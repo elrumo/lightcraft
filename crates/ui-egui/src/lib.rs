@@ -27,6 +27,8 @@ pub mod theme;
 pub mod widgets;
 
 #[cfg(test)]
+mod tests_compact;
+#[cfg(test)]
 mod tests_curve;
 #[cfg(test)]
 mod tests_grid;
@@ -135,6 +137,9 @@ pub struct LightcraftApp {
     pub perf: Perf,
     /// macOS: the host draws the traffic lights over our top bar.
     pub integrated_titlebar: bool,
+    /// Phone-sized window (content narrower than [`COMPACT_BELOW_PT`]): one panel at a time, tools in
+    /// a bottom tab bar and sheet (`panels::compact`). Set every frame from the window width.
+    pub compact: bool,
     /// The host installed a native menu bar (no in-window menus then).
     pub native_menu: bool,
     /// Shortcuts the native menu bar currently handles (`Cmd+Z`, `G`…): the egui shortcut handler
@@ -217,6 +222,7 @@ impl LightcraftApp {
             perf: Perf::default(),
             caches: Caches::default(),
             integrated_titlebar: false,
+            compact: false,
             native_menu: false,
             native_shortcuts: Default::default(),
             headless_host: false,
@@ -707,6 +713,15 @@ impl LightcraftApp {
             self.end_frame(t0);
             return;
         }
+        self.compact = ctx.content_rect().width() < COMPACT_BELOW_PT;
+        ctx.data_mut(|d| d.insert_temp(egui::Id::new("lc-compact"), self.compact));
+        touch_style(&ctx, self.compact);
+        if self.compact {
+            panels::compact::show(self, ui);
+            self.widgets = widgets::take_registry(&ctx);
+            self.end_frame(t0);
+            return;
+        }
         // Order matters: earlier panels take the full edge (top bar spans the window; the tool strip,
         // right panels and left panel run to the bottom; the bottom bar sits between them).
         panels::topbar::show(self, ui);
@@ -749,6 +764,36 @@ impl LightcraftApp {
         self.widgets = widgets::take_registry(&ctx);
         self.end_frame(t0);
     }
+}
+
+/// Content width (points) below which the compact, touch-first layout is used. The desktop layout
+/// needs about 810 pt (and its window never gets narrower than 900); iPhones are 375–440 pt wide in
+/// portrait, iPads 744–834 pt in portrait (compact, with side panels: see `COMPACT_WIDE_PT`) and
+/// 1024 pt and more in landscape (the desktop layout).
+pub const COMPACT_BELOW_PT: f32 = 900.0;
+
+/// Minimum height (points) of egui-drawn rows and buttons (context menus, combo boxes, dialogs) in the
+/// compact layout: Apple's 44 pt touch target.
+pub const TOUCH_ROW_H: f32 = 44.0;
+
+/// Sets egui's interaction size for the layout in use, remembering the desktop value to restore it.
+fn touch_style(ctx: &egui::Context, compact: bool) {
+    let id = egui::Id::new("lc-desktop-interact-h");
+    let cur = ctx.global_style().spacing.interact_size.y;
+    let saved = ctx.data(|d| d.get_temp::<f32>(id));
+    if compact && cur < TOUCH_ROW_H {
+        ctx.data_mut(|d| d.insert_temp(id, cur));
+        ctx.global_style_mut(|s| s.spacing.interact_size.y = TOUCH_ROW_H);
+    } else if !compact && let Some(h) = saved {
+        ctx.data_mut(|d| d.remove_temp::<f32>(id));
+        ctx.global_style_mut(|s| s.spacing.interact_size.y = h);
+    }
+}
+
+/// Whether this frame uses the compact layout, for widgets that only have the context (bigger touch
+/// targets).
+pub fn is_compact(ctx: &egui::Context) -> bool {
+    ctx.data(|d| d.get_temp::<bool>(egui::Id::new("lc-compact"))).unwrap_or(false)
 }
 
 /// How long a screenshot waits for in-flight renders.

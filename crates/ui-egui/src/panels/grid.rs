@@ -189,8 +189,9 @@ fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     }
     let ppp = ui.ctx().pixels_per_point();
     let square = app.ui.view == ViewMode::SquareGrid;
-    let target = app.ui.thumb_size;
     let avail_w = ui.available_width() - 8.0;
+    // phone: about three tiles across (and, through `resolve_group`, month headers rather than one per day)
+    let target = if app.compact { (avail_w / 3.0).max(90.0) } else { app.ui.thumb_size };
     let by = resolve_group(app.session.sort.group, target);
     let group_key = match app.session.source {
         lightcraft_engine::LibrarySource::RecentlyDeleted => None,
@@ -609,7 +610,11 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
         }
         return;
     }
-    if resp.clicked() {
+    if app.compact && resp.clicked() {
+        // touch: a tap opens the photo (no double-tap, no modifiers)
+        let _ = app.run("library.select", json!({"ids": [id.0]}));
+        let _ = app.run("view.detail", json!({}));
+    } else if resp.clicked() {
         let m = ui.input(|i| i.modifiers);
         let mode = if m.shift {
             "range"

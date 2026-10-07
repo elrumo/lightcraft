@@ -52,10 +52,21 @@ layout and interaction only: no Adobe icons, artwork, fonts, presets or screensh
 
 ## What is missing
 
-1. **A touch UI.** `ui-egui` is built for mouse and keyboard: no pinch or two-finger pan, 23 right-click menus, hover
-   previews, Shift/Cmd/Alt modifiers, about 22 px hit targets and a three-panel layout about 810 pt wide. A phone needs
-   one panel at a time with bottom sheets. Plan: a new L5 crate that generates its edit panels from the `develop`
-   control specs and the command registry.
+1. **A touch UI (done for the spike, unverified on a device).** `ui-egui` has a compact layout (`panels/compact.rs`) used
+   when the content is narrower than `COMPACT_BELOW_PT` (900 pt; `LightcraftApp::compact`), i.e. iPhones and iPads in
+   portrait; iPad landscape (1024 pt and more) keeps the desktop layout. Slim top bar with a Menu button (the whole
+   command menu: import, export, settings…), the grid (about three tiles across, month headers) or the loupe, a bottom
+   tab bar (Presets, Edit, Crop, Remove, Masking, Info) and the active tool as a bottom sheet (from 600 pt wide: a
+   panel on the right, with My Photos as a column on the left; on a phone My Photos is a page of its own). The sheets
+   reuse the desktop panel bodies. Touch: a tap opens a photo, pinch zooms, two fingers pan, a sideways swipe on a
+   fitted photo goes to the next / previous one, double tap zooms, sliders have 68 pt rows and a 48 pt grab zone,
+   egui-drawn rows are 44 pt, crop handles and mask / spot pins are about a finger wide, and press-and-hold opens the
+   context menus (egui's own long-touch). Check it headless with `lightcraft-cli snapshot --demo --size 390x844
+   --scale 2` (phone) or `--size 820x1180` (iPad). Pinch and two-finger pan are untested (the headless driver injects
+   no multi-touch); everything is untested on a real device.
+   Still missing: the native pickers and share sheet that make Menu → Import / Export work (item 4), the on-screen
+   keyboard for text fields, Apple Pencil, tool-specific touch polish (brush strokes with a finger while the sheet is
+   open, the curve editor, the colour wheels) and a landscape phone layout.
 2. **HEIC/HEIF decode.** iPhone photos are HEIC; `crates/codecs` recognises the format but cannot decode it, and import
    currently accepts `.heic` files it then fails on. The pragmatic route is ImageIO behind the `FileLoader` hook
    (`crates/engine/src/media.rs`).

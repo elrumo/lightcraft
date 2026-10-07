@@ -22,7 +22,8 @@ fn row(
 ) -> egui::Response {
     let label = if matches!(id, "all" | "recentlyAdded" | "picks" | "missing" | "recentlyDeleted") { crate::i18n::tr(label) } else { label };
     let t = Tokens::get(ui.ctx());
-    let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 29.0), Sense::click());
+    let (r, resp) =
+        ui.allocate_exact_size(vec2(ui.available_width(), if crate::is_compact(ui.ctx()) { crate::TOUCH_ROW_H } else { 29.0 }), Sense::click());
     register(ui.ctx(), format!("source:{id}"), r);
     let name = match count {
         Some(n) => crate::i18n::tr_format!("{label}, {n} photos", label = label, n = n),
@@ -59,89 +60,94 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
     let frame = egui::Frame::NONE.fill(t.chrome).stroke(egui::Stroke::new(1.0, t.divider));
     let width = app.ui.left_width;
-    let resized = super::resizable_side(ui, true, "left_panel", frame, width, crate::state::LEFT_WIDTH, 0.0, |ui| {
-        ui.spacing_mut().item_spacing.y = 0.0;
-        let (hr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 44.0), Sense::hover());
-        ui.painter().text(pos2(hr.left() + 18.0, hr.center().y), Align2::LEFT_CENTER, crate::i18n::tr("My Photos"), t.semibold(15.0), t.text);
-        let counts = app.caches.counts(&app.session.catalog);
-        let (total, picks, deleted) = (counts.total, counts.picks, counts.deleted);
-        egui::ScrollArea::vertical().id_salt("left-scroll").auto_shrink([false, false]).show(ui, |ui| {
-            let src = app.session.source;
-            for (id, icon, label, count, s) in [
-                ("all", Icon::Photos, "All Photos", Some(total), LibrarySource::All),
-                ("recentlyAdded", Icon::Clock, "Recently Added", None, LibrarySource::RecentlyAdded),
-                ("picks", Icon::FlagPick, "Picks", Some(picks), LibrarySource::Picks),
-            ] {
-                if row(app, ui, id, icon, label, count, src == s, 0.0).clicked() {
-                    let _ = app.run("library.source", json!({"kind": id}));
-                }
+    let resized = super::resizable_side(ui, true, "left_panel", frame, width, crate::state::LEFT_WIDTH, 0.0, |ui| body(app, ui));
+    if let Some(w) = resized {
+        app.ui.left_width = w;
+    }
+}
+
+/// The "My Photos" sidebar content (library sources, albums, folders): the side panel on desktop,
+/// a page of its own in the compact layout.
+pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui) {
+    let t = Tokens::get(ui.ctx());
+    ui.spacing_mut().item_spacing.y = 0.0;
+    let (hr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 44.0), Sense::hover());
+    ui.painter().text(pos2(hr.left() + 18.0, hr.center().y), Align2::LEFT_CENTER, crate::i18n::tr("My Photos"), t.semibold(15.0), t.text);
+    let counts = app.caches.counts(&app.session.catalog);
+    let (total, picks, deleted) = (counts.total, counts.picks, counts.deleted);
+    egui::ScrollArea::vertical().id_salt("left-scroll").auto_shrink([false, false]).show(ui, |ui| {
+        let src = app.session.source;
+        for (id, icon, label, count, s) in [
+            ("all", Icon::Photos, "All Photos", Some(total), LibrarySource::All),
+            ("recentlyAdded", Icon::Clock, "Recently Added", None, LibrarySource::RecentlyAdded),
+            ("picks", Icon::FlagPick, "Picks", Some(picks), LibrarySource::Picks),
+        ] {
+            if row(app, ui, id, icon, label, count, src == s, 0.0).clicked() {
+                let _ = app.run("library.source", json!({"kind": id}));
             }
-            // photos whose files can't be found (checked every few seconds, not every frame)
-            let missing = missing_count(app, ui);
-            if (missing > 0 || src == LibrarySource::Missing)
-                && row(app, ui, "missing", Icon::Folder, "Missing Photos", Some(missing), src == LibrarySource::Missing, 0.0).clicked()
-            {
-                let _ = app.run("library.source", json!({"kind": "missing"}));
+        }
+        // photos whose files can't be found (checked every few seconds, not every frame)
+        let missing = missing_count(app, ui);
+        if (missing > 0 || src == LibrarySource::Missing)
+            && row(app, ui, "missing", Icon::Folder, "Missing Photos", Some(missing), src == LibrarySource::Missing, 0.0).clicked()
+        {
+            let _ = app.run("library.source", json!({"kind": "missing"}));
+        }
+        ui.add_space(10.0);
+        // Albums header
+        let (ar, _) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::hover());
+        ui.painter().text(pos2(ar.left() + 18.0, ar.center().y), Align2::LEFT_CENTER, crate::i18n::tr("Albums"), t.semibold(13.5), t.text_label);
+        let mut hdr = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(Rect::from_min_max(pos2(ar.right() - 50.0, ar.top()), ar.right_bottom()))
+                .layout(egui::Layout::right_to_left(egui::Align::Center)),
+        );
+        let plus = icon_button(&mut hdr, "albumNew", Icon::Plus, vec2(26.0, 26.0), false, true, "Create Album");
+        egui::Popup::menu(&plus).show(|ui| {
+            if ui.button(crate::i18n::tr("Create Album…")).clicked() {
+                app.ui.dialog = Some(crate::state::Dialog::NewAlbum { name: String::new(), folder: false });
             }
-            ui.add_space(10.0);
-            // Albums header
-            let (ar, _) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::hover());
-            ui.painter().text(pos2(ar.left() + 18.0, ar.center().y), Align2::LEFT_CENTER, crate::i18n::tr("Albums"), t.semibold(13.5), t.text_label);
-            let mut hdr = ui.new_child(
-                egui::UiBuilder::new()
-                    .max_rect(Rect::from_min_max(pos2(ar.right() - 50.0, ar.top()), ar.right_bottom()))
-                    .layout(egui::Layout::right_to_left(egui::Align::Center)),
-            );
-            let plus = icon_button(&mut hdr, "albumNew", Icon::Plus, vec2(26.0, 26.0), false, true, "Create Album");
-            egui::Popup::menu(&plus).show(|ui| {
-                if ui.button(crate::i18n::tr("Create Album…")).clicked() {
-                    app.ui.dialog = Some(crate::state::Dialog::NewAlbum { name: String::new(), folder: false });
-                }
-                if ui.button(crate::i18n::tr("Create Smart Album…")).clicked() {
-                    app.ui.dialog = Some(crate::state::Dialog::SmartRules {
-                        id: None,
-                        name: String::new(),
-                        rules: lightcraft_catalog::RuleSet { rules: vec![crate::panels::rules_editor::new_rule()], ..Default::default() },
-                    });
-                }
-                if ui.button(crate::i18n::tr("Create Smart Album from Filter…")).clicked() {
-                    app.ui.dialog = Some(crate::state::Dialog::NewSmartAlbum { name: String::new() });
-                }
-                if ui.button(crate::i18n::tr("Create Folder…")).clicked() {
-                    app.ui.dialog = Some(crate::state::Dialog::NewAlbum { name: String::new(), folder: true });
-                }
-            });
-            let albums: Vec<Album> = app.session.catalog.albums().cloned().collect();
-            albums_tree(app, ui, &albums, None, 0.0);
-            ui.add_space(10.0);
-            local_section(app, ui);
-            // By date
-            let (dr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::hover());
-            ui.painter().text(pos2(dr.left() + 18.0, dr.center().y), Align2::LEFT_CENTER, crate::i18n::tr("By Date"), t.semibold(13.5), t.text_label);
-            for g in app.caches.date_groups(&app.session.catalog).iter() {
-                // year → month → day; a click filters by that prefix, the triangle opens a level
-                if date_row(app, ui, &g.year, &crate::i18n::date_group_label(&g.year, true), g.count, 0.0) {
-                    for (m, n) in &g.months {
-                        let label = crate::i18n::date_group_label(m, true);
-                        if date_row(app, ui, m, &label, *n, 16.0) {
-                            for (d, n) in g.days.iter().filter(|(d, _)| d.starts_with(m.as_str())) {
-                                let label = crate::i18n::date_group_label(d, true);
-                                date_row(app, ui, d, &label, *n, 32.0);
-                            }
+            if ui.button(crate::i18n::tr("Create Smart Album…")).clicked() {
+                app.ui.dialog = Some(crate::state::Dialog::SmartRules {
+                    id: None,
+                    name: String::new(),
+                    rules: lightcraft_catalog::RuleSet { rules: vec![crate::panels::rules_editor::new_rule()], ..Default::default() },
+                });
+            }
+            if ui.button(crate::i18n::tr("Create Smart Album from Filter…")).clicked() {
+                app.ui.dialog = Some(crate::state::Dialog::NewSmartAlbum { name: String::new() });
+            }
+            if ui.button(crate::i18n::tr("Create Folder…")).clicked() {
+                app.ui.dialog = Some(crate::state::Dialog::NewAlbum { name: String::new(), folder: true });
+            }
+        });
+        let albums: Vec<Album> = app.session.catalog.albums().cloned().collect();
+        albums_tree(app, ui, &albums, None, 0.0);
+        ui.add_space(10.0);
+        local_section(app, ui);
+        // By date
+        let (dr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::hover());
+        ui.painter().text(pos2(dr.left() + 18.0, dr.center().y), Align2::LEFT_CENTER, crate::i18n::tr("By Date"), t.semibold(13.5), t.text_label);
+        for g in app.caches.date_groups(&app.session.catalog).iter() {
+            // year → month → day; a click filters by that prefix, the triangle opens a level
+            if date_row(app, ui, &g.year, &crate::i18n::date_group_label(&g.year, true), g.count, 0.0) {
+                for (m, n) in &g.months {
+                    let label = crate::i18n::date_group_label(m, true);
+                    if date_row(app, ui, m, &label, *n, 16.0) {
+                        for (d, n) in g.days.iter().filter(|(d, _)| d.starts_with(m.as_str())) {
+                            let label = crate::i18n::date_group_label(d, true);
+                            date_row(app, ui, d, &label, *n, 32.0);
                         }
                     }
                 }
             }
-            keywords_section(app, ui);
-            ui.add_space(10.0);
-            if row(app, ui, "recentlyDeleted", Icon::Trash, "Recently Deleted", Some(deleted), src == LibrarySource::RecentlyDeleted, 0.0).clicked() {
-                let _ = app.run("library.source", json!({"kind": "recentlyDeleted"}));
-            }
-        });
+        }
+        keywords_section(app, ui);
+        ui.add_space(10.0);
+        if row(app, ui, "recentlyDeleted", Icon::Trash, "Recently Deleted", Some(deleted), src == LibrarySource::RecentlyDeleted, 0.0).clicked() {
+            let _ = app.run("library.source", json!({"kind": "recentlyDeleted"}));
+        }
     });
-    if let Some(w) = resized {
-        app.ui.left_width = w;
-    }
 }
 
 /// How many library photos have no file (Local browse records are not checked; see

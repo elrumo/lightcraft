@@ -142,7 +142,8 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
     let full = ui.max_rect();
     let fullscreen = app.ui.fullscreen;
-    let show_film = app.ui.filmstrip && !fullscreen;
+    // the compact layout has no filmstrip (it would eat the loupe)
+    let show_film = app.ui.filmstrip && !fullscreen && !app.compact;
     let film_h = if show_film { t.film_h } else { 0.0 };
     let canvas = Rect::from_min_max(full.min, pos2(full.right(), full.bottom() - film_h));
     app.canvas_rect = Some(canvas);
@@ -740,6 +741,43 @@ fn clipping_overlay(app: &LightcraftApp, p: &egui::Painter, r: Rect) {
     }
 }
 
+/// How far (points) from a crop handle a finger still grabs it (a handle is 44 pt wide with margin).
+const TOUCH_HANDLE_REACH: f32 = 28.0;
+
+/// How far (points) a one-finger swipe must travel to change photo.
+const SWIPE_MIN_PT: f32 = 80.0;
+
+/// Two-finger gestures on the loupe: pinch zooms (back to Fit when it shrinks past the fitted
+/// size), two fingers pan a zoomed photo. Returns whether two or more fingers are down, so the
+/// one-finger pan and swipe stand down.
+#[allow(clippy::too_many_arguments)]
+fn touch_gestures(app: &mut LightcraftApp, ui: &egui::Ui, img: Rect, canvas: Rect, native: [usize; 2], aspect: f32, zoomed: bool) -> bool {
+    let Some(mt) = ui.input(|i| i.multi_touch()) else { return false };
+    let ppp = ui.ctx().pixels_per_point();
+    if (mt.zoom_delta - 1.0).abs() > 1e-4 {
+        let fit_w = fit_rect(canvas, aspect, Zoom::Fit, native, ppp, app.ui.pan).width();
+        let w = img.width() * mt.zoom_delta;
+        if w <= fit_w {
+            app.ui.zoom = Zoom::Fit;
+        } else {
+            if !zoomed {
+                // start the zoom under the fingers
+                app.ui.pan =
+                    (((mt.center_pos.x - img.left()) / img.width()).clamp(0.0, 1.0), ((mt.center_pos.y - img.top()) / img.height()).clamp(0.0, 1.0));
+            }
+            let pct = w * ppp / native[0].max(1) as f32 * 100.0;
+            app.ui.zoom = Zoom::Percent(pct.clamp(5.0, 800.0).round() as u32);
+        }
+        app.ui.zoom_anim = false;
+    }
+    if zoomed {
+        let d = mt.translation_delta;
+        app.ui.pan.0 = (app.ui.pan.0 - d.x / img.width()).clamp(0.0, 1.0);
+        app.ui.pan.1 = (app.ui.pan.1 - d.y / img.height()).clamp(0.0, 1.0);
+    }
+    true
+}
+
 fn general_interaction(
     app: &mut LightcraftApp,
     ui: &mut egui::Ui,
@@ -792,9 +830,11 @@ fn general_interaction(
         }
         return;
     }
-    // click toggles Fit ↔ the click-zoom ratio (2:1/3:1/5:1) at the clicked point; drag pans when zoomed
     let zoomed = img.width() > canvas.width() + 1.0 || img.height() > canvas.height() + 1.0;
-    if resp.double_clicked() || (resp.clicked() && !zoomed) {
+    let two_fingers = touch_gestures(app, ui, img, canvas, native, aspect, zoomed);
+    // click toggles Fit ↔ the click-zoom ratio (2:1/3:1/5:1) at the clicked point; drag pans when zoomed.
+    // On a touch layout only a double tap zooms (a single tap must not move the photo).
+    if resp.double_clicked() || (resp.clicked() && !zoomed && !app.compact) {
         if let Some(q) = resp.interact_pointer_pos() {
             let u = ((q.x - img.left()) / img.width()).clamp(0.0, 1.0);
             let v = ((q.y - img.top()) / img.height()).clamp(0.0, 1.0);
@@ -802,7 +842,7 @@ fn general_interaction(
         }
         app.ui.zoom = if matches!(app.ui.zoom, Zoom::Fit) { Zoom::Percent(app.ui.click_zoom) } else { Zoom::Fit };
         app.ui.zoom_anim = true;
-    } else if resp.clicked() && zoomed {
+    } else if resp.clicked() && zoomed && !app.compact {
         app.ui.zoom = Zoom::Fit;
         app.ui.zoom_anim = true;
     }
@@ -811,11 +851,25 @@ fn general_interaction(
         if resp.dragged() || resp.hovered() {
             ui.ctx().set_cursor_icon(if resp.dragged() { egui::CursorIcon::Grabbing } else { egui::CursorIcon::Grab });
         }
-        if resp.dragged() {
+        if resp.dragged() && !two_fingers {
             let dlt = resp.drag_delta();
             app.ui.pan.0 = (app.ui.pan.0 - dlt.x / img.width()).clamp(0.0, 1.0);
             app.ui.pan.1 = (app.ui.pan.1 - dlt.y / img.height()).clamp(0.0, 1.0);
         }
+    } else if app.compact && !two_fingers && resp.dragged() {
+        if let Some(d) = resp.total_drag_delta() {
+            ui.data_mut(|m| m.insert_temp(egui::Id::new("loupe-swipe"), d));
+        }
+    } else if app.compact && !two_fingers && resp.drag_stopped() && !app.ui.zoom_anim {
+        // swipe sideways across a fitted photo: the next / previous one (egui has no total on the
+        // release frame: use the last one seen while dragging)
+        if let Some(d) = ui.data(|d| d.get_temp::<egui::Vec2>(egui::Id::new("loupe-swipe")))
+            && d.x.abs() >= SWIPE_MIN_PT
+            && d.x.abs() > 2.0 * d.y.abs()
+        {
+            let _ = app.run(if d.x < 0.0 { "library.next" } else { "library.previous" }, json!({}));
+        }
+        ui.data_mut(|m| m.remove_temp::<egui::Vec2>(egui::Id::new("loupe-swipe")));
     }
     let _ = (native, aspect);
 }
@@ -872,19 +926,24 @@ fn crop_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respons
     }
     // handles: 0..3 corners, 4..7 edges (top, right, bottom, left)
     let handles: Vec<Pos2> = (0..8).map(|i| if i < 4 { pts[i] } else { lerp(pts[i - 4], pts[(i - 3) % 4], 0.5) }).collect();
+    // touch: handles about a finger wide (the drawn marks grow too), grabbed by the nearest one in reach
+    let (reach, grow) = if app.compact { (TOUCH_HANDLE_REACH, 2.0) } else { (12.0, 1.0) };
     for (i, h) in handles.iter().enumerate() {
-        register(ui.ctx(), format!("cropHandle:{i}"), Rect::from_center_size(*h, vec2(14.0, 14.0)));
-        let s = if i < 4 { 12.0 } else { 9.0 };
-        p.rect_filled(Rect::from_center_size(*h, vec2(s, 3.0)), 0.0, Color32::WHITE);
-        p.rect_filled(Rect::from_center_size(*h, vec2(3.0, s)), 0.0, Color32::WHITE);
+        register(ui.ctx(), format!("cropHandle:{i}"), Rect::from_center_size(*h, vec2(14.0, 14.0) * grow));
+        let s = (if i < 4 { 12.0 } else { 9.0 }) * grow;
+        p.rect_filled(Rect::from_center_size(*h, vec2(s, 3.0 * grow)), 0.0, Color32::WHITE);
+        p.rect_filled(Rect::from_center_size(*h, vec2(3.0 * grow, s)), 0.0, Color32::WHITE);
     }
+    let grab = |q: Pos2| {
+        handles.iter().enumerate().filter(|(_, h)| h.distance(q) < reach).min_by(|a, b| a.1.distance(q).total_cmp(&b.1.distance(q))).map(|(i, _)| i)
+    };
     let inside = |q: Pos2| {
         let n = map.norm(q);
         let s = to_straight(n, d.crop.geometry.angle, frame);
         d.crop.geometry.rect.contains(Point::new(s.x.clamp(-1.0, 2.0), s.y))
     };
     if let Some(hq) = resp.hover_pos() {
-        let near = handles.iter().position(|h| h.distance(hq) < 12.0);
+        let near = grab(hq);
         ui.ctx().set_cursor_icon(match near {
             Some(0 | 2) => egui::CursorIcon::ResizeNwSe,
             Some(1 | 3) => egui::CursorIcon::ResizeNeSw,
@@ -898,7 +957,7 @@ fn crop_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respons
     if resp.double_clicked()
         && let Some(q) = resp.interact_pointer_pos()
         && inside(q)
-        && !handles.iter().any(|h| h.distance(q) < 12.0)
+        && grab(q).is_none()
     {
         let _ = app.run("tool.done", json!({}));
         return;
@@ -907,7 +966,9 @@ fn crop_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respons
         && let Some(q) = resp.interact_pointer_pos()
     {
         let _ = app.run("develop.beginInteraction", json!({"label": "Crop"}));
-        app.gesture = Some(match handles.iter().position(|h| h.distance(q) < 12.0) {
+        // a finger has moved a few points by the time the drag starts: pick the handle where it went down
+        let q0 = if app.compact { ui.input(|i| i.pointer.press_origin()).unwrap_or(q) } else { q };
+        app.gesture = Some(match grab(q0) {
             Some(h) => Gesture::CropHandle { handle: h as u8, start: d.crop.geometry.rect, angle: d.crop.geometry.angle },
             None if inside(q) => Gesture::CropHandle { handle: 8, start: d.crop.geometry.rect, angle: d.crop.geometry.angle },
             None => {
@@ -1166,7 +1227,7 @@ fn mask_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respons
                 && let Some(at) = component_pin(&c.shape)
             {
                 let q = map.screen(at);
-                pin(p, q, sel);
+                pin(p, q, sel, app.compact);
                 register(ui.ctx(), format!("maskPin:{}:{ci}", m.id), Rect::from_center_size(q, vec2(14.0, 14.0)));
                 grips.push((m.id, ci, 0, q));
             }
@@ -1210,10 +1271,11 @@ fn mask_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respons
         return;
     }
     // the grip under the pointer: the selected mask's first, then the nearest
+    let reach = if app.compact { TOUCH_HANDLE_REACH } else { 10.0 };
     let hit = |q: Pos2| {
         grips
             .iter()
-            .filter(|g| g.3.distance(q) < 10.0)
+            .filter(|g| g.3.distance(q) < reach)
             .min_by(|a, b| {
                 (Some(a.0) != active, a.3.distance(q)).partial_cmp(&(Some(b.0) != active, b.3.distance(q))).unwrap_or(std::cmp::Ordering::Equal)
             })
@@ -1271,9 +1333,10 @@ fn frame_long_norm(map: &CanvasMap) -> (f64, f64) {
     (l / x.max(1e-9), l / y.max(1e-9))
 }
 
-fn pin(p: &egui::Painter, c: Pos2, sel: bool) {
-    p.circle_filled(c, 6.0, if sel { Color32::from_rgb(1, 101, 221) } else { Color32::from_gray(200) });
-    p.circle_stroke(c, 6.0, Stroke::new(1.5, Color32::WHITE));
+fn pin(p: &egui::Painter, c: Pos2, sel: bool, touch: bool) {
+    let r = if touch { 11.0 } else { 6.0 };
+    p.circle_filled(c, r, if sel { Color32::from_rgb(1, 101, 221) } else { Color32::from_gray(200) });
+    p.circle_stroke(c, r, Stroke::new(1.5, Color32::WHITE));
 }
 
 // ------------------------------------------------------------------------ remove
@@ -1305,16 +1368,17 @@ fn remove_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respo
             register(ui.ctx(), format!("spotSource:{i}"), Rect::from_center_size(sq, vec2(14.0, 14.0)));
             grips.push((i, true, sq, r));
         }
-        pin(&p, tq, sel);
+        pin(&p, tq, sel, app.compact);
         register(ui.ctx(), format!("spotPin:{i}"), Rect::from_center_size(tq, vec2(14.0, 14.0)));
         grips.push((i, false, tq, r));
     }
     let r = (app.ui.remove_size as f64 * long) as f32;
     // a target or source under `q`: the selected spot's first, then the nearest pin
+    let min_reach = if app.compact { TOUCH_HANDLE_REACH } else { 8.0 };
     let hit = |q: Pos2| {
         grips
             .iter()
-            .filter(|g| g.2.distance(q) < g.3.max(8.0))
+            .filter(|g| g.2.distance(q) < g.3.max(min_reach))
             .min_by(|a, b| {
                 (Some(a.0) != active, a.2.distance(q)).partial_cmp(&(Some(b.0) != active, b.2.distance(q))).unwrap_or(std::cmp::Ordering::Equal)
             })

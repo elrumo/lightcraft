@@ -85,7 +85,8 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     }
     let preview_only = app.session.catalog.photo(id).and_then(|p| p.preview_only.clone());
 
-    if app.ui.histogram {
+    // the compact sheet is short: the sliders come first
+    if app.ui.histogram && !app.compact {
         histogram(app, ui, id);
     }
     if app.ui.soft_proof {
