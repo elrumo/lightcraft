@@ -18,7 +18,7 @@
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use lightcraft_develop::DevelopSettings;
@@ -46,14 +46,53 @@ static BROKEN_REASON: Mutex<Option<String>> = Mutex::new(None);
 /// The latest render that fell back to the CPU, and why.
 static LAST_FALLBACK: Mutex<Option<String>> = Mutex::new(None);
 
-/// Stop using the GPU for the rest of the process (after a device error).
+/// The app is in the background ([`pause`]): renders stay on the CPU, and device errors are
+/// blamed on the backgrounding instead of stopping the GPU for good.
+static PAUSED: AtomicBool = AtomicBool::new(false);
+/// Bumped by every [`pause`]: a render that saw it change failed because of the backgrounding.
+static PAUSES: AtomicU64 = AtomicU64::new(0);
+/// The GPU stopped because of an error while paused: [`resume`] gives it another chance.
+static BROKEN_IN_PAUSE: AtomicBool = AtomicBool::new(false);
+
+/// Stop using the GPU for the rest of the process (after a device error). While [`paused`], only
+/// until [`resume`]: a backgrounded app may not use the GPU (iOS rejects its command buffers),
+/// which is no reason to give up on it.
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 fn mark_broken(reason: &str) {
+    if PAUSED.load(Ordering::Relaxed) {
+        log::warn!("gpu: error while paused (the app is in the background): {reason}");
+        BROKEN_IN_PAUSE.store(true, Ordering::Relaxed);
+        BROKEN.store(true, Ordering::Relaxed);
+        return;
+    }
     let mut r = BROKEN_REASON.lock().unwrap_or_else(|e| e.into_inner());
     if r.is_none() {
         *r = Some(reason.to_string());
     }
     BROKEN.store(true, Ordering::Relaxed);
+}
+
+/// The app went to the background (iOS: it may not use the GPU there): renders run on the CPU
+/// until [`resume`], device errors meanwhile don't stop the GPU for good, and the pool of
+/// recycled device buffers is freed (a backgrounded app is held to a much smaller memory limit).
+pub fn pause() {
+    PAUSES.fetch_add(1, Ordering::Relaxed);
+    PAUSED.store(true, Ordering::Relaxed);
+    trim_pool(0);
+}
+
+/// The app is in the foreground again: the GPU is used again, also when an error while paused
+/// stopped it (if the device is really gone, the next render's error stops it for good).
+pub fn resume() {
+    PAUSED.store(false, Ordering::Relaxed);
+    if BROKEN_IN_PAUSE.swap(false, Ordering::Relaxed) && BROKEN_REASON.lock().unwrap_or_else(|e| e.into_inner()).is_none() {
+        BROKEN.store(false, Ordering::Relaxed);
+    }
+}
+
+/// Is the GPU paused ([`pause`])?
+pub fn paused() -> bool {
+    PAUSED.load(Ordering::Relaxed)
 }
 
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
@@ -74,6 +113,9 @@ pub fn unavailable_reason() -> Option<String> {
     }
     if !ENABLED.load(Ordering::Relaxed) {
         return Some("disabled by the GPU rendering preference (app.gpu)".into());
+    }
+    if PAUSED.load(Ordering::Relaxed) {
+        return Some("paused while the app is in the background".into());
     }
     if BROKEN.load(Ordering::Relaxed) {
         let r = BROKEN_REASON.lock().unwrap_or_else(|e| e.into_inner()).clone().unwrap_or_else(|| "device error".into());
@@ -124,6 +166,12 @@ pub fn inject_fault(f: Fault) {
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 fn take_fault() -> Option<Fault> {
     FAULT.with(|c| c.take())
+}
+
+/// What the device's error callback does with an error it reports (tests of [`pause`]).
+#[doc(hidden)]
+pub fn inject_device_error(reason: &str) {
+    mark_broken(reason);
 }
 
 /// Use the GPU again after a failure (tests that inject faults).
@@ -298,6 +346,11 @@ pub fn render(src: &Arc<Rgb32f>, info: &SourceInfo, s: &DevelopSettings, req: &R
         if !enabled() || req.depth != lightcraft_pipeline::OutputDepth::U8 || req.proof.is_some() {
             return None;
         }
+        if PAUSED.load(Ordering::Relaxed) {
+            record_fallback("the app is in the background (GPU paused)".into());
+            return None;
+        }
+        let pauses = PAUSES.load(Ordering::Relaxed);
         let gpu = device()?;
         let ext = stages.map(|c| c.extension::<GpuStages>());
         let fault = take_fault();
@@ -331,6 +384,10 @@ pub fn render(src: &Arc<Rgb32f>, info: &SourceInfo, s: &DevelopSettings, req: &R
                     None => "GPU render".into(),
                 };
                 let reason = match f.kind {
+                    // the app went to the background during the render: not the device's fault
+                    ctx::FailKind::Fatal if PAUSES.load(Ordering::Relaxed) != pauses => {
+                        format!("{what}: {} (the app went to the background)", f.reason)
+                    }
                     ctx::FailKind::Fatal => {
                         mark_broken(&f.reason);
                         format!("{what}: {}; the GPU is not used again", f.reason)
