@@ -2,8 +2,10 @@
 
 Everything still missing, with priorities: [`ios-gaps.md`](ios-gaps.md).
 
-**Status: no app yet.** The engine and the egui shell type-check for iOS; nothing has been built, linked or run on a
-device or simulator. This page records what is verified, what is not, and the plan.
+**Status: a spike that runs on the simulator.** The desktop egui app builds as a static library, an Xcode project wraps
+it, and it runs on the iOS 27 simulator with a compact touch layout (below). It has not run on a device, has no native
+host (pickers, share sheet, sandbox paths) and imports nothing yet beyond the procedural demo library. This page
+records what is verified, what is not, and the plan.
 
 ## What is verified
 
