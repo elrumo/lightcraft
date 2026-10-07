@@ -21,6 +21,7 @@ pub mod render;
 pub mod shortcuts;
 pub mod softpaint;
 pub mod state;
+pub mod sync_ui;
 pub mod tasks;
 pub mod theme;
 pub mod widgets;
@@ -107,6 +108,8 @@ pub struct Services {
     pub backup_library: Option<HostAction>,
     /// File ▸ Restore Library from Backup… (web only; keeps the current library).
     pub restore_library: Option<HostAction>,
+    /// Runs self-hosted sync requests ([`sync_ui`]); `None`: this host doesn't sync.
+    pub sync_exec: Option<sync_ui::SyncExec>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -205,6 +208,8 @@ pub struct LightcraftApp {
     /// The library failed to open at launch: the blocking window, then the temporary-session
     /// banner (issue #100). Cleared once a library opens.
     pub library_problem: Option<panels::library_problem::LibraryProblem>,
+    /// Self-hosted sync requests in flight, and the Settings ▸ Sync form.
+    pub sync: sync_ui::SyncDriver,
 }
 
 impl LightcraftApp {
@@ -253,6 +258,7 @@ impl LightcraftApp {
             gpu_applied: None,
             memory_applied: None,
             library_problem: None,
+            sync: Default::default(),
         }
     }
 
@@ -542,6 +548,7 @@ impl LightcraftApp {
         import::poll_scan(self, ctx);
         import::tick(self, ctx);
         tasks::poll(self, ctx);
+        sync_ui::poll(self, ctx);
         self.preview_build_status(ctx);
         self.save_status(ctx);
         self.slideshow_tick(ctx);

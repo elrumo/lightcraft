@@ -63,6 +63,22 @@ pub fn encode(img: &Rgb32f, tone: Option<&CameraTone>) -> Result<Vec<u8>, String
     Ok(out)
 }
 
+/// A photo's smart preview and a smaller one (≤ `mini_edge`, the sync's grid preview), from the
+/// bytes of its original.
+pub fn encode_pair(original: &[u8], mini_edge: usize) -> Result<(Vec<u8>, Vec<u8>), String> {
+    use lightcraft_raster::resample::{Filter, fit};
+    let (img, info) = crate::files::load_bytes(original, crate::media::SourceLevel::Preview.max_edge())?;
+    let tone = info.camera_tone.as_ref();
+    let smart = encode(&img, tone)?;
+    let small = if img.width.max(img.height) > mini_edge { fit(&img, mini_edge, mini_edge, Filter::Mitchell) } else { img };
+    Ok((smart, encode(&small, tone)?))
+}
+
+/// Is this a smart preview's bytes (by its header)?
+pub fn is_smart_preview(bytes: &[u8]) -> bool {
+    bytes.starts_with(MAGIC)
+}
+
 /// Decode a smart preview back into a source image and its stored camera tone curve (an invalid
 /// curve is ignored, like a missing one).
 pub fn decode(bytes: &[u8]) -> Result<(Rgb32f, Option<CameraTone>), String> {

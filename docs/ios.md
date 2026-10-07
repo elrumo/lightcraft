@@ -4,23 +4,24 @@ Everything still missing, with priorities: [`ios-gaps.md`](ios-gaps.md).
 
 **Status: a spike that runs on the simulator.** The desktop egui app builds as a static library, an Xcode project wraps
 it, and it runs on the iOS 27 simulator with a compact touch layout (below). It has not run on a device, has no native
-host (pickers, share sheet, sandbox paths) and imports nothing yet beyond the procedural demo library. This page
+host (pickers, share sheet) and imports nothing yet: its library, saved on the device, starts with the procedural demo
+photos. Sync with your own LightCraft server ([sync.md](sync.md)) is wired up but not yet run. This page
 records what is verified, what is not, and the plan.
 
 ## What is verified
 
 `cargo xtask ios` runs `cargo check --target aarch64-apple-ios` for every L0–L5 crate (geometry, colour, raster, TIFF,
-sysmem, raw, codecs, meta, develop, scenes, pipeline, GPU, catalog, preview, merge, engine, MCP and `ui-egui`) and is
-part of `cargo xtask ci`. It needs only the Rust target (`rustup target add aarch64-apple-ios`), not Xcode, so it runs on
+sysmem, raw, codecs, meta, develop, scenes, pipeline, GPU, catalog, preview, merge, engine, MCP and `ui-egui`) and the
+app (`apps/lightcraft-ios`), and is part of `cargo xtask ci`. It needs only the Rust target (`rustup target add aarch64-apple-ios`), not Xcode, so it runs on
 Linux. It proves the dependency tree has no desktop-only crate on the iOS path (wgpu builds with its Metal backend).
 It does **not** prove an app links or runs: that needs macOS and Xcode.
 
 ## Xcode project (phase 0 spike)
 
-`apps/lightcraft-ios` is the egui app as a static library (in-memory demo library, no pickers). `xcode/project.yml`
+`apps/lightcraft-ios` is the egui app as a static library (no pickers). `xcode/project.yml`
 is an XcodeGen spec: `cd apps/lightcraft-ios/xcode && xcodegen && open LightCraft.xcodeproj`. A pre-build phase runs
 `cargo build` for the SDK being built (Apple-silicon simulator or device; set `DEVELOPMENT_TEAM` for a device).
-It runs on the iOS 27 simulator: the desktop UI renders (not touch-adapted, ignores the safe area). Three fixes were
+It runs on the iOS 27 simulator (the touch layout: *What is missing*, 1; the panels keep out of the safe area). Three fixes were
 needed, all in the host: (1) iOS 27 traps apps without scene lifecycle and winit 0.30/0.31 has none, so
 `xcode/Sources/SceneDelegate.m` declares an empty scene delegate (plus `UIApplicationSceneManifest` in `project.yml`);
 (2) winit creates its window with `-[UIWindow initWithFrame:]`, which a scene-based app never shows, so that file
@@ -29,9 +30,28 @@ shader variables, the simulator's Metal adapter allows 15, so `wgpu_options()` c
 goes to `lightcraft-ios.log` in the app's tmp dir (`xcrun simctl get_app_container <device> ai.storyteller.lightcraft.ios data`).
 Not yet tried on a device.
 
+**The library** is `LightCraft Library` in the app's Documents folder (kept across launches and updates, backed up
+with the device); a new one starts with the demo photos. `$LIGHTCRAFT_LIBRARY` puts it elsewhere
+(`SIMCTL_CHILD_LIGHTCRAFT_LIBRARY=… xcrun simctl launch …`). If it can't be opened the app falls back to the in-memory
+demo library (nothing saved, no sync) and logs why.
+
+**Sync** is wired up as on the desktop ([sync.md](sync.md)) but has not been run on a simulator or device yet (it is
+type-checked for iOS and its library handling unit-tested on Linux): Menu ▸ Settings ▸ Sync in the compact layout
+(Settings ▸ Sync or the cloud icon in the desktop one), the server address
+(`photos.example.com` is enough; https is assumed, and a capitalised first letter is fine), user name and password;
+the library then fills from the server, previews first, originals on request. The device signs in under the name
+`main.m` reads from `UIDevice` ("iPhone", "iPad"; `$LIGHTCRAFT_DEVICE`), which the server's admin page lists. Requests
+use the same pure-Rust transport as the desktop app (rustls, Mozilla roots), over plain sockets, so App Transport
+Security doesn't apply; `project.yml` sets `NSLocalNetworkUsageDescription` because a server on the home network needs
+the local-network permission. To check on a Mac: typing in the Sync fields (the Mac's keyboard works on the simulator;
+on a device the on-screen keyboard is listed as missing below, although egui-winit asks winit for it when a field takes
+focus, which on iOS makes winit's view the first responder), the TLS handshake on a device, and sync while the app is
+backgrounded (requests fail and are retried on return).
+
 ## Scope
 
-iPhone and iPad, a standalone library on the device (import, edit and export there; cloud sync stays out of scope),
+iPhone and iPad, a library on the device (import, edit and export there), optionally shared with the user's other
+devices through their own LightCraft server ([sync.md](sync.md)),
 with a layout and behaviour modelled on Lightroom's mobile app. As everywhere in this repo that means imitating
 layout and interaction only: no Adobe icons, artwork, fonts, presets or screenshots (see `CLAUDE.md`, *Assets*).
 
@@ -58,12 +78,13 @@ layout and interaction only: no Adobe icons, artwork, fonts, presets or screensh
 3. **A memory budget.** The RAM probe (`crates/engine/src/memory.rs`) returns nothing on iOS, so the budget defaults to
    1.5 GiB, too high for iOS memory limits. The pipeline works on whole `f32` RGB images (about 288 MB at 24 MP) and
    does not tile, so previews are fine but full-resolution 48 MP export is a risk.
-4. **A host.** App entry and lifecycle, Files and Photos pickers, export through the share sheet, sandbox paths (the
-   library and config directories assume `$HOME`), and no `std::process` open/reveal. Originals are referenced by
+4. **A host.** App lifecycle, Files and Photos pickers, export through the share sheet, sandbox paths (the library is in
+   Documents; config directories assume `$HOME`), and no `std::process` open/reveal. Originals are referenced by
    absolute path; on iOS import must copy into the library.
 5. **GPU lifecycle.** A device error disables the GPU for the rest of the process (`crates/gpu/src/lib.rs`); backgrounding
    needs to pause and resume it instead.
-6. **Unverified:** eframe/winit and accesskit on iOS, egui text input and long-press on a phone, Metal's
+6. **Unverified:** eframe/winit and accesskit on a device, egui text input and long-press on a phone, sync from a
+   device, Metal's
    storage-buffer limits on iPhone (the GPU path needs at least 10 per stage), Apple ProRAW against real files (JPEG XL
    compressed DNG is rejected), and the `rfd` file dialogs the desktop app uses.
 

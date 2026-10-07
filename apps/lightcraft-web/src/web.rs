@@ -167,6 +167,7 @@ fn download(path: &str, bytes: &[u8]) -> Result<(), String> {
 fn services(originals: Originals, backend: Option<Backend>, files: Files, frozen: Rc<Cell<bool>>, ctx: egui::Context) -> Services {
     let (backup_backend, backup_files) = (backend.clone(), files);
     let restore_backend = backend.clone();
+    let sync_backend = backend.clone();
     Services {
         backup_library: Some(Box::new(move |session: &mut Session| {
             let Some(b) = backup_backend.clone() else { return Err("nothing is stored in this browser session (?store=memory)".into()) };
@@ -223,6 +224,7 @@ fn services(originals: Originals, backend: Option<Backend>, files: Files, frozen
             w.open_with_url_and_target(url, "_blank").map(|_| ()).map_err(|_| "the browser blocked the new tab".to_string())
         })),
         pick_folder: None,
+        sync_exec: Some(crate::sync::exec(sync_backend)),
     }
 }
 
@@ -264,6 +266,8 @@ struct Boot {
     index: ThumbIndex,
     /// The library folder in storage (`library`, or a restored backup's).
     lib_dir: String,
+    /// What storage holds for sync: preview files (`proxies/`) and originals by hash.
+    stored: Option<lightcraft_engine::sync::BrowserStore>,
 }
 
 async fn boot(opts: Options) -> Boot {
@@ -343,6 +347,14 @@ async fn boot(opts: Options) -> Boot {
             });
         }
     }
+    let mut stored = None;
+    if let Some(b) = &backend {
+        let list =
+            |dir: &'static str| async move { b.list(dir).await.unwrap_or_default().into_iter().collect::<std::collections::HashSet<String>>() };
+        let proxies = list(crate::sync::PROXIES.trim_end_matches('/')).await;
+        let originals = list("originals").await;
+        stored = Some(lightcraft_engine::sync::BrowserStore { prefix: crate::sync::PROXIES.into(), proxies, originals });
+    }
     log::info!(
         "lightcraft: storage {} opened in {:.0} ms ({} thumbnails indexed, {:.1} MB)",
         backend.as_ref().map_or("memory", |b| b.kind()),
@@ -350,7 +362,7 @@ async fn boot(opts: Options) -> Boot {
         index.len(),
         index.total() as f64 / 1e6
     );
-    Boot { opts, backend, files, index, lib_dir }
+    Boot { opts, backend, files, index, lib_dir, stored }
 }
 
 struct WebApp {
@@ -373,7 +385,7 @@ struct WebApp {
 
 impl WebApp {
     fn new(cc: &eframe::CreationContext<'_>, boot: Boot) -> Self {
-        let Boot { opts, backend, files, index, lib_dir } = boot;
+        let Boot { opts, backend, files, index, lib_dir, stored } = boot;
         let originals = Originals::default();
         let t = perf_now();
         let mut session = Session::new();
@@ -416,6 +428,8 @@ impl WebApp {
         }
         // previews are large (≤ 2560 px, f32): keep few in a 32-bit address space
         session.media.preview_capacity = 3;
+        // sync keeps photo files in browser storage
+        session.sync_store = stored;
         let frozen = Rc::new(Cell::new(false));
         let mut app = LightcraftApp::new(session, services(originals.clone(), backend.clone(), files.clone(), frozen.clone(), cc.egui_ctx.clone()));
         let ui_written = files.get("ui.json").unwrap_or_default();
@@ -424,6 +438,10 @@ impl WebApp {
         }
         app.ui = app.ui.sanitized();
         app.library_problem = problem;
+        // the server that serves this page is the one to sign in to
+        if let Some(origin) = window().and_then(|w| w.location().origin().ok()).filter(|o| o.starts_with("http")) {
+            app.sync.form.server = origin;
+        }
         let n = opts.workers.unwrap_or_else(|| {
             let cores = window().map_or(1, |w| w.navigator().hardware_concurrency() as usize);
             cores.saturating_sub(1).clamp(1, 4)
@@ -466,6 +484,9 @@ impl WebApp {
             });
         }
         let paths = self.originals.take_pending();
+        if let Some(store) = self.app.session.sync_store.as_mut() {
+            store.originals.extend(paths.iter().filter_map(|p| crate::store::hash_of_path(p)).map(str::to_string));
+        }
         if !paths.is_empty() {
             let n = paths.len();
             match self.app.run("library.import", json!({"paths": paths})) {

@@ -275,6 +275,10 @@ lightcraft --control 7980 ~/Pictures/trip
   thread: drafts during drags, full quality on release.
 - **Local-first.** No account, no cloud, no telemetry, no subscription. Your catalog is an append-only log of
   human-readable operations you can diff, back up or replay.
+- **Optional self-hosted sync.** Run your own `lightcraft-server` (one binary or a Docker image) and your devices share
+  one library — photos, edits, albums — downloading previews and originals as needed, Lightroom-cloud style, on a
+  machine you own, with an admin page in the browser for users and devices. Off until you sign in
+  ([docs/sync.md](docs/sync.md)).
 
 <br>
 

@@ -63,6 +63,8 @@ pub struct Library {
     /// What forgetting untouched Local records did when the library opened.
     pub forgot_local: Option<lightcraft_catalog::ForgetPlan>,
     presets_written: String,
+    /// Bumped whenever presets.json is written (the sync compares the presets then).
+    presets_gen: u64,
     view_written: Vec<u8>,
     /// Settings files that were unreadable or damaged when the library opened (`library.info` →
     /// `settingsWarnings`; shown by the UI once, see [`Session::take_library_warnings`]).
@@ -112,9 +114,16 @@ impl Library {
     pub fn journal(&self) -> &Journal {
         &self.journal
     }
-    #[cfg(test)]
     pub(crate) fn journal_mut(&mut self) -> &mut Journal {
         &mut self.journal
+    }
+    /// How many times presets.json was written this session.
+    pub(crate) fn presets_gen(&self) -> u64 {
+        self.presets_gen
+    }
+    /// presets.json, view.json, prefs.json and the sync files.
+    pub(crate) fn files_mut(&mut self) -> &mut dyn Store {
+        self.files.as_mut()
     }
     pub fn thumbs_dir(&self) -> PathBuf {
         self.dir.join("thumbs")
@@ -343,6 +352,11 @@ impl Session {
         if let Some(d) = &self.smart_previews_dir {
             self.media.smart_dir = Some(d.clone());
         }
+        // sync: its state, and the id space this device allocates new ids in
+        self.sync = crate::sync::SyncState::load(files.as_mut());
+        if let Some(st) = self.sync.as_ref().filter(|st| !st.config.library.is_empty()) {
+            self.catalog.set_id_space(st.config.space);
+        }
         // view state
         if let Some(v) = settings.read::<ViewFile>(files.as_mut(), "view.json") {
             self.source = v.source;
@@ -375,6 +389,7 @@ impl Session {
             retry_at: None,
             forgot_local: None,
             presets_written,
+            presets_gen: 0,
             view_written,
             settings_warnings: settings.warnings,
             warnings_reported: 0,
@@ -402,6 +417,17 @@ impl Session {
     pub fn persist(&mut self) -> Result<()> {
         let Some(lib) = self.library.as_mut() else { return Ok(()) };
         if !self.pending_log.is_empty() {
+            // the sync outbox first: a change is never logged without being queued for the server
+            if let Some(st) = self.sync.as_mut()
+                && let Err(e) = st.save_outbox(lib.files.as_mut())
+            {
+                let reason = format!("{}: {e}", crate::sync::OUTBOX);
+                log::error!("library: {} change(s) not written to disk: {reason}", self.pending_log.len());
+                lib.last_error = Some(reason.clone());
+                lib.unsaved_error = Some(reason.clone());
+                lib.retry_at = Some(web_time::Instant::now() + RETRY_BACKOFF);
+                return Err(EngineError::NotSaved(reason));
+            }
             if let Err(e) = lib.journal.append(&self.pending_log) {
                 // the ops stay queued (and applied in memory): the next persist retries them
                 let reason = e.to_string();
@@ -430,6 +456,20 @@ impl Session {
             log::error!("library: compaction: {e}");
             lib.last_error = Some(format!("compaction: {e}"));
         }
+        // the sync state after the log: its cursor never runs ahead of what the log holds
+        if let Some(st) = self.sync.as_mut() {
+            if let Err(e) = st.save_outbox(lib.files.as_mut()) {
+                log::error!("library: {}: {e}", crate::sync::OUTBOX);
+            }
+            if let Err(e) = st.save_presets_base(lib.files.as_mut()) {
+                log::error!("library: {}: {e}", crate::sync::PRESETS);
+            }
+            if self.pending_log.is_empty()
+                && let Err(e) = st.save_config(lib.files.as_mut())
+            {
+                log::error!("library: {}: {e}", crate::sync::CONFIG);
+            }
+        }
         let presets = presets_json(self);
         let Some(lib) = self.library.as_mut() else { return Ok(()) };
         if presets != lib.presets_written && !lib.blocked.contains(&"presets.json") {
@@ -437,6 +477,7 @@ impl Session {
                 log::error!("library: presets: {e}");
             } else {
                 lib.presets_written = presets;
+                lib.presets_gen += 1;
             }
         }
         Ok(())

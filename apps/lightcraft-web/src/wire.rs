@@ -58,6 +58,7 @@ impl WireJob {
             SourceRef::Demo { max_edge, .. } | SourceRef::File { max_edge, .. } => *max_edge,
             SourceRef::Loaded(img) => img.image.width.max(img.image.height),
             SourceRef::Smart { .. } => 2560,
+            SourceRef::Synced { max_edge, .. } => *max_edge,
         };
         WireJob {
             level: job.level,
@@ -119,6 +120,14 @@ impl WireJob {
     }
 }
 
+/// Storage keys of a synced photo's previews, best for `max_edge` first (the mini preview serves
+/// thumbnails, the smart one everything larger).
+pub fn proxy_keys(hash: &str, max_edge: usize) -> [String; 2] {
+    let (smart, mini) = lightcraft_engine::sync::store_proxy_names(hash);
+    let (smart, mini) = (format!("proxies/{smart}"), format!("proxies/{mini}"));
+    if max_edge <= lightcraft_engine::sync::MINI_EDGE { [mini, smart] } else { [smart, mini] }
+}
+
 pub fn thumb_storage_key(hex: &str) -> String {
     format!("thumbs/{hex}.jpg")
 }
@@ -159,6 +168,23 @@ impl WorkerCore {
             Some(s) => s,
             None => {
                 let src = match (&job.origin, original) {
+                    // a synced photo's preview standing in for its original (no decoder facts:
+                    // the catalog's); kept only when it is the right one for this size
+                    (Source::File { .. }, Some(bytes)) if lightcraft_engine::smart::is_smart_preview(bytes) => {
+                        let (mut image, camera_tone) = lightcraft_engine::smart::decode(bytes)?;
+                        let small = image.width.max(image.height) <= lightcraft_engine::sync::MINI_EDGE;
+                        if image.width.max(image.height) > job.max_edge {
+                            use lightcraft_raster::resample::{Filter, fit};
+                            image = fit(&image, job.max_edge, job.max_edge, Filter::Mitchell);
+                        }
+                        let src = DecodedSource { image: Arc::new(image), info: None, camera_tone };
+                        if small && job.max_edge > lightcraft_engine::sync::MINI_EDGE {
+                            // the smart preview is on its way: don't keep the stand-in
+                            let info = src.info_or(job.info());
+                            return Ok(lightcraft_engine::pipeline::render(&src.image, &info, &job.settings, &job.request()));
+                        }
+                        src
+                    }
                     (Source::File { .. }, Some(bytes)) => {
                         let (image, info) = lightcraft_engine::files::load_bytes(bytes, job.max_edge)?;
                         DecodedSource::new(Arc::new(image), Some(info))
@@ -328,6 +354,45 @@ mod tests {
         let r = core.render(&job, Some(&bytes)).unwrap();
         assert_eq!(r.image.width, 32);
         assert_eq!(core.needs_original(&job), None, "decoded source is kept");
+    }
+
+    /// A synced photo whose original isn't in this browser renders from its downloaded
+    /// previews; the mini one stands in for a larger view only until the smart one is there.
+    #[test]
+    fn worker_renders_synced_photos_from_their_previews() {
+        let png = crate::store::png_bytes(1200, 800);
+        let (smart, mini) = lightcraft_engine::smart::encode_pair(&png, lightcraft_engine::sync::MINI_EDGE).unwrap();
+        let hash = crate::store::content_hash(&png);
+        let job = |max_edge: usize, size: usize| WireJob {
+            level: if max_edge <= 512 { SourceLevel::Thumb } else { SourceLevel::Preview },
+            origin: Source::File { path: crate::store::original_path(&hash, "a.png") },
+            max_edge,
+            raw: false,
+            relative_wb: false,
+            as_shot_temp: 6500.0,
+            as_shot_tint: 0.0,
+            lens: None,
+            settings: Arc::new(DevelopSettings::default()),
+            max_w: size,
+            max_h: size,
+            draft: false,
+            apply_crop: true,
+            thumb: None,
+            thumb_cached: false,
+            stages: None,
+            overlay: (0, 0.0),
+        };
+        assert_eq!(proxy_keys(&hash, 512)[0], format!("proxies/{hash}.lcsm"), "the mini preview first for thumbnails");
+        assert_eq!(proxy_keys(&hash, 2560)[0], format!("proxies/{hash}.lcsp"));
+        let mut core = WorkerCore::default();
+        let thumb = job(512, 256);
+        assert_eq!(core.render(&thumb, Some(&mini)).unwrap().image.width, 256);
+        assert_eq!(core.needs_original(&thumb), None, "the mini preview is the thumbnail source");
+        let view = job(2560, 1000);
+        assert_eq!(core.render(&view, Some(&mini)).unwrap().image.width, 1000, "a stand-in, upscaled");
+        assert!(core.needs_original(&view).is_some(), "…not kept: the smart preview replaces it");
+        assert_eq!(core.render(&view, Some(&smart)).unwrap().image.width, 1000);
+        assert_eq!(core.needs_original(&view), None);
     }
 
     #[test]

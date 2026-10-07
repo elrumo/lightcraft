@@ -177,6 +177,7 @@ impl Headless {
             || self.app.import.is_some()
             || self.app.export.is_some()
             || !self.app.tasks.is_empty()
+            || self.app.sync.in_flight > 0
             || !self.app.synthetic.is_empty()
             || !self.events.is_empty()
     }
@@ -520,6 +521,8 @@ mod tests {
         ex(&mut h, "photo.setMeta", json!({"ids": [vis[0], vis[1]], "addKeywords": ["travel|italy"]}));
         ex(&mut h, "photo.setMeta", json!({"ids": [vis[2]], "addKeywords": ["travel|france"]}));
         h.request("ui.set", json!({"leftPanel": true}), t);
+        // the keyword list lays out over the panel's first frames: click once it holds still
+        h.settle(SETTLE);
         let r = h.request("ui.clickWidget", json!({"id": "source:keyword:travel"}), t);
         assert_eq!(r["ok"], true, "{r}");
         assert_eq!(h.app.session.filter.keyword.as_deref(), Some("travel"));

@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>LightCraft Server</title>
+<link rel="stylesheet" href="/admin/admin.css">
+<script src="/admin/admin.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <div class="brand">LightCraft <span>Server</span></div>
+  <div class="who" id="who" hidden><span id="whoName"></span><button type="button" class="link" id="signOut">Sign out</button></div>
+</header>
+
+<main>
+  <p class="notice" id="notice" role="status" hidden></p>
+
+  <section class="card narrow" id="setup" hidden>
+    <h1>Set up this server</h1>
+    <p class="hint">Create the first admin. The setup code is in the server's log (<code>docker compose logs lightcraft</code>, or the terminal running <code>lightcraft-server serve</code>).</p>
+    <form id="setupForm" autocomplete="off">
+      <label>Setup code <input name="code" required placeholder="ABCD-1234" autocomplete="one-time-code"></label>
+      <label>User name <input name="user" required pattern="[A-Za-z0-9._\-]{1,64}" autocomplete="username"></label>
+      <label>Password <input name="password" type="password" required minlength="8" autocomplete="new-password"></label>
+      <label>Password again <input name="password2" type="password" required minlength="8" autocomplete="new-password"></label>
+      <button type="submit">Create admin</button>
+    </form>
+  </section>
+
+  <section class="card narrow" id="login" hidden>
+    <h1>Sign in</h1>
+    <p class="hint">Admins manage users, devices and storage here.</p>
+    <form id="loginForm">
+      <label>User name <input name="user" required autocomplete="username"></label>
+      <label>Password <input name="password" type="password" required autocomplete="current-password"></label>
+      <button type="submit">Sign in</button>
+    </form>
+  </section>
+
+  <div id="dash" hidden>
+    <section class="card">
+      <h2>Server</h2>
+      <dl class="facts" id="facts"></dl>
+      <div class="disk" id="disk" hidden><div class="bar"><div id="diskUsed"></div></div><span id="diskText"></span></div>
+      <p class="hint">Where the data lives, the address the server listens on and its domain are deployment settings:
+        <code>--data</code> / <code>LIGHTCRAFT_DATA</code>, <code>--listen</code> / <code>LIGHTCRAFT_LISTEN</code>, and the
+        domain in your reverse proxy (<code>LIGHTCRAFT_DOMAIN</code> with the compose file). Change them there and
+        restart; moving a library under a running server can lose it.</p>
+    </section>
+
+    <section class="card">
+      <h2>Connect a device</h2>
+      <p>In LightCraft, <b>Settings › Sync</b>: server <code id="origin"></code>, a user name below and its password.
+        In a browser, open <code id="origin2"></code>.</p>
+    </section>
+
+    <section class="card">
+      <div class="head"><h2>Users</h2><button type="button" id="addUserToggle">Add user</button></div>
+      <form id="addUser" class="row-form" hidden autocomplete="off">
+        <input name="name" required placeholder="user name" pattern="[A-Za-z0-9._\-]{1,64}" autocomplete="off">
+        <input name="password" type="password" required minlength="8" placeholder="password (8 characters at least)" autocomplete="new-password">
+        <label class="check"><input type="checkbox" name="admin"> admin</label>
+        <button type="submit">Add</button>
+      </form>
+      <div class="table-wrap">
+        <table id="users">
+          <thead><tr><th>User</th><th class="num">Photos</th><th class="num">Albums</th><th class="num">Devices</th><th class="num">Storage</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card" id="devicesCard" hidden>
+      <div class="head"><h2 id="devicesTitle">Devices</h2><button type="button" class="link" id="devicesClose">Close</button></div>
+      <p class="hint">Signing a device out ends its access; it keeps its library and signs in again with the password.</p>
+      <div class="table-wrap">
+        <table id="devices">
+          <thead><tr><th>Device</th><th>Signed in</th><th>Last seen</th><th class="num">Id space</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Storage clean-up</h2>
+      <p class="hint">Deletes photo files no library refers to any more (photos deleted for good) and unfinished uploads, if older than a day.</p>
+      <div class="actions"><button type="button" id="gcCheck">Check</button><button type="button" id="gcRun" class="danger" hidden>Remove</button><span id="gcText"></span></div>
+    </section>
+  </div>
+</main>
+
+<dialog id="dialog">
+  <form method="dialog" id="dialogForm">
+    <h2 id="dialogTitle"></h2>
+    <p id="dialogText"></p>
+    <label id="dialogLabel" hidden><span id="dialogLabelText"></span> <input id="dialogInput"></label>
+    <div class="actions"><button value="cancel" type="button" id="dialogCancel" class="secondary">Cancel</button><button value="ok" id="dialogOk">OK</button></div>
+  </form>
+</dialog>
+</body>
+</html>

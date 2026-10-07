@@ -352,6 +352,8 @@ fn services() -> Services {
         // the library is a folder on disk: backed up with the user's other files
         backup_library: None,
         restore_library: None,
+        // self-hosted sync: each request on a worker thread
+        sync_exec: Some(lightcraft_ui_egui::sync_ui::native_exec()),
     }
 }
 

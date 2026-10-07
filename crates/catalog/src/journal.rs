@@ -667,6 +667,14 @@ impl Journal {
     pub fn seq(&self) -> u64 {
         self.seq
     }
+
+    /// The logged ops after op `after`, oldest first, at most `limit` of them. Only ops still in
+    /// the log are there: `after` must be at least [`Journal::snapshot_seq`].
+    pub fn records_since(&mut self, after: u64, limit: usize) -> Result<Vec<(u64, Op)>> {
+        let bytes = self.store.read(LOG).map_err(io)?.unwrap_or_default();
+        let text = String::from_utf8_lossy(&bytes);
+        Ok(text.lines().filter_map(decode_record).filter(|(seq, _)| *seq > after && *seq <= self.seq).take(limit).collect())
+    }
     pub fn snapshot_seq(&self) -> u64 {
         self.snapshot_seq
     }

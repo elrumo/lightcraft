@@ -22,7 +22,7 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | Section | ✅ | 🟡 | ⬜ | 🚫 | P0 done | P1 done |
 |---|---:|---:|---:|---:|---:|---:|
 | A. Import (IMP) | 11 | 3 | 1 | 1 | 3/5 (60%) | 5/5 (100%) |
-| B. Library management (LIB) | 22 | 2 | 1 | 2 | 9/9 (100%) | 9/9 (100%) |
+| B. Library management (LIB) | 23 | 2 | 1 | 1 | 9/9 (100%) | 9/9 (100%) |
 | C. Views & navigation (VIEW) | 16 | 0 | 1 | 0 | 9/9 (100%) | 4/4 (100%) |
 | D. Search & filter (FILT) | 11 | 1 | 1 | 0 | 4/4 (100%) | 4/4 (100%) |
 | E. Metadata (META) | 5 | 1 | 0 | 0 | 2/2 (100%) | 2/2 (100%) |
@@ -42,15 +42,15 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | S. Export (EXP) | 15 | 1 | 2 | 0 | 7/7 (100%) | 7/7 (100%) |
 | T. Share (SHARE) | 0 | 0 | 0 | 4 | — | — |
 | U. Map & location (MAP) | 0 | 1 | 1 | 0 | — | 0/1 (0%) |
-| V. Preferences (PREF) | 5 | 0 | 3 | 3 | 1/1 (100%) | 4/4 (100%) |
-| W. Cloud & AI infrastructure (CLOUD / AI) | 1 | 0 | 1 | 2 | — | — |
+| V. Preferences (PREF) | 6 | 0 | 3 | 2 | 1/1 (100%) | 4/4 (100%) |
+| W. Cloud & AI infrastructure (CLOUD / AI) | 1 | 1 | 1 | 1 | — | — |
 | X. Cross-cutting behaviours (BEHAV) | 16 | 4 | 1 | 1 | 8/8 (100%) | 6/8 (75%) |
-| Y. Menus | 81 | 0 | 4 | 8 | 47/47 (100%) | 23/23 (100%) |
+| Y. Menus | 83 | 1 | 4 | 5 | 47/47 (100%) | 23/23 (100%) |
 | Z. Keyboard shortcuts (desktop) | 74 | 3 | 3 | 1 | 49/52 (94%) | 22/23 (96%) |
 | Lightroom Classic extras | 31 | 10 | 39 | 9 | — | 21/22 (95%) |
-| **Total** | 388 | 33 | 87 | 37 | 194/200 (97%) | 139/149 (93%) |
+| **Total** | 392 | 35 | 87 | 31 | 194/200 (97%) | 139/149 (93%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **79.6%** of 508 in-scope rows — P0 98.5% of 200 · P1 95.6% of 149 · P2 40.9% of 159.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **79.7%** of 514 in-scope rows — P0 98.5% of 200 · P1 95.6% of 149 · P2 42.4% of 165.
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -139,7 +139,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-LIB-FOLDER | Folders of albums | P0 | ✅ | `cmd:album.create` (`folder`), `cmd:album.move` | moving is command-only (no drag, no "Move to" menu) |
 | LR-LIB-SMARTALBUM | Smart albums | P1 | ✅ | `cmd:album.createSmart`, `cmd:album.setRules`, `crates/catalog/src/query.rs`, `crates/ui-egui/src/panels/filterbar.rs`, `crates/ui-egui/src/lib.rs` (`album_counts`) | saved filters (rating/flag/label/kind/edited/keyword/camera/lens/date range/text/album), live; match-all only (no any/none rule groups, no rule editor dialog — rules come from the filter bar or `album.setRules`); sidebar counts are cached per catalog revision (and per minute while an “in the last…” rule is used), counted without building id lists |
 | LR-LIB-SHARED-ALBUM | Shared albums | P2 | ⬜ | | needs a sharing service |
-| LR-LIB-OFFLINE | Keep album offline | P2 | 🚫 | | not applicable: local-first library |
+| LR-LIB-OFFLINE | Keep album offline | P2 | ✅ | `cmd:album.makeAvailableOffline`, `cmd:photo.makeAvailableOffline`, `cmd:sync.downloadOriginals`, `crates/engine/src/sync.rs`, `crates/ui-egui/src/panels/left.rs` | with [self-hosted sync](sync.md): an album (right-click; ✓ in the sidebar) or photos keep their smart previews on the device, originals on request or for every photo (Settings ▸ Sync); no eviction of downloaded originals under a size budget yet |
 | LR-LIB-TARGET | Target album | P2 | ✅ | `cmd:album.setTarget`, `cmd:album.toggleTarget` | see LRC-LIB-COLLECTIONS |
 | LR-LIB-RATING | Star ratings | P0 | ✅ | `cmd:photo.rate` (`advance`), `crates/ui-egui/src/shortcuts.rs` | |
 | LR-LIB-FLAG | Pick / reject flags | P0 | ✅ | `cmd:photo.pick`, `cmd:photo.reject`, `cmd:photo.unflag`, `cmd:photo.flag` | pick key is P (see Shortcuts); no flag cycle |
@@ -463,7 +463,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 |---|---|---|---|---|---|
 | LR-PREF-GENERAL | General settings | P0 | ✅ | `cmd:app.settings`, `cmd:app.openLibrary`, `crates/ui-egui/src/panels/settings.rs`, `crates/ui-egui/src/panels/notices.rs` | General / Import / Performance / Interface tabs; app settings in ui.json (written atomically, saved when the library changes and every few seconds), library settings in prefs.json; a damaged settings file is kept as `.corrupt-<time>` and reported, an unreadable one is not overwritten that session (`library.info` → `settingsWarnings`); quitting with unsaved changes retries, then asks |
 | LR-PREF-LOCALSTORAGE | Storage & cache | P1 | ✅ | `cmd:library.preferences`, `cmd:library.clearPreviews`, `cmd:library.compact` | thumbnail cache size + clear in Settings → Performance; library location + Open Library… in General |
-| LR-PREF-ACCOUNT | Account | OOS | 🚫 | | |
+| LR-PREF-ACCOUNT | Account | P2 | ✅ | `cmd:sync.signIn`, `cmd:sync.signOut`, `cmd:sync.status`, `crates/ui-egui/src/panels/settings.rs` (`sync_tab`) | Settings ▸ Sync: your own server (docs/sync.md), user and password; status, Sync Now, Pause, Sign Out, store originals locally. No Adobe-style account or subscription |
 | LR-PREF-INTERFACE | Interface options | P1 | ✅ | `cmd:app.settings` | filmstrip names/badges, grid badges (auto/always/never), square-grid names, navigator, info overlay |
 | LR-PREF-PERFORMANCE | GPU / performance | P1 | ✅ | `cmd:app.gpu`, `cmd:app.memoryBudget`, `cmd:app.settings` | GPU on/off, preview size (1600–5120 px), memory budget, thumbnail cache size in Settings |
 | LR-PREF-PEOPLE | Face recognition | P2 | ⬜ | | |
@@ -477,7 +477,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 
 | Id | Feature | Tier | Status | Evidence | Missing / notes |
 |---|---|---|---|---|---|
-| LR-CLOUD-SYNC | Cloud sync | OOS | 🚫 | | |
+| LR-CLOUD-SYNC | Cloud sync | P2 | 🟡 | `cmd:sync.signIn`, `cmd:sync.now`, `crates/catalog/src/sync.rs`, `crates/engine/src/sync.rs`, `apps/lightcraft-server/src/api.rs`, `apps/lightcraft-server/tests/e2e.rs`, `docs/sync.md` | optional and self-hosted (`lightcraft-server`, Docker): one library per user shared by their devices — photos (originals + smart / mini previews by content hash, downloaded as needed), edits, versions, albums, stacks, metadata; one server order, field-level three-way merges, removals win, per-device id spaces, outbox written before the log; History, file locations and Local folders stay per device. also user presets (one versioned document, merged by preset id so deletions stick); desktop, CLI and the web build the server serves (same origin; pixels on the main thread need the original downloaded); an admin page at `/admin` (`apps/lightcraft-server/src/admin.rs`: users with photos / storage, add, reset password, admins, devices and sign-out, disk, clean-up; first admin from a one-time setup code in the server log); the iOS spike has the same sync for its on-device library (type-checked and unit-tested, not yet run on a simulator or device); no sharing |
 | LR-CLOUD-SMARTPREVIEW | Editable proxies | P2 | ✅ | `cmd:library.smartPreviews`, `cmd:library.smartPreviewsLocation`, `cmd:photo.smartPreview`, `crates/engine/src/smart.rs`, `crates/ui-egui/src/panels/settings.rs` | File ▸ Previews ▸ Build / Discard Smart Previews (on a worker thread, progress and Stop like Build Previews): ~1 MB proxies in the library; with the original offline the photo renders, edits and exports (at proxy size) from its proxy; Info shows the status; the proxy folder is chosen per library (Settings → Performance → Smart previews, saved in the library): the effective path, count and size are shown, changing it needs a choice for the proxies already built (move / leave / delete), and an unavailable or unwritable folder is an error, never a fallback to the library drive; proxies are written atomically and a damaged one (cut short by a crash or a full drive) doesn't count as built, is rebuilt (`repaired`) and is never moved over a good one (issue #106). The thumbnail cache stays in the library |
 | LR-AI-UPDATE-INDICATOR | AI-settings update indicator | P2 | ⬜ | | |
 | LR-AI-CREDITS | Generative credits | OOS | 🚫 | | |
@@ -520,8 +520,8 @@ visible menu bar yet: the menu model is only exposed through the control channel
 | MENU-APP-ABOUT | About | P2 | ✅ | `cmd:app.about` | |
 | MENU-APP-SETTINGS | Settings… | P0 | ✅ | `cmd:app.settings` | app menu on macOS, Edit menu elsewhere |
 | MENU-APP-UPDATES | Check for updates | P2 | ⬜ | | |
-| MENU-APP-SYNC | Sync status / pause | OOS | 🚫 | | |
-| MENU-APP-SIGNOUT | Sign out | OOS | 🚫 | | |
+| MENU-APP-SYNC | Sync status / pause | P2 | ✅ | `cmd:sync.pause`, `cmd:sync.now`, `crates/ui-egui/src/sync_ui.rs`, `crates/ui-egui/src/panels/topbar.rs` | File ▸ Pause Syncing / Sync Now (shown once the library syncs); the top-bar cloud icon tells the state (synced, syncing with what's queued, paused, error) and opens Settings ▸ Sync |
+| MENU-APP-SIGNOUT | Sign out | P2 | 🟡 | `cmd:sync.signOut` | Settings ▸ Sync ▸ Sign Out (keeps the library and its unsent changes); not in the app menu |
 | MENU-APP-HIDE | Hide / hide others / show all | P1 | ✅ | `apps/lightcraft/src/native_menu.rs` | the system's own items in the app menu (⌘H, ⌥⌘H) |
 | MENU-APP-QUIT | Quit | P0 | ✅ | `cmd:app.quit`, `apps/lightcraft/src/native_menu.rs` | macOS: app menu (native); elsewhere: File → Quit LightCraft, always the last item in its own group (after commands the File layout does not list) |
 | MENU-FILE-ADDPHOTOS | Import Photos… (was Add Photos…) | P0 | ✅ | `cmd:file.addPhotos`, `crates/ui-egui/src/menus.rs` | first item of File, ⇧⌘I; file picker → the import review |
@@ -537,7 +537,7 @@ visible menu bar yet: the menu model is only exposed through the control channel
 | MENU-FILE-SHARE | Share / get link / invite | OOS | 🚫 | | |
 | MENU-FILE-PHOTOSHOP | Edit in external editor | P2 | ✅ | `cmd:photo.editInExternal` | Photo ▸ Edit in External Editor |
 | MENU-FILE-SHOWFINDER | Show in Finder | P0 | ✅ | `cmd:app.showInFinder` | ⌘R; Explorer on Windows, the folder on Linux; disabled for demo scenes and on the web |
-| MENU-FILE-OFFLINE | Store album locally | P2 | 🚫 | | not applicable: local-first |
+| MENU-FILE-OFFLINE | Store album locally | P2 | ✅ | `cmd:album.makeAvailableOffline` | File ▸ Make Album Available Offline (the album shown) and the album's context menu, with [sync](sync.md) |
 | MENU-FILE-CLOSE | Close Window | P1 | ✅ | `apps/lightcraft/src/native_menu.rs` | the system's Close Window item at the end of File (⌘W) |
 | MENU-EDIT-UNDO | Undo | P0 | ✅ | `cmd:edit.undo` | label does not name the step |
 | MENU-EDIT-REDO | Redo | P0 | ✅ | `cmd:edit.redo` | |

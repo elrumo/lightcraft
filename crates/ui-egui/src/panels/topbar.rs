@@ -121,7 +121,8 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                     n = n
                 )
             });
-            let cloud_tip = unsaved.as_deref().unwrap_or("Local library — no cloud account needed");
+            let (sync_tip, sync_problem, sync_busy) = crate::sync_ui::cloud_status(app);
+            let cloud_tip = unsaved.as_deref().unwrap_or(&sync_tip);
             for (id, icon, tip, cmd) in [
                 ("discord", Icon::Chat, "Join the ArtCraft community on Discord", "app.discord"),
                 ("cloud", Icon::Cloud, cloud_tip, ""),
@@ -133,8 +134,10 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 let resp = ui.interact(r, egui::Id::new(("top", id)), Sense::click()).on_hover_text(tip);
                 register(ui.ctx(), format!("icon:{id}"), r);
                 let warn = id == "cloud" && unsaved.is_some();
-                let colour = if warn {
+                let colour = if warn || (id == "cloud" && sync_problem) {
                     t.caution
+                } else if id == "cloud" && sync_busy {
+                    t.accent
                 } else if resp.hovered() {
                     t.text
                 } else {
@@ -149,6 +152,8 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 }
                 if resp.clicked() && !cmd.is_empty() {
                     let _ = app.run(cmd, json!({}));
+                } else if resp.clicked() && id == "cloud" && unsaved.is_none() {
+                    let _ = app.run("app.settings", json!({"tab": "sync"}));
                 }
                 x -= 40.0;
             }

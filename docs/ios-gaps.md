@@ -21,7 +21,7 @@ mobile · **P2** = later, niche or needs large new work (models, services). **Ne
 | A1.1 | Photos library picker (import from the camera roll, with limited-access handling) | P0 | PhotosUI / PHPicker glue crate |
 | A1.2 | Files picker for import (folders, external drives, iCloud Drive) with security-scoped bookmarks | P0 | UIDocumentPicker glue, copy into the sandbox |
 | A1.3 | Export and share: share sheet, Save to Files, Save to Photos | P0 | UIActivityViewController glue |
-| A1.4 | Library and settings in the app sandbox (paths assume `$HOME`; originals are referenced by absolute path, so import must copy) | P0 | host crate |
+| A1.4 | Library and settings in the app sandbox (the library is in Documents; settings paths assume `$HOME`; originals are referenced by absolute path, so import must copy) | P0 | host crate |
 | A1.5 | HEIC / HEIF decode (iPhone photos; import accepts `.heic` and then fails) | P0 | ImageIO behind the `FileLoader` hook |
 | A1.6 | Apple ProRAW / JPEG XL compressed DNG (rejected today) | P1 | codec work in `crates/raw` |
 | A1.7 | Memory budget for iOS (the probe returns nothing, so the 1.5 GiB default is too high); tiled full-resolution export (48 MP risk) | P0 | `crates/engine/src/memory.rs`, tiling in `pipeline` |
@@ -76,16 +76,16 @@ mobile · **P2** = later, niche or needs large new work (models, services). **Ne
 
 | # | Feature | Pri | Needs |
 |---|---|---|---|
-| B2.1 | Library sync between devices (edits, ratings, albums, presets) | P1 | a sync design; out of scope in `ios.md` today. iCloud Drive / CloudKit is the likely route since there is no LightCraft service |
-| B2.2 | Smart previews / originals management: keep previews on the phone and originals elsewhere, download on demand, free up space | P1 | B2.1, storage manager |
-| B2.3 | Desktop ↔ phone handoff over the local network or iCloud (open the same catalog) | P2 | B2.1 |
-| B2.4 | Shared albums with comments, likes and per-viewer permissions | P2 | a server; none planned |
-| B2.5 | Web galleries (publish an album as a page) | P2 | a server; none planned |
+| B2.1 | Library sync between devices (edits, ratings, albums, presets) | P1 | wired up, not yet run on iOS: the user's own `lightcraft-server` ([`sync.md`](sync.md)), Menu → Settings → Sync; verify on a simulator and a device (keyboard entry, TLS, backgrounding) |
+| B2.2 | Smart previews / originals management: keep previews on the phone and originals elsewhere, download on demand, free up space | P1 | sync has the tiers (mini / smart previews, originals on request, albums kept offline); no free-up-space or size budget yet (`sync.md`, Limits), no compact UI for offline albums |
+| B2.3 | Desktop ↔ phone handoff over the local network or iCloud (open the same catalog) | P2 | B2.1 shares one library through the server; no direct device-to-device handoff |
+| B2.4 | Shared albums with comments, likes and per-viewer permissions | P2 | the sync server is the place for it; not planned yet (sync v1 is one person's devices) |
+| B2.5 | Web galleries (publish an album as a page) | P2 | the sync server could serve them; not planned yet |
 | B2.6 | Share edits as a link or as a preset file; share a photo with a preset embedded | P1 | preset export exists (`file.exportPresets`); needs A1.3 |
 | B2.7 | Share a before / after image or a time-lapse of the edit history | P2 | |
 | B2.8 | Save to Photos and send to other apps in the formats / sizes / watermark of the export dialog | P0 | A1.3 (export dialog exists) |
 | B2.9 | Backup and restore of the catalog from the app | P1 | catalog is a log; a zip export is easy |
-| B2.10 | Account, subscription and storage UI | OOS | LightCraft has no accounts |
+| B2.10 | Account, subscription and storage UI | OOS | no LightCraft service or subscription: accounts live on the user's own sync server (its admin page) |
 
 ### B3. Library and organisation
 

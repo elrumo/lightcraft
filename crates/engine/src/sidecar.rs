@@ -376,10 +376,11 @@ fn stem_key(original: &str) -> String {
     sidecar_path(original, SidecarNaming::Stem).to_string_lossy().to_lowercase()
 }
 
+/// The photo's file on this disk (not a demo scene, nor a synced photo stored by content).
 fn file_path(p: &Photo) -> Option<&str> {
     match &p.source {
-        Source::File { path } => Some(path),
-        Source::Demo { .. } => None,
+        Source::File { path } if !path.starts_with(lightcraft_catalog::sync::PATH_PREFIX) => Some(path),
+        _ => None,
     }
 }
 

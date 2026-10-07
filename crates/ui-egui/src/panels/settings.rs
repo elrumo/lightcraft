@@ -1,4 +1,4 @@
-//! The Settings dialog (⌘,): General, Import, Performance, Interface.
+//! The Settings dialog (⌘,): General, Import, Performance, Interface, Sync.
 //!
 //! Changes apply immediately (no OK/Cancel). Where they are stored:
 //! - **app settings** ([`crate::state::AppSettings`]: startup view, delete confirmation, GPU,
@@ -17,7 +17,8 @@ use crate::theme::Tokens;
 use crate::widgets::register;
 
 /// (id, label) of the tabs, in order.
-pub const TABS: &[(&str, &str)] = &[("general", "General"), ("import", "Import"), ("performance", "Performance"), ("interface", "Interface")];
+pub const TABS: &[(&str, &str)] =
+    &[("general", "General"), ("import", "Import"), ("performance", "Performance"), ("interface", "Interface"), ("sync", "Sync")];
 
 /// Thumbnail cache sizes offered (MB).
 const CACHE_SIZES: [u32; 5] = [512, 1024, 2048, 4096, 8192];
@@ -27,7 +28,7 @@ const LABEL_W: f32 = 150.0;
 /// The dialog body for `tab` (the tab bar switches `tab`).
 pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, tab: &mut String) {
     let t = Tokens::get(ui.ctx());
-    ui.set_min_width(560.0);
+    ui.set_min_width(crate::panels::modal_width(ui.ctx(), 560.0));
     ui.set_min_height(330.0);
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
@@ -43,6 +44,7 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, tab: &mut String) {
         "import" => import_tab(app, ui, &t),
         "performance" => performance_tab(app, ui, &t),
         "interface" => interface_tab(app, ui, &t),
+        "sync" => sync_tab(app, ui, &t),
         _ => general_tab(app, ui, &t),
     }
 }
@@ -523,6 +525,122 @@ fn interface_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
         use crate::state::InfoOverlay as I;
         choices(ui, "settingsInfo", &[(I::Off, "Off"), (I::Basic, "File & date"), (I::Exposure, "Exposure")], &mut app.ui.info_overlay);
     });
+}
+
+// ---------------------------------------------------------------------------------------- Sync
+
+/// A text field addressable as `field:{id}`.
+fn field(ui: &mut egui::Ui, id: &str, value: &mut String, hint_text: &str, password: bool) {
+    // narrower on a phone, beside the label
+    let r = ui.add(
+        egui::TextEdit::singleline(value).hint_text(crate::i18n::tr(hint_text)).password(password).desired_width(ui.available_width().min(260.0)),
+    );
+    register(ui.ctx(), format!("field:{id}"), r.rect);
+}
+
+/// Run a sync command, showing what went wrong.
+fn sync_cmd(app: &mut LightcraftApp, ui: &egui::Ui, id: &str, p: Value) {
+    if let Err(e) = app.run(id, p) {
+        app.toast(ui.ctx(), e);
+    }
+}
+
+fn sync_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
+    heading(ui, t, crate::i18n::tr("Sync"));
+    hint(
+        ui,
+        t,
+        crate::i18n::tr(
+            "Share this library — photos, edits, albums and presets — with your other devices through your own LightCraft server (see docs/sync.md). Without one, everything stays on this computer.",
+        ),
+    );
+    if app.services.sync_exec.is_none() {
+        hint(ui, t, crate::i18n::tr("Sync isn't available here yet."));
+        return;
+    }
+    if app.session.library.is_none() {
+        hint(ui, t, crate::i18n::tr("Sync needs a saved library: open or create one in General first."));
+        return;
+    }
+    let status = app.session.sync_state().map(|st| (st.status(), st.signed_in(), st.config.clone()));
+    match status {
+        Some((s, true, c)) => {
+            row(ui, t, crate::i18n::tr("Server"), |ui| ui.label(RichText::new(&c.server).color(t.text)));
+            row(ui, t, crate::i18n::tr("User"), |ui| ui.label(RichText::new(&c.user).color(t.text)));
+            let (tip, problem, _) = crate::sync_ui::cloud_status(app);
+            row(ui, t, crate::i18n::tr("Status"), |ui| {
+                let r = ui.label(RichText::new(&tip).color(if problem { t.caution } else { t.text }));
+                register(ui.ctx(), "label:syncStatus", r.rect);
+            });
+            row(ui, t, "", |ui| {
+                let r = ui.button(crate::i18n::tr("Sync Now"));
+                register(ui.ctx(), "button:syncNow", r.rect);
+                if r.clicked() {
+                    sync_cmd(app, ui, "sync.now", json!({}));
+                }
+                let r = ui.button(crate::i18n::tr(if c.paused { "Resume Syncing" } else { "Pause Syncing" }));
+                register(ui.ctx(), "button:syncPause", r.rect);
+                if r.clicked() {
+                    sync_cmd(app, ui, "sync.pause", json!({"on": !c.paused}));
+                }
+                let r = ui.button(crate::i18n::tr("Sign Out"));
+                register(ui.ctx(), "button:syncSignOut", r.rect);
+                if r.clicked() {
+                    sync_cmd(app, ui, "sync.signOut", json!({}));
+                }
+            });
+            heading(ui, t, crate::i18n::tr("On This Device"));
+            let mut keep = c.store_originals;
+            if check(ui, "sync.storeOriginals", &mut keep, "Store the originals of all photos on this device") {
+                sync_cmd(app, ui, "sync.storeOriginalsLocally", json!({"on": keep}));
+            }
+            hint(
+                ui,
+                t,
+                crate::i18n::tr(
+                    "Otherwise photos from other devices come down as previews: small ones for the grid, an editable smart preview when you open a photo or make an album available offline (right-click it), and the original when you ask (Photo > Download Originals).",
+                ),
+            );
+            let offline = s["offlineAlbums"].as_array().map_or(0, Vec::len);
+            if offline > 0 {
+                hint(ui, t, &format!("{offline} album(s) available offline"));
+            }
+        }
+        other => {
+            let known = other.map(|(_, _, c)| c);
+            if let Some(c) = &known {
+                if app.sync.form.server.is_empty() {
+                    app.sync.form.server = c.server.clone();
+                    app.sync.form.user = c.user.clone();
+                }
+                if let Some(e) = app.session.sync_state().and_then(|st| st.error()) {
+                    row(ui, t, crate::i18n::tr("Status"), |ui| ui.label(RichText::new(e).color(t.caution)));
+                }
+            }
+            let mut form = std::mem::take(&mut app.sync.form);
+            row(ui, t, crate::i18n::tr("Server"), |ui| field(ui, "syncServer", &mut form.server, "https://photos.example.com", false));
+            row(ui, t, crate::i18n::tr("User"), |ui| field(ui, "syncUser", &mut form.user, "", false));
+            row(ui, t, crate::i18n::tr("Password"), |ui| field(ui, "syncPassword", &mut form.password, "", true));
+            row(ui, t, "", |ui| {
+                let ready = !form.server.trim().is_empty() && !form.user.trim().is_empty() && !form.password.is_empty();
+                let r = ui.add_enabled(ready, egui::Button::new(crate::i18n::tr("Sign In")));
+                register(ui.ctx(), "button:syncSignIn", r.rect);
+                if r.clicked() {
+                    let p = json!({"server": form.server.trim(), "user": form.user.trim(), "password": form.password});
+                    form.password.clear();
+                    sync_cmd(app, ui, "sync.signIn", p);
+                }
+            });
+            app.sync.form = form;
+            hint(
+                ui,
+                t,
+                crate::i18n::tr(
+                    "The first library signed in uploads its photos to the empty server. To get them on another computer, sign in from a new, empty library there.",
+                ),
+            );
+        }
+    }
 }
 
 // ------------------------------------------------------------------------------- Open Library…

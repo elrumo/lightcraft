@@ -1,0 +1,107 @@
+/* LightCraft server admin page. System fonts; dark like the app, light when the system is. */
+:root {
+  --bg: #161616;
+  --card: #222;
+  --line: #343434;
+  --text: #e8e8e8;
+  --dim: #9a9a9a;
+  --accent: #4d8dff;
+  --danger: #e5534b;
+  --ok: #3fb950;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f3f3f3;
+    --card: #fff;
+    --line: #ddd;
+    --text: #1d1d1d;
+    --dim: #666;
+    color-scheme: light;
+  }
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+.top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--line);
+}
+.brand { font-weight: 600; font-size: 16px; }
+.brand span { color: var(--dim); font-weight: 400; }
+.who { display: flex; gap: 12px; align-items: center; color: var(--dim); }
+main { max-width: 980px; margin: 0 auto; padding: 20px 16px 48px; }
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 16px 20px;
+  margin: 0 0 16px;
+}
+.card.narrow { max-width: 420px; margin: 40px auto; }
+h1 { font-size: 20px; margin: 0 0 8px; }
+h2 { font-size: 15px; margin: 0 0 10px; }
+.head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.head h2 { margin: 0; }
+.hint { color: var(--dim); font-size: 13px; }
+code { font: 12.5px ui-monospace, SFMono-Regular, Menlo, monospace; background: rgba(127, 127, 127, 0.15); padding: 1px 4px; border-radius: 4px; overflow-wrap: anywhere; }
+form label { display: block; margin: 10px 0; color: var(--dim); }
+form label input { display: block; width: 100%; margin-top: 4px; }
+input {
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 7px 9px;
+}
+input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+button {
+  font: inherit;
+  cursor: pointer;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 6px 12px;
+  background: var(--accent);
+  color: #fff;
+}
+button.secondary { background: transparent; color: var(--text); border-color: var(--line); }
+button.danger { background: transparent; color: var(--danger); border-color: var(--danger); }
+button.link { background: none; border: none; color: var(--accent); padding: 0; }
+button:disabled { opacity: 0.4; cursor: default; }
+.row-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 12px 0 4px; }
+.row-form input { flex: 1 1 180px; }
+.check { display: flex; gap: 6px; align-items: center; color: var(--dim); }
+.facts { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 0 0 10px; }
+.facts dt { color: var(--dim); }
+.facts dd { margin: 0; overflow-wrap: anywhere; }
+.disk { display: flex; align-items: center; gap: 12px; margin: 6px 0 4px; color: var(--dim); }
+.bar { flex: 0 0 220px; height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; }
+.bar div { height: 100%; background: var(--accent); }
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+th, td { text-align: left; padding: 8px 6px; border-top: 1px solid var(--line); vertical-align: middle; }
+th { color: var(--dim); font-weight: 500; border-top: none; }
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+td.actions { text-align: right; white-space: nowrap; }
+.actions { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; align-items: center; }
+.card > .actions { justify-content: flex-start; }
+.empty { color: var(--dim); text-align: center; }
+.badge { font-size: 11px; color: var(--accent); border: 1px solid var(--accent); border-radius: 10px; padding: 0 6px; }
+.notice { margin: 0 0 16px; padding: 10px 14px; border-radius: 8px; border: 1px solid var(--ok); color: var(--ok); }
+.notice.bad { border-color: var(--danger); color: var(--danger); }
+dialog { background: var(--card); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; max-width: 440px; width: calc(100% - 32px); }
+dialog::backdrop { background: rgba(0, 0, 0, 0.5); }
+dialog .actions { margin-top: 14px; }
+@media (max-width: 640px) {
+  td.actions { white-space: normal; }
+  .bar { flex-basis: 120px; }
+}

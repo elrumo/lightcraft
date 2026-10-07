@@ -550,6 +550,13 @@ fn albums_tree(app: &mut LightcraftApp, ui: &mut egui::Ui, all: &[Album], parent
             if let Some(rules) = &a.smart {
                 resp = resp.on_hover_text(crate::i18n::tr_format!("Smart album: {}", rules.describe()));
             }
+            if app.session.sync_state().is_some_and(|st| st.config.offline_albums.contains(&a.id)) {
+                let t = Tokens::get(ui.ctx());
+                let c = pos2(resp.rect.right() - 46.0, resp.rect.center().y);
+                paint(ui.painter(), Rect::from_center_size(c, vec2(12.0, 12.0)), Icon::Check, t.text_dim);
+                register(ui.ctx(), format!("offline:album:{}", a.id.0), Rect::from_center_size(c, vec2(12.0, 12.0)));
+                resp = resp.on_hover_text(crate::i18n::tr("Available offline on this device"));
+            }
             if resp.clicked() {
                 let _ = app.run("library.source", json!({"kind": "album", "id": a.id.0}));
             }
@@ -590,6 +597,13 @@ fn folder_menu(app: &mut LightcraftApp, resp: &egui::Response, a: &Album) {
             }
             if is_target && !a.quick && ui.button(crate::i18n::tr("Stop Using as Target Album")).clicked() {
                 let _ = app.run("album.setTarget", json!({"id": null}));
+            }
+        }
+        if !a.folder && app.services.sync_exec.is_some() && app.session.sync_state().is_some() {
+            let on = app.session.sync_state().is_some_and(|st| st.config.offline_albums.contains(&a.id));
+            let label = if on { "Remove Offline Copy" } else { "Make Available Offline" };
+            if ui.button(crate::i18n::tr(label)).clicked() {
+                let _ = app.run("album.makeAvailableOffline", json!({"id": a.id.0, "on": !on}));
             }
         }
         if a.quick && ui.button(crate::i18n::tr("Clear Quick Collection")).clicked() {

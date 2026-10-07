@@ -8,7 +8,9 @@
 //!   ([`store`]); a new library starts with the procedural demo photos;
 //! - renders run in Web Workers, each a second instance of this module ([`wire`], `workers`), and
 //!   fall back to the main thread (one job per frame) if workers can't start;
-//! - export downloads the file through the browser.
+//! - export downloads the file through the browser;
+//! - self-hosted sync (`docs/sync.md`) talks to the server that serves the page, with `fetch`
+//!   (`sync`); synced previews and originals are kept in browser storage.
 //!
 //! `?bench` in the URL runs a scripted first-paint / slider-latency measurement and logs it to the
 //! console (see [`bench`]); `?store=idb` forces the IndexedDB backend, `?store=memory` disables
@@ -26,6 +28,8 @@ pub mod wire;
 mod backend;
 #[cfg(target_arch = "wasm32")]
 mod safety;
+#[cfg(target_arch = "wasm32")]
+mod sync;
 #[cfg(target_arch = "wasm32")]
 mod web;
 #[cfg(target_arch = "wasm32")]

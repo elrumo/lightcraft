@@ -109,6 +109,14 @@ impl Availability {
         cached.map(|c| c.0)
     }
 
+    /// Forget the answer about `path` (it was just written or removed here).
+    pub fn forget(&self, path: &str) {
+        let mut st = lock(&self.state);
+        if st.known.remove(path).is_some() {
+            st.generation += 1;
+        }
+    }
+
     /// Known to be missing (unknown counts as present).
     pub fn is_offline(&self, path: &str) -> bool {
         self.exists(path) == Some(false)

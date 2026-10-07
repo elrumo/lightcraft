@@ -29,8 +29,10 @@ pub struct Stack {
 }
 
 impl Stack {
+    /// The top photo (`PhotoId(0)`, which no photo has, for an empty stack read from damaged or
+    /// untrusted data).
     pub fn top(&self) -> PhotoId {
-        self.photos[0]
+        self.photos.first().copied().unwrap_or(PhotoId(0))
     }
     pub fn position(&self, id: PhotoId) -> Option<usize> {
         self.photos.iter().position(|p| *p == id)
