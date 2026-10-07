@@ -609,7 +609,11 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
         }
         return;
     }
-    if resp.clicked() {
+    if app.compact && resp.clicked() {
+        // touch: a tap opens the photo (no double-tap, no modifiers)
+        let _ = app.run("library.select", json!({"ids": [id.0]}));
+        let _ = app.run("view.detail", json!({}));
+    } else if resp.clicked() {
         let m = ui.input(|i| i.modifiers);
         let mode = if m.shift {
             "range"

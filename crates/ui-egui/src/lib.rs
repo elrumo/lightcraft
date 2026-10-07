@@ -26,6 +26,8 @@ pub mod theme;
 pub mod widgets;
 
 #[cfg(test)]
+mod tests_compact;
+#[cfg(test)]
 mod tests_curve;
 #[cfg(test)]
 mod tests_grid;
@@ -132,6 +134,9 @@ pub struct LightcraftApp {
     pub perf: Perf,
     /// macOS: the host draws the traffic lights over our top bar.
     pub integrated_titlebar: bool,
+    /// Phone-sized window (content narrower than [`COMPACT_BELOW_PT`]): one panel at a time, tools in
+    /// a bottom tab bar and sheet (`panels::compact`). Set every frame from the window width.
+    pub compact: bool,
     /// The host installed a native menu bar (no in-window menus then).
     pub native_menu: bool,
     /// Shortcuts the native menu bar currently handles (`Cmd+Z`, `G`…): the egui shortcut handler
@@ -212,6 +217,7 @@ impl LightcraftApp {
             perf: Perf::default(),
             caches: Caches::default(),
             integrated_titlebar: false,
+            compact: false,
             native_menu: false,
             native_shortcuts: Default::default(),
             headless_host: false,
@@ -700,6 +706,13 @@ impl LightcraftApp {
             self.end_frame(t0);
             return;
         }
+        self.compact = ctx.content_rect().width() < COMPACT_BELOW_PT;
+        if self.compact {
+            panels::compact::show(self, ui);
+            self.widgets = widgets::take_registry(&ctx);
+            self.end_frame(t0);
+            return;
+        }
         // Order matters: earlier panels take the full edge (top bar spans the window; the tool strip,
         // right panels and left panel run to the bottom; the bottom bar sits between them).
         panels::topbar::show(self, ui);
@@ -743,6 +756,10 @@ impl LightcraftApp {
         self.end_frame(t0);
     }
 }
+
+/// Content width (points) below which the compact, touch-first layout is used. The desktop layout
+/// needs about 810 pt; iPhones are 375–440 pt wide in portrait, iPads 744+.
+pub const COMPACT_BELOW_PT: f32 = 700.0;
 
 /// How long a screenshot waits for in-flight renders.
 const SCREENSHOT_SETTLE_MS: f64 = 3000.0;
