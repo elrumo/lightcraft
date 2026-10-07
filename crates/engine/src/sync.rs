@@ -42,6 +42,11 @@ pub const PRESETS: &str = "sync.presets";
 /// User presets taken from the server at most (untrusted input).
 const PRESETS_MAX: usize = 10_000;
 
+/// Signing in to a server whose library this one isn't a copy of (the server was set up again,
+/// or the user's library there was replaced).
+const NOT_THIS_LIBRARY: &str = "this library is a copy of another library on that server (was the server set up again?): \
+     sign in from a new library (Settings › General › Open Library…; in a browser, open the server's address with ?reset)";
+
 /// How often the server is asked for other devices' changes.
 pub const POLL: Duration = Duration::from_secs(5);
 /// Longest wait between retries after a failure (network down, server away).
@@ -963,7 +968,7 @@ impl Session {
                 (true, Ok(dev)) if dev.space == 0 || dev.space > MAX_SPACE => st.signed_out("the server gave this device an unusable id space"),
                 (true, Ok(dev)) => {
                     if !st.config.library.is_empty() && st.config.library != dev.library {
-                        st.signed_out("this library is a copy of another library on that server: use a new library");
+                        st.signed_out(NOT_THIS_LIBRARY);
                         return;
                     }
                     st.config.token = dev.token;
@@ -1151,7 +1156,7 @@ impl Session {
         let joining = st.config.library != snap.library;
         if joining {
             if !st.config.library.is_empty() {
-                return Err("this library is a copy of another library on that server: use a new library".into());
+                return Err(NOT_THIS_LIBRARY.into());
             }
             // the procedural demo photos a new library starts with don't count: the server's
             // library replaces them (an empty one too: they are never uploaded on their own)
