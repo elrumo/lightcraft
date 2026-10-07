@@ -894,6 +894,7 @@ pub struct Caches {
     suggestions: Option<(u64, std::sync::Arc<Vec<String>>)>,
     counts: Option<(u64, LibraryCounts)>,
     date_groups: Option<(u64, std::sync::Arc<Vec<lightcraft_catalog::DateGroup>>)>,
+    server_folders: Option<(u64, std::sync::Arc<std::collections::BTreeMap<String, usize>>)>,
     filter_values: Option<(u64, std::sync::Arc<FilterValues>)>,
     album_counts: Option<(u64, std::sync::Arc<std::collections::HashMap<lightcraft_catalog::AlbumId, usize>>)>,
     /// How often the album counts were recomputed (tests check that unchanged frames don't).
@@ -983,6 +984,18 @@ impl Caches {
                 let g = std::sync::Arc::new(cat.date_groups());
                 self.date_groups = Some((cat.revision, g.clone()));
                 g
+            }
+        }
+    }
+    /// The library folders on the sync server, with their photo counts (the sidebar's Server
+    /// Folders).
+    pub fn server_folders(&mut self, cat: &lightcraft_catalog::Catalog) -> std::sync::Arc<std::collections::BTreeMap<String, usize>> {
+        match &self.server_folders {
+            Some((r, f)) if *r == cat.revision => f.clone(),
+            _ => {
+                let f = std::sync::Arc::new(lightcraft_catalog::query::server_folders(cat));
+                self.server_folders = Some((cat.revision, f.clone()));
+                f
             }
         }
     }

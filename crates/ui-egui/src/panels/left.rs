@@ -124,6 +124,7 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         let albums: Vec<Album> = app.session.catalog.albums().cloned().collect();
         albums_tree(app, ui, &albums, None, 0.0);
         ui.add_space(10.0);
+        server_folders_section(app, ui);
         local_section(app, ui);
         // By date
         let (dr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::hover());
@@ -687,6 +688,95 @@ fn is_within(app: &LightcraftApp, id: lightcraft_catalog::AlbumId, ancestor: lig
 /// "Keywords": the library's keyword tree with photo counts (`a|b|c` keywords nest). A click
 /// filters the grid by the keyword (children included), the triangle opens a level, and the
 /// context menu renames, merges or deletes the keyword across the library.
+/// The user's library folders on the sync server, as folders (photos found there in place): a
+/// click shows a folder's photos (and those below it), the triangle opens it.
+fn server_folders_section(app: &mut LightcraftApp, ui: &mut egui::Ui) {
+    let t = Tokens::get(ui.ctx());
+    let folders = app.caches.server_folders(&app.session.catalog);
+    if folders.is_empty() {
+        return;
+    }
+    let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::hover());
+    ui.painter().text(pos2(r.left() + 18.0, r.center().y), Align2::LEFT_CENTER, crate::i18n::tr("Server Folders"), t.semibold(13.5), t.text_label);
+    server_folder_rows(app, ui, &folders, "", 0.0);
+    ui.add_space(10.0);
+}
+
+/// The folders directly in `parent` (`""`: the library folders themselves).
+fn server_folder_children<'a>(all: &'a std::collections::BTreeMap<String, usize>, parent: &str) -> Vec<(&'a str, usize)> {
+    let prefix = if parent.is_empty() { String::new() } else { format!("{parent}/") };
+    all.range(prefix.clone()..)
+        .take_while(|(k, _)| k.starts_with(&prefix))
+        .filter(|(k, _)| k.get(prefix.len()..).is_some_and(|rest| !rest.is_empty() && !rest.contains('/')))
+        .map(|(k, n)| (k.as_str(), *n))
+        .collect()
+}
+
+fn server_folder_rows(app: &mut LightcraftApp, ui: &mut egui::Ui, all: &std::collections::BTreeMap<String, usize>, parent: &str, indent: f32) {
+    let t = Tokens::get(ui.ctx());
+    for (path, count) in server_folder_children(all, parent) {
+        let name = path.rsplit('/').next().unwrap_or(path);
+        let open_id = egui::Id::new(("server-folder-open", path.to_string()));
+        let mut open: bool = ui.data(|d| d.get_temp(open_id)).unwrap_or(false);
+        let sel = app.session.filter.server_folder.as_deref() == Some(path);
+        let resp = row(app, ui, &format!("serverFolder:{path}"), Icon::Folder, name, Some(count), sel, indent);
+        let has_children = all.range(format!("{path}/")..).next().is_some_and(|(k, _)| k.starts_with(&format!("{path}/")));
+        if has_children {
+            let c = pos2(resp.rect.left() + 10.0 + indent, resp.rect.center().y);
+            let tri = Rect::from_center_size(c, vec2(14.0, 14.0));
+            let tr = ui.interact(tri, egui::Id::new(("server-folder-tri", path.to_string())), Sense::click());
+            register(ui.ctx(), format!("serverFolderToggle:{path}"), tri);
+            let col = if tr.hovered() { t.text } else { t.text_dim };
+            let pts = if open {
+                vec![c + vec2(-4.0, -2.0), c + vec2(4.0, -2.0), c + vec2(0.0, 3.0)]
+            } else {
+                vec![c + vec2(-2.0, -4.0), c + vec2(3.0, 0.0), c + vec2(-2.0, 4.0)]
+            };
+            ui.painter().add(egui::Shape::convex_polygon(pts, col, egui::Stroke::NONE));
+            if tr.clicked() {
+                open = !open;
+                ui.data_mut(|d| d.insert_temp(open_id, open));
+            }
+        }
+        let resp = resp.on_hover_text(format!("{path} on the sync server (with the folders in it)"));
+        if resp.clicked() {
+            // the whole library, narrowed to the folder (like By Date)
+            if !sel && !matches!(app.session.source, LibrarySource::All) {
+                let _ = app.run("library.source", json!({"kind": "all"}));
+            }
+            let v = if sel { serde_json::Value::Null } else { json!(path) };
+            let _ = app.run("library.filter", json!({"serverFolder": v}));
+        }
+        resp.context_menu(|ui| {
+            let ids = |c: &lightcraft_catalog::Catalog| -> Vec<u64> {
+                c.photos()
+                    .filter(|p| !p.deleted && p.server_path.as_deref().is_some_and(|sp| lightcraft_catalog::query::in_server_folder(sp, path)))
+                    .map(|p| p.id.0)
+                    .collect()
+            };
+            if ui.button(crate::i18n::tr("Create Album from Folder")).clicked() {
+                let ids = ids(&app.session.catalog);
+                if let Ok(r) = app.run("album.create", json!({"name": name})) {
+                    let _ = app.run("album.addPhotos", json!({"id": r["id"], "ids": ids}));
+                }
+            }
+            if app.services.sync_exec.is_some() && app.session.sync_state().is_some() {
+                if ui.button(crate::i18n::tr("Make Available Offline")).clicked() {
+                    let ids = ids(&app.session.catalog);
+                    let _ = app.run("photo.makeAvailableOffline", json!({"ids": ids, "on": true}));
+                }
+                if ui.button(crate::i18n::tr("Download Originals")).clicked() {
+                    let ids = ids(&app.session.catalog);
+                    let _ = app.run("sync.downloadOriginals", json!({"ids": ids}));
+                }
+            }
+        });
+        if open {
+            server_folder_rows(app, ui, all, path, indent + 16.0);
+        }
+    }
+}
+
 fn keywords_section(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
     let tree = app.caches.keyword_tree(&app.session.catalog);

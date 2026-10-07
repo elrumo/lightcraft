@@ -556,6 +556,12 @@ fn info(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             ui.add_space(4.0);
             ui.label(egui::RichText::new(line).color(t.text_dim));
         }
+        if let Some(sp) = &p.server_path {
+            // one of the library folders on the sync server, read there in place
+            ui.label(egui::RichText::new(format!("{} {sp}", crate::i18n::tr("On the server:"))).color(t.text_dim)).on_hover_text(crate::i18n::tr(
+                "The original is in one of your library folders on the sync server, where it stays (never copied or changed)",
+            ));
+        }
         // offline originals / smart previews
         // (cached answers, checked off the UI thread: unknown counts as online / no smart preview)
         if lightcraft_engine::sync::is_remote(&p) {

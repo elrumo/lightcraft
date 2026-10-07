@@ -1,5 +1,7 @@
 # HTTPS for the LightCraft sync server (docker-compose.yml). Caddy gets and renews the
 # certificate for $LIGHTCRAFT_DOMAIN by itself.
 {$LIGHTCRAFT_DOMAIN} {
+	# browsers only ever come back over HTTPS
+	header Strict-Transport-Security "max-age=31536000"
 	reverse_proxy lightcraft:8080
 }

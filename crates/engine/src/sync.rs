@@ -525,27 +525,52 @@ fn is_removal(op: &Op) -> bool {
     matches!(op, Op::RemovePhoto { .. } | Op::RemoveAlbum { .. } | Op::RemoveStack { .. })
 }
 
-/// A server address as typed: `photos.example.com` means `https://photos.example.com`, the scheme
-/// and host are lower-cased (phone keyboards capitalise the first letter) and trailing `/`s go.
-/// `None`: not an `http(s)://` address.
+/// A server address as typed: `photos.example.com` means `https://photos.example.com`, while an
+/// address on this computer or the home network without a scheme — `localhost`, a private or
+/// Tailscale IP address, a one-word machine name (`nas`), `*.local` / `*.lan` / `*.home.arpa` /
+/// `*.internal` — means plain `http://` (such servers rarely have a certificate; their traffic
+/// stays at home or in the tailnet's tunnel). The scheme and host are lower-cased (phone keyboards
+/// capitalise the first letter) and trailing `/`s go. `None`: not an `http(s)://` address.
 pub fn server_address(typed: &str) -> Option<String> {
     let t = typed.trim();
     if t.contains(char::is_whitespace) {
         return None;
     }
     let (scheme, rest) = match t.split_once("://") {
-        Some((scheme, rest)) => (scheme.to_ascii_lowercase(), rest),
-        None => ("https".to_string(), t),
+        Some((scheme, rest)) => (Some(scheme.to_ascii_lowercase()), rest),
+        None => (None, t),
     };
     let rest = rest.trim_end_matches('/');
     let (host, path) = match rest.split_once('/') {
         Some((host, path)) => (host, format!("/{path}")),
         None => (rest, String::new()),
     };
+    let scheme = scheme.unwrap_or_else(|| if is_home_host(host) { "http".into() } else { "https".into() });
     if !matches!(scheme.as_str(), "http" | "https") || !is_host_port(host) || path.contains(['?', '#']) {
         return None;
     }
     Some(format!("{scheme}://{}{path}", host.to_ascii_lowercase()))
+}
+
+/// Is `host[:port]` this computer or on a home / private network (see [`server_address`])?
+fn is_home_host(host_port: &str) -> bool {
+    let host = match host_port.strip_prefix('[') {
+        Some(v6) => v6.split(']').next().unwrap_or(""),
+        None => host_port.rsplit_once(':').map_or(host_port, |(h, _)| h),
+    }
+    .to_ascii_lowercase();
+    match host.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V4(ip)) => {
+            let [a, b, ..] = ip.octets();
+            ip.is_loopback() || ip.is_private() || ip.is_link_local() || (a == 100 && (64..128).contains(&b))
+        }
+        Ok(std::net::IpAddr::V6(ip)) => ip.is_loopback() || ip.segments().first().is_some_and(|s| s & 0xfe00 == 0xfc00 || s & 0xffc0 == 0xfe80),
+        Err(_) => {
+            host == "localhost"
+                || !host.contains('.')
+                || [".local", ".lan", ".home.arpa", ".internal", ".localhost"].iter().any(|s| host.ends_with(s))
+        }
+    }
 }
 
 /// `name[:port]` or `[ipv6][:port]`.

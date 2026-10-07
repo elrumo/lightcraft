@@ -83,6 +83,27 @@
       </div>
     </section>
 
+    <section class="card" id="foldersCard" hidden>
+      <div class="head"><h2 id="foldersTitle">Library folders</h2><button type="button" class="link" id="foldersClose">Close</button></div>
+      <p class="hint">Photo folders already on this server (a NAS share, a backup disk) that are this user's library: their
+        photos are read where they are — never copied, moved or changed — and show on every device in their folders.
+        With Docker, mount them into the container read-only (<code>-v /srv/photos:/photos:ro</code>) and add
+        <code>/photos/…</code> here.</p>
+      <div class="table-wrap">
+        <table id="folders">
+          <thead><tr><th>Folder</th><th>On the server</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <form id="addFolder" class="row-form" autocomplete="off">
+        <input name="path" required placeholder="/photos/ann" autocomplete="off">
+        <input name="name" placeholder="name shown on devices (optional)" autocomplete="off">
+        <button type="submit">Add folder</button>
+      </form>
+      <div class="actions"><button type="button" id="scanNow">Scan now</button><span id="scanText"></span></div>
+      <ul class="errors" id="scanErrors" hidden></ul>
+    </section>
+
     <section class="card">
       <h2>Storage clean-up</h2>
       <p class="hint">Deletes photo files no library refers to any more (photos deleted for good) and unfinished uploads, if older than a day.</p>
