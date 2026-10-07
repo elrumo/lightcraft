@@ -656,21 +656,33 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                             opts.start_number = v as u32;
                         }
                     }
-                    field(ui, "Folder", |ui| {
-                        trailing_button_row(ui, |ui| {
-                            if app.services.pick_folder.is_some()
-                                && crate::widgets::text_button(ui, "exportChooseFolder", crate::i18n::tr("Choose…"), false).clicked()
-                                && let Some(pick) = app.services.pick_folder.as_mut()
-                                && let Some(d) = pick()
-                            {
-                                *dir = d;
-                            }
-                            ui.add(egui::TextEdit::singleline(dir).desired_width(ui.available_width()));
+                    if app.services.share_exports.is_some() {
+                        // iOS: no folder to choose; the share sheet saves or sends the photos
+                        let r = ui.label(
+                            egui::RichText::new(crate::i18n::tr(
+                                "When the export is done, the share sheet opens: save the photos to Photos or Files, or send them to another app.",
+                            ))
+                            .color(Tokens::get(ui.ctx()).text_dim)
+                            .small(),
+                        );
+                        crate::widgets::register(ui.ctx(), "label:exportShareHelp", r.rect);
+                    } else {
+                        field(ui, "Folder", |ui| {
+                            trailing_button_row(ui, |ui| {
+                                if app.services.pick_folder.is_some()
+                                    && crate::widgets::text_button(ui, "exportChooseFolder", crate::i18n::tr("Choose…"), false).clicked()
+                                    && let Some(pick) = app.services.pick_folder.as_mut()
+                                    && let Some(d) = pick()
+                                {
+                                    *dir = d;
+                                }
+                                ui.add(egui::TextEdit::singleline(dir).desired_width(ui.available_width()));
+                            });
                         });
-                    });
-                    field(ui, "Subfolder", |ui| {
-                        ui.add(egui::TextEdit::singleline(&mut opts.subfolder).hint_text(crate::i18n::tr("none")).desired_width(f32::INFINITY))
-                    });
+                        field(ui, "Subfolder", |ui| {
+                            ui.add(egui::TextEdit::singleline(&mut opts.subfolder).hint_text(crate::i18n::tr("none")).desired_width(f32::INFINITY))
+                        });
+                    }
                     use lightcraft_engine::export::Conflict as K;
                     choices(
                         ui,

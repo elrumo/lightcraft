@@ -53,6 +53,10 @@ pub struct ImportDialog {
     pub metadata_preset: String,
     /// Copy: raws are copied as DNG.
     pub dng: bool,
+    /// The files are the host's temporary copies (iOS pickers hand over copies in the app's tmp
+    /// folder, which the system may empty): they are always moved into the library's Originals/,
+    /// never added in place.
+    pub staged: bool,
 }
 
 impl ImportDialog {
@@ -275,6 +279,8 @@ pub struct ScanTask {
     rx: std::sync::mpsc::Receiver<ScanOutput>,
     /// Open the review with "copy into the library" checked (a camera / card).
     pub copy: bool,
+    /// The host's temporary copies ([`ImportDialog::staged`]).
+    staged: bool,
     /// Browsing a folder (Local): the photos are read in place instead of opening the review.
     browse: bool,
     /// What is being scanned (the review's source).
@@ -283,6 +289,19 @@ pub struct ScanTask {
 
 /// Scan `paths` in the background, then open the review dialog (see [`poll_scan`]).
 pub fn open(app: &mut LightcraftApp, paths: Vec<String>) -> Result<Value, String> {
+    scan(app, paths, false)
+}
+
+/// [`open`] for files the host copied into a temporary folder of its own (iOS: the Photos and
+/// Files pickers): the review moves them into the library ([`ImportDialog::staged`]).
+pub fn open_staged(app: &mut LightcraftApp, paths: Vec<String>) -> Result<Value, String> {
+    if !app.session.library.as_ref().is_some_and(|l| l.on_disk) {
+        return Err("photos can't be imported: the library isn't saved on this device (see the log for why it couldn't be opened)".into());
+    }
+    scan(app, paths, true)
+}
+
+fn scan(app: &mut LightcraftApp, paths: Vec<String>, staged: bool) -> Result<Value, String> {
     if app.scan.is_some() {
         return Err("a scan is already running".into());
     }
@@ -298,7 +317,7 @@ pub fn open(app: &mut LightcraftApp, paths: Vec<String>) -> Result<Value, String
     std::thread::spawn(job);
     #[cfg(target_arch = "wasm32")]
     job();
-    app.scan = Some(ScanTask { progress, rx, copy: false, browse: false, sources });
+    app.scan = Some(ScanTask { progress, rx, copy: staged, staged, browse: false, sources });
     Ok(json!({"scanning": true}))
 }
 
@@ -359,7 +378,7 @@ pub fn browse(app: &mut LightcraftApp, path: &str, subfolders: Option<bool>) -> 
     std::thread::spawn(job);
     #[cfg(target_arch = "wasm32")]
     job();
-    app.scan = Some(ScanTask { progress, rx, copy: false, browse: true, sources: Vec::new() });
+    app.scan = Some(ScanTask { progress, rx, copy: false, staged: false, browse: true, sources: Vec::new() });
     app.renderer.forget_imports();
     Ok(json!({"path": dir_s, "subfolders": subfolders, "scanning": true}))
 }
@@ -401,6 +420,8 @@ pub fn poll_scan(app: &mut LightcraftApp, ctx: &egui::Context) {
     app.renderer.forget_imports();
     let mut d = ImportDialog::new(out.candidates);
     d.copy = task.copy;
+    d.staged = task.staged;
+    d.move_files = task.staged;
     d.sources = task.sources;
     app.ui.dialog = Some(crate::state::Dialog::Import { opts: Box::new(d) });
 }
@@ -456,6 +477,7 @@ pub fn start(app: &mut LightcraftApp, d: &ImportDialog) -> Result<Value, String>
         album = r["id"].as_u64();
     }
     let mode = match (d.copy, d.move_files) {
+        _ if d.staged => "move",
         (false, _) => "add",
         (true, false) => "copy",
         (true, true) => "move",
@@ -470,8 +492,8 @@ pub fn start(app: &mut LightcraftApp, d: &ImportDialog) -> Result<Value, String>
     if !d.metadata_preset.is_empty() {
         params["metadataPreset"] = json!(d.metadata_preset);
     }
-    if d.copy {
-        if !d.destination.trim().is_empty() {
+    if d.copy || d.staged {
+        if !d.destination.trim().is_empty() && !d.staged {
             params["destination"] = json!(d.destination.trim());
         }
         if let Some(o) = d.organize_param()? {
@@ -745,7 +767,8 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDialog) {
     });
     ui.add_space(4.0);
     // options
-    if !d.sources.is_empty() {
+    // (staged: the host's temporary folder means nothing to the user)
+    if !d.sources.is_empty() && !d.staged {
         field(ui, "Source", |ui| {
             // (whether each source is a folder is checked off the UI thread, once)
             let joined = d.sources.join("\n");
@@ -762,45 +785,17 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDialog) {
                 .small(),
         );
     }
-    field(ui, "Transfer", |ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
-        if crate::widgets::text_button(ui, "importAdd", crate::i18n::tr("Add in place"), !d.copy)
-            .on_hover_text(crate::i18n::tr("Reference the files where they are"))
-            .clicked()
-        {
-            d.copy = false;
-            d.move_files = false;
-        }
-        let can_copy = app.session.library.as_ref().is_some_and(|l| l.on_disk) || app.services.pick_folder.is_some();
-        let r =
-            ui.add_enabled_ui(can_copy, |ui| crate::widgets::text_button(ui, "importCopy", crate::i18n::tr("Copy"), d.copy && !d.move_files)).inner;
-        if r.on_hover_text(crate::i18n::tr("Copy the files (into the library's Originals/, or a folder you choose)")).clicked() {
-            d.copy = true;
-            d.move_files = false;
-        }
-        let r =
-            ui.add_enabled_ui(can_copy, |ui| crate::widgets::text_button(ui, "importMove", crate::i18n::tr("Move"), d.copy && d.move_files)).inner;
-        if r.on_hover_text(crate::i18n::tr("Move the files (into the library's Originals/, or a folder you choose), removing them from the source"))
-            .clicked()
-        {
-            d.copy = true;
-            d.move_files = true;
-        }
-    });
-    let r = ui.label(
-        egui::RichText::new(match (d.copy, d.move_files) {
-            (true, false) => {
-                "Copy: the files are copied to the folder below and the library uses the copies; the originals are left as they are."
-            }
-            (true, true) => {
-                "Move: the files are moved to the folder below; each original (and its XMP sidecar) is removed from the source only after its copy is verified. Duplicates and files that fail stay where they are."
-            }
-            _ => "Add in place: the library references the files where they are; nothing is copied or moved.",
-        })
-        .color(if d.copy && d.move_files { t.caution } else { t.text_dim })
-        .small(),
-    );
-    register(ui.ctx(), "label:importModeHelp", r.rect);
+    if d.staged {
+        // the host's temporary copies: into the library, nothing to choose
+        let r = ui.label(
+            egui::RichText::new(crate::i18n::tr("The photos are copied into the library; the originals in Photos or Files are left as they are."))
+                .color(t.text_dim)
+                .small(),
+        );
+        register(ui.ctx(), "label:importModeHelp", r.rect);
+    } else {
+        transfer_choice(app, ui, d);
+    }
     if d.copy {
         field(ui, if d.move_files { "Move to" } else { "Copy to" }, |ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
@@ -962,6 +957,50 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDialog) {
         let r = ui.add(egui::TextEdit::singleline(&mut d.keywords).hint_text(crate::i18n::tr("comma, separated")).desired_width(f32::INFINITY));
         register(ui.ctx(), "field:importKeywords", r.rect);
     });
+}
+
+/// Add in place / Copy / Move, and what the choice means.
+fn transfer_choice(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDialog) {
+    let t = Tokens::get(ui.ctx());
+    field(ui, "Transfer", |ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        if crate::widgets::text_button(ui, "importAdd", crate::i18n::tr("Add in place"), !d.copy)
+            .on_hover_text(crate::i18n::tr("Reference the files where they are"))
+            .clicked()
+        {
+            d.copy = false;
+            d.move_files = false;
+        }
+        let can_copy = app.session.library.as_ref().is_some_and(|l| l.on_disk) || app.services.pick_folder.is_some();
+        let r =
+            ui.add_enabled_ui(can_copy, |ui| crate::widgets::text_button(ui, "importCopy", crate::i18n::tr("Copy"), d.copy && !d.move_files)).inner;
+        if r.on_hover_text(crate::i18n::tr("Copy the files (into the library's Originals/, or a folder you choose)")).clicked() {
+            d.copy = true;
+            d.move_files = false;
+        }
+        let r =
+            ui.add_enabled_ui(can_copy, |ui| crate::widgets::text_button(ui, "importMove", crate::i18n::tr("Move"), d.copy && d.move_files)).inner;
+        if r.on_hover_text(crate::i18n::tr("Move the files (into the library's Originals/, or a folder you choose), removing them from the source"))
+            .clicked()
+        {
+            d.copy = true;
+            d.move_files = true;
+        }
+    });
+    let r = ui.label(
+        egui::RichText::new(match (d.copy, d.move_files) {
+            (true, false) => {
+                "Copy: the files are copied to the folder below and the library uses the copies; the originals are left as they are."
+            }
+            (true, true) => {
+                "Move: the files are moved to the folder below; each original (and its XMP sidecar) is removed from the source only after its copy is verified. Duplicates and files that fail stay where they are."
+            }
+            _ => "Add in place: the library references the files where they are; nothing is copied or moved.",
+        })
+        .color(if d.copy && d.move_files { t.caution } else { t.text_dim })
+        .small(),
+    );
+    register(ui.ctx(), "label:importModeHelp", r.rect);
 }
 
 fn candidate_cell(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDialog, i: usize, rect: Rect) {

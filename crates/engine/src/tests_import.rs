@@ -854,3 +854,61 @@ fn missing_photos_skip_local_browse_records() {
     s.execute("library.source", &json!({"kind": "missing"})).unwrap();
     assert_eq!(s.visible_cloned().len(), 4, "the view lists what the count counts");
 }
+
+/// iOS gives the app a new container folder on every update, and a desktop library can be moved
+/// to another disk: the photos copied into its Originals/ follow it (stored by absolute path, they
+/// would all be missing otherwise). Photos outside the library keep their paths.
+#[test]
+fn a_moved_library_finds_its_originals() {
+    let src = temp_dir("movesrc");
+    let root = temp_dir("moveroot");
+    let old = root.join("Container-A").join("Documents").join("LightCraft Library");
+    write_png(&src.join("in.png"), 6);
+    write_png(&src.join("outside.png"), 7);
+    let mut s = Session::new().with_fs();
+    s.open_library(&old, false).unwrap();
+    s.execute("library.import", &json!({"paths": [src.join("in.png").to_string_lossy()], "mode": "copy"})).unwrap();
+    s.execute("library.import", &json!({"paths": [src.join("outside.png").to_string_lossy()]})).unwrap();
+    let info = s.execute("library.info", &json!({})).unwrap();
+    assert_eq!(info["relocated"], Value::Null, "{info}");
+    drop(s);
+
+    // the whole container moves (an app update on iOS)
+    let new_root = root.join("Container-B");
+    std::fs::rename(root.join("Container-A"), &new_root).unwrap();
+    let new = new_root.join("Documents").join("LightCraft Library");
+    let mut s = Session::new().with_fs();
+    s.open_library(&new, false).unwrap();
+    let paths = |s: &Session| -> Vec<String> {
+        let mut v: Vec<String> = s
+            .catalog
+            .photos()
+            .filter_map(|p| match &p.source {
+                lightcraft_catalog::Source::File { path } => Some(path.clone()),
+                _ => None,
+            })
+            .collect();
+        v.sort();
+        v
+    };
+    let now = paths(&s);
+    assert_eq!(now.len(), 2);
+    assert!(now.iter().any(|p| Path::new(p).starts_with(new.join("Originals")) && Path::new(p).is_file()), "{now:?}");
+    assert!(now.contains(&src.join("outside.png").to_string_lossy().to_string()), "{now:?}");
+    let info = s.execute("library.info", &json!({})).unwrap();
+    assert_eq!(info["relocated"]["photos"], 1, "{info}");
+    assert_eq!(info["relocated"]["from"], old.to_string_lossy().as_ref(), "{info}");
+    let id = s.catalog.photos().find(|p| p.file_name == "in.png").unwrap().id;
+    assert!(s.render_now(id, 32, 32).is_ok());
+    assert!(s.undo.is_empty(), "following the library isn't an undo step");
+    drop(s);
+
+    // saved: reopened from the same place, nothing more to do
+    let mut s = Session::new().with_fs();
+    s.open_library(&new, false).unwrap();
+    assert_eq!(paths(&s), now);
+    assert_eq!(s.execute("library.info", &json!({})).unwrap()["relocated"], Value::Null);
+    drop(s);
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&src);
+}

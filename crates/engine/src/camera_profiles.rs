@@ -61,9 +61,10 @@ impl CameraProfile {
     }
 }
 
-/// LightCraft's configuration folder (settings, GPU marker, camera profiles).
+/// LightCraft's configuration folder (settings, GPU marker, camera profiles). On iOS `$HOME` is
+/// the app's container, where only `Documents/`, `Library/` and `tmp/` are the app's to write.
 pub fn config_dir() -> Option<PathBuf> {
-    if cfg!(target_os = "macos") {
+    if cfg!(any(target_os = "macos", target_os = "ios")) {
         std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Library/Application Support/LightCraft"))
     } else if cfg!(windows) {
         std::env::var_os("APPDATA").map(|a| PathBuf::from(a).join("LightCraft"))

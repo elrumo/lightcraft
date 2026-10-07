@@ -354,6 +354,7 @@ fn services() -> Services {
         restore_library: None,
         // self-hosted sync: each request on a worker thread
         sync_exec: Some(lightcraft_ui_egui::sync_ui::native_exec()),
+        share_exports: None,
     }
 }
 

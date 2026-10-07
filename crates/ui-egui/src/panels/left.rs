@@ -193,7 +193,9 @@ fn missing_count(app: &mut LightcraftApp, ui: &mut egui::Ui) -> usize {
 /// Folders on this computer to browse without adding (Lightroom's Local): Pictures, Desktop,
 /// Downloads, the home folder, the folder being browsed, and Browse Folder….
 fn local_section(app: &mut LightcraftApp, ui: &mut egui::Ui) {
-    if cfg!(target_arch = "wasm32") {
+    // no folders to browse: the browser has none, and an iOS app sees only its own container
+    // (photos come in through the Photos and Files pickers)
+    if cfg!(any(target_arch = "wasm32", target_os = "ios")) {
         return;
     }
     let t = Tokens::get(ui.ctx());

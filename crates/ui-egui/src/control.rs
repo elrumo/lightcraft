@@ -333,6 +333,7 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context, req: &ControlRequest
 }
 
 /// Default export folder: `~/Pictures/LightCraft Exports` (falls back to the working directory).
+/// On iOS exports go through the share sheet from the host's staging folder ([`crate::ShareExports`]).
 pub fn default_export_dir() -> String {
     std::env::var("HOME").map(|h| format!("{h}/Pictures/LightCraft Exports")).unwrap_or_default()
 }
@@ -365,26 +366,63 @@ pub fn export_active(app: &mut LightcraftApp, p: &Value) -> Result<Value, String
     }
     // no folder given (e.g. File → Export with Preset): the last export's, else the default
     let last_dir = app.session.last_export.as_ref().and_then(|l| l.get("dir")).and_then(Value::as_str).map(str::to_string);
-    let dir = p.get("dir").and_then(Value::as_str).map(str::to_string).or(last_dir).filter(|d| !d.is_empty()).unwrap_or_else(default_export_dir);
-    let to = Destination { dir: dir.clone(), exact: p.get("path").and_then(Value::as_str).map(str::to_string) };
+    let mut dir = p.get("dir").and_then(Value::as_str).map(str::to_string).or(last_dir).filter(|d| !d.is_empty()).unwrap_or_else(default_export_dir);
+    let mut exact = p.get("path").and_then(Value::as_str).map(str::to_string);
+    // iOS: into the host's staging folder (emptied first), then the share sheet
+    if let Some(share) = &app.services.share_exports {
+        dir = share.dir.clone();
+        exact = None;
+        opts.subfolder.clear();
+        empty_folder(std::path::Path::new(&dir));
+    }
+    let to = Destination { dir: dir.clone(), exact };
     let background = p.get("background").and_then(Value::as_bool).unwrap_or(false) && app.services.write_shared.is_some();
     let out = if background {
         let items = lightcraft_engine::export::prepare_batch(&mut app.session, &ids, &opts)?;
         crate::export_task::start(app, items, opts, to)?
     } else {
         let w = app.services.write.as_mut().ok_or("no writer")?;
-        json!({"files": export_batch(&mut app.session, &ids, &opts, &to, &mut |path, bytes| w(path, bytes), &|path| std::path::Path::new(path).exists())?})
+        let files = export_batch(&mut app.session, &ids, &opts, &to, &mut |path, bytes| w(path, bytes), &|path| std::path::Path::new(path).exists())?;
+        share_exported(app, &files);
+        json!({"files": files})
     };
     // remember for Export with Previous (and to prefill the dialog)
     let mut last = p.clone();
     if let Some(o) = last.as_object_mut() {
         o.remove("ids");
         o.remove("path");
-        o.insert("dir".into(), json!(dir));
+        if app.services.share_exports.is_some() {
+            // the staging folder isn't the user's choice (and moves with an iOS app update)
+            o.remove("dir");
+        } else {
+            o.insert("dir".into(), json!(dir));
+        }
     }
     app.session.last_export = Some(last);
     let _ = app.session.save_prefs();
     Ok(out)
+}
+
+/// Offer what an export wrote to the system's share sheet, when the host shares exports
+/// ([`crate::ShareExports`]). `files`: the export's per-photo results (`path` for each written).
+pub fn share_exported(app: &mut LightcraftApp, files: &[Value]) {
+    let paths: Vec<String> = files.iter().filter_map(|f| f.get("path").and_then(Value::as_str)).map(str::to_string).collect();
+    if let Some(share) = app.services.share_exports.as_mut()
+        && !paths.is_empty()
+    {
+        (share.share)(&paths);
+    }
+}
+
+/// Remove the files left in the share staging folder by an earlier export (they were shared, or
+/// the share sheet was dismissed); subfolders and anything that can't be removed are left.
+fn empty_folder(dir: &std::path::Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for e in entries.flatten() {
+        if e.file_type().is_ok_and(|t| t.is_file()) {
+            let _ = std::fs::remove_file(e.path());
+        }
+    }
 }
 
 pub fn save_screenshot(app: &mut LightcraftApp, image: &egui::ColorImage, path: Option<&str>) -> Value {

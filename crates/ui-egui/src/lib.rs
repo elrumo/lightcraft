@@ -33,6 +33,8 @@ mod tests_curve;
 #[cfg(test)]
 mod tests_grid;
 #[cfg(test)]
+mod tests_ios_host;
+#[cfg(test)]
 mod tests_library_problem;
 #[cfg(test)]
 mod tests_masking;
@@ -74,6 +76,16 @@ pub type OpenWithFn = Box<dyn FnMut(&str, &str) -> Result<(), String>>;
 /// storage); the work may finish asynchronously.
 pub type HostAction = Box<dyn FnMut(&mut Session) -> Result<Value, String>>;
 
+/// Exports handed to the system instead of written to a folder the user chooses (iOS: the share
+/// sheet, with Save Image, Save to Files, AirDrop and other apps). The export dialog then has no
+/// folder field; each export empties `dir` first, writes there and offers what it wrote.
+pub struct ShareExports {
+    /// Where exports are written (the host's own staging folder; emptied before each export).
+    pub dir: String,
+    /// Offer the exported files (absolute paths, at least one).
+    pub share: Box<dyn FnMut(&[String])>,
+}
+
 /// Platform services injected by the host app (desktop or web).
 #[derive(Default)]
 pub struct Services {
@@ -110,6 +122,8 @@ pub struct Services {
     pub restore_library: Option<HostAction>,
     /// Runs self-hosted sync requests ([`sync_ui`]); `None`: this host doesn't sync.
     pub sync_exec: Option<sync_ui::SyncExec>,
+    /// Exports go to the system's share sheet instead of a folder (iOS; see [`ShareExports`]).
+    pub share_exports: Option<ShareExports>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]

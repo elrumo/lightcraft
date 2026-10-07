@@ -63,8 +63,7 @@ fn wgpu_options() -> eframe::egui_wgpu::WgpuConfiguration {
 /// Where the library lives: `$LIGHTCRAFT_LIBRARY`, else `LightCraft Library` in the app's Documents
 /// folder (on iOS `$HOME` is the app's container: kept across launches and updates, backed up).
 pub fn library_dir(library: Option<OsString>, home: Option<OsString>) -> Option<PathBuf> {
-    let library = library.filter(|l| !l.is_empty()).map(PathBuf::from);
-    library.or_else(|| home.filter(|h| !h.is_empty()).map(|h| PathBuf::from(h).join("Documents").join("LightCraft Library")))
+    lightcraft_engine::library::default_dir_in(library, home, true)
 }
 
 /// The library on the device (a new one starts with the demo photos), or, when it can't be opened,

@@ -21,7 +21,7 @@ mobile · **P2** = later, niche or needs large new work (models, services). **Ne
 | A1.1 | Photos library picker (import from the camera roll, with limited-access handling) | P0 | PhotosUI / PHPicker glue crate |
 | A1.2 | Files picker for import (folders, external drives, iCloud Drive) with security-scoped bookmarks | P0 | UIDocumentPicker glue, copy into the sandbox |
 | A1.3 | Export and share: share sheet, Save to Files, Save to Photos | P0 | UIActivityViewController glue |
-| A1.4 | Library and settings in the app sandbox (the library is in Documents; settings paths assume `$HOME`; originals are referenced by absolute path, so import must copy) | P0 | host crate |
+| A1.4 | ✅ Library and settings in the app sandbox: the library in `Documents/`, settings in `Library/Application Support/LightCraft`, exports written to a staging folder for the share sheet (`ShareExports`), no desktop "Local" folders; photos handed over by the pickers are *moved* into the library (`file.addPhotos {staged: true}`), never referenced in `tmp/`; a library opened from another folder than last time (iOS gives the container a new path on every app update) re-points the photos stored under its old folder (`location.json`, `library.info` → `relocated`) | P0 | tested on Linux; check on a device after an app update |
 | A1.5 | HEIC / HEIF decode (iPhone photos; import accepts `.heic` and then fails) | P0 | ImageIO behind the `FileLoader` hook |
 | A1.6 | Apple ProRAW / JPEG XL compressed DNG (rejected today) | P1 | codec work in `crates/raw` |
 | A1.7 | Memory budget for iOS (the probe returns nothing, so the 1.5 GiB default is too high); tiled full-resolution export (48 MP risk) | P0 | `crates/engine/src/memory.rs`, tiling in `pipeline` |

@@ -957,7 +957,11 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             if paths.is_empty() {
                 return Some(Ok(Value::Null));
             }
-            // review first: the import dialog lists what was found
+            // review first: the import dialog lists what was found. `staged`: the host copied the
+            // files into a temporary folder of its own (iOS pickers); they are moved into the library
+            if p.get("staged").and_then(Value::as_bool).unwrap_or(false) {
+                return Some(crate::import::open_staged(app, paths));
+            }
             crate::import::open(app, paths)
         }
         "app.quit" => {

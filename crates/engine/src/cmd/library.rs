@@ -975,6 +975,8 @@ pub fn specs() -> Vec<CommandSpec> {
                 "unsavedError": s.unsaved().map(|u| u.1),
                 // untouched Local records forgotten when the library opened
                 "forgotLocal": lib.forgot_local.as_ref().map(|p| json!({"forgotten": p.evict.len(), "local": p.local, "keptRecent": p.kept_recent, "keptTouched": p.kept_touched, "keptInUse": p.kept_in_use})),
+                // opened from another folder than last time: {from, photos} re-pointed at their new place
+                "relocated": lib.relocated,
                 "persistence": j.stats(),
                 "cache": cache,
                 "load": {

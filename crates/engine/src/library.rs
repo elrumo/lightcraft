@@ -6,9 +6,17 @@
 //!   catalog.snap   catalog.log      (lightcraft-catalog journal)
 //!   presets.json   view.json        (user presets + favourites; last source/sort/selection)
 //!   prefs.json     (library preferences: XMP sidecars, import defaults, cache size, last export)
+//!   location.json  (the folder the library was last opened from: see below)
 //!   thumbs/        (rendered thumbnail cache, safe to delete)
 //!   Originals/     (photos imported with "copy into library")
 //! ```
+//!
+//! Photos are stored by absolute path, those copied into `Originals/` included. A library that
+//! was moved (another disk, a renamed folder, or on iOS the app's container, which gets a new
+//! path on every app update) finds its own photos at the new place: when the folder it opens
+//! from differs from `location.json`, photos under the old folder whose file is now under the
+//! new one are pointed there (a logged change outside the undo history; not synced, paths are
+//! per device). See [`Session::open_library`] and [`Library::relocated`].
 //!
 //! The files live in [`Store`]s: a directory ([`FsStore`]) natively, or any other implementation
 //! via [`Session::open_library_in`] (the browser build keeps them in OPFS or IndexedDB).
@@ -33,13 +41,23 @@ use crate::{EngineError, LibrarySource, Result, Selection, Session};
 pub const DEFAULT_NAME: &str = "LightCraft Library";
 
 /// The default library location: `$LIGHTCRAFT_LIBRARY` if set, else `~/Pictures/LightCraft Library`
-/// (`%USERPROFILE%\Pictures\LightCraft Library` on Windows).
+/// (`%USERPROFILE%\Pictures\LightCraft Library` on Windows; on iOS `Documents/LightCraft Library`
+/// in the app's container: kept across launches and updates, backed up with the device).
 pub fn default_dir() -> Option<PathBuf> {
-    if let Some(p) = std::env::var_os("LIGHTCRAFT_LIBRARY").filter(|p| !p.is_empty()) {
+    default_dir_in(
+        std::env::var_os("LIGHTCRAFT_LIBRARY"),
+        if cfg!(windows) { std::env::var_os("USERPROFILE") } else { std::env::var_os("HOME") },
+        cfg!(target_os = "ios"),
+    )
+}
+
+/// [`default_dir`] from `$LIGHTCRAFT_LIBRARY`, the home folder and the platform.
+pub fn default_dir_in(library: Option<std::ffi::OsString>, home: Option<std::ffi::OsString>, ios: bool) -> Option<PathBuf> {
+    if let Some(p) = library.filter(|p| !p.is_empty()) {
         return Some(PathBuf::from(p));
     }
-    let home = if cfg!(windows) { std::env::var_os("USERPROFILE") } else { std::env::var_os("HOME") }?;
-    Some(PathBuf::from(home).join("Pictures").join(DEFAULT_NAME))
+    let home = PathBuf::from(home.filter(|h| !h.is_empty())?);
+    Some(home.join(if ios { "Documents" } else { "Pictures" }).join(DEFAULT_NAME))
 }
 
 pub struct Library {
@@ -62,6 +80,9 @@ pub struct Library {
     retry_at: Option<web_time::Instant>,
     /// What forgetting untouched Local records did when the library opened.
     pub forgot_local: Option<lightcraft_catalog::ForgetPlan>,
+    /// The library had moved since it was last opened: where from, and how many of its photos
+    /// were pointed at their new place (see the module docs).
+    pub relocated: Option<Relocated>,
     presets_written: String,
     /// Bumped whenever presets.json is written (the sync compares the presets then).
     presets_gen: u64,
@@ -76,6 +97,25 @@ pub struct Library {
     /// journal's background snapshot has landed).
     lock: Option<LibraryLock>,
 }
+
+/// A library opened from another folder than last time ([`Library::relocated`]).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Relocated {
+    /// The folder it was last opened from.
+    pub from: String,
+    /// Photos whose file was found under the new folder and now point there.
+    pub photos: usize,
+}
+
+/// The library's folder when it was last opened (`location.json`).
+#[derive(Default, Serialize, Deserialize)]
+#[serde(default)]
+struct LocationFile {
+    dir: String,
+}
+
+const LOCATION: &str = "location.json";
 
 /// Where a library's files live (see [`Session::open_library_in`]).
 pub struct LibraryStores {
@@ -388,6 +428,7 @@ impl Session {
             unsaved_error: None,
             retry_at: None,
             forgot_local: None,
+            relocated: None,
             presets_written,
             presets_gen: 0,
             view_written,
@@ -396,6 +437,9 @@ impl Session {
             blocked: settings.blocked,
             lock: lock.take(),
         });
+        if on_disk {
+            self.follow_moved_library();
+        }
         // forget untouched Local records of folders not browsed for a while (journaled at once)
         if self.forget_local_days > 0 {
             let plan = self.forget_local(false, None);
@@ -409,6 +453,68 @@ impl Session {
             }
         }
         Ok(())
+    }
+
+    /// A library opened from another folder than last time: point the photos stored under the
+    /// old folder at the same files under the new one (when they are there), then remember the
+    /// new folder. See the module docs.
+    fn follow_moved_library(&mut self) {
+        let Some(lib) = self.library.as_mut() else { return };
+        let dir = lib.dir.clone();
+        let now = dir.to_string_lossy().to_string();
+        let old = match lib.files.read(LOCATION) {
+            Ok(Some(b)) => serde_json::from_slice::<LocationFile>(&b).ok().map(|l| l.dir).filter(|d| !d.is_empty()),
+            Ok(None) => None,
+            Err(e) => {
+                log::warn!("library: {LOCATION}: {e}");
+                None
+            }
+        };
+        if old.as_deref() == Some(now.as_str()) {
+            return;
+        }
+        if let Some(old) = &old {
+            let from = Path::new(old);
+            let mut ops = Vec::new();
+            for p in self.catalog.photos() {
+                let lightcraft_catalog::Source::File { path } = &p.source else { continue };
+                let Ok(rest) = Path::new(path).strip_prefix(from) else { continue };
+                let to = dir.join(rest);
+                if to.is_file() {
+                    let source = lightcraft_catalog::Source::File { path: to.to_string_lossy().to_string() };
+                    ops.push(lightcraft_catalog::Op::Relink { id: p.id, file_name: p.file_name.clone(), source, format: None });
+                }
+            }
+            let mut moved = 0;
+            for op in ops {
+                // device-local (paths aren't synced) and not undoable: the old paths are gone
+                if self.catalog.apply(op.clone()).is_ok() {
+                    self.pending_log.push(op);
+                    moved += 1;
+                }
+            }
+            if let Some(d) = self.smart_previews_dir.as_ref().and_then(|d| d.strip_prefix(from).ok()).map(|rest| dir.join(rest)) {
+                self.media.smart_dir = Some(d.clone());
+                self.smart_previews_dir = Some(d);
+                if let Err(e) = self.save_prefs() {
+                    log::error!("library: {e}");
+                }
+            }
+            log::info!("library: moved from {old} to {now}; {moved} photo(s) now point at the new folder");
+            if moved > 0
+                && let Err(e) = self.persist()
+            {
+                log::error!("library: {e}");
+            }
+            if let Some(lib) = self.library.as_mut() {
+                lib.relocated = Some(Relocated { from: old.clone(), photos: moved });
+            }
+        }
+        let Some(lib) = self.library.as_mut() else { return };
+        let v = serde_json::to_vec(&LocationFile { dir: now }).unwrap_or_default();
+        if let Err(e) = lib.files.write_atomic(LOCATION, &v) {
+            log::error!("library: {LOCATION}: {e}");
+        }
     }
 
     /// Write pending ops to the log (fsynced), compact when due, and save changed presets.
