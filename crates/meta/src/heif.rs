@@ -43,7 +43,7 @@ pub fn is_heif(bytes: &[u8]) -> bool {
     let Some(ftyp) = bytes.get(8..size.min(bytes.len()).min(256)) else { return false };
     const BRANDS: [&[u8; 4]; 8] = [b"heic", b"heix", b"heim", b"heis", b"mif1", b"msf1", b"avif", b"avis"];
     // the major brand, then the compatible brands after the minor version
-    ftyp.chunks_exact(4).enumerate().filter(|(i, _)| *i != 1).any(|(_, b)| BRANDS.iter().any(|x| x.as_slice() == b))
+    ftyp.as_chunks::<4>().0.iter().enumerate().filter(|(i, _)| *i != 1).any(|(_, b)| BRANDS.contains(&b))
 }
 
 const MAX_BOXES: usize = 4096;
