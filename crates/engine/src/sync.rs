@@ -525,6 +525,53 @@ fn is_removal(op: &Op) -> bool {
     matches!(op, Op::RemovePhoto { .. } | Op::RemoveAlbum { .. } | Op::RemoveStack { .. })
 }
 
+/// A server address as typed: `photos.example.com` means `https://photos.example.com`, the scheme
+/// and host are lower-cased (phone keyboards capitalise the first letter) and trailing `/`s go.
+/// `None`: not an `http(s)://` address.
+pub fn server_address(typed: &str) -> Option<String> {
+    let t = typed.trim();
+    if t.contains(char::is_whitespace) {
+        return None;
+    }
+    let (scheme, rest) = match t.split_once("://") {
+        Some((scheme, rest)) => (scheme.to_ascii_lowercase(), rest),
+        None => ("https".to_string(), t),
+    };
+    let rest = rest.trim_end_matches('/');
+    let (host, path) = match rest.split_once('/') {
+        Some((host, path)) => (host, format!("/{path}")),
+        None => (rest, String::new()),
+    };
+    if !matches!(scheme.as_str(), "http" | "https") || !is_host_port(host) || path.contains(['?', '#']) {
+        return None;
+    }
+    Some(format!("{scheme}://{}{path}", host.to_ascii_lowercase()))
+}
+
+/// `name[:port]` or `[ipv6][:port]`.
+fn is_host_port(a: &str) -> bool {
+    let (name, port) = match a.strip_prefix('[') {
+        Some(v6) => match v6.split_once(']') {
+            Some((ip, "")) => (ip, None),
+            Some((ip, rest)) => match rest.strip_prefix(':') {
+                Some(port) => (ip, Some(port)),
+                None => return false,
+            },
+            None => return false,
+        },
+        None => match a.split_once(':') {
+            Some((name, port)) => (name, Some(port)),
+            None => (a, None),
+        },
+    };
+    let v6 = a.starts_with('[');
+    let name_ok = !name.is_empty()
+        && name
+            .chars()
+            .all(|c| if v6 { c.is_ascii_hexdigit() || matches!(c, ':' | '.') } else { c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') });
+    name_ok && port.is_none_or(|p| (1..=5).contains(&p.len()) && p.chars().all(|c| c.is_ascii_digit()))
+}
+
 impl Session {
     /// The library's sync, when it was ever signed in.
     pub fn sync_state(&self) -> Option<&SyncState> {
@@ -544,10 +591,11 @@ impl Session {
     /// that has photos can only start syncing with an empty server library (it uploads them);
     /// to get a server's photos, sign in from a new library.
     pub fn sync_sign_in(&mut self, server: &str, user: &str, password: &str, device: &str) -> Result<()> {
-        let server = server.trim().trim_end_matches('/');
-        if !(server.starts_with("http://") || server.starts_with("https://")) || server.contains(char::is_whitespace) {
-            return Err(EngineError::Other(format!("not a server address: `{server}` (http://… or https://…)")));
-        }
+        let typed = server;
+        let Some(server) = server_address(typed) else {
+            return Err(EngineError::Other(format!("not a server address: `{}` (https://… or http://…)", typed.trim())));
+        };
+        let server = server.as_str();
         if user.trim().is_empty() {
             return Err(EngineError::Other("a user name is needed".into()));
         }
@@ -555,7 +603,7 @@ impl Session {
             return Err(EngineError::Other("sync needs a library that is saved (open or create one first)".into()));
         }
         let st = self.sync.get_or_insert_with(|| SyncState::new(SyncConfig::default()));
-        if !st.config.library.is_empty() && (st.config.server != server || st.config.user != user) {
+        if !st.config.library.is_empty() && (!st.config.server.eq_ignore_ascii_case(server) || st.config.user != user) {
             return Err(EngineError::Other(format!(
                 "this library is a copy of {}'s library on {}: sign in there, or use a new library for another server or user",
                 st.config.user, st.config.server
@@ -1080,8 +1128,16 @@ impl Session {
             if !st.config.library.is_empty() {
                 return Err("this library is a copy of another library on that server: use a new library".into());
             }
+            // the procedural demo photos a new library starts with don't count: the server's
+            // library replaces them (an empty one too: they are never uploaded on their own)
+            let user_photo = |p: &Photo| !p.local && !matches!(p.source, Source::Demo { .. });
+            let has_photos = self.catalog.photos().any(|p| user_photo(p))
+                || self
+                    .catalog
+                    .albums()
+                    .any(|a| a.smart.is_some() || a.photos.iter().any(|id| self.catalog.photo(*id).is_some_and(|p| user_photo(p))));
             let server_empty = snap.seq == 0 && snap.catalog.is_empty() && snap.catalog.albums().next().is_none();
-            if server_empty {
+            if server_empty && has_photos {
                 // the first device: upload this library
                 st.config.library = snap.library;
                 st.config.cursor = 0;
@@ -1089,14 +1145,6 @@ impl Session {
                 st.outbox_changed();
                 return Ok(());
             }
-            // the procedural demo photos a new library starts with don't count: the server's
-            // library replaces them
-            let user_photo = |p: &Photo| !p.local && !matches!(p.source, Source::Demo { .. });
-            let has_photos = self.catalog.photos().any(|p| user_photo(p))
-                || self
-                    .catalog
-                    .albums()
-                    .any(|a| a.smart.is_some() || a.photos.iter().any(|id| self.catalog.photo(*id).is_some_and(|p| user_photo(p))));
             if has_photos {
                 return Err(
                     "this library has photos and the server already has a library: sign in from a new library to get the server's photos".into()

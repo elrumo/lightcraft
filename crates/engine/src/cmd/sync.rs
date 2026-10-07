@@ -40,10 +40,11 @@ fn sign_in(s: &mut Session, p: &Value) -> Result<Value> {
     status(s, p)
 }
 
-/// A name for this device on the server.
+/// A name for this device on the server: `$LIGHTCRAFT_DEVICE` (the iOS host sets the device's
+/// name), else the computer's name.
 fn default_device_name() -> String {
-    let host = std::env::var("HOSTNAME").or_else(|_| std::env::var("COMPUTERNAME")).ok().filter(|h| !h.trim().is_empty());
-    host.unwrap_or_else(|| format!("LightCraft ({})", std::env::consts::OS))
+    let named = ["LIGHTCRAFT_DEVICE", "HOSTNAME", "COMPUTERNAME"].iter().find_map(|v| std::env::var(v).ok().filter(|h| !h.trim().is_empty()));
+    named.unwrap_or_else(|| format!("LightCraft ({})", std::env::consts::OS))
 }
 
 fn sign_out(s: &mut Session, p: &Value) -> Result<Value> {

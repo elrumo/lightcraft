@@ -1,7 +1,11 @@
-//! LightCraft on iOS, phase 0 spike (`docs/ios.md`): the desktop egui UI on a throwaway in-memory
-//! demo library, started from the C `main` of the Xcode project in `xcode/`. No pickers, no
-//! persistence, no touch layout yet; the point is to see it run on the simulator and a device.
+//! LightCraft on iOS, phase 0 spike (`docs/ios.md`): the desktop egui UI, started from the C `main`
+//! of the Xcode project in `xcode/`. The library is saved in the app's Documents folder (new ones
+//! start with the demo photos) and can sync with a self-hosted server (Settings ▸ Sync,
+//! `docs/sync.md`). No pickers and no touch layout yet.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
+
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
 
 use lightcraft_engine::Session;
 use lightcraft_ui_egui::{LightcraftApp, Services};
@@ -56,6 +60,38 @@ fn wgpu_options() -> eframe::egui_wgpu::WgpuConfiguration {
     c
 }
 
+/// Where the library lives: `$LIGHTCRAFT_LIBRARY`, else `LightCraft Library` in the app's Documents
+/// folder (on iOS `$HOME` is the app's container: kept across launches and updates, backed up).
+pub fn library_dir(library: Option<OsString>, home: Option<OsString>) -> Option<PathBuf> {
+    let library = library.filter(|l| !l.is_empty()).map(PathBuf::from);
+    library.or_else(|| home.filter(|h| !h.is_empty()).map(|h| PathBuf::from(h).join("Documents").join("LightCraft Library")))
+}
+
+/// The library on the device (a new one starts with the demo photos), or, when it can't be opened,
+/// the in-memory demo library — nothing saved, no sync — with the reason in the log.
+pub fn open_session(dir: Option<&Path>) -> Session {
+    match dir {
+        Some(dir) => {
+            let mut s = Session::new().with_fs().with_system_clock();
+            match s.open_library(dir, true) {
+                Ok(r) => {
+                    let replayed = r.replayed;
+                    log::info!("library {}: {} photos, {replayed} log records replayed", dir.display(), s.catalog.len());
+                    return s;
+                }
+                Err(e) => log::error!("can't open the library {}: {e}; using an in-memory demo library (not saved, can't sync)", dir.display()),
+            }
+        }
+        None => log::error!("no home folder for the library; using an in-memory demo library (not saved, can't sync)"),
+    }
+    Session::with_demo().with_fs().with_system_clock()
+}
+
+/// What the app can do on iOS: sync requests on worker threads (pure-Rust TLS, Mozilla roots).
+fn services() -> Services {
+    Services { sync_exec: Some(lightcraft_ui_egui::sync_ui::native_exec()), ..Services::default() }
+}
+
 /// Runs the app; returns when the event loop ends (on iOS, normally never).
 pub fn run() -> eframe::Result {
     let _ = log::set_logger(&FileLog).map(|()| log::set_max_level(log::LevelFilter::Info));
@@ -64,8 +100,8 @@ pub fn run() -> eframe::Result {
         "LightCraft",
         eframe::NativeOptions { wgpu_options: wgpu_options(), ..Default::default() },
         Box::new(|_cc| {
-            let session = Session::with_demo().with_fs().with_system_clock();
-            Ok(Box::new(App(LightcraftApp::new(session, Services::default()))))
+            let dir = library_dir(std::env::var_os("LIGHTCRAFT_LIBRARY"), std::env::var_os("HOME"));
+            Ok(Box::new(App(LightcraftApp::new(open_session(dir.as_deref()), services()))))
         }),
     )
 }
@@ -81,4 +117,40 @@ pub extern "C" fn lightcraft_ios_main() {
         Err(e) => format!("lightcraft: {e}"),
     };
     log::error!("{msg}");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_library_is_kept_in_documents() {
+        let dir = library_dir(None, Some("/var/mobile/Containers/Data/Application/X".into()));
+        assert_eq!(dir, Some(PathBuf::from("/var/mobile/Containers/Data/Application/X/Documents/LightCraft Library")));
+        assert_eq!(library_dir(Some("/tmp/lib".into()), Some("/home".into())), Some(PathBuf::from("/tmp/lib")));
+        assert_eq!(library_dir(Some("".into()), None), None);
+    }
+
+    #[test]
+    fn a_saved_library_can_sign_in_and_the_fallback_says_why_not() {
+        let root = std::env::temp_dir().join(format!("lightcraft-ios-test-{}", std::process::id()));
+        let home = root.join("home");
+        let dir = library_dir(None, Some(home.into_os_string())).unwrap();
+        let mut s = open_session(Some(&dir));
+        assert_ne!(s.catalog.len(), 0, "a new library starts with the demo photos");
+        assert!(dir.is_dir());
+        s.sync_sign_in("photos.example.com", "ann", "a password", "iPhone").unwrap();
+        drop(s);
+        // reopened: the same library, still signed in to the same server
+        let s = open_session(Some(&dir));
+        assert_eq!(s.sync_state().map(|st| st.status()["server"].clone()), Some("https://photos.example.com".into()));
+        drop(s);
+        // a library that can't be opened (a file in the way) falls back to the demo, which can't sync
+        let blocked = root.join("blocked");
+        std::fs::write(&blocked, b"not a folder").unwrap();
+        let mut s = open_session(Some(&blocked));
+        assert_ne!(s.catalog.len(), 0);
+        assert!(s.sync_sign_in("https://photos.example.com", "ann", "a password", "iPhone").is_err());
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }

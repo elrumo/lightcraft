@@ -8,8 +8,8 @@ in, and only to the server you name.
 - **Server:** `apps/lightcraft-server`, one pure-Rust binary (or a Docker image). It keeps each user's library and
   photo files, orders every device's changes, and serves the web build at `/`.
 - **Clients:** the desktop app (Settings ▸ Sync), the web build the server serves (open the server's address in a
-  browser, Settings ▸ Sync) and `lightcraft-cli`/MCP. An iOS app is next: the protocol is plain HTTP + JSON and the
-  device side is sans-IO Rust (`crates/engine/src/sync.rs`, `crates/catalog/src/sync.rs`).
+  browser, Settings ▸ Sync), the iOS app (a spike: [ios.md](ios.md)) and `lightcraft-cli`/MCP. The protocol is plain
+  HTTP + JSON and the device side is sans-IO Rust (`crates/engine/src/sync.rs`, `crates/catalog/src/sync.rs`).
 - **v1 is one person's devices.** Sharing albums with other people comes later.
 
 ## Run a server
@@ -126,14 +126,15 @@ Every client needs the same three things: the **server address** (`https://photo
 `http://machine-name:8080` on a tailnet), a **user name** and its **password**, as added on
 [the admin page](#the-admin-page) or with `lightcraft-server user add`. The password goes to the server once; the
 device gets its own token (kept in the library's `sync.json`), which revoking the device (admin page or
-`lightcraft-server device revoke`) or Sign Out ends.
+`lightcraft-server device revoke`) or Sign Out ends. A bare `photos.example.com` means `https://photos.example.com`.
+The device is listed on the server under the computer's name (`$LIGHTCRAFT_DEVICE` to choose another).
 
 | Client | How |
 |---|---|
 | Desktop app | **Settings ▸ Sync** (or click the cloud icon in the top bar): server, user, password, **Sign In** |
 | Browser | open the server's address: the server serves the web build, and Settings ▸ Sync has the address filled in |
 | Command line / agents | `lightcraft-cli run --library DIR sync.signIn server=… user=… password=… sync.now wait=true` |
-| iOS (later) | the same three fields, the same API |
+| iOS (spike, [ios.md](ios.md)) | **Settings ▸ Sync**, as on the desktop; the library is kept in the app's Documents folder |
 
 Users and devices are managed on the server: on [the admin page](#the-admin-page) or from its command line
 (`user add / passwd / admin / remove / list`, `device list / revoke`, `gc`; see the table above).
@@ -141,7 +142,8 @@ Users and devices are managed on the server: on [the admin page](#the-admin-page
 ## What happens at sign-in
 
 - **The first library** signed in to an empty server **uploads itself**: every photo's original, a smart preview
-  (≤ 2560 px, ~1 MB) and a mini preview (≤ 512 px) built on this device, then the whole catalog.
+  (≤ 2560 px, ~1 MB) and a mini preview (≤ 512 px) built on this device, then the whole catalog. A library holding
+  only the demo photos uploads nothing: the empty server library replaces them.
 - **Other devices sign in from a new, empty library** (Settings ▸ General ▸ Open Library… → a new folder). A library
   that already has photos can't join a server library that has some: v1 doesn't merge two libraries. A new library
   holding only the demo photos counts as empty (the server's library replaces them).
@@ -230,7 +232,8 @@ refused.
 
 v1, honestly:
 
-- **No iOS app yet** (it would reuse this protocol and the sans-IO device code).
+- **The iOS app is a spike** ([ios.md](ios.md)): the desktop UI on the simulator, not touch-adapted; sync there is
+  untested on a device.
 - **In the browser** the web build signs in to the server that serves it (same origin; no cross-origin servers). Synced
   previews and downloaded originals are kept in the browser's storage. Commands that read a photo's pixels on the main
   thread (auto settings, export) need its original there: **Photo ▸ Download Originals** first. A photo imported in

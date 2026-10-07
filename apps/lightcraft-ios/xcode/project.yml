@@ -18,6 +18,8 @@ targets:
       path: Info.plist
       properties:
         CFBundleDisplayName: LightCraft
+        # sync with a LightCraft server on the home network (docs/sync.md); iOS asks once
+        NSLocalNetworkUsageDescription: LightCraft syncs your library with your own LightCraft server, which can be on this network.
         UILaunchScreen: {}
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false

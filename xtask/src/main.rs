@@ -30,7 +30,7 @@ commands:
                   check docs/parity.md (every cmd:/ctl: id and path it cites exists) and print the
                   Lightroom parity summary; --write refreshes the summary table in the document
   wasm            cargo check --target wasm32-unknown-unknown for the wasm-safe crates (+ the web app)
-  ios             cargo check --target aarch64-apple-ios for the same crates (needs `rustup target add aarch64-apple-ios`;
+  ios             cargo check --target aarch64-apple-ios for the same crates (+ the iOS app; needs `rustup target add aarch64-apple-ios`;
                   type-checks only: building and running on a device needs macOS + Xcode)
   web [--serve [port]] [--dev]
                   build the browser app (apps/lightcraft-web) into <target>/web/;
@@ -154,6 +154,11 @@ fn wasm_set() -> Result<Vec<String>, String> {
     Ok(portable_set()?.into_iter().chain(std::iter::once("lightcraft-web".to_string())).collect())
 }
 
+/// Workspace packages that must build for iOS: the portable set plus the iOS app.
+fn ios_set() -> Result<Vec<String>, String> {
+    Ok(portable_set()?.into_iter().chain(std::iter::once("lightcraft-ios".to_string())).collect())
+}
+
 fn cmd_wasm() -> Result<(), String> {
     check_target("wasm32-unknown-unknown", &wasm_set()?)
 }
@@ -161,7 +166,7 @@ fn cmd_wasm() -> Result<(), String> {
 /// iOS device target. A type-check only: it proves the crates have no desktop-only code on the iOS path (the
 /// engine, GPU and egui shell all compile for it), not that an app links and runs; that needs macOS + Xcode.
 fn cmd_ios() -> Result<(), String> {
-    check_target("aarch64-apple-ios", &portable_set()?)
+    check_target("aarch64-apple-ios", &ios_set()?)
 }
 
 fn check_target(target: &str, set: &[String]) -> Result<(), String> {

@@ -10,7 +10,7 @@ use lightcraft_catalog::{MemStore, Op, PhotoId, Source};
 use serde_json::{Value, json};
 
 use crate::Session;
-use crate::sync::{Body, Done, Task, is_remote};
+use crate::sync::{Body, Done, Task, is_remote, server_address};
 
 fn temp_dir(tag: &str) -> PathBuf {
     let d = std::env::temp_dir().join(format!("lc-sync-{tag}-{}", std::process::id()));
@@ -268,6 +268,29 @@ fn joining_from_a_demo_library_takes_the_servers_photos_whole() {
         assert!(is_remote(pb), "{:?}", pb.source);
     }
     assert!(b.selection.active.is_none_or(|id| ids.contains(&id)));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn demo_photos_alone_are_never_uploaded() {
+    let mut f = Fake::new();
+    let root = temp_dir("demofirst");
+    let mut a = Session::new().with_fs();
+    a.open_library(root.join("a"), true).unwrap();
+    assert!(a.catalog.len() > 2, "seeded with the demo photos");
+    sign_in(&mut a);
+    sync(&mut a, &mut f);
+    assert_eq!(a.catalog.len(), 0, "the empty server library replaces the demo photos");
+    assert_eq!(f.core.head(), 0, "nothing was uploaded");
+    // the device's own photos go up as usual
+    write_png(&root.join("in/a.png"), 1);
+    a.execute("library.import", &json!({"paths": [root.join("in").to_string_lossy()]})).unwrap();
+    sync(&mut a, &mut f);
+    assert!(f.core.head() > 0);
+    let mut b = open(&root.join("b"));
+    sign_in(&mut b);
+    sync(&mut b, &mut f);
+    assert_eq!(b.catalog.len(), 1);
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -555,5 +578,42 @@ fn a_browser_shares_the_library_through_its_storage() {
     b.sync_now_with(10_000, &mut |t| browser(&mut f, &mut storage, t));
     assert!(storage.contains_key(&BrowserStore::original_key(&key(&b, ids[1]))));
     assert!(is_remote(b.catalog.photo(ids[1]).unwrap()), "no relink in the browser");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn server_addresses_as_a_phone_keyboard_types_them() {
+    let ok = |typed: &str| server_address(typed).unwrap_or_else(|| panic!("{typed}"));
+    assert_eq!(ok("photos.example.com"), "https://photos.example.com");
+    assert_eq!(ok(" Https://Photos.Example.com/ "), "https://photos.example.com");
+    assert_eq!(ok("HTTP://Pi:8080"), "http://pi:8080");
+    assert_eq!(ok("http://100.64.0.1:8080/lightcraft/"), "http://100.64.0.1:8080/lightcraft");
+    assert_eq!(ok("http://[FD7A::1]:8080"), "http://[fd7a::1]:8080");
+    for bad in [
+        "",
+        "   ",
+        "https://",
+        "https:",
+        "ftp://x",
+        "a b.com",
+        "https://user@host",
+        "https:///path",
+        "/",
+        "mailto:x@y",
+        "host:",
+        "host:80a",
+        "[::1",
+        "[::1]:",
+        "[::1]x",
+        "[]",
+        "https://x.com/?q",
+    ] {
+        assert_eq!(server_address(bad), None, "{bad:?}");
+    }
+    // a library signed in to a server stays that server's however its address is typed
+    let root = temp_dir("address");
+    let mut s = open(&root.join("a"));
+    s.sync_sign_in("Photos.Example.com", "ann", "pw", "Phone").unwrap();
+    assert_eq!(s.sync_state().unwrap().config.server, "https://photos.example.com");
     let _ = std::fs::remove_dir_all(&root);
 }
