@@ -49,3 +49,28 @@ fn tapping_the_open_tool_closes_the_sheet() {
     h.settle(SETTLE);
     assert_eq!(h.app.ui.right, RightPanel::None);
 }
+
+#[test]
+fn swiping_a_fitted_photo_changes_photo_and_a_tap_does_not_zoom() {
+    let mut h = detail([390.0, 844.0]);
+    let first_in_view = h.app.session.visible()[0];
+    let r = h.request("engine.execute", json!({"command": "library.select", "params": {"ids": [first_in_view.0]}}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    let first = h.app.session.active();
+    assert_eq!(first, Some(first_in_view));
+    // a tap on the fitted photo leaves it fitted (desktop would zoom to 2:1)
+    let r = h.request("ui.pointer", json!({"events": [{"kind": "down", "x": 0.5, "y": 0.5}, {"kind": "up", "x": 0.5, "y": 0.5}]}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    assert_eq!(h.app.ui.zoom, crate::state::Zoom::Fit);
+    // a long sideways drag goes to the next photo
+    let ev: Vec<_> = [("down", 0.9), ("drag", 0.5), ("drag", 0.0), ("drag", -0.5), ("up", -0.5)]
+        .iter()
+        .map(|(k, x)| json!({"kind": k, "x": x, "y": 0.5}))
+        .collect();
+    let r = h.request("ui.pointer", json!({"events": ev}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    assert_ne!(h.app.session.active(), first, "swipe left shows the next photo");
+}

@@ -741,6 +741,40 @@ fn clipping_overlay(app: &LightcraftApp, p: &egui::Painter, r: Rect) {
     }
 }
 
+/// How far (points) a one-finger swipe must travel to change photo.
+const SWIPE_MIN_PT: f32 = 80.0;
+
+/// Two-finger gestures on the loupe: pinch zooms (back to Fit when it shrinks past the fitted
+/// size), two fingers pan a zoomed photo. Returns whether two or more fingers are down, so the
+/// one-finger pan and swipe stand down.
+#[allow(clippy::too_many_arguments)]
+fn touch_gestures(app: &mut LightcraftApp, ui: &egui::Ui, img: Rect, canvas: Rect, native: [usize; 2], aspect: f32, zoomed: bool) -> bool {
+    let Some(mt) = ui.input(|i| i.multi_touch()) else { return false };
+    let ppp = ui.ctx().pixels_per_point();
+    if (mt.zoom_delta - 1.0).abs() > 1e-4 {
+        let fit_w = fit_rect(canvas, aspect, Zoom::Fit, native, ppp, app.ui.pan).width();
+        let w = img.width() * mt.zoom_delta;
+        if w <= fit_w {
+            app.ui.zoom = Zoom::Fit;
+        } else {
+            if !zoomed {
+                // start the zoom under the fingers
+                app.ui.pan =
+                    (((mt.center_pos.x - img.left()) / img.width()).clamp(0.0, 1.0), ((mt.center_pos.y - img.top()) / img.height()).clamp(0.0, 1.0));
+            }
+            let pct = w * ppp / native[0].max(1) as f32 * 100.0;
+            app.ui.zoom = Zoom::Percent(pct.clamp(5.0, 800.0).round() as u32);
+        }
+        app.ui.zoom_anim = false;
+    }
+    if zoomed {
+        let d = mt.translation_delta;
+        app.ui.pan.0 = (app.ui.pan.0 - d.x / img.width()).clamp(0.0, 1.0);
+        app.ui.pan.1 = (app.ui.pan.1 - d.y / img.height()).clamp(0.0, 1.0);
+    }
+    true
+}
+
 fn general_interaction(
     app: &mut LightcraftApp,
     ui: &mut egui::Ui,
@@ -793,9 +827,11 @@ fn general_interaction(
         }
         return;
     }
-    // click toggles Fit ↔ the click-zoom ratio (2:1/3:1/5:1) at the clicked point; drag pans when zoomed
     let zoomed = img.width() > canvas.width() + 1.0 || img.height() > canvas.height() + 1.0;
-    if resp.double_clicked() || (resp.clicked() && !zoomed) {
+    let two_fingers = touch_gestures(app, ui, img, canvas, native, aspect, zoomed);
+    // click toggles Fit ↔ the click-zoom ratio (2:1/3:1/5:1) at the clicked point; drag pans when zoomed.
+    // On a touch layout only a double tap zooms (a single tap must not move the photo).
+    if resp.double_clicked() || (resp.clicked() && !zoomed && !app.compact) {
         if let Some(q) = resp.interact_pointer_pos() {
             let u = ((q.x - img.left()) / img.width()).clamp(0.0, 1.0);
             let v = ((q.y - img.top()) / img.height()).clamp(0.0, 1.0);
@@ -803,7 +839,7 @@ fn general_interaction(
         }
         app.ui.zoom = if matches!(app.ui.zoom, Zoom::Fit) { Zoom::Percent(app.ui.click_zoom) } else { Zoom::Fit };
         app.ui.zoom_anim = true;
-    } else if resp.clicked() && zoomed {
+    } else if resp.clicked() && zoomed && !app.compact {
         app.ui.zoom = Zoom::Fit;
         app.ui.zoom_anim = true;
     }
@@ -812,11 +848,25 @@ fn general_interaction(
         if resp.dragged() || resp.hovered() {
             ui.ctx().set_cursor_icon(if resp.dragged() { egui::CursorIcon::Grabbing } else { egui::CursorIcon::Grab });
         }
-        if resp.dragged() {
+        if resp.dragged() && !two_fingers {
             let dlt = resp.drag_delta();
             app.ui.pan.0 = (app.ui.pan.0 - dlt.x / img.width()).clamp(0.0, 1.0);
             app.ui.pan.1 = (app.ui.pan.1 - dlt.y / img.height()).clamp(0.0, 1.0);
         }
+    } else if app.compact && !two_fingers && resp.dragged() {
+        if let Some(d) = resp.total_drag_delta() {
+            ui.data_mut(|m| m.insert_temp(egui::Id::new("loupe-swipe"), d));
+        }
+    } else if app.compact && !two_fingers && resp.drag_stopped() && !app.ui.zoom_anim {
+        // swipe sideways across a fitted photo: the next / previous one (egui has no total on the
+        // release frame: use the last one seen while dragging)
+        if let Some(d) = ui.data(|d| d.get_temp::<egui::Vec2>(egui::Id::new("loupe-swipe")))
+            && d.x.abs() >= SWIPE_MIN_PT
+            && d.x.abs() > 2.0 * d.y.abs()
+        {
+            let _ = app.run(if d.x < 0.0 { "library.next" } else { "library.previous" }, json!({}));
+        }
+        ui.data_mut(|m| m.remove_temp::<egui::Vec2>(egui::Id::new("loupe-swipe")));
     }
     let _ = (native, aspect);
 }
