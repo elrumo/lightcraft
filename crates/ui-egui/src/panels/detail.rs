@@ -741,6 +741,9 @@ fn clipping_overlay(app: &LightcraftApp, p: &egui::Painter, r: Rect) {
     }
 }
 
+/// How far (points) from a crop handle a finger still grabs it (a handle is 44 pt wide with margin).
+const TOUCH_HANDLE_REACH: f32 = 28.0;
+
 /// How far (points) a one-finger swipe must travel to change photo.
 const SWIPE_MIN_PT: f32 = 80.0;
 
@@ -923,19 +926,24 @@ fn crop_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respons
     }
     // handles: 0..3 corners, 4..7 edges (top, right, bottom, left)
     let handles: Vec<Pos2> = (0..8).map(|i| if i < 4 { pts[i] } else { lerp(pts[i - 4], pts[(i - 3) % 4], 0.5) }).collect();
+    // touch: handles about a finger wide (the drawn marks grow too), grabbed by the nearest one in reach
+    let (reach, grow) = if app.compact { (TOUCH_HANDLE_REACH, 2.0) } else { (12.0, 1.0) };
     for (i, h) in handles.iter().enumerate() {
-        register(ui.ctx(), format!("cropHandle:{i}"), Rect::from_center_size(*h, vec2(14.0, 14.0)));
-        let s = if i < 4 { 12.0 } else { 9.0 };
-        p.rect_filled(Rect::from_center_size(*h, vec2(s, 3.0)), 0.0, Color32::WHITE);
-        p.rect_filled(Rect::from_center_size(*h, vec2(3.0, s)), 0.0, Color32::WHITE);
+        register(ui.ctx(), format!("cropHandle:{i}"), Rect::from_center_size(*h, vec2(14.0, 14.0) * grow));
+        let s = (if i < 4 { 12.0 } else { 9.0 }) * grow;
+        p.rect_filled(Rect::from_center_size(*h, vec2(s, 3.0 * grow)), 0.0, Color32::WHITE);
+        p.rect_filled(Rect::from_center_size(*h, vec2(3.0 * grow, s)), 0.0, Color32::WHITE);
     }
+    let grab = |q: Pos2| {
+        handles.iter().enumerate().filter(|(_, h)| h.distance(q) < reach).min_by(|a, b| a.1.distance(q).total_cmp(&b.1.distance(q))).map(|(i, _)| i)
+    };
     let inside = |q: Pos2| {
         let n = map.norm(q);
         let s = to_straight(n, d.crop.geometry.angle, frame);
         d.crop.geometry.rect.contains(Point::new(s.x.clamp(-1.0, 2.0), s.y))
     };
     if let Some(hq) = resp.hover_pos() {
-        let near = handles.iter().position(|h| h.distance(hq) < 12.0);
+        let near = grab(hq);
         ui.ctx().set_cursor_icon(match near {
             Some(0 | 2) => egui::CursorIcon::ResizeNwSe,
             Some(1 | 3) => egui::CursorIcon::ResizeNeSw,
@@ -949,7 +957,7 @@ fn crop_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respons
     if resp.double_clicked()
         && let Some(q) = resp.interact_pointer_pos()
         && inside(q)
-        && !handles.iter().any(|h| h.distance(q) < 12.0)
+        && grab(q).is_none()
     {
         let _ = app.run("tool.done", json!({}));
         return;
@@ -958,7 +966,9 @@ fn crop_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respons
         && let Some(q) = resp.interact_pointer_pos()
     {
         let _ = app.run("develop.beginInteraction", json!({"label": "Crop"}));
-        app.gesture = Some(match handles.iter().position(|h| h.distance(q) < 12.0) {
+        // a finger has moved a few points by the time the drag starts: pick the handle where it went down
+        let q0 = if app.compact { ui.input(|i| i.pointer.press_origin()).unwrap_or(q) } else { q };
+        app.gesture = Some(match grab(q0) {
             Some(h) => Gesture::CropHandle { handle: h as u8, start: d.crop.geometry.rect, angle: d.crop.geometry.angle },
             None if inside(q) => Gesture::CropHandle { handle: 8, start: d.crop.geometry.rect, angle: d.crop.geometry.angle },
             None => {
@@ -1217,7 +1227,7 @@ fn mask_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respons
                 && let Some(at) = component_pin(&c.shape)
             {
                 let q = map.screen(at);
-                pin(p, q, sel);
+                pin(p, q, sel, app.compact);
                 register(ui.ctx(), format!("maskPin:{}:{ci}", m.id), Rect::from_center_size(q, vec2(14.0, 14.0)));
                 grips.push((m.id, ci, 0, q));
             }
@@ -1261,10 +1271,11 @@ fn mask_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respons
         return;
     }
     // the grip under the pointer: the selected mask's first, then the nearest
+    let reach = if app.compact { TOUCH_HANDLE_REACH } else { 10.0 };
     let hit = |q: Pos2| {
         grips
             .iter()
-            .filter(|g| g.3.distance(q) < 10.0)
+            .filter(|g| g.3.distance(q) < reach)
             .min_by(|a, b| {
                 (Some(a.0) != active, a.3.distance(q)).partial_cmp(&(Some(b.0) != active, b.3.distance(q))).unwrap_or(std::cmp::Ordering::Equal)
             })
@@ -1322,9 +1333,10 @@ fn frame_long_norm(map: &CanvasMap) -> (f64, f64) {
     (l / x.max(1e-9), l / y.max(1e-9))
 }
 
-fn pin(p: &egui::Painter, c: Pos2, sel: bool) {
-    p.circle_filled(c, 6.0, if sel { Color32::from_rgb(1, 101, 221) } else { Color32::from_gray(200) });
-    p.circle_stroke(c, 6.0, Stroke::new(1.5, Color32::WHITE));
+fn pin(p: &egui::Painter, c: Pos2, sel: bool, touch: bool) {
+    let r = if touch { 11.0 } else { 6.0 };
+    p.circle_filled(c, r, if sel { Color32::from_rgb(1, 101, 221) } else { Color32::from_gray(200) });
+    p.circle_stroke(c, r, Stroke::new(1.5, Color32::WHITE));
 }
 
 // ------------------------------------------------------------------------ remove
@@ -1356,16 +1368,17 @@ fn remove_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respo
             register(ui.ctx(), format!("spotSource:{i}"), Rect::from_center_size(sq, vec2(14.0, 14.0)));
             grips.push((i, true, sq, r));
         }
-        pin(&p, tq, sel);
+        pin(&p, tq, sel, app.compact);
         register(ui.ctx(), format!("spotPin:{i}"), Rect::from_center_size(tq, vec2(14.0, 14.0)));
         grips.push((i, false, tq, r));
     }
     let r = (app.ui.remove_size as f64 * long) as f32;
     // a target or source under `q`: the selected spot's first, then the nearest pin
+    let min_reach = if app.compact { TOUCH_HANDLE_REACH } else { 8.0 };
     let hit = |q: Pos2| {
         grips
             .iter()
-            .filter(|g| g.2.distance(q) < g.3.max(8.0))
+            .filter(|g| g.2.distance(q) < g.3.max(min_reach))
             .min_by(|a, b| {
                 (Some(a.0) != active, a.2.distance(q)).partial_cmp(&(Some(b.0) != active, b.2.distance(q))).unwrap_or(std::cmp::Ordering::Equal)
             })

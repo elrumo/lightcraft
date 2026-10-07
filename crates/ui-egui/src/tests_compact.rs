@@ -125,3 +125,20 @@ fn presets_are_a_tab_and_the_sidebar_is_a_page_that_closes_on_choosing() {
     assert!(!h.app.ui.left_panel);
     assert_eq!(h.app.session.source, lightcraft_engine::LibrarySource::Picks);
 }
+
+#[test]
+fn compact_crop_handles_are_grabbed_from_a_finger_width_away() {
+    let mut h = detail([390.0, 1000.0]);
+    h.app.ui.right = RightPanel::Crop;
+    h.settle(SETTLE);
+    let id = h.app.session.active().expect("active photo");
+    let corner = h.app.widgets.iter().find(|(w, _)| w == "cropHandle:0").map(|(_, r)| r.center()).expect("top-left handle");
+    // 25 pt inside the corner: a desktop press there moves the whole box, a finger takes the corner
+    let from = corner + egui::vec2(18.0, 18.0);
+    let r = h.request("ui.drag", json!({"x": from.x, "y": from.y, "toX": from.x + 40.0, "toY": from.y + 40.0, "steps": 6}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    let rect = h.app.session.develop_of(id).expect("settings").crop.geometry.rect;
+    assert!(rect.x0 > 0.05 && rect.y0 > 0.02, "the corner moved in: {rect:?}");
+    assert!((rect.x1 - 1.0).abs() < 1e-6 && (rect.y1 - 1.0).abs() < 1e-6, "the opposite corner stayed: {rect:?}");
+}
