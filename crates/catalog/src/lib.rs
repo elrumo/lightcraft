@@ -697,4 +697,6 @@ mod tests_local;
 #[cfg(test)]
 mod tests_lock;
 #[cfg(test)]
+mod tests_sync;
+#[cfg(test)]
 mod tests_torn_append;

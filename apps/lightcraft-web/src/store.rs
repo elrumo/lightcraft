@@ -15,23 +15,10 @@ use std::sync::{Arc, Mutex};
 use lightcraft_engine::files::{load_bytes, probe_bytes};
 use lightcraft_engine::media::{FileLoader, FileProbe};
 
-/// Prefix of the catalog paths of files kept in browser storage.
-pub const PATH_PREFIX: &str = "web/";
+pub use lightcraft_engine::catalog::sync::{PATH_PREFIX, hash_of_path, original_path};
 
 /// Memory budget for original bytes on the main thread.
 const MEM_BUDGET: usize = 768 << 20;
-
-/// Catalog path for a stored original.
-pub fn original_path(hash: &str, name: &str) -> String {
-    let name = name.rsplit(['/', '\\']).next().filter(|n| !n.is_empty()).unwrap_or("photo");
-    format!("{PATH_PREFIX}{hash}/{name}")
-}
-
-/// The content hash in a path made by [`original_path`].
-pub fn hash_of_path(path: &str) -> Option<&str> {
-    let (hash, _) = path.strip_prefix(PATH_PREFIX)?.split_once('/')?;
-    (!hash.is_empty()).then_some(hash)
-}
 
 /// Storage key of an original.
 pub fn storage_key(hash: &str) -> String {

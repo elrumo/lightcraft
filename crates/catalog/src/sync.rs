@@ -263,6 +263,12 @@ impl Outbox {
                 (op.clone(), inverse.clone())
             }
         };
+        self.upsert(latest, base);
+    }
+
+    /// Queue `latest` (which replaced `base`): a new entry, or the pending one for the same value
+    /// updated and moved to the end.
+    fn upsert(&mut self, latest: Op, base: Op) {
         let Some(key) = key_of(&latest) else { return };
         self.rev += 1;
         let rev = self.rev;
@@ -274,6 +280,39 @@ impl Outbox {
                 self.entries.push(e);
             }
             None => self.entries.push(Entry { key, base, latest, rev }),
+        }
+    }
+
+    /// Queue a whole library, for a server that has none yet (the first device uploading its
+    /// library): photos, then folders before what they hold, albums, stacks and label names.
+    /// Local records stay on this device.
+    pub fn seed(&mut self, c: &Catalog) {
+        let shared = |id: &PhotoId| c.photo(*id).is_some_and(|p| !p.local);
+        for p in c.photos().filter(|p| !p.local) {
+            self.upsert(Op::AddPhoto { photo: Box::new(portable(p)) }, Op::RemovePhoto { id: p.id });
+        }
+        let depth = |a: &crate::Album| {
+            let mut d = 0;
+            let mut cur = a.parent;
+            while let Some(id) = cur.filter(|_| d < MAX_DEPTH) {
+                d += 1;
+                cur = c.album(id).and_then(|a| a.parent);
+            }
+            d
+        };
+        let mut albums: Vec<&crate::Album> = c.albums().collect();
+        albums.sort_by_key(|a| depth(a));
+        for a in albums {
+            let mut a = a.clone();
+            a.photos.retain(shared);
+            let id = a.id;
+            self.upsert(Op::AddAlbum { album: a }, Op::RemoveAlbum { id });
+        }
+        for st in c.stacks.values().filter(|st| st.photos.iter().all(shared)) {
+            self.upsert(Op::AddStack { stack: st.clone() }, Op::RemoveStack { id: st.id });
+        }
+        for (label, name) in &c.label_names {
+            self.upsert(Op::SetLabelName { label: *label, name: Some(name.clone()) }, Op::SetLabelName { label: *label, name: None });
         }
     }
 
@@ -451,4 +490,80 @@ impl ServerCore {
     pub fn snapshot(&self) -> (u64, String) {
         (self.head(), self.catalog.to_snapshot())
     }
+}
+
+/// The server API's JSON bodies (`/api/…`; every route but `login` wants
+/// `Authorization: Bearer <token>`).
+pub mod proto {
+    use serde::{Deserialize, Serialize};
+
+    use crate::{Catalog, Op};
+
+    /// `POST /api/login`.
+    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+    pub struct Login {
+        pub user: String,
+        pub password: String,
+        /// A name for this device (shown on the server).
+        pub device: String,
+    }
+
+    /// The reply to [`Login`]: this device's token, and the id space it allocates in.
+    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+    pub struct Device {
+        pub token: String,
+        pub device: u64,
+        pub space: u32,
+        /// Identifies the user's library on this server (a device only resumes the same one).
+        pub library: String,
+    }
+
+    /// `GET /api/snapshot`: the library after op `seq`.
+    #[derive(Clone, Debug, Serialize, Deserialize)]
+    pub struct Snapshot<C = Catalog> {
+        pub library: String,
+        pub seq: u64,
+        pub catalog: C,
+    }
+
+    /// `GET /api/ops?since=N&limit=M`: the ops after `N` (`410 Gone`: reload the snapshot).
+    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+    pub struct Ops {
+        pub head: u64,
+        pub ops: Vec<(u64, Op)>,
+        /// Version of the presets document ([`Presets`]).
+        #[serde(default)]
+        pub presets: u64,
+    }
+
+    /// `POST /api/ops`: ops made on top of op `base`. `200` [`Head`]; `409` [`Head`] (behind:
+    /// pull first); `422` [`Refused`] (nothing was applied).
+    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+    pub struct Push {
+        pub base: u64,
+        pub ops: Vec<Op>,
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+    pub struct Head {
+        pub head: u64,
+    }
+
+    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+    pub struct Refused {
+        pub index: usize,
+        pub error: String,
+    }
+
+    /// `GET` / `PUT /api/presets`: the user presets (a JSON array). `PUT` carries the version it
+    /// changed; `412` when the server's is newer (get it, merge, put again).
+    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+    pub struct Presets {
+        pub version: u64,
+        pub presets: serde_json::Value,
+    }
+
+    /// `/api/blobs/<kind>/<hash>` (`HEAD`, `GET`, `PUT`): a photo's original, its smart preview
+    /// (≤ 2560 px) and its mini preview (≤ 512 px, for thumbnails), by content hash.
+    pub const BLOB_KINDS: [&str; 3] = ["original", "smart", "mini"];
 }
