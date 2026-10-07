@@ -1,0 +1,9 @@
+# xtool project file (docs/ios.md → "Build and run with xtool"). xtool prefixes the bundle ID when it
+# signs for a device with a free Apple ID (e.g. XTL-1234.ai.storyteller.lightcraft.ios).
+version: 1
+bundleID: ai.storyteller.lightcraft.ios
+product: LightCraft
+# merged over xtool's default Info.plist (scene manifest, usage strings, orientations)
+infoPath: Info.plist
+iconPath: ../../../assets/app-icon/lightcraft-1024.png
+skipLSP: true

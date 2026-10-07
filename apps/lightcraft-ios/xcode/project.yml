@@ -13,7 +13,8 @@ targets:
     type: application
     platform: iOS
     supportedDestinations: [iOS]
-    sources: [Sources]
+    # the Objective-C host, shared with the xtool package (../xtool, the main way to build: docs/ios.md)
+    sources: [../xtool/Sources/LightCraftHost]
     info:
       path: Info.plist
       properties:
@@ -38,6 +39,8 @@ targets:
         ENABLE_USER_SCRIPT_SANDBOXING: NO
         EXCLUDED_ARCHS[sdk=iphonesimulator*]: x86_64   # Apple-silicon simulator only
         LIBRARY_SEARCH_PATHS: ["$(BUILT_PRODUCTS_DIR)"]
+        HEADER_SEARCH_PATHS: ["$(SRCROOT)/../xtool/Sources/LightCraftHost/include"]
+        CLANG_ENABLE_OBJC_ARC: YES
         OTHER_LDFLAGS: [-llightcraft_ios, -lc++, -framework, Metal, -framework, QuartzCore, -framework, UIKit, -framework, Foundation, -framework, CoreGraphics, -framework, CoreFoundation, -framework, Security, -framework, CoreText, -framework, AVFoundation, -framework, CoreMedia, -framework, CoreVideo, -framework, MetalKit, -framework, IOSurface, -framework, PhotosUI, -framework, Photos, -framework, ImageIO, -framework, UniformTypeIdentifiers]
     preBuildScripts:
       - name: Build Rust (cargo)

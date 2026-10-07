@@ -32,9 +32,9 @@ mark: not started.
 | A1.8 | 🟡 App lifecycle: the library, view and app settings (`ui.json`, now kept on iOS too) are saved when the app resigns active, goes to the background or terminates; the GPU is paused in the background (`gpu::pause`: renders on the CPU, errors meanwhile don't disable it for good) and resumed after; an export in progress asks for background time | P0 | run on a device |
 | A1.9 | On-screen keyboard: text fields, search, rename, keyword entry. From reading winit 0.30 and egui-winit 0.36 (not yet run): a focused field raises the keyboard (`set_ime_allowed` → `becomeFirstResponder`), and winit's view takes typing and backspace through `UIKeyInput`; but the keyboard's Return arrives as a `"\n"` character, which egui drops (fields must be confirmed with their buttons), and there is no `UITextInput`: no autocorrect, no dictation, no Japanese / Chinese composition | P0 | run it; then a winit with `UITextInput` (or a native text field bridge) for composition and Return |
 | A1.10 | Scene support without the `-[UIWindow initWithFrame:]` swizzle (winit has none) | P1 | a winit with scenes, or a native UIKit host |
-| A1.11 | Signed device build, TestFlight, App Store review (privacy manifest, photo-library usage strings, icon set) | P0 | Apple developer account; an original app icon (`assets/ATTRIBUTION.md`) |
+| A1.11 | 🟡 Signed device build: `apps/lightcraft-ios/xtool` (xtool signs with any Apple ID and installs over USB, from Linux too; `run.sh`), not yet run; the app icon is the LightCraft lynx (`assets/app-icon/lightcraft-1024.png`). Still missing: TestFlight and App Store review (a paid account, a privacy manifest, an icon without alpha, the usage strings reviewed) | P0 | a device; a paid Apple Developer account for TestFlight |
 | A1.12 | Metal limits on iPhone GPUs for the compute path (needs at least 10 storage buffers per stage); the simulator allows 15 inter-stage variables | P1 | spike on devices |
-| A1.13 | Verified on a real device (everything so far ran on the simulator and in headless snapshots) | P0 | a device |
+| A1.13 | Verified on a real device (everything so far ran on the simulator and in headless snapshots): `apps/lightcraft-ios/xtool/run.sh` on a USB-connected iPhone / iPad (`docs/ios.md` → *Build and run with xtool*), logs through `idevicesyslog` | P0 | a device, xtool |
 
 ### A2. Compact layout and touch
 
@@ -59,7 +59,7 @@ mark: not started.
 | A2.17 | iPad: keyboard shortcuts and a menu bar for hardware keyboards, pointer hover and right-click, Stage Manager / multiple windows, external display | P1 |
 | A2.18 | Apple Pencil: pressure-sensitive brush, hover preview, double-tap tool switch, squeeze | P2 |
 | A2.19 | The desktop layout (1024 pt and wider, iPad landscape) still has mouse-sized targets and no touch gestures beyond what egui gives | P1 |
-| A2.20 | UI language switching, right-to-left layouts and the Japanese / Chinese fonts have not been checked on iOS (`CRAFT_FONTS_DIR` is not wired into the Xcode build) | P1 |
+| A2.20 | UI language switching, right-to-left layouts and the Japanese / Chinese fonts have not been checked on iOS (`CRAFT_FONTS_DIR` is not wired into `run.sh` or the Xcode build; `CRAFT_FONTS_DIR=… ./run.sh` should work, since cargo reads it) | P1 |
 | A2.21 | Tests: gesture tests need a multi-touch injector in `Headless`; no snapshot tests of the compact layout (they exist only as manual `lightcraft-cli snapshot` runs) | P1 |
 
 ## B. Lightroom mobile features LightCraft does not have
@@ -101,7 +101,7 @@ mark: not started.
 | B3.4 | Map / location view and geotagging from the phone's GPS or a track | P1 | map tiles are an external service; privacy decision |
 | B3.5 | Auto-tagging of people (faces exist: names and grouping) across the library, "People" suggestions | P1 | partly done (`ViewMode::People`) |
 | B3.6 | Photos app integration: show the Photos library inside the app without importing, with edits written back as a Photos adjustment | P1 | PhotoKit glue |
-| B3.7 | Home-screen and lock-screen widgets, Shortcuts / Siri actions, Spotlight indexing, share extension ("Edit in LightCraft") | P2 | extensions in the Xcode project |
+| B3.7 | Home-screen and lock-screen widgets, Shortcuts / Siri actions, Spotlight indexing, share extension ("Edit in LightCraft") | P2 | app extensions (xtool supports them: `extensions` in `xtool.yml`) |
 | B3.8 | Learn / Discover: in-app tutorials and a community feed of edits | OOS | not a goal |
 | B3.9 | Presets marketplace and premium presets | OOS | |
 | B3.10 | Adaptive presets (a look that adjusts to the photo's subject) | P2 | masking models |

@@ -1,0 +1,6 @@
+# xtool / SwiftPM build output and the Rust library run.sh copies in
+/.build/
+/xtool/
+/.rust/
+/.swiftpm/
+/.bsp/

@@ -1,8 +1,16 @@
-// The Rust crate owns the UIApplication (winit calls UIApplicationMain from lightcraft_ios_main).
+// The app's entry point. The Rust crate owns the UIApplication (winit calls UIApplicationMain from
+// lightcraft_ios_main).
+#import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 #include <stdlib.h>
 
-extern void lightcraft_ios_main(void);
+#include "LightCraftHost.h"
+
+void lightcraft_host_log(const char *line) {
+    if (line != NULL) {
+        NSLog(@"LightCraft: %s", line);
+    }
+}
 
 int main(int argc, char *argv[]) {
     @autoreleasepool {

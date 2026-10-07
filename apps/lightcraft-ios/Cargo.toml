@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish = false
-description = "LightCraft on iOS: the egui app as a static library for the Xcode project in xcode/"
+description = "LightCraft on iOS: the egui app as a static library, built into an app by xtool (xtool/) or Xcode (xcode/)"
 
 # Opts out of the workspace lints only so the one FFI entry point (`#[unsafe(no_mangle)]`) can be
 # allowed in `src/lib.rs`; the rest of the crate denies `unsafe_code`. See crates/sysmem.

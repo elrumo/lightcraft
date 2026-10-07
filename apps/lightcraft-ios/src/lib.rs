@@ -144,8 +144,9 @@ impl eframe::App for App {
     }
 }
 
-/// Appends every log record to `lightcraft-ios.log` in the app's tmp dir: a bundled simulator app's
-/// stderr isn't shown anywhere, and winit exits the process on iOS when eframe fails to start.
+/// Sends every log record to the system log (NSLog, through the Objective-C host) and appends it to
+/// `lightcraft-ios.log` in the app's tmp dir: a bundled app's stderr isn't shown anywhere, and winit
+/// exits the process on iOS when eframe fails to start.
 struct FileLog;
 
 impl log::Log for FileLog {
@@ -154,8 +155,11 @@ impl log::Log for FileLog {
     }
     fn log(&self, r: &log::Record) {
         use std::io::Write;
+        let line = format!("{} {}: {}", r.level(), r.target(), r.args());
+        // the device console too (`idevicesyslog | grep LightCraft`, Console.app)
+        lightcraft_ios_host::console(&line);
         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(std::env::temp_dir().join("lightcraft-ios.log")) {
-            let _ = writeln!(f, "{} {}: {}", r.level(), r.target(), r.args());
+            let _ = writeln!(f, "{line}");
         }
     }
     fn flush(&self) {}
@@ -357,7 +361,7 @@ pub fn run() -> eframe::Result {
     )
 }
 
-/// C entry point called from `main.m`.
+/// C entry point called from `main` (`xtool/Sources/LightCraftHost/LightCraftMain.m`).
 #[allow(unsafe_code)]
 #[unsafe(no_mangle)]
 pub extern "C" fn lightcraft_ios_main() {

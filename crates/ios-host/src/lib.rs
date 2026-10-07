@@ -172,6 +172,16 @@ pub fn decode_image(bytes: &[u8], max: Option<(u32, u32)>) -> Result<Image, Stri
     }
 }
 
+/// One line to the system log (NSLog: the device console, `idevicesyslog` on Linux, Console.app on
+/// a Mac), through the app's Objective-C host (`lightcraft_host_log`,
+/// `apps/lightcraft-ios/xtool/Sources/LightCraftHost`). Elsewhere: nothing.
+pub fn console(line: &str) {
+    #[cfg(target_os = "ios")]
+    ios::console(line);
+    #[cfg(not(target_os = "ios"))]
+    let _ = line;
+}
+
 #[cfg_attr(target_os = "ios", allow(dead_code))]
 const ONLY_IOS: &str = "only available in the iOS app";
 

@@ -10,6 +10,19 @@ use objc2::MainThreadMarker;
 use objc2::rc::Retained;
 use objc2_ui_kit::{UIApplication, UIViewController, UIWindowScene};
 
+unsafe extern "C" {
+    /// The app's Objective-C host (`LightCraftMain.m`): `NSLog(@"LightCraft: %s", line)`.
+    fn lightcraft_host_log(line: *const std::ffi::c_char);
+}
+
+pub fn console(line: &str) {
+    // an interior NUL would end the C string early
+    let Ok(c) = std::ffi::CString::new(line.replace('\0', " ")) else { return };
+    // SAFETY: `c` is a valid NUL-terminated string that outlives the call; the host function only
+    // reads it (formats it into NSLog) and keeps no pointer to it; it is thread-safe (NSLog is).
+    unsafe { lightcraft_host_log(c.as_ptr()) }
+}
+
 pub(crate) fn main_thread() -> Result<MainThreadMarker, String> {
     MainThreadMarker::new().ok_or_else(|| "must be called on the main thread".to_string())
 }
