@@ -203,6 +203,8 @@ pub struct Session {
     /// Untouched Local records of folders not browsed for this many days are forgotten when the
     /// library opens (0 = never; persisted in prefs.json). See `cmd/browse.rs`.
     pub forget_local_days: u32,
+    /// Sharing this library with other devices through a server (see [`sync`]).
+    sync: Option<sync::SyncState>,
 }
 
 impl Default for Session {
@@ -265,6 +267,7 @@ impl Session {
             cache_mb: 0,
             smart_previews_dir: None,
             forget_local_days: lightcraft_catalog::DEFAULT_FORGET_DAYS,
+            sync: None,
         }
     }
 
@@ -346,6 +349,7 @@ impl Session {
     pub fn commit(&mut self, label: &str, op: Op) -> Result<()> {
         let fwd = op.clone();
         let inv = self.catalog.apply(op)?;
+        self.sync_record(&fwd, &inv);
         self.pending_log.push(fwd);
         self.undo.push(UndoEntry { label: label.to_string(), op: inv, folder: None });
         if self.undo.len() > 1000 {
@@ -384,7 +388,8 @@ impl Session {
             versions.remove(i);
         }
         let op = Op::SetVersions { id, versions };
-        if self.catalog.apply(op.clone()).is_ok() {
+        if let Ok(inv) = self.catalog.apply(op.clone()) {
+            self.sync_record(&op, &inv);
             self.pending_log.push(op);
         }
     }
@@ -419,6 +424,7 @@ impl Session {
                 return Err(err);
             }
         };
+        self.sync_record(&e.op, &redo);
         self.pending_log.push(e.op);
         self.redo.push(UndoEntry { label: e.label.clone(), op: redo, folder: e.folder.as_ref().map(FolderMove::reversed) });
         Ok(e.label)
@@ -433,6 +439,7 @@ impl Session {
                 return Err(err);
             }
         };
+        self.sync_record(&e.op, &undo);
         self.pending_log.push(e.op);
         self.undo.push(UndoEntry { label: e.label.clone(), op: undo, folder: e.folder.as_ref().map(FolderMove::reversed) });
         Ok(e.label)

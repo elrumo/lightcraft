@@ -367,10 +367,9 @@ impl Session {
     }
 
     /// Queue an op this device applied for the server (`inverse` as [`Catalog::apply`] returned).
+    /// Recorded while signed out too: signing in again sends them.
     pub(crate) fn sync_record(&mut self, op: &Op, inverse: &Op) {
-        if let Some(st) = self.sync.as_mut()
-            && st.signed_in()
-        {
+        if let Some(st) = self.sync.as_mut() {
             st.outbox.record(op, inverse, &self.catalog);
         }
     }
@@ -484,10 +483,31 @@ impl Session {
             st.planned = Some(self.catalog.revision);
         }
         while st.jobs.len() < BLOB_PARALLEL {
-            let Some(job) = st.ready.pop_front().or_else(|| st.plan.pop_front()) else { break };
-            // one step at a time per photo file
-            if st.jobs.values().any(|j| j.key() == job.key() && std::mem::discriminant(j) == std::mem::discriminant(&job)) {
+            let (mut job, planned) = match st.ready.pop_front() {
+                Some(j) => (j, false),
+                None => match st.plan.pop_front() {
+                    Some(j) => (j, true),
+                    None => break,
+                },
+            };
+            // one transfer at a time per photo file (an upload is several steps)
+            if planned && (st.jobs.values().any(|j| j.key() == job.key()) || st.ready.iter().any(|j| j.key() == job.key())) {
                 continue;
+            }
+            if let Job::Proxies { key, id, .. } = &job {
+                match self.proxy_paths(*id) {
+                    // no folder for previews (the browser): the original is enough
+                    None => {
+                        let key = key.clone();
+                        self.uploaded(st, key);
+                        continue;
+                    }
+                    // built before (Build Smart Previews, or an earlier try): send them
+                    Some((smart, mini)) if crate::smart::is_valid(std::path::Path::new(&smart)) && std::path::Path::new(&mini).exists() => {
+                        job = Job::Put { key: key.clone(), blob: Blob::Smart, path: smart, id: *id };
+                    }
+                    Some(_) => {}
+                }
             }
             let task = match &job {
                 Job::Head { key, .. } => st.http("HEAD", &format!("/api/blobs/original/{key}"), Body::Empty, None),
@@ -552,7 +572,7 @@ impl Session {
             if !exists(&mini_path) && !exists(&smart_path) {
                 minis.push(Job::Get { key: key.clone(), blob: Blob::Mini, dest: mini_path });
             }
-            if (st.config.store_originals || (pinned && st.config.store_originals) || st.want_originals.contains(&key))
+            if (st.config.store_originals || st.want_originals.contains(&key))
                 && let Some(dir) = self.originals_dir()
             {
                 let dest = dir.join(&key).join(file_name_of(path, &p.file_name));
