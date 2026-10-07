@@ -14,4 +14,4 @@ if [ "$CONFIGURATION" = Release ]; then PROFILE=release; FLAG=--release; fi
 cd "$ROOT"
 cargo build -p lightcraft-ios --target "$TRIPLE" $FLAG
 mkdir -p "$BUILT_PRODUCTS_DIR"
-/bin/cp -f "target/$TRIPLE/$PROFILE/liblightcraft_ios.a" "$BUILT_PRODUCTS_DIR/liblightcraft_ios.a"
+/bin/cp -f "${CARGO_TARGET_DIR:-target}/$TRIPLE/$PROFILE/liblightcraft_ios.a" "$BUILT_PRODUCTS_DIR/liblightcraft_ios.a"

@@ -48,7 +48,7 @@ export IPHONEOS_DEPLOYMENT_TARGET=16.0
 echo "run.sh: cargo build -p lightcraft-ios --target $triple $cargo_flag"
 (cd "$root" && cargo build -p lightcraft-ios --target "$triple" $cargo_flag)
 mkdir -p "$here/.rust"
-cp -f "$root/target/$triple/$profile/liblightcraft_ios.a" "$here/.rust/liblightcraft_ios.a"
+cp -f "${CARGO_TARGET_DIR:-$root/target}/$triple/$profile/liblightcraft_ios.a" "$here/.rust/liblightcraft_ios.a"
 
 cd "$here"
 # shellcheck disable=SC2086 # extra xtool arguments are split on purpose
