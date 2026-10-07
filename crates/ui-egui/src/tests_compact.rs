@@ -88,3 +88,15 @@ fn compact_sliders_take_a_touch_well_above_the_track() {
     h.settle(SETTLE);
     assert_ne!(format!("{:?}", h.app.session.develop_of(id)), before, "the tap moved the slider");
 }
+
+#[test]
+fn compact_layout_raises_egui_rows_to_touch_size_and_desktop_restores_them() {
+    let mut h = detail([390.0, 844.0]);
+    assert!(h.view.ctx.global_style().spacing.interact_size.y >= crate::TOUCH_ROW_H);
+    // growing to a desktop window puts the original size back
+    let r = h.request("ui.resize", json!({"width": 1200, "height": 800}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    assert!(!h.app.compact);
+    assert!(h.view.ctx.global_style().spacing.interact_size.y < crate::TOUCH_ROW_H);
+}
