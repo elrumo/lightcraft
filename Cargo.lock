@@ -2615,6 +2615,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "lightcraft-ios"
+version = "0.2.1"
+dependencies = [
+ "eframe",
+ "egui",
+ "lightcraft-engine",
+ "lightcraft-ui-egui",
+]
+
+[[package]]
 name = "lightcraft-mcp"
 version = "0.2.1"
 dependencies = [

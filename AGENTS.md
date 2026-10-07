@@ -56,7 +56,7 @@ of it. Full standard: `../craftrules/standards/never-crash.md`
 - **Layering** (`plan/architecture.md` §3, enforced by `cargo xtask layers`): nothing below L5 depends on egui/eframe/winit/rfd.
 - **Everything is a command** (`crates/engine`): id, label, menu path, shortcut, params, enabled(), run(). UI, CLI, control channel and MCP all dispatch by id. Every slider is a `develop` control spec.
 - **Resolution independence:** settings use normalized image coordinates and relative radii; previews and exports must match.
-- **Quality gates** before every commit: `cargo xtask ci` (fmt, clippy -D warnings, tests, layers, assets, wasm).
+- **Quality gates** before every commit: `cargo xtask ci` (fmt, clippy -D warnings, tests, layers, assets, wasm, ios). The `ios` step is a type-check for `aarch64-apple-ios` (`rustup target add aarch64-apple-ios`); see `docs/ios.md`.
 - **Commits:** one task id per commit (`M2.3: local Laplacian highlights/shadows`). Only green states. End messages with the attribution line required by the environment.
 
 ## Assets: icons, images, fonts (ABSOLUTE RULE — never violate)
