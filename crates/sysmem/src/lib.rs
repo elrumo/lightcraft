@@ -6,31 +6,61 @@
 //! everything ever decoded. `malloc_zone_pressure_relief` (libSystem) returns those pages now.
 //! Elsewhere (glibc, Windows) blocks this large are unmapped when freed: nothing to do.
 //!
-//! This is LightCraft's only crate allowed `unsafe` (one FFI call, in `macos`). Its API is safe,
-//! and on failure or on other platforms it simply releases nothing.
+//! On iOS the system ends an app that goes over its memory limit, which depends on the device and
+//! is far below its RAM: [`available_memory`] says how much is left (`os_proc_available_memory`),
+//! so the caches can be sized to fit.
+//!
+//! This is LightCraft's only crate allowed `unsafe` (two FFI calls into libSystem, in `apple`).
+//! Its API is safe, and on failure or on other platforms it releases nothing / knows nothing.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 /// Return free allocator pages to the system. Returns the number of bytes released (always 0 on
 /// platforms where freed large blocks are already unmapped). Safe to call at any time, from any
 /// thread.
 pub fn release_free_memory() -> usize {
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
     {
-        macos::release()
+        apple::release()
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
     {
         0
     }
 }
 
-#[cfg(target_os = "macos")]
+/// Bytes this process can still allocate before iOS ends it for using too much memory, or `None`
+/// where the system sets no such limit (desktops) or doesn't report it (the iOS simulator says 0).
+/// Safe to call at any time, from any thread.
+pub fn available_memory() -> Option<usize> {
+    #[cfg(target_os = "ios")]
+    {
+        Some(apple::available()).filter(|n| *n > 0)
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        None
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
 #[allow(unsafe_code)]
-mod macos {
+mod apple {
     unsafe extern "C" {
         /// libSystem malloc: release free memory of `zone` (all zones when null) back to the
         /// system, up to `goal` bytes (0 = as much as possible). Returns the bytes released.
         fn malloc_zone_pressure_relief(zone: *mut std::ffi::c_void, goal: usize) -> usize;
+        /// libSystem (`os/proc.h`, iOS 13+): bytes left before the process reaches its memory
+        /// limit; 0 when it has none or can't tell.
+        #[cfg(target_os = "ios")]
+        fn os_proc_available_memory() -> usize;
+    }
+
+    #[cfg(target_os = "ios")]
+    pub fn available() -> usize {
+        // SAFETY: `os_proc_available_memory` is a documented, thread-safe libSystem function
+        // (os/proc.h, iOS 13+; the app targets iOS 16) that takes no arguments, touches no memory
+        // of ours and returns a plain integer (0 when there is no limit or it is unknown).
+        unsafe { os_proc_available_memory() }
     }
 
     pub fn release() -> usize {
@@ -62,12 +92,22 @@ mod tests {
         assert_eq!(sum, (0..8u64).sum());
         drop(blocks);
         let released = release_free_memory();
-        if cfg!(not(target_os = "macos")) {
+        if cfg!(not(any(target_os = "macos", target_os = "ios"))) {
             assert_eq!(released, 0);
         }
         // The allocator must still work normally afterwards.
         let again = vec![7u8; 16 << 20];
         assert_eq!(again[again.len() - 1], 7);
+    }
+
+    #[test]
+    fn available_memory_is_known_only_where_the_system_limits_it() {
+        let a = super::available_memory();
+        if cfg!(target_os = "ios") {
+            assert!(a.is_none_or(|n| n > 0));
+        } else {
+            assert_eq!(a, None);
+        }
     }
 
     #[test]

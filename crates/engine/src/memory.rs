@@ -19,16 +19,32 @@ use serde::Serialize;
 /// - an eighth for the GPU renderer's pool of recycled buffers (trimmed when the app is idle).
 ///
 /// The rest is headroom for what isn't cached (renders in progress, textures, the UI). Default:
-/// a quarter of the machine's RAM, at most 1.5 GiB (`LIGHTCRAFT_MEMORY_MB` overrides it).
+/// a quarter of the machine's RAM, at most 1.5 GiB (`LIGHTCRAFT_MEMORY_MB` overrides it); on iOS
+/// see [`budget_for_limit`].
 pub fn default_budget() -> usize {
     if let Some(mb) = std::env::var("LIGHTCRAFT_MEMORY_MB").ok().and_then(|v| v.trim().parse::<usize>().ok()).filter(|m| *m >= 64) {
         return mb << 20;
+    }
+    if cfg!(target_os = "ios") {
+        // the host passes the real limit to `set_budget(budget_for_limit(..))` at launch
+        return budget_for_limit(None);
     }
     let cap = 3usize << 29; // 1.5 GiB
     match total_ram() {
         Some(ram) => (ram / 4).clamp(256 << 20, cap),
         None => cap,
     }
+}
+
+/// The budget on iOS, where the system ends an app that goes over its memory limit (a fraction
+/// of the device's RAM that depends on the model) instead of swapping: a third of what the app
+/// may still allocate at launch (`available`, from `lightcraft_sysmem::available_memory`),
+/// between 256 MiB and 1 GiB, leaving two thirds for decodes and renders in progress, textures
+/// and the UI. Unknown (the simulator): 768 MiB.
+pub fn budget_for_limit(available: Option<usize>) -> usize {
+    const MIN: usize = 256 << 20;
+    const MAX: usize = 1 << 30;
+    available.filter(|a| *a > 0).map_or(768 << 20, |a| a / 3).clamp(MIN, MAX)
 }
 
 /// Physical memory (bytes), when the platform tells us without native calls.
@@ -296,5 +312,53 @@ impl crate::Session {
         let b = set_budget(bytes);
         self.media.set_budget(cache_share(b));
         b
+    }
+
+    /// The system is short of memory (an iOS memory warning; the app is ended if it doesn't give
+    /// some back): forget the decoded sources (decoded again when next shown) and the GPU's
+    /// pooled buffers, and hand freed pages back to the system. Returns the bytes freed from the
+    /// caches. Rendered previews stay: they are small and redrawing the grid without them is slow.
+    pub fn release_memory(&mut self) -> usize {
+        let held = self.memory_report().engine_bytes;
+        self.media.clear_sources();
+        lightcraft_gpu::trim_pool(0);
+        release();
+        held.saturating_sub(self.memory_report().engine_bytes)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_ios_budget_follows_the_app_memory_limit() {
+        // a 4 GB limit (a recent iPhone Pro): 1 GiB at most
+        assert_eq!(budget_for_limit(Some(4_000_000_000)), 1 << 30);
+        // a 1.5 GB limit: a third
+        assert_eq!(budget_for_limit(Some(1_500_000_000)), 500_000_000);
+        // nearly nothing left: still enough for a preview
+        assert_eq!(budget_for_limit(Some(100 << 20)), 256 << 20);
+        // unknown (simulator) or none
+        assert_eq!(budget_for_limit(None), 768 << 20);
+        assert_eq!(budget_for_limit(Some(0)), 768 << 20);
+    }
+
+    /// A memory warning drops the decoded sources; photos still render afterwards.
+    #[test]
+    fn releasing_memory_drops_decoded_sources_and_keeps_working() {
+        let mut s = crate::Session::with_demo();
+        let ids: Vec<_> = s.catalog.photos().take(3).map(|p| p.id).collect();
+        for id in &ids {
+            s.render_now(*id, 256, 256).unwrap();
+        }
+        let before = s.memory_report();
+        let sources = before.thumb_sources.bytes + before.preview_sources.bytes + before.full_source.bytes;
+        assert!(sources > 0, "{before:?}");
+        let freed = s.release_memory();
+        assert!(freed >= sources, "freed {freed} of {sources}");
+        let after = s.memory_report();
+        assert_eq!(after.thumb_sources.bytes + after.preview_sources.bytes + after.full_source.bytes, 0, "{after:?}");
+        assert!(s.render_now(ids[0], 256, 256).is_ok());
     }
 }
