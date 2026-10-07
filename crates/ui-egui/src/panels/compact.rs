@@ -24,11 +24,25 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     top_bar(app, ui, &t);
     if detail {
         tab_bar(app, ui, &t);
-        if app.ui.right != RightPanel::None {
+        if app.ui.right != RightPanel::None || app.ui.presets {
             sheet(app, ui, &t);
         }
     }
     let bg = if detail { t.canvas } else { t.grid_bg };
+    if app.ui.left_panel {
+        // "My Photos" as a page of its own; choosing a source closes it
+        let src = app.session.source;
+        egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.chrome)).show(ui, |ui| super::left::body(app, ui));
+        if app.session.source != src {
+            app.ui.left_panel = false;
+        }
+    } else {
+        content(app, ui, bg);
+    }
+    overlays(app, &ctx);
+}
+
+fn content(app: &mut LightcraftApp, ui: &mut egui::Ui, bg: egui::Color32) {
     egui::CentralPanel::default().frame(egui::Frame::NONE.fill(bg)).show(ui, |ui| match app.ui.view {
         ViewMode::Detail => super::detail::show(app, ui),
         ViewMode::Compare => super::compare::show_compare(app, ui),
@@ -37,6 +51,10 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         ViewMode::People => super::people::show(app, ui),
         ViewMode::PhotoGrid | ViewMode::SquareGrid => super::grid::show(app, ui),
     });
+}
+
+fn overlays(app: &mut LightcraftApp, ctx: &egui::Context) {
+    let ctx = ctx.clone();
     super::second::show(app, &ctx);
     super::notices::show(app, &ctx);
     super::dialogs::show(app, &ctx);
@@ -53,14 +71,28 @@ fn top_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
         .frame(egui::Frame::NONE.fill(t.chrome).inner_margin(egui::Margin::symmetric(8, 0)).stroke(egui::Stroke::new(1.0, t.divider)))
         .show(ui, |ui| {
             let full = ui.max_rect();
+            let grid = matches!(app.ui.view, ViewMode::PhotoGrid | ViewMode::SquareGrid);
+            let title = if app.ui.left_panel {
+                "My Photos"
+            } else if app.ui.view == ViewMode::Detail {
+                "Edit"
+            } else {
+                "Photos"
+            };
+            ui.painter().text(full.center(), Align2::CENTER_CENTER, crate::i18n::tr(title), t.semibold(17.0), t.text);
             ui.horizontal_centered(|ui| {
-                let grid = matches!(app.ui.view, ViewMode::PhotoGrid | ViewMode::SquareGrid);
+                ui.spacing_mut().item_spacing.x = 0.0;
+                if icon_button(ui, "sidebar", Icon::Sidebar, vec2(44.0, 44.0), app.ui.left_panel, true, "My Photos").clicked() {
+                    let _ = app.run("view.leftPanel", json!({}));
+                }
                 if icon_button(ui, "back", Icon::Back, vec2(44.0, 44.0), false, !grid, "Back").clicked() {
                     let _ = app.run("view.back", json!({}));
                 }
+                // every command stays reachable: the whole menu bar behind one button
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    crate::menubar::show_in_window(app, ui, 0.0);
+                });
             });
-            let title = if app.ui.view == ViewMode::Detail { "Edit" } else { "Photos" };
-            ui.painter().text(full.center(), Align2::CENTER_CENTER, crate::i18n::tr(title), t.semibold(17.0), t.text);
         });
 }
 
@@ -71,6 +103,7 @@ fn tab_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
         |ui| {
             let has_photo = app.session.active().is_some();
             let tools = [
+                ("presets", Icon::Presets, RightPanel::None, "Presets"),
                 ("edit", Icon::Sliders, RightPanel::Edit, "Edit"),
                 ("crop", Icon::Crop, RightPanel::Crop, "Crop & Rotate"),
                 ("remove", Icon::Eraser, RightPanel::Remove, "Remove"),
@@ -81,12 +114,20 @@ fn tab_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
             ui.horizontal_centered(|ui| {
                 ui.spacing_mut().item_spacing.x = 0.0;
                 for (id, icon, panel, tip) in tools {
-                    let on = app.ui.right == panel || (panel == RightPanel::Edit && app.ui.right == RightPanel::Profiles);
+                    let presets = id == "presets";
+                    let on = if presets {
+                        app.ui.presets
+                    } else {
+                        !app.ui.presets && (app.ui.right == panel || (panel == RightPanel::Edit && app.ui.right == RightPanel::Profiles))
+                    };
                     if icon_button(ui, id, icon, vec2(w, BAR_H - 4.0), on, has_photo, tip).clicked() {
-                        // tapping the open tool closes its sheet
-                        if app.ui.right == panel {
+                        // one sheet at a time; tapping the open tool closes it
+                        if presets {
+                            let _ = app.run("panel.presets", json!({}));
+                        } else if on {
                             app.ui.right = RightPanel::None;
                         } else {
+                            app.ui.presets = false;
                             let _ = app.run(&format!("panel.{id}"), json!({}));
                         }
                     }
@@ -103,5 +144,5 @@ fn sheet(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
         .default_size(h * SHEET_FRACTION)
         .size_range(120.0..=h * 0.85)
         .frame(egui::Frame::NONE.fill(t.chrome).stroke(egui::Stroke::new(1.0, t.divider)))
-        .show(ui, |ui| super::right::body(app, ui));
+        .show(ui, |ui| if app.ui.presets { super::presets::body(app, ui) } else { super::right::body(app, ui) });
 }

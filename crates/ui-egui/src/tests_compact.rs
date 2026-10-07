@@ -34,11 +34,11 @@ fn phone_width_uses_tab_bar_and_sheet_desktop_width_does_not() {
     let h = detail([390.0, 844.0]);
     assert!(h.app.compact);
     assert!(has(&h, "icon:masking"), "tab bar tools are drawn");
-    assert!(!has(&h, "icon:presets"), "the desktop tool strip is not");
+    assert!(!has(&h, "icon:keywords"), "the desktop tool strip is not");
     assert!(!has(&h, "histogram"), "the sheet leaves the histogram out");
     let h = detail([1200.0, 800.0]);
     assert!(!h.app.compact);
-    assert!(has(&h, "icon:presets"));
+    assert!(has(&h, "icon:keywords"));
 }
 
 #[test]
@@ -99,4 +99,29 @@ fn compact_layout_raises_egui_rows_to_touch_size_and_desktop_restores_them() {
     h.settle(SETTLE);
     assert!(!h.app.compact);
     assert!(h.view.ctx.global_style().spacing.interact_size.y < crate::TOUCH_ROW_H);
+}
+
+#[test]
+fn presets_are_a_tab_and_the_sidebar_is_a_page_that_closes_on_choosing() {
+    let mut h = detail([390.0, 844.0]);
+    // presets: one sheet at a time with the tools
+    let r = h.request("ui.clickWidget", json!({"id": "icon:presets"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    assert!(h.app.ui.presets);
+    let r = h.request("ui.clickWidget", json!({"id": "icon:crop"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    assert!(!h.app.ui.presets);
+    assert_eq!(h.app.ui.right, RightPanel::Crop);
+    // the sidebar: a page; picking a source closes it
+    h.app.ui.view = ViewMode::PhotoGrid;
+    h.app.ui.left_panel = true;
+    h.settle(SETTLE);
+    assert!(has(&h, "source:picks"), "the sidebar page is drawn");
+    let r = h.request("ui.clickWidget", json!({"id": "source:picks"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    assert!(!h.app.ui.left_panel);
+    assert_eq!(h.app.session.source, lightcraft_engine::LibrarySource::Picks);
 }
