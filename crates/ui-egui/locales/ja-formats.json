@@ -77,6 +77,7 @@
   "{name} Off": "{name}を無効にする",
   "{name} On": "{name}を有効にする",
   "{name} — double-click to reset it": "{name}：ダブルクリックでリセット",
+  "{n} Selected": "{n}枚を選択中",
   "{n} change{} saved in memory but not written to disk: {e}\nLightCraft retries automatically; quitting now would lose {}.": "{n}件の変更{:.0}をディスクに保存できません：{e}\n自動で再試行します。終了すると変更が失われます{:.0}",
   "{n} found · {sel} selected": "{n}枚検出・{sel}枚選択",
   "{n} photos": "{n}枚",

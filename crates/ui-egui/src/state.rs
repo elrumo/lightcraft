@@ -211,6 +211,10 @@ pub struct UiState {
     /// a later save succeeds).
     #[serde(skip)]
     pub unsaved_seen: bool,
+    /// Compact layout: the grid is choosing photos (a tap adds or removes one; the action bar
+    /// works on the chosen ones). Entered with Select or a long press; `view.selectMode`.
+    #[serde(skip)]
+    pub select_mode: bool,
     pub view: ViewMode,
     pub left_panel: bool,
     pub right: RightPanel,
@@ -520,6 +524,7 @@ impl Default for UiState {
             language: crate::i18n::default_language(),
             preview_build_seen: None,
             unsaved_seen: false,
+            select_mode: false,
             luminance_map_restore: None,
             view: ViewMode::Detail,
             left_panel: false,

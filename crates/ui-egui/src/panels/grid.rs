@@ -494,9 +494,11 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
             img_rect
         };
         p.image(tex.tex.id(), fit, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
-        if active {
+        // (choosing by touch draws its own frame: `check_badge`)
+        let choosing = app.compact && app.ui.select_mode;
+        if active && !choosing {
             p.rect_stroke(fit.expand(if square { 2.0 } else { 0.0 }), 0.0, Stroke::new(2.0, Color32::WHITE), StrokeKind::Outside);
-        } else if selected {
+        } else if selected && !choosing {
             p.rect_stroke(fit, 0.0, Stroke::new(2.0, Color32::from_gray(170)), StrokeKind::Outside);
         }
     } else {
@@ -610,11 +612,24 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
         }
         return;
     }
-    if app.compact && resp.clicked() {
-        // touch: a tap opens the photo (no double-tap, no modifiers)
-        let _ = app.run("library.select", json!({"ids": [id.0]}));
-        let _ = app.run("view.detail", json!({}));
-    } else if resp.clicked() {
+    if app.compact {
+        // touch: a tap opens the photo (no double-tap, no modifiers); choosing photos, it adds or
+        // removes it; a long press starts choosing (there is no right click: the action bar and
+        // Menu have what the context menu would)
+        if app.ui.select_mode {
+            check_badge(ui, img_rect, selected, &t);
+            if resp.clicked() {
+                let _ = app.run("library.select", json!({"ids": [id.0], "mode": "toggle"}));
+            }
+        } else if resp.clicked() {
+            let _ = app.run("library.select", json!({"ids": [id.0]}));
+            let _ = app.run("view.detail", json!({}));
+        } else if resp.long_touched() || resp.secondary_clicked() {
+            let _ = app.run("view.selectMode", json!({"on": true, "id": id.0}));
+        }
+        return;
+    }
+    if resp.clicked() {
         let m = ui.input(|i| i.modifiers);
         let mode = if m.shift {
             "range"
@@ -637,6 +652,21 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
         app.ui.dragging_photos = Some(app.session.selection.ids.iter().map(|p| p.0).collect());
     }
     resp.context_menu(|ui| context_menu(app, ui, id));
+}
+
+/// Choosing photos by touch: a circle at the cell's top right, filled with a check when chosen.
+fn check_badge(ui: &egui::Ui, img: Rect, selected: bool, t: &Tokens) {
+    let p = ui.painter();
+    let c = pos2(img.right() - 15.0, img.top() + 15.0);
+    if selected {
+        p.rect_stroke(img, 0.0, Stroke::new(3.0, t.accent), StrokeKind::Inside);
+        p.circle(c, 10.0, t.accent, Stroke::new(1.5, Color32::WHITE));
+        let tick = [c + vec2(-4.5, 0.0), c + vec2(-1.5, 3.5), c + vec2(4.5, -3.5)];
+        p.line_segment([tick[0], tick[1]], Stroke::new(2.0, Color32::WHITE));
+        p.line_segment([tick[1], tick[2]], Stroke::new(2.0, Color32::WHITE));
+    } else {
+        p.circle(c, 10.0, Color32::from_black_alpha(70), Stroke::new(1.5, Color32::WHITE));
+    }
 }
 
 /// The header of a Local folder view: the path as a breadcrumb (each part opens that folder),

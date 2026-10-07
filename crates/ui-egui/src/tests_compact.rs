@@ -162,3 +162,112 @@ fn modal_dialogs_fit_a_phone_screen() {
     assert!(rect.width() <= 390.0 && rect.height() <= 844.0, "the dialog fits the screen: {rect:?}");
     assert!(rect.left() >= 0.0 && rect.top() >= 0.0, "and starts on it: {rect:?}");
 }
+
+fn grid(size: [f32; 2]) -> Headless {
+    let mut app = LightcraftApp::new(Session::with_demo(), Services { png: None, ..Default::default() });
+    app.ui.view = ViewMode::PhotoGrid;
+    let mut h = Headless::new(app, size, 1.0);
+    h.settle(SETTLE);
+    h
+}
+
+fn click(h: &mut Headless, id: &str) {
+    let r = h.request("ui.clickWidget", json!({"id": id}), T);
+    assert_eq!(r["ok"], true, "{id}: {r}");
+    h.settle(SETTLE);
+}
+
+/// iOS gap A2.8 / A2.9: photos are chosen by touch (Select, then taps; a long press starts it
+/// with that photo) and rated, flagged, labelled, put in an album or deleted from the action bar.
+#[test]
+fn photos_are_chosen_by_touch_and_acted_on_from_the_action_bar() {
+    let mut h = grid([390.0, 844.0]);
+    assert!(h.app.compact && has(&h, "button:select") && !has(&h, "icon:selRate"));
+    click(&mut h, "button:select");
+    assert!(h.app.ui.select_mode && h.app.session.selection.ids.is_empty(), "choosing starts with none");
+    assert!(has(&h, "button:selectCancel") && has(&h, "icon:selRate") && has(&h, "icon:selDelete"));
+    let ids: Vec<u64> = h.app.session.visible().iter().take(2).map(|id| id.0).collect();
+    // taps add and remove; nothing opens
+    for id in &ids {
+        click(&mut h, &format!("thumb:{id}"));
+    }
+    assert_eq!(h.app.ui.view, ViewMode::PhotoGrid, "a tap chooses instead of opening the photo");
+    let chosen: Vec<u64> = h.app.session.selection.ids.iter().map(|i| i.0).collect();
+    assert_eq!(chosen, ids);
+    let photo = |h: &Headless, id: u64| h.app.session.catalog.photo(lightcraft_catalog::PhotoId(id)).unwrap().clone();
+    // rating, flag, label
+    click(&mut h, "icon:selRate");
+    click(&mut h, "button:rate4");
+    click(&mut h, "icon:selFlag");
+    click(&mut h, "button:flag-pick");
+    click(&mut h, "icon:selLabel");
+    click(&mut h, "button:label-green");
+    for id in &ids {
+        let p = photo(&h, *id);
+        assert_eq!((p.rating, p.flag, p.label), (4, lightcraft_catalog::Flag::Pick, Some(lightcraft_catalog::ColorLabel::Green)), "{id}");
+    }
+    // into an album
+    let album = h.app.run("album.create", json!({"name": "Trip"})).unwrap()["id"].as_u64().unwrap();
+    click(&mut h, "icon:selAlbum");
+    click(&mut h, &format!("button:album-{album}"));
+    let in_album = h.app.session.catalog.album(lightcraft_catalog::AlbumId(album)).unwrap().photos.len();
+    assert_eq!(in_album, 2);
+    // one photo off again, then copy its settings and paste them on the other
+    click(&mut h, &format!("thumb:{}", ids[1]));
+    assert_eq!(h.app.session.selection.ids.len(), 1);
+    h.app.run("develop.set", json!({"ids": [ids[0]], "values": {"light.exposure": 0.7}})).unwrap();
+    click(&mut h, "icon:selMore");
+    click(&mut h, "button:copySettings");
+    assert!(h.app.session.clipboard.is_some());
+    click(&mut h, &format!("thumb:{}", ids[0]));
+    click(&mut h, &format!("thumb:{}", ids[1]));
+    click(&mut h, "icon:selMore");
+    click(&mut h, "button:pasteSettings");
+    assert!((photo(&h, ids[1]).develop.light.exposure - 0.7).abs() < 1e-6);
+    // Select All, Deselect All, Cancel
+    click(&mut h, "button:selectAll");
+    assert_eq!(h.app.session.selection.ids.len(), h.app.session.visible().len());
+    click(&mut h, "button:selectNone");
+    assert!(h.app.session.selection.ids.is_empty());
+    click(&mut h, "button:selectCancel");
+    assert!(!h.app.ui.select_mode && has(&h, "button:select"));
+    // a long press starts choosing with that photo (the command it runs)
+    let r = h.request("engine.execute", json!({"command": "view.selectMode", "params": {"on": true, "id": ids[0]}}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    assert_eq!(h.app.session.selection.ids.iter().map(|i| i.0).collect::<Vec<_>>(), [ids[0]]);
+    // delete (asks first), into Recently Deleted
+    click(&mut h, "icon:selDelete");
+    if h.app.ui.dialog.is_some() {
+        let r = h.request("ui.dialog.confirm", json!({}), T);
+        assert_eq!(r["ok"], true, "{r}");
+        h.settle(SETTLE);
+    }
+    assert!(photo(&h, ids[0]).deleted);
+    // Back leaves choosing; so does opening another view
+    let r = h.request("engine.execute", json!({"command": "view.back", "params": {}}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    assert!(!h.app.ui.select_mode);
+}
+
+/// The loupe rates, flags and labels the photo from the top bar (no right click on a phone).
+#[test]
+fn the_loupe_rates_flags_and_labels_by_touch() {
+    let mut h = detail([390.0, 844.0]);
+    h.app.ui.right = RightPanel::None;
+    h.settle(SETTLE);
+    click(&mut h, "icon:rateFlag");
+    click(&mut h, "button:rate3");
+    let id = h.app.session.active().unwrap();
+    assert_eq!(h.app.session.catalog.photo(id).unwrap().rating, 3);
+    click(&mut h, "icon:rateFlag");
+    click(&mut h, "button:flag-reject");
+    click(&mut h, "icon:rateFlag");
+    click(&mut h, "button:label-none");
+    let p = h.app.session.catalog.photo(id).unwrap();
+    assert_eq!((p.flag, p.label), (lightcraft_catalog::Flag::Reject, None));
+    // the desktop layout has none of this
+    let h = detail([1200.0, 800.0]);
+    assert!(!has(&h, "icon:rateFlag") && !has(&h, "button:select"));
+}

@@ -102,7 +102,10 @@ layout and interaction only: no Adobe icons, artwork, fonts, presets or screensh
    reuse the desktop panel bodies. Touch: a tap opens a photo, pinch zooms, two fingers pan, a sideways swipe on a
    fitted photo goes to the next / previous one, double tap zooms, sliders have 68 pt rows and a 48 pt grab zone,
    egui-drawn rows are 44 pt, crop handles and mask / spot pins are about a finger wide, and press-and-hold opens the
-   context menus (egui's own long-touch). Check it headless with `lightcraft-cli snapshot --demo --size 390x844
+   context menus (egui's own long-touch) except in the grid, where it starts choosing photos: taps then add and remove
+   them, and an action bar at the bottom rates, flags, labels, adds to an album, exports, copies / pastes settings or
+   deletes them (Select in the top bar does the same); the loupe's star button rates, flags and labels the photo; a
+   round + over the grid imports (with the host's pickers). Check it headless with `lightcraft-cli snapshot --demo --size 390x844
    --scale 2` (phone) or `--size 820x1180` (iPad). Pinch and two-finger pan are untested (the headless driver injects
    no multi-touch); everything is untested on a real device.
    Still missing: the on-screen keyboard for text fields, Apple Pencil, tool-specific touch polish (brush strokes with

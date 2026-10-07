@@ -47,8 +47,8 @@ mark: not started.
 | A2.5 | Dialog rows with chips (format, colour space…) scroll sideways instead of wrapping; Export's buttons need scrolling to reach | P1 |
 | A2.6 | Landscape phone layout (today: the portrait compact layout, which leaves the loupe small) | P1 |
 | A2.7 | Safe area on rotation, Dynamic Island and the home indicator are handled once at startup frames only; not re-checked on rotation / split view | P1 |
-| A2.8 | Multi-select by touch (tap-and-hold then tap, select-all, drag to select) and batch actions on the selection; the grid has no selection mode | P0 |
-| A2.9 | Photo actions without right-click menus: rating, flag and colour label by swipe or toolbar in the loupe and the grid; delete, add to album, copy / paste settings | P0 |
+| A2.8 | ✅ Multi-select by touch: Select (top bar) or a long press on a photo starts choosing; taps add and remove (check badges), Select All / Deselect All, Cancel or Back ends it (`view.selectMode`); batch actions in A2.9. Still missing: drag across photos to choose a run (a drag scrolls the grid) | P0 |
+| A2.9 | ✅ Photo actions without right-click menus: while choosing, an action bar rates, flags, labels, adds to an album, exports, copies / pastes edit settings and deletes the chosen photos; the loupe's star button rates, flags and labels the photo. Still missing: swipe gestures for them (as in Lightroom's rate-and-review mode) | P0 |
 | A2.10 | Sheets for the remaining desktop panels: filter bar, sort / group options, Info and Keywords details on a phone, Versions, Activity, Settings | P1 |
 | A2.11 | Keywords, Versions and History have no tab: they are reachable only through Menu → Window | P1 |
 | A2.12 | Haptics (slider detents at zero, snapping, mode switches) | P2 |
@@ -140,7 +140,7 @@ mark: not started.
 
 ## Suggested order
 
-1. **Make it a usable app:** A1.1–A1.5, A1.7–A1.9, A1.13, B2.8, A2.8, A2.9. After this a person can import, cull, edit and export on a device.
+1. **Make it a usable app:** A1.1–A1.5, A1.7–A1.9, A1.13, B2.8, A2.8, A2.9. After this a person can import, cull, edit and export on a device. *Written:* everything here but A1.9 (the on-screen keyboard); what remains is running it on a simulator and a device (A1.13) and fixing what that finds.
 2. **Make editing comfortable:** A2.1–A2.5, A2.11, A2.13–A2.14, B4.5, B4.6, B4.8–B4.10.
 3. **Parity with the phone app's core:** B2.1–B2.2 (sync and previews), B3.4, B3.6, B4.1, B4.4, B4.7, A2.15, A2.17.
 4. **Later:** capture (B1), generative and search features (B3.2–B3.3, B4.2), widgets and extensions (B3.7), Pencil (A2.18).

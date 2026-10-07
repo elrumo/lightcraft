@@ -139,6 +139,8 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("merge.hdrLast", "HDR with Last Settings", Some("Ctrl+Shift+H"), "Photo>Photo Merge"),
     ("merge.panoramaLast", "Panorama with Last Settings", Some("Ctrl+Shift+M"), "Photo>Photo Merge"),
     ("merge.hdrPanoramaLast", "HDR Panorama with Last Settings", None, "Photo>Photo Merge"),
+    // compact layout: choose photos by touch (Select, or a long press in the grid)
+    ("view.selectMode", "Select Photos", None, ""),
     ("file.addPhotos", "Import Photos…", Some("Cmd+Shift+I"), "File"),
     // the host's own pickers (iOS); only in hosts that have them
     ("file.importFromPhotos", "Import from Photos…", None, "File"),
@@ -340,9 +342,26 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             app.toast(&ctx, if app.ui.auto_advance { "Auto Advance On" } else { "Auto Advance Off" });
             Ok(json!({"autoAdvance": app.ui.auto_advance}))
         }
+        "view.selectMode" => {
+            // {on?: bool (default: toggle), id?: photo to start with (a long press)}
+            let on = p.get("on").and_then(Value::as_bool).unwrap_or(!app.ui.select_mode);
+            app.ui.select_mode = on;
+            if on {
+                if !matches!(app.ui.view, ViewMode::PhotoGrid | ViewMode::SquareGrid) {
+                    app.ui.view = ViewMode::PhotoGrid;
+                }
+                let ids: Vec<u64> = p.get("id").and_then(Value::as_u64).into_iter().collect();
+                if let Err(e) = app.run("library.select", json!({"ids": ids})) {
+                    return Some(Err(e));
+                }
+            }
+            Ok(json!({"on": on, "selected": app.session.selection.ids.len()}))
+        }
         "view.back" => {
             if app.ui.dialog.is_some() {
                 app.ui.dialog = None;
+            } else if app.ui.select_mode {
+                app.ui.select_mode = false;
             } else if app.ui.keyword_painter.is_some() {
                 app.ui.keyword_painter = None;
             } else if app.ui.fullscreen {

@@ -1244,5 +1244,21 @@
   "this photo": "這張照片",
   "日本語": "日本語",
   "繁體中文（台灣）": "繁體中文（台灣）",
-  "In Recently Deleted": "在「最近刪除」中"
+  "In Recently Deleted": "在「最近刪除」中",
+  "Color Label": "色彩標籤",
+  "No Rating": "無評分",
+  "Stars": "星等",
+  "No Label": "無標籤",
+  "Edit settings copied": "已複製編輯設定",
+  "No albums yet (My Photos ▸ Albums ▸ +)": "尚無相簿（我的照片 ▸ 相簿 ▸ +）",
+  "Rating, Flag and Label": "評分、旗標與標籤",
+  "Add Photos": "加入照片",
+  "From Photos…": "從「照片」…",
+  "From Files…": "從「檔案」…",
+  "Folder from Files…": "「檔案」中的資料夾…",
+  "Import from Photos…": "從「照片」匯入…",
+  "Import from Files…": "從「檔案」匯入…",
+  "Import Folder from Files…": "從「檔案」匯入資料夾…",
+  "When the export is done, the share sheet opens: save the photos to Photos or Files, or send them to another app.": "匯出完成後會開啟分享表單：可將照片儲存到「照片」或「檔案」，或傳送到其他 App。",
+  "The photos are copied into the library; the originals in Photos or Files are left as they are.": "照片會拷貝到圖庫；「照片」或「檔案」中的原始照片保持不變。"
 }
