@@ -33,14 +33,21 @@ layout and interaction only: no Adobe icons, artwork, fonts, presets or screensh
 
 ## What is missing
 
-1. **A touch UI (started).** `ui-egui` has a compact layout (`panels/compact.rs`) used when the content is narrower than
-   `COMPACT_BELOW_PT` (700 pt; `LightcraftApp::compact`): slim top bar, grid or loupe, a bottom tab bar of tools and the
-   active tool's panel as a resizable bottom sheet (it reuses `right::body`); a tap on a grid photo opens it. The host
-   keeps it inside the safe area. Check it headless with `lightcraft-cli snapshot --demo --size 390x844 --scale 2`.
-   Still missing: pinch / two-finger pan in the loupe (egui multi-touch is untested), swipe to the next photo, 44 pt
-   slider hit targets (sliders are ~22 px), a phone grid (3 columns, no date header per photo), long-press instead of the
-   23 right-click menus, import/export/preset UI without menus, masks and crop by touch, the iPad split layout (744+ pt
-   still gets the desktop layout), the left sidebar and presets as sheets.
+1. **A touch UI (done for the spike, unverified on a device).** `ui-egui` has a compact layout (`panels/compact.rs`) used
+   when the content is narrower than `COMPACT_BELOW_PT` (900 pt; `LightcraftApp::compact`), i.e. iPhones and iPads in
+   portrait; iPad landscape (1024 pt and more) keeps the desktop layout. Slim top bar with a Menu button (the whole
+   command menu: import, export, settings…), the grid (about three tiles across, month headers) or the loupe, a bottom
+   tab bar (Presets, Edit, Crop, Remove, Masking, Info) and the active tool as a bottom sheet (from 600 pt wide: a
+   panel on the right, with My Photos as a column on the left; on a phone My Photos is a page of its own). The sheets
+   reuse the desktop panel bodies. Touch: a tap opens a photo, pinch zooms, two fingers pan, a sideways swipe on a
+   fitted photo goes to the next / previous one, double tap zooms, sliders have 68 pt rows and a 48 pt grab zone,
+   egui-drawn rows are 44 pt, crop handles and mask / spot pins are about a finger wide, and press-and-hold opens the
+   context menus (egui's own long-touch). Check it headless with `lightcraft-cli snapshot --demo --size 390x844
+   --scale 2` (phone) or `--size 820x1180` (iPad). Pinch and two-finger pan are untested (the headless driver injects
+   no multi-touch); everything is untested on a real device.
+   Still missing: the native pickers and share sheet that make Menu → Import / Export work (item 4), the on-screen
+   keyboard for text fields, Apple Pencil, tool-specific touch polish (brush strokes with a finger while the sheet is
+   open, the curve editor, the colour wheels) and a landscape phone layout.
 2. **HEIC/HEIF decode.** iPhone photos are HEIC; `crates/codecs` recognises the format but cannot decode it, and import
    currently accepts `.heic` files it then fails on. The pragmatic route is ImageIO behind the `FileLoader` hook
    (`crates/engine/src/media.rs`).
