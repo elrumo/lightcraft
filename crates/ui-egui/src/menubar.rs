@@ -64,6 +64,9 @@ const LAYOUT: &[(&str, &[&str])] = &[
         &[
             "file.addPhotos",
             "file.addFolder",
+            "file.importFromPhotos",
+            "file.importFromFiles",
+            "file.importFolderFromFiles",
             "@Import from Device",
             "---",
             "app.openLibrary",
@@ -276,6 +279,9 @@ fn host_supports(app: &LightcraftApp, id: &str) -> bool {
     match id {
         "file.backupLibrary" => app.services.backup_library.is_some(),
         "file.restoreLibrary" => app.services.restore_library.is_some(),
+        // the host's own pickers replace the desktop's file and folder dialogs (iOS)
+        "file.importFromPhotos" | "file.importFromFiles" | "file.importFolderFromFiles" => app.services.host_pick.is_some(),
+        "file.addPhotos" | "file.addFolder" | "@Import from Device" => app.services.host_pick.is_none(),
         "photo.restore" | "photo.deletePermanently" => selection_deleted(app),
         "photo.delete" => !selection_deleted(app),
         // only once this library syncs (Settings ▸ Sync), on a host that can
@@ -634,6 +640,9 @@ pub fn menu_bar(app: &LightcraftApp) -> Vec<(String, Vec<MenuNode>)> {
             if *slot == "---" {
                 items.push(MenuNode::Separator);
             } else if let Some(name) = slot.strip_prefix('@') {
+                if !host_supports(app, slot) {
+                    continue;
+                }
                 let children = sub(name, &mut used);
                 items.push(MenuNode::Submenu { label: name.to_string(), children });
             } else if let Some(i) = entries.iter().position(|e| e.id == *slot && e.menu.first().map(String::as_str) == Some(title)) {

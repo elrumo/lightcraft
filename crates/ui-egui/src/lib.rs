@@ -77,6 +77,21 @@ pub type OpenWithFn = Box<dyn FnMut(&str, &str) -> Result<(), String>>;
 /// storage); the work may finish asynchronously.
 pub type HostAction = Box<dyn FnMut(&mut Session) -> Result<Value, String>>;
 
+/// Where the host's own picker takes photos from ([`Services::host_pick`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PickSource {
+    /// The system photo library (iOS: Photos).
+    Photos,
+    /// Image files (iOS: Files, iCloud Drive, external drives).
+    Files,
+    /// A folder of photos (iOS: a folder in Files).
+    Folder,
+}
+
+/// Show the host's picker for `source`. It returns at once; the picked photos arrive later as
+/// `file.addPhotos {paths, staged: true}` (copies in the host's staging folder).
+pub type HostPick = Box<dyn FnMut(PickSource) -> Result<(), String>>;
+
 /// Exports handed to the system instead of written to a folder the user chooses (iOS: the share
 /// sheet, with Save Image, Save to Files, AirDrop and other apps). The export dialog then has no
 /// folder field; each export empties `dir` first, writes there and offers what it wrote.
@@ -125,6 +140,9 @@ pub struct Services {
     pub sync_exec: Option<sync_ui::SyncExec>,
     /// Exports go to the system's share sheet instead of a folder (iOS; see [`ShareExports`]).
     pub share_exports: Option<ShareExports>,
+    /// The host's own pickers (iOS: Photos, Files): File ▸ Import from Photos… / from Files… /
+    /// Folder from Files…, and the compact grid's + button.
+    pub host_pick: Option<HostPick>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]

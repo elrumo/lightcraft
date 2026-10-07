@@ -140,6 +140,10 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("merge.panoramaLast", "Panorama with Last Settings", Some("Ctrl+Shift+M"), "Photo>Photo Merge"),
     ("merge.hdrPanoramaLast", "HDR Panorama with Last Settings", None, "Photo>Photo Merge"),
     ("file.addPhotos", "Import Photos…", Some("Cmd+Shift+I"), "File"),
+    // the host's own pickers (iOS); only in hosts that have them
+    ("file.importFromPhotos", "Import from Photos…", None, "File"),
+    ("file.importFromFiles", "Import from Files…", None, "File"),
+    ("file.importFolderFromFiles", "Import Folder from Files…", None, "File"),
     ("file.addFolder", "Import from Folder…", None, "File"),
     ("file.addFromDevice", "Import from Device", None, ""),
     ("file.findMissing", "Find Missing Photos…", None, "File"),
@@ -1084,6 +1088,16 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             }
             r
         }
+        "file.importFromPhotos" | "file.importFromFiles" | "file.importFolderFromFiles" => {
+            // the host's picker shows over the app; its picks come back as file.addPhotos {staged}
+            let source = match id {
+                "file.importFromPhotos" => crate::PickSource::Photos,
+                "file.importFromFiles" => crate::PickSource::Files,
+                _ => crate::PickSource::Folder,
+            };
+            let Some(pick) = app.services.host_pick.as_mut() else { return Some(Err("this app has no photo picker".into())) };
+            pick(source).map(|()| json!({"picking": true}))
+        }
         "file.addFolder" => {
             // a folder (searched recursively) into the import review
             let path = match p.get("path").and_then(Value::as_str) {
@@ -1272,6 +1286,7 @@ pub fn ui_enabled(app: &LightcraftApp, id: &str) -> bool {
         "view.compare" => app.session.catalog.len() > 1,
         "view.fullScreenPreview" | "view.infoOverlay" | "view.navigator" => app.session.active().is_some() || app.ui.fullscreen,
         "app.openLibrary" | "file.addFolder" => app.services.pick_folder.is_some(),
+        "file.importFromPhotos" | "file.importFromFiles" | "file.importFolderFromFiles" => app.services.host_pick.is_some(),
         "file.backupLibrary" => app.services.backup_library.is_some(),
         "file.restoreLibrary" => app.services.restore_library.is_some(),
         "compare.swap" | "compare.makeSelect" => app.ui.view == ViewMode::Compare,

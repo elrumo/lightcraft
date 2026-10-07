@@ -153,3 +153,87 @@ fn exports_go_to_the_share_sheet() {
     drop(h);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+fn menu_ids(app: &LightcraftApp) -> Vec<String> {
+    fn walk(nodes: &[crate::menubar::MenuNode], out: &mut Vec<String>) {
+        for n in nodes {
+            match n {
+                crate::menubar::MenuNode::Item { id, .. } => out.push(id.clone()),
+                crate::menubar::MenuNode::Submenu { label, children } => {
+                    out.push(format!("@{label}"));
+                    walk(children, out);
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for (_, items) in crate::menubar::menu_bar(app) {
+        walk(&items, &mut out);
+    }
+    out
+}
+
+fn picking_app() -> (LightcraftApp, Rc<RefCell<Vec<crate::PickSource>>>) {
+    let asked: Rc<RefCell<Vec<crate::PickSource>>> = Rc::default();
+    let log = asked.clone();
+    let services = Services {
+        png: None,
+        host_pick: Some(Box::new(move |s| {
+            log.borrow_mut().push(s);
+            Ok(())
+        })),
+        ..Default::default()
+    };
+    (LightcraftApp::new(Session::with_demo(), services), asked)
+}
+
+/// The host's pickers replace the desktop's open dialogs in File (and only there).
+#[test]
+fn host_pickers_are_in_the_file_menu_instead_of_the_open_dialogs() {
+    let desktop = LightcraftApp::new(Session::with_demo(), Services { png: None, ..Default::default() });
+    let ids = menu_ids(&desktop);
+    assert!(ids.iter().any(|i| i == "file.addPhotos") && ids.iter().any(|i| i == "@Import from Device"));
+    assert!(!ids.iter().any(|i| i.starts_with("file.importFrom") || i == "file.importFolderFromFiles"), "{ids:?}");
+    let mut desktop = desktop;
+    assert!(desktop.run("file.importFromPhotos", json!({})).is_err(), "no picker without the host");
+
+    let (mut app, asked) = picking_app();
+    let ids = menu_ids(&app);
+    for id in ["file.importFromPhotos", "file.importFromFiles", "file.importFolderFromFiles"] {
+        assert!(ids.iter().any(|i| i == id), "{id} in {ids:?}");
+    }
+    for id in ["file.addPhotos", "file.addFolder", "@Import from Device"] {
+        assert!(!ids.iter().any(|i| i == id), "{id} hidden: {ids:?}");
+    }
+    assert_eq!(app.run("file.importFromPhotos", json!({})).unwrap()["picking"], true);
+    app.run("file.importFromFiles", json!({})).unwrap();
+    app.run("file.importFolderFromFiles", json!({})).unwrap();
+    use crate::PickSource as P;
+    assert_eq!(*asked.borrow(), [P::Photos, P::Files, P::Folder]);
+}
+
+/// The phone grid's + button offers the pickers; the loupe has none.
+#[test]
+fn the_phone_grid_has_an_add_button() {
+    let (mut app, asked) = picking_app();
+    app.ui.view = crate::state::ViewMode::PhotoGrid;
+    let mut h = Headless::new(app, [390.0, 844.0], 1.0);
+    h.settle(SETTLE);
+    assert!(h.app.compact && has(&h, "button:addPhotos"));
+    let r = h.request("ui.clickWidget", json!({"id": "button:addPhotos"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    let r = h.request("ui.clickWidget", json!({"id": "button:file.importFromFiles"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    assert_eq!(*asked.borrow(), [crate::PickSource::Files]);
+    h.app.ui.view = crate::state::ViewMode::Detail;
+    h.settle(SETTLE);
+    assert!(!has(&h, "button:addPhotos"));
+    // without host pickers (desktop-built compact window): no button
+    let mut h = Headless::new(LightcraftApp::new(Session::with_demo(), Services { png: None, ..Default::default() }), [390.0, 844.0], 1.0);
+    h.app.ui.view = crate::state::ViewMode::PhotoGrid;
+    h.settle(SETTLE);
+    assert!(!has(&h, "button:addPhotos"));
+}

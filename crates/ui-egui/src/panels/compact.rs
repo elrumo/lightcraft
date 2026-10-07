@@ -3,7 +3,7 @@
 //! sheet. It reuses the desktop panels' bodies (`right::body`) and commands, so every control
 //! stays a `develop` control spec / command.
 
-use egui::{Align2, vec2};
+use egui::{Align2, Sense, Stroke, pos2, vec2};
 use serde_json::json;
 
 use crate::LightcraftApp;
@@ -52,7 +52,51 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     } else {
         content(app, ui, bg);
     }
+    if !(app.ui.left_panel && !wide) {
+        add_button(app, &ctx, &t);
+    }
     overlays(app, &ctx);
+}
+
+/// Diameter of the add-photos button.
+const ADD_D: f32 = 56.0;
+
+/// The phone's add-photos button: a round + over the grid's bottom right corner, offering the
+/// host's pickers (Photos, Files, a folder). Only in hosts that have them (iOS).
+fn add_button(app: &mut LightcraftApp, ctx: &egui::Context, t: &Tokens) {
+    if app.services.host_pick.is_none() || !matches!(app.ui.view, ViewMode::PhotoGrid | ViewMode::SquareGrid) {
+        return;
+    }
+    let screen = ctx.content_rect();
+    let at = pos2(screen.right() - 20.0 - ADD_D, screen.bottom() - 20.0 - ADD_D);
+    egui::Area::new(egui::Id::new("compact_add")).order(egui::Order::Foreground).fixed_pos(at).show(ctx, |ui| {
+        let (r, resp) = ui.allocate_exact_size(vec2(ADD_D, ADD_D), Sense::click());
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, crate::i18n::tr("Add Photos")));
+        crate::widgets::register(ui.ctx(), "button:addPhotos", r);
+        let p = ui.painter();
+        let fill = if resp.is_pointer_button_down_on() { t.accent.gamma_multiply(0.8) } else { t.accent };
+        p.circle_filled(r.center(), ADD_D / 2.0, fill);
+        let (c, arm) = (r.center(), ADD_D * 0.2);
+        let stroke = Stroke::new(2.5, egui::Color32::WHITE);
+        p.line_segment([c - vec2(arm, 0.0), c + vec2(arm, 0.0)], stroke);
+        p.line_segment([c - vec2(0.0, arm), c + vec2(0.0, arm)], stroke);
+        egui::Popup::menu(&resp).show(|ui| {
+            for (id, label) in [
+                ("file.importFromPhotos", "From Photos…"),
+                ("file.importFromFiles", "From Files…"),
+                ("file.importFolderFromFiles", "Folder from Files…"),
+            ] {
+                let b = ui.add(egui::Button::new(crate::i18n::tr(label)).min_size(vec2(220.0, 44.0)));
+                crate::widgets::register(ui.ctx(), format!("button:{id}"), b.rect);
+                if b.clicked() {
+                    if let Err(e) = app.run(id, json!({})) {
+                        app.toast(ui.ctx(), e);
+                    }
+                    ui.close();
+                }
+            }
+        });
+    });
 }
 
 fn content(app: &mut LightcraftApp, ui: &mut egui::Ui, bg: egui::Color32) {
