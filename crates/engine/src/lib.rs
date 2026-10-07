@@ -206,6 +206,9 @@ pub struct Session {
     pub forget_local_days: u32,
     /// Sharing this library with other devices through a server (see [`sync`]).
     sync: Option<sync::SyncState>,
+    /// Set by a host that keeps synced photo files in its own storage instead of a previews folder
+    /// (the browser).
+    pub sync_store: Option<sync::BrowserStore>,
 }
 
 impl Default for Session {
@@ -269,6 +272,7 @@ impl Session {
             smart_previews_dir: None,
             forget_local_days: lightcraft_catalog::DEFAULT_FORGET_DAYS,
             sync: None,
+            sync_store: None,
         }
     }
 

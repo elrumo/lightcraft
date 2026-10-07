@@ -7,12 +7,27 @@ in, and only to the server you name.
 
 - **Server:** `apps/lightcraft-server`, one pure-Rust binary (or a Docker image). It keeps each user's library and
   photo files, orders every device's changes, and serves the web build at `/`.
-- **Clients:** the desktop app (Settings ▸ Sync) and `lightcraft-cli`/MCP. The web build and an iOS app are next
-  ([Limits](#limits)): the protocol is plain HTTP + JSON and the device side is sans-IO Rust
-  (`crates/engine/src/sync.rs`, `crates/catalog/src/sync.rs`), already checked on wasm32.
+- **Clients:** the desktop app (Settings ▸ Sync), the web build the server serves (open the server's address in a
+  browser, Settings ▸ Sync) and `lightcraft-cli`/MCP. An iOS app is next: the protocol is plain HTTP + JSON and the
+  device side is sans-IO Rust (`crates/engine/src/sync.rs`, `crates/catalog/src/sync.rs`).
 - **v1 is one person's devices.** Sharing albums with other people comes later.
 
 ## Run a server
+
+### Docker Compose, with HTTPS on your own domain
+
+The easiest setup on a machine reachable from the internet (a home server, a small VPS): the server plus
+[Caddy](https://caddyserver.com), which gets and renews the HTTPS certificate by itself.
+
+```sh
+# a DNS name pointing at this machine, ports 80 and 443 open
+cd apps/lightcraft-server
+LIGHTCRAFT_DOMAIN=photos.example.com docker compose up -d --build
+docker compose exec -it lightcraft lightcraft-server user add ann    # type the password (not shown)
+```
+
+`apps/lightcraft-server/docker-compose.yml` and its `Caddyfile` are all there is to it; everything the server keeps is
+in the `lightcraft-data` volume. Then [connect your devices](#connect-your-devices) to `https://photos.example.com`.
 
 ### Docker
 
@@ -75,10 +90,26 @@ certificate from Let's Encrypt or Tailscale works as is; a self-signed one doesn
 
 Back up `<data>` like any folder (stop the server, or copy `catalog.log` first and the blobs after).
 
-## Sign in
+## Connect your devices
 
-**Settings ▸ Sync** (or click the cloud icon in the top bar): server address, user name, password, **Sign In**. The
-password goes to the server once; the device keeps a token (in the library's `sync.json`).
+Every client needs the same three things: the **server address** (`https://photos.example.com`, or
+`http://machine-name:8080` on a tailnet), a **user name** and its **password**, as added with
+`lightcraft-server user add`. The password goes to the server once; the device gets its own token (kept in the
+library's `sync.json`), which `lightcraft-server device revoke` or Sign Out ends.
+
+| Client | How |
+|---|---|
+| Desktop app | **Settings ▸ Sync** (or click the cloud icon in the top bar): server, user, password, **Sign In** |
+| Browser | open the server's address: the server serves the web build, and Settings ▸ Sync has the address filled in |
+| Command line / agents | `lightcraft-cli run --library DIR sync.signIn server=… user=… password=… sync.now wait=true` |
+| iOS (later) | the same three fields, the same API |
+
+Users and devices are managed on the server, from its command line (`user add / passwd / remove / list`,
+`device list / revoke`, `gc`; see the table above). There is no admin web page yet. Where the server keeps its data,
+which address it listens on and the domain are deployment settings: `--data` / `LIGHTCRAFT_DATA`, `--listen` /
+`LIGHTCRAFT_LISTEN`, and the domain in the reverse proxy (`LIGHTCRAFT_DOMAIN` with the compose file).
+
+## What happens at sign-in
 
 - **The first library** signed in to an empty server **uploads itself**: every photo's original, a smart preview
   (≤ 2560 px, ~1 MB) and a mini preview (≤ 512 px) built on this device, then the whole catalog.
@@ -91,13 +122,6 @@ password goes to the server once; the device keeps a token (in the library's `sy
 
 The cloud icon shows the state: its tooltip says synced / syncing (with what's queued) / paused / signed out / the last
 error, and it turns amber while the server can't be reached (changes wait on the device, nothing is lost).
-
-From the command line (a headless session on a library folder):
-
-```sh
-lightcraft-cli run --library ~/Pictures/LightCraft\ Library \
-    sync.signIn server=https://photos.example.com user=ann password='…' sync.now wait=true
-```
 
 ## Photos on a device
 
@@ -121,6 +145,7 @@ Each device keeps the **whole catalog** (it's small) and **downloads pixels as n
 |---|---|
 | photos (added, removed, Recently Deleted), ratings, flags, colour labels, label names | where the original is on this disk (renames and relinks of files), Local folders browsed |
 | develop settings, versions (incl. automatic ones), capture time edits | edit **History** (each device keeps its own steps) |
+| user presets (create, rename, move, delete, favourite) | favourites among the built-in presets, recent profiles |
 | metadata and keywords, analysis results | undo / redo |
 | albums, folders, smart albums, stacks | Settings (`prefs.json`), the view (`view.json`, `ui.json`) |
 | | Local records (photos seen while browsing a folder, until added to the library) |
@@ -140,6 +165,9 @@ another device got there first it pulls, merges, and sends again. What the merge
 - **Undo after someone else's change:** a change from another device clears Redo (and Undo too when something was
   removed), so undo never silently reverts another device's edit.
 - **During a slider drag** nothing from the server is applied; it waits until you let go.
+- **Presets** are one document on the server, merged by preset id against the copy both sides last agreed on: a preset
+  deleted on one device stays deleted unless the other changed it meanwhile, presets added on both are all kept, and
+  one edited on both merges field by field. A preset created on a synced device gets an id that includes its id space.
 
 Ids never collide: the server gives each device an id space at sign-in, and ids a device hands out are
 `space · 2³² + n` (still exact in JavaScript). The library uploaded first keeps the ids it had.
@@ -173,10 +201,12 @@ refused.
 
 v1, honestly:
 
-- **Desktop and CLI only for now.** The web build serves from the server but doesn't sign in yet; the iOS app doesn't
-  exist yet. Both reuse this protocol and the sans-IO device code.
-- **Presets don't sync yet** (the server's `/api/presets` document is there; the clients don't use it yet).
-  Preferences, LUT profiles and export presets stay per device.
+- **No iOS app yet** (it would reuse this protocol and the sans-IO device code).
+- **In the browser** the web build signs in to the server that serves it (same origin; no cross-origin servers). Synced
+  previews and downloaded originals are kept in the browser's storage. Commands that read a photo's pixels on the main
+  thread (auto settings, export) need its original there: **Photo ▸ Download Originals** first. A photo imported in
+  the browser is uploaded with previews built in the page (slow for large raws).
+- Preferences, LUT profiles and export / metadata / filter presets stay per device.
 - **No merging of two existing libraries**, no sharing with other people, no shared albums or links.
 - **Originals downloaded to a device are kept** until you delete them (no automatic eviction under a size budget yet).
 - **The server never compacts its log** (it only grows; a pull reads it whole when behind). Fine for one person's

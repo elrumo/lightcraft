@@ -770,7 +770,14 @@ pub fn specs() -> Vec<CommandSpec> {
             let group = str_param(p, "group").unwrap_or("User Presets");
             let groups = groups_param(p).unwrap_or_else(SettingsGroup::default_copy);
             let d = s.develop_of(id).unwrap_or_default();
-            let pid = format!("user.{}.{}", s.presets.len(), name.to_lowercase().replace(' ', "-"));
+            // a synced device's presets carry its id space, so two devices never make the same id
+            let space = s.sync_state().filter(|st| !st.config.library.is_empty()).map(|st| format!("s{}-", st.config.space)).unwrap_or_default();
+            let base = format!("user.{space}{}.{}", s.presets.len(), name.to_lowercase().replace(' ', "-"));
+            let (mut pid, mut n) = (base.clone(), 2);
+            while s.presets.iter().any(|x| x.id == pid) {
+                pid = format!("{base}-{n}");
+                n += 1;
+            }
             s.presets.push(Preset::from_settings(&pid, name, group, &d, &groups));
             Ok(json!({"id": pid}))
         }),

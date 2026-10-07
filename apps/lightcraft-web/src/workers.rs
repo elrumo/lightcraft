@@ -105,7 +105,20 @@ async fn handle(scope: &web_sys::DedicatedWorkerGlobalScope, backend: Option<Bac
         set(&out, "cacheMiss", &cache_miss.into());
         let original = match CORE.with(|c| c.borrow_mut().needs_original(&job)) {
             Some(hash) => match &backend {
-                Some(b) => b.read(&crate::store::storage_key(&hash)).await?,
+                Some(b) => match b.read(&crate::store::storage_key(&hash)).await? {
+                    Some(bytes) => Some(bytes),
+                    // a synced photo whose original is on the server: its downloaded previews
+                    None => {
+                        let mut found = None;
+                        for key in crate::wire::proxy_keys(&hash, job.max_edge) {
+                            if let Some(bytes) = b.read(&key).await? {
+                                found = Some(bytes);
+                                break;
+                            }
+                        }
+                        found
+                    }
+                },
                 None => None,
             },
             None => None,

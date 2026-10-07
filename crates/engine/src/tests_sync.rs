@@ -34,6 +34,7 @@ struct Fake {
     blobs: HashMap<(String, String), Vec<u8>>,
     library: String,
     spaces: u32,
+    presets: proto::Presets,
     /// Answer nothing (the network is down).
     down: bool,
     requests: Vec<String>,
@@ -46,6 +47,7 @@ impl Fake {
             blobs: HashMap::new(),
             library: "lib-1".into(),
             spaces: 0,
+            presets: proto::Presets { version: 0, presets: json!([]) },
             down: false,
             requests: vec![],
         }
@@ -92,7 +94,7 @@ impl Fake {
                 let (since, limit) = q.split_once("&limit=").unwrap();
                 match self.core.since(since.parse().unwrap(), limit.parse().unwrap()).unwrap() {
                     lightcraft_catalog::sync::Pull::Ops(ops) => {
-                        ok(serde_json::to_value(proto::Ops { head: self.core.head(), ops, presets: 0 }).unwrap())
+                        ok(serde_json::to_value(proto::Ops { head: self.core.head(), ops, presets: self.presets.version }).unwrap())
                     }
                     lightcraft_catalog::sync::Pull::Gone => status(410, json!({"error": "gone"})),
                 }
@@ -105,6 +107,15 @@ impl Fake {
                     Err(PushError::Rejected { index, error }) => status(422, json!({"index": index, "error": error})),
                     Err(PushError::Storage(e)) => status(500, json!({"error": e})),
                 }
+            }
+            ("GET", "/api/presets") => ok(serde_json::to_value(&self.presets).unwrap()),
+            ("PUT", "/api/presets") => {
+                let p: proto::Presets = serde_json::from_str(&json_body()).unwrap();
+                if p.version != self.presets.version {
+                    return status(412, serde_json::to_value(&self.presets).unwrap());
+                }
+                self.presets = proto::Presets { version: p.version + 1, presets: p.presets };
+                ok(json!({"version": self.presets.version}))
             }
             (m, p) if p.starts_with("/api/blobs/") => {
                 let (kind, hash) = p.trim_start_matches("/api/blobs/").split_once('/').unwrap();
@@ -239,6 +250,27 @@ fn two_devices_share_photos_edits_and_files() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// A new library seeded with the demo photos joins: their ids mean other photos than the
+/// server's, so nothing of them carries over (file names, sources, the selection).
+#[test]
+fn joining_from_a_demo_library_takes_the_servers_photos_whole() {
+    let mut f = Fake::new();
+    let (a, root, ids) = first_device("demojoin", &mut f);
+    let mut b = Session::new().with_fs();
+    b.open_library(root.join("b"), true).unwrap();
+    assert!(b.catalog.len() > 2, "seeded with the demo photos");
+    sign_in(&mut b);
+    sync(&mut b, &mut f);
+    assert_eq!(b.catalog.len(), 2);
+    for id in &ids {
+        let (pa, pb) = (a.catalog.photo(*id).unwrap(), b.catalog.photo(*id).unwrap());
+        assert_eq!(pb.file_name, pa.file_name);
+        assert!(is_remote(pb), "{:?}", pb.source);
+    }
+    assert!(b.selection.active.is_none_or(|id| ids.contains(&id)));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 #[test]
 fn signing_in_counts_as_signed_in_while_the_request_is_out() {
     let root = temp_dir("signing");
@@ -348,6 +380,64 @@ fn hostile_answers_are_errors_not_crashes() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+fn preset_names(s: &Session) -> Vec<String> {
+    let mut v: Vec<String> = s.presets.iter().filter(|p| !p.builtin).map(|p| p.name.clone()).collect();
+    v.sort();
+    v
+}
+
+#[test]
+fn presets_sync_and_deletions_stick() {
+    let mut f = Fake::new();
+    let (mut a, root, ids) = first_device("presets", &mut f);
+    a.selection = crate::Selection::single(ids[0]);
+    a.execute("preset.create", &json!({"name": "Warm"})).unwrap();
+    a.execute("preset.create", &json!({"name": "Cool"})).unwrap();
+    sync(&mut a, &mut f);
+    assert_eq!(f.presets.version, 1);
+    let mut b = open(&root.join("b"));
+    sign_in(&mut b);
+    sync(&mut b, &mut f);
+    assert_eq!(preset_names(&b), ["Cool", "Warm"]);
+    // both change them at once: B deletes Warm and adds Matte, A renames Cool
+    let warm = b.presets.iter().find(|p| p.name == "Warm").unwrap().id.clone();
+    b.execute("preset.delete", &json!({"id": warm})).unwrap();
+    b.selection = crate::Selection::single(ids[1]);
+    let matte = b.execute("preset.create", &json!({"name": "Matte"})).unwrap();
+    assert!(matte["id"].as_str().unwrap().contains(&format!("s{}-", b.sync_state().unwrap().config.space)), "{matte}");
+    let cool = a.presets.iter().find(|p| p.name == "Cool").unwrap().id.clone();
+    a.execute("preset.rename", &json!({"id": cool, "name": "Cooler"})).unwrap();
+    sync(&mut b, &mut f);
+    sync(&mut a, &mut f);
+    sync(&mut b, &mut f);
+    assert_eq!(preset_names(&a), ["Cooler", "Matte"], "the deletion stuck, both other changes landed");
+    assert_eq!(preset_names(&b), ["Cooler", "Matte"]);
+    // reopened: nothing to send again
+    drop(a);
+    let mut a = open(&root.join("a"));
+    let before = f.requests.len();
+    sync(&mut a, &mut f);
+    assert!(!f.requests[before..].iter().any(|r| r.contains("presets")), "{:?}", &f.requests[before..]);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn merging_preset_lists() {
+    use crate::sync::merge_presets;
+    let p = |id: &str, name: &str| json!({"id": id, "name": name, "group": "User Presets", "settings": {}});
+    let base = [p("a", "A"), p("b", "B"), p("c", "C")];
+    // here: b deleted, c edited, d added; there: a deleted, c edited elsewhere, e added
+    let ours = [p("a", "A"), json!({"id": "c", "name": "C", "group": "Mine", "settings": {}}), p("d", "D")];
+    let theirs = [p("b", "B"), json!({"id": "c", "name": "C2", "group": "User Presets", "settings": {}}), p("e", "E")];
+    let m = merge_presets(&base, &ours, &theirs);
+    let ids: Vec<&str> = m.iter().map(|v| v["id"].as_str().unwrap()).collect();
+    assert_eq!(ids, ["c", "e", "d"]);
+    assert_eq!((m[0]["name"].as_str(), m[0]["group"].as_str()), (Some("C2"), Some("Mine")), "both edits of c");
+    // deleted on one side but changed on the other: the change stays
+    let m = merge_presets(&[p("x", "X")], &[], &[p("x", "X2")]);
+    assert_eq!(m.len(), 1);
+}
+
 #[test]
 fn removals_win_over_pending_edits() {
     let mut f = Fake::new();
@@ -363,5 +453,107 @@ fn removals_win_over_pending_edits() {
     assert!(b.catalog.photo(ids[1]).is_none());
     assert!(b.sync_state().unwrap().outbox.is_empty());
     assert!(!b.undo.iter().any(|e| matches!(e.op, Op::SetRating { .. })), "undo can't bring back a removed photo's edit");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// A browser: the library in memory stores, photo files as keys in the host's storage
+/// ([`crate::sync::BrowserStore`]), requests answered by the same server.
+#[test]
+fn a_browser_shares_the_library_through_its_storage() {
+    use crate::library::LibraryStores;
+    use crate::sync::BrowserStore;
+    let mut f = Fake::new();
+    let (mut a, root, ids) = first_device("browser", &mut f);
+    let mut b = Session::new();
+    let stores = LibraryStores { dir: "browser:test".into(), catalog: Box::new(MemStore::new()), files: Box::new(MemStore::new()), on_disk: false };
+    b.open_library_in(stores, false).unwrap();
+    b.sync_store = Some(BrowserStore { prefix: "proxies/".into(), ..Default::default() });
+    sign_in(&mut b);
+    // the host: storage keys instead of files, previews built from stored originals
+    let mut storage: HashMap<String, Vec<u8>> = HashMap::new();
+    let browser = |f: &mut Fake, storage: &mut HashMap<String, Vec<u8>>, t: &Task| -> Done {
+        match t {
+            Task::Proxies { id, original, smart, mini } => {
+                let (s, m) = crate::smart::encode_pair(&storage[original], crate::sync::MINI_EDGE).unwrap();
+                storage.insert(smart.clone(), s);
+                storage.insert(mini.clone(), m);
+                Done { id: *id, status: 200, body: String::new() }
+            }
+            Task::Http { id, method, url, token, body: Body::File(key), save_to } => {
+                let tmp = root.join("upload.tmp");
+                std::fs::write(&tmp, &storage[key]).unwrap();
+                let t = Task::Http {
+                    id: *id,
+                    method,
+                    url: url.clone(),
+                    token: token.clone(),
+                    body: Body::File(tmp.to_string_lossy().to_string()),
+                    save_to: save_to.clone(),
+                };
+                f.handle(&t)
+            }
+            Task::Http { id, method, url, token, body, save_to: Some(key) } => {
+                let tmp = root.join("download.tmp");
+                let t = Task::Http {
+                    id: *id,
+                    method,
+                    url: url.clone(),
+                    token: token.clone(),
+                    body: body.clone(),
+                    save_to: Some(tmp.to_string_lossy().to_string()),
+                };
+                let d = f.handle(&t);
+                if d.status == 200 {
+                    storage.insert(key.clone(), std::fs::read(&tmp).unwrap());
+                }
+                d
+            }
+            t => f.handle(t),
+        }
+    };
+    b.sync_now_with(10_000, &mut |t| browser(&mut f, &mut storage, t));
+    assert_eq!(b.catalog.len(), 2);
+    // opening a photo brings its smart preview down
+    b.selection = crate::Selection::single(ids[0]);
+    b.sync_now_with(10_000, &mut |t| browser(&mut f, &mut storage, t));
+    let key = |s: &Session, id: PhotoId| crate::sync::blob_key(s.catalog.photo(id).unwrap()).unwrap();
+    for id in &ids {
+        assert!(storage.contains_key(&format!("proxies/{}.lcsm", key(&b, *id))), "mini previews in the browser's storage");
+    }
+    assert!(storage.contains_key(&format!("proxies/{}.lcsp", key(&b, ids[0]))), "the open photo's smart preview");
+    assert!(!storage.keys().any(|k| k.starts_with("originals/")), "no originals unless asked");
+    assert_eq!(b.media.synced_tiers.len(), 2, "both are photos without their original here");
+
+    // a photo imported in the browser (stored there by content) is uploaded with its previews
+    let png = root.join("c.png");
+    write_png(&png, 9);
+    let bytes = std::fs::read(&png).unwrap();
+    let hash = lightcraft_preview::hash_bytes(&bytes).to_string();
+    storage.insert(BrowserStore::original_key(&hash), bytes);
+    let id = b.catalog.alloc_photo_id();
+    let mut p = lightcraft_catalog::Photo::new(
+        id,
+        Source::File { path: lightcraft_catalog::sync::original_path(&hash, "c.png") },
+        "c.png",
+        "PNG",
+        96,
+        64,
+        "t",
+    );
+    p.content_hash = Some(hash.clone());
+    b.commit("Import", Op::AddPhoto { photo: Box::new(p) }).unwrap();
+    b.sync_store.as_mut().unwrap().originals.insert(hash.clone());
+    b.sync_now_with(10_000, &mut |t| browser(&mut f, &mut storage, t));
+    for kind in ["original", "smart", "mini"] {
+        assert!(f.blobs.contains_key(&(kind.to_string(), hash.clone())), "{kind} uploaded");
+    }
+    sync(&mut a, &mut f);
+    assert!(a.catalog.photo(id).is_some());
+    assert!(root.join("a/Smart Previews").join(crate::sync::mini_file_name(a.catalog.photo(id).unwrap())).exists(), "A gets its preview");
+    // an original asked for lands in storage, where the photo's path already points
+    b.execute("sync.downloadOriginals", &json!({"ids": [ids[1].0]})).unwrap();
+    b.sync_now_with(10_000, &mut |t| browser(&mut f, &mut storage, t));
+    assert!(storage.contains_key(&BrowserStore::original_key(&key(&b, ids[1]))));
+    assert!(is_remote(b.catalog.photo(ids[1]).unwrap()), "no relink in the browser");
     let _ = std::fs::remove_dir_all(&root);
 }

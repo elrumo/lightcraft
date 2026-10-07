@@ -1,0 +1,44 @@
+# LightCraft sync server behind Caddy (automatic HTTPS certificates). See docs/sync.md.
+#
+#   1. Point a DNS name at this machine (photos.example.com) with ports 80 and 443 reachable.
+#   2. cd apps/lightcraft-server && LIGHTCRAFT_DOMAIN=photos.example.com docker compose up -d --build
+#   3. docker compose exec -it lightcraft lightcraft-server user add ann     (type the password)
+#   4. In LightCraft: Settings > Sync, server https://photos.example.com, user ann, the password.
+#      In a browser: open https://photos.example.com.
+#
+# Everything the server keeps is in the lightcraft-data volume (users, libraries, photo files).
+
+services:
+  lightcraft:
+    build:
+      context: ../..
+      dockerfile: apps/lightcraft-server/Dockerfile
+    image: lightcraft-server
+    restart: unless-stopped
+    environment:
+      LIGHTCRAFT_LOG: info
+    volumes:
+      - lightcraft-data:/data
+    expose:
+      - "8080"
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      - lightcraft
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      LIGHTCRAFT_DOMAIN: ${LIGHTCRAFT_DOMAIN:?set LIGHTCRAFT_DOMAIN to this server's domain name}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  lightcraft-data:
+  caddy-data:
+  caddy-config:

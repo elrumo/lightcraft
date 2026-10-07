@@ -17,7 +17,7 @@
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
-use std::io::BufRead;
+use std::io::{BufRead, IsTerminal};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -76,9 +76,20 @@ fn password() -> Result<String, String> {
     {
         return Ok(p);
     }
-    eprintln!("password (one line on stdin):");
+    // typed at a terminal: don't show it (best effort, `stty` where there is one)
+    let tty = std::io::stdin().is_terminal();
+    let echo = |on: bool| {
+        if tty {
+            let _ = std::process::Command::new("stty").arg(if on { "echo" } else { "-echo" }).stdin(std::process::Stdio::inherit()).status();
+        }
+    };
+    eprint!("password: ");
+    echo(false);
     let mut line = String::new();
-    std::io::stdin().lock().read_line(&mut line).map_err(|e| e.to_string())?;
+    let read = std::io::stdin().lock().read_line(&mut line);
+    echo(true);
+    eprintln!();
+    read.map_err(|e| e.to_string())?;
     let p = line.trim_end_matches(['\r', '\n']).to_string();
     if p.is_empty() { Err("no password given".into()) } else { Ok(p) }
 }

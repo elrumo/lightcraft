@@ -196,7 +196,18 @@ impl Store for FilesStore {
 }
 
 /// Names of the library files read at start-up.
-pub const LIBRARY_FILES: [&str; 6] = ["catalog.snap", "catalog.log", "presets.json", "view.json", "prefs.json", "ui.json"];
+pub const LIBRARY_FILES: [&str; 10] = [
+    "catalog.snap",
+    "catalog.log",
+    "presets.json",
+    "view.json",
+    "prefs.json",
+    "ui.json",
+    "sync.json",
+    "sync.outbox",
+    "sync.uploaded",
+    "sync.presets",
+];
 
 #[cfg(test)]
 mod tests {

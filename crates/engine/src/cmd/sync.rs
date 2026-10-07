@@ -52,11 +52,15 @@ fn sign_out(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn now(s: &mut Session, p: &Value) -> Result<Value> {
+    let wait = bool_or(p, "wait", false);
     #[cfg(not(target_arch = "wasm32"))]
-    if bool_or(p, "wait", false) {
+    if wait {
         let limit = p.get("limit").and_then(Value::as_u64).unwrap_or(100_000) as usize;
         return Ok(s.sync_now(limit));
     }
+    // (the browser can't wait here: its requests finish on later frames)
+    #[cfg(target_arch = "wasm32")]
+    let _ = wait;
     s.sync_soon();
     status(s, p)
 }

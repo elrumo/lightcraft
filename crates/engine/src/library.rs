@@ -63,6 +63,8 @@ pub struct Library {
     /// What forgetting untouched Local records did when the library opened.
     pub forgot_local: Option<lightcraft_catalog::ForgetPlan>,
     presets_written: String,
+    /// Bumped whenever presets.json is written (the sync compares the presets then).
+    presets_gen: u64,
     view_written: Vec<u8>,
     /// Settings files that were unreadable or damaged when the library opened (`library.info` →
     /// `settingsWarnings`; shown by the UI once, see [`Session::take_library_warnings`]).
@@ -114,6 +116,10 @@ impl Library {
     }
     pub(crate) fn journal_mut(&mut self) -> &mut Journal {
         &mut self.journal
+    }
+    /// How many times presets.json was written this session.
+    pub(crate) fn presets_gen(&self) -> u64 {
+        self.presets_gen
     }
     /// presets.json, view.json, prefs.json and the sync files.
     pub(crate) fn files_mut(&mut self) -> &mut dyn Store {
@@ -383,6 +389,7 @@ impl Session {
             retry_at: None,
             forgot_local: None,
             presets_written,
+            presets_gen: 0,
             view_written,
             settings_warnings: settings.warnings,
             warnings_reported: 0,
@@ -454,6 +461,9 @@ impl Session {
             if let Err(e) = st.save_outbox(lib.files.as_mut()) {
                 log::error!("library: {}: {e}", crate::sync::OUTBOX);
             }
+            if let Err(e) = st.save_presets_base(lib.files.as_mut()) {
+                log::error!("library: {}: {e}", crate::sync::PRESETS);
+            }
             if self.pending_log.is_empty()
                 && let Err(e) = st.save_config(lib.files.as_mut())
             {
@@ -467,6 +477,7 @@ impl Session {
                 log::error!("library: presets: {e}");
             } else {
                 lib.presets_written = presets;
+                lib.presets_gen += 1;
             }
         }
         Ok(())

@@ -14,8 +14,13 @@
 //!   asked to keep them. A downloaded original becomes the photo's file on this device. A photo
 //!   whose file isn't here renders from the best of those it has ([`crate::media::SourceRef::Synced`]).
 //!
+//! - **Presets** are one document on the server (`/api/presets`, versioned). A device sends its
+//!   user presets when they change, and merges the server's by preset id against the copy both
+//!   last agreed on ([`merge_presets`]), so a preset deleted on one device stays deleted.
+//!
 //! Files in the library: `sync.json` ([`SyncConfig`]), `sync.outbox` (changes the server hasn't
-//! acknowledged; written before the op log) and `sync.uploaded` (content hashes the server has).
+//! acknowledged; written before the op log), `sync.uploaded` (content hashes the server has) and
+//! `sync.presets` (the user presets as last synced).
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
@@ -33,6 +38,9 @@ use crate::{EngineError, Result, Session};
 pub const CONFIG: &str = "sync.json";
 pub const OUTBOX: &str = "sync.outbox";
 pub const UPLOADED: &str = "sync.uploaded";
+pub const PRESETS: &str = "sync.presets";
+/// User presets taken from the server at most (untrusted input).
+const PRESETS_MAX: usize = 10_000;
 
 /// How often the server is asked for other devices' changes.
 pub const POLL: Duration = Duration::from_secs(5);
@@ -75,6 +83,27 @@ pub struct SyncConfig {
     pub store_originals: bool,
     /// Don't talk to the server for now (File → Pause Syncing).
     pub paused: bool,
+    /// Version of the server's presets document this device last synced with.
+    pub presets_version: u64,
+}
+
+/// Where a host without a previews folder (the browser) keeps synced photo files: storage keys
+/// `<prefix><hash>.lcsp` / `.lcsm` for the smart and mini previews, `originals/<hash>` for
+/// originals (the web build's own layout). The host fills in what its storage holds and keeps
+/// `originals` up to date as photos are added there.
+#[derive(Clone, Debug, Default)]
+pub struct BrowserStore {
+    pub prefix: String,
+    /// Preview file names stored (`<hash>.lcsp`, `<hash>.lcsm`).
+    pub proxies: HashSet<String>,
+    /// Content hashes of the originals stored.
+    pub originals: HashSet<String>,
+}
+
+impl BrowserStore {
+    pub fn original_key(hash: &str) -> String {
+        format!("originals/{hash}")
+    }
 }
 
 /// A photo file kept on the server, by content hash.
@@ -151,6 +180,9 @@ enum Control {
     Snapshot,
     Pull,
     Push(Pushed),
+    GetPresets,
+    /// (what was sent)
+    PutPresets(Vec<Value>),
 }
 
 /// A photo file transfer step. Uploads go original → proxies → smart → mini, one step at a time.
@@ -230,6 +262,15 @@ pub struct SyncState {
     /// A photo file arrived: renders that failed for want of it are tried again.
     landed: bool,
     written_config: String,
+    /// The user presets as last synced (the base of [`merge_presets`]).
+    presets_base: Vec<Value>,
+    presets_base_dirty: bool,
+    /// The presets document's version on the server, as the last pull said.
+    presets_remote: u64,
+    /// The presets differ from the last synced copy: send them.
+    presets_changed: bool,
+    /// Which presets.json write was last compared.
+    presets_seen: Option<u64>,
 }
 
 impl SyncState {
@@ -259,6 +300,11 @@ impl SyncState {
             have: None,
             landed: false,
             written_config: String::new(),
+            presets_base: Vec::new(),
+            presets_base_dirty: false,
+            presets_remote: 0,
+            presets_changed: false,
+            presets_seen: None,
         }
     }
 
@@ -291,6 +337,10 @@ impl SyncState {
             }
             None => {}
         }
+        if let Some(b) = files.read(PRESETS).ok().flatten() {
+            st.presets_base = serde_json::from_slice(&b).unwrap_or_default();
+        }
+        st.presets_remote = st.config.presets_version;
         if let Some(b) = files.read(UPLOADED).ok().flatten() {
             st.uploaded = String::from_utf8_lossy(&b).lines().filter(|l| !l.is_empty()).map(str::to_string).collect();
         }
@@ -350,6 +400,16 @@ impl SyncState {
             let s = serde_json::to_vec(&self.outbox).map_err(std::io::Error::other)?;
             files.write_atomic(OUTBOX, &s)?;
             self.outbox_dirty = false;
+        }
+        Ok(())
+    }
+
+    /// Write `sync.presets` if it changed.
+    pub(crate) fn save_presets_base(&mut self, files: &mut dyn Store) -> std::io::Result<()> {
+        if self.presets_base_dirty {
+            let s = serde_json::to_vec(&self.presets_base).map_err(std::io::Error::other)?;
+            files.write_atomic(PRESETS, &s)?;
+            self.presets_base_dirty = false;
         }
         Ok(())
     }
@@ -433,6 +493,11 @@ pub fn mini_file_name(p: &Photo) -> String {
     let mut n = crate::smart::file_name(p);
     n.truncate(n.len().saturating_sub(".lcsp".len()));
     n + ".lcsm"
+}
+
+/// Preview file names in a [`BrowserStore`].
+pub fn store_proxy_names(key: &str) -> (String, String) {
+    (format!("{key}.lcsp"), format!("{key}.lcsm"))
 }
 
 /// A photo whose file isn't on this device: the library has it by content (`web/<hash>/…`).
@@ -624,10 +689,20 @@ impl Session {
                     tasks.push(t);
                 } else if !st.outbox.is_empty() {
                     let (ops, pushed) = st.outbox.take_push(PUSH_LIMIT);
-                    st.outbox_changed();
                     let body = serde_json::to_string(&proto::Push { base: st.config.cursor, ops }).unwrap_or_default();
                     let t = st.http("POST", "/api/ops", Body::Json(body), None);
                     st.control = Some((t.id(), Control::Push(pushed)));
+                    tasks.push(t);
+                } else if !st.config.library.is_empty() && st.presets_remote > st.config.presets_version {
+                    let t = st.http("GET", "/api/presets", Body::Empty, None);
+                    st.control = Some((t.id(), Control::GetPresets));
+                    tasks.push(t);
+                } else if !st.config.library.is_empty() && self.presets_changed(&mut st) {
+                    let presets = self.user_presets();
+                    let body = serde_json::to_string(&proto::Presets { version: st.config.presets_version, presets: Value::Array(presets.clone()) })
+                        .unwrap_or_default();
+                    let t = st.http("PUT", "/api/presets", Body::Json(body), None);
+                    st.control = Some((t.id(), Control::PutPresets(presets)));
                     tasks.push(t);
                 }
             }
@@ -642,13 +717,25 @@ impl Session {
     /// Plan photo file transfers (when the library, the active photo or what to keep offline
     /// changed) and start some.
     fn blob_tasks(&mut self, st: &mut SyncState, now: Instant, tasks: &mut Vec<Task>) {
-        let Some(dir) = self.media.smart_dir.clone() else { return };
+        let dir = self.media.smart_dir.clone();
+        if dir.is_none() && self.sync_store.is_none() {
+            return;
+        }
+        // a transfer that failed is tried again once its wait is over
+        if st.blob_retry.values().any(|t| now >= *t) {
+            st.blob_retry.retain(|_, t| now < *t);
+            st.plan_gen += 1;
+        }
         let key = (self.catalog.revision, self.active(), st.plan_gen);
         if st.planned != Some(key) {
             if st.have.is_none() {
-                st.have = Some(read_names(&dir));
+                st.have = Some(match (&dir, &self.sync_store) {
+                    (Some(d), _) => read_names(d),
+                    (None, Some(s)) => s.proxies.clone(),
+                    (None, None) => HashSet::new(),
+                });
             }
-            st.plan = self.plan_blobs(st, &dir, now).into();
+            st.plan = self.plan_blobs(st, now).into();
             st.planned = Some(key);
         }
         while st.jobs.len() < BLOB_PARALLEL {
@@ -660,7 +747,14 @@ impl Session {
             if let Job::Proxies { key, id, .. } = &job {
                 let Some((smart, mini)) = self.proxy_paths(*id) else { continue };
                 // built before (Build Smart Previews, or an earlier try): send them
-                if crate::smart::is_valid(Path::new(&smart)) && crate::smart::is_valid(Path::new(&mini)) {
+                let built = match &self.media.smart_dir {
+                    Some(_) => crate::smart::is_valid(Path::new(&smart)) && crate::smart::is_valid(Path::new(&mini)),
+                    None => st.have.as_ref().is_some_and(|h| {
+                        let (s, m) = store_proxy_names(key);
+                        h.contains(&s) && h.contains(&m)
+                    }),
+                };
+                if built {
                     job = Job::Put { key: key.clone(), blob: Blob::Smart, path: smart, id: *id };
                 }
             }
@@ -678,12 +772,27 @@ impl Session {
         }
     }
 
-    /// Where a photo's smart and mini previews live on this device (`None`: no folder for them).
+    /// Where a photo's smart and mini previews live on this device: files in the previews folder,
+    /// else keys in the host's storage (`None`: neither).
     fn proxy_paths(&self, id: PhotoId) -> Option<(String, String)> {
-        let dir = self.media.smart_dir.as_ref()?;
         let p = self.catalog.photo(id)?;
-        let s = |n: String| dir.join(n).to_string_lossy().to_string();
-        Some((s(crate::smart::file_name(p)), s(mini_file_name(p))))
+        if let Some(dir) = &self.media.smart_dir {
+            let s = |n: String| dir.join(n).to_string_lossy().to_string();
+            return Some((s(crate::smart::file_name(p)), s(mini_file_name(p))));
+        }
+        let store = self.sync_store.as_ref()?;
+        let (smart, mini) = store_proxy_names(&blob_key(p)?);
+        Some((format!("{}{smart}", store.prefix), format!("{}{mini}", store.prefix)))
+    }
+
+    /// The file names [`Session::proxy_paths`] ends in, and which of them are here.
+    fn proxy_names(&self, p: &Photo, key: &str, have: &HashSet<String>) -> (String, String, bool, bool) {
+        let (smart, mini) = match &self.sync_store {
+            Some(_) if self.media.smart_dir.is_none() => store_proxy_names(key),
+            _ => (crate::smart::file_name(p), mini_file_name(p)),
+        };
+        let (s, m) = (have.contains(&smart), have.contains(&mini));
+        (smart, mini, s, m)
     }
 
     /// Where downloaded originals are kept.
@@ -694,7 +803,7 @@ impl Session {
     /// Photo file transfers this device needs: uploads of the originals it has that the server
     /// doesn't, then downloads — the smart previews of the active photo and of what's available
     /// offline, mini previews of every photo whose file isn't here, and wanted originals.
-    fn plan_blobs(&mut self, st: &SyncState, dir: &Path, now: Instant) -> Vec<Job> {
+    fn plan_blobs(&mut self, st: &SyncState, now: Instant) -> Vec<Job> {
         let empty = HashSet::new();
         let have = st.have.as_ref().unwrap_or(&empty);
         let retry_ok = |key: &str| st.blob_retry.get(key).is_none_or(|t| now >= *t);
@@ -706,34 +815,49 @@ impl Session {
         let originals_dir = self.originals_dir();
         let (mut ups, mut smart, mut minis, mut originals) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
         let mut tiers = HashMap::new();
+        let store = self.sync_store.as_ref().filter(|_| self.media.smart_dir.is_none());
+        let in_store = |key: &str| store.is_some_and(|s| s.originals.contains(key));
         for p in self.catalog.photos().filter(|p| !p.local && p.copy_of.is_none()) {
             let (Some(key), Source::File { path }) = (blob_key(p), &p.source) else { continue };
-            if !path.starts_with(PATH_PREFIX) {
-                // this device has the file
-                if !st.uploaded.contains(&key) && !st.refused.contains(&key) && retry_ok(&key) && cfg!(not(target_arch = "wasm32")) {
-                    ups.push(Job::Head { key, path: path.clone(), id: p.id });
+            // this device has the file: on its disk, or in the host's storage
+            let here = match (path.starts_with(PATH_PREFIX), in_store(&key)) {
+                (false, _) => Some(path.clone()),
+                (true, true) => Some(BrowserStore::original_key(&key)),
+                (true, false) => None,
+            };
+            if let Some(file) = here {
+                if !st.uploaded.contains(&key) && !st.refused.contains(&key) && retry_ok(&key) {
+                    ups.push(Job::Head { key, path: file, id: p.id });
                 }
                 continue;
             }
-            let (smart_name, mini_name) = (crate::smart::file_name(p), mini_file_name(p));
-            let (has_smart, has_mini) = (have.contains(&smart_name), have.contains(&mini_name));
+            let (smart_name, mini_name, has_smart, has_mini) = self.proxy_names(p, &key, have);
+            let dest = |name: &str| match (&self.media.smart_dir, store) {
+                (Some(dir), _) => dir.join(name).to_string_lossy().to_string(),
+                (None, Some(s)) => format!("{}{name}", s.prefix),
+                (None, None) => name.to_string(),
+            };
             tiers.insert(crate::media::content_key(p), if has_smart { 2 } else { u8::from(has_mini) });
             if !retry_ok(&key) {
                 continue;
             }
             let pinned = offline.contains(&p.id);
             if (pinned || active == Some(p.id)) && !has_smart {
-                let job = Job::Get { key: key.clone(), blob: Blob::Smart, dest: dir.join(&smart_name).to_string_lossy().to_string() };
+                let job = Job::Get { key: key.clone(), blob: Blob::Smart, dest: dest(&smart_name) };
                 if active == Some(p.id) { smart.insert(0, job) } else { smart.push(job) }
             }
             if !has_mini && !has_smart {
-                minis.push(Job::Get { key: key.clone(), blob: Blob::Mini, dest: dir.join(&mini_name).to_string_lossy().to_string() });
+                minis.push(Job::Get { key: key.clone(), blob: Blob::Mini, dest: dest(&mini_name) });
             }
-            if (st.config.store_originals || st.want_originals.contains(&key))
-                && let Some(odir) = &originals_dir
-            {
-                let dest = odir.join(&key).join(file_name_of(path, &p.file_name));
-                originals.push(Job::Get { key, blob: Blob::Original, dest: dest.to_string_lossy().to_string() });
+            if st.config.store_originals || st.want_originals.contains(&key) {
+                let dest = match (&originals_dir, store) {
+                    (Some(odir), _) => Some(odir.join(&key).join(file_name_of(path, &p.file_name)).to_string_lossy().to_string()),
+                    (None, Some(_)) => Some(BrowserStore::original_key(&key)),
+                    (None, None) => None,
+                };
+                if let Some(dest) = dest {
+                    originals.push(Job::Get { key, blob: Blob::Original, dest });
+                }
             }
         }
         self.media.synced_tiers = tiers;
@@ -796,6 +920,7 @@ impl Session {
                 _ if d.ok() => match decode::<proto::Ops>(d) {
                     Ok(ops) => {
                         let more = ops.ops.len() >= PULL_LIMIT;
+                        st.presets_remote = ops.presets;
                         if self.interaction.is_some() {
                             st.held.extend(ops.ops);
                         } else {
@@ -830,7 +955,75 @@ impl Session {
                 },
                 _ => st.fail(why(d)),
             },
+            Control::GetPresets => match (d.ok(), decode::<proto::Presets>(d)) {
+                (true, Ok(p)) => {
+                    self.take_presets(st, p);
+                    st.succeeded();
+                }
+                (true, Err(e)) => st.fail(e),
+                (false, _) => st.fail(why(d)),
+            },
+            Control::PutPresets(sent) => match d.status {
+                // another device changed them first: the answer is theirs, merge and send again
+                412 => match decode::<proto::Presets>(d) {
+                    Ok(p) => self.take_presets(st, p),
+                    Err(e) => st.fail(e),
+                },
+                _ if d.ok() => match serde_json::from_str::<Value>(&d.body).ok().and_then(|v| v["version"].as_u64()) {
+                    Some(v) => {
+                        st.config.presets_version = v;
+                        st.presets_remote = st.presets_remote.max(v);
+                        st.presets_base = sent;
+                        st.presets_base_dirty = true;
+                        st.presets_seen = None;
+                        st.succeeded();
+                    }
+                    None => st.fail("unexpected answer from the server".into()),
+                },
+                _ => st.fail(why(d)),
+            },
         }
+    }
+
+    /// This device's user presets, as synced.
+    fn user_presets(&self) -> Vec<Value> {
+        self.presets.iter().filter(|p| !p.builtin).filter_map(|p| serde_json::to_value(p).ok()).collect()
+    }
+
+    /// Did the user presets change since they were last synced? (Compared only after presets.json
+    /// was written, which happens when they change.)
+    fn presets_changed(&self, st: &mut SyncState) -> bool {
+        let generation = self.library.as_ref().map(|l| l.presets_gen());
+        if st.presets_seen != generation {
+            st.presets_seen = generation;
+            st.presets_changed = self.user_presets() != st.presets_base;
+        }
+        st.presets_changed
+    }
+
+    /// The server's presets document (`theirs`) merged into this device's.
+    fn take_presets(&mut self, st: &mut SyncState, theirs: proto::Presets) {
+        let remote: Vec<Value> = theirs.presets.as_array().cloned().unwrap_or_default();
+        let merged = merge_presets(&st.presets_base, &self.user_presets(), &remote);
+        let builtin: HashSet<String> = self.presets.iter().filter(|p| p.builtin).map(|p| p.id.clone()).collect();
+        let mut users = Vec::new();
+        let mut seen = HashSet::new();
+        for v in merged.into_iter().take(PRESETS_MAX) {
+            // untrusted: a preset that doesn't read as one, a built-in's id or a repeated id is left out
+            let Ok(mut p) = serde_json::from_value::<lightcraft_develop::Preset>(v) else { continue };
+            if p.id.trim().is_empty() || p.id.len() > 200 || builtin.contains(&p.id) || !seen.insert(p.id.clone()) {
+                continue;
+            }
+            p.builtin = false;
+            users.push(p);
+        }
+        self.presets.retain(|p| p.builtin);
+        self.presets.extend(users);
+        st.presets_base = remote;
+        st.presets_base_dirty = true;
+        st.config.presets_version = theirs.version;
+        st.presets_remote = st.presets_remote.max(theirs.version);
+        st.presets_seen = None;
     }
 
     fn snapshot_done(&mut self, st: &mut SyncState, snap: proto::Snapshot) {
@@ -881,7 +1074,9 @@ impl Session {
     /// pending changes are kept on top.
     fn adopt_snapshot(&mut self, st: &mut SyncState, snap: proto::Snapshot) -> std::result::Result<(), String> {
         st.needs_snapshot = false;
-        if st.config.library != snap.library {
+        // joining: this library's ids name other photos than the server's
+        let joining = st.config.library != snap.library;
+        if joining {
             if !st.config.library.is_empty() {
                 return Err("this library is a copy of another library on that server: use a new library".into());
             }
@@ -911,7 +1106,14 @@ impl Session {
         }
         let mut c: Catalog = snap.catalog;
         lightcraft_catalog::sync::sanitize(&mut c);
-        carry_local(&self.catalog, &mut c);
+        if joining {
+            // nothing of the (empty or demo-only) library joining carries over by id
+            self.selection = crate::Selection::default();
+            self.previous_active = None;
+            self.before.clear();
+        } else {
+            carry_local(&self.catalog, &mut c);
+        }
         c.set_id_space(st.config.space);
         let dropped = st.outbox.rebase(&mut c);
         st.outbox_changed();
@@ -977,8 +1179,13 @@ impl Session {
             Job::Put { key, .. } => retry(st, &key, why(d)),
             Job::Proxies { key, id, .. } => match (d.ok(), self.proxy_paths(id)) {
                 (true, Some((smart, mini))) => {
+                    let names: Vec<String> =
+                        [&smart, &mini].iter().filter_map(|p| Path::new(p).file_name()).map(|n| n.to_string_lossy().to_string()).collect();
+                    if let Some(s) = self.sync_store.as_mut() {
+                        s.proxies.extend(names.iter().cloned());
+                    }
                     if let Some(have) = st.have.as_mut() {
-                        have.extend([&smart, &mini].iter().filter_map(|p| Path::new(p).file_name()).map(|n| n.to_string_lossy().to_string()));
+                        have.extend(names);
                     }
                     st.ready.push_front(Job::Put { key, blob: Blob::Smart, path: smart, id });
                 }
@@ -1000,7 +1207,13 @@ impl Session {
                     self.media.forget(*id);
                 }
                 st.landed = true;
-                if blob == Blob::Original {
+                if blob == Blob::Original && self.media.smart_dir.is_none() {
+                    // in the host's storage now, where the photo's path already points
+                    self.uploaded(st, key.clone());
+                    if let Some(s) = self.sync_store.as_mut() {
+                        s.originals.insert(key.clone());
+                    }
+                } else if blob == Blob::Original {
                     // the file is here now: the photo points at it (on this device only); the
                     // server has it, so it's never sent back
                     self.uploaded(st, key.clone());
@@ -1017,7 +1230,11 @@ impl Session {
                 } else if let Some(have) = st.have.as_mut()
                     && let Some(n) = Path::new(&dest).file_name()
                 {
-                    have.insert(n.to_string_lossy().to_string());
+                    let n = n.to_string_lossy().to_string();
+                    if let Some(s) = self.sync_store.as_mut() {
+                        s.proxies.insert(n.clone());
+                    }
+                    have.insert(n);
                 }
                 st.planned = None;
             }
@@ -1062,6 +1279,37 @@ impl Session {
     }
 }
 
+/// Three-way merge of preset lists by preset id: what changed on this device since `base` (the
+/// list both sides last agreed on) applied over `theirs`. A preset deleted on one side and
+/// untouched on the other is gone; deleted on one and edited on the other, the edit stays; edited
+/// on both, the settings merge field by field ([`lightcraft_catalog::sync::merge3`]). Theirs keep
+/// their order; presets added here come after.
+pub fn merge_presets(base: &[Value], ours: &[Value], theirs: &[Value]) -> Vec<Value> {
+    let id = |v: &Value| v.get("id").and_then(Value::as_str).map(str::to_string);
+    let index = |list: &[Value]| list.iter().filter_map(|v| Some((id(v)?, v.clone()))).collect::<HashMap<String, Value>>();
+    let (b, o, t) = (index(base), index(ours), index(theirs));
+    let mut order: Vec<String> = theirs.iter().filter_map(id).collect();
+    order.extend(ours.iter().filter_map(id).filter(|i| !t.contains_key(i)));
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for i in order {
+        if !seen.insert(i.clone()) {
+            continue;
+        }
+        let kept = match (b.get(&i), o.get(&i), t.get(&i)) {
+            (base, Some(o), Some(t)) => Some(lightcraft_catalog::sync::merge3(base.unwrap_or(&Value::Null), o, t)),
+            // deleted here: unless changed there meanwhile
+            (Some(b), None, Some(t)) => (t != b).then(|| t.clone()),
+            // deleted there: unless changed here meanwhile
+            (Some(b), Some(o), None) => (o != b).then(|| o.clone()),
+            (None, Some(v), None) | (None, None, Some(v)) => Some(v.clone()),
+            _ => None,
+        };
+        out.extend(kept);
+    }
+    out
+}
+
 /// The file names in a folder (none if it can't be read).
 fn read_names(dir: &Path) -> HashSet<String> {
     let Ok(rd) = std::fs::read_dir(dir) else { return HashSet::new() };
@@ -1083,17 +1331,14 @@ pub fn content_path(p: &Photo) -> Option<String> {
 /// Build a photo's smart and mini previews from its original (decodes it).
 #[cfg(not(target_arch = "wasm32"))]
 pub fn build_proxies(original: &str, smart: &str, mini: &str) -> std::result::Result<(), String> {
-    use lightcraft_raster::resample::{Filter, fit};
     let bytes = std::fs::read(original).map_err(|e| format!("{original}: {e}"))?;
-    let (img, info) = crate::files::load_vec(bytes, crate::media::SourceLevel::Preview.max_edge())?;
-    let tone = info.camera_tone.as_ref();
+    let (s, m) = crate::smart::encode_pair(&bytes, MINI_EDGE)?;
     let write = |path: &str, b: Vec<u8>| lightcraft_catalog::safe_file::write_atomic(Path::new(path), &b).map_err(|e| format!("{path}: {e}"));
     if let Some(dir) = Path::new(smart).parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
-    write(smart, crate::smart::encode(&img, tone)?)?;
-    let small = if img.width.max(img.height) > MINI_EDGE { fit(&img, MINI_EDGE, MINI_EDGE, Filter::Mitchell) } else { img };
-    write(mini, crate::smart::encode(&small, tone)?)
+    write(smart, s)?;
+    write(mini, m)
 }
 
 /// Run a task here (blocking; native hosts call it on a worker thread). Never panics: a panic
