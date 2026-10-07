@@ -331,7 +331,7 @@ cargo run --release -p lightcraft -- --memory           # a throwaway in-memory 
 cargo run --release -p lightcraft -- --control 7980     # with the automation channel
 cargo xtask web --serve                                 # the same app in the browser: http://127.0.0.1:8080/
 cargo run --release -p lightcraft-cli -- render photo.jpg -o out.jpg --set light.exposure=0.5
-cargo xtask ci                                          # fmt, clippy, tests, layering, wasm checks
+cargo xtask ci                                          # fmt, clippy, tests, layering, wasm and iOS checks
 ```
 
 **Chinese and Japanese text** need the shared font repo, an optional build input (official releases always include it):

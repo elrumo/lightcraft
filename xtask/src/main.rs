@@ -30,10 +30,12 @@ commands:
                   check docs/parity.md (every cmd:/ctl: id and path it cites exists) and print the
                   Lightroom parity summary; --write refreshes the summary table in the document
   wasm            cargo check --target wasm32-unknown-unknown for the wasm-safe crates (+ the web app)
+  ios             cargo check --target aarch64-apple-ios for the same crates (needs `rustup target add aarch64-apple-ios`;
+                  type-checks only: building and running on a device needs macOS + Xcode)
   web [--serve [port]] [--dev]
                   build the browser app (apps/lightcraft-web) into <target>/web/;
                   --serve serves it on http://127.0.0.1:<port> (default 8080)
-  ci              fmt --check, clippy -D warnings, test, parity refs, layers, assets, wasm (stops at first failure)
+  ci              fmt --check, clippy -D warnings, test, parity refs, layers, assets, wasm, ios (stops at first failure)
   corpus [--download]
                   show where test corpora live; --download fetches PngSuite and CC0 raw samples (raw.pixls.us) into corpus/
   stats [--exact] count tests and lines per crate (--exact: ask the test harness via `-- --list`)
@@ -50,6 +52,7 @@ fn main() -> ExitCode {
         Some("bench") => bench::run(&root(), &rest),
         Some("parity") => parity::run(&root(), rest.contains(&"--write")),
         Some("wasm") => cmd_wasm(),
+        Some("ios") => cmd_ios(),
         Some("web") => web::run(&rest),
         Some("ci") => cmd_ci(),
         Some("corpus") => cmd_corpus(rest.contains(&"--download")),
@@ -132,9 +135,8 @@ fn cmd_layers() -> Result<(), String> {
     }
 }
 
-/// Workspace packages that must build for wasm32: all L0–L5 crates plus
-/// the egui shell and the web app.
-fn wasm_set() -> Result<Vec<String>, String> {
+/// Workspace packages that must build on every non-desktop target (wasm32, iOS): all L0–L5 crates.
+fn portable_set() -> Result<Vec<String>, String> {
     let crates = layers::from_metadata(&metadata()?)?;
     Ok(crates
         .into_iter()
@@ -144,25 +146,42 @@ fn wasm_set() -> Result<Vec<String>, String> {
             _ => false,
         })
         .map(|c| c.name)
-        .chain(std::iter::once("lightcraft-web".to_string()))
         .collect())
 }
 
+/// Workspace packages that must build for wasm32: the portable set plus the web app.
+fn wasm_set() -> Result<Vec<String>, String> {
+    Ok(portable_set()?.into_iter().chain(std::iter::once("lightcraft-web".to_string())).collect())
+}
+
 fn cmd_wasm() -> Result<(), String> {
-    let set = wasm_set()?;
+    check_target("wasm32-unknown-unknown", &wasm_set()?)
+}
+
+/// iOS device target. A type-check only: it proves the crates have no desktop-only code on the iOS path (the
+/// engine, GPU and egui shell all compile for it), not that an app links and runs; that needs macOS + Xcode.
+fn cmd_ios() -> Result<(), String> {
+    check_target("aarch64-apple-ios", &portable_set()?)
+}
+
+fn check_target(target: &str, set: &[String]) -> Result<(), String> {
     let mut results = Vec::new();
-    for pkg in &set {
+    for pkg in set {
         let mut c = cargo();
-        c.args(["check", "--target", "wasm32-unknown-unknown", "-p", pkg]);
-        let ok = run(c, &format!("cargo check --target wasm32-unknown-unknown -p {pkg}")).is_ok();
+        c.args(["check", "--target", target, "-p", pkg]);
+        let ok = run(c, &format!("cargo check --target {target} -p {pkg}")).is_ok();
         results.push((pkg.clone(), ok));
     }
-    println!("\nwasm32-unknown-unknown check:");
+    println!("\n{target} check:");
     for (p, ok) in &results {
         println!("  {:<6} {p}", if *ok { "ok" } else { "FAIL" });
     }
     let failed = results.iter().filter(|r| !r.1).count();
-    if failed == 0 { Ok(()) } else { Err(format!("{failed} crate(s) failed the wasm check")) }
+    if failed == 0 {
+        Ok(())
+    } else {
+        Err(format!("{failed} crate(s) failed the {target} check (is the target installed? `rustup target add {target}`)"))
+    }
 }
 
 fn cmd_ci() -> Result<(), String> {
@@ -196,6 +215,7 @@ fn cmd_ci() -> Result<(), String> {
         ("layers", Box::new(cmd_layers)),
         ("assets", Box::new(|| assets::run(&root()))),
         ("wasm", Box::new(cmd_wasm)),
+        ("ios", Box::new(cmd_ios)),
     ];
     let mut done = Vec::new();
     for (name, f) in &steps {

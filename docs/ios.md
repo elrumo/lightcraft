@@ -1,0 +1,57 @@
+# iOS (iPhone and iPad)
+
+**Status: no app yet.** The engine and the egui shell type-check for iOS; nothing has been built, linked or run on a
+device or simulator. This page records what is verified, what is not, and the plan.
+
+## What is verified
+
+`cargo xtask ios` runs `cargo check --target aarch64-apple-ios` for every L0–L5 crate (geometry, colour, raster, TIFF,
+sysmem, raw, codecs, meta, develop, scenes, pipeline, GPU, catalog, preview, merge, engine, MCP and `ui-egui`) and is
+part of `cargo xtask ci`. It needs only the Rust target (`rustup target add aarch64-apple-ios`), not Xcode, so it runs on
+Linux. It proves the dependency tree has no desktop-only crate on the iOS path (wgpu builds with its Metal backend).
+It does **not** prove an app links or runs: that needs macOS and Xcode.
+
+## Scope
+
+iPhone and iPad, a standalone library on the device (import, edit and export there; cloud sync stays out of scope),
+with a layout and behaviour modelled on Lightroom's mobile app. As everywhere in this repo that means imitating
+layout and interaction only: no Adobe icons, artwork, fonts, presets or screenshots (see `CLAUDE.md`, *Assets*).
+
+## What is missing
+
+1. **A touch UI.** `ui-egui` is built for mouse and keyboard: no pinch or two-finger pan, 23 right-click menus, hover
+   previews, Shift/Cmd/Alt modifiers, about 22 px hit targets and a three-panel layout about 810 pt wide. A phone needs
+   one panel at a time with bottom sheets. Plan: a new L5 crate that generates its edit panels from the `develop`
+   control specs and the command registry.
+2. **HEIC/HEIF decode.** iPhone photos are HEIC; `crates/codecs` recognises the format but cannot decode it, and import
+   currently accepts `.heic` files it then fails on. The pragmatic route is ImageIO behind the `FileLoader` hook
+   (`crates/engine/src/media.rs`).
+3. **A memory budget.** The RAM probe (`crates/engine/src/memory.rs`) returns nothing on iOS, so the budget defaults to
+   1.5 GiB, too high for iOS memory limits. The pipeline works on whole `f32` RGB images (about 288 MB at 24 MP) and
+   does not tile, so previews are fine but full-resolution 48 MP export is a risk.
+4. **A host.** App entry and lifecycle, Files and Photos pickers, export through the share sheet, sandbox paths (the
+   library and config directories assume `$HOME`), and no `std::process` open/reveal. Originals are referenced by
+   absolute path; on iOS import must copy into the library.
+5. **GPU lifecycle.** A device error disables the GPU for the rest of the process (`crates/gpu/src/lib.rs`); backgrounding
+   needs to pause and resume it instead.
+6. **Unverified:** eframe/winit and accesskit on iOS, egui text input and long-press on a phone, Metal's
+   storage-buffer limits on iPhone (the GPU path needs at least 10 per stage), Apple ProRAW against real files (JPEG XL
+   compressed DNG is rejected), and the `rfd` file dialogs the desktop app uses.
+
+Any `unsafe` or Objective-C glue goes in an isolated crate registered in `xtask/src/layers.rs`, like `crates/sysmem`
+(see `CLAUDE.md`, *Never crash*).
+
+## Plan
+
+- **Phase 0, spike (needs a Mac):** run the egui app on the simulator, an iPhone and an iPad; log Metal limits; time a
+  preview render and a 24 MP raw decode; record peak memory; check text input, long-press and safe areas. Output: a
+  decision between egui and a native shell over FFI, with a revised estimate.
+- **Phase 1, platform glue:** host crate, pickers, sandbox paths, memory budget, GPU pause/resume, HEIC via ImageIO,
+  JPEG/DNG/ProRAW verified on real files.
+- **Phase 2, mobile UI:** grid, loupe with gestures, bottom-sheet edit tools, presets, crop, masks, export; adaptive
+  iPhone and iPad layout; tests through headless snapshots at phone and tablet sizes.
+- **Phase 3, hardening:** memory pressure, tiled full-resolution export, Apple Pencil, multitasking, VoiceOver,
+  TestFlight and App Store review.
+
+The project's own priorities (`ROADMAP.md`, *Where we're going*) put camera colour, raw coverage and AI ahead of mobile;
+the gaps listed there apply to the phone app too.
