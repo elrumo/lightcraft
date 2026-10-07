@@ -370,6 +370,10 @@ pub fn export_active(app: &mut LightcraftApp, p: &Value) -> Result<Value, String
     let mut exact = p.get("path").and_then(Value::as_str).map(str::to_string);
     // iOS: into the host's staging folder (emptied first), then the share sheet
     if let Some(share) = &app.services.share_exports {
+        // (the running export's files are in that folder, waiting for its share sheet)
+        if app.export.is_some() {
+            return Err("an export is already running".into());
+        }
         dir = share.dir.clone();
         exact = None;
         opts.subfolder.clear();

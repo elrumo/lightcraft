@@ -68,45 +68,65 @@ pub fn decode(bytes: &[u8], max: Option<(u32, u32)>) -> Result<Image, String> {
     let (wu, hu) = (u32::try_from(w).map_err(|e| e.to_string())?, u32::try_from(h).map_err(|e| e.to_string())?);
 
     // draw into a bitmap in the image's own RGB space (Display P3 for iPhone photos), so no colour
-    // is lost to sRGB; anything else (grey, CMYK) is converted to sRGB
+    // is lost to sRGB; anything else (grey, CMYK), or a space CoreGraphics can't draw into as
+    // integers (HDR transfer functions), is converted to sRGB
     let own = CGImage::color_space(Some(&image)).filter(|s| CGColorSpace::model(Some(s)) == CGColorSpaceModel::RGB);
     // SAFETY: reading CoreGraphics' colour-space name constant (an immutable framework static).
-    let space = own.clone().or_else(|| CGColorSpace::with_name(Some(unsafe { kCGColorSpaceSRGB }))).ok_or("no colour space to decode into")?;
-    let icc = own.as_deref().and_then(|s| CGColorSpace::icc_data(Some(s))).map(|d| d.to_vec());
+    let srgb = CGColorSpace::with_name(Some(unsafe { kCGColorSpaceSRGB }));
     let rect = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(w as f64, h as f64));
-    let premultiplied_last = CGImageAlphaInfo::PremultipliedLast.0;
-
-    if depth > 8 {
-        // 10- and 12-bit HEIC: 16 bits per sample
-        let mut px = vec![0u16; n * 4];
-        // SAFETY: `px` holds exactly `h` rows of `w * 8` bytes and outlives the context (dropped
-        // before `px` is moved); 16-bit RGBA, premultiplied alpha last, little-endian samples is a
-        // pixel format CoreGraphics supports.
-        let ctx: Option<CFRetained<CGContext>> = unsafe {
-            CGBitmapContextCreate(px.as_mut_ptr().cast(), w, h, 16, w * 8, Some(&space), premultiplied_last | CGImageByteOrderInfo::Order16Little.0)
-        };
-        if let Some(ctx) = ctx {
-            CGContext::draw_image(Some(&ctx), rect, Some(&image));
-            drop(ctx);
-            return Ok(Image {
-                width: wu,
-                height: hu,
-                pixels: Pixels::Rgba16(px),
-                bit_depth: depth.min(16),
-                icc,
-                orientation,
-                source_width: sw,
-                source_height: sh,
-            });
+    let mut attempts: Vec<(&CGColorSpace, bool, bool)> = Vec::new();
+    if let Some(s) = own.as_deref() {
+        if depth > 8 {
+            attempts.push((s, true, true));
+        }
+        attempts.push((s, false, true));
+    }
+    if let Some(s) = srgb.as_deref() {
+        attempts.push((s, false, false));
+    }
+    for (space, deep, keep_icc) in attempts {
+        let pixels = if deep { draw16(&image, space, w, h, n, rect) } else { draw8(&image, space, w, h, n, rect) };
+        if let Some(pixels) = pixels {
+            let icc = if keep_icc { CGColorSpace::icc_data(Some(space)).map(|d| d.to_vec()) } else { None };
+            let bit_depth = if deep { depth.min(16) } else { depth.min(8) };
+            return Ok(Image { width: wu, height: hu, pixels, bit_depth, icc, orientation, source_width: sw, source_height: sh });
         }
     }
-    let mut px = vec![0u8; n * 4];
-    // SAFETY: `px` holds exactly `h` rows of `w * 4` bytes and outlives the context (dropped
-    // before `px` is moved); 8-bit RGBA with premultiplied alpha last is CoreGraphics' basic format.
-    let ctx: Option<CFRetained<CGContext>> =
-        unsafe { CGBitmapContextCreate(px.as_mut_ptr().cast(), w, h, 8, w * 4, Some(&space), premultiplied_last) };
-    let ctx = ctx.ok_or("CoreGraphics couldn't make a bitmap for the image")?;
-    CGContext::draw_image(Some(&ctx), rect, Some(&image));
+    Err("CoreGraphics couldn't make a bitmap for the image".into())
+}
+
+/// The image drawn into 16-bit RGBA (alpha premultiplied, last; little-endian samples) in `space`.
+fn draw16(image: &CGImage, space: &CGColorSpace, w: usize, h: usize, n: usize, rect: CGRect) -> Option<Pixels> {
+    let mut px = vec![0u16; n.checked_mul(4)?];
+    // SAFETY: `px` holds exactly `h` rows of `w * 8` bytes and outlives the context (dropped before
+    // `px` is moved); 16-bit RGBA, premultiplied alpha last, little-endian samples is a pixel
+    // format CoreGraphics supports (it returns null for a combination it doesn't).
+    let ctx: Option<CFRetained<CGContext>> = unsafe {
+        CGBitmapContextCreate(
+            px.as_mut_ptr().cast(),
+            w,
+            h,
+            16,
+            w * 8,
+            Some(space),
+            CGImageAlphaInfo::PremultipliedLast.0 | CGImageByteOrderInfo::Order16Little.0,
+        )
+    };
+    let ctx = ctx?;
+    CGContext::draw_image(Some(&ctx), rect, Some(image));
     drop(ctx);
-    Ok(Image { width: wu, height: hu, pixels: Pixels::Rgba8(px), bit_depth: depth.min(8), icc, orientation, source_width: sw, source_height: sh })
+    Some(Pixels::Rgba16(px))
+}
+
+/// The image drawn into 8-bit RGBA (alpha premultiplied, last) in `space`.
+fn draw8(image: &CGImage, space: &CGColorSpace, w: usize, h: usize, n: usize, rect: CGRect) -> Option<Pixels> {
+    let mut px = vec![0u8; n.checked_mul(4)?];
+    // SAFETY: `px` holds exactly `h` rows of `w * 4` bytes and outlives the context (dropped before
+    // `px` is moved); 8-bit RGBA with premultiplied alpha last is CoreGraphics' basic format.
+    let ctx: Option<CFRetained<CGContext>> =
+        unsafe { CGBitmapContextCreate(px.as_mut_ptr().cast(), w, h, 8, w * 4, Some(space), CGImageAlphaInfo::PremultipliedLast.0) };
+    let ctx = ctx?;
+    CGContext::draw_image(Some(&ctx), rect, Some(image));
+    drop(ctx);
+    Some(Pixels::Rgba8(px))
 }

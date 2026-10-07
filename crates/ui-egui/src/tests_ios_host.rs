@@ -150,6 +150,24 @@ fn exports_go_to_the_share_sheet() {
     h.settle(SETTLE);
     assert!(has(&h, "label:exportShareHelp"));
     assert!(!has(&h, "button:exportChooseFolder"));
+    // a background export, and another one asked for meanwhile: refused before it could empty
+    // the staging folder the first one is writing to
+    let shared_before = shared.borrow().len();
+    let all: Vec<u64> = h.app.session.catalog.photos().take(3).map(|p| p.id.0).collect();
+    h.app.services.write_shared = Some(std::sync::Arc::new(|path: &str, bytes: &[u8]| {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        std::fs::write(path, bytes).map_err(|e| e.to_string())
+    }));
+    let r = h.app.run("app.export", json!({"ids": all, "format": "jpeg", "longEdge": 64, "background": true})).unwrap();
+    assert_eq!(r["background"], true, "{r}");
+    let again = h.app.run("app.export", json!({"ids": [all[0]], "format": "jpeg", "longEdge": 64}));
+    assert!(again.as_ref().is_err_and(|e| e.contains("already running")), "{again:?}");
+    h.settle(SETTLE);
+    assert!(h.app.export.is_none(), "finished");
+    assert_eq!(shared.borrow().len(), shared_before + 1, "the background export opened the share sheet");
+    let last = shared.borrow().last().cloned().unwrap();
+    assert_eq!(last.len(), 3);
+    assert!(last.iter().all(|p| Path::new(p).is_file()), "nothing of it was removed: {last:?}");
     drop(h);
     let _ = std::fs::remove_dir_all(&root);
 }

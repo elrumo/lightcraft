@@ -473,7 +473,9 @@ impl Session {
         if old.as_deref() == Some(now.as_str()) {
             return;
         }
-        if let Some(old) = &old {
+        // the same folder by another path (a symbolic link, a different spelling): nothing moved
+        let moved = old.as_deref().filter(|o| !same_dir(Path::new(o), &dir));
+        if let Some(old) = moved {
             let from = Path::new(old);
             let mut ops = Vec::new();
             for p in self.catalog.photos() {
@@ -485,12 +487,12 @@ impl Session {
                     ops.push(lightcraft_catalog::Op::Relink { id: p.id, file_name: p.file_name.clone(), source, format: None });
                 }
             }
-            let mut moved = 0;
+            let mut relinked = 0;
             for op in ops {
                 // device-local (paths aren't synced) and not undoable: the old paths are gone
                 if self.catalog.apply(op.clone()).is_ok() {
                     self.pending_log.push(op);
-                    moved += 1;
+                    relinked += 1;
                 }
             }
             if let Some(d) = self.smart_previews_dir.as_ref().and_then(|d| d.strip_prefix(from).ok()).map(|rest| dir.join(rest)) {
@@ -500,14 +502,14 @@ impl Session {
                     log::error!("library: {e}");
                 }
             }
-            log::info!("library: moved from {old} to {now}; {moved} photo(s) now point at the new folder");
-            if moved > 0
+            log::info!("library: moved from {old} to {now}; {relinked} photo(s) now point at the new folder");
+            if relinked > 0
                 && let Err(e) = self.persist()
             {
                 log::error!("library: {e}");
             }
             if let Some(lib) = self.library.as_mut() {
-                lib.relocated = Some(Relocated { from: old.clone(), photos: moved });
+                lib.relocated = Some(Relocated { from: old.to_string(), photos: relinked });
             }
         }
         let Some(lib) = self.library.as_mut() else { return };

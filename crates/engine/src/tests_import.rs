@@ -912,3 +912,31 @@ fn a_moved_library_finds_its_originals() {
     let _ = std::fs::remove_dir_all(&root);
     let _ = std::fs::remove_dir_all(&src);
 }
+
+/// The same library reached by another path (a symbolic link) hasn't moved: nothing is relinked
+/// (alternating between the two paths must not grow the log with relinks every time).
+#[cfg(unix)]
+#[test]
+fn a_library_opened_through_a_link_is_not_relinked() {
+    let src = temp_dir("linksrc");
+    let root = temp_dir("linkroot");
+    let real = root.join("Real Library");
+    write_png(&src.join("a.png"), 8);
+    let mut s = Session::new().with_fs();
+    s.open_library(&real, false).unwrap();
+    s.execute("library.import", &json!({"paths": [src.join("a.png").to_string_lossy()], "mode": "copy"})).unwrap();
+    drop(s);
+    let link = root.join("Linked Library");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    let mut s = Session::new().with_fs();
+    s.open_library(&link, false).unwrap();
+    assert_eq!(s.execute("library.info", &json!({})).unwrap()["relocated"], Value::Null);
+    let path = match &s.catalog.photos().next().unwrap().source {
+        lightcraft_catalog::Source::File { path } => path.clone(),
+        _ => panic!(),
+    };
+    assert!(Path::new(&path).starts_with(&real), "{path}");
+    drop(s);
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&src);
+}
