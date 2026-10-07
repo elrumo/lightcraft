@@ -195,6 +195,10 @@ struct Entry {
     latest: Op,
     /// Bumped on every change, so a push acknowledged after a newer change keeps the entry.
     rev: u64,
+    /// What the last push sent for this value: seen coming back from the server (its
+    /// acknowledgement was lost), it is this device's own change, not another device's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sent: Option<Op>,
 }
 
 /// What a push sent ([`Outbox::take_push`]): entries by key and revision, in order.
@@ -279,7 +283,7 @@ impl Outbox {
                 e.rev = rev;
                 self.entries.push(e);
             }
-            None => self.entries.push(Entry { key, base, latest, rev }),
+            None => self.entries.push(Entry { key, base, latest, rev, sent: None }),
         }
     }
 
@@ -330,6 +334,11 @@ impl Outbox {
             self.entries.remove(i);
             return None;
         }
+        if self.entries[i].sent.as_ref() == Some(remote) {
+            // our earlier push (since changed again here): the server now has it
+            self.entries[i].base = remote.clone();
+            return None;
+        }
         self.rev += 1;
         let rev = self.rev;
         let e = &mut self.entries[i];
@@ -344,9 +353,14 @@ impl Outbox {
     }
 
     /// The ops to push, in order, and what they were (for [`Outbox::acked`]).
-    pub fn take_push(&self, limit: usize) -> (Vec<Op>, Pushed) {
-        let e = self.entries.iter().take(limit);
-        (e.clone().map(|e| e.latest.clone()).collect(), Pushed(e.map(|e| (e.key.clone(), e.rev)).collect()))
+    pub fn take_push(&mut self, limit: usize) -> (Vec<Op>, Pushed) {
+        let (mut ops, mut pushed) = (Vec::new(), Vec::new());
+        for e in self.entries.iter_mut().take(limit) {
+            e.sent = Some(e.latest.clone());
+            ops.push(e.latest.clone());
+            pushed.push((e.key.clone(), e.rev));
+        }
+        (ops, Pushed(pushed))
     }
 
     /// The server applied a push: its entries are done, unless they changed since.
@@ -363,16 +377,28 @@ impl Outbox {
         }
     }
 
-    /// Replay the pending changes on `catalog` (the server's state, after [`carry_local`]);
-    /// changes that no longer apply are dropped. Returns how many were dropped.
+    /// Replay the pending changes on `catalog` (the server's state, after [`carry_local`]), each
+    /// merged with the server's value like [`Outbox::merge_remote`] does; changes that no longer
+    /// apply are dropped. Returns how many were dropped.
     pub fn rebase(&mut self, catalog: &mut Catalog) -> usize {
         let before = self.entries.len();
-        self.entries.retain_mut(|e| match catalog.apply(e.latest.clone()) {
-            Ok(inv) => {
-                e.base = inv;
-                true
+        self.entries.retain_mut(|e| {
+            // applying ours hands back the server's value (its inverse)
+            let Ok(theirs) = catalog.apply(e.latest.clone()) else { return false };
+            let merged = merge_ops(&e.base, &e.latest, &theirs);
+            if merged != e.latest {
+                let back = catalog.apply(theirs.clone()).and_then(|_| catalog.apply(merged.clone()));
+                match back {
+                    Ok(_) => e.latest = merged,
+                    // (can't happen: the same value set three times) keep ours, as before the merge
+                    Err(_) => {
+                        let _ = catalog.apply(e.latest.clone());
+                    }
+                }
             }
-            Err(_) => false,
+            e.base = theirs;
+            e.sent = None;
+            true
         });
         before - self.entries.len()
     }
@@ -396,6 +422,12 @@ pub fn carry_local(from: &Catalog, to: &mut Catalog) {
         }
     }
     to.browsed = from.browsed.clone();
+}
+
+/// Make a catalog from another device or the server safe to use here (it is untrusted input):
+/// stacks without a photo go.
+pub fn sanitize(c: &mut Catalog) {
+    c.stacks.retain(|_, st| !st.photos.is_empty());
 }
 
 /// Why the server didn't take a push.

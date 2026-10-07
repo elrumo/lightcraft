@@ -1,0 +1,7 @@
+target
+target-*
+corpus
+plan
+dist
+log
+.git

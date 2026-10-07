@@ -112,6 +112,13 @@ pub enum SourceRef {
     Smart {
         path: std::path::PathBuf,
     },
+    /// A synced photo whose original isn't on this device ([`crate::sync`]): its smart preview,
+    /// else its mini preview (the other way round for thumbnails), whichever has been downloaded.
+    Synced {
+        smart: std::path::PathBuf,
+        mini: std::path::PathBuf,
+        max_edge: usize,
+    },
 }
 
 impl SourceRef {
@@ -137,8 +144,21 @@ impl SourceRef {
             }
             #[cfg(not(target_arch = "wasm32"))]
             SourceRef::Smart { path } => return crate::smart::load(path),
+            #[cfg(not(target_arch = "wasm32"))]
+            SourceRef::Synced { smart, mini, max_edge } => {
+                let order = if *max_edge <= crate::sync::MINI_EDGE { [mini, smart] } else { [smart, mini] };
+                let Some(path) = order.into_iter().find(|p| crate::smart::is_valid(p)) else {
+                    return Err("this photo's preview is still downloading".into());
+                };
+                let mut s = crate::smart::load(path)?;
+                if s.image.width.max(s.image.height) > *max_edge {
+                    use lightcraft_raster::resample::{Filter, fit};
+                    s.image = Arc::new(fit(&s.image, *max_edge, *max_edge, Filter::Mitchell));
+                }
+                return Ok(s);
+            }
             #[cfg(target_arch = "wasm32")]
-            SourceRef::Smart { .. } => return Err("smart previews are not available here".into()),
+            SourceRef::Smart { .. } | SourceRef::Synced { .. } => return Err("smart previews are not available here".into()),
         };
         Ok(DecodedSource::new(image, None))
     }
@@ -169,6 +189,10 @@ pub struct MediaCache {
     scenes: Vec<lightcraft_scenes::Scene>,
     /// Rendered thumbnails (memory, plus disk once a library is attached).
     pub rendered: Arc<PreviewCache>,
+    /// Synced photos whose original isn't here, by [`content_key`]: the best preview downloaded
+    /// so far (1 mini, 2 smart; kept by [`crate::sync`]). Part of render keys, so a view rendered
+    /// from the mini preview renders again once the smart one arrives.
+    pub synced_tiers: std::collections::HashMap<String, u8>,
 }
 
 impl Default for MediaCache {
@@ -188,6 +212,7 @@ impl Default for MediaCache {
             availability: Default::default(),
             scenes: Vec::new(),
             rendered: Arc::new(PreviewCache::memory(rendered_budget(budget))),
+            synced_tiers: Default::default(),
         }
     }
 }
@@ -356,6 +381,10 @@ impl MediaCache {
         #[cfg(not(target_arch = "wasm32"))]
         if let (Source::File { path }, Some(dir)) = (&p.source, &self.smart_dir) {
             let sp = dir.join(crate::smart::file_name(p));
+            // synced, with the original on the server only: what was downloaded of it
+            if path.starts_with(lightcraft_catalog::sync::PATH_PREFIX) {
+                return SourceRef::Synced { smart: sp, mini: dir.join(crate::sync::mini_file_name(p)), max_edge };
+            }
             // (a proxy cut short fails to load, like the offline original; the worker's fallback
             // in `SourceRef::load` only uses a proxy that passes `smart::is_valid`)
             if self.availability.is_offline(path) && self.availability.exists(&sp.to_string_lossy()) == Some(true) {
@@ -638,7 +667,10 @@ impl crate::Session {
         // the photo id is part of the key: two photos with the same settings and size must not
         // share a result (a view slot showing photo A would otherwise look current for photo B)
         // …and so is the file's content: a file changed on disk (Reload) renders afresh
-        let content = Hasher128::new().str(&content_key(&p)).finish().0 as u64;
+        // …and, for a synced photo whose original isn't here, which of its previews it has
+        let ck = content_key(&p);
+        let tier = self.media.synced_tiers.get(&ck).copied().unwrap_or(0);
+        let content = (Hasher128::new().str(&ck).finish().0 as u64) ^ u64::from(tier).wrapping_mul(0xd6e8_feb8_6659_fd93);
         let key = settings.hash64()
             ^ ((max_w as u64) << 40)
             ^ ((max_h as u64) << 20)

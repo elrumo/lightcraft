@@ -11,13 +11,15 @@
 //!   and a mini preview (≤ 512 px) it builds from each. It downloads the mini previews of the
 //!   other photos (grid thumbnails, rendered here with the current edits), the smart preview of
 //!   the photo being looked at and of everything made available offline, and originals when
-//!   asked to keep them. A downloaded original becomes the photo's file on this device.
+//!   asked to keep them. A downloaded original becomes the photo's file on this device. A photo
+//!   whose file isn't here renders from the best of those it has ([`crate::media::SourceRef::Synced`]).
 //!
 //! Files in the library: `sync.json` ([`SyncConfig`]), `sync.outbox` (changes the server hasn't
 //! acknowledged; written before the op log) and `sync.uploaded` (content hashes the server has).
 
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use lightcraft_catalog::sync::{Outbox, PATH_PREFIX, Pushed, carry_local, original_path, proto};
@@ -36,15 +38,18 @@ pub const UPLOADED: &str = "sync.uploaded";
 pub const POLL: Duration = Duration::from_secs(5);
 /// Longest wait between retries after a failure (network down, server away).
 const BACKOFF_MAX: Duration = Duration::from_secs(60);
-/// A missing or failed blob is tried again after this long.
+/// A missing or failed photo file is tried again after this long.
 const BLOB_RETRY: Duration = Duration::from_secs(60);
 /// Ops per push / pull.
 const PUSH_LIMIT: usize = 500;
 const PULL_LIMIT: usize = 2000;
-/// Blob transfers at a time.
+/// Photo file transfers at a time.
 const BLOB_PARALLEL: usize = 4;
-/// Edge of the mini preview.
+/// Long edge of the mini preview.
 pub const MINI_EDGE: usize = 512;
+/// The server's id spaces stay below this, so ids remain exact in JSON numbers read by
+/// JavaScript (`space << 32 | n` < 2^53).
+pub const MAX_SPACE: u32 = (1 << 21) - 1;
 
 /// This library's sync settings (`sync.json`).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -68,6 +73,8 @@ pub struct SyncConfig {
     pub offline_photos: Vec<PhotoId>,
     /// Keep the original of every photo on this device too (not just the ones available offline).
     pub store_originals: bool,
+    /// Don't talk to the server for now (File → Pause Syncing).
+    pub paused: bool,
 }
 
 /// A photo file kept on the server, by content hash.
@@ -99,7 +106,8 @@ pub enum Body {
 /// Something for the host to do.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Task {
-    /// An HTTP request. `save_to`: write the response body there (atomically, only on success).
+    /// An HTTP request with `Authorization: Bearer <token>`. `save_to`: write the response body
+    /// there (atomically, only on success) instead of returning it.
     Http { id: u64, method: &'static str, url: String, token: String, body: Body, save_to: Option<String> },
     /// Build a photo's smart and mini previews from its original (decodes it: run it off the UI
     /// thread; natively [`build_proxies`]).
@@ -131,10 +139,15 @@ impl Done {
     }
 }
 
+/// Task ids are unique in the process: an answer for a library that was closed meanwhile is
+/// never mistaken for one of the next library's.
+static NEXT_TASK: AtomicU64 = AtomicU64::new(1);
+
 /// The request in flight that orders the library (one at a time).
 #[derive(Debug)]
 enum Control {
-    Login,
+    /// (kept to try again when the server can't be reached)
+    Login(proto::Login),
     Snapshot,
     Pull,
     Push(Pushed),
@@ -144,16 +157,35 @@ enum Control {
 #[derive(Clone, Debug, PartialEq)]
 enum Job {
     /// Does the server have the original?
-    Head { key: String, path: String, id: PhotoId },
-    Put { key: String, blob: Blob, path: String, id: PhotoId },
-    Proxies { key: String, path: String, id: PhotoId },
-    Get { key: String, blob: Blob, dest: String },
+    Head {
+        key: String,
+        path: String,
+        id: PhotoId,
+    },
+    Put {
+        key: String,
+        blob: Blob,
+        path: String,
+        id: PhotoId,
+    },
+    Proxies {
+        key: String,
+        path: String,
+        id: PhotoId,
+    },
+    Get {
+        key: String,
+        blob: Blob,
+        dest: String,
+    },
 }
 
 impl Job {
-    fn key(&self) -> &str {
+    /// What a job moves: one transfer at a time per file.
+    fn target(&self) -> String {
         match self {
-            Job::Head { key, .. } | Job::Put { key, .. } | Job::Proxies { key, .. } | Job::Get { key, .. } => key,
+            Job::Head { key, .. } | Job::Put { key, .. } | Job::Proxies { key, .. } => format!("up:{key}"),
+            Job::Get { dest, .. } => dest.clone(),
         }
     }
 }
@@ -162,6 +194,8 @@ impl Job {
 pub struct SyncState {
     pub config: SyncConfig,
     pub outbox: Outbox,
+    /// The outbox changed since it was last written.
+    outbox_dirty: bool,
     /// Content hashes the server has (all three files).
     uploaded: HashSet<String>,
     /// A sign-in waiting to be sent (the password is never saved).
@@ -170,7 +204,6 @@ pub struct SyncState {
     jobs: HashMap<u64, Job>,
     /// Upload steps ready to go (the next step of a finished one).
     ready: VecDeque<Job>,
-    next_id: u64,
     /// When to pull next (`None`: now).
     pull_at: Option<Instant>,
     /// After a failure: not before then.
@@ -178,17 +211,25 @@ pub struct SyncState {
     backoff: Duration,
     /// Pulled during a slider drag: applied once it ends.
     held: Vec<(u64, Op)>,
+    held_snapshot: Option<proto::Snapshot>,
     needs_snapshot: bool,
-    /// Blob transfers that failed: not retried before then.
+    /// Photo files whose transfer failed: not tried again before then.
     blob_retry: HashMap<String, Instant>,
+    /// Originals the server refused (not the file their hash says): not sent again this session.
+    refused: HashSet<String>,
     /// Originals asked for (by content hash).
     want_originals: HashSet<String>,
     error: Option<String>,
-    /// Catalog revision the blob plan was made for.
-    planned: Option<u64>,
+    /// What the transfer plan was made for (catalog revision, active photo, settings changes).
+    planned: Option<(u64, Option<PhotoId>, u64)>,
     plan: VecDeque<Job>,
+    /// Bumped when what to keep offline changes.
+    plan_gen: u64,
+    /// File names in the proxies folder (read once, then kept up to date).
+    have: Option<HashSet<String>>,
+    /// A photo file arrived: renders that failed for want of it are tried again.
+    landed: bool,
     written_config: String,
-    written_outbox: String,
 }
 
 impl SyncState {
@@ -196,32 +237,51 @@ impl SyncState {
         SyncState {
             config,
             outbox: Outbox::default(),
+            outbox_dirty: false,
             uploaded: HashSet::new(),
             login: None,
             control: None,
             jobs: HashMap::new(),
             ready: VecDeque::new(),
-            next_id: 1,
             pull_at: None,
             retry_at: None,
             backoff: Duration::from_secs(1),
             held: Vec::new(),
+            held_snapshot: None,
             needs_snapshot: false,
             blob_retry: HashMap::new(),
+            refused: HashSet::new(),
             want_originals: HashSet::new(),
             error: None,
             planned: None,
             plan: VecDeque::new(),
+            plan_gen: 0,
+            have: None,
+            landed: false,
             written_config: String::new(),
-            written_outbox: String::new(),
         }
     }
 
-    /// Read a library's sync files (`None`: the library never synced). Damaged files read as
-    /// empty: the server's copy is the reference, so the next sync repairs this one.
+    /// Read a library's sync files (`None`: the library never synced). A damaged outbox reloads
+    /// the library from the server (the server's copy is the reference); a damaged `sync.json`
+    /// reads as never synced.
     pub fn load(files: &mut dyn Store) -> Option<SyncState> {
-        let config: SyncConfig = serde_json::from_slice(&files.read(CONFIG).ok()??).ok()?;
+        let bytes = match files.read(CONFIG) {
+            Ok(b) => b?,
+            Err(e) => {
+                log::error!("sync: {CONFIG}: {e}");
+                return None;
+            }
+        };
+        let config: SyncConfig = match serde_json::from_slice(&bytes) {
+            Ok(c) => c,
+            Err(e) => {
+                log::error!("sync: {CONFIG} is damaged ({e}); sign in again");
+                return None;
+            }
+        };
         let mut st = SyncState::new(config);
+        st.config.space = st.config.space.min(MAX_SPACE);
         st.written_config = serde_json::to_string_pretty(&st.config).unwrap_or_default();
         match files.read(OUTBOX).ok().flatten().map(|b| serde_json::from_slice::<Outbox>(&b)) {
             Some(Ok(o)) => st.outbox = o,
@@ -231,23 +291,18 @@ impl SyncState {
             }
             None => {}
         }
-        st.written_outbox = serde_json::to_string(&st.outbox).unwrap_or_default();
         if let Some(b) = files.read(UPLOADED).ok().flatten() {
             st.uploaded = String::from_utf8_lossy(&b).lines().filter(|l| !l.is_empty()).map(str::to_string).collect();
         }
-        // a library that was synced before reloads the server's state once, in case another
-        // device changed what this one's pending changes touch
-        st.needs_snapshot |= !st.config.library.is_empty() && !st.config.token.is_empty() && !st.outbox.is_empty();
+        // pending changes made before the library closed: reload the server's state once and
+        // replay them on top (merged), in case other devices changed what they touch
+        st.needs_snapshot |= !st.config.library.is_empty() && !st.outbox.is_empty();
         Some(st)
     }
 
+    /// Signed in, or signing in (the sign-in waiting to be sent or on its way).
     pub fn signed_in(&self) -> bool {
-        !self.config.token.is_empty() || self.login.is_some()
-    }
-
-    fn id(&mut self) -> u64 {
-        self.next_id += 1;
-        self.next_id
+        !self.config.token.is_empty() || self.login.is_some() || matches!(self.control, Some((_, Control::Login(_))))
     }
 
     fn url(&self, path: &str) -> String {
@@ -255,7 +310,8 @@ impl SyncState {
     }
 
     fn http(&mut self, method: &'static str, path: &str, body: Body, save_to: Option<String>) -> Task {
-        Task::Http { id: self.id(), method, url: self.url(path), token: self.config.token.clone(), body, save_to }
+        let id = NEXT_TASK.fetch_add(1, Ordering::Relaxed);
+        Task::Http { id, method, url: self.url(path), token: self.config.token.clone(), body, save_to }
     }
 
     fn fail(&mut self, why: String) {
@@ -272,24 +328,35 @@ impl SyncState {
     }
 
     fn signed_out(&mut self, why: &str) {
+        log::warn!("sync: {why}");
         self.config.token.clear();
         self.login = None;
+        self.control = None;
+        self.jobs.clear();
+        self.ready.clear();
+        self.plan.clear();
+        self.planned = None;
         self.error = Some(why.to_string());
     }
 
-    /// Write the outbox (before the op log, so a change is never logged without being queued).
+    fn outbox_changed(&mut self) {
+        self.outbox_dirty = true;
+    }
+
+    /// Write the outbox if it changed (before the op log, so a change is never logged without
+    /// being queued).
     pub(crate) fn save_outbox(&mut self, files: &mut dyn Store) -> std::io::Result<()> {
-        let s = serde_json::to_string(&self.outbox).unwrap_or_default();
-        if s != self.written_outbox {
-            files.write_atomic(OUTBOX, s.as_bytes())?;
-            self.written_outbox = s;
+        if self.outbox_dirty {
+            let s = serde_json::to_vec(&self.outbox).map_err(std::io::Error::other)?;
+            files.write_atomic(OUTBOX, &s)?;
+            self.outbox_dirty = false;
         }
         Ok(())
     }
 
     /// Write `sync.json` if it changed (after the op log: the cursor never runs ahead of it).
     pub(crate) fn save_config(&mut self, files: &mut dyn Store) -> std::io::Result<()> {
-        let s = serde_json::to_string_pretty(&self.config).unwrap_or_default();
+        let s = serde_json::to_string_pretty(&self.config).map_err(std::io::Error::other)?;
         if s != self.written_config {
             files.write_atomic(CONFIG, s.as_bytes())?;
             self.written_config = s;
@@ -297,15 +364,23 @@ impl SyncState {
         Ok(())
     }
 
+    /// Photo file transfers queued or running: (uploads, downloads).
+    fn transfers(&self) -> (usize, usize) {
+        let all = || self.plan.iter().chain(self.ready.iter()).chain(self.jobs.values());
+        let downloads = all().filter(|j| matches!(j, Job::Get { .. })).count();
+        (all().count() - downloads, downloads)
+    }
+
     /// What `sync.status` reports.
     pub fn status(&self) -> Value {
-        let uploads = self.plan.iter().chain(self.ready.iter()).chain(self.jobs.values()).filter(|j| !matches!(j, Job::Get { .. })).count();
-        let downloads = self.plan.iter().chain(self.jobs.values()).filter(|j| matches!(j, Job::Get { .. })).count();
+        let (uploads, downloads) = self.transfers();
         let state = if !self.signed_in() {
             "signedOut"
+        } else if self.config.paused {
+            "paused"
         } else if self.error.is_some() {
             "error"
-        } else if self.control.is_some() || !self.jobs.is_empty() || !self.outbox.is_empty() || uploads + downloads > 0 {
+        } else if self.control.is_some() || !self.outbox.is_empty() || uploads + downloads > 0 || self.login.is_some() {
             "syncing"
         } else {
             "idle"
@@ -316,6 +391,7 @@ impl SyncState {
             "server": self.config.server,
             "user": self.config.user,
             "device": self.config.device,
+            "library": self.config.library,
             "cursor": self.config.cursor,
             "pending": self.outbox.len(),
             "uploads": uploads,
@@ -324,7 +400,24 @@ impl SyncState {
             "offlineAlbums": self.config.offline_albums,
             "offlinePhotos": self.config.offline_photos,
             "storeOriginals": self.config.store_originals,
+            "paused": self.config.paused,
         })
+    }
+
+    /// The state for the topbar's cloud icon: `signedOut`, `paused`, `error`, `syncing` or `idle`.
+    pub fn state(&self) -> &'static str {
+        match self.status()["state"].as_str() {
+            Some("paused") => "paused",
+            Some("error") => "error",
+            Some("syncing") => "syncing",
+            Some("idle") => "idle",
+            _ => "signedOut",
+        }
+    }
+
+    /// The last error, if the last request failed.
+    pub fn error(&self) -> Option<&str> {
+        self.error.as_deref()
     }
 }
 
@@ -335,9 +428,16 @@ pub fn blob_key(p: &Photo) -> Option<String> {
     (h.len() == 32 && h.bytes().all(|b| b.is_ascii_hexdigit())).then(|| h.to_ascii_lowercase())
 }
 
-/// The mini preview's file name in the smart previews folder (beside the smart preview's).
+/// The mini preview's file name in the proxies folder (beside the smart preview's).
 pub fn mini_file_name(p: &Photo) -> String {
-    crate::smart::file_name(p).replace(".lcsp", ".lcsm")
+    let mut n = crate::smart::file_name(p);
+    n.truncate(n.len().saturating_sub(".lcsp".len()));
+    n + ".lcsm"
+}
+
+/// A photo whose file isn't on this device: the library has it by content (`web/<hash>/…`).
+pub fn is_remote(p: &Photo) -> bool {
+    matches!(&p.source, Source::File { path } if path.starts_with(PATH_PREFIX))
 }
 
 fn decode<T: serde::de::DeserializeOwned>(d: &Done) -> std::result::Result<T, String> {
@@ -369,8 +469,9 @@ impl Session {
     /// Queue an op this device applied for the server (`inverse` as [`Catalog::apply`] returned).
     /// Recorded while signed out too: signing in again sends them.
     pub(crate) fn sync_record(&mut self, op: &Op, inverse: &Op) {
-        if let Some(st) = self.sync.as_mut() {
+        if let Some(st) = self.sync.as_mut().filter(|st| !st.config.library.is_empty()) {
             st.outbox.record(op, inverse, &self.catalog);
+            st.outbox_changed();
         }
     }
 
@@ -379,8 +480,11 @@ impl Session {
     /// to get a server's photos, sign in from a new library.
     pub fn sync_sign_in(&mut self, server: &str, user: &str, password: &str, device: &str) -> Result<()> {
         let server = server.trim().trim_end_matches('/');
-        if !(server.starts_with("http://") || server.starts_with("https://")) {
+        if !(server.starts_with("http://") || server.starts_with("https://")) || server.contains(char::is_whitespace) {
             return Err(EngineError::Other(format!("not a server address: `{server}` (http://… or https://…)")));
+        }
+        if user.trim().is_empty() {
+            return Err(EngineError::Other("a user name is needed".into()));
         }
         if self.library.is_none() {
             return Err(EngineError::Other("sync needs a library that is saved (open or create one first)".into()));
@@ -398,17 +502,14 @@ impl Session {
         st.error = None;
         st.retry_at = None;
         st.pull_at = None;
-        Ok(())
+        self.persist()
     }
 
     /// Stop syncing (the library and its pending changes stay; signing in again resumes).
     pub fn sync_sign_out(&mut self) -> Result<()> {
         if let Some(st) = self.sync.as_mut() {
-            st.config.token.clear();
-            st.login = None;
-            st.control = None;
-            st.jobs.clear();
-            st.ready.clear();
+            st.signed_out("signed out");
+            st.error = None;
         }
         self.persist()
     }
@@ -418,43 +519,104 @@ impl Session {
         if let Some(st) = self.sync.as_mut() {
             st.pull_at = None;
             st.retry_at = None;
+            st.blob_retry.clear();
         }
     }
 
-    /// Keep an original on this device (downloaded by the sync).
-    pub fn sync_want_original(&mut self, p: &Photo) {
-        if let (Some(st), Some(key)) = (self.sync.as_mut(), blob_key(p)) {
-            st.blob_retry.remove(&key);
-            st.want_originals.insert(key);
-            st.planned = None;
+    /// Download these photos' originals to this device (kept until made unavailable offline).
+    pub fn sync_want_originals(&mut self, ids: &[PhotoId]) -> usize {
+        let Some(st) = self.sync.as_mut() else { return 0 };
+        let mut n = 0;
+        for p in ids.iter().filter_map(|id| self.catalog.photo(*id)).filter(|p| is_remote(p)) {
+            if let Some(key) = blob_key(p) {
+                st.blob_retry.remove(&key);
+                n += usize::from(st.want_originals.insert(key));
+            }
         }
+        st.plan_gen += 1;
+        n
+    }
+
+    /// Make an album or photos available offline on this device (or not).
+    pub fn sync_offline(&mut self, albums: &[AlbumId], photos: &[PhotoId], on: bool) -> Result<()> {
+        let st = self.sync.as_mut().ok_or_else(|| EngineError::Other("this library isn't synced".into()))?;
+        fn toggle<T: PartialEq + Copy>(list: &mut Vec<T>, items: &[T], on: bool) {
+            for i in items {
+                list.retain(|x| x != i);
+                if on {
+                    list.push(*i);
+                }
+            }
+        }
+        toggle(&mut st.config.offline_albums, albums, on);
+        toggle(&mut st.config.offline_photos, photos, on);
+        st.plan_gen += 1;
+        self.persist()
+    }
+
+    /// Stop talking to the server for now (or resume).
+    pub fn sync_pause(&mut self, on: bool) -> Result<()> {
+        let st = self.sync.as_mut().ok_or_else(|| EngineError::Other("this library isn't synced".into()))?;
+        st.config.paused = on;
+        st.pull_at = None;
+        st.retry_at = None;
+        self.persist()
+    }
+
+    /// Keep the original of every photo on this device (or only the ones asked for).
+    pub fn sync_store_originals(&mut self, on: bool) -> Result<()> {
+        let st = self.sync.as_mut().ok_or_else(|| EngineError::Other("this library isn't synced".into()))?;
+        st.config.store_originals = on;
+        st.plan_gen += 1;
+        self.persist()
+    }
+
+    /// Is photo `id` kept on this device even offline?
+    pub fn sync_is_offline(&self, id: PhotoId) -> bool {
+        let Some(st) = &self.sync else { return false };
+        st.config.offline_photos.contains(&id) || st.config.offline_albums.iter().any(|a| self.catalog.album_photos(*a).contains(&id))
     }
 
     /// What the host should do next: at most one request that orders the library (sign-in,
     /// reload, pull or push) plus photo file transfers. Cheap when there's nothing to do; call
     /// it once per frame (or after [`Session::sync_done`]).
     pub fn sync_tasks(&mut self) -> Vec<Task> {
+        if self.sync.as_ref().is_none_or(|st| st.config.paused) {
+            return Vec::new();
+        }
         let Some(mut st) = self.sync.take() else { return Vec::new() };
-        if !st.held.is_empty() && self.interaction.is_none() {
-            let held = std::mem::take(&mut st.held);
-            self.apply_pulled(&mut st, held);
+        if self.interaction.is_none() {
+            if let Some(snap) = st.held_snapshot.take() {
+                self.snapshot_done(&mut st, snap);
+            }
+            if !st.held.is_empty() {
+                let held = std::mem::take(&mut st.held);
+                self.apply_pulled(&mut st, held);
+            }
+        }
+        if std::mem::take(&mut st.landed) {
+            // renders that failed for want of a file try again once the catalog moves on
+            let was_current = st.planned.is_some_and(|p| p.0 == self.catalog.revision);
+            self.catalog.revision += 1;
+            if was_current && let Some(p) = st.planned.as_mut() {
+                p.0 = self.catalog.revision;
+            }
         }
         let now = Instant::now();
         let mut tasks = Vec::new();
         let waiting = st.retry_at.is_some_and(|t| now < t);
-        if st.control.is_none() && !waiting {
+        // a slider drag holds a preview value in the catalog: nothing changes it meanwhile
+        if st.control.is_none() && !waiting && self.interaction.is_none() {
             if let Some(login) = st.login.take() {
                 let body = Body::Json(serde_json::to_string(&login).unwrap_or_default());
                 let t = st.http("POST", "/api/login", body, None);
-                st.control = Some((t.id(), Control::Login));
+                st.control = Some((t.id(), Control::Login(login)));
                 tasks.push(t);
             } else if !st.config.token.is_empty() {
                 if st.needs_snapshot {
                     let t = st.http("GET", "/api/snapshot", Body::Empty, None);
                     st.control = Some((t.id(), Control::Snapshot));
                     tasks.push(t);
-                } else if self.interaction.is_some() {
-                    // a slider drag holds a preview value: pull after it
                 } else if st.pull_at.is_none_or(|t| now >= t) {
                     let path = format!("/api/ops?since={}&limit={PULL_LIMIT}", st.config.cursor);
                     let t = st.http("GET", &path, Body::Empty, None);
@@ -462,6 +624,7 @@ impl Session {
                     tasks.push(t);
                 } else if !st.outbox.is_empty() {
                     let (ops, pushed) = st.outbox.take_push(PUSH_LIMIT);
+                    st.outbox_changed();
                     let body = serde_json::to_string(&proto::Push { base: st.config.cursor, ops }).unwrap_or_default();
                     let t = st.http("POST", "/api/ops", Body::Json(body), None);
                     st.control = Some((t.id(), Control::Push(pushed)));
@@ -469,44 +632,36 @@ impl Session {
                 }
             }
         }
-        if !st.config.token.is_empty() && !st.config.library.is_empty() && !waiting {
+        if !st.config.token.is_empty() && !st.config.library.is_empty() && !st.needs_snapshot && !waiting {
             self.blob_tasks(&mut st, now, &mut tasks);
         }
         self.sync = Some(st);
         tasks
     }
 
-    /// Plan photo file transfers (when the catalog changed) and start some.
+    /// Plan photo file transfers (when the library, the active photo or what to keep offline
+    /// changed) and start some.
     fn blob_tasks(&mut self, st: &mut SyncState, now: Instant, tasks: &mut Vec<Task>) {
-        if st.planned != Some(self.catalog.revision) && st.plan.is_empty() {
-            st.plan = self.plan_blobs(st, now).into();
-            st.planned = Some(self.catalog.revision);
+        let Some(dir) = self.media.smart_dir.clone() else { return };
+        let key = (self.catalog.revision, self.active(), st.plan_gen);
+        if st.planned != Some(key) {
+            if st.have.is_none() {
+                st.have = Some(read_names(&dir));
+            }
+            st.plan = self.plan_blobs(st, &dir, now).into();
+            st.planned = Some(key);
         }
         while st.jobs.len() < BLOB_PARALLEL {
-            let (mut job, planned) = match st.ready.pop_front() {
-                Some(j) => (j, false),
-                None => match st.plan.pop_front() {
-                    Some(j) => (j, true),
-                    None => break,
-                },
-            };
-            // one transfer at a time per photo file (an upload is several steps)
-            if planned && (st.jobs.values().any(|j| j.key() == job.key()) || st.ready.iter().any(|j| j.key() == job.key())) {
+            let Some(mut job) = st.ready.pop_front().or_else(|| st.plan.pop_front()) else { break };
+            let target = job.target();
+            if st.jobs.values().any(|j| j.target() == target) {
                 continue;
             }
             if let Job::Proxies { key, id, .. } = &job {
-                match self.proxy_paths(*id) {
-                    // no folder for previews (the browser): the original is enough
-                    None => {
-                        let key = key.clone();
-                        self.uploaded(st, key);
-                        continue;
-                    }
-                    // built before (Build Smart Previews, or an earlier try): send them
-                    Some((smart, mini)) if crate::smart::is_valid(std::path::Path::new(&smart)) && std::path::Path::new(&mini).exists() => {
-                        job = Job::Put { key: key.clone(), blob: Blob::Smart, path: smart, id: *id };
-                    }
-                    Some(_) => {}
+                let Some((smart, mini)) = self.proxy_paths(*id) else { continue };
+                // built before (Build Smart Previews, or an earlier try): send them
+                if crate::smart::is_valid(Path::new(&smart)) && crate::smart::is_valid(Path::new(&mini)) {
+                    job = Job::Put { key: key.clone(), blob: Blob::Smart, path: smart, id: *id };
                 }
             }
             let task = match &job {
@@ -515,7 +670,7 @@ impl Session {
                 Job::Get { key, blob, dest } => st.http("GET", &format!("/api/blobs/{}/{key}", blob.name()), Body::Empty, Some(dest.clone())),
                 Job::Proxies { path, id, .. } => {
                     let Some((smart, mini)) = self.proxy_paths(*id) else { continue };
-                    Task::Proxies { id: st.id(), original: path.clone(), smart, mini }
+                    Task::Proxies { id: NEXT_TASK.fetch_add(1, Ordering::Relaxed), original: path.clone(), smart, mini }
                 }
             };
             st.jobs.insert(task.id(), job);
@@ -539,46 +694,49 @@ impl Session {
     /// Photo file transfers this device needs: uploads of the originals it has that the server
     /// doesn't, then downloads — the smart previews of the active photo and of what's available
     /// offline, mini previews of every photo whose file isn't here, and wanted originals.
-    // ponytail: one stat per photo per catalog change; keep an index of the proxies folder once
-    // libraries get big enough for that to show.
-    fn plan_blobs(&self, st: &SyncState, now: Instant) -> Vec<Job> {
-        let exists = |p: &str| std::path::Path::new(p).exists();
+    fn plan_blobs(&mut self, st: &SyncState, dir: &Path, now: Instant) -> Vec<Job> {
+        let empty = HashSet::new();
+        let have = st.have.as_ref().unwrap_or(&empty);
         let retry_ok = |key: &str| st.blob_retry.get(key).is_none_or(|t| now >= *t);
         let mut offline: HashSet<PhotoId> = st.config.offline_photos.iter().copied().collect();
         for a in &st.config.offline_albums {
             offline.extend(self.catalog.album_photos(*a));
         }
         let active = self.active();
+        let originals_dir = self.originals_dir();
         let (mut ups, mut smart, mut minis, mut originals) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
-        let mut seen = HashSet::new();
+        let mut tiers = HashMap::new();
         for p in self.catalog.photos().filter(|p| !p.local && p.copy_of.is_none()) {
             let (Some(key), Source::File { path }) = (blob_key(p), &p.source) else { continue };
-            if !retry_ok(&key) || !seen.insert(key.clone()) {
-                continue;
-            }
             if !path.starts_with(PATH_PREFIX) {
                 // this device has the file
-                if !st.uploaded.contains(&key) && cfg!(not(target_arch = "wasm32")) {
+                if !st.uploaded.contains(&key) && !st.refused.contains(&key) && retry_ok(&key) && cfg!(not(target_arch = "wasm32")) {
                     ups.push(Job::Head { key, path: path.clone(), id: p.id });
                 }
                 continue;
             }
-            let Some((smart_path, mini_path)) = self.proxy_paths(p.id) else { continue };
+            let (smart_name, mini_name) = (crate::smart::file_name(p), mini_file_name(p));
+            let (has_smart, has_mini) = (have.contains(&smart_name), have.contains(&mini_name));
+            tiers.insert(crate::media::content_key(p), if has_smart { 2 } else { u8::from(has_mini) });
+            if !retry_ok(&key) {
+                continue;
+            }
             let pinned = offline.contains(&p.id);
-            if (pinned || active == Some(p.id)) && !exists(&smart_path) {
-                let job = Job::Get { key: key.clone(), blob: Blob::Smart, dest: smart_path.clone() };
+            if (pinned || active == Some(p.id)) && !has_smart {
+                let job = Job::Get { key: key.clone(), blob: Blob::Smart, dest: dir.join(&smart_name).to_string_lossy().to_string() };
                 if active == Some(p.id) { smart.insert(0, job) } else { smart.push(job) }
             }
-            if !exists(&mini_path) && !exists(&smart_path) {
-                minis.push(Job::Get { key: key.clone(), blob: Blob::Mini, dest: mini_path });
+            if !has_mini && !has_smart {
+                minis.push(Job::Get { key: key.clone(), blob: Blob::Mini, dest: dir.join(&mini_name).to_string_lossy().to_string() });
             }
             if (st.config.store_originals || st.want_originals.contains(&key))
-                && let Some(dir) = self.originals_dir()
+                && let Some(odir) = &originals_dir
             {
-                let dest = dir.join(&key).join(file_name_of(path, &p.file_name));
+                let dest = odir.join(&key).join(file_name_of(path, &p.file_name));
                 originals.push(Job::Get { key, blob: Blob::Original, dest: dest.to_string_lossy().to_string() });
             }
         }
+        self.media.synced_tiers = tiers;
         ups.into_iter().chain(smart).chain(minis).chain(originals).collect()
     }
 
@@ -599,12 +757,13 @@ impl Session {
     }
 
     fn control_done(&mut self, st: &mut SyncState, c: Control, d: &Done) {
-        if d.status == 401 && !matches!(c, Control::Login) {
+        if d.status == 401 && !matches!(c, Control::Login(_)) {
             st.signed_out("the server signed this device out: sign in again");
             return;
         }
         match c {
-            Control::Login => match (d.ok(), decode::<proto::Device>(d)) {
+            Control::Login(login) => match (d.ok(), decode::<proto::Device>(d)) {
+                (true, Ok(dev)) if dev.space == 0 || dev.space > MAX_SPACE => st.signed_out("the server gave this device an unusable id space"),
                 (true, Ok(dev)) => {
                     if !st.config.library.is_empty() && st.config.library != dev.library {
                         st.signed_out("this library is a copy of another library on that server: use a new library");
@@ -619,15 +778,16 @@ impl Session {
                 }
                 (true, Err(e)) => st.signed_out(&e),
                 (false, _) if d.status == 401 => st.signed_out("wrong user name or password"),
+                (false, _) if d.status == 0 || d.status >= 500 => {
+                    // try again later: the server may be away
+                    st.login = Some(login);
+                    st.fail(why(d));
+                }
                 (false, _) => st.signed_out(&why(d)),
             },
             Control::Snapshot => match (d.ok(), decode::<proto::Snapshot>(d)) {
-                (true, Ok(snap)) => {
-                    match self.adopt_snapshot(st, snap) {
-                        Ok(()) => st.succeeded(),
-                        Err(e) => st.signed_out(&e),
-                    }
-                }
+                (true, Ok(snap)) if self.interaction.is_some() => st.held_snapshot = Some(snap),
+                (true, Ok(snap)) => self.snapshot_done(st, snap),
                 (true, Err(e)) => st.fail(e),
                 (false, _) => st.fail(why(d)),
             },
@@ -655,12 +815,14 @@ impl Session {
                     log::warn!("sync: the server refused a change ({r:?}); reloading the library");
                     if let Ok(r) = r {
                         st.outbox.rejected(&pushed, r.index);
+                        st.outbox_changed();
                     }
                     st.needs_snapshot = true;
                 }
                 _ if d.ok() => match decode::<proto::Head>(d) {
                     Ok(h) => {
                         st.outbox.acked(&pushed);
+                        st.outbox_changed();
                         st.config.cursor = h.head;
                         st.succeeded();
                     }
@@ -668,6 +830,13 @@ impl Session {
                 },
                 _ => st.fail(why(d)),
             },
+        }
+    }
+
+    fn snapshot_done(&mut self, st: &mut SyncState, snap: proto::Snapshot) {
+        match self.adopt_snapshot(st, snap) {
+            Ok(()) => st.succeeded(),
+            Err(e) => st.signed_out(&e),
         }
     }
 
@@ -679,13 +848,17 @@ impl Session {
             if seq <= st.config.cursor {
                 continue;
             }
-            if let Some(op) = st.outbox.merge_remote(&op) {
+            let merged = st.outbox.merge_remote(&op);
+            st.outbox_changed();
+            if let Some(op) = merged {
                 removed |= is_removal(&op);
                 match self.catalog.apply(op.clone()) {
                     Ok(_) => {
                         self.pending_log.push(op);
                         applied = true;
                     }
+                    // our own photo coming back after a lost acknowledgement, already here
+                    Err(_) if matches!(&op, Op::AddPhoto { photo } if self.catalog.photo(photo.id).is_some()) => {}
                     Err(e) => {
                         log::warn!("sync: a change from another device doesn't apply here ({e}); reloading the library");
                         st.needs_snapshot = true;
@@ -718,9 +891,17 @@ impl Session {
                 st.config.library = snap.library;
                 st.config.cursor = 0;
                 st.outbox.seed(&self.catalog);
+                st.outbox_changed();
                 return Ok(());
             }
-            let has_photos = self.catalog.photos().any(|p| !p.local) || self.catalog.albums().next().is_some();
+            // the procedural demo photos a new library starts with don't count: the server's
+            // library replaces them
+            let user_photo = |p: &Photo| !p.local && !matches!(p.source, Source::Demo { .. });
+            let has_photos = self.catalog.photos().any(|p| user_photo(p))
+                || self
+                    .catalog
+                    .albums()
+                    .any(|a| a.smart.is_some() || a.photos.iter().any(|id| self.catalog.photo(*id).is_some_and(|p| user_photo(p))));
             if has_photos {
                 return Err(
                     "this library has photos and the server already has a library: sign in from a new library to get the server's photos".into()
@@ -729,20 +910,25 @@ impl Session {
             st.config.library = snap.library;
         }
         let mut c: Catalog = snap.catalog;
+        lightcraft_catalog::sync::sanitize(&mut c);
         carry_local(&self.catalog, &mut c);
         c.set_id_space(st.config.space);
         let dropped = st.outbox.rebase(&mut c);
+        st.outbox_changed();
         if dropped > 0 {
             log::info!("sync: {dropped} change(s) made here no longer apply to the server's library");
         }
         st.config.cursor = snap.seq;
+        st.planned = None;
         self.replace_catalog(c);
         Ok(())
     }
 
     /// Switch to another state of the library wholesale (a snapshot replaces the op log).
     fn replace_catalog(&mut self, mut c: Catalog) {
-        let _ = self.persist();
+        if let Err(e) = self.persist() {
+            log::error!("sync: {e}");
+        }
         c.revision = self.catalog.revision + 1;
         self.catalog = c;
         self.undo.clear();
@@ -750,9 +936,10 @@ impl Session {
         self.interaction = None;
         self.selection.ids.retain(|id| self.catalog.photo(*id).is_some());
         self.selection.active = self.selection.active.filter(|id| self.catalog.photo(*id).is_some());
+        self.media.clear_sources();
         let unlogged = self.pending_log.len() as u64;
         if let Some(lib) = self.library.as_mut() {
-            match lib.journal.snapshot_with_unlogged(&self.catalog, unlogged) {
+            match lib.journal_mut().snapshot_with_unlogged(&self.catalog, unlogged) {
                 Ok(()) => self.pending_log.clear(),
                 Err(e) => log::error!("sync: saving the library: {e}"),
             }
@@ -763,6 +950,7 @@ impl Session {
         let retry = |st: &mut SyncState, key: &str, why: String| {
             log::warn!("sync: {key}: {why}");
             st.blob_retry.insert(key.to_string(), Instant::now() + BLOB_RETRY);
+            st.plan_gen += 1;
         };
         if d.status == 401 {
             st.signed_out("the server signed this device out: sign in again");
@@ -782,10 +970,18 @@ impl Session {
                 },
                 Blob::Mini => self.uploaded(st, key),
             },
+            Job::Put { key, blob: Blob::Original, .. } if d.status == 422 => {
+                log::warn!("sync: the server refused the original {key}: {}", why(d));
+                st.refused.insert(key);
+            }
             Job::Put { key, .. } => retry(st, &key, why(d)),
             Job::Proxies { key, id, .. } => match (d.ok(), self.proxy_paths(id)) {
-                (true, Some((smart, _))) => st.ready.push_front(Job::Put { key, blob: Blob::Smart, path: smart, id }),
-                // no proxies folder (the browser): the original is enough
+                (true, Some((smart, mini))) => {
+                    if let Some(have) = st.have.as_mut() {
+                        have.extend([&smart, &mini].iter().filter_map(|p| Path::new(p).file_name()).map(|n| n.to_string_lossy().to_string()));
+                    }
+                    st.ready.push_front(Job::Put { key, blob: Blob::Smart, path: smart, id });
+                }
                 (_, None) => self.uploaded(st, key),
                 (false, _) => {
                     // an original that doesn't decode here: the server keeps it, others try
@@ -803,19 +999,25 @@ impl Session {
                 for id in &ids {
                     self.media.forget(*id);
                 }
+                st.landed = true;
                 if blob == Blob::Original {
-                    // the file is here now: the photo points at it (on this device only)
-                    st.uploaded.insert(key.clone());
+                    // the file is here now: the photo points at it (on this device only); the
+                    // server has it, so it's never sent back
+                    self.uploaded(st, key.clone());
                     for id in ids {
                         let Some(p) = self.catalog.photo(id) else { continue };
-                        if let Source::File { path } = &p.source {
-                            self.media.availability.forget(path);
+                        if !is_remote(p) {
+                            continue;
                         }
                         let op = Op::Relink { id, file_name: p.file_name.clone(), source: Source::File { path: dest.clone() }, format: None };
                         if self.catalog.apply(op.clone()).is_ok() {
                             self.pending_log.push(op);
                         }
                     }
+                } else if let Some(have) = st.have.as_mut()
+                    && let Some(n) = Path::new(&dest).file_name()
+                {
+                    have.insert(n.to_string_lossy().to_string());
                 }
                 st.planned = None;
             }
@@ -832,29 +1034,19 @@ impl Session {
         st.uploaded.insert(key);
     }
 
-    /// Make an album or photos available offline on this device (or not).
-    pub fn sync_offline(&mut self, albums: &[AlbumId], photos: &[PhotoId], on: bool) -> Result<()> {
-        let st = self.sync.as_mut().ok_or_else(|| EngineError::Other("this library isn't synced".into()))?;
-        let toggle = |list: &mut Vec<_>, items: &[_]| {
-            for i in items {
-                list.retain(|x| x != i);
-                if on {
-                    list.push(*i);
-                }
-            }
-        };
-        toggle(&mut st.config.offline_albums, albums);
-        toggle(&mut st.config.offline_photos, photos);
-        st.planned = None;
-        self.persist()
-    }
-
     /// Run the sync to completion here (blocking: the CLI, tests): sign-in, reload, pull, push
     /// and photo file transfers, until there's nothing left to do or `limit` tasks ran.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn sync_now(&mut self, limit: usize) -> Value {
+        self.sync_now_with(limit, &mut run)
+    }
+
+    /// [`Session::sync_now`] with another transport (tests).
+    pub fn sync_now_with(&mut self, limit: usize, run: &mut dyn FnMut(&Task) -> Done) -> Value {
         self.sync_soon();
         let mut n = 0;
+        // until nothing is left to do now (the next pull waits for the poll interval, a failure
+        // for its retry time)
         while n < limit {
             let tasks = self.sync_tasks();
             if tasks.is_empty() {
@@ -870,10 +1062,17 @@ impl Session {
     }
 }
 
+/// The file names in a folder (none if it can't be read).
+fn read_names(dir: &Path) -> HashSet<String> {
+    let Ok(rd) = std::fs::read_dir(dir) else { return HashSet::new() };
+    rd.flatten().map(|e| e.file_name().to_string_lossy().to_string()).collect()
+}
+
 /// The file name an original is kept under (its name in the catalog path, else the photo's).
 fn file_name_of(path: &str, fallback: &str) -> String {
     let n = path.rsplit(['/', '\\']).next().filter(|n| !n.is_empty() && *n != "." && *n != "..").unwrap_or(fallback);
-    n.replace(['/', '\\'], "_")
+    let n = n.replace(['/', '\\', ':'], "_");
+    if n.is_empty() || n == "." || n == ".." { "photo".into() } else { n }
 }
 
 /// Path of a photo file kept by content (`web/<hash>/<name>`), for hosts.
@@ -888,8 +1087,8 @@ pub fn build_proxies(original: &str, smart: &str, mini: &str) -> std::result::Re
     let bytes = std::fs::read(original).map_err(|e| format!("{original}: {e}"))?;
     let (img, info) = crate::files::load_vec(bytes, crate::media::SourceLevel::Preview.max_edge())?;
     let tone = info.camera_tone.as_ref();
-    let write = |path: &str, b: Vec<u8>| lightcraft_catalog::safe_file::write_atomic(std::path::Path::new(path), &b).map_err(|e| format!("{path}: {e}"));
-    if let Some(dir) = std::path::Path::new(smart).parent() {
+    let write = |path: &str, b: Vec<u8>| lightcraft_catalog::safe_file::write_atomic(Path::new(path), &b).map_err(|e| format!("{path}: {e}"));
+    if let Some(dir) = Path::new(smart).parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
     write(smart, crate::smart::encode(&img, tone)?)?;
@@ -897,10 +1096,12 @@ pub fn build_proxies(original: &str, smart: &str, mini: &str) -> std::result::Re
     write(mini, crate::smart::encode(&small, tone)?)
 }
 
-/// Run a task here (blocking; native hosts call it on a worker thread).
+/// Run a task here (blocking; native hosts call it on a worker thread). Never panics: a panic
+/// in the HTTP or TLS stack is this task's failure.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn run(task: &Task) -> Done {
-    match task {
+    let id = task.id();
+    crate::guard::catch("sync", || match task {
         Task::Proxies { id, original, smart, mini } => match build_proxies(original, smart, mini) {
             Ok(()) => Done { id: *id, status: 200, body: String::new() },
             Err(e) => Done::failed(*id, e),
@@ -909,7 +1110,8 @@ pub fn run(task: &Task) -> Done {
             Ok((status, body)) => Done { id: *id, status, body },
             Err(e) => Done::failed(*id, e),
         },
-    }
+    })
+    .unwrap_or_else(|e| Done::failed(id, e))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -929,6 +1131,7 @@ mod net {
             // pure-Rust TLS (no C crypto), with the Mozilla root certificates
             let tls = ureq::tls::TlsConfig::builder()
                 .provider(ureq::tls::TlsProvider::Rustls)
+                .root_certs(ureq::tls::RootCerts::WebPki)
                 .unversioned_rustls_crypto_provider(Arc::new(rustls_rustcrypto::provider()))
                 .build();
             ureq::Agent::config_builder()
@@ -971,13 +1174,13 @@ mod net {
             if let Some(dir) = path.parent() {
                 std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
             }
-            let mut reader = resp.body_mut().as_reader();
+            let mut reader = resp.body_mut().with_config().limit(u64::MAX).reader();
             lightcraft_catalog::safe_file::write_atomic_with(path, &mut |w| std::io::copy(&mut reader, w).map(|_| ()))
                 .map_err(|e| format!("{dest}: {e}"))?;
             return Ok((status, String::new()));
         }
         let mut text = String::new();
-        resp.body_mut().as_reader().take(TEXT_MAX).read_to_string(&mut text).map_err(|e| e.to_string())?;
+        resp.body_mut().with_config().limit(TEXT_MAX).reader().read_to_string(&mut text).map_err(|e| e.to_string())?;
         Ok((status, text))
     }
 }

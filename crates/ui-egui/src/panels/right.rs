@@ -554,7 +554,16 @@ fn info(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         }
         // offline originals / smart previews
         // (cached answers, checked off the UI thread: unknown counts as online / no smart preview)
-        if let lightcraft_catalog::Source::File { path } = &p.source {
+        if lightcraft_engine::sync::is_remote(&p) {
+            // synced: the original is on the server
+            let s = app.session.media.synced_tiers.get(&lightcraft_engine::media::content_key(&p)).copied().unwrap_or(0);
+            let text = match s {
+                2 => "Original on the sync server · editing the smart preview",
+                1 => "Original on the sync server · smart preview downloading",
+                _ => "Original on the sync server · previews downloading",
+            };
+            ui.label(egui::RichText::new(crate::i18n::tr(text)).color(t.text_dim));
+        } else if let lightcraft_catalog::Source::File { path } = &p.source {
             let avail = &app.session.media.availability;
             let online = !avail.is_offline(path);
             let smart = app

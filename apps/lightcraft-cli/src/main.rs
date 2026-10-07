@@ -737,6 +737,7 @@ fn snapshot(args: &[String]) -> Result<(), String> {
         png: Some(Box::new(|img: &lightcraft_raster::Rgba8| {
             lightcraft_codecs::encode_png(&lightcraft_codecs::EncodeImage::rgba8(img), &lightcraft_codecs::EncodeMeta::default()).unwrap_or_default()
         })),
+        sync_exec: Some(lightcraft_ui_egui::sync_ui::native_exec()),
         ..Default::default()
     };
     let app = lightcraft_ui_egui::LightcraftApp::new(session, services);

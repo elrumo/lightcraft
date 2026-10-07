@@ -177,6 +177,7 @@ impl Headless {
             || self.app.import.is_some()
             || self.app.export.is_some()
             || !self.app.tasks.is_empty()
+            || self.app.sync.in_flight > 0
             || !self.app.synthetic.is_empty()
             || !self.events.is_empty()
     }

@@ -35,6 +35,7 @@ pub mod presets;
 pub mod rename;
 pub mod sidecar;
 pub mod smart;
+pub mod sync;
 mod view;
 
 use std::sync::Arc;
@@ -733,5 +734,7 @@ mod tests_prefs;
 mod tests_settings_files;
 #[cfg(test)]
 mod tests_spots;
+#[cfg(test)]
+mod tests_sync;
 #[cfg(test)]
 mod tests_xmp;

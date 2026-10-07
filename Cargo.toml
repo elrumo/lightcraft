@@ -74,6 +74,16 @@ rfd = "0.17"
 muda = { version = "0.21", default-features = false } # native menu bar (macOS: objc2/AppKit, pure Rust; no GTK)
 web-time = "1"
 
+# sync (crates/engine native transport, apps/lightcraft-server). Pure Rust: TLS is rustls with the
+# RustCrypto provider (no ring / aws-lc C code) and Mozilla's roots; ureq panics without a root store,
+# so `rustls-webpki-roots` must stay on.
+ureq = { version = "3", default-features = false, features = ["rustls-no-provider", "rustls-webpki-roots"] }
+rustls-rustcrypto = "0.0.2-alpha"
+tiny_http = "0.12"
+argon2 = { version = "0.5", default-features = false, features = ["alloc", "password-hash", "std"] }
+sha2 = "0.10"
+getrandom = "0.3"
+
 # web (apps/lightcraft-web)
 wasm-bindgen = "0.2.129"
 wasm-bindgen-futures = "0.4"

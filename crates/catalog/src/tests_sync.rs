@@ -486,3 +486,45 @@ fn seeding_uploads_a_whole_library() {
     assert_eq!(s.push(0, &ops), Ok(ops.len() as u64));
     assert_eq!(shared(s.catalog()), shared(&c));
 }
+
+#[test]
+fn a_lost_ack_does_not_undo_a_later_change() {
+    let mut s = server();
+    let mut a = Replica::join(&s, 1);
+    let add = add_photo(&mut a.cat);
+    a.local(add);
+    a.sync(&mut s);
+    let id = a.cat.photos().next().unwrap().id;
+    a.local(develop(&a.cat, id, |s| s.light.exposure = 1.0));
+    a.push(&mut s, true);
+    // set back while the acknowledgement was lost: the server's copy of our first change
+    // coming back must not win over the newer one
+    a.local(develop(&a.cat, id, |s| s.light.exposure = 0.0));
+    a.sync(&mut s);
+    a.sync(&mut s);
+    assert_eq!(a.cat.photo(id).unwrap().develop.light.exposure, 0.0);
+    assert_eq!(s.catalog().photo(id).unwrap().develop.light.exposure, 0.0);
+    assert!(a.out.is_empty());
+}
+
+#[test]
+fn rebase_merges_with_the_server_value() {
+    let mut s = server();
+    let mut a = Replica::join(&s, 1);
+    let add = add_photo(&mut a.cat);
+    a.local(add);
+    a.sync(&mut s);
+    let id = a.cat.photos().next().unwrap().id;
+    let mut b = Replica::join(&s, 2);
+    b.local(develop(&b.cat, id, |s| s.light.contrast = 30.0));
+    b.sync(&mut s);
+    // A edits exposure, then reloads the server's state (a repair) before pulling B's change
+    a.local(develop(&a.cat, id, |s| s.light.exposure = 1.0));
+    a.repair(&s);
+    let d = &a.cat.photo(id).unwrap().develop;
+    assert_eq!((d.light.exposure, d.light.contrast), (1.0, 30.0), "both edits survive the reload");
+    a.sync(&mut s);
+    b.sync(&mut s);
+    assert_eq!(shared(&a.cat), shared(&b.cat));
+    assert_eq!(shared(&a.cat), shared(s.catalog()));
+}
