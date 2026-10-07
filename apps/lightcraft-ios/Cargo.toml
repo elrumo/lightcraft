@@ -19,3 +19,4 @@ lightcraft-engine = { workspace = true }
 lightcraft-ui-egui = { workspace = true }
 eframe = { workspace = true, features = ["default_fonts", "wgpu"] }
 egui = { workspace = true }
+log = { workspace = true }
