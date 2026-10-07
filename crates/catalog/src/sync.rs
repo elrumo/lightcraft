@@ -452,19 +452,29 @@ pub enum Pull {
     Gone,
 }
 
+/// The server compacts its log into a snapshot once it holds this much.
+pub const COMPACT_BYTES: u64 = 64 << 20;
+
 /// A user's library on the server: the single log of every device's ops and the state it
-/// leads to (to validate pushes and to start new devices from).
-// ponytail: the log is never compacted (pulls read it whole when behind); compact with a
-// snapshot and answer older cursors with Pull::Gone once logs get big.
+/// leads to (to validate pushes and to start new devices from). Once the log holds
+/// [`COMPACT_BYTES`] it is compacted into a snapshot: a device further behind than that reloads
+/// the library ([`Pull::Gone`]) instead of pulling ops.
+// ponytail: pulls read the log whole when behind; bounded by the compaction size.
 pub struct ServerCore {
     journal: Journal,
     catalog: Catalog,
+    compact_bytes: u64,
 }
 
 impl ServerCore {
     pub fn open(store: Box<dyn Store>) -> Result<ServerCore> {
         let (journal, catalog, _) = Journal::open(store)?;
-        Ok(ServerCore { journal, catalog })
+        Ok(ServerCore { journal, catalog, compact_bytes: COMPACT_BYTES })
+    }
+
+    /// Compact the log at this size instead of [`COMPACT_BYTES`] (tests).
+    pub fn set_compact_bytes(&mut self, bytes: u64) {
+        self.compact_bytes = bytes.max(1);
     }
 
     /// Sequence number of the newest op.
@@ -512,7 +522,15 @@ impl ServerCore {
                 }
                 Err(e)
             }
-            None => Ok(self.head()),
+            None => {
+                if self.journal.log_bytes() >= self.compact_bytes
+                    && let Err(e) = self.journal.snapshot(&self.catalog)
+                {
+                    // nothing lost: the log is whole, it is tried again after the next push
+                    log::warn!("sync: compacting the server's log: {e}");
+                }
+                Ok(self.head())
+            }
         }
     }
 

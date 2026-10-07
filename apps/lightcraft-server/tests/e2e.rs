@@ -282,3 +282,20 @@ fn admin_page_sets_up_and_manages_users() {
     drop(server);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// What anyone can send without signing in is small.
+#[test]
+fn unauthenticated_bodies_are_capped() {
+    let root = temp("cap");
+    let server = start(&root);
+    let base = format!("http://{}", server.addr());
+    let big = vec![b' '; 200 << 10];
+    assert_eq!(call("POST", &format!("{base}/api/login"), "", Some(&big), &[]).0, 413);
+    assert_eq!(call("POST", &format!("{base}/api/admin/login"), "", Some(&big), &[]).0, 413);
+    assert_eq!(call("POST", &format!("{base}/api/admin/setup"), "", Some(&big), &[]).0, 413);
+    let (s, _, hs) = call("GET", &format!("{base}/"), "", None, &[]);
+    assert_eq!(s, 200);
+    assert!(hs.iter().any(|(k, v)| k.eq_ignore_ascii_case("x-frame-options") && v == "DENY"));
+    drop(server);
+    let _ = std::fs::remove_dir_all(&root);
+}

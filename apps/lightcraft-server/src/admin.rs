@@ -23,7 +23,7 @@ use tiny_http::{Header, Method, Request, Response, StatusCode};
 
 use crate::State;
 use crate::accounts::{self, LoginError};
-use crate::api::{Resp, error, header_value, json, read_json};
+use crate::api::{Resp, error, header_value, json, read_json, read_small_json};
 
 const INDEX: &str = include_str!("../admin/index.html");
 const SCRIPT: &str = include_str!("../admin/admin.js");
@@ -205,7 +205,7 @@ pub fn api(st: &State, req: &mut Request, method: &Method, rest: &str) -> Resp {
 type AdminResult = Result<Value, std::result::Result<(u16, String), Resp>>;
 
 fn setup(st: &State, req: &mut Request) -> Resp {
-    let s: Setup = match read_json(req) {
+    let s: Setup = match read_small_json(req) {
         Ok(s) => s,
         Err(r) => return r,
     };
@@ -237,7 +237,7 @@ fn setup(st: &State, req: &mut Request) -> Resp {
 }
 
 fn login(st: &State, req: &mut Request) -> Resp {
-    let l: Login = match read_json(req) {
+    let l: Login = match read_small_json(req) {
         Ok(l) => l,
         Err(r) => return r,
     };

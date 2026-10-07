@@ -289,8 +289,8 @@ fn describe(file: &Found, hash: &str, bytes: &[u8], now: &str) -> Result<(Photo,
 /// What the library knows, to tell which files need describing (refreshed every batch).
 #[derive(Default)]
 struct Known {
-    /// Content hashes of the library's photos.
-    hashes: HashSet<String>,
+    /// The places of the library's photos by content hash (`None`: not in a library folder).
+    by_hash: HashMap<String, Vec<Option<String>>>,
     /// Each library-folder photo's content hash, by its place.
     places: HashMap<String, String>,
 }
@@ -300,7 +300,7 @@ impl Known {
         let mut k = Known::default();
         for p in l.core.catalog().photos().filter(|p| p.copy_of.is_none()) {
             if let Some(h) = &p.content_hash {
-                k.hashes.insert(h.clone());
+                k.by_hash.entry(h.clone()).or_default().push(p.server_path.clone());
                 if let Some(sp) = &p.server_path {
                     k.places.insert(sp.clone(), h.clone());
                 }
@@ -309,17 +309,18 @@ impl Known {
         k
     }
 
-    /// Does a file with this content at this place need describing (a new photo, or new
-    /// content for its photo)?
-    fn needs_description(&self, key: &str, hash: &str) -> bool {
+    /// Does a file with this content at this place need describing: new content for its photo,
+    /// or a new photo (no photo with this content is free to take the place: every one is in a
+    /// place that is still there, `found`)?
+    fn needs_description(&self, key: &str, hash: &str, found: &HashSet<String>) -> bool {
         match self.places.get(key) {
             Some(h) => h != hash,
-            None => !self.hashes.contains(hash),
+            None => !self.by_hash.get(hash).is_some_and(|places| places.iter().any(|p| p.as_ref().is_none_or(|p| !found.contains(p)))),
         }
     }
 }
 
-fn read(file: Found, known: &Known, now: &str) -> FileRead {
+fn read(file: Found, known: &Known, found: &HashSet<String>, now: &str) -> FileRead {
     if file.size > FILE_MAX {
         let why = format!("larger than {} GiB", FILE_MAX >> 30);
         return FileRead { file, hash: Err(why), probed: None };
@@ -331,7 +332,7 @@ fn read(file: Found, known: &Known, now: &str) -> FileRead {
         None => (hash_file(&file.path), None),
     };
     let probed = match &hash {
-        Ok(h) if known.needs_description(&file.key, h) => {
+        Ok(h) if known.needs_description(&file.key, h, found) => {
             let bytes = match bytes {
                 Some(b) => Ok(b),
                 None => std::fs::read(&file.path).map_err(|e| e.to_string()),
@@ -589,7 +590,7 @@ pub fn scan(
         if stop.load(Ordering::Relaxed) {
             break;
         }
-        batch.push(read(f, &known, &now));
+        batch.push(read(f, &known, &keys, &now));
         s.done += 1;
         if batch.len() >= BATCH || batch_at.elapsed() >= BATCH_TIME {
             for (hash, path) in commit(lib, &mut batch, &keys, &mut s, &now) {
@@ -658,6 +659,9 @@ pub fn build_previews(blobs: &Path, hash: &str, file: &Path) -> Result<bool, Str
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
     let (f, s, m) = (file.to_string_lossy().to_string(), smart.to_string_lossy().to_string(), mini.to_string_lossy().to_string());
+    // a huge file (a scan, a PSB) is read whole and decoded: one at a time
+    static BIG: Mutex<()> = Mutex::new(());
+    let _one = (std::fs::metadata(file).map_or(0, |m| m.len()) > READ_WHOLE).then(|| lock(&BIG));
     lightcraft_engine::guard::catch("building previews", || lightcraft_engine::sync::build_proxies(&f, &s, &m))??;
     Ok(true)
 }

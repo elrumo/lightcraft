@@ -20,6 +20,8 @@ use crate::accounts::{self, LoginError, Session};
 
 /// Largest JSON body (a push is at most a few hundred ops).
 pub const JSON_MAX: u64 = 64 << 20;
+/// Largest body of the routes anyone can call (signing in, setting up): they are small.
+pub const SMALL_JSON_MAX: u64 = 64 << 10;
 /// Largest photo file: originals (raw files, videos) and previews.
 pub const BLOB_MAX: u64 = 16 << 30;
 const PREVIEW_MAX: u64 = 256 << 20;
@@ -110,7 +112,16 @@ fn read_body(req: &mut Request, max: u64) -> Result<Vec<u8>, Resp> {
 }
 
 pub(crate) fn read_json<T: serde::de::DeserializeOwned>(req: &mut Request) -> Result<T, Resp> {
-    let b = read_body(req, JSON_MAX)?;
+    read_json_max(req, JSON_MAX)
+}
+
+/// [`read_json`] for the routes that need no sign-in.
+pub(crate) fn read_small_json<T: serde::de::DeserializeOwned>(req: &mut Request) -> Result<T, Resp> {
+    read_json_max(req, SMALL_JSON_MAX)
+}
+
+fn read_json_max<T: serde::de::DeserializeOwned>(req: &mut Request, max: u64) -> Result<T, Resp> {
+    let b = read_body(req, max)?;
     serde_json::from_slice(&b).map_err(|e| error(400, format!("not the JSON this route takes: {e}")))
 }
 
@@ -210,7 +221,7 @@ pub(crate) fn throttled(st: &State, keys: &[String]) -> Option<Resp> {
 }
 
 fn login(st: &State, req: &mut Request) -> Resp {
-    let l: proto::Login = match read_json(req) {
+    let l: proto::Login = match read_small_json(req) {
         Ok(l) => l,
         Err(r) => return r,
     };
@@ -522,6 +533,9 @@ fn web(st: &State, req: &Request, method: &Method, path: &str) -> Resp {
         header("Cross-Origin-Opener-Policy", "same-origin"),
         header("Cross-Origin-Embedder-Policy", "require-corp"),
         header("Cross-Origin-Resource-Policy", "same-origin"),
+        // never inside another site's page
+        header("X-Frame-Options", "DENY"),
+        header("Content-Security-Policy", "frame-ancestors 'none'"),
     ]
     .into_iter()
     .flatten()

@@ -245,6 +245,32 @@ fn server_core_orders_validates_and_persists() {
     assert_eq!((s.head(), s.catalog().photo(id).unwrap().rating), (2, 4));
 }
 
+/// A big log is compacted: devices behind it reload the library, the rest pull as before, and
+/// it reopens the same.
+#[test]
+fn server_log_compacts() {
+    let store = MemStore::new();
+    let mut s = ServerCore::open(Box::new(store.clone())).unwrap();
+    s.set_compact_bytes(2000);
+    let mut c = Catalog::new();
+    c.set_id_space(1);
+    let mut ids = Vec::new();
+    while s.since(0, 1).unwrap() != Pull::Gone {
+        let add = add_photo(&mut c);
+        let Op::AddPhoto { photo } = &add else { panic!("{add:?}") };
+        ids.push(photo.id);
+        s.push(s.head(), &[add]).unwrap();
+        assert!(ids.len() < 100, "never compacted");
+    }
+    let head = s.head();
+    assert_eq!(s.since(head, 10).unwrap(), Pull::Ops(vec![]));
+    s.push(head, &[Op::SetRating { id: ids[0], rating: 5 }]).unwrap();
+    assert_eq!(s.since(head, 10).unwrap(), Pull::Ops(vec![(head + 1, Op::SetRating { id: ids[0], rating: 5 })]));
+    drop(s);
+    let s = ServerCore::open(Box::new(store)).unwrap();
+    assert_eq!((s.head(), s.catalog().len(), s.catalog().photo(ids[0]).unwrap().rating), (head + 1, ids.len(), 5));
+}
+
 /// Photos the server adds from the user's library folders: its own id space, their place on the
 /// server synced (and moved), shown by folder.
 #[test]

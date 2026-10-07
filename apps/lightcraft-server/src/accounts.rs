@@ -117,7 +117,14 @@ fn write_json<T: Serialize>(path: &Path, v: &T) -> Result<(), String> {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
     let bytes = serde_json::to_vec_pretty(v).map_err(|e| e.to_string())?;
-    lightcraft_catalog::safe_file::write_atomic(path, &bytes).map_err(|e| format!("{}: {e}", path.display()))
+    lightcraft_catalog::safe_file::write_atomic(path, &bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+    // password and token hashes: for the server's eyes only
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+    }
+    Ok(())
 }
 
 pub fn read_users(data: &Path) -> Result<UsersFile, String> {
@@ -461,6 +468,11 @@ mod tests {
         assert_eq!(lib.len(), 32);
         assert_eq!(a.check(&t1), Some(Session { user: "ann".into(), device: d1.id }));
         assert!(!std::fs::read_to_string(user_dir(&data, "ann").join(DEVICES)).unwrap().contains(&t1), "tokens are stored hashed");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(data.join(USERS)).unwrap().permissions().mode() & 0o777, 0o600);
+        }
         // revoked from the command line while the server runs
         std::thread::sleep(std::time::Duration::from_millis(20));
         revoke(&data, "ann", d1.id).unwrap();

@@ -127,9 +127,11 @@ fn library_folders_are_read_in_place() {
     sync(&mut dev);
     write_png(&photos.join("2024/Trip/b.png"), 9);
     write_png(&photos.join("2026/d.png"), 5);
+    // a copy of a file that is in the library: a photo of its own
+    std::fs::copy(photos.join("2024/Trip/b.png"), photos.join("2026/b copy.png")).unwrap();
     server.scan("ann");
     let st = scanned(&server, 1);
-    assert_eq!((st.added, st.moved, st.changed), (1, 1, 1), "{st:?}");
+    assert_eq!((st.added, st.moved, st.changed), (2, 1, 1), "{st:?}");
     sync(&mut dev);
     let a = by_place(&dev, "Photos/2026/a.png").expect("moved");
     assert_eq!((a.id, a.develop.light.exposure), (a_id, 0.5));
@@ -138,7 +140,9 @@ fn library_folders_are_read_in_place() {
     assert_eq!(b.rating, 4, "edits stay when the content changes");
     assert!(by_place(&dev, "Photos/2025/c.png").is_none(), "removed photos aren't brought back");
     assert!(by_place(&dev, "Photos/2026/d.png").is_some());
-    assert_eq!(dev.catalog.len(), 3);
+    let copy = by_place(&dev, "Photos/2026/b copy.png").expect("the copy is a photo");
+    assert_eq!(copy.content_hash, dev.catalog.photo(b_id).unwrap().content_hash);
+    assert_eq!(dev.catalog.len(), 4);
 
     // the disk goes away: nothing is taken from the library
     std::fs::rename(&photos, root.join("nas/unmounted")).unwrap();
@@ -150,7 +154,7 @@ fn library_folders_are_read_in_place() {
     let st = scanned(&server, 3);
     assert!(st.errors.iter().any(|e| e.contains("empty")), "{st:?}");
     sync(&mut dev);
-    assert_eq!(dev.catalog.len(), 3);
+    assert_eq!(dev.catalog.len(), 4);
     let album = dev.catalog.albums().find(|al| al.name == "Best").unwrap();
     assert!(album.photos.contains(&a_id) && album.photos.contains(&b_id), "{album:?}");
     drop(server);
