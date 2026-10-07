@@ -12,20 +12,24 @@ before anything is built from it.
 **Priority:** **P0** = the app is not usable on a phone without it · **P1** = expected by anyone coming from Lightroom
 mobile · **P2** = later, niche or needs large new work (models, services). **Needs** says what blocks it.
 
+**Status** (start of a row): ✅ done and tested · 🟡 built, but not yet run on the simulator or a device (the native
+code is type-checked and clippy-clean for `aarch64-apple-ios`; its logic is tested on Linux), or partly done · no
+mark: not started.
+
 ## A. Known gaps in what exists
 
 ### A1. Platform host (nothing here works yet; the Menu → Import / Export commands have nothing to open)
 
 | # | Gap | Pri | Needs |
 |---|---|---|---|
-| A1.1 | Photos library picker (import from the camera roll, with limited-access handling) | P0 | PhotosUI / PHPicker glue crate |
-| A1.2 | Files picker for import (folders, external drives, iCloud Drive) with security-scoped bookmarks | P0 | UIDocumentPicker glue, copy into the sandbox |
-| A1.3 | Export and share: share sheet, Save to Files, Save to Photos | P0 | UIActivityViewController glue |
+| A1.1 | 🟡 Photos library picker: `lightcraft-ios-host` shows PHPicker (File ▸ Import from Photos…, the grid's + button), loads each photo as stored (a ProRAW DNG when there is one, else the HEIC / JPEG), copies it into `tmp/Import/` and the import review moves it into the library. PHPicker runs out of process and needs no photo-library permission, so there is no limited-access case to handle | P0 | run on a device |
+| A1.2 | 🟡 Files picker: image files (the picker's own copies) and whole folders (read in place under their security scope, copied off the main thread; at most 5000 photos, 12 levels). Everything is copied into the library, so no security-scoped bookmarks are kept | P0 | run on a device; iCloud files that aren't downloaded yet |
+| A1.3 | 🟡 Export and share: every export goes to a staging folder and opens the share sheet (Save Image to Photos, Save to Files, AirDrop, Mail, other apps; anchored as a popover on iPad); the export dialog has no folder field (`ShareExports`); `NSPhotoLibraryAddUsageDescription` is set for Save Image | P0 | run on a device |
 | A1.4 | ✅ Library and settings in the app sandbox: the library in `Documents/`, settings in `Library/Application Support/LightCraft`, exports written to a staging folder for the share sheet (`ShareExports`), no desktop "Local" folders; photos handed over by the pickers are *moved* into the library (`file.addPhotos {staged: true}`), never referenced in `tmp/`; a library opened from another folder than last time (iOS gives the container a new path on every app update) re-points the photos stored under its old folder (`location.json`, `library.info` → `relocated`) | P0 | tested on Linux; check on a device after an app update |
-| A1.5 | HEIC / HEIF decode (iPhone photos; import accepts `.heic` and then fails) | P0 | ImageIO behind the `FileLoader` hook |
+| A1.5 | 🟡 HEIC / HEIF (and AVIF) decode through ImageIO: `lightcraft_codecs::set_system_decoder` (tested on Linux with a stand-in decoder); 8- or 16-bit, in the photo's own colour space (Display P3) with its ICC profile, thumbnails through ImageIO's fast path; their EXIF and XMP (capture time, camera, location) are read by `lightcraft-meta`'s HEIF parser (pure Rust, tested) | P0 | run on real iPhone files |
 | A1.6 | Apple ProRAW / JPEG XL compressed DNG (rejected today) | P1 | codec work in `crates/raw` |
-| A1.7 | Memory budget for iOS (the probe returns nothing, so the 1.5 GiB default is too high); tiled full-resolution export (48 MP risk) | P0 | `crates/engine/src/memory.rs`, tiling in `pipeline` |
-| A1.8 | App lifecycle: save on backgrounding, GPU pause / resume instead of disabling the GPU for the process | P0 | `crates/gpu` |
+| A1.7 | 🟡 Memory budget for iOS: a third of what the app may allocate at launch (`os_proc_available_memory`), 256 MiB–1 GiB; memory warnings and backgrounding release decoded photos (`Session::release_memory`). Still missing: tiled full-resolution export (48 MP risk) | P0 | tiling in `pipeline`; peak memory measured on a device |
+| A1.8 | 🟡 App lifecycle: the library, view and app settings (`ui.json`, now kept on iOS too) are saved when the app resigns active, goes to the background or terminates; the GPU is paused in the background (`gpu::pause`: renders on the CPU, errors meanwhile don't disable it for good) and resumed after; an export in progress asks for background time | P0 | run on a device |
 | A1.9 | On-screen keyboard: text fields, search, rename, keyword entry (egui's iOS text input is unverified) | P0 | winit / egui iOS text input, or a native text field bridge |
 | A1.10 | Scene support without the `-[UIWindow initWithFrame:]` swizzle (winit has none) | P1 | a winit with scenes, or a native UIKit host |
 | A1.11 | Signed device build, TestFlight, App Store review (privacy manifest, photo-library usage strings, icon set) | P0 | Apple developer account; an original app icon (`assets/ATTRIBUTION.md`) |
@@ -83,7 +87,7 @@ mobile · **P2** = later, niche or needs large new work (models, services). **Ne
 | B2.5 | Web galleries (publish an album as a page) | P2 | the sync server could serve them; not planned yet |
 | B2.6 | Share edits as a link or as a preset file; share a photo with a preset embedded | P1 | preset export exists (`file.exportPresets`); needs A1.3 |
 | B2.7 | Share a before / after image or a time-lapse of the edit history | P2 | |
-| B2.8 | Save to Photos and send to other apps in the formats / sizes / watermark of the export dialog | P0 | A1.3 (export dialog exists) |
+| B2.8 | 🟡 Save to Photos and send to other apps in the formats / sizes / watermark of the export dialog: exports open the share sheet (A1.3) | P0 | run on a device |
 | B2.9 | Backup and restore of the catalog from the app | P1 | catalog is a log; a zip export is easy |
 | B2.10 | Account, subscription and storage UI | OOS | no LightCraft service or subscription: accounts live on the user's own sync server (its admin page) |
 
@@ -127,7 +131,7 @@ mobile · **P2** = later, niche or needs large new work (models, services). **Ne
 
 | # | Feature | Pri | Needs |
 |---|---|---|---|
-| B5.1 | Onboarding, permissions prompts with explanations (Photos, Camera, Location, Files) | P0 | A1.1 |
+| B5.1 | Onboarding, permissions prompts with explanations (Photos, Camera, Location, Files). Importing needs no permission (PHPicker, the Files picker); saving to Photos asks with LightCraft's own explanation | P0 | onboarding screens |
 | B5.2 | Settings suited to a phone (cache size, storage, export defaults, "Include location in export") | P1 | settings dialog is a desktop window; scrolls but is not designed for touch |
 | B5.3 | Crash and error reporting that the user can send (never-crash standard: the panic hook writes to a file the user cannot reach on iOS) | P1 | share the log via A1.3 |
 | B5.4 | Localisation checks and a localised App Store listing | P2 | |

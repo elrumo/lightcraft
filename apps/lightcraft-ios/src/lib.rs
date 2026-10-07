@@ -1,29 +1,146 @@
-//! LightCraft on iOS, phase 0 spike (`docs/ios.md`): the desktop egui UI, started from the C `main`
-//! of the Xcode project in `xcode/`. The library is saved in the app's Documents folder (new ones
-//! start with the demo photos) and can sync with a self-hosted server (Settings ▸ Sync,
-//! `docs/sync.md`). No pickers and no touch layout yet.
+//! LightCraft on iOS (`docs/ios.md`): the egui UI (its compact touch layout on phones), started
+//! from the C `main` of the Xcode project in `xcode/`. The library is saved in the app's Documents
+//! folder (new ones start with the demo photos) and can sync with a self-hosted server (Settings ▸
+//! Sync, `docs/sync.md`). The native pieces come from `lightcraft-ios-host`: photos are imported
+//! from the Photos and Files pickers (copied into the library), exports go to the share sheet,
+//! HEIC is decoded by ImageIO, and the app saves, pauses the GPU and frees memory as iOS asks.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+use std::cell::RefCell;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+use std::rc::{Rc, Weak};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use lightcraft_engine::Session;
-use lightcraft_ui_egui::{LightcraftApp, Services};
+use lightcraft_ios_host::{BackgroundTask, Lifecycle, PickKind, Picked};
+use lightcraft_ui_egui::prefs::PrefsWriter;
+use lightcraft_ui_egui::{LightcraftApp, PickSource, Services, ShareExports};
+use serde_json::json;
 
-struct App(LightcraftApp);
+/// Picks the pickers delivered (from any thread), joined to the app on the next frame.
+type Inbox = Arc<Mutex<Vec<Picked>>>;
+
+/// The app and what the host keeps beside it. Shared (`Rc<RefCell<…>>`) between eframe, which
+/// drives the frames, and UIKit's lifecycle notifications, which arrive between frames.
+struct Host {
+    app: LightcraftApp,
+    prefs: PrefsWriter,
+    inbox: Inbox,
+    /// Time to finish an export after the app went to the background.
+    background: Option<BackgroundTask>,
+}
+
+impl Host {
+    fn logic(&mut self, ctx: &egui::Context) {
+        let picks = std::mem::take(&mut *self.inbox.lock().unwrap_or_else(PoisonError::into_inner));
+        for p in picks {
+            self.joined(ctx, p);
+        }
+        self.app.logic(ctx);
+        self.prefs.tick(&mut self.app, ctx);
+        // an export kept going in the background has finished
+        if self.background.is_some() && self.app.export.is_none() {
+            self.background = None;
+        }
+    }
+
+    /// Picked photos (copies in the staging folder) into the import review.
+    fn joined(&mut self, ctx: &egui::Context, p: Picked) {
+        if let Some(msg) = picked_message(&p) {
+            log::warn!("{msg}: {:?}", p.failed);
+            self.app.toast(ctx, msg);
+        }
+        if p.files.is_empty() {
+            return;
+        }
+        let paths: Vec<String> = p.files.iter().map(|f| f.to_string_lossy().to_string()).collect();
+        self.app.ui.view = lightcraft_ui_egui::state::ViewMode::PhotoGrid;
+        if let Err(e) = self.app.run("file.addPhotos", json!({"paths": paths, "staged": true})) {
+            self.app.toast(ctx, e);
+        }
+    }
+
+    /// Write everything that isn't on disk yet: the app may be ended without notice once it is in
+    /// the background.
+    fn save(&mut self) {
+        if let Err(e) = self.app.session.persist() {
+            log::error!("saving the library: {e}");
+        }
+        self.app.session.save_view();
+        if let Err(e) = self.prefs.save(&self.app) {
+            log::error!("{e}");
+        }
+    }
+
+    fn lifecycle(&mut self, event: Lifecycle) {
+        log::info!("lifecycle: {event:?}");
+        match event {
+            Lifecycle::WillResignActive => self.save(),
+            Lifecycle::DidEnterBackground => {
+                self.save();
+                // an export in progress gets the time the system allows to finish
+                if self.app.export.is_some() && self.background.is_none() {
+                    self.background = BackgroundTask::begin("LightCraft export");
+                }
+                // no GPU in the background, and a much smaller memory limit
+                lightcraft_engine::gpu::pause();
+                let freed = self.app.session.release_memory();
+                log::info!("background: {} MB of decoded photos released", freed >> 20);
+            }
+            Lifecycle::WillEnterForeground | Lifecycle::DidBecomeActive => {
+                lightcraft_engine::gpu::resume();
+                self.background = None;
+            }
+            Lifecycle::MemoryWarning => {
+                let freed = self.app.session.release_memory();
+                log::warn!("memory warning: {} MB of decoded photos released", freed >> 20);
+            }
+            Lifecycle::WillTerminate => {
+                self.save();
+                if let Err(e) = self.app.session.close_library() {
+                    log::error!("closing the library: {e}");
+                }
+            }
+        }
+    }
+}
+
+/// What to tell the user about a pick that didn't fully work.
+fn picked_message(p: &Picked) -> Option<String> {
+    let n = p.failed.len();
+    match (n, p.files.len()) {
+        (0, _) => None,
+        (n, 0) => Some(format!("{n} item{} couldn't be copied from the picker", if n == 1 { "" } else { "s" })),
+        (n, ok) => Some(format!("{ok} photo{} copied; {n} couldn't be", if ok == 1 { "" } else { "s" })),
+    }
+}
+
+struct App(Rc<RefCell<Host>>);
 
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.0.logic(ctx);
+        if let Ok(mut h) = self.0.try_borrow_mut() {
+            h.logic(ctx);
+        }
     }
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {
-        self.0.raw_input_hook(raw);
+        if let Ok(mut h) = self.0.try_borrow_mut() {
+            h.app.raw_input_hook(raw);
+        }
     }
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         // the root ui spans the whole screen; keep the panels out of the status bar, Dynamic Island and
         // home indicator (egui-winit reads the insets from UIKit into `content_rect`)
         let safe = ui.ctx().content_rect();
-        ui.scope_builder(egui::UiBuilder::new().max_rect(safe), |ui| self.0.ui(ui));
+        if let Ok(mut h) = self.0.try_borrow_mut() {
+            ui.scope_builder(egui::UiBuilder::new().max_rect(safe), |ui| h.app.ui(ui));
+        }
+    }
+    fn on_exit(&mut self) {
+        if let Ok(mut h) = self.0.try_borrow_mut() {
+            h.lifecycle(Lifecycle::WillTerminate);
+        }
     }
 }
 
@@ -86,21 +203,156 @@ pub fn open_session(dir: Option<&Path>) -> Session {
     Session::with_demo().with_fs().with_system_clock()
 }
 
-/// What the app can do on iOS: sync requests on worker threads (pure-Rust TLS, Mozilla roots).
-fn services() -> Services {
-    Services { sync_exec: Some(lightcraft_ui_egui::sync_ui::native_exec()), ..Services::default() }
+/// The staging folders in the app's tmp folder: copies the pickers made (moved into the library
+/// by the import review) and the last export (handed to the share sheet).
+fn staging(tmp: &Path) -> (PathBuf, PathBuf) {
+    (tmp.join("Import"), tmp.join("Exports"))
+}
+
+/// What a previous run left there: picks the review didn't take (cancelled, duplicates) and
+/// exports that were shared or dismissed.
+fn clean_staging(tmp: &Path) {
+    let (import, export) = staging(tmp);
+    for d in [import, export] {
+        if let Err(e) = std::fs::remove_dir_all(&d)
+            && e.kind() != std::io::ErrorKind::NotFound
+        {
+            log::warn!("{}: {e}", d.display());
+        }
+    }
+}
+
+/// Files a folder pick copies: the formats the library imports.
+fn is_photo(p: &Path) -> bool {
+    p.extension().and_then(|e| e.to_str()).is_some_and(|e| lightcraft_engine::import::EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
+}
+
+fn pick_kind(s: PickSource) -> PickKind {
+    match s {
+        PickSource::Photos => PickKind::Photos,
+        PickSource::Files => PickKind::Files,
+        PickSource::Folder => PickKind::Folder,
+    }
+}
+
+/// ImageIO's decode as `lightcraft-codecs` takes it (HEIC / HEIF and AVIF have no pure-Rust
+/// decoder): pixels as stored, premultiplied, in the image's own colour space.
+fn system_image(i: lightcraft_ios_host::Image) -> lightcraft_codecs::SystemImage {
+    lightcraft_codecs::SystemImage {
+        width: i.width,
+        height: i.height,
+        pixels: match i.pixels {
+            lightcraft_ios_host::Pixels::Rgba8(v) => lightcraft_codecs::SystemPixels::Rgba8(v),
+            lightcraft_ios_host::Pixels::Rgba16(v) => lightcraft_codecs::SystemPixels::Rgba16(v),
+        },
+        premultiplied: true,
+        bit_depth: i.bit_depth,
+        icc: i.icc,
+        exif: None,
+        orientation: i.orientation,
+        source_width: i.source_width,
+        source_height: i.source_height,
+    }
+}
+
+fn imageio_decode(bytes: &[u8], max: Option<(u32, u32)>) -> Result<lightcraft_codecs::SystemImage, String> {
+    lightcraft_ios_host::decode_image(bytes, max).map(system_image)
+}
+
+/// What the app can do on iOS: the Photos and Files pickers (their copies arrive in `inbox`),
+/// exports through the share sheet, sync requests on worker threads (pure-Rust TLS, Mozilla roots).
+fn services(ctx: egui::Context, inbox: Inbox, tmp: &Path) -> Services {
+    let (import_dir, export_dir) = staging(tmp);
+    let pick: Rc<dyn Fn(PickSource) -> Result<(), String>> = Rc::new(move |source| {
+        let (inbox, ctx) = (inbox.clone(), ctx.clone());
+        let deliver = Box::new(move |p: Picked| {
+            inbox.lock().unwrap_or_else(PoisonError::into_inner).push(p);
+            ctx.request_repaint();
+        });
+        lightcraft_ios_host::pick(pick_kind(source), &import_dir, is_photo, deliver)
+    });
+    let photos = pick.clone();
+    Services {
+        // Import Photos… (and its shortcut on an iPad keyboard): the Photos picker
+        pick_files: Some(Box::new(move || {
+            if let Err(e) = photos(PickSource::Photos) {
+                log::error!("Photos picker: {e}");
+            }
+            Vec::new() // the picks arrive later, through the inbox
+        })),
+        host_pick: Some(Box::new(move |s| pick(s))),
+        share_exports: Some(ShareExports {
+            dir: export_dir.to_string_lossy().to_string(),
+            share: Box::new(|files: &[String]| {
+                let paths: Vec<PathBuf> = files.iter().map(PathBuf::from).collect();
+                if let Err(e) = lightcraft_ios_host::share(&paths) {
+                    log::error!("share sheet: {e}");
+                }
+            }),
+        }),
+        write: Some(Box::new(lightcraft_engine::export::write_file)),
+        write_shared: Some(Arc::new(lightcraft_engine::export::write_file)),
+        png: Some(Box::new(|img: &lightcraft_raster::Rgba8| {
+            lightcraft_codecs::encode_png(&lightcraft_codecs::EncodeImage::rgba8(img), &lightcraft_codecs::EncodeMeta::default()).unwrap_or_default()
+        })),
+        sync_exec: Some(lightcraft_ui_egui::sync_ui::native_exec()),
+        ..Services::default()
+    }
+}
+
+/// A lifecycle notification for the app (between frames, on the main thread).
+fn on_lifecycle(host: &Weak<RefCell<Host>>, event: Lifecycle) {
+    if let Some(h) = host.upgrade()
+        && let Ok(mut h) = h.try_borrow_mut()
+    {
+        h.lifecycle(event);
+        return;
+    }
+    // (the app is busy or gone: at least keep the GPU out of the background)
+    match event {
+        Lifecycle::DidEnterBackground => lightcraft_engine::gpu::pause(),
+        Lifecycle::WillEnterForeground | Lifecycle::DidBecomeActive => lightcraft_engine::gpu::resume(),
+        _ => {}
+    }
 }
 
 /// Runs the app; returns when the event loop ends (on iOS, normally never).
 pub fn run() -> eframe::Result {
     let _ = log::set_logger(&FileLog).map(|()| log::set_max_level(log::LevelFilter::Info));
     lightcraft_engine::guard::install_hook(std::env::temp_dir().join("lightcraft-panics.log"));
+    // caches sized to what iOS lets this app use, before anything is cached
+    let available = lightcraft_sysmem::available_memory();
+    let budget = lightcraft_engine::memory::set_budget(lightcraft_engine::memory::budget_for_limit(available));
+    log::info!("memory: {} MB available to the app, budget {} MB", available.map_or(0, |a| a >> 20), budget >> 20);
+    lightcraft_engine::memory::set_release_hook(|| {
+        let _ = lightcraft_sysmem::release_free_memory();
+    });
+    lightcraft_codecs::set_system_decoder(&[lightcraft_codecs::Format::Heif, lightcraft_codecs::Format::Avif], imageio_decode);
+    let tmp = std::env::temp_dir();
+    clean_staging(&tmp);
+    let (prefs, prefs_warning, keep_prefs_file) = lightcraft_ui_egui::prefs::load_prefs();
+    if let Some(p) = &prefs {
+        lightcraft_engine::gpu::set_enabled(p.settings.gpu);
+    }
     eframe::run_native(
         "LightCraft",
         eframe::NativeOptions { wgpu_options: wgpu_options(), ..Default::default() },
-        Box::new(|_cc| {
+        Box::new(move |cc| {
             let dir = library_dir(std::env::var_os("LIGHTCRAFT_LIBRARY"), std::env::var_os("HOME"));
-            Ok(Box::new(App(LightcraftApp::new(open_session(dir.as_deref()), services()))))
+            let inbox = Inbox::default();
+            let mut app = LightcraftApp::new(open_session(dir.as_deref()), services(cc.egui_ctx.clone(), inbox.clone(), &tmp));
+            if let Some(ui) = prefs {
+                app.ui = ui;
+            }
+            lightcraft_ui_egui::i18n::set_language(app.ui.language);
+            app.notices.extend(prefs_warning);
+            let prefs = PrefsWriter::new(&app, keep_prefs_file);
+            let host = Rc::new(RefCell::new(Host { app, prefs, inbox, background: None }));
+            let weak = Rc::downgrade(&host);
+            if let Err(e) = lightcraft_ios_host::observe_lifecycle(Box::new(move |event| on_lifecycle(&weak, event))) {
+                log::error!("lifecycle notifications: {e}");
+            }
+            Ok(Box::new(App(host)))
         }),
     )
 }
@@ -121,6 +373,103 @@ pub extern "C" fn lightcraft_ios_main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn temp(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("lightcraft-ios-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    fn host(lib: &Path) -> Host {
+        let app = LightcraftApp::new(open_session(Some(lib)), Services::default());
+        // keep_file: these tests never write the developer's own ui.json
+        let prefs = PrefsWriter::new(&app, true);
+        Host { app, prefs, inbox: Inbox::default(), background: None }
+    }
+
+    /// Backgrounding saves the view and pauses the GPU; coming back resumes it.
+    #[test]
+    fn backgrounding_saves_and_pauses_the_gpu() {
+        let root = temp("lifecycle");
+        let lib = root.join("Library");
+        let mut h = host(&lib);
+        let ids: Vec<u64> = h.app.session.catalog.photos().take(2).map(|p| p.id.0).collect();
+        h.app.run("library.select", json!({"ids": ids})).unwrap();
+        h.lifecycle(Lifecycle::WillResignActive);
+        let view = std::fs::read_to_string(lib.join("view.json")).unwrap();
+        assert!(view.contains(&ids[1].to_string()), "{view}");
+        h.lifecycle(Lifecycle::DidEnterBackground);
+        assert!(lightcraft_engine::gpu::paused());
+        assert!(h.background.is_none(), "no export running: no background time asked for");
+        h.lifecycle(Lifecycle::MemoryWarning);
+        h.lifecycle(Lifecycle::WillEnterForeground);
+        assert!(!lightcraft_engine::gpu::paused());
+        drop(h);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Picked copies go to the import review (moved into the library from there); failures are said.
+    #[test]
+    fn picks_open_the_import_review() {
+        let root = temp("picks");
+        let mut h = host(&root.join("Library"));
+        let ctx = egui::Context::default();
+        h.joined(&ctx, Picked { cancelled: true, ..Default::default() });
+        assert!(h.app.scan.is_none(), "a cancelled pick does nothing");
+        let staged = root.join("tmp").join("Import");
+        std::fs::create_dir_all(&staged).unwrap();
+        let img = lightcraft_raster::Rgba8 { width: 4, height: 4, data: vec![[9, 99, 199, 255]; 16] };
+        let png = lightcraft_codecs::encode_png(&lightcraft_codecs::EncodeImage::rgba8(&img), &lightcraft_codecs::EncodeMeta::default()).unwrap();
+        std::fs::write(staged.join("IMG_0001.png"), png).unwrap();
+        h.joined(&ctx, Picked { files: vec![staged.join("IMG_0001.png")], failed: vec!["IMG_0002: gone".into()], cancelled: false });
+        assert!(h.app.scan.is_some(), "the review scans the picked copies");
+        assert!(h.app.ui.toast.as_ref().is_some_and(|(t, _)| t.contains("couldn't be")), "{:?}", h.app.ui.toast);
+        drop(h);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn pick_messages_and_photo_files() {
+        assert_eq!(picked_message(&Picked::default()), None);
+        let p = Picked { files: vec![], failed: vec!["a".into()], cancelled: false };
+        assert_eq!(picked_message(&p).as_deref(), Some("1 item couldn't be copied from the picker"));
+        let p = Picked { files: vec!["x".into(), "y".into()], failed: vec!["a".into()], cancelled: false };
+        assert_eq!(picked_message(&p).as_deref(), Some("2 photos copied; 1 couldn't be"));
+        assert!(
+            is_photo(Path::new("/a/IMG_1.HEIC")) && is_photo(Path::new("b.dng")) && !is_photo(Path::new("IMG_1.AAE")) && !is_photo(Path::new("x"))
+        );
+    }
+
+    #[test]
+    fn imageio_results_become_codec_images() {
+        let i = lightcraft_ios_host::Image {
+            width: 2,
+            height: 1,
+            pixels: lightcraft_ios_host::Pixels::Rgba16(vec![65535, 0, 0, 65535, 0, 65535, 0, 65535]),
+            bit_depth: 10,
+            icc: None,
+            orientation: 8,
+            source_width: 4000,
+            source_height: 2000,
+        };
+        let s = system_image(i);
+        assert!(s.premultiplied && s.bit_depth == 10 && s.orientation == 8 && s.source_width == 4000);
+        assert!(matches!(s.pixels, lightcraft_codecs::SystemPixels::Rgba16(ref v) if v.len() == 8));
+    }
+
+    #[test]
+    fn staging_is_cleaned_at_launch() {
+        let tmp = temp("staging");
+        let (import, export) = staging(&tmp);
+        std::fs::create_dir_all(import.join("pick-1")).unwrap();
+        std::fs::create_dir_all(&export).unwrap();
+        std::fs::write(export.join("old.jpg"), b"x").unwrap();
+        clean_staging(&tmp);
+        assert!(!import.exists() && !export.exists());
+        clean_staging(&tmp); // nothing there: fine
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 
     #[test]
     fn the_library_is_kept_in_documents() {

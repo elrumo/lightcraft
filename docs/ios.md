@@ -2,11 +2,14 @@
 
 Everything still missing, with priorities: [`ios-gaps.md`](ios-gaps.md).
 
-**Status: a spike that runs on the simulator.** The desktop egui app builds as a static library, an Xcode project wraps
-it, and it runs on the iOS 27 simulator with a compact touch layout (below). It has not run on a device, has no native
-host (pickers, share sheet) and imports nothing yet: its library, saved on the device, starts with the procedural demo
-photos. Sync with your own LightCraft server ([sync.md](sync.md)) is wired up but not yet run. This page
-records what is verified, what is not, and the plan.
+**Status: a spike that runs on the simulator, with a native host written but not yet run.** The desktop egui app builds
+as a static library, an Xcode project wraps it, and it runs on the iOS 27 simulator with a compact touch layout
+(below). Since then the native pieces a usable app needs have been written (`crates/ios-host`, *Native host* below):
+import from the Photos and Files pickers, export through the share sheet, HEIC through ImageIO, saving and pausing the
+GPU as iOS backgrounds the app, a memory budget from the app's real limit. They type-check and pass clippy for iOS and
+their logic is tested on Linux, but **none of them has run on a simulator or a device yet**. Its library, saved on the
+device, starts with the procedural demo photos. Sync with your own LightCraft server ([sync.md](sync.md)) is wired up
+but not yet run. This page records what is verified, what is not, and the plan.
 
 ## What is verified
 
@@ -14,7 +17,9 @@ records what is verified, what is not, and the plan.
 sysmem, raw, codecs, meta, develop, scenes, pipeline, GPU, catalog, preview, merge, engine, MCP and `ui-egui`) and the
 app (`apps/lightcraft-ios`), and is part of `cargo xtask ci`. It needs only the Rust target (`rustup target add aarch64-apple-ios`), not Xcode, so it runs on
 Linux. It proves the dependency tree has no desktop-only crate on the iOS path (wgpu builds with its Metal backend).
-It does **not** prove an app links or runs: that needs macOS and Xcode.
+It does **not** prove an app links or runs: that needs macOS and Xcode. The native host (`lightcraft-ios-host`, checked
+with the app) has its Objective-C calls checked against the `objc2` bindings' signatures only; selectors and framework
+behaviour are verified only by running it.
 
 ## Xcode project (phase 0 spike)
 
@@ -28,7 +33,9 @@ needed, all in the host: (1) iOS 27 traps apps without scene lifecycle and winit
 swizzles it to create the window in the connected scene; (3) egui-wgpu's default device limits ask for 16 inter-stage
 shader variables, the simulator's Metal adapter allows 15, so `wgpu_options()` clamps them to the adapter. Log output
 goes to `lightcraft-ios.log` in the app's tmp dir (`xcrun simctl get_app_container <device> ai.storyteller.lightcraft.ios data`).
-Not yet tried on a device.
+Not yet tried on a device. `project.yml` links PhotosUI, Photos, ImageIO and UniformTypeIdentifiers for the native
+host and sets `NSPhotoLibraryAddUsageDescription` (Save Image in the share sheet); importing needs no photo-library
+permission (the Photos picker runs out of process).
 
 **The library** is `LightCraft Library` in the app's Documents folder (kept across launches and updates, backed up
 with the device); a new one starts with the demo photos. `$LIGHTCRAFT_LIBRARY` puts it elsewhere
@@ -47,6 +54,35 @@ the local-network permission. To check on a Mac: typing in the Sync fields (the 
 on a device the on-screen keyboard is listed as missing below, although egui-winit asks winit for it when a field takes
 focus, which on iOS makes winit's view the first responder), the TLS handshake on a device, and sync while the app is
 backgrounded (requests fail and are retried on return).
+
+## Native host (written, not yet run)
+
+`crates/ios-host` (`lightcraft-ios-host`) holds the app's Objective-C calls, through `objc2` (Rust bindings to the
+system frameworks; no C or Objective-C is compiled). It is allowed `unsafe` like `crates/sysmem` (`CLAUDE.md`, *Never
+crash*): every block says why it is sound and failures come back as errors. On other platforms it is an empty shell
+whose portable helpers (safe file names, unique paths, the folder walk) are tested on Linux.
+
+- **Import.** File ▸ Import from Photos… / from Files… / Folder from Files…, and the round + button over the phone
+  grid (`Services::host_pick`). The Photos picker (PHPicker; no permission needed) hands over each photo as stored (a
+  ProRAW DNG when there is one, else the HEIC or JPEG); the Files picker hands over copies; a folder is read in place
+  under its security scope (at most 5000 photos, 12 levels deep). Everything is copied into `tmp/Import/` and opens the
+  import review, which *moves* it into the library's `Originals/` (`file.addPhotos {staged: true}`: no "add in place").
+- **Export.** Every export is written to `tmp/Exports/` (emptied first) and opens the share sheet: Save Image (to
+  Photos), Save to Files, AirDrop, Mail, other apps. The export dialog has no folder field (`Services::share_exports`).
+- **HEIC / HEIF, AVIF** decode through ImageIO, installed as `lightcraft-codecs`' system decoder (8- or 16-bit, in the
+  photo's own colour space with its ICC profile); their EXIF and XMP come from `lightcraft-meta`'s HEIF parser.
+- **Lifecycle.** The library, the view and the app settings (`ui.json`, in `Library/Application Support/LightCraft`)
+  are saved when the app resigns active, goes to the background or terminates. In the background the GPU is paused
+  (`gpu::pause`: renders go to the CPU, and errors meanwhile don't turn the GPU off for the rest of the run) and
+  decoded photos are released; an export in progress asks for background time.
+- **Memory.** The budget is a third of what the app may allocate at launch (`os_proc_available_memory`), between 256 MiB
+  and 1 GiB; a memory warning releases decoded photos.
+- **Paths.** A library opened from another folder than last time (iOS gives the container a new path on every app
+  update) re-points the photos stored under its old folder (`location.json`).
+
+To check on a Mac: each picker (and cancelling it), a ProRAW and a Live Photo from the library, an iCloud file not yet
+downloaded, a folder on a USB drive, the share sheet on iPhone and iPad (popover), Save Image's permission prompt,
+backgrounding during an export, and a memory warning (Simulator ▸ Debug ▸ Simulate Memory Warning).
 
 ## Scope
 
@@ -69,35 +105,30 @@ layout and interaction only: no Adobe icons, artwork, fonts, presets or screensh
    context menus (egui's own long-touch). Check it headless with `lightcraft-cli snapshot --demo --size 390x844
    --scale 2` (phone) or `--size 820x1180` (iPad). Pinch and two-finger pan are untested (the headless driver injects
    no multi-touch); everything is untested on a real device.
-   Still missing: the native pickers and share sheet that make Menu → Import / Export work (item 4), the on-screen
-   keyboard for text fields, Apple Pencil, tool-specific touch polish (brush strokes with a finger while the sheet is
-   open, the curve editor, the colour wheels) and a landscape phone layout.
-2. **HEIC/HEIF decode.** iPhone photos are HEIC; `crates/codecs` recognises the format but cannot decode it, and import
-   currently accepts `.heic` files it then fails on. The pragmatic route is ImageIO behind the `FileLoader` hook
-   (`crates/engine/src/media.rs`).
-3. **A memory budget.** The RAM probe (`crates/engine/src/memory.rs`) returns nothing on iOS, so the budget defaults to
-   1.5 GiB, too high for iOS memory limits. The pipeline works on whole `f32` RGB images (about 288 MB at 24 MP) and
-   does not tile, so previews are fine but full-resolution 48 MP export is a risk.
-4. **A host.** App lifecycle, Files and Photos pickers, export through the share sheet, sandbox paths (the library is in
-   Documents; config directories assume `$HOME`), and no `std::process` open/reveal. Originals are referenced by
-   absolute path; on iOS import must copy into the library.
-5. **GPU lifecycle.** A device error disables the GPU for the rest of the process (`crates/gpu/src/lib.rs`); backgrounding
-   needs to pause and resume it instead.
+   Still missing: the on-screen keyboard for text fields, Apple Pencil, tool-specific touch polish (brush strokes with
+   a finger while the sheet is open, the curve editor, the colour wheels) and a landscape phone layout.
+2. **HEIC/HEIF decode: written, not yet run** (*Native host*): ImageIO through `lightcraft_codecs::set_system_decoder`.
+3. **Memory: the budget is written, tiling is not.** The budget follows the app's limit (*Native host*), but the
+   pipeline works on whole `f32` RGB images (about 288 MB at 24 MP) and does not tile, so previews are fine but
+   full-resolution 48 MP export is a risk.
+4. **A host: written, not yet run** (*Native host*): lifecycle, pickers, share sheet, sandbox paths. Still none:
+   `std::process` open/reveal (Show in Finder, Edit in External Editor) and opening links.
+5. **GPU lifecycle: done in the engine** (`gpu::pause` / `resume`, tested); the host calls it on backgrounding.
 6. **Unverified:** eframe/winit and accesskit on a device, egui text input and long-press on a phone, sync from a
    device, Metal's
    storage-buffer limits on iPhone (the GPU path needs at least 10 per stage), Apple ProRAW against real files (JPEG XL
    compressed DNG is rejected), and the `rfd` file dialogs the desktop app uses.
 
 Any `unsafe` or Objective-C glue goes in an isolated crate registered in `xtask/src/layers.rs`, like `crates/sysmem`
-(see `CLAUDE.md`, *Never crash*).
+and `crates/ios-host` (see `CLAUDE.md`, *Never crash*).
 
 ## Plan
 
 - **Phase 0, spike (needs a Mac):** run the egui app on the simulator, an iPhone and an iPad; log Metal limits; time a
   preview render and a 24 MP raw decode; record peak memory; check text input, long-press and safe areas. Output: a
   decision between egui and a native shell over FFI, with a revised estimate.
-- **Phase 1, platform glue:** host crate, pickers, sandbox paths, memory budget, GPU pause/resume, HEIC via ImageIO,
-  JPEG/DNG/ProRAW verified on real files.
+- **Phase 1, platform glue (written; run it):** host crate, pickers, sandbox paths, memory budget, GPU pause/resume,
+  HEIC via ImageIO, JPEG/DNG/ProRAW verified on real files.
 - **Phase 2, mobile UI:** grid, loupe with gestures, bottom-sheet edit tools, presets, crop, masks, export; adaptive
   iPhone and iPad layout; tests through headless snapshots at phone and tablet sizes.
 - **Phase 3, hardening:** memory pressure, tiled full-resolution export, Apple Pencil, multitasking, VoiceOver,

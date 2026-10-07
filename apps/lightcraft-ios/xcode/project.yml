@@ -20,6 +20,8 @@ targets:
         CFBundleDisplayName: LightCraft
         # sync with a LightCraft server on the home network (docs/sync.md); iOS asks once
         NSLocalNetworkUsageDescription: LightCraft syncs your library with your own LightCraft server, which can be on this network.
+        # Save Image in the share sheet (exports); importing uses the Photos picker, which needs no access
+        NSPhotoLibraryAddUsageDescription: LightCraft saves the photos you export to your photo library.
         UILaunchScreen: {}
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
@@ -36,7 +38,7 @@ targets:
         ENABLE_USER_SCRIPT_SANDBOXING: NO
         EXCLUDED_ARCHS[sdk=iphonesimulator*]: x86_64   # Apple-silicon simulator only
         LIBRARY_SEARCH_PATHS: ["$(BUILT_PRODUCTS_DIR)"]
-        OTHER_LDFLAGS: [-llightcraft_ios, -lc++, -framework, Metal, -framework, QuartzCore, -framework, UIKit, -framework, Foundation, -framework, CoreGraphics, -framework, CoreFoundation, -framework, Security, -framework, CoreText, -framework, AVFoundation, -framework, CoreMedia, -framework, CoreVideo, -framework, MetalKit, -framework, IOSurface]
+        OTHER_LDFLAGS: [-llightcraft_ios, -lc++, -framework, Metal, -framework, QuartzCore, -framework, UIKit, -framework, Foundation, -framework, CoreGraphics, -framework, CoreFoundation, -framework, Security, -framework, CoreText, -framework, AVFoundation, -framework, CoreMedia, -framework, CoreVideo, -framework, MetalKit, -framework, IOSurface, -framework, PhotosUI, -framework, Photos, -framework, ImageIO, -framework, UniformTypeIdentifiers]
     preBuildScripts:
       - name: Build Rust (cargo)
         script: '"$SRCROOT/build-rust.sh"'
