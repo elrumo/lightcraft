@@ -232,8 +232,8 @@ refused.
 
 v1, honestly:
 
-- **The iOS app is a spike** ([ios.md](ios.md)): the desktop UI on the simulator, not touch-adapted; sync there is
-  untested on a device.
+- **The iOS app is a spike** ([ios.md](ios.md)): it runs on the simulator (compact touch layout); sync there is wired
+  up but not yet run on a simulator or device.
 - **In the browser** the web build signs in to the server that serves it (same origin; no cross-origin servers). Synced
   previews and downloaded originals are kept in the browser's storage. Commands that read a photo's pixels on the main
   thread (auto settings, export) need its original there: **Photo ▸ Download Originals** first. A photo imported in

@@ -28,7 +28,7 @@ const LABEL_W: f32 = 150.0;
 /// The dialog body for `tab` (the tab bar switches `tab`).
 pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, tab: &mut String) {
     let t = Tokens::get(ui.ctx());
-    ui.set_min_width(560.0);
+    ui.set_min_width(crate::panels::modal_width(ui.ctx(), 560.0));
     ui.set_min_height(330.0);
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
@@ -531,7 +531,10 @@ fn interface_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
 
 /// A text field addressable as `field:{id}`.
 fn field(ui: &mut egui::Ui, id: &str, value: &mut String, hint_text: &str, password: bool) {
-    let r = ui.add(egui::TextEdit::singleline(value).hint_text(crate::i18n::tr(hint_text)).password(password).desired_width(260.0));
+    // narrower on a phone, beside the label
+    let r = ui.add(
+        egui::TextEdit::singleline(value).hint_text(crate::i18n::tr(hint_text)).password(password).desired_width(ui.available_width().min(260.0)),
+    );
     register(ui.ctx(), format!("field:{id}"), r.rect);
 }
 

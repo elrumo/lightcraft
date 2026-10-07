@@ -21,7 +21,7 @@ It does **not** prove an app links or runs: that needs macOS and Xcode.
 `apps/lightcraft-ios` is the egui app as a static library (no pickers). `xcode/project.yml`
 is an XcodeGen spec: `cd apps/lightcraft-ios/xcode && xcodegen && open LightCraft.xcodeproj`. A pre-build phase runs
 `cargo build` for the SDK being built (Apple-silicon simulator or device; set `DEVELOPMENT_TEAM` for a device).
-It runs on the iOS 27 simulator: the desktop UI renders (not touch-adapted, ignores the safe area). Three fixes were
+It runs on the iOS 27 simulator (the touch layout: *What is missing*, 1; the panels keep out of the safe area). Three fixes were
 needed, all in the host: (1) iOS 27 traps apps without scene lifecycle and winit 0.30/0.31 has none, so
 `xcode/Sources/SceneDelegate.m` declares an empty scene delegate (plus `UIApplicationSceneManifest` in `project.yml`);
 (2) winit creates its window with `-[UIWindow initWithFrame:]`, which a scene-based app never shows, so that file
@@ -36,15 +36,17 @@ with the device); a new one starts with the demo photos. `$LIGHTCRAFT_LIBRARY` p
 demo library (nothing saved, no sync) and logs why.
 
 **Sync** is wired up as on the desktop ([sync.md](sync.md)) but has not been run on a simulator or device yet (it is
-type-checked for iOS and its library handling unit-tested on Linux): Settings ▸ Sync (or the cloud icon), the server address
+type-checked for iOS and its library handling unit-tested on Linux): Menu ▸ Settings ▸ Sync in the compact layout
+(Settings ▸ Sync or the cloud icon in the desktop one), the server address
 (`photos.example.com` is enough; https is assumed, and a capitalised first letter is fine), user name and password;
 the library then fills from the server, previews first, originals on request. The device signs in under the name
 `main.m` reads from `UIDevice` ("iPhone", "iPad"; `$LIGHTCRAFT_DEVICE`), which the server's admin page lists. Requests
 use the same pure-Rust transport as the desktop app (rustls, Mozilla roots), over plain sockets, so App Transport
 Security doesn't apply; `project.yml` sets `NSLocalNetworkUsageDescription` because a server on the home network needs
-the local-network permission. To check on a Mac: typing in the Sync fields with the soft keyboard (winit shows it when
-a field takes focus), the TLS handshake on device, sync while the app is backgrounded (requests fail and are retried on
-return).
+the local-network permission. To check on a Mac: typing in the Sync fields (the Mac's keyboard works on the simulator;
+on a device the on-screen keyboard is listed as missing below, although egui-winit asks winit for it when a field takes
+focus, which on iOS makes winit's view the first responder), the TLS handshake on a device, and sync while the app is
+backgrounded (requests fail and are retried on return).
 
 ## Scope
 
