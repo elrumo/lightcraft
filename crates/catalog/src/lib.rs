@@ -24,6 +24,7 @@ pub mod rules;
 pub mod safe_file;
 pub mod stacks;
 pub mod store;
+pub mod sync;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -216,6 +217,20 @@ pub enum Op {
     },
 }
 
+/// Bits of an id below its id space (see [`Catalog::set_id_space`]).
+pub const ID_SPACE_SHIFT: u32 = 32;
+
+/// The id a counter hands out next: never 0, and at least the first id of its space.
+fn first_free(next: u64) -> u64 {
+    next.max(((next >> ID_SPACE_SHIFT) << ID_SPACE_SHIFT) | 1)
+}
+
+/// A counter after a record with id `id` was added: raised past it only when it's in the
+/// counter's own space.
+fn raise(next: u64, id: u64) -> u64 {
+    if id >> ID_SPACE_SHIFT == next >> ID_SPACE_SHIFT { next.max(id.saturating_add(1)) } else { next }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Catalog {
     photos: BTreeMap<PhotoId, Arc<Photo>>,
@@ -243,21 +258,40 @@ impl Catalog {
     }
 
     // ---- ids
+    //
+    // Ids are `(space << ID_SPACE_SHIFT) | n`. A library that never synced lives in space 0; each
+    // synced device allocates in the space the server gave it ([`Catalog::set_id_space`]), so
+    // devices never hand out the same id. Adding a record only raises the counter of its own
+    // space: ids arriving from other devices leave this device's counters alone.
 
     pub fn alloc_photo_id(&mut self) -> PhotoId {
-        let id = PhotoId(self.next_photo.max(1));
-        self.next_photo = id.0 + 1;
+        let id = PhotoId(first_free(self.next_photo));
+        self.next_photo = id.0.saturating_add(1);
         id
     }
     pub fn alloc_album_id(&mut self) -> AlbumId {
-        let id = AlbumId(self.next_album.max(1));
-        self.next_album = id.0 + 1;
+        let id = AlbumId(first_free(self.next_album));
+        self.next_album = id.0.saturating_add(1);
         id
     }
     pub fn alloc_stack_id(&mut self) -> StackId {
-        let id = StackId(self.next_stack.max(1));
-        self.next_stack = id.0 + 1;
+        let id = StackId(first_free(self.next_stack));
+        self.next_stack = id.0.saturating_add(1);
         id
+    }
+
+    /// Allocate new ids in `space` from now on (after the highest id already in it). Spaces stay
+    /// below 2^21 so ids remain exact in JSON numbers read by JavaScript (2^53).
+    pub fn set_id_space(&mut self, space: u32) {
+        let base = u64::from(space) << ID_SPACE_SHIFT;
+        let end = base.saturating_add(1 << ID_SPACE_SHIFT);
+        let next = |cur: u64, max: Option<u64>| {
+            let after_max = max.map_or(base + 1, |m| m.saturating_add(1));
+            if cur >> ID_SPACE_SHIFT == u64::from(space) { cur.max(after_max) } else { after_max }
+        };
+        self.next_photo = next(self.next_photo, self.photos.range(PhotoId(base)..PhotoId(end)).next_back().map(|(id, _)| id.0));
+        self.next_album = next(self.next_album, self.albums.range(AlbumId(base)..AlbumId(end)).next_back().map(|(id, _)| id.0));
+        self.next_stack = next(self.next_stack, self.stacks.range(StackId(base)..StackId(end)).next_back().map(|(id, _)| id.0));
     }
 
     // ---- reads
@@ -370,7 +404,7 @@ impl Catalog {
                     return Err(CatalogError::Invalid(format!("photo {:?} exists", photo.id)));
                 }
                 let id = photo.id;
-                self.next_photo = self.next_photo.max(id.0 + 1);
+                self.next_photo = raise(self.next_photo, id.0);
                 self.photos.insert(id, Arc::new(*photo));
                 Op::RemovePhoto { id }
             }
@@ -447,7 +481,7 @@ impl Catalog {
                     self.validate_rules(rules)?;
                 }
                 let id = album.id;
-                self.next_album = self.next_album.max(id.0 + 1);
+                self.next_album = raise(self.next_album, id.0);
                 self.albums.insert(id, album);
                 Op::RemoveAlbum { id }
             }
@@ -506,7 +540,7 @@ impl Catalog {
                 }
                 self.validate_stack(stack.id, &stack.photos)?;
                 let id = stack.id;
-                self.next_stack = self.next_stack.max(id.0 + 1);
+                self.next_stack = raise(self.next_stack, id.0);
                 self.stacks.insert(id, stack);
                 Op::RemoveStack { id }
             }

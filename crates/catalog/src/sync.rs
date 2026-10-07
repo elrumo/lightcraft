@@ -1,0 +1,454 @@
+//! Sharing one library between devices through a server (no I/O here: the engine and the server
+//! move the bytes).
+//!
+//! - **One order.** The server keeps the single log of every device's ops ([`ServerCore`]). A
+//!   device pushes its changes on top of the newest op it has seen; behind, it pulls first.
+//! - **Keyed outbox.** A device's unpushed changes are kept per value they set ([`key_of`]: a
+//!   photo's rating, an album's photos…), each with the value it replaced ([`Outbox`]). An op from
+//!   another device that sets a value with a pending change is merged with it ([`merge3`]):
+//!   Exposure edited here and Contrast there both survive, so do photos added to one album on two
+//!   devices. Everything else is applied as it arrives. A removal beats a pending change.
+//! - **Device-local state stays local**: browsing Local folders, renames and relinks of files on
+//!   disk, and edit History never leave the device ([`key_of`] is `None`). Pushed photos point at
+//!   their content (`web/<hash>/<name>`, see [`original_path`]), not at a path on this disk.
+//! - **Ids** don't collide: each device allocates in its own id space ([`Catalog::set_id_space`]).
+//! - **Repair**: when an op can't be applied the same way here and on the server, the device
+//!   reloads the server's state ([`ServerCore::snapshot`]), keeps its device-local state
+//!   ([`carry_local`]) and replays its pending changes on top ([`Outbox::rebase`]).
+
+use std::collections::HashSet;
+use std::sync::Arc;
+
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+use crate::journal::Journal;
+use crate::store::Store;
+use crate::{Catalog, CatalogError, Op, Photo, PhotoId, Result, Source};
+
+/// Prefix of the catalog paths of photos stored by content: `web/<content hash>/<file name>`
+/// (the web build's browser storage, and synced photos whose file isn't on this disk).
+pub const PATH_PREFIX: &str = "web/";
+
+/// Array fields merged member by member (album and stack photos, keywords, versions); other
+/// arrays (curves, masks…) are one value.
+const SET_FIELDS: [&str; 3] = ["photos", "keywords", "versions"];
+
+/// Nesting depth [`merge3`] and [`Outbox::record`] follow (deeper is taken whole).
+const MAX_DEPTH: usize = 32;
+
+/// Catalog path for a photo stored by content.
+pub fn original_path(hash: &str, name: &str) -> String {
+    let name = name.rsplit(['/', '\\']).next().filter(|n| !n.is_empty()).unwrap_or("photo");
+    format!("{PATH_PREFIX}{hash}/{name}")
+}
+
+/// The content hash in a path made by [`original_path`].
+pub fn hash_of_path(path: &str) -> Option<&str> {
+    let (hash, _) = path.strip_prefix(PATH_PREFIX)?.split_once('/')?;
+    (!hash.is_empty()).then_some(hash)
+}
+
+/// The value an op sets, as `p<id>.<field>` / `a<id>.<field>` / `s<id>.<field>` /
+/// `label.<colour>`: two ops with the same key replace the same value. `None` for ops that are
+/// never synced: device-local ones and batches (synced op by op).
+pub fn key_of(op: &Op) -> Option<String> {
+    let p = |id: &PhotoId, f: &str| Some(format!("p{}.{f}", id.0));
+    let a = |id: &crate::AlbumId, f: &str| Some(format!("a{}.{f}", id.0));
+    match op {
+        Op::AddPhoto { photo } => p(&photo.id, "add"),
+        Op::RemovePhoto { id } => p(id, "remove"),
+        Op::SetRating { id, .. } => p(id, "rating"),
+        Op::SetFlag { id, .. } => p(id, "flag"),
+        Op::SetLabel { id, .. } => p(id, "label"),
+        Op::SetDevelop { id, .. } => p(id, "develop"),
+        Op::SetMeta { id, .. } => p(id, "meta"),
+        Op::SetDeleted { id, .. } => p(id, "deleted"),
+        Op::SetVersions { id, .. } => p(id, "versions"),
+        Op::SetCaptured { id, .. } => p(id, "captured"),
+        Op::SetAnalysis { id, .. } => p(id, "analysis"),
+        Op::SetContent { id, .. } => p(id, "content"),
+        Op::AddAlbum { album } => a(&album.id, "add"),
+        Op::RemoveAlbum { id } => a(id, "remove"),
+        Op::RenameAlbum { id, .. } => a(id, "name"),
+        Op::MoveAlbum { id, .. } => a(id, "parent"),
+        Op::SetAlbumPhotos { id, .. } => a(id, "photos"),
+        Op::SetAlbumCover { id, .. } => a(id, "cover"),
+        Op::SetAlbumRules { id, .. } => a(id, "rules"),
+        Op::AddStack { stack } => Some(format!("s{}.add", stack.id.0)),
+        Op::RemoveStack { id } => Some(format!("s{}.remove", id.0)),
+        Op::SetStack { id, .. } => Some(format!("s{}.set", id.0)),
+        Op::SetLabelName { label, .. } => Some(format!("label.{label:?}")),
+        Op::SetLocal { .. }
+        | Op::SetHistory { .. }
+        | Op::PushHistory { .. }
+        | Op::SetFile { .. }
+        | Op::Relink { .. }
+        | Op::SetBrowsed { .. }
+        | Op::Batch { .. } => None,
+    }
+}
+
+/// The key prefix of every value of the record a removal deletes (`p7.`).
+fn removed_prefix(op: &Op) -> Option<String> {
+    match op {
+        Op::RemovePhoto { id } => Some(format!("p{}.", id.0)),
+        Op::RemoveAlbum { id } => Some(format!("a{}.", id.0)),
+        Op::RemoveStack { id } => Some(format!("s{}.", id.0)),
+        _ => None,
+    }
+}
+
+/// The photo a photo op changes.
+fn photo_of(op: &Op) -> Option<PhotoId> {
+    match op {
+        Op::SetRating { id, .. }
+        | Op::SetFlag { id, .. }
+        | Op::SetLabel { id, .. }
+        | Op::SetDevelop { id, .. }
+        | Op::SetMeta { id, .. }
+        | Op::SetDeleted { id, .. }
+        | Op::SetVersions { id, .. }
+        | Op::SetCaptured { id, .. }
+        | Op::SetAnalysis { id, .. }
+        | Op::SetContent { id, .. } => Some(*id),
+        _ => None,
+    }
+}
+
+/// A photo as other devices get it: pointing at its content instead of a path on this disk, and
+/// without this device's History and Local bookkeeping.
+pub fn portable(p: &Photo) -> Photo {
+    let mut p = p.clone();
+    if let (Source::File { path }, Some(hash)) = (&p.source, &p.content_hash)
+        && !path.starts_with(PATH_PREFIX)
+    {
+        p.source = Source::File { path: original_path(hash, &p.file_name) };
+    }
+    p.history.clear();
+    p.local = false;
+    p.local_baseline = None;
+    p
+}
+
+/// Three-way merge of JSON values: what `ours` changed since `base`, applied over `theirs`.
+/// Objects merge field by field and the set-like arrays (`photos`, `keywords`, `versions`)
+/// member by member; any other value changed on both sides is ours (pushed after theirs, it
+/// would win on the server anyway).
+pub fn merge3(base: &Value, ours: &Value, theirs: &Value) -> Value {
+    merge3_at(base, ours, theirs, "", 0)
+}
+
+fn merge3_at(base: &Value, ours: &Value, theirs: &Value, field: &str, depth: usize) -> Value {
+    if ours == base {
+        return theirs.clone();
+    }
+    if theirs == base || theirs == ours || depth > MAX_DEPTH {
+        return ours.clone();
+    }
+    match (base, ours, theirs) {
+        (Value::Object(b), Value::Object(o), Value::Object(t)) => {
+            let mut out = t.clone();
+            for k in o.keys().chain(b.keys()) {
+                let (bv, ov) = (b.get(k).unwrap_or(&Value::Null), o.get(k).unwrap_or(&Value::Null));
+                if ov == bv {
+                    continue;
+                }
+                let m = merge3_at(bv, ov, t.get(k).unwrap_or(&Value::Null), k, depth + 1);
+                if m.is_null() && !o.contains_key(k) {
+                    out.remove(k);
+                } else {
+                    out.insert(k.clone(), m);
+                }
+            }
+            Value::Object(out)
+        }
+        (Value::Array(b), Value::Array(o), Value::Array(t)) if SET_FIELDS.contains(&field) => {
+            let set = |v: &[Value]| v.iter().map(Value::to_string).collect::<HashSet<String>>();
+            let (bs, os) = (set(b), set(o));
+            // theirs without what we removed, then what we added
+            let kept = t.iter().filter(|v| {
+                let s = v.to_string();
+                !bs.contains(&s) || os.contains(&s)
+            });
+            let added = o.iter().filter(|v| !bs.contains(&v.to_string()));
+            let mut seen = HashSet::new();
+            let out: Vec<Value> = kept.chain(added).filter(|v| seen.insert(v.to_string())).cloned().collect();
+            Value::Array(out)
+        }
+        _ => ours.clone(),
+    }
+}
+
+/// [`merge3`] of three ops setting the same value (`ours` if the merge doesn't read back as an op).
+fn merge_ops(base: &Op, ours: &Op, theirs: &Op) -> Op {
+    let v = |op: &Op| serde_json::to_value(op).unwrap_or(Value::Null);
+    serde_json::from_value(merge3(&v(base), &v(ours), &v(theirs))).unwrap_or_else(|_| ours.clone())
+}
+
+/// One pending change: the latest op setting a value, and the value it replaced (the server's
+/// value as far as this device knows).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct Entry {
+    key: String,
+    base: Op,
+    latest: Op,
+    /// Bumped on every change, so a push acknowledged after a newer change keeps the entry.
+    rev: u64,
+}
+
+/// What a push sent ([`Outbox::take_push`]): entries by key and revision, in order.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Pushed(Vec<(String, u64)>);
+
+impl Pushed {
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+/// A device's changes the server hasn't acknowledged, one per value, in the order they must be
+/// applied (a changed entry moves to the end: after whatever it depends on, like an album's new
+/// photos after the photos).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Outbox {
+    entries: Vec<Entry>,
+    rev: u64,
+}
+
+impl Outbox {
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Note an op this device applied (`inverse` is what [`Catalog::apply`] returned, `after` the
+    /// catalog once it was applied). Batches are recorded op by op; device-local ops and changes
+    /// to Local records are left out; a Local photo added to the library is pushed whole.
+    pub fn record(&mut self, op: &Op, inverse: &Op, after: &Catalog) {
+        self.record_at(op, inverse, after, 0);
+    }
+
+    fn record_at(&mut self, op: &Op, inverse: &Op, after: &Catalog, depth: usize) {
+        if let (Op::Batch { ops }, Op::Batch { ops: invs }) = (op, inverse) {
+            if depth < MAX_DEPTH {
+                // the inverse batch undoes in reverse order
+                for (o, i) in ops.iter().zip(invs.iter().rev()) {
+                    self.record_at(o, i, after, depth + 1);
+                }
+            }
+            return;
+        }
+        let (latest, base) = match op {
+            Op::SetLocal { id, local: false } => match after.photo(*id) {
+                Some(p) => (Op::AddPhoto { photo: Box::new(portable(p)) }, Op::RemovePhoto { id: *id }),
+                None => return,
+            },
+            // back out of the library: gone for other devices
+            Op::SetLocal { id, local: true } => (Op::RemovePhoto { id: *id }, Op::RemovePhoto { id: *id }),
+            Op::AddPhoto { photo } if !photo.local => (Op::AddPhoto { photo: Box::new(portable(photo)) }, Op::RemovePhoto { id: photo.id }),
+            Op::RemovePhoto { .. } if matches!(inverse, Op::AddPhoto { photo } if !photo.local) => (op.clone(), inverse.clone()),
+            Op::AddPhoto { .. } | Op::RemovePhoto { .. } => return,
+            _ => {
+                if let Some(id) = photo_of(op)
+                    && after.photo(id).is_none_or(|p| p.local)
+                {
+                    return;
+                }
+                (op.clone(), inverse.clone())
+            }
+        };
+        let Some(key) = key_of(&latest) else { return };
+        self.rev += 1;
+        let rev = self.rev;
+        match self.entries.iter().position(|e| e.key == key) {
+            Some(i) => {
+                let mut e = self.entries.remove(i);
+                e.latest = latest;
+                e.rev = rev;
+                self.entries.push(e);
+            }
+            None => self.entries.push(Entry { key, base, latest, rev }),
+        }
+    }
+
+    /// An op from the server (another device's, or one of ours whose acknowledgement was lost):
+    /// what to apply here, if anything. An op setting a value with a pending change here is
+    /// merged with it (the merge is pushed later); a removal drops pending changes to what it
+    /// removes; our own op coming back settles its entry.
+    pub fn merge_remote(&mut self, remote: &Op) -> Option<Op> {
+        let key = key_of(remote)?;
+        if let Some(prefix) = removed_prefix(remote) {
+            self.entries.retain(|e| e.key == key || !e.key.starts_with(&prefix));
+        }
+        let Some(i) = self.entries.iter().position(|e| e.key == key) else { return Some(remote.clone()) };
+        if self.entries[i].latest == *remote {
+            self.entries.remove(i);
+            return None;
+        }
+        self.rev += 1;
+        let rev = self.rev;
+        let e = &mut self.entries[i];
+        let merged = merge_ops(&e.base, &e.latest, remote);
+        e.base = remote.clone();
+        e.rev = rev;
+        if merged == e.latest {
+            return None;
+        }
+        e.latest = merged.clone();
+        Some(merged)
+    }
+
+    /// The ops to push, in order, and what they were (for [`Outbox::acked`]).
+    pub fn take_push(&self, limit: usize) -> (Vec<Op>, Pushed) {
+        let e = self.entries.iter().take(limit);
+        (e.clone().map(|e| e.latest.clone()).collect(), Pushed(e.map(|e| (e.key.clone(), e.rev)).collect()))
+    }
+
+    /// The server applied a push: its entries are done, unless they changed since.
+    pub fn acked(&mut self, pushed: &Pushed) {
+        let done: HashSet<&(String, u64)> = pushed.0.iter().collect();
+        self.entries.retain(|e| !done.contains(&(e.key.clone(), e.rev)));
+    }
+
+    /// The server refused op `index` of a push (it can't be applied to the server's state): drop
+    /// it, so the rest can go.
+    pub fn rejected(&mut self, pushed: &Pushed, index: usize) {
+        if let Some((key, rev)) = pushed.0.get(index) {
+            self.entries.retain(|e| !(e.key == *key && e.rev == *rev));
+        }
+    }
+
+    /// Replay the pending changes on `catalog` (the server's state, after [`carry_local`]);
+    /// changes that no longer apply are dropped. Returns how many were dropped.
+    pub fn rebase(&mut self, catalog: &mut Catalog) -> usize {
+        let before = self.entries.len();
+        self.entries.retain_mut(|e| match catalog.apply(e.latest.clone()) {
+            Ok(inv) => {
+                e.base = inv;
+                true
+            }
+            Err(_) => false,
+        });
+        before - self.entries.len()
+    }
+}
+
+/// Bring this device's local state from `from` (the catalog it had) into `to` (the server's
+/// state it is switching to): Local records, where each photo's file is on this disk and its
+/// file name, its History, and which Local folders were browsed.
+pub fn carry_local(from: &Catalog, to: &mut Catalog) {
+    for (id, old) in &from.photos {
+        if old.local {
+            to.photos.entry(*id).or_insert_with(|| old.clone());
+            continue;
+        }
+        if let Some(p) = to.photos.get_mut(id) {
+            let p = Arc::make_mut(p);
+            p.source = old.source.clone();
+            p.file_name = old.file_name.clone();
+            p.history = old.history.clone();
+            p.local_baseline = old.local_baseline;
+        }
+    }
+    to.browsed = from.browsed.clone();
+}
+
+/// Why the server didn't take a push.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PushError {
+    /// Other devices pushed since `base`: pull up to `head` first.
+    Behind { head: u64 },
+    /// Op `index` can't be applied to the server's state (nothing was applied).
+    Rejected { index: usize, error: String },
+    /// Writing the log failed (nothing was applied).
+    Storage(String),
+}
+
+/// Ops after a sequence number ([`ServerCore::since`]).
+#[derive(Clone, Debug, PartialEq)]
+pub enum Pull {
+    /// `(seq, op)`, oldest first.
+    Ops(Vec<(u64, Op)>),
+    /// The log no longer goes back that far: reload from [`ServerCore::snapshot`].
+    Gone,
+}
+
+/// A user's library on the server: the single log of every device's ops and the state it
+/// leads to (to validate pushes and to start new devices from).
+// ponytail: the log is never compacted (pulls read it whole when behind); compact with a
+// snapshot and answer older cursors with Pull::Gone once logs get big.
+pub struct ServerCore {
+    journal: Journal,
+    catalog: Catalog,
+}
+
+impl ServerCore {
+    pub fn open(store: Box<dyn Store>) -> Result<ServerCore> {
+        let (journal, catalog, _) = Journal::open(store)?;
+        Ok(ServerCore { journal, catalog })
+    }
+
+    /// Sequence number of the newest op.
+    pub fn head(&self) -> u64 {
+        self.journal.seq()
+    }
+
+    pub fn catalog(&self) -> &Catalog {
+        &self.catalog
+    }
+
+    /// Append a device's ops, made on top of op `base`: all of them or none.
+    pub fn push(&mut self, base: u64, ops: &[Op]) -> std::result::Result<u64, PushError> {
+        if base != self.head() {
+            return Err(PushError::Behind { head: self.head() });
+        }
+        let mut inverses = Vec::with_capacity(ops.len());
+        let mut fail = None;
+        for (index, op) in ops.iter().enumerate() {
+            let r = if key_of(op).is_none() { Err(CatalogError::Invalid("not an op devices share".into())) } else { self.catalog.apply(op.clone()) };
+            match r {
+                Ok(inv) => inverses.push(inv),
+                Err(e) => {
+                    fail = Some(PushError::Rejected { index, error: e.to_string() });
+                    break;
+                }
+            }
+        }
+        if fail.is_none()
+            && let Err(e) = self.journal.append(ops)
+        {
+            fail = Some(PushError::Storage(e.to_string()));
+        }
+        match fail {
+            Some(e) => {
+                for inv in inverses.into_iter().rev() {
+                    let _ = self.catalog.apply(inv);
+                }
+                Err(e)
+            }
+            None => Ok(self.head()),
+        }
+    }
+
+    /// The ops after `after` (at most `limit`).
+    pub fn since(&mut self, after: u64, limit: usize) -> Result<Pull> {
+        if after >= self.head() {
+            return Ok(Pull::Ops(Vec::new()));
+        }
+        if after < self.journal.snapshot_seq() {
+            return Ok(Pull::Gone);
+        }
+        Ok(Pull::Ops(self.journal.records_since(after, limit)?))
+    }
+
+    /// The current state as a snapshot (JSON, [`Catalog::from_snapshot`]) and the op it's at.
+    pub fn snapshot(&self) -> (u64, String) {
+        (self.head(), self.catalog.to_snapshot())
+    }
+}
