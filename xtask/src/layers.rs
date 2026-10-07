@@ -59,6 +59,8 @@ pub const TABLE: &[(&str, Class)] = &[
     ("web", Class::Exempt),
     ("server", Class::Exempt),
     ("ios", Class::Exempt),
+    // the iOS app's native glue (UIKit, PhotosUI, ImageIO through objc2); used only by `ios`
+    ("ios-host", Class::Exempt),
     ("xtask", Class::Exempt),
 ];
 

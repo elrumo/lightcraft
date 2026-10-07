@@ -33,10 +33,13 @@ of it. Full standard: `../craftrules/standards/never-crash.md`
   fallback (`unwrap_or…`) only where it can't silently corrupt a document. An unfinished feature returns an
   "unsupported" error or is disabled. Sole exception: a provably infallible literal, as `#[allow(clippy::expect_used)]`
   + `.expect("why it can't fail")`.
-- **`unsafe` lives only in `crates/sysmem`** (one FFI call, `malloc_zone_pressure_relief`, that returns freed
-  allocator pages to macOS after raw decodes). Every other production crate root has `#![forbid(unsafe_code)]`. A new
-  unsafe need goes in an isolated, well-tested helper crate like it: `// SAFETY:` on every block, a safe API, a safe
-  fallback where possible, and a line here naming it.
+- **`unsafe` lives only in `crates/sysmem` and `crates/ios-host`.** `sysmem`: two libSystem calls,
+  `malloc_zone_pressure_relief` (returns freed allocator pages to macOS / iOS after raw decodes) and
+  `os_proc_available_memory` (the iOS app's memory limit). `ios-host`: the iOS app's Objective-C calls through `objc2`
+  (Photos and Files pickers, share sheet, lifecycle notifications, ImageIO decoding), compiled for iOS only. (The iOS
+  app's C entry point, `lightcraft_ios_main`, is the one `#[unsafe(no_mangle)]`.) Every other production crate root has
+  `#![forbid(unsafe_code)]`. A new unsafe need goes in an isolated, well-tested helper crate like them: `// SAFETY:` on
+  every block, a safe API, a safe fallback where possible, and a line here naming it.
 - **Input-derived numbers are hostile:** `get()` instead of `[i]`/`[a..b]` for offsets from files, users, agents or
   arithmetic on them; checked/saturating math for lengths, offsets and counts; no division by zero, NaN/inf or negative
   casts to `usize`; cap allocations sized by input; slice strings only at char boundaries.
