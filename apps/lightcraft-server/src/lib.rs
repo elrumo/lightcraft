@@ -14,17 +14,24 @@
 //! <data>/users/<name>/blobs/<kind>/<xx>/<hash>   original | smart | mini
 //! <data>/users/<name>/presets.json        { version, presets }
 //! <data>/users/<name>/devices.json        signed-in devices (token hashes, id spaces)
+//! <data>/users/<name>/folders.json        the user's library folders as last scanned
 //! ```
 //!
-//! Users and devices are managed from the command line (`lightcraft-server user …`) or the admin
-//! page at `/admin` ([`admin`]).
+//! **Library folders** ([`folders`]): photo folders already on the server, given to a user by an
+//! admin, are read in place — never copied, moved or written — and their photos join the user's
+//! library like any other (the server builds their previews and serves their originals).
+//!
+//! Users, devices and library folders are managed from the command line (`lightcraft-server
+//! user …`, `folder …`) or the admin page at `/admin` ([`admin`]).
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 pub mod accounts;
 pub mod admin;
 pub mod api;
+pub mod folders;
 pub mod gc;
+pub mod throttle;
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -32,7 +39,8 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-/// The largest id space handed out (ids stay below 2^53: exact in JavaScript).
+/// The largest id space (ids stay below 2^53: exact in JavaScript). Devices get the ones below
+/// it; it is the server's own ([`folders::SPACE`]).
 pub const MAX_SPACE: u32 = (1 << 21) - 1;
 
 pub struct Config {
@@ -44,6 +52,25 @@ pub struct Config {
     pub web: Option<PathBuf>,
     /// Requests served at once (more get `503`).
     pub max_requests: usize,
+    /// Scan every user's library folders this often (`None`: at start and on demand only).
+    pub scan_interval: Option<std::time::Duration>,
+    /// Threads building previews of photos found in library folders.
+    pub preview_threads: usize,
+}
+
+impl Config {
+    /// Serve `data` on `listen`: no web build, the default limits, library folders scanned every
+    /// 15 minutes.
+    pub fn new(data: impl Into<PathBuf>, listen: impl Into<String>) -> Config {
+        Config {
+            data: data.into(),
+            listen: listen.into(),
+            web: None,
+            max_requests: 64,
+            scan_interval: Some(std::time::Duration::from_secs(15 * 60)),
+            preview_threads: 2,
+        }
+    }
 }
 
 /// What every request thread shares.
@@ -57,6 +84,10 @@ pub struct State {
     pub(crate) setup_tries: AtomicU32,
     pub(crate) accounts: Mutex<accounts::Accounts>,
     pub(crate) libs: Mutex<HashMap<String, Arc<Mutex<api::UserLib>>>>,
+    /// Library folder scans and preview building.
+    pub(crate) folders: folders::Scanner,
+    /// Failed sign-ins (password guessing).
+    pub(crate) throttle: Mutex<throttle::Throttle>,
     busy: AtomicUsize,
     max: usize,
 }
@@ -66,6 +97,8 @@ pub struct Server {
     http: Arc<tiny_http::Server>,
     addr: SocketAddr,
     thread: Option<std::thread::JoinHandle<()>>,
+    /// The library folder scanner and preview builders.
+    workers: Vec<std::thread::JoinHandle<()>>,
     state: Arc<State>,
 }
 
@@ -77,7 +110,8 @@ impl Server {
         let addr = http.server_addr().to_ip().ok_or("not listening on an IP address")?;
         let setup = if accounts::has_admin(&cfg.data) { None } else { admin::new_setup_code() };
         if let Some(code) = &setup {
-            log::warn!("no admin yet: open http://{addr}/admin (or your domain's /admin) and enter the setup code {code}");
+            let at = if addr.ip().is_unspecified() { format!("http://<this server>:{}", addr.port()) } else { format!("http://{addr}") };
+            log::warn!("no admin yet: open {at}/admin (or your domain's /admin) and enter the setup code {code}");
         }
         let state = Arc::new(State {
             accounts: Mutex::new(accounts::Accounts::new(&cfg.data)),
@@ -87,12 +121,22 @@ impl Server {
             data: cfg.data,
             web: cfg.web,
             libs: Mutex::new(HashMap::new()),
+            folders: folders::Scanner::new(cfg.scan_interval),
+            throttle: Mutex::new(throttle::Throttle::default()),
             busy: AtomicUsize::new(0),
             max: cfg.max_requests.max(1),
         });
         let (h, s) = (http.clone(), state.clone());
         let thread = std::thread::Builder::new().name("lc-accept".into()).spawn(move || accept(&h, &s)).map_err(|e| e.to_string())?;
-        Ok(Server { http, addr, thread: Some(thread), state })
+        let mut workers = Vec::new();
+        let s = state.clone();
+        workers.push(std::thread::Builder::new().name("lc-scan".into()).spawn(move || folders::run_scanner(&s)).map_err(|e| e.to_string())?);
+        for i in 0..cfg.preview_threads.max(1) {
+            let s = state.clone();
+            let t = std::thread::Builder::new().name(format!("lc-previews-{i}")).spawn(move || folders::run_previews(&s));
+            workers.push(t.map_err(|e| e.to_string())?);
+        }
+        Ok(Server { http, addr, thread: Some(thread), workers, state })
     }
 
     /// The first-run setup code, while the server has no admin (tests; it is also logged).
@@ -102,6 +146,16 @@ impl Server {
 
     pub fn addr(&self) -> SocketAddr {
         self.addr
+    }
+
+    /// What the last (or current) scan of a user's library folders did (tests, the admin page).
+    pub fn folder_status(&self, user: &str) -> folders::Status {
+        self.state.folders.status(user)
+    }
+
+    /// Scan a user's library folders soon.
+    pub fn scan(&self, user: &str) {
+        self.state.folders.request(user);
     }
 
     /// Serve until the process ends.
@@ -115,7 +169,11 @@ impl Server {
 impl Drop for Server {
     fn drop(&mut self) {
         self.http.unblock();
+        self.state.folders.shut_down();
         if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
+        for t in self.workers.drain(..) {
             let _ = t.join();
         }
     }

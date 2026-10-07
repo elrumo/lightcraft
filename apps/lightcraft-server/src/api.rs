@@ -47,11 +47,14 @@ pub(crate) fn error(status: u16, msg: impl std::fmt::Display) -> Resp {
     json(status, &json!({"error": msg.to_string()}))
 }
 
-/// A user's library on this server: the op log, and the presets document.
+/// A user's library on this server: the op log, the presets document, and the index of their
+/// library folders.
 pub struct UserLib {
-    core: ServerCore,
+    pub(crate) core: ServerCore,
     presets: proto::Presets,
-    dir: PathBuf,
+    /// The user's folder.
+    pub(crate) dir: PathBuf,
+    pub(crate) index: crate::folders::Index,
     _lock: LibraryLock,
 }
 
@@ -67,13 +70,19 @@ impl UserLib {
             Ok(b) => serde_json::from_slice(&b).map_err(|e| format!("{user}'s presets.json is damaged: {e}"))?,
             Err(_) => proto::Presets { version: 0, presets: json!([]) },
         };
-        Ok(UserLib { core, presets, dir, _lock: lock })
+        let index = crate::folders::Index::load(&dir);
+        Ok(UserLib { core, presets, dir, index, _lock: lock })
     }
 
     /// (photos, albums) in the library.
     pub(crate) fn counts(&self) -> (usize, usize) {
         let c = self.core.catalog();
         (c.len(), c.albums().count())
+    }
+
+    /// Open a user's library (the command line, while the server isn't running).
+    pub fn open_for(data: &Path, user: &str) -> Result<UserLib, String> {
+        UserLib::open(data, user)
     }
 }
 
@@ -118,15 +127,28 @@ pub fn handle(st: &State, mut req: Request) {
     let url = req.url().to_string();
     let (path, q) = url.split_once('?').unwrap_or((url.as_str(), ""));
     let method = req.method().clone();
-    let resp = if let Some(rest) = path.strip_prefix("/api/admin/") {
+    let is_api = path == "/api" || path.starts_with("/api/");
+    let mut resp = if let Some(rest) = path.strip_prefix("/api/admin/") {
         crate::admin::api(st, &mut req, &method, rest)
-    } else if path == "/api" || path.starts_with("/api/") {
+    } else if is_api {
         api(st, &mut req, &method, path, q)
     } else if path == "/admin" || path.starts_with("/admin/") {
         crate::admin::page(&method, path)
     } else {
         web(st, &req, &method, path)
     };
+    // what every answer says, unless it says otherwise: don't guess types, don't leak the URL,
+    // and (the API) don't keep answers that hold a user's library
+    let has = |r: &Resp, k: &'static str| r.headers().iter().any(|h| h.field.equiv(k));
+    for (k, v, when) in [("X-Content-Type-Options", "nosniff", true), ("Referrer-Policy", "no-referrer", true), ("Cache-Control", "no-store", is_api)]
+    {
+        if when
+            && !has(&resp, k)
+            && let Some(h) = header(k, v)
+        {
+            resp.add_header(h);
+        }
+    }
     if let Err(e) = req.respond(resp) {
         log::debug!("{method} {path}: {e}");
     }
@@ -135,6 +157,9 @@ pub fn handle(st: &State, mut req: Request) {
 fn api(st: &State, req: &mut Request, method: &Method, path: &str, q: &str) -> Resp {
     if (method, path) == (&Method::Post, "/api/login") {
         return login(st, req);
+    }
+    if path == "/api/health" {
+        return json(200, &json!({"ok": true, "version": env!("CARGO_PKG_VERSION")}));
     }
     let token = header_value(req, "Authorization").and_then(|v| v.strip_prefix("Bearer ")).unwrap_or("").trim().to_string();
     let Some(who) = st.accounts.lock().unwrap_or_else(PoisonError::into_inner).check(&token) else {
@@ -162,12 +187,26 @@ fn api(st: &State, req: &mut Request, method: &Method, path: &str, q: &str) -> R
             json(200, &serde_json::to_value(&l.presets).unwrap_or(Value::Null))
         }
         (Method::Put, ["presets"]) => put_presets(req, &l),
-        (m, ["blobs", kind, hash]) => {
-            let dir = l.lock().unwrap_or_else(PoisonError::into_inner).dir.join("blobs");
-            blob(req, m, &dir, kind, hash)
-        }
+        (m, ["blobs", kind, hash]) => blob(st, req, m, &l, &who.user, kind, hash),
         _ => error(404, format!("no route {method} {path}")),
     }
+}
+
+/// The throttle's keys for a sign-in: the client's address and the user name.
+pub(crate) fn throttle_keys(req: &Request, user: &str) -> Vec<String> {
+    let ip = crate::throttle::client(req.remote_addr().copied(), header_value(req, "X-Forwarded-For"));
+    vec![format!("ip:{ip}"), format!("user:{}", user.chars().take(64).collect::<String>().to_lowercase())]
+}
+
+/// `429` while these sign-in keys must wait.
+pub(crate) fn throttled(st: &State, keys: &[String]) -> Option<Resp> {
+    let wait = st.throttle.lock().unwrap_or_else(PoisonError::into_inner).wait(keys)?;
+    let secs = wait.as_secs().max(1);
+    let mut r = error(429, format!("too many wrong passwords: try again in {secs} s"));
+    if let Some(h) = header("Retry-After", &secs.to_string()) {
+        r.add_header(h);
+    }
+    Some(r)
 }
 
 fn login(st: &State, req: &mut Request) -> Resp {
@@ -175,7 +214,18 @@ fn login(st: &State, req: &mut Request) -> Resp {
         Ok(l) => l,
         Err(r) => return r,
     };
+    let keys = throttle_keys(req, &l.user);
+    if let Some(r) = throttled(st, &keys) {
+        return r;
+    }
     let r = st.accounts.lock().unwrap_or_else(PoisonError::into_inner).login(&l.user, &l.password, &l.device);
+    let mut t = st.throttle.lock().unwrap_or_else(PoisonError::into_inner);
+    if matches!(r, Err(LoginError::Refused)) {
+        t.failed(&keys)
+    } else {
+        t.succeeded(&keys)
+    }
+    drop(t);
     match r {
         Ok((token, d, library)) => {
             if let Err(e) = lib(st, &l.user) {
@@ -276,7 +326,7 @@ fn put_presets(req: &mut Request, l: &Mutex<UserLib>) -> Resp {
 }
 
 /// Where a photo file is kept: `blobs/<kind>/<first two digits>/<hash>`.
-fn blob_path(dir: &Path, kind: &str, hash: &str) -> Option<PathBuf> {
+pub(crate) fn blob_path(dir: &Path, kind: &str, hash: &str) -> Option<PathBuf> {
     if !proto::BLOB_KINDS.contains(&kind) {
         return None;
     }
@@ -301,16 +351,47 @@ fn range(v: &str, len: u64) -> Option<Result<(u64, u64), ()>> {
     Some(r)
 }
 
-fn blob(req: &mut Request, method: &Method, dir: &Path, kind: &str, hash: &str) -> Resp {
-    let Some(path) = blob_path(dir, kind, hash) else {
+/// An original kept in one of the user's library folders (still the file that was indexed).
+fn folder_original(st: &State, l: &Mutex<UserLib>, user: &str, hash: &str) -> Option<std::fs::File> {
+    let found = l.lock().unwrap_or_else(PoisonError::into_inner).index.originals(hash);
+    for (path, size, mtime) in &found {
+        if crate::folders::unchanged(path, *size, *mtime)
+            && let Ok(f) = std::fs::File::open(path)
+        {
+            return Some(f);
+        }
+    }
+    if !found.is_empty() {
+        // changed or gone since the last scan: look again
+        st.folders.request(user);
+    }
+    None
+}
+
+fn blob(st: &State, req: &mut Request, method: &Method, l: &Mutex<UserLib>, user: &str, kind: &str, hash: &str) -> Resp {
+    let dir = l.lock().unwrap_or_else(PoisonError::into_inner).dir.join("blobs");
+    let Some(path) = blob_path(&dir, kind, hash) else {
         return error(400, "not a photo file this server keeps (/api/blobs/original|smart|mini/<32 hex digits>)");
     };
+    let hash = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
     match method {
         Method::Head | Method::Get => {
-            let Ok(mut f) = std::fs::File::open(&path) else { return error(404, "the server doesn't have this file yet") };
+            let f = match std::fs::File::open(&path) {
+                Ok(f) => Some(f),
+                Err(_) if kind == "original" => folder_original(st, l, user, &hash),
+                Err(_) => None,
+            };
+            let Some(mut f) = f else { return error(404, "the server doesn't have this file yet") };
             let len = f.metadata().map(|m| m.len()).unwrap_or(0);
-            let mut headers: Vec<Header> =
-                [header("Content-Type", "application/octet-stream"), header("Accept-Ranges", "bytes")].into_iter().flatten().collect();
+            // by content: never changes
+            let mut headers: Vec<Header> = [
+                header("Content-Type", "application/octet-stream"),
+                header("Accept-Ranges", "bytes"),
+                header("Cache-Control", "private, max-age=31536000, immutable"),
+            ]
+            .into_iter()
+            .flatten()
+            .collect();
             let (status, start, n) = match header_value(req, "Range").and_then(|v| range(v, len)) {
                 Some(Ok((a, b))) => {
                     headers.extend(header("Content-Range", &format!("bytes {a}-{b}/{len}")));
@@ -328,7 +409,7 @@ fn blob(req: &mut Request, method: &Method, dir: &Path, kind: &str, hash: &str) 
             let size = usize::try_from(n).ok();
             Response::new(StatusCode(status), headers, Box::new(f.take(n)), size, None)
         }
-        Method::Put => put_blob(req, dir, kind, &path),
+        Method::Put => put_blob(req, &dir, kind, &path),
         _ => error(405, "HEAD, GET or PUT"),
     }
 }

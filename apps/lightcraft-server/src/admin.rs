@@ -108,6 +108,13 @@ struct Admin {
     admin: bool,
 }
 
+#[derive(Deserialize)]
+struct NewFolder {
+    path: String,
+    #[serde(default)]
+    name: Option<String>,
+}
+
 #[derive(Deserialize, Default)]
 #[serde(default, rename_all = "camelCase")]
 struct Gc {
@@ -131,6 +138,12 @@ pub fn api(st: &State, req: &mut Request, method: &Method, rest: &str) -> Resp {
     let Some(me) = st.accounts.lock().unwrap_or_else(PoisonError::into_inner).check_admin(&token) else {
         return error(401, "sign in as an admin");
     };
+    // a user name in the path is one (never `..` or the like)
+    if let ["users", name, ..] = parts.as_slice()
+        && !accounts::valid_name(name)
+    {
+        return error(400, format!("not a user name: {name}"));
+    }
     let r = match (method, parts.as_slice()) {
         (Method::Post, ["logout"]) => {
             st.accounts.lock().unwrap_or_else(PoisonError::into_inner).admin_logout(&token);
@@ -151,6 +164,24 @@ pub fn api(st: &State, req: &mut Request, method: &Method, rest: &str) -> Resp {
             Ok(id) => st.accounts.lock().unwrap_or_else(PoisonError::into_inner).revoke(name, id).map(|()| json!({})).map_err(|e| Ok((404, e))),
             Err(_) => Err(Ok((400, format!("not a device id: {id}")))),
         },
+        (Method::Get, ["users", name, "folders"]) => folders(st, name),
+        (Method::Post, ["users", name, "folders"]) => read_json::<NewFolder>(req).map_err(Err).and_then(|f| {
+            let added = accounts::add_folder(&st.data, name, &f.path, f.name.as_deref()).map_err(|e| Ok((400, e)))?;
+            log::info!("admin {me}: {name} has the library folder {} ({})", added.name, added.path);
+            st.folders.request(name);
+            folders(st, name)
+        }),
+        (Method::Delete, ["users", name, "folders", folder]) => {
+            let folder = percent_decode(folder);
+            accounts::remove_folder(&st.data, name, &folder).map_err(|e| Ok((404, e))).and_then(|()| {
+                log::info!("admin {me}: {name} no longer has the library folder {folder}");
+                folders(st, name)
+            })
+        }
+        (Method::Post, ["users", name, "scan"]) => {
+            st.folders.request(name);
+            folders(st, name)
+        }
         (Method::Post, ["gc"]) => {
             let g = read_json::<Gc>(req).unwrap_or_default();
             match crate::gc::run(&st.data, g.dry_run) {
@@ -210,7 +241,18 @@ fn login(st: &State, req: &mut Request) -> Resp {
         Ok(l) => l,
         Err(r) => return r,
     };
+    let keys = crate::api::throttle_keys(req, &l.user);
+    if let Some(r) = crate::api::throttled(st, &keys) {
+        return r;
+    }
     let r = st.accounts.lock().unwrap_or_else(PoisonError::into_inner).admin_login(&l.user, &l.password);
+    let mut t = st.throttle.lock().unwrap_or_else(PoisonError::into_inner);
+    if matches!(r, Err(LoginError::Refused)) {
+        t.failed(&keys)
+    } else {
+        t.succeeded(&keys)
+    }
+    drop(t);
     match r {
         Ok(token) => {
             log::info!("admin {} signed in to the admin page", l.user);
@@ -273,7 +315,11 @@ fn users(st: &State) -> AdminResult {
             }
         };
         let bytes = size_of(&accounts::user_dir(&st.data, name).join("blobs"), 3);
-        out.push(json!({"name": name, "admin": u.admin, "photos": photos, "albums": albums, "devices": devices, "bytes": bytes}));
+        let folders: Vec<Value> = u.folders.iter().map(|f| json!({"name": f.name, "path": f.path})).collect();
+        out.push(json!({
+            "name": name, "admin": u.admin, "photos": photos, "albums": albums, "devices": devices, "bytes": bytes,
+            "folders": folders, "scan": st.folders.status(name),
+        }));
     }
     Ok(Value::Array(out))
 }
@@ -294,6 +340,36 @@ fn remove_user(st: &State, name: &str) -> AdminResult {
     st.libs.lock().unwrap_or_else(PoisonError::into_inner).remove(name);
     log::info!("removed user {name} (their files stay in {})", accounts::user_dir(&st.data, name).display());
     Ok(json!({"files": accounts::user_dir(&st.data, name).to_string_lossy()}))
+}
+
+/// `%20` and the like in a path segment (folder names may have spaces).
+fn percent_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while let Some(&c) = b.get(i) {
+        let hex = b.get(i + 1..i + 3).and_then(|h| std::str::from_utf8(h).ok()).and_then(|h| u8::from_str_radix(h, 16).ok());
+        match (c, hex) {
+            (b'%', Some(v)) => {
+                out.push(v);
+                i += 3;
+            }
+            _ => {
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// A user's library folders and what the last scan of them did.
+fn folders(st: &State, name: &str) -> AdminResult {
+    let f = accounts::read_users(&st.data).map_err(|e| Ok((500, e)))?;
+    let u = f.users.get(name).ok_or_else(|| Ok((404, format!("no user `{name}`"))))?;
+    let list: Vec<Value> =
+        u.folders.iter().map(|f| json!({"name": f.name, "path": f.path, "there": std::path::Path::new(&f.path).is_dir()})).collect();
+    Ok(json!({"folders": list, "scan": st.folders.status(name)}))
 }
 
 fn devices(st: &State, name: &str) -> AdminResult {
