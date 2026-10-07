@@ -2,7 +2,9 @@
 #
 #   1. Point a DNS name at this machine (photos.example.com) with ports 80 and 443 reachable.
 #   2. cd apps/lightcraft-server && LIGHTCRAFT_DOMAIN=photos.example.com docker compose up -d --build
-#   3. docker compose exec -it lightcraft lightcraft-server user add ann     (type the password)
+#   3. docker compose logs lightcraft     (shows the one-time setup code)
+#      Open https://photos.example.com/admin, enter the code, create your admin account, add users.
+#      (Or from the command line: docker compose exec -it lightcraft lightcraft-server user add ann)
 #   4. In LightCraft: Settings > Sync, server https://photos.example.com, user ann, the password.
 #      In a browser: open https://photos.example.com.
 #

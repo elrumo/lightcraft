@@ -15,17 +15,21 @@
 //! <data>/users/<name>/presets.json        { version, presets }
 //! <data>/users/<name>/devices.json        signed-in devices (token hashes, id spaces)
 //! ```
+//!
+//! Users and devices are managed from the command line (`lightcraft-server user …`) or the admin
+//! page at `/admin` ([`admin`]).
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 pub mod accounts;
+pub mod admin;
 pub mod api;
 pub mod gc;
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// The largest id space handed out (ids stay below 2^53: exact in JavaScript).
@@ -46,6 +50,11 @@ pub struct Config {
 pub struct State {
     pub(crate) data: PathBuf,
     pub(crate) web: Option<PathBuf>,
+    /// The address served (shown on the admin page).
+    pub(crate) listen: String,
+    /// The one-time code that creates the first admin from `/admin` (while there is none).
+    pub(crate) setup: Mutex<Option<String>>,
+    pub(crate) setup_tries: AtomicU32,
     pub(crate) accounts: Mutex<accounts::Accounts>,
     pub(crate) libs: Mutex<HashMap<String, Arc<Mutex<api::UserLib>>>>,
     busy: AtomicUsize,
@@ -57,6 +66,7 @@ pub struct Server {
     http: Arc<tiny_http::Server>,
     addr: SocketAddr,
     thread: Option<std::thread::JoinHandle<()>>,
+    state: Arc<State>,
 }
 
 impl Server {
@@ -65,17 +75,29 @@ impl Server {
         std::fs::create_dir_all(&cfg.data).map_err(|e| format!("{}: {e}", cfg.data.display()))?;
         let http = Arc::new(tiny_http::Server::http(&cfg.listen).map_err(|e| format!("can't listen on {}: {e}", cfg.listen))?);
         let addr = http.server_addr().to_ip().ok_or("not listening on an IP address")?;
+        let setup = if accounts::has_admin(&cfg.data) { None } else { admin::new_setup_code() };
+        if let Some(code) = &setup {
+            log::warn!("no admin yet: open http://{addr}/admin (or your domain's /admin) and enter the setup code {code}");
+        }
         let state = Arc::new(State {
             accounts: Mutex::new(accounts::Accounts::new(&cfg.data)),
+            listen: addr.to_string(),
+            setup: Mutex::new(setup),
+            setup_tries: AtomicU32::new(0),
             data: cfg.data,
             web: cfg.web,
             libs: Mutex::new(HashMap::new()),
             busy: AtomicUsize::new(0),
             max: cfg.max_requests.max(1),
         });
-        let h = http.clone();
-        let thread = std::thread::Builder::new().name("lc-accept".into()).spawn(move || accept(&h, &state)).map_err(|e| e.to_string())?;
-        Ok(Server { http, addr, thread: Some(thread) })
+        let (h, s) = (http.clone(), state.clone());
+        let thread = std::thread::Builder::new().name("lc-accept".into()).spawn(move || accept(&h, &s)).map_err(|e| e.to_string())?;
+        Ok(Server { http, addr, thread: Some(thread), state })
+    }
+
+    /// The first-run setup code, while the server has no admin (tests; it is also logged).
+    pub fn setup_code(&self) -> Option<String> {
+        self.state.setup.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
     }
 
     pub fn addr(&self) -> SocketAddr {

@@ -50,6 +50,7 @@ fn call(method: &str, url: &str, token: &str, body: Option<&[u8]>, headers: &[(&
             req.call()
         }
         "HEAD" => a.head(url).header("Authorization", &auth).call(),
+        "DELETE" => a.delete(url).header("Authorization", &auth).call(),
         "PUT" => a.put(url).header("Authorization", &auth).send(body.unwrap_or(&[])),
         _ => a.post(url).header("Authorization", &auth).send(body.unwrap_or(&[])),
     };
@@ -195,6 +196,85 @@ fn two_libraries_sync_through_the_server() {
     assert!(stray.exists(), "dry run");
     assert_eq!(gc::run(&data, false).unwrap().removed, 1);
     assert!(!stray.exists() && kept.exists());
+    drop(server);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn admin_page_sets_up_and_manages_users() {
+    let root = temp("admin");
+    let server = Server::start(Config { data: root.join("data"), listen: "127.0.0.1:0".into(), web: None, max_requests: 32 }).unwrap();
+    let base = format!("http://{}", server.addr());
+    let req = |m: &str, path: &str, token: &str, body: Option<Value>| {
+        let (s, b, h) = call(m, &format!("{base}{path}"), token, body.map(|v| v.to_string()).as_deref().map(str::as_bytes), &[]);
+        (s, json_of(&b), h)
+    };
+    // the page, locked down
+    let (s, _, h) = req("GET", "/admin", "", None);
+    assert_eq!(s, 200);
+    assert!(
+        h.iter().any(|(k, v)| k.eq_ignore_ascii_case("content-security-policy")
+            && v.contains("script-src 'self'")
+            && v.contains("frame-ancestors 'none'"))
+    );
+    assert_eq!(req("GET", "/admin/admin.js", "", None).0, 200);
+    assert_eq!(req("GET", "/admin/../users.json", "", None).0, 404);
+    // first run: the setup code (from the log) makes the first admin, once
+    assert_eq!(req("GET", "/api/admin/state", "", None).1["setup"], true);
+    let code = server.setup_code().unwrap();
+    let setup = |code: &str| req("POST", "/api/admin/setup", "", Some(json!({"code": code, "user": "ann", "password": "correct horse"})));
+    assert_eq!(setup("NOPE-0000").0, 403);
+    assert_eq!(setup(&code.to_lowercase()).0, 200, "codes are case-insensitive");
+    assert_eq!(setup(&code).0, 409, "only while there is no admin");
+    assert_eq!(req("GET", "/api/admin/state", "", None).1["setup"], false);
+    assert!(server.setup_code().is_none());
+    // admin sessions are not device tokens, and the other way round
+    let login = |user: &str, pw: &str| req("POST", "/api/admin/login", "", Some(json!({"user": user, "password": pw})));
+    assert_eq!(login("ann", "wrong").0, 401);
+    let ann = login("ann", "correct horse").1["token"].as_str().unwrap().to_string();
+    let device = |user: &str, pw: &str| req("POST", "/api/login", "", Some(json!({"user": user, "password": pw, "device": "Phone"})));
+    let ann_device = device("ann", "correct horse").1["token"].as_str().unwrap().to_string();
+    assert_eq!(req("GET", "/api/admin/status", &ann_device, None).0, 401);
+    assert_eq!(req("GET", "/api/snapshot", &ann, None).0, 401);
+    let (s, st, _) = req("GET", "/api/admin/status", &ann, None);
+    assert_eq!((s, st["me"].as_str(), st["users"].as_u64()), (200, Some("ann"), Some(1)));
+    // users: add, list, reset a password
+    assert_eq!(req("POST", "/api/admin/users", &ann, Some(json!({"name": "../x", "password": "long enough"}))).0, 400);
+    assert_eq!(req("POST", "/api/admin/users", &ann, Some(json!({"name": "bob", "password": "long enough"}))).0, 200);
+    assert_eq!(req("POST", "/api/admin/users", &ann, Some(json!({"name": "bob", "password": "long enough"}))).0, 400, "no silent overwrite");
+    let users = req("GET", "/api/admin/users", &ann, None).1;
+    let names: Vec<&str> = users.as_array().unwrap().iter().map(|u| u["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["ann", "bob"]);
+    assert_eq!(users[0]["admin"], true);
+    assert_eq!(login("bob", "long enough").0, 401, "not an admin");
+    let bob_device = device("bob", "long enough").1;
+    let bob_token = bob_device["token"].as_str().unwrap().to_string();
+    let list = req("GET", "/api/admin/users/bob/devices", &ann, None).1;
+    assert_eq!(list[0]["name"], "Phone");
+    assert!(list[0]["lastSeen"].as_u64().is_some(), "signing in counts as seen: {list}");
+    assert_eq!(req("GET", "/api/me", &bob_token, None).0, 200);
+    // signing a device out ends its token
+    let id = bob_device["device"].as_u64().unwrap();
+    assert_eq!(req("DELETE", &format!("/api/admin/users/bob/devices/{id}"), &ann, None).0, 200);
+    assert_eq!(req("GET", "/api/me", &bob_token, None).0, 401);
+    assert_eq!(req("PUT", "/api/admin/users/bob/password", &ann, Some(json!({"password": "battery staple"}))).0, 200);
+    assert_eq!(device("bob", "battery staple").0, 200);
+    // there is always an admin
+    assert_eq!(req("PUT", "/api/admin/users/ann/admin", &ann, Some(json!({"admin": false}))).0, 409);
+    assert_eq!(req("DELETE", "/api/admin/users/ann", &ann, None).0, 409);
+    assert_eq!(req("PUT", "/api/admin/users/bob/admin", &ann, Some(json!({"admin": true}))).0, 200);
+    assert_eq!(req("PUT", "/api/admin/users/ann/admin", &ann, Some(json!({"admin": false}))).0, 200);
+    assert_eq!(req("GET", "/api/admin/status", &ann, None).0, 401, "no longer an admin: the session ends");
+    let bob = login("bob", "battery staple").1["token"].as_str().unwrap().to_string();
+    // removing a user keeps their files; storage clean-up runs
+    let (s, r, _) = req("DELETE", "/api/admin/users/ann", &bob, None);
+    assert_eq!(s, 200);
+    assert!(std::path::Path::new(r["files"].as_str().unwrap()).exists());
+    assert_eq!(device("ann", "correct horse").0, 401);
+    let (s, r, _) = req("POST", "/api/admin/gc", &bob, Some(json!({"dryRun": true})));
+    assert_eq!((s, r["dryRun"].as_bool()), (200, Some(true)));
+    assert_eq!(req("POST", "/api/admin/logout", &bob, None).0, 200);
+    assert_eq!(req("GET", "/api/admin/users", &bob, None).0, 401);
     drop(server);
     let _ = std::fs::remove_dir_all(&root);
 }

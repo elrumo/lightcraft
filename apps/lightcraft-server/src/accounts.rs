@@ -6,13 +6,17 @@
 //!   SHA-256 of the device's token (the token itself is never stored). Reloaded when it changes
 //!   on disk (`device revoke` while the server runs).
 //!
+//! Admins (`admin` in `users.json`) also manage the server from its web page (`/admin`, see
+//! [`crate::admin`]) with sessions of their own: an admin session is not a device and never
+//! syncs; a device token never opens the admin page.
+//!
 //! A device gets an id space at sign-in ([`crate::MAX_SPACE`] at most): ids it allocates are
 //! `space << 32 | n`, so no two devices hand out the same id. Space 0 is never given out: a
 //! library that never synced has its ids there, and the first one uploaded keeps them.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+use std::time::{Duration, Instant, SystemTime};
 
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use serde::{Deserialize, Serialize};
@@ -30,6 +34,8 @@ pub struct User {
     pub password: String,
     /// Identifies this user's library (a device only resumes the library it is a copy of).
     pub library: String,
+    /// May manage the server (users, devices, storage) from `/admin`.
+    pub admin: bool,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -67,7 +73,10 @@ pub fn user_dir(data: &Path, name: &str) -> PathBuf {
     data.join("users").join(name)
 }
 
-fn now() -> u64 {
+/// An admin session ends after this long without a request.
+pub const ADMIN_IDLE: Duration = Duration::from_secs(2 * 3600);
+
+pub fn now() -> u64 {
     SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
@@ -128,17 +137,40 @@ pub fn set_user(data: &Path, name: &str, password: &str, replace: bool) -> Resul
         None if replace => return Err(format!("no user `{name}`")),
         None => random_hex(16)?,
     };
-    f.users.insert(name.to_string(), User { password: hash_password(password)?, library });
+    let admin = f.users.get(name).is_some_and(|u| u.admin);
+    f.users.insert(name.to_string(), User { password: hash_password(password)?, library, admin });
     std::fs::create_dir_all(user_dir(data, name)).map_err(|e| e.to_string())?;
     write_json(&data.join(USERS), &f)
+}
+
+/// Let a user manage the server (or not). The last admin can't be taken away while the server
+/// has users (there would be no one left to manage it from the web page).
+pub fn set_admin(data: &Path, name: &str, on: bool) -> Result<(), String> {
+    let mut f = read_users(data)?;
+    let others = f.users.iter().any(|(n, u)| n != name && u.admin);
+    let u = f.users.get_mut(name).ok_or_else(|| format!("no user `{name}`"))?;
+    if !on && u.admin && !others {
+        return Err(format!("`{name}` is the only admin: make someone else admin first"));
+    }
+    u.admin = on;
+    write_json(&data.join(USERS), &f)
+}
+
+/// Is there an admin yet? (Until there is, `/admin` asks for the setup code.)
+pub fn has_admin(data: &Path) -> bool {
+    read_users(data).is_ok_and(|f| f.users.values().any(|u| u.admin))
 }
 
 /// Remove a user's account (their files stay in `users/<name>/` until deleted by hand).
 pub fn remove_user(data: &Path, name: &str) -> Result<(), String> {
     let mut f = read_users(data)?;
-    if f.users.remove(name).is_none() {
-        return Err(format!("no user `{name}`"));
+    let others = f.users.iter().any(|(n, u)| n != name && u.admin);
+    match f.users.get(name) {
+        None => return Err(format!("no user `{name}`")),
+        Some(u) if u.admin && !others => return Err(format!("`{name}` is the only admin: make someone else admin first")),
+        Some(_) => {}
     }
+    f.users.remove(name);
     write_json(&data.join(USERS), &f)?;
     // signed-in devices stop working at once
     write_json(&user_dir(data, name).join(DEVICES), &DevicesFile::default())
@@ -173,6 +205,10 @@ pub struct Accounts {
     /// Per user: their devices file's time and size when it was read, and its devices.
     loaded: HashMap<String, (Option<(SystemTime, u64)>, Vec<Device>)>,
     tokens: HashMap<String, Session>,
+    /// When each device was last heard from (since the server started), unix seconds.
+    seen: HashMap<(String, u64), u64>,
+    /// Admin sessions by token hash: the admin, and when the session was last used.
+    admins: HashMap<String, (String, Instant)>,
 }
 
 pub enum LoginError {
@@ -224,7 +260,53 @@ impl Accounts {
         let s = self.tokens.get(&token_hash(token))?.clone();
         // revoked on disk meanwhile?
         self.reload(&s.user);
-        self.tokens.get(&token_hash(token)).cloned()
+        let s = self.tokens.get(&token_hash(token)).cloned()?;
+        self.seen.insert((s.user.clone(), s.device), now());
+        Some(s)
+    }
+
+    /// When a device was last heard from since the server started.
+    pub fn last_seen(&self, user: &str, device: u64) -> Option<u64> {
+        self.seen.get(&(user.to_string(), device)).copied()
+    }
+
+    /// Open an admin session (the user must be an admin).
+    pub fn admin_login(&mut self, user: &str, password: &str) -> Result<String, LoginError> {
+        let users = read_users(&self.data).map_err(LoginError::Failed)?;
+        let ok = users.users.get(user).is_some_and(|u| u.admin && password_ok(&u.password, password));
+        if !ok {
+            return Err(LoginError::Refused);
+        }
+        let token = random_hex(32).map_err(LoginError::Failed)?;
+        self.admins.retain(|_, (_, at)| at.elapsed() < ADMIN_IDLE);
+        self.admins.insert(token_hash(&token), (user.to_string(), Instant::now()));
+        Ok(token)
+    }
+
+    /// The admin an admin session belongs to (still an admin, session not idle too long).
+    pub fn check_admin(&mut self, token: &str) -> Option<String> {
+        if token.is_empty() || token.len() > 256 {
+            return None;
+        }
+        let key = token_hash(token);
+        let (user, at) = self.admins.get_mut(&key)?;
+        if at.elapsed() >= ADMIN_IDLE || !read_users(&self.data).is_ok_and(|f| f.users.get(user.as_str()).is_some_and(|u| u.admin)) {
+            self.admins.remove(&key);
+            return None;
+        }
+        *at = Instant::now();
+        Some(user.clone())
+    }
+
+    pub fn admin_logout(&mut self, token: &str) {
+        self.admins.remove(&token_hash(token));
+    }
+
+    /// Forget a removed user's devices.
+    pub fn forget(&mut self, user: &str) {
+        self.loaded.remove(user);
+        self.tokens.retain(|_, s| s.user != user);
+        self.admins.retain(|_, (u, _)| u != user);
     }
 
     /// Sign a device in: a new token and id space.
@@ -255,7 +337,16 @@ impl Accounts {
         write_json(&path, &f).map_err(LoginError::Failed)?;
         self.loaded.remove(user);
         self.reload(user);
+        self.seen.insert((user.to_string(), id), d.created);
         Ok((token, d, u.library.clone()))
+    }
+
+    /// Sign a device out by id (the admin page).
+    pub fn revoke(&mut self, user: &str, device: u64) -> Result<(), String> {
+        revoke(&self.data, user, device)?;
+        self.loaded.remove(user);
+        self.reload(user);
+        Ok(())
     }
 
     /// Sign the device with this token out.

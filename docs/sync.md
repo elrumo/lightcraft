@@ -23,8 +23,12 @@ The easiest setup on a machine reachable from the internet (a home server, a sma
 # a DNS name pointing at this machine, ports 80 and 443 open
 cd apps/lightcraft-server
 LIGHTCRAFT_DOMAIN=photos.example.com docker compose up -d --build
-docker compose exec -it lightcraft lightcraft-server user add ann    # type the password (not shown)
+docker compose logs lightcraft     # "… enter the setup code ABCD-EFGH"
 ```
+
+Open `https://photos.example.com/admin`, enter the setup code, create your admin account and add users there
+([the admin page](#the-admin-page)); or from the command line:
+`docker compose exec -it lightcraft lightcraft-server user add ann` (type the password; it isn't shown).
 
 `apps/lightcraft-server/docker-compose.yml` and its `Caddyfile` are all there is to it; everything the server keeps is
 in the `lightcraft-data` volume. Then [connect your devices](#connect-your-devices) to `https://photos.example.com`.
@@ -50,7 +54,8 @@ target/release/lightcraft-server serve --data /srv/lightcraft --listen 127.0.0.1
 | Command | What it does |
 |---|---|
 | `serve [--listen HOST:PORT] [--web DIR]` | Serve (default `127.0.0.1:8080`, only this computer; `$LIGHTCRAFT_LISTEN`). `--web` (`$LIGHTCRAFT_WEB`): the `cargo xtask web` bundle, served at `/` with the same cross-origin isolation headers as the dev server |
-| `user add NAME` / `user passwd NAME` | Add a user / change a password (first line of stdin, or `$LIGHTCRAFT_PASSWORD`; 8 characters at least). Works while the server runs |
+| `user add NAME [--admin]` / `user passwd NAME` | Add a user / change a password (first line of stdin, or `$LIGHTCRAFT_PASSWORD`; 8 characters at least). Works while the server runs |
+| `user admin NAME on\|off` | Let a user sign in to [the admin page](#the-admin-page), or stop them (the last admin stays) |
 | `user remove NAME` / `user list` | Remove a user (signs out every device; their files stay in `users/NAME/`) |
 | `device list NAME` / `device revoke NAME ID` | A user's signed-in devices; sign one out (it must sign in again) |
 | `gc [--dry-run]` | Delete photo files no library refers to any more (photos deleted for good) and unfinished uploads, if older than a day |
@@ -81,7 +86,7 @@ certificate from Let's Encrypt or Tailscale works as is; a self-signed one doesn
 ### What the server keeps
 
 ```text
-<data>/users.json                              users: argon2id password hash, library id
+<data>/users.json                              users: argon2id password hash, library id, admin
 <data>/users/<name>/library/catalog.log        every change from every device, in order
 <data>/users/<name>/blobs/<kind>/<xx>/<hash>   photo files by content: original | smart | mini
 <data>/users/<name>/presets.json               user presets { version, presets }
@@ -90,12 +95,38 @@ certificate from Let's Encrypt or Tailscale works as is; a self-signed one doesn
 
 Back up `<data>` like any folder (stop the server, or copy `catalog.log` first and the blobs after).
 
+### The admin page
+
+`https://<your server>/admin` manages the server from a browser:
+
+- **Users:** every user with their photo count, storage used and devices; add one, reset a password, make or remove
+  an admin, remove a user (their files stay in `users/NAME/` until you delete them).
+- **Devices:** a user's signed-in devices (name, id, last seen); sign one out (it must sign in again).
+- **Server:** version, the data folder and the free space on its disk, the address it listens on, whether it serves
+  the web build, and photo-file clean-up (**Check** = `gc --dry-run`, then **Remove** = `gc`).
+- **Connect:** the address to type into Settings ▸ Sync on each device (the one you opened the page with).
+
+**First run:** while no user is an admin, the server prints a one-time **setup code** to its log
+(`docker compose logs lightcraft`, or the terminal running `serve`). The admin page asks for it before it creates the
+first admin, so a server that is already on the internet can't be claimed by whoever finds it first; ten wrong codes
+replace it with a new one (logged again). Already have users? `lightcraft-server user admin ann on` (or
+`user add NAME --admin`) instead.
+
+Admins sign in to the page with their user name and password. That opens an admin session of its own (not a device:
+it can't sync, and a device token can't manage the server); it ends after two hours without use, or with Sign Out.
+An admin is also an ordinary user with a library of their own.
+
+The data folder, the listen address and the domain are deployment settings, so the page shows them but doesn't change
+them: `--data` / `LIGHTCRAFT_DATA`, `--listen` / `LIGHTCRAFT_LISTEN`, and the domain in the reverse proxy
+(`LIGHTCRAFT_DOMAIN` with the compose file). Its JSON API is under `/api/admin/` (`apps/lightcraft-server/src/admin.rs`).
+
 ## Connect your devices
 
 Every client needs the same three things: the **server address** (`https://photos.example.com`, or
-`http://machine-name:8080` on a tailnet), a **user name** and its **password**, as added with
-`lightcraft-server user add`. The password goes to the server once; the device gets its own token (kept in the
-library's `sync.json`), which `lightcraft-server device revoke` or Sign Out ends.
+`http://machine-name:8080` on a tailnet), a **user name** and its **password**, as added on
+[the admin page](#the-admin-page) or with `lightcraft-server user add`. The password goes to the server once; the
+device gets its own token (kept in the library's `sync.json`), which revoking the device (admin page or
+`lightcraft-server device revoke`) or Sign Out ends.
 
 | Client | How |
 |---|---|
@@ -104,10 +135,8 @@ library's `sync.json`), which `lightcraft-server device revoke` or Sign Out ends
 | Command line / agents | `lightcraft-cli run --library DIR sync.signIn server=… user=… password=… sync.now wait=true` |
 | iOS (later) | the same three fields, the same API |
 
-Users and devices are managed on the server, from its command line (`user add / passwd / remove / list`,
-`device list / revoke`, `gc`; see the table above). There is no admin web page yet. Where the server keeps its data,
-which address it listens on and the domain are deployment settings: `--data` / `LIGHTCRAFT_DATA`, `--listen` /
-`LIGHTCRAFT_LISTEN`, and the domain in the reverse proxy (`LIGHTCRAFT_DOMAIN` with the compose file).
+Users and devices are managed on the server: on [the admin page](#the-admin-page) or from its command line
+(`user add / passwd / admin / remove / list`, `device list / revoke`, `gc`; see the table above).
 
 ## What happens at sign-in
 

@@ -39,11 +39,11 @@ fn bytes(status: u16, ctype: &str, body: Vec<u8>) -> Resp {
     Response::new(StatusCode(status), header("Content-Type", ctype).into_iter().collect(), Box::new(std::io::Cursor::new(body)), Some(len), None)
 }
 
-fn json(status: u16, v: &Value) -> Resp {
+pub(crate) fn json(status: u16, v: &Value) -> Resp {
     bytes(status, "application/json", v.to_string().into_bytes())
 }
 
-fn error(status: u16, msg: impl std::fmt::Display) -> Resp {
+pub(crate) fn error(status: u16, msg: impl std::fmt::Display) -> Resp {
     json(status, &json!({"error": msg.to_string()}))
 }
 
@@ -69,9 +69,15 @@ impl UserLib {
         };
         Ok(UserLib { core, presets, dir, _lock: lock })
     }
+
+    /// (photos, albums) in the library.
+    pub(crate) fn counts(&self) -> (usize, usize) {
+        let c = self.core.catalog();
+        (c.len(), c.albums().count())
+    }
 }
 
-fn lib(st: &State, user: &str) -> Result<Arc<Mutex<UserLib>>, String> {
+pub(crate) fn lib(st: &State, user: &str) -> Result<Arc<Mutex<UserLib>>, String> {
     let mut libs = st.libs.lock().unwrap_or_else(PoisonError::into_inner);
     if let Some(l) = libs.get(user) {
         return Ok(l.clone());
@@ -94,12 +100,12 @@ fn read_body(req: &mut Request, max: u64) -> Result<Vec<u8>, Resp> {
     }
 }
 
-fn read_json<T: serde::de::DeserializeOwned>(req: &mut Request) -> Result<T, Resp> {
+pub(crate) fn read_json<T: serde::de::DeserializeOwned>(req: &mut Request) -> Result<T, Resp> {
     let b = read_body(req, JSON_MAX)?;
     serde_json::from_slice(&b).map_err(|e| error(400, format!("not the JSON this route takes: {e}")))
 }
 
-fn header_value<'a>(req: &'a Request, name: &'static str) -> Option<&'a str> {
+pub(crate) fn header_value<'a>(req: &'a Request, name: &'static str) -> Option<&'a str> {
     req.headers().iter().find(|h| h.field.equiv(name)).map(|h| h.value.as_str())
 }
 
@@ -112,7 +118,15 @@ pub fn handle(st: &State, mut req: Request) {
     let url = req.url().to_string();
     let (path, q) = url.split_once('?').unwrap_or((url.as_str(), ""));
     let method = req.method().clone();
-    let resp = if path == "/api" || path.starts_with("/api/") { api(st, &mut req, &method, path, q) } else { web(st, &req, &method, path) };
+    let resp = if let Some(rest) = path.strip_prefix("/api/admin/") {
+        crate::admin::api(st, &mut req, &method, rest)
+    } else if path == "/api" || path.starts_with("/api/") {
+        api(st, &mut req, &method, path, q)
+    } else if path == "/admin" || path.starts_with("/admin/") {
+        crate::admin::page(&method, path)
+    } else {
+        web(st, &req, &method, path)
+    };
     if let Err(e) = req.respond(resp) {
         log::debug!("{method} {path}: {e}");
     }

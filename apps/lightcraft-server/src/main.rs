@@ -2,14 +2,18 @@
 //!
 //! ```text
 //! lightcraft-server serve [--data DIR] [--listen HOST:PORT] [--web DIR]
-//! lightcraft-server user add NAME        (password: first line of stdin, or $LIGHTCRAFT_PASSWORD)
+//! lightcraft-server user add NAME [--admin]   (password: typed, stdin, or $LIGHTCRAFT_PASSWORD)
 //! lightcraft-server user passwd NAME
+//! lightcraft-server user admin NAME on|off
 //! lightcraft-server user remove NAME
 //! lightcraft-server user list
 //! lightcraft-server device list NAME
 //! lightcraft-server device revoke NAME ID
 //! lightcraft-server gc [--dry-run]
 //! ```
+//!
+//! Admins also manage users and devices from the server's web page, `/admin` (until the first
+//! admin exists, it asks for the setup code the server logs at start).
 //!
 //! `--data` defaults to `$LIGHTCRAFT_DATA` or `./lightcraft-data`, `--listen` to
 //! `$LIGHTCRAFT_LISTEN` or `127.0.0.1:8080` (only this computer: put a TLS proxy in front, or
@@ -25,7 +29,9 @@ use lightcraft_server::{Config, Server, accounts, gc};
 
 const USAGE: &str = "usage:
   lightcraft-server serve [--data DIR] [--listen HOST:PORT] [--web DIR]
-  lightcraft-server user add|passwd|remove NAME   (password: stdin or $LIGHTCRAFT_PASSWORD)
+  lightcraft-server user add NAME [--admin]   (password: typed, stdin or $LIGHTCRAFT_PASSWORD)
+  lightcraft-server user passwd|remove NAME
+  lightcraft-server user admin NAME on|off    (admins manage the server at /admin)
   lightcraft-server user list
   lightcraft-server device list NAME
   lightcraft-server device revoke NAME ID
@@ -103,7 +109,7 @@ fn run(args: &[String]) -> Result<(), String> {
             let web = option(args, "--web").or_else(|| std::env::var("LIGHTCRAFT_WEB").ok()).map(PathBuf::from).filter(|w| w.is_dir());
             let users = accounts::read_users(&data)?;
             if users.users.is_empty() {
-                log::warn!("no users yet: add one with `lightcraft-server user add NAME --data {}`", data.display());
+                log::warn!("no users yet: add them on the admin page (/admin) or with `lightcraft-server user add NAME --data {}`", data.display());
             }
             let s = Server::start(Config { data: data.clone(), listen, web: web.clone(), max_requests: 64 })?;
             log::info!(
@@ -117,7 +123,16 @@ fn run(args: &[String]) -> Result<(), String> {
         }
         ["user", "add", name] => {
             accounts::set_user(&data, name, &password()?, false)?;
-            println!("added {name}");
+            let admin = args.iter().any(|a| a == "--admin");
+            if admin {
+                accounts::set_admin(&data, name, true)?;
+            }
+            println!("added {name}{}", if admin { " (admin)" } else { "" });
+            Ok(())
+        }
+        ["user", "admin", name, on @ ("on" | "off")] => {
+            accounts::set_admin(&data, name, *on == "on")?;
+            println!("{name} {} an admin", if *on == "on" { "is" } else { "is no longer" });
             Ok(())
         }
         ["user", "passwd", name] => {
@@ -131,8 +146,8 @@ fn run(args: &[String]) -> Result<(), String> {
             Ok(())
         }
         ["user", "list"] => {
-            for name in accounts::read_users(&data)?.users.keys() {
-                println!("{name}");
+            for (name, u) in accounts::read_users(&data)?.users {
+                println!("{name}{}", if u.admin { "\tadmin" } else { "" });
             }
             Ok(())
         }
