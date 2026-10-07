@@ -16,9 +16,14 @@ It does **not** prove an app links or runs: that needs macOS and Xcode.
 `apps/lightcraft-ios` is the egui app as a static library (in-memory demo library, no pickers). `xcode/project.yml`
 is an XcodeGen spec: `cd apps/lightcraft-ios/xcode && xcodegen && open LightCraft.xcodeproj`. A pre-build phase runs
 `cargo build` for the SDK being built (Apple-silicon simulator or device; set `DEVELOPMENT_TEAM` for a device).
-It builds and installs on the simulator, but **crashes at launch on iOS 27**: UIKit traps
-(`UIApplicationEvaluateRuntimeIssueForNoSceneLifecycleAdoption`) because winit 0.30 has no scene lifecycle. Needs a
-newer winit or a scene delegate in the host; unresolved.
+It runs on the iOS 27 simulator: the desktop UI renders (not touch-adapted, ignores the safe area). Three fixes were
+needed, all in the host: (1) iOS 27 traps apps without scene lifecycle and winit 0.30/0.31 has none, so
+`xcode/Sources/SceneDelegate.m` declares an empty scene delegate (plus `UIApplicationSceneManifest` in `project.yml`);
+(2) winit creates its window with `-[UIWindow initWithFrame:]`, which a scene-based app never shows, so that file
+swizzles it to create the window in the connected scene; (3) egui-wgpu's default device limits ask for 16 inter-stage
+shader variables, the simulator's Metal adapter allows 15, so `wgpu_options()` clamps them to the adapter. Log output
+goes to `lightcraft-ios.log` in the app's tmp dir (`xcrun simctl get_app_container <device> ai.storyteller.lightcraft.ios data`).
+Not yet tried on a device.
 
 ## Scope
 

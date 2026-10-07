@@ -2622,6 +2622,7 @@ dependencies = [
  "egui",
  "lightcraft-engine",
  "lightcraft-ui-egui",
+ "log",
 ]
 
 [[package]]
