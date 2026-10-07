@@ -8,3 +8,7 @@ void lightcraft_ios_main(void);
 /// One log line to the system log (NSLog: Console.app, `idevicesyslog`); called from Rust
 /// (lightcraft-ios-host).
 void lightcraft_host_log(const char *line);
+
+/// The on-screen keyboard's Return was tapped (SceneDelegate.m's -insertText: hook); implemented
+/// in Rust (lightcraft-ios-host).
+void lightcraft_host_return_key(void);

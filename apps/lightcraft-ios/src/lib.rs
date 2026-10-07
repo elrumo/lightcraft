@@ -29,6 +29,8 @@ struct Host {
     inbox: Inbox,
     /// Time to finish an export after the app went to the background.
     background: Option<BackgroundTask>,
+    /// UIKit's safe area as egui-winit last read it (it reads it only on some window events).
+    safe_area: egui::SafeAreaInsets,
 }
 
 impl Host {
@@ -106,6 +108,23 @@ impl Host {
     }
 }
 
+/// The keyboard's Return as egui wants it: an Enter key press (it confirms a text field). winit
+/// hands it over as a `"\n"` character, which egui drops (`docs/ios-gaps.md`, A1.9).
+fn press_enter(raw: &mut egui::RawInput, times: u32) {
+    for _ in 0..times.min(8) {
+        for pressed in [true, false] {
+            raw.events.push(egui::Event::Key { key: egui::Key::Enter, physical_key: None, pressed, repeat: false, modifiers: egui::Modifiers::NONE });
+        }
+    }
+}
+
+/// The safe area with the on-screen keyboard counted in, so the UI (`content_rect`: panels,
+/// sheets, dialogs) stays above it and the field being typed in isn't covered.
+fn above_keyboard(mut safe: egui::SafeAreaInsets, keyboard: f32) -> egui::SafeAreaInsets {
+    safe.0.bottom = safe.0.bottom.max(keyboard);
+    safe
+}
+
 /// What to tell the user about a pick that didn't fully work.
 fn picked_message(p: &Picked) -> Option<String> {
     let n = p.failed.len();
@@ -125,7 +144,12 @@ impl eframe::App for App {
         }
     }
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {
+        press_enter(raw, lightcraft_ios_host::take_return_presses());
         if let Ok(mut h) = self.0.try_borrow_mut() {
+            if let Some(s) = raw.safe_area_insets {
+                h.safe_area = s;
+            }
+            raw.safe_area_insets = Some(above_keyboard(h.safe_area, lightcraft_ios_host::keyboard_height()));
             h.app.raw_input_hook(raw);
         }
     }
@@ -396,10 +420,15 @@ pub fn run() -> eframe::Result {
             lightcraft_ui_egui::i18n::set_language(app.ui.language);
             app.notices.extend(prefs_warning);
             let prefs = PrefsWriter::new(&app, keep_prefs_file);
-            let host = Rc::new(RefCell::new(Host { app, prefs, inbox, background: None }));
+            let host = Rc::new(RefCell::new(Host { app, prefs, inbox, background: None, safe_area: Default::default() }));
             let weak = Rc::downgrade(&host);
             if let Err(e) = lightcraft_ios_host::observe_lifecycle(Box::new(move |event| on_lifecycle(&weak, event))) {
                 log::error!("lifecycle notifications: {e}");
+            }
+            // the layout moves above the keyboard (`above_keyboard`) on the next frame
+            let ctx = cc.egui_ctx.clone();
+            if let Err(e) = lightcraft_ios_host::observe_keyboard(Box::new(move || ctx.request_repaint())) {
+                log::error!("keyboard notifications: {e}");
             }
             Ok(Box::new(App(host)))
         }),
@@ -434,7 +463,7 @@ mod tests {
         let app = LightcraftApp::new(open_session(Some(lib)), Services::default());
         // keep_file: these tests never write the developer's own ui.json
         let prefs = PrefsWriter::new(&app, true);
-        Host { app, prefs, inbox: Inbox::default(), background: None }
+        Host { app, prefs, inbox: Inbox::default(), background: None, safe_area: Default::default() }
     }
 
     /// Backgrounding saves the view and pauses the GPU; coming back resumes it.
@@ -505,6 +534,36 @@ mod tests {
         let s = system_image(i);
         assert!(s.premultiplied && s.bit_depth == 10 && s.orientation == 8 && s.source_width == 4000);
         assert!(matches!(s.pixels, lightcraft_codecs::SystemPixels::Rgba16(ref v) if v.len() == 8));
+    }
+
+    /// The keyboard's Return confirms a single-line field: it loses focus with Enter pressed (A1.9).
+    #[test]
+    fn the_keyboards_return_confirms_a_text_field() {
+        let ctx = egui::Context::default();
+        let mut text = String::from("trip");
+        let mut confirmed = false;
+        for (frame, returns) in [(0, 0), (1, 0), (2, 1)] {
+            let mut raw = egui::RawInput::default();
+            press_enter(&mut raw, returns);
+            let mut out = ctx.run_ui(raw, |ui| {
+                let r = ui.text_edit_singleline(&mut text);
+                if frame == 0 {
+                    r.request_focus();
+                }
+                confirmed |= r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            });
+            out.textures_delta.clear(); // (no renderer here)
+        }
+        assert!(confirmed);
+    }
+
+    /// The on-screen keyboard pushes the bottom of the content up; hidden, the home indicator's inset stays.
+    #[test]
+    fn content_stays_above_the_keyboard() {
+        let safe = egui::SafeAreaInsets(egui::epaint::MarginF32 { left: 0.0, right: 0.0, top: 62.0, bottom: 34.0 });
+        assert_eq!(above_keyboard(safe, 0.0).0.bottom, 34.0);
+        assert_eq!(above_keyboard(safe, 336.0).0.bottom, 336.0);
+        assert_eq!(above_keyboard(safe, 336.0).0.top, 62.0);
     }
 
     #[test]

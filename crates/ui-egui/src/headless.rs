@@ -36,6 +36,8 @@ pub struct HeadlessView {
     pixels_per_point: f32,
     size: egui::Vec2,
     frames: u64,
+    /// The last frame's text-input request (what a host passes to the on-screen keyboard).
+    pub ime: Option<egui::output::IMEOutput>,
 }
 
 impl Default for HeadlessView {
@@ -49,7 +51,15 @@ impl HeadlessView {
         let ctx = egui::Context::default();
         crate::theme::install_fonts(&ctx);
         crate::theme::apply(&ctx);
-        HeadlessView { ctx, textures: TextureStore::default(), shapes: vec![], pixels_per_point: 1.0, size: egui::vec2(1600.0, 1000.0), frames: 0 }
+        HeadlessView {
+            ctx,
+            textures: TextureStore::default(),
+            shapes: vec![],
+            pixels_per_point: 1.0,
+            size: egui::vec2(1600.0, 1000.0),
+            frames: 0,
+            ime: None,
+        }
     }
 
     /// Input for one frame of a `size` (points) viewport at `pixels_per_point`.
@@ -82,6 +92,7 @@ impl HeadlessView {
         self.textures.apply(std::mem::take(&mut out.textures_delta));
         self.shapes = std::mem::take(&mut out.shapes);
         self.pixels_per_point = out.pixels_per_point;
+        self.ime = out.platform_output.ime;
         out.viewport_output.remove(&ViewportId::ROOT).map(|v| v.commands).unwrap_or_default()
     }
 

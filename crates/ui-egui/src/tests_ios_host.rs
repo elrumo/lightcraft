@@ -255,3 +255,18 @@ fn the_phone_grid_has_an_add_button() {
     h.settle(SETTLE);
     assert!(!has(&h, "button:addPhotos"));
 }
+
+/// A dialog's text field keeps the keyboard up: focus is asked for once, not every frame (each
+/// request interrupts IME composition, which on iOS hides the keyboard and shows it again).
+#[test]
+fn dialog_fields_dont_restart_the_keyboard_every_frame() {
+    let mut h = Headless::new(LightcraftApp::new(Session::with_demo(), Services::default()), [390.0, 844.0], 3.0);
+    h.app.run("dialog.newAlbum", json!({})).unwrap();
+    for _ in 0..3 {
+        h.step();
+    }
+    let ime = h.view.ime.expect("the name field has the keyboard");
+    assert!(!ime.should_interrupt_composition);
+    h.step();
+    assert!(h.view.ime.as_ref().is_some_and(|i| !i.should_interrupt_composition));
+}
