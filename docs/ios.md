@@ -1,5 +1,7 @@
 # iOS (iPhone and iPad)
 
+Everything still missing, with priorities: [`ios-gaps.md`](ios-gaps.md).
+
 **Status: no app yet.** The engine and the egui shell type-check for iOS; nothing has been built, linked or run on a
 device or simulator. This page records what is verified, what is not, and the plan.
 
