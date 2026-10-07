@@ -304,6 +304,48 @@ fn services(ctx: egui::Context, inbox: Inbox, tmp: &Path) -> Services {
     }
 }
 
+/// Development aid: `LIGHTCRAFT_SCRIPT=<file>` runs the control-protocol requests in it, one JSON
+/// object per line (`{"method": …, "params": …}`, `docs/control-protocol.md`; `{"sleep": ms}`
+/// waits), and appends each reply to `<file>.out`. This is how a Mac drives the app on a device
+/// without touching it (`docs/ios.md` → *Driving the app on a device*). The file lives in the app's
+/// own sandbox, so nothing is exposed on the network.
+fn run_script(path: PathBuf, ctx: egui::Context) -> std::sync::mpsc::Receiver<lightcraft_ui_egui::ControlRequest> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let spawned = std::thread::Builder::new().name("lc-script".into()).spawn(move || {
+        use std::io::Write;
+        let out_path = path.with_extension("out");
+        let mut out = std::fs::OpenOptions::new().create(true).append(true).open(&out_path).ok();
+        let text = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+            log::error!("script {}: {e}", path.display());
+            String::new()
+        });
+        for line in text.lines().filter(|l| !l.trim().is_empty()) {
+            let v: serde_json::Value = serde_json::from_str(line).unwrap_or_default();
+            let reply = if let Some(ms) = v.get("sleep").and_then(serde_json::Value::as_u64) {
+                std::thread::sleep(std::time::Duration::from_millis(ms.min(600_000)));
+                json!({"ok": true})
+            } else if let Some(method) = v.get("method").and_then(serde_json::Value::as_str) {
+                let (req, reply) = lightcraft_ui_egui::ControlRequest::new(method, v.get("params").cloned().unwrap_or(json!({})));
+                if tx.send(req).is_err() {
+                    break;
+                }
+                ctx.request_repaint();
+                reply.recv_timeout(std::time::Duration::from_secs(120)).unwrap_or_else(|_| json!({"ok": false, "error": "timeout"}))
+            } else {
+                json!({"ok": false, "error": "not a request"})
+            };
+            if let Some(f) = out.as_mut() {
+                let _ = writeln!(f, "{}", json!({"request": v, "reply": reply}));
+            }
+        }
+        log::info!("script {} done", path.display());
+    });
+    if let Err(e) = spawned {
+        log::error!("script: {e}");
+    }
+    rx
+}
+
 /// A lifecycle notification for the app (between frames, on the main thread).
 fn on_lifecycle(host: &Weak<RefCell<Host>>, event: Lifecycle) {
     if let Some(h) = host.upgrade()
@@ -347,6 +389,9 @@ pub fn run() -> eframe::Result {
             let mut app = LightcraftApp::new(open_session(dir.as_deref()), services(cc.egui_ctx.clone(), inbox.clone(), &tmp));
             if let Some(ui) = prefs {
                 app.ui = ui;
+            }
+            if let Some(script) = std::env::var_os("LIGHTCRAFT_SCRIPT").filter(|s| !s.is_empty()) {
+                app = app.with_control(run_script(PathBuf::from(script), cc.egui_ctx.clone()));
             }
             lightcraft_ui_egui::i18n::set_language(app.ui.language);
             app.notices.extend(prefs_warning);
@@ -460,6 +505,29 @@ mod tests {
         let s = system_image(i);
         assert!(s.premultiplied && s.bit_depth == 10 && s.orientation == 8 && s.source_width == 4000);
         assert!(matches!(s.pixels, lightcraft_codecs::SystemPixels::Rgba16(ref v) if v.len() == 8));
+    }
+
+    #[test]
+    fn a_script_drives_the_app_and_keeps_the_replies() {
+        let dir = temp("script");
+        let script = dir.join("tour.jsonl");
+        std::fs::write(&script, "{\"sleep\": 1}\n\nnot json\n{\"method\": \"ui.inspect\"}\n").unwrap();
+        let rx = run_script(script, egui::Context::default());
+        let req = rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap();
+        assert_eq!(req.method, "ui.inspect");
+        req.reply.send(json!({"ok": true, "result": 7})).unwrap();
+        let mut out = String::new();
+        for _ in 0..200 {
+            out = std::fs::read_to_string(dir.join("tour.out")).unwrap_or_default();
+            if out.lines().count() == 3 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), 3, "{out}");
+        assert!(lines[1].contains("not a request") && lines[2].contains("\"result\":7"), "{out}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
