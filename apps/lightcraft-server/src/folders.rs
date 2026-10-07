@@ -184,8 +184,9 @@ pub struct Status {
     pub failed: usize,
     /// Indexed files not found any more.
     pub missing: usize,
-    /// Previews waiting to be built.
+    /// Previews waiting to be built, and the ones that couldn't be.
     pub previews: usize,
+    pub preview_errors: Vec<String>,
     /// When the last scan ended (unix seconds).
     pub last_scan: Option<u64>,
     /// Folders that couldn't be read, and the first few files that couldn't.
@@ -413,6 +414,7 @@ fn commit(lib: &Mutex<UserLib>, batch: &mut Vec<FileRead>, found: &HashSet<Strin
     let mut entries: Vec<Option<Entry>> = Vec::with_capacity(batch.len());
     let mut kinds = Vec::new();
     let mut moved_from: HashMap<usize, String> = HashMap::new();
+    let mut removed: HashSet<usize> = HashSet::new();
     for (i, (r, plan)) in batch.iter_mut().zip(plans).enumerate() {
         let mut e =
             Entry { size: r.file.size, mtime: r.file.mtime, hash: r.hash.clone().unwrap_or_default(), photo: None, missing: false, error: None };
@@ -424,7 +426,10 @@ fn commit(lib: &Mutex<UserLib>, batch: &mut Vec<FileRead>, found: &HashSet<Strin
         };
         match plan {
             Plan::Same(id) => e.photo = Some(id.0),
-            Plan::Removed(id) => e.photo = Some(id),
+            Plan::Removed(id) => {
+                e.photo = Some(id);
+                removed.insert(i);
+            }
             Plan::Changed(id) => {
                 if let Some(Ok((p, _))) = &probed {
                     let op = Op::SetContent {
@@ -507,7 +512,7 @@ fn commit(lib: &Mutex<UserLib>, batch: &mut Vec<FileRead>, found: &HashSet<Strin
     let mut previews = Vec::new();
     for (i, (r, e)) in batch.drain(..).zip(entries).enumerate() {
         let Some(e) = e.filter(|_| !refused.contains(&i)) else { continue };
-        if e.photo.is_some() && e.error.is_none() && !e.hash.is_empty() {
+        if e.photo.is_some() && e.error.is_none() && !e.hash.is_empty() && !removed.contains(&i) {
             previews.push((e.hash.clone(), r.file.path.clone()));
         }
         // a moved file is no longer in its old place
@@ -614,6 +619,8 @@ pub fn scan(
     }
     // gone from folders that are there; every photo file whose previews may be missing
     let mut l = lock(lib);
+    let roots: HashSet<&str> = folders.iter().map(|f| f.name.as_str()).collect();
+    l.index.files.retain(|k, _| roots.contains(k.split_once('/').map_or("", |(r, _)| r)));
     let mut all = Vec::new();
     for (k, e) in l.index.files.iter_mut() {
         let root = k.split_once('/').map_or("", |(r, _)| r);
@@ -686,6 +693,8 @@ pub struct Scanner {
     status: Mutex<BTreeMap<String, Status>>,
     jobs: Mutex<(VecDeque<Job>, HashSet<(String, String)>)>,
     jobs_wake: Condvar,
+    /// Previews that couldn't be built (user, hash): not tried again until the server restarts.
+    failed: Mutex<HashMap<(String, String), String>>,
     pub(crate) stop: AtomicBool,
 }
 
@@ -698,6 +707,7 @@ impl Scanner {
             status: Mutex::new(BTreeMap::new()),
             jobs: Mutex::new((VecDeque::new(), HashSet::new())),
             jobs_wake: Condvar::new(),
+            failed: Mutex::new(HashMap::new()),
             stop: AtomicBool::new(false),
         }
     }
@@ -712,11 +722,12 @@ impl Scanner {
         let mut s = lock(&self.status).get(user).cloned().unwrap_or_default();
         // (waiting or being built)
         s.previews = lock(&self.jobs).1.iter().filter(|(u, _)| u == user).count();
+        s.preview_errors = lock(&self.failed).iter().filter(|((u, _), _)| u == user).map(|(_, e)| e.clone()).take(20).collect();
         s
     }
 
     fn queue(&self, blobs: &Path, user: &str, hash: String, file: PathBuf) {
-        if !previews_missing(blobs, &hash) {
+        if !previews_missing(blobs, &hash) || lock(&self.failed).contains_key(&(user.to_string(), hash.clone())) {
             return;
         }
         let mut j = lock(&self.jobs);
@@ -841,13 +852,7 @@ pub(crate) fn run_previews(st: &Arc<State>) {
         lock(&sc.jobs).1.remove(&(user.clone(), hash.clone()));
         if let Err(e) = r {
             log::warn!("{user}: previews of {}: {e}", file.display());
-            // not tried again until the file changes
-            if let Ok(lib) = crate::api::lib(st, &user) {
-                let mut l = lock(&lib);
-                for e2 in l.index.files.values_mut().filter(|x| x.hash == hash) {
-                    e2.error = Some(format!("previews: {e}"));
-                }
-            }
+            lock(&sc.failed).insert((user, hash), format!("{}: {e}", file.display()));
         }
         lightcraft_engine::memory::release();
     }

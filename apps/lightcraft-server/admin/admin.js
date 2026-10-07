@@ -297,8 +297,9 @@ function showFolders(r) {
   }
   $('scanText').textContent = scanText(r.scan);
   const errs = $('scanErrors');
-  errs.replaceChildren(...(r.scan.errors || []).map((e) => el('li', {}, e)));
-  errs.hidden = !(r.scan.errors || []).length;
+  const all = (r.scan.errors || []).concat((r.scan.previewErrors || []).map((e) => 'previews: ' + e));
+  errs.replaceChildren(...all.map((e) => el('li', {}, e)));
+  errs.hidden = !all.length;
   clearTimeout(foldersTimer);
   if (r.scan.scanning || r.scan.previews) foldersTimer = setTimeout(loadFolders, 2000);
 }
