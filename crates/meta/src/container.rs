@@ -39,6 +39,10 @@ pub fn embedded(bytes: &[u8]) -> Embedded {
     if let Some(c) = crate::cr3::parse_cr3(bytes) {
         return Embedded { exif: crate::cr3::merged_exif(&c), xmp: c.xmp.map(|b| String::from_utf8_lossy(b).into_owned()), ..Default::default() };
     }
+    // HEIC / HEIF (iPhone photos) and AVIF: the Exif and XMP items of the `meta` box
+    if let Some((exif, xmp)) = crate::heif::metadata(bytes) {
+        return Embedded { exif, xmp, ..Default::default() };
+    }
     if bytes.starts_with(&[0xff, 0xd8]) {
         jpeg_segments(bytes)
     } else if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {

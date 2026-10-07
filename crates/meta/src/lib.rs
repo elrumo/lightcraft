@@ -16,6 +16,7 @@ pub mod cr3;
 mod datetime;
 mod exif;
 mod gpx;
+pub mod heif;
 mod iptc;
 pub mod tags;
 mod xmp;
