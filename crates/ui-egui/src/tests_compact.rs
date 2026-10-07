@@ -142,3 +142,12 @@ fn compact_crop_handles_are_grabbed_from_a_finger_width_away() {
     assert!(rect.x0 > 0.05 && rect.y0 > 0.02, "the corner moved in: {rect:?}");
     assert!((rect.x1 - 1.0).abs() < 1e-6 && (rect.y1 - 1.0).abs() < 1e-6, "the opposite corner stayed: {rect:?}");
 }
+
+#[test]
+fn ipad_portrait_is_compact_with_the_tools_on_the_right() {
+    let h = detail([820.0, 1180.0]);
+    assert!(h.app.compact, "820 pt is below the desktop layout's width");
+    let img = h.app.image_rect.expect("loupe drawn");
+    assert!(img.right() < 820.0 - 300.0, "the tool panel sits beside the photo, not below it: {img:?}");
+    assert!(img.width() > 400.0, "and it fills the room beside it: {img:?}");
+}

@@ -760,8 +760,10 @@ impl LightcraftApp {
 }
 
 /// Content width (points) below which the compact, touch-first layout is used. The desktop layout
-/// needs about 810 pt; iPhones are 375–440 pt wide in portrait, iPads 744+.
-pub const COMPACT_BELOW_PT: f32 = 700.0;
+/// needs about 810 pt (and its window never gets narrower than 900); iPhones are 375–440 pt wide in
+/// portrait, iPads 744–834 pt in portrait (compact, with side panels: see `COMPACT_WIDE_PT`) and
+/// 1024 pt and more in landscape (the desktop layout).
+pub const COMPACT_BELOW_PT: f32 = 900.0;
 
 /// Minimum height (points) of egui-drawn rows and buttons (context menus, combo boxes, dialogs) in the
 /// compact layout: Apple's 44 pt touch target.

@@ -14,6 +14,11 @@ use crate::widgets::icon_button;
 
 /// Height of the top bar and of the tab bar: Apple's minimum touch target is 44 pt.
 const BAR_H: f32 = 52.0;
+/// From this width (iPad) the tool sheet is a panel on the right and My Photos a column on the left,
+/// instead of a bottom sheet and a page of their own.
+pub const WIDE_PT: f32 = 600.0;
+/// The side panels' width on a wide compact window.
+const SIDE_W: f32 = 340.0;
 /// The sheet opens at this fraction of the window height.
 const SHEET_FRACTION: f32 = 0.4;
 
@@ -21,15 +26,23 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let ctx = ui.ctx().clone();
     let t = Tokens::get(&ctx);
     let detail = app.ui.view == ViewMode::Detail;
-    top_bar(app, ui, &t);
+    let wide = ctx.content_rect().width() >= WIDE_PT;
+    top_bar(app, ui, &t, wide);
     if detail {
         tab_bar(app, ui, &t);
         if app.ui.right != RightPanel::None || app.ui.presets {
-            sheet(app, ui, &t);
+            sheet(app, ui, &t, wide);
         }
     }
     let bg = if detail { t.canvas } else { t.grid_bg };
-    if app.ui.left_panel {
+    if app.ui.left_panel && wide {
+        egui::Panel::left("compact_sources")
+            .resizable(false)
+            .exact_size(SIDE_W)
+            .frame(egui::Frame::NONE.fill(t.chrome).stroke(egui::Stroke::new(1.0, t.divider)))
+            .show(ui, |ui| super::left::body(app, ui));
+        content(app, ui, bg);
+    } else if app.ui.left_panel {
         // "My Photos" as a page of its own; choosing a source closes it
         let src = app.session.source;
         egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.chrome)).show(ui, |ui| super::left::body(app, ui));
@@ -65,14 +78,14 @@ fn overlays(app: &mut LightcraftApp, ctx: &egui::Context) {
     super::toast(app, &ctx);
 }
 
-fn top_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
+fn top_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, wide: bool) {
     egui::Panel::top("compact_top")
         .exact_size(BAR_H)
         .frame(egui::Frame::NONE.fill(t.chrome).inner_margin(egui::Margin::symmetric(8, 0)).stroke(egui::Stroke::new(1.0, t.divider)))
         .show(ui, |ui| {
             let full = ui.max_rect();
             let grid = matches!(app.ui.view, ViewMode::PhotoGrid | ViewMode::SquareGrid);
-            let title = if app.ui.left_panel {
+            let title = if app.ui.left_panel && !wide {
                 "My Photos"
             } else if app.ui.view == ViewMode::Detail {
                 "Edit"
@@ -137,12 +150,20 @@ fn tab_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
     );
 }
 
-fn sheet(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
+fn sheet(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, wide: bool) {
     let h = ui.max_rect().height();
-    egui::Panel::bottom("compact_sheet")
-        .resizable(true)
-        .default_size(h * SHEET_FRACTION)
-        .size_range(120.0..=h * 0.85)
-        .frame(egui::Frame::NONE.fill(t.chrome).stroke(egui::Stroke::new(1.0, t.divider)))
-        .show(ui, |ui| if app.ui.presets { super::presets::body(app, ui) } else { super::right::body(app, ui) });
+    let frame = egui::Frame::NONE.fill(t.chrome).stroke(egui::Stroke::new(1.0, t.divider));
+    let body = |app: &mut LightcraftApp, ui: &mut egui::Ui| {
+        if app.ui.presets { super::presets::body(app, ui) } else { super::right::body(app, ui) }
+    };
+    if wide {
+        egui::Panel::right("compact_side").resizable(true).default_size(SIDE_W).size_range(280.0..=480.0).frame(frame).show(ui, |ui| body(app, ui));
+    } else {
+        egui::Panel::bottom("compact_sheet")
+            .resizable(true)
+            .default_size(h * SHEET_FRACTION)
+            .size_range(120.0..=h * 0.85)
+            .frame(frame)
+            .show(ui, |ui| body(app, ui));
+    }
 }
