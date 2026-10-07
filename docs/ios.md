@@ -33,10 +33,14 @@ layout and interaction only: no Adobe icons, artwork, fonts, presets or screensh
 
 ## What is missing
 
-1. **A touch UI.** `ui-egui` is built for mouse and keyboard: no pinch or two-finger pan, 23 right-click menus, hover
-   previews, Shift/Cmd/Alt modifiers, about 22 px hit targets and a three-panel layout about 810 pt wide. A phone needs
-   one panel at a time with bottom sheets. Plan: a new L5 crate that generates its edit panels from the `develop`
-   control specs and the command registry.
+1. **A touch UI (started).** `ui-egui` has a compact layout (`panels/compact.rs`) used when the content is narrower than
+   `COMPACT_BELOW_PT` (700 pt; `LightcraftApp::compact`): slim top bar, grid or loupe, a bottom tab bar of tools and the
+   active tool's panel as a resizable bottom sheet (it reuses `right::body`); a tap on a grid photo opens it. The host
+   keeps it inside the safe area. Check it headless with `lightcraft-cli snapshot --demo --size 390x844 --scale 2`.
+   Still missing: pinch / two-finger pan in the loupe (egui multi-touch is untested), swipe to the next photo, 44 pt
+   slider hit targets (sliders are ~22 px), a phone grid (3 columns, no date header per photo), long-press instead of the
+   23 right-click menus, import/export/preset UI without menus, masks and crop by touch, the iPad split layout (744+ pt
+   still gets the desktop layout), the left sidebar and presets as sheets.
 2. **HEIC/HEIF decode.** iPhone photos are HEIC; `crates/codecs` recognises the format but cannot decode it, and import
    currently accepts `.heic` files it then fails on. The pragmatic route is ImageIO behind the `FileLoader` hook
    (`crates/engine/src/media.rs`).
