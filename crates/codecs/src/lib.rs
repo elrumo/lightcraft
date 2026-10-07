@@ -27,6 +27,7 @@ mod png_codec;
 mod psd;
 mod sniff;
 pub mod space;
+mod system;
 mod tiff_codec;
 mod webp;
 
@@ -35,6 +36,7 @@ pub use encode::{
 };
 pub use sniff::{Format, sniff};
 pub use space::{NamedSpace, SourceSpace, SpaceOrigin, Trc};
+pub use system::{SystemDecodeFn, SystemImage, SystemPixels, clear_system_decoder, has_system_decoder, set_system_decoder};
 
 use lightcraft_raster::{Plane, Rgb32f, Rgba8};
 use serde::{Deserialize, Serialize};
@@ -171,8 +173,13 @@ pub fn decode_unguarded(bytes: &[u8], format: Format, opts: &DecodeOptions) -> R
         Format::Jxl => jxl::decode(bytes, &opts),
         #[cfg(not(feature = "jxl"))]
         Format::Jxl => Err(Error::Unsupported(format, "built without the `jxl` feature")),
-        Format::Avif => Err(Error::Unsupported(format, "no pure-Rust, permissively licensed AV1 decoder yet")),
-        Format::Heif => Err(Error::Unsupported(format, "no pure-Rust, permissively licensed HEVC decoder yet")),
+        // the system's decoder when the host installed one (iOS: ImageIO), see `system`
+        Format::Avif => {
+            system::decode(bytes, format, &opts).unwrap_or(Err(Error::Unsupported(format, "no pure-Rust, permissively licensed AV1 decoder yet")))
+        }
+        Format::Heif => {
+            system::decode(bytes, format, &opts).unwrap_or(Err(Error::Unsupported(format, "no pure-Rust, permissively licensed HEVC decoder yet")))
+        }
         Format::RawTiffLike | Format::RawOther => Err(Error::Unsupported(format, "camera raw: decode with lightcraft-raw")),
     }
 }
