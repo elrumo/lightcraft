@@ -11,6 +11,15 @@ part of `cargo xtask ci`. It needs only the Rust target (`rustup target add aarc
 Linux. It proves the dependency tree has no desktop-only crate on the iOS path (wgpu builds with its Metal backend).
 It does **not** prove an app links or runs: that needs macOS and Xcode.
 
+## Xcode project (phase 0 spike)
+
+`apps/lightcraft-ios` is the egui app as a static library (in-memory demo library, no pickers). `xcode/project.yml`
+is an XcodeGen spec: `cd apps/lightcraft-ios/xcode && xcodegen && open LightCraft.xcodeproj`. A pre-build phase runs
+`cargo build` for the SDK being built (Apple-silicon simulator or device; set `DEVELOPMENT_TEAM` for a device).
+It builds and installs on the simulator, but **crashes at launch on iOS 27**: UIKit traps
+(`UIApplicationEvaluateRuntimeIssueForNoSceneLifecycleAdoption`) because winit 0.30 has no scene lifecycle. Needs a
+newer winit or a scene delegate in the host; unresolved.
+
 ## Scope
 
 iPhone and iPad, a standalone library on the device (import, edit and export there; cloud sync stays out of scope),

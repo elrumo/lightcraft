@@ -1,0 +1,21 @@
+[package]
+name = "lightcraft-ios"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "LightCraft on iOS (phase 0 spike): the egui app as a static library for the Xcode project in xcode/"
+
+# Opts out of the workspace lints only so the one FFI entry point (`#[unsafe(no_mangle)]`) can be
+# allowed in `src/lib.rs`; the rest of the crate denies `unsafe_code`. See crates/sysmem.
+[lints.rust]
+unsafe_code = "deny"
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+lightcraft-engine = { workspace = true }
+lightcraft-ui-egui = { workspace = true }
+eframe = { workspace = true, features = ["default_fonts", "wgpu"] }
+egui = { workspace = true }

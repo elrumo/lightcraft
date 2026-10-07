@@ -1,0 +1,36 @@
+name: LightCraft
+options:
+  bundleIdPrefix: ai.storyteller
+  deploymentTarget:
+    iOS: "16.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    CODE_SIGN_STYLE: Automatic
+    DEVELOPMENT_TEAM: ""   # set your team to run on a device
+targets:
+  LightCraft:
+    type: application
+    platform: iOS
+    supportedDestinations: [iOS]
+    sources: [Sources]
+    info:
+      path: Info.plist
+      properties:
+        CFBundleDisplayName: LightCraft
+        UILaunchScreen: {}
+        UIApplicationSceneManifest: {UIApplicationSupportsMultipleScenes: false}
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+        UISupportedInterfaceOrientations~ipad: [UIInterfaceOrientationPortrait, UIInterfaceOrientationPortraitUpsideDown, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ai.storyteller.lightcraft.ios
+        TARGETED_DEVICE_FAMILY: "1,2"
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+        EXCLUDED_ARCHS[sdk=iphonesimulator*]: x86_64   # Apple-silicon simulator only
+        LIBRARY_SEARCH_PATHS: ["$(BUILT_PRODUCTS_DIR)"]
+        OTHER_LDFLAGS: [-llightcraft_ios, -lc++, -framework, Metal, -framework, QuartzCore, -framework, UIKit, -framework, Foundation, -framework, CoreGraphics, -framework, CoreFoundation, -framework, Security, -framework, CoreText, -framework, AVFoundation, -framework, CoreMedia, -framework, CoreVideo, -framework, MetalKit, -framework, IOSurface]
+    preBuildScripts:
+      - name: Build Rust (cargo)
+        script: '"$SRCROOT/build-rust.sh"'
+        basedOnDependencyAnalysis: false
