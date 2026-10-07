@@ -94,17 +94,16 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
     });
     let mut choice = None;
     let frame = egui::Frame::window(&ctx.global_style()).inner_margin(egui::Margin::symmetric(18, 14));
-    egui::Window::new(crate::i18n::tr("Your library couldn't be opened"))
-        .id(egui::Id::new("library-problem"))
+    super::fit_window(egui::Window::new(crate::i18n::tr("Your library couldn't be opened")).id(egui::Id::new("library-problem")), ctx)
         .order(egui::Order::Foreground)
         .collapsible(false)
         .resizable(false)
         .frame(frame)
         .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
-        .default_width(460.0)
+        .default_width(super::modal_width(ctx, 460.0))
         .show(ctx, |ui| {
             // a fixed width: a wrapped label in an auto-sized, centred window would move it every frame
-            ui.set_width(440.0);
+            ui.set_width(super::modal_width(ctx, 440.0));
             ui.spacing_mut().item_spacing.y = 8.0;
             if problem.path.is_empty() {
                 ui.label(RichText::new(crate::i18n::tr("LightCraft couldn't find where to keep your library.")).color(t.text));

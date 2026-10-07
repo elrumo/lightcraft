@@ -99,17 +99,17 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
     }
     .to_string();
     let frame = egui::Frame::window(&ctx.global_style()).inner_margin(egui::Margin::symmetric(16, 12));
-    let shown = egui::Window::new(crate::i18n::tr(&title)).id(egui::Id::new("lightcraft-dialog"))
+    let shown = super::fit_window(egui::Window::new(crate::i18n::tr(&title)).id(egui::Id::new("lightcraft-dialog")), ctx)
         .collapsible(false)
         .resizable(false)
         .frame(frame)
         .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
         .default_width(match dlg {
-            Dialog::Import { .. } => 760.0,
+            Dialog::Import { .. } => 760.0_f32,
             Dialog::SmartRules { .. } => 680.0,
             Dialog::AllMetadata { .. } => 620.0,
             _ => 380.0,
-        })
+        }.min(if app.compact { screen.width() - 16.0 } else { f32::INFINITY }))
         .show(ctx, |ui| {
             ui.spacing_mut().item_spacing.y = 8.0;
             match &mut dlg {

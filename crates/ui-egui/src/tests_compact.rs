@@ -151,3 +151,14 @@ fn ipad_portrait_is_compact_with_the_tools_on_the_right() {
     assert!(img.right() < 820.0 - 300.0, "the tool panel sits beside the photo, not below it: {img:?}");
     assert!(img.width() > 400.0, "and it fills the room beside it: {img:?}");
 }
+
+#[test]
+fn modal_dialogs_fit_a_phone_screen() {
+    let mut h = detail([390.0, 844.0]);
+    let r = h.request("engine.execute", json!({"command": "dialog.export"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    let rect = h.view.ctx.memory(|m| m.area_rect(egui::Id::new("lightcraft-dialog"))).expect("the export dialog is open");
+    assert!(rect.width() <= 390.0 && rect.height() <= 844.0, "the dialog fits the screen: {rect:?}");
+    assert!(rect.left() >= 0.0 && rect.top() >= 0.0, "and starts on it: {rect:?}");
+}

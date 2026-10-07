@@ -61,6 +61,20 @@ pub fn resizable_side(
     Some(w.round().clamp(limits.min, max))
 }
 
+/// Makes a modal window fit a phone in the compact layout: no wider or taller than the screen, and
+/// scrolling when its contents are. Desktop windows are left alone.
+pub fn fit_window<'a>(w: egui::Window<'a>, ctx: &egui::Context) -> egui::Window<'a> {
+    if !crate::is_compact(ctx) {
+        return w;
+    }
+    w.max_size(ctx.content_rect().size() - vec2(16.0, 16.0)).scroll(true)
+}
+
+/// A modal's content width: `want`, or what fits a phone's screen.
+pub fn modal_width(ctx: &egui::Context, want: f32) -> f32 {
+    if crate::is_compact(ctx) { want.min(ctx.content_rect().width() - 52.0) } else { want }
+}
+
 /// The HUD toast at the bottom centre of the canvas.
 pub fn toast(app: &mut LightcraftApp, ctx: &egui::Context) {
     let now = ctx.input(|i| i.time);

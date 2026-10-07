@@ -55,17 +55,16 @@ fn window(ctx: &egui::Context, id: &str, title: &str, text: &str, buttons: &[(&s
     });
     let mut chosen = None;
     let frame = egui::Frame::window(&ctx.global_style()).inner_margin(egui::Margin::symmetric(18, 14));
-    egui::Window::new(title)
-        .id(egui::Id::new(id))
+    super::fit_window(egui::Window::new(title).id(egui::Id::new(id)), ctx)
         .order(egui::Order::Foreground)
         .collapsible(false)
         .resizable(false)
         .frame(frame)
         .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
-        .default_width(440.0)
+        .default_width(super::modal_width(ctx, 440.0))
         .show(ctx, |ui| {
             // a fixed width: a wrapped label in an auto-sized, centred window would move it every frame
-            ui.set_width(420.0);
+            ui.set_width(super::modal_width(ctx, 420.0));
             ui.spacing_mut().item_spacing.y = 8.0;
             ui.add(egui::Label::new(RichText::new(text).color(t.text_label)).wrap());
             ui.add_space(4.0);
