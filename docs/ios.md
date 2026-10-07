@@ -1,8 +1,11 @@
 # iOS (iPhone and iPad)
 
-**Status: phase 0 spike.** The desktop egui UI runs on the iOS simulator (not touch-adapted, not yet tried on a
-device). The library is saved on the device and sync with your own LightCraft server ([sync.md](sync.md)) is wired up,
-not yet run. This page
+Everything still missing, with priorities: [`ios-gaps.md`](ios-gaps.md).
+
+**Status: a spike that runs on the simulator.** The desktop egui app builds as a static library, an Xcode project wraps
+it, and it runs on the iOS 27 simulator with a compact touch layout (below). It has not run on a device, has no native
+host (pickers, share sheet) and imports nothing yet: its library, saved on the device, starts with the procedural demo
+photos. Sync with your own LightCraft server ([sync.md](sync.md)) is wired up but not yet run. This page
 records what is verified, what is not, and the plan.
 
 ## What is verified
