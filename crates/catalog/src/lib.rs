@@ -211,6 +211,12 @@ pub enum Op {
         folder: String,
         at: Option<String>,
     },
+    /// Where a photo's original is in the user's library folders on the sync server
+    /// ([`Photo::server_path`]): the server found it there, or it moved there.
+    SetServerPath {
+        id: PhotoId,
+        path: Option<String>,
+    },
     /// Several ops as one step (undo applies the inverses in reverse).
     Batch {
         ops: Vec<Op>,
@@ -576,6 +582,10 @@ impl Catalog {
                 let old_name = std::mem::replace(&mut p.file_name, file_name);
                 let old_format = format.map(|f| std::mem::replace(&mut p.format, f));
                 Op::Relink { id, file_name: old_name, source: std::mem::replace(&mut p.source, source), format: old_format }
+            }
+            Op::SetServerPath { id, path } => {
+                let p = self.photo_mut(id)?;
+                Op::SetServerPath { id, path: std::mem::replace(&mut p.server_path, path) }
             }
             Op::SetContent { id, width, height, file_size, content_hash, preview_only } => {
                 let p = self.photo_mut(id)?;

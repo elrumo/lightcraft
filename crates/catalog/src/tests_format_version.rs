@@ -179,8 +179,9 @@ fn op_variants_are_versioned() {
             | Op::SetLabelName { .. }
             | Op::Batch { .. } => 1,
             Op::SetBrowsed { .. } => 2,
+            Op::SetServerPath { .. } => 3,
         }
     }
-    let newest = since(&Op::SetBrowsed { folder: String::new(), at: None });
+    let newest = since(&Op::SetServerPath { id: crate::PhotoId(1), path: None });
     assert_eq!(newest, VERSION, "the newest op's version must be the current format version");
 }

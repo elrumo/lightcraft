@@ -68,6 +68,7 @@ pub fn key_of(op: &Op) -> Option<String> {
         Op::SetCaptured { id, .. } => p(id, "captured"),
         Op::SetAnalysis { id, .. } => p(id, "analysis"),
         Op::SetContent { id, .. } => p(id, "content"),
+        Op::SetServerPath { id, .. } => p(id, "serverPath"),
         Op::AddAlbum { album } => a(&album.id, "add"),
         Op::RemoveAlbum { id } => a(id, "remove"),
         Op::RenameAlbum { id, .. } => a(id, "name"),
@@ -111,7 +112,8 @@ fn photo_of(op: &Op) -> Option<PhotoId> {
         | Op::SetVersions { id, .. }
         | Op::SetCaptured { id, .. }
         | Op::SetAnalysis { id, .. }
-        | Op::SetContent { id, .. } => Some(*id),
+        | Op::SetContent { id, .. }
+        | Op::SetServerPath { id, .. } => Some(*id),
         _ => None,
     }
 }
@@ -472,6 +474,13 @@ impl ServerCore {
 
     pub fn catalog(&self) -> &Catalog {
         &self.catalog
+    }
+
+    /// A new photo id in id space `space` (photos the server adds itself, from the user's library
+    /// folders, are in a space no device is given).
+    pub fn alloc_photo_id(&mut self, space: u32) -> PhotoId {
+        self.catalog.set_id_space(space);
+        self.catalog.alloc_photo_id()
     }
 
     /// Append a device's ops, made on top of op `base`: all of them or none.

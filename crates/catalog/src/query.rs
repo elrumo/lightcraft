@@ -57,6 +57,10 @@ pub struct Filter {
     /// A folder on disk: its files only (browsed ones too); `subfolders` includes everything below.
     pub folder: Option<String>,
     pub subfolders: bool,
+    /// A folder of the user's library folders on the sync server: the photos in it and in the
+    /// folders below (by [`Photo::server_path`]; `""` = every photo kept in a library folder).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server_folder: Option<String>,
     /// Smart-album rules (all / any / none, nested groups; see [`crate::rules`]).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rule_set: Option<crate::RuleSet>,
@@ -207,6 +211,11 @@ impl Filter {
                     return false;
                 }
             }
+        }
+        if let Some(dir) = &self.server_folder
+            && !p.server_path.as_deref().is_some_and(|path| in_server_folder(path, dir))
+        {
+            return false;
         }
         if self.rating > 0 {
             let ok = match self.rating_op {
@@ -407,6 +416,27 @@ pub struct DateGroup {
     pub months: Vec<(String, usize)>,
     /// `YYYY-MM-DD` and counts, newest first.
     pub days: Vec<(String, usize)>,
+}
+
+/// The folders of the user's library folders on the sync server, each with how many photos are
+/// in it or below (Recently Deleted and Local records left out), by path.
+pub fn server_folders(cat: &Catalog) -> std::collections::BTreeMap<String, usize> {
+    let mut out = std::collections::BTreeMap::new();
+    for dir in cat.photos().filter(|p| !p.deleted && !p.local).filter_map(|p| p.server_folder()) {
+        let mut end = Some(dir.len());
+        while let Some(e) = end {
+            let Some(d) = dir.get(..e).filter(|d| !d.is_empty()) else { break };
+            *out.entry(d.to_string()).or_insert(0) += 1;
+            end = d.rfind('/');
+        }
+    }
+    out
+}
+
+/// Whether a [`Photo::server_path`] lies in server folder `dir` (or below it; `""`: anywhere).
+pub fn in_server_folder(path: &str, dir: &str) -> bool {
+    let dir = dir.trim_matches('/');
+    dir.is_empty() || path.strip_prefix(dir).is_some_and(|rest| rest.starts_with('/'))
 }
 
 /// Whether file `path` is directly in `dir` (or anywhere below it with `deep`). Both `/` and `\\`
