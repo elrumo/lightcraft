@@ -74,3 +74,17 @@ fn swiping_a_fitted_photo_changes_photo_and_a_tap_does_not_zoom() {
     h.settle(SETTLE);
     assert_ne!(h.app.session.active(), first, "swipe left shows the next photo");
 }
+
+#[test]
+fn compact_sliders_take_a_touch_well_above_the_track() {
+    let mut h = detail([390.0, 1500.0]);
+    let id = h.app.session.active().expect("active photo");
+    let before = format!("{:?}", h.app.session.develop_of(id));
+    let track = h.app.widgets.iter().find(|(w, _)| w == "slider:light.exposure").map(|(_, r)| *r).expect("exposure slider in the sheet");
+    // 18 pt above the track centre: outside a desktop slider's hit area, inside the touch one
+    let (x, y) = (track.left() + track.width() * 0.8, track.center().y - 18.0);
+    let r = h.request("ui.click", json!({"x": x, "y": y}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    assert_ne!(format!("{:?}", h.app.session.develop_of(id)), before, "the tap moved the slider");
+}

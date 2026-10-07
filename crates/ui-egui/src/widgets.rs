@@ -147,13 +147,22 @@ pub struct SliderOut {
 pub fn slider(ui: &mut Ui, spec: &ControlSpec, value: f64, enabled: bool, label_override: Option<&str>) -> SliderOut {
     let t = Tokens::get(ui.ctx());
     let w = ui.available_width();
-    let (row, _) = ui.allocate_exact_size(vec2(w, t.slider_row_h), Sense::hover());
+    // touch: a taller row with the track low in it, and a grab zone of about 48 pt (Apple wants 44)
+    let touch = crate::is_compact(ui.ctx());
+    let (row_h, track_dy) = if touch { (68.0, 24.0) } else { (t.slider_row_h, 0.0) };
+    let (row, _) = ui.allocate_exact_size(vec2(w, row_h), Sense::hover());
     let pad_l = 24.0;
     let pad_r = 22.0;
     let label_rect = Rect::from_min_size(pos2(row.left() + pad_l, row.top() + 4.0), vec2(w - pad_l - pad_r, 18.0));
-    let track_rect = Rect::from_min_max(pos2(row.left() + pad_l, row.top() + 22.0), pos2(row.right() - pad_r, row.top() + 40.0));
+    let track_rect =
+        Rect::from_min_max(pos2(row.left() + pad_l, row.top() + 22.0 + track_dy), pos2(row.right() - pad_r, row.top() + 40.0 + track_dy));
     let id = ui.id().with(spec.id);
-    let resp = ui.interact(track_rect.expand2(vec2(8.0, 2.0)), id, if enabled { Sense::click_and_drag() } else { Sense::hover() });
+    let grab = if touch {
+        Rect::from_min_max(pos2(track_rect.left() - 12.0, track_rect.top() - 24.0), pos2(track_rect.right() + 12.0, row.bottom()))
+    } else {
+        track_rect.expand2(vec2(8.0, 2.0))
+    };
+    let resp = ui.interact(grab, id, if enabled { Sense::click_and_drag() } else { Sense::hover() });
     // screen readers: a slider named after its control, with its value
     let label_text = crate::i18n::tr(label_override.unwrap_or(spec.label)).to_string();
     resp.widget_info(|| egui::WidgetInfo::slider(enabled, value, label_text.clone()));
@@ -227,7 +236,7 @@ pub fn slider(ui: &mut Ui, spec: &ControlSpec, value: f64, enabled: bool, label_
     let shown = if spec.id == "wb.temp" { format!("{v:.0}") } else { spec.format(v).replace("+0.00", "0").replace("-0.00", "0") };
     let shown = if shown == "+0" || shown == "-0" { "0".to_string() } else { shown };
     p.text(label_rect.right_center(), Align2::RIGHT_CENTER, shown, t.font(12.5), text_c);
-    let ring = 7.0;
+    let ring = if touch { 11.0 } else { 7.0 };
     let tx = to_x(v);
     paint_track(ui, track_rect, &spec.track, &t, tx, ring);
     let p = ui.painter();

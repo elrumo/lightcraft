@@ -707,6 +707,7 @@ impl LightcraftApp {
             return;
         }
         self.compact = ctx.content_rect().width() < COMPACT_BELOW_PT;
+        ctx.data_mut(|d| d.insert_temp(egui::Id::new("lc-compact"), self.compact));
         if self.compact {
             panels::compact::show(self, ui);
             self.widgets = widgets::take_registry(&ctx);
@@ -760,6 +761,12 @@ impl LightcraftApp {
 /// Content width (points) below which the compact, touch-first layout is used. The desktop layout
 /// needs about 810 pt; iPhones are 375–440 pt wide in portrait, iPads 744+.
 pub const COMPACT_BELOW_PT: f32 = 700.0;
+
+/// Whether this frame uses the compact layout, for widgets that only have the context (bigger touch
+/// targets).
+pub fn is_compact(ctx: &egui::Context) -> bool {
+    ctx.data(|d| d.get_temp::<bool>(egui::Id::new("lc-compact"))).unwrap_or(false)
+}
 
 /// How long a screenshot waits for in-flight renders.
 const SCREENSHOT_SETTLE_MS: f64 = 3000.0;
