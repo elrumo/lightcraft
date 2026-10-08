@@ -357,3 +357,22 @@ fn search_over_a_large_library_is_fast() {
     println!("reopen {N}: {:?}", t.elapsed());
     assert_eq!(ix.len(), N);
 }
+
+#[test]
+fn an_in_memory_index_works_like_a_file_one_without_writing() {
+    let dir = Dir::new();
+    let mut mem = EmbeddingIndex::in_memory(MODEL, DIM).unwrap();
+    for i in 0..5 {
+        assert!(mem.insert(key(i), &vec_of(i as u64, DIM)).unwrap());
+    }
+    assert!(!mem.insert(key(2), &vec_of(2, DIM)).unwrap());
+    assert_eq!(mem.search(&vec_of(3, DIM), 1).unwrap()[0].key, key(3));
+    assert_eq!(mem.model(), MODEL);
+    // what it holds can be handed to a file-backed index
+    let mut disk = EmbeddingIndex::open(&dir.file("d.bin"), MODEL, DIM).unwrap();
+    assert_eq!(disk.import(&mem.export(|_| false, 100), |_| true).unwrap().added, 5);
+    drop(disk);
+    assert_eq!(EmbeddingIndex::open(&dir.file("d.bin"), MODEL, DIM).unwrap().len(), 5);
+    // and a model id that can't be stored is refused here too
+    assert!(EmbeddingIndex::in_memory("a-model-id-that-is-far-too-long", DIM).is_err());
+}

@@ -8,8 +8,13 @@ description = "LightCraft photo understanding: image-text search embeddings and 
 [lints]
 workspace = true
 
+[features]
+# a tiny deterministic stand-in for the model, for the tests of crates that use it
+testing = []
+
 [dependencies]
 half = { workspace = true }
+lightcraft-raster = { workspace = true }
 siphasher = { workspace = true }
 thiserror = { workspace = true }
 
@@ -19,7 +24,6 @@ candle-core = { workspace = true }
 candle-nn = { workspace = true }
 candle-transformers = { workspace = true }
 lightcraft-fetch = { workspace = true }
-lightcraft-raster = { workspace = true }
 serde_json = { workspace = true }
 # pure Rust: no `onig` (C), no `esaxx_fast` (C++); `unstable_wasm` swaps Oniguruma for fancy-regex
 tokenizers = { version = "0.22", default-features = false, features = ["unstable_wasm"] }

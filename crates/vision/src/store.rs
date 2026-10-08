@@ -95,7 +95,8 @@ pub struct Spec<'a> {
 }
 
 impl Spec<'_> {
-    fn check(&self) -> Result<(), Error> {
+    /// Whether the model id and layout can be stored.
+    pub fn check(&self) -> Result<(), Error> {
         if self.model.is_empty() || self.model.len() > MODEL_LEN || !self.model.is_ascii() || self.model.bytes().any(|b| b == 0) {
             return Err(Error::Invalid("model id"));
         }

@@ -30,7 +30,8 @@ pub struct Import {
 
 #[derive(Debug)]
 pub struct EmbeddingIndex {
-    file: RecordFile,
+    /// `None`: an in-memory index (nothing is written; a library without a folder).
+    file: Option<RecordFile>,
     spec_model: String,
     dim: usize,
     keys: Vec<Key>,
@@ -115,7 +116,13 @@ impl EmbeddingIndex {
             keys.push(key);
             rows.extend_from_slice(&bits);
         })?;
-        Ok(EmbeddingIndex { file, spec_model: model.to_string(), dim, keys, rows, pos })
+        Ok(EmbeddingIndex { file: Some(file), spec_model: model.to_string(), dim, keys, rows, pos })
+    }
+
+    /// An index that lives in memory only.
+    pub fn in_memory(model: &str, dim: usize) -> Result<EmbeddingIndex, Error> {
+        Self::spec(model, dim)?.check()?;
+        Ok(EmbeddingIndex { file: None, spec_model: model.to_string(), dim, keys: Vec::new(), rows: Vec::new(), pos: HashMap::new() })
     }
 
     pub fn len(&self) -> usize {
@@ -128,6 +135,10 @@ impl EmbeddingIndex {
 
     pub fn dim(&self) -> usize {
         self.dim
+    }
+
+    pub fn model(&self) -> &str {
+        &self.spec_model
     }
 
     pub fn contains(&self, key: &Key) -> bool {
@@ -156,7 +167,9 @@ impl EmbeddingIndex {
             return Err(Error::Invalid("vector size"));
         }
         let bits = encode(vec).ok_or(Error::Invalid("vector is not finite or has no length"))?;
-        self.file.append(&Self::record(&key, &bits))?;
+        if let Some(f) = &mut self.file {
+            f.append(&Self::record(&key, &bits))?;
+        }
         self.pos.insert(key, self.keys.len());
         self.keys.push(key);
         self.rows.extend_from_slice(&bits);
@@ -240,8 +253,8 @@ impl EmbeddingIndex {
         for (key, bits) in &fresh {
             recs.extend_from_slice(&Self::record(key, bits));
         }
-        if !recs.is_empty() {
-            self.file.append(&recs)?;
+        if let (false, Some(f)) = (recs.is_empty(), &mut self.file) {
+            f.append(&recs)?;
         }
         for (key, bits) in fresh {
             self.pos.insert(key, self.keys.len());

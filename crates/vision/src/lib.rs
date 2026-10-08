@@ -12,6 +12,9 @@
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+pub mod embedder;
+#[cfg(any(test, feature = "testing"))]
+pub mod fake;
 pub mod index;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod models;
@@ -21,6 +24,7 @@ pub mod store;
 #[cfg(not(target_arch = "wasm32"))]
 mod weights;
 
+pub use embedder::Embedder;
 pub use index::{EmbeddingIndex, Hit, Import};
 pub use store::{Error, Key};
 
