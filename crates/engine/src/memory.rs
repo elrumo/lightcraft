@@ -47,6 +47,38 @@ pub fn budget_for_limit(available: Option<usize>) -> usize {
     available.filter(|a| *a > 0).map_or(768 << 20, |a| a / 3).clamp(MIN, MAX)
 }
 
+/// What an export needs at its peak: the source as floats (12 bytes per pixel) while the develop pipeline's stage
+/// buffers, the output image and the encoder take about 48 bytes per output pixel. (Measured on a 12 MP and a 48 MP
+/// ProRAW; deliberately a little high.)
+pub fn export_need(source_px: usize, output_px: usize) -> usize {
+    source_px.saturating_mul(12).saturating_add(output_px.saturating_mul(48))
+}
+
+/// What an export may take on this device, where going over ends the app: on iOS the system ends an app that
+/// exceeds its limit, so two budgets (the budget is a third of what the app may allocate at launch); elsewhere memory
+/// swaps instead, so there is no limit unless `LIGHTCRAFT_EXPORT_MEMORY_MB` sets one. A render over it is not tried
+/// here: it goes to the sync server, or fails with a message ([`crate::export`]).
+pub fn export_limit() -> Option<usize> {
+    if let Some(mb) = std::env::var("LIGHTCRAFT_EXPORT_MEMORY_MB").ok().and_then(|v| v.trim().parse::<usize>().ok()).filter(|m| *m > 0) {
+        return Some(mb << 20);
+    }
+    cfg!(target_os = "ios").then(|| budget().saturating_mul(2))
+}
+
+impl crate::Session {
+    /// What an export from this session may take: what its host set ([`crate::Session::set_export_limit`]), else the
+    /// platform's ([`export_limit`]).
+    pub fn export_limit(&self) -> Option<usize> {
+        self.export_limit.unwrap_or_else(export_limit)
+    }
+
+    /// Say what an export from this session may take (`None`: no limit). A host that knows the app's real limit (the
+    /// iOS app) says so here; the render a sync server makes for a device has none of its own.
+    pub fn set_export_limit(&mut self, bytes: Option<usize>) {
+        self.export_limit = Some(bytes);
+    }
+}
+
 /// Physical memory (bytes), when the platform tells us without native calls.
 fn total_ram() -> Option<usize> {
     #[cfg(target_os = "linux")]
@@ -100,6 +132,8 @@ fn apply(b: usize) {
         g.set_limit(b / 4);
     }
     lightcraft_gpu::set_pool_limit((b / 8) as u64);
+    // an eighth of the budget for the JPEG XL tiles (ProRAW, Adobe's JPEG XL DNGs) decoded at once, ~32 MB each
+    lightcraft_raw::set_max_parallel_tiles((b / 8 / (32 << 20)).max(2));
 }
 
 /// Share of the budget for the engine's caches.
@@ -330,6 +364,19 @@ impl crate::Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn export_needs_follow_the_pixels() {
+        let (mp12, mp48) = (12_192_768usize, 48_771_072usize);
+        let gib = 1usize << 30;
+        // two iOS budgets of 1 GiB: a 12 MP export fits; a 48 MP one at full size does not, but a 48 MP photo exported
+        // at half its size (read at 12 MP, written at 24 MP) does
+        assert!(export_need(mp12, mp12) < 2 * gib, "{}", export_need(mp12, mp12));
+        assert!(export_need(mp48, mp48) > 2 * gib, "{}", export_need(mp48, mp48));
+        assert!(export_need(mp12, mp48 / 2) < 2 * gib, "{}", export_need(mp12, mp48 / 2));
+        // never overflows
+        assert_eq!(export_need(usize::MAX, usize::MAX), usize::MAX);
+    }
 
     #[test]
     fn the_ios_budget_follows_the_app_memory_limit() {

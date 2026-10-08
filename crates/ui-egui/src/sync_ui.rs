@@ -8,6 +8,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::Duration;
 
 use lightcraft_engine::sync::{Done, POLL, Task};
+use lightcraft_engine::usage::LocalUsage;
 
 use crate::LightcraftApp;
 
@@ -46,13 +47,111 @@ pub struct SyncDriver {
     pub in_flight: usize,
     focused: bool,
     pub form: SyncForm,
+    pub storage: Storage,
 }
 
 impl Default for SyncDriver {
     fn default() -> Self {
         let (tx, rx) = channel();
-        SyncDriver { tx, rx, in_flight: 0, focused: false, form: SyncForm::default() }
+        SyncDriver { tx, rx, in_flight: 0, focused: false, form: SyncForm::default(), storage: Storage::default() }
     }
+}
+
+/// How often this computer's folders are measured again while Settings ▸ Sync is open.
+const MEASURE_EVERY: f64 = 30.0;
+
+/// What this computer takes, for Settings ▸ Sync's storage section. Reading every file's size
+/// takes a while on a big library, so a worker thread does it and a frame only picks up the answer.
+#[derive(Default)]
+pub struct Storage {
+    /// The last measurement (`None`: not yet, or not a library on a disk).
+    pub local: Option<LocalUsage>,
+    /// (photos in the library, those with only previews here) when `local` was measured.
+    pub counts: (usize, usize),
+    #[cfg(not(target_arch = "wasm32"))]
+    measuring: Option<Receiver<LocalUsage>>,
+    /// `ctx` time of the last measurement.
+    at: Option<f64>,
+}
+
+/// Keep the storage numbers current while Settings ▸ Sync shows them: the server is asked (the
+/// engine says when: at most every 20 s) and this computer measured again every 30 s, or at
+/// once with `refresh`. Call it every frame the section is visible.
+pub fn storage_poll(app: &mut LightcraftApp, ctx: &egui::Context, refresh: bool) {
+    if refresh {
+        app.session.sync_refresh_usage();
+    } else {
+        app.session.sync_want_usage();
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let now = ctx.input(|i| i.time);
+        let s = &mut app.sync.storage;
+        if let Some(rx) = &s.measuring {
+            match rx.try_recv() {
+                Ok(u) => {
+                    s.local = Some(u);
+                    s.at = Some(now);
+                    s.measuring = None;
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => s.measuring = None,
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    ctx.request_repaint_after(Duration::from_millis(250));
+                }
+            }
+        }
+        if s.measuring.is_none()
+            && (refresh || s.at.is_none_or(|t| now - t >= MEASURE_EVERY))
+            && let Some(dirs) = app.session.local_dirs()
+        {
+            app.sync.storage.counts = app.session.photo_counts();
+            let (tx, rx) = channel();
+            let ctx = ctx.clone();
+            let spawned = std::thread::Builder::new().name("lc-usage".into()).spawn(move || {
+                let _ = tx.send(lightcraft_engine::usage::measure(&dirs));
+                ctx.request_repaint();
+            });
+            match spawned {
+                Ok(_) => app.sync.storage.measuring = Some(rx),
+                Err(e) => {
+                    log::warn!("storage: can't start a thread: {e}");
+                    app.sync.storage.at = Some(now);
+                }
+            }
+        }
+    }
+    #[cfg(target_arch = "wasm32")]
+    let _ = ctx;
+}
+
+/// Bytes as a person reads them: `412 GB`, `1.9 GB`, `37 MB` (decimal units, as the system's file
+/// manager shows them).
+pub fn bytes_label(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    let mut value = bytes as f64;
+    let mut unit = 0;
+    while value >= 999.5 && unit < UNITS.len() - 1 {
+        value /= 1000.0;
+        unit += 1;
+    }
+    match unit {
+        0 => format!("{bytes} B"),
+        _ if value >= 99.5 => format!("{value:.0} {}", UNITS[unit]),
+        _ => format!("{value:.1} {}", UNITS[unit]),
+    }
+}
+
+/// A count with thousands separators: `22,796`.
+pub fn count_label(n: u64) -> String {
+    let digits = n.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
 }
 
 /// Hand finished tasks to the engine and start the next ones (cheap when there's nothing to do).
@@ -97,5 +196,27 @@ pub fn cloud_status(app: &LightcraftApp) -> (String, bool, bool) {
             true,
         ),
         _ => (format!("Synced with {server}"), false, false),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sizes_and_counts_read_well() {
+        assert_eq!(bytes_label(0), "0 B");
+        assert_eq!(bytes_label(999), "999 B");
+        assert_eq!(bytes_label(1_000), "1.0 KB");
+        assert_eq!(bytes_label(37_400_000), "37.4 MB");
+        assert_eq!(bytes_label(412_300_000_000), "412 GB");
+        assert_eq!(bytes_label(1_900_000_000), "1.9 GB");
+        assert_eq!(bytes_label(999_900_000), "1.0 GB", "no `1000 MB`");
+        assert_eq!(bytes_label(4_000_000_000_000), "4.0 TB");
+        assert_eq!(bytes_label(u64::MAX), "18446744 TB");
+        assert_eq!(count_label(0), "0");
+        assert_eq!(count_label(999), "999");
+        assert_eq!(count_label(22_796), "22,796");
+        assert_eq!(count_label(1_234_567), "1,234,567");
     }
 }

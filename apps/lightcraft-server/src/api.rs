@@ -9,6 +9,7 @@
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::{Duration, Instant};
 
 use lightcraft_catalog::sync::{Pull, PushError, ServerCore, proto};
 use lightcraft_catalog::{FsStore, LibraryLock};
@@ -27,6 +28,8 @@ pub const BLOB_MAX: u64 = 16 << 30;
 const PREVIEW_MAX: u64 = 256 << 20;
 /// Ops per pull at most.
 const PULL_MAX: usize = 5000;
+/// A storage answer is reused this long: it walks every photo file the user has.
+const USAGE_TTL: Duration = Duration::from_secs(5);
 /// Smart and mini previews start with this.
 const PREVIEW_MAGIC: &[u8] = b"LCSP1\n";
 
@@ -57,6 +60,8 @@ pub struct UserLib {
     /// The user's folder.
     pub(crate) dir: PathBuf,
     pub(crate) index: crate::folders::Index,
+    /// The last `GET /api/usage` answer and when it was made.
+    usage: Option<(Instant, proto::Usage)>,
     _lock: LibraryLock,
 }
 
@@ -73,7 +78,7 @@ impl UserLib {
             Err(_) => proto::Presets { version: 0, presets: json!([]) },
         };
         let index = crate::folders::Index::load(&dir);
-        Ok(UserLib { core, presets, dir, index, _lock: lock })
+        Ok(UserLib { core, presets, dir, index, usage: None, _lock: lock })
     }
 
     /// (photos, albums) in the library.
@@ -191,6 +196,7 @@ fn api(st: &State, req: &mut Request, method: &Method, path: &str, q: &str) -> R
         },
         (Method::Get, ["me"]) => me(st, &who),
         (Method::Get, ["snapshot"]) => snapshot(st, &l, &who),
+        (Method::Get, ["usage"]) => usage(st, &l, &who),
         (Method::Get, ["ops"]) => ops(&l, q),
         (Method::Post, ["ops"]) => push(req, &l, &who),
         (Method::Get, ["presets"]) => {
@@ -199,6 +205,7 @@ fn api(st: &State, req: &mut Request, method: &Method, path: &str, q: &str) -> R
         }
         (Method::Put, ["presets"]) => put_presets(req, &l),
         (m, ["blobs", kind, hash]) => blob(st, req, m, &l, &who.user, kind, hash),
+        (Method::Post, ["render"]) => render(st, req, &l, &who.user),
         _ => error(404, format!("no route {method} {path}")),
     }
 }
@@ -264,6 +271,53 @@ fn me(st: &State, who: &Session) -> Resp {
     let devices: Vec<Value> =
         a.devices_of(&who.user).iter().map(|d| json!({"id": d.id, "name": d.name, "space": d.space, "created": d.created})).collect();
     json(200, &json!({"user": who.user, "device": who.device, "library": a.library_of(&who.user).unwrap_or_default(), "devices": devices}))
+}
+
+/// What the user's library takes here: their photo files by kind, the photos in their library
+/// folders (read where they are, not stored), and how much room the disk has left.
+fn usage(st: &State, l: &Mutex<UserLib>, who: &Session) -> Resp {
+    let (dir, mut u) = {
+        let l = l.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some((at, u)) = &l.usage
+            && at.elapsed() < USAGE_TTL
+        {
+            return json(200, &json!(u));
+        }
+        let (photos, albums) = l.counts();
+        let mut folders = proto::Files::default();
+        for e in l.index.files.values().filter(|e| !e.missing) {
+            folders.files += 1;
+            folders.bytes = folders.bytes.saturating_add(e.size);
+        }
+        (l.dir.clone(), proto::Usage { photos: photos as u64, albums: albums as u64, folders, ..Default::default() })
+    };
+    // (the folders are walked without the library locked: pushes and pulls go on meanwhile)
+    let blobs = dir.join("blobs");
+    u.original = blob_usage(&blobs, "original");
+    u.smart = blob_usage(&blobs, "smart");
+    u.mini = blob_usage(&blobs, "mini");
+    u.disk = lightcraft_engine::usage::disk_space(&st.data);
+    u.devices = st.accounts.lock().unwrap_or_else(PoisonError::into_inner).devices_of(&who.user).len() as u64;
+    l.lock().unwrap_or_else(PoisonError::into_inner).usage = Some((Instant::now(), u.clone()));
+    json(200, &json!(u))
+}
+
+/// The files of one kind under `blobs/<kind>/<xx>/<hash>`.
+fn blob_usage(blobs: &Path, kind: &str) -> proto::Files {
+    let mut out = proto::Files::default();
+    let Ok(prefixes) = std::fs::read_dir(blobs.join(kind)) else { return out };
+    for prefix in prefixes.flatten().filter(|e| e.file_type().is_ok_and(|t| t.is_dir())) {
+        let Ok(files) = std::fs::read_dir(prefix.path()) else { continue };
+        for f in files.flatten() {
+            if let Ok(m) = f.metadata()
+                && m.is_file()
+            {
+                out.files += 1;
+                out.bytes = out.bytes.saturating_add(m.len());
+            }
+        }
+    }
+    out
 }
 
 fn snapshot(st: &State, l: &Mutex<UserLib>, who: &Session) -> Resp {
@@ -364,12 +418,15 @@ fn range(v: &str, len: u64) -> Option<Result<(u64, u64), ()>> {
 
 /// An original kept in one of the user's library folders (still the file that was indexed).
 fn folder_original(st: &State, l: &Mutex<UserLib>, user: &str, hash: &str) -> Option<std::fs::File> {
+    folder_original_path(st, l, user, hash).and_then(|p| std::fs::File::open(p).ok())
+}
+
+/// Where a library folder keeps the original with this content, when it is there, unchanged and readable.
+fn folder_original_path(st: &State, l: &Mutex<UserLib>, user: &str, hash: &str) -> Option<PathBuf> {
     let found = l.lock().unwrap_or_else(PoisonError::into_inner).index.originals(hash);
     for (path, size, mtime) in &found {
-        if crate::folders::unchanged(path, *size, *mtime)
-            && let Ok(f) = std::fs::File::open(path)
-        {
-            return Some(f);
+        if crate::folders::unchanged(path, *size, *mtime) && std::fs::File::open(path).is_ok() {
+            return Some(path.clone());
         }
     }
     if !found.is_empty() {
@@ -420,8 +477,50 @@ fn blob(st: &State, req: &mut Request, method: &Method, l: &Mutex<UserLib>, user
             let size = usize::try_from(n).ok();
             Response::new(StatusCode(status), headers, Box::new(f.take(n)), size, None)
         }
-        Method::Put => put_blob(req, &dir, kind, &path),
+        Method::Put => {
+            // `?previews=1` on an original: the device asks the server to build its previews
+            let previews = kind == "original" && req.url().split_once('?').is_some_and(|(_, q)| query(q, "previews") == Some("1"));
+            let resp = put_blob(req, &dir, kind, &path);
+            if previews && resp.status_code().0 == 200 {
+                return json(200, &json!({"previews": st.folders.queue(&dir, user, hash, path).word()}));
+            }
+            resp
+        }
         _ => error(405, "HEAD, GET or PUT"),
+    }
+}
+
+/// How long a render waits for a free place before the device is told to try again.
+const RENDER_WAIT: Duration = Duration::from_secs(45);
+
+/// `POST /api/render` ([`proto::Render`]): the photo with this original, rendered with these edits and options.
+fn render(st: &State, req: &mut Request, l: &Mutex<UserLib>, user: &str) -> Resp {
+    let r: proto::Render = match read_json(req) {
+        Ok(r) => r,
+        Err(resp) => return resp,
+    };
+    let (dir, data) = {
+        let l = l.lock().unwrap_or_else(PoisonError::into_inner);
+        (l.dir.join("blobs"), st.data.join("tmp"))
+    };
+    let Some(blob) = blob_path(&dir, "original", &r.hash) else {
+        return error(400, "not a content hash (32 hex digits)");
+    };
+    let Some(original) = Some(blob).filter(|b| b.is_file()).or_else(|| folder_original_path(st, l, user, &r.hash)) else {
+        return error(404, "the server doesn't have this photo's original");
+    };
+    let Some(_slot) = st.render.acquire(RENDER_WAIT) else {
+        let mut resp = error(503, "the server is rendering other photos: try again in a minute");
+        header("Retry-After", "60").into_iter().for_each(|h| resp.add_header(h));
+        return resp;
+    };
+    match lightcraft_engine::guard::catch("rendering", || crate::render::render_file(&original, &data, &r)) {
+        Ok(Ok(out)) => {
+            let mut resp = bytes(200, out.content_type, out.bytes);
+            header("X-LightCraft-Size", &format!("{}x{}", out.width, out.height)).into_iter().for_each(|h| resp.add_header(h));
+            resp
+        }
+        Ok(Err(e)) | Err(e) => error(422, e),
     }
 }
 

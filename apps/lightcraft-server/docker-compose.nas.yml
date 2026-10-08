@@ -1,0 +1,26 @@
+# LightCraft sync server on a Synology NAS (Container Manager > Project), pulled from a private
+# registry, reached over Tailscale or the home network. No Caddy: the server speaks plain HTTP and
+# must NOT be exposed to the internet (docs/self-hosting.md).
+#
+#   Container Manager > Registry > Settings > Add: https://registry.eliasruiz.com (your login),
+#   then Registry > search "library/lightcraft" > Download (tag latest).
+#   Container Manager > Project > Create, paste this file, set the photo path below, Build.
+#   Open http://<nas>:8080/admin, enter the setup code from the project's log.
+
+services:
+  lightcraft:
+    image: registry.eliasruiz.com/library/lightcraft:latest
+    container_name: lightcraft
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      LIGHTCRAFT_LOG: info
+      LIGHTCRAFT_SCAN_INTERVAL: "15"
+      # a NAS often has little memory: build one preview at a time
+      LIGHTCRAFT_PREVIEW_THREADS: "1"
+    volumes:
+      # server data (users, libraries, previews): create it first and chown it to uid 10001
+      - /volume3/docker/lightcraft/data:/data
+      # your photo folder, read in place; must be readable by uid 10001 (Others: read)
+      - "/volume3/homes/elrumo/Photos:/photos:ro"

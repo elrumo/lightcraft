@@ -229,7 +229,7 @@ pub fn plan_find_missing(candidates: &[FindCandidate], folder: &str) -> std::res
     let in_use: HashSet<&str> = candidates.iter().map(|c| c.path.as_str()).collect();
     // file name (lower case) → candidate paths; size → paths (filled lazily)
     let mut by_name: HashMap<String, Vec<String>> = HashMap::new();
-    let files: Vec<String> = crate::import::expand(&[folder.to_string()], None).into_iter().filter(|f| !in_use.contains(f.as_str())).collect();
+    let files: Vec<String> = crate::import::expand(&[folder.to_string()], None, &[]).into_iter().filter(|f| !in_use.contains(f.as_str())).collect();
     for f in &files {
         if let Some(n) = Path::new(f).file_name() {
             by_name.entry(n.to_string_lossy().to_lowercase()).or_default().push(f.clone());

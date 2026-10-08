@@ -58,6 +58,8 @@ const PUSH_LIMIT: usize = 500;
 const PULL_LIMIT: usize = 2000;
 /// Photo file transfers at a time.
 const BLOB_PARALLEL: usize = 4;
+/// The server's storage numbers are asked for at most this often (it walks every photo file).
+const USAGE_EVERY: Duration = Duration::from_secs(20);
 /// Long edge of the mini preview.
 pub const MINI_EDGE: usize = 512;
 /// The server's id spaces stay below this, so ids remain exact in JSON numbers read by
@@ -88,8 +90,18 @@ pub struct SyncConfig {
     pub store_originals: bool,
     /// Don't talk to the server for now (File → Pause Syncing).
     pub paused: bool,
+    /// Let the server build the previews of the originals this device uploads, instead of building them here
+    /// (a phone saves its battery and memory). `None`: the platform's default, which is on for iOS.
+    pub server_previews: Option<bool>,
     /// Version of the server's presets document this device last synced with.
     pub presets_version: u64,
+}
+
+impl SyncConfig {
+    /// Whether the server builds the previews of what this device uploads ([`SyncConfig::server_previews`]).
+    pub fn server_builds_previews(&self) -> bool {
+        self.server_previews.unwrap_or(cfg!(target_os = "ios"))
+    }
 }
 
 /// Where a host without a previews folder (the browser) keeps synced photo files: storage keys
@@ -276,6 +288,14 @@ pub struct SyncState {
     presets_changed: bool,
     /// Which presets.json write was last compared.
     presets_seen: Option<u64>,
+    /// What the server says this library takes there, when it said so, and the request in flight.
+    usage: Option<proto::Usage>,
+    usage_at: Option<Instant>,
+    usage_task: Option<u64>,
+    /// Why the last answer wasn't one (the numbers above are older than that).
+    usage_error: Option<String>,
+    /// Someone is looking (Settings ▸ Sync, `sync.usage`): ask again once the last answer is old.
+    usage_wanted: bool,
 }
 
 impl SyncState {
@@ -310,6 +330,11 @@ impl SyncState {
             presets_remote: 0,
             presets_changed: false,
             presets_seen: None,
+            usage: None,
+            usage_at: None,
+            usage_task: None,
+            usage_error: None,
+            usage_wanted: false,
         }
     }
 
@@ -391,7 +416,41 @@ impl SyncState {
         self.ready.clear();
         self.plan.clear();
         self.planned = None;
+        self.usage_task = None;
         self.error = Some(why.to_string());
+    }
+
+    /// What the server says this library takes there (as of [`SyncState::usage_age`] ago).
+    pub fn usage(&self) -> Option<&proto::Usage> {
+        self.usage.as_ref()
+    }
+
+    /// Why the server's last answer about storage wasn't one.
+    pub fn usage_error(&self) -> Option<&str> {
+        self.usage_error.as_deref()
+    }
+
+    /// How long ago the server was asked about storage (answered or not).
+    pub fn usage_age(&self) -> Option<Duration> {
+        self.usage_at.map(|t| t.elapsed())
+    }
+
+    /// The answer to `GET /api/usage`.
+    fn usage_done(&mut self, d: &Done) {
+        // (a failure waits as long as a success before the next try)
+        self.usage_at = Some(Instant::now());
+        match d.status {
+            401 => self.signed_out("the server signed this device out: sign in again"),
+            404 | 405 => self.usage_error = Some("this server is too old to report storage: update it".into()),
+            _ if d.ok() => match decode::<proto::Usage>(d) {
+                Ok(u) => {
+                    self.usage = Some(u);
+                    self.usage_error = None;
+                }
+                Err(e) => self.usage_error = Some(e),
+            },
+            _ => self.usage_error = Some(why(d)),
+        }
     }
 
     fn outbox_changed(&mut self) {
@@ -465,6 +524,7 @@ impl SyncState {
             "offlineAlbums": self.config.offline_albums,
             "offlinePhotos": self.config.offline_photos,
             "storeOriginals": self.config.store_originals,
+            "serverPreviews": self.config.server_builds_previews(),
             "paused": self.config.paused,
         })
     }
@@ -503,6 +563,15 @@ pub fn mini_file_name(p: &Photo) -> String {
 /// Preview file names in a [`BrowserStore`].
 pub fn store_proxy_names(key: &str) -> (String, String) {
     (format!("{key}.lcsp"), format!("{key}.lcsm"))
+}
+
+/// Where to have a photo rendered on the sync server ([`Session::sync_render_target`]).
+#[derive(Clone, Debug, PartialEq)]
+pub struct RenderTarget {
+    pub url: String,
+    pub token: String,
+    /// The photo original's content hash, the server's key for it.
+    pub hash: String,
 }
 
 /// A photo whose file isn't on this device: the library has it by content (`web/<hash>/…`).
@@ -606,6 +675,13 @@ impl Session {
     /// The library's sync, when it was ever signed in.
     pub fn sync_state(&self) -> Option<&SyncState> {
         self.sync.as_ref()
+    }
+
+    /// Where `p` can be rendered on the sync server: this device is signed in and the photo has a content hash (the
+    /// server only has it once its original was uploaded; the server says when it hasn't).
+    pub fn sync_render_target(&self, p: &Photo) -> Option<RenderTarget> {
+        let st = self.sync.as_ref().filter(|st| !st.config.token.is_empty())?;
+        Some(RenderTarget { url: st.url("/api/render"), token: st.config.token.clone(), hash: blob_key(p)? })
     }
 
     /// Queue an op this device applied for the server (`inverse` as [`Catalog::apply`] returned).
@@ -714,6 +790,44 @@ impl Session {
         self.persist()
     }
 
+    /// Have the server build the previews of what this device uploads (or build them here again).
+    pub fn sync_server_previews(&mut self, on: bool) -> Result<()> {
+        let st = self.sync.as_mut().ok_or_else(|| EngineError::Other("this library isn't synced".into()))?;
+        st.config.server_previews = Some(on);
+        self.persist()
+    }
+
+    /// Someone is looking at the storage numbers: have the server asked again (at most every
+    /// [`USAGE_EVERY`]) by the next [`Session::sync_tasks`].
+    pub fn sync_want_usage(&mut self) {
+        if let Some(st) = self.sync.as_mut() {
+            st.usage_wanted = true;
+        }
+    }
+
+    /// Ask the server for the storage numbers again at once, instead of when the last answer is
+    /// old.
+    pub fn sync_refresh_usage(&mut self) {
+        if let Some(st) = self.sync.as_mut() {
+            st.usage_wanted = true;
+            st.usage_at = None;
+        }
+    }
+
+    /// Ask the server what it keeps for this library now and wait for the answer (blocking: the
+    /// CLI, tests), through `run`. Silent when signed out or paused: the last numbers stay.
+    pub fn sync_fetch_usage_with(&mut self, run: &mut dyn FnMut(&Task) -> Done) {
+        self.sync_refresh_usage();
+        let Some(st) = self.sync.as_mut().filter(|st| !st.config.paused && !st.config.token.is_empty() && st.usage_task.is_none()) else {
+            return;
+        };
+        st.usage_wanted = false;
+        let t = st.http("GET", "/api/usage", Body::Empty, None);
+        st.usage_task = Some(t.id());
+        let d = run(&t);
+        self.sync_done(d);
+    }
+
     /// Is photo `id` kept on this device even offline?
     pub fn sync_is_offline(&self, id: PhotoId) -> bool {
         let Some(st) = &self.sync else { return false };
@@ -785,6 +899,17 @@ impl Session {
                 }
             }
         }
+        if st.usage_wanted
+            && st.usage_task.is_none()
+            && !st.config.token.is_empty()
+            && !waiting
+            && st.usage_at.is_none_or(|t| t.elapsed() >= USAGE_EVERY)
+        {
+            st.usage_wanted = false;
+            let t = st.http("GET", "/api/usage", Body::Empty, None);
+            st.usage_task = Some(t.id());
+            tasks.push(t);
+        }
         if !st.config.token.is_empty() && !st.config.library.is_empty() && !st.needs_snapshot && !waiting {
             self.blob_tasks(&mut st, now, &mut tasks);
         }
@@ -838,7 +963,12 @@ impl Session {
             }
             let task = match &job {
                 Job::Head { key, .. } => st.http("HEAD", &format!("/api/blobs/original/{key}"), Body::Empty, None),
-                Job::Put { key, blob, path, .. } => st.http("PUT", &format!("/api/blobs/{}/{key}", blob.name()), Body::File(path.clone()), None),
+                Job::Put { key, blob, path, .. } => {
+                    // (the server builds the previews of an original it is sent this way; one that doesn't know the
+                    // parameter ignores it and the device builds them, see `job_done`)
+                    let ask = if *blob == Blob::Original && st.config.server_builds_previews() { "?previews=1" } else { "" };
+                    st.http("PUT", &format!("/api/blobs/{}/{key}{ask}", blob.name()), Body::File(path.clone()), None)
+                }
                 Job::Get { key, blob, dest } => st.http("GET", &format!("/api/blobs/{}/{key}", blob.name()), Body::Empty, Some(dest.clone())),
                 Job::Proxies { path, id, .. } => {
                     let Some((smart, mini)) = self.proxy_paths(*id) else { continue };
@@ -874,7 +1004,7 @@ impl Session {
     }
 
     /// Where downloaded originals are kept.
-    fn originals_dir(&self) -> Option<PathBuf> {
+    pub(crate) fn originals_dir(&self) -> Option<PathBuf> {
         self.library.as_ref().filter(|l| l.on_disk).map(|l| l.dir.join("sync").join("originals"))
     }
 
@@ -949,6 +1079,9 @@ impl Session {
             if let Some((_, c)) = st.control.take() {
                 self.control_done(&mut st, c, &done);
             }
+        } else if st.usage_task == Some(done.id) {
+            st.usage_task = None;
+            st.usage_done(&done);
         } else if let Some(job) = st.jobs.remove(&done.id) {
             self.job_done(&mut st, job, &done);
         }
@@ -1243,7 +1376,16 @@ impl Session {
                 _ => retry(st, &key, why(d)),
             },
             Job::Put { key, blob, path, id } if d.ok() => match blob {
-                Blob::Original => st.ready.push_front(Job::Proxies { key, path, id }),
+                Blob::Original => {
+                    // the server answers `{"previews": "queued" | "built"}` when it is making them: nothing to build here
+                    let by_server = st.config.server_builds_previews()
+                        && serde_json::from_str::<Value>(&d.body).ok().is_some_and(|v| matches!(v["previews"].as_str(), Some("queued" | "built")));
+                    if by_server {
+                        self.uploaded(st, key);
+                    } else {
+                        st.ready.push_front(Job::Proxies { key, path, id });
+                    }
+                }
                 Blob::Smart => match self.proxy_paths(id) {
                     Some((_, mini)) => st.ready.push_front(Job::Put { key, blob: Blob::Mini, path: mini, id }),
                     None => self.uploaded(st, key),
@@ -1336,6 +1478,12 @@ impl Session {
         self.sync_now_with(limit, &mut run)
     }
 
+    /// [`Session::sync_fetch_usage_with`] over the network.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn sync_fetch_usage(&mut self) {
+        self.sync_fetch_usage_with(&mut run);
+    }
+
     /// [`Session::sync_now`] with another transport (tests).
     pub fn sync_now_with(&mut self, limit: usize, run: &mut dyn FnMut(&Task) -> Done) -> Value {
         self.sync_soon();
@@ -1406,6 +1554,13 @@ pub fn content_path(p: &Photo) -> Option<String> {
     Some(original_path(&blob_key(p)?, &p.file_name))
 }
 
+/// Have the sync server render a photo (`POST /api/render`): the encoded image. Blocking, and for as long as the
+/// render takes (minutes for a big photo on a small server): run it off the UI thread.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn render_on_server(target: &RenderTarget, request: &proto::Render) -> std::result::Result<Vec<u8>, String> {
+    net::render(&target.url, &target.token, &serde_json::to_string(request).map_err(|e| e.to_string())?)
+}
+
 /// Build a photo's smart and mini previews from its original (decodes it).
 #[cfg(not(target_arch = "wasm32"))]
 pub fn build_proxies(original: &str, smart: &str, mini: &str) -> std::result::Result<(), String> {
@@ -1465,6 +1620,36 @@ mod net {
                 .build()
                 .into()
         })
+    }
+
+    /// `POST` JSON and read the answer's bytes, waiting for a render ([`super::render_on_server`]).
+    pub(super) fn render(url: &str, token: &str, json: &str) -> Result<Vec<u8>, String> {
+        let auth = format!("Bearer {token}");
+        let mut resp = agent()
+            .post(url)
+            .header("Authorization", &auth)
+            .header("Content-Type", "application/json")
+            .config()
+            .timeout_recv_response(Some(Duration::from_secs(900)))
+            .build()
+            .send(json.as_bytes())
+            .map_err(|e| e.to_string())?;
+        let status = resp.status().as_u16();
+        let body = resp.body_mut().with_config().limit(1 << 30).read_to_vec().map_err(|e| e.to_string())?;
+        if (200..300).contains(&status) {
+            return Ok(body);
+        }
+        let why = serde_json::from_slice::<serde_json::Value>(&body).ok().and_then(|v| v["error"].as_str().map(str::to_string));
+        Err(match (status, why) {
+            (404, _) if body.is_empty() || why_is_route(&body) => "this server can't render (it is older than this app)".to_string(),
+            (_, Some(why)) => why,
+            (s, None) => format!("the server answered {s}"),
+        })
+    }
+
+    /// A `404` for the route itself (an older server), not for a missing original.
+    fn why_is_route(body: &[u8]) -> bool {
+        String::from_utf8_lossy(body).contains("no route")
     }
 
     pub(super) fn http(method: &str, url: &str, token: &str, body: &Body, save_to: Option<&str>) -> Result<(u16, String), String> {
