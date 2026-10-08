@@ -22,7 +22,8 @@
 //! The table of names is sorted when the file is read: storing it sorted would cost a position
 //! per name, about a third of the file.
 
-use std::sync::OnceLock;
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock, PoisonError};
 
 use crate::codec::{DataError, Reader, inflate};
 use crate::geodesy::{distance_km, valid};
@@ -81,6 +82,8 @@ pub struct Region {
 
 #[derive(Clone, Copy, Debug)]
 struct Key {
+    /// The first eight bytes of the name, big-endian: most comparisons end here.
+    prefix: u64,
     off: u32,
     len: u16,
     kind: Kind,
@@ -124,6 +127,15 @@ impl PlaceName<'_> {
     }
 }
 
+/// The first eight bytes of `k` as a big-endian number (zero-padded): byte order and number order agree.
+fn prefix_of(k: &[u8]) -> u64 {
+    let mut b = [0u8; 8];
+    for (d, s) in b.iter_mut().zip(k) {
+        *d = *s;
+    }
+    u64::from_be_bytes(b)
+}
+
 const GRID_W: usize = 360;
 const GRID_H: usize = 180;
 
@@ -138,6 +150,8 @@ pub struct Gazetteer {
     /// Prefix offsets into `grid_cities`, one cell per degree (`GRID_W * GRID_H + 1` entries).
     grid_start: Vec<u32>,
     grid_cities: Vec<u32>,
+    /// [`Gazetteer::locate_cell`]'s results by 0.01° cell.
+    cells: Mutex<HashMap<(i32, i32), Option<Located>>>,
 }
 
 impl Gazetteer {
@@ -151,6 +165,7 @@ impl Gazetteer {
             keys: vec![],
             grid_start: vec![0; GRID_W * GRID_H + 1],
             grid_cities: vec![],
+            cells: Mutex::default(),
         }
     }
 
@@ -174,7 +189,7 @@ impl Gazetteer {
             let mut push = |k: &str| {
                 if let (Ok(off), Ok(len)) = (u32::try_from(key_text.len()), u16::try_from(k.len())) {
                     key_text.extend_from_slice(k.as_bytes());
-                    keys.push(Key { off, len, kind, index });
+                    keys.push(Key { prefix: prefix_of(k.as_bytes()), off, len, kind, index });
                 }
             };
             push(&normalize(name));
@@ -220,19 +235,14 @@ impl Gazetteer {
             names(&mut r, name, Kind::City, i as u32)?;
             cities.push(City { name: name.into(), lat, lon, population, country, region });
         }
+        let bytes_of = |k: &Key| key_text.get(k.off as usize..k.off as usize + usize::from(k.len)).unwrap_or(&[]);
         keys.sort_unstable_by(|a, b| {
-            let bytes = |k: &Key| key_text.get(k.off as usize..k.off as usize + usize::from(k.len)).unwrap_or(&[]);
-            bytes(a).cmp(bytes(b)).then(a.kind.cmp(&b.kind)).then(a.index.cmp(&b.index))
+            a.prefix.cmp(&b.prefix).then_with(|| bytes_of(a).cmp(bytes_of(b))).then(a.kind.cmp(&b.kind)).then(a.index.cmp(&b.index))
         });
-        keys.dedup_by(|b, a| {
-            a.kind == b.kind
-                && a.index == b.index
-                && key_text.get(a.off as usize..a.off as usize + usize::from(a.len))
-                    == key_text.get(b.off as usize..b.off as usize + usize::from(b.len))
-        });
+        keys.dedup_by(|b, a| a.kind == b.kind && a.index == b.index && a.prefix == b.prefix && bytes_of(a) == bytes_of(b));
         keys.retain(|k| k.len > 0);
         keys.shrink_to_fit();
-        let mut g = Gazetteer { countries, regions, cities, key_text, keys, grid_start: vec![], grid_cities: vec![] };
+        let mut g = Gazetteer { countries, regions, cities, key_text, keys, grid_start: vec![], grid_cities: vec![], cells: Mutex::default() };
         g.build_grid();
         Ok(g)
     }
@@ -298,8 +308,10 @@ impl Gazetteer {
         if k.is_empty() {
             return vec![];
         }
-        let first = self.keys.partition_point(|e| self.key_bytes(e) < k);
-        self.keys.iter().skip(first).take_while(|e| self.key_bytes(e) == k).map(|e| PlaceId { kind: e.kind, index: e.index }).collect()
+        let p = prefix_of(k);
+        let order = |e: &Key| e.prefix.cmp(&p).then_with(|| self.key_bytes(e).cmp(k));
+        let first = self.keys.partition_point(|e| order(e).is_lt());
+        self.keys.iter().skip(first).take_while(|e| order(e).is_eq()).map(|e| PlaceId { kind: e.kind, index: e.index }).collect()
     }
 
     /// [`lookup`](Self::lookup) for text as a person typed it ("Alcalá de Henares", "NEW-YORK").
@@ -349,33 +361,63 @@ impl Gazetteer {
     }
 
     fn scan(&self, lat: f64, lon: f64, reach_deg: f64) -> Option<Located> {
-        let lon_span = (reach_deg / lat.to_radians().cos().max(0.01) * 1.1).min(180.0);
+        let cos_lat = lat.to_radians().cos();
+        let lon_span = (reach_deg / cos_lat.max(0.01) * 1.1).min(180.0);
         let rows = (((lat + 90.0 - reach_deg).floor() as i64).max(0))..=(((lat + 90.0 + reach_deg).floor() as i64).min(GRID_H as i64 - 1));
         let (c0, c1) = if lon_span >= 180.0 {
             (0, GRID_W as i64 - 1)
         } else {
             ((lon + 180.0 - lon_span).floor() as i64, (lon + 180.0 + lon_span).floor() as i64)
         };
-        let mut best: Option<Located> = None;
+        // Candidates are compared by a flat-earth distance in degrees²; only the winner gets the
+        // exact (and ten times dearer) great-circle distance.
+        let mut best: Option<(f64, u32)> = None;
         for row in rows {
             for c in c0..=c1 {
                 let cell = row as usize * GRID_W + c.rem_euclid(GRID_W as i64) as usize;
                 let (Some(&a), Some(&b)) = (self.grid_start.get(cell), self.grid_start.get(cell + 1)) else { continue };
                 for &ci in self.grid_cities.get(a as usize..b as usize).unwrap_or(&[]) {
                     let Some(city) = self.city(ci) else { continue };
-                    let d = distance_km(lat, lon, city.lat, city.lon);
-                    if best.is_none_or(|x| d < x.distance_km) {
-                        best = Some(Located { city: ci, distance_km: d });
+                    let dlat = city.lat - lat;
+                    let mut dlon = (city.lon - lon).abs();
+                    if dlon > 180.0 {
+                        dlon = 360.0 - dlon;
+                    }
+                    let d2 = dlat * dlat + (dlon * cos_lat) * (dlon * cos_lat);
+                    if best.is_none_or(|(b, _)| d2 < b) {
+                        best = Some((d2, ci));
                     }
                 }
             }
         }
-        best
+        let (_, ci) = best?;
+        let city = self.city(ci)?;
+        Some(Located { city: ci, distance_km: distance_km(lat, lon, city.lat, city.lon) })
     }
 
     /// The nearest city within [`LOCATE_KM`] (the one a photo's region and country come from).
     pub fn locate(&self, lat: f64, lon: f64) -> Option<Located> {
         self.nearest(lat, lon, LOCATE_KM)
+    }
+
+    /// [`locate`](Self::locate) for the 0.01° cell (about a kilometre) the position is in, answered
+    /// for the cell's centre and remembered: a library has thousands of photos per place, and the
+    /// search asks about every one of them.
+    pub fn locate_cell(&self, lat: f64, lon: f64) -> Option<Located> {
+        if !valid(lat, lon) {
+            return None;
+        }
+        let cell = ((lat * 100.0).floor() as i32, (lon * 100.0).floor() as i32);
+        if let Some(hit) = self.cells.lock().unwrap_or_else(PoisonError::into_inner).get(&cell) {
+            return *hit;
+        }
+        let found = self.locate((f64::from(cell.0) + 0.5) / 100.0, (f64::from(cell.1) + 0.5) / 100.0);
+        let mut cells = self.cells.lock().unwrap_or_else(PoisonError::into_inner);
+        if cells.len() >= 1 << 18 {
+            cells.clear();
+        }
+        cells.insert(cell, found);
+        found
     }
 
     /// Where a GPS position is: city (within [`IN_CITY_KM`]), region and country (within [`LOCATE_KM`]).
@@ -411,6 +453,7 @@ pub fn city_radius_km(population: u32) -> f64 {
 /// matches the positions whose nearest city ([`Gazetteer::locate`]) lies in it.
 #[derive(Clone, Debug, Default)]
 pub struct PlaceFilter {
+    ids: Vec<PlaceId>,
     circles: Vec<Circle>,
     regions: Vec<u16>,
     countries: Vec<u16>,
@@ -428,7 +471,7 @@ struct Circle {
 
 impl PlaceFilter {
     pub fn new(g: &Gazetteer, places: &[PlaceId]) -> PlaceFilter {
-        let mut f = PlaceFilter::default();
+        let mut f = PlaceFilter { ids: places.to_vec(), ..PlaceFilter::default() };
         for p in places {
             match p.kind {
                 Kind::City => {
@@ -450,6 +493,17 @@ impl PlaceFilter {
         self.circles.is_empty() && self.regions.is_empty() && self.countries.is_empty()
     }
 
+    /// The places this filter was made from.
+    pub fn places(&self) -> &[PlaceId] {
+        &self.ids
+    }
+
+    /// Whether `name` (a city, region or country written in a photo's IPTC fields: "Madrid",
+    /// "España") names one of the places.
+    pub fn names(&self, g: &Gazetteer, name: &str) -> bool {
+        !name.trim().is_empty() && g.lookup_text(name).iter().any(|f| self.ids.contains(f))
+    }
+
     /// Whether a position is in any of the places.
     pub fn contains(&self, g: &Gazetteer, lat: f64, lon: f64) -> bool {
         if !valid(lat, lon) {
@@ -464,7 +518,7 @@ impl PlaceFilter {
         if self.regions.is_empty() && self.countries.is_empty() {
             return false;
         }
-        let Some(city) = g.locate(lat, lon).and_then(|l| g.city(l.city)) else { return false };
+        let Some(city) = g.locate_cell(lat, lon).and_then(|l| g.city(l.city)) else { return false };
         self.regions.contains(&city.region) || self.countries.contains(&city.country)
     }
 }
@@ -572,6 +626,13 @@ mod tests {
         assert!(spain.contains(g(), 37.3891, -5.9845), "Seville");
         assert!(!spain.contains(g(), 48.8566, 2.3522), "Paris");
         assert!(!PlaceFilter::new(g(), &[]).contains(g(), 40.4, -3.7));
+    }
+
+    #[test]
+    fn iptc_names_match_by_meaning() {
+        let spain = PlaceFilter::new(g(), &g().lookup_text("spain"));
+        assert!(spain.names(g(), "España") && spain.names(g(), "Spain") && !spain.names(g(), "France") && !spain.names(g(), ""));
+        assert_eq!(spain.places().len(), 1);
     }
 
     #[test]

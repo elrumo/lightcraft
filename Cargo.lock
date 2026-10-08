@@ -2881,6 +2881,7 @@ version = "0.2.1"
 dependencies = [
  "crc32fast",
  "lightcraft-develop",
+ "lightcraft-geo",
  "lightcraft-meta",
  "log",
  "proptest",

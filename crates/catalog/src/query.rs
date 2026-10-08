@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::search::TextQuery;
 use crate::{AlbumId, Catalog, ColorLabel, Flag, MediaKind, Photo, PhotoId};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -17,8 +18,10 @@ pub enum RatingOp {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Filter {
-    /// Free-text search: every token must match filename, title, caption, keywords, camera, lens,
-    /// location or format. Tokens like `rating:3`, `flag:pick`, `iso:>800`, `camera:x2` are fielded.
+    /// Free-text search: every word must match filename, title, caption, keywords, camera, lens,
+    /// place fields or format; place names and dates are understood in context ("photos in madrid
+    /// in june", see [`crate::search`]). Tokens like `rating:3`, `flag:pick`, `iso:>800`,
+    /// `camera:x2`, `place:madrid`, `near:40.4,-3.7,5` are fielded.
     pub text: String,
     pub rating: u8,
     pub rating_op: RatingOp,
@@ -93,51 +96,6 @@ impl Default for Sort {
     }
 }
 
-fn token_matches(p: &Photo, tok: &str) -> bool {
-    let t = tok.to_lowercase();
-    if let Some((field, val)) = t.split_once(':') {
-        let num = |s: &str| -> Option<(char, f64)> {
-            let (op, rest) = match s.chars().next()? {
-                c @ ('>' | '<' | '=') => (c, &s[1..]),
-                _ => ('=', s),
-            };
-            rest.parse().ok().map(|v| (op, v))
-        };
-        let cmp = |x: f64, s: &str| match num(s) {
-            Some(('>', v)) => x > v,
-            Some(('<', v)) => x < v,
-            Some((_, v)) => (x - v).abs() < 1e-9,
-            None => false,
-        };
-        return match field {
-            "rating" | "stars" => cmp(p.rating as f64, val),
-            "flag" => Flag::parse(val) == Some(p.flag),
-            "label" | "color" => p.label.is_some_and(|l| format!("{l:?}").eq_ignore_ascii_case(val)),
-            "iso" => p.meta.iso.is_some_and(|i| cmp(i as f64, val)),
-            "f" | "aperture" => p.meta.aperture.is_some_and(|a| cmp(a as f64, val)),
-            "focal" => p.meta.focal_mm.is_some_and(|a| cmp(a as f64, val)),
-            "camera" => p.meta.camera.to_lowercase().contains(val),
-            "lens" => p.meta.lens.to_lowercase().contains(val),
-            "keyword" | "kw" => p.meta.keywords.iter().any(|k| crate::keywords::is_under(k, val)),
-            "person" | "who" => has_person(p, val),
-            "type" | "kind" => format!("{:?}", p.kind).eq_ignore_ascii_case(val),
-            "edited" => (val == "true" || val == "yes") == p.is_edited(),
-            "date" => p.date().starts_with(val),
-            "copy" | "virtual" => (val == "true" || val == "yes") == p.copy_of.is_some(),
-            "name" | "file" => p.file_name.to_lowercase().contains(val),
-            _ => false,
-        };
-    }
-    let hay = [&p.file_name, &p.meta.title, &p.meta.caption, &p.meta.camera, &p.meta.lens, &p.meta.location, &p.format];
-    hay.iter().any(|h| h.to_lowercase().contains(&t)) || p.meta.keywords.iter().any(|k| k.to_lowercase().contains(&t))
-}
-
-/// Whether `p` has a named face region called `name` (case-insensitive).
-fn has_person(p: &Photo, name: &str) -> bool {
-    let name = name.trim().to_lowercase();
-    p.meta.regions.iter().any(|r| r.kind == lightcraft_meta::RegionKind::Face && r.name.as_deref().is_some_and(|n| n.to_lowercase() == name))
-}
-
 impl Filter {
     /// Human-readable summary of the active rules (smart album tooltips, `album.list`).
     pub fn describe(&self) -> String {
@@ -197,7 +155,14 @@ impl Filter {
         self.rule_set.as_ref().is_some_and(crate::RuleSet::depends_on_now)
     }
 
+    /// Whether `p` passes. Parses the search text each call: when testing many photos, parse it
+    /// once ([`TextQuery::parse`]) and use [`Filter::matches_with`].
     pub fn matches(&self, p: &Photo, cat: &Catalog) -> bool {
+        self.matches_with(p, cat, &TextQuery::parse(&self.text))
+    }
+
+    /// [`Filter::matches`] with the search text already compiled from `self.text`.
+    pub fn matches_with(&self, p: &Photo, cat: &Catalog, text: &TextQuery) -> bool {
         if p.deleted != self.deleted {
             return false;
         }
@@ -291,7 +256,7 @@ impl Filter {
             return false;
         }
         if let Some(n) = &self.person
-            && !has_person(p, n)
+            && !crate::search::has_person(p, n)
         {
             return false;
         }
@@ -300,14 +265,15 @@ impl Filter {
         {
             return false;
         }
-        self.text.split_whitespace().all(|tok| token_matches(p, tok))
+        text.matches(p)
     }
 }
 
 impl Catalog {
     /// Photos matching `filter`, in `sort` order (ties broken by id for stability).
     pub fn query(&self, filter: &Filter, sort: &Sort) -> Vec<PhotoId> {
-        let mut v: Vec<&Photo> = self.photos().map(|p| p.as_ref()).filter(|p| filter.matches(p, self)).collect();
+        let text = TextQuery::parse(&filter.text);
+        let mut v: Vec<&Photo> = self.photos().map(|p| p.as_ref()).filter(|p| filter.matches_with(p, self, &text)).collect();
         v.sort_by(|a, b| {
             let o = match sort.key {
                 SortKey::CaptureDate => a.date().cmp(b.date()),
@@ -321,6 +287,16 @@ impl Catalog {
             if sort.ascending { o } else { o.reverse() }
         });
         v.into_iter().map(|p| p.id).collect()
+    }
+
+    /// The places and dates the search text of `filter` was read as ("photos in madrid in june"),
+    /// for the interface to say so; see [`crate::search::Understood`].
+    pub fn understood(&self, filter: &Filter) -> Vec<crate::search::Understood> {
+        if filter.text.trim().is_empty() {
+            return vec![];
+        }
+        let photos: Vec<&Photo> = self.photos().map(|p| p.as_ref()).filter(|p| p.in_library()).collect();
+        TextQuery::parse(&filter.text).understood(&photos)
     }
 
     /// Year → month → day counts for the "By Date" section (newest first).
@@ -373,7 +349,8 @@ impl Catalog {
     pub fn people_in(&self, filter: &Filter) -> Vec<Person> {
         let filter = Filter { person: None, ..filter.clone() };
         let mut m: std::collections::HashMap<String, (Person, f64)> = Default::default();
-        for p in self.photos().filter(|p| filter.matches(p, self)) {
+        let text = TextQuery::parse(&filter.text);
+        for p in self.photos().filter(|p| filter.matches_with(p, self, &text)) {
             let mut seen: Vec<String> = Vec::new();
             for r in p.meta.regions.iter().filter(|r| r.kind == lightcraft_meta::RegionKind::Face) {
                 let Some(name) = r.name.as_deref().map(str::trim).filter(|n| !n.is_empty()) else { continue };
