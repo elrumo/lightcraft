@@ -246,3 +246,66 @@ fn a_phone_held_sideways_has_a_tool_rail_and_the_groups_in_the_panel() {
     click(&mut h, "icon:edit");
     assert_eq!(h.app.ui.right, RightPanel::None);
 }
+
+/// Colour grading on a phone is one big wheel at a time, chosen with a segmented control.
+#[test]
+fn phone_color_grading_is_one_big_wheel_at_a_time() {
+    let mut h = detail([390.0, 1400.0]);
+    h.app.ui.edit_group = "color".into();
+    h.app.ui.toggle_flyout("grading");
+    h.app.ui.sheet_detent = 2;
+    h.settle(SETTLE);
+    let wheel = rect(&h, "wheel:midtones");
+    assert!(wheel.width() >= 180.0, "a wheel a finger can use: {wheel:?}");
+    assert!(!has(&h, "wheel:shadows") && !has(&h, "wheel:highlights"), "the others are one tap away");
+    click(&mut h, "button:gradingRange-shadows");
+    let wheel = rect(&h, "wheel:shadows");
+    assert!(!has(&h, "wheel:midtones"));
+    // a touch at the wheel's right edge: hue 0°, fully saturated
+    let id = h.app.session.active().expect("active photo");
+    let r = h.request("ui.click", json!({"x": wheel.right() - 2.0, "y": wheel.center().y}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    let shadows = h.app.session.develop_of(id).expect("settings").grading.shadows;
+    assert!(shadows.sat > 90.0 && (shadows.hue < 5.0 || shadows.hue > 355.0), "{shadows:?}");
+}
+
+/// The colour mixer's eight swatches share the phone's width, about 40 pt each.
+#[test]
+fn phone_mixer_swatches_share_the_width() {
+    let mut h = detail([390.0, 1400.0]);
+    h.app.ui.edit_group = "color".into();
+    h.app.ui.toggle_flyout("mixer");
+    h.app.ui.sheet_detent = 2;
+    h.settle(SETTLE);
+    let (first, last) = (rect(&h, "mixerBand:red"), rect(&h, "mixerBand:magenta"));
+    assert!(first.width() >= 36.0 && first.height() >= 36.0, "{first:?}");
+    assert!(last.right() <= 390.0 - 15.0 && last.right() > 390.0 - 30.0, "across the whole width: {last:?}");
+}
+
+/// A curve's points are taken from a finger's width away (24 pt, the desktop's pointer takes 10), so
+/// dragging near one moves it rather than adding another.
+#[test]
+fn phone_curve_points_are_taken_from_a_finger_away() {
+    let mut h = detail([390.0, 1400.0]);
+    h.app.ui.toggle_flyout("curve");
+    h.app.ui.curve_channel = "master".into();
+    h.app.ui.sheet_detent = 2;
+    h.settle(SETTLE);
+    let id = h.app.session.active().expect("active photo");
+    let canvas = rect(&h, "curve");
+    let at = |x: f32, y: f32| egui::pos2(canvas.left() + canvas.width() * x, canvas.bottom() - canvas.height() * y);
+    let master = |h: &Headless| h.app.session.develop_of(id).expect("settings").curve.master.clone();
+    // a tap adds a point at (0.5, 0.5)... (the curve's identity)
+    let p = at(0.5, 0.5);
+    let r = h.request("ui.click", json!({"x": p.x, "y": p.y}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    assert_eq!(master(&h).len(), 3, "a tap adds a point: {:?}", master(&h));
+    // a drag that starts 18 pt from it takes it and moves it up
+    let from = p + egui::vec2(18.0, 0.0);
+    drag(&mut h, from, from + vec2(0.0, -60.0));
+    let pts = master(&h);
+    assert_eq!(pts.len(), 3, "no new point was made: {pts:?}");
+    assert!(pts[1].y > 0.6, "the point moved up: {pts:?}");
+}

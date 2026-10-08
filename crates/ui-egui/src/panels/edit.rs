@@ -629,7 +629,7 @@ fn curve_editor(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, d: &Dev
                 ("green", hex("#33bb55")),
                 ("blue", hex("#3377ee")),
             ] {
-                let (r, resp) = ui.allocate_exact_size(vec2(24.0, 24.0), Sense::click());
+                let (r, resp) = ui.allocate_exact_size(if app.compact { vec2(40.0, 40.0) } else { vec2(24.0, 24.0) }, Sense::click());
                 register(ui.ctx(), format!("curveChannel:{ch}"), r);
                 let sel = app.ui.curve_channel == ch;
                 if ch == "parametric" {
@@ -665,9 +665,12 @@ fn curve_editor(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, d: &Dev
     });
     let ch = app.ui.curve_channel.clone();
     let w = ui.available_width();
-    let side = (w - 48.0).max(80.0);
+    let (pad_l, pad_r) = crate::widgets::side_pad(ui.ctx());
+    let side = (w - pad_l - pad_r).max(80.0);
     let (outer, _) = ui.allocate_exact_size(vec2(w, side + 12.0), Sense::hover());
-    let r = Rect::from_min_size(pos2(outer.left() + 24.0, outer.top() + 6.0), vec2(side, side));
+    let r = Rect::from_min_size(pos2(outer.left() + pad_l, outer.top() + 6.0), vec2(side, side));
+    // a finger takes a point from further away than a pointer does, and points are drawn bigger
+    let (reach, dot) = if app.compact { (24.0, 7.0) } else { (10.0, 4.0) };
     let resp = ui.interact(r, egui::Id::new(("curve", &ch)), Sense::click_and_drag());
     register(ui.ctx(), "curve", r);
     resp.context_menu(|ui| curve_reset_menu(app, ui, &ch));
@@ -741,7 +744,7 @@ fn curve_editor(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, d: &Dev
     // the point being dragged (stored as `Option<usize>` so a stale value can be cleared)
     let mut dragging: Option<usize> = ui.data(|dd| dd.get_temp::<Option<usize>>(drag_id)).flatten();
     let nearest = |q: Pos2| pts.iter().enumerate().map(|(i, p)| (i, to_screen(p.x, p.y).distance(q))).min_by(|a, b| a.1.total_cmp(&b.1));
-    let hovered = resp.hover_pos().and_then(nearest).filter(|(_, dist)| *dist < 10.0).map(|(i, _)| i);
+    let hovered = resp.hover_pos().and_then(nearest).filter(|(_, dist)| *dist < reach).map(|(i, _)| i);
     if dragging.is_some() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
     } else if hovered.is_some() {
@@ -750,10 +753,10 @@ fn curve_editor(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, d: &Dev
     for (i, q) in pts.iter().enumerate() {
         let c = to_screen(q.x, q.y);
         if dragging == Some(i) || (dragging.is_none() && hovered == Some(i)) {
-            p.circle_filled(c, 5.5, color);
-            p.circle_stroke(c, 5.5, Stroke::new(1.0, t.canvas));
+            p.circle_filled(c, dot + 1.5, color);
+            p.circle_stroke(c, dot + 1.5, Stroke::new(1.0, t.canvas));
         } else {
-            p.circle_filled(c, 4.0, color);
+            p.circle_filled(c, dot, color);
         }
     }
     // input / output readout of the point being dragged (0–255 like the histogram)
@@ -770,7 +773,7 @@ fn curve_editor(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, d: &Dev
     if resp.double_clicked()
         && let Some(q) = resp.interact_pointer_pos()
         && let Some((i, dist)) = nearest(q)
-        && dist < 10.0
+        && dist < reach
         && i != 0
         && i != pts.len() - 1
     {
@@ -783,7 +786,7 @@ fn curve_editor(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, d: &Dev
         // pick the point under the press, not where the pointer is once the drag threshold passed
         let _ = app.run("develop.beginInteraction", json!({"label": "Tone Curve"}));
         match nearest(q) {
-            Some((i, dist)) if dist < 10.0 => dragging = Some(i),
+            Some((i, dist)) if dist < reach => dragging = Some(i),
             _ => {
                 let (x, y) = from_screen(q);
                 let mut v = pts.clone();
@@ -813,7 +816,7 @@ fn curve_editor(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, d: &Dev
         }
     } else if resp.clicked()
         && let Some(q) = resp.interact_pointer_pos()
-        && nearest(q).is_none_or(|(_, dist)| dist >= 10.0)
+        && nearest(q).is_none_or(|(_, dist)| dist >= reach)
     {
         let (x, y) = from_screen(q);
         let mut v = pts.clone();
@@ -947,13 +950,16 @@ fn mixer(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &DevelopSettings) {
     let sel = bands.iter().position(|b| *b == app.ui.mixer_mode).unwrap_or(0);
     egui::Frame::NONE.inner_margin(crate::widgets::margin(ui.ctx(), 8, 4)).show(ui, |ui| {
         ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 5.0;
+            // on a phone the eight swatches share the width (about 40 pt each)
+            let gap = if app.compact { 6.0 } else { 5.0 };
+            ui.spacing_mut().item_spacing.x = gap;
+            let cell = if app.compact { ((ui.available_width() - 7.0 * gap) / 8.0).clamp(22.0, 44.0) } else { 22.0 };
             for (i, b) in bands.iter().enumerate() {
-                let (r, resp) = ui.allocate_exact_size(vec2(22.0, 22.0), Sense::click());
+                let (r, resp) = ui.allocate_exact_size(vec2(cell, cell), Sense::click());
                 register(ui.ctx(), format!("mixerBand:{b}"), r);
-                ui.painter().circle_filled(r.center(), 9.0, hex(BAND_COLORS[i]));
+                ui.painter().circle_filled(r.center(), cell * 0.41, hex(BAND_COLORS[i]));
                 if i == sel {
-                    ui.painter().circle_stroke(r.center(), 10.5, Stroke::new(1.5, t.text));
+                    ui.painter().circle_stroke(r.center(), cell * 0.48, Stroke::new(1.5, t.text));
                     ui.painter().circle_filled(r.center(), 2.0, Color32::WHITE);
                 }
                 if resp.clicked() {
@@ -985,7 +991,7 @@ fn mixer(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &DevelopSettings) {
     let b = bands[sel];
     if crate::is_bw(d) {
         ui.horizontal(|ui| {
-            ui.add_space(24.0);
+            ui.add_space(crate::widgets::side_pad(ui.ctx()).0);
             if crate::widgets::text_button(ui, "bwAuto", crate::i18n::tr("Auto"), false)
                 .on_hover_text(crate::i18n::tr("Set the mix from the photo's colours"))
                 .clicked()
@@ -1032,11 +1038,16 @@ fn point_color(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &DevelopSettings) 
                 app.ui.tool = if active { String::new() } else { "pointColor".into() };
             }
             for (i, p) in d.point_colors.iter().enumerate() {
-                let (r, resp) = ui.allocate_exact_size(vec2(22.0, 22.0), Sense::click());
+                let cell = if app.compact { 38.0 } else { 22.0 };
+                let (r, resp) = ui.allocate_exact_size(vec2(cell, cell), Sense::click());
                 register(ui.ctx(), format!("pointColor:{i}"), r);
-                ui.painter().rect_filled(r.shrink(2.0), 3.0, oklch_color(p.lum, p.chroma, p.hue));
+                ui.painter().rect_filled(
+                    r.shrink(if app.compact { 3.0 } else { 2.0 }),
+                    if app.compact { 8.0 } else { 3.0 },
+                    oklch_color(p.lum, p.chroma, p.hue),
+                );
                 if i == sel {
-                    ui.painter().rect_stroke(r, 4.0, Stroke::new(1.5, t.text), egui::StrokeKind::Inside);
+                    ui.painter().rect_stroke(r, if app.compact { 9.0 } else { 4.0 }, Stroke::new(1.5, t.text), egui::StrokeKind::Inside);
                 }
                 if resp.clicked() {
                     app.ui.point_color = i;
@@ -1075,6 +1086,9 @@ fn point_color(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &DevelopSettings) 
 // ------------------------------------------------------------------------------ colour grading
 
 fn grading(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &DevelopSettings) {
+    if app.compact {
+        return grading_phone(app, ui, d);
+    }
     let t = Tokens::get(ui.ctx());
     let w = ui.available_width();
     let (area, _) = ui.allocate_exact_size(vec2(w, 250.0), Sense::hover());
@@ -1091,35 +1105,79 @@ fn grading(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &DevelopSettings) {
             "midtones" => d.grading.midtones,
             _ => d.grading.highlights,
         };
-        let r = Rect::from_center_size(c, vec2(rad * 2.0, rad * 2.0));
-        let resp = ui.interact(r, egui::Id::new(("wheel", key)), Sense::click_and_drag());
-        register(ui.ctx(), format!("wheel:{key}"), r);
-        paint_wheel(ui.painter(), c, rad);
-        let a = (wh.hue as f32).to_radians();
-        let dot = c + vec2(a.cos(), -a.sin()) * rad * (wh.sat as f32 / 100.0);
-        ui.painter().circle_filled(dot, 5.0, Color32::WHITE);
-        ui.painter().circle_stroke(dot, 5.0, Stroke::new(1.0, Color32::BLACK));
+        wheel(app, ui, key, c, rad, wh.hue, wh.sat, 5.0);
         ui.painter().text(pos2(c.x, c.y + rad + 12.0), Align2::CENTER_CENTER, crate::i18n::tr(label), t.font(12.0), t.text_label);
-        if resp.drag_started() {
-            let _ = app.run("develop.beginInteraction", json!({"label": crate::i18n::tr_format!("{label} Grading", label = label)}));
-        }
-        if (resp.dragged() || resp.clicked())
-            && let Some(q) = resp.interact_pointer_pos()
-        {
-            let v = q - c;
-            let hue = ((-v.y).atan2(v.x).to_degrees() + 360.0) % 360.0;
-            let sat = (v.length() / rad * 100.0).min(100.0);
-            let _ = app.run("develop.set", json!({"values": {format!("grading.{key}.hue"): hue.round(), format!("grading.{key}.sat"): sat.round()}}));
-        }
-        if resp.drag_stopped() || resp.clicked() {
-            let _ = app.run("develop.endInteraction", json!({}));
-        }
-        if resp.double_clicked() {
-            let _ = app.run("develop.set", json!({"values": {format!("grading.{key}.hue"): 0, format!("grading.{key}.sat"): 0}}));
-        }
     }
     for c in ["grading.shadows.lum", "grading.midtones.lum", "grading.highlights.lum", "grading.blending", "grading.balance"] {
         control(app, ui, d, c, true);
+    }
+}
+
+/// A phone's colour grading: one big wheel at a time (Shadows, Midtones, Highlights or Global, from a
+/// segmented control), where three small ones were hard to hit; then that range's luminance and the
+/// Blending and Balance.
+fn grading_phone(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &DevelopSettings) {
+    let (pad_l, pad_r) = crate::widgets::side_pad(ui.ctx());
+    let ranges = [("Shadows", "shadows"), ("Midtones", "midtones"), ("Highlights", "highlights"), ("Global", "global")];
+    let id = egui::Id::new("grading-range");
+    let chosen = ui.data(|dd| dd.get_temp::<usize>(id)).unwrap_or(1).min(ranges.len() - 1);
+    let tapped = egui::Frame::NONE
+        .inner_margin(crate::widgets::margin(ui.ctx(), 8, 4))
+        .show(ui, |ui| crate::widgets::segmented(ui, "gradingRange", &ranges, Some(chosen), 4))
+        .inner;
+    let chosen = tapped.unwrap_or(chosen);
+    ui.data_mut(|dd| dd.insert_temp(id, chosen));
+    let key = ranges[chosen].1;
+    let wh = match key {
+        "shadows" => d.grading.shadows,
+        "midtones" => d.grading.midtones,
+        "highlights" => d.grading.highlights,
+        _ => d.grading.global,
+    };
+    let w = ui.available_width();
+    let rad = ((w - pad_l - pad_r).min(210.0) / 2.0).max(40.0);
+    let (area, _) = ui.allocate_exact_size(vec2(w, rad * 2.0 + 20.0), Sense::hover());
+    wheel(app, ui, key, pos2(area.center().x, area.top() + 10.0 + rad), rad, wh.hue, wh.sat, 11.0);
+    for c in [&format!("grading.{key}.lum"), "grading.blending", "grading.balance"] {
+        control(app, ui, d, c, true);
+    }
+}
+
+/// One colour wheel (`wheel:<key>`) centred on `c`: the hue is the angle of a touch or press from
+/// the centre and the saturation its distance; a double click resets it. The puck shows `hue` and
+/// `sat`. A drag is one undo step.
+#[allow(clippy::too_many_arguments)]
+fn wheel(app: &mut LightcraftApp, ui: &mut egui::Ui, key: &str, c: Pos2, rad: f32, hue: f64, sat: f64, puck: f32) {
+    let r = Rect::from_center_size(c, vec2(rad * 2.0, rad * 2.0));
+    let resp = ui.interact(r, egui::Id::new(("wheel", key)), Sense::click_and_drag());
+    register(ui.ctx(), format!("wheel:{key}"), r);
+    paint_wheel(ui.painter(), c, rad);
+    let a = (hue as f32).to_radians();
+    let dot = c + vec2(a.cos(), -a.sin()) * rad * (sat as f32 / 100.0);
+    ui.painter().circle_filled(dot, puck, Color32::WHITE);
+    ui.painter().circle_stroke(dot, puck, Stroke::new(1.0, Color32::BLACK));
+    let label = match key {
+        "shadows" => "Shadows",
+        "midtones" => "Midtones",
+        "highlights" => "Highlights",
+        _ => "Global",
+    };
+    if resp.drag_started() {
+        let _ = app.run("develop.beginInteraction", json!({"label": crate::i18n::tr_format!("{label} Grading", label = label)}));
+    }
+    if (resp.dragged() || resp.clicked())
+        && let Some(q) = resp.interact_pointer_pos()
+    {
+        let v = q - c;
+        let hue = ((-v.y).atan2(v.x).to_degrees() + 360.0) % 360.0;
+        let sat = (v.length() / rad * 100.0).min(100.0);
+        let _ = app.run("develop.set", json!({"values": {format!("grading.{key}.hue"): hue.round(), format!("grading.{key}.sat"): sat.round()}}));
+    }
+    if resp.drag_stopped() || resp.clicked() {
+        let _ = app.run("develop.endInteraction", json!({}));
+    }
+    if resp.double_clicked() {
+        let _ = app.run("develop.set", json!({"values": {format!("grading.{key}.hue"): 0, format!("grading.{key}.sat"): 0}}));
     }
 }
 
