@@ -337,6 +337,41 @@ impl Gazetteer {
         }
     }
 
+    /// How likely a person typing this name means this place when it is ambiguous: a country
+    /// beats everything, a big city beats its region ("madrid" is the city), a region beats a town.
+    pub fn importance(&self, id: PlaceId) -> u64 {
+        match id.kind {
+            Kind::Country => 50_000_000,
+            Kind::Region => 2_000_000,
+            Kind::City => self.city(id.index).map_or(0, |c| u64::from(c.population)),
+        }
+    }
+
+    /// The map box that shows a place: a city and its surroundings, or all the cities of a region
+    /// or country (so about the place). `((south, west), (north, east))`.
+    pub fn view_of(&self, id: PlaceId) -> Option<((f64, f64), (f64, f64))> {
+        match id.kind {
+            Kind::City => {
+                let c = self.city(id.index)?;
+                let r = city_radius_km(c.population);
+                let dlat = r / 110.0;
+                let dlon = (r / (110.0 * c.lat.to_radians().cos().max(0.01))).min(90.0);
+                Some(((c.lat - dlat, c.lon - dlon), (c.lat + dlat, c.lon + dlon)))
+            }
+            Kind::Region | Kind::Country => {
+                let want = u16::try_from(id.index).ok()?;
+                let mut b: Option<((f64, f64), (f64, f64))> = None;
+                for c in self.cities.iter().filter(|c| if id.kind == Kind::Region { c.region == want } else { c.country == want }) {
+                    b = Some(match b {
+                        None => ((c.lat, c.lon), (c.lat, c.lon)),
+                        Some(((s, w), (n, e))) => ((s.min(c.lat), w.min(c.lon)), (n.max(c.lat), e.max(c.lon))),
+                    });
+                }
+                b.map(|((s, w), (n, e))| ((s - 0.4, w - 0.4), (n + 0.4, e + 0.4)))
+            }
+        }
+    }
+
     /// The nearest city within `max_km` of a position, and how far it is.
     pub fn nearest(&self, lat: f64, lon: f64, max_km: f64) -> Option<Located> {
         if !valid(lat, lon) || self.cities.is_empty() || max_km.is_nan() || max_km <= 0.0 {
@@ -633,6 +668,27 @@ mod tests {
         let spain = PlaceFilter::new(g(), &g().lookup_text("spain"));
         assert!(spain.names(g(), "España") && spain.names(g(), "Spain") && !spain.names(g(), "France") && !spain.names(g(), ""));
         assert_eq!(spain.places().len(), 1);
+    }
+
+    #[test]
+    fn ambiguous_names_rank_sensibly() {
+        let best = |name: &str| g().lookup_text(name).into_iter().max_by_key(|i| g().importance(*i)).and_then(|i| g().label(i)).unwrap();
+        assert!(best("madrid").starts_with("Madrid, Spain"), "{}", best("madrid"));
+        assert_eq!(best("france"), "France");
+        assert_eq!(best("spain"), "Spain");
+        assert!(best("new york").starts_with("New York"), "{}", best("new york"));
+    }
+
+    #[test]
+    fn places_have_a_box_to_show() {
+        let city =
+            g().lookup_text("madrid").into_iter().find(|i| i.kind == Kind::City && g().label(*i).is_some_and(|l| l.ends_with("Spain"))).unwrap();
+        let ((s, w), (n, e)) = g().view_of(city).unwrap();
+        assert!(s < 40.4 && n > 40.4 && w < -3.7 && e > -3.7 && n - s < 2.0, "{s} {w} {n} {e}");
+        let spain = g().lookup_text("españa")[0];
+        let ((s, w), (n, e)) = g().view_of(spain).unwrap();
+        assert!(s < 36.5 && n > 43.0 && w < -8.0 && e > 3.0, "{s} {w} {n} {e}");
+        assert!(g().view_of(PlaceId { kind: Kind::City, index: u32::MAX }).is_none());
     }
 
     #[test]

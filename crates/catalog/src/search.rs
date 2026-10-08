@@ -163,7 +163,7 @@ impl TextQuery {
             let Term::Word(w) = t else { continue };
             if let Some(pl) = &w.place {
                 let count = photos.iter().filter(|p| in_places(pl, p)).count();
-                let best = pl.places().iter().max_by_key(|id| rank(g, **id)).copied();
+                let best = pl.places().iter().max_by_key(|id| g.importance(**id)).copied();
                 if let (Some(label), true) = (best.and_then(|id| g.label(id)), count > 0) {
                     let more = pl.places().len().saturating_sub(1);
                     out.push(Understood { kind: "place", label: if more > 0 { format!("{label} +{more}") } else { label }, count });
@@ -184,15 +184,6 @@ fn month_name(m: u8) -> String {
     let n = MONTHS.get(usize::from(m).saturating_sub(1)).copied().unwrap_or("");
     let mut c = n.chars();
     c.next().map(|f| f.to_uppercase().chain(c).collect()).unwrap_or_default()
-}
-
-/// Which candidate best stands for an ambiguous name: the biggest city, else a region, else a country.
-fn rank(g: &Gazetteer, id: PlaceId) -> u64 {
-    match id.kind {
-        Kind::City => 1_000_000_000 + g.city(id.index).map_or(0, |c| u64::from(c.population)),
-        Kind::Region => 500_000_000,
-        Kind::Country => 100_000_000,
-    }
 }
 
 fn is_filler(w: &str) -> bool {

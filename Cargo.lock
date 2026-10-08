@@ -2962,6 +2962,7 @@ dependencies = [
  "lightcraft-codecs",
  "lightcraft-color",
  "lightcraft-develop",
+ "lightcraft-geo",
  "lightcraft-geom",
  "lightcraft-gpu",
  "lightcraft-merge",

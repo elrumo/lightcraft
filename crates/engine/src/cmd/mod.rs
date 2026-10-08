@@ -18,6 +18,7 @@ pub mod keywords;
 pub mod library;
 pub mod lut_profiles;
 pub mod manage;
+mod map;
 mod masks;
 mod merge;
 pub mod metadata;
@@ -132,6 +133,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(convert::edit_specs());
         v.extend(merge::specs());
         v.extend(query::specs());
+        v.extend(map::specs());
         v.extend(xmp::specs());
         v.extend(preset_files::specs());
         v.extend(prefs::specs());
