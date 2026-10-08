@@ -94,7 +94,14 @@ impl Downloader {
 
     /// Start downloading `files` from `mirrors` into `dir` on a background thread. False when
     /// one is already running.
-    pub fn start(&self, label: &'static str, files: &'static [fetch::FileSpec], mirrors: Vec<String>, dir: PathBuf, opts: Options) -> Result<bool, String> {
+    pub fn start(
+        &self,
+        label: &'static str,
+        files: &'static [fetch::FileSpec],
+        mirrors: Vec<String>,
+        dir: PathBuf,
+        opts: Options,
+    ) -> Result<bool, String> {
         let s = self.shared.clone();
         if s.running.swap(true, Ordering::SeqCst) {
             return Ok(false);

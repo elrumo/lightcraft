@@ -263,7 +263,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Filter",
             [],
             None,
-            "partial Filter: {text?, rating?, ratingOp?: atLeast|exactly|atMost, flag?: pick|reject|none|null, label?, kind?, merged?: hdr|panorama|hdrPanorama|any, edited?, date?, keyword?, person?, camera?, serverFolder?: a folder of the library folders on the sync server (`Photos/2024`; its subfolders too)}",
+            "partial Filter: {text?, rating?, ratingOp?: atLeast|exactly|atMost, flag?: pick|reject|none|null, label?, kind?, merged?: hdr|panorama|hdrPanorama|any, edited?, date?, keyword?, person?, camera?, serverFolder?: a folder of the library folders on the sync server (`Photos/2024`; its subfolders too), only?: [photo ids] (an empty list clears it), semantic?: the description of a library.search (null clears it, together with `only: []`)}",
             always,
             |s, p| {
                 let mut v = serde_json::to_value(&s.filter).unwrap_or_default();
