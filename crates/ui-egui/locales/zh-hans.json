@@ -1045,5 +1045,16 @@
   "Import from Files…": "从“文件”导入…",
   "Import Folder from Files…": "从“文件”导入文件夹…",
   "When the export is done, the share sheet opens: save the photos to Photos or Files, or send them to another app.": "导出完成后会打开共享表单：可将照片存储到“照片”或“文件”，或发送到其他应用。",
-  "The photos are copied into the library; the originals in Photos or Files are left as they are.": "照片会复制到图库中；“照片”或“文件”中的原件保持不变。"
+  "The photos are copied into the library; the originals in Photos or Files are left as they are.": "照片会复制到图库中；“照片”或“文件”中的原件保持不变。",
+  "Square Thumbnails": "方形缩略图",
+  "All Commands…": "所有命令…",
+  "All Commands": "所有命令",
+  "Search": "搜索",
+  "Capture Time": "拍摄时间",
+  "Date Added": "添加日期",
+  "Edit Time": "编辑时间",
+  "Reset All Edits": "重置所有编辑",
+  "Before / After": "之前 / 之后",
+  "Create": "创建",
+  "Auto settings applied": "已应用自动设置"
 }

@@ -147,9 +147,11 @@ pub struct SliderOut {
 pub fn slider(ui: &mut Ui, spec: &ControlSpec, value: f64, enabled: bool, label_override: Option<&str>) -> SliderOut {
     let t = Tokens::get(ui.ctx());
     let w = ui.available_width();
-    // touch: a taller row with the track low in it, and a grab zone of about 48 pt (Apple wants 44)
+    // touch: a taller row with the track low in it, and a grab zone of about 44 pt (Apple's
+    // minimum); the value follows the finger's movement rather than jumping to it, and a tap
+    // doesn't change it (as in Lightroom's mobile app and iOS's own sliders)
     let touch = crate::is_compact(ui.ctx());
-    let (row_h, track_dy) = if touch { (68.0, 24.0) } else { (t.slider_row_h, 0.0) };
+    let (row_h, track_dy) = if touch { (60.0, 18.0) } else { (t.slider_row_h, 0.0) };
     let (row, _) = ui.allocate_exact_size(vec2(w, row_h), Sense::hover());
     let pad_l = 24.0;
     let pad_r = 22.0;
@@ -178,16 +180,38 @@ pub fn slider(ui: &mut Ui, spec: &ControlSpec, value: f64, enabled: bool, label_
         out.value = Some(spec.default);
         v = spec.default;
     } else {
-        if resp.drag_started() {
-            out.drag_started = true;
-        }
-        if (resp.dragged() || resp.drag_started())
+        // touch: a drag that sets off mostly up or down scrolls what holds the slider (the sheet)
+        let drag = if touch { touch_drag(ui, &resp, id) } else { None };
+        let sliding = match drag {
+            Some((mode, was)) => {
+                if mode == TouchDrag::Slide && was != Some(TouchDrag::Slide) {
+                    out.drag_started = true;
+                }
+                if mode == TouchDrag::Scroll && resp.dragged() {
+                    ui.scroll_with_delta(vec2(0.0, ui.input(|i| i.pointer.delta().y)));
+                }
+                if resp.drag_stopped() && was == Some(TouchDrag::Slide) {
+                    out.drag_stopped = true;
+                }
+                mode == TouchDrag::Slide
+            }
+            None => {
+                if resp.drag_started() {
+                    out.drag_started = true;
+                }
+                !touch
+            }
+        };
+        if sliding
+            && (resp.dragged() || resp.drag_started())
             && let Some(p) = resp.interact_pointer_pos()
         {
             let fine = ui.input(|i| i.modifiers.shift);
+            let dx = ui.input(|i| i.pointer.delta().x) as f64;
             let nv = if fine {
-                let dx = ui.input(|i| i.pointer.delta().x);
-                value + dx as f64 * span / track_rect.width() as f64 * 0.1
+                value + dx * span / track_rect.width() as f64 * 0.1
+            } else if touch {
+                value + dx * span / track_rect.width() as f64
             } else {
                 from_x(p.x)
             };
@@ -198,6 +222,7 @@ pub fn slider(ui: &mut Ui, spec: &ControlSpec, value: f64, enabled: bool, label_
                 v = nv;
             }
         } else if resp.clicked()
+            && !touch
             && let Some(p) = resp.interact_pointer_pos()
         {
             let step = spec.step.max(1e-9);
@@ -207,7 +232,7 @@ pub fn slider(ui: &mut Ui, spec: &ControlSpec, value: f64, enabled: bool, label_
             out.drag_started = true;
             out.drag_stopped = true;
         }
-        if resp.drag_stopped() {
+        if resp.drag_stopped() && !touch {
             out.drag_stopped = true;
         }
         // ↑ / ↓ while the pointer rests on the row nudge the value (⇧: five times as much)
@@ -232,10 +257,11 @@ pub fn slider(ui: &mut Ui, spec: &ControlSpec, value: f64, enabled: bool, label_
     let hovered = resp.hovered() || resp.dragged();
     let text_c = if enabled { t.text_label } else { t.text_disabled };
     let p = ui.painter();
-    p.text(label_rect.left_center(), Align2::LEFT_CENTER, crate::i18n::tr(label_override.unwrap_or(spec.label)), t.font(12.5), text_c);
+    let font = t.font(if touch { 15.0 } else { 12.5 });
+    p.text(label_rect.left_center(), Align2::LEFT_CENTER, crate::i18n::tr(label_override.unwrap_or(spec.label)), font.clone(), text_c);
     let shown = if spec.id == "wb.temp" { format!("{v:.0}") } else { spec.format(v).replace("+0.00", "0").replace("-0.00", "0") };
     let shown = if shown == "+0" || shown == "-0" { "0".to_string() } else { shown };
-    p.text(label_rect.right_center(), Align2::RIGHT_CENTER, shown, t.font(12.5), text_c);
+    p.text(label_rect.right_center(), Align2::RIGHT_CENTER, shown, font, text_c);
     let ring = if touch { 11.0 } else { 7.0 };
     let tx = to_x(v);
     paint_track(ui, track_rect, &spec.track, &t, tx, ring);
@@ -253,6 +279,48 @@ pub fn slider(ui: &mut Ui, spec: &ControlSpec, value: f64, enabled: bool, label_
         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
     }
     out
+}
+
+/// How a finger's drag on a touch slider is taken: undecided for its first few points, then a
+/// slide when it went mostly sideways, else a scroll of what holds the slider, as iOS tells them
+/// apart.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TouchDrag {
+    Pending,
+    Slide,
+    Scroll,
+}
+
+/// This frame's [`TouchDrag`] for the slider `id` and what it was on the previous frame; `None`
+/// when no drag is going on or ending.
+fn touch_drag(ui: &Ui, resp: &Response, id: egui::Id) -> Option<(TouchDrag, Option<TouchDrag>)> {
+    let key = id.with("touch-drag");
+    let was = ui.data(|d| d.get_temp::<TouchDrag>(key));
+    if resp.dragged() || resp.drag_started() {
+        let mode = match was {
+            Some(m) if m != TouchDrag::Pending => m,
+            _ => {
+                let moved = match (ui.input(|i| i.pointer.press_origin()), resp.interact_pointer_pos()) {
+                    (Some(o), Some(p)) => p - o,
+                    _ => egui::Vec2::ZERO,
+                };
+                if moved.length() < 8.0 {
+                    TouchDrag::Pending
+                } else if moved.x.abs() >= moved.y.abs() {
+                    TouchDrag::Slide
+                } else {
+                    TouchDrag::Scroll
+                }
+            }
+        };
+        ui.data_mut(|d| d.insert_temp(key, mode));
+        return Some((mode, was));
+    }
+    if resp.drag_stopped() {
+        ui.data_mut(|d| d.remove::<TouchDrag>(key));
+        return was.map(|m| (m, was));
+    }
+    None
 }
 
 /// `value` moved by `steps` keyboard nudges: one nudge is about 1/200 of the range, a whole
@@ -329,6 +397,37 @@ pub fn flyout_row(ui: &mut Ui, id: &str, title: &str, icon: Icon, open: bool) ->
     resp
 }
 
+/// A checkbox on the desktop; on a phone an iOS switch at the end of a full-width row, the label
+/// first (green when on, its knob sliding across), as iOS forms show an on / off choice.
+pub fn check(ui: &mut Ui, on: &mut bool, label: impl Into<egui::WidgetText>) -> Response {
+    if !crate::is_compact(ui.ctx()) {
+        return ui.checkbox(on, label);
+    }
+    let t = Tokens::get(ui.ctx());
+    let enabled = ui.is_enabled();
+    let w = ui.available_width().max(80.0);
+    let galley = label.into().into_galley(ui, Some(egui::TextWrapMode::Wrap), w - 70.0, egui::TextStyle::Body);
+    let (r, mut resp) = ui.allocate_exact_size(vec2(w, (galley.size().y + 16.0).max(44.0)), Sense::click());
+    if resp.clicked() && enabled {
+        *on = !*on;
+        resp.mark_changed();
+    }
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, enabled, *on, galley.text()));
+    let k = ui.ctx().animate_bool_with_time(resp.id, *on, 0.15);
+    let p = ui.painter();
+    p.galley(pos2(r.left(), r.center().y - galley.size().y / 2.0), galley, if enabled { t.text } else { t.text_disabled });
+    // 51 × 31 pt like iOS's own; its off track is a translucent grey
+    let sw = Rect::from_center_size(pos2(r.right() - 27.0, r.center().y), vec2(51.0, 31.0));
+    let (off, green) = (Color32::from_rgb(0x39, 0x39, 0x3d), Color32::from_rgb(0x30, 0xd1, 0x58));
+    let mix = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * k).round() as u8;
+    let track = Color32::from_rgb(mix(off.r(), green.r()), mix(off.g(), green.g()), mix(off.b(), green.b()));
+    p.rect_filled(sw, 15.5, if enabled { track } else { track.gamma_multiply(0.5) });
+    let x = sw.left() + 15.5 + (sw.width() - 31.0) * k;
+    p.circle_filled(pos2(x, sw.center().y + 1.0), 13.5, Color32::from_black_alpha(40));
+    p.circle_filled(pos2(x, sw.center().y), 13.5, Color32::WHITE);
+    resp
+}
+
 /// A small bordered text button (Auto, B&W, HDR…).
 pub fn text_button(ui: &mut Ui, id: &str, label: &str, active: bool) -> Response {
     let label = if id.starts_with("labelSet-") { label } else { crate::i18n::tr(label) };
@@ -386,6 +485,43 @@ pub fn segmented(ui: &mut Ui, id: &str, items: &[(&str, &str)], active: Option<u
         });
     }
     clicked
+}
+
+/// iOS's segmented control (phone dialogs): segments of equal width on a rounded grey track, the
+/// chosen one raised on a lighter pill; more than four wrap to rows of four. Segment `i` is
+/// `button:{id}-{i}`. Returns the tapped index.
+pub fn ios_segmented(ui: &mut Ui, id: &str, labels: &[&str], active: Option<usize>) -> Option<usize> {
+    let t = Tokens::get(ui.ctx());
+    let w = ui.available_width();
+    let mut tapped = None;
+    for (row_i, row) in labels.chunks(4).enumerate() {
+        let (track, _) = ui.allocate_exact_size(vec2(w, 34.0), Sense::hover());
+        ui.painter().rect_filled(track, 9.0, t.inset);
+        let seg_w = track.width() / row.len() as f32;
+        for (j, label) in row.iter().enumerate() {
+            let i = row_i * 4 + j;
+            let r = Rect::from_min_size(pos2(track.left() + j as f32 * seg_w, track.top()), vec2(seg_w, track.height()));
+            let resp = ui.interact(r, ui.id().with((id, i)), Sense::click());
+            let on = active == Some(i);
+            resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::RadioButton, true, on, *label));
+            register(ui.ctx(), format!("button:{id}-{i}"), r);
+            let p = ui.painter();
+            if on {
+                let pill = r.shrink(2.0);
+                p.rect_filled(pill.translate(vec2(0.0, 1.0)), 7.0, Color32::from_black_alpha(50));
+                p.rect_filled(pill, 7.0, Color32::from_rgb(0x63, 0x63, 0x66));
+            } else if j > 0 && active != Some(i - 1) {
+                p.vline(r.left(), r.shrink2(vec2(0.0, 9.0)).y_range(), Stroke::new(1.0, t.hover));
+            }
+            let font = if on { t.semibold(13.0) } else { t.font(13.0) };
+            p.text(r.center(), Align2::CENTER_CENTER, crate::i18n::tr(label), font, t.text);
+            if resp.clicked() {
+                tapped = Some(i);
+            }
+        }
+        ui.add_space(4.0);
+    }
+    tapped
 }
 
 /// An icon-only button. `active` draws the selected background (tool strip).

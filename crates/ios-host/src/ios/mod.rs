@@ -8,7 +8,7 @@ pub mod share;
 
 use objc2::MainThreadMarker;
 use objc2::rc::Retained;
-use objc2_ui_kit::{UIApplication, UIViewController, UIWindowScene};
+use objc2_ui_kit::{UIApplication, UIViewController, UIWindow, UIWindowScene};
 
 unsafe extern "C" {
     /// The app's Objective-C host (`LightCraftMain.m`): `NSLog(@"LightCraft: %s", line)`.
@@ -23,13 +23,18 @@ pub fn console(line: &str) {
     unsafe { lightcraft_host_log(c.as_ptr()) }
 }
 
+/// Called by the Objective-C host (`SceneDelegate.m`) when the on-screen keyboard's Return is tapped.
+#[unsafe(no_mangle)]
+pub extern "C" fn lightcraft_host_return_key() {
+    crate::return_pressed();
+}
+
 pub(crate) fn main_thread() -> Result<MainThreadMarker, String> {
     MainThreadMarker::new().ok_or_else(|| "must be called on the main thread".to_string())
 }
 
-/// The view controller to present a sheet over: the app window's root view controller (winit's),
-/// then whatever it already presents.
-pub(crate) fn top_controller(mtm: MainThreadMarker) -> Result<Retained<UIViewController>, String> {
+/// The app's window (winit's): the key window of its scene, else the first one.
+pub(crate) fn app_window(mtm: MainThreadMarker) -> Option<Retained<UIWindow>> {
     let app = UIApplication::sharedApplication(mtm);
     let mut windows = Vec::new();
     for scene in app.connectedScenes().allObjects().iter() {
@@ -37,7 +42,14 @@ pub(crate) fn top_controller(mtm: MainThreadMarker) -> Result<Retained<UIViewCon
             windows.extend(scene.windows().iter());
         }
     }
-    let window = windows.iter().find(|w| w.isKeyWindow()).or(windows.first()).ok_or("no window to show the sheet over")?;
+    let key = windows.iter().position(|w| w.isKeyWindow()).unwrap_or(0);
+    (key < windows.len()).then(|| windows.swap_remove(key))
+}
+
+/// The view controller to present a sheet over: the app window's root view controller (winit's),
+/// then whatever it already presents.
+pub(crate) fn top_controller(mtm: MainThreadMarker) -> Result<Retained<UIViewController>, String> {
+    let window = app_window(mtm).ok_or("no window to show the sheet over")?;
     let mut top = window.rootViewController().ok_or("the window has no view controller")?;
     // a sheet already up (bounded: presentation chains are short)
     for _ in 0..16 {

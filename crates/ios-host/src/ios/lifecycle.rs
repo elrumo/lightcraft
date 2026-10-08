@@ -10,11 +10,11 @@ use block2::RcBlock;
 use objc2::MainThreadMarker;
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
-use objc2_foundation::{NSNotification, NSNotificationCenter, NSObjectProtocol, NSOperationQueue, NSString};
+use objc2_foundation::{NSNotification, NSNotificationCenter, NSObjectProtocol, NSOperationQueue, NSString, NSValue};
 use objc2_ui_kit::{
-    UIApplication, UIApplicationDidBecomeActiveNotification, UIApplicationDidEnterBackgroundNotification,
+    NSValueUIGeometryExtensions, UIApplication, UIApplicationDidBecomeActiveNotification, UIApplicationDidEnterBackgroundNotification,
     UIApplicationDidReceiveMemoryWarningNotification, UIApplicationWillEnterForegroundNotification, UIApplicationWillResignActiveNotification,
-    UIApplicationWillTerminateNotification,
+    UIApplicationWillTerminateNotification, UIKeyboardFrameEndUserInfoKey, UIKeyboardWillChangeFrameNotification, UIKeyboardWillHideNotification,
 };
 
 use crate::Lifecycle;
@@ -47,14 +47,57 @@ pub fn observe(f: Box<dyn Fn(Lifecycle)>) -> Result<(), String> {
         let block = RcBlock::new(move |_n: NonNull<NSNotification>| f(kind));
         // SAFETY: no object filter; the queue is the main queue, so the block runs on the main
         // thread; the block copies what it captures and lives as long as the observer.
-        let token = unsafe { center.addObserverForName_object_queue_usingBlock(Some(name), None, Some(&queue), &block) };
-        OBSERVERS.with(|o| {
-            if let Ok(mut o) = o.try_borrow_mut() {
-                o.push(token);
-            }
-        });
+        keep(unsafe { center.addObserverForName_object_queue_usingBlock(Some(name), None, Some(&queue), &block) });
     }
     Ok(())
+}
+
+/// Keeps the observer token for the life of the app.
+fn keep(token: Retained<ProtocolObject<dyn NSObjectProtocol>>) {
+    OBSERVERS.with(|o| {
+        if let Ok(mut o) = o.try_borrow_mut() {
+            o.push(token);
+        }
+    });
+}
+
+pub fn observe_keyboard(f: Box<dyn Fn()>) -> Result<(), String> {
+    let mtm = super::main_thread()?;
+    let f: Rc<dyn Fn()> = Rc::from(f);
+    let center = NSNotificationCenter::defaultCenter();
+    let queue = NSOperationQueue::mainQueue();
+    // SAFETY: reading UIKit's notification-name constants (immutable NSString statics).
+    let names = unsafe { [(UIKeyboardWillChangeFrameNotification, false), (UIKeyboardWillHideNotification, true)] };
+    for (name, hide) in names {
+        let f = f.clone();
+        // on the main queue (below): the non-Send `Rc` and the marker stay on the main thread
+        let block = RcBlock::new(move |n: NonNull<NSNotification>| {
+            // SAFETY: the notification centre passes a valid notification for the block's duration.
+            let n = unsafe { n.as_ref() };
+            crate::set_keyboard_height(if hide { 0.0 } else { keyboard_cover(mtm, n) });
+            f();
+        });
+        // SAFETY: as in `observe`: no object filter, the main queue, a block that lives as long as
+        // the observer.
+        keep(unsafe { center.addObserverForName_object_queue_usingBlock(Some(name), None, Some(&queue), &block) });
+    }
+    Ok(())
+}
+
+/// How far up from the bottom of the screen the keyboard's final frame reaches, in points (0 when
+/// the notification doesn't say).
+fn keyboard_cover(mtm: MainThreadMarker, n: &NSNotification) -> f32 {
+    let Some(info) = n.userInfo() else { return 0.0 };
+    // SAFETY: reading UIKit's user-info key constant (an immutable NSString static).
+    let key = unsafe { UIKeyboardFrameEndUserInfoKey };
+    let Some(value) = info.objectForKey(key) else { return 0.0 };
+    let Ok(value) = value.downcast::<NSValue>() else { return 0.0 };
+    // SAFETY: UIKit documents this key's value as an NSValue holding a CGRect (screen coordinates).
+    let frame = unsafe { value.CGRectValue() };
+    // the app's window fills the screen, so its height is the screen's
+    let Some(window) = super::app_window(mtm) else { return 0.0 };
+    let cover = (window.bounds().size.height - frame.origin.y).clamp(0.0, frame.size.height.max(0.0));
+    cover as f32
 }
 
 /// A UIKit background task (see [`crate::BackgroundTask`]).
