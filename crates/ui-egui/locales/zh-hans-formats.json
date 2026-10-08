@@ -120,5 +120,7 @@
   "{month} {year}": "{year}年{month}月",
   "{weekday}, {day}": "{day}日 {weekday}",
   "{weekday}, {day} {month} {year}": "{year}年{month}月{day}日 {weekday}",
-  "Add {n}": "添加 {n} 张"
+  "Add {n}": "添加 {n} 张",
+  "Getting your photos ready to search: {done} of {total}": "正在准备可搜索的照片：{done}/{total}",
+  "{indexed} of {total} photos can be searched.": "已有 {indexed}/{total} 张照片可供搜索"
 }

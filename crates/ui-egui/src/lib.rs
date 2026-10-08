@@ -28,6 +28,8 @@ pub mod theme;
 pub mod widgets;
 
 #[cfg(test)]
+mod tests_ai_search;
+#[cfg(test)]
 mod tests_compact;
 #[cfg(test)]
 mod tests_curve;
@@ -249,6 +251,7 @@ impl LightcraftApp {
     pub fn new(mut session: Session, services: Services) -> Self {
         // AI mask requests run on the model's worker; frames apply their results (never wait)
         session.segmenter.background = true;
+        session.vision.background = true;
         Self {
             session,
             ui: UiState::default(),
@@ -816,6 +819,7 @@ impl LightcraftApp {
         // panels set it again this frame while the pointer rests on a preset or profile
         self.hover_preview = None;
         self.ai_mask_detail(&ctx);
+        panels::ai_search::frame(self, &ctx);
         if self.ui.fullscreen {
             // full-screen preview: the photo alone on black
             egui::CentralPanel::default().frame(egui::Frame::NONE.fill(egui::Color32::BLACK)).show(ui, |ui| panels::detail::show(self, ui));

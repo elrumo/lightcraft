@@ -491,6 +491,11 @@ impl Session {
         map
     }
 
+    /// How many photos the index can hold: the library's photos, distinct by content.
+    pub fn vision_photo_count(&self) -> usize {
+        self.vision_keys().len()
+    }
+
     /// Status for the UI and agents (`vision.model.status`).
     pub fn vision_status(&self) -> Value {
         let v = &self.vision;

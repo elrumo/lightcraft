@@ -3372,6 +3372,7 @@ dependencies = [
  "lightcraft-pipeline",
  "lightcraft-preview",
  "lightcraft-raster",
+ "lightcraft-vision",
  "log",
  "serde",
  "serde_json",

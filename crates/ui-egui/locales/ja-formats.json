@@ -120,5 +120,7 @@
   "{weekday}, {day}": "{day}日（{weekday}）",
   "{weekday}, {day} {month} {year}": "{year}年{month}月{day}日（{weekday}）",
   "{year}": "{year}年",
-  "Add {n}": "{n}枚を追加"
+  "Add {n}": "{n}枚を追加",
+  "Getting your photos ready to search: {done} of {total}": "検索の準備中：{done}/{total}枚",
+  "{indexed} of {total} photos can be searched.": "{indexed}/{total}枚を検索できます"
 }

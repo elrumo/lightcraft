@@ -304,6 +304,21 @@ pub struct UiState {
     /// A SAM 3 download was started from the app (to report its end once).
     #[serde(skip)]
     pub sam_downloading: bool,
+    /// The search field describes a photo (search by description) instead of matching text.
+    #[serde(skip)]
+    pub ai_search: bool,
+    /// Why the last search by description, download or indexing failed (shown under the field).
+    #[serde(skip)]
+    pub ai_search_error: Option<String>,
+    /// The search model download was started from the app (to report its end once).
+    #[serde(skip)]
+    pub ai_search_downloading: bool,
+    /// Indexing was started for this switching-on (it is offered, not repeated, after).
+    #[serde(skip)]
+    pub ai_search_autostarted: bool,
+    /// Photos the index can hold, with the catalog revision they were counted at.
+    #[serde(skip)]
+    pub ai_search_total: (u64, usize),
     /// When to start the zoomed-in detail pass of an AI mask (app time) and which mask: set by
     /// each click or description, so the pass runs once the clicking stops.
     #[serde(skip)]
@@ -597,6 +612,11 @@ impl Default for UiState {
             describe: None,
             detail_due: None,
             sam_downloading: false,
+            ai_search: false,
+            ai_search_error: None,
+            ai_search_downloading: false,
+            ai_search_autostarted: false,
+            ai_search_total: (0, 0),
             renaming_component: None,
             quit: false,
             dragging_photos: None,

@@ -120,5 +120,7 @@
   " ({} in Recently Deleted)": "（其中 {} 張在「最近刪除」中）",
   "Already in the library: {} photo{} selected in All Photos": "已在照片庫中：已在「所有照片」中選取 {} 張照片{:.0}",
   "Already in the library, in Recently Deleted: {} photo{} selected · right-click ▸ Restore, or Delete Permanently to import afresh": "已在照片庫的「最近刪除」中：已選取 {} 張照片{:.0} · 按右鍵 ▸ 還原，或永久刪除後重新匯入",
-  "Add {n}": "加入 {n} 張"
+  "Add {n}": "加入 {n} 張",
+  "Getting your photos ready to search: {done} of {total}": "正在準備可搜尋的照片：{done}/{total}",
+  "{indexed} of {total} photos can be searched.": "{indexed}/{total} 張照片可供搜尋"
 }
