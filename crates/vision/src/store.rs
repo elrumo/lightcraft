@@ -37,6 +37,15 @@ pub enum Error {
     /// Data that must not be stored (wrong length, not finite, all zero…).
     #[error("invalid data: {0}")]
     Invalid(&'static str),
+    /// The model's files are damaged, incomplete or of another kind.
+    #[error("model: {0}")]
+    Model(String),
+    /// No model in this folder (it is downloaded only when the user asks).
+    #[error("model files not found in {0}")]
+    Missing(std::path::PathBuf),
+    #[cfg(not(target_arch = "wasm32"))]
+    #[error(transparent)]
+    Candle(#[from] candle_core::Error),
 }
 
 /// What a photo's data is filed under: its 128-bit content hash.

@@ -13,7 +13,13 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 pub mod index;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod models;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod siglip;
 pub mod store;
+#[cfg(not(target_arch = "wasm32"))]
+mod weights;
 
 pub use index::{EmbeddingIndex, Hit, Import};
 pub use store::{Error, Key};
