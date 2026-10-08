@@ -194,3 +194,32 @@ fn the_tablet_panel_has_no_grabber_but_the_same_rows() {
     let (exposure, contrast) = (rect(&h, "slider:light.exposure"), rect(&h, "slider:light.contrast"));
     assert!((contrast.center().y - exposure.center().y - crate::widgets::TOUCH_SLIDER_ROW_H).abs() < 0.5);
 }
+
+/// Presets on a phone: the groups are chips and the chosen group's presets a row of thumbnails of
+/// the photo that scrolls sideways, all in a short sheet; a tap on a tile applies the preset.
+#[test]
+fn phone_presets_are_a_strip_of_thumbnails_under_group_chips() {
+    let mut h = detail([390.0, 844.0]);
+    let id = h.app.session.active().expect("active photo");
+    let r = h.request("engine.execute", json!({"command": "panel.presets"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    let chips =
+        |h: &Headless| h.app.widgets.iter().filter(|(w, _)| w.starts_with("button:presetGroup:")).map(|(w, r)| (w.clone(), *r)).collect::<Vec<_>>();
+    let tiles = |h: &Headless| h.app.widgets.iter().filter(|(w, _)| w.starts_with("preset:")).map(|(w, r)| (w.clone(), *r)).collect::<Vec<_>>();
+    let chips_now = chips(&h);
+    assert!(chips_now.len() >= 3, "a chip for each group: {chips_now:?}");
+    let first_tiles = tiles(&h);
+    assert!(first_tiles.len() >= 3, "{first_tiles:?}");
+    let y = first_tiles[0].1.center().y;
+    assert!(first_tiles.iter().all(|(_, r)| (r.center().y - y).abs() < 0.5 && r.width() >= 80.0), "one row of tiles: {first_tiles:?}");
+    assert!(h.app.renderer.variant_textures() > 0, "the tiles show the photo with each preset");
+    // another group's presets replace them
+    click(&mut h, &chips_now[1].0);
+    let other = tiles(&h);
+    assert_ne!(other[0].0, first_tiles[0].0, "the second group's presets: {other:?}");
+    // a tap applies one
+    let before = format!("{:?}", h.app.session.develop_of(id));
+    click(&mut h, &other[0].0);
+    assert_ne!(format!("{:?}", h.app.session.develop_of(id)), before, "the preset was applied");
+}

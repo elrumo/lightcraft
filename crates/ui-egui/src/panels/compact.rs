@@ -524,13 +524,17 @@ fn group_cell(ui: &mut egui::Ui, id: &str, icon: Icon, label: &str, on: bool) ->
 /// it to step through them. A sheet whose content is shorter than its height shrinks to fit (the
 /// Profile group is one row), so the photo gets the room.
 fn sheet(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, wide: bool) {
-    let avail = ui.max_rect().height();
+    // the room the bars left, for the photo and the sheet
+    let avail = ui.available_rect_before_wrap().height();
     let frame = egui::Frame::NONE.fill(t.chrome);
     let body = |app: &mut LightcraftApp, ui: &mut egui::Ui| {
         if app.ui.presets { super::presets::body(app, ui) } else { super::right::body(app, ui) }
     };
     if wide {
-        egui::Panel::right("compact_side").resizable(true).default_size(SIDE_W).size_range(280.0..=480.0).frame(frame).show(ui, |ui| body(app, ui));
+        egui::Panel::right("compact_side").resizable(true).default_size(SIDE_W).size_range(280.0..=480.0).frame(frame).show(ui, |ui| {
+            ui.add_space(8.0);
+            body(app, ui)
+        });
         return;
     }
     let ctx = ui.ctx().clone();
@@ -541,7 +545,8 @@ fn sheet(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, wide: bool) {
     let drag_id = egui::Id::new("compact-sheet-drag");
     let dragging = ctx.data(|d| d.get_temp::<f32>(drag_id));
     let fit = ctx.data(|d| d.get_temp::<f32>(fit_id(app))).map(|c| c + GRABBER_H);
-    let limit = |h: f32| fit.map_or(h, |f| h.min(f)).max(GRABBER_H + SLIDER_ROW_H);
+    // (content that only just overflows a stop is shown whole: a row cut in half helps nobody)
+    let limit = |h: f32| fit.map_or(h, |f| if f <= h + SLIDER_ROW_H { f } else { h }).max(GRABBER_H + SLIDER_ROW_H);
     let h = match dragging {
         Some(h) => limit(h),
         None => ease_to(&ctx, egui::Id::new("compact-sheet-h"), limit(stops[detent])),
@@ -578,9 +583,9 @@ fn sheet(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, wide: bool) {
 }
 
 /// The sheet's heights: about two and a half slider rows, four and a half (a part of the next row
-/// shows that the rest scrolls), and most of the screen.
+/// shows that the rest scrolls), and three fifths of the room (the photo keeps the rest).
 fn sheet_stops(avail: f32) -> [f32; 3] {
-    let most = (avail * 0.68).max(GRABBER_H + 6.0 * SLIDER_ROW_H);
+    let most = (avail * 0.62).max(GRABBER_H + 6.0 * SLIDER_ROW_H);
     let cap = avail * 0.8;
     [(GRABBER_H + 2.5 * SLIDER_ROW_H).min(cap), (GRABBER_H + 4.5 * SLIDER_ROW_H).min(cap), most.min(cap)]
 }

@@ -33,6 +33,10 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     };
     let out = egui::ScrollArea::vertical().id_salt("right-scroll").auto_shrink([false, false]).show(ui, |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
+        if app.compact {
+            // rows in the sheet are 36 pt, not 44: its own controls (sliders, buttons) size themselves
+            ui.spacing_mut().interact_size.y = 36.0;
+        }
         match app.ui.right {
             RightPanel::Edit => super::edit::show(app, ui, id),
             RightPanel::Profiles => super::profiles::show(app, ui, id),
