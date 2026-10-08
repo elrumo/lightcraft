@@ -8,6 +8,7 @@ use lightcraft_catalog::{Catalog, ColorLabel, DateRun, Flag, GroupBy, PhotoId, S
 use serde_json::json;
 
 use crate::LightcraftApp;
+use crate::haptics::{self, Haptic};
 use crate::icons::{Icon, paint};
 use crate::render::Slot;
 use crate::state::ViewMode;
@@ -355,6 +356,7 @@ fn drag_choose(app: &mut LightcraftApp, ui: &egui::Ui, ids: &[PhotoId], lay: &Gr
         && s.last != Some(cur)
     {
         s.last = Some(cur);
+        haptics::tap(ui.ctx(), Haptic::Selection);
         let run: HashSet<u64> = ids.get(s.start.min(cur)..=s.start.max(cur)).unwrap_or(&[]).iter().map(|i| i.0).collect();
         let mut chosen: Vec<u64> = s.base.iter().copied().filter(|i| s.adding || !run.contains(i)).collect();
         if s.adding {
@@ -594,7 +596,9 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
         };
         // phone tiles: the photo fills its square, the long side cropped
         let uv = if tiles { cover_uv(tw as f32, th as f32) } else { Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)) };
-        p.image(tex.tex.id(), fit, uv, Color32::WHITE);
+        // a thumbnail that was not there yet fades in (one that was, shows at once: it has no stored 0)
+        let fade = if app.compact { ui.ctx().animate_bool_with_time(egui::Id::new(("thumb-in", id.0)), true, 0.2) } else { 1.0 };
+        p.image(tex.tex.id(), fit, uv, Color32::WHITE.gamma_multiply(fade));
         // (choosing by touch draws its own frame: `check_badge`)
         let choosing = app.compact && app.ui.select_mode;
         if active && !choosing && tiles {
@@ -609,6 +613,9 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
     } else {
         let ph = img_rect.shrink(if square && !tiles { 20.0 } else { 0.0 });
         p.rect_filled(ph, 0.0, Color32::from_gray(38));
+        if app.compact {
+            let _ = ui.ctx().animate_bool_with_time(egui::Id::new(("thumb-in", id.0)), false, 0.0);
+        }
         if app.renderer.failure(Slot::Thumb(id)).is_some() {
             // unreadable / missing file
             p.text(ph.center(), Align2::CENTER_CENTER, "!", t.semibold(18.0), t.text_dim);
@@ -722,15 +729,17 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
         // removes it; a long press starts choosing (there is no right click: the action bar and
         // Menu have what the context menu would)
         if app.ui.select_mode {
-            check_badge(ui, img_rect, selected, &t);
+            check_badge(ui, img_rect, selected, &t, egui::Id::new(("check", id.0)));
             if resp.clicked() {
                 let _ = app.run("library.select", json!({"ids": [id.0], "mode": "toggle"}));
+                haptics::tap(ui.ctx(), Haptic::Selection);
             }
         } else if resp.clicked() {
             let _ = app.run("library.select", json!({"ids": [id.0]}));
             let _ = app.run("view.detail", json!({}));
         } else if resp.long_touched() || resp.secondary_clicked() {
             let _ = app.run("view.selectMode", json!({"on": true, "id": id.0}));
+            haptics::tap(ui.ctx(), Haptic::Medium);
         }
         return;
     }
@@ -772,17 +781,19 @@ pub fn cover_uv(w: f32, h: f32) -> Rect {
 }
 
 /// Choosing photos by touch: a circle at the cell's top right, filled with a check when chosen.
-fn check_badge(ui: &egui::Ui, img: Rect, selected: bool, t: &Tokens) {
+fn check_badge(ui: &egui::Ui, img: Rect, selected: bool, t: &Tokens, id: egui::Id) {
     let p = ui.painter();
     let c = pos2(img.right() - 15.0, img.top() + 15.0);
-    if selected {
-        p.rect_stroke(img, 0.0, Stroke::new(3.0, t.accent), StrokeKind::Inside);
-        p.circle(c, 10.0, t.accent, Stroke::new(1.5, Color32::WHITE));
-        let tick = [c + vec2(-4.5, 0.0), c + vec2(-1.5, 3.5), c + vec2(4.5, -3.5)];
-        p.line_segment([tick[0], tick[1]], Stroke::new(2.0, Color32::WHITE));
-        p.line_segment([tick[1], tick[2]], Stroke::new(2.0, Color32::WHITE));
-    } else {
-        p.circle(c, 10.0, Color32::from_black_alpha(70), Stroke::new(1.5, Color32::WHITE));
+    // the circle fills and the tick pops in (and back out) as the photo is chosen
+    let k = ui.ctx().animate_bool_with_time(id, selected, 0.18);
+    p.circle(c, 10.0, Color32::from_black_alpha(70).lerp_to_gamma(t.accent, k), Stroke::new(1.5, Color32::WHITE));
+    if k > 0.0 {
+        p.rect_stroke(img, 0.0, Stroke::new(3.0 * k, t.accent.gamma_multiply(k)), StrokeKind::Inside);
+        let s = k * (1.0 + 0.25 * (k * std::f32::consts::PI).sin());
+        let tick = [c + vec2(-4.5, 0.0) * s, c + vec2(-1.5, 3.5) * s, c + vec2(4.5, -3.5) * s];
+        let stroke = Stroke::new(2.0, Color32::WHITE.gamma_multiply(k));
+        p.line_segment([tick[0], tick[1]], stroke);
+        p.line_segment([tick[1], tick[2]], stroke);
     }
 }
 

@@ -27,7 +27,7 @@ fn browse(s: &mut Session, p: &Value) -> Result<Value> {
     let dir_s = dir.to_string_lossy().trim_end_matches(['/', '\\']).to_string();
     let subfolders = bool_or(p, "subfolders", s.browse.as_ref().is_some_and(|b| b.subfolders));
     let files: Vec<String> = if subfolders {
-        crate::import::expand(std::slice::from_ref(&dir_s), None)
+        crate::import::expand(std::slice::from_ref(&dir_s), None, &s.import_defaults.ignore)
     } else {
         let mut v: Vec<String> = std::fs::read_dir(&dir)
             .map_err(|e| bad(C, format!("{path}: {e}")))?

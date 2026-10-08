@@ -242,6 +242,9 @@ fn services() -> Services {
         tile_exec: Some(lightcraft_ui_egui::panels::map::native_exec()),
         share_exports: None,
         host_pick: None,
+        // the system clipboard reaches text fields directly; no haptics
+        haptic: None,
+        clipboard_text: None,
     }
 }
 

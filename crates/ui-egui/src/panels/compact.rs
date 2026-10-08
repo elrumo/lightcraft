@@ -12,6 +12,7 @@ use serde_json::json;
 
 use super::mobile;
 use crate::LightcraftApp;
+use crate::haptics::{self, Haptic};
 use crate::icons::Icon;
 use crate::state::{RightPanel, ViewMode};
 use crate::theme::Tokens;
@@ -60,19 +61,17 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     }
     // the albums list: a column on a tablet, a page sliding over the grid on a phone
     let albums_page = app.ui.left_panel && !wide;
-    top_bar(app, ui, &t);
-    if app.ui.select_mode {
-        action_bar(app, ui, &t);
-    }
-    if detail {
-        tool_bar(app, ui, &t);
-        if !app.ui.presets && matches!(app.ui.right, RightPanel::Edit) {
-            group_bar(app, ui, &t);
-        }
-        if app.ui.right != RightPanel::None || app.ui.presets {
-            sheet(app, ui, &t, wide);
-        }
-    }
+    // review mode (bars away, swipes rate) belongs to a photo with no tool in hand
+    let tool = !app.ui.tool.is_empty() || matches!(app.ui.right, RightPanel::Crop | RightPanel::Masking | RightPanel::Remove | RightPanel::RedEye);
+    app.ui.review &= detail && !tool;
+    let bars = !app.ui.review;
+    top_bar(app, ui, &t, bars);
+    // the bars below are called every frame, shown or not, so that they slide in and out
+    action_bar(app, ui, &t, app.ui.select_mode);
+    let edit = !app.ui.presets && matches!(app.ui.right, RightPanel::Edit);
+    tool_bar(app, ui, &t, detail && bars);
+    group_bar(app, ui, &t, detail && bars && edit);
+    sheet(app, ui, &t, wide, detail && bars && (app.ui.right != RightPanel::None || app.ui.presets));
     let bg = if detail { t.canvas } else { t.grid_bg };
     if app.ui.left_panel && wide {
         egui::Panel::left("compact_sources")
@@ -82,24 +81,21 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             .show(ui, |ui| super::left::body(app, ui));
     }
     content(app, ui, bg);
-    if albums_page {
-        albums(app, &ctx);
-    } else {
-        mobile::hidden(&ctx, "albums");
-    }
+    albums(app, &ctx, albums_page);
     if !albums_page && !app.ui.select_mode {
         add_button(app, &ctx, &t);
     }
     menus(app, &ctx);
     overlays(app, &ctx);
     mobile::all_commands_page(app, &ctx);
+    mobile::edit_menu(app, &ctx);
 }
 
 /// The albums list (My Photos) as a page; choosing one closes it.
-fn albums(app: &mut LightcraftApp, ctx: &egui::Context) {
+fn albums(app: &mut LightcraftApp, ctx: &egui::Context, open: bool) {
     let src = app.session.source;
-    let bar = mobile::page(ctx, "albums", "Albums", "Done", None, |ui| super::left::body(app, ui));
-    if bar.cancel || app.session.source != src {
+    let bar = mobile::page(ctx, "albums", "Albums", "Done", None, open, |ui| super::left::body(app, ui));
+    if bar.cancel || (open && app.session.source != src) {
         app.ui.left_panel = false;
     }
 }
@@ -274,6 +270,7 @@ fn photo_more(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     }
     mobile::row_gap(ui);
     if mobile::row(ui, "deletePhoto", Some(Icon::Trash), crate::i18n::tr("Delete Photo"), true) {
+        haptics::tap(&ctx, Haptic::Warning);
         run_cmd(app, &ctx, "photo.delete", json!({}));
     }
     if mobile::row(ui, "allCommands", Some(Icon::Search), crate::i18n::tr("All Commands…"), true) {
@@ -282,14 +279,24 @@ fn photo_more(app: &mut LightcraftApp, ui: &mut egui::Ui) {
 }
 
 fn content(app: &mut LightcraftApp, ui: &mut egui::Ui, bg: egui::Color32) {
-    egui::CentralPanel::default().frame(egui::Frame::NONE.fill(bg)).show(ui, |ui| match app.ui.view {
-        ViewMode::Detail => super::detail::show(app, ui),
-        ViewMode::Compare => super::compare::show_compare(app, ui),
-        ViewMode::Survey => super::compare::show_survey(app, ui),
-        ViewMode::Reference => super::compare::show_reference(app, ui),
-        ViewMode::People => super::people::show(app, ui),
-        ViewMode::Map => super::map::show(app, ui),
-        ViewMode::PhotoGrid | ViewMode::SquareGrid => super::grid::show(app, ui),
+    // the grid and the photo fade into each other (between the two grids, the tiles stay put)
+    let kind = match app.ui.view {
+        ViewMode::PhotoGrid | ViewMode::SquareGrid => 0,
+        ViewMode::Detail => 1,
+        _ => 2,
+    };
+    let k = mobile::enter(ui.ctx(), egui::Id::new("compact-content-in"), kind, 0.22);
+    egui::CentralPanel::default().frame(egui::Frame::NONE.fill(bg)).show(ui, |ui| {
+        ui.multiply_opacity(k);
+        match app.ui.view {
+            ViewMode::Detail => super::detail::show(app, ui),
+            ViewMode::Compare => super::compare::show_compare(app, ui),
+            ViewMode::Survey => super::compare::show_survey(app, ui),
+            ViewMode::Reference => super::compare::show_reference(app, ui),
+            ViewMode::People => super::people::show(app, ui),
+            ViewMode::Map => super::map::show(app, ui),
+            ViewMode::PhotoGrid | ViewMode::SquareGrid => super::grid::show(app, ui),
+        }
     });
 }
 
@@ -322,13 +329,20 @@ fn bar_icon(ui: &mut egui::Ui, id: &str, icon: Icon, tip: &str, enabled: bool) -
     resp
 }
 
-fn top_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
+fn top_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, mut shown: bool) {
     egui::Panel::top("compact_top")
         .show_separator_line(false)
         .exact_size(BAR_H)
         .frame(egui::Frame::NONE.fill(t.canvas).inner_margin(egui::Margin::symmetric(6, 0)))
-        .show(ui, |ui| {
+        .show_collapsible(ui, &mut shown, |ui| {
             let full = ui.max_rect();
+            // (the bar's contents fade in when it turns into another: grid, photo, choosing)
+            ui.multiply_opacity(mobile::enter(
+                ui.ctx(),
+                egui::Id::new("compact-top-in"),
+                (app.ui.select_mode, app.ui.view == ViewMode::Detail),
+                0.18,
+            ));
             if app.ui.select_mode {
                 select_bar(app, ui, t, full);
             } else if app.ui.view == ViewMode::Detail {
@@ -345,12 +359,13 @@ fn top_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
 fn grid_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
-        let more = bar_icon(ui, "more", Icon::Dots, "More", true);
+        let more = glass_button(ui, "icon:more", None, "More", t);
         if more.clicked() {
             mobile::open_menu(ui.ctx(), "more", more.rect);
         }
+        ui.add_space(4.0);
         let has_photos = !app.session.visible().is_empty();
-        if has_photos && bar_text(ui, "select", "Select", t).clicked() {
+        if has_photos && glass_button(ui, "button:select", Some("Select"), "Select", t).clicked() {
             let _ = app.run("view.selectMode", json!({"on": true}));
         }
     });
@@ -364,6 +379,32 @@ fn map_bar(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             let _ = app.run("view.photoGrid", json!({}));
         }
     });
+}
+
+/// A button of the grid's bar as iOS's Photos app draws them over the library: a translucent grey
+/// capsule with `label` in it, or a circle with "…" when there's none; it shrinks and brightens a
+/// little under the finger. A 44 pt touch target; `key` is its automation id.
+fn glass_button(ui: &mut egui::Ui, key: &str, label: Option<&str>, tip: &str, t: &Tokens) -> egui::Response {
+    const H: f32 = 34.0;
+    let galley = label.map(|l| ui.painter().layout_no_wrap(crate::i18n::tr(l).to_string(), t.semibold(15.0), t.text));
+    let w = galley.as_ref().map_or(H, |g| g.size().x + 28.0);
+    let (r, resp) = ui.allocate_exact_size(vec2(w.max(44.0), 44.0), Sense::click());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, crate::i18n::tr(tip)));
+    crate::widgets::register(ui.ctx(), key, r);
+    let k = ui.ctx().animate_bool_with_time(resp.id.with("press"), resp.is_pointer_button_down_on(), 0.1);
+    let pill = egui::Rect::from_center_size(r.center(), vec2(w, H) * (1.0 - 0.06 * k));
+    let p = ui.painter();
+    p.rect_filled(pill, H / 2.0, egui::Color32::from_white_alpha((36.0 + 30.0 * k) as u8));
+    p.rect_stroke(pill, H / 2.0, Stroke::new(0.5, egui::Color32::from_white_alpha(28)), egui::StrokeKind::Inside);
+    match galley {
+        Some(g) => p.galley(pill.center() - g.size() / 2.0, g, t.text),
+        None => {
+            for dx in [-6.0, 0.0, 6.0] {
+                p.circle_filled(pill.center() + vec2(dx, 0.0), 1.9, t.text);
+            }
+        }
+    }
+    resp
 }
 
 /// Over a photo: back on the left; undo, share and "…" on the right (a long press on undo opens
@@ -387,6 +428,7 @@ fn photo_bar(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             let undo = bar_icon(ui, "undo", Icon::Undo, "Undo", can_undo);
             if undo.clicked() {
                 let _ = app.run("edit.undo", json!({}));
+                haptics::tap(ui.ctx(), Haptic::Light);
             }
             if undo.long_touched() || undo.secondary_clicked() {
                 app.ui.presets = false;
@@ -435,9 +477,10 @@ pub fn grid_header(app: &mut LightcraftApp, ui: &mut egui::Ui, hr: egui::Rect, c
 
 /// The tools under a photo, icons only; the open one on a blue rounded square. Tapping the open
 /// tool closes its sheet.
-fn tool_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
+fn tool_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, mut shown: bool) {
     // the bottom safe area is already outside this ui (see the host); the bar sits at its edge
-    egui::Panel::bottom("compact_tabs").show_separator_line(false).exact_size(BAR_H + 8.0).frame(egui::Frame::NONE.fill(t.canvas)).show(ui, |ui| {
+    let bar = egui::Panel::bottom("compact_tabs").show_separator_line(false).exact_size(BAR_H + 8.0).frame(egui::Frame::NONE.fill(t.canvas));
+    bar.show_collapsible(ui, &mut shown, |ui| {
         let has_photo = app.session.active().is_some();
         let full = ui.max_rect();
         ui.painter().hline(full.x_range(), full.top(), Stroke::new(0.5, t.divider));
@@ -469,6 +512,7 @@ fn tool_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
             };
             crate::icons::paint(ui.painter(), egui::Rect::from_center_size(cell.center(), vec2(24.0, 24.0)), icon, color);
             if resp.clicked() {
+                haptics::tap(ui.ctx(), Haptic::Selection);
                 // one sheet at a time; tapping the open tool closes it
                 if presets {
                     let _ = app.run("panel.presets", json!({}));
@@ -485,8 +529,9 @@ fn tool_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
 
 /// The Edit tool's groups in a row that scrolls sideways (icon over name), Auto first: a phone
 /// shows one group's sliders at a time, as Lightroom's mobile app does.
-fn group_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
-    egui::Panel::bottom("compact_groups").show_separator_line(false).exact_size(GROUP_H).frame(egui::Frame::NONE.fill(t.canvas)).show(ui, |ui| {
+fn group_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, mut shown: bool) {
+    let bar = egui::Panel::bottom("compact_groups").show_separator_line(false).exact_size(GROUP_H).frame(egui::Frame::NONE.fill(t.canvas));
+    bar.show_collapsible(ui, &mut shown, |ui| {
         egui::ScrollArea::horizontal().id_salt("compact-groups").scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden).show(
             ui,
             |ui| {
@@ -528,25 +573,58 @@ fn group_cell(ui: &mut egui::Ui, id: &str, icon: Icon, label: &str, on: bool) ->
     let color = if on || resp.is_pointer_button_down_on() { t.text } else { t.text_dim };
     crate::icons::paint(ui.painter(), egui::Rect::from_center_size(r.center() - vec2(0.0, 9.0), vec2(22.0, 22.0)), icon, color);
     ui.painter().text(r.center() + vec2(0.0, 15.0), Align2::CENTER_CENTER, label, t.font(12.0), color);
+    if resp.clicked() {
+        haptics::tap(ui.ctx(), Haptic::Selection);
+    }
     resp
 }
 
-fn sheet(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, wide: bool) {
+fn sheet(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, wide: bool, mut shown: bool) {
     let h = ui.max_rect().height();
     let frame = egui::Frame::NONE.fill(t.chrome);
+    let was = shown;
     let body = |app: &mut LightcraftApp, ui: &mut egui::Ui| {
-        if app.ui.presets { super::presets::body(app, ui) } else { super::right::body(app, ui) }
+        let ctx = ui.ctx().clone();
+        // sliding away, the sheet still shows the tool it had (the app has moved on)
+        let (id, mine) = (egui::Id::new("compact-sheet-last"), (app.ui.right, app.ui.presets));
+        let now = (app.ui.right != RightPanel::None || app.ui.presets).then_some(mine);
+        let tool = now.or_else(|| ctx.data(|d| d.get_temp::<(RightPanel, bool)>(id))).unwrap_or(mine);
+        ctx.data_mut(|d| d.insert_temp(id, tool));
+        (app.ui.right, app.ui.presets) = tool;
+        // the tool's controls fade in on a change of tool or group
+        let key = format!("{tool:?}{}", app.ui.edit_group);
+        ui.multiply_opacity(mobile::enter(&ctx, egui::Id::new("compact-sheet-in"), key, 0.18));
+        if app.ui.presets {
+            super::presets::body(app, ui)
+        } else {
+            super::right::body(app, ui)
+        }
+        if now.is_none() {
+            (app.ui.right, app.ui.presets) = mine;
+        }
     };
     if wide {
-        egui::Panel::right("compact_side").resizable(true).default_size(SIDE_W).size_range(280.0..=480.0).frame(frame).show(ui, |ui| body(app, ui));
+        egui::Panel::right("compact_side")
+            .resizable(true)
+            .drag_to_open(false)
+            .default_size(SIDE_W)
+            .size_range(280.0..=480.0)
+            .frame(frame)
+            .show_collapsible(ui, &mut shown, |ui| body(app, ui));
     } else {
         egui::Panel::bottom("compact_sheet")
             .show_separator_line(false)
             .resizable(true)
+            .drag_to_open(false)
             .default_size(h * SHEET_FRACTION)
             .size_range(120.0..=h * 0.85)
             .frame(frame)
-            .show(ui, |ui| body(app, ui));
+            .show_collapsible(ui, &mut shown, |ui| body(app, ui));
+    }
+    // (dragged shut: the tool is put away rather than coming back the next frame)
+    if was && !shown {
+        app.ui.right = RightPanel::None;
+        app.ui.presets = false;
     }
 }
 
@@ -587,13 +665,14 @@ fn select_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, full: egui
 
 /// What the chosen photos can have done to them, at the bottom: rating, flag, label, album,
 /// export, more (copy / paste settings) and delete; each opens its own menu.
-fn action_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
+fn action_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, mut shown: bool) {
     egui::Panel::bottom("compact_actions")
         .show_separator_line(false)
         .exact_size(BAR_H)
         .frame(egui::Frame::NONE.fill(t.canvas).stroke(Stroke::new(0.5, t.divider)))
-        .show(ui, |ui| {
-            let any = !app.session.selection.ids.is_empty();
+        .show_collapsible(ui, &mut shown, |ui| {
+            // (sliding away after Cancel, it must not delete anything)
+            let any = app.ui.select_mode && !app.session.selection.ids.is_empty();
             let actions = [
                 ("selRate", Icon::Star, "Rating"),
                 ("selFlag", Icon::FlagPick, "Flag"),
@@ -616,6 +695,7 @@ fn action_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
                             let _ = app.run("dialog.export", json!({}));
                         }
                         "selDelete" => {
+                            haptics::tap(ui.ctx(), Haptic::Warning);
                             // (asks first when Settings say so; the photos go to Recently Deleted)
                             if let Err(e) = crate::menubar::run_item(app, "photo.delete", json!({})) {
                                 app.toast(ui.ctx(), e);

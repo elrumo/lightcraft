@@ -27,6 +27,7 @@ pub mod demosaic;
 mod dng;
 pub mod dngwrite;
 pub mod highlight;
+mod jxl;
 pub mod ljpeg;
 pub mod opcodes;
 mod preview;
@@ -37,6 +38,7 @@ mod vendor;
 
 pub use demosaic::{Method, demosaic};
 pub use dngwrite::{DngCompression, DngWriteOptions, write_dng};
+pub use jxl::set_max_parallel_tiles;
 pub use lightcraft_color::Mat3;
 pub use lightcraft_geom::Orientation;
 pub use lightcraft_meta::Metadata;
@@ -163,6 +165,19 @@ pub fn decode(bytes: &[u8]) -> Result<RawImage> {
 /// decompress) and dropped.
 pub fn probe_info(bytes: &[u8]) -> Result<RawInfo> {
     decode_with(bytes, Mode::Header).map(RawImage::into_info)
+}
+
+/// Decode a file already reduced to `k × k` blocks: each block is the mean of its (normalised, linearized) samples, or
+/// their maximum where one reaches `clip` of the sensor range, as [`RawImage::develop_binned`] makes them — but the
+/// full-size samples are never held, so a thumbnail or preview of a 48 MP file takes a fraction of the memory. The
+/// result is an ordinary, smaller [`RawImage`] (default crop applied; `develop` it as usual). `None` when the file
+/// can't be read that way — today three-samples-per-pixel integer DNGs (Apple ProRAW, Adobe's linear DNGs) with a flat
+/// black level and no opcodes — and the caller decodes it in full.
+pub fn decode_binned(bytes: &[u8], k: usize, clip: f32) -> Result<Option<RawImage>> {
+    match probe(bytes).ok_or(RawError::NotRaw)? {
+        RawFormat::Dng => dng::decode_with(bytes, Mode::Full, Some(dng::Bin { k, clip })),
+        _ => Ok(None),
+    }
 }
 
 /// How much of a file a decoder reads.

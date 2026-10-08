@@ -228,6 +228,9 @@ fn services(originals: Originals, backend: Option<Backend>, files: Files, frozen
         tile_exec: Some(crate::tiles::exec()),
         share_exports: None,
         host_pick: None,
+        // the system clipboard reaches text fields directly; no haptics
+        haptic: None,
+        clipboard_text: None,
     }
 }
 

@@ -115,6 +115,10 @@ pub const BLACK_LEVEL: u16 = 50714;
 pub const BLACK_LEVEL_DELTA_H: u16 = 50715;
 pub const BLACK_LEVEL_DELTA_V: u16 = 50716;
 pub const WHITE_LEVEL: u16 = 50717;
+/// DNG 1.2: the stored image is `n` row fields stored one after the other.
+pub const ROW_INTERLEAVE_FACTOR: u16 = 50975;
+/// DNG 1.7.1: the same for columns.
+pub const COLUMN_INTERLEAVE_FACTOR: u16 = 52547;
 pub const DEFAULT_SCALE: u16 = 50718;
 pub const DEFAULT_CROP_ORIGIN: u16 = 50719;
 pub const DEFAULT_CROP_SIZE: u16 = 50720;

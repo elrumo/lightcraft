@@ -120,5 +120,8 @@
   "{month} {year}": "{year}年{month}月",
   "{weekday}, {day}": "{day}日 {weekday}",
   "{weekday}, {day} {month} {year}": "{year}年{month}月{day}日 {weekday}",
-  "Add {n}": "添加 {n} 张"
+  "Add {n}": "添加 {n} 张",
+  "{n} photos · synced with {server}": "{n} 张照片 · 已与 {server} 同步",
+  "{n} photos on this device": "此设备上有 {n} 张照片",
+  "{n} photos, not saved": "{n} 张照片（不会保存）"
 }

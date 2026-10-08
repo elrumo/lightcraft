@@ -26,13 +26,14 @@ tiff = { workspace = true }
 image-webp = { workspace = true }
 moxcms = { workspace = true }
 jxl-oxide = { workspace = true, optional = true }
+heic-rs = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 ravif = { workspace = true, optional = true }
 
 [features]
 default = ["parallel", "jxl", "avif"]
-parallel = ["dep:rayon", "lightcraft-raster/parallel", "jpeg-decoder/rayon"]
+parallel = ["dep:rayon", "lightcraft-raster/parallel", "jpeg-decoder/rayon", "heic-rs/parallel"]
 jxl = ["dep:jxl-oxide"]
 ## AVIF encoding via ravif/rav1e (pure Rust, BSD). Native targets only; a no-op on wasm32.
 avif = ["dep:ravif"]

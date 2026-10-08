@@ -39,6 +39,7 @@ pub mod sidecar;
 pub mod smart;
 pub mod sync;
 pub mod tiles;
+pub mod usage;
 mod view;
 
 use std::sync::Arc;
@@ -206,6 +207,8 @@ pub struct Session {
     pub cache_mb: u32,
     /// Where smart previews are kept when not in the library folder (persisted in prefs.json).
     pub smart_previews_dir: Option<std::path::PathBuf>,
+    /// What an export may take in memory, when the host said ([`Session::set_export_limit`]); `None`: the platform's.
+    pub export_limit: Option<Option<usize>>,
     /// Untouched Local records of folders not browsed for this many days are forgotten when the
     /// library opens (0 = never; persisted in prefs.json). See `cmd/browse.rs`.
     pub forget_local_days: u32,
@@ -276,6 +279,7 @@ impl Session {
             import_defaults: import::ImportDefaults::default(),
             cache_mb: 0,
             smart_previews_dir: None,
+            export_limit: None,
             forget_local_days: lightcraft_catalog::DEFAULT_FORGET_DAYS,
             sync: None,
             sync_store: None,
