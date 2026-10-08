@@ -80,13 +80,15 @@ impl Enhancer {
     /// Whether this build can enlarge photos at all.
     pub const AVAILABLE: bool = cfg!(feature = "enhance");
 
-    /// Size the work to the `bytes` of memory it may use (a phone): the enlarged picture is kept as
-    /// 16-bit samples (6 bytes a pixel) and encoding briefly needs about two more copies of it, so
-    /// call it ~20 bytes per output pixel plus what the network needs for its tiles.
+    /// Size the work to the `bytes` of memory it may use (a phone). Measured on a 17 MP photo
+    /// (a 69 MP result) on a Mac: the job peaks at about 24 bytes per output pixel (the 16-bit
+    /// result, its encoding and the file's read-back check), and adding the result to the library
+    /// (reading the huge file back in) brings the process to about 42 at its worst; that is the
+    /// figure used here, plus what the network needs for its tiles. Not yet checked on a phone.
     pub fn limit_memory(&mut self, bytes: usize) {
         let (tile, working) = if bytes < (2 << 30) { (192, 120 << 20) } else { (384, 400 << 20) };
         self.tile = Some(tile);
-        self.max_output_pixels = Some((bytes.saturating_sub(working) / 20).clamp(4_000_000, DEFAULT_MAX_OUTPUT_PIXELS));
+        self.max_output_pixels = Some((bytes.saturating_sub(working) / 42).clamp(4_000_000, DEFAULT_MAX_OUTPUT_PIXELS));
     }
 
     /// The folder of model `id`.
@@ -414,14 +416,16 @@ impl SuperResJob {
         }
         let size = (ow, oh);
         let image = DeepImage { width: ow, height: oh, space, samples: DeepSamples::U16(enlarged) };
-        let bytes = crate::export::encode_deep(&image, &self.export, self.meta.as_ref())?;
-        drop(image);
+        // (handed over, not copied: the result is the biggest thing in memory here)
+        let bytes = crate::export::encode_deep_owned(image, &self.export, self.meta.as_ref())?;
         let (dir, stem) = (self.dir.clone(), self.stem.clone());
         let mut names = (1u64..).map(move |k| dir.join(if k == 1 { format!("{stem}-SR.tif") } else { format!("{stem}-SR-{k}.tif") }));
         let path = lightcraft_catalog::safe_file::write_new_unique(&mut names, &bytes)
             .map_err(|e| format!("could not write the enlarged photo next to the original: {e}"))?
             .to_string_lossy()
             .to_string();
+        // give the freed pages back before the result is read in again (a phone's limit counts them)
+        crate::memory::release();
         progress(1.0, "Done");
         Ok(SuperResDone { photo: self.photo, path, size })
     }

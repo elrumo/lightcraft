@@ -208,3 +208,105 @@ fn an_identical_enlargement_is_not_added_twice_and_a_photos_own_file_is_never_re
     assert_eq!(s.catalog.photos().count(), 2);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The real thing, by hand: the app's own downloader fetches the real model from the author's
+/// Hugging Face repository (checked against the pinned size and SHA-256), then a real photo is
+/// enlarged with it. Takes minutes for a large photo.
+///
+/// `LIGHTCRAFT_REAL_AI_PHOTO=<a .jpg/.png/.tif> cargo test -p lightcraft-engine --features enhance real_download -- --ignored --nocapture`
+#[cfg(feature = "enhance")]
+#[test]
+#[ignore = "downloads the real model and enlarges a real photo"]
+fn real_download_and_enlargement() {
+    use std::time::{Duration, Instant};
+    let Some(src) = std::env::var_os("LIGHTCRAFT_REAL_AI_PHOTO") else { return };
+    let dir = tmp("real");
+    let photo = dir.join("REAL_1.jpg");
+    std::fs::copy(&src, &photo).unwrap();
+    let mut s = Session::new().with_fs();
+    let r = s.execute("library.import", &json!({"paths": [photo]})).unwrap();
+    let id = r["imported"][0].as_u64().unwrap();
+    let p = s.catalog.photo(lightcraft_catalog::PhotoId(id)).unwrap();
+    eprintln!("photo: {} × {} ({:.1} MP)", p.width, p.height, (p.width * p.height) as f64 / 1e6);
+    s.enhancer.dir = Some(dir.join("models"));
+    // the built-in location: the real download
+    assert!(!s.enhancer.no_builtin_mirrors && s.enhancer.mirrors(SUPER_RES_MODEL).len() == 1);
+    let t = Instant::now();
+    let r = s.execute("enhance.model.download", &json!({"acknowledged": true})).unwrap();
+    assert_eq!(r["started"], true);
+    while s.enhancer.download_status().1.running {
+        assert!(t.elapsed() < Duration::from_secs(180), "the download never ended");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let (_, d) = s.enhancer.download_status();
+    eprintln!("download: {:?} in {:.1?}", (d.finished, d.done, d.total, d.error.clone()), t.elapsed());
+    assert!(d.finished && d.error.is_none() && s.enhancer.installed(SUPER_RES_MODEL), "{d:?}");
+    // pinned: the file is exactly the author's
+    let file = s.enhancer.model_file(SUPER_RES_MODEL).unwrap();
+    assert_eq!(std::fs::metadata(&file).unwrap().len(), 4_461_056);
+
+    let t = Instant::now();
+    // (the job in its stages, with the process's memory at each: what a phone's limit must cover)
+    let rss = || {
+        let out = std::process::Command::new("ps").args(["-o", "rss=", "-p", &std::process::id().to_string()]).output().unwrap();
+        String::from_utf8_lossy(&out.stdout).trim().parse::<u64>().unwrap_or(0) / 1024
+    };
+    eprintln!("memory before the job: {} MB", rss());
+    let job = s.super_res_job(lightcraft_catalog::PhotoId(id), None).unwrap();
+    // a sampler: the process's memory every 200 ms, tagged with the stage the job reports
+    let stage_now = std::sync::Arc::new(std::sync::Mutex::new(String::from("starting")));
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let sampler = {
+        let (stage_now, stop) = (stage_now.clone(), stop.clone());
+        let t0 = Instant::now();
+        std::thread::spawn(move || {
+            let mut line = Vec::new();
+            while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                let out = std::process::Command::new("ps").args(["-o", "rss=", "-p", &std::process::id().to_string()]).output().unwrap();
+                let mb = String::from_utf8_lossy(&out.stdout).trim().parse::<u64>().unwrap_or(0) / 1024;
+                line.push((t0.elapsed().as_secs_f32(), mb, stage_now.lock().unwrap().clone()));
+                std::thread::sleep(Duration::from_millis(200));
+            }
+            line
+        })
+    };
+    let done = job
+        .run(&|_, stage| {
+            let mut l = stage_now.lock().unwrap();
+            if *l != stage {
+                *l = stage.to_string();
+            }
+            true
+        })
+        .unwrap();
+    // (adding the result to the library reads the huge file back in)
+    *stage_now.lock().unwrap() = "adding to the library".into();
+    let r = s.finish_super_res(done).unwrap();
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    let samples = sampler.join().unwrap();
+    // the highest memory in each stage, and when
+    let mut stages: Vec<(String, f32, u64)> = Vec::new();
+    for (t, mb, st) in &samples {
+        match stages.last_mut() {
+            Some(last) if last.0 == *st => {
+                if *mb > last.2 {
+                    last.2 = *mb;
+                }
+            }
+            _ => stages.push((st.clone(), *t, *mb)),
+        }
+    }
+    for (st, t, mb) in &stages {
+        eprintln!("  from {t:6.1}s  {st:<22} highest {mb} MB");
+    }
+    eprintln!("memory after the job: {} MB; highest sampled {} MB", rss(), samples.iter().map(|s| s.1).max().unwrap_or(0));
+    eprintln!("enlarged: {} × {} in {:.1?} → {}", r["width"], r["height"], t.elapsed(), r["path"]);
+    let new = lightcraft_catalog::PhotoId(r["id"].as_u64().unwrap());
+    let q = s.catalog.photo(new).unwrap();
+    assert_eq!((q.width, q.height), (r["width"].as_u64().unwrap() as u32, r["height"].as_u64().unwrap() as u32));
+    eprintln!("size on disk: {:.1} MB", std::fs::metadata(r["path"].as_str().unwrap()).unwrap().len() as f64 / 1e6);
+    if let Some(keep) = std::env::var_os("LIGHTCRAFT_REAL_AI_KEEP") {
+        std::fs::copy(r["path"].as_str().unwrap(), keep).unwrap();
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

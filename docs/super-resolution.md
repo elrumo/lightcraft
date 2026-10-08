@@ -27,9 +27,12 @@ It is added with neutral settings (its pixels carry the edits already), so a pre
 - The model enlarges by exactly 2×, in sRGB. Wide-gamut colours are brought into sRGB first.
 - The enlarged photo may have at most **100 megapixels** (a 25 MP photo): crop first, or raise it with
   `enhance.superRes {maxMegapixels}`.
-- Speed: on an Apple-silicon Mac (GPU through Metal) about 0.15 megapixels of input per second, so a 4 MP photo takes
-  half a minute and a 24 MP photo a few minutes; on the CPU (Windows, Linux for now) it is slower. Memory use grows
-  with the photo: about 1 GB for a 4 MP photo.
+- Speed: on an Apple-silicon Mac (GPU through Metal) about 0.15 megapixels of input per second: a 4 MP photo takes
+  about half a minute, and a 17 MP photo took about 2 minutes (measured while the computer was busy with other work);
+  on the CPU (Windows, Linux for now) it is slower.
+- Memory (measured with a 17 MP photo, a 69 MP result): about 1.7 GB while it works, and up to about 2.9 GB for a
+  moment when the large result is added to the library. Plan for roughly 40 bytes per pixel of the *enlarged* photo.
+- The result is a large file: that 69 MP TIFF is 325 MB.
 - It sharpens and adds plausible detail; it can't recover detail that was never captured, and very smooth photos
   gain little. Judge a result at 100 %.
 - Tones are kept: the enlargement's broad tones are anchored to the original's (the network alone drifts about 1.5 %
@@ -46,9 +49,10 @@ Super Resolution is in the photo's "…" menu (and in All Commands); the dialog 
 
 - The model is stored in the app's `Library/Caches`, which iOS never backs up and may empty when storage runs low
   (the app then offers the download again). It is about 4.5 MB.
-- The work is sized to a third of the memory iOS gives the app, so the photo can be smaller than on a computer
-  (roughly 12 MP on a recent iPhone, less on older ones); the dialog says when a photo is too large. The enlarged
-  photo is kept as 16-bit samples and the network works on small tiles to stay within that.
+- The work is sized to half of the memory iOS gives the app, from the figures above, so the photo has to be smaller
+  than on a computer: roughly 9 MP on a recent iPhone (a typical 12 MP photo needs cropping first), less on older
+  ones; the dialog says when a photo is too large. The enlarged photo is kept as 16-bit samples and the network
+  works on small tiles to stay within that.
 - Keep the app open while it works: iOS stops GPU work for apps in the background, so a job interrupted that way
   ends with an error and can be started again.
 - **Status:** the iOS build compiles and type-checks (`cargo xtask ios`), and the engine and dialog are tested on
