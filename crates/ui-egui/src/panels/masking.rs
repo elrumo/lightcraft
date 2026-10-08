@@ -109,7 +109,14 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
                 for (i, (kind, label, icon)) in tiles.iter().enumerate() {
                     let (r, resp) = ui.allocate_exact_size(vec2(tile, if compact { 60.0 } else { 52.0 }), Sense::click());
                     register(ui.ctx(), format!("maskNew:{kind}"), r);
-                    let fill = if resp.is_pointer_button_down_on() || (resp.hovered() && !compact) { t.hover } else { t.inset };
+                    // (a phone's tiles are cards: white on the light sheet)
+                    let fill = if resp.is_pointer_button_down_on() || (resp.hovered() && !compact) {
+                        t.hover
+                    } else if compact {
+                        t.cell_selected
+                    } else {
+                        t.inset
+                    };
                     ui.painter().rect_filled(r, if compact { 10.0 } else { 4.0 }, fill);
                     let (glyph, up, label_up, font) = if compact { (24.0, 9.0, 11.0, 11.5) } else { (20.0, 7.0, 9.0, 10.5) };
                     paint(ui.painter(), Rect::from_center_size(r.center() - vec2(0.0, up), vec2(glyph, glyph)), *icon, t.text_label);

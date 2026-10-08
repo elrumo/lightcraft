@@ -13,7 +13,7 @@ use std::rc::{Rc, Weak};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use lightcraft_engine::Session;
-use lightcraft_ios_host::{BackgroundTask, Lifecycle, PickKind, Picked};
+use lightcraft_ios_host::{BackgroundTask, InterfaceStyle, Lifecycle, PickKind, Picked};
 use lightcraft_ui_egui::prefs::PrefsWriter;
 use lightcraft_ui_egui::{LightcraftApp, PickSource, Services, ShareExports};
 use serde_json::json;
@@ -161,6 +161,12 @@ impl eframe::App for App {
         if let Ok(mut h) = self.0.try_borrow_mut() {
             h.logic(ctx);
         }
+    }
+    /// What shows behind the UI: in the status bar and home indicator areas, which the bars' colour
+    /// (black, or white in the light appearance) should fill, not eframe's dark grey.
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        let dark = self.0.try_borrow().map_or(true, |h| h.app.dark);
+        (if dark { egui::Color32::BLACK } else { egui::Color32::WHITE }).to_normalized_gamma_f32()
     }
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {
         press_enter(raw, lightcraft_ios_host::take_return_presses());

@@ -28,6 +28,8 @@ pub mod theme;
 pub mod widgets;
 
 #[cfg(test)]
+mod tests_appearance;
+#[cfg(test)]
 mod tests_compact;
 #[cfg(test)]
 mod tests_compact_editor;
@@ -175,8 +177,9 @@ pub struct LightcraftApp {
     /// Phone-sized window (content narrower than [`COMPACT_BELOW_PT`]): one panel at a time, tools in
     /// a bottom tab bar and sheet (`panels::compact`). Set every frame from the window width.
     pub compact: bool,
-    /// The compact layout is drawn dark (else light): the appearance setting, or the system's.
-    /// Set every frame; a host that restyles its own chrome (the status bar, the keyboard) reads it.
+    /// The UI is drawn dark (else light): the compact layout follows the appearance setting or the
+    /// system's, the desktop layout is always dark. Set every frame; a host that restyles its own
+    /// chrome (the status bar, the keyboard) reads it.
     pub dark: bool,
     /// The host installed a native menu bar (no in-window menus then).
     pub native_menu: bool,
@@ -838,7 +841,8 @@ impl LightcraftApp {
         ctx.data_mut(|d| d.insert_temp(egui::Id::new("lc-compact"), self.compact));
         // light, dark, or what the system prefers (the host says, in `RawInput::system_theme`)
         let system = ctx.input(|i| i.raw.system_theme).map(|t| t == egui::Theme::Dark);
-        self.dark = self.ui.appearance.is_dark(system);
+        // (the desktop layout is dark either way, and the host's status bar follows what is drawn)
+        self.dark = !self.compact || self.ui.appearance.is_dark(system);
         theme::apply_layout(&ctx, self.compact, self.dark);
         if self.compact {
             panels::compact::show(self, ui);

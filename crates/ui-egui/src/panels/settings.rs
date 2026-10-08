@@ -12,7 +12,8 @@ use egui::RichText;
 use serde_json::{Value, json};
 
 use crate::LightcraftApp;
-use crate::state::{GridBadges, PREVIEW_EDGES, StartupView};
+use crate::panels::forms;
+use crate::state::{Appearance, GridBadges, PREVIEW_EDGES, StartupView};
 use crate::theme::Tokens;
 use crate::widgets::register;
 
@@ -28,18 +29,36 @@ const LABEL_W: f32 = 150.0;
 /// The dialog body for `tab` (the tab bar switches `tab`).
 pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, tab: &mut String) {
     let t = Tokens::get(ui.ctx());
+    let compact = app.compact;
     ui.set_min_width(crate::panels::modal_width(ui.ctx(), 560.0));
-    ui.set_min_height(330.0);
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
-        for (id, label) in TABS {
-            if crate::widgets::text_button(ui, &format!("settingsTab-{id}"), label, tab == id).clicked() {
-                *tab = id.to_string();
+    if compact {
+        // the tabs are chips that scroll sideways; the sections below are inset grouped lists
+        egui::ScrollArea::horizontal().id_salt("settings-tabs").scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden).show(
+            ui,
+            |ui| {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    for (id, label) in TABS {
+                        if crate::widgets::text_button(ui, &format!("settingsTab-{id}"), label, tab == id).clicked() {
+                            *tab = id.to_string();
+                        }
+                    }
+                });
+            },
+        );
+    } else {
+        ui.set_min_height(330.0);
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            for (id, label) in TABS {
+                if crate::widgets::text_button(ui, &format!("settingsTab-{id}"), label, tab == id).clicked() {
+                    *tab = id.to_string();
+                }
             }
-        }
-    });
-    ui.separator();
-    ui.add_space(2.0);
+        });
+        ui.separator();
+        ui.add_space(2.0);
+    }
     match tab.as_str() {
         "import" => import_tab(app, ui, &t),
         "performance" => performance_tab(app, ui, &t),
@@ -47,14 +66,36 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, tab: &mut String) {
         "sync" => sync_tab(app, ui, &t),
         _ => general_tab(app, ui, &t),
     }
+    if compact {
+        forms::close(ui);
+    }
 }
 
 fn heading(ui: &mut egui::Ui, t: &Tokens, text: &str) {
+    if crate::is_compact(ui.ctx()) {
+        return forms::header(ui, crate::i18n::tr(text));
+    }
     ui.add_space(4.0);
     ui.label(RichText::new(crate::i18n::tr(text)).font(t.semibold(12.5)).color(t.text));
 }
 
 fn row<R>(ui: &mut egui::Ui, t: &Tokens, label: &str, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    if crate::is_compact(ui.ctx()) {
+        // a row of a card: its label, then its controls under it (they wrap, rather than running off the screen)
+        return forms::row(ui, |ui| {
+            ui.vertical(|ui| {
+                ui.add_space(8.0);
+                if !label.is_empty() {
+                    ui.label(RichText::new(crate::i18n::tr(label)).size(15.0).color(t.text));
+                    ui.add_space(2.0);
+                }
+                let r = ui.horizontal_wrapped(add).inner;
+                ui.add_space(8.0);
+                r
+            })
+            .inner
+        });
+    }
     ui.horizontal(|ui| {
         ui.allocate_ui_with_layout(egui::vec2(LABEL_W, 24.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
             ui.set_min_width(LABEL_W);
@@ -66,18 +107,59 @@ fn row<R>(ui: &mut egui::Ui, t: &Tokens, label: &str, add: impl FnOnce(&mut egui
 }
 
 fn hint(ui: &mut egui::Ui, t: &Tokens, text: &str) {
+    if crate::is_compact(ui.ctx()) {
+        return forms::footer(ui, crate::i18n::tr(text));
+    }
     ui.label(RichText::new(crate::i18n::tr(text)).size(11.0).color(t.text_dim));
 }
 
-/// A checkbox addressable as `check:{id}`; true when toggled.
+/// A checkbox addressable as `check:{id}`; true when toggled. On a phone an iOS switch in a row of
+/// the card.
 fn check(ui: &mut egui::Ui, id: &str, value: &mut bool, label: &str) -> bool {
-    let r = crate::widgets::check(ui, value, crate::i18n::tr(label));
+    let r = if crate::is_compact(ui.ctx()) {
+        forms::row(ui, |ui| crate::widgets::check(ui, value, crate::i18n::tr(label)))
+    } else {
+        crate::widgets::check(ui, value, crate::i18n::tr(label))
+    };
     register(ui.ctx(), format!("check:{id}"), r.rect);
     r.changed()
 }
 
-/// Mutually exclusive buttons (`button:{id}-{index}`).
+/// A width for a field or a menu: `want` on the desktop, the whole row on a phone.
+fn width(ui: &egui::Ui, want: f32) -> f32 {
+    if crate::is_compact(ui.ctx()) { ui.available_width() } else { want }
+}
+
+/// Mutually exclusive buttons (`button:{id}-{index}`); on a phone iOS's segmented control.
 fn choices<V: PartialEq + Copy>(ui: &mut egui::Ui, id: &str, options: &[(V, &str)], value: &mut V) -> bool {
+    if crate::is_compact(ui.ctx()) {
+        let longest = options.iter().map(|(_, l)| l.chars().count()).max().unwrap_or(0);
+        let active = options.iter().position(|(v, _)| *v == *value);
+        if longest > 12 || options.len() > 4 {
+            // long or many options don't fit a segmented control: an iOS list, a check by the chosen one
+            let w = ui.available_width();
+            ui.spacing_mut().item_spacing.y = 0.0;
+            let mut changed = false;
+            for (i, (v, l)) in options.iter().enumerate() {
+                if forms::pick(ui, &format!("{id}-{i}"), l, active == Some(i), w) && *value != *v {
+                    *value = *v;
+                    changed = true;
+                }
+            }
+            return changed;
+        }
+        let keys: Vec<String> = (0..options.len()).map(|i| i.to_string()).collect();
+        let items: Vec<(&str, &str)> = options.iter().zip(&keys).map(|((_, l), k)| (*l, k.as_str())).collect();
+        let per_row = if longest <= 7 { 4 } else { 3 };
+        if let Some(i) = crate::widgets::segmented(ui, id, &items, active, per_row)
+            && let Some((v, _)) = options.get(i)
+            && *value != *v
+        {
+            *value = *v;
+            return true;
+        }
+        return false;
+    }
     let mut changed = false;
     ui.spacing_mut().item_spacing.x = 4.0;
     for (i, (v, l)) in options.iter().enumerate() {
@@ -130,8 +212,11 @@ fn general_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
     check(ui, "settings.confirmDelete", &mut app.ui.settings.confirm_delete, "Confirm before moving photos to Recently Deleted");
     heading(ui, t, crate::i18n::tr("External Editor"));
     row(ui, t, crate::i18n::tr("Application"), |ui| {
-        let r = ui
-            .add(egui::TextEdit::singleline(&mut app.ui.settings.external_editor).hint_text(crate::i18n::tr("System default")).desired_width(220.0));
+        let r = ui.add(
+            egui::TextEdit::singleline(&mut app.ui.settings.external_editor)
+                .hint_text(crate::i18n::tr("System default"))
+                .desired_width(width(ui, 220.0)),
+        );
         register(ui.ctx(), "field:externalEditor", r.rect);
     });
     hint(
@@ -150,7 +235,7 @@ fn preset_combo(app: &LightcraftApp, ui: &mut egui::Ui, id: &str, current: Optio
     let name = |pid: &str| app.session.presets.iter().find(|p| p.id == pid).map(|p| p.name.clone()).unwrap_or_else(|| format!("{pid} (missing)"));
     let text = current.map(name).unwrap_or_else(|| none_label.to_string());
     let mut out = None;
-    let r = egui::ComboBox::from_id_salt(id).width(240.0).selected_text(text).show_ui(ui, |ui| {
+    let r = egui::ComboBox::from_id_salt(id).width(width(ui, 240.0)).selected_text(text).show_ui(ui, |ui| {
         if ui.selectable_label(current.is_none(), none_label).clicked() {
             out = Some(None);
         }
@@ -221,7 +306,7 @@ fn import_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
                         Some(pid) => app.session.presets.iter().find(|p| p.id == pid).map(|p| p.name.clone()).unwrap_or_else(|| pid.to_string()),
                     };
                     let id = format!("settingsCamera-{i}");
-                    let r = egui::ComboBox::from_id_salt(&id).width(240.0).selected_text(label).show_ui(ui, |ui| {
+                    let r = egui::ComboBox::from_id_salt(&id).width(width(ui, 240.0)).selected_text(label).show_ui(ui, |ui| {
                         if ui.selectable_label(current == Some(RAW_DEFAULT), crate::i18n::tr("Same as raw default")).clicked() {
                             pick = Some(json!({"camera": cam, "remove": true}));
                         }
@@ -256,7 +341,7 @@ fn import_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
         row(ui, t, label, |ui| {
             let id = egui::Id::new(("settingsMeta", key));
             let mut text: String = ui.data(|m| m.get_temp(id)).unwrap_or(value.clone());
-            let r = ui.add(egui::TextEdit::singleline(&mut text).hint_text(hint_text).desired_width(240.0));
+            let r = ui.add(egui::TextEdit::singleline(&mut text).hint_text(hint_text).desired_width(width(ui, 240.0)));
             register(ui.ctx(), format!("field:settings.{key}"), r.rect);
             if r.lost_focus() && text.trim() != value {
                 let _ = app.run("library.preferences", json!({"import": {key: text.trim()}}));
@@ -273,7 +358,7 @@ fn import_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
             let cur = d.metadata_preset.clone();
             let mut pick = None;
             let r = egui::ComboBox::from_id_salt("settingsMetaPreset")
-                .width(240.0)
+                .width(width(ui, 240.0))
                 .selected_text(cur.clone().unwrap_or_else(|| "None".into()))
                 .show_ui(ui, |ui| {
                     if ui.selectable_label(cur.is_none(), crate::i18n::tr("None")).clicked() {
@@ -332,7 +417,7 @@ fn import_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
             row(ui, t, crate::i18n::tr("Album"), |ui| {
                 let id = egui::Id::new("auto-album");
                 let mut name = ui.data(|m| m.get_temp::<String>(id)).unwrap_or_else(|| d.auto_album.clone().unwrap_or_default());
-                let r = ui.add(egui::TextEdit::singleline(&mut name).hint_text(crate::i18n::tr("None")).desired_width(180.0));
+                let r = ui.add(egui::TextEdit::singleline(&mut name).hint_text(crate::i18n::tr("None")).desired_width(width(ui, 180.0)));
                 if r.lost_focus() {
                     let _ = app.run("library.autoImport", json!({"album": name.trim()}));
                 }
@@ -506,6 +591,14 @@ fn smart_previews(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
 // ---------------------------------------------------------------------------------- Interface
 
 fn interface_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
+    if app.compact {
+        heading(ui, t, crate::i18n::tr("Appearance"));
+        row(ui, t, "", |ui| {
+            let items: Vec<(Appearance, &str)> = Appearance::ALL.iter().map(|a| (*a, a.label())).collect();
+            choices(ui, "settingsAppearance", &items, &mut app.ui.appearance);
+        });
+        hint(ui, t, crate::i18n::tr("System follows the device's Display & Brightness setting."));
+    }
     heading(ui, t, crate::i18n::tr("Filmstrip"));
     check(ui, "settings.filmNames", &mut app.ui.settings.film_names, "Show file names");
     check(ui, "settings.filmBadges", &mut app.ui.settings.film_badges, "Show ratings, flags and edit badges");
@@ -533,7 +626,10 @@ fn interface_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
 fn field(ui: &mut egui::Ui, id: &str, value: &mut String, hint_text: &str, password: bool) {
     // narrower on a phone, beside the label
     let r = ui.add(
-        egui::TextEdit::singleline(value).hint_text(crate::i18n::tr(hint_text)).password(password).desired_width(ui.available_width().min(260.0)),
+        egui::TextEdit::singleline(value)
+            .hint_text(crate::i18n::tr(hint_text))
+            .password(password)
+            .desired_width(width(ui, ui.available_width().min(260.0))),
     );
     register(ui.ctx(), format!("field:{id}"), r.rect);
 }

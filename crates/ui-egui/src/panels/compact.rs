@@ -458,21 +458,18 @@ fn tool_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, rail: bool) 
             let resp = ui.interact(cell, egui::Id::new(("compact-tool", id)), if has_photo { Sense::click() } else { Sense::hover() });
             resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, has_photo, on, crate::i18n::tr(tip)));
             crate::widgets::register(ui.ctx(), format!("icon:{id}"), cell);
+            // iOS's tab bar: the open tool's icon and name are tinted, the others grey
             let k = ui.ctx().animate_bool_with_time(resp.id.with("on"), on, 0.15);
-            let tile = egui::Rect::from_center_size(cell.center(), if rail { vec2(44.0, 40.0) } else { vec2(48.0, 38.0) });
-            if k > 0.0 {
-                ui.painter().rect_filled(tile, 10.0, t.accent.gamma_multiply(k));
-            }
             let color = if !has_photo {
                 t.text_disabled
-            } else if on {
-                egui::Color32::WHITE
             } else if resp.is_pointer_button_down_on() {
-                t.text_dim
+                t.accent.gamma_multiply(0.6)
             } else {
-                t.icon
+                crate::widgets::lerp(t.text_dim, t.accent, k)
             };
-            crate::icons::paint(ui.painter(), egui::Rect::from_center_size(cell.center(), vec2(24.0, 24.0)), icon, color);
+            let name = crate::i18n::tr(if id == "crop" { "Crop" } else { tip });
+            crate::icons::paint(ui.painter(), egui::Rect::from_center_size(cell.center() - vec2(0.0, 8.0), vec2(24.0, 24.0)), icon, color);
+            ui.painter().text(cell.center() + vec2(0.0, 14.0), egui::Align2::CENTER_CENTER, name, t.font(10.0), color);
             if resp.clicked() {
                 // one sheet at a time; tapping the open tool closes it
                 if presets {
@@ -583,7 +580,9 @@ fn sheet(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, wide: bool, lan
         None => ease_to(&ctx, egui::Id::new("compact-sheet-h"), limit(stops[detent])),
     };
     let frame = frame.corner_radius(egui::CornerRadius { nw: 12, ne: 12, sw: 0, se: 0 });
-    egui::Panel::bottom("compact_sheet").show_separator_line(false).resizable(false).exact_size(h).frame(frame).show(ui, |ui| {
+    // (what shows through the rounded corners is the photo's canvas, not what the window was cleared to)
+    let behind = ui.painter().add(egui::Shape::Noop);
+    let shown = egui::Panel::bottom("compact_sheet").show_separator_line(false).resizable(false).exact_size(h).frame(frame).show(ui, |ui| {
         let (g, resp) = ui.allocate_exact_size(vec2(ui.available_width(), GRABBER_H), Sense::click_and_drag());
         resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, crate::i18n::tr("Resize Panel")));
         crate::widgets::register(ui.ctx(), "sheet:grabber", g);
@@ -612,6 +611,7 @@ fn sheet(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, wide: bool, lan
         }
         body(app, ui);
     });
+    ui.painter().set(behind, egui::Shape::rect_filled(shown.response.rect, 0.0, t.canvas));
 }
 
 /// The sheet's heights: about two and a half slider rows, four and a half (a part of the next row
@@ -832,7 +832,7 @@ fn label_items(app: &mut LightcraftApp, ui: &mut egui::Ui, ids: &[u64]) {
                 let name = app.session.catalog.label_name(l).to_string();
                 let (rect, resp) = row_cell(ui, &format!("label-{key}"), &name, false);
                 let on = cur == Some(Some(l));
-                let ring = if on { Stroke::new(2.5, egui::Color32::WHITE) } else { Stroke::NONE };
+                let ring = if on { Stroke::new(2.5, t.text) } else { Stroke::NONE };
                 ui.painter().circle(rect.center(), 10.0, super::grid::label_color(l), ring);
                 if resp.on_hover_text(name).clicked() {
                     tapped = Some(key);

@@ -39,6 +39,10 @@ pub struct Tokens {
     pub star: Color32,
     pub pick: Color32,
     pub reject: Color32,
+    /// Ratings and flags drawn over a photo (a thumbnail's badges): light in both appearances, as
+    /// the photo under them isn't the page's colour.
+    pub photo_star: Color32,
+    pub photo_pick: Color32,
     /// Cautionary notices (e.g. a raw shown from its embedded preview): a muted amber.
     pub caution: Color32,
     pub mask_overlay: Color32,
@@ -87,6 +91,8 @@ impl Default for Tokens {
             accent: Color32::from_rgb(0x01, 0x65, 0xdd),
             star: Color32::from_rgb(0xd8, 0xd8, 0xd8),
             pick: Color32::from_rgb(0xf0, 0xf0, 0xf0),
+            photo_star: Color32::from_rgb(0xd8, 0xd8, 0xd8),
+            photo_pick: Color32::from_rgb(0xf0, 0xf0, 0xf0),
             reject: Color32::from_rgb(0xe0, 0x4a, 0x4a),
             caution: Color32::from_rgb(0xe3, 0xa8, 0x3c),
             mask_overlay: Color32::from_rgba_unmultiplied(0xe0, 0x20, 0x30, 110),
@@ -148,6 +154,8 @@ impl Tokens {
             accent: rgb(0x00, 0x7a, 0xff),
             star: rgb(0x3c, 0x3c, 0x43),
             pick: rgb(0x1c, 0x1c, 0x1e),
+            photo_star: rgb(0xe5, 0xe5, 0xea),
+            photo_pick: rgb(0xff, 0xff, 0xff),
             reject: rgb(0xff, 0x3b, 0x30),
             caution: rgb(0xff, 0x95, 0x00),
             switch_off: rgb(0xe5, 0xe5, 0xea),
@@ -187,6 +195,8 @@ impl Tokens {
             accent: rgb(0x0a, 0x84, 0xff),
             star: rgb(0xe5, 0xe5, 0xea),
             pick: rgb(0xff, 0xff, 0xff),
+            photo_star: rgb(0xe5, 0xe5, 0xea),
+            photo_pick: rgb(0xff, 0xff, 0xff),
             reject: rgb(0xff, 0x45, 0x3a),
             caution: rgb(0xff, 0xd6, 0x0a),
             ..Tokens::default()
@@ -311,6 +321,11 @@ pub fn apply_layout(ctx: &egui::Context, compact: bool, dark: bool) {
 }
 
 fn apply_tokens(ctx: &egui::Context, t: Tokens, dark: bool) {
+    // egui keeps one style per theme and switches by itself when the system's changes. Ours are
+    // set on the one in use, whichever look they give it, so egui is pinned to it (else a change of
+    // the system's theme would swap in egui's own, unstyled, other style under a light or dark
+    // appearance the user chose).
+    ctx.set_theme(egui::ThemePreference::Dark);
     ctx.data_mut(|d| d.insert_temp(egui::Id::NULL, t));
     ctx.data_mut(|d| d.insert_temp(egui::Id::new("lc-dark"), dark));
     let mut v = if dark { Visuals::dark() } else { Visuals::light() };

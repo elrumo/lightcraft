@@ -102,6 +102,13 @@ xcrun devicectl device copy from --device <udid> --domain-type appDataContainer 
   --domain-identifier ai.storyteller.lightcraft.ios --source tmp --destination ./device-tmp
 ```
 
+**Light and dark.** Settings ▸ Interface ▸ Appearance (System, Light, Dark; `app.appearance.*`) chooses how the phone and
+iPad-portrait layouts are coloured; System follows the device (the host reads UIKit's style, as winit ignores the theme on
+iOS, and forces the same style on its windows so the status bar, keyboard and system sheets match). On a simulator,
+`xcrun simctl ui booted appearance light` (or `dark`) changes what the device says, with no synthetic input; headless,
+`lightcraft-cli snapshot … --script` with `{"method": "ui.set", "params": {"appearance": "light"}}` draws the light one.
+The desktop layout (iPad held landscape) is dark whatever is chosen.
+
 The file stays in the app's sandbox, so nothing listens on the network. On the simulator, `SIMCTL_CHILD_LIGHTCRAFT_SCRIPT=…
 xcrun simctl launch …` does the same.
 
@@ -185,13 +192,13 @@ layout and interaction only: no Adobe icons, artwork, fonts, presets or screensh
    compact layout (`panels/compact.rs`, `panels/mobile.rs`) used when the content is narrower than `COMPACT_BELOW_PT`
    (900 pt; `LightcraftApp::compact`), i.e. iPhones and iPads in portrait; iPad landscape (1024 pt and more) keeps the
    desktop layout. It follows Lightroom's mobile app for layout and behaviour and iOS for its look (`Tokens::ios`:
-   Apple's dark-mode system colours, 44 pt rows; [ios-gaps.md](ios-gaps.md) A2.22–A2.25), and has **no menu bar**.
+   Apple's system colours in light or dark, as Settings ▸ Interface or the device says, 44 pt rows; [ios-gaps.md](ios-gaps.md) A2.22–A2.25), and has **no menu bar**.
    The grid: the collection as its title (▾ opens the albums list as a page), filter and sort beside it, Select and
    "…" (import, new album, sort, settings, help…) above, square tiles three across and edge to edge with the photo
    filling each (Square Thumbnails, the default on a first start; justified rows otherwise) under month headers, and a
    round + (the host's pickers). A photo: back, undo, share and "…" (rating, flag, label, copy / paste / reset edits,
    versions, history, keywords, delete) above it; below it the tools (Presets, Crop, Edit, Masking, Remove, Info),
-   the open one on a blue tile, with the Edit tool's groups (Auto, Profile, Light, Color, Effects, Detail, Optics,
+   the open one tinted blue like an iOS tab bar's, with the Edit tool's groups (Auto, Profile, Light, Color, Effects, Detail, Optics,
    Calibration) in a row of their own and one group's sliders in the sheet (a grabber at its top: drag it to one of
    three heights or right down to put the tool away; the sheet is only as tall as its content, so the photo keeps the
    rest; from 600 pt wide it is a panel on the right, with My Photos as a column on the left; held sideways, under

@@ -274,8 +274,12 @@ pub fn slider(ui: &mut Ui, spec: &ControlSpec, value: f64, enabled: bool, label_
     let shown = if spec.id == "wb.temp" { format!("{v:.0}") } else { spec.format(v).replace("+0.00", "0").replace("-0.00", "0") };
     let shown = if shown == "+0" || shown == "-0" { "0".to_string() } else { shown };
     p.text(label_rect.right_center(), Align2::RIGHT_CENTER, shown, font, text_c);
-    let ring = if touch { 10.0 } else { 7.0 };
     let tx = to_x(v);
+    if touch {
+        paint_ios_slider(ui, track_rect, &spec.track, &t, tx, to_x(spec.default), enabled);
+        return out;
+    }
+    let ring = 7.0;
     paint_track(ui, track_rect, &spec.track, &t, tx, ring);
     let p = ui.painter();
     let ring_c = if !enabled {
@@ -291,6 +295,40 @@ pub fn slider(ui: &mut Ui, spec: &ControlSpec, value: f64, enabled: bool, label_
         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
     }
     out
+}
+
+/// A touch slider drawn as iOS draws its own: a 4 pt track, filled with the accent colour from where
+/// the control's default is to the thumb (so an edited slider shows how far it went, and a centred
+/// one fills outward from its middle), and a white thumb with a soft shadow. Gradient tracks
+/// (temperature, hue…) keep their colours.
+fn paint_ios_slider(ui: &Ui, rect: Rect, track: &Track, t: &Tokens, thumb_x: f32, from_x: f32, enabled: bool) {
+    let p = ui.painter();
+    let y = rect.center().y;
+    if let Some(stops) = track_stops(track) {
+        let n = stops.len().max(2) - 1;
+        let steps = 48;
+        for i in 0..steps {
+            let (a, b) = (i as f32 / steps as f32, (i + 1) as f32 / steps as f32);
+            let seg = (a * n as f32).floor() as usize;
+            let local = a * n as f32 - seg as f32;
+            let c = lerp(stops[seg.min(n)], stops[(seg + 1).min(n)], local);
+            let (x0, x1) = (rect.left() + rect.width() * a, rect.left() + rect.width() * b);
+            p.rect_filled(Rect::from_min_max(pos2(x0, y - 2.0), pos2(x1 + 0.5, y + 2.0)), 0.0, c);
+        }
+    } else {
+        p.rect_filled(Rect::from_min_max(pos2(rect.left(), y - 2.0), pos2(rect.right(), y + 2.0)), 2.0, t.track);
+        let (a, b) = (from_x.min(thumb_x), from_x.max(thumb_x));
+        if enabled && b - a > 0.5 {
+            p.rect_filled(Rect::from_min_max(pos2(a, y - 2.0), pos2(b, y + 2.0)), 2.0, t.accent);
+        }
+    }
+    let (c, r) = (pos2(thumb_x, y), 12.0);
+    let dark = Tokens::is_dark(ui.ctx());
+    p.circle_filled(c + vec2(0.0, 1.5), r + 1.0, Color32::from_black_alpha(if dark { 80 } else { 40 }));
+    p.circle_filled(c, r, if enabled { Color32::WHITE } else { t.track });
+    if !dark {
+        p.circle_stroke(c, r, Stroke::new(0.5, Color32::from_black_alpha(30)));
+    }
 }
 
 /// How a finger's drag on a touch slider is taken: undecided for its first few points, then a
@@ -461,7 +499,8 @@ pub fn text_button(ui: &mut Ui, id: &str, label: &str, active: bool) -> Response
     let touch = crate::is_compact(ui.ctx());
     let label = if touch { strip_key_hint(label) } else { label };
     let font = t.semibold(if touch { 13.5 } else { 11.5 });
-    let galley = ui.painter().layout_no_wrap(label.to_string(), font, t.text);
+    // (white on the accent colour, the theme's text colour otherwise)
+    let galley = ui.painter().layout_no_wrap(label.to_string(), font, if touch && active { Color32::WHITE } else { t.text });
     let size = if touch { vec2((galley.size().x + 28.0).max(56.0), 36.0) } else { vec2((galley.size().x + 18.0).max(37.0), 24.0) };
     let (r, resp) = ui.allocate_exact_size(size, Sense::click());
     resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, active, label));
@@ -476,7 +515,7 @@ pub fn text_button(ui: &mut Ui, id: &str, label: &str, active: bool) -> Response
             t.button
         };
         p.rect_filled(r, 9.0, fill);
-        p.galley(r.center() - galley.size() / 2.0, galley, Color32::WHITE);
+        p.galley(r.center() - galley.size() / 2.0, galley, t.text);
         return resp;
     }
     let fill = if active {
@@ -568,7 +607,6 @@ fn ios_segments(ui: &mut Ui, id: &str, items: Vec<(&str, String)>, active: Optio
                 tapped = Some(i);
             }
         }
-        ui.add_space(4.0);
     }
     tapped
 }

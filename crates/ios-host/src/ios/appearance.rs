@@ -3,15 +3,17 @@
 //! matches it. winit ignores the theme on iOS, so this is the app's only source for it.
 
 use objc2::MainThreadMarker;
-use objc2_ui_kit::{UIApplication, UIScreen, UITraitEnvironment, UIUserInterfaceStyle, UIWindowScene};
+use objc2_ui_kit::{UIApplication, UITraitEnvironment, UIUserInterfaceStyle, UIWindowScene};
 
 use crate::InterfaceStyle;
 
-/// The system's own style. The main screen's traits are the system's: a window's
-/// `overrideUserInterfaceStyle` doesn't reach them, so this stays right while the app forces a style.
+/// The system's own style. The screen's traits are the system's: a window's
+/// `overrideUserInterfaceStyle` doesn't reach them, so this stays right while the app forces a
+/// style. (`None` before the app has a window.)
 pub fn system_style() -> Option<InterfaceStyle> {
     let mtm = MainThreadMarker::new()?;
-    let traits = UIScreen::mainScreen(mtm).traitCollection();
+    let screen = super::app_window(mtm)?.windowScene()?.screen();
+    let traits = screen.traitCollection();
     // SAFETY: a plain getter on a valid UITraitCollection, called on the main thread.
     let style = unsafe { traits.userInterfaceStyle() };
     match style {

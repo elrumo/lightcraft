@@ -596,18 +596,21 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
         p.image(tex.tex.id(), fit, uv, Color32::WHITE);
         // (choosing by touch draws its own frame: `check_badge`)
         let choosing = app.compact && app.ui.select_mode;
+        // (the rings are the page's text colour: white on the dark pages, black on the light ones)
+        let dark = crate::theme::Tokens::is_dark(ui.ctx());
+        let (ring, ring_sel) = if dark { (Color32::WHITE, Color32::from_gray(170)) } else { (t.text, t.text_dim) };
         if active && !choosing && tiles {
-            p.rect_stroke(fit, 0.0, Stroke::new(2.0, Color32::WHITE), StrokeKind::Inside);
+            p.rect_stroke(fit, 0.0, Stroke::new(2.0, ring), StrokeKind::Inside);
         } else if active && !choosing {
-            p.rect_stroke(fit.expand(if square { 2.0 } else { 0.0 }), 0.0, Stroke::new(2.0, Color32::WHITE), StrokeKind::Outside);
+            p.rect_stroke(fit.expand(if square { 2.0 } else { 0.0 }), 0.0, Stroke::new(2.0, ring), StrokeKind::Outside);
         } else if selected && !choosing && tiles {
-            p.rect_stroke(fit, 0.0, Stroke::new(2.0, Color32::from_gray(170)), StrokeKind::Inside);
+            p.rect_stroke(fit, 0.0, Stroke::new(2.0, ring_sel), StrokeKind::Inside);
         } else if selected && !choosing {
-            p.rect_stroke(fit, 0.0, Stroke::new(2.0, Color32::from_gray(170)), StrokeKind::Outside);
+            p.rect_stroke(fit, 0.0, Stroke::new(2.0, ring_sel), StrokeKind::Outside);
         }
     } else {
         let ph = img_rect.shrink(if square && !tiles { 20.0 } else { 0.0 });
-        p.rect_filled(ph, 0.0, Color32::from_gray(38));
+        p.rect_filled(ph, 0.0, if crate::theme::Tokens::is_dark(ui.ctx()) { Color32::from_gray(38) } else { t.inset });
         if app.renderer.failure(Slot::Thumb(id)).is_some() {
             // unreadable / missing file
             p.text(ph.center(), Align2::CENTER_CENTER, "!", t.semibold(18.0), t.text_dim);
@@ -653,17 +656,17 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
         }
         let mut x = bar.left() + 6.0;
         for i in 0..photo.rating {
-            paint(p, Rect::from_min_size(pos2(x + i as f32 * 13.0, bar.center().y - 6.0), vec2(12.0, 12.0)), Icon::StarFilled, t.star);
+            paint(p, Rect::from_min_size(pos2(x + i as f32 * 13.0, bar.center().y - 6.0), vec2(12.0, 12.0)), Icon::StarFilled, t.photo_star);
         }
         x += photo.rating as f32 * 13.0 + 4.0;
         match photo.flag {
-            Flag::Pick => paint(p, Rect::from_min_size(pos2(x, bar.center().y - 7.0), vec2(14.0, 14.0)), Icon::FlagPick, t.pick),
+            Flag::Pick => paint(p, Rect::from_min_size(pos2(x, bar.center().y - 7.0), vec2(14.0, 14.0)), Icon::FlagPick, t.photo_pick),
             Flag::Reject => paint(p, Rect::from_min_size(pos2(x, bar.center().y - 7.0), vec2(14.0, 14.0)), Icon::FlagReject, t.reject),
             Flag::None => {}
         }
         let mut right = bar.right();
         if photo.is_edited() {
-            paint(p, Rect::from_min_size(pos2(right - 20.0, bar.center().y - 7.0), vec2(14.0, 14.0)), Icon::Sliders, t.text_label);
+            paint(p, Rect::from_min_size(pos2(right - 20.0, bar.center().y - 7.0), vec2(14.0, 14.0)), Icon::Sliders, t.photo_star);
             right -= 20.0;
         }
         if let Some(l) = photo.label {

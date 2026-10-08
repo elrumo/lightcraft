@@ -120,6 +120,7 @@ pub const WHATS_NEW: &str = include_str!("../../../../docs/whats-new.md");
 pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
     let Some(mut dlg) = app.ui.dialog.clone() else {
         super::mobile::hidden(ctx, "dialog");
+        super::alert::hidden(ctx, "dialog");
         return;
     };
     let t = Tokens::get(ctx);
@@ -165,6 +166,8 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
     }
     .to_string();
     let informational = matches!(dlg, Dialog::About | Dialog::Shortcuts | Dialog::Settings { .. });
+    // (taken before `body` borrows the dialog)
+    let confirm_delete = if let Dialog::ConfirmDelete { count } = &dlg { Some(*count) } else { None };
     let ok = ok_label(app, &dlg, informational);
     let cancel = cancel_label(app, &dlg, informational);
     let compact = app.compact;
@@ -920,7 +923,21 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
         }
     };
     let (mut cancel_tapped, mut ok_tapped) = (false, false);
-    if compact {
+    if compact && let Some(count) = confirm_delete {
+        // a yes-or-no question on a phone is an alert, not a page
+        let what =
+            if count == 1 { crate::i18n::tr("this photo").to_string() } else { crate::i18n::tr_format!("these {count} photos", count = count) };
+        let title = crate::i18n::tr_format!("Move {what} to Recently Deleted?", what = what);
+        let alert = super::alert::Alert {
+            id: "dialog",
+            title: &title,
+            message: "They can be restored from Recently Deleted until it is emptied.",
+            cancel,
+            ok: &ok,
+            destructive: true,
+        };
+        (cancel_tapped, ok_tapped) = super::alert::show(ctx, &alert);
+    } else if compact {
         // a phone: a page covering the screen, the action in its bar
         let action = (!informational && !ok.is_empty()).then_some((ok.as_str(), true));
         let bar = super::mobile::page(ctx, "dialog", &title, cancel, action, &mut body);

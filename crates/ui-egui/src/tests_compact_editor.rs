@@ -340,3 +340,75 @@ fn each_tool_starts_at_the_top_of_its_sheet() {
     let object = rect(&h, "maskNew:object");
     assert!(object.top() >= grabber.bottom() - 1.0, "Masking starts at its first row: {object:?} under {grabber:?}");
 }
+
+/// Settings on a phone are inset grouped lists: no tab's controls run past the screen's edge (the
+/// desktop's label-and-controls rows did, cutting off the language choices and the fields).
+#[test]
+fn phone_settings_stay_inside_the_screen() {
+    let mut h = detail([390.0, 844.0]);
+    let r = h.request("engine.execute", json!({"command": "app.settings"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    for tab in ["general", "import", "performance", "interface", "sync"] {
+        click(&mut h, &format!("button:settingsTab-{tab}"));
+        let outside: Vec<_> = h
+            .app
+            .widgets
+            .iter()
+            .filter(|(id, _)| {
+                ["button:settings", "check:", "field:", "combo:", "label:sync"].iter().any(|p| id.starts_with(p))
+                    && !id.starts_with("button:settingsTab-")
+            })
+            .filter(|(_, r)| r.left() < -0.5 || r.right() > 390.5)
+            .collect();
+        let page: Vec<_> = h.app.widgets.iter().filter(|(id, _)| id.starts_with("sheet:") || id.starts_with("dialog:")).collect();
+        let settings: Vec<_> = h
+            .app
+            .widgets
+            .iter()
+            .filter(|(id, _)| id.starts_with("button:settings") || id.starts_with("check:"))
+            .map(|(id, r)| (id.as_str(), r.left(), r.right()))
+            .collect();
+        assert!(outside.is_empty(), "{tab}: {outside:?}\npage {page:?}\nall {settings:?}");
+    }
+}
+
+/// A choice with long options (Grid ▸ Ratings & flags) is an iOS list on a phone: a row each, as wide
+/// as the card, a check beside the chosen one; not a stack of segmented controls.
+#[test]
+fn long_settings_choices_are_a_list() {
+    let mut h = detail([390.0, 844.0]);
+    let r = h.request("engine.execute", json!({"command": "app.settings"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    click(&mut h, "button:settingsTab-interface");
+    let rows: Vec<Rect> = (0..3).map(|i| rect(&h, &format!("button:settingsGridBadges-{i}"))).collect();
+    for pair in rows.windows(2) {
+        assert!((pair[1].top() - pair[0].bottom()).abs() < 1.0 && pair[0].height() >= 44.0, "a list, 44 pt a row: {rows:?}");
+    }
+    assert!(rows[0].width() > 300.0, "as wide as the card: {rows:?}");
+    // tapping a row chooses it
+    click(&mut h, "button:settingsGridBadges-1");
+    assert_eq!(h.app.ui.settings.grid_badges, crate::state::GridBadges::Always);
+}
+
+/// A yes-or-no question on a phone is an iOS alert (a card in the middle with Cancel and the
+/// action), not a page that covers the screen.
+#[test]
+fn deleting_photos_asks_with_an_alert_on_a_phone() {
+    let mut h = detail([390.0, 844.0]);
+    let id = h.app.session.active().expect("active photo");
+    h.app.ui.dialog = Some(crate::state::Dialog::ConfirmDelete { count: 1 });
+    h.settle(SETTLE);
+    let card = rect(&h, "alert:dialog");
+    assert!(card.width() <= 300.0 && card.height() < 300.0, "a card, not a page: {card:?}");
+    assert!((card.center().x - 195.0).abs() < 2.0, "in the middle: {card:?}");
+    assert!(!has(&h, "sheet:dialog"), "no page");
+    assert!(rect(&h, "button:alertOk").center().x > rect(&h, "button:alertCancel").center().x, "Cancel on the left, the action on the right");
+    click(&mut h, "button:alertCancel");
+    assert!(h.app.ui.dialog.is_none() && !h.app.session.catalog.photo(id).expect("photo").deleted, "Cancel keeps the photo");
+    h.app.ui.dialog = Some(crate::state::Dialog::ConfirmDelete { count: 1 });
+    h.settle(SETTLE);
+    click(&mut h, "button:alertOk");
+    assert!(h.app.ui.dialog.is_none() && h.app.session.catalog.photo(id).expect("photo").deleted, "the action moves it to Recently Deleted");
+}

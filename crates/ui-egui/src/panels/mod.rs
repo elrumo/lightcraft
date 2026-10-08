@@ -1,5 +1,6 @@
 //! Window regions and panels.
 
+pub mod alert;
 pub mod bottombar;
 pub mod chips;
 pub mod compact;
@@ -9,6 +10,7 @@ pub mod detail;
 pub mod dialogs;
 pub mod edit;
 pub mod filterbar;
+pub mod forms;
 pub mod grid;
 pub mod left;
 pub mod library_problem;
