@@ -31,6 +31,7 @@ lightcraft-ui-egui = { path = "crates/ui-egui" }
 lightcraft-ios-host = { path = "crates/ios-host" }
 lightcraft-mcp = { path = "crates/mcp" }
 lightcraft-segment = { path = "crates/segment" }
+lightcraft-models = { path = "crates/models" }
 
 # foundation
 thiserror = "2"

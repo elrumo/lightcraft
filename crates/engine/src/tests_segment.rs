@@ -230,3 +230,14 @@ fn object_clicks_are_capped() {
     assert!(!s.segmenter.busy());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The consent dialog's numbers and licence come from these constants; the download itself from
+/// the model's entry in `lightcraft-models`. They must say the same thing.
+#[cfg(feature = "sam")]
+#[test]
+fn the_dialog_describes_the_model_that_is_downloaded() {
+    let sam3 = &lightcraft_models::registry::SAM3;
+    assert_eq!(crate::segment::MODEL_BYTES, sam3.bytes());
+    assert_eq!(crate::segment::LICENSE_NAME, sam3.licence);
+    assert_eq!(crate::segment::LICENSE_URL, sam3.licence_url);
+}

@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use lightcraft_segment::fetch::{self, Options, Progress};
+use crate::fetch::{self, Options, Progress};
 
 /// What the session sees of a download.
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
@@ -107,7 +107,7 @@ impl Downloader {
         *lock(&s.text) = Text::default();
         *lock(&self.last) = Text::default();
         let guard = Running(s.clone());
-        let spawned = std::thread::Builder::new().name("sam3-download".into()).spawn(move || {
+        let spawned = std::thread::Builder::new().name("model-download".into()).spawn(move || {
             let s = guard.0.clone();
             let mut last_file = String::new();
             let mut on_progress = |p: &Progress| {
@@ -123,14 +123,14 @@ impl Downloader {
             let error = match r {
                 Ok(Ok(())) => {
                     s.finished.store(true, Ordering::SeqCst);
-                    log::info!("SAM 3 model downloaded to {}", dir.display());
+                    log::info!("model downloaded to {}", dir.display());
                     None
                 }
                 Ok(Err(e)) => Some(e.to_string()),
                 Err(_) => Some("the download failed unexpectedly".to_string()),
             };
             if let Some(e) = &error {
-                log::warn!("SAM 3 download: {e}");
+                log::warn!("model download: {e}");
             }
             lock(&s.text).error = error;
             drop(guard);

@@ -2946,6 +2946,7 @@ dependencies = [
  "lightcraft-gpu",
  "lightcraft-merge",
  "lightcraft-meta",
+ "lightcraft-models",
  "lightcraft-pipeline",
  "lightcraft-preview",
  "lightcraft-raster",
@@ -3060,6 +3061,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "lightcraft-models"
+version = "0.2.1"
+dependencies = [
+ "log",
+ "rustls",
+ "rustls-rustcrypto",
+ "serde",
+ "sha2",
+ "webpki-roots",
+]
+
+[[package]]
 name = "lightcraft-pipeline"
 version = "0.2.1"
 dependencies = [
@@ -3136,13 +3149,9 @@ dependencies = [
  "candle-core",
  "candle-nn",
  "log",
- "rustls",
- "rustls-rustcrypto",
  "serde",
  "serde_json",
- "sha2",
  "thiserror 2.0.21",
- "webpki-roots",
 ]
 
 [[package]]

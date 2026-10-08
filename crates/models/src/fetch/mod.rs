@@ -1,4 +1,4 @@
-//! Downloading the SAM 3 model, only when the user asked for it: from an ordered list of mirrors
+//! Downloading a model, only when the user asked for it: from an ordered list of mirrors
 //! (the next one when a mirror fails), resuming partial files, with connect and stall timeouts,
 //! a size cap, progress and cancellation, and checked (exact size, SHA-256 where pinned) before
 //! each file is moved into the model folder. Runs on whatever thread calls [`download`] (the
@@ -8,8 +8,8 @@
 //! model folder never holds a half-written file under a real name, and an interrupted download
 //! resumes from where it stopped. A file that fails its check is deleted, never kept.
 //!
-//! The weights are never part of LightCraft (SAM License, see docs/ai-masks.md); where they are
-//! downloaded from is configured by [`DEFAULT_MIRRORS`] and the user's own list.
+//! The weights are never part of LightCraft; where they are downloaded from is configured by each
+//! model's [`ModelSpec`](crate::ModelSpec) and the user's own list.
 
 pub mod http;
 
@@ -35,50 +35,15 @@ pub struct FileSpec {
     pub max: u64,
 }
 
-/// The `facebook/sam3` checkpoint files [`crate::Sam3::load`] needs.
-///
-/// `model.safetensors` is pinned to the official checkpoint (Hugging Face LFS SHA-256). The two
-/// tokenizer files are small text files without a pinned hash yet: they are only parsed by the
-/// tokenizer (never executed) and capped in size.
-// TODO(maintainer): pin `vocab.json` and `merges.txt` (size + SHA-256) when the files are
-// uploaded to LightCraft's CDN.
-pub const SAM3_FILES: &[FileSpec] = &[
-    FileSpec { name: "vocab.json", size: None, sha256: None, max: 16 << 20 },
-    FileSpec { name: "merges.txt", size: None, sha256: None, max: 16 << 20 },
-    FileSpec {
-        name: crate::WEIGHTS_FILE,
-        size: Some(SAM3_WEIGHTS_SIZE),
-        sha256: Some("6d06f0a5f84e435071fe6603e61d0b4cc7b40e0d39d487cfd4d67d8cc11cc14a"),
-        max: SAM3_WEIGHTS_SIZE,
-    },
-];
-
-/// Size of the official `model.safetensors` (3.44 GB).
-pub const SAM3_WEIGHTS_SIZE: u64 = 3_439_938_512;
-
-/// Where LightCraft downloads the model from, in order: each is a base URL, and file `f` is at
-/// `<base>/<f>`. **Empty for now**: LightCraft has no download location of its own yet, so the
-/// in-app download needs the user's list (`LIGHTCRAFT_SAM3_MIRRORS` or the mirrors file, see
-/// [`mirrors`] and docs/ai-masks.md) until this is filled in.
-///
-/// Hugging Face's `facebook/sam3` can't be a default: it is gated (each user must accept the
-/// SAM License there and download with their own token).
-// TODO(maintainer): add LightCraft's CDN locations (https, primary first), e.g.
-// "https://<cdn-host>/models/sam3/<revision>" — the files there must match `SAM3_FILES`.
-pub const DEFAULT_MIRRORS: &[&str] = &[];
-
-/// Environment variable with extra mirrors (base URLs separated by commas, spaces or newlines),
-/// tried before the defaults.
-pub const MIRRORS_ENV: &str = "LIGHTCRAFT_SAM3_MIRRORS";
-
 /// Most mirrors used (a hostile list can't make a download loop forever).
 const MAX_MIRRORS: usize = 16;
 /// Redirects followed per request.
 const MAX_REDIRECTS: usize = 8;
 
-/// The mirrors to try, in order: the environment variable's, then the mirrors file's (one base
-/// URL per line, `#` comments), then [`DEFAULT_MIRRORS`]; duplicates and unusable URLs dropped.
-pub fn mirrors(env: Option<&str>, file: Option<&Path>) -> Vec<String> {
+/// The mirrors to try, in order: the environment variable's (`env`), then the mirrors file's (one
+/// base URL per line, `#` comments), then `defaults` (the model's built-in ones); duplicates
+/// and unusable URLs dropped.
+pub fn mirrors(env: Option<&str>, file: Option<&Path>, defaults: &[&str]) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let mut add = |s: &str| {
         let s = s.trim().trim_end_matches('/');
@@ -93,7 +58,7 @@ pub fn mirrors(env: Option<&str>, file: Option<&Path>) -> Vec<String> {
     if let Some(text) = file.and_then(|f| std::fs::metadata(f).ok().filter(|m| m.len() < 64 * 1024).and_then(|_| std::fs::read_to_string(f).ok())) {
         text.lines().map(|l| l.split('#').next().unwrap_or_default()).for_each(&mut add);
     }
-    DEFAULT_MIRRORS.iter().for_each(|m| add(m));
+    defaults.iter().for_each(|m| add(m));
     out
 }
 
@@ -143,10 +108,7 @@ pub enum DownloadError {
 impl std::fmt::Display for DownloadError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            DownloadError::NoMirrors => write!(
-                f,
-                "no download location is configured for the SAM 3 model in this build (set {MIRRORS_ENV}, or put the files in the model folder yourself; see docs/ai-masks.md)"
-            ),
+            DownloadError::NoMirrors => write!(f, "no download location is configured for this model in this build"),
             DownloadError::Cancelled => write!(f, "the download was cancelled"),
             DownloadError::Disk(e) => write!(f, "{e}"),
             DownloadError::AllMirrorsFailed { file, errors } => write!(f, "could not download {file}: {}", errors.join("; ")),
@@ -214,11 +176,11 @@ pub fn download(
                     Err(Fail::Cancelled) => return Err(DownloadError::Cancelled),
                     Err(Fail::Disk(e)) => return Err(DownloadError::Disk(e)),
                     Err(Fail::Retry(e)) => {
-                        log::warn!("SAM 3 download of {url}: {e} (retrying)");
+                        log::warn!("model download of {url}: {e} (retrying)");
                         errors.push(format!("{}: {e}", short(m)));
                     }
                     Err(Fail::NextMirror(e)) => {
-                        log::warn!("SAM 3 download of {url}: {e}");
+                        log::warn!("model download of {url}: {e}");
                         errors.push(format!("{}: {e}", short(m)));
                         continue 'mirrors;
                     }

@@ -16,8 +16,6 @@
 //! MCP, tests) they wait for the worker.
 
 #[cfg(feature = "sam")]
-mod download;
-#[cfg(feature = "sam")]
 mod worker;
 
 use std::path::PathBuf;
@@ -128,7 +126,7 @@ pub struct Segmenter {
     #[cfg(feature = "sam")]
     worker: worker::Worker,
     #[cfg(feature = "sam")]
-    download: download::Downloader,
+    download: lightcraft_models::download::Downloader,
     #[cfg(feature = "sam")]
     results: (std::sync::mpsc::Sender<worker::Outcome>, std::sync::mpsc::Receiver<worker::Outcome>),
 }
@@ -146,7 +144,7 @@ impl Default for Segmenter {
             #[cfg(feature = "sam")]
             worker: worker::Worker::default(),
             #[cfg(feature = "sam")]
-            download: download::Downloader::default(),
+            download: lightcraft_models::download::Downloader::default(),
             #[cfg(feature = "sam")]
             results: std::sync::mpsc::channel(),
         }
@@ -218,8 +216,9 @@ impl Segmenter {
     pub fn mirrors(&self) -> Vec<String> {
         #[cfg(feature = "sam")]
         {
-            let env = std::env::var(lightcraft_segment::fetch::MIRRORS_ENV).ok();
-            lightcraft_segment::fetch::mirrors(env.as_deref(), self.mirrors_file.as_deref())
+            let sam3 = &lightcraft_models::registry::SAM3;
+            let env = std::env::var(sam3.mirrors_env).ok();
+            sam3.mirrors(env.as_deref(), self.mirrors_file.as_deref())
         }
         #[cfg(not(feature = "sam"))]
         Vec::new()
@@ -260,9 +259,9 @@ impl Segmenter {
         {
             let mirrors = self.mirrors();
             if mirrors.is_empty() {
-                return Err(lightcraft_segment::fetch::DownloadError::NoMirrors.to_string());
+                return Err(lightcraft_models::registry::SAM3.no_mirrors_message());
             }
-            self.download.start(lightcraft_segment::fetch::SAM3_FILES, mirrors, dir, lightcraft_segment::fetch::Options::default())
+            self.download.start(lightcraft_models::registry::SAM3.files, mirrors, dir, lightcraft_models::fetch::Options::default())
         }
         #[cfg(not(feature = "sam"))]
         {
