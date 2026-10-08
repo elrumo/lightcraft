@@ -475,6 +475,30 @@ fn run_search(shared: &Arc<Shared>, provider: &Provider, spec: &IndexSpec, query
     })?
 }
 
+/// A neutral (unedited) rendering of `photo` from a smart or mini preview file, at most `edge` on
+/// its long edge: what search embeds, so a photo gets the same vector wherever it is indexed (a
+/// device renders its thumbnail source the same way, with default settings). The server uses it on
+/// the previews it keeps.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn neutral_from_preview(photo: &lightcraft_catalog::Photo, preview: &std::path::Path, edge: usize) -> Result<Rgba8, String> {
+    use crate::media::{SourceLevel, SourceRef, source_info};
+    let edge = edge.clamp(16, SourceLevel::Thumb.max_edge());
+    let job = RenderJob {
+        photo: photo.id,
+        level: SourceLevel::Thumb,
+        source: SourceRef::Smart { path: preview.to_path_buf() },
+        origin: photo.source.clone(),
+        info: source_info(photo),
+        settings: Arc::new(DevelopSettings::default()),
+        request: lightcraft_pipeline::RenderRequest { apply_crop: true, ..lightcraft_pipeline::RenderRequest::fit(edge, edge) },
+        key: 0,
+        cache: None,
+        stages: None,
+        view_cache: None,
+    };
+    guard::catch("rendering a photo for search", || job.run().rendered.map(|r| r.image))?
+}
+
 impl Session {
     /// The index file for `model`: in the library's `search/` folder, else none (memory only).
     fn vision_index_path(&self, model: &str) -> Option<PathBuf> {

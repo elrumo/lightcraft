@@ -32,11 +32,11 @@ const PREVIEW_MAGIC: &[u8] = b"LCSP1\n";
 
 pub type Resp = Response<Box<dyn Read + Send>>;
 
-fn header(k: &str, v: &str) -> Option<Header> {
+pub(crate) fn header(k: &str, v: &str) -> Option<Header> {
     Header::from_bytes(k.as_bytes(), v.as_bytes()).ok()
 }
 
-fn bytes(status: u16, ctype: &str, body: Vec<u8>) -> Resp {
+pub(crate) fn bytes(status: u16, ctype: &str, body: Vec<u8>) -> Resp {
     let len = body.len();
     Response::new(StatusCode(status), header("Content-Type", ctype).into_iter().collect(), Box::new(std::io::Cursor::new(body)), Some(len), None)
 }
@@ -99,7 +99,7 @@ pub(crate) fn lib(st: &State, user: &str) -> Result<Arc<Mutex<UserLib>>, String>
 }
 
 /// Read a body of at most `max` bytes.
-fn read_body(req: &mut Request, max: u64) -> Result<Vec<u8>, Resp> {
+pub(crate) fn read_body(req: &mut Request, max: u64) -> Result<Vec<u8>, Resp> {
     if req.body_length().is_some_and(|n| n as u64 > max) {
         return Err(error(413, format!("the request is larger than {max} bytes")));
     }
@@ -129,7 +129,7 @@ pub(crate) fn header_value<'a>(req: &'a Request, name: &'static str) -> Option<&
     req.headers().iter().find(|h| h.field.equiv(name)).map(|h| h.value.as_str())
 }
 
-fn query<'a>(q: &'a str, key: &str) -> Option<&'a str> {
+pub(crate) fn query<'a>(q: &'a str, key: &str) -> Option<&'a str> {
     q.split('&').filter_map(|kv| kv.split_once('=')).find(|(k, _)| *k == key).map(|(_, v)| v)
 }
 
@@ -199,6 +199,11 @@ fn api(st: &State, req: &mut Request, method: &Method, path: &str, q: &str) -> R
         }
         (Method::Put, ["presets"]) => put_presets(req, &l),
         (m, ["blobs", kind, hash]) => blob(st, req, m, &l, &who.user, kind, hash),
+        // search by description (see `vision`)
+        (Method::Get, ["search", "status"]) => crate::vision::status(st, &l, &who.user),
+        (Method::Get, ["search"]) => crate::vision::search(st, &l, &who.user, q),
+        (Method::Get, ["index", "embeddings", "keys"]) => crate::vision::keys(st, &who.user),
+        (Method::Post, ["index", "embeddings"]) => crate::vision::upload(st, req, &l, &who.user),
         _ => error(404, format!("no route {method} {path}")),
     }
 }
@@ -420,12 +425,12 @@ fn blob(st: &State, req: &mut Request, method: &Method, l: &Mutex<UserLib>, user
             let size = usize::try_from(n).ok();
             Response::new(StatusCode(status), headers, Box::new(f.take(n)), size, None)
         }
-        Method::Put => put_blob(req, &dir, kind, &path),
+        Method::Put => put_blob(st, req, &dir, kind, &path),
         _ => error(405, "HEAD, GET or PUT"),
     }
 }
 
-fn put_blob(req: &mut Request, dir: &Path, kind: &str, path: &Path) -> Resp {
+fn put_blob(st: &State, req: &mut Request, dir: &Path, kind: &str, path: &Path) -> Resp {
     let max = if kind == "original" { BLOB_MAX } else { PREVIEW_MAX };
     if req.body_length().is_some_and(|n| n as u64 > max) {
         return error(413, format!("larger than {max} bytes"));
@@ -482,7 +487,13 @@ fn put_blob(req: &mut Request, dir: &Path, kind: &str, path: &Path) -> Resp {
         Ok(())
     })();
     match r {
-        Ok(()) => json(200, &json!({})),
+        Ok(()) => {
+            if kind == "mini" {
+                // a photo that can be indexed for search now
+                st.vision.wake();
+            }
+            json(200, &json!({}))
+        }
         Err((status, msg)) => {
             let _ = std::fs::remove_file(&tmp);
             error(status, msg)

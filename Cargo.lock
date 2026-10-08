@@ -3336,6 +3336,7 @@ dependencies = [
  "lightcraft-engine",
  "lightcraft-preview",
  "lightcraft-raster",
+ "lightcraft-vision",
  "log",
  "serde",
  "serde_json",

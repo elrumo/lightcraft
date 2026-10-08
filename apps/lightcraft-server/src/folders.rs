@@ -850,6 +850,9 @@ pub(crate) fn run_previews(st: &Arc<State>) {
         let blobs = accounts::user_dir(&st.data, &user).join("blobs");
         let r = build_previews(&blobs, &hash, &file);
         lock(&sc.jobs).1.remove(&(user.clone(), hash.clone()));
+        if r.is_ok() {
+            st.vision.wake();
+        }
         if let Err(e) = r {
             log::warn!("{user}: previews of {}: {e}", file.display());
             lock(&sc.failed).insert((user, hash), format!("{}: {e}", file.display()));

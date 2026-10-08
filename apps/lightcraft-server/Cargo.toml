@@ -21,6 +21,8 @@ lightcraft-catalog = { workspace = true }
 lightcraft-preview = { workspace = true }
 # reading photos found in library folders: describing them, their XMP sidecars, their previews
 lightcraft-engine = { workspace = true }
+# search by description: the model (SigLIP 2 on candle) and each user's index of photo vectors
+lightcraft-vision = { workspace = true, features = ["siglip"] }
 tiny_http = { workspace = true }
 argon2 = { workspace = true }
 sha2 = { workspace = true }
@@ -31,5 +33,6 @@ log = { workspace = true }
 
 [dev-dependencies]
 lightcraft-codecs = { workspace = true }
+lightcraft-vision = { workspace = true, features = ["siglip", "testing"] }
 lightcraft-raster = { workspace = true }
 ureq = { workspace = true }

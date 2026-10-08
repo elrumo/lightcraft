@@ -45,6 +45,7 @@ const USAGE: &str = "usage:
   lightcraft-server folder remove NAME FOLDER
   lightcraft-server folder list [NAME]
   lightcraft-server scan [NAME]                (read the library folders now)
+  lightcraft-server model status|download [--accept-licences] [--vision-dir DIR]   (the search model: about 1.5 GB, Google's Apache License 2.0)
   lightcraft-server gc [--dry-run]
   lightcraft-server health                     (is the server answering? exit status)
 options (any command): --data DIR (default $LIGHTCRAFT_DATA or ./lightcraft-data)
@@ -78,7 +79,7 @@ fn positional(args: &[String]) -> Vec<&str> {
     for a in args {
         if skip {
             skip = false;
-        } else if matches!(a.as_str(), "--data" | "--listen" | "--web" | "--name" | "--scan-interval") {
+        } else if matches!(a.as_str(), "--data" | "--listen" | "--web" | "--name" | "--scan-interval" | "--vision-dir") {
             skip = true;
         } else if !a.starts_with("--") {
             out.push(a.as_str());
@@ -130,6 +131,7 @@ fn run(args: &[String]) -> Result<(), String> {
                 .unwrap_or(15);
             let threads = std::env::var("LIGHTCRAFT_PREVIEW_THREADS").ok().and_then(|t| t.trim().parse::<usize>().ok());
             let mut cfg = Config::new(data.clone(), listen);
+            cfg.vision_dir = Some(vision_dir(args, &data));
             cfg.web = web.clone();
             cfg.scan_interval = (minutes > 0).then(|| Duration::from_secs(minutes.saturating_mul(60)));
             cfg.preview_threads = threads.unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| (n.get() / 2).clamp(1, 4)));
@@ -219,6 +221,26 @@ fn run(args: &[String]) -> Result<(), String> {
             }
             Ok(())
         }
+        ["model", "status"] => {
+            println!("{}", lightcraft_server::vision::model_status(&vision_dir(args, &data)));
+            Ok(())
+        }
+        ["model", "download"] => {
+            let dir = vision_dir(args, &data);
+            if lightcraft_vision::siglip::is_model_dir(&dir) {
+                println!("the search model is installed in {}", dir.display());
+                return Ok(());
+            }
+            if !args.iter().any(|a| a == "--accept-licences") {
+                return Err(format!(
+                    "{}\n\nThe model is not part of LightCraft. Downloading it means accepting that licence; add --accept-licences to download it.",
+                    lightcraft_server::vision::model_status(&dir)
+                ));
+            }
+            lightcraft_server::vision::download_model(&dir, dir.parent().map(|p| p.join("siglip2-mirrors.txt")).as_deref())?;
+            println!("the search model is installed in {}; the running server finds it within a minute", dir.display());
+            Ok(())
+        }
         ["health"] => {
             health(&option(args, "--listen").or_else(|| std::env::var("LIGHTCRAFT_LISTEN").ok()).unwrap_or_else(|| "127.0.0.1:8080".into()))
         }
@@ -233,6 +255,14 @@ fn run(args: &[String]) -> Result<(), String> {
         }
         _ => Err(USAGE.into()),
     }
+}
+
+/// Where the search model's files are: `--vision-dir`, `$LIGHTCRAFT_VISION_DIR`, else `<data>/models/siglip2`.
+fn vision_dir(args: &[String], data: &Path) -> PathBuf {
+    option(args, "--vision-dir")
+        .or_else(|| std::env::var("LIGHTCRAFT_VISION_DIR").ok())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| data.join("models").join("siglip2"))
 }
 
 /// Ask a running server to scan a user's library folders (it looks for the request every few
