@@ -6,8 +6,9 @@
 //!   content-preserving mesh warps.)
 //! - **Auto crop**: the largest axis-aligned rectangle of fully valid pixels (maximal rectangle in a
 //!   binary matrix via a per-row histogram and a monotone stack, O(w·h)).
-//! - **Fill edges**: transparent areas are filled by push–pull diffusion of the surrounding pixels
-//!   in log space (no patch synthesis).
+//! - **Fill edges**: transparent areas are filled content-aware, with texture synthesized from the
+//!   panorama ([`lightcraft_pipeline::inpaint`]); push–pull diffusion of the surrounding pixels in
+//!   log space where nothing can be copied.
 
 use lightcraft_raster::{Plane, Rgb32f};
 use rayon::prelude::*;
@@ -148,6 +149,28 @@ pub fn auto_crop(alpha: &Plane) -> Option<(usize, usize, usize, usize)> {
 /// Fill transparent pixels (alpha < 1) from their surroundings; returns the image with alpha 1.
 pub fn fill_edges(img: &Rgb32f, alpha: &Plane) -> Rgb32f {
     let (w, h) = (img.width, img.height);
+    let hole: Vec<bool> = alpha.data.iter().map(|a| *a < 0.999).collect();
+    let synthesized = lightcraft_pipeline::inpaint::fill(img, 0, 0, w, h, &hole, reach(&hole, w, h), (0.0, 0.0), 0);
+    let mut out = match synthesized {
+        Some(data) => Rgb32f { width: w, height: h, data },
+        None => diffused(img, alpha),
+    };
+    for ((o, p), a) in out.data.iter_mut().zip(&img.data).zip(&alpha.data) {
+        let a = a.clamp(0.0, 1.0);
+        *o = if a < 0.999 {
+            // the warped/blended edge pixels are premultiplied-like: un-premultiply then mix
+            let v = if a > 1e-3 { p.map(|v| v / a) } else { [0.0; 3] };
+            [0, 1, 2].map(|c| v[c] * a + o[c] * (1.0 - a))
+        } else {
+            *p
+        };
+    }
+    out
+}
+
+/// Push–pull diffusion of the opaque pixels (in log space) over the whole canvas.
+fn diffused(img: &Rgb32f, alpha: &Plane) -> Rgb32f {
+    let (w, h) = (img.width, img.height);
     let mut b = Buf::new(w, h, 3);
     for (i, p) in img.data.iter().enumerate() {
         for c in 0..3 {
@@ -156,17 +179,39 @@ pub fn fill_edges(img: &Rgb32f, alpha: &Plane) -> Rgb32f {
     }
     let wgt: Vec<f32> = alpha.data.iter().map(|a| if *a >= 0.999 { 1.0 } else { 0.0 }).collect();
     push_pull(&mut b, &wgt);
-    let mut out = img.clone();
-    for (i, p) in out.data.iter_mut().enumerate() {
-        let a = alpha.data[i].clamp(0.0, 1.0);
-        if a < 0.999 {
-            let f = [0, 1, 2].map(|c| b.data[i * 3 + c].exp());
-            // the warped/blended edge pixels are premultiplied-like: un-premultiply then mix
-            let v = if a > 1e-3 { p.map(|v| v / a) } else { [0.0; 3] };
-            *p = [0, 1, 2].map(|c| v[c] * a + f[c] * (1.0 - a));
+    Rgb32f::from_fn(w, h, |x, y| {
+        let i = y * w + x;
+        [0, 1, 2].map(|c| b.data[i * 3 + c].exp())
+    })
+}
+
+/// How far (px) the hole reaches from the nearest pixel outside it, on a grid of at most 512 cells
+/// a side (it only sizes the synthesis pyramid).
+fn reach(hole: &[bool], w: usize, h: usize) -> f32 {
+    let f = (w.max(h) / 512).max(1);
+    let (gw, gh) = (w.div_ceil(f), h.div_ceil(f));
+    // breadth-first from the cells holding any pixel outside the hole
+    let mut d = vec![u32::MAX; gw * gh];
+    let mut queue = std::collections::VecDeque::new();
+    for (i, _) in hole.iter().enumerate().filter(|(_, m)| !**m) {
+        let c = (i / w / f) * gw + (i % w) / f;
+        if d[c] != 0 {
+            d[c] = 0;
+            queue.push_back(c);
         }
     }
-    out
+    let mut far = 0;
+    while let Some(c) = queue.pop_front() {
+        let (x, y, next) = (c % gw, c / gw, d[c] + 1);
+        far = far.max(d[c]);
+        for (nx, ny) in [(x.wrapping_sub(1), y), (x + 1, y), (x, y.wrapping_sub(1)), (x, y + 1)] {
+            if nx < gw && ny < gh && d[ny * gw + nx] == u32::MAX {
+                d[ny * gw + nx] = next;
+                queue.push_back(ny * gw + nx);
+            }
+        }
+    }
+    ((far as usize * f) as f32).max(1.0)
 }
 
 #[cfg(test)]
@@ -206,5 +251,34 @@ mod tests {
         assert_eq!(a0, a);
         let filled = fill_edges(&img, &a);
         assert!(filled.data.iter().all(|p| p[0] > 0.0));
+    }
+
+    /// Fill Edges continues the texture into the empty corners instead of smearing it flat.
+    #[test]
+    fn fill_edges_continues_the_texture() {
+        let (w, h) = (200, 120);
+        let stripes = Rgb32f::from_fn(w, h, |x, _| if (x / 4) % 2 == 0 { [0.7; 3] } else { [0.1; 3] });
+        let mut a = Plane::new(w, h);
+        let mut img = stripes.clone();
+        for y in 0..h {
+            for x in 0..w {
+                if x + y >= 50 {
+                    a.set(x, y, 1.0);
+                } else {
+                    img.set(x, y, [0.0; 3]);
+                }
+            }
+        }
+        let filled = fill_edges(&img, &a);
+        let (mut err, mut n) = (0.0f32, 0.0f32);
+        for y in 0..h {
+            for x in 0..w {
+                if x + y < 50 {
+                    err += (filled.get(x, y)[0] - stripes.get(x, y)[0]).abs();
+                    n += 1.0;
+                }
+            }
+        }
+        assert!(err / n < 0.08, "mean error {}", err / n);
     }
 }

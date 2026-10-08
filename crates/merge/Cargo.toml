@@ -16,6 +16,7 @@ lightcraft-raw = { workspace = true }
 lightcraft-codecs = { workspace = true }
 lightcraft-meta = { workspace = true }
 lightcraft-scenes = { workspace = true }
+lightcraft-pipeline = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
 rayon = { workspace = true }

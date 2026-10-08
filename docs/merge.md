@@ -37,7 +37,8 @@ gain compensation from the overlaps. Seams: each pixel goes to the image with th
 centre-weighted feather weight; multi-band blending (Laplacian pyramids) in log space. Boundary
 Warp: a separable stretch of the smoothed valid-area edges to the canvas edges. Auto Crop: the
 largest rectangle of image data (set as the develop crop, so it stays adjustable). Fill Edges:
-push–pull diffusion. Output: 16-bit integer DNG (16-bit float for HDR panoramas).
+content-aware, texture synthesized from the panorama (the Remove tool's fill,
+`lightcraft_pipeline::inpaint`); push–pull diffusion where nothing can be copied. Output: 16-bit integer DNG (16-bit float for HDR panoramas).
 
 **DNG output** (`output.rs`): LinearRaw, 3 samples, Deflate tiles; values scaled below 1.0 with the
 scale in `BaselineExposure`; raw sources keep their DNG colour tags (camera RGB), other sources get
@@ -56,8 +57,8 @@ scale in `BaselineExposure`; raw sources keep their DNG colour tags (camera RGB)
 - No lens-distortion model in the panorama bundle adjustment (rectilinear lenses assumed); no
   360° wrap-around; flat (translating-camera) scans are fitted with the rotation model.
 - No camera response calibration for JPEG brackets (sRGB decoding is taken as linear light).
-- Boundary Warp is a separable stretch, not a content-preserving mesh warp; Fill Edges is diffusion,
-  not patch synthesis.
+- Boundary Warp is a separable stretch, not a content-preserving mesh warp. Fill Edges copies by
+  translation only, so strong perspective structure (rows, tiles) can continue at the wrong angle.
 - *Create Stack*: the result goes on top of a collapsed stack of its sources (`Catalog::stack_with_ops`); its
   caption also lists them.
 - Panorama output is limited to `maxMegapixels` (default 40) — blending memory is ~25 bytes/pixel.

@@ -8,6 +8,8 @@
   source still counts (it seeds the fill and is searched too), so Refresh Source (`/`) or dragging the source
   gives another result; Heal and Clone copy from the source exactly, as before. Rows or tiles seen in strong
   perspective can come out at the wrong angle; use Heal or Clone with a chosen source there.
+- Photo Merge ▸ Panorama ▸ Fill Edges is content-aware too: the empty corners of a stitched panorama are filled
+  with sky, ground and texture continued from the panorama instead of a smooth smear.
 
 ### Presets and profiles
 - Import presets from other editors: XMP presets, classic `.lrtemplate` files, "DNG presets" from mobile apps and `.zip`
