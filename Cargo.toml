@@ -32,6 +32,7 @@ lightcraft-ios-host = { path = "crates/ios-host" }
 lightcraft-mcp = { path = "crates/mcp" }
 lightcraft-segment = { path = "crates/segment" }
 lightcraft-models = { path = "crates/models" }
+lightcraft-enhance = { path = "crates/enhance" }
 
 # foundation
 thiserror = "2"

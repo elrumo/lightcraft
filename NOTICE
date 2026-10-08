@@ -27,6 +27,18 @@ the facebook/sam3 checkpoint only when they choose to (in the app, or by hand), 
 License (https://github.com/facebookresearch/sam3/blob/main/LICENSE), a separate, non-OSI
 licence. See docs/ai-masks.md.
 
+crates/enhance (lightcraft-enhance) re-implements the SPAN super-resolution network (Swift
+Parameter-free Attention Network, Cheng Wan et al., CVPR Workshops 2024;
+https://github.com/hongyuanyu/SPAN, basicsr/archs/span_arch.py, Apache License 2.0) and follows
+its neosr and spandrel ports (Apache-2.0 and MIT), in Rust on candle. crates/enhance is
+therefore licensed under the Apache License 2.0 only (LICENSE-APACHE).
+
+Super-resolution weights are not part of LightCraft and are never distributed with it. A user
+downloads them only when they choose to. The first supported model is Nomos Uni SPAN
+(https://huggingface.co/Phips/2xNomosUni_span_multijpg, by Philip Hofmann, "Phips"), licensed
+CC-BY-4.0 (https://creativecommons.org/licenses/by/4.0/): LightCraft credits the author where it
+offers the download and in the files it makes with it. See docs/ai-models.md.
+
 Builds made with craft-fonts (the optional CRAFT_FONTS_DIR build input; all official releases)
 also embed the fonts listed in https://github.com/storytold/craft-fonts/blob/main/ATTRIBUTION.md
 (the Japanese fonts BIZ UDPGothic, BIZ UDMincho and Shippori Mincho; the web build embeds only BIZ

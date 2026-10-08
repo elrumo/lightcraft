@@ -2965,6 +2965,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "lightcraft-enhance"
+version = "0.2.1"
+dependencies = [
+ "candle-core",
+ "candle-nn",
+ "lightcraft-codecs",
+ "lightcraft-color",
+ "lightcraft-raster",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "lightcraft-geom"
 version = "0.2.1"
 dependencies = [
