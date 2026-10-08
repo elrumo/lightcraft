@@ -62,6 +62,11 @@ fn staged_picks_are_moved_into_the_library() {
     let Some(crate::state::Dialog::Import { opts }) = &h.app.ui.dialog else { panic!("no import review") };
     assert!(opts.staged && opts.copy && opts.move_files, "{opts:?}");
     assert_eq!(opts.candidates.len(), 3);
+    // a phone: the photos in a grid, the options folded away under a disclosure
+    assert!(has(&h, "import:2") && !has(&h, "label:importModeHelp"));
+    let r = h.request("ui.clickWidget", json!({"id": "button:importOptions"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
     assert!(has(&h, "label:importModeHelp"));
     assert!(!has(&h, "button:importAdd"), "no add in place for temporary copies");
     assert!(!has(&h, "label:importSource"), "the host's temporary folder isn't shown");
@@ -254,4 +259,19 @@ fn the_phone_grid_has_an_add_button() {
     h.app.ui.view = crate::state::ViewMode::PhotoGrid;
     h.settle(SETTLE);
     assert!(!has(&h, "button:addPhotos"));
+}
+
+/// A dialog's text field keeps the keyboard up: focus is asked for once, not every frame (each
+/// request interrupts IME composition, which on iOS hides the keyboard and shows it again).
+#[test]
+fn dialog_fields_dont_restart_the_keyboard_every_frame() {
+    let mut h = Headless::new(LightcraftApp::new(Session::with_demo(), Services::default()), [390.0, 844.0], 3.0);
+    h.app.run("dialog.newAlbum", json!({})).unwrap();
+    for _ in 0..3 {
+        h.step();
+    }
+    let ime = h.view.ime.expect("the name field has the keyboard");
+    assert!(!ime.should_interrupt_composition);
+    h.step();
+    assert!(h.view.ime.as_ref().is_some_and(|i| !i.should_interrupt_composition));
 }

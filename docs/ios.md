@@ -2,15 +2,16 @@
 
 Everything still missing, with priorities: [`ios-gaps.md`](ios-gaps.md).
 
-**Status: a spike that runs on the simulator, with a native host written but not yet run.** The desktop egui app builds
-as a static library, wrapped into an app by [xtool](https://github.com/xtool-org/xtool) (*Build and run with xtool*;
-from Linux too) or an Xcode project, and it has run on the iOS 27 simulator (through Xcode) with a compact touch layout
-(below). Since then the native pieces a usable app needs have been written (`crates/ios-host`, *Native host* below):
-import from the Photos and Files pickers, export through the share sheet, HEIC through ImageIO, saving and pausing the
-GPU as iOS backgrounds the app, a memory budget from the app's real limit. They type-check and pass clippy for iOS and
-their logic is tested on Linux, but **none of them has run on a simulator or a device yet**. Its library, saved on the
-device, starts with the procedural demo photos. Sync with your own LightCraft server ([sync.md](sync.md)) is wired up
-but not yet run. This page records what is verified, what is not, and the plan.
+**Status: runs on an iPhone and on the simulator; the native host works on the simulator, partly checked on a
+device.** The desktop egui app builds as a static library, wrapped into an app by an Xcode project (*Xcode, on a Mac*)
+or [xtool](https://github.com/xtool-org/xtool) (*Build and run with xtool*; written for Linux too, not yet tried).
+It has run on an iPhone 17 Pro (iOS 27.2) and the iOS 27 simulator with a compact touch layout (below). The native
+pieces (`crates/ios-host`, *Native host* below) — the Photos and Files pickers, export through the share sheet, HEIC
+through ImageIO, saving and pausing the GPU as iOS backgrounds the app, a memory budget from the app's real limit —
+were checked on the simulator by hand (2026-10-08, iPhone 18 Pro simulator, iOS 27.0); on the device so far: launch,
+the GPU, the memory budget, the library on disk and the lifecycle notifications. *Native host* lists what was checked
+where. Its library, saved on the device, starts with the procedural demo photos. Sync with your own LightCraft server
+([sync.md](sync.md)) is wired up but not yet run. This page records what is verified, what is not, and the plan.
 
 ## What is verified
 
@@ -52,15 +53,31 @@ only on macOS).
 Console.app on a Mac) and to `lightcraft-ios.log` in the app's tmp folder; a panic is also written to
 `lightcraft-panics.log` there.
 
-**Not yet tried:** none of this has run yet (the Rust side type-checks for iOS; the package, `run.sh` and the link have
-not been through xtool). Likely first problems: the system libraries the Rust library needs at link time (`cargo rustc
+**Not yet tried:** xtool itself has not run yet (the same sources, Rust library and frameworks link and run through
+Xcode, below; the package and `run.sh` have not been through xtool). Likely first problems: the system libraries the Rust library needs at link time (`cargo rustc
 -p lightcraft-ios --target aarch64-apple-ios --crate-type staticlib -- --print native-static-libs` lists them; add any
 missing one to `Package.swift`), and whether SwiftPM accepts `unsafeFlags` in the package xtool builds against (it is a
 local path dependency there).
 
-**Xcode, on a Mac (alternative):** `xcode/project.yml` is an XcodeGen spec over the same host sources: `cd
-apps/lightcraft-ios/xcode && xcodegen && open LightCraft.xcodeproj` (a pre-build phase runs `cargo build`; set
-`DEVELOPMENT_TEAM` for a device). Useful for the debugger, Instruments and the simulator; keep its Info.plist keys in
+**Xcode, on a Mac:** `xcode/project.yml` is an XcodeGen spec over the same host sources: `cd
+apps/lightcraft-ios/xcode && xcodegen && open LightCraft.xcodeproj` (a pre-build phase runs `cargo build`, honouring
+`CARGO_TARGET_DIR`; set `DEVELOPMENT_TEAM` for a device). This is how it first ran on a device; from the command line
+(any Apple ID signed in to Xcode; a team's wildcard profile signs it):
+
+```sh
+cd apps/lightcraft-ios/xcode && xcodegen
+xcodebuild -project LightCraft.xcodeproj -target LightCraft -sdk iphoneos -configuration Release \
+  -allowProvisioningUpdates DEVELOPMENT_TEAM=<team id> SYMROOT=$PWD/build build
+xcrun devicectl device install app --device <udid> build/Release-iphoneos/LightCraft.app
+xcrun devicectl device process launch --device <udid> --terminate-existing ai.storyteller.lightcraft.ios
+```
+
+`xcrun devicectl list devices` gives the UDID (USB or the same Wi-Fi network). The app's logs:
+`xcrun devicectl device copy from --device <udid> --domain-type appDataContainer --domain-identifier
+ai.storyteller.lightcraft.ios --source tmp --destination ./tmp` (`lightcraft-ios.log`, `lightcraft-panics.log`);
+a screenshot: `xcrun devicectl device capture screenshot --device <udid> --destination shot.png` (it captures whatever
+is on screen, so only while LightCraft is in front). The release library links with no extra system libraries
+(`-lc++` and the frameworks in `project.yml`); the app is 43 MB. Useful for the debugger, Instruments and the simulator; keep its Info.plist keys in
 step with `xtool/Info.plist`. This is how the spike first ran on the iOS 27 simulator (the touch layout: *What is
 missing*, 1; the panels keep out of the safe area). Three fixes were needed, all in the host: (1) iOS 27 traps apps
 without scene lifecycle and winit 0.30/0.31 has none, so `Sources/LightCraftHost/SceneDelegate.m` declares an empty
@@ -69,6 +86,24 @@ initWithFrame:]`, which a scene-based app never shows, so that file swizzles it 
 scene; (3) egui-wgpu's default device limits ask for 16 inter-stage shader variables, the simulator's Metal adapter
 allows 15, so `wgpu_options()` clamps them to the adapter. On the simulator the log file is in the app's data container
 (`xcrun simctl get_app_container <device> ai.storyteller.lightcraft.ios data`).
+
+**Driving the app on a device** (no taps needed): launched with `LIGHTCRAFT_SCRIPT=<file>`, the app runs the
+control-protocol requests in that file, one JSON object per line (`{"method": "ui.screenshot", "params": {"path":
+"…"}}`, see [control-protocol.md](control-protocol.md); `{"sleep": 500}` waits), and appends each reply to the same
+path with the extension `.out`; a relative path (the script's, or a screenshot's) is in the app's tmp folder. Copy
+the script there, launch with the variable, copy the replies and screenshots back:
+
+```sh
+xcrun devicectl device copy to --device <udid> --domain-type appDataContainer \
+  --domain-identifier ai.storyteller.lightcraft.ios --source tour.jsonl --destination tmp/tour.jsonl
+xcrun devicectl device process launch --device <udid> --terminate-existing \
+  --environment-variables '{"LIGHTCRAFT_SCRIPT": "tour.jsonl"}' ai.storyteller.lightcraft.ios
+xcrun devicectl device copy from --device <udid> --domain-type appDataContainer \
+  --domain-identifier ai.storyteller.lightcraft.ios --source tmp --destination ./device-tmp
+```
+
+The file stays in the app's sandbox, so nothing listens on the network. On the simulator, `SIMCTL_CHILD_LIGHTCRAFT_SCRIPT=…
+xcrun simctl launch …` does the same.
 
 Both link PhotosUI, Photos, ImageIO and UniformTypeIdentifiers for the native host and set
 `NSPhotoLibraryAddUsageDescription` (Save Image in the share sheet); importing needs no photo-library permission (the
@@ -92,7 +127,7 @@ on a device the on-screen keyboard is listed as missing below, although egui-win
 focus, which on iOS makes winit's view the first responder), the TLS handshake on a device, and sync while the app is
 backgrounded (requests fail and are retried on return).
 
-## Native host (written, not yet run)
+## Native host (run on the simulator; partly on a device)
 
 `crates/ios-host` (`lightcraft-ios-host`) holds the app's Objective-C calls, through `objc2` (Rust bindings to the
 system frameworks; no C or Objective-C is compiled). It is allowed `unsafe` like `crates/sysmem` (`CLAUDE.md`, *Never
@@ -117,9 +152,25 @@ whose portable helpers (safe file names, unique paths, the folder walk) are test
 - **Paths.** A library opened from another folder than last time (iOS gives the container a new path on every app
   update) re-points the photos stored under its old folder (`location.json`).
 
-To check on a device (`run.sh`) or a Mac: each picker (and cancelling it), a ProRAW and a Live Photo from the library, an iCloud file not yet
-downloaded, a folder on a USB drive, the share sheet on iPhone and iPad (popover), Save Image's permission prompt,
-backgrounding during an export, and a memory warning (Simulator ▸ Debug ▸ Simulate Memory Warning).
+**Checked by hand** (2026-10-08; simulator: iPhone 18 Pro, iOS 27.0; device: iPhone 17 Pro, iOS 27.2, through Xcode,
+see *Xcode, on a Mac*):
+
+| What | Simulator | Device |
+|---|---|---|
+| Launch, Metal (`Apple A19 Pro GPU`, buffers ≤ 4095 MiB on the device; 256 MiB on the simulator), the library in Documents | ✅ | ✅ |
+| Memory budget: 3373 MB available → 1024 MB budget (the simulator reports 0: the 768 MB default) | ✅ | ✅ |
+| Lifecycle notifications: resign / active / background; decoded photos released in the background | ✅ | ✅ |
+| Photos picker: two photos (a HEIC, a JPEG) copied, reviewed with ImageIO thumbnails, moved into `Originals/<date>`; a duplicate tagged; cancelling does nothing | ✅ | — |
+| Files picker: one file (the picker's copy); a folder with a HEIC, a JPEG in a subfolder and a `.txt` (skipped); the originals in Files untouched; cancelling | ✅ | — |
+| HEIC through ImageIO: a 4032 × 3024 iPhone HEIC in the loupe; camera, lens, exposure and capture date from `lightcraft-meta` | ✅ | — |
+| Export → share sheet; Save Image asks with LightCraft's own text and the photo lands in Photos | ✅ | — |
+| On-screen keyboard: rises for a field, typing, Return confirms, the layout above it (A1.9) | ✅ | — |
+| A library moved by an app update re-points its photos (`location.json`; a reinstall gave the container a new path) | — | ✅ |
+| The compact layout (A2.22) draws: the edit view with its group row, sliders and tool bar (an in-app screenshot through `LIGHTCRAFT_SCRIPT`) | ✅ | ✅ |
+
+Not yet checked anywhere: a ProRAW DNG and a Live Photo from a real library, an iCloud file not yet downloaded, a
+folder on a USB drive, the share sheet as an iPad popover, backgrounding during an export, a memory warning, sync.
+The device column needs someone at the phone (pickers and sheets are system UI); `LIGHTCRAFT_SCRIPT` covers the rest.
 
 ## Scope
 
@@ -130,23 +181,32 @@ layout and interaction only: no Adobe icons, artwork, fonts, presets or screensh
 
 ## What is missing
 
-1. **A touch UI (done for the spike, unverified on a device).** `ui-egui` has a compact layout (`panels/compact.rs`) used
-   when the content is narrower than `COMPACT_BELOW_PT` (900 pt; `LightcraftApp::compact`), i.e. iPhones and iPads in
-   portrait; iPad landscape (1024 pt and more) keeps the desktop layout. Slim top bar with a Menu button (the whole
-   command menu: import, export, settings…), the grid (about three tiles across, month headers) or the loupe, a bottom
-   tab bar (Presets, Edit, Crop, Remove, Masking, Info) and the active tool as a bottom sheet (from 600 pt wide: a
-   panel on the right, with My Photos as a column on the left; on a phone My Photos is a page of its own). The sheets
-   reuse the desktop panel bodies. Touch: a tap opens a photo, pinch zooms, two fingers pan, a sideways swipe on a
-   fitted photo goes to the next / previous one, double tap zooms, sliders have 68 pt rows and a 48 pt grab zone,
-   egui-drawn rows are 44 pt, crop handles and mask / spot pins are about a finger wide, and press-and-hold opens the
-   context menus (egui's own long-touch) except in the grid, where it starts choosing photos: taps then add and remove
-   them, and an action bar at the bottom rates, flags, labels, adds to an album, exports, copies / pastes settings or
-   deletes them (Select in the top bar does the same); the loupe's star button rates, flags and labels the photo; a
-   round + over the grid imports (with the host's pickers). Check it headless with `lightcraft-cli snapshot --demo --size 390x844
-   --scale 2` (phone) or `--size 820x1180` (iPad). Pinch and two-finger pan are untested (the headless driver injects
-   no multi-touch); everything is untested on a real device.
-   Still missing: the on-screen keyboard for text fields, Apple Pencil, tool-specific touch polish (brush strokes with
-   a finger while the sheet is open, the curve editor, the colour wheels) and a landscape phone layout.
+1. **A touch UI (done for the phone and iPad portrait; checked on the simulator, not yet used on a device).** `ui-egui` has a
+   compact layout (`panels/compact.rs`, `panels/mobile.rs`) used when the content is narrower than `COMPACT_BELOW_PT`
+   (900 pt; `LightcraftApp::compact`), i.e. iPhones and iPads in portrait; iPad landscape (1024 pt and more) keeps the
+   desktop layout. It follows Lightroom's mobile app for layout and behaviour and iOS for its look (`Tokens::ios`:
+   Apple's dark-mode system colours, 44 pt rows; [ios-gaps.md](ios-gaps.md) A2.22–A2.25), and has **no menu bar**.
+   The grid: the collection as its title (▾ opens the albums list as a page), filter and sort beside it, Select and
+   "…" (import, new album, sort, settings, help…) above, square tiles three across and edge to edge with the photo
+   filling each (Square Thumbnails, the default on a first start; justified rows otherwise) under month headers, and a
+   round + (the host's pickers). A photo: back, undo, share and "…" (rating, flag, label, copy / paste / reset edits,
+   versions, history, keywords, delete) above it; below it the tools (Presets, Crop, Edit, Masking, Remove, Info),
+   the open one on a blue tile, with the Edit tool's groups (Auto, Profile, Light, Color, Effects, Detail, Optics,
+   Calibration) in a row of their own and one group's sliders in the sheet (from 600 pt wide: a panel on the right,
+   with My Photos as a column on the left). Dialogs are pages sliding up from the bottom (Cancel, title and action
+   in the bar), menus are iOS pull-downs or action sheets, and every other command is in a searchable All Commands
+   list. Touch: a tap opens a photo, pinch zooms, two fingers pan, a sideways swipe on a fitted photo goes to the
+   next / previous one, an up / down swipe rates it (left half) or flags it (right half), double tap zooms, sliders follow a finger's sideways movement (a tap leaves them alone, an up
+   or down drag scrolls), crop handles
+   and mask / spot pins are about a finger wide, press-and-hold opens context menus (egui's own long-touch) except in
+   the grid, where it starts choosing photos (taps then add and remove them; an action bar rates, flags, labels, adds
+   to an album, exports, copies / pastes settings or deletes them). The on-screen keyboard rises for text fields,
+   Return confirms them, and the layout moves above it. Check it headless with `lightcraft-cli snapshot --demo --size
+   390x844 --scale 2` (phone) or `--size 820x1180` (iPad). Pinch and two-finger pan are untested (the headless driver
+   injects no multi-touch).
+   Dialogs use iOS switches and segmented controls; a vertical drag on a slider scrolls its sheet.
+   Still missing: Apple Pencil, tool-specific touch polish (brush strokes with a finger while the sheet is open, the
+   curve editor, the colour wheels), iOS pickers instead of drop-down menus, and a landscape phone layout.
 2. **HEIC/HEIF decode: written, not yet run** (*Native host*): ImageIO through `lightcraft_codecs::set_system_decoder`.
 3. **Memory: the budget is written, tiling is not.** The budget follows the app's limit (*Native host*), but the
    pipeline works on whole `f32` RGB images (about 288 MB at 24 MP) and does not tile, so previews are fine but
@@ -164,9 +224,17 @@ and `crates/ios-host` (see `CLAUDE.md`, *Never crash*).
 
 ## Plan
 
-- **Phase 0, spike:** run the egui app on the simulator (done, through Xcode), an iPhone and an iPad (with xtool, from
-  Linux too); log Metal limits; time a preview render and a 24 MP raw decode; record peak memory; check text input,
-  long-press and safe areas. Output: a decision between egui and a native shell over FFI, with a revised estimate.
+- **Phase 0, spike:** run the egui app on the simulator (done, through Xcode), an iPhone (done, through Xcode) and an
+  iPad (with xtool, from Linux too); log Metal limits; time a preview render and a 24 MP raw decode; record peak
+  memory; check text input, long-press and safe areas. Output: a decision between egui and a native shell over FFI,
+  with a revised estimate. **Measured on an iPhone 17 Pro** (iOS 27.2, release build, `LIGHTCRAFT_SCRIPT` +
+  `LIGHTCRAFT_PROFILE=1` through `devicectl … --console`, 2026-10-08): Metal adapter `Apple A19 Pro GPU`, buffers up
+  to 4095 MiB; 3373 MB available to the app at launch (budget 1024 MB); a 24 MP demo photo's preview took 373 ms the
+  first time (with the GPU's start-up) and 38–51 ms for the next ones (GPU stages: sampling 25–42 ms, the rest a few
+  ms; once 467 ms in white balance / noise reduction); the caches held 114 MB after two previews and 224 MB after
+  four; frames took under 0.5 ms of layout, the slowest update 28 ms. Not measured yet: a raw decode (no raw on the
+  device without importing the user's photos or the CC0 corpus), the storage-buffer limits (A1.12) and the process's
+  peak memory (the caches' total is what is known).
 - **Phase 1, platform glue (written; run it):** host crate, pickers, sandbox paths, memory budget, GPU pause/resume,
   HEIC via ImageIO, JPEG/DNG/ProRAW verified on real files.
 - **Phase 2, mobile UI:** grid, loupe with gestures, bottom-sheet edit tools, presets, crop, masks, export; adaptive

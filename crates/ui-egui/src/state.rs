@@ -215,6 +215,12 @@ pub struct UiState {
     /// works on the chosen ones). Entered with Select or a long press; `view.selectMode`.
     #[serde(skip)]
     pub select_mode: bool,
+    /// Compact layout: the Edit tool's group (`profile`, `light`, `color`, `effects`, `detail`,
+    /// `optics`, `calibration`); a phone shows one group at a time, as Lightroom's mobile app does.
+    pub edit_group: String,
+    /// Compact layout: the searchable list of every command is open (the phone has no menu bar).
+    #[serde(skip)]
+    pub all_commands: bool,
     pub view: ViewMode,
     pub left_panel: bool,
     pub right: RightPanel,
@@ -545,6 +551,8 @@ impl Default for UiState {
             preview_build_seen: None,
             unsaved_seen: false,
             select_mode: false,
+            edit_group: "light".into(),
+            all_commands: false,
             luminance_map_restore: None,
             view: ViewMode::Detail,
             left_panel: false,

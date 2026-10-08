@@ -119,5 +119,6 @@
   "{verb} {n} Photo{}": "{n}枚を{verb}{:.0}",
   "{weekday}, {day}": "{day}日（{weekday}）",
   "{weekday}, {day} {month} {year}": "{year}年{month}月{day}日（{weekday}）",
-  "{year}": "{year}年"
+  "{year}": "{year}年",
+  "Add {n}": "{n}枚を追加"
 }

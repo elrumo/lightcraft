@@ -71,7 +71,7 @@ fn hint(ui: &mut egui::Ui, t: &Tokens, text: &str) {
 
 /// A checkbox addressable as `check:{id}`; true when toggled.
 fn check(ui: &mut egui::Ui, id: &str, value: &mut bool, label: &str) -> bool {
-    let r = ui.checkbox(value, crate::i18n::tr(label));
+    let r = crate::widgets::check(ui, value, crate::i18n::tr(label));
     register(ui.ctx(), format!("check:{id}"), r.rect);
     r.changed()
 }
@@ -325,7 +325,7 @@ fn import_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
         if d.auto_folder.is_some() {
             row(ui, t, "", |ui| {
                 let mut copy = d.auto_copy;
-                if ui.checkbox(&mut copy, crate::i18n::tr("Copy into the library (else use the files where they are)")).changed() {
+                if crate::widgets::check(ui, &mut copy, crate::i18n::tr("Copy into the library (else use the files where they are)")).changed() {
                     let _ = app.run("library.autoImport", json!({"copy": copy}));
                 }
             });

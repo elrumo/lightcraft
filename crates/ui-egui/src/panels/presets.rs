@@ -42,7 +42,7 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     }
     let more = icon_button(&mut hdr, "presetMore", Icon::More, vec2(28.0, 28.0), false, true, "More preset options");
     egui::Popup::menu(&more).show(|ui| {
-        let r = ui.checkbox(&mut app.ui.preset_thumbs, crate::i18n::tr("Show Thumbnails"));
+        let r = crate::widgets::check(ui, &mut app.ui.preset_thumbs, crate::i18n::tr("Show Thumbnails"));
         register(ui.ctx(), "presetMenu:thumbnails", r.rect);
         ui.separator();
         if ui.button(crate::i18n::tr("Import Presets…")).clicked() {
@@ -80,8 +80,15 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     }
     let active = app.session.active();
     let current = active.and_then(|id| app.session.develop_of(id)).map(|d| (*d).clone());
-    let thumbs = app.ui.preset_thumbs && active.is_some();
-    let row_h = if thumbs { 54.0 } else { 26.0 };
+    // a phone always shows each preset on this photo, in rows tall enough for a finger (as
+    // Lightroom's mobile app lists them)
+    let thumbs = (app.ui.preset_thumbs || app.compact) && active.is_some();
+    let row_h = match (thumbs, app.compact) {
+        (true, true) => 64.0,
+        (true, false) => 54.0,
+        (false, true) => crate::TOUCH_ROW_H,
+        (false, false) => 26.0,
+    };
     let scroll = egui::ScrollArea::vertical().id_salt("presets-scroll").auto_shrink([false, false]).show(ui, |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
         let mut groups: BTreeMap<String, Vec<Preset>> = BTreeMap::new();

@@ -859,19 +859,54 @@ fn general_interaction(
     } else if app.compact && !two_fingers && resp.dragged() {
         if let Some(d) = resp.total_drag_delta() {
             ui.data_mut(|m| m.insert_temp(egui::Id::new("loupe-swipe"), d));
+            // where the finger came down: here, less how far it has moved
+            if let Some(p) = resp.interact_pointer_pos() {
+                ui.data_mut(|m| m.insert_temp(egui::Id::new("loupe-swipe-from"), p - d));
+            }
         }
     } else if app.compact && !two_fingers && resp.drag_stopped() && !app.ui.zoom_anim {
-        // swipe sideways across a fitted photo: the next / previous one (egui has no total on the
-        // release frame: use the last one seen while dragging)
-        if let Some(d) = ui.data(|d| d.get_temp::<egui::Vec2>(egui::Id::new("loupe-swipe")))
-            && d.x.abs() >= SWIPE_MIN_PT
-            && d.x.abs() > 2.0 * d.y.abs()
-        {
-            let _ = app.run(if d.x < 0.0 { "library.next" } else { "library.previous" }, json!({}));
+        // (egui has no total on the release frame: use the last one seen while dragging)
+        let from = ui.data(|d| d.get_temp::<egui::Pos2>(egui::Id::new("loupe-swipe-from")));
+        if let Some(d) = ui.data(|d| d.get_temp::<egui::Vec2>(egui::Id::new("loupe-swipe"))) {
+            if d.x.abs() >= SWIPE_MIN_PT && d.x.abs() > 2.0 * d.y.abs() {
+                // sideways across a fitted photo: the next / previous one
+                let _ = app.run(if d.x < 0.0 { "library.next" } else { "library.previous" }, json!({}));
+            } else if d.y.abs() >= SWIPE_MIN_PT && d.y.abs() > 2.0 * d.x.abs() {
+                // up or down: rating on the photo's left half, pick / reject on its right half
+                let right = from.is_some_and(|o| o.x > img.center().x);
+                swipe_rate(app, ui.ctx(), right, d.y < 0.0);
+            }
         }
-        ui.data_mut(|m| m.remove_temp::<egui::Vec2>(egui::Id::new("loupe-swipe")));
+        ui.data_mut(|m| {
+            m.remove_temp::<egui::Vec2>(egui::Id::new("loupe-swipe"));
+            m.remove_temp::<egui::Pos2>(egui::Id::new("loupe-swipe-from"));
+        });
     }
     let _ = (native, aspect);
+}
+
+/// Rating by swiping on a phone, as Lightroom's mobile app does when reviewing: up or down on the
+/// photo's left half adds or takes a star; on its right half, up picks and down rejects (towards
+/// the other flag from one of them first clears it). A toast says what it became.
+fn swipe_rate(app: &mut LightcraftApp, ctx: &egui::Context, flag_side: bool, up: bool) {
+    use lightcraft_catalog::Flag;
+    let Some(id) = app.session.active() else { return };
+    let Some(photo) = app.session.catalog.photo(id) else { return };
+    let (rating, flag) = (photo.rating, photo.flag);
+    let said = if flag_side {
+        let (key, said) = match (flag, up) {
+            (Flag::Reject, true) | (Flag::Pick, false) => ("none", "Unflagged"),
+            (_, true) => ("pick", "Pick"),
+            (_, false) => ("reject", "Reject"),
+        };
+        let _ = app.run("photo.flag", json!({"ids": [id.0], "flag": key}));
+        crate::i18n::tr(said).to_string()
+    } else {
+        let r = if up { rating.saturating_add(1).min(5) } else { rating.saturating_sub(1) };
+        let _ = app.run("photo.rate", json!({"ids": [id.0], "rating": r}));
+        if r == 0 { crate::i18n::tr("No Rating").to_string() } else { format!("{} {}", crate::i18n::tr("Rating"), "★".repeat(r as usize)) }
+    };
+    app.toast(ctx, said);
 }
 
 // ------------------------------------------------------------------------ crop

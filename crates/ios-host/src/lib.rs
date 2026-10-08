@@ -13,6 +13,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU32, Ordering};
 
 #[cfg(target_os = "ios")]
 #[allow(unsafe_code)]
@@ -182,6 +183,49 @@ pub fn console(line: &str) {
     let _ = line;
 }
 
+/// Return taps on the on-screen keyboard that the app hasn't taken yet.
+static RETURN_PRESSES: AtomicU32 = AtomicU32::new(0);
+/// How far the on-screen keyboard reaches up over the app, in points (`f32` bits; 0 = hidden).
+static KEYBOARD: AtomicU32 = AtomicU32::new(0);
+
+/// The on-screen keyboard's Return was tapped (on iOS, the Objective-C host's `-insertText:` hook
+/// calls this through `lightcraft_host_return_key`).
+pub fn return_pressed() {
+    RETURN_PRESSES.fetch_add(1, Ordering::Relaxed);
+}
+
+/// Return taps since the last call. winit hands Return over as a `"\n"` character, which egui
+/// drops, so the app turns these into Enter key presses (which confirm a text field).
+pub fn take_return_presses() -> u32 {
+    RETURN_PRESSES.swap(0, Ordering::Relaxed)
+}
+
+/// How much of the bottom of the screen the on-screen keyboard covers, in points (0 when it is
+/// hidden): the app keeps its content above it.
+pub fn keyboard_height() -> f32 {
+    f32::from_bits(KEYBOARD.load(Ordering::Relaxed))
+}
+
+/// Set by the keyboard notifications ([`observe_keyboard`]); negative or not finite means hidden.
+pub fn set_keyboard_height(points: f32) {
+    let h = if points.is_finite() { points.max(0.0) } else { 0.0 };
+    KEYBOARD.store(h.to_bits(), Ordering::Relaxed);
+}
+
+/// Call `f` on the main thread whenever the on-screen keyboard appears, moves or hides, after
+/// [`keyboard_height`] has the new height (call on the main thread, once).
+pub fn observe_keyboard(f: Box<dyn Fn()>) -> Result<(), String> {
+    #[cfg(target_os = "ios")]
+    {
+        ios::lifecycle::observe_keyboard(f)
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        let _ = f;
+        Err(ONLY_IOS.into())
+    }
+}
+
 #[cfg_attr(target_os = "ios", allow(dead_code))]
 const ONLY_IOS: &str = "only available in the iOS app";
 
@@ -295,6 +339,23 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    /// Return taps are counted until the app takes them; the keyboard height never goes negative.
+    #[test]
+    fn return_taps_and_keyboard_height() {
+        let _ = take_return_presses();
+        return_pressed();
+        return_pressed();
+        assert_eq!(take_return_presses(), 2);
+        assert_eq!(take_return_presses(), 0);
+        set_keyboard_height(336.5);
+        assert_eq!(keyboard_height(), 336.5);
+        set_keyboard_height(-4.0);
+        assert_eq!(keyboard_height(), 0.0);
+        set_keyboard_height(f32::NAN);
+        assert_eq!(keyboard_height(), 0.0);
+        assert!(observe_keyboard(Box::new(|| {})).is_err(), "only on iOS");
     }
 
     #[test]

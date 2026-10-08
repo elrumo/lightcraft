@@ -92,30 +92,37 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     if app.ui.soft_proof {
         soft_proofing(app, ui, id);
     }
+    // a phone shows one group at a time, picked in the bar under the sheet (`compact::group_bar`),
+    // which also has Auto; B&W is in Color and Reset in the photo's menu
+    let compact = app.compact;
     // header: Edit + Auto / B&W / HDR
-    let (hr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 40.0), Sense::hover());
-    ui.painter().text(pos2(hr.left() + 24.0, hr.bottom() - 10.0), Align2::LEFT_CENTER, crate::i18n::tr("Edit"), t.semibold(15.0), t.text);
-    egui::Frame::NONE.inner_margin(egui::Margin { left: 24, right: 22, top: 8, bottom: 14 }).show(ui, |ui| {
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 8.0;
-            if text_button(ui, "auto", crate::i18n::tr("Auto"), false).clicked() {
-                let _ = app.run("develop.auto", json!({}));
-                app.toast(ui.ctx(), "Auto settings applied");
-            }
-            let bw = crate::is_bw(&d);
-            if text_button(ui, "bw", crate::i18n::tr("B&W"), bw).clicked() {
-                let _ = app.run("develop.treatment", json!({}));
-            }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if text_button(ui, "reset", crate::i18n::tr("Reset"), false).on_hover_text(crate::i18n::tr("Reset all edits (Cmd+Shift+R)")).clicked()
-                {
-                    let _ = app.run("develop.reset", json!({}));
+    if !compact {
+        let (hr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 40.0), Sense::hover());
+        ui.painter().text(pos2(hr.left() + 24.0, hr.bottom() - 10.0), Align2::LEFT_CENTER, crate::i18n::tr("Edit"), t.semibold(15.0), t.text);
+        egui::Frame::NONE.inner_margin(egui::Margin { left: 24, right: 22, top: 8, bottom: 14 }).show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                if text_button(ui, "auto", crate::i18n::tr("Auto"), false).clicked() {
+                    let _ = app.run("develop.auto", json!({}));
+                    app.toast(ui.ctx(), "Auto settings applied");
                 }
+                let bw = crate::is_bw(&d);
+                if text_button(ui, "bw", crate::i18n::tr("B&W"), bw).clicked() {
+                    let _ = app.run("develop.treatment", json!({}));
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if text_button(ui, "reset", crate::i18n::tr("Reset"), false)
+                        .on_hover_text(crate::i18n::tr("Reset all edits (Cmd+Shift+R)"))
+                        .clicked()
+                    {
+                        let _ = app.run("develop.reset", json!({}));
+                    }
+                });
             });
         });
-    });
+    }
     if let Some(why) = &preview_only {
-        egui::Frame::NONE.inner_margin(egui::Margin { left: 24, right: 22, top: 0, bottom: 12 }).show(ui, |ui| {
+        egui::Frame::NONE.inner_margin(egui::Margin { left: 24, right: 22, top: if compact { 12 } else { 0 }, bottom: 12 }).show(ui, |ui| {
             crate::widgets::preview_only_notice(ui, "edit", why);
         });
     }
@@ -135,26 +142,34 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             });
         });
     }
-    divider(ui);
+    if !compact {
+        divider(ui);
+    }
     // profile row
-    egui::Frame::NONE.inner_margin(egui::Margin { left: 24, right: 22, top: 14, bottom: 14 }).show(ui, |ui| {
-        ui.horizontal(|ui| {
-            ui.label(egui::RichText::new(crate::i18n::tr("Profile")).font(t.font(13.0)).color(t.text_dim));
-            let name = lightcraft_engine::presets::profile(&d.profile.id).map(|p| p.name).unwrap_or("Color");
-            let r = crate::widgets::dropdown(ui, "profile", crate::i18n::tr(name), t.font(15.0), t.text_label);
-            egui::Popup::menu(&r).show(|ui| profile_menu(app, ui, &d));
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if crate::widgets::icon_button(ui, "profileBrowser", Icon::ProfileGrid, vec2(28.0, 28.0), false, true, "Browse Profiles").clicked() {
-                    let _ = app.run("panel.profiles", json!({}));
-                }
+    if !compact || app.ui.edit_group == "profile" {
+        egui::Frame::NONE.inner_margin(egui::Margin { left: 24, right: 22, top: 14, bottom: 14 }).show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(crate::i18n::tr("Profile")).font(t.font(13.0)).color(t.text_dim));
+                let name = lightcraft_engine::presets::profile(&d.profile.id).map(|p| p.name).unwrap_or("Color");
+                let r = crate::widgets::dropdown(ui, "profile", crate::i18n::tr(name), t.font(15.0), t.text_label);
+                egui::Popup::menu(&r).show(|ui| profile_menu(app, ui, &d));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if crate::widgets::icon_button(ui, "profileBrowser", Icon::ProfileGrid, vec2(28.0, 28.0), false, true, "Browse Profiles")
+                        .clicked()
+                    {
+                        let _ = app.run("panel.profiles", json!({}));
+                    }
+                });
             });
         });
-    });
-    if d.profile.id != "lc.color" {
-        control(app, ui, &d, "profile.amount", true);
-        ui.add_space(6.0);
+        if d.profile.id != "lc.color" {
+            control(app, ui, &d, "profile.amount", true);
+            ui.add_space(6.0);
+        }
+        if !compact {
+            divider(ui);
+        }
     }
-    divider(ui);
 
     section(app, ui, &d, "light", "Light", |app, ui, d| {
         for c in ["light.exposure", "light.contrast", "light.highlights", "light.shadows", "light.whites", "light.blacks"] {
@@ -171,6 +186,13 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         ui.add_space(8.0);
     });
     section(app, ui, &d, "color", "Color", |app, ui, d| {
+        if app.compact {
+            egui::Frame::NONE.inner_margin(egui::Margin { left: 24, right: 22, top: 12, bottom: 4 }).show(ui, |ui| {
+                if text_button(ui, "bw", crate::i18n::tr("B&W"), crate::is_bw(d)).clicked() {
+                    let _ = app.run("develop.treatment", json!({}));
+                }
+            });
+        }
         // White balance row
         egui::Frame::NONE.inner_margin(egui::Margin { left: 24, right: 22, top: 2, bottom: 2 }).show(ui, |ui| {
             ui.horizontal(|ui| {
@@ -284,11 +306,11 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         let has_lens = app.session.catalog.photo(id).is_some_and(|p| p.embedded_lens.is_some());
         egui::Frame::NONE.inner_margin(egui::Margin { left: 24, right: 22, top: 4, bottom: 4 }).show(ui, |ui| {
             let mut ca = d.optics.remove_ca;
-            if ui.checkbox(&mut ca, crate::i18n::tr("Remove Chromatic Aberration")).changed() {
+            if crate::widgets::check(ui, &mut ca, crate::i18n::tr("Remove Chromatic Aberration")).changed() {
                 let _ = app.run("develop.merge", json!({"settings": {"optics": {"remove_ca": ca}}, "label": "Remove CA"}));
             }
             let mut lp = d.optics.lens_profile;
-            if ui.checkbox(&mut lp, crate::i18n::tr("Enable Lens Corrections")).changed() {
+            if crate::widgets::check(ui, &mut lp, crate::i18n::tr("Enable Lens Corrections")).changed() {
                 let _ = app.run("develop.merge", json!({"settings": {"optics": {"lens_profile": lp}}, "label": "Lens Corrections"}));
             }
             if lp && !has_lens {
@@ -435,6 +457,13 @@ fn section(
     title: &str,
     body: impl FnOnce(&mut LightcraftApp, &mut egui::Ui, &DevelopSettings),
 ) {
+    if app.compact {
+        if app.ui.edit_group == id {
+            ui.add_space(8.0);
+            body(app, ui, d);
+        }
+        return;
+    }
     let open = app.ui.section_open(id);
     let (resp, toggled) = section_header(ui, id, title, open, Some(d.section_enabled(id)));
     if let Some(on) = toggled {
@@ -1028,7 +1057,7 @@ fn point_color(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &DevelopSettings) 
     egui::Frame::NONE.inner_margin(egui::Margin { left: 24, right: 22, top: 4, bottom: 8 }).show(ui, |ui| {
         ui.horizontal(|ui| {
             let mut v = app.ui.point_color_visualize;
-            if ui.checkbox(&mut v, crate::i18n::tr("Visualize range")).changed() {
+            if crate::widgets::check(ui, &mut v, crate::i18n::tr("Visualize range")).changed() {
                 app.ui.point_color_visualize = v;
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
