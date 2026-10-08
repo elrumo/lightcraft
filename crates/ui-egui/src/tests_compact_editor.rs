@@ -90,7 +90,14 @@ fn the_sheet_has_a_grabber_with_three_heights() {
     let g = rect(&h, "sheet:grabber").center();
     drag(&mut h, g, g + vec2(0.0, 500.0));
     assert_eq!(h.app.ui.right, RightPanel::None, "dragged right down: the sheet is put away");
-    assert!(!has(&h, "sheet:grabber"));
+    // (it slides off the screen)
+    for _ in 0..120 {
+        if !has(&h, "sheet:grabber") {
+            break;
+        }
+        h.step();
+    }
+    assert!(!has(&h, "sheet:grabber"), "and is gone");
 }
 
 /// A group with one row (Profile) needs less sheet than Light: the sheet is only as tall as its
@@ -341,8 +348,8 @@ fn each_tool_starts_at_the_top_of_its_sheet() {
     assert!(object.top() >= grabber.bottom() - 1.0, "Masking starts at its first row: {object:?} under {grabber:?}");
 }
 
-/// Settings on a phone are inset grouped lists: no tab's controls run past the screen's edge (the
-/// desktop's label-and-controls rows did, cutting off the language choices and the fields).
+/// Settings on a phone is a list of pages (iOS's Settings app): no page's controls run past the
+/// screen's edge.
 #[test]
 fn phone_settings_stay_inside_the_screen() {
     let mut h = detail([390.0, 844.0]);
@@ -355,41 +362,13 @@ fn phone_settings_stay_inside_the_screen() {
             .app
             .widgets
             .iter()
-            .filter(|(id, _)| {
-                ["button:settings", "check:", "field:", "combo:", "label:sync"].iter().any(|p| id.starts_with(p))
-                    && !id.starts_with("button:settingsTab-")
-            })
+            .filter(|(id, _)| ["button:settings", "check:", "field:", "combo:", "label:sync"].iter().any(|p| id.starts_with(p)))
             .filter(|(_, r)| r.left() < -0.5 || r.right() > 390.5)
             .collect();
-        let page: Vec<_> = h.app.widgets.iter().filter(|(id, _)| id.starts_with("sheet:") || id.starts_with("dialog:")).collect();
-        let settings: Vec<_> = h
-            .app
-            .widgets
-            .iter()
-            .filter(|(id, _)| id.starts_with("button:settings") || id.starts_with("check:"))
-            .map(|(id, r)| (id.as_str(), r.left(), r.right()))
-            .collect();
-        assert!(outside.is_empty(), "{tab}: {outside:?}\npage {page:?}\nall {settings:?}");
+        assert!(outside.is_empty(), "{tab}: {outside:?}");
+        // back to the list
+        click(&mut h, "button:sheetCancel");
     }
-}
-
-/// A choice with long options (Grid ▸ Ratings & flags) is an iOS list on a phone: a row each, as wide
-/// as the card, a check beside the chosen one; not a stack of segmented controls.
-#[test]
-fn long_settings_choices_are_a_list() {
-    let mut h = detail([390.0, 844.0]);
-    let r = h.request("engine.execute", json!({"command": "app.settings"}), T);
-    assert_eq!(r["ok"], true, "{r}");
-    h.settle(SETTLE);
-    click(&mut h, "button:settingsTab-interface");
-    let rows: Vec<Rect> = (0..3).map(|i| rect(&h, &format!("button:settingsGridBadges-{i}"))).collect();
-    for pair in rows.windows(2) {
-        assert!((pair[1].top() - pair[0].bottom()).abs() < 1.0 && pair[0].height() >= 44.0, "a list, 44 pt a row: {rows:?}");
-    }
-    assert!(rows[0].width() > 300.0, "as wide as the card: {rows:?}");
-    // tapping a row chooses it
-    click(&mut h, "button:settingsGridBadges-1");
-    assert_eq!(h.app.ui.settings.grid_badges, crate::state::GridBadges::Always);
 }
 
 /// An empty collection's message wraps inside a phone's width (it was one line that ran off both

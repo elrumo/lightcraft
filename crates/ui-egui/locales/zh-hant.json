@@ -1274,5 +1274,9 @@
   "Reset All Edits": "重設所有編輯",
   "Before / After": "之前 / 之後",
   "Create": "建立",
-  "Auto settings applied": "已套用自動設定"
+  "Auto settings applied": "已套用自動設定",
+  "On": "開啟",
+  "Account": "帳號",
+  "Required": "必填",
+  "Demo Library": "示範照片庫"
 }

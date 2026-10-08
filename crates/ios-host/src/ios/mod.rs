@@ -2,8 +2,10 @@
 //! otherwise; `objc2`'s `MainThreadMarker` makes that a compile-time requirement for UIKit.
 
 pub mod appearance;
+pub mod haptics;
 pub mod imageio;
 pub mod lifecycle;
+pub mod pasteboard;
 pub mod pickers;
 pub mod share;
 

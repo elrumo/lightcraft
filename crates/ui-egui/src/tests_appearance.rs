@@ -116,12 +116,12 @@ fn the_appearance_is_a_command_and_is_saved_with_the_ui_state() {
 fn settings_has_an_appearance_choice() {
     let mut h = phone();
     run(&mut h, "app.settings");
-    let r = h.request("ui.clickWidget", json!({"id": "button:settingsTab-interface"}), T);
-    assert_eq!(r["ok"], true, "{r}");
-    h.settle(SETTLE);
-    let r = h.request("ui.clickWidget", json!({"id": "button:settingsAppearance-1"}), T);
-    assert_eq!(r["ok"], true, "{r}");
-    h.settle(SETTLE);
-    assert_eq!(h.app.ui.appearance, Appearance::Light, "the second segment is Light");
+    // the list of pages, the Interface page, the Appearance row's menu, its second choice
+    for id in ["button:settingsTab-interface", "button:settingsAppearance", "button:settingsAppearance-1"] {
+        let r = h.request("ui.clickWidget", json!({"id": id}), T);
+        assert_eq!(r["ok"], true, "{id}: {r}");
+        h.settle(SETTLE);
+    }
+    assert_eq!(h.app.ui.appearance, Appearance::Light, "the second choice is Light");
     assert!(!Tokens::is_dark(&h.view.ctx));
 }

@@ -1,6 +1,6 @@
-//! HEIC / HEIF and AVIF have no pure-Rust decoder: a host with a system decoder (iOS: ImageIO)
-//! installs it, and those files then decode like any other. Without one they stay unsupported.
-//! One test, sequential: the decoder is process-wide.
+//! A host with a system decoder (iOS: ImageIO) installs it, and it decodes HEIC / HEIF and AVIF
+//! from then on. Without one AVIF stays unsupported (no pure-Rust decoder) and HEIC goes through
+//! `heic-rs`. One test, sequential: the decoder is process-wide.
 
 use lightcraft_codecs::{DecodeOptions, Error, Format, SystemImage, SystemPixels, decode, sniff};
 
@@ -39,8 +39,9 @@ fn failing(_bytes: &[u8], _max: Option<(u32, u32)>) -> Result<SystemImage, Strin
 #[test]
 fn heic_decodes_through_the_system_decoder_when_the_host_has_one() {
     assert_eq!(sniff(HEIC), Some(Format::Heif));
-    assert!(!Format::Heif.can_decode());
-    assert!(matches!(decode(HEIC, DecodeOptions::default()), Err(Error::Unsupported(Format::Heif, _))));
+    assert!(Format::Heif.can_decode() && !Format::Avif.can_decode());
+    // our own decoder: this file has no image in it
+    assert!(matches!(decode(HEIC, DecodeOptions::default()), Err(Error::Malformed(Format::Heif, _))));
 
     lightcraft_codecs::set_system_decoder(&[Format::Heif], fake);
     assert!(Format::Heif.can_decode());
@@ -67,5 +68,5 @@ fn heic_decodes_through_the_system_decoder_when_the_host_has_one() {
     assert!(e.to_string().contains("no image in the file"), "{e}");
 
     lightcraft_codecs::clear_system_decoder();
-    assert!(!Format::Heif.can_decode());
+    assert!(Format::Heif.can_decode() && !Format::Avif.can_decode());
 }

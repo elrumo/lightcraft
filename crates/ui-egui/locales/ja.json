@@ -1059,5 +1059,9 @@
   "Reset All Edits": "すべての編集をリセット",
   "Before / After": "補正前 / 補正後",
   "Create": "作成",
-  "Auto settings applied": "自動補正を適用しました"
+  "Auto settings applied": "自動補正を適用しました",
+  "On": "オン",
+  "Account": "アカウント",
+  "Required": "必須",
+  "Demo Library": "デモライブラリ"
 }

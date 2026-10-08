@@ -60,6 +60,20 @@ fn prefs(s: &mut Session, p: &Value) -> Result<Value> {
             Some(Value::Null) => d.metadata_preset = None,
             _ => {}
         }
+        // one name pattern per line (or a list), see `import::is_ignored`
+        match i.get("ignore") {
+            Some(Value::Null) => d.ignore.clear(),
+            Some(v @ (Value::String(_) | Value::Array(_))) => {
+                let list: Option<Vec<String>> = match v {
+                    Value::Array(a) => a.iter().map(|x| x.as_str().map(str::to_string)).collect(),
+                    other => other.as_str().map(|t| t.lines().map(str::to_string).collect()),
+                };
+                let list = list.ok_or_else(|| bad(ID, "ignore must be a list of text patterns"))?;
+                d.ignore = crate::import::clean_ignore(&list).map_err(|e| bad(ID, e))?;
+            }
+            Some(_) => return Err(bad(ID, "ignore must be a list of patterns (or text, one per line)")),
+            None => {}
+        }
         if let Some(a) = i.get("cameras").and_then(Value::as_array) {
             d.cameras.clear();
             for c in a {
@@ -107,7 +121,7 @@ pub fn specs() -> Vec<CommandSpec> {
         "Library Preferences",
         [],
         None,
-        "{import?: {rawPreset?: presetId|\"default\", otherPreset?: presetId|\"default\", perCamera?: bool, cameras?: [{camera: \"Make Model\", preset: presetId|null}], copyright?: text, creator?: text (given to imported photos without one)}, camera?: {camera, preset?, remove?: bool}, cacheMb?: n (0 = default), forgetLocalDays?: n (forget untouched Local photos of folders not browsed for n days; 0 = never)} — develop defaults applied on import (raws / other images / per camera) and the thumbnail cache size, saved with the library → {xmp, import, cacheMb, forgetLocalDays, persistent}",
+        "{import?: {rawPreset?: presetId|\"default\", otherPreset?: presetId|\"default\", perCamera?: bool, cameras?: [{camera: \"Make Model\", preset: presetId|null}], copyright?: text, creator?: text (given to imported photos without one), ignore?: [name pattern] (or text, one per line: files and folders scanning and importing skip, wherever they are below the folder chosen — `*` any run of characters, `?` one, any letter case, e.g. `*.fcpbundle`)}, camera?: {camera, preset?, remove?: bool}, cacheMb?: n (0 = default), forgetLocalDays?: n (forget untouched Local photos of folders not browsed for n days; 0 = never)} — develop defaults applied on import (raws / other images / per camera) and the thumbnail cache size, saved with the library → {xmp, import, cacheMb, forgetLocalDays, persistent}",
         always,
         prefs
     )]

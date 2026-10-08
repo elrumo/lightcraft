@@ -191,6 +191,9 @@ pub fn slider(ui: &mut Ui, spec: &ControlSpec, value: f64, enabled: bool, label_
         out.reset = true;
         out.value = Some(spec.default);
         v = spec.default;
+        if touch {
+            crate::haptics::tap(ui.ctx(), crate::haptics::Haptic::Light);
+        }
     } else {
         // touch: a drag that sets off mostly up or down scrolls what holds the slider (the sheet)
         let drag = if touch { touch_drag(ui, &resp, id) } else { None };
@@ -232,6 +235,9 @@ pub fn slider(ui: &mut Ui, spec: &ControlSpec, value: f64, enabled: bool, label_
             if (nv - value).abs() > 1e-12 {
                 out.value = Some(nv);
                 v = nv;
+                if touch {
+                    detent_haptic(ui.ctx(), spec, value, nv);
+                }
             }
         } else if resp.clicked()
             && !touch
@@ -328,6 +334,19 @@ fn paint_ios_slider(ui: &Ui, rect: Rect, track: &Track, t: &Tokens, thumb_x: f32
     p.circle_filled(c, r, if enabled { Color32::WHITE } else { t.track });
     if !dark {
         p.circle_stroke(c, r, Stroke::new(0.5, Color32::from_black_alpha(30)));
+    }
+}
+
+/// A tick when a finger's slide lands on the control's default or crosses it (the zero of most
+/// sliders, as Lightroom's mobile app does), a light tap on reaching either end of its range.
+fn detent_haptic(ctx: &egui::Context, spec: &ControlSpec, from: f64, to: f64) {
+    use crate::haptics::{Haptic, tap};
+    let half_step = spec.step.max(1e-9) / 2.0;
+    let (was_on, on) = ((from - spec.default).abs() < half_step, (to - spec.default).abs() < half_step);
+    if on || (!was_on && (from - spec.default).signum() != (to - spec.default).signum()) {
+        tap(ctx, Haptic::Selection);
+    } else if to <= spec.min || to >= spec.max {
+        tap(ctx, Haptic::Light);
     }
 }
 
@@ -445,6 +464,19 @@ pub fn flyout_row(ui: &mut Ui, id: &str, title: &str, icon: Icon, open: bool) ->
         t.text_label,
     );
     resp
+}
+
+/// `edit` as the layout wants its text fields: on a phone 44 pt tall with 17 pt text and room
+/// around it, as iOS draws a rounded text field (egui's own is ~24 pt: too tight for a finger and
+/// for the edit menu); unchanged on the desktop.
+pub fn touch_field<'t>(ui: &Ui, edit: egui::TextEdit<'t>) -> egui::TextEdit<'t> {
+    if !crate::is_compact(ui.ctx()) {
+        return edit;
+    }
+    edit.font(egui::FontId::proportional(17.0))
+        .margin(egui::Margin::symmetric(12, 10))
+        .min_size(vec2(0.0, crate::TOUCH_ROW_H))
+        .vertical_align(egui::Align::Center)
 }
 
 /// A checkbox on the desktop; on a phone an iOS switch at the end of a full-width row, the label

@@ -5,7 +5,7 @@
 //! - `moov` holds a Canon `uuid` box (85c0b687-820f-11e0-8111-f4ce462b6a48) whose children are `CMT1` (a TIFF
 //!   stream: IFD0), `CMT2` (TIFF: the Exif IFD), `CMT3` (TIFF: the Canon maker note), `CMT4` (TIFF: GPS) and the
 //!   `THMB` thumbnail, then one `trak` per stream: a full-size JPEG, a reduced raw, the full raw (`CRAW` sample
-//!   entries; raws carry a `CMP1` coding header) and timed metadata (`CTMD`).
+//!   entries; raws carry a `CMP1` coding header and a `CDI1`/`IAD1` image-area box) and timed metadata (`CTMD`).
 //! - A top-level `uuid` box with the XMP uuid (be7acfcb-97a9-42e8-9c71-999491e3afac, XMP spec part 3) holds the
 //!   XMP packet.
 //!
@@ -16,10 +16,115 @@
 pub enum Cr3TrackKind {
     /// `CRAW` with a `JPEG` child: the full-size JPEG.
     Jpeg,
-    /// `CRAW` raw image: dimensions and the `CMP1` coding header (byte range in the file).
-    Raw { width: u16, height: u16, cmp1: Option<(usize, usize)> },
+    /// `CRAW` raw image: dimensions, the `CMP1` coding header and the `CDI1`/`IAD1` image-area box.
+    Raw { width: u16, height: u16, cmp1: Option<Cmp1>, iad1: Option<Iad1> },
     /// Anything else (`CTMD` timed metadata, unknown entries).
     Other([u8; 4]),
+}
+
+/// The `CMP1` coding header of a raw track: sizes of the image and its tiles, and how the planes are coded.
+/// Field layout from Clévy's notes (credited there to Alexey Danilchenko); the nibble order of the packed bytes
+/// was confirmed on an EOS M50 C-RAW file (planes in the high nibble, Bayer layout in the low one).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Cmp1 {
+    /// 0x100 on current bodies.
+    pub version: u16,
+    pub width: u32,
+    pub height: u32,
+    pub tile_width: u32,
+    pub tile_height: u32,
+    /// Bits per sample (14 on current bodies).
+    pub bits: u8,
+    /// Coded planes: 4 (R, G1, G2, B) for Bayer data.
+    pub planes: u8,
+    /// Bayer layout of the planes: 0 = RGGB, 1 = GRBG, 2 = GBRG, 3 = BGGR (meaningful with more than one plane).
+    pub cfa_layout: u8,
+    /// 0 for still raw (lossless and C-RAW), 3 for roll-burst.
+    pub enc_type: u8,
+    /// Wavelet decomposition levels: 0 for lossless, 3 for C-RAW.
+    pub wavelet_levels: u8,
+    pub tiles_across: bool,
+    pub tiles_down: bool,
+    /// Size of the header at the start of the sample (before the first tile's data).
+    pub header_size: u32,
+}
+
+impl Cmp1 {
+    /// Parse the payload of a `CMP1` box (offsets after the box header). `None` when it is too short.
+    pub fn parse(b: &[u8]) -> Option<Cmp1> {
+        let (planes_cfa, enc_levels, tiles) = (*b.get(25)?, *b.get(26)?, *b.get(27)?);
+        Some(Cmp1 {
+            version: be16(b, 4)?,
+            width: be32(b, 8)?,
+            height: be32(b, 12)?,
+            tile_width: be32(b, 16)?,
+            tile_height: be32(b, 20)?,
+            bits: *b.get(24)?,
+            planes: planes_cfa >> 4,
+            cfa_layout: planes_cfa & 15,
+            enc_type: enc_levels >> 4,
+            wavelet_levels: enc_levels & 15,
+            tiles_across: tiles & 0x80 != 0,
+            tiles_down: tiles & 0x40 != 0,
+            header_size: be32(b, 28)?,
+        })
+    }
+}
+
+/// An inclusive pixel rectangle as `IAD1` stores it: zero-based `left, top, right, bottom`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Iad1Rect {
+    pub left: u16,
+    pub top: u16,
+    pub right: u16,
+    pub bottom: u16,
+}
+
+impl Iad1Rect {
+    /// Width in pixels (the right edge is inclusive).
+    pub fn width(&self) -> usize {
+        (self.right as usize + 1).saturating_sub(self.left as usize)
+    }
+    pub fn height(&self) -> usize {
+        (self.bottom as usize + 1).saturating_sub(self.top as usize)
+    }
+}
+
+/// The four rectangles of a full-size raw's `IAD1` box.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Iad1Areas {
+    /// The recommended crop (the image the camera writes to its JPEG; the sensor-info borders of the maker note).
+    pub crop: Iad1Rect,
+    /// Optically black columns on the left.
+    pub left_black: Iad1Rect,
+    /// Optically black rows on top.
+    pub top_black: Iad1Rect,
+    /// The active area. Clévy notes it can overflow the image by a few pixels on some files; clamp it.
+    pub active: Iad1Rect,
+}
+
+/// The `IAD1` image-area box inside `CDI1`: sensor size and, on full-size raws, the areas of the sensor.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Iad1 {
+    pub width: u16,
+    pub height: u16,
+    /// `None` on the reduced raw (its 32-byte box has no named areas).
+    pub areas: Option<Iad1Areas>,
+}
+
+impl Iad1 {
+    /// Parse the payload of an `IAD1` box (a full box: 4 bytes of version and flags, then big-endian `u16`s).
+    pub fn parse(b: &[u8]) -> Option<Iad1> {
+        let rect = |at: usize| Some(Iad1Rect { left: be16(b, at)?, top: be16(b, at + 2)?, right: be16(b, at + 4)?, bottom: be16(b, at + 6)? });
+        let areas = rect(16).zip(rect(24)).zip(rect(32)).zip(rect(40)).map(|(((crop, left_black), top_black), active)| Iad1Areas {
+            crop,
+            left_black,
+            top_black,
+            active,
+        });
+        // the reduced raw's box ends after two unnamed groups of four values, so only the full-size one has areas
+        Some(Iad1 { width: be16(b, 4)?, height: be16(b, 6)?, areas })
+    }
 }
 
 /// One track's single sample: where it is in the file.
@@ -38,6 +143,17 @@ pub struct Cr3<'a> {
     pub thumbnail: Option<&'a [u8]>,
     pub xmp: Option<&'a [u8]>,
     pub tracks: Vec<Cr3Track>,
+}
+
+impl Cr3<'_> {
+    /// The full-size raw track: the largest `CRAW` raw entry whose coding header and sample location were found
+    /// (the reduced raw is also a `CRAW` raw entry).
+    pub fn raw_track(&self) -> Option<&Cr3Track> {
+        self.tracks.iter().filter(|t| t.data.is_some() && matches!(t.kind, Cr3TrackKind::Raw { cmp1: Some(_), .. })).max_by_key(|t| match t.kind {
+            Cr3TrackKind::Raw { width, height, .. } => width as u32 * height as u32,
+            _ => 0,
+        })
+    }
 }
 
 const CANON_UUID: [u8; 16] = [0x85, 0xc0, 0xb6, 0x87, 0x82, 0x0f, 0x11, 0xe0, 0x81, 0x11, 0xf4, 0xce, 0x46, 0x2b, 0x6a, 0x48];
@@ -188,15 +304,23 @@ fn sample_entry(bytes: &[u8], e: &BoxRef, budget: &mut usize) -> Cr3TrackKind {
     let (Some(width), Some(height)) = (be16(bytes, e.body + 24), be16(bytes, e.body + 26)) else {
         return Cr3TrackKind::Other(e.kind);
     };
-    let mut cmp1 = None;
+    let (mut cmp1, mut iad1) = (None, None);
     for c in boxes(bytes, e.body.saturating_add(CRAW_CHILDREN_AT), e.end, budget) {
         match &c.kind {
             b"JPEG" => return Cr3TrackKind::Jpeg,
-            b"CMP1" => cmp1 = Some((c.body, c.end - c.body)),
+            b"CMP1" => cmp1 = bytes.get(c.body..c.end).and_then(Cmp1::parse),
+            // full box (version and flags), then the `IAD1` box
+            b"CDI1" => {
+                iad1 = boxes(bytes, c.body.saturating_add(4), c.end, budget)
+                    .iter()
+                    .find(|i| &i.kind == b"IAD1")
+                    .and_then(|i| bytes.get(i.body..i.end))
+                    .and_then(Iad1::parse)
+            }
             _ => {}
         }
     }
-    Cr3TrackKind::Raw { width, height, cmp1 }
+    Cr3TrackKind::Raw { width, height, cmp1, iad1 }
 }
 
 fn be16(b: &[u8], at: usize) -> Option<u16> {
@@ -276,6 +400,28 @@ mod tests {
         let stbl = [full(b"stsd", &stsd), full(b"stsz", &stsz), full(b"co64", &co64)].concat();
         bx(b"trak", &bx(b"mdia", &bx(b"minf", &bx(b"stbl", &stbl))))
     }
+    /// A `CMP1` payload: 14-bit, four planes (RGGB), three wavelet levels, tiles side by side.
+    fn cmp1_body(w: u32, h: u32, tile_w: u32, tile_h: u32) -> Vec<u8> {
+        let mut b = vec![0xff, 0, 0, 0x30, 1, 0, 0, 0];
+        for v in [w, h, tile_w, tile_h] {
+            b.extend(v.to_be_bytes());
+        }
+        b.extend([14, 0x40, 0x03, 0x80, 0, 0, 0x04, 0x38, 0, 0, 0, 0]);
+        b.extend([1, 1, 0, 0].repeat(4));
+        b
+    }
+    /// An `IAD1` payload inside `CDI1`: version/flags, size, four header values, then `rects` (inclusive rectangles).
+    fn cdi1(w: u16, h: u16, rects: &[[u16; 4]]) -> Vec<u8> {
+        let mut b = vec![0u8; 4];
+        for v in [w, h, 1, if rects.len() > 2 { 2 } else { 0 }, 1, 0] {
+            b.extend(v.to_be_bytes());
+        }
+        for v in rects.concat() {
+            b.extend(v.to_be_bytes());
+        }
+        let iad1 = bx(b"IAD1", &b);
+        full(b"CDI1", &iad1)
+    }
     fn tiff_with(tag: u16, v: lightcraft_tiff::Value) -> Vec<u8> {
         let b = lightcraft_tiff::IfdBuilder::new().with(tag, v);
         lightcraft_tiff::TiffWriter::new(lightcraft_tiff::ByteOrder::Little, false).write(&[b]).unwrap()
@@ -291,8 +437,14 @@ mod tests {
         let mut file = bx(b"ftyp", b"crx \0\0\0\x01crx isom");
         let payload_at = 4096u64;
         let jpeg_t = trak(craw(64, 48, &bx(b"JPEG", &[0; 4])), payload_at, 16);
-        let raw_t = trak(craw(60, 40, &bx(b"CMP1", &[0xff, 0x10, 0, 0x30])), payload_at + 16, 32);
-        file.extend(bx(b"moov", &[canon, jpeg_t, raw_t].concat()));
+        // the reduced raw comes first, as in real files; its IAD1 has no named areas
+        let small_children = [bx(b"CMP1", &cmp1_body(1624, 1080, 1624, 1080)), cdi1(1624, 1080, &[[1, 0, 1620, 1079], [0, 0, 1623, 1079]])].concat();
+        let small_t = trak(craw(1624, 1080, &small_children), payload_at + 16, 16);
+        // full size: crop, left black, top black and active rectangles, as on an EOS M50 (6288 × 4056, 6000 × 4000 image)
+        let areas = [[276, 48, 6275, 4047], [0, 0, 263, 4055], [264, 0, 6287, 35], [264, 36, 6287, 4055]];
+        let raw_children = [bx(b"CMP1", &cmp1_body(6288, 4056, 3144, 4056)), cdi1(6288, 4056, &areas)].concat();
+        let raw_t = trak(craw(6288, 4056, &raw_children), payload_at + 32, 32);
+        file.extend(bx(b"moov", &[canon, jpeg_t, small_t, raw_t].concat()));
         file.extend(uuid(&XMP_UUID, b"<x:xmpmeta/>"));
         file.resize(payload_at as usize + 64, 0);
         file
@@ -306,12 +458,60 @@ mod tests {
         assert!(c.cmt[0].is_some() && c.cmt[1].is_some() && c.cmt[2].is_none() && c.cmt[3].is_some());
         assert_eq!(c.thumbnail, Some(b"thumb".as_slice()));
         assert_eq!(c.xmp, Some(b"<x:xmpmeta/>".as_slice()));
-        assert_eq!(c.tracks.len(), 2);
+        assert_eq!(c.tracks.len(), 3);
         assert_eq!(c.tracks[0], Cr3Track { kind: Cr3TrackKind::Jpeg, data: Some((4096, 16)) });
-        let Cr3TrackKind::Raw { width, height, cmp1: Some((at, len)) } = c.tracks[1].kind else { panic!("{:?}", c.tracks[1]) };
-        assert_eq!((width, height, len), (60, 40, 4));
-        assert_eq!(&f[at..at + 2], &[0xff, 0x10]);
-        assert_eq!(c.tracks[1].data, Some((4112, 32)));
+        assert_eq!(c.tracks[1].data, Some((4112, 16)));
+        assert_eq!(c.tracks[2].data, Some((4128, 32)));
+    }
+
+    #[test]
+    fn reads_coding_header_and_image_areas_of_the_full_size_raw() {
+        let f = sample();
+        let c = parse_cr3(&f).unwrap();
+        // the reduced raw is listed first; the full-size one is the largest
+        let full = c.raw_track().unwrap();
+        assert_eq!(full.data, Some((4128, 32)));
+        let Cr3TrackKind::Raw { width, height, cmp1: Some(h), iad1: Some(a) } = full.kind else { panic!("{:?}", full.kind) };
+        assert_eq!((width, height), (6288, 4056));
+        assert_eq!(
+            h,
+            Cmp1 {
+                version: 0x100,
+                width: 6288,
+                height: 4056,
+                tile_width: 3144,
+                tile_height: 4056,
+                bits: 14,
+                planes: 4,
+                cfa_layout: 0,
+                enc_type: 0,
+                wavelet_levels: 3,
+                tiles_across: true,
+                tiles_down: false,
+                header_size: 0x438,
+            }
+        );
+        assert_eq!((a.width, a.height), (6288, 4056));
+        let areas = a.areas.unwrap();
+        assert_eq!((areas.crop.width(), areas.crop.height()), (6000, 4000));
+        assert_eq!((areas.left_black.width(), areas.left_black.height()), (264, 4056));
+        assert_eq!((areas.top_black.width(), areas.top_black.height()), (6024, 36));
+        assert_eq!((areas.active.left, areas.active.top, areas.active.width(), areas.active.height()), (264, 36, 6024, 4020));
+        // the reduced raw's IAD1 names no areas
+        let Cr3TrackKind::Raw { iad1: Some(small), .. } = c.tracks[1].kind else { panic!("{:?}", c.tracks[1]) };
+        assert_eq!((small.width, small.height, small.areas), (1624, 1080, None));
+    }
+
+    #[test]
+    fn short_headers_are_not_parsed() {
+        let body = cmp1_body(6288, 4056, 3144, 4056);
+        assert!(Cmp1::parse(&body).is_some());
+        assert!(Cmp1::parse(&body[..31]).is_none());
+        assert!(Cmp1::parse(&[]).is_none());
+        assert!(Iad1::parse(&[0; 7]).is_none());
+        assert_eq!(Iad1::parse(&[0; 47]).unwrap().areas, None);
+        // an inverted rectangle has no pixels instead of underflowing
+        assert_eq!(Iad1Rect { left: 9, top: 9, right: 3, bottom: 3 }.width(), 0);
     }
 
     #[test]
@@ -326,14 +526,15 @@ mod tests {
     fn hostile_input_never_panics() {
         let f = sample();
         // every truncation and single-byte corruption parses to something or nothing
-        for n in 0..f.len().min(800) {
-            let _ = parse_cr3(&f[..n]).map(|c| merged_exif(&c));
+        // (the box tree, including the coding headers, ends before the 4096-byte payloads)
+        for n in 0..f.len().min(4096) {
+            let _ = parse_cr3(&f[..n]).map(|c| (merged_exif(&c), c.raw_track().is_some()));
         }
-        for i in 0..f.len().min(800) {
+        for i in 0..f.len().min(4096) {
             for v in [0u8, 1, 0x7f, 0xff] {
                 let mut g = f.clone();
                 g[i] = v;
-                let _ = parse_cr3(&g).map(|c| merged_exif(&c));
+                let _ = parse_cr3(&g).map(|c| (merged_exif(&c), c.raw_track().is_some()));
             }
         }
         // a sample offset past the end is not reported

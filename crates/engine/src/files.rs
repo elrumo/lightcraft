@@ -192,11 +192,24 @@ const HIGHLIGHT_CLIP: f32 = 0.99;
 /// instead of a ~1.2 s full demosaic; zooming in still uses the full-size source).
 /// `None` = demosaic at full size.
 pub fn bin_factor(raw: &lightcraft_raw::RawImage, max_edge: usize) -> Option<usize> {
-    let c = raw.crop.clipped(raw.active_area.width, raw.active_area.height);
-    let long = if c.width > 1 && c.height > 1 { c.width.max(c.height) } else { raw.active_area.width.max(raw.active_area.height) };
+    pick_bin_factor(raw.crop, raw.active_area, max_edge, |k| raw.can_bin(k))
+}
+
+fn pick_bin_factor(crop: lightcraft_raw::Rect, active: lightcraft_raw::Rect, max_edge: usize, can_bin: impl Fn(usize) -> bool) -> Option<usize> {
+    let c = crop.clipped(active.width, active.height);
+    let long = if c.width > 1 && c.height > 1 { c.width.max(c.height) } else { active.width.max(active.height) };
     let need = (max_edge.saturating_mul(9) / 10).max(1);
     let need3 = (max_edge.saturating_mul(3) / 4).max(1);
-    [8usize, 6, 4, 3, 2].into_iter().find(|&k| raw.can_bin(k) && (long / k >= need || (k == 3 && !raw.can_bin(2) && long / k >= need3)))
+    [8usize, 6, 4, 3, 2].into_iter().find(|&k| can_bin(k) && (long / k >= need || (k == 3 && !can_bin(2) && long / k >= need3)))
+}
+
+/// The block size to read a raw at when it can be binned *while it is decoded* ([`lightcraft_raw::decode_binned`]):
+/// a linear raw (three samples per pixel, no mosaic; Apple ProRAW) without opcodes, whose preview needs 2× or more
+/// less than its size. Its full-size samples are then never held. `None`: decode it whole, as [`bin_factor`] says.
+fn stream_bin_factor(info: &lightcraft_raw::RawInfo, max_edge: usize) -> Option<usize> {
+    let linear =
+        info.cfa.is_none() && info.cpp == 3 && info.opcodes.list1.is_empty() && info.opcodes.list2.is_empty() && info.opcodes.list3.is_empty();
+    if linear { pick_bin_factor(info.crop, info.active_area, max_edge, |_| true) } else { None }
 }
 
 /// Decode a file into a linear Rec.2020 image no larger than `max_edge`, oriented.
@@ -216,13 +229,24 @@ pub fn load_vec(bytes: Vec<u8>, max_edge: usize) -> Result<(Rgb32f, SourceInfo),
 
 fn load_bytes_now(bytes: std::borrow::Cow<'_, [u8]>, max_edge: usize) -> Result<(Rgb32f, SourceInfo), String> {
     if lightcraft_raw::probe(&bytes).is_some() {
-        let mut raw = match lightcraft_raw::decode(&bytes) {
-            Ok(r) => r,
-            Err(lightcraft_raw::RawError::Unsupported(why)) => {
-                // show the camera's embedded JPEG (rendered, not raw) until the variant is supported
-                return load_embedded_preview(&bytes, max_edge).ok_or(format!("unsupported raw ({why}) without an embedded preview"));
-            }
-            Err(e) => return Err(e.to_string()),
+        // A big linear raw (ProRAW) is binned as its tiles are decoded, when the preview needs much less than its size:
+        // the full-size samples (293 MB at 48 MP) are never held. Any failure here falls back to the whole decode below,
+        // which reports it.
+        let streamed = lightcraft_raw::probe_info(&bytes)
+            .ok()
+            .and_then(|i| stream_bin_factor(&i, max_edge))
+            .and_then(|k| lightcraft_raw::decode_binned(&bytes, k, HIGHLIGHT_CLIP).ok().flatten());
+        let pre_binned = streamed.is_some();
+        let mut raw = match streamed {
+            Some(r) => r,
+            None => match lightcraft_raw::decode(&bytes) {
+                Ok(r) => r,
+                Err(lightcraft_raw::RawError::Unsupported(why)) => {
+                    // show the camera's embedded JPEG (rendered, not raw) until the variant is supported
+                    return load_embedded_preview(&bytes, max_edge).ok_or(format!("unsupported raw ({why}) without an embedded preview"));
+                }
+                Err(e) => return Err(e.to_string()),
+            },
         };
         let xy = lightcraft_raw::color::as_shot_white_xy(&raw);
         let t = lightcraft_raw::color::camera_transform(&raw, xy);
@@ -234,7 +258,8 @@ fn load_bytes_now(bytes: std::borrow::Cow<'_, [u8]>, max_edge: usize) -> Result<
         // Previews and thumbnails bin the mosaic straight to (about) the size they need; only
         // larger levels (exports, 1:1) demosaic the whole sensor.
         let t0 = std::time::Instant::now();
-        let binned = match bin_factor(&raw, max_edge) {
+        // (mosaics bin only for previews: a bigger size is an export, which demosaics the whole sensor)
+        let binned = match bin_factor(&raw, max_edge).filter(|_| !pre_binned && max_edge <= crate::media::SourceLevel::Preview.max_edge()) {
             Some(k) => raw.develop_binned(k, HIGHLIGHT_CLIP).map_err(|e| e.to_string())?,
             None => None,
         };
@@ -358,20 +383,45 @@ pub fn fs_preview_loader() -> PreviewLoader {
     Arc::new(|path: &str, max_edge: usize| embedded_preview_srgb(&std::fs::read(path).ok()?, max_edge))
 }
 
+/// Working memory (bytes) of loading `bytes` for a source of at most `max_edge` pixels: its size times a
+/// rule of thumb for compressed images; for a raw, what its decode allocates — the samples (16 bits each), some
+/// tiles in flight, and unless the load bins the mosaic ([`bin_factor`]) the full-size normalised and RGB float
+/// images.
+fn load_weight(bytes: &[u8], max_edge: usize) -> usize {
+    let factor = if max_edge <= crate::media::SourceLevel::Thumb.max_edge() { 3 } else { 6 };
+    let by_size = bytes.len().saturating_mul(factor);
+    let Ok(info) = lightcraft_raw::probe_info(bytes) else { return by_size };
+    let px = info.width.saturating_mul(info.height);
+    if let Some(k) = stream_bin_factor(&info, max_edge) {
+        // binned while decoding: block sums (18 bytes per block) and the tiles in flight, never the samples
+        let (w, h) = info.developed_size();
+        return by_size.max((w / k).saturating_mul(h / k).saturating_mul(18).saturating_add(160 << 20));
+    }
+    let binned = max_edge.saturating_mul(9) <= info.width.max(info.height).saturating_mul(5);
+    let develop = if binned { 0 } else { px.saturating_mul(info.cpp * 4 + 12) };
+    by_size.max(px.saturating_mul(info.cpp * 2).saturating_add(develop).saturating_add(64 << 20))
+}
+
 /// Filesystem-backed hooks (native). On the web the host installs bytes-based hooks instead.
 ///
 /// Their working memory is bounded by [`crate::memory::work_gate`]: background loads (grid
 /// thumbnails, neighbour prefetch: [`crate::memory::in_background`]) and import probes wait while
-/// too much is in flight, each counting its file's size times the expansion of decoding it;
+/// too much is in flight, each counting what decoding its file takes ([`load_weight`]);
 /// interactive loads (the loupe, exports) never wait — they are counted, so background work
 /// yields to them.
 pub fn fs_hooks() -> (FileLoader, FileProbe) {
     let loader: FileLoader = Arc::new(|path: &str, max_edge: usize| {
         let len = std::fs::metadata(path).map(|m| m.len() as usize).unwrap_or(0);
-        let weight = len * if max_edge <= crate::media::SourceLevel::Thumb.max_edge() { 3 } else { 6 };
         let gate = crate::memory::work_gate();
-        let _permit = if crate::memory::is_background() { gate.acquire(weight) } else { gate.acquire_urgent(weight) };
-        let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
+        let hold = |weight| if crate::memory::is_background() { gate.acquire(weight) } else { gate.acquire_urgent(weight) };
+        // the file is read while counted at its size; the decode is then counted at what it needs, which the
+        // header tells (a JPEG XL ProRAW is 4 MB on disk and 70 MB of samples) — never holding one share while
+        // waiting for another, which could deadlock two loads
+        let bytes = {
+            let _read = hold(len);
+            std::fs::read(path).map_err(|e| format!("{path}: {e}"))?
+        };
+        let _permit = hold(load_weight(&bytes, max_edge));
         let r = load_vec(bytes, max_edge);
         // the file, the samples and the intermediate images are gone: give their pages back
         crate::memory::release();
@@ -415,6 +465,73 @@ mod tests {
         b.extend_from_slice(&(jpeg.len() as u32).to_be_bytes());
         b.extend_from_slice(&jpeg);
         b
+    }
+
+    /// A linear (three samples per pixel) raw.
+    fn linear_dng(w: usize, h: usize) -> Vec<u8> {
+        use lightcraft_raw::*;
+        let data: Vec<u16> = (0..w * h * 3).map(|i| 300 + ((i / 3 % w) * 40 + (i / 3 / w) * 20 + (i % 3) * 300) as u16).collect();
+        let raw = RawImage {
+            format: RawFormat::Dng,
+            width: w,
+            height: h,
+            cpp: 3,
+            data: RawData::U16(data),
+            cfa: None,
+            bits: 14,
+            black: BlackLevel::uniform(256.0),
+            white: vec![16000.0],
+            active_area: Rect::new(0, 0, w, h),
+            crop: Rect::new(0, 0, w, h),
+            orientation: Orientation::Normal,
+            color: ColorData { illuminant: [21, 21], as_shot_neutral: Some([0.6, 1.0, 0.7]), ..Default::default() },
+            wb_multipliers: None,
+            linearized: false,
+            opcodes: OpcodeLists::default(),
+            metadata: lightcraft_meta::Metadata::default(),
+        };
+        write_dng(&raw, &DngWriteOptions::default()).unwrap()
+    }
+
+    /// A linear raw's preview is binned while it is decoded: it matches the full-size load shrunk to the same size.
+    #[test]
+    fn linear_raw_previews_are_binned_while_decoding() {
+        let dng = linear_dng(240, 168);
+        let info = lightcraft_raw::probe_info(&dng).unwrap();
+        assert_eq!(stream_bin_factor(&info, 40), Some(6), "a 40 px preview bins 6× while decoding");
+        assert_eq!(stream_bin_factor(&info, 10_000), None, "a full-size load decodes the whole image");
+        // a mosaic isn't binned that way
+        assert_eq!(stream_bin_factor(&lightcraft_raw::probe_info(&crate::tests_xmp::synthetic_dng_with(None, Default::default())).unwrap(), 8), None);
+        let (small, _) = load_bytes(&dng, 40).unwrap();
+        let (full, _) = load_bytes(&dng, 10_000).unwrap();
+        assert_eq!((full.width, full.height), (240, 168));
+        let full = fit(&full, small.width, small.height, Filter::Box);
+        assert_eq!((small.width, small.height), (full.width, full.height));
+        for (a, b) in small.data.iter().zip(&full.data) {
+            for c in 0..3 {
+                assert!((a[c] - b[c]).abs() <= 0.01 * b[c].abs().max(0.05), "{a:?} vs {b:?}");
+            }
+        }
+        // and the gate counts it for the blocks and tiles, not the image
+        let (binned, whole) = (load_weight(&dng, 40), load_weight(&dng, 10_000));
+        assert!(binned < whole + (160 << 20), "{binned} {whole}");
+        assert!(binned >= 160 << 20, "{binned}");
+    }
+
+    /// The work gate counts a raw by its decoded size, not its file size, and a binned load as cheaper than a full one.
+    #[test]
+    fn raw_load_weight_follows_the_decoded_size() {
+        let dng = crate::tests_xmp::synthetic_dng_with(None, Default::default());
+        let by_size = dng.len() * 3;
+        let info = lightcraft_raw::probe_info(&dng).unwrap();
+        let samples = info.width * info.height * info.cpp * 2;
+        let full = load_weight(&dng, usize::MAX / 20);
+        let binned = load_weight(&dng, 4);
+        assert!(full >= samples + info.width * info.height * (info.cpp * 4 + 12), "{full}");
+        assert!(binned >= samples && binned < full, "{binned} {full}");
+        assert!(by_size < full, "{by_size} {full}");
+        // not a raw: the file's size times the rule of thumb
+        assert_eq!(load_weight(&[1, 2, 3, 4], 100), 12);
     }
 
     /// Issue #138: a DNG's own profile look (hue/saturation map, look table, tone curve) is

@@ -1,6 +1,7 @@
 //! Phone-sized building blocks for the compact layout (`compact.rs`): pages that cover the screen
 //! and slide up from the bottom (every dialog, the albums list, the command list), and action
-//! sheets at the bottom of the screen in place of the desktop's popup menus. Layout and behaviour
+//! sheets at the bottom of the screen in place of the desktop's popup menus, and the text fields'
+//! edit menu (Cut, Copy, Paste: the touch keyboard has no shortcuts). Layout and behaviour
 //! follow Lightroom's mobile app; the drawing and the words are our own.
 
 use egui::{Align2, Color32, CornerRadius, Id, Rect, Sense, Stroke, UiBuilder, pos2, vec2};
@@ -10,22 +11,40 @@ use crate::LightcraftApp;
 use crate::icons::Icon;
 use crate::theme::Tokens;
 
-/// How long a sheet takes to slide in (s).
+/// How long a sheet takes to slide in (s); it leaves a little faster.
 const SLIDE_S: f32 = 0.28;
+const LEAVE_S: f32 = 0.2;
 /// Height of a page's bar and of an action row: a comfortable touch target (Apple's minimum is 44).
 pub const ROW_H: f32 = 52.0;
 /// Action sheets are no wider than this (iPad).
 const ACTIONS_MAX_W: f32 = 480.0;
 
-/// The slide-in progress of the sheet `id`, eased: 0 = off screen, 1 = in place. Call [`hidden`]
-/// on frames when it isn't shown, so that the next opening slides in again.
-fn slide(ctx: &egui::Context, id: Id) -> f32 {
-    ctx.animate_bool_with_time_and_easing(id.with("slide"), true, SLIDE_S, egui::emath::easing::cubic_out)
+/// The slide progress of the sheet `id`, eased: 0 = off screen, 1 = in place. It follows `open`, so
+/// a sheet slides out the way it slid in (the same curve backwards: it starts slowly and picks up).
+/// Call it, or [`hidden`], every frame: a sheet first seen open appears at once, not sliding in.
+fn slide(ctx: &egui::Context, id: Id, open: bool) -> f32 {
+    ctx.animate_bool_with_time_and_easing(id.with("slide"), open, if open { SLIDE_S } else { LEAVE_S }, egui::emath::easing::cubic_out)
 }
 
-/// The sheet `id` isn't on screen this frame (its next opening slides in from the bottom).
+/// The sheet `id` isn't on screen this frame and has no exit to play (its next opening slides in
+/// from the bottom).
 pub fn hidden(ctx: &egui::Context, id: &str) {
     let _ = ctx.animate_bool_with_time(Id::new(("lc-sheet", id)).with("slide"), false, 0.0);
+}
+
+/// 0 → 1 over `secs` (eased out) each time `key` changes, for fading in what `key` names (the view
+/// shown, the tool in the sheet); 1 while it stays. The first call only notes the key, so nothing
+/// fades in at start-up. Multiply a ui's opacity by it.
+pub fn enter(ctx: &egui::Context, id: Id, key: impl std::hash::Hash + std::fmt::Debug, secs: f32) -> f32 {
+    let key = Id::new(key).value();
+    let seen = ctx.data(|d| d.get_temp::<u64>(id));
+    if seen != Some(key) {
+        ctx.data_mut(|d| d.insert_temp(id, key));
+        if seen.is_some() {
+            let _ = ctx.animate_bool_with_time(id.with("enter"), false, 0.0);
+        }
+    }
+    ctx.animate_bool_with_time_and_easing(id.with("enter"), true, secs, egui::emath::easing::cubic_out)
 }
 
 /// What was tapped in a page's bar.
@@ -33,14 +52,26 @@ pub fn hidden(ctx: &egui::Context, id: &str) {
 pub struct Bar {
     pub cancel: bool,
     pub ok: bool,
+    /// The page is off screen (shut, or done sliding out): nothing was drawn.
+    pub gone: bool,
 }
 
 /// A text button in a bar, `align`ed to `at` (`button:<id>`); true when tapped.
+/// An empty `label` draws nothing; one starting with "‹" is a back button (a chevron, then the
+/// rest of the label), as iOS's navigation bars have.
 fn bar_button(ui: &mut egui::Ui, id: &str, label: &str, at: egui::Pos2, align: Align2, strong: bool, enabled: bool) -> bool {
+    if label.is_empty() {
+        return false;
+    }
+    let (back, label) = match label.strip_prefix('‹') {
+        Some(rest) => (true, rest),
+        None => (false, label),
+    };
     let t = Tokens::get(ui.ctx());
     let font = if strong { t.semibold(16.0) } else { t.font(16.0) };
     let galley = ui.painter().layout_no_wrap(crate::i18n::tr(label).to_string(), font, t.accent);
-    let size = vec2(galley.size().x + 24.0, ROW_H);
+    let chevron = if back { 16.0 } else { 0.0 };
+    let size = vec2(galley.size().x + 24.0 + chevron, ROW_H);
     let left = if align == Align2::LEFT_CENTER { at.x } else { at.x - size.x };
     let r = Rect::from_min_size(pos2(left, at.y - size.y / 2.0), size);
     let resp = ui.interact(r, Id::new(("lc-bar", id)), if enabled { Sense::click() } else { Sense::hover() });
@@ -53,7 +84,13 @@ fn bar_button(ui: &mut egui::Ui, id: &str, label: &str, at: egui::Pos2, align: A
     } else {
         t.accent
     };
-    ui.painter().galley(r.center() - galley.size() / 2.0, galley, color);
+    if back {
+        let c = pos2(r.left() + 6.0 + chevron / 2.0, r.center().y);
+        crate::icons::paint(ui.painter(), Rect::from_center_size(c, vec2(22.0, 22.0)), Icon::ChevronLeft, color);
+        ui.painter().galley(pos2(r.left() + 6.0 + chevron + 4.0, r.center().y - galley.size().y / 2.0), galley, color);
+    } else {
+        ui.painter().galley(r.center() - galley.size() / 2.0, galley, color);
+    }
     resp.clicked()
 }
 
@@ -61,10 +98,16 @@ fn bar_button(ui: &mut egui::Ui, id: &str, label: &str, at: egui::Pos2, align: A
 /// bar with `cancel` on the left, `title` in the middle and the `ok` action (if any) on the right,
 /// then `body`, which scrolls. It stays above the on-screen keyboard (the host counts the keyboard
 /// in the safe area). Widget ids: `sheet:<id>`, `button:sheetCancel`, `button:sheetOk`.
-pub fn page(ctx: &egui::Context, id: &str, title: &str, cancel: &str, ok: Option<(&str, bool)>, body: impl FnOnce(&mut egui::Ui)) -> Bar {
+///
+/// When `open` goes false the page slides back down, still drawn from `body` (so the caller keeps
+/// what it showed until `gone`) with a deaf bar; call it every frame, or [`hidden`].
+pub fn page(ctx: &egui::Context, id: &str, title: &str, cancel: &str, ok: Option<(&str, bool)>, open: bool, body: impl FnOnce(&mut egui::Ui)) -> Bar {
     let t = Tokens::get(ctx);
     let sid = Id::new(("lc-sheet", id));
-    let p = slide(ctx, sid);
+    let p = slide(ctx, sid, open);
+    if p <= 0.0 {
+        return Bar { gone: true, ..Bar::default() };
+    }
     let content = ctx.content_rect();
     let screen = ctx.viewport_rect();
     let drop = (1.0 - p) * (screen.bottom() - content.top());
@@ -90,6 +133,10 @@ pub fn page(ctx: &egui::Context, id: &str, title: &str, cancel: &str, ok: Option
         bar.cancel = bar_button(ui, "sheetCancel", cancel, bar_r.left_center() + vec2(4.0, 0.0), Align2::LEFT_CENTER, false, true);
         if let Some((label, enabled)) = ok {
             bar.ok = bar_button(ui, "sheetOk", label, bar_r.right_center() - vec2(4.0, 0.0), Align2::RIGHT_CENTER, true, enabled);
+        }
+        if !open {
+            // (sliding out: its bar's buttons are deaf)
+            bar = Bar::default();
         }
         ui.painter().hline(full.x_range(), bar_r.bottom(), Stroke::new(1.0, t.divider));
         let body_r =
@@ -138,19 +185,35 @@ pub fn actions_open(ctx: &egui::Context, id: &str) -> bool {
 
 /// The menu `id`, when it's open (`open_menu` / `open_actions`): rows (`row`, `row_checked`) in a
 /// rounded panel over a dimmed screen — a pull-down under its button, or an action sheet at the
-/// bottom with Cancel under it. A tap outside, on Cancel or on any row closes it.
+/// bottom with Cancel under it. A tap outside, on Cancel or on any row closes it: it slides (or
+/// fades) away, drawn as it was, under a layer that takes the touches meanwhile.
 pub fn actions(ctx: &egui::Context, id: &str, title: Option<&str>, add: impl FnOnce(&mut egui::Ui)) {
     let sid = Id::new(("lc-sheet", id));
-    let Some(anchor) = opened(ctx, id) else {
-        let _ = ctx.animate_bool_with_time(sid.with("slide"), false, 0.0);
-        return;
+    let live = opened(ctx, id);
+    let p = slide(ctx, sid, live.is_some());
+    let last = sid.with("anchor");
+    let closing = live.is_none();
+    let anchor = match live {
+        Some(a) => {
+            ctx.data_mut(|d| d.insert_temp(last, a));
+            a
+        }
+        // (leaving: where it was)
+        None if p > 0.0 => ctx.data(|d| d.get_temp::<Option<Rect>>(last)).flatten(),
+        None => return,
     };
     let t = Tokens::get(ctx);
-    let p = slide(ctx, sid);
     let content = ctx.content_rect();
     let screen = ctx.viewport_rect();
     let mut close = false;
-    egui::Area::new(sid.with("dim")).order(egui::Order::Middle).fixed_pos(screen.min).show(ctx, |ui| {
+    if closing {
+        egui::Area::new(sid.with("block")).order(egui::Order::Tooltip).fixed_pos(screen.min).show(ctx, |ui| {
+            let _ = ui.allocate_rect(screen, Sense::click_and_drag());
+        });
+    }
+    // (in the foreground layer: over a page the menu was opened from, which it guards from taps;
+    // shown after the page, it goes on top of it)
+    egui::Area::new(sid.with("dim")).order(egui::Order::Foreground).fixed_pos(screen.min).show(ctx, |ui| {
         let alpha = t.scrim as f32 * if anchor.is_some() { 0.4 } else { 0.8 };
         ui.painter().rect_filled(screen, 0.0, Color32::from_black_alpha((alpha * p) as u8));
         if ui.allocate_rect(screen, Sense::click()).clicked() {
@@ -168,7 +231,8 @@ pub fn actions(ctx: &egui::Context, id: &str, title: Option<&str>, add: impl FnO
             let x = x.clamp(content.left() + 8.0, (content.right() - w - 8.0).max(content.left() + 8.0));
             let below = a.bottom() + 6.0;
             let y = if below + h <= content.bottom() - 8.0 { below } else { (a.top() - 6.0 - h).max(content.top() + 8.0) };
-            (w, pos2(x, y))
+            // (it drifts a few points towards its button as it fades in and out)
+            (w, pos2(x, y + (1.0 - p) * if y < a.top() { 6.0 } else { -6.0 }))
         }
         None => {
             let w = (content.width() - 16.0).min(ACTIONS_MAX_W);
@@ -213,7 +277,7 @@ pub fn actions(ctx: &egui::Context, id: &str, title: Option<&str>, add: impl FnO
     });
     crate::widgets::register(ctx, format!("actions:{id}"), shown.response.rect);
     ctx.data_mut(|d| d.insert_temp(h_id, shown.response.rect.height()));
-    if close || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+    if !closing && (close || ctx.input(|i| i.key_pressed(egui::Key::Escape))) {
         close_actions(ctx);
     }
 }
@@ -294,16 +358,16 @@ fn all_commands(app: &LightcraftApp) -> Vec<(String, String, String, Value, bool
 /// "All Commands": every command the menus have, as a searchable list (the phone layout has no
 /// menu bar). Open with `app.ui.all_commands = true`.
 pub fn all_commands_page(app: &mut LightcraftApp, ctx: &egui::Context) {
-    if !app.ui.all_commands {
-        hidden(ctx, "allCommands");
-        return;
-    }
     let query_id = Id::new("lc-all-commands-query");
     let mut query = ctx.data(|d| d.get_temp::<String>(query_id)).unwrap_or_default();
-    let commands = all_commands(app);
     let mut run: Option<(String, Value)> = None;
-    let bar = page(ctx, "allCommands", "All Commands", "Close", None, |ui| {
-        let r = ui.add(egui::TextEdit::singleline(&mut query).hint_text(crate::i18n::tr("Search")).desired_width(f32::INFINITY));
+    let open = app.ui.all_commands;
+    let bar = page(ctx, "allCommands", "All Commands", "Close", None, open, |ui| {
+        let commands = all_commands(app);
+        let r = ui.add(crate::widgets::touch_field(
+            ui,
+            egui::TextEdit::singleline(&mut query).hint_text(crate::i18n::tr("Search")).desired_width(f32::INFINITY),
+        ));
         crate::widgets::register(ui.ctx(), "field:allCommandsSearch", r.rect);
         let q = query.to_lowercase();
         let t = Tokens::get(ui.ctx());
@@ -325,12 +389,156 @@ pub fn all_commands_page(app: &mut LightcraftApp, ctx: &egui::Context) {
         }
     });
     ctx.data_mut(|d| d.insert_temp(query_id, query));
-    if let Some((id, params)) = run {
-        app.ui.all_commands = false;
-        if let Err(e) = crate::menubar::run_item(app, &id, params) {
-            app.toast(ctx, e);
-        }
-    } else if bar.cancel {
+    if run.is_some() || bar.cancel {
+        // (the keyboard goes with the page)
+        ctx.memory_mut(|m| {
+            if let Some(f) = m.focused() {
+                m.surrender_focus(f);
+            }
+        });
         app.ui.all_commands = false;
     }
+    if let Some((id, params)) = run
+        && let Err(e) = crate::menubar::run_item(app, &id, params)
+    {
+        app.toast(ctx, e);
+    }
+}
+
+/// A text field's edit menu, as iOS shows it over the text: Cut, Copy and Paste with a selection,
+/// Select All and Paste without. A tap on a field that already has the keyboard, a double tap
+/// (which selects a word) or a long press opens it; typing, a choice or a tap elsewhere closes it.
+/// Touch screens only (a mouse has the keyboard's shortcuts). Its choices reach the field as the
+/// events those shortcuts make (`app.synthetic`, next frame); Paste reads the host's clipboard
+/// (`Services::clipboard_text`). While it is open a tap elsewhere doesn't take the keyboard away.
+/// Call once a frame, after everything else is drawn. Buttons: `button:edit-<action>`.
+pub fn edit_menu(app: &mut LightcraftApp, ctx: &egui::Context) {
+    let id = Id::new("lc-edit-menu");
+    let focused = ctx.memory(|m| m.focused()).filter(|f| egui::TextEdit::load_state(ctx, *f).is_some());
+    // which field had the keyboard when the finger came down: a first tap only focuses
+    let before = ctx.data(|d| d.get_temp::<Option<Id>>(id.with("before"))).flatten();
+    if ctx.input(|i| i.pointer.any_pressed()) {
+        ctx.data_mut(|d| d.insert_temp(id.with("press"), before));
+    }
+    ctx.data_mut(|d| d.insert_temp(id.with("before"), focused));
+    let ime = ctx.output(|o| o.ime);
+    let (Some(field), Some(ime), true) = (focused, ime, ctx.input(|i| i.has_touch_screen())) else {
+        ctx.data_mut(|d| d.remove::<Id>(id));
+        ctx.options_mut(|o| o.input_options.surrender_focus_on = egui::SurrenderFocusOn::Clicks);
+        return;
+    };
+    let mut open = ctx.data(|d| d.get_temp::<Id>(id)) == Some(field);
+    let tapped = match ctx.read_response(field) {
+        Some(r) if r.double_clicked() || r.long_touched() => {
+            open = true;
+            true
+        }
+        Some(r) if r.clicked() => {
+            let had_keyboard = ctx.data(|d| d.get_temp::<Option<Id>>(id.with("press"))).flatten() == Some(field);
+            open = had_keyboard && !open;
+            true
+        }
+        _ => false,
+    };
+    // typing closes it (not the ⌘A its own Select All sends)
+    let typed = |e: &egui::Event| match e {
+        egui::Event::Text(_) => true,
+        egui::Event::Key { pressed: true, modifiers, .. } => !modifiers.command,
+        _ => false,
+    };
+    if ctx.input(|i| i.events.iter().any(typed)) {
+        open = false;
+    }
+    let mut hit = false;
+    if open {
+        let selected = egui::TextEdit::load_state(ctx, field).and_then(|s| s.cursor.char_range()).is_some_and(|r| !r.is_empty());
+        let secret = ime.purpose == egui::IMEPurpose::Password;
+        let mut items: Vec<(&'static str, &str)> = Vec::new();
+        if selected && !secret {
+            items.extend([("cut", "Cut"), ("copy", "Copy")]);
+        }
+        if !selected {
+            items.push(("selectAll", "Select All"));
+        }
+        if app.services.clipboard_text.is_some() {
+            items.push(("paste", "Paste"));
+        }
+        let (chosen, rect) = edit_menu_bar(ctx, id, &items, ime.cursor_rect, ime.rect);
+        hit = ctx.input(|i| i.pointer.interact_pos()).is_some_and(|p| rect.contains(p));
+        let command = egui::Modifiers::COMMAND;
+        let key = |pressed| egui::Event::Key { key: egui::Key::A, physical_key: None, pressed, repeat: false, modifiers: command };
+        match chosen {
+            Some("cut") => app.synthetic.push(egui::Event::Cut),
+            Some("copy") => app.synthetic.push(egui::Event::Copy),
+            Some("paste") => {
+                if let Some(text) = app.services.clipboard_text.as_mut().and_then(|f| f()) {
+                    app.synthetic.push(egui::Event::Paste(text));
+                }
+            }
+            Some(_) => app.synthetic.extend([key(true), key(false)]),
+            None => {}
+        }
+        // (after Select All it offers Cut and Copy, as iOS does)
+        open = chosen.is_none() || chosen == Some("selectAll");
+    }
+    if ctx.input(|i| i.pointer.any_click()) && !tapped && !hit {
+        open = false;
+    }
+    ctx.data_mut(|d| {
+        if open {
+            d.insert_temp(id, field);
+        } else {
+            d.remove::<Id>(id);
+        }
+    });
+    let keep = if open { egui::SurrenderFocusOn::Never } else { egui::SurrenderFocusOn::Clicks };
+    ctx.options_mut(|o| o.input_options.surrender_focus_on = keep);
+}
+
+/// The edit menu's bar: `items` (id, label) side by side on a rounded dark platter with a small
+/// arrow at the cursor, above the field (below it when there's no room). The tapped item and the
+/// bar's rect.
+fn edit_menu_bar(ctx: &egui::Context, id: Id, items: &[(&'static str, &str)], cursor: Rect, field: Rect) -> (Option<&'static str>, Rect) {
+    const H: f32 = 40.0;
+    const ARROW: f32 = 7.0;
+    let t = Tokens::get(ctx);
+    let content = ctx.content_rect();
+    let font = t.font(15.0);
+    let galleys: Vec<_> =
+        items.iter().map(|(_, l)| ctx.fonts_mut(|f| f.layout_no_wrap(crate::i18n::tr(l).to_string(), font.clone(), t.text))).collect();
+    let w: f32 = galleys.iter().map(|g| g.size().x + 28.0).sum();
+    let above = field.top() - ARROW - H >= content.top() + 4.0;
+    let y = if above { field.top() - ARROW - H } else { field.bottom() + ARROW };
+    let x = (cursor.center().x - w / 2.0).clamp(content.left() + 8.0, (content.right() - 8.0 - w).max(content.left() + 8.0));
+    let bar = Rect::from_min_size(pos2(x, y), vec2(w, H));
+    let mut chosen = None;
+    egui::Area::new(id.with("bar")).order(egui::Order::Tooltip).constrain(false).fixed_pos(bar.min).show(ctx, |ui| {
+        let p = ui.painter().clone();
+        p.add(egui::epaint::Shadow { offset: [0, 6], blur: 24, spread: 0, color: Color32::from_black_alpha(110) }.as_shape(bar, 9.0));
+        p.rect_filled(bar, 9.0, t.hover);
+        // the arrow points at the cursor
+        let ax = cursor.center().x.clamp(bar.left() + 14.0, bar.right() - 14.0);
+        let (base, tip) = if above { (bar.bottom(), bar.bottom() + ARROW) } else { (bar.top(), bar.top() - ARROW) };
+        p.add(egui::Shape::convex_polygon(vec![pos2(ax - ARROW, base), pos2(ax + ARROW, base), pos2(ax, tip)], t.hover, Stroke::NONE));
+        let mut left = bar.left();
+        for (i, ((key, label), galley)) in items.iter().zip(galleys).enumerate() {
+            let r = Rect::from_min_size(pos2(left, bar.top()), vec2(galley.size().x + 28.0, H));
+            let resp = ui.interact(r, id.with(*key), Sense::click());
+            resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, crate::i18n::tr(label)));
+            crate::widgets::register(ctx, format!("button:edit-{key}"), r);
+            if resp.is_pointer_button_down_on() {
+                let round = |first, last| CornerRadius { nw: first, sw: first, ne: last, se: last };
+                p.rect_filled(r, round(if i == 0 { 9 } else { 0 }, if i + 1 == items.len() { 9 } else { 0 }), t.pressed);
+            }
+            if i > 0 {
+                p.vline(r.left(), r.shrink2(vec2(0.0, 10.0)).y_range(), Stroke::new(1.0, t.text_disabled));
+            }
+            p.galley(r.center() - galley.size() / 2.0, galley, t.text);
+            if resp.clicked() {
+                chosen = Some(*key);
+            }
+            left = r.right();
+        }
+    });
+    (chosen, bar)
 }

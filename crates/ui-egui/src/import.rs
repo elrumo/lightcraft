@@ -352,9 +352,10 @@ pub fn browse(app: &mut LightcraftApp, path: &str, subfolders: Option<bool>) -> 
     let (tx, rx) = std::sync::mpsc::channel();
     let p = progress.clone();
     let root = dir_s.clone();
+    let ignore = app.session.import_defaults.ignore.clone();
     let job = move || {
         let files: Vec<String> = if subfolders {
-            lightcraft_engine::import::expand(&[root], None)
+            lightcraft_engine::import::expand(&[root], None, &ignore)
         } else {
             let mut v: Vec<String> = std::fs::read_dir(&root)
                 .map(|rd| {
@@ -966,7 +967,10 @@ fn options(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDialog) {
             let tags_open = field(ui, "Template", |ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
                 let w = (ui.available_width() - 50.0).max(80.0);
-                let r = ui.add(egui::TextEdit::singleline(&mut d.folder_template).id(folders_id).hint_text(DEFAULT_FOLDER_TEMPLATE).desired_width(w));
+                let r = ui.add(crate::widgets::touch_field(
+                    ui,
+                    egui::TextEdit::singleline(&mut d.folder_template).id(folders_id).hint_text(DEFAULT_FOLDER_TEMPLATE).desired_width(w),
+                ));
                 register(ui.ctx(), "field:importFolderTemplate", r.rect);
                 tag_toggle(ui, "importFolders")
             });
@@ -998,7 +1002,10 @@ fn options(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDialog) {
         let tags_open = field(ui, "Rename", |ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
             let w = (ui.available_width() - 50.0).max(80.0);
-            let r = ui.add(egui::TextEdit::singleline(&mut d.rename).id(rename_id).hint_text("keep names — or e.g. {date}_{seq:3}").desired_width(w));
+            let r = ui.add(crate::widgets::touch_field(
+                ui,
+                egui::TextEdit::singleline(&mut d.rename).id(rename_id).hint_text("keep names — or e.g. {date}_{seq:3}").desired_width(w),
+            ));
             register(ui.ctx(), "field:importRename", r.rect);
             tag_toggle(ui, "importRename")
         });
@@ -1048,7 +1055,7 @@ fn options(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDialog) {
             }
         });
         if d.album.is_none() && !d.new_album.is_empty() {
-            let r = ui.add(egui::TextEdit::singleline(&mut d.new_album).desired_width(f32::INFINITY));
+            let r = ui.add(crate::widgets::touch_field(ui, egui::TextEdit::singleline(&mut d.new_album).desired_width(f32::INFINITY)));
             register(ui.ctx(), "field:importAlbumName", r.rect);
         }
     });
@@ -1081,7 +1088,10 @@ fn options(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDialog) {
         });
     }
     field(ui, "Keywords", |ui| {
-        let r = ui.add(egui::TextEdit::singleline(&mut d.keywords).hint_text(crate::i18n::tr("comma, separated")).desired_width(f32::INFINITY));
+        let r = ui.add(crate::widgets::touch_field(
+            ui,
+            egui::TextEdit::singleline(&mut d.keywords).hint_text(crate::i18n::tr("comma, separated")).desired_width(f32::INFINITY),
+        ));
         register(ui.ctx(), "field:importKeywords", r.rect);
     });
 }

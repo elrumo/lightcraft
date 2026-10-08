@@ -1,7 +1,7 @@
 //! The Detail (loupe) view: the developed photo, before/after, zoom & pan, the filmstrip, and the
 //! on-canvas tools (crop, brush/gradient masks, remove spots, white-balance picker).
 
-use egui::{Align2, Color32, Pos2, Rect, Sense, Stroke, StrokeKind, pos2, vec2};
+use egui::{Align2, Color32, Pos2, Rect, Sense, Stroke, StrokeKind, Vec2, pos2, vec2};
 use lightcraft_catalog::PhotoId;
 use lightcraft_develop::{DevelopSettings, MaskShape};
 use lightcraft_geom::{Affine, Point};
@@ -9,6 +9,7 @@ use lightcraft_pipeline::geometry::Frame;
 use serde_json::json;
 
 use crate::LightcraftApp;
+use crate::haptics::{self, Haptic};
 use crate::render::Slot;
 use crate::state::{BeforeAfter, RightPanel, Zoom};
 use crate::theme::Tokens;
@@ -162,13 +163,18 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let frame = Frame::with_lens(photo.width.max(1) as usize, photo.height.max(1) as usize, &d, !crop_tool, photo.embedded_lens.as_ref());
     let aspect = frame.aspect() as f32;
     let ppp = ui.ctx().pixels_per_point();
-    let area = canvas.shrink(if fullscreen {
+    // review mode (phone): the bars are away and the readout of the stars and flag is over the photo
+    let review = app.compact && app.ui.review && !fullscreen;
+    let margin = if fullscreen || review {
         0.0
     } else if crop_tool {
         48.0
     } else {
         24.0
-    });
+    };
+    // (on the phone the margin follows the bars away)
+    let margin = ui.ctx().animate_value_with_time(egui::Id::new("loupe-margin"), margin, if app.compact { 0.2 } else { 0.0 });
+    let area = canvas.shrink(margin);
     let max_edge = app.ui.settings.preview_edge.clamp(512, 8192) as f32;
     let native = [photo.width.max(1) as usize, photo.height.max(1) as usize];
     // two views (before, after): side by side or stacked
@@ -195,13 +201,30 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let target_rect = fit_rect(main_area, aspect, app.ui.zoom, native, ppp, app.ui.pan);
     let img_rect = animated_rect(ui.ctx(), &mut app.ui.zoom_anim, target_rect);
     app.image_rect = Some(img_rect);
+    // the phone's carousel: a drag across a fitted photo carries it (and its neighbours) along
+    let resp = ui.interact(canvas, egui::Id::new("loupe"), Sense::click_and_drag());
+    let zoomed = img_rect.width() > canvas.width() + 1.0 || img_rect.height() > canvas.height() + 1.0;
+    let tool_free = !matches!(right, RightPanel::Crop | RightPanel::Masking | RightPanel::Remove | RightPanel::RedEye) && app.ui.tool.is_empty();
+    let live = app.compact && tool_free && !zoomed && !app.ui.zoom_anim && !ui.input(|i| i.multi_touch().is_some());
+    let slide = if app.compact { swipe(app, ui, &resp, canvas, id, live) } else { 0.0 };
+    let img_rect = img_rect.translate(vec2(slide, 0.0));
     // request renders: the loupe at display resolution (drafts during drags)
     let interacting = app.session.interaction.is_some();
     let scale = if interacting { 0.6 } else { 1.0 };
     // render at the final size: a click-zoom animation only changes how the result is drawn
     let want = (target_rect.width().max(target_rect.height()) * ppp * scale).min(max_edge) as usize;
     let (rw, rh) = if aspect >= 1.0 { (want, (want as f32 / aspect) as usize) } else { ((want as f32 * aspect) as usize, want) };
-    if let Some(job) = app.session.loupe_job(id, rw.max(8), rh.max(8), !crop_tool) {
+    // (bars sliding in or out resize the canvas every frame: the render on show is drawn scaled
+    // meanwhile, and the photo is rendered once, at the size it ends up)
+    let resizing = ui.data_mut(|d| {
+        let last = d.get_temp::<Vec2>(egui::Id::new("loupe-canvas"));
+        d.insert_temp(egui::Id::new("loupe-canvas"), canvas.size());
+        last.is_some_and(|l| (l - canvas.size()).abs().max_elem() > 0.5)
+    });
+    let drawn = app.renderer.textures.get(&Slot::Main).is_some_and(|t| t.photo == id);
+    if !(resizing && drawn)
+        && let Some(job) = app.session.loupe_job(id, rw.max(8), rh.max(8), !crop_tool)
+    {
         let job = if interacting { job.draft() } else { job };
         let job = job.with_overlay(view_overlay(app, &d)).with_proof(app.ui.soft_proof.then_some(app.ui.proof));
         app.renderer.request(Slot::Main, job, 100);
@@ -217,8 +240,12 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         _ => None,
     };
     // once this photo is on screen: prepare its neighbours in filmstrip order (source decoded and
-    // kept, view render cached) so stepping to them is instant
-    if !interacting && !app.renderer.is_pending(Slot::Main) && app.renderer.textures.get(&Slot::Main).is_some_and(|t| t.photo == id) {
+    // kept, view render cached) so stepping to them is instant; the phone also keeps their renders to
+    // slide them in, and `near` is where each is drawn (a photo's width and a gap beside this one)
+    let idle = !interacting && !app.renderer.is_pending(Slot::Main) && app.renderer.textures.get(&Slot::Main).is_some_and(|t| t.photo == id);
+    app.renderer.keep_neighbours = app.compact;
+    let mut near = Vec::new();
+    if idle || slide != 0.0 {
         let ids = app.session.visible_cloned();
         if let Some(i) = ids.iter().position(|p| *p == id) {
             let next = ids.get(i + 1).copied();
@@ -229,9 +256,11 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 let nf = Frame::with_lens(np.width.max(1) as usize, np.height.max(1) as usize, &np.develop, !crop_tool, np.embedded_lens.as_ref());
                 let na = nf.aspect() as f32;
                 let nr = fit_rect(main_area, na, app.ui.zoom, [np.width.max(1) as usize, np.height.max(1) as usize], ppp, app.ui.pan);
+                let beside = (canvas.width() + SLIDE_GAP) * if n == 0 { 1.0 } else { -1.0 };
+                near.push((nid, nr.translate(vec2(slide + beside, 0.0))));
                 let nw = (nr.width().max(nr.height()) * ppp).min(max_edge) as usize;
                 let (w, h) = if na >= 1.0 { (nw, (nw as f32 / na) as usize) } else { ((nw as f32 * na) as usize, nw) };
-                if let Some(job) = app.session.loupe_job(nid, w.max(8), h.max(8), !crop_tool) {
+                if idle && let Some(job) = app.session.loupe_job(nid, w.max(8), h.max(8), !crop_tool) {
                     app.renderer.prefetch(Slot::Prefetch(n as u8), job, PREFETCH_PRIORITY);
                 }
             }
@@ -256,6 +285,8 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         let mine = |s: Slot| app.renderer.textures.get(&s).filter(|t| t.photo == id);
         let (tex, what) = if let Some(t) = mine(slot) {
             (t, "render")
+        } else if let Some(t) = mine(Slot::Prefetch(0)).or_else(|| mine(Slot::Prefetch(1))) {
+            (t, "neighbour")
         } else if let Some(t) = mine(Slot::Preview) {
             (t, t.quick.map(quick_name).unwrap_or("preview"))
         } else if let Some(t) = app.renderer.thumb(id) {
@@ -312,6 +343,11 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         }
     }
     app.loupe_shown = Some((id, shown));
+    for (nid, r) in near.iter().filter(|(_, r)| r.intersects(canvas)) {
+        if let Some(t) = tex_of(&app.renderer, *nid) {
+            p.image(t.tex.id(), *r, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+        }
+    }
     if app.ui.before_after == BeforeAfter::Split {
         let mid = img_rect.center().x;
         if let Some(tex) = app.renderer.textures.get(&Slot::Before).filter(|t| t.photo == id) {
@@ -333,9 +369,11 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     }
     register(ui.ctx(), "canvas:image", img_rect);
     let map = CanvasMap::new(&frame, img_rect);
-    let resp = ui.interact(canvas, egui::Id::new("loupe"), Sense::click_and_drag());
+    if app.compact {
+        review_hud(ui, &p, canvas, &photo, review);
+    }
     info_overlay(app, &p, canvas, &photo);
-    if !fullscreen {
+    if !fullscreen && !review {
         filter_pill(app, ui, canvas);
     }
     if app.ui.face_boxes {
@@ -372,7 +410,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     }
     // drawn and hit-tested above the loupe and its tools: clicks on it pan
     navigator(app, ui, canvas, img_rect, id);
-    if let Some(why) = photo.preview_only.as_deref().filter(|_| !fullscreen) {
+    if let Some(why) = photo.preview_only.as_deref().filter(|_| !fullscreen && !review) {
         preview_only_pill(ui, canvas, why);
     }
     resp.context_menu(|ui| {
@@ -658,6 +696,74 @@ fn navigator(app: &mut LightcraftApp, ui: &mut egui::Ui, canvas: Rect, img: Rect
 /// Neighbour prefetch: below on-screen thumbnails, above background thumbnail refreshes.
 const PREFETCH_PRIORITY: u32 = 4;
 
+/// The best the renderer has to show of `id` right now: a render of it (the loupe's or a
+/// neighbour's), else its stand-in or thumbnail.
+fn tex_of(r: &crate::render::Renderer, id: PhotoId) -> Option<&crate::render::Tex> {
+    [Slot::Main, Slot::Prefetch(0), Slot::Prefetch(1), Slot::Preview]
+        .iter()
+        .find_map(|s| r.textures.get(s).filter(|t| t.photo == id))
+        .or_else(|| r.thumb(id))
+}
+
+/// Review mode's readout over the photo: its stars at the bottom left and its flag at the bottom
+/// right. It fades in as the bars go. A swipe shows its stars and flag as the finger makes them
+/// (`Swipe::shown`): each star fills with a little pop as it is reached, the flag changes into the
+/// next one, the pill pops at every step and the side under the finger swells.
+fn review_hud(ui: &egui::Ui, p: &egui::Painter, canvas: Rect, photo: &lightcraft_catalog::Photo, on: bool) {
+    use crate::icons::{Icon, paint};
+    let ctx = ui.ctx();
+    let fade = ctx.animate_bool_with_time(egui::Id::new("review-hud"), on, 0.25);
+    if fade <= 0.0 {
+        return;
+    }
+    let t = Tokens::get(ctx);
+    let (s, now) = (ui.data(|d| d.get_temp::<Swipe>(egui::Id::new("loupe-swipe"))).unwrap_or_default(), ui.input(|i| i.time));
+    let (rating, flag) = s.shown.unwrap_or_else(|| stars_and_flag(photo));
+    // how much bigger than its size at rest a side is: a pop after a change, a swell under the finger
+    let size = |flag: bool| {
+        let u = s.pop.filter(|(_, f)| *f == flag).map_or(1.0, |(at, _)| (now - at) / POP_S);
+        let pop = if u < 1.0 { (u as f32 * std::f32::consts::PI).sin() } else { 0.0 };
+        let touched = s.sideways == Some(false) && (s.from.x > canvas.center().x) == flag;
+        let swell = ctx.animate_value_with_time(egui::Id::new(("review-swell", flag)), if touched { 0.12 } else { 0.0 }, 0.12);
+        if u < 1.0 || swell > 0.0 {
+            ctx.request_repaint();
+        }
+        1.0 + 0.35 * pop + swell
+    };
+    let (h, y) = (44.0, canvas.bottom() - 16.0 - 22.0);
+    let pill = |c: Pos2, w: f32, k: f32| {
+        p.rect_filled(Rect::from_center_size(c, vec2(w, h) * k), h / 2.0 * k, Color32::from_black_alpha((150.0 * fade) as u8))
+    };
+    // the stars
+    let (star, gap) = (26.0, 6.0);
+    let w = 5.0 * star + 4.0 * gap + 28.0;
+    let k = size(false);
+    // (a pill grows from its screen edge, not out of it)
+    let c = pos2(canvas.left() + 16.0 + w * k / 2.0, y);
+    pill(c, w, k);
+    crate::widgets::register(ctx, "review:stars", Rect::from_center_size(c, vec2(w, h) * k));
+    for i in 0..5u8 {
+        // 0 → 1 as the star is reached; it swells on the way (and shrinks back as it is given up)
+        let f = ctx.animate_bool_with_time(egui::Id::new(("review-star", i)), rating > i, 0.14);
+        let bump = 1.0 + 1.6 * f * (1.0 - f);
+        let at = c + vec2((f32::from(i) - 2.0) * (star + gap), 0.0) * k;
+        let r = Rect::from_center_size(at, vec2(star, star) * k * bump);
+        paint(p, r, Icon::Star, t.text_dim.gamma_multiply(fade * (1.0 - f)));
+        paint(p, r, Icon::StarFilled, t.star.gamma_multiply(fade * f));
+    }
+    // the flag: the three states cross-fade
+    let k = size(true);
+    let c = pos2(canvas.right() - 16.0 - h * k / 2.0, y);
+    pill(c, h, k);
+    crate::widgets::register(ctx, "review:flag", Rect::from_center_size(c, vec2(h, h) * k));
+    for (ix, icon, color) in [(0u8, Icon::FlagReject, t.reject), (1, Icon::FlagPick, t.text_dim), (2, Icon::FlagPick, t.pick)] {
+        let f = ctx.animate_bool_with_time(egui::Id::new(("review-flag", ix)), flag == ix, 0.14);
+        if f > 0.0 {
+            paint(p, Rect::from_center_size(c, vec2(star, star) * k * (0.8 + 0.2 * f)), icon, color.gamma_multiply(fade * f));
+        }
+    }
+}
+
 fn quick_name(q: lightcraft_engine::media::QuickSource) -> &'static str {
     use lightcraft_engine::media::QuickSource;
     match q {
@@ -744,8 +850,187 @@ fn clipping_overlay(app: &LightcraftApp, p: &egui::Painter, r: Rect) {
 /// How far (points) from a crop handle a finger still grabs it (a handle is 44 pt wide with margin).
 const TOUCH_HANDLE_REACH: f32 = 28.0;
 
-/// How far (points) a one-finger swipe must travel to change photo.
-const SWIPE_MIN_PT: f32 = 80.0;
+/// How far (points) an up / down swipe must travel for each star, and for each step of the flag
+/// (reject, none, pick); half of it already counts, so the readout answers the first movement.
+const STAR_STEP_PT: f32 = 44.0;
+const FLAG_STEP_PT: f32 = 56.0;
+/// The gap (points) between photos in the phone loupe's carousel.
+const SLIDE_GAP: f32 = 16.0;
+/// A sideways drag settles on the next photo when it carried the photo this fraction of its width
+/// across, or was this fast (points per second) and went a few points.
+const SLIDE_FRACTION: f32 = 0.25;
+const SLIDE_FLING: f32 = 600.0;
+/// How quickly a let-go photo settles: the distance left shrinks by e^-10 each second.
+const SLIDE_SETTLE: f32 = 10.0;
+/// A second tap within this many seconds is a double tap (zoom), not a single one (the bars).
+const DOUBLE_TAP_S: f64 = 0.32;
+/// How long the review readout's pop lasts (seconds).
+const POP_S: f64 = 0.45;
+
+/// A one-finger drag on the phone loupe, kept from frame to frame.
+#[derive(Clone, Copy, Default)]
+struct Swipe {
+    /// Where the photo is, as points from rest, and where it was when the finger came down.
+    off: f32,
+    base: f32,
+    /// The finger: how far it has moved, how fast it was going sideways, where it came down, and
+    /// whether the drag is sideways (the carousel) or up / down (rating), known once it has moved.
+    d: Vec2,
+    v: f32,
+    from: Pos2,
+    sideways: Option<bool>,
+    /// The last frame this ran, and the last rating / flag change (when, was it the flag?).
+    t: f64,
+    pop: Option<(f64, bool)>,
+    /// A rating / flag swipe: the (stars, flag) the photo had when it began, and what the finger
+    /// has made of them so far, which the readout shows (and which is kept for the frame the finger
+    /// lifts, when the photo's own are not yet updated). The flag is 0 reject, 1 none, 2 pick.
+    start: (u8, u8),
+    shown: Option<(u8, u8)>,
+    /// The photo this ran for last, to slide in a change made by anything but the finger.
+    id: u64,
+}
+
+/// What a rating / flag swipe in progress (or just lifted) is showing: (stars, flag).
+#[cfg(test)]
+pub(crate) fn swiping(ctx: &egui::Context) -> Option<(u8, u8)> {
+    ctx.data(|d| d.get_temp::<Swipe>(egui::Id::new("loupe-swipe"))).and_then(|s| s.shown)
+}
+
+/// The stars and flag (0 reject, 1 none, 2 pick) of a photo, as a swipe changes them.
+fn stars_and_flag(photo: &lightcraft_catalog::Photo) -> (u8, u8) {
+    use lightcraft_catalog::Flag;
+    (
+        photo.rating,
+        match photo.flag {
+            Flag::Reject => 0,
+            Flag::None => 1,
+            Flag::Pick => 2,
+        },
+    )
+}
+
+/// What `dy` points of drag (up is negative) make of `start` on one side: the stars (left) or the
+/// flag (right), a step for each stretch of the finger.
+fn swiped(start: (u8, u8), flag_side: bool, dy: f32) -> (u8, u8) {
+    let up = -dy;
+    if flag_side {
+        (start.0, (f32::from(start.1) + (up / FLAG_STEP_PT).round()).clamp(0.0, 2.0) as u8)
+    } else {
+        ((f32::from(start.0) + (up / STAR_STEP_PT).round()).clamp(0.0, 5.0) as u8, start.1)
+    }
+}
+
+/// Is there a photo before / after `id` in view order?
+fn has_neighbours(app: &mut LightcraftApp, id: PhotoId) -> (bool, bool) {
+    let ids = app.session.visible();
+    ids.iter().position(|p| *p == id).map_or((false, false), |i| (i > 0, i + 1 < ids.len()))
+}
+
+/// What a one-finger drag does on the phone loupe, run before the photo is drawn so it follows the
+/// finger: sideways across a fitted photo carries it, with its neighbours alongside, and letting go
+/// settles on the next / previous photo (far or fast enough) or back; up / down, in review mode,
+/// rates (left half) or flags (right half). Returns the photo's offset from rest, in points.
+fn swipe(app: &mut LightcraftApp, ui: &egui::Ui, resp: &egui::Response, canvas: Rect, id: PhotoId, live: bool) -> f32 {
+    let key = egui::Id::new("loupe-swipe");
+    let mut s: Swipe = ui.data(|d| d.get_temp(key)).unwrap_or_default();
+    let now = ui.input(|i| i.time);
+    if now - s.t > 0.25 {
+        (s.off, s.id) = (0.0, id.0); // (it was off screen a while: it starts at rest)
+    }
+    s.t = now;
+    let w = canvas.width() + SLIDE_GAP;
+    if !resp.dragged() && !resp.drag_stopped() {
+        s.shown = None;
+    }
+    // another photo than last time, and not by the finger (a button, an arrow key): it slides in
+    // from the side it lies on
+    if s.id != id.0 {
+        let ids = app.session.visible();
+        let at = |n: u64| ids.iter().position(|p| p.0 == n);
+        if let (Some(a), Some(b)) = (at(s.id), at(id.0))
+            && a.abs_diff(b) == 1
+        {
+            s.off = if b > a { w } else { -w };
+        }
+        s.id = id.0;
+    }
+    if resp.drag_started() {
+        // a photo still settling can be caught
+        (s.base, s.d, s.sideways) = (s.off, Vec2::ZERO, None);
+        s.from = ui.input(|i| i.pointer.press_origin()).unwrap_or(canvas.center());
+    }
+    // (the photo drawn this frame: the one before a change of photo, which comes next frame)
+    let mut drawn = None;
+    if live && resp.dragged() {
+        s.d = resp.total_drag_delta().unwrap_or(s.d);
+        s.v = ui.input(|i| i.pointer.velocity().x);
+        if s.sideways.is_none() && s.d.length() > 8.0 {
+            s.sideways = Some(s.d.x.abs() > s.d.y.abs());
+        }
+        if s.sideways == Some(true) {
+            let (prev, next) = has_neighbours(app, id);
+            let want = s.base + s.d.x;
+            // nothing beyond the first and last photo: it gives way only grudgingly
+            s.off = if (want > 0.0 && !prev) || (want < 0.0 && !next) { want * 0.3 } else { want };
+        } else if s.sideways == Some(false) && app.ui.review {
+            // up / down: the stars (left half) or the flag (right half) follow the finger
+            if s.shown.is_none() {
+                s.start = app.session.catalog.photo(id).map(|p| stars_and_flag(p)).unwrap_or_default();
+            }
+            let flag_side = s.from.x > canvas.center().x;
+            let now_shown = swiped(s.start, flag_side, s.d.y);
+            if s.shown != Some(now_shown) && s.shown.is_some() {
+                s.pop = Some((now, flag_side));
+            }
+            // a tick for each star or flag step the finger reaches (or gives up)
+            if s.shown.unwrap_or(s.start) != now_shown {
+                haptics::tap(ui.ctx(), Haptic::Selection);
+            }
+            s.shown = Some(now_shown);
+        }
+    } else {
+        if resp.drag_stopped() {
+            match s.sideways.filter(|_| live) {
+                Some(true) => {
+                    let (prev, next) = has_neighbours(app, id);
+                    let dir = s.off.signum(); // -1: towards the next photo
+                    let far = s.off.abs() > w * SLIDE_FRACTION || (s.v * dir > SLIDE_FLING && s.off.abs() > 24.0);
+                    if far && if dir < 0.0 { next } else { prev } {
+                        drawn = Some(s.off);
+                        let _ = app.run(if dir < 0.0 { "library.next" } else { "library.previous" }, json!({}));
+                        haptics::tap(ui.ctx(), Haptic::Light);
+                        s.off -= dir * w; // (the new photo is where its neighbour was)
+                        s.id = app.session.active().map_or(s.id, |p| p.0);
+                    }
+                }
+                Some(false) if app.ui.review => {
+                    // (the readout has been showing it all along; now it is kept)
+                    if let Some(end) = s.shown.filter(|end| *end != s.start) {
+                        let flag_side = s.from.x > canvas.center().x;
+                        rate_to(app, id, flag_side, end);
+                        haptics::tap(ui.ctx(), Haptic::Light);
+                        s.pop = Some((now, flag_side));
+                        ui.ctx().request_repaint();
+                    }
+                }
+                _ => {}
+            }
+            s.sideways = None;
+        }
+        if drawn.is_none() && s.off != 0.0 {
+            s.off *= (-SLIDE_SETTLE * ui.input(|i| i.stable_dt)).exp();
+            if s.off.abs() < 0.5 {
+                s.off = 0.0;
+            }
+        }
+    }
+    if s.off != 0.0 {
+        ui.ctx().request_repaint();
+    }
+    ui.data_mut(|d| d.insert_temp(key, s));
+    drawn.unwrap_or(s.off)
+}
 
 /// Two-finger gestures on the loupe: pinch zooms (back to Fit when it shrinks past the fitted
 /// size), two fingers pan a zoomed photo. Returns whether two or more fingers are down, so the
@@ -856,57 +1141,43 @@ fn general_interaction(
             app.ui.pan.0 = (app.ui.pan.0 - dlt.x / img.width()).clamp(0.0, 1.0);
             app.ui.pan.1 = (app.ui.pan.1 - dlt.y / img.height()).clamp(0.0, 1.0);
         }
-    } else if app.compact && !two_fingers && resp.dragged() {
-        if let Some(d) = resp.total_drag_delta() {
-            ui.data_mut(|m| m.insert_temp(egui::Id::new("loupe-swipe"), d));
-            // where the finger came down: here, less how far it has moved
-            if let Some(p) = resp.interact_pointer_pos() {
-                ui.data_mut(|m| m.insert_temp(egui::Id::new("loupe-swipe-from"), p - d));
+    }
+    if app.compact {
+        // a single tap shows or hides the bars (review mode), once no second tap can follow
+        let (key, now) = (egui::Id::new("loupe-tap"), ui.input(|i| i.time));
+        if resp.double_clicked() {
+            ui.data_mut(|m| m.remove_temp::<f64>(key));
+        } else if resp.clicked() {
+            ui.data_mut(|m| m.insert_temp(key, now));
+        }
+        if let Some(at) = ui.data(|m| m.get_temp::<f64>(key)) {
+            if now - at >= DOUBLE_TAP_S {
+                ui.data_mut(|m| m.remove_temp::<f64>(key));
+                let _ = app.run("view.reviewMode", json!({}));
+                haptics::tap(ui.ctx(), Haptic::Light);
+            } else {
+                ui.ctx().request_repaint_after(std::time::Duration::from_secs_f64(at + DOUBLE_TAP_S - now));
             }
         }
-    } else if app.compact && !two_fingers && resp.drag_stopped() && !app.ui.zoom_anim {
-        // (egui has no total on the release frame: use the last one seen while dragging)
-        let from = ui.data(|d| d.get_temp::<egui::Pos2>(egui::Id::new("loupe-swipe-from")));
-        if let Some(d) = ui.data(|d| d.get_temp::<egui::Vec2>(egui::Id::new("loupe-swipe"))) {
-            if d.x.abs() >= SWIPE_MIN_PT && d.x.abs() > 2.0 * d.y.abs() {
-                // sideways across a fitted photo: the next / previous one
-                let _ = app.run(if d.x < 0.0 { "library.next" } else { "library.previous" }, json!({}));
-            } else if d.y.abs() >= SWIPE_MIN_PT && d.y.abs() > 2.0 * d.x.abs() {
-                // up or down: rating on the photo's left half, pick / reject on its right half
-                let right = from.is_some_and(|o| o.x > img.center().x);
-                swipe_rate(app, ui.ctx(), right, d.y < 0.0);
-            }
-        }
-        ui.data_mut(|m| {
-            m.remove_temp::<egui::Vec2>(egui::Id::new("loupe-swipe"));
-            m.remove_temp::<egui::Pos2>(egui::Id::new("loupe-swipe-from"));
-        });
     }
     let _ = (native, aspect);
 }
 
 /// Rating by swiping on a phone, as Lightroom's mobile app does when reviewing: up or down on the
-/// photo's left half adds or takes a star; on its right half, up picks and down rejects (towards
-/// the other flag from one of them first clears it). A toast says what it became.
-fn swipe_rate(app: &mut LightcraftApp, ctx: &egui::Context, flag_side: bool, up: bool) {
-    use lightcraft_catalog::Flag;
-    let Some(id) = app.session.active() else { return };
-    let Some(photo) = app.session.catalog.photo(id) else { return };
-    let (rating, flag) = (photo.rating, photo.flag);
-    let said = if flag_side {
-        let (key, said) = match (flag, up) {
-            (Flag::Reject, true) | (Flag::Pick, false) => ("none", "Unflagged"),
-            (_, true) => ("pick", "Pick"),
-            (_, false) => ("reject", "Reject"),
+/// photo's left half adds or takes stars, a stretch of finger for each; on its right half, up picks
+/// and down rejects (towards the other flag from one of them first clears it). The review readout
+/// follows the finger (`swiped`); this stores what it showed when the finger lifts.
+fn rate_to(app: &mut LightcraftApp, id: PhotoId, flag_side: bool, (rating, flag): (u8, u8)) {
+    if flag_side {
+        let key = match flag {
+            0 => "reject",
+            2 => "pick",
+            _ => "none",
         };
         let _ = app.run("photo.flag", json!({"ids": [id.0], "flag": key}));
-        crate::i18n::tr(said).to_string()
     } else {
-        let r = if up { rating.saturating_add(1).min(5) } else { rating.saturating_sub(1) };
-        let _ = app.run("photo.rate", json!({"ids": [id.0], "rating": r}));
-        if r == 0 { crate::i18n::tr("No Rating").to_string() } else { format!("{} {}", crate::i18n::tr("Rating"), "★".repeat(r as usize)) }
-    };
-    app.toast(ctx, said);
+        let _ = app.run("photo.rate", json!({"ids": [id.0], "rating": rating}));
+    }
 }
 
 // ------------------------------------------------------------------------ crop

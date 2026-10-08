@@ -10,7 +10,6 @@ pub mod detail;
 pub mod dialogs;
 pub mod edit;
 pub mod filterbar;
-pub mod forms;
 pub mod grid;
 pub mod left;
 pub mod library_problem;
@@ -89,12 +88,20 @@ pub fn toast(app: &mut LightcraftApp, ctx: &egui::Context) {
     let Some(canvas) = app.canvas_rect else { return };
     let t = Tokens::get(ctx);
     let fade = ((until - now) / 0.25).clamp(0.0, 1.0) as f32;
+    // it rises into place and fades in as it appears (`until` names this toast; when it was first seen)
+    let seen = ctx.data_mut(|d| {
+        let (u, at) = d.get_temp::<(f64, f64)>(egui::Id::new("toast-seen")).filter(|(u, _)| *u == until).unwrap_or((until, now));
+        d.insert_temp(egui::Id::new("toast-seen"), (u, at));
+        at
+    });
+    let rise = egui::emath::easing::cubic_out(((now - seen) / 0.2).clamp(0.0, 1.0) as f32);
+    let fade = fade * rise;
     let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("toast")));
     // long messages (a save warning, the web build's notices) wrap within the canvas
     let wrap = (canvas.width() - 80.0).clamp(200.0, 720.0);
     let galley = painter.layout(text, t.font(14.0), t.text.gamma_multiply(fade), wrap);
     let size = vec2(galley.size().x + 40.0, (galley.size().y + 22.0).max(40.0));
-    let r = Rect::from_center_size(pos2(canvas.center().x, canvas.bottom() - 60.0), size);
+    let r = Rect::from_center_size(pos2(canvas.center().x, canvas.bottom() - 60.0 + (1.0 - rise) * 14.0), size);
     painter.rect_filled(r, 6.0, egui::Color32::from_black_alpha((200.0 * fade) as u8));
     painter.galley(r.center() - galley.size() / 2.0, galley, t.text);
     ctx.request_repaint_after(std::time::Duration::from_millis(30));

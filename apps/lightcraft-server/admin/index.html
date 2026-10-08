@@ -5,119 +5,252 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
 <title>LightCraft Server</title>
+<link rel="icon" href="/admin/icon.png">
 <link rel="stylesheet" href="/admin/admin.css">
 <script src="/admin/admin.js" defer></script>
 </head>
 <body>
-<header class="top">
-  <div class="brand">LightCraft <span>Server</span></div>
-  <div class="who" id="who" hidden><span id="whoName"></span><button type="button" class="link" id="signOut">Sign out</button></div>
-</header>
+<!-- Icons: original line drawings, 20×20 (assets/ATTRIBUTION.md). -->
+<svg class="sprite" aria-hidden="true">
+  <symbol id="i-overview" viewBox="0 0 20 20"><rect x="3" y="3" width="6" height="6" rx="1.5"/><rect x="11" y="3" width="6" height="6" rx="1.5"/><rect x="3" y="11" width="6" height="6" rx="1.5"/><rect x="11" y="11" width="6" height="6" rx="1.5"/></symbol>
+  <symbol id="i-users" viewBox="0 0 20 20"><circle cx="8" cy="7" r="3"/><path d="M2.5 16.5c0-3 2.4-4.6 5.5-4.6s5.5 1.6 5.5 4.6"/><path d="M13 4.1a2.6 2.6 0 0 1 0 5.4"/><path d="M15 12.2c1.5.5 2.5 1.9 2.5 4.3"/></symbol>
+  <symbol id="i-storage" viewBox="0 0 20 20"><ellipse cx="10" cy="5" rx="6" ry="2.5"/><path d="M4 5v10c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5V5"/><path d="M4 10c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 20 20"><path d="M10 4v12M4 10h12"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 20 20"><rect x="7" y="7" width="9.5" height="9.5" rx="2"/><path d="M13 7V5a1.5 1.5 0 0 0-1.5-1.5H5A1.5 1.5 0 0 0 3.5 5v6.5A1.5 1.5 0 0 0 5 13h2"/></symbol>
+  <symbol id="i-check" viewBox="0 0 20 20"><path d="M4.5 10.5l3.5 3.5 7.5-8"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 20 20"><path d="M8.7 3.8a1.5 1.5 0 0 1 2.6 0l6 10.7a1.5 1.5 0 0 1-1.3 2.2H4a1.5 1.5 0 0 1-1.3-2.2z"/><path d="M10 8v3.5M10 14.2v.1"/></symbol>
+  <symbol id="i-info" viewBox="0 0 20 20"><circle cx="10" cy="10" r="7.5"/><path d="M10 9v5M10 6.2v.1"/></symbol>
+  <symbol id="i-close" viewBox="0 0 20 20"><path d="M5.5 5.5l9 9M14.5 5.5l-9 9"/></symbol>
+  <symbol id="i-chevron" viewBox="0 0 20 20"><path d="M8 5l5 5-5 5"/></symbol>
+  <symbol id="i-back" viewBox="0 0 20 20"><path d="M12 5l-5 5 5 5"/></symbol>
+  <symbol id="i-device" viewBox="0 0 20 20"><rect x="3" y="4" width="14" height="9.5" rx="1.5"/><path d="M1.5 16.5h17"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 20 20"><path d="M2.5 6A1.5 1.5 0 0 1 4 4.5h3.5l2 2H16A1.5 1.5 0 0 1 17.5 8v6.5A1.5 1.5 0 0 1 16 16H4a1.5 1.5 0 0 1-1.5-1.5z"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 20 20"><path d="M16.2 8.5A6.5 6.5 0 1 0 16 13"/><path d="M16.5 3.5v5h-5"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 20 20"><path d="M3.5 6h13M8 6V4h4v2M5.5 6l.8 10.5h7.4l.8-10.5"/></symbol>
+  <symbol id="i-key" viewBox="0 0 20 20"><circle cx="7" cy="13" r="3.5"/><path d="M9.5 10.5L16 4M13.5 6.5l2 2"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 20 20"><path d="M10 2.5l6 2.5v4.5c0 3.8-2.6 6.6-6 8-3.4-1.4-6-4.2-6-8V5z"/></symbol>
+  <symbol id="i-signout" viewBox="0 0 20 20"><path d="M11.5 3.5H5A1.5 1.5 0 0 0 3.5 5v10A1.5 1.5 0 0 0 5 16.5h6.5M8.5 10h9M14.5 7l3 3-3 3"/></symbol>
+  <symbol id="i-sparkle" viewBox="0 0 20 20"><path d="M10 2.5v4M10 13.5v4M2.5 10h4M13.5 10h4M5 5l2.2 2.2M12.8 12.8L15 15M15 5l-2.2 2.2M7.2 12.8L5 15"/></symbol>
+</svg>
 
-<main>
-  <p class="notice" id="notice" role="status" hidden></p>
+<!-- Sign in / first run -->
+<div class="auth" id="auth" hidden>
+  <div class="auth-card">
+    <div class="auth-brand"><img src="/admin/icon.png" alt="" width="40" height="40"><span>LightCraft <b>Server</b></span></div>
 
-  <section class="card narrow" id="setup" hidden>
-    <h1>Set up this server</h1>
-    <p class="hint">Create the first admin. The setup code is in the server's log (<code>docker compose logs lightcraft</code>, or the terminal running <code>lightcraft-server serve</code>).</p>
-    <form id="setupForm" autocomplete="off">
-      <label>Setup code <input name="code" required placeholder="ABCD-1234" autocomplete="one-time-code"></label>
-      <label>User name <input name="user" required pattern="[A-Za-z0-9._\-]{1,64}" autocomplete="username"></label>
-      <label>Password <input name="password" type="password" required minlength="8" autocomplete="new-password"></label>
-      <label>Password again <input name="password2" type="password" required minlength="8" autocomplete="new-password"></label>
-      <button type="submit">Create admin</button>
-    </form>
-  </section>
-
-  <section class="card narrow" id="login" hidden>
-    <h1>Sign in</h1>
-    <p class="hint">Admins manage users, devices and storage here.</p>
-    <form id="loginForm">
-      <label>User name <input name="user" required autocomplete="username"></label>
-      <label>Password <input name="password" type="password" required autocomplete="current-password"></label>
-      <button type="submit">Sign in</button>
-    </form>
-  </section>
-
-  <div id="dash" hidden>
-    <section class="card">
-      <h2>Server</h2>
-      <dl class="facts" id="facts"></dl>
-      <div class="disk" id="disk" hidden><div class="bar"><div id="diskUsed"></div></div><span id="diskText"></span></div>
-      <p class="hint">Where the data lives, the address the server listens on and its domain are deployment settings:
-        <code>--data</code> / <code>LIGHTCRAFT_DATA</code>, <code>--listen</code> / <code>LIGHTCRAFT_LISTEN</code>, and the
-        domain in your reverse proxy (<code>LIGHTCRAFT_DOMAIN</code> with the compose file). Change them there and
-        restart; moving a library under a running server can lose it.</p>
-    </section>
-
-    <section class="card">
-      <h2>Connect a device</h2>
-      <p>In LightCraft, <b>Settings › Sync</b>: server <code id="origin"></code>, a user name below and its password.
-        In a browser, open <code id="origin2"></code>.</p>
-    </section>
-
-    <section class="card">
-      <div class="head"><h2>Users</h2><button type="button" id="addUserToggle">Add user</button></div>
-      <form id="addUser" class="row-form" hidden autocomplete="off">
-        <input name="name" required placeholder="user name" pattern="[A-Za-z0-9._\-]{1,64}" autocomplete="off">
-        <input name="password" type="password" required minlength="8" placeholder="password (8 characters at least)" autocomplete="new-password">
-        <label class="check"><input type="checkbox" name="admin"> admin</label>
-        <button type="submit">Add</button>
+    <section id="setup" hidden>
+      <h1>Set up your server</h1>
+      <p class="lead">Create the first administrator. Administrators add the people who use this server and look after its devices and storage.</p>
+      <form id="setupForm" class="form" autocomplete="off">
+        <div class="field">
+          <label for="setupCode">Setup code</label>
+          <input id="setupCode" name="code" required placeholder="ABCD-1234" autocomplete="one-time-code" spellcheck="false">
+          <p class="help">Printed in the server's log when it starts: run <code>docker compose logs lightcraft</code>, or look in the terminal running <code>lightcraft-server serve</code>.</p>
+        </div>
+        <div class="field">
+          <label for="setupUser">User name</label>
+          <input id="setupUser" name="user" required pattern="[A-Za-z0-9._\-]{1,64}" autocomplete="username" spellcheck="false">
+          <p class="help">Letters, digits, dots, dashes and underscores.</p>
+        </div>
+        <div class="field">
+          <label for="setupPassword">Password</label>
+          <input id="setupPassword" name="password" type="password" required minlength="8" autocomplete="new-password">
+          <p class="help">At least 8 characters.</p>
+        </div>
+        <div class="field">
+          <label for="setupPassword2">Confirm password</label>
+          <input id="setupPassword2" name="password2" type="password" required minlength="8" autocomplete="new-password">
+        </div>
+        <div class="alert negative" role="alert" hidden><svg class="icon"><use href="#i-alert"/></svg><p></p></div>
+        <button type="submit" class="btn accent wide">Create administrator</button>
       </form>
-      <div class="table-wrap">
-        <table id="users">
-          <thead><tr><th>User</th><th class="num">Photos</th><th class="num">Albums</th><th class="num">Devices</th><th class="num">Storage</th><th></th></tr></thead>
-          <tbody></tbody>
-        </table>
-      </div>
     </section>
 
-    <section class="card" id="devicesCard" hidden>
-      <div class="head"><h2 id="devicesTitle">Devices</h2><button type="button" class="link" id="devicesClose">Close</button></div>
-      <p class="hint">Signing a device out ends its access; it keeps its library and signs in again with the password.</p>
-      <div class="table-wrap">
-        <table id="devices">
-          <thead><tr><th>Device</th><th>Signed in</th><th>Last seen</th><th class="num">Id space</th><th></th></tr></thead>
-          <tbody></tbody>
-        </table>
-      </div>
-    </section>
-
-    <section class="card" id="foldersCard" hidden>
-      <div class="head"><h2 id="foldersTitle">Library folders</h2><button type="button" class="link" id="foldersClose">Close</button></div>
-      <p class="hint">Photo folders already on this server (a NAS share, a backup disk) that are this user's library: their
-        photos are read where they are — never copied, moved or changed — and show on every device in their folders.
-        With Docker, mount them into the container read-only (<code>-v /srv/photos:/photos:ro</code>) and add
-        <code>/photos/…</code> here.</p>
-      <div class="table-wrap">
-        <table id="folders">
-          <thead><tr><th>Folder</th><th>On the server</th><th></th></tr></thead>
-          <tbody></tbody>
-        </table>
-      </div>
-      <form id="addFolder" class="row-form" autocomplete="off">
-        <input name="path" required placeholder="/photos/ann" autocomplete="off">
-        <input name="name" placeholder="name shown on devices (optional)" autocomplete="off">
-        <button type="submit">Add folder</button>
+    <section id="login" hidden>
+      <h1>Sign in</h1>
+      <p class="lead">Sign in with an administrator account to manage this server.</p>
+      <form id="loginForm" class="form">
+        <div class="field">
+          <label for="loginUser">User name</label>
+          <input id="loginUser" name="user" required autocomplete="username" spellcheck="false">
+        </div>
+        <div class="field">
+          <label for="loginPassword">Password</label>
+          <input id="loginPassword" name="password" type="password" required autocomplete="current-password">
+        </div>
+        <div class="alert negative" role="alert" hidden><svg class="icon"><use href="#i-alert"/></svg><p></p></div>
+        <button type="submit" class="btn accent wide">Sign in</button>
       </form>
-      <div class="actions"><button type="button" id="scanNow">Scan now</button><span id="scanText"></span></div>
-      <ul class="errors" id="scanErrors" hidden></ul>
-    </section>
-
-    <section class="card">
-      <h2>Storage clean-up</h2>
-      <p class="hint">Deletes photo files no library refers to any more (photos deleted for good) and unfinished uploads, if older than a day.</p>
-      <div class="actions"><button type="button" id="gcCheck">Check</button><button type="button" id="gcRun" class="danger" hidden>Remove</button><span id="gcText"></span></div>
     </section>
   </div>
-</main>
+  <p class="auth-foot">LightCraft Server · your photos, on your own hardware</p>
+</div>
 
-<dialog id="dialog">
-  <form method="dialog" id="dialogForm">
+<!-- The console -->
+<div class="shell" id="dash" hidden>
+  <header class="topbar">
+    <a class="brand" href="#/overview"><img src="/admin/icon.png" alt="" width="28" height="28"><span>LightCraft <b>Server</b></span></a>
+    <div class="account">
+      <span class="avatar" id="meAvatar" aria-hidden="true"></span>
+      <span class="account-name" id="whoName"></span>
+      <button type="button" class="btn quiet icon-only" id="signOut" title="Sign out" aria-label="Sign out"><svg class="icon"><use href="#i-signout"/></svg></button>
+    </div>
+  </header>
+
+  <nav class="sidenav" aria-label="Sections">
+    <a href="#/overview" data-nav="overview"><svg class="icon"><use href="#i-overview"/></svg><span>Overview</span></a>
+    <a href="#/users" data-nav="users"><svg class="icon"><use href="#i-users"/></svg><span>Users</span></a>
+    <a href="#/storage" data-nav="storage"><svg class="icon"><use href="#i-storage"/></svg><span>Storage</span></a>
+  </nav>
+
+  <main>
+    <!-- Overview -->
+    <section data-view="overview" hidden>
+      <div class="page-head"><div><h1>Overview</h1><p class="lead">Your server at a glance.</p></div></div>
+      <div class="stats">
+        <div class="stat"><span class="stat-label">Users</span><span class="stat-value" id="stUsers">–</span></div>
+        <div class="stat"><span class="stat-label">Photos</span><span class="stat-value" id="stPhotos">–</span></div>
+        <div class="stat"><span class="stat-label">Signed-in devices</span><span class="stat-value" id="stDevices">–</span></div>
+        <div class="stat"><span class="stat-label">Free disk space</span><span class="stat-value" id="stFree">–</span><div class="meter small" id="stDisk" hidden><div></div></div></div>
+      </div>
+      <div class="columns">
+        <section class="panel">
+          <h2>Connect a device</h2>
+          <p class="muted">Sync a library with this server from LightCraft on a Mac, PC or iPhone.</p>
+          <div class="field">
+            <label for="origin">Server address</label>
+            <div class="copy-field"><input id="origin" readonly><button type="button" class="btn secondary" id="copyOrigin"><svg class="icon"><use href="#i-copy"/></svg><span>Copy</span></button></div>
+          </div>
+          <ol class="steps">
+            <li><span>In LightCraft, open <b>Settings › Sync</b>.</span></li>
+            <li><span>Enter the server address above.</span></li>
+            <li><span>Sign in with a user name and password from <a href="#/users">Users</a>.</span></li>
+          </ol>
+          <p class="muted" id="webHint" hidden>Or open the server address in a web browser to use LightCraft there.</p>
+        </section>
+        <section class="panel">
+          <h2>Server details</h2>
+          <dl class="facts" id="facts"></dl>
+          <div class="alert info"><svg class="icon"><use href="#i-info"/></svg><div><b>Set when the server starts</b><p>The data folder, address and domain come from the deployment: <code>--data</code> / <code>LIGHTCRAFT_DATA</code>, <code>--listen</code> / <code>LIGHTCRAFT_LISTEN</code>, and your reverse proxy (<code>LIGHTCRAFT_DOMAIN</code>). Change them there and restart; moving a library under a running server can lose it.</p></div></div>
+        </section>
+      </div>
+    </section>
+
+    <!-- Users -->
+    <section data-view="users" hidden>
+      <div class="page-head">
+        <div><h1>Users</h1><p class="lead">Each person has their own library, password and devices. Administrators can also sign in here.</p></div>
+        <button type="button" class="btn accent" id="addUser"><svg class="icon"><use href="#i-plus"/></svg><span>Add user</span></button>
+      </div>
+      <div class="panel flush">
+        <table class="table" id="users">
+          <thead><tr><th>Name</th><th class="num">Photos</th><th class="num opt">Albums</th><th class="num opt">Devices</th><th class="num">Storage</th><th class="chev-col"><span class="sr">Open</span></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- One user -->
+    <section data-view="user" hidden>
+      <a class="back" href="#/users"><svg class="icon"><use href="#i-back"/></svg><span>Users</span></a>
+      <div class="user-head">
+        <span class="avatar xl" id="uAvatar" aria-hidden="true"></span>
+        <div class="user-title"><h1 id="uName"></h1><div id="uRole"></div></div>
+        <div class="btn-group">
+          <button type="button" class="btn secondary" id="uPassword"><svg class="icon"><use href="#i-key"/></svg><span>Reset password</span></button>
+          <button type="button" class="btn secondary" id="uAdmin"><svg class="icon"><use href="#i-shield"/></svg><span></span></button>
+          <button type="button" class="btn negative-outline" id="uRemove"><svg class="icon"><use href="#i-trash"/></svg><span>Remove user</span></button>
+        </div>
+      </div>
+      <div class="stats">
+        <div class="stat"><span class="stat-label">Photos</span><span class="stat-value" id="uPhotos"></span></div>
+        <div class="stat"><span class="stat-label">Albums</span><span class="stat-value" id="uAlbums"></span></div>
+        <div class="stat"><span class="stat-label">Devices</span><span class="stat-value" id="uDevices"></span></div>
+        <div class="stat"><span class="stat-label">Storage used</span><span class="stat-value" id="uBytes"></span></div>
+      </div>
+      <div class="tabs" role="tablist">
+        <a role="tab" data-tab="devices"><svg class="icon"><use href="#i-device"/></svg><span>Devices</span></a>
+        <a role="tab" data-tab="folders"><svg class="icon"><use href="#i-folder"/></svg><span>Library folders</span></a>
+      </div>
+
+      <div data-panel="devices" role="tabpanel">
+        <p class="muted">Computers, phones and browsers signed in as this user. Signing one out ends its access; it keeps its library and can sign in again with the password.</p>
+        <div class="panel flush">
+          <table class="table" id="devices">
+            <thead><tr><th>Device</th><th class="opt">Signed in</th><th>Last seen</th><th><span class="sr">Actions</span></th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div data-panel="folders" role="tabpanel">
+        <div class="section-head">
+          <p class="muted">Photo folders already on the server, like a NAS share or a backup disk, shown in this user's library on every device. Photos are read where they are: never copied, moved or changed.</p>
+          <button type="button" class="btn secondary" id="addFolder"><svg class="icon"><use href="#i-plus"/></svg><span>Add folder</span></button>
+        </div>
+        <div class="panel flush">
+          <table class="table" id="folders">
+            <thead><tr><th>Name</th><th>Location on the server</th><th>Status</th><th><span class="sr">Actions</span></th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <section class="panel scan">
+          <div class="scan-head">
+            <div><h3>Skipped names</h3><p class="muted" id="ignoreText"></p></div>
+            <button type="button" class="btn secondary" id="editIgnore"><span>Edit</span></button>
+          </div>
+        </section>
+        <section class="panel scan">
+          <div class="scan-head">
+            <div><h3 id="scanTitle">Scan</h3><p class="muted" id="scanText"></p></div>
+            <button type="button" class="btn secondary" id="scanNow"><svg class="icon"><use href="#i-refresh"/></svg><span>Scan now</span></button>
+          </div>
+          <div class="meter" id="scanBar" hidden><div></div></div>
+          <div class="alert negative" id="scanErrors" hidden><svg class="icon"><use href="#i-alert"/></svg><div><b>Some files couldn't be read</b><ul></ul></div></div>
+        </section>
+      </div>
+    </section>
+
+    <!-- Storage -->
+    <section data-view="storage" hidden>
+      <div class="page-head"><div><h1>Storage</h1><p class="lead">Disk space on the server, and the photo files and previews kept for each user.</p></div></div>
+      <div class="columns">
+        <section class="panel">
+          <h2>Disk</h2>
+          <div id="diskBox">
+            <div class="meter-head"><span id="diskUsedText"></span><span id="diskPct"></span></div>
+            <div class="meter large"><div id="diskUsed"></div></div>
+            <p class="muted" id="diskFree"></p>
+          </div>
+          <p class="muted" id="diskNone" hidden>Disk usage isn't available on this system.</p>
+          <h3>Storage used by each user</h3>
+          <ul class="usage" id="usage"></ul>
+        </section>
+        <section class="panel">
+          <h2>Clean up</h2>
+          <p class="muted">Finds photo files that no library uses any more (photos deleted for good) and uploads that never finished, if they are older than a day. Checking changes nothing.</p>
+          <div class="btn-row"><button type="button" class="btn secondary" id="gcCheck"><svg class="icon"><use href="#i-sparkle"/></svg><span>Check for unused files</span></button></div>
+          <div class="alert" id="gcResult" hidden><svg class="icon"><use href="#i-info"/></svg><div><b id="gcTitle"></b><p id="gcText"></p><button type="button" class="btn negative" id="gcRun" hidden>Remove files</button></div></div>
+        </section>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div class="toasts" id="toasts" aria-live="polite"></div>
+
+<dialog id="dialog" class="dialog">
+  <form id="dialogForm">
     <h2 id="dialogTitle"></h2>
-    <p id="dialogText"></p>
-    <label id="dialogLabel" hidden><span id="dialogLabelText"></span> <input id="dialogInput"></label>
-    <div class="actions"><button value="cancel" type="button" id="dialogCancel" class="secondary">Cancel</button><button value="ok" id="dialogOk">OK</button></div>
+    <div class="dialog-body">
+      <p id="dialogText"></p>
+      <div id="dialogFields" class="form"></div>
+      <div class="alert negative" id="dialogError" role="alert" hidden><svg class="icon"><use href="#i-alert"/></svg><p></p></div>
+    </div>
+    <div class="btn-group end">
+      <button type="button" class="btn secondary" id="dialogCancel">Cancel</button>
+      <button type="submit" class="btn accent" id="dialogOk">OK</button>
+    </div>
   </form>
 </dialog>
 </body>

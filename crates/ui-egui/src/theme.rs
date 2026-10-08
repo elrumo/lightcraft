@@ -316,7 +316,8 @@ pub fn apply_layout(ctx: &egui::Context, compact: bool, dark: bool) {
         s.text_styles.insert(egui::TextStyle::Button, FontId::proportional(16.0));
         s.text_styles.insert(egui::TextStyle::Small, FontId::proportional(13.0));
         s.text_styles.insert(egui::TextStyle::Heading, FontId::new(17.0, FontFamily::Name(FONT_SEMIBOLD.into())));
-        s.animation_time = 0.2;
+        // (panels slide, switches and tiles fade over this: iOS's quick-but-visible quarter second)
+        s.animation_time = 0.25;
     });
 }
 

@@ -137,7 +137,7 @@ Open the admin page: `https://photos.example.com/admin` (or `http://<address>:80
 1. **Create the admin.** Enter the setup code from the log, a user name and a password. (The code makes sure nobody
    else can claim a server that is already reachable; ten wrong tries replace it with a new one, logged again.)
 2. **Add users** (Users ▸ Add user): one per person; each gets their own library. An admin is also an ordinary user.
-3. **Connect a device** shows the address to type on each device.
+3. **Overview ▸ Connect a device** shows the address to type on each device, with a Copy button.
 
 The same from the command line, if you prefer (`docker compose exec` with Compose, `docker exec -it lightcraft`
 with plain Docker, or `lightcraft-server` directly):
@@ -150,14 +150,14 @@ docker compose exec -it lightcraft lightcraft-server user add ben
 ### Add library folders (optional)
 
 Folders of photos already on the server become part of a user's library, in place. On the admin page: **Users ▸
-Folders** next to the user, then the folder's path **as the server sees it** — inside Docker, under `/photos` — and
+the user ▸ Library folders ▸ Add folder**, then the folder's path **as the server sees it** — inside Docker, under `/photos` — and
 the name devices show (say `/photos/ann` named `Photos`). Or:
 
 ```sh
 docker compose exec lightcraft lightcraft-server folder add ann /photos/ann --name Photos
 ```
 
-The server reads the folder right away (the panel shows the progress: files read, new photos, previews still to
+The server reads the folder right away (the tab shows the progress: files read, new photos, previews still to
 build) and again every 15 minutes. Ratings, labels, keywords and Lightroom edits in XMP sidecars come along. Nothing
 in the folder is ever written; the container only needs to read it (it runs as uid 10001: the files must be readable
 by others, which is the usual `644`/`755`). Two people can be given the same folder; each gets their own photos of it.
@@ -165,7 +165,7 @@ by others, which is the usual `644`/`755`). Two people can be given the same fol
 ## 4. Connect your devices
 
 Each device needs the **server address**, a **user name** and its **password**. The password is sent once; the
-device keeps a token of its own, which the admin page can sign out (Users ▸ Devices).
+device keeps a token of its own, which the admin page can sign out (Users ▸ the user ▸ Devices).
 
 **Which library signs in matters:**
 
@@ -268,13 +268,13 @@ lightcraft-cli run --library ~/LightCraft-synced sync.signIn server=photos.examp
 | `the server signed this device out` | The device was signed out on the admin page, or its user removed: sign in again. |
 | The admin page asks for a setup code | No admin exists yet: the code is in the server's log. |
 | A library folder `isn't there (not mounted?)` / `is empty but had photos` | The path is the one inside the container (`/photos/…`); check the volume mount, and that uid 10001 can read it. |
-| Photos without thumbnails for a while | Their previews are still being built (admin page ▸ Folders shows how many are left). |
+| Photos without thumbnails for a while | Their previews are still being built (admin page ▸ Users ▸ the user ▸ Library folders shows how many are left). |
 | Uploads of big raws fail behind your own proxy | Allow large request bodies (nginx: `client_max_body_size 0;`). |
 
 ## Security checklist
 
 - Only Caddy (443), `tailscale serve`, or your home network reaches the server — never port 8080 from the internet.
-- Strong passwords (8 characters at least are required). Sign out devices you no longer use (admin page ▸ Devices).
+- Strong passwords (8 characters at least are required). Sign out devices you no longer use (admin page ▸ Users ▸ the user ▸ Devices).
 - Library folders mounted read-only (`:ro`).
 - Keep the server and the apps updated together.
 

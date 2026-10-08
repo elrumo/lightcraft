@@ -1,7 +1,8 @@
-//! Decoders the operating system provides, for formats with no pure-Rust, permissively licensed
-//! decoder yet (HEIC / HEIF: iPhone photos; AVIF). The product stays pure Rust: a host that has
-//! such a decoder (the iOS app: ImageIO) installs it with [`set_system_decoder`]; without one these
-//! formats stay [`crate::Error::Unsupported`] and [`crate::Format::can_decode`] says so.
+//! Decoders the operating system provides: AVIF, which has no pure-Rust, permissively licensed
+//! decoder yet, and HEIC / HEIF, where the system's (hardware) decoder is faster than ours
+//! (`crate::heif`). The product stays pure Rust: a host that has such a decoder (the iOS app:
+//! ImageIO) installs it with [`set_system_decoder`]; without one AVIF stays
+//! [`crate::Error::Unsupported`] and [`crate::Format::can_decode`] says so.
 
 use std::sync::RwLock;
 

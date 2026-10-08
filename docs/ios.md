@@ -207,8 +207,10 @@ layout and interaction only: no Adobe icons, artwork, fonts, presets or screensh
    thumbnails under group chips, Masking's kinds tiles five to a row, Colour Grading one big wheel at a time.
    Dialogs are pages sliding up from the bottom (Cancel, title and action
    in the bar), menus are iOS pull-downs or action sheets, and every other command is in a searchable All Commands
-   list. Touch: a tap opens a photo, pinch zooms, two fingers pan, a sideways swipe on a fitted photo goes to the
-   next / previous one, an up / down swipe rates it (left half) or flags it (right half), double tap zooms, sliders follow a finger's sideways movement (a tap leaves them alone, an up
+   list. Touch: a tap opens a photo, pinch zooms, two fingers pan, a sideways drag on a fitted photo carries it
+   like a carousel (the next / previous one slides in beside it and settles when let go), a single tap hides the bars
+   (review mode: the photo fills the screen and an up / down swipe rates it on the left half or flags it on the
+   right, the stars and flag following the finger as it moves), double tap zooms, sliders follow a finger's sideways movement (a tap leaves them alone, an up
    or down drag scrolls), crop handles
    and mask / spot pins are about a finger wide, press-and-hold opens context menus (egui's own long-touch) except in
    the grid, where it starts choosing photos (taps then add and remove them; an action bar rates, flags, labels, adds

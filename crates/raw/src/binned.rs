@@ -8,6 +8,10 @@
 //! interpolation, so there are no demosaicing artefacts; the colour planes are offset by less than
 //! one output pixel, which is invisible at these scales.
 //!
+//! Linear raws (`LinearRaw`: three samples per pixel, no mosaic — Apple ProRAW, Adobe's linear DNGs) bin the same
+//! way with any `k ≥ 2`: each output channel is the mean of its `k × k` samples, so a 2560 px preview of a 48 MP file
+//! never needs a full-size float copy.
+//!
 //! Clipping is preserved for [`crate::highlight::reconstruct`]: a channel whose block contains a
 //! sample at or above `clip` takes that block's maximum sample of the colour (instead of a mean that
 //! would fall just below the clip level and escape reconstruction).
@@ -19,6 +23,9 @@ impl RawImage {
     /// Can `k × k` blocks be binned (single-plane CFA data, every `k × k` window containing R, G
     /// and B; Bayer: `k` even, so that every block has the same layout)?
     pub fn can_bin(&self, k: usize) -> bool {
+        if self.cfa.is_none() {
+            return k >= 2 && self.cpp == 3;
+        }
         let Some(cfa) = &self.cfa else { return false };
         if k < 2 || self.cpp != 1 || !cfa.valid() || (cfa.is_bayer() && !k.is_multiple_of(2)) {
             return false;
@@ -35,7 +42,7 @@ impl RawImage {
         if !self.can_bin(k) || !self.opcodes.list3.is_empty() {
             return Ok(None);
         }
-        let Some(cfa) = &self.cfa else { return Ok(None) };
+        let Some(cfa) = &self.cfa else { return self.develop_binned_linear(k, clip) };
         let a = self.active_area;
         // bin the default crop (relative to the active area) only
         let c = self.crop.clipped(a.width, a.height);
@@ -99,6 +106,67 @@ impl RawImage {
                 }
                 for ch in 0..3 {
                     px[ch] = if max[ch] >= clip { max[ch] } else { sum[ch] * inv[ch] };
+                }
+            }
+        });
+        Ok(Some(out))
+    }
+}
+
+impl RawImage {
+    /// [`RawImage::develop_binned`] for three-sample-per-pixel data.
+    fn develop_binned_linear(&self, k: usize, clip: f32) -> Result<Option<Rgb32f>> {
+        let a = self.active_area;
+        let c = self.crop.clipped(a.width, a.height);
+        let c = if c.width < k || c.height < k { crate::Rect::new(0, 0, a.width, a.height) } else { c };
+        let (bw, bh) = (c.width / k, c.height / k);
+        if bw == 0 || bh == 0 {
+            return Ok(None);
+        }
+        let norm: Option<Normalized> = if self.opcodes.list1.is_empty() && self.opcodes.list2.is_empty() { None } else { Some(self.normalized()?) };
+        let scale: [f32; 3] = std::array::from_fn(|s| {
+            let range = self.white_at(s) - self.black.mean();
+            if range > 0.0 { 1.0 / range } else { 1.0 }
+        });
+        let flat_black = self.black.delta_h.is_empty() && self.black.delta_v.is_empty() && self.black.repeat_rows <= 1 && self.black.repeat_cols <= 1;
+        let black: [f32; 3] = std::array::from_fn(|s| self.black.at(0, 0, s, 3));
+        let inv = 1.0 / (k * k) as f32;
+        let wlen = bw * k * 3;
+        let mut out = Rgb32f::new(bw, bh);
+        out.data.par_chunks_mut(bw).enumerate().for_each(|(by, row)| {
+            // the block row's k sample rows, normalised
+            let mut rows = vec![0f32; k * wlen];
+            for dy in 0..k {
+                let y = c.y + by * k + dy;
+                let dst = &mut rows[dy * wlen..(dy + 1) * wlen];
+                match (&norm, &self.data) {
+                    (Some(nm), _) => dst.copy_from_slice(&nm.data[(y * nm.width + c.x) * 3..][..wlen]),
+                    (None, RawData::U16(d)) if flat_black => {
+                        let src = &d[((a.y + y) * self.width + a.x + c.x) * 3..][..wlen];
+                        for (i, (o, &v)) in dst.iter_mut().zip(src).enumerate() {
+                            *o = (v as f32 - black[i % 3]) * scale[i % 3];
+                        }
+                    }
+                    (None, data) => {
+                        let base = ((a.y + y) * self.width + a.x + c.x) * 3;
+                        for (i, o) in dst.iter_mut().enumerate() {
+                            *o = (data.get(base + i) - self.black.at(c.x + i / 3, y, i % 3, 3)) * scale[i % 3];
+                        }
+                    }
+                }
+            }
+            for (bx, px) in row.iter_mut().enumerate() {
+                let (mut sum, mut max) = ([0f32; 3], [f32::MIN; 3]);
+                for dy in 0..k {
+                    for v in rows[dy * wlen + bx * k * 3..][..k * 3].as_chunks::<3>().0 {
+                        for ch in 0..3 {
+                            sum[ch] += v[ch];
+                            max[ch] = max[ch].max(v[ch]);
+                        }
+                    }
+                }
+                for ch in 0..3 {
+                    px[ch] = if max[ch] >= clip { max[ch] } else { sum[ch] * inv };
                 }
             }
         });
@@ -175,6 +243,49 @@ mod tests {
         let xb = x.develop_binned(3, 0.99).unwrap().unwrap();
         assert_eq!((xb.width, xb.height), (8, 6));
         assert!((xb.get(4, 3)[2] - 0.3).abs() < 2e-3);
+    }
+
+    #[test]
+    fn linear_raw_bins_to_block_means_and_keeps_clipping() {
+        let (w, h) = (30usize, 20usize);
+        let sample = |x: usize, y: usize, c: usize| ((x * 37 + y * 91 + c * 500) % 4000) as u16 + 100;
+        let data: Vec<u16> = (0..w * h * 3).map(|i| sample(i / 3 % w, i / 3 / w, i % 3)).collect();
+        let mut raw = RawImage {
+            format: RawFormat::Dng,
+            width: w,
+            height: h,
+            cpp: 3,
+            data: RawData::U16(data),
+            cfa: None,
+            bits: 16,
+            black: BlackLevel::uniform(100.0),
+            white: vec![4100.0],
+            active_area: Rect::new(0, 0, w, h),
+            crop: Rect::new(0, 0, w, h),
+            orientation: Orientation::Normal,
+            color: ColorData::default(),
+            wb_multipliers: None,
+            linearized: false,
+            opcodes: OpcodeLists::default(),
+            metadata: Metadata::default(),
+        };
+        assert!(raw.can_bin(2) && raw.can_bin(3) && raw.can_bin(8) && !raw.can_bin(1));
+        let b = raw.develop_binned(3, 2.0).unwrap().unwrap();
+        assert_eq!((b.width, b.height), (10, 6));
+        for (bx, by, c) in [(0, 0, 0), (4, 2, 1), (9, 5, 2)] {
+            let mean: f32 = (0..9).map(|t| (sample(bx * 3 + t % 3, by * 3 + t / 3, c) as f32 - 100.0) / 4000.0).sum::<f32>() / 9.0;
+            assert!((b.get(bx, by)[c] - mean).abs() < 1e-5, "({bx},{by}) channel {c}");
+        }
+        // a sample at the clip level keeps its block's channel clipped
+        if let RawData::U16(d) = &mut raw.data {
+            d[(4 * w + 7) * 3 + 1] = 4100;
+        }
+        assert!(raw.develop_binned(3, 0.99).unwrap().unwrap().get(2, 1)[1] >= 0.99);
+        // the default crop is honoured
+        raw.crop = Rect::new(3, 3, 18, 12);
+        let c = raw.develop_binned(3, 2.0).unwrap().unwrap();
+        assert_eq!((c.width, c.height), (6, 4));
+        assert!((c.get(0, 0)[0] - (0..9).map(|t| (sample(3 + t % 3, 3 + t / 3, 0) as f32 - 100.0) / 4000.0).sum::<f32>() / 9.0).abs() < 1e-5);
     }
 
     #[test]

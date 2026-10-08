@@ -1,7 +1,7 @@
 //! Standard image codecs for LightCraft (layer L1).
 //!
 //! - [`sniff`] detects the container format (and flags camera raws for `lightcraft-raw`).
-//! - [`decode`] decodes JPEG, PNG, TIFF, WebP, GIF, BMP, PSD (merged composite) and JPEG XL into
+//! - [`decode`] decodes JPEG, PNG, TIFF, WebP, GIF, BMP, PSD (merged composite), JPEG XL and HEIC into
 //!   **linear-light** [`Rgb32f`] in the source's own primaries, described by [`SourceSpace`]; ICC
 //!   profiles (matrix/TRC exactly, LUT/CMYK via the `moxcms` CMS), 16-bit and float precision are
 //!   preserved. EXIF/XMP/ICC blobs are passed through untouched; orientation is reported, never applied.
@@ -17,6 +17,7 @@
 mod convert;
 pub mod encode;
 pub mod exif;
+mod heif;
 pub mod icc;
 mod jpeg;
 pub mod jpeg_par;
@@ -177,9 +178,7 @@ pub fn decode_unguarded(bytes: &[u8], format: Format, opts: &DecodeOptions) -> R
         Format::Avif => {
             system::decode(bytes, format, &opts).unwrap_or(Err(Error::Unsupported(format, "no pure-Rust, permissively licensed AV1 decoder yet")))
         }
-        Format::Heif => {
-            system::decode(bytes, format, &opts).unwrap_or(Err(Error::Unsupported(format, "no pure-Rust, permissively licensed HEVC decoder yet")))
-        }
+        Format::Heif => system::decode(bytes, format, &opts).unwrap_or_else(|| heif::decode(bytes, &opts)),
         Format::RawTiffLike | Format::RawOther => Err(Error::Unsupported(format, "camera raw: decode with lightcraft-raw")),
     }
 }
