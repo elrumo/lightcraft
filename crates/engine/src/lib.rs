@@ -33,6 +33,8 @@ pub mod preset_import;
 pub mod preset_luminar;
 pub mod presets;
 pub mod rename;
+#[cfg(any(feature = "sam", feature = "vision"))]
+mod download;
 pub mod segment;
 pub mod sidecar;
 pub mod smart;

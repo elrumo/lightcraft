@@ -16,8 +16,6 @@
 //! MCP, tests) they wait for the worker.
 
 #[cfg(feature = "sam")]
-mod download;
-#[cfg(feature = "sam")]
 mod worker;
 
 use std::path::PathBuf;
@@ -128,7 +126,7 @@ pub struct Segmenter {
     #[cfg(feature = "sam")]
     worker: worker::Worker,
     #[cfg(feature = "sam")]
-    download: download::Downloader,
+    download: crate::download::Downloader,
     #[cfg(feature = "sam")]
     results: (std::sync::mpsc::Sender<worker::Outcome>, std::sync::mpsc::Receiver<worker::Outcome>),
 }
@@ -146,7 +144,7 @@ impl Default for Segmenter {
             #[cfg(feature = "sam")]
             worker: worker::Worker::default(),
             #[cfg(feature = "sam")]
-            download: download::Downloader::default(),
+            download: crate::download::Downloader::default(),
             #[cfg(feature = "sam")]
             results: std::sync::mpsc::channel(),
         }
@@ -262,7 +260,7 @@ impl Segmenter {
             if mirrors.is_empty() {
                 return Err(lightcraft_segment::fetch::no_mirrors_message());
             }
-            self.download.start(lightcraft_segment::fetch::SAM3_FILES, mirrors, dir, lightcraft_segment::fetch::Options::default())
+            self.download.start("SAM 3", lightcraft_segment::fetch::SAM3_FILES, mirrors, dir, lightcraft_segment::fetch::Options::default())
         }
         #[cfg(not(feature = "sam"))]
         {
