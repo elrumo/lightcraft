@@ -212,6 +212,59 @@ fn phone_dialogs_use_switches_for_on_off_choices() {
     assert_ne!(enlarge(&h), before, "the switch toggled");
 }
 
+/// On a phone every preset is shown on the photo, in finger-sized rows.
+#[test]
+fn phone_presets_show_the_photo_with_each_preset() {
+    let mut h = detail([390.0, 844.0]);
+    let r = h.request("engine.execute", json!({"command": "panel.presets"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    let row = h.app.widgets.iter().find(|(w, _)| w.starts_with("preset:")).map(|(_, r)| *r).expect("a preset row");
+    assert!(row.height() >= 60.0, "{row:?}");
+    assert!(h.app.renderer.variant_textures() > 0, "the presets' previews of this photo were rendered");
+}
+
+/// A finger's up or down drag scrolls the phone grid (its photos take only taps).
+#[test]
+fn a_drag_scrolls_the_phone_grid() {
+    let mut h = grid([390.0, 844.0]);
+    let before = h.app.grid_scroll.unwrap_or(0.0);
+    let r = h.request("ui.drag", json!({"x": 200.0, "y": 650.0, "toX": 204.0, "toY": 250.0, "steps": 20}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    assert!(h.app.grid_scroll.unwrap_or(0.0) > before + 100.0, "{before} → {:?}", h.app.grid_scroll);
+    assert!(h.app.ui.view != ViewMode::Detail, "the drag opened nothing");
+}
+
+/// iOS gap A2.8: choosing photos, a sideways drag from a photo chooses the run to the one under
+/// the finger; from a chosen photo it unchooses them.
+#[test]
+fn a_sideways_drag_chooses_a_run_of_photos() {
+    let mut h = grid([390.0, 844.0]);
+    h.app.ui.view = ViewMode::SquareGrid;
+    h.settle(SETTLE);
+    click(&mut h, "button:select");
+    let ids: Vec<u64> = h.app.session.visible().iter().take(3).map(|id| id.0).collect();
+    let cell = |h: &Headless, id: u64| h.app.widgets.iter().find(|(w, _)| *w == format!("thumb:{id}")).map(|(_, r)| *r).expect("cell");
+    let (a, c) = (cell(&h, ids[0]), cell(&h, ids[2]));
+    assert!((a.center().y - c.center().y).abs() < 1.0, "one row of three");
+    let r = h.request("ui.drag", json!({"x": a.center().x, "y": a.center().y, "toX": c.center().x, "toY": c.center().y + 3.0, "steps": 16}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    let mut chosen: Vec<u64> = h.app.session.selection.ids.iter().map(|i| i.0).collect();
+    chosen.sort_unstable();
+    let mut want = ids.clone();
+    want.sort_unstable();
+    assert_eq!(chosen, want, "the run of three is chosen");
+    // from a chosen photo back to the first: those two are unchosen
+    let b = cell(&h, ids[1]);
+    let r = h.request("ui.drag", json!({"x": b.center().x, "y": b.center().y, "toX": a.center().x, "toY": a.center().y, "steps": 16}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    let chosen: Vec<u64> = h.app.session.selection.ids.iter().map(|i| i.0).collect();
+    assert_eq!(chosen, vec![ids[2]], "{chosen:?}");
+}
+
 /// No menu bar on a phone: the grid's and the photo's "…" menus, and every other command in the
 /// searchable All Commands list.
 #[test]

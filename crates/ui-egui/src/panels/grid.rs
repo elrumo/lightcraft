@@ -237,7 +237,16 @@ fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     };
     let mut visible_ids = HashSet::new();
     let mut visited = 0u64;
-    egui::ScrollArea::vertical().id_salt("grid-scroll").auto_shrink([false, false]).show_viewport(ui, |ui, viewport| {
+    // a phone: a finger's drag scrolls the grid (its cells take only taps), except while a
+    // sideways drag is choosing photos (`drag_choose`)
+    let source = if !app.compact {
+        egui::scroll_area::ScrollSource::default()
+    } else if ui.data(|d| d.get_temp::<DragChoose>(egui::Id::new(DRAG_CHOOSE))).is_some() {
+        egui::scroll_area::ScrollSource { drag: egui::scroll_area::DragScroll::Never, ..Default::default() }
+    } else {
+        egui::scroll_area::ScrollSource::ALL
+    };
+    egui::ScrollArea::vertical().id_salt("grid-scroll").scroll_source(source).auto_shrink([false, false]).show_viewport(ui, |ui, viewport| {
         let (area, _) = ui.allocate_exact_size(vec2(ui.available_width(), total_h), Sense::hover());
         let origin = area.min;
         app.grid_scroll = Some(viewport.top());
@@ -261,6 +270,9 @@ fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                     stack_badge(app, ui, id, *sid, *pos, r, square);
                 }
             }
+        }
+        if app.compact && app.ui.select_mode {
+            drag_choose(app, ui, &ids, &lay, origin);
         }
         // date headers (top to bottom); the current group's header sticks to the top while its
         // photos scroll by
@@ -289,6 +301,67 @@ fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     app.caches.grid_stats.cells_visited += visited;
     app.renderer.evict_thumbs(&visible_ids, 600);
     let _ = (Color32::BLACK, StrokeKind::Inside, Stroke::NONE);
+}
+
+/// Memory key of a [`DragChoose`] in progress.
+const DRAG_CHOOSE: &str = "grid-drag-choose";
+
+/// A sideways drag over the phone's grid while choosing photos.
+#[derive(Clone, Debug)]
+struct DragChoose {
+    /// Where the drag began (index into the grid's photos).
+    start: usize,
+    /// Choosing (the first photo wasn't chosen) or unchoosing.
+    adding: bool,
+    /// What was chosen before the drag.
+    base: Vec<u64>,
+    /// The photo under the finger last frame.
+    last: Option<usize>,
+}
+
+/// Choosing photos by touch, as iOS Photos does: a drag that sets off sideways from a photo
+/// chooses the run of photos from it to the one under the finger (or unchooses them when the
+/// first was chosen); an up or down drag scrolls instead.
+fn drag_choose(app: &mut LightcraftApp, ui: &egui::Ui, ids: &[PhotoId], lay: &GridLayout, origin: egui::Pos2) {
+    let key = egui::Id::new(DRAG_CHOOSE);
+    let (down, press, pos) = ui.input(|i| (i.pointer.primary_down(), i.pointer.press_origin(), i.pointer.interact_pos()));
+    let at = |p: egui::Pos2| -> Option<usize> {
+        let local = p - origin.to_vec2();
+        rows_between(&lay.rows, local.y, local.y).iter().flat_map(|r| r.start..r.end).find(|i| lay.cells.get(*i).is_some_and(|c| c.contains(local)))
+    };
+    let mut state: Option<DragChoose> = ui.data(|d| d.get_temp(key));
+    if !down {
+        if state.is_some() {
+            ui.data_mut(|d| d.remove::<DragChoose>(key));
+        }
+        return;
+    }
+    if state.is_none()
+        && let (Some(o), Some(p)) = (press, pos)
+    {
+        let d = p - o;
+        if d.x.abs() >= 12.0
+            && d.x.abs() >= 2.0 * d.y.abs()
+            && let Some(start) = at(o)
+            && let Some(first) = ids.get(start)
+        {
+            let adding = !app.session.selection.contains(*first);
+            state = Some(DragChoose { start, adding, base: app.session.selection.ids.iter().map(|i| i.0).collect(), last: None });
+        }
+    }
+    let Some(mut s) = state else { return };
+    if let Some(cur) = pos.and_then(at)
+        && s.last != Some(cur)
+    {
+        s.last = Some(cur);
+        let run: HashSet<u64> = ids.get(s.start.min(cur)..=s.start.max(cur)).unwrap_or(&[]).iter().map(|i| i.0).collect();
+        let mut chosen: Vec<u64> = s.base.iter().copied().filter(|i| s.adding || !run.contains(i)).collect();
+        if s.adding {
+            chosen.extend(ids.iter().map(|i| i.0).filter(|i| run.contains(i) && !s.base.contains(i)));
+        }
+        let _ = app.run("library.select", json!({"ids": chosen}));
+    }
+    ui.data_mut(|d| d.insert_temp(key, s));
 }
 
 /// Should a scrolling photo strip (`key`: the grid, the filmstrip) bring the active photo into
@@ -478,7 +551,8 @@ pub const BACKGROUND_THUMB_PRIORITY: u32 = 3;
 fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square: bool, onscreen: bool, ppp: f32) {
     let t = Tokens::get(ui.ctx());
     let Some(photo) = app.session.catalog.photo(id).cloned() else { return };
-    let resp = ui.interact(r, egui::Id::new(("cell", id.0)), Sense::click_and_drag());
+    // (a phone's cells take only taps and long presses: a drag scrolls the grid)
+    let resp = ui.interact(r, egui::Id::new(("cell", id.0)), if app.compact { Sense::click() } else { Sense::click_and_drag() });
     register(ui.ctx(), format!("thumb:{}", id.0), r);
     let selected = app.session.selection.contains(id);
     // screen readers: the file, then rating / flag / label
@@ -684,7 +758,6 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
     resp.context_menu(|ui| context_menu(app, ui, id));
 }
 
-/// Choosing photos by touch: a circle at the cell's top right, filled with a check when chosen.
 /// The part of a `w` × `h` texture that fills a square (the middle of its long side).
 pub fn cover_uv(w: f32, h: f32) -> Rect {
     let (w, h) = (w.max(1.0), h.max(1.0));
@@ -697,6 +770,7 @@ pub fn cover_uv(w: f32, h: f32) -> Rect {
     }
 }
 
+/// Choosing photos by touch: a circle at the cell's top right, filled with a check when chosen.
 fn check_badge(ui: &egui::Ui, img: Rect, selected: bool, t: &Tokens) {
     let p = ui.painter();
     let c = pos2(img.right() - 15.0, img.top() + 15.0);
