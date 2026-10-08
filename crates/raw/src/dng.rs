@@ -2,7 +2,7 @@
 //! linearization, black/white levels, active area, default crop, CFA description, colour tags, opcode lists.
 
 use crate::profile::{HsvTable, ProfileLook, ToneCurve};
-use crate::tiffraw::{Packing, read_image_in};
+use crate::tiffraw::{BinSpec, Packing, read_binned, read_image_in};
 use crate::{BlackLevel, Cfa, ColorData, Mat3, Mode, RawData, RawError, RawFormat, RawImage, Rect, Result, opcodes};
 use lightcraft_color::Xy;
 use lightcraft_geom::Orientation;
@@ -70,7 +70,63 @@ pub(crate) fn profile_look(ifd0: &Ifd, raw: &Ifd) -> ProfileLook {
     }
 }
 
+/// Final position of each of `n` stored rows (or columns) that hold `f` interleaved fields one after the other:
+/// field `i` has the final rows `i`, `i + f`, `i + 2f`…, and earlier fields take the remainder when `f` doesn't
+/// divide `n`.
+fn field_positions(n: usize, f: usize) -> Vec<usize> {
+    (0..f).flat_map(|field| (0..n.saturating_sub(field).div_ceil(f)).map(move |k| k * f + field)).collect()
+}
+
+/// Undo `RowInterleaveFactor` / `ColumnInterleaveFactor` (DNG 1.2 / 1.7.1): Adobe's lossy JPEG XL mosaics store the
+/// four colour planes of a 2×2 pattern as quarter-size fields, which compress better. It is a pass over the whole
+/// frame — a tile may straddle two fields. A no-op without the tags or without samples (header mode).
+fn deinterleave(raw: &Ifd, data: &mut RawData, w: usize, h: usize, cpp: usize) -> Result<()> {
+    let factor = |tag, n: usize| match raw.u64(tag) {
+        None | Some(0 | 1) => Ok(1),
+        Some(f) => match usize::try_from(f) {
+            Ok(f) if f <= n.min(64) => Ok(f),
+            _ => Err(RawError::Corrupt(format!("interleave factor {f} for {n} samples"))),
+        },
+    };
+    let (rows, cols) = (factor(t::ROW_INTERLEAVE_FACTOR, h)?, factor(t::COLUMN_INTERLEAVE_FACTOR, w)?);
+    if (rows, cols) == (1, 1) {
+        return Ok(());
+    }
+    fn go<T: Copy>(src: &[T], w: usize, cpp: usize, ry: &[usize], rx: &[usize]) -> Option<Vec<T>> {
+        let mut out = src.to_vec();
+        for (sy, &fy) in ry.iter().enumerate() {
+            for (sx, &fx) in rx.iter().enumerate() {
+                let (s, d) = ((sy * w + sx) * cpp, (fy * w + fx) * cpp);
+                out.get_mut(d..d + cpp)?.copy_from_slice(src.get(s..s + cpp)?);
+            }
+        }
+        Some(out)
+    }
+    let (ry, rx) = (field_positions(h, rows), field_positions(w, cols));
+    let done = match data {
+        RawData::U16(v) if !v.is_empty() => go(v, w, cpp, &ry, &rx).map(RawData::U16),
+        RawData::F32(v) if !v.is_empty() => go(v, w, cpp, &ry, &rx).map(RawData::F32),
+        _ => return Ok(()),
+    };
+    *data = done.ok_or_else(|| RawError::Corrupt("interleaved image smaller than its size".into()))?;
+    Ok(())
+}
+
 pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
+    decode_with(bytes, mode, None)?.ok_or_else(|| RawError::Unsupported("binned decode of this image".into()))
+}
+
+/// A decode that reduces the image while reading it ([`crate::decode_binned`]).
+pub(crate) struct Bin {
+    pub k: usize,
+    pub clip: f32,
+}
+
+/// [`decode`], or with `bin` the image reduced to `k × k` blocks as its tiles are decoded: the returned image is the
+/// binned one (an ordinary, smaller `RawImage`, its crop applied), and the full-size samples are never held. `None`
+/// when `bin` was asked for and the image can't be binned that way: only three-samples-per-pixel integer data with
+/// a flat black level and no opcodes (Apple ProRAW, Adobe's linear DNGs) can.
+pub(crate) fn decode_with(bytes: &[u8], mode: Mode, bin: Option<Bin>) -> Result<Option<RawImage>> {
     let tiff = Tiff::parse(bytes)?;
     let ifd0 = &tiff.ifds[0];
     let raw = raw_ifd(&tiff).ok_or_else(|| RawError::Corrupt("DNG without a raw image IFD".into()))?;
@@ -79,27 +135,11 @@ pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
     if !(1..=4).contains(&cpp) {
         return Err(RawError::Unsupported(format!("{cpp} samples per pixel")));
     }
-    if info.compression == t::compression::JPEG_XL {
-        return Err(RawError::Unsupported("JPEG XL DNG".into()));
-    }
-    let mut data = read_image_in(mode, bytes, &info, tiff.order, Packing::Msb)?;
+    let white_tag: Vec<f32> = raw.f64s(t::WHITE_LEVEL).unwrap_or_default().into_iter().map(|v| v as f32).filter(|v| *v > 0.0).collect();
     let bits = info.bits() as u32;
-
-    // linearization table (integer data only)
-    let mut linearized = false;
-    if let (RawData::U16(v), Some(table)) = (&mut data, raw.u64s(t::LINEARIZATION_TABLE).filter(|t| !t.is_empty())) {
-        let table: Vec<u16> = table.iter().map(|&x| x.min(65535) as u16).collect();
-        let last = table.len() - 1;
-        v.iter_mut().for_each(|s| *s = table[(*s as usize).min(last)]);
-        linearized = true;
-    }
-
-    let float = matches!(data, RawData::F32(_));
+    let float = info.sample_format == 3;
     let default_white = if float { 1.0 } else { ((1u64 << bits.min(16)) - 1) as f32 };
-    let mut white: Vec<f32> = raw.f64s(t::WHITE_LEVEL).unwrap_or_default().into_iter().map(|v| v as f32).filter(|v| *v > 0.0).collect();
-    if white.is_empty() {
-        white = vec![default_white];
-    }
+    let white = if white_tag.is_empty() { vec![default_white] } else { white_tag.clone() };
 
     let dim = raw.u64s(t::BLACK_LEVEL_REPEAT_DIM).unwrap_or_default();
     let (br, bc) = match dim.as_slice() {
@@ -162,10 +202,60 @@ pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
     let mut metadata = lightcraft_meta::from_tiff(&tiff);
     metadata.width = Some(crop.width as u32);
     metadata.height = Some(crop.height as u32);
+
+    // `WhiteLevel` speaks of the values after the linearization table (Apple's ProRAW has a 1024-entry one over 10-bit
+    // codes and a white level of 65535), so only without a table does it say how to scale JPEG XL samples
+    let table: Option<Vec<u16>> =
+        raw.u64s(t::LINEARIZATION_TABLE).filter(|t| !t.is_empty()).map(|t| t.iter().map(|&x| x.min(65535) as u16).collect());
+    let jxl_white = if table.is_some() { None } else { white_tag.iter().copied().reduce(f32::max) };
+    let (mut width, mut height, mut active_area, mut crop) = (w, h, active_area, crop);
+    let data = match bin {
+        Some(b) => {
+            // the region binned is the default crop, unless that is smaller than a block
+            let region = if crop.width >= b.k && crop.height >= b.k { crop } else { Rect::new(0, 0, active_area.width, active_area.height) };
+            let (bw, bh) = (region.width / b.k.max(1), region.height / b.k.max(1));
+            let flat_black = black.delta_h.is_empty() && black.delta_v.is_empty() && black.repeat_rows <= 1 && black.repeat_cols <= 1;
+            let no_opcodes = opcodes.list1.is_empty() && opcodes.list2.is_empty() && opcodes.list3.is_empty();
+            if mode != Mode::Full
+                || cfa.is_some()
+                || cpp != 3
+                || info.planar == 2
+                || float
+                || !flat_black
+                || !no_opcodes
+                || !(2..=64).contains(&b.k)
+                || bw == 0
+                || bh == 0
+            {
+                return Ok(None);
+            }
+            let clip_at: [f32; 3] = std::array::from_fn(|s| {
+                let white = white.get(s).or_else(|| white.first()).copied().unwrap_or(65535.0);
+                let black = black.at(0, 0, s, 3);
+                black + b.clip * (white - black)
+            });
+            let spec =
+                BinSpec { k: b.k, origin: (active_area.x + region.x, active_area.y + region.y), size: (bw, bh), table: table.as_deref(), clip_at };
+            let data = read_binned(bytes, &info, tiff.order, jxl_white, &spec)?;
+            (width, height) = (bw, bh);
+            active_area = Rect::new(0, 0, bw, bh);
+            crop = active_area;
+            data
+        }
+        None => {
+            let mut data = read_image_in(mode, bytes, &info, tiff.order, Packing::Msb, jxl_white)?;
+            deinterleave(raw, &mut data, w, h, cpp)?;
+            if let (RawData::U16(v), Some(table)) = (&mut data, &table) {
+                let last = table.len() - 1;
+                v.iter_mut().for_each(|s| *s = table[(*s as usize).min(last)]);
+            }
+            data
+        }
+    };
     let img = RawImage {
         format: RawFormat::Dng,
-        width: w,
-        height: h,
+        width,
+        height,
         cpp,
         data,
         cfa,
@@ -177,10 +267,10 @@ pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
         orientation: Orientation::from_exif(ifd0.u16(t::ORIENTATION).unwrap_or(1)),
         color: color_data(ifd0, raw),
         wb_multipliers: None,
-        linearized,
+        linearized: table.is_some(),
         opcodes,
         metadata,
     };
     img.validate_for(mode)?;
-    Ok(img)
+    Ok(Some(img))
 }
