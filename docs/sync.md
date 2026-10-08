@@ -139,6 +139,13 @@ The data folder, the listen address and the domain are deployment settings, so t
 them: `--data` / `LIGHTCRAFT_DATA`, `--listen` / `LIGHTCRAFT_LISTEN`, and the domain in the reverse proxy
 (`LIGHTCRAFT_DOMAIN` with the compose file). Its JSON API is under `/api/admin/` (`apps/lightcraft-server/src/admin.rs`).
 
+## Search by description
+
+The server can also search each user's photos by what is in them, so the web build, iOS and other
+computers need no model: `GET /api/search?q=…`, an index of vectors per user that devices may add to, and
+`lightcraft-server model download --accept-licences` to install the model (about 1.5 GB, loaded on first use, ~1.9 GB of
+memory while loaded). Routes, privacy and limits: [`search-people.md`](search-people.md).
+
 ## Library folders: photos already on the server
 
 A self-hosted server usually sits next to the photos: a NAS share, a backup disk, folders of past years. An admin

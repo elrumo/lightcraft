@@ -168,7 +168,7 @@ impl Done {
     pub fn failed(id: u64, why: impl Into<String>) -> Done {
         Done { id, status: 0, body: why.into() }
     }
-    fn ok(&self) -> bool {
+    pub(crate) fn ok(&self) -> bool {
         (200..300).contains(&self.status)
     }
 }
@@ -239,6 +239,10 @@ pub struct SyncState {
     login: Option<proto::Login>,
     control: Option<(u64, Control)>,
     jobs: HashMap<u64, Job>,
+    /// Requests beside the library's own sync (search by description through the server): what
+    /// each one is for, and the ones waiting to be handed to the host.
+    pub(crate) aux: HashMap<u64, crate::vision::Aux>,
+    pub(crate) aux_ready: VecDeque<Task>,
     /// Upload steps ready to go (the next step of a finished one).
     ready: VecDeque<Job>,
     /// When to pull next (`None`: now).
@@ -288,6 +292,8 @@ impl SyncState {
             login: None,
             control: None,
             jobs: HashMap::new(),
+            aux: HashMap::new(),
+            aux_ready: VecDeque::new(),
             ready: VecDeque::new(),
             pull_at: None,
             retry_at: None,
@@ -364,7 +370,7 @@ impl SyncState {
         format!("{}{path}", self.config.server.trim_end_matches('/'))
     }
 
-    fn http(&mut self, method: &'static str, path: &str, body: Body, save_to: Option<String>) -> Task {
+    pub(crate) fn http(&mut self, method: &'static str, path: &str, body: Body, save_to: Option<String>) -> Task {
         let id = NEXT_TASK.fetch_add(1, Ordering::Relaxed);
         Task::Http { id, method, url: self.url(path), token: self.config.token.clone(), body, save_to }
     }
@@ -747,6 +753,10 @@ impl Session {
         }
         let now = Instant::now();
         let mut tasks = Vec::new();
+        // (search questions don't wait for the library's own sync to be idle)
+        if !st.config.token.is_empty() {
+            tasks.extend(st.aux_ready.drain(..));
+        }
         let waiting = st.retry_at.is_some_and(|t| now < t);
         // a slider drag holds a preview value in the catalog: nothing changes it meanwhile
         if st.control.is_none() && !waiting && self.interaction.is_none() {
@@ -949,6 +959,8 @@ impl Session {
             if let Some((_, c)) = st.control.take() {
                 self.control_done(&mut st, c, &done);
             }
+        } else if let Some(aux) = st.aux.remove(&done.id) {
+            self.vision_server_done(&mut st, aux, &done);
         } else if let Some(job) = st.jobs.remove(&done.id) {
             self.job_done(&mut st, job, &done);
         }

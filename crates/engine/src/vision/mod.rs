@@ -32,6 +32,15 @@ use serde_json::{Value, json};
 use crate::media::{RenderJob, content_key};
 use crate::{Session, guard, memory};
 
+mod server;
+pub(crate) use server::Aux;
+
+/// A number that is never used twice in this process (temporary file names).
+pub(crate) fn next_id() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed)
+}
+
 /// Long edge of the rendering a photo is embedded from.
 const THUMB_EDGE: usize = 512;
 /// Photos embedded in one model pass.
@@ -162,7 +171,12 @@ pub struct Vision {
     /// Run work in the background and apply results in [`Session::vision_poll`] (the desktop
     /// app); otherwise commands wait for their result (CLI, MCP, tests).
     pub background: bool,
+    /// Send this library's search vectors to the server it syncs with, so the server and the
+    /// user's other devices needn't compute them again. Off until the user turns it on
+    /// (persisted in the library's prefs.json).
+    pub share_with_server: bool,
     injected: Option<Arc<dyn Embedder>>,
+    remote: server::Remote,
     shared: Arc<Shared>,
     job: Option<Arc<IndexJob>>,
     job_reported: bool,
@@ -181,7 +195,9 @@ impl Default for Vision {
             dir: None,
             mirrors_file: None,
             background: false,
+            share_with_server: false,
             injected: None,
+            remote: server::Remote::default(),
             shared: Arc::new(Shared::default()),
             job: None,
             job_reported: true,
@@ -197,9 +213,42 @@ impl Default for Vision {
 }
 
 impl Vision {
-    /// Whether this build can search by description at all (or a host supplied a model).
-    pub fn available(&self) -> bool {
+    /// Whether this device can run the search model (this build has it, or a host supplied one).
+    pub fn local_available(&self) -> bool {
         cfg!(feature = "vision") || self.injected.is_some()
+    }
+
+    /// Whether searching by description is possible here: with the model on this device, or
+    /// through the server the library syncs with (which says so when asked).
+    pub fn available(&self) -> bool {
+        self.local_available() || self.remote.supported()
+    }
+
+    /// Takes `status` as what the sync server said about its search, as if it had just answered
+    /// (tests of a UI that has no server to ask).
+    #[doc(hidden)]
+    pub fn set_server_status(&mut self, status: Option<Value>) {
+        self.remote.set_status(status);
+    }
+
+    /// The sync server can search now (its model is installed).
+    pub fn server_ready(&self) -> bool {
+        self.remote.ready()
+    }
+
+    /// What the sync server last said about its search: `{available, installed, indexed, total, …}`.
+    pub fn server_status(&self) -> Option<&Value> {
+        self.remote.status.as_ref()
+    }
+
+    /// The local vectors are being sent to the server.
+    pub fn sharing(&self) -> bool {
+        self.remote.share.running
+    }
+
+    /// Why the last send of the local vectors failed.
+    pub fn share_error(&self) -> Option<&str> {
+        self.remote.share.error.as_deref()
     }
 
     /// Use `model` instead of loading SigLIP 2 from the model folder (tests, other hosts).
@@ -236,7 +285,7 @@ impl Vision {
 
     /// Whether a search is running.
     pub fn searching(&self) -> bool {
-        self.searching.load(Ordering::SeqCst) > 0
+        self.searching.load(Ordering::SeqCst) > 0 || self.remote.pending_seq.is_some()
     }
 
     /// The indexing run in progress or the last one.
@@ -274,7 +323,7 @@ impl Vision {
     /// Start downloading the model on a background thread. `Ok(false)` when it is installed or
     /// downloading already.
     pub fn start_download(&self) -> Result<bool, String> {
-        if !self.available() {
+        if !self.local_available() {
             return Err("natural-language search is not available in this build".into());
         }
         if self.installed() {
@@ -303,6 +352,17 @@ impl Vision {
         return self.download.cancel();
         #[cfg(not(feature = "vision"))]
         false
+    }
+
+    /// The local model's id and vector length, installed or not (what an index on disk was made with).
+    fn spec_only(&self) -> Result<(String, usize), String> {
+        if let Some(m) = &self.injected {
+            return Ok((m.model_id().to_string(), m.dim()));
+        }
+        #[cfg(feature = "vision")]
+        return Ok((lightcraft_vision::siglip::MODEL_ID.to_string(), lightcraft_vision::siglip::DIM));
+        #[cfg(not(feature = "vision"))]
+        Err("this device has no search data to send".into())
     }
 
     /// What the model is and how to reach it from a worker thread, or why it can't be.
@@ -526,6 +586,9 @@ impl Session {
         let photos = self.catalog.photos().filter(|p| p.in_library()).count();
         json!({
             "available": v.available(),
+            "localAvailable": v.local_available(),
+            "server": {"supported": v.remote.supported(), "ready": v.remote.ready(), "status": v.remote.status},
+            "share": {"enabled": v.share_with_server, "running": v.remote.share.running, "sent": v.remote.share.sent, "error": v.remote.share.error},
             "installed": v.installed(),
             "dir": v.dir.as_ref().map(|d| d.display().to_string()),
             "loaded": v.loaded(),
@@ -597,14 +660,46 @@ impl Session {
         Ok(job.json())
     }
 
+    /// Whether this device's own index holds a vector for every photo of the library.
+    fn vision_local_covers(&self) -> bool {
+        let Ok((_, model, dim)) = self.vision.provider() else { return false };
+        let spec = IndexSpec { path: self.vision_index_path(&model), model, dim };
+        let total = self.vision_photo_count();
+        total > 0 && with_index(&self.vision.shared, &spec, |ix| ix.len()).is_ok_and(|n| n >= total)
+    }
+
     /// Search by description (`library.search`): the best `limit` photos, best first, as the
-    /// view's filter. With `wait` (or without [`Vision::background`]) the result is applied here;
-    /// otherwise a thread computes it and [`Session::vision_poll`] applies it.
+    /// view's filter. `source`: `local` (this device's model and index), `server` (the sync
+    /// server's) or `auto` (this device's when its index covers the whole library, else the
+    /// server's, else whatever of this device's there is). With `wait` (or without
+    /// [`Vision::background`]) the result is applied here; otherwise it is computed in the
+    /// background and [`Session::vision_poll`] applies it.
     #[cfg_attr(target_arch = "wasm32", allow(unused_variables))]
-    pub fn vision_search(&mut self, query: &str, limit: usize, wait: bool) -> std::result::Result<Value, String> {
+    pub fn vision_search(&mut self, query: &str, limit: usize, wait: bool, source: &str) -> std::result::Result<Value, String> {
         let query: String = query.trim().chars().take(MAX_QUERY).collect();
         if query.is_empty() {
             return Err("describe the photo you are looking for".into());
+        }
+        let limit = limit.clamp(1, MAX_LIMIT);
+        let local = self.vision.local_available() && self.vision.installed();
+        let server = self.vision.remote.ready() && self.vision_signed_in();
+        let use_server = match source {
+            "local" => false,
+            "server" => true,
+            "auto" | "" => !(local && self.vision_local_covers()) && server,
+            other => return Err(format!("unknown source `{other}` (auto|local|server)")),
+        };
+        if use_server {
+            return self.vision_server_search(&query, limit, wait);
+        }
+        if !local {
+            return Err(match (self.vision.local_available(), self.vision_signed_in()) {
+                (true, _) => self.vision.provider().err().unwrap_or_default(),
+                (false, true) => "this server can't search by description yet: its search model isn't installed".into(),
+                (false, false) => {
+                    "search by description needs a LightCraft server with the search model installed, and this library isn't signed in to one".into()
+                }
+            });
         }
         let (provider, model, dim) = self.vision.provider()?;
         let spec = IndexSpec { path: self.vision_index_path(&model), model, dim };
@@ -612,7 +707,6 @@ impl Session {
         if known == 0 {
             return Err("no photos are indexed for search yet: run `vision.index` first".into());
         }
-        let limit = limit.clamp(1, MAX_LIMIT);
         self.vision.search_seq += 1;
         let seq = self.vision.search_seq;
         let shared = self.vision.shared.clone();
@@ -634,11 +728,10 @@ impl Session {
                 return Err(format!("could not start the search: {e}"));
             }
         }
-        Ok(json!({"query": query, "status": "searching", "indexed": known}))
+        Ok(json!({"query": query, "status": "searching", "source": "local", "indexed": known}))
     }
 
-    /// Sets the view to `hits` (best first) for `query`; photos by content, so virtual copies of
-    /// a hit come with it. An empty result is an empty view, not "everything".
+    /// This device's hits as photos (by content, so virtual copies of a hit come with it).
     fn apply_hits(&mut self, query: &str, hits: &[Hit]) -> Value {
         let by_key = self.vision_keys();
         let mut found: Vec<(PhotoId, f32)> = Vec::new();
@@ -647,13 +740,20 @@ impl Session {
                 found.push((*id, h.score));
             }
         }
+        self.apply_ids(query, &found, "local")
+    }
+
+    /// Sets the view to `found` (best first) for `query`. An empty result is an empty view, not
+    /// "everything".
+    fn apply_ids(&mut self, query: &str, found: &[(PhotoId, f32)], source: &str) -> Value {
         self.filter.only = found.iter().map(|(id, _)| *id).collect();
         self.filter.semantic = Some(query.to_string());
         json!({
             "query": query,
+            "source": source,
             "photos": found.iter().map(|(id, score)| json!({"id": id.0, "score": (f64::from(*score) * 1e4).round() / 1e4})).collect::<Vec<_>>(),
             "indexed": self.vision.indexed(),
-            "libraryPhotos": by_key.values().map(Vec::len).sum::<usize>(),
+            "libraryPhotos": self.vision_photo_count(),
         })
     }
 
@@ -688,6 +788,7 @@ impl Session {
             });
         }
         out.messages.append(&mut self.vision.messages);
+        self.vision_server_poll(&mut out);
         self.vision_open_in_background();
         self.vision_unload_if_idle();
         out

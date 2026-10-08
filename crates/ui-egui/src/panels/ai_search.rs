@@ -97,10 +97,40 @@ enum Panel {
     Error(String),
     Install,
     Downloading,
-    Indexing { done: usize, total: usize },
-    Partial { indexed: usize, total: usize },
+    Indexing {
+        done: usize,
+        total: usize,
+    },
+    Partial {
+        indexed: usize,
+        total: usize,
+    },
+    /// The sync server can search, but its model isn't installed (this device has none either).
+    ServerNoModel,
+    /// The sync server is getting the photos ready (this device searches through it).
+    ServerIndexing {
+        indexed: usize,
+        total: usize,
+    },
     Searching,
     Hint,
+}
+
+impl Panel {
+    /// Which panel this is, for the widget id (`panel:describe:<name>`).
+    fn name(&self) -> &'static str {
+        match self {
+            Panel::Error(_) => "error",
+            Panel::Install => "install",
+            Panel::Downloading => "downloading",
+            Panel::Indexing { .. } => "indexing",
+            Panel::Partial { .. } => "partial",
+            Panel::ServerNoModel => "serverNoModel",
+            Panel::ServerIndexing { .. } => "serverIndexing",
+            Panel::Searching => "searching",
+            Panel::Hint => "hint",
+        }
+    }
 }
 
 /// Once per frame: apply finished work (a search, a download, a finished index), announce what
@@ -156,13 +186,24 @@ pub fn panel(app: &mut LightcraftApp, ctx: &egui::Context, field: Rect) {
         .filter(|j| !j.finished.load(std::sync::atomic::Ordering::Relaxed))
         .map(|j| (j.done.load(std::sync::atomic::Ordering::Relaxed), j.total));
     let (installed, searching, indexed) = (v.installed(), v.searching(), v.indexed());
+    let (local, server_ready) = (v.local_available(), v.server_ready());
+    // what the sync server has done, when this device searches through it
+    let server = v.server_status().map(|s| (s["indexed"].as_u64().unwrap_or(0) as usize, s["total"].as_u64().unwrap_or(0) as usize));
     let total = if installed { total_photos(app) } else { 0 };
     let which = if let Some(e) = app.ui.ai_search_error.clone() {
         Panel::Error(e)
     } else if download["running"].as_bool() == Some(true) {
         Panel::Downloading
+    } else if !installed && !server_ready {
+        if local { Panel::Install } else { Panel::ServerNoModel }
     } else if !installed {
-        Panel::Install
+        // no model on this device: the server's
+        match server {
+            _ if searching => Panel::Searching,
+            Some((indexed, total)) if indexed < total => Panel::ServerIndexing { indexed, total },
+            _ if app.ui.search.trim().is_empty() => Panel::Hint,
+            _ => return,
+        }
     } else if let Some((done, total)) = running_job {
         Panel::Indexing { done, total }
     } else if searching {
@@ -175,16 +216,32 @@ pub fn panel(app: &mut LightcraftApp, ctx: &egui::Context, field: Rect) {
         return;
     };
     let t = Tokens::get(ctx);
-    egui::Area::new(egui::Id::new("describe-panel")).order(egui::Order::Foreground).fixed_pos(pos2(field.left(), field.bottom() + 6.0)).show(
-        ctx,
-        |ui| {
+    let shown = egui::Area::new(egui::Id::new("describe-panel"))
+        .order(egui::Order::Foreground)
+        .fixed_pos(pos2(field.left(), field.bottom() + 6.0))
+        .show(ctx, |ui| {
             egui::Frame::new().fill(t.chrome).stroke(Stroke::new(1.0, t.field_border)).corner_radius(6.0).inner_margin(12.0).show(ui, |ui| {
                 ui.set_width((field.width() - 24.0).max(240.0));
                 ui.spacing_mut().item_spacing.y = 6.0;
                 body(app, ui, &which, &download, &t);
             });
-        },
-    );
+        });
+    register(ctx, format!("panel:describe:{}", which.name()), shown.response.rect);
+}
+
+/// For a device that has the model, next to a server that can search: whether to send it the
+/// search data, so the server and the user's other devices needn't compute it again.
+fn share_row(app: &mut LightcraftApp, ui: &mut egui::Ui) {
+    let v = &app.session.vision;
+    if !v.installed() || !v.server_status().is_some_and(|s| s["available"].as_bool() == Some(true)) {
+        return;
+    }
+    let mut on = v.share_with_server;
+    let r = crate::widgets::check(ui, &mut on, crate::i18n::tr("Send the search data to my server, so my other devices can search too"));
+    register(ui.ctx(), "check:describeShare", r.rect);
+    if r.changed() {
+        let _ = app.run("vision.setShare", json!({"on": on}));
+    }
 }
 
 fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, which: &Panel, download: &serde_json::Value, t: &Tokens) {
@@ -214,8 +271,10 @@ fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, which: &Panel, download: &se
                 .color(t.text_label),
             );
             ui.label(
-                egui::RichText::new(crate::i18n::tr("Your photos are then indexed on this computer; nothing about them leaves it."))
-                    .color(t.text_dim),
+                egui::RichText::new(crate::i18n::tr(
+                    "Your photos are then indexed on this computer. Nothing is sent anywhere unless you choose to share it with your own server.",
+                ))
+                .color(t.text_dim),
             );
             let r = ui.link(crate::i18n::tr("Read the licence")).on_hover_text(LICENSE_URL);
             register(ui.ctx(), "link:describeLicense", r.rect);
@@ -262,6 +321,7 @@ fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, which: &Panel, download: &se
         }
         Panel::Partial { indexed, total } => {
             ui.label(crate::i18n::tr_format!("{indexed} of {total} photos can be searched.", indexed = indexed, total = total));
+            share_row(app, ui);
             let r = ui.button(crate::i18n::tr("Prepare the Rest"));
             register(ui.ctx(), "button:describeIndex", r.rect);
             if r.clicked()
@@ -270,10 +330,22 @@ fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, which: &Panel, download: &se
                 app.ui.ai_search_error = Some(plain(&e));
             }
         }
+        Panel::ServerNoModel => {
+            ui.label(crate::i18n::tr("Your server can search by description, but its search model isn't installed yet."));
+            ui.label(
+                egui::RichText::new(crate::i18n::tr("Whoever runs the server installs it with: lightcraft-server model download --accept-licences"))
+                    .color(t.text_dim),
+            );
+        }
+        Panel::ServerIndexing { indexed, total } => {
+            ui.label(crate::i18n::tr_format!("Your server has {indexed} of {total} photos ready to search.", indexed = indexed, total = total));
+            ui.label(egui::RichText::new(crate::i18n::tr("It keeps going in the background; search the ones that are ready now.")).color(t.text_dim));
+        }
         Panel::Searching => {
             ui.label(egui::RichText::new(crate::i18n::tr("Searching…")).color(t.text_label));
         }
         Panel::Hint => {
+            share_row(app, ui);
             ui.label(
                 egui::RichText::new(crate::i18n::tr("Describe what you're looking for, for example “a dog on a beach at sunset”, and press Return."))
                     .color(t.text_dim),

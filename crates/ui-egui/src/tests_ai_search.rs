@@ -150,3 +150,67 @@ fn an_error_shows_under_the_field_and_goes_away() {
     click(&mut h, "button:describeDismiss");
     assert_eq!(h.app.ui.ai_search_error, None);
 }
+
+#[test]
+fn a_device_without_the_model_searches_through_a_server_that_can() {
+    let mut h = window(false);
+    h.app.session.vision.set_server_status(Some(json!({"available": true, "installed": true, "indexed": 2, "total": 4})));
+    h.step();
+    // the switch is there because the server can search; turning it on offers no download
+    assert!(has(&h, "button:describeSearch"));
+    click(&mut h, "button:describeSearch");
+    h.step();
+    assert!(h.app.ui.ai_search);
+    assert!(!has(&h, "button:describeDownload") && !has(&h, "link:describeLicense"), "the server has the model: nothing to install here");
+    // it says how far the server has got
+    assert!(
+        has(&h, "panel:describe:serverIndexing"),
+        "{:?}",
+        h.app.widgets.iter().filter(|(w, _)| w.starts_with("panel:describe")).collect::<Vec<_>>()
+    );
+    // and once the server has everything, only the hint is left
+    h.app.session.vision.set_server_status(Some(json!({"available": true, "installed": true, "indexed": 4, "total": 4})));
+    h.step();
+    h.step();
+    assert!(has(&h, "panel:describe:hint"));
+    assert!(!h.app.session.vision.installed());
+}
+
+#[test]
+fn a_server_whose_model_is_not_installed_says_so() {
+    let mut h = window(false);
+    h.app.session.vision.set_server_status(Some(json!({"available": true, "installed": false, "indexed": 0, "total": 4})));
+    h.step();
+    click(&mut h, "button:describeSearch");
+    h.step();
+    if h.app.session.vision.local_available() {
+        // this build could run the model itself: it offers that (not the server's)
+        assert!(has(&h, "panel:describe:install"));
+    } else {
+        assert!(has(&h, "panel:describe:serverNoModel"));
+        assert!(!has(&h, "button:describeDownload"), "nothing to download on a device that can't run the model");
+    }
+}
+
+#[test]
+fn a_server_that_cannot_search_adds_no_switch() {
+    let mut h = window(false);
+    h.app.session.vision.set_server_status(Some(json!({"available": false})));
+    h.step();
+    assert_eq!(has(&h, "button:describeSearch"), h.app.session.vision.local_available());
+}
+
+#[test]
+fn the_choice_to_send_search_data_to_the_server_is_a_checkbox_where_it_applies() {
+    let mut h = window(true);
+    h.app.session.vision.set_server_status(Some(json!({"available": true, "installed": true, "indexed": 4, "total": 4})));
+    click(&mut h, "button:describeSearch");
+    until(&mut h, "the index", indexed);
+    h.settle(Duration::from_secs(5));
+    assert!(has(&h, "check:describeShare"), "this device has the model and the server can search");
+    assert!(!h.app.session.vision.share_with_server, "off until the user turns it on");
+    click(&mut h, "check:describeShare");
+    assert!(h.app.session.vision.share_with_server);
+    click(&mut h, "check:describeShare");
+    assert!(!h.app.session.vision.share_with_server);
+}

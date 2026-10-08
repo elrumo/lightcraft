@@ -199,10 +199,10 @@ fn a_device_sends_the_vectors_it_computed() {
     assert_eq!(ids.len(), 4);
 
     // the keys the server has: four, for this model
-    let mut keys =
-        agent().get(format!("{}/api/index/embeddings/keys", f.ann.url)).header("Authorization", format!("Bearer {}", f.ann.token)).call().unwrap();
-    assert_eq!(keys.headers().get("X-Model").unwrap().to_str().unwrap(), FAKE_ID);
-    assert_eq!(keys.body_mut().read_to_vec().unwrap().len(), 4 * 16);
+    let (status, keys) = get(&f.ann, "/api/index/embeddings/keys");
+    assert_eq!((status, keys["model"].as_str(), keys["dim"].as_u64()), (200, Some(FAKE_ID), Some(FAKE_DIM as u64)), "{keys}");
+    assert_eq!(keys["keys"].as_array().unwrap().len(), 4);
+    assert!(keys["keys"].as_array().unwrap().iter().all(|k| Key::from_hex(k.as_str().unwrap()).is_some()));
 
     // a photo that is not in ann's library is skipped, never kept
     let mut device = EmbeddingIndex::in_memory(FAKE_ID, FAKE_DIM).unwrap();
@@ -283,4 +283,170 @@ fn photos_added_later_are_indexed_and_restarts_keep_the_index() {
     let ann = login(&server, "ann", "correct horse");
     assert_eq!(get(&ann, "/api/search/status").1["indexed"], 5);
     assert_eq!(get(&ann, "/api/search?q=blue").0, 200);
+}
+
+// ---------------------------------------------------------------- devices (the engine's side)
+
+use lightcraft_engine::Session;
+use lightcraft_vision::Error as VisionError;
+use lightcraft_vision::siglip::{DIM as SIGLIP_DIM, MODEL_ID as SIGLIP_ID};
+
+/// The colour stand-in at SigLIP 2's size and name: a device with it matches a server that has no
+/// model installed (which is a SigLIP 2 server), so the two can exchange vectors.
+struct Padded;
+
+fn pad(mut v: Vec<f32>) -> Vec<f32> {
+    v.resize(SIGLIP_DIM, 0.0);
+    v
+}
+
+impl Embedder for Padded {
+    fn model_id(&self) -> &str {
+        SIGLIP_ID
+    }
+    fn dim(&self) -> usize {
+        SIGLIP_DIM
+    }
+    fn encode_text(&self, t: &str) -> Result<Vec<f32>, VisionError> {
+        FakeEmbedder.encode_text(t).map(pad)
+    }
+    fn encode_images(&self, i: &[&lightcraft_raster::Rgba8]) -> Result<Vec<Vec<f32>>, VisionError> {
+        FakeEmbedder.encode_images(i).map(|v| v.into_iter().map(pad).collect())
+    }
+}
+
+/// A device signed in to `f`'s server, with its library in `dir`.
+fn device_in(f: &Fixture, dir: &Path, model: Option<Arc<dyn Embedder>>) -> Session {
+    let mut s = Session::new().with_fs();
+    s.open_library(dir, false).unwrap();
+    if let Some(m) = model {
+        s.vision.set_embedder(m);
+    }
+    s.execute("sync.signIn", &json!({"server": f.ann.url, "user": "ann", "password": "correct horse", "device": "test"})).unwrap();
+    sync(&mut s);
+    assert_eq!(s.catalog.len(), 4, "the library arrived");
+    s
+}
+
+fn device(f: &Fixture, tag: &str, model: Option<Arc<dyn Embedder>>) -> Session {
+    device_in(f, &temp(tag).join("device"), model)
+}
+
+fn sync(s: &mut Session) {
+    let st = s.execute("sync.now", &json!({"wait": true})).unwrap();
+    assert_eq!(st["state"], "idle", "{st}");
+}
+
+fn photo_named(s: &Session, name: &str) -> lightcraft_engine::catalog::PhotoId {
+    s.catalog.photos().find(|p| p.file_name == format!("{name}.png")).map(|p| p.id).unwrap_or_else(|| panic!("no photo {name}"))
+}
+
+#[test]
+fn a_thin_client_searches_through_the_server() {
+    let f = fixture("thin", Some(Arc::new(FakeEmbedder)));
+    indexed(&f, 4);
+    // a device with no model of its own (the web build, iOS)
+    let mut s = device(&f, "thin-device", None);
+    assert!(!s.vision.available(), "nothing to search with until the server says it can");
+    let e = s.execute("library.search", &json!({"q": "red", "wait": true})).unwrap_err().to_string();
+    assert!(e.contains("server"), "{e}");
+
+    // it asks, the answer comes with the next sync round, and now the switch would show
+    s.vision_probe_server();
+    sync(&mut s);
+    assert!(s.vision.available() && s.vision.server_ready(), "{:?}", s.vision.server_status());
+    let st = s.execute("vision.model.status", &json!({})).unwrap();
+    assert_eq!(
+        (st["localAvailable"].clone(), st["server"]["ready"].clone(), st["server"]["status"]["indexed"].clone()),
+        (json!(false), json!(true), json!(4)),
+        "{st}"
+    );
+
+    for (q, want) in [("red", "red"), ("a GREEN field", "green"), ("猫 blue", "blue")] {
+        let r = s.execute("library.search", &json!({"q": q, "wait": true})).unwrap();
+        assert_eq!(r["source"], "server", "{r}");
+        let first = r["photos"][0]["id"].as_u64().unwrap();
+        assert_eq!(first, photo_named(&s, want).0, "{q}: {r}");
+        assert_eq!(r["photos"].as_array().unwrap().len(), 4);
+        // it is the view's filter, in the server's order
+        assert_eq!(s.visible_cloned().first().map(|i| i.0), Some(first));
+        assert_eq!(s.filter.semantic.as_deref(), Some(q));
+    }
+    // this device can't search on its own
+    let e = s.execute("library.search", &json!({"q": "red", "wait": true, "source": "local"})).unwrap_err().to_string();
+    assert!(e.contains("server") && e.contains("model"), "{e}");
+    assert!(s.execute("library.search", &json!({"q": "red", "wait": true, "source": "nowhere"})).is_err());
+
+    // a server that can't search (no model) says why, in words
+    let none = fixture("thin-none", None);
+    let mut s2 = device(&none, "thin-device-2", None);
+    s2.vision_probe_server();
+    sync(&mut s2);
+    assert!(s2.vision.available() && !s2.vision.server_ready(), "it can, once its admin installs the model");
+    let e = s2.execute("library.search", &json!({"q": "red", "wait": true, "source": "server"})).unwrap_err().to_string();
+    assert!(e.contains("not installed"), "{e}");
+}
+
+#[test]
+fn a_desktop_sends_the_server_the_vectors_it_computed() {
+    // the server has no model: it can only be given vectors
+    let f = fixture("share", None);
+    let mut s = device(&f, "desktop", Some(Arc::new(Padded)));
+    let r = s.execute("vision.index", &json!({"wait": true})).unwrap();
+    assert_eq!((r["done"].clone(), r["failed"].clone()), (json!(4), json!(0)), "{r}");
+    s.vision_probe_server();
+    sync(&mut s);
+
+    // nothing leaves the device unless the user asked
+    assert!(!s.vision.share_with_server);
+    s.vision_poll();
+    sync(&mut s);
+    assert_eq!(get(&f.ann, "/api/search/status").1["indexed"], 0, "not sent by itself");
+
+    // `vision.share` sends them
+    let r = s.execute("vision.share", &json!({"wait": true})).unwrap();
+    assert_eq!((r["running"].clone(), r["sent"].clone(), r["error"].clone()), (json!(false), json!(4), Value::Null), "{r}");
+    let (_, st) = get(&f.ann, "/api/search/status");
+    assert_eq!((st["indexed"].clone(), st["installed"].clone()), (json!(4), json!(false)), "{st}");
+    // and only what the server lacks
+    let r = s.execute("vision.share", &json!({"wait": true})).unwrap();
+    assert_eq!(r["sent"], 0, "{r}");
+
+    // a device whose model isn't the server's is refused before anything is sent
+    let mut s3 = device(&f, "desktop-3", Some(Arc::new(FakeEmbedder)));
+    s3.execute("vision.index", &json!({"wait": true})).unwrap();
+    let r = s3.execute("vision.share", &json!({"wait": true})).unwrap();
+    assert_eq!((r["running"].clone(), r["sent"].clone()), (json!(false), json!(0)), "{r}");
+    assert!(r["error"].as_str().unwrap().contains("nothing was sent"), "{r}");
+    assert_eq!(get(&f.ann, "/api/search/status").1["indexed"], 4);
+
+    // no photos indexed: nothing to send
+    let mut s4 = device(&f, "desktop-4", Some(Arc::new(Padded)));
+    assert!(s4.execute("vision.share", &json!({"wait": true})).is_err());
+}
+
+#[test]
+fn a_device_that_turned_sharing_on_sends_by_itself_and_remembers_the_choice() {
+    let f = fixture("auto-share", None);
+    let dir = temp("auto-share-device").join("device");
+    let mut s = device_in(&f, &dir, Some(Arc::new(Padded)));
+    s.execute("vision.setShare", &json!({"on": true})).unwrap();
+    s.execute("vision.index", &json!({"wait": true})).unwrap();
+    s.vision_probe_server();
+    sync(&mut s);
+    // the frame loop's upkeep notices the new vectors and queues the send; the sync round runs it
+    s.vision_poll();
+    sync(&mut s);
+    assert!(!s.vision.sharing(), "{:?}", s.vision.share_error());
+    assert_eq!(get(&f.ann, "/api/search/status").1["indexed"], 4, "sent without being asked each time");
+    assert_eq!(s.execute("vision.model.status", &json!({})).unwrap()["share"]["enabled"], true);
+
+    // the choice is saved with the library
+    s.close_library().unwrap();
+    drop(s);
+    let mut again = Session::new().with_fs();
+    again.open_library(&dir, false).unwrap();
+    assert!(again.vision.share_with_server);
+    again.execute("vision.setShare", &json!({"on": false})).unwrap();
+    assert!(!again.vision.share_with_server);
 }

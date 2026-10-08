@@ -1068,7 +1068,7 @@
   "saved in": "保存先：",
   "Licence:": "ライセンス：",
   "Google's terms, not LightCraft's. Downloading it means accepting them.": "Googleの利用条件であり、LightCraftのものではありません。ダウンロードすると、これに同意したことになります。",
-  "Your photos are then indexed on this computer; nothing about them leaves it.": "その後、写真はこのコンピューター上で索引化され、写真に関する情報が外部へ送信されることはありません。",
+  "Your photos are then indexed on this computer. Nothing is sent anywhere unless you choose to share it with your own server.": "その後、写真はこのコンピューター上で索引化されます。ご自身のサーバーと共有すると選んだ場合を除き、何も送信されません。",
   "Read the licence": "ライセンスを読む",
   "This build has no download location for the model yet.": "このビルドには、モデルのダウンロード先がまだ設定されていません。",
   "Download and Turn On": "ダウンロードして有効にする",
@@ -1079,5 +1079,9 @@
   "Prepare the Rest": "残りを準備",
   "Searching…": "検索中…",
   "Describe what you're looking for, for example “a dog on a beach at sunset”, and press Return.": "探している写真を説明して（例：「夕暮れの浜辺の犬」）、Returnキーを押します。",
-  "The search model is installed: describe a photo to find it.": "検索モデルをインストールしました。写真を説明して探せます。"
+  "The search model is installed: describe a photo to find it.": "検索モデルをインストールしました。写真を説明して探せます。",
+  "Your server can search by description, but its search model isn't installed yet.": "ご利用のサーバーは説明による検索に対応していますが、検索モデルがまだインストールされていません。",
+  "Whoever runs the server installs it with: lightcraft-server model download --accept-licences": "サーバーの管理者は次のコマンドでインストールします：lightcraft-server model download --accept-licences",
+  "It keeps going in the background; search the ones that are ready now.": "処理はバックグラウンドで続きます。準備ができた写真はすぐに検索できます。",
+  "Send the search data to my server, so my other devices can search too": "検索用データを自分のサーバーに送り、他のデバイスでも検索できるようにする"
 }

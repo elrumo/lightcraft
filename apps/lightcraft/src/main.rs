@@ -405,8 +405,9 @@ fn main() -> eframe::Result {
             session.segmenter.mirrors_file = config_dir().map(|d| d.join("models").join("sam3-mirrors.txt"));
             // search by description: the SigLIP 2 checkpoint in <config>/models/siglip2, or LIGHTCRAFT_VISION_DIR
             // (never required: the Describe switch on the search field offers to download it)
-            session.vision.dir =
-                std::env::var_os("LIGHTCRAFT_VISION_DIR").map(std::path::PathBuf::from).or_else(|| config_dir().map(|d| d.join("models").join("siglip2")));
+            session.vision.dir = std::env::var_os("LIGHTCRAFT_VISION_DIR")
+                .map(std::path::PathBuf::from)
+                .or_else(|| config_dir().map(|d| d.join("models").join("siglip2")));
             session.vision.mirrors_file = config_dir().map(|d| d.join("models").join("siglip2-mirrors.txt"));
             let mut app = LightcraftApp::new(session, services());
             if let Some(ui) = prefs {

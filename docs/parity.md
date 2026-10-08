@@ -24,7 +24,7 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | A. Import (IMP) | 11 | 3 | 1 | 1 | 3/5 (60%) | 5/5 (100%) |
 | B. Library management (LIB) | 23 | 2 | 1 | 1 | 9/9 (100%) | 9/9 (100%) |
 | C. Views & navigation (VIEW) | 16 | 0 | 1 | 0 | 9/9 (100%) | 4/4 (100%) |
-| D. Search & filter (FILT) | 11 | 1 | 1 | 0 | 4/4 (100%) | 4/4 (100%) |
+| D. Search & filter (FILT) | 11 | 2 | 0 | 0 | 4/4 (100%) | 4/4 (100%) |
 | E. Metadata (META) | 5 | 1 | 0 | 0 | 2/2 (100%) | 2/2 (100%) |
 | F. Edit panel — global adjustments (EDIT) | 42 | 1 | 5 | 1 | 28/28 (100%) | 13/14 (93%) |
 | G. Profiles (PROF) | 6 | 2 | 3 | 0 | 3/4 (75%) | 2/3 (67%) |
@@ -48,9 +48,9 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | Y. Menus | 83 | 1 | 4 | 5 | 47/47 (100%) | 23/23 (100%) |
 | Z. Keyboard shortcuts (desktop) | 74 | 3 | 3 | 1 | 49/52 (94%) | 22/23 (96%) |
 | Lightroom Classic extras | 31 | 10 | 39 | 9 | — | 21/22 (95%) |
-| **Total** | 393 | 35 | 86 | 31 | 194/200 (97%) | 140/149 (94%) |
+| **Total** | 393 | 36 | 85 | 31 | 194/200 (97%) | 140/149 (94%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **79.9%** of 514 in-scope rows — P0 98.5% of 200 · P1 96.0% of 149 · P2 42.7% of 165.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **80.0%** of 514 in-scope rows — P0 98.5% of 200 · P1 96.0% of 149 · P2 43.0% of 165.
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -71,7 +71,8 @@ Take the first one nobody is working on.
 6. **AI masks and Enhance** (LR-MASK-SUBJECT / SKY / PEOPLE / OBJECTS, LR-EDIT-DETAIL-DENOISE, SUPERRES, LENSBLUR):
    Object and Describe masks run SAM 3 in pure Rust (`crates/segment`); the weights (SAM License) are never bundled:
    the app offers a consented, verified download, but **LightCraft's CDN mirrors are not configured yet** (the
-   built-in list is empty, so today users need their own mirror or a manual install). Subject / Sky / People could
+   built-in list is empty, so today users need their own mirror or a manual install). Natural-language search
+   (SigLIP 2, `docs/search-people.md`) is separate and downloads from Hugging Face by default. Subject / Sky / People could
    use the same model with fixed prompts; denoise / super-resolution models remain a maintainer decision.
 7. **HDR** (Q. HDR, LR-EXP-HDR), **video** (R. Video), **Classic output modules** (Map view, Book, Slideshow module,
    Print, publish): large, well understood, lower priority than 1–5.
@@ -189,7 +190,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | Id | Feature | Tier | Status | Evidence | Missing / notes |
 |---|---|---|---|---|---|
 | LR-FILT-SEARCH-META | Text search | P0 | ✅ | `cmd:library.filter` (`text`), `crates/ui-egui/src/panels/topbar.rs`, `crates/catalog/src/query.rs` | fielded tokens (`rating:3`, `iso:>800`, `camera:…`); no suggestions dropdown |
-| LR-FILT-SEARCH-AI | Natural-language search | P2 | ⬜ | | |
+| LR-FILT-SEARCH-AI | Natural-language search | P2 | 🟡 | `cmd:library.search`, `cmd:vision.index`, `cmd:vision.model.status`, `cmd:vision.model.download`, `cmd:vision.share`, `cmd:vision.setShare`, `crates/vision/src/siglip.rs`, `crates/ui-egui/src/panels/ai_search.rs`, `apps/lightcraft-server/src/vision.rs`, `docs/search-people.md` | The Describe switch on the search field: describe a photo in your own words (SigLIP 2, multilingual, Apache-2.0; a one-time 1.5 GB download the user agrees to) and the grid shows the best matches first, with a chip. Photos are indexed in the background on this computer and on the sync server, which answers devices with no model (web, iOS); a desktop can send its vectors to the server (opt-in). 100k photos search in ~90 ms. No OCR (text inside photos), no relevance cut-off (best N, not "only matches"), not benchmarked on a real library yet, no on-device model on iOS |
 | LR-FILT-RATING | Rating filter | P0 | ✅ | `cmd:library.filter` (`rating`, `ratingOp`), `crates/ui-egui/src/panels/filterbar.rs` | ≥ / = / ≤ stars in the filter bar (`cmd:view.filterBar`) |
 | LR-FILT-FLAG | Flag filter | P0 | ✅ | `cmd:library.filter` (`flag`), `crates/ui-egui/src/panels/filterbar.rs` | picked / rejected / unflagged (one at a time) |
 | LR-FILT-LABEL | Colour-label filter | P1 | ✅ | `cmd:library.filter` (`label`), `crates/ui-egui/src/panels/filterbar.rs` | one label at a time; no “no label” choice |

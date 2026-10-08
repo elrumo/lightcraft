@@ -7,7 +7,7 @@
 //! ```text
 //! GET  /api/search/status            {available, installed, model, dim, indexed, total}
 //! GET  /api/search?q=…&limit=…       {query, ids: [photo id], scores: [f32], indexed, total}
-//! GET  /api/index/embeddings/keys    the 16-byte keys the server has, concatenated (X-Model, X-Dim)
+//! GET  /api/index/embeddings/keys    {model, dim, keys: [content hash]} the server already has
 //! POST /api/index/embeddings         records a device computed (see `lightcraft_vision::EmbeddingIndex::export`)
 //! ```
 //!
@@ -387,14 +387,9 @@ pub(crate) fn keys(st: &State, user: &str) -> Resp {
         Ok(i) => i,
         Err(e) => return error(500, e),
     };
-    let body: Vec<u8> = lock(&index).keys().flat_map(|k| k.0).collect();
-    let mut r = api::bytes(200, "application/octet-stream", body);
-    for (k, val) in [("X-Model", model), ("X-Dim", dim.to_string())] {
-        if let Some(h) = api::header(k, &val) {
-            r.add_header(h);
-        }
-    }
-    r
+    // (JSON: the sync transport carries text; 100k photos are ~3.5 MB)
+    let keys: Vec<String> = lock(&index).keys().map(Key::to_hex).collect();
+    api::json(200, &json!({"model": model, "dim": dim, "keys": keys}))
 }
 
 /// `POST /api/index/embeddings`: vectors a device computed. Only photos in the user's library are

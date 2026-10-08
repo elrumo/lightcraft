@@ -116,7 +116,8 @@ fn search_needs_a_query_an_index_and_a_model() {
     assert_eq!(plain.execute("vision.model.status", &json!({})).unwrap()["available"], json!(cfg!(feature = "vision")));
     if !cfg!(feature = "vision") {
         let e = plain.execute("library.search", &json!({"q": "red", "wait": true})).unwrap_err().to_string();
-        assert!(e.contains("not available"), "{e}");
+        // (no model here and no server to ask: it says where search could come from)
+        assert!(e.contains("server") && e.contains("isn't signed in"), "{e}");
         assert!(plain.execute("vision.index", &json!({"wait": true})).is_err());
         assert!(plain.execute("vision.model.download", &json!({"acknowledged": true})).is_err());
     }

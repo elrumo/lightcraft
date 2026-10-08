@@ -76,6 +76,33 @@ pub fn specs() -> Vec<CommandSpec> {
             always,
             |s, _| Ok(s.vision.job().map_or(Value::Null, |j| j.json()))
         ),
+        cmd!(
+            query "vision.share",
+            "Send Search Data to the Server",
+            [],
+            None,
+            "{wait?: bool} — send the sync server the search vectors this device computed that it doesn't have (so it and the user's other devices needn't compute them), in pieces; the server keeps only photos of this library, for the same model. Needs a server that can search (vision.model.status → server) and indexed photos → {running, sent, error}; watch vision.model.status → share",
+            always,
+            |s, p| {
+                let wait = p.get("wait").and_then(Value::as_bool).unwrap_or(false);
+                s.vision_share(wait).map_err(|e| bad("vision.share", e))
+            }
+        ),
+        cmd!(
+            "vision.setShare",
+            "Share Search Data with the Server",
+            [],
+            None,
+            "{on: bool} — whether this library sends its search vectors to the sync server automatically whenever new photos are indexed (off until turned on; saved with the library) → {enabled}",
+            always,
+            |s, p| {
+                let on = p.get("on").and_then(Value::as_bool).ok_or_else(|| bad("vision.setShare", "missing `on`"))?;
+                s.vision.share_with_server = on;
+                // (saved with the library, like the other preferences)
+                s.save_prefs()?;
+                Ok(json!({"enabled": on}))
+            }
+        ),
         cmd!(query "vision.indexCancel", "Cancel Search Indexing", [], None, "{}", always, |s, _| {
             if let Some(j) = s.vision.job() {
                 j.cancel.store(true, Ordering::Relaxed);
@@ -87,14 +114,14 @@ pub fn specs() -> Vec<CommandSpec> {
             "Search by Description",
             [],
             None,
-            "{q: text, limit?: 1..2000 (200), wait?: bool} — the library photos that best match a description (\"a dog on a beach at sunset\", in any language the model reads), best first, as the view's filter (Clear Filters to go back); needs the model and indexed photos (vision.model.status, vision.index). In the app the search runs in the background and the view updates when it is done → {query, photos: [{id, score}], indexed, libraryPhotos} (with `wait`; else {status: \"searching\"})",
+            "{q: text, limit?: 1..2000 (200), wait?: bool, source?: auto|local|server (auto)} — the library photos that best match a description (\"a dog on a beach at sunset\", in any language the model reads), best first, as the view's filter (Clear Filters to go back). `local` uses this device's model and index (vision.model.status, vision.index); `server` asks the sync server, which needs no model here; `auto` uses this device's index when it covers the library, else the server's. In the app the search runs in the background and the view updates when it is done → {query, source, photos: [{id, score}], indexed, libraryPhotos} (with `wait`; else {status: \"searching\"})",
             always,
             |s, p| {
                 let c = "library.search";
                 let q = str_param(p, "q").or_else(|| str_param(p, "query")).ok_or_else(|| bad(c, "missing text `q`"))?;
                 let limit = p.get("limit").and_then(Value::as_u64).map_or(DEFAULT_LIMIT, |n| n as usize);
                 let wait = p.get("wait").and_then(Value::as_bool).unwrap_or(false);
-                s.vision_search(q, limit, wait).map_err(|e| bad(c, e))
+                s.vision_search(q, limit, wait, str_param(p, "source").unwrap_or("auto")).map_err(|e| bad(c, e))
             }
         ),
     ]

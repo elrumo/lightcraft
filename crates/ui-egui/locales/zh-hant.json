@@ -1283,7 +1283,7 @@
   "saved in": "儲存於",
   "Licence:": "授權條款：",
   "Google's terms, not LightCraft's. Downloading it means accepting them.": "這是 Google 的條款，並非 LightCraft 的。下載即表示接受。",
-  "Your photos are then indexed on this computer; nothing about them leaves it.": "之後會在這台電腦上為照片建立索引，照片的任何資訊都不會離開本機。",
+  "Your photos are then indexed on this computer. Nothing is sent anywhere unless you choose to share it with your own server.": "之後會在這台電腦上為照片建立索引。除非你選擇與自己的伺服器共用，否則不會傳送任何內容。",
   "Read the licence": "閱讀授權條款",
   "This build has no download location for the model yet.": "此版本尚未設定模型的下載位置。",
   "Download and Turn On": "下載並啟用",
@@ -1294,5 +1294,9 @@
   "Prepare the Rest": "準備其餘照片",
   "Searching…": "正在搜尋…",
   "Describe what you're looking for, for example “a dog on a beach at sunset”, and press Return.": "描述你要找的照片，例如「日落時海灘上的一隻狗」，然後按 Return。",
-  "The search model is installed: describe a photo to find it.": "搜尋模型已安裝：描述一張照片即可尋找。"
+  "The search model is installed: describe a photo to find it.": "搜尋模型已安裝：描述一張照片即可尋找。",
+  "Your server can search by description, but its search model isn't installed yet.": "你的伺服器支援依描述搜尋，但尚未安裝搜尋模型。",
+  "Whoever runs the server installs it with: lightcraft-server model download --accept-licences": "伺服器管理員可用以下指令安裝：lightcraft-server model download --accept-licences",
+  "It keeps going in the background; search the ones that are ready now.": "它會在背景繼續處理；已準備好的照片現在就可以搜尋。",
+  "Send the search data to my server, so my other devices can search too": "將搜尋資料傳送到我的伺服器，讓我的其他裝置也能搜尋"
 }
