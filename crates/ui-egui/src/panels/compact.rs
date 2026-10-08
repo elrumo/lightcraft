@@ -591,7 +591,8 @@ fn sheet(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, wide: bool, lan
         ui.painter().rect_filled(egui::Rect::from_center_size(g.center() + vec2(0.0, 1.0), vec2(36.0, 5.0)), 2.5, pill);
         if resp.dragged() {
             let now = dragging.unwrap_or(h) - ui.input(|i| i.pointer.delta().y);
-            let now = now.clamp(0.0, stops[2].max(avail * 0.85));
+            // (not `clamp`: that panics when a tiny window leaves `avail` negative)
+            let now = now.max(0.0).min(stops[2].max(avail * 0.85));
             ctx.data_mut(|d| d.insert_temp(drag_id, now));
             ctx.data_mut(|d| d.insert_temp(egui::Id::new("compact-sheet-h"), limit(now)));
         }

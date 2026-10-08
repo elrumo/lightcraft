@@ -192,8 +192,13 @@ layout and interaction only: no Adobe icons, artwork, fonts, presets or screensh
    round + (the host's pickers). A photo: back, undo, share and "…" (rating, flag, label, copy / paste / reset edits,
    versions, history, keywords, delete) above it; below it the tools (Presets, Crop, Edit, Masking, Remove, Info),
    the open one on a blue tile, with the Edit tool's groups (Auto, Profile, Light, Color, Effects, Detail, Optics,
-   Calibration) in a row of their own and one group's sliders in the sheet (from 600 pt wide: a panel on the right,
-   with My Photos as a column on the left). Dialogs are pages sliding up from the bottom (Cancel, title and action
+   Calibration) in a row of their own and one group's sliders in the sheet (a grabber at its top: drag it to one of
+   three heights or right down to put the tool away; the sheet is only as tall as its content, so the photo keeps the
+   rest; from 600 pt wide it is a panel on the right, with My Photos as a column on the left; held sideways, under
+   520 pt tall, the tools are a rail down the left edge and the groups sit on top of that panel; A2.4, A2.6). The
+   tool panels use finger-sized controls throughout (A2.3, A2.5): Crop's aspect ratios are chips, Presets a strip of
+   thumbnails under group chips, Masking's kinds tiles five to a row, Colour Grading one big wheel at a time.
+   Dialogs are pages sliding up from the bottom (Cancel, title and action
    in the bar), menus are iOS pull-downs or action sheets, and every other command is in a searchable All Commands
    list. Touch: a tap opens a photo, pinch zooms, two fingers pan, a sideways swipe on a fitted photo goes to the
    next / previous one, an up / down swipe rates it (left half) or flags it (right half), double tap zooms, sliders follow a finger's sideways movement (a tap leaves them alone, an up
@@ -205,8 +210,8 @@ layout and interaction only: no Adobe icons, artwork, fonts, presets or screensh
    390x844 --scale 2` (phone) or `--size 820x1180` (iPad). Pinch and two-finger pan are untested (the headless driver
    injects no multi-touch).
    Dialogs use iOS switches and segmented controls; a vertical drag on a slider scrolls its sheet.
-   Still missing: Apple Pencil, tool-specific touch polish (brush strokes with a finger while the sheet is open, the
-   curve editor, the colour wheels), iOS pickers instead of drop-down menus, and a landscape phone layout.
+   Still missing: Apple Pencil, tool-specific touch polish (brush strokes with a finger while the sheet is open, a
+   magnifier while a finger is on a curve point or a wheel's puck), and iOS pickers instead of drop-down menus.
 2. **HEIC/HEIF decode: written, not yet run** (*Native host*): ImageIO through `lightcraft_codecs::set_system_decoder`.
 3. **Memory: the budget is written, tiling is not.** The budget follows the app's limit (*Native host*), but the
    pipeline works on whole `f32` RGB images (about 288 MB at 24 MP) and does not tile, so previews are fine but

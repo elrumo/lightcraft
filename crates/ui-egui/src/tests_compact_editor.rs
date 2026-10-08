@@ -309,3 +309,34 @@ fn phone_curve_points_are_taken_from_a_finger_away() {
     assert_eq!(pts.len(), 3, "no new point was made: {pts:?}");
     assert!(pts[1].y > 0.6, "the point moved up: {pts:?}");
 }
+
+/// A window too short for the bars (a phone's keyboard up in landscape, a tiny Slide Over) leaves
+/// the sheet no room: it must still draw and its grabber still drag, with no panic (`clamp` panics
+/// when its range is upside down).
+#[test]
+fn a_window_too_short_for_the_bars_does_not_panic() {
+    let mut h = detail([390.0, 130.0]);
+    if has(&h, "sheet:grabber") {
+        let g = rect(&h, "sheet:grabber").center();
+        drag(&mut h, g, g + vec2(0.0, -80.0));
+        drag(&mut h, g, g + vec2(0.0, 80.0));
+    }
+    let r = h.request("ui.resize", json!({"width": 390, "height": 60}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+}
+
+/// Each tool's sheet starts at its top: scrolling Crop doesn't leave Masking scrolled too.
+#[test]
+fn each_tool_starts_at_the_top_of_its_sheet() {
+    let mut h = detail([390.0, 844.0]);
+    click(&mut h, "icon:crop");
+    let angle = rect(&h, "slider:crop.angle");
+    let from = angle.center() - vec2(0.0, 6.0);
+    drag(&mut h, from, from - vec2(4.0, 120.0));
+    assert!(rect(&h, "slider:crop.angle").top() < angle.top() - 40.0, "Crop's sheet scrolled");
+    click(&mut h, "icon:masking");
+    let grabber = rect(&h, "sheet:grabber");
+    let object = rect(&h, "maskNew:object");
+    assert!(object.top() >= grabber.bottom() - 1.0, "Masking starts at its first row: {object:?} under {grabber:?}");
+}
