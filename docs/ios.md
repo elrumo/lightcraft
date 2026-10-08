@@ -196,16 +196,17 @@ layout and interaction only: no Adobe icons, artwork, fonts, presets or screensh
    with My Photos as a column on the left). Dialogs are pages sliding up from the bottom (Cancel, title and action
    in the bar), menus are iOS pull-downs or action sheets, and every other command is in a searchable All Commands
    list. Touch: a tap opens a photo, pinch zooms, two fingers pan, a sideways swipe on a fitted photo goes to the
-   next / previous one, double tap zooms, sliders follow a finger's movement (a tap leaves them alone), crop handles
+   next / previous one, double tap zooms, sliders follow a finger's sideways movement (a tap leaves them alone, an up
+   or down drag scrolls), crop handles
    and mask / spot pins are about a finger wide, press-and-hold opens context menus (egui's own long-touch) except in
    the grid, where it starts choosing photos (taps then add and remove them; an action bar rates, flags, labels, adds
    to an album, exports, copies / pastes settings or deletes them). The on-screen keyboard rises for text fields,
    Return confirms them, and the layout moves above it. Check it headless with `lightcraft-cli snapshot --demo --size
    390x844 --scale 2` (phone) or `--size 820x1180` (iPad). Pinch and two-finger pan are untested (the headless driver
    injects no multi-touch).
-   Still missing: telling a scroll from a slider drag, Apple Pencil, tool-specific touch polish (brush strokes with a
-   finger while the sheet is open, the curve editor, the colour wheels), iOS pickers and switches inside dialogs, and
-   a landscape phone layout.
+   Dialogs use iOS switches and segmented controls; a vertical drag on a slider scrolls its sheet.
+   Still missing: Apple Pencil, tool-specific touch polish (brush strokes with a finger while the sheet is open, the
+   curve editor, the colour wheels), iOS pickers instead of drop-down menus, and a landscape phone layout.
 2. **HEIC/HEIF decode: written, not yet run** (*Native host*): ImageIO through `lightcraft_codecs::set_system_decoder`.
 3. **Memory: the budget is written, tiling is not.** The budget follows the app's limit (*Native host*), but the
    pipeline works on whole `f32` RGB images (about 288 MB at 24 MP) and does not tile, so previews are fine but

@@ -396,7 +396,7 @@ fn overlay_options(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         app.ui.mask_overlay_opacity = v as f32;
     }
     let mut pins = app.ui.mask_pins;
-    if ui.checkbox(&mut pins, crate::i18n::tr("Show Pins")).changed() {
+    if crate::widgets::check(ui, &mut pins, crate::i18n::tr("Show Pins")).changed() {
         let _ = app.run("view.maskPins", json!({"show": pins}));
     }
 }
@@ -471,7 +471,7 @@ fn range_controls(app: &mut LightcraftApp, ui: &mut egui::Ui, comp: usize, shape
                 app.run("mask.update", json!({"component": comp, "shape": MaskShape::LuminanceRange { lo, hi, lo_feather: f, hi_feather: f }}))
             });
             let mut map = app.ui.mask_overlay && app.ui.mask_overlay_mode == "colorOnBw";
-            let r = ui.checkbox(&mut map, crate::i18n::tr("Show Luminance Map"));
+            let r = crate::widgets::check(ui, &mut map, crate::i18n::tr("Show Luminance Map"));
             register(ui.ctx(), format!("check:lumMap{comp}"), r.rect);
             if r.changed() {
                 // the luminance map: the photo in black & white with the selected range tinted

@@ -188,7 +188,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                     })
                     .color(t.text_dim),
                 );
-                let r = ui.checkbox(pick_best, crate::i18n::tr("Pick the sharpest photo of each burst"));
+                let r = crate::widgets::check(ui, pick_best, crate::i18n::tr("Pick the sharpest photo of each burst"));
                 crate::widgets::register(ui.ctx(), "check:cullPick", r.rect);
                 ui.label(
                     egui::RichText::new(crate::i18n::tr(
@@ -654,10 +654,10 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                         &mut opts.metadata,
                     );
                     if !matches!(opts.metadata, M::None | M::Copyright) {
-                        ui.checkbox(&mut opts.remove_location, crate::i18n::tr("Remove location info"));
+                        crate::widgets::check(ui, &mut opts.remove_location, crate::i18n::tr("Remove location info"));
                     }
                     let mut wm_on = opts.watermark.is_some();
-                    if ui.checkbox(&mut wm_on, crate::i18n::tr("Watermark")).changed() {
+                    if crate::widgets::check(ui, &mut wm_on, crate::i18n::tr("Watermark")).changed() {
                         opts.watermark = wm_on.then(|| lightcraft_engine::export::Watermark { text: "© ".into(), ..Default::default() });
                     }
                     if let Some(wm) = &mut opts.watermark {
@@ -715,7 +715,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                             wm.opacity = (op / 100.0) as f32;
                         }
                         if !graphic {
-                            ui.checkbox(&mut wm.shadow, crate::i18n::tr("Shadow"));
+                            crate::widgets::check(ui, &mut wm.shadow, crate::i18n::tr("Shadow"));
                         }
                     }
                 }
@@ -1113,7 +1113,7 @@ fn export_size(ui: &mut egui::Ui, full: &mut bool, r: &mut lightcraft_engine::ex
         (R::Megapixels, "Megapixels"),
         (R::Percent, "Percentage"),
     ];
-    let r_full = ui.checkbox(full, crate::i18n::tr("Full size"));
+    let r_full = crate::widgets::check(ui, full, crate::i18n::tr("Full size"));
     crate::widgets::register(ui.ctx(), "check:exportFullSize", r_full.rect);
     if !*full {
         field(ui, "Resize to", |ui| {
@@ -1154,7 +1154,7 @@ fn export_size(ui: &mut egui::Ui, full: &mut bool, r: &mut lightcraft_engine::ex
                 r.height = h as u32;
             }
         }
-        let c = ui.checkbox(&mut r.dont_enlarge, crate::i18n::tr("Don't enlarge"));
+        let c = crate::widgets::check(ui, &mut r.dont_enlarge, crate::i18n::tr("Don't enlarge"));
         crate::widgets::register(ui.ctx(), "check:exportDontEnlarge", c.rect);
     }
     let mut p = *ppi as f64;
@@ -1206,6 +1206,18 @@ fn trailing_button_row(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
 
 /// A labelled row of mutually exclusive choice buttons (ids `button:{id}-{index}`).
 fn choices<V: PartialEq + Copy>(ui: &mut egui::Ui, label: &str, id: &str, options: &[(V, &str)], value: &mut V) {
+    if crate::is_compact(ui.ctx()) {
+        // a phone: iOS's segmented control under the label
+        let t = Tokens::get(ui.ctx());
+        ui.add_space(4.0);
+        ui.label(egui::RichText::new(crate::i18n::tr(label)).color(t.text_dim).size(13.0));
+        let labels: Vec<&str> = options.iter().map(|(_, l)| *l).collect();
+        let active = options.iter().position(|(v, _)| *v == *value);
+        if let Some((v, _)) = crate::widgets::ios_segmented(ui, id, &labels, active).and_then(|i| options.get(i)) {
+            *value = *v;
+        }
+        return;
+    }
     field(ui, label, |ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         for (i, (v, l)) in options.iter().enumerate() {

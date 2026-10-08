@@ -756,7 +756,7 @@ fn folder_header(app: &mut LightcraftApp, ui: &mut egui::Ui, hr: Rect, b: &light
             }
         }
         let mut sub = b.subfolders;
-        let c = ui.checkbox(&mut sub, crate::i18n::tr("Include subfolders"));
+        let c = crate::widgets::check(ui, &mut sub, crate::i18n::tr("Include subfolders"));
         register(ui.ctx(), "check:includeSubfolders", c.rect);
         if c.changed() {
             let _ = app.run("library.browse", json!({"path": b.path, "subfolders": sub}));

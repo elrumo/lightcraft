@@ -306,11 +306,11 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         let has_lens = app.session.catalog.photo(id).is_some_and(|p| p.embedded_lens.is_some());
         egui::Frame::NONE.inner_margin(egui::Margin { left: 24, right: 22, top: 4, bottom: 4 }).show(ui, |ui| {
             let mut ca = d.optics.remove_ca;
-            if ui.checkbox(&mut ca, crate::i18n::tr("Remove Chromatic Aberration")).changed() {
+            if crate::widgets::check(ui, &mut ca, crate::i18n::tr("Remove Chromatic Aberration")).changed() {
                 let _ = app.run("develop.merge", json!({"settings": {"optics": {"remove_ca": ca}}, "label": "Remove CA"}));
             }
             let mut lp = d.optics.lens_profile;
-            if ui.checkbox(&mut lp, crate::i18n::tr("Enable Lens Corrections")).changed() {
+            if crate::widgets::check(ui, &mut lp, crate::i18n::tr("Enable Lens Corrections")).changed() {
                 let _ = app.run("develop.merge", json!({"settings": {"optics": {"lens_profile": lp}}, "label": "Lens Corrections"}));
             }
             if lp && !has_lens {
@@ -1057,7 +1057,7 @@ fn point_color(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &DevelopSettings) 
     egui::Frame::NONE.inner_margin(egui::Margin { left: 24, right: 22, top: 4, bottom: 8 }).show(ui, |ui| {
         ui.horizontal(|ui| {
             let mut v = app.ui.point_color_visualize;
-            if ui.checkbox(&mut v, crate::i18n::tr("Visualize range")).changed() {
+            if crate::widgets::check(ui, &mut v, crate::i18n::tr("Visualize range")).changed() {
                 app.ui.point_color_visualize = v;
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

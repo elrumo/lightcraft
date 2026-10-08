@@ -97,6 +97,23 @@ fn compact_sliders_follow_a_drag_from_above_the_track_and_ignore_taps() {
     assert!(exposure > 0.5 && exposure < 1.5, "exposure {exposure}");
 }
 
+/// A drag that sets off up or down on a slider scrolls the sheet; the slider keeps its value.
+#[test]
+fn compact_sliders_let_a_vertical_drag_scroll_the_sheet() {
+    let mut h = detail([390.0, 844.0]);
+    let id = h.app.session.active().expect("active photo");
+    let before = format!("{:?}", h.app.session.develop_of(id));
+    let slider =
+        |h: &Headless| h.app.widgets.iter().find(|(w, _)| w == "slider:light.contrast").map(|(_, r)| *r).expect("contrast slider in the sheet");
+    let track = slider(&h);
+    let (x, y) = (track.center().x, track.center().y - 10.0);
+    let r = h.request("ui.drag", json!({"x": x, "y": y, "toX": x + 4.0, "toY": y - 120.0, "steps": 20}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    assert_eq!(format!("{:?}", h.app.session.develop_of(id)), before, "the slider kept its value");
+    assert!(slider(&h).top() < track.top() - 40.0, "the sheet scrolled: {:?} → {:?}", track, slider(&h));
+}
+
 #[test]
 fn compact_layout_raises_egui_rows_to_touch_size_and_desktop_restores_them() {
     let mut h = detail([390.0, 844.0]);
@@ -172,6 +189,27 @@ fn dialogs_are_pages_on_a_phone() {
     assert!(has(&h, "button:sheetOk") && has(&h, "button:sheetCancel"));
     click(&mut h, "button:sheetCancel");
     assert!(h.app.ui.dialog.is_none(), "Cancel closes it");
+}
+
+/// On a phone a dialog's on / off choice is an iOS switch spanning the row: a tap anywhere on it toggles.
+#[test]
+fn phone_dialogs_use_switches_for_on_off_choices() {
+    let mut h = detail([390.0, 844.0]);
+    let r = h.request("engine.execute", json!({"command": "dialog.export"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    let row = h.app.widgets.iter().find(|(w, _)| w == "check:exportDontEnlarge").map(|(_, r)| *r).expect("Don't enlarge");
+    assert!(row.width() > 300.0 && row.height() >= 44.0, "a full-width row: {row:?}");
+    let enlarge = |h: &Headless| match &h.app.ui.dialog {
+        Some(crate::state::Dialog::Export { resize, .. }) => resize.dont_enlarge,
+        _ => panic!("export dialog"),
+    };
+    let before = enlarge(&h);
+    // the far right of the row, on the switch
+    let r = h.request("ui.click", json!({"x": row.right() - 20.0, "y": row.center().y}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    assert_ne!(enlarge(&h), before, "the switch toggled");
 }
 
 /// No menu bar on a phone: the grid's and the photo's "…" menus, and every other command in the

@@ -42,7 +42,7 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     }
     let more = icon_button(&mut hdr, "presetMore", Icon::More, vec2(28.0, 28.0), false, true, "More preset options");
     egui::Popup::menu(&more).show(|ui| {
-        let r = ui.checkbox(&mut app.ui.preset_thumbs, crate::i18n::tr("Show Thumbnails"));
+        let r = crate::widgets::check(ui, &mut app.ui.preset_thumbs, crate::i18n::tr("Show Thumbnails"));
         register(ui.ctx(), "presetMenu:thumbnails", r.rect);
         ui.separator();
         if ui.button(crate::i18n::tr("Import Presets…")).clicked() {
