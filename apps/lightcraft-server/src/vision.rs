@@ -129,11 +129,13 @@ impl Search {
                 self.dir.display()
             ));
         }
+        let started = Instant::now();
+        log::info!("loading the search model from {}", self.dir.display());
         let loaded = guard::catch("loading the search model", || lightcraft_vision::siglip::SigLip::load(&self.dir))?.map_err(|e| e.to_string())?;
         let m: Arc<dyn Embedder> = Arc::new(loaded);
         *slot = Some(m.clone());
         self.touch();
-        log::info!("the search model is loaded");
+        log::info!("the search model is loaded ({:.1} s)", started.elapsed().as_secs_f64());
         Ok(m)
     }
 
@@ -246,6 +248,7 @@ fn index_user(st: &Arc<State>, user: &str) -> Result<(), String> {
     if work.is_empty() {
         return Ok(());
     }
+    log::info!("{user}: {} photo(s) to index for search", work.len());
     let model = v.model()?;
     let started = Instant::now();
     let total = work.len();
