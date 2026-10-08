@@ -17,17 +17,21 @@ use crate::state::{RightPanel, ViewMode};
 use crate::theme::Tokens;
 use crate::widgets::icon_button;
 
-/// Height of the top bar and of the tool bar: Apple's minimum touch target is 44 pt.
-const BAR_H: f32 = 52.0;
+/// Height of the top bar: Apple's minimum touch target is 44 pt.
+const BAR_H: f32 = 44.0;
+/// Height of the tool bar and of the select action bar (iOS's tab bar is 49 pt).
+const TAB_H: f32 = 50.0;
 /// Height of the Edit tool's group row (icon over label).
-const GROUP_H: f32 = 68.0;
+const GROUP_H: f32 = 54.0;
 /// From this width (iPad) the tool sheet is a panel on the right and My Photos a column on the left,
 /// instead of a bottom sheet and a page of their own.
 pub const WIDE_PT: f32 = 600.0;
 /// The side panels' width on a wide compact window.
 const SIDE_W: f32 = 340.0;
-/// The sheet opens at this fraction of the window height.
-const SHEET_FRACTION: f32 = 0.4;
+/// The grabber at the top of the bottom sheet: drag it to make the sheet taller or shorter.
+const GRABBER_H: f32 = 24.0;
+/// A slider row's height, which the sheet's stops are counted in.
+const SLIDER_ROW_H: f32 = crate::widgets::TOUCH_SLIDER_ROW_H;
 
 /// The tools under a photo: (id, icon, panel, name). Presets is a panel of its own (`ui.presets`).
 const TOOLS: [(&str, Icon, RightPanel, &str); 6] = [
@@ -421,7 +425,7 @@ pub fn grid_header(app: &mut LightcraftApp, ui: &mut egui::Ui, hr: egui::Rect, c
 /// tool closes its sheet.
 fn tool_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
     // the bottom safe area is already outside this ui (see the host); the bar sits at its edge
-    egui::Panel::bottom("compact_tabs").show_separator_line(false).exact_size(BAR_H + 8.0).frame(egui::Frame::NONE.fill(t.canvas)).show(ui, |ui| {
+    egui::Panel::bottom("compact_tabs").show_separator_line(false).exact_size(TAB_H).frame(egui::Frame::NONE.fill(t.canvas)).show(ui, |ui| {
         let has_photo = app.session.active().is_some();
         let full = ui.max_rect();
         ui.painter().hline(full.x_range(), full.top(), Stroke::new(0.5, t.divider));
@@ -438,7 +442,7 @@ fn tool_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
             resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, has_photo, on, crate::i18n::tr(tip)));
             crate::widgets::register(ui.ctx(), format!("icon:{id}"), cell);
             let k = ui.ctx().animate_bool_with_time(resp.id.with("on"), on, 0.15);
-            let tile = egui::Rect::from_center_size(cell.center(), vec2(46.0, 40.0));
+            let tile = egui::Rect::from_center_size(cell.center(), vec2(48.0, 38.0));
             if k > 0.0 {
                 ui.painter().rect_filled(tile, 10.0, t.accent.gamma_multiply(k));
             }
@@ -481,7 +485,7 @@ fn group_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
                         let _ = app.run("develop.auto", json!({}));
                         app.toast(ui.ctx(), "Auto settings applied");
                     }
-                    let (sep, _) = ui.allocate_exact_size(vec2(13.0, 40.0), Sense::hover());
+                    let (sep, _) = ui.allocate_exact_size(vec2(13.0, 34.0), Sense::hover());
                     ui.painter().vline(sep.center().x, sep.y_range(), Stroke::new(1.0, t.divider));
                     for (id, icon, label) in GROUPS {
                         if group_cell(ui, &format!("group-{id}"), icon, label, app.ui.edit_group == id).clicked() {
@@ -502,7 +506,7 @@ fn group_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
 fn group_cell(ui: &mut egui::Ui, id: &str, icon: Icon, label: &str, on: bool) -> egui::Response {
     let t = Tokens::get(ui.ctx());
     let label = crate::i18n::tr(label);
-    let (r, resp) = ui.allocate_exact_size(vec2(72.0, GROUP_H - 8.0), Sense::click());
+    let (r, resp) = ui.allocate_exact_size(vec2(68.0, GROUP_H - 6.0), Sense::click());
     resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, on, label));
     crate::widgets::register(ui.ctx(), format!("button:{id}"), r);
     let k = ui.ctx().animate_bool_with_time(resp.id.with("on"), on, 0.15);
@@ -510,28 +514,97 @@ fn group_cell(ui: &mut egui::Ui, id: &str, icon: Icon, label: &str, on: bool) ->
         ui.painter().rect_filled(r, 10.0, t.tool_active.gamma_multiply(k));
     }
     let color = if on || resp.is_pointer_button_down_on() { t.text } else { t.text_dim };
-    crate::icons::paint(ui.painter(), egui::Rect::from_center_size(r.center() - vec2(0.0, 9.0), vec2(22.0, 22.0)), icon, color);
-    ui.painter().text(r.center() + vec2(0.0, 15.0), Align2::CENTER_CENTER, label, t.font(12.0), color);
+    crate::icons::paint(ui.painter(), egui::Rect::from_center_size(r.center() - vec2(0.0, 8.0), vec2(20.0, 20.0)), icon, color);
+    ui.painter().text(r.center() + vec2(0.0, 14.0), Align2::CENTER_CENTER, label, t.font(11.5), color);
     resp
 }
 
+/// The tool sheet: a panel on the right on a tablet, a bottom sheet on a phone. The sheet has a
+/// grabber: drag it to one of three heights (small, medium, large) or down to close the tool, tap
+/// it to step through them. A sheet whose content is shorter than its height shrinks to fit (the
+/// Profile group is one row), so the photo gets the room.
 fn sheet(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, wide: bool) {
-    let h = ui.max_rect().height();
+    let avail = ui.max_rect().height();
     let frame = egui::Frame::NONE.fill(t.chrome);
     let body = |app: &mut LightcraftApp, ui: &mut egui::Ui| {
         if app.ui.presets { super::presets::body(app, ui) } else { super::right::body(app, ui) }
     };
     if wide {
         egui::Panel::right("compact_side").resizable(true).default_size(SIDE_W).size_range(280.0..=480.0).frame(frame).show(ui, |ui| body(app, ui));
-    } else {
-        egui::Panel::bottom("compact_sheet")
-            .show_separator_line(false)
-            .resizable(true)
-            .default_size(h * SHEET_FRACTION)
-            .size_range(120.0..=h * 0.85)
-            .frame(frame)
-            .show(ui, |ui| body(app, ui));
+        return;
     }
+    let ctx = ui.ctx().clone();
+    let stops = sheet_stops(avail);
+    let detent = (app.ui.sheet_detent as usize).min(stops.len() - 1);
+    // what the finger has made it while dragging the grabber, else the stop it was left at; never
+    // taller than its content (measured by `right::body` a frame before)
+    let drag_id = egui::Id::new("compact-sheet-drag");
+    let dragging = ctx.data(|d| d.get_temp::<f32>(drag_id));
+    let fit = ctx.data(|d| d.get_temp::<f32>(fit_id(app))).map(|c| c + GRABBER_H);
+    let limit = |h: f32| fit.map_or(h, |f| h.min(f)).max(GRABBER_H + SLIDER_ROW_H);
+    let h = match dragging {
+        Some(h) => limit(h),
+        None => ease_to(&ctx, egui::Id::new("compact-sheet-h"), limit(stops[detent])),
+    };
+    let frame = frame.corner_radius(egui::CornerRadius { nw: 12, ne: 12, sw: 0, se: 0 });
+    egui::Panel::bottom("compact_sheet").show_separator_line(false).resizable(false).exact_size(h).frame(frame).show(ui, |ui| {
+        let (g, resp) = ui.allocate_exact_size(vec2(ui.available_width(), GRABBER_H), Sense::click_and_drag());
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, crate::i18n::tr("Resize Panel")));
+        crate::widgets::register(ui.ctx(), "sheet:grabber", g);
+        let pill = if resp.is_pointer_button_down_on() { t.text_dim } else { t.track };
+        ui.painter().rect_filled(egui::Rect::from_center_size(g.center() + vec2(0.0, 1.0), vec2(36.0, 5.0)), 2.5, pill);
+        if resp.dragged() {
+            let now = dragging.unwrap_or(h) - ui.input(|i| i.pointer.delta().y);
+            let now = now.clamp(0.0, stops[2].max(avail * 0.85));
+            ctx.data_mut(|d| d.insert_temp(drag_id, now));
+            ctx.data_mut(|d| d.insert_temp(egui::Id::new("compact-sheet-h"), limit(now)));
+        }
+        if resp.drag_stopped() {
+            let dropped = dragging.unwrap_or(h);
+            ctx.data_mut(|d| d.remove::<f32>(drag_id));
+            if dropped < stops[0] - 60.0 {
+                // dragged right down: the tool is put away
+                app.ui.right = RightPanel::None;
+                app.ui.presets = false;
+            } else {
+                let near = (0..stops.len()).min_by(|a, b| (limit(stops[*a]) - dropped).abs().total_cmp(&(limit(stops[*b]) - dropped).abs()));
+                app.ui.sheet_detent = near.unwrap_or(detent) as u8;
+            }
+        } else if resp.clicked() {
+            app.ui.sheet_detent = ((detent + 1) % stops.len()) as u8;
+        }
+        body(app, ui);
+    });
+}
+
+/// The sheet's heights: about two and a half slider rows, four and a half (a part of the next row
+/// shows that the rest scrolls), and most of the screen.
+fn sheet_stops(avail: f32) -> [f32; 3] {
+    let most = (avail * 0.68).max(GRABBER_H + 6.0 * SLIDER_ROW_H);
+    let cap = avail * 0.8;
+    [(GRABBER_H + 2.5 * SLIDER_ROW_H).min(cap), (GRABBER_H + 4.5 * SLIDER_ROW_H).min(cap), most.min(cap)]
+}
+
+/// Where the height of what the sheet shows now (the tool, and the Edit group) is kept.
+fn fit_id(app: &LightcraftApp) -> egui::Id {
+    egui::Id::new(("compact-sheet-fit", format!("{:?}", app.ui.right), app.ui.presets, app.ui.edit_group.clone()))
+}
+
+/// The tool panel says how tall its content is (`right::body`), so that the sheet needn't be taller.
+pub fn note_sheet_content(app: &LightcraftApp, ctx: &egui::Context, height: f32) {
+    ctx.data_mut(|d| d.insert_temp(fit_id(app), height));
+}
+
+/// `target`, approached from wherever `id` was last, easing out (about a sixth of a second).
+fn ease_to(ctx: &egui::Context, id: egui::Id, target: f32) -> f32 {
+    let now = ctx.data(|d| d.get_temp::<f32>(id)).unwrap_or(target);
+    let dt = ctx.input(|i| i.stable_dt).min(0.1);
+    let next = if (now - target).abs() < 0.5 { target } else { now + (target - now) * (1.0 - (-dt * 18.0).exp()) };
+    ctx.data_mut(|d| d.insert_temp(id, next));
+    if next != target {
+        ctx.request_repaint();
+    }
+    next
 }
 
 /// A text button sized for a finger in a bar (`button:<id>`).
@@ -574,7 +647,7 @@ fn select_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, full: egui
 fn action_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
     egui::Panel::bottom("compact_actions")
         .show_separator_line(false)
-        .exact_size(BAR_H)
+        .exact_size(TAB_H)
         .frame(egui::Frame::NONE.fill(t.canvas).stroke(Stroke::new(0.5, t.divider)))
         .show(ui, |ui| {
             let any = !app.session.selection.ids.is_empty();
@@ -591,7 +664,7 @@ fn action_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
             ui.horizontal_centered(|ui| {
                 ui.spacing_mut().item_spacing.x = 0.0;
                 for (id, icon, tip) in actions {
-                    let r = icon_button(ui, id, icon, vec2(w, BAR_H - 4.0), false, any, tip);
+                    let r = icon_button(ui, id, icon, vec2(w, TAB_H - 4.0), false, any, tip);
                     if !r.clicked() {
                         continue;
                     }

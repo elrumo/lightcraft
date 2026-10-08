@@ -142,33 +142,45 @@ pub struct SliderOut {
     pub reset: bool,
 }
 
+/// A slider row's height on a phone: the label and value, and the track under them.
+pub const TOUCH_SLIDER_ROW_H: f32 = 46.0;
+
+/// The left and right padding of what a tool panel holds: 24 and 22 pt on the desktop, 16 pt on a
+/// phone (iOS's own margin).
+pub fn side_pad(ctx: &egui::Context) -> (f32, f32) {
+    if crate::is_compact(ctx) { (16.0, 16.0) } else { (24.0, 22.0) }
+}
+
+/// A tool panel's margin: the usual sides ([`side_pad`]) and `top` / `bottom` as given.
+pub fn margin(ctx: &egui::Context, top: i8, bottom: i8) -> egui::Margin {
+    let (left, right) = side_pad(ctx);
+    egui::Margin { left: left as i8, right: right as i8, top, bottom }
+}
+
 /// A Lightroom slider row (label + value above a track with a hollow ring thumb).
 /// Double-click the label or thumb to reset. Shift-drag = fine adjustment.
 pub fn slider(ui: &mut Ui, spec: &ControlSpec, value: f64, enabled: bool, label_override: Option<&str>) -> SliderOut {
     let t = Tokens::get(ui.ctx());
     let w = ui.available_width();
-    // touch: a taller row with the track low in it, and a grab zone of about 44 pt (Apple's
-    // minimum); the value follows the finger's movement rather than jumping to it, and a tap
-    // doesn't change it (as in Lightroom's mobile app and iOS's own sliders)
+    // touch: the whole row is the grab zone (a finger's width is more than the track's), the
+    // track sits low in it under its label; the value follows the finger's movement rather than
+    // jumping to it, and a tap doesn't change it (as in Lightroom's mobile app and iOS's own
+    // sliders)
     let touch = crate::is_compact(ui.ctx());
-    let (row_h, track_dy) = if touch { (60.0, 18.0) } else { (t.slider_row_h, 0.0) };
+    let (row_h, track_dy) = if touch { (TOUCH_SLIDER_ROW_H, 3.0) } else { (t.slider_row_h, 0.0) };
     let (row, _) = ui.allocate_exact_size(vec2(w, row_h), Sense::hover());
-    let pad_l = 24.0;
-    let pad_r = 22.0;
+    let (pad_l, pad_r) = side_pad(ui.ctx());
     let label_rect = Rect::from_min_size(pos2(row.left() + pad_l, row.top() + 4.0), vec2(w - pad_l - pad_r, 18.0));
     let track_rect =
         Rect::from_min_max(pos2(row.left() + pad_l, row.top() + 22.0 + track_dy), pos2(row.right() - pad_r, row.top() + 40.0 + track_dy));
     let id = ui.id().with(spec.id);
-    let grab = if touch {
-        Rect::from_min_max(pos2(track_rect.left() - 12.0, track_rect.top() - 24.0), pos2(track_rect.right() + 12.0, row.bottom()))
-    } else {
-        track_rect.expand2(vec2(8.0, 2.0))
-    };
+    let grab = if touch { row } else { track_rect.expand2(vec2(8.0, 2.0)) };
     let resp = ui.interact(grab, id, if enabled { Sense::click_and_drag() } else { Sense::hover() });
     // screen readers: a slider named after its control, with its value
     let label_text = crate::i18n::tr(label_override.unwrap_or(spec.label)).to_string();
     resp.widget_info(|| egui::WidgetInfo::slider(enabled, value, label_text.clone()));
-    let label_resp = ui.interact(label_rect, id.with("label"), Sense::click());
+    // (a phone's whole row is the slider's: its label takes no touches of its own)
+    let label_resp = ui.interact(label_rect, id.with("label"), if touch { Sense::hover() } else { Sense::click() });
     register(ui.ctx(), format!("slider:{}", spec.id), track_rect);
     let mut out = SliderOut::default();
     let span = (spec.max - spec.min).max(1e-9);
@@ -262,7 +274,7 @@ pub fn slider(ui: &mut Ui, spec: &ControlSpec, value: f64, enabled: bool, label_
     let shown = if spec.id == "wb.temp" { format!("{v:.0}") } else { spec.format(v).replace("+0.00", "0").replace("-0.00", "0") };
     let shown = if shown == "+0" || shown == "-0" { "0".to_string() } else { shown };
     p.text(label_rect.right_center(), Align2::RIGHT_CENTER, shown, font, text_c);
-    let ring = if touch { 11.0 } else { 7.0 };
+    let ring = if touch { 10.0 } else { 7.0 };
     let tx = to_x(v);
     paint_track(ui, track_rect, &spec.track, &t, tx, ring);
     let p = ui.painter();
@@ -406,7 +418,12 @@ pub fn check(ui: &mut Ui, on: &mut bool, label: impl Into<egui::WidgetText>) -> 
     let t = Tokens::get(ui.ctx());
     let enabled = ui.is_enabled();
     let w = ui.available_width().max(80.0);
-    let galley = label.into().into_galley(ui, Some(egui::TextWrapMode::Wrap), w - 70.0, egui::TextStyle::Body);
+    let label: egui::WidgetText = label.into();
+    let label = match strip_key_hint(label.text()) {
+        plain if plain.len() != label.text().len() => plain.to_string().into(),
+        _ => label,
+    };
+    let galley = label.into_galley(ui, Some(egui::TextWrapMode::Wrap), w - 70.0, egui::TextStyle::Body);
     let (r, mut resp) = ui.allocate_exact_size(vec2(w, (galley.size().y + 16.0).max(44.0)), Sense::click());
     if resp.clicked() && enabled {
         *on = !*on;
@@ -428,16 +445,40 @@ pub fn check(ui: &mut Ui, on: &mut bool, label: impl Into<egui::WidgetText>) -> 
     resp
 }
 
-/// A small bordered text button (Auto, B&W, HDR…).
+/// `label` without a trailing keyboard hint such as " (X)" or " (⇧O)": a phone has no keyboard.
+pub fn strip_key_hint(label: &str) -> &str {
+    match label.rfind(" (") {
+        Some(i) if label.ends_with(')') && label[i + 2..label.len() - 1].chars().count() <= 3 => &label[..i],
+        _ => label,
+    }
+}
+
+/// A small bordered text button (Auto, B&W, HDR…); on a phone iOS's borderless, rounded kind, 36 pt
+/// tall, the chosen one in the accent colour.
 pub fn text_button(ui: &mut Ui, id: &str, label: &str, active: bool) -> Response {
     let label = if id.starts_with("labelSet-") { label } else { crate::i18n::tr(label) };
     let t = Tokens::get(ui.ctx());
-    let font = t.semibold(11.5);
+    let touch = crate::is_compact(ui.ctx());
+    let label = if touch { strip_key_hint(label) } else { label };
+    let font = t.semibold(if touch { 13.5 } else { 11.5 });
     let galley = ui.painter().layout_no_wrap(label.to_string(), font, t.text);
-    let size = vec2((galley.size().x + 18.0).max(37.0), 24.0);
+    let size = if touch { vec2((galley.size().x + 28.0).max(56.0), 36.0) } else { vec2((galley.size().x + 18.0).max(37.0), 24.0) };
     let (r, resp) = ui.allocate_exact_size(size, Sense::click());
     resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, active, label));
     register(ui.ctx(), format!("button:{id}"), r);
+    let p = ui.painter();
+    if touch {
+        let fill = if active {
+            t.accent
+        } else if resp.is_pointer_button_down_on() {
+            t.pressed
+        } else {
+            t.button
+        };
+        p.rect_filled(r, 9.0, fill);
+        p.galley(r.center() - galley.size() / 2.0, galley, Color32::WHITE);
+        return resp;
+    }
     let fill = if active {
         t.pressed
     } else if resp.hovered() {
@@ -445,7 +486,6 @@ pub fn text_button(ui: &mut Ui, id: &str, label: &str, active: bool) -> Response
     } else {
         t.button
     };
-    let p = ui.painter();
     p.rect(r, CornerRadius::same(4), fill, Stroke::new(1.0, t.button_border), StrokeKind::Inside);
     p.galley(r.center() - galley.size() / 2.0, galley, t.text);
     resp
@@ -456,6 +496,9 @@ pub fn text_button(ui: &mut Ui, id: &str, label: &str, active: bool) -> Response
 pub fn segmented(ui: &mut Ui, id: &str, items: &[(&str, &str)], active: Option<usize>, per_row: usize) -> Option<usize> {
     let t = Tokens::get(ui.ctx());
     let per_row = per_row.max(1);
+    if crate::is_compact(ui.ctx()) {
+        return ios_segments(ui, id, items.iter().map(|(label, key)| (*label, key.to_string())).collect(), active, per_row);
+    }
     let gap = 4.0;
     let w = ui.available_width();
     let seg_w = ((w - gap * (per_row as f32 - 1.0)) / per_row as f32).max(24.0);
@@ -491,20 +534,26 @@ pub fn segmented(ui: &mut Ui, id: &str, items: &[(&str, &str)], active: Option<u
 /// chosen one raised on a lighter pill; more than four wrap to rows of four. Segment `i` is
 /// `button:{id}-{i}`. Returns the tapped index.
 pub fn ios_segmented(ui: &mut Ui, id: &str, labels: &[&str], active: Option<usize>) -> Option<usize> {
+    ios_segments(ui, id, labels.iter().enumerate().map(|(i, l)| (*l, i.to_string())).collect(), active, 4)
+}
+
+/// [`ios_segmented`] with `per_row` segments to a row and `button:{id}-{key}` for each segment's
+/// `(label, key)`.
+fn ios_segments(ui: &mut Ui, id: &str, items: Vec<(&str, String)>, active: Option<usize>, per_row: usize) -> Option<usize> {
     let t = Tokens::get(ui.ctx());
     let w = ui.available_width();
     let mut tapped = None;
-    for (row_i, row) in labels.chunks(4).enumerate() {
-        let (track, _) = ui.allocate_exact_size(vec2(w, 34.0), Sense::hover());
+    for (row_i, row) in items.chunks(per_row.max(1)).enumerate() {
+        let (track, _) = ui.allocate_exact_size(vec2(w, 36.0), Sense::hover());
         ui.painter().rect_filled(track, 9.0, t.inset);
         let seg_w = track.width() / row.len() as f32;
-        for (j, label) in row.iter().enumerate() {
-            let i = row_i * 4 + j;
+        for (j, (label, key)) in row.iter().enumerate() {
+            let i = row_i * per_row.max(1) + j;
             let r = Rect::from_min_size(pos2(track.left() + j as f32 * seg_w, track.top()), vec2(seg_w, track.height()));
             let resp = ui.interact(r, ui.id().with((id, i)), Sense::click());
             let on = active == Some(i);
             resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::RadioButton, true, on, *label));
-            register(ui.ctx(), format!("button:{id}-{i}"), r);
+            register(ui.ctx(), format!("button:{id}-{key}"), r);
             let p = ui.painter();
             if on {
                 let pill = r.shrink(2.0);
@@ -528,6 +577,8 @@ pub fn ios_segmented(ui: &mut Ui, id: &str, labels: &[&str], active: Option<usiz
 pub fn icon_button(ui: &mut Ui, id: &str, icon: Icon, size: egui::Vec2, active: bool, enabled: bool, tooltip: &str) -> Response {
     let tooltip = crate::i18n::tr(tooltip);
     let t = Tokens::get(ui.ctx());
+    // a finger needs 40 pt or so
+    let size = if crate::is_compact(ui.ctx()) { size.max(vec2(40.0, 40.0)) } else { size };
     let (r, resp) = ui.allocate_exact_size(size, if enabled { Sense::click() } else { Sense::hover() });
     resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, enabled, active, tooltip));
     register(ui.ctx(), format!("icon:{id}"), r);
@@ -581,7 +632,7 @@ pub fn stars(ui: &mut Ui, id: &str, rating: u8, size: f32) -> Option<u8> {
 pub fn dropdown(ui: &mut Ui, id: &str, text: &str, font: egui::FontId, color: Color32) -> Response {
     let t = Tokens::get(ui.ctx());
     let galley = ui.painter().layout_no_wrap(text.to_string(), font, color);
-    let size = vec2(galley.size().x + 20.0, galley.size().y.max(20.0));
+    let size = vec2(galley.size().x + 20.0, galley.size().y.max(if crate::is_compact(ui.ctx()) { 40.0 } else { 20.0 }));
     let (r, resp) = ui.allocate_exact_size(size, Sense::click());
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, true, text));
     register(ui.ctx(), format!("dropdown:{id}"), r);
@@ -594,6 +645,16 @@ pub fn dropdown(ui: &mut Ui, id: &str, text: &str, font: egui::FontId, color: Co
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keyboard_hints_are_stripped_but_other_parentheses_stay() {
+        assert_eq!(strip_key_hint("Swap Aspect (X)"), "Swap Aspect");
+        assert_eq!(strip_key_hint("Flip Overlay (⇧O)"), "Flip Overlay");
+        assert_eq!(strip_key_hint("Delete (⌫)"), "Delete");
+        assert_eq!(strip_key_hint("Resize (long edge)"), "Resize (long edge)");
+        assert_eq!(strip_key_hint("Exposure"), "Exposure");
+        assert_eq!(strip_key_hint("(X)"), "(X)", "a label that is only a hint keeps it");
+    }
 
     #[test]
     fn nudges_are_a_sensible_step() {

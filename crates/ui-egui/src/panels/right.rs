@@ -31,7 +31,7 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         super::empty_message(ui, r, "No photo selected", "Select a photo to edit");
         return;
     };
-    egui::ScrollArea::vertical().id_salt("right-scroll").auto_shrink([false, false]).show(ui, |ui| {
+    let out = egui::ScrollArea::vertical().id_salt("right-scroll").auto_shrink([false, false]).show(ui, |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
         match app.ui.right {
             RightPanel::Edit => super::edit::show(app, ui, id),
@@ -47,30 +47,105 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             RightPanel::None => {}
         }
     });
+    // (the phone's sheet is only as tall as this)
+    if app.compact {
+        super::compact::note_sheet_content(app, ui.ctx(), out.content_size.y);
+    }
 }
 
 pub fn header(ui: &mut egui::Ui, title: &str) {
     let t = Tokens::get(ui.ctx());
-    let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 46.0), Sense::hover());
-    ui.painter().text(pos2(r.left() + 24.0, r.center().y + 2.0), Align2::LEFT_CENTER, crate::i18n::tr(title), t.semibold(15.0), t.text);
+    let compact = crate::is_compact(ui.ctx());
+    let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), if compact { 34.0 } else { 46.0 }), Sense::hover());
+    let x = r.left() + crate::widgets::side_pad(ui.ctx()).0;
+    ui.painter().text(
+        pos2(x, r.center().y + 2.0),
+        Align2::LEFT_CENTER,
+        crate::i18n::tr(title),
+        t.semibold(if compact { 14.0 } else { 15.0 }),
+        t.text,
+    );
+}
+
+/// The title of a tool's panel. A phone's tool bar already names the open tool, so its sheet
+/// starts with the tool's controls.
+pub fn tool_header(ui: &mut egui::Ui, title: &str) {
+    if !crate::is_compact(ui.ctx()) {
+        header(ui, title);
+    }
 }
 
 pub fn label_row(ui: &mut egui::Ui, label: &str, value: &str) {
     let t = Tokens::get(ui.ctx());
-    let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 24.0), Sense::hover());
-    ui.painter().text(pos2(r.left() + 24.0, r.center().y), Align2::LEFT_CENTER, crate::i18n::tr(label), t.font(12.5), t.text_dim);
+    let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), if crate::is_compact(ui.ctx()) { 30.0 } else { 24.0 }), Sense::hover());
+    let x = r.left() + crate::widgets::side_pad(ui.ctx()).0;
+    ui.painter().text(pos2(x, r.center().y), Align2::LEFT_CENTER, crate::i18n::tr(label), t.font(12.5), t.text_dim);
     ui.painter().text(pos2(r.left() + 110.0, r.center().y), Align2::LEFT_CENTER, value, t.font(12.5), t.text_label);
 }
 
 fn padded(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
-    egui::Frame::NONE.inner_margin(egui::Margin { left: 24, right: 22, top: 6, bottom: 6 }).show(ui, add);
+    egui::Frame::NONE.inner_margin(crate::widgets::margin(ui.ctx(), 6, 6)).show(ui, add);
+}
+
+/// The crop's aspect ratios: (label, `crop.aspect` name).
+const ASPECTS: [(&str, &str); 10] = [
+    ("Free", "free"),
+    ("Original", "original"),
+    ("1 × 1", "1x1"),
+    ("4 × 5 / 8 × 10", "4x5"),
+    ("8.5 × 11", "8.5x11"),
+    ("5 × 7", "5x7"),
+    ("2 × 3 / 4 × 6", "2x3"),
+    ("4 × 3", "4x3"),
+    ("16 × 9", "16x9"),
+    ("16 × 10", "16x10"),
+];
+
+/// A phone's aspect ratios: chips in a row that scrolls sideways, the chosen one lit (the desktop's
+/// pop-up menu is hard to hit with a finger, and hides the choices).
+fn aspect_chips(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, d: &lightcraft_develop::DevelopSettings) {
+    let (w, h) = app.session.catalog.photo(id).map_or((1.0, 1.0), |p| (p.width.max(1) as f64, p.height.max(1) as f64));
+    let same = |a: (u32, u32), r: f64| (a.0 as f64 / a.1.max(1) as f64 - r).abs() < 0.005 * r;
+    let on = |name: &str| match (name, d.crop.aspect) {
+        ("free", a) => a.is_none(),
+        (_, None) => false,
+        ("original", Some(a)) => same(a, w / h) || same(a, h / w),
+        (name, Some(a)) => name
+            .split_once('x')
+            .and_then(|(x, y)| Some((x.parse::<f64>().ok()?, y.parse::<f64>().ok()?)))
+            .is_some_and(|(x, y)| same(a, x / y) || same(a, y / x)),
+    };
+    let pad = crate::widgets::side_pad(ui.ctx()).0;
+    egui::ScrollArea::horizontal().id_salt("crop-aspects").scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden).show(
+        ui,
+        |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                ui.add_space(pad);
+                for (label, name) in ASPECTS {
+                    if text_button(ui, &format!("cropAspect-{name}"), label.split(" / ").next().unwrap_or(label), on(name)).clicked() {
+                        let _ = app.run("crop.aspect", json!({"aspect": name}));
+                    }
+                }
+                ui.add_space(pad);
+            });
+        },
+    );
 }
 
 fn crop(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     let d = app.session.develop_of(id).unwrap_or_default();
-    header(ui, "Crop");
+    tool_header(ui, "Crop");
+    let compact = app.compact;
+    if compact {
+        ui.add_space(8.0);
+        aspect_chips(app, ui, id, &d);
+    }
     padded(ui, |ui| {
         ui.horizontal(|ui| {
+            if compact {
+                return;
+            }
             ui.label(crate::i18n::tr("Aspect Ratio"));
             let cur = d.crop.aspect.map(|(w, h)| format!("{} × {}", w as f64 / 100.0, h as f64 / 100.0)).unwrap_or_else(|| "Free".into());
             let r = ui.add(egui::Button::new(crate::i18n::tr(&cur)).frame(false));
@@ -229,15 +304,23 @@ fn crop(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
 
 fn remove(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     let d = app.session.develop_of(id).unwrap_or_default();
-    header(ui, "Remove");
+    tool_header(ui, "Remove");
     padded(ui, |ui| {
-        ui.horizontal_wrapped(|ui| {
-            for (label, tool) in [("Remove", "remove"), ("Heal", "heal"), ("Clone", "clone")] {
-                if text_button(ui, &format!("removeMode-{tool}"), label, app.ui.tool == tool).clicked() {
-                    app.ui.tool = tool.into();
-                }
+        let modes = [("Remove", "remove"), ("Heal", "heal"), ("Clone", "clone")];
+        if app.compact {
+            let active = modes.iter().position(|(_, tool)| app.ui.tool == *tool);
+            if let Some(i) = crate::widgets::segmented(ui, "removeMode", &modes, active, 3) {
+                app.ui.tool = modes[i].1.into();
             }
-        });
+        } else {
+            ui.horizontal_wrapped(|ui| {
+                for (label, tool) in modes {
+                    if text_button(ui, &format!("removeMode-{tool}"), label, app.ui.tool == tool).clicked() {
+                        app.ui.tool = tool.into();
+                    }
+                }
+            });
+        }
         ui.add_space(8.0);
         ui.label(crate::i18n::tr_format!("{} spot(s) on this photo", d.spots.len()));
         ui.add_space(4.0);
@@ -406,7 +489,7 @@ fn red_eye(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
 
 fn info(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     let Some(p) = app.session.catalog.photo(id).cloned() else { return };
-    header(ui, "Info");
+    tool_header(ui, "Info");
     let t = Tokens::get(ui.ctx());
     padded(ui, |ui| {
         camera_card(ui, &p);

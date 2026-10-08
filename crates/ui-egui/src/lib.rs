@@ -30,6 +30,8 @@ pub mod widgets;
 #[cfg(test)]
 mod tests_compact;
 #[cfg(test)]
+mod tests_compact_editor;
+#[cfg(test)]
 mod tests_curve;
 #[cfg(test)]
 mod tests_grid;

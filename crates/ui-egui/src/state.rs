@@ -218,6 +218,9 @@ pub struct UiState {
     /// Compact layout: the Edit tool's group (`profile`, `light`, `color`, `effects`, `detail`,
     /// `optics`, `calibration`); a phone shows one group at a time, as Lightroom's mobile app does.
     pub edit_group: String,
+    /// Compact layout: how tall the tool sheet is, as the stop (0 small, 1 medium, 2 large) it was
+    /// last left at (the grabber at its top snaps between them).
+    pub sheet_detent: u8,
     /// Compact layout: the searchable list of every command is open (the phone has no menu bar).
     #[serde(skip)]
     pub all_commands: bool,
@@ -552,6 +555,7 @@ impl Default for UiState {
             unsaved_seen: false,
             select_mode: false,
             edit_group: "light".into(),
+            sheet_detent: 1,
             all_commands: false,
             luminance_map_restore: None,
             view: ViewMode::Detail,

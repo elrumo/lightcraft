@@ -1,0 +1,196 @@
+//! Headless tests of the phone's editor screens: the sheet under the photo (its grabber and its
+//! three heights, shrinking to its content), slider rows, and the tool panels' touch-sized controls
+//! (iOS gap A2.4 / A2.5).
+
+use std::time::Duration;
+
+use egui::{Rect, vec2};
+use lightcraft_engine::Session;
+use serde_json::json;
+
+use crate::headless::Headless;
+use crate::state::{RightPanel, ViewMode};
+use crate::{LightcraftApp, Services};
+
+const T: Duration = Duration::from_secs(30);
+const SETTLE: Duration = Duration::from_secs(120);
+
+fn detail(size: [f32; 2]) -> Headless {
+    let app = LightcraftApp::new(Session::with_demo(), Services { png: None, ..Default::default() });
+    let mut h = Headless::new(app, size, 1.0);
+    h.settle(SETTLE);
+    let r = h.request("engine.execute", json!({"command": "library.select", "params": {"ids": [1]}}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.app.ui.view = ViewMode::Detail;
+    h.app.ui.right = RightPanel::Edit;
+    h.settle(SETTLE);
+    h
+}
+
+fn rect(h: &Headless, id: &str) -> Rect {
+    h.app.widgets.iter().find(|(w, _)| w == id).map(|(_, r)| *r).unwrap_or_else(|| panic!("{id} is not on screen"))
+}
+
+fn has(h: &Headless, id: &str) -> bool {
+    h.app.widgets.iter().any(|(w, _)| w == id)
+}
+
+fn click(h: &mut Headless, id: &str) {
+    let r = h.request("ui.clickWidget", json!({"id": id}), T);
+    assert_eq!(r["ok"], true, "{id}: {r}");
+    h.settle(SETTLE);
+}
+
+/// A drag of the finger from `from` to `to` in steps.
+fn drag(h: &mut Headless, from: egui::Pos2, to: egui::Pos2) {
+    let r = h.request("ui.drag", json!({"x": from.x, "y": from.y, "toX": to.x, "toY": to.y, "steps": 12}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+}
+
+/// The top of the sheet (the grabber's top edge): lower on the screen is a shorter sheet. The sheet
+/// eases to its height, so this runs frames until it has stopped.
+fn sheet_top(h: &mut Headless) -> f32 {
+    let mut last = rect(h, "sheet:grabber").top();
+    for _ in 0..240 {
+        h.step();
+        let now = rect(h, "sheet:grabber").top();
+        if (now - last).abs() < 0.01 {
+            return now;
+        }
+        last = now;
+    }
+    last
+}
+
+/// The sheet has a grabber: a tap steps through its three heights, a drag takes it to the nearest
+/// and a drag right down puts the tool away.
+#[test]
+fn the_sheet_has_a_grabber_with_three_heights() {
+    let mut h = detail([390.0, 844.0]);
+    assert!(has(&h, "sheet:grabber"));
+    assert!(rect(&h, "sheet:grabber").height() >= 24.0, "a finger can hit it: {:?}", rect(&h, "sheet:grabber"));
+    assert_eq!(h.app.ui.sheet_detent, 1, "it opens at the middle height");
+    let middle = sheet_top(&mut h);
+    // a tap steps up to the tallest, then round to the shortest
+    click(&mut h, "sheet:grabber");
+    assert_eq!(h.app.ui.sheet_detent, 2);
+    let tall = sheet_top(&mut h);
+    assert!(tall < middle - 80.0, "taller: {tall} < {middle}");
+    click(&mut h, "sheet:grabber");
+    assert_eq!(h.app.ui.sheet_detent, 0);
+    let short = sheet_top(&mut h);
+    assert!(short > middle + 40.0, "shorter: {short} > {middle}");
+    // a drag up from the shortest lets go nearest the tallest
+    let g = rect(&h, "sheet:grabber").center();
+    drag(&mut h, g, g - vec2(0.0, 300.0));
+    assert_eq!(h.app.ui.sheet_detent, 2, "dragged up: the tallest");
+    assert!((sheet_top(&mut h) - tall).abs() < 1.5, "and it settled there: {} vs {tall} (middle {middle}, short {short})", sheet_top(&mut h));
+    // a drag down to the bottom of the screen closes the tool
+    let g = rect(&h, "sheet:grabber").center();
+    drag(&mut h, g, g + vec2(0.0, 500.0));
+    assert_eq!(h.app.ui.right, RightPanel::None, "dragged right down: the sheet is put away");
+    assert!(!has(&h, "sheet:grabber"));
+}
+
+/// A group with one row (Profile) needs less sheet than Light: the sheet is only as tall as its
+/// content, and the photo gets the rest.
+#[test]
+fn the_sheet_is_only_as_tall_as_its_content() {
+    let mut h = detail([390.0, 844.0]);
+    let light = sheet_top(&mut h);
+    h.app.ui.edit_group = "profile".into();
+    h.settle(SETTLE);
+    let profile = sheet_top(&mut h);
+    assert!(profile > light + 40.0, "Profile's sheet is shorter: {profile} vs {light}");
+    let photo = h.app.image_rect.expect("loupe");
+    assert!(photo.bottom() <= profile, "the photo stays above the sheet: {photo:?}");
+}
+
+/// Slider rows on a phone are 46 pt apart (they were 60), with the whole row grabbing a finger.
+#[test]
+fn phone_slider_rows_are_compact() {
+    let h = detail([390.0, 1000.0]);
+    let exposure = rect(&h, "slider:light.exposure");
+    let contrast = rect(&h, "slider:light.contrast");
+    assert!((contrast.center().y - exposure.center().y - crate::widgets::TOUCH_SLIDER_ROW_H).abs() < 0.5, "{exposure:?} {contrast:?}");
+    assert!(exposure.left() <= 16.5 && exposure.right() >= 390.0 - 16.5, "tracks run the width but for the 16 pt margins: {exposure:?}");
+}
+
+/// A drag that starts on a slider's label moves the slider, as the whole row is its grab zone.
+#[test]
+fn a_drag_on_a_sliders_label_slides_it() {
+    let mut h = detail([390.0, 1000.0]);
+    let id = h.app.session.active().expect("active photo");
+    let track = rect(&h, "slider:light.exposure");
+    // the label line is above the track: well outside a desktop slider's grab zone
+    let from = egui::pos2(track.left() + track.width() * 0.5, track.center().y - 18.0);
+    drag(&mut h, from, from + vec2(track.width() * 0.1, 0.0));
+    let exposure = h.app.session.develop_of(id).map(|d| d.light.exposure).unwrap_or_default();
+    assert!(exposure > 0.5, "exposure {exposure}");
+}
+
+/// Crop on a phone: the aspect ratios are chips (the chosen one lit) and its buttons are 36 pt
+/// tall, not the desktop's 24.
+#[test]
+fn phone_crop_has_aspect_chips_and_finger_sized_buttons() {
+    let mut h = detail([390.0, 1000.0]);
+    h.app.ui.right = RightPanel::Crop;
+    h.app.ui.sheet_detent = 2;
+    h.settle(SETTLE);
+    let id = h.app.session.active().expect("active photo");
+    assert!(has(&h, "button:cropAspect-free") && has(&h, "button:cropAspect-4x5"));
+    assert!(!has(&h, "button:cropAspect"), "the desktop's pop-up menu isn't there");
+    assert!(rect(&h, "button:cropRotateLeft").height() >= 34.0, "{:?}", rect(&h, "button:cropRotateLeft"));
+    click(&mut h, "button:cropAspect-4x5");
+    assert_eq!(h.app.session.develop_of(id).expect("settings").crop.aspect, Some((400, 500)), "4 × 5 is locked");
+    // segmented choices are iOS's: 36 pt tall, ids keep their names
+    assert!(rect(&h, "button:cropOverlay-thirds").height() >= 34.0);
+    click(&mut h, "button:cropOverlay-grid");
+    assert_eq!(h.app.ui.crop_overlay, crate::state::CropOverlay::Grid);
+}
+
+/// Remove on a phone: Remove / Heal / Clone are one segmented control.
+#[test]
+fn phone_remove_modes_are_a_segmented_control() {
+    let mut h = detail([390.0, 1000.0]);
+    h.app.ui.right = RightPanel::Remove;
+    h.app.ui.sheet_detent = 2;
+    h.settle(SETTLE);
+    let (heal, clone) = (rect(&h, "button:removeMode-heal"), rect(&h, "button:removeMode-clone"));
+    assert!((heal.center().y - clone.center().y).abs() < 0.5 && heal.height() >= 34.0, "{heal:?} {clone:?}");
+    click(&mut h, "button:removeMode-clone");
+    assert_eq!(h.app.ui.tool, "clone");
+}
+
+/// Masking on a phone: the ten kinds of mask are tiles across the whole width, folded away once a
+/// mask exists, and the mask list has finger-high rows with the eye always shown.
+#[test]
+fn phone_masking_tiles_fill_the_width_and_the_list_is_finger_high() {
+    let mut h = detail([390.0, 1000.0]);
+    h.app.ui.right = RightPanel::Masking;
+    h.app.ui.sheet_detent = 2;
+    h.settle(SETTLE);
+    let (first, last) = (rect(&h, "maskNew:object"), rect(&h, "maskNew:background"));
+    assert!((first.center().y - last.center().y).abs() < 0.5, "five to a row: {first:?} {last:?}");
+    assert!(last.right() > 390.0 - 24.0 && first.width() >= 60.0, "across the width: {first:?} {last:?}");
+    click(&mut h, "maskNew:radial");
+    let mask = h.app.session.develop_of(h.app.session.active().expect("photo")).expect("settings").masks[0].id;
+    assert!(has(&h, "flyout:maskNew") && !has(&h, "maskNew:object"), "the kinds fold away once there is a mask");
+    assert!(rect(&h, &format!("mask:{mask}")).height() >= 44.0);
+    let eye = rect(&h, &format!("maskVisible:{mask}"));
+    assert!(eye.width() >= 44.0 && eye.height() >= 44.0, "shown without a hover, and big enough: {eye:?}");
+    // the folded row opens them again
+    click(&mut h, "flyout:maskNew");
+    assert!(has(&h, "maskNew:object"));
+}
+
+/// iPad portrait keeps the tools in a panel on the right: the compact rows and margins are used
+/// there too, and there is no grabber.
+#[test]
+fn the_tablet_panel_has_no_grabber_but_the_same_rows() {
+    let h = detail([820.0, 1180.0]);
+    assert!(!has(&h, "sheet:grabber"));
+    let (exposure, contrast) = (rect(&h, "slider:light.exposure"), rect(&h, "slider:light.contrast"));
+    assert!((contrast.center().y - exposure.center().y - crate::widgets::TOUCH_SLIDER_ROW_H).abs() < 0.5);
+}
