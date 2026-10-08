@@ -23,7 +23,7 @@ duplicate Local entries #22, black GPU exports on an Intel iGPU #78).
 | Dimension | Estimate | What's true today | Biggest gaps |
 |---|---:|---|---|
 | **Feature checklist** | 79% | P0 core and P1 nearly complete: import (Add / Copy / Move, templates, devices), library, grid/loupe/compare/survey, every Edit slider, curves, colour grading, masking tools, crop/Upright, heal/clone, presets/profiles, versions/history, sync, export, menus, shortcuts | P1: lens-profile database, video playback/trim |
-| **RAW coverage** (formats people shoot) | ~50% | DNG (all kinds), CR2, CR3 (lossless), ARW, NEF (uncompressed + Huffman lossless/lossy), uncompressed RAF/ORF, packed RW2, PEF; every container's embedded preview (incl. CR3) | **CR3 C-RAW** (the lossy mode of every Canon since ~2018; lossless CR3 decodes but without camera colour yet), compressed RAF/ORF, RW2 v4, Nikon lossy-after-split, Canon sRAW, AVIF. NEFs labelled compressed but stored uncompressed (Z 6 packed 14-bit, D850 12-bit uncompressed). Per-model verification is thin (~40 corpus files vs >1,000 models) |
+| **RAW coverage** (formats people shoot) | ~50% | DNG (all kinds), CR2, CR3 (lossless), ARW, NEF (uncompressed + Huffman lossless/lossy), uncompressed RAF/ORF, packed RW2, PEF; every container's embedded preview (incl. CR3) | **CR3 C-RAW** (the lossy mode of every Canon since ~2018; lossless CR3 decodes, with white balance and a look fitted to the camera JPEG), compressed RAF/ORF, RW2 v4, Nikon lossy-after-split, Canon sRAW, AVIF. NEFs labelled compressed but stored uncompressed (Z 6 packed 14-bit, D850 12-bit uncompressed). Per-model verification is thin (~40 corpus files vs >1,000 models) |
 | **Colour & image quality** | ~55–65% | Pipeline is complete and fast; GPU path CPU-exact within 1/255 | **No measured camera calibration database**: ARW and NEF have a guarded per-file embedded-JPEG colour estimate (docs/camera-preview-colour.md); other non-DNG raws and rejected estimates use a neutral matrix. Colour fidelity remains incomplete. No lens-profile database. No measured fidelity against Lightroom (tone, highlights, texture/clarity, NR, sharpening are tuned by eye) |
 | **AI & computational** | ~15–20% | Assisted culling (focus, bursts), auto tone, HDR/panorama merge; subject/sky/background masks as classical heuristics | Real segmentation masks (subject, sky, people, objects, landscape, depth), AI denoise, super resolution, lens blur, generative remove, faces/people, natural-language search. **Blocked on a model strategy** (licensable weights or our own training; pure-Rust inference is feasible) |
 | **Workflow & library** | ~85% (single machine) | Robust catalog (journal + snapshots, background compaction, crash-tested), 85k-photo libraries stay responsive, Local browsing with automatic cleanup, XMP interop, keywords, smart albums, Move import | Opening an 85k library takes 1.7–4.7 s; no tablet companion (#74, roadmap), shared albums, publish services, tethering. **Optional self-hosted sync** (docs/sync.md: `lightcraft-server`, one library shared by a user's desktop devices, previews and originals by content hash, field-level merges; photo folders already on the server read in place as library folders) is new and lightly tested (desktop, CLI and the web build; presets merge by id): running sync in the iOS spike (wired up and type-checked, not yet run on a simulator or iPhone) and eviction of downloaded originals are still to come |
@@ -37,7 +37,7 @@ duplicate Local entries #22, black GPU exports on an Intel iGPU #78).
 |---|---:|---|
 | JPEG / DNG shooter, single machine | ~85% | Fidelity polish, AI masks |
 | Nikon / Sony / older-Canon raw shooter | ~65% | Camera colour fidelity and coverage (ARW and NEF preview estimates are only a starting point) |
-| Canon CR3 / Fujifilm / Olympus shooter | ~35% | Canon lossless raws decode (colour is neutral until M11.1c); C-RAW, Fujifilm and Olympus compressed raws open as embedded previews only (CR3: the full-size JPEG with full metadata) |
+| Canon CR3 / Fujifilm / Olympus shooter | ~35% | Canon lossless raws decode (look fitted to the camera JPEG); C-RAW, Fujifilm and Olympus compressed raws open as embedded previews only (CR3: the full-size JPEG with full metadata) |
 | Lightroom Classic power user | ~45% | Print, Book, Map, publish, tethering |
 | Relies on AI (masks, denoise) | ~25% | Object / Describe masks via optional SAM 3 (download not yet hosted); no AI denoise |
 
@@ -198,7 +198,7 @@ own chart-based calibration (M11.4). Adobe matrices are never used.
   tracker rows for camera colour, camera coverage and render fidelity.
 - 2026-10-08: Canon CR3 lossless (CRX, no wavelets) decodes in pure Rust, bit-exact against a reference decoder's output on
   EOS R / R5 / R6 / 90D files (M11.1b): the entropy coder is JPEG-LS-style, found by black-box analysis of the bitstreams.
-  Camera colour (M11.1c) and the lossy C-RAW mode (M11.1d) come next.
+  The camera's white balance and a look fitted to its JPEG follow (M11.1c); the lossy C-RAW mode (M11.1d) is next.
 
 ## Chinese and Japanese interfaces, and text watermarks
 

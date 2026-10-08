@@ -289,3 +289,44 @@ fn corpus_sony_pre2017_colour_metadata() {
     }
     eprintln!("pre-2017 Sony ARW colour metadata checked on {seen} files");
 }
+
+/// FNV-1a over the samples (little-endian bytes): a regression fingerprint of a decode.
+fn fingerprint(img: &lightcraft_raw::RawImage) -> u64 {
+    let lightcraft_raw::RawData::U16(d) = &img.data else { panic!("float data") };
+    d.iter().flat_map(|v| v.to_le_bytes()).fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x0000_0100_0000_01b3))
+}
+
+/// Lossless Canon CR3 (CRX): the samples of four bodies were compared with a reference decoder's output
+/// (0 differences), so a changed fingerprint means the decoder changed. Geometry, black level and the as-shot
+/// white balance (from the `ColorData` array in the timed-metadata sample) are plausible.
+#[test]
+fn corpus_cr3_lossless_decodes_exactly() {
+    // (file, mosaic size, active area x, y, fingerprint, as-shot R and B multipliers)
+    const FILES: &[(&str, (usize, usize), (usize, usize), u64, (f32, f32))] = &[
+        ("cr3-canon-r-raw.cr3", (6888, 4546), (144, 46), 0x97e0cf6ed78f761d, (1.954, 1.545)),
+        ("cr3-canon-r5-crop-raw.cr3", (5248, 3510), (128, 96), 0xdccb990876b040dc, (1.540, 2.444)),
+        ("cr3-canon-r6-raw.cr3", (5568, 3708), (72, 38), 0xbb6e4c49b9a90021, (1.806, 1.639)),
+        ("cr3-canon-90d-raw.cr3", (7128, 4732), (144, 72), 0x79523891317a8c57, (2.048, 1.344)),
+    ];
+    let dir = corpus_root().join("raw");
+    for &(name, (w, h), (ax, ay), print, (wb_r, wb_b)) in FILES {
+        let Ok(bytes) = std::fs::read(dir.join(name)) else {
+            eprintln!("skip: {name} absent");
+            continue;
+        };
+        let img = decode(&bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert_eq!((img.width, img.height, img.bits), (w, h, 14), "{name}");
+        assert_eq!((img.active_area.x, img.active_area.y), (ax, ay), "{name}");
+        assert_eq!(img.cfa.as_ref().map(|c| c.name()), Some("RGGB".to_string()), "{name}");
+        assert!(img.black.values.iter().all(|b| (509.0..514.0).contains(b)), "{name}: black {:?}", img.black.values);
+        let wb = img.wb_multipliers.unwrap_or_else(|| panic!("{name}: no white balance"));
+        assert!((wb[0] - wb_r).abs() < 0.002 && wb[1] == 1.0 && (wb[2] - wb_b).abs() < 0.002, "{name}: wb {wb:?}");
+        // the default crop is the size of the camera's own JPEG
+        let jpeg = embedded_preview(&bytes).expect("preview");
+        let mut jd = zune_jpeg::JpegDecoder::new(zune_core::bytestream::ZCursor::new(&jpeg));
+        jd.decode_headers().expect("JPEG header");
+        assert_eq!(jd.dimensions(), Some((img.crop.width, img.crop.height)), "{name}: crop vs JPEG");
+        let got = fingerprint(&img);
+        assert_eq!(got, print, "{name}: fingerprint {got:#018x}");
+    }
+}

@@ -11,6 +11,13 @@
 //!   overflow the data by a few pixels, so it is clamped) and the recommended crop, which is absolute and made relative
 //!   to the active area here. The Bayer layout is `CMP1`'s `cfaLayout` (0 = RGGB).
 //! - Black level is measured from the optically black columns on the left; white from the data.
+//! - As-shot white balance: Canon's `ColorData` array (maker-note tag `0x4001`, found in the timed-metadata sample, see
+//!   [`lightcraft_meta::cr3::Cr3::color_data`]). Its first value is a layout version; the as-shot block is
+//!   `R, G1, G2, B, colour temperature` (levels relative to 1024 for green) at index 71 on the versions seen on the
+//!   M50 (16), EOS R (17) and 90D (19) and at 85 on the R5 and R6 (33); other versions are probed at both places and
+//!   accepted only when the block looks like white-balance levels. ExifTool's Canon tag-name documentation names the
+//!   array; the offsets were found by reading files (the presets that follow the as-shot block include the known
+//!   5200 K daylight and 3200 K tungsten levels) and checked against the grey-world gains of the scenes.
 //! - Variants not handled return [`RawError::Unsupported`]: the lossy wavelet mode (`C-RAW`), roll-burst
 //!   (`encType 3`) and files that do not code four planes.
 
@@ -104,6 +111,31 @@ fn geometry(areas: Option<&Iad1Areas>, width: usize, height: usize) -> (Rect, Re
     (active, crop)
 }
 
+/// As-shot white-balance multipliers (R, G, B with G = 1) from the `ColorData` array (see the module docs).
+fn wb_from_color_data(v: &[u16]) -> Option<[f32; 3]> {
+    let block = |at: usize| -> Option<[f32; 3]> {
+        let q = v.get(at..at + 5)?;
+        let (r, g1, g2, b, temp) = (q[0] as f32, q[1] as f32, q[2] as f32, q[3] as f32, q[4]);
+        let plausible = g1 >= 256.0
+            && (g1 - g2).abs() <= 0.02 * g1
+            && r >= 0.25 * g1
+            && b >= 0.25 * g1
+            && r <= 6.0 * g1
+            && b <= 6.0 * g1
+            && (1500..=16000).contains(&temp);
+        plausible.then(|| {
+            let g = (g1 + g2) / 2.0;
+            [r / g, 1.0, b / g]
+        })
+    };
+    let first = match v.first()? {
+        16 | 17 | 19 => 71,
+        33 => 85,
+        _ => 0,
+    };
+    [first, 71, 85].into_iter().filter(|&at| at > 0).find_map(block)
+}
+
 fn cfa_of(layout: u8) -> Cfa {
     Cfa::bayer_static(match layout {
         1 => "GRBG",
@@ -115,9 +147,9 @@ fn cfa_of(layout: u8) -> Cfa {
 
 pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
     let cr3 = parse_cr3(bytes).ok_or_else(|| RawError::Corrupt("CR3 container".into()))?;
-    let track = cr3.raw_track().ok_or_else(|| RawError::Corrupt("CR3 without a raw track".into()))?;
+    let track = cr3.raw_track().ok_or_else(|| RawError::Unsupported("CR3 without a raw track".into()))?;
     let (Cr3TrackKind::Raw { cmp1: Some(cmp1), iad1, .. }, Some((at, len))) = (&track.kind, track.data) else {
-        return Err(RawError::Corrupt("CR3 raw track without coding header".into()));
+        return Err(RawError::Unsupported("CR3 raw track without a coding header".into()));
     };
     if cmp1.enc_type != 0 {
         return Err(RawError::Unsupported("Canon roll-burst raw (CRX encType 3)".into()));
@@ -156,7 +188,11 @@ pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
                     .and_then(|r| r.get(p))
                     .and_then(|r| sample.get(r.clone()))
                     .ok_or_else(|| RawError::Corrupt("CRX plane".into()))?;
-                crx::decode_plane(span, w / 2, h / 2, cmp1.bits as u32)
+                // an unseen stream variant (or damage) falls back to the embedded preview like other unsupported raws
+                crx::decode_plane(span, w / 2, h / 2, cmp1.bits as u32).map_err(|e| match e {
+                    RawError::Corrupt(why) => RawError::Unsupported(format!("Canon CRX data not decoded ({why})")),
+                    other => other,
+                })
             })
             .collect::<Result<_>>()?;
         data = vec![0u16; width * height];
@@ -192,6 +228,7 @@ pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
         .and_then(|tf| tf.ifds.first().and_then(|i| i.u16(t::ORIENTATION)))
         .map(Orientation::from_exif)
         .unwrap_or(Orientation::Normal);
+    let wb_multipliers = cr3.color_data(bytes).and_then(|v| wb_from_color_data(&v));
     let mut metadata = lightcraft_meta::extract(bytes);
     metadata.width = Some(crop.width as u32);
     metadata.height = Some(crop.height as u32);
@@ -209,7 +246,7 @@ pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
         crop,
         orientation,
         color: ColorData::default(),
-        wb_multipliers: None,
+        wb_multipliers,
         linearized: false,
         opcodes: OpcodeLists::default(),
         metadata,
@@ -371,6 +408,29 @@ mod tests {
             let img = decode(&file(&m, W, layout, 0, 0), Mode::Full).unwrap();
             assert_eq!(img.cfa.as_ref().map(|c| c.name()), Some(name.to_string()));
         }
+    }
+
+    #[test]
+    fn white_balance_comes_from_the_as_shot_block() {
+        let mut v = vec![0u16; 120];
+        v[85..90].copy_from_slice(&[1577, 1024, 1024, 2503, 3726]);
+        // the R5 / R6 layout (version 33) reads index 85
+        v[0] = 33;
+        let wb = wb_from_color_data(&v).unwrap();
+        assert!((wb[0] - 1577.0 / 1024.0).abs() < 1e-5 && wb[1] == 1.0 && (wb[2] - 2503.0 / 1024.0).abs() < 1e-5);
+        // an unknown version is probed and accepted when the block is plausible
+        v[0] = 99;
+        assert_eq!(wb_from_color_data(&v), Some(wb));
+        // the M50 / R / 90D layout reads index 71
+        let mut w = vec![0u16; 120];
+        w[0] = 17;
+        w[71..76].copy_from_slice(&[2001, 1024, 1025, 1582, 4833]);
+        assert!((wb_from_color_data(&w).unwrap()[0] - 2001.0 / 1024.5).abs() < 1e-5);
+        // implausible blocks (unequal greens, a temperature outside the range) and short arrays give nothing
+        w[72] = 600;
+        assert_eq!(wb_from_color_data(&w), None);
+        assert_eq!(wb_from_color_data(&[33; 10]), None);
+        assert_eq!(wb_from_color_data(&[]), None);
     }
 
     #[test]

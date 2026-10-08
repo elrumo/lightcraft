@@ -146,6 +146,41 @@ pub struct Cr3<'a> {
 }
 
 impl Cr3<'_> {
+    /// Canon's `ColorData` array (maker-note tag `0x4001`: white-balance levels per preset, colour temperatures, …).
+    /// CR3 files do not keep it in `CMT3` but in the timed-metadata (`CTMD`) sample: records of `size: u32le,
+    /// type: u16le, 6 bytes of flags, payload`, whose type-8 payload is a run of `size: u32le, tag: u32le, data`
+    /// entries; the entry with tag `0x927c` (maker note) is a TIFF stream. `None` when any part is missing.
+    pub fn color_data(&self, bytes: &[u8]) -> Option<Vec<u16>> {
+        use lightcraft_tiff::Tiff;
+        let (at, len) = self.tracks.iter().find(|t| t.kind == Cr3TrackKind::Other(*b"CTMD"))?.data?;
+        let sample = bytes.get(at..at.checked_add(len)?)?;
+        let le32 = |b: &[u8], at: usize| b.get(at..at.checked_add(4)?).map(|s| u32::from_le_bytes([s[0], s[1], s[2], s[3]]) as usize);
+        let mut pos = 0usize;
+        for _ in 0..MAX_CTMD_RECORDS {
+            let size = le32(sample, pos)?;
+            let record = sample.get(pos..pos.checked_add(size)?).filter(|_| size >= 12)?;
+            pos += size;
+            let kind = u16::from_le_bytes([*record.get(4)?, *record.get(5)?]);
+            if kind == 8 {
+                let mut at = 12usize;
+                for _ in 0..MAX_CTMD_RECORDS {
+                    let Some(esize) = le32(record, at).filter(|&e| e >= 8) else { break };
+                    let entry = record.get(at..at.checked_add(esize)?)?;
+                    at += esize;
+                    if le32(entry, 4) == Some(0x927c) {
+                        let note = Tiff::parse(entry.get(8..)?).ok()?;
+                        let values = note.ifds.first()?.u64s(COLOR_DATA)?;
+                        return values.iter().map(|&v| u16::try_from(v).ok()).collect();
+                    }
+                }
+            }
+            if pos >= sample.len() {
+                break;
+            }
+        }
+        None
+    }
+
     /// The full-size raw track: the largest `CRAW` raw entry whose coding header and sample location were found
     /// (the reduced raw is also a `CRAW` raw entry).
     pub fn raw_track(&self) -> Option<&Cr3Track> {
@@ -159,6 +194,10 @@ impl Cr3<'_> {
 const CANON_UUID: [u8; 16] = [0x85, 0xc0, 0xb6, 0x87, 0x82, 0x0f, 0x11, 0xe0, 0x81, 0x11, 0xf4, 0xce, 0x46, 0x2b, 0x6a, 0x48];
 const XMP_UUID: [u8; 16] = [0xbe, 0x7a, 0xcf, 0xcb, 0x97, 0xa9, 0x42, 0xe8, 0x9c, 0x71, 0x99, 0x94, 0x91, 0xe3, 0xaf, 0xac];
 const MAX_DEPTH: usize = 12;
+/// Records (and entries per record) read from the `CTMD` sample.
+const MAX_CTMD_RECORDS: usize = 64;
+/// Maker-note tag of the Canon `ColorData` array.
+const COLOR_DATA: u16 = 0x4001;
 const MAX_BOXES: usize = 4096;
 /// A `VisualSampleEntry` (78 bytes after the box header) plus 4 bytes Canon adds before the child boxes.
 const CRAW_CHILDREN_AT: usize = 82;
@@ -500,6 +539,41 @@ mod tests {
         // the reduced raw's IAD1 names no areas
         let Cr3TrackKind::Raw { iad1: Some(small), .. } = c.tracks[1].kind else { panic!("{:?}", c.tracks[1]) };
         assert_eq!((small.width, small.height, small.areas), (1624, 1080, None));
+    }
+
+    /// A CR3 whose `CTMD` sample holds a time-stamp record and a type-8 record with a maker note carrying `ColorData`.
+    fn ctmd_file(color_data: &[u16]) -> Vec<u8> {
+        use lightcraft_tiff::Value;
+        let note = tiff_with(COLOR_DATA, Value::Short(color_data.to_vec()));
+        let entry = |tag: u32, data: &[u8]| [((data.len() + 8) as u32).to_le_bytes().to_vec(), tag.to_le_bytes().to_vec(), data.to_vec()].concat();
+        let record = |kind: u16, payload: &[u8]| {
+            [((payload.len() + 12) as u32).to_le_bytes().to_vec(), kind.to_le_bytes().to_vec(), vec![1, 1, 0, 1, 0xff, 0xff], payload.to_vec()]
+                .concat()
+        };
+        let sample = [record(1, &[0; 12]), record(8, &[entry(0x8769, &[0; 22]), entry(0x927c, &note)].concat())].concat();
+        let mut file = bx(b"ftyp", b"crx \0\0\0\x01crx isom");
+        file.extend(bx(b"moov", &trak(bx(b"CTMD", &[0; 8]), 2048, sample.len() as u32)));
+        file.resize(2048, 0);
+        file.extend(sample);
+        file
+    }
+
+    #[test]
+    fn color_data_comes_from_the_timed_metadata_maker_note() {
+        let values: Vec<u16> = (0..200u16).map(|i| i * 7 + 1).collect();
+        let f = ctmd_file(&values);
+        assert_eq!(parse_cr3(&f).unwrap().color_data(&f), Some(values));
+        // files without a CTMD track, or whose sample is cut short, have none
+        let plain = sample();
+        assert_eq!(parse_cr3(&plain).unwrap().color_data(&plain), None);
+        for n in 0..f.len() {
+            let _ = parse_cr3(&f[..n]).map(|c| c.color_data(&f[..n]));
+        }
+        for i in 2048..f.len() {
+            let mut g = f.clone();
+            g[i] = 0xff;
+            let _ = parse_cr3(&g).map(|c| c.color_data(&g));
+        }
     }
 
     #[test]

@@ -46,6 +46,8 @@ const ESCAPE_ZEROS: u32 = 41;
 /// Longest unary prefix we accept (the first sample of a plane uses one zero more than later escapes).
 const MAX_ZEROS: u32 = 42;
 const ESCAPE_BITS: u32 = 21;
+/// Bytes a plane's data may extend past its last code (the encoder pads to a multiple of eight; we allow some more).
+const MAX_TRAILING: usize = 64;
 /// Largest Golomb parameter the adaptation may reach (keeps shifts defined on hostile streams).
 const MAX_K: u32 = 24;
 
@@ -294,6 +296,11 @@ pub(crate) fn decode_plane(data: &[u8], w: usize, h: usize, bits: u32) -> Result
         }
         prev_row_start = row_start;
     }
+    // the encoder pads a plane to a multiple of eight bytes; a stream with much more left over was not understood
+    let consumed = (br.next * 8).saturating_sub(br.n as usize).div_ceil(8);
+    if consumed + MAX_TRAILING < data.len() {
+        return Err(RawError::Corrupt(format!("CRX plane ends {} bytes before its data does", data.len() - consumed)));
+    }
     Ok(out)
 }
 
@@ -530,6 +537,16 @@ mod tests {
         assert!(decode_plane(&[0xff; 64], 4, 4, 7).is_err());
         assert!(decode_plane(&[0xff; 64], usize::MAX, 2, 14).is_err());
         assert!(decode_plane(&[0u8; 64], 4, 4, 14).is_err(), "an endless unary prefix is an error");
+    }
+
+    #[test]
+    fn padding_is_accepted_but_a_long_tail_is_not() {
+        let px = plane(40, 8, 14, 21, 6, 60);
+        let mut enc = encode_plane(&px, 40, 8, 14);
+        enc.extend([0u8; MAX_TRAILING]);
+        assert_eq!(decode_plane(&enc, 40, 8, 14).unwrap(), px);
+        enc.push(0);
+        assert!(decode_plane(&enc, 40, 8, 14).is_err(), "unexplained data after the last code");
     }
 
     #[test]
