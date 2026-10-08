@@ -29,6 +29,7 @@ pub mod cull;
 pub mod dust;
 pub mod finish;
 pub mod geometry;
+pub mod inpaint;
 pub mod local;
 pub mod lut;
 pub mod masks;

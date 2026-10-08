@@ -3,8 +3,10 @@
 //! - **Clone** copies the source patch with a feathered edge.
 //! - **Heal** copies the source's *detail* and keeps the target's *tone*: result = src + blur(target − src)
 //!   (frequency separation — a fast, stable approximation of gradient-domain healing).
-//! - **Remove** is Heal with an automatically chosen source: candidate offsets on rings around the
-//!   spot are scored by how well the source's surrounding annulus matches the target's.
+//! - **Remove** fills the stroke with texture synthesized from around it ([`crate::inpaint`]), seeded
+//!   by and searching the spot's source too; it heals from the source when nothing around fits.
+//!   Automatic sources: candidate offsets on rings around the spot are scored by how well the
+//!   source's surrounding annulus matches the target's.
 
 use lightcraft_develop::{Spot, SpotMode};
 use lightcraft_geom::Point;
@@ -151,6 +153,8 @@ pub fn apply(img: &mut Rgb32f, spots: &[Spot], frame: &Frame, ppl: f64) {
         let opacity = (spot.opacity / 100.0).clamp(0.0, 1.0) as f32;
         // alpha of the stroke and source patch in the box
         let mut alpha = vec![0.0f32; bw * bh];
+        let remove = spot.mode == SpotMode::Remove;
+        let mut hole = vec![false; if remove { bw * bh } else { 0 }];
         let mut src = vec![[0.0f32; 3]; bw * bh];
         let mut tgt = vec![[0.0f32; 3]; bw * bh];
         for y in 0..bh {
@@ -159,11 +163,23 @@ pub fn apply(img: &mut Rgb32f, spots: &[Spot], frame: &Frame, ppl: f64) {
                 let d = pts.iter().map(|p| ((px - p.0).powi(2) + (py - p.1).powi(2)).sqrt()).fold(f32::MAX, f32::min);
                 let inner = r * (1.0 - feather * 0.8);
                 alpha[y * bw + x] = (1.0 - smooth(inner, r, d)) * opacity;
+                if let Some(m) = hole.get_mut(y * bw + x) {
+                    *m = d < r;
+                }
                 src[y * bw + x] = img.sample_bilinear(px + offset.0, py + offset.1);
                 tgt[y * bw + x] = img.get(bx0 + x, by0 + y);
             }
         }
-        let heal = spot.mode != SpotMode::Clone;
+        // Remove: synthesize; the seed follows the spot, so a fill doesn't change when others do
+        let seed = spot.points.first().map_or(0, |p| p.x.to_bits() ^ p.y.to_bits().rotate_left(32));
+        let filled = if remove { crate::inpaint::fill(img, bx0, by0, bw, bh, &hole, r, offset, seed) } else { None };
+        let heal = match filled {
+            Some(f) => {
+                src = f;
+                false
+            }
+            None => spot.mode != SpotMode::Clone,
+        };
         let low = if heal {
             // Tone correction from the spot's *surroundings* only: normalized convolution of
             // (target − source) over pixels outside the stroke (a membrane-like interpolation).
@@ -230,6 +246,28 @@ mod tests {
         apply(&mut img, &[spot], &frame, frame.px_per_long(120));
         let c = img.get(60, 40);
         assert!((c[0] - 0.26).abs() < 0.03, "{c:?}");
+    }
+
+    /// Four quadrants meet under the spot: healing from one offset can't continue all four edges,
+    /// the synthesized fill does.
+    #[test]
+    fn remove_continues_the_structure_around_it() {
+        let q = [[0.05; 3], [0.8, 0.1, 0.1], [0.1, 0.6, 0.1], [0.1, 0.1, 0.9]];
+        let mut img = Rgb32f::from_fn(160, 160, |x, y| q[usize::from(x >= 80) + 2 * usize::from(y >= 80)]);
+        let frame = Frame::new(160, 160, &DevelopSettings::default(), true);
+        let spot = Spot {
+            points: vec![Point::new(0.5, 0.5)],
+            size: 14.0 / 160.0,
+            feather: 0.0,
+            source_offset: Some(Point::new(0.3, 0.3)),
+            ..Default::default()
+        };
+        apply(&mut img, &[spot], &frame, frame.px_per_long(160));
+        for (x, y, want) in [(72, 72, 0), (88, 72, 1), (72, 88, 2), (88, 88, 3)] {
+            let got = img.get(x, y);
+            let err: f32 = (0..3).map(|c| (got[c] - q[want][c]).abs()).sum();
+            assert!(err < 0.05, "({x}, {y}): {got:?} vs {:?}", q[want]);
+        }
     }
 
     #[test]

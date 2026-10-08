@@ -2,6 +2,13 @@
 
 ## October 2026
 
+### Remove
+- Content-aware Remove: painting over a distraction now fills it with texture synthesized from around it,
+  continuing edges, horizons and patterns through the stroke, instead of healing from one copied spot. The spot's
+  source still counts (it seeds the fill and is searched too), so Refresh Source (`/`) or dragging the source
+  gives another result; Heal and Clone copy from the source exactly, as before. Rows or tiles seen in strong
+  perspective can come out at the wrong angle; use Heal or Clone with a chosen source there.
+
 ### Presets and profiles
 - Import presets from other editors: XMP presets, classic `.lrtemplate` files, "DNG presets" from mobile apps and `.zip`
   bundles of any of these — whole folders at once, grouped by pack. Masks inside presets come along.

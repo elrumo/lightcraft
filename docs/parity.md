@@ -29,7 +29,7 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | F. Edit panel — global adjustments (EDIT) | 42 | 1 | 5 | 1 | 28/28 (100%) | 13/14 (93%) |
 | G. Profiles (PROF) | 6 | 2 | 3 | 0 | 3/4 (75%) | 2/3 (67%) |
 | H. Crop & rotate (CROP) | 9 | 0 | 0 | 1 | 6/6 (100%) | 3/3 (100%) |
-| I. Remove / healing (REM) | 7 | 1 | 2 | 2 | 4/4 (100%) | 2/3 (67%) |
+| I. Remove / healing (REM) | 8 | 0 | 2 | 2 | 4/4 (100%) | 3/3 (100%) |
 | J. Red eye (EYE) | 2 | 0 | 0 | 0 | — | 1/1 (100%) |
 | K. Masking (MASK) | 14 | 4 | 5 | 0 | 8/8 (100%) | 5/5 (100%) |
 | L. Presets (PRE) | 6 | 0 | 1 | 1 | 2/2 (100%) | 2/2 (100%) |
@@ -48,9 +48,9 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | Y. Menus | 83 | 1 | 4 | 5 | 47/47 (100%) | 23/23 (100%) |
 | Z. Keyboard shortcuts (desktop) | 74 | 3 | 3 | 1 | 49/52 (94%) | 22/23 (96%) |
 | Lightroom Classic extras | 31 | 10 | 39 | 9 | — | 21/22 (95%) |
-| **Total** | 392 | 36 | 86 | 31 | 194/200 (97%) | 139/149 (93%) |
+| **Total** | 393 | 35 | 86 | 31 | 194/200 (97%) | 140/149 (94%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **79.8%** of 514 in-scope rows — P0 98.5% of 200 · P1 95.6% of 149 · P2 42.7% of 165.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **79.9%** of 514 in-scope rows — P0 98.5% of 200 · P1 96.0% of 149 · P2 42.7% of 165.
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -302,7 +302,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 
 | Id | Feature | Tier | Status | Evidence | Missing / notes |
 |---|---|---|---|---|---|
-| LR-REM-CONTENTAWARE | Content-aware remove | P1 | 🟡 | `cmd:spot.add` (`mode: remove`), `crates/pipeline/src/spots.rs` | heal with automatic source; no patch synthesis (M8.4) |
+| LR-REM-CONTENTAWARE | Content-aware remove | P1 | ✅ | `cmd:spot.add` (`mode: remove`), `crates/pipeline/src/spots.rs`, `crates/pipeline/src/inpaint.rs` | the stroke is filled with texture synthesized from around it (exemplar-based completion with PatchMatch, coarse to fine; the spot's source seeds and joins the search, so Refresh Source / dragging it changes the fill); preview and export synthesize the same structure; heals from the source when nothing around fits. Matches are translations only: rows or tiles in strong perspective can continue at the wrong angle (use Heal / Clone there) |
 | LR-REM-HEAL | Heal | P0 | ✅ | `cmd:spot.add` (`mode: heal`) | |
 | LR-REM-CLONE | Clone | P0 | ✅ | `cmd:spot.add` (`mode: clone`) | |
 | LR-REM-GEN | Generative remove | OOS | 🚫 | | |
