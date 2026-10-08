@@ -26,7 +26,7 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | C. Views & navigation (VIEW) | 16 | 0 | 1 | 0 | 9/9 (100%) | 4/4 (100%) |
 | D. Search & filter (FILT) | 11 | 1 | 1 | 0 | 4/4 (100%) | 4/4 (100%) |
 | E. Metadata (META) | 5 | 1 | 0 | 0 | 2/2 (100%) | 2/2 (100%) |
-| F. Edit panel — global adjustments (EDIT) | 42 | 1 | 5 | 1 | 28/28 (100%) | 13/14 (93%) |
+| F. Edit panel — global adjustments (EDIT) | 42 | 2 | 4 | 1 | 28/28 (100%) | 13/14 (93%) |
 | G. Profiles (PROF) | 6 | 2 | 3 | 0 | 3/4 (75%) | 2/3 (67%) |
 | H. Crop & rotate (CROP) | 9 | 0 | 0 | 1 | 6/6 (100%) | 3/3 (100%) |
 | I. Remove / healing (REM) | 8 | 0 | 2 | 2 | 4/4 (100%) | 3/3 (100%) |
@@ -36,7 +36,7 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | M. Versions & history (VER) | 5 | 0 | 0 | 0 | 1/1 (100%) | 3/3 (100%) |
 | N. Copy / paste / sync (SYNC) | 5 | 0 | 0 | 0 | 3/3 (100%) | 1/1 (100%) |
 | O. Merge (MERGE) | 4 | 0 | 0 | 0 | — | — |
-| P. Enhance (ENH) | 0 | 0 | 2 | 0 | — | — |
+| P. Enhance (ENH) | 0 | 1 | 1 | 0 | — | — |
 | Q. HDR (HDR) | 0 | 0 | 5 | 0 | — | — |
 | R. Video (VID) | 0 | 0 | 5 | 1 | — | 0/2 (0%) |
 | S. Export (EXP) | 15 | 1 | 2 | 0 | 7/7 (100%) | 7/7 (100%) |
@@ -45,12 +45,12 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | V. Preferences (PREF) | 6 | 0 | 3 | 2 | 1/1 (100%) | 4/4 (100%) |
 | W. Cloud & AI infrastructure (CLOUD / AI) | 1 | 1 | 1 | 1 | — | — |
 | X. Cross-cutting behaviours (BEHAV) | 16 | 4 | 1 | 1 | 8/8 (100%) | 6/8 (75%) |
-| Y. Menus | 83 | 1 | 4 | 5 | 47/47 (100%) | 23/23 (100%) |
+| Y. Menus | 83 | 2 | 3 | 5 | 47/47 (100%) | 23/23 (100%) |
 | Z. Keyboard shortcuts (desktop) | 74 | 3 | 3 | 1 | 49/52 (94%) | 22/23 (96%) |
 | Lightroom Classic extras | 31 | 10 | 39 | 9 | — | 21/22 (95%) |
-| **Total** | 393 | 35 | 86 | 31 | 194/200 (97%) | 140/149 (94%) |
+| **Total** | 393 | 38 | 83 | 31 | 194/200 (97%) | 140/149 (94%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **79.9%** of 514 in-scope rows — P0 98.5% of 200 · P1 96.0% of 149 · P2 42.7% of 165.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **80.2%** of 514 in-scope rows — P0 98.5% of 200 · P1 96.0% of 149 · P2 43.6% of 165.
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -68,11 +68,14 @@ Take the first one nobody is working on.
 4. **LR-BEHAV-RENDER-FIDELITY** (P1): a side-by-side fidelity suite against Lightroom renders (kept local in `plan/`),
    then tune tone, highlights, texture/clarity/dehaze, NR and sharpening against it.
 5. **LR-EDIT-OPTICS-PROFILE** (P1): a lens-profile database of our own (embedded DNG/maker corrections work today).
-6. **AI masks and Enhance** (LR-MASK-SUBJECT / SKY / PEOPLE / OBJECTS, LR-EDIT-DETAIL-DENOISE, SUPERRES, LENSBLUR):
+6. **AI masks and Enhance** (LR-MASK-SUBJECT / SKY / PEOPLE / OBJECTS, LR-EDIT-DETAIL-DENOISE, LENSBLUR; SUPERRES now 🟡):
    Object and Describe masks run SAM 3 in pure Rust (`crates/segment`); the weights (SAM License) are never bundled:
-   the app offers a consented, verified download, but **LightCraft's CDN mirrors are not configured yet** (the
-   built-in list is empty, so today users need their own mirror or a manual install). Subject / Sky / People could
-   use the same model with fixed prompts; denoise / super-resolution models remain a maintainer decision.
+   the app offers a consented, verified download, but **LightCraft's CDN mirrors for SAM 3 are not configured yet**
+   (needs the user's own mirror or a manual install). Subject / Sky / People could use the same model with fixed
+   prompts. **Super Resolution** works (Nomos Uni SPAN 2×, 4.5 MB, downloaded from its author's public repository;
+   `docs/super-resolution.md`). The researched, licence-checked shortlist for the rest (depth, denoise, faces,
+   semantic search, SAM 2.1, MI-GAN) and the runtime decision are in `docs/ai-models.md`; **AI denoise has no clean
+   open raw-domain model** (the only raw-trained one is GPL-3), a maintainer decision.
 7. **HDR** (Q. HDR, LR-EXP-HDR), **video** (R. Video), **Classic output modules** (Map view, Book, Slideshow module,
    Print, publish): large, well understood, lower priority than 1–5.
 
@@ -251,7 +254,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-EDIT-DETAIL-CNR | Colour noise reduction | P0 | ✅ | `ctl:detail.nrColor`, `ctl:detail.nrColorDetail`, `ctl:detail.nrColorSmoothness` | |
 | LR-EDIT-DETAIL-DENOISE | AI denoise | P2 | ⬜ | | settings field reserved, not rendered |
 | LR-EDIT-DETAIL-RAWDETAILS | Improved demosaic toggle | P2 | ⬜ | | |
-| LR-EDIT-DETAIL-SUPERRES | Super resolution | P2 | ⬜ | | |
+| LR-EDIT-DETAIL-SUPERRES | Super resolution | P2 | 🟡 | `cmd:enhance.superRes`, `cmd:enhance.model.status`, `cmd:enhance.model.download`, `cmd:enhance.model.cancel`, `cmd:dialog.superRes`, `crates/enhance/src/span.rs`, `crates/engine/src/enhance/mod.rs`, `docs/super-resolution.md` | Photo ▸ Enhance ▸ Super Resolution…: 2× with the Nomos Uni SPAN model (an optional 4.5 MB download, CC-BY-4.0, consent first), the photo rendered with its edits in 16-bit sRGB and written as `<name>-SR.tif`, imported with neutral settings and stacked on the original; not raw-domain (no linear DNG), 2× only, no batch, no before/after; ~0.15 MP/s on Metal, CPU elsewhere |
 | LR-EDIT-DETAIL-AISHARPEN | AI sharpen | OOS | 🚫 | | |
 | LR-EDIT-OPTICS-CA | Remove chromatic aberration | P1 | ✅ | `crates/ui-egui/src/panels/edit.rs` (checkbox), `ctl:optics.caRed`, `ctl:optics.caBlue` | |
 | LR-EDIT-OPTICS-PROFILE | Lens profile corrections | P1 | 🟡 | `ctl:optics.profileDistortion`, `ctl:optics.profileVignetting`, `crates/pipeline/src/optics.rs` | uses corrections embedded in DNG/raw files; no lens-profile database |
@@ -396,7 +399,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 
 | Id | Feature | Tier | Status | Evidence | Missing / notes |
 |---|---|---|---|---|---|
-| LR-ENH-DIALOG | Enhance dialog | P2 | ⬜ | | |
+| LR-ENH-DIALOG | Enhance dialog | P2 | 🟡 | `cmd:dialog.superRes`, `crates/ui-egui/src/superres.rs` | Super Resolution only: model download consent, size before / after, Enlarge; no Denoise or Raw Details option, no preview |
 | LR-ENH-INPLACE | In-place enhance | P2 | ⬜ | | |
 
 ## Q. HDR (HDR)
@@ -584,7 +587,7 @@ visible menu bar yet: the menu model is only exposed through the control channel
 | MENU-PHOTO-CREATEVERSION | Create Version… | P1 | ✅ | `cmd:version.create` | no name prompt |
 | MENU-PHOTO-STACK | Stack submenu | P1 | ✅ | `cmd:stack.group`, `cmd:stack.ungroup`, `cmd:dialog.autoStack` | |
 | MENU-PHOTO-MERGE | Photo merge submenu | P2 | ✅ | `cmd:dialog.mergeHdr`, `cmd:dialog.mergePanorama`, `cmd:dialog.mergeHdrPanorama`, `cmd:merge.hdrLast` | |
-| MENU-PHOTO-ENHANCE | Enhance… | P2 | ⬜ | | |
+| MENU-PHOTO-ENHANCE | Enhance… | P2 | 🟡 | `cmd:dialog.superRes`, `cmd:superRes.cancel` | Photo ▸ Enhance ▸ Super Resolution… and Cancel Super Resolution; no Denoise yet |
 | MENU-PHOTO-AUTO | Auto settings | P0 | ✅ | `cmd:develop.auto` | |
 | MENU-PHOTO-BW | Convert to B&W | P0 | ✅ | `cmd:develop.treatment` | |
 | MENU-PHOTO-RESET | Reset edits / crop | P0 | ✅ | `cmd:develop.reset`, `cmd:crop.reset` | |

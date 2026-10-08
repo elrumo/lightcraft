@@ -139,6 +139,8 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("merge.hdrLast", "HDR with Last Settings", Some("Ctrl+Shift+H"), "Photo>Photo Merge"),
     ("merge.panoramaLast", "Panorama with Last Settings", Some("Ctrl+Shift+M"), "Photo>Photo Merge"),
     ("merge.hdrPanoramaLast", "HDR Panorama with Last Settings", None, "Photo>Photo Merge"),
+    ("dialog.superRes", "Super Resolution…", None, "Photo>Enhance"),
+    ("superRes.cancel", "Cancel Super Resolution", None, "Photo>Enhance"),
     // compact layout: choose photos by touch (Select, or a long press in the grid)
     ("view.selectMode", "Select Photos", None, ""),
     ("file.addPhotos", "Import Photos…", Some("Cmd+Shift+I"), "File"),
@@ -888,6 +890,14 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
         "dialog.mergeHdr" => crate::merge::open(app, "merge.hdr"),
         "dialog.mergePanorama" => crate::merge::open(app, "merge.panorama"),
         "dialog.mergeHdrPanorama" => crate::merge::open(app, "merge.hdrPanorama"),
+        "dialog.superRes" => crate::superres::open(app),
+        "superRes.cancel" => {
+            if crate::superres::cancel(app) {
+                Ok(json!({"cancelled": true}))
+            } else {
+                Err("Super Resolution isn't running".to_string())
+            }
+        }
         "app.about" => {
             app.ui.dialog = Some(Dialog::About);
             Ok(Value::Null)
@@ -1309,6 +1319,8 @@ pub fn ui_enabled(app: &LightcraftApp, id: &str) -> bool {
         "file.backupLibrary" => app.services.backup_library.is_some(),
         "file.restoreLibrary" => app.services.restore_library.is_some(),
         "compare.swap" | "compare.makeSelect" => app.ui.view == ViewMode::Compare,
+        "dialog.superRes" => lightcraft_engine::enhance::Enhancer::AVAILABLE && app.session.active().is_some() && !app.superres.busy(),
+        "superRes.cancel" => app.superres.busy(),
         s if s.starts_with("dialog.merge") || (s.starts_with("merge.") && s.ends_with("Last")) => {
             app.session.targets(&serde_json::json!({})).len() >= 2 && app.merge.final_task.is_none()
         }

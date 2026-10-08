@@ -10,7 +10,7 @@ use serde_json::json;
 use crate::Session;
 use crate::enhance::{Enhancer, SUPER_RES_MODEL};
 
-fn tmp(tag: &str) -> PathBuf {
+pub(crate) fn tmp(tag: &str) -> PathBuf {
     let d = std::env::temp_dir().join(format!("lc-enhance-engine-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);
     std::fs::create_dir_all(&d).unwrap();
@@ -67,7 +67,7 @@ fn without_the_model_the_commands_say_so() {
 
 /// A session with a photo and a (synthetic) model in place.
 #[cfg(feature = "enhance")]
-fn ready(tag: &str, size: (usize, usize)) -> (Session, PathBuf, u64) {
+pub(crate) fn ready(tag: &str, size: (usize, usize)) -> (Session, PathBuf, u64) {
     let dir = tmp(tag);
     let mut s = Session::new().with_fs();
     let id = photo(&mut s, &dir, "IMG_1.png", size);

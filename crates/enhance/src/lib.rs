@@ -51,9 +51,9 @@ impl From<candle_core::Error> for Error {
     }
 }
 
-/// The best device here: Metal on macOS when there is one, otherwise the CPU.
+/// The best device here: Metal on macOS and iOS when there is one, otherwise the CPU.
 pub fn best_device() -> candle_core::Device {
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
     if let Ok(d) = candle_core::Device::new_metal(0) {
         return d;
     }

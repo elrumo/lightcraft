@@ -1,4 +1,4 @@
-//! The Settings dialog (⌘,): General, Import, Performance, Interface, Sync.
+//! The Settings dialog (⌘,): General, Import, Performance, Interface, Sync, AI Models.
 //!
 //! Changes apply immediately (no OK/Cancel). Where they are stored:
 //! - **app settings** ([`crate::state::AppSettings`]: startup view, delete confirmation, GPU,
@@ -17,8 +17,14 @@ use crate::theme::Tokens;
 use crate::widgets::register;
 
 /// (id, label) of the tabs, in order.
-pub const TABS: &[(&str, &str)] =
-    &[("general", "General"), ("import", "Import"), ("performance", "Performance"), ("interface", "Interface"), ("sync", "Sync")];
+pub const TABS: &[(&str, &str)] = &[
+    ("general", "General"),
+    ("import", "Import"),
+    ("performance", "Performance"),
+    ("interface", "Interface"),
+    ("sync", "Sync"),
+    ("models", "AI Models"),
+];
 
 /// Thumbnail cache sizes offered (MB).
 const CACHE_SIZES: [u32; 5] = [512, 1024, 2048, 4096, 8192];
@@ -30,7 +36,8 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, tab: &mut String) {
     let t = Tokens::get(ui.ctx());
     ui.set_min_width(crate::panels::modal_width(ui.ctx(), 560.0));
     ui.set_min_height(330.0);
-    ui.horizontal(|ui| {
+    // (wrapping: on a phone the six tabs don't fit in one row)
+    ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         for (id, label) in TABS {
             if crate::widgets::text_button(ui, &format!("settingsTab-{id}"), label, tab == id).clicked() {
@@ -45,6 +52,7 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, tab: &mut String) {
         "performance" => performance_tab(app, ui, &t),
         "interface" => interface_tab(app, ui, &t),
         "sync" => sync_tab(app, ui, &t),
+        "models" => crate::panels::ai_models::tab(app, ui, &t),
         _ => general_tab(app, ui, &t),
     }
 }

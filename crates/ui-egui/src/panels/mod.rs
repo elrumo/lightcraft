@@ -1,5 +1,6 @@
 //! Window regions and panels.
 
+pub mod ai_models;
 pub mod bottombar;
 pub mod chips;
 pub mod compact;

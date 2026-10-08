@@ -120,5 +120,7 @@
   "{month} {year}": "{year}年{month}月",
   "{weekday}, {day}": "{day}日 {weekday}",
   "{weekday}, {day} {month} {year}": "{year}年{month}月{day}日 {weekday}",
-  "Add {n}": "添加 {n} 张"
+  "Add {n}": "添加 {n} 张",
+  "Enlarging… {:.0}%": "正在放大… {0:.0}%",
+  "Super Resolution failed: {e}": "超分辨率失败：{e}"
 }

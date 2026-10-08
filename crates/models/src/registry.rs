@@ -10,6 +10,8 @@ pub struct ModelSpec {
     pub id: &'static str,
     /// The model's name in messages ("SAM 3").
     pub label: &'static str,
+    /// What it does for the user ("Object and Describe masks").
+    pub purpose: &'static str,
     pub files: &'static [FileSpec],
     /// Environment variable with extra mirrors (base URLs separated by commas, spaces or
     /// newlines), tried before the built-in ones.
@@ -80,6 +82,7 @@ const SAM3_FILES: &[FileSpec] = &[
 pub const SAM3: ModelSpec = ModelSpec {
     id: "sam3",
     label: "SAM 3",
+    purpose: "Object and Describe masks (Masking panel)",
     files: SAM3_FILES,
     mirrors_env: "LIGHTCRAFT_SAM3_MIRRORS",
     default_mirrors: &[],
@@ -96,6 +99,7 @@ pub const SAM3: ModelSpec = ModelSpec {
 pub const NOMOS_SPAN_2X: ModelSpec = ModelSpec {
     id: "nomos-span-2x",
     label: "Nomos Uni SPAN 2×",
+    purpose: "Super Resolution (Photo → Enhance)",
     files: &[FileSpec {
         name: "2xNomosUni_span_multijpg.safetensors",
         size: Some(4_461_056),
@@ -144,7 +148,11 @@ mod tests {
         for m in ALL {
             assert!(m.default_mirrors.iter().all(|u| u.starts_with("https://") && !u.ends_with('/')), "{}", m.id);
             assert!(
-                !m.licence.is_empty() && m.licence_url.starts_with("https://") && m.home_url.starts_with("https://") && !m.credit.is_empty(),
+                !m.purpose.is_empty()
+                    && !m.licence.is_empty()
+                    && m.licence_url.starts_with("https://")
+                    && m.home_url.starts_with("https://")
+                    && !m.credit.is_empty(),
                 "{}",
                 m.id
             );

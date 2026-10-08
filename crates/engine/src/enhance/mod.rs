@@ -60,6 +60,11 @@ pub struct Enhancer {
     /// Most pixels an enlarged image may have (`None`: [`DEFAULT_MAX_OUTPUT_PIXELS`]). Phones
     /// set less.
     pub max_output_pixels: Option<usize>,
+    /// Side of the tiles the network works on, in input pixels (`None`: 384; phones use less
+    /// memory with smaller ones).
+    pub tile: Option<usize>,
+    /// Models the user turned off (Settings ▸ AI Models), by id.
+    pub disabled: std::collections::BTreeSet<String>,
     /// Download only from the user's own mirrors (the environment variable and
     /// `<id>-mirrors.txt`), never from the built-in location. For tests and for people who want
     /// no connection to any host they didn't choose.
@@ -74,6 +79,15 @@ pub struct Enhancer {
 impl Enhancer {
     /// Whether this build can enlarge photos at all.
     pub const AVAILABLE: bool = cfg!(feature = "enhance");
+
+    /// Size the work to the `bytes` of memory it may use (a phone): the enlarged picture is kept as
+    /// 16-bit samples (6 bytes a pixel) and encoding briefly needs about two more copies of it, so
+    /// call it ~20 bytes per output pixel plus what the network needs for its tiles.
+    pub fn limit_memory(&mut self, bytes: usize) {
+        let (tile, working) = if bytes < (2 << 30) { (192, 120 << 20) } else { (384, 400 << 20) };
+        self.tile = Some(tile);
+        self.max_output_pixels = Some((bytes.saturating_sub(working) / 20).clamp(4_000_000, DEFAULT_MAX_OUTPUT_PIXELS));
+    }
 
     /// The folder of model `id`.
     pub fn model_dir(&self, id: &str) -> Option<PathBuf> {
@@ -208,6 +222,9 @@ impl Enhancer {
         if self.dir.is_none() {
             return Err("no folder is set for the enhancement models".into());
         }
+        if self.disabled.contains(SUPER_RES_MODEL) {
+            return Err("Super Resolution is turned off: turn its model on in Settings → AI Models.".into());
+        }
         if self.installed(SUPER_RES_MODEL) {
             return Ok(());
         }
@@ -229,6 +246,7 @@ pub struct SuperResJob {
     dir: PathBuf,
     stem: String,
     max_output_pixels: usize,
+    tile: Option<usize>,
     /// The photo being enlarged.
     pub photo: PhotoId,
     /// Its size (what is rendered): the result is [`SUPER_RES_SCALE`] times that.
@@ -286,7 +304,7 @@ impl Session {
         let model = self.enhancer.model_file(SUPER_RES_MODEL).ok_or("the Super Resolution model has no file")?;
         let meta = crate::export::export_metadata(&photo, &export);
         let render = self.export_job(id, w, h, lightcraft_pipeline::OutputSpace::Srgb, lightcraft_pipeline::OutputDepth::U16)?;
-        Ok(SuperResJob { render, export, meta, model, dir: folder, stem, max_output_pixels: max, photo: id, size: (w, h) })
+        Ok(SuperResJob { render, export, meta, model, dir: folder, stem, max_output_pixels: max, tile: self.enhancer.tile, photo: id, size: (w, h) })
     }
 
     /// Add a finished enlargement to the library: import the file with neutral settings, stack
@@ -339,7 +357,6 @@ impl SuperResJob {
     #[cfg(feature = "enhance")]
     fn run_enhance(self, progress: &ProgressFn) -> std::result::Result<SuperResDone, String> {
         use lightcraft_pipeline::{DeepImage, DeepSamples};
-        use lightcraft_raster::Rgb32f;
 
         const CANCELLED: &str = "Super Resolution was cancelled";
         if !progress(0.0, "Rendering the photo") {
@@ -353,8 +370,14 @@ impl SuperResJob {
         if samples.len() != w * h * 3 {
             return Err("the render has an unexpected size".into());
         }
-        let input = Rgb32f { width: w, height: h, data: samples.as_chunks::<3>().0.iter().map(|p| p.map(|v| f32::from(v) / 65535.0)).collect() };
-        drop(samples);
+        // the picture stays 16-bit end to end (6 bytes a pixel, not a 12-byte float copy of each)
+        let read = |x: usize, y: usize| {
+            let i = (y * w + x) * 3;
+            match samples.get(i..i + 3) {
+                Some([r, g, b]) => [f32::from(*r) / 65535.0, f32::from(*g) / 65535.0, f32::from(*b) / 65535.0],
+                _ => [0.0; 3],
+            }
+        };
 
         if !progress(0.08, "Loading the model") {
             return Err(CANCELLED.into());
@@ -364,20 +387,33 @@ impl SuperResJob {
         if span.scale() != SUPER_RES_SCALE {
             return Err(format!("{} enlarges {}×, not {SUPER_RES_SCALE}×", self.model.display(), span.scale()));
         }
-        let opts = lightcraft_enhance::Options { max_output_pixels: self.max_output_pixels, ..Default::default() };
-        let enlarged = span
-            .upscale(&input, &opts, &mut |p| progress(0.1 + 0.85 * p, "Enlarging"))
+        let mut opts = lightcraft_enhance::Options { max_output_pixels: self.max_output_pixels, ..Default::default() };
+        if let Some(tile) = self.tile {
+            opts.tile = tile;
+        }
+        let (ow, oh) = (w * SUPER_RES_SCALE, h * SUPER_RES_SCALE);
+        // (the plan checked this size; the render is the one that says what it really is)
+        if ow.checked_mul(oh).is_none_or(|px| px > self.max_output_pixels || px == 0) {
+            return Err(format!("the enlarged photo ({ow} × {oh}) is too large"));
+        }
+        let mut enlarged = vec![0u16; ow * oh * 3];
+        let mut write = |x: usize, y: usize, p: [f32; 3]| {
+            if let Some(d) = enlarged.get_mut((y * ow + x) * 3..(y * ow + x) * 3 + 3) {
+                for (d, v) in d.iter_mut().zip(p) {
+                    *d = (v.clamp(0.0, 1.0) * 65535.0 + 0.5) as u16;
+                }
+            }
+        };
+        span.upscale_with((w, h), &read, &mut write, &opts, &mut |p| progress(0.1 + 0.85 * p, "Enlarging"))
             .map_err(|e| if matches!(e, lightcraft_enhance::Error::Cancelled) { CANCELLED.to_string() } else { e.to_string() })?;
-        drop(input);
         drop(span);
+        drop(samples);
 
         if !progress(0.96, "Saving") {
             return Err(CANCELLED.into());
         }
-        let samples: Vec<u16> = enlarged.data.iter().flat_map(|p| p.map(|v| (v.clamp(0.0, 1.0) * 65535.0 + 0.5) as u16)).collect();
-        let size = (enlarged.width, enlarged.height);
-        drop(enlarged);
-        let image = DeepImage { width: size.0, height: size.1, space, samples: DeepSamples::U16(samples) };
+        let size = (ow, oh);
+        let image = DeepImage { width: ow, height: oh, space, samples: DeepSamples::U16(enlarged) };
         let bytes = crate::export::encode_deep(&image, &self.export, self.meta.as_ref())?;
         drop(image);
         let (dir, stem) = (self.dir.clone(), self.stem.clone());

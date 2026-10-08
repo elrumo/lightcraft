@@ -231,6 +231,15 @@ pub fn open_session(dir: Option<&Path>) -> Session {
     Session::with_demo().with_fs().with_system_clock()
 }
 
+/// AI Super Resolution on the phone: the model (a few MB, downloaded when the user agrees) goes in
+/// `Library/Caches`, which iOS never backs up and may empty when storage runs low (the app offers
+/// the download again), and the work is sized to a third of the memory iOS lets the app use.
+pub fn configure_enhancer(enhancer: &mut lightcraft_engine::enhance::Enhancer, home: Option<&std::ffi::OsStr>, available: Option<usize>) {
+    enhancer.dir = home.map(|h| PathBuf::from(h).join("Library/Caches/LightCraft/models"));
+    // (unknown: assume little)
+    enhancer.limit_memory(available.map_or(512 << 20, |a| a / 3));
+}
+
 /// The staging folders in the app's tmp folder: copies the pickers made (moved into the library
 /// by the import review) and the last export (handed to the share sheet).
 fn staging(tmp: &Path) -> (PathBuf, PathBuf) {
@@ -418,7 +427,9 @@ pub fn run() -> eframe::Result {
         Box::new(move |cc| {
             let dir = library_dir(std::env::var_os("LIGHTCRAFT_LIBRARY"), std::env::var_os("HOME"));
             let inbox = Inbox::default();
-            let mut app = LightcraftApp::new(open_session(dir.as_deref()), services(cc.egui_ctx.clone(), inbox.clone(), &tmp));
+            let mut session = open_session(dir.as_deref());
+            configure_enhancer(&mut session.enhancer, std::env::var_os("HOME").as_deref(), available);
+            let mut app = LightcraftApp::new(session, services(cc.egui_ctx.clone(), inbox.clone(), &tmp));
             match prefs {
                 Some(ui) => app.ui = ui,
                 // a first start: the phone's square grid, as Lightroom's mobile app shows a library
@@ -643,5 +654,28 @@ mod tests {
         assert_ne!(s.catalog.len(), 0);
         assert!(s.sync_sign_in("https://photos.example.com", "ann", "a password", "iPhone").is_err());
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Super Resolution on the phone: the model goes where iOS never backs it up, and the work is
+    /// sized to the memory the app has.
+    #[test]
+    fn the_phone_keeps_models_in_caches_and_sizes_the_work_to_its_memory() {
+        use lightcraft_engine::enhance::{DEFAULT_MAX_OUTPUT_PIXELS, Enhancer};
+        let home = std::ffi::OsString::from("/var/mobile/Containers/Data/Application/ABC");
+        let mut e = Enhancer::default();
+        configure_enhancer(&mut e, Some(&home), Some(3 << 30));
+        assert_eq!(e.dir.as_deref(), Some(Path::new("/var/mobile/Containers/Data/Application/ABC/Library/Caches/LightCraft/models")));
+        // a third of 3 GB: small tiles, and room for a ~12 MP photo's enlargement, not a 25 MP one's
+        assert_eq!(e.tile, Some(192));
+        let max = e.max_output_pixels.unwrap();
+        assert!((40_000_000..DEFAULT_MAX_OUTPUT_PIXELS).contains(&max), "{max}");
+        // an old phone with little to spare, and one that can't say: still a usable, smaller limit
+        configure_enhancer(&mut e, Some(&home), Some(600 << 20));
+        assert!(e.max_output_pixels.is_some_and(|m| (4_000_000..=4_500_000).contains(&m)), "{:?}", e.max_output_pixels);
+        configure_enhancer(&mut e, Some(&home), None);
+        assert!(e.max_output_pixels.is_some_and(|m| m >= 4_000_000 && m < max));
+        // no home folder: nowhere to put it (the dialog says so), never a guess
+        configure_enhancer(&mut e, None, Some(3 << 30));
+        assert_eq!(e.dir, None);
     }
 }

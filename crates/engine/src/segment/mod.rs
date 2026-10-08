@@ -121,6 +121,8 @@ pub struct Segmenter {
     /// Run requests in the background and apply them in [`Session::segment_poll`] (the
     /// desktop app); otherwise commands wait for their result (CLI, MCP, tests).
     pub background: bool,
+    /// The user turned AI masks off (Settings ▸ AI Models): every request says so.
+    pub disabled: bool,
     pending: Option<PendingClicks>,
     messages: Vec<String>,
     #[cfg(feature = "sam")]
@@ -139,6 +141,7 @@ impl Default for Segmenter {
             dir: None,
             mirrors_file: None,
             background: false,
+            disabled: false,
             pending: None,
             messages: Vec::new(),
             #[cfg(feature = "sam")]
@@ -228,6 +231,9 @@ impl Segmenter {
     pub fn model_dir(&self) -> Result<PathBuf, String> {
         if !Self::AVAILABLE {
             return Err("AI masks are not available in this build".into());
+        }
+        if self.disabled {
+            return Err("AI masks are turned off: turn the SAM 3 model on in Settings → AI Models.".into());
         }
         let dir = self.dir.clone().ok_or("no folder is set for the SAM 3 model")?;
         if self.installed() {

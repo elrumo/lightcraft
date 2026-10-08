@@ -15,9 +15,27 @@ Models whose licence allows redistribution (Apache-2.0, MIT, BSD, CC-BY) can be 
 licence text and attribution next to them; gated or custom-licence models (SAM 3) cannot, and need the user's own
 mirror or a manual install ([ai-masks.md](ai-masks.md)).
 
-Today: **SAM 3** (Object and Describe masks). The rest of this page is the research behind what to add next
+Today: **SAM 3** (Object and Describe masks, [ai-masks.md](ai-masks.md)) and **Nomos Uni SPAN 2×** (Super
+Resolution, [super-resolution.md](super-resolution.md)). The rest of this page is the research behind what to add next
 (2026-10-08; read from each repo's LICENSE and each Hugging Face model card — **re-check the licence of a model when
 you add it**, and write the verdict and the URL you read in its `ModelSpec`).
+
+Models that are public and ungated (Nomos) are downloaded from their author's own repository, pinned by size and
+SHA-256: LightCraft hosts nothing and redistributes nothing. Only a gated model (SAM 3) needs a mirror of our own.
+
+## Managing models
+
+**Settings → AI Models** lists every model in one place. For each: what it is for, whether it is **on this device**
+(and the space it takes, with its folder and Show in Folder) or **not downloaded** (its size, and the host it would
+come from), its licence and credit, **Use this model** (turn it off and its feature says so and does nothing; the files
+stay), **Download…** (asks first, naming the size, the host and the licence), **Cancel Download**, and **Delete…**
+(asks first; removes only the model's own files, never anything else in the folder; it can be downloaded again). A
+model this build can't run (SAM 3 on an iPhone) is listed as not available. The first time a feature needs its model
+it offers the download itself (Object / Describe masks, Super Resolution). The on / off choice is saved with the app
+settings (`models_disabled` in `ui.json`).
+
+Agents get the same through commands: `models.list`, `models.download {id, acknowledged: true}`, `models.cancel {id}`,
+`models.delete {id, confirm: true}`, `models.setEnabled {id, enabled}`.
 
 ## Runtime
 

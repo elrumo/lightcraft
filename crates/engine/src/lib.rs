@@ -29,6 +29,7 @@ pub mod library;
 pub mod media;
 pub mod memory;
 pub mod merge;
+pub mod models;
 pub mod originals;
 pub mod preset_import;
 pub mod preset_luminar;
@@ -738,6 +739,8 @@ mod tests_libops;
 mod tests_library;
 #[cfg(test)]
 mod tests_merge;
+#[cfg(test)]
+mod tests_models;
 #[cfg(test)]
 mod tests_organize;
 #[cfg(test)]

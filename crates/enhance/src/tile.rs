@@ -40,11 +40,10 @@ impl Default for Options {
 }
 
 impl Span {
-    /// Enlarge `img` (sRGB-encoded, 0…1) by [`Span::scale`]. `progress` is called before every
-    /// tile with the fraction done; it returns `false` to stop ([`Error::Cancelled`]).
-    pub fn upscale(&self, img: &Rgb32f, opts: &Options, progress: &mut dyn FnMut(f32) -> bool) -> Result<Rgb32f> {
-        let (w, h, s) = (img.width, img.height, self.scale());
-        if w == 0 || h == 0 || Some(img.data.len()) != w.checked_mul(h) {
+    /// The enlarged size of a `w` × `h` picture, or why it can't be enlarged.
+    fn enlarged_size(&self, (w, h): (usize, usize), opts: &Options) -> Result<(usize, usize)> {
+        let s = self.scale();
+        if w == 0 || h == 0 {
             return Err(Error::Image(format!("a {w} × {h} image can't be enlarged")));
         }
         let (ow, oh) = (w.checked_mul(s), h.checked_mul(s));
@@ -57,10 +56,45 @@ impl Span {
                 opts.max_output_pixels as f64 / 1e6
             )));
         }
+        Ok((ow, oh))
+    }
+
+    /// Enlarge `img` (sRGB-encoded, 0…1) by [`Span::scale`]. `progress` is called before every
+    /// tile with the fraction done; it returns `false` to stop ([`Error::Cancelled`]).
+    pub fn upscale(&self, img: &Rgb32f, opts: &Options, progress: &mut dyn FnMut(f32) -> bool) -> Result<Rgb32f> {
+        let (w, h) = (img.width, img.height);
+        if Some(img.data.len()) != w.checked_mul(h) {
+            return Err(Error::Image(format!("a {w} × {h} image can't be enlarged")));
+        }
+        let (ow, oh) = self.enlarged_size((w, h), opts)?;
+        let mut out = Rgb32f::new(ow, oh);
+        let read = |x: usize, y: usize| img.data.get(y * w + x).copied().unwrap_or_default();
+        let mut write = |x: usize, y: usize, p: [f32; 3]| {
+            if let Some(d) = out.data.get_mut(y * ow + x) {
+                *d = p;
+            }
+        };
+        self.upscale_with((w, h), &read, &mut write, opts, progress)?;
+        Ok(out)
+    }
+
+    /// [`Self::upscale`] for pictures held in any layout (for instance 16-bit samples, which take
+    /// half the memory of a float copy): `read(x, y)` gives the pixel at `x < w, y < h` (sRGB,
+    /// 0…1), and `write(x, y, pixel)` receives every pixel of the enlargement (`x < w·scale`),
+    /// each once, in tile order, already within 0…1.
+    pub fn upscale_with(
+        &self,
+        (w, h): (usize, usize),
+        read: &dyn Fn(usize, usize) -> [f32; 3],
+        write: &mut dyn FnMut(usize, usize, [f32; 3]),
+        opts: &Options,
+        progress: &mut dyn FnMut(f32) -> bool,
+    ) -> Result<()> {
+        self.enlarged_size((w, h), opts)?;
+        let s = self.scale();
         let tile = opts.tile.clamp(16, 2048);
         let (tiles_x, tiles_y) = (w.div_ceil(tile), h.div_ceil(tile));
         let total = tiles_x * tiles_y;
-        let mut out = Rgb32f::new(ow, oh);
         for n in 0..total {
             if !progress(n as f32 / total as f32) {
                 return Err(Error::Cancelled);
@@ -74,10 +108,9 @@ impl Span {
             // planar input window
             let mut planes = vec![0f32; 3 * ww * wh];
             for (y, dst) in (wy0..wy1).zip(0..) {
-                let row = img.data.get(y * w + wx0..y * w + wx1).ok_or_else(|| Error::Image("tile outside the image".into()))?;
-                for (x, p) in row.iter().enumerate() {
-                    for (c, v) in p.iter().enumerate() {
-                        if let Some(d) = planes.get_mut(c * ww * wh + dst * ww + x) {
+                for (x, src) in (wx0..wx1).zip(0..) {
+                    for (c, v) in read(x, y).iter().enumerate() {
+                        if let Some(d) = planes.get_mut(c * ww * wh + dst * ww + src) {
                             // (NaN / inf in a damaged source must not poison the whole tile)
                             *d = if v.is_finite() { v.clamp(0.0, 1.0) } else { 0.0 };
                         }
@@ -102,14 +135,12 @@ impl Span {
                         // (also maps NaN to 0)
                         *v = if r > 0.0 { r.min(1.0) } else { 0.0 };
                     }
-                    if let Some(d) = out.data.get_mut(y * ow + x) {
-                        *d = px;
-                    }
+                    write(x, y, px);
                 }
             }
         }
         progress(1.0);
-        Ok(out)
+        Ok(())
     }
 }
 
