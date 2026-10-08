@@ -349,7 +349,14 @@ fn run_script(path: PathBuf, ctx: egui::Context) -> std::sync::mpsc::Receiver<li
                 std::thread::sleep(std::time::Duration::from_millis(ms.min(600_000)));
                 json!({"ok": true})
             } else if let Some(method) = v.get("method").and_then(serde_json::Value::as_str) {
-                let (req, reply) = lightcraft_ui_egui::ControlRequest::new(method, v.get("params").cloned().unwrap_or(json!({})));
+                let mut params = v.get("params").cloned().unwrap_or(json!({}));
+                // a relative `path` (a screenshot's) is next to the script: the app's tmp folder
+                if let Some(rel) = params.get("path").and_then(serde_json::Value::as_str).filter(|p| Path::new(p).is_relative())
+                    && let Some(dir) = path.parent()
+                {
+                    params["path"] = json!(dir.join(rel).to_string_lossy());
+                }
+                let (req, reply) = lightcraft_ui_egui::ControlRequest::new(method, params);
                 if tx.send(req).is_err() {
                     break;
                 }
@@ -359,7 +366,8 @@ fn run_script(path: PathBuf, ctx: egui::Context) -> std::sync::mpsc::Receiver<li
                 json!({"ok": false, "error": "not a request"})
             };
             if let Some(f) = out.as_mut() {
-                let _ = writeln!(f, "{}", json!({"request": v, "reply": reply}));
+                // one write per line, so a reader never sees half a reply
+                let _ = f.write_all(format!("{}\n", json!({"request": v, "reply": reply})).as_bytes());
             }
         }
         log::info!("script {} done", path.display());
@@ -415,7 +423,8 @@ pub fn run() -> eframe::Result {
                 app.ui = ui;
             }
             if let Some(script) = std::env::var_os("LIGHTCRAFT_SCRIPT").filter(|s| !s.is_empty()) {
-                app = app.with_control(run_script(PathBuf::from(script), cc.egui_ctx.clone()));
+                // a relative path is in the app's tmp folder (where `devicectl … copy to` puts it)
+                app = app.with_control(run_script(tmp.join(script), cc.egui_ctx.clone()));
             }
             lightcraft_ui_egui::i18n::set_language(app.ui.language);
             app.notices.extend(prefs_warning);
@@ -570,15 +579,16 @@ mod tests {
     fn a_script_drives_the_app_and_keeps_the_replies() {
         let dir = temp("script");
         let script = dir.join("tour.jsonl");
-        std::fs::write(&script, "{\"sleep\": 1}\n\nnot json\n{\"method\": \"ui.inspect\"}\n").unwrap();
+        std::fs::write(&script, "{\"sleep\": 1}\n\nnot json\n{\"method\": \"ui.screenshot\", \"params\": {\"path\": \"shot.png\"}}\n").unwrap();
         let rx = run_script(script, egui::Context::default());
         let req = rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap();
-        assert_eq!(req.method, "ui.inspect");
+        assert_eq!(req.method, "ui.screenshot");
+        assert_eq!(req.params["path"], json!(dir.join("shot.png").to_string_lossy()), "relative to the script");
         req.reply.send(json!({"ok": true, "result": 7})).unwrap();
         let mut out = String::new();
         for _ in 0..200 {
             out = std::fs::read_to_string(dir.join("tour.out")).unwrap_or_default();
-            if out.lines().count() == 3 {
+            if out.ends_with('\n') && out.lines().count() == 3 {
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(25));
