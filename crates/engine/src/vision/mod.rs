@@ -264,6 +264,10 @@ pub struct Vision {
     /// Find the faces in photos and group them into people. Off until the user turns it on
     /// (persisted in the library's prefs.json): it needs its own download and the user's yes.
     pub faces: bool,
+    /// This device runs none of the models even if this build could (a thin client; tests of one):
+    /// it searches and lists people through the sync server.
+    #[doc(hidden)]
+    pub thin: bool,
     /// Long edge of the renderings text and faces are read from ([`TEXT_EDGE`]; smaller in tests).
     #[doc(hidden)]
     pub text_edge: usize,
@@ -298,6 +302,7 @@ impl Default for Vision {
             share_with_server: false,
             text: false,
             faces: false,
+            thin: false,
             text_edge: TEXT_EDGE,
             injected: None,
             injected_reader: None,
@@ -325,7 +330,7 @@ impl Default for Vision {
 impl Vision {
     /// Whether this device can run the search model (this build has it, or a host supplied one).
     pub fn local_available(&self) -> bool {
-        cfg!(feature = "vision") || self.injected.is_some()
+        (cfg!(feature = "vision") && !self.thin) || self.injected.is_some()
     }
 
     /// Whether searching by description is possible here: with the model on this device, or
@@ -478,7 +483,7 @@ impl Vision {
     /// Whether this device can read the text in photos (this build has the readers, or a host
     /// supplied one).
     pub fn text_available(&self) -> bool {
-        cfg!(feature = "vision") || self.injected_reader.is_some()
+        (cfg!(feature = "vision") && !self.thin) || self.injected_reader.is_some()
     }
 
     /// Whether the text-reading models' files are in place.
@@ -579,7 +584,7 @@ impl Vision {
     /// Whether this device can find faces (this build has the models' code, or a host supplied a
     /// finder).
     pub fn faces_available(&self) -> bool {
-        cfg!(feature = "vision") || self.injected_finder.is_some()
+        (cfg!(feature = "vision") && !self.thin) || self.injected_finder.is_some()
     }
 
     /// Whether the face models' files are in place.

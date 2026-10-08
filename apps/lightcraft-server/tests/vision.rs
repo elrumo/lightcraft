@@ -329,8 +329,10 @@ impl Embedder for Padded {
 fn device_in(f: &Fixture, dir: &Path, model: Option<Arc<dyn Embedder>>) -> Session {
     let mut s = Session::new().with_fs();
     s.open_library(dir, false).unwrap();
-    if let Some(m) = model {
-        s.vision.set_embedder(m);
+    match model {
+        Some(m) => s.vision.set_embedder(m),
+        // (a device with no model of its own: the web build, iOS; whatever this build could do)
+        None => s.vision.thin = true,
     }
     s.execute("sync.signIn", &json!({"server": f.ann.url, "user": "ann", "password": "correct horse", "device": "test"})).unwrap();
     sync(&mut s);
