@@ -18,7 +18,7 @@ pub trait Embedder: Send + Sync {
     fn encode_images(&self, imgs: &[&Rgba8]) -> Result<Vec<Vec<f32>>, Error>;
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "siglip", not(target_arch = "wasm32")))]
 impl Embedder for crate::siglip::SigLip {
     fn model_id(&self) -> &str {
         crate::siglip::MODEL_ID

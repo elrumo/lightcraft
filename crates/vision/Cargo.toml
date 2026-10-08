@@ -9,6 +9,10 @@ description = "LightCraft photo understanding: image-text search embeddings and 
 workspace = true
 
 [features]
+default = ["siglip"]
+# The SigLIP 2 model on candle, and its download spec. Off, this crate is the store, index and
+# traits only (a few small dependencies; builds for the web and iOS).
+siglip = ["dep:candle-core", "dep:candle-nn", "dep:candle-transformers", "dep:lightcraft-fetch", "dep:serde_json", "dep:tokenizers"]
 # a tiny deterministic stand-in for the model, for the tests of crates that use it
 testing = []
 
@@ -20,17 +24,25 @@ thiserror = { workspace = true }
 
 # the models run natively only (the web build has no AI)
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-candle-core = { workspace = true }
-candle-nn = { workspace = true }
-candle-transformers = { workspace = true }
-lightcraft-fetch = { workspace = true }
-serde_json = { workspace = true }
+candle-core = { workspace = true, optional = true }
+candle-nn = { workspace = true, optional = true }
+candle-transformers = { workspace = true, optional = true }
+lightcraft-fetch = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
 # pure Rust: no `onig` (C), no `esaxx_fast` (C++); `unstable_wasm` swaps Oniguruma for fancy-regex
-tokenizers = { version = "0.22", default-features = false, features = ["unstable_wasm"] }
+tokenizers = { version = "0.22", default-features = false, features = ["unstable_wasm"], optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-candle-core = { workspace = true, features = ["metal"] }
-candle-nn = { workspace = true, features = ["metal"] }
+candle-core = { workspace = true, features = ["metal"], optional = true }
+candle-nn = { workspace = true, features = ["metal"], optional = true }
 
 [dev-dependencies]
 image = { workspace = true }
+
+[[example]]
+name = "siglip_probe"
+required-features = ["siglip"]
+
+[[test]]
+name = "reference"
+required-features = ["siglip"]

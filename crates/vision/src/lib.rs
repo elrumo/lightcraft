@@ -16,12 +16,12 @@ pub mod embedder;
 #[cfg(any(test, feature = "testing"))]
 pub mod fake;
 pub mod index;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "siglip", not(target_arch = "wasm32")))]
 pub mod models;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "siglip", not(target_arch = "wasm32")))]
 pub mod siglip;
 pub mod store;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "siglip", not(target_arch = "wasm32")))]
 mod weights;
 
 pub use embedder::Embedder;

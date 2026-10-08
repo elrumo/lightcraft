@@ -43,7 +43,7 @@ pub enum Error {
     /// No model in this folder (it is downloaded only when the user asks).
     #[error("model files not found in {0}")]
     Missing(std::path::PathBuf),
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(feature = "siglip", not(target_arch = "wasm32")))]
     #[error(transparent)]
     Candle(#[from] candle_core::Error),
 }
