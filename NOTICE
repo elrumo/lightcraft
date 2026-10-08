@@ -13,6 +13,10 @@ This product bundles third-party material under its own licenses, listed below. 
 list (author, source, license) is in assets/ATTRIBUTION.md.
 
 Inter (assets/fonts/Inter-*.ttf) — SIL Open Font License 1.1. See assets/fonts/OFL-Inter.txt.
+Place names (crates/geo/data/places.bin) are derived from GeoNames (https://www.geonames.org/), used under the
+Creative Commons Attribution 4.0 licence (https://creativecommons.org/licenses/by/4.0/); they were converted to a
+compact form (columns dropped, names normalised and capped). World coastlines (crates/geo/data/land.bin) come from
+Natural Earth (https://www.naturalearthdata.com/), public domain.
 Showcase photographs by Ansel Adams, Dorothea Lange and NASA (docs/images/) — public domain. See assets/ATTRIBUTION.md.
 
 crates/segment (lightcraft-segment) ports the SAM 3 model code of Hugging Face Transformers

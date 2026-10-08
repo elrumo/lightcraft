@@ -5,6 +5,7 @@
 
 mod assets;
 mod bench;
+mod geodata;
 mod ico;
 mod layers;
 mod parity;
@@ -23,6 +24,8 @@ commands:
   bench [FILE] [--strict] [--threshold PCT]
                   run the render benchmark, append to target/bench/history.jsonl, compare CPU time with
                   the previous run (default input: corpus/raw/arw-sony-a7m3-compressed.arw)
+  geodata <dir>   rebuild crates/geo/data/{places,land}.bin from the GeoNames dumps (cities15000.txt, countryInfo.txt,
+                  admin1CodesASCII.txt) and Natural Earth's ne_110m_land.shp found in <dir> (see assets/ATTRIBUTION.md)
   ico <out.ico> <in.png>...
                   pack square PNGs (<= 256 px) into a Windows .ico (see packaging/icons.sh)
   layers          enforce the crate dependency layering (plan/architecture.md §3)
@@ -45,6 +48,7 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let rest: Vec<&str> = args.iter().skip(1).map(String::as_str).collect();
     let result = match args.first().map(String::as_str) {
+        Some("geodata") => geodata::run(&root(), &rest),
         Some("ico") => ico::run(&rest),
         Some("version") => version::run(&root(), &rest),
         Some("layers") => cmd_layers(),
