@@ -253,6 +253,27 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// One real request to the default tile server (the whole-world tile), to see that the client,
+    /// TLS, the user agent and the decoder work against the real thing:
+    /// `cargo test -p lightcraft-engine --lib -- --ignored live_default_tile`
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    #[ignore = "needs the internet"]
+    fn live_default_tile() {
+        let dir = std::env::temp_dir().join(format!("lc-live-tile-{}", std::process::id()));
+        let id = TileId { z: 0, x: 0, y: 0 };
+        let req = TileRequest { id, url: id.url(DEFAULT_TILE_URL), cache: Some(cache_path(&dir, id)), online: true };
+        let t = load(&req).tile.expect("the default tile server answers");
+        assert_eq!((t.width, t.height), (256, 256));
+        // the world at zoom 0: ocean in the corners, not all one colour
+        let first = &t.rgba[..4];
+        assert!(t.rgba.chunks(4).any(|p| p != first), "a map, not a flat colour");
+        // the second load comes from the disk cache, offline
+        let again = load(&TileRequest { online: false, ..req });
+        assert_eq!(again.tile.expect("served from the cache").rgba, t.rgba);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn pruning_removes_the_oldest_first() {
