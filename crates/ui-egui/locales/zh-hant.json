@@ -1318,5 +1318,9 @@
   "The face models are installed: looking for faces in your photos.": "人臉模型已安裝：正在尋找照片中的人臉。",
   "Who is this?": "這是誰？",
   "Show their photos": "顯示他們的照片",
-  "Because you send your search data to your server, the faces found here go there too.": "由於你已將搜尋資料傳送到自己的伺服器，在這裡找到的人臉資料也會一併傳送過去。"
+  "Because you send your search data to your server, the faces found here go there too.": "由於你已將搜尋資料傳送到自己的伺服器，在這裡找到的人臉資料也會一併傳送過去。",
+  "On": "開啟",
+  "Account": "帳號",
+  "Required": "必填",
+  "Demo Library": "示範照片庫"
 }

@@ -42,6 +42,9 @@ pub struct User {
     /// The server finds the faces in this user's photos and groups them into people (see
     /// [`crate::vision`]). Off until an admin turns it on for them: faces are personal data.
     pub faces: bool,
+    /// File and folder names the scan of those folders skips, wherever they are (see
+    /// `lightcraft_engine::import::is_ignored`): `*.fcpbundle`, `Proxy Media`.
+    pub ignore: Vec<String>,
 }
 
 /// One of a user's library folders: a folder on the server, shown to devices by `name`.
@@ -160,8 +163,8 @@ pub fn set_user(data: &Path, name: &str, password: &str, replace: bool) -> Resul
         None if replace => return Err(format!("no user `{name}`")),
         None => random_hex(16)?,
     };
-    let (admin, folders, faces) = f.users.get(name).map(|u| (u.admin, u.folders.clone(), u.faces)).unwrap_or_default();
-    f.users.insert(name.to_string(), User { password: hash_password(password)?, library, admin, folders, faces });
+    let prev = f.users.get(name).cloned().unwrap_or_default();
+    f.users.insert(name.to_string(), User { password: hash_password(password)?, library, ..prev });
     std::fs::create_dir_all(user_dir(data, name)).map_err(|e| e.to_string())?;
     write_json(&data.join(USERS), &f)
 }
@@ -238,6 +241,17 @@ pub fn remove_folder(data: &Path, user: &str, name: &str) -> Result<(), String> 
         return Err(format!("{user} has no library folder `{name}`"));
     }
     write_json(&data.join(USERS), &f)
+}
+
+/// Set the names `user`'s library folders are scanned without (see [`User::ignore`]); returns the
+/// list as kept. Photos already read from a name now ignored stay in the library (their files
+/// show as missing).
+pub fn set_ignore(data: &Path, user: &str, list: &[String]) -> Result<Vec<String>, String> {
+    let list = lightcraft_engine::import::clean_ignore(list)?;
+    let mut f = read_users(data)?;
+    f.users.get_mut(user).ok_or_else(|| format!("no user `{user}`"))?.ignore = list.clone();
+    write_json(&data.join(USERS), &f)?;
+    Ok(list)
 }
 
 /// Is there an admin yet? (Until there is, `/admin` asks for the setup code.)

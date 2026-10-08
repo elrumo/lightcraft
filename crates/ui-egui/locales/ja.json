@@ -1103,5 +1103,9 @@
   "The face models are installed: looking for faces in your photos.": "顔モデルをインストールしました。写真の中の顔を探しています。",
   "Who is this?": "この人は誰？",
   "Show their photos": "この人の写真を表示",
-  "Because you send your search data to your server, the faces found here go there too.": "検索データをご自身のサーバーへ送る設定のため、ここで見つかった顔のデータもサーバーへ送られます。"
+  "Because you send your search data to your server, the faces found here go there too.": "検索データをご自身のサーバーへ送る設定のため、ここで見つかった顔のデータもサーバーへ送られます。",
+  "On": "オン",
+  "Account": "アカウント",
+  "Required": "必須",
+  "Demo Library": "デモライブラリ"
 }

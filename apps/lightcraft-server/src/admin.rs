@@ -28,6 +28,8 @@ use crate::api::{Resp, error, header_value, json, read_json, read_small_json};
 const INDEX: &str = include_str!("../admin/index.html");
 const SCRIPT: &str = include_str!("../admin/admin.js");
 const STYLE: &str = include_str!("../admin/admin.css");
+/// The app icon (64 px), for the page's header and tab.
+const ICON: &[u8] = include_bytes!("../../../assets/app-icon/hicolor/64x64/apps/ai.storyteller.lightcraft.png");
 
 /// Wrong setup codes before a new one is made.
 const SETUP_TRIES: u32 = 10;
@@ -51,18 +53,19 @@ fn page_headers(ctype: &str) -> Vec<Header> {
     .collect()
 }
 
-/// `/admin`, `/admin/admin.js`, `/admin/admin.css`.
+/// `/admin`, `/admin/admin.js`, `/admin/admin.css`, `/admin/icon.png`.
 pub fn page(method: &Method, path: &str) -> Resp {
     if !matches!(method, Method::Get | Method::Head) {
         return error(405, "GET or HEAD");
     }
     let (ctype, body) = match path.trim_end_matches('/') {
-        "/admin" | "/admin/index.html" => ("text/html; charset=utf-8", INDEX),
-        "/admin/admin.js" => ("text/javascript; charset=utf-8", SCRIPT),
-        "/admin/admin.css" => ("text/css; charset=utf-8", STYLE),
+        "/admin" | "/admin/index.html" => ("text/html; charset=utf-8", INDEX.as_bytes()),
+        "/admin/admin.js" => ("text/javascript; charset=utf-8", SCRIPT.as_bytes()),
+        "/admin/admin.css" => ("text/css; charset=utf-8", STYLE.as_bytes()),
+        "/admin/icon.png" => ("image/png", ICON),
         _ => return error(404, "not found"),
     };
-    let bytes = body.as_bytes().to_vec();
+    let bytes = body.to_vec();
     let len = bytes.len();
     Response::new(StatusCode(200), page_headers(ctype), Box::new(std::io::Cursor::new(bytes)), Some(len), None)
 }
@@ -113,6 +116,11 @@ struct NewFolder {
     path: String,
     #[serde(default)]
     name: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct Ignore {
+    ignore: Vec<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -178,6 +186,12 @@ pub fn api(st: &State, req: &mut Request, method: &Method, rest: &str) -> Resp {
                 folders(st, name)
             })
         }
+        (Method::Put, ["users", name, "ignore"]) => read_json::<Ignore>(req).map_err(Err).and_then(|i| {
+            let kept = accounts::set_ignore(&st.data, name, &i.ignore).map_err(|e| Ok((400, e)))?;
+            log::info!("admin {me}: {name} ignores {kept:?}");
+            st.folders.request(name);
+            folders(st, name)
+        }),
         (Method::Post, ["users", name, "scan"]) => {
             st.folders.request(name);
             folders(st, name)
@@ -369,7 +383,7 @@ fn folders(st: &State, name: &str) -> AdminResult {
     let u = f.users.get(name).ok_or_else(|| Ok((404, format!("no user `{name}`"))))?;
     let list: Vec<Value> =
         u.folders.iter().map(|f| json!({"name": f.name, "path": f.path, "there": std::path::Path::new(&f.path).is_dir()})).collect();
-    Ok(json!({"folders": list, "scan": st.folders.status(name)}))
+    Ok(json!({"folders": list, "ignore": u.ignore, "scan": st.folders.status(name)}))
 }
 
 fn devices(st: &State, name: &str) -> AdminResult {

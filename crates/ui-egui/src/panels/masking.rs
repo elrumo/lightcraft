@@ -176,7 +176,10 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             if let Some((rid, name)) = app.ui.renaming_mask.as_mut().filter(|(rid, _)| *rid == m.id) {
                 // inline rename: Enter (or leaving the field) commits, Escape cancels
                 let rid = *rid;
-                let r = ui.add(egui::TextEdit::singleline(name).desired_width(ui.available_width()).id_salt(("maskRename", rid)));
+                let r = ui.add(crate::widgets::touch_field(
+                    ui,
+                    egui::TextEdit::singleline(name).desired_width(ui.available_width()).id_salt(("maskRename", rid)),
+                ));
                 register(ui.ctx(), format!("maskRename:{rid}"), r.rect);
                 if !r.has_focus() && !r.lost_focus() {
                     r.request_focus();
@@ -275,7 +278,10 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
                 };
                 if let Some((_, _, name)) = app.ui.renaming_component.as_mut().filter(|(mid, k, _)| *mid == m.id && *k == i) {
                     // inline rename: Enter (or leaving the field) commits, Escape cancels
-                    let r = ui.add(egui::TextEdit::singleline(name).desired_width(ui.available_width() - 30.0).id_salt(("compRename", m.id, i)));
+                    let r = ui.add(crate::widgets::touch_field(
+                        ui,
+                        egui::TextEdit::singleline(name).desired_width(ui.available_width() - 30.0).id_salt(("compRename", m.id, i)),
+                    ));
                     register(ui.ctx(), format!("componentRename:{i}"), r.rect);
                     if !r.has_focus() && !r.lost_focus() {
                         r.request_focus();
@@ -707,8 +713,10 @@ fn describe_field(app: &mut LightcraftApp, ui: &mut egui::Ui, new_mask: bool) {
     ui.label(crate::i18n::tr(prompt));
     let mut submit = false;
     ui.horizontal(|ui| {
-        let r =
-            ui.add(egui::TextEdit::singleline(&mut text).hint_text("e.g. sky · the red car · car, road").desired_width(ui.available_width() - 64.0));
+        let r = ui.add(crate::widgets::touch_field(
+            ui,
+            egui::TextEdit::singleline(&mut text).hint_text("e.g. sky · the red car · car, road").desired_width(ui.available_width() - 64.0),
+        ));
         register(ui.ctx(), "maskDescribe", r.rect);
         if !r.has_focus() && !r.lost_focus() && text.is_empty() {
             r.request_focus();

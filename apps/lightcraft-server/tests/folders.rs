@@ -87,6 +87,12 @@ fn library_folders_are_read_in_place() {
     dev.execute("sync.signIn", &json!({"server": url, "user": "ann", "password": "correct horse", "device": "test"})).unwrap();
     sync(&mut dev);
     assert_eq!(dev.catalog.len(), 3);
+    // the storage numbers tell what the server stores from what it only reads
+    let u = dev.execute("sync.usage", &json!({"refresh": true})).unwrap();
+    let on_disk: u64 = ["2024/Trip/a.png", "2024/Trip/b.png", "2025/c.png"].iter().map(|f| std::fs::metadata(photos.join(f)).unwrap().len()).sum();
+    assert_eq!((u["server"]["folders"]["files"].as_u64(), u["server"]["folders"]["bytes"].as_u64()), (Some(3), Some(on_disk)), "{u}");
+    assert_eq!(u["server"]["original"]["files"], 0, "folder photos are never copied: {u}");
+    assert_eq!(u["server"]["mini"]["files"], 3, "{u}");
     let b = by_place(&dev, "Photos/2024/Trip/b.png").expect("b in its folder");
     assert_eq!((b.rating, b.meta.keywords.clone()), (4, vec!["beach".to_string()]));
     assert!(matches!(&b.source, Source::File { path } if path.starts_with("web/")));
@@ -193,6 +199,77 @@ fn uploads_of_folder_files_are_not_duplicated() {
     let a = by_place(&dev, "photos/a.png").expect("the uploaded photo has its place in the folder");
     assert!(!lightcraft_engine::sync::is_remote(a), "the device keeps its own file");
 
+    drop(server);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// A file the server couldn't read is read again when it changes, or once after the server
+/// restarts (a newer server may read it), not on every scan.
+#[test]
+fn files_that_failed_are_read_again_after_a_restart() {
+    let root = temp("retry");
+    let photos = root.join("photos");
+    write_png(&photos.join("a.png"), 1);
+    std::fs::write(photos.join("b.jpg"), b"not a photo").unwrap();
+    let data = root.join("data");
+    accounts::set_user(&data, "ann", "correct horse", false).unwrap();
+    accounts::add_folder(&data, "ann", &photos.to_string_lossy(), None).unwrap();
+    let start = || {
+        let mut cfg = Config::new(&data, "127.0.0.1:0");
+        cfg.scan_interval = None;
+        cfg.preview_threads = 1;
+        Server::start(cfg).unwrap()
+    };
+    let server = start();
+    let st = scanned(&server, 0);
+    assert_eq!((st.added, st.failed), (1, 1), "{st:?}");
+    server.scan("ann");
+    let st = scanned(&server, 1);
+    assert_eq!((st.todo, st.failed), (0, 0), "not read again: {st:?}");
+    drop(server);
+
+    let server = start();
+    let st = scanned(&server, 0);
+    assert_eq!((st.todo, st.failed), (1, 1), "read again after a restart: {st:?}");
+    drop(server);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Names a user asks to leave out (`*.fcpbundle`) are skipped with everything inside them; the
+/// photos already read from them stay in the library, their files showing as missing.
+#[test]
+fn ignored_names_are_left_out_of_the_scan() {
+    let root = temp("ignore");
+    let photos = root.join("nas/photos");
+    write_png(&photos.join("Gigs/Joe Bonamassa/Joe Bonamassa.fcpbundle/2-11-2015/Original Media/Joe Bonamassa-9.png"), 1);
+    write_png(&photos.join("Gigs/Joe Bonamassa/stills/a.png"), 2);
+    let data = root.join("data");
+    accounts::set_user(&data, "ann", "correct horse", false).unwrap();
+    accounts::add_folder(&data, "ann", &photos.to_string_lossy(), Some("Photos")).unwrap();
+    let mut cfg = Config::new(&data, "127.0.0.1:0");
+    cfg.scan_interval = None;
+    cfg.preview_threads = 1;
+    let server = Server::start(cfg).unwrap();
+    let st = scanned(&server, 0);
+    assert_eq!((st.files, st.added, st.missing), (2, 2, 0), "{st:?}");
+
+    // a name is not a path, and the user has to exist
+    assert!(accounts::set_ignore(&data, "ann", &["Gigs/Joe Bonamassa".into()]).is_err());
+    assert!(accounts::set_ignore(&data, "bob", &["*.fcpbundle".into()]).is_err());
+    let kept = accounts::set_ignore(&data, "ann", &[" *.fcpbundle ".into(), "".into(), "*.FCPBUNDLE".into()]).unwrap();
+    assert_eq!(kept, ["*.fcpbundle"]);
+    // changing the password doesn't lose it
+    accounts::set_user(&data, "ann", "another horse", true).unwrap();
+    assert_eq!(accounts::read_users(&data).unwrap().users["ann"].ignore, ["*.fcpbundle"]);
+
+    server.scan("ann");
+    let st = scanned(&server, 1);
+    assert_eq!((st.files, st.added, st.missing), (1, 0, 1), "the bundle's photo is no longer found: {st:?}");
+
+    accounts::set_ignore(&data, "ann", &[]).unwrap();
+    server.scan("ann");
+    let st = scanned(&server, 2);
+    assert_eq!((st.files, st.added, st.missing), (2, 0, 0), "found again where it was: {st:?}");
     drop(server);
     let _ = std::fs::remove_dir_all(&root);
 }

@@ -1103,5 +1103,9 @@
   "The face models are installed: looking for faces in your photos.": "人脸模型已安装：正在查找照片中的人脸。",
   "Who is this?": "这是谁？",
   "Show their photos": "显示他们的照片",
-  "Because you send your search data to your server, the faces found here go there too.": "由于你已将搜索数据发送到自己的服务器，在这里找到的人脸数据也会一并发送过去。"
+  "Because you send your search data to your server, the faces found here go there too.": "由于你已将搜索数据发送到自己的服务器，在这里找到的人脸数据也会一并发送过去。",
+  "On": "开启",
+  "Account": "账户",
+  "Required": "必填",
+  "Demo Library": "演示图库"
 }

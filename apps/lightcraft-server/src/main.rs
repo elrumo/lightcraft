@@ -12,6 +12,7 @@
 //! lightcraft-server folder add NAME PATH [--name FOLDER]
 //! lightcraft-server folder remove NAME FOLDER
 //! lightcraft-server folder list [NAME]
+//! lightcraft-server folder ignore NAME [PATTERN…]
 //! lightcraft-server scan [NAME]
 //! lightcraft-server gc [--dry-run]
 //! lightcraft-server health
@@ -45,6 +46,7 @@ const USAGE: &str = "usage:
   lightcraft-server folder add NAME PATH [--name FOLDER]   (a photo folder on this server, read in place)
   lightcraft-server folder remove NAME FOLDER
   lightcraft-server folder list [NAME]
+  lightcraft-server folder ignore NAME [PATTERN…]   (names the scan skips, like '*.fcpbundle'; none: show them, '': clear)
   lightcraft-server scan [NAME]                (read the library folders now)
   lightcraft-server model status|download [--accept-licences] [--text] [--faces] [--vision-dir DIR]   (the search model: about 1.5 GB, Google's Apache License 2.0; --text adds the models that read the text in photos: about 31 MB, Baidu's Apache License 2.0; --faces adds the models that find and tell apart faces: about 39 MB, MIT and Apache 2.0)
   lightcraft-server gc [--dry-run]
@@ -136,6 +138,9 @@ fn run(args: &[String]) -> Result<(), String> {
             cfg.web = web.clone();
             cfg.scan_interval = (minutes > 0).then(|| Duration::from_secs(minutes.saturating_mul(60)));
             cfg.preview_threads = threads.unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| (n.get() / 2).clamp(1, 4)));
+            if let Some(n) = std::env::var("LIGHTCRAFT_RENDER_THREADS").ok().and_then(|t| t.trim().parse::<usize>().ok()) {
+                cfg.render_threads = n;
+            }
             let s = Server::start(cfg)?;
             log::info!(
                 "serving {} on http://{}{}",
@@ -202,6 +207,17 @@ fn run(args: &[String]) -> Result<(), String> {
         ["folder", "remove", name, folder] => {
             accounts::remove_folder(&data, name, folder)?;
             println!("{name} no longer has the library folder {folder} (its photos stay in the library)");
+            Ok(())
+        }
+        ["folder", "ignore", name, patterns @ ..] => {
+            let list = if patterns.is_empty() {
+                accounts::read_users(&data)?.users.get(*name).map(|u| u.ignore.clone()).ok_or_else(|| format!("no user `{name}`"))?
+            } else {
+                let list = accounts::set_ignore(&data, name, &patterns.iter().map(|p| p.to_string()).collect::<Vec<_>>())?;
+                request_scan(&data, name);
+                list
+            };
+            println!("{name}'s library folders are scanned without: {}", if list.is_empty() { "(nothing)".to_string() } else { list.join(", ") });
             Ok(())
         }
         ["folder", "list", rest @ ..] => {
@@ -312,6 +328,7 @@ fn scan(data: &Path, user: &str) -> Result<(), String> {
         user,
         &lib,
         &stop,
+        true,
         &mut |s| {
             if tty && s.todo > 0 {
                 eprint!("\r{user}: read {} of {} file(s)", s.done, s.todo);

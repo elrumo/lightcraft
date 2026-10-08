@@ -127,5 +127,8 @@
   "Reading the text in your photos: {done} of {total}": "写真の文字を読み取り中：{done}/{total}枚",
   "Confirm {pending} more": "さらに{pending}件を確認",
   "{faces} faces found in {photos} photos.": "{photos}枚の写真から{faces}個の顔が見つかりました。",
-  "Looking for faces: {done} of {total}": "顔を探しています：{done}/{total}枚"
+  "Looking for faces: {done} of {total}": "顔を探しています：{done}/{total}枚",
+  "{n} photos · synced with {server}": "{n}枚・{server}と同期",
+  "{n} photos on this device": "このデバイスに{n}枚",
+  "{n} photos, not saved": "{n}枚（保存されません）"
 }

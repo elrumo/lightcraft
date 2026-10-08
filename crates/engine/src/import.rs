@@ -224,6 +224,9 @@ pub struct ImportDefaults {
     pub auto_folder: Option<String>,
     pub auto_copy: bool,
     pub auto_album: Option<String>,
+    /// Folder and file names scanning and importing skip, wherever they are below the folder
+    /// chosen ([`is_ignored`]): `*.fcpbundle`, `Proxy Media`.
+    pub ignore: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -285,12 +288,77 @@ pub fn is_supported(path: &Path) -> bool {
     path.extension().is_some_and(|e| EXTENSIONS.contains(&e.to_string_lossy().to_lowercase().as_str()))
 }
 
+/// Does `name` (one file or folder name, not a path) match one of the `ignore` patterns? `*` in a
+/// pattern stands for any run of characters and `?` for one; case doesn't matter, blank patterns
+/// match nothing. `*.fcpbundle` skips every Final Cut bundle, and with it everything inside.
+pub fn is_ignored(ignore: &[String], name: &str) -> bool {
+    if ignore.is_empty() {
+        return false;
+    }
+    let name: Vec<char> = name.to_lowercase().chars().collect();
+    ignore.iter().any(|p| {
+        let p: Vec<char> = p.trim().to_lowercase().chars().collect();
+        !p.is_empty() && glob(&p, &name)
+    })
+}
+
+/// An ignore list as it is kept: trimmed, blanks and repeats dropped. A pattern names one file or
+/// folder, so one with a `/` or `\\` (a path, which would never match) is refused, as is a list
+/// of more than 200 patterns or a pattern of more than 255 characters.
+pub fn clean_ignore(list: &[String]) -> std::result::Result<Vec<String>, String> {
+    let mut out: Vec<String> = Vec::new();
+    for p in list.iter().map(|p| p.trim()).filter(|p| !p.is_empty()) {
+        if p.contains(['/', '\\']) {
+            return Err(format!("`{p}`: a pattern matches one file or folder name (like `*.fcpbundle`), not a path"));
+        }
+        if p.chars().count() > 255 {
+            return Err("a pattern is longer than 255 characters".into());
+        }
+        if !out.iter().any(|x| x.eq_ignore_ascii_case(p)) {
+            out.push(p.to_string());
+        }
+    }
+    if out.len() > 200 {
+        return Err("at most 200 patterns".into());
+    }
+    Ok(out)
+}
+
+/// Wildcard match (`*`, `?`) by backtracking to the last `*`: linear in practice, no recursion.
+fn glob(p: &[char], n: &[char]) -> bool {
+    let (mut pi, mut ni, mut star, mut mark) = (0, 0, None, 0);
+    while ni < n.len() {
+        match p.get(pi) {
+            Some('*') => {
+                star = Some(pi);
+                mark = ni;
+                pi += 1;
+            }
+            Some(&c) if c == '?' || n.get(ni) == Some(&c) => {
+                pi += 1;
+                ni += 1;
+            }
+            _ => match star {
+                Some(s) => {
+                    pi = s + 1;
+                    mark += 1;
+                    ni = mark;
+                }
+                None => return false,
+            },
+        }
+    }
+    p.get(pi..).is_some_and(|rest| rest.iter().all(|&c| c == '*'))
+}
+
 /// Expand files and folders (recursively) into supported files. `skip` (e.g. the library folder)
-/// is never descended into.
-pub fn expand(paths: &[String], skip: Option<&Path>) -> Vec<String> {
-    fn walk(p: &Path, skip: Option<&Path>, out: &mut Vec<String>, top: bool) {
-        let hidden = p.file_name().is_some_and(|n| n.to_string_lossy().starts_with('.'));
-        if (hidden && !top) || skip.is_some_and(|s| p == s) {
+/// is never descended into, nor is anything named by `ignore` ([`is_ignored`]) below the folders
+/// given (the ones named in `paths` are always read).
+pub fn expand(paths: &[String], skip: Option<&Path>, ignore: &[String]) -> Vec<String> {
+    fn walk(p: &Path, skip: Option<&Path>, ignore: &[String], out: &mut Vec<String>, top: bool) {
+        let name = p.file_name().map(|n| n.to_string_lossy());
+        let hidden = name.as_ref().is_some_and(|n| n.starts_with('.'));
+        if (hidden && !top) || skip.is_some_and(|s| p == s) || (!top && name.as_ref().is_some_and(|n| is_ignored(ignore, n))) {
             return;
         }
         if p.is_dir() {
@@ -298,7 +366,7 @@ pub fn expand(paths: &[String], skip: Option<&Path>) -> Vec<String> {
             let mut v: Vec<PathBuf> = rd.flatten().map(|e| e.path()).collect();
             v.sort();
             for c in v {
-                walk(&c, skip, out, false);
+                walk(&c, skip, ignore, out, false);
             }
         } else if top || is_supported(p) {
             // explicitly named files are attempted even with an unknown extension (sniffed)
@@ -307,7 +375,7 @@ pub fn expand(paths: &[String], skip: Option<&Path>) -> Vec<String> {
     }
     let mut out = Vec::new();
     for p in paths {
-        walk(Path::new(p), skip, &mut out, true);
+        walk(Path::new(p), skip, ignore, &mut out, true);
     }
     let mut seen = std::collections::HashSet::new();
     out.retain(|p| seen.insert(p.clone()));
@@ -392,6 +460,7 @@ fn copy_into(root: &Path, src: &str, folders: &[String], name: Option<&str>, pro
 pub struct ScanInput {
     probe: Option<crate::media::FileProbe>,
     skip: Option<PathBuf>,
+    ignore: Vec<String>,
     /// path → (photo, its summary) for files already in the library.
     by_path: HashMap<String, (PhotoId, ImportCandidate)>,
     by_hash: HashMap<String, PhotoId>,
@@ -438,7 +507,14 @@ impl ScanInput {
                 by_hash.insert(h.clone(), p.id);
             }
         }
-        let input = ScanInput { probe: s.media.file_probe.clone(), skip, by_path, by_hash, cache: std::mem::take(&mut s.import_probes) };
+        let input = ScanInput {
+            probe: s.media.file_probe.clone(),
+            skip,
+            ignore: s.import_defaults.ignore.clone(),
+            by_path,
+            by_hash,
+            cache: std::mem::take(&mut s.import_probes),
+        };
         (input, paths.to_vec())
     }
 }
@@ -457,7 +533,7 @@ pub fn scan(s: &mut Session, paths: &[String]) -> Vec<ImportCandidate> {
 /// has) when `progress.cancel` is set.
 pub fn scan_with(mut input: ScanInput, paths: &[String], progress: &ScanProgress) -> ScanOutput {
     use std::sync::atomic::Ordering::Relaxed;
-    let files = expand(paths, input.skip.as_deref());
+    let files = expand(paths, input.skip.as_deref(), &input.ignore);
     let todo: Vec<String> = files.iter().filter(|f| !input.by_path.contains_key(f.as_str())).cloned().collect();
     progress.total.store(todo.len(), Relaxed);
     // probes from a preceding `scan` are reused when the file is unchanged (same size)
@@ -541,6 +617,7 @@ pub struct ImportJob {
     /// The mode in effect (Copy / Move become Add in a library without its own folder).
     mode: ImportMode,
     lib_dir: Option<PathBuf>,
+    ignore: Vec<String>,
     copy_root: Option<PathBuf>,
     /// path → (photo, a Local browse record?)
     by_path: HashMap<String, (PhotoId, bool)>,
@@ -650,6 +727,7 @@ impl ImportJob {
             opts,
             mode,
             lib_dir,
+            ignore: s.import_defaults.ignore.clone(),
             copy_root,
             by_path,
             by_hash,
@@ -674,7 +752,7 @@ impl ImportJob {
     /// Expand `paths` (folders recursively, the library's own folder skipped) into the files an
     /// import would handle; counted in [`ImportJob::total`].
     pub fn expand(&self, paths: &[String]) -> Vec<String> {
-        let files = expand(paths, self.lib_dir.as_deref());
+        let files = expand(paths, self.lib_dir.as_deref(), &self.ignore);
         self.total.fetch_add(files.len(), std::sync::atomic::Ordering::Relaxed);
         files
     }

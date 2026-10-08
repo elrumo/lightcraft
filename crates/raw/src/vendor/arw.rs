@@ -414,9 +414,9 @@ pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
         },
         1 => {
             let packing = if strip_len >= (w * h * 2) as u64 { Packing::Word16 } else { Packing::Msb };
-            (read_image_in(mode, bytes, &info, tiff.order, packing)?, bits)
+            (read_image_in(mode, bytes, &info, tiff.order, packing, None)?, bits)
         }
-        _ => (read_image_in(mode, bytes, &info, tiff.order, Packing::Msb)?, bits),
+        _ => (read_image_in(mode, bytes, &info, tiff.order, Packing::Msb, None)?, bits),
     };
     let RawData::U16(ref samples) = data else { return Err(RawError::Unsupported("float ARW".into())) };
     // "12-bit uncompressed" files (e.g. ILCE-7RM2) say BitsPerSample 12 but store 16-bit words on the 14-bit scale

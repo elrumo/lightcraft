@@ -34,8 +34,9 @@ pub enum Slot {
     Preview,
     Before,
     Compare(u8),
-    /// Background preparation of a neighbouring photo (no texture: its decoded source and view
-    /// render are cached by the engine). 0 = next, 1 = previous.
+    /// Background preparation of a neighbouring photo: its decoded source and view render are
+    /// cached by the engine, and a texture is kept only for the phone loupe
+    /// ([`Renderer::keep_neighbours`]). 0 = next, 1 = previous.
     Prefetch(u8),
     /// A variant thumbnail (profile / preset browsers), by its job key ([`Session::variant_job`]).
     /// Kept in a bounded LRU ([`VARIANT_TEXTURES`]).
@@ -99,6 +100,9 @@ pub struct Renderer {
     /// Keep a CPU copy of every texture so the UI can be rasterized headlessly (set when the app
     /// is driven by the control channel).
     pub keep_pixels: bool,
+    /// Keep the renders of the neighbouring photos ([`Slot::Prefetch`]) as textures, for the phone
+    /// loupe to slide in; elsewhere they only warm the engine's caches.
+    pub keep_neighbours: bool,
     /// Per-view intermediate results (loupe and "before"), so slider drags redo only what changed.
     stages: HashMap<Slot, Arc<StageCache>>,
     /// Slot → key of the last quick job requested for it (each is tried once).
@@ -137,6 +141,7 @@ impl Default for Renderer {
             last_main_ms: 0.0,
             completed: 0,
             keep_pixels: false,
+            keep_neighbours: false,
             stages: HashMap::new(),
             quick_tried: HashMap::new(),
             failed: HashMap::new(),
@@ -385,7 +390,7 @@ impl Renderer {
                     continue;
                 }
             };
-            if matches!(slot, Slot::Prefetch(_)) {
+            if matches!(slot, Slot::Prefetch(_)) && !self.keep_neighbours {
                 continue;
             }
             if let Slot::ThumbQuick(id) = slot {

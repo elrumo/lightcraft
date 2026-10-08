@@ -895,6 +895,14 @@ impl crate::Session {
         depth: lightcraft_pipeline::OutputDepth,
     ) -> Result<RenderJob, String> {
         let mut job = self.render_job(id, max_w, max_h, false, true).ok_or("no such photo")?;
+        // A DNG exported at half its size or less is read at about the size the export needs (a linear raw — Apple ProRAW —
+        // is binned while it is decoded, so a 4096 px export of a 48 MP photo never holds 48 MP of floats).
+        if let (Some(p), SourceRef::File { max_edge, .. }) = (self.catalog.photo(id), &mut job.source)
+            && p.format.eq_ignore_ascii_case("DNG")
+            && let Some(edge) = export_source_edge(p, max_w.max(max_h))
+        {
+            *max_edge = edge;
+        }
         job.request.space = space;
         job.request.depth = depth;
         job.key ^= (space as u64 + 1).wrapping_mul(0xa076_1d64_78bd_642f) ^ (depth as u64 + 1).wrapping_mul(0xe703_7ed1_a0b4_28db);
@@ -914,6 +922,36 @@ impl crate::Session {
         let image = r.image.clone();
         self.media.insert_source(id, level, r);
         Ok(image)
+    }
+}
+
+/// The long edge to read photo `p`'s source at for an export `out_long` pixels long, when that is less than half the
+/// photo's own size (so reading it smaller saves much). It leaves every output pixel a source pixel of its own, with a
+/// margin for the geometry stage's lens, perspective and straightening.
+pub(crate) fn export_source_edge(p: &Photo, out_long: usize) -> Option<usize> {
+    let (w, h) = (p.width.max(1) as usize, p.height.max(1) as usize);
+    let (nw, nh) = lightcraft_pipeline::native_output_size(w, h, &p.develop);
+    let native = nw.max(nh);
+    if !native.is_finite() || native < 1.0 {
+        return None;
+    }
+    let needed = (w.max(h) as f64 * (out_long as f64 / native).min(1.0) * 1.12).ceil();
+    (needed * 2.0 <= w.max(h) as f64).then_some(needed as usize)
+}
+
+/// How many pixels the source of an export `out_long` pixels long has: the photo's own, or fewer when a DNG is read
+/// at the size the export needs ([`export_source_edge`]).
+pub(crate) fn export_source_pixels(p: &Photo, out_long: usize) -> usize {
+    let px = (p.width.max(1) as usize).saturating_mul(p.height.max(1) as usize);
+    if !p.format.eq_ignore_ascii_case("DNG") {
+        return px;
+    }
+    match export_source_edge(p, out_long) {
+        Some(edge) => {
+            let long = p.width.max(p.height).max(1) as f64;
+            ((px as f64) * (edge as f64 / long).powi(2)).ceil() as usize
+        }
+        None => px,
     }
 }
 
@@ -1029,6 +1067,26 @@ mod tests {
         assert_eq!(g.usage().0, 0);
         // a single holder may exceed the limit
         drop(g.acquire(1000));
+    }
+
+    #[test]
+    fn exports_of_at_most_half_the_size_read_a_source_of_about_that_size() {
+        let s = crate::Session::with_demo();
+        let p = s.catalog.photos().next().unwrap().clone();
+        let long = p.width.max(p.height) as usize;
+        // a quarter of the size: a source with a 12 % margin; half the size, the full size, or more: the whole original
+        assert_eq!(export_source_edge(&p, long / 4), Some((long as f64 / 4.0 * 1.12).ceil() as usize));
+        assert_eq!(export_source_edge(&p, long / 2), None);
+        assert_eq!(export_source_edge(&p, long), None);
+        assert_eq!(export_source_edge(&p, long * 2), None);
+        // a crop to half the photo: an export an eighth of the original's size is a quarter of the crop's, so the source
+        // needs a quarter of the original (not an eighth), and a quarter-size export is half the crop's, which saves nothing
+        let mut cropped: Photo = (*p).clone();
+        let mut d = (*cropped.develop).clone();
+        d.crop.geometry.rect = lightcraft_geom::Rect { x0: 0.0, y0: 0.0, x1: 0.5, y1: 0.5 };
+        cropped.develop = Arc::new(d);
+        assert_eq!(export_source_edge(&cropped, long / 8), Some((long as f64 / 4.0 * 1.12).ceil() as usize));
+        assert_eq!(export_source_edge(&cropped, long / 4), None);
     }
 
     #[test]

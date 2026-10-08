@@ -32,6 +32,7 @@ pub mod admin;
 pub mod api;
 pub mod folders;
 pub mod gc;
+pub mod render;
 pub mod throttle;
 pub mod vision;
 
@@ -66,6 +67,8 @@ pub struct Config {
     pub text_reader: Option<Arc<dyn lightcraft_vision::TextReader>>,
     /// A face finder instead of YuNet and SFace from `<vision_dir>/faces` (tests).
     pub face_finder: Option<Arc<dyn lightcraft_vision::FaceEngine>>,
+    /// Renders at once for devices that export on the server ([`render`]).
+    pub render_threads: usize,
 }
 
 impl Config {
@@ -83,6 +86,7 @@ impl Config {
             embedder: None,
             text_reader: None,
             face_finder: None,
+            render_threads: 1,
         }
     }
 }
@@ -102,6 +106,8 @@ pub struct State {
     pub(crate) folders: folders::Scanner,
     /// Search by description: the model and each user's index.
     pub(crate) vision: vision::Search,
+    /// Renders for devices ([`render`]).
+    pub(crate) render: render::Slots,
     /// Failed sign-ins (password guessing).
     pub(crate) throttle: Mutex<throttle::Throttle>,
     busy: AtomicUsize,
@@ -140,6 +146,7 @@ impl Server {
             web: cfg.web,
             libs: Mutex::new(HashMap::new()),
             folders: folders::Scanner::new(cfg.scan_interval),
+            render: render::Slots::new(cfg.render_threads),
             throttle: Mutex::new(throttle::Throttle::default()),
             busy: AtomicUsize::new(0),
             max: cfg.max_requests.max(1),

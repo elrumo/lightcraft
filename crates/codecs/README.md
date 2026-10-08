@@ -40,7 +40,7 @@ CRW, MRW, X3F) are detected so the engine can route them to `lightcraft-raw`; `d
 | PSD / PSB | merged composite: 8/16/32-bit gray, RGB, CMYK, indexed, duotone (as gray); raw/RLE | — | ICC (1039), EXIF (1058), XMP (1060); ZIP-compressed composite, Lab and 1-bit unsupported |
 | JPEG XL | yes (jxl-oxide, feature `jxl`, default on) | — | enum colour → rendered straight to linear Rec.2020; ICC → our ICC path; orientation applied by the decoder (reported as 1) |
 | AVIF | **no** | yes (ravif/rav1e, native only, feature `avif`) | 8-bit sRGB, EXIF; no ICC in the muxer |
-| HEIC/HEIF | **no** (sniff only) | — | see gaps |
+| HEIC/HEIF | yes (`heic-rs`, pure Rust; the host's decoder first when it installed one, e.g. ImageIO on iOS): grids, 8/10-bit, `irot`/`imir`/`clap` applied (reported as 1); colour from `nclx`, else the HEVC VUI | — | ICC, EXIF; no alpha (`auxC`) item |
 
 ## Colour
 
@@ -89,9 +89,13 @@ Run `cargo test --release -p lightcraft-codecs --test bench -- --ignored --nocap
 
 ## Gaps / limitations
 
-- **AVIF and HEIC decode**: no permissively licensed, pure-Rust AV1/HEVC decoder exists today
-  (dav1d/libheif are C; rav1d-safe and imazen's heic are AGPL). Files are sniffed and rejected with
-  `Error::Unsupported`; a raw-style embedded-preview path could be added for HEIC thumbnails.
+- **AVIF decode**: no permissively licensed, pure-Rust AV1 decoder exists today (dav1d is C,
+  rav1d-safe is AGPL). Files are sniffed and rejected with `Error::Unsupported` unless the host
+  installed a system decoder.
+- **HEIC**: `heic-rs` 0.1 ignores the VUI colour description when a file has no `nclx` box (every
+  iPhone photo), so `heif.rs` drives its public pieces with the VUI read from the SPS; drop that
+  once `heic-rs` reads it. Inter-predicted reference picture sets in a still's SPS (none seen) fall
+  back to BT.709 limited range. HEIC is decoded whole (no scaled or embedded-thumbnail path).
 - JPEG: arithmetic coding unsupported (as in both decoders); extended XMP (> 64 KiB) neither read
   nor written; EXIF > 64 KiB not written. The encoder uses standard Huffman tables (interleaved
   baseline) for maximum compatibility.

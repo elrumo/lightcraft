@@ -1,8 +1,8 @@
 //! LightCraft on iOS: what the app needs from the system that egui and winit don't give it — the
-//! Photos and Files pickers, the share sheet, the app's lifecycle (backgrounding, memory
-//! warnings, time to finish work in the background) and ImageIO's decoder for HEIC / HEIF (the
-//! iPhone's own photos), whose formats have no pure-Rust decoder (`lightcraft_codecs::
-//! set_system_decoder`).
+//! Photos and Files pickers, the share sheet, the pasteboard, haptic feedback, the app's lifecycle
+//! (backgrounding, memory warnings, time to finish work in the background) and ImageIO's decoder for
+//! HEIC / HEIF (the iPhone's own photos), whose formats have no pure-Rust decoder
+//! (`lightcraft_codecs::set_system_decoder`).
 //!
 //! The Objective-C calls go through `objc2` (Rust bindings to the system frameworks; no C or
 //! Objective-C code is compiled) and live in `ios` (compiled for iOS only). This crate is allowed
@@ -74,6 +74,48 @@ pub fn share(paths: &[PathBuf]) -> Result<(), String> {
         let _ = paths;
         Err(ONLY_IOS.into())
     }
+}
+
+/// A tap on the Taptic Engine, as UIKit's feedback generators give them (the system's Haptics
+/// switch in Settings still decides whether the phone buzzes).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Haptic {
+    /// A light tick: a step, a detent, a choice.
+    Selection,
+    /// A small thing landed.
+    Light,
+    /// A mode began.
+    Medium,
+    /// Something is going away.
+    Warning,
+}
+
+/// Play `haptic` (call on the main thread; elsewhere, and off the phone, it does nothing: feedback
+/// is never worth an error).
+pub fn haptic(haptic: Haptic) {
+    #[cfg(target_os = "ios")]
+    ios::haptics::play(haptic);
+    #[cfg(not(target_os = "ios"))]
+    let _ = haptic;
+}
+
+/// The system pasteboard's text (Paste in a text field's edit menu); `None` when it has none, or
+/// off iOS. iOS may first ask the user to allow the paste.
+pub fn pasteboard_text() -> Option<String> {
+    #[cfg(target_os = "ios")]
+    {
+        ios::pasteboard::text()
+    }
+    #[cfg(not(target_os = "ios"))]
+    None
+}
+
+/// Put `text` on the system pasteboard (what the app copies; does nothing off iOS).
+pub fn set_pasteboard_text(text: &str) {
+    #[cfg(target_os = "ios")]
+    ios::pasteboard::set_text(text);
+    #[cfg(not(target_os = "ios"))]
+    let _ = text;
 }
 
 /// The app's lifecycle, as UIKit announces it.
@@ -423,6 +465,7 @@ mod tests {
         assert!(decode_image(b"", None).is_err());
         assert!(observe_lifecycle(Box::new(|_| {})).is_err());
         assert!(BackgroundTask::begin("x").is_none());
+        haptic(Haptic::Selection); // (nothing to play on, nothing to fail)
         let d = temp("stub");
         assert!(pick(PickKind::Photos, &d, |_| true, Box::new(|_| {})).is_err());
         let _ = std::fs::remove_dir_all(&d);

@@ -65,6 +65,7 @@ tiff = "0.11"
 image-webp = "0.2"
 moxcms = { version = "0.9", default-features = false, features = ["lut"] }
 jxl-oxide = { version = "0.12", default-features = false }
+heic-rs = { version = "0.1.1", default-features = false }
 ravif = { version = "0.13", default-features = false, features = ["threading"] } # no "asm": it needs nasm (non-Rust)
 
 # gpu (crates/gpu; native backends only, no GL: everything stays pure Rust)
@@ -153,6 +154,7 @@ lightcraft-preview = { opt-level = 3 }
 zune-jpeg = { opt-level = 3 }
 zune-core = { opt-level = 3 }
 jpeg-decoder = { opt-level = 3 }
+heic-rs = { opt-level = 3 }
 jpeg-encoder = { opt-level = 3 }
 png = { opt-level = 3 }
 miniz_oxide = { opt-level = 3 }

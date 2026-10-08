@@ -625,4 +625,61 @@ pub mod proto {
     /// `/api/blobs/<kind>/<hash>` (`HEAD`, `GET`, `PUT`): a photo's original, its smart preview
     /// (≤ 2560 px) and its mini preview (≤ 512 px, for thumbnails), by content hash.
     pub const BLOB_KINDS: [&str; 3] = ["original", "smart", "mini"];
+
+    /// `POST /api/render`: render a photo whose original the server keeps (by content hash) with the edits sent
+    /// here, and answer with the encoded image: the way a device that can't hold a full-size render in memory (a phone,
+    /// a 48 MP photo) exports at full size. A server without the route answers `404`; one that is busy `503`.
+    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+    pub struct Render {
+        /// The original's content hash.
+        pub hash: String,
+        /// The original's file name: its extension tells the decoder what the file is.
+        pub name: String,
+        /// The photo's develop settings (`DevelopSettings` JSON; a partial document merges over the defaults).
+        pub settings: serde_json::Value,
+        /// Export options (`ExportOptions` JSON): format, size, quality, colour space…
+        pub export: serde_json::Value,
+    }
+
+    /// A count of files and the bytes they take.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+    pub struct Files {
+        pub files: u64,
+        pub bytes: u64,
+    }
+
+    /// A file system's size and what is left on it.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+    pub struct Disk {
+        pub total: u64,
+        pub free: u64,
+    }
+
+    /// `GET /api/usage`: what the user's library takes on the server. An answer may be a few
+    /// seconds old (the server walks every photo file).
+    #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(default)]
+    pub struct Usage {
+        pub photos: u64,
+        pub albums: u64,
+        /// Signed-in devices.
+        pub devices: u64,
+        /// The files this server keeps by content: uploaded originals, smart previews, mini
+        /// previews.
+        pub original: Files,
+        pub smart: Files,
+        pub mini: Files,
+        /// Photos in the user's library folders: read where they are on the server, never copied,
+        /// so not part of what LightCraft stores.
+        pub folders: Files,
+        /// The disk the server keeps its data on (`None`: it can't tell).
+        pub disk: Option<Disk>,
+    }
+
+    impl Usage {
+        /// Bytes of the files LightCraft keeps for this user (not the library folders).
+        pub fn stored(&self) -> u64 {
+            self.original.bytes.saturating_add(self.smart.bytes).saturating_add(self.mini.bytes)
+        }
+    }
 }
