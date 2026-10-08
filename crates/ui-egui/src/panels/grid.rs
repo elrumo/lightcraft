@@ -15,7 +15,7 @@ use crate::theme::Tokens;
 use crate::widgets::register;
 
 /// Thumbnail render size (pixels, long edge) for a cell of `pts` points.
-fn thumb_px(pts: f32, ppp: f32) -> usize {
+pub(super) fn thumb_px(pts: f32, ppp: f32) -> usize {
     let px = (pts * ppp).ceil() as usize;
     if px <= 256 {
         256
@@ -156,6 +156,7 @@ fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             ui.painter().text(pos2(hr.right() - 20.0, hr.center().y), Align2::RIGHT_CENTER, cnt, t.font(12.5), t.text_dim);
         }
     }
+    let chips = super::chips::with_understanding(app, chips);
     super::chips::show(app, ui, &chips);
     if app.ui.filter_bar {
         super::filterbar::show(app, ui);

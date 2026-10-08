@@ -41,16 +41,16 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | R. Video (VID) | 0 | 0 | 5 | 1 | — | 0/2 (0%) |
 | S. Export (EXP) | 15 | 1 | 2 | 0 | 7/7 (100%) | 7/7 (100%) |
 | T. Share (SHARE) | 0 | 0 | 0 | 4 | — | — |
-| U. Map & location (MAP) | 0 | 1 | 1 | 0 | — | 0/1 (0%) |
+| U. Map & location (MAP) | 0 | 2 | 0 | 0 | — | 0/1 (0%) |
 | V. Preferences (PREF) | 6 | 0 | 3 | 2 | 1/1 (100%) | 4/4 (100%) |
 | W. Cloud & AI infrastructure (CLOUD / AI) | 1 | 1 | 1 | 1 | — | — |
 | X. Cross-cutting behaviours (BEHAV) | 16 | 4 | 1 | 1 | 8/8 (100%) | 6/8 (75%) |
 | Y. Menus | 83 | 1 | 4 | 5 | 47/47 (100%) | 23/23 (100%) |
 | Z. Keyboard shortcuts (desktop) | 74 | 3 | 3 | 1 | 49/52 (94%) | 22/23 (96%) |
-| Lightroom Classic extras | 31 | 10 | 39 | 9 | — | 21/22 (95%) |
-| **Total** | 393 | 35 | 86 | 31 | 194/200 (97%) | 140/149 (94%) |
+| Lightroom Classic extras | 32 | 12 | 37 | 8 | — | 21/22 (95%) |
+| **Total** | 394 | 38 | 83 | 30 | 194/200 (97%) | 140/149 (94%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **79.9%** of 514 in-scope rows — P0 98.5% of 200 · P1 96.0% of 149 · P2 42.7% of 165.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **80.2%** of 515 in-scope rows — P0 98.5% of 200 · P1 96.0% of 149 · P2 44.0% of 166.
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -73,8 +73,9 @@ Take the first one nobody is working on.
    the app offers a consented, verified download, but **LightCraft's CDN mirrors are not configured yet** (the
    built-in list is empty, so today users need their own mirror or a manual install). Subject / Sky / People could
    use the same model with fixed prompts; denoise / super-resolution models remain a maintainer decision.
-7. **HDR** (Q. HDR, LR-EXP-HDR), **video** (R. Video), **Classic output modules** (Map view, Book, Slideshow module,
-   Print, publish): large, well understood, lower priority than 1–5.
+7. **HDR** (Q. HDR, LR-EXP-HDR), **video** (R. Video), **Classic output modules** (Book, Slideshow module,
+   Print, publish): large, well understood, lower priority than 1–5. The **Map** now exists (LR-MAP-MODULE, 🟡:
+   not yet run in a browser or on an iPhone; no drag-to-geotag, saved locations or satellite layer).
 
 ## Shortcuts: conflicts and missing bindings
 
@@ -188,7 +189,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 
 | Id | Feature | Tier | Status | Evidence | Missing / notes |
 |---|---|---|---|---|---|
-| LR-FILT-SEARCH-META | Text search | P0 | ✅ | `cmd:library.filter` (`text`), `crates/ui-egui/src/panels/topbar.rs`, `crates/catalog/src/query.rs` | fielded tokens (`rating:3`, `iso:>800`, `camera:…`); no suggestions dropdown |
+| LR-FILT-SEARCH-META | Text search | P0 | ✅ | `cmd:library.filter` (`text`), `crates/ui-egui/src/panels/topbar.rs`, `crates/catalog/src/search.rs` | fielded tokens (`rating:3`, `iso:>800`, `camera:…`, `place:`, `near:`, `bbox:`); natural phrasing: places in many languages (`photos in madrid`, `españa`), years and months (`june 2024`), `or`, filler words dropped; the search chip says how it was read (docs/map.md); no suggestions dropdown |
 | LR-FILT-SEARCH-AI | Natural-language search | P2 | ⬜ | | |
 | LR-FILT-RATING | Rating filter | P0 | ✅ | `cmd:library.filter` (`rating`, `ratingOp`), `crates/ui-egui/src/panels/filterbar.rs` | ≥ / = / ≤ stars in the filter bar (`cmd:view.filterBar`) |
 | LR-FILT-FLAG | Flag filter | P0 | ✅ | `cmd:library.filter` (`flag`), `crates/ui-egui/src/panels/filterbar.rs` | picked / rejected / unflagged (one at a time) |
@@ -196,7 +197,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-FILT-TYPE | Type / edited filter | P1 | ✅ | `cmd:library.filter` (`kind`, `merged`, `edited`), `crates/ui-egui/src/panels/filterbar.rs`, `crates/catalog/src/query.rs` (`merged_kind`) | photos / raw / videos / HDR / panoramas / HDR panoramas (merge results by name), edited / unedited; no depth kind |
 | LR-FILT-KEYWORD | Keyword filter | P1 | ✅ | `cmd:library.filter` (`keyword`), `crates/ui-egui/src/panels/filterbar.rs` | keyword picker |
 | LR-FILT-CAMERA | Camera / lens filter | P1 | ✅ | `cmd:library.filter` (`camera`, `lens`), `crates/ui-egui/src/panels/filterbar.rs` | camera and lens pickers |
-| LR-FILT-LOCATION | Location filter | P2 | ✅ | `cmd:library.filter` (`text`, `ruleSet` field `location`) | free text, or a rule on location / city / state / country (smart albums, `library.filter`) |
+| LR-FILT-LOCATION | Location filter | P2 | ✅ | `cmd:library.filter` (`text`, `ruleSet` fields `location` and `place`), `crates/catalog/src/search.rs` | free text, or a rule on location / city / state / country; by GPS: a place name finds the photos taken there (offline gazetteer), a country everything whose nearest city is in it; smart-album rule `place` |
 | LR-FILT-PEOPLE | People filter | P2 | 🟡 | `cmd:library.filter`, `crates/catalog/src/query.rs` | filter by a person's name (case-insensitive, named Face regions only) from the People view, a filter chip or `person:`; no unnamed / suggested people |
 | LR-FILT-CULL | Culling-score filters | P2 | ✅ | `cmd:library.filter` (`ruleSet` fields `sharpness`, `bestOfGroup`) | Focus and Best of Similar Shots in the rule editor / smart albums |
 | LR-FILT-SORT | Sort | P0 | ✅ | `cmd:library.sort`, `crates/ui-egui/src/panels/bottombar.rs` | no colour-label or custom (manual) order |
@@ -208,7 +209,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 |---|---|---|---|---|---|
 | LR-META-INFO | Info panel | P0 | ✅ | `cmd:panel.info`, `cmd:photo.setMeta`, `crates/ui-egui/src/panels/right.rs` (`info`, `camera_card`) | camera card (camera, lens, size, format, focal length / shutter / aperture / ISO); title, caption, alt text, extended description, copyright, copyright status, rights usage terms, copyright info URL, creator; file name (rename), file path (reveal), capture time (edit); location, city, state, country; GPS. No flash, map snippet or people |
 | LR-META-COPYRIGHT-DEFAULT | Default copyright on import | P1 | ✅ | `cmd:library.preferences` (`import.copyright`, `import.creator`), `crates/ui-egui/src/panels/settings.rs` | Settings → Import → Metadata; fills only photos without their own |
-| LR-META-LOCATION | Location editing | P2 | 🟡 | `cmd:photo.setMeta` (`location`, `city`, `state`, `country`, `gps`) | place fields and GPS (decimal or degrees / minutes / seconds) edited in Info, read/written as IPTC Core / Photoshop / EXIF XMP; Show on Map opens OpenStreetMap; no embedded map, no geocoding |
+| LR-META-LOCATION | Location editing | P2 | 🟡 | `cmd:photo.setMeta` (`location`, `city`, `state`, `country`, `gps`), `cmd:photo.place` | place fields and GPS (decimal or degrees / minutes / seconds) edited in Info, read/written as IPTC Core / Photoshop / EXIF XMP; the place worked out from GPS is shown (not written to the file); Show on Map opens the in-app Map; no embedded mini-map in Info |
 | LR-META-COPYPASTE | Copy / paste metadata | P2 | ✅ | `cmd:photo.copyMetadata`, `cmd:photo.pasteMetadata` | title, caption, alt text, extended description, copyright (notice, status, usage terms, info URL), creator, place fields, keywords; `fields` picks a subset |
 | LR-META-XMP | XMP read/write | P0 | ✅ | `cmd:photo.saveMetadataToFile`, `cmd:photo.readMetadataFromFile`, `cmd:library.xmpPreferences`, `crates/engine/src/sidecar.rs`, `docs/xmp-interop.md` | sidecar wins for metadata; a sidecar capture time (`exif:DateTimeOriginal` / `photoshop:DateCreated` / `xmp:CreateDate`) fills in only when the file has none; saving merges into an existing sidecar (`crates/meta/src/xmp_merge.rs`): another app's `crs:`, `xmpMM:History` and unknown namespaces are kept byte for byte, an unreadable sidecar is backed up first; with stem naming, files sharing a stem (raw + JPEG) get separate sidecars (`<file>.xmp` for all but the raw) |
 | LR-META-EXIF-FULL | Full EXIF/IPTC [Classic] | P1 | ✅ | `cmd:photo.allMetadata`, `cmd:dialog.allMetadata`, `crates/meta/src/tags.rs`, `crates/meta/src/exif.rs`, `crates/meta/src/iptc.rs` | read and written on export; Info ▸ All Metadata…: every TIFF / EXIF / GPS / interop tag (named, common values spelled out) and the XMP fields, searchable; metadata presets |
@@ -456,8 +457,8 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 
 | Id | Feature | Tier | Status | Evidence | Missing / notes |
 |---|---|---|---|---|---|
-| LR-MAP-INFO | Location in the info panel | P1 | 🟡 | `cmd:photo.setMeta` (`location`, `city`, `state`, `country`, `gps`), `crates/ui-egui/src/panels/right.rs` | location, city, state/province, country and GPS editable; Show on Map (OpenStreetMap in the browser); no map in the panel |
-| LR-MAP-MODULE | Map module [Classic] | P2 | ⬜ | | |
+| LR-MAP-INFO | Location in the info panel | P1 | 🟡 | `cmd:photo.setMeta` (`location`, `city`, `state`, `country`, `gps`), `cmd:photo.place`, `crates/ui-egui/src/panels/right.rs` | location, city, state/province, country and GPS editable; the place name from GPS shown under it; Show on Map (in-app Map) and In Browser (OpenStreetMap); no map snippet in the panel |
+| LR-MAP-MODULE | Map module [Classic] | P2 | 🟡 | `cmd:view.map`, `cmd:map.points`, `cmd:map.bounds`, `cmd:map.place`, `crates/ui-egui/src/panels/map.rs`, `crates/geo/src/tiles.rs`, `crates/engine/src/tiles.rs`, `docs/map.md` | **Map view** on desktop, web and iOS (one egui implementation): clustered thumbnail markers, pan / zoom (wheel, pinch, double-click), fit, place search, tiles from a configurable server with a disk cache and attribution (OpenStreetMap by default), the built-in Natural Earth world map offline; follows the search and filters. Checked headlessly on the desktop UI and type-checked for wasm and iOS; **not yet run in a browser or on an iPhone**. Missing: drag photos onto the map, saved locations, satellite / terrain, a filter bar tied to the visible area |
 
 ## V. Preferences (PREF)
 
@@ -744,12 +745,12 @@ From `08-lightroom-classic-extras.md` (Classic-only features) and part 2 of `06-
 | LRC-DEV-DEFAULTS | Per-camera raw defaults | P1 | ✅ | `cmd:library.preferences` (`camera`, `import.perCamera`), `crates/ui-egui/src/panels/settings.rs` | Settings → Import: raw default and per-camera presets |
 | LRC-DEV-VIEWOPTIONS | Develop view options | P2 | ⬜ | | |
 | LRC-DEV-VIDEO | Video frame capture | P2 | ⬜ | | |
-| LRC-MAP-VIEW | Map view | P2 | ⬜ | | |
+| LRC-MAP-VIEW | Map view | P2 | 🟡 | `cmd:view.map`, `crates/ui-egui/src/panels/map.rs` | see LR-MAP-MODULE |
 | LRC-MAP-GEOTAG | Drag photos onto the map | P2 | ⬜ | | |
 | LRC-MAP-LOCATIONS | Saved locations | P2 | ⬜ | | |
-| LRC-MAP-TRACKLOG | GPS track logs | P2 | ✅ | `cmd:photo.autoTagTracklog`, `cmd:photo.tagFromTracklog`, `crates/meta/src/gpx.rs` | Photo ▸ Auto-Tag from Tracklog…: a GPX 1.0 / 1.1 track log sets the GPS of the selected photos by capture time — interpolated between the points of a track segment, else the nearest point within `maxGap` (10 min); never across segment breaks. The camera's time zone comes from the photo (Exif offset) or is asked for; photos that already have a location keep it unless `replace`; `dryRun` previews; one undo step. No track drawn on a map (no Map module) |
-| LRC-MAP-FILTER | Location filter bar | P2 | ⬜ | | |
-| LRC-MAP-REVGEO | Reverse geocoding | OOS | 🚫 | | |
+| LRC-MAP-TRACKLOG | GPS track logs | P2 | ✅ | `cmd:photo.autoTagTracklog`, `cmd:photo.tagFromTracklog`, `crates/meta/src/gpx.rs` | Photo ▸ Auto-Tag from Tracklog…: a GPX 1.0 / 1.1 track log sets the GPS of the selected photos by capture time — interpolated between the points of a track segment, else the nearest point within `maxGap` (10 min); never across segment breaks. The camera's time zone comes from the photo (Exif offset) or is asked for; photos that already have a location keep it unless `replace`; `dryRun` previews; one undo step. The track itself is not drawn on the Map |
+| LRC-MAP-FILTER | Location filter bar | P2 | 🟡 | `cmd:library.filter` (`text`: `bbox:`, `near:`, `place:`), `cmd:map.points` | search tokens for a box, a radius and a place; Show in Grid on a marker; no filter bar tied to the visible map area |
+| LRC-MAP-REVGEO | Reverse geocoding | P2 | ✅ | `cmd:photo.place`, `crates/geo/src/gazetteer.rs`, `docs/map.md` | offline: the nearest of 34 000 GeoNames cities (population ≥ 15 000) within 150 km names the city, region and country; towns under 15 000 are "near" a bigger one; not written to the files |
 | LRC-BOOK-SETTINGS | Book settings | P2 | ⬜ | | |
 | LRC-BOOK-AUTOLAYOUT | Book auto layout | P2 | ⬜ | | |
 | LRC-BOOK-PAGE | Book pages & templates | P2 | ⬜ | | |

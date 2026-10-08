@@ -18,6 +18,8 @@ pub enum ViewMode {
     Reference,
     /// A card per person named on faces (close-up, name, photo count).
     People,
+    /// The photos where they were taken, on a map.
+    Map,
 }
 
 /// The right-hand tool/panel shown next to the tool strip.
@@ -146,6 +148,10 @@ pub struct AppSettings {
     pub external_editor: String,
     /// Memory the caches may hold together, in MB (0 = automatic; `app.memoryBudget`).
     pub memory_mb: u32,
+    /// Map: fetch map tiles from the network (off: only the built-in map and saved tiles).
+    pub map_online: bool,
+    /// Map: tile server URL with `{z}`, `{x}` and `{y}` (empty: OpenStreetMap's standard tiles).
+    pub map_tile_url: String,
     /// Filmstrip: file names above the thumbnails.
     pub film_names: bool,
     /// Filmstrip: rating / flag / edited badges on the thumbnails.
@@ -164,6 +170,8 @@ impl Default for AppSettings {
             preview_edge: 2560,
             external_editor: String::new(),
             memory_mb: 0,
+            map_online: true,
+            map_tile_url: String::new(),
             film_names: true,
             film_badges: true,
             grid_badges: GridBadges::Auto,
@@ -291,6 +299,8 @@ pub struct UiState {
     #[serde(skip)]
     pub dragging_control: Option<String>,
     pub search: String,
+    /// Where the Map was looking (latitude, longitude, zoom) when it was last used.
+    pub map_view: Option<(f64, f64, f64)>,
     /// Focus the search field on the next frame (Edit → Find…).
     #[serde(skip)]
     pub focus_search: bool,
@@ -555,6 +565,7 @@ impl Default for UiState {
             all_commands: false,
             luminance_map_restore: None,
             view: ViewMode::Detail,
+            map_view: None,
             left_panel: false,
             left_width: LEFT_WIDTH.default,
             right_width: RIGHT_WIDTH.default,

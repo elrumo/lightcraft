@@ -532,9 +532,20 @@ fn info(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         }
         if let Some((la, lo)) = m.gps {
             let pretty = format!("{:.5}° {}, {:.5}° {}", la.abs(), if la >= 0.0 { "N" } else { "S" }, lo.abs(), if lo >= 0.0 { "E" } else { "W" });
+            // where that is, in words (offline): "Madrid, Spain"
+            if let Some(place) = lightcraft_engine::map::place_of(&p).filter(|pl| pl.from_gps) {
+                ui.label(egui::RichText::new(place.display).size(12.5).color(t.text))
+                    .on_hover_text(crate::i18n::tr("Worked out from the GPS position"));
+            }
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new(pretty).size(11.0).color(t.text_dim));
                 if text_button(ui, "showOnMap", crate::i18n::tr("Show on Map"), false)
+                    .on_hover_text(crate::i18n::tr("Open the Map at this photo"))
+                    .clicked()
+                {
+                    let _ = app.run("view.map", json!({"lat": la, "lon": lo, "zoom": 16}));
+                }
+                if text_button(ui, "showInBrowser", crate::i18n::tr("In Browser"), false)
                     .on_hover_text(crate::i18n::tr("Open the place in OpenStreetMap"))
                     .clicked()
                 {

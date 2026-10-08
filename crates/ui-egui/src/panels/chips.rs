@@ -28,6 +28,19 @@ fn chip_width(ui: &egui::Ui, label: &str, font: egui::FontId) -> f32 {
     ui.painter().layout_no_wrap(label.to_string(), font, egui::Color32::WHITE).size().x + 12.0 + 22.0
 }
 
+/// The search chip says what the search text was understood as: `Search: “photos in madrid” →
+/// Madrid, Spain` (places that no photo of the library is in are left out).
+pub fn with_understanding(app: &mut LightcraftApp, mut chips: Vec<FilterChip>) -> Vec<FilterChip> {
+    if let Some(chip) = chips.iter_mut().find(|c| c.clear.get("text").is_some()) {
+        let u = app.caches.understood(&app.session.catalog, &app.session.filter);
+        if !u.is_empty() {
+            let said: Vec<String> = u.iter().map(|x| x.label.clone()).collect();
+            chip.label = format!("{} → {}", chip.label, said.join(" · "));
+        }
+    }
+    chips
+}
+
 /// Draws the strip; does nothing without chips.
 pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, chips: &[FilterChip]) {
     if chips.is_empty() {

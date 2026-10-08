@@ -38,6 +38,8 @@ mod tests_ios_host;
 #[cfg(test)]
 mod tests_library_problem;
 #[cfg(test)]
+mod tests_map;
+#[cfg(test)]
 mod tests_masking;
 #[cfg(test)]
 mod tests_offline;
@@ -138,6 +140,8 @@ pub struct Services {
     pub restore_library: Option<HostAction>,
     /// Runs self-hosted sync requests ([`sync_ui`]); `None`: this host doesn't sync.
     pub sync_exec: Option<sync_ui::SyncExec>,
+    /// Fetches map tiles for the Map view ([`panels::map`]); `None`: only the built-in map.
+    pub tile_exec: Option<panels::map::TileExec>,
     /// Exports go to the system's share sheet instead of a folder (iOS; see [`ShareExports`]).
     pub share_exports: Option<ShareExports>,
     /// The host's own pickers (iOS: Photos, Files): File ▸ Import from Photos… / from Files… /
@@ -243,12 +247,16 @@ pub struct LightcraftApp {
     pub library_problem: Option<panels::library_problem::LibraryProblem>,
     /// Self-hosted sync requests in flight, and the Settings ▸ Sync form.
     pub sync: sync_ui::SyncDriver,
+    /// The Map view: viewport, tiles, markers.
+    pub map: panels::map::MapState,
 }
 
 impl LightcraftApp {
     pub fn new(mut session: Session, services: Services) -> Self {
         // AI mask requests run on the model's worker; frames apply their results (never wait)
         session.segmenter.background = true;
+        // places and coastlines are parsed in the background, not on the first search
+        lightcraft_geo::preload();
         Self {
             session,
             ui: UiState::default(),
@@ -294,6 +302,7 @@ impl LightcraftApp {
             memory_applied: None,
             library_problem: None,
             sync: Default::default(),
+            map: Default::default(),
         }
     }
 
@@ -866,6 +875,7 @@ impl LightcraftApp {
             state::ViewMode::Survey => panels::compare::show_survey(self, ui),
             state::ViewMode::Reference => panels::compare::show_reference(self, ui),
             state::ViewMode::People => panels::people::show(self, ui),
+            state::ViewMode::Map => panels::map::show(self, ui),
         });
         panels::second::show(self, &ctx);
         panels::notices::show(self, &ctx);
@@ -960,6 +970,7 @@ pub struct Caches {
     keyword_tree: Option<(u64, std::sync::Arc<Vec<lightcraft_catalog::KeywordNode>>)>,
     people: Option<(u64, lightcraft_catalog::Filter, std::sync::Arc<Vec<lightcraft_catalog::Person>>)>,
     suggestions: Option<(u64, std::sync::Arc<Vec<String>>)>,
+    understood: Option<(u64, String, std::sync::Arc<Vec<lightcraft_catalog::search::Understood>>)>,
     counts: Option<(u64, LibraryCounts)>,
     date_groups: Option<(u64, std::sync::Arc<Vec<lightcraft_catalog::DateGroup>>)>,
     server_folders: Option<(u64, std::sync::Arc<std::collections::BTreeMap<String, usize>>)>,
@@ -1020,6 +1031,21 @@ impl Caches {
                 let t = std::sync::Arc::new(cat.people_in(&key));
                 self.people = Some((cat.revision, key, t.clone()));
                 t
+            }
+        }
+    }
+    /// What the search text was read as (places, dates), per catalog revision and text.
+    pub fn understood(
+        &mut self,
+        cat: &lightcraft_catalog::Catalog,
+        filter: &lightcraft_catalog::Filter,
+    ) -> std::sync::Arc<Vec<lightcraft_catalog::search::Understood>> {
+        match &self.understood {
+            Some((r, t, u)) if *r == cat.revision && *t == filter.text => u.clone(),
+            _ => {
+                let u = std::sync::Arc::new(cat.understood(filter));
+                self.understood = Some((cat.revision, filter.text.clone(), u.clone()));
+                u
             }
         }
     }

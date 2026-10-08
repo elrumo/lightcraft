@@ -23,3 +23,16 @@ pub mod tiles;
 pub use codec::DataError;
 pub use gazetteer::{City, Country, Gazetteer, Kind, LOCATE_KM, Located, MAX_NAME_WORDS, PlaceFilter, PlaceId, PlaceName, Region, city_radius_km};
 pub use text::normalize;
+
+/// Parse the place database and the coastlines on a background thread, so the first search or the
+/// first look at the Map doesn't wait for them (a tenth of a second or more). Does nothing in the
+/// browser, which has no threads to spare.
+pub fn preload() {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = std::thread::Builder::new().name("lc-geo".into()).spawn(|| {
+            let _ = Gazetteer::global();
+            let _ = land::Land::global();
+        });
+    }
+}

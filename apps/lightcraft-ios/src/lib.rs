@@ -324,6 +324,7 @@ fn services(ctx: egui::Context, inbox: Inbox, tmp: &Path) -> Services {
             lightcraft_codecs::encode_png(&lightcraft_codecs::EncodeImage::rgba8(img), &lightcraft_codecs::EncodeMeta::default()).unwrap_or_default()
         })),
         sync_exec: Some(lightcraft_ui_egui::sync_ui::native_exec()),
+        tile_exec: Some(lightcraft_ui_egui::panels::map::native_exec()),
         ..Services::default()
     }
 }

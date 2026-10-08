@@ -360,12 +360,29 @@ impl Gazetteer {
             }
             Kind::Region | Kind::Country => {
                 let want = u16::try_from(id.index).ok()?;
+                let members: Vec<&City> =
+                    self.cities.iter().filter(|c| if id.kind == Kind::Region { c.region == want } else { c.country == want }).collect();
+                // The main landmass: from the biggest city, every city within LINK_KM of one already
+                // in. A country's islands far away (the Azores, the Canaries, Hawaii, overseas
+                // departments) would otherwise drag the view into the ocean.
+                const LINK_KM: f64 = 700.0;
+                let first = members.iter().enumerate().max_by_key(|(_, c)| c.population).map(|(i, _)| i)?;
+                let mut reached = vec![false; members.len()];
+                let mut frontier = vec![first];
+                reached[first] = true;
                 let mut b: Option<((f64, f64), (f64, f64))> = None;
-                for c in self.cities.iter().filter(|c| if id.kind == Kind::Region { c.region == want } else { c.country == want }) {
+                while let Some(i) = frontier.pop() {
+                    let c = members[i];
                     b = Some(match b {
                         None => ((c.lat, c.lon), (c.lat, c.lon)),
                         Some(((s, w), (n, e))) => ((s.min(c.lat), w.min(c.lon)), (n.max(c.lat), e.max(c.lon))),
                     });
+                    for (j, o) in members.iter().enumerate() {
+                        if !reached[j] && distance_km(c.lat, c.lon, o.lat, o.lon) <= LINK_KM {
+                            reached[j] = true;
+                            frontier.push(j);
+                        }
+                    }
                 }
                 b.map(|((s, w), (n, e))| ((s - 0.4, w - 0.4), (n + 0.4, e + 0.4)))
             }
@@ -688,7 +705,24 @@ mod tests {
         let spain = g().lookup_text("españa")[0];
         let ((s, w), (n, e)) = g().view_of(spain).unwrap();
         assert!(s < 36.5 && n > 43.0 && w < -8.0 && e > 3.0, "{s} {w} {n} {e}");
+        assert!(s > 34.0, "not the Canary Islands: {s}");
         assert!(g().view_of(PlaceId { kind: Kind::City, index: u32::MAX }).is_none());
+    }
+
+    #[test]
+    fn a_countrys_box_is_its_main_landmass() {
+        let view = |name: &str| {
+            let id = g().lookup_text(name).into_iter().find(|i| i.kind == Kind::Country).unwrap();
+            g().view_of(id).unwrap()
+        };
+        let ((_, w), (_, e)) = view("portugal");
+        assert!(w > -10.5 && e < -5.0, "not the Azores or Madeira: {w} {e}");
+        let ((s, w), (n, e)) = view("france");
+        assert!(w > -6.0 && e < 10.0 && s > 40.0 && n < 52.0, "not Réunion or Guyane: {s} {w} {n} {e}");
+        let ((s, w), (n, _)) = view("usa");
+        assert!(w > -130.0 && s > 24.0 && n < 50.0, "the lower 48: {s} {w} {n}");
+        let ((s, _), (n, _)) = view("chile");
+        assert!(n - s > 30.0, "a long country stays whole: {s} {n}");
     }
 
     #[test]

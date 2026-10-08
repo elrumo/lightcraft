@@ -199,7 +199,9 @@ Then tone it with Color Grading for selenium, sepia or split-tone prints.
 A library that stays out of your way: **All Photos**, **Recently Added**, **Picks**, **By Date**, **Albums** nested in
 **Folders**, and **Recently Deleted**. Rate with <kbd>0</kbd>–<kbd>5</kbd>, flag with <kbd>P</kbd> / <kbd>X</kbd> /
 <kbd>U</kbd>, colour-label with <kbd>6</kbd>–<kbd>9</kbd>. Search understands fields:
-`rating:>3 flag:pick iso:>800 camera:x2 date:2026-04 keyword:mountains`. Every view sorts by capture date,
+`rating:>3 flag:pick iso:>800 camera:x2 date:2026-04 keyword:mountains`, and places and dates the way you'd say
+them: `madrid`, `photos in lisbon in june 2024`, `españa or portugal` (by GPS, offline; [docs/map.md](docs/map.md)).
+The **Map** shows your photos where they were taken, on desktop, web and iPhone. Every view sorts by capture date,
 import date, edit date, name, rating or size. The justified **Photo Grid** and **Square Grid** views are virtualized,
 so they stay smooth whether you have forty photos or forty thousand.
 

@@ -47,6 +47,7 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("view.compare", "Compare", Some("Shift+C"), "View"),
     ("view.survey", "Survey", Some("N"), "View"),
     ("view.people", "People", None, "View"),
+    ("view.map", "Map", None, "View"),
     ("view.faceBoxes", "Face Boxes", None, "View"),
     ("view.reference", "Reference View", Some("Shift+R"), "View"),
     ("photo.setReference", "Set as Reference Photo", None, ""),
@@ -307,6 +308,7 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             app.ui.view = ViewMode::People;
             Ok(json!({"people": app.session.catalog.people().len()}))
         }
+        "view.map" => crate::panels::map::open(app, p),
         "view.survey" => {
             app.ui.view = ViewMode::Survey;
             Ok(json!({"photos": crate::panels::compare::survey_photos(app).len()}))

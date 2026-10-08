@@ -521,6 +521,30 @@ fn interface_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
     check(ui, "settings.showFilenames", &mut app.ui.show_filenames, "Square Grid: show file names and formats");
     heading(ui, t, crate::i18n::tr("Detail"));
     check(ui, "settings.navigator", &mut app.ui.navigator, "Show the Navigator while zoomed in");
+    heading(ui, t, crate::i18n::tr("Map"));
+    check(ui, "settings.mapOnline", &mut app.ui.settings.map_online, "Load map tiles from the internet");
+    hint(
+        ui,
+        t,
+        crate::i18n::tr(
+            "Off: the Map shows the built-in world map and tiles saved earlier. Place names and the photos' positions never leave your computer; a tile request tells the tile server which area you look at.",
+        ),
+    );
+    row(ui, t, crate::i18n::tr("Tile server"), |ui| {
+        field(ui, "mapTileUrl", &mut app.ui.settings.map_tile_url, "https://tile.openstreetmap.org/{z}/{x}/{y}.png", false);
+    });
+    let custom = app.ui.settings.map_tile_url.trim();
+    if !custom.is_empty() && !lightcraft_geo::tiles::valid_template(custom) {
+        hint(ui, t, crate::i18n::tr("Not a tile address (it needs https://, {z}, {x} and {y}): the standard tiles are used."));
+    } else if custom.is_empty() {
+        hint(
+            ui,
+            t,
+            crate::i18n::tr(
+                "Empty: OpenStreetMap's standard tiles. They are meant for light use; for a busy shared deployment, use your own or a commercial tile server.",
+            ),
+        );
+    }
     row(ui, t, crate::i18n::tr("Info overlay"), |ui| {
         use crate::state::InfoOverlay as I;
         choices(ui, "settingsInfo", &[(I::Off, "Off"), (I::Basic, "File & date"), (I::Exposure, "Exposure")], &mut app.ui.info_overlay);

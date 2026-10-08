@@ -190,6 +190,9 @@ fn grid_more(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     if mobile::row_checked(ui, "squareGrid", Some(Icon::GridSquare), crate::i18n::tr("Square Thumbnails"), true, Some(square)) {
         run_cmd(app, &ctx, if square { "view.photoGrid" } else { "view.squareGrid" }, json!({}));
     }
+    if mobile::row(ui, "map", Some(Icon::Pin), crate::i18n::tr("Map"), true) {
+        run_cmd(app, &ctx, "view.map", json!({}));
+    }
     mobile::row_gap(ui);
     if mobile::row(ui, "settings", Some(Icon::Gear), crate::i18n::tr("Settings"), true) {
         run_cmd(app, &ctx, "app.settings", json!({}));
@@ -285,6 +288,7 @@ fn content(app: &mut LightcraftApp, ui: &mut egui::Ui, bg: egui::Color32) {
         ViewMode::Survey => super::compare::show_survey(app, ui),
         ViewMode::Reference => super::compare::show_reference(app, ui),
         ViewMode::People => super::people::show(app, ui),
+        ViewMode::Map => super::map::show(app, ui),
         ViewMode::PhotoGrid | ViewMode::SquareGrid => super::grid::show(app, ui),
     });
 }
@@ -329,6 +333,8 @@ fn top_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
                 select_bar(app, ui, t, full);
             } else if app.ui.view == ViewMode::Detail {
                 photo_bar(app, ui);
+            } else if app.ui.view == ViewMode::Map {
+                map_bar(app, ui);
             } else {
                 grid_bar(app, ui, t);
             }
@@ -346,6 +352,16 @@ fn grid_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
         let has_photos = !app.session.visible().is_empty();
         if has_photos && bar_text(ui, "select", "Select", t).clicked() {
             let _ = app.run("view.selectMode", json!({"on": true}));
+        }
+    });
+}
+
+/// Over the map: back to the grid on the left.
+fn map_bar(app: &mut LightcraftApp, ui: &mut egui::Ui) {
+    ui.horizontal_centered(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        if bar_icon(ui, "back", Icon::ChevronLeft, "Back", true).clicked() {
+            let _ = app.run("view.photoGrid", json!({}));
         }
     });
 }

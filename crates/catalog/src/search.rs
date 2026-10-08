@@ -129,6 +129,8 @@ pub struct Understood {
     pub label: String,
     /// Photos of the library this part matches by itself (places only; 0 for dates).
     pub count: usize,
+    /// Other places the same name could mean ("madrid" is also a town in Colombia).
+    pub more: usize,
 }
 
 impl TextQuery {
@@ -166,13 +168,15 @@ impl TextQuery {
                 let best = pl.places().iter().max_by_key(|id| g.importance(**id)).copied();
                 if let (Some(label), true) = (best.and_then(|id| g.label(id)), count > 0) {
                     let more = pl.places().len().saturating_sub(1);
-                    out.push(Understood { kind: "place", label: if more > 0 { format!("{label} +{more}") } else { label }, count });
+                    out.push(Understood { kind: "place", label, count, more });
                 }
             }
             match w.date {
-                Some(DateTerm::Year(y)) => out.push(Understood { kind: "year", label: y.to_string(), count: 0 }),
-                Some(DateTerm::Month(m)) => out.push(Understood { kind: "month", label: month_name(m), count: 0 }),
-                Some(DateTerm::MonthYear(y, m)) => out.push(Understood { kind: "month-year", label: format!("{} {y}", month_name(m)), count: 0 }),
+                Some(DateTerm::Year(y)) => out.push(Understood { kind: "year", label: y.to_string(), count: 0, more: 0 }),
+                Some(DateTerm::Month(m)) => out.push(Understood { kind: "month", label: month_name(m), count: 0, more: 0 }),
+                Some(DateTerm::MonthYear(y, m)) => {
+                    out.push(Understood { kind: "month-year", label: format!("{} {y}", month_name(m)), count: 0, more: 0 })
+                }
                 None => {}
             }
         }
@@ -566,7 +570,7 @@ mod tests {
         assert_eq!(m.len(), 1);
         assert_eq!((m[0].kind, m[0].count), ("place", 3));
         assert!(m[0].label.starts_with("Madrid, Spain"), "{}", m[0].label);
-        assert_eq!(u("june 2024"), vec![Understood { kind: "month-year", label: "June 2024".into(), count: 0 }]);
+        assert_eq!(u("june 2024"), vec![Understood { kind: "month-year", label: "June 2024".into(), count: 0, more: 0 }]);
         assert_eq!(u("2024")[0].kind, "year");
         assert!(u("sunset").is_empty(), "a town called Sunset, but no photo there: not worth a chip");
         assert!(u("rating:3").is_empty());

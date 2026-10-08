@@ -225,6 +225,7 @@ fn services(originals: Originals, backend: Option<Backend>, files: Files, frozen
         })),
         pick_folder: None,
         sync_exec: Some(crate::sync::exec(sync_backend)),
+        tile_exec: Some(crate::tiles::exec()),
         share_exports: None,
         host_pick: None,
     }
