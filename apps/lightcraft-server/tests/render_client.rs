@@ -50,7 +50,7 @@ fn an_export_the_server_renders_is_the_picture_exporting_here_gives() {
     let url = format!("http://{}", server.addr());
     write_png(&root.join("in/a.png"));
     let mut s = Session::new().with_fs();
-    s.open_library(&root.join("lib"), false).unwrap();
+    s.open_library(root.join("lib"), false).unwrap();
     s.execute("library.import", &json!({"paths": [root.join("in").to_string_lossy()]})).unwrap();
     let id = s.catalog.photos().next().unwrap().id;
     s.execute("sync.signIn", &json!({"server": url, "user": "ann", "password": "correct horse", "device": "t"})).unwrap();
@@ -75,7 +75,7 @@ fn an_export_the_server_renders_is_the_picture_exporting_here_gives() {
     // a photo the server doesn't have (not uploaded) says so instead of failing in the dark
     write_png(&root.join("in2/b.png"));
     let mut lone = Session::new().with_fs();
-    lone.open_library(&root.join("lib2"), false).unwrap();
+    lone.open_library(root.join("lib2"), false).unwrap();
     lone.execute("library.import", &json!({"paths": [root.join("in2").to_string_lossy()]})).unwrap();
     let lone_id = lone.catalog.photos().next().unwrap().id;
     let err = export_photo(&mut lone, lone_id, &there, 1).err().unwrap();
@@ -108,7 +108,7 @@ fn the_server_builds_the_previews_of_an_upload_when_the_device_asks_it_to() {
     let url = format!("http://{}", server.addr());
     write_png(&root.join("in/a.png"));
     let mut s = Session::new().with_fs();
-    s.open_library(&root.join("lib"), false).unwrap();
+    s.open_library(root.join("lib"), false).unwrap();
     s.execute("library.import", &json!({"paths": [root.join("in").to_string_lossy()]})).unwrap();
     s.execute("sync.signIn", &json!({"server": url, "user": "ann", "password": "correct horse", "device": "t"})).unwrap();
     let st = s.execute("sync.serverPreviews", &json!({"on": true})).unwrap();
@@ -131,7 +131,7 @@ fn the_server_builds_the_previews_of_an_upload_when_the_device_asks_it_to() {
     let other = start(&control);
     write_png(&control.join("in2/b.png"));
     let mut t = Session::new().with_fs();
-    t.open_library(&control.join("lib2"), false).unwrap();
+    t.open_library(control.join("lib2"), false).unwrap();
     t.execute("library.import", &json!({"paths": [control.join("in2").to_string_lossy()]})).unwrap();
     t.execute("sync.signIn", &json!({"server": format!("http://{}", other.addr()), "user": "ann", "password": "correct horse", "device": "t2"}))
         .unwrap();

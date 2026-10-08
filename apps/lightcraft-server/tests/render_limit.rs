@@ -31,7 +31,7 @@ fn a_render_over_the_limit_goes_to_the_server_or_is_refused_clearly() {
 
     write_png(&root.join("in/a.png"));
     let mut s = Session::new().with_fs();
-    s.open_library(&root.join("lib"), false).unwrap();
+    s.open_library(root.join("lib"), false).unwrap();
     s.execute("library.import", &json!({"paths": [root.join("in").to_string_lossy()]})).unwrap();
     let id = s.catalog.photos().next().unwrap().id;
     s.execute("sync.signIn", &json!({"server": url, "user": "ann", "password": "correct horse", "device": "t"})).unwrap();
@@ -49,7 +49,7 @@ fn a_render_over_the_limit_goes_to_the_server_or_is_refused_clearly() {
 
     write_png(&root.join("in2/b.png"));
     let mut lone = Session::new().with_fs();
-    lone.open_library(&root.join("lib2"), false).unwrap();
+    lone.open_library(root.join("lib2"), false).unwrap();
     lone.execute("library.import", &json!({"paths": [root.join("in2").to_string_lossy()]})).unwrap();
     let lone_id = lone.catalog.photos().next().unwrap().id;
     lone.set_export_limit(Some(1024));
