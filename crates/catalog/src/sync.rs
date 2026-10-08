@@ -68,6 +68,7 @@ pub fn key_of(op: &Op) -> Option<String> {
         Op::SetCaptured { id, .. } => p(id, "captured"),
         Op::SetAnalysis { id, .. } => p(id, "analysis"),
         Op::SetContent { id, .. } => p(id, "content"),
+        Op::SetServerPath { id, .. } => p(id, "serverPath"),
         Op::AddAlbum { album } => a(&album.id, "add"),
         Op::RemoveAlbum { id } => a(id, "remove"),
         Op::RenameAlbum { id, .. } => a(id, "name"),
@@ -111,7 +112,8 @@ fn photo_of(op: &Op) -> Option<PhotoId> {
         | Op::SetVersions { id, .. }
         | Op::SetCaptured { id, .. }
         | Op::SetAnalysis { id, .. }
-        | Op::SetContent { id, .. } => Some(*id),
+        | Op::SetContent { id, .. }
+        | Op::SetServerPath { id, .. } => Some(*id),
         _ => None,
     }
 }
@@ -450,19 +452,29 @@ pub enum Pull {
     Gone,
 }
 
+/// The server compacts its log into a snapshot once it holds this much.
+pub const COMPACT_BYTES: u64 = 64 << 20;
+
 /// A user's library on the server: the single log of every device's ops and the state it
-/// leads to (to validate pushes and to start new devices from).
-// ponytail: the log is never compacted (pulls read it whole when behind); compact with a
-// snapshot and answer older cursors with Pull::Gone once logs get big.
+/// leads to (to validate pushes and to start new devices from). Once the log holds
+/// [`COMPACT_BYTES`] it is compacted into a snapshot: a device further behind than that reloads
+/// the library ([`Pull::Gone`]) instead of pulling ops.
+// ponytail: pulls read the log whole when behind; bounded by the compaction size.
 pub struct ServerCore {
     journal: Journal,
     catalog: Catalog,
+    compact_bytes: u64,
 }
 
 impl ServerCore {
     pub fn open(store: Box<dyn Store>) -> Result<ServerCore> {
         let (journal, catalog, _) = Journal::open(store)?;
-        Ok(ServerCore { journal, catalog })
+        Ok(ServerCore { journal, catalog, compact_bytes: COMPACT_BYTES })
+    }
+
+    /// Compact the log at this size instead of [`COMPACT_BYTES`] (tests).
+    pub fn set_compact_bytes(&mut self, bytes: u64) {
+        self.compact_bytes = bytes.max(1);
     }
 
     /// Sequence number of the newest op.
@@ -472,6 +484,13 @@ impl ServerCore {
 
     pub fn catalog(&self) -> &Catalog {
         &self.catalog
+    }
+
+    /// A new photo id in id space `space` (photos the server adds itself, from the user's library
+    /// folders, are in a space no device is given).
+    pub fn alloc_photo_id(&mut self, space: u32) -> PhotoId {
+        self.catalog.set_id_space(space);
+        self.catalog.alloc_photo_id()
     }
 
     /// Append a device's ops, made on top of op `base`: all of them or none.
@@ -503,7 +522,15 @@ impl ServerCore {
                 }
                 Err(e)
             }
-            None => Ok(self.head()),
+            None => {
+                if self.journal.log_bytes() >= self.compact_bytes
+                    && let Err(e) = self.journal.snapshot(&self.catalog)
+                {
+                    // nothing lost: the log is whole, it is tried again after the next push
+                    log::warn!("sync: compacting the server's log: {e}");
+                }
+                Ok(self.head())
+            }
         }
     }
 

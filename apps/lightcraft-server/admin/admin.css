@@ -105,3 +105,5 @@ dialog .actions { margin-top: 14px; }
   td.actions { white-space: normal; }
   .bar { flex-basis: 120px; }
 }
+.badge.bad { color: var(--danger); border-color: var(--danger); }
+.errors { margin: 8px 0 0; padding-left: 18px; color: var(--danger); font-size: 13px; }

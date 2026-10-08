@@ -19,6 +19,8 @@ workspace = true
 [dependencies]
 lightcraft-catalog = { workspace = true }
 lightcraft-preview = { workspace = true }
+# reading photos found in library folders: describing them, their XMP sidecars, their previews
+lightcraft-engine = { workspace = true }
 tiny_http = { workspace = true }
 argon2 = { workspace = true }
 sha2 = { workspace = true }
@@ -28,7 +30,6 @@ serde_json = { workspace = true }
 log = { workspace = true }
 
 [dev-dependencies]
-lightcraft-engine = { workspace = true }
 lightcraft-codecs = { workspace = true }
 lightcraft-raster = { workspace = true }
 ureq = { workspace = true }

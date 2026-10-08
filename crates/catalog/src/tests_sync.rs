@@ -245,6 +245,64 @@ fn server_core_orders_validates_and_persists() {
     assert_eq!((s.head(), s.catalog().photo(id).unwrap().rating), (2, 4));
 }
 
+/// A big log is compacted: devices behind it reload the library, the rest pull as before, and
+/// it reopens the same.
+#[test]
+fn server_log_compacts() {
+    let store = MemStore::new();
+    let mut s = ServerCore::open(Box::new(store.clone())).unwrap();
+    s.set_compact_bytes(2000);
+    let mut c = Catalog::new();
+    c.set_id_space(1);
+    let mut ids = Vec::new();
+    while s.since(0, 1).unwrap() != Pull::Gone {
+        let add = add_photo(&mut c);
+        let Op::AddPhoto { photo } = &add else { panic!("{add:?}") };
+        ids.push(photo.id);
+        s.push(s.head(), &[add]).unwrap();
+        assert!(ids.len() < 100, "never compacted");
+    }
+    let head = s.head();
+    assert_eq!(s.since(head, 10).unwrap(), Pull::Ops(vec![]));
+    s.push(head, &[Op::SetRating { id: ids[0], rating: 5 }]).unwrap();
+    assert_eq!(s.since(head, 10).unwrap(), Pull::Ops(vec![(head + 1, Op::SetRating { id: ids[0], rating: 5 })]));
+    drop(s);
+    let s = ServerCore::open(Box::new(store)).unwrap();
+    assert_eq!((s.head(), s.catalog().len(), s.catalog().photo(ids[0]).unwrap().rating), (head + 1, ids.len(), 5));
+}
+
+/// Photos the server adds from the user's library folders: its own id space, their place on the
+/// server synced (and moved), shown by folder.
+#[test]
+fn server_folder_photos_sync_and_filter() {
+    let mut s = server();
+    let space = (1 << 21) - 1;
+    let id = s.alloc_photo_id(space);
+    assert_eq!(id.0 >> ID_SPACE_SHIFT, u64::from(space));
+    let mut p = Photo::new(id, Source::File { path: original_path("ab", "IMG_1.jpg") }, "IMG_1.jpg", "JPEG", 60, 40, "2026-01-01T00:00:00");
+    p.server_path = Some("Photos/2024/Trip/IMG_1.jpg".into());
+    assert_eq!(p.server_folder(), Some("Photos/2024/Trip"));
+    let head = s.push(s.head(), &[Op::AddPhoto { photo: Box::new(p) }]).unwrap();
+    assert_ne!(s.alloc_photo_id(space), id, "ids are never handed out twice");
+    let mut a = Replica::join(&s, 1);
+    assert_eq!(a.cursor, head);
+    // the file moved on the server: every device follows
+    let moved = Op::SetServerPath { id, path: Some("Photos/2025/IMG_1.jpg".into()) };
+    assert_eq!(key_of(&moved).as_deref(), Some(&*format!("p{}.serverPath", id.0)));
+    s.push(s.head(), &[moved]).unwrap();
+    a.local(Op::SetRating { id, rating: 3 });
+    a.sync(&mut s);
+    let ap = a.cat.photo(id).unwrap();
+    assert_eq!((ap.server_path.as_deref(), ap.rating), (Some("Photos/2025/IMG_1.jpg"), 3));
+    assert_eq!(s.catalog().photo(id).unwrap().rating, 3);
+    // folders, with what's in them or below
+    let folders = query::server_folders(&a.cat);
+    assert_eq!(folders.into_iter().collect::<Vec<_>>(), [("Photos".to_string(), 1), ("Photos/2025".to_string(), 1)]);
+    let only = |dir: &str| Filter { server_folder: Some(dir.into()), ..Default::default() }.matches(ap, &a.cat);
+    assert!(only("Photos") && only("Photos/2025/") && only(""));
+    assert!(!only("Photos/2024") && !only("Photos/202") && !only("Phot"));
+}
+
 #[test]
 fn concurrent_edits_merge() {
     let mut s = server();

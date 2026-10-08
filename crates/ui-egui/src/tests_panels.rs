@@ -148,3 +148,29 @@ fn a_narrow_window_shrinks_the_panels_without_forgetting_their_width() {
     h.settle(SETTLE);
     assert_eq!(widget(&h, "panel:right_panel").width(), 480.0);
 }
+
+/// Photos in the library folders on the sync server show as folders in the sidebar: a click
+/// narrows the library to a folder (and the folders below it), the triangle opens it.
+#[test]
+fn server_folders_filter_the_library() {
+    let mut h = demo([1400.0, 900.0], json!({"view": "photoGrid", "leftPanel": true}));
+    let ids: Vec<_> = h.app.session.catalog.photos().map(|p| p.id).take(3).collect();
+    for (id, path) in ids.iter().zip(["Photos/2024/a.jpg", "Photos/2024/Trip/b.jpg", "Photos/2025/c.jpg"]) {
+        h.app.session.catalog.apply(lightcraft_catalog::Op::SetServerPath { id: *id, path: Some(path.into()) }).unwrap();
+    }
+    h.step();
+    h.step();
+    let click = |h: &mut Headless, id: &str| {
+        let r = h.request("ui.clickWidget", json!({"id": id}), T);
+        assert_eq!(r["ok"], true, "{id}: {r}");
+        h.step();
+    };
+    click(&mut h, "source:serverFolder:Photos");
+    assert_eq!(h.app.session.filter.server_folder.as_deref(), Some("Photos"));
+    assert_eq!(h.app.session.visible().len(), 3);
+    click(&mut h, "serverFolderToggle:Photos");
+    click(&mut h, "source:serverFolder:Photos/2024");
+    assert_eq!(h.app.session.visible().len(), 2, "the folder and the ones below it");
+    click(&mut h, "source:serverFolder:Photos/2024");
+    assert_eq!(h.app.session.filter.server_folder, None, "a second click clears it");
+}

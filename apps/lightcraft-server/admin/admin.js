@@ -139,6 +139,7 @@ async function loadUsers() {
       'td',
       { class: 'actions' },
       el('button', { type: 'button', class: 'secondary', onclick: () => openDevices(u.name) }, 'Devices'),
+      el('button', { type: 'button', class: 'secondary', onclick: () => openFolders(u.name) }, u.folders && u.folders.length ? 'Folders (' + u.folders.length + ')' : 'Folders'),
       el('button', { type: 'button', class: 'secondary', onclick: () => resetPassword(u.name) }, 'Reset password'),
       el(
         'button',
@@ -195,6 +196,7 @@ async function removeUser(name) {
     const r = await api('DELETE', 'users/' + encodeURIComponent(name));
     notice(name + ' was removed. Their files stay in ' + r.files + '.');
     $('devicesCard').hidden = true;
+    closeFolders();
     await refresh();
   } catch (e) {
     notice(e.message, true);
@@ -248,6 +250,81 @@ async function revoke(name, d) {
     await api('DELETE', 'users/' + encodeURIComponent(name) + '/devices/' + d.id);
     notice('Signed out.');
     await Promise.all([loadDevices(), loadUsers()]);
+  } catch (e) {
+    notice(e.message, true);
+  }
+}
+
+// ---------------------------------------------------------- library folders
+
+let foldersOf = null;
+let foldersTimer = null;
+
+async function openFolders(name) {
+  foldersOf = name;
+  $('foldersTitle').textContent = name + "'s library folders";
+  $('foldersCard').hidden = false;
+  await loadFolders();
+  $('foldersCard').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function closeFolders() {
+  $('foldersCard').hidden = true;
+  foldersOf = null;
+  clearTimeout(foldersTimer);
+}
+
+function scanText(s) {
+  if (s.scanning) return s.todo ? 'Scanning: read ' + s.done + ' of ' + s.todo + ' file(s)…' : 'Scanning…';
+  const parts = [];
+  if (s.lastScan) parts.push('Last scan ' + when(s.lastScan) + ': ' + s.files + ' photo file(s)');
+  const n = [[s.added, 'new'], [s.moved, 'moved'], [s.changed, 'changed'], [s.linked, 'uploaded before'], [s.failed, 'not read'], [s.missing, 'missing']]
+    .filter(([v]) => v > 0)
+    .map(([v, w]) => v + ' ' + w);
+  if (n.length) parts.push(n.join(', '));
+  if (s.previews) parts.push('building previews: ' + s.previews + ' to go');
+  return parts.length ? parts.join('; ') + '.' : 'Not scanned yet.';
+}
+
+function showFolders(r) {
+  const body = $('folders').querySelector('tbody');
+  body.replaceChildren();
+  if (!r.folders.length) body.append(el('tr', {}, el('td', { colspan: 3, class: 'empty' }, 'No library folders.')));
+  for (const f of r.folders) {
+    const where = el('td', {}, el('code', {}, f.path));
+    if (!f.there) where.append(' ', el('span', { class: 'badge bad' }, 'not there'));
+    body.append(el('tr', {}, el('td', {}, f.name), where, el('td', { class: 'actions' }, el('button', { type: 'button', class: 'danger', onclick: () => removeFolder(foldersOf, f) }, 'Remove'))));
+  }
+  $('scanText').textContent = scanText(r.scan);
+  const errs = $('scanErrors');
+  const all = (r.scan.errors || []).concat((r.scan.previewErrors || []).map((e) => 'previews: ' + e));
+  errs.replaceChildren(...all.map((e) => el('li', {}, e)));
+  errs.hidden = !all.length;
+  clearTimeout(foldersTimer);
+  if (r.scan.scanning || r.scan.previews) foldersTimer = setTimeout(loadFolders, 2000);
+}
+
+async function loadFolders() {
+  if (!foldersOf) return;
+  try {
+    showFolders(await api('GET', 'users/' + encodeURIComponent(foldersOf) + '/folders'));
+  } catch (e) {
+    notice(e.message, true);
+  }
+}
+
+async function removeFolder(name, f) {
+  const ok = await ask({
+    title: 'Stop reading ' + f.name + '?',
+    text: 'Its photos stay in ' + name + "'s library with their edits, but their originals can't be downloaded any more. Nothing in " + f.path + ' is touched.',
+    ok: 'Remove',
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    showFolders(await api('DELETE', 'users/' + encodeURIComponent(name) + '/folders/' + encodeURIComponent(f.name)));
+    notice(f.name + ' is no longer read.');
+    await loadUsers();
   } catch (e) {
     notice(e.message, true);
   }
@@ -354,6 +431,30 @@ document.addEventListener('DOMContentLoaded', () => {
   $('devicesClose').addEventListener('click', () => {
     $('devicesCard').hidden = true;
     devicesOf = null;
+  });
+  $('foldersClose').addEventListener('click', closeFolders);
+  $('addFolder').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    try {
+      const r = await api('POST', 'users/' + encodeURIComponent(foldersOf) + '/folders', { path: f.get('path'), name: f.get('name') || null });
+      e.target.reset();
+      showFolders(r);
+      notice('Added. The server is reading the folder now.');
+      await loadUsers();
+    } catch (err) {
+      notice(err.message, true);
+    }
+  });
+  $('scanNow').addEventListener('click', async () => {
+    try {
+      showFolders(await api('POST', 'users/' + encodeURIComponent(foldersOf) + '/scan'));
+      $('scanText').textContent = 'Scanning…';
+      clearTimeout(foldersTimer);
+      foldersTimer = setTimeout(loadFolders, 1000);
+    } catch (err) {
+      notice(err.message, true);
+    }
   });
   $('gcCheck').addEventListener('click', () => gc(true));
   $('gcRun').addEventListener('click', async () => {

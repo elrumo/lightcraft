@@ -44,7 +44,28 @@ fn sign_in(s: &mut Session, p: &Value) -> Result<Value> {
 /// name), else the computer's name.
 fn default_device_name() -> String {
     let named = ["LIGHTCRAFT_DEVICE", "HOSTNAME", "COMPUTERNAME"].iter().find_map(|v| std::env::var(v).ok().filter(|h| !h.trim().is_empty()));
-    named.unwrap_or_else(|| format!("LightCraft ({})", std::env::consts::OS))
+    named.or_else(computer_name).unwrap_or_else(|| format!("LightCraft ({})", std::env::consts::OS))
+}
+
+/// The computer's name as its system shows it (macOS: "Ann's MacBook Pro"; elsewhere the host
+/// name), when it can be asked.
+fn computer_name() -> Option<String> {
+    #[cfg(not(any(target_arch = "wasm32", target_os = "ios")))]
+    {
+        let ask = |cmd: &str, args: &[&str]| {
+            let out = std::process::Command::new(cmd).args(args).output().ok().filter(|o| o.status.success())?;
+            let name: String = String::from_utf8_lossy(&out.stdout).trim().chars().filter(|c| !c.is_control()).take(100).collect();
+            (!name.is_empty()).then_some(name)
+        };
+        if cfg!(target_os = "macos")
+            && let Some(n) = ask("scutil", &["--get", "ComputerName"])
+        {
+            return Some(n);
+        }
+        ask("hostname", &[])
+    }
+    #[cfg(any(target_arch = "wasm32", target_os = "ios"))]
+    None
 }
 
 fn sign_out(s: &mut Session, p: &Value) -> Result<Value> {

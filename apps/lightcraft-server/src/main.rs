@@ -1,7 +1,7 @@
 //! `lightcraft-server`: the self-hosted LightCraft sync server (see `docs/sync.md`).
 //!
 //! ```text
-//! lightcraft-server serve [--data DIR] [--listen HOST:PORT] [--web DIR]
+//! lightcraft-server serve [--data DIR] [--listen HOST:PORT] [--web DIR] [--scan-interval MINUTES]
 //! lightcraft-server user add NAME [--admin]   (password: typed, stdin, or $LIGHTCRAFT_PASSWORD)
 //! lightcraft-server user passwd NAME
 //! lightcraft-server user admin NAME on|off
@@ -9,7 +9,12 @@
 //! lightcraft-server user list
 //! lightcraft-server device list NAME
 //! lightcraft-server device revoke NAME ID
+//! lightcraft-server folder add NAME PATH [--name FOLDER]
+//! lightcraft-server folder remove NAME FOLDER
+//! lightcraft-server folder list [NAME]
+//! lightcraft-server scan [NAME]
 //! lightcraft-server gc [--dry-run]
+//! lightcraft-server health
 //! ```
 //!
 //! Admins also manage users and devices from the server's web page, `/admin` (until the first
@@ -21,21 +26,27 @@
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
-use std::io::{BufRead, IsTerminal};
-use std::path::PathBuf;
+use std::io::{BufRead, IsTerminal, Read, Write};
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::time::Duration;
 
-use lightcraft_server::{Config, Server, accounts, gc};
+use lightcraft_server::{Config, Server, accounts, folders, gc};
 
 const USAGE: &str = "usage:
-  lightcraft-server serve [--data DIR] [--listen HOST:PORT] [--web DIR]
+  lightcraft-server serve [--data DIR] [--listen HOST:PORT] [--web DIR] [--scan-interval MINUTES]
   lightcraft-server user add NAME [--admin]   (password: typed, stdin or $LIGHTCRAFT_PASSWORD)
   lightcraft-server user passwd|remove NAME
   lightcraft-server user admin NAME on|off    (admins manage the server at /admin)
   lightcraft-server user list
   lightcraft-server device list NAME
   lightcraft-server device revoke NAME ID
+  lightcraft-server folder add NAME PATH [--name FOLDER]   (a photo folder on this server, read in place)
+  lightcraft-server folder remove NAME FOLDER
+  lightcraft-server folder list [NAME]
+  lightcraft-server scan [NAME]                (read the library folders now)
   lightcraft-server gc [--dry-run]
+  lightcraft-server health                     (is the server answering? exit status)
 options (any command): --data DIR (default $LIGHTCRAFT_DATA or ./lightcraft-data)
 ";
 
@@ -67,7 +78,7 @@ fn positional(args: &[String]) -> Vec<&str> {
     for a in args {
         if skip {
             skip = false;
-        } else if matches!(a.as_str(), "--data" | "--listen" | "--web") {
+        } else if matches!(a.as_str(), "--data" | "--listen" | "--web" | "--name" | "--scan-interval") {
             skip = true;
         } else if !a.starts_with("--") {
             out.push(a.as_str());
@@ -111,7 +122,18 @@ fn run(args: &[String]) -> Result<(), String> {
             if users.users.is_empty() {
                 log::warn!("no users yet: add them on the admin page (/admin) or with `lightcraft-server user add NAME --data {}`", data.display());
             }
-            let s = Server::start(Config { data: data.clone(), listen, web: web.clone(), max_requests: 64 })?;
+            // minutes between scans of the library folders (0: at start and on demand only)
+            let minutes = option(args, "--scan-interval")
+                .or_else(|| std::env::var("LIGHTCRAFT_SCAN_INTERVAL").ok())
+                .map(|m| m.trim().parse::<u64>().map_err(|_| format!("--scan-interval takes minutes, not `{m}`")))
+                .transpose()?
+                .unwrap_or(15);
+            let threads = std::env::var("LIGHTCRAFT_PREVIEW_THREADS").ok().and_then(|t| t.trim().parse::<usize>().ok());
+            let mut cfg = Config::new(data.clone(), listen);
+            cfg.web = web.clone();
+            cfg.scan_interval = (minutes > 0).then(|| Duration::from_secs(minutes.saturating_mul(60)));
+            cfg.preview_threads = threads.unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| (n.get() / 2).clamp(1, 4)));
+            let s = Server::start(cfg)?;
             log::info!(
                 "serving {} on http://{}{}",
                 data.display(),
@@ -163,6 +185,43 @@ fn run(args: &[String]) -> Result<(), String> {
             println!("signed out device {id}");
             Ok(())
         }
+        ["folder", "add", name, path] => {
+            let f = accounts::add_folder(&data, name, path, option(args, "--name").as_deref())?;
+            println!("{name} has the library folder {} ({}): its photos are read in place, never copied or changed", f.name, f.path);
+            request_scan(&data, name);
+            Ok(())
+        }
+        ["folder", "remove", name, folder] => {
+            accounts::remove_folder(&data, name, folder)?;
+            println!("{name} no longer has the library folder {folder} (its photos stay in the library)");
+            Ok(())
+        }
+        ["folder", "list", rest @ ..] => {
+            for (name, u) in accounts::read_users(&data)?.users {
+                if rest.first().is_some_and(|n| *n != name) {
+                    continue;
+                }
+                for f in &u.folders {
+                    let there = if Path::new(&f.path).is_dir() { "" } else { "\t(not there)" };
+                    println!("{name}\t{}\t{}{there}", f.name, f.path);
+                }
+            }
+            Ok(())
+        }
+        ["scan", rest @ ..] => {
+            let users: Vec<String> = match rest {
+                [name] => vec![name.to_string()],
+                [] => accounts::read_users(&data)?.users.into_iter().filter(|(_, u)| !u.folders.is_empty()).map(|(n, _)| n).collect(),
+                _ => return Err(USAGE.into()),
+            };
+            for u in users {
+                scan(&data, &u)?;
+            }
+            Ok(())
+        }
+        ["health"] => {
+            health(&option(args, "--listen").or_else(|| std::env::var("LIGHTCRAFT_LISTEN").ok()).unwrap_or_else(|| "127.0.0.1:8080".into()))
+        }
         ["gc"] => {
             let dry = args.iter().any(|a| a == "--dry-run");
             let r = gc::run(&data, dry)?;
@@ -174,6 +233,83 @@ fn run(args: &[String]) -> Result<(), String> {
         }
         _ => Err(USAGE.into()),
     }
+}
+
+/// Ask a running server to scan a user's library folders (it looks for the request every few
+/// seconds; a server that isn't running scans at start).
+fn request_scan(data: &Path, user: &str) {
+    let _ = std::fs::write(accounts::user_dir(data, user).join(folders::REQUEST), b"");
+}
+
+/// `scan NAME`: here and now, or by the running server.
+fn scan(data: &Path, user: &str) -> Result<(), String> {
+    let lib_dir = accounts::user_dir(data, user).join("library");
+    std::fs::create_dir_all(&lib_dir).map_err(|e| format!("{}: {e}", lib_dir.display()))?;
+    if lightcraft_engine::catalog::LibraryLock::acquire(&lib_dir, "lightcraft-server scan").is_err() {
+        request_scan(data, user);
+        println!("{user}: the server is running: it scans the library folders within a few seconds (progress on the admin page)");
+        return Ok(());
+    }
+    let lib = std::sync::Mutex::new(lightcraft_server::api::UserLib::open_for(data, user)?);
+    let stop = std::sync::atomic::AtomicBool::new(false);
+    let mut jobs = Vec::new();
+    let tty = std::io::stderr().is_terminal();
+    let s = folders::scan(
+        data,
+        user,
+        &lib,
+        &stop,
+        &mut |s| {
+            if tty && s.todo > 0 {
+                eprint!("\r{user}: read {} of {} file(s)", s.done, s.todo);
+            }
+        },
+        &mut |hash, file| jobs.push((hash, file)),
+    )?;
+    if tty {
+        eprintln!();
+    }
+    println!(
+        "{user}: {} photo file(s); {} new, {} moved, {} changed, {} uploaded before, {} not read, {} missing",
+        s.files, s.added, s.moved, s.changed, s.linked, s.failed, s.missing
+    );
+    for e in &s.errors {
+        eprintln!("  {e}");
+    }
+    let blobs = accounts::user_dir(data, user).join("blobs");
+    let (mut built, mut failed) = (0, 0);
+    let n = jobs.len();
+    for (i, (hash, file)) in jobs.into_iter().enumerate() {
+        match folders::build_previews(&blobs, &hash, &file) {
+            Ok(b) => built += usize::from(b),
+            Err(e) => {
+                failed += 1;
+                eprintln!("{}: {e}", file.display());
+            }
+        }
+        if tty {
+            eprint!("\r{user}: previews {} of {n}", i + 1);
+        }
+    }
+    if tty && n > 0 {
+        eprintln!();
+    }
+    println!("{user}: built previews of {built} photo(s){}", if failed > 0 { format!(", {failed} failed") } else { String::new() });
+    Ok(())
+}
+
+/// `health`: does the server at `listen` answer (the Docker health check)?
+fn health(listen: &str) -> Result<(), String> {
+    use std::net::ToSocketAddrs;
+    let local = listen.replacen("0.0.0.0:", "127.0.0.1:", 1).replacen("[::]:", "[::1]:", 1);
+    let addr = local.to_socket_addrs().map_err(|e| format!("{local}: {e}"))?.next().ok_or_else(|| format!("{local}: no address"))?;
+    let mut c = std::net::TcpStream::connect_timeout(&addr, Duration::from_secs(3)).map_err(|e| format!("{addr}: {e}"))?;
+    c.set_read_timeout(Some(Duration::from_secs(5))).map_err(|e| e.to_string())?;
+    c.write_all(b"GET /api/health HTTP/1.0\r\nHost: localhost\r\n\r\n").map_err(|e| e.to_string())?;
+    let mut answer = String::new();
+    c.take(4096).read_to_string(&mut answer).map_err(|e| e.to_string())?;
+    let status = answer.split_whitespace().nth(1).unwrap_or("");
+    if status == "200" { Ok(()) } else { Err(format!("{addr}: unhealthy ({})", answer.lines().next().unwrap_or("no answer"))) }
 }
 
 fn main() -> ExitCode {

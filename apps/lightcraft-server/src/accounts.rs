@@ -36,6 +36,19 @@ pub struct User {
     pub library: String,
     /// May manage the server (users, devices, storage) from `/admin`.
     pub admin: bool,
+    /// Photo folders on the server that are this user's library folders, read in place (see
+    /// [`crate::folders`]). Only an admin sets them.
+    pub folders: Vec<LibraryFolder>,
+}
+
+/// One of a user's library folders: a folder on the server, shown to devices by `name`.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LibraryFolder {
+    /// What devices see as the top folder (`Photos`).
+    pub name: String,
+    /// The folder on the server (absolute).
+    pub path: String,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -104,7 +117,14 @@ fn write_json<T: Serialize>(path: &Path, v: &T) -> Result<(), String> {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
     let bytes = serde_json::to_vec_pretty(v).map_err(|e| e.to_string())?;
-    lightcraft_catalog::safe_file::write_atomic(path, &bytes).map_err(|e| format!("{}: {e}", path.display()))
+    lightcraft_catalog::safe_file::write_atomic(path, &bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+    // password and token hashes: for the server's eyes only
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+    }
+    Ok(())
 }
 
 pub fn read_users(data: &Path) -> Result<UsersFile, String> {
@@ -137,8 +157,8 @@ pub fn set_user(data: &Path, name: &str, password: &str, replace: bool) -> Resul
         None if replace => return Err(format!("no user `{name}`")),
         None => random_hex(16)?,
     };
-    let admin = f.users.get(name).is_some_and(|u| u.admin);
-    f.users.insert(name.to_string(), User { password: hash_password(password)?, library, admin });
+    let (admin, folders) = f.users.get(name).map(|u| (u.admin, u.folders.clone())).unwrap_or_default();
+    f.users.insert(name.to_string(), User { password: hash_password(password)?, library, admin, folders });
     std::fs::create_dir_all(user_dir(data, name)).map_err(|e| e.to_string())?;
     write_json(&data.join(USERS), &f)
 }
@@ -153,6 +173,59 @@ pub fn set_admin(data: &Path, name: &str, on: bool) -> Result<(), String> {
         return Err(format!("`{name}` is the only admin: make someone else admin first"));
     }
     u.admin = on;
+    write_json(&data.join(USERS), &f)
+}
+
+/// A library folder's name: one folder name devices show (letters, digits, spaces, `.`, `_`,
+/// `-`, `(`, `)`; not starting with `.`; at most 64).
+pub fn valid_folder_name(name: &str) -> bool {
+    let n = name.trim();
+    n == name && !n.is_empty() && n.chars().count() <= 64 && !n.starts_with('.') && n.chars().all(|c| c.is_alphanumeric() || " ._-()".contains(c))
+}
+
+/// Give `user` a library folder: `path`, a folder on this server, shown as `name` (default: the
+/// folder's own name). The folder must exist and can't hold the server's data, or be inside it.
+pub fn add_folder(data: &Path, user: &str, path: &str, name: Option<&str>) -> Result<LibraryFolder, String> {
+    let dir = std::fs::canonicalize(path).map_err(|e| format!("{path}: {e}"))?;
+    if !dir.is_dir() {
+        return Err(format!("{path} isn't a folder"));
+    }
+    let data_dir = std::fs::canonicalize(data).unwrap_or_else(|_| data.to_path_buf());
+    if dir.starts_with(&data_dir) || data_dir.starts_with(&dir) {
+        return Err(format!("{} holds the server's own data ({}): pick a photo folder outside it", dir.display(), data_dir.display()));
+    }
+    let name = match name.map(str::trim).filter(|n| !n.is_empty()) {
+        Some(n) => n.to_string(),
+        None => dir.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "Photos".into()),
+    };
+    if !valid_folder_name(&name) {
+        return Err(format!("`{name}` isn't a usable folder name (letters, digits, spaces, `.`, `_`, `-`, `(`, `)`; at most 64)"));
+    }
+    let mut f = read_users(data)?;
+    let u = f.users.get_mut(user).ok_or_else(|| format!("no user `{user}`"))?;
+    if u.folders.iter().any(|x| x.name.eq_ignore_ascii_case(&name)) {
+        return Err(format!("{user} has a library folder named `{name}` already (give this one another name)"));
+    }
+    let path = dir.to_string_lossy().to_string();
+    if u.folders.iter().any(|x| Path::new(&x.path).starts_with(&dir) || dir.starts_with(&x.path)) {
+        return Err(format!("{path} is inside one of {user}'s library folders, or holds one"));
+    }
+    let folder = LibraryFolder { name, path };
+    u.folders.push(folder.clone());
+    write_json(&data.join(USERS), &f)?;
+    Ok(folder)
+}
+
+/// Stop reading one of `user`'s library folders (its photos stay in the library; their originals
+/// can't be downloaded any more).
+pub fn remove_folder(data: &Path, user: &str, name: &str) -> Result<(), String> {
+    let mut f = read_users(data)?;
+    let u = f.users.get_mut(user).ok_or_else(|| format!("no user `{user}`"))?;
+    let before = u.folders.len();
+    u.folders.retain(|x| !x.name.eq_ignore_ascii_case(name));
+    if u.folders.len() == before {
+        return Err(format!("{user} has no library folder `{name}`"));
+    }
     write_json(&data.join(USERS), &f)
 }
 
@@ -324,7 +397,8 @@ impl Accounts {
         let path = self.devices_path(user);
         let mut f: DevicesFile = read_json(&path).map_err(LoginError::Failed)?;
         let space = f.next_space.max(1);
-        if space > MAX_SPACE {
+        // (the last one is the server's own: photos from library folders)
+        if space >= MAX_SPACE {
             return Err(LoginError::Failed("this user has signed in too many devices".into()));
         }
         let token = random_hex(32).map_err(LoginError::Failed)?;
@@ -394,6 +468,11 @@ mod tests {
         assert_eq!(lib.len(), 32);
         assert_eq!(a.check(&t1), Some(Session { user: "ann".into(), device: d1.id }));
         assert!(!std::fs::read_to_string(user_dir(&data, "ann").join(DEVICES)).unwrap().contains(&t1), "tokens are stored hashed");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(data.join(USERS)).unwrap().permissions().mode() & 0o777, 0o600);
+        }
         // revoked from the command line while the server runs
         std::thread::sleep(std::time::Duration::from_millis(20));
         revoke(&data, "ann", d1.id).unwrap();

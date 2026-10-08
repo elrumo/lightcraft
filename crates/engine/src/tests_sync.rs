@@ -589,6 +589,15 @@ fn server_addresses_as_a_phone_keyboard_types_them() {
     assert_eq!(ok("HTTP://Pi:8080"), "http://pi:8080");
     assert_eq!(ok("http://100.64.0.1:8080/lightcraft/"), "http://100.64.0.1:8080/lightcraft");
     assert_eq!(ok("http://[FD7A::1]:8080"), "http://[fd7a::1]:8080");
+    // at home or on the tailnet, without a scheme: plain http (no certificate there)
+    assert_eq!(ok("127.0.0.1:8080"), "http://127.0.0.1:8080");
+    assert_eq!(ok("192.168.1.20:8080"), "http://192.168.1.20:8080");
+    assert_eq!(ok("100.101.102.103:8080"), "http://100.101.102.103:8080");
+    assert_eq!(ok("Nas:8080"), "http://nas:8080");
+    assert_eq!(ok("photos.local"), "http://photos.local");
+    assert_eq!(ok("[fd7a::1]:8080"), "http://[fd7a::1]:8080");
+    assert_eq!(ok("8.8.8.8"), "https://8.8.8.8");
+    assert_eq!(ok("photos.example.com:8443"), "https://photos.example.com:8443");
     for bad in [
         "",
         "   ",

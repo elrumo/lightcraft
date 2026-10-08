@@ -173,6 +173,9 @@ pub fn filter_chips(f: &Filter, cat: &Catalog) -> Vec<FilterChip> {
     if let Some(d) = &f.date {
         add(format!("Date: {}", date_label(d)), json!({"date": Null}));
     }
+    if let Some(d) = &f.server_folder {
+        add(if d.is_empty() { "On the server: every folder".into() } else { format!("Folder: {d}") }, json!({"serverFolder": Null}));
+    }
     if let Some(d) = &f.imported {
         add(format!("Imported: {}", date_label(d)), json!({"imported": Null}));
     }

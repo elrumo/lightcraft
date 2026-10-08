@@ -283,6 +283,12 @@ pub struct Photo {
     /// whether the user changed anything since (see [`crate::local`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub local_baseline: Option<u64>,
+    /// The original is one of the files in the user's library folders on the sync server, read
+    /// there in place: its path, starting with the folder's name (`Photos/2024/Trip/IMG_1.CR3`).
+    /// Set by the server when it finds the file (and when the file moves); `None` for every other
+    /// photo.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_path: Option<String>,
 }
 
 /// What assisted culling measured on a photo.
@@ -331,7 +337,12 @@ impl Photo {
             analysis: None,
             preview_only: None,
             local_baseline: None,
+            server_path: None,
         }
+    }
+    /// The folder of [`Photo::server_path`] (`Photos/2024/Trip`).
+    pub fn server_folder(&self) -> Option<&str> {
+        self.server_path.as_deref().map(|p| p.rsplit_once('/').map_or("", |(dir, _)| dir))
     }
     /// A raw file developed from its sensor data: not a rendered image, and not a raw shown from
     /// its embedded preview ([`Photo::preview_only`]).

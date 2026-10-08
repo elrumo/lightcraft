@@ -6,7 +6,9 @@ keywords, versions — the way Lightroom (cloud) does, but on a machine you own.
 in, and only to the server you name.
 
 - **Server:** `apps/lightcraft-server`, one pure-Rust binary (or a Docker image). It keeps each user's library and
-  photo files, orders every device's changes, and serves the web build at `/`.
+  photo files, orders every device's changes, and serves the web build at `/`. Photo folders that are already on the
+  server (a NAS share, years of `2019/Holidays/…`) can be a user's **library folders**: read where they are, never
+  copied, moved or changed ([below](#library-folders-photos-already-on-the-server)).
 - **Clients:** the desktop app (Settings ▸ Sync), the web build the server serves (open the server's address in a
   browser, Settings ▸ Sync), the iOS app (a spike: [ios.md](ios.md)) and `lightcraft-cli`/MCP. The protocol is plain
   HTTP + JSON and the device side is sans-IO Rust (`crates/engine/src/sync.rs`, `crates/catalog/src/sync.rs`).
@@ -22,9 +24,12 @@ The easiest setup on a machine reachable from the internet (a home server, a sma
 ```sh
 # a DNS name pointing at this machine, ports 80 and 443 open
 cd apps/lightcraft-server
-LIGHTCRAFT_DOMAIN=photos.example.com docker compose up -d --build
+LIGHTCRAFT_DOMAIN=photos.example.com LIGHTCRAFT_PHOTOS=/srv/photos docker compose up -d --build
 docker compose logs lightcraft     # "… enter the setup code ABCD-EFGH"
 ```
+
+`LIGHTCRAFT_PHOTOS` (optional) is a folder of photos already on this machine; it is mounted read-only at `/photos`
+in the container, for [library folders](#library-folders-photos-already-on-the-server).
 
 Open `https://photos.example.com/admin`, enter the setup code, create your admin account and add users there
 ([the admin page](#the-admin-page)); or from the command line:
@@ -37,11 +42,15 @@ in the `lightcraft-data` volume. Then [connect your devices](#connect-your-devic
 
 ```sh
 docker build -f apps/lightcraft-server/Dockerfile -t lightcraft-server .
-docker run -d --name lightcraft --restart unless-stopped -p 8080:8080 -v lightcraft-data:/data lightcraft-server
+docker run -d --name lightcraft --restart unless-stopped -p 8080:8080 \
+  -v lightcraft-data:/data -v /srv/photos:/photos:ro lightcraft-server
 docker exec -i lightcraft lightcraft-server user add ann        # type the password, then Enter
+docker exec lightcraft lightcraft-server folder add ann /photos/ann --name Photos   # optional
 ```
 
-The image holds the server and the web build; everything it keeps is in the `/data` volume.
+The image holds the server and the web build; everything it keeps is in the `/data` volume (the photo folders
+mounted at `/photos` stay where they are). It runs as uid 10001, which must be able to read the photo folders, and
+reports its health to Docker (`lightcraft-server health`).
 
 ### Without Docker
 
@@ -53,12 +62,16 @@ target/release/lightcraft-server serve --data /srv/lightcraft --listen 127.0.0.1
 
 | Command | What it does |
 |---|---|
-| `serve [--listen HOST:PORT] [--web DIR]` | Serve (default `127.0.0.1:8080`, only this computer; `$LIGHTCRAFT_LISTEN`). `--web` (`$LIGHTCRAFT_WEB`): the `cargo xtask web` bundle, served at `/` with the same cross-origin isolation headers as the dev server |
+| `serve [--listen HOST:PORT] [--web DIR] [--scan-interval MIN]` | Serve (default `127.0.0.1:8080`, only this computer; `$LIGHTCRAFT_LISTEN`). `--web` (`$LIGHTCRAFT_WEB`): the `cargo xtask web` bundle, served at `/` with the same cross-origin isolation headers as the dev server. `--scan-interval` (`$LIGHTCRAFT_SCAN_INTERVAL`, default 15): minutes between scans of the library folders, 0 = at start and on demand only. `$LIGHTCRAFT_PREVIEW_THREADS`: threads building their previews (default half the cores, 1–4) |
 | `user add NAME [--admin]` / `user passwd NAME` | Add a user / change a password (first line of stdin, or `$LIGHTCRAFT_PASSWORD`; 8 characters at least). Works while the server runs |
 | `user admin NAME on\|off` | Let a user sign in to [the admin page](#the-admin-page), or stop them (the last admin stays) |
 | `user remove NAME` / `user list` | Remove a user (signs out every device; their files stay in `users/NAME/`) |
 | `device list NAME` / `device revoke NAME ID` | A user's signed-in devices; sign one out (it must sign in again) |
+| `folder add NAME PATH [--name FOLDER]` | Make `PATH` (a folder on the server) one of `NAME`'s [library folders](#library-folders-photos-already-on-the-server), shown on devices as `FOLDER` (default: its own name) |
+| `folder remove NAME FOLDER` / `folder list [NAME]` | Stop reading a library folder (its photos stay in the library) / list them |
+| `scan [NAME]` | Scan the library folders now (a running server is asked to; otherwise here, with their previews) |
 | `gc [--dry-run]` | Delete photo files no library refers to any more (photos deleted for good) and unfinished uploads, if older than a day |
+| `health` | Exit status 0 when the server on `--listen` answers (the Docker health check) |
 
 Every command takes `--data DIR` (default `$LIGHTCRAFT_DATA`, else `./lightcraft-data`). `$LIGHTCRAFT_LOG` = `error`,
 `warn`, `info` (default) or `debug`.
@@ -91,7 +104,10 @@ certificate from Let's Encrypt or Tailscale works as is; a self-signed one doesn
 <data>/users/<name>/blobs/<kind>/<xx>/<hash>   photo files by content: original | smart | mini
 <data>/users/<name>/presets.json               user presets { version, presets }
 <data>/users/<name>/devices.json               signed-in devices: name, id space, SHA-256 of the token
+<data>/users/<name>/folders.json               library folders as last scanned: each file's size, time, hash, photo
 ```
+
+`users.json` and `devices.json` are readable by the server's user only.
 
 Back up `<data>` like any folder (stop the server, or copy `catalog.log` first and the blobs after).
 
@@ -102,6 +118,9 @@ Back up `<data>` like any folder (stop the server, or copy `catalog.log` first a
 - **Users:** every user with their photo count, storage used and devices; add one, reset a password, make or remove
   an admin, remove a user (their files stay in `users/NAME/` until you delete them).
 - **Devices:** a user's signed-in devices (name, id, last seen); sign one out (it must sign in again).
+- **Folders:** a user's [library folders](#library-folders-photos-already-on-the-server): add one (a path on the
+  server, and the name devices show), remove one, **Scan now**, and what the last scan found (new, moved, changed,
+  missing, files that couldn't be read) while previews are built.
 - **Server:** version, the data folder and the free space on its disk, the address it listens on, whether it serves
   the web build, and photo-file clean-up (**Check** = `gc --dry-run`, then **Remove** = `gc`).
 - **Connect:** the address to type into Settings ▸ Sync on each device (the one you opened the page with).
@@ -120,13 +139,48 @@ The data folder, the listen address and the domain are deployment settings, so t
 them: `--data` / `LIGHTCRAFT_DATA`, `--listen` / `LIGHTCRAFT_LISTEN`, and the domain in the reverse proxy
 (`LIGHTCRAFT_DOMAIN` with the compose file). Its JSON API is under `/api/admin/` (`apps/lightcraft-server/src/admin.rs`).
 
+## Library folders: photos already on the server
+
+A self-hosted server usually sits next to the photos: a NAS share, a backup disk, folders of past years. An admin
+can make such folders a user's **library folders** (admin page › Users › Folders, or
+`lightcraft-server folder add ann /photos/ann --name Photos`). The server reads them in place:
+
+- **Nothing in them is copied, moved or changed.** Mount them read-only (`-v /srv/photos:/photos:ro`). The server
+  keeps only the previews it builds and an index (`folders.json`); a photo's original is sent to a device straight
+  from its folder, when the device asks for it (Download Originals, or keeping originals on the device).
+- **Every photo there joins the user's library** like any other: on every device, in All Photos, in searches and
+  smart albums, in any album (albums stay virtual: a photo can be in many, its file stays where it is), editable
+  (edits are kept in the library, never written to the folder).
+- **Devices show the folders** in the sidebar under **Server Folders**, with how many photos each holds: a click
+  shows a folder's photos (and those of the folders in it); right-click it to create an album from it, make it
+  available offline or download its originals. Info shows each photo's place on the server.
+- **XMP sidecars are read** when a file is found: ratings, flags, colour labels, title, caption, keywords and
+  Lightroom (Camera Raw) edits from `IMG_0001.xmp` (or a raw's own XMP), as an import reads them.
+- **Scans** run when the server starts, every 15 minutes (`--scan-interval`), when a folder is added and on demand
+  (**Scan now**, `lightcraft-server scan`). Files whose size and time didn't change aren't read again.
+  - a new file becomes a new photo, with smart and mini previews built on the server (`LIGHTCRAFT_PREVIEW_THREADS`);
+  - a file that moved or was renamed keeps its photo, edits and albums (same content, its old place gone);
+  - a file changed in place keeps its photo and edits and gets new previews;
+  - a copy of a file is a photo of its own;
+  - a file a device had uploaded already becomes that photo's place on the server, not a second photo, and a device
+    never uploads a file the server has in a folder.
+- **A scan never takes anything away.** A file that disappears keeps its photo (its original can't be downloaded
+  until it's back); a library folder that is missing, or empty when it had photos (an unmounted disk), is skipped
+  and shown as such on the admin page. A photo removed from the library on a device isn't added back by the next
+  scan (unless its file changes). Removing a library folder keeps its photos in the library.
+- Hidden folders and NAS bookkeeping (`@eaDir`, `#recycle`, `#snapshot`, `$RECYCLE.BIN`…) are skipped, symbolic
+  links aren't followed, files larger than 2 GiB aren't read, and every file is decoded under a guard: a damaged
+  one is reported, never fatal.
+
 ## Connect your devices
 
 Every client needs the same three things: the **server address** (`https://photos.example.com`, or
 `http://machine-name:8080` on a tailnet), a **user name** and its **password**, as added on
 [the admin page](#the-admin-page) or with `lightcraft-server user add`. The password goes to the server once; the
 device gets its own token (kept in the library's `sync.json`), which revoking the device (admin page or
-`lightcraft-server device revoke`) or Sign Out ends. A bare `photos.example.com` means `https://photos.example.com`.
+`lightcraft-server device revoke`) or Sign Out ends. A bare `photos.example.com` means `https://photos.example.com`;
+a bare address at home or on a tailnet (`localhost`, a private or Tailscale IP address, a one-word name such as `nas`,
+`*.local`, `*.lan`) means `http://` (type `https://` to say otherwise).
 The device is listed on the server under the computer's name (`$LIGHTCRAFT_DEVICE` to choose another).
 
 | Client | How |
@@ -222,11 +276,27 @@ JSON over HTTP; every route but `login` wants `Authorization: Bearer <token>`. T
 | `POST /api/ops` | `{base, ops}` → `200 {head}` · `409 {head}` (behind: pull first) · `422 {index, error}` (op `index` doesn't apply; nothing was) |
 | `HEAD`/`GET`/`PUT /api/blobs/{original\|smart\|mini}/{hash}` | photo files by 128-bit content hash; `GET` takes `Range`; an original is only kept if its bytes hash to its name, previews must be LightCraft previews |
 | `GET`/`PUT /api/presets` | `{version, presets}`; `PUT` with a stale `version` → `412` with the current document |
+| `GET /api/health` | `{ok, version}` (no sign-in) |
 | `GET /…` | the web build (`--web`) |
 
 Ops are the catalog's own (`lightcraft_catalog::Op`); the server applies each push to its copy of the library, all
 or nothing, so it never stores a change that doesn't apply. Device-local ops (file paths, Local folders, History) are
-refused.
+refused. The server adds ops of its own for library folders (`AddPhoto`, `SetServerPath`, `SetContent`), in an id
+space no device is given. An original kept in a library folder is served from there (`HEAD`/`GET`).
+
+## Security
+
+- Passwords are argon2id hashes; device and admin tokens are 256-bit random, stored as SHA-256 hashes. The account
+  files are readable by the server's user only.
+- **Password guessing is throttled** by client address and by user name: five wrong passwords in a row are free
+  (typos), then each further try must wait, doubling from a second up to 15 minutes (`429` with `Retry-After`).
+  Behind a reverse proxy on the same machine or a private network, the client's address is taken from
+  `X-Forwarded-For`.
+- Requests that need no sign-in (signing in, first-run setup) are capped at 64 KiB; JSON at 64 MiB, photo files at
+  16 GiB. Every answer says `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`, the API's
+  `Cache-Control: no-store`; the web build can't be framed by another site, the admin page has a strict Content
+  Security Policy. The Caddy configuration adds HSTS.
+- Library folders are set by admins only, must exist, and can't be (or hold) the server's data folder.
 
 ## Limits
 
@@ -241,8 +311,10 @@ v1, honestly:
 - Preferences, LUT profiles and export / metadata / filter presets stay per device.
 - **No merging of two existing libraries**, no sharing with other people, no shared albums or links.
 - **Originals downloaded to a device are kept** until you delete them (no automatic eviction under a size budget yet).
-- **The server never compacts its log** (it only grows; a pull reads it whole when behind). Fine for one person's
-  libraries; compaction (and `410` re-bootstraps) is the upgrade path.
+- **The server compacts its log** into a snapshot at 64 MiB; a device further behind than that reloads the library.
+  A pull reads the (compacted) log whole when behind.
+- **Library folders are read, never written**: edits stay in the library (no XMP written back to the folders), and
+  photos imported on a device are kept by the server as uploads, not filed into the folders.
 - **Uploads aren't resumable**: an interrupted upload starts again.
 - **One request per thread, plain HTTP**: meant for a home server behind a proxy or on a tailnet, not the open
   internet at scale.

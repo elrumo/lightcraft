@@ -31,7 +31,11 @@ fn start(root: &Path) -> Server {
     let web = root.join("web");
     std::fs::create_dir_all(&web).unwrap();
     std::fs::write(web.join("index.html"), "<!doctype html>web build").unwrap();
-    Server::start(Config { data, listen: "127.0.0.1:0".into(), web: Some(web), max_requests: 32 }).unwrap()
+    let mut cfg = Config::new(data, "127.0.0.1:0");
+    cfg.web = Some(web);
+    cfg.scan_interval = None;
+    cfg.preview_threads = 1;
+    Server::start(cfg).unwrap()
 }
 
 fn agent() -> ureq::Agent {
@@ -203,7 +207,7 @@ fn two_libraries_sync_through_the_server() {
 #[test]
 fn admin_page_sets_up_and_manages_users() {
     let root = temp("admin");
-    let server = Server::start(Config { data: root.join("data"), listen: "127.0.0.1:0".into(), web: None, max_requests: 32 }).unwrap();
+    let server = Server::start(Config::new(root.join("data"), "127.0.0.1:0")).unwrap();
     let base = format!("http://{}", server.addr());
     let req = |m: &str, path: &str, token: &str, body: Option<Value>| {
         let (s, b, h) = call(m, &format!("{base}{path}"), token, body.map(|v| v.to_string()).as_deref().map(str::as_bytes), &[]);
@@ -275,6 +279,23 @@ fn admin_page_sets_up_and_manages_users() {
     assert_eq!((s, r["dryRun"].as_bool()), (200, Some(true)));
     assert_eq!(req("POST", "/api/admin/logout", &bob, None).0, 200);
     assert_eq!(req("GET", "/api/admin/users", &bob, None).0, 401);
+    drop(server);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// What anyone can send without signing in is small.
+#[test]
+fn unauthenticated_bodies_are_capped() {
+    let root = temp("cap");
+    let server = start(&root);
+    let base = format!("http://{}", server.addr());
+    let big = vec![b' '; 200 << 10];
+    assert_eq!(call("POST", &format!("{base}/api/login"), "", Some(&big), &[]).0, 413);
+    assert_eq!(call("POST", &format!("{base}/api/admin/login"), "", Some(&big), &[]).0, 413);
+    assert_eq!(call("POST", &format!("{base}/api/admin/setup"), "", Some(&big), &[]).0, 413);
+    let (s, _, hs) = call("GET", &format!("{base}/"), "", None, &[]);
+    assert_eq!(s, 200);
+    assert!(hs.iter().any(|(k, v)| k.eq_ignore_ascii_case("x-frame-options") && v == "DENY"));
     drop(server);
     let _ = std::fs::remove_dir_all(&root);
 }
