@@ -392,6 +392,22 @@ fn long_settings_choices_are_a_list() {
     assert_eq!(h.app.ui.settings.grid_badges, crate::state::GridBadges::Always);
 }
 
+/// An empty collection's message wraps inside a phone's width (it was one line that ran off both
+/// edges of the screen).
+#[test]
+fn the_empty_grid_message_fits_a_phone() {
+    let mut app = LightcraftApp::new(Session::new(), Services { png: None, ..Default::default() });
+    app.ui.view = ViewMode::PhotoGrid;
+    let mut h = Headless::new(app, [390.0, 844.0], 1.0);
+    h.settle(SETTLE);
+    let img = h.paint();
+    let w = img.size[0];
+    let background = img.pixels[300 * w];
+    // the rows the message is on: nothing is drawn in the 6 px at either edge
+    let touched: Vec<_> = (300..560usize).filter(|y| (0..6).chain(w - 6..w).any(|x| img.pixels[y * w + x] != background)).collect();
+    assert!(touched.is_empty(), "the message is cut off at the screen's edges, rows {touched:?}");
+}
+
 /// A yes-or-no question on a phone is an iOS alert (a card in the middle with Cancel and the
 /// action), not a page that covers the screen.
 #[test]

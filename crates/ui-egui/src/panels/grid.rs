@@ -175,16 +175,24 @@ fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             };
             super::empty_message(ui, ui.max_rect(), "No photos match the active filters", &body);
         } else if app.session.filter != Default::default() {
-            super::empty_message(
-                ui,
-                ui.max_rect(),
-                "No matching photos",
-                "A filter is hiding this view's photos: change it, or clear it (View → Clear Filters)",
-            );
+            let how = if app.compact {
+                "A filter is hiding this view's photos: change it, or clear it with the filter button"
+            } else {
+                "A filter is hiding this view's photos: change it, or clear it (View → Clear Filters)"
+            };
+            super::empty_message(ui, ui.max_rect(), "No matching photos", how);
         } else if app.session.source == lightcraft_engine::LibrarySource::Folder {
             super::empty_message(ui, ui.max_rect(), "No photos in this folder", "Turn on Include subfolders, or pick another folder under Local");
         } else {
-            super::empty_message(ui, ui.max_rect(), "No photos", "Import photos with File → Import Photos… (Cmd+Shift+I), or drop them here");
+            // (a phone has no File menu, shortcuts or dropping: its + button, or the … menu)
+            let how = if !app.compact {
+                "Import photos with File → Import Photos… (Cmd+Shift+I), or drop them here"
+            } else if app.services.host_pick.is_some() {
+                "Tap + to add photos from Photos or Files"
+            } else {
+                "Import photos with … → Import Photos…"
+            };
+            super::empty_message(ui, ui.max_rect(), "No photos", how);
         }
         return;
     }
