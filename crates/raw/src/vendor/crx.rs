@@ -1,4 +1,4 @@
-//! Canon CRX (the codec inside CR3 raw tracks): the lossless ("RAW", no wavelet) mode.
+//! Canon CRX (the codec inside CR3 raw tracks): the lossless ("RAW", no wavelet) mode and the entropy coder both modes share.
 //!
 //! Sources: Laurent Clévy's CR3 notes (prose: the `CMP1` header, the tile / plane / subband record layout and that
 //! the lossless mode is a JPEG-LS-like Golomb-Rice coder with run mode and median-edge prediction), ITU-T T.87
@@ -28,31 +28,33 @@
 //!   whether the run is empty (`0`, the state below is untouched) or not (`1`); a non-empty run of `R` samples equal
 //!   to the left one is then coded exactly like the run of T.87 A.7 for `R − 1`: blocks of `2^J[ri]` (a one bit each,
 //!   `ri` grows), a zero bit and `J[ri]` bits of remainder (MSB first) for the rest, after which `ri` shrinks by one
-//!   (not below 0). A run that reaches the end of the row has no zero bit and no remainder, and `ri` is not shrunk.
+//!   (not below 0). A run that reaches the end of the row has no zero bit and no remainder, and `ri` is not shrunk (it grows after the
+//!   final block only when that block ends exactly at the row end; a block that overshoots leaves it alone).
 //!   `ri` is one state per plane (carried across rows, capped at 31). The sample that ended the run is coded as a
 //!   residual against the above sample (the left one when they are equal); it is never equal to the run's value
 //!   but the code does not exploit that.
 //!
-//! Not covered: the lossy wavelet mode (`C-RAW`), roll-burst (`encType 3`), dual-pixel data.
+//! The lossy wavelet mode (`C-RAW`) is in [`super::crx_wavelet`], which reuses this coder for its approximation band.
+//! Not covered: roll-burst (`encType 3`), dual-pixel data.
 
 use crate::{RawError, Result};
 
 /// Run-mode block exponents (T.87 `J[]`).
-const J: [u8; 32] = [0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+pub(super) const J: [u8; 32] = [0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 9, 10, 11, 12, 13, 14, 15];
 /// Highest run-mode state.
-const MAX_RI: usize = J.len() - 1;
+pub(super) const MAX_RI: usize = J.len() - 1;
 /// Unary zeros that introduce the escape code, and the width of its raw value.
 const ESCAPE_ZEROS: u32 = 41;
 /// Longest unary prefix we accept (the first sample of a plane uses one zero more than later escapes).
 const MAX_ZEROS: u32 = 42;
 const ESCAPE_BITS: u32 = 21;
 /// Bytes a plane's data may extend past its last code (the encoder pads to a multiple of eight; we allow some more).
-const MAX_TRAILING: usize = 64;
+pub(super) const MAX_TRAILING: usize = 64;
 /// Largest Golomb parameter the adaptation may reach (keeps shifts defined on hostile streams).
-const MAX_K: u32 = 24;
+pub(super) const MAX_K: u32 = 24;
 
 /// MSB-first bit reader over a byte slice that errors at the end of data.
-struct Bits<'a> {
+pub(super) struct Bits<'a> {
     data: &'a [u8],
     next: usize,
     acc: u64,
@@ -60,7 +62,7 @@ struct Bits<'a> {
 }
 
 impl<'a> Bits<'a> {
-    fn new(data: &'a [u8]) -> Self {
+    pub(super) fn new(data: &'a [u8]) -> Self {
         Bits { data, next: 0, acc: 0, n: 0 }
     }
 
@@ -79,9 +81,14 @@ impl<'a> Bits<'a> {
         RawError::Corrupt("CRX stream ends inside a code".into())
     }
 
+    /// Whole bytes consumed so far (a partly read byte counts).
+    pub(super) fn bytes_consumed(&self) -> usize {
+        (self.next * 8).saturating_sub(self.n as usize).div_ceil(8)
+    }
+
     /// One bit.
     #[inline]
-    fn bit(&mut self) -> Result<u32> {
+    pub(super) fn bit(&mut self) -> Result<u32> {
         if self.n == 0 {
             self.refill();
             if self.n == 0 {
@@ -96,7 +103,7 @@ impl<'a> Bits<'a> {
 
     /// The next `n ≤ 32` bits as a number (0 for `n == 0`).
     #[inline]
-    fn bits(&mut self, n: u32) -> Result<u32> {
+    pub(super) fn bits(&mut self, n: u32) -> Result<u32> {
         if n == 0 {
             return Ok(0);
         }
@@ -141,7 +148,7 @@ impl<'a> Bits<'a> {
 }
 
 #[inline]
-fn zigzag(v: u32) -> i32 {
+pub(super) fn zigzag(v: u32) -> i32 {
     ((v >> 1) as i32) ^ -((v & 1) as i32)
 }
 
@@ -158,7 +165,7 @@ fn med(a: i32, b: i32, c: i32) -> i32 {
 
 /// Golomb parameter after a symbol (see the module docs).
 #[inline]
-fn next_k(k: u32, w: u32) -> u32 {
+pub(super) fn next_k(k: u32, w: u32) -> u32 {
     let q = w >> k;
     if q >= 6 {
         (k + 2).min(MAX_K)
@@ -171,20 +178,47 @@ fn next_k(k: u32, w: u32) -> u32 {
     }
 }
 
+/// A decoded sample: `u16` for the lossless planes, `i32` for the wavelet approximation band (which can leave the
+/// sample range a little).
+pub(crate) trait Sample: Copy + Default + Send {
+    fn get(self) -> i32;
+    fn put(x: i32) -> Self;
+}
+impl Sample for u16 {
+    #[inline]
+    fn get(self) -> i32 {
+        self as i32
+    }
+    #[inline]
+    fn put(x: i32) -> Self {
+        x as u16
+    }
+}
+impl Sample for i32 {
+    #[inline]
+    fn get(self) -> i32 {
+        self
+    }
+    #[inline]
+    fn put(x: i32) -> Self {
+        x
+    }
+}
+
 /// `|above-right − above|` of column `i`; the last column has no above-right neighbour and uses the residual.
 #[inline]
-fn gradient(up: &[u16], i: usize, w: usize, v: u32) -> u32 {
+fn gradient<T: Sample>(up: &[T], i: usize, w: usize, v: u32) -> u32 {
     if i + 1 >= w {
         return (v + 1) >> 1;
     }
-    let b = up.get(i).copied().unwrap_or(0) as i32;
-    let d = up.get(i + 1).copied().unwrap_or(0) as i32;
+    let b = up.get(i).map_or(0, |s| s.get());
+    let d = up.get(i + 1).map_or(0, |s| s.get());
     b.abs_diff(d)
 }
 
 /// One Golomb-Rice coded value `v` with parameter `k`.
 #[inline]
-fn read_value(br: &mut Bits, k: u32) -> Result<u32> {
+pub(super) fn read_value(br: &mut Bits, k: u32) -> Result<u32> {
     let q = br.zeros(MAX_ZEROS)?;
     if q >= ESCAPE_ZEROS {
         return br.bits(ESCAPE_BITS);
@@ -196,16 +230,20 @@ fn read_value(br: &mut Bits, k: u32) -> Result<u32> {
 /// A run's length (≥ 1) after the "non-empty" bit, and whether it reaches the end of the row. `room` is the number of
 /// samples left in the row, `ri` the run state.
 #[inline]
-fn read_run(br: &mut Bits, ri: &mut usize, room: usize) -> Result<(usize, bool)> {
+pub(super) fn read_run(br: &mut Bits, ri: &mut usize, room: usize) -> Result<(usize, bool)> {
     let mut run = 1usize;
     loop {
         let jr = J.get(*ri).copied().unwrap_or(0) as u32;
         if br.bit()? == 1 {
             run += 1usize << jr;
-            *ri = (*ri + 1).min(MAX_RI);
             if run >= room {
+                // a final block that overshoots the row end leaves `ri` alone (only an exact fit grows it)
+                if run == room {
+                    *ri = (*ri + 1).min(MAX_RI);
+                }
                 return Ok((room, true));
             }
+            *ri = (*ri + 1).min(MAX_RI);
         } else {
             run += br.bits(jr)? as usize;
             *ri = ri.saturating_sub(1);
@@ -216,12 +254,27 @@ fn read_run(br: &mut Bits, ri: &mut usize, room: usize) -> Result<(usize, bool)>
 
 /// Decode one plane stream of `w × h` samples with `bits` significant bits.
 pub(crate) fn decode_plane(data: &[u8], w: usize, h: usize, bits: u32) -> Result<Vec<u16>> {
-    if w == 0 || h == 0 || !(8..=16).contains(&bits) {
+    if !(8..=16).contains(&bits) {
+        return Err(RawError::Corrupt("bad CRX plane geometry".into()));
+    }
+    decode_samples::<u16>(data, w, h, bits, 0, (1i32 << bits) - 1)
+}
+
+/// The same coder for a wavelet approximation band, whose samples may lie slightly outside `0..2^bits`.
+pub(crate) fn decode_approximation(data: &[u8], w: usize, h: usize, bits: u32) -> Result<Vec<i32>> {
+    if !(8..=16).contains(&bits) {
+        return Err(RawError::Corrupt("bad CRX plane geometry".into()));
+    }
+    decode_samples::<i32>(data, w, h, bits, -(1i32 << (bits + 1)), 3i32 << bits)
+}
+
+/// The plane coder of the module docs for samples of type `T`, accepting values in `lo..=hi`.
+fn decode_samples<T: Sample>(data: &[u8], w: usize, h: usize, bits: u32, lo: i32, hi: i32) -> Result<Vec<T>> {
+    if w == 0 || h == 0 {
         return Err(RawError::Corrupt("bad CRX plane geometry".into()));
     }
     let total = w.checked_mul(h).filter(|t| *t <= crate::MAX_SAMPLES).ok_or(RawError::Limit("CRX plane too large"))?;
-    let maxv = (1i32 << bits) - 1;
-    let mut out = vec![0u16; total];
+    let mut out = vec![T::default(); total];
     let mut br = Bits::new(data);
     let mut k = 2u32;
     let mut ri = 0usize;
@@ -229,8 +282,8 @@ pub(crate) fn decode_plane(data: &[u8], w: usize, h: usize, bits: u32) -> Result
     // first sample: residual against mid-scale, escape coded; it does not adapt k
     let v0 = read_value(&mut br, k)?;
     let first = (1i32 << (bits - 1)) + zigzag(v0);
-    let store = |x: i32, y: usize, i: usize| -> Result<u16> {
-        if (0..=maxv).contains(&x) { Ok(x as u16) } else { Err(RawError::Corrupt(format!("CRX sample out of range ({x}) at row {y} column {i}"))) }
+    let store = |x: i32, y: usize, i: usize| -> Result<T> {
+        if (lo..=hi).contains(&x) { Ok(T::put(x)) } else { Err(RawError::Corrupt(format!("CRX sample out of range ({x}) at row {y} column {i}"))) }
     };
     let mut prev_row_start = 0usize;
     for y in 0..h {
@@ -244,20 +297,20 @@ pub(crate) fn decode_plane(data: &[u8], w: usize, h: usize, bits: u32) -> Result
             let (a, b, d);
             let pred;
             if y == 0 {
-                a = if i > 0 { cur.get(i - 1).copied().unwrap_or(0) as i32 } else { 0 };
+                a = if i > 0 { cur.get(i - 1).map_or(0, |s| s.get()) } else { 0 };
                 b = 0;
                 d = 0;
                 pred = if i == 0 { 1i32 << (bits - 1) } else { a };
             } else {
-                b = up.get(i).copied().unwrap_or(0) as i32;
+                b = up.get(i).map_or(0, |s| s.get());
                 if i == 0 {
                     a = b;
-                    d = up.get(1.min(w - 1)).copied().unwrap_or(0) as i32;
+                    d = up.get(1.min(w - 1)).map_or(0, |s| s.get());
                     pred = b;
                 } else {
-                    a = cur.get(i - 1).copied().unwrap_or(0) as i32;
-                    let c = up.get(i - 1).copied().unwrap_or(0) as i32;
-                    d = up.get((i + 1).min(w - 1)).copied().unwrap_or(0) as i32;
+                    a = cur.get(i - 1).map_or(0, |s| s.get());
+                    let c = up.get(i - 1).map_or(0, |s| s.get());
+                    d = up.get((i + 1).min(w - 1)).map_or(0, |s| s.get());
                     pred = med(a, b, c);
                 }
             }
@@ -266,17 +319,17 @@ pub(crate) fn decode_plane(data: &[u8], w: usize, h: usize, bits: u32) -> Result
                 let (run, eol) = if br.bit()? == 1 { read_run(&mut br, &mut ri, w - i)? } else { (0, false) };
                 let end = i + run;
                 if let Some(s) = cur.get_mut(i..end) {
-                    s.fill(a as u16);
+                    s.fill(T::put(a));
                 }
                 i = end;
                 if eol || i >= w {
                     break;
                 }
                 // the sample that broke the run
-                let b2 = up.get(i).copied().unwrap_or(0) as i32;
+                let b2 = up.get(i).map_or(0, |s| s.get());
                 let p2 = if a != b2 { b2 } else { a };
                 let v = read_value(&mut br, k)?;
-                let x = p2 + zigzag(v);
+                let x = p2.wrapping_add(zigzag(v));
                 if let Some(s) = cur.get_mut(i) {
                     *s = store(x, y, i)?;
                 }
@@ -285,7 +338,7 @@ pub(crate) fn decode_plane(data: &[u8], w: usize, h: usize, bits: u32) -> Result
                 continue;
             }
             let v = if y == 0 && i == 0 { v0 } else { read_value(&mut br, k)? };
-            let x = if y == 0 && i == 0 { first } else { pred + zigzag(v) };
+            let x = if y == 0 && i == 0 { first } else { pred.wrapping_add(zigzag(v)) };
             if let Some(s) = cur.get_mut(i) {
                 *s = store(x, y, i)?;
             }
@@ -297,7 +350,7 @@ pub(crate) fn decode_plane(data: &[u8], w: usize, h: usize, bits: u32) -> Result
         prev_row_start = row_start;
     }
     // the encoder pads a plane to a multiple of eight bytes; a stream with much more left over was not understood
-    let consumed = (br.next * 8).saturating_sub(br.n as usize).div_ceil(8);
+    let consumed = br.bytes_consumed();
     if consumed + MAX_TRAILING < data.len() {
         return Err(RawError::Corrupt(format!("CRX plane ends {} bytes before its data does", data.len() - consumed)));
     }
@@ -312,14 +365,14 @@ pub(crate) mod testenc {
 
     /// MSB-first bit writer for the test encoder.
     #[derive(Default)]
-    struct BitWriter {
+    pub(crate) struct BitWriter {
         out: Vec<u8>,
         acc: u64,
         n: u32,
     }
 
     impl BitWriter {
-        fn put(&mut self, value: u32, count: u32) {
+        pub(crate) fn put(&mut self, value: u32, count: u32) {
             for t in (0..count).rev() {
                 self.acc = (self.acc << 1) | ((value >> t) & 1) as u64;
                 self.n += 1;
@@ -330,7 +383,7 @@ pub(crate) mod testenc {
                 }
             }
         }
-        fn finish(mut self) -> Vec<u8> {
+        pub(crate) fn finish(mut self) -> Vec<u8> {
             if self.n > 0 {
                 let pad = 8 - self.n;
                 self.put(0, pad);
@@ -339,7 +392,7 @@ pub(crate) mod testenc {
         }
     }
 
-    fn unzigzag(d: i32) -> u32 {
+    pub(crate) fn unzigzag(d: i32) -> u32 {
         if d >= 0 { (d as u32) << 1 } else { (((-d) as u32) << 1) - 1 }
     }
 
@@ -360,11 +413,11 @@ pub(crate) mod testenc {
         }
     }
 
-    pub(crate) fn encode_plane(px: &[u16], w: usize, h: usize, bits: u32) -> Vec<u8> {
+    pub(crate) fn encode_plane<T: Sample>(px: &[T], w: usize, h: usize, bits: u32) -> Vec<u8> {
         let mut bw = BitWriter::default();
         let mut k = 2u32;
         let mut ri = 0usize;
-        let at = |x: usize, y: usize| px[y * w + x] as i32;
+        let at = |x: usize, y: usize| px[y * w + x].get();
         put_value(&mut bw, unzigzag(at(0, 0) - (1i32 << (bits - 1))), k, true);
         let mut i = 1usize;
         for y in 0..h {
@@ -395,8 +448,7 @@ pub(crate) mod testenc {
                         }
                         if i + run == w {
                             if n > 0 {
-                                bw.put(1, 1); // partial last block
-                                ri = (ri + 1).min(MAX_RI);
+                                bw.put(1, 1); // partial last block: no remainder, `ri` unchanged
                             }
                             break;
                         }

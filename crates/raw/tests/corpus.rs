@@ -15,7 +15,8 @@ fn corpus_root() -> PathBuf {
 
 /// Variants known not to decode yet (see the crate docs): matched against the lower-case file name.
 const KNOWN_UNSUPPORTED: &[&str] = &[
-    "craw",                     // Canon C-RAW: lossy CRX (M11.1d)
+    "r5-crop-craw",             // Canon C-RAW of the R5 / R6 (CRX version 2, M11.1e)
+    "r6-craw",                  // "
     "arw-sony-a7m4-lossless-m", // Sony lossless compressed M/S: subsampled (YCbCr) lossless JPEG
     "arw-sony-a7m4-lossless-s", // "
     "raf-fuji-xt20-compressed", // Fujifilm compressed RAF
@@ -326,6 +327,34 @@ fn corpus_cr3_lossless_decodes_exactly() {
         let mut jd = zune_jpeg::JpegDecoder::new(zune_core::bytestream::ZCursor::new(&jpeg));
         jd.decode_headers().expect("JPEG header");
         assert_eq!(jd.dimensions(), Some((img.crop.width, img.crop.height)), "{name}: crop vs JPEG");
+        let got = fingerprint(&img);
+        assert_eq!(got, print, "{name}: fingerprint {got:#018x}");
+    }
+}
+
+/// Canon C-RAW (lossy CRX, version 1) of three bodies: their mosaics equal a reference decoder's output sample for
+/// sample (0 differences), so a changed fingerprint means the decoder changed.
+#[test]
+fn corpus_cr3_craw_decodes_exactly() {
+    // (file, mosaic size, active area x, y, fingerprint, black level range, as-shot R and B multipliers)
+    const FILES: &[(&str, (usize, usize), (usize, usize), u64, (f32, f32), (f32, f32))] = &[
+        ("cr3-canon-r-craw.cr3", (6888, 4546), (144, 46), 0xf9cd81a3249fcfc7, (509.0, 514.0), (1.946, 1.549)),
+        ("cr3-canon-90d-craw.cr3", (7128, 4732), (144, 72), 0xfaac50ca858e5563, (509.0, 514.0), (2.032, 1.371)),
+        ("cr3-canon-m50-craw.cr3", (6288, 4056), (264, 36), 0x9aacbfe66f505e1b, (2040.0, 2056.0), (1.418, 1.416)),
+    ];
+    let dir = corpus_root().join("raw");
+    for &(name, (w, h), (ax, ay), print, (black_lo, black_hi), (wb_r, wb_b)) in FILES {
+        let Ok(bytes) = std::fs::read(dir.join(name)) else {
+            eprintln!("skip: {name} absent");
+            continue;
+        };
+        let img = decode(&bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert_eq!((img.width, img.height, img.bits), (w, h, 14), "{name}");
+        assert_eq!((img.active_area.x, img.active_area.y), (ax, ay), "{name}");
+        assert_eq!(img.cfa.as_ref().map(|c| c.name()), Some("RGGB".to_string()), "{name}");
+        assert!(img.black.values.iter().all(|b| (black_lo..black_hi).contains(b)), "{name}: black {:?}", img.black.values);
+        let wb = img.wb_multipliers.unwrap_or_else(|| panic!("{name}: no white balance"));
+        assert!((wb[0] - wb_r).abs() < 0.002 && wb[1] == 1.0 && (wb[2] - wb_b).abs() < 0.002, "{name}: wb {wb:?}");
         let got = fingerprint(&img);
         assert_eq!(got, print, "{name}: fingerprint {got:#018x}");
     }
