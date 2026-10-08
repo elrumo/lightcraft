@@ -223,3 +223,26 @@ fn phone_presets_are_a_strip_of_thumbnails_under_group_chips() {
     click(&mut h, &other[0].0);
     assert_ne!(format!("{:?}", h.app.session.develop_of(id)), before, "the preset was applied");
 }
+
+/// A phone held sideways: the tools are a rail down the left edge and the Edit groups sit at the
+/// top of the panel on the right, so that the photo keeps the height and gets wider.
+#[test]
+fn a_phone_held_sideways_has_a_tool_rail_and_the_groups_in_the_panel() {
+    let mut h = detail([750.0, 380.0]);
+    let (presets, crop, edit) = (rect(&h, "icon:presets"), rect(&h, "icon:crop"), rect(&h, "icon:edit"));
+    assert!(presets.right() <= 61.0 && edit.right() <= 61.0, "the rail is down the left edge: {presets:?} {edit:?}");
+    assert!(presets.center().y < crop.center().y && crop.center().y < edit.center().y, "stacked, top to bottom");
+    assert!(edit.bottom() <= 380.0, "all of them fit: {edit:?}");
+    let (light, exposure) = (rect(&h, "button:group-light"), rect(&h, "slider:light.exposure"));
+    assert!(light.left() > 380.0 && light.top() < 120.0, "the groups are at the top of the panel on the right: {light:?}");
+    assert!(exposure.top() >= light.bottom() - 1.0 && exposure.left() > 380.0, "with the sliders under them: {exposure:?}");
+    let photo = h.app.image_rect.expect("loupe");
+    // (it was 275 × 184 with the bars along the bottom)
+    assert!(photo.width() > 300.0 && photo.height() > 200.0, "the photo has the room the rail and the panel leave: {photo:?}");
+    // choosing a group works from there, and tapping the open tool closes the panel
+    click(&mut h, "button:group-color");
+    assert_eq!(h.app.ui.edit_group, "color");
+    assert!(has(&h, "slider:color.vibrance"));
+    click(&mut h, "icon:edit");
+    assert_eq!(h.app.ui.right, RightPanel::None);
+}

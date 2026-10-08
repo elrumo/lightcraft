@@ -28,6 +28,12 @@ const GROUP_H: f32 = 54.0;
 pub const WIDE_PT: f32 = 600.0;
 /// The side panels' width on a wide compact window.
 const SIDE_W: f32 = 340.0;
+/// A wide compact window shorter than this is a phone held sideways: the tools are a rail down its
+/// left edge and the Edit groups sit at the top of the panel on the right, so that the photo keeps
+/// the height.
+const LANDSCAPE_BELOW_PT: f32 = 520.0;
+/// The width of that rail of tools.
+const RAIL_W: f32 = 60.0;
 /// The grabber at the top of the bottom sheet: drag it to make the sheet taller or shorter.
 const GRABBER_H: f32 = 24.0;
 /// A slider row's height, which the sheet's stops are counted in.
@@ -59,6 +65,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let t = Tokens::get(&ctx);
     let detail = app.ui.view == ViewMode::Detail;
     let wide = ctx.content_rect().width() >= WIDE_PT;
+    let landscape = wide && ctx.content_rect().height() < LANDSCAPE_BELOW_PT;
     if app.ui.select_mode && !matches!(app.ui.view, ViewMode::PhotoGrid | ViewMode::SquareGrid) {
         app.ui.select_mode = false;
     }
@@ -69,12 +76,12 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         action_bar(app, ui, &t);
     }
     if detail {
-        tool_bar(app, ui, &t);
-        if !app.ui.presets && matches!(app.ui.right, RightPanel::Edit) {
+        tool_bar(app, ui, &t, landscape);
+        if !landscape && !app.ui.presets && matches!(app.ui.right, RightPanel::Edit) {
             group_bar(app, ui, &t);
         }
         if app.ui.right != RightPanel::None || app.ui.presets {
-            sheet(app, ui, &t, wide);
+            sheet(app, ui, &t, wide, landscape);
         }
     }
     let bg = if detail { t.canvas } else { t.grid_bg };
@@ -422,14 +429,23 @@ pub fn grid_header(app: &mut LightcraftApp, ui: &mut egui::Ui, hr: egui::Rect, c
 }
 
 /// The tools under a photo, icons only; the open one on a blue rounded square. Tapping the open
-/// tool closes its sheet.
-fn tool_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
+/// tool closes its sheet. A phone held sideways has them as a rail down the left edge instead.
+fn tool_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, rail: bool) {
     // the bottom safe area is already outside this ui (see the host); the bar sits at its edge
-    egui::Panel::bottom("compact_tabs").show_separator_line(false).exact_size(TAB_H).frame(egui::Frame::NONE.fill(t.canvas)).show(ui, |ui| {
+    let bar = if rail { egui::Panel::left("compact_rail").exact_size(RAIL_W) } else { egui::Panel::bottom("compact_tabs").exact_size(TAB_H) };
+    bar.show_separator_line(false).frame(egui::Frame::NONE.fill(t.canvas)).show(ui, |ui| {
         let has_photo = app.session.active().is_some();
         let full = ui.max_rect();
-        ui.painter().hline(full.x_range(), full.top(), Stroke::new(0.5, t.divider));
-        let w = full.width() / TOOLS.len() as f32;
+        let divider = Stroke::new(0.5, t.divider);
+        if rail {
+            ui.painter().vline(full.right(), full.y_range(), divider);
+        } else {
+            ui.painter().hline(full.x_range(), full.top(), divider);
+        }
+        // the tools share the bar; a rail's don't stretch (52 pt apart, in the middle)
+        let n = TOOLS.len() as f32;
+        let (cell_w, cell_h) = if rail { (full.width(), (full.height() / n).min(52.0)) } else { (full.width() / n, full.height()) };
+        let start = if rail { pos2(full.left(), full.center().y - cell_h * n / 2.0) } else { full.min };
         for (i, (id, icon, panel, tip)) in TOOLS.into_iter().enumerate() {
             let presets = id == "presets";
             let on = if presets {
@@ -437,12 +453,13 @@ fn tool_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
             } else {
                 !app.ui.presets && (app.ui.right == panel || (panel == RightPanel::Edit && app.ui.right == RightPanel::Profiles))
             };
-            let cell = egui::Rect::from_min_size(pos2(full.left() + i as f32 * w, full.top()), vec2(w, full.height()));
+            let at = if rail { start + vec2(0.0, i as f32 * cell_h) } else { start + vec2(i as f32 * cell_w, 0.0) };
+            let cell = egui::Rect::from_min_size(at, vec2(cell_w, cell_h));
             let resp = ui.interact(cell, egui::Id::new(("compact-tool", id)), if has_photo { Sense::click() } else { Sense::hover() });
             resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, has_photo, on, crate::i18n::tr(tip)));
             crate::widgets::register(ui.ctx(), format!("icon:{id}"), cell);
             let k = ui.ctx().animate_bool_with_time(resp.id.with("on"), on, 0.15);
-            let tile = egui::Rect::from_center_size(cell.center(), vec2(48.0, 38.0));
+            let tile = egui::Rect::from_center_size(cell.center(), if rail { vec2(44.0, 40.0) } else { vec2(48.0, 38.0) });
             if k > 0.0 {
                 ui.painter().rect_filled(tile, 10.0, t.accent.gamma_multiply(k));
             }
@@ -474,32 +491,40 @@ fn tool_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
 /// The Edit tool's groups in a row that scrolls sideways (icon over name), Auto first: a phone
 /// shows one group's sliders at a time, as Lightroom's mobile app does.
 fn group_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
-    egui::Panel::bottom("compact_groups").show_separator_line(false).exact_size(GROUP_H).frame(egui::Frame::NONE.fill(t.canvas)).show(ui, |ui| {
-        egui::ScrollArea::horizontal().id_salt("compact-groups").scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden).show(
-            ui,
-            |ui| {
-                ui.horizontal_centered(|ui| {
-                    ui.spacing_mut().item_spacing.x = 2.0;
-                    ui.add_space(6.0);
-                    if group_cell(ui, "auto", Icon::Wand, "Auto", false).clicked() {
-                        let _ = app.run("develop.auto", json!({}));
-                        app.toast(ui.ctx(), "Auto settings applied");
-                    }
-                    let (sep, _) = ui.allocate_exact_size(vec2(13.0, 34.0), Sense::hover());
-                    ui.painter().vline(sep.center().x, sep.y_range(), Stroke::new(1.0, t.divider));
-                    for (id, icon, label) in GROUPS {
-                        if group_cell(ui, &format!("group-{id}"), icon, label, app.ui.edit_group == id).clicked() {
-                            app.ui.edit_group = id.to_string();
-                            if app.ui.right == RightPanel::Profiles {
-                                app.ui.right = RightPanel::Edit;
-                            }
+    egui::Panel::bottom("compact_groups")
+        .show_separator_line(false)
+        .exact_size(GROUP_H)
+        .frame(egui::Frame::NONE.fill(t.canvas))
+        .show(ui, |ui| group_strip(app, ui, t));
+}
+
+/// The row of groups itself (`group_bar` is its panel; a phone held sideways has it at the top of
+/// the panel on the right).
+fn group_strip(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
+    egui::ScrollArea::horizontal().id_salt("compact-groups").scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden).show(
+        ui,
+        |ui| {
+            ui.horizontal_centered(|ui| {
+                ui.spacing_mut().item_spacing.x = 2.0;
+                ui.add_space(6.0);
+                if group_cell(ui, "auto", Icon::Wand, "Auto", false).clicked() {
+                    let _ = app.run("develop.auto", json!({}));
+                    app.toast(ui.ctx(), "Auto settings applied");
+                }
+                let (sep, _) = ui.allocate_exact_size(vec2(13.0, 34.0), Sense::hover());
+                ui.painter().vline(sep.center().x, sep.y_range(), Stroke::new(1.0, t.divider));
+                for (id, icon, label) in GROUPS {
+                    if group_cell(ui, &format!("group-{id}"), icon, label, app.ui.edit_group == id).clicked() {
+                        app.ui.edit_group = id.to_string();
+                        if app.ui.right == RightPanel::Profiles {
+                            app.ui.right = RightPanel::Edit;
                         }
                     }
-                    ui.add_space(6.0);
-                });
-            },
-        );
-    });
+                }
+                ui.add_space(6.0);
+            });
+        },
+    );
 }
 
 /// One group in the group row (`button:<id>`): its icon over its name, on a grey tile when chosen.
@@ -523,7 +548,7 @@ fn group_cell(ui: &mut egui::Ui, id: &str, icon: Icon, label: &str, on: bool) ->
 /// grabber: drag it to one of three heights (small, medium, large) or down to close the tool, tap
 /// it to step through them. A sheet whose content is shorter than its height shrinks to fit (the
 /// Profile group is one row), so the photo gets the room.
-fn sheet(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, wide: bool) {
+fn sheet(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, wide: bool, landscape: bool) {
     // the room the bars left, for the photo and the sheet
     let avail = ui.available_rect_before_wrap().height();
     let frame = egui::Frame::NONE.fill(t.chrome);
@@ -531,8 +556,14 @@ fn sheet(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, wide: bool) {
         if app.ui.presets { super::presets::body(app, ui) } else { super::right::body(app, ui) }
     };
     if wide {
-        egui::Panel::right("compact_side").resizable(true).default_size(SIDE_W).size_range(280.0..=480.0).frame(frame).show(ui, |ui| {
-            ui.add_space(8.0);
+        let width = if landscape { 316.0 } else { SIDE_W };
+        egui::Panel::right("compact_side").resizable(true).default_size(width).size_range(280.0..=480.0).frame(frame).show(ui, |ui| {
+            if landscape && !app.ui.presets && matches!(app.ui.right, RightPanel::Edit) {
+                ui.allocate_ui(vec2(ui.available_width(), GROUP_H), |ui| group_strip(app, ui, t));
+                ui.painter().hline(ui.max_rect().x_range(), ui.cursor().top(), Stroke::new(0.5, t.divider));
+            } else {
+                ui.add_space(8.0);
+            }
             body(app, ui)
         });
         return;
