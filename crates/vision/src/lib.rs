@@ -20,6 +20,8 @@ pub mod index;
 pub mod models;
 #[cfg(all(feature = "onnx", not(target_arch = "wasm32")))]
 pub mod ocr;
+#[cfg(all(feature = "onnx", not(target_arch = "wasm32")))]
+pub mod onnxfix;
 #[cfg(all(feature = "siglip", not(target_arch = "wasm32")))]
 pub mod siglip;
 pub mod store;

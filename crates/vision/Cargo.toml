@@ -36,7 +36,7 @@ serde_json = { workspace = true, optional = true }
 # pure Rust: no `onig` (C), no `esaxx_fast` (C++); `unstable_wasm` swaps Oniguruma for fancy-regex
 tokenizers = { version = "0.22", default-features = false, features = ["unstable_wasm"], optional = true }
 # pure Rust ONNX runtime with no build script (tract's build.rs runs the C compiler); 0.24 builds on Rust 1.89
-rten = { version = "0.24", default-features = false, features = ["onnx_format"], optional = true }
+rten = { version = "0.24", default-features = false, features = ["onnx_format", "random"], optional = true }
 rten-tensor = { version = "0.24", optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]

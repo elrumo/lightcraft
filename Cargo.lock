@@ -1816,6 +1816,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
 
 [[package]]
+name = "fastrand-contrib"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fb6c045880cda8f657f4859baf534963ff0595e2dcce0de5f52dcdf3076c290b"
+dependencies = [
+ "fastrand",
+]
+
+[[package]]
 name = "fax"
 version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5255,6 +5264,8 @@ version = "0.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "43c230fa4ade87c913f61dbd911b7eb0d49460ceff3f1e4fabc837fac191137c"
 dependencies = [
+ "fastrand",
+ "fastrand-contrib",
  "num_cpus",
  "rayon",
  "rten-base",
