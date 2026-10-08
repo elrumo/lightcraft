@@ -313,6 +313,12 @@ pub struct UiState {
     /// The search model download was started from the app (to report its end once).
     #[serde(skip)]
     pub ai_search_downloading: bool,
+    /// The user ticked "search the words in photos" and is being asked to download the models.
+    #[serde(skip)]
+    pub ai_text_offer: bool,
+    /// The text-reading models download was started from the app (to report its end once).
+    #[serde(skip)]
+    pub ai_text_downloading: bool,
     /// Indexing was started for this switching-on (it is offered, not repeated, after).
     #[serde(skip)]
     pub ai_search_autostarted: bool,
@@ -615,6 +621,8 @@ impl Default for UiState {
             ai_search: false,
             ai_search_error: None,
             ai_search_downloading: false,
+            ai_text_offer: false,
+            ai_text_downloading: false,
             ai_search_autostarted: false,
             ai_search_total: (0, 0),
             renaming_component: None,

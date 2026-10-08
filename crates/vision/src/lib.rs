@@ -22,6 +22,7 @@ pub mod models;
 pub mod ocr;
 #[cfg(all(feature = "onnx", not(target_arch = "wasm32")))]
 pub mod onnxfix;
+pub mod reader;
 #[cfg(all(feature = "siglip", not(target_arch = "wasm32")))]
 pub mod siglip;
 pub mod store;
@@ -31,6 +32,7 @@ mod weights;
 
 pub use embedder::Embedder;
 pub use index::{EmbeddingIndex, Hit, Import};
+pub use reader::TextReader;
 pub use store::{Error, Key};
 pub use textindex::TextIndex;
 

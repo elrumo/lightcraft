@@ -1298,5 +1298,11 @@
   "Your server can search by description, but its search model isn't installed yet.": "你的伺服器支援依描述搜尋，但尚未安裝搜尋模型。",
   "Whoever runs the server installs it with: lightcraft-server model download --accept-licences": "伺服器管理員可用以下指令安裝：lightcraft-server model download --accept-licences",
   "It keeps going in the background; search the ones that are ready now.": "它會在背景繼續處理；已準備好的照片現在就可以搜尋。",
-  "Send the search data to my server, so my other devices can search too": "將搜尋資料傳送到我的伺服器，讓我的其他裝置也能搜尋"
+  "Send the search data to my server, so my other devices can search too": "將搜尋資料傳送到我的伺服器，讓我的其他裝置也能搜尋",
+  "Also find words in photos (signs, menus, documents)": "同時尋找照片中的文字（招牌、菜單、文件等）",
+  "Finding words in photos uses two small AI models that read text, in English, Chinese, Japanese and many other languages. They aren't part of LightCraft, and everything else works without them.": "尋找照片中的文字會用到兩個讀取文字的小型 AI 模型，支援英語、中文、日語等多種語言。它們不屬於 LightCraft，沒有它們其他功能仍可正常使用。",
+  "Baidu's terms, not LightCraft's. Downloading them means accepting them.": "這是百度的條款，並非 LightCraft 的。下載即表示接受。",
+  "Your photos are then read on this computer, a few at a time in the background; it takes a while. Nothing is sent anywhere unless you choose to share it with your own server.": "之後會在這台電腦的背景中分批讀取照片中的文字，需要一些時間。除非你選擇與自己的伺服器共用，否則不會傳送到任何地方。",
+  "Not Now": "暫不",
+  "Text search is ready: your photos are being read.": "文字搜尋已就緒：正在讀取你的照片。"
 }

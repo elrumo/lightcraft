@@ -214,3 +214,79 @@ fn the_choice_to_send_search_data_to_the_server_is_a_checkbox_where_it_applies()
     click(&mut h, "check:describeShare");
     assert!(!h.app.session.vision.share_with_server);
 }
+
+/// A window whose search model and text reader are the stand-ins (both "installed").
+fn window_with_reader() -> Headless {
+    let mut session = Session::with_demo();
+    session.vision.set_embedder(Arc::new(FakeEmbedder));
+    session.vision.set_text_reader(Arc::new(lightcraft_vision::fake::FakeReader));
+    session.vision.text_edge = 192;
+    let mut app = LightcraftApp::new(session, Services { png: None, ..Default::default() });
+    app.ui.view = ViewMode::PhotoGrid;
+    let mut h = Headless::new(app, [1400.0, 900.0], 1.0);
+    h.settle(SETTLE);
+    h
+}
+
+#[test]
+fn ticking_the_words_box_reads_the_photos_and_finds_them() {
+    let mut h = window_with_reader();
+    click(&mut h, "button:describeSearch");
+    until(&mut h, "the index", indexed);
+    h.settle(Duration::from_secs(5));
+    assert!(has(&h, "check:describeText"), "the models are there: the choice is offered");
+    assert!(!h.app.session.vision.text, "off until the user turns it on");
+    assert_eq!(h.app.session.vision.text_indexed(), 0);
+
+    click(&mut h, "check:describeText");
+    assert!(h.app.session.vision.text);
+    until(&mut h, "the reading", |h| indexed(h) && h.app.session.vision.job().is_some_and(|j| j.reading.load(Ordering::Relaxed)));
+    h.settle(Duration::from_secs(5));
+    assert_eq!(h.app.session.vision.text_indexed(), h.app.session.vision_photo_count());
+
+    // a word printed in a photo finds it, ahead of the look-alikes
+    click(&mut h, "field:search");
+    let r = h.request("ui.text", json!({"text": "stop"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.request("ui.key", json!({"key": "Enter"}), T);
+    until(&mut h, "the search", |h| h.app.session.filter.semantic.is_some());
+    let first = h.app.session.filter.only.first().copied().expect("results");
+    let said = h.app.session.execute("library.search", &json!({"q": "stop", "wait": true})).unwrap();
+    assert_eq!(said["photos"][0]["id"].as_u64(), Some(first.0), "{said}");
+    assert_eq!(said["photos"][0]["text"], true, "{said}");
+
+    // unticking turns it off again
+    click(&mut h, "button:describeSearch");
+    click(&mut h, "button:describeSearch");
+    until(&mut h, "the hint", |h| has(h, "check:describeText"));
+    click(&mut h, "check:describeText");
+    assert!(!h.app.session.vision.text);
+}
+
+#[test]
+fn the_words_box_asks_before_downloading_anything() {
+    let mut h = window(true);
+    if !h.app.session.vision.text_available() {
+        // a build without the readers has no box
+        assert!(!has(&h, "check:describeText"));
+        return;
+    }
+    // (never the user's real model folder: nothing is installed here)
+    h.app.session.vision.dir = Some(std::env::temp_dir().join(format!("lc-ui-no-text-models-{}", std::process::id())));
+    click(&mut h, "button:describeSearch");
+    until(&mut h, "the index", indexed);
+    h.settle(Duration::from_secs(5));
+    assert!(!h.app.session.vision.text_installed());
+    click(&mut h, "check:describeText");
+    h.step();
+    h.step();
+    assert!(h.app.ui.ai_text_offer && !h.app.session.vision.text, "asked, not turned on yet");
+    assert!(has(&h, "panel:describe:textInstall"), "the models and the licence are shown first");
+    assert!(has(&h, "link:describeTextLicense") && has(&h, "button:describeTextDownload"));
+    assert_eq!(h.app.session.vision.text_download_status()["running"], json!(false), "nothing downloads without a click");
+    // "Not Now" leaves everything as it was
+    click(&mut h, "button:describeTextLater");
+    h.step();
+    assert!(!h.app.ui.ai_text_offer && !h.app.session.vision.text);
+    assert!(!has(&h, "panel:describe:textInstall"));
+}

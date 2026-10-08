@@ -47,6 +47,69 @@ pub fn mirrors(env: Option<&str>, file: Option<&Path>) -> Vec<String> {
     lightcraft_fetch::mirrors(env, file, DEFAULT_MIRRORS)
 }
 
+/// One folder of the text-reading models (PP-OCRv6 small, PaddleOCR, Apache-2.0): the detector and
+/// the recogniser are two repositories on Hugging Face, each pinned to a commit.
+pub struct OcrPart {
+    /// Its folder inside the OCR model folder (`det`, `rec`), where the reader loads it from.
+    pub dir: &'static str,
+    pub files: &'static [FileSpec],
+    pub default_mirror: &'static str,
+}
+
+pub const OCR_PARTS: &[OcrPart] = &[
+    OcrPart {
+        dir: "det",
+        files: &[FileSpec {
+            name: "inference.onnx",
+            size: Some(9_880_512),
+            sha256: Some("d73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e"),
+            max: 9_880_512,
+        }],
+        default_mirror: "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx/resolve/28fe5895c24fd108c19eb3e8479f4ab385fbfc62",
+    },
+    OcrPart {
+        dir: "rec",
+        files: &[
+            FileSpec {
+                name: "inference.onnx",
+                size: Some(21_159_378),
+                sha256: Some("5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634"),
+                max: 21_159_378,
+            },
+            // the character dictionary
+            FileSpec {
+                name: "inference.yml",
+                size: Some(150_579),
+                sha256: Some("ab078671bb49f06228eadccd34f1bb501e157f7a047095ffb943ba81512c77d1"),
+                max: 150_579,
+            },
+        ],
+        default_mirror: "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/b8f84f0b80c529de40b4fbb3544b84fa7233a513",
+    },
+];
+
+/// Download size of the text-reading models.
+pub const OCR_BYTES: u64 = 9_880_512 + 21_159_378 + 150_579;
+
+/// The licence the user is shown before downloading the text-reading models.
+pub const OCR_LICENCE: (&str, &str) =
+    ("Apache License 2.0 (Baidu, PaddleOCR PP-OCRv6)", "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx");
+
+/// What to download for the text-reading models into `dir`: per folder, the files, the mirrors to
+/// try (the user's first, each keeping the files under `<base>/ocr/<det|rec>/`; then the pinned
+/// default) and where they go.
+pub fn ocr_downloads(dir: &Path, env: Option<&str>, file: Option<&Path>) -> Vec<(&'static [FileSpec], Vec<String>, std::path::PathBuf)> {
+    let user = lightcraft_fetch::mirrors(env, file, &[]);
+    OCR_PARTS
+        .iter()
+        .map(|p| {
+            let mut mirrors: Vec<String> = user.iter().map(|b| format!("{b}/ocr/{}", p.dir)).collect();
+            mirrors.push(p.default_mirror.to_string());
+            (p.files, mirrors, dir.join(p.dir))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -63,6 +126,28 @@ mod tests {
         // the folder a download fills is the one the loader reads
         assert!(SIGLIP_FILES.iter().any(|f| f.name == crate::siglip::WEIGHTS_FILE));
         assert!(SIGLIP_FILES.iter().any(|f| f.name == crate::siglip::TOKENIZER_FILE));
+    }
+
+    #[test]
+    fn the_text_models_fill_the_folders_the_reader_loads() {
+        let parts = ocr_downloads(Path::new("/m/ocr"), Some("https://mirror.example/models/"), None);
+        assert_eq!(parts.len(), 2);
+        let mut names: Vec<String> =
+            parts.iter().flat_map(|(files, _, dir)| files.iter().map(move |f| dir.join(f.name).to_string_lossy().into_owned())).collect();
+        names.sort();
+        // (the reader's own file names are checked in the OCR tests, which need the `onnx` feature)
+        assert_eq!(names, ["/m/ocr/det/inference.onnx", "/m/ocr/rec/inference.onnx", "/m/ocr/rec/inference.yml"]);
+        for (files, mirrors, dir) in &parts {
+            assert_eq!(mirrors.len(), 2, "the user's mirror, then the pinned default");
+            let leaf = dir.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+            assert_eq!(mirrors[0], format!("https://mirror.example/models/ocr/{leaf}"));
+            assert!(mirrors[1].contains("/resolve/") && !mirrors[1].contains("/main"));
+            for f in *files {
+                assert_eq!((f.size, f.sha256.map(str::len)), (Some(f.max), Some(64)), "{}", f.name);
+            }
+        }
+        let total: u64 = parts.iter().flat_map(|(files, _, _)| files.iter()).filter_map(|f| f.size).sum();
+        assert_eq!(total, OCR_BYTES);
     }
 
     #[test]

@@ -204,6 +204,8 @@ fn api(st: &State, req: &mut Request, method: &Method, path: &str, q: &str) -> R
         (Method::Get, ["search"]) => crate::vision::search(st, &l, &who.user, q),
         (Method::Get, ["index", "embeddings", "keys"]) => crate::vision::keys(st, &who.user),
         (Method::Post, ["index", "embeddings"]) => crate::vision::upload(st, req, &l, &who.user),
+        (Method::Get, ["index", "text", "keys"]) => crate::vision::text_keys(st, &who.user),
+        (Method::Post, ["index", "text"]) => crate::vision::text_upload(st, req, &l, &who.user),
         _ => error(404, format!("no route {method} {path}")),
     }
 }
@@ -488,8 +490,8 @@ fn put_blob(st: &State, req: &mut Request, dir: &Path, kind: &str, path: &Path) 
     })();
     match r {
         Ok(()) => {
-            if kind == "mini" {
-                // a photo that can be indexed for search now
+            if kind == "mini" || kind == "smart" {
+                // a photo that can be indexed for search now (its text is read from the smart preview)
                 st.vision.wake();
             }
             json(200, &json!({}))

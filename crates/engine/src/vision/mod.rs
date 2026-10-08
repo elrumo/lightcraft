@@ -26,10 +26,10 @@ use std::time::{Duration, Instant};
 use lightcraft_catalog::PhotoId;
 use lightcraft_develop::DevelopSettings;
 use lightcraft_raster::Rgba8;
-use lightcraft_vision::{Embedder, EmbeddingIndex, Hit, Key};
+use lightcraft_vision::{Embedder, EmbeddingIndex, Hit, Key, TextIndex, TextReader};
 use serde_json::{Value, json};
 
-use crate::media::{RenderJob, content_key};
+use crate::media::{RenderJob, SourceLevel, content_key};
 use crate::{Session, guard, memory};
 
 mod server;
@@ -43,6 +43,11 @@ pub(crate) fn next_id() -> u64 {
 
 /// Long edge of the rendering a photo is embedded from.
 const THUMB_EDGE: usize = 512;
+/// Long edge of the rendering the text in a photo is read from (small print needs the pixels).
+pub const TEXT_EDGE: usize = 1280;
+/// Photos that fail to be read one after the other before the text reader is given up on.
+const READ_FAILURES: usize = 8;
+pub use lightcraft_vision::textindex::TEXT_SCORE_BASE;
 /// Photos embedded in one model pass.
 const BATCH: usize = 8;
 /// Unload the model (and the in-memory index) after this long without use.
@@ -58,6 +63,15 @@ pub const LICENSE_NAME: &str = "Apache License 2.0 (Google, SigLIP 2)";
 pub const LICENSE_URL: &str = "https://huggingface.co/google/siglip2-base-patch16-224";
 /// Download size of the model.
 pub const MODEL_BYTES: u64 = 1_500_800_904 + 34_363_039;
+/// The text-reading models' licence (not LightCraft's): shown before downloading.
+pub const TEXT_LICENSE_NAME: &str = "Apache License 2.0 (Baidu, PaddleOCR PP-OCRv6)";
+pub const TEXT_LICENSE_URL: &str = "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx";
+/// Download size of the text-reading models.
+pub const TEXT_BYTES: u64 = 9_880_512 + 21_159_378 + 150_579;
+/// How errors about missing text-reading models start (the UI offers the download on it).
+pub const TEXT_NOT_INSTALLED: &str = "The text-reading models are not installed";
+/// Folder of the text-reading models inside [`Vision::dir`].
+pub const TEXT_DIR: &str = "ocr";
 
 /// Where an index lives and what it holds.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -68,6 +82,13 @@ struct IndexSpec {
     dim: usize,
 }
 
+/// Where the text index lives and which reader filled it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct TextSpec {
+    path: Option<PathBuf>,
+    engine: String,
+}
+
 /// How a worker thread gets the model.
 #[derive(Clone)]
 struct Provider {
@@ -76,9 +97,21 @@ struct Provider {
     dir: Option<PathBuf>,
 }
 
+/// How a worker thread gets the text reader.
+#[derive(Clone)]
+struct ReaderProvider {
+    injected: Option<Arc<dyn TextReader>>,
+    dir: Option<PathBuf>,
+}
+
 /// What worker threads and the session share.
 #[derive(Default)]
 struct Shared {
+    reader: Mutex<Option<Arc<dyn TextReader>>>,
+    text: Mutex<Option<(Option<PathBuf>, TextIndex)>>,
+    /// The text index's length, readable without its lock.
+    text_len: AtomicUsize,
+    text_opened: AtomicBool,
     model: Mutex<Option<Arc<dyn Embedder>>>,
     index: Mutex<Option<(Option<PathBuf>, EmbeddingIndex)>>,
     /// The index's length, readable without its lock.
@@ -122,6 +155,8 @@ pub struct IndexJob {
     pub failed: AtomicUsize,
     pub cancel: AtomicBool,
     pub finished: AtomicBool,
+    /// The run is reading the text in photos (after describing them).
+    pub reading: AtomicBool,
     error: Mutex<Option<String>>,
 }
 
@@ -141,6 +176,7 @@ impl IndexJob {
             "failed": self.failed.load(Ordering::Relaxed),
             "running": !self.finished.load(Ordering::Relaxed),
             "cancelled": self.cancel.load(Ordering::Relaxed),
+            "phase": if self.reading.load(Ordering::Relaxed) { "reading" } else { "describing" },
             "error": self.error(),
         })
     }
@@ -175,7 +211,14 @@ pub struct Vision {
     /// user's other devices needn't compute them again. Off until the user turns it on
     /// (persisted in the library's prefs.json).
     pub share_with_server: bool,
+    /// Also read the text in photos and search it. Off until the user turns it on (persisted in
+    /// the library's prefs.json): reading is slow and needs its own download.
+    pub text: bool,
+    /// Long edge of the renderings text is read from ([`TEXT_EDGE`]; smaller in tests).
+    #[doc(hidden)]
+    pub text_edge: usize,
     injected: Option<Arc<dyn Embedder>>,
+    injected_reader: Option<Arc<dyn TextReader>>,
     remote: server::Remote,
     shared: Arc<Shared>,
     job: Option<Arc<IndexJob>>,
@@ -183,10 +226,13 @@ pub struct Vision {
     search_seq: u64,
     searching: Arc<AtomicUsize>,
     results: (Sender<Searched>, Receiver<Searched>),
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     opening: Arc<AtomicBool>,
     messages: Vec<String>,
     #[cfg(feature = "vision")]
     download: crate::download::Downloader,
+    #[cfg(feature = "vision")]
+    text_download: crate::download::Downloader,
 }
 
 impl Default for Vision {
@@ -196,7 +242,10 @@ impl Default for Vision {
             mirrors_file: None,
             background: false,
             share_with_server: false,
+            text: false,
+            text_edge: TEXT_EDGE,
             injected: None,
+            injected_reader: None,
             remote: server::Remote::default(),
             shared: Arc::new(Shared::default()),
             job: None,
@@ -208,6 +257,8 @@ impl Default for Vision {
             messages: Vec::new(),
             #[cfg(feature = "vision")]
             download: crate::download::Downloader::default(),
+            #[cfg(feature = "vision")]
+            text_download: crate::download::Downloader::default(),
         }
     }
 }
@@ -354,6 +405,108 @@ impl Vision {
         false
     }
 
+    /// Use `reader` instead of loading the text-reading models from the model folder (tests,
+    /// other hosts).
+    pub fn set_text_reader(&mut self, reader: Arc<dyn TextReader>) {
+        self.injected_reader = Some(reader);
+    }
+
+    /// Where the text-reading models live (inside the model folder).
+    pub fn text_dir(&self) -> Option<PathBuf> {
+        self.dir.as_ref().map(|d| d.join(TEXT_DIR))
+    }
+
+    /// Whether this device can read the text in photos (this build has the readers, or a host
+    /// supplied one).
+    pub fn text_available(&self) -> bool {
+        cfg!(feature = "vision") || self.injected_reader.is_some()
+    }
+
+    /// Whether the text-reading models' files are in place.
+    pub fn text_installed(&self) -> bool {
+        if self.injected_reader.is_some() {
+            return true;
+        }
+        #[cfg(feature = "vision")]
+        if let Some(dir) = self.text_dir() {
+            return lightcraft_vision::ocr::is_model_dir(&dir);
+        }
+        false
+    }
+
+    /// Text in photos is wanted (the user's choice) and this device can read it.
+    pub fn text_ready(&self) -> bool {
+        self.text && self.text_installed()
+    }
+
+    /// Photos whose text has been read (0 until the text index has been opened).
+    pub fn text_indexed(&self) -> usize {
+        self.shared.text_len.load(Ordering::Relaxed)
+    }
+
+    /// The text-reading models' download state.
+    pub fn text_download_status(&self) -> Value {
+        #[cfg(feature = "vision")]
+        {
+            let s = self.text_download.status();
+            json!({"running": s.running, "done": s.done, "total": s.total, "file": s.file, "error": s.error, "finished": s.finished})
+        }
+        #[cfg(not(feature = "vision"))]
+        json!({"running": false, "done": 0, "total": 0, "file": "", "error": null, "finished": false})
+    }
+
+    /// Start downloading the text-reading models on a background thread. `Ok(false)` when they
+    /// are installed or downloading already.
+    pub fn start_text_download(&self) -> Result<bool, String> {
+        if !self.text_available() {
+            return Err("reading the text in photos is not available in this build".into());
+        }
+        if self.text_installed() {
+            return Ok(false);
+        }
+        #[cfg(feature = "vision")]
+        {
+            let dir = self.text_dir().ok_or("no folder is set for the search models")?;
+            let env = std::env::var(lightcraft_vision::models::MIRRORS_ENV).ok();
+            let parts = lightcraft_vision::models::ocr_downloads(&dir, env.as_deref(), self.mirrors_file.as_deref());
+            self.text_download.start_parts("text", parts, lightcraft_vision::models::Options::default())
+        }
+        #[cfg(not(feature = "vision"))]
+        Ok(false)
+    }
+
+    /// Stop a running text-model download (its partial files stay, to resume). False when none runs.
+    pub fn cancel_text_download(&self) -> bool {
+        #[cfg(feature = "vision")]
+        return self.text_download.cancel();
+        #[cfg(not(feature = "vision"))]
+        false
+    }
+
+    /// What reads the text and how to reach it from a worker thread, with the engine's id, or why
+    /// it can't be.
+    fn reader_provider(&self) -> Result<(ReaderProvider, String), String> {
+        if let Some(r) = &self.injected_reader {
+            return Ok((ReaderProvider { injected: Some(r.clone()), dir: None }, r.engine().to_string()));
+        }
+        #[cfg(feature = "vision")]
+        {
+            if !self.text_installed() {
+                let d = self.text_download_status();
+                if d["running"].as_bool() == Some(true) {
+                    return Err(format!("{TEXT_NOT_INSTALLED} yet: they are downloading."));
+                }
+                return Err(format!(
+                    "{TEXT_NOT_INSTALLED}. Download them (about {:.0} MB, {TEXT_LICENSE_NAME}) with `vision.text.download {{\"acknowledged\": true}}`.",
+                    TEXT_BYTES as f64 / 1e6
+                ));
+            }
+            Ok((ReaderProvider { injected: None, dir: self.text_dir() }, lightcraft_vision::ocr::ENGINE.to_string()))
+        }
+        #[cfg(not(feature = "vision"))]
+        Err("reading the text in photos is not available in this build".into())
+    }
+
     /// The local model's id and vector length, installed or not (what an index on disk was made with).
     fn spec_only(&self) -> Result<(String, usize), String> {
         if let Some(m) = &self.injected {
@@ -467,46 +620,97 @@ fn with_index<R>(shared: &Shared, spec: &IndexSpec, f: impl FnOnce(&mut Embeddin
     Ok(r)
 }
 
-/// Embeds `work`'s photos in batches and stores their vectors.
-fn run_index(shared: &Arc<Shared>, provider: &Provider, spec: &IndexSpec, work: Vec<(Key, RenderJob)>, job: &IndexJob) {
+/// The text reader, loading it first if needed (like [`acquire`]).
+fn acquire_reader(shared: &Shared, provider: &ReaderProvider) -> Result<Arc<dyn TextReader>, String> {
+    if let Some(r) = &provider.injected {
+        shared.touch();
+        return Ok(r.clone());
+    }
+    let mut slot = shared.reader.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some(r) = slot.as_ref() {
+        shared.touch();
+        return Ok(r.clone());
+    }
+    shared.loading.store(true, Ordering::SeqCst);
+    let loaded = load_reader(provider.dir.as_deref());
+    shared.loading.store(false, Ordering::SeqCst);
+    let r = loaded?;
+    *slot = Some(r.clone());
+    shared.loaded.store(true, Ordering::SeqCst);
+    shared.touch();
+    Ok(r)
+}
+
+fn load_reader(dir: Option<&std::path::Path>) -> Result<Arc<dyn TextReader>, String> {
+    #[cfg(feature = "vision")]
+    {
+        let dir = dir.ok_or("no folder is set for the search models")?;
+        let ocr = guard::catch("loading the text reader", || lightcraft_vision::ocr::Ocr::load(dir))?.map_err(|e| e.to_string())?;
+        Ok(Arc::new(ocr))
+    }
+    #[cfg(not(feature = "vision"))]
+    {
+        let _ = dir;
+        Err("reading the text in photos is not available in this build".into())
+    }
+}
+
+/// Opens the text index at `spec` (another reader's, or damaged, is derived data: started over).
+fn open_text_index(spec: &TextSpec) -> Result<TextIndex, String> {
+    use lightcraft_vision::Error;
+    let Some(path) = &spec.path else { return TextIndex::in_memory(&spec.engine).map_err(|e| e.to_string()) };
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("can't create {}: {e}", parent.display()))?;
+    }
+    match TextIndex::open(path, &spec.engine) {
+        Ok(ix) => Ok(ix),
+        Err(Error::Mismatch { .. } | Error::Format(_)) => {
+            log::info!("text index {} is for another reader or damaged: starting over", path.display());
+            let _ = std::fs::remove_file(path);
+            TextIndex::open(path, &spec.engine).map_err(|e| e.to_string())
+        }
+        Err(e) => Err(format!("{}: {e}", path.display())),
+    }
+}
+
+/// Runs `f` on the text index at `spec`, opening it first (or again, when it is another one).
+fn with_text<R>(shared: &Shared, spec: &TextSpec, f: impl FnOnce(&mut TextIndex) -> R) -> Result<R, String> {
+    let mut slot = shared.text.lock().unwrap_or_else(PoisonError::into_inner);
+    let stale = slot.as_ref().is_none_or(|(p, ix)| *p != spec.path || ix.engine() != spec.engine);
+    if stale {
+        let ix = open_text_index(spec)?;
+        *slot = Some((spec.path.clone(), ix));
+    }
+    let (_, ix) = slot.as_mut().ok_or("the text index is unavailable")?;
+    let r = f(ix);
+    shared.text_len.store(ix.len(), Ordering::Relaxed);
+    shared.text_opened.store(true, Ordering::Relaxed);
+    Ok(r)
+}
+
+/// What an indexing run does: embed photos (describe), read their text, or both.
+struct Plan {
+    semantic: Option<(Provider, IndexSpec)>,
+    text: Option<(ReaderProvider, TextSpec)>,
+    embed: Vec<(Key, RenderJob)>,
+    read: Vec<(Key, RenderJob)>,
+}
+
+/// Embeds `plan.embed`'s photos in batches and stores their vectors, then reads the text of
+/// `plan.read`'s and stores that.
+fn run_index(shared: &Arc<Shared>, plan: Plan, job: &IndexJob) {
     let _busy = Busy::new(shared);
+    let Plan { semantic, text, embed, read } = plan;
     let result = guard::catch("indexing photos", || -> Result<(), String> {
-        let model = acquire(shared, provider)?;
-        let mut work = work.into_iter();
-        while !job.cancel.load(Ordering::Relaxed) {
-            let batch: Vec<(Key, RenderJob)> = work.by_ref().take(BATCH).collect();
-            if batch.is_empty() {
-                break;
-            }
-            let n = batch.len();
-            let (mut keys, mut images) = (Vec::with_capacity(n), Vec::<Rgba8>::with_capacity(n));
-            for (key, render) in batch {
-                match memory::in_background(|| render.run().rendered) {
-                    Ok(r) => {
-                        keys.push(key);
-                        images.push(r.image);
-                    }
-                    Err(e) => {
-                        log::debug!("search index: can't render a photo: {e}");
-                        job.failed.fetch_add(1, Ordering::Relaxed);
-                    }
-                }
-            }
-            if !images.is_empty() {
-                let refs: Vec<&Rgba8> = images.iter().collect();
-                match model.encode_images(&refs) {
-                    Ok(vectors) => {
-                        let stored = with_index(shared, spec, |ix| keys.iter().zip(&vectors).filter(|(k, v)| ix.insert(**k, v).is_err()).count())?;
-                        job.failed.fetch_add(stored, Ordering::Relaxed);
-                    }
-                    Err(e) => {
-                        // a model that fails once will fail again: stop, the rest counts as failed
-                        job.fail(e.to_string());
-                        return Ok(());
-                    }
-                }
-            }
-            job.done.fetch_add(n, Ordering::Relaxed);
+        if let Some((provider, spec)) = &semantic {
+            describe_photos(shared, provider, spec, embed, job)?;
+        }
+        if let Some((provider, spec)) = &text
+            && !job.cancel.load(Ordering::Relaxed)
+            && job.error().is_none()
+        {
+            job.reading.store(true, Ordering::Relaxed);
+            read_photos(shared, provider, spec, read, job)?;
         }
         Ok(())
     });
@@ -524,28 +728,130 @@ fn run_index(shared: &Arc<Shared>, provider: &Provider, spec: &IndexSpec, work: 
     job.finished.store(true, Ordering::Relaxed);
 }
 
-/// The photos nearest `query`.
-fn run_search(shared: &Arc<Shared>, provider: &Provider, spec: &IndexSpec, query: &str, limit: usize) -> Result<Vec<Hit>, String> {
+/// Embeds `work`'s photos in batches and stores their vectors.
+fn describe_photos(shared: &Arc<Shared>, provider: &Provider, spec: &IndexSpec, work: Vec<(Key, RenderJob)>, job: &IndexJob) -> Result<(), String> {
+    if work.is_empty() {
+        return Ok(());
+    }
+    let model = acquire(shared, provider)?;
+    let mut work = work.into_iter();
+    while !job.cancel.load(Ordering::Relaxed) {
+        let batch: Vec<(Key, RenderJob)> = work.by_ref().take(BATCH).collect();
+        if batch.is_empty() {
+            break;
+        }
+        let n = batch.len();
+        let (mut keys, mut images) = (Vec::with_capacity(n), Vec::<Rgba8>::with_capacity(n));
+        for (key, render) in batch {
+            match memory::in_background(|| render.run().rendered) {
+                Ok(r) => {
+                    keys.push(key);
+                    images.push(r.image);
+                }
+                Err(e) => {
+                    log::debug!("search index: can't render a photo: {e}");
+                    job.failed.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+        }
+        if !images.is_empty() {
+            let refs: Vec<&Rgba8> = images.iter().collect();
+            match model.encode_images(&refs) {
+                Ok(vectors) => {
+                    let stored = with_index(shared, spec, |ix| keys.iter().zip(&vectors).filter(|(k, v)| ix.insert(**k, v).is_err()).count())?;
+                    job.failed.fetch_add(stored, Ordering::Relaxed);
+                }
+                Err(e) => {
+                    // a model that fails once will fail again: stop, the rest counts as failed
+                    job.fail(e.to_string());
+                    return Ok(());
+                }
+            }
+        }
+        job.done.fetch_add(n, Ordering::Relaxed);
+    }
+    Ok(())
+}
+
+/// Reads the text of `work`'s photos, one at a time, and stores it (a photo with no text is
+/// stored as empty, so it isn't read again).
+fn read_photos(shared: &Arc<Shared>, provider: &ReaderProvider, spec: &TextSpec, work: Vec<(Key, RenderJob)>, job: &IndexJob) -> Result<(), String> {
+    if work.is_empty() {
+        return Ok(());
+    }
+    let reader = acquire_reader(shared, provider)?;
+    let mut failures = 0;
+    for (key, render) in work {
+        if job.cancel.load(Ordering::Relaxed) {
+            break;
+        }
+        let read = memory::in_background(|| render.run().rendered)
+            .and_then(|r| guard::catch("reading text", || reader.text(&r.image)).and_then(|t| t.map_err(|e| e.to_string())));
+        let stopped = match read {
+            Ok(text) => {
+                failures = 0;
+                if with_text(shared, spec, |ix| ix.insert(key, &text).is_err())? {
+                    job.failed.fetch_add(1, Ordering::Relaxed);
+                }
+                None
+            }
+            Err(e) => {
+                log::debug!("text index: can't read a photo: {e}");
+                job.failed.fetch_add(1, Ordering::Relaxed);
+                failures += 1;
+                // a reader that fails this often will keep failing
+                (failures >= READ_FAILURES).then(|| format!("reading text stopped after {READ_FAILURES} photos in a row failed: {e}"))
+            }
+        };
+        job.done.fetch_add(1, Ordering::Relaxed);
+        shared.touch();
+        if let Some(e) = stopped {
+            job.fail(e);
+            return Ok(());
+        }
+    }
+    Ok(())
+}
+
+/// Where a search looks: the description model's index, the photos' text, or both.
+struct Where {
+    semantic: Option<(Provider, IndexSpec)>,
+    text: Option<TextSpec>,
+}
+
+/// The photos best matching `query`: those with its words in them first, then those that look
+/// like it.
+fn run_search(shared: &Arc<Shared>, at: &Where, query: &str, limit: usize) -> Result<Vec<Hit>, String> {
     let _busy = Busy::new(shared);
     guard::catch("searching", || -> Result<Vec<Hit>, String> {
-        let model = acquire(shared, provider)?;
-        let v = model.encode_text(query).map_err(|e| e.to_string())?;
-        shared.touch();
-        with_index(shared, spec, |ix| ix.search(&v, limit).map_err(|e| e.to_string()))?
+        let words = match &at.text {
+            Some(spec) => with_text(shared, spec, |ix| ix.search(query, limit))?,
+            None => Vec::new(),
+        };
+        let mut looks = Vec::new();
+        if let Some((provider, spec)) = &at.semantic {
+            let model = acquire(shared, provider)?;
+            let v = model.encode_text(query).map_err(|e| e.to_string())?;
+            shared.touch();
+            looks = with_index(shared, spec, |ix| ix.search(&v, limit).map_err(|e| e.to_string()))??;
+        }
+        Ok(lightcraft_vision::textindex::merge(&words, looks, limit))
     })?
 }
 
 /// A neutral (unedited) rendering of `photo` from a smart or mini preview file, at most `edge` on
 /// its long edge: what search embeds, so a photo gets the same vector wherever it is indexed (a
-/// device renders its thumbnail source the same way, with default settings). The server uses it on
+/// device renders its thumbnail source the same way, with default settings), or the larger one the
+/// text in it is read from (`edge` up to a smart preview's 2560). The server uses it on
 /// the previews it keeps.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn neutral_from_preview(photo: &lightcraft_catalog::Photo, preview: &std::path::Path, edge: usize) -> Result<Rgba8, String> {
-    use crate::media::{SourceLevel, SourceRef, source_info};
-    let edge = edge.clamp(16, SourceLevel::Thumb.max_edge());
+    use crate::media::{SourceRef, source_info};
+    let edge = edge.clamp(16, SourceLevel::Preview.max_edge());
+    let level = SourceLevel::for_size(edge);
     let job = RenderJob {
         photo: photo.id,
-        level: SourceLevel::Thumb,
+        level,
         source: SourceRef::Smart { path: preview.to_path_buf() },
         origin: photo.source.clone(),
         info: source_info(photo),
@@ -564,6 +870,23 @@ impl Session {
     fn vision_index_path(&self, model: &str) -> Option<PathBuf> {
         let lib = self.library.as_ref().filter(|l| l.on_disk)?;
         Some(lib.dir.join("search").join(format!("{model}.bin")))
+    }
+
+    /// The text index file for `engine`: in the library's `search/` folder, else none (memory only).
+    fn vision_text_path(&self, engine: &str) -> Option<PathBuf> {
+        let lib = self.library.as_ref().filter(|l| l.on_disk)?;
+        Some(lib.dir.join("search").join(format!("text-{engine}.bin")))
+    }
+
+    /// Where to look for words in photos: when the user wants that, the models are installed and
+    /// something has been read.
+    fn vision_text_where(&self) -> Option<TextSpec> {
+        if !self.vision.text_ready() {
+            return None;
+        }
+        let (_, engine) = self.vision.reader_provider().ok()?;
+        let spec = TextSpec { path: self.vision_text_path(&engine), engine };
+        (with_text(&self.vision.shared, &spec, |ix| ix.len()).ok()? > 0).then_some(spec)
     }
 
     /// Photos of the library by the key their vectors are filed under.
@@ -603,6 +926,17 @@ impl Session {
             "mirrors": v.mirrors().len(),
             "download": v.download_status(),
             "index": v.job.as_ref().map(|j| j.json()),
+            "text": {
+                "available": v.text_available(),
+                "enabled": v.text,
+                "installed": v.text_installed(),
+                "dir": v.text_dir().map(|d| d.display().to_string()),
+                "indexed": v.shared.text_opened.load(Ordering::Relaxed).then(|| v.text_indexed()),
+                "sizeBytes": TEXT_BYTES,
+                "license": TEXT_LICENSE_NAME,
+                "licenseUrl": TEXT_LICENSE_URL,
+                "download": v.text_download_status(),
+            },
         })
     }
 
@@ -612,46 +946,77 @@ impl Session {
         if self.vision.job.as_ref().is_some_and(|j| !j.finished.load(Ordering::Relaxed)) {
             return Err("photos are already being indexed".into());
         }
-        let (provider, model, dim) = self.vision.provider()?;
-        let spec = IndexSpec { path: self.vision_index_path(&model), model, dim };
-        let have: HashSet<Key> = with_index(&self.vision.shared, &spec, |ix| ix.keys().copied().collect())?;
+        // describing needs the search model; reading text needs the user's yes and its own models.
+        // What can't run is left out; only when nothing can is that an error.
+        let semantic = self.vision.provider().map(|(p, model, dim)| {
+            let spec = IndexSpec { path: self.vision_index_path(&model), model, dim };
+            (p, spec)
+        });
+        let text = if self.vision.text {
+            self.vision.reader_provider().map(|(p, engine)| (p, TextSpec { path: self.vision_text_path(&engine), engine }))
+        } else {
+            Err(String::new())
+        };
+        if semantic.is_err() && text.is_err() {
+            return Err(semantic.err().unwrap_or_default());
+        }
+        let (semantic, text) = (semantic.ok(), text.ok());
+        let shared = self.vision.shared.clone();
+        let mut seen: HashSet<Key> = match &semantic {
+            Some((_, spec)) => with_index(&shared, spec, |ix| ix.keys().copied().collect())?,
+            None => HashSet::new(),
+        };
+        let mut seen_text: HashSet<Key> = match &text {
+            Some((_, spec)) => with_text(&shared, spec, |ix| ix.keys().copied().collect())?,
+            None => HashSet::new(),
+        };
         let want: Vec<PhotoId> = match ids {
             Some(ids) => ids,
             None => self.catalog.photos().filter(|p| p.in_library()).map(|p| p.id).collect(),
         };
-        let mut seen = have;
-        let mut work: Vec<(Key, RenderJob)> = Vec::new();
-        let mut failed = 0;
+        let (mut embed, mut read): (Vec<(Key, RenderJob)>, Vec<(Key, RenderJob)>) = (Vec::new(), Vec::new());
+        let (mut failed, edge) = (0, self.vision.text_edge);
         for id in want {
             let Some(key) = self.catalog.photo(id).filter(|p| p.in_library()).map(|p| Key::of(&content_key(p))) else { continue };
-            if !seen.insert(key) {
-                continue;
-            }
+            // (a photo is described and read once per content, whatever copies it has)
+            let describe = semantic.is_some() && seen.insert(key);
+            let reads = text.is_some() && seen_text.insert(key);
             // a neutral rendering: the photo as its file looks, whatever the user did to it; not
             // cached, so indexing doesn't fill the thumbnail cache with a second set
-            match self.variant_job(id, &DevelopSettings::default(), THUMB_EDGE) {
-                Some(mut job) => {
-                    job.cache = None;
-                    work.push((key, job));
+            if describe {
+                match self.variant_job(id, &DevelopSettings::default(), THUMB_EDGE) {
+                    Some(mut job) => {
+                        job.cache = None;
+                        embed.push((key, job));
+                    }
+                    None => failed += 1,
                 }
-                None => failed += 1,
+            }
+            if reads {
+                match self.variant_job_at(id, &DevelopSettings::default(), edge, SourceLevel::for_size(edge)) {
+                    Some(mut job) => {
+                        job.cache = None;
+                        read.push((key, job));
+                    }
+                    None => failed += 1,
+                }
             }
         }
-        let job = Arc::new(IndexJob { total: work.len() + failed, ..Default::default() });
+        let job = Arc::new(IndexJob { total: embed.len() + read.len() + failed, ..Default::default() });
         job.done.store(failed, Ordering::Relaxed);
         job.failed.store(failed, Ordering::Relaxed);
         self.vision.job = Some(job.clone());
         self.vision.job_reported = wait;
-        let shared = self.vision.shared.clone();
+        let plan = Plan { semantic, text, embed, read };
         if wait || !self.vision.background || cfg!(target_arch = "wasm32") {
-            run_index(&shared, &provider, &spec, work, &job);
+            run_index(&shared, plan, &job);
             self.vision.job_reported = true;
             return Ok(job.json());
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
             let j = job.clone();
-            let started = std::thread::Builder::new().name("lc-vision-index".into()).spawn(move || run_index(&shared, &provider, &spec, work, &j));
+            let started = std::thread::Builder::new().name("lc-vision-index".into()).spawn(move || run_index(&shared, plan, &j));
             if let Err(e) = started {
                 job.finished.store(true, Ordering::Relaxed);
                 return Err(format!("could not start indexing: {e}"));
@@ -692,26 +1057,36 @@ impl Session {
         if use_server {
             return self.vision_server_search(&query, limit, wait);
         }
-        if !local {
-            return Err(match (self.vision.local_available(), self.vision_signed_in()) {
+        // the words printed in photos need no description model; the look of them does
+        let text = self.vision_text_where();
+        let semantic: Result<(Provider, IndexSpec, usize), String> = if !local {
+            Err(match (self.vision.local_available(), self.vision_signed_in()) {
                 (true, _) => self.vision.provider().err().unwrap_or_default(),
                 (false, true) => "this server can't search by description yet: its search model isn't installed".into(),
                 (false, false) => {
                     "search by description needs a LightCraft server with the search model installed, and this library isn't signed in to one".into()
                 }
-            });
+            })
+        } else {
+            self.vision.provider().and_then(|(provider, model, dim)| {
+                let spec = IndexSpec { path: self.vision_index_path(&model), model, dim };
+                let known = with_index(&self.vision.shared, &spec, |ix| ix.len())?;
+                if known == 0 {
+                    return Err("no photos are indexed for search yet: run `vision.index` first".into());
+                }
+                Ok((provider, spec, known))
+            })
+        };
+        if text.is_none() && semantic.is_err() {
+            return Err(semantic.err().unwrap_or_default());
         }
-        let (provider, model, dim) = self.vision.provider()?;
-        let spec = IndexSpec { path: self.vision_index_path(&model), model, dim };
-        let known = with_index(&self.vision.shared, &spec, |ix| ix.len())?;
-        if known == 0 {
-            return Err("no photos are indexed for search yet: run `vision.index` first".into());
-        }
+        let known = semantic.as_ref().map_or_else(|_| self.vision.text_indexed(), |(_, _, n)| *n);
+        let at = Where { semantic: semantic.ok().map(|(p, spec, _)| (p, spec)), text };
         self.vision.search_seq += 1;
         let seq = self.vision.search_seq;
         let shared = self.vision.shared.clone();
         if wait || !self.vision.background || cfg!(target_arch = "wasm32") {
-            let hits = run_search(&shared, &provider, &spec, &query, limit)?;
+            let hits = run_search(&shared, &at, &query, limit)?;
             return Ok(self.apply_hits(&query, &hits));
         }
         #[cfg(not(target_arch = "wasm32"))]
@@ -719,7 +1094,7 @@ impl Session {
             let (tx, searching, q) = (self.vision.results.0.clone(), self.vision.searching.clone(), query.clone());
             searching.fetch_add(1, Ordering::SeqCst);
             let started = std::thread::Builder::new().name("lc-vision-search".into()).spawn(move || {
-                let hits = run_search(&shared, &provider, &spec, &q, limit);
+                let hits = run_search(&shared, &at, &q, limit);
                 let _ = tx.send(Searched { seq, query: q, hits });
                 let _ = searching.try_update(Ordering::SeqCst, Ordering::SeqCst, |n| Some(n.saturating_sub(1)));
             });
@@ -751,7 +1126,11 @@ impl Session {
         json!({
             "query": query,
             "source": source,
-            "photos": found.iter().map(|(id, score)| json!({"id": id.0, "score": (f64::from(*score) * 1e4).round() / 1e4})).collect::<Vec<_>>(),
+            // (a score from TEXT_SCORE_BASE up is a match on words printed in the photo)
+            "photos": found
+                .iter()
+                .map(|(id, score)| json!({"id": id.0, "score": (f64::from(*score) * 1e4).round() / 1e4, "text": *score >= TEXT_SCORE_BASE}))
+                .collect::<Vec<_>>(),
             "indexed": self.vision.indexed(),
             "libraryPhotos": self.vision_photo_count(),
         })
@@ -799,18 +1178,32 @@ impl Session {
     #[cfg(not(target_arch = "wasm32"))]
     fn vision_open_in_background(&mut self) {
         let sh = &self.vision.shared;
-        if sh.opened.load(Ordering::Relaxed) || self.vision.opening.load(Ordering::SeqCst) || !self.vision.background {
+        if self.vision.opening.load(Ordering::SeqCst) || !self.vision.background {
             return;
         }
-        let Ok((_, model, dim)) = self.vision.provider() else { return };
-        let spec = IndexSpec { path: self.vision_index_path(&model), model, dim };
-        if spec.path.as_ref().is_none_or(|p| !p.is_file()) {
+        // (an index that has no file yet has nothing to wait for)
+        let semantic = (!sh.opened.load(Ordering::Relaxed))
+            .then(|| self.vision.provider().ok())
+            .flatten()
+            .map(|(_, model, dim)| IndexSpec { path: self.vision_index_path(&model), model, dim })
+            .filter(|s| s.path.as_ref().is_some_and(|p| p.is_file()));
+        let text = (!sh.text_opened.load(Ordering::Relaxed) && self.vision.text_ready())
+            .then(|| self.vision.reader_provider().ok())
+            .flatten()
+            .map(|(_, engine)| TextSpec { path: self.vision_text_path(&engine), engine })
+            .filter(|s| s.path.as_ref().is_some_and(|p| p.is_file()));
+        if semantic.is_none() && text.is_none() {
             return;
         }
         let (shared, opening) = (sh.clone(), self.vision.opening.clone());
         opening.store(true, Ordering::SeqCst);
         let started = std::thread::Builder::new().name("lc-vision-open".into()).spawn(move || {
-            let _ = with_index(&shared, &spec, |_| ());
+            if let Some(spec) = &semantic {
+                let _ = with_index(&shared, spec, |_| ());
+            }
+            if let Some(spec) = &text {
+                let _ = with_text(&shared, spec, |_| ());
+            }
             opening.store(false, Ordering::SeqCst);
         });
         if started.is_err() {
@@ -832,11 +1225,14 @@ impl Session {
         if !idle {
             return;
         }
-        if let (Ok(mut m), Ok(mut ix)) = (sh.model.try_lock(), sh.index.try_lock()) {
+        if let (Ok(mut m), Ok(mut ix), Ok(mut r), Ok(mut tx)) = (sh.model.try_lock(), sh.index.try_lock(), sh.reader.try_lock(), sh.text.try_lock()) {
             *m = None;
             *ix = None;
+            *r = None;
+            *tx = None;
             sh.loaded.store(false, Ordering::SeqCst);
             sh.opened.store(false, Ordering::Relaxed);
+            sh.text_opened.store(false, Ordering::Relaxed);
             log::info!("the search model was unloaded after {} minutes without use", IDLE_UNLOAD.as_secs() / 60);
         }
     }
@@ -844,3 +1240,5 @@ impl Session {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_text;

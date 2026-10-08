@@ -7,7 +7,7 @@ use lightcraft_catalog::PhotoId;
 use serde_json::{Value, json};
 
 use super::{CommandSpec, always, bad, cmd, str_param};
-use crate::vision::{DEFAULT_LIMIT, LICENSE_NAME, LICENSE_URL, MODEL_BYTES};
+use crate::vision::{DEFAULT_LIMIT, LICENSE_NAME, LICENSE_URL, MODEL_BYTES, TEXT_BYTES, TEXT_LICENSE_NAME, TEXT_LICENSE_URL};
 
 fn ids_param(p: &Value) -> Option<Vec<PhotoId>> {
     p.get("ids").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_u64).map(PhotoId).collect())
@@ -20,7 +20,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Search Model Status",
             [],
             None,
-            "{} — whether this build can search by description, whether the model is installed (and where), loaded, busy, and how many photos are indexed → {available, installed, dir, loaded, loading, busy, searching, indexed (null until the index has been opened), photos, sizeBytes, license, licenseUrl, mirrors, download: {running, done, total, file, error, finished}, index: {total, done, failed, running, cancelled, error} | null}",
+            "{} — whether this build can search by description, whether the model is installed (and where), loaded, busy, and how many photos are indexed → {available, installed, dir, loaded, loading, busy, searching, indexed (null until the index has been opened), photos, sizeBytes, license, licenseUrl, mirrors, download: {running, done, total, file, error, finished}, index: {total, done, failed, running, cancelled, phase (describing|reading), error} | null, text: {available, enabled, installed, dir, indexed (photos read; null until opened), sizeBytes, license, licenseUrl, download: {…}}}",
             always,
             |s, _| Ok(s.vision_status())
         ),
@@ -60,7 +60,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Index Photos for Search",
             [],
             None,
-            "{ids?: [photo ids], wait?: bool} — compute the search vector of every library photo that has none yet (or of `ids`), from an unedited rendering, in the background unless `wait`; needs the model (vision.model.status) → {total, done, failed, running, cancelled, error}. Watch vision.indexProgress; vision.indexCancel stops it",
+            "{ids?: [photo ids], wait?: bool} — compute the search vector of every library photo that has none yet (or of `ids`), from an unedited rendering, and, when text search is on (vision.setText) and its models are installed, read the text in each photo too (slower: the reading phase); in the background unless `wait`; needs the search model or the text models (vision.model.status) → {total, done, failed, running, cancelled, phase, error}. Watch vision.indexProgress; vision.indexCancel stops it",
             always,
             |s, p| {
                 let wait = p.get("wait").and_then(Value::as_bool).unwrap_or(false);
@@ -103,6 +103,51 @@ pub fn specs() -> Vec<CommandSpec> {
                 Ok(json!({"enabled": on}))
             }
         ),
+        cmd!(
+            "vision.setText",
+            "Search the Text in Photos",
+            [],
+            None,
+            "{on: bool} — whether search also reads the text printed in photos (signs, menus, documents, screenshots; English, Chinese, Japanese and other languages) and finds photos by it. Off until turned on (saved with the library). Reading needs its own models (vision.text.download) and is slow: it happens when photos are indexed (vision.index) → {enabled}",
+            always,
+            |s, p| {
+                let on = p.get("on").and_then(Value::as_bool).ok_or_else(|| bad("vision.setText", "missing `on`"))?;
+                s.vision.text = on;
+                s.save_prefs()?;
+                Ok(json!({"enabled": on}))
+            }
+        ),
+        cmd!(
+            query "vision.text.download",
+            "Download Text-Reading Models",
+            [],
+            None,
+            "{acknowledged: true} — download the models that read the text in photos (PP-OCRv6, about 31 MB, Baidu's Apache License 2.0, not LightCraft's) in the background; only after the user agreed to it. Watch vision.model.status → text.download; vision.text.cancel stops it (it resumes later) → {started, installed, downloading}",
+            always,
+            |s, p| {
+                let c = "vision.text.download";
+                if p.get("acknowledged").and_then(Value::as_bool) != Some(true) {
+                    return Err(bad(
+                        c,
+                        format!(
+                            "the text-reading models are a {:.0} MB download under the {TEXT_LICENSE_NAME} ({TEXT_LICENSE_URL}): pass `acknowledged: true` once the user has agreed to download them",
+                            TEXT_BYTES as f64 / 1e6
+                        ),
+                    ));
+                }
+                let started = s.vision.start_text_download().map_err(|e| bad(c, e))?;
+                Ok(json!({"started": started, "installed": s.vision.text_installed(), "downloading": s.vision.text_download_status()["running"]}))
+            }
+        ),
+        cmd!(
+            query "vision.text.cancel",
+            "Cancel Text-Reading Models Download",
+            [],
+            None,
+            "{} — stop the text-reading models download (what has arrived is kept, and a new download resumes from it) → {cancelled}",
+            always,
+            |s, _| Ok(json!({"cancelled": s.vision.cancel_text_download()}))
+        ),
         cmd!(query "vision.indexCancel", "Cancel Search Indexing", [], None, "{}", always, |s, _| {
             if let Some(j) = s.vision.job() {
                 j.cancel.store(true, Ordering::Relaxed);
@@ -114,7 +159,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Search by Description",
             [],
             None,
-            "{q: text, limit?: 1..2000 (200), wait?: bool, source?: auto|local|server (auto)} — the library photos that best match a description (\"a dog on a beach at sunset\", in any language the model reads), best first, as the view's filter (Clear Filters to go back). `local` uses this device's model and index (vision.model.status, vision.index); `server` asks the sync server, which needs no model here; `auto` uses this device's index when it covers the library, else the server's. In the app the search runs in the background and the view updates when it is done → {query, source, photos: [{id, score}], indexed, libraryPhotos} (with `wait`; else {status: \"searching\"})",
+            "{q: text, limit?: 1..2000 (200), wait?: bool, source?: auto|local|server (auto)} — the library photos that best match a description (\"a dog on a beach at sunset\", in any language the model reads), best first, as the view's filter (Clear Filters to go back). `local` uses this device's model and index (vision.model.status, vision.index); `server` asks the sync server, which needs no model here; `auto` uses this device's index when it covers the library, else the server's. With text search on (vision.setText), photos with the words printed in them come first (`text: true`, any language the reader knows; a typo in a long word still matches). In the app the search runs in the background and the view updates when it is done → {query, source, photos: [{id, score, text}], indexed, libraryPhotos} (with `wait`; else {status: \"searching\"})",
             always,
             |s, p| {
                 let c = "library.search";

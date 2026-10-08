@@ -13,12 +13,14 @@ use lightcraft_catalog::PhotoId;
 use lightcraft_vision::Key;
 use serde_json::{Value, json};
 
-use super::{IndexSpec, with_index};
+use super::{IndexSpec, TextSpec, with_index, with_text};
 use crate::Session;
 use crate::sync::{Body, Done, SyncState};
 
 /// Vectors in one upload (`records × (16 + 2 × dim)` bytes: ~6 MB for SigLIP 2).
 pub const SHARE_CHUNK: usize = 4000;
+/// Texts in one upload (a few KB each at most; usually a few hundred bytes).
+pub const SHARE_CHUNK_TEXT: usize = 2000;
 /// How long the server's answer to the status question is trusted.
 const STATUS_TTL: Duration = Duration::from_secs(60);
 /// Automatic sharing waits at least this long between runs.
@@ -35,6 +37,10 @@ pub(crate) enum Aux {
     Keys,
     /// `POST /api/index/embeddings`: one piece of the local index (`path`: the file sent).
     Upload { path: PathBuf, keys: Vec<Key> },
+    /// `GET /api/index/text/keys`: the photos whose text the server has.
+    TextKeys,
+    /// `POST /api/index/text`: one piece of the text this device read.
+    TextUpload { path: PathBuf, keys: Vec<Key> },
 }
 
 /// A search the server answered, on its way to the view.
@@ -48,13 +54,16 @@ pub(crate) struct ServerHits {
 #[derive(Default)]
 pub(crate) struct Share {
     pub running: bool,
+    /// What is sent: the vectors, and the text that was read.
     spec: Option<IndexSpec>,
+    text: Option<TextSpec>,
     have: HashSet<Key>,
-    /// Vectors sent so far in this run.
+    /// Vectors and texts sent so far in this run.
     pub sent: usize,
     pub error: Option<String>,
-    /// The index's size when this run started (what automatic sharing compares with).
+    /// The indexes' sizes when this run started (what automatic sharing compares with).
     started_len: usize,
+    started_text: usize,
 }
 
 /// What this device knows about the server's search.
@@ -68,8 +77,9 @@ pub(crate) struct Remote {
     /// The newest search that was sent to the server and hasn't been answered.
     pub pending_seq: Option<u64>,
     pub share: Share,
-    /// The index size that was last sent completely.
+    /// The index sizes that were last sent completely.
     shared_len: usize,
+    shared_text: usize,
     share_at: Option<Instant>,
 }
 
@@ -81,7 +91,14 @@ impl Remote {
 
     /// The server can search now.
     pub fn ready(&self) -> bool {
-        self.supported() && self.status.as_ref().and_then(|s| s["installed"].as_bool()) == Some(true)
+        // (a server that only has text, read by itself or sent by a desktop, still answers with
+        // the photos that have the words)
+        let on = |v: &Value| v.as_bool() == Some(true);
+        self.supported()
+            && self
+                .status
+                .as_ref()
+                .is_some_and(|s| on(&s["installed"]) || on(&s["text"]["installed"]) || s["text"]["indexed"].as_u64().unwrap_or(0) > 0)
     }
 
     /// Takes `status` as the server's answer (tests of the UI).
@@ -191,15 +208,36 @@ impl Session {
         if self.vision.remote.share.running {
             return Err("the search data is already being sent".into());
         }
-        let (model, dim) = self.vision.spec_only()?;
-        let spec = IndexSpec { path: self.vision_index_path(&model), model, dim };
-        let len = with_index(&self.vision.shared, &spec, |ix| ix.len())?;
-        if len == 0 {
+        // what there is to send: vectors, and the text that was read
+        let vectors = self.vision.spec_only().ok().map(|(model, dim)| IndexSpec { path: self.vision_index_path(&model), model, dim });
+        let len = match &vectors {
+            Some(spec) => with_index(&self.vision.shared, spec, |ix| ix.len())?,
+            None => 0,
+        };
+        let text = self
+            .vision
+            .reader_provider()
+            .ok()
+            .filter(|_| self.vision.text)
+            .map(|(_, engine)| TextSpec { path: self.vision_text_path(&engine), engine });
+        let text_len = match &text {
+            Some(spec) => with_text(&self.vision.shared, spec, |ix| ix.len())?,
+            None => 0,
+        };
+        if len == 0 && text_len == 0 {
             return Err("nothing to send yet: index the photos first (`vision.index`)".into());
         }
         let share = &mut self.vision.remote.share;
-        *share = Share { running: true, spec: Some(spec), started_len: len, ..Default::default() };
-        if let Err(e) = self.vision_aux("GET", "/api/index/embeddings/keys", Body::Empty, Aux::Keys) {
+        *share = Share {
+            running: true,
+            spec: vectors.filter(|_| len > 0),
+            text: text.filter(|_| text_len > 0),
+            started_len: len,
+            started_text: text_len,
+            ..Default::default()
+        };
+        let started = if len > 0 { self.vision_aux("GET", "/api/index/embeddings/keys", Body::Empty, Aux::Keys) } else { self.share_text_start() };
+        if let Err(e) = started {
             self.vision.remote.share.running = false;
             return Err(e);
         }
@@ -233,6 +271,7 @@ impl Session {
                 self.vision.remote.arrived.push(ServerHits { seq, query, result });
             }
             Aux::Keys => self.share_keys(st, d),
+            Aux::TextKeys => self.share_text_keys(st, d),
             Aux::Upload { path, keys } => {
                 let _ = std::fs::remove_file(&path);
                 if !d.ok() {
@@ -244,6 +283,17 @@ impl Session {
                 // (what the server skipped counts as handled too: it would be skipped again)
                 r.share.have.extend(keys);
                 self.share_next(st);
+            }
+            Aux::TextUpload { path, keys } => {
+                let _ = std::fs::remove_file(&path);
+                if !d.ok() {
+                    self.share_failed(why(d));
+                    return;
+                }
+                let r = &mut self.vision.remote;
+                r.share.sent += keys.len();
+                r.share.have.extend(keys);
+                self.share_next_text(st);
             }
         }
     }
@@ -306,8 +356,12 @@ impl Session {
         };
         if keys.is_empty() {
             let r = &mut self.vision.remote;
-            r.share.running = false;
             r.shared_len = r.share.started_len;
+            r.share.have.clear();
+            // (then the text that was read, if there is any)
+            if let Err(e) = self.share_text_start() {
+                self.share_failed(e);
+            }
             return;
         }
         let dir = self.library.as_ref().filter(|l| l.on_disk).map_or_else(std::env::temp_dir, |l| l.dir.join("search"));
@@ -316,6 +370,61 @@ impl Session {
             return self.share_failed(format!("{}: {e}", path.display()));
         }
         queue(st, "POST", "/api/index/embeddings", Body::File(path.to_string_lossy().into_owned()), Aux::Upload { path, keys });
+    }
+
+    /// Starts sending the text that was read (when there is any): asks the server what it has. Ends
+    /// the run when there is none.
+    fn share_text_start(&mut self) -> Result<(), String> {
+        if self.vision.remote.share.text.is_none() {
+            let r = &mut self.vision.remote;
+            r.share.running = false;
+            r.shared_text = r.share.started_text;
+            return Ok(());
+        }
+        self.vision_aux("GET", "/api/index/text/keys", Body::Empty, Aux::TextKeys)
+    }
+
+    /// The server's text keys arrived: send what it lacks.
+    fn share_text_keys(&mut self, st: &mut SyncState, d: &Done) {
+        if !d.ok() {
+            return self.share_failed(why(d));
+        }
+        let Ok(v) = serde_json::from_str::<Value>(&d.body) else { return self.share_failed("the server's answer isn't what was expected".into()) };
+        let Some(spec) = self.vision.remote.share.text.clone() else { return };
+        let engine = v["engine"].as_str().unwrap_or_default();
+        if engine != spec.engine {
+            return self.share_failed(format!("the server reads text with {engine}, not {}: nothing was sent", spec.engine));
+        }
+        self.vision.remote.share.have = v["keys"].as_array().into_iter().flatten().filter_map(|k| k.as_str().and_then(Key::from_hex)).collect();
+        self.share_next_text(st);
+    }
+
+    /// Sends the next piece of the text that was read, or ends the run.
+    fn share_next_text(&mut self, st: &mut SyncState) {
+        let Some(spec) = self.vision.remote.share.text.clone() else { return };
+        let have = std::mem::take(&mut self.vision.remote.share.have);
+        let exported = with_text(&self.vision.shared, &spec, |ix| {
+            let bytes = ix.export(|k| have.contains(k), SHARE_CHUNK_TEXT);
+            let keys: Vec<Key> = ix.keys().filter(|k| !have.contains(k)).take(SHARE_CHUNK_TEXT).copied().collect();
+            (bytes, keys)
+        });
+        self.vision.remote.share.have = have;
+        let (bytes, keys) = match exported {
+            Ok(x) => x,
+            Err(e) => return self.share_failed(e),
+        };
+        if keys.is_empty() {
+            let r = &mut self.vision.remote;
+            r.share.running = false;
+            r.shared_text = r.share.started_text;
+            return;
+        }
+        let dir = self.library.as_ref().filter(|l| l.on_disk).map_or_else(std::env::temp_dir, |l| l.dir.join("search"));
+        let path = dir.join(format!("sending-{}.part", crate::vision::next_id()));
+        if let Err(e) = std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(&path, &bytes)) {
+            return self.share_failed(format!("{}: {e}", path.display()));
+        }
+        queue(st, "POST", "/api/index/text", Body::File(path.to_string_lossy().into_owned()), Aux::TextUpload { path, keys });
     }
 
     /// Frame-loop upkeep for the server side: learn whether the server can search, apply the
@@ -342,7 +451,7 @@ impl Session {
             && self.vision_signed_in()
             && r.supported()
             && !r.share.running
-            && self.vision.indexed() > r.shared_len
+            && (self.vision.indexed() > r.shared_len || self.vision.text_indexed() > r.shared_text)
             && r.share_at.is_none_or(|t| t.elapsed() >= SHARE_EVERY);
         if due {
             self.vision.remote.share_at = Some(Instant::now());

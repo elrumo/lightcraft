@@ -64,11 +64,58 @@ impl Embedder for FakeEmbedder {
     }
 }
 
+pub const FAKE_READER_ID: &str = "fake-reader";
+
+/// A stand-in for the text reader: a photo "says" what its dominant colour suggests (a red photo
+/// has a stop sign in it, a blue one a harbour hotel, a green one a café; grey ones have no text).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct FakeReader;
+
+impl crate::TextReader for FakeReader {
+    fn engine(&self) -> &str {
+        FAKE_READER_ID
+    }
+
+    fn text(&self, img: &Rgba8) -> Result<String, Error> {
+        if img.data.is_empty() {
+            return Err(Error::Invalid("image size"));
+        }
+        let mut sum = [0u64; 3];
+        for p in &img.data {
+            for (s, &c) in sum.iter_mut().zip(p) {
+                *s += u64::from(c);
+            }
+        }
+        let [r, g, b] = sum;
+        let margin = img.data.len() as u64 * 30;
+        Ok(if r > g + margin && r > b + margin {
+            "STOP\nOpen 24 hours"
+        } else if b > r + margin && b > g + margin {
+            "Harbour Hotel\nRoom 12"
+        } else if g > r + margin && g > b + margin {
+            "Café Verde"
+        } else {
+            ""
+        }
+        .to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{EmbeddingIndex, Key};
     use lightcraft_raster::Image;
+
+    #[test]
+    fn the_fake_reader_reads_a_sign_off_a_coloured_photo() {
+        use crate::TextReader;
+        let r = FakeReader;
+        assert!(r.text(&flat([220, 20, 20, 255])).unwrap().contains("STOP"));
+        assert!(r.text(&flat([20, 40, 220, 255])).unwrap().contains("Harbour"));
+        assert!(r.text(&flat([128, 128, 128, 255])).unwrap().is_empty());
+        assert!(r.text(&Image { width: 0, height: 0, data: vec![] }).is_err());
+    }
 
     fn flat(px: [u8; 4]) -> Rgba8 {
         Image { width: 4, height: 4, data: vec![px; 16] }

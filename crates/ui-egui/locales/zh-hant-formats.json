@@ -123,5 +123,6 @@
   "Add {n}": "加入 {n} 張",
   "Getting your photos ready to search: {done} of {total}": "正在準備可搜尋的照片：{done}/{total}",
   "{indexed} of {total} photos can be searched.": "{indexed}/{total} 張照片可供搜尋",
-  "Your server has {indexed} of {total} photos ready to search.": "伺服器上已有 {indexed}/{total} 張照片可供搜尋"
+  "Your server has {indexed} of {total} photos ready to search.": "伺服器上已有 {indexed}/{total} 張照片可供搜尋",
+  "Reading the text in your photos: {done} of {total}": "正在讀取照片中的文字：{done}/{total}"
 }

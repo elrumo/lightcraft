@@ -1,4 +1,4 @@
-# Search by description (and, next, People and text in photos)
+# Search by description and by the text in photos (and, next, People)
 
 Describe a photo in your own words — "a dog on a beach at sunset", "雪の山", "红色的汽车" — and LightCraft shows the
 photos that look most like it, best first. It works on the desktop app, on the self-hosted sync server (so the web build,
@@ -24,7 +24,9 @@ to its licence, and everything else works without it.
   | `vision.model.download {acknowledged: true}` / `vision.model.cancel` | download (resumable, SHA-256-checked) or stop |
   | `vision.index {wait?, ids?}` / `vision.indexProgress` / `vision.indexCancel` | embed the photos that have no vector yet |
   | `library.search {q, limit?, wait?, source?}` | `source`: `local`, `server`, or `auto` (this device's index when it covers the library, else the server's) |
-  | `vision.share {wait?}` / `vision.setShare {on}` | send this device's vectors to the server, once or whenever new photos are indexed |
+  | `vision.share {wait?}` / `vision.setShare {on}` | send this device's vectors (and text) to the server, once or whenever new photos are indexed |
+  | `vision.setText {on}` | also read and search the text printed in photos (off until turned on; saved with the library) |
+  | `vision.text.download {acknowledged: true}` / `vision.text.cancel` | download (resumable, SHA-256-checked) or stop the text-reading models |
 
 ## How it works
 
@@ -40,13 +42,44 @@ loading the model takes a few seconds (the first text pass compiles GPU kernels,
 
 The model and the index leave memory after ten idle minutes (about 1.9 GB while the server has it loaded).
 
+## Text in photos
+
+Signs, menus, receipts, documents, screenshots, slides: with **Also find words in photos** ticked in the Describe panel
+(or `vision.setText`), the words printed in a photo are found by searching for them, in English, Chinese (Simplified and
+Traditional), Japanese and 46 other languages. It is a separate, opt-in step with its own small download (about 31 MB:
+**PP-OCRv6 small** from PaddleOCR, Baidu, Apache-2.0, a detector plus a recogniser, run by a pure-Rust ONNX runtime
+(`rten`)), shown with its licence before anything is fetched. Nothing is read until you tick the box.
+
+- **Reading is slow** (a second or so per photo on a laptop, more on a server): it runs in the background after the photos
+  are described, from a 1280 px unedited rendering, and can be stopped (**Stop**) and resumed; photos that were read are
+  never read again (kept by content hash in `<library>/search/text-<engine>.bin`, derived data like the vectors).
+- **Searching:** the photos that have *every* word of your query in their text come first (`text: true` in the result,
+  score 2 and up), then the photos that look like it. Matching is forgiving, because OCR is: case, accents and full-width
+  forms don't matter, hiragana and katakana are the same, one wrong letter in a word of five or more still matches, and
+  Chinese/Japanese match as phrases or when most of their character pairs are there. Text search works without the
+  description model.
+- **On the server:** with the models installed (`lightcraft-server model download --accept-licences --text`) the server reads
+  each photo's smart preview, 25 photos at a time so new photos are never kept waiting, and `GET /api/search` merges the
+  words and the looks; a desktop can send what it read (`vision.share`, same opt-in as the vectors) — the server keeps text
+  for photos of that user's library only and refuses another reader's or a damaged upload whole. A server that only has text
+  (sent by a desktop) still answers.
+
+```text
+GET  /api/index/text/keys          {engine, keys: [content hash]}          whose text the server has
+POST /api/index/text               text a device read (checked whole)
+```
+
+Known limits: text upside down isn't read (there is no orientation classifier yet) and neither is curved text; very small
+print needs the original's resolution; handwriting is hit and miss. There is no layout analysis (a line is a line), and
+no "copy the text" action yet.
+
 ## On the server
 
 The server indexes each user's photos from the previews it already keeps (a worker wakes when a preview arrives, a folder
 scan builds one, and every 30 s) and answers searches:
 
 ```text
-GET  /api/search/status            {available, installed, model, dim, indexed, total}
+GET  /api/search/status            {available, installed, model, dim, indexed, total, text: {installed, engine, indexed}}
 GET  /api/search?q=…&limit=…       {query, ids: [photo id], scores: [f32], indexed, total}
 GET  /api/index/embeddings/keys    {model, dim, keys: [content hash]}      what the server already has
 POST /api/index/embeddings         vectors a device computed (checked whole; see below)
@@ -77,7 +110,7 @@ reverse proxy or Tailscale, see `sync.md`).
   scores are small numbers; a calibrated cut-off needs a real-library benchmark we haven't run.
 - Quality has been checked on procedural images and a handful of portraits, not on a large real library. Gender and similar
   attributes in non-English queries are weak spots of this model class.
-- It does not read text in photos (signs, documents, screenshots): OCR is planned as its own step.
+- Reading text is slow (see above) and only as good as the print: a photo of a crowded street won't give up its shop signs.
 - Brute-force search (exact, one thread): fine to several hundred thousand photos; an approximate index would be needed
   beyond about a million.
 - iOS runs no model on the device (memory budget); it searches through the server.

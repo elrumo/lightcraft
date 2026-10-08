@@ -45,7 +45,7 @@ const USAGE: &str = "usage:
   lightcraft-server folder remove NAME FOLDER
   lightcraft-server folder list [NAME]
   lightcraft-server scan [NAME]                (read the library folders now)
-  lightcraft-server model status|download [--accept-licences] [--vision-dir DIR]   (the search model: about 1.5 GB, Google's Apache License 2.0)
+  lightcraft-server model status|download [--accept-licences] [--text] [--vision-dir DIR]   (the search model: about 1.5 GB, Google's Apache License 2.0; --text adds the models that read the text in photos: about 31 MB, Baidu's Apache License 2.0)
   lightcraft-server gc [--dry-run]
   lightcraft-server health                     (is the server answering? exit status)
 options (any command): --data DIR (default $LIGHTCRAFT_DATA or ./lightcraft-data)
@@ -227,18 +227,29 @@ fn run(args: &[String]) -> Result<(), String> {
         }
         ["model", "download"] => {
             let dir = vision_dir(args, &data);
-            if lightcraft_vision::siglip::is_model_dir(&dir) {
-                println!("the search model is installed in {}", dir.display());
+            let (text, accepted) = (args.iter().any(|a| a == "--text"), args.iter().any(|a| a == "--accept-licences"));
+            let mirrors = dir.parent().map(|p| p.join("siglip2-mirrors.txt"));
+            let search_missing = !lightcraft_vision::siglip::is_model_dir(&dir);
+            let text_missing = text && !lightcraft_vision::ocr::is_model_dir(&dir.join(lightcraft_engine::vision::TEXT_DIR));
+            if !search_missing && !text_missing {
+                println!("the model{} installed in {}", if text { "s are" } else { " is" }, dir.display());
                 return Ok(());
             }
-            if !args.iter().any(|a| a == "--accept-licences") {
+            if !accepted {
                 return Err(format!(
-                    "{}\n\nThe model is not part of LightCraft. Downloading it means accepting that licence; add --accept-licences to download it.",
+                    "{}\n\nThe models are not part of LightCraft. Downloading them means accepting those licences; add --accept-licences to download them.",
                     lightcraft_server::vision::model_status(&dir)
                 ));
             }
-            lightcraft_server::vision::download_model(&dir, dir.parent().map(|p| p.join("siglip2-mirrors.txt")).as_deref())?;
-            println!("the search model is installed in {}; the running server finds it within a minute", dir.display());
+            if search_missing {
+                lightcraft_server::vision::download_model(&dir, mirrors.as_deref())?;
+                println!("the search model is installed in {}", dir.display());
+            }
+            if text_missing {
+                lightcraft_server::vision::download_text_models(&dir, mirrors.as_deref())?;
+                println!("the text-reading models are installed in {}", dir.join(lightcraft_engine::vision::TEXT_DIR).display());
+            }
+            println!("the running server finds them within a minute");
             Ok(())
         }
         ["health"] => {

@@ -100,7 +100,12 @@ enum Panel {
     Indexing {
         done: usize,
         total: usize,
+        /// Reading the text in photos (after describing them).
+        reading: bool,
     },
+    /// Asking whether to download the models that read the text in photos.
+    TextInstall,
+    TextDownloading,
     Partial {
         indexed: usize,
         total: usize,
@@ -124,6 +129,8 @@ impl Panel {
             Panel::Install => "install",
             Panel::Downloading => "downloading",
             Panel::Indexing { .. } => "indexing",
+            Panel::TextInstall => "textInstall",
+            Panel::TextDownloading => "textDownloading",
             Panel::Partial { .. } => "partial",
             Panel::ServerNoModel => "serverNoModel",
             Panel::ServerIndexing { .. } => "serverIndexing",
@@ -162,13 +169,37 @@ pub fn frame(app: &mut LightcraftApp, ctx: &egui::Context) {
             (None, false) => {}
         }
     }
+    // the text-reading models arrived: say so, and start reading
+    let text_download = app.session.vision.text_download_status();
+    let text_downloading = text_download["running"].as_bool() == Some(true);
+    if text_downloading {
+        ctx.request_repaint_after(std::time::Duration::from_millis(250));
+    }
+    if app.ui.ai_text_downloading && !text_downloading {
+        app.ui.ai_text_downloading = false;
+        match (text_download["error"].as_str(), text_download["finished"].as_bool() == Some(true)) {
+            (Some(e), _) if e.contains("cancelled") => {
+                let _ = app.run("vision.setText", json!({"on": false}));
+            }
+            (Some(e), _) => {
+                let _ = app.run("vision.setText", json!({"on": false}));
+                app.ui.ai_search_error = Some(format!("{} {e}", crate::i18n::tr("The download didn't work:")));
+            }
+            (None, true) => {
+                app.toast_for(ctx, crate::i18n::tr("Text search is ready: your photos are being read."), 4.0);
+                let _ = app.run("vision.index", json!({}));
+            }
+            (None, false) => {}
+        }
+    }
     // switched on with the model in place: index what isn't yet, once
     let v = &app.session.vision;
     let idle = v.job().is_none_or(|j| j.finished.load(std::sync::atomic::Ordering::Relaxed));
     if app.ui.ai_search && !app.ui.ai_search_autostarted && v.installed() && idle && !downloading {
         app.ui.ai_search_autostarted = true;
         let (indexed, total) = (v.indexed(), total_photos(app));
-        if indexed < total {
+        let unread = app.session.vision.text_ready() && app.session.vision.text_indexed() < total;
+        if indexed < total || unread {
             let _ = app.run("vision.index", json!({}));
         }
     }
@@ -194,6 +225,10 @@ pub fn panel(app: &mut LightcraftApp, ctx: &egui::Context, field: Rect) {
         Panel::Error(e)
     } else if download["running"].as_bool() == Some(true) {
         Panel::Downloading
+    } else if app.session.vision.text_download_status()["running"].as_bool() == Some(true) {
+        Panel::TextDownloading
+    } else if app.ui.ai_text_offer && !app.session.vision.text_installed() {
+        Panel::TextInstall
     } else if !installed && !server_ready {
         if local { Panel::Install } else { Panel::ServerNoModel }
     } else if !installed {
@@ -205,7 +240,8 @@ pub fn panel(app: &mut LightcraftApp, ctx: &egui::Context, field: Rect) {
             _ => return,
         }
     } else if let Some((done, total)) = running_job {
-        Panel::Indexing { done, total }
+        let reading = app.session.vision.job().is_some_and(|j| j.reading.load(std::sync::atomic::Ordering::Relaxed));
+        Panel::Indexing { done, total, reading }
     } else if searching {
         Panel::Searching
     } else if indexed < total {
@@ -241,6 +277,30 @@ fn share_row(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     register(ui.ctx(), "check:describeShare", r.rect);
     if r.changed() {
         let _ = app.run("vision.setShare", json!({"on": on}));
+    }
+}
+
+/// For a device that has the model: whether search also reads the words printed in photos. Ticking
+/// it asks first when the models (a small download of their own) aren't there yet.
+fn text_row(app: &mut LightcraftApp, ui: &mut egui::Ui) {
+    let v = &app.session.vision;
+    if !v.local_available() || !v.text_available() {
+        return;
+    }
+    let mut on = v.text || app.ui.ai_text_offer;
+    let r = crate::widgets::check(ui, &mut on, crate::i18n::tr("Also find words in photos (signs, menus, documents)"));
+    register(ui.ctx(), "check:describeText", r.rect);
+    if !r.changed() {
+        return;
+    }
+    if !on {
+        app.ui.ai_text_offer = false;
+        let _ = app.run("vision.setText", json!({"on": false}));
+    } else if app.session.vision.text_installed() {
+        let _ = app.run("vision.setText", json!({"on": true}));
+        let _ = app.run("vision.index", json!({}));
+    } else {
+        app.ui.ai_text_offer = true;
     }
 }
 
@@ -307,9 +367,13 @@ fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, which: &Panel, download: &se
             }
             ui.label(egui::RichText::new(crate::i18n::tr("The download continues if you close this, and resumes if interrupted.")).color(t.text_dim));
         }
-        Panel::Indexing { done, total } => {
+        Panel::Indexing { done, total, reading } => {
             let frac = if *total > 0 { *done as f32 / *total as f32 } else { 0.0 };
-            let text = crate::i18n::tr_format!("Getting your photos ready to search: {done} of {total}", done = done, total = total);
+            let text = if *reading {
+                crate::i18n::tr_format!("Reading the text in your photos: {done} of {total}", done = done, total = total)
+            } else {
+                crate::i18n::tr_format!("Getting your photos ready to search: {done} of {total}", done = done, total = total)
+            };
             let r = ui.add(egui::ProgressBar::new(frac).text(text));
             register(ui.ctx(), "progress:describeIndex", r.rect);
             let r = ui.button(crate::i18n::tr("Stop"));
@@ -321,6 +385,7 @@ fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, which: &Panel, download: &se
         }
         Panel::Partial { indexed, total } => {
             ui.label(crate::i18n::tr_format!("{indexed} of {total} photos can be searched.", indexed = indexed, total = total));
+            text_row(app, ui);
             share_row(app, ui);
             let r = ui.button(crate::i18n::tr("Prepare the Rest"));
             register(ui.ctx(), "button:describeIndex", r.rect);
@@ -341,10 +406,74 @@ fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, which: &Panel, download: &se
             ui.label(crate::i18n::tr_format!("Your server has {indexed} of {total} photos ready to search.", indexed = indexed, total = total));
             ui.label(egui::RichText::new(crate::i18n::tr("It keeps going in the background; search the ones that are ready now.")).color(t.text_dim));
         }
+        Panel::TextInstall => {
+            use lightcraft_engine::vision::{TEXT_BYTES, TEXT_LICENSE_NAME, TEXT_LICENSE_URL};
+            ui.label(crate::i18n::tr(
+                "Finding words in photos uses two small AI models that read text, in English, Chinese, Japanese and many other languages. They aren't part of LightCraft, and everything else works without them.",
+            ));
+            let dir = app.session.vision.text_dir().map(|d| d.display().to_string()).unwrap_or_default();
+            ui.label(format!(
+                "{} {:.0} MB, {} {dir}",
+                crate::i18n::tr("A one-time download of about"),
+                TEXT_BYTES as f64 / 1e6,
+                crate::i18n::tr("saved in")
+            ));
+            ui.label(
+                egui::RichText::new(format!(
+                    "{} {TEXT_LICENSE_NAME} — {}",
+                    crate::i18n::tr("Licence:"),
+                    crate::i18n::tr("Baidu's terms, not LightCraft's. Downloading them means accepting them.")
+                ))
+                .color(t.text_label),
+            );
+            ui.label(
+                egui::RichText::new(crate::i18n::tr(
+                    "Your photos are then read on this computer, a few at a time in the background; it takes a while. Nothing is sent anywhere unless you choose to share it with your own server.",
+                ))
+                .color(t.text_dim),
+            );
+            let r = ui.link(crate::i18n::tr("Read the licence")).on_hover_text(TEXT_LICENSE_URL);
+            register(ui.ctx(), "link:describeTextLicense", r.rect);
+            if r.clicked() {
+                let _ = crate::links::open(app, TEXT_LICENSE_URL);
+            }
+            ui.horizontal(|ui| {
+                let r = ui.button(crate::i18n::tr("Download and Turn On"));
+                register(ui.ctx(), "button:describeTextDownload", r.rect);
+                if r.clicked() {
+                    match app.run("vision.text.download", json!({"acknowledged": true})) {
+                        Ok(_) => {
+                            app.ui.ai_text_offer = false;
+                            app.ui.ai_text_downloading = true;
+                            let _ = app.run("vision.setText", json!({"on": true}));
+                        }
+                        Err(e) => app.ui.ai_search_error = Some(plain(&e)),
+                    }
+                }
+                let r = ui.button(crate::i18n::tr("Not Now"));
+                register(ui.ctx(), "button:describeTextLater", r.rect);
+                if r.clicked() {
+                    app.ui.ai_text_offer = false;
+                }
+            });
+        }
+        Panel::TextDownloading => {
+            let d = app.session.vision.text_download_status();
+            let (done, total) = (d["done"].as_u64().unwrap_or(0), d["total"].as_u64().unwrap_or(0));
+            let frac = if total > 0 { done as f64 / total as f64 } else { 0.0 };
+            let r = ui.add(egui::ProgressBar::new(frac as f32).text(format!("{:.1} / {:.1} MB", done as f64 / 1e6, total as f64 / 1e6)));
+            register(ui.ctx(), "progress:describeTextDownload", r.rect);
+            let r = ui.button(crate::i18n::tr("Cancel Download"));
+            register(ui.ctx(), "button:describeTextCancel", r.rect);
+            if r.clicked() {
+                app.session.vision.cancel_text_download();
+            }
+        }
         Panel::Searching => {
             ui.label(egui::RichText::new(crate::i18n::tr("Searching…")).color(t.text_label));
         }
         Panel::Hint => {
+            text_row(app, ui);
             share_row(app, ui);
             ui.label(
                 egui::RichText::new(crate::i18n::tr("Describe what you're looking for, for example “a dog on a beach at sunset”, and press Return."))

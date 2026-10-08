@@ -8,8 +8,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use lightcraft_server::{Config, Server, accounts};
+use lightcraft_vision::fake::FakeReader;
 use lightcraft_vision::fake::{FAKE_DIM, FAKE_ID, FakeEmbedder};
-use lightcraft_vision::{Embedder, EmbeddingIndex, Key};
+use lightcraft_vision::{Embedder, EmbeddingIndex, Key, TextIndex, TextReader};
 use serde_json::{Value, json};
 
 fn temp(tag: &str) -> PathBuf {
@@ -40,10 +41,15 @@ struct Fixture {
 }
 
 fn start(data: &Path, model: Option<Arc<dyn Embedder>>) -> Server {
+    start_with(data, model, None)
+}
+
+fn start_with(data: &Path, model: Option<Arc<dyn Embedder>>, reader: Option<Arc<dyn TextReader>>) -> Server {
     let mut cfg = Config::new(data, "127.0.0.1:0");
     cfg.scan_interval = None;
     cfg.preview_threads = 1;
     cfg.embedder = model;
+    cfg.text_reader = reader;
     // (never the machine's real model folder)
     cfg.vision_dir = Some(data.join("no-model-here"));
     Server::start(cfg).unwrap()
@@ -51,6 +57,10 @@ fn start(data: &Path, model: Option<Arc<dyn Embedder>>) -> Server {
 
 /// A server with `ann`, whose library folder holds a red, a green, a blue and a grey photo, and `bob`.
 fn fixture(tag: &str, model: Option<Arc<dyn Embedder>>) -> Fixture {
+    fixture_with(tag, model, None)
+}
+
+fn fixture_with(tag: &str, model: Option<Arc<dyn Embedder>>, reader: Option<Arc<dyn TextReader>>) -> Fixture {
     let root = temp(tag);
     let nas = root.join("nas");
     for (name, rgb) in [("red", [220, 20, 20]), ("green", [20, 200, 40]), ("blue", [20, 40, 220]), ("grey", [128, 128, 128])] {
@@ -60,7 +70,7 @@ fn fixture(tag: &str, model: Option<Arc<dyn Embedder>>) -> Fixture {
     accounts::set_user(&data, "ann", "correct horse", false).unwrap();
     accounts::set_user(&data, "bob", "battery staple", false).unwrap();
     accounts::add_folder(&data, "ann", &nas.to_string_lossy(), Some("Photos")).unwrap();
-    let server = start(&data, model);
+    let server = start_with(&data, model, reader);
     let ann = login(&server, "ann", "correct horse");
     let f = Fixture { server, ann, data, nas };
     wait_scan(&f);
@@ -449,4 +459,174 @@ fn a_device_that_turned_sharing_on_sends_by_itself_and_remembers_the_choice() {
     assert!(again.vision.share_with_server);
     again.execute("vision.setShare", &json!({"on": false})).unwrap();
     assert!(!again.vision.share_with_server);
+}
+
+// ---------------------------------------------------------------- the text printed in photos
+
+/// Wait until the text of `want` of `ann`'s photos has been read (or sent).
+fn read(f: &Fixture, want: u64) -> Value {
+    for _ in 0..1200 {
+        f.server.index_for_search();
+        let (_, s) = get(&f.ann, "/api/search/status");
+        if s["text"]["indexed"].as_u64() == Some(want) {
+            return s;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    panic!("text not read: {:?}", get(&f.ann, "/api/search/status"));
+}
+
+fn scores(r: &Value) -> Vec<f64> {
+    r["scores"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect()
+}
+
+/// The stand-in reader under the real reader's name: a server without a reader of its own expects
+/// that engine.
+struct Ocrish;
+
+impl TextReader for Ocrish {
+    fn engine(&self) -> &str {
+        lightcraft_vision::ocr::ENGINE
+    }
+    fn text(&self, img: &lightcraft_raster::Rgba8) -> Result<String, VisionError> {
+        FakeReader.text(img)
+    }
+}
+
+#[test]
+fn words_printed_in_photos_are_read_and_found_first() {
+    let f = fixture_with("words", Some(Arc::new(FakeEmbedder)), Some(Arc::new(FakeReader)));
+    let s = read(&f, 4);
+    indexed(&f, 4);
+    assert_eq!((s["text"]["installed"].clone(), s["text"]["engine"].as_str()), (json!(true), Some("fake-reader")), "{s}");
+    let ids = ids_by_name(&f);
+
+    // "stop" is printed on the red photo only: it is first, as a text match
+    let (status, r) = get(&f.ann, "/api/search?q=stop");
+    assert_eq!(status, 200, "{r}");
+    let (found, sc) = (ranked(&r), scores(&r));
+    assert_eq!(found[0], ids["red"], "{r}");
+    assert!(sc[0] >= 2.0 && sc[1..].iter().all(|s| *s < 2.0), "only the first is a text match: {sc:?}");
+    assert_eq!(found.len(), 4, "the others follow, by how they look");
+
+    // case, and one slip in a long word
+    let (_, r) = get(&f.ann, "/api/search?q=HARBOR%20hotel");
+    assert_eq!(ranked(&r)[0], ids["blue"], "{r}");
+    // the word and the colour agree: nothing is listed twice
+    let (_, r) = get(&f.ann, "/api/search?q=stop%20red");
+    let found = ranked(&r);
+    assert_eq!(found.len(), 4, "{r}");
+    assert_eq!(found.iter().collect::<std::collections::BTreeSet<_>>().len(), 4);
+
+    // words nobody printed: only look-alikes
+    let (_, r) = get(&f.ann, "/api/search?q=xylophone");
+    assert!(scores(&r).iter().all(|s| *s < 2.0), "{r}");
+    // the text is on disk, filed by the user and the reader
+    assert!(f.data.join("users/ann/search/text-fake-reader.bin").is_file());
+}
+
+#[test]
+fn a_server_that_only_reads_text_still_answers() {
+    let f = fixture_with("text-only", None, Some(Arc::new(FakeReader)));
+    let s = read(&f, 4);
+    assert_eq!((s["installed"].clone(), s["text"]["installed"].clone()), (json!(false), json!(true)), "{s}");
+    let ids = ids_by_name(&f);
+    let (status, r) = get(&f.ann, "/api/search?q=stop");
+    assert_eq!((status, ranked(&r)), (200, vec![ids["red"]]), "{r}");
+    // no words found and nothing that could look like it: an empty answer, not an error
+    let (status, r) = get(&f.ann, "/api/search?q=xylophone");
+    assert_eq!((status, r["ids"].clone()), (200, json!([])), "{r}");
+}
+
+#[test]
+fn a_device_sends_the_text_it_read_and_the_server_checks_it() {
+    // a server with no models at all: nothing to read with, but it keeps what a device sends
+    let f = fixture("text-upload", None);
+    let (_, snap) = get(&f.ann, "/api/snapshot");
+    let hashes: HashMap<String, String> = snap["catalog"]["photos"]
+        .as_object()
+        .unwrap()
+        .values()
+        .map(|p| (p["file_name"].as_str().unwrap().trim_end_matches(".png").to_string(), p["content_hash"].as_str().unwrap().to_string()))
+        .collect();
+    let ids = ids_by_name(&f);
+    let engine = lightcraft_vision::ocr::ENGINE;
+    let (_, s) = get(&f.ann, "/api/search/status");
+    assert_eq!((s["text"]["installed"].clone(), s["text"]["indexed"].clone()), (json!(false), json!(0)), "{s}");
+    assert!(!f.data.join("users/ann/search").join(format!("text-{engine}.bin")).exists(), "asking creates nothing");
+    let (status, k) = get(&f.ann, "/api/index/text/keys");
+    assert_eq!((status, k["engine"].as_str(), k["keys"].clone()), (200, Some(engine), json!([])), "{k}");
+
+    let mut device = TextIndex::in_memory(engine).unwrap();
+    device.insert(Key::from_hex(&hashes["grey"]).unwrap(), "Pharmacy open late").unwrap();
+    device.insert(Key::of("not-in-the-library"), "secret").unwrap();
+    let good = device.export(|_| false, 100);
+    let (status, r) = post(&f.ann, "/api/index/text", &good);
+    assert_eq!((status, r["added"].clone(), r["skipped"].clone()), (200, json!(1), json!(1)), "{r}");
+    let (_, k) = get(&f.ann, "/api/index/text/keys");
+    assert_eq!(k["keys"].as_array().unwrap().len(), 1, "{k}");
+    // the server finds it by the words, with no model of its own
+    let (status, r) = get(&f.ann, "/api/search?q=PHARMACY");
+    assert_eq!((status, ranked(&r)), (200, vec![ids["grey"]]), "{r}");
+    // sending again changes nothing
+    let (_, r) = post(&f.ann, "/api/index/text", &good);
+    assert_eq!((r["added"].clone(), r["skipped"].clone()), (json!(0), json!(2)), "{r}");
+
+    // refused whole: another reader's, cut short, damaged, empty
+    let mut other = TextIndex::in_memory("other-reader").unwrap();
+    other.insert(Key::of("x"), "text").unwrap();
+    let up = |bytes: &[u8]| post(&f.ann, "/api/index/text", bytes).0;
+    assert_eq!(up(&other.export(|_| false, 10)), 409, "another reader");
+    assert_eq!(up(&good[..good.len() - 3]), 422, "truncated");
+    assert_eq!(up(b"not an index"), 422);
+    assert_eq!(up(b""), 422);
+    assert_eq!(get(&f.ann, "/api/search/status").1["text"]["indexed"], 1);
+    // and nobody else sees it
+    let bob = login(&f.server, "bob", "battery staple");
+    // (bob has no text and the server no models: nothing to answer with)
+    let (status, r) = get(&bob, "/api/search?q=pharmacy");
+    assert!(status == 503 && r["ids"].is_null(), "{status} {r}");
+    assert_eq!(get(&bob, "/api/index/text/keys").1["keys"], json!([]));
+}
+
+#[test]
+fn a_desktop_sends_the_server_the_text_it_read() {
+    let f = fixture("text-share", None);
+    let mut s = device(&f, "text-desktop", None);
+    s.vision.set_text_reader(Arc::new(Ocrish));
+    s.vision.text_edge = 192;
+    // text search is off until it is turned on; nothing to send before it has been read
+    s.execute("vision.setText", &json!({"on": true})).unwrap();
+    assert!(s.execute("vision.share", &json!({"wait": true})).is_err(), "nothing read yet");
+    let r = s.execute("vision.index", &json!({"wait": true})).unwrap();
+    assert_eq!((r["done"].clone(), r["failed"].clone(), r["error"].clone()), (json!(4), json!(0), Value::Null), "{r}");
+    s.vision_probe_server();
+    sync(&mut s);
+
+    let r = s.execute("vision.share", &json!({"wait": true})).unwrap();
+    assert_eq!((r["running"].clone(), r["sent"].clone(), r["error"].clone()), (json!(false), json!(4), Value::Null), "{r}");
+    let (_, st) = get(&f.ann, "/api/search/status");
+    assert_eq!(st["text"]["indexed"], 4, "{st}");
+    // and only what the server lacks
+    let r = s.execute("vision.share", &json!({"wait": true})).unwrap();
+    assert_eq!(r["sent"], 0, "{r}");
+
+    // another device finds the photo by its words through the server, with no reader of its own
+    let mut thin = device(&f, "text-thin", None);
+    thin.vision_probe_server();
+    sync(&mut thin);
+    assert!(thin.vision.server_ready(), "a server that has text can search: {:?}", thin.vision.server_status());
+    let r = thin.execute("library.search", &json!({"q": "stop", "wait": true})).unwrap();
+    assert_eq!(r["source"], "server", "{r}");
+    assert_eq!(r["photos"][0]["id"].as_u64(), Some(photo_named(&thin, "red").0), "{r}");
+    assert_eq!(r["photos"][0]["text"], true, "{r}");
+
+    // a reader the server doesn't use is refused before anything is sent
+    let mut odd = device(&f, "text-odd", None);
+    odd.vision.set_text_reader(Arc::new(FakeReader));
+    odd.vision.text_edge = 192;
+    odd.execute("vision.setText", &json!({"on": true})).unwrap();
+    odd.execute("vision.index", &json!({"wait": true})).unwrap();
+    let r = odd.execute("vision.share", &json!({"wait": true})).unwrap();
+    assert!(r["error"].as_str().is_some_and(|e| e.contains("nothing was sent")), "{r}");
 }

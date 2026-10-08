@@ -39,6 +39,21 @@ pub struct TextHit {
     pub score: f32,
 }
 
+/// A text match scores [`TEXT_SCORE_BASE`] plus its own score: above any cosine similarity (at
+/// most 1), so searching words and looks together puts the photos with the words first.
+pub const TEXT_SCORE_BASE: f32 = 2.0;
+
+/// The results of searching a query's words and its look together: the photos with the words
+/// first (scores from [`TEXT_SCORE_BASE`]), then the look-alikes they don't already include, at
+/// most `limit` in all.
+pub fn merge(text: &[TextHit], looks: Vec<crate::Hit>, limit: usize) -> Vec<crate::Hit> {
+    let mut out: Vec<crate::Hit> = text.iter().map(|h| crate::Hit { key: h.key, score: TEXT_SCORE_BASE + h.score }).collect();
+    let seen: std::collections::HashSet<Key> = out.iter().map(|h| h.key).collect();
+    out.extend(looks.into_iter().filter(|h| !seen.contains(&h.key)));
+    out.truncate(limit);
+    out
+}
+
 /// What [`TextIndex::import`] did.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Imported {

@@ -27,6 +27,23 @@ impl Drop for Dir {
     }
 }
 
+#[test]
+fn words_and_looks_are_merged_with_the_words_first_and_each_photo_once() {
+    use crate::Hit;
+    use crate::textindex::{TEXT_SCORE_BASE, TextHit, merge};
+    let (a, b, c, d) = (key(0), key(1), key(2), key(3));
+    let text = [TextHit { key: a, score: 1.2 }, TextHit { key: b, score: 0.8 }];
+    let looks = vec![Hit { key: c, score: 0.9 }, Hit { key: a, score: 0.7 }, Hit { key: d, score: 0.1 }];
+    let m = merge(&text, looks.clone(), 10);
+    assert_eq!(m.iter().map(|h| h.key).collect::<Vec<_>>(), [a, b, c, d]);
+    assert_eq!(m[0].score, TEXT_SCORE_BASE + 1.2);
+    assert!(m.windows(2).all(|w| w[0].score >= w[1].score), "best first");
+    assert!(m[..2].iter().all(|h| h.score >= TEXT_SCORE_BASE) && m[2..].iter().all(|h| h.score < TEXT_SCORE_BASE));
+    assert_eq!(merge(&text, looks.clone(), 3).len(), 3);
+    assert_eq!(merge(&[], looks, 10).len(), 3, "no words: just the looks");
+    assert!(merge(&text, vec![], 0).is_empty());
+}
+
 fn key(i: usize) -> Key {
     Key::of(&format!("photo-{i}"))
 }

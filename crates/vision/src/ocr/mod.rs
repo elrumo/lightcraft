@@ -23,6 +23,8 @@ use rten::{Model, NodeId, ValueView};
 use crate::Error;
 use dbnet::{Params, Rect};
 
+/// Names the text index these models fill (a different model would read differently).
+pub const ENGINE: &str = "ppocrv6-small";
 pub const DET_FILE: &str = "det/inference.onnx";
 pub const REC_FILE: &str = "rec/inference.onnx";
 pub const DICT_FILE: &str = "rec/inference.yml";

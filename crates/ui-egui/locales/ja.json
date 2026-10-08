@@ -1083,5 +1083,11 @@
   "Your server can search by description, but its search model isn't installed yet.": "ご利用のサーバーは説明による検索に対応していますが、検索モデルがまだインストールされていません。",
   "Whoever runs the server installs it with: lightcraft-server model download --accept-licences": "サーバーの管理者は次のコマンドでインストールします：lightcraft-server model download --accept-licences",
   "It keeps going in the background; search the ones that are ready now.": "処理はバックグラウンドで続きます。準備ができた写真はすぐに検索できます。",
-  "Send the search data to my server, so my other devices can search too": "検索用データを自分のサーバーに送り、他のデバイスでも検索できるようにする"
+  "Send the search data to my server, so my other devices can search too": "検索用データを自分のサーバーに送り、他のデバイスでも検索できるようにする",
+  "Also find words in photos (signs, menus, documents)": "写真の中の文字も検索する（看板、メニュー、書類など）",
+  "Finding words in photos uses two small AI models that read text, in English, Chinese, Japanese and many other languages. They aren't part of LightCraft, and everything else works without them.": "写真の中の文字を探すには、英語・中国語・日本語など多くの言語の文字を読み取る、小さなAIモデルを2つ使います。LightCraftには含まれておらず、これらがなくても他の機能はすべて使えます。",
+  "Baidu's terms, not LightCraft's. Downloading them means accepting them.": "Baiduの利用条件であり、LightCraftのものではありません。ダウンロードすると、これに同意したことになります。",
+  "Your photos are then read on this computer, a few at a time in the background; it takes a while. Nothing is sent anywhere unless you choose to share it with your own server.": "その後、写真はこのコンピューター上でバックグラウンドで少しずつ読み取られます。しばらく時間がかかります。ご自身のサーバーと共有することを選ばない限り、何も送信されません。",
+  "Not Now": "今はしない",
+  "Text search is ready: your photos are being read.": "文字検索の準備ができました。写真を読み取っています。"
 }

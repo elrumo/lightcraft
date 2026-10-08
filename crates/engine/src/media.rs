@@ -730,9 +730,13 @@ impl crate::Session {
     /// hash, so a variant renders once; `key` is derived from the same hash, so a frontend can
     /// keep one texture per variant.
     pub fn variant_job(&mut self, id: PhotoId, settings: &DevelopSettings, edge: usize) -> Option<RenderJob> {
+        self.variant_job_at(id, settings, edge, SourceLevel::Thumb)
+    }
+
+    /// [`Self::variant_job`] from the source `level`, long edge `edge` (≤ that level's largest).
+    pub fn variant_job_at(&mut self, id: PhotoId, settings: &DevelopSettings, edge: usize, level: SourceLevel) -> Option<RenderJob> {
         let p = self.catalog.photo(id)?.clone();
-        let edge = edge.clamp(16, SourceLevel::Thumb.max_edge());
-        let level = SourceLevel::Thumb;
+        let edge = edge.clamp(16, level.max_edge());
         let source = self.media.source_ref(&p, level);
         let ck = Self::variant_key(&p, settings, edge);
         Some(RenderJob {

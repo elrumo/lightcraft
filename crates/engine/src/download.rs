@@ -8,6 +8,9 @@ use std::sync::{Arc, Mutex};
 
 use lightcraft_fetch::{self as fetch, Options, Progress};
 
+/// A set of files, the mirrors to try for them, and the folder they go into.
+pub type Part = (&'static [fetch::FileSpec], Vec<String>, PathBuf);
+
 /// What the session sees of a download.
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
 pub struct Status {
@@ -102,6 +105,12 @@ impl Downloader {
         dir: PathBuf,
         opts: Options,
     ) -> Result<bool, String> {
+        self.start_parts(label, vec![(files, mirrors, dir)], opts)
+    }
+
+    /// Start downloading several sets of files, one after the other (each with its own mirrors and
+    /// folder), as one download: one progress, one cancel. False when one is already running.
+    pub fn start_parts(&self, label: &'static str, parts: Vec<Part>, opts: Options) -> Result<bool, String> {
         let s = self.shared.clone();
         if s.running.swap(true, Ordering::SeqCst) {
             return Ok(false);
@@ -109,7 +118,7 @@ impl Downloader {
         s.cancel.store(false, Ordering::SeqCst);
         s.finished.store(false, Ordering::SeqCst);
         s.done.store(0, Ordering::SeqCst);
-        s.total.store(files.iter().filter_map(|f| f.size).sum(), Ordering::SeqCst);
+        s.total.store(parts.iter().flat_map(|(files, _, _)| files.iter()).filter_map(|f| f.size).sum(), Ordering::SeqCst);
         // nothing else runs while `running` was false
         *lock(&s.text) = Text::default();
         *lock(&self.last) = Text::default();
@@ -117,20 +126,30 @@ impl Downloader {
         let spawned = std::thread::Builder::new().name(format!("{label}-download")).spawn(move || {
             let s = guard.0.clone();
             let mut last_file = String::new();
-            let mut on_progress = |p: &Progress| {
-                s.done.store(p.done, Ordering::SeqCst);
-                s.total.store(p.total, Ordering::SeqCst);
-                if p.file != last_file {
-                    last_file.clone_from(&p.file);
-                    lock(&s.text).file.clone_from(&p.file);
+            // bytes of the parts finished so far, which the next part's progress adds to
+            let mut before = 0u64;
+            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                for (files, mirrors, dir) in &parts {
+                    let mut on_progress = |p: &Progress| {
+                        s.done.store(before.saturating_add(p.done), Ordering::SeqCst);
+                        if parts.len() == 1 {
+                            // (sizes the files don't pin are learnt from the server)
+                            s.total.store(p.total, Ordering::SeqCst);
+                        }
+                        if p.file != last_file {
+                            last_file.clone_from(&p.file);
+                            lock(&s.text).file.clone_from(&p.file);
+                        }
+                    };
+                    fetch::download(files, mirrors, dir, &opts, &s.cancel, &mut on_progress)?;
+                    before = before.saturating_add(files.iter().filter_map(|f| f.size).sum());
                 }
-            };
-            let r =
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| fetch::download(files, &mirrors, &dir, &opts, &s.cancel, &mut on_progress)));
+                Ok::<(), fetch::DownloadError>(())
+            }));
             let error = match r {
                 Ok(Ok(())) => {
                     s.finished.store(true, Ordering::SeqCst);
-                    log::info!("{label} model downloaded to {}", dir.display());
+                    log::info!("{label} model downloaded");
                     None
                 }
                 Ok(Err(e)) => Some(e.to_string()),

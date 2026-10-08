@@ -62,6 +62,8 @@ pub struct Config {
     pub vision_dir: Option<PathBuf>,
     /// A model to search with instead of SigLIP 2 from `vision_dir` (tests).
     pub embedder: Option<Arc<dyn lightcraft_vision::Embedder>>,
+    /// A reader of the text in photos instead of PP-OCRv6 from `<vision_dir>/ocr` (tests).
+    pub text_reader: Option<Arc<dyn lightcraft_vision::TextReader>>,
 }
 
 impl Config {
@@ -77,6 +79,7 @@ impl Config {
             preview_threads: 2,
             vision_dir: None,
             embedder: None,
+            text_reader: None,
         }
     }
 }
@@ -125,7 +128,7 @@ impl Server {
         }
         let vision_dir = cfg.vision_dir.clone().unwrap_or_else(|| cfg.data.join("models").join("siglip2"));
         let state = Arc::new(State {
-            vision: vision::Search::new(vision_dir, cfg.embedder),
+            vision: vision::Search::new(vision_dir, cfg.embedder).with_reader(cfg.text_reader),
             accounts: Mutex::new(accounts::Accounts::new(&cfg.data)),
             listen: addr.to_string(),
             setup: Mutex::new(setup),
