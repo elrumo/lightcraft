@@ -190,9 +190,17 @@ fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     }
     let ppp = ui.ctx().pixels_per_point();
     let square = app.ui.view == ViewMode::SquareGrid;
-    let avail_w = ui.available_width() - 8.0;
+    // phone squares (Lightroom's mobile grid): edge to edge, three across, 2 pt apart
+    let tiles = square && app.compact;
+    let avail_w = if tiles { ui.available_width() } else { ui.available_width() - 8.0 };
     // phone: about three tiles across (and, through `resolve_group`, month headers rather than one per day)
-    let target = if app.compact { (avail_w / 3.0).max(90.0) } else { app.ui.thumb_size };
+    let target = if tiles {
+        ((avail_w - 2.0 * TILE_GAP) / 3.0).floor()
+    } else if app.compact {
+        (avail_w / 3.0).max(90.0)
+    } else {
+        app.ui.thumb_size
+    };
     let by = resolve_group(app.session.sort.group, target);
     let group_key = match app.session.source {
         lightcraft_engine::LibrarySource::RecentlyDeleted => None,
@@ -204,6 +212,7 @@ fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let runs = app.caches.grid.runs(stats, &app.session.catalog, &ids, runs_key);
     // the layout only changes with the photos (and their shapes), the grouping, the width and
     // the thumbnail size
+    // (phone tiles have their own width and size, so they key apart from desktop squares)
     let lay_key = (runs_key, avail_w.to_bits(), target.to_bits(), square);
     let lay = match &app.caches.grid.layout {
         Some((k, l)) if *k == lay_key => l.clone(),
@@ -211,7 +220,7 @@ fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             stats.layout_builds += 1;
             let aspects = if square { vec![1.0; ids.len()] } else { aspects(&app.session.catalog, &ids) };
             let spans: Vec<(usize, usize)> = runs.iter().map(|r| (r.start, r.count)).collect();
-            let l = Arc::new(layout(&aspects, &spans, avail_w, target, square));
+            let l = Arc::new(layout(&aspects, &spans, avail_w, target, square, tiles));
             app.caches.grid.layout = Some((lay_key, l.clone()));
             l
         }
@@ -300,6 +309,9 @@ pub(crate) fn follow_active(ctx: &egui::Context, key: egui::Id, active: Option<P
 /// Height of a date header row (points).
 pub const HEADER_H: f32 = 40.0;
 
+/// Space between the phone's square tiles (points).
+pub const TILE_GAP: f32 = 2.0;
+
 /// Cell rectangles (one per photo, in order), date-header rectangles (one per group, top to
 /// bottom), the rows of cells (top to bottom, for finding the visible ones by binary search) and
 /// the total height of the grid content.
@@ -336,11 +348,19 @@ pub fn resolve_group(by: GroupBy, thumb_size: f32) -> GroupBy {
 /// about `target` high (square cells about `target` wide). Every group starts on a new row
 /// below its header. Justified rows fill the width exactly except a group's last row, which keeps
 /// the target height.
-pub fn layout(aspects: &[f32], groups: &[(usize, usize)], avail_w: f32, target: f32, square: bool) -> GridLayout {
+pub fn layout(aspects: &[f32], groups: &[(usize, usize)], avail_w: f32, target: f32, square: bool, tiles: bool) -> GridLayout {
     let n = aspects.len();
     let whole = [(0, n)];
     let (groups, headed) = if groups.is_empty() { (&whole[..], false) } else { (groups, true) };
-    let gap = if square { 1.0 } else { 6.0 };
+    let gap = if tiles {
+        TILE_GAP
+    } else if square {
+        1.0
+    } else {
+        6.0
+    };
+    // phone tiles run to the screen's edges
+    let left = if tiles { 0.0 } else { 4.0 };
     let mut out = GridLayout { cells: vec![Rect::NOTHING; n], headers: Vec::with_capacity(groups.len()), rows: Vec::new(), height: 0.0 };
     let mut y = 4.0f32;
     for &(start, count) in groups {
@@ -358,7 +378,7 @@ pub fn layout(aspects: &[f32], groups: &[(usize, usize)], avail_w: f32, target: 
             for i in start..end {
                 let k = (i - start) as f32;
                 let (c, r) = (k % cols, (k / cols).floor());
-                out.cells[i] = Rect::from_min_size(pos2(4.0 + c * (cw + gap), y + r * (cw + gap)), vec2(cw, cw));
+                out.cells[i] = Rect::from_min_size(pos2(left + c * (cw + gap), y + r * (cw + gap)), vec2(cw, cw));
             }
             let per_row = (cols as usize).max(1);
             for (r, row_start) in (start..end).step_by(per_row).enumerate() {
@@ -476,8 +496,11 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
     }
     resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, &spoken));
     let active = app.session.selection.active == Some(id);
+    let tiles = square && app.compact;
     let p = ui.painter();
-    let img_rect = if square {
+    let img_rect = if tiles {
+        r
+    } else if square {
         p.rect_filled(r, 0.0, if selected { t.cell_selected } else { t.cell });
         Rect::from_min_max(r.min + vec2(10.0, 24.0), r.max - vec2(10.0, 10.0))
     } else {
@@ -488,22 +511,28 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
     request_thumb(app, id, size, if onscreen { 10 } else { 5 });
     if let Some(tex) = app.renderer.thumb(id) {
         let [tw, th] = tex.size;
-        let fit = if square {
+        let fit = if square && !tiles {
             let s = (img_rect.width() / tw as f32).min(img_rect.height() / th as f32);
             Rect::from_center_size(img_rect.center(), vec2(tw as f32 * s, th as f32 * s))
         } else {
             img_rect
         };
-        p.image(tex.tex.id(), fit, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+        // phone tiles: the photo fills its square, the long side cropped
+        let uv = if tiles { cover_uv(tw as f32, th as f32) } else { Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)) };
+        p.image(tex.tex.id(), fit, uv, Color32::WHITE);
         // (choosing by touch draws its own frame: `check_badge`)
         let choosing = app.compact && app.ui.select_mode;
-        if active && !choosing {
+        if active && !choosing && tiles {
+            p.rect_stroke(fit, 0.0, Stroke::new(2.0, Color32::WHITE), StrokeKind::Inside);
+        } else if active && !choosing {
             p.rect_stroke(fit.expand(if square { 2.0 } else { 0.0 }), 0.0, Stroke::new(2.0, Color32::WHITE), StrokeKind::Outside);
+        } else if selected && !choosing && tiles {
+            p.rect_stroke(fit, 0.0, Stroke::new(2.0, Color32::from_gray(170)), StrokeKind::Inside);
         } else if selected && !choosing {
             p.rect_stroke(fit, 0.0, Stroke::new(2.0, Color32::from_gray(170)), StrokeKind::Outside);
         }
     } else {
-        let ph = img_rect.shrink(if square { 20.0 } else { 0.0 });
+        let ph = img_rect.shrink(if square && !tiles { 20.0 } else { 0.0 });
         p.rect_filled(ph, 0.0, Color32::from_gray(38));
         if app.renderer.failure(Slot::Thumb(id)).is_some() {
             // unreadable / missing file
@@ -511,7 +540,7 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
         }
     }
     // labels and badges
-    if square && app.ui.show_filenames {
+    if square && !tiles && app.ui.show_filenames {
         let m = &photo.meta;
         let name = match app.ui.grid_info.as_str() {
             "exposure" => {
@@ -656,6 +685,18 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
 }
 
 /// Choosing photos by touch: a circle at the cell's top right, filled with a check when chosen.
+/// The part of a `w` × `h` texture that fills a square (the middle of its long side).
+pub fn cover_uv(w: f32, h: f32) -> Rect {
+    let (w, h) = (w.max(1.0), h.max(1.0));
+    if w > h {
+        let k = h / w;
+        Rect::from_min_max(pos2((1.0 - k) / 2.0, 0.0), pos2((1.0 + k) / 2.0, 1.0))
+    } else {
+        let k = w / h;
+        Rect::from_min_max(pos2(0.0, (1.0 - k) / 2.0), pos2(1.0, (1.0 + k) / 2.0))
+    }
+}
+
 fn check_badge(ui: &egui::Ui, img: Rect, selected: bool, t: &Tokens) {
     let p = ui.painter();
     let c = pos2(img.right() - 15.0, img.top() + 15.0);
@@ -969,7 +1010,7 @@ mod tests {
     #[test]
     fn ungrouped_justified_rows_fill_the_width() {
         let aspects = [1.5f32, 1.5, 0.66, 1.0, 1.5, 1.5, 1.5];
-        let l = layout(&aspects, &[], 600.0, 150.0, false);
+        let l = layout(&aspects, &[], 600.0, 150.0, false, false);
         assert!(l.headers.is_empty());
         assert_eq!(l.cells.len(), aspects.len());
         // full rows end at the right edge; rows are at most the target height
@@ -985,7 +1026,7 @@ mod tests {
     #[test]
     fn groups_start_new_rows_below_their_headers() {
         let aspects = [1.5f32; 7];
-        let l = layout(&aspects, &[(0, 2), (2, 5)], 1000.0, 200.0, false);
+        let l = layout(&aspects, &[(0, 2), (2, 5)], 1000.0, 200.0, false, false);
         assert_eq!(l.headers.len(), 2);
         assert_eq!(l.headers[0].top(), 4.0);
         assert_eq!(l.headers[0].height(), HEADER_H);
@@ -1019,7 +1060,7 @@ mod tests {
         let aspects: Vec<f32> = (0..500).map(|i| [1.5f32, 0.66, 1.0, 1.78][i % 4]).collect();
         let groups = [(0, 7), (7, 200), (207, 1), (208, 292)];
         for square in [false, true] {
-            let l = layout(&aspects, &groups, 900.0, 140.0, square);
+            let l = layout(&aspects, &groups, 900.0, 140.0, square, false);
             let mut next = 0;
             for (k, row) in l.rows.iter().enumerate() {
                 assert_eq!(row.start, next, "rows are contiguous");
@@ -1043,9 +1084,27 @@ mod tests {
         }
     }
 
+    /// The phone's squares: three across, edge to edge, 2 pt apart; a photo fills its square from
+    /// the middle of its long side.
+    #[test]
+    fn phone_tiles_run_edge_to_edge_three_across() {
+        let w = 390.0;
+        let l = layout(&[1.5; 7], &[], w, ((w - 2.0 * TILE_GAP) / 3.0).floor(), true, true);
+        assert_eq!(l.cells[0].left(), 0.0);
+        assert_eq!(l.cells[0].top(), l.cells[2].top());
+        assert!((w - l.cells[2].right()).abs() < 3.0, "{:?}", l.cells[2]);
+        assert_eq!(l.cells[3].left(), 0.0);
+        assert!((l.cells[3].top() - l.cells[0].bottom() - TILE_GAP).abs() < 0.01);
+        assert!((l.cells[1].left() - l.cells[0].right() - TILE_GAP).abs() < 0.01);
+        let wide = cover_uv(300.0, 200.0);
+        assert!((wide.width() - 2.0 / 3.0).abs() < 1e-6 && wide.height() == 1.0 && (wide.center().x - 0.5).abs() < 1e-6);
+        let tall = cover_uv(200.0, 400.0);
+        assert!(tall.width() == 1.0 && (tall.height() - 0.5).abs() < 1e-6 && (tall.min.y - 0.25).abs() < 1e-6);
+    }
+
     #[test]
     fn square_grid_groups_and_auto_levels() {
-        let l = layout(&[1.0; 5], &[(0, 3), (3, 2)], 400.0, 100.0, true);
+        let l = layout(&[1.0; 5], &[(0, 3), (3, 2)], 400.0, 100.0, true, false);
         // 4 columns: group 1 fills 3 cells of a row, group 2 starts a new row
         assert_eq!(l.cells[0].top(), l.cells[2].top());
         assert_eq!(l.cells[3].left(), 4.0);

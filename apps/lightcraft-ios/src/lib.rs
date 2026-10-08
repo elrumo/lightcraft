@@ -419,8 +419,10 @@ pub fn run() -> eframe::Result {
             let dir = library_dir(std::env::var_os("LIGHTCRAFT_LIBRARY"), std::env::var_os("HOME"));
             let inbox = Inbox::default();
             let mut app = LightcraftApp::new(open_session(dir.as_deref()), services(cc.egui_ctx.clone(), inbox.clone(), &tmp));
-            if let Some(ui) = prefs {
-                app.ui = ui;
+            match prefs {
+                Some(ui) => app.ui = ui,
+                // a first start: the phone's square grid, as Lightroom's mobile app shows a library
+                None => app.ui.view = lightcraft_ui_egui::state::ViewMode::SquareGrid,
             }
             if let Some(script) = std::env::var_os("LIGHTCRAFT_SCRIPT").filter(|s| !s.is_empty()) {
                 // a relative path is in the app's tmp folder (where `devicectl … copy to` puts it)

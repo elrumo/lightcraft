@@ -187,8 +187,9 @@ layout and interaction only: no Adobe icons, artwork, fonts, presets or screensh
    desktop layout. It follows Lightroom's mobile app for layout and behaviour and iOS for its look (`Tokens::ios`:
    Apple's dark-mode system colours, 44 pt rows; [ios-gaps.md](ios-gaps.md) A2.22–A2.25), and has **no menu bar**.
    The grid: the collection as its title (▾ opens the albums list as a page), filter and sort beside it, Select and
-   "…" (import, new album, sort, settings, help…) above, about three tiles across with month headers, and a round +
-   (the host's pickers). A photo: back, undo, share and "…" (rating, flag, label, copy / paste / reset edits,
+   "…" (import, new album, sort, settings, help…) above, square tiles three across and edge to edge with the photo
+   filling each (Square Thumbnails, the default on a first start; justified rows otherwise) under month headers, and a
+   round + (the host's pickers). A photo: back, undo, share and "…" (rating, flag, label, copy / paste / reset edits,
    versions, history, keywords, delete) above it; below it the tools (Presets, Crop, Edit, Masking, Remove, Info),
    the open one on a blue tile, with the Edit tool's groups (Auto, Profile, Light, Color, Effects, Detail, Optics,
    Calibration) in a row of their own and one group's sliders in the sheet (from 600 pt wide: a panel on the right,
