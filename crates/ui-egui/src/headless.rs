@@ -262,8 +262,11 @@ mod tests {
     use super::*;
 
     /// Generous: renders are slow when the machine is loaded (parallel builds), and a timed-out
-    /// settle would show a half-rendered UI.
-    const SETTLE: Duration = Duration::from_secs(120);
+    /// settle would show a half-rendered UI. In a full `cargo test` every test's demo photos
+    /// (24 MP, painted on rayon's global pool) queue together; on a 10-core Mac the first test's
+    /// thumbnails waited over 120 s behind the others. Settling returns as soon as renders finish,
+    /// so the limit only costs time on a loaded machine.
+    const SETTLE: Duration = Duration::from_secs(600);
 
     fn demo(size: [f32; 2]) -> Headless {
         let services = crate::Services { png: None, ..Default::default() };
@@ -289,7 +292,15 @@ mod tests {
         let bright = img.pixels[..top_h * 1200].iter().filter(|c| c.r() > 150 && c.g() > 150 && c.b() > 150).count();
         assert!(bright > 30, "no text in the top bar ({bright} bright px)");
         // thumbnails arrived (photo textures were drawn)
-        assert!(h.app.renderer.thumb_textures() > 0);
+        assert!(
+            h.app.renderer.thumb_textures() > 0,
+            "settled in {:?}: {} renders done, {} queued, {} in flight, budget {} MB",
+            t0.elapsed(),
+            h.app.renderer.completed,
+            h.app.renderer.queued(),
+            h.app.renderer.in_flight(),
+            lightcraft_engine::memory::budget() >> 20
+        );
     }
 
     #[test]
