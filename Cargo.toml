@@ -30,6 +30,7 @@ lightcraft-engine = { path = "crates/engine" }
 lightcraft-ui-egui = { path = "crates/ui-egui" }
 lightcraft-ios-host = { path = "crates/ios-host" }
 lightcraft-mcp = { path = "crates/mcp" }
+lightcraft-fetch = { path = "crates/fetch" }
 lightcraft-segment = { path = "crates/segment" }
 
 # foundation
