@@ -196,7 +196,7 @@ layout and interaction only: no Adobe icons, artwork, fonts, presets or screensh
    with My Photos as a column on the left). Dialogs are pages sliding up from the bottom (Cancel, title and action
    in the bar), menus are iOS pull-downs or action sheets, and every other command is in a searchable All Commands
    list. Touch: a tap opens a photo, pinch zooms, two fingers pan, a sideways swipe on a fitted photo goes to the
-   next / previous one, double tap zooms, sliders follow a finger's sideways movement (a tap leaves them alone, an up
+   next / previous one, an up / down swipe rates it (left half) or flags it (right half), double tap zooms, sliders follow a finger's sideways movement (a tap leaves them alone, an up
    or down drag scrolls), crop handles
    and mask / spot pins are about a finger wide, press-and-hold opens context menus (egui's own long-touch) except in
    the grid, where it starts choosing photos (taps then add and remove them; an action bar rates, flags, labels, adds

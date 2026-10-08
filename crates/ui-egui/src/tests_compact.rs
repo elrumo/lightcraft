@@ -265,6 +265,37 @@ fn a_sideways_drag_chooses_a_run_of_photos() {
     assert_eq!(chosen, vec![ids[2]], "{chosen:?}");
 }
 
+/// iOS gap A2.9: swiping up or down on a photo rates it (left half) or flags it (right half).
+#[test]
+fn swiping_up_or_down_on_a_photo_rates_and_flags_it() {
+    let mut h = detail([390.0, 844.0]);
+    h.app.ui.right = RightPanel::None;
+    h.settle(SETTLE);
+    let id = h.app.session.active().unwrap();
+    h.app.run("photo.flag", json!({"ids": [id.0], "flag": "none"})).unwrap();
+    let rating = h.app.session.catalog.photo(id).unwrap().rating;
+    let img = h.app.image_rect.expect("loupe");
+    let swipe = |h: &mut Headless, x: f32, dy: f32| {
+        let y = img.center().y;
+        let r = h.request("ui.drag", json!({"x": x, "y": y, "toX": x + 2.0, "toY": y + dy, "steps": 12}), T);
+        assert_eq!(r["ok"], true, "{r}");
+        h.settle(SETTLE);
+    };
+    let left = img.left() + img.width() * 0.25;
+    let right = img.left() + img.width() * 0.75;
+    swipe(&mut h, left, -120.0);
+    assert_eq!(h.app.session.catalog.photo(id).unwrap().rating, (rating + 1).min(5), "up on the left: a star more");
+    swipe(&mut h, left, 120.0);
+    assert_eq!(h.app.session.catalog.photo(id).unwrap().rating, rating, "down: a star less");
+    swipe(&mut h, right, 120.0);
+    assert_eq!(h.app.session.catalog.photo(id).unwrap().flag, lightcraft_catalog::Flag::Reject);
+    swipe(&mut h, right, -120.0);
+    assert_eq!(h.app.session.catalog.photo(id).unwrap().flag, lightcraft_catalog::Flag::None, "up from rejected: unflagged");
+    swipe(&mut h, right, -120.0);
+    assert_eq!(h.app.session.catalog.photo(id).unwrap().flag, lightcraft_catalog::Flag::Pick);
+    assert_eq!(h.app.session.active(), Some(id), "still the same photo");
+}
+
 /// No menu bar on a phone: the grid's and the photo's "…" menus, and every other command in the
 /// searchable All Commands list.
 #[test]
