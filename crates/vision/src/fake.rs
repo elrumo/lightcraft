@@ -101,6 +101,59 @@ impl crate::TextReader for FakeReader {
     }
 }
 
+pub const FAKE_FACES_ID: &str = "fake-faces";
+
+/// A stand-in for the face finder: the left and right halves of a photo each "have a face" when
+/// they are bright enough, and a face "looks like" its half's dominant colour (red, green and blue
+/// halves are three people, with a little variation, so they cluster). Rects are fixed boxes.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct FakeFaces;
+
+impl crate::faces::FaceEngine for FakeFaces {
+    fn engine(&self) -> &str {
+        FAKE_FACES_ID
+    }
+
+    fn faces(&self, img: &Rgba8) -> Result<Vec<crate::faces::FaceFound>, Error> {
+        if img.data.is_empty() || img.width == 0 {
+            return Err(Error::Invalid("image size"));
+        }
+        let mut out = Vec::new();
+        for (half, rect) in [(0usize, [0.1f32, 0.2, 0.45, 0.8]), (1, [0.55, 0.2, 0.9, 0.8])] {
+            let (mut sum, mut n) = ([0f64; 3], 0f64);
+            for row in img.data.chunks(img.width) {
+                let (left, right) = row.split_at(row.len() / 2);
+                for p in if half == 0 { left } else { right } {
+                    for (s, &c) in sum.iter_mut().zip(p) {
+                        *s += f64::from(c);
+                    }
+                    n += 1.0;
+                }
+            }
+            if n == 0.0 {
+                continue;
+            }
+            let mean = sum.map(|s| (s / n) as f32);
+            let top = mean.iter().copied().fold(0f32, f32::max);
+            if top < 100.0 {
+                continue;
+            }
+            let dominant = mean.iter().enumerate().max_by(|a, b| a.1.total_cmp(b.1)).map_or(0, |(i, _)| i);
+            let mut e = vec![0f32; crate::faces::DIM];
+            if let Some(slot) = e.get_mut(dominant) {
+                *slot = 1.0;
+            }
+            for (i, m) in mean.iter().enumerate() {
+                if let Some(slot) = e.get_mut(8 + i) {
+                    *slot = m / 2550.0;
+                }
+            }
+            out.push(crate::faces::FaceFound { rect, score: 0.95, embedding: e });
+        }
+        Ok(out)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

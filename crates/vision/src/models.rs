@@ -95,19 +95,67 @@ pub const OCR_BYTES: u64 = 9_880_512 + 21_159_378 + 150_579;
 pub const OCR_LICENCE: (&str, &str) =
     ("Apache License 2.0 (Baidu, PaddleOCR PP-OCRv6)", "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx");
 
-/// What to download for the text-reading models into `dir`: per folder, the files, the mirrors to
-/// try (the user's first, each keeping the files under `<base>/ocr/<det|rec>/`; then the pinned
-/// default) and where they go.
-pub fn ocr_downloads(dir: &Path, env: Option<&str>, file: Option<&Path>) -> Vec<(&'static [FileSpec], Vec<String>, std::path::PathBuf)> {
+/// The face models (OpenCV Zoo): YuNet finds faces, SFace tells them apart. Two repositories on
+/// Hugging Face, each pinned to a commit; both files go straight into the faces folder.
+pub const FACE_PARTS: &[OcrPart] = &[
+    OcrPart {
+        dir: "",
+        files: &[FileSpec {
+            name: "face_detection_yunet_2023mar.onnx",
+            size: Some(232_589),
+            sha256: Some("8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4"),
+            max: 232_589,
+        }],
+        default_mirror: "https://huggingface.co/opencv/face_detection_yunet/resolve/3cc26e7f1014a5ee5d74a42acee58bafc9d0a310",
+    },
+    OcrPart {
+        dir: "",
+        files: &[FileSpec {
+            name: "face_recognition_sface_2021dec.onnx",
+            size: Some(38_696_353),
+            sha256: Some("0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79"),
+            max: 38_696_353,
+        }],
+        default_mirror: "https://huggingface.co/opencv/face_recognition_sface/resolve/3d7082438a6e4551e840c9b2bb60b71e8da4b524",
+    },
+];
+
+/// Download size of the face models.
+pub const FACE_BYTES: u64 = 232_589 + 38_696_353;
+
+/// The licences the user is shown before downloading the face models: name and where to read it.
+pub const FACE_LICENCES: [(&str, &str); 2] = [
+    ("MIT License (Shiqi Yu, YuNet)", "https://huggingface.co/opencv/face_detection_yunet"),
+    ("Apache License 2.0 (BUPT, SFace)", "https://huggingface.co/opencv/face_recognition_sface"),
+];
+
+/// One download: the files, the mirrors to try for them, and the folder they go into.
+pub type Download = (&'static [FileSpec], Vec<String>, std::path::PathBuf);
+
+/// What to download for `parts` into `dir`: per part, the files, the mirrors to try (the user's
+/// first, each keeping the files under `<base>/<folder>/<part's folder>/`; then the pinned default)
+/// and where they go.
+pub fn part_downloads(parts: &'static [OcrPart], folder: &str, dir: &Path, env: Option<&str>, file: Option<&Path>) -> Vec<Download> {
     let user = lightcraft_fetch::mirrors(env, file, &[]);
-    OCR_PARTS
+    parts
         .iter()
         .map(|p| {
-            let mut mirrors: Vec<String> = user.iter().map(|b| format!("{b}/ocr/{}", p.dir)).collect();
+            let under = |b: &String| if p.dir.is_empty() { format!("{b}/{folder}") } else { format!("{b}/{folder}/{}", p.dir) };
+            let mut mirrors: Vec<String> = user.iter().map(under).collect();
             mirrors.push(p.default_mirror.to_string());
-            (p.files, mirrors, dir.join(p.dir))
+            (p.files, mirrors, if p.dir.is_empty() { dir.to_path_buf() } else { dir.join(p.dir) })
         })
         .collect()
+}
+
+/// What to download for the text-reading models into `dir` (see [`part_downloads`]; folder `ocr`).
+pub fn ocr_downloads(dir: &Path, env: Option<&str>, file: Option<&Path>) -> Vec<Download> {
+    part_downloads(OCR_PARTS, "ocr", dir, env, file)
+}
+
+/// What to download for the face models into `dir` (see [`part_downloads`]; folder `faces`).
+pub fn face_downloads(dir: &Path, env: Option<&str>, file: Option<&Path>) -> Vec<Download> {
+    part_downloads(FACE_PARTS, "faces", dir, env, file)
 }
 
 #[cfg(test)]
@@ -148,6 +196,25 @@ mod tests {
         }
         let total: u64 = parts.iter().flat_map(|(files, _, _)| files.iter()).filter_map(|f| f.size).sum();
         assert_eq!(total, OCR_BYTES);
+    }
+
+    #[test]
+    fn the_face_models_fill_the_folder_the_finder_loads() {
+        let parts = face_downloads(Path::new("/m/faces"), Some("https://mirror.example/models"), None);
+        let mut names: Vec<String> =
+            parts.iter().flat_map(|(files, _, dir)| files.iter().map(move |f| dir.join(f.name).to_string_lossy().into_owned())).collect();
+        names.sort();
+        assert_eq!(names, ["/m/faces/face_detection_yunet_2023mar.onnx", "/m/faces/face_recognition_sface_2021dec.onnx"]);
+        for (files, mirrors, _) in &parts {
+            assert_eq!(mirrors.len(), 2);
+            assert_eq!(mirrors[0], "https://mirror.example/models/faces");
+            assert!(mirrors[1].contains("/resolve/") && !mirrors[1].contains("/main"));
+            for f in *files {
+                assert_eq!((f.size, f.sha256.map(str::len)), (Some(f.max), Some(64)), "{}", f.name);
+            }
+        }
+        let total: u64 = parts.iter().flat_map(|(files, _, _)| files.iter()).filter_map(|f| f.size).sum();
+        assert_eq!(total, FACE_BYTES);
     }
 
     #[test]

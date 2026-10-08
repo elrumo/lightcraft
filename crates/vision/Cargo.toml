@@ -58,3 +58,7 @@ required-features = ["siglip"]
 [[test]]
 name = "ocr_reference"
 required-features = ["onnx"]
+
+[[test]]
+name = "faces_reference"
+required-features = ["onnx"]

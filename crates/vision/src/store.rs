@@ -192,6 +192,13 @@ impl RecordFile {
         Ok(RecordFile { file, rec_len: spec.rec_len, len: keep })
     }
 
+    /// Empties the file down to its header (forgetting every record).
+    pub fn truncate(&mut self) -> Result<(), Error> {
+        self.file.set_len(HEADER_LEN as u64)?;
+        self.len = HEADER_LEN as u64;
+        Ok(())
+    }
+
     /// Appends one or more whole records. A failed write is rolled back so the file stays aligned.
     pub fn append(&mut self, recs: &[u8]) -> Result<(), Error> {
         if recs.is_empty() || !recs.len().is_multiple_of(self.rec_len) {

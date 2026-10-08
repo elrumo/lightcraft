@@ -13,6 +13,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 pub mod embedder;
+pub mod faces;
 #[cfg(any(test, feature = "testing"))]
 pub mod fake;
 pub mod index;
@@ -38,5 +39,7 @@ pub use textindex::TextIndex;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_faces;
 #[cfg(test)]
 mod tests_text;
