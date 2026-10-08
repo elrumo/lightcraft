@@ -32,6 +32,7 @@ pub mod textindex;
 mod weights;
 
 pub use embedder::Embedder;
+pub use faces::FaceEngine;
 pub use index::{EmbeddingIndex, Hit, Import};
 pub use reader::TextReader;
 pub use store::{Error, Key};

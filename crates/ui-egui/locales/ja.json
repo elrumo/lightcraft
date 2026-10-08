@@ -1089,5 +1089,18 @@
   "Baidu's terms, not LightCraft's. Downloading them means accepting them.": "Baiduの利用条件であり、LightCraftのものではありません。ダウンロードすると、これに同意したことになります。",
   "Your photos are then read on this computer, a few at a time in the background; it takes a while. Nothing is sent anywhere unless you choose to share it with your own server.": "その後、写真はこのコンピューター上でバックグラウンドで少しずつ読み取られます。しばらく時間がかかります。ご自身のサーバーと共有することを選ばない限り、何も送信されません。",
   "Not Now": "今はしない",
-  "Text search is ready: your photos are being read.": "文字検索の準備ができました。写真を読み取っています。"
+  "Text search is ready: your photos are being read.": "文字検索の準備ができました。写真を読み取っています。",
+  "People": "人物",
+  "No people yet": "まだ人物がいません",
+  "Names written to XMP by Lightroom and other apps show up here, and so do the people found in your photos.": "Lightroomなどのアプリが XMP に書き込んだ名前と、写真から見つかった人物がここに表示されます。",
+  "Find the people in your photos, and name them once for all their photos.": "写真に写っている人物を見つけ、一度名前を付けるだけで、その人のすべての写真に反映します。",
+  "It runs on this computer, only when you ask, and you can forget everything it found at any time.": "このコンピューター上で、ご指示があったときだけ実行します。見つかった内容はいつでもすべて消去できます。",
+  "Find People…": "人物を探す…",
+  "Look in the Rest": "残りの写真も調べる",
+  "Forget All Faces": "すべての顔を消去",
+  "Finding people uses two small AI models: one finds the faces in your photos and one tells them apart. They aren't part of LightCraft, and everything else works without them.": "人物を探すには、2つの小さなAIモデルを使います。1つは写真の中の顔を見つけ、もう1つは顔を見分けます。LightCraftには含まれておらず、これらがなくても他の機能はすべて使えます。",
+  "These models were trained on collections of public photos of people; their makers publish them for general use. What they find in your photos stays on this computer unless you choose to share it with your own server. You can forget it all at any time. Naming a person writes their name on the photos they are in.": "これらのモデルは、人物の公開写真のコレクションで学習されており、作者が一般向けに公開しています。写真から見つかった内容は、ご自身のサーバーと共有することを選ばない限り、このコンピューターの外へ出ません。いつでもすべて消去できます。人物に名前を付けると、その人が写っている写真に名前が書き込まれます。",
+  "The face models are installed: looking for faces in your photos.": "顔モデルをインストールしました。写真の中の顔を探しています。",
+  "Who is this?": "この人は誰？",
+  "Show their photos": "この人の写真を表示"
 }

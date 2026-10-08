@@ -100,8 +100,8 @@ enum Panel {
     Indexing {
         done: usize,
         total: usize,
-        /// Reading the text in photos (after describing them).
-        reading: bool,
+        /// `describing`, `reading` (the text in photos) or `finding` (faces).
+        phase: &'static str,
     },
     /// Asking whether to download the models that read the text in photos.
     TextInstall,
@@ -240,8 +240,8 @@ pub fn panel(app: &mut LightcraftApp, ctx: &egui::Context, field: Rect) {
             _ => return,
         }
     } else if let Some((done, total)) = running_job {
-        let reading = app.session.vision.job().is_some_and(|j| j.reading.load(std::sync::atomic::Ordering::Relaxed));
-        Panel::Indexing { done, total, reading }
+        let phase = app.session.vision.job().map_or("describing", |j| j.phase());
+        Panel::Indexing { done, total, phase }
     } else if searching {
         Panel::Searching
     } else if indexed < total {
@@ -367,12 +367,12 @@ fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, which: &Panel, download: &se
             }
             ui.label(egui::RichText::new(crate::i18n::tr("The download continues if you close this, and resumes if interrupted.")).color(t.text_dim));
         }
-        Panel::Indexing { done, total, reading } => {
+        Panel::Indexing { done, total, phase } => {
             let frac = if *total > 0 { *done as f32 / *total as f32 } else { 0.0 };
-            let text = if *reading {
-                crate::i18n::tr_format!("Reading the text in your photos: {done} of {total}", done = done, total = total)
-            } else {
-                crate::i18n::tr_format!("Getting your photos ready to search: {done} of {total}", done = done, total = total)
+            let text = match *phase {
+                "reading" => crate::i18n::tr_format!("Reading the text in your photos: {done} of {total}", done = done, total = total),
+                "finding" => crate::i18n::tr_format!("Looking for faces: {done} of {total}", done = done, total = total),
+                _ => crate::i18n::tr_format!("Getting your photos ready to search: {done} of {total}", done = done, total = total),
             };
             let r = ui.add(egui::ProgressBar::new(frac).text(text));
             register(ui.ctx(), "progress:describeIndex", r.rect);

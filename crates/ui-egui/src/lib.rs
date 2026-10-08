@@ -46,6 +46,8 @@ mod tests_offline;
 #[cfg(test)]
 mod tests_panels;
 #[cfg(test)]
+mod tests_people;
+#[cfg(test)]
 mod tests_quit_unsaved;
 #[cfg(test)]
 mod tests_scroll;
@@ -820,6 +822,7 @@ impl LightcraftApp {
         self.hover_preview = None;
         self.ai_mask_detail(&ctx);
         panels::ai_search::frame(self, &ctx);
+        panels::people::frame(self, &ctx);
         if self.ui.fullscreen {
             // full-screen preview: the photo alone on black
             egui::CentralPanel::default().frame(egui::Frame::NONE.fill(egui::Color32::BLACK)).show(ui, |ui| panels::detail::show(self, ui));

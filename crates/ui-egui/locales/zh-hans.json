@@ -1089,5 +1089,18 @@
   "Baidu's terms, not LightCraft's. Downloading them means accepting them.": "这是百度的条款，不是 LightCraft 的。下载即表示接受。",
   "Your photos are then read on this computer, a few at a time in the background; it takes a while. Nothing is sent anywhere unless you choose to share it with your own server.": "随后会在本机后台逐批读取照片中的文字，需要一些时间。除非你选择与自己的服务器共享，否则不会向任何地方发送内容。",
   "Not Now": "暂不",
-  "Text search is ready: your photos are being read.": "文字搜索已就绪：正在读取你的照片。"
+  "Text search is ready: your photos are being read.": "文字搜索已就绪：正在读取你的照片。",
+  "People": "人物",
+  "No people yet": "还没有人物",
+  "Names written to XMP by Lightroom and other apps show up here, and so do the people found in your photos.": "Lightroom 等应用写入 XMP 的姓名，以及从照片中找到的人物，都会显示在这里。",
+  "Find the people in your photos, and name them once for all their photos.": "找出照片中的人物，只需命名一次，即可应用到他们的所有照片。",
+  "It runs on this computer, only when you ask, and you can forget everything it found at any time.": "仅在你需要时于本机运行，并且你可以随时清除它找到的全部内容。",
+  "Find People…": "查找人物…",
+  "Look in the Rest": "查看其余照片",
+  "Forget All Faces": "清除所有人脸",
+  "Finding people uses two small AI models: one finds the faces in your photos and one tells them apart. They aren't part of LightCraft, and everything else works without them.": "查找人物会用到两个小型 AI 模型：一个负责找出照片中的人脸，另一个负责区分不同的人。它们不是 LightCraft 的一部分，没有它们其他功能均可正常使用。",
+  "These models were trained on collections of public photos of people; their makers publish them for general use. What they find in your photos stays on this computer unless you choose to share it with your own server. You can forget it all at any time. Naming a person writes their name on the photos they are in.": "这些模型是用公开的人物照片集训练的，其作者将它们公开发布供一般使用。除非你选择与自己的服务器共享，否则在你的照片中找到的内容只会保留在本机。你可以随时将其全部清除。为人物命名会把名字写入他们所在的照片。",
+  "The face models are installed: looking for faces in your photos.": "人脸模型已安装：正在查找照片中的人脸。",
+  "Who is this?": "这是谁？",
+  "Show their photos": "显示他们的照片"
 }

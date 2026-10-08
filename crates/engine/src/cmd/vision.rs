@@ -7,7 +7,9 @@ use lightcraft_catalog::PhotoId;
 use serde_json::{Value, json};
 
 use super::{CommandSpec, always, bad, cmd, str_param};
-use crate::vision::{DEFAULT_LIMIT, LICENSE_NAME, LICENSE_URL, MODEL_BYTES, TEXT_BYTES, TEXT_LICENSE_NAME, TEXT_LICENSE_URL};
+use crate::vision::{
+    DEFAULT_LIMIT, FACE_BYTES, FACE_LICENSES, LICENSE_NAME, LICENSE_URL, MODEL_BYTES, TEXT_BYTES, TEXT_LICENSE_NAME, TEXT_LICENSE_URL,
+};
 
 fn ids_param(p: &Value) -> Option<Vec<PhotoId>> {
     p.get("ids").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_u64).map(PhotoId).collect())
@@ -147,6 +149,101 @@ pub fn specs() -> Vec<CommandSpec> {
             "{} — stop the text-reading models download (what has arrived is kept, and a new download resumes from it) → {cancelled}",
             always,
             |s, _| Ok(json!({"cancelled": s.vision.cancel_text_download()}))
+        ),
+        cmd!(
+            "vision.setFaces",
+            "Find People in Photos",
+            [],
+            None,
+            "{on: bool} — whether the faces in photos are found and grouped into people (people.list). Off until turned on, and only after the user agreed to it (the face models are a download of their own, vision.faces.download); saved with the library. Faces and what they look like stay in this library's search folder (and on the sync server only if the user shares them); naming a person writes face regions to the catalog → {enabled}",
+            always,
+            |s, p| {
+                let on = p.get("on").and_then(Value::as_bool).ok_or_else(|| bad("vision.setFaces", "missing `on`"))?;
+                s.vision.faces = on;
+                s.save_prefs()?;
+                Ok(json!({"enabled": on}))
+            }
+        ),
+        cmd!(
+            query "vision.faces.download",
+            "Download Face Models",
+            [],
+            None,
+            "{acknowledged: true} — download the models that find and tell apart faces (YuNet, MIT; SFace, Apache 2.0; about 39 MB; their makers' licences, not LightCraft's) in the background; only after the user agreed to it. Watch vision.model.status → faces.download; vision.faces.cancel stops it (it resumes later) → {started, installed, downloading}",
+            always,
+            |s, p| {
+                let c = "vision.faces.download";
+                if p.get("acknowledged").and_then(Value::as_bool) != Some(true) {
+                    return Err(bad(
+                        c,
+                        format!(
+                            "the face models are a {:.0} MB download under the licences of their makers ({}; {}): pass `acknowledged: true` once the user has agreed to download them",
+                            FACE_BYTES as f64 / 1e6,
+                            FACE_LICENSES[0].0,
+                            FACE_LICENSES[1].0
+                        ),
+                    ));
+                }
+                let started = s.vision.start_faces_download().map_err(|e| bad(c, e))?;
+                Ok(json!({"started": started, "installed": s.vision.faces_installed(), "downloading": s.vision.faces_download_status()["running"]}))
+            }
+        ),
+        cmd!(
+            query "vision.faces.cancel",
+            "Cancel Face Models Download",
+            [],
+            None,
+            "{} — stop the face models download (what has arrived is kept, and a new download resumes from it) → {cancelled}",
+            always,
+            |s, _| Ok(json!({"cancelled": s.vision.cancel_faces_download()}))
+        ),
+        cmd!(
+            query "people.list",
+            "List People",
+            [],
+            None,
+            "{all?: bool, limit?: 1..1000 (200)} — the people found in the photos (vision.setFaces on, vision.index): those nobody has named, and named people with faces not yet confirmed (`all`: everyone), biggest first → {people: [{id, name | null, faces, photos, pending (faces not yet written to the catalog), cover: {photo, rect}, photoIds}], totalPeople, faces, scanned, libraryPhotos}",
+            always,
+            |s, p| {
+                let all = p.get("all").and_then(Value::as_bool).unwrap_or(false);
+                let limit = p.get("limit").and_then(Value::as_u64).map_or(200, |n| n.clamp(1, 1000) as usize);
+                s.people_list(all, limit).map_err(|e| bad("people.list", e))
+            }
+        ),
+        cmd!(
+            "people.name",
+            "Name a Person",
+            [],
+            None,
+            "{cluster: a person's id from people.list, name: text} — name a person: a face region with that name is added to each photo they are in (or named, when a box is there already), in one undoable step; faces that already have another name keep it. Naming an already named person confirms the faces found since → {name, faces, photos, keptOtherName}",
+            always,
+            |s, p| {
+                let c = "people.name";
+                let cluster = str_param(p, "cluster").ok_or_else(|| bad(c, "missing `cluster`"))?;
+                let name = str_param(p, "name").ok_or_else(|| bad(c, "missing `name`"))?;
+                s.people_name(cluster, name).map_err(|e| bad(c, e))
+            }
+        ),
+        cmd!(
+            "people.show",
+            "Show a Person's Photos",
+            [],
+            None,
+            "{cluster: a person's id from people.list} — the view becomes that person's photos, oldest first (Clear Filters to go back) → {person, photos}",
+            always,
+            |s, p| {
+                let c = "people.show";
+                s.people_show(str_param(p, "cluster").ok_or_else(|| bad(c, "missing `cluster`"))?).map_err(|e| bad(c, e))
+            }
+        ),
+        cmd!(
+            "people.deleteData",
+            "Forget All Faces",
+            [],
+            None,
+            "{} — forget every face found (the face index of this library); names already written to photos stay, they are catalog data (photo.removeRegion removes one). Turn finding off too with vision.setFaces → {faces, photos}",
+            always,
+            |s, _| s.people_delete_data().map_err(|e| bad("people.deleteData", e))
         ),
         cmd!(query "vision.indexCancel", "Cancel Search Indexing", [], None, "{}", always, |s, _| {
             if let Some(j) = s.vision.job() {

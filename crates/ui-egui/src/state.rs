@@ -319,6 +319,21 @@ pub struct UiState {
     /// The text-reading models download was started from the app (to report its end once).
     #[serde(skip)]
     pub ai_text_downloading: bool,
+    /// The user asked to find people and is being asked to download the face models.
+    #[serde(skip)]
+    pub faces_offer: bool,
+    /// The face models download was started from the app (to report its end once).
+    #[serde(skip)]
+    pub faces_downloading: bool,
+    /// Why finding people, naming or forgetting failed (shown in the People view).
+    #[serde(skip)]
+    pub people_error: Option<String>,
+    /// People found in photos as listed by the engine, with the state they were listed at.
+    #[serde(skip)]
+    pub people_found: Option<((usize, usize, u64, bool), std::sync::Arc<Vec<serde_json::Value>>)>,
+    /// Names being typed for people found in photos, by the person's id.
+    #[serde(skip)]
+    pub people_names: std::collections::HashMap<String, String>,
     /// Indexing was started for this switching-on (it is offered, not repeated, after).
     #[serde(skip)]
     pub ai_search_autostarted: bool,
@@ -623,6 +638,11 @@ impl Default for UiState {
             ai_search_downloading: false,
             ai_text_offer: false,
             ai_text_downloading: false,
+            faces_offer: false,
+            faces_downloading: false,
+            people_error: None,
+            people_found: None,
+            people_names: Default::default(),
             ai_search_autostarted: false,
             ai_search_total: (0, 0),
             renaming_component: None,

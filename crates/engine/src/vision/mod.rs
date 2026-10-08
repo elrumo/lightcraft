@@ -26,13 +26,16 @@ use std::time::{Duration, Instant};
 use lightcraft_catalog::PhotoId;
 use lightcraft_develop::DevelopSettings;
 use lightcraft_raster::Rgba8;
-use lightcraft_vision::{Embedder, EmbeddingIndex, Hit, Key, TextIndex, TextReader};
+use lightcraft_vision::faces::index::FaceIndex;
+use lightcraft_vision::{Embedder, EmbeddingIndex, FaceEngine, Hit, Key, TextIndex, TextReader};
 use serde_json::{Value, json};
 
 use crate::media::{RenderJob, SourceLevel, content_key};
 use crate::{Session, guard, memory};
 
+mod people;
 mod server;
+pub use people::{Cluster, FaceRef};
 pub(crate) use server::Aux;
 
 /// A number that is never used twice in this process (temporary file names).
@@ -72,6 +75,17 @@ pub const TEXT_BYTES: u64 = 9_880_512 + 21_159_378 + 150_579;
 pub const TEXT_NOT_INSTALLED: &str = "The text-reading models are not installed";
 /// Folder of the text-reading models inside [`Vision::dir`].
 pub const TEXT_DIR: &str = "ocr";
+/// The face models' licences (not LightCraft's): shown before downloading.
+pub const FACE_LICENSES: [(&str, &str); 2] = [
+    ("MIT License (Shiqi Yu, YuNet)", "https://huggingface.co/opencv/face_detection_yunet"),
+    ("Apache License 2.0 (BUPT, SFace)", "https://huggingface.co/opencv/face_recognition_sface"),
+];
+/// Download size of the face models.
+pub const FACE_BYTES: u64 = 232_589 + 38_696_353;
+/// How errors about missing face models start (the UI offers the download on it).
+pub const FACES_NOT_INSTALLED: &str = "The face models are not installed";
+/// Folder of the face models inside [`Vision::dir`].
+pub const FACES_DIR: &str = "faces";
 
 /// Where an index lives and what it holds.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -104,9 +118,29 @@ struct ReaderProvider {
     dir: Option<PathBuf>,
 }
 
+/// Where the face index lives and which models filled it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct FaceSpec {
+    path: Option<PathBuf>,
+    engine: String,
+}
+
+/// How a worker thread gets the face models.
+#[derive(Clone)]
+struct FinderProvider {
+    injected: Option<Arc<dyn FaceEngine>>,
+    dir: Option<PathBuf>,
+}
+
 /// What worker threads and the session share.
 #[derive(Default)]
 struct Shared {
+    finder: Mutex<Option<Arc<dyn FaceEngine>>>,
+    face_ix: Mutex<Option<(Option<PathBuf>, FaceIndex)>>,
+    /// Faces and photos looked at in the face index, readable without its lock.
+    face_len: AtomicUsize,
+    face_photos: AtomicUsize,
+    faces_opened: AtomicBool,
     reader: Mutex<Option<Arc<dyn TextReader>>>,
     text: Mutex<Option<(Option<PathBuf>, TextIndex)>>,
     /// The text index's length, readable without its lock.
@@ -157,12 +191,25 @@ pub struct IndexJob {
     pub finished: AtomicBool,
     /// The run is reading the text in photos (after describing them).
     pub reading: AtomicBool,
+    /// The run is looking for faces in photos (after reading them).
+    pub finding: AtomicBool,
     error: Mutex<Option<String>>,
 }
 
 impl IndexJob {
     pub fn error(&self) -> Option<String> {
         self.error.lock().unwrap_or_else(PoisonError::into_inner).clone()
+    }
+
+    /// What the run is doing now: `describing`, `reading` (text) or `finding` (faces).
+    pub fn phase(&self) -> &'static str {
+        if self.finding.load(Ordering::Relaxed) {
+            "finding"
+        } else if self.reading.load(Ordering::Relaxed) {
+            "reading"
+        } else {
+            "describing"
+        }
     }
 
     fn fail(&self, e: String) {
@@ -176,7 +223,7 @@ impl IndexJob {
             "failed": self.failed.load(Ordering::Relaxed),
             "running": !self.finished.load(Ordering::Relaxed),
             "cancelled": self.cancel.load(Ordering::Relaxed),
-            "phase": if self.reading.load(Ordering::Relaxed) { "reading" } else { "describing" },
+            "phase": self.phase(),
             "error": self.error(),
         })
     }
@@ -214,11 +261,16 @@ pub struct Vision {
     /// Also read the text in photos and search it. Off until the user turns it on (persisted in
     /// the library's prefs.json): reading is slow and needs its own download.
     pub text: bool,
-    /// Long edge of the renderings text is read from ([`TEXT_EDGE`]; smaller in tests).
+    /// Find the faces in photos and group them into people. Off until the user turns it on
+    /// (persisted in the library's prefs.json): it needs its own download and the user's yes.
+    pub faces: bool,
+    /// Long edge of the renderings text and faces are read from ([`TEXT_EDGE`]; smaller in tests).
     #[doc(hidden)]
     pub text_edge: usize,
     injected: Option<Arc<dyn Embedder>>,
     injected_reader: Option<Arc<dyn TextReader>>,
+    injected_finder: Option<Arc<dyn FaceEngine>>,
+    people: people::Cache,
     remote: server::Remote,
     shared: Arc<Shared>,
     job: Option<Arc<IndexJob>>,
@@ -233,6 +285,8 @@ pub struct Vision {
     download: crate::download::Downloader,
     #[cfg(feature = "vision")]
     text_download: crate::download::Downloader,
+    #[cfg(feature = "vision")]
+    faces_download: crate::download::Downloader,
 }
 
 impl Default for Vision {
@@ -243,9 +297,12 @@ impl Default for Vision {
             background: false,
             share_with_server: false,
             text: false,
+            faces: false,
             text_edge: TEXT_EDGE,
             injected: None,
             injected_reader: None,
+            injected_finder: None,
+            people: people::Cache::default(),
             remote: server::Remote::default(),
             shared: Arc::new(Shared::default()),
             job: None,
@@ -259,6 +316,8 @@ impl Default for Vision {
             download: crate::download::Downloader::default(),
             #[cfg(feature = "vision")]
             text_download: crate::download::Downloader::default(),
+            #[cfg(feature = "vision")]
+            faces_download: crate::download::Downloader::default(),
         }
     }
 }
@@ -507,6 +566,111 @@ impl Vision {
         Err("reading the text in photos is not available in this build".into())
     }
 
+    /// Use `finder` instead of loading the face models from the model folder (tests, other hosts).
+    pub fn set_face_finder(&mut self, finder: Arc<dyn FaceEngine>) {
+        self.injected_finder = Some(finder);
+    }
+
+    /// Where the face models live (inside the model folder).
+    pub fn faces_dir(&self) -> Option<PathBuf> {
+        self.dir.as_ref().map(|d| d.join(FACES_DIR))
+    }
+
+    /// Whether this device can find faces (this build has the models' code, or a host supplied a
+    /// finder).
+    pub fn faces_available(&self) -> bool {
+        cfg!(feature = "vision") || self.injected_finder.is_some()
+    }
+
+    /// Whether the face models' files are in place.
+    pub fn faces_installed(&self) -> bool {
+        if self.injected_finder.is_some() {
+            return true;
+        }
+        #[cfg(feature = "vision")]
+        if let Some(dir) = self.faces_dir() {
+            return lightcraft_vision::faces::model::is_model_dir(&dir);
+        }
+        false
+    }
+
+    /// Finding people is wanted (the user's choice) and this device can do it.
+    pub fn faces_ready(&self) -> bool {
+        self.faces && self.faces_installed()
+    }
+
+    /// Faces in the index (0 until it has been opened).
+    pub fn faces_found(&self) -> usize {
+        self.shared.face_len.load(Ordering::Relaxed)
+    }
+
+    /// Photos looked at for faces (0 until the index has been opened).
+    pub fn faces_scanned(&self) -> usize {
+        self.shared.face_photos.load(Ordering::Relaxed)
+    }
+
+    /// The face models' download state.
+    pub fn faces_download_status(&self) -> Value {
+        #[cfg(feature = "vision")]
+        {
+            let s = self.faces_download.status();
+            json!({"running": s.running, "done": s.done, "total": s.total, "file": s.file, "error": s.error, "finished": s.finished})
+        }
+        #[cfg(not(feature = "vision"))]
+        json!({"running": false, "done": 0, "total": 0, "file": "", "error": null, "finished": false})
+    }
+
+    /// Start downloading the face models on a background thread. `Ok(false)` when they are
+    /// installed or downloading already.
+    pub fn start_faces_download(&self) -> Result<bool, String> {
+        if !self.faces_available() {
+            return Err("finding people in photos is not available in this build".into());
+        }
+        if self.faces_installed() {
+            return Ok(false);
+        }
+        #[cfg(feature = "vision")]
+        {
+            let dir = self.faces_dir().ok_or("no folder is set for the search models")?;
+            let env = std::env::var(lightcraft_vision::models::MIRRORS_ENV).ok();
+            let parts = lightcraft_vision::models::face_downloads(&dir, env.as_deref(), self.mirrors_file.as_deref());
+            self.faces_download.start_parts("faces", parts, lightcraft_vision::models::Options::default())
+        }
+        #[cfg(not(feature = "vision"))]
+        Ok(false)
+    }
+
+    /// Stop a running face-model download (its partial files stay, to resume). False when none runs.
+    pub fn cancel_faces_download(&self) -> bool {
+        #[cfg(feature = "vision")]
+        return self.faces_download.cancel();
+        #[cfg(not(feature = "vision"))]
+        false
+    }
+
+    /// What finds faces and how to reach it from a worker thread, with the engine's id, or why it
+    /// can't be.
+    fn finder_provider(&self) -> Result<(FinderProvider, String), String> {
+        if let Some(f) = &self.injected_finder {
+            return Ok((FinderProvider { injected: Some(f.clone()), dir: None }, f.engine().to_string()));
+        }
+        #[cfg(feature = "vision")]
+        {
+            if !self.faces_installed() {
+                if self.faces_download_status()["running"].as_bool() == Some(true) {
+                    return Err(format!("{FACES_NOT_INSTALLED} yet: they are downloading."));
+                }
+                return Err(format!(
+                    "{FACES_NOT_INSTALLED}. Download them (about {:.0} MB, MIT and Apache 2.0 licences) with `vision.faces.download {{\"acknowledged\": true}}`.",
+                    FACE_BYTES as f64 / 1e6
+                ));
+            }
+            Ok((FinderProvider { injected: None, dir: self.faces_dir() }, lightcraft_vision::faces::ENGINE.to_string()))
+        }
+        #[cfg(not(feature = "vision"))]
+        Err("finding people in photos is not available in this build".into())
+    }
+
     /// The local model's id and vector length, installed or not (what an index on disk was made with).
     fn spec_only(&self) -> Result<(String, usize), String> {
         if let Some(m) = &self.injected {
@@ -688,19 +852,89 @@ fn with_text<R>(shared: &Shared, spec: &TextSpec, f: impl FnOnce(&mut TextIndex)
     Ok(r)
 }
 
-/// What an indexing run does: embed photos (describe), read their text, or both.
+/// The face finder, loading it first if needed (like [`acquire`]).
+fn acquire_finder(shared: &Shared, provider: &FinderProvider) -> Result<Arc<dyn FaceEngine>, String> {
+    if let Some(f) = &provider.injected {
+        shared.touch();
+        return Ok(f.clone());
+    }
+    let mut slot = shared.finder.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some(f) = slot.as_ref() {
+        shared.touch();
+        return Ok(f.clone());
+    }
+    shared.loading.store(true, Ordering::SeqCst);
+    let loaded = load_finder(provider.dir.as_deref());
+    shared.loading.store(false, Ordering::SeqCst);
+    let f = loaded?;
+    *slot = Some(f.clone());
+    shared.loaded.store(true, Ordering::SeqCst);
+    shared.touch();
+    Ok(f)
+}
+
+fn load_finder(dir: Option<&std::path::Path>) -> Result<Arc<dyn FaceEngine>, String> {
+    #[cfg(feature = "vision")]
+    {
+        let dir = dir.ok_or("no folder is set for the search models")?;
+        let faces = guard::catch("loading the face models", || lightcraft_vision::faces::model::Faces::load(dir))?.map_err(|e| e.to_string())?;
+        Ok(Arc::new(faces))
+    }
+    #[cfg(not(feature = "vision"))]
+    {
+        let _ = dir;
+        Err("finding people in photos is not available in this build".into())
+    }
+}
+
+/// Opens the face index at `spec` (another pair of models', or damaged, is derived data: started over).
+fn open_face_index(spec: &FaceSpec) -> Result<FaceIndex, String> {
+    use lightcraft_vision::Error;
+    let Some(path) = &spec.path else { return Ok(FaceIndex::in_memory()) };
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("can't create {}: {e}", parent.display()))?;
+    }
+    match FaceIndex::open(path) {
+        Ok(ix) => Ok(ix),
+        Err(Error::Mismatch { .. } | Error::Format(_)) => {
+            log::info!("face index {} is for other models or damaged: starting over", path.display());
+            let _ = std::fs::remove_file(path);
+            FaceIndex::open(path).map_err(|e| e.to_string())
+        }
+        Err(e) => Err(format!("{}: {e}", path.display())),
+    }
+}
+
+/// Runs `f` on the face index at `spec`, opening it first (or again, when it is another one).
+fn with_faces<R>(shared: &Shared, spec: &FaceSpec, f: impl FnOnce(&mut FaceIndex) -> R) -> Result<R, String> {
+    let mut slot = shared.face_ix.lock().unwrap_or_else(PoisonError::into_inner);
+    if slot.as_ref().is_none_or(|(p, _)| *p != spec.path) {
+        let ix = open_face_index(spec)?;
+        *slot = Some((spec.path.clone(), ix));
+    }
+    let (_, ix) = slot.as_mut().ok_or("the face index is unavailable")?;
+    let r = f(ix);
+    shared.face_len.store(ix.len(), Ordering::Relaxed);
+    shared.face_photos.store(ix.photos(), Ordering::Relaxed);
+    shared.faces_opened.store(true, Ordering::Relaxed);
+    Ok(r)
+}
+
+/// What an indexing run does: embed photos (describe), read their text, find faces, or all.
 struct Plan {
     semantic: Option<(Provider, IndexSpec)>,
     text: Option<(ReaderProvider, TextSpec)>,
+    faces: Option<(FinderProvider, FaceSpec)>,
     embed: Vec<(Key, RenderJob)>,
     read: Vec<(Key, RenderJob)>,
+    scan: Vec<(Key, RenderJob)>,
 }
 
 /// Embeds `plan.embed`'s photos in batches and stores their vectors, then reads the text of
 /// `plan.read`'s and stores that.
 fn run_index(shared: &Arc<Shared>, plan: Plan, job: &IndexJob) {
     let _busy = Busy::new(shared);
-    let Plan { semantic, text, embed, read } = plan;
+    let Plan { semantic, text, faces, embed, read, scan } = plan;
     let result = guard::catch("indexing photos", || -> Result<(), String> {
         if let Some((provider, spec)) = &semantic {
             describe_photos(shared, provider, spec, embed, job)?;
@@ -711,6 +945,13 @@ fn run_index(shared: &Arc<Shared>, plan: Plan, job: &IndexJob) {
         {
             job.reading.store(true, Ordering::Relaxed);
             read_photos(shared, provider, spec, read, job)?;
+        }
+        if let Some((provider, spec)) = &faces
+            && !job.cancel.load(Ordering::Relaxed)
+            && job.error().is_none()
+        {
+            job.finding.store(true, Ordering::Relaxed);
+            find_faces(shared, provider, spec, scan, job)?;
         }
         Ok(())
     });
@@ -813,6 +1054,45 @@ fn read_photos(shared: &Arc<Shared>, provider: &ReaderProvider, spec: &TextSpec,
     Ok(())
 }
 
+/// Looks for the faces in `work`'s photos, one at a time, and stores them (a photo with none is
+/// stored as looked at, so it isn't looked at again).
+fn find_faces(shared: &Arc<Shared>, provider: &FinderProvider, spec: &FaceSpec, work: Vec<(Key, RenderJob)>, job: &IndexJob) -> Result<(), String> {
+    if work.is_empty() {
+        return Ok(());
+    }
+    let finder = acquire_finder(shared, provider)?;
+    let mut failures = 0;
+    for (key, render) in work {
+        if job.cancel.load(Ordering::Relaxed) {
+            break;
+        }
+        let found = memory::in_background(|| render.run().rendered)
+            .and_then(|r| guard::catch("finding faces", || finder.faces(&r.image)).and_then(|t| t.map_err(|e| e.to_string())));
+        let stopped = match found {
+            Ok(faces) => {
+                failures = 0;
+                if with_faces(shared, spec, |ix| ix.insert_photo(key, &faces).is_err())? {
+                    job.failed.fetch_add(1, Ordering::Relaxed);
+                }
+                None
+            }
+            Err(e) => {
+                log::debug!("face index: can't look at a photo: {e}");
+                job.failed.fetch_add(1, Ordering::Relaxed);
+                failures += 1;
+                (failures >= READ_FAILURES).then(|| format!("finding faces stopped after {READ_FAILURES} photos in a row failed: {e}"))
+            }
+        };
+        job.done.fetch_add(1, Ordering::Relaxed);
+        shared.touch();
+        if let Some(e) = stopped {
+            job.fail(e);
+            return Ok(());
+        }
+    }
+    Ok(())
+}
+
 /// Where a search looks: the description model's index, the photos' text, or both.
 struct Where {
     semantic: Option<(Provider, IndexSpec)>,
@@ -878,6 +1158,12 @@ impl Session {
         Some(lib.dir.join("search").join(format!("text-{engine}.bin")))
     }
 
+    /// The face index file for `engine`: in the library's `search/` folder, else none (memory only).
+    fn vision_faces_path(&self, engine: &str) -> Option<PathBuf> {
+        let lib = self.library.as_ref().filter(|l| l.on_disk)?;
+        Some(lib.dir.join("search").join(format!("faces-{engine}.bin")))
+    }
+
     /// Where to look for words in photos: when the user wants that, the models are installed and
     /// something has been read.
     fn vision_text_where(&self) -> Option<TextSpec> {
@@ -926,6 +1212,17 @@ impl Session {
             "mirrors": v.mirrors().len(),
             "download": v.download_status(),
             "index": v.job.as_ref().map(|j| j.json()),
+            "faces": {
+                "available": v.faces_available(),
+                "enabled": v.faces,
+                "installed": v.faces_installed(),
+                "dir": v.faces_dir().map(|d| d.display().to_string()),
+                "found": v.shared.faces_opened.load(Ordering::Relaxed).then(|| v.faces_found()),
+                "scanned": v.shared.faces_opened.load(Ordering::Relaxed).then(|| v.faces_scanned()),
+                "sizeBytes": FACE_BYTES,
+                "licenses": FACE_LICENSES.iter().map(|(n, u)| json!({"name": n, "url": u})).collect::<Vec<_>>(),
+                "download": v.faces_download_status(),
+            },
             "text": {
                 "available": v.text_available(),
                 "enabled": v.text,
@@ -957,10 +1254,15 @@ impl Session {
         } else {
             Err(String::new())
         };
-        if semantic.is_err() && text.is_err() {
+        let faces = if self.vision.faces {
+            self.vision.finder_provider().map(|(p, engine)| (p, FaceSpec { path: self.vision_faces_path(&engine), engine }))
+        } else {
+            Err(String::new())
+        };
+        if semantic.is_err() && text.is_err() && faces.is_err() {
             return Err(semantic.err().unwrap_or_default());
         }
-        let (semantic, text) = (semantic.ok(), text.ok());
+        let (semantic, text, faces) = (semantic.ok(), text.ok(), faces.ok());
         let shared = self.vision.shared.clone();
         let mut seen: HashSet<Key> = match &semantic {
             Some((_, spec)) => with_index(&shared, spec, |ix| ix.keys().copied().collect())?,
@@ -970,17 +1272,23 @@ impl Session {
             Some((_, spec)) => with_text(&shared, spec, |ix| ix.keys().copied().collect())?,
             None => HashSet::new(),
         };
+        let mut seen_faces: HashSet<Key> = match &faces {
+            Some((_, spec)) => with_faces(&shared, spec, |ix| ix.keys().copied().collect())?,
+            None => HashSet::new(),
+        };
         let want: Vec<PhotoId> = match ids {
             Some(ids) => ids,
             None => self.catalog.photos().filter(|p| p.in_library()).map(|p| p.id).collect(),
         };
-        let (mut embed, mut read): (Vec<(Key, RenderJob)>, Vec<(Key, RenderJob)>) = (Vec::new(), Vec::new());
+        let (mut embed, mut read, mut scan): (Vec<(Key, RenderJob)>, Vec<(Key, RenderJob)>, Vec<(Key, RenderJob)>) =
+            (Vec::new(), Vec::new(), Vec::new());
         let (mut failed, edge) = (0, self.vision.text_edge);
         for id in want {
             let Some(key) = self.catalog.photo(id).filter(|p| p.in_library()).map(|p| Key::of(&content_key(p))) else { continue };
             // (a photo is described and read once per content, whatever copies it has)
             let describe = semantic.is_some() && seen.insert(key);
             let reads = text.is_some() && seen_text.insert(key);
+            let looks = faces.is_some() && seen_faces.insert(key);
             // a neutral rendering: the photo as its file looks, whatever the user did to it; not
             // cached, so indexing doesn't fill the thumbnail cache with a second set
             if describe {
@@ -992,22 +1300,25 @@ impl Session {
                     None => failed += 1,
                 }
             }
-            if reads {
+            for (wanted, list) in [(reads, &mut read), (looks, &mut scan)] {
+                if !wanted {
+                    continue;
+                }
                 match self.variant_job_at(id, &DevelopSettings::default(), edge, SourceLevel::for_size(edge)) {
                     Some(mut job) => {
                         job.cache = None;
-                        read.push((key, job));
+                        list.push((key, job));
                     }
                     None => failed += 1,
                 }
             }
         }
-        let job = Arc::new(IndexJob { total: embed.len() + read.len() + failed, ..Default::default() });
+        let job = Arc::new(IndexJob { total: embed.len() + read.len() + scan.len() + failed, ..Default::default() });
         job.done.store(failed, Ordering::Relaxed);
         job.failed.store(failed, Ordering::Relaxed);
         self.vision.job = Some(job.clone());
         self.vision.job_reported = wait;
-        let plan = Plan { semantic, text, embed, read };
+        let plan = Plan { semantic, text, faces, embed, read, scan };
         if wait || !self.vision.background || cfg!(target_arch = "wasm32") {
             run_index(&shared, plan, &job);
             self.vision.job_reported = true;
@@ -1192,7 +1503,12 @@ impl Session {
             .flatten()
             .map(|(_, engine)| TextSpec { path: self.vision_text_path(&engine), engine })
             .filter(|s| s.path.as_ref().is_some_and(|p| p.is_file()));
-        if semantic.is_none() && text.is_none() {
+        let faces = (!sh.faces_opened.load(Ordering::Relaxed) && self.vision.faces_ready())
+            .then(|| self.vision.finder_provider().ok())
+            .flatten()
+            .map(|(_, engine)| FaceSpec { path: self.vision_faces_path(&engine), engine })
+            .filter(|s| s.path.as_ref().is_some_and(|p| p.is_file()));
+        if semantic.is_none() && text.is_none() && faces.is_none() {
             return;
         }
         let (shared, opening) = (sh.clone(), self.vision.opening.clone());
@@ -1203,6 +1519,9 @@ impl Session {
             }
             if let Some(spec) = &text {
                 let _ = with_text(&shared, spec, |_| ());
+            }
+            if let Some(spec) = &faces {
+                let _ = with_faces(&shared, spec, |_| ());
             }
             opening.store(false, Ordering::SeqCst);
         });
@@ -1225,11 +1544,16 @@ impl Session {
         if !idle {
             return;
         }
-        if let (Ok(mut m), Ok(mut ix), Ok(mut r), Ok(mut tx)) = (sh.model.try_lock(), sh.index.try_lock(), sh.reader.try_lock(), sh.text.try_lock()) {
+        if let (Ok(mut m), Ok(mut ix), Ok(mut r), Ok(mut tx), Ok(mut fd), Ok(mut fx)) =
+            (sh.model.try_lock(), sh.index.try_lock(), sh.reader.try_lock(), sh.text.try_lock(), sh.finder.try_lock(), sh.face_ix.try_lock())
+        {
             *m = None;
             *ix = None;
             *r = None;
             *tx = None;
+            *fd = None;
+            *fx = None;
+            sh.faces_opened.store(false, Ordering::Relaxed);
             sh.loaded.store(false, Ordering::SeqCst);
             sh.opened.store(false, Ordering::Relaxed);
             sh.text_opened.store(false, Ordering::Relaxed);
@@ -1240,5 +1564,7 @@ impl Session {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_people;
 #[cfg(test)]
 mod tests_text;
