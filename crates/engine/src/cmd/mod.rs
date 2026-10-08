@@ -12,6 +12,7 @@ mod cull;
 pub mod curves;
 mod develop;
 mod edit;
+mod enhance;
 mod export;
 pub mod filters;
 pub mod keywords;
@@ -122,6 +123,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(color::specs());
         v.extend(curves::specs());
         v.extend(masks::specs());
+        v.extend(enhance::specs());
         v.extend(organize::specs());
         v.extend(keywords::specs());
         v.extend(manage::specs());

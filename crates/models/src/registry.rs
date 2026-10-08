@@ -20,6 +20,11 @@ pub struct ModelSpec {
     /// The weights' licence, as named in the consent dialog.
     pub licence: &'static str,
     pub licence_url: &'static str,
+    /// Who made the model, for the credit the licence may require ("Nomos Uni SPAN by Philip
+    /// Hofmann").
+    pub credit: &'static str,
+    /// Where the model is described (its page), shown next to the licence.
+    pub home_url: &'static str,
 }
 
 impl ModelSpec {
@@ -80,10 +85,38 @@ pub const SAM3: ModelSpec = ModelSpec {
     default_mirrors: &[],
     licence: "SAM License (Meta)",
     licence_url: "https://github.com/facebookresearch/sam3/blob/main/LICENSE",
+    credit: "SAM 3 by Meta",
+    home_url: "https://github.com/facebookresearch/sam3",
+};
+
+/// Nomos Uni SPAN 2×: AI Super Resolution (see `lightcraft-enhance`).
+///
+/// Downloaded straight from its author's Hugging Face repository (public, no account needed):
+/// LightCraft hosts nothing. The file is pinned, so a changed or tampered file is refused.
+pub const NOMOS_SPAN_2X: ModelSpec = ModelSpec {
+    id: "nomos-span-2x",
+    label: "Nomos Uni SPAN 2×",
+    files: &[FileSpec {
+        name: "2xNomosUni_span_multijpg.safetensors",
+        size: Some(4_461_056),
+        sha256: Some("bee2a9c082f2b8f6e7f5db504b36593c24a1a959511f587114c399ca58b9c92c"),
+        max: 4_461_056,
+    }],
+    mirrors_env: "LIGHTCRAFT_NOMOS_SPAN_MIRRORS",
+    default_mirrors: &["https://huggingface.co/Phips/2xNomosUni_span_multijpg/resolve/main"],
+    licence: "CC-BY-4.0",
+    licence_url: "https://creativecommons.org/licenses/by/4.0/",
+    credit: "Nomos Uni SPAN by Philip Hofmann (Phips)",
+    home_url: "https://huggingface.co/Phips/2xNomosUni_span_multijpg",
 };
 
 /// Every model, for listings.
-pub const ALL: &[&ModelSpec] = &[&SAM3];
+pub const ALL: &[&ModelSpec] = &[&SAM3, &NOMOS_SPAN_2X];
+
+/// The model with this id.
+pub fn find(id: &str) -> Option<&'static ModelSpec> {
+    ALL.iter().copied().find(|m| m.id == id)
+}
 
 #[cfg(test)]
 mod tests {
@@ -104,6 +137,27 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn built_in_mirrors_are_https_and_every_model_is_credited() {
+        for m in ALL {
+            assert!(m.default_mirrors.iter().all(|u| u.starts_with("https://") && !u.ends_with('/')), "{}", m.id);
+            assert!(
+                !m.licence.is_empty() && m.licence_url.starts_with("https://") && m.home_url.starts_with("https://") && !m.credit.is_empty(),
+                "{}",
+                m.id
+            );
+            assert_eq!(find(m.id).map(|f| f.id), Some(m.id));
+        }
+        assert!(find("nope").is_none());
+    }
+
+    #[test]
+    fn nomos_span_is_pinned_and_downloads_from_its_authors_repository() {
+        assert_eq!(NOMOS_SPAN_2X.bytes(), 4_461_056);
+        assert!(NOMOS_SPAN_2X.files.iter().all(|f| f.sha256.is_some()));
+        assert!(!NOMOS_SPAN_2X.default_mirrors.is_empty());
     }
 
     #[test]

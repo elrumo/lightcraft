@@ -19,6 +19,8 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod span;
+#[doc(hidden)]
+pub mod testing;
 #[cfg(test)]
 mod tests;
 mod tile;

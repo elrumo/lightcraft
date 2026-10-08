@@ -18,6 +18,7 @@ pub mod crs;
 pub mod crs_masks;
 pub mod demo;
 pub mod devices;
+pub mod enhance;
 pub mod export;
 pub mod files;
 pub mod fonts;
@@ -158,6 +159,8 @@ pub struct Session {
     pub active_mask: Option<u32>,
     /// AI masks (SAM 3): the model and the last photo prepared for it.
     pub segmenter: segment::Segmenter,
+    /// AI Super Resolution: the models and where they live.
+    pub enhancer: enhance::Enhancer,
     /// Selected spot (Remove panel), by index into the active photo's spots.
     pub active_spot: Option<usize>,
     /// The persistent library this session writes to (`None` = in-memory only).
@@ -252,6 +255,7 @@ impl Session {
             depth: 0,
             active_mask: None,
             segmenter: segment::Segmenter::default(),
+            enhancer: enhance::Enhancer::default(),
             active_spot: None,
             library: None,
             xmp: sidecar::XmpPrefs::default(),
@@ -718,6 +722,8 @@ pub fn json_delta(old: &Value, new: &Value) -> Option<Value> {
 mod tests;
 #[cfg(test)]
 mod tests_color;
+#[cfg(test)]
+mod tests_enhance;
 #[cfg(test)]
 mod tests_export;
 #[cfg(test)]
