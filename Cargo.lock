@@ -3207,6 +3207,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "lightcraft-vision"
+version = "0.2.1"
+dependencies = [
+ "half",
+ "siphasher",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "lightcraft-web"
 version = "0.2.1"
 dependencies = [

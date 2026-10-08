@@ -1,0 +1,14 @@
+[package]
+name = "lightcraft-vision"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "LightCraft photo understanding: image-text search embeddings and their on-disk index (L3)"
+
+[lints]
+workspace = true
+
+[dependencies]
+half = { workspace = true }
+siphasher = { workspace = true }
+thiserror = { workspace = true }
