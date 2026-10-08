@@ -517,7 +517,10 @@ fn info(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         let gid = egui::Id::new("info-gps");
         ui.label(egui::RichText::new("GPS").size(11.5).color(t.text_dim));
         let mut text: String = ui.data(|d| d.get_temp(gid)).unwrap_or_else(|| gps.clone());
-        let r = ui.add(egui::TextEdit::singleline(&mut text).hint_text("latitude, longitude").desired_width(f32::INFINITY));
+        let r = ui.add(crate::widgets::touch_field(
+            ui,
+            egui::TextEdit::singleline(&mut text).hint_text("latitude, longitude").desired_width(f32::INFINITY),
+        ));
         register(ui.ctx(), "field:gps", r.rect);
         if r.has_focus() {
             ui.data_mut(|d| d.insert_temp(gid, text.clone()));
@@ -674,7 +677,7 @@ fn meta_field(app: &mut LightcraftApp, ui: &mut egui::Ui, label: &str, key: &str
     let id = egui::Id::new(("info-field", key));
     let mut text: String = ui.data(|d| d.get_temp(id)).unwrap_or_else(|| value.to_string());
     let edit = if lines > 1 { egui::TextEdit::multiline(&mut text).desired_rows(lines) } else { egui::TextEdit::singleline(&mut text) };
-    let r = ui.add(edit.desired_width(f32::INFINITY));
+    let r = ui.add(crate::widgets::touch_field(ui, edit.desired_width(f32::INFINITY)));
     register(ui.ctx(), format!("field:{key}"), r.rect);
     if r.has_focus() {
         ui.data_mut(|d| d.insert_temp(id, text.clone()));
@@ -694,7 +697,10 @@ fn keywords(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     padded(ui, |ui| {
         let kid = egui::Id::new("kw-input");
         let mut text = ui.data_mut(|d| d.get_temp::<String>(kid).unwrap_or_default());
-        let r = ui.add(egui::TextEdit::singleline(&mut text).hint_text(crate::i18n::tr("Add keyword")).desired_width(f32::INFINITY));
+        let r = ui.add(crate::widgets::touch_field(
+            ui,
+            egui::TextEdit::singleline(&mut text).hint_text(crate::i18n::tr("Add keyword")).desired_width(f32::INFINITY),
+        ));
         register(ui.ctx(), "field:keyword", r.rect);
         if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) && !text.trim().is_empty() {
             let kws: Vec<String> = text.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
@@ -738,7 +744,10 @@ fn keywords(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             let mut k: String = ui.data(|d| d.get_temp(pid)).unwrap_or_else(|| painting.clone().unwrap_or_default());
             let r = ui.add_enabled(
                 painting.is_none(),
-                egui::TextEdit::singleline(&mut k).hint_text(crate::i18n::tr("Keyword to paint")).desired_width(130.0),
+                crate::widgets::touch_field(
+                    ui,
+                    egui::TextEdit::singleline(&mut k).hint_text(crate::i18n::tr("Keyword to paint")).desired_width(130.0),
+                ),
             );
             register(ui.ctx(), "field:keywordPainter", r.rect);
             ui.data_mut(|d| d.insert_temp(pid, k.clone()));

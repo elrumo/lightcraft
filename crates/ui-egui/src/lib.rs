@@ -8,6 +8,7 @@
 
 pub mod control;
 pub mod export_task;
+pub mod haptics;
 pub mod headless;
 pub mod i18n;
 pub mod icons;
@@ -143,6 +144,12 @@ pub struct Services {
     /// The host's own pickers (iOS: Photos, Files): File ▸ Import from Photos… / from Files… /
     /// Folder from Files…, and the compact grid's + button.
     pub host_pick: Option<HostPick>,
+    /// Plays haptic feedback (iOS: the Taptic Engine); the compact layout asks for it on touch
+    /// gestures and choices (`haptics`).
+    pub haptic: Option<haptics::PlayHaptic>,
+    /// The system clipboard's text, for Paste in a text field's touch edit menu
+    /// (`panels::mobile::edit_menu`; iOS: the on-screen keyboard has no ⌘V).
+    pub clipboard_text: Option<Box<dyn FnMut() -> Option<String>>>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -795,7 +802,8 @@ impl LightcraftApp {
     }
 
     /// Frame timings once layout is done (`t0`: when layout started).
-    fn end_frame(&mut self, t0: f64) {
+    fn end_frame(&mut self, ctx: &egui::Context, t0: f64) {
+        haptics::flush(ctx, self.services.haptic.as_ref());
         self.perf.frame_ms = now_ms() - t0;
         self.perf.update_ms = self.perf.logic_ms + self.perf.frame_ms;
         self.perf.max_update_ms = self.perf.max_update_ms.max(self.perf.update_ms);
@@ -825,7 +833,7 @@ impl LightcraftApp {
             panels::library_problem::show(self, &ctx);
             panels::toast(self, &ctx);
             self.widgets = widgets::take_registry(&ctx);
-            self.end_frame(t0);
+            self.end_frame(&ctx, t0);
             return;
         }
         self.compact = ctx.content_rect().width() < COMPACT_BELOW_PT;
@@ -834,7 +842,7 @@ impl LightcraftApp {
         if self.compact {
             panels::compact::show(self, ui);
             self.widgets = widgets::take_registry(&ctx);
-            self.end_frame(t0);
+            self.end_frame(&ctx, t0);
             return;
         }
         // Order matters: earlier panels take the full edge (top bar spans the window; the tool strip,
@@ -876,8 +884,10 @@ impl LightcraftApp {
         export_task::poll(self, &ctx);
         panels::grid::drag_feedback(self, &ctx);
         panels::toast(self, &ctx);
+        // (an iPad in landscape: touch, and the desktop layout)
+        panels::mobile::edit_menu(self, &ctx);
         self.widgets = widgets::take_registry(&ctx);
-        self.end_frame(t0);
+        self.end_frame(&ctx, t0);
     }
 }
 
