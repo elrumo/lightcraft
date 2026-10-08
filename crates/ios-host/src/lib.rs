@@ -200,6 +200,41 @@ pub fn take_return_presses() -> u32 {
     RETURN_PRESSES.swap(0, Ordering::Relaxed)
 }
 
+/// How iOS draws the app's windows (and its own chrome over them): light or dark.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InterfaceStyle {
+    Light,
+    Dark,
+}
+
+/// What the system is set to (Settings ▸ Display & Brightness), whatever the app forces on its own
+/// windows. Call on the main thread. `None`: not iOS, or the system doesn't say.
+pub fn system_interface_style() -> Option<InterfaceStyle> {
+    #[cfg(target_os = "ios")]
+    {
+        ios::appearance::system_style()
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        None
+    }
+}
+
+/// Make the app's windows light or dark (`None`: like the system), so that UIKit's own chrome, the
+/// status bar, the keyboard, the share sheet and the pickers, matches what the app draws. Call on
+/// the main thread.
+pub fn set_interface_style(style: Option<InterfaceStyle>) -> Result<(), String> {
+    #[cfg(target_os = "ios")]
+    {
+        ios::appearance::set_style(style)
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        let _ = style;
+        Err(ONLY_IOS.into())
+    }
+}
+
 /// How much of the bottom of the screen the on-screen keyboard covers, in points (0 when it is
 /// hidden): the app keeps its content above it.
 pub fn keyboard_height() -> f32 {

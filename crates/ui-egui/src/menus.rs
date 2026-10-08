@@ -38,6 +38,9 @@ pub fn language_from_command(id: &str) -> Option<crate::i18n::Locale> {
 }
 
 pub const UI_COMMANDS: &[UiCommand] = &[
+    ("app.appearance.system", "System", None, "Edit>Appearance"),
+    ("app.appearance.light", "Light", None, "Edit>Appearance"),
+    ("app.appearance.dark", "Dark", None, "Edit>Appearance"),
     ("view.photoGrid", "Photo Grid", None, "View"),
     ("view.squareGrid", "Square Grid", None, "View"),
     // G: Photo Grid ↔ Square Grid (from other views: the photo grid)
@@ -237,8 +240,17 @@ pub fn parse_rgb(v: &Value) -> Option<[u8; 3]> {
     Some([c(0)?, c(1)?, c(2)?])
 }
 
+/// The appearance an `app.appearance.*` command selects, if the id is one.
+pub fn appearance_from_command(id: &str) -> Option<crate::state::Appearance> {
+    crate::state::Appearance::ALL.into_iter().find(|a| id.strip_prefix("app.appearance.") == Some(a.key()))
+}
+
 /// Handle UI commands; `None` means "not a UI command — send it to the engine".
 pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Result<Value, String>> {
+    if let Some(appearance) = appearance_from_command(id) {
+        app.ui.appearance = appearance;
+        return Some(Ok(json!(appearance.key())));
+    }
     if let Some(language) = language_from_command(id) {
         app.ui.language = language;
         // Immediately, not on the next frame: the reply and anything else run this frame

@@ -435,7 +435,7 @@ pub fn check(ui: &mut Ui, on: &mut bool, label: impl Into<egui::WidgetText>) -> 
     p.galley(pos2(r.left(), r.center().y - galley.size().y / 2.0), galley, if enabled { t.text } else { t.text_disabled });
     // 51 × 31 pt like iOS's own; its off track is a translucent grey
     let sw = Rect::from_center_size(pos2(r.right() - 27.0, r.center().y), vec2(51.0, 31.0));
-    let (off, green) = (Color32::from_rgb(0x39, 0x39, 0x3d), Color32::from_rgb(0x30, 0xd1, 0x58));
+    let (off, green) = (t.switch_off, t.switch_on);
     let mix = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * k).round() as u8;
     let track = Color32::from_rgb(mix(off.r(), green.r()), mix(off.g(), green.g()), mix(off.b(), green.b()));
     p.rect_filled(sw, 15.5, if enabled { track } else { track.gamma_multiply(0.5) });
@@ -557,8 +557,8 @@ fn ios_segments(ui: &mut Ui, id: &str, items: Vec<(&str, String)>, active: Optio
             let p = ui.painter();
             if on {
                 let pill = r.shrink(2.0);
-                p.rect_filled(pill.translate(vec2(0.0, 1.0)), 7.0, Color32::from_black_alpha(50));
-                p.rect_filled(pill, 7.0, Color32::from_rgb(0x63, 0x63, 0x66));
+                p.rect_filled(pill.translate(vec2(0.0, 1.0)), 7.0, Color32::from_black_alpha(if Tokens::is_dark(ui.ctx()) { 50 } else { 28 }));
+                p.rect_filled(pill, 7.0, t.segment_pill);
             } else if j > 0 && active != Some(i - 1) {
                 p.vline(r.left(), r.shrink2(vec2(0.0, 9.0)).y_range(), Stroke::new(1.0, t.hover));
             }

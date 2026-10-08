@@ -1,6 +1,7 @@
 //! The Objective-C side (iOS only). Everything here runs on the main thread unless it says
 //! otherwise; `objc2`'s `MainThreadMarker` makes that a compile-time requirement for UIKit.
 
+pub mod appearance;
 pub mod imageio;
 pub mod lifecycle;
 pub mod pickers;

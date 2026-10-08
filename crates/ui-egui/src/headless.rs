@@ -121,6 +121,8 @@ pub struct Headless {
     /// Logical size (points) and scale.
     pub size: egui::Vec2,
     pub pixels_per_point: f32,
+    /// What the (simulated) system prefers, as a real host reports it in `RawInput::system_theme`.
+    pub system_theme: Option<egui::Theme>,
     time: f64,
     frames: u64,
     events: Vec<egui::Event>,
@@ -139,6 +141,7 @@ impl Headless {
             view: HeadlessView::new(),
             size: egui::vec2(size[0], size[1]),
             pixels_per_point,
+            system_theme: None,
             time: 0.0,
             frames: 0,
             events: vec![],
@@ -159,6 +162,7 @@ impl Headless {
     /// Run one frame.
     pub fn step(&mut self) {
         let mut raw = HeadlessView::raw_input(self.size, self.pixels_per_point, self.time, std::mem::take(&mut self.events));
+        raw.system_theme = self.system_theme;
         self.app.raw_input_hook(&mut raw);
         let app = &mut self.app;
         let commands = self.view.run(raw, |ui| {
