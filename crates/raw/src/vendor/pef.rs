@@ -224,7 +224,7 @@ pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
         1 => {
             let strip: u64 = info.chunks(bytes.len() as u64).iter().map(|c| c.len).sum();
             let packing = if strip >= (w * hgt * 2) as u64 { Packing::Word16 } else { Packing::Msb };
-            read_image_in(read, bytes, &info, tiff.order, packing)?
+            read_image_in(read, bytes, &info, tiff.order, packing, None)?
         }
         c => return Err(RawError::Unsupported(format!("PEF compression {c}"))),
     };

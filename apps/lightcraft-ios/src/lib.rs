@@ -3,7 +3,8 @@
 //! folder (new ones start with the demo photos) and can sync with a self-hosted server (Settings ▸
 //! Sync, `docs/sync.md`). The native pieces come from `lightcraft-ios-host`: photos are imported
 //! from the Photos and Files pickers (copied into the library), exports go to the share sheet,
-//! HEIC is decoded by ImageIO, and the app saves, pauses the GPU and frees memory as iOS asks.
+//! HEIC is decoded by ImageIO, touch gestures and choices tap the Taptic Engine, and the app saves,
+//! pauses the GPU and frees memory as iOS asks.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 use std::cell::RefCell;
@@ -14,6 +15,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use lightcraft_engine::Session;
 use lightcraft_ios_host::{BackgroundTask, Lifecycle, PickKind, Picked};
+use lightcraft_ui_egui::haptics::Haptic;
 use lightcraft_ui_egui::prefs::PrefsWriter;
 use lightcraft_ui_egui::{LightcraftApp, PickSource, Services, ShareExports};
 use serde_json::json;
@@ -114,6 +116,29 @@ fn press_enter(raw: &mut egui::RawInput, times: u32) {
     for _ in 0..times.min(8) {
         for pressed in [true, false] {
             raw.events.push(egui::Event::Key { key: egui::Key::Enter, physical_key: None, pressed, repeat: false, modifiers: egui::Modifiers::NONE });
+        }
+    }
+}
+
+/// Text fields and the iOS keyboard. egui asks to "interrupt the IME composition" each time a
+/// focused `TextEdit` is tapped (it requests focus again), and egui-winit does that with
+/// `resignFirstResponder` + `becomeFirstResponder`: the keyboard dropped and came back on every tap.
+/// winit's iOS view takes plain text (no marked text), so there is nothing to interrupt: drop the
+/// request. And egui-winit keeps copied text inside the app on iOS: put it on the pasteboard too.
+struct TextInput;
+
+impl egui::Plugin for TextInput {
+    fn debug_name(&self) -> &'static str {
+        "lightcraft-ios-text-input"
+    }
+    fn output_hook(&mut self, _ctx: &egui::Context, output: &mut egui::FullOutput) {
+        if let Some(ime) = &mut output.platform_output.ime {
+            ime.should_interrupt_composition = false;
+        }
+        for c in &output.platform_output.commands {
+            if let egui::OutputCommand::CopyText(text) = c {
+                lightcraft_ios_host::set_pasteboard_text(text);
+            }
         }
     }
 }
@@ -273,6 +298,16 @@ fn pick_kind(s: PickSource) -> PickKind {
     }
 }
 
+/// The UI's haptic feedback as the Taptic Engine plays it.
+fn play_haptic(h: Haptic) {
+    lightcraft_ios_host::haptic(match h {
+        Haptic::Selection => lightcraft_ios_host::Haptic::Selection,
+        Haptic::Light => lightcraft_ios_host::Haptic::Light,
+        Haptic::Medium => lightcraft_ios_host::Haptic::Medium,
+        Haptic::Warning => lightcraft_ios_host::Haptic::Warning,
+    });
+}
+
 /// ImageIO's decode as `lightcraft-codecs` takes it (HEIC / HEIF and AVIF have no pure-Rust
 /// decoder): pixels as stored, premultiplied, in the image's own colour space.
 fn system_image(i: lightcraft_ios_host::Image) -> lightcraft_codecs::SystemImage {
@@ -334,6 +369,8 @@ fn services(ctx: egui::Context, inbox: Inbox, tmp: &Path) -> Services {
             lightcraft_codecs::encode_png(&lightcraft_codecs::EncodeImage::rgba8(img), &lightcraft_codecs::EncodeMeta::default()).unwrap_or_default()
         })),
         sync_exec: Some(lightcraft_ui_egui::sync_ui::native_exec()),
+        haptic: Some(Box::new(play_haptic)),
+        clipboard_text: Some(Box::new(lightcraft_ios_host::pasteboard_text)),
         ..Services::default()
     }
 }
@@ -448,6 +485,7 @@ pub fn run() -> eframe::Result {
             if let Err(e) = lightcraft_ios_host::observe_lifecycle(Box::new(move |event| on_lifecycle(&weak, event))) {
                 log::error!("lifecycle notifications: {e}");
             }
+            cc.egui_ctx.add_plugin(TextInput);
             // the layout moves above the keyboard (`above_keyboard`) on the next frame
             let ctx = cc.egui_ctx.clone();
             if let Err(e) = lightcraft_ios_host::observe_keyboard(Box::new(move || ctx.request_repaint())) {
@@ -578,6 +616,36 @@ mod tests {
             out.textures_delta.clear(); // (no renderer here)
         }
         assert!(confirmed);
+    }
+
+    /// Tapping a text field that already has the keyboard must not ask winit to hide and show it
+    /// again (egui's "interrupt composition" on every tap; the plugin drops it).
+    #[test]
+    fn tapping_a_focused_text_field_keeps_the_keyboard() {
+        let interrupts = |plugin: bool| {
+            let ctx = egui::Context::default();
+            if plugin {
+                ctx.add_plugin(TextInput);
+            }
+            let mut text = String::from("trip");
+            let at = egui::pos2(20.0, 10.0);
+            let tap =
+                |pressed| egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
+            let mut seen = vec![];
+            for events in [vec![], vec![egui::Event::PointerMoved(at), tap(true)], vec![tap(false)], vec![tap(true)], vec![tap(false)]] {
+                let raw = egui::RawInput { events, ..Default::default() };
+                let mut out = ctx.run_ui(raw, |ui| {
+                    ui.text_edit_singleline(&mut text);
+                });
+                out.textures_delta.clear(); // (no renderer here)
+                seen.push(out.platform_output.ime.map(|i| i.should_interrupt_composition));
+            }
+            seen
+        };
+        assert!(interrupts(false).contains(&Some(true)), "egui asks for it: {:?}", interrupts(false));
+        let fixed = interrupts(true);
+        assert!(fixed.last().is_some_and(Option::is_some), "the field keeps the keyboard: {fixed:?}");
+        assert!(!fixed.contains(&Some(true)), "{fixed:?}");
     }
 
     /// The on-screen keyboard pushes the bottom of the content up; hidden, the home indicator's inset stays.

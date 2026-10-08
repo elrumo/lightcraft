@@ -120,7 +120,13 @@ fn ok_label(app: &LightcraftApp, dlg: &Dialog, informational: bool) -> String {
 pub const WHATS_NEW: &str = include_str!("../../../../docs/whats-new.md");
 
 pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
-    let Some(mut dlg) = app.ui.dialog.clone() else {
+    // a phone's page slides away after the dialog closes, drawn from the dialog as it was
+    if app.ui.dialog.is_some() {
+        app.ui.dialog_leaving = None;
+    }
+    let leaving = app.ui.dialog.is_none() && app.compact;
+    let Some(mut dlg) = app.ui.dialog.clone().or_else(|| app.ui.dialog_leaving.clone().filter(|_| leaving)) else {
+        app.ui.dialog_leaving = None;
         super::mobile::hidden(ctx, "dialog");
         return;
     };
@@ -171,6 +177,11 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
     let ok = ok_label(app, &dlg, informational);
     let cancel = cancel_label(app, &dlg, informational);
     let compact = app.compact;
+    // a phone's Settings, as iOS's: the list, or a section with a back button; Done on the right
+    let phone_settings = match &dlg {
+        Dialog::Settings { tab } if compact => Some(crate::panels::settings::phone_title(tab)),
+        _ => None,
+    };
     let default_width = match dlg {
         Dialog::Import { .. } => 760.0_f32,
         Dialog::SmartRules { .. } => 680.0,
@@ -262,7 +273,10 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
             }
             Dialog::AllMetadata { title, rows, search } => {
                 ui.label(egui::RichText::new(title.as_str()).color(t.text_label));
-                let r = ui.add(egui::TextEdit::singleline(search).hint_text(crate::i18n::tr("Filter fields")).desired_width(f32::INFINITY));
+                let r = ui.add(crate::widgets::touch_field(
+                    ui,
+                    egui::TextEdit::singleline(search).hint_text(crate::i18n::tr("Filter fields")).desired_width(f32::INFINITY),
+                ));
                 crate::widgets::register(ui.ctx(), "field:metadataSearch", r.rect);
                 let q = search.trim().to_lowercase();
                 let keep = |n: &str, v: &str| q.is_empty() || n.to_lowercase().contains(&q) || v.to_lowercase().contains(&q);
@@ -305,7 +319,10 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                 });
             }
             Dialog::SmartRules { name, rules, .. } => {
-                let r = ui.add(egui::TextEdit::singleline(name).hint_text(crate::i18n::tr("Name")).desired_width(f32::INFINITY));
+                let r = ui.add(crate::widgets::touch_field(
+                    ui,
+                    egui::TextEdit::singleline(name).hint_text(crate::i18n::tr("Name")).desired_width(f32::INFINITY),
+                ));
                 crate::widgets::register(ui.ctx(), "field:smartName", r.rect);
                 ui.add_space(6.0);
                 egui::ScrollArea::vertical().max_height(360.0).auto_shrink([false, true]).show(ui, |ui| {
@@ -328,7 +345,10 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                 );
             }
             Dialog::NewSmartAlbum { name } => {
-                let r = ui.add(egui::TextEdit::singleline(name).hint_text(crate::i18n::tr("Name")).desired_width(f32::INFINITY));
+                let r = ui.add(crate::widgets::touch_field(
+                    ui,
+                    egui::TextEdit::singleline(name).hint_text(crate::i18n::tr("Name")).desired_width(f32::INFINITY),
+                ));
                 keep_focus(&r);
                 if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                     confirm = true;
@@ -358,7 +378,10 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                 let params = match mode.as_str() {
                     "set" => {
                         field(ui, "New time", |ui| {
-                            let r = ui.add(egui::TextEdit::singleline(time).hint_text("2026-09-30 14:05:00").desired_width(f32::INFINITY));
+                            let r = ui.add(crate::widgets::touch_field(
+                                ui,
+                                egui::TextEdit::singleline(time).hint_text("2026-09-30 14:05:00").desired_width(f32::INFINITY),
+                            ));
                             crate::widgets::register(ui.ctx(), "field:captureTime", r.rect);
                         });
                         json!({"time": time})
@@ -418,12 +441,18 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                     field(ui, &colour, |ui| {
                         let (r, _) = ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::hover());
                         ui.painter().circle_filled(r.center(), 6.0, crate::panels::grid::label_color(*l));
-                        let te = ui.add(egui::TextEdit::singleline(&mut names[i]).hint_text(colour.as_str()).desired_width(f32::INFINITY));
+                        let te = ui.add(crate::widgets::touch_field(
+                            ui,
+                            egui::TextEdit::singleline(&mut names[i]).hint_text(colour.as_str()).desired_width(f32::INFINITY),
+                        ));
                         crate::widgets::register(ui.ctx(), format!("field:labelName-{}", colour.to_lowercase()), te.rect);
                     });
                 }
                 field(ui, "Save as set", |ui| {
-                    let te = ui.add(egui::TextEdit::singleline(save_as).hint_text(crate::i18n::tr("Optional name")).desired_width(f32::INFINITY));
+                    let te = ui.add(crate::widgets::touch_field(
+                        ui,
+                        egui::TextEdit::singleline(save_as).hint_text(crate::i18n::tr("Optional name")).desired_width(f32::INFINITY),
+                    ));
                     crate::widgets::register(ui.ctx(), "field:labelSetName", te.rect);
                 });
                 ui.label(
@@ -440,7 +469,10 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                 let tags_open = field(ui, "Template", |ui| {
                     ui.spacing_mut().item_spacing.x = 4.0;
                     let w = (ui.available_width() - 50.0).max(80.0);
-                    let r = ui.add(egui::TextEdit::singleline(template).id(template_id).hint_text("{name}").desired_width(w));
+                    let r = ui.add(crate::widgets::touch_field(
+                        ui,
+                        egui::TextEdit::singleline(template).id(template_id).hint_text("{name}").desired_width(w),
+                    ));
                     crate::widgets::register(ui.ctx(), "field:renameTemplate", r.rect);
                     crate::import::tag_toggle(ui, "renameTemplate")
                 });
@@ -491,7 +523,10 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
             Dialog::RenameKeyword { from, to } => {
                 let n =
                     app.session.catalog.photos().filter(|p| p.meta.keywords.iter().any(|k| lightcraft_catalog::keywords::is_under(k, from))).count();
-                let r = ui.add(egui::TextEdit::singleline(to).hint_text(crate::i18n::tr("New name")).desired_width(f32::INFINITY));
+                let r = ui.add(crate::widgets::touch_field(
+                    ui,
+                    egui::TextEdit::singleline(to).hint_text(crate::i18n::tr("New name")).desired_width(f32::INFINITY),
+                ));
                 crate::widgets::register(ui.ctx(), "field:keywordName", r.rect);
                 keep_focus(&r);
                 if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
@@ -510,7 +545,10 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                     egui::RichText::new(format!("Replace {} with:", from.iter().map(|f| format!("“{f}”")).collect::<Vec<_>>().join(", ")))
                         .color(t.text_label),
                 );
-                let r = ui.add(egui::TextEdit::singleline(into).hint_text(crate::i18n::tr("Keyword")).desired_width(f32::INFINITY));
+                let r = ui.add(crate::widgets::touch_field(
+                    ui,
+                    egui::TextEdit::singleline(into).hint_text(crate::i18n::tr("Keyword")).desired_width(f32::INFINITY),
+                ));
                 crate::widgets::register(ui.ctx(), "field:keywordInto", r.rect);
                 keep_focus(&r);
                 if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
@@ -532,22 +570,32 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                 });
             }
             Dialog::TextPrompt { value, hint, .. } => {
-                let r = ui.add(egui::TextEdit::singleline(value).hint_text(hint.as_str()).desired_width(f32::INFINITY));
+                let r =
+                    ui.add(crate::widgets::touch_field(ui, egui::TextEdit::singleline(value).hint_text(hint.as_str()).desired_width(f32::INFINITY)));
                 keep_focus(&r);
                 if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                     confirm = true;
                 }
             }
             Dialog::NewAlbum { name, .. } | Dialog::RenameAlbum { name, .. } => {
-                let r = ui.add(egui::TextEdit::singleline(name).hint_text(crate::i18n::tr("Name")).desired_width(f32::INFINITY));
+                let r = ui.add(crate::widgets::touch_field(
+                    ui,
+                    egui::TextEdit::singleline(name).hint_text(crate::i18n::tr("Name")).desired_width(f32::INFINITY),
+                ));
                 keep_focus(&r);
                 if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                     confirm = true;
                 }
             }
             Dialog::CreatePreset { name, group, groups } => {
-                ui.add(egui::TextEdit::singleline(name).hint_text(crate::i18n::tr("Preset name")).desired_width(f32::INFINITY));
-                ui.add(egui::TextEdit::singleline(group).hint_text(crate::i18n::tr("Group")).desired_width(f32::INFINITY));
+                ui.add(crate::widgets::touch_field(
+                    ui,
+                    egui::TextEdit::singleline(name).hint_text(crate::i18n::tr("Preset name")).desired_width(f32::INFINITY),
+                ));
+                ui.add(crate::widgets::touch_field(
+                    ui,
+                    egui::TextEdit::singleline(group).hint_text(crate::i18n::tr("Group")).desired_width(f32::INFINITY),
+                ));
                 ui.label(egui::RichText::new(crate::i18n::tr("Settings to include")).color(t.text_dim));
                 group_checklist(ui, "presetInclude", groups);
             }
@@ -711,7 +759,10 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                                     {
                                         wm.image = f;
                                     }
-                                    ui.add(egui::TextEdit::singleline(&mut wm.image).hint_text("logo.png").desired_width(ui.available_width()));
+                                    ui.add(crate::widgets::touch_field(
+                                        ui,
+                                        egui::TextEdit::singleline(&mut wm.image).hint_text("logo.png").desired_width(ui.available_width()),
+                                    ));
                                 });
                             });
                             let mut width = wm.image_width as f64 * 100.0;
@@ -727,7 +778,10 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                                 &mut wm.vertical,
                             );
                             field(ui, "Text", |ui| {
-                                ui.add(egui::TextEdit::multiline(&mut wm.text).desired_rows(2).hint_text("© Your Name").desired_width(f32::INFINITY))
+                                ui.add(crate::widgets::touch_field(
+                                    ui,
+                                    egui::TextEdit::multiline(&mut wm.text).desired_rows(2).hint_text("© Your Name").desired_width(f32::INFINITY),
+                                ))
                             });
                         }
                         choices(
@@ -775,12 +829,13 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                 let tags_open = field(ui, "File name", |ui| {
                     ui.spacing_mut().item_spacing.x = 4.0;
                     let w = (ui.available_width() - 50.0).max(80.0);
-                    ui.add(
+                    ui.add(crate::widgets::touch_field(
+                        ui,
                         egui::TextEdit::singleline(&mut opts.naming)
                             .id(naming_id)
                             .hint_text("{name}-{seq}  ·  {date}  ·  {title}  ·  {folder}")
                             .desired_width(w),
-                    );
+                    ));
                     crate::import::tag_toggle(ui, "exportNaming")
                 });
                 if tags_open {
@@ -813,11 +868,14 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                             {
                                 *dir = d;
                             }
-                            ui.add(egui::TextEdit::singleline(dir).desired_width(ui.available_width()));
+                            ui.add(crate::widgets::touch_field(ui, egui::TextEdit::singleline(dir).desired_width(ui.available_width())));
                         });
                     });
                     field(ui, "Subfolder", |ui| {
-                        ui.add(egui::TextEdit::singleline(&mut opts.subfolder).hint_text(crate::i18n::tr("none")).desired_width(f32::INFINITY))
+                        ui.add(crate::widgets::touch_field(
+                            ui,
+                            egui::TextEdit::singleline(&mut opts.subfolder).hint_text(crate::i18n::tr("none")).desired_width(f32::INFINITY),
+                        ))
                     });
                 }
                 use lightcraft_engine::export::Conflict as K;
@@ -842,7 +900,10 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                                 Err(e) => app.toast(ui.ctx(), e),
                             }
                         }
-                        ui.add(egui::TextEdit::singleline(preset_name).hint_text(crate::i18n::tr("Preset name")).desired_width(ui.available_width()));
+                        ui.add(crate::widgets::touch_field(
+                            ui,
+                            egui::TextEdit::singleline(preset_name).hint_text(crate::i18n::tr("Preset name")).desired_width(ui.available_width()),
+                        ));
                     });
                 });
             }
@@ -926,9 +987,29 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
     let (mut cancel_tapped, mut ok_tapped) = (false, false);
     if compact {
         // a phone: a page covering the screen, the action in its bar
-        let action = (!informational && !ok.is_empty()).then_some((ok.as_str(), true));
-        let bar = super::mobile::page(ctx, "dialog", &title, cancel, action, &mut body);
+        let mut action = (!informational && !ok.is_empty()).then_some((ok.as_str(), true));
+        let (mut title, mut cancel) = (title.clone(), cancel.to_string());
+        if let Some((page, back)) = phone_settings {
+            title = page.to_string();
+            cancel = back.map(|b| format!("‹{}", crate::i18n::tr(b))).unwrap_or_default();
+            action = Some((crate::i18n::tr("Done"), true));
+        }
+        let bar = super::mobile::page(ctx, "dialog", &title, &cancel, action, !leaving, &mut body);
         (cancel_tapped, ok_tapped) = (bar.cancel, bar.ok);
+        // (back to the list)
+        if let Dialog::Settings { tab } = &mut dlg
+            && cancel_tapped
+            && !tab.is_empty()
+        {
+            tab.clear();
+            cancel_tapped = false;
+        }
+        if leaving {
+            if bar.gone {
+                app.ui.dialog_leaving = None;
+            }
+            return;
+        }
     } else {
         let frame = egui::Frame::window(&ctx.global_style()).inner_margin(egui::Margin::symmetric(16, 12));
         let shown = egui::Window::new(crate::i18n::tr(&title))
@@ -983,7 +1064,18 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
             _ => close = true,
         }
     }
-    app.ui.dialog = if close { None } else { Some(dlg) };
+    if close {
+        // (the keyboard goes with it)
+        ctx.memory_mut(|m| {
+            if let Some(f) = m.focused() {
+                m.surrender_focus(f);
+            }
+        });
+        app.ui.dialog_leaving = compact.then_some(dlg);
+        app.ui.dialog = None;
+    } else {
+        app.ui.dialog = Some(dlg);
+    }
 }
 
 /// Apply a dialog's action (also used by `ui.dialog.confirm`).

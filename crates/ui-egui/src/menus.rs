@@ -143,6 +143,8 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("superRes.cancel", "Cancel Super Resolution", None, "Photo>Enhance"),
     // compact layout: choose photos by touch (Select, or a long press in the grid)
     ("view.selectMode", "Select Photos", None, ""),
+    // compact layout: a photo with the bars away, where swipes rate and flag it
+    ("view.reviewMode", "Rate & Review", None, ""),
     ("file.addPhotos", "Import Photos…", Some("Cmd+Shift+I"), "File"),
     // the host's own pickers (iOS); only in hosts that have them
     ("file.importFromPhotos", "Import from Photos…", None, "File"),
@@ -359,11 +361,19 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             }
             Ok(json!({"on": on, "selected": app.session.selection.ids.len()}))
         }
+        "view.reviewMode" => {
+            // {on?: bool (default: toggle)}: a photo open in the compact layout, the bars away
+            let on = p.get("on").and_then(Value::as_bool).unwrap_or(!app.ui.review);
+            app.ui.review = on && app.ui.view == ViewMode::Detail && app.session.active().is_some();
+            Ok(json!({"on": app.ui.review}))
+        }
         "view.back" => {
             if app.ui.dialog.is_some() {
                 app.ui.dialog = None;
             } else if app.ui.select_mode {
                 app.ui.select_mode = false;
+            } else if app.ui.review {
+                app.ui.review = false;
             } else if app.ui.keyword_painter.is_some() {
                 app.ui.keyword_painter = None;
             } else if app.ui.fullscreen {
@@ -438,9 +448,10 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             Ok(json!({"navigator": app.ui.navigator}))
         }
         "app.settings" => {
-            let tab = p.get("tab").and_then(Value::as_str).unwrap_or("general");
-            if !crate::panels::settings::TABS.iter().any(|(id, _)| *id == tab) {
-                return Some(Err(format!("unknown settings tab `{tab}` (general|import|performance|interface|sync)")));
+            // (a phone opens the list of sections, "", as iOS's Settings app does)
+            let tab = p.get("tab").and_then(Value::as_str).unwrap_or(if app.compact { "" } else { "general" });
+            if !(tab.is_empty() || crate::panels::settings::TABS.iter().any(|(id, _)| *id == tab)) {
+                return Some(Err(format!("unknown settings tab `{tab}` (general|import|performance|interface|sync, or \"\" for the list)")));
             }
             app.ui.dialog = Some(Dialog::Settings { tab: tab.into() });
             Ok(Value::Null)
@@ -1313,6 +1324,7 @@ pub fn ui_enabled(app: &LightcraftApp, id: &str) -> bool {
         "file.exportPresets" => app.session.presets.iter().any(|p| !p.builtin),
         "file.exportCurvePresets" => !app.session.curve_presets.is_empty(),
         "view.compare" => app.session.catalog.len() > 1,
+        "view.reviewMode" => app.ui.review || (app.ui.view == ViewMode::Detail && app.session.active().is_some()),
         "view.fullScreenPreview" | "view.infoOverlay" | "view.navigator" => app.session.active().is_some() || app.ui.fullscreen,
         "app.openLibrary" | "file.addFolder" => app.services.pick_folder.is_some(),
         "file.importFromPhotos" | "file.importFromFiles" | "file.importFolderFromFiles" => app.services.host_pick.is_some(),

@@ -31,6 +31,7 @@ pub mod admin;
 pub mod api;
 pub mod folders;
 pub mod gc;
+pub mod render;
 pub mod throttle;
 
 use std::collections::HashMap;
@@ -56,6 +57,8 @@ pub struct Config {
     pub scan_interval: Option<std::time::Duration>,
     /// Threads building previews of photos found in library folders.
     pub preview_threads: usize,
+    /// Renders at once for devices that export on the server ([`render`]).
+    pub render_threads: usize,
 }
 
 impl Config {
@@ -69,6 +72,7 @@ impl Config {
             max_requests: 64,
             scan_interval: Some(std::time::Duration::from_secs(15 * 60)),
             preview_threads: 2,
+            render_threads: 1,
         }
     }
 }
@@ -86,6 +90,8 @@ pub struct State {
     pub(crate) libs: Mutex<HashMap<String, Arc<Mutex<api::UserLib>>>>,
     /// Library folder scans and preview building.
     pub(crate) folders: folders::Scanner,
+    /// Renders for devices ([`render`]).
+    pub(crate) render: render::Slots,
     /// Failed sign-ins (password guessing).
     pub(crate) throttle: Mutex<throttle::Throttle>,
     busy: AtomicUsize,
@@ -122,6 +128,7 @@ impl Server {
             web: cfg.web,
             libs: Mutex::new(HashMap::new()),
             folders: folders::Scanner::new(cfg.scan_interval),
+            render: render::Slots::new(cfg.render_threads),
             throttle: Mutex::new(throttle::Throttle::default()),
             busy: AtomicUsize::new(0),
             max: cfg.max_requests.max(1),

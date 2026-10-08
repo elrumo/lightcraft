@@ -535,6 +535,10 @@ pub struct ExportOptions {
     /// Bits per channel: 8, 16 (PNG, TIFF), 32 (TIFF: float, linear) or 10 (AVIF); `None` = the
     /// format's default (TIFF 16, everything else 8). See [`ExportOptions::effective_depth`].
     pub bit_depth: Option<u8>,
+    /// Have the sync server render this photo ([`crate::sync::render_on_server`]) instead of this device. Also what
+    /// happens when the render wouldn't fit this device's memory ([`crate::memory::export_limit`]) and the photo is
+    /// on the server.
+    pub on_server: bool,
 }
 
 impl Default for ExportOptions {
@@ -558,6 +562,7 @@ impl Default for ExportOptions {
             watermark: None,
             color_space: OutputSpace::Srgb,
             bit_depth: None,
+            on_server: false,
         }
     }
 }
@@ -605,6 +610,7 @@ impl ExportOptions {
             .filter(|w: &Watermark| !w.text.trim().is_empty() || !w.image.trim().is_empty()),
             color_space: s("colorSpace").and_then(OutputSpace::parse).unwrap_or(d.color_space),
             bit_depth: u("bitDepth").filter(|b| matches!(b, 8 | 10 | 16 | 32)).map(|b| b as u8),
+            on_server: p.get("onServer").and_then(Value::as_bool).unwrap_or(d.on_server),
         }
     }
 
@@ -1021,8 +1027,19 @@ struct RenderWork {
     opts: ExportOptions,
 }
 
+/// An export the sync server renders ([`crate::sync::render_on_server`]).
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))] // (the web build can't make the call)
+struct ServerWork {
+    target: crate::sync::RenderTarget,
+    request: lightcraft_catalog::sync::proto::Render,
+    /// The size asked for (what the export reports).
+    size: (usize, usize),
+}
+
 enum Work {
     Render(Box<RenderWork>),
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))] // (the web build can't make the call)
+    Server(Box<ServerWork>),
     /// [`ExportFormat::Original`] (the file's bytes + an XMP sidecar) or [`ExportFormat::Dng`] (the
     /// raw data re-encoded as a lossless DNG with the edits in its XMP).
     File {
@@ -1064,6 +1081,26 @@ fn prepare_guarded(
     let file_name = o.file_name_for(p, seq);
     let work = if o.format.is_rendered() {
         let (w, h) = output_size(p, o);
+        // what this render needs against what this device may use: over it, the sync server renders (or says why not)
+        let need = crate::memory::export_need(crate::media::export_source_pixels(p, w.max(h)), w.saturating_mul(h));
+        let too_big = session.export_limit().is_some_and(|limit| need > limit);
+        if o.on_server || too_big {
+            let Some(target) = session.sync_render_target(p) else {
+                return Err(if o.on_server {
+                    format!("{}: the sync server has no original of this photo to render (sign in, and let it upload)", p.file_name)
+                } else {
+                    format!(
+                        "{}: a {w} × {h} export needs about {} MB, more than this device can allow. Export it smaller, or sign in to a sync server that has the original and it renders there",
+                        p.file_name,
+                        need >> 20
+                    )
+                });
+            };
+            let settings = serde_json::to_value(&*p.develop).map_err(|e| e.to_string())?;
+            let request =
+                lightcraft_catalog::sync::proto::Render { hash: target.hash.clone(), name: p.file_name.clone(), settings, export: o.to_json() };
+            return Ok(PreparedExport { photo: id, file_name, work: Work::Server(Box::new(ServerWork { target, request, size: (w, h) })), guard });
+        }
         let meta = export_metadata(p, o);
         let job = session.export_job(id, w, h, o.effective_space(), o.effective_depth())?;
         Work::Render(Box::new(RenderWork { job, meta, opts: o.clone() }))
@@ -1093,6 +1130,13 @@ impl PreparedExport {
                 let bytes = encode_rendered(&r, &opts, meta.as_ref())?;
                 Ok(Exported { file_name, bytes, width: r.image.width, height: r.image.height, sidecars: Vec::new() })
             }
+            #[cfg(not(target_arch = "wasm32"))]
+            Work::Server(w) => {
+                let bytes = crate::sync::render_on_server(&w.target, &w.request)?;
+                Ok(Exported { file_name, bytes, width: w.size.0, height: w.size.1, sidecars: Vec::new() })
+            }
+            #[cfg(target_arch = "wasm32")]
+            Work::Server(_) => Err("rendering on the server needs the desktop or iOS app".to_string()),
             Work::File { path, read, packet, dng, label, size } => {
                 let bytes = match &read {
                     Some(r) => r(&path)?,
@@ -1513,6 +1557,7 @@ mod tests {
             watermark: Some(Watermark { text: "© LC".into(), ..Default::default() }),
             color_space: OutputSpace::ProPhoto,
             bit_depth: Some(16),
+            on_server: true,
             ..Default::default()
         };
         assert_eq!(ExportOptions::from_json(&o.to_json()), o);

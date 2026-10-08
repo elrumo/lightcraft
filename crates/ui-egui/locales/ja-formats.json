@@ -121,6 +121,9 @@
   "{weekday}, {day} {month} {year}": "{year}年{month}月{day}日（{weekday}）",
   "{year}": "{year}年",
   "Add {n}": "{n}枚を追加",
+  "{n} photos · synced with {server}": "{n}枚・{server}と同期",
+  "{n} photos on this device": "このデバイスに{n}枚",
+  "{n} photos, not saved": "{n}枚（保存されません）",
   "Enlarging… {:.0}%": "拡大中… {:.0}%",
   "Super Resolution failed: {e}": "超解像に失敗：{e}"
 }

@@ -47,7 +47,7 @@ fn text_value(ui: &mut egui::Ui, v: &mut Value, width: f32, hint: &str, salt: &s
         Value::Null => String::new(),
         other => other.to_string(),
     };
-    let r = ui.add(egui::TextEdit::singleline(&mut s).hint_text(hint).desired_width(width));
+    let r = ui.add(crate::widgets::touch_field(ui, egui::TextEdit::singleline(&mut s).hint_text(hint).desired_width(width)));
     register(ui.ctx(), format!("field:{salt}"), r.rect);
     if r.changed() {
         *v = json!(s);

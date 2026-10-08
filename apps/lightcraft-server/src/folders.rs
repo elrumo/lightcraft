@@ -80,7 +80,8 @@ pub struct Entry {
     /// Not found by the last scan (its folder was there).
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub missing: bool,
-    /// Why it isn't a photo or has no previews (tried again when the file changes).
+    /// Why it isn't a photo or has no previews (tried again when the file changes, and once
+    /// each time the server starts).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -168,6 +169,12 @@ pub fn unchanged(path: &Path, size: u64, mtime: u64) -> bool {
 #[serde(rename_all = "camelCase")]
 pub struct Status {
     pub scanning: bool,
+    /// What the scan is doing: `listing` (finding photo files; `files` counts up), `reading`
+    /// (hashing and importing the new ones: `done` of `todo`), `finishing`; empty when idle.
+    pub phase: &'static str,
+    /// Seconds since this scan started, and the time left reading (once the rate is known).
+    pub elapsed_secs: u64,
+    pub eta_secs: Option<u64>,
     /// Scans finished since the server started.
     pub scans: u64,
     /// Files read so far / to read in this scan.
@@ -184,13 +191,37 @@ pub struct Status {
     pub failed: usize,
     /// Indexed files not found any more.
     pub missing: usize,
-    /// Previews waiting to be built, and the ones that couldn't be.
+    /// Previews waiting to be built; of this batch of previews, the ones built (or failed) and
+    /// the total, and the time left (once the rate is known).
     pub previews: usize,
+    pub previews_done: usize,
+    pub previews_total: usize,
+    pub previews_eta_secs: Option<u64>,
+    /// Previews built per minute in this batch, the space they take so far (bytes) and the
+    /// estimate for the whole batch (once the rate is known).
+    pub previews_per_min: Option<u64>,
+    pub previews_bytes: u64,
+    pub previews_bytes_total: Option<u64>,
+    /// The ones that couldn't be built.
     pub preview_errors: Vec<String>,
     /// When the last scan ended (unix seconds).
     pub last_scan: Option<u64>,
     /// Folders that couldn't be read, and the first few files that couldn't.
     pub errors: Vec<String>,
+    #[serde(skip)]
+    started: Option<Instant>,
+    #[serde(skip)]
+    read_started: Option<Instant>,
+}
+
+/// Seconds left at the rate so far, once there's enough to tell (a few items and a few seconds).
+fn eta(started: Instant, done: usize, total: usize) -> Option<u64> {
+    let secs = started.elapsed().as_secs_f64();
+    if done < 3 || secs < 3.0 {
+        return None;
+    }
+    let left = secs / done as f64 * total.saturating_sub(done) as f64;
+    left.is_finite().then(|| left.round() as u64)
 }
 
 /// A file found in a library folder.
@@ -202,8 +233,9 @@ struct Found {
     mtime: u64,
 }
 
-/// List the photo files under `root` (named `name`), without following links.
-fn walk(name: &str, root: &Path, out: &mut Vec<Found>, errors: &mut Vec<String>, stop: &AtomicBool) {
+/// List the photo files under `root` (named `name`), without following links, leaving out what
+/// `ignore` names (see [`lightcraft_engine::import::is_ignored`]) and everything inside it.
+fn walk(name: &str, root: &Path, ignore: &[String], out: &mut Vec<Found>, errors: &mut Vec<String>, stop: &AtomicBool, tick: &mut dyn FnMut(usize)) {
     let mut stack = vec![(root.to_path_buf(), name.to_string(), 0usize)];
     while let Some((dir, key, depth)) = stack.pop() {
         if stop.load(Ordering::Relaxed) || out.len() >= FILES_MAX {
@@ -219,7 +251,7 @@ fn walk(name: &str, root: &Path, out: &mut Vec<Found>, errors: &mut Vec<String>,
         for e in rd.flatten() {
             // (a name that isn't UTF-8 can't be shown or found again by its path: skipped)
             let Some(n) = e.file_name().to_str().map(str::to_string) else { continue };
-            if n.starts_with('.') || SKIP_DIRS.contains(&n.as_str()) {
+            if n.starts_with('.') || SKIP_DIRS.contains(&n.as_str()) || lightcraft_engine::import::is_ignored(ignore, &n) {
                 continue;
             }
             let Ok(ft) = e.file_type() else { continue };
@@ -231,11 +263,23 @@ fn walk(name: &str, root: &Path, out: &mut Vec<Found>, errors: &mut Vec<String>,
             } else if ft.is_file()
                 && lightcraft_engine::import::is_supported(Path::new(&n))
                 && let Ok(m) = e.metadata()
+                && !is_xsym(&e.path(), m.len())
             {
                 out.push(Found { key: k, path: e.path(), size: m.len(), mtime: mtime_of(&m) });
+                if out.len().is_multiple_of(250) {
+                    tick(out.len());
+                }
             }
         }
+        tick(out.len());
     }
+}
+
+/// A macOS symbolic link copied to a share that has none: an `XSym` text file of 1067 bytes
+/// (Final Cut bundles' `Original Media` are full of them). A link, so skipped like real ones.
+fn is_xsym(path: &Path, len: u64) -> bool {
+    let mut head = [0u8; 5];
+    len == 1067 && std::fs::File::open(path).and_then(|mut f| f.read_exact(&mut head)).is_ok() && &head == b"XSym\n"
 }
 
 /// A file read: its hash, and its description when it is new to the library.
@@ -527,19 +571,21 @@ fn commit(lib: &Mutex<UserLib>, batch: &mut Vec<FileRead>, found: &HashSet<Strin
 
 /// Scan a user's library folders: add, move and update their photos in the user's library.
 /// `progress` sees the status as it goes, `preview` each photo file whose previews may be
-/// missing (the caller builds them, see [`build_previews`]).
+/// missing (the caller builds them, see [`build_previews`]). `retry_failed`: read the files that
+/// failed before again, though they haven't changed (a newer server may read them).
 pub fn scan(
     data: &Path,
     user: &str,
     lib: &Mutex<UserLib>,
     stop: &AtomicBool,
+    retry_failed: bool,
     progress: &mut dyn FnMut(&Status),
     preview: &mut dyn FnMut(String, PathBuf),
 ) -> Result<Status, String> {
-    let folders: Vec<LibraryFolder> =
-        accounts::read_users(data)?.users.get(user).map(|u| u.folders.clone()).ok_or_else(|| format!("no user `{user}`"))?;
+    let (folders, ignore): (Vec<LibraryFolder>, Vec<String>) =
+        accounts::read_users(data)?.users.get(user).map(|u| (u.folders.clone(), u.ignore.clone())).ok_or_else(|| format!("no user `{user}`"))?;
     let now = lightcraft_engine::import::system_clock();
-    let mut s = Status { scanning: true, ..Default::default() };
+    let mut s = Status { scanning: true, phase: "listing", started: Some(Instant::now()), ..Default::default() };
     progress(&s);
     let had: HashSet<String> = {
         let l = lock(lib);
@@ -556,7 +602,10 @@ pub fn scan(
         }
         let before = found.len();
         let mut errs = Vec::new();
-        walk(&f.name, dir, &mut found, &mut errs, stop);
+        walk(&f.name, dir, &ignore, &mut found, &mut errs, stop, &mut |n| {
+            s.files = n;
+            progress(&s);
+        });
         if found.len() == before && had.contains(&f.name) {
             s.errors.push(format!("{} ({}) is empty but had photos (not mounted?): skipped", f.name, f.path));
             continue;
@@ -573,7 +622,11 @@ pub fn scan(
         l.index.roots = folders.iter().map(|f| (f.name.clone(), f.path.clone())).collect();
         let todo: Vec<Found> = found
             .iter()
-            .filter(|f| l.index.files.get(&f.key).is_none_or(|e| e.size != f.size || e.mtime != f.mtime || (e.photo.is_none() && e.error.is_none())))
+            .filter(|f| {
+                l.index.files.get(&f.key).is_none_or(|e| {
+                    e.size != f.size || e.mtime != f.mtime || (e.photo.is_none() && e.error.is_none()) || (retry_failed && e.error.is_some())
+                })
+            })
             .cloned()
             .collect();
         // found again where they were
@@ -587,6 +640,8 @@ pub fn scan(
     };
     s.files = found.len();
     s.todo = todo.len();
+    s.phase = "reading";
+    s.read_started = Some(Instant::now());
     progress(&s);
     let user_dir = lock(lib).dir.clone();
     let mut batch = Vec::new();
@@ -618,6 +673,8 @@ pub fn scan(
         preview(hash, path);
     }
     // gone from folders that are there; every photo file whose previews may be missing
+    s.phase = "finishing";
+    progress(&s);
     let mut l = lock(lib);
     let roots: HashSet<&str> = folders.iter().map(|f| f.name.as_str()).collect();
     l.index.files.retain(|k, _| roots.contains(k.split_once('/').map_or("", |(r, _)| r)));
@@ -649,6 +706,7 @@ pub fn scan(
         preview(hash, path);
     }
     s.scanning = false;
+    s.phase = "";
     s.last_scan = Some(accounts::now());
     Ok(s)
 }
@@ -673,11 +731,42 @@ pub fn build_previews(blobs: &Path, hash: &str, file: &Path) -> Result<bool, Str
     Ok(true)
 }
 
+/// What a photo's smart and mini previews take on disk (0 for the ones not there).
+fn preview_bytes(blobs: &Path, hash: &str) -> u64 {
+    ["smart", "mini"]
+        .iter()
+        .filter_map(|kind| crate::api::blob_path(blobs, kind, hash))
+        .filter_map(|p| std::fs::metadata(p).ok())
+        .map(|m| m.len())
+        .fold(0, u64::saturating_add)
+}
+
 /// Previews whose photo files exist (cheap: skips the ones built).
 fn previews_missing(blobs: &Path, hash: &str) -> bool {
     match (crate::api::blob_path(blobs, "smart", hash), crate::api::blob_path(blobs, "mini", hash)) {
         (Some(s), Some(m)) => !(s.is_file() && m.is_file()),
         _ => false,
+    }
+}
+
+/// Where a photo's previews stand after asking for them ([`Scanner::queue`]); the word a device is told.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PreviewState {
+    /// They are there.
+    Built,
+    /// They will be.
+    Queued,
+    /// They couldn't be built (and aren't tried again until the server restarts).
+    Failed,
+}
+
+impl PreviewState {
+    pub(crate) fn word(self) -> &'static str {
+        match self {
+            PreviewState::Built => "built",
+            PreviewState::Queued => "queued",
+            PreviewState::Failed => "failed",
+        }
     }
 }
 
@@ -693,6 +782,8 @@ pub struct Scanner {
     status: Mutex<BTreeMap<String, Status>>,
     jobs: Mutex<(VecDeque<Job>, HashSet<(String, String)>)>,
     jobs_wake: Condvar,
+    /// Per user, the batch of previews being built: when it began, how many are done, how many in all.
+    runs: Mutex<HashMap<String, (Instant, usize, usize, u64)>>,
     /// Previews that couldn't be built (user, hash): not tried again until the server restarts.
     failed: Mutex<HashMap<(String, String), String>>,
     pub(crate) stop: AtomicBool,
@@ -707,6 +798,7 @@ impl Scanner {
             status: Mutex::new(BTreeMap::new()),
             jobs: Mutex::new((VecDeque::new(), HashSet::new())),
             jobs_wake: Condvar::new(),
+            runs: Mutex::new(HashMap::new()),
             failed: Mutex::new(HashMap::new()),
             stop: AtomicBool::new(false),
         }
@@ -722,19 +814,38 @@ impl Scanner {
         let mut s = lock(&self.status).get(user).cloned().unwrap_or_default();
         // (waiting or being built)
         s.previews = lock(&self.jobs).1.iter().filter(|(u, _)| u == user).count();
+        if let Some(&(began, done, total, bytes)) = lock(&self.runs).get(user) {
+            (s.previews_done, s.previews_total, s.previews_eta_secs) = (done, total, eta(began, done, total));
+            s.previews_bytes = bytes;
+            if s.previews_eta_secs.is_some() {
+                let mins = began.elapsed().as_secs_f64() / 60.0;
+                s.previews_per_min = (mins > 0.0).then(|| (done as f64 / mins).round() as u64);
+                s.previews_bytes_total = Some((bytes as f64 / done as f64 * total as f64).round() as u64);
+            }
+        }
+        if s.scanning {
+            s.elapsed_secs = s.started.map_or(0, |t| t.elapsed().as_secs());
+            s.eta_secs = s.read_started.filter(|_| s.phase == "reading").and_then(|t| eta(t, s.done, s.todo));
+        }
         s.preview_errors = lock(&self.failed).iter().filter(|((u, _), _)| u == user).map(|(_, e)| e.clone()).take(20).collect();
         s
     }
 
-    fn queue(&self, blobs: &Path, user: &str, hash: String, file: PathBuf) {
-        if !previews_missing(blobs, &hash) || lock(&self.failed).contains_key(&(user.to_string(), hash.clone())) {
-            return;
+    /// Have a photo file's previews built soon (unless they are there, or failed before): what is now the case.
+    pub(crate) fn queue(&self, blobs: &Path, user: &str, hash: String, file: PathBuf) -> PreviewState {
+        if !previews_missing(blobs, &hash) {
+            return PreviewState::Built;
+        }
+        if lock(&self.failed).contains_key(&(user.to_string(), hash.clone())) {
+            return PreviewState::Failed;
         }
         let mut j = lock(&self.jobs);
         if j.1.insert((user.to_string(), hash.clone())) {
+            lock(&self.runs).entry(user.to_string()).or_insert_with(|| (Instant::now(), 0, 0, 0)).2 += 1;
             j.0.push_back((user.to_string(), hash, file));
             self.jobs_wake.notify_one();
         }
+        PreviewState::Queued
     }
 
     pub(crate) fn shut_down(&self) {
@@ -793,10 +904,14 @@ pub(crate) fn run_scanner(st: &Arc<State>) {
                 &user,
                 &lib,
                 &sc.stop,
+                // the first scan since the server started: an upgrade may read what failed
+                scans == 0,
                 &mut |s| {
                     lock(&sc.status).insert(user.clone(), Status { scans, ..s.clone() });
                 },
-                &mut |hash, file| sc.queue(&blobs, &user, hash, file),
+                &mut |hash, file| {
+                    sc.queue(&blobs, &user, hash, file);
+                },
             )
         });
         match r.and_then(|r| r) {
@@ -850,10 +965,85 @@ pub(crate) fn run_previews(st: &Arc<State>) {
         let blobs = accounts::user_dir(&st.data, &user).join("blobs");
         let r = build_previews(&blobs, &hash, &file);
         lock(&sc.jobs).1.remove(&(user.clone(), hash.clone()));
+        {
+            // one more done; the batch is over when all of it is
+            let mut runs = lock(&sc.runs);
+            if let Some(run) = runs.get_mut(&user) {
+                run.1 += 1;
+                run.3 = run.3.saturating_add(preview_bytes(&blobs, &hash));
+                if run.1 >= run.2 {
+                    runs.remove(&user);
+                }
+            }
+        }
         if let Err(e) = r {
             log::warn!("{user}: previews of {}: {e}", file.display());
             lock(&sc.failed).insert((user, hash), format!("{}: {e}", file.display()));
         }
         lightcraft_engine::memory::release();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn eta_waits_for_a_rate_then_extrapolates() {
+        let long_ago = Instant::now().checked_sub(Duration::from_secs(100)).unwrap_or_else(Instant::now);
+        assert_eq!(eta(Instant::now(), 50, 100), None, "too early to tell");
+        assert_eq!(eta(long_ago, 2, 100), None, "too few done");
+        assert_eq!(eta(long_ago, 50, 100), Some(100));
+        assert_eq!(eta(long_ago, 100, 100), Some(0));
+        assert_eq!(eta(long_ago, 120, 100), Some(0), "done past the total never underflows");
+    }
+
+    #[test]
+    fn walk_reports_the_files_found_so_far() {
+        let dir = std::env::temp_dir().join(format!("lc-walk-tick-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        for d in ["a", "b/c"] {
+            std::fs::create_dir_all(dir.join(d)).unwrap();
+        }
+        for f in ["a/1.jpg", "a/2.jpg", "b/c/3.jpg", "b/notes.txt"] {
+            std::fs::write(dir.join(f), b"x").unwrap();
+        }
+        // a macOS link stored as a file is not a photo
+        let mut xsym = b"XSym\n0040\n".to_vec();
+        xsym.resize(1067, b' ');
+        std::fs::write(dir.join("a/linked.jpg"), xsym).unwrap();
+        let (mut found, mut errs, mut ticks) = (Vec::new(), Vec::new(), Vec::new());
+        walk("P", &dir, &[], &mut found, &mut errs, &AtomicBool::new(false), &mut |n| ticks.push(n));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(found.len(), 3, "{errs:?}");
+        assert_eq!(ticks.last(), Some(&3), "the last tick is the total: {ticks:?}");
+        assert!(ticks.windows(2).all(|w| w[0] <= w[1]), "counts only go up: {ticks:?}");
+    }
+
+    #[test]
+    fn walk_leaves_out_ignored_names_and_everything_inside() {
+        let dir = std::env::temp_dir().join(format!("lc-walk-ignore-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let bundle = "Gigs/2015/Joe Bonamassa/Joe Bonamassa.fcpbundle/2-11-2015/Original Media";
+        for d in [bundle, "Gigs/2015/Joe Bonamassa/Stills", "Proxy Media"] {
+            std::fs::create_dir_all(dir.join(d)).unwrap();
+        }
+        let files =
+            [format!("{bundle}/Joe Bonamassa-9.jpg"), "Gigs/2015/Joe Bonamassa/Stills/a.jpg".into(), "Proxy Media/p.jpg".into(), "b.JPG".into()];
+        for f in files {
+            std::fs::write(dir.join(f), b"x").unwrap();
+        }
+        let keys = |ignore: &[&str]| {
+            let ignore: Vec<String> = ignore.iter().map(|s| s.to_string()).collect();
+            let (mut found, mut errs) = (Vec::new(), Vec::new());
+            walk("P", &dir, &ignore, &mut found, &mut errs, &AtomicBool::new(false), &mut |_| {});
+            let mut k: Vec<String> = found.into_iter().map(|f| f.key).collect();
+            k.sort();
+            k
+        };
+        assert_eq!(keys(&[]).len(), 4);
+        let k = keys(&["*.FCPBUNDLE", "proxy media"]);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(k, ["P/Gigs/2015/Joe Bonamassa/Stills/a.jpg", "P/b.JPG"]);
     }
 }

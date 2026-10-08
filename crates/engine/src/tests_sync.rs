@@ -37,6 +37,8 @@ struct Fake {
     presets: proto::Presets,
     /// Answer nothing (the network is down).
     down: bool,
+    /// A server from before `GET /api/usage`.
+    no_usage: bool,
     requests: Vec<String>,
 }
 
@@ -49,6 +51,7 @@ impl Fake {
             spaces: 0,
             presets: proto::Presets { version: 0, presets: json!([]) },
             down: false,
+            no_usage: false,
             requests: vec![],
         }
     }
@@ -107,6 +110,22 @@ impl Fake {
                     Err(PushError::Rejected { index, error }) => status(422, json!({"index": index, "error": error})),
                     Err(PushError::Storage(e)) => status(500, json!({"error": e})),
                 }
+            }
+            ("GET", "/api/usage") if !self.no_usage => {
+                let kind = |k: &str| {
+                    let sizes: Vec<u64> = self.blobs.iter().filter(|((kind, _), _)| kind == k).map(|(_, b)| b.len() as u64).collect();
+                    proto::Files { files: sizes.len() as u64, bytes: sizes.iter().sum() }
+                };
+                let u = proto::Usage {
+                    photos: self.core.catalog().len() as u64,
+                    devices: u64::from(self.spaces),
+                    original: kind("original"),
+                    smart: kind("smart"),
+                    mini: kind("mini"),
+                    disk: Some(proto::Disk { total: 1000, free: 400 }),
+                    ..Default::default()
+                };
+                ok(serde_json::to_value(u).unwrap())
             }
             ("GET", "/api/presets") => ok(serde_json::to_value(&self.presets).unwrap()),
             ("PUT", "/api/presets") => {
@@ -624,5 +643,94 @@ fn server_addresses_as_a_phone_keyboard_types_them() {
     let mut s = open(&root.join("a"));
     s.sync_sign_in("Photos.Example.com", "ann", "pw", "Phone").unwrap();
     assert_eq!(s.sync_state().unwrap().config.server, "https://photos.example.com");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn storage_numbers_come_from_the_server_and_from_this_computer() {
+    let mut f = Fake::new();
+    let (mut a, root, _) = first_device("usage", &mut f);
+    assert!(a.sync_state().unwrap().usage().is_none(), "nobody asked yet");
+    a.sync_fetch_usage_with(&mut |t| f.handle(t));
+    let u = a.sync_state().unwrap().usage().cloned().expect("the server answered");
+    let bytes = |k: &str| f.blobs.iter().filter(|((kind, _), _)| kind == k).map(|(_, b)| b.len() as u64).sum::<u64>();
+    assert_eq!((u.original.files, u.smart.files, u.mini.files), (2, 2, 2));
+    assert_eq!(u.original.bytes, bytes("original"));
+    assert_eq!(u.stored(), bytes("original") + bytes("smart") + bytes("mini"));
+    assert_eq!((u.photos, u.disk), (2, Some(proto::Disk { total: 1000, free: 400 })));
+    assert!(a.sync_state().unwrap().usage_error().is_none());
+
+    // the command says both sides: this device made the previews it uploaded
+    let r = a.execute("sync.usage", &json!({})).unwrap();
+    assert_eq!(r["server"]["original"]["files"], 2, "{r}");
+    assert_eq!(r["photos"], json!({"total": 2, "onlyPreviewsHere": 0}));
+    assert_eq!(r["local"]["smart"]["files"], 2, "{r}");
+    assert_eq!(r["local"]["mini"]["files"], 2, "{r}");
+    assert!(r["local"]["library"].as_u64().unwrap() > 0, "the catalog takes room: {r}");
+
+    // a second device has only previews of the photos: the grid's small ones
+    let mut b = open(&root.join("b"));
+    sign_in(&mut b);
+    sync(&mut b, &mut f);
+    assert_eq!(b.photo_counts(), (2, 2));
+    let r = b.execute("sync.usage", &json!({})).unwrap();
+    assert_eq!(r["photos"], json!({"total": 2, "onlyPreviewsHere": 2}));
+    assert_eq!(r["local"]["mini"]["files"], 2, "{r}");
+    assert_eq!(r["local"]["downloaded"]["files"], 0, "{r}");
+    // an original on request is counted as downloaded
+    let ids: Vec<u64> = b.catalog.photos().map(|p| p.id.0).collect();
+    b.selection = crate::Selection::single(PhotoId(ids[0]));
+    b.execute("sync.downloadOriginals", &json!({"ids": ids})).unwrap();
+    sync(&mut b, &mut f);
+    let r = b.execute("sync.usage", &json!({})).unwrap();
+    assert_eq!(r["local"]["downloaded"]["files"], 2, "{r}");
+    assert_eq!(r["photos"]["onlyPreviewsHere"], 0, "{r}");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn storage_is_asked_for_only_while_someone_looks_and_not_too_often() {
+    let mut f = Fake::new();
+    let (mut a, root, _) = first_device("usage-ask", &mut f);
+    let usage_tasks = |s: &mut Session| {
+        s.sync_tasks().into_iter().filter(|t| matches!(t, Task::Http { url, .. } if url.ends_with("/api/usage"))).collect::<Vec<_>>()
+    };
+    assert!(usage_tasks(&mut a).is_empty(), "nobody is looking");
+    a.sync_want_usage();
+    let t = usage_tasks(&mut a);
+    assert_eq!(t.len(), 1);
+    a.sync_want_usage();
+    assert!(usage_tasks(&mut a).is_empty(), "one request at a time");
+    a.sync_done(f.handle(&t[0]));
+    assert!(a.sync_state().unwrap().usage().is_some());
+    a.sync_want_usage();
+    assert!(usage_tasks(&mut a).is_empty(), "the answer is fresh");
+    a.sync_refresh_usage();
+    assert_eq!(usage_tasks(&mut a).len(), 1, "Refresh asks at once");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_server_without_the_storage_route_says_so_and_syncing_goes_on() {
+    let mut f = Fake::new();
+    let (mut a, root, ids) = first_device("usage-old", &mut f);
+    f.no_usage = true;
+    a.sync_fetch_usage_with(&mut |t| f.handle(t));
+    let st = a.sync_state().unwrap();
+    assert!(st.usage().is_none());
+    assert!(st.usage_error().unwrap().contains("too old"), "{:?}", st.usage_error());
+    a.selection = crate::Selection::single(ids[0]);
+    a.execute("photo.rate", &json!({"rating": 3})).unwrap();
+    let st = sync(&mut a, &mut f);
+    assert_eq!(st["state"], "idle", "not an error of the sync itself: {st}");
+    // the network being down is told apart too, and the older numbers stay
+    f.no_usage = false;
+    a.sync_fetch_usage_with(&mut |t| f.handle(t));
+    assert!(a.sync_state().unwrap().usage().is_some());
+    f.down = true;
+    a.sync_fetch_usage_with(&mut |t| f.handle(t));
+    let st = a.sync_state().unwrap();
+    assert!(st.usage().is_some(), "the last numbers stay");
+    assert!(st.usage_error().unwrap().contains("can't reach"), "{:?}", st.usage_error());
     let _ = std::fs::remove_dir_all(&root);
 }

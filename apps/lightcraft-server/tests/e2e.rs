@@ -143,6 +143,49 @@ fn api_refuses_what_it_should() {
 }
 
 #[test]
+fn storage_is_reported_per_user_and_matches_the_disk() {
+    let root = temp("usage");
+    let server = start(&root);
+    let url = format!("http://{}", server.addr());
+    assert_eq!(call("GET", &format!("{url}/api/usage"), "", None, &[]).0, 401, "only for signed-in devices");
+    write_png(&root.join("in/a.png"), 1);
+    write_png(&root.join("in/b.png"), 2);
+    let mut a = open(&root.join("a"));
+    a.execute("library.import", &json!({"paths": [root.join("in").to_string_lossy()]})).unwrap();
+    sign_in(&mut a, &url);
+    a.execute("sync.now", &json!({"wait": true})).unwrap();
+
+    // what the server says is what its blobs folder holds
+    let blobs = root.join("data/users/ann/blobs");
+    let on_disk = |kind: &str| -> (u64, u64) {
+        let mut found = (0, 0);
+        for prefix in std::fs::read_dir(blobs.join(kind)).unwrap().flatten() {
+            for f in std::fs::read_dir(prefix.path()).unwrap().flatten() {
+                found = (found.0 + 1, found.1 + f.metadata().unwrap().len());
+            }
+        }
+        found
+    };
+    let r = a.execute("sync.usage", &json!({"refresh": true})).unwrap();
+    for kind in ["original", "smart", "mini"] {
+        let (files, bytes) = on_disk(kind);
+        assert_eq!((r["server"][kind]["files"].as_u64(), r["server"][kind]["bytes"].as_u64()), (Some(files), Some(bytes)), "{kind}: {r}");
+        assert_eq!(files, 2, "{kind}");
+    }
+    assert_eq!((r["server"]["photos"].clone(), r["server"]["devices"].clone()), (json!(2), json!(1)), "{r}");
+    assert_eq!(r["serverError"], Value::Null, "{r}");
+    assert!(r["server"]["disk"]["total"].as_u64().unwrap_or(0) > 0, "the server's disk is known: {r}");
+    // this computer: the library folder and its previews are measured too
+    assert!(r["local"]["library"].as_u64().unwrap() > 0 && r["local"]["smart"]["files"].as_u64().unwrap() > 0, "{r}");
+    // a second user's files don't count
+    accounts::set_user(&root.join("data"), "bob", "another horse", false).unwrap();
+    let (s, body, _) = call("GET", &format!("{url}/api/usage"), a.sync_state().map(|st| st.config.token.clone()).unwrap().as_str(), None, &[]);
+    assert_eq!((s, json_of(&body)["original"]["files"].clone()), (200, json!(2)));
+    drop(server);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn two_libraries_sync_through_the_server() {
     let root = temp("sync");
     let server = start(&root);
@@ -222,6 +265,9 @@ fn admin_page_sets_up_and_manages_users() {
             && v.contains("frame-ancestors 'none'"))
     );
     assert_eq!(req("GET", "/admin/admin.js", "", None).0, 200);
+    let (s, _, h) = req("GET", "/admin/icon.png", "", None);
+    assert_eq!(s, 200);
+    assert!(h.iter().any(|(k, v)| k.eq_ignore_ascii_case("content-type") && v == "image/png"));
     assert_eq!(req("GET", "/admin/../users.json", "", None).0, 404);
     // first run: the setup code (from the log) makes the first admin, once
     assert_eq!(req("GET", "/api/admin/state", "", None).1["setup"], true);
@@ -263,6 +309,14 @@ fn admin_page_sets_up_and_manages_users() {
     assert_eq!(req("GET", "/api/me", &bob_token, None).0, 401);
     assert_eq!(req("PUT", "/api/admin/users/bob/password", &ann, Some(json!({"password": "battery staple"}))).0, 200);
     assert_eq!(device("bob", "battery staple").0, 200);
+    // names the scan of their library folders leaves out (kept through the password change above)
+    let (st, r, _) = req("PUT", "/api/admin/users/bob/ignore", &ann, Some(json!({"ignore": ["*.fcpbundle", " "]})));
+    assert_eq!((st, &r["ignore"]), (200, &json!(["*.fcpbundle"])), "{r}");
+    assert_eq!(req("PUT", "/api/admin/users/bob/ignore", &ann, Some(json!({"ignore": ["Gigs/2015"]}))).0, 400, "a name, not a path");
+    assert_eq!(req("PUT", "/api/admin/users/nobody/ignore", &ann, Some(json!({"ignore": []}))).0, 400);
+    assert_eq!(req("GET", "/api/admin/users/bob/folders", &ann, None).1["ignore"], json!(["*.fcpbundle"]));
+    assert_eq!(req("PUT", "/api/admin/users/bob/password", &ann, Some(json!({"password": "battery staple"}))).0, 200);
+    assert_eq!(req("GET", "/api/admin/users/bob/folders", &ann, None).1["ignore"], json!(["*.fcpbundle"]));
     // there is always an admin
     assert_eq!(req("PUT", "/api/admin/users/ann/admin", &ann, Some(json!({"admin": false}))).0, 409);
     assert_eq!(req("DELETE", "/api/admin/users/ann", &ann, None).0, 409);

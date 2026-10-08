@@ -30,6 +30,29 @@ fn status(s: &mut Session, _: &Value) -> Result<Value> {
     Ok(s.sync_state().map(|st| st.status()).unwrap_or_else(|| json!({"state": "off", "signedIn": false})))
 }
 
+/// What this library takes on the server and on this computer. The server's numbers are the last
+/// ones it gave (`refresh`: ask it now and wait, natively); this computer's are measured here.
+fn usage(s: &mut Session, p: &Value) -> Result<Value> {
+    if bool_or(p, "refresh", false) {
+        #[cfg(not(target_arch = "wasm32"))]
+        s.sync_fetch_usage();
+        // (the browser can't wait here: its requests finish on later frames)
+        #[cfg(target_arch = "wasm32")]
+        s.sync_refresh_usage();
+    } else {
+        s.sync_want_usage();
+    }
+    let (photos, remote) = s.photo_counts();
+    let st = s.sync_state();
+    Ok(json!({
+        "server": st.and_then(|st| st.usage()),
+        "serverError": st.and_then(|st| st.usage_error()),
+        "serverAgeSecs": st.and_then(|st| st.usage_age()).map(|a| a.as_secs()),
+        "local": s.local_dirs().map(|d| crate::usage::measure(&d)),
+        "photos": {"total": photos, "onlyPreviewsHere": remote},
+    }))
+}
+
 fn sign_in(s: &mut Session, p: &Value) -> Result<Value> {
     const C: &str = "sync.signIn";
     let server = str_param(p, "server").ok_or_else(|| bad(C, "missing `server` (https://…)"))?;
@@ -102,6 +125,12 @@ fn store_originals(s: &mut Session, p: &Value) -> Result<Value> {
     status(s, p)
 }
 
+fn server_previews(s: &mut Session, p: &Value) -> Result<Value> {
+    let on = p.get("on").and_then(Value::as_bool).ok_or_else(|| bad("sync.serverPreviews", "missing `on` (true or false)"))?;
+    s.sync_server_previews(on)?;
+    status(s, p)
+}
+
 fn download_originals(s: &mut Session, p: &Value) -> Result<Value> {
     let ids = s.targets(p);
     let n = s.sync_want_originals(&ids);
@@ -167,6 +196,9 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!("sync.pause", "Pause Syncing", ["File"], None, "{on?: bool}: stop talking to the server for now (toggle without `on`)", synced, pause),
         cmd!(query "sync.status", "Sync Status", [], None, "{}: state (off / signedOut / idle / syncing / error), pending changes, transfers, error", always, status),
+        cmd!(query "sync.usage", "Sync Storage", [], None,
+            "{refresh?: bool}: what this library takes on the sync server (originals, smart and small previews, library folders, the server's free disk) and on this computer (catalog, thumbnails, previews, downloaded originals, free disk), in bytes; photos with only previews here. The server's numbers are the last it gave (asked for again every 20 s while someone looks) unless `refresh` asks it now",
+            synced, usage),
         cmd!(
             "sync.storeOriginalsLocally",
             "Store Originals Locally",
@@ -175,6 +207,15 @@ pub fn specs() -> Vec<CommandSpec> {
             "{on: bool}: keep every photo's original on this device too",
             synced,
             store_originals
+        ),
+        cmd!(
+            "sync.serverPreviews",
+            "Server Builds Previews",
+            [],
+            None,
+            "{on: bool}: have the sync server build the previews of the originals this device uploads (default on iOS: the phone spares its battery and memory); a server that can't builds none and this device does",
+            synced,
+            server_previews
         ),
         cmd!(
             "sync.downloadOriginals",

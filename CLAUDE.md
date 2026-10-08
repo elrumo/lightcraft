@@ -36,7 +36,7 @@ of it. Full standard: `../craftrules/standards/never-crash.md`
 - **`unsafe` lives only in `crates/sysmem` and `crates/ios-host`.** `sysmem`: two libSystem calls,
   `malloc_zone_pressure_relief` (returns freed allocator pages to macOS / iOS after raw decodes) and
   `os_proc_available_memory` (the iOS app's memory limit). `ios-host`: the iOS app's Objective-C calls through `objc2`
-  (Photos and Files pickers, share sheet, lifecycle notifications, ImageIO decoding), compiled for iOS only. (The iOS
+  (Photos and Files pickers, share sheet, pasteboard, lifecycle notifications, ImageIO decoding), compiled for iOS only. (The iOS
   app's C entry point, `lightcraft_ios_main`, is the one `#[unsafe(no_mangle)]`.) Every other production crate root has
   `#![forbid(unsafe_code)]`. A new unsafe need goes in an isolated, well-tested helper crate like them: `// SAFETY:` on
   every block, a safe API, a safe fallback where possible, and a line here naming it.

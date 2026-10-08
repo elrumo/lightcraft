@@ -940,3 +940,67 @@ fn a_library_opened_through_a_link_is_not_relinked() {
     let _ = std::fs::remove_dir_all(&root);
     let _ = std::fs::remove_dir_all(&src);
 }
+
+#[test]
+fn ignore_patterns_match_whole_names_with_wildcards() {
+    use crate::import::{clean_ignore, is_ignored};
+    let l = |p: &[&str]| p.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    assert!(is_ignored(&l(&["*.fcpbundle"]), "Joe Bonamassa.fcpbundle"));
+    assert!(is_ignored(&l(&["*.FCPBUNDLE"]), "joe.fcpbundle"), "capitals don't matter");
+    assert!(!is_ignored(&l(&["*.fcpbundle"]), "fcpbundle.jpg"));
+    assert!(!is_ignored(&l(&["*.fcpbundle"]), "a.fcpbundle.bak"), "the whole name has to match");
+    assert!(is_ignored(&l(&["Original Media"]), "original media"));
+    assert!(!is_ignored(&l(&["Original Media"]), "Original Media 2"));
+    assert!(is_ignored(&l(&["IMG_????.jpg"]), "IMG_0042.JPG"));
+    assert!(!is_ignored(&l(&["IMG_????.jpg"]), "IMG_042.JPG"));
+    assert!(is_ignored(&l(&["a*b*c"]), "a-xxb-yyc") && !is_ignored(&l(&["a*b*c"]), "a-xxb-yy"));
+    assert!(is_ignored(&l(&["*"]), "anything"));
+    assert!(is_ignored(&l(&["é*"]), "École"), "not just ASCII");
+    assert!(!is_ignored(&l(&["", "  "]), "a"), "blank patterns match nothing");
+    assert!(!is_ignored(&[], "a"));
+    // (a long run of stars and a near miss must not blow up)
+    assert!(!is_ignored(&l(&["*a*a*a*a*a*a*a*a*b"]), &"a".repeat(200)));
+
+    assert_eq!(clean_ignore(&l(&[" *.fcpbundle ", "", "*.FCPBUNDLE", "Proxy Media"])).unwrap(), ["*.fcpbundle", "Proxy Media"]);
+    assert!(clean_ignore(&l(&["Gigs/2015"])).is_err(), "a path never matches a name");
+    assert!(clean_ignore(&l(&["a\\b"])).is_err());
+    assert!(clean_ignore(&(0..201).map(|i| format!("n{i}")).collect::<Vec<_>>()).is_err());
+}
+
+#[test]
+fn import_leaves_out_ignored_names_below_the_chosen_folder() {
+    let src = temp_dir("ignore");
+    let lib = temp_dir("ignore-lib");
+    write_png(&src.join("a.png"), 1);
+    write_png(&src.join("Gigs/Joe Bonamassa/Joe Bonamassa.fcpbundle/2-11-2015/Original Media/Joe Bonamassa-9.png"), 2);
+    write_png(&src.join("Gigs/Joe Bonamassa/stills/b.png"), 3);
+    write_png(&src.join("Proxy Media/c.png"), 4);
+    let mut s = Session::new().with_fs();
+    s.open_library(&lib, false).unwrap();
+
+    // the setting is saved with the library, and refuses a path
+    assert!(s.execute("library.preferences", &json!({"import": {"ignore": ["Gigs/2015"]}})).is_err());
+    let r = s.execute("library.preferences", &json!({"import": {"ignore": "*.fcpbundle\n proxy media \n"}})).unwrap();
+    assert_eq!(r["import"]["ignore"], json!(["*.fcpbundle", "proxy media"]));
+
+    // browsing (Local view) and importing both skip them
+    let scanned = |s: &mut Session, path: &Path| -> Vec<String> {
+        let mut v: Vec<String> = crate::import::scan(s, &[path.to_string_lossy().to_string()]).into_iter().map(|c| c.name).collect();
+        v.sort();
+        v
+    };
+    assert_eq!(scanned(&mut s, &src), ["a.png", "b.png"]);
+    let r = s.execute("library.import", &json!({"paths": [src.to_string_lossy()]})).unwrap();
+    assert_eq!(ids(&r, "imported"), 2, "{r}");
+
+    // a folder named on purpose is read, even if its name is ignored
+    let bundle = src.join("Gigs/Joe Bonamassa/Joe Bonamassa.fcpbundle");
+    assert_eq!(scanned(&mut s, &bundle), ["Joe Bonamassa-9.png"]);
+
+    // clearing the list brings them back
+    s.execute("library.preferences", &json!({"import": {"ignore": []}})).unwrap();
+    assert_eq!(scanned(&mut s, &src).len(), 4);
+    s.close_library().unwrap();
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&lib);
+}

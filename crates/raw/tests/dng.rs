@@ -1,11 +1,13 @@
 //! Synthetic DNG round trips: every storage variant we decode is written with our own TIFF writer (and LJ92
 //! encoder) and must decode bit-exactly.
 
+mod jxl_data;
+
 use lightcraft_color::{D65, Mat3, Xy};
 use lightcraft_raw::opcodes::{Area, Opcode};
 use lightcraft_raw::{
     BlackLevel, Cfa, ColorData, DngCompression, DngWriteOptions, Method, OpcodeLists, Orientation, RawData, RawFormat, RawImage, Rect, decode,
-    embedded_preview, probe, write_dng,
+    embedded_preview, probe, probe_info, write_dng,
 };
 use lightcraft_tiff::tags::{self as t, compression, photometric};
 use lightcraft_tiff::{ByteOrder, IfdBuilder, ImageData, TiffWriter, Value};
@@ -531,4 +533,277 @@ fn malformed_profile_look_tags_are_ignored() {
     // and without any of the tags there is nothing to apply
     let plain = decode(&profile_dng(ByteOrder::Little, |_| {})).unwrap();
     assert!(plain.color.profile.is_empty());
+}
+
+// ---------------------------------------------------------------- JPEG XL (DNG 1.7, Compression 52546)
+
+/// A JPEG XL codestream wrapped the way Apple ProRAW tiles are: signature, `ftyp`, one `jxlc` box.
+fn container(codestream: &[u8]) -> Vec<u8> {
+    let mut v = vec![0, 0, 0, 12, b'J', b'X', b'L', b' ', 0x0d, 0x0a, 0x87, 0x0a];
+    v.extend([0, 0, 0, 20, b'f', b't', b'y', b'p', b'j', b'x', b'l', b' ', 0, 0, 0, 0, b'j', b'x', b'l', b' ']);
+    v.extend(((codestream.len() + 8) as u32).to_be_bytes());
+    v.extend(b"jxlc");
+    v.extend(codestream);
+    v
+}
+
+/// A raw IFD of `w × h` pixels cut into square `tile`s, each one of `tiles` (row-major).
+fn jxl_ifd(w: usize, h: usize, tile: usize, cpp: usize, cfa: bool, tiles: Vec<Vec<u8>>) -> IfdBuilder {
+    let mut raw = base_ifd(w, h, 16, cpp, cfa);
+    raw.set(t::COMPRESSION, Value::Short(vec![compression::JPEG_XL]));
+    raw.set_image(ImageData::Tiles { tile_width: tile as u32, tile_height: tile as u32, tiles });
+    raw
+}
+
+fn jxl_expected(w: usize, h: usize, tile: usize, cpp: usize, maxv: u32, f: impl Fn(u32) -> u16) -> Vec<u16> {
+    (0..h)
+        .flat_map(|y| (0..w).flat_map(move |x| (0..cpp).map(move |c| (x, y, c))))
+        .map(|(x, y, c)| f(jxl_data::val(x % tile, y % tile, c, maxv)))
+        .collect()
+}
+
+#[test]
+fn jxl_linear_raw_tiles_bare_and_in_a_container() {
+    // ProRAW style: three channels per pixel; the right-hand tile is cut by the image edge
+    let (w, h) = (24, 16);
+    let mut raw = jxl_ifd(w, h, 16, 3, false, vec![jxl_data::RGB16.to_vec(), container(jxl_data::RGB16)]);
+    raw.set(t::WHITE_LEVEL, Value::Long(vec![65535]));
+    let bytes = dng(raw, ByteOrder::Little);
+    let img = decode(&bytes).unwrap();
+    assert_eq!(img.data, RawData::U16(jxl_expected(w, h, 16, 3, 65535, |v| v as u16)));
+    assert_eq!((img.cpp, img.white.clone()), (3, vec![65535.0]));
+    // the import-time probe reads the tile headers and agrees
+    let info = probe_info(&bytes).unwrap();
+    assert_eq!((info.width, info.height, info.cpp), (w, h, 3));
+}
+
+#[test]
+fn jxl_mosaic_tiles_keep_their_raw_values() {
+    // a 12-bit stream under a white level of 4095 holds the raw values themselves
+    let mut raw = jxl_ifd(16, 16, 16, 1, true, vec![jxl_data::GRAY12.to_vec()]);
+    raw.set(t::WHITE_LEVEL, Value::Long(vec![4095]));
+    let img = decode(&dng(raw, ByteOrder::Big)).unwrap();
+    assert_eq!(img.data, RawData::U16(jxl_expected(16, 16, 16, 1, 4095, |v| v as u16)));
+    assert_eq!(img.cfa.unwrap().name(), "GRBG");
+}
+
+#[test]
+fn jxl_stream_depth_against_white_level() {
+    let tiles = || vec![jxl_data::RGB10.to_vec()];
+    // white level within the stream's 10 bits: raw values
+    let mut raw = jxl_ifd(16, 16, 16, 3, false, tiles());
+    raw.set(t::WHITE_LEVEL, Value::Long(vec![1023]));
+    let img = decode(&dng(raw, ByteOrder::Little)).unwrap();
+    assert_eq!(img.data, RawData::U16(jxl_expected(16, 16, 16, 3, 1023, |v| v as u16)));
+    // Apple declares 10 bits but a white level of 65535: the full 16-bit range
+    let mut raw = jxl_ifd(16, 16, 16, 3, false, tiles());
+    raw.set(t::WHITE_LEVEL, Value::Long(vec![65535]));
+    let img = decode(&dng(raw, ByteOrder::Little)).unwrap();
+    assert_eq!(img.data, RawData::U16(jxl_expected(16, 16, 16, 3, 1023, |v| (v as f32 / 1023.0 * 65535.0).round() as u16)));
+}
+
+#[test]
+fn jxl_codes_under_a_linearization_table_are_not_rescaled_by_the_white_level() {
+    // iPhone ProRAW: 10-bit codes, a 1024-entry table up to 65535 and WhiteLevel 65535 (the level after the table)
+    let table: Vec<u16> = (0..1024u32).map(|i| (i * 64).min(65535) as u16).collect();
+    let mut raw = jxl_ifd(16, 16, 16, 3, false, vec![jxl_data::RGB10.to_vec()]);
+    raw.set(t::LINEARIZATION_TABLE, Value::Short(table.clone()));
+    raw.set(t::WHITE_LEVEL, Value::Long(vec![65535]));
+    let img = decode(&dng(raw, ByteOrder::Little)).unwrap();
+    assert_eq!(img.data, RawData::U16(jxl_expected(16, 16, 16, 3, 1023, |v| table[v as usize])));
+    assert!(img.linearized);
+}
+
+#[test]
+fn jxl_lossy_tile_matches_libjxl() {
+    let mut raw = jxl_ifd(32, 32, 32, 3, false, vec![jxl_data::LOSSY.to_vec()]);
+    raw.set(t::WHITE_LEVEL, Value::Long(vec![65535]));
+    let img = decode(&dng(raw, ByteOrder::Little)).unwrap();
+    let RawData::U16(v) = &img.data else { panic!("integer samples") };
+    for &(x, y, rgb) in jxl_data::LOSSY_REFERENCE {
+        for c in 0..3 {
+            let got = v[(y * 32 + x) * 3 + c] as i32;
+            assert!((got - rgb[c] as i32).abs() <= 64, "({x},{y}) channel {c}: {got} vs libjxl {}", rgb[c]);
+        }
+    }
+}
+
+#[test]
+fn jxl_float_tile() {
+    let mut raw = jxl_ifd(8, 8, 8, 3, false, vec![container(jxl_data::FLOAT)]);
+    raw.set(t::BITS_PER_SAMPLE, Value::Short(vec![32; 3]));
+    raw.set(t::SAMPLE_FORMAT, Value::Short(vec![3; 3]));
+    let img = decode(&dng(raw, ByteOrder::Little)).unwrap();
+    let expect: Vec<f32> = (0..8)
+        .flat_map(|y| (0..8).flat_map(move |x| (0..3).map(move |c| (x + 1) as f32 * 0.125 + y as f32 * 0.015625 + c as f32 * 0.0625)))
+        .collect();
+    assert_eq!(img.data, RawData::F32(expect));
+}
+
+#[test]
+fn jxl_interleaved_mosaic_is_woven_back() {
+    // the stored 16×16 holds 2 row fields (rows 0-7: even final rows, 8-15: odd) and 2 column fields likewise
+    let stored = |x: usize, y: usize| jxl_data::val(x, y, 0, 4095) as u16;
+    for (rows, cols) in [(2usize, 1usize), (1, 2), (2, 2)] {
+        let mut raw = jxl_ifd(16, 16, 16, 1, true, vec![jxl_data::GRAY12.to_vec()]);
+        raw.set(t::WHITE_LEVEL, Value::Long(vec![4095]));
+        raw.set(t::ROW_INTERLEAVE_FACTOR, Value::Short(vec![rows as u16]));
+        raw.set(t::COLUMN_INTERLEAVE_FACTOR, Value::Short(vec![cols as u16]));
+        let img = decode(&dng(raw, ByteOrder::Little)).unwrap();
+        let RawData::U16(v) = &img.data else { panic!("integer samples") };
+        for fy in 0..16 {
+            for fx in 0..16 {
+                let sy = if rows == 2 { (fy % 2) * 8 + fy / 2 } else { fy };
+                let sx = if cols == 2 { (fx % 2) * 8 + fx / 2 } else { fx };
+                assert_eq!(v[fy * 16 + fx], stored(sx, sy), "rows {rows} cols {cols} at ({fx},{fy})");
+            }
+        }
+    }
+    // a factor larger than the image is a corrupt file, not a panic
+    let mut raw = jxl_ifd(16, 16, 16, 1, true, vec![jxl_data::GRAY12.to_vec()]);
+    raw.set(t::ROW_INTERLEAVE_FACTOR, Value::Long(vec![4_000_000_000]));
+    assert!(matches!(decode(&dng(raw, ByteOrder::Little)), Err(lightcraft_raw::RawError::Corrupt(_))));
+}
+
+#[test]
+fn jxl_bad_tiles_are_errors() {
+    let corrupt = |raw: IfdBuilder| matches!(decode(&dng(raw, ByteOrder::Little)), Err(lightcraft_raw::RawError::Corrupt(_)));
+    // one channel where the IFD says three
+    assert!(corrupt(jxl_ifd(16, 16, 16, 3, false, vec![jxl_data::GRAY12.to_vec()])));
+    // a 16×16 stream in an 8×8 tile
+    assert!(corrupt(jxl_ifd(8, 8, 8, 3, false, vec![jxl_data::RGB16.to_vec()])));
+    // truncated, and not JPEG XL at all
+    assert!(corrupt(jxl_ifd(16, 16, 16, 3, false, vec![jxl_data::RGB16[..300].to_vec()])));
+    assert!(corrupt(jxl_ifd(16, 16, 16, 3, false, vec![vec![0x5a; 200]])));
+    // the header-only probe rejects what the full decode rejects
+    assert!(probe_info(&dng(jxl_ifd(16, 16, 16, 3, false, vec![jxl_data::GRAY12.to_vec()]), ByteOrder::Little)).is_err());
+}
+
+#[test]
+fn jxl_damaged_streams_never_panic() {
+    for stream in [jxl_data::RGB16, jxl_data::LOSSY] {
+        let (w, cpp) = if stream.len() == jxl_data::RGB16.len() { (16, 3) } else { (32, 3) };
+        for i in 0..stream.len() {
+            for flip in [0x01u8, 0x80, 0xff] {
+                let mut bad = stream.to_vec();
+                bad[i] ^= flip;
+                let _ = decode(&dng(jxl_ifd(w, w, w, cpp, false, vec![bad]), ByteOrder::Little));
+            }
+        }
+        for len in (0..stream.len()).step_by(7) {
+            let _ = decode(&dng(jxl_ifd(w, w, w, cpp, false, vec![stream[..len].to_vec()]), ByteOrder::Little));
+        }
+    }
+}
+
+// ---------------------------------------------------------------- binned decode (decode_binned)
+
+/// A LinearRaw DNG of uncompressed `tw × th` tiles holding `px` (`w × h × 3`, 16-bit), plus `extra` raw-IFD tags.
+fn linear_tiles_dng(w: usize, h: usize, (tw, th): (usize, usize), px: &[u16], extra: impl FnOnce(&mut IfdBuilder)) -> Vec<u8> {
+    let mut raw = base_ifd(w, h, 16, 3, false);
+    raw.set(t::COMPRESSION, Value::Short(vec![1]));
+    let tiles: Vec<Vec<u8>> = (0..h.div_ceil(th))
+        .flat_map(|ty| (0..w.div_ceil(tw)).map(move |tx| (tx, ty)))
+        .map(|(tx, ty)| {
+            let mut tile = vec![0u16; tw * th * 3];
+            for y in 0..th.min(h.saturating_sub(ty * th)) {
+                for x in 0..tw.min(w.saturating_sub(tx * tw)) {
+                    let src = ((ty * th + y) * w + tx * tw + x) * 3;
+                    tile[(y * tw + x) * 3..][..3].copy_from_slice(&px[src..src + 3]);
+                }
+            }
+            u16_bytes(&tile, ByteOrder::Little)
+        })
+        .collect();
+    raw.set_image(ImageData::Tiles { tile_width: tw as u32, tile_height: th as u32, tiles });
+    extra(&mut raw);
+    dng(raw, ByteOrder::Little)
+}
+
+/// The streaming binned decode agrees with binning the fully decoded image.
+fn assert_binned_matches_full(bytes: &[u8], k: usize, clip: f32) {
+    let full = decode(bytes).unwrap();
+    let want = full.develop_binned(k, clip).unwrap().unwrap();
+    let binned = lightcraft_raw::decode_binned(bytes, k, clip).unwrap().expect("binnable");
+    assert_eq!((binned.width, binned.height), (want.width, want.height), "k {k}");
+    assert_eq!(binned.crop, Rect::new(0, 0, want.width, want.height));
+    let got = binned.develop(Method::Bilinear).unwrap();
+    assert_eq!((got.width, got.height), (want.width, want.height));
+    // the mean is rounded to a whole raw value
+    let tol = 1.0 / (full.white_at(0) - full.black.mean()) + 1e-6;
+    for (a, b) in got.data.iter().zip(&want.data) {
+        for c in 0..3 {
+            assert!((a[c] - b[c]).abs() <= tol, "k {k}: {a:?} vs {b:?}");
+        }
+    }
+    // metadata keeps the photo's own size
+    assert_eq!(binned.metadata.width, full.metadata.width);
+}
+
+#[test]
+fn binned_decode_matches_binning_the_full_image() {
+    let (w, h) = (37, 29);
+    let px: Vec<u16> = (0..w * h * 3).map(|i| ((i as u32).wrapping_mul(2654435761u32) >> 9) as u16 % 4096).collect();
+    let table: Vec<u16> = (0..4096u32).map(|i| (i * i / 280).min(60000) as u16).collect();
+    let tags = |raw: &mut IfdBuilder| {
+        raw.set(t::LINEARIZATION_TABLE, Value::Short(table.clone()));
+        raw.set(t::BLACK_LEVEL, Value::Rational(vec![(100, 1), (130, 1), (90, 1)]));
+        raw.set(t::WHITE_LEVEL, Value::Long(vec![58000]));
+        raw.set(t::ACTIVE_AREA, Value::Long(vec![1, 2, 28, 35]));
+        raw.set(t::DEFAULT_CROP_ORIGIN, Value::Rational(vec![(1, 1), (3, 1)]));
+        raw.set(t::DEFAULT_CROP_SIZE, Value::Rational(vec![(30, 1), (24, 1)]));
+    };
+    // tiles that don't line up with the blocks (11 × 7 against k = 2, 3, 4) and are cut by the image edge
+    let bytes = linear_tiles_dng(w, h, (11, 7), &px, tags);
+    for k in [2, 3, 4, 8] {
+        assert_binned_matches_full(&bytes, k, 0.99);
+    }
+    // a clipped sample keeps its block's channel at the clipped value (the maximum, not the mean)
+    let mut hot = px.clone();
+    hot[(10 * w + 12) * 3 + 1] = 4095;
+    let bytes = linear_tiles_dng(w, h, (11, 7), &hot, tags);
+    assert_binned_matches_full(&bytes, 3, 0.5);
+    let b = lightcraft_raw::decode_binned(&bytes, 3, 0.5).unwrap().unwrap();
+    assert!(b.normalized().unwrap().data.iter().any(|v| *v >= 0.5), "a clipped channel survives binning");
+}
+
+#[test]
+fn binned_decode_of_jpeg_xl_tiles() {
+    let mut raw = jxl_ifd(32, 16, 16, 3, false, vec![jxl_data::RGB16.to_vec(), jxl_data::RGB16.to_vec()]);
+    raw.set(t::WHITE_LEVEL, Value::Long(vec![65535]));
+    let bytes = dng(raw, ByteOrder::Little);
+    for k in [2, 4] {
+        assert_binned_matches_full(&bytes, k, 0.99);
+    }
+}
+
+#[test]
+fn binned_decode_declines_what_it_cannot_bin() {
+    let (w, h) = (16, 16);
+    let px = pattern(w, h, 3, 12);
+    let plain = linear_tiles_dng(w, h, (8, 8), &px, |_| {});
+    assert!(lightcraft_raw::decode_binned(&plain, 2, 0.99).unwrap().is_some());
+    // a block of one sample, or a silly one
+    assert!(lightcraft_raw::decode_binned(&plain, 1, 0.99).unwrap().is_none());
+    assert!(lightcraft_raw::decode_binned(&plain, 1000, 0.99).unwrap().is_none());
+    // a mosaic, a black level that varies across the image, opcodes
+    let mosaic = {
+        let mut raw = base_ifd(w, h, 16, 1, true);
+        raw.set(t::COMPRESSION, Value::Short(vec![1]));
+        raw.set_image(ImageData::Strips { rows_per_strip: 16, strips: vec![vec![0; w * h * 2]] });
+        dng(raw, ByteOrder::Little)
+    };
+    assert!(lightcraft_raw::decode_binned(&mosaic, 2, 0.99).unwrap().is_none());
+    let varying = linear_tiles_dng(w, h, (8, 8), &px, |raw| {
+        raw.set(t::BLACK_LEVEL_DELTA_H, Value::SRational(vec![(1, 2); 16]));
+    });
+    assert!(lightcraft_raw::decode_binned(&varying, 2, 0.99).unwrap().is_none());
+    let opcode = linear_tiles_dng(w, h, (8, 8), &px, |raw| {
+        let area = Area { top: 0, left: 0, bottom: 16, right: 16, plane: 0, planes: 3, row_pitch: 1, col_pitch: 1 };
+        let list = lightcraft_raw::opcodes::write_list(&[Opcode::ScalePerRow { area, scales: vec![1.0; 16] }]);
+        raw.set(t::OPCODE_LIST_2, Value::Undefined(list));
+    });
+    assert!(lightcraft_raw::decode_binned(&opcode, 2, 0.99).unwrap().is_none());
+    // not a DNG at all
+    assert!(lightcraft_raw::decode_binned(b"nothing", 2, 0.99).is_err());
 }
