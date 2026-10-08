@@ -1045,5 +1045,16 @@
   "Import from Files…": "「ファイル」から読み込む…",
   "Import Folder from Files…": "「ファイル」のフォルダを読み込む…",
   "When the export is done, the share sheet opens: save the photos to Photos or Files, or send them to another app.": "書き出しが終わると共有シートが開きます。写真を「写真」や「ファイル」に保存したり、ほかのアプリに送ったりできます。",
-  "The photos are copied into the library; the originals in Photos or Files are left as they are.": "写真はライブラリにコピーされます。「写真」や「ファイル」にある元の写真はそのまま残ります。"
+  "The photos are copied into the library; the originals in Photos or Files are left as they are.": "写真はライブラリにコピーされます。「写真」や「ファイル」にある元の写真はそのまま残ります。",
+  "Square Thumbnails": "正方形のサムネール",
+  "All Commands…": "すべてのコマンド…",
+  "All Commands": "すべてのコマンド",
+  "Search": "検索",
+  "Capture Time": "撮影日時",
+  "Date Added": "追加日",
+  "Edit Time": "編集日時",
+  "Reset All Edits": "すべての編集をリセット",
+  "Before / After": "補正前 / 補正後",
+  "Create": "作成",
+  "Auto settings applied": "自動補正を適用しました"
 }

@@ -80,6 +80,22 @@ pub enum Icon {
     Chat,
     /// Face boxes on/off: four corner brackets round a small face.
     FaceBox,
+    /// Undo: a hook arrow pointing back.
+    Undo,
+    /// Redo: the hook arrow pointing forward.
+    Redo,
+    /// Light (exposure, contrast…): a sun.
+    Sun,
+    /// Colour (white balance, saturation…): a drop.
+    Drop,
+    /// Effects (texture, clarity, vignette…): a frame with a darkened edge.
+    Vignette,
+    /// Detail (sharpening, noise): a sharp-edged triangle.
+    Detail,
+    /// Optics (lens corrections): two overlapping lens circles.
+    Lens,
+    /// Automatic settings: a wand with sparks.
+    Wand,
 }
 
 struct Pen<'a> {
@@ -413,6 +429,46 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
             pen.line(&[(13.0, 17.5), (17.5, 17.5), (17.5, 13.0)]);
             pen.circle(10.0, 8.5, 2.4);
             pen.arc(10.0, 16.0, 4.5, 215.0, 325.0);
+        }
+        Undo => {
+            pen.line(&[(5.0, 8.0), (13.0, 8.0)]);
+            pen.arc(13.0, 11.5, 3.5, -90.0, 90.0);
+            pen.line(&[(13.0, 15.0), (8.0, 15.0)]);
+            pen.line(&[(8.0, 5.0), (5.0, 8.0), (8.0, 11.0)]);
+        }
+        Redo => {
+            pen.line(&[(15.0, 8.0), (7.0, 8.0)]);
+            pen.arc(7.0, 11.5, 3.5, 90.0, 270.0);
+            pen.line(&[(7.0, 15.0), (12.0, 15.0)]);
+            pen.line(&[(12.0, 5.0), (15.0, 8.0), (12.0, 11.0)]);
+        }
+        Sun => {
+            pen.circle(10.0, 10.0, 3.5);
+            for i in 0..8 {
+                let a = (i as f32 * 45.0).to_radians();
+                let (c, s) = (a.cos(), a.sin());
+                pen.line(&[(10.0 + 5.8 * c, 10.0 + 5.8 * s), (10.0 + 8.0 * c, 10.0 + 8.0 * s)]);
+            }
+        }
+        Drop => {
+            pen.arc(10.0, 12.0, 5.0, -30.0, 210.0);
+            pen.line(&[(5.67, 9.5), (10.0, 2.5), (14.33, 9.5)]);
+        }
+        Vignette => {
+            pen.rect(3.0, 4.0, 17.0, 16.0, 2.0);
+            pen.p.add(Shape::ellipse_stroke(pen.pt(10.0, 10.0), vec2(5.0 * pen.k, 4.0 * pen.k), pen.s));
+        }
+        Detail => pen.closed(&[(10.0, 3.0), (16.5, 16.5), (3.5, 16.5)]),
+        Lens => {
+            pen.circle(8.0, 10.0, 5.0);
+            pen.circle(12.0, 10.0, 5.0);
+        }
+        Wand => {
+            pen.line(&[(4.0, 16.0), (12.0, 8.0)]);
+            pen.line(&[(14.5, 2.5), (14.5, 6.5)]);
+            pen.line(&[(12.5, 4.5), (16.5, 4.5)]);
+            pen.dot(7.0, 5.0, 0.9);
+            pen.dot(16.0, 11.0, 0.9);
         }
         Picker => {
             pen.line(&[(4.0, 16.0), (11.5, 8.5)]);

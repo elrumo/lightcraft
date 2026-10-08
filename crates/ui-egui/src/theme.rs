@@ -95,6 +95,43 @@ impl Default for Tokens {
 }
 
 impl Tokens {
+    /// The phone / tablet (compact) look, as close to iOS's own dark appearance as egui allows:
+    /// Apple's published dark-mode system colours (system blue, grouped backgrounds, separators,
+    /// label greys), black behind photos as in Lightroom's mobile app.
+    pub fn ios() -> Tokens {
+        let rgb = Color32::from_rgb;
+        Tokens {
+            chrome: rgb(0x1c, 0x1c, 0x1e),
+            canvas: rgb(0x00, 0x00, 0x00),
+            grid_bg: rgb(0x00, 0x00, 0x00),
+            cell: rgb(0x1c, 0x1c, 0x1e),
+            cell_selected: rgb(0x2c, 0x2c, 0x2e),
+            divider: rgb(0x38, 0x38, 0x3a),
+            inset: rgb(0x2c, 0x2c, 0x2e),
+            field: rgb(0x2c, 0x2c, 0x2e),
+            field_border: rgb(0x2c, 0x2c, 0x2e),
+            button: rgb(0x2c, 0x2c, 0x2e),
+            button_border: rgb(0x2c, 0x2c, 0x2e),
+            hover: rgb(0x3a, 0x3a, 0x3c),
+            pressed: rgb(0x48, 0x48, 0x4a),
+            tool_active: rgb(0x3a, 0x3a, 0x3c),
+            text: rgb(0xff, 0xff, 0xff),
+            text_label: rgb(0xe5, 0xe5, 0xea),
+            text_dim: rgb(0x8e, 0x8e, 0x93),
+            text_disabled: rgb(0x48, 0x48, 0x4a),
+            icon: rgb(0xe5, 0xe5, 0xea),
+            track: rgb(0x48, 0x48, 0x4a),
+            thumb: rgb(0xe5, 0xe5, 0xea),
+            thumb_hover: rgb(0xff, 0xff, 0xff),
+            accent: rgb(0x0a, 0x84, 0xff),
+            star: rgb(0xe5, 0xe5, 0xea),
+            pick: rgb(0xff, 0xff, 0xff),
+            reject: rgb(0xff, 0x45, 0x3a),
+            caution: rgb(0xff, 0xd6, 0x0a),
+            ..Tokens::default()
+        }
+    }
+
     pub fn get(ctx: &egui::Context) -> Tokens {
         ctx.data(|d| d.get_temp::<Tokens>(egui::Id::NULL)).unwrap_or_default()
     }
@@ -161,7 +198,51 @@ fn craft_font_name(f: &lightcraft_engine::CraftFont) -> String {
 }
 
 pub fn apply(ctx: &egui::Context) {
-    let t = Tokens::default();
+    apply_tokens(ctx, Tokens::default());
+}
+
+/// The look for the layout in use: iOS's (`Tokens::ios`, larger type, borderless rounded controls,
+/// 44 pt rows) for the compact layout, the desktop's otherwise. Cheap to call every frame: it only
+/// restyles when the layout changes.
+pub fn apply_layout(ctx: &egui::Context, compact: bool) {
+    let id = egui::Id::new("lc-styled-compact");
+    if ctx.data(|d| d.get_temp::<bool>(id)) == Some(compact) {
+        return;
+    }
+    ctx.data_mut(|d| d.insert_temp(id, compact));
+    if !compact {
+        apply(ctx);
+        return;
+    }
+    let t = Tokens::ios();
+    apply_tokens(ctx, t);
+    ctx.global_style_mut(|s| {
+        let v = &mut s.visuals;
+        v.window_corner_radius = CornerRadius::same(13);
+        v.menu_corner_radius = CornerRadius::same(13);
+        v.window_stroke = Stroke::NONE;
+        v.override_text_color = Some(t.text);
+        let w = &mut v.widgets;
+        for wv in [&mut w.noninteractive, &mut w.inactive, &mut w.hovered, &mut w.active, &mut w.open] {
+            wv.corner_radius = CornerRadius::same(9);
+            wv.fg_stroke = Stroke::new(1.0, t.text);
+        }
+        w.inactive.bg_stroke = Stroke::NONE;
+        w.hovered.bg_stroke = Stroke::NONE;
+        w.active.bg_stroke = Stroke::NONE;
+        w.noninteractive.bg_stroke = Stroke::new(1.0, t.divider);
+        s.spacing.item_spacing = egui::vec2(8.0, 8.0);
+        s.spacing.button_padding = egui::vec2(14.0, 8.0);
+        s.spacing.interact_size.y = crate::TOUCH_ROW_H;
+        s.text_styles.insert(egui::TextStyle::Body, FontId::proportional(16.0));
+        s.text_styles.insert(egui::TextStyle::Button, FontId::proportional(16.0));
+        s.text_styles.insert(egui::TextStyle::Small, FontId::proportional(13.0));
+        s.text_styles.insert(egui::TextStyle::Heading, FontId::new(17.0, FontFamily::Name(FONT_SEMIBOLD.into())));
+        s.animation_time = 0.2;
+    });
+}
+
+fn apply_tokens(ctx: &egui::Context, t: Tokens) {
     ctx.data_mut(|d| d.insert_temp(egui::Id::NULL, t));
     let mut v = Visuals::dark();
     v.panel_fill = t.chrome;

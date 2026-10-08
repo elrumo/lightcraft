@@ -75,18 +75,26 @@ fn swiping_a_fitted_photo_changes_photo_and_a_tap_does_not_zoom() {
     assert_ne!(h.app.session.active(), first, "swipe left shows the next photo");
 }
 
+/// A finger drags a slider from well above its track, by how far it moves (not to where it is);
+/// a tap leaves the value alone.
 #[test]
-fn compact_sliders_take_a_touch_well_above_the_track() {
+fn compact_sliders_follow_a_drag_from_above_the_track_and_ignore_taps() {
     let mut h = detail([390.0, 1500.0]);
     let id = h.app.session.active().expect("active photo");
     let before = format!("{:?}", h.app.session.develop_of(id));
     let track = h.app.widgets.iter().find(|(w, _)| w == "slider:light.exposure").map(|(_, r)| *r).expect("exposure slider in the sheet");
-    // 18 pt above the track centre: outside a desktop slider's hit area, inside the touch one
-    let (x, y) = (track.left() + track.width() * 0.8, track.center().y - 18.0);
+    // 16 pt above the track centre: outside a desktop slider's hit area, inside the touch one
+    let (x, y) = (track.left() + track.width() * 0.8, track.center().y - 16.0);
     let r = h.request("ui.click", json!({"x": x, "y": y}), T);
     assert_eq!(r["ok"], true, "{r}");
     h.settle(SETTLE);
-    assert_ne!(format!("{:?}", h.app.session.develop_of(id)), before, "the tap moved the slider");
+    assert_eq!(format!("{:?}", h.app.session.develop_of(id)), before, "a tap doesn't move a touch slider");
+    let r = h.request("ui.drag", json!({"x": x, "y": y, "toX": x + track.width() * 0.1, "toY": y}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    let exposure = h.app.session.develop_of(id).map(|d| d.light.exposure).unwrap_or_default();
+    // a tenth of the track is a tenth of the range (−5…+5 EV), from 0, not the 0.8 the finger is at
+    assert!(exposure > 0.5 && exposure < 1.5, "exposure {exposure}");
 }
 
 #[test]
@@ -152,15 +160,42 @@ fn ipad_portrait_is_compact_with_the_tools_on_the_right() {
     assert!(img.width() > 400.0, "and it fills the room beside it: {img:?}");
 }
 
+/// A phone shows dialogs as pages covering the screen, with Cancel and the action in a bar.
 #[test]
-fn modal_dialogs_fit_a_phone_screen() {
+fn dialogs_are_pages_on_a_phone() {
     let mut h = detail([390.0, 844.0]);
     let r = h.request("engine.execute", json!({"command": "dialog.export"}), T);
     assert_eq!(r["ok"], true, "{r}");
     h.settle(SETTLE);
-    let rect = h.view.ctx.memory(|m| m.area_rect(egui::Id::new("lightcraft-dialog"))).expect("the export dialog is open");
-    assert!(rect.width() <= 390.0 && rect.height() <= 844.0, "the dialog fits the screen: {rect:?}");
-    assert!(rect.left() >= 0.0 && rect.top() >= 0.0, "and starts on it: {rect:?}");
+    let rect = h.app.widgets.iter().find(|(w, _)| w == "sheet:dialog").map(|(_, r)| *r).expect("the export dialog is a page");
+    assert!(rect.width() >= 389.0 && rect.left() >= 0.0 && rect.top() >= 0.0 && rect.bottom() <= 844.5, "it covers the screen: {rect:?}");
+    assert!(has(&h, "button:sheetOk") && has(&h, "button:sheetCancel"));
+    click(&mut h, "button:sheetCancel");
+    assert!(h.app.ui.dialog.is_none(), "Cancel closes it");
+}
+
+/// No menu bar on a phone: the grid's and the photo's "…" menus, and every other command in the
+/// searchable All Commands list.
+#[test]
+fn a_phone_has_menus_instead_of_a_menu_bar() {
+    let mut h = grid([390.0, 844.0]);
+    assert!(!h.app.widgets.iter().any(|(w, _)| w.starts_with("menu:")), "no menu bar");
+    click(&mut h, "icon:more");
+    assert!(has(&h, "actions:more") && has(&h, "button:newAlbum"));
+    click(&mut h, "button:allCommands");
+    assert!(h.app.ui.all_commands && has(&h, "sheet:allCommands"));
+    // every menu command is there; searching narrows the list
+    assert!(has(&h, "button:cmd:library.selectAll"));
+    click(&mut h, "field:allCommandsSearch");
+    let r = h.request("ui.text", json!({"text": "select all"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    assert!(!has(&h, "button:cmd:dialog.newAlbum"), "the search hides the others");
+    click(&mut h, "button:cmd:library.selectAll");
+    assert!(!h.app.ui.all_commands && h.app.session.selection.ids.len() > 1, "the command ran and the list closed");
+    // the collection title opens the albums list
+    click(&mut h, "button:collections");
+    assert!(h.app.ui.left_panel && has(&h, "sheet:albums"));
 }
 
 fn grid(size: [f32; 2]) -> Headless {
@@ -251,23 +286,23 @@ fn photos_are_chosen_by_touch_and_acted_on_from_the_action_bar() {
     assert!(!h.app.ui.select_mode);
 }
 
-/// The loupe rates, flags and labels the photo from the top bar (no right click on a phone).
+/// The loupe rates, flags and labels the photo from its "…" menu (no right click on a phone).
 #[test]
 fn the_loupe_rates_flags_and_labels_by_touch() {
     let mut h = detail([390.0, 844.0]);
     h.app.ui.right = RightPanel::None;
     h.settle(SETTLE);
-    click(&mut h, "icon:rateFlag");
+    click(&mut h, "icon:photoMore");
     click(&mut h, "button:rate3");
     let id = h.app.session.active().unwrap();
     assert_eq!(h.app.session.catalog.photo(id).unwrap().rating, 3);
-    click(&mut h, "icon:rateFlag");
+    click(&mut h, "icon:photoMore");
     click(&mut h, "button:flag-reject");
-    click(&mut h, "icon:rateFlag");
+    click(&mut h, "icon:photoMore");
     click(&mut h, "button:label-none");
     let p = h.app.session.catalog.photo(id).unwrap();
     assert_eq!((p.flag, p.label), (lightcraft_catalog::Flag::Reject, None));
     // the desktop layout has none of this
     let h = detail([1200.0, 800.0]);
-    assert!(!has(&h, "icon:rateFlag") && !has(&h, "button:select"));
+    assert!(!has(&h, "icon:photoMore") && !has(&h, "button:select"));
 }

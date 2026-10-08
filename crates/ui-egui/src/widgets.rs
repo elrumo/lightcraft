@@ -147,9 +147,11 @@ pub struct SliderOut {
 pub fn slider(ui: &mut Ui, spec: &ControlSpec, value: f64, enabled: bool, label_override: Option<&str>) -> SliderOut {
     let t = Tokens::get(ui.ctx());
     let w = ui.available_width();
-    // touch: a taller row with the track low in it, and a grab zone of about 48 pt (Apple wants 44)
+    // touch: a taller row with the track low in it, and a grab zone of about 44 pt (Apple's
+    // minimum); the value follows the finger's movement rather than jumping to it, and a tap
+    // doesn't change it (as in Lightroom's mobile app and iOS's own sliders)
     let touch = crate::is_compact(ui.ctx());
-    let (row_h, track_dy) = if touch { (68.0, 24.0) } else { (t.slider_row_h, 0.0) };
+    let (row_h, track_dy) = if touch { (60.0, 18.0) } else { (t.slider_row_h, 0.0) };
     let (row, _) = ui.allocate_exact_size(vec2(w, row_h), Sense::hover());
     let pad_l = 24.0;
     let pad_r = 22.0;
@@ -185,9 +187,11 @@ pub fn slider(ui: &mut Ui, spec: &ControlSpec, value: f64, enabled: bool, label_
             && let Some(p) = resp.interact_pointer_pos()
         {
             let fine = ui.input(|i| i.modifiers.shift);
+            let dx = ui.input(|i| i.pointer.delta().x) as f64;
             let nv = if fine {
-                let dx = ui.input(|i| i.pointer.delta().x);
-                value + dx as f64 * span / track_rect.width() as f64 * 0.1
+                value + dx * span / track_rect.width() as f64 * 0.1
+            } else if touch {
+                value + dx * span / track_rect.width() as f64
             } else {
                 from_x(p.x)
             };
@@ -198,6 +202,7 @@ pub fn slider(ui: &mut Ui, spec: &ControlSpec, value: f64, enabled: bool, label_
                 v = nv;
             }
         } else if resp.clicked()
+            && !touch
             && let Some(p) = resp.interact_pointer_pos()
         {
             let step = spec.step.max(1e-9);
@@ -232,10 +237,11 @@ pub fn slider(ui: &mut Ui, spec: &ControlSpec, value: f64, enabled: bool, label_
     let hovered = resp.hovered() || resp.dragged();
     let text_c = if enabled { t.text_label } else { t.text_disabled };
     let p = ui.painter();
-    p.text(label_rect.left_center(), Align2::LEFT_CENTER, crate::i18n::tr(label_override.unwrap_or(spec.label)), t.font(12.5), text_c);
+    let font = t.font(if touch { 15.0 } else { 12.5 });
+    p.text(label_rect.left_center(), Align2::LEFT_CENTER, crate::i18n::tr(label_override.unwrap_or(spec.label)), font.clone(), text_c);
     let shown = if spec.id == "wb.temp" { format!("{v:.0}") } else { spec.format(v).replace("+0.00", "0").replace("-0.00", "0") };
     let shown = if shown == "+0" || shown == "-0" { "0".to_string() } else { shown };
-    p.text(label_rect.right_center(), Align2::RIGHT_CENTER, shown, t.font(12.5), text_c);
+    p.text(label_rect.right_center(), Align2::RIGHT_CENTER, shown, font, text_c);
     let ring = if touch { 11.0 } else { 7.0 };
     let tx = to_x(v);
     paint_track(ui, track_rect, &spec.track, &t, tx, ring);

@@ -766,7 +766,134 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDialog) {
         }
     });
     ui.add_space(4.0);
-    // options
+    options(app, ui, d);
+}
+
+/// The import review on a phone, as Lightroom's mobile app has it: the photos in a grid as wide
+/// as the screen, three across, each with a check badge a tap toggles; the options under a
+/// disclosure below. The page's bar has Cancel and Add (`dialogs::ok_label`).
+pub fn mobile_body(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDialog) {
+    let t = Tokens::get(ui.ctx());
+    let n = d.candidates.len();
+    let dups = d.candidates.iter().filter(|c| c.duplicate.is_some()).count();
+    let sel = d.selected_paths().len();
+    ui.horizontal(|ui| {
+        let r = ui.label(egui::RichText::new(crate::i18n::tr_format!("{n} found · {sel} selected", n = n, sel = sel)).color(t.text_dim));
+        register(ui.ctx(), "label:importCount", r.rect);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let all = (0..n).filter(|i| d.importable(*i)).all(|i| d.checked.get(i).copied().unwrap_or(false));
+            let (id, label) = if all && sel > 0 { ("importNone", "Deselect All") } else { ("importAll", "Select All") };
+            let galley = ui.painter().layout_no_wrap(crate::i18n::tr(label).to_string(), t.font(16.0), t.accent);
+            let (r, resp) = ui.allocate_exact_size(galley.size() + vec2(8.0, 20.0), Sense::click());
+            register(ui.ctx(), format!("button:{id}"), r);
+            ui.painter().galley(
+                r.center() - galley.size() / 2.0,
+                galley,
+                if resp.is_pointer_button_down_on() { t.accent.gamma_multiply(0.6) } else { t.accent },
+            );
+            if resp.clicked() {
+                for i in 0..n {
+                    let on = !all && d.importable(i);
+                    if let Some(c) = d.checked.get_mut(i) {
+                        *c = on;
+                    }
+                }
+            }
+        });
+    });
+    if dups > 0 {
+        ui.label(egui::RichText::new(crate::i18n::tr_format!("· {dups} already in the library", dups = dups)).color(t.text_dim).size(13.0));
+    }
+    // the grid runs to the page's edges
+    let gap = 2.0;
+    let margin = 16.0;
+    let w = ui.available_width() + 2.0 * margin;
+    let cell = ((w - 2.0 * gap) / 3.0).floor();
+    let rows = n.div_ceil(3);
+    let (area, _) = ui.allocate_exact_size(vec2(ui.available_width(), rows as f32 * (cell + gap)), Sense::hover());
+    let left = area.left() - margin;
+    let clip = ui.clip_rect();
+    for i in 0..n {
+        let (c, r) = (i % 3, i / 3);
+        let rect = Rect::from_min_size(pos2(left + c as f32 * (cell + gap), area.top() + r as f32 * (cell + gap)), vec2(cell, cell));
+        if rect.intersects(clip) {
+            mobile_cell(app, ui, d, i, rect);
+        }
+    }
+    ui.add_space(8.0);
+    let r = egui::CollapsingHeader::new(egui::RichText::new(crate::i18n::tr("Options")).size(17.0))
+        .id_salt("import-options")
+        .show(ui, |ui| options(app, ui, d));
+    register(ui.ctx(), "button:importOptions", r.header_response.rect);
+}
+
+/// One photo of the phone's import review: the thumbnail filling a square, a round check badge
+/// (filled blue when it will be added), and a tag for duplicates and unreadable files.
+fn mobile_cell(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDialog, i: usize, rect: Rect) {
+    let t = Tokens::get(ui.ctx());
+    let Some(c) = d.candidates.get(i).cloned() else { return };
+    let ok = d.importable(i);
+    let resp = ui.interact(rect, egui::Id::new(("import-cell", i)), Sense::click());
+    register(ui.ctx(), format!("import:{i}"), rect);
+    let p = ui.painter_at(rect.intersect(ui.clip_rect()));
+    p.rect_filled(rect, 0.0, t.cell);
+    let slot = Slot::Import(i as u32);
+    if !app.renderer.textures.contains_key(&slot)
+        && let Some(job) = app.session.candidate_thumb_job(&c, 256, i as u64)
+    {
+        app.renderer.request_quick(slot, job, 4);
+    }
+    if let Some(tex) = app.renderer.textures.get(&slot) {
+        // fill the square, cropping the long side (as the grid's square thumbnails do)
+        let [tw, th] = tex.size;
+        let (tw, th) = (tw.max(1) as f32, th.max(1) as f32);
+        let uv = if tw > th {
+            let k = th / tw;
+            Rect::from_min_max(pos2((1.0 - k) / 2.0, 0.0), pos2((1.0 + k) / 2.0, 1.0))
+        } else {
+            let k = tw / th;
+            Rect::from_min_max(pos2(0.0, (1.0 - k) / 2.0), pos2(1.0, (1.0 + k) / 2.0))
+        };
+        p.image(tex.tex.id(), rect, uv, if ok { Color32::WHITE } else { Color32::from_gray(90) });
+    }
+    let on = d.checked.get(i).copied().unwrap_or(false) && ok;
+    if !on {
+        p.rect_filled(rect, 0.0, Color32::from_black_alpha(70));
+    }
+    if ok {
+        let c0 = rect.right_bottom() - vec2(16.0, 16.0);
+        if on {
+            p.circle(c0, 11.0, t.accent, Stroke::new(1.5, Color32::WHITE));
+            crate::icons::paint(&p, Rect::from_center_size(c0, vec2(13.0, 13.0)), crate::icons::Icon::Check, Color32::WHITE);
+        } else {
+            p.circle(c0, 11.0, Color32::from_black_alpha(60), Stroke::new(1.5, Color32::WHITE));
+        }
+    }
+    let in_trash = c.existing.is_some_and(|id| app.session.catalog.photo(lightcraft_catalog::PhotoId(id)).is_some_and(|p| p.deleted));
+    let tag = match (&c.duplicate, &c.error) {
+        (Some(_), _) if in_trash => Some("In Recently Deleted"),
+        (Some(r), _) if r == "path" => Some("In library"),
+        (Some(_), _) => Some("Duplicate"),
+        (None, Some(_)) => Some("Unreadable"),
+        _ => None,
+    };
+    if let Some(b) = tag {
+        let g = p.layout_no_wrap(crate::i18n::tr(b).to_string(), t.semibold(11.0), Color32::WHITE);
+        let br = Rect::from_min_size(rect.min + vec2(6.0, 6.0), g.size() + vec2(10.0, 6.0));
+        p.rect_filled(br, 5.0, Color32::from_black_alpha(170));
+        p.galley(br.min + vec2(5.0, 3.0), g, Color32::WHITE);
+    }
+    if resp.clicked()
+        && ok
+        && let Some(c) = d.checked.get_mut(i)
+    {
+        *c = !*c;
+    }
+}
+
+/// The review's options (where photos go, folders, renaming, album, preset, keywords).
+fn options(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDialog) {
+    let t = Tokens::get(ui.ctx());
     // (staged: the host's temporary folder means nothing to the user)
     if !d.sources.is_empty() && !d.staged {
         field(ui, "Source", |ui| {
@@ -1177,7 +1304,11 @@ pub fn example_destination(app: &LightcraftApp, d: &ImportDialog) -> Option<Stri
         q.meta = info.meta.clone();
     }
     let name = if d.rename.trim().is_empty() { c.name.clone() } else { lightcraft_engine::rename::expand(d.rename.trim(), &q, 1) };
-    let root = if d.destination.trim().is_empty() {
+    let root = if d.staged {
+        // the host's copies go into the library, whose folder in the app's sandbox means nothing to
+        // the user: shown from Originals
+        "Originals".to_string()
+    } else if d.destination.trim().is_empty() {
         app.session.library.as_ref().map_or_else(|| "Originals".to_string(), |l| l.dir.join("Originals").to_string_lossy().to_string())
     } else {
         d.destination.trim().trim_end_matches(['/', '\\']).to_string()
@@ -1209,6 +1340,12 @@ pub fn source_summary(sources: &[String]) -> String {
 /// A labelled row (fixed label column).
 fn field<R>(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
     let t = Tokens::get(ui.ctx());
+    if crate::is_compact(ui.ctx()) {
+        // a phone (iOS forms): the label above its controls, which wrap to the page's width
+        ui.add_space(4.0);
+        ui.label(egui::RichText::new(crate::i18n::tr(label)).color(t.text_dim).size(13.0));
+        return ui.horizontal_wrapped(add).inner;
+    }
     ui.horizontal(|ui| {
         ui.allocate_ui_with_layout(vec2(78.0, 24.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
             ui.set_min_width(78.0);

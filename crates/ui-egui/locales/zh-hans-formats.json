@@ -119,5 +119,6 @@
   "{month}": "{month}月",
   "{month} {year}": "{year}年{month}月",
   "{weekday}, {day}": "{day}日 {weekday}",
-  "{weekday}, {day} {month} {year}": "{year}年{month}月{day}日 {weekday}"
+  "{weekday}, {day} {month} {year}": "{year}年{month}月{day}日 {weekday}",
+  "Add {n}": "添加 {n} 张"
 }

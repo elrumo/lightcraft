@@ -137,7 +137,7 @@ fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
     let (generation, ids) = app.session.visible_shared();
     // header: source title + count
-    let (hr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 44.0), Sense::hover());
+    let (hr, _) = ui.allocate_exact_size(vec2(ui.available_width(), if app.compact { 56.0 } else { 44.0 }), Sense::hover());
     ui.painter().rect_filled(hr, 0.0, t.canvas);
     let sel_n = app.session.selection.ids.len();
     let chips = lightcraft_engine::filter_chips(&app.session.filter, &app.session.catalog);
@@ -149,6 +149,7 @@ fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             let local = app.caches.grid.local(&app.session.catalog, &ids, generation);
             folder_header(app, ui, hr, &b, &ids, local, &cnt)
         }
+        None if app.compact => super::compact::grid_header(app, ui, hr, &cnt),
         None => {
             let title = crate::i18n::source_label(app.session.source, &app.session.catalog);
             ui.painter().text(pos2(hr.left() + 20.0, hr.center().y), Align2::LEFT_CENTER, &title, t.semibold(17.0), t.text);
