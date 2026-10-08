@@ -202,12 +202,13 @@ pub fn specs() -> Vec<CommandSpec> {
             "List People",
             [],
             None,
-            "{all?: bool, limit?: 1..1000 (200)} — the people found in the photos (vision.setFaces on, vision.index): those nobody has named, and named people with faces not yet confirmed (`all`: everyone), biggest first → {people: [{id, name | null, faces, photos, pending (faces not yet written to the catalog), cover: {photo, rect}, photoIds}], totalPeople, faces, scanned, libraryPhotos}",
+            "{all?: bool, limit?: 1..1000 (200), wait?: bool} — the people found (here, or on the sync server when it finds them and this device doesn't; `wait` asks the server now) in the photos (vision.setFaces on, vision.index): those nobody has named, and named people with faces not yet confirmed (`all`: everyone), biggest first → {people: [{id, name | null, faces, photos, pending (faces not yet written to the catalog), cover: {photo, rect}, photoIds}], totalPeople, source: local|server, faces, scanned, libraryPhotos}",
             always,
             |s, p| {
                 let all = p.get("all").and_then(Value::as_bool).unwrap_or(false);
                 let limit = p.get("limit").and_then(Value::as_u64).map_or(200, |n| n.clamp(1, 1000) as usize);
-                s.people_list(all, limit).map_err(|e| bad("people.list", e))
+                let wait = p.get("wait").and_then(Value::as_bool).unwrap_or(false);
+                s.people_list(all, limit, wait).map_err(|e| bad("people.list", e))
             }
         ),
         cmd!(
@@ -241,9 +242,12 @@ pub fn specs() -> Vec<CommandSpec> {
             "Forget All Faces",
             [],
             None,
-            "{} — forget every face found (the face index of this library); names already written to photos stay, they are catalog data (photo.removeRegion removes one). Turn finding off too with vision.setFaces → {faces, photos}",
+            "{wait?: bool} — forget every face found (the face index of this library, and what the sync server found for this user, if it finds any); names already written to photos stay, they are catalog data (photo.removeRegion removes one). Turn finding off too with vision.setFaces → {faces, photos, server (the server was asked)}",
             always,
-            |s, _| s.people_delete_data().map_err(|e| bad("people.deleteData", e))
+            |s, p| {
+                let wait = p.get("wait").and_then(Value::as_bool).unwrap_or(false);
+                s.people_delete_data(wait).map_err(|e| bad("people.deleteData", e))
+            }
         ),
         cmd!(query "vision.indexCancel", "Cancel Search Indexing", [], None, "{}", always, |s, _| {
             if let Some(j) = s.vision.job() {

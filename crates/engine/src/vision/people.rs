@@ -15,6 +15,7 @@ use lightcraft_catalog::{Op, PhotoId};
 use lightcraft_meta::{Region, RegionKind};
 use lightcraft_vision::Key;
 use lightcraft_vision::faces::cluster::{self, JOIN};
+use lightcraft_vision::faces::index::FaceIndex;
 use serde_json::{Value, json};
 
 use super::{FaceSpec, with_faces};
@@ -87,6 +88,24 @@ fn clean_name(name: &str) -> Result<String, String> {
     Ok(name)
 }
 
+/// The people the faces of `ix` make (best face first in each; biggest first).
+pub fn clusters_of(ix: &FaceIndex) -> Vec<Cluster> {
+    let faces = ix.faces();
+    cluster::group(faces, JOIN)
+        .into_iter()
+        .filter_map(|g| {
+            let members: Vec<FaceRef> = g
+                .members
+                .iter()
+                .filter_map(|&i| faces.get(i))
+                .map(|f| FaceRef { key: f.key, index: f.index, rect: f.rect, score: f.score })
+                .collect();
+            let first = g.members.first().and_then(|&i| faces.get(i))?;
+            Some(Cluster { id: cluster::face_id(first), members, centroid: g.centroid })
+        })
+        .collect()
+}
+
 impl Session {
     /// Where the face index is: the models that made it (known without loading them).
     fn faces_spec(&self) -> FaceSpec {
@@ -97,30 +116,27 @@ impl Session {
         FaceSpec { path: self.vision_faces_path(&engine), engine }
     }
 
-    /// The people the faces make (cached while the faces don't change).
-    pub fn people_clusters(&mut self) -> Result<Arc<Vec<Cluster>>, String> {
+    /// The people come from the sync server's faces when this device finds none itself (the web
+    /// build, iOS, a computer that didn't turn finding people on) and the server does.
+    fn people_from_server(&self) -> bool {
+        let local = self.vision.faces_available() && (self.vision.faces || self.vision.faces_found() > 0);
+        !local && self.vision.remote.faces_enabled()
+    }
+
+    /// The people the faces make (cached while the faces don't change). `wait`: when they come
+    /// from the server, ask it now and wait for the answer.
+    pub fn people_clusters(&mut self, wait: bool) -> Result<Arc<Vec<Cluster>>, String> {
+        if self.people_from_server() {
+            self.vision_fetch_people(wait);
+            return Ok(self.vision.remote.people.as_ref().map(|(_, c)| c.clone()).unwrap_or_default());
+        }
         let spec = self.faces_spec();
         let shared = self.vision.shared.clone();
         let at = with_faces(&shared, &spec, |ix| (ix.len(), ix.photos(), ix.revision()))?;
         if self.vision.people.at == Some(at) {
             return Ok(self.vision.people.clusters.clone());
         }
-        let clusters = with_faces(&shared, &spec, |ix| {
-            let faces = ix.faces();
-            cluster::group(faces, JOIN)
-                .into_iter()
-                .filter_map(|g| {
-                    let members: Vec<FaceRef> = g
-                        .members
-                        .iter()
-                        .filter_map(|&i| faces.get(i))
-                        .map(|f| FaceRef { key: f.key, index: f.index, rect: f.rect, score: f.score })
-                        .collect();
-                    let first = g.members.first().and_then(|&i| faces.get(i))?;
-                    Some(Cluster { id: cluster::face_id(first), members, centroid: g.centroid })
-                })
-                .collect::<Vec<_>>()
-        })?;
+        let clusters = with_faces(&shared, &spec, |ix| clusters_of(ix))?;
         self.vision.people.at = Some(at);
         self.vision.people.clusters = Arc::new(clusters);
         Ok(self.vision.people.clusters.clone())
@@ -156,8 +172,8 @@ impl Session {
 
     /// The people found in the photos (`people.list`): the ones nobody has named, and the named
     /// ones with faces that aren't confirmed yet (`all`: every one). Biggest first.
-    pub fn people_list(&mut self, all: bool, limit: usize) -> Result<Value, String> {
-        let clusters = self.people_clusters()?;
+    pub fn people_list(&mut self, all: bool, limit: usize, wait: bool) -> Result<Value, String> {
+        let clusters = self.people_clusters(wait)?;
         let photos = self.vision_keys();
         let mut out = Vec::new();
         let mut people = 0;
@@ -189,6 +205,7 @@ impl Session {
         Ok(json!({
             "people": out,
             "totalPeople": people,
+            "source": if self.people_from_server() { "server" } else { "local" },
             "faces": self.vision.faces_found(),
             "scanned": self.vision.faces_scanned(),
             "libraryPhotos": self.vision_photo_count(),
@@ -198,7 +215,7 @@ impl Session {
     /// Finds `cluster` among the people, or says to look again (people are regrouped as photos are
     /// added, so an id can go away).
     fn people_cluster(&mut self, id: &str) -> Result<Cluster, String> {
-        let clusters = self.people_clusters()?;
+        let clusters = self.people_clusters(false)?;
         clusters.iter().find(|c| c.id == id).cloned().ok_or_else(|| "that person is no longer there: look at the people again".to_string())
     }
 
@@ -275,14 +292,16 @@ impl Session {
         Ok(json!({"person": label, "photos": ids.iter().map(|i| i.0).collect::<Vec<_>>()}))
     }
 
-    /// Forgets every face found (`people.deleteData`): the face index, here. Names already written
+    /// Forgets every face found (`people.deleteData`): the face index, here, and what the sync server found. Names already written
     /// to photos stay (they are catalog data; remove them with `photo.removeRegion`).
-    pub fn people_delete_data(&mut self) -> Result<Value, String> {
+    pub fn people_delete_data(&mut self, wait: bool) -> Result<Value, String> {
         let spec = self.faces_spec();
         let shared = self.vision.shared.clone();
         let (faces, photos) = with_faces(&shared, &spec, |ix| (ix.len(), ix.photos()))?;
         with_faces(&shared, &spec, |ix| ix.clear().map_err(|e| e.to_string()))??;
         self.vision.people = Default::default();
-        Ok(json!({"faces": faces, "photos": photos}))
+        // (and what the sync server found for this user, when it finds any)
+        let server = self.vision_forget_remote_faces(wait);
+        Ok(json!({"faces": faces, "photos": photos, "server": server}))
     }
 }

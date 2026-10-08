@@ -144,7 +144,9 @@ them: `--data` / `LIGHTCRAFT_DATA`, `--listen` / `LIGHTCRAFT_LISTEN`, and the do
 The server can also search each user's photos by what is in them, so the web build, iOS and other
 computers need no model: `GET /api/search?q=…`, an index of vectors per user that devices may add to, and
 `lightcraft-server model download --accept-licences` to install the model (about 1.5 GB, loaded on first use, ~1.9 GB of
-memory while loaded). Routes, privacy and limits: [`search-people.md`](search-people.md).
+memory while loaded). It can also read the text in photos (`model download --text`) and, for a user an admin allows
+(`lightcraft-server user faces NAME on`, after `model download --faces`), find the people in their photos for devices to
+name. Routes, privacy and limits: [`search-people.md`](search-people.md).
 
 ## Library folders: photos already on the server
 

@@ -35,7 +35,7 @@ use crate::{Session, guard, memory};
 
 mod people;
 mod server;
-pub use people::{Cluster, FaceRef};
+pub use people::{Cluster, FaceRef, clusters_of};
 pub(crate) use server::Aux;
 
 /// A number that is never used twice in this process (temporary file names).
@@ -597,6 +597,16 @@ impl Vision {
     /// Finding people is wanted (the user's choice) and this device can do it.
     pub fn faces_ready(&self) -> bool {
         self.faces && self.faces_installed()
+    }
+
+    /// The sync server finds the faces in this user's photos (so it can list the people).
+    pub fn server_faces(&self) -> bool {
+        self.remote.faces_enabled()
+    }
+
+    /// Changes whenever the people the server listed change (a view's cache key).
+    pub fn people_rev(&self) -> u64 {
+        self.remote.people_rev
     }
 
     /// Faces in the index (0 until it has been opened).

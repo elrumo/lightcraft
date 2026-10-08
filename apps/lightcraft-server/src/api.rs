@@ -45,6 +45,11 @@ pub(crate) fn json(status: u16, v: &Value) -> Resp {
     bytes(status, "application/json", v.to_string().into_bytes())
 }
 
+/// A JSON document that is already text.
+pub(crate) fn raw_json(status: u16, body: String) -> Resp {
+    bytes(status, "application/json", body.into_bytes())
+}
+
 pub(crate) fn error(status: u16, msg: impl std::fmt::Display) -> Resp {
     json(status, &json!({"error": msg.to_string()}))
 }
@@ -206,6 +211,11 @@ fn api(st: &State, req: &mut Request, method: &Method, path: &str, q: &str) -> R
         (Method::Post, ["index", "embeddings"]) => crate::vision::upload(st, req, &l, &who.user),
         (Method::Get, ["index", "text", "keys"]) => crate::vision::text_keys(st, &who.user),
         (Method::Post, ["index", "text"]) => crate::vision::text_upload(st, req, &l, &who.user),
+        (Method::Get, ["people", "status"]) => crate::vision::people_status(st, &l, &who.user),
+        (Method::Get, ["people", "clusters"]) => crate::vision::people_clusters(st, &l, &who.user),
+        (Method::Get, ["index", "faces", "keys"]) => crate::vision::face_keys(st, &who.user),
+        (Method::Post, ["index", "faces"]) => crate::vision::face_upload(st, req, &l, &who.user),
+        (Method::Delete, ["index", "faces"]) => crate::vision::face_delete(st, &who.user),
         _ => error(404, format!("no route {method} {path}")),
     }
 }

@@ -1317,5 +1317,6 @@
   "These models were trained on collections of public photos of people; their makers publish them for general use. What they find in your photos stays on this computer unless you choose to share it with your own server. You can forget it all at any time. Naming a person writes their name on the photos they are in.": "這些模型是用公開的人物照片集訓練的，其作者將它們公開發布供一般使用。除非你選擇與自己的伺服器共用，否則在你的照片中找到的內容只會保留在這台電腦上。你可以隨時將其全部清除。為人物命名會把名字寫入他們所在的照片。",
   "The face models are installed: looking for faces in your photos.": "人臉模型已安裝：正在尋找照片中的人臉。",
   "Who is this?": "這是誰？",
-  "Show their photos": "顯示他們的照片"
+  "Show their photos": "顯示他們的照片",
+  "Because you send your search data to your server, the faces found here go there too.": "由於你已將搜尋資料傳送到自己的伺服器，在這裡找到的人臉資料也會一併傳送過去。"
 }

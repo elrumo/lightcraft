@@ -1,4 +1,4 @@
-# Search by description and by the text in photos (and, next, People)
+# Search by description, text in photos, and People
 
 Describe a photo in your own words — "a dog on a beach at sunset", "雪の山", "红色的汽车" — and LightCraft shows the
 photos that look most like it, best first. It works on the desktop app, on the self-hosted sync server (so the web build,
@@ -26,6 +26,8 @@ to its licence, and everything else works without it.
   | `library.search {q, limit?, wait?, source?}` | `source`: `local`, `server`, or `auto` (this device's index when it covers the library, else the server's) |
   | `vision.share {wait?}` / `vision.setShare {on}` | send this device's vectors (and text) to the server, once or whenever new photos are indexed |
   | `vision.setText {on}` | also read and search the text printed in photos (off until turned on; saved with the library) |
+  | `vision.setFaces {on}` / `vision.faces.download {acknowledged: true}` / `vision.faces.cancel` | find the people in photos (off until turned on and the user agreed to the models), and download or stop the face models |
+  | `people.list {all?, limit?, wait?}` / `people.name {cluster, name}` / `people.show {cluster}` / `people.deleteData` | the people found (unnamed ones, and named ones with faces to confirm), name one, show their photos, forget every face |
   | `vision.text.download {acknowledged: true}` / `vision.text.cancel` | download (resumable, SHA-256-checked) or stop the text-reading models |
 
 ## How it works
@@ -73,6 +75,58 @@ Known limits: text upside down isn't read (there is no orientation classifier ye
 print needs the original's resolution; handwriting is hit and miss. There is no layout analysis (a line is a line), and
 no "copy the text" action yet.
 
+## People
+
+Turn on **Find People…** at the top of the People view and LightCraft finds the faces in your photos, groups the ones that
+look alike into people, and shows each as a card: type a name and press Return and that person is named in every photo
+they are in, in one undoable step (a person on a bad day may be two cards: name both the same). New photos of a named
+person show up as a **Confirm** button on their card (nothing is written until you click it); a click on a face shows
+that person's photos.
+
+**It is opt-in, local and deletable.** Off by default, per library. Nothing is downloaded or looked at until you agree:
+the bar shows the two models, their size (about 39 MB), where they are kept and their licences first. The models are
+**YuNet** (finds faces; MIT, Shiqi Yu) and **SFace** (tells them apart; Apache-2.0, BUPT) from the OpenCV Zoo, run by a pure-Rust
+ONNX runtime. Their makers trained them on collections of public photos of people (WIDER FACE for YuNet, a large web-scraped
+face set for SFace) and publish them for general use; LightCraft ships and trains none of it and never trains on your photos.
+What they find (a rectangle and 128 numbers per face) stays in the library's `search/` folder: never in the catalog, an
+XMP sidecar or a backup of the catalog, and not sent anywhere unless you turn on **Send the search data to my server** and the
+server's admin allowed it for you. **Forget All Faces** (or `people.deleteData`) deletes it, here and on the server. Names
+are different: naming a person writes an ordinary face region (the MWG-RS kind the People view already shows) on each of
+their photos, in the catalog (synced like any edit, undoable, never written to the XMP sidecar); remove one with the ×
+on its face box, or undo.
+
+How it works: each face is cut out and turned upright using its five landmarks (eyes, nose, mouth corners), SFace reads
+that crop into 128 numbers, and faces whose numbers point the same way (cosine similarity of at least 0.40 with the average
+of the person's faces; SFace's own pair threshold is 0.363) are one person. On public-domain portraits the same person
+scores 0.86 and different people 0.11–0.16; a photo takes about 150 ms to look at on a laptop. Faces are looked at in the
+same background pass as the description and the text, from a 1280 px unedited rendering.
+
+**On the server** (faces are personal data, so it is separate and off): install the models once and allow each user:
+
+```sh
+lightcraft-server model download --accept-licences --faces
+lightcraft-server user faces ann on        # and `off`; `user list` shows who has it
+```
+
+The server then looks at that user's smart previews (25 photos at a time) and lists the people for devices that find
+none themselves (the web build, iOS): `people.list` shows them, naming one is a catalog edit on the device. A desktop that
+finds faces can send them instead (same opt-in as the vectors, `vision.share`). The user can always delete what the server
+found (`people.deleteData` asks it to, or `DELETE /api/index/faces`).
+
+```text
+GET    /api/people/status            {available, enabled (an admin allowed it), installed, engine, faces, photos, total}
+GET    /api/people/clusters          {engine, faces, photos, clusters: [{id, members: [[photo, face, x0, y0, x1, y1, score]]}]}   403 until allowed
+GET    /api/index/faces/keys         {engine, keys: [content hash]}                                                              403 until allowed
+POST   /api/index/faces              faces a device found (checked whole; photos not in the library are skipped)                 403 until allowed
+DELETE /api/index/faces              forget every face (always allowed)
+```
+
+Known limits: faces under about 32 px in the 1280 px view and faces turned away from the camera are missed or unreliable;
+grouping is one quick pass (no hierarchy, no learning from your corrections); there is no "not this person", no merge by
+drag and no suggestions from your other names yet; it has been checked on a handful of portraits and procedural images, not
+on a large real library. Face recognition is only as fair as its training data: expect more mistakes on some groups of people
+than others, which is one more reason names stay yours to give and confirm.
+
 ## On the server
 
 The server indexes each user's photos from the previews it already keeps (a worker wakes when a preview arrives, a folder
@@ -106,6 +160,7 @@ reverse proxy or Tailscale, see `sync.md`).
 
 ## Limits (honest)
 
+- Faces: see **People** above.
 - Relevance has **no score cut-off**: you get the best N (200 by default, up to 2000), not "only the matches". SigLIP's
   scores are small numbers; a calibrated cut-off needs a real-library benchmark we haven't run.
 - Quality has been checked on procedural images and a handful of portraits, not on a large real library. Gender and similar

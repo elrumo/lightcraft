@@ -64,6 +64,8 @@ pub struct Config {
     pub embedder: Option<Arc<dyn lightcraft_vision::Embedder>>,
     /// A reader of the text in photos instead of PP-OCRv6 from `<vision_dir>/ocr` (tests).
     pub text_reader: Option<Arc<dyn lightcraft_vision::TextReader>>,
+    /// A face finder instead of YuNet and SFace from `<vision_dir>/faces` (tests).
+    pub face_finder: Option<Arc<dyn lightcraft_vision::FaceEngine>>,
 }
 
 impl Config {
@@ -80,6 +82,7 @@ impl Config {
             vision_dir: None,
             embedder: None,
             text_reader: None,
+            face_finder: None,
         }
     }
 }
@@ -128,7 +131,7 @@ impl Server {
         }
         let vision_dir = cfg.vision_dir.clone().unwrap_or_else(|| cfg.data.join("models").join("siglip2"));
         let state = Arc::new(State {
-            vision: vision::Search::new(vision_dir, cfg.embedder).with_reader(cfg.text_reader),
+            vision: vision::Search::new(vision_dir, cfg.embedder).with_reader(cfg.text_reader).with_finder(cfg.face_finder),
             accounts: Mutex::new(accounts::Accounts::new(&cfg.data)),
             listen: addr.to_string(),
             setup: Mutex::new(setup),

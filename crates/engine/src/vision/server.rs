@@ -13,12 +13,16 @@ use lightcraft_catalog::PhotoId;
 use lightcraft_vision::Key;
 use serde_json::{Value, json};
 
-use super::{IndexSpec, TextSpec, with_index, with_text};
+use super::{Cluster, FaceRef, FaceSpec, IndexSpec, TextSpec, with_faces, with_index, with_text};
 use crate::Session;
 use crate::sync::{Body, Done, SyncState};
 
 /// Vectors in one upload (`records × (16 + 2 × dim)` bytes: ~6 MB for SigLIP 2).
 pub const SHARE_CHUNK: usize = 4000;
+/// Photos' faces in one upload (296 bytes a face).
+pub const SHARE_CHUNK_FACES: usize = 1000;
+/// How long the server's people are trusted before they are asked for again.
+const PEOPLE_TTL: Duration = Duration::from_secs(60);
 /// Texts in one upload (a few KB each at most; usually a few hundred bytes).
 pub const SHARE_CHUNK_TEXT: usize = 2000;
 /// How long the server's answer to the status question is trusted.
@@ -41,6 +45,14 @@ pub(crate) enum Aux {
     TextKeys,
     /// `POST /api/index/text`: one piece of the text this device read.
     TextUpload { path: PathBuf, keys: Vec<Key> },
+    /// `GET /api/index/faces/keys`: the photos the server has looked at for faces.
+    FaceKeys,
+    /// `POST /api/index/faces`: faces this device found, whole photos at a time.
+    FaceUpload { path: PathBuf, keys: Vec<Key> },
+    /// `GET /api/people/clusters`: the people the server's faces make.
+    People,
+    /// `DELETE /api/index/faces`: forget the faces the server found.
+    FacesDelete,
 }
 
 /// A search the server answered, on its way to the view.
@@ -57,6 +69,7 @@ pub(crate) struct Share {
     /// What is sent: the vectors, and the text that was read.
     spec: Option<IndexSpec>,
     text: Option<TextSpec>,
+    faces: Option<FaceSpec>,
     have: HashSet<Key>,
     /// Vectors and texts sent so far in this run.
     pub sent: usize,
@@ -64,6 +77,7 @@ pub(crate) struct Share {
     /// The indexes' sizes when this run started (what automatic sharing compares with).
     started_len: usize,
     started_text: usize,
+    started_faces: usize,
 }
 
 /// What this device knows about the server's search.
@@ -80,6 +94,12 @@ pub(crate) struct Remote {
     /// The index sizes that were last sent completely.
     shared_len: usize,
     shared_text: usize,
+    shared_faces: usize,
+    /// The people the server's faces make, as of when it was asked last.
+    pub people: Option<(Instant, std::sync::Arc<Vec<Cluster>>)>,
+    people_asked: Option<Instant>,
+    /// Bumped when a new answer arrives (what a view caches by).
+    pub people_rev: u64,
     share_at: Option<Instant>,
 }
 
@@ -99,6 +119,11 @@ impl Remote {
                 .status
                 .as_ref()
                 .is_some_and(|s| on(&s["installed"]) || on(&s["text"]["installed"]) || s["text"]["indexed"].as_u64().unwrap_or(0) > 0)
+    }
+
+    /// The server finds the faces in this user's photos (an admin turned it on).
+    pub fn faces_enabled(&self) -> bool {
+        self.supported() && self.status.as_ref().is_some_and(|s| s["faces"]["enabled"].as_bool() == Some(true))
     }
 
     /// Takes `status` as the server's answer (tests of the UI).
@@ -224,7 +249,17 @@ impl Session {
             Some(spec) => with_text(&self.vision.shared, spec, |ix| ix.len())?,
             None => 0,
         };
-        if len == 0 && text_len == 0 {
+        let faces = self
+            .vision
+            .finder_provider()
+            .ok()
+            .filter(|_| self.vision.faces && self.vision.remote.faces_enabled())
+            .map(|(_, engine)| FaceSpec { path: self.vision_faces_path(&engine), engine });
+        let faces_len = match &faces {
+            Some(spec) => with_faces(&self.vision.shared, spec, |ix| ix.photos())?,
+            None => 0,
+        };
+        if len == 0 && text_len == 0 && faces_len == 0 {
             return Err("nothing to send yet: index the photos first (`vision.index`)".into());
         }
         let share = &mut self.vision.remote.share;
@@ -232,8 +267,10 @@ impl Session {
             running: true,
             spec: vectors.filter(|_| len > 0),
             text: text.filter(|_| text_len > 0),
+            faces: faces.filter(|_| faces_len > 0),
             started_len: len,
             started_text: text_len,
+            started_faces: faces_len,
             ..Default::default()
         };
         let started = if len > 0 { self.vision_aux("GET", "/api/index/embeddings/keys", Body::Empty, Aux::Keys) } else { self.share_text_start() };
@@ -272,6 +309,15 @@ impl Session {
             }
             Aux::Keys => self.share_keys(st, d),
             Aux::TextKeys => self.share_text_keys(st, d),
+            Aux::FaceKeys => self.share_face_keys(st, d),
+            Aux::People => self.people_arrived(d),
+            Aux::FacesDelete => {
+                if !d.ok() {
+                    log::warn!("asking the server to forget the faces: {}", why(d));
+                }
+                self.vision.remote.people = None;
+                self.vision.remote.people_rev += 1;
+            }
             Aux::Upload { path, keys } => {
                 let _ = std::fs::remove_file(&path);
                 if !d.ok() {
@@ -294,6 +340,17 @@ impl Session {
                 r.share.sent += keys.len();
                 r.share.have.extend(keys);
                 self.share_next_text(st);
+            }
+            Aux::FaceUpload { path, keys } => {
+                let _ = std::fs::remove_file(&path);
+                if !d.ok() {
+                    self.share_failed(why(d));
+                    return;
+                }
+                let r = &mut self.vision.remote;
+                r.share.sent += keys.len();
+                r.share.have.extend(keys);
+                self.share_next_faces(st);
             }
         }
     }
@@ -376,12 +433,131 @@ impl Session {
     /// the run when there is none.
     fn share_text_start(&mut self) -> Result<(), String> {
         if self.vision.remote.share.text.is_none() {
+            return self.share_faces_start();
+        }
+        self.vision_aux("GET", "/api/index/text/keys", Body::Empty, Aux::TextKeys)
+    }
+
+    /// Starts sending the faces that were found (when there are any): asks the server what it has.
+    /// Ends the run when there are none.
+    fn share_faces_start(&mut self) -> Result<(), String> {
+        if self.vision.remote.share.faces.is_none() {
             let r = &mut self.vision.remote;
             r.share.running = false;
             r.shared_text = r.share.started_text;
+            r.shared_faces = r.share.started_faces;
             return Ok(());
         }
-        self.vision_aux("GET", "/api/index/text/keys", Body::Empty, Aux::TextKeys)
+        self.vision_aux("GET", "/api/index/faces/keys", Body::Empty, Aux::FaceKeys)
+    }
+
+    /// The server's face keys arrived: send what it lacks.
+    fn share_face_keys(&mut self, st: &mut SyncState, d: &Done) {
+        if !d.ok() {
+            return self.share_failed(why(d));
+        }
+        let Ok(v) = serde_json::from_str::<Value>(&d.body) else { return self.share_failed("the server's answer isn't what was expected".into()) };
+        let Some(spec) = self.vision.remote.share.faces.clone() else { return };
+        let engine = v["engine"].as_str().unwrap_or_default();
+        if engine != spec.engine {
+            return self.share_failed(format!("the server finds faces with {engine}, not {}: nothing was sent", spec.engine));
+        }
+        self.vision.remote.share.have = v["keys"].as_array().into_iter().flatten().filter_map(|k| k.as_str().and_then(Key::from_hex)).collect();
+        self.share_next_faces(st);
+    }
+
+    /// Sends the next piece of the faces that were found, or ends the run.
+    fn share_next_faces(&mut self, st: &mut SyncState) {
+        let Some(spec) = self.vision.remote.share.faces.clone() else { return };
+        let have = std::mem::take(&mut self.vision.remote.share.have);
+        let exported = with_faces(&self.vision.shared, &spec, |ix| {
+            let bytes = ix.export(|k| have.contains(k), SHARE_CHUNK_FACES);
+            let keys = lightcraft_vision::faces::index::FaceIndex::exported_keys(&bytes);
+            (bytes, keys)
+        });
+        self.vision.remote.share.have = have;
+        let (bytes, keys) = match exported {
+            Ok(x) => x,
+            Err(e) => return self.share_failed(e),
+        };
+        if keys.is_empty() {
+            let r = &mut self.vision.remote;
+            r.share.running = false;
+            r.shared_text = r.share.started_text;
+            r.shared_faces = r.share.started_faces;
+            return;
+        }
+        let dir = self.library.as_ref().filter(|l| l.on_disk).map_or_else(std::env::temp_dir, |l| l.dir.join("search"));
+        let path = dir.join(format!("sending-{}.part", crate::vision::next_id()));
+        if let Err(e) = std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(&path, &bytes)) {
+            return self.share_failed(format!("{}: {e}", path.display()));
+        }
+        queue(st, "POST", "/api/index/faces", Body::File(path.to_string_lossy().into_owned()), Aux::FaceUpload { path, keys });
+    }
+
+    /// Asks the server for the people its faces make, unless it was asked lately; the answer is
+    /// [`Session::vision_server_done`]'s. `wait` runs the request here (no frame loop to do it).
+    pub(crate) fn vision_fetch_people(&mut self, wait: bool) {
+        let r = &self.vision.remote;
+        let stale = r.people.as_ref().is_none_or(|(at, _)| at.elapsed() >= PEOPLE_TTL);
+        let asking = r.people_asked.is_some_and(|at| at.elapsed() < PEOPLE_TTL);
+        if !r.faces_enabled() || !self.vision_signed_in() || (!stale && !wait) || (asking && !wait) {
+            return;
+        }
+        if self.vision_aux("GET", "/api/people/clusters", Body::Empty, Aux::People).is_ok() {
+            self.vision.remote.people_asked = Some(Instant::now());
+            if wait {
+                self.vision_drive();
+            }
+        }
+    }
+
+    /// The server's people arrived: as clusters of faces of photos this device has.
+    fn people_arrived(&mut self, d: &Done) {
+        self.vision.remote.people_asked = None;
+        if !d.ok() {
+            log::warn!("asking the server for the people: {}", why(d));
+            return;
+        }
+        let Ok(v) = serde_json::from_str::<Value>(&d.body) else { return };
+        let clusters: Vec<Cluster> = v["clusters"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|c| {
+                let id = c["id"].as_str()?.to_string();
+                let members: Vec<FaceRef> = c["members"]
+                    .as_array()?
+                    .iter()
+                    .filter_map(|m| {
+                        let m = m.as_array()?;
+                        let photo = self.catalog.photo(PhotoId(m.first()?.as_u64()?))?;
+                        let f = |i: usize| m.get(i).and_then(Value::as_f64).map(|x| x as f32);
+                        Some(FaceRef {
+                            key: Key::of(&crate::media::content_key(photo)),
+                            index: u8::try_from(m.get(1)?.as_u64()?).ok()?,
+                            rect: [f(2)?, f(3)?, f(4)?, f(5)?],
+                            score: f(6)?,
+                        })
+                    })
+                    .collect();
+                (!members.is_empty()).then_some(Cluster { id, members, centroid: Vec::new() })
+            })
+            .collect();
+        let r = &mut self.vision.remote;
+        r.people = Some((Instant::now(), std::sync::Arc::new(clusters)));
+        r.people_rev += 1;
+    }
+
+    /// Asks the server to forget the faces it found (when it is finding any for this user).
+    pub(crate) fn vision_forget_remote_faces(&mut self, wait: bool) -> bool {
+        if !self.vision.remote.faces_enabled() || self.vision_aux("DELETE", "/api/index/faces", Body::Empty, Aux::FacesDelete).is_err() {
+            return false;
+        }
+        if wait {
+            self.vision_drive();
+        }
+        true
     }
 
     /// The server's text keys arrived: send what it lacks.
@@ -414,9 +590,10 @@ impl Session {
             Err(e) => return self.share_failed(e),
         };
         if keys.is_empty() {
-            let r = &mut self.vision.remote;
-            r.share.running = false;
-            r.shared_text = r.share.started_text;
+            self.vision.remote.shared_text = self.vision.remote.share.started_text;
+            if let Err(e) = self.share_faces_start() {
+                self.share_failed(e);
+            }
             return;
         }
         let dir = self.library.as_ref().filter(|l| l.on_disk).map_or_else(std::env::temp_dir, |l| l.dir.join("search"));
@@ -451,7 +628,9 @@ impl Session {
             && self.vision_signed_in()
             && r.supported()
             && !r.share.running
-            && (self.vision.indexed() > r.shared_len || self.vision.text_indexed() > r.shared_text)
+            && (self.vision.indexed() > r.shared_len
+                || self.vision.text_indexed() > r.shared_text
+                || (self.vision.faces && r.faces_enabled() && self.vision.faces_scanned() > r.shared_faces))
             && r.share_at.is_none_or(|t| t.elapsed() >= SHARE_EVERY);
         if due {
             self.vision.remote.share_at = Some(Instant::now());

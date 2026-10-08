@@ -33,14 +33,14 @@ fn plain(e: &str) -> String {
 /// engine lists them; recomputed when the faces, the catalog or the user's naming change.
 fn found(app: &mut LightcraftApp) -> std::sync::Arc<Vec<Value>> {
     let v = &app.session.vision;
-    let key = (v.faces_found(), v.faces_scanned(), app.session.catalog.revision, v.faces);
+    let key = (v.faces_found(), v.faces_scanned(), app.session.catalog.revision, v.faces, v.people_rev());
     if let Some((k, list)) = &app.ui.people_found
         && *k == key
     {
         return list.clone();
     }
-    let list = if key.3 || key.0 > 0 {
-        app.session.people_list(false, FOUND_MAX).ok().and_then(|v| v["people"].as_array().cloned()).unwrap_or_default()
+    let list = if key.3 || key.0 > 0 || v.server_faces() {
+        app.session.people_list(false, FOUND_MAX, false).ok().and_then(|v| v["people"].as_array().cloned()).unwrap_or_default()
     } else {
         Vec::new()
     };
@@ -124,6 +124,12 @@ fn bar(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                     let _ = app.run("vision.indexCancel", json!({}));
                 }
             } else {
+                if app.session.vision.share_with_server && app.session.vision.server_faces() {
+                    ui.label(
+                        egui::RichText::new(crate::i18n::tr("Because you send your search data to your server, the faces found here go there too."))
+                            .color(t.text_dim),
+                    );
+                }
                 ui.horizontal_wrapped(|ui| {
                     ui.label(crate::i18n::tr_format!("{faces} faces found in {photos} photos.", faces = found_n, photos = scanned));
                     if scanned < photos {

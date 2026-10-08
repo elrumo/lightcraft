@@ -38,6 +38,7 @@ const USAGE: &str = "usage:
   lightcraft-server user add NAME [--admin]   (password: typed, stdin or $LIGHTCRAFT_PASSWORD)
   lightcraft-server user passwd|remove NAME
   lightcraft-server user admin NAME on|off    (admins manage the server at /admin)
+  lightcraft-server user faces NAME on|off    (find the people in NAME's photos; needs `model download --faces`)
   lightcraft-server user list
   lightcraft-server device list NAME
   lightcraft-server device revoke NAME ID
@@ -45,7 +46,7 @@ const USAGE: &str = "usage:
   lightcraft-server folder remove NAME FOLDER
   lightcraft-server folder list [NAME]
   lightcraft-server scan [NAME]                (read the library folders now)
-  lightcraft-server model status|download [--accept-licences] [--text] [--vision-dir DIR]   (the search model: about 1.5 GB, Google's Apache License 2.0; --text adds the models that read the text in photos: about 31 MB, Baidu's Apache License 2.0)
+  lightcraft-server model status|download [--accept-licences] [--text] [--faces] [--vision-dir DIR]   (the search model: about 1.5 GB, Google's Apache License 2.0; --text adds the models that read the text in photos: about 31 MB, Baidu's Apache License 2.0; --faces adds the models that find and tell apart faces: about 39 MB, MIT and Apache 2.0)
   lightcraft-server gc [--dry-run]
   lightcraft-server health                     (is the server answering? exit status)
 options (any command): --data DIR (default $LIGHTCRAFT_DATA or ./lightcraft-data)
@@ -159,6 +160,11 @@ fn run(args: &[String]) -> Result<(), String> {
             println!("{name} {} an admin", if *on == "on" { "is" } else { "is no longer" });
             Ok(())
         }
+        ["user", "faces", name, on @ ("on" | "off")] => {
+            accounts::set_faces(&data, name, *on == "on")?;
+            println!("{name}: finding the people in their photos is {}", if *on == "on" { "on (once the face models are installed)" } else { "off" });
+            Ok(())
+        }
         ["user", "passwd", name] => {
             accounts::set_user(&data, name, &password()?, true)?;
             println!("changed {name}'s password");
@@ -171,7 +177,7 @@ fn run(args: &[String]) -> Result<(), String> {
         }
         ["user", "list"] => {
             for (name, u) in accounts::read_users(&data)?.users {
-                println!("{name}{}", if u.admin { "\tadmin" } else { "" });
+                println!("{name}{}{}", if u.admin { "\tadmin" } else { "" }, if u.faces { "\tfaces" } else { "" });
             }
             Ok(())
         }
@@ -231,7 +237,9 @@ fn run(args: &[String]) -> Result<(), String> {
             let mirrors = dir.parent().map(|p| p.join("siglip2-mirrors.txt"));
             let search_missing = !lightcraft_vision::siglip::is_model_dir(&dir);
             let text_missing = text && !lightcraft_vision::ocr::is_model_dir(&dir.join(lightcraft_engine::vision::TEXT_DIR));
-            if !search_missing && !text_missing {
+            let faces = args.iter().any(|a| a == "--faces");
+            let faces_missing = faces && !lightcraft_vision::faces::model::is_model_dir(&dir.join(lightcraft_engine::vision::FACES_DIR));
+            if !search_missing && !text_missing && !faces_missing {
                 println!("the model{} installed in {}", if text { "s are" } else { " is" }, dir.display());
                 return Ok(());
             }
@@ -244,6 +252,10 @@ fn run(args: &[String]) -> Result<(), String> {
             if search_missing {
                 lightcraft_server::vision::download_model(&dir, mirrors.as_deref())?;
                 println!("the search model is installed in {}", dir.display());
+            }
+            if faces_missing {
+                lightcraft_server::vision::download_face_models(&dir, mirrors.as_deref())?;
+                println!("the face models are installed in {}", dir.join(lightcraft_engine::vision::FACES_DIR).display());
             }
             if text_missing {
                 lightcraft_server::vision::download_text_models(&dir, mirrors.as_deref())?;

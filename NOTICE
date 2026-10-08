@@ -36,6 +36,12 @@ Reading the text in photos runs PP-OCRv6 small (PaddlePaddle/PP-OCRv6_small_det_
 Apache License 2.0) through rten (MIT OR Apache-2.0), a pure-Rust ONNX runtime. The models are not part of LightCraft
 and are never distributed with it: a user downloads them only when they choose to, pinned by size and SHA-256.
 
+Finding people runs YuNet (face_detection_yunet_2023mar, MIT License, Copyright (c) 2020 Shiqi Yu) and SFace
+(face_recognition_sface_2021dec, Apache License 2.0, Beijing University of Posts and Telecommunications) from the OpenCV
+Zoo through rten. The models are not part of LightCraft and are never distributed with it: a user downloads them only when
+they choose to, pinned by size and SHA-256. LightCraft's code reads their published input and output conventions; it
+contains no code from OpenCV.
+
 Builds made with craft-fonts (the optional CRAFT_FONTS_DIR build input; all official releases)
 also embed the fonts listed in https://github.com/storytold/craft-fonts/blob/main/ATTRIBUTION.md
 (the Japanese fonts BIZ UDPGothic, BIZ UDMincho and Shippori Mincho; the web build embeds only BIZ

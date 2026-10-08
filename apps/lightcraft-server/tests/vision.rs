@@ -630,3 +630,200 @@ fn a_desktop_sends_the_server_the_text_it_read() {
     let r = odd.execute("vision.share", &json!({"wait": true})).unwrap();
     assert!(r["error"].as_str().is_some_and(|e| e.contains("nothing was sent")), "{r}");
 }
+
+// ---------------------------------------------------------------- the people in photos
+
+/// Wait until the server has looked at `want` of `ann`'s photos for faces.
+fn looked(f: &Fixture, want: u64) -> Value {
+    for _ in 0..1200 {
+        f.server.index_for_search();
+        let (_, s) = get(&f.ann, "/api/people/status");
+        if s["photos"].as_u64() == Some(want) {
+            return s;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    panic!("faces not found: {:?}", get(&f.ann, "/api/people/status"));
+}
+
+fn delete(w: &Who, path: &str) -> (u16, Value) {
+    let mut r = agent().delete(format!("{}{path}", w.url)).header("Authorization", format!("Bearer {}", w.token)).call().unwrap();
+    let status = r.status().as_u16();
+    (status, json_body(&mut r))
+}
+
+fn fixture_full(
+    tag: &str,
+    model: Option<Arc<dyn Embedder>>,
+    reader: Option<Arc<dyn TextReader>>,
+    finder: Option<Arc<dyn lightcraft_vision::FaceEngine>>,
+) -> Fixture {
+    let root = temp(tag);
+    let nas = root.join("nas");
+    for (name, rgb) in [("red", [220, 20, 20]), ("green", [20, 200, 40]), ("blue", [20, 40, 220]), ("grey", [128, 128, 128])] {
+        write_flat(&nas.join(format!("{name}.png")), rgb);
+    }
+    let data = root.join("data");
+    accounts::set_user(&data, "ann", "correct horse", false).unwrap();
+    accounts::set_user(&data, "bob", "battery staple", false).unwrap();
+    accounts::add_folder(&data, "ann", &nas.to_string_lossy(), Some("Photos")).unwrap();
+    let mut cfg = Config::new(&data, "127.0.0.1:0");
+    cfg.scan_interval = None;
+    cfg.preview_threads = 1;
+    cfg.embedder = model;
+    cfg.text_reader = reader;
+    cfg.face_finder = finder;
+    cfg.vision_dir = Some(data.join("no-model-here"));
+    let server = Server::start(cfg).unwrap();
+    let ann = login(&server, "ann", "correct horse");
+    let f = Fixture { server, ann, data, nas };
+    wait_scan(&f);
+    f
+}
+
+/// The stand-in finder under the real models' name (a server without a finder of its own expects it).
+struct Yunetish;
+
+impl lightcraft_vision::FaceEngine for Yunetish {
+    fn engine(&self) -> &str {
+        lightcraft_vision::faces::ENGINE
+    }
+    fn faces(&self, img: &lightcraft_raster::Rgba8) -> Result<Vec<lightcraft_vision::faces::FaceFound>, VisionError> {
+        lightcraft_vision::fake::FakeFaces.faces(img)
+    }
+}
+
+#[test]
+fn faces_are_found_only_for_a_user_an_admin_turned_them_on() {
+    let f = fixture_full("faces-flag", None, None, Some(Arc::new(lightcraft_vision::fake::FakeFaces)));
+    let (status, s) = get(&f.ann, "/api/people/status");
+    assert_eq!((status, s["enabled"].clone(), s["installed"].clone(), s["photos"].clone()), (200, json!(false), json!(true), json!(0)), "{s}");
+    // off: nothing is looked at, nothing is served, and the user can still delete
+    f.server.index_for_search();
+    std::thread::sleep(Duration::from_millis(400));
+    assert_eq!(get(&f.ann, "/api/people/status").1["photos"], 0, "no faces were looked for");
+    for path in ["/api/people/clusters", "/api/index/faces/keys"] {
+        let (status, r) = get(&f.ann, path);
+        assert_eq!(status, 403, "{path}: {r}");
+        assert!(r["error"].as_str().unwrap().contains("user faces"), "{r}");
+    }
+    assert_eq!(post(&f.ann, "/api/index/faces", b"x").0, 403);
+    assert_eq!(delete(&f.ann, "/api/index/faces").0, 200);
+    // the search status says it too (that is what devices ask)
+    assert_eq!(get(&f.ann, "/api/search/status").1["faces"]["enabled"], false);
+
+    // an admin turns it on for ann only
+    accounts::set_faces(&f.data, "ann", true).unwrap();
+    let s = looked(&f, 4);
+    assert_eq!((s["enabled"].clone(), s["engine"].as_str()), (json!(true), Some("fake-faces")), "{s}");
+    assert_eq!(get(&f.ann, "/api/search/status").1["faces"]["enabled"], true);
+    let (status, c) = get(&f.ann, "/api/people/clusters");
+    assert_eq!(status, 200, "{c}");
+    let clusters = c["clusters"].as_array().unwrap();
+    let members: usize = clusters.iter().map(|c| c["members"].as_array().unwrap().len()).sum();
+    assert_eq!((members as u64, c["faces"].as_u64()), (c["faces"].as_u64().unwrap(), Some(8)), "two faces in each of four photos: {c}");
+    assert_eq!(clusters.len(), 3, "red, green, and blue with grey: {c}");
+    let m = &clusters[0]["members"][0];
+    assert!(m[0].as_u64().is_some() && m[5].as_f64().unwrap() > m[3].as_f64().unwrap(), "photo, face, box, score: {m}");
+    assert_eq!(get(&f.ann, "/api/index/faces/keys").1["keys"].as_array().unwrap().len(), 4);
+    assert!(f.data.join("users/ann/search/faces-fake-faces.bin").is_file());
+
+    // bob's is off, and his own
+    let bob = login(&f.server, "bob", "battery staple");
+    assert_eq!(get(&bob, "/api/people/clusters").0, 403);
+    assert_eq!(get(&bob, "/api/people/status").1["photos"], 0);
+
+    // forgetting empties it (the flag is off first, or the sweep would look again)
+    accounts::set_faces(&f.data, "ann", false).unwrap();
+    let (status, r) = delete(&f.ann, "/api/index/faces");
+    assert_eq!((status, r["photos"].clone()), (200, json!(4)), "{r}");
+    f.server.index_for_search();
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(get(&f.ann, "/api/people/status").1["photos"], 0);
+}
+
+#[test]
+fn a_device_sends_the_faces_it_found_and_the_server_checks_them() {
+    // a server with no face models: it keeps what a device sends (for a user it may find people for)
+    let f = fixture_full("faces-upload", None, None, None);
+    accounts::set_faces(&f.data, "ann", true).unwrap();
+    let mut s = device(&f, "faces-desktop", None);
+    s.vision.set_face_finder(Arc::new(Yunetish));
+    s.vision.text_edge = 192;
+    s.execute("vision.setFaces", &json!({"on": true})).unwrap();
+    assert!(s.execute("vision.share", &json!({"wait": true})).is_err(), "nothing found yet");
+    let r = s.execute("vision.index", &json!({"wait": true})).unwrap();
+    assert_eq!((r["done"].clone(), r["failed"].clone(), r["error"].clone()), (json!(4), json!(0), Value::Null), "{r}");
+    s.vision_probe_server();
+    sync(&mut s);
+    assert!(s.vision.server_faces(), "the server says it finds people for this user: {:?}", s.vision.server_status());
+
+    let r = s.execute("vision.share", &json!({"wait": true})).unwrap();
+    assert_eq!((r["running"].clone(), r["sent"].clone(), r["error"].clone()), (json!(false), json!(4), Value::Null), "{r}");
+    assert_eq!(get(&f.ann, "/api/people/status").1["photos"], 4);
+    // and only what the server lacks
+    assert_eq!(s.execute("vision.share", &json!({"wait": true})).unwrap()["sent"], 0);
+
+    // refused whole: other models, cut short, damaged, empty
+    use lightcraft_vision::faces::index::FaceIndex;
+    let mut other = FaceIndex::in_memory();
+    other.insert_photo(Key::of("x"), &[]).unwrap();
+    let good = {
+        let mut ix = FaceIndex::in_memory();
+        let e: Vec<f32> = (0..128).map(|i| if i == 0 { 1.0 } else { 0.0 }).collect();
+        ix.insert_photo(Key::of("y"), &[lightcraft_vision::faces::FaceFound { rect: [0.1, 0.1, 0.5, 0.5], score: 0.9, embedding: e }]).unwrap();
+        ix.export(|_| false, 10)
+    };
+    let up = |bytes: &[u8]| post(&f.ann, "/api/index/faces", bytes).0;
+    assert_eq!(up(&good[..good.len() - 3]), 422, "truncated");
+    assert_eq!(up(b"not an index"), 422);
+    assert_eq!(up(b""), 422);
+    let mut wrong = good.clone();
+    wrong[16] = b'Z';
+    assert_eq!(up(&wrong), 409, "another pair of models");
+    // a photo that is not in the library is skipped, never kept
+    let (_, r) = post(&f.ann, "/api/index/faces", &good);
+    assert_eq!((r["added"].clone(), r["skipped"].clone()), (json!(0), json!(1)), "{r}");
+    assert_eq!(get(&f.ann, "/api/people/status").1["photos"], 4);
+}
+
+#[test]
+fn a_thin_client_lists_and_names_the_servers_people_and_can_make_it_forget() {
+    let f = fixture_full("faces-thin", None, None, Some(Arc::new(lightcraft_vision::fake::FakeFaces)));
+    accounts::set_faces(&f.data, "ann", true).unwrap();
+    looked(&f, 4);
+
+    // a device with no face models of its own (the web build, iOS)
+    let mut s = device(&f, "faces-thin-device", None);
+    s.vision_probe_server();
+    sync(&mut s);
+    assert!(s.vision.server_faces());
+    let r = s.execute("people.list", &json!({"wait": true})).unwrap();
+    assert_eq!(r["source"], "server", "{r}");
+    let people = r["people"].as_array().unwrap();
+    assert_eq!(people.len(), 3, "{r}");
+    assert!(people.iter().all(|p| p["name"].is_null() && p["faces"].as_u64().unwrap() >= 2));
+    // the faces are of photos this device has
+    let ours: std::collections::HashSet<u64> = s.catalog.photos().map(|p| p.id.0).collect();
+    assert!(people.iter().all(|p| ours.contains(&p["cover"]["photo"].as_u64().unwrap())));
+
+    // naming is an ordinary catalog edit, made here
+    let red = people.iter().find(|p| p["photoIds"].as_array().unwrap().iter().any(|i| i.as_u64() == Some(photo_named(&s, "red").0))).unwrap();
+    let named = s.execute("people.name", &json!({"cluster": red["id"], "name": "Ada"})).unwrap();
+    assert_eq!((named["faces"].clone(), named["photos"].clone()), (json!(2), json!(1)), "{named}");
+    assert!(s.catalog.people().iter().any(|p| p.name == "Ada"));
+    let shown = s.execute("people.show", &json!({"cluster": red["id"]})).unwrap();
+    assert_eq!(shown["person"], "Ada");
+
+    // and the name reaches the server's catalog with the next sync
+    sync(&mut s);
+    let (_, snap) = get(&f.ann, "/api/snapshot");
+    let has_ada = snap["catalog"]["photos"].as_object().unwrap().values().any(|p| p["meta"]["regions"].to_string().contains("Ada"));
+    assert!(has_ada, "the server's catalog has the region");
+
+    // forgetting reaches the server too
+    let r = s.execute("people.deleteData", &json!({"wait": true})).unwrap();
+    assert_eq!(r["server"], true, "{r}");
+    accounts::set_faces(&f.data, "ann", false).unwrap();
+    assert_eq!(get(&f.ann, "/api/people/status").1["photos"], 0, "the server forgot");
+}

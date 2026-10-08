@@ -11,6 +11,11 @@
 //! POST /api/index/embeddings         records a device computed (see `lightcraft_vision::EmbeddingIndex::export`)
 //! GET  /api/index/text/keys          {engine, keys: [content hash]} whose text the server has read
 //! POST /api/index/text               text a device read (see `lightcraft_vision::TextIndex::export`)
+//! GET  /api/people/status            {available, enabled, installed, engine, faces, photos, total}
+//! GET  /api/people/clusters          {engine, faces, photos, clusters: [{id, members: [[photo, face, x0, y0, x1, y1, score]]}]}
+//! GET  /api/index/faces/keys         {engine, keys: [content hash]} the server has looked at
+//! POST /api/index/faces              faces a device found (see `lightcraft_vision::faces::index::FaceIndex::export`)
+//! DELETE /api/index/faces            forget every face (always allowed)
 //! ```
 //!
 //! Vectors are filed by content hash, from a neutral (unedited) rendering of the mini preview, in
@@ -18,6 +23,14 @@
 //! of LightCraft: an admin installs it (`lightcraft-server model download --accept-licences`)
 //! and it loads on first use and unloads when idle (~1.5 GB while loaded). Until then every route
 //! says so instead of failing.
+//!
+//! Faces are personal data and off by default: an admin turns finding people on for a user
+//! (`lightcraft-server user faces NAME on`) after installing the face models (`model download
+//! --faces`); then the server finds the faces in that user's smart previews, and devices ask for
+//! the people it grouped them into (`GET /api/people/clusters`) to show and name them (names are
+//! ordinary catalog edits, made on the device). A user can delete everything the server found
+//! (`DELETE /api/index/faces`), and a desktop can send the faces it found instead
+//! (`POST /api/index/faces`).
 //!
 //! The same goes for the text printed in photos (`model download --text`, PP-OCRv6, ~31 MB): once
 //! installed, the server reads each photo's smart preview in the background, a few at a time so
@@ -32,7 +45,8 @@ use std::time::{Duration, Instant};
 
 use lightcraft_catalog::Photo;
 use lightcraft_engine::guard;
-use lightcraft_vision::{Embedder, EmbeddingIndex, Error as VisionError, Key, TextIndex, TextReader};
+use lightcraft_vision::faces::index::FaceIndex;
+use lightcraft_vision::{Embedder, EmbeddingIndex, Error as VisionError, FaceEngine, Key, TextIndex, TextReader};
 use serde_json::json;
 use tiny_http::Request;
 
@@ -71,6 +85,12 @@ pub struct Search {
     injected: Option<Arc<dyn Embedder>>,
     /// A reader supplied by the host (tests) instead of PP-OCRv6 from `<dir>/ocr`.
     injected_reader: Option<Arc<dyn TextReader>>,
+    /// A finder supplied by the host (tests) instead of YuNet and SFace from `<dir>/faces`.
+    injected_finder: Option<Arc<dyn FaceEngine>>,
+    finder: Mutex<Option<Arc<dyn FaceEngine>>>,
+    faces: Mutex<HashMap<String, Arc<Mutex<FaceIndex>>>>,
+    /// The people each user's faces make, as the JSON sent to devices, while the faces don't change.
+    people: Mutex<HashMap<String, ((usize, usize, u64), Arc<String>)>>,
     model: Mutex<Option<Arc<dyn Embedder>>>,
     reader: Mutex<Option<Arc<dyn TextReader>>>,
     indexes: Mutex<HashMap<String, Arc<Mutex<EmbeddingIndex>>>>,
@@ -83,6 +103,8 @@ pub struct Search {
     failed: Mutex<HashSet<(String, Key)>>,
     /// Photos whose text could not be read (likewise).
     failed_text: Mutex<HashSet<(String, Key)>>,
+    /// Photos that could not be looked at for faces (likewise).
+    failed_faces: Mutex<HashSet<(String, Key)>>,
     /// The last problem indexing a user's photos.
     problems: Mutex<HashMap<String, String>>,
 }
@@ -93,6 +115,10 @@ impl Search {
             dir,
             injected,
             injected_reader: None,
+            injected_finder: None,
+            finder: Mutex::new(None),
+            faces: Mutex::new(HashMap::new()),
+            people: Mutex::new(HashMap::new()),
             model: Mutex::new(None),
             reader: Mutex::new(None),
             indexes: Mutex::new(HashMap::new()),
@@ -103,8 +129,87 @@ impl Search {
             stop: AtomicBool::new(false),
             failed: Mutex::new(HashSet::new()),
             failed_text: Mutex::new(HashSet::new()),
+            failed_faces: Mutex::new(HashSet::new()),
             problems: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Finds faces with `finder` instead of YuNet and SFace from the model folder (tests).
+    pub fn with_finder(mut self, finder: Option<Arc<dyn FaceEngine>>) -> Search {
+        self.injected_finder = finder;
+        self
+    }
+
+    /// Where the face models' files are (inside the model folder).
+    pub fn faces_dir(&self) -> PathBuf {
+        self.dir.join(lightcraft_engine::vision::FACES_DIR)
+    }
+
+    /// Whether the face models' files are in place.
+    pub fn faces_installed(&self) -> bool {
+        self.injected_finder.is_some() || lightcraft_vision::faces::model::is_model_dir(&self.faces_dir())
+    }
+
+    /// The finder's engine id (known without loading it).
+    fn faces_engine(&self) -> String {
+        match &self.injected_finder {
+            Some(f) => f.engine().to_string(),
+            None => lightcraft_vision::faces::ENGINE.to_string(),
+        }
+    }
+
+    /// The face finder, loaded first if needed.
+    fn finder(&self) -> Result<Arc<dyn FaceEngine>, String> {
+        if let Some(f) = &self.injected_finder {
+            return Ok(f.clone());
+        }
+        let mut slot = lock(&self.finder);
+        if let Some(f) = slot.as_ref() {
+            self.touch();
+            return Ok(f.clone());
+        }
+        if !self.faces_installed() {
+            return Err(format!(
+                "the face models are not installed on this server (run `lightcraft-server model download --accept-licences --faces`, or put them in {})",
+                self.faces_dir().display()
+            ));
+        }
+        let started = Instant::now();
+        log::info!("loading the face models from {}", self.faces_dir().display());
+        let loaded = guard::catch("loading the face models", || lightcraft_vision::faces::model::Faces::load(&self.faces_dir()))?
+            .map_err(|e| e.to_string())?;
+        let f: Arc<dyn FaceEngine> = Arc::new(loaded);
+        *slot = Some(f.clone());
+        self.touch();
+        log::info!("the face models are loaded ({:.1} s)", started.elapsed().as_secs_f64());
+        Ok(f)
+    }
+
+    /// A user's face index, opened if needed (other models', or damaged, is derived data: replaced).
+    /// Without `create`, a user who has none yet gets `None` and no file is made.
+    fn face_index(&self, data: &Path, user: &str, create: bool) -> Result<Option<Arc<Mutex<FaceIndex>>>, String> {
+        let mut all = lock(&self.faces);
+        if let Some(ix) = all.get(user) {
+            return Ok(Some(ix.clone()));
+        }
+        let dir = accounts::user_dir(data, user).join("search");
+        let path = dir.join(format!("faces-{}.bin", self.faces_engine()));
+        if !create && !path.is_file() {
+            return Ok(None);
+        }
+        std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        let ix = match FaceIndex::open(&path) {
+            Ok(ix) => ix,
+            Err(VisionError::Mismatch { .. } | VisionError::Format(_)) => {
+                log::info!("{}: the face index is for other models or damaged: starting over", path.display());
+                let _ = std::fs::remove_file(&path);
+                FaceIndex::open(&path).map_err(|e| format!("{}: {e}", path.display()))?
+            }
+            Err(e) => return Err(format!("{}: {e}", path.display())),
+        };
+        let ix = Arc::new(Mutex::new(ix));
+        all.insert(user.to_string(), ix.clone());
+        Ok(Some(ix))
     }
 
     /// Reads text with `reader` instead of PP-OCRv6 from the model folder (tests).
@@ -277,6 +382,10 @@ impl Search {
                 log::info!("the text-reading models were unloaded after {} minutes without use", IDLE_UNLOAD.as_secs() / 60);
             }
             lock(&self.texts).clear();
+            if lock(&self.finder).take().is_some() {
+                log::info!("the face models were unloaded after {} minutes without use", IDLE_UNLOAD.as_secs() / 60);
+            }
+            lock(&self.faces).clear();
             *lock(&self.used) = None;
         }
     }
@@ -323,6 +432,20 @@ pub(crate) fn run(st: &Arc<State>) {
             if v.installed() {
                 report(user.clone(), "search index", index_user(st, &user));
             }
+            if v.faces_installed()
+                && !v.stop.load(Ordering::SeqCst)
+                && accounts::read_users(&st.data).is_ok_and(|f| f.users.get(&user).is_some_and(|u| u.faces))
+            {
+                match scan_user(st, &user) {
+                    Ok(more) => {
+                        lock(&v.problems).remove(&format!("{user}:faces"));
+                        if more {
+                            v.wake();
+                        }
+                    }
+                    Err(e) => report(format!("{user}:faces"), "face index", Err(e)),
+                }
+            }
             if v.text_installed() && !v.stop.load(Ordering::SeqCst) {
                 match read_user(st, &user) {
                     // (more to read: come back after looking at new photos)
@@ -338,6 +461,71 @@ pub(crate) fn run(st: &Arc<State>) {
         }
         v.unload_if_idle();
     }
+}
+
+/// Looks for the faces in up to [`READ_CHUNK`] of a user's photos that have a smart preview and
+/// haven't been looked at. True when there are more.
+fn scan_user(st: &Arc<State>, user: &str) -> Result<bool, String> {
+    let v = &st.vision;
+    let lib = api::lib(st, user)?;
+    let (photos, blobs) = {
+        let l = lock(&lib);
+        (hashed(&l), l.dir.join("blobs"))
+    };
+    if photos.is_empty() {
+        return Ok(false);
+    }
+    let index = v.face_index(&st.data, user, true)?.ok_or("the face index is unavailable")?;
+    let failed = lock(&v.failed_faces).clone();
+    let mut work: Vec<(Key, Arc<Photo>, PathBuf)> = Vec::new();
+    {
+        let ix = lock(&index);
+        for (key, photo) in photos {
+            if ix.scanned(&key) || failed.contains(&(user.to_string(), key)) {
+                continue;
+            }
+            let Some(path) = photo.content_hash.as_deref().and_then(|h| api::blob_path(&blobs, "smart", h)).filter(|p| p.is_file()) else { continue };
+            work.push((key, photo, path));
+        }
+    }
+    if work.is_empty() {
+        return Ok(false);
+    }
+    let more = work.len() > READ_CHUNK;
+    work.truncate(READ_CHUNK);
+    let finder = v.finder()?;
+    let started = Instant::now();
+    let (mut done, mut failures) = (0, 0);
+    for (key, photo, path) in &work {
+        if v.stop.load(Ordering::SeqCst) {
+            return Ok(false);
+        }
+        let found = lightcraft_engine::vision::neutral_from_preview(photo, path, TEXT_EDGE)
+            .and_then(|img| guard::catch("finding faces", || finder.faces(&img)).and_then(|t| t.map_err(|e| e.to_string())));
+        match found {
+            Ok(faces) => {
+                failures = 0;
+                if lock(&index).insert_photo(*key, &faces).is_ok() {
+                    done += 1;
+                } else {
+                    lock(&v.failed_faces).insert((user.to_string(), *key));
+                }
+            }
+            Err(e) => {
+                log::debug!("{user}: can't look for faces in {}: {e}", path.display());
+                lock(&v.failed_faces).insert((user.to_string(), *key));
+                failures += 1;
+                if failures >= 8 {
+                    // models that fail this often will keep failing
+                    return Err(format!("finding faces keeps failing: {e}"));
+                }
+            }
+        }
+        v.touch();
+    }
+    log::info!("{user}: faces found in {done} of {} photo(s) in {:.1} s", work.len(), started.elapsed().as_secs_f64());
+    lightcraft_engine::memory::release();
+    Ok(more)
 }
 
 /// Reads the text of up to [`READ_CHUNK`] of a user's photos that have a smart preview and no
@@ -518,6 +706,13 @@ pub(crate) fn status(st: &State, l: &Mutex<UserLib>, user: &str) -> Resp {
                 "indexed": read,
                 "problem": lock(&v.problems).get(&format!("{user}:text")),
             },
+            // (finding people: whether an admin turned it on for this user, and how far it is)
+            "faces": {
+                "enabled": accounts::read_users(&st.data).is_ok_and(|f| f.users.get(user).is_some_and(|u| u.faces)),
+                "installed": v.faces_installed(),
+                "engine": v.faces_engine(),
+                "photos": v.face_index(&st.data, user, false).ok().flatten().map_or(0, |ix| lock(&ix).photos()),
+            },
         }),
     )
 }
@@ -649,16 +844,182 @@ pub(crate) fn text_upload(st: &State, req: &mut Request, l: &Mutex<UserLib>, use
     }
 }
 
+/// Why finding people is not available to `user`, or `None` when it is (an admin turned it on).
+fn faces_refused(st: &State, user: &str) -> Option<Resp> {
+    let on = accounts::read_users(&st.data).is_ok_and(|f| f.users.get(user).is_some_and(|u| u.faces));
+    (!on).then(|| {
+        api::json(
+            403,
+            &json!({"error": "finding people is off for this user: an admin turns it on with `lightcraft-server user faces NAME on`", "enabled": false}),
+        )
+    })
+}
+
+/// `GET /api/people/status`
+pub(crate) fn people_status(st: &State, l: &Mutex<UserLib>, user: &str) -> Resp {
+    let v = &st.vision;
+    let enabled = accounts::read_users(&st.data).is_ok_and(|f| f.users.get(user).is_some_and(|u| u.faces));
+    let (faces, photos) = v.face_index(&st.data, user, false).ok().flatten().map_or((0, 0), |ix| {
+        let ix = lock(&ix);
+        (ix.len(), ix.photos())
+    });
+    api::json(
+        200,
+        &json!({
+            "available": true,
+            "enabled": enabled,
+            "installed": v.faces_installed(),
+            "engine": v.faces_engine(),
+            "faces": faces,
+            "photos": photos,
+            "total": hashed(&lock(l)).len(),
+            "problem": lock(&v.problems).get(&format!("{user}:faces")),
+        }),
+    )
+}
+
+/// `GET /api/people/clusters`: the people the faces make, for a device to name and show.
+pub(crate) fn people_clusters(st: &State, l: &Mutex<UserLib>, user: &str) -> Resp {
+    if let Some(r) = faces_refused(st, user) {
+        return r;
+    }
+    let v = &st.vision;
+    let index = match v.face_index(&st.data, user, false) {
+        Ok(Some(i)) => i,
+        Ok(None) => return api::json(200, &json!({"engine": v.faces_engine(), "faces": 0, "photos": 0, "clusters": []})),
+        Err(e) => return error(500, e),
+    };
+    let at = {
+        let ix = lock(&index);
+        (ix.len(), ix.photos(), ix.revision())
+    };
+    if let Some((k, body)) = lock(&v.people).get(user)
+        && *k == at
+    {
+        return api::raw_json(200, body.as_str().to_string());
+    }
+    // a face by the first photo that has its content (virtual copies share it)
+    let mut photo_of: HashMap<Key, u64> = HashMap::new();
+    for p in lock(l).core.catalog().photos().filter(|p| p.in_library()) {
+        if let Some(k) = p.content_hash.as_deref().and_then(Key::from_hex) {
+            photo_of.entry(k).and_modify(|id| *id = (*id).min(p.id.0)).or_insert(p.id.0);
+        }
+    }
+    let clusters: Vec<serde_json::Value> = lightcraft_engine::vision::clusters_of(&lock(&index))
+        .iter()
+        .filter_map(|c| {
+            let members: Vec<serde_json::Value> = c
+                .members
+                .iter()
+                .filter_map(|m| {
+                    let r = |x: f32| (f64::from(x) * 1e5).round() / 1e5;
+                    photo_of.get(&m.key).map(|id| json!([id, m.index, r(m.rect[0]), r(m.rect[1]), r(m.rect[2]), r(m.rect[3]), r(m.score)]))
+                })
+                .collect();
+            (!members.is_empty()).then(|| json!({"id": c.id, "members": members}))
+        })
+        .collect();
+    let body = json!({"engine": v.faces_engine(), "faces": at.0, "photos": at.1, "clusters": clusters}).to_string();
+    lock(&v.people).insert(user.to_string(), (at, Arc::new(body.clone())));
+    api::raw_json(200, body)
+}
+
+/// `GET /api/index/faces/keys`
+pub(crate) fn face_keys(st: &State, user: &str) -> Resp {
+    if let Some(r) = faces_refused(st, user) {
+        return r;
+    }
+    let v = &st.vision;
+    let keys: Vec<String> = match v.face_index(&st.data, user, false) {
+        Ok(Some(ix)) => lock(&ix).keys().map(Key::to_hex).collect(),
+        Ok(None) => Vec::new(),
+        Err(e) => return error(500, e),
+    };
+    api::json(200, &json!({"engine": v.faces_engine(), "keys": keys}))
+}
+
+/// `POST /api/index/faces`: faces a device found. Only photos in the user's library are kept; the
+/// whole upload is refused when it is from other models or damaged.
+pub(crate) fn face_upload(st: &State, req: &mut Request, l: &Mutex<UserLib>, user: &str) -> Resp {
+    if let Some(r) = faces_refused(st, user) {
+        return r;
+    }
+    let v = &st.vision;
+    let body = match api::read_body(req, UPLOAD_MAX) {
+        Ok(b) => b,
+        Err(r) => return r,
+    };
+    let index = match v.face_index(&st.data, user, true) {
+        Ok(Some(i)) => i,
+        Ok(None) => return error(500, "the face index is unavailable"),
+        Err(e) => return error(500, e),
+    };
+    let mine: HashSet<Key> = hashed(&lock(l)).into_iter().map(|(k, _)| k).collect();
+    let r = lock(&index).import(&body, |k| mine.contains(k));
+    match r {
+        Ok(done) => {
+            v.touch();
+            api::json(200, &json!({"added": done.added, "skipped": done.skipped}))
+        }
+        Err(e @ VisionError::Mismatch { .. }) => error(409, e),
+        Err(e) => error(422, e),
+    }
+}
+
+/// `DELETE /api/index/faces`: forget every face (whether or not finding people is on).
+pub(crate) fn face_delete(st: &State, user: &str) -> Resp {
+    let v = &st.vision;
+    let (faces, photos) = match v.face_index(&st.data, user, false) {
+        Ok(Some(ix)) => {
+            let mut ix = lock(&ix);
+            let counts = (ix.len(), ix.photos());
+            if let Err(e) = ix.clear() {
+                return error(500, e);
+            }
+            counts
+        }
+        Ok(None) => (0, 0),
+        Err(e) => return error(500, e),
+    };
+    lock(&v.people).remove(user);
+    lock(&v.failed_faces).retain(|(u, _)| u != user);
+    api::json(200, &json!({"faces": faces, "photos": photos}))
+}
+
+/// `lightcraft-server model download --faces`: fetches the face models into `<dir>/faces`.
+pub fn download_face_models(dir: &Path, mirrors_file: Option<&Path>) -> Result<(), String> {
+    use lightcraft_vision::models::{self, Options, Progress};
+    let env = std::env::var(models::MIRRORS_ENV).ok();
+    let cancel = AtomicBool::new(false);
+    let mut last = Instant::now() - Duration::from_secs(10);
+    let mut report = |p: &Progress| {
+        if last.elapsed() >= Duration::from_secs(2) {
+            last = Instant::now();
+            eprintln!("{}: {:.1} / {:.1} MB", p.file, p.done as f64 / 1e6, p.total as f64 / 1e6);
+        }
+    };
+    for (files, mirrors, to) in models::face_downloads(&dir.join(lightcraft_engine::vision::FACES_DIR), env.as_deref(), mirrors_file) {
+        models::download(files, &mirrors, &to, &Options::default(), &cancel, &mut report).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 /// What `lightcraft-server model status` says.
 pub fn model_status(dir: &Path) -> String {
     let (name, url) = lightcraft_vision::models::SIGLIP_LICENCE;
     let (tname, turl) = lightcraft_vision::models::OCR_LICENCE;
     let text = dir.join(lightcraft_engine::vision::TEXT_DIR);
+    let faces = dir.join(lightcraft_engine::vision::FACES_DIR);
     format!(
-        "search model (SigLIP 2): {} in {}\nlicence: {name}, {url}\ndownload: {:.1} GB\n\ntext-reading models (PP-OCRv6): {} in {}\nlicence: {tname}, {turl}\ndownload: {:.0} MB (add --text)",
+        "search model (SigLIP 2): {} in {}\nlicence: {name}, {url}\ndownload: {:.1} GB\n\nface models (YuNet, SFace): {} in {}\nlicences: {}, {}\ndownload: {:.0} MB (add --faces; then `user faces NAME on` for each user whose people the server may find)\n\ntext-reading models (PP-OCRv6): {} in {}\nlicence: {tname}, {turl}\ndownload: {:.0} MB (add --text)",
         if lightcraft_vision::siglip::is_model_dir(dir) { "installed" } else { "not installed" },
         dir.display(),
         (lightcraft_vision::models::SIGLIP_WEIGHTS_SIZE as f64 + 34_363_039.0) / 1e9,
+        if lightcraft_vision::faces::model::is_model_dir(&faces) { "installed" } else { "not installed" },
+        faces.display(),
+        lightcraft_vision::models::FACE_LICENCES[0].0,
+        lightcraft_vision::models::FACE_LICENCES[1].0,
+        lightcraft_vision::models::FACE_BYTES as f64 / 1e6,
         if lightcraft_vision::ocr::is_model_dir(&text) { "installed" } else { "not installed" },
         text.display(),
         lightcraft_vision::models::OCR_BYTES as f64 / 1e6

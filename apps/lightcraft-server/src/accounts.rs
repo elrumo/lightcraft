@@ -39,6 +39,9 @@ pub struct User {
     /// Photo folders on the server that are this user's library folders, read in place (see
     /// [`crate::folders`]). Only an admin sets them.
     pub folders: Vec<LibraryFolder>,
+    /// The server finds the faces in this user's photos and groups them into people (see
+    /// [`crate::vision`]). Off until an admin turns it on for them: faces are personal data.
+    pub faces: bool,
 }
 
 /// One of a user's library folders: a folder on the server, shown to devices by `name`.
@@ -157,8 +160,8 @@ pub fn set_user(data: &Path, name: &str, password: &str, replace: bool) -> Resul
         None if replace => return Err(format!("no user `{name}`")),
         None => random_hex(16)?,
     };
-    let (admin, folders) = f.users.get(name).map(|u| (u.admin, u.folders.clone())).unwrap_or_default();
-    f.users.insert(name.to_string(), User { password: hash_password(password)?, library, admin, folders });
+    let (admin, folders, faces) = f.users.get(name).map(|u| (u.admin, u.folders.clone(), u.faces)).unwrap_or_default();
+    f.users.insert(name.to_string(), User { password: hash_password(password)?, library, admin, folders, faces });
     std::fs::create_dir_all(user_dir(data, name)).map_err(|e| e.to_string())?;
     write_json(&data.join(USERS), &f)
 }
@@ -173,6 +176,14 @@ pub fn set_admin(data: &Path, name: &str, on: bool) -> Result<(), String> {
         return Err(format!("`{name}` is the only admin: make someone else admin first"));
     }
     u.admin = on;
+    write_json(&data.join(USERS), &f)
+}
+
+/// Let the server find the faces in a user's photos (or stop: what it found stays until the user
+/// deletes it, `DELETE /api/index/faces`).
+pub fn set_faces(data: &Path, name: &str, on: bool) -> Result<(), String> {
+    let mut f = read_users(data)?;
+    f.users.get_mut(name).ok_or_else(|| format!("no user `{name}`"))?.faces = on;
     write_json(&data.join(USERS), &f)
 }
 

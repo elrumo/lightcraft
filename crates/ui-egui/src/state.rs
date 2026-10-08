@@ -330,7 +330,7 @@ pub struct UiState {
     pub people_error: Option<String>,
     /// People found in photos as listed by the engine, with the state they were listed at.
     #[serde(skip)]
-    pub people_found: Option<((usize, usize, u64, bool), std::sync::Arc<Vec<serde_json::Value>>)>,
+    pub people_found: Option<((usize, usize, u64, bool, u64), std::sync::Arc<Vec<serde_json::Value>>)>,
     /// Names being typed for people found in photos, by the person's id.
     #[serde(skip)]
     pub people_names: std::collections::HashMap<String, String>,

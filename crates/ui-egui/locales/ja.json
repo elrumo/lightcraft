@@ -1102,5 +1102,6 @@
   "These models were trained on collections of public photos of people; their makers publish them for general use. What they find in your photos stays on this computer unless you choose to share it with your own server. You can forget it all at any time. Naming a person writes their name on the photos they are in.": "これらのモデルは、人物の公開写真のコレクションで学習されており、作者が一般向けに公開しています。写真から見つかった内容は、ご自身のサーバーと共有することを選ばない限り、このコンピューターの外へ出ません。いつでもすべて消去できます。人物に名前を付けると、その人が写っている写真に名前が書き込まれます。",
   "The face models are installed: looking for faces in your photos.": "顔モデルをインストールしました。写真の中の顔を探しています。",
   "Who is this?": "この人は誰？",
-  "Show their photos": "この人の写真を表示"
+  "Show their photos": "この人の写真を表示",
+  "Because you send your search data to your server, the faces found here go there too.": "検索データをご自身のサーバーへ送る設定のため、ここで見つかった顔のデータもサーバーへ送られます。"
 }
