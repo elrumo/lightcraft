@@ -13,14 +13,18 @@ default = ["siglip"]
 # The SigLIP 2 model on candle, and its download spec. Off, this crate is the store, index and
 # traits only (a few small dependencies; builds for the web and iOS).
 siglip = ["dep:candle-core", "dep:candle-nn", "dep:candle-transformers", "dep:lightcraft-fetch", "dep:serde_json", "dep:tokenizers"]
+# Reading the text in photos (PP-OCRv6 on rten, pure Rust) and, next, faces: ONNX models.
+onnx = ["dep:rten", "dep:rten-tensor"]
 # a tiny deterministic stand-in for the model, for the tests of crates that use it
 testing = []
 
 [dependencies]
+crc32fast = { workspace = true }
 half = { workspace = true }
 lightcraft-raster = { workspace = true }
 siphasher = { workspace = true }
 thiserror = { workspace = true }
+unicode-normalization = "0.1"
 
 # the models run natively only (the web build has no AI)
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
@@ -31,12 +35,16 @@ lightcraft-fetch = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 # pure Rust: no `onig` (C), no `esaxx_fast` (C++); `unstable_wasm` swaps Oniguruma for fancy-regex
 tokenizers = { version = "0.22", default-features = false, features = ["unstable_wasm"], optional = true }
+# pure Rust ONNX runtime with no build script (tract's build.rs runs the C compiler); 0.24 builds on Rust 1.89
+rten = { version = "0.24", default-features = false, features = ["onnx_format"], optional = true }
+rten-tensor = { version = "0.24", optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 candle-core = { workspace = true, features = ["metal"], optional = true }
 candle-nn = { workspace = true, features = ["metal"], optional = true }
 
 [dev-dependencies]
+ab_glyph = { workspace = true }
 image = { workspace = true }
 
 [[example]]
@@ -46,3 +54,7 @@ required-features = ["siglip"]
 [[test]]
 name = "reference"
 required-features = ["siglip"]
+
+[[test]]
+name = "ocr_reference"
+required-features = ["onnx"]

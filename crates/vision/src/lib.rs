@@ -18,15 +18,21 @@ pub mod fake;
 pub mod index;
 #[cfg(all(feature = "siglip", not(target_arch = "wasm32")))]
 pub mod models;
+#[cfg(all(feature = "onnx", not(target_arch = "wasm32")))]
+pub mod ocr;
 #[cfg(all(feature = "siglip", not(target_arch = "wasm32")))]
 pub mod siglip;
 pub mod store;
+pub mod textindex;
 #[cfg(all(feature = "siglip", not(target_arch = "wasm32")))]
 mod weights;
 
 pub use embedder::Embedder;
 pub use index::{EmbeddingIndex, Hit, Import};
 pub use store::{Error, Key};
+pub use textindex::TextIndex;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_text;
