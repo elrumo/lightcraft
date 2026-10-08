@@ -76,6 +76,9 @@ pub fn close(ui: &mut egui::Ui) {
 /// A section's small grey title above its card.
 pub fn header(ui: &mut egui::Ui, text: &str) {
     close(ui);
+    // (the page's own gap between items would add to ours before the first section only: later ones
+    // find it already zeroed by their rows)
+    ui.spacing_mut().item_spacing.y = 0.0;
     let t = Tokens::get(ui.ctx());
     ui.add_space(22.0);
     ui.horizontal(|ui| {
@@ -88,6 +91,7 @@ pub fn header(ui: &mut egui::Ui, text: &str) {
 /// Small grey text under a card (what the rows above do).
 pub fn footer(ui: &mut egui::Ui, text: &str) {
     close(ui);
+    ui.spacing_mut().item_spacing.y = 0.0;
     let t = Tokens::get(ui.ctx());
     ui.add_space(6.0);
     egui::Frame::NONE.inner_margin(Margin::symmetric(SIDE as i8, 0)).show(ui, |ui| {
