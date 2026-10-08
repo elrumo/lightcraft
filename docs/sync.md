@@ -1,5 +1,8 @@
 # Self-hosted sync
 
+**Setting it up step by step:** [self-hosting.md](self-hosting.md) (deploy the server, connect the desktop, web and
+iOS apps). This page is the reference.
+
 LightCraft is local-first: a library is a folder on your computer and needs no account. **Sync is optional**: run
 your own LightCraft server and every device you sign in shares one library — photos, edits, albums, ratings,
 keywords, versions — the way Lightroom (cloud) does, but on a machine you own. Nothing is sent anywhere until you sign

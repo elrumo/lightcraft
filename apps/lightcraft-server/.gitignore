@@ -1,2 +1,4 @@
 # the photo folder docker-compose.yml mounts when LIGHTCRAFT_PHOTOS is not set
 /photos/
+# docker compose settings (LIGHTCRAFT_DOMAIN, LIGHTCRAFT_PHOTOS)
+/.env

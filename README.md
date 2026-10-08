@@ -279,7 +279,7 @@ lightcraft --control 7980 ~/Pictures/trip
   one library — photos, edits, albums — downloading previews and originals as needed, Lightroom-cloud style, on a
   machine you own, with an admin page in the browser for users and devices. Photo folders already on the server (a
   NAS share) can be part of a user's library, read in place: never copied, moved or changed, shown on every device in
-  their folders. Off until you sign in ([docs/sync.md](docs/sync.md)).
+  their folders. Off until you sign in ([set it up](docs/self-hosting.md), [reference](docs/sync.md)).
 
 <br>
 
