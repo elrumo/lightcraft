@@ -1137,10 +1137,11 @@ fn sync_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
                 card_end(ui, t);
                 ui.add_space(28.0);
             }
+            check(ui, "sync.merge", &mut form.merge, "Combine with the photos already on the server");
             row(ui, t, "", |ui| {
                 let ready = !form.server.trim().is_empty() && !form.user.trim().is_empty() && !form.password.is_empty();
                 if action(ui, t, "syncSignIn", "Sign In", ready, false) {
-                    let p = json!({"server": form.server.trim(), "user": form.user.trim(), "password": form.password});
+                    let p = json!({"server": form.server.trim(), "user": form.user.trim(), "password": form.password, "merge": form.merge});
                     form.password.clear();
                     sync_cmd(app, ui, "sync.signIn", p);
                 }
@@ -1150,7 +1151,7 @@ fn sync_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
                 ui,
                 t,
                 crate::i18n::tr(
-                    "The first library signed in uploads its photos to the empty server. To get them on another computer, sign in from a new, empty library there.",
+                    "The first library signed in uploads its photos to the empty server. On another computer, sign in from a new, empty library to get them, or tick Combine to merge a library you already have with the server's: photos are matched by what they are, and nothing is removed on either side.",
                 ),
             );
         }

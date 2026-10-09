@@ -172,7 +172,9 @@ device keeps a token of its own, which the admin page can sign out (Users ▸ th
 - The **first** device with photos to sign in to an empty server **uploads its library** (originals and previews).
   If a library folder already filled the server, it isn't empty.
 - **Every other device signs in from a new, empty library**, and fills from the server. A library that has photos of
-  its own can't join a server library that has some (two libraries aren't merged).
+  its own can **merge** into the server's: tick *Combine with the photos already on the server* in Settings ▸ Sync
+  before signing in (photos are matched by what they are, nothing is removed on either side; without the tick it
+  tells you what a merge would do and signs nothing in).
 
 Address typing: `photos.example.com` means `https://`; a bare address on your home network or tailnet
 (`192.168.1.20:8080`, `nas:8080`, `100.101.102.103:8080`, `*.local`) means `http://`. Type the scheme to choose.

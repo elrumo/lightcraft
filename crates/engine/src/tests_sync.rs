@@ -1298,3 +1298,79 @@ fn shared_documents_from_elsewhere_are_checked() {
     assert!(!root.join("escape.cube").exists() && !root.join("a/escape.cube").exists());
     let _ = std::fs::remove_dir_all(&root);
 }
+
+// ---- merging a library into the server's ----
+
+fn by_name(s: &Session, name: &str) -> PhotoId {
+    s.catalog.photos().find(|p| p.file_name == name).unwrap_or_else(|| panic!("no {name}")).id
+}
+
+/// A library that already has photos joins a server that has some, when asked: the photos both have are matched by
+/// what they are (their ids differ — and collide), the rest comes across with its albums, edits made on this side
+/// reach the server and the other device, and nothing of the server's is lost.
+#[test]
+fn a_library_with_photos_merges_into_the_servers_when_asked() {
+    let mut f = Fake::new();
+    let (mut a, root, ids) = first_device("merge", &mut f); // a.png and b.png, ids 1 and 2
+    a.selection = crate::Selection::single(ids[0]);
+    a.execute("photo.rate", &json!({"rating": 4})).unwrap();
+    sync(&mut a, &mut f);
+    // another library: b.png again (the same file) and c.png, numbered 1 and 2 as well
+    write_png(&root.join("in2/b.png"), 2);
+    write_png(&root.join("in2/c.png"), 3);
+    let mut c = open(&root.join("c"));
+    c.execute("library.import", &json!({"paths": [root.join("in2").to_string_lossy()]})).unwrap();
+    let (cb, cc) = (by_name(&c, "b.png"), by_name(&c, "c.png"));
+    assert!(ids.contains(&cb) && ids.contains(&cc), "the two libraries number their photos alike");
+    c.selection = crate::Selection::single(cb);
+    c.execute("develop.set", &json!({"control": "light.exposure", "value": 1.0})).unwrap();
+    c.execute("photo.rate", &json!({"rating": 2})).unwrap();
+    c.selection = crate::Selection::single(cc);
+    c.execute("photo.rate", &json!({"rating": 5})).unwrap();
+    c.execute("album.create", &json!({"name": "Mine", "addSelected": true})).unwrap();
+
+    // not asked: refused, and the message says what a merge would do
+    sign_in(&mut c);
+    let st = sync(&mut c, &mut f);
+    assert_eq!(st["signedIn"], false, "{st}");
+    let why = st["error"].as_str().unwrap();
+    assert!(why.contains("Merge") && why.contains("new library") && why.contains("1 of them are the same, 1 would be added"), "{why}");
+    assert_eq!((c.catalog.len(), f.core.catalog().len()), (2, 2), "nothing changed on either side");
+
+    // asked: combined
+    c.execute("sync.signIn", &json!({"server": "http://fake", "user": "ann", "password": "pw", "device": "test", "merge": true})).unwrap();
+    let st = sync(&mut c, &mut f);
+    assert_eq!(st["state"], "idle", "{st}");
+    assert_eq!((st["merged"]["matched"].clone(), st["merged"]["added"].clone()), (json!(1), json!(1)), "{st}");
+    // the server: its three photos, the shared one with this side's edits, the new one and its album
+    let server = f.core.catalog();
+    assert_eq!(server.len(), 3);
+    let sb = server.photos().find(|p| p.file_name == "b.png").unwrap();
+    assert_eq!((sb.rating, sb.develop.light.exposure), (2, 1.0));
+    let sa = server.photos().find(|p| p.file_name == "a.png").unwrap();
+    assert_eq!(sa.rating, 4, "what was there stays");
+    let sc = server.photos().find(|p| p.file_name == "c.png").unwrap();
+    assert_eq!(sc.rating, 5);
+    assert_eq!(sc.id.0 >> 32, u64::from(c.sync_state().unwrap().config.space), "new ids are in this device's space");
+    let mine: Vec<_> = server.albums().filter(|al| al.name == "Mine").collect();
+    assert_eq!((mine.len(), mine[0].photos.clone()), (1, vec![sc.id]));
+    assert!(f.blobs.keys().any(|(k, h)| k == "original" && Some(h.as_str()) == crate::sync::blob_key(sc).as_deref()), "its file went up");
+    // this device: all three, its own files where it has them, the server's photo only as previews
+    assert_eq!(c.catalog.len(), 3);
+    let (lb, lc, la) = (by_name(&c, "b.png"), by_name(&c, "c.png"), by_name(&c, "a.png"));
+    assert!(matches!(&c.catalog.photo(lb).unwrap().source, Source::File { path } if path.starts_with(root.join("in2").to_string_lossy().as_ref())));
+    assert!(matches!(&c.catalog.photo(lc).unwrap().source, Source::File { path } if path.starts_with(root.join("in2").to_string_lossy().as_ref())));
+    assert!(is_remote(c.catalog.photo(la).unwrap()));
+    assert_eq!(c.catalog.albums().filter(|al| al.name == "Mine").count(), 1);
+    assert!(c.sync_state().unwrap().outbox.is_empty());
+    // the first device gets it all
+    sync(&mut a, &mut f);
+    assert_eq!(a.catalog.len(), 3);
+    assert_eq!(a.catalog.photo(a.catalog.photos().find(|p| p.file_name == "b.png").unwrap().id).unwrap().develop.light.exposure, 1.0);
+    assert_eq!(a.catalog.albums().filter(|al| al.name == "Mine").count(), 1);
+    // signing in again later finds nothing to merge and nothing to redo
+    let before = f.core.head();
+    sync(&mut c, &mut f);
+    assert_eq!(f.core.head(), before);
+    let _ = std::fs::remove_dir_all(&root);
+}

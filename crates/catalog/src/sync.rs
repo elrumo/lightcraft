@@ -49,6 +49,13 @@ pub fn hash_of_path(path: &str) -> Option<&str> {
     (!hash.is_empty()).then_some(hash)
 }
 
+/// The server's key for a photo's files: its content hash (without the suffix that keeps converted copies
+/// apart), when it is a 128-bit hex hash.
+pub fn content_key(p: &Photo) -> Option<String> {
+    let h = p.content_hash.as_deref()?.split(':').next()?;
+    (h.len() == 32 && h.bytes().all(|b| b.is_ascii_hexdigit())).then(|| h.to_ascii_lowercase())
+}
+
 /// The value an op sets, as `p<id>.<field>` / `a<id>.<field>` / `s<id>.<field>` /
 /// `label.<colour>`: two ops with the same key replace the same value. `None` for ops that are
 /// never synced: device-local ones and batches (synced op by op).

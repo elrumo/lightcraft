@@ -18,6 +18,7 @@ pub mod journal;
 pub mod keywords;
 pub mod local;
 pub mod lock;
+pub mod merge;
 pub mod model;
 pub mod query;
 pub mod rules;
@@ -707,6 +708,8 @@ mod tests_journal;
 mod tests_local;
 #[cfg(test)]
 mod tests_lock;
+#[cfg(test)]
+mod tests_merge;
 #[cfg(test)]
 mod tests_sync;
 #[cfg(test)]

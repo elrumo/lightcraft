@@ -38,6 +38,8 @@ pub struct SyncForm {
     pub server: String,
     pub user: String,
     pub password: String,
+    /// Combine this library with the server's when both have photos.
+    pub merge: bool,
 }
 
 pub struct SyncDriver {

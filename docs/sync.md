@@ -238,9 +238,19 @@ that site's browser storage, so each site is a separate device. The admin page i
 - **The first library** signed in to an empty server **uploads itself**: every photo's original, a smart preview
   (≤ 2560 px, ~1 MB) and a mini preview (≤ 512 px) built on this device, then the whole catalog. A library holding
   only the demo photos uploads nothing: the empty server library replaces them.
-- **Other devices sign in from a new, empty library** (Settings ▸ General ▸ Open Library… → a new folder). A library
-  that already has photos can't join a server library that has some: v1 doesn't merge two libraries. A new library
-  holding only the demo photos counts as empty (the server's library replaces them).
+- **Other devices sign in from a new, empty library** (Settings ▸ General ▸ Open Library… → a new folder): they get
+  the server's library. A new library holding only the demo photos counts as empty (the server's library replaces them).
+- **A library that already has photos can be merged into the server's** (Settings ▸ Sync ▸ *Combine with the photos
+  already on the server*, or `sync.signIn … merge=true`). Without it the sign-in is refused and says what a merge
+  would do ("12 of them are the same, 30 would be added"). A merge never removes anything on either side:
+  - photos are matched by what they are (the content hash of the file), not by number — each library numbered its own;
+  - a photo on both sides stays the server's and gets what this library added to it (rating, flag, label, edits,
+    metadata, versions); where both changed the same value, the server's stays;
+  - photos only here are added (with their virtual copies), with their albums, smart albums and stacks; an album with
+    the same name in the same place on both sides becomes one album with the photos of both;
+  - the changes are made on top of the server's library like any edit, so they reach every device, and the photos'
+    files upload as usual. What belongs to this device alone — where its files are, History, Local folders — is kept.
+  Merging again changes nothing.
 - **Signing out** keeps the library and its unsent changes; signing in again (same server and user) resumes.
 - **File ▸ Pause Syncing** stops talking to the server until resumed; **File ▸ Sync Now** pulls at once (it also pulls
   every 5 seconds and whenever the window comes back to the front).
@@ -404,7 +414,7 @@ v1, honestly:
   need the original: **Photo ▸ Download Originals** first (the export says so). The browser can't have the server
   render a photo (export runs on the page's main thread), as the desktop and iOS apps can.
 - **Settings that describe one computer stay on it**, by design: the folders (library, smart previews, the watched folder for auto import), the cache size, the external editor, what is shared for search, the window layout.
-- **No merging of two existing libraries**, no sharing with other people, no shared albums or links.
+- **No sharing with other people**, no shared albums or links.
 - **The server compacts its log** into a snapshot at 64 MiB and keeps the newest 16 MiB of it (tens of thousands of
   changes): a device behind by more than that reloads the library. (A device that is only a little behind keeps
   pulling; a pull reads just the part of the log it asks for.)

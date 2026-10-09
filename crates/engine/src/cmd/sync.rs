@@ -60,6 +60,7 @@ fn sign_in(s: &mut Session, p: &Value) -> Result<Value> {
     let password = str_param(p, "password").ok_or_else(|| bad(C, "missing `password`"))?;
     let device = str_param(p, "device").filter(|d| !d.trim().is_empty()).map(str::to_string).unwrap_or_else(default_device_name);
     s.sync_sign_in(server, user, password, &device)?;
+    s.sync_merge_on_join(bool_or(p, "merge", false));
     status(s, p)
 }
 
@@ -185,7 +186,7 @@ pub fn specs() -> Vec<CommandSpec> {
     vec![
         // not journaled: the parameters carry a password
         cmd!(query "sync.signIn", "Sign In to Sync", [], None,
-            "{server: \"https://…\", user, password, device?}: share this library with a LightCraft server (docs/sync.md). An empty server library gets this one; a library with photos can't join a server that has some (sign in from a new library)",
+            "{server: \"https://…\", user, password, device?, merge?: bool}: share this library with a LightCraft server (docs/sync.md). An empty server library gets this one; a library with photos can join a server that has some only with `merge` (photos matched by content, nothing removed on either side; without it the error says what a merge would do) — or sign in from a new library to just get the server's photos",
             always, sign_in),
         cmd!(
             "sync.signOut",

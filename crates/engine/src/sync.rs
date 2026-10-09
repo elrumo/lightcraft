@@ -323,6 +323,11 @@ pub struct SyncState {
     docs_base_dirty: bool,
     /// Which prefs.json write was last compared.
     docs_seen: Option<u64>,
+    /// Signing in to a server that has a library when this one has photos: combine the two
+    /// ([`lightcraft_catalog::merge`]) instead of refusing. Only for this sign-in.
+    merge: bool,
+    /// What the last merge of this library into the server's found and did.
+    merged: Option<lightcraft_catalog::merge::MergeReport>,
     /// What the server says this library takes there, when it said so, and the request in flight.
     usage: Option<proto::Usage>,
     usage_at: Option<Instant>,
@@ -372,6 +377,8 @@ impl SyncState {
             docs: Default::default(),
             docs_base_dirty: false,
             docs_seen: None,
+            merge: false,
+            merged: None,
             usage: None,
             usage_at: None,
             usage_task: None,
@@ -578,6 +585,7 @@ impl SyncState {
             "offlinePhotos": self.config.offline_photos,
             "storeOriginals": self.config.store_originals,
             "originalsBudgetMb": self.config.originals_budget_mb,
+            "merged": self.merged,
             "serverPreviews": self.config.server_builds_previews(),
             "paused": self.config.paused,
         })
@@ -603,8 +611,7 @@ impl SyncState {
 /// The server's key for a photo's files: its content hash (without the suffix that keeps
 /// converted copies apart), when it is a 128-bit hex hash.
 pub fn blob_key(p: &Photo) -> Option<String> {
-    let h = p.content_hash.as_deref()?.split(':').next()?;
-    (h.len() == 32 && h.bytes().all(|b| b.is_ascii_hexdigit())).then(|| h.to_ascii_lowercase())
+    lightcraft_catalog::sync::content_key(p)
 }
 
 /// Does the file at `path` hash to `key` (a [`blob_key`])? A file that can't be read doesn't.
@@ -795,6 +802,15 @@ impl Session {
         st.retry_at = None;
         st.pull_at = None;
         self.persist()
+    }
+
+    /// Combine this library with the server's when the sign-in finds both have photos (instead of
+    /// refusing): matched by what the photos are, nothing removed on either side. Call it after
+    /// [`Session::sync_sign_in`]; it holds for that sign-in only.
+    pub fn sync_merge_on_join(&mut self, on: bool) {
+        if let Some(st) = self.sync.as_mut() {
+            st.merge = on;
+        }
     }
 
     /// Stop syncing (the library and its pending changes stay; signing in again resumes).
@@ -1413,9 +1429,7 @@ impl Session {
                 return Ok(());
             }
             if has_photos {
-                return Err(
-                    "this library has photos and the server already has a library: sign in from a new library to get the server's photos".into()
-                );
+                return self.join_by_merging(st, snap);
             }
             st.config.library = snap.library;
         }
@@ -1437,6 +1451,46 @@ impl Session {
         }
         st.config.cursor = snap.seq;
         st.planned = None;
+        self.replace_catalog(c);
+        Ok(())
+    }
+
+    /// This library has photos and the server already has a library: without the person's say-so say what a merge
+    /// would do; with it, merge. The result is the server's library with this one's changes made on top, so they
+    /// reach the server (and every other device) like any edit; what belongs to this device alone — where its
+    /// files are, History, Local records — is carried over under the new ids.
+    fn join_by_merging(&mut self, st: &mut SyncState, snap: proto::Snapshot) -> std::result::Result<(), String> {
+        let here = self.catalog.photos().filter(|p| !p.local && !matches!(p.source, Source::Demo { .. })).count();
+        let there = snap.catalog.len();
+        let merged = lightcraft_catalog::merge::merge(&self.catalog, snap.catalog, st.config.space);
+        let r = merged.report.clone();
+        if !st.merge {
+            st.merge = false;
+            return Err(format!(
+                "this library has {here} photo(s) and the server already has a library of {there}: {} of them are the same, {} would be added. \
+                 Sign in with Merge on to combine the two (nothing is removed on either side), or sign in from a new library to just get the server's photos",
+                r.matched, r.added
+            ));
+        }
+        st.merge = false;
+        let mut c = merged.catalog;
+        lightcraft_catalog::merge::carry_local_mapped(&self.catalog, &mut c, &merged.photos);
+        lightcraft_catalog::sync::sanitize(&mut c);
+        st.config.library = snap.library;
+        st.config.cursor = snap.seq;
+        st.outbox = merged.outbox;
+        st.outbox_changed();
+        // what this device keeps offline is named by the new ids
+        st.config.offline_photos = st.config.offline_photos.iter().filter_map(|id| merged.photos.get(id).copied()).collect();
+        st.config.offline_albums = st.config.offline_albums.iter().filter_map(|id| merged.albums.get(id).copied()).collect();
+        st.planned = None;
+        st.merged = Some(r);
+        // views and selections named the old ids
+        self.selection = crate::Selection::default();
+        self.previous_active = None;
+        self.before.clear();
+        self.source = crate::LibrarySource::All;
+        self.filter = Default::default();
         self.replace_catalog(c);
         Ok(())
     }
