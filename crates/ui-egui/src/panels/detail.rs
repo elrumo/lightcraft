@@ -241,8 +241,10 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     };
     // once this photo is on screen: prepare its neighbours in filmstrip order (source decoded and
     // kept, view render cached) so stepping to them is instant; the phone also keeps their renders to
-    // slide them in, and `near` is where each is drawn (a photo's width and a gap beside this one)
-    let idle = !interacting && !app.renderer.is_pending(Slot::Main) && app.renderer.textures.get(&Slot::Main).is_some_and(|t| t.photo == id);
+    // slide them in, and `near` is where each is drawn (a photo's width and a gap beside this one).
+    // Not while the bars slide: a render at each size on the way would hold up this photo's own.
+    let idle =
+        !interacting && !resizing && !app.renderer.is_pending(Slot::Main) && app.renderer.textures.get(&Slot::Main).is_some_and(|t| t.photo == id);
     app.renderer.keep_neighbours = app.compact;
     let mut near = Vec::new();
     if idle || slide != 0.0 {
@@ -731,9 +733,9 @@ fn review_hud(ui: &egui::Ui, p: &egui::Painter, canvas: Rect, photo: &lightcraft
         1.0 + 0.35 * pop + swell
     };
     let (h, y) = (44.0, canvas.bottom() - 16.0 - 22.0);
-    let pill = |c: Pos2, w: f32, k: f32| {
-        p.rect_filled(Rect::from_center_size(c, vec2(w, h) * k), h / 2.0 * k, Color32::from_black_alpha((150.0 * fade) as u8))
-    };
+    // (the glyphs' colours follow the appearance: dark pills under light ones, light under dark)
+    let fill = if Tokens::is_dark(ctx) { Color32::from_black_alpha((150.0 * fade) as u8) } else { Color32::from_white_alpha((210.0 * fade) as u8) };
+    let pill = |c: Pos2, w: f32, k: f32| p.rect_filled(Rect::from_center_size(c, vec2(w, h) * k), h / 2.0 * k, fill);
     // the stars
     let (star, gap) = (26.0, 6.0);
     let w = 5.0 * star + 4.0 * gap + 28.0;
@@ -862,8 +864,11 @@ const SLIDE_FRACTION: f32 = 0.25;
 const SLIDE_FLING: f32 = 600.0;
 /// How quickly a let-go photo settles: the distance left shrinks by e^-10 each second.
 const SLIDE_SETTLE: f32 = 10.0;
-/// A second tap within this many seconds is a double tap (zoom), not a single one (the bars).
-const DOUBLE_TAP_S: f64 = 0.32;
+/// A tap shows or hides the bars once no second finger has come down this many seconds after it
+/// lifted (a double tap's second comes sooner, and zooms).
+const TAP_GAP_S: f64 = 0.2;
+/// How long the ring that answers a tap on the phone loupe lasts (seconds).
+const TAP_RING_S: f64 = 0.35;
 /// How long the review readout's pop lasts (seconds).
 const POP_S: f64 = 0.45;
 
@@ -889,6 +894,16 @@ struct Swipe {
     shown: Option<(u8, u8)>,
     /// The photo this ran for last, to slide in a change made by anything but the finger.
     id: u64,
+}
+
+/// The phone loupe's last tap: when and where it lifted, whether the bars are still to change for
+/// it, and whether they have.
+#[derive(Clone, Copy, Default)]
+struct LoupeTap {
+    at: f64,
+    pos: Pos2,
+    pending: bool,
+    toggled: bool,
 }
 
 /// What a rating / flag swipe in progress (or just lifted) is showing: (stars, flag).
@@ -1143,22 +1158,41 @@ fn general_interaction(
         }
     }
     if app.compact {
-        // a single tap shows or hides the bars (review mode), once no second tap can follow
+        // a single tap shows or hides the bars (review mode) as soon as it can't be a double tap's
+        // first, and is answered at once: a light haptic, and a ring where the finger lifted
         let (key, now) = (egui::Id::new("loupe-tap"), ui.input(|i| i.time));
+        let mut tap = ui.data(|m| m.get_temp(key)).unwrap_or(LoupeTap { at: f64::NEG_INFINITY, ..Default::default() });
         if resp.double_clicked() {
-            ui.data_mut(|m| m.remove_temp::<f64>(key));
-        } else if resp.clicked() {
-            ui.data_mut(|m| m.insert_temp(key, now));
-        }
-        if let Some(at) = ui.data(|m| m.get_temp::<f64>(key)) {
-            if now - at >= DOUBLE_TAP_S {
-                ui.data_mut(|m| m.remove_temp::<f64>(key));
+            // (a double tap slower than the wait has already changed the bars: they go back)
+            if tap.toggled {
                 let _ = app.run("view.reviewMode", json!({}));
-                haptics::tap(ui.ctx(), Haptic::Light);
+            }
+            (tap.pending, tap.toggled) = (false, false);
+        } else if resp.clicked() {
+            tap = LoupeTap { at: now, pos: resp.interact_pointer_pos().unwrap_or(canvas.center()), pending: true, toggled: false };
+            haptics::tap(ui.ctx(), Haptic::Light);
+        } else if resp.drag_started() {
+            tap.pending = false; // (a tap then a swipe: the swipe)
+        }
+        // (a finger down on the photo again may be a double tap's second: wait for it to lift)
+        if tap.pending && !resp.is_pointer_button_down_on() {
+            if now - tap.at >= TAP_GAP_S {
+                let _ = app.run("view.reviewMode", json!({}));
+                (tap.pending, tap.toggled) = (false, true);
             } else {
-                ui.ctx().request_repaint_after(std::time::Duration::from_secs_f64(at + DOUBLE_TAP_S - now));
+                ui.ctx().request_repaint_after(std::time::Duration::from_secs_f64(tap.at + TAP_GAP_S - now));
             }
         }
+        let u = ((now - tap.at) / TAP_RING_S) as f32;
+        if (0.0..1.0).contains(&u) {
+            // it swells (easing out) and fades; a dark halo keeps it seen on a light background
+            let (r, a) = (18.0 + 14.0 * (1.0 - (1.0 - u).powi(3)), 1.0 - u);
+            let p = ui.painter_at(canvas);
+            p.circle(tap.pos, r, Color32::from_white_alpha((50.0 * a) as u8), Stroke::new(3.5, Color32::from_black_alpha((40.0 * a) as u8)));
+            p.circle_stroke(tap.pos, r, Stroke::new(2.0, Color32::from_white_alpha((220.0 * a) as u8)));
+            ui.ctx().request_repaint();
+        }
+        ui.data_mut(|m| m.insert_temp(key, tap));
     }
     let _ = (native, aspect);
 }

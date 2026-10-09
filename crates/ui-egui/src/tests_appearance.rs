@@ -88,6 +88,27 @@ fn the_sheets_rounded_corners_show_the_canvas() {
     assert_eq!(img.pixels[y * img.size[0]], Color32::WHITE, "a light sheet's corner is the canvas, not the clear colour");
 }
 
+/// Review mode's stars and flag sit on light pills in the light appearance (its dark glyphs were
+/// lost on the dark ones) and on dark pills in the dark one.
+#[test]
+fn the_review_pills_follow_the_appearance() {
+    let mut h = phone();
+    let r = h.request("engine.execute", json!({"command": "view.reviewMode", "params": {"on": true}}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    for (command, light) in [("app.appearance.light", true), ("app.appearance.dark", false)] {
+        run(&mut h, command);
+        for _ in 0..30 {
+            h.step();
+        }
+        let pill = h.app.widgets.iter().find(|(w, _)| w == "review:stars").map(|(_, r)| *r).expect("the readout is up");
+        let img = h.paint();
+        // inside the pill's rounded left end, clear of the first star
+        let (x, y) = ((pill.left() + 8.0) as usize, pill.center().y as usize);
+        let px = img.pixels[y * img.size[0] + x];
+        assert!(if light { px.r() > 200 } else { px.r() < 60 }, "{command}: {px:?}");
+    }
+}
+
 /// The setting is a command (menu, All Commands, control channel, MCP), checked in the menu, in the
 /// UI state the host saves.
 #[test]
