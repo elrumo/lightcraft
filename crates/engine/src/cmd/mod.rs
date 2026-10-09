@@ -29,6 +29,7 @@ mod preset_files;
 pub mod previews;
 mod query;
 mod sync;
+mod vision;
 mod xmp;
 
 use serde::Serialize;
@@ -134,6 +135,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(merge::specs());
         v.extend(query::specs());
         v.extend(map::specs());
+        v.extend(vision::specs());
         v.extend(xmp::specs());
         v.extend(preset_files::specs());
         v.extend(prefs::specs());

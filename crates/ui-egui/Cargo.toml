@@ -27,6 +27,7 @@ log = { workspace = true }
 
 [dev-dependencies]
 lightcraft-codecs = { workspace = true }
+lightcraft-vision = { workspace = true, features = ["testing"] }
 
 [build-dependencies]
 serde_json = { workspace = true }

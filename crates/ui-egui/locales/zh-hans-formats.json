@@ -121,6 +121,13 @@
   "{weekday}, {day}": "{day}日 {weekday}",
   "{weekday}, {day} {month} {year}": "{year}年{month}月{day}日 {weekday}",
   "Add {n}": "添加 {n} 张",
+  "Getting your photos ready to search: {done} of {total}": "正在准备可搜索的照片：{done}/{total}",
+  "{indexed} of {total} photos can be searched.": "已有 {indexed}/{total} 张照片可供搜索",
+  "Your server has {indexed} of {total} photos ready to search.": "服务器上已有 {indexed}/{total} 张照片可供搜索",
+  "Reading the text in your photos: {done} of {total}": "正在读取照片中的文字：{done}/{total}",
+  "Confirm {pending} more": "确认另外 {pending} 张",
+  "{faces} faces found in {photos} photos.": "在 {photos} 张照片中找到 {faces} 张人脸。",
+  "Looking for faces: {done} of {total}": "正在查找人脸：{done}/{total}",
   "{n} photos · synced with {server}": "{n} 张照片 · 已与 {server} 同步",
   "{n} photos on this device": "此设备上有 {n} 张照片",
   "{n} photos, not saved": "{n} 张照片（不会保存）"

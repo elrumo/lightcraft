@@ -39,6 +39,9 @@ pub struct User {
     /// Photo folders on the server that are this user's library folders, read in place (see
     /// [`crate::folders`]). Only an admin sets them.
     pub folders: Vec<LibraryFolder>,
+    /// The server finds the faces in this user's photos and groups them into people (see
+    /// [`crate::vision`]). Off until an admin turns it on for them: faces are personal data.
+    pub faces: bool,
     /// File and folder names the scan of those folders skips, wherever they are (see
     /// `lightcraft_engine::import::is_ignored`): `*.fcpbundle`, `Proxy Media`.
     pub ignore: Vec<String>,
@@ -176,6 +179,14 @@ pub fn set_admin(data: &Path, name: &str, on: bool) -> Result<(), String> {
         return Err(format!("`{name}` is the only admin: make someone else admin first"));
     }
     u.admin = on;
+    write_json(&data.join(USERS), &f)
+}
+
+/// Let the server find the faces in a user's photos (or stop: what it found stays until the user
+/// deletes it, `DELETE /api/index/faces`).
+pub fn set_faces(data: &Path, name: &str, on: bool) -> Result<(), String> {
+    let mut f = read_users(data)?;
+    f.users.get_mut(name).ok_or_else(|| format!("no user `{name}`"))?.faces = on;
     write_json(&data.join(USERS), &f)
 }
 

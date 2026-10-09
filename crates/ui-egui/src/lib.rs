@@ -29,6 +29,8 @@ pub mod theme;
 pub mod widgets;
 
 #[cfg(test)]
+mod tests_ai_search;
+#[cfg(test)]
 mod tests_compact;
 #[cfg(test)]
 mod tests_curve;
@@ -46,6 +48,8 @@ mod tests_masking;
 mod tests_offline;
 #[cfg(test)]
 mod tests_panels;
+#[cfg(test)]
+mod tests_people;
 #[cfg(test)]
 mod tests_quit_unsaved;
 #[cfg(test)]
@@ -264,6 +268,7 @@ impl LightcraftApp {
         session.segmenter.background = true;
         // places and coastlines are parsed in the background, not on the first search
         lightcraft_geo::preload();
+        session.vision.background = true;
         Self {
             session,
             ui: UiState::default(),
@@ -833,6 +838,8 @@ impl LightcraftApp {
         // panels set it again this frame while the pointer rests on a preset or profile
         self.hover_preview = None;
         self.ai_mask_detail(&ctx);
+        panels::ai_search::frame(self, &ctx);
+        panels::people::frame(self, &ctx);
         if self.ui.fullscreen {
             // full-screen preview: the photo alone on black
             egui::CentralPanel::default().frame(egui::Frame::NONE.fill(egui::Color32::BLACK)).show(ui, |ui| panels::detail::show(self, ui));

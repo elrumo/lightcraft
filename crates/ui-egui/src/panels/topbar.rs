@@ -59,24 +59,37 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 ui.new_child(egui::UiBuilder::new().max_rect(sr.shrink2(vec2(10.0, 4.0))).layout(egui::Layout::left_to_right(egui::Align::Center)));
             let empty = app.ui.search.is_empty();
             if empty && !focused {
-                let g = child.painter().layout_no_wrap(crate::i18n::tr("Search Photos").into(), t.font(13.5), t.text_dim);
+                let hint = if app.ui.ai_search { "Describe a photo…" } else { "Search Photos" };
+                let g = child.painter().layout_no_wrap(crate::i18n::tr(hint).into(), t.font(13.5), t.text_dim);
                 let w = g.size().x + 24.0;
                 let x0 = sr.center().x - w / 2.0;
                 paint(child.painter(), Rect::from_min_size(pos2(x0, sr.center().y - 8.0), vec2(16.0, 16.0)), Icon::Search, t.text_dim);
                 child.painter().galley(pos2(x0 + 24.0, sr.center().y - g.size().y / 2.0), g, t.text_dim);
             }
+            let pill_w = crate::panels::ai_search::pill_width(app);
             let resp = child.add(
                 egui::TextEdit::singleline(&mut app.ui.search)
                     .id(id)
                     .frame(egui::Frame::NONE)
-                    .desired_width(sr.width() - 20.0)
+                    .desired_width(sr.width() - 20.0 - pill_w)
                     .font(t.font(13.5))
                     .text_color(t.text),
             );
-            if resp.changed() {
+            if app.ui.ai_search {
+                // describing a photo: Return searches; emptying the field leaves the results
+                if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    crate::panels::ai_search::submit(app);
+                    // (Return ends the edit; stay in the field so the description can be refined)
+                    app.ui.focus_search = true;
+                } else if resp.changed() && app.ui.search.trim().is_empty() {
+                    crate::panels::ai_search::clear(app);
+                }
+            } else if resp.changed() {
                 let q = app.ui.search.clone();
                 let _ = app.run("library.filter", json!({"text": q}));
             }
+            crate::panels::ai_search::pill(app, ui, sr);
+            crate::panels::ai_search::panel(app, ui.ctx(), sr);
             // filter icon right of the search field
             let fr = Rect::from_center_size(pos2(sr.right() + 22.0, sr.center().y), vec2(28.0, 28.0));
             let fresp = ui.interact(fr, egui::Id::new("filter-btn"), Sense::click());
