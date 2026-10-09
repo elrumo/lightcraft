@@ -66,6 +66,7 @@ impl Session {
             && Path::new(path).starts_with(&dir)
             && let Ok(f) = std::fs::OpenOptions::new().append(true).open(path)
         {
+            #[allow(clippy::disallowed_methods)] // native only: the file is on a disk, and wasm has none
             let _ = f.set_modified(SystemTime::now());
         }
     }
