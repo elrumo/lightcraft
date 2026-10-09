@@ -8,16 +8,44 @@ use serde_json::{Value, json};
 
 use crate::headless::Headless;
 use crate::state::{Dialog, ModelStep};
-use crate::tests_superres::{app, settle, tmp};
+use crate::tests_superres::{app as small_app, settle, tmp};
 
 const T: Duration = Duration::from_secs(20);
+
+/// The app in a window tall enough for every model's card (a click goes to where a widget is
+/// drawn, and doesn't scroll to it).
+fn app(dir: &std::path::Path) -> (Headless, lightcraft_catalog::PhotoId) {
+    let (h, id) = small_app(dir);
+    (Headless::new(h.app, [1200.0, 1800.0], 1.0), id)
+}
 
 fn open_tab(h: &mut Headless) {
     h.app.ui.dialog = Some(Dialog::Settings { tab: "models".into() });
     settle(h);
 }
 
+/// Scroll the dialog's list until the widget is inside the dialog window (a click goes to where a
+/// widget is drawn and doesn't scroll to it, as a user would).
+fn reveal(h: &mut Headless, id: &str) {
+    for _ in 0..40 {
+        let all = h.request("ui.widgets", json!({}), T);
+        let rect = |name: &str| all["result"].as_array().and_then(|a| a.iter().find(|x| x["id"] == name)).map(|x| x["rect"].clone());
+        let (Some(win), Some(r)) = (rect("dialog:window"), rect(id)) else { return };
+        let n = |v: &Value, i: usize| v[i].as_f64().unwrap_or(0.0);
+        let (wx, wy, ww, wh) = (n(&win, 0), n(&win, 1), n(&win, 2), n(&win, 3));
+        let (ry, rh) = (n(&r, 1), n(&r, 3));
+        // inside, clear of the tab bar above and the Close button below
+        if ry >= wy + 80.0 && ry + rh <= wy + wh - 50.0 {
+            return;
+        }
+        h.request("ui.move", json!({"x": wx + ww / 2.0, "y": wy + wh / 2.0}), T);
+        h.request("ui.scroll", json!({"dy": if ry > wy + wh / 2.0 { -160.0 } else { 160.0 }}), T);
+        settle(h);
+    }
+}
+
 fn click(h: &mut Headless, id: &str) -> Value {
+    reveal(h, id);
     h.request("ui.clickWidget", json!({"id": id}), T)
 }
 

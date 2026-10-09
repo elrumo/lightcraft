@@ -94,7 +94,11 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, tab: &mut String) {
             let h = (ui.ctx().content_rect().height() - 240.0).max(300.0);
             egui::ScrollArea::vertical().max_height(h).auto_shrink([false, true]).show(ui, |ui| sync_tab(app, ui, &t));
         }
-        "models" => crate::panels::ai_models::tab(app, ui, &t),
+        "models" => {
+            // (five models make this tab long)
+            let h = (ui.ctx().content_rect().height() - 240.0).max(300.0);
+            egui::ScrollArea::vertical().max_height(h).auto_shrink([false, true]).show(ui, |ui| crate::panels::ai_models::tab(app, ui, &t));
+        }
         _ => general_tab(app, ui, &t),
     }
 }
