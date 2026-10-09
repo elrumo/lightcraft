@@ -64,6 +64,8 @@ mod tests_scroll;
 #[cfg(test)]
 mod tests_superres;
 #[cfg(test)]
+mod tests_sync_ui;
+#[cfg(test)]
 mod tests_unsaved;
 
 use std::sync::mpsc::{Receiver, Sender};
@@ -935,6 +937,7 @@ impl LightcraftApp {
         });
         panels::second::show(self, &ctx);
         panels::notices::show(self, &ctx);
+        panels::sync_status::show(self, &ctx);
         panels::dialogs::show(self, &ctx);
         panels::library_problem::show(self, &ctx);
         import::progress(self, &ctx);

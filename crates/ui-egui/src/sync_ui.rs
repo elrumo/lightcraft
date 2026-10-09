@@ -48,12 +48,15 @@ pub struct SyncDriver {
     focused: bool,
     pub form: SyncForm,
     pub storage: Storage,
+    /// The choice after signing in to a server that has a library already was put to the user (once
+    /// per sign-in: it can be put off, and is offered again from the cloud button and Settings).
+    choice_asked: bool,
 }
 
 impl Default for SyncDriver {
     fn default() -> Self {
         let (tx, rx) = channel();
-        SyncDriver { tx, rx, in_flight: 0, focused: false, form: SyncForm::default(), storage: Storage::default() }
+        SyncDriver { tx, rx, in_flight: 0, focused: false, form: SyncForm::default(), storage: Storage::default(), choice_asked: false }
     }
 }
 
@@ -160,6 +163,14 @@ pub fn poll(app: &mut LightcraftApp, ctx: &egui::Context) {
         app.sync.in_flight = app.sync.in_flight.saturating_sub(1);
         app.session.sync_done(d);
     }
+    // two libraries with photos met: ask what to do about it (once; nothing syncs meanwhile)
+    if app.session.sync_conflict().is_some() {
+        if !std::mem::replace(&mut app.sync.choice_asked, true) {
+            app.ui.dialog = Some(crate::state::Dialog::SyncChoice);
+        }
+    } else {
+        app.sync.choice_asked = false;
+    }
     let Some(exec) = app.services.sync_exec.as_ref() else { return };
     let Some(st) = app.session.sync_state() else { return };
     if !st.signed_in() || st.config.paused {
@@ -187,6 +198,7 @@ pub fn cloud_status(app: &LightcraftApp) -> (String, bool, bool) {
     let s = st.status();
     let server = st.config.server.trim_start_matches("https://").trim_start_matches("http://");
     match st.state() {
+        "conflict" => (format!("{server} has a library already: choose what to do with this library's photos"), true, false),
         "signedOut" => (format!("Signed out of {server}: sign in again in Settings > Sync"), false, false),
         "paused" => (format!("Syncing with {server} is paused"), false, false),
         "error" => (format!("Can't sync with {server}: {}\nLightCraft keeps trying.", st.error().unwrap_or("")), true, false),

@@ -124,6 +124,18 @@ pub enum Icon {
     UprightFull,
     /// Upright Guided: a drawn line with a node.
     UprightGuided,
+    /// Sending to the sync server: an arrow up out of a tray.
+    Upload,
+    /// Receiving from the sync server: an arrow down into a tray.
+    Download,
+    /// Two bars: pause syncing.
+    Pause,
+    /// A triangle pointing right: resume syncing.
+    Play,
+    /// Two stacked units: the sync server.
+    Server,
+    /// Two arrows chasing each other: sync now.
+    Refresh,
 }
 
 struct Pen<'a> {
@@ -643,6 +655,33 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
             for x in [6.8, 10.0, 13.2] {
                 pen.dot(x, 8.5, 1.1);
             }
+        }
+        Upload => {
+            pen.line(&[(4.0, 13.0), (4.0, 16.5), (16.0, 16.5), (16.0, 13.0)]);
+            pen.line(&[(10.0, 13.0), (10.0, 3.5)]);
+            pen.line(&[(6.0, 7.0), (10.0, 3.0), (14.0, 7.0)]);
+        }
+        Download => {
+            pen.line(&[(4.0, 13.0), (4.0, 16.5), (16.0, 16.5), (16.0, 13.0)]);
+            pen.line(&[(10.0, 3.0), (10.0, 12.5)]);
+            pen.line(&[(6.0, 9.0), (10.0, 13.0), (14.0, 9.0)]);
+        }
+        Pause => {
+            pen.rect_fill(5.0, 4.0, 8.5, 16.0, 0.8);
+            pen.rect_fill(11.5, 4.0, 15.0, 16.0, 0.8);
+        }
+        Play => pen.fill(&[(6.0, 4.0), (6.0, 16.0), (16.0, 10.0)], color),
+        Server => {
+            pen.rect(3.0, 3.5, 17.0, 8.5, 1.5);
+            pen.rect(3.0, 11.5, 17.0, 16.5, 1.5);
+            pen.dot(6.5, 6.0, 0.9);
+            pen.dot(6.5, 14.0, 0.9);
+        }
+        Refresh => {
+            pen.arc(10.0, 10.0, 6.5, 200.0, 340.0);
+            pen.line(&[(16.5, 3.5), (16.3, 7.8), (12.0, 7.6)]);
+            pen.arc(10.0, 10.0, 6.5, 20.0, 160.0);
+            pen.line(&[(3.5, 16.5), (3.7, 12.2), (8.0, 12.4)]);
         }
     }
 }

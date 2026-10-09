@@ -171,8 +171,11 @@ device keeps a token of its own, which the admin page can sign out (Users ▸ th
 
 - The **first** device with photos to sign in to an empty server **uploads its library** (originals and previews).
   If a library folder already filled the server, it isn't empty.
-- **Every other device signs in from a new, empty library**, and fills from the server. A library that has photos of
-  its own can't join a server library that has some (two libraries aren't merged).
+- **Every other device signs in from a new, empty library**, and fills from the server.
+- A library that has photos of its own, signing in to a server that has some, **asks what to do**: add its photos to
+  the server's library (photos both have are kept once), or use the server's library instead (a copy of the old one is
+  kept in its folder), or don't sync. Nothing syncs until you choose;
+  [sync.md](sync.md#when-this-library-and-the-servers-both-have-photos) has the details.
 
 Address typing: `photos.example.com` means `https://`; a bare address on your home network or tailnet
 (`192.168.1.20:8080`, `nas:8080`, `100.101.102.103:8080`, `*.local`) means `http://`. Type the scheme to choose.
@@ -221,7 +224,9 @@ The iOS app is in an early stage: it builds from the source and installs with [x
 (there is no App Store version yet), and **its sync has not been run on a device yet** — expect rough edges. It
 syncs exactly like the desktop app:
 
-1. The app's library starts with demo photos: it signs in as a new library and fills from the server.
+1. The app's library starts with demo photos: it signs in as a new library and fills from the server. (A phone that
+   already has photos of its own asks whether to add them to the server's library or to use the server's.) The cloud
+   button on the grid shows what syncing is doing, here and on the server: uploads, downloads, scans, previews.
 2. **Settings ▸ Sync** (in the phone layout, from the menu): address, user name, password, **Sign In**. The device
    appears on the admin page under its name (iPhone, iPad).
 3. For a server on your home network, allow LightCraft when iOS asks for **Local Network** access (Settings ▸ Privacy
@@ -263,7 +268,7 @@ lightcraft-cli run --library ~/LightCraft-synced sync.signIn server=photos.examp
 | `can't reach the server: …` | Check the address and its scheme (`https://` behind Caddy or `tailscale serve`, `http://` on port 8080), that the container is `healthy`, and the firewall. |
 | `wrong user name or password` | Check them on the admin page (Reset password). |
 | `too many wrong passwords: try again in N s` | Wait: after five wrong passwords each try waits longer (up to 15 minutes), per address and per user name. |
-| `this library has photos and the server already has a library` | Sign in from a new, empty library (desktop: File ▸ Open Library…). |
+| The app asks **Sync This Library** after you sign in | This library and the server's both have photos. **Add this library to the server's** uploads this one into it (photos both have are kept once), **Use the server's library instead** replaces this one (a copy is kept in its folder), **Sign Out** leaves things as they are. Details: [sync.md](sync.md#when-this-library-and-the-servers-both-have-photos). |
 | `this library is a copy of another library on that server` | The server was set up again (or the user's library replaced): sign in from a new library; in a browser, open the address with `?reset`. |
 | `the server signed this device out` | The device was signed out on the admin page, or its user removed: sign in again. |
 | The admin page asks for a setup code | No admin exists yet: the code is in the server's log. |

@@ -27,6 +27,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+use lightcraft_catalog::join::{self, Counts};
 use lightcraft_catalog::sync::{Outbox, PATH_PREFIX, Pushed, carry_local, original_path, proto};
 use lightcraft_catalog::{AlbumId, Catalog, Op, Photo, PhotoId, Source, Store};
 use serde::{Deserialize, Serialize};
@@ -60,6 +61,8 @@ const PULL_LIMIT: usize = 2000;
 const BLOB_PARALLEL: usize = 4;
 /// The server's storage numbers are asked for at most this often (it walks every photo file).
 const USAGE_EVERY: Duration = Duration::from_secs(20);
+/// What the server is doing (scans, previews…) is asked for this often while someone looks.
+const ACTIVITY_EVERY: Duration = Duration::from_secs(2);
 /// Long edge of the mini preview.
 pub const MINI_EDGE: usize = 512;
 /// The server's id spaces stay below this, so ids remain exact in JSON numbers read by
@@ -239,6 +242,59 @@ impl Job {
     }
 }
 
+/// A library with photos signed in to a server that has a library already: two libraries that
+/// never met, whose ids name different photos. Nothing syncs until the user chooses what to do
+/// ([`Session::sync_resolve`]); the server's library waits here, as it was when fetched.
+struct Conflict {
+    snapshot: proto::Snapshot,
+    info: ConflictInfo,
+}
+
+/// What the sign-in choice is about: this library and the server's.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConflictInfo {
+    /// The server (`photos.example.com`) and the user signed in as.
+    pub server: String,
+    pub user: String,
+    /// This library, as joining would carry it over.
+    pub here: Counts,
+    /// The server's library.
+    pub there: Counts,
+    /// Photos both have (the same file): joining keeps them once.
+    pub shared: usize,
+}
+
+/// What to do about a [`ConflictInfo`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Resolution {
+    /// Add this library's photos, edits and albums to the server's library (and get the server's).
+    Upload,
+    /// Replace this library with the server's (a copy of this one is kept).
+    UseServer,
+    /// Don't sync: sign out and leave this library as it is.
+    Cancel,
+}
+
+impl Resolution {
+    /// `upload` / `useServer` / `cancel` (the `sync.resolveConflict` parameter).
+    pub fn parse(s: &str) -> Option<Resolution> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "upload" | "merge" | "join" => Some(Resolution::Upload),
+            "useserver" | "replace" | "server" => Some(Resolution::UseServer),
+            "cancel" | "signout" | "keep" => Some(Resolution::Cancel),
+            _ => None,
+        }
+    }
+    pub fn id(self) -> &'static str {
+        match self {
+            Resolution::Upload => "upload",
+            Resolution::UseServer => "useServer",
+            Resolution::Cancel => "cancel",
+        }
+    }
+}
+
 /// Sync state of an open library (signed in, or signed out after syncing).
 pub struct SyncState {
     pub config: SyncConfig,
@@ -300,6 +356,20 @@ pub struct SyncState {
     usage_error: Option<String>,
     /// Someone is looking (Settings ▸ Sync, `sync.usage`): ask again once the last answer is old.
     usage_wanted: bool,
+    /// What the server says it is doing for this user, when it said so, and the request in flight.
+    activity: Option<proto::Activity>,
+    activity_at: Option<Instant>,
+    activity_task: Option<u64>,
+    activity_error: Option<String>,
+    /// Someone is looking (the cloud popover, `sync.activity`): ask again soon.
+    activity_wanted: bool,
+    /// Photos uploaded and files downloaded since the queue was last empty (progress "12 of 56").
+    up_done: usize,
+    down_done: usize,
+    /// Signed in to a server whose library this one has to be joined to or replaced by: waiting for the user.
+    conflict: Option<Conflict>,
+    /// Why the last photo file transfer failed (a full disk on the server, a refused file); cleared by the next that works.
+    transfer_error: Option<String>,
 }
 
 impl SyncState {
@@ -341,6 +411,15 @@ impl SyncState {
             usage_task: None,
             usage_error: None,
             usage_wanted: false,
+            activity: None,
+            activity_at: None,
+            activity_task: None,
+            activity_error: None,
+            activity_wanted: false,
+            up_done: 0,
+            down_done: 0,
+            conflict: None,
+            transfer_error: None,
         }
     }
 
@@ -383,6 +462,9 @@ impl SyncState {
         // pending changes made before the library closed: reload the server's state once and
         // replay them on top (merged), in case other devices changed what they touch
         st.needs_snapshot |= !st.config.library.is_empty() && !st.outbox.is_empty();
+        // signed in but never joined to the server's library (closed while the choice at sign-in waited):
+        // fetch it again, which asks again
+        st.needs_snapshot |= st.config.library.is_empty() && !st.config.token.is_empty();
         Some(st)
     }
 
@@ -423,6 +505,9 @@ impl SyncState {
         self.plan.clear();
         self.planned = None;
         self.usage_task = None;
+        self.activity_task = None;
+        self.conflict = None;
+        self.transfer_error = None;
         self.error = Some(why.to_string());
     }
 
@@ -506,6 +591,8 @@ impl SyncState {
         let (uploads, downloads) = self.transfers();
         let state = if !self.signed_in() {
             "signedOut"
+        } else if self.conflict.is_some() {
+            "conflict"
         } else if self.config.paused {
             "paused"
         } else if self.error.is_some() {
@@ -526,6 +613,9 @@ impl SyncState {
             "pending": self.outbox.len(),
             "uploads": uploads,
             "downloads": downloads,
+            "uploadsDone": self.up_done,
+            "downloadsDone": self.down_done,
+            "conflict": self.conflict.as_ref().map(|c| &c.info),
             "error": self.error,
             "offlineAlbums": self.config.offline_albums,
             "offlinePhotos": self.config.offline_photos,
@@ -535,9 +625,10 @@ impl SyncState {
         })
     }
 
-    /// The state for the topbar's cloud icon: `signedOut`, `paused`, `error`, `syncing` or `idle`.
+    /// The state for the topbar's cloud icon: `signedOut`, `conflict`, `paused`, `error`, `syncing` or `idle`.
     pub fn state(&self) -> &'static str {
         match self.status()["state"].as_str() {
+            Some("conflict") => "conflict",
             Some("paused") => "paused",
             Some("error") => "error",
             Some("syncing") => "syncing",
@@ -550,13 +641,96 @@ impl SyncState {
     pub fn error(&self) -> Option<&str> {
         self.error.as_deref()
     }
+
+    /// The choice waiting after signing in to a server that has a library already (see
+    /// [`Session::sync_resolve`]).
+    pub fn conflict(&self) -> Option<&ConflictInfo> {
+        self.conflict.as_ref().map(|c| &c.info)
+    }
+
+    /// What the server says it is doing for this user (scanning folders, building previews…), as of
+    /// [`SyncState::activity_age`] ago.
+    pub fn activity(&self) -> Option<&proto::Activity> {
+        self.activity.as_ref()
+    }
+
+    /// Why the server's last answer about what it is doing wasn't one.
+    pub fn activity_error(&self) -> Option<&str> {
+        self.activity_error.as_deref()
+    }
+
+    pub fn activity_age(&self) -> Option<Duration> {
+        self.activity_at.map(|t| t.elapsed())
+    }
+
+    /// The answer to `GET /api/activity`.
+    fn activity_done(&mut self, d: &Done) {
+        self.activity_at = Some(Instant::now());
+        match d.status {
+            401 => self.signed_out("the server signed this device out: sign in again"),
+            404 | 405 => {
+                self.activity = None;
+                self.activity_error = Some("this server is too old to say what it is doing: update it".into());
+            }
+            _ if d.ok() => match decode::<proto::Activity>(d) {
+                Ok(a) => {
+                    self.activity = Some(a);
+                    self.activity_error = None;
+                }
+                Err(e) => self.activity_error = Some(e),
+            },
+            _ => self.activity_error = Some(why(d)),
+        }
+    }
+
+    /// Photos uploaded and files downloaded since the queue was last empty, and what is still
+    /// queued or running: ((done, left), (done, left)) for uploads and downloads.
+    pub fn progress(&self) -> ((usize, usize), (usize, usize)) {
+        let (uploads, downloads) = self.transfers();
+        ((self.up_done, uploads), (self.down_done, downloads))
+    }
 }
 
 /// The server's key for a photo's files: its content hash (without the suffix that keeps
 /// converted copies apart), when it is a 128-bit hex hash.
 pub fn blob_key(p: &Photo) -> Option<String> {
-    let h = p.content_hash.as_deref()?.split(':').next()?;
-    (h.len() == 32 && h.bytes().all(|b| b.is_ascii_hexdigit())).then(|| h.to_ascii_lowercase())
+    lightcraft_catalog::sync::content_key(p)
+}
+
+/// Is `key` (a [`blob_key`]) the content hash of `p`'s file? (No allocation: scans every photo.)
+fn has_key(p: &Photo, key: &str) -> bool {
+    p.content_hash.as_deref().and_then(|h| h.split(':').next()).is_some_and(|h| h.eq_ignore_ascii_case(key))
+}
+
+/// What this device is sending and receiving ([`Session::sync_transfers`]).
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Transfers {
+    /// Changes made here and not yet sent.
+    pub pending: usize,
+    /// Photos queued to upload (a photo is its original and its previews), and how many finished
+    /// since nothing was queued.
+    pub uploads: usize,
+    pub uploads_done: usize,
+    /// Files queued to download (previews, originals), and how many finished likewise.
+    pub downloads: usize,
+    pub downloads_done: usize,
+    /// What is moving at this moment.
+    pub running: Vec<Transfer>,
+    /// Files whose transfer failed and waits to be tried again, and why the last one failed.
+    pub failing: usize,
+    pub error: Option<String>,
+}
+
+/// One file moving ([`Transfers::running`]).
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Transfer {
+    pub upload: bool,
+    /// `original`, `smart preview`, `preview` or `building previews`.
+    pub what: &'static str,
+    /// The photo's file name (empty when it isn't in the library any more).
+    pub name: String,
 }
 
 /// The mini preview's file name in the proxies folder (beside the smart preview's).
@@ -699,9 +873,10 @@ impl Session {
         }
     }
 
-    /// Sign this library in to a server (sent by the next [`Session::sync_tasks`]). A library
-    /// that has photos can only start syncing with an empty server library (it uploads them);
-    /// to get a server's photos, sign in from a new library.
+    /// Sign this library in to a server (sent by the next [`Session::sync_tasks`]). An empty server
+    /// library gets this library's photos; a library with no photos gets the server's. When both
+    /// have photos the sign-in waits for a choice ([`SyncState::conflict`], [`Session::sync_resolve`]):
+    /// add this library's photos to the server's, or use the server's instead.
     pub fn sync_sign_in(&mut self, server: &str, user: &str, password: &str, device: &str) -> Result<()> {
         let typed = server;
         let Some(server) = server_address(typed) else {
@@ -724,6 +899,7 @@ impl Session {
         st.config.server = server.to_string();
         st.config.user = user.to_string();
         st.login = Some(proto::Login { user: user.to_string(), password: password.to_string(), device: device.to_string() });
+        st.conflict = None;
         st.error = None;
         st.retry_at = None;
         st.pull_at = None;
@@ -739,12 +915,16 @@ impl Session {
         self.persist()
     }
 
-    /// Pull now (instead of at the next poll).
+    /// Pull now (instead of at the next poll), and try again the photo files that failed (their
+    /// transfers are planned afresh: clearing their waits alone would leave them where they were).
     pub fn sync_soon(&mut self) {
         if let Some(st) = self.sync.as_mut() {
             st.pull_at = None;
             st.retry_at = None;
-            st.blob_retry.clear();
+            if !st.blob_retry.is_empty() {
+                st.blob_retry.clear();
+                st.plan_gen += 1;
+            }
         }
     }
 
@@ -820,6 +1000,14 @@ impl Session {
         }
     }
 
+    /// Someone is looking at what the server is doing (the cloud popover): have it asked again (at
+    /// most every [`ACTIVITY_EVERY`]) by the next [`Session::sync_tasks`].
+    pub fn sync_want_activity(&mut self) {
+        if let Some(st) = self.sync.as_mut() {
+            st.activity_wanted = true;
+        }
+    }
+
     /// Ask the server what it keeps for this library now and wait for the answer (blocking: the
     /// CLI, tests), through `run`. Silent when signed out or paused: the last numbers stay.
     pub fn sync_fetch_usage_with(&mut self, run: &mut dyn FnMut(&Task) -> Done) {
@@ -830,6 +1018,19 @@ impl Session {
         st.usage_wanted = false;
         let t = st.http("GET", "/api/usage", Body::Empty, None);
         st.usage_task = Some(t.id());
+        let d = run(&t);
+        self.sync_done(d);
+    }
+
+    /// Ask the server what it is doing for this user now and wait for the answer (blocking: the CLI,
+    /// tests), through `run`. Silent when signed out or paused: the last answer stays.
+    pub fn sync_fetch_activity_with(&mut self, run: &mut dyn FnMut(&Task) -> Done) {
+        let Some(st) = self.sync.as_mut().filter(|st| !st.config.paused && !st.config.token.is_empty() && st.activity_task.is_none()) else {
+            return;
+        };
+        st.activity_wanted = false;
+        let t = st.http("GET", "/api/activity", Body::Empty, None);
+        st.activity_task = Some(t.id());
         let d = run(&t);
         self.sync_done(d);
     }
@@ -872,8 +1073,9 @@ impl Session {
             tasks.extend(st.aux_ready.drain(..));
         }
         let waiting = st.retry_at.is_some_and(|t| now < t);
-        // a slider drag holds a preview value in the catalog: nothing changes it meanwhile
-        if st.control.is_none() && !waiting && self.interaction.is_none() {
+        // a slider drag holds a preview value in the catalog: nothing changes it meanwhile; the choice at
+        // sign-in comes first (this library isn't the server's yet: nothing may be pulled or pushed)
+        if st.control.is_none() && !waiting && self.interaction.is_none() && st.conflict.is_none() {
             if let Some(login) = st.login.take() {
                 let body = Body::Json(serde_json::to_string(&login).unwrap_or_default());
                 let t = st.http("POST", "/api/login", body, None);
@@ -920,8 +1122,24 @@ impl Session {
             st.usage_task = Some(t.id());
             tasks.push(t);
         }
+        if st.activity_wanted
+            && st.activity_task.is_none()
+            && !st.config.token.is_empty()
+            && !waiting
+            && st.activity_at.is_none_or(|t| t.elapsed() >= ACTIVITY_EVERY)
+        {
+            st.activity_wanted = false;
+            let t = st.http("GET", "/api/activity", Body::Empty, None);
+            st.activity_task = Some(t.id());
+            tasks.push(t);
+        }
         if !st.config.token.is_empty() && !st.config.library.is_empty() && !st.needs_snapshot && !waiting {
             self.blob_tasks(&mut st, now, &mut tasks);
+        }
+        // nothing queued or running: the next batch of transfers counts from zero
+        if st.transfers() == (0, 0) {
+            st.up_done = 0;
+            st.down_done = 0;
         }
         self.sync = Some(st);
         tasks
@@ -1094,6 +1312,9 @@ impl Session {
         } else if st.usage_task == Some(done.id) {
             st.usage_task = None;
             st.usage_done(&done);
+        } else if st.activity_task == Some(done.id) {
+            st.activity_task = None;
+            st.activity_done(&done);
         } else if let Some(job) = st.jobs.remove(&done.id) {
             self.job_done(&mut st, job, &done);
         }
@@ -1321,9 +1542,17 @@ impl Session {
                 return Ok(());
             }
             if has_photos {
-                return Err(
-                    "this library has photos and the server already has a library: sign in from a new library to get the server's photos".into()
-                );
+                // two libraries that never met: the user chooses ([`Session::sync_resolve`]); nothing is
+                // pulled or pushed meanwhile
+                let info = ConflictInfo {
+                    server: st.config.server.trim_start_matches("https://").trim_start_matches("http://").trim_end_matches('/').to_string(),
+                    user: st.config.user.clone(),
+                    here: join::counts(&self.catalog),
+                    there: join::counts(&snap.catalog),
+                    shared: join::shared_photos(&self.catalog, &snap.catalog),
+                };
+                st.conflict = Some(Conflict { snapshot: snap, info });
+                return Ok(());
             }
             st.config.library = snap.library;
         }
@@ -1331,9 +1560,7 @@ impl Session {
         lightcraft_catalog::sync::sanitize(&mut c);
         if joining {
             // nothing of the (empty or demo-only) library joining carries over by id
-            self.selection = crate::Selection::default();
-            self.previous_active = None;
-            self.before.clear();
+            self.forget_selection();
         } else {
             carry_local(&self.catalog, &mut c);
         }
@@ -1343,10 +1570,157 @@ impl Session {
         if dropped > 0 {
             log::info!("sync: {dropped} change(s) made here no longer apply to the server's library");
         }
+        if !joining {
+            // photos added here and not pushed yet came back with the replay in their shared form: they are
+            // still files on this disk (a library joined to the server's has a queue of them)
+            carry_local(&self.catalog, &mut c);
+        }
         st.config.cursor = snap.seq;
         st.planned = None;
         self.replace_catalog(c);
         Ok(())
+    }
+
+    /// The photos selected here (and what points at them) belong to a library that was replaced.
+    fn forget_selection(&mut self) {
+        self.selection = crate::Selection::default();
+        self.previous_active = None;
+        self.before.clear();
+    }
+
+    /// The choice waiting after signing in to a server that has a library already, when there is one
+    /// ([`Session::sync_resolve`]).
+    pub fn sync_conflict(&self) -> Option<&ConflictInfo> {
+        self.sync.as_ref()?.conflict()
+    }
+
+    /// Settle the choice waiting after signing in to a server that has a library already:
+    ///
+    /// - [`Resolution::Upload`]: this library's photos, albums, stacks and edits are added to the
+    ///   server's library — photos the server has too (the same file) are kept once, see
+    ///   [`lightcraft_catalog::join`] — and the server's photos come here. This library's originals
+    ///   upload in the background, as after any import.
+    /// - [`Resolution::UseServer`]: this library becomes the server's. Photo files on this computer
+    ///   are not touched; they are just no longer in the library.
+    /// - [`Resolution::Cancel`]: sign out; this library stays as it is.
+    ///
+    /// Before either of the first two changes anything, a copy of this library's catalog is kept in
+    /// the library folder (`catalog-before-sync-<time>.snap`, in the format of `catalog.snap`); if
+    /// that can't be written nothing changes and the choice stays open.
+    pub fn sync_resolve(&mut self, how: Resolution) -> Result<Value> {
+        let Some(mut st) = self.sync.take() else {
+            return Err(EngineError::Other("this library isn't synced".into()));
+        };
+        let result = self.resolve_conflict(&mut st, how);
+        self.sync = Some(st);
+        let v = result?;
+        self.persist()?;
+        Ok(v)
+    }
+
+    fn resolve_conflict(&mut self, st: &mut SyncState, how: Resolution) -> Result<Value> {
+        let Some(conflict) = st.conflict.take() else {
+            return Err(EngineError::Other("this library isn't waiting for a choice".into()));
+        };
+        if how == Resolution::Cancel {
+            st.signed_out("signed out");
+            st.error = None;
+            return Ok(json!({"choice": how.id()}));
+        }
+        let backup = match self.keep_library_copy() {
+            Ok(name) => name,
+            Err(e) => {
+                st.conflict = Some(conflict);
+                return Err(e);
+            }
+        };
+        let Conflict { snapshot, .. } = conflict;
+        let mut c = snapshot.catalog;
+        lightcraft_catalog::sync::sanitize(&mut c);
+        let joined = match how {
+            Resolution::Upload => {
+                let joined = join::join_libraries(&self.catalog, &mut c, st.config.space, &mut st.outbox);
+                st.outbox_changed();
+                Some(joined)
+            }
+            _ => {
+                c.set_id_space(st.config.space);
+                None
+            }
+        };
+        st.config.library = snapshot.library;
+        st.config.cursor = snapshot.seq;
+        st.planned = None;
+        // the photos here have new ids (or are gone): what pointed at the old ones doesn't
+        self.forget_selection();
+        self.source = crate::LibrarySource::All;
+        self.filter = Default::default();
+        self.replace_catalog(c);
+        Ok(json!({"choice": how.id(), "backup": backup, "joined": joined}))
+    }
+
+    /// A copy of this library's catalog, kept beside it before the server's library joins or replaces
+    /// it. Its file name.
+    fn keep_library_copy(&mut self) -> Result<String> {
+        let stamp: String = (self.clock)().chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
+        let lib = self.library.as_mut().ok_or_else(|| EngineError::Other("sync needs a library that is saved (open or create one first)".into()))?;
+        // (an earlier copy is never overwritten: the same second, or a host whose clock stands still)
+        let mut name = format!("catalog-before-sync-{stamp}.snap");
+        for n in 2..100 {
+            if lib.files_mut().read(&name).ok().flatten().is_none() {
+                break;
+            }
+            name = format!("catalog-before-sync-{stamp}-{n}.snap");
+        }
+        lightcraft_catalog::journal::write_backup(lib.files_mut(), &name, &self.catalog)
+            .map_err(|e| EngineError::Other(format!("can't keep a copy of this library first ({e}): nothing was changed")))?;
+        Ok(name)
+    }
+
+    /// What this device is sending and receiving now, for the cloud popover: the changes waiting to
+    /// go, how many photos and files are queued (and done since the queue was last empty), and the
+    /// few that are moving at this moment.
+    pub fn sync_transfers(&self) -> Transfers {
+        let Some(st) = &self.sync else { return Transfers::default() };
+        let ((uploads_done, uploads), (downloads_done, downloads)) = st.progress();
+        let file_name = |id: PhotoId| self.catalog.photo(id).map(|p| p.file_name.clone());
+        let by_key = |key: &str| self.catalog.photos().find(|p| has_key(p, key)).map(|p| p.file_name.clone());
+        let mut running: Vec<Transfer> = st
+            .jobs
+            .values()
+            .map(|job| match job {
+                Job::Head { id, .. } | Job::Put { blob: Blob::Original, id, .. } => {
+                    Transfer { upload: true, what: "original", name: file_name(*id).unwrap_or_default() }
+                }
+                Job::Put { blob, id, .. } => Transfer {
+                    upload: true,
+                    what: if *blob == Blob::Smart { "smart preview" } else { "preview" },
+                    name: file_name(*id).unwrap_or_default(),
+                },
+                Job::Proxies { id, .. } => Transfer { upload: true, what: "building previews", name: file_name(*id).unwrap_or_default() },
+                Job::Get { key, blob, .. } => Transfer {
+                    upload: false,
+                    what: match blob {
+                        Blob::Original => "original",
+                        Blob::Smart => "smart preview",
+                        Blob::Mini => "preview",
+                    },
+                    name: by_key(key).unwrap_or_default(),
+                },
+            })
+            .collect();
+        // (a stable order: the jobs are kept in a map)
+        running.sort_by(|a, b| (!a.upload, &a.name, a.what).cmp(&(!b.upload, &b.name, b.what)));
+        Transfers {
+            pending: st.outbox.len(),
+            uploads,
+            uploads_done,
+            downloads,
+            downloads_done,
+            running,
+            failing: st.blob_retry.len(),
+            error: st.transfer_error.clone(),
+        }
     }
 
     /// Switch to another state of the library wholesale (a snapshot replaces the op log).
@@ -1374,6 +1748,7 @@ impl Session {
     fn job_done(&mut self, st: &mut SyncState, job: Job, d: &Done) {
         let retry = |st: &mut SyncState, key: &str, why: String| {
             log::warn!("sync: {key}: {why}");
+            st.transfer_error = Some(why);
             st.blob_retry.insert(key.to_string(), Instant::now() + BLOB_RETRY);
             st.plan_gen += 1;
         };
@@ -1393,16 +1768,16 @@ impl Session {
                     let by_server = st.config.server_builds_previews()
                         && serde_json::from_str::<Value>(&d.body).ok().is_some_and(|v| matches!(v["previews"].as_str(), Some("queued" | "built")));
                     if by_server {
-                        self.uploaded(st, key);
+                        self.upload_finished(st, key);
                     } else {
                         st.ready.push_front(Job::Proxies { key, path, id });
                     }
                 }
                 Blob::Smart => match self.proxy_paths(id) {
                     Some((_, mini)) => st.ready.push_front(Job::Put { key, blob: Blob::Mini, path: mini, id }),
-                    None => self.uploaded(st, key),
+                    None => self.upload_finished(st, key),
                 },
-                Blob::Mini => self.uploaded(st, key),
+                Blob::Mini => self.upload_finished(st, key),
             },
             Job::Put { key, blob: Blob::Original, .. } if d.status == 422 => {
                 log::warn!("sync: the server refused the original {key}: {}", why(d));
@@ -1421,11 +1796,11 @@ impl Session {
                     }
                     st.ready.push_front(Job::Put { key, blob: Blob::Smart, path: smart, id });
                 }
-                (_, None) => self.uploaded(st, key),
+                (_, None) => self.upload_finished(st, key),
                 (false, _) => {
                     // an original that doesn't decode here: the server keeps it, others try
                     log::warn!("sync: can't build previews of {key}: {}", d.body);
-                    self.uploaded(st, key);
+                    self.upload_finished(st, key);
                 }
             },
             Job::Get { key, blob, dest } => {
@@ -1433,6 +1808,8 @@ impl Session {
                     retry(st, &key, why(d));
                     return;
                 }
+                st.down_done += 1;
+                st.transfer_error = None;
                 let ids: Vec<PhotoId> = self.catalog.photos().filter(|p| blob_key(p).as_deref() == Some(&key)).map(|p| p.id).collect();
                 self.media.availability.forget(&dest);
                 for id in &ids {
@@ -1473,6 +1850,13 @@ impl Session {
         }
     }
 
+    /// This device finished uploading a photo (counted for the progress shown).
+    fn upload_finished(&mut self, st: &mut SyncState, key: String) {
+        st.up_done += 1;
+        st.transfer_error = None;
+        self.uploaded(st, key);
+    }
+
     /// The server has all of a photo's files.
     fn uploaded(&mut self, st: &mut SyncState, key: String) {
         if let Some(lib) = self.library.as_mut()
@@ -1494,6 +1878,12 @@ impl Session {
     #[cfg(not(target_arch = "wasm32"))]
     pub fn sync_fetch_usage(&mut self) {
         self.sync_fetch_usage_with(&mut run);
+    }
+
+    /// [`Session::sync_fetch_activity_with`] over the network.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn sync_fetch_activity(&mut self) {
+        self.sync_fetch_activity_with(&mut run);
     }
 
     /// [`Session::sync_now`] with another transport (tests).

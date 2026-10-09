@@ -717,6 +717,29 @@ pub(crate) fn status(st: &State, l: &Mutex<UserLib>, user: &str) -> Resp {
     )
 }
 
+/// How far the user's photos are indexed for search by description, for the text in them and for the
+/// people in them (`GET /api/activity`): each `None` when the server doesn't do it for this user
+/// (the model isn't installed, or an admin hasn't turned finding people on).
+pub(crate) fn progress(
+    st: &State,
+    l: &Mutex<UserLib>,
+    user: &str,
+) -> (
+    Option<lightcraft_catalog::sync::proto::Progress>,
+    Option<lightcraft_catalog::sync::proto::Progress>,
+    Option<lightcraft_catalog::sync::proto::Progress>,
+) {
+    use lightcraft_catalog::sync::proto::Progress;
+    let v = &st.vision;
+    let total = hashed(&lock(l)).len() as u64;
+    let of = |done: usize| Progress { done: (done as u64).min(total), total, eta_secs: None };
+    let search = v.installed().then(|| of(v.index(&st.data, user).map(|ix| lock(&ix).len()).unwrap_or(0)));
+    let text = v.text_installed().then(|| of(v.text_index(&st.data, user, false).ok().flatten().map_or(0, |ix| lock(&ix).len())));
+    let faces_on = accounts::read_users(&st.data).is_ok_and(|f| f.users.get(user).is_some_and(|u| u.faces));
+    let faces = (faces_on && v.faces_installed()).then(|| of(v.face_index(&st.data, user, false).ok().flatten().map_or(0, |ix| lock(&ix).photos())));
+    (search, text, faces)
+}
+
 /// `GET /api/search?q=…&limit=…`
 pub(crate) fn search(st: &State, l: &Mutex<UserLib>, user: &str, q: &str) -> Resp {
     let v = &st.vision;

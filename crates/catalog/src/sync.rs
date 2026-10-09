@@ -43,6 +43,13 @@ pub fn original_path(hash: &str, name: &str) -> String {
     format!("{PATH_PREFIX}{hash}/{name}")
 }
 
+/// The server's key for a photo's files: its content hash (without the suffix that keeps converted
+/// copies apart), when it is a 128-bit hex hash.
+pub fn content_key(p: &Photo) -> Option<String> {
+    let h = p.content_hash.as_deref()?.split(':').next()?;
+    (h.len() == 32 && h.bytes().all(|b| b.is_ascii_hexdigit())).then(|| h.to_ascii_lowercase())
+}
+
 /// The content hash in a path made by [`original_path`].
 pub fn hash_of_path(path: &str) -> Option<&str> {
     let (hash, _) = path.strip_prefix(PATH_PREFIX)?.split_once('/')?;
@@ -680,6 +687,68 @@ pub mod proto {
         /// Bytes of the files LightCraft keeps for this user (not the library folders).
         pub fn stored(&self) -> u64 {
             self.original.bytes.saturating_add(self.smart.bytes).saturating_add(self.mini.bytes)
+        }
+    }
+
+    /// How far a batch of work on the server is.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(default, rename_all = "camelCase")]
+    pub struct Progress {
+        pub done: u64,
+        pub total: u64,
+        /// Seconds left at the rate so far (once the server can tell).
+        pub eta_secs: Option<u64>,
+    }
+
+    impl Progress {
+        /// Something is left to do.
+        pub fn active(&self) -> bool {
+            self.total > self.done
+        }
+    }
+
+    /// The scan of the user's library folders ([`Activity::scan`]).
+    #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(default, rename_all = "camelCase")]
+    pub struct Scan {
+        pub scanning: bool,
+        /// `listing` (finding photo files; `files` counts up), `reading` (hashing and importing the
+        /// new ones: `done` of `todo`) or `finishing`; empty when idle.
+        pub phase: String,
+        pub done: u64,
+        pub todo: u64,
+        /// Photo files found in the folders.
+        pub files: u64,
+        pub eta_secs: Option<u64>,
+        /// When the last scan ended (unix seconds).
+        pub last_scan: Option<u64>,
+        /// Files that couldn't be read, and folders that couldn't be opened.
+        pub problems: u64,
+    }
+
+    /// `GET /api/activity`: what the server is doing for this user right now. The cloud popover
+    /// shows it; an answer is a snapshot (ask again for progress).
+    #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(default, rename_all = "camelCase")]
+    pub struct Activity {
+        /// Scanning the library folders (`None`: the user has none).
+        pub scan: Option<Scan>,
+        /// Previews being built, of photos found in the library folders and of originals devices
+        /// uploaded (`total` counts the batch being worked through).
+        pub previews: Progress,
+        /// Indexing photos for search by description; reading the text in them; finding the people
+        /// in them (each `None`: not available for this user, or not installed).
+        pub search: Option<Progress>,
+        pub text: Option<Progress>,
+        pub faces: Option<Progress>,
+    }
+
+    impl Activity {
+        /// The server is working for this user.
+        pub fn busy(&self) -> bool {
+            self.scan.as_ref().is_some_and(|s| s.scanning)
+                || self.previews.active()
+                || [self.search, self.text, self.faces].into_iter().flatten().any(|p| p.active())
         }
     }
 }

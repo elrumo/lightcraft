@@ -6,6 +6,7 @@ use lightcraft_catalog::{AlbumId, PhotoId};
 use serde_json::{Value, json};
 
 use super::{CommandSpec, always, bad, bool_or, cmd, str_param};
+use crate::sync::Resolution;
 use crate::{LibrarySource, Result, Session};
 
 /// The library was signed in to a server once (signed in now or not).
@@ -13,6 +14,15 @@ fn synced(s: &Session) -> std::result::Result<(), String> {
     match s.sync_state() {
         Some(st) if !st.config.library.is_empty() || st.signed_in() => Ok(()),
         _ => Err("this library isn't synced (Settings → Sync)".into()),
+    }
+}
+
+/// Signed in to a server whose library this one can't just be: the choice is waiting.
+fn conflict_pending(s: &Session) -> std::result::Result<(), String> {
+    if s.sync_conflict().is_some() {
+        Ok(())
+    } else {
+        Err("no sync choice is waiting (it comes after signing in to a server that has a library already)".into())
     }
 }
 
@@ -51,6 +61,39 @@ fn usage(s: &mut Session, p: &Value) -> Result<Value> {
         "local": s.local_dirs().map(|d| crate::usage::measure(&d)),
         "photos": {"total": photos, "onlyPreviewsHere": remote},
     }))
+}
+
+/// What this device and the server are doing for the library now: the files being sent and
+/// received, and the server's own work (scanning folders, building previews, indexing).
+fn activity(s: &mut Session, p: &Value) -> Result<Value> {
+    if bool_or(p, "refresh", false) {
+        #[cfg(not(target_arch = "wasm32"))]
+        s.sync_fetch_activity();
+        // (the browser can't wait here: its requests finish on later frames)
+        #[cfg(target_arch = "wasm32")]
+        s.sync_want_activity();
+    } else {
+        s.sync_want_activity();
+    }
+    let st = s.sync_state();
+    Ok(json!({
+        "state": st.map_or("off", |st| st.state()),
+        "transfers": s.sync_transfers(),
+        "server": st.and_then(|st| st.activity()),
+        "serverError": st.and_then(|st| st.activity_error()),
+        "serverAgeSecs": st.and_then(|st| st.activity_age()).map(|a| a.as_secs()),
+    }))
+}
+
+/// Settle the choice after signing in to a server that already has a library.
+fn resolve_conflict(s: &mut Session, p: &Value) -> Result<Value> {
+    const C: &str = "sync.resolveConflict";
+    let choice = str_param(p, "choice").ok_or_else(|| bad(C, "missing `choice` (upload, useServer or cancel)"))?;
+    let how = Resolution::parse(choice).ok_or_else(|| bad(C, format!("unknown choice `{choice}` (upload, useServer or cancel)")))?;
+    let resolved = s.sync_resolve(how)?;
+    let mut out = status(s, p)?;
+    out["resolved"] = resolved;
+    Ok(out)
 }
 
 fn sign_in(s: &mut Session, p: &Value) -> Result<Value> {
@@ -174,8 +217,15 @@ pub fn specs() -> Vec<CommandSpec> {
     vec![
         // not journaled: the parameters carry a password
         cmd!(query "sync.signIn", "Sign In to Sync", [], None,
-            "{server: \"https://…\", user, password, device?}: share this library with a LightCraft server (docs/sync.md). An empty server library gets this one; a library with photos can't join a server that has some (sign in from a new library)",
+            "{server: \"https://…\", user, password, device?}: share this library with a LightCraft server (docs/sync.md). An empty server library gets this one; a library with no photos gets the server's; when both have photos the sign-in waits for `sync.resolveConflict` (state `conflict` in `sync.status`)",
             always, sign_in),
+        // not journaled: it replaces the whole catalog
+        cmd!(query "sync.resolveConflict", "Resolve Sync Conflict", [], None,
+            "{choice: \"upload\" | \"useServer\" | \"cancel\"}: this library and the server's both have photos. upload: add this library's photos, edits and albums to the server's (photos both have are kept once) and get the server's; useServer: replace this library with the server's (a copy of this one is kept in the library folder); cancel: sign out and keep this library as it is",
+            conflict_pending, resolve_conflict),
+        cmd!(query "sync.activity", "Sync Activity", [], None,
+            "{refresh?: bool}: what this device is sending and receiving (changes waiting, photos and files queued and done, the ones moving now) and what the server is doing for this library (scanning library folders, building previews, indexing for search), as the server last said (asked for again every 2 s while someone looks) unless `refresh` asks it now",
+            synced, activity),
         cmd!(
             "sync.signOut",
             "Sign Out of Sync",
