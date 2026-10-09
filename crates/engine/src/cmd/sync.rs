@@ -143,6 +143,36 @@ fn server_previews(s: &mut Session, p: &Value) -> Result<Value> {
     status(s, p)
 }
 
+fn album_share(s: &mut Session, p: &Value) -> Result<Value> {
+    const C: &str = "album.share";
+    let id = match p.get("id").and_then(Value::as_u64) {
+        Some(id) => AlbumId(id),
+        None => match s.source {
+            LibrarySource::Album(a) => a,
+            _ => return Err(bad(C, "missing `id` (or show an album first)")),
+        },
+    };
+    let days = p.get("expiresDays").and_then(Value::as_u64).map(|d| d.min(3650) as u32).filter(|d| *d > 0);
+    s.sync_share_album(id, days, bool_or(p, "originals", false))?;
+    Ok(json!({"started": true, "album": id.0}))
+}
+
+fn album_unshare(s: &mut Session, p: &Value) -> Result<Value> {
+    let id = str_param(p, "id").ok_or_else(|| bad("album.unshare", "missing `id` (a link's id, see shares.list)"))?.to_string();
+    s.sync_unshare(&id)?;
+    Ok(json!({"started": true, "link": id}))
+}
+
+fn shares_list(s: &mut Session, p: &Value) -> Result<Value> {
+    s.sync_refresh_shares(bool_or(p, "refresh", false));
+    let (links, error) = s.sync_shares();
+    let links: Vec<Value> = links
+        .into_iter()
+        .map(|(l, url)| json!({"id": l.id, "album": l.album, "name": l.name, "url": url, "created": l.created, "expires": l.expires, "originals": l.originals}))
+        .collect();
+    Ok(json!({"shares": links, "error": error}))
+}
+
 fn download_originals(s: &mut Session, p: &Value) -> Result<Value> {
     let ids = s.targets(p);
     let n = s.sync_want_originals(&ids);
@@ -238,6 +268,27 @@ pub fn specs() -> Vec<CommandSpec> {
             synced,
             server_previews
         ),
+        cmd!(
+            "album.share",
+            "Share Link",
+            [],
+            None,
+            "{id?, expiresDays?: n, originals?: bool}: make a link to an album (default: the album shown) that anyone can open in a browser, no account needed: its pictures as they are edited now, and the originals if `originals`; ends after `expiresDays` or when revoked. The address arrives with the next sync (sync.now wait=true), then shares.list shows it",
+            signed_in,
+            album_share
+        ),
+        cmd!(
+            "album.unshare",
+            "Revoke Link",
+            [],
+            None,
+            "{id: link id from shares.list}: take an album link back; it stops working at once",
+            signed_in,
+            album_unshare
+        ),
+        cmd!(query "shares.list", "Shared Links", [], None,
+            "{refresh?: bool} → {shares: [{id, album, name, url, created, expires, originals}], error}: this user's album links (asked of the server once, then kept up to date; `refresh` asks again)",
+            signed_in, shares_list),
         cmd!(
             "sync.downloadOriginals",
             "Download Originals",

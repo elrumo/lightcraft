@@ -133,6 +133,11 @@ fn write_json<T: Serialize>(path: &Path, v: &T) -> Result<(), String> {
     Ok(())
 }
 
+/// Write a JSON file only the server's user may read (it holds secrets).
+pub(crate) fn write_private_json<T: Serialize>(path: &Path, v: &T) -> Result<(), String> {
+    write_json(path, v)
+}
+
 pub fn read_users(data: &Path) -> Result<UsersFile, String> {
     read_json(&data.join(USERS))
 }

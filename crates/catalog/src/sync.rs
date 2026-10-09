@@ -643,6 +643,34 @@ pub mod proto {
         pub presets: serde_json::Value,
     }
 
+    /// A link to an album that anyone who has it can open in a browser, no account needed
+    /// (`https://<server>/s/<token>`): `GET /api/shares` → `{shares: [Share]}`, `POST /api/shares` ([`NewShare`])
+    /// → a `Share`, `DELETE /api/shares/<id>`. The owner's; the token is the secret.
+    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+    pub struct Share {
+        pub id: String,
+        pub token: String,
+        pub album: u64,
+        /// The album's name when the link was made.
+        pub name: String,
+        /// Seconds since 1970.
+        pub created: u64,
+        /// When it ends (seconds since 1970); `None`: never, until revoked.
+        pub expires: Option<u64>,
+        /// Visitors may download the original files, not only see the pictures.
+        pub originals: bool,
+    }
+
+    /// `POST /api/shares`.
+    #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+    #[serde(default, rename_all = "camelCase")]
+    pub struct NewShare {
+        pub album: u64,
+        /// The link ends after this many days (`None`: it doesn't).
+        pub expires_days: Option<u32>,
+        pub originals: bool,
+    }
+
     /// `GET` / `PUT /api/docs/<name>`: one of the small documents a user's devices share beside the library
     /// (their export, metadata and filter presets, curve presets, label and keyword sets, LUT profiles, a few
     /// preferences): a JSON array the devices merge themselves, by item. `PUT` carries the version it changed;

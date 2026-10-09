@@ -13,6 +13,8 @@ use crate::accounts;
 
 /// New files are never collected.
 pub const KEEP_NEW: Duration = Duration::from_secs(24 * 3600);
+/// Pictures rendered for album links are kept this long after they were made.
+const SHARE_CACHE_KEEP: Duration = Duration::from_secs(30 * 24 * 3600);
 
 #[derive(Debug, Default, PartialEq)]
 pub struct Report {
@@ -75,6 +77,16 @@ pub fn run(data: &Path, dry_run: bool) -> Result<Report, String> {
                     } else {
                         remove(&f.path(), &meta, &mut r);
                     }
+                }
+            }
+        }
+        // pictures rendered for album links that nobody asked for in a while (they are made again on request)
+        if let Ok(cache) = std::fs::read_dir(dir.join("shares").join("cache")) {
+            for f in cache.flatten() {
+                if let Ok(meta) = f.metadata()
+                    && meta.modified().ok().and_then(|m| now.duration_since(m).ok()).is_some_and(|age| age > SHARE_CACHE_KEEP)
+                {
+                    remove(&f.path(), &meta, &mut r);
                 }
             }
         }

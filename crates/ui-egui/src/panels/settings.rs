@@ -1096,6 +1096,7 @@ fn sync_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
             if offline > 0 {
                 hint(ui, t, &format!("{offline} album(s) available offline"));
             }
+            shared_links(app, ui, t);
         }
         other => {
             let known = other.map(|(_, _, c)| c);
@@ -1155,6 +1156,52 @@ fn sync_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
                 ),
             );
         }
+    }
+}
+
+/// The album links this user has made: copy one, or take it back.
+fn shared_links(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
+    heading(ui, t, crate::i18n::tr("Shared Links"));
+    app.session.sync_refresh_shares(false);
+    let (links, error) = app.session.sync_shares();
+    let error = error.map(str::to_string);
+    if links.is_empty() {
+        hint(
+            ui,
+            t,
+            crate::i18n::tr(
+                "Right-click an album and choose Share Link to make a link anyone can open in a browser, with no account. It shows the album's photos as you have edited them, and you can take it back here.",
+            ),
+        );
+    }
+    let (mut copy, mut revoke) = (None, None);
+    for (link, url) in &links {
+        let ends = match link.expires {
+            Some(e) => {
+                format!("ends {}", lightcraft_catalog::dates::civil(i64::try_from(e).unwrap_or(i64::MAX)).chars().take(10).collect::<String>())
+            }
+            None => "no end".to_string(),
+        };
+        let what = if link.originals { "originals too" } else { "pictures only" };
+        row(ui, t, &link.name, |ui| {
+            ui.label(RichText::new(format!("{what}, {ends}")).color(t.text_dim));
+            if action(ui, t, &format!("shareCopy{}", link.id), "Copy Link", true, false) {
+                copy = Some(url.clone());
+            }
+            if action(ui, t, &format!("shareRevoke{}", link.id), "Revoke", true, true) {
+                revoke = Some(link.id.clone());
+            }
+        });
+    }
+    if let Some(e) = error {
+        hint(ui, t, &e);
+    }
+    if let Some(url) = copy {
+        ui.ctx().copy_text(url);
+        app.toast(ui.ctx(), "Link copied");
+    }
+    if let Some(id) = revoke {
+        sync_cmd(app, ui, "album.unshare", json!({"id": id}));
     }
 }
 

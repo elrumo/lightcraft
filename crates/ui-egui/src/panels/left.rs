@@ -609,6 +609,10 @@ fn folder_menu(app: &mut LightcraftApp, resp: &egui::Response, a: &Album) {
                 let _ = app.run("album.makeAvailableOffline", json!({"id": a.id.0, "on": !on}));
             }
         }
+        let can_share = !a.folder && !a.is_smart() && app.services.sync_exec.is_some() && app.session.sync_state().is_some_and(|st| st.signed_in());
+        if can_share && ui.button(crate::i18n::tr("Share Link")).clicked() {
+            let _ = app.run("album.share", json!({"id": a.id.0}));
+        }
         if a.quick && ui.button(crate::i18n::tr("Clear Quick Collection")).clicked() {
             let _ = app.run("album.clearQuick", json!({}));
         }

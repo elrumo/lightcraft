@@ -108,6 +108,8 @@ certificate from Let's Encrypt or Tailscale works as is; a self-signed one doesn
 <data>/users/<name>/blobs/<kind>/<xx>/<hash>   photo files by content: original | smart | mini
 <data>/users/<name>/presets.json               user presets { version, presets }
 <data>/users/<name>/docs/<name>.json           the other shared settings { version, items }, one file each
+<data>/users/<name>/shares.json                album links (with their tokens: server's eyes only)
+<data>/users/<name>/shares/cache/              pictures rendered for album links (made again on request)
 <data>/users/<name>/devices.json               signed-in devices: name, id space, SHA-256 of the token
 <data>/users/<name>/folders.json               library folders as last scanned: each file's size, time, hash, photo
 ```
@@ -128,6 +130,7 @@ screens, tabs on a phone), follows the system's light or dark mode, and confirms
   their page: reset the password, make or remove an admin, remove the user (their files stay in `users/NAME/` until
   you delete them), and two tabs:
   - **Devices:** their signed-in devices (name, id, when signed in, last seen); sign one out (it must sign in again).
+  - **Shared links:** the [album links](#share-an-album) they made; revoke one.
   - **Library folders:** their [library folders](#library-folders-photos-already-on-the-server): add one (a path on
     the server, and the name devices show), remove one, whether the server can see it, the names to leave out of the
     scan (**Skipped names**), **Scan now**, and what the
@@ -297,6 +300,26 @@ at once):
 The same numbers, in bytes, are the `sync.usage` command (`lightcraft-cli run --library DIR sync.usage refresh=true`,
 MCP, control channel). Disk space comes from `df`, so it's missing on Windows and in the browser.
 
+## Share an album
+
+Right-click an album in the sidebar ▸ **Share Link** (or `album.share id=… [expiresDays=…] [originals=true]`): the
+server makes a link, `https://photos.example.com/s/<a long random token>`, and the app puts it on the clipboard.
+Whoever has it opens a plain page of the album in any browser — no account, nothing to install, no script:
+
+- The pictures are the photos **as you have edited them now** (rendered on the server by the same pipeline an export
+  uses, 400 px in the grid and 1600 px when opened), without their metadata (no location, no camera serial number).
+  Edit a photo and the link shows the new version. The first visit builds the pictures (a few seconds each for large
+  raws; the server renders one at a time by default, `LIGHTCRAFT_RENDER_THREADS`); they are kept after that.
+- The link can **end** after some days and can let visitors **download the originals**; the default is pictures only,
+  until revoked.
+- Settings ▸ Sync ▸ **Shared Links** lists them with **Copy Link** and **Revoke** (`shares.list`, `album.unshare id=…`);
+  an admin can revoke any user's on the admin page. A revoked, ended or unknown link is the same plain "not found", and
+  guessing is throttled by address.
+- Only plain albums can be shared (not folders or smart albums), and only the album's own photos are reachable through
+  its link. A photo whose file the server doesn't have yet is left out of the page until it is uploaded.
+- The pages ask search engines to stay away and carry their own styles; the link is the secret, so send it to the people
+  you mean it for. It is read-only: visitors can't change or add anything.
+
 ## Exporting on the server
 
 A phone can't always hold a full-size render in memory: a 48 MP photo takes about 2.9 GB to develop and encode, and
@@ -372,6 +395,8 @@ JSON over HTTP; every route but `login` wants `Authorization: Bearer <token>`. T
 | `POST /api/ops` | `{base, ops}` → `200 {head}` · `409 {head}` (behind: pull first) · `422 {index, error}` (op `index` doesn't apply; nothing was) |
 | `HEAD`/`GET`/`PUT /api/blobs/{original\|smart\|mini}/{hash}` | photo files by 128-bit content hash; `GET` takes `Range`; an original is only kept if its bytes hash to its name, previews must be LightCraft previews and arrive whole. **Resuming an upload:** an original that breaks off is kept (`tmp/original-<hash>.part`); `HEAD` of a file the server doesn't have yet answers `404` with `Upload-Offset: N` (the bytes kept, `0` if none), and `PUT` with `Content-Range: bytes N-<last>/<total>` carries on from there (`409` with `{"offset": N}` if the server has another number of bytes or another request is writing the file; a plain `PUT` starts over). Downloads of originals resume with `Range` |
 | `GET`/`PUT /api/presets` | `{version, presets}`; `PUT` with a stale `version` → `412` with the current document |
+| `GET`/`POST /api/shares`, `DELETE /api/shares/{id}` | the user's album links ([`proto::Share`](../crates/catalog/src/sync.rs)): `{shares: [...]}`; `POST {album, expiresDays?, originals?}` → the new link (`400` for a folder or smart album, `404` no such album, `409` over 200 links); `DELETE` takes one back |
+| `GET /s/{token}`, `GET /s/{token}/{photo}/{thumb\|view\|original}` | **no sign-in**: the album's page and its pictures ([above](#share-an-album)); `404` for anything else (unknown, ended or revoked token, a photo not in the album, `original` on a link that doesn't offer it), `429` when an address keeps guessing, `503` + `Retry-After` while the server is busy rendering |
 | `GET`/`PUT /api/docs/{name}` | the other shared settings, `name` one of `export-presets`, `metadata-presets`, `filter-presets`, `curve-presets`, `label-sets`, `keyword-sets`, `lut-profiles`, `prefs`: `{version, items}` (a list; at most 24 MiB), merged by the devices item by item like presets; `PUT` with a stale `version` → `412` with the current document; another name → `404`. Their versions come with every pull (`docs`) |
 | `POST /api/render` | `{hash, name, settings, export}` → the encoded image (`X-LightCraft-Size: WxH`): the photo with this original, rendered with these edits and [export options](#exporting-on-the-server) · `404` no such original (or a server older than the route) · `422` can't be rendered · `503` busy, `Retry-After` |
 | `GET /api/health` | `{ok, version}` (no sign-in) |
@@ -414,7 +439,8 @@ v1, honestly:
   need the original: **Photo ▸ Download Originals** first (the export says so). The browser can't have the server
   render a photo (export runs on the page's main thread), as the desktop and iOS apps can.
 - **Settings that describe one computer stay on it**, by design: the folders (library, smart previews, the watched folder for auto import), the cache size, the external editor, what is shared for search, the window layout.
-- **No sharing with other people**, no shared albums or links.
+- **Sharing is links to a read-only page**: no accounts for other people, no shared albums that several people add
+  to, and no comments or favourites on the page.
 - **The server compacts its log** into a snapshot at 64 MiB and keeps the newest 16 MiB of it (tens of thousands of
   changes): a device behind by more than that reloads the library. (A device that is only a little behind keeps
   pulling; a pull reads just the part of the log it asks for.)

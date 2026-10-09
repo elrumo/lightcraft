@@ -171,6 +171,7 @@
       <div class="tabs" role="tablist">
         <a role="tab" data-tab="devices"><svg class="icon"><use href="#i-device"/></svg><span>Devices</span></a>
         <a role="tab" data-tab="folders"><svg class="icon"><use href="#i-folder"/></svg><span>Library folders</span></a>
+        <a role="tab" data-tab="shares"><svg class="icon"><use href="#i-copy"/></svg><span>Shared links</span></a>
       </div>
 
       <div data-panel="devices" role="tabpanel">
@@ -178,6 +179,16 @@
         <div class="panel flush">
           <table class="table" id="devices">
             <thead><tr><th>Device</th><th class="opt">Signed in</th><th>Last seen</th><th><span class="sr">Actions</span></th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div data-panel="shares" role="tabpanel">
+        <p class="muted">Links this user made to show an album to someone without an account. Whoever has a link sees that album's pictures; revoking one ends it at once.</p>
+        <div class="panel flush">
+          <table class="table" id="shares">
+            <thead><tr><th>Album</th><th class="opt">Made</th><th>Ends</th><th><span class="sr">Actions</span></th></tr></thead>
             <tbody></tbody>
           </table>
         </div>

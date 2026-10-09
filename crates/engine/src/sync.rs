@@ -37,6 +37,7 @@ use crate::{EngineError, Result, Session};
 
 mod docs;
 mod evict;
+mod shares;
 
 pub const CONFIG: &str = "sync.json";
 pub const OUTBOX: &str = "sync.outbox";
@@ -328,6 +329,8 @@ pub struct SyncState {
     merge: bool,
     /// What the last merge of this library into the server's found and did.
     merged: Option<lightcraft_catalog::merge::MergeReport>,
+    /// Album links ([`shares`]).
+    shares: shares::ShareState,
     /// What the server says this library takes there, when it said so, and the request in flight.
     usage: Option<proto::Usage>,
     usage_at: Option<Instant>,
@@ -379,6 +382,7 @@ impl SyncState {
             docs_seen: None,
             merge: false,
             merged: None,
+            shares: Default::default(),
             usage: None,
             usage_at: None,
             usage_task: None,
@@ -963,6 +967,7 @@ impl Session {
         // (search questions don't wait for the library's own sync to be idle)
         if !st.config.token.is_empty() {
             tasks.extend(st.aux_ready.drain(..));
+            tasks.extend(st.shares.ready.drain(..));
         }
         let waiting = st.retry_at.is_some_and(|t| now < t);
         // a slider drag holds a preview value in the catalog: nothing changes it meanwhile
@@ -1196,6 +1201,8 @@ impl Session {
             }
         } else if let Some(aux) = st.aux.remove(&done.id) {
             self.vision_server_done(&mut st, aux, &done);
+        } else if let Some(kind) = st.shares.take_kind(done.id) {
+            self.share_done(&mut st, kind, &done);
         } else if st.usage_task == Some(done.id) {
             st.usage_task = None;
             st.usage_done(&done);

@@ -1,5 +1,5 @@
 // LightCraft server admin page (served at /admin; API: /api/admin/…, see src/admin.rs).
-// Views by URL hash: #/overview, #/users, #/users/NAME[/devices|/folders], #/storage.
+// Views by URL hash: #/overview, #/users, #/users/NAME[/devices|/folders|/shares], #/storage.
 // Text from the server (user and device names, errors) is only ever set as text, never as HTML.
 'use strict';
 
@@ -244,7 +244,7 @@ async function route() {
     else a.removeAttribute('aria-current');
   }
   const seq = ++routeSeq;
-  const load = { overview: loadOverview, users: loadUsers, storage: loadStorage, user: () => loadUser(decode(name), tab === 'folders' ? 'folders' : 'devices') }[v];
+  const load = { overview: loadOverview, users: loadUsers, storage: loadStorage, user: () => loadUser(decode(name), tab === 'folders' || tab === 'shares' ? tab : 'devices') }[v];
   try {
     await load();
   } catch (e) {
@@ -371,7 +371,7 @@ async function loadUser(name, tab) {
   $('uAdmin').onclick = () => setAdmin(name, !u.admin);
   $('uRemove').onclick = () => removeUser(name);
 
-  const counts = { devices: u.devices, folders: (u.folders || []).length };
+  const counts = { devices: u.devices, folders: (u.folders || []).length, shares: u.shares || 0 };
   for (const a of document.querySelectorAll('.tabs a')) {
     a.href = '#/users/' + enc(name) + '/' + a.dataset.tab;
     a.setAttribute('aria-selected', String(a.dataset.tab === tab));
@@ -385,6 +385,8 @@ async function loadUser(name, tab) {
   if (tab === 'folders') {
     foldersOf = name;
     await loadFolders(name);
+  } else if (tab === 'shares') {
+    await loadShares(name);
   } else {
     await loadDevices(name);
   }
@@ -472,6 +474,47 @@ function revoke(name, d, label) {
     action: async () => {
       await api('DELETE', 'users/' + enc(name) + '/devices/' + d.id);
       toast(label + ' was signed out.');
+      await route();
+    },
+  });
+}
+
+// ----------------------------------------------------------- shared links
+
+async function loadShares(name) {
+  const list = await api('GET', 'users/' + enc(name) + '/shares');
+  const body = $('shares').querySelector('tbody');
+  body.replaceChildren();
+  if (!list.length) body.append(emptyRow(4, 'copy', name + ' has no shared links.'));
+  const now = Date.now() / 1000;
+  for (const s of list) {
+    const ends = !s.expires
+      ? el('span', { class: 'muted' }, 'Never')
+      : s.expires < now
+        ? el('span', { class: 'muted' }, 'Ended')
+        : el('span', { title: date(s.expires) }, 'in ' + dur(s.expires - now));
+    body.append(
+      el(
+        'tr',
+        {},
+        el('td', {}, el('div', { class: 'who-cell' }, el('span', { class: 'thing' }, icon('copy')), el('div', {}, el('b', {}, s.name), el('span', { class: 'sub' }, s.originals ? 'Originals can be downloaded' : 'Pictures only')))),
+        el('td', { class: 'opt', title: date(s.created) }, ago(s.created)),
+        el('td', {}, ends),
+        el('td', { class: 'end' }, el('button', { type: 'button', class: 'btn quiet', onclick: () => revokeShare(name, s) }, icon('trash'), 'Revoke')),
+      ),
+    );
+  }
+}
+
+function revokeShare(name, s) {
+  return ask({
+    title: 'Revoke the link to ' + s.name + '?',
+    text: 'Anyone who has it stops seeing the album at once. ' + name + ' can make a new link.',
+    ok: 'Revoke',
+    danger: true,
+    action: async () => {
+      await api('DELETE', 'users/' + enc(name) + '/shares/' + encodeURIComponent(s.id));
+      toast('The link to ' + s.name + ' was revoked.');
       await route();
     },
   });

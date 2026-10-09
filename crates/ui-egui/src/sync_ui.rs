@@ -162,6 +162,11 @@ pub fn poll(app: &mut LightcraftApp, ctx: &egui::Context) {
         app.sync.in_flight = app.sync.in_flight.saturating_sub(1);
         app.session.sync_done(d);
     }
+    // a link just made goes on the clipboard
+    if let Some(url) = app.session.sync_take_new_link() {
+        ctx.copy_text(url.clone());
+        app.toast_for(ctx, format!("Link copied: {url}"), 4.0);
+    }
     let Some(exec) = app.services.sync_exec.as_ref() else { return };
     let Some(st) = app.session.sync_state() else { return };
     if !st.signed_in() || st.config.paused {

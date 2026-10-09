@@ -157,7 +157,10 @@ pub fn handle(st: &State, req: &mut Request) -> Resp {
     if let (Method::Options, Some(o)) = (&method, &origin) {
         return preflight(st, o);
     }
-    let mut resp = if let Some(rest) = path.strip_prefix("/api/admin/") {
+    let mut resp = if path == "/s" || path.starts_with("/s/") {
+        // a shared album: for anyone with the link
+        crate::shares::public(st, req, &method, path)
+    } else if let Some(rest) = path.strip_prefix("/api/admin/") {
         crate::admin::api(st, req, &method, rest)
     } else if is_api {
         api(st, req, &method, path, q)
@@ -230,6 +233,9 @@ fn api(st: &State, req: &mut Request, method: &Method, path: &str, q: &str) -> R
             json(200, &serde_json::to_value(&l.presets).unwrap_or(Value::Null))
         }
         (Method::Put, ["presets"]) => put_presets(req, &l),
+        (Method::Get, ["shares"]) => crate::shares::list(st, &who.user),
+        (Method::Post, ["shares"]) => crate::shares::create(st, &who.user, req),
+        (Method::Delete, ["shares", id]) => crate::shares::revoke(st, &who.user, id),
         (Method::Get, ["docs", name]) => get_doc(&l, name),
         (Method::Put, ["docs", name]) => put_doc(req, &l, name),
         (m, ["blobs", kind, hash]) => blob(st, req, m, &l, &who.user, kind, hash),
@@ -469,7 +475,7 @@ pub(crate) fn blob_path(dir: &Path, kind: &str, hash: &str) -> Option<PathBuf> {
 
 /// `Range: bytes=a-b` / `bytes=a-` / `bytes=-n` → (start, end inclusive); `None`: not a range
 /// this server serves (the whole file is sent).
-fn range(v: &str, len: u64) -> Option<Result<(u64, u64), ()>> {
+pub(crate) fn range(v: &str, len: u64) -> Option<Result<(u64, u64), ()>> {
     let spec = v.trim().strip_prefix("bytes=")?;
     if spec.contains(',') {
         return None;
@@ -490,7 +496,7 @@ fn folder_original(st: &State, l: &Mutex<UserLib>, user: &str, hash: &str) -> Op
 }
 
 /// Where a library folder keeps the original with this content, when it is there, unchanged and readable.
-fn folder_original_path(st: &State, l: &Mutex<UserLib>, user: &str, hash: &str) -> Option<PathBuf> {
+pub(crate) fn folder_original_path(st: &State, l: &Mutex<UserLib>, user: &str, hash: &str) -> Option<PathBuf> {
     let found = l.lock().unwrap_or_else(PoisonError::into_inner).index.originals(hash);
     for (path, size, mtime) in &found {
         if crate::folders::unchanged(path, *size, *mtime) && std::fs::File::open(path).is_ok() {

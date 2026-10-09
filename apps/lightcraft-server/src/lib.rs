@@ -36,6 +36,7 @@ pub mod folders;
 pub mod gc;
 pub mod http;
 pub mod render;
+pub mod shares;
 pub mod throttle;
 pub mod vision;
 
@@ -120,6 +121,8 @@ pub struct State {
     pub(crate) throttle: Mutex<throttle::Throttle>,
     /// Which sites' pages may call the API.
     pub(crate) cors: cors::Cors,
+    /// Every user's album links, by token ([`shares`]).
+    pub(crate) shares: Mutex<shares::Index>,
     /// The unfinished uploads being written right now (one writer per file).
     pub(crate) uploading: Mutex<std::collections::HashSet<PathBuf>>,
 }
@@ -146,6 +149,7 @@ impl Server {
             log::warn!("no admin yet: open {at}/admin (or your domain's /admin) and enter the setup code {code}");
         }
         let vision_dir = cfg.vision_dir.clone().unwrap_or_else(|| cfg.data.join("models").join("siglip2"));
+        let links = shares::Index::load(&cfg.data);
         let state = Arc::new(State {
             vision: vision::Search::new(vision_dir, cfg.embedder).with_reader(cfg.text_reader).with_finder(cfg.face_finder),
             accounts: Mutex::new(accounts::Accounts::new(&cfg.data)),
@@ -160,6 +164,7 @@ impl Server {
             throttle: Mutex::new(throttle::Throttle::default()),
             uploading: Mutex::new(std::collections::HashSet::new()),
             cors: cors::Cors::new(&cfg.cors_origins),
+            shares: Mutex::new(links),
         });
         let st = state.clone();
         let http = bound.serve(Arc::new(move |req: &mut http::Request| api::handle(&st, req)))?;

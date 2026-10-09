@@ -22,7 +22,7 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | Section | ✅ | 🟡 | ⬜ | 🚫 | P0 done | P1 done |
 |---|---:|---:|---:|---:|---:|---:|
 | A. Import (IMP) | 12 | 3 | 1 | 1 | 3/5 (60%) | 5/5 (100%) |
-| B. Library management (LIB) | 23 | 2 | 1 | 1 | 9/9 (100%) | 9/9 (100%) |
+| B. Library management (LIB) | 23 | 3 | 0 | 1 | 9/9 (100%) | 9/9 (100%) |
 | C. Views & navigation (VIEW) | 16 | 0 | 1 | 0 | 9/9 (100%) | 4/4 (100%) |
 | D. Search & filter (FILT) | 11 | 2 | 0 | 0 | 4/4 (100%) | 4/4 (100%) |
 | E. Metadata (META) | 5 | 1 | 0 | 0 | 2/2 (100%) | 2/2 (100%) |
@@ -45,12 +45,12 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | V. Preferences (PREF) | 6 | 1 | 2 | 2 | 1/1 (100%) | 4/4 (100%) |
 | W. Cloud & AI infrastructure (CLOUD / AI) | 1 | 1 | 1 | 1 | — | — |
 | X. Cross-cutting behaviours (BEHAV) | 16 | 5 | 1 | 1 | 8/8 (100%) | 6/8 (75%) |
-| Y. Menus | 83 | 1 | 4 | 5 | 47/47 (100%) | 23/23 (100%) |
+| Y. Menus | 83 | 2 | 3 | 5 | 47/47 (100%) | 23/23 (100%) |
 | Z. Keyboard shortcuts (desktop) | 74 | 3 | 3 | 1 | 49/52 (94%) | 22/23 (96%) |
 | Lightroom Classic extras | 32 | 12 | 37 | 8 | — | 21/22 (95%) |
-| **Total** | 395 | 41 | 81 | 30 | 194/200 (97%) | 140/149 (94%) |
+| **Total** | 395 | 45 | 77 | 30 | 194/200 (97%) | 140/149 (94%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **80.4%** of 517 in-scope rows — P0 98.5% of 200 · P1 96.0% of 149 · P2 44.9% of 168.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **80.8%** of 517 in-scope rows — P0 98.5% of 200 · P1 96.0% of 149 · P2 46.1% of 168.
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -149,7 +149,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-LIB-ALBUM | Albums | P0 | ✅ | `cmd:album.create`, `cmd:album.rename`, `cmd:album.delete`, `cmd:album.addPhotos`, `cmd:album.removePhotos`, `cmd:dialog.newAlbum` | no drag photos onto album (LR-BEHAV-DRAGDROP), no album sort |
 | LR-LIB-FOLDER | Folders of albums | P0 | ✅ | `cmd:album.create` (`folder`), `cmd:album.move` | moving is command-only (no drag, no "Move to" menu) |
 | LR-LIB-SMARTALBUM | Smart albums | P1 | ✅ | `cmd:album.createSmart`, `cmd:album.setRules`, `crates/catalog/src/query.rs`, `crates/ui-egui/src/panels/filterbar.rs`, `crates/ui-egui/src/lib.rs` (`album_counts`) | saved filters (rating/flag/label/kind/edited/keyword/camera/lens/date range/text/album), live; match-all only (no any/none rule groups, no rule editor dialog — rules come from the filter bar or `album.setRules`); sidebar counts are cached per catalog revision (and per minute while an “in the last…” rule is used), counted without building id lists |
-| LR-LIB-SHARED-ALBUM | Shared albums | P2 | ⬜ | | needs a sharing service |
+| LR-LIB-SHARED-ALBUM | Shared albums | P2 | 🟡 | `cmd:album.share`, `cmd:album.unshare`, `cmd:shares.list`, `apps/lightcraft-server/src/shares.rs`, `apps/lightcraft-server/tests/shares.rs`, `crates/engine/src/sync/shares.rs`, `crates/ui-egui/src/panels/left.rs`, `docs/sync.md` | with [self-hosted sync](sync.md): right-click an album ▸ Share Link makes a read-only link anyone can open in a browser, no account: the photos as they are edited now (rendered on the server, no metadata), optionally downloadable originals, optionally ending after some days, listed and revocable in Settings ▸ Sync and on the admin page. Not collaborative: other people can't add to the album, comment or favourite |
 | LR-LIB-OFFLINE | Keep album offline | P2 | ✅ | `cmd:album.makeAvailableOffline`, `cmd:photo.makeAvailableOffline`, `cmd:sync.downloadOriginals`, `crates/engine/src/sync.rs`, `crates/ui-egui/src/panels/left.rs` | with [self-hosted sync](sync.md): an album (right-click; ✓ in the sidebar) or photos keep their smart previews on the device, originals on request or for every photo (Settings ▸ Sync); a size limit for downloaded originals (`cmd:sync.originalsBudget`) deletes the ones used longest ago, never the server's only copy or a photo in use |
 | LR-LIB-TARGET | Target album | P2 | ✅ | `cmd:album.setTarget`, `cmd:album.toggleTarget` | see LRC-LIB-COLLECTIONS |
 | LR-LIB-RATING | Star ratings | P0 | ✅ | `cmd:photo.rate` (`advance`), `crates/ui-egui/src/shortcuts.rs` | |

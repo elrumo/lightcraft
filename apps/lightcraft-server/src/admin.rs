@@ -172,6 +172,18 @@ pub fn api(st: &State, req: &mut Request, method: &Method, rest: &str) -> Resp {
             Ok(id) => st.accounts.lock().unwrap_or_else(PoisonError::into_inner).revoke(name, id).map(|()| json!({})).map_err(|e| Ok((404, e))),
             Err(_) => Err(Ok((400, format!("not a device id: {id}")))),
         },
+        (Method::Get, ["users", name, "shares"]) => Ok(json!(st.shares.lock().unwrap_or_else(PoisonError::into_inner).list(name))),
+        (Method::Delete, ["users", name, "shares", id]) => {
+            let r = st.shares.lock().unwrap_or_else(PoisonError::into_inner).remove(&st.data, name, id);
+            match r {
+                Ok(true) => {
+                    log::info!("admin {me}: revoked {name}'s link {id}");
+                    Ok(json!({}))
+                }
+                Ok(false) => Err(Ok((404, "no such link".to_string()))),
+                Err(e) => Err(Ok((500, e))),
+            }
+        }
         (Method::Get, ["users", name, "folders"]) => folders(st, name),
         (Method::Post, ["users", name, "folders"]) => read_json::<NewFolder>(req).map_err(Err).and_then(|f| {
             let added = accounts::add_folder(&st.data, name, &f.path, f.name.as_deref()).map_err(|e| Ok((400, e)))?;
@@ -332,6 +344,7 @@ fn users(st: &State) -> AdminResult {
         let folders: Vec<Value> = u.folders.iter().map(|f| json!({"name": f.name, "path": f.path})).collect();
         out.push(json!({
             "name": name, "admin": u.admin, "photos": photos, "albums": albums, "devices": devices, "bytes": bytes,
+            "shares": st.shares.lock().unwrap_or_else(PoisonError::into_inner).list(name).len(),
             "folders": folders, "scan": st.folders.status(name),
         }));
     }
@@ -349,6 +362,8 @@ fn add_user(st: &State, u: NewUser) -> std::result::Result<Value, (u16, String)>
 
 fn remove_user(st: &State, name: &str) -> AdminResult {
     accounts::remove_user(&st.data, name).map_err(|e| Ok((409, e)))?;
+    // (their album links stop at once)
+    st.shares.lock().unwrap_or_else(PoisonError::into_inner).drop_user(name);
     st.accounts.lock().unwrap_or_else(PoisonError::into_inner).forget(name);
     // closes the library (and releases its lock)
     st.libs.lock().unwrap_or_else(PoisonError::into_inner).remove(name);
