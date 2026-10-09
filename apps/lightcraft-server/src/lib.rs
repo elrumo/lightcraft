@@ -110,6 +110,8 @@ pub struct State {
     pub(crate) render: render::Slots,
     /// Failed sign-ins (password guessing).
     pub(crate) throttle: Mutex<throttle::Throttle>,
+    /// The unfinished uploads being written right now (one writer per file).
+    pub(crate) uploading: Mutex<std::collections::HashSet<PathBuf>>,
     busy: AtomicUsize,
     max: usize,
 }
@@ -148,6 +150,7 @@ impl Server {
             folders: folders::Scanner::new(cfg.scan_interval),
             render: render::Slots::new(cfg.render_threads),
             throttle: Mutex::new(throttle::Throttle::default()),
+            uploading: Mutex::new(std::collections::HashSet::new()),
             busy: AtomicUsize::new(0),
             max: cfg.max_requests.max(1),
         });

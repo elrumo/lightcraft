@@ -60,12 +60,27 @@ async fn run(task: &Task, backend: Option<&Backend>) -> Result<Done, String> {
                     headers.set("Content-Type", "application/octet-stream").map_err(js)?;
                     init.set_body(&js_sys::Uint8Array::from(bytes.as_slice()));
                 }
+                Body::FileFrom(key, offset) => {
+                    let bytes = backend.read(key).await?.ok_or_else(|| format!("{key}: not in browser storage"))?;
+                    headers.set("Content-Type", "application/octet-stream").map_err(js)?;
+                    // the rest of a broken upload (from the start when the offset isn't inside the file)
+                    let from = usize::try_from(*offset).ok().filter(|f| *f > 0 && *f < bytes.len());
+                    if let Some(from) = from {
+                        headers.set("Content-Range", &format!("bytes {from}-{}/{}", bytes.len() - 1, bytes.len())).map_err(js)?;
+                    }
+                    init.set_body(&js_sys::Uint8Array::from(bytes.get(from.unwrap_or(0)..).unwrap_or_default()));
+                }
             }
             init.set_headers(&headers);
             let req = web_sys::Request::new_with_str_and_init(url, &init).map_err(js)?;
             let window = web_sys::window().ok_or("no window")?;
             let resp: web_sys::Response = JsFuture::from(window.fetch_with_request(&req)).await.map_err(js)?.dyn_into().map_err(js)?;
             let status = resp.status();
+            if *method == "HEAD" {
+                // (a HEAD has no body: the engine reads the bytes of a broken upload from here)
+                let offset = resp.headers().get("Upload-Offset").ok().flatten().unwrap_or_default();
+                return Ok(Done { id: *id, status, body: offset });
+            }
             if let (Some(dest), true) = (save_to, resp.ok()) {
                 let buf = JsFuture::from(resp.array_buffer().map_err(js)?).await.map_err(js)?;
                 backend.write(dest, &js_sys::Uint8Array::new(&buf).to_vec()).await?;

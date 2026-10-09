@@ -353,3 +353,197 @@ fn unauthenticated_bodies_are_capped() {
     drop(server);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+// ---- resumable uploads ----
+
+/// Bytes that don't repeat (a stand-in for a raw file).
+fn noise(n: usize, seed: u64) -> Vec<u8> {
+    let mut x = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+    (0..n)
+        .map(|_| {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            (x >> 24) as u8
+        })
+        .collect()
+}
+
+fn sign_in_raw(base: &str) -> String {
+    let body = json!({"user": "ann", "password": "correct horse", "device": "t"}).to_string();
+    let (s, b, _) = call("POST", &format!("{base}/api/login"), "", Some(body.as_bytes()), &[]);
+    assert_eq!(s, 200);
+    json_of(&b)["token"].as_str().unwrap().to_string()
+}
+
+/// A `PUT` with extra headers.
+fn put_with(url: &str, token: &str, body: &[u8], headers: &[(&str, &str)]) -> (u16, Value) {
+    let mut req = agent().put(url).header("Authorization", &format!("Bearer {token}"));
+    for (k, v) in headers {
+        req = req.header(*k, *v);
+    }
+    let mut r = req.send(body).unwrap();
+    let status = r.status().as_u16();
+    (status, json_of(&r.body_mut().read_to_vec().unwrap_or_default()))
+}
+
+/// A `PUT` that announces `declared` bytes and sends only `sent`, then (if `hold` is false) hangs up:
+/// the connection a phone loses.
+fn broken_put(addr: std::net::SocketAddr, path: &str, token: &str, declared: usize, sent: &[u8], hold: bool) -> Option<std::net::TcpStream> {
+    use std::io::Write;
+    let mut c = std::net::TcpStream::connect(addr).unwrap();
+    let head = format!("PUT {path} HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer {token}\r\nContent-Length: {declared}\r\n\r\n");
+    c.write_all(head.as_bytes()).unwrap();
+    c.write_all(sent).unwrap();
+    c.flush().unwrap();
+    hold.then_some(c)
+}
+
+/// What `HEAD` says about a file: the status and `Upload-Offset`.
+fn head(url: &str, token: &str) -> (u16, Option<u64>) {
+    let (s, _, hs) = call("HEAD", url, token, None, &[]);
+    (s, hs.iter().find(|(k, _)| k.eq_ignore_ascii_case("upload-offset")).and_then(|(_, v)| v.parse().ok()))
+}
+
+/// Wait until `HEAD` reports `want` bytes of an unfinished upload.
+fn wait_for_offset(url: &str, token: &str, want: u64) {
+    for _ in 0..200 {
+        if head(url, token) == (404, Some(want)) {
+            std::thread::sleep(Duration::from_millis(50)); // (the request thread lets go of the file)
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    panic!("the server never reported {want} bytes: {:?}", head(url, token));
+}
+
+#[test]
+fn an_interrupted_upload_carries_on_where_it_stopped() {
+    let root = temp("resume");
+    let server = start(&root);
+    let base = format!("http://{}", server.addr());
+    let token = sign_in_raw(&base);
+    let bytes = noise(400_000, 1);
+    let h = lightcraft_preview::hash_bytes(&bytes).to_string();
+    let url = format!("{base}/api/blobs/original/{h}");
+    assert_eq!(head(&url, &token), (404, Some(0)));
+
+    // the connection breaks 40 % of the way: what arrived stays
+    let cut = 160_000;
+    broken_put(server.addr(), &format!("/api/blobs/original/{h}"), &token, bytes.len(), &bytes[..cut], false);
+    wait_for_offset(&url, &token, cut as u64);
+    assert!(std::fs::read_dir(root.join("data/users/ann/blobs/original")).map_or(true, |d| d.count() == 0), "nothing is kept as the file yet");
+
+    // going on from the wrong place is refused, and says where the server is
+    let rest = &bytes[cut..];
+    let range = |first: usize| format!("bytes {first}-{}/{}", bytes.len() - 1, bytes.len());
+    let (s, body) = put_with(&url, &token, &bytes[1000..], &[("Content-Range", &range(1000))]);
+    assert_eq!((s, body["offset"].clone()), (409, json!(cut)), "{body}");
+    // a range that stops short of the end, a body that isn't the range's length, garbage, other kinds
+    let short = format!("bytes {cut}-{}/{}", bytes.len() - 2, bytes.len());
+    assert_eq!(put_with(&url, &token, rest, &[("Content-Range", &short)]).0, 400);
+    assert_eq!(put_with(&url, &token, &rest[1..], &[("Content-Range", &range(cut))]).0, 400);
+    assert_eq!(put_with(&url, &token, rest, &[("Content-Range", "bytes lots")]).0, 400);
+    let huge = format!("bytes {cut}-{}/{}", (1u64 << 40) - 1, 1u64 << 40);
+    assert_eq!(put_with(&url, &token, rest, &[("Content-Range", &huge)]).0, 400);
+    assert_eq!(put_with(&format!("{base}/api/blobs/mini/{h}"), &token, rest, &[("Content-Range", &range(cut))]).0, 400);
+    assert_eq!(head(&url, &token), (404, Some(cut as u64)), "none of that touched what is kept");
+
+    // the rest, from where it stopped: the whole file hashes right and is kept
+    let (s, body) = put_with(&url, &token, rest, &[("Content-Range", &range(cut))]);
+    assert_eq!((s, body), (200, json!({})));
+    assert_eq!(head(&url, &token).0, 200);
+    let (s, all, _) = call("GET", &url, &token, None, &[]);
+    assert_eq!((s, all == bytes), (200, true));
+    let tmp = root.join("data/users/ann/blobs/tmp");
+    assert!(std::fs::read_dir(&tmp).map_or(true, |d| d.count() == 0), "the partial file is gone");
+    drop(server);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_damaged_partial_is_dropped_and_the_upload_starts_again() {
+    let root = temp("resume-bad");
+    let server = start(&root);
+    let base = format!("http://{}", server.addr());
+    let token = sign_in_raw(&base);
+    let bytes = noise(50_000, 2);
+    let h = lightcraft_preview::hash_bytes(&bytes).to_string();
+    let url = format!("{base}/api/blobs/original/{h}");
+    // 20 000 bytes that are not the start of this file arrived (another file under this name, a
+    // bad disk sector, anything): the hash decides
+    let wrong = noise(20_000, 3);
+    broken_put(server.addr(), &format!("/api/blobs/original/{h}"), &token, bytes.len(), &wrong, false);
+    wait_for_offset(&url, &token, 20_000);
+    let range = format!("bytes 20000-{}/{}", bytes.len() - 1, bytes.len());
+    let (s, body) = put_with(&url, &token, &bytes[20_000..], &[("Content-Range", &range)]);
+    assert_eq!(s, 422, "{body}");
+    assert_eq!(head(&url, &token), (404, Some(0)), "the damaged partial is gone");
+    // the device then sends the whole file
+    assert_eq!(put_with(&url, &token, &bytes, &[]).0, 200);
+    let (_, all, _) = call("GET", &url, &token, None, &[]);
+    assert_eq!(all, bytes);
+    // a plain upload over a partial starts over too
+    let other = noise(30_000, 4);
+    let h2 = lightcraft_preview::hash_bytes(&other).to_string();
+    let url2 = format!("{base}/api/blobs/original/{h2}");
+    broken_put(server.addr(), &format!("/api/blobs/original/{h2}"), &token, other.len(), &other[..10_000], false);
+    wait_for_offset(&url2, &token, 10_000);
+    assert_eq!(put_with(&url2, &token, &other, &[]).0, 200);
+    assert_eq!(call("GET", &url2, &token, None, &[]).1, other);
+    drop(server);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn one_request_writes_a_file_at_a_time() {
+    let root = temp("resume-busy");
+    let server = start(&root);
+    let base = format!("http://{}", server.addr());
+    let token = sign_in_raw(&base);
+    let bytes = noise(80_000, 5);
+    let h = lightcraft_preview::hash_bytes(&bytes).to_string();
+    let url = format!("{base}/api/blobs/original/{h}");
+    // an upload that is still going (it has sent half and waits)
+    let open = broken_put(server.addr(), &format!("/api/blobs/original/{h}"), &token, bytes.len(), &bytes[..40_000], true);
+    wait_for_offset(&url, &token, 40_000);
+    let (s, body) = put_with(&url, &token, &bytes, &[]);
+    assert_eq!((s, body["offset"].clone()), (409, json!(40_000)), "{body}");
+    // once it hangs up, the file can be finished
+    drop(open);
+    let mut done = 409;
+    for _ in 0..100 {
+        let range = format!("bytes 40000-{}/{}", bytes.len() - 1, bytes.len());
+        done = put_with(&url, &token, &bytes[40_000..], &[("Content-Range", &range)]).0;
+        if done != 409 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(done, 200);
+    assert_eq!(call("GET", &url, &token, None, &[]).1, bytes);
+    drop(server);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// A preview is whole or nothing: a body that ends early is refused, not kept (before, the
+/// magic number at its start was all that was checked).
+#[test]
+fn a_truncated_preview_is_not_kept() {
+    let root = temp("resume-preview");
+    let server = start(&root);
+    let base = format!("http://{}", server.addr());
+    let token = sign_in_raw(&base);
+    let h = lightcraft_preview::hash_bytes(b"x").to_string();
+    let mut preview = b"LCSP1\n".to_vec();
+    preview.extend(noise(10_000, 6));
+    for kind in ["mini", "smart"] {
+        let url = format!("{base}/api/blobs/{kind}/{h}");
+        broken_put(server.addr(), &format!("/api/blobs/{kind}/{h}"), &token, preview.len(), &preview[..4_000], false);
+        std::thread::sleep(Duration::from_millis(300));
+        assert_eq!(head(&url, &token).0, 404, "{kind}");
+        assert_eq!(put_with(&url, &token, &preview, &[]).0, 200, "{kind}: a whole one is kept");
+    }
+    drop(server);
+    let _ = std::fs::remove_dir_all(&root);
+}

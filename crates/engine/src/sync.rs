@@ -147,6 +147,9 @@ pub enum Body {
     Json(String),
     /// The contents of a file (a catalog path: the host reads it).
     File(String),
+    /// The rest of a file from byte `offset` (an upload the server has the start of), sent with
+    /// `Content-Range: bytes <offset>-<last>/<length>`. An offset at or past the end sends the whole file.
+    FileFrom(String, u64),
 }
 
 /// Something for the host to do.
@@ -216,6 +219,8 @@ enum Job {
         blob: Blob,
         path: String,
         id: PhotoId,
+        /// The server already has this many bytes of the file (an upload that broke): send the rest.
+        offset: u64,
     },
     Proxies {
         key: String,
@@ -557,6 +562,25 @@ impl SyncState {
 pub fn blob_key(p: &Photo) -> Option<String> {
     let h = p.content_hash.as_deref()?.split(':').next()?;
     (h.len() == 32 && h.bytes().all(|b| b.is_ascii_hexdigit())).then(|| h.to_ascii_lowercase())
+}
+
+/// Does the file at `path` hash to `key` (a [`blob_key`])? A file that can't be read doesn't.
+fn file_has_hash(path: &str, key: &str) -> bool {
+    use std::io::Read;
+    let Ok(mut f) = std::fs::File::open(path) else { return false };
+    let mut hasher = lightcraft_preview::Hasher128::new();
+    let mut buf = vec![0u8; 1 << 20];
+    loop {
+        match f.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                hasher.update(buf.get(..n).unwrap_or(&[]));
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => return false,
+        }
+    }
+    hasher.finish().to_string() == key
 }
 
 /// The mini preview's file name in the proxies folder (beside the smart preview's).
@@ -968,16 +992,17 @@ impl Session {
                     }),
                 };
                 if built {
-                    job = Job::Put { key: key.clone(), blob: Blob::Smart, path: smart, id: *id };
+                    job = Job::Put { key: key.clone(), blob: Blob::Smart, path: smart, id: *id, offset: 0 };
                 }
             }
             let task = match &job {
                 Job::Head { key, .. } => st.http("HEAD", &format!("/api/blobs/original/{key}"), Body::Empty, None),
-                Job::Put { key, blob, path, .. } => {
+                Job::Put { key, blob, path, offset, .. } => {
                     // (the server builds the previews of an original it is sent this way; one that doesn't know the
                     // parameter ignores it and the device builds them, see `job_done`)
                     let ask = if *blob == Blob::Original && st.config.server_builds_previews() { "?previews=1" } else { "" };
-                    st.http("PUT", &format!("/api/blobs/{}/{key}{ask}", blob.name()), Body::File(path.clone()), None)
+                    let body = if *offset > 0 { Body::FileFrom(path.clone(), *offset) } else { Body::File(path.clone()) };
+                    st.http("PUT", &format!("/api/blobs/{}/{key}{ask}", blob.name()), body, None)
                 }
                 Job::Get { key, blob, dest } => st.http("GET", &format!("/api/blobs/{}/{key}", blob.name()), Body::Empty, Some(dest.clone())),
                 Job::Proxies { path, id, .. } => {
@@ -1384,10 +1409,12 @@ impl Session {
         match job {
             Job::Head { key, path, id } => match d.status {
                 200 => st.ready.push_front(Job::Proxies { key, path, id }),
-                404 => st.ready.push_front(Job::Put { key, blob: Blob::Original, path, id }),
+                // (a `HEAD` has no body: the host puts the `Upload-Offset` header there, the bytes of an
+                // earlier, broken upload the server kept)
+                404 => st.ready.push_front(Job::Put { key, blob: Blob::Original, path, id, offset: d.body.trim().parse().unwrap_or(0) }),
                 _ => retry(st, &key, why(d)),
             },
-            Job::Put { key, blob, path, id } if d.ok() => match blob {
+            Job::Put { key, blob, path, id, .. } if d.ok() => match blob {
                 Blob::Original => {
                     // the server answers `{"previews": "queued" | "built"}` when it is making them: nothing to build here
                     let by_server = st.config.server_builds_previews()
@@ -1399,7 +1426,7 @@ impl Session {
                     }
                 }
                 Blob::Smart => match self.proxy_paths(id) {
-                    Some((_, mini)) => st.ready.push_front(Job::Put { key, blob: Blob::Mini, path: mini, id }),
+                    Some((_, mini)) => st.ready.push_front(Job::Put { key, blob: Blob::Mini, path: mini, id, offset: 0 }),
                     None => self.uploaded(st, key),
                 },
                 Blob::Mini => self.uploaded(st, key),
@@ -1407,6 +1434,14 @@ impl Session {
             Job::Put { key, blob: Blob::Original, .. } if d.status == 422 => {
                 log::warn!("sync: the server refused the original {key}: {}", why(d));
                 st.refused.insert(key);
+            }
+            // the server has another number of bytes than the device thought (or is taking this file
+            // from another request): go on from where it says, unless that is where this tried
+            Job::Put { key, blob: Blob::Original, path, id, offset } if d.status == 409 => {
+                match serde_json::from_str::<Value>(&d.body).ok().and_then(|v| v["offset"].as_u64()) {
+                    Some(at) if at != offset => st.ready.push_front(Job::Put { key, blob: Blob::Original, path, id, offset: at }),
+                    _ => retry(st, &key, why(d)),
+                }
             }
             Job::Put { key, .. } => retry(st, &key, why(d)),
             Job::Proxies { key, id, .. } => match (d.ok(), self.proxy_paths(id)) {
@@ -1419,7 +1454,7 @@ impl Session {
                     if let Some(have) = st.have.as_mut() {
                         have.extend(names);
                     }
-                    st.ready.push_front(Job::Put { key, blob: Blob::Smart, path: smart, id });
+                    st.ready.push_front(Job::Put { key, blob: Blob::Smart, path: smart, id, offset: 0 });
                 }
                 (_, None) => self.uploaded(st, key),
                 (false, _) => {
@@ -1446,6 +1481,13 @@ impl Session {
                         s.originals.insert(key.clone());
                     }
                 } else if blob == Blob::Original {
+                    // (a download that was resumed, or a folder file that changed on the server, may not be the
+                    // photo it should be: the hash is the key)
+                    if !file_has_hash(&dest, &key) {
+                        let _ = std::fs::remove_file(&dest);
+                        retry(st, &key, format!("{dest} isn't the original it should be"));
+                        return;
+                    }
                     // the file is here now: the photo points at it (on this device only); the
                     // server has it, so it's never sent back
                     self.uploaded(st, key.clone());
@@ -1672,7 +1714,12 @@ mod net {
 
     pub(super) fn http(method: &str, url: &str, token: &str, body: &Body, save_to: Option<&str>) -> Result<(u16, String), String> {
         let auth = format!("Bearer {token}");
+        // An original that broke on its way down is kept as `<file>.part` and asked for again from
+        // there. (Not the previews: the server may have built a new one since.)
+        let part = save_to.filter(|_| method == "GET" && url.contains("/api/blobs/original/")).map(|d| format!("{d}.part"));
+        let resume = part.as_ref().and_then(|p| std::fs::metadata(p).ok()).map_or(0, |m| m.len());
         let r = match (method, body) {
+            ("GET", _) if resume > 0 => agent().get(url).header("Authorization", &auth).header("Range", format!("bytes={resume}-")).call(),
             ("GET", _) => agent().get(url).header("Authorization", &auth).call(),
             ("HEAD", _) => agent().head(url).header("Authorization", &auth).call(),
             ("DELETE", _) => agent().delete(url).header("Authorization", &auth).call(),
@@ -1690,19 +1737,65 @@ mod net {
                         let len = f.metadata().map(|m| m.len()).map_err(|e| format!("{path}: {e}"))?;
                         req.header("Content-Type", "application/octet-stream").header("Content-Length", len.to_string()).send(f)
                     }
+                    Body::FileFrom(path, offset) => {
+                        use std::io::{Seek, SeekFrom};
+                        let mut f = std::fs::File::open(path).map_err(|e| format!("{path}: {e}"))?;
+                        let len = f.metadata().map(|m| m.len()).map_err(|e| format!("{path}: {e}"))?;
+                        let req = req.header("Content-Type", "application/octet-stream");
+                        if *offset == 0 || *offset >= len {
+                            req.header("Content-Length", len.to_string()).send(f)
+                        } else {
+                            f.seek(SeekFrom::Start(*offset)).map_err(|e| format!("{path}: {e}"))?;
+                            req.header("Content-Length", (len - offset).to_string())
+                                .header("Content-Range", format!("bytes {offset}-{}/{len}", len - 1))
+                                .send(f)
+                        }
+                    }
                 }
             }
         };
         let mut resp = r.map_err(|e| e.to_string())?;
         let status = resp.status().as_u16();
+        if method == "HEAD" {
+            // (no body to read: the one thing a HEAD can add, how far an unfinished upload got)
+            let at = resp.headers().get("upload-offset").and_then(|v| v.to_str().ok()).unwrap_or("");
+            return Ok((status, at.to_string()));
+        }
+        if resume > 0
+            && status == 416
+            && let Some(part) = &part
+        {
+            // what is kept doesn't fit what the server has now: start again
+            let _ = std::fs::remove_file(part);
+            return http(method, url, token, body, save_to);
+        }
         if let (Some(dest), true) = (save_to, (200..300).contains(&status)) {
             let path = std::path::Path::new(dest);
             if let Some(dir) = path.parent() {
                 std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
             }
+            let from = resp
+                .headers()
+                .get("content-range")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.strip_prefix("bytes "))
+                .and_then(|v| v.split('-').next())
+                .and_then(|v| v.trim().parse::<u64>().ok());
             let mut reader = resp.body_mut().with_config().limit(u64::MAX).reader();
-            lightcraft_catalog::safe_file::write_atomic_with(path, &mut |w| std::io::copy(&mut reader, w).map(|_| ()))
-                .map_err(|e| format!("{dest}: {e}"))?;
+            let Some(part) = part else {
+                lightcraft_catalog::safe_file::write_atomic_with(path, &mut |w| std::io::copy(&mut reader, w).map(|_| ()))
+                    .map_err(|e| format!("{dest}: {e}"))?;
+                return Ok((status, String::new()));
+            };
+            // 206 from where it was asked: carry on; the whole file: from the start
+            let carry_on = status == 206 && resume > 0 && from == Some(resume);
+            let mut f = if carry_on { std::fs::OpenOptions::new().append(true).open(&part) } else { std::fs::File::create(&part) }
+                .map_err(|e| format!("{part}: {e}"))?;
+            // (an error half-way leaves what arrived in the .part file)
+            std::io::copy(&mut reader, &mut f).map_err(|e| format!("{dest}: {e}"))?;
+            f.sync_all().map_err(|e| format!("{part}: {e}"))?;
+            drop(f);
+            std::fs::rename(&part, path).map_err(|e| format!("{dest}: {e}"))?;
             return Ok((status, String::new()));
         }
         let mut text = String::new();

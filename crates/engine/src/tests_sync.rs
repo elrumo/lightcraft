@@ -39,6 +39,10 @@ struct Fake {
     down: bool,
     /// A server from before `GET /api/usage`.
     no_usage: bool,
+    /// Originals whose upload broke: what the server kept of each, by (kind, hash).
+    partials: HashMap<(String, String), Vec<u8>>,
+    /// Answer a `HEAD` with this offset whatever is kept (an answer that has gone out of date).
+    stale_offset: Option<u64>,
     requests: Vec<String>,
 }
 
@@ -52,6 +56,8 @@ impl Fake {
             presets: proto::Presets { version: 0, presets: json!([]) },
             down: false,
             no_usage: false,
+            partials: HashMap::new(),
+            stale_offset: None,
             requests: vec![],
         }
     }
@@ -65,7 +71,8 @@ impl Fake {
             return Done::failed(id, "connection refused");
         }
         let path = url.strip_prefix("http://fake").unwrap();
-        self.requests.push(format!("{method} {path}"));
+        let from = if let Body::FileFrom(_, at) = body { format!(" from {at}") } else { String::new() };
+        self.requests.push(format!("{method} {path}{from}"));
         let ok = |v: Value| Done { id, status: 200, body: v.to_string() };
         let status = |s: u16, v: Value| Done { id, status: s, body: v.to_string() };
         let json_body = || match body {
@@ -140,12 +147,31 @@ impl Fake {
                 let (kind, hash) = p.trim_start_matches("/api/blobs/").split_once('/').unwrap();
                 let k = (kind.to_string(), hash.to_string());
                 match m {
-                    "HEAD" => status(if self.blobs.contains_key(&k) { 200 } else { 404 }, Value::Null),
-                    "PUT" => {
-                        let Body::File(f) = body else { panic!("{body:?}") };
-                        self.blobs.insert(k, std::fs::read(f).unwrap());
-                        ok(Value::Null)
-                    }
+                    "HEAD" if self.blobs.contains_key(&k) => status(200, Value::Null),
+                    // (a HEAD has no body: the engine reads the Upload-Offset the host puts there)
+                    "HEAD" => match self.partials.get(&k) {
+                        Some(p) => Done { id, status: 404, body: self.stale_offset.unwrap_or(p.len() as u64).to_string() },
+                        None => Done { id, status: 404, body: String::new() },
+                    },
+                    "PUT" => match body {
+                        Body::File(f) => {
+                            self.partials.remove(&k);
+                            self.blobs.insert(k, std::fs::read(f).unwrap());
+                            ok(Value::Null)
+                        }
+                        Body::FileFrom(f, at) => {
+                            let have = self.partials.get(&k).map_or(0, |p| p.len() as u64);
+                            if *at != have {
+                                return status(409, json!({"error": "not where the server is", "offset": have}));
+                            }
+                            let all = std::fs::read(f).unwrap();
+                            let mut whole = self.partials.remove(&k).unwrap_or_default();
+                            whole.extend_from_slice(&all[*at as usize..]);
+                            self.blobs.insert(k, whole);
+                            ok(Value::Null)
+                        }
+                        other => panic!("{other:?}"),
+                    },
                     "GET" => match self.blobs.get(&k) {
                         Some(b) => {
                             let dest = save_to.as_ref().unwrap();
@@ -390,6 +416,95 @@ fn remote_changes_wait_for_a_slider_drag() {
     assert_eq!(a.catalog.photo(ids[0]).unwrap().rating, 3);
     sync(&mut b, &mut f);
     assert_eq!(exposure(&b, ids[0]), 0.5);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// A library with two imported photos, not signed in yet: where it is, the session, their ids.
+fn two_photos(tag: &str) -> (PathBuf, Session, Vec<PhotoId>) {
+    let root = temp_dir(tag);
+    write_png(&root.join("in/a.png"), 1);
+    write_png(&root.join("in/b.png"), 2);
+    let mut a = open(&root.join("a"));
+    a.execute("library.import", &json!({"paths": [root.join("in").to_string_lossy()]})).unwrap();
+    let ids: Vec<PhotoId> = a.catalog.photos().map(|p| p.id).collect();
+    assert_eq!(ids.len(), 2);
+    (root, a, ids)
+}
+
+/// The server's key for a photo's files and the bytes of its original.
+fn original_of(s: &Session, id: PhotoId) -> (String, Vec<u8>) {
+    let p = s.catalog.photo(id).unwrap();
+    let Source::File { path } = &p.source else { panic!("{:?}", p.source) };
+    (crate::sync::blob_key(p).unwrap(), std::fs::read(path).unwrap())
+}
+
+/// An upload that broke is not sent again from the start: `HEAD` says how much the server kept,
+/// and the rest is sent from there. The other photos upload as usual.
+#[test]
+fn an_upload_that_broke_goes_on_where_the_server_has_it() {
+    let mut f = Fake::new();
+    let (root, mut a, ids) = two_photos("resume");
+    let (key, bytes) = original_of(&a, ids[0]);
+    let cut = bytes.len() / 3;
+    assert!(cut > 0);
+    f.partials.insert(("original".into(), key.clone()), bytes[..cut].to_vec());
+    sign_in(&mut a);
+    let st = sync(&mut a, &mut f);
+    assert_eq!(st["state"], "idle", "{st}");
+    let put = format!("PUT /api/blobs/original/{key}");
+    assert!(f.requests.contains(&format!("{put} from {cut}")), "{:?}", f.requests);
+    assert!(!f.requests.contains(&put), "not from the start: {:?}", f.requests);
+    assert_eq!(f.blobs.get(&("original".into(), key)), Some(&bytes), "the server holds the whole file");
+    assert!(f.partials.is_empty());
+    let (other, _) = original_of(&a, ids[1]);
+    assert!(f.requests.contains(&format!("PUT /api/blobs/original/{other}")), "the other photo went whole");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// The server has more (or less) of the file than the device was told: it says so and the device
+/// carries on from there, without waiting a minute to try again.
+#[test]
+fn an_upload_corrects_its_start_when_the_server_says_so() {
+    let mut f = Fake::new();
+    let (root, mut a, ids) = two_photos("resume-409");
+    let (key, bytes) = original_of(&a, ids[0]);
+    let kept = bytes.len() / 2;
+    f.partials.insert(("original".into(), key.clone()), bytes[..kept].to_vec());
+    f.stale_offset = Some(10);
+    sign_in(&mut a);
+    let st = sync(&mut a, &mut f);
+    assert_eq!(st["state"], "idle", "{st}");
+    let put = format!("PUT /api/blobs/original/{key}");
+    let sent: Vec<_> = f.requests.iter().filter(|r| r.starts_with(&put)).cloned().collect();
+    assert_eq!(sent, [format!("{put} from 10"), format!("{put} from {kept}")]);
+    assert_eq!(f.blobs.get(&("original".into(), key)), Some(&bytes));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// An original that comes down wrong (a resumed download spliced onto a changed file, a folder
+/// file edited on the server) is not kept as the photo's file.
+#[test]
+fn a_downloaded_original_that_is_not_the_photo_is_not_kept() {
+    let mut f = Fake::new();
+    let (mut a, root, ids) = first_device("badget", &mut f);
+    let (key, bytes) = original_of(&a, ids[1]);
+    let mut b = open(&root.join("b"));
+    sign_in(&mut b);
+    sync(&mut b, &mut f);
+    let mut wrong = bytes.clone();
+    wrong.push(0);
+    f.blobs.insert(("original".into(), key), wrong);
+    b.selection = crate::Selection::single(ids[1]);
+    b.execute("sync.downloadOriginals", &json!({"ids": [ids[1].0]})).unwrap();
+    sync(&mut b, &mut f);
+    let p = b.catalog.photo(ids[1]).unwrap();
+    assert!(is_remote(p), "still a photo of the server's: {:?}", p.source);
+    let dir = root.join("b/sync/originals");
+    assert!(
+        std::fs::read_dir(&dir).map_or(true, |d| d.flatten().all(|e| std::fs::read_dir(e.path()).map_or(true, |f| f.count() == 0))),
+        "nothing was left in {dir:?}"
+    );
+    let _ = a.close_library();
     let _ = std::fs::remove_dir_all(&root);
 }
 

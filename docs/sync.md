@@ -250,7 +250,9 @@ Each device keeps the **whole catalog** (it's small) and **downloads pixels as n
 
 - **Make Available Offline:** right-click an album (✓ marks it in the sidebar), or **Photo ▸ Make Available Offline**
   for selected photos: their smart previews stay on the device, so they open and edit without a network.
-- A downloaded original (`<library>/sync/originals/<hash>/<name>`) becomes the photo's file on this device only.
+- A downloaded original (`<library>/sync/originals/<hash>/<name>`) becomes the photo's file on this device only. It is
+  checked against the photo's content hash before it is used, and a download that breaks off is continued, not started
+  again (`<name>.part`); an upload that breaks off is continued from what the server kept.
 - Photos whose original is on the server are not *Missing Photos*; Info says “Original on the sync server”.
 - Photos you import on any desktop device are uploaded with their previews in the background.
 
@@ -342,7 +344,7 @@ JSON over HTTP; every route but `login` wants `Authorization: Bearer <token>`. T
 | `GET /api/usage` | what this user takes on the server ([`proto::Usage`](../crates/catalog/src/sync.rs)): `{photos, albums, devices, original, smart, mini, folders: {files, bytes}, disk: {total, free}}`; a few seconds old at most. A server older than the route answers `404` |
 | `GET /api/ops?since=N&limit=M` | `{head, ops: [[seq, op]…], presets}` (presets = the presets document's version) · `410`: reload the snapshot |
 | `POST /api/ops` | `{base, ops}` → `200 {head}` · `409 {head}` (behind: pull first) · `422 {index, error}` (op `index` doesn't apply; nothing was) |
-| `HEAD`/`GET`/`PUT /api/blobs/{original\|smart\|mini}/{hash}` | photo files by 128-bit content hash; `GET` takes `Range`; an original is only kept if its bytes hash to its name, previews must be LightCraft previews |
+| `HEAD`/`GET`/`PUT /api/blobs/{original\|smart\|mini}/{hash}` | photo files by 128-bit content hash; `GET` takes `Range`; an original is only kept if its bytes hash to its name, previews must be LightCraft previews and arrive whole. **Resuming an upload:** an original that breaks off is kept (`tmp/original-<hash>.part`); `HEAD` of a file the server doesn't have yet answers `404` with `Upload-Offset: N` (the bytes kept, `0` if none), and `PUT` with `Content-Range: bytes N-<last>/<total>` carries on from there (`409` with `{"offset": N}` if the server has another number of bytes or another request is writing the file; a plain `PUT` starts over). Downloads of originals resume with `Range` |
 | `GET`/`PUT /api/presets` | `{version, presets}`; `PUT` with a stale `version` → `412` with the current document |
 | `POST /api/render` | `{hash, name, settings, export}` → the encoded image (`X-LightCraft-Size: WxH`): the photo with this original, rendered with these edits and [export options](#exporting-on-the-server) · `404` no such original (or a server older than the route) · `422` can't be rendered · `503` busy, `Retry-After` |
 | `GET /api/health` | `{ok, version}` (no sign-in) |
@@ -385,6 +387,5 @@ v1, honestly:
   pulling; a pull reads just the part of the log it asks for.)
 - **Library folders are read, never written**: edits stay in the library (no XMP written back to the folders), and
   photos imported on a device are kept by the server as uploads, not filed into the folders.
-- **Uploads aren't resumable**: an interrupted upload starts again.
 - **One request per thread, plain HTTP**: meant for a home server behind a proxy or on a tailnet, not the open
   internet at scale.

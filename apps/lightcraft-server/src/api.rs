@@ -466,7 +466,11 @@ fn blob(st: &State, req: &mut Request, method: &Method, l: &Mutex<UserLib>, user
                 Err(_) if kind == "original" => folder_original(st, l, user, &hash),
                 Err(_) => None,
             };
-            let Some(mut f) = f else { return error(404, "the server doesn't have this file yet") };
+            let Some(mut f) = f else {
+                // an original may be part-way: say how far
+                let have = if kind == "original" { std::fs::metadata(part_path(&dir, &hash)).map(|m| m.len()).unwrap_or(0) } else { 0 };
+                return offset_error(404, "the server doesn't have this file yet", have);
+            };
             let len = f.metadata().map(|m| m.len()).unwrap_or(0);
             // by content: never changes
             let mut headers: Vec<Header> = [
@@ -541,33 +545,135 @@ fn render(st: &State, req: &mut Request, l: &Mutex<UserLib>, user: &str) -> Resp
     }
 }
 
+/// Where an original's unfinished upload is kept: the same file for every attempt, so a later one
+/// can go on from it ([`put_blob`]). `gc` removes the ones nobody went back to.
+pub(crate) fn part_path(dir: &Path, hash: &str) -> PathBuf {
+    dir.join("tmp").join(format!("original-{hash}.part"))
+}
+
+/// `Content-Range: bytes first-last/total` of an upload: (first, last, total).
+fn upload_range(v: &str) -> Option<(u64, u64, u64)> {
+    let (r, total) = v.trim().strip_prefix("bytes ")?.split_once('/')?;
+    let (first, last) = r.split_once('-')?;
+    Some((first.trim().parse().ok()?, last.trim().parse().ok()?, total.trim().parse().ok()?))
+}
+
+/// An error that also tells the device where its unfinished upload of an original stands (in
+/// the body, and as `Upload-Offset` for a `HEAD`, which has none).
+fn offset_error(status: u16, msg: impl std::fmt::Display, offset: u64) -> Resp {
+    let mut r = json(status, &json!({"error": msg.to_string(), "offset": offset}));
+    if let Some(h) = header("Upload-Offset", &offset.to_string()) {
+        r.add_header(h);
+    }
+    r
+}
+
+/// Marks an original's partial file as being written until dropped (one writer at a time).
+struct Writing<'a> {
+    set: &'a Mutex<std::collections::HashSet<PathBuf>>,
+    path: PathBuf,
+}
+
+impl<'a> Writing<'a> {
+    fn take(set: &'a Mutex<std::collections::HashSet<PathBuf>>, path: &Path) -> Option<Writing<'a>> {
+        set.lock().unwrap_or_else(PoisonError::into_inner).insert(path.to_path_buf()).then(|| Writing { set, path: path.to_path_buf() })
+    }
+}
+
+impl Drop for Writing<'_> {
+    fn drop(&mut self) {
+        self.set.lock().unwrap_or_else(PoisonError::into_inner).remove(&self.path);
+    }
+}
+
+/// `PUT /api/blobs/<kind>/<hash>`. A preview is taken whole or not at all. An original is
+/// streamed to `tmp/original-<hash>.part` and hashed on the way; if the connection breaks, what
+/// arrived stays, `HEAD` says how much (`Upload-Offset`), and a `PUT` with
+/// `Content-Range: bytes <offset>-<last>/<total>` carries on from there. A plain `PUT` starts
+/// over. Only the hash decides whether the file is kept.
 fn put_blob(st: &State, req: &mut Request, dir: &Path, kind: &str, path: &Path) -> Resp {
-    let max = if kind == "original" { BLOB_MAX } else { PREVIEW_MAX };
-    if req.body_length().is_some_and(|n| n as u64 > max) {
+    let original = kind == "original";
+    let max = if original { BLOB_MAX } else { PREVIEW_MAX };
+    let expected = req.body_length().map(|n| n as u64);
+    if expected.is_some_and(|n| n > max) {
         return error(413, format!("larger than {max} bytes"));
     }
+    // (the path's file name is the hash, normalized)
+    let hash = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
     let tmp_dir = dir.join("tmp");
-    let tmp = match accounts::random_hex(8) {
-        Ok(r) => tmp_dir.join(format!("{r}.part")),
-        Err(e) => return error(500, e),
+    let part = if original {
+        part_path(dir, &hash)
+    } else {
+        match accounts::random_hex(8) {
+            Ok(r) => tmp_dir.join(format!("{r}.part")),
+            Err(e) => return error(500, e),
+        }
     };
+    let range = match header_value(req, "Content-Range").map(upload_range) {
+        None => None,
+        Some(Some(r)) if original => Some(r),
+        Some(_) => return error(400, "Content-Range: bytes <first>-<last>/<total>, on an original"),
+    };
+    let _writing = if original {
+        match Writing::take(&st.uploading, &part) {
+            Some(w) => Some(w),
+            None => {
+                return offset_error(409, "this file is being uploaded by another request", std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0));
+            }
+        }
+    } else {
+        None
+    };
+    // the bytes of the unfinished upload that are here, if this request carries on from them
+    let have = if original { std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0) } else { 0 };
+    let start = match range {
+        None => 0,
+        Some((first, last, total)) => {
+            // (the whole rest of the file, in this one request)
+            if total > max || last.checked_add(1) != Some(total) || first > last || expected != Some(last - first + 1) {
+                return error(400, "Content-Range must name the rest of the file, as long as the body");
+            }
+            if first != have {
+                return offset_error(409, format!("the server has {have} bytes of this file, not {first}"), have);
+            }
+            first
+        }
+    };
+    let mut keep = false;
     let r = (|| -> Result<(), (u16, String)> {
         let io = |e: std::io::Error| (500, e.to_string());
         std::fs::create_dir_all(&tmp_dir).map_err(io)?;
-        let mut f = std::fs::File::create(&tmp).map_err(io)?;
         let mut hasher = lightcraft_preview::Hasher128::new();
         let mut buf = vec![0u8; 1 << 20];
-        let (mut total, mut head) = (0u64, Vec::<u8>::new());
+        let mut f = if start > 0 {
+            // the first part is hashed again: the hash is of the whole file
+            let mut old = std::fs::File::open(&part).map_err(io)?.take(start);
+            loop {
+                let n = old.read(&mut buf).map_err(io)?;
+                if n == 0 {
+                    break;
+                }
+                hasher.update(buf.get(..n).unwrap_or(&[]));
+            }
+            std::fs::OpenOptions::new().append(true).open(&part).map_err(io)?
+        } else {
+            std::fs::File::create(&part).map_err(io)?
+        };
+        let (mut total, mut got, mut head) = (start, 0u64, Vec::<u8>::new());
         let reader = req.as_reader();
         loop {
             let n = match reader.read(&mut buf) {
                 Ok(0) => break,
                 Ok(n) => n,
                 Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
-                Err(e) => return Err((400, format!("reading the upload: {e}"))),
+                Err(e) => {
+                    keep = original && f.sync_data().is_ok();
+                    return Err((400, format!("reading the upload: {e}")));
+                }
             };
             let chunk = buf.get(..n).unwrap_or(&[]);
             total += n as u64;
+            got += n as u64;
             if total > max {
                 return Err((413, format!("larger than {max} bytes")));
             }
@@ -577,11 +683,16 @@ fn put_blob(st: &State, req: &mut Request, dir: &Path, kind: &str, path: &Path) 
             hasher.update(chunk);
             f.write_all(chunk).map_err(io)?;
         }
-        // (the path's file name is the hash, normalized)
-        if kind == "original" && path.file_name().is_none_or(|n| *n != *hasher.finish().to_string()) {
+        // a body that ends before its Content-Length: the connection broke (the reader says
+        // "end" then). An original keeps what arrived, for the device to resume from.
+        if expected.is_some_and(|n| got != n) {
+            keep = original && f.sync_data().is_ok();
+            return Err((400, format!("the upload ended after {got} of {} bytes", expected.unwrap_or(0))));
+        }
+        if original && hasher.finish().to_string() != hash {
             return Err((422, "the file isn't the one its hash names".into()));
         }
-        if kind != "original" && head != PREVIEW_MAGIC {
+        if !original && head != PREVIEW_MAGIC {
             return Err((422, "not a LightCraft preview".into()));
         }
         f.sync_all().map_err(io)?;
@@ -589,7 +700,7 @@ fn put_blob(st: &State, req: &mut Request, dir: &Path, kind: &str, path: &Path) 
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(io)?;
         }
-        std::fs::rename(&tmp, path).map_err(io)?;
+        std::fs::rename(&part, path).map_err(io)?;
         if let Some(parent) = path.parent()
             && let Ok(d) = std::fs::File::open(parent)
         {
@@ -606,7 +717,12 @@ fn put_blob(st: &State, req: &mut Request, dir: &Path, kind: &str, path: &Path) 
             json(200, &json!({}))
         }
         Err((status, msg)) => {
-            let _ = std::fs::remove_file(&tmp);
+            if keep {
+                // what is here is exactly what arrived: the next request goes on from it
+                let have = std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
+                return offset_error(status, msg, have);
+            }
+            let _ = std::fs::remove_file(&part);
             error(status, msg)
         }
     }
