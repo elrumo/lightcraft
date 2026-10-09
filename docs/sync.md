@@ -392,8 +392,9 @@ v1, honestly:
 - **The iOS app is a spike** ([ios.md](ios.md)): it runs on the simulator (compact touch layout); sync there is wired
   up but not yet run on a simulator or device.
 - **In the browser** synced previews and downloaded originals are kept in the browser's storage. Auto settings, white
-  balance picks and the like read the photo's preview when its original isn't there. Export needs the original there:
-  **Photo ▸ Download Originals** first.
+  balance picks and exports up to 2560 px read the photo's preview when its original isn't there; larger exports
+  need the original: **Photo ▸ Download Originals** first (the export says so). The browser can't have the server
+  render a photo (export runs on the page's main thread), as the desktop and iOS apps can.
 - Preferences, LUT profiles and export / metadata / filter presets stay per device.
 - **No merging of two existing libraries**, no sharing with other people, no shared albums or links.
 - **Originals downloaded to a device are kept** until you delete them (no automatic eviction under a size budget yet).

@@ -541,6 +541,33 @@ fn pixel_commands_read_the_preview_when_the_original_is_not_here() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// A browser exports a photo it holds only the preview of: up to the preview's size from the preview, and
+/// beyond it the message says what to do (instead of failing deep in the render).
+#[test]
+fn a_browser_exports_from_the_preview_and_says_what_to_do_beyond_its_size() {
+    use crate::export::{ExportFormat, ExportOptions, Resize, export_photo};
+    let mut f = Fake::new();
+    let (_a, root, ids) = first_device("browserexport", &mut f);
+    let mut b = open(&root.join("b"));
+    sign_in(&mut b);
+    sync(&mut b, &mut f);
+    b.selection = crate::Selection::single(ids[0]);
+    sync(&mut b, &mut f);
+    let smart = std::fs::read(root.join("b/Smart Previews").join(crate::smart::file_name(b.catalog.photo(ids[0]).unwrap()))).unwrap();
+    // the browser: no previews folder, no originals in its storage, the preview in memory
+    b.media.smart_dir = None;
+    b.sync_store = Some(crate::sync::BrowserStore { prefix: "proxies/".into(), ..Default::default() });
+    let bytes: std::sync::Arc<[u8]> = smart.into();
+    b.media.proxy_bytes = Some(std::sync::Arc::new(move |_: &str, _: usize| Some(bytes.clone())));
+    let small = ExportOptions { format: ExportFormat::Jpeg, resize: Some(Resize { value: 48.0, ..Default::default() }), ..Default::default() };
+    let e = export_photo(&mut b, ids[0], &small, 1).unwrap();
+    assert!(e.width <= 48 && e.width > 0 && e.bytes.starts_with(&[0xFF, 0xD8]), "{}x{}", e.width, e.height);
+    let big = ExportOptions { resize: Some(Resize { value: 4000.0, dont_enlarge: false, ..Default::default() }), ..small };
+    let err = export_photo(&mut b, ids[0], &big, 1).err().unwrap();
+    assert!(err.contains("Download Originals") && err.contains("2560"), "{err}");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 fn snapshots(f: &Fake) -> usize {
     f.requests.iter().filter(|r| *r == "GET /api/snapshot").count()
 }

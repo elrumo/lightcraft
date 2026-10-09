@@ -67,9 +67,10 @@ impl SourceLevel {
 /// Decodes a file into a linear Rec.2020 image no larger than `max_edge` (set by the app).
 pub type FileLoader = Arc<dyn Fn(&str, usize) -> Result<(Rgb32f, SourceInfo), String> + Send + Sync>;
 
-/// A synced photo's preview files as a host keeps them in memory (the browser): the bytes of the
-/// photo's smart preview, or its mini preview when the long edge wanted is small, by the photo's
-/// content hash and the long edge wanted. `None`: not there (yet).
+/// A synced photo's preview files as a host keeps them in memory (the browser), for a photo whose
+/// original that host doesn't have: the bytes of the photo's smart preview, or its mini preview when the
+/// long edge wanted is small, by the photo's content hash and the long edge wanted. `None`: the
+/// original is here (or may be), or the preview isn't (yet).
 pub type ProxyBytes = Arc<dyn Fn(&str, usize) -> Option<Arc<[u8]>> + Send + Sync>;
 
 /// A raw file's embedded (camera-rendered) preview as display sRGB, oriented, no larger than
@@ -124,6 +125,12 @@ pub enum SourceRef {
         mini: std::path::PathBuf,
         max_edge: usize,
     },
+    /// A synced photo whose original this device (a browser) doesn't have: its smart or mini
+    /// preview, as the bytes the host holds ([`MediaCache::proxy_bytes`]).
+    Bytes {
+        bytes: Arc<[u8]>,
+        max_edge: usize,
+    },
 }
 
 impl SourceRef {
@@ -164,6 +171,14 @@ impl SourceRef {
             }
             #[cfg(target_arch = "wasm32")]
             SourceRef::Smart { .. } | SourceRef::Synced { .. } => return Err("smart previews are not available here".into()),
+            SourceRef::Bytes { bytes, max_edge } => {
+                use lightcraft_raster::resample::{Filter, fit};
+                let (mut image, camera_tone) = crate::smart::decode(bytes)?;
+                if image.width.max(image.height) > *max_edge {
+                    image = fit(&image, *max_edge, *max_edge, Filter::Mitchell);
+                }
+                return Ok(DecodedSource { image: Arc::new(image), info: None, camera_tone });
+            }
         };
         Ok(DecodedSource::new(image, None))
     }
@@ -186,9 +201,8 @@ pub struct MediaCache {
     pub preview_loader: Option<PreviewLoader>,
     /// Reads a photo file's bytes (Photo Merge); `None` = the local file system.
     pub file_bytes: Option<crate::merge::ByteReader>,
-    /// A synced photo's preview files kept in memory, for the commands that read pixels at once
-    /// ([`Session::source_now`]) when the original isn't here (the browser; a computer reads its
-    /// smart previews folder).
+    /// A synced photo's preview files kept in memory, for when the original isn't here (the browser;
+    /// a computer reads its smart previews folder): [`SourceRef::Bytes`].
     pub proxy_bytes: Option<ProxyBytes>,
     /// The library's smart previews folder (originals offline: render from the proxy).
     pub smart_dir: Option<std::path::PathBuf>,
@@ -376,19 +390,6 @@ impl MediaCache {
         (Usage::new(self.thumbs.len(), self.thumbs.cost()), previews, full)
     }
 
-    /// A synced photo's source from the preview bytes the host holds ([`MediaCache::proxy_bytes`]), at most
-    /// `level` large.
-    fn source_from_proxy(&self, p: &Photo, level: SourceLevel) -> Option<DecodedSource> {
-        use lightcraft_raster::resample::{Filter, fit};
-        let edge = level.max_edge();
-        let bytes = self.proxy_bytes.as_ref()?(&crate::sync::blob_key(p)?, edge)?;
-        let (mut image, camera_tone) = crate::smart::decode(&bytes).ok()?;
-        if image.width.max(image.height) > edge {
-            image = fit(&image, edge, edge, Filter::Mitchell);
-        }
-        Some(DecodedSource { image: Arc::new(image), info: None, camera_tone })
-    }
-
     pub fn source_ref(&mut self, p: &Photo, level: SourceLevel) -> SourceRef {
         if let Some(a) = self.get_source(p.id, level) {
             return SourceRef::Loaded(Box::new(a));
@@ -418,6 +419,15 @@ impl MediaCache {
                 *fallback = Some(sp);
             }
             return r;
+        }
+        // the original isn't in this browser but its preview is (up to the preview's own size)
+        if level != SourceLevel::Full
+            && let Source::File { path } = &p.source
+            && path.starts_with(lightcraft_catalog::sync::PATH_PREFIX)
+            && let (Some(hook), Some(key)) = (&self.proxy_bytes, crate::sync::blob_key(p))
+            && let Some(bytes) = hook(&key, max_edge)
+        {
+            return SourceRef::Bytes { bytes, max_edge };
         }
         self.origin_ref(&p.source, max_edge)
     }
@@ -941,11 +951,7 @@ impl crate::Session {
     /// The source proxy for pixel-statistics commands (auto tone/WB), loading synchronously.
     pub fn source_now(&mut self, id: PhotoId, level: SourceLevel) -> Result<Arc<Rgb32f>, String> {
         let p = self.catalog.photo(id).ok_or("no such photo")?.clone();
-        let r = match self.media.source_ref(&p, level).load_source() {
-            Ok(r) => r,
-            // the original isn't on this device but its preview is: pixel statistics come from that
-            Err(e) => self.media.source_from_proxy(&p, level).ok_or(e)?,
-        };
+        let r = self.media.source_ref(&p, level).load_source()?;
         let image = r.image.clone();
         self.media.insert_source(id, level, r);
         Ok(image)

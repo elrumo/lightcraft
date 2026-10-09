@@ -1095,6 +1095,18 @@ fn prepare_guarded(
                 lightcraft_catalog::sync::proto::Render { hash: target.hash.clone(), name: p.file_name.clone(), settings, export: o.to_json() };
             return Ok(PreparedExport { photo: id, file_name, work: Work::Server(Box::new(ServerWork { target, request, size: (w, h) })), guard });
         }
+        // a browser that doesn't hold the original renders from the photo's preview, up to the preview's size
+        if let (Some(store), lightcraft_catalog::Source::File { path }) = (&session.sync_store, &p.source)
+            && let Some(hash) = lightcraft_catalog::sync::hash_of_path(path)
+            && !store.originals.contains(hash)
+            && w.max(h) > crate::media::SourceLevel::Preview.max_edge()
+        {
+            return Err(format!(
+                "{}: this browser has only a preview of it. Choose Photo > Download Originals first, or export at {} px or smaller",
+                p.file_name,
+                crate::media::SourceLevel::Preview.max_edge()
+            ));
+        }
         let meta = export_metadata(p, o);
         let job = session.export_job(id, w, h, o.effective_space(), o.effective_depth())?;
         Work::Render(Box::new(RenderWork { job, meta, opts: o.clone() }))

@@ -172,6 +172,28 @@ impl Originals {
         g.proxies_absent.insert(key.to_string());
     }
 
+    /// Storage has no original with this hash (a synced photo whose file wasn't downloaded), from what sync
+    /// says it holds.
+    pub fn mark_absent(&self, hash: &str) {
+        let mut g = self.lock();
+        if !g.bytes.contains_key(hash) {
+            g.absent.insert(hash.to_string());
+        }
+    }
+
+    /// [`Originals::proxy`], but only for a photo whose original storage doesn't hold: the engine's hook
+    /// ([`lightcraft_engine::media::ProxyBytes`]). For any other photo it asks for the original and says no.
+    pub fn proxy_if_absent(&self, hash: &str, max_edge: usize) -> Option<Arc<[u8]>> {
+        if !self.lock().absent.contains(hash) {
+            let mut g = self.lock();
+            if !g.bytes.contains_key(hash) && !g.loading.contains(hash) && !g.wanted.iter().any(|w| w == hash) {
+                g.wanted.push(hash.to_string());
+            }
+            return None;
+        }
+        self.proxy(hash, max_edge)
+    }
+
     /// The smart or mini preview of the photo with this content hash for pixels no more than `max_edge` long, if in
     /// memory; a miss queues the load (the mini preview first when little is wanted, else the smart one).
     pub fn proxy(&self, hash: &str, max_edge: usize) -> Option<Arc<[u8]>> {
@@ -238,7 +260,7 @@ impl Originals {
             Some(Arc::new(move |path: &str, max_edge: usize| lightcraft_engine::files::embedded_preview_srgb(&s.get(path)?, max_edge)));
         // a synced photo whose original wasn't downloaded: auto tone and the like read its preview
         let s = self.clone();
-        session.media.proxy_bytes = Some(Arc::new(move |hash: &str, max_edge: usize| s.proxy(hash, max_edge)));
+        session.media.proxy_bytes = Some(Arc::new(move |hash: &str, max_edge: usize| s.proxy_if_absent(hash, max_edge)));
     }
 }
 

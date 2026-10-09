@@ -514,6 +514,18 @@ impl WebApp {
         // what sync keeps in storage is known: a missing original is a photo whose file wasn't downloaded
         // (its previews stand in), asked for again once sync has stored it
         let synced = self.app.session.sync_store.as_ref().map(|s| s.originals.clone());
+        // the selected photos (an export of several): the ones this browser has no original of, and their previews
+        if let Some(store) = &self.app.session.sync_store {
+            for id in self.app.session.selection.ids.iter().take(500) {
+                if let Some(Source::File { path }) = self.app.session.catalog.photo(*id).map(|p| &p.source)
+                    && let Some(hash) = crate::store::hash_of_path(path)
+                    && !store.originals.contains(hash)
+                {
+                    self.originals.mark_absent(hash);
+                    let _ = self.originals.proxy(hash, lightcraft_engine::media::SourceLevel::Preview.max_edge());
+                }
+            }
+        }
         if let Some(store) = &self.app.session.sync_store {
             self.originals.retry_absent(|h| store.originals.contains(h), |name| store.proxies.contains(name));
         }
