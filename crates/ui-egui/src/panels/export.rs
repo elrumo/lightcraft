@@ -70,7 +70,7 @@ pub fn form(app: &mut LightcraftApp, ui: &mut egui::Ui, f: Form<'_>, part: Part)
     if phone {
         pulldown(ui, "exportPreset", "Preset", crate::i18n::tr("Choose…"), |ui| {
             for (i, (p, b)) in presets.iter().enumerate() {
-                if mobile::row(ui, &format!("exportPreset-{i}"), None, &crate::i18n::builtin_label(&p.name, *b), true) {
+                if mobile::row(ui, &format!("exportPreset-{i}"), None, crate::i18n::builtin_label(&p.name, *b), true) {
                     chosen = Some(p.name.clone());
                 }
             }

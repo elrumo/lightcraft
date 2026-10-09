@@ -505,10 +505,11 @@ fn photo_bar(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 mobile::open_menu(ui.ctx(), "photoMore", more.rect);
             }
             // (right to left: save, then share)
-            if app.services.save_to_photos.is_some() && bar_icon(ui, "save", Icon::Download, "Save to Photos", has_photo).clicked() {
-                if let Err(e) = app.run("app.saveToPhotos", json!({})) {
-                    app.toast_error(ui.ctx(), e);
-                }
+            if app.services.save_to_photos.is_some()
+                && bar_icon(ui, "save", Icon::Download, "Save to Photos", has_photo).clicked()
+                && let Err(e) = app.run("app.saveToPhotos", json!({}))
+            {
+                app.toast_error(ui.ctx(), e);
             }
             if bar_icon(ui, "share", Icon::Share, "Share", has_photo).clicked() {
                 let _ = app.run("dialog.export", json!({}));
