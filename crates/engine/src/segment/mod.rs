@@ -128,7 +128,7 @@ pub struct Segmenter {
     #[cfg(feature = "sam")]
     worker: worker::Worker,
     #[cfg(feature = "sam")]
-    download: lightcraft_models::download::Downloader,
+    download: crate::download::Downloader,
     #[cfg(feature = "sam")]
     results: (std::sync::mpsc::Sender<worker::Outcome>, std::sync::mpsc::Receiver<worker::Outcome>),
 }
@@ -147,7 +147,7 @@ impl Default for Segmenter {
             #[cfg(feature = "sam")]
             worker: worker::Worker::default(),
             #[cfg(feature = "sam")]
-            download: lightcraft_models::download::Downloader::default(),
+            download: crate::download::Downloader::default(),
             #[cfg(feature = "sam")]
             results: std::sync::mpsc::channel(),
         }
@@ -219,9 +219,8 @@ impl Segmenter {
     pub fn mirrors(&self) -> Vec<String> {
         #[cfg(feature = "sam")]
         {
-            let sam3 = &lightcraft_models::registry::SAM3;
-            let env = std::env::var(sam3.mirrors_env).ok();
-            sam3.mirrors(env.as_deref(), self.mirrors_file.as_deref())
+            let env = std::env::var(lightcraft_segment::fetch::MIRRORS_ENV).ok();
+            lightcraft_segment::fetch::mirrors(env.as_deref(), self.mirrors_file.as_deref())
         }
         #[cfg(not(feature = "sam"))]
         Vec::new()
@@ -265,9 +264,9 @@ impl Segmenter {
         {
             let mirrors = self.mirrors();
             if mirrors.is_empty() {
-                return Err(lightcraft_models::registry::SAM3.no_mirrors_message());
+                return Err(lightcraft_segment::fetch::no_mirrors_message());
             }
-            self.download.start(lightcraft_models::registry::SAM3.files, mirrors, dir, lightcraft_models::fetch::Options::default())
+            self.download.start("SAM 3", lightcraft_segment::fetch::SAM3_FILES, mirrors, dir, lightcraft_segment::fetch::Options::default())
         }
         #[cfg(not(feature = "sam"))]
         {

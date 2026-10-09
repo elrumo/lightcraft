@@ -149,6 +149,15 @@ The data folder, the listen address and the domain are deployment settings, so t
 them: `--data` / `LIGHTCRAFT_DATA`, `--listen` / `LIGHTCRAFT_LISTEN`, and the domain in the reverse proxy
 (`LIGHTCRAFT_DOMAIN` with the compose file). Its JSON API is under `/api/admin/` (`apps/lightcraft-server/src/admin.rs`).
 
+## Search by description
+
+The server can also search each user's photos by what is in them, so the web build, iOS and other
+computers need no model: `GET /api/search?q=…`, an index of vectors per user that devices may add to, and
+`lightcraft-server model download --accept-licences` to install the model (about 1.5 GB, loaded on first use, ~1.9 GB of
+memory while loaded). It can also read the text in photos (`model download --text`) and, for a user an admin allows
+(`lightcraft-server user faces NAME on`, after `model download --faces`), find the people in their photos for devices to
+name. Routes, privacy and limits: [`search-people.md`](search-people.md).
+
 ## Library folders: photos already on the server
 
 A self-hosted server usually sits next to the photos: a NAS share, a backup disk, folders of past years. An admin
@@ -165,7 +174,11 @@ can make such folders a user's **library folders** (admin page › Users › the
   shows a folder's photos (and those of the folders in it); right-click it to create an album from it, make it
   available offline or download its originals. Info shows each photo's place on the server.
 - **XMP sidecars are read** when a file is found: ratings, flags, colour labels, title, caption, keywords and
-  Lightroom (Camera Raw) edits from `IMG_0001.xmp` (or a raw's own XMP), as an import reads them.
+  Lightroom (Camera Raw) edits from `IMG_0001.xmp` (or a raw's own XMP), as an import reads them. A sidecar that
+  changes later (the photo was edited again in Lightroom) is read again by the next scan, without reading the photo
+  file again: what it states replaces the photo's values on every device (fields it doesn't state are kept), as
+  Read Metadata from File does. Edits made on a device stay until the sidecar changes. The index keeps each
+  sidecar's time; an index written by an older server only notes them on its first scan.
 - **Scans** run when the server starts, every 15 minutes (`--scan-interval`), when a folder is added and on demand
   (**Scan now**, `lightcraft-server scan`). Files whose size and time didn't change aren't read again.
   - a new file becomes a new photo, with smart and mini previews built on the server (`LIGHTCRAFT_PREVIEW_THREADS`);

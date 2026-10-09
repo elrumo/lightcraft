@@ -1,15 +1,23 @@
-//! Downloading a model, only when the user asked for it: from an ordered list of mirrors
+//! Downloading a model's files, only when the user asked for it: from an ordered list of mirrors
 //! (the next one when a mirror fails), resuming partial files, with connect and stall timeouts,
 //! a size cap, progress and cancellation, and checked (exact size, SHA-256 where pinned) before
 //! each file is moved into the model folder. Runs on whatever thread calls [`download`] (the
-//! engine uses a background thread; the UI thread never waits for the network).
+//! engine uses a background thread; the UI thread never waits for the network). Pure Rust: the
+//! HTTPS client is rustls with the RustCrypto provider (see [`http`]).
 //!
 //! Files are written to `<name>.part` next to their final place and renamed when verified, so a
 //! model folder never holds a half-written file under a real name, and an interrupted download
 //! resumes from where it stopped. A file that fails its check is deleted, never kept.
 //!
-//! The weights are never part of LightCraft; where they are downloaded from is configured by each
-//! model's [`ModelSpec`](crate::ModelSpec) and the user's own list.
+//! What to download and where from belongs to the caller: it passes the [`FileSpec`]s and the
+//! default mirrors (see [`mirrors`]). `lightcraft-segment` does so for the SAM 3 weights, which
+//! are never part of LightCraft (SAM License, see docs/ai-masks.md).
+//!
+//! Native only: on wasm32 this crate is empty (the web build downloads no models).
+
+#![cfg(not(target_arch = "wasm32"))]
+#![forbid(unsafe_code)]
+#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 pub mod http;
 
@@ -40,9 +48,9 @@ const MAX_MIRRORS: usize = 16;
 /// Redirects followed per request.
 const MAX_REDIRECTS: usize = 8;
 
-/// The mirrors to try, in order: the environment variable's (`env`), then the mirrors file's (one
-/// base URL per line, `#` comments), then `defaults` (the model's built-in ones); duplicates
-/// and unusable URLs dropped.
+/// The mirrors to try, in order: `env`'s (base URLs separated by commas, spaces or newlines), then
+/// the mirrors file's (one base URL per line, `#` comments), then `defaults`; duplicates and
+/// unusable URLs dropped, at most 16.
 pub fn mirrors(env: Option<&str>, file: Option<&Path>, defaults: &[&str]) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let mut add = |s: &str| {
@@ -176,11 +184,11 @@ pub fn download(
                     Err(Fail::Cancelled) => return Err(DownloadError::Cancelled),
                     Err(Fail::Disk(e)) => return Err(DownloadError::Disk(e)),
                     Err(Fail::Retry(e)) => {
-                        log::warn!("model download of {url}: {e} (retrying)");
+                        log::warn!("download of {url}: {e} (retrying)");
                         errors.push(format!("{}: {e}", short(m)));
                     }
                     Err(Fail::NextMirror(e)) => {
-                        log::warn!("model download of {url}: {e}");
+                        log::warn!("download of {url}: {e}");
                         errors.push(format!("{}: {e}", short(m)));
                         continue 'mirrors;
                     }

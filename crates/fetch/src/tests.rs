@@ -294,12 +294,13 @@ fn no_mirrors_is_a_clear_error_and_mirror_lists_are_parsed() {
     let dir = tmp("nomirror");
     let e = run(&[pinned()], &[], &dir, &AtomicBool::new(false)).0.unwrap_err();
     assert_eq!(e, DownloadError::NoMirrors);
+    assert!(e.to_string().contains("no download location"));
     let file = std::env::temp_dir().join(format!("lc-sam3-mirrors-{}.txt", std::process::id()));
     std::fs::write(&file, "# mine\nhttps://b.example/m/ # second\n\nnot a url\nhttps://a.example/x\n").unwrap();
-    // the user's (environment, then file) come first, the model's built-in ones last, no repeats
-    let defaults = ["https://cdn.example/m", "https://a.example/x"];
+    let defaults = ["https://c.example/d", "https://a.example/x"];
     let m = mirrors(Some("https://a.example/x/, ftp://no"), Some(&file), &defaults);
-    assert_eq!(m, ["https://a.example/x", "https://b.example/m", "https://cdn.example/m"]);
+    // the environment's, then the file's, then the defaults; a repeated one is kept once
+    assert_eq!(m, ["https://a.example/x", "https://b.example/m", "https://c.example/d"]);
     assert_eq!(mirrors(None, Some(Path::new("/nonexistent/mirrors.txt")), &defaults).len(), 2);
     assert!(mirrors(None, None, &[]).is_empty());
     let _ = std::fs::remove_file(&file);

@@ -6,10 +6,11 @@ model, the feature that needs it says so and everything else works. Results are 
 logits; denoise, super resolution and depth will store an enhanced image or a depth map), so renders and exports never
 run a model.
 
-`crates/models` holds what each model is (`registry.rs`: files with pinned size + SHA-256, licence, mirrors) and how
-it is downloaded (`fetch`: ordered mirrors, resume, `.part` files, size cap, cancel; `download`: the background
-thread the engine starts). Adding a model is adding a `ModelSpec` there. Inference lives in the crate that runs the
-model (`crates/segment` for SAM 3).
+`crates/fetch` is the downloader (ordered mirrors, resume, `.part` files, size cap, cancel, pinned SHA-256, pure-Rust
+HTTPS) and the engine's `Downloader` runs it on a background thread. What to download belongs to the feature that
+needs the model: `crates/segment` (SAM 3), `crates/enhance` (`models::NOMOS_SPAN_2X`: pinned size and SHA-256,
+licence, credit), `crates/vision` (SigLIP 2, PP-OCRv6, YuNet + SFace). Inference lives in the same crates.
+`crates/engine/src/models.rs` lists them all as one.
 
 Models whose licence allows redistribution (Apache-2.0, MIT, BSD, CC-BY) can be mirrored by LightCraft with their
 licence text and attribution next to them; gated or custom-licence models (SAM 3) cannot, and need the user's own

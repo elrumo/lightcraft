@@ -90,8 +90,8 @@ in `models/nomos-span-2x-mirrors.txt`; they are tried before the built-in locati
   (tiled with a halo wider than the receptive field, so tiles equal a whole-image pass). `cargo run --release -p
   lightcraft-enhance --example upscale -- <model> <image> <out.png> [--check] [--crop N]` tries a model; `--check`
   shrinks the picture, enlarges it, and reports PSNR against bicubic and how well the result shrinks back.
-- `crates/models` describes the model (`registry::NOMOS_SPAN_2X`: pinned size and SHA-256, licence, credit) and does
-  the download.
+- `lightcraft_enhance::models` describes the model (`NOMOS_SPAN_2X`: pinned size and SHA-256, licence, credit);
+  `crates/fetch` does the download.
 - `crates/engine/src/enhance` is the job: `Session::super_res_job` (plan), `SuperResJob::run` (slow, any thread,
   progress and cancel), `Session::finish_super_res` (import, neutral settings, stack).
 - Porting notes (SPAN's reference code is easy to misread): the file's stored `eval_conv` tensors are the random

@@ -4,7 +4,7 @@
 //! The model is optional (Nomos Uni SPAN 2×, a ~4.5 MB download): it is not part of LightCraft,
 //! nothing requires it, and without it the feature says so. The download needs the user's
 //! consent (`enhance.model.download {acknowledged: true}`) and is verified before it is used
-//! (`lightcraft-models`).
+//! (`lightcraft-fetch`; what to fetch is `lightcraft_enhance::models`).
 //!
 //! The photo is rendered with its settings at full size (sRGB, 16 bit), enlarged tile by tile,
 //! and written next to the original as a 16-bit TIFF `<name>-SR.tif` (never replacing a file),
@@ -70,7 +70,7 @@ pub struct Enhancer {
     /// no connection to any host they didn't choose.
     pub no_builtin_mirrors: bool,
     #[cfg(feature = "enhance")]
-    download: lightcraft_models::download::Downloader,
+    download: crate::download::Downloader,
     /// The model the downloader was last started for.
     #[cfg(feature = "enhance")]
     fetching: std::sync::Mutex<Option<&'static str>>,
@@ -98,12 +98,12 @@ impl Enhancer {
 
     /// The enhancement models (not SAM 3, which has its own commands).
     #[cfg(feature = "enhance")]
-    pub fn models() -> impl Iterator<Item = &'static lightcraft_models::ModelSpec> {
-        lightcraft_models::registry::ALL.iter().copied().filter(|m| m.id != lightcraft_models::registry::SAM3.id)
+    pub fn models() -> impl Iterator<Item = &'static lightcraft_enhance::models::ModelSpec> {
+        lightcraft_enhance::models::ALL.iter().copied()
     }
 
     #[cfg(feature = "enhance")]
-    fn spec(id: &str) -> std::result::Result<&'static lightcraft_models::ModelSpec, String> {
+    pub(crate) fn spec(id: &str) -> std::result::Result<&'static lightcraft_enhance::models::ModelSpec, String> {
         Self::models().find(|m| m.id == id).ok_or_else(|| {
             let known: Vec<&str> = Self::models().map(|m| m.id).collect();
             format!("no enhancement model `{id}` (known: {})", known.join(", "))
@@ -138,7 +138,7 @@ impl Enhancer {
             let env = std::env::var(spec.mirrors_env).ok();
             let file = self.dir.as_ref().map(|d| d.join(format!("{id}-mirrors.txt")));
             let builtin = if self.no_builtin_mirrors { &[] } else { spec.default_mirrors };
-            return lightcraft_models::fetch::mirrors(env.as_deref(), file.as_deref(), builtin);
+            return lightcraft_fetch::mirrors(env.as_deref(), file.as_deref(), builtin);
         }
         let _ = id;
         Vec::new()
@@ -195,7 +195,7 @@ impl Enhancer {
             if mirrors.is_empty() {
                 return Err(spec.no_mirrors_message());
             }
-            let started = self.download.start(spec.files, mirrors, dir, lightcraft_models::fetch::Options::default())?;
+            let started = self.download.start(spec.id, spec.files, mirrors, dir, lightcraft_fetch::Options::default())?;
             if started {
                 *self.fetching.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(spec.id);
             }

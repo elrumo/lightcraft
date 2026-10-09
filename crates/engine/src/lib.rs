@@ -18,6 +18,8 @@ pub mod crs;
 pub mod crs_masks;
 pub mod demo;
 pub mod devices;
+#[cfg(any(feature = "sam", feature = "vision", feature = "enhance"))]
+mod download;
 pub mod enhance;
 pub mod export;
 pub mod files;
@@ -41,6 +43,7 @@ pub mod smart;
 pub mod sync;
 pub mod usage;
 mod view;
+pub mod vision;
 
 use std::sync::Arc;
 
@@ -134,6 +137,8 @@ pub struct Session {
     /// Set by a command whose change must not rewrite the photo's XMP sidecar even with auto-write on
     /// (a catalog-only edit of data the sidecar writer does not emit); consumed when the command ends.
     pub(crate) skip_auto_write: bool,
+    /// When LightCraft last read or wrote each XMP sidecar (`sidecars.json` in the library).
+    pub(crate) sidecar_times: sidecar::SidecarTimes,
     /// Copied develop settings (partial JSON) for Paste.
     pub clipboard: Option<Value>,
     /// The folder on disk the [`LibrarySource::Folder`] view browses.
@@ -163,6 +168,8 @@ pub struct Session {
     pub segmenter: segment::Segmenter,
     /// AI Super Resolution: the models and where they live.
     pub enhancer: enhance::Enhancer,
+    /// Search by description: the model, the library's index of photo vectors and the work in flight.
+    pub vision: vision::Vision,
     /// Selected spot (Remove panel), by index into the active photo's spots.
     pub active_spot: Option<usize>,
     /// The persistent library this session writes to (`None` = in-memory only).
@@ -244,6 +251,7 @@ impl Session {
             redo: Vec::new(),
             interaction: None,
             skip_auto_write: false,
+            sidecar_times: Default::default(),
             clipboard: None,
             meta_clipboard: None,
             browse: None,
@@ -260,6 +268,7 @@ impl Session {
             active_mask: None,
             segmenter: segment::Segmenter::default(),
             enhancer: enhance::Enhancer::default(),
+            vision: vision::Vision::default(),
             active_spot: None,
             library: None,
             xmp: sidecar::XmpPrefs::default(),
@@ -337,7 +346,8 @@ impl Session {
         if self.depth == 0 {
             let skip = std::mem::take(&mut self.skip_auto_write);
             if r.is_ok() && !skip && self.xmp.auto_write && self.interaction.is_none() && self.pending_log.len() > log_start {
-                self.auto_write_sidecars(&self.pending_log[log_start..]);
+                let ops = self.pending_log.get(log_start..).map(<[Op]>::to_vec).unwrap_or_default();
+                self.auto_write_sidecars(&ops);
             }
         }
         if self.depth == 0 && self.library.is_some() {
@@ -639,6 +649,11 @@ impl Session {
                 if !self.sort.ascending {
                     visible.reverse();
                 }
+            }
+            if self.filter.semantic.is_some() {
+                // a search by description: best match first, whatever the sort
+                let rank: std::collections::HashMap<PhotoId, usize> = self.filter.only.iter().enumerate().map(|(i, id)| (*id, i)).collect();
+                visible.sort_by_key(|id| rank.get(id).copied().unwrap_or(usize::MAX));
             }
             if self.source == LibrarySource::RecentlyAdded {
                 // newest import first, whatever the sort (the grid groups by import day)

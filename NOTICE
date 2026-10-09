@@ -39,6 +39,21 @@ downloads them only when they choose to. The first supported model is Nomos Uni 
 CC-BY-4.0 (https://creativecommons.org/licenses/by/4.0/): LightCraft credits the author where it
 offers the download and in the files it makes with it. See docs/ai-models.md.
 
+Search by description runs the SigLIP 2 B/16 model (google/siglip2-base-patch16-224, Google, Apache License 2.0)
+through candle (MIT OR Apache-2.0) and the tokenizers crate (Apache-2.0). The weights are not part of
+LightCraft and are never distributed with it: a user downloads them only when they choose to, from Hugging Face or a
+mirror they configure, pinned by size and SHA-256. See docs/search-people.md.
+
+Reading the text in photos runs PP-OCRv6 small (PaddlePaddle/PP-OCRv6_small_det_onnx and _rec_onnx, PaddleOCR, Baidu,
+Apache License 2.0) through rten (MIT OR Apache-2.0), a pure-Rust ONNX runtime. The models are not part of LightCraft
+and are never distributed with it: a user downloads them only when they choose to, pinned by size and SHA-256.
+
+Finding people runs YuNet (face_detection_yunet_2023mar, MIT License, Copyright (c) 2020 Shiqi Yu) and SFace
+(face_recognition_sface_2021dec, Apache License 2.0, Beijing University of Posts and Telecommunications) from the OpenCV
+Zoo through rten. The models are not part of LightCraft and are never distributed with it: a user downloads them only when
+they choose to, pinned by size and SHA-256. LightCraft's code reads their published input and output conventions; it
+contains no code from OpenCV.
+
 Builds made with craft-fonts (the optional CRAFT_FONTS_DIR build input; all official releases)
 also embed the fonts listed in https://github.com/storytold/craft-fonts/blob/main/ATTRIBUTION.md
 (the Japanese fonts BIZ UDPGothic, BIZ UDMincho and Shippori Mincho; the web build embeds only BIZ

@@ -7,6 +7,7 @@
 //!   presets.json   view.json        (user presets + favourites; last source/sort/selection)
 //!   prefs.json     (library preferences: XMP sidecars, import defaults, cache size, last export)
 //!   location.json  (the folder the library was last opened from: see below)
+//!   sidecars.json  (when each XMP sidecar was last read or written: see `sidecar::SidecarTimes`)
 //!   thumbs/        (rendered thumbnail cache, safe to delete)
 //!   Originals/     (photos imported with "copy into library")
 //! ```
@@ -205,6 +206,12 @@ struct PrefsFile {
     /// Days after which untouched Local records of unbrowsed folders are forgotten (missing =
     /// the default, 0 = never).
     forget_local_days: Option<u32>,
+    /// Send the search vectors to the sync server (`vision.setShare`).
+    search_share: bool,
+    /// Also read and search the text in photos (`vision.setText`).
+    search_text: bool,
+    /// Find the faces in photos and group them into people (`vision.setFaces`).
+    search_faces: bool,
 }
 
 fn presets_json(s: &Session) -> String {
@@ -388,10 +395,16 @@ impl Session {
         self.import_defaults = prefs.import;
         self.cache_mb = prefs.cache_mb;
         self.forget_local_days = prefs.forget_local_days.unwrap_or(lightcraft_catalog::DEFAULT_FORGET_DAYS);
+        self.vision.share_with_server = prefs.search_share;
+        self.vision.text = prefs.search_text;
+        self.vision.faces = prefs.search_faces;
         self.smart_previews_dir = prefs.smart_previews_dir.filter(|_| on_disk).map(PathBuf::from);
         if let Some(d) = &self.smart_previews_dir {
             self.media.smart_dir = Some(d.clone());
         }
+        // when the XMP sidecars were last read or written (a cache: unreadable = empty)
+        self.sidecar_times =
+            files.read(crate::sidecar::SidecarTimes::FILE).ok().flatten().map(|b| crate::sidecar::SidecarTimes::from_json(&b)).unwrap_or_default();
         // sync: its state, and the id space this device allocates new ids in
         self.sync = crate::sync::SyncState::load(files.as_mut());
         if let Some(st) = self.sync.as_ref().filter(|st| !st.config.library.is_empty()) {
@@ -622,6 +635,7 @@ impl Session {
         let _ = self.end_interaction();
         let persisted = self.persist();
         self.save_view();
+        self.save_sidecar_times();
         let unlogged = if persisted.is_err() { self.pending_log.len() as u64 } else { 0 };
         let Some(lib) = self.library.as_mut() else { return Ok(()) };
         let before = lib.journal.seq();
@@ -664,6 +678,17 @@ impl Session {
         }
     }
 
+    /// Save when the XMP sidecars were last read or written, if that changed (`sidecars.json`; a
+    /// cache, so a failure is only logged).
+    pub fn save_sidecar_times(&mut self) {
+        let Some(bytes) = self.sidecar_times.to_save() else { return };
+        let Some(lib) = self.library.as_mut() else { return };
+        match lib.files.write_atomic(crate::sidecar::SidecarTimes::FILE, &bytes) {
+            Ok(()) => self.sidecar_times.saved(),
+            Err(e) => log::error!("library: {}: {e}", crate::sidecar::SidecarTimes::FILE),
+        }
+    }
+
     /// Save the library preferences (no-op for in-memory sessions).
     pub fn save_prefs(&mut self) -> Result<()> {
         let v = serde_json::to_vec_pretty(&PrefsFile {
@@ -682,6 +707,9 @@ impl Session {
             cache_mb: self.cache_mb,
             smart_previews_dir: self.smart_previews_dir.as_ref().map(|d| d.to_string_lossy().to_string()),
             forget_local_days: Some(self.forget_local_days),
+            search_share: self.vision.share_with_server,
+            search_text: self.vision.text,
+            search_faces: self.vision.faces,
         })
         .unwrap_or_default();
         let Some(lib) = self.library.as_mut() else { return Ok(()) };

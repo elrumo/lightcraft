@@ -3,7 +3,8 @@
 //! trained with it (the Nomos Uni family).
 //!
 //! The weights are not part of LightCraft: the user downloads them when they ask for the feature
-//! (`lightcraft-models` does the download); this crate reads the `.safetensors` file.
+//! (`lightcraft-fetch` does the download, [`models`] says what to fetch); this crate reads the
+//! `.safetensors` file.
 //!
 //! [`Span`] loads a model and [`Span::upscale`] enlarges an sRGB-encoded image in tiles, so a
 //! 24 MP photo needs a few hundred MB, not gigabytes, and the result is identical to one pass
@@ -18,6 +19,7 @@
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+pub mod models;
 mod span;
 #[doc(hidden)]
 pub mod testing;

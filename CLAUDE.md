@@ -123,6 +123,6 @@ of it. Full standard: `../craftrules/standards/never-crash.md`
 - Never commit media: test images are procedural (`lightcraft-scenes`) or CC0 downloads in the gitignored `corpus/`.
 
 ## Map of the code
-`geom`, `color`, `raster`, `tiff` (L0) → `raw`, `codecs`, `meta`, `develop`, `models` (L1; optional AI models: what each is + its consented, verified download) → `pipeline` → `catalog` → `engine`
+`geom`, `color`, `raster`, `tiff` (L0) → `raw`, `codecs`, `meta`, `develop` (L1) → `pipeline` → `catalog` → `engine`
 → `ui-egui`, `mcp` (L5) → apps `lightcraft` (desktop), `lightcraft-cli` (render/commands/MCP), `lightcraft-server`
 (optional self-hosted sync, `docs/sync.md`). `scenes` generates demo photos. `xtask` = tooling (`ci`, `layers`, `assets`, `parity`, `wasm`, `corpus`, `stats`).

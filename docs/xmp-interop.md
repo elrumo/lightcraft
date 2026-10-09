@@ -10,7 +10,7 @@ other tools), and let LightCraft pick up edits made elsewhere.
 |---|---|
 | Name | `<stem>.xmp` by default (`IMG_0001.CR3` → `IMG_0001.xmp`); `<file>.xmp` (`IMG_0001.CR3.xmp`) with `naming: "full"`. Reading accepts either (preferred first) and `.XMP`. With stem naming, files sharing a stem don't share a sidecar: see *Shared names* below. |
 | Write | `photo.saveMetadataToFile {ids?}` (Photo ▸ Save Metadata to File, ⌘S), or automatically after every change with `library.xmpPreferences {autoWrite: true}` (File ▸ Automatically Write Changes into XMP). Slider drags are written once, when the drag ends; undo/redo rewrite the sidecar. An existing sidecar is **merged into, never replaced** (see *Saving into an existing sidecar*). Written atomically (temp file, fsync, rename). The result lists `written`, `merged` and `backups`. |
-| Read | On import (`library.import`, the report counts `sidecars`), and `photo.readMetadataFromFile {ids?}` (one undo step). For raw/DNG files without a sidecar, the XMP embedded in the file is used. |
+| Read | On import (`library.import`, the report counts `sidecars`), when a folder is browsed (`library.browse`), and `photo.readMetadataFromFile {ids?}` (one undo step). Browsing a folder again reads the sidecars that changed since (see *Changes made in another application*). For raw/DNG files without a sidecar, the XMP embedded in the file is used. |
 | Preferences | `library.xmpPreferences {autoWrite?, naming?: stem\|full}`, stored in the library's `prefs.json`. |
 
 What we write (standard namespaces, so other tools can read the metadata):
@@ -36,6 +36,29 @@ has none, the sidecar's `exif:DateTimeOriginal`, else `photoshop:DateCreated`, e
 used — on import (it then also files a copied photo in its date folder) and by `photo.readMetadataFromFile` (undoable).
 `xmp:Rating="-1"` (the XMP convention for rejected) sets the reject flag. Develop settings come from
 `lc:settings` when present (exact); otherwise from the `crs:` fields below (approximate).
+
+## Changes made in another application
+
+Edit a photo in Lightroom (with its XMP written to the file: *Automatically write changes into XMP*, or Metadata ›
+Save Metadata to File) and LightCraft picks the change up:
+
+- **Local folders**: browsing the folder (`library.browse`, the Local sidebar) reads every sidecar that changed since
+  LightCraft last read or wrote it, as **one undo step** ("Read Metadata from File"; `reread` in the result counts
+  the photos it changed). The sidecar wins, as above, for every field it states; the develop settings it replaces
+  stay in History. Reading a sidecar never writes it back, even with auto-write on.
+- **Library folders on a sync server**: the next scan does the same (see [`sync.md`](sync.md)).
+
+LightCraft notes each sidecar's modification time when it reads or writes it (`sidecars.json` in the library; the
+server keeps them in its folder index), so a sidecar it wrote itself isn't taken for someone else's edit, and an
+unchanged one never replaces an edit made in LightCraft. Without a noted time (a photo catalogued by an older
+LightCraft, or `sidecars.json` was deleted) a sidecar is read only into a browsed photo nobody changed here;
+otherwise its time is just noted, and the next change is read.
+
+Limits: a sidecar that holds LightCraft's own `lc:settings` (LightCraft wrote into it once) is read from those, so
+develop edits another application makes to its `crs:` fields afterwards aren't seen (its rating, label and keywords
+are). Photos imported into the library (not browsed) are checked when their folder is browsed, or with Read
+Metadata from File. Lightroom writes the edits of JPEG, TIFF, PSD and DNG files into the file itself, not a sidecar;
+LightCraft reads that embedded XMP only for raw and DNG files.
 
 ## Saving into an existing sidecar
 

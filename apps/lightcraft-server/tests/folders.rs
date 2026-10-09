@@ -273,3 +273,91 @@ fn ignored_names_are_left_out_of_the_scan() {
     drop(server);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// A Lightroom-style sidecar: a rating and an exposure.
+fn lr_xmp(rating: u8, exposure: f64) -> String {
+    format!(
+        r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description rdf:about="" xmlns:xmp="http://ns.adobe.com/xap/1.0/" xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/" xmp:Rating="{rating}" crs:Exposure2012="{exposure:+.2}"/></rdf:RDF></x:xmpmeta>"#
+    )
+}
+
+/// Write a sidecar as Lightroom would, stamped `secs` after 1970.
+fn write_sidecar(path: &Path, xmp: &str, secs: u64) {
+    std::fs::write(path, xmp).unwrap();
+    let f = std::fs::File::options().write(true).open(path).unwrap();
+    f.set_modified(std::time::UNIX_EPOCH + Duration::from_secs(secs)).unwrap();
+}
+
+#[test]
+fn sidecars_changed_by_lightroom_are_read_again() {
+    let root = temp("xmp");
+    let photos = root.join("photos");
+    write_png(&photos.join("a.png"), 1);
+    write_png(&photos.join("b.png"), 2);
+    write_sidecar(&photos.join("a.xmp"), &lr_xmp(2, 0.5), 1_000);
+    write_sidecar(&photos.join("b.xmp"), &lr_xmp(3, 0.0), 1_000);
+    let data = root.join("data");
+    accounts::set_user(&data, "ann", "correct horse", false).unwrap();
+    accounts::add_folder(&data, "ann", &photos.to_string_lossy(), None).unwrap();
+    let start = || {
+        let mut cfg = Config::new(&data, "127.0.0.1:0");
+        cfg.scan_interval = None;
+        cfg.preview_threads = 1;
+        Server::start(cfg).unwrap()
+    };
+    let device = |server: &Server, name: &str| {
+        let mut dev = Session::new().with_fs();
+        dev.open_library(root.join(name), false).unwrap();
+        let url = format!("http://{}", server.addr());
+        dev.execute("sync.signIn", &json!({"server": url, "user": "ann", "password": "correct horse", "device": name})).unwrap();
+        sync(&mut dev);
+        dev
+    };
+    let server = start();
+    let st = scanned(&server, 0);
+    assert_eq!((st.added, st.sidecars), (2, 0), "{st:?}");
+    let mut dev = device(&server, "device");
+    let look = |dev: &Session, place: &str| {
+        let p = by_place(dev, place).unwrap();
+        (p.rating, p.develop.light.exposure)
+    };
+    assert_eq!(look(&dev, "photos/a.png"), (2, 0.5));
+
+    // b rated on the device: its unchanged sidecar isn't read again
+    dev.selection = lightcraft_engine::Selection::single(by_place(&dev, "photos/b.png").unwrap().id);
+    dev.execute("photo.rate", &json!({"rating": 5})).unwrap();
+    sync(&mut dev);
+    // Lightroom edits a: the next scan reads its sidecar again, without reading the photo
+    write_sidecar(&photos.join("a.xmp"), &lr_xmp(4, 1.25), 2_000);
+    server.scan("ann");
+    let st = scanned(&server, 1);
+    assert_eq!((st.sidecars, st.todo, st.changed), (1, 0, 0), "{st:?}");
+    sync(&mut dev);
+    assert_eq!(look(&dev, "photos/a.png"), (4, 1.25));
+    assert_eq!(look(&dev, "photos/b.png").0, 5);
+
+    // an index from before sidecar times were kept: its first scan only notes them, so an edit
+    // made on a device isn't replaced by a sidecar that may be older; the next change is read
+    drop(server);
+    let index = data.join("users/ann/folders.json");
+    let mut v: serde_json::Value = serde_json::from_slice(&std::fs::read(&index).unwrap()).unwrap();
+    v.as_object_mut().unwrap().remove("sidecars");
+    for e in v["files"].as_object_mut().unwrap().values_mut() {
+        e.as_object_mut().unwrap().remove("sidecar");
+    }
+    std::fs::write(&index, serde_json::to_vec(&v).unwrap()).unwrap();
+    write_sidecar(&photos.join("b.xmp"), &lr_xmp(1, 0.0), 3_000);
+    let server = start();
+    let st = scanned(&server, 0);
+    assert_eq!(st.sidecars, 0, "{st:?}");
+    let mut dev = device(&server, "device2");
+    assert_eq!(look(&dev, "photos/b.png").0, 5);
+    write_sidecar(&photos.join("b.xmp"), &lr_xmp(1, 0.0), 4_000);
+    server.scan("ann");
+    assert_eq!(scanned(&server, 1).sidecars, 1);
+    sync(&mut dev);
+    assert_eq!(look(&dev, "photos/b.png").0, 1);
+
+    drop(server);
+    let _ = std::fs::remove_dir_all(&root);
+}

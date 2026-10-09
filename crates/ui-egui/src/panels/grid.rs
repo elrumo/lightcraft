@@ -202,7 +202,8 @@ fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     } else {
         app.ui.thumb_size
     };
-    let by = resolve_group(app.session.sort.group, target);
+    // ranked results (search by description) are in relevance order, not date order: no date headers
+    let by = if app.session.filter.semantic.is_some() { GroupBy::None } else { resolve_group(app.session.sort.group, target) };
     let group_key = match app.session.source {
         lightcraft_engine::LibrarySource::RecentlyDeleted => None,
         lightcraft_engine::LibrarySource::RecentlyAdded => Some(SortKey::ImportDate),

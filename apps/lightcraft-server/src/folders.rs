@@ -15,7 +15,10 @@
 //!   `lightcraft-server scan`). A new file becomes a photo, with what its XMP sidecar (or the
 //!   raw's own XMP) says: rating, label, keywords, title, Lightroom edits. A file that moved keeps
 //!   its photo (same content, its old place gone); one changed in place keeps its photo and edits
-//!   and gets new previews; a file a device uploaded already becomes that photo's place.
+//!   and gets new previews; a file a device uploaded already becomes that photo's place. A sidecar
+//!   that changed since the scan last read it (Lightroom edited the photo) is read again: what it
+//!   states replaces the photo's rating, metadata and develop settings, as on a device's Read
+//!   Metadata from File.
 //! - **Nothing is taken away by a scan.** A file that disappears keeps its photo (its original
 //!   can't be downloaded until it's back); a folder that is missing, or empty when it had photos
 //!   (an unmounted disk), is skipped, never read as everything deleted. A photo removed from the
@@ -84,6 +87,9 @@ pub struct Entry {
     /// each time the server starts).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Its XMP sidecar's modification time when the scan last read it (`None`: no sidecar).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sidecar: Option<u64>,
 }
 
 /// A user's library folders as last scanned.
@@ -94,6 +100,9 @@ pub struct Index {
     pub files: BTreeMap<String, Entry>,
     /// Where each library folder is, by name.
     pub roots: BTreeMap<String, String>,
+    /// The entries' sidecar times are recorded. An index written before they were has none: its
+    /// next scan only notes them, so an old sidecar never replaces an edit made on a device.
+    pub sidecars: bool,
     #[serde(skip)]
     by_hash: HashMap<String, Vec<String>>,
 }
@@ -188,6 +197,8 @@ pub struct Status {
     pub moved: usize,
     pub changed: usize,
     pub linked: usize,
+    /// Photos whose XMP sidecar changed (another app edited them) and was read again.
+    pub sidecars: usize,
     pub failed: usize,
     /// Indexed files not found any more.
     pub missing: usize,
@@ -231,6 +242,8 @@ struct Found {
     path: PathBuf,
     size: u64,
     mtime: u64,
+    /// Its XMP sidecar's modification time (`None`: no sidecar).
+    sidecar: Option<u64>,
 }
 
 /// List the photo files under `root` (named `name`), without following links, leaving out what
@@ -265,7 +278,8 @@ fn walk(name: &str, root: &Path, ignore: &[String], out: &mut Vec<Found>, errors
                 && let Ok(m) = e.metadata()
                 && !is_xsym(&e.path(), m.len())
             {
-                out.push(Found { key: k, path: e.path(), size: m.len(), mtime: mtime_of(&m) });
+                let sidecar = sidecar::find_sidecar(&e.path().to_string_lossy(), SidecarNaming::Stem).and_then(|p| sidecar::modified(&p));
+                out.push(Found { key: k, path: e.path(), size: m.len(), mtime: mtime_of(&m), sidecar });
                 if out.len().is_multiple_of(250) {
                     tick(out.len());
                 }
@@ -460,8 +474,17 @@ fn commit(lib: &Mutex<UserLib>, batch: &mut Vec<FileRead>, found: &HashSet<Strin
     let mut moved_from: HashMap<usize, String> = HashMap::new();
     let mut removed: HashSet<usize> = HashSet::new();
     for (i, (r, plan)) in batch.iter_mut().zip(plans).enumerate() {
-        let mut e =
-            Entry { size: r.file.size, mtime: r.file.mtime, hash: r.hash.clone().unwrap_or_default(), photo: None, missing: false, error: None };
+        // the sidecar as last read (a new photo's, and a photo a device added, as found)
+        let sidecar = l.index.files.get(&r.file.key).and_then(|o| o.sidecar);
+        let mut e = Entry {
+            size: r.file.size,
+            mtime: r.file.mtime,
+            hash: r.hash.clone().unwrap_or_default(),
+            photo: None,
+            missing: false,
+            error: None,
+            sidecar,
+        };
         let probed = r.probed.take();
         let plan = match (plan, &probed) {
             (Plan::Changed(_) | Plan::New, None) => Plan::Later,
@@ -490,6 +513,7 @@ fn commit(lib: &Mutex<UserLib>, batch: &mut Vec<FileRead>, found: &HashSet<Strin
                 e.photo = Some(id.0);
             }
             Plan::Place { id, from } => {
+                e.sidecar = r.file.sidecar;
                 ops.push((Op::SetServerPath { id, path: Some(r.file.key.clone()) }, i));
                 kinds.push((i, if from.is_some() { "moved" } else { "linked" }));
                 moved_from.extend(from.map(|f| (i, f)));
@@ -503,6 +527,7 @@ fn commit(lib: &Mutex<UserLib>, batch: &mut Vec<FileRead>, found: &HashSet<Strin
                         sidecar::merge_into(&mut p, &sc, now);
                     }
                     e.photo = Some(p.id.0);
+                    e.sidecar = r.file.sidecar;
                     ops.push((Op::AddPhoto { photo: Box::new(p) }, i));
                     kinds.push((i, "added"));
                 }
@@ -522,26 +547,7 @@ fn commit(lib: &Mutex<UserLib>, batch: &mut Vec<FileRead>, found: &HashSet<Strin
         entries.push(Some(e));
     }
     // one push; an op the library refuses is left out (its file is read again next scan)
-    let mut refused: HashSet<usize> = HashSet::new();
-    loop {
-        let list: Vec<Op> = ops.iter().filter(|(_, i)| !refused.contains(i)).map(|(op, _)| op.clone()).collect();
-        if list.is_empty() {
-            break;
-        }
-        let head = l.core.head();
-        match l.core.push(head, &list) {
-            Ok(_) => break,
-            Err(lightcraft_engine::catalog::sync::PushError::Rejected { index, error }) => {
-                let Some((_, i)) = ops.iter().filter(|(_, i)| !refused.contains(i)).nth(index) else { break };
-                log::warn!("library folders: {}: {error}", batch.get(*i).map_or("?", |r| r.file.key.as_str()));
-                refused.insert(*i);
-            }
-            Err(e) => {
-                log::error!("library folders: saving the library: {e:?}");
-                return Vec::new();
-            }
-        }
-    }
+    let Some(refused) = push(&mut l, &ops, &|i| batch.get(i).map_or("?", |r| r.file.key.as_str()).to_string()) else { return Vec::new() };
     for (i, kind) in kinds {
         if refused.contains(&i) {
             continue;
@@ -567,6 +573,59 @@ fn commit(lib: &Mutex<UserLib>, batch: &mut Vec<FileRead>, found: &HashSet<Strin
     }
     l.index.reindex();
     previews
+}
+
+/// Push `ops` (each tagged with the file it is for) in one go, leaving out the files whose ops the
+/// library refuses. Returns those files, or `None` when the library couldn't be saved.
+fn push(l: &mut UserLib, ops: &[(Op, usize)], name: &dyn Fn(usize) -> String) -> Option<HashSet<usize>> {
+    let mut refused: HashSet<usize> = HashSet::new();
+    loop {
+        let list: Vec<Op> = ops.iter().filter(|(_, i)| !refused.contains(i)).map(|(op, _)| op.clone()).collect();
+        if list.is_empty() {
+            return Some(refused);
+        }
+        let head = l.core.head();
+        match l.core.push(head, &list) {
+            Ok(_) => return Some(refused),
+            Err(lightcraft_engine::catalog::sync::PushError::Rejected { index, error }) => {
+                let (_, i) = ops.iter().filter(|(_, i)| !refused.contains(i)).nth(index)?;
+                log::warn!("library folders: {}: {error}", name(*i));
+                refused.insert(*i);
+            }
+            Err(e) => {
+                log::error!("library folders: saving the library: {e:?}");
+                return None;
+            }
+        }
+    }
+}
+
+/// Read again the sidecars in `read` (each file with its sidecar's contents, read before the
+/// lock): what they state replaces their photos' values; then note their times. With
+/// `note_only` (an index from before sidecar times were kept), only note them.
+fn reread_sidecars(lib: &Mutex<UserLib>, read: &[(Found, Option<String>)], note_only: bool, s: &mut Status, now: &str) {
+    let mut l = lock(lib);
+    let mut ops: Vec<(Op, usize)> = Vec::new();
+    for (i, (f, packet)) in read.iter().enumerate() {
+        let id = l.index.files.get(&f.key).and_then(|e| e.photo).map(PhotoId);
+        // (a photo removed on a device stays removed; a sidecar that's gone states nothing)
+        let (Some(p), Some(x), false) = (id.and_then(|id| l.core.catalog().photo(id)), packet, note_only) else { continue };
+        match sidecar::parse_sidecar(x, p.kind == MediaKind::Raw) {
+            Ok(sc) => {
+                let sc = sc.resolve_label(l.core.catalog());
+                ops.extend(sidecar::sidecar_ops(p, &sc, now, sidecar::READ_LABEL).into_iter().map(|op| (op, i)));
+            }
+            Err(e) => log::warn!("{}: XMP: {e}", f.key),
+        }
+    }
+    let Some(refused) = push(&mut l, &ops, &|i| read.get(i).map_or("?", |(f, _)| f.key.as_str()).to_string()) else { return };
+    let changed: HashSet<usize> = ops.iter().map(|(_, i)| *i).filter(|i| !refused.contains(i)).collect();
+    s.sidecars += changed.len();
+    for (i, (f, _)) in read.iter().enumerate() {
+        if let Some(e) = l.index.files.get_mut(&f.key).filter(|_| !refused.contains(&i)) {
+            e.sidecar = f.sidecar;
+        }
+    }
 }
 
 /// Scan a user's library folders: add, move and update their photos in the user's library.
@@ -671,6 +730,28 @@ pub fn scan(
     }
     for (hash, path) in commit(lib, &mut batch, &keys, &mut s, &now) {
         preview(hash, path);
+    }
+    // sidecars changed since they were last read (Lightroom edited the photo): read them again
+    let note_only = !lock(lib).index.sidecars;
+    let stale: Vec<Found> = {
+        let l = lock(lib);
+        found.into_iter().filter(|f| l.index.files.get(&f.key).is_some_and(|e| e.photo.is_some() && e.sidecar != f.sidecar)).collect()
+    };
+    for chunk in stale.chunks(BATCH) {
+        if stop.load(Ordering::Relaxed) {
+            break;
+        }
+        let read: Vec<(Found, Option<String>)> = chunk
+            .iter()
+            .map(|f| {
+                let packet = f.sidecar.and_then(|_| sidecar::find_sidecar(&f.path.to_string_lossy(), SidecarNaming::Stem));
+                (f.clone(), packet.and_then(|p| std::fs::read_to_string(p).ok()))
+            })
+            .collect();
+        reread_sidecars(lib, &read, note_only, &mut s, &now);
+    }
+    if !stop.load(Ordering::Relaxed) {
+        lock(lib).index.sidecars = true;
     }
     // gone from folders that are there; every photo file whose previews may be missing
     s.phase = "finishing";
@@ -965,6 +1046,9 @@ pub(crate) fn run_previews(st: &Arc<State>) {
         let blobs = accounts::user_dir(&st.data, &user).join("blobs");
         let r = build_previews(&blobs, &hash, &file);
         lock(&sc.jobs).1.remove(&(user.clone(), hash.clone()));
+        if r.is_ok() {
+            st.vision.wake();
+        }
         {
             // one more done; the batch is over when all of it is
             let mut runs = lock(&sc.runs);

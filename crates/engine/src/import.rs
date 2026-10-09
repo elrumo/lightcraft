@@ -663,6 +663,8 @@ struct ReadyFile {
     stored: String,
     info: ProbeInfo,
     sidecar: Option<crate::sidecar::SidecarData>,
+    /// The sidecar file read, and its modification time before it was read.
+    sidecar_file: Option<(PathBuf, Option<u64>)>,
     placed: Option<crate::import_move::Placed>,
 }
 
@@ -816,9 +818,11 @@ impl ImportJob {
             // the XMP sidecar (or a raw's embedded XMP), read before copying: its capture time files
             // and names the copy when the file itself has none
             let raw = info.kind == MediaKind::Raw;
-            let packet = crate::sidecar::find_sidecar(&path, self.naming)
-                .and_then(|f| std::fs::read_to_string(f).ok())
-                .or_else(|| info.xmp.clone().filter(|_| raw));
+            let sidecar_file = crate::sidecar::find_sidecar(&path, self.naming).map(|f| {
+                let t = crate::sidecar::modified(&f);
+                (f, t)
+            });
+            let packet = sidecar_file.as_ref().and_then(|(f, _)| std::fs::read_to_string(f).ok()).or_else(|| info.xmp.clone().filter(|_| raw));
             let sidecar = packet.and_then(|x| match crate::sidecar::parse_sidecar(&x, raw) {
                 Ok(sc) => Some(sc),
                 Err(e) => {
@@ -901,7 +905,7 @@ impl ImportJob {
                     Err(e) => log::warn!("import {path}: copy as DNG: {e}"),
                 }
             }
-            out.items.push(PreparedItem::Ready(Box::new(ReadyFile { path, stored, info, sidecar, placed })));
+            out.items.push(PreparedItem::Ready(Box::new(ReadyFile { path, stored, info, sidecar, sidecar_file, placed })));
         }
         out
     }
@@ -936,7 +940,11 @@ pub fn commit_prepared(s: &mut Session, opts: &ImportOptions, now: &str, prepare
             PreparedItem::Failed(path, e) => report.failed.push((path, e)),
             PreparedItem::Kept(k) => report.kept.push(k),
             PreparedItem::Ready(r) => {
-                let ReadyFile { path, stored, info, sidecar, placed: pl } = *r;
+                let ReadyFile { path, stored, info, sidecar, sidecar_file, placed: pl } = *r;
+                // added in place: a later change to its sidecar is read when its folder is browsed
+                if let Some((f, t)) = sidecar_file.filter(|_| stored == path) {
+                    s.sidecar_times.set(&f, t);
+                }
                 placed.extend(pl);
                 let id = s.catalog.alloc_photo_id();
                 if let Some(h) = &info.content_hash {
@@ -996,6 +1004,7 @@ pub fn commit_prepared(s: &mut Session, opts: &ImportOptions, now: &str, prepare
     if !placed.is_empty() {
         finish_moves(s, placed, log0, &mut report);
     }
+    s.save_sidecar_times();
     Ok(report)
 }
 

@@ -132,17 +132,19 @@ fn card(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, m: &ModelInfo) {
         });
         ui.add_space(2.0);
 
-        // on / off
-        let mut on = m.enabled;
-        let r = crate::widgets::check(ui, &mut on, crate::i18n::tr("Use this model"));
-        register(ui.ctx(), format!("check:modelEnabled-{}", m.id), r.rect);
-        if r.changed()
-            && let Err(e) = app.run("models.setEnabled", json!({"id": m.id, "enabled": on}))
-        {
-            app.ui.status = e;
-        }
-        if !m.enabled {
-            hint(ui, t, crate::i18n::tr("Turned off: the feature that uses it won't run until you turn it back on."));
+        // on / off (the search, text and people models are switched on where they are used)
+        if m.can_disable {
+            let mut on = m.enabled;
+            let r = crate::widgets::check(ui, &mut on, crate::i18n::tr("Use this model"));
+            register(ui.ctx(), format!("check:modelEnabled-{}", m.id), r.rect);
+            if r.changed()
+                && let Err(e) = app.run("models.setEnabled", json!({"id": m.id, "enabled": on}))
+            {
+                app.ui.status = e;
+            }
+            if !m.enabled {
+                hint(ui, t, crate::i18n::tr("Turned off: the feature that uses it won't run until you turn it back on."));
+            }
         }
 
         // download in progress, or the buttons

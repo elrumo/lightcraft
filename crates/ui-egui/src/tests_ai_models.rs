@@ -36,11 +36,11 @@ fn model(h: &Headless, id: &str) -> lightcraft_engine::models::ModelInfo {
 fn the_tab_lists_the_models_and_asks_before_downloading_or_deleting() {
     use std::io::{BufRead, BufReader, Write};
     if !Enhancer::AVAILABLE {
-        // a build without AI models says so
+        // a build without Super Resolution doesn't list its model (the others say what they are)
         let dir = tmp("none");
         let (mut h, _) = app(&dir);
         open_tab(&mut h);
-        assert!(h.app.session.models().is_empty());
+        assert!(h.app.session.models().iter().all(|m| m.id != SUPER_RES_MODEL));
         let _ = std::fs::remove_dir_all(&dir);
         return;
     }

@@ -1,16 +1,19 @@
-//! The models LightCraft knows how to download. A model is data: its files (pinned size and
-//! SHA-256), its licence, and where it comes from. Adding one is adding a [`ModelSpec`] here.
+//! The enhancement models: what each is, where it comes from, and how it is pinned. The downloader
+//! itself (mirrors, resuming, size and SHA-256 checks, pure-Rust HTTPS) is `lightcraft-fetch`;
+//! what to download belongs to the feature, as for SAM 3 (`lightcraft-segment`) and the search
+//! models (`lightcraft-vision`). The weights are never part of LightCraft: the user asks for them
+//! and sees the licence first.
 
-use crate::fetch::FileSpec;
+use lightcraft_fetch::FileSpec;
 
-/// One downloadable model.
+/// One downloadable enhancement model.
 #[derive(Debug)]
 pub struct ModelSpec {
     /// Stable id: the folder under `models/` in the settings folder, and the id in commands.
     pub id: &'static str,
-    /// The model's name in messages ("SAM 3").
+    /// The model's name in messages.
     pub label: &'static str,
-    /// What it does for the user ("Object and Describe masks").
+    /// What it does for the user.
     pub purpose: &'static str,
     pub files: &'static [FileSpec],
     /// Environment variable with extra mirrors (base URLs separated by commas, spaces or
@@ -22,8 +25,7 @@ pub struct ModelSpec {
     /// The weights' licence, as named in the consent dialog.
     pub licence: &'static str,
     pub licence_url: &'static str,
-    /// Who made the model, for the credit the licence may require ("Nomos Uni SPAN by Philip
-    /// Hofmann").
+    /// Who made the model, for the credit the licence may require.
     pub credit: &'static str,
     /// Where the model is described (its page), shown next to the licence.
     pub home_url: &'static str,
@@ -38,7 +40,7 @@ impl ModelSpec {
     /// The mirrors to try, in order: `env`'s (the value of [`Self::mirrors_env`]), then the
     /// mirrors file's, then [`Self::default_mirrors`].
     pub fn mirrors(&self, env: Option<&str>, file: Option<&std::path::Path>) -> Vec<String> {
-        crate::fetch::mirrors(env, file, self.default_mirrors)
+        lightcraft_fetch::mirrors(env, file, self.default_mirrors)
     }
 
     /// What to tell the user when there is nowhere to download from.
@@ -50,49 +52,7 @@ impl ModelSpec {
     }
 }
 
-/// Size of the official SAM 3 `model.safetensors` (3.44 GB).
-const SAM3_WEIGHTS_SIZE: u64 = 3_439_938_512;
-
-/// The `facebook/sam3` checkpoint files `lightcraft_segment::Sam3::load` needs.
-///
-/// `model.safetensors` is pinned to the official checkpoint (Hugging Face LFS SHA-256). The two
-/// tokenizer files are small text files without a pinned hash yet: they are only parsed by the
-/// tokenizer (never executed) and capped in size.
-// TODO(maintainer): pin `vocab.json` and `merges.txt` (size + SHA-256) when the files are
-// uploaded to LightCraft's CDN.
-const SAM3_FILES: &[FileSpec] = &[
-    FileSpec { name: "vocab.json", size: None, sha256: None, max: 16 << 20 },
-    FileSpec { name: "merges.txt", size: None, sha256: None, max: 16 << 20 },
-    FileSpec {
-        name: "model.safetensors",
-        size: Some(SAM3_WEIGHTS_SIZE),
-        sha256: Some("6d06f0a5f84e435071fe6603e61d0b4cc7b40e0d39d487cfd4d67d8cc11cc14a"),
-        max: SAM3_WEIGHTS_SIZE,
-    },
-];
-
-/// SAM 3 (Segment Anything with Concepts, Meta 2025): Object and Describe masks.
-///
-/// No default mirror: Hugging Face's `facebook/sam3` is gated (each user must accept the SAM
-/// License there and download with their own token), so LightCraft needs its own CDN location
-/// before the in-app download works without the user's list (`LIGHTCRAFT_SAM3_MIRRORS` or the
-/// mirrors file, see docs/ai-masks.md).
-// TODO(maintainer): add LightCraft's CDN locations (https, primary first), e.g.
-// "https://<cdn-host>/models/sam3/<revision>" — the files there must match `SAM3_FILES`.
-pub const SAM3: ModelSpec = ModelSpec {
-    id: "sam3",
-    label: "SAM 3",
-    purpose: "Object and Describe masks (Masking panel)",
-    files: SAM3_FILES,
-    mirrors_env: "LIGHTCRAFT_SAM3_MIRRORS",
-    default_mirrors: &[],
-    licence: "SAM License (Meta)",
-    licence_url: "https://github.com/facebookresearch/sam3/blob/main/LICENSE",
-    credit: "SAM 3 by Meta",
-    home_url: "https://github.com/facebookresearch/sam3",
-};
-
-/// Nomos Uni SPAN 2×: AI Super Resolution (see `lightcraft-enhance`).
+/// Nomos Uni SPAN 2×: AI Super Resolution (see [`crate::Span`]).
 ///
 /// Downloaded straight from its author's Hugging Face repository (public, no account needed):
 /// LightCraft hosts nothing. The file is pinned, so a changed or tampered file is refused.
@@ -114,10 +74,10 @@ pub const NOMOS_SPAN_2X: ModelSpec = ModelSpec {
     home_url: "https://huggingface.co/Phips/2xNomosUni_span_multijpg",
 };
 
-/// Every model, for listings.
-pub const ALL: &[&ModelSpec] = &[&SAM3, &NOMOS_SPAN_2X];
+/// Every enhancement model, for listings.
+pub const ALL: &[&ModelSpec] = &[&NOMOS_SPAN_2X];
 
-/// The model with this id.
+/// The enhancement model with this id.
 pub fn find(id: &str) -> Option<&'static ModelSpec> {
     ALL.iter().copied().find(|m| m.id == id)
 }
@@ -144,7 +104,7 @@ mod tests {
     }
 
     #[test]
-    fn built_in_mirrors_are_https_and_every_model_is_credited() {
+    fn built_in_mirrors_are_https_and_every_model_is_described() {
         for m in ALL {
             assert!(m.default_mirrors.iter().all(|u| u.starts_with("https://") && !u.ends_with('/')), "{}", m.id);
             assert!(
@@ -166,11 +126,6 @@ mod tests {
         assert_eq!(NOMOS_SPAN_2X.bytes(), 4_461_056);
         assert!(NOMOS_SPAN_2X.files.iter().all(|f| f.sha256.is_some()));
         assert!(!NOMOS_SPAN_2X.default_mirrors.is_empty());
-    }
-
-    #[test]
-    fn sam3_is_the_official_checkpoint() {
-        assert_eq!(SAM3.bytes(), SAM3_WEIGHTS_SIZE);
-        assert!(SAM3.no_mirrors_message().contains(SAM3.mirrors_env));
+        assert!(NOMOS_SPAN_2X.no_mirrors_message().contains(NOMOS_SPAN_2X.mirrors_env));
     }
 }
