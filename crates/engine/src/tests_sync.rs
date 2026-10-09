@@ -978,3 +978,118 @@ fn a_server_without_the_storage_route_says_so_and_syncing_goes_on() {
     assert!(st.usage_error().unwrap().contains("can't reach"), "{:?}", st.usage_error());
     let _ = std::fs::remove_dir_all(&root);
 }
+
+// ---- the budget for downloaded originals ----
+
+/// Two devices, B with the originals of both photos downloaded (`sync/originals/<hash>/<name>`).
+fn device_with_originals(tag: &str) -> (Fake, Session, PathBuf, Vec<PhotoId>) {
+    let mut f = Fake::new();
+    let (a, root, ids) = first_device(tag, &mut f);
+    drop(a);
+    let mut b = open(&root.join("b"));
+    sign_in(&mut b);
+    sync(&mut b, &mut f);
+    b.selection = crate::Selection::single(ids[0]);
+    b.execute("sync.downloadOriginals", &json!({"ids": [ids[0].0, ids[1].0]})).unwrap();
+    sync(&mut b, &mut f);
+    for id in &ids {
+        let Source::File { path } = &b.catalog.photo(*id).unwrap().source else { panic!() };
+        assert!(path.contains("originals") && Path::new(path).exists(), "{path}");
+    }
+    (f, b, root, ids)
+}
+
+fn here(s: &Session, id: PhotoId) -> bool {
+    matches!(&s.catalog.photo(id).unwrap().source, Source::File { path } if Path::new(path).exists())
+}
+
+/// Over its budget a device deletes the originals used longest ago, keeps the one it is working on, and the
+/// photo is the server's again (nothing is missing, nothing downloads again by itself).
+#[test]
+fn downloaded_originals_go_over_the_budget_least_recently_used_first() {
+    let (mut f, mut b, root, ids) = device_with_originals("budget");
+    // the photo being worked on was used last
+    b.selection = crate::Selection::single(ids[1]);
+    sync(&mut b, &mut f);
+    // a budget under the two files' size, over one's
+    let sizes: Vec<u64> = ids
+        .iter()
+        .map(|id| {
+            std::fs::metadata(match &b.catalog.photo(*id).unwrap().source {
+                Source::File { path } => path.clone(),
+                _ => String::new(),
+            })
+            .unwrap()
+            .len()
+        })
+        .collect();
+    let one = sizes.iter().copied().max().unwrap();
+    assert!(one < (1 << 20), "test photos are small");
+    // (megabytes are whole: use the smallest budget and make the two files big enough to matter)
+    for id in &ids {
+        let Source::File { path } = &b.catalog.photo(*id).unwrap().source else { panic!() };
+        let f = std::fs::OpenOptions::new().append(true).open(path).unwrap();
+        f.set_len(700 << 10).unwrap();
+    }
+    b.execute("sync.originalsBudget", &json!({"mb": 1})).unwrap();
+    sync(&mut b, &mut f);
+    assert!(
+        !here(&b, ids[0]) && here(&b, ids[1]),
+        "the one not worked on went: {:?} {:?}",
+        b.catalog.photo(ids[0]).unwrap().source,
+        b.catalog.photo(ids[1]).unwrap().source
+    );
+    // it is the server's again: a remote photo, not a missing one, and not downloaded again
+    assert!(is_remote(b.catalog.photo(ids[0]).unwrap()));
+    assert!(crate::cmd::missing::missing(&b).is_empty());
+    let before = f.requests.len();
+    sync(&mut b, &mut f);
+    assert!(!f.requests[before..].iter().any(|r| r.contains("/blobs/original/")), "{:?}", &f.requests[before..]);
+    // the server still has it, and asking for it brings it back
+    b.execute("sync.downloadOriginals", &json!({"ids": [ids[0].0]})).unwrap();
+    b.selection = crate::Selection::single(ids[0]);
+    sync(&mut b, &mut f);
+    assert!(here(&b, ids[0]));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// An original the server doesn't have, one that is open or selected, or available offline is never deleted, and
+/// nothing is without a budget or with every original kept.
+#[test]
+fn the_budget_never_deletes_the_only_copy_or_what_is_in_use() {
+    let (mut f, mut b, root, ids) = device_with_originals("budget-safe");
+    let grow = |b: &Session| {
+        for id in &ids {
+            let Source::File { path } = &b.catalog.photo(*id).unwrap().source else { return };
+            if let Ok(f) = std::fs::OpenOptions::new().append(true).open(path) {
+                let _ = f.set_len(700 << 10);
+            }
+        }
+    };
+    grow(&b);
+    // no budget: nothing goes
+    sync(&mut b, &mut f);
+    assert!(here(&b, ids[0]) && here(&b, ids[1]));
+    // every original kept: the budget has no effect
+    b.execute("sync.storeOriginalsLocally", &json!({"on": true})).unwrap();
+    b.execute("sync.originalsBudget", &json!({"mb": 1})).unwrap();
+    sync(&mut b, &mut f);
+    assert!(here(&b, ids[0]) && here(&b, ids[1]));
+    b.execute("sync.storeOriginalsLocally", &json!({"on": false})).unwrap();
+    // the photos in use: ids[0] selected, ids[1] available offline
+    b.selection = crate::Selection::single(ids[0]);
+    b.execute("photo.makeAvailableOffline", &json!({"ids": [ids[1].0], "on": true})).unwrap();
+    sync(&mut b, &mut f);
+    assert!(here(&b, ids[0]) && here(&b, ids[1]), "in use");
+    // the server doesn't have it: the only copy stays
+    b.execute("photo.makeAvailableOffline", &json!({"ids": [ids[1].0], "on": false})).unwrap();
+    let key = crate::sync::blob_key(b.catalog.photo(ids[1]).unwrap()).unwrap();
+    b.sync.as_mut().unwrap().uploaded.remove(&key);
+    b.selection = crate::Selection::single(ids[0]);
+    f.blobs.retain(|(_, h), _| *h != key);
+    sync(&mut b, &mut f);
+    assert!(here(&b, ids[1]), "the server has no copy of it");
+    // a path outside the originals folder is never touched whatever the budget
+    assert!(Path::new(&root).exists());
+    let _ = std::fs::remove_dir_all(&root);
+}

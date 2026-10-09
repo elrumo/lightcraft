@@ -1046,6 +1046,27 @@ fn sync_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
                     "Otherwise photos from other devices come down as previews: small ones for the grid, an editable smart preview when you open a photo or make an album available offline (right-click it), and the original when you ask (Photo > Download Originals).",
                 ),
             );
+            // the downloaded originals' budget (MB; 0: none); with every original kept it has no effect
+            let mut budget = c.originals_budget_mb.unwrap_or(0);
+            let sizes = [
+                (0u64, "No limit"),
+                (5_000, "5 GB"),
+                (10_000, "10 GB"),
+                (25_000, "25 GB"),
+                (50_000, "50 GB"),
+                (100_000, "100 GB"),
+                (250_000, "250 GB"),
+            ];
+            if !c.store_originals && pick(ui, t, "syncOriginalsBudget", crate::i18n::tr("Originals limit"), &sizes, &mut budget) {
+                sync_cmd(app, ui, "sync.originalsBudget", json!({"mb": (budget > 0).then_some(budget)}));
+            }
+            hint(
+                ui,
+                t,
+                crate::i18n::tr(
+                    "Originals downloaded from the server are deleted, the ones used longest ago first, when they take more than this. Only ones the server has; photos you are working on or made available offline keep theirs.",
+                ),
+            );
             let mut by_server = c.server_builds_previews();
             if check(ui, "sync.serverPreviews", &mut by_server, "Let the server build the previews of photos added here") {
                 sync_cmd(app, ui, "sync.serverPreviews", json!({"on": by_server}));

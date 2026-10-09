@@ -257,6 +257,11 @@ Each device keeps the **whole catalog** (it's small) and **downloads pixels as n
 | smart preview (≤ 2560 px) | the photo you open, and everything **made available offline** | the loupe, editing, exporting at preview size |
 | original | **Photo ▸ Download Originals**, or every photo with *Store the originals of all photos on this device* | full-size export, 1:1 |
 
+- **A size limit for downloaded originals** (Settings ▸ Sync ▸ Originals limit, or `sync.originalsBudget {mb}`): beyond
+  it the originals used longest ago are deleted, and their photos are the server's again (previews stay; Download
+  Originals brings one back). Never an original the server doesn't have, one that is open or selected, or one kept
+  available offline, and nothing at all while *Store the originals of all photos on this device* is on. The folder is
+  checked about once a minute and when a download lands. No limit is the default.
 - **Make Available Offline:** right-click an album (✓ marks it in the sidebar), or **Photo ▸ Make Available Offline**
   for selected photos: their smart previews stay on the device, so they open and edit without a network.
 - A downloaded original (`<library>/sync/originals/<hash>/<name>`) becomes the photo's file on this device only. It is
@@ -397,7 +402,6 @@ v1, honestly:
   render a photo (export runs on the page's main thread), as the desktop and iOS apps can.
 - Preferences, LUT profiles and export / metadata / filter presets stay per device.
 - **No merging of two existing libraries**, no sharing with other people, no shared albums or links.
-- **Originals downloaded to a device are kept** until you delete them (no automatic eviction under a size budget yet).
 - **The server compacts its log** into a snapshot at 64 MiB and keeps the newest 16 MiB of it (tens of thousands of
   changes): a device behind by more than that reloads the library. (A device that is only a little behind keeps
   pulling; a pull reads just the part of the log it asks for.)

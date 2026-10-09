@@ -125,6 +125,17 @@ fn store_originals(s: &mut Session, p: &Value) -> Result<Value> {
     status(s, p)
 }
 
+fn originals_budget(s: &mut Session, p: &Value) -> Result<Value> {
+    const C: &str = "sync.originalsBudget";
+    let mb = match p.get("mb") {
+        Some(Value::Null) => None,
+        Some(v) => Some(v.as_u64().filter(|n| *n > 0).ok_or_else(|| bad(C, "`mb` is a number of megabytes (1 or more), or null for no limit"))?),
+        None => return Err(bad(C, "missing `mb` (megabytes, or null for no limit)")),
+    };
+    s.sync_originals_budget(mb)?;
+    status(s, p)
+}
+
 fn server_previews(s: &mut Session, p: &Value) -> Result<Value> {
     let on = p.get("on").and_then(Value::as_bool).ok_or_else(|| bad("sync.serverPreviews", "missing `on` (true or false)"))?;
     s.sync_server_previews(on)?;
@@ -209,11 +220,20 @@ pub fn specs() -> Vec<CommandSpec> {
             store_originals
         ),
         cmd!(
+            "sync.originalsBudget",
+            "Limit Downloaded Originals",
+            [],
+            None,
+            "{mb: number | null}: keep the originals downloaded from the server under this many megabytes by deleting the ones used longest ago (never one the server doesn't have, one that is open, selected or available offline; not with Store Originals Locally); null: no limit",
+            synced,
+            originals_budget
+        ),
+        cmd!(
             "sync.serverPreviews",
             "Server Builds Previews",
             [],
             None,
-            "{on: bool}: have the sync server build the previews of the originals this device uploads (default on iOS: the phone spares its battery and memory); a server that can't builds none and this device does",
+            "{on: bool}: have the sync server build the previews of the originals this device uploads (default on iOS and in the browser: the phone spares its battery and memory, the page its main thread); a server that can't builds none and this device does",
             synced,
             server_previews
         ),

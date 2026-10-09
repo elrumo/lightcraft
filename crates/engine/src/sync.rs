@@ -35,6 +35,8 @@ use web_time::Instant;
 
 use crate::{EngineError, Result, Session};
 
+mod evict;
+
 pub const CONFIG: &str = "sync.json";
 pub const OUTBOX: &str = "sync.outbox";
 pub const UPLOADED: &str = "sync.uploaded";
@@ -58,6 +60,8 @@ const PUSH_LIMIT: usize = 500;
 const PULL_LIMIT: usize = 2000;
 /// Photo file transfers at a time.
 const BLOB_PARALLEL: usize = 4;
+/// Downloaded originals are checked against their budget this often (and right after one arrives).
+const EVICT_EVERY: Duration = Duration::from_secs(60);
 /// The server's storage numbers are asked for at most this often (it walks every photo file).
 const USAGE_EVERY: Duration = Duration::from_secs(20);
 /// Long edge of the mini preview.
@@ -88,6 +92,10 @@ pub struct SyncConfig {
     pub offline_photos: Vec<PhotoId>,
     /// Keep the original of every photo on this device too (not just the ones available offline).
     pub store_originals: bool,
+    /// The most the originals downloaded from the server may take on this device, in MB: the ones used longest
+    /// ago are deleted beyond it (never one the server doesn't have, one that is open, selected or available
+    /// offline; not at all with [`SyncConfig::store_originals`]). `None`: no limit.
+    pub originals_budget_mb: Option<u64>,
     /// Don't talk to the server for now (File → Pause Syncing).
     pub paused: bool,
     /// Let the server build the previews of the originals this device uploads, instead of building them here
@@ -252,7 +260,7 @@ pub struct SyncState {
     /// The outbox changed since it was last written.
     outbox_dirty: bool,
     /// Content hashes the server has (all three files).
-    uploaded: HashSet<String>,
+    pub(crate) uploaded: HashSet<String>,
     /// A sign-in waiting to be sent (the password is never saved).
     login: Option<proto::Login>,
     control: Option<(u64, Control)>,
@@ -288,6 +296,10 @@ pub struct SyncState {
     have: Option<HashSet<String>>,
     /// A photo file arrived: renders that failed for want of it are tried again.
     landed: bool,
+    /// When downloaded originals are next checked against their budget (`None`: now).
+    evict_at: Option<Instant>,
+    /// The photo whose original was last marked as used ([`Session::touch_active_original`]).
+    touched: Option<PhotoId>,
     written_config: String,
     /// The user presets as last synced (the base of [`merge_presets`]).
     presets_base: Vec<Value>,
@@ -336,6 +348,8 @@ impl SyncState {
             plan_gen: 0,
             have: None,
             landed: false,
+            evict_at: None,
+            touched: None,
             written_config: String::new(),
             presets_base: Vec::new(),
             presets_base_dirty: false,
@@ -536,6 +550,7 @@ impl SyncState {
             "offlineAlbums": self.config.offline_albums,
             "offlinePhotos": self.config.offline_photos,
             "storeOriginals": self.config.store_originals,
+            "originalsBudgetMb": self.config.originals_budget_mb,
             "serverPreviews": self.config.server_builds_previews(),
             "paused": self.config.paused,
         })
@@ -821,6 +836,16 @@ impl Session {
         self.persist()
     }
 
+    /// Keep the originals downloaded from the server under `mb` megabytes, deleting the ones used longest ago
+    /// (`None`: no limit).
+    pub fn sync_originals_budget(&mut self, mb: Option<u64>) -> Result<()> {
+        let st = self.sync.as_mut().ok_or_else(|| EngineError::Other("this library isn't synced".into()))?;
+        st.config.originals_budget_mb = mb;
+        st.evict_at = None;
+        st.plan_gen += 1;
+        self.persist()
+    }
+
     /// Have the server build the previews of what this device uploads (or build them here again).
     pub fn sync_server_previews(&mut self, on: bool) -> Result<()> {
         let st = self.sync.as_mut().ok_or_else(|| EngineError::Other("this library isn't synced".into()))?;
@@ -955,6 +980,11 @@ impl Session {
     /// Plan photo file transfers (when the library, the active photo or what to keep offline
     /// changed) and start some.
     fn blob_tasks(&mut self, st: &mut SyncState, now: Instant, tasks: &mut Vec<Task>) {
+        self.touch_active_original(st);
+        if st.config.originals_budget_mb.is_some() && st.evict_at.is_none_or(|t| now >= t) {
+            self.evict_originals(st);
+            st.evict_at = Some(now + EVICT_EVERY);
+        }
         let dir = self.media.smart_dir.clone();
         if dir.is_none() && self.sync_store.is_none() {
             return;
@@ -1482,6 +1512,8 @@ impl Session {
                         s.originals.insert(key.clone());
                     }
                 } else if blob == Blob::Original {
+                    // a new original may put the device over its budget
+                    st.evict_at = None;
                     // (a download that was resumed, or a folder file that changed on the server, may not be the
                     // photo it should be: the hash is the key)
                     if !file_has_hash(&dest, &key) {
