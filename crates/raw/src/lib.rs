@@ -12,10 +12,10 @@
 //!   look tables and tone curve.
 //!
 //! Formats: DNG (uncompressed, lossless JPEG, lossy JPEG (Smart Previews), Deflate incl. floating point, tiled/stripped, CFA and LinearRaw),
-//! Canon CR2 and CR3 (lossless CRX and the first-generation lossy C-RAW; the EOS R5 / R6 generation of C-RAW is preview-only for now), Nikon NEF/NRW (uncompressed, Huffman lossless / lossy compressed), Sony ARW (uncompressed, ARW2, lossless), Fujifilm RAF (uncompressed Bayer
+//! Canon CR2 and CR3 (lossless CRX and both generations of lossy C-RAW, the EOS R5 / R6 one approximately), Nikon NEF/NRW (uncompressed, Huffman lossless / lossy compressed), Sony ARW (uncompressed, ARW2, lossless), Fujifilm RAF (uncompressed Bayer
 //! and X-Trans), Panasonic RW2 (packed 12/14-bit), Pentax PEF (uncompressed, Huffman), Olympus ORF (uncompressed).
 //! [`embedded_preview`] covers all of them. Variants we can't decode yet (Nikon "lossy after split" NEF,
-//! Panasonic quantised RW2, compressed ORF/RAF, Canon C-RAW of the R5 / R6 generation) return [`RawError::Unsupported`]; each vendor module documents its sources
+//! Panasonic quantised RW2, compressed ORF/RAF) return [`RawError::Unsupported`]; each vendor module documents its sources
 //! (public specifications, tag-name documentation, black-box analysis of CC0 samples) and gaps. Non-DNG files carry no
 //! colour matrix: [`color`] falls back to a documented neutral model. The decoders never panic on malformed input.
 #![forbid(unsafe_code)]

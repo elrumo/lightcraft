@@ -19,11 +19,13 @@
 //!   array; the offsets were found by reading files (the presets that follow the as-shot block include the known
 //!   5200 K daylight and 3200 K tungsten levels) and checked against the grey-world gains of the scenes.
 //! - Lossy files (`C-RAW`, three wavelet levels) are decoded by [`super::crx_wavelet`]; their tile header holds ten band
-//!   records per plane. One or two tiles across are supported (the seam between two tiles is described there).
-//! - Variants not handled return [`RawError::Unsupported`]: the newer (R5 / R6 generation, `CMP1` version 2) lossy
-//!   layout, lossy files in more tiles, roll-burst (`encType 3`) and files that do not code four planes.
+//!   records per plane. Of the first generation (`CMP1` version 1: EOS R, 90D, M50) one or two tiles across are supported
+//!   (the seam between two tiles is described there); the second generation (version 2: EOS R5, R6) has 20-byte band
+//!   records and an extra block ahead of the band streams, and is decoded approximately for a single tile.
+//! - Variants not handled return [`RawError::Unsupported`]: other `CMP1` versions, lossy files in more tiles than above,
+//!   roll-burst (`encType 3`) and files that do not code four planes.
 
-use super::crx_wavelet::{self, BANDS, PlaneBands, TileEdge};
+use super::crx_wavelet::{self, BANDS, PlaneBands, Scale, TileEdge};
 use super::{black_from_columns, crx, white_from_data};
 use crate::{BlackLevel, Cfa, ColorData, Mode, OpcodeLists, RawData, RawError, RawFormat, RawImage, Rect, Result};
 use lightcraft_geom::Orientation;
@@ -56,6 +58,65 @@ fn record(sample: &[u8], at: usize, marker: u16) -> Result<u32> {
 struct Stream {
     range: Range<usize>,
     quant: u16,
+}
+
+/// A `ffXX nnnn` header record of the second layout: `len` payload bytes after the marker and length; returns them.
+fn record_with(sample: &[u8], at: usize, marker: u16, len: usize) -> Result<&[u8]> {
+    if be16(sample, at) != Some(marker) || be16(sample, at + 2) != Some(len as u16) {
+        return Err(RawError::Corrupt(format!("CRX header record {marker:#06x} missing")));
+    }
+    at.checked_add(4).and_then(|s| sample.get(s..s.checked_add(len)?)).ok_or_else(|| RawError::Corrupt("CRX header truncated".into()))
+}
+
+/// The streams of the four planes of the only tile of a second-generation (`CMP1` version 2) wavelet file. The tile
+/// record (`ff11`, 20 bytes) holds the tile size and the size of an unexplained block that starts the tile's data; the
+/// plane records (`ff12`) are the same as before and the band records (`ff13`) are 20 bytes: a size, the band index in the
+/// top four bits of the next dword and its quantiser byte in the last, and two more dwords.
+fn plane_streams_v2(sample: &[u8], cmp1: &Cmp1) -> Result<[Vec<Stream>; 4]> {
+    let tile = record_with(sample, 0, 0xff11, 16)?;
+    let be = |o: usize| be32(tile, o).ok_or_else(|| RawError::Corrupt("CRX header truncated".into()));
+    let (tile_size, extra) = (be(0)? as usize, be(8)? as usize);
+    let mut at = 20usize;
+    let mut sizes: [Vec<(usize, u16)>; 4] = Default::default();
+    let mut tile_sum = 0usize;
+    for plane in &mut sizes {
+        let plane_size = record(sample, at, 0xff12)? as usize;
+        at += 12;
+        let mut sum = 0usize;
+        for band in 0..BANDS {
+            let rec = record_with(sample, at, 0xff13, 16)?;
+            at += 20;
+            let size = be32(rec, 0).ok_or_else(|| RawError::Corrupt("CRX header truncated".into()))? as usize;
+            let (index, quant) = (rec.get(4).copied().unwrap_or(0) >> 4, rec.get(7).copied().unwrap_or(0));
+            if index as usize != band {
+                return Err(RawError::Corrupt("CRX subband records out of order".into()));
+            }
+            sum = sum.checked_add(size).ok_or_else(|| RawError::Corrupt("CRX plane size".into()))?;
+            plane.push((size, quant as u16));
+        }
+        if sum != plane_size {
+            return Err(RawError::Corrupt("CRX plane size differs from its subbands".into()));
+        }
+        tile_sum = tile_sum.checked_add(plane_size).ok_or_else(|| RawError::Corrupt("CRX tile size".into()))?;
+    }
+    let extra = extra.checked_next_multiple_of(8).ok_or_else(|| RawError::Corrupt("CRX header".into()))?;
+    if tile_sum.checked_add(extra) != Some(tile_size) {
+        return Err(RawError::Corrupt("CRX tile size differs from its planes".into()));
+    }
+    let mut start = (cmp1.header_size as usize).checked_add(extra).ok_or_else(|| RawError::Corrupt("CRX header".into()))?;
+    if (cmp1.header_size as usize) < at {
+        return Err(RawError::Corrupt("CRX header size smaller than its records".into()));
+    }
+    let mut out: [Vec<Stream>; 4] = Default::default();
+    for (streams, bands) in out.iter_mut().zip(sizes) {
+        for (size, quant) in bands {
+            let end =
+                start.checked_add(size).filter(|e| *e <= sample.len()).ok_or_else(|| RawError::Corrupt("CRX plane outside the sample".into()))?;
+            streams.push(Stream { range: start..end, quant });
+            start = end;
+        }
+    }
+    Ok(out)
 }
 
 /// The streams of the four planes of each tile, as byte ranges within the sample.
@@ -180,7 +241,7 @@ pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
     if cmp1.enc_type != 0 {
         return Err(RawError::Unsupported("Canon roll-burst raw (CRX encType 3)".into()));
     }
-    if cmp1.wavelet_levels != 0 && (cmp1.wavelet_levels != 3 || cmp1.version != 0x100) {
+    if cmp1.wavelet_levels != 0 && (cmp1.wavelet_levels != 3 || !matches!(cmp1.version, 0x100 | 0x200)) {
         return Err(RawError::Unsupported(format!(
             "Canon C-RAW (lossy CRX version {:#x} with {} wavelet levels)",
             cmp1.version, cmp1.wavelet_levels
@@ -199,7 +260,8 @@ pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
     }
     let (tiles_x, tiles_y) = (width.div_ceil(tw), height.div_ceil(th));
     let tiles = tiles_x.checked_mul(tiles_y).filter(|n| *n <= MAX_TILES).ok_or(RawError::Limit("too many CRX tiles"))?;
-    if cmp1.wavelet_levels != 0 && (tiles_y != 1 || tiles_x > 2) {
+    let second_generation = cmp1.wavelet_levels != 0 && cmp1.version == 0x200;
+    if cmp1.wavelet_levels != 0 && (tiles_y != 1 || tiles_x > if second_generation { 1 } else { 2 }) {
         return Err(RawError::Unsupported(format!("Canon C-RAW in {tiles_x} × {tiles_y} tiles")));
     }
     let sample = at.checked_add(len).and_then(|end| bytes.get(at..end)).ok_or_else(|| RawError::Corrupt("CRX sample outside the file".into()))?;
@@ -207,45 +269,67 @@ pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
     if width * height / (sample.len() + 1) > 4096 {
         return Err(RawError::Corrupt("CRX sample too small for its geometry".into()));
     }
-    let streams = plane_streams(sample, cmp1, tiles)?;
+    let streams = if second_generation { vec![plane_streams_v2(sample, cmp1)?] } else { plane_streams(sample, cmp1, tiles)? };
 
     let (active, crop) = geometry(iad1.as_ref().and_then(|i| i.areas.as_ref()), width, height);
     let mut data = Vec::new();
     if mode == Mode::Full {
         // every plane is an independent stream
         let jobs: Vec<(usize, usize)> = (0..tiles).flat_map(|t| (0..4).map(move |p| (t, p))).collect();
-        let planes: Vec<Vec<u16>> = jobs
-            .par_iter()
-            .map(|&(tile, p)| {
-                let (tx, ty) = (tile % tiles_x, tile / tiles_x);
-                let (w, h) = ((width - tx * tw).min(tw), (height - ty * th).min(th));
-                let planes = streams.get(tile).and_then(|t| t.get(p)).ok_or_else(|| RawError::Corrupt("CRX plane".into()))?;
-                let slice = |s: &Stream| sample.get(s.range.clone()).ok_or_else(|| RawError::Corrupt("CRX plane".into()));
-                // an unseen stream variant (or damage) falls back to the embedded preview like other unsupported raws
-                let plane = if cmp1.wavelet_levels == 0 {
-                    planes
-                        .first()
-                        .ok_or_else(|| RawError::Corrupt("CRX plane".into()))
-                        .and_then(|s| crx::decode_plane(slice(s)?, w / 2, h / 2, cmp1.bits as u32))
-                } else {
-                    let mut input = PlaneBands { streams: [&[]; BANDS], steps: [1; BANDS] };
-                    for ((s, stream), step) in planes.iter().zip(input.streams.iter_mut()).zip(input.steps.iter_mut()) {
-                        *stream = slice(s)?;
-                        *step = crx_wavelet::band_step(s.quant);
-                    }
-                    let edge = match (tiles_x, tx) {
-                        (1, _) => TileEdge::Only,
-                        (_, 0) => TileEdge::First,
-                        _ => TileEdge::Last,
+        let planes: Vec<Vec<u16>> = if second_generation {
+            // the four planes of the tile together: the quantiser steps follow a brightness map shared by them
+            let tile = streams.first().ok_or_else(|| RawError::Corrupt("CRX plane".into()))?;
+            let mut inputs: Vec<PlaneBands> = Vec::with_capacity(4);
+            for plane in tile {
+                let mut input = PlaneBands { streams: [&[]; BANDS], scales: [Scale::Fixed(1); BANDS] };
+                for (b, ((s, stream), scale)) in plane.iter().zip(input.streams.iter_mut()).zip(input.scales.iter_mut()).enumerate() {
+                    *stream = sample.get(s.range.clone()).ok_or_else(|| RawError::Corrupt("CRX plane".into()))?;
+                    let step = (s.quant as i32).saturating_mul(5) / 2;
+                    *scale = match (b, step) {
+                        (_, 0) => Scale::Fixed(1),
+                        (0..=3, step) => Scale::Fixed(step),
+                        (_, step) => Scale::Adaptive(step),
                     };
-                    crx_wavelet::decode_plane(&input, w / 2, h / 2, edge, cmp1.bits as u32)
-                };
-                plane.map_err(|e| match e {
-                    RawError::Corrupt(why) => RawError::Unsupported(format!("Canon CRX data not decoded ({why})")),
-                    other => other,
+                }
+                inputs.push(input);
+            }
+            crx_wavelet::decode_planes(&inputs, width / 2, height / 2, TileEdge::Only, cmp1.bits as u32).map_err(|e| match e {
+                RawError::Corrupt(why) => RawError::Unsupported(format!("Canon CRX data not decoded ({why})")),
+                other => other,
+            })?
+        } else {
+            jobs.par_iter()
+                .map(|&(tile, p)| {
+                    let (tx, ty) = (tile % tiles_x, tile / tiles_x);
+                    let (w, h) = ((width - tx * tw).min(tw), (height - ty * th).min(th));
+                    let planes = streams.get(tile).and_then(|t| t.get(p)).ok_or_else(|| RawError::Corrupt("CRX plane".into()))?;
+                    let slice = |s: &Stream| sample.get(s.range.clone()).ok_or_else(|| RawError::Corrupt("CRX plane".into()));
+                    // an unseen stream variant (or damage) falls back to the embedded preview like other unsupported raws
+                    let plane = if cmp1.wavelet_levels == 0 {
+                        planes
+                            .first()
+                            .ok_or_else(|| RawError::Corrupt("CRX plane".into()))
+                            .and_then(|s| crx::decode_plane(slice(s)?, w / 2, h / 2, cmp1.bits as u32))
+                    } else {
+                        let mut input = PlaneBands { streams: [&[]; BANDS], scales: [Scale::Fixed(1); BANDS] };
+                        for ((s, stream), scale) in planes.iter().zip(input.streams.iter_mut()).zip(input.scales.iter_mut()) {
+                            *stream = slice(s)?;
+                            *scale = Scale::Fixed(crx_wavelet::band_step(s.quant));
+                        }
+                        let edge = match (tiles_x, tx) {
+                            (1, _) => TileEdge::Only,
+                            (_, 0) => TileEdge::First,
+                            _ => TileEdge::Last,
+                        };
+                        crx_wavelet::decode_plane(&input, w / 2, h / 2, edge, cmp1.bits as u32)
+                    };
+                    plane.map_err(|e| match e {
+                        RawError::Corrupt(why) => RawError::Unsupported(format!("Canon CRX data not decoded ({why})")),
+                        other => other,
+                    })
                 })
-            })
-            .collect::<Result<_>>()?;
+                .collect::<Result<_>>()?
+        };
         data = vec![0u16; width * height];
         for (&(tile, p), plane) in jobs.iter().zip(&planes) {
             let (tx, ty) = (tile % tiles_x, tile / tiles_x);
@@ -405,6 +489,49 @@ mod tests {
         build(m, tile_w, 0, 0, 3, 1, Some(quant))
     }
 
+    /// A second-generation C-RAW file (`CMP1` version 2): 20-byte records, quantiser bytes of the bands, and an extra
+    /// block of `extra` bytes before the band streams.
+    fn second_generation_file(m: &[u16], quant: [u8; BANDS], extra: usize) -> Vec<u8> {
+        let planes: Vec<Vec<u16>> = (0..4).map(|p| plane_of(m, 0, W, p)).collect();
+        let bases: [i32; BANDS] = std::array::from_fn(|b| quant[b] as i32 * 5 / 2);
+        let streams = crx_wavelet::testenc::encode_adaptive_planes(std::array::from_fn(|p| planes[p].as_slice()), W / 2, H / 2, 14, &bases);
+        let plane_sizes: Vec<usize> = streams.iter().map(|s| s.iter().map(Vec::len).sum()).collect();
+        let padded = extra.next_multiple_of(8);
+        let mut sample = vec![0xff, 0x11, 0, 0x10];
+        sample.extend(((padded + plane_sizes.iter().sum::<usize>()) as u32).to_be_bytes());
+        sample.extend(0x4000u32.to_be_bytes());
+        sample.extend((extra as u32).to_be_bytes());
+        sample.extend([0, 4, 0, 0]);
+        for (p, s) in streams.iter().enumerate() {
+            sample.extend([0xff, 0x12, 0, 8]);
+            sample.extend((plane_sizes[p] as u32).to_be_bytes());
+            sample.extend([(p as u8) << 4 | 8, 0, 0, 0]);
+            for (b, band) in s.iter().enumerate() {
+                sample.extend([0xff, 0x13, 0, 0x10]);
+                sample.extend((band.len() as u32).to_be_bytes());
+                sample.extend([(b as u8) << 4, 0, 0, quant[b]]);
+                sample.extend([0, 0, 0, (b < 4) as u8]);
+                sample.extend([0, p as u8 + 1, 0, 0]);
+            }
+        }
+        let header_size = sample.len().next_multiple_of(8);
+        sample.resize(header_size, 0);
+        sample.extend((0..padded).map(|i| if i % 3 == 0 { 0xff } else { (i * 37) as u8 }));
+        for s in &streams {
+            for band in s {
+                sample.extend(band);
+            }
+        }
+        let areas = [[20, 12, 91, 59], [0, 0, 15, 63], [16, 0, 95, 7], [16, 8, 95, 63]];
+        let payload_at = 4096u64;
+        let mut f = bx(b"ftyp", b"crx \0\0\0\x01crx isom");
+        let trak = raw_trak(&cmp1(W, header_size as u32, 0, 0, 3, 2), &areas, payload_at, sample.len() as u32);
+        f.extend(bx(b"moov", &trak));
+        f.resize(payload_at as usize, 0);
+        f.extend(sample);
+        f
+    }
+
     fn build(m: &[u16], tile_w: usize, cfa: u8, enc: u8, levels: u8, version: u8, lossy: Option<[u16; BANDS]>) -> Vec<u8> {
         let tiles = W.div_ceil(tile_w);
         // each tile is a list of streams per plane: one for lossless, ten bands for the wavelet mode
@@ -536,12 +663,71 @@ mod tests {
     }
 
     #[test]
+    fn second_generation_files_decode_close_to_the_mosaic() {
+        let m = mosaic();
+        let quant = [0, 0, 0, 0, 4, 4, 8, 8, 8, 16];
+        for extra in [0usize, 5, 200] {
+            let img = decode(&second_generation_file(&m, quant, extra), Mode::Full).unwrap();
+            let RawData::U16(d) = &img.data else { panic!("float data") };
+            assert_eq!((img.width, img.height, img.bits), (W, H, 14));
+            assert_eq!(img.active_area, Rect::new(16, 8, 80, 56));
+            let errs: Vec<i32> = d.iter().zip(&m).map(|(&a, &b)| (a as i32 - b as i32).abs()).collect();
+            let (worst, mean) = (errs.iter().max().copied().unwrap(), errs.iter().sum::<i32>() as f64 / errs.len() as f64);
+            assert!(worst > 0 && worst < 600 && mean < 12.0, "extra {extra}: worst {worst} mean {mean}");
+            // the masked frame is flat: its black level survives
+            assert!(img.black.values.iter().all(|v| (511.0..515.0).contains(v)), "{:?}", img.black.values);
+        }
+    }
+
+    #[test]
+    fn second_generation_records_must_be_consistent() {
+        let m = mosaic();
+        let quant = [0, 0, 0, 0, 4, 4, 8, 8, 8, 16];
+        let f = second_generation_file(&m, quant, 40);
+        assert!(decode(&f, Mode::Full).is_ok());
+        // a tile size that does not add up, a band out of order, and an extra block of the wrong size
+        for (at, v) in [(4096 + 7, 1u8), (4096 + 20 + 12 + 4, 0x70), (4096 + 15, 0xff)] {
+            let mut g = f.clone();
+            g[at] ^= v;
+            let r = decode(&g, Mode::Full);
+            assert!(matches!(r, Err(RawError::Corrupt(_))), "byte {at}: {r:?}");
+        }
+        // only a single tile of this layout is supported
+        let wide = {
+            let mut g = f.clone();
+            // CMP1 tile width at its payload offset: patch the box in place (find it by its type)
+            let at = g.windows(4).position(|w| w == b"CMP1").unwrap();
+            let tw = at + 4 + 16;
+            g[tw..tw + 4].copy_from_slice(&((W / 2) as u32).to_be_bytes());
+            g
+        };
+        assert!(matches!(decode(&wide, Mode::Full), Err(RawError::Unsupported(ref s)) if s.contains("tiles")));
+    }
+
+    #[test]
+    fn damaged_second_generation_files_are_errors_not_panics() {
+        let m = mosaic();
+        let f = second_generation_file(&m, [0, 0, 0, 0, 4, 4, 8, 8, 8, 16], 64);
+        for n in (0..f.len()).step_by(61) {
+            let _ = decode(&f[..n], Mode::Full);
+        }
+        let damage = (0..600).chain(4096..4096 + 1000).chain((4096 + 1000..f.len()).step_by(67));
+        for i in damage {
+            for v in [0u8, 0x7f, 0xff] {
+                let mut g = f.clone();
+                g[i] = v;
+                let _ = decode(&g, Mode::Full);
+            }
+        }
+    }
+
+    #[test]
     fn unsupported_variants_say_so() {
         let m = mosaic();
-        // two levels, a newer stream version, three tiles across, roll-burst
+        // two levels, an unknown newer stream version, three tiles across, roll-burst
         let cases = [
             (file(&m, W, 0, 0, 2), "C-RAW"),
-            (build(&m, W, 0, 0, 3, 2, Some([0x20; BANDS])), "C-RAW"),
+            (build(&m, W, 0, 0, 3, 3, Some([0x20; BANDS])), "C-RAW"),
             (lossy_file(&m, 32, [0x20; BANDS]), "tiles"),
             (file(&m, W, 0, 3, 0), "roll-burst"),
         ];

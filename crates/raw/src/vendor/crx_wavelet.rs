@@ -43,6 +43,24 @@
 //!   run state `ri` grows after a block that ends exactly at the row end and is unchanged when the final block
 //!   overshoots.
 //!
+//! # Second generation (EOS R5 / R6, `CMP1` version 2)
+//!
+//! The same bands, geometry and entropy coder; the tile data starts with an unexplained block (its size is in the tile
+//! record, padded to eight bytes) before the band streams, and the quantiser value of a band record (a byte) is 0 for the
+//! four coarsest bands and 4, 4, 8, 8, 8, 16 for the finer ones. Those finer bands use a base step of 2.5 times that value
+//! scaled by a brightness class of each position, and the class map is shared by the four planes and the three bands
+//! of a level: a position is "dark" (step × 0.6) below about 360 above the black level, "bright" (× 1.4) above about
+//! 2250 and normal in between. A class covers four coefficients of the finest level along a row and one row. At the
+//! second level a coefficient takes the step of the two finest rows it covers (the table in [`level2_step`]).
+//!
+//! The decoder cannot read the class map (it is not in the band streams; the unexplained block was not decoded) so it
+//! estimates it from the approximation bands it has already decoded: the average of the four planes, over the two samples
+//! of the second-level approximation that cover the group (for the odd finest rows also the next row), for the second
+//! level, and the same from the first-level approximation for the finest level. The estimate agrees with the true class
+//! for about 98 % of the positions that matter (measured against the reference decoder's output of an R5 and an R6
+//! file): the reconstruction is not exact. About 4 % (R5) to 9 % (R6) of the samples differ, by 1–3 counts for the
+//! most part (mean 0.1–1.6), and about 0.2–2 % by 10 or more. The coarse levels are exact.
+//!
 //! # Reconstruction
 //!
 //! Per level, the rows of the low and high bands are first inverted horizontally (`x[2k] = s[k] - ((d[k-1] + d[k] +
@@ -343,49 +361,222 @@ fn inverse_level(ll: &Grid, hl: &Grid, lh: &Grid, hh: &Grid, left: usize, out_w:
     inverse_columns(&lo, &hi)
 }
 
-/// The ten band streams of a plane and their quantiser steps.
-pub(crate) struct PlaneBands<'a> {
-    pub streams: [&'a [u8]; BANDS],
-    pub steps: [i32; BANDS],
+/// How the coefficients of a band are scaled back to the signal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Scale {
+    /// One step for the whole band.
+    Fixed(i32),
+    /// The base step of a second-generation band: the step at each position follows the brightness class map.
+    Adaptive(i32),
 }
 
-/// Decode a plane of `pw × ph` samples of `bits` significant bits from its ten bands.
-pub(crate) fn decode_plane(bands: &PlaneBands, pw: usize, ph: usize, edge: TileEdge, bits: u32) -> Result<Vec<u16>> {
-    if pw == 0 || ph == 0 || !(8..=16).contains(&bits) || pw.checked_mul(ph).is_none_or(|n| n > MAX_SAMPLES) {
-        return Err(RawError::Corrupt("bad CRX plane geometry".into()));
+/// The ten band streams of a plane and how to scale them.
+pub(crate) struct PlaneBands<'a> {
+    pub streams: [&'a [u8]; BANDS],
+    pub scales: [Scale; BANDS],
+}
+
+impl PlaneBands<'_> {
+    fn adaptive(&self) -> bool {
+        self.scales.iter().any(|s| matches!(s, Scale::Adaptive(_)))
     }
-    let lay = layout(pw, ph, edge);
+}
+
+/// Black-relative brightness (of the mean of the four planes) above which a position is "bright" (steps × 1.4) and below
+/// which it is "dark" (× 0.6); see the module docs.
+const DARK_BELOW: f32 = 361.0;
+const BRIGHT_FROM: f32 = 2250.0;
+/// Share of the approximation samples taken to lie at the black level when estimating it.
+const BLACK_PERCENTILE: usize = 200;
+
+/// Brightness class (−1 dark, 0 normal, 1 bright) of each row and group of four columns of the finest level.
+struct ClassMap {
+    rows: usize,
+    groups: usize,
+    cls: Vec<i8>,
+}
+
+impl ClassMap {
+    fn at(&self, y: usize, g: usize) -> i8 {
+        let (y, g) = (y.min(self.rows.saturating_sub(1)), g.min(self.groups.saturating_sub(1)));
+        y.checked_mul(self.groups).and_then(|i| self.cls.get(i.checked_add(g)?)).copied().unwrap_or(0)
+    }
+}
+
+/// Mean of the planes' approximation samples at `(y, x)`, repeating the edges.
+fn mean_at(ll: &[Grid], y: usize, x: usize) -> f32 {
+    let mut sum = 0.0f32;
+    for g in ll {
+        let (yy, xx) = (y.min(g.h.saturating_sub(1)), x.min(g.w.saturating_sub(1)));
+        sum += g.v.get(yy.saturating_mul(g.w).saturating_add(xx)).copied().unwrap_or(0) as f32;
+    }
+    sum / ll.len().max(1) as f32
+}
+
+/// The black level seen by the approximation of the four planes: its darkest per-mille samples.
+fn estimate_black(ll: &[Grid], bits: u32) -> f32 {
+    let Some(first) = ll.first() else { return 0.0 };
+    let mut all: Vec<f32> = (0..first.h).flat_map(|y| (0..first.w).map(move |x| (y, x))).map(|(y, x)| mean_at(ll, y, x)).collect();
+    if all.is_empty() {
+        return 0.0;
+    }
+    let k = all.len() / BLACK_PERCENTILE;
+    let (_, v, _) = all.select_nth_unstable_by(k, f32::total_cmp);
+    v.clamp(0.0, (1u32 << bits) as f32)
+}
+
+/// The class map estimated from an approximation of the planes: `cols` samples of it per group (two for the second
+/// level, four for the finest) and, for the second level (`halved`), half as many rows, the odd finest rows
+/// blending a row with the next.
+fn class_map(ll: &[Grid], rows: usize, groups: usize, cols: usize, halved: bool, black: f32) -> ClassMap {
+    let (dark, bright) = (black + DARK_BELOW, black + BRIGHT_FROM);
+    let mut cls = Vec::with_capacity(rows.saturating_mul(groups));
+    for y in 0..rows {
+        let (r, blend) = if halved { (y / 2, y % 2 == 1) } else { (y, false) };
+        for g in 0..groups {
+            let row_mean = |row: usize| (0..cols).map(|c| mean_at(ll, row, g * cols + c)).sum::<f32>() / cols as f32;
+            let v = if blend { (row_mean(r) + row_mean(r + 1)) / 2.0 } else { row_mean(r) };
+            cls.push(if v < dark {
+                -1
+            } else if v >= bright {
+                1
+            } else {
+                0
+            });
+        }
+    }
+    ClassMap { rows, groups, cls }
+}
+
+/// Step of a second-level coefficient with base step `base` from the classes of the two finest rows it covers (the
+/// table of the module docs: 0.6, 0.8, 1, 1.1 and 1.4 times the base).
+fn level2_step(base: i32, a: i8, d: i8) -> i32 {
+    const TENTHS: [i64; 5] = [6, 8, 10, 11, 14];
+    let i = (a as i32 + d as i32 + 2).clamp(0, 4) as usize;
+    ((base as i64) * TENTHS.get(i).copied().unwrap_or(10) / 10) as i32
+}
+
+/// Step of a finest-level coefficient with base step `base` of class `c`: 0.6, 1 and 1.4 times the base.
+fn level1_step(base: i32, c: i8) -> i32 {
+    const FIFTHS: [i64; 3] = [3, 5, 7];
+    let i = (c as i32 + 1).clamp(0, 2) as usize;
+    ((base as i64) * FIFTHS.get(i).copied().unwrap_or(5) / 5) as i32
+}
+
+/// Scale the coefficients of the band at `level` (1 = finest, 2) in place.
+fn apply_scale(g: &mut Grid, scale: Scale, level: usize, map: Option<&ClassMap>) {
+    match (scale, map) {
+        (Scale::Fixed(1), _) => {}
+        (Scale::Fixed(step), _) => g.v.iter_mut().for_each(|x| *x = x.wrapping_mul(step)),
+        (Scale::Adaptive(base), Some(map)) => {
+            let w = g.w.max(1);
+            for (y, row) in g.v.chunks_mut(w).enumerate() {
+                for (x, v) in row.iter_mut().enumerate() {
+                    let step = if level == 2 {
+                        level2_step(base, map.at(2 * y, x / 2), map.at(2 * y + 1, x / 2))
+                    } else {
+                        level1_step(base, map.at(y, x / 4))
+                    };
+                    *v = v.wrapping_mul(step);
+                }
+            }
+        }
+        // no class map (cannot happen: the caller builds one for every adaptive plane)
+        (Scale::Adaptive(base), None) => g.v.iter_mut().for_each(|x| *x = x.wrapping_mul(base)),
+    }
+}
+
+/// Entropy-decode the ten bands of a plane (unscaled).
+fn decode_bands(bands: &PlaneBands, lay: &Layout, bits: u32) -> Result<Vec<Grid>> {
     let decoded: Vec<Vec<i32>> = (0..BANDS)
         .into_par_iter()
         .map(|b| -> Result<Vec<i32>> {
             let (dim, data) = (lay.bands.get(b).copied().unwrap_or(Dim { cols: 0, rows: 0 }), bands.streams.get(b).copied().unwrap_or(&[]));
-            let step = bands.steps.get(b).copied().unwrap_or(1);
-            let mut v = if dim.cols == 0 || dim.rows == 0 {
-                Vec::new()
+            if dim.cols == 0 || dim.rows == 0 {
+                Ok(Vec::new())
             } else if b == 0 {
-                crx::decode_approximation(data, dim.cols, dim.rows, bits)?
+                crx::decode_approximation(data, dim.cols, dim.rows, bits)
             } else {
-                decode_detail(data, dim.cols, dim.rows)?
-            };
-            if step != 1 {
-                v.iter_mut().for_each(|x| *x = x.wrapping_mul(step));
+                decode_detail(data, dim.cols, dim.rows)
             }
-            Ok(v)
         })
         .collect::<Result<_>>()?;
-    let mut grids = Vec::with_capacity(BANDS);
-    for (v, dim) in decoded.into_iter().zip(&lay.bands) {
-        grids.push(Grid::new(dim.cols, dim.rows, v)?);
+    decoded.into_iter().zip(&lay.bands).map(|(v, dim)| Grid::new(dim.cols, dim.rows, v)).collect()
+}
+
+/// Decode a plane of `pw × ph` samples of `bits` significant bits from its ten bands (first-generation files; the
+/// scales must be fixed).
+pub(crate) fn decode_plane(bands: &PlaneBands, pw: usize, ph: usize, edge: TileEdge, bits: u32) -> Result<Vec<u16>> {
+    if bands.adaptive() {
+        return Err(RawError::Unsupported("adaptive CRX bands need all four planes".into()));
     }
-    let g = |b: usize| grids.get(b).ok_or_else(|| RawError::Corrupt("CRX bands".into()));
-    let ll2 = inverse_level(g(0)?, g(1)?, g(2)?, g(3)?, lay.left, lay.ll_widths[1])?;
-    let ll1 = inverse_level(&ll2, g(4)?, g(5)?, g(6)?, lay.left, lay.ll_widths[0])?;
-    let plane = inverse_level(&ll1, g(7)?, g(8)?, g(9)?, lay.left, pw)?;
-    if plane.w != pw || plane.h != ph {
-        return Err(RawError::Corrupt("CRX plane shape".into()));
+    let mut planes = decode_planes(std::slice::from_ref(bands), pw, ph, edge, bits)?;
+    planes.pop().ok_or_else(|| RawError::Corrupt("CRX plane".into()))
+}
+
+/// Decode the planes of a tile together (second-generation files need all four for the class map).
+pub(crate) fn decode_planes(planes: &[PlaneBands], pw: usize, ph: usize, edge: TileEdge, bits: u32) -> Result<Vec<Vec<u16>>> {
+    if planes.is_empty() || pw == 0 || ph == 0 || !(8..=16).contains(&bits) || pw.checked_mul(ph).is_none_or(|n| n > MAX_SAMPLES) {
+        return Err(RawError::Corrupt("bad CRX plane geometry".into()));
     }
+    let lay = layout(pw, ph, edge);
+    let shape = || RawError::Corrupt("CRX bands".into());
+    // entropy decoding and the coarsest level: the approximation of the second level
+    let mut work: Vec<Vec<Grid>> = planes.par_iter().map(|p| decode_bands(p, &lay, bits)).collect::<Result<_>>()?;
+    let ll2: Vec<Grid> = work
+        .par_iter_mut()
+        .zip(planes.par_iter())
+        .map(|(g, p)| -> Result<Grid> {
+            for (b, grid) in g.iter_mut().enumerate().take(4) {
+                apply_scale(grid, p.scales.get(b).copied().unwrap_or(Scale::Fixed(1)), 3, None);
+            }
+            let g = |b: usize| g.get(b).ok_or_else(shape);
+            inverse_level(g(0)?, g(1)?, g(2)?, g(3)?, lay.left, lay.ll_widths[1])
+        })
+        .collect::<Result<_>>()?;
+    let adaptive = planes.iter().any(PlaneBands::adaptive);
+    let (rows1, groups1) = lay.bands.get(7).map_or((0, 0), |d| (d.rows, d.cols.div_ceil(4)));
+    let (black, map2) = if adaptive {
+        let black = estimate_black(&ll2, bits);
+        (black, Some(class_map(&ll2, rows1, groups1, 2, true, black)))
+    } else {
+        (0.0, None)
+    };
+    // the second level
+    let ll1: Vec<Grid> = work
+        .par_iter_mut()
+        .zip(planes.par_iter())
+        .zip(ll2.par_iter())
+        .map(|((g, p), ll2)| -> Result<Grid> {
+            for b in 4..7 {
+                if let Some(grid) = g.get_mut(b) {
+                    apply_scale(grid, p.scales.get(b).copied().unwrap_or(Scale::Fixed(1)), 2, map2.as_ref());
+                }
+            }
+            let g = |b: usize| g.get(b).ok_or_else(shape);
+            inverse_level(ll2, g(4)?, g(5)?, g(6)?, lay.left, lay.ll_widths[0])
+        })
+        .collect::<Result<_>>()?;
+    let map1 = adaptive.then(|| class_map(&ll1, rows1, groups1, 4, false, black));
+    // the finest level and the output
     let maxv = (1i32 << bits) - 1;
-    Ok(plane.v.iter().map(|&x| x.clamp(0, maxv) as u16).collect())
+    work.par_iter_mut()
+        .zip(planes.par_iter())
+        .zip(ll1.par_iter())
+        .map(|((g, p), ll1)| -> Result<Vec<u16>> {
+            for b in 7..BANDS {
+                if let Some(grid) = g.get_mut(b) {
+                    apply_scale(grid, p.scales.get(b).copied().unwrap_or(Scale::Fixed(1)), 1, map1.as_ref());
+                }
+            }
+            let g = |b: usize| g.get(b).ok_or_else(shape);
+            let plane = inverse_level(ll1, g(7)?, g(8)?, g(9)?, lay.left, pw)?;
+            if plane.w != pw || plane.h != ph {
+                return Err(RawError::Corrupt("CRX plane shape".into()));
+            }
+            Ok(plane.v.iter().map(|&x| x.clamp(0, maxv) as u16).collect())
+        })
+        .collect()
 }
 
 /// A test-only wavelet encoder (the rules of the module docs, written independently of the decoder's control flow),
@@ -625,6 +816,52 @@ pub(crate) mod testenc {
             (0..dim.rows).flat_map(|y| g.v[y * g.w + off..y * g.w + off + dim.cols].iter().map(|&c| c / steps[b]).collect::<Vec<_>>()).collect()
         })
     }
+
+    /// The ten band streams of each of four planes with the second generation's adaptive quantisation (`bases` are the
+    /// base steps of the bands, 0 for the unit-step coarse ones); the steps follow the same class maps the decoder builds.
+    pub(crate) fn encode_adaptive_planes(imgs: [&[u16]; 4], pw: usize, ph: usize, bits: u32, bases: &[i32; BANDS]) -> [[Vec<u8>; BANDS]; 4] {
+        let lay = layout(pw, ph, TileEdge::Only);
+        let unit = [1i32; BANDS];
+        let mut q: Vec<[Vec<i32>; BANDS]> = imgs.iter().map(|img| quantised_bands(img, pw, ph, 0, pw, TileEdge::Only, &unit)).collect();
+        let grid = |p: &[Vec<i32>; BANDS], b: usize| Grid { w: lay.bands[b].cols, h: lay.bands[b].rows, v: p[b].clone() };
+        let ll2: Vec<Grid> =
+            q.iter().map(|p| inverse_level(&grid(p, 0), &grid(p, 1), &grid(p, 2), &grid(p, 3), 0, lay.ll_widths[1]).unwrap()).collect();
+        let (rows1, groups1) = (lay.bands[7].rows, lay.bands[7].cols.div_ceil(4));
+        let black = estimate_black(&ll2, bits);
+        let map2 = class_map(&ll2, rows1, groups1, 2, true, black);
+        // second level: quantise, and rebuild what the decoder will see
+        let mut ll1: Vec<Grid> = Vec::new();
+        for (p, ll2) in q.iter_mut().zip(&ll2) {
+            let mut deq: Vec<Grid> = Vec::new();
+            for b in 4..7 {
+                let mut g = grid(p, b);
+                let w = g.w.max(1);
+                for (i, c) in g.v.iter_mut().enumerate() {
+                    let (y, x) = (i / w, i % w);
+                    *c /= level2_step(bases[b], map2.at(2 * y, x / 2), map2.at(2 * y + 1, x / 2));
+                }
+                p[b] = g.v.clone();
+                apply_scale(&mut g, Scale::Adaptive(bases[b]), 2, Some(&map2));
+                deq.push(g);
+            }
+            ll1.push(inverse_level(ll2, &deq[0], &deq[1], &deq[2], 0, lay.ll_widths[0]).unwrap());
+        }
+        let map1 = class_map(&ll1, rows1, groups1, 4, false, black);
+        for p in q.iter_mut() {
+            for b in 7..BANDS {
+                let w = lay.bands[b].cols.max(1);
+                for (i, c) in p[b].iter_mut().enumerate() {
+                    *c /= level1_step(bases[b], map1.at(i / w, (i % w) / 4));
+                }
+            }
+        }
+        std::array::from_fn(|pl| {
+            std::array::from_fn(|b| {
+                let dim = lay.bands[b];
+                if b == 0 { encode_plane(&q[pl][b], dim.cols, dim.rows, bits) } else { encode_detail(&q[pl][b], dim.cols, dim.rows) }
+            })
+        })
+    }
 }
 
 #[cfg(test)]
@@ -788,7 +1025,7 @@ mod tests {
 
     fn decode_streams(streams: &[Vec<u8>; BANDS], steps: [i32; BANDS], pw: usize, ph: usize, edge: TileEdge) -> Result<Vec<u16>> {
         let refs: [&[u8]; BANDS] = std::array::from_fn(|b| streams[b].as_slice());
-        decode_plane(&PlaneBands { streams: refs, steps }, pw, ph, edge, 14)
+        decode_plane(&PlaneBands { streams: refs, scales: steps.map(Scale::Fixed) }, pw, ph, edge, 14)
     }
 
     #[test]
@@ -841,7 +1078,7 @@ mod tests {
     #[test]
     fn bad_geometry_and_damaged_planes_are_errors() {
         let empty: [&[u8]; BANDS] = [&[]; BANDS];
-        let bands = PlaneBands { streams: empty, steps: [1; BANDS] };
+        let bands = PlaneBands { streams: empty, scales: [Scale::Fixed(1); BANDS] };
         assert!(decode_plane(&bands, 0, 4, TileEdge::Only, 14).is_err());
         assert!(decode_plane(&bands, 4, 0, TileEdge::Only, 14).is_err());
         assert!(decode_plane(&bands, 4, 4, TileEdge::Only, 7).is_err());
@@ -870,6 +1107,133 @@ mod tests {
 
     /// A bright patch against a dark frame drives the approximation band below zero (the low-pass filter overshoots);
     /// every band and the whole plane must still round-trip.
+    #[test]
+    fn adaptive_steps_follow_the_tables() {
+        // second level: 0.6, 0.8, 1, 1.1 and 1.4 times the base, symmetric in the two rows
+        let row = |base: i32| [(-1, -1), (-1, 0), (0, 0), (0, 1), (1, 1)].map(|(a, d)| level2_step(base, a, d));
+        assert_eq!(row(10), [6, 8, 10, 11, 14]);
+        assert_eq!(row(20), [12, 16, 20, 22, 28]);
+        assert_eq!(level2_step(10, 0, -1), level2_step(10, -1, 0));
+        assert_eq!(level2_step(10, 1, 0), 11);
+        // finest level: 0.6, 1 and 1.4 times the base
+        assert_eq!([-1, 0, 1].map(|c| level1_step(20, c)), [12, 20, 28]);
+        assert_eq!([-1, 0, 1].map(|c| level1_step(40, c)), [24, 40, 56]);
+        // out-of-range classes are clamped, not trusted
+        assert_eq!(level1_step(20, 9), 28);
+        assert_eq!(level2_step(10, -9, 9), 10);
+    }
+
+    /// `n` planes whose second-level approximation is `value` everywhere.
+    fn flat_ll(n: usize, w: usize, h: usize, value: i32) -> Vec<Grid> {
+        (0..n).map(|_| Grid { w, h, v: vec![value; w * h] }).collect()
+    }
+
+    #[test]
+    fn class_maps_threshold_the_mean_of_the_planes() {
+        let black = 512.0;
+        let at = |v: i32| class_map(&flat_ll(4, 8, 6, v), 12, 4, 2, true, black).at(5, 2);
+        assert_eq!([600, 872, 873, 1500, 2761, 2762, 5000].map(at), [-1, -1, 0, 0, 0, 1, 1]);
+        // the mean of the planes decides, not each plane
+        let mut ll = flat_ll(4, 8, 6, 1500);
+        ll[0].v.iter_mut().for_each(|x| *x = 5000);
+        ll[1].v.iter_mut().for_each(|x| *x = 700);
+        assert_eq!(class_map(&ll, 12, 4, 2, true, black).at(3, 1), 0);
+        // an odd row blends with the next row of the approximation: a dark row above a bright one lands in between
+        let mut ll = flat_ll(1, 8, 6, 600);
+        ll[0].v.iter_mut().skip(8 * 3).for_each(|x| *x = 4000);
+        let m = class_map(&ll, 12, 4, 2, true, black);
+        assert_eq!((m.at(4, 0), m.at(5, 0), m.at(6, 0)), (-1, 0, 1));
+        // the finest level reads four samples of its own row
+        let mut ll = flat_ll(1, 16, 3, 600);
+        ll[0].v[4..8].iter_mut().for_each(|x| *x = 4000);
+        let m = class_map(&ll, 3, 4, 4, false, black);
+        assert_eq!((m.at(0, 0), m.at(0, 1), m.at(0, 2)), (-1, 1, -1));
+    }
+
+    #[test]
+    fn the_black_level_is_the_dark_end_of_the_approximation() {
+        let mut ll = flat_ll(4, 50, 40, 3000);
+        // a frame of masked samples at 700
+        for g in &mut ll {
+            g.v[..50 * 8].iter_mut().for_each(|x| *x = 700);
+        }
+        assert_eq!(estimate_black(&ll, 14), 700.0);
+        assert_eq!(estimate_black(&[], 14), 0.0);
+        assert_eq!(estimate_black(&flat_ll(2, 3, 3, -50), 14), 0.0);
+        // brighter than the sample range cannot push the estimate past it
+        assert_eq!(estimate_black(&flat_ll(1, 4, 4, 1 << 20), 14), (1 << 14) as f32);
+    }
+
+    /// Four planes, brighter on the right so that the classes change across the picture.
+    fn shaded_planes(pw: usize, ph: usize, seed: u64) -> Vec<Vec<u16>> {
+        (0..4u64)
+            .map(|p| {
+                let mut r = Lcg(seed + p);
+                (0..pw * ph).map(|i| (700 + (i % pw) * 5000 / pw + (i / pw) * 3 + (r.next() % 25) as usize) as u16).collect()
+            })
+            .collect()
+    }
+
+    fn adaptive_inputs<'a>(streams: &'a [[Vec<u8>; BANDS]; 4], bases: &[i32; BANDS]) -> Vec<PlaneBands<'a>> {
+        streams
+            .iter()
+            .map(|s| PlaneBands {
+                streams: std::array::from_fn(|b| s[b].as_slice()),
+                scales: std::array::from_fn(|b| if bases[b] == 0 { Scale::Fixed(1) } else { Scale::Adaptive(bases[b]) }),
+            })
+            .collect()
+    }
+
+    const BASES: [i32; BANDS] = [0, 0, 0, 0, 10, 10, 20, 20, 20, 40];
+
+    #[test]
+    fn adaptive_quantisation_reconstructs_closely_across_the_classes() {
+        let (pw, ph) = (96usize, 64usize);
+        let planes = shaded_planes(pw, ph, 3);
+        let streams = super::testenc::encode_adaptive_planes(std::array::from_fn(|p| planes[p].as_slice()), pw, ph, 14, &BASES);
+        let out = decode_planes(&adaptive_inputs(&streams, &BASES), pw, ph, TileEdge::Only, 14).unwrap();
+        assert_eq!(out.len(), 4);
+        for (o, img) in out.iter().zip(&planes) {
+            let errs: Vec<i32> = o.iter().zip(img).map(|(&a, &b)| (a as i32 - b as i32).abs()).collect();
+            let (worst, mean) = (errs.iter().max().copied().unwrap(), errs.iter().sum::<i32>() as f64 / errs.len() as f64);
+            assert!(worst > 0 && worst < 120 && mean < 12.0, "worst {worst} mean {mean}");
+        }
+    }
+
+    #[test]
+    fn normal_brightness_uses_the_base_steps() {
+        // mid-grey planes under a black frame: away from the frame every class is "normal", so the adaptive scales
+        // equal the fixed ones
+        let (pw, ph) = (128usize, 96usize);
+        let planes: Vec<Vec<u16>> = (0..4u64)
+            .map(|p| {
+                let mut r = Lcg(p + 9);
+                (0..pw * ph).map(|i| if i / pw < 6 { 512 } else { (1500 + r.next() % 40) as u16 }).collect()
+            })
+            .collect();
+        let streams = super::testenc::encode_adaptive_planes(std::array::from_fn(|p| planes[p].as_slice()), pw, ph, 14, &BASES);
+        let adaptive = decode_planes(&adaptive_inputs(&streams, &BASES), pw, ph, TileEdge::Only, 14).unwrap();
+        for (p, a) in adaptive.iter().enumerate() {
+            let fixed = PlaneBands { streams: std::array::from_fn(|b| streams[p][b].as_slice()), scales: BASES.map(|b| Scale::Fixed(b.max(1))) };
+            let f = decode_plane(&fixed, pw, ph, TileEdge::Only, 14).unwrap();
+            assert_eq!(a[pw * 40..], f[pw * 40..], "plane {p}");
+            // the frame itself is dark: the steps there differ, but the picture stays close
+            assert!(a.iter().zip(&planes[p]).all(|(&x, &y)| (x as i32 - y as i32).abs() < 200));
+        }
+    }
+
+    #[test]
+    fn adaptive_bands_need_all_four_planes() {
+        let (pw, ph) = (32usize, 16usize);
+        let planes = shaded_planes(pw, ph, 5);
+        let streams = super::testenc::encode_adaptive_planes(std::array::from_fn(|p| planes[p].as_slice()), pw, ph, 14, &BASES);
+        let inputs = adaptive_inputs(&streams, &BASES);
+        assert!(matches!(decode_plane(&inputs[0], pw, ph, TileEdge::Only, 14), Err(RawError::Unsupported(_))));
+        assert!(decode_planes(&[], pw, ph, TileEdge::Only, 14).is_err());
+        // fewer than four planes still decode (the map is built from those given)
+        assert_eq!(decode_planes(&inputs[..2], pw, ph, TileEdge::Only, 14).unwrap().len(), 2);
+    }
+
     #[test]
     fn sharp_edges_push_the_approximation_below_zero() {
         use super::testenc::quantised_bands;

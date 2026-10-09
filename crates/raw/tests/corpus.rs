@@ -15,8 +15,6 @@ fn corpus_root() -> PathBuf {
 
 /// Variants known not to decode yet (see the crate docs): matched against the lower-case file name.
 const KNOWN_UNSUPPORTED: &[&str] = &[
-    "r5-crop-craw",             // Canon C-RAW of the R5 / R6 (CRX version 2, M11.1e)
-    "r6-craw",                  // "
     "arw-sony-a7m4-lossless-m", // Sony lossless compressed M/S: subsampled (YCbCr) lossless JPEG
     "arw-sony-a7m4-lossless-s", // "
     "raf-fuji-xt20-compressed", // Fujifilm compressed RAF
@@ -353,6 +351,35 @@ fn corpus_cr3_craw_decodes_exactly() {
         assert_eq!((img.active_area.x, img.active_area.y), (ax, ay), "{name}");
         assert_eq!(img.cfa.as_ref().map(|c| c.name()), Some("RGGB".to_string()), "{name}");
         assert!(img.black.values.iter().all(|b| (black_lo..black_hi).contains(b)), "{name}: black {:?}", img.black.values);
+        let wb = img.wb_multipliers.unwrap_or_else(|| panic!("{name}: no white balance"));
+        assert!((wb[0] - wb_r).abs() < 0.002 && wb[1] == 1.0 && (wb[2] - wb_b).abs() < 0.002, "{name}: wb {wb:?}");
+        let got = fingerprint(&img);
+        assert_eq!(got, print, "{name}: fingerprint {got:#018x}");
+    }
+}
+
+/// Canon C-RAW of the second generation (EOS R5 crop mode and R6, `CMP1` version 2). These decode *approximately*: the
+/// brightness class map that sets their quantiser steps is estimated, not read (see `crx_wavelet`), so the fingerprints
+/// pin this decoder's output, not Canon's. Measured against a reference decoder's output the mosaics differ in 4 % (R5)
+/// and 9 % (R6) of the samples, 0.17 and 1.1 counts on average.
+#[test]
+fn corpus_cr3_craw_second_generation_decodes_closely() {
+    // (file, mosaic size, active area x, y, fingerprint, as-shot R and B multipliers)
+    const FILES: &[(&str, (usize, usize), (usize, usize), u64, (f32, f32))] = &[
+        ("cr3-canon-r5-crop-craw.cr3", (5248, 3510), (128, 96), 0x2176e89ef32329c2, (1.448, 2.522)),
+        ("cr3-canon-r6-craw.cr3", (5568, 3708), (72, 38), 0xabfd4737c4f7923f, (1.803, 1.641)),
+    ];
+    let dir = corpus_root().join("raw");
+    for &(name, (w, h), (ax, ay), print, (wb_r, wb_b)) in FILES {
+        let Ok(bytes) = std::fs::read(dir.join(name)) else {
+            eprintln!("skip: {name} absent");
+            continue;
+        };
+        let img = decode(&bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert_eq!((img.width, img.height, img.bits), (w, h, 14), "{name}");
+        assert_eq!((img.active_area.x, img.active_area.y), (ax, ay), "{name}");
+        assert_eq!(img.cfa.as_ref().map(|c| c.name()), Some("RGGB".to_string()), "{name}");
+        assert!(img.black.values.iter().all(|b| (509.0..514.0).contains(b)), "{name}: black {:?}", img.black.values);
         let wb = img.wb_multipliers.unwrap_or_else(|| panic!("{name}: no white balance"));
         assert!((wb[0] - wb_r).abs() < 0.002 && wb[1] == 1.0 && (wb[2] - wb_b).abs() < 0.002, "{name}: wb {wb:?}");
         let got = fingerprint(&img);

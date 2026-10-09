@@ -293,7 +293,7 @@ LightCraft is young and moving fast. **Where we honestly stand** (details in the
   older-Canon raws on one machine.
 - **The biggest gaps:**
   - **camera colour calibration:** raws other than DNG develop with a neutral colour matrix today, so colour is muted;
-  - **Canon C-RAW of the EOS R5 / R6 generation and compressed Fujifilm / Olympus raws:** these open as embedded previews only (lossless CR3 and the first-generation C-RAW of the EOS R, 90D and M50 decode);
+  - **Compressed Fujifilm / Olympus raws:** these open as embedded previews only (Canon lossless CR3 and C-RAW decode; the EOS R5 / R6 generation of C-RAW approximately: its quantiser steps are estimated, so a few percent of the samples are a few counts off);
   - **AI masks and denoise:** subject and sky selection are classical heuristics;
   - **HDR, video and the Classic Print / Book / Map modules.**
 - **What's next:** see [where we're going](ROADMAP.md#where-were-going).
@@ -308,7 +308,7 @@ LightCraft is young and moving fast. **Where we honestly stand** (details in the
 | Profiles (Color, Neutral, Vivid, Landscape, Portrait, Monochrome: our own looks), presets, versions, history, copy/paste/sync settings | ✅ |
 | Camera colour: DNG files use their own matrices | ✅ · our own calibration for other raws ⬜ (top priority; neutral fallback today) |
 | Native macOS menu bar (generated from the command registry), control channel + every widget addressable, headless UI snapshots | ✅ |
-| RAW: DNG, CR2, ARW, NEF (uncompressed + lossless/lossy compressed), Fujifilm RAF (uncompressed, Bayer + X-Trans), Panasonic RW2, Pentax PEF, Olympus ORF (uncompressed), Canon CR3 (lossless and first-generation C-RAW); embedded previews for every format incl. CR3 | ✅ · R5 / R6 C-RAW, compressed RAF/ORF decode ⬜ |
+| RAW: DNG, CR2, ARW, NEF (uncompressed + lossless/lossy compressed), Fujifilm RAF (uncompressed, Bayer + X-Trans), Panasonic RW2, Pentax PEF, Olympus ORF (uncompressed), Canon CR3 (lossless and C-RAW; R5 / R6 C-RAW approximately); embedded previews for every format incl. CR3 | ✅ · exact R5 / R6 C-RAW, compressed RAF/ORF decode ⬜ |
 | Detail: sharpening, luminance + colour noise reduction | ✅ · AI Denoise, Super Resolution ⬜ |
 | Remove (content-aware fill) / Heal / Clone spots (auto source, editable pins), Visualize Spots, Red Eye and Pet Eye (auto pupil detection, catchlight) | ✅ |
 | Export: JPEG / PNG / TIFF / WebP / AVIF / DNG / original, sizing, file-size limit, output sharpening, naming templates, batch, metadata policy, text or image watermark | ✅ · HDR export ⬜ |
