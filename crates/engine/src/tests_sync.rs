@@ -1496,12 +1496,10 @@ fn a_library_with_photos_merges_into_the_servers_when_asked() {
     c.execute("photo.rate", &json!({"rating": 5})).unwrap();
     c.execute("album.create", &json!({"name": "Mine", "addSelected": true})).unwrap();
 
-    // not asked: refused, and the message says what a merge would do
+    // not asked: the sign-in waits for a choice, and nothing changed on either side
     sign_in(&mut c);
     let st = sync(&mut c, &mut f);
-    assert_eq!(st["signedIn"], false, "{st}");
-    let why = st["error"].as_str().unwrap();
-    assert!(why.contains("Merge") && why.contains("new library") && why.contains("1 of them are the same, 1 would be added"), "{why}");
+    assert_eq!(st["state"], "conflict", "{st}");
     assert_eq!((c.catalog.len(), f.core.catalog().len()), (2, 2), "nothing changed on either side");
 
     // asked: combined
