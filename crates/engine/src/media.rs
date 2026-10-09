@@ -193,6 +193,13 @@ pub struct MediaCache {
     /// so far (1 mini, 2 smart; kept by [`crate::sync`]). Part of render keys, so a view rendered
     /// from the mini preview renders again once the smart one arrives.
     pub synced_tiers: std::collections::HashMap<String, u8>,
+    /// Grid and filmstrip thumbnails asked for that wait on their mini preview from the sync
+    /// server, by photo: when (`thumb_tick`) and in which order they were last asked for.
+    /// [`crate::sync`] downloads the most recent first, so the cells on screen fill before the rest.
+    pub thumb_asks: std::collections::HashMap<PhotoId, (u64, u64)>,
+    /// Bumped once per sync step (a frame, in the app).
+    pub thumb_tick: u64,
+    thumb_seq: u64,
 }
 
 impl Default for MediaCache {
@@ -213,6 +220,9 @@ impl Default for MediaCache {
             scenes: Vec::new(),
             rendered: Arc::new(PreviewCache::memory(rendered_budget(budget))),
             synced_tiers: Default::default(),
+            thumb_asks: Default::default(),
+            thumb_tick: 0,
+            thumb_seq: 0,
         }
     }
 }
@@ -647,7 +657,22 @@ impl crate::Session {
     /// (≥ `long_edge`) and the result comes from / goes to the thumbnail cache (memory + disk).
     pub fn thumb_job(&mut self, id: PhotoId, long_edge: usize) -> Option<RenderJob> {
         let b = THUMB_SIZES.iter().copied().find(|s| *s >= long_edge).unwrap_or(THUMB_SIZES[THUMB_SIZES.len() - 1]);
+        self.note_thumb_ask(id);
         self.build_job(id, b, b, false, true, Some(b))
+    }
+
+    /// A synced photo without any preview here was asked for (see [`MediaCache::thumb_asks`]).
+    fn note_thumb_ask(&mut self, id: PhotoId) {
+        let m = &mut self.media;
+        if m.synced_tiers.is_empty() {
+            return;
+        }
+        let Some(p) = self.catalog.photo(id) else { return };
+        if m.synced_tiers.get(&content_key(p)) != Some(&0) {
+            return;
+        }
+        m.thumb_seq = m.thumb_seq.wrapping_add(1);
+        m.thumb_asks.insert(id, (m.thumb_tick, m.thumb_seq));
     }
 
     fn build_job(

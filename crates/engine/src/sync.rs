@@ -848,6 +848,7 @@ impl Session {
             return Vec::new();
         }
         let Some(mut st) = self.sync.take() else { return Vec::new() };
+        self.media.thumb_tick = self.media.thumb_tick.wrapping_add(1);
         if self.interaction.is_none() {
             if let Some(snap) = st.held_snapshot.take() {
                 self.snapshot_done(&mut st, snap);
@@ -1019,8 +1020,10 @@ impl Session {
     }
 
     /// Photo file transfers this device needs: uploads of the originals it has that the server
-    /// doesn't, then downloads — the smart previews of the active photo and of what's available
-    /// offline, mini previews of every photo whose file isn't here, and wanted originals.
+    /// doesn't, then downloads — the active photo's smart preview, the mini previews of the cells
+    /// on screen (most recently asked first, [`crate::media::MediaCache::thumb_asks`]), the smart
+    /// previews of what's available offline, the mini previews of every other photo whose file
+    /// isn't here, and wanted originals.
     fn plan_blobs(&mut self, st: &SyncState, now: Instant) -> Vec<Job> {
         let empty = HashSet::new();
         let have = st.have.as_ref().unwrap_or(&empty);
@@ -1032,6 +1035,7 @@ impl Session {
         let active = self.active();
         let originals_dir = self.originals_dir();
         let (mut ups, mut smart, mut minis, mut originals) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        let (mut active_smart, mut asked) = (None, Vec::new());
         let mut tiers = HashMap::new();
         let store = self.sync_store.as_ref().filter(|_| self.media.smart_dir.is_none());
         let in_store = |key: &str| store.is_some_and(|s| s.originals.contains(key));
@@ -1062,10 +1066,14 @@ impl Session {
             let pinned = offline.contains(&p.id);
             if (pinned || active == Some(p.id)) && !has_smart {
                 let job = Job::Get { key: key.clone(), blob: Blob::Smart, dest: dest(&smart_name) };
-                if active == Some(p.id) { smart.insert(0, job) } else { smart.push(job) }
+                if active == Some(p.id) { active_smart = Some(job) } else { smart.push(job) }
             }
             if !has_mini && !has_smart {
-                minis.push(Job::Get { key: key.clone(), blob: Blob::Mini, dest: dest(&mini_name) });
+                let job = Job::Get { key: key.clone(), blob: Blob::Mini, dest: dest(&mini_name) };
+                match self.media.thumb_asks.get(&p.id) {
+                    Some(&(tick, seq)) => asked.push(((std::cmp::Reverse(tick), seq), p.id, job)),
+                    None => minis.push(job),
+                }
             }
             if st.config.store_originals || st.want_originals.contains(&key) {
                 let dest = match (&originals_dir, store) {
@@ -1079,7 +1087,12 @@ impl Session {
             }
         }
         self.media.synced_tiers = tiers;
-        ups.into_iter().chain(smart).chain(minis).chain(originals).collect()
+        // the cells on screen, in the order they were drawn, before the cells drawn earlier
+        asked.sort_by_key(|(order, _, _)| *order);
+        let waiting: HashSet<PhotoId> = asked.iter().map(|(_, id, _)| *id).collect();
+        self.media.thumb_asks.retain(|id, _| waiting.contains(id));
+        let asked = asked.into_iter().map(|(_, _, job)| job);
+        ups.into_iter().chain(active_smart).chain(asked).chain(smart).chain(minis).chain(originals).collect()
     }
 
     /// A finished task.

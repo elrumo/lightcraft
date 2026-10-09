@@ -10,7 +10,7 @@ use lightcraft_catalog::{MemStore, Op, PhotoId, Source};
 use serde_json::{Value, json};
 
 use crate::Session;
-use crate::sync::{Body, Done, Task, is_remote, server_address};
+use crate::sync::{Body, Done, Task, blob_key, is_remote, server_address};
 
 fn temp_dir(tag: &str) -> PathBuf {
     let d = std::env::temp_dir().join(format!("lc-sync-{tag}-{}", std::process::id()));
@@ -495,6 +495,55 @@ fn removals_win_over_pending_edits() {
     assert!(b.catalog.photo(ids[1]).is_none());
     assert!(b.sync_state().unwrap().outbox.is_empty());
     assert!(!b.undo.iter().any(|e| matches!(e.op, Op::SetRating { .. })), "undo can't bring back a removed photo's edit");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// The mini preview of a thumbnail the grid asks for comes down before those of the photos not
+/// on screen, whatever their place in the library.
+#[test]
+fn thumbnails_on_screen_download_first() {
+    let mut f = Fake::new();
+    let root = temp_dir("onscreen");
+    for i in 0..8u8 {
+        write_png(&root.join(format!("in/{i}.png")), i * 20);
+    }
+    let mut a = open(&root.join("a"));
+    a.execute("library.import", &json!({"paths": [root.join("in").to_string_lossy()]})).unwrap();
+    sign_in(&mut a);
+    assert_eq!(sync(&mut a, &mut f)["state"], "idle");
+    let mut b = open(&root.join("b"));
+    sign_in(&mut b);
+    let mini = |t: &Task| match t {
+        Task::Http { url, .. } => url.split_once("/api/blobs/mini/").map(|(_, key)| key.to_string()),
+        Task::Proxies { .. } => None,
+    };
+    // everything but the mini previews goes through; those stay out (in flight)
+    let mut held = Vec::new();
+    for _ in 0..100 {
+        let tasks = b.sync_tasks();
+        if tasks.is_empty() {
+            break;
+        }
+        for t in tasks {
+            if let Some(key) = mini(&t) {
+                held.push((key, t));
+            } else {
+                let d = f.handle(&t);
+                b.sync_done(d);
+            }
+        }
+    }
+    assert_eq!(held.len(), 4, "as many as go at once");
+    let key_of = |s: &Session, id: PhotoId| blob_key(s.catalog.photo(id).unwrap()).unwrap();
+    // the last photo of the library: four others would come before it
+    let last = b.catalog.photos().map(|p| p.id).filter(|id| held.iter().all(|(k, _)| *k != key_of(&b, *id))).last().unwrap();
+    // the grid draws its cell
+    assert!(b.thumb_job(last, 128).is_some());
+    let (_, t) = held.remove(0);
+    let d = f.handle(&t);
+    b.sync_done(d);
+    let next: Vec<String> = b.sync_tasks().iter().filter_map(mini).collect();
+    assert_eq!(next, vec![key_of(&b, last)]);
     let _ = std::fs::remove_dir_all(&root);
 }
 
