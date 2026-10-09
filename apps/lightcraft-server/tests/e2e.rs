@@ -186,6 +186,46 @@ fn storage_is_reported_per_user_and_matches_the_disk() {
 }
 
 #[test]
+fn the_servers_work_is_reported_to_signed_in_devices_and_is_idle_when_there_is_none() {
+    let root = temp("activity");
+    let server = start(&root);
+    let url = format!("http://{}", server.addr());
+    assert_eq!(call("GET", &format!("{url}/api/activity"), "", None, &[]).0, 401, "only for signed-in devices");
+    write_png(&root.join("in/a.png"), 1);
+    write_png(&root.join("in/b.png"), 2);
+    let mut a = open(&root.join("a"));
+    a.execute("library.import", &json!({"paths": [root.join("in").to_string_lossy()]})).unwrap();
+    sign_in(&mut a, &url);
+    // the server builds the previews of what this device uploads (as a phone asks it to)
+    a.execute("sync.serverPreviews", &json!({"on": true})).unwrap();
+    a.execute("sync.now", &json!({"wait": true})).unwrap();
+    let token = a.sync_state().map(|st| st.config.token.clone()).unwrap();
+    // the previews are built by the server's own threads: it is idle once they are
+    let mut seen = json!(null);
+    for _ in 0..400 {
+        let (s, body, _) = call("GET", &format!("{url}/api/activity"), &token, None, &[]);
+        assert_eq!(s, 200);
+        seen = json_of(&body);
+        if seen["previews"]["total"] == 0 && root.join("data/users/ann/blobs/mini").exists() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    assert_eq!(seen["previews"]["total"], 0, "idle: {seen}");
+    // no library folders and no search models here: only what is true is said
+    for field in ["scan", "search", "text", "faces"] {
+        assert_eq!(seen[field], Value::Null, "{field}: {seen}");
+    }
+    // the same through the command a device (or an agent) uses
+    let r = a.execute("sync.activity", &json!({"refresh": true})).unwrap();
+    assert_eq!(r["server"]["previews"]["total"], 0, "{r}");
+    assert_eq!(r["serverError"], Value::Null, "{r}");
+    assert_eq!(r["transfers"]["uploads"], 0, "{r}");
+    drop(server);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn two_libraries_sync_through_the_server() {
     let root = temp("sync");
     let server = start(&root);

@@ -18,6 +18,7 @@ in, and only to the server you name.
   HTTP + JSON and the device side is sans-IO Rust (`crates/engine/src/sync.rs`, `crates/catalog/src/sync.rs`).
 - **It is one person's devices.** Other people see an album through a read-only [link](#share-an-album) (no account);
   there are no shared libraries or albums several people edit.
+  A second library can **join** the server's ([when both have photos](#when-this-library-and-the-servers-both-have-photos)).
 
 ## Run a server
 
@@ -262,11 +263,12 @@ that site's browser storage, so each site is a separate device. The admin page i
 - **The first library** signed in to an empty server **uploads itself**: every photo's original, a smart preview
   (≤ 2560 px, ~1 MB) and a mini preview (≤ 512 px) built on this device, then the whole catalog. A library holding
   only the demo photos uploads nothing: the empty server library replaces them.
-- **Other devices sign in from a new, empty library** (Settings ▸ General ▸ Open Library… → a new folder): they get
-  the server's library. A new library holding only the demo photos counts as empty (the server's library replaces them).
-- **A library that already has photos can be merged into the server's** (Settings ▸ Sync ▸ *Combine with the photos
-  already on the server*, or `sync.signIn … merge=true`). Without it the sign-in is refused and says what a merge
-  would do ("12 of them are the same, 30 would be added"). A merge never removes anything on either side:
+- **Other devices sign in from a new, empty library** (Settings ▸ General ▸ Open Library… → a new folder, or a fresh
+  install: the iOS and web apps start that way) and get the server's library. A new library holding only the demo
+  photos counts as empty (the server's library replaces them).
+- **A library that already has photos signed in to a server that has some too** is two libraries that never met: their ids mean different photos, so nothing
+  syncs until you choose ([below](#when-this-library-and-the-servers-both-have-photos)), or tick *Combine with the photos already on the server* in Settings ▸ Sync (or
+  `sync.signIn … merge=true`) to merge at once. A merge never removes anything on either side:
   - photos are matched by what they are (the content hash of the file), not by number — each library numbered its own;
   - a photo on both sides stays the server's and gets what this library added to it (rating, flag, label, edits,
     metadata, versions); where both changed the same value, the server's stays;
@@ -279,8 +281,49 @@ that site's browser storage, so each site is a separate device. The admin page i
 - **File ▸ Pause Syncing** stops talking to the server until resumed; **File ▸ Sync Now** pulls at once (it also pulls
   every 5 seconds and whenever the window comes back to the front).
 
-The cloud icon shows the state: its tooltip says synced / syncing (with what's queued) / paused / signed out / the last
-error, and it turns amber while the server can't be reached (changes wait on the device, nothing is lost).
+### When this library and the server's both have photos
+
+Signing in asks (on a phone a page, on a computer a window: **Sync This Library**; *Decide Later* puts it off) what to
+do. It shows both libraries' sizes and how many photos both have (the same file). Nothing is pulled, pushed or
+uploaded while it waits — the cloud button is amber with a `!`, and its popover, Settings ▸ Sync and
+`dialog.syncChoice` offer the choice again. Closing the app doesn't lose it: the next launch asks again. The choices
+(`sync.resolveConflict {choice}`; the answer says what happened):
+
+| Choice | What it does |
+|---|---|
+| **Add this library to the server's** (`upload`) | This library's photos, edits, ratings, keywords, versions, albums, folders, stacks and colour-label names are **added** to the server's library under new ids of this device, and the server's photos come here. Photos both libraries have (same content hash) are kept **once**, as the server has them: where this library knew something the server's copy lacks (a rating, a flag, a colour label, edits, a title, keywords, versions) it is filled in, where both have a value the server's stays. Albums and folders with the same name in the same place are one album (this library's photos are added to it); smart albums keep their rules, pointing at the joined library's albums. Stacks carry over when all their photos did and none is stacked on the server. The originals then upload in the background, as after any import. |
+| **Use the server's library instead** (`useServer`) | This library becomes the server's. This library's photos leave the library (their files on this computer are never touched, deleted or moved — copies that import made inside the library's `Originals/` folder stay there too, where the safety copy below points at them) and its edits are gone from the library — see the copy below. |
+| **Don't sync** (`cancel`) | Signs out; this library stays as it is. To keep two libraries apart on a computer, open a new, empty library (Settings ▸ General ▸ Open Library…) and sign in from there. |
+
+Before either of the first two changes anything, **a copy of this library's catalog is kept in its folder**
+(`catalog-before-sync-<time>.snap`, never overwriting an earlier one). It is a `catalog.snap`: put it in an empty folder
+under that name and open the folder as a library to get this library back, photos, edits and albums as they were.
+If the copy can't be written (full disk) nothing changes and the choice stays open.
+
+Joining adds photos, it never removes any: nothing of either library is deleted by it, and the server's wins only
+where both have a value for the same photo. It is one-way (a library joined to the server's can't be separated from it
+again); other devices see the new photos like any others.
+
+## The sync status popover
+
+The **cloud button** — in the top bar on a computer, next to Select and "…" on the phone's grid — shows how syncing
+stands (blue and turning while it works, amber with a red `!` on a problem, a choice waiting, signed out or saving
+trouble) and opens, as Lightroom's cloud does, a panel (`view.syncStatus`, File ▸ Sync Status):
+
+- **Where it stands:** up to date, syncing (with what's queued), paused, signed out, the last error (kept in full, wrapped), or the
+  choice above. A library that never synced says how to start (**Set Up Sync…**).
+- **On this device:** changes waiting to go, **photos being uploaded** and **files being downloaded** with a bar and
+  "12 of 56" (counted since the queue was last empty), and the names of the ones moving now.
+- **On the server:** what the server is doing for this library — scanning its library folders (listing, reading new
+  photos: how many of how many, time left), building previews (of library-folder photos and of originals devices
+  uploaded), indexing photos for search, reading the text in them, finding people — or that it is idle (and when the
+  folders were last scanned). Asked of `GET /api/activity` every 2 seconds, only while the panel is open.
+- **Storage:** what the library takes on the server and how much room its disk has left.
+- **Pause / Resume syncing**, **Sync Now** and the gear (Settings ▸ Sync).
+
+The same numbers are the `sync.activity` command (`lightcraft-cli run --library DIR sync.activity refresh=true`, MCP,
+control channel) and part of `sync.status`; `ui.inspect` and `ui.widgets` list the popover's buttons (`icon:cloud`,
+`actions:syncStatus`, `button:syncPause`, `button:syncNow`, `button:syncSettings`).
 
 ## Photos on a device
 
@@ -412,6 +455,7 @@ JSON over HTTP; every route but `login` wants `Authorization: Bearer <token>`. T
 | `GET /api/me` | `{user, device, library, devices}` |
 | `GET /api/snapshot` | `{library, seq, catalog}`: the library after change `seq` |
 | `GET /api/usage` | what this user takes on the server ([`proto::Usage`](../crates/catalog/src/sync.rs)): `{photos, albums, devices, original, smart, mini, folders: {files, bytes}, disk: {total, free}}`; a few seconds old at most. A server older than the route answers `404` |
+| `GET /api/activity` | what the server is doing for this user now ([`proto::Activity`](../crates/catalog/src/sync.rs)): `{scan: {scanning, phase, done, todo, files, etaSecs, lastScan, problems} \| null, previews: {done, total, etaSecs}, search, text, faces: {done, total, etaSecs} \| null}`; `scan` is null for a user without library folders, the others null when not installed / not turned on. A server older than the route answers `404` |
 | `GET /api/ops?since=N&limit=M` | `{head, ops: [[seq, op]…], presets}` (presets = the presets document's version) · `410`: reload the snapshot |
 | `POST /api/ops` | `{base, ops}` → `200 {head}` · `409 {head}` (behind: pull first) · `422 {index, error}` (op `index` doesn't apply; nothing was) |
 | `HEAD`/`GET`/`PUT /api/blobs/{original\|smart\|mini}/{hash}` | photo files by 128-bit content hash; `GET` takes `Range`; an original is only kept if its bytes hash to its name, previews must be LightCraft previews and arrive whole. **Resuming an upload:** an original that breaks off is kept (`tmp/original-<hash>.part`); `HEAD` of a file the server doesn't have yet answers `404` with `Upload-Offset: N` (the bytes kept, `0` if none), and `PUT` with `Content-Range: bytes N-<last>/<total>` carries on from there (`409` with `{"offset": N}` if the server has another number of bytes or another request is writing the file; a plain `PUT` starts over). Downloads of originals resume with `Range` |
@@ -472,3 +516,4 @@ v1, honestly:
 - **Plain HTTP, sized for a household**: TLS is the proxy's or the tailnet's job ([above](#tls-a-reverse-proxy-or-a-private-network));
   the server itself is hardened against stalled clients ([Security](#security)), but it serves a thread per
   connection: right for a home server or a small group, not the open internet at scale.
+- **Joining two existing libraries adds only**: [this library's photos are added to the server's](#when-this-library-and-the-servers-both-have-photos) (or replaced by it); photos without a content hash (very old libraries) can't be recognised as the same and are added again.

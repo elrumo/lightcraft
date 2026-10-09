@@ -165,8 +165,9 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 }
                 if resp.clicked() && !cmd.is_empty() {
                     let _ = app.run(cmd, json!({}));
-                } else if resp.clicked() && id == "cloud" && unsaved.is_none() {
-                    let _ = app.run("app.settings", json!({"tab": "sync"}));
+                } else if resp.clicked() && id == "cloud" {
+                    // what syncing is doing, here and on the server (its gear opens Settings ▸ Sync)
+                    crate::panels::sync_status::open(ui.ctx(), r);
                 }
                 x -= 40.0;
             }

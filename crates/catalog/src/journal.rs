@@ -313,9 +313,20 @@ fn index_log(log: &[u8]) -> (Vec<(u64, u64)>, Option<u64>) {
 /// `{"format":"lightcraft-catalog","version":1,"seq":N,"catalog":<serde_json of the catalog>}\n`,
 /// as before streaming. Fills in the serialise / write+sync times and the size.
 fn write_snapshot(store: &mut dyn Store, seq: u64, catalog: &Catalog) -> std::io::Result<SnapshotTiming> {
+    write_snapshot_as(store, SNAPSHOT, seq, catalog)
+}
+
+/// A copy of `catalog` in the format of `catalog.snap`, kept under `name` (the sync's safety copy of
+/// a library it replaces): put in an empty folder as `catalog.snap`, it opens as a library again.
+/// Returns its size in bytes.
+pub fn write_backup(store: &mut dyn Store, name: &str, catalog: &Catalog) -> std::io::Result<u64> {
+    write_snapshot_as(store, name, 0, catalog).map(|t| t.bytes)
+}
+
+fn write_snapshot_as(store: &mut dyn Store, name: &str, seq: u64, catalog: &Catalog) -> std::io::Result<SnapshotTiming> {
     let t0 = web_time::Instant::now();
     let mut serialize_ms = 0.0;
-    let bytes = store.write_atomic_with(SNAPSHOT, &mut |w| {
+    let bytes = store.write_atomic_with(name, &mut |w| {
         use std::io::Write;
         let t = web_time::Instant::now();
         // serde_json emits many tiny writes: buffer them in a concrete writer (inlined), so only

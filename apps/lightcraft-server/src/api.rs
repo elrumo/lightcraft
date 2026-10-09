@@ -226,6 +226,7 @@ fn api(st: &State, req: &mut Request, method: &Method, path: &str, q: &str) -> R
         (Method::Get, ["me"]) => me(st, &who),
         (Method::Get, ["snapshot"]) => snapshot(st, &l, &who),
         (Method::Get, ["usage"]) => usage(st, &l, &who),
+        (Method::Get, ["activity"]) => activity(st, &l, &who),
         (Method::Get, ["ops"]) => ops(&l, q),
         (Method::Post, ["ops"]) => push(st, req, &l, &who),
         (Method::Get, ["presets"]) => {
@@ -346,6 +347,27 @@ fn usage(st: &State, l: &Mutex<UserLib>, who: &Session) -> Resp {
     u.devices = st.accounts.lock().unwrap_or_else(PoisonError::into_inner).devices_of(&who.user).len() as u64;
     l.lock().unwrap_or_else(PoisonError::into_inner).usage = Some((Instant::now(), u.clone()));
     json(200, &json!(u))
+}
+
+/// What the server is doing for this user right now: scanning their library folders, building previews
+/// (of what was found there and of originals devices uploaded) and indexing their photos for search.
+/// Cheap: it reads the progress the workers keep, so devices can ask every few seconds.
+fn activity(st: &State, l: &Mutex<UserLib>, who: &Session) -> Resp {
+    let s = st.folders.status(&who.user);
+    let has_folders = accounts::read_users(&st.data).is_ok_and(|f| f.users.get(&who.user).is_some_and(|u| !u.folders.is_empty()));
+    let scan = has_folders.then(|| proto::Scan {
+        scanning: s.scanning,
+        phase: s.phase.to_string(),
+        done: s.done as u64,
+        todo: s.todo as u64,
+        files: s.files as u64,
+        eta_secs: s.eta_secs,
+        last_scan: s.last_scan,
+        problems: (s.failed + s.errors.len() + s.preview_errors.len()) as u64,
+    });
+    let previews = proto::Progress { done: s.previews_done as u64, total: s.previews_total as u64, eta_secs: s.previews_eta_secs };
+    let (search, text, faces) = crate::vision::progress(st, l, &who.user);
+    json(200, &json!(proto::Activity { scan, previews, search, text, faces }))
 }
 
 /// The files of one kind under `blobs/<kind>/<xx>/<hash>`.

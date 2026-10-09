@@ -80,6 +80,8 @@ fn cancel_label(app: &LightcraftApp, dlg: &Dialog, informational: bool) -> &'sta
         Dialog::SamModel { .. } if running || installed || nowhere => "Close",
         Dialog::SamModel { .. } => "Not Now",
         Dialog::SuperRes { .. } => crate::superres::cancel_label(app),
+        // (the choices are in the body: this one puts it off)
+        Dialog::SyncChoice => "Decide Later",
         _ if informational => "Done",
         _ => "Cancel",
     }
@@ -105,6 +107,7 @@ fn ok_label(app: &LightcraftApp, dlg: &Dialog, informational: bool) -> String {
         Dialog::SamModel { error, .. } if error.is_some() || failed => "Try Again",
         Dialog::SamModel { .. } => "Download",
         Dialog::SuperRes { error } => crate::superres::ok_label(app, error.as_ref()),
+        Dialog::SyncChoice => return String::new(),
         Dialog::NewAlbum { .. } | Dialog::NewSmartAlbum { .. } | Dialog::SmartRules { id: None, .. } | Dialog::CreatePreset { .. } if compact => {
             "Create"
         }
@@ -170,6 +173,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
         Dialog::ConfirmDelete { .. } => "Delete Photos",
         Dialog::SamModel { .. } => "Download the SAM 3 Model?",
         Dialog::SuperRes { .. } => "Super Resolution",
+        Dialog::SyncChoice => "Sync This Library",
         Dialog::About => "About LightCraft",
         Dialog::Shortcuts => "Keyboard Shortcuts",
     }
@@ -191,6 +195,8 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
         Dialog::AllMetadata { .. } => 620.0,
         _ => 380.0,
     };
+    // (a choice made in the body of the sync dialog closes it)
+    let mut choice_made = false;
     let mut body = |ui: &mut egui::Ui| {
         ui.spacing_mut().item_spacing.y = 8.0;
         match &mut dlg {
@@ -916,6 +922,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
             Dialog::Settings { tab } => crate::panels::settings::body(app, ui, tab),
             Dialog::SamModel { error, .. } => sam_model_body(app, ui, error.as_deref()),
             Dialog::SuperRes { error } => crate::superres::body(app, ui, error.as_deref()),
+            Dialog::SyncChoice => choice_made |= super::sync_choice::body(app, ui),
             Dialog::ConfirmDelete { count } => {
                 let what = if *count == 1 {
                     crate::i18n::tr("this photo").to_string()
@@ -1063,6 +1070,9 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
             crate::widgets::register(ctx, "dialog:window", w.response.rect);
         }
     }
+    if choice_made {
+        cancel_tapped = true;
+    }
     if cancel_tapped || (ok_tapped && informational) {
         close = true;
     } else if ok_tapped {
@@ -1183,6 +1193,8 @@ fn sam_model_body(app: &mut LightcraftApp, ui: &mut egui::Ui, error: Option<&str
 pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_json::Value, String> {
     match dlg {
         Dialog::SuperRes { .. } => crate::superres::confirm(app),
+        // (its buttons act in the body)
+        Dialog::SyncChoice => Ok(serde_json::Value::Null),
         Dialog::SamModel { then, .. } => {
             if app.session.segmenter.installed() {
                 // installed: start what the user was doing

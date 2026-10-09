@@ -18,6 +18,8 @@ const LEAVE_S: f32 = 0.2;
 pub const ROW_H: f32 = 52.0;
 /// Action sheets are no wider than this (iPad).
 const ACTIONS_MAX_W: f32 = 480.0;
+/// A pull-down menu's width.
+const PULL_DOWN_W: f32 = 290.0;
 
 /// The slide progress of the sheet `id`, eased: 0 = off screen, 1 = in place. It follows `open`, so
 /// a sheet slides out the way it slid in (the same curve backwards: it starts slowly and picks up).
@@ -188,6 +190,12 @@ pub fn actions_open(ctx: &egui::Context, id: &str) -> bool {
 /// bottom with Cancel under it. A tap outside, on Cancel or on any row closes it: it slides (or
 /// fades) away, drawn as it was, under a layer that takes the touches meanwhile.
 pub fn actions(ctx: &egui::Context, id: &str, title: Option<&str>, add: impl FnOnce(&mut egui::Ui)) {
+    actions_wide(ctx, id, title, PULL_DOWN_W, add);
+}
+
+/// [`actions`] with a pull-down `menu_w` wide (at most the screen's width less its margins): for a
+/// panel of its own rather than a list of rows, like the sync status.
+pub fn actions_wide(ctx: &egui::Context, id: &str, title: Option<&str>, menu_w: f32, add: impl FnOnce(&mut egui::Ui)) {
     let sid = Id::new(("lc-sheet", id));
     let live = opened(ctx, id);
     let p = slide(ctx, sid, live.is_some());
@@ -226,7 +234,7 @@ pub fn actions(ctx: &egui::Context, id: &str, title: Option<&str>, add: impl FnO
         Some(a) => {
             // a pull-down: under its button, flush with the nearer screen edge; above it when
             // there's no room below
-            let w = 290.0_f32.min(content.width() - 16.0);
+            let w = menu_w.min(content.width() - 16.0);
             let x = if a.center().x > content.center().x { a.right() - w } else { a.left() };
             let x = x.clamp(content.left() + 8.0, (content.right() - w - 8.0).max(content.left() + 8.0));
             let below = a.bottom() + 6.0;

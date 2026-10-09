@@ -104,6 +104,9 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("panel.keywords", "Keywords", Some("K"), "Window"),
     ("panel.versions", "Versions", Some("Shift+V"), "Window"),
     ("panel.activity", "History", None, "Window"),
+    // the cloud button's popover: what syncing is doing, here and on the server
+    ("view.syncStatus", "Sync Status", None, "File"),
+    ("dialog.syncChoice", "Choose What to Do with This Library…", None, ""),
     ("panel.close", "Close Panel", None, ""),
     ("section.light", "Light", Some("Cmd+1"), "Window>Edit Sections"),
     ("section.color", "Color", Some("Cmd+2"), "Window>Edit Sections"),
@@ -925,6 +928,17 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
         }
         "app.about" => {
             app.ui.dialog = Some(Dialog::About);
+            Ok(Value::Null)
+        }
+        "view.syncStatus" => {
+            app.ui.sync_popover = true;
+            Ok(Value::Null)
+        }
+        "dialog.syncChoice" => {
+            if app.session.sync_conflict().is_none() {
+                return Some(Err("no sync choice is waiting (it comes after signing in to a server that has a library already)".into()));
+            }
+            app.ui.dialog = Some(Dialog::SyncChoice);
             Ok(Value::Null)
         }
         "photo.editInExternal" => {

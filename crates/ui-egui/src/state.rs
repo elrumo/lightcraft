@@ -297,6 +297,10 @@ pub struct UiState {
     /// Compact layout: the searchable list of every command is open (the phone has no menu bar).
     #[serde(skip)]
     pub all_commands: bool,
+    /// Open the sync status popover this frame (`view.syncStatus`): under the top right corner,
+    /// where a click on the cloud button would have put it.
+    #[serde(skip)]
+    pub sync_popover: bool,
     pub view: ViewMode,
     pub left_panel: bool,
     pub right: RightPanel,
@@ -667,6 +671,9 @@ pub enum Dialog {
     ConfirmDelete {
         count: usize,
     },
+    /// Signed in to a sync server that has a library already, and this library has photos too: add
+    /// this library to the server's, use the server's instead, or don't sync (`sync.resolveConflict`).
+    SyncChoice,
     About,
     Shortcuts,
 }
@@ -685,6 +692,7 @@ impl Default for UiState {
             crop_geometry: false,
             crop_undo_base: None,
             all_commands: false,
+            sync_popover: false,
             luminance_map_restore: None,
             view: ViewMode::Detail,
             map_view: None,

@@ -46,6 +46,11 @@ struct Fake {
     partials: HashMap<(String, String), Vec<u8>>,
     /// Answer a `HEAD` with this offset whatever is kept (an answer that has gone out of date).
     stale_offset: Option<u64>,
+    /// What the server says it is doing (`GET /api/activity`), and a server from before the route.
+    activity: proto::Activity,
+    no_activity: bool,
+    /// Photo files can't be stored (the disk is full): why.
+    put_fails: Option<String>,
     requests: Vec<String>,
 }
 
@@ -63,6 +68,9 @@ impl Fake {
             no_docs: false,
             partials: HashMap::new(),
             stale_offset: None,
+            activity: proto::Activity::default(),
+            no_activity: false,
+            put_fails: None,
             requests: vec![],
         }
     }
@@ -159,6 +167,7 @@ impl Fake {
                 self.docs.insert(name, proto::Doc { version, items: sent.items });
                 ok(json!({"version": version}))
             }
+            ("GET", "/api/activity") if !self.no_activity => ok(serde_json::to_value(&self.activity).unwrap()),
             ("GET", "/api/presets") => ok(serde_json::to_value(&self.presets).unwrap()),
             ("PUT", "/api/presets") => {
                 let p: proto::Presets = serde_json::from_str(&json_body()).unwrap();
@@ -178,6 +187,7 @@ impl Fake {
                         Some(p) => Done { id, status: 404, body: self.stale_offset.unwrap_or(p.len() as u64).to_string() },
                         None => Done { id, status: 404, body: String::new() },
                     },
+                    "PUT" if self.put_fails.is_some() => status(500, json!({"error": self.put_fails.clone()})),
                     "PUT" => match body {
                         Body::File(f) => {
                             self.partials.remove(&k);
@@ -399,24 +409,176 @@ fn changes_made_offline_survive_a_restart() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
-#[test]
-fn a_library_with_photos_cannot_join_another() {
-    let mut f = Fake::new();
-    let (_a, root, _) = first_device("join", &mut f);
+/// Another computer's library: `c.png` is its own, `a-again.png` is the file the first device has as `a.png`.
+fn second_library(root: &Path) -> Session {
     write_png(&root.join("in2/c.png"), 3);
+    write_png(&root.join("in2/a-again.png"), 1);
     let mut c = open(&root.join("c"));
     c.execute("library.import", &json!({"paths": [root.join("in2").to_string_lossy()]})).unwrap();
+    assert_eq!(c.catalog.len(), 2);
+    c
+}
+
+fn photo_named(s: &Session, name: &str) -> PhotoId {
+    s.catalog.photos().find(|p| p.file_name == name).unwrap_or_else(|| panic!("no photo {name}")).id
+}
+
+#[test]
+fn a_library_with_photos_signing_in_to_a_server_that_has_one_waits_for_a_choice() {
+    let mut f = Fake::new();
+    let (_a, root, _) = first_device("conflict", &mut f);
+    let mut c = second_library(&root);
     sign_in(&mut c);
+    let before = f.requests.len();
     let st = sync(&mut c, &mut f);
-    assert_eq!(st["signedIn"], false, "{st}");
-    assert!(st["error"].as_str().unwrap().contains("new library"), "{st}");
-    assert_eq!(c.catalog.len(), 1, "nothing changed here");
+    assert_eq!(st["state"], "conflict", "{st}");
+    assert_eq!(st["signedIn"], true, "signed in, not turned away: {st}");
+    assert_eq!(st["error"], Value::Null, "{st}");
+    let info = &st["conflict"];
+    assert_eq!((&info["here"]["photos"], &info["there"]["photos"], &info["shared"]), (&json!(2), &json!(2), &json!(1)), "{info}");
+    assert_eq!((info["server"].as_str(), info["user"].as_str()), (Some("fake"), Some("ann")));
+    assert_eq!(c.catalog.len(), 2, "nothing changed here");
     assert_eq!(f.core.catalog().len(), 2, "nor there");
+    // only the sign-in and the server's library were asked for: nothing pulled, pushed or sent, however long it waits
+    assert_eq!(f.requests[before..], ["POST /api/login", "GET /api/snapshot"]);
+    sync(&mut c, &mut f);
+    assert_eq!(f.requests.len(), before + 2);
+    // closing the library doesn't lose the question: the server's library is fetched again and asks again
+    drop(c);
+    let mut c = open(&root.join("c"));
+    let st = sync(&mut c, &mut f);
+    assert_eq!(st["state"], "conflict", "{st}");
+    assert_eq!(c.catalog.len(), 2);
+    assert_eq!(f.requests.last().map(String::as_str), Some("GET /api/snapshot"), "{:?}", f.requests);
     // a wrong password says so
     let mut d = open(&root.join("d"));
     d.execute("sync.signIn", &json!({"server": "http://fake", "user": "ann", "password": "nope"})).unwrap();
     let st = sync(&mut d, &mut f);
     assert!(st["error"].as_str().unwrap().contains("password"), "{st}");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn choosing_to_upload_adds_this_library_to_the_servers_and_keeps_a_copy() {
+    let mut f = Fake::new();
+    let (mut a, root, ids) = first_device("upload", &mut f);
+    let mut c = second_library(&root);
+    // what this library knows: its own photo is edited, and it rated the one the server has too
+    let own = photo_named(&c, "c.png");
+    c.selection = crate::Selection::single(own);
+    c.execute("develop.set", &json!({"control": "light.exposure", "value": 0.5})).unwrap();
+    let again = photo_named(&c, "a-again.png");
+    c.selection = crate::Selection::single(again);
+    c.execute("photo.rate", &json!({"rating": 4})).unwrap();
+    c.execute("album.create", &json!({"name": "Mine", "addSelected": true})).unwrap();
+    sign_in(&mut c);
+    assert_eq!(sync(&mut c, &mut f)["state"], "conflict");
+
+    let r = c.execute("sync.resolveConflict", &json!({"choice": "upload"})).unwrap();
+    assert_eq!(r["resolved"]["choice"], "upload", "{r}");
+    assert_eq!((&r["resolved"]["joined"]["photosAdded"], &r["resolved"]["joined"]["photosShared"]), (&json!(1), &json!(1)), "{r}");
+    let backup = r["resolved"]["backup"].as_str().unwrap();
+    assert!(root.join("c").join(backup).is_file(), "a copy of the library as it was is kept: {backup}");
+    assert_eq!(r["state"], "syncing", "{r}");
+    let st = sync(&mut c, &mut f);
+    assert_eq!(st["state"], "idle", "{st}");
+
+    // the server has the first device's two photos and this one's own: the shared file once
+    assert_eq!(f.core.catalog().len(), 3);
+    assert_eq!(c.catalog.len(), 3);
+    let on_server = |name: &str| f.core.catalog().photos().find(|p| p.file_name == name).map(|p| p.id);
+    let c_id = on_server("c.png").expect("c.png reached the server");
+    assert_eq!(c_id.0 >> 32, u64::from(c.sync_state().unwrap().config.space), "under an id of this device's space");
+    // …with the edit, and the rating the server's copy lacked; the album with the shared photo in it
+    assert_eq!(f.core.catalog().photo(c_id).unwrap().develop.light.exposure, 0.5);
+    assert_eq!(f.core.catalog().photo(ids[0]).unwrap().rating, 4);
+    let mine: Vec<_> = f.core.catalog().albums().filter(|a| a.name == "Mine").collect();
+    assert_eq!((mine.len(), mine[0].photos.clone()), (1, vec![ids[0]]));
+    // the new photo's files went up (original and both previews), the shared one's didn't need to
+    assert!(f.blobs.keys().filter(|(k, _)| k == "original").count() == 3, "{:?}", f.blobs.keys().collect::<Vec<_>>());
+    // this device still shows its own files, and the first device gets the new photo
+    assert!(!is_remote(c.catalog.photo(c_id).unwrap()), "own file");
+    assert!(!is_remote(c.catalog.photo(ids[0]).unwrap()), "the shared photo shows from this device's file");
+    sync(&mut a, &mut f);
+    assert_eq!(a.catalog.len(), 3);
+    assert_eq!(a.catalog.photo(c_id).unwrap().file_name, "c.png");
+    assert!(is_remote(a.catalog.photo(c_id).unwrap()));
+    assert!(c.sync_state().unwrap().outbox.is_empty());
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn choosing_the_servers_library_replaces_this_one_and_keeps_a_copy() {
+    let mut f = Fake::new();
+    let (_a, root, ids) = first_device("useserver", &mut f);
+    let mut c = second_library(&root);
+    let (blobs, head) = (f.blobs.len(), f.core.head());
+    // an earlier copy where this one would go (a host whose clock stands still): never overwritten
+    let earlier = root.join("c/catalog-before-sync-2026-09-30T12-00-00.snap");
+    std::fs::write(&earlier, b"an earlier copy").unwrap();
+    sign_in(&mut c);
+    assert_eq!(sync(&mut c, &mut f)["state"], "conflict");
+    let r = c.execute("sync.resolveConflict", &json!({"choice": "useServer"})).unwrap();
+    assert_eq!(r["resolved"]["joined"], Value::Null, "{r}");
+    let backup = r["resolved"]["backup"].as_str().unwrap().to_string();
+    assert!(backup.ends_with("-2.snap"), "the copy has a name of its own: {backup}");
+    assert_eq!(std::fs::read(&earlier).unwrap(), b"an earlier copy");
+    let st = sync(&mut c, &mut f);
+    assert_eq!(st["state"], "idle", "{st}");
+    // this library is the server's: its two photos, nothing of this library's, nothing uploaded
+    let mut names: Vec<String> = c.catalog.photos().map(|p| p.file_name.clone()).collect();
+    names.sort();
+    assert_eq!(names, ["a.png", "b.png"]);
+    assert!(c.catalog.photos().all(|p| is_remote(p)));
+    assert_eq!((f.blobs.len(), f.core.head()), (blobs, head), "nothing was uploaded");
+    assert!(c.catalog.photo(ids[0]).is_some());
+    // the old library is in the copy, which opens as a library of its own
+    let bytes = std::fs::read(root.join("c").join(&backup)).unwrap();
+    let mut store = MemStore::new();
+    lightcraft_catalog::Store::write_atomic(&mut store, lightcraft_catalog::journal::SNAPSHOT, &bytes).unwrap();
+    let (_, old, _) = lightcraft_catalog::Journal::open(Box::new(store)).unwrap();
+    let mut old_names: Vec<String> = old.photos().map(|p| p.file_name.clone()).collect();
+    old_names.sort();
+    assert_eq!(old_names, ["a-again.png", "c.png"]);
+    // the choice is made: asking again says so
+    assert!(c.execute("sync.resolveConflict", &json!({"choice": "upload"})).is_err());
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn cancelling_the_choice_signs_out_and_leaves_this_library_alone() {
+    let mut f = Fake::new();
+    let (_a, root, _) = first_device("cancel", &mut f);
+    let mut c = second_library(&root);
+    sign_in(&mut c);
+    assert_eq!(sync(&mut c, &mut f)["state"], "conflict");
+    let before = f.requests.len();
+    let r = c.execute("sync.resolveConflict", &json!({"choice": "cancel"})).unwrap();
+    assert_eq!((&r["state"], &r["signedIn"], &r["error"]), (&json!("signedOut"), &json!(false), &Value::Null), "{r}");
+    assert_eq!(c.catalog.len(), 2);
+    assert!(c.sync_state().unwrap().config.token.is_empty(), "the device's token is forgotten");
+    assert_eq!(f.requests.len(), before, "it just stops");
+    // nothing was copied: nothing changed
+    assert!(!std::fs::read_dir(root.join("c")).unwrap().flatten().any(|e| e.file_name().to_string_lossy().starts_with("catalog-before-sync")));
+    // signing in again asks again; an unknown choice is an error
+    sign_in(&mut c);
+    assert_eq!(sync(&mut c, &mut f)["state"], "conflict");
+    assert!(c.execute("sync.resolveConflict", &json!({"choice": "merge-ish"})).is_err());
+    assert!(c.execute("sync.resolveConflict", &json!({})).is_err());
+    assert_eq!(c.sync_conflict().map(|i| i.here.photos), Some(2), "still waiting");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn there_is_nothing_to_resolve_without_a_waiting_choice() {
+    let mut f = Fake::new();
+    let (mut a, root, _) = first_device("noconflict", &mut f);
+    assert!(a.execute("sync.resolveConflict", &json!({"choice": "upload"})).is_err());
+    let c = second_library(&root);
+    // not signed in at all
+    let mut c = c;
+    assert!(c.execute("sync.resolveConflict", &json!({"choice": "cancel"})).is_err());
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -1400,5 +1562,140 @@ fn asking_for_links_while_signing_in_does_not_sign_the_device_out() {
     assert_eq!(f.requests.iter().filter(|r| *r == "GET /api/shares").count(), 1, "{:?}", f.requests);
     let (links, error) = a.sync_shares();
     assert!(links.is_empty() && error.is_none(), "{error:?}");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn what_the_server_is_doing_is_asked_for_only_while_someone_looks() {
+    let mut f = Fake::new();
+    let (mut a, root, _) = first_device("activity-ask", &mut f);
+    let asks = |s: &mut Session| {
+        s.sync_tasks().into_iter().filter(|t| matches!(t, Task::Http { url, .. } if url.ends_with("/api/activity"))).collect::<Vec<_>>()
+    };
+    assert!(asks(&mut a).is_empty(), "nobody is looking");
+    a.sync_want_activity();
+    let t = asks(&mut a);
+    assert_eq!(t.len(), 1);
+    a.sync_want_activity();
+    assert!(asks(&mut a).is_empty(), "one request at a time");
+    a.sync_done(f.handle(&t[0]));
+    assert!(a.sync_state().unwrap().activity().is_some());
+    a.sync_want_activity();
+    assert!(asks(&mut a).is_empty(), "the answer is fresh");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn the_servers_work_is_reported_and_an_older_server_says_so() {
+    let mut f = Fake::new();
+    let (mut a, root, _) = first_device("activity", &mut f);
+    f.activity = proto::Activity {
+        scan: Some(proto::Scan { scanning: true, phase: "reading".into(), done: 120, todo: 4000, files: 4120, ..Default::default() }),
+        previews: proto::Progress { done: 3, total: 40, eta_secs: Some(90) },
+        search: Some(proto::Progress { done: 10, total: 10, eta_secs: None }),
+        ..Default::default()
+    };
+    a.sync_fetch_activity_with(&mut |t| f.handle(t));
+    let r = a.execute("sync.activity", &json!({})).unwrap();
+    assert_eq!(r["server"]["scan"]["phase"], "reading", "{r}");
+    assert_eq!((&r["server"]["scan"]["done"], &r["server"]["scan"]["todo"]), (&json!(120), &json!(4000)), "{r}");
+    assert_eq!(
+        (&r["server"]["previews"]["done"], &r["server"]["previews"]["total"], &r["server"]["previews"]["etaSecs"]),
+        (&json!(3), &json!(40), &json!(90))
+    );
+    assert!(a.sync_state().unwrap().activity().unwrap().busy());
+    // idle: a finished batch isn't work
+    f.activity = proto::Activity { previews: proto::Progress { done: 40, total: 40, eta_secs: None }, ..Default::default() };
+    a.sync_fetch_activity_with(&mut |t| f.handle(t));
+    assert!(!a.sync_state().unwrap().activity().unwrap().busy());
+    // a server from before the route
+    f.no_activity = true;
+    a.sync_fetch_activity_with(&mut |t| f.handle(t));
+    let st = a.sync_state().unwrap();
+    assert!(st.activity().is_none());
+    assert!(st.activity_error().unwrap().contains("too old"), "{:?}", st.activity_error());
+    assert_eq!(sync(&mut a, &mut f)["state"], "idle", "not an error of the sync itself");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn what_is_being_sent_is_listed_with_its_progress() {
+    let mut f = Fake::new();
+    let root = temp_dir("transfers");
+    write_png(&root.join("in/a.png"), 1);
+    write_png(&root.join("in/b.png"), 2);
+    let mut a = open(&root.join("a"));
+    a.execute("library.import", &json!({"paths": [root.join("in").to_string_lossy()]})).unwrap();
+    sign_in(&mut a);
+    // step the sync by hand, looking at what it says at every step
+    let (mut most_queued, mut most_done, mut named) = (0, 0, std::collections::BTreeSet::new());
+    let mut one_of_two = false;
+    for _ in 0..500 {
+        let tasks = a.sync_tasks();
+        let t = a.sync_transfers();
+        most_queued = most_queued.max(t.uploads);
+        for r in &t.running {
+            assert!(r.upload, "{r:?}");
+            named.insert((r.name.clone(), r.what));
+        }
+        if tasks.is_empty() {
+            break;
+        }
+        for task in tasks {
+            let d = f.handle(&task);
+            a.sync_done(d);
+            // (after each file: the first photo is finished while the second is still being sent)
+            let t = a.sync_transfers();
+            most_done = most_done.max(t.uploads_done);
+            one_of_two |= (t.uploads_done, t.uploads) == (1, 1);
+        }
+    }
+    assert_eq!(most_queued, 2, "both photos were queued");
+    assert_eq!(most_done, 2);
+    assert!(one_of_two, "the progress read 1 done, 1 left");
+    assert!(named.contains(&("a.png".to_string(), "original")) && named.contains(&("b.png".to_string(), "original")), "{named:?}");
+    assert!(named.iter().any(|(_, what)| *what == "smart preview"), "{named:?}");
+    // all sent: nothing is left, and the next batch counts from zero
+    let t = a.sync_transfers();
+    assert_eq!((t.pending, t.uploads, t.uploads_done, t.downloads, t.running.len()), (0, 0, 0, 0, 0), "{t:?}");
+    // a second device downloads previews: they are counted the same way
+    let mut b = open(&root.join("b"));
+    sign_in(&mut b);
+    let mut most_down = 0;
+    for _ in 0..500 {
+        let tasks = b.sync_tasks();
+        let t = b.sync_transfers();
+        most_down = most_down.max(t.downloads + t.downloads_done);
+        if tasks.is_empty() {
+            break;
+        }
+        for task in tasks {
+            let d = f.handle(&task);
+            b.sync_done(d);
+        }
+    }
+    assert!(most_down >= 2, "two previews came down: {most_down}");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn failing_transfers_say_why_and_are_forgotten_once_one_works() {
+    let mut f = Fake::new();
+    let root = temp_dir("failing");
+    write_png(&root.join("in/a.png"), 1);
+    let mut a = open(&root.join("a"));
+    a.execute("library.import", &json!({"paths": [root.join("in").to_string_lossy()]})).unwrap();
+    f.put_fails = Some("no space left on the server's disk".into());
+    sign_in(&mut a);
+    sync(&mut a, &mut f);
+    let t = a.sync_transfers();
+    assert_eq!(t.failing, 1, "{t:?}");
+    assert!(t.error.as_deref().is_some_and(|e| e.contains("no space left")), "{t:?}");
+    // room again: the next try works, and the complaint goes
+    f.put_fails = None;
+    sync(&mut a, &mut f);
+    let t = a.sync_transfers();
+    assert_eq!((t.failing, t.error), (0, None));
+    assert_eq!(f.blobs.len(), 3, "the original and both previews are there now");
     let _ = std::fs::remove_dir_all(&root);
 }

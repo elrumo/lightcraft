@@ -14,6 +14,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 pub mod dates;
+pub mod join;
 pub mod journal;
 pub mod keywords;
 pub mod local;
@@ -702,6 +703,8 @@ mod tests;
 mod tests_background;
 #[cfg(test)]
 mod tests_format_version;
+#[cfg(test)]
+mod tests_join;
 #[cfg(test)]
 mod tests_journal;
 #[cfg(test)]
