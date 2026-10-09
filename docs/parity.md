@@ -39,7 +39,7 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | P. Enhance (ENH) | 0 | 0 | 2 | 0 | — | — |
 | Q. HDR (HDR) | 0 | 0 | 5 | 0 | — | — |
 | R. Video (VID) | 0 | 0 | 5 | 1 | — | 0/2 (0%) |
-| S. Export (EXP) | 15 | 1 | 2 | 0 | 7/7 (100%) | 7/7 (100%) |
+| S. Export (EXP) | 15 | 3 | 1 | 0 | 7/7 (100%) | 7/8 (88%) |
 | T. Share (SHARE) | 0 | 0 | 0 | 4 | — | — |
 | U. Map & location (MAP) | 0 | 2 | 0 | 0 | — | 0/1 (0%) |
 | V. Preferences (PREF) | 6 | 1 | 2 | 2 | 1/1 (100%) | 4/4 (100%) |
@@ -48,9 +48,9 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | Y. Menus | 83 | 1 | 4 | 5 | 47/47 (100%) | 23/23 (100%) |
 | Z. Keyboard shortcuts (desktop) | 74 | 3 | 3 | 1 | 49/52 (94%) | 22/23 (96%) |
 | Lightroom Classic extras | 32 | 12 | 37 | 8 | — | 21/22 (95%) |
-| **Total** | 395 | 41 | 81 | 30 | 194/200 (97%) | 140/149 (94%) |
+| **Total** | 395 | 43 | 80 | 30 | 194/200 (97%) | 140/150 (93%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **80.4%** of 517 in-scope rows — P0 98.5% of 200 · P1 96.0% of 149 · P2 44.9% of 168.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **80.4%** of 518 in-scope rows — P0 98.5% of 200 · P1 95.7% of 150 · P2 45.2% of 168.
 <!-- /parity:summary -->
 
 ## Top gaps
