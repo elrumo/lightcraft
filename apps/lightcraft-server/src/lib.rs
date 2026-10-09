@@ -39,6 +39,7 @@ pub mod render;
 pub mod shares;
 pub mod throttle;
 pub mod vision;
+pub mod writeback;
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -123,6 +124,8 @@ pub struct State {
     pub(crate) cors: cors::Cors,
     /// Every user's album links, by token ([`shares`]).
     pub(crate) shares: Mutex<shares::Index>,
+    /// Sidecars to write and uploads to file in writable library folders ([`writeback`]).
+    pub(crate) writer: writeback::Writer,
     /// The unfinished uploads being written right now (one writer per file).
     pub(crate) uploading: Mutex<std::collections::HashSet<PathBuf>>,
 }
@@ -165,6 +168,7 @@ impl Server {
             uploading: Mutex::new(std::collections::HashSet::new()),
             cors: cors::Cors::new(&cfg.cors_origins),
             shares: Mutex::new(links),
+            writer: writeback::Writer::new(),
         });
         let st = state.clone();
         let http = bound.serve(Arc::new(move |req: &mut http::Request| api::handle(&st, req)))?;
@@ -173,6 +177,8 @@ impl Server {
         workers.push(std::thread::Builder::new().name("lc-scan".into()).spawn(move || folders::run_scanner(&s)).map_err(|e| e.to_string())?);
         let s = state.clone();
         workers.push(std::thread::Builder::new().name("lc-vision".into()).spawn(move || vision::run(&s)).map_err(|e| e.to_string())?);
+        let s = state.clone();
+        workers.push(std::thread::Builder::new().name("lc-writeback".into()).spawn(move || writeback::run(&s)).map_err(|e| e.to_string())?);
         for i in 0..cfg.preview_threads.max(1) {
             let s = state.clone();
             let t = std::thread::Builder::new().name(format!("lc-previews-{i}")).spawn(move || folders::run_previews(&s));
@@ -219,6 +225,7 @@ impl Drop for Server {
         drop(self.http.take());
         self.state.folders.shut_down();
         self.state.vision.shut_down();
+        self.state.writer.shut_down();
         for t in self.workers.drain(..) {
             let _ = t.join();
         }

@@ -27,7 +27,9 @@ services:
       LIGHTCRAFT_SCAN_INTERVAL: "15"
     volumes:
       - lightcraft-data:/data
-      # photo folders already on this machine, read in place (must be readable by uid 10001)
+      # photo folders already on this machine, read in place (must be readable by uid 10001). To let the server
+      # write XMP sidecars there, or file uploaded photos into one, change :ro to :rw (writable by uid 10001) and
+      # turn it on in the admin page (Users > the user > Library folders > Writing)
       - ${LIGHTCRAFT_PHOTOS:-./photos}:/photos:ro
     expose:
       - "8080"

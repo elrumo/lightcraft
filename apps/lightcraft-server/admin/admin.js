@@ -154,6 +154,7 @@ function field(f) {
   const id = 'f-' + f.name;
   if (f.type === 'switch') {
     const input = el('input', { type: 'checkbox', id, role: 'switch' });
+    input.checked = !!f.value;
     const wrap = el('label', { class: 'switch', for: id }, input, el('span', {}, el('span', { class: 'label' }, f.label), f.help ? el('span', { class: 'help' }, f.help) : ''));
     return { f, input, wrap };
   }
@@ -561,8 +562,25 @@ function showFolders(name, r) {
         {},
         el('td', {}, el('div', { class: 'who-cell' }, el('span', { class: 'thing' }, icon('folder')), el('b', {}, f.name))),
         el('td', {}, el('code', {}, f.path)),
-        el('td', {}, f.there ? el('span', { class: 'status positive' }, 'Available') : el('span', { class: 'status negative', title: 'The server cannot see this folder: is the disk mounted?' }, 'Not found')),
-        el('td', { class: 'end' }, el('button', { type: 'button', class: 'btn quiet', onclick: () => removeFolder(name, f) }, icon('trash'), 'Remove')),
+        el(
+          'td',
+          {},
+          f.there ? el('span', { class: 'status positive' }, 'Available') : el('span', { class: 'status negative', title: 'The server cannot see this folder: is the disk mounted?' }, 'Not found'),
+          ' ',
+          f.writeError
+            ? el('span', { class: 'status negative', title: f.writeError }, "Can't write")
+            : f.imports
+              ? el('span', { class: 'status active', title: 'Writes XMP sidecars here and files the photos devices upload into it' }, 'Takes uploads')
+              : f.writable
+                ? el('span', { class: 'status active', title: 'Writes XMP sidecars here; never changes the photos' }, 'Writable')
+                : el('span', { class: 'muted' }, 'Read-only'),
+        ),
+        el(
+          'td',
+          { class: 'end' },
+          el('button', { type: 'button', class: 'btn quiet', onclick: () => folderMode(name, f) }, icon('key'), 'Writing'),
+          el('button', { type: 'button', class: 'btn quiet', onclick: () => removeFolder(name, f) }, icon('trash'), 'Remove'),
+        ),
       ),
     );
   }
@@ -604,10 +622,12 @@ function addFolder(name) {
     fields: [
       { name: 'path', label: 'Folder on the server', placeholder: '/photos/' + name, help: 'A path the server can read. With Docker, mount the folder into the container read-only first (-v /srv/photos:/photos:ro) and enter /photos/…' },
       { name: 'name', label: 'Name on devices (optional)', required: false, help: "The folder's own name if left empty." },
+      { name: 'writable', label: 'Let the server write XMP sidecars here', type: 'switch', help: 'Off: the folder is only read (and may be a read-only mount). On: edits made on devices are written beside the photos as .xmp files, for Lightroom and other programs. The photos themselves are never changed.' },
+      { name: 'imports', label: 'File uploaded photos here', type: 'switch', help: 'Photos devices upload are filed in this folder as year/date/name instead of kept in the server\'s own store. One folder per user; needs writing.' },
     ],
     ok: 'Add folder',
     action: async (v) => {
-      await api('POST', 'users/' + enc(name) + '/folders', { path: v.path, name: v.name || null });
+      await api('POST', 'users/' + enc(name) + '/folders', { path: v.path, name: v.name || null, writable: !!v.writable, imports: !!v.imports });
       toast('Added. The server is reading the folder now.');
       await route();
     },
@@ -633,6 +653,23 @@ function editIgnore(name, list) {
     action: async (v) => {
       await api('PUT', 'users/' + enc(name) + '/ignore', { ignore: v.ignore.split('\n') });
       toast('Saved. The server is scanning again.');
+      await route();
+    },
+  });
+}
+
+function folderMode(name, f) {
+  return ask({
+    title: 'What the server may do in ' + f.name,
+    text: 'The server never changes, moves or deletes the photos. With writing on, it adds and updates .xmp sidecar files beside them' + (f.writeError ? ' — but it cannot write there now: ' + f.writeError : '') + '.',
+    fields: [
+      { name: 'writable', label: 'Write XMP sidecars here', type: 'switch', value: !!f.writable, help: 'Mount the folder read-write, with the server user allowed to write, before turning this on.' },
+      { name: 'imports', label: 'File uploaded photos here', type: 'switch', value: !!f.imports, help: 'One folder per user; turns writing on.' },
+    ],
+    ok: 'Save',
+    action: async (v) => {
+      await api('PUT', 'users/' + enc(name) + '/folders/' + enc(f.name), { writable: !!v.writable || !!v.imports, imports: !!v.imports });
+      toast('Saved.');
       await route();
     },
   });

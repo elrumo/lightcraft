@@ -227,7 +227,7 @@ fn api(st: &State, req: &mut Request, method: &Method, path: &str, q: &str) -> R
         (Method::Get, ["snapshot"]) => snapshot(st, &l, &who),
         (Method::Get, ["usage"]) => usage(st, &l, &who),
         (Method::Get, ["ops"]) => ops(&l, q),
-        (Method::Post, ["ops"]) => push(req, &l, &who),
+        (Method::Post, ["ops"]) => push(st, req, &l, &who),
         (Method::Get, ["presets"]) => {
             let l = l.lock().unwrap_or_else(PoisonError::into_inner);
             json(200, &serde_json::to_value(&l.presets).unwrap_or(Value::Null))
@@ -392,7 +392,7 @@ fn ops(l: &Mutex<UserLib>, q: &str) -> Resp {
     }
 }
 
-fn push(req: &mut Request, l: &Mutex<UserLib>, who: &Session) -> Resp {
+fn push(st: &State, req: &mut Request, l: &Mutex<UserLib>, who: &Session) -> Resp {
     let p: proto::Push = match read_json(req) {
         Ok(p) => p,
         Err(r) => return r,
@@ -401,6 +401,8 @@ fn push(req: &mut Request, l: &Mutex<UserLib>, who: &Session) -> Resp {
     match l.core.push(p.base, &p.ops) {
         Ok(head) => {
             log::debug!("{} device {}: {} op(s), head {head}", who.user, who.device, p.ops.len());
+            // (a library folder the server may write in gets the changed photos' sidecars)
+            st.writer.photos_changed(&who.user, &crate::writeback::sidecar_photos(&p.ops));
             json(200, &json!(proto::Head { head }))
         }
         Err(PushError::Behind { head }) => json(409, &json!(proto::Head { head })),
@@ -559,6 +561,10 @@ fn blob(st: &State, req: &mut Request, method: &Method, l: &Mutex<UserLib>, user
             // `?previews=1` on an original: the device asks the server to build its previews
             let previews = kind == "original" && req.url().split_once('?').is_some_and(|(_, q)| query(q, "previews") == Some("1"));
             let resp = put_blob(st, req, &dir, kind, &path);
+            if kind == "original" && resp.status_code().0 == 200 {
+                // (an imports folder takes it)
+                st.writer.file_uploads(user);
+            }
             if previews && resp.status_code().0 == 200 {
                 return json(200, &json!({"previews": st.folders.queue(&dir, user, hash, path).word()}));
             }

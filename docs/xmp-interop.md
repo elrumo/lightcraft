@@ -46,7 +46,11 @@ Save Metadata to File) and LightCraft picks the change up:
   LightCraft last read or wrote it, as **one undo step** ("Read Metadata from File"; `reread` in the result counts
   the photos it changed). The sidecar wins, as above, for every field it states; the develop settings it replaces
   stay in History. Reading a sidecar never writes it back, even with auto-write on.
-- **Library folders on a sync server**: the next scan does the same (see [`sync.md`](sync.md)).
+- **Library folders on a sync server**: the next scan does the same (see [`sync.md`](sync.md)). In a folder an admin
+  made *writable*, the server also writes the sidecars: a few seconds after a device changes a photo it writes (or
+  merges into) the photo's `.xmp`, like auto-write on the desktop, and records the sidecar's time so the scan doesn't
+  read its own file back. A sidecar another program changed since the server last read it is read first, never
+  overwritten.
 
 LightCraft notes each sidecar's modification time when it reads or writes it (`sidecars.json` in the library; the
 server keeps them in its folder index), so a sidecar it wrote itself isn't taken for someone else's edit, and an

@@ -55,6 +55,12 @@ pub struct LibraryFolder {
     pub name: String,
     /// The folder on the server (absolute).
     pub path: String,
+    /// The server may write XMP sidecars here (an admin's choice; off: the folder is only read, and may be a
+    /// read-only mount). It never writes to the photos themselves.
+    pub writable: bool,
+    /// Photos devices upload are filed here, as `<year>/<date>/<name>`, instead of kept in the server's own
+    /// store (at most one per user; implies `writable`).
+    pub imports: bool,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -229,8 +235,49 @@ pub fn add_folder(data: &Path, user: &str, path: &str, name: Option<&str>) -> Re
     if u.folders.iter().any(|x| Path::new(&x.path).starts_with(&dir) || dir.starts_with(&x.path)) {
         return Err(format!("{path} is inside one of {user}'s library folders, or holds one"));
     }
-    let folder = LibraryFolder { name, path };
+    let folder = LibraryFolder { name, path, writable: false, imports: false };
     u.folders.push(folder.clone());
+    write_json(&data.join(USERS), &f)?;
+    Ok(folder)
+}
+
+/// Can the server create files in `dir`? (A file made and removed: `readonly` mounts and permissions say no.)
+pub fn check_writable(dir: &Path) -> Result<(), String> {
+    let probe = dir.join(format!(".lightcraft-write-test-{}", random_hex(4)?));
+    std::fs::write(&probe, b"x")
+        .map_err(|e| format!("the server can't write in {}: {e} (mount it read-write and let the server's user write there)", dir.display()))?;
+    let _ = std::fs::remove_file(&probe);
+    Ok(())
+}
+
+/// Change what the server may do in `user`'s library folder `name`: `writable` (XMP sidecars), `imports` (where
+/// devices' uploads are filed). A writable folder is probed; `imports` needs `writable` and is the user's only one.
+pub fn set_folder_mode(data: &Path, user: &str, name: &str, writable: Option<bool>, imports: Option<bool>) -> Result<LibraryFolder, String> {
+    let mut f = read_users(data)?;
+    let u = f.users.get_mut(user).ok_or_else(|| format!("no user `{user}`"))?;
+    let Some(i) = u.folders.iter().position(|x| x.name.eq_ignore_ascii_case(name)) else {
+        return Err(format!("{user} has no library folder `{name}`"));
+    };
+    let mut folder = u.folders[i].clone();
+    if let Some(w) = writable {
+        folder.writable = w;
+        if !w {
+            folder.imports = false;
+        }
+    }
+    if let Some(im) = imports {
+        folder.imports = im;
+        if im {
+            folder.writable = true;
+        }
+    }
+    if folder.writable {
+        check_writable(Path::new(&folder.path))?;
+    }
+    if folder.imports {
+        u.folders.iter_mut().for_each(|x| x.imports = false);
+    }
+    u.folders[i] = folder.clone();
     write_json(&data.join(USERS), &f)?;
     Ok(folder)
 }

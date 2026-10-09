@@ -129,7 +129,7 @@ impl Index {
         lightcraft_engine::catalog::safe_file::write_atomic(&path, &bytes).map_err(|e| format!("{}: {e}", path.display()))
     }
 
-    fn reindex(&mut self) {
+    pub(crate) fn reindex(&mut self) {
         self.by_hash.clear();
         for (k, e) in &self.files {
             if !e.missing && !e.hash.is_empty() {
@@ -164,7 +164,7 @@ impl Index {
 }
 
 /// Nanoseconds since 1970 of a file's modification time (0 when unknown).
-fn mtime_of(m: &std::fs::Metadata) -> u64 {
+pub(crate) fn mtime_of(m: &std::fs::Metadata) -> u64 {
     m.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map_or(0, |d| u64::try_from(d.as_nanos()).unwrap_or(u64::MAX))
 }
 
@@ -577,7 +577,7 @@ fn commit(lib: &Mutex<UserLib>, batch: &mut Vec<FileRead>, found: &HashSet<Strin
 
 /// Push `ops` (each tagged with the file it is for) in one go, leaving out the files whose ops the
 /// library refuses. Returns those files, or `None` when the library couldn't be saved.
-fn push(l: &mut UserLib, ops: &[(Op, usize)], name: &dyn Fn(usize) -> String) -> Option<HashSet<usize>> {
+pub(crate) fn push(l: &mut UserLib, ops: &[(Op, usize)], name: &dyn Fn(usize) -> String) -> Option<HashSet<usize>> {
     let mut refused: HashSet<usize> = HashSet::new();
     loop {
         let list: Vec<Op> = ops.iter().filter(|(_, i)| !refused.contains(i)).map(|(op, _)| op.clone()).collect();
@@ -998,6 +998,8 @@ pub(crate) fn run_scanner(st: &Arc<State>) {
         match r.and_then(|r| r) {
             Ok(mut s) => {
                 s.scans = scans + 1;
+                // (uploads waiting for the scan to end can be filed now)
+                st.writer.file_uploads(&user);
                 if s.added + s.moved + s.changed + s.linked + s.failed > 0 || !s.errors.is_empty() {
                     log::info!(
                         "{user}'s library folders: {} file(s) in {:.1} s; {} new, {} moved, {} changed, {} uploaded before, {} not read, {} missing{}",

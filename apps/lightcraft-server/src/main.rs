@@ -9,7 +9,8 @@
 //! lightcraft-server user list
 //! lightcraft-server device list NAME
 //! lightcraft-server device revoke NAME ID
-//! lightcraft-server folder add NAME PATH [--name FOLDER]
+//! lightcraft-server folder add NAME PATH [--name FOLDER] [--writable] [--imports]
+//! lightcraft-server folder writable|imports NAME FOLDER on|off
 //! lightcraft-server folder remove NAME FOLDER
 //! lightcraft-server folder list [NAME]
 //! lightcraft-server folder ignore NAME [PATTERN…]
@@ -43,7 +44,9 @@ const USAGE: &str = "usage:
   lightcraft-server user list
   lightcraft-server device list NAME
   lightcraft-server device revoke NAME ID
-  lightcraft-server folder add NAME PATH [--name FOLDER]   (a photo folder on this server, read in place)
+  lightcraft-server folder add NAME PATH [--name FOLDER] [--writable] [--imports]   (a photo folder on this server, read in place;
+                                                      --writable: the server writes XMP sidecars there; --imports: devices' uploads are filed there)
+  lightcraft-server folder writable|imports NAME FOLDER on|off
   lightcraft-server folder remove NAME FOLDER
   lightcraft-server folder list [NAME]
   lightcraft-server folder ignore NAME [PATTERN…]   (names the scan skips, like '*.fcpbundle'; none: show them, '': clear)
@@ -121,6 +124,15 @@ fn password() -> Result<String, String> {
     read.map_err(|e| e.to_string())?;
     let p = line.trim_end_matches(['\r', '\n']).to_string();
     if p.is_empty() { Err("no password given".into()) } else { Ok(p) }
+}
+
+/// What to tell about a folder the server may write in.
+fn mode_note(f: &accounts::LibraryFolder) -> &'static str {
+    match (f.writable, f.imports) {
+        (_, true) => "; it writes XMP sidecars there and files the photos devices upload into it (never changing the photos themselves)",
+        (true, false) => "; it writes XMP sidecars there (never changing the photos themselves)",
+        _ => "",
+    }
 }
 
 fn run(args: &[String]) -> Result<(), String> {
@@ -219,9 +231,23 @@ fn run(args: &[String]) -> Result<(), String> {
             Ok(())
         }
         ["folder", "add", name, path] => {
-            let f = accounts::add_folder(&data, name, path, option(args, "--name").as_deref())?;
-            println!("{name} has the library folder {} ({}): its photos are read in place, never copied or changed", f.name, f.path);
+            let mut f = accounts::add_folder(&data, name, path, option(args, "--name").as_deref())?;
+            let (imports, writable) = (args.iter().any(|a| a == "--imports"), args.iter().any(|a| a == "--writable"));
+            if imports || writable {
+                let added = f.name.clone();
+                f = accounts::set_folder_mode(&data, name, &added, Some(true), imports.then_some(true)).inspect_err(|_| {
+                    let _ = accounts::remove_folder(&data, name, &added);
+                })?;
+            }
+            println!("{name} has the library folder {} ({}): its photos are read in place, never copied or moved{}", f.name, f.path, mode_note(&f));
             request_scan(&data, name);
+            Ok(())
+        }
+        ["folder", kind @ ("writable" | "imports"), name, folder, on @ ("on" | "off")] => {
+            let on = Some(*on == "on");
+            let (w, i) = if *kind == "writable" { (on, None) } else { (None, on) };
+            let f = accounts::set_folder_mode(&data, name, folder, w, i)?;
+            println!("{name}'s {} is {}{}", f.name, if f.writable { "writable" } else { "read-only" }, mode_note(&f));
             Ok(())
         }
         ["folder", "remove", name, folder] => {
@@ -247,7 +273,14 @@ fn run(args: &[String]) -> Result<(), String> {
                 }
                 for f in &u.folders {
                     let there = if Path::new(&f.path).is_dir() { "" } else { "\t(not there)" };
-                    println!("{name}\t{}\t{}{there}", f.name, f.path);
+                    let mode = if f.imports {
+                        "\t(writable, takes uploads)"
+                    } else if f.writable {
+                        "\t(writable)"
+                    } else {
+                        ""
+                    };
+                    println!("{name}\t{}\t{}{there}{mode}", f.name, f.path);
                 }
             }
             Ok(())

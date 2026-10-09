@@ -422,6 +422,17 @@ fn backup(path: &Path, stamp: &str) -> std::io::Result<PathBuf> {
     Err(std::io::Error::other("no free backup name"))
 }
 
+/// Write the XMP sidecar of photo `p`, whose original is the file `original`, as `naming` says, merged into an
+/// existing sidecar (its other contents kept; one that isn't XMP is copied to `.bak-<stamp>` first). It needs no
+/// session: the sync server uses it for the photos in its writable library folders.
+pub fn write_sidecar_for(p: &Photo, cat: &lightcraft_catalog::Catalog, original: &str, naming: SidecarNaming, stamp: &str) -> Result<SidecarSaved> {
+    let path = sidecar_path(original, naming);
+    let err = |e: std::io::Error| EngineError::Other(format!("{}: {e}", path.display()));
+    let (data, merged, backup) = sidecar_contents(&path, sidecar_packet(p, cat), stamp).map_err(err)?;
+    write_atomic(&path, data.as_bytes()).map_err(err)?;
+    Ok(SidecarSaved { path, merged, backup })
+}
+
 /// What [`Session::save_sidecar`] did.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SidecarSaved {
@@ -551,11 +562,7 @@ impl Session {
             return Err(EngineError::Other(format!("{} is a virtual copy: its settings live only in the library", p.file_name)));
         }
         let orig = file_path(p).ok_or_else(|| EngineError::Other(format!("{} is not a file on disk", p.file_name)))?;
-        let path = sidecar_path(orig, owners.naming(p, self.xmp.naming));
-        let err = |e: std::io::Error| EngineError::Other(format!("{}: {e}", path.display()));
-        let (data, merged, backup) = sidecar_contents(&path, sidecar_packet(p, &self.catalog), &(self.clock)()).map_err(err)?;
-        write_atomic(&path, data.as_bytes()).map_err(err)?;
-        Ok(SidecarSaved { path, merged, backup })
+        write_sidecar_for(p, &self.catalog, orig, owners.naming(p, self.xmp.naming), &(self.clock)())
     }
 
     /// The op that applies a photo's sidecar (or embedded XMP) to the catalog, if there is one.

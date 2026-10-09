@@ -170,7 +170,8 @@ can make such folders a user's **library folders** (admin page › Users › the
 
 - **Nothing in them is copied, moved or changed.** Mount them read-only (`-v /srv/photos:/photos:ro`). The server
   keeps only the previews it builds and an index (`folders.json`); a photo's original is sent to a device straight
-  from its folder, when the device asks for it (Download Originals, or keeping originals on the device).
+  from its folder, when the device asks for it (Download Originals, or keeping originals on the device). A folder
+  can be made **writable** (below); the photos themselves are still never opened for writing.
 - **Every photo there joins the user's library** like any other: on every device, in All Photos, in searches and
   smart albums, in any album (albums stay virtual: a photo can be in many, its file stays where it is), editable
   (edits are kept in the library, never written to the folder).
@@ -183,6 +184,24 @@ can make such folders a user's **library folders** (admin page › Users › the
   file again: what it states replaces the photo's values on every device (fields it doesn't state are kept), as
   Read Metadata from File does. Edits made on a device stay until the sidecar changes. The index keeps each
   sidecar's time; an index written by an older server only notes them on its first scan.
+- **Writable folders (opt-in, per folder).** An admin can let the server write in a library folder (admin page ›
+  the user › Library folders › **Writing**, or `lightcraft-server folder writable ann Photos on`; add
+  `--writable` / `--imports` to `folder add`). The folder must be mounted read-write, writable by the server's user
+  (uid 10001 in the image; `:rw` in the compose file); the server tries a file before it says yes, and the admin
+  page shows when a folder that should be writable isn't. Two things then happen, and nothing else:
+  - **XMP sidecars:** when a device changes a photo in such a folder — rating, flag, colour label, develop settings,
+    title, caption, keywords — the server writes its `.xmp` a few seconds later, beside the photo, merged into one
+    that's there (the same file, naming and merge as the desktop app's *Automatically Write Changes into XMP*; a
+    raw+JPEG pair shares `IMG_1.xmp` for the raw and `IMG_1.JPG.xmp` for the JPEG). Lightroom and other programs
+    see the edits. If another program changed that sidecar since the server last read it, the server doesn't
+    overwrite it: it reads it first (a scan is started), and what that program wrote wins; the next change goes out.
+  - **Uploads are filed here, if it is the user's imports folder** (`--imports`; one per user; implies writable).
+    A photo a device uploads would otherwise live in the server's own store (`blobs/original`, not a place you
+    browse). In an imports folder it becomes `<folder>/<year>/<yyyy-mm-dd>/<name>` (by capture date, else import
+    date; a name already taken gets `-1`, `-2`…, never replaced), is the photo's place on the server like any
+    library-folder photo, and the server's own copy is deleted once that's recorded. The file is copied under a
+    temporary name and linked into place; if the server stops in between, the next scan recognises the file by its
+    content. Previews stay in the server's store.
 - **Scans** run when the server starts, every 15 minutes (`--scan-interval`), when a folder is added and on demand
   (**Scan now**, `lightcraft-server scan`). Files whose size and time didn't change aren't read again.
   - a new file becomes a new photo, with smart and mini previews built on the server (`LIGHTCRAFT_PREVIEW_THREADS`);
@@ -444,8 +463,9 @@ v1, honestly:
 - **The server compacts its log** into a snapshot at 64 MiB and keeps the newest 16 MiB of it (tens of thousands of
   changes): a device behind by more than that reloads the library. (A device that is only a little behind keeps
   pulling; a pull reads just the part of the log it asks for.)
-- **Library folders are read, never written**: edits stay in the library (no XMP written back to the folders), and
-  photos imported on a device are kept by the server as uploads, not filed into the folders.
+- **Library folders are read-only unless an admin makes one writable** ([above](#library-folders-photos-already-on-the-server)):
+  then the server writes XMP sidecars and can file uploads there, never touching the photos themselves. Edits in
+  read-only folders stay in the library.
 - **Plain HTTP, sized for a household**: TLS is the proxy's or the tailnet's job ([above](#tls-a-reverse-proxy-or-a-private-network));
   the server itself is hardened against stalled clients ([Security](#security)), but it serves a thread per
   connection: right for a home server or a small group, not the open internet at scale.

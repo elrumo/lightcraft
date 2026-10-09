@@ -116,6 +116,18 @@ struct NewFolder {
     path: String,
     #[serde(default)]
     name: Option<String>,
+    #[serde(default)]
+    writable: bool,
+    #[serde(default)]
+    imports: bool,
+}
+
+#[derive(Deserialize)]
+struct FolderMode {
+    #[serde(default)]
+    writable: Option<bool>,
+    #[serde(default)]
+    imports: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -188,7 +200,26 @@ pub fn api(st: &State, req: &mut Request, method: &Method, rest: &str) -> Resp {
         (Method::Post, ["users", name, "folders"]) => read_json::<NewFolder>(req).map_err(Err).and_then(|f| {
             let added = accounts::add_folder(&st.data, name, &f.path, f.name.as_deref()).map_err(|e| Ok((400, e)))?;
             log::info!("admin {me}: {name} has the library folder {} ({})", added.name, added.path);
+            if f.writable || f.imports {
+                // (a folder the server can't write in is not added at all)
+                if let Err(e) = accounts::set_folder_mode(&st.data, name, &added.name, Some(f.writable || f.imports), Some(f.imports)) {
+                    let _ = accounts::remove_folder(&st.data, name, &added.name);
+                    return Err(Ok((400, e)));
+                }
+                log::info!("admin {me}: {name}'s {} is writable{}", added.name, if f.imports { " and takes the uploads" } else { "" });
+            }
             st.folders.request(name);
+            folders(st, name)
+        }),
+        (Method::Put, ["users", name, "folders", folder]) => read_json::<FolderMode>(req).map_err(Err).and_then(|m| {
+            let folder = percent_decode(folder);
+            let f = accounts::set_folder_mode(&st.data, name, &folder, m.writable, m.imports).map_err(|e| Ok((400, e)))?;
+            log::info!(
+                "admin {me}: {name}'s {} is {}{}",
+                f.name,
+                if f.writable { "writable" } else { "read-only" },
+                if f.imports { " and takes the uploads" } else { "" }
+            );
             folders(st, name)
         }),
         (Method::Delete, ["users", name, "folders", folder]) => {
@@ -396,8 +427,19 @@ fn percent_decode(s: &str) -> String {
 fn folders(st: &State, name: &str) -> AdminResult {
     let f = accounts::read_users(&st.data).map_err(|e| Ok((500, e)))?;
     let u = f.users.get(name).ok_or_else(|| Ok((404, format!("no user `{name}`"))))?;
-    let list: Vec<Value> =
-        u.folders.iter().map(|f| json!({"name": f.name, "path": f.path, "there": std::path::Path::new(&f.path).is_dir()})).collect();
+    let list: Vec<Value> = u
+        .folders
+        .iter()
+        .map(|f| {
+            // (a writable folder is tried, so the page shows a mount that went read-only)
+            let can_write = f.writable.then(|| accounts::check_writable(std::path::Path::new(&f.path)).map_err(|e| e.to_string()));
+            json!({
+                "name": f.name, "path": f.path, "there": std::path::Path::new(&f.path).is_dir(),
+                "writable": f.writable, "imports": f.imports,
+                "writeError": can_write.and_then(Result::err),
+            })
+        })
+        .collect();
     Ok(json!({"folders": list, "ignore": u.ignore, "scan": st.folders.status(name)}))
 }
 
