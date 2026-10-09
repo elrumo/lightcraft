@@ -14,6 +14,7 @@ pub mod filterbar;
 pub mod grid;
 pub mod left;
 pub mod library_problem;
+pub mod map;
 pub mod masking;
 pub mod mobile;
 pub mod notices;

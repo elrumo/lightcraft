@@ -104,7 +104,7 @@ mark: not started.
 | B3.1 | Quick Actions: suggested next steps for a photo or an import (cull, stack, add to album, apply a look) | P2 | AI scoring exists in part (`Dialog::Cull`) |
 | B3.2 | Best-photo suggestions and automatic sorting of an import into groups | P2 | models |
 | B3.3 | Search by content (objects, scenes, text in photos), natural-language search | P2 | embedding model; none shipped |
-| B3.4 | Map / location view and geotagging from the phone's GPS or a track | P1 | map tiles are an external service; privacy decision |
+| B3.4 | 🟡 Map view (the shared egui Map, compact layout: "…" ▸ Map, back arrow, pinch and drag, place search; tiles through the engine's HTTP client with a disk cache, offline world map built in; docs/map.md) and place search by GPS (offline gazetteer). Type-checked for iOS and tested headlessly at phone size, **not yet run on the simulator or an iPhone**. **Unverified:** whether iOS's Photos picker hands over files with their location (it may remove it: then PHAsset.location with Photos library access is the way); geotagging from the phone's own GPS or a track | P1 | a simulator and device run; the picker question; the "Location" permission prompt for geotagging |
 | B3.5 | Auto-tagging of people (faces exist: names and grouping) across the library, "People" suggestions | P1 | partly done (`ViewMode::People`) |
 | B3.6 | Photos app integration: show the Photos library inside the app without importing, with edits written back as a Photos adjustment | P1 | PhotoKit glue |
 | B3.7 | Home-screen and lock-screen widgets, Shortcuts / Siri actions, Spotlight indexing, share extension ("Edit in LightCraft") | P2 | app extensions (xtool supports them: `extensions` in `xtool.yml`) |
