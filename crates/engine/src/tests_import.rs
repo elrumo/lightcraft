@@ -144,6 +144,82 @@ fn browsing_a_folder_lists_its_photos_without_adding_them() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A Lightroom-style sidecar: a rating and an exposure.
+fn lr_xmp(rating: u8, exposure: f64) -> String {
+    format!(
+        r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description rdf:about="" xmlns:xmp="http://ns.adobe.com/xap/1.0/" xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/" xmp:Rating="{rating}" crs:Exposure2012="{exposure:+.2}"/></rdf:RDF></x:xmpmeta>"#
+    )
+}
+
+/// Write a sidecar as another application would, stamped `secs` after 1970.
+fn write_sidecar(path: &Path, xmp: &str, secs: u64) {
+    std::fs::write(path, xmp).unwrap();
+    let f = std::fs::File::options().write(true).open(path).unwrap();
+    f.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs)).unwrap();
+}
+
+#[test]
+fn browsing_again_reads_sidecars_changed_by_another_app() {
+    let root = temp_dir("reread");
+    let (dir, lib) = (root.join("shoot"), root.join("lib"));
+    for (i, n) in ["a", "b", "c"].iter().enumerate() {
+        write_png(&dir.join(format!("{n}.png")), i as u8);
+        write_sidecar(&dir.join(format!("{n}.xmp")), &lr_xmp(i as u8 + 1, 0.5), 1_000);
+    }
+    let open = || {
+        let mut s = Session::new().with_fs();
+        s.open_library(&lib, false).unwrap();
+        s
+    };
+    let browse = |s: &mut Session| s.execute("library.browse", &json!({"path": dir.to_string_lossy()})).unwrap();
+    let mut s = open();
+    s.execute("library.xmpPreferences", &json!({"autoWrite": true})).unwrap();
+    let r = browse(&mut s);
+    assert_eq!((r["new"].as_u64(), r["reread"].as_u64()), (Some(3), Some(0)), "{r}");
+    let id = |s: &Session, n: &str| s.catalog.photos().find(|p| p.file_name == n).unwrap().id;
+    let look = |s: &Session, n: &str| {
+        let p = s.catalog.photo(id(s, n)).unwrap();
+        (p.rating, p.develop.light.exposure)
+    };
+    assert_eq!(look(&s, "a.png"), (1, 0.5));
+
+    // an edit made here (auto-written into b's sidecar) isn't taken for a change made elsewhere
+    s.selection = crate::Selection::single(id(&s, "b.png"));
+    s.execute("photo.rate", &json!({"rating": 5})).unwrap();
+    assert!(std::fs::read_to_string(dir.join("b.xmp")).unwrap().contains("lc:settings"), "auto-written");
+    assert_eq!(browse(&mut s)["reread"], 0);
+    assert_eq!(look(&s, "b.png").0, 5);
+
+    // another app edits a: read again by the next browse (one undo step), not written back
+    write_sidecar(&dir.join("a.xmp"), &lr_xmp(4, 1.25), 2_000);
+    let r = browse(&mut s);
+    assert_eq!(r["reread"], 1, "{r}");
+    assert_eq!(look(&s, "a.png"), (4, 1.25));
+    assert_eq!(std::fs::read_to_string(dir.join("a.xmp")).unwrap(), lr_xmp(4, 1.25));
+    let a = s.catalog.photo(id(&s, "a.png")).unwrap();
+    assert_eq!(a.history.last().map(|h| h.label.as_str()), Some("Read Metadata from File"));
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(look(&s, "a.png"), (1, 0.5));
+    // undone stays undone: the sidecar's time is noted, also across a restart
+    s.close_library().unwrap();
+    drop(s);
+    let mut s = open();
+    assert_eq!(browse(&mut s)["reread"], 0);
+    assert_eq!(look(&s, "a.png"), (1, 0.5));
+
+    // the times are lost: a changed sidecar is read only into a record nobody changed here
+    s.close_library().unwrap();
+    drop(s);
+    std::fs::remove_file(lib.join("sidecars.json")).unwrap();
+    write_sidecar(&dir.join("b.xmp"), &lr_xmp(2, 0.0), 3_000);
+    write_sidecar(&dir.join("c.xmp"), &lr_xmp(1, -1.0), 3_000);
+    let mut s = open();
+    assert_eq!(browse(&mut s)["reread"], 1);
+    assert_eq!(look(&s, "b.png").0, 5, "rated here: kept");
+    assert_eq!(look(&s, "c.png"), (1, -1.0));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// Photos a.png, b.png, c.png imported from `old`, then: a renamed into `moved`; b renamed, with
 /// an impostor (same name and size, other bytes) under its old name; c gone, with two impostors.
 fn renamed_and_ambiguous_scene(tag: &str) -> (std::path::PathBuf, Session) {

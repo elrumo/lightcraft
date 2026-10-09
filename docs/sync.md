@@ -158,7 +158,11 @@ can make such folders a user's **library folders** (admin page › Users › Fol
   shows a folder's photos (and those of the folders in it); right-click it to create an album from it, make it
   available offline or download its originals. Info shows each photo's place on the server.
 - **XMP sidecars are read** when a file is found: ratings, flags, colour labels, title, caption, keywords and
-  Lightroom (Camera Raw) edits from `IMG_0001.xmp` (or a raw's own XMP), as an import reads them.
+  Lightroom (Camera Raw) edits from `IMG_0001.xmp` (or a raw's own XMP), as an import reads them. A sidecar that
+  changes later (the photo was edited again in Lightroom) is read again by the next scan, without reading the photo
+  file again: what it states replaces the photo's values on every device (fields it doesn't state are kept), as
+  Read Metadata from File does. Edits made on a device stay until the sidecar changes. The index keeps each
+  sidecar's time; an index written by an older server only notes them on its first scan.
 - **Scans** run when the server starts, every 15 minutes (`--scan-interval`), when a folder is added and on demand
   (**Scan now**, `lightcraft-server scan`). Files whose size and time didn't change aren't read again.
   - a new file becomes a new photo, with smart and mini previews built on the server (`LIGHTCRAFT_PREVIEW_THREADS`);

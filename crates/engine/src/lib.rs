@@ -131,6 +131,8 @@ pub struct Session {
     /// Set by a command whose change must not rewrite the photo's XMP sidecar even with auto-write on
     /// (a catalog-only edit of data the sidecar writer does not emit); consumed when the command ends.
     pub(crate) skip_auto_write: bool,
+    /// When LightCraft last read or wrote each XMP sidecar (`sidecars.json` in the library).
+    pub(crate) sidecar_times: sidecar::SidecarTimes,
     /// Copied develop settings (partial JSON) for Paste.
     pub clipboard: Option<Value>,
     /// The folder on disk the [`LibrarySource::Folder`] view browses.
@@ -237,6 +239,7 @@ impl Session {
             redo: Vec::new(),
             interaction: None,
             skip_auto_write: false,
+            sidecar_times: Default::default(),
             clipboard: None,
             meta_clipboard: None,
             browse: None,
@@ -328,7 +331,8 @@ impl Session {
         if self.depth == 0 {
             let skip = std::mem::take(&mut self.skip_auto_write);
             if r.is_ok() && !skip && self.xmp.auto_write && self.interaction.is_none() && self.pending_log.len() > log_start {
-                self.auto_write_sidecars(&self.pending_log[log_start..]);
+                let ops = self.pending_log.get(log_start..).map(<[Op]>::to_vec).unwrap_or_default();
+                self.auto_write_sidecars(&ops);
             }
         }
         if self.depth == 0 && self.library.is_some() {

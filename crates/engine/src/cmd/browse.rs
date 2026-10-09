@@ -8,9 +8,10 @@
 //! `library.forgetLocal`); see [`lightcraft_catalog::local`] for what "untouched" means. Files
 //! and sidecars on disk are never touched, and browsing the folder again brings them back.
 
+use std::collections::HashSet;
 use std::path::Path;
 
-use lightcraft_catalog::{Op, PhotoId};
+use lightcraft_catalog::{MediaKind, Op, PhotoId, Source};
 use serde_json::{Value, json};
 
 use super::{CommandSpec, always, bad, bool_or, cmd, str_param};
@@ -40,11 +41,67 @@ fn browse(s: &mut Session, p: &Value) -> Result<Value> {
         v
     };
     let report = import_with(s, &files, &ImportOptions { mode: ImportMode::Add, local: true, ..Default::default() })?;
+    let reread = reread_sidecars(s, &files)?;
     stamp_browsed(s, &dir_s, &files);
     s.browse = Some(Browse { path: dir_s.clone(), subfolders });
     s.source = LibrarySource::Folder;
     let shown = s.visible().len();
-    Ok(json!({"path": dir_s, "subfolders": subfolders, "photos": shown, "new": report.imported.len(), "failed": report.failed.len()}))
+    Ok(
+        json!({"path": dir_s, "subfolders": subfolders, "photos": shown, "new": report.imported.len(), "reread": reread, "failed": report.failed.len()}),
+    )
+}
+
+/// Read again the XMP sidecars of `files` that changed since LightCraft last read or wrote them
+/// (another application — Lightroom — edited the photos meanwhile): the sidecar wins, as with Read
+/// Metadata from File, in one undo step. A sidecar with no recorded time (catalogued before times
+/// were kept, or the cache was lost) is read only into a Local record nobody changed here, and
+/// otherwise just noted, so an old sidecar never replaces an edit made in LightCraft. Returns the
+/// number of photos changed.
+fn reread_sidecars(s: &mut Session, files: &[String]) -> Result<usize> {
+    use crate::sidecar::{self, StemOwners};
+    let owners = StemOwners::of(&s.catalog);
+    let now = (s.clock)();
+    let wanted: HashSet<&str> = files.iter().map(String::as_str).collect();
+    let mut ops = Vec::new();
+    let mut seen = Vec::new();
+    for p in s.catalog.photos().filter(|p| p.copy_of.is_none() && !p.deleted) {
+        let Source::File { path } = &p.source else { continue };
+        if !wanted.contains(path.as_str()) {
+            continue;
+        }
+        let Some(sc_path) = sidecar::find_sidecar(path, owners.naming(p, s.xmp.naming)) else { continue };
+        let t = sidecar::modified(&sc_path);
+        match s.sidecar_times.get(&sc_path) {
+            known @ Some(_) if known == t => continue,
+            None if !p.untouched_local() => {
+                seen.push((sc_path, t));
+                continue;
+            }
+            _ => {}
+        }
+        let read = std::fs::read_to_string(&sc_path).map_err(|e| e.to_string()).and_then(|x| sidecar::parse_sidecar(&x, p.kind == MediaKind::Raw));
+        match read {
+            Ok(sc) => {
+                let changes = sidecar::sidecar_ops(p, &sc.resolve_label(&s.catalog), &now, sidecar::READ_LABEL);
+                if !changes.is_empty() {
+                    ops.push(sidecar::with_history(changes));
+                }
+            }
+            Err(e) => log::warn!("{}: XMP: {e}", sc_path.display()),
+        }
+        seen.push((sc_path, t));
+    }
+    let changed = ops.len();
+    if !ops.is_empty() {
+        // reading a sidecar doesn't write it back (auto-write would add our settings to it)
+        s.skip_auto_write = true;
+        s.commit(sidecar::READ_LABEL, Op::Batch { ops })?;
+    }
+    for (path, t) in seen {
+        s.sidecar_times.set(&path, t);
+    }
+    s.save_sidecar_times();
+    Ok(changed)
 }
 
 /// Folders whose browse time is refreshed at most this often (keeps repeated browsing from
@@ -200,7 +257,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Browse Folder",
             [],
             None,
-            "{path, subfolders?: bool} — show a folder's photos without adding them to the library (they're read in place; edits go to XMP sidecars) → {path, photos, new}",
+            "{path, subfolders?: bool} — show a folder's photos without adding them to the library (they're read in place; edits go to XMP sidecars, and sidecars changed by another app since LightCraft last read them are read again, one undo step) → {path, photos, new, reread, failed}",
             always,
             browse
         ),
