@@ -68,9 +68,9 @@ impl Fake {
     }
 
     fn handle(&mut self, t: &Task) -> Done {
-        let (id, method, url, body, save_to) = match t {
+        let (id, method, url, body, save_to, token) = match t {
             Task::Proxies { .. } => return crate::sync::run(t),
-            Task::Http { id, method, url, body, save_to, .. } => (*id, *method, url, body, save_to),
+            Task::Http { id, method, url, body, save_to, token } => (*id, *method, url, body, save_to, token),
         };
         if self.down {
             return Done::failed(id, "connection refused");
@@ -80,6 +80,10 @@ impl Fake {
         self.requests.push(format!("{method} {path}{from}"));
         let ok = |v: Value| Done { id, status: 200, body: v.to_string() };
         let status = |s: u16, v: Value| Done { id, status: s, body: v.to_string() };
+        // (like the real server: everything but signing in and the health check wants a token)
+        if token.is_empty() && !matches!(path, "/api/login" | "/api/health") {
+            return status(401, json!({"error": "sign in first"}));
+        }
         let json_body = || match body {
             Body::Json(j) => j.clone(),
             other => panic!("{other:?}"),
@@ -205,6 +209,7 @@ impl Fake {
                     _ => status(405, Value::Null),
                 }
             }
+            ("GET", "/api/shares") => ok(json!({"shares": []})),
             _ => status(404, json!({"error": "no such route"})),
         }
     }
@@ -1372,5 +1377,28 @@ fn a_library_with_photos_merges_into_the_servers_when_asked() {
     let before = f.core.head();
     sync(&mut c, &mut f);
     assert_eq!(f.core.head(), before);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Settings ▸ Sync asks for the album links on every frame, including the ones while the sign-in is still on its
+/// way. That request had no token yet, the server answered 401, and the device was signed out the moment it signed
+/// in (found on the iOS simulator, where the sign-in is slow enough for a frame to draw first).
+#[test]
+fn asking_for_links_while_signing_in_does_not_sign_the_device_out() {
+    let mut f = Fake::new();
+    let root = temp_dir("shares-early");
+    let mut a = open(&root.join("a"));
+    sign_in(&mut a);
+    a.sync_refresh_shares(false);
+    let st = sync(&mut a, &mut f);
+    assert_eq!(st["state"], "idle", "{st}");
+    assert_eq!(st["signedIn"], true, "{st}");
+    assert!(f.requests.iter().all(|r| r != "GET /api/shares"), "nothing asked before there was a token: {:?}", f.requests);
+    a.sync_refresh_shares(false);
+    let st = sync(&mut a, &mut f);
+    assert_eq!(st["state"], "idle", "{st}");
+    assert_eq!(f.requests.iter().filter(|r| *r == "GET /api/shares").count(), 1, "{:?}", f.requests);
+    let (links, error) = a.sync_shares();
+    assert!(links.is_empty() && error.is_none(), "{error:?}");
     let _ = std::fs::remove_dir_all(&root);
 }

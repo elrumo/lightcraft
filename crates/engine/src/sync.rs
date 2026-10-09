@@ -439,6 +439,12 @@ impl SyncState {
         !self.config.token.is_empty() || self.login.is_some() || matches!(self.control, Some((_, Control::Login(_))))
     }
 
+    /// The server has accepted this device: requests can carry its token (unlike while [`signed_in`](Self::signed_in)
+    /// is only "signing in").
+    pub(crate) fn has_token(&self) -> bool {
+        !self.config.token.is_empty()
+    }
+
     fn url(&self, path: &str) -> String {
         format!("{}{path}", self.config.server.trim_end_matches('/'))
     }

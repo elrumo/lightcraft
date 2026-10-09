@@ -72,7 +72,7 @@ impl Session {
             }
             Some(_) => {}
         }
-        let st = self.sync.as_mut().filter(|st| st.signed_in()).ok_or_else(not_signed_in)?;
+        let st = self.sync.as_mut().filter(|st| st.has_token()).ok_or_else(not_signed_in)?;
         let body =
             serde_json::to_string(&proto::NewShare { album: album.0, expires_days, originals }).map_err(|e| EngineError::Other(e.to_string()))?;
         st.shares.error = None;
@@ -85,7 +85,7 @@ impl Session {
         if id.is_empty() || id.len() > 64 || !id.bytes().all(|b| b.is_ascii_alphanumeric()) {
             return Err(EngineError::Other(format!("not a link id: `{id}`")));
         }
-        let st = self.sync.as_mut().filter(|st| st.signed_in()).ok_or_else(not_signed_in)?;
+        let st = self.sync.as_mut().filter(|st| st.has_token()).ok_or_else(not_signed_in)?;
         st.shares.error = None;
         st.queue_share(Kind::Revoke(id.to_string()), "DELETE", &format!("/api/shares/{id}"), Body::Empty);
         Ok(())
@@ -93,7 +93,8 @@ impl Session {
 
     /// Ask for the list of links again (once is enough unless `again`: the answers to making and revoking keep it).
     pub fn sync_refresh_shares(&mut self, again: bool) {
-        let Some(st) = self.sync.as_mut().filter(|st| st.signed_in()) else { return };
+        // (not while signing in: the request would carry no token, and the server's 401 would sign the device out)
+        let Some(st) = self.sync.as_mut().filter(|st| st.has_token()) else { return };
         let in_flight = st.shares.tasks.values().any(|k| matches!(k, Kind::List));
         if in_flight || (st.shares.asked && !again) {
             return;
