@@ -301,6 +301,9 @@ ENVIRONMENT:
   LIGHTCRAFT_SAM3_DIR=DIR   the SAM 3 model for Object / Describe masks (default: <settings folder>/models/sam3;
                    optional: LightCraft offers to download it when first needed)
   LIGHTCRAFT_SAM3_MIRRORS=URL,…   where to download the SAM 3 model from (base URLs, tried in order)
+  LIGHTCRAFT_VISION_DIR=DIR   the SigLIP 2 model for search by description (default: <settings folder>/models/siglip2;
+                   optional: LightCraft offers to download it when you turn on Describe)
+  LIGHTCRAFT_VISION_MIRRORS=URL,…   where to download that model from (base URLs, tried before Hugging Face)
 ";
 
 /// Warnings and errors (failed commands, AI mask analysis) on stderr; `LIGHTCRAFT_LOG=info`
@@ -403,6 +406,12 @@ fn main() -> eframe::Result {
                 std::env::var_os("LIGHTCRAFT_SAM3_DIR").map(std::path::PathBuf::from).or_else(|| config_dir().map(|d| d.join("models").join("sam3")));
             // the user's own download locations, one base URL per line (LIGHTCRAFT_SAM3_MIRRORS too)
             session.segmenter.mirrors_file = config_dir().map(|d| d.join("models").join("sam3-mirrors.txt"));
+            // search by description: the SigLIP 2 checkpoint in <config>/models/siglip2, or LIGHTCRAFT_VISION_DIR
+            // (never required: the Describe switch on the search field offers to download it)
+            session.vision.dir = std::env::var_os("LIGHTCRAFT_VISION_DIR")
+                .map(std::path::PathBuf::from)
+                .or_else(|| config_dir().map(|d| d.join("models").join("siglip2")));
+            session.vision.mirrors_file = config_dir().map(|d| d.join("models").join("siglip2-mirrors.txt"));
             let mut app = LightcraftApp::new(session, services());
             if let Some(ui) = prefs {
                 app.ui = ui;

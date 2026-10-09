@@ -18,6 +18,8 @@ pub mod crs;
 pub mod crs_masks;
 pub mod demo;
 pub mod devices;
+#[cfg(any(feature = "sam", feature = "vision"))]
+mod download;
 pub mod export;
 pub mod files;
 pub mod fonts;
@@ -39,6 +41,7 @@ pub mod smart;
 pub mod sync;
 pub mod usage;
 mod view;
+pub mod vision;
 
 use std::sync::Arc;
 
@@ -159,6 +162,8 @@ pub struct Session {
     pub active_mask: Option<u32>,
     /// AI masks (SAM 3): the model and the last photo prepared for it.
     pub segmenter: segment::Segmenter,
+    /// Search by description: the model, the library's index of photo vectors and the work in flight.
+    pub vision: vision::Vision,
     /// Selected spot (Remove panel), by index into the active photo's spots.
     pub active_spot: Option<usize>,
     /// The persistent library this session writes to (`None` = in-memory only).
@@ -255,6 +260,7 @@ impl Session {
             depth: 0,
             active_mask: None,
             segmenter: segment::Segmenter::default(),
+            vision: vision::Vision::default(),
             active_spot: None,
             library: None,
             xmp: sidecar::XmpPrefs::default(),
@@ -634,6 +640,11 @@ impl Session {
                 if !self.sort.ascending {
                     visible.reverse();
                 }
+            }
+            if self.filter.semantic.is_some() {
+                // a search by description: best match first, whatever the sort
+                let rank: std::collections::HashMap<PhotoId, usize> = self.filter.only.iter().enumerate().map(|(i, id)| (*id, i)).collect();
+                visible.sort_by_key(|id| rank.get(id).copied().unwrap_or(usize::MAX));
             }
             if self.source == LibrarySource::RecentlyAdded {
                 // newest import first, whatever the sort (the grid groups by import day)
