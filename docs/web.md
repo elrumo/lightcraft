@@ -154,9 +154,12 @@ are the same in every version, so serve them with `Cache-Control: no-cache` (not
 
 `lightcraft-server` serves this build at `/` (`--web target/web`, or the Docker image), and the page signs in to the
 server that serves it: Settings ▸ Sync has its address filled in. Synced photos come down as previews into browser
-storage (`proxies/<hash>.lcsp|.lcsm`; the render workers use them when the original isn't stored here), originals
-only when asked (Photo ▸ Download Originals), and photos imported in the browser are uploaded with previews built in the
-page. Same-origin only: the page can't sign in to another server. See [sync.md](sync.md).
+storage (`proxies/<hash>.lcsp|.lcsm`; the render workers use them when the original isn't stored here, and so do auto
+tone, white-balance picks and exports up to 2560 px), originals only when asked (Photo ▸ Download Originals; a larger
+export needs one), and photos imported in the browser are uploaded without decoding them on the page: the server builds
+their previews (Settings ▸ Sync, *Let the server build the previews*). A build hosted on another site can sign in to a
+server that lists that site (`--cors-origin`, [sync.md](sync.md#a-web-build-on-another-site)); the library and
+sign-in then belong to that site's browser storage. See [sync.md](sync.md).
 
 ## Not yet
 

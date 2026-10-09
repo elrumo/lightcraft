@@ -7,8 +7,11 @@ limits) is [sync.md](sync.md).
 What you'll have at the end:
 
 - **One library per person**, shared by all their devices: photos, edits, albums, ratings, keywords, presets.
-- **Your existing photo folders** (a NAS share, a backup disk) in that library, read where they are: never copied,
-  moved or changed ([library folders](sync.md#library-folders-photos-already-on-the-server)).
+- **Your existing photo folders** (a NAS share, a backup disk) in that library, read where they are: never copied
+  or moved, and written to (XMP sidecars, and a folder for your devices' uploads) only if you switch that on per
+  folder ([library folders](sync.md#library-folders-photos-already-on-the-server)).
+- **Links to albums** that anyone you send them to can open in a browser, with no account
+  ([sharing](sync.md#share-an-album)); you can revoke them any time.
 - **The web app** at the server's address, and an **admin page** at `/admin` for users, devices and folders.
 
 Sync is optional: LightCraft works without an account or a server, and nothing leaves a device until it signs in.
@@ -277,7 +280,11 @@ lightcraft-cli run --library ~/LightCraft-synced sync.signIn server=photos.examp
 
 - Only Caddy (443), `tailscale serve`, or your home network reaches the server — never port 8080 from the internet.
 - Strong passwords (8 characters at least are required). Sign out devices you no longer use (admin page ▸ Users ▸ the user ▸ Devices).
-- Library folders mounted read-only (`:ro`).
+- Library folders mounted read-only (`:ro`), unless you want the server to write XMP sidecars or file uploads there
+  (then mount that one `:rw`, make it writable for uid 10001, and switch it on in the admin page).
+- Album links are secret addresses: send them to people you'd send the photos to, give them an end date, and revoke
+  the ones you no longer need (Settings ▸ Sync ▸ Shared Links, or the admin page).
+- The web app on another site needs that site named with `--cors-origin` (`LIGHTCRAFT_CORS`); leave it off otherwise.
 - Keep the server and the apps updated together.
 
 What the server does on its side — throttling password guessing, hashed passwords and tokens, size limits, headers —

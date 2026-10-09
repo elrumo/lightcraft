@@ -2,6 +2,31 @@
 
 ## October 2026
 
+### Self-hosted sync
+- **Share an album with a link.** Right-click an album ▸ Share Link: anyone you send it to sees a plain page of the
+  album in their browser, with no account. The pictures are your photos as you have edited them, without location or
+  camera details; the link can end after some days and can let people download the originals; you can copy or revoke
+  your links in Settings ▸ Sync, and the server's admin can too.
+- **Merge a library you already have.** Signing in to a server from a library that already has photos used to be
+  refused. Tick *Combine with the photos already on the server* and the two are merged: photos are matched by what they
+  are, edits merged, albums and stacks kept, nothing removed on either side.
+- **Your presets and sets follow you.** Export, metadata, filter and curve presets, colour-label and keyword sets, LUT
+  profiles and your import defaults now sync between your devices (the watched folder, cache size and other settings
+  that belong to one computer don't).
+- **A limit for downloaded originals** (Settings ▸ Sync ▸ Originals limit): the ones you haven't used for longest are
+  deleted from the device when it goes over, and come back when you ask; never one the server doesn't have, or one you
+  are working on.
+- **Uploads and downloads of originals resume** after a broken connection instead of starting again, and a download is
+  checked against the photo before it is used.
+- **XMP for Lightroom, written by the server (opt-in).** An admin can let the server write in a library folder: edits
+  made on your devices then appear as `.xmp` sidecars beside the photos, and the photos you upload can be filed into
+  an imports folder as year/date/name. The photos themselves are never changed.
+- **The browser** works with a server that hosts the web build elsewhere (`--cors-origin`), asks the server to build the
+  previews of what it uploads, and auto tone, white-balance picks and exports up to 2560 px work on a photo whose
+  original isn't in the browser.
+- **A sturdier server.** The HTTP layer closes stalled connections and bounds connections and requests (the health
+  check always answers); the log it keeps for devices is compacted without making every other device reload.
+
 ### Map and places
 - **Map view** (View ▸ Map, or the pin in the bottom bar; on a phone, "…" ▸ Map): your photos where they were
   taken, grouped into thumbnail markers with counts, on desktop, in the browser and on iPhone. Pan, zoom with the

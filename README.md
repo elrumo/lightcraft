@@ -280,8 +280,11 @@ lightcraft --control 7980 ~/Pictures/trip
 - **Optional self-hosted sync.** Run your own `lightcraft-server` (one binary or a Docker image) and your devices share
   one library — photos, edits, albums — downloading previews and originals as needed, Lightroom-cloud style, on a
   machine you own, with an admin page in the browser for users and devices. Photo folders already on the server (a
-  NAS share) can be part of a user's library, read in place: never copied, moved or changed, shown on every device in
-  their folders. Off until you sign in ([set it up](docs/self-hosting.md), [reference](docs/sync.md)).
+  NAS share) can be part of a user's library, read in place: never copied or moved, shown on every device in their
+  folders (and, if you allow a folder, with XMP sidecars written beside the photos for Lightroom and uploads filed
+  into it). A library you already had can merge into the server's, uploads and downloads resume after a broken
+  connection, and right-click an album ▸ Share Link gives anyone a read-only page of it, no account. Off until you sign
+  in ([set it up](docs/self-hosting.md), [reference](docs/sync.md)).
 
 <br>
 

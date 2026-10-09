@@ -11,11 +11,13 @@ in, and only to the server you name.
 - **Server:** `apps/lightcraft-server`, one pure-Rust binary (or a Docker image). It keeps each user's library and
   photo files, orders every device's changes, and serves the web build at `/`. Photo folders that are already on the
   server (a NAS share, years of `2019/Holidays/…`) can be a user's **library folders**: read where they are, never
-  copied, moved or changed ([below](#library-folders-photos-already-on-the-server)).
+  copied or moved, and written to (XMP sidecars; uploads filed into one) only where an admin allows it
+  ([below](#library-folders-photos-already-on-the-server)).
 - **Clients:** the desktop app (Settings ▸ Sync), the web build the server serves (open the server's address in a
   browser, Settings ▸ Sync), the iOS app (a spike: [ios.md](ios.md)) and `lightcraft-cli`/MCP. The protocol is plain
   HTTP + JSON and the device side is sans-IO Rust (`crates/engine/src/sync.rs`, `crates/catalog/src/sync.rs`).
-- **v1 is one person's devices.** Sharing albums with other people comes later.
+- **It is one person's devices.** Other people see an album through a read-only [link](#share-an-album) (no account);
+  there are no shared libraries or albums several people edit.
 
 ## Run a server
 
@@ -451,8 +453,9 @@ space no device is given. An original kept in a library folder is served from th
 
 v1, honestly:
 
-- **The iOS app is a spike** ([ios.md](ios.md)): it runs on the simulator (compact touch layout); sync there is wired
-  up but not yet run on a simulator or device.
+- **The iOS app is a spike** ([ios.md](ios.md)): sync runs on the simulator (sign-in, upload with resume, server-built
+  previews, pulling and downloading originals); it has not been run on a device, so TLS from a phone, the local-network
+  prompt and syncing while the app is in the background are untested.
 - **In the browser** synced previews and downloaded originals are kept in the browser's storage. Auto settings, white
   balance picks and exports up to 2560 px read the photo's preview when its original isn't there; larger exports
   need the original: **Photo ▸ Download Originals** first (the export says so). The browser can't have the server

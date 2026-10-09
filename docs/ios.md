@@ -11,7 +11,7 @@ through ImageIO, saving and pausing the GPU as iOS backgrounds the app, a memory
 were checked on the simulator by hand (2026-10-08, iPhone 18 Pro simulator, iOS 27.0); on the device so far: launch,
 the GPU, the memory budget, the library on disk and the lifecycle notifications. *Native host* lists what was checked
 where. Its library, saved on the device, starts with the procedural demo photos. Sync with your own LightCraft server
-([sync.md](sync.md)) is wired up but not yet run. This page records what is verified, what is not, and the plan.
+([sync.md](sync.md)) runs on the simulator (not yet on a device). This page records what is verified, what is not, and the plan.
 
 ## What is verified
 
@@ -121,8 +121,8 @@ with the device); a new one starts with the demo photos. `$LIGHTCRAFT_LIBRARY` p
 (`SIMCTL_CHILD_LIGHTCRAFT_LIBRARY=… xcrun simctl launch …`). If it can't be opened the app falls back to the in-memory
 demo library (nothing saved, no sync) and logs why.
 
-**Sync** is wired up as on the desktop ([sync.md](sync.md)) but has not been run on a simulator or device yet (it is
-type-checked for iOS and its library handling unit-tested on Linux): Menu ▸ Settings ▸ Sync in the compact layout
+**Sync** is the desktop's ([sync.md](sync.md)), run on the simulator (see *Checked by hand* below; not yet on a
+device): Menu ▸ Settings ▸ Sync in the compact layout
 (Settings ▸ Sync or the cloud icon in the desktop one), the server address
 (`photos.example.com` is enough; https is assumed, and a capitalised first letter is fine), user name and password;
 the library then fills from the server, previews first, originals on request. The device signs in under the name
@@ -175,8 +175,24 @@ see *Xcode, on a Mac*):
 | A library moved by an app update re-points its photos (`location.json`; a reinstall gave the container a new path) | — | ✅ |
 | The compact layout (A2.22) draws: the edit view with its group row, sliders and tool bar (an in-app screenshot through `LIGHTCRAFT_SCRIPT`) | ✅ | ✅ |
 
+**Sync** (2026-10-09; simulator: iPhone 17 Pro, iOS 26.5; a local `lightcraft-server` on loopback over plain http,
+behind a logging proxy to see every request; driven with `LIGHTCRAFT_SCRIPT`):
+
+| What | Simulator | Device |
+|---|---|---|
+| Sign in from Settings ▸ Sync (compact layout draws the form, status, Sync Now, Pause, Storage); the token is kept | ✅ | — |
+| A library with four imported photos uploads to an empty server: one push of the library's ops, then for each original `HEAD` (the resume offset) and `PUT`; the server builds the smart and mini previews (`serverPreviews`, the iOS default) | ✅ | — |
+| A second device (CLI) joins, pulls all of it, adds two photos; the phone pulls them as previews (30 photos in the grid, one only as a preview) and **Download Originals** fetches the file (332 KB) | ✅ | — |
+| A library with only the demo photos signing in to an empty server adopts the server's library (the demo photos are not uploaded) | ✅ | — |
+| TLS (rustls, Mozilla roots) from the phone, the local-network permission prompt, sync while backgrounded, typing the sign-in fields on the on-screen keyboard | — | — |
+
+This run found one bug: opening Settings ▸ Sync while the sign-in was still on its way asked the server for the album
+links with no token yet, and the server's 401 signed the device out (fixed, with a test: the engine tests' fake server
+now refuses a request with no token, like the real one).
+
 Not yet checked anywhere: a ProRAW DNG and a Live Photo from a real library, an iCloud file not yet downloaded, a
-folder on a USB drive, the share sheet as an iPad popover, backgrounding during an export, a memory warning, sync.
+folder on a USB drive, the share sheet as an iPad popover, backgrounding during an export, a memory warning, and
+sync on a device (TLS, the local-network prompt, backgrounding).
 The device column needs someone at the phone (pickers and sheets are system UI); `LIGHTCRAFT_SCRIPT` covers the rest.
 
 ## Scope
@@ -231,8 +247,8 @@ layout and interaction only: no Adobe icons, artwork, fonts, presets or screensh
 4. **A host: written, not yet run** (*Native host*): lifecycle, pickers, share sheet, sandbox paths. Still none:
    `std::process` open/reveal (Show in Finder, Edit in External Editor) and opening links.
 5. **GPU lifecycle: done in the engine** (`gpu::pause` / `resume`, tested); the host calls it on backgrounding.
-6. **Unverified:** eframe/winit and accesskit on a device, egui text input and long-press on a phone, sync from a
-   device, Metal's
+6. **Unverified:** eframe/winit and accesskit on a device, egui text input and long-press on a phone, sync on a
+   device (verified on the simulator), Metal's
    storage-buffer limits on iPhone (the GPU path needs at least 10 per stage), Apple ProRAW against real files (JPEG XL
    compressed DNG is rejected), and the `rfd` file dialogs the desktop app uses.
 

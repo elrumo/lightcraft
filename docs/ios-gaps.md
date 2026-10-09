@@ -87,11 +87,11 @@ mark: not started.
 
 | # | Feature | Pri | Needs |
 |---|---|---|---|
-| B2.1 | Library sync between devices (edits, ratings, albums, presets) | P1 | wired up, not yet run on iOS: the user's own `lightcraft-server` ([`sync.md`](sync.md)), Menu → Settings → Sync; verify on a simulator and a device (keyboard entry, TLS, backgrounding) |
-| B2.2 | Smart previews / originals management: keep previews on the phone and originals elsewhere, download on demand, free up space | P1 | sync has the tiers (mini / smart previews, originals on request, albums kept offline); no free-up-space or size budget yet (`sync.md`, Limits), no compact UI for offline albums |
+| B2.1 | Library sync between devices (edits, ratings, albums, presets) | P1 | runs on the simulator: the user's own `lightcraft-server` ([`sync.md`](sync.md)), Menu → Settings → Sync (sign-in, upload with resume, server-built previews, pulling another device's photos, downloading an original: `ios.md` → *Checked by hand*); not yet on a device (keyboard entry, TLS, backgrounding) |
+| B2.2 | Smart previews / originals management: keep previews on the phone and originals elsewhere, download on demand, free up space | P1 | sync has the tiers (mini / smart previews, originals on request, albums kept offline) and a size limit for downloaded originals (Settings ▸ Sync ▸ Originals limit; the least recently used go first); no compact UI for offline albums |
 | B2.3 | Desktop ↔ phone handoff over the local network or iCloud (open the same catalog) | P2 | B2.1 shares one library through the server; no direct device-to-device handoff |
-| B2.4 | Shared albums with comments, likes and per-viewer permissions | P2 | the sync server is the place for it; not planned yet (sync v1 is one person's devices) |
-| B2.5 | Web galleries (publish an album as a page) | P2 | the sync server could serve them; not planned yet |
+| B2.4 | Shared albums with comments, likes and per-viewer permissions | P2 | read-only album links are in (Share Link on an album; `sync.md` → *Share an album*); comments, likes and per-viewer permissions are not planned (sync is one person's devices) |
+| B2.5 | Web galleries (publish an album as a page) | P2 | the sync server serves an album as a page behind a link (B2.4); a public gallery with its own address is not planned |
 | B2.6 | Share edits as a link or as a preset file; share a photo with a preset embedded | P1 | preset export exists (`file.exportPresets`); needs A1.3 |
 | B2.7 | Share a before / after image or a time-lapse of the edit history | P2 | |
 | B2.8 | 🟡 Save to Photos and send to other apps in the formats / sizes / watermark of the export dialog: exports open the share sheet (A1.3; checked on the simulator) | P0 | run on a device |
