@@ -75,6 +75,7 @@ const LAYOUT: &[(&str, &[&str])] = &[
             "---",
             "sync.now",
             "sync.pause",
+            "view.syncStatus",
             "album.makeAvailableOffline",
             "---",
             "dialog.newAlbum",
@@ -290,6 +291,8 @@ fn host_supports(app: &LightcraftApp, id: &str) -> bool {
         "sync.now" | "sync.pause" | "sync.downloadOriginals" | "album.makeAvailableOffline" | "photo.makeAvailableOffline" => {
             app.services.sync_exec.is_some() && app.session.sync_state().is_some()
         }
+        // (a library that never synced shows how to start)
+        "view.syncStatus" => app.services.sync_exec.is_some(),
         _ => true,
     }
 }

@@ -2,6 +2,17 @@
 
 ## October 2026
 
+### Sync
+- **Sync status on the grid.** The cloud button (beside Select and "…" on the phone, in the top bar on a computer) opens
+  a panel like Lightroom's: whether you're up to date, the photos being uploaded and files being downloaded ("12 of 56"
+  and which), what your server is doing for you (scanning its library folders, building previews, indexing photos for
+  search) and how much room it has left, with Pause and Sync Now. It's amber with a `!` when something needs you.
+- **Signing in with photos of your own to a server that already has a library** no longer stops: LightCraft asks
+  whether to **add your photos to the server's library** (photos both have are kept once; edits, ratings, keywords and
+  albums come along), **use the server's library instead**, or **not sync**. Before anything changes, a copy of your
+  library's catalog is kept in its folder. Nothing syncs until you choose. See `docs/sync.md`.
+- Settings ▸ Sync on a phone shows the status, server address and errors in full, wrapped, instead of cut off with "…".
+
 ### Map and places
 - **Map view** (View ▸ Map, or the pin in the bottom bar; on a phone, "…" ▸ Map): your photos where they were
   taken, grouped into thumbnail markers with counts, on desktop, in the browser and on iPhone. Pan, zoom with the

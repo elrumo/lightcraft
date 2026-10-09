@@ -329,6 +329,7 @@ fn overlays(app: &mut LightcraftApp, ctx: &egui::Context) {
     let ctx = ctx.clone();
     super::second::show(app, &ctx);
     super::notices::show(app, &ctx);
+    super::sync_status::show(app, &ctx);
     super::dialogs::show(app, &ctx);
     super::library_problem::show(app, &ctx);
     crate::import::progress(app, &ctx);
@@ -393,7 +394,61 @@ fn grid_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
         if has_photos && glass_button(ui, "button:select", Some("Select"), "Select", t).clicked() {
             let _ = app.run("view.selectMode", json!({"on": true}));
         }
+        // the cloud: where syncing stands, and its popover (Lightroom's has it beside the "…" too)
+        if app.services.sync_exec.is_some() {
+            ui.add_space(4.0);
+            let cloud = cloud_button(app, ui, t);
+            if cloud.clicked() {
+                crate::panels::sync_status::open(ui.ctx(), cloud.rect);
+            }
+        }
     });
+}
+
+/// The grid bar's cloud: a glass circle like the "…", its cloud tinted by how syncing stands (blue
+/// while it works, with an arc turning round it; amber with a red `!` on a problem), and the
+/// number of things waiting under it is the popover's to say.
+fn cloud_button(app: &LightcraftApp, ui: &mut egui::Ui, t: &Tokens) -> egui::Response {
+    const H: f32 = 34.0;
+    let (tip, problem, busy) = crate::sync_ui::cloud_status(app);
+    let unsaved = app.session.unsaved().is_some();
+    let (r, resp) = ui.allocate_exact_size(vec2(44.0, 44.0), Sense::click());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, tip.clone()));
+    crate::widgets::register(ui.ctx(), "icon:cloud", r);
+    let k = ui.ctx().animate_bool_with_time(resp.id.with("press"), resp.is_pointer_button_down_on(), 0.1);
+    let circle = egui::Rect::from_center_size(r.center(), vec2(H, H) * (1.0 - 0.06 * k));
+    let dark = Tokens::is_dark(ui.ctx());
+    let veil = |a: f32| if dark { egui::Color32::from_white_alpha(a as u8) } else { egui::Color32::from_black_alpha((a * 0.55) as u8) };
+    let tint = if problem || unsaved {
+        t.caution
+    } else if busy {
+        t.accent
+    } else {
+        t.text
+    };
+    let p = ui.painter();
+    p.circle_filled(circle.center(), H / 2.0 * (1.0 - 0.06 * k), veil(36.0 + 30.0 * k));
+    p.circle_stroke(circle.center(), H / 2.0 * (1.0 - 0.06 * k), Stroke::new(0.5, veil(28.0)));
+    crate::icons::paint(p, egui::Rect::from_center_size(circle.center(), vec2(20.0, 20.0)), Icon::Cloud, tint);
+    if busy {
+        // an arc turning round the cloud while it works
+        let t0 = ui.ctx().input(|i| i.time) as f32;
+        let a0 = t0 * 3.2;
+        let pts: Vec<egui::Pos2> = (0..=14)
+            .map(|i| {
+                let a = a0 + i as f32 * 0.09;
+                circle.center() + vec2(a.cos(), a.sin()) * (H / 2.0 - 1.5)
+            })
+            .collect();
+        p.add(egui::Shape::line(pts, Stroke::new(1.8, t.accent)));
+        ui.ctx().request_repaint();
+    }
+    if problem || unsaved {
+        let c = circle.right_top() + vec2(-2.0, 4.0);
+        p.circle_filled(c, 6.5, t.reject);
+        p.text(c, Align2::CENTER_CENTER, "!", t.semibold(9.5), egui::Color32::WHITE);
+    }
+    resp
 }
 
 /// Over the map: back to the grid on the left.

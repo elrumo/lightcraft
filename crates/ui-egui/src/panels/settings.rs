@@ -152,6 +152,7 @@ fn list(app: &LightcraftApp, ui: &mut egui::Ui, t: &Tokens, tab: &mut String) {
     ui.add_space(28.0);
     for ((id, label), (icon, tile)) in TABS.iter().zip(TAB_TILES) {
         let value = match *id {
+            "sync" if app.session.sync_conflict().is_some() => crate::i18n::tr("Choose…"),
             "sync" if synced.is_some() => crate::i18n::tr("On"),
             "sync" => crate::i18n::tr("Off"),
             "general" => app.ui.language.name(),
@@ -334,16 +335,33 @@ fn pick<V: PartialEq + Copy>(ui: &mut egui::Ui, t: &Tokens, id: &str, label: &st
 }
 
 /// A label and its value: beside each other on the desktop, the value on the right on the phone.
+/// Nothing is ever cut off: a value that doesn't fit in the rest of the row wraps (on the phone it
+/// moves to lines of its own under the label, as iOS's long values do).
 fn info(ui: &mut egui::Ui, t: &Tokens, label: &str, value: &str, color: Color32) -> Rect {
     if !crate::is_compact(ui.ctx()) {
-        return row(ui, t, label, |ui| ui.label(RichText::new(value).color(color)).rect);
+        return row(ui, t, label, |ui| ui.add(egui::Label::new(RichText::new(value).color(color)).wrap()).rect);
     }
-    let (r, _) = tap_row(ui, t, "", label, ROW, 16.0, false);
-    let label = line(ui, crate::i18n::tr(label), 17.0, t.text, r.width() * 0.62);
-    let value = line(ui, value, 17.0, if color == t.text { t.text_dim } else { color }, r.width() - 44.0 - label.size().x);
-    ui.painter().galley(pos2(r.left() + 16.0, r.center().y - label.size().y / 2.0), label, t.text);
-    let vr = Rect::from_min_size(pos2(r.right() - 16.0 - value.size().x, r.center().y - value.size().y / 2.0), value.size());
-    ui.painter().galley(vr.min, value, t.text_dim);
+    let value_color = if color == t.text { t.text_dim } else { color };
+    let label_text = crate::i18n::tr(label);
+    let width = ui.available_width();
+    let label_galley = ui.painter().layout_no_wrap(label_text.to_string(), t.font(17.0), t.text);
+    let one_line = ui.painter().layout_no_wrap(value.to_string(), t.font(17.0), value_color);
+    // beside the label when it all fits on one line (with room for the margins and a gap)
+    if label_galley.size().x + 12.0 + one_line.size().x + 32.0 <= width {
+        let (r, _) = tap_row(ui, t, "", label_text, ROW, 16.0, false);
+        ui.painter().galley(pos2(r.left() + 16.0, r.center().y - label_galley.size().y / 2.0), label_galley, t.text);
+        let vr = Rect::from_min_size(pos2(r.right() - 16.0 - one_line.size().x, r.center().y - one_line.size().y / 2.0), one_line.size());
+        ui.painter().galley(vr.min, one_line, value_color);
+        return vr;
+    }
+    // otherwise the label, then the value wrapped over the whole width under it
+    const PAD: f32 = 10.0;
+    let wrapped = ui.painter().layout(value.to_string(), t.font(15.0), value_color, (width - 32.0).max(40.0));
+    let h = (PAD + label_galley.size().y + 4.0 + wrapped.size().y + PAD).max(ROW);
+    let (r, _) = tap_row(ui, t, "", label_text, h, 16.0, false);
+    ui.painter().galley(pos2(r.left() + 16.0, r.top() + PAD), label_galley.clone(), t.text);
+    let vr = Rect::from_min_size(pos2(r.left() + 16.0, r.top() + PAD + label_galley.size().y + 4.0), wrapped.size());
+    ui.painter().galley(vr.min, wrapped, value_color);
     vr
 }
 
@@ -396,8 +414,8 @@ fn heading(ui: &mut egui::Ui, t: &Tokens, text: &str) {
         // iOS: small grey capitals over the card
         card_end(ui, t);
         ui.add_space(26.0);
-        ui.horizontal(|ui| {
-            ui.add_space(16.0);
+        // (a heading with a long server address in it wraps like a note)
+        egui::Frame::NONE.inner_margin(Margin::symmetric(16, 0)).show(ui, |ui| {
             ui.label(RichText::new(crate::i18n::tr(text).to_uppercase()).size(13.0).color(t.text_dim));
         });
         ui.add_space(7.0);
@@ -1027,12 +1045,21 @@ fn sync_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
             let (tip, problem, _) = crate::sync_ui::cloud_status(app);
             let r = info(ui, t, crate::i18n::tr("Status"), &tip, if problem { t.caution } else { t.text });
             register(ui.ctx(), "label:syncStatus", r);
+            // signed in to a server that has a library already, and this one has photos: nothing
+            // syncs until the user chooses (a dialog asked once; this is where to come back to it)
+            let waiting = app.session.sync_conflict().is_some();
             row(ui, t, "", |ui| {
-                if action(ui, t, "syncNow", "Sync Now", true, false) {
-                    sync_cmd(app, ui, "sync.now", json!({}));
-                }
-                if action(ui, t, "syncPause", if c.paused { "Resume Syncing" } else { "Pause Syncing" }, true, false) {
-                    sync_cmd(app, ui, "sync.pause", json!({"on": !c.paused}));
+                if waiting {
+                    if action(ui, t, "syncChoose", "Choose What to Do…", true, false) {
+                        sync_cmd(app, ui, "dialog.syncChoice", json!({}));
+                    }
+                } else {
+                    if action(ui, t, "syncNow", "Sync Now", true, false) {
+                        sync_cmd(app, ui, "sync.now", json!({}));
+                    }
+                    if action(ui, t, "syncPause", if c.paused { "Resume Syncing" } else { "Pause Syncing" }, true, false) {
+                        sync_cmd(app, ui, "sync.pause", json!({"on": !c.paused}));
+                    }
                 }
                 if crate::is_compact(ui.ctx()) {
                     // (iOS: signing out on a card of its own)
@@ -1043,6 +1070,16 @@ fn sync_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
                     sync_cmd(app, ui, "sync.signOut", json!({}));
                 }
             });
+            if waiting {
+                hint(
+                    ui,
+                    t,
+                    crate::i18n::tr(
+                        "This library and the server's both have photos. Add this library's photos to the server's, or use the server's library instead; nothing syncs until you choose.",
+                    ),
+                );
+                return;
+            }
             storage_section(app, ui, t, &c.server);
             heading(ui, t, crate::i18n::tr("On This Device"));
             let mut keep = c.store_originals;
@@ -1114,7 +1151,7 @@ fn sync_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
                 ui,
                 t,
                 crate::i18n::tr(
-                    "The first library signed in uploads its photos to the empty server. To get them on another computer, sign in from a new, empty library there.",
+                    "A library signed in to an empty server uploads its photos there. Signing in from a new, empty library gets the server's. If both have photos, you choose: add this library to the server's, or use the server's instead.",
                 ),
             );
         }

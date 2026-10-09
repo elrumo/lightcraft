@@ -28,6 +28,8 @@ pub mod rules_editor;
 pub mod second;
 pub mod settings;
 pub mod strip;
+pub mod sync_choice;
+pub mod sync_status;
 pub mod topbar;
 
 use egui::{Rect, pos2, vec2};

@@ -361,3 +361,36 @@ fn sidecars_changed_by_lightroom_are_read_again() {
     drop(server);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn the_scan_of_library_folders_is_reported_to_devices() {
+    let root = temp("activity");
+    let photos = root.join("nas/photos");
+    write_png(&photos.join("a.png"), 1);
+    write_png(&photos.join("2025/b.png"), 2);
+    // a file that can't be read as a photo is a problem the device is told about
+    std::fs::write(photos.join("broken.jpg"), b"not a jpeg").unwrap();
+    let data = root.join("data");
+    accounts::set_user(&data, "ann", "correct horse", false).unwrap();
+    accounts::add_folder(&data, "ann", &photos.to_string_lossy(), Some("Photos")).unwrap();
+    let mut cfg = Config::new(&data, "127.0.0.1:0");
+    cfg.scan_interval = None;
+    cfg.preview_threads = 1;
+    let server = Server::start(cfg).unwrap();
+    let url = format!("http://{}", server.addr());
+    let st = scanned(&server, 0);
+    assert_eq!(st.files, 3, "{st:?}");
+
+    let mut dev = Session::new().with_fs();
+    dev.open_library(root.join("device"), false).unwrap();
+    dev.execute("sync.signIn", &json!({"server": url, "user": "ann", "password": "correct horse", "device": "test"})).unwrap();
+    sync(&mut dev);
+    let r = dev.execute("sync.activity", &json!({"refresh": true})).unwrap();
+    let scan = &r["server"]["scan"];
+    assert_eq!((&scan["scanning"], &scan["files"]), (&json!(false), &json!(3)), "{r}");
+    assert!(scan["lastScan"].as_u64().unwrap_or(0) > 0, "when it ended: {r}");
+    assert!(scan["problems"].as_u64().unwrap_or(0) >= 1, "the unreadable file: {r}");
+    assert_eq!(r["server"]["previews"]["total"], 0, "all previews are built: {r}");
+    drop(server);
+    let _ = std::fs::remove_dir_all(&root);
+}
