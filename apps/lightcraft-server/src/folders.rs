@@ -965,6 +965,9 @@ pub(crate) fn run_previews(st: &Arc<State>) {
         let blobs = accounts::user_dir(&st.data, &user).join("blobs");
         let r = build_previews(&blobs, &hash, &file);
         lock(&sc.jobs).1.remove(&(user.clone(), hash.clone()));
+        if r.is_ok() {
+            st.vision.wake();
+        }
         {
             // one more done; the batch is over when all of it is
             let mut runs = lock(&sc.runs);

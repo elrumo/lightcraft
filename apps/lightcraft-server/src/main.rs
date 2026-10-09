@@ -39,6 +39,7 @@ const USAGE: &str = "usage:
   lightcraft-server user add NAME [--admin]   (password: typed, stdin or $LIGHTCRAFT_PASSWORD)
   lightcraft-server user passwd|remove NAME
   lightcraft-server user admin NAME on|off    (admins manage the server at /admin)
+  lightcraft-server user faces NAME on|off    (find the people in NAME's photos; needs `model download --faces`)
   lightcraft-server user list
   lightcraft-server device list NAME
   lightcraft-server device revoke NAME ID
@@ -47,6 +48,7 @@ const USAGE: &str = "usage:
   lightcraft-server folder list [NAME]
   lightcraft-server folder ignore NAME [PATTERN…]   (names the scan skips, like '*.fcpbundle'; none: show them, '': clear)
   lightcraft-server scan [NAME]                (read the library folders now)
+  lightcraft-server model status|download [--accept-licences] [--text] [--faces] [--vision-dir DIR]   (the search model: about 1.5 GB, Google's Apache License 2.0; --text adds the models that read the text in photos: about 31 MB, Baidu's Apache License 2.0; --faces adds the models that find and tell apart faces: about 39 MB, MIT and Apache 2.0)
   lightcraft-server gc [--dry-run]
   lightcraft-server health                     (is the server answering? exit status)
 options (any command): --data DIR (default $LIGHTCRAFT_DATA or ./lightcraft-data)
@@ -80,7 +82,7 @@ fn positional(args: &[String]) -> Vec<&str> {
     for a in args {
         if skip {
             skip = false;
-        } else if matches!(a.as_str(), "--data" | "--listen" | "--web" | "--name" | "--scan-interval") {
+        } else if matches!(a.as_str(), "--data" | "--listen" | "--web" | "--name" | "--scan-interval" | "--vision-dir") {
             skip = true;
         } else if !a.starts_with("--") {
             out.push(a.as_str());
@@ -132,6 +134,7 @@ fn run(args: &[String]) -> Result<(), String> {
                 .unwrap_or(15);
             let threads = std::env::var("LIGHTCRAFT_PREVIEW_THREADS").ok().and_then(|t| t.trim().parse::<usize>().ok());
             let mut cfg = Config::new(data.clone(), listen);
+            cfg.vision_dir = Some(vision_dir(args, &data));
             cfg.web = web.clone();
             cfg.scan_interval = (minutes > 0).then(|| Duration::from_secs(minutes.saturating_mul(60)));
             cfg.preview_threads = threads.unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| (n.get() / 2).clamp(1, 4)));
@@ -162,6 +165,11 @@ fn run(args: &[String]) -> Result<(), String> {
             println!("{name} {} an admin", if *on == "on" { "is" } else { "is no longer" });
             Ok(())
         }
+        ["user", "faces", name, on @ ("on" | "off")] => {
+            accounts::set_faces(&data, name, *on == "on")?;
+            println!("{name}: finding the people in their photos is {}", if *on == "on" { "on (once the face models are installed)" } else { "off" });
+            Ok(())
+        }
         ["user", "passwd", name] => {
             accounts::set_user(&data, name, &password()?, true)?;
             println!("changed {name}'s password");
@@ -174,7 +182,7 @@ fn run(args: &[String]) -> Result<(), String> {
         }
         ["user", "list"] => {
             for (name, u) in accounts::read_users(&data)?.users {
-                println!("{name}{}", if u.admin { "\tadmin" } else { "" });
+                println!("{name}{}{}", if u.admin { "\tadmin" } else { "" }, if u.faces { "\tfaces" } else { "" });
             }
             Ok(())
         }
@@ -235,6 +243,43 @@ fn run(args: &[String]) -> Result<(), String> {
             }
             Ok(())
         }
+        ["model", "status"] => {
+            println!("{}", lightcraft_server::vision::model_status(&vision_dir(args, &data)));
+            Ok(())
+        }
+        ["model", "download"] => {
+            let dir = vision_dir(args, &data);
+            let (text, accepted) = (args.iter().any(|a| a == "--text"), args.iter().any(|a| a == "--accept-licences"));
+            let mirrors = dir.parent().map(|p| p.join("siglip2-mirrors.txt"));
+            let search_missing = !lightcraft_vision::siglip::is_model_dir(&dir);
+            let text_missing = text && !lightcraft_vision::ocr::is_model_dir(&dir.join(lightcraft_engine::vision::TEXT_DIR));
+            let faces = args.iter().any(|a| a == "--faces");
+            let faces_missing = faces && !lightcraft_vision::faces::model::is_model_dir(&dir.join(lightcraft_engine::vision::FACES_DIR));
+            if !search_missing && !text_missing && !faces_missing {
+                println!("the model{} installed in {}", if text { "s are" } else { " is" }, dir.display());
+                return Ok(());
+            }
+            if !accepted {
+                return Err(format!(
+                    "{}\n\nThe models are not part of LightCraft. Downloading them means accepting those licences; add --accept-licences to download them.",
+                    lightcraft_server::vision::model_status(&dir)
+                ));
+            }
+            if search_missing {
+                lightcraft_server::vision::download_model(&dir, mirrors.as_deref())?;
+                println!("the search model is installed in {}", dir.display());
+            }
+            if faces_missing {
+                lightcraft_server::vision::download_face_models(&dir, mirrors.as_deref())?;
+                println!("the face models are installed in {}", dir.join(lightcraft_engine::vision::FACES_DIR).display());
+            }
+            if text_missing {
+                lightcraft_server::vision::download_text_models(&dir, mirrors.as_deref())?;
+                println!("the text-reading models are installed in {}", dir.join(lightcraft_engine::vision::TEXT_DIR).display());
+            }
+            println!("the running server finds them within a minute");
+            Ok(())
+        }
         ["health"] => {
             health(&option(args, "--listen").or_else(|| std::env::var("LIGHTCRAFT_LISTEN").ok()).unwrap_or_else(|| "127.0.0.1:8080".into()))
         }
@@ -249,6 +294,14 @@ fn run(args: &[String]) -> Result<(), String> {
         }
         _ => Err(USAGE.into()),
     }
+}
+
+/// Where the search model's files are: `--vision-dir`, `$LIGHTCRAFT_VISION_DIR`, else `<data>/models/siglip2`.
+fn vision_dir(args: &[String], data: &Path) -> PathBuf {
+    option(args, "--vision-dir")
+        .or_else(|| std::env::var("LIGHTCRAFT_VISION_DIR").ok())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| data.join("models").join("siglip2"))
 }
 
 /// Ask a running server to scan a user's library folders (it looks for the request every few

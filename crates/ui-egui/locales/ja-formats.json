@@ -121,6 +121,13 @@
   "{weekday}, {day} {month} {year}": "{year}年{month}月{day}日（{weekday}）",
   "{year}": "{year}年",
   "Add {n}": "{n}枚を追加",
+  "Getting your photos ready to search: {done} of {total}": "検索の準備中：{done}/{total}枚",
+  "{indexed} of {total} photos can be searched.": "{indexed}/{total}枚を検索できます",
+  "Your server has {indexed} of {total} photos ready to search.": "サーバーで検索の準備ができた写真：{indexed}/{total}枚",
+  "Reading the text in your photos: {done} of {total}": "写真の文字を読み取り中：{done}/{total}枚",
+  "Confirm {pending} more": "さらに{pending}件を確認",
+  "{faces} faces found in {photos} photos.": "{photos}枚の写真から{faces}個の顔が見つかりました。",
+  "Looking for faces: {done} of {total}": "顔を探しています：{done}/{total}枚",
   "{n} photos · synced with {server}": "{n}枚・{server}と同期",
   "{n} photos on this device": "このデバイスに{n}枚",
   "{n} photos, not saved": "{n}枚（保存されません）"

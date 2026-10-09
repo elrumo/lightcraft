@@ -2,7 +2,8 @@
 //! their devices (the desktop app, the web build it serves at `/`, later iOS). Self-hosted, one
 //! binary; see `docs/sync.md`.
 //!
-//! The server never decodes a photo. It keeps the single order of every device's changes
+//! The server decodes photos only to build previews of library folders' photos and to search by
+//! description ([`vision`]). It keeps the single order of every device's changes
 //! ([`lightcraft_catalog::sync::ServerCore`]: each push is validated by applying it to the
 //! user's catalog, all or nothing), the photo files by content hash (originals and the smart and
 //! mini previews devices build), the presets document, and who may sign in. Plain HTTP: put it
@@ -33,6 +34,7 @@ pub mod folders;
 pub mod gc;
 pub mod render;
 pub mod throttle;
+pub mod vision;
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -57,6 +59,14 @@ pub struct Config {
     pub scan_interval: Option<std::time::Duration>,
     /// Threads building previews of photos found in library folders.
     pub preview_threads: usize,
+    /// Where the search model's files are (default `<data>/models/siglip2`).
+    pub vision_dir: Option<PathBuf>,
+    /// A model to search with instead of SigLIP 2 from `vision_dir` (tests).
+    pub embedder: Option<Arc<dyn lightcraft_vision::Embedder>>,
+    /// A reader of the text in photos instead of PP-OCRv6 from `<vision_dir>/ocr` (tests).
+    pub text_reader: Option<Arc<dyn lightcraft_vision::TextReader>>,
+    /// A face finder instead of YuNet and SFace from `<vision_dir>/faces` (tests).
+    pub face_finder: Option<Arc<dyn lightcraft_vision::FaceEngine>>,
     /// Renders at once for devices that export on the server ([`render`]).
     pub render_threads: usize,
 }
@@ -72,6 +82,10 @@ impl Config {
             max_requests: 64,
             scan_interval: Some(std::time::Duration::from_secs(15 * 60)),
             preview_threads: 2,
+            vision_dir: None,
+            embedder: None,
+            text_reader: None,
+            face_finder: None,
             render_threads: 1,
         }
     }
@@ -90,6 +104,8 @@ pub struct State {
     pub(crate) libs: Mutex<HashMap<String, Arc<Mutex<api::UserLib>>>>,
     /// Library folder scans and preview building.
     pub(crate) folders: folders::Scanner,
+    /// Search by description: the model and each user's index.
+    pub(crate) vision: vision::Search,
     /// Renders for devices ([`render`]).
     pub(crate) render: render::Slots,
     /// Failed sign-ins (password guessing).
@@ -119,7 +135,9 @@ impl Server {
             let at = if addr.ip().is_unspecified() { format!("http://<this server>:{}", addr.port()) } else { format!("http://{addr}") };
             log::warn!("no admin yet: open {at}/admin (or your domain's /admin) and enter the setup code {code}");
         }
+        let vision_dir = cfg.vision_dir.clone().unwrap_or_else(|| cfg.data.join("models").join("siglip2"));
         let state = Arc::new(State {
+            vision: vision::Search::new(vision_dir, cfg.embedder).with_reader(cfg.text_reader).with_finder(cfg.face_finder),
             accounts: Mutex::new(accounts::Accounts::new(&cfg.data)),
             listen: addr.to_string(),
             setup: Mutex::new(setup),
@@ -138,6 +156,8 @@ impl Server {
         let mut workers = Vec::new();
         let s = state.clone();
         workers.push(std::thread::Builder::new().name("lc-scan".into()).spawn(move || folders::run_scanner(&s)).map_err(|e| e.to_string())?);
+        let s = state.clone();
+        workers.push(std::thread::Builder::new().name("lc-vision".into()).spawn(move || vision::run(&s)).map_err(|e| e.to_string())?);
         for i in 0..cfg.preview_threads.max(1) {
             let s = state.clone();
             let t = std::thread::Builder::new().name(format!("lc-previews-{i}")).spawn(move || folders::run_previews(&s));
@@ -165,6 +185,11 @@ impl Server {
         self.state.folders.request(user);
     }
 
+    /// Look for photos to index for search now (tests; it happens by itself as previews arrive).
+    pub fn index_for_search(&self) {
+        self.state.vision.wake();
+    }
+
     /// Serve until the process ends.
     pub fn wait(mut self) {
         if let Some(t) = self.thread.take() {
@@ -177,6 +202,7 @@ impl Drop for Server {
     fn drop(&mut self) {
         self.http.unblock();
         self.state.folders.shut_down();
+        self.state.vision.shut_down();
         if let Some(t) = self.thread.take() {
             let _ = t.join();
         }

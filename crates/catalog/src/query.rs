@@ -27,6 +27,11 @@ pub struct Filter {
     /// Only these photos (Find Similar results…); empty = no constraint.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub only: Vec<PhotoId>,
+    /// The description whose best matches `only` holds, best first (search by description). Unlike
+    /// a plain `only`, an empty `only` here means "no matches", and the view shows them in `only`'s
+    /// order.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub semantic: Option<String>,
     /// Any of these labels (the filter bar's multi-select); empty = no constraint.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub labels: Vec<ColorLabel>,
@@ -186,6 +191,9 @@ impl Filter {
         if !self.text.trim().is_empty() {
             v.push(format!("“{}”", self.text.trim()));
         }
+        if let Some(q) = &self.semantic {
+            v.push(format!("looks like “{}”", q.trim()));
+        }
         if let Some(rs) = self.rule_set.as_ref().filter(|r| !r.rules.is_empty()) {
             v.push(rs.describe());
         }
@@ -241,7 +249,7 @@ impl Filter {
         if !self.labels.is_empty() && !p.label.is_some_and(|l| self.labels.contains(&l)) {
             return false;
         }
-        if !self.only.is_empty() && !self.only.contains(&p.id) {
+        if (self.semantic.is_some() || !self.only.is_empty()) && !self.only.contains(&p.id) {
             return false;
         }
         if let Some(want) = &self.merged {
