@@ -7,6 +7,7 @@
 //!   presets.json   view.json        (user presets + favourites; last source/sort/selection)
 //!   prefs.json     (library preferences: XMP sidecars, import defaults, cache size, last export)
 //!   location.json  (the folder the library was last opened from: see below)
+//!   sidecars.json  (when each XMP sidecar was last read or written: see `sidecar::SidecarTimes`)
 //!   thumbs/        (rendered thumbnail cache, safe to delete)
 //!   Originals/     (photos imported with "copy into library")
 //! ```
@@ -401,6 +402,9 @@ impl Session {
         if let Some(d) = &self.smart_previews_dir {
             self.media.smart_dir = Some(d.clone());
         }
+        // when the XMP sidecars were last read or written (a cache: unreadable = empty)
+        self.sidecar_times =
+            files.read(crate::sidecar::SidecarTimes::FILE).ok().flatten().map(|b| crate::sidecar::SidecarTimes::from_json(&b)).unwrap_or_default();
         // sync: its state, and the id space this device allocates new ids in
         self.sync = crate::sync::SyncState::load(files.as_mut());
         if let Some(st) = self.sync.as_ref().filter(|st| !st.config.library.is_empty()) {
@@ -631,6 +635,7 @@ impl Session {
         let _ = self.end_interaction();
         let persisted = self.persist();
         self.save_view();
+        self.save_sidecar_times();
         let unlogged = if persisted.is_err() { self.pending_log.len() as u64 } else { 0 };
         let Some(lib) = self.library.as_mut() else { return Ok(()) };
         let before = lib.journal.seq();
@@ -670,6 +675,17 @@ impl Session {
                 Ok(()) => lib.view_written = v,
                 Err(e) => log::error!("library: view: {e}"),
             }
+        }
+    }
+
+    /// Save when the XMP sidecars were last read or written, if that changed (`sidecars.json`; a
+    /// cache, so a failure is only logged).
+    pub fn save_sidecar_times(&mut self) {
+        let Some(bytes) = self.sidecar_times.to_save() else { return };
+        let Some(lib) = self.library.as_mut() else { return };
+        match lib.files.write_atomic(crate::sidecar::SidecarTimes::FILE, &bytes) {
+            Ok(()) => self.sidecar_times.saved(),
+            Err(e) => log::error!("library: {}: {e}", crate::sidecar::SidecarTimes::FILE),
         }
     }
 

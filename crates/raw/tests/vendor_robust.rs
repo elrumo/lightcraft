@@ -1,4 +1,4 @@
-//! Malformed vendor raw files (NEF, ARW, PEF, ORF, RW2, CR2, RAF) must decode to an error, never panic.
+//! Malformed vendor raw files (NEF, ARW, PEF, ORF, RW2, CR2, CR3, RAF) must decode to an error, never panic.
 
 use lightcraft_tiff::tags as t;
 use lightcraft_tiff::{ByteOrder, IfdBuilder, ImageData, TiffWriter, Value};
@@ -166,6 +166,87 @@ fn raf() -> Vec<u8> {
     raf_file(W, H, 16, strip, Some(layout), b"\xff\xd8\xff\xd9")
 }
 
+/// An ISO-BMFF box.
+fn bmff(kind: &[u8; 4], body: &[u8]) -> Vec<u8> {
+    let mut v = ((body.len() + 8) as u32).to_be_bytes().to_vec();
+    v.extend_from_slice(kind);
+    v.extend_from_slice(body);
+    v
+}
+
+/// A Canon CR3 with a lossless-CRX raw track: one tile, four planes of noise (so the CRX decoder meets a stream of
+/// random codes), a `CMP1` coding header and a `CDI1`/`IAD1` image-area box.
+fn cr3(levels: u8) -> Vec<u8> {
+    let (w, h) = (W as usize, H as usize);
+    let planes: Vec<Vec<u8>> = (0..4u32).map(|p| (0..40u32).map(|i| ((i * 53 + p * 17) as u8) ^ 0x5a).collect()).collect();
+    let mut sample = vec![0xff, 0x01, 0, 8];
+    sample.extend((planes.iter().map(Vec::len).sum::<usize>() as u32).to_be_bytes());
+    sample.extend([0; 4]);
+    for (p, plane) in planes.iter().enumerate() {
+        sample.extend([0xff, 0x02, 0, 8]);
+        sample.extend((plane.len() as u32).to_be_bytes());
+        sample.extend([(p as u8) << 4 | 8, 0, 0, 0]);
+        sample.extend([0xff, 0x03, 0, 8]);
+        sample.extend((plane.len() as u32).to_be_bytes());
+        sample.extend([0, 0x20, 0, 1]);
+    }
+    sample.resize(112, 0);
+    sample.extend(planes.concat());
+    let mut cmp1 = vec![0xff, 0, 0, 0x30, 1, 0, 0, 0];
+    for v in [w, h, w, h] {
+        cmp1.extend((v as u32).to_be_bytes());
+    }
+    cmp1.extend([14, 0x40, levels, 0]);
+    cmp1.extend(112u32.to_be_bytes());
+    cmp1.extend([1, 1, 0, 0].repeat(4));
+    let mut iad = vec![0u8; 4];
+    for v in [
+        w as u16,
+        h as u16,
+        1,
+        2,
+        1,
+        0,
+        2,
+        2,
+        w as u16 - 3,
+        h as u16 - 3,
+        0,
+        0,
+        3,
+        h as u16 - 1,
+        4,
+        0,
+        w as u16 - 1,
+        3,
+        4,
+        4,
+        w as u16 - 1,
+        h as u16 - 1,
+    ] {
+        iad.extend(v.to_be_bytes());
+    }
+    let mut entry = vec![0u8; 82];
+    entry[24..26].copy_from_slice(&(w as u16).to_be_bytes());
+    entry[26..28].copy_from_slice(&(h as u16).to_be_bytes());
+    entry.extend(bmff(b"CMP1", &cmp1));
+    entry.extend(bmff(b"CDI1", &[vec![0u8; 4], bmff(b"IAD1", &iad)].concat()));
+    let full = |kind: &[u8; 4], body: &[u8]| bmff(kind, &[vec![0u8; 4], body.to_vec()].concat());
+    let mut stsd = 1u32.to_be_bytes().to_vec();
+    stsd.extend(bmff(b"CRAW", &entry));
+    let (mut stsz, mut co64) = (vec![0u8; 4], 1u32.to_be_bytes().to_vec());
+    stsz.extend(1u32.to_be_bytes());
+    stsz.extend((sample.len() as u32).to_be_bytes());
+    co64.extend(2048u64.to_be_bytes());
+    let stbl = [full(b"stsd", &stsd), full(b"stsz", &stsz), full(b"co64", &co64)].concat();
+    let trak = bmff(b"trak", &bmff(b"mdia", &bmff(b"minf", &bmff(b"stbl", &stbl))));
+    let mut f = bmff(b"ftyp", b"crx \0\0\0\x01crx isom");
+    f.extend(bmff(b"moov", &trak));
+    f.resize(2048, 0);
+    f.extend(sample);
+    f
+}
+
 fn samples() -> Vec<Vec<u8>> {
     vec![
         cfa_tiff("NIKON CORPORATION", 1, 12, ByteOrder::Big),
@@ -180,6 +261,8 @@ fn samples() -> Vec<Vec<u8>> {
         rw2(),
         cr2(),
         raf(),
+        cr3(0),
+        cr3(3),
     ]
 }
 

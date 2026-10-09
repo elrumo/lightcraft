@@ -16,6 +16,7 @@ fn save(s: &mut Session, p: &Value) -> Result<Value> {
     for id in s.targets(p) {
         match s.save_sidecar_with(id, &owners) {
             Ok(r) => {
+                s.sidecar_times.note(&r.path);
                 let path = r.path.display().to_string();
                 if r.merged {
                     merged.push(path.clone());
@@ -28,6 +29,7 @@ fn save(s: &mut Session, p: &Value) -> Result<Value> {
             Err(e) => failed.push(json!({"id": id.0, "error": e.to_string()})),
         }
     }
+    s.save_sidecar_times();
     Ok(json!({"written": written, "merged": merged, "backups": backups, "failed": failed}))
 }
 
@@ -38,6 +40,9 @@ fn read(s: &mut Session, p: &Value) -> Result<Value> {
     for id in s.targets(p) {
         match s.read_sidecar_op(id) {
             Ok(Some((op, from))) => {
+                if from.extension().is_some_and(|e| e.eq_ignore_ascii_case("xmp")) {
+                    s.sidecar_times.note(&from);
+                }
                 ops.push(op);
                 read.push(json!({"id": id.0, "from": from.display().to_string()}));
             }
@@ -46,8 +51,9 @@ fn read(s: &mut Session, p: &Value) -> Result<Value> {
         }
     }
     if !ops.is_empty() {
-        s.commit("Read Metadata from File", Op::Batch { ops })?;
+        s.commit(crate::sidecar::READ_LABEL, Op::Batch { ops })?;
     }
+    s.save_sidecar_times();
     Ok(json!({"read": read, "failed": failed}))
 }
 
