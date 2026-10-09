@@ -107,6 +107,7 @@ certificate from Let's Encrypt or Tailscale works as is; a self-signed one doesn
 <data>/users/<name>/library/catalog.log        every change from every device, in order
 <data>/users/<name>/blobs/<kind>/<xx>/<hash>   photo files by content: original | smart | mini
 <data>/users/<name>/presets.json               user presets { version, presets }
+<data>/users/<name>/docs/<name>.json           the other shared settings { version, items }, one file each
 <data>/users/<name>/devices.json               signed-in devices: name, id space, SHA-256 of the token
 <data>/users/<name>/folders.json               library folders as last scanned: each file's size, time, hash, photo
 ```
@@ -314,8 +315,9 @@ pipeline and encoder as the apps, and sends the image back, which the device sav
 | photos (added, removed, Recently Deleted), ratings, flags, colour labels, label names | where the original is on this disk (renames and relinks of files), Local folders browsed |
 | develop settings, versions (incl. automatic ones), capture time edits | edit **History** (each device keeps its own steps) |
 | user presets (create, rename, move, delete, favourite) | favourites among the built-in presets, recent profiles |
+| export, metadata and filter presets, curve presets, colour-label and keyword sets, LUT profiles (with their `.cube` files), the import defaults that don't name a place | the watched folder for auto import, the folders and the external editor, the cache size, the search-sharing choices |
 | metadata and keywords, analysis results | undo / redo |
-| albums, folders, smart albums, stacks | Settings (`prefs.json`), the view (`view.json`, `ui.json`) |
+| albums, folders, smart albums, stacks | the view (`view.json`, `ui.json`) |
 | | Local records (photos seen while browsing a folder, until added to the library) |
 
 ## When two devices change the same thing
@@ -360,6 +362,7 @@ JSON over HTTP; every route but `login` wants `Authorization: Bearer <token>`. T
 | `POST /api/ops` | `{base, ops}` → `200 {head}` · `409 {head}` (behind: pull first) · `422 {index, error}` (op `index` doesn't apply; nothing was) |
 | `HEAD`/`GET`/`PUT /api/blobs/{original\|smart\|mini}/{hash}` | photo files by 128-bit content hash; `GET` takes `Range`; an original is only kept if its bytes hash to its name, previews must be LightCraft previews and arrive whole. **Resuming an upload:** an original that breaks off is kept (`tmp/original-<hash>.part`); `HEAD` of a file the server doesn't have yet answers `404` with `Upload-Offset: N` (the bytes kept, `0` if none), and `PUT` with `Content-Range: bytes N-<last>/<total>` carries on from there (`409` with `{"offset": N}` if the server has another number of bytes or another request is writing the file; a plain `PUT` starts over). Downloads of originals resume with `Range` |
 | `GET`/`PUT /api/presets` | `{version, presets}`; `PUT` with a stale `version` → `412` with the current document |
+| `GET`/`PUT /api/docs/{name}` | the other shared settings, `name` one of `export-presets`, `metadata-presets`, `filter-presets`, `curve-presets`, `label-sets`, `keyword-sets`, `lut-profiles`, `prefs`: `{version, items}` (a list; at most 24 MiB), merged by the devices item by item like presets; `PUT` with a stale `version` → `412` with the current document; another name → `404`. Their versions come with every pull (`docs`) |
 | `POST /api/render` | `{hash, name, settings, export}` → the encoded image (`X-LightCraft-Size: WxH`): the photo with this original, rendered with these edits and [export options](#exporting-on-the-server) · `404` no such original (or a server older than the route) · `422` can't be rendered · `503` busy, `Retry-After` |
 | `GET /api/health` | `{ok, version}` (no sign-in) |
 | `GET /…` | the web build (`--web`) |
@@ -400,7 +403,7 @@ v1, honestly:
   balance picks and exports up to 2560 px read the photo's preview when its original isn't there; larger exports
   need the original: **Photo ▸ Download Originals** first (the export says so). The browser can't have the server
   render a photo (export runs on the page's main thread), as the desktop and iOS apps can.
-- Preferences, LUT profiles and export / metadata / filter presets stay per device.
+- **Settings that describe one computer stay on it**, by design: the folders (library, smart previews, the watched folder for auto import), the cache size, the external editor, what is shared for search, the window layout.
 - **No merging of two existing libraries**, no sharing with other people, no shared albums or links.
 - **The server compacts its log** into a snapshot at 64 MiB and keeps the newest 16 MiB of it (tens of thousands of
   changes): a device behind by more than that reloads the library. (A device that is only a little behind keeps

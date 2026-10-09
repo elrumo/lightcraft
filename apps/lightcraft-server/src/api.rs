@@ -62,6 +62,8 @@ pub(crate) fn error(status: u16, msg: impl std::fmt::Display) -> Resp {
 pub struct UserLib {
     pub(crate) core: ServerCore,
     presets: proto::Presets,
+    /// The other documents the user's devices share ([`crate::docs`]).
+    docs: crate::docs::Docs,
     /// The user's folder.
     pub(crate) dir: PathBuf,
     pub(crate) index: crate::folders::Index,
@@ -82,8 +84,9 @@ impl UserLib {
             Ok(b) => serde_json::from_slice(&b).map_err(|e| format!("{user}'s presets.json is damaged: {e}"))?,
             Err(_) => proto::Presets { version: 0, presets: json!([]) },
         };
+        let docs = crate::docs::Docs::load(&dir).map_err(|e| format!("{user}'s documents: {e}"))?;
         let index = crate::folders::Index::load(&dir);
-        Ok(UserLib { core, presets, dir, index, usage: None, _lock: lock })
+        Ok(UserLib { core, presets, docs, dir, index, usage: None, _lock: lock })
     }
 
     /// (photos, albums) in the library.
@@ -227,6 +230,8 @@ fn api(st: &State, req: &mut Request, method: &Method, path: &str, q: &str) -> R
             json(200, &serde_json::to_value(&l.presets).unwrap_or(Value::Null))
         }
         (Method::Put, ["presets"]) => put_presets(req, &l),
+        (Method::Get, ["docs", name]) => get_doc(&l, name),
+        (Method::Put, ["docs", name]) => put_doc(req, &l, name),
         (m, ["blobs", kind, hash]) => blob(st, req, m, &l, &who.user, kind, hash),
         // search by description (see `vision`)
         (Method::Get, ["search", "status"]) => crate::vision::status(st, &l, &who.user),
@@ -370,8 +375,9 @@ fn ops(l: &Mutex<UserLib>, q: &str) -> Resp {
     let limit = query(q, "limit").and_then(|v| v.parse::<usize>().ok()).unwrap_or(1000).clamp(1, PULL_MAX);
     let mut l = l.lock().unwrap_or_else(PoisonError::into_inner);
     let presets = l.presets.version;
+    let docs = l.docs.versions();
     match l.core.since(since, limit) {
-        Ok(Pull::Ops(ops)) => json(200, &json!(proto::Ops { head: l.core.head(), ops, presets })),
+        Ok(Pull::Ops(ops)) => json(200, &json!(proto::Ops { head: l.core.head(), ops, presets, docs })),
         Ok(Pull::Gone) => error(410, "that is older than the server keeps: reload the library"),
         Err(e) => {
             log::error!("reading the log: {e}");
@@ -423,6 +429,33 @@ fn put_presets(req: &mut Request, l: &Mutex<UserLib>) -> Resp {
     }
     l.presets = next;
     json(200, &json!({"version": l.presets.version}))
+}
+
+fn get_doc(l: &Mutex<UserLib>, name: &str) -> Resp {
+    match l.lock().unwrap_or_else(PoisonError::into_inner).docs.get(name) {
+        Some(doc) => json(200, &serde_json::to_value(&doc).unwrap_or(Value::Null)),
+        None => error(404, format!("no document `{name}`")),
+    }
+}
+
+fn put_doc(req: &mut Request, l: &Mutex<UserLib>, name: &str) -> Resp {
+    if req.body_length().is_some_and(|n| n as u64 > crate::docs::MAX) {
+        return error(413, format!("a document is at most {} bytes", crate::docs::MAX));
+    }
+    let doc: proto::Doc = match read_body(req, crate::docs::MAX)
+        .and_then(|b| serde_json::from_slice(&b).map_err(|e| error(400, format!("not the JSON this route takes: {e}"))))
+    {
+        Ok(d) => d,
+        Err(r) => return r,
+    };
+    match l.lock().unwrap_or_else(PoisonError::into_inner).docs.put(name, doc) {
+        Ok(Ok(version)) => json(200, &json!({"version": version})),
+        // another device wrote first: the answer is its document, to merge and put again
+        Ok(Err(current)) => json(412, &serde_json::to_value(&current).unwrap_or(Value::Null)),
+        Err(e) if e.starts_with("no document") => error(404, e),
+        Err(e) if e.starts_with("storage:") => error(500, e),
+        Err(e) => error(400, e),
+    }
 }
 
 /// Where a photo file is kept: `blobs/<kind>/<first two digits>/<hash>`.

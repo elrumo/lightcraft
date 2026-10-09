@@ -31,6 +31,7 @@ pub mod accounts;
 pub mod admin;
 pub mod api;
 pub mod cors;
+pub mod docs;
 pub mod folders;
 pub mod gc;
 pub mod http;

@@ -35,12 +35,15 @@ use web_time::Instant;
 
 use crate::{EngineError, Result, Session};
 
+mod docs;
 mod evict;
 
 pub const CONFIG: &str = "sync.json";
 pub const OUTBOX: &str = "sync.outbox";
 pub const UPLOADED: &str = "sync.uploaded";
 pub const PRESETS: &str = "sync.presets";
+/// The other shared documents as last synced (the base of their merges), by name.
+pub const DOCS: &str = "sync.docs";
 /// User presets taken from the server at most (untrusted input).
 const PRESETS_MAX: usize = 10_000;
 
@@ -104,6 +107,8 @@ pub struct SyncConfig {
     pub server_previews: Option<bool>,
     /// Version of the server's presets document this device last synced with.
     pub presets_version: u64,
+    /// The same for the other shared documents ([`docs`]), by name.
+    pub docs_versions: std::collections::BTreeMap<String, u64>,
 }
 
 impl SyncConfig {
@@ -212,6 +217,9 @@ enum Control {
     GetPresets,
     /// (what was sent)
     PutPresets(Vec<Value>),
+    /// A shared document ([`docs`]) by name, and what was sent.
+    GetDoc(String),
+    PutDoc(String, Vec<Value>),
 }
 
 /// A photo file transfer step. Uploads go original → proxies → smart → mini, one step at a time.
@@ -310,6 +318,11 @@ pub struct SyncState {
     presets_changed: bool,
     /// Which presets.json write was last compared.
     presets_seen: Option<u64>,
+    /// The other shared documents ([`docs`]): the copy both sides last agreed on and what's new, by name.
+    docs: std::collections::BTreeMap<String, docs::DocState>,
+    docs_base_dirty: bool,
+    /// Which prefs.json write was last compared.
+    docs_seen: Option<u64>,
     /// What the server says this library takes there, when it said so, and the request in flight.
     usage: Option<proto::Usage>,
     usage_at: Option<Instant>,
@@ -356,6 +369,9 @@ impl SyncState {
             presets_remote: 0,
             presets_changed: false,
             presets_seen: None,
+            docs: Default::default(),
+            docs_base_dirty: false,
+            docs_seen: None,
             usage: None,
             usage_at: None,
             usage_task: None,
@@ -397,6 +413,7 @@ impl SyncState {
             st.presets_base = serde_json::from_slice(&b).unwrap_or_default();
         }
         st.presets_remote = st.config.presets_version;
+        st.load_docs_base(files.read(DOCS).ok().flatten().as_deref());
         if let Some(b) = files.read(UPLOADED).ok().flatten() {
             st.uploaded = String::from_utf8_lossy(&b).lines().filter(|l| !l.is_empty()).map(str::to_string).collect();
         }
@@ -490,6 +507,16 @@ impl SyncState {
             let s = serde_json::to_vec(&self.outbox).map_err(std::io::Error::other)?;
             files.write_atomic(OUTBOX, &s)?;
             self.outbox_dirty = false;
+        }
+        Ok(())
+    }
+
+    /// Write `sync.docs` if it changed.
+    pub(crate) fn save_docs_base(&mut self, files: &mut dyn Store) -> std::io::Result<()> {
+        if self.docs_base_dirty {
+            let s = serde_json::to_vec(&self.docs_base()).map_err(std::io::Error::other)?;
+            files.write_atomic(DOCS, &s)?;
+            self.docs_base_dirty = false;
         }
         Ok(())
     }
@@ -956,6 +983,12 @@ impl Session {
                     let t = st.http("PUT", "/api/presets", Body::Json(body), None);
                     st.control = Some((t.id(), Control::PutPresets(presets)));
                     tasks.push(t);
+                } else if !st.config.library.is_empty()
+                    && let Some((control, method, path, body)) = self.doc_request(&mut st)
+                {
+                    let t = st.http(method, &path, body, None);
+                    st.control = Some((t.id(), control));
+                    tasks.push(t);
                 }
             }
         }
@@ -1200,6 +1233,7 @@ impl Session {
                     Ok(ops) => {
                         let more = ops.ops.len() >= PULL_LIMIT;
                         st.presets_remote = ops.presets;
+                        st.note_docs(&ops.docs);
                         if self.interaction.is_some() {
                             st.held.extend(ops.ops);
                         } else {
@@ -1242,6 +1276,8 @@ impl Session {
                 (true, Err(e)) => st.fail(e),
                 (false, _) => st.fail(why(d)),
             },
+            Control::GetDoc(name) => self.doc_got(st, &name, d),
+            Control::PutDoc(name, sent) => self.doc_put(st, &name, sent, d),
             Control::PutPresets(sent) => match d.status {
                 // another device changed them first: the answer is theirs, merge and send again
                 412 => match decode::<proto::Presets>(d) {
@@ -1598,8 +1634,13 @@ impl Session {
 /// on both, the settings merge field by field ([`lightcraft_catalog::sync::merge3`]). Theirs keep
 /// their order; presets added here come after.
 pub fn merge_presets(base: &[Value], ours: &[Value], theirs: &[Value]) -> Vec<Value> {
-    let id = |v: &Value| v.get("id").and_then(Value::as_str).map(str::to_string);
-    let index = |list: &[Value]| list.iter().filter_map(|v| Some((id(v)?, v.clone()))).collect::<HashMap<String, Value>>();
+    merge_by(base, ours, theirs, &|v| v.get("id").and_then(Value::as_str).map(str::to_string))
+}
+
+/// [`merge_presets`] for lists whose items are told apart by `id(item)` (a name, an id).
+pub(crate) fn merge_by(base: &[Value], ours: &[Value], theirs: &[Value], id: &dyn Fn(&Value) -> Option<String>) -> Vec<Value> {
+    // (an id that repeats in a list: its first item counts)
+    let index = |list: &[Value]| list.iter().rev().filter_map(|v| Some((id(v)?, v.clone()))).collect::<HashMap<String, Value>>();
     let (b, o, t) = (index(base), index(ours), index(theirs));
     let mut order: Vec<String> = theirs.iter().filter_map(id).collect();
     order.extend(ours.iter().filter_map(id).filter(|i| !t.contains_key(i)));

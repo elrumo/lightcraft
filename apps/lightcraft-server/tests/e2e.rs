@@ -652,3 +652,55 @@ fn only_sites_the_server_was_told_about_may_call_it_from_a_browser() {
     let _ = std::fs::remove_dir_all(&root);
     let _ = std::fs::remove_dir_all(&root2);
 }
+
+// ---- shared documents ----
+
+/// The shared documents (`/api/docs/<name>`): a name the server keeps, versions, `412` with the current
+/// document when another device wrote first, and what is refused.
+#[test]
+fn shared_documents_are_versioned_and_only_known_names_are_kept() {
+    let root = temp("docs");
+    let server = start(&root);
+    let base = format!("http://{}", server.addr());
+    let token = sign_in_raw(&base);
+    let doc = |name: &str| format!("{base}/api/docs/{name}");
+    let put = |name: &str, v: Value| put_with(&doc(name), &token, v.to_string().as_bytes(), &[]);
+    let (s, d) = {
+        let (s, b, _) = call("GET", &doc("export-presets"), &token, None, &[]);
+        (s, json_of(&b))
+    };
+    assert_eq!((s, d), (200, json!({"version": 0, "items": []})));
+    assert_eq!(put("export-presets", json!({"version": 0, "items": [{"name": "Web"}]})), (200, json!({"version": 1})));
+    // another device that hadn't seen it: the current document comes back
+    let (s, cur) = put("export-presets", json!({"version": 0, "items": []}));
+    assert_eq!((s, cur), (412, json!({"version": 1, "items": [{"name": "Web"}]})));
+    assert_eq!(put("export-presets", json!({"version": 1, "items": []})).0, 200);
+    // the versions come with every pull
+    let (_, b, _) = call("GET", &format!("{base}/api/ops?since=0"), &token, None, &[]);
+    assert_eq!(json_of(&b)["docs"], json!({"export-presets": 2}));
+    // what is refused: other names (no path tricks), items that aren't a list, junk, too much
+    assert_eq!(call("GET", &doc("users"), &token, None, &[]).0, 404);
+    assert_eq!(call("GET", &doc("..%2fpresets"), &token, None, &[]).0, 404);
+    assert_eq!(put("presets", json!({"version": 0, "items": []})).0, 404);
+    assert_eq!(put("prefs", json!({"version": 0, "items": {"a": 1}})).0, 400);
+    assert_eq!(put_with(&doc("prefs"), &token, b"{garbage", &[]).0, 400);
+    assert_eq!(call("GET", &doc("prefs"), "", None, &[]).0, 401, "only for signed-in devices");
+    // another user has their own
+    accounts::set_user(&root.join("data"), "bob", "battery staple", false).unwrap();
+    let body = json!({"user": "bob", "password": "battery staple", "device": "t"}).to_string();
+    let bob = json_of(&call("POST", &format!("{base}/api/login"), "", Some(body.as_bytes()), &[]).1)["token"].as_str().unwrap().to_string();
+    let (_, b, _) = call("GET", &doc("export-presets"), &bob, None, &[]);
+    assert_eq!(json_of(&b)["version"], 0);
+    // it survives a restart
+    drop(server);
+    let mut cfg = Config::new(root.join("data"), "127.0.0.1:0");
+    cfg.scan_interval = None;
+    cfg.preview_threads = 1;
+    let server = Server::start(cfg).unwrap();
+    let base = format!("http://{}", server.addr());
+    let token = sign_in_raw(&base);
+    let (_, b, _) = call("GET", &format!("{base}/api/docs/export-presets"), &token, None, &[]);
+    assert_eq!(json_of(&b)["version"], 2);
+    drop(server);
+    let _ = std::fs::remove_dir_all(&root);
+}

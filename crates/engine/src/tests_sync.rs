@@ -39,6 +39,9 @@ struct Fake {
     down: bool,
     /// A server from before `GET /api/usage`.
     no_usage: bool,
+    /// The other shared documents (`/api/docs/<name>`), by name; `no_docs`: a server from before them.
+    docs: HashMap<String, proto::Doc>,
+    no_docs: bool,
     /// Originals whose upload broke: what the server kept of each, by (kind, hash).
     partials: HashMap<(String, String), Vec<u8>>,
     /// Answer a `HEAD` with this offset whatever is kept (an answer that has gone out of date).
@@ -56,6 +59,8 @@ impl Fake {
             presets: proto::Presets { version: 0, presets: json!([]) },
             down: false,
             no_usage: false,
+            docs: HashMap::new(),
+            no_docs: false,
             partials: HashMap::new(),
             stale_offset: None,
             requests: vec![],
@@ -104,7 +109,8 @@ impl Fake {
                 let (since, limit) = q.split_once("&limit=").unwrap();
                 match self.core.since(since.parse().unwrap(), limit.parse().unwrap()).unwrap() {
                     lightcraft_catalog::sync::Pull::Ops(ops) => {
-                        ok(serde_json::to_value(proto::Ops { head: self.core.head(), ops, presets: self.presets.version }).unwrap())
+                        let docs = self.docs.iter().map(|(n, d)| (n.clone(), d.version)).collect();
+                        ok(serde_json::to_value(proto::Ops { head: self.core.head(), ops, presets: self.presets.version, docs }).unwrap())
                     }
                     lightcraft_catalog::sync::Pull::Gone => status(410, json!({"error": "gone"})),
                 }
@@ -133,6 +139,21 @@ impl Fake {
                     ..Default::default()
                 };
                 ok(serde_json::to_value(u).unwrap())
+            }
+            ("GET", p) if p.starts_with("/api/docs/") && !self.no_docs => {
+                let doc = self.docs.get(p.trim_start_matches("/api/docs/")).cloned().unwrap_or(proto::Doc { version: 0, items: json!([]) });
+                ok(serde_json::to_value(doc).unwrap())
+            }
+            ("PUT", p) if p.starts_with("/api/docs/") && !self.no_docs => {
+                let name = p.trim_start_matches("/api/docs/").to_string();
+                let sent: proto::Doc = serde_json::from_str(&json_body()).unwrap();
+                let current = self.docs.get(&name).cloned().unwrap_or(proto::Doc { version: 0, items: json!([]) });
+                if sent.version != current.version {
+                    return status(412, serde_json::to_value(current).unwrap());
+                }
+                let version = current.version + 1;
+                self.docs.insert(name, proto::Doc { version, items: sent.items });
+                ok(json!({"version": version}))
             }
             ("GET", "/api/presets") => ok(serde_json::to_value(&self.presets).unwrap()),
             ("PUT", "/api/presets") => {
@@ -1091,5 +1112,189 @@ fn the_budget_never_deletes_the_only_copy_or_what_is_in_use() {
     assert!(here(&b, ids[1]), "the server has no copy of it");
     // a path outside the originals folder is never touched whatever the budget
     assert!(Path::new(&root).exists());
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+// ---- the other shared documents ----
+
+fn names(v: &Value) -> Vec<String> {
+    let mut n: Vec<String> = v.as_array().map(|a| a.iter().filter_map(|p| p["name"].as_str().map(str::to_string)).collect()).unwrap_or_default();
+    n.sort();
+    n
+}
+
+/// Two signed-in devices of one user, B joined after A uploaded (nothing but the library to share yet).
+fn two_devices(tag: &str, f: &mut Fake) -> (Session, Session, PathBuf) {
+    let (a, root, _) = first_device(tag, f);
+    let mut b = open(&root.join("b"));
+    sign_in(&mut b);
+    sync(&mut b, f);
+    (a, b, root)
+}
+
+/// Export and filter presets follow the user to their other devices: ones added on two devices are all kept,
+/// a deletion sticks, and the same name edited on both ends up as one.
+#[test]
+fn presets_and_sets_follow_the_user_to_their_other_devices() {
+    let mut f = Fake::new();
+    let (mut a, mut b, root) = two_devices("docs", &mut f);
+    a.execute("export.savePreset", &json!({"name": "Web", "params": {"format": "jpeg", "quality": 80}})).unwrap();
+    sync(&mut a, &mut f);
+    sync(&mut b, &mut f);
+    assert_eq!(names(&b.execute("export.presets", &json!({})).unwrap()).iter().filter(|n| *n == "Web").count(), 1, "B has A's preset");
+    // each adds one; both end up with both
+    b.execute("export.savePreset", &json!({"name": "Print", "params": {"format": "tiff"}})).unwrap();
+    a.execute("export.savePreset", &json!({"name": "Mail", "params": {"format": "jpeg", "quality": 60}})).unwrap();
+    sync(&mut a, &mut f);
+    sync(&mut b, &mut f);
+    sync(&mut a, &mut f);
+    for s in [&mut a, &mut b] {
+        let user: Vec<String> = s.export_presets.iter().map(|p| p.name.clone()).collect();
+        let mut user = user;
+        user.sort();
+        assert_eq!(user, ["Mail", "Print", "Web"]);
+    }
+    // a deletion sticks
+    a.execute("export.deletePreset", &json!({"name": "Web"})).unwrap();
+    sync(&mut a, &mut f);
+    sync(&mut b, &mut f);
+    assert!(b.export_presets.iter().all(|p| p.name != "Web"), "{:?}", b.export_presets);
+    // the same name edited on both ends up one preset
+    a.execute("export.savePreset", &json!({"name": "Print", "params": {"format": "tiff", "dpi": 300}})).unwrap();
+    b.execute("export.savePreset", &json!({"name": "print", "params": {"format": "tiff", "dpi": 240}})).unwrap();
+    sync(&mut a, &mut f);
+    sync(&mut b, &mut f);
+    sync(&mut a, &mut f);
+    assert_eq!(a.export_presets.iter().filter(|p| p.name.eq_ignore_ascii_case("print")).count(), 1);
+    assert_eq!(a.export_presets.len(), b.export_presets.len());
+    // the other lists use the same mechanism: keyword and label sets, filters, metadata
+    a.execute("metadata.savePreset", &json!({"name": "Wedding", "fields": {"creator": "Ann"}})).unwrap();
+    a.keyword_sets.push(crate::cmd::keywords::KeywordSet { name: "Trip".into(), keywords: vec!["beach".into()] });
+    a.save_prefs().unwrap();
+    sync(&mut a, &mut f);
+    sync(&mut b, &mut f);
+    assert!(b.metadata_presets.iter().any(|p| p.name == "Wedding") && b.keyword_sets.iter().any(|k| k.name == "Trip" && k.keywords == ["beach"]));
+    // and they are quiet when nothing changed
+    let before = f.requests.len();
+    sync(&mut a, &mut f);
+    sync(&mut b, &mut f);
+    assert!(f.requests[before..].iter().all(|r| !r.starts_with("PUT /api/docs/")), "{:?}", &f.requests[before..]);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+const CUBE: &str = "TITLE \"Warm\"\nLUT_3D_SIZE 2\n0 0 0\n1 0 0\n0 1 0\n1 1 0\n0 0 1\n1 0 1\n0 1 1\n1 1 1\n";
+
+/// A LUT profile travels with its `.cube` text: the other device writes it into its own `Profiles` folder
+/// and registers it; removing it removes it there.
+#[test]
+fn lut_profiles_travel_with_their_files() {
+    let mut f = Fake::new();
+    let (mut a, mut b, root) = two_devices("docs-lut", &mut f);
+    let cube = root.join("Warm.cube");
+    std::fs::write(&cube, CUBE).unwrap();
+    let r = a.execute("profile.import", &json!({"paths": [cube.to_string_lossy()]})).unwrap();
+    let id = r["imported"][0]["id"].as_str().unwrap().to_string();
+    sync(&mut a, &mut f);
+    sync(&mut b, &mut f);
+    assert_eq!(b.lut_profiles.len(), 1);
+    let on_b = &b.lut_profiles[0];
+    assert_eq!((&on_b.id, on_b.name.as_str()), (&id, "Warm"));
+    assert!(on_b.file.starts_with(root.join("b").to_string_lossy().as_ref()) && on_b.file.ends_with(".cube"), "{}", on_b.file);
+    assert_eq!(std::fs::read_to_string(&on_b.file).unwrap(), CUBE);
+    // removed on A: gone on B, file and all
+    let file_on_b = on_b.file.clone();
+    a.execute("profile.deleteImported", &json!({"id": id})).unwrap();
+    sync(&mut a, &mut f);
+    sync(&mut b, &mut f);
+    assert!(b.lut_profiles.is_empty() && !Path::new(&file_on_b).exists());
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// The import defaults travel, except what names a place on one computer (the watched folder).
+#[test]
+fn import_defaults_travel_but_not_the_watched_folder() {
+    let mut f = Fake::new();
+    let (mut a, mut b, root) = two_devices("docs-prefs", &mut f);
+    b.import_defaults.auto_folder = Some("/Users/b/Watched".into());
+    b.save_prefs().unwrap();
+    sync(&mut b, &mut f);
+    a.import_defaults.auto_folder = Some("/home/a/Incoming".into());
+    a.execute("library.preferences", &json!({"import": {"copyright": "(c) Ann", "creator": "Ann"}})).unwrap();
+    sync(&mut a, &mut f);
+    sync(&mut b, &mut f);
+    assert_eq!((b.import_defaults.copyright.as_str(), b.import_defaults.creator.as_str()), ("(c) Ann", "Ann"));
+    assert_eq!(b.import_defaults.auto_folder.as_deref(), Some("/Users/b/Watched"), "its own folder stays");
+    assert_eq!(a.import_defaults.auto_folder.as_deref(), Some("/home/a/Incoming"));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// A server from before the documents answers 404: the rest of the sync goes on, with no error and no
+/// retrying every second.
+#[test]
+fn a_server_without_the_documents_does_not_stall_syncing() {
+    let mut f = Fake::new();
+    f.no_docs = true;
+    let (mut a, mut b, root) = two_devices("docs-old", &mut f);
+    a.execute("export.savePreset", &json!({"name": "Web", "params": {"format": "jpeg"}})).unwrap();
+    a.selection = crate::Selection::single(a.catalog.photos().next().unwrap().id);
+    let id = a.selection.active.unwrap();
+    a.execute("photo.rate", &json!({"rating": 4})).unwrap();
+    let st = sync(&mut a, &mut f);
+    assert_eq!(st["state"], "idle", "{st}");
+    sync(&mut b, &mut f);
+    assert_eq!(b.catalog.photo(id).unwrap().rating, 4, "photos sync as ever");
+    let asked = f.requests.iter().filter(|r| r.contains("/api/docs/")).count();
+    sync(&mut a, &mut f);
+    sync(&mut a, &mut f);
+    assert_eq!(f.requests.iter().filter(|r| r.contains("/api/docs/")).count(), asked, "not asked again this session");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// What a server (or another device) sends is data: junk items, repeated names, a LUT id that would leave the
+/// Profiles folder, a huge name — none of it panics, and only what is usable is kept.
+#[test]
+fn shared_documents_from_elsewhere_are_checked() {
+    let mut f = Fake::new();
+    let (mut a, root, _) = first_device("docs-hostile", &mut f);
+    let long = "x".repeat(5000);
+    f.docs.insert(
+        "export-presets".into(),
+        proto::Doc {
+            version: 1,
+            items: json!([
+                {"name": "Fine", "params": {"format": "png"}},
+                {"name": "fine", "params": {}},
+                {"name": "", "params": {}},
+                {"name": long, "params": {}},
+                {"nope": 1},
+                7,
+                "text",
+                null
+            ]),
+        },
+    );
+    f.docs.insert(
+        "lut-profiles".into(),
+        proto::Doc {
+            version: 1,
+            items: json!([
+                {"id": "lut:../../escape", "name": "bad", "group": "g", "cube": CUBE},
+                {"id": "lut:a/b", "name": "bad", "group": "g", "cube": CUBE},
+                {"id": "nolut", "name": "bad", "group": "g", "cube": CUBE},
+                {"id": "lut:notacube", "name": "bad", "group": "g", "cube": "garbage"},
+                {"id": "lut:fine", "name": "Fine", "group": "g", "cube": CUBE}
+            ]),
+        },
+    );
+    f.docs.insert("keyword-sets".into(), proto::Doc { version: 1, items: json!({"not": "a list"}) });
+    let st = sync(&mut a, &mut f);
+    assert_eq!(st["state"], "idle", "{st}");
+    assert_eq!(a.export_presets.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), ["Fine"]);
+    assert_eq!(a.lut_profiles.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(), ["lut:fine"]);
+    assert!(a.keyword_sets.is_empty());
+    let profiles = root.join("a/Profiles");
+    let files: Vec<_> = std::fs::read_dir(&profiles).unwrap().flatten().map(|e| e.file_name().to_string_lossy().to_string()).collect();
+    assert_eq!(files, ["fine.cube"], "nothing written outside the Profiles folder");
+    assert!(!root.join("escape.cube").exists() && !root.join("a/escape.cube").exists());
     let _ = std::fs::remove_dir_all(&root);
 }

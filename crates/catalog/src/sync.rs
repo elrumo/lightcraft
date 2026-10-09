@@ -604,6 +604,9 @@ pub mod proto {
         /// Version of the presets document ([`Presets`]).
         #[serde(default)]
         pub presets: u64,
+        /// Versions of the other shared documents ([`Doc`]) that have been written, by name.
+        #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+        pub docs: std::collections::BTreeMap<String, u64>,
     }
 
     /// `POST /api/ops`: ops made on top of op `base`. `200` [`Head`]; `409` [`Head`] (behind:
@@ -631,6 +634,16 @@ pub mod proto {
     pub struct Presets {
         pub version: u64,
         pub presets: serde_json::Value,
+    }
+
+    /// `GET` / `PUT /api/docs/<name>`: one of the small documents a user's devices share beside the library
+    /// (their export, metadata and filter presets, curve presets, label and keyword sets, LUT profiles, a few
+    /// preferences): a JSON array the devices merge themselves, by item. `PUT` carries the version it changed;
+    /// `412` with the current document when the server's is newer, `404` for a name the server doesn't keep.
+    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+    pub struct Doc {
+        pub version: u64,
+        pub items: serde_json::Value,
     }
 
     /// `/api/blobs/<kind>/<hash>` (`HEAD`, `GET`, `PUT`): a photo's original, its smart preview

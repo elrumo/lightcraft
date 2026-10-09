@@ -88,6 +88,8 @@ pub struct Library {
     presets_written: String,
     /// Bumped whenever presets.json is written (the sync compares the presets then).
     presets_gen: u64,
+    /// The same for prefs.json (the sync compares the shared documents then).
+    prefs_gen: u64,
     view_written: Vec<u8>,
     /// Settings files that were unreadable or damaged when the library opened (`library.info` →
     /// `settingsWarnings`; shown by the UI once, see [`Session::take_library_warnings`]).
@@ -162,6 +164,10 @@ impl Library {
     /// How many times presets.json was written this session.
     pub(crate) fn presets_gen(&self) -> u64 {
         self.presets_gen
+    }
+    /// How many times prefs.json was written this session.
+    pub(crate) fn prefs_gen(&self) -> u64 {
+        self.prefs_gen
     }
     /// presets.json, view.json, prefs.json and the sync files.
     pub(crate) fn files_mut(&mut self) -> &mut dyn Store {
@@ -449,6 +455,7 @@ impl Session {
             relocated: None,
             presets_written,
             presets_gen: 0,
+            prefs_gen: 0,
             view_written,
             settings_warnings: settings.warnings,
             warnings_reported: 0,
@@ -590,6 +597,9 @@ impl Session {
             if let Err(e) = st.save_presets_base(lib.files.as_mut()) {
                 log::error!("library: {}: {e}", crate::sync::PRESETS);
             }
+            if let Err(e) = st.save_docs_base(lib.files.as_mut()) {
+                log::error!("library: {}: {e}", crate::sync::DOCS);
+            }
             if self.pending_log.is_empty()
                 && let Err(e) = st.save_config(lib.files.as_mut())
             {
@@ -723,7 +733,11 @@ impl Session {
                 "prefs: prefs.json couldn't be read when the library opened, so it isn't overwritten; reopen the library to save preferences".into(),
             ));
         }
-        lib.files.write_atomic("prefs.json", &v).map_err(|e| EngineError::Other(format!("prefs: {e}")))
+        let written = lib.files.write_atomic("prefs.json", &v);
+        if written.is_ok() {
+            lib.prefs_gen += 1;
+        }
+        written.map_err(|e| EngineError::Other(format!("prefs: {e}")))
     }
 
     /// Settings-file warnings of the open library not handed out yet (the UI shows each once).
