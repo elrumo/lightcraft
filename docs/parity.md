@@ -39,7 +39,7 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | P. Enhance (ENH) | 0 | 1 | 1 | 0 | — | — |
 | Q. HDR (HDR) | 0 | 0 | 5 | 0 | — | — |
 | R. Video (VID) | 0 | 0 | 5 | 1 | — | 0/2 (0%) |
-| S. Export (EXP) | 15 | 1 | 2 | 0 | 7/7 (100%) | 7/7 (100%) |
+| S. Export (EXP) | 15 | 3 | 1 | 0 | 7/7 (100%) | 7/8 (88%) |
 | T. Share (SHARE) | 0 | 0 | 0 | 4 | — | — |
 | U. Map & location (MAP) | 0 | 2 | 0 | 0 | — | 0/1 (0%) |
 | V. Preferences (PREF) | 6 | 1 | 2 | 2 | 1/1 (100%) | 4/4 (100%) |
@@ -48,9 +48,9 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | Y. Menus | 83 | 2 | 3 | 5 | 47/47 (100%) | 23/23 (100%) |
 | Z. Keyboard shortcuts (desktop) | 74 | 3 | 3 | 1 | 49/52 (94%) | 22/23 (96%) |
 | Lightroom Classic extras | 32 | 12 | 37 | 8 | — | 21/22 (95%) |
-| **Total** | 395 | 45 | 77 | 30 | 194/200 (97%) | 140/149 (94%) |
+| **Total** | 395 | 47 | 76 | 30 | 194/200 (97%) | 140/150 (93%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **80.8%** of 517 in-scope rows — P0 98.5% of 200 · P1 96.0% of 149 · P2 46.1% of 168.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **80.8%** of 518 in-scope rows — P0 98.5% of 200 · P1 95.7% of 150 · P2 46.4% of 168.
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -433,7 +433,7 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 
 | Id | Feature | Tier | Status | Evidence | Missing / notes |
 |---|---|---|---|---|---|
-| LR-EXP-DIALOG | Export dialog | P0 | ✅ | `cmd:dialog.export`, `cmd:app.export` (`preset`), `cmd:export.presets`, `cmd:export.savePreset`, `cmd:export.deletePreset`, `crates/ui-egui/src/panels/dialogs.rs`, `crates/engine/src/export.rs` | batch export; built-in presets (JPEG Small 2048 px / Large full size, Original + Settings, DNG) and saved user presets (library prefs) load into the dialog; deleting a user preset is command-only |
+| LR-EXP-DIALOG | Export dialog | P0 | ✅ | `cmd:dialog.export`, `cmd:app.export` (`preset`), `cmd:export.presets`, `cmd:export.savePreset`, `cmd:export.deletePreset`, `crates/ui-egui/src/panels/export.rs`, `crates/engine/src/export.rs` | batch export; built-in presets (JPEG Small 2048 px / Large full size, Original + Settings, DNG) and saved user presets (library prefs) load into the dialog; deleting a user preset is command-only |
 | LR-EXP-TYPE | File types | P0 | ✅ | `cmd:app.export` (`format`), `crates/engine/src/export.rs` (`ExportFormat`), `crates/engine/src/tests_export.rs` | JPEG, PNG, TIFF, WebP, AVIF, DNG (raw photos: lossless re-encode with the edits in the embedded XMP), Original (+ XMP sidecar). No JXL encoder; non-raw → DNG not supported |
 | LR-EXP-DIM | Output size | P0 | ✅ | `cmd:app.export` (`longEdge`, `shortEdge`, `width`, `height`, `megapixels`, `percent`, `dontEnlarge`, `ppi`), `crates/engine/src/export.rs` (`Resize`), `crates/ui-egui/src/panels/dialogs.rs` | full size = the cropped native size (no longer upscaled); W × H fits either orientation; ppi written to JFIF / pHYs / TIFF tags |
 | LR-EXP-QUALITY | JPEG quality | P0 | ✅ | `cmd:app.export` (`quality`, `limitKb`) | |
@@ -449,7 +449,8 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | LR-EXP-PREVIOUS | Export with previous settings | P0 | ✅ | `cmd:app.exportPrevious`, `cmd:dialog.export` | last options persist in prefs.json; dialog prefilled; no named export presets yet |
 | LR-EXP-DNGOPT | DNG options | P2 | 🟡 | `cmd:app.export` (`dngCompression`), `crates/engine/src/export.rs` | compression: lossless JPEG (default), ZIP or none; no embedded JPEG preview size, no lossy DNG output |
 | LR-EXP-ORIGINAL | Original + XMP | P1 | ✅ | `cmd:app.export` (`format: original`), `crates/engine/src/tests_export.rs` | file copied byte for byte, sidecar named after the output and subject to the conflict policy |
-| LR-EXP-PHOTOS | Export to the system photo library | P2 | ⬜ | | |
+| LR-EXP-PHOTOS | Export to the system photo library | P2 | 🟡 | `cmd:app.saveToPhotos`, `cmd:app.export` (`sendTo`), `crates/ios-host/src/ios/photos.rs`, `crates/ui-egui/src/control.rs`, `crates/ui-egui/src/tests_export_flow.rs` | iOS: Save to Photos adds the exported files to the photo library through PhotoKit with add-only access (the system asks the first time); JPEG, PNG, TIFF and DNG exports only (a WebP, AVIF or Original export is refused before it starts, with the reason). `sendTo: photos` of `app.export`, the Save to Photos row of the share sheet, and the save button in the photo's top bar. Tested headless against a fake library; the PhotoKit calls type-check for iOS but have not run on a simulator or a device |
+| LR-EXP-MOBILE | Export flow on a phone | P1 | 🟡 | `cmd:dialog.export`, `cmd:app.export`, `crates/ui-egui/src/panels/export.rs`, `crates/ui-egui/src/tests_export_flow.rs` | a share sheet (a strip of the view's photos with a check box under each, Select All, round Share and Export As… buttons, a Save to Photos row), the export options as a page (file type, size and quality as pull-down fields, an Include Watermark switch, More Options for everything else the desktop dialog has) and a card with the progress and Cancel; modelled on Lightroom's mobile app. No shareable link, border or edit-process video. Tested headless; not yet seen on a device |
 | LR-EXP-PSD | Round trip to an external editor | P2 | ✅ | `cmd:photo.editExternal`, `cmd:photo.editInExternal`, `crates/engine/src/cmd/convert.rs` | a 16-bit TIFF `-Edit` copy with the edits (Adobe RGB / ProPhoto / P3 / sRGB) next to the original, added stacked on top of it and opened in the editor set in Settings ▸ General (or the system default) |
 
 ## T. Share (SHARE)

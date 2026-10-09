@@ -54,6 +54,7 @@
   "Rendering on the CPU: {why}": "CPUで描画：{why}",
   "Reset {} Channel": "{}チャンネルをリセット",
   "Saved export preset “{}”": "書き出しプリセット「{}」を保存しました",
+  "Saved {n} photo{} to Photos": "{n}枚を「写真」に保存しました{:.0}",
   "Show {hidden} hidden location{}": "非表示の{hidden}か所を表示{:.0}",
   "Showing {n} of {}": "{}枚中{n}枚を表示",
   "Smart album: {}": "スマートアルバム：{}",

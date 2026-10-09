@@ -241,6 +241,7 @@ fn services() -> Services {
         sync_exec: Some(lightcraft_ui_egui::sync_ui::native_exec()),
         tile_exec: Some(lightcraft_ui_egui::panels::map::native_exec()),
         share_exports: None,
+        save_to_photos: None,
         host_pick: None,
         // the system clipboard reaches text fields directly; no haptics
         haptic: None,

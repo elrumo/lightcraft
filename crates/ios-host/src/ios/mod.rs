@@ -6,6 +6,7 @@ pub mod haptics;
 pub mod imageio;
 pub mod lifecycle;
 pub mod pasteboard;
+pub mod photos;
 pub mod pickers;
 pub mod share;
 

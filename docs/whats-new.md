@@ -61,6 +61,14 @@
   names the size and licence), cancel, delete to free the space, or turn a model off. The first use of a feature
   that needs a model offers the download too. See `docs/ai-models.md`.
 
+### Export on iPhone
+- Sharing is a flow of its own, as in Lightroom's mobile app: the share button opens a sheet with a strip of your photos (tick the
+  ones to send, or Select All) and round Share and Export As… buttons; Export As… has the file type, size, quality and watermark
+  as simple pull-down fields, and More Options everything else the desktop dialog has. While photos are exported a card shows
+  which one and how many, with Cancel.
+- Save to Photos adds the exported photos to your photo library in one step (JPEG, PNG, TIFF or DNG; the system asks for
+  permission to add photos the first time). The photo's top bar has a save button that does it with the last settings.
+
 ### Remove
 - Content-aware Remove: painting over a distraction now fills it with texture synthesized from around it,
   continuing edges, horizons and patterns through the stroke, instead of healing from one copied spot. The spot's

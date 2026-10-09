@@ -3,7 +3,7 @@ name = "lightcraft-ios-host"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "LightCraft on iOS: the native glue the app needs (Photos and Files pickers, share sheet, app lifecycle, haptics, ImageIO decode), through objc2. Allowed `unsafe` for its Objective-C calls; an empty crate elsewhere."
+description = "LightCraft on iOS: the native glue the app needs (Photos and Files pickers, share sheet, saving to Photos, app lifecycle, haptics, ImageIO decode), through objc2. Allowed `unsafe` for its Objective-C calls; an empty crate elsewhere."
 
 # Opts out of the workspace lints only so its Objective-C calls can be allowed module by module
 # (each `unsafe` block has a SAFETY comment); see crates/sysmem and CLAUDE.md, Never crash.
@@ -22,6 +22,16 @@ objc2 = "0.6"
 block2 = "0.6"
 objc2-foundation = "0.3"
 objc2-ui-kit = { version = "0.3", features = ["objc2-uniform-type-identifiers"] }
+objc2-photos = { version = "0.3", default-features = false, features = [
+    "std",
+    "block2",
+    "dispatch2",
+    "PhotosTypes",
+    "PHChangeRequest",
+    "PHAssetChangeRequest",
+    "PHAssetCreationRequest",
+    "PHPhotoLibrary",
+] }
 objc2-photos-ui = "0.3"
 objc2-uniform-type-identifiers = "0.3"
 objc2-image-io = "0.3"

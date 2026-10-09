@@ -42,6 +42,8 @@ mod tests_compact_editor;
 #[cfg(test)]
 mod tests_curve;
 #[cfg(test)]
+mod tests_export_flow;
+#[cfg(test)]
 mod tests_grid;
 #[cfg(test)]
 mod tests_ios_host;
@@ -120,6 +122,18 @@ pub struct ShareExports {
     pub share: Box<dyn FnMut(&[String])>,
 }
 
+/// How a save to the photo library ended: how many photos went in, or why none did. Called on any
+/// thread.
+pub type SaveDone = Box<dyn FnOnce(Result<usize, String>) + Send>;
+
+/// Add exported files (absolute paths, at least one) to the device's photo library (iOS: PhotoKit).
+/// It returns at once and calls the `SaveDone` when the library has them (or has refused), after
+/// which the host asks for a repaint. The files stay where they are.
+pub type SaveToPhotos = Box<dyn FnMut(&[String], SaveDone)>;
+
+/// What finished saves (see [`SaveToPhotos`]) left for the app to say, taken by `export_task::poll`.
+pub type SavedInbox = std::sync::Arc<std::sync::Mutex<Vec<Result<usize, String>>>>;
+
 /// Platform services injected by the host app (desktop or web).
 #[derive(Default)]
 pub struct Services {
@@ -160,6 +174,9 @@ pub struct Services {
     pub tile_exec: Option<panels::map::TileExec>,
     /// Exports go to the system's share sheet instead of a folder (iOS; see [`ShareExports`]).
     pub share_exports: Option<ShareExports>,
+    /// Adds exports to the device's photo library (iOS: Save to Photos in the share sheet and the
+    /// photo's top bar; needs [`Services::share_exports`], whose folder the files are written to).
+    pub save_to_photos: Option<SaveToPhotos>,
     /// The host's own pickers (iOS: Photos, Files): File ▸ Import from Photos… / from Files… /
     /// Folder from Files…, and the compact grid's + button.
     pub host_pick: Option<HostPick>,
@@ -263,6 +280,8 @@ pub struct LightcraftApp {
     pub tasks: tasks::Tasks,
     /// The files of the last finished background export (`ui.inspect` → `export.last`).
     pub last_export_result: Option<Value>,
+    /// How saves to the photo library ended, until `export_task::poll` has said so ([`SaveToPhotos`]).
+    pub saved: SavedInbox,
     /// The look the loupe shows while the pointer rests on a preset or profile (set by the
     /// panels each frame; nothing is committed, no history entry).
     pub hover_preview: Option<HoverPreview>,
@@ -330,6 +349,7 @@ impl LightcraftApp {
             export: None,
             tasks: Default::default(),
             last_export_result: None,
+            saved: Default::default(),
             hover_preview: None,
             window_is_fullscreen: false,
             gpu_applied: None,

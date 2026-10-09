@@ -530,6 +530,30 @@ impl Dialog {
     }
 }
 
+/// The pages of a phone's export flow, each over the one before (`panels::export`).
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ExportPage {
+    /// Which photos, and where to send them.
+    #[default]
+    Share,
+    /// File type, size, quality, watermark.
+    Options,
+    /// Everything else the export dialog has.
+    More,
+}
+
+/// Where a phone's export sends the files it wrote (`sendTo` of `app.export`).
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ExportThen {
+    /// The system's share sheet.
+    #[default]
+    Share,
+    /// The device's photo library.
+    Save,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum Dialog {
@@ -642,6 +666,19 @@ pub enum Dialog {
         preset_name: String,
         limit_kb: u32,
         dir: String,
+        /// The photos to export (a phone's share sheet lets the user choose them); empty = the
+        /// selection, else the open photo.
+        #[serde(default)]
+        ids: Vec<u64>,
+        /// A phone: which page of the export flow is on top (`panels::export`).
+        #[serde(default)]
+        page: ExportPage,
+        /// A phone: where the files go once they are exported.
+        #[serde(default)]
+        then: ExportThen,
+        /// A phone: the share sheet's strip of photos has been scrolled to the first chosen one.
+        #[serde(skip)]
+        centered: bool,
     },
     /// Photo Merge (HDR / Panorama / HDR Panorama) options; the preview lives in the app.
     Merge {

@@ -112,7 +112,7 @@ impl GridCache {
 }
 
 /// Width / height of each photo's cell: its cropped, oriented shape.
-fn aspects(cat: &Catalog, ids: &[PhotoId]) -> Vec<f32> {
+pub(crate) fn aspects(cat: &Catalog, ids: &[PhotoId]) -> Vec<f32> {
     ids.iter()
         .map(|id| {
             let p = cat.photo(*id);

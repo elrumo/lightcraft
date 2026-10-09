@@ -54,6 +54,7 @@
   "Rendering on the CPU: {why}": "正在使用 CPU 渲染：{why}",
   "Reset {} Channel": "重置 {0} 通道",
   "Saved export preset “{}”": "已保存导出预设“{0}”",
+  "Saved {n} photo{} to Photos": "已将 {n} 张照片存储到“照片”{0:.0}",
   "Show {hidden} hidden location{}": "显示 {hidden} 个隐藏位置{0:.0}",
   "Showing {n} of {}": "显示 {0} 张中的 {n} 张",
   "Smart album: {}": "智能相册：{0}",

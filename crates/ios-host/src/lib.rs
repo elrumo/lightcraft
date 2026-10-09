@@ -1,8 +1,8 @@
 //! LightCraft on iOS: what the app needs from the system that egui and winit don't give it — the
-//! Photos and Files pickers, the share sheet, the pasteboard, haptic feedback, the app's lifecycle
-//! (backgrounding, memory warnings, time to finish work in the background) and ImageIO's decoder for
-//! HEIC / HEIF (the iPhone's own photos), whose formats have no pure-Rust decoder
-//! (`lightcraft_codecs::set_system_decoder`).
+//! Photos and Files pickers, the share sheet, saving to the photo library, the pasteboard, haptic
+//! feedback, the app's lifecycle (backgrounding, memory warnings, time to finish work in the
+//! background) and ImageIO's decoder for HEIC / HEIF (the iPhone's own photos), whose formats have
+//! no pure-Rust decoder (`lightcraft_codecs::set_system_decoder`).
 //!
 //! The Objective-C calls go through `objc2` (Rust bindings to the system frameworks; no C or
 //! Objective-C code is compiled) and live in `ios` (compiled for iOS only). This crate is allowed
@@ -73,6 +73,24 @@ pub fn share(paths: &[PathBuf]) -> Result<(), String> {
     {
         let _ = paths;
         Err(ONLY_IOS.into())
+    }
+}
+
+/// How a save to the photo library ended: how many photos went in, or why none did. Called once, on
+/// any thread.
+pub type SaveDone = Box<dyn FnOnce(Result<usize, String>) + Send + 'static>;
+
+/// Add image files to the photo library, each as a photo of its own, all or none (PhotoKit with
+/// "add only" access: the first time, the system asks the user, with the sentence in the app's
+/// Info.plist). It returns at once and calls `done` when the library has them or has refused (no
+/// permission, a format it can't keep). Elsewhere than iOS `done` gets an error.
+pub fn save_to_photos(paths: &[PathBuf], done: SaveDone) {
+    #[cfg(target_os = "ios")]
+    ios::photos::save(paths, done);
+    #[cfg(not(target_os = "ios"))]
+    {
+        let _ = paths;
+        done(Err(ONLY_IOS.into()));
     }
 }
 

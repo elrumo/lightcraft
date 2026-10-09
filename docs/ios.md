@@ -113,7 +113,7 @@ The file stays in the app's sandbox, so nothing listens on the network. On the s
 xcrun simctl launch …` does the same.
 
 Both link PhotosUI, Photos, ImageIO and UniformTypeIdentifiers for the native host and set
-`NSPhotoLibraryAddUsageDescription` (Save Image in the share sheet); importing needs no photo-library permission (the
+`NSPhotoLibraryAddUsageDescription` (Save to Photos, and Save Image in the share sheet); importing needs no photo-library permission (the
 Photos picker runs out of process).
 
 **The library** is `LightCraft Library` in the app's Documents folder (kept across launches and updates, backed up
@@ -148,6 +148,10 @@ whose portable helpers (safe file names, unique paths, the folder walk) are test
   import review, which *moves* it into the library's `Originals/` (`file.addPhotos {staged: true}`: no "add in place").
 - **Export.** Every export is written to `tmp/Exports/` (emptied first) and opens the share sheet: Save Image (to
   Photos), Save to Files, AirDrop, Mail, other apps. The export dialog has no folder field (`Services::share_exports`).
+  **Save to Photos** (the share sheet's row and the photo's save button; `Services::save_to_photos`) skips the share sheet:
+  `lightcraft_ios_host::save_to_photos` adds the exported files to the library through PhotoKit with *add-only* access
+  (the system asks the first time, with `NSPhotoLibraryAddUsageDescription`), all or none; JPEG, PNG, TIFF and DNG only.
+  *Written and type-checked, not yet run on the simulator or a device.* The phone's export pages are `panels/export.rs`.
 - **HEIC / HEIF, AVIF** decode through ImageIO, installed as `lightcraft-codecs`' system decoder (8- or 16-bit, in the
   photo's own colour space with its ICC profile); their EXIF and XMP come from `lightcraft-meta`'s HEIF parser.
 - **Lifecycle.** The library, the view and the app settings (`ui.json`, in `Library/Application Support/LightCraft`)

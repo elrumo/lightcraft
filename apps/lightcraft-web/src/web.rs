@@ -227,6 +227,7 @@ fn services(originals: Originals, backend: Option<Backend>, files: Files, frozen
         sync_exec: Some(crate::sync::exec(sync_backend)),
         tile_exec: Some(crate::tiles::exec()),
         share_exports: None,
+        save_to_photos: None,
         host_pick: None,
         // the system clipboard reaches text fields directly; no haptics
         haptic: None,

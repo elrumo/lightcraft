@@ -12,6 +12,7 @@ pub mod crop_overlay;
 pub mod detail;
 pub mod dialogs;
 pub mod edit;
+pub mod export;
 pub mod filterbar;
 pub mod grid;
 pub mod left;

@@ -351,10 +351,20 @@ pub fn default_export_dir() -> String {
 pub fn export_active(app: &mut LightcraftApp, p: &Value) -> Result<Value, String> {
     use lightcraft_engine::export::{Destination, ExportOptions, export_batch};
     let p = &app.session.export_params(p)?;
+    let send = SendTo::of(p)?;
+    if send == SendTo::Photos && app.services.save_to_photos.is_none() {
+        return Err("this device has no photo library to save to".into());
+    }
     let mut opts = ExportOptions::from_json(p);
     if let (Some(path), None) = (p.get("path").and_then(Value::as_str), p.get("format")) {
         let ext = path.rsplit_once('.').map_or("", |(_, e)| e);
         opts.format = lightcraft_engine::export::ExportFormat::parse(ext).unwrap_or(opts.format);
+    }
+    {
+        use lightcraft_engine::export::ExportFormat as F;
+        if send == SendTo::Photos && !matches!(opts.format, F::Jpeg | F::Png | F::Tiff | F::Dng) {
+            return Err("Photos keeps JPEG, PNG, TIFF and DNG files: choose one of those to save to Photos, or share the files instead".into());
+        }
     }
     let ids: Vec<_> = match p.get("ids").and_then(Value::as_array) {
         Some(a) => a.iter().filter_map(|v| serde_json::from_value(v.clone()).ok()).collect(),
@@ -390,11 +400,11 @@ pub fn export_active(app: &mut LightcraftApp, p: &Value) -> Result<Value, String
     let background = p.get("background").and_then(Value::as_bool).unwrap_or(false) && app.services.write_shared.is_some();
     let out = if background {
         let items = lightcraft_engine::export::prepare_batch(&mut app.session, &ids, &opts)?;
-        crate::export_task::start(app, items, opts, to)?
+        crate::export_task::start(app, items, opts, to, send)?
     } else {
         let w = app.services.write.as_mut().ok_or("no writer")?;
         let files = export_batch(&mut app.session, &ids, &opts, &to, &mut |path, bytes| w(path, bytes), &|path| std::path::Path::new(path).exists())?;
-        share_exported(app, &files);
+        deliver(app, &files, send);
         json!({"files": files})
     };
     // remember for Export with Previous (and to prefill the dialog)
@@ -402,6 +412,7 @@ pub fn export_active(app: &mut LightcraftApp, p: &Value) -> Result<Value, String
     if let Some(o) = last.as_object_mut() {
         o.remove("ids");
         o.remove("path");
+        o.remove("sendTo");
         if app.services.share_exports.is_some() {
             // the staging folder isn't the user's choice (and moves with an iOS app update)
             o.remove("dir");
@@ -412,6 +423,48 @@ pub fn export_active(app: &mut LightcraftApp, p: &Value) -> Result<Value, String
     app.session.last_export = Some(last);
     let _ = app.session.save_prefs();
     Ok(out)
+}
+
+/// Where `app.export` sends the files it wrote (its `sendTo` param).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SendTo {
+    /// The system's share sheet, when the host has one; otherwise they stay in their folder.
+    #[default]
+    Share,
+    /// The device's photo library ([`crate::Services::save_to_photos`]).
+    Photos,
+}
+
+impl SendTo {
+    /// `sendTo` of export params: `share` (the default) or `photos`.
+    pub fn of(p: &Value) -> Result<SendTo, String> {
+        match p.get("sendTo").and_then(Value::as_str) {
+            None | Some("share") => Ok(SendTo::Share),
+            Some("photos") => Ok(SendTo::Photos),
+            Some(other) => Err(format!("unknown `sendTo` \"{other}\" (share or photos)")),
+        }
+    }
+}
+
+/// Hand on what an export wrote: to the share sheet or the photo library.
+pub fn deliver(app: &mut LightcraftApp, files: &[Value], to: SendTo) {
+    match to {
+        SendTo::Share => share_exported(app, files),
+        SendTo::Photos => save_exported(app, files),
+    }
+}
+
+/// Add what an export wrote to the device's photo library. How it went arrives in `app.saved`
+/// (`export_task::poll` says so); nothing is said here.
+fn save_exported(app: &mut LightcraftApp, files: &[Value]) {
+    let paths: Vec<String> = files.iter().filter_map(|f| f.get("path").and_then(Value::as_str)).map(str::to_string).collect();
+    if paths.is_empty() {
+        return;
+    }
+    let inbox = app.saved.clone();
+    if let Some(save) = app.services.save_to_photos.as_mut() {
+        save(&paths, Box::new(move |r| inbox.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(r)));
+    }
 }
 
 /// Offer what an export wrote to the system's share sheet, when the host shares exports

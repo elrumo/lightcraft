@@ -220,10 +220,10 @@ fn ipad_portrait_is_compact_with_the_tools_on_the_right() {
 #[test]
 fn dialogs_are_pages_on_a_phone() {
     let mut h = detail([390.0, 844.0]);
-    let r = h.request("engine.execute", json!({"command": "dialog.export"}), T);
+    let r = h.request("engine.execute", json!({"command": "dialog.newAlbum"}), T);
     assert_eq!(r["ok"], true, "{r}");
     h.settle(SETTLE);
-    let rect = h.app.widgets.iter().find(|(w, _)| w == "sheet:dialog").map(|(_, r)| *r).expect("the export dialog is a page");
+    let rect = h.app.widgets.iter().find(|(w, _)| w == "sheet:dialog").map(|(_, r)| *r).expect("the new album dialog is a page");
     assert!(rect.width() >= 389.0 && rect.left() >= 0.0 && rect.top() >= 0.0 && rect.bottom() <= 844.5, "it covers the screen: {rect:?}");
     assert!(has(&h, "button:sheetOk") && has(&h, "button:sheetCancel"));
     click(&mut h, "button:sheetCancel");
@@ -237,6 +237,9 @@ fn phone_dialogs_use_switches_for_on_off_choices() {
     let r = h.request("engine.execute", json!({"command": "dialog.export"}), T);
     assert_eq!(r["ok"], true, "{r}");
     h.settle(SETTLE);
+    // (no share sheet in this host: the options come first, and More Options is a row on them)
+    click(&mut h, "button:exportMore");
+    frames(&mut h, 40);
     let row = h.app.widgets.iter().find(|(w, _)| w == "check:exportDontEnlarge").map(|(_, r)| *r).expect("Don't enlarge");
     assert!(row.width() > 300.0 && row.height() >= 44.0, "a full-width row: {row:?}");
     let enlarge = |h: &Headless| match &h.app.ui.dialog {
@@ -473,7 +476,7 @@ fn pages_and_menus_leave_the_way_they_came() {
     assert_eq!(r["ok"], true, "{r}");
     frames(&mut h, 60);
     let top = rect_of(&h, "sheet:dialog").top();
-    let r = h.request("ui.clickWidget", json!({"id": "button:sheetCancel"}), T);
+    let r = h.request("ui.clickWidget", json!({"id": "button:optionsClose"}), T);
     assert_eq!(r["ok"], true, "{r}");
     assert!(h.app.ui.dialog.is_none(), "the dialog is closed at once");
     let mid = rect_of(&h, "sheet:dialog").top();
