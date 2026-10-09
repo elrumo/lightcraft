@@ -331,7 +331,7 @@ Each device keeps the **whole catalog** (it's small) and **downloads pixels as n
 
 | What | When | Used for |
 |---|---|---|
-| mini preview (≤ 512 px) | every photo whose original isn't here | grid and filmstrip thumbnails, rendered here with the current edits (never stale) |
+| mini preview (≤ 512 px) | every photo whose original isn't here: the cells on screen first (the grid fills where you look, then the rest of the library) | grid and filmstrip thumbnails, rendered here with the current edits (never stale) |
 | smart preview (≤ 2560 px) | the photo you open, and everything **made available offline** | the loupe, editing, exporting at preview size |
 | original | **Photo ▸ Download Originals**, or every photo with *Store the originals of all photos on this device* | full-size export, 1:1 |
 
