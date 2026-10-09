@@ -287,6 +287,13 @@ pub struct UiState {
     /// Compact layout: how tall the tool sheet is, as the stop (0 small, 1 medium, 2 large) it was
     /// last left at (the grabber at its top snaps between them).
     pub sheet_detent: u8,
+    /// Compact layout: the crop screen's tab, Aspect (false) or Geometry (true).
+    #[serde(skip)]
+    pub crop_geometry: bool,
+    /// Compact layout: how many undo steps there were when the crop screen opened; ✕ goes back to
+    /// there.
+    #[serde(skip)]
+    pub crop_undo_base: Option<usize>,
     /// Compact layout: the searchable list of every command is open (the phone has no menu bar).
     #[serde(skip)]
     pub all_commands: bool,
@@ -675,6 +682,8 @@ impl Default for UiState {
             edit_group: "light".into(),
             appearance: Appearance::System,
             sheet_detent: 1,
+            crop_geometry: false,
+            crop_undo_base: None,
             all_commands: false,
             luminance_map_restore: None,
             view: ViewMode::Detail,

@@ -21,7 +21,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::{Duration, Instant};
+use web_time::{Duration, Instant};
 
 use lightcraft_catalog::PhotoId;
 use lightcraft_develop::DevelopSettings;

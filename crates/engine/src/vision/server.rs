@@ -7,7 +7,7 @@
 
 use std::collections::HashSet;
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use web_time::{Duration, Instant};
 
 use lightcraft_catalog::PhotoId;
 use lightcraft_vision::Key;

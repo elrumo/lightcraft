@@ -1,0 +1,11 @@
+# Clippy config for `cargo xtask wasm` (CLIPPY_CONF_DIR): the root clippy.toml plus the std clock, which
+# panics on wasm32-unknown-unknown ("time not implemented on this platform"). Use `web_time` instead
+# (a re-export of `std::time` on native).
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-indexing-slicing-in-tests = true
+disallowed-methods = [
+    { path = "std::time::Instant::now", reason = "panics on wasm32: use web_time::Instant" },
+    { path = "std::time::SystemTime::now", reason = "panics on wasm32: use web_time::SystemTime" },
+]

@@ -7,6 +7,7 @@ pub mod bottombar;
 pub mod chips;
 pub mod compact;
 pub mod compare;
+pub mod crop_mobile;
 pub mod crop_overlay;
 pub mod detail;
 pub mod dialogs;

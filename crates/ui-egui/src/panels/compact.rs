@@ -76,14 +76,21 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let tool = !app.ui.tool.is_empty() || matches!(app.ui.right, RightPanel::Crop | RightPanel::Masking | RightPanel::Remove | RightPanel::RedEye);
     app.ui.review &= detail && !tool;
     let bars = !app.ui.review;
-    top_bar(app, ui, &t, bars);
-    // the bars below are called every frame, shown or not, so that they slide in and out
-    action_bar(app, ui, &t, app.ui.select_mode);
-    let edit = !app.ui.presets && matches!(app.ui.right, RightPanel::Edit);
-    tool_bar(app, ui, &t, landscape, detail && bars);
-    // (held sideways, the groups are at the top of the side panel: `sheet`)
-    group_bar(app, ui, &t, detail && bars && edit && !landscape);
-    sheet(app, ui, &t, wide, landscape, detail && bars && (app.ui.right != RightPanel::None || app.ui.presets));
+    // the Crop tool has a screen of its own in place of the bars and the sheet
+    let crop = super::crop_mobile::open(app);
+    super::crop_mobile::track(app, crop);
+    if crop {
+        super::crop_mobile::show(app, ui, &t, landscape);
+    } else {
+        top_bar(app, ui, &t, bars);
+        // the bars below are called every frame, shown or not, so that they slide in and out
+        action_bar(app, ui, &t, app.ui.select_mode);
+        let edit = !app.ui.presets && matches!(app.ui.right, RightPanel::Edit);
+        tool_bar(app, ui, &t, landscape, detail && bars);
+        // (held sideways, the groups are at the top of the side panel: `sheet`)
+        group_bar(app, ui, &t, detail && bars && edit && !landscape);
+        sheet(app, ui, &t, wide, landscape, detail && bars && (app.ui.right != RightPanel::None || app.ui.presets));
+    }
     let bg = if detail { t.canvas } else { t.grid_bg };
     if app.ui.left_panel && wide {
         egui::Panel::left("compact_sources")
@@ -159,6 +166,7 @@ fn menus(app: &mut LightcraftApp, ctx: &egui::Context) {
             }
         }
     });
+    super::crop_mobile::menus(app, ctx);
     mobile::actions(ctx, "more", None, |ui| grid_more(app, ui));
     mobile::actions(ctx, "sort", Some("Sort"), |ui| sort_items(app, ui));
     mobile::actions(ctx, "photoMore", None, |ui| photo_more(app, ui));
@@ -330,7 +338,7 @@ fn overlays(app: &mut LightcraftApp, ctx: &egui::Context) {
 }
 
 /// An icon button in a bar (`icon:<id>`): white glyphs on black, dimmed while pressed.
-fn bar_icon(ui: &mut egui::Ui, id: &str, icon: Icon, tip: &str, enabled: bool) -> egui::Response {
+pub(super) fn bar_icon(ui: &mut egui::Ui, id: &str, icon: Icon, tip: &str, enabled: bool) -> egui::Response {
     let t = Tokens::get(ui.ctx());
     let (r, resp) = ui.allocate_exact_size(vec2(44.0, 44.0), if enabled { Sense::click() } else { Sense::hover() });
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, crate::i18n::tr(tip)));

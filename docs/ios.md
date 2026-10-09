@@ -203,8 +203,11 @@ layout and interaction only: no Adobe icons, artwork, fonts, presets or screensh
    three heights or right down to put the tool away; the sheet is only as tall as its content, so the photo keeps the
    rest; from 600 pt wide it is a panel on the right, with My Photos as a column on the left; held sideways, under
    520 pt tall, the tools are a rail down the left edge and the groups sit on top of that panel; A2.4, A2.6). The
-   tool panels use finger-sized controls throughout (A2.3, A2.5): Crop's aspect ratios are chips, Presets a strip of
+   tool panels use finger-sized controls throughout (A2.3, A2.5): Presets a strip of
    thumbnails under group chips, Masking's kinds tiles five to a row, Colour Grading one big wheel at a time.
+   Crop is a screen of its own (A2.28): a title with undo over the photo, an angle dial and four round buttons (auto level,
+   lock the aspect, rotate, more) under it, Aspect (Original, Ratios, Instagram, TikTok) and Geometry (Upright, sliders) tabs,
+   and ✕ / ✓ at the bottom; ✕ undoes everything done since it opened.
    Dialogs are pages sliding up from the bottom (Cancel, title and action
    in the bar), menus are iOS pull-downs or action sheets, and every other command is in a searchable All Commands
    list. Touch: a tap opens a photo, pinch zooms, two fingers pan, a sideways drag on a fitted photo carries it

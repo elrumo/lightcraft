@@ -97,65 +97,11 @@ fn padded(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
     egui::Frame::NONE.inner_margin(crate::widgets::margin(ui.ctx(), 6, 6)).show(ui, add);
 }
 
-/// The crop's aspect ratios: (label, `crop.aspect` name).
-const ASPECTS: [(&str, &str); 10] = [
-    ("Free", "free"),
-    ("Original", "original"),
-    ("1 × 1", "1x1"),
-    ("4 × 5 / 8 × 10", "4x5"),
-    ("8.5 × 11", "8.5x11"),
-    ("5 × 7", "5x7"),
-    ("2 × 3 / 4 × 6", "2x3"),
-    ("4 × 3", "4x3"),
-    ("16 × 9", "16x9"),
-    ("16 × 10", "16x10"),
-];
-
-/// A phone's aspect ratios: chips in a row that scrolls sideways, the chosen one lit (the desktop's
-/// pop-up menu is hard to hit with a finger, and hides the choices).
-fn aspect_chips(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, d: &lightcraft_develop::DevelopSettings) {
-    let (w, h) = app.session.catalog.photo(id).map_or((1.0, 1.0), |p| (p.width.max(1) as f64, p.height.max(1) as f64));
-    let same = |a: (u32, u32), r: f64| (a.0 as f64 / a.1.max(1) as f64 - r).abs() < 0.005 * r;
-    let on = |name: &str| match (name, d.crop.aspect) {
-        ("free", a) => a.is_none(),
-        (_, None) => false,
-        ("original", Some(a)) => same(a, w / h) || same(a, h / w),
-        (name, Some(a)) => name
-            .split_once('x')
-            .and_then(|(x, y)| Some((x.parse::<f64>().ok()?, y.parse::<f64>().ok()?)))
-            .is_some_and(|(x, y)| same(a, x / y) || same(a, y / x)),
-    };
-    let pad = crate::widgets::side_pad(ui.ctx()).0;
-    egui::ScrollArea::horizontal().id_salt("crop-aspects").scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden).show(
-        ui,
-        |ui| {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 8.0;
-                ui.add_space(pad);
-                for (label, name) in ASPECTS {
-                    if text_button(ui, &format!("cropAspect-{name}"), label.split(" / ").next().unwrap_or(label), on(name)).clicked() {
-                        let _ = app.run("crop.aspect", json!({"aspect": name}));
-                    }
-                }
-                ui.add_space(pad);
-            });
-        },
-    );
-}
-
 fn crop(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     let d = app.session.develop_of(id).unwrap_or_default();
     tool_header(ui, "Crop");
-    let compact = app.compact;
-    if compact {
-        ui.add_space(8.0);
-        aspect_chips(app, ui, id, &d);
-    }
     padded(ui, |ui| {
         ui.horizontal(|ui| {
-            if compact {
-                return;
-            }
             ui.label(crate::i18n::tr("Aspect Ratio"));
             let cur = d.crop.aspect.map(|(w, h)| format!("{} × {}", w as f64 / 100.0, h as f64 / 100.0)).unwrap_or_else(|| "Free".into());
             let r = ui.add(egui::Button::new(crate::i18n::tr(&cur)).frame(false));

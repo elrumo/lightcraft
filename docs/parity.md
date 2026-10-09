@@ -297,10 +297,10 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 | Id | Feature | Tier | Status | Evidence | Missing / notes |
 |---|---|---|---|---|---|
 | LR-CROP-RECT | Crop rectangle | P0 | ✅ | `cmd:crop.set`, `crates/ui-egui/src/panels/detail.rs` | double-click inside the box applies the crop (like Return) |
-| LR-CROP-ASPECT | Aspect ratios | P0 | ✅ | `cmd:crop.aspect`, `cmd:crop.rotateAspect` | no "As Shot"; custom ratio via command params only |
+| LR-CROP-ASPECT | Aspect ratios | P0 | ✅ | `cmd:crop.aspect`, `cmd:crop.rotateAspect`, `crates/ui-egui/src/panels/crop_mobile.rs` | no "As Shot"; custom ratio via command params only; on a phone the Aspect tab has Original, Ratios, Instagram and TikTok menus and a lock button |
 | LR-CROP-STRAIGHTEN | Straighten tool | P0 | ✅ | `cmd:crop.straighten`, `cmd:crop.autoStraighten` | Straighten Tool button: drag along a horizon/vertical; double-click or Auto levels automatically |
 | LR-CROP-AUTO | Auto straighten | P1 | ✅ | `cmd:crop.autoStraighten` | crop-angle leveling from detected horizon/plumb lines (consensus required) |
-| LR-CROP-ANGLE | Angle slider | P0 | ✅ | `ctl:crop.angle` | |
+| LR-CROP-ANGLE | Angle slider | P0 | ✅ | `ctl:crop.angle`, `crates/ui-egui/src/panels/crop_mobile.rs` | a phone has an arc dial instead |
 | LR-CROP-ROTATE90 | Rotate 90° | P0 | ✅ | `cmd:photo.rotateLeft`, `cmd:photo.rotateRight` | |
 | LR-CROP-FLIP | Flip | P0 | ✅ | `cmd:photo.flipHorizontal`, `cmd:photo.flipVertical` | |
 | LR-CROP-OVERLAY | Crop overlays | P1 | ✅ | `cmd:view.cropOverlay`, `cmd:view.cropOverlayOrientation`, `crates/ui-egui/src/panels/crop_overlay.rs` | thirds, grid, golden ratio, diagonal, triangle, golden spiral (mirrored with ⇧O while cropping); no aspect-ratio overlays |

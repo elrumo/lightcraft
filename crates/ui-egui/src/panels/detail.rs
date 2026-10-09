@@ -168,7 +168,8 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let margin = if fullscreen || review {
         0.0
     } else if crop_tool {
-        48.0
+        // (a phone's handles sit just outside the frame, and the panels under the photo are tall)
+        if app.compact { 22.0 } else { 48.0 }
     } else {
         24.0
     };
@@ -403,8 +404,10 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             p.line_segment([pos2(img_rect.left(), fy), pos2(img_rect.right(), fy)], stroke);
         }
     }
+    // (the phone's Geometry tab shows the photo as the sliders change it, with no crop frame)
+    let crop_frame = !(app.compact && app.ui.crop_geometry && app.ui.tool.is_empty());
     match right {
-        RightPanel::Crop => crop_overlay(app, ui, &resp, &map, &frame, &d, id),
+        RightPanel::Crop if crop_frame => crop_overlay(app, ui, &resp, &map, &frame, &d, id),
         RightPanel::Masking => mask_overlay(app, ui, &resp, &map, &d),
         RightPanel::Remove => remove_overlay(app, ui, &resp, &map, &d),
         RightPanel::RedEye => eye_overlay(app, ui, &resp, &map, &d),
@@ -1272,12 +1275,18 @@ fn crop_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respons
     let (reach, grow) = if app.compact { (TOUCH_HANDLE_REACH, 2.0) } else { (12.0, 1.0) };
     for (i, h) in handles.iter().enumerate() {
         register(ui.ctx(), format!("cropHandle:{i}"), Rect::from_center_size(*h, vec2(14.0, 14.0) * grow));
+        if app.compact {
+            continue;
+        }
         let s = (if i < 4 { 12.0 } else { 9.0 }) * grow;
         let halo = Color32::from_black_alpha(100);
         p.rect_filled(Rect::from_center_size(*h, vec2(s + 2.0, 3.0 * grow + 2.0)), 0.0, halo);
         p.rect_filled(Rect::from_center_size(*h, vec2(3.0 * grow + 2.0, s + 2.0)), 0.0, halo);
         p.rect_filled(Rect::from_center_size(*h, vec2(s, 3.0 * grow)), 0.0, Color32::WHITE);
         p.rect_filled(Rect::from_center_size(*h, vec2(3.0 * grow, s)), 0.0, Color32::WHITE);
+    }
+    if app.compact {
+        bracket_handles(p, &pts);
     }
     let grab = |q: Pos2| {
         handles.iter().enumerate().filter(|(_, h)| h.distance(q) < reach).min_by(|a, b| a.1.distance(q).total_cmp(&b.1.distance(q))).map(|(i, _)| i)
@@ -1378,6 +1387,32 @@ fn crop_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respons
         let _ = app.run("develop.endInteraction", json!({}));
     }
     let _ = id;
+}
+
+/// A phone's crop handles, as Lightroom's mobile app draws them: a thick bracket round each corner
+/// and a short bar in the middle of each edge, hugging the frame's outside (so the photo stays
+/// visible), on a dark halo.
+fn bracket_handles(p: &egui::Painter, pts: &[Pos2]) {
+    const ARM: f32 = 22.0;
+    const BAR: f32 = 28.0;
+    const W: f32 = 4.0;
+    let n = pts.len();
+    for (i, c) in pts.iter().enumerate() {
+        let (Some(next), Some(prev)) = (pts.get((i + 1) % n.max(1)), pts.get((i + n - 1) % n.max(1))) else { continue };
+        let (u, v) = ((*next - *c).normalized(), (*prev - *c).normalized());
+        // (the corner moves out along both edges, so the stroke lies outside the frame)
+        let corner = *c - (u + v) * (W / 2.0);
+        let line = vec![corner + u * (ARM + W / 2.0), corner, corner + v * (ARM + W / 2.0)];
+        p.add(egui::Shape::line(line.clone(), Stroke::new(W + 2.0, Color32::from_black_alpha(90))));
+        p.add(egui::Shape::line(line, Stroke::new(W, Color32::WHITE)));
+        // the bar on the edge from this corner to the next, pushed out by the edge's normal
+        let mid = c.lerp(*next, 0.5);
+        let out = -v * (W / 2.0);
+        let along = u * (BAR / 2.0);
+        let bar = vec![mid + out - along, mid + out + along];
+        p.add(egui::Shape::line(bar.clone(), Stroke::new(W + 2.0, Color32::from_black_alpha(90))));
+        p.add(egui::Shape::line(bar, Stroke::new(W, Color32::WHITE)));
+    }
 }
 
 /// Guided Upright: draw up to four guides along lines that should be vertical or horizontal. Guides are
