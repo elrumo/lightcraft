@@ -22,8 +22,12 @@
 //! else `photoshop:DateCreated`, else `xmp:CreateDate`) fills in only when the file has none; develop
 //! settings are restored from `lc:settings` when present, else mapped from interoperable `crs:`
 //! fields ([`crate::crs`]). For raw/DNG files without a sidecar the file's embedded XMP is used.
+//!
+//! **Changes made elsewhere** ([`SidecarTimes`]): LightCraft notes each sidecar's modification
+//! time when it reads or writes it. Browsing a folder again reads every sidecar whose time
+//! changed since (Lightroom edited the photo meanwhile), the sidecar winning as above.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -74,6 +78,61 @@ pub fn find_sidecar(original: &str, naming: SidecarNaming) -> Option<PathBuf> {
             [p, upper]
         })
         .find(|p| p.is_file())
+}
+
+/// A file's modification time in nanoseconds since 1970 (`None` when it can't be read).
+pub fn modified(path: &Path) -> Option<u64> {
+    let t = std::fs::metadata(path).ok()?.modified().ok()?;
+    u64::try_from(t.duration_since(std::time::UNIX_EPOCH).ok()?.as_nanos()).ok()
+}
+
+/// When LightCraft last read or wrote each sidecar: the sidecar's modification time then, by
+/// path. A sidecar whose time differs now was changed by another application since. Kept in the
+/// library as [`SidecarTimes::FILE`], a cache: a sidecar it has no time for is treated as unknown
+/// (see `library.browse`).
+#[derive(Debug, Default)]
+pub struct SidecarTimes {
+    times: BTreeMap<String, u64>,
+    dirty: bool,
+}
+
+impl SidecarTimes {
+    pub const FILE: &'static str = "sidecars.json";
+
+    pub fn get(&self, sidecar: &Path) -> Option<u64> {
+        self.times.get(sidecar.to_string_lossy().as_ref()).copied()
+    }
+
+    /// Note the sidecar's current modification time (forgotten when it can't be read).
+    pub fn note(&mut self, sidecar: &Path) {
+        self.set(sidecar, modified(sidecar));
+    }
+
+    /// Note a modification time taken before the sidecar was read.
+    pub fn set(&mut self, sidecar: &Path, t: Option<u64>) {
+        let key = sidecar.to_string_lossy().to_string();
+        if self.times.get(&key).copied() != t {
+            match t {
+                Some(t) => self.times.insert(key, t),
+                None => self.times.remove(&key),
+            };
+            self.dirty = true;
+        }
+    }
+
+    /// Read from the library's file (missing or damaged: empty, it's only a cache).
+    pub fn from_json(bytes: &[u8]) -> SidecarTimes {
+        SidecarTimes { times: serde_json::from_slice(bytes).unwrap_or_default(), dirty: false }
+    }
+
+    /// The file's contents, if anything changed since it was last [`SidecarTimes::saved`].
+    pub fn to_save(&self) -> Option<Vec<u8>> {
+        self.dirty.then(|| serde_json::to_vec(&self.times).unwrap_or_default())
+    }
+
+    pub fn saved(&mut self) {
+        self.dirty = false;
+    }
 }
 
 /// What a sidecar (or embedded XMP packet) says about a photo. `None` = not stated.
@@ -229,6 +288,34 @@ pub fn merge_into(p: &mut Photo, sc: &SidecarData, now: &str) -> bool {
     p.develop = Arc::new(develop);
     p.edited = Some(now.to_string());
     true
+}
+
+/// The ops that bring photo `p` to what `sc` says, as [`merge_into`] would: only what changes, the
+/// develop settings as a `SetDevelop` labelled `label` (no history step).
+pub fn sidecar_ops(p: &Photo, sc: &SidecarData, now: &str, label: &str) -> Vec<Op> {
+    let id = p.id;
+    let mut q = p.clone();
+    let develop = merge_into(&mut q, sc, now);
+    let mut ops = Vec::new();
+    if q.rating != p.rating {
+        ops.push(Op::SetRating { id, rating: q.rating });
+    }
+    if q.flag != p.flag {
+        ops.push(Op::SetFlag { id, flag: q.flag });
+    }
+    if q.label != p.label {
+        ops.push(Op::SetLabel { id, label: q.label });
+    }
+    if q.captured != p.captured {
+        ops.push(Op::SetCaptured { id, captured: q.captured });
+    }
+    if q.meta != p.meta {
+        ops.push(Op::SetMeta { id, meta: Box::new(q.meta) });
+    }
+    if develop {
+        ops.push(Op::SetDevelop { id, settings: q.develop, label: label.into(), edited: q.edited });
+    }
+    ops
 }
 
 impl SidecarData {
@@ -433,7 +520,7 @@ impl StemOwners {
     }
 
     /// `naming` for photo `p`, except that a stem sidecar another file owns becomes Full.
-    fn naming(&self, p: &Photo, naming: SidecarNaming) -> SidecarNaming {
+    pub(crate) fn naming(&self, p: &Photo, naming: SidecarNaming) -> SidecarNaming {
         match (naming, file_path(p)) {
             (SidecarNaming::Stem, Some(path)) if self.0.get(&stem_key(path)).is_some_and(|owner| *owner != p.id) => SidecarNaming::Full,
             _ => naming,
@@ -479,25 +566,11 @@ impl Session {
         let sc = parse_sidecar(&packet, p.kind == MediaKind::Raw)
             .map_err(|e| EngineError::Other(format!("{}: {e}", from.display())))?
             .resolve_label(&self.catalog);
-        let mut q = (**p).clone();
-        let develop_changed = merge_into(&mut q, &sc, &(self.clock)());
-        let mut ops = vec![
-            Op::SetRating { id, rating: q.rating },
-            Op::SetFlag { id, flag: q.flag },
-            Op::SetLabel { id, label: q.label },
-            Op::SetMeta { id, meta: Box::new(q.meta.clone()) },
-        ];
-        if q.captured != p.captured {
-            ops.push(Op::SetCaptured { id, captured: q.captured.clone() });
-        }
-        if develop_changed {
-            ops.extend(self.develop_op(id, (*q.develop).clone(), "Read Metadata from File"));
-        }
-        Ok(Some((Op::Batch { ops }, from)))
+        Ok(Some((with_history(sidecar_ops(p, &sc, &(self.clock)(), READ_LABEL)), from)))
     }
 
     /// Auto-write: sidecars for photos changed by `ops` (errors are logged, not returned).
-    pub(crate) fn auto_write_sidecars(&self, ops: &[Op]) {
+    pub(crate) fn auto_write_sidecars(&mut self, ops: &[Op]) {
         let mut ids = Vec::new();
         ops.iter().for_each(|o| op_photos(o, &mut ids));
         if ids.is_empty() {
@@ -505,13 +578,29 @@ impl Session {
         }
         let owners = StemOwners::of(&self.catalog);
         for id in ids {
-            if self.catalog.photo(id).is_some_and(|p| file_path(p).is_some() && p.copy_of.is_none())
-                && let Err(e) = self.save_sidecar_with(id, &owners)
-            {
-                log::warn!("auto-write XMP: {e}");
+            if self.catalog.photo(id).is_some_and(|p| file_path(p).is_some() && p.copy_of.is_none()) {
+                match self.save_sidecar_with(id, &owners) {
+                    Ok(r) => self.sidecar_times.note(&r.path),
+                    Err(e) => log::warn!("auto-write XMP: {e}"),
+                }
             }
         }
     }
+}
+
+/// The undo label of reading sidecars.
+pub const READ_LABEL: &str = "Read Metadata from File";
+
+/// [`sidecar_ops`] as one step, with a history step for the develop change.
+pub(crate) fn with_history(mut ops: Vec<Op>) -> Op {
+    let step = ops.iter().find_map(|o| match o {
+        Op::SetDevelop { id, settings, label, .. } => {
+            Some(Op::PushHistory { id: *id, step: lightcraft_catalog::HistoryStep { label: label.clone(), settings: settings.clone() } })
+        }
+        _ => None,
+    });
+    ops.extend(step);
+    Op::Batch { ops }
 }
 
 #[cfg(test)]
