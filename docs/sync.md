@@ -65,7 +65,7 @@ target/release/lightcraft-server serve --data /srv/lightcraft --listen 127.0.0.1
 
 | Command | What it does |
 |---|---|
-| `serve [--listen HOST:PORT] [--web DIR] [--scan-interval MIN] [--max-requests N]` | Serve (default `127.0.0.1:8080`, only this computer; `$LIGHTCRAFT_LISTEN`). `--web` (`$LIGHTCRAFT_WEB`): the `cargo xtask web` bundle, served at `/` with the same cross-origin isolation headers as the dev server. `--scan-interval` (`$LIGHTCRAFT_SCAN_INTERVAL`, default 15): minutes between scans of the library folders, 0 = at start and on demand only. `--max-requests` (`$LIGHTCRAFT_MAX_REQUESTS`, default 64): requests answered at once, more are told to try again (the health check never waits). `$LIGHTCRAFT_PREVIEW_THREADS`: threads building their previews (default half the cores, 1–4). `$LIGHTCRAFT_RENDER_THREADS`: photos rendered at once for devices that [export on the server](#exporting-on-the-server) (default 1; a render takes about as much memory as the same export on a desktop) |
+| `serve [--listen HOST:PORT] [--web DIR] [--scan-interval MIN] [--max-requests N] [--cors-origin SITE]…` | Serve (default `127.0.0.1:8080`, only this computer; `$LIGHTCRAFT_LISTEN`). `--web` (`$LIGHTCRAFT_WEB`): the `cargo xtask web` bundle, served at `/` with the same cross-origin isolation headers as the dev server. `--scan-interval` (`$LIGHTCRAFT_SCAN_INTERVAL`, default 15): minutes between scans of the library folders, 0 = at start and on demand only. `--max-requests` (`$LIGHTCRAFT_MAX_REQUESTS`, default 64): requests answered at once, more are told to try again (the health check never waits). `--cors-origin` (once per site; `$LIGHTCRAFT_CORS`, comma-separated; `*` = any site): web builds hosted on another site may call the API ([below](#a-web-build-on-another-site)). `$LIGHTCRAFT_PREVIEW_THREADS`: threads building their previews (default half the cores, 1–4). `$LIGHTCRAFT_RENDER_THREADS`: photos rendered at once for devices that [export on the server](#exporting-on-the-server) (default 1; a render takes about as much memory as the same export on a desktop) |
 | `user add NAME [--admin]` / `user passwd NAME` | Add a user / change a password (first line of stdin, or `$LIGHTCRAFT_PASSWORD`; 8 characters at least). Works while the server runs |
 | `user admin NAME on\|off` | Let a user sign in to [the admin page](#the-admin-page), or stop them (the last admin stays) |
 | `user remove NAME` / `user list` | Remove a user (signs out every device; their files stay in `users/NAME/`) |
@@ -216,12 +216,21 @@ The device is listed on the server under the computer's name (`$LIGHTCRAFT_DEVIC
 | Client | How |
 |---|---|
 | Desktop app | **Settings ▸ Sync** (or click the cloud icon in the top bar): server, user, password, **Sign In** |
-| Browser | open the server's address: the server serves the web build, and Settings ▸ Sync has the address filled in |
+| Browser | open the server's address: the server serves the web build, and Settings ▸ Sync has the address filled in; a web build hosted on another site works too ([below](#a-web-build-on-another-site)) |
 | Command line / agents | `lightcraft-cli run --library DIR sync.signIn server=… user=… password=… sync.now wait=true` |
 | iOS (spike, [ios.md](ios.md)) | **Settings ▸ Sync**, as on the desktop; the library is kept in the app's Documents folder |
 
 Users and devices are managed on the server: on [the admin page](#the-admin-page) or from its command line
 (`user add / passwd / admin / remove / list`, `device list / revoke`, `gc`; see the table above).
+
+### A web build on another site
+
+The server serves the web build itself, at its own address, and that needs nothing more. A web build hosted somewhere
+else (a static host or CDN) can sign in to the server too, if the server is told that site may call it from a browser:
+`lightcraft-server serve --cors-origin https://photos-app.example.com` (once per site, or `$LIGHTCRAFT_CORS`). Then
+type the server's address in Settings ▸ Sync on that site. Two things stay the browser's own rules: a page served over
+`https://` can only call an `https://` server (no `http://` on a home network), and the library and sign-in live in
+that site's browser storage, so each site is a separate device. The admin page is never callable from another site.
 
 ## What happens at sign-in
 
@@ -371,6 +380,9 @@ space no device is given. An original kept in a library folder is served from th
   arrive within 10 s, whose body pauses for 60 s, or that is idle for 30 s; it caps a request's head at 32 KiB and
   64 headers, takes at most 512 connections (128 per address) and answers 64 requests at once (`--max-requests`;
   `/api/health` never waits for a place). Request bodies must say their length: `Transfer-Encoding: chunked` gets `411`.
+- **Other sites** can call the API from a browser only if listed with `--cors-origin`; nothing is added otherwise. Devices
+  authenticate with a bearer token in a header, never a cookie, so a listed site can call the API only as a user who
+  signed in to it. `/api/admin/…` never answers cross-origin calls.
 - Library folders are set by admins only, must exist, and can't be (or hold) the server's data folder.
 
 ## Limits
@@ -379,10 +391,9 @@ v1, honestly:
 
 - **The iOS app is a spike** ([ios.md](ios.md)): it runs on the simulator (compact touch layout); sync there is wired
   up but not yet run on a simulator or device.
-- **In the browser** the web build signs in to the server that serves it (same origin; no cross-origin servers). Synced
-  previews and downloaded originals are kept in the browser's storage. Commands that read a photo's pixels on the main
-  thread (auto settings, export) need its original there: **Photo ▸ Download Originals** first. A photo imported in
-  the browser is uploaded with previews built in the page (slow for large raws).
+- **In the browser** synced previews and downloaded originals are kept in the browser's storage. Auto settings, white
+  balance picks and the like read the photo's preview when its original isn't there. Export needs the original there:
+  **Photo ▸ Download Originals** first.
 - Preferences, LUT profiles and export / metadata / filter presets stay per device.
 - **No merging of two existing libraries**, no sharing with other people, no shared albums or links.
 - **Originals downloaded to a device are kept** until you delete them (no automatic eviction under a size budget yet).

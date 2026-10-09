@@ -30,6 +30,7 @@
 pub mod accounts;
 pub mod admin;
 pub mod api;
+pub mod cors;
 pub mod folders;
 pub mod gc;
 pub mod http;
@@ -71,6 +72,9 @@ pub struct Config {
     pub face_finder: Option<Arc<dyn lightcraft_vision::FaceEngine>>,
     /// Renders at once for devices that export on the server ([`render`]).
     pub render_threads: usize,
+    /// Sites whose pages may call the API from a browser (`https://photos.example.com`; `*`: any),
+    /// for a web build served from somewhere else than this server ([`cors`]). Empty: none.
+    pub cors_origins: Vec<String>,
 }
 
 impl Config {
@@ -89,6 +93,7 @@ impl Config {
             text_reader: None,
             face_finder: None,
             render_threads: 1,
+            cors_origins: Vec::new(),
         }
     }
 }
@@ -112,6 +117,8 @@ pub struct State {
     pub(crate) render: render::Slots,
     /// Failed sign-ins (password guessing).
     pub(crate) throttle: Mutex<throttle::Throttle>,
+    /// Which sites' pages may call the API.
+    pub(crate) cors: cors::Cors,
     /// The unfinished uploads being written right now (one writer per file).
     pub(crate) uploading: Mutex<std::collections::HashSet<PathBuf>>,
 }
@@ -151,6 +158,7 @@ impl Server {
             render: render::Slots::new(cfg.render_threads),
             throttle: Mutex::new(throttle::Throttle::default()),
             uploading: Mutex::new(std::collections::HashSet::new()),
+            cors: cors::Cors::new(&cfg.cors_origins),
         });
         let st = state.clone();
         let http = bound.serve(Arc::new(move |req: &mut http::Request| api::handle(&st, req)))?;

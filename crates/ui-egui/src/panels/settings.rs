@@ -1046,6 +1046,17 @@ fn sync_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
                     "Otherwise photos from other devices come down as previews: small ones for the grid, an editable smart preview when you open a photo or make an album available offline (right-click it), and the original when you ask (Photo > Download Originals).",
                 ),
             );
+            let mut by_server = c.server_builds_previews();
+            if check(ui, "sync.serverPreviews", &mut by_server, "Let the server build the previews of photos added here") {
+                sync_cmd(app, ui, "sync.serverPreviews", json!({"on": by_server}));
+            }
+            hint(
+                ui,
+                t,
+                crate::i18n::tr(
+                    "The server decodes each original it is sent, so this device doesn't: that saves battery on a phone and keeps a browser tab responsive. Off: the previews are built here, before the photo goes up.",
+                ),
+            );
             let offline = s["offlineAlbums"].as_array().map_or(0, Vec::len);
             if offline > 0 {
                 hint(ui, t, &format!("{offline} album(s) available offline"));

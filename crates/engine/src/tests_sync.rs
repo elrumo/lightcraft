@@ -508,6 +508,39 @@ fn a_downloaded_original_that_is_not_the_photo_is_not_kept() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// Where the browser has a synced photo's preview in memory but not its original, the commands that read pixels
+/// (auto tone, auto white balance…) read the preview instead of failing "the original is still loading".
+#[test]
+fn pixel_commands_read_the_preview_when_the_original_is_not_here() {
+    use crate::media::SourceLevel;
+    let mut f = Fake::new();
+    let (_a, root, ids) = first_device("proxyonly", &mut f);
+    let mut b = open(&root.join("b"));
+    sign_in(&mut b);
+    sync(&mut b, &mut f);
+    b.selection = crate::Selection::single(ids[0]);
+    sync(&mut b, &mut f);
+    let smart = std::fs::read(root.join("b/Smart Previews").join(crate::smart::file_name(b.catalog.photo(ids[0]).unwrap()))).unwrap();
+    // the browser: no previews folder, and no decoder for the original, which isn't in memory
+    b.media.smart_dir = None;
+    assert!(b.source_now(ids[0], SourceLevel::Thumb).is_err(), "nothing to read without the preview");
+    let bytes: std::sync::Arc<[u8]> = smart.into();
+    let asked = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let log = asked.clone();
+    b.media.proxy_bytes = Some(std::sync::Arc::new(move |hash: &str, edge: usize| {
+        log.lock().unwrap().push((hash.to_string(), edge));
+        Some(bytes.clone())
+    }));
+    let img = b.source_now(ids[0], SourceLevel::Thumb).unwrap();
+    assert_eq!((img.width, img.height), (96, 64), "the photo's own size: it is smaller than the preview's edge");
+    let key = crate::sync::blob_key(b.catalog.photo(ids[0]).unwrap()).unwrap();
+    assert_eq!(asked.lock().unwrap().first(), Some(&(key, 512)), "asked by content hash and the edge wanted");
+    // a preview that doesn't decode is the original error, not a crash
+    b.media.proxy_bytes = Some(std::sync::Arc::new(|_: &str, _: usize| Some(std::sync::Arc::from(&b"not a preview"[..]))));
+    assert!(b.source_now(ids[1], SourceLevel::Preview).is_err());
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 fn snapshots(f: &Fake) -> usize {
     f.requests.iter().filter(|r| *r == "GET /api/snapshot").count()
 }

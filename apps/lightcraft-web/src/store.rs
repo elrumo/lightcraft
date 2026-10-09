@@ -19,6 +19,8 @@ pub use lightcraft_engine::catalog::sync::{PATH_PREFIX, hash_of_path, original_p
 
 /// Memory budget for original bytes on the main thread.
 const MEM_BUDGET: usize = 768 << 20;
+/// Memory for synced photos' smart and mini previews on the main thread (about 1 MB each).
+const PROXY_BUDGET: usize = 128 << 20;
 
 /// Storage key of an original.
 pub fn storage_key(hash: &str) -> String {
@@ -42,6 +44,17 @@ struct Inner {
     wanted: Vec<String>,
     /// Hashes being loaded.
     loading: std::collections::HashSet<String>,
+    /// Hashes storage doesn't hold (a synced photo whose original wasn't downloaded): not asked
+    /// for again until [`Originals::retry_absent`] says it is there.
+    absent: std::collections::HashSet<String>,
+    /// Smart / mini preview files by storage key (`proxies/<hash>.lcsp|.lcsm`) → (bytes, last use).
+    proxies: HashMap<String, (Arc<[u8]>, u64)>,
+    proxies_total: usize,
+    /// Preview keys to load from storage, and the ones being loaded or not in storage.
+    proxies_wanted: Vec<String>,
+    proxies_loading: std::collections::HashSet<String>,
+    /// Preview keys storage doesn't hold (not downloaded yet): not asked for again until sync stores them.
+    proxies_absent: std::collections::HashSet<String>,
 }
 
 /// Original bytes in memory, shared between the engine hooks and the host (cheap to clone).
@@ -59,6 +72,7 @@ impl Originals {
         g.clock += 1;
         let clock = g.clock;
         g.loading.remove(hash);
+        g.absent.remove(hash);
         if let Some(old) = g.bytes.insert(hash.to_string(), (bytes.clone(), clock)) {
             g.total -= old.0.len();
         }
@@ -89,7 +103,7 @@ impl Originals {
             v.1 = clock;
             return Some(v.0.clone());
         }
-        if !g.loading.contains(hash) && !g.wanted.iter().any(|w| w == hash) {
+        if !g.loading.contains(hash) && !g.absent.contains(hash) && !g.wanted.iter().any(|w| w == hash) {
             g.wanted.push(hash.to_string());
         }
         None
@@ -115,6 +129,77 @@ impl Originals {
 
     pub fn load_failed(&self, hash: &str) {
         self.lock().loading.remove(hash);
+    }
+
+    /// Storage doesn't hold this original (a synced photo it wasn't downloaded for): stop asking.
+    pub fn load_missing(&self, hash: &str) {
+        let mut g = self.lock();
+        g.loading.remove(hash);
+        g.absent.insert(hash.to_string());
+    }
+
+    /// Ask again for the originals (by hash) and previews (by file name, `<hash>.lcsp`) that were missing and
+    /// storage now holds.
+    pub fn retry_absent(&self, original: impl Fn(&str) -> bool, proxy: impl Fn(&str) -> bool) {
+        let mut g = self.lock();
+        g.absent.retain(|h| !original(h));
+        g.proxies_absent.retain(|k| !proxy(k.strip_prefix("proxies/").unwrap_or(k)));
+    }
+
+    /// A preview file read from storage (`proxies/<hash>.lcsp|.lcsm`).
+    pub fn insert_proxy(&self, key: &str, bytes: Arc<[u8]>) {
+        let mut g = self.lock();
+        g.clock += 1;
+        let clock = g.clock;
+        g.proxies_loading.remove(key);
+        if let Some(old) = g.proxies.insert(key.to_string(), (bytes.clone(), clock)) {
+            g.proxies_total -= old.0.len();
+        }
+        g.proxies_total += bytes.len();
+        while g.proxies_total > PROXY_BUDGET && g.proxies.len() > 1 {
+            let Some(oldest) = g.proxies.iter().filter(|(k, _)| *k != key).min_by_key(|(_, v)| v.1).map(|(k, _)| k.clone()) else { break };
+            if let Some(v) = g.proxies.remove(&oldest) {
+                g.proxies_total -= v.0.len();
+            }
+        }
+    }
+
+    /// Storage doesn't hold this preview (yet): it is looked for again once sync has stored it
+    /// ([`Originals::retry_absent`]).
+    pub fn proxy_missing(&self, key: &str) {
+        let mut g = self.lock();
+        g.proxies_loading.remove(key);
+        g.proxies_absent.insert(key.to_string());
+    }
+
+    /// The smart or mini preview of the photo with this content hash for pixels no more than `max_edge` long, if in
+    /// memory; a miss queues the load (the mini preview first when little is wanted, else the smart one).
+    pub fn proxy(&self, hash: &str, max_edge: usize) -> Option<Arc<[u8]>> {
+        let keys = crate::wire::proxy_keys(hash, max_edge);
+        let mut g = self.lock();
+        g.clock += 1;
+        let clock = g.clock;
+        for k in &keys {
+            if let Some(v) = g.proxies.get_mut(k) {
+                v.1 = clock;
+                return Some(v.0.clone());
+            }
+        }
+        for k in keys {
+            if !g.proxies_loading.contains(&k) && !g.proxies_absent.contains(&k) && !g.proxies_wanted.contains(&k) {
+                g.proxies_wanted.push(k);
+            }
+        }
+        None
+    }
+
+    /// Preview keys to load from storage (they count as loading until [`Originals::insert_proxy`] or
+    /// [`Originals::proxy_missing`]).
+    pub fn take_wanted_proxies(&self) -> Vec<String> {
+        let mut g = self.lock();
+        let w = std::mem::take(&mut g.proxies_wanted);
+        g.proxies_loading.extend(w.iter().cloned());
+        w
     }
 
     /// Paths added since the last call.
@@ -151,6 +236,9 @@ impl Originals {
         let s = self.clone();
         session.media.preview_loader =
             Some(Arc::new(move |path: &str, max_edge: usize| lightcraft_engine::files::embedded_preview_srgb(&s.get(path)?, max_edge)));
+        // a synced photo whose original wasn't downloaded: auto tone and the like read its preview
+        let s = self.clone();
+        session.media.proxy_bytes = Some(Arc::new(move |hash: &str, max_edge: usize| s.proxy(hash, max_edge)));
     }
 }
 
@@ -202,6 +290,61 @@ mod tests {
         assert!(s.take_wanted().is_empty());
         s.insert("h1", Arc::from(vec![1u8, 2]));
         assert_eq!(&*s.get("web/h1/b.jpg").unwrap(), &[1, 2]);
+    }
+
+    #[test]
+    fn an_original_storage_does_not_hold_is_not_asked_for_every_frame() {
+        let s = Originals::default();
+        assert!(s.get("web/h1/a.png").is_none());
+        assert_eq!(s.take_wanted(), vec!["h1".to_string()]);
+        s.load_missing("h1");
+        assert!(s.get("web/h1/a.png").is_none());
+        assert!(s.take_wanted().is_empty(), "not asked for again");
+        // sync stored it: asked for again
+        s.retry_absent(|h| h == "h1", |_| false);
+        assert!(s.get("web/h1/a.png").is_none());
+        assert_eq!(s.take_wanted(), vec!["h1".to_string()]);
+        // and a read that failed (not "missing") is retried
+        s.load_failed("h1");
+        assert!(s.get("web/h1/a.png").is_none());
+        assert_eq!(s.take_wanted(), vec!["h1".to_string()]);
+    }
+
+    #[test]
+    fn previews_stand_in_for_an_original_that_was_not_downloaded() {
+        let s = Originals::default();
+        // a miss asks for the preview that fits (the mini one for little), then the other
+        assert!(s.proxy("abc", 400).is_none());
+        assert_eq!(s.take_wanted_proxies(), vec!["proxies/abc.lcsm".to_string(), "proxies/abc.lcsp".to_string()]);
+        assert!(s.proxy("abc", 400).is_none());
+        assert!(s.take_wanted_proxies().is_empty(), "being loaded");
+        s.proxy_missing("proxies/abc.lcsm");
+        s.insert_proxy("proxies/abc.lcsp", Arc::from(vec![1u8, 2, 3]));
+        // the smart preview serves a small request too while the mini one isn't there
+        assert_eq!(&*s.proxy("abc", 400).unwrap(), &[1, 2, 3]);
+        assert_eq!(&*s.proxy("abc", 2560).unwrap(), &[1, 2, 3]);
+        // a preview storage doesn't hold is not looked for again until sync has stored it
+        assert!(s.proxy("def", 2560).is_none());
+        let wanted = s.take_wanted_proxies();
+        wanted.iter().for_each(|k| s.proxy_missing(k));
+        assert!(s.proxy("def", 2560).is_none());
+        assert!(s.take_wanted_proxies().is_empty());
+        s.retry_absent(|_| false, |name| name == "def.lcsp");
+        assert!(s.proxy("def", 2560).is_none());
+        assert_eq!(s.take_wanted_proxies(), vec!["proxies/def.lcsp".to_string()]);
+    }
+
+    #[test]
+    fn previews_in_memory_are_bounded() {
+        let s = Originals::default();
+        let third: Arc<[u8]> = Arc::from(vec![0u8; PROXY_BUDGET / 3 + 1]);
+        let held = |h: &str| s.lock().proxies.contains_key(&format!("proxies/{h}.lcsp"));
+        s.insert_proxy("proxies/a.lcsp", third.clone());
+        s.insert_proxy("proxies/b.lcsp", third.clone());
+        assert!(s.proxy("a", 2560).is_some(), "a is used after b");
+        // three don't fit: the one used longest ago goes
+        s.insert_proxy("proxies/c.lcsp", third);
+        assert!(held("a") && !held("b") && held("c"));
     }
 
     #[test]

@@ -586,3 +586,69 @@ fn stalled_uploads_do_not_starve_the_server() {
     drop(server);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// A request as raw text, the answer as text (the server closes the connection after it).
+fn raw_request(addr: std::net::SocketAddr, request: &str) -> String {
+    use std::io::{Read, Write};
+    let mut c = std::net::TcpStream::connect(addr).unwrap();
+    c.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    c.write_all(request.as_bytes()).unwrap();
+    let mut got = String::new();
+    let _ = c.read_to_string(&mut got);
+    got
+}
+
+/// A web build served from another site can call the API only if the server was told that site
+/// (`--cors-origin`): the browser's preflight is answered without signing in, the answer to a real
+/// call says the site may read it, and nothing is said to other sites or about the admin page.
+#[test]
+fn only_sites_the_server_was_told_about_may_call_it_from_a_browser() {
+    let root = temp("cors");
+    let data = root.join("data");
+    accounts::set_user(&data, "ann", "correct horse", false).unwrap();
+    let mut cfg = Config::new(data, "127.0.0.1:0");
+    cfg.scan_interval = None;
+    cfg.preview_threads = 1;
+    cfg.cors_origins = vec!["https://photos.example.com/".into()];
+    let server = Server::start(cfg).unwrap();
+    let addr = server.addr();
+    let preflight = |origin: &str, path: &str| {
+        raw_request(
+            addr,
+            &format!(
+                "OPTIONS {path} HTTP/1.1\r\nHost: x\r\nOrigin: {origin}\r\nAccess-Control-Request-Method: PUT\r\nAccess-Control-Request-Headers: authorization, content-range\r\nConnection: close\r\n\r\n"
+            ),
+        )
+    };
+    let ok = preflight("https://photos.example.com", "/api/blobs/original/0123456789abcdef0123456789abcdef");
+    assert!(ok.starts_with("HTTP/1.1 204"), "{ok}");
+    for want in [
+        "Access-Control-Allow-Origin: https://photos.example.com",
+        "Access-Control-Allow-Headers: Authorization, Content-Type, Range, Content-Range",
+        "Access-Control-Allow-Methods:",
+        "Vary: Origin",
+    ] {
+        assert!(ok.contains(want), "{want} in {ok}");
+    }
+    let other = preflight("https://evil.example.com", "/api/me");
+    assert!(other.starts_with("HTTP/1.1 403") && !other.contains("Access-Control-Allow-Origin"), "{other}");
+    assert!(
+        !preflight("https://photos.example.com", "/api/admin/state").contains("Access-Control-Allow-Origin"),
+        "the admin page is not for other sites"
+    );
+    // a real call: the allowed site may read the answer, including what the client needs from it
+    let call = |origin: &str| raw_request(addr, &format!("GET /api/health HTTP/1.1\r\nHost: x\r\n{origin}Connection: close\r\n\r\n"));
+    let got = call("Origin: https://photos.example.com\r\n");
+    assert!(got.contains("Access-Control-Allow-Origin: https://photos.example.com") && got.contains("Upload-Offset"), "{got}");
+    assert!(!call("Origin: https://evil.example.com\r\n").contains("Access-Control-Allow-Origin"));
+    assert!(!call("").contains("Access-Control-Allow-Origin"), "no Origin, no CORS headers");
+    drop(server);
+    // without any site listed nothing is allowed
+    let root2 = temp("cors-none");
+    let server = start(&root2);
+    let got = raw_request(server.addr(), "OPTIONS /api/me HTTP/1.1\r\nHost: x\r\nOrigin: https://photos.example.com\r\nConnection: close\r\n\r\n");
+    assert!(got.starts_with("HTTP/1.1 403"), "{got}");
+    drop(server);
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&root2);
+}

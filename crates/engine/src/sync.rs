@@ -91,7 +91,8 @@ pub struct SyncConfig {
     /// Don't talk to the server for now (File → Pause Syncing).
     pub paused: bool,
     /// Let the server build the previews of the originals this device uploads, instead of building them here
-    /// (a phone saves its battery and memory). `None`: the platform's default, which is on for iOS.
+    /// (a phone saves its battery and memory; a browser tab its main thread, where decoding a large raw takes
+    /// seconds). `None`: the platform's default, which is on for iOS and the browser.
     pub server_previews: Option<bool>,
     /// Version of the server's presets document this device last synced with.
     pub presets_version: u64,
@@ -100,7 +101,7 @@ pub struct SyncConfig {
 impl SyncConfig {
     /// Whether the server builds the previews of what this device uploads ([`SyncConfig::server_previews`]).
     pub fn server_builds_previews(&self) -> bool {
-        self.server_previews.unwrap_or(cfg!(target_os = "ios"))
+        self.server_previews.unwrap_or(cfg!(any(target_os = "ios", target_arch = "wasm32")))
     }
 }
 

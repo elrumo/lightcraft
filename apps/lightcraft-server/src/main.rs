@@ -1,7 +1,7 @@
 //! `lightcraft-server`: the self-hosted LightCraft sync server (see `docs/sync.md`).
 //!
 //! ```text
-//! lightcraft-server serve [--data DIR] [--listen HOST:PORT] [--web DIR] [--scan-interval MINUTES] [--max-requests N]
+//! lightcraft-server serve [--data DIR] [--listen HOST:PORT] [--web DIR] [--scan-interval MINUTES] [--max-requests N] [--cors-origin SITE]...
 //! lightcraft-server user add NAME [--admin]   (password: typed, stdin, or $LIGHTCRAFT_PASSWORD)
 //! lightcraft-server user passwd NAME
 //! lightcraft-server user admin NAME on|off
@@ -35,7 +35,7 @@ use std::time::Duration;
 use lightcraft_server::{Config, Server, accounts, folders, gc};
 
 const USAGE: &str = "usage:
-  lightcraft-server serve [--data DIR] [--listen HOST:PORT] [--web DIR] [--scan-interval MINUTES] [--max-requests N]
+  lightcraft-server serve [--data DIR] [--listen HOST:PORT] [--web DIR] [--scan-interval MINUTES] [--max-requests N] [--cors-origin SITE]...
   lightcraft-server user add NAME [--admin]   (password: typed, stdin or $LIGHTCRAFT_PASSWORD)
   lightcraft-server user passwd|remove NAME
   lightcraft-server user admin NAME on|off    (admins manage the server at /admin)
@@ -75,6 +75,11 @@ fn option(args: &[String], name: &str) -> Option<String> {
     args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned()
 }
 
+/// Every value of an option that may be given more than once.
+fn options(args: &[String], name: &str) -> Vec<String> {
+    args.iter().enumerate().filter(|(_, a)| *a == name).filter_map(|(i, _)| args.get(i + 1)).cloned().collect()
+}
+
 /// The arguments that aren't options or option values.
 fn positional(args: &[String]) -> Vec<&str> {
     let mut out = Vec::new();
@@ -82,7 +87,10 @@ fn positional(args: &[String]) -> Vec<&str> {
     for a in args {
         if skip {
             skip = false;
-        } else if matches!(a.as_str(), "--data" | "--listen" | "--web" | "--name" | "--scan-interval" | "--max-requests" | "--vision-dir") {
+        } else if matches!(
+            a.as_str(),
+            "--data" | "--listen" | "--web" | "--name" | "--scan-interval" | "--max-requests" | "--cors-origin" | "--vision-dir"
+        ) {
             skip = true;
         } else if !a.starts_with("--") {
             out.push(a.as_str());
@@ -144,6 +152,10 @@ fn run(args: &[String]) -> Result<(), String> {
             if let Some(n) = max_requests {
                 cfg.max_requests = n.max(1);
             }
+            // sites that may call the API from a browser (`--cors-origin` once per site, or `$LIGHTCRAFT_CORS`, comma-separated)
+            cfg.cors_origins = options(args, "--cors-origin");
+            cfg.cors_origins.extend(std::env::var("LIGHTCRAFT_CORS").unwrap_or_default().split(',').map(str::to_string));
+            cfg.cors_origins.retain(|o| !o.trim().is_empty());
             cfg.scan_interval = (minutes > 0).then(|| Duration::from_secs(minutes.saturating_mul(60)));
             cfg.preview_threads = threads.unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| (n.get() / 2).clamp(1, 4)));
             if let Some(n) = std::env::var("LIGHTCRAFT_RENDER_THREADS").ok().and_then(|t| t.trim().parse::<usize>().ok()) {

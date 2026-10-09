@@ -511,7 +511,44 @@ impl WebApp {
             self.originals.prefetch(path);
         }
         let Some(b) = &self.backend else { return };
+        // what sync keeps in storage is known: a missing original is a photo whose file wasn't downloaded
+        // (its previews stand in), asked for again once sync has stored it
+        let synced = self.app.session.sync_store.as_ref().map(|s| s.originals.clone());
+        if let Some(store) = &self.app.session.sync_store {
+            self.originals.retry_absent(|h| store.originals.contains(h), |name| store.proxies.contains(name));
+        }
+        // the active photo's previews, ahead of time, when its original isn't in memory
+        if let Some(id) = self.app.session.selection.active
+            && let Some(p) = self.app.session.catalog.photo(id)
+            && let Some(Source::File { path }) = Some(&p.source)
+            && !self.originals.contains(path)
+            && let Some(hash) = crate::store::hash_of_path(path)
+        {
+            let _ = self.originals.proxy(hash, lightcraft_engine::media::SourceLevel::Thumb.max_edge());
+        }
+        for key in self.originals.take_wanted_proxies() {
+            let (b, originals, ctx) = (b.clone(), self.originals.clone(), ctx.clone());
+            wasm_bindgen_futures::spawn_local(async move {
+                match b.read(&key).await {
+                    Ok(Some(bytes)) => {
+                        originals.insert_proxy(&key, Arc::from(bytes));
+                        ctx.request_repaint();
+                    }
+                    Ok(None) => originals.proxy_missing(&key),
+                    Err(e) => {
+                        log::warn!("loading {key}: {e}");
+                        originals.proxy_missing(&key);
+                    }
+                }
+            });
+        }
         for hash in self.originals.take_wanted() {
+            if let Some(have) = &synced
+                && !have.contains(&hash)
+            {
+                self.originals.load_missing(&hash);
+                continue;
+            }
             let (b, originals, ctx) = (b.clone(), self.originals.clone(), ctx.clone());
             wasm_bindgen_futures::spawn_local(async move {
                 match b.read(&storage_key(&hash)).await {
@@ -521,7 +558,7 @@ impl WebApp {
                     }
                     Ok(None) => {
                         log::warn!("original {hash} is not in browser storage");
-                        originals.load_failed(&hash);
+                        originals.load_missing(&hash);
                     }
                     Err(e) => {
                         log::warn!("loading original {hash}: {e}");

@@ -149,6 +149,11 @@ pub fn handle(st: &State, req: &mut Request) -> Resp {
     let (path, q) = url.split_once('?').unwrap_or((url.as_str(), ""));
     let method = req.method().clone();
     let is_api = path == "/api" || path.starts_with("/api/");
+    // (the admin page is never called from another site)
+    let origin = header_value(req, "Origin").filter(|_| is_api && !path.starts_with("/api/admin/")).map(str::to_string);
+    if let (Method::Options, Some(o)) = (&method, &origin) {
+        return preflight(st, o);
+    }
     let mut resp = if let Some(rest) = path.strip_prefix("/api/admin/") {
         crate::admin::api(st, req, &method, rest)
     } else if is_api {
@@ -170,7 +175,22 @@ pub fn handle(st: &State, req: &mut Request) -> Resp {
             resp.add_header(h);
         }
     }
+    // a page from a site the server was told about may read the answer
+    if let Some(o) = &origin {
+        for h in st.cors.answer_headers(o) {
+            resp.add_header(h);
+        }
+    }
     resp
+}
+
+/// The answer to a browser's question whether a page from `origin` may call the API.
+fn preflight(st: &State, origin: &str) -> Resp {
+    let headers = st.cors.preflight_headers(origin);
+    if headers.is_empty() {
+        return error(403, "this site may not call the server from a browser (start it with --cors-origin to allow it)");
+    }
+    Response::new(StatusCode(204), headers, Box::new(std::io::empty()), Some(0), None)
 }
 
 fn api(st: &State, req: &mut Request, method: &Method, path: &str, q: &str) -> Resp {
