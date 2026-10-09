@@ -245,7 +245,7 @@ fn server_core_orders_validates_and_persists() {
     assert_eq!((s.head(), s.catalog().photo(id).unwrap().rating), (2, 4));
 }
 
-/// A big log is compacted: devices behind it reload the library, the rest pull as before, and
+/// A big log is compacted: devices far behind reload the library, the rest pull as before, and
 /// it reopens the same.
 #[test]
 fn server_log_compacts() {
@@ -269,6 +269,114 @@ fn server_log_compacts() {
     drop(s);
     let s = ServerCore::open(Box::new(store)).unwrap();
     assert_eq!((s.head(), s.catalog().len(), s.catalog().photo(ids[0]).unwrap().rating), (head + 1, ids.len(), 5));
+}
+
+/// What a compaction leaves of the log is still served: a device one op behind keeps pulling
+/// (before, every compaction made every other device reload), one far behind reloads, across a
+/// restart too.
+#[test]
+fn compaction_keeps_the_newest_ops_for_devices_a_little_behind() {
+    let store = MemStore::new();
+    let mut s = ServerCore::open(Box::new(store.clone())).unwrap();
+    s.set_compact_bytes(30_000);
+    let mut c = Catalog::new();
+    c.set_id_space(1);
+    let mut ops = Vec::new();
+    while s.since(0, 1).unwrap() != Pull::Gone {
+        let add = add_photo(&mut c);
+        ops.push(add.clone());
+        s.push(s.head(), &[add]).unwrap();
+        assert!(ops.len() < 100, "never compacted");
+    }
+    // the push that compacted is the newest op: a device that had everything before it pulls it
+    let head = s.head();
+    assert_eq!(head as usize, ops.len());
+    for behind in 1..=2u64 {
+        let want: Vec<_> = (head - behind + 1..=head).map(|seq| (seq, ops[seq as usize - 1].clone())).collect();
+        assert_eq!(s.since(head - behind, 10).unwrap(), Pull::Ops(want), "{behind} behind");
+    }
+    assert_eq!(s.since(1, 10).unwrap(), Pull::Gone);
+    let floor_known = (1..head).find(|&after| s.since(after, 1).unwrap() != Pull::Gone).unwrap();
+    // restarting changes nothing: the kept ops are in the log, the rest in the snapshot
+    drop(s);
+    let mut s = ServerCore::open(Box::new(store.clone())).unwrap();
+    assert_eq!((s.head(), s.since(floor_known - 1, 1).unwrap()), (head, Pull::Gone));
+    let Pull::Ops(from_floor) = s.since(floor_known, usize::MAX).unwrap() else { panic!("floor moved") };
+    assert_eq!(from_floor.len() as u64, head - floor_known);
+    assert_eq!(from_floor.last().map(|(seq, _)| *seq), Some(head));
+    // a device that is behind by more than what is kept reloads, and joins the same state
+    let mut late = Replica::join(&s, 2);
+    late.cursor = 0;
+    late.sync(&mut s);
+    assert_eq!(late.cursor, head);
+    assert_eq!(shared(&late.cat), shared(s.catalog()));
+    // and the next compactions go on the same way
+    for _ in 0..40 {
+        let add = add_photo(&mut c);
+        s.push(s.head(), &[add]).unwrap();
+    }
+    let head = s.head();
+    assert!(matches!(s.since(head - 1, 10).unwrap(), Pull::Ops(v) if v.len() == 1));
+}
+
+/// Pulling goes through the log's index and reads it in windows: whatever the cursor, limit and
+/// window, the answer is what reading the whole log gives, and it survives a restart and a
+/// compaction.
+#[test]
+fn pulls_through_the_index_match_reading_the_whole_log() {
+    fn naive(store: &MemStore, after: u64, limit: usize, head: u64) -> Vec<(u64, Op)> {
+        let log = String::from_utf8(store.get("catalog.log").unwrap_or_default()).unwrap();
+        log.lines().filter_map(crate::journal::decode_record).filter(|(seq, _)| *seq > after && *seq <= head).take(limit).collect()
+    }
+    let store = MemStore::new();
+    let mut s = ServerCore::open(Box::new(store.clone())).unwrap();
+    let mut c = Catalog::new();
+    c.set_id_space(1);
+    let add = add_photo(&mut c);
+    let Op::AddPhoto { photo } = &add else { panic!("{add:?}") };
+    let id = photo.id;
+    s.push(0, &[add]).unwrap();
+    // a thousand-odd ops, pushed in batches of different sizes (the index counts records)
+    let mut rating = 0u8;
+    for batch in (1..=45usize).cycle().take(60) {
+        let ops: Vec<_> = (0..batch)
+            .map(|_| {
+                rating = (rating + 1) % 6;
+                Op::SetRating { id, rating }
+            })
+            .collect();
+        s.push(s.head(), &ops).unwrap();
+    }
+    let check = |s: &mut ServerCore, floor: u64| {
+        let head = s.head();
+        for after in [floor, floor + 1, floor + 255, floor + 256, floor + 257, head / 2, head - 2, head - 1, head] {
+            if after < floor || after > head {
+                continue;
+            }
+            for (limit, window) in [(1, 64), (7, 300), (usize::MAX, 1), (usize::MAX, 1 << 20), (500, 4096)] {
+                s.set_pull_window(window);
+                assert_eq!(
+                    s.since(after, limit).unwrap(),
+                    Pull::Ops(naive(&store, after, limit, head)),
+                    "after {after}, limit {limit}, window {window}"
+                );
+            }
+        }
+    };
+    check(&mut s, 0);
+    drop(s);
+    let mut s = ServerCore::open(Box::new(store.clone())).unwrap();
+    check(&mut s, 0);
+    // compact, keeping the end: only the kept part is served, from the same index
+    s.set_compact_bytes(store.get("catalog.log").unwrap().len() as u64 / 2);
+    s.push(s.head(), &[Op::SetRating { id, rating: 1 }]).unwrap();
+    let floor = (0..s.head()).find(|&after| s.since(after, 1).unwrap() != Pull::Gone).unwrap();
+    assert!(floor > 300, "the log was not trimmed ({floor})");
+    check(&mut s, floor);
+    drop(s);
+    let mut s = ServerCore::open(Box::new(store.clone())).unwrap();
+    assert_eq!(s.since(floor - 1, 1).unwrap(), Pull::Gone);
+    check(&mut s, floor);
 }
 
 /// Photos the server adds from the user's library folders: its own id space, their place on the

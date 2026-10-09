@@ -72,6 +72,14 @@ const FORMAT: &str = "lightcraft-catalog";
 /// *Format versions*; bump it whenever an [`Op`] variant or a serialized field is added.
 pub const VERSION: u32 = 3;
 
+/// [`Journal::records_since`] finds its place in the log through an index with one entry per this
+/// many records.
+const INDEX_STEP: u64 = 256;
+/// How much of the log [`Journal::records_since`] reads at a time.
+const PULL_WINDOW: usize = 4 << 20;
+/// A log line longer than this is not read (a record is a few KiB at most).
+const PULL_WINDOW_MAX: usize = 256 << 20;
+
 /// When [`Journal::wants_snapshot`] says it's time to compact the log.
 #[derive(Clone, Copy, Debug)]
 pub struct SnapshotPolicy {
@@ -185,6 +193,13 @@ pub struct Journal {
     /// A failed append may have left part of its records after `log_bytes`, and cutting them off
     /// failed too: the next append cuts the log back to `log_bytes` first.
     tail_dirty: bool,
+    /// Every op after this one is in the log ([`Journal::records_since`] can serve it). At most
+    /// `snapshot_seq`: [`Journal::snapshot_keeping`] leaves the end of the log in place.
+    floor: u64,
+    /// `(seq, byte offset)` of every [`INDEX_STEP`]th record of the log, oldest first.
+    index: Vec<(u64, u64)>,
+    /// How much of the log one read takes (tests make it small).
+    pull_window: usize,
 }
 
 /// A background snapshot in flight.
@@ -267,6 +282,32 @@ fn resync(line: &[u8], last: u64) -> Option<(usize, (u64, Op))> {
     })
 }
 
+/// `seq` of a log line, without checking the rest of it.
+fn line_seq(line: &str) -> Option<u64> {
+    line.strip_prefix("{\"seq\":")?.split_once(',')?.0.parse().ok()
+}
+
+/// What [`Journal`] remembers of a log's contents, from reading the log once (no JSON parsing):
+/// its index ([`INDEX_STEP`]), and the `seq` of the first record of its last run of consecutive
+/// records (the oldest op the log can serve is the one after it).
+fn index_log(log: &[u8]) -> (Vec<(u64, u64)>, Option<u64>) {
+    let (mut index, mut first, mut prev, mut records, mut at) = (Vec::new(), None, 0u64, 0u64, 0u64);
+    for line in log.split(|b| *b == b'\n') {
+        let start = at;
+        at = at.saturating_add(line.len() as u64 + 1);
+        let Some(seq) = std::str::from_utf8(line).ok().and_then(line_seq) else { continue };
+        if records.is_multiple_of(INDEX_STEP) {
+            index.push((seq, start));
+        }
+        records += 1;
+        if first.is_none() || seq > prev.saturating_add(1) {
+            first = Some(seq);
+        }
+        prev = prev.max(seq);
+    }
+    (index, first)
+}
+
 /// Write `catalog.snap` for the state after op `seq`, streaming the JSON into the store (no
 /// whole-file string). The bytes are exactly
 /// `{"format":"lightcraft-catalog","version":1,"seq":N,"catalog":<serde_json of the catalog>}\n`,
@@ -339,6 +380,9 @@ impl Journal {
             pending: None,
             retry_at_records: 0,
             tail_dirty: false,
+            floor: snapshot_seq,
+            index: Vec::new(),
+            pull_window: PULL_WINDOW,
         };
         let log = log.unwrap_or_default();
 
@@ -410,6 +454,11 @@ impl Journal {
             needs_newline = !has_nl;
         }
 
+        // (a damaged log is replaced by a snapshot below, which resets both)
+        let (index, first) = index_log(log.get(..good_end).unwrap_or_default());
+        j.index = index;
+        j.floor = first.map_or(j.snapshot_seq, |f| f.saturating_sub(1).min(j.snapshot_seq));
+
         if let Some(at) = damaged_at {
             let name = format!("{LOG}.damaged-{}", j.seq);
             j.store.write_atomic(&name, &log).map_err(io)?;
@@ -462,8 +511,12 @@ impl Journal {
         let t0 = web_time::Instant::now();
         let mut buf = String::new();
         let mut seq = self.seq;
-        for op in ops {
+        let mut indexed = Vec::new();
+        for (i, op) in ops.iter().enumerate() {
             seq += 1;
+            if (self.log_records + i as u64).is_multiple_of(INDEX_STEP) {
+                indexed.push((seq, self.log_bytes + buf.len() as u64));
+            }
             buf.push_str(&encode_record(seq, op));
             buf.push('\n');
         }
@@ -488,6 +541,7 @@ impl Journal {
         self.seq = seq;
         self.log_records += ops.len() as u64;
         self.log_bytes += buf.len() as u64;
+        self.index.extend(indexed);
         let ms = ms_since(t0);
         self.stats.appends += 1;
         self.stats.last_append_ms = ms;
@@ -509,6 +563,18 @@ impl Journal {
     /// appended afterwards. Once the snapshot is durable [`Journal::seq`] includes them, even if
     /// resetting the log then fails (the error is still returned).
     pub fn snapshot_with_unlogged(&mut self, catalog: &Catalog, unlogged: u64) -> Result<()> {
+        self.compact(catalog, unlogged, 0)
+    }
+
+    /// [`Journal::snapshot`], but the last `keep_bytes` of the log (whole records) stay in it, so
+    /// [`Journal::records_since`] still serves the ops they hold: a reader a little behind the
+    /// snapshot pulls them instead of reloading ([`Journal::log_floor`]). The kept records are
+    /// covered by the snapshot, so loading skips them as stale.
+    pub fn snapshot_keeping(&mut self, catalog: &Catalog, keep_bytes: u64) -> Result<()> {
+        self.compact(catalog, 0, keep_bytes)
+    }
+
+    fn compact(&mut self, catalog: &Catalog, unlogged: u64, keep_bytes: u64) -> Result<()> {
         // never two snapshot writers; the one in flight is older, so it must land first
         if let Err(e) = self.wait() {
             log::warn!("catalog: background snapshot failed ({e}); writing one now");
@@ -528,18 +594,39 @@ impl Journal {
         self.seq = seq;
         self.snapshot_seq = seq;
         let t2 = web_time::Instant::now();
+        let kept = if keep_bytes == 0 { Vec::new() } else { self.log_tail(keep_bytes) };
         // A crash here leaves old records in the log; they are skipped by seq on load.
-        self.store.write_atomic(LOG, b"").map_err(io)?;
+        self.store.write_atomic(LOG, &kept).map_err(io)?;
         timing.reset_ms = ms_since(t2);
         timing.total_ms = ms_since(t0);
         timing.blocking_ms = timing.total_ms;
         timing.records = self.log_records;
         self.record_snapshot(timing);
-        self.log_records = 0;
-        self.log_bytes = 0;
+        let (index, first) = index_log(&kept);
+        self.index = index;
+        self.floor = first.map_or(seq, |f| f.saturating_sub(1).min(seq));
+        self.log_records = kept.split(|b| *b == b'\n').filter(|l| !l.is_empty()).count() as u64;
+        self.log_bytes = kept.len() as u64;
         self.retry_at_records = 0;
         self.tail_dirty = false;
         Ok(())
+    }
+
+    /// The last `keep_bytes` of the log, from the start of a record (empty if it can't be read).
+    fn log_tail(&mut self, keep_bytes: u64) -> Vec<u8> {
+        let log = match self.store.read(LOG) {
+            Ok(l) => l.unwrap_or_default(),
+            Err(e) => {
+                log::warn!("catalog: can't read the log to keep its end ({e}); keeping none");
+                return Vec::new();
+            }
+        };
+        let mut from = log.len().saturating_sub(usize::try_from(keep_bytes).unwrap_or(usize::MAX));
+        // on to the next line start, unless the cut already is one
+        if from > 0 && log.get(from - 1) != Some(&b'\n') {
+            from = log.get(from..).and_then(|rest| rest.iter().position(|b| *b == b'\n')).map_or(log.len(), |i| from + i + 1);
+        }
+        log.get(from..).unwrap_or_default().to_vec()
     }
 
     /// Compact like [`Journal::snapshot`], but write the snapshot on a worker thread from a copy
@@ -626,6 +713,8 @@ impl Journal {
         timing.background = true;
         timing.records = p.records;
         self.record_snapshot(timing);
+        self.index = index_log(&p.tail).0;
+        self.floor = p.seq;
         self.log_records = p.tail_records;
         self.log_bytes = p.tail.len() as u64;
         self.retry_at_records = 0;
@@ -670,12 +759,61 @@ impl Journal {
     }
 
     /// The logged ops after op `after`, oldest first, at most `limit` of them. Only ops still in
-    /// the log are there: `after` must be at least [`Journal::snapshot_seq`].
+    /// the log are there: `after` must be at least [`Journal::log_floor`]. Reads the log from the
+    /// index entry just before the first op wanted, a window at a time, so the cost follows what
+    /// is asked for, not how long the log is.
     pub fn records_since(&mut self, after: u64, limit: usize) -> Result<Vec<(u64, Op)>> {
-        let bytes = self.store.read(LOG).map_err(io)?.unwrap_or_default();
-        let text = String::from_utf8_lossy(&bytes);
-        Ok(text.lines().filter_map(decode_record).filter(|(seq, _)| *seq > after && *seq <= self.seq).take(limit).collect())
+        let mut out = Vec::new();
+        if limit == 0 || after >= self.seq {
+            return Ok(out);
+        }
+        let place = self.index.partition_point(|e| e.0 <= after.saturating_add(1));
+        let mut offset = place.checked_sub(1).and_then(|i| self.index.get(i)).map_or(0, |e| e.1);
+        let mut window = self.pull_window.max(1);
+        while let Some(chunk) = self.store.read_range(LOG, offset, window).map_err(io)? {
+            // a window ends mid-record unless it reached the end of the log
+            let at_end = chunk.len() < window;
+            let used = if at_end {
+                chunk.len()
+            } else if let Some(i) = chunk.iter().rposition(|b| *b == b'\n') {
+                i + 1
+            } else if window < PULL_WINDOW_MAX {
+                window = window.saturating_mul(2);
+                continue;
+            } else {
+                return Err(CatalogError::Corrupt(format!("{LOG}: a record longer than {PULL_WINDOW_MAX} bytes")));
+            };
+            for line in chunk.get(..used).unwrap_or_default().split(|b| *b == b'\n') {
+                let Ok(line) = std::str::from_utf8(line) else { continue };
+                let line = line.trim_end_matches('\r');
+                // (a fragment of a failed append may precede the record on its line: `resync`)
+                let Some((seq, op)) = decode_record(line).or_else(|| resync(line.as_bytes(), u64::MAX - 1).map(|(_, r)| r)) else { continue };
+                if seq > after && seq <= self.seq {
+                    out.push((seq, op));
+                    if out.len() >= limit {
+                        return Ok(out);
+                    }
+                }
+            }
+            if at_end || used == 0 {
+                break;
+            }
+            offset = offset.saturating_add(used as u64);
+        }
+        Ok(out)
     }
+
+    /// Every op after this one is in the log ([`Journal::records_since`]); `after` below it needs
+    /// the snapshot. At most [`Journal::snapshot_seq`].
+    pub fn log_floor(&self) -> u64 {
+        self.floor
+    }
+
+    /// Read the log `bytes` at a time (tests make it small to cross windows).
+    pub fn set_pull_window(&mut self, bytes: usize) {
+        self.pull_window = bytes;
+    }
+
     pub fn snapshot_seq(&self) -> u64 {
         self.snapshot_seq
     }

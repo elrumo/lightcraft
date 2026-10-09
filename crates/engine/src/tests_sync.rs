@@ -393,6 +393,75 @@ fn remote_changes_wait_for_a_slider_drag() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+fn snapshots(f: &Fake) -> usize {
+    f.requests.iter().filter(|r| *r == "GET /api/snapshot").count()
+}
+
+/// The server compacts its log while a device is away for long: it can't pull what's gone, so it
+/// reloads the library — and the changes it made meanwhile (the outbox) are replayed on top, not
+/// lost.
+#[test]
+fn a_device_further_behind_than_the_server_keeps_reloads_and_keeps_its_changes() {
+    let mut f = Fake::new();
+    f.core.set_compact_bytes(3000);
+    let (mut a, root, ids) = first_device("gone", &mut f);
+    let mut b = open(&root.join("b"));
+    sign_in(&mut b);
+    sync(&mut b, &mut f);
+    let behind = b.sync_state().unwrap().config.cursor;
+    // B changes a photo and goes away; A keeps working until the log has been compacted past B
+    b.selection = crate::Selection::single(ids[1]);
+    b.execute("photo.rate", &json!({"rating": 3})).unwrap();
+    a.selection = crate::Selection::single(ids[0]);
+    for i in 0..80 {
+        a.execute("photo.rate", &json!({"rating": i % 5 + 1})).unwrap();
+        sync(&mut a, &mut f);
+    }
+    assert_eq!(f.core.since(behind, 10).unwrap(), lightcraft_catalog::sync::Pull::Gone, "the log still goes back to B");
+    let before = snapshots(&f);
+    let st = sync(&mut b, &mut f);
+    assert_eq!(st["state"], "idle", "{st}");
+    assert!(snapshots(&f) > before, "B reloaded the library: {:?}", f.requests);
+    let last = (79 % 5 + 1) as u8;
+    assert_eq!(b.catalog.photo(ids[0]).unwrap().rating, last, "A's changes came with the snapshot");
+    assert_eq!(b.catalog.photo(ids[1]).unwrap().rating, 3, "B's own change survived the reload");
+    assert_eq!(f.core.catalog().photo(ids[1]).unwrap().rating, 3, "and reached the server");
+    sync(&mut a, &mut f);
+    assert_eq!(a.catalog.photo(ids[1]).unwrap().rating, 3);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// A compaction leaves the newest ops in the log: a device that is only a little behind it keeps
+/// pulling instead of reloading the whole library.
+#[test]
+fn a_device_one_op_behind_a_compaction_keeps_pulling() {
+    let mut f = Fake::new();
+    f.core.set_compact_bytes(3000);
+    let (mut a, root, ids) = first_device("tail", &mut f);
+    let mut b = open(&root.join("b"));
+    sign_in(&mut b);
+    sync(&mut b, &mut f);
+    a.selection = crate::Selection::single(ids[0]);
+    // until the push that compacts: B has everything before it
+    let mut compacted = false;
+    for i in 0..200 {
+        sync(&mut b, &mut f);
+        a.execute("photo.rate", &json!({"rating": i % 5 + 1})).unwrap();
+        sync(&mut a, &mut f);
+        if f.core.since(0, 1).unwrap() == lightcraft_catalog::sync::Pull::Gone {
+            compacted = true;
+            break;
+        }
+    }
+    assert!(compacted, "the server never compacted");
+    let before = snapshots(&f);
+    let st = sync(&mut b, &mut f);
+    assert_eq!(st["state"], "idle", "{st}");
+    assert_eq!(snapshots(&f), before, "B pulled the newest ops, no reload: {:?}", f.requests);
+    assert_eq!(b.catalog.photo(ids[0]).unwrap().rating, a.catalog.photo(ids[0]).unwrap().rating);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 #[test]
 fn hostile_answers_are_errors_not_crashes() {
     let root = temp_dir("hostile");

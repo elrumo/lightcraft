@@ -13,6 +13,15 @@ use std::sync::{Arc, Mutex};
 pub trait Store: Send {
     /// The whole file, or `None` if it doesn't exist.
     fn read(&mut self, name: &str) -> io::Result<Option<Vec<u8>>>;
+    /// Up to `len` bytes of a file from byte `offset` (fewer at the end of the file; empty past
+    /// it), or `None` if it doesn't exist. The default reads the whole file; [`FsStore`] seeks.
+    fn read_range(&mut self, name: &str, offset: u64, len: usize) -> io::Result<Option<Vec<u8>>> {
+        Ok(self.read(name)?.map(|all| {
+            let from = usize::try_from(offset).unwrap_or(usize::MAX);
+            let rest = all.get(from..).unwrap_or_default();
+            rest.get(..len).unwrap_or(rest).to_vec()
+        }))
+    }
     /// Replace a file atomically: after a crash either the old or the new content is visible,
     /// never a mix (native: write temp + fsync + rename + fsync directory).
     fn write_atomic(&mut self, name: &str, data: &[u8]) -> io::Result<()>;
@@ -80,6 +89,19 @@ impl Store for FsStore {
             Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(e),
         }
+    }
+
+    fn read_range(&mut self, name: &str, offset: u64, len: usize) -> io::Result<Option<Vec<u8>>> {
+        use std::io::{Read, Seek, SeekFrom};
+        let mut f = match std::fs::File::open(self.path(name)) {
+            Ok(f) => f,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(e),
+        };
+        f.seek(SeekFrom::Start(offset))?;
+        let mut buf = Vec::new();
+        f.take(len as u64).read_to_end(&mut buf)?;
+        Ok(Some(buf))
     }
 
     fn write_atomic(&mut self, name: &str, data: &[u8]) -> io::Result<()> {

@@ -380,8 +380,9 @@ v1, honestly:
 - Preferences, LUT profiles and export / metadata / filter presets stay per device.
 - **No merging of two existing libraries**, no sharing with other people, no shared albums or links.
 - **Originals downloaded to a device are kept** until you delete them (no automatic eviction under a size budget yet).
-- **The server compacts its log** into a snapshot at 64 MiB; a device further behind than that reloads the library.
-  A pull reads the (compacted) log whole when behind.
+- **The server compacts its log** into a snapshot at 64 MiB and keeps the newest 16 MiB of it (tens of thousands of
+  changes): a device behind by more than that reloads the library. (A device that is only a little behind keeps
+  pulling; a pull reads just the part of the log it asks for.)
 - **Library folders are read, never written**: edits stay in the library (no XMP written back to the folders), and
   photos imported on a device are kept by the server as uploads, not filed into the folders.
 - **Uploads aren't resumable**: an interrupted upload starts again.

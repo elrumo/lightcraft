@@ -455,11 +455,17 @@ pub enum Pull {
 /// The server compacts its log into a snapshot once it holds this much.
 pub const COMPACT_BYTES: u64 = 64 << 20;
 
+/// What a compaction leaves of the log, as a share of [`COMPACT_BYTES`] (a quarter: 16 MiB, tens
+/// of thousands of ops): devices that are not further behind than that keep pulling.
+const KEEP_DIVISOR: u64 = 4;
+
 /// A user's library on the server: the single log of every device's ops and the state it
 /// leads to (to validate pushes and to start new devices from). Once the log holds
-/// [`COMPACT_BYTES`] it is compacted into a snapshot: a device further behind than that reloads
-/// the library ([`Pull::Gone`]) instead of pulling ops.
-// ponytail: pulls read the log whole when behind; bounded by the compaction size.
+/// [`COMPACT_BYTES`] it is compacted into a snapshot that leaves the newest quarter of the log
+/// in place: a device further behind than that reloads the library ([`Pull::Gone`]) instead of
+/// pulling ops.
+// ponytail: compaction writes the snapshot under the caller's lock (every ~48 MiB of ops);
+// `Journal::snapshot_in_background` is there if that pause ever shows.
 pub struct ServerCore {
     journal: Journal,
     catalog: Catalog,
@@ -475,6 +481,11 @@ impl ServerCore {
     /// Compact the log at this size instead of [`COMPACT_BYTES`] (tests).
     pub fn set_compact_bytes(&mut self, bytes: u64) {
         self.compact_bytes = bytes.max(1);
+    }
+
+    /// Read the log `bytes` at a time when pulling (tests make it small).
+    pub fn set_pull_window(&mut self, bytes: usize) {
+        self.journal.set_pull_window(bytes);
     }
 
     /// Sequence number of the newest op.
@@ -524,7 +535,7 @@ impl ServerCore {
             }
             None => {
                 if self.journal.log_bytes() >= self.compact_bytes
-                    && let Err(e) = self.journal.snapshot(&self.catalog)
+                    && let Err(e) = self.journal.snapshot_keeping(&self.catalog, self.compact_bytes / KEEP_DIVISOR)
                 {
                     // nothing lost: the log is whole, it is tried again after the next push
                     log::warn!("sync: compacting the server's log: {e}");
@@ -539,7 +550,7 @@ impl ServerCore {
         if after >= self.head() {
             return Ok(Pull::Ops(Vec::new()));
         }
-        if after < self.journal.snapshot_seq() {
+        if after < self.journal.log_floor() {
             return Ok(Pull::Gone);
         }
         Ok(Pull::Ops(self.journal.records_since(after, limit)?))
