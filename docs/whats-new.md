@@ -61,6 +61,17 @@
   names the size and licence), cancel, delete to free the space, or turn a model off. The first use of a feature
   that needs a model offers the download too. See `docs/ai-models.md`.
 
+### iPhone and iPad look like iOS 26
+- Floating controls are drawn as glass: the bars' buttons are glass circles and capsules (a photo's share, save and "…"
+  share one), the tools float in a glass tab bar whose highlight springs to the tool you tap, the select bar and the +
+  button float the same way, and toasts are glass capsules. Pressed, glass swells a little and lights up.
+- Menus grow out of the button that opened them with a small bounce, have their icons on the leading side, and round
+  their corners as iOS 26 does. Pages close with ✕ and confirm with a blue ✓, and while one is up the screen behind
+  steps back with rounded corners, as iPhone sheets do.
+- Sliders have iOS 26's capsule thumb, which turns into a glass lens while you drag it; switches have the wider track
+  and a knob that springs across; segmented controls slide their highlight to the segment you tap. The library has a
+  large title, and Settings' cards are rounder.
+
 ### Export on iPhone
 - Sharing is a flow of its own, as in Lightroom's mobile app: the share button opens a sheet with a strip of your photos (tick the
   ones to send, or Select All) and round Share and Export As… buttons; Export As… has the file type, size, quality and watermark

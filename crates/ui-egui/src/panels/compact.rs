@@ -12,16 +12,17 @@ use serde_json::json;
 
 use super::mobile;
 use crate::LightcraftApp;
+use crate::glass;
 use crate::haptics::{self, Haptic};
 use crate::icons::Icon;
 use crate::state::{RightPanel, ViewMode};
 use crate::theme::Tokens;
-use crate::widgets::icon_button;
 
 /// Height of the top bar: Apple's minimum touch target is 44 pt.
 const BAR_H: f32 = 44.0;
-/// Height of the tool bar and of the select action bar (iOS's tab bar is 49 pt).
-const TAB_H: f32 = 50.0;
+/// Height of the tool bar and of the select action bar: a floating glass capsule 52 pt tall (iOS 26's
+/// tab bar) with a little room around it.
+const TAB_H: f32 = 60.0;
 /// Height of the Edit tool's group row (icon over label).
 const GROUP_H: f32 = 54.0;
 /// From this width (iPad) the tool sheet is a panel on the right and My Photos a column on the left,
@@ -63,6 +64,8 @@ const GROUPS: [(&str, Icon, &str); 7] = [
 
 pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let ctx = ui.ctx().clone();
+    // (black behind the screen when a page pushes it back: `mobile::stack_behind`)
+    let backdrop = ui.painter().add(egui::Shape::Noop);
     let t = Tokens::get(&ctx);
     let detail = app.ui.view == ViewMode::Detail;
     let wide = ctx.content_rect().width() >= WIDE_PT;
@@ -86,9 +89,9 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         // the bars below are called every frame, shown or not, so that they slide in and out
         action_bar(app, ui, &t, app.ui.select_mode);
         let edit = !app.ui.presets && matches!(app.ui.right, RightPanel::Edit);
-        tool_bar(app, ui, &t, landscape, detail && bars);
+        tool_bar(app, ui, &t, landscape, wide, detail && bars);
         // (held sideways, the groups are at the top of the side panel: `sheet`)
-        group_bar(app, ui, &t, detail && bars && edit && !landscape);
+        group_bar(app, ui, &t, wide, detail && bars && edit && !landscape);
         sheet(app, ui, &t, wide, landscape, detail && bars && (app.ui.right != RightPanel::None || app.ui.presets));
     }
     let bg = if detail { t.canvas } else { t.grid_bg };
@@ -108,6 +111,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     overlays(app, &ctx);
     mobile::all_commands_page(app, &ctx);
     mobile::edit_menu(app, &ctx);
+    mobile::stack_behind(&ctx, ui.layer_id(), backdrop);
 }
 
 /// The albums list (My Photos) as a page; choosing one closes it.
@@ -122,7 +126,7 @@ fn albums(app: &mut LightcraftApp, ctx: &egui::Context, open: bool) {
 /// Diameter of the add-photos button.
 const ADD_D: f32 = 56.0;
 
-/// The phone's add-photos button: a round + over the grid's bottom right corner, offering the
+/// The phone's add-photos button: a round + of tinted glass over the grid's bottom right corner, offering the
 /// host's pickers (Photos, Files, a folder) in a menu. Only in hosts that have them (iOS).
 fn add_button(app: &mut LightcraftApp, ctx: &egui::Context, t: &Tokens) {
     if app.services.host_pick.is_none() || !matches!(app.ui.view, ViewMode::PhotoGrid | ViewMode::SquareGrid) {
@@ -135,12 +139,10 @@ fn add_button(app: &mut LightcraftApp, ctx: &egui::Context, t: &Tokens) {
         resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, crate::i18n::tr("Add Photos")));
         crate::widgets::register(ui.ctx(), "button:addPhotos", r);
         let p = ui.painter();
-        // pressed: a little smaller and darker, as iOS buttons respond to a touch
-        let down = resp.is_pointer_button_down_on();
-        let k = ui.ctx().animate_bool_with_time(resp.id.with("press"), down, 0.1);
-        let fill = t.accent.gamma_multiply(1.0 - 0.2 * k);
-        p.circle_filled(r.center() + vec2(0.0, 2.0), ADD_D / 2.0, egui::Color32::from_black_alpha(80));
-        p.circle_filled(r.center(), ADD_D / 2.0 * (1.0 - 0.06 * k), fill);
+        // prominent (accent-tinted) glass, swelling under the finger as iOS 26's does
+        let k = glass::press(ui.ctx(), &resp);
+        let d = ADD_D * (1.0 + 0.08 * k);
+        glass::paint(p, egui::Rect::from_center_size(r.center(), vec2(d, d)), d / 2.0, Some(t.accent), k);
         let (c, arm) = (r.center(), ADD_D * 0.2);
         let stroke = Stroke::new(2.5, egui::Color32::WHITE);
         p.line_segment([c - vec2(arm, 0.0), c + vec2(arm, 0.0)], stroke);
@@ -338,21 +340,9 @@ fn overlays(app: &mut LightcraftApp, ctx: &egui::Context) {
     super::toast(app, &ctx);
 }
 
-/// An icon button in a bar (`icon:<id>`): white glyphs on black, dimmed while pressed.
+/// An icon button in a bar (`icon:<id>`): a round glass button, as iOS 26's bars have.
 pub(super) fn bar_icon(ui: &mut egui::Ui, id: &str, icon: Icon, tip: &str, enabled: bool) -> egui::Response {
-    let t = Tokens::get(ui.ctx());
-    let (r, resp) = ui.allocate_exact_size(vec2(44.0, 44.0), if enabled { Sense::click() } else { Sense::hover() });
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, crate::i18n::tr(tip)));
-    crate::widgets::register(ui.ctx(), format!("icon:{id}"), r);
-    let color = if !enabled {
-        t.text_disabled
-    } else if resp.is_pointer_button_down_on() {
-        t.text_dim
-    } else {
-        t.text
-    };
-    crate::icons::paint(ui.painter(), egui::Rect::from_center_size(r.center(), vec2(24.0, 24.0)), icon, color);
-    resp
+    glass::circle_button(ui, &format!("icon:{id}"), icon, tip, enabled, None)
 }
 
 fn top_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, mut shown: bool) {
@@ -383,15 +373,16 @@ fn top_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, mut shown: bo
 
 /// Over the grid: Select and the "…" menu (the collection is the grid's own title row).
 fn grid_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
+    ui.add_space(6.0);
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
-        let more = glass_button(ui, "icon:more", None, "More", t);
+        let more = glass::circle_button(ui, "icon:more", Icon::Dots, "More", true, None);
         if more.clicked() {
             mobile::open_menu(ui.ctx(), "more", more.rect);
         }
         ui.add_space(4.0);
         let has_photos = !app.session.visible().is_empty();
-        if has_photos && glass_button(ui, "button:select", Some("Select"), "Select", t).clicked() {
+        if has_photos && glass::capsule_button(ui, "button:select", "Select", None).clicked() {
             let _ = app.run("view.selectMode", json!({"on": true}));
         }
         // the cloud: where syncing stands, and its popover (Lightroom's has it beside the "…" too)
@@ -409,16 +400,14 @@ fn grid_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
 /// while it works, with an arc turning round it; amber with a red `!` on a problem), and the
 /// number of things waiting under it is the popover's to say.
 fn cloud_button(app: &LightcraftApp, ui: &mut egui::Ui, t: &Tokens) -> egui::Response {
-    const H: f32 = 34.0;
+    const H: f32 = glass::BUTTON_D;
     let (tip, problem, busy) = crate::sync_ui::cloud_status(app);
     let unsaved = app.session.unsaved().is_some();
     let (r, resp) = ui.allocate_exact_size(vec2(44.0, 44.0), Sense::click());
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, tip.clone()));
     crate::widgets::register(ui.ctx(), "icon:cloud", r);
-    let k = ui.ctx().animate_bool_with_time(resp.id.with("press"), resp.is_pointer_button_down_on(), 0.1);
-    let circle = egui::Rect::from_center_size(r.center(), vec2(H, H) * (1.0 - 0.06 * k));
-    let dark = Tokens::is_dark(ui.ctx());
-    let veil = |a: f32| if dark { egui::Color32::from_white_alpha(a as u8) } else { egui::Color32::from_black_alpha((a * 0.55) as u8) };
+    let k = glass::press(ui.ctx(), &resp);
+    let circle = egui::Rect::from_center_size(r.center(), vec2(H, H) * (1.0 + 0.1 * k));
     let tint = if problem || unsaved {
         t.caution
     } else if busy {
@@ -427,8 +416,7 @@ fn cloud_button(app: &LightcraftApp, ui: &mut egui::Ui, t: &Tokens) -> egui::Res
         t.text
     };
     let p = ui.painter();
-    p.circle_filled(circle.center(), H / 2.0 * (1.0 - 0.06 * k), veil(36.0 + 30.0 * k));
-    p.circle_stroke(circle.center(), H / 2.0 * (1.0 - 0.06 * k), Stroke::new(0.5, veil(28.0)));
+    glass::paint(p, circle, H / 2.0, None, k);
     crate::icons::paint(p, egui::Rect::from_center_size(circle.center(), vec2(20.0, 20.0)), Icon::Cloud, tint);
     if busy {
         // an arc turning round the cloud while it works
@@ -455,64 +443,48 @@ fn cloud_button(app: &LightcraftApp, ui: &mut egui::Ui, t: &Tokens) -> egui::Res
 fn map_bar(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     ui.horizontal_centered(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
+        ui.add_space(2.0);
         if bar_icon(ui, "back", Icon::ChevronLeft, "Back", true).clicked() {
             let _ = app.run("view.photoGrid", json!({}));
         }
     });
 }
 
-/// A button of the grid's bar as iOS's Photos app draws them over the library: a translucent grey
-/// capsule with `label` in it, or a circle with "…" when there's none; it shrinks and brightens a
-/// little under the finger. A 44 pt touch target; `key` is its automation id.
-fn glass_button(ui: &mut egui::Ui, key: &str, label: Option<&str>, tip: &str, t: &Tokens) -> egui::Response {
-    const H: f32 = 34.0;
-    let galley = label.map(|l| ui.painter().layout_no_wrap(crate::i18n::tr(l).to_string(), t.semibold(15.0), t.text));
-    let w = galley.as_ref().map_or(H, |g| g.size().x + 28.0);
-    let (r, resp) = ui.allocate_exact_size(vec2(w.max(44.0), 44.0), Sense::click());
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, crate::i18n::tr(tip)));
-    crate::widgets::register(ui.ctx(), key, r);
-    let k = ui.ctx().animate_bool_with_time(resp.id.with("press"), resp.is_pointer_button_down_on(), 0.1);
-    let pill = egui::Rect::from_center_size(r.center(), vec2(w, H) * (1.0 - 0.06 * k));
-    // (translucent: a light veil on a dark bar, a dark one on a light bar)
-    let dark = Tokens::is_dark(ui.ctx());
-    let veil = |a: f32| if dark { egui::Color32::from_white_alpha(a as u8) } else { egui::Color32::from_black_alpha((a * 0.55) as u8) };
-    let p = ui.painter();
-    p.rect_filled(pill, H / 2.0, veil(36.0 + 30.0 * k));
-    p.rect_stroke(pill, H / 2.0, Stroke::new(0.5, veil(28.0)), egui::StrokeKind::Inside);
-    match galley {
-        Some(g) => p.galley(pill.center() - g.size() / 2.0, g, t.text),
-        None => {
-            for dx in [-6.0, 0.0, 6.0] {
-                p.circle_filled(pill.center() + vec2(dx, 0.0), 1.9, t.text);
-            }
-        }
-    }
-    resp
-}
-
-/// Over a photo: back on the left; undo, share and "…" on the right (a long press on undo opens
-/// the history).
+/// Over a photo: back on the left; undo, then share, save and "…" sharing one glass capsule on the
+/// right, as iOS 26 groups a bar's buttons (a long press on undo opens the history).
 fn photo_bar(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     ui.horizontal_centered(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
+        ui.add_space(2.0);
         if bar_icon(ui, "back", Icon::ChevronLeft, "Back", true).clicked() {
             let _ = app.run("view.back", json!({}));
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.add_space(2.0);
             let has_photo = app.session.active().is_some();
-            let more = bar_icon(ui, "photoMore", Icon::Dots, "More", has_photo);
-            if more.clicked() {
+            // (right to left: "…", save, share)
+            let save = app.services.save_to_photos.is_some();
+            let mut items: Vec<glass::GroupItem> = vec![("icon:photoMore", Icon::Dots, "More", has_photo)];
+            if save {
+                items.push(("icon:save", Icon::Download, "Save to Photos", has_photo));
+            }
+            items.push(("icon:share", Icon::Share, "Share", has_photo));
+            let tapped = glass::group(ui, &items);
+            if let Some(more) = tapped.first()
+                && more.clicked()
+            {
                 mobile::open_menu(ui.ctx(), "photoMore", more.rect);
             }
-            // (right to left: save, then share)
-            if app.services.save_to_photos.is_some() && bar_icon(ui, "save", Icon::Download, "Save to Photos", has_photo).clicked() {
-                if let Err(e) = app.run("app.saveToPhotos", json!({})) {
-                    app.toast_error(ui.ctx(), e);
-                }
+            if save
+                && tapped.get(1).is_some_and(|r| r.clicked())
+                && let Err(e) = app.run("app.saveToPhotos", json!({}))
+            {
+                app.toast_error(ui.ctx(), e);
             }
-            if bar_icon(ui, "share", Icon::Share, "Share", has_photo).clicked() {
+            if tapped.last().is_some_and(|r| r.clicked()) {
                 let _ = app.run("dialog.export", json!({}));
             }
+            ui.add_space(6.0);
             let can_undo = lightcraft_engine::cmd::can_undo(&app.session).is_ok();
             let undo = bar_icon(ui, "undo", Icon::Undo, "Undo", can_undo);
             if undo.clicked() {
@@ -532,7 +504,8 @@ fn photo_bar(app: &mut LightcraftApp, ui: &mut egui::Ui) {
 pub fn grid_header(app: &mut LightcraftApp, ui: &mut egui::Ui, hr: egui::Rect, count: &str) {
     let t = Tokens::get(ui.ctx());
     let title = crate::i18n::source_label(app.session.source, &app.session.catalog);
-    let galley = ui.painter().layout_no_wrap(title, t.semibold(22.0), t.text);
+    // (a large title, as iOS's Photos heads its library)
+    let galley = ui.painter().layout_no_wrap(title, t.semibold(28.0), t.text);
     let title_r = egui::Rect::from_min_size(pos2(hr.left() + 16.0, hr.center().y - 20.0), vec2(galley.size().x + 30.0, 40.0));
     let resp = ui.interact(title_r, egui::Id::new("compact-collection"), Sense::click());
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, crate::i18n::tr("Albums")));
@@ -548,41 +521,53 @@ pub fn grid_header(app: &mut LightcraftApp, ui: &mut egui::Ui, hr: egui::Rect, c
     if resp.clicked() {
         let _ = app.run("view.leftPanel", json!({}));
     }
-    let right = egui::Rect::from_min_max(pos2(hr.right() - 104.0, hr.top()), pos2(hr.right() - 8.0, hr.bottom()));
+    let right = egui::Rect::from_min_max(pos2(hr.right() - 104.0, hr.top()), pos2(hr.right() - 12.0, hr.bottom()));
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(right).layout(egui::Layout::right_to_left(egui::Align::Center)));
     child.spacing_mut().item_spacing.x = 0.0;
-    let sort = bar_icon(&mut child, "sort", Icon::Sort, "Sort", true);
-    if sort.clicked() {
+    let tapped = glass::group(&mut child, &[("icon:sort", Icon::Sort, "Sort", true), ("icon:filter", Icon::Filter, "Filter Bar", true)]);
+    if let Some(sort) = tapped.first()
+        && sort.clicked()
+    {
         mobile::open_menu(ui.ctx(), "sort", sort.rect);
     }
-    if bar_icon(&mut child, "filter", Icon::Filter, "Filter Bar", true).clicked() {
+    if tapped.get(1).is_some_and(|r| r.clicked()) {
         let _ = app.run("view.filterBar", json!({}));
     }
-    let after = title_r.right() + 8.0;
-    if after + 60.0 < right.left() {
-        ui.painter().text(pos2(after, hr.center().y + 2.0), Align2::LEFT_CENTER, count, t.font(13.0), t.text_dim);
+    // the count, where there's room for it before the buttons
+    let after = title_r.right() + 4.0;
+    let count = ui.painter().layout_no_wrap(count.to_string(), t.font(13.0), t.text_dim);
+    if after + count.size().x + 8.0 < child.min_rect().left() {
+        ui.painter().galley(pos2(after, hr.center().y + 3.0 - count.size().y / 2.0), count, t.text_dim);
     }
 }
 
-/// The tools under a photo as an iOS tab bar (an icon over its name, the open one's tinted blue). Tapping the open
-/// tool closes its sheet. A phone held sideways has them as a rail down the left edge instead.
-fn tool_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, rail: bool, mut shown: bool) {
+/// The tools under a photo as an iOS 26 tab bar: a floating glass capsule, the open tool's icon and
+/// name tinted, on a lighter pill that springs across to the tool tapped. Tapping the open tool
+/// closes its sheet. A phone held sideways has them as a rail down the left edge instead.
+fn tool_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, rail: bool, wide: bool, mut shown: bool) {
     // the bottom safe area is already outside this ui (see the host); the bar sits at its edge
     let bar = if rail { egui::Panel::left("compact_rail").exact_size(RAIL_W) } else { egui::Panel::bottom("compact_tabs").exact_size(TAB_H) };
-    let bar = bar.show_separator_line(false).frame(egui::Frame::NONE.fill(t.canvas));
+    // (what is above the bar, so that the capsule floats on it: a phone's sheet when a tool is open)
+    let under = if !wide && (app.ui.right != RightPanel::None || app.ui.presets) { t.chrome } else { t.canvas };
+    let bar = bar.show_separator_line(false).frame(egui::Frame::NONE.fill(if rail { t.canvas } else { under }));
     bar.show_collapsible(ui, &mut shown, |ui| {
         let has_photo = app.session.active().is_some();
         let full = ui.max_rect();
-        let divider = Stroke::new(0.5, t.divider);
-        if rail {
-            ui.painter().vline(full.right(), full.y_range(), divider);
+        // (no wider than a phone's: on a tablet the tools sit together in the middle)
+        let capsule = if rail {
+            full.shrink2(vec2(4.0, 0.0))
         } else {
-            ui.painter().hline(full.x_range(), full.top(), divider);
-        }
-        // the tools share the bar; a rail's don't stretch (52 pt apart, in the middle)
+            egui::Rect::from_center_size(full.center(), vec2((full.width() - 28.0).min(480.0), full.height() - 8.0))
+        };
+        // the tools share the capsule; a rail's don't stretch (52 pt apart, in the middle)
         let n = TOOLS.len() as f32;
-        let (cell_w, cell_h) = if rail { (full.width(), (full.height() / n).min(52.0)) } else { (full.width() / n, full.height()) };
-        let start = if rail { pos2(full.left(), full.center().y - cell_h * n / 2.0) } else { full.min };
+        let (cell_w, cell_h) =
+            if rail { (capsule.width(), (capsule.height() / n).min(52.0)) } else { ((capsule.width() - 8.0) / n, capsule.height()) };
+        let capsule = if rail { egui::Rect::from_center_size(capsule.center(), vec2(capsule.width(), cell_h * n + 8.0)) } else { capsule };
+        let start = capsule.min + vec2(4.0, 4.0);
+        let glass_idx = ui.painter().add(egui::Shape::Noop);
+        let pill_idx = ui.painter().add(egui::Shape::Noop);
+        let mut chosen = None;
         for (i, (id, icon, panel, tip)) in TOOLS.into_iter().enumerate() {
             let presets = id == "presets";
             let on = if presets {
@@ -590,23 +575,30 @@ fn tool_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, rail: bool, 
             } else {
                 !app.ui.presets && (app.ui.right == panel || (panel == RightPanel::Edit && app.ui.right == RightPanel::Profiles))
             };
-            let at = if rail { start + vec2(0.0, i as f32 * cell_h) } else { start + vec2(i as f32 * cell_w, 0.0) };
+            let at = if rail { start + vec2(-4.0, i as f32 * cell_h) } else { start + vec2(i as f32 * cell_w, -4.0) };
             let cell = egui::Rect::from_min_size(at, vec2(cell_w, cell_h));
+            if on {
+                chosen = Some(cell);
+            }
             let resp = ui.interact(cell, egui::Id::new(("compact-tool", id)), if has_photo { Sense::click() } else { Sense::hover() });
             resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, has_photo, on, crate::i18n::tr(tip)));
             crate::widgets::register(ui.ctx(), format!("icon:{id}"), cell);
-            // iOS's tab bar: the open tool's icon and name are tinted, the others grey
+            // iOS's tab bar: the open tool's icon and name are tinted, the others the label colour
             let k = ui.ctx().animate_bool_with_time(resp.id.with("on"), on, 0.15);
             let color = if !has_photo {
                 t.text_disabled
             } else if resp.is_pointer_button_down_on() {
                 t.accent.gamma_multiply(0.6)
             } else {
-                crate::widgets::lerp(t.text_dim, t.accent, k)
+                crate::widgets::lerp(t.text, t.accent, k)
             };
             let name = crate::i18n::tr(if id == "crop" { "Crop" } else { tip });
-            crate::icons::paint(ui.painter(), egui::Rect::from_center_size(cell.center() - vec2(0.0, 8.0), vec2(24.0, 24.0)), icon, color);
-            ui.painter().text(cell.center() + vec2(0.0, 14.0), egui::Align2::CENTER_CENTER, name, t.font(10.0), color);
+            let label = !rail;
+            let icon_c = if label { cell.center() - vec2(0.0, 7.0) } else { cell.center() };
+            crate::icons::paint(ui.painter(), egui::Rect::from_center_size(icon_c, vec2(22.0, 22.0)), icon, color);
+            if label {
+                ui.painter().text(cell.center() + vec2(0.0, 13.0), egui::Align2::CENTER_CENTER, name, t.semibold(10.0), color);
+            }
             if resp.clicked() {
                 haptics::tap(ui.ctx(), Haptic::Selection);
                 // one sheet at a time; tapping the open tool closes it
@@ -620,13 +612,44 @@ fn tool_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, rail: bool, 
                 }
             }
         }
+        ui.painter().set(glass_idx, glass::shape(ui.ctx(), capsule, if rail { 26.0 } else { capsule.height() / 2.0 }, None, 0.0));
+        ui.painter().set(pill_idx, selection_pill(ui.ctx(), egui::Id::new("compact-tool-pill"), chosen, rail));
     });
+}
+
+/// The lighter pill behind a bar's chosen item (`at`, none: it fades away), springing from the item
+/// chosen before to this one along the bar (down a rail).
+fn selection_pill(ctx: &egui::Context, id: egui::Id, at: Option<egui::Rect>, vertical: bool) -> egui::Shape {
+    let shown = glass::spring(ctx, id.with("alpha"), if at.is_some() { 1.0 } else { 0.0 }, 0.25, 1.0);
+    let last = id.with("rect");
+    let at = match at {
+        Some(r) => {
+            ctx.data_mut(|d| d.insert_temp(last, r));
+            r
+        }
+        None => match ctx.data(|d| d.get_temp::<egui::Rect>(last)) {
+            Some(r) => r,
+            None => return egui::Shape::Noop,
+        },
+    };
+    let along = if vertical { at.center().y } else { at.center().x };
+    // (one that appears starts where it is, rather than sliding in from an old place)
+    if shown < 0.05 {
+        ctx.data_mut(|d| d.insert_temp(id.with("pos"), (along, 0.0_f32)));
+    }
+    let pos = glass::spring(ctx, id.with("pos"), along, 0.42, 0.72);
+    let c = if vertical { pos2(at.center().x, pos) } else { pos2(pos, at.center().y) };
+    let r = egui::Rect::from_center_size(c, at.size() - if vertical { vec2(8.0, 2.0) } else { vec2(2.0, 8.0) });
+    let ink = if Tokens::is_dark(ctx) { egui::Color32::from_white_alpha(30) } else { egui::Color32::from_black_alpha(14) };
+    egui::Shape::rect_filled(r, r.height().min(r.width()) / 2.0, ink.gamma_multiply(shown.clamp(0.0, 1.0)))
 }
 
 /// The Edit tool's groups in a row that scrolls sideways (icon over name), Auto first: a phone
 /// shows one group's sliders at a time, as Lightroom's mobile app does.
-fn group_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, mut shown: bool) {
-    let bar = egui::Panel::bottom("compact_groups").show_separator_line(false).exact_size(GROUP_H).frame(egui::Frame::NONE.fill(t.canvas));
+fn group_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, wide: bool, mut shown: bool) {
+    // (on a phone, on the sheet's colour: the sheet, its groups and the tool bar under them read as one)
+    let fill = if wide { t.canvas } else { t.chrome };
+    let bar = egui::Panel::bottom("compact_groups").show_separator_line(false).exact_size(GROUP_H).frame(egui::Frame::NONE.fill(fill));
     bar.show_collapsible(ui, &mut shown, |ui| group_strip(app, ui, t));
 }
 
@@ -639,6 +662,9 @@ fn group_strip(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
             ui.horizontal_centered(|ui| {
                 ui.spacing_mut().item_spacing.x = 2.0;
                 ui.add_space(6.0);
+                // the chosen group's pill goes under the cells, and springs from one to the next
+                let (pill, origin) = (ui.painter().add(egui::Shape::Noop), ui.cursor().min.to_vec2());
+                let mut chosen = None;
                 if group_cell(ui, "auto", Icon::Wand, "Auto", false).clicked() {
                     let _ = app.run("develop.auto", json!({}));
                     app.toast(ui.ctx(), "Auto settings applied");
@@ -646,7 +672,11 @@ fn group_strip(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
                 let (sep, _) = ui.allocate_exact_size(vec2(13.0, 34.0), Sense::hover());
                 ui.painter().vline(sep.center().x, sep.y_range(), Stroke::new(1.0, t.divider));
                 for (id, icon, label) in GROUPS {
-                    if group_cell(ui, &format!("group-{id}"), icon, label, app.ui.edit_group == id).clicked() {
+                    let cell = group_cell(ui, &format!("group-{id}"), icon, label, app.ui.edit_group == id);
+                    if app.ui.edit_group == id {
+                        chosen = Some(cell.rect.translate(-origin));
+                    }
+                    if cell.clicked() {
                         app.ui.edit_group = id.to_string();
                         if app.ui.right == RightPanel::Profiles {
                             app.ui.right = RightPanel::Edit;
@@ -654,22 +684,22 @@ fn group_strip(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
                     }
                 }
                 ui.add_space(6.0);
+                let mut shape = selection_pill(ui.ctx(), egui::Id::new("compact-group-pill"), chosen, false);
+                shape.translate(origin);
+                ui.painter().set(pill, shape);
             });
         },
     );
 }
 
-/// One group in the group row (`button:<id>`): its icon over its name, on a grey tile when chosen.
+/// One group in the group row (`button:<id>`): its icon over its name (the chosen one's pill is the
+/// row's to draw).
 fn group_cell(ui: &mut egui::Ui, id: &str, icon: Icon, label: &str, on: bool) -> egui::Response {
     let t = Tokens::get(ui.ctx());
     let label = crate::i18n::tr(label);
     let (r, resp) = ui.allocate_exact_size(vec2(68.0, GROUP_H - 6.0), Sense::click());
     resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, on, label));
     crate::widgets::register(ui.ctx(), format!("button:{id}"), r);
-    let k = ui.ctx().animate_bool_with_time(resp.id.with("on"), on, 0.15);
-    if k > 0.0 {
-        ui.painter().rect_filled(r, 10.0, t.tool_active.gamma_multiply(k));
-    }
     let color = if on || resp.is_pointer_button_down_on() { t.text } else { t.text_dim };
     crate::icons::paint(ui.painter(), egui::Rect::from_center_size(r.center() - vec2(0.0, 8.0), vec2(20.0, 20.0)), icon, color);
     ui.painter().text(r.center() + vec2(0.0, 14.0), Align2::CENTER_CENTER, label, t.font(11.5), color);
@@ -740,7 +770,7 @@ fn sheet(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, wide: bool, lan
         Some(h) => limit(h),
         None => ease_to(&ctx, egui::Id::new("compact-sheet-h"), limit(stops[detent])),
     };
-    let frame = frame.corner_radius(egui::CornerRadius { nw: 12, ne: 12, sw: 0, se: 0 });
+    let frame = frame.corner_radius(egui::CornerRadius { nw: 22, ne: 22, sw: 0, se: 0 });
     // (what shows through the rounded corners is the photo's canvas, not what the window was cleared to)
     let behind = ui.painter().add(egui::Shape::Noop);
     let out = egui::Panel::bottom("compact_sheet").show_separator_line(false).resizable(false).exact_size(h).frame(frame).show_collapsible(
@@ -814,18 +844,6 @@ fn ease_to(ctx: &egui::Context, id: egui::Id, target: f32) -> f32 {
     next
 }
 
-/// A text button sized for a finger in a bar (`button:<id>`).
-fn bar_text(ui: &mut egui::Ui, id: &str, label: &str, t: &Tokens) -> egui::Response {
-    let label = crate::i18n::tr(label);
-    let galley = ui.painter().layout_no_wrap(label.to_string(), t.font(17.0), t.accent);
-    let (r, resp) = ui.allocate_exact_size(vec2(galley.size().x + 20.0, 44.0), Sense::click());
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
-    crate::widgets::register(ui.ctx(), format!("button:{id}"), r);
-    let color = if resp.is_pointer_button_down_on() { t.accent.gamma_multiply(0.6) } else { t.accent };
-    ui.painter().galley(r.center() - galley.size() / 2.0, galley, color);
-    resp
-}
-
 /// The top bar while choosing photos: Cancel, how many are chosen, Select All / Deselect All.
 fn select_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, full: egui::Rect) {
     let n = app.session.selection.ids.len();
@@ -833,16 +851,18 @@ fn select_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, full: egui
     ui.painter().text(full.center(), Align2::CENTER_CENTER, title, t.semibold(17.0), t.text);
     ui.horizontal_centered(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
-        if bar_text(ui, "selectCancel", "Cancel", t).clicked() {
+        ui.add_space(6.0);
+        if glass::capsule_button(ui, "button:selectCancel", "Cancel", None).clicked() {
             let _ = app.run("view.selectMode", json!({"on": false}));
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.add_space(6.0);
             let all = n > 0 && n >= app.session.visible().len();
             if all {
-                if bar_text(ui, "selectNone", "Deselect All", t).clicked() {
+                if glass::capsule_button(ui, "button:selectNone", "Deselect All", None).clicked() {
                     let _ = app.run("library.select", json!({"ids": []}));
                 }
-            } else if bar_text(ui, "selectAll", "Select All", t).clicked() {
+            } else if glass::capsule_button(ui, "button:selectAll", "Select All", None).clicked() {
                 let _ = app.run("library.selectAll", json!({}));
             }
         });
@@ -852,11 +872,10 @@ fn select_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, full: egui
 /// What the chosen photos can have done to them, at the bottom: rating, flag, label, album,
 /// export, more (copy / paste settings) and delete; each opens its own menu.
 fn action_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, mut shown: bool) {
-    egui::Panel::bottom("compact_actions")
-        .show_separator_line(false)
-        .exact_size(TAB_H)
-        .frame(egui::Frame::NONE.fill(t.canvas).stroke(Stroke::new(0.5, t.divider)))
-        .show_collapsible(ui, &mut shown, |ui| {
+    egui::Panel::bottom("compact_actions").show_separator_line(false).exact_size(TAB_H).frame(egui::Frame::NONE.fill(t.grid_bg)).show_collapsible(
+        ui,
+        &mut shown,
+        |ui| {
             // (sliding away after Cancel, it must not delete anything)
             let any = app.ui.select_mode && !app.session.selection.ids.is_empty();
             let actions = [
@@ -868,11 +887,15 @@ fn action_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, mut shown:
                 ("selMore", Icon::Dots, "More"),
                 ("selDelete", Icon::Trash, "Delete"),
             ];
-            let w = ui.max_rect().width() / actions.len() as f32;
-            ui.horizontal_centered(|ui| {
+            // a floating glass capsule, as the tool bar
+            let capsule = ui.max_rect().shrink2(vec2(14.0, 4.0));
+            glass::paint(ui.painter(), capsule, capsule.height() / 2.0, None, 0.0);
+            let w = (capsule.width() - 8.0) / actions.len() as f32;
+            let inner = capsule.shrink2(vec2(4.0, 0.0));
+            ui.scope_builder(egui::UiBuilder::new().max_rect(inner).layout(egui::Layout::left_to_right(egui::Align::Center)), |ui| {
                 ui.spacing_mut().item_spacing.x = 0.0;
                 for (id, icon, tip) in actions {
-                    let r = icon_button(ui, id, icon, vec2(w, TAB_H - 4.0), false, any, tip);
+                    let r = action_cell(ui, id, icon, w, any, tip);
                     if !r.clicked() {
                         continue;
                     }
@@ -891,7 +914,25 @@ fn action_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, mut shown:
                     }
                 }
             });
-        });
+        },
+    );
+}
+
+/// One action of the select bar (`icon:<id>`): its icon, lit while pressed.
+fn action_cell(ui: &mut egui::Ui, id: &str, icon: Icon, w: f32, enabled: bool, tip: &str) -> egui::Response {
+    let t = Tokens::get(ui.ctx());
+    let (r, resp) = ui.allocate_exact_size(vec2(w, ui.available_height()), if enabled { Sense::click() } else { Sense::hover() });
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, crate::i18n::tr(tip)));
+    crate::widgets::register(ui.ctx(), format!("icon:{id}"), r);
+    let k = glass::press(ui.ctx(), &resp);
+    if k > 0.0 {
+        let spot = egui::Rect::from_center_size(r.center(), vec2(w - 2.0, r.height() - 8.0));
+        let ink = if Tokens::is_dark(ui.ctx()) { egui::Color32::from_white_alpha(30) } else { egui::Color32::from_black_alpha(14) };
+        ui.painter().rect_filled(spot, spot.height() / 2.0, ink.gamma_multiply(k.min(1.0)));
+    }
+    let color = if enabled { t.text } else { t.text_disabled };
+    crate::icons::paint(ui.painter(), egui::Rect::from_center_size(r.center(), vec2(22.0, 22.0)), icon, color);
+    resp
 }
 
 /// A finger-sized menu row (`button:<id>`); true when tapped.

@@ -19,7 +19,9 @@ pub const ROW_H: f32 = 52.0;
 /// Action sheets are no wider than this (iPad).
 const ACTIONS_MAX_W: f32 = 480.0;
 /// A pull-down menu's width.
-const PULL_DOWN_W: f32 = 290.0;
+const PULL_DOWN_W: f32 = 270.0;
+/// A menu's corners (iOS 26's are round enough to look like a lozenge).
+const MENU_R: f32 = 24.0;
 
 /// The slide progress of the sheet `id`, eased: 0 = off screen, 1 = in place. It follows `open`, so
 /// a sheet slides out the way it slid in (the same curve backwards: it starts slowly and picks up).
@@ -58,42 +60,65 @@ pub struct Bar {
     pub gone: bool,
 }
 
-/// A text button in a bar, `align`ed to `at` (`button:<id>`); true when tapped.
-/// An empty `label` draws nothing; one starting with "‹" is a back button (a chevron, then the
-/// rest of the label), as iOS's navigation bars have.
+/// What a glass button at the end of a page's bar shows.
+#[derive(Clone, Copy)]
+enum Face<'a> {
+    Icon(Icon),
+    Label(&'a str),
+}
+
+/// A glass button at one end of a page's bar (`button:<id>`), `align`ed to `at`, as iOS 26's sheets
+/// have them: a circle with an icon, or a capsule with a label; `tint` makes it a prominent one.
+/// `tip` is what a screen reader calls it. True when tapped.
+fn glass_end(ui: &mut egui::Ui, id: &str, tip: &str, face: Face, tint: Option<Color32>, enabled: bool, at: egui::Pos2, align: Align2) -> bool {
+    let t = Tokens::get(ui.ctx());
+    let tint = tint.filter(|_| enabled);
+    let ink = match (enabled, tint) {
+        (false, _) => t.text_disabled,
+        (true, Some(_)) => Color32::WHITE,
+        (true, None) => t.text,
+    };
+    let galley = match face {
+        Face::Label(label) => Some(ui.painter().layout_no_wrap(crate::i18n::tr(label).to_string(), t.semibold(15.0), ink)),
+        Face::Icon(_) => None,
+    };
+    let w = galley.as_ref().map_or(crate::glass::BUTTON_D, |g| g.size().x + 30.0);
+    // (12 pt in from the page's edge, as iOS sets them)
+    let left = if align == Align2::LEFT_CENTER { at.x + 8.0 } else { at.x - 8.0 - w };
+    let glass = Rect::from_min_size(pos2(left, at.y - crate::glass::BUTTON_D / 2.0), vec2(w, crate::glass::BUTTON_D));
+    let hit = glass.expand2(vec2(3.0, (ROW_H - glass.height()) / 2.0));
+    let resp = ui.interact(hit, Id::new(("lc-bar", id)), if enabled { Sense::click() } else { Sense::hover() });
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, crate::i18n::tr(tip)));
+    crate::widgets::register(ui.ctx(), format!("button:{id}"), hit);
+    let k = crate::glass::press(ui.ctx(), &resp);
+    let glass = glass.expand(2.0 * k);
+    crate::glass::paint(ui.painter(), glass, glass.height() / 2.0, tint, k);
+    match (face, galley) {
+        (_, Some(g)) => ui.painter().galley(glass.center() - g.size() / 2.0, g, ink),
+        (Face::Icon(icon), None) => crate::icons::paint(ui.painter(), Rect::from_center_size(glass.center(), vec2(20.0, 20.0)), icon, ink),
+        (Face::Label(_), None) => {}
+    }
+    resp.clicked()
+}
+
+/// A text item of a bar as iOS 26 draws it: "Cancel" and "Close" a ✕, "Done" and "OK" a ✓ (the
+/// page's action, `strong`, tinted), a back button ("‹…") a chevron, any other label a capsule.
 fn bar_button(ui: &mut egui::Ui, id: &str, label: &str, at: egui::Pos2, align: Align2, strong: bool, enabled: bool) -> bool {
     if label.is_empty() {
         return false;
     }
-    let (back, label) = match label.strip_prefix('‹') {
-        Some(rest) => (true, rest),
-        None => (false, label),
-    };
-    let t = Tokens::get(ui.ctx());
-    let font = if strong { t.semibold(16.0) } else { t.font(16.0) };
-    let galley = ui.painter().layout_no_wrap(crate::i18n::tr(label).to_string(), font, t.accent);
-    let chevron = if back { 16.0 } else { 0.0 };
-    let size = vec2(galley.size().x + 24.0 + chevron, ROW_H);
-    let left = if align == Align2::LEFT_CENTER { at.x } else { at.x - size.x };
-    let r = Rect::from_min_size(pos2(left, at.y - size.y / 2.0), size);
-    let resp = ui.interact(r, Id::new(("lc-bar", id)), if enabled { Sense::click() } else { Sense::hover() });
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, crate::i18n::tr(label)));
-    crate::widgets::register(ui.ctx(), format!("button:{id}"), r);
-    let color = if !enabled {
-        t.text_disabled
-    } else if resp.is_pointer_button_down_on() {
-        t.accent.gamma_multiply(0.6)
-    } else {
-        t.accent
-    };
-    if back {
-        let c = pos2(r.left() + 6.0 + chevron / 2.0, r.center().y);
-        crate::icons::paint(ui.painter(), Rect::from_center_size(c, vec2(22.0, 22.0)), Icon::ChevronLeft, color);
-        ui.painter().galley(pos2(r.left() + 6.0 + chevron + 4.0, r.center().y - galley.size().y / 2.0), galley, color);
-    } else {
-        ui.painter().galley(r.center() - galley.size() / 2.0, galley, color);
+    let accent = Tokens::get(ui.ctx()).accent;
+    let tint = strong.then_some(accent);
+    if let Some(rest) = label.strip_prefix('‹') {
+        let tip = if rest.is_empty() { "Back" } else { rest };
+        return glass_end(ui, id, tip, Face::Icon(Icon::ChevronLeft), None, enabled, at, align);
     }
-    resp.clicked()
+    let face = match label {
+        "Cancel" | "Close" => Face::Icon(Icon::Close),
+        "Done" | "OK" => Face::Icon(Icon::Check),
+        _ => Face::Label(label),
+    };
+    glass_end(ui, id, label, face, tint, enabled, at, align)
 }
 
 /// What a page's bar holds at either end.
@@ -104,9 +129,9 @@ pub enum Item<'a> {
     Text(&'a str, bool),
     /// The page's action, in bold.
     Strong(&'a str, bool),
-    /// An icon button (what a screen reader calls it; `true`: tinted with the accent colour).
+    /// An icon button (what a screen reader calls it; `true`: a prominent one, of accent-tinted glass).
     Icon(Icon, &'a str, bool),
-    /// A text in an outlined capsule: a choice that applies to the page (Select All).
+    /// A text in a glass capsule: a choice that applies to the page (Select All).
     Pill(&'a str),
 }
 
@@ -122,40 +147,13 @@ pub struct PageBar<'a> {
 
 /// One end of a page's bar, `align`ed to `at`; true when tapped.
 fn bar_item(ui: &mut egui::Ui, id: &str, item: Item, at: egui::Pos2, align: Align2) -> bool {
-    let t = Tokens::get(ui.ctx());
-    let left_of = |w: f32| if align == Align2::LEFT_CENTER { at.x } else { at.x - w };
+    let accent = Tokens::get(ui.ctx()).accent;
     match item {
         Item::None => false,
         Item::Text(label, enabled) => bar_button(ui, id, label, at, align, false, enabled),
         Item::Strong(label, enabled) => bar_button(ui, id, label, at, align, true, enabled),
-        Item::Icon(icon, tip, accent) => {
-            let size = vec2(48.0, ROW_H);
-            let r = Rect::from_min_size(pos2(left_of(size.x), at.y - size.y / 2.0), size);
-            let resp = ui.interact(r, Id::new(("lc-bar", id)), Sense::click());
-            resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, crate::i18n::tr(tip)));
-            crate::widgets::register(ui.ctx(), format!("button:{id}"), r);
-            let ink = if accent { t.accent } else { t.text };
-            let color = if resp.is_pointer_button_down_on() { ink.gamma_multiply(0.6) } else { ink };
-            crate::icons::paint(ui.painter(), Rect::from_center_size(r.center(), vec2(22.0, 22.0)), icon, color);
-            resp.clicked()
-        }
-        Item::Pill(label) => {
-            let label = crate::i18n::tr(label);
-            let galley = ui.painter().layout_no_wrap(label.to_string(), t.font(15.0), t.text);
-            let size = vec2(galley.size().x + 28.0, 34.0);
-            let r = Rect::from_min_size(pos2(left_of(size.x + 12.0) + 6.0, at.y - size.y / 2.0), size);
-            let hit = r.expand2(vec2(6.0, (ROW_H - size.y) / 2.0));
-            let resp = ui.interact(hit, Id::new(("lc-bar", id)), Sense::click());
-            resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
-            crate::widgets::register(ui.ctx(), format!("button:{id}"), hit);
-            let p = ui.painter();
-            if resp.is_pointer_button_down_on() {
-                p.rect_filled(r, size.y / 2.0, t.hover);
-            }
-            p.rect_stroke(r, size.y / 2.0, Stroke::new(1.0, t.text_disabled), egui::StrokeKind::Inside);
-            p.galley(r.center() - galley.size() / 2.0, galley, t.text);
-            resp.clicked()
-        }
+        Item::Icon(icon, tip, prominent) => glass_end(ui, id, tip, Face::Icon(icon), prominent.then_some(accent), true, at, align),
+        Item::Pill(label) => glass_end(ui, id, label, Face::Label(label), None, true, at, align),
     }
 }
 
@@ -190,6 +188,11 @@ pub fn page_with(ctx: &egui::Context, id: &str, bar_spec: PageBar, open: bool, b
     let content = ctx.content_rect();
     let screen = ctx.viewport_rect();
     let drop = (1.0 - p) * (screen.bottom() - content.top());
+    // (the screen behind steps back as it comes up: `stack_behind`)
+    ctx.data_mut(|d| {
+        let most = d.get_temp::<f32>(presented_id()).unwrap_or(0.0);
+        d.insert_temp(presented_id(), most.max(p));
+    });
     // dim what is behind while it slides in, and keep taps off it
     egui::Area::new(sid.with("dim")).order(egui::Order::Middle).fixed_pos(screen.min).show(ctx, |ui| {
         ui.painter().rect_filled(screen, 0.0, Color32::from_black_alpha((t.scrim as f32 * p) as u8));
@@ -205,7 +208,7 @@ pub fn page_with(ctx: &egui::Context, id: &str, bar_spec: PageBar, open: bool, b
         let _ = ui.allocate_rect(full, Sense::hover());
         crate::widgets::register(ctx, format!("sheet:{id}"), full);
         crate::widgets::register(ctx, "dialog:window", full);
-        ui.painter().rect_filled(full, CornerRadius { nw: 12, ne: 12, sw: 0, se: 0 }, t.chrome);
+        ui.painter().rect_filled(full, CornerRadius { nw: PAGE_R, ne: PAGE_R, sw: 0, se: 0 }, t.chrome);
         let bar_r = Rect::from_min_size(full.min, vec2(w, ROW_H));
         let galley = ui.painter().layout(crate::i18n::tr(bar_spec.title).to_string(), t.semibold(17.0), t.text, (w - 200.0).max(80.0));
         ui.painter().galley(bar_r.center() - galley.size() / 2.0, galley, t.text);
@@ -215,7 +218,7 @@ pub fn page_with(ctx: &egui::Context, id: &str, bar_spec: PageBar, open: bool, b
             // (sliding out: its bar's buttons are deaf)
             bar = Bar::default();
         }
-        ui.painter().hline(full.x_range(), bar_r.bottom(), Stroke::new(1.0, t.divider));
+        ui.painter().hline(full.x_range(), bar_r.bottom(), Stroke::new(0.5, t.divider));
         let body_r =
             Rect::from_min_max(pos2(full.left(), bar_r.bottom() + 1.0), pos2(full.right(), (content.bottom() + drop).max(bar_r.bottom() + 1.0)));
         let mut child = ui.new_child(UiBuilder::new().max_rect(body_r).id_salt(sid.with("body")));
@@ -229,6 +232,43 @@ pub fn page_with(ctx: &egui::Context, id: &str, bar_spec: PageBar, open: bool, b
         });
     });
     bar
+}
+
+/// A page's top corners, rounder than they were before iOS 26.
+const PAGE_R: u8 = 24;
+
+/// Where the pages say how far up they are this frame (the most of any), for [`stack_behind`].
+fn presented_id() -> Id {
+    Id::new("lc-presented")
+}
+
+/// The screen behind a page steps back while the page is up, as an iPhone shows a sheet: it
+/// shrinks a little towards the top, its corners round, and black shows around it. Call once a
+/// frame after everything is drawn, with the layer the screen is drawn in and a placeholder added
+/// before it (for the black). Phones only: a tablet's pages don't cover the whole screen's width.
+pub fn stack_behind(ctx: &egui::Context, layer: egui::LayerId, backdrop: egui::layers::ShapeIdx) {
+    let p = ctx.data_mut(|d| d.remove_temp::<f32>(presented_id())).unwrap_or(0.0).clamp(0.0, 1.0);
+    let (screen, content) = (ctx.viewport_rect(), ctx.content_rect());
+    if p <= 0.0 || screen.width() >= super::compact::WIDE_PT {
+        return;
+    }
+    let s = 1.0 - 0.07 * p;
+    // its top comes to rest a little above the page's
+    let top = screen.top() + ((content.top() - 4.0).max(screen.top()) - screen.top()) * p;
+    let shift = vec2(screen.center().x * (1.0 - s), top - s * screen.top());
+    ctx.transform_layer_shapes(layer, egui::emath::TSTransform::new(shift, s));
+    let card = Rect::from_min_size(pos2(screen.left() * s, screen.top() * s) + shift, screen.size() * s);
+    // (over the whole screen: a layer's painter stops at the safe area, and the black goes round the
+    // status bar too)
+    let mut painter = ctx.layer_painter(layer);
+    painter.set_clip_rect(screen);
+    // black round it, and under its content the bars' colour, which is what shows of it above the
+    // page (nothing is drawn in its status bar's strip)
+    let r = 14.0 * p;
+    let fill = Tokens::get(ctx).canvas;
+    painter.set(backdrop, egui::Shape::Vec(vec![egui::Shape::rect_filled(screen, 0.0, Color32::BLACK), egui::Shape::rect_filled(card, r, fill)]));
+    // (its rounded corners: black over what is outside them)
+    painter.rect_stroke(card, r, Stroke::new(r + 2.0, Color32::BLACK), egui::StrokeKind::Outside);
 }
 
 fn open_id() -> Id {
@@ -271,6 +311,7 @@ pub fn actions(ctx: &egui::Context, id: &str, title: Option<&str>, add: impl FnO
 /// [`actions`] with a pull-down `menu_w` wide (at most the screen's width less its margins): for a
 /// panel of its own rather than a list of rows, like the sync status.
 pub fn actions_wide(ctx: &egui::Context, id: &str, title: Option<&str>, menu_w: f32, add: impl FnOnce(&mut egui::Ui)) {
+    let mut add = Some(add);
     let sid = Id::new(("lc-sheet", id));
     let live = opened(ctx, id);
     let p = slide(ctx, sid, live.is_some());
@@ -322,19 +363,21 @@ pub fn actions_wide(ctx: &egui::Context, id: &str, title: Option<&str>, menu_w: 
             (w, pos2(content.center().x - w / 2.0, content.bottom() - 8.0 - h + (1.0 - p) * (h + 40.0)))
         }
     };
+    // a pull-down grows out of its button with a little bounce, and shrinks back into it
+    let grow = ctx.animate_bool_with_time(sid.with("grow"), !closing, if closing { LEAVE_S } else { 0.42 });
     let shown = egui::Area::new(sid).order(egui::Order::Foreground).fixed_pos(pos).show(ctx, |ui| {
         if anchor.is_some() {
             ui.multiply_opacity(p);
         }
         ui.set_width(w);
         ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
-        let frame = egui::Frame::NONE.fill(t.cell_selected).corner_radius(13.0).shadow(egui::epaint::Shadow {
-            offset: [0, 8],
-            blur: 30,
-            spread: 0,
-            color: Color32::from_black_alpha(120),
-        });
-        frame.show(ui, |ui| {
+        // glass, thicker than a button's so that the rows read over anything
+        let glass = |ui: &mut egui::Ui, add: &mut dyn FnMut(&mut egui::Ui)| {
+            let under = ui.painter().add(egui::Shape::Noop);
+            let r = egui::Frame::NONE.inner_margin(egui::Margin::symmetric(0, 6)).show(ui, |ui| add(ui)).response.rect;
+            ui.painter().set(under, crate::glass::shape(ui.ctx(), r, MENU_R, Some(crate::glass::menu_fill(ui.ctx())), 0.0));
+        };
+        glass(ui, &mut |ui| {
             ui.set_width(w);
             if let Some(title) = title {
                 let galley = ui.painter().layout(crate::i18n::tr(title).to_string(), t.font(13.0), t.text_dim, w - 32.0);
@@ -342,12 +385,14 @@ pub fn actions_wide(ctx: &egui::Context, id: &str, title: Option<&str>, menu_w: 
                 ui.painter().galley(pos2(r.left() + 16.0, r.center().y - galley.size().y / 2.0), galley, t.text_dim);
                 ui.painter().hline(r.x_range(), r.bottom() - 0.5, Stroke::new(1.0, t.divider));
             }
-            add(ui);
+            if let Some(add) = add.take() {
+                add(ui);
+            }
         });
         if anchor.is_none() {
             ui.add_space(8.0);
-            frame.show(ui, |ui| {
-                let (r, resp) = ui.allocate_exact_size(vec2(w, ROW_H + 4.0), Sense::click());
+            glass(ui, &mut |ui| {
+                let (r, resp) = ui.allocate_exact_size(vec2(w, ROW_H - 8.0), Sense::click());
                 resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, crate::i18n::tr("Cancel")));
                 crate::widgets::register(ctx, "button:actionsCancel", r);
                 let color = if resp.is_pointer_button_down_on() { t.accent.gamma_multiply(0.6) } else { t.accent };
@@ -358,6 +403,11 @@ pub fn actions_wide(ctx: &egui::Context, id: &str, title: Option<&str>, menu_w: 
             });
         }
     });
+    if let Some(a) = anchor {
+        let s = if closing { 0.7 + 0.3 * grow } else { 0.3 + 0.7 * crate::glass::bounce(grow) };
+        let pivot = a.center();
+        ctx.transform_layer_shapes(shown.response.layer_id, egui::emath::TSTransform::new(pivot.to_vec2() * (1.0 - s), s));
+    }
     crate::widgets::register(ctx, format!("actions:{id}"), shown.response.rect);
     ctx.data_mut(|d| d.insert_temp(h_id, shown.response.rect.height()));
     if !closing && (close || ctx.input(|i| i.key_pressed(egui::Key::Escape))) {
@@ -365,13 +415,13 @@ pub fn actions_wide(ctx: &egui::Context, id: &str, title: Option<&str>, menu_w: 
     }
 }
 
-/// A row of a menu or list page (`button:<id>`), as iOS draws menu items: the label on the left
-/// (a check mark before it when `checked` is `Some(true)`), the icon on the right. True when
-/// tapped; a tap closes the menu.
+/// A row of a menu or list page (`button:<id>`), as iOS 26 draws menu items: a check mark (when
+/// `checked` is `Some(true)`) or else the icon at the leading edge, then the label; a rounded
+/// highlight under the finger. True when tapped; a tap closes the menu.
 pub fn row_checked(ui: &mut egui::Ui, id: &str, icon: Option<Icon>, label: &str, enabled: bool, checked: Option<bool>) -> bool {
     let t = Tokens::get(ui.ctx());
     let w = ui.available_width();
-    let (r, resp) = ui.allocate_exact_size(vec2(w, 46.0), if enabled { Sense::click() } else { Sense::hover() });
+    let (r, resp) = ui.allocate_exact_size(vec2(w, 44.0), if enabled { Sense::click() } else { Sense::hover() });
     resp.widget_info(|| match checked {
         Some(c) => egui::WidgetInfo::selected(egui::WidgetType::Checkbox, enabled, c, label),
         None => egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label),
@@ -379,23 +429,19 @@ pub fn row_checked(ui: &mut egui::Ui, id: &str, icon: Option<Icon>, label: &str,
     crate::widgets::register(ui.ctx(), format!("button:{id}"), r);
     let p = ui.painter();
     if resp.is_pointer_button_down_on() {
-        p.rect_filled(r, 0.0, t.hover);
+        let spot = r.shrink2(vec2(6.0, 1.0));
+        p.rect_filled(spot, 12.0, if Tokens::is_dark(ui.ctx()) { Color32::from_white_alpha(28) } else { Color32::from_black_alpha(16) });
     }
     let color = if enabled { t.text } else { t.text_disabled };
-    let mut x = r.left() + 16.0;
-    if checked.is_some() {
-        if checked == Some(true) {
-            crate::icons::paint(p, Rect::from_center_size(pos2(x + 7.0, r.center().y), vec2(15.0, 15.0)), Icon::Check, color);
-        }
-        x += 26.0;
+    let lead = pos2(r.left() + 30.0, r.center().y);
+    if checked == Some(true) {
+        crate::icons::paint(p, Rect::from_center_size(lead, vec2(16.0, 16.0)), Icon::Check, color);
+    } else if let Some(icon) = icon {
+        crate::icons::paint(p, Rect::from_center_size(lead, vec2(20.0, 20.0)), icon, color);
     }
-    let right = if icon.is_some() { r.right() - 48.0 } else { r.right() - 16.0 };
-    let galley = p.layout(label.to_string(), t.font(17.0), color, (right - x).max(40.0));
+    let x = r.left() + 52.0;
+    let galley = p.layout(label.to_string(), t.font(17.0), color, (r.right() - 16.0 - x).max(40.0));
     p.galley(pos2(x, r.center().y - galley.size().y / 2.0), galley, color);
-    if let Some(icon) = icon {
-        crate::icons::paint(p, Rect::from_center_size(pos2(r.right() - 28.0, r.center().y), vec2(20.0, 20.0)), icon, color);
-    }
-    p.hline(r.x_range(), r.bottom() - 0.5, Stroke::new(0.5, t.divider));
     let clicked = resp.clicked();
     if clicked {
         close_actions(ui.ctx());
@@ -408,11 +454,11 @@ pub fn row(ui: &mut egui::Ui, id: &str, icon: Option<Icon>, label: &str, enabled
     row_checked(ui, id, icon, label, enabled, None)
 }
 
-/// A thicker gap between groups of menu rows, as iOS separates menu sections.
+/// A hairline between groups of menu rows, as iOS 26 separates menu sections.
 pub fn row_gap(ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
-    let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 8.0), Sense::hover());
-    ui.painter().rect_filled(r, 0.0, t.chrome);
+    let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 13.0), Sense::hover());
+    ui.painter().hline((r.left() + 16.0)..=(r.right() - 16.0), r.center().y, Stroke::new(1.0, t.divider.gamma_multiply(0.8)));
 }
 
 /// Every menu command, flattened: (where it lives, label, id, params, enabled, checked).
@@ -578,9 +624,8 @@ pub fn edit_menu(app: &mut LightcraftApp, ctx: &egui::Context) {
     ctx.options_mut(|o| o.input_options.surrender_focus_on = keep);
 }
 
-/// The edit menu's bar: `items` (id, label) side by side on a rounded dark platter with a small
-/// arrow at the cursor, above the field (below it when there's no room). The tapped item and the
-/// bar's rect.
+/// The edit menu's bar: `items` (id, label) side by side in a glass capsule over the cursor, above
+/// the field (below it when there's no room). The tapped item and the bar's rect.
 fn edit_menu_bar(ctx: &egui::Context, id: Id, items: &[(&'static str, &str)], cursor: Rect, field: Rect) -> (Option<&'static str>, Rect) {
     const H: f32 = 40.0;
     const ARROW: f32 = 7.0;
@@ -597,24 +642,15 @@ fn edit_menu_bar(ctx: &egui::Context, id: Id, items: &[(&'static str, &str)], cu
     let mut chosen = None;
     egui::Area::new(id.with("bar")).order(egui::Order::Tooltip).constrain(false).fixed_pos(bar.min).show(ctx, |ui| {
         let p = ui.painter().clone();
-        p.add(egui::epaint::Shadow { offset: [0, 6], blur: 24, spread: 0, color: Color32::from_black_alpha(110) }.as_shape(bar, 9.0));
-        p.rect_filled(bar, 9.0, t.hover);
-        // the arrow points at the cursor
-        let ax = cursor.center().x.clamp(bar.left() + 14.0, bar.right() - 14.0);
-        let (base, tip) = if above { (bar.bottom(), bar.bottom() + ARROW) } else { (bar.top(), bar.top() - ARROW) };
-        p.add(egui::Shape::convex_polygon(vec![pos2(ax - ARROW, base), pos2(ax + ARROW, base), pos2(ax, tip)], t.hover, Stroke::NONE));
+        crate::glass::paint(&p, bar, H / 2.0, Some(crate::glass::menu_fill(ctx)), 0.0);
         let mut left = bar.left();
-        for (i, ((key, label), galley)) in items.iter().zip(galleys).enumerate() {
+        for ((key, label), galley) in items.iter().zip(galleys) {
             let r = Rect::from_min_size(pos2(left, bar.top()), vec2(galley.size().x + 28.0, H));
             let resp = ui.interact(r, id.with(*key), Sense::click());
             resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, crate::i18n::tr(label)));
             crate::widgets::register(ctx, format!("button:edit-{key}"), r);
             if resp.is_pointer_button_down_on() {
-                let round = |first, last| CornerRadius { nw: first, sw: first, ne: last, se: last };
-                p.rect_filled(r, round(if i == 0 { 9 } else { 0 }, if i + 1 == items.len() { 9 } else { 0 }), t.pressed);
-            }
-            if i > 0 {
-                p.vline(r.left(), r.shrink2(vec2(0.0, 10.0)).y_range(), Stroke::new(1.0, t.text_disabled));
+                p.rect_filled(r.shrink(3.0), (H - 6.0) / 2.0, t.pressed);
             }
             p.galley(r.center() - galley.size() / 2.0, galley, t.text);
             if resp.clicked() {

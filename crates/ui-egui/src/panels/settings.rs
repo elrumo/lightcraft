@@ -198,8 +198,9 @@ fn card_end(ui: &mut egui::Ui, t: &Tokens) {
     let Some(card) = ui.data(|d| d.get_temp::<Card>(card_id())) else { return };
     ui.data_mut(|d| d.remove::<Card>(card_id()));
     let r = Rect::from_min_max(pos2(ui.max_rect().left(), card.top), pos2(ui.max_rect().right(), ui.cursor().top()));
-    // (iOS's grouped cards: the sheet colour in the dark appearance, white on the light page)
-    ui.painter().set(card.shape, egui::epaint::RectShape::filled(r, 10.0, t.cell_selected));
+    // (iOS's grouped cards, as round as iOS 26 draws them: the sheet colour in the dark
+    // appearance, white on the light page)
+    ui.painter().set(card.shape, egui::epaint::RectShape::filled(r, 20.0, t.cell_selected));
 }
 
 /// A whole phone row that reacts to a tap (`button:{id}` unless `id` is empty), lit while pressed.

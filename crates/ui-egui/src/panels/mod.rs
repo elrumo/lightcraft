@@ -103,13 +103,19 @@ pub fn toast(app: &mut LightcraftApp, ctx: &egui::Context) {
     });
     let rise = egui::emath::easing::cubic_out(((now - seen) / 0.2).clamp(0.0, 1.0) as f32);
     let fade = fade * rise;
-    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("toast")));
+    let mut painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("toast")));
     // long messages (a save warning, the web build's notices) wrap within the canvas
     let wrap = (canvas.width() - 80.0).clamp(200.0, 720.0);
     let galley = painter.layout(text, t.font(14.0), t.text.gamma_multiply(fade), wrap);
     let size = vec2(galley.size().x + 40.0, (galley.size().y + 22.0).max(40.0));
     let r = Rect::from_center_size(pos2(canvas.center().x, canvas.bottom() - 60.0 + (1.0 - rise) * 14.0), size);
-    painter.rect_filled(r, 6.0, egui::Color32::from_black_alpha((200.0 * fade) as u8));
+    if crate::is_compact(ctx) {
+        // a phone's: a capsule of glass
+        painter.multiply_opacity(fade);
+        crate::glass::paint(&painter, r, (size.y / 2.0).min(22.0), Some(crate::glass::menu_fill(ctx)), 0.0);
+    } else {
+        painter.rect_filled(r, 6.0, egui::Color32::from_black_alpha((200.0 * fade) as u8));
+    }
     painter.galley(r.center() - galley.size() / 2.0, galley, t.text);
     ctx.request_repaint_after(std::time::Duration::from_millis(30));
 }

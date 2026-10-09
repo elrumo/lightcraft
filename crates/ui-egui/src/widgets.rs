@@ -282,7 +282,10 @@ pub fn slider(ui: &mut Ui, spec: &ControlSpec, value: f64, enabled: bool, label_
     p.text(label_rect.right_center(), Align2::RIGHT_CENTER, shown, font, text_c);
     let tx = to_x(v);
     if touch {
-        paint_ios_slider(ui, track_rect, &spec.track, &t, tx, to_x(spec.default), enabled);
+        // (the thumb turns into a lens of glass while the finger slides it)
+        let held = resp.dragged() && ui.data(|d| d.get_temp::<TouchDrag>(id.with("touch-drag"))) == Some(TouchDrag::Slide);
+        let lens = crate::glass::spring(ui.ctx(), id.with("lens"), if held { 1.0 } else { 0.0 }, 0.3, 0.7).max(0.0);
+        paint_ios_slider(ui, track_rect, &spec.track, &t, tx, to_x(spec.default), enabled, lens);
         return out;
     }
     let ring = 7.0;
@@ -303,13 +306,15 @@ pub fn slider(ui: &mut Ui, spec: &ControlSpec, value: f64, enabled: bool, label_
     out
 }
 
-/// A touch slider drawn as iOS draws its own: a 4 pt track, filled with the accent colour from where
-/// the control's default is to the thumb (so an edited slider shows how far it went, and a centred
-/// one fills outward from its middle), and a white thumb with a soft shadow. Gradient tracks
-/// (temperature, hue…) keep their colours.
-fn paint_ios_slider(ui: &Ui, rect: Rect, track: &Track, t: &Tokens, thumb_x: f32, from_x: f32, enabled: bool) {
+/// A touch slider drawn as iOS 26 draws its own: a 6 pt track, filled with the accent colour from
+/// where the control's default is to the thumb (so an edited slider shows how far it went, and a
+/// centred one fills outward from its middle), and a white capsule thumb with a soft shadow that
+/// swells into a lens of glass while it is held (`lens`, 0–1). Gradient tracks (temperature,
+/// hue…) keep their colours.
+fn paint_ios_slider(ui: &Ui, rect: Rect, track: &Track, t: &Tokens, thumb_x: f32, from_x: f32, enabled: bool, lens: f32) {
     let p = ui.painter();
     let y = rect.center().y;
+    const HALF: f32 = 3.0;
     if let Some(stops) = track_stops(track) {
         let n = stops.len().max(2) - 1;
         let steps = 48;
@@ -319,21 +324,39 @@ fn paint_ios_slider(ui: &Ui, rect: Rect, track: &Track, t: &Tokens, thumb_x: f32
             let local = a * n as f32 - seg as f32;
             let c = lerp(stops[seg.min(n)], stops[(seg + 1).min(n)], local);
             let (x0, x1) = (rect.left() + rect.width() * a, rect.left() + rect.width() * b);
-            p.rect_filled(Rect::from_min_max(pos2(x0, y - 2.0), pos2(x1 + 0.5, y + 2.0)), 0.0, c);
+            let r = egui::CornerRadius {
+                nw: if i == 0 { 3 } else { 0 },
+                sw: if i == 0 { 3 } else { 0 },
+                ne: if i + 1 == steps { 3 } else { 0 },
+                se: if i + 1 == steps { 3 } else { 0 },
+            };
+            p.rect_filled(Rect::from_min_max(pos2(x0, y - HALF), pos2(x1 + 0.5, y + HALF)), r, c);
         }
     } else {
-        p.rect_filled(Rect::from_min_max(pos2(rect.left(), y - 2.0), pos2(rect.right(), y + 2.0)), 2.0, t.track);
+        p.rect_filled(Rect::from_min_max(pos2(rect.left(), y - HALF), pos2(rect.right(), y + HALF)), HALF, t.track);
         let (a, b) = (from_x.min(thumb_x), from_x.max(thumb_x));
         if enabled && b - a > 0.5 {
-            p.rect_filled(Rect::from_min_max(pos2(a, y - 2.0), pos2(b, y + 2.0)), 2.0, t.accent);
+            p.rect_filled(Rect::from_min_max(pos2(a, y - HALF), pos2(b, y + HALF)), HALF, t.accent);
         }
     }
-    let (c, r) = (pos2(thumb_x, y), 12.0);
+    // (a capsule wider than it is tall; at the ends of the track it stays clear of the panel's edge)
+    let size = vec2(38.0, 24.0) * (1.0 + 0.35 * lens);
+    let c = pos2(thumb_x.min(rect.right() - 8.0).max(rect.left() + 8.0).min(rect.right()), y);
+    let thumb = Rect::from_center_size(c, size);
     let dark = Tokens::is_dark(ui.ctx());
-    p.circle_filled(c + vec2(0.0, 1.5), r + 1.0, Color32::from_black_alpha(if dark { 80 } else { 40 }));
-    p.circle_filled(c, r, if enabled { Color32::WHITE } else { t.track });
+    if lens > 0.01 {
+        crate::glass::paint(p, thumb, size.y / 2.0, None, 0.4 * lens);
+        // (the glass clears as it swells: what's left of the white thumb fades)
+        p.rect_filled(thumb, size.y / 2.0, Color32::from_white_alpha((255.0 * (1.0 - lens).max(0.0)) as u8));
+        return;
+    }
+    p.add(
+        egui::epaint::Shadow { offset: [0, 2], blur: 8, spread: 0, color: Color32::from_black_alpha(if dark { 90 } else { 45 }) }
+            .as_shape(thumb, size.y / 2.0),
+    );
+    p.rect_filled(thumb, size.y / 2.0, if enabled { Color32::WHITE } else { t.track });
     if !dark {
-        p.circle_stroke(c, r, Stroke::new(0.5, Color32::from_black_alpha(30)));
+        p.rect_stroke(thumb, size.y / 2.0, Stroke::new(0.5, Color32::from_black_alpha(30)), egui::StrokeKind::Outside);
     }
 }
 
@@ -500,18 +523,29 @@ pub fn check(ui: &mut Ui, on: &mut bool, label: impl Into<egui::WidgetText>) -> 
         resp.mark_changed();
     }
     resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, enabled, *on, galley.text()));
-    let k = ui.ctx().animate_bool_with_time(resp.id, *on, 0.15);
+    // the knob springs across (a little past, and back)
+    let k = crate::glass::spring(ui.ctx(), resp.id.with("knob"), if *on { 1.0 } else { 0.0 }, 0.35, 0.68);
+    let held = crate::glass::press(ui.ctx(), &resp);
     let p = ui.painter();
     p.galley(pos2(r.left(), r.center().y - galley.size().y / 2.0), galley, if enabled { t.text } else { t.text_disabled });
-    // 51 × 31 pt like iOS's own; its off track is a translucent grey
-    let sw = Rect::from_center_size(pos2(r.right() - 27.0, r.center().y), vec2(51.0, 31.0));
+    // 62 × 28 pt like iOS 26's own, with a capsule knob; its off track is a translucent grey
+    let sw = Rect::from_center_size(pos2(r.right() - 31.0, r.center().y), vec2(62.0, 28.0));
     let (off, green) = (t.switch_off, t.switch_on);
-    let mix = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * k).round() as u8;
+    let tone = k.clamp(0.0, 1.0);
+    let mix = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * tone).round() as u8;
     let track = Color32::from_rgb(mix(off.r(), green.r()), mix(off.g(), green.g()), mix(off.b(), green.b()));
-    p.rect_filled(sw, 15.5, if enabled { track } else { track.gamma_multiply(0.5) });
-    let x = sw.left() + 15.5 + (sw.width() - 31.0) * k;
-    p.circle_filled(pos2(x, sw.center().y + 1.0), 13.5, Color32::from_black_alpha(40));
-    p.circle_filled(pos2(x, sw.center().y), 13.5, Color32::WHITE);
+    p.rect_filled(sw, 14.0, if enabled { track } else { track.gamma_multiply(0.5) });
+    // held, the knob swells past the track into a lens of glass
+    let knob_size = vec2(38.0, 24.0) + vec2(10.0, 12.0) * held;
+    let x = sw.left() + 2.0 + knob_size.x / 2.0 - 5.0 * held + (sw.width() - 4.0 - knob_size.x + 10.0 * held) * k;
+    let knob = Rect::from_center_size(pos2(x, sw.center().y), knob_size);
+    if held > 0.01 {
+        crate::glass::paint(p, knob, knob_size.y / 2.0, None, 0.4 * held);
+        p.rect_filled(knob, knob_size.y / 2.0, Color32::from_white_alpha((255.0 * (1.0 - held).max(0.0)) as u8));
+    } else {
+        p.add(egui::epaint::Shadow { offset: [0, 1], blur: 6, spread: 0, color: Color32::from_black_alpha(50) }.as_shape(knob, 12.0));
+        p.rect_filled(knob, 12.0, Color32::WHITE);
+    }
     resp
 }
 
@@ -601,8 +635,9 @@ pub fn segmented(ui: &mut Ui, id: &str, items: &[(&str, &str)], active: Option<u
     clicked
 }
 
-/// iOS's segmented control (phone dialogs): segments of equal width on a rounded grey track, the
-/// chosen one raised on a lighter pill; more than four wrap to rows of four. Segment `i` is
+/// iOS's segmented control (phone dialogs): segments of equal width on a capsule grey track, the
+/// chosen one raised on a lighter capsule that slides to the one tapped; more than four wrap to
+/// rows of four. Segment `i` is
 /// `button:{id}-{i}`. Returns the tapped index.
 pub fn ios_segmented(ui: &mut Ui, id: &str, labels: &[&str], active: Option<usize>) -> Option<usize> {
     ios_segments(ui, id, labels.iter().enumerate().map(|(i, l)| (*l, i.to_string())).collect(), active, 4)
@@ -615,23 +650,36 @@ fn ios_segments(ui: &mut Ui, id: &str, items: Vec<(&str, String)>, active: Optio
     let w = ui.available_width();
     let mut tapped = None;
     for (row_i, row) in items.chunks(per_row.max(1)).enumerate() {
+        // iOS 26's: a capsule track, the chosen segment on a raised capsule that slides to the one tapped
         let (track, _) = ui.allocate_exact_size(vec2(w, 36.0), Sense::hover());
-        ui.painter().rect_filled(track, 9.0, t.inset);
+        ui.painter().rect_filled(track, 18.0, t.inset);
         let seg_w = track.width() / row.len() as f32;
+        let pill_idx = ui.painter().add(egui::Shape::Noop);
+        let first = row_i * per_row.max(1);
+        let chosen = active.filter(|a| (first..first + row.len()).contains(a)).map(|a| (a - first) as f32);
+        if let Some(j) = chosen {
+            let id = ui.id().with((id, "pill", row_i));
+            let x = crate::glass::spring(ui.ctx(), id, j, 0.4, 0.78);
+            let pill = Rect::from_min_size(pos2(track.left() + x * seg_w, track.top()), vec2(seg_w, track.height())).shrink(2.5);
+            let dark = Tokens::is_dark(ui.ctx());
+            let mut shapes = vec![
+                egui::epaint::Shadow { offset: [0, 2], blur: 6, spread: 0, color: Color32::from_black_alpha(if dark { 60 } else { 26 }) }
+                    .as_shape(pill, pill.height() / 2.0)
+                    .into(),
+            ];
+            shapes.push(egui::Shape::rect_filled(pill, pill.height() / 2.0, t.segment_pill));
+            ui.painter().set(pill_idx, egui::Shape::Vec(shapes));
+        }
         for (j, (label, key)) in row.iter().enumerate() {
-            let i = row_i * per_row.max(1) + j;
+            let i = first + j;
             let r = Rect::from_min_size(pos2(track.left() + j as f32 * seg_w, track.top()), vec2(seg_w, track.height()));
             let resp = ui.interact(r, ui.id().with((id, i)), Sense::click());
             let on = active == Some(i);
             resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::RadioButton, true, on, *label));
             register(ui.ctx(), format!("button:{id}-{key}"), r);
             let p = ui.painter();
-            if on {
-                let pill = r.shrink(2.0);
-                p.rect_filled(pill.translate(vec2(0.0, 1.0)), 7.0, Color32::from_black_alpha(if Tokens::is_dark(ui.ctx()) { 50 } else { 28 }));
-                p.rect_filled(pill, 7.0, t.segment_pill);
-            } else if j > 0 && active != Some(i - 1) {
-                p.vline(r.left(), r.shrink2(vec2(0.0, 9.0)).y_range(), Stroke::new(1.0, t.hover));
+            if !on && j > 0 && active != Some(i - 1) {
+                p.vline(r.left(), r.shrink2(vec2(0.0, 11.0)).y_range(), Stroke::new(1.0, t.hover));
             }
             let font = if on { t.semibold(13.0) } else { t.font(13.0) };
             p.text(r.center(), Align2::CENTER_CENTER, crate::i18n::tr(label), font, t.text);

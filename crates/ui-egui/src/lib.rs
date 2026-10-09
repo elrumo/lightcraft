@@ -8,6 +8,7 @@
 
 pub mod control;
 pub mod export_task;
+pub mod glass;
 pub mod haptics;
 pub mod headless;
 pub mod i18n;
@@ -43,6 +44,8 @@ mod tests_compact_editor;
 mod tests_curve;
 #[cfg(test)]
 mod tests_export_flow;
+#[cfg(test)]
+mod tests_glass;
 #[cfg(test)]
 mod tests_grid;
 #[cfg(test)]

@@ -231,7 +231,7 @@ fn bottom_bar(app: &mut LightcraftApp, ui: &mut Ui, t: &Tokens) {
         cancel(app);
     }
     let mut right = ui.new_child(UiBuilder::new().max_rect(r.shrink2(vec2(6.0, 0.0))).layout(egui::Layout::right_to_left(egui::Align::Center)));
-    if compact::bar_icon(&mut right, "cropDone", Icon::Check, "Done", true).clicked() {
+    if crate::glass::circle_button(&mut right, "icon:cropDone", Icon::Check, "Done", true, Some(t.accent)).clicked() {
         let _ = app.run("tool.done", json!({}));
     }
 }
