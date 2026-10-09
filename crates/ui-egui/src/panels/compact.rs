@@ -266,6 +266,11 @@ fn photo_more(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     if mobile::row(ui, "resetEdits", None, crate::i18n::tr("Reset All Edits"), true) {
         run_cmd(app, &ctx, "develop.reset", json!({}));
     }
+    if lightcraft_engine::enhance::Enhancer::AVAILABLE
+        && mobile::row(ui, "superRes", None, crate::i18n::tr("Super Resolution…"), !app.superres.busy())
+    {
+        run_cmd(app, &ctx, "dialog.superRes", json!({}));
+    }
     mobile::row_gap(ui);
     for (cmd, icon, label) in
         [("panel.versions", Icon::Versions, "Versions"), ("panel.activity", Icon::Activity, "History"), ("panel.keywords", Icon::Tag, "Keywords")]

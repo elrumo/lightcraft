@@ -3151,6 +3151,7 @@ dependencies = [
  "lightcraft-codecs",
  "lightcraft-color",
  "lightcraft-develop",
+ "lightcraft-enhance",
  "lightcraft-fetch",
  "lightcraft-geo",
  "lightcraft-geom",
@@ -3173,6 +3174,19 @@ dependencies = [
  "thiserror 2.0.21",
  "ureq",
  "web-time",
+]
+
+[[package]]
+name = "lightcraft-enhance"
+version = "0.2.1"
+dependencies = [
+ "candle-core",
+ "candle-nn",
+ "lightcraft-codecs",
+ "lightcraft-color",
+ "lightcraft-fetch",
+ "lightcraft-raster",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -3417,6 +3431,7 @@ dependencies = [
  "lightcraft-color",
  "lightcraft-develop",
  "lightcraft-engine",
+ "lightcraft-enhance",
  "lightcraft-geo",
  "lightcraft-geom",
  "lightcraft-meta",

@@ -18,8 +18,9 @@ pub mod crs;
 pub mod crs_masks;
 pub mod demo;
 pub mod devices;
-#[cfg(any(feature = "sam", feature = "vision"))]
+#[cfg(any(feature = "sam", feature = "vision", feature = "enhance"))]
 mod download;
+pub mod enhance;
 pub mod export;
 pub mod files;
 pub mod fonts;
@@ -31,6 +32,7 @@ pub mod map;
 pub mod media;
 pub mod memory;
 pub mod merge;
+pub mod models;
 pub mod originals;
 pub mod preset_import;
 pub mod preset_luminar;
@@ -166,6 +168,8 @@ pub struct Session {
     pub active_mask: Option<u32>,
     /// AI masks (SAM 3): the model and the last photo prepared for it.
     pub segmenter: segment::Segmenter,
+    /// AI Super Resolution: the models and where they live.
+    pub enhancer: enhance::Enhancer,
     /// Search by description: the model, the library's index of photo vectors and the work in flight.
     pub vision: vision::Vision,
     /// Selected spot (Remove panel), by index into the active photo's spots.
@@ -265,6 +269,7 @@ impl Session {
             depth: 0,
             active_mask: None,
             segmenter: segment::Segmenter::default(),
+            enhancer: enhance::Enhancer::default(),
             vision: vision::Vision::default(),
             active_spot: None,
             library: None,
@@ -740,6 +745,8 @@ mod tests;
 #[cfg(test)]
 mod tests_color;
 #[cfg(test)]
+mod tests_enhance;
+#[cfg(test)]
 mod tests_export;
 #[cfg(test)]
 mod tests_forget_local;
@@ -755,6 +762,8 @@ mod tests_library;
 mod tests_map;
 #[cfg(test)]
 mod tests_merge;
+#[cfg(test)]
+mod tests_models;
 #[cfg(test)]
 mod tests_organize;
 #[cfg(test)]

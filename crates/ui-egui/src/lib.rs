@@ -23,11 +23,14 @@ pub mod render;
 pub mod shortcuts;
 pub mod softpaint;
 pub mod state;
+pub mod superres;
 pub mod sync_ui;
 pub mod tasks;
 pub mod theme;
 pub mod widgets;
 
+#[cfg(test)]
+mod tests_ai_models;
 #[cfg(test)]
 mod tests_ai_search;
 #[cfg(test)]
@@ -58,6 +61,8 @@ mod tests_people;
 mod tests_quit_unsaved;
 #[cfg(test)]
 mod tests_scroll;
+#[cfg(test)]
+mod tests_superres;
 #[cfg(test)]
 mod tests_unsaved;
 
@@ -242,6 +247,10 @@ pub struct LightcraftApp {
     pub loupe_shown: Option<(lightcraft_catalog::PhotoId, &'static str)>,
     /// Photo Merge dialog previews and background merges.
     pub merge: merge::MergeState,
+    /// AI Super Resolution: the running job.
+    pub superres: superres::SuperResState,
+    /// The saved choice of AI models turned off has been applied to the session.
+    models_synced: bool,
     /// An import in progress (the import review dialog's batches).
     pub import: Option<import::ImportTask>,
     /// A folder scan in progress (feeds the import review).
@@ -312,6 +321,8 @@ impl LightcraftApp {
             gesture: None,
             loupe_shown: None,
             merge: merge::MergeState::default(),
+            superres: superres::SuperResState::default(),
+            models_synced: false,
             import: None,
             scan: None,
             export: None,
@@ -422,6 +433,21 @@ impl LightcraftApp {
             }
             (Some(_), true) => ctx.request_repaint_after(std::time::Duration::from_secs(2)), // retry
             (None, false) => {}
+        }
+    }
+
+    /// The AI models the user turned off: the saved choice is applied to the session on the first
+    /// frame (the settings are loaded after the app is built), and from then on the session's
+    /// (changed by Settings ▸ AI Models or by an agent) is what gets saved.
+    fn sync_models(&mut self) {
+        if !self.models_synced {
+            self.session.set_models_disabled(&self.ui.settings.models_disabled);
+            self.models_synced = true;
+            return;
+        }
+        let now = self.session.models_disabled();
+        if now != self.ui.settings.models_disabled {
+            self.ui.settings.models_disabled = now;
         }
     }
 
@@ -689,6 +715,8 @@ impl LightcraftApp {
         }
         self.renderer.poll(ctx, &mut self.session);
         merge::poll(self, ctx);
+        superres::poll(self, ctx);
+        self.sync_models();
         import::poll_scan(self, ctx);
         import::tick(self, ctx);
         tasks::poll(self, ctx);

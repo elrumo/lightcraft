@@ -130,5 +130,7 @@
   "Looking for faces: {done} of {total}": "正在尋找人臉：{done}/{total}",
   "{n} photos · synced with {server}": "{n} 張照片 · 已與 {server} 同步",
   "{n} photos on this device": "此裝置上有 {n} 張照片",
-  "{n} photos, not saved": "{n} 張照片（不會儲存）"
+  "{n} photos, not saved": "{n} 張照片（不會儲存）",
+  "Enlarging… {:.0}%": "正在放大… {:.0}%",
+  "Super Resolution failed: {e}": "超解析度失敗：{e}"
 }

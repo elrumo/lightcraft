@@ -200,6 +200,8 @@ pub struct AppSettings {
     pub film_badges: bool,
     /// Grid: when to show the rating / flag / edited badges.
     pub grid_badges: GridBadges,
+    /// AI models the user turned off (Settings ▸ AI Models), by id.
+    pub models_disabled: Vec<String>,
 }
 
 impl Default for AppSettings {
@@ -217,8 +219,16 @@ impl Default for AppSettings {
             film_names: true,
             film_badges: true,
             grid_badges: GridBadges::Auto,
+            models_disabled: Vec::new(),
         }
     }
+}
+
+/// What a model card in Settings ▸ AI Models is asking the user to confirm.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ModelStep {
+    Download,
+    Delete,
 }
 
 /// Preview sizes offered in Settings → Performance.
@@ -365,6 +375,9 @@ pub struct UiState {
     /// A SAM 3 download was started from the app (to report its end once).
     #[serde(skip)]
     pub sam_downloading: bool,
+    /// Settings ▸ AI Models: the model whose download or delete is waiting for the user's yes.
+    #[serde(skip)]
+    pub model_confirm: Option<(String, ModelStep)>,
     /// The search field describes a photo (search by description) instead of matching text.
     #[serde(skip)]
     pub ai_search: bool,
@@ -636,6 +649,13 @@ pub enum Dialog {
         #[serde(default)]
         error: Option<String>,
     },
+    /// Photo ▸ Enhance ▸ Super Resolution: the model's download (consent, size, licence, credit,
+    /// progress), then Enlarge.
+    SuperRes {
+        /// Why the download couldn't start (shown in the dialog).
+        #[serde(default)]
+        error: Option<String>,
+    },
     /// Confirm moving photos to Recently Deleted.
     ConfirmDelete {
         count: usize,
@@ -701,6 +721,7 @@ impl Default for UiState {
             describe: None,
             detail_due: None,
             sam_downloading: false,
+            model_confirm: None,
             ai_search: false,
             ai_search_error: None,
             ai_search_downloading: false,

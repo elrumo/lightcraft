@@ -893,7 +893,13 @@ pub fn encode_rendered(r: &lightcraft_pipeline::Rendered, o: &ExportOptions, met
 
 /// Encode a high-bit-depth image (see [`encode_rendered`]).
 pub fn encode_deep(img: &DeepImage, o: &ExportOptions, meta: Option<&Metadata>) -> Result<Vec<u8>, String> {
-    let mut img = img.clone();
+    encode_deep_owned(img.clone(), o, meta)
+}
+
+/// [`encode_deep`] for an image nothing else needs: no copy of it is made, and it is freed as
+/// soon as it is encoded, so a huge image (a Super Resolution result) is in memory once, not
+/// twice, next to its encoding.
+pub fn encode_deep_owned(mut img: DeepImage, o: &ExportOptions, meta: Option<&Metadata>) -> Result<Vec<u8>, String> {
     output_sharpen_deep(&mut img, o.sharpen, o.sharpen_amount);
     if let Some(wm) = &o.watermark {
         let wm = Watermark { color: srgb8_in(img.space, wm.color), target: Some(img.space), ..wm.clone() };

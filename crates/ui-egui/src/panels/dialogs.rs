@@ -79,6 +79,7 @@ fn cancel_label(app: &LightcraftApp, dlg: &Dialog, informational: bool) -> &'sta
     match dlg {
         Dialog::SamModel { .. } if running || installed || nowhere => "Close",
         Dialog::SamModel { .. } => "Not Now",
+        Dialog::SuperRes { .. } => crate::superres::cancel_label(app),
         _ if informational => "Done",
         _ => "Cancel",
     }
@@ -103,6 +104,7 @@ fn ok_label(app: &LightcraftApp, dlg: &Dialog, informational: bool) -> String {
         Dialog::SamModel { .. } if installed || running || nowhere => return String::new(),
         Dialog::SamModel { error, .. } if error.is_some() || failed => "Try Again",
         Dialog::SamModel { .. } => "Download",
+        Dialog::SuperRes { error } => crate::superres::ok_label(app, error.as_ref()),
         Dialog::NewAlbum { .. } | Dialog::NewSmartAlbum { .. } | Dialog::SmartRules { id: None, .. } | Dialog::CreatePreset { .. } if compact => {
             "Create"
         }
@@ -167,6 +169,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
         Dialog::Settings { .. } => "Settings",
         Dialog::ConfirmDelete { .. } => "Delete Photos",
         Dialog::SamModel { .. } => "Download the SAM 3 Model?",
+        Dialog::SuperRes { .. } => "Super Resolution",
         Dialog::About => "About LightCraft",
         Dialog::Shortcuts => "Keyboard Shortcuts",
     }
@@ -912,6 +915,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
             Dialog::Import { opts } => crate::import::body(app, ui, opts),
             Dialog::Settings { tab } => crate::panels::settings::body(app, ui, tab),
             Dialog::SamModel { error, .. } => sam_model_body(app, ui, error.as_deref()),
+            Dialog::SuperRes { error } => crate::superres::body(app, ui, error.as_deref()),
             Dialog::ConfirmDelete { count } => {
                 let what = if *count == 1 {
                     crate::i18n::tr("this photo").to_string()
@@ -1072,16 +1076,14 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
             // the import review stays open on an error (e.g. an unusable folder template)
             Err(e) if matches!(dlg, Dialog::Import { .. }) => app.toast(ctx, e),
             // the SAM 3 dialog stays open to show the download (or why it can't start)
-            Err(e) if matches!(dlg, Dialog::SamModel { .. }) => {
-                if let Dialog::SamModel { error, .. } = &mut dlg {
-                    *error = Some(e);
-                }
-            }
-            Ok(_) if keeps_open(app, &dlg) => {
-                if let Dialog::SamModel { error, .. } = &mut dlg {
-                    *error = None;
-                }
-            }
+            Err(e) if matches!(dlg, Dialog::SamModel { .. } | Dialog::SuperRes { .. }) => match &mut dlg {
+                Dialog::SamModel { error, .. } | Dialog::SuperRes { error } => *error = Some(e),
+                _ => {}
+            },
+            Ok(_) if keeps_open(app, &dlg) => match &mut dlg {
+                Dialog::SamModel { error, .. } | Dialog::SuperRes { error } => *error = None,
+                _ => {}
+            },
             _ => close = true,
         }
     }
@@ -1116,7 +1118,8 @@ pub fn fmt_gap(v: f64) -> String {
 /// Whether a dialog stays open after its action succeeded (the SAM 3 dialog while the model
 /// downloads).
 pub fn keeps_open(app: &LightcraftApp, dlg: &Dialog) -> bool {
-    matches!(dlg, Dialog::SamModel { .. }) && !app.session.segmenter.installed()
+    (matches!(dlg, Dialog::SamModel { .. }) && !app.session.segmenter.installed())
+        || (matches!(dlg, Dialog::SuperRes { .. }) && crate::superres::keeps_open(app))
 }
 
 /// The SAM 3 dialog: what the model is, its size and licence, and the download's progress.
@@ -1179,6 +1182,7 @@ fn sam_model_body(app: &mut LightcraftApp, ui: &mut egui::Ui, error: Option<&str
 
 pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_json::Value, String> {
     match dlg {
+        Dialog::SuperRes { .. } => crate::superres::confirm(app),
         Dialog::SamModel { then, .. } => {
             if app.session.segmenter.installed() {
                 // installed: start what the user was doing

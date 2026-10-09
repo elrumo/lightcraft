@@ -1,4 +1,4 @@
-//! The Settings dialog (⌘,): General, Import, Performance, Interface, Sync.
+//! The Settings dialog (⌘,): General, Import, Performance, Interface, Sync, AI Models.
 //!
 //! Changes apply immediately (no OK/Cancel). Where they are stored:
 //! - **app settings** ([`crate::state::AppSettings`]: startup view, delete confirmation, GPU,
@@ -26,8 +26,14 @@ use crate::theme::Tokens;
 use crate::widgets::register;
 
 /// (id, label) of the tabs, in order.
-pub const TABS: &[(&str, &str)] =
-    &[("general", "General"), ("import", "Import"), ("performance", "Performance"), ("interface", "Interface"), ("sync", "Sync")];
+pub const TABS: &[(&str, &str)] = &[
+    ("general", "General"),
+    ("import", "Import"),
+    ("performance", "Performance"),
+    ("interface", "Interface"),
+    ("sync", "Sync"),
+    ("models", "AI Models"),
+];
 
 /// Thumbnail cache sizes offered (MB).
 const CACHE_SIZES: [u32; 5] = [512, 1024, 2048, 4096, 8192];
@@ -39,12 +45,13 @@ const LABEL_W: f32 = 150.0;
 const IOS: bool = cfg!(target_os = "ios");
 
 /// The phone's list: each tab's icon and the colour of its tile (iOS's system colours).
-const TAB_TILES: [(Icon, Color32); 5] = [
+const TAB_TILES: [(Icon, Color32); 6] = [
     (Icon::Gear, Color32::from_rgb(0x8e, 0x8e, 0x93)),
     (Icon::Photos, Color32::from_rgb(0x30, 0xd1, 0x58)),
     (Icon::Wand, Color32::from_rgb(0xff, 0x9f, 0x0a)),
     (Icon::Eye, Color32::from_rgb(0x5e, 0x5c, 0xe6)),
     (Icon::Cloud, Color32::from_rgb(0x0a, 0x84, 0xff)),
+    (Icon::Subject, Color32::from_rgb(0xbf, 0x5a, 0xf2)),
 ];
 
 /// A row's height on the phone (Apple's 44 pt).
@@ -67,7 +74,8 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, tab: &mut String) {
     let t = Tokens::get(ui.ctx());
     ui.set_min_width(crate::panels::modal_width(ui.ctx(), 560.0));
     ui.set_min_height(330.0);
-    ui.horizontal(|ui| {
+    // (wrapping: on a phone the six tabs don't fit in one row)
+    ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         for (id, label) in TABS {
             if crate::widgets::text_button(ui, &format!("settingsTab-{id}"), label, tab == id).clicked() {
@@ -86,6 +94,7 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, tab: &mut String) {
             let h = (ui.ctx().content_rect().height() - 240.0).max(300.0);
             egui::ScrollArea::vertical().max_height(h).auto_shrink([false, true]).show(ui, |ui| sync_tab(app, ui, &t));
         }
+        "models" => crate::panels::ai_models::tab(app, ui, &t),
         _ => general_tab(app, ui, &t),
     }
 }
@@ -111,6 +120,7 @@ fn phone_body(app: &mut LightcraftApp, ui: &mut egui::Ui, tab: &mut String) {
             "performance" => performance_tab(app, ui, &t),
             "interface" => interface_tab(app, ui, &t),
             "sync" => sync_tab(app, ui, &t),
+            "models" => crate::panels::ai_models::tab(app, ui, &t),
             _ => list(app, ui, &t, tab),
         }
         card_end(ui, &t);

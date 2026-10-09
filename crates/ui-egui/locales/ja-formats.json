@@ -130,5 +130,7 @@
   "Looking for faces: {done} of {total}": "顔を探しています：{done}/{total}枚",
   "{n} photos · synced with {server}": "{n}枚・{server}と同期",
   "{n} photos on this device": "このデバイスに{n}枚",
-  "{n} photos, not saved": "{n}枚（保存されません）"
+  "{n} photos, not saved": "{n}枚（保存されません）",
+  "Enlarging… {:.0}%": "拡大中… {:.0}%",
+  "Super Resolution failed: {e}": "超解像に失敗：{e}"
 }
