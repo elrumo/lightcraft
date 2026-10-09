@@ -279,7 +279,11 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context, req: &ControlRequest
             Some(d) => {
                 let r = crate::panels::dialogs::confirm_dialog(app, &d);
                 // the import review stays open on an error, as with its button
-                if (r.is_err() && matches!(d, crate::state::Dialog::Import { .. } | crate::state::Dialog::SamModel { .. }))
+                if (r.is_err()
+                    && matches!(
+                        d,
+                        crate::state::Dialog::Import { .. } | crate::state::Dialog::SamModel { .. } | crate::state::Dialog::SuperRes { .. }
+                    ))
                     || (r.is_ok() && crate::panels::dialogs::keeps_open(app, &d))
                 {
                     app.ui.dialog = Some(d);

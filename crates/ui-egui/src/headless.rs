@@ -15,7 +15,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::mpsc::Sender;
-use std::time::{Duration, Instant};
+use web_time::{Duration, Instant};
 
 use egui::{Color32, ColorImage, RawInput, TextureId, ViewportCommand, ViewportId};
 use serde_json::{Value, json};

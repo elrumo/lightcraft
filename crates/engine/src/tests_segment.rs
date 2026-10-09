@@ -230,3 +230,12 @@ fn object_clicks_are_capped() {
     assert!(!s.segmenter.busy());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The consent dialog's size comes from this constant; the download itself from the pinned files.
+/// They must say the same thing.
+#[cfg(feature = "sam")]
+#[test]
+fn the_dialog_describes_the_model_that_is_downloaded() {
+    let pinned: u64 = lightcraft_segment::fetch::SAM3_FILES.iter().filter_map(|f| f.size).sum();
+    assert_eq!(crate::segment::MODEL_BYTES, pinned);
+}

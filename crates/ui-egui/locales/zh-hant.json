@@ -1348,5 +1348,22 @@
   "Empty: OpenStreetMap's standard tiles. They are meant for light use; for a busy shared deployment, use your own or a commercial tile server.": "留空：使用 OpenStreetMap 的標準圖磚。僅適合輕度使用；若為多人共用的繁忙部署，請使用自己的或商業圖磚伺服器。",
   "Worked out from the GPS position": "依 GPS 位置推算",
   "Open the Map at this photo": "在地圖上開啟這張照片",
-  "In Browser": "在瀏覽器中"
+  "In Browser": "在瀏覽器中",
+  "Super Resolution": "超解析度",
+  "Super Resolution…": "超解析度…",
+  "Cancel Super Resolution": "取消超解析度",
+  "Enhance": "增強",
+  "Enlarge": "放大",
+  "Download": "下載",
+  "Select a photo to enlarge": "請選取要放大的照片",
+  "Super Resolution is already running": "超解析度正在執行中",
+  "Super Resolution added": "已新增超解析度照片",
+  "Super Resolution cancelled": "已取消超解析度",
+  "AI Super Resolution is not available in this build": "此版本不提供 AI 超解析度",
+  "This is too large for Super Resolution here. Crop the photo first: the limit is": "照片太大，無法在此進行超解析度。請先裁切：上限為",
+  "megapixels.": "百萬像素。",
+  "The photo is enlarged to twice its width and height with an AI model, with your edits applied, and added next to the original (a 16-bit sRGB TIFF), stacked with it. The original isn't changed. This takes a while on large photos.": "使用 AI 模型將照片的寬度與高度放大為兩倍，套用您的編輯，並將結果（16 位元 sRGB TIFF）新增到原照片旁，與其堆疊。原照片不會被變更。較大的照片需要一些時間。",
+  "Super Resolution enlarges a photo to twice its width and height with an AI model. The model isn't part of LightCraft, and everything else works without it.": "超解析度使用 AI 模型將照片的寬度與高度放大為兩倍。此模型不屬於 LightCraft，沒有它其他功能也能正常使用。",
+  "— licence:": "— 授權：",
+  "About the model": "關於此模型"
 }

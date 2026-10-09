@@ -366,14 +366,13 @@ enum Src<'a> {
 }
 
 fn render_impl(src: Src<'_>, info: &SourceInfo, s: &DevelopSettings, req: &RenderRequest, cache: Option<&StageCache>) -> Rendered {
-    // `Instant::now()` panics on wasm32-unknown-unknown: only read the clock when profiling.
-    let lap = |what: &str, t: &mut Option<std::time::Instant>| {
+    let lap = |what: &str, t: &mut Option<web_time::Instant>| {
         if let Some(t) = t {
             eprintln!("  {what}: {:.1} ms", t.elapsed().as_secs_f64() * 1e3);
-            *t = std::time::Instant::now();
+            *t = web_time::Instant::now();
         }
     };
-    let mut t = profiling().then(std::time::Instant::now);
+    let mut t = profiling().then(web_time::Instant::now);
     let src_img: &Rgb32f = match &src {
         Src::Borrowed(r) => r,
         Src::Shared(a) => a,
@@ -492,7 +491,7 @@ pub(crate) fn timed<R>(what: &str, f: impl FnOnce() -> R) -> R {
     if !profiling() {
         return f();
     }
-    let t = std::time::Instant::now();
+    let t = web_time::Instant::now();
     let r = f();
     eprintln!("    {what}: {:.1} ms", t.elapsed().as_secs_f64() * 1e3);
     r

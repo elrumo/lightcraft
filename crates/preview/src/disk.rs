@@ -62,6 +62,7 @@ impl DiskCache {
                 self.hits.fetch_add(1, Ordering::Relaxed);
                 // refresh recency for pruning
                 if let Ok(f) = std::fs::File::options().write(true).open(&p) {
+                    #[allow(clippy::disallowed_methods)] // native only: wasm has no files, so `read` above failed
                     let _ = f.set_modified(std::time::SystemTime::now());
                 }
                 Some(img)

@@ -13,6 +13,18 @@
   years and months work too; the search chip shows how the text was read.
 - The Info panel names the place a GPS position is in (offline); Show on Map opens the Map at the photo.
 
+### Enhance
+- Super Resolution (Photo ▸ Enhance ▸ Super Resolution…): enlarges a photo to twice its width and height with an AI
+  model (Nomos Uni SPAN 2×) and adds the result next to the original, stacked with it. The model is a 4.5 MB optional
+  download (CC-BY-4.0, credited to its author) offered with a consent dialog the first time; nothing downloads
+  without a yes. It enlarges the rendered, edited photo as a 16-bit sRGB TIFF (not the raw data), runs on the GPU on
+  Mac and the CPU elsewhere, and takes minutes on large photos. It is also on the iPhone and iPad, in a photo's "…"
+  menu. See `docs/super-resolution.md`.
+- Settings → AI Models: every optional AI model in one place: what it is for, whether it is on this device or still
+  to download (and from which host), the space it takes, its licence and credit. Download (after a question that
+  names the size and licence), cancel, delete to free the space, or turn a model off. The first use of a feature
+  that needs a model offers the download too. See `docs/ai-models.md`.
+
 ### Remove
 - Content-aware Remove: painting over a distraction now fills it with texture synthesized from around it,
   continuing edges, horizons and patterns through the stroke, instead of healing from one copied spot. The spot's

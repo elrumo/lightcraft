@@ -33,6 +33,7 @@ log = { workspace = true }
 ab_glyph = { workspace = true }
 lightcraft-segment = { workspace = true, optional = true }
 lightcraft-fetch = { workspace = true, optional = true }
+lightcraft-enhance = { workspace = true, optional = true }
 # the store, index and traits only; the model itself is the `vision` feature
 lightcraft-vision = { workspace = true }
 
@@ -41,6 +42,8 @@ lightcraft-vision = { workspace = true }
 sam = ["dep:lightcraft-segment", "dep:lightcraft-fetch"]
 # Natural-language search with SigLIP 2, reading the text in photos (PP-OCRv6) and, later, People. Off for the web and CLI builds.
 vision = ["lightcraft-vision/siglip", "lightcraft-vision/onnx", "dep:lightcraft-fetch"]
+# AI Super Resolution (Photo → Enhance). Off for the web and CLI builds.
+enhance = ["dep:lightcraft-enhance", "dep:lightcraft-fetch"]
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 ureq = { workspace = true }

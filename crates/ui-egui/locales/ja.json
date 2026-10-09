@@ -1133,5 +1133,22 @@
   "Empty: OpenStreetMap's standard tiles. They are meant for light use; for a busy shared deployment, use your own or a commercial tile server.": "空欄：OpenStreetMap の標準タイルを使用します。軽い利用向けです。多くの人が使う環境では、自前のタイルサーバーか商用サーバーを指定してください。",
   "Worked out from the GPS position": "GPS位置から算出",
   "Open the Map at this photo": "この写真の位置でマップを開く",
-  "In Browser": "ブラウザで"
+  "In Browser": "ブラウザで",
+  "Super Resolution": "超解像",
+  "Super Resolution…": "超解像…",
+  "Cancel Super Resolution": "超解像をキャンセル",
+  "Enhance": "強化",
+  "Enlarge": "拡大",
+  "Download": "ダウンロード",
+  "Select a photo to enlarge": "拡大する写真を選択してください",
+  "Super Resolution is already running": "超解像はすでに実行中です",
+  "Super Resolution added": "超解像の写真を追加しました",
+  "Super Resolution cancelled": "超解像をキャンセルしました",
+  "AI Super Resolution is not available in this build": "このビルドではAI超解像を利用できません",
+  "This is too large for Super Resolution here. Crop the photo first: the limit is": "この写真は超解像するには大きすぎます。先にトリミングしてください。上限は",
+  "megapixels.": "メガピクセルです。",
+  "The photo is enlarged to twice its width and height with an AI model, with your edits applied, and added next to the original (a 16-bit sRGB TIFF), stacked with it. The original isn't changed. This takes a while on large photos.": "AIモデルで写真の幅と高さを2倍に拡大します。編集内容が反映された状態で、元の写真の隣に（16ビットsRGBのTIFFとして）追加され、元の写真とスタックされます。元の写真は変更されません。大きな写真では時間がかかります。",
+  "Super Resolution enlarges a photo to twice its width and height with an AI model. The model isn't part of LightCraft, and everything else works without it.": "超解像は、AIモデルで写真の幅と高さを2倍に拡大します。このモデルはLightCraftに含まれておらず、他の機能はモデルがなくても使えます。",
+  "— licence:": "— ライセンス：",
+  "About the model": "モデルについて"
 }

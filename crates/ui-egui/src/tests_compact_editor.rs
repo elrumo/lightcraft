@@ -137,24 +137,142 @@ fn a_drag_on_a_sliders_label_slides_it() {
     assert!(exposure > 0.5, "exposure {exposure}");
 }
 
-/// Crop on a phone: the aspect ratios are chips (the chosen one lit) and its buttons are 36 pt
-/// tall, not the desktop's 24.
+/// The Crop tool on a phone is a screen of its own (Lightroom's mobile app): the tool bar and the
+/// sheet make way for a title, the angle dial, four round buttons, the Aspect / Geometry tabs and a
+/// bar with ✕ and ✓; every control is a finger wide.
 #[test]
-fn phone_crop_has_aspect_chips_and_finger_sized_buttons() {
-    let mut h = detail([390.0, 1000.0]);
-    h.app.ui.right = RightPanel::Crop;
-    h.app.ui.sheet_detent = 2;
-    h.settle(SETTLE);
+fn phone_crop_is_a_screen_of_its_own() {
+    let mut h = detail([390.0, 844.0]);
     let id = h.app.session.active().expect("active photo");
-    assert!(has(&h, "button:cropAspect-free") && has(&h, "button:cropAspect-4x5"));
-    assert!(!has(&h, "button:cropAspect"), "the desktop's pop-up menu isn't there");
-    assert!(rect(&h, "button:cropRotateLeft").height() >= 34.0, "{:?}", rect(&h, "button:cropRotateLeft"));
+    click(&mut h, "icon:crop");
+    assert_eq!(h.app.ui.right, RightPanel::Crop);
+    assert!(!has(&h, "icon:edit") && !has(&h, "sheet:grabber"), "no tool bar or sheet while cropping");
+    for w in ["icon:cropCancel", "icon:cropDone", "icon:undo", "icon:cropAuto", "icon:cropLock", "icon:cropRotate", "icon:cropMore"] {
+        let r = rect(&h, w);
+        assert!(r.width() >= 43.9 && r.height() >= 43.9, "{w} is a finger wide: {r:?}");
+    }
+    for w in [
+        "dial:angle",
+        "button:cropTab-aspect",
+        "button:cropTab-geometry",
+        "button:cropOriginal",
+        "button:cropRatios",
+        "button:cropInstagram",
+        "button:cropTikTok",
+    ] {
+        assert!(has(&h, w), "{w} is on the Aspect tab");
+    }
+    // untouched, the photo is cropped to its own shape (locked or not: the lock is open)
+    assert!(h.app.session.develop_of(id).expect("settings").crop.aspect.is_none());
+    // the Ratios button opens a menu of them; choosing one locks the crop to it
+    click(&mut h, "button:cropRatios");
+    assert!(has(&h, "button:cropAspect-4x5"), "the ratios are listed");
     click(&mut h, "button:cropAspect-4x5");
     assert_eq!(h.app.session.develop_of(id).expect("settings").crop.aspect, Some((400, 500)), "4 × 5 is locked");
-    // segmented choices are iOS's: 36 pt tall, ids keep their names
-    assert!(rect(&h, "button:cropOverlay-thirds").height() >= 34.0);
-    click(&mut h, "button:cropOverlay-grid");
-    assert_eq!(h.app.ui.crop_overlay, crate::state::CropOverlay::Grid);
+    // the lock frees it again
+    click(&mut h, "icon:cropLock");
+    assert_eq!(h.app.session.develop_of(id).expect("settings").crop.aspect, None, "unlocked: free");
+    // Instagram's formats are in a menu of their own
+    click(&mut h, "button:cropInstagram");
+    click(&mut h, "button:cropAspect-100x191");
+    assert_eq!(h.app.session.develop_of(id).expect("settings").crop.aspect, Some((10000, 19100)), "Landscape is 1.91 : 1");
+}
+
+/// Dragging the dial straightens the photo (one undo step); the round buttons rotate and flip.
+#[test]
+fn the_crop_dial_straightens_and_the_buttons_rotate() {
+    let mut h = detail([390.0, 844.0]);
+    let id = h.app.session.active().expect("active photo");
+    click(&mut h, "icon:crop");
+    let angle = |h: &Headless| h.app.session.develop_of(id).expect("settings").crop.geometry.angle;
+    assert_eq!(angle(&h), 0.0);
+    let steps = h.app.session.undo.len();
+    let dial = rect(&h, "dial:angle").center();
+    // the ruler follows the finger: 70 pt to the left reads about 10° higher
+    drag(&mut h, dial, dial - vec2(70.0, 0.0));
+    assert!((angle(&h) - 10.0).abs() < 1.5, "angle {}", angle(&h));
+    assert_eq!(h.app.session.undo.len(), steps + 1, "the drag is one undo step");
+    click(&mut h, "icon:cropRotate");
+    assert!(h.app.session.develop_of(id).expect("settings").orientation.swaps_axes(), "turned a quarter");
+    click(&mut h, "icon:cropMore");
+    click(&mut h, "button:cropFlipH");
+    assert!(h.app.session.develop_of(id).expect("settings").crop.flip_h);
+    click(&mut h, "icon:cropMore");
+    click(&mut h, "button:cropStraighten");
+    assert_eq!(h.app.ui.tool, "straighten", "the line tool is on");
+    assert!(has(&h, "button:straightenCancel"), "and says how to leave it");
+    click(&mut h, "button:straightenCancel");
+    assert!(h.app.ui.tool.is_empty());
+}
+
+/// ✓ keeps what was done; ✕ undoes all of it (the aspect, the angle, the turn) and leaves what was
+/// done before the screen opened alone. Both go back to Edit.
+#[test]
+fn the_crop_screens_cross_undoes_it_and_its_tick_keeps_it() {
+    let mut h = detail([390.0, 844.0]);
+    let id = h.app.session.active().expect("active photo");
+    let r = h.request("engine.execute", json!({"command": "develop.set", "params": {"control": "light.exposure", "value": 0.7}}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    let before = h.app.session.develop_of(id).expect("settings");
+    click(&mut h, "icon:crop");
+    click(&mut h, "button:cropRatios");
+    click(&mut h, "button:cropAspect-1x1");
+    let dial = rect(&h, "dial:angle").center();
+    drag(&mut h, dial, dial - vec2(35.0, 0.0));
+    click(&mut h, "icon:cropRotate");
+    assert_ne!(*h.app.session.develop_of(id).expect("settings"), *before, "the crop changed the photo");
+    click(&mut h, "icon:cropCancel");
+    assert_eq!(h.app.ui.right, RightPanel::Edit, "back to Edit");
+    assert_eq!(*h.app.session.develop_of(id).expect("settings"), *before, "everything since the screen opened is undone, the exposure kept");
+    assert!(!has(&h, "dial:angle") && has(&h, "icon:edit"), "the tool bar is back");
+    // and ✓ keeps it
+    click(&mut h, "icon:crop");
+    click(&mut h, "button:cropRatios");
+    click(&mut h, "button:cropAspect-1x1");
+    click(&mut h, "icon:cropDone");
+    assert_eq!(h.app.ui.right, RightPanel::Edit);
+    assert_eq!(h.app.session.develop_of(id).expect("settings").crop.aspect, Some((100, 100)), "the square crop stays");
+}
+
+/// The Geometry tab: Upright's five modes and the lens / perspective sliders, with no crop frame,
+/// dial or round buttons; a tap on the chosen mode turns it off.
+#[test]
+fn the_crop_screens_geometry_tab_has_upright_and_sliders() {
+    let mut h = detail([390.0, 844.0]);
+    let id = h.app.session.active().expect("active photo");
+    click(&mut h, "icon:crop");
+    click(&mut h, "button:cropTab-geometry");
+    assert!(h.app.ui.crop_geometry);
+    for w in ["button:upright-auto", "button:upright-level", "button:upright-vertical", "button:upright-full", "button:upright-guided"] {
+        assert!(rect(&h, w).width() >= 43.9, "{w}");
+    }
+    for w in ["slider:optics.distortion", "slider:geometry.vertical", "slider:geometry.horizontal"] {
+        assert!(has(&h, w), "{w}");
+    }
+    assert!(!has(&h, "dial:angle") && !has(&h, "icon:cropLock"), "the dial and the round buttons belong to Aspect");
+    assert!(!h.app.widgets.iter().any(|(w, _)| w.starts_with("cropHandle:")), "no crop frame over the photo");
+    click(&mut h, "button:upright-level");
+    assert_eq!(h.app.session.develop_of(id).expect("settings").geometry.upright, lightcraft_develop::Upright::Level);
+    click(&mut h, "button:upright-level");
+    assert_eq!(h.app.session.develop_of(id).expect("settings").geometry.upright, lightcraft_develop::Upright::Off, "a second tap turns it off");
+    click(&mut h, "button:cropTab-aspect");
+    assert!(has(&h, "dial:angle") && has(&h, "cropHandle:0"), "back on Aspect, with the frame");
+}
+
+/// Held sideways the crop screen's title, panel and bar are a column on the right and the dial shares
+/// a row with the round buttons under the photo.
+#[test]
+fn the_crop_screen_fits_a_phone_held_sideways() {
+    let mut h = detail([844.0, 390.0]);
+    click(&mut h, "icon:crop");
+    let (cancel, done, dial, auto, photo) =
+        (rect(&h, "icon:cropCancel"), rect(&h, "icon:cropDone"), rect(&h, "dial:angle"), rect(&h, "icon:cropAuto"), h.app.image_rect.expect("loupe"));
+    assert!(cancel.left() > 844.0 - 330.0 && done.right() <= 844.0, "the bar is in the column on the right: {cancel:?} {done:?}");
+    assert!(
+        auto.center().y > photo.bottom() && (dial.center().y - auto.center().y).abs() < 30.0,
+        "the dial and the buttons share a row under the photo"
+    );
+    assert!(photo.height() > 200.0, "the photo keeps its room: {photo:?}");
 }
 
 /// Remove on a phone: Remove / Heal / Clone are one segmented control.
@@ -333,15 +451,14 @@ fn a_window_too_short_for_the_bars_does_not_panic() {
     h.settle(SETTLE);
 }
 
-/// Each tool's sheet starts at its top: scrolling Crop doesn't leave Masking scrolled too.
+/// Each tool's sheet starts at its top: scrolling Edit doesn't leave Masking scrolled too.
 #[test]
 fn each_tool_starts_at_the_top_of_its_sheet() {
     let mut h = detail([390.0, 844.0]);
-    click(&mut h, "icon:crop");
-    let angle = rect(&h, "slider:crop.angle");
-    let from = angle.center() - vec2(0.0, 6.0);
+    let exposure = rect(&h, "slider:light.exposure");
+    let from = exposure.center() - vec2(0.0, 6.0);
     drag(&mut h, from, from - vec2(4.0, 120.0));
-    assert!(rect(&h, "slider:crop.angle").top() < angle.top() - 40.0, "Crop's sheet scrolled");
+    assert!(rect(&h, "slider:light.exposure").top() < exposure.top() - 40.0, "Edit's sheet scrolled");
     click(&mut h, "icon:masking");
     let grabber = rect(&h, "sheet:grabber");
     let object = rect(&h, "maskNew:object");

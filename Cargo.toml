@@ -33,6 +33,7 @@ lightcraft-ios-host = { path = "crates/ios-host" }
 lightcraft-mcp = { path = "crates/mcp" }
 lightcraft-fetch = { path = "crates/fetch" }
 lightcraft-segment = { path = "crates/segment" }
+lightcraft-enhance = { path = "crates/enhance" }
 # no model by default: crates that want SigLIP 2 ask for `features = ["siglip"]`
 lightcraft-vision = { path = "crates/vision", default-features = false }
 

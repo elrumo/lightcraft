@@ -413,6 +413,8 @@ fn main() -> eframe::Result {
                 .map(std::path::PathBuf::from)
                 .or_else(|| config_dir().map(|d| d.join("models").join("siglip2")));
             session.vision.mirrors_file = config_dir().map(|d| d.join("models").join("siglip2-mirrors.txt"));
+            // AI Super Resolution: models live in <config>/models/<id>/ (downloaded only when the user agrees)
+            session.enhancer.dir = config_dir().map(|d| d.join("models"));
             let mut app = LightcraftApp::new(session, services());
             if let Some(ui) = prefs {
                 app.ui = ui;

@@ -188,6 +188,7 @@ const LAYOUT: &[(&str, &[&str])] = &[
             "photo.virtualCopy",
             "@Stack",
             "@Photo Merge",
+            "@Enhance",
             "---",
             "develop.auto",
             "develop.treatment",

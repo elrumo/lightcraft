@@ -28,7 +28,7 @@ fn fs_exists(path: &str) -> bool {
 #[derive(Default)]
 struct State {
     /// path → (exists, when checked)
-    known: HashMap<String, (bool, std::time::Instant)>,
+    known: HashMap<String, (bool, web_time::Instant)>,
     queue: VecDeque<String>,
     queued: HashSet<String>,
     worker: bool,
@@ -94,7 +94,7 @@ impl Availability {
             return Some((self.probe)(path));
         };
         let mut st = lock(&self.state);
-        let now = std::time::Instant::now();
+        let now = web_time::Instant::now();
         let cached = st.known.get(path).copied();
         if cached.is_none_or(|(_, at)| now.saturating_duration_since(at) >= RECHECK) && !st.queued.contains(path) {
             st.queued.insert(path.to_string());
@@ -148,7 +148,7 @@ impl Availability {
                 let changed = {
                     let mut st = lock(&state);
                     st.queued.remove(&path);
-                    let prev = st.known.insert(path, (ok, std::time::Instant::now()));
+                    let prev = st.known.insert(path, (ok, web_time::Instant::now()));
                     let changed = prev.map(|p| p.0) != Some(ok);
                     if changed {
                         st.generation += 1;

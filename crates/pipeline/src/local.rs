@@ -156,7 +156,7 @@ pub fn denoise(img: &mut Rgb32f, s: &DevelopSettings, src_long: usize, out_long:
     let (lum, col) = nr_params(s, src_long, out_long);
     let w = img.width;
     if let Some(nr) = lum {
-        let _t = crate::profiling().then(std::time::Instant::now);
+        let _t = crate::profiling().then(web_time::Instant::now);
         let l = img.map(log_lum);
         let f = guided(&l, nr.sigma, nr.eps);
         for_rows(&mut img.data, w, |y, row| {
@@ -172,7 +172,7 @@ pub fn denoise(img: &mut Rgb32f, s: &DevelopSettings, src_long: usize, out_long:
         }
     }
     if let Some(nr) = col {
-        let _t = crate::profiling().then(std::time::Instant::now);
+        let _t = crate::profiling().then(web_time::Instant::now);
         let chroma = img.map(|c| {
             let y = luminance_2020(c).max(1e-6);
             [c[0] / y, c[1] / y, c[2] / y]
