@@ -43,12 +43,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
+use crate::http::Request;
 use lightcraft_catalog::Photo;
 use lightcraft_engine::guard;
 use lightcraft_vision::faces::index::FaceIndex;
 use lightcraft_vision::{Embedder, EmbeddingIndex, Error as VisionError, FaceEngine, Key, TextIndex, TextReader};
 use serde_json::json;
-use tiny_http::Request;
 
 use crate::State;
 use crate::accounts;

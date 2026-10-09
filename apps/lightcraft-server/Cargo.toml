@@ -23,7 +23,7 @@ lightcraft-preview = { workspace = true }
 lightcraft-engine = { workspace = true }
 # search by description: the model (SigLIP 2 on candle), reading the text in photos (PP-OCRv6 on rten) and each user's indexes of photo vectors and text
 lightcraft-vision = { workspace = true, features = ["siglip", "onnx"] }
-tiny_http = { workspace = true }
+httparse = { workspace = true }
 argon2 = { workspace = true }
 sha2 = { workspace = true }
 getrandom = { workspace = true }

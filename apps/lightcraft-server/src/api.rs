@@ -11,10 +11,10 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
+use crate::http::{Header, Method, Request, Response, StatusCode};
 use lightcraft_catalog::sync::{Pull, PushError, ServerCore, proto};
 use lightcraft_catalog::{FsStore, LibraryLock};
 use serde_json::{Value, json};
-use tiny_http::{Header, Method, Request, Response, StatusCode};
 
 use crate::State;
 use crate::accounts::{self, LoginError, Session};
@@ -144,19 +144,19 @@ pub(crate) fn query<'a>(q: &'a str, key: &str) -> Option<&'a str> {
 }
 
 /// Answer one request.
-pub fn handle(st: &State, mut req: Request) {
+pub fn handle(st: &State, req: &mut Request) -> Resp {
     let url = req.url().to_string();
     let (path, q) = url.split_once('?').unwrap_or((url.as_str(), ""));
     let method = req.method().clone();
     let is_api = path == "/api" || path.starts_with("/api/");
     let mut resp = if let Some(rest) = path.strip_prefix("/api/admin/") {
-        crate::admin::api(st, &mut req, &method, rest)
+        crate::admin::api(st, req, &method, rest)
     } else if is_api {
-        api(st, &mut req, &method, path, q)
+        api(st, req, &method, path, q)
     } else if path == "/admin" || path.starts_with("/admin/") {
         crate::admin::page(&method, path)
     } else {
-        web(st, &req, &method, path)
+        web(st, req, &method, path)
     };
     // what every answer says, unless it says otherwise: don't guess types, don't leak the URL,
     // and (the API) don't keep answers that hold a user's library
@@ -170,9 +170,7 @@ pub fn handle(st: &State, mut req: Request) {
             resp.add_header(h);
         }
     }
-    if let Err(e) = req.respond(resp) {
-        log::debug!("{method} {path}: {e}");
-    }
+    resp
 }
 
 fn api(st: &State, req: &mut Request, method: &Method, path: &str, q: &str) -> Resp {

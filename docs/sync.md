@@ -65,7 +65,7 @@ target/release/lightcraft-server serve --data /srv/lightcraft --listen 127.0.0.1
 
 | Command | What it does |
 |---|---|
-| `serve [--listen HOST:PORT] [--web DIR] [--scan-interval MIN]` | Serve (default `127.0.0.1:8080`, only this computer; `$LIGHTCRAFT_LISTEN`). `--web` (`$LIGHTCRAFT_WEB`): the `cargo xtask web` bundle, served at `/` with the same cross-origin isolation headers as the dev server. `--scan-interval` (`$LIGHTCRAFT_SCAN_INTERVAL`, default 15): minutes between scans of the library folders, 0 = at start and on demand only. `$LIGHTCRAFT_PREVIEW_THREADS`: threads building their previews (default half the cores, 1–4). `$LIGHTCRAFT_RENDER_THREADS`: photos rendered at once for devices that [export on the server](#exporting-on-the-server) (default 1; a render takes about as much memory as the same export on a desktop) |
+| `serve [--listen HOST:PORT] [--web DIR] [--scan-interval MIN] [--max-requests N]` | Serve (default `127.0.0.1:8080`, only this computer; `$LIGHTCRAFT_LISTEN`). `--web` (`$LIGHTCRAFT_WEB`): the `cargo xtask web` bundle, served at `/` with the same cross-origin isolation headers as the dev server. `--scan-interval` (`$LIGHTCRAFT_SCAN_INTERVAL`, default 15): minutes between scans of the library folders, 0 = at start and on demand only. `--max-requests` (`$LIGHTCRAFT_MAX_REQUESTS`, default 64): requests answered at once, more are told to try again (the health check never waits). `$LIGHTCRAFT_PREVIEW_THREADS`: threads building their previews (default half the cores, 1–4). `$LIGHTCRAFT_RENDER_THREADS`: photos rendered at once for devices that [export on the server](#exporting-on-the-server) (default 1; a render takes about as much memory as the same export on a desktop) |
 | `user add NAME [--admin]` / `user passwd NAME` | Add a user / change a password (first line of stdin, or `$LIGHTCRAFT_PASSWORD`; 8 characters at least). Works while the server runs |
 | `user admin NAME on\|off` | Let a user sign in to [the admin page](#the-admin-page), or stop them (the last admin stays) |
 | `user remove NAME` / `user list` | Remove a user (signs out every device; their files stay in `users/NAME/`) |
@@ -367,6 +367,10 @@ space no device is given. An original kept in a library folder is served from th
   16 GiB. Every answer says `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`, the API's
   `Cache-Control: no-store`; the web build can't be framed by another site, the admin page has a strict Content
   Security Policy. The Caddy configuration adds HSTS.
+- **A client that stalls is cut off.** The server's own HTTP layer closes a connection whose request head doesn't
+  arrive within 10 s, whose body pauses for 60 s, or that is idle for 30 s; it caps a request's head at 32 KiB and
+  64 headers, takes at most 512 connections (128 per address) and answers 64 requests at once (`--max-requests`;
+  `/api/health` never waits for a place). Request bodies must say their length: `Transfer-Encoding: chunked` gets `411`.
 - Library folders are set by admins only, must exist, and can't be (or hold) the server's data folder.
 
 ## Limits
@@ -387,5 +391,6 @@ v1, honestly:
   pulling; a pull reads just the part of the log it asks for.)
 - **Library folders are read, never written**: edits stay in the library (no XMP written back to the folders), and
   photos imported on a device are kept by the server as uploads, not filed into the folders.
-- **One request per thread, plain HTTP**: meant for a home server behind a proxy or on a tailnet, not the open
-  internet at scale.
+- **Plain HTTP, sized for a household**: TLS is the proxy's or the tailnet's job ([above](#tls-a-reverse-proxy-or-a-private-network));
+  the server itself is hardened against stalled clients ([Security](#security)), but it serves a thread per
+  connection: right for a home server or a small group, not the open internet at scale.

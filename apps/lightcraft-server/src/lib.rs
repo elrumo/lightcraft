@@ -32,6 +32,7 @@ pub mod admin;
 pub mod api;
 pub mod folders;
 pub mod gc;
+pub mod http;
 pub mod render;
 pub mod throttle;
 pub mod vision;
@@ -39,7 +40,7 @@ pub mod vision;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::AtomicU32;
 use std::sync::{Arc, Mutex};
 
 /// The largest id space (ids stay below 2^53: exact in JavaScript). Devices get the ones below
@@ -53,7 +54,8 @@ pub struct Config {
     pub listen: String,
     /// The web build to serve at `/` (`cargo xtask web` → `target/web/`).
     pub web: Option<PathBuf>,
-    /// Requests served at once (more get `503`).
+    /// Requests answered at once (more get `503`; the health check always answers). How long
+    /// connections may stall and how many there can be: [`http::Limits`].
     pub max_requests: usize,
     /// Scan every user's library folders this often (`None`: at start and on demand only).
     pub scan_interval: Option<std::time::Duration>,
@@ -112,15 +114,12 @@ pub struct State {
     pub(crate) throttle: Mutex<throttle::Throttle>,
     /// The unfinished uploads being written right now (one writer per file).
     pub(crate) uploading: Mutex<std::collections::HashSet<PathBuf>>,
-    busy: AtomicUsize,
-    max: usize,
 }
 
 /// A running server.
 pub struct Server {
-    http: Arc<tiny_http::Server>,
+    http: Option<http::Server>,
     addr: SocketAddr,
-    thread: Option<std::thread::JoinHandle<()>>,
     /// The library folder scanner and preview builders.
     workers: Vec<std::thread::JoinHandle<()>>,
     state: Arc<State>,
@@ -130,8 +129,9 @@ impl Server {
     /// Listen and serve on a background thread.
     pub fn start(cfg: Config) -> Result<Server, String> {
         std::fs::create_dir_all(&cfg.data).map_err(|e| format!("{}: {e}", cfg.data.display()))?;
-        let http = Arc::new(tiny_http::Server::http(&cfg.listen).map_err(|e| format!("can't listen on {}: {e}", cfg.listen))?);
-        let addr = http.server_addr().to_ip().ok_or("not listening on an IP address")?;
+        let limits = http::Limits { active: cfg.max_requests.max(1), ..http::Limits::default() };
+        let bound = http::Server::bind(&cfg.listen, limits).map_err(|e| format!("can't listen on {}: {e}", cfg.listen))?;
+        let addr = bound.addr();
         let setup = if accounts::has_admin(&cfg.data) { None } else { admin::new_setup_code() };
         if let Some(code) = &setup {
             let at = if addr.ip().is_unspecified() { format!("http://<this server>:{}", addr.port()) } else { format!("http://{addr}") };
@@ -151,11 +151,9 @@ impl Server {
             render: render::Slots::new(cfg.render_threads),
             throttle: Mutex::new(throttle::Throttle::default()),
             uploading: Mutex::new(std::collections::HashSet::new()),
-            busy: AtomicUsize::new(0),
-            max: cfg.max_requests.max(1),
         });
-        let (h, s) = (http.clone(), state.clone());
-        let thread = std::thread::Builder::new().name("lc-accept".into()).spawn(move || accept(&h, &s)).map_err(|e| e.to_string())?;
+        let st = state.clone();
+        let http = bound.serve(Arc::new(move |req: &mut http::Request| api::handle(&st, req)))?;
         let mut workers = Vec::new();
         let s = state.clone();
         workers.push(std::thread::Builder::new().name("lc-scan".into()).spawn(move || folders::run_scanner(&s)).map_err(|e| e.to_string())?);
@@ -166,7 +164,7 @@ impl Server {
             let t = std::thread::Builder::new().name(format!("lc-previews-{i}")).spawn(move || folders::run_previews(&s));
             workers.push(t.map_err(|e| e.to_string())?);
         }
-        Ok(Server { http, addr, thread: Some(thread), workers, state })
+        Ok(Server { http: Some(http), addr, workers, state })
     }
 
     /// The first-run setup code, while the server has no admin (tests; it is also logged).
@@ -195,44 +193,20 @@ impl Server {
 
     /// Serve until the process ends.
     pub fn wait(mut self) {
-        if let Some(t) = self.thread.take() {
-            let _ = t.join();
+        if let Some(h) = self.http.take() {
+            h.wait();
         }
     }
 }
 
 impl Drop for Server {
     fn drop(&mut self) {
-        self.http.unblock();
+        // (stops answering first: a request in flight may still need the workers)
+        drop(self.http.take());
         self.state.folders.shut_down();
         self.state.vision.shut_down();
-        if let Some(t) = self.thread.take() {
-            let _ = t.join();
-        }
         for t in self.workers.drain(..) {
             let _ = t.join();
-        }
-    }
-}
-
-fn accept(http: &tiny_http::Server, state: &Arc<State>) {
-    for req in http.incoming_requests() {
-        if state.busy.fetch_add(1, Ordering::SeqCst) >= state.max {
-            state.busy.fetch_sub(1, Ordering::SeqCst);
-            let _ = req.respond(tiny_http::Response::from_string("busy, try again").with_status_code(503));
-            continue;
-        }
-        let st = state.clone();
-        let spawned = std::thread::Builder::new().name("lc-request".into()).spawn(move || {
-            // a panic in one request is that request's failure (its connection drops)
-            if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| api::handle(&st, req))).is_err() {
-                log::error!("a request failed unexpectedly");
-            }
-            st.busy.fetch_sub(1, Ordering::SeqCst);
-        });
-        if let Err(e) = spawned {
-            log::error!("can't start a request thread: {e}");
-            state.busy.fetch_sub(1, Ordering::SeqCst);
         }
     }
 }

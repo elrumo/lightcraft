@@ -1,7 +1,7 @@
 //! `lightcraft-server`: the self-hosted LightCraft sync server (see `docs/sync.md`).
 //!
 //! ```text
-//! lightcraft-server serve [--data DIR] [--listen HOST:PORT] [--web DIR] [--scan-interval MINUTES]
+//! lightcraft-server serve [--data DIR] [--listen HOST:PORT] [--web DIR] [--scan-interval MINUTES] [--max-requests N]
 //! lightcraft-server user add NAME [--admin]   (password: typed, stdin, or $LIGHTCRAFT_PASSWORD)
 //! lightcraft-server user passwd NAME
 //! lightcraft-server user admin NAME on|off
@@ -35,7 +35,7 @@ use std::time::Duration;
 use lightcraft_server::{Config, Server, accounts, folders, gc};
 
 const USAGE: &str = "usage:
-  lightcraft-server serve [--data DIR] [--listen HOST:PORT] [--web DIR] [--scan-interval MINUTES]
+  lightcraft-server serve [--data DIR] [--listen HOST:PORT] [--web DIR] [--scan-interval MINUTES] [--max-requests N]
   lightcraft-server user add NAME [--admin]   (password: typed, stdin or $LIGHTCRAFT_PASSWORD)
   lightcraft-server user passwd|remove NAME
   lightcraft-server user admin NAME on|off    (admins manage the server at /admin)
@@ -82,7 +82,7 @@ fn positional(args: &[String]) -> Vec<&str> {
     for a in args {
         if skip {
             skip = false;
-        } else if matches!(a.as_str(), "--data" | "--listen" | "--web" | "--name" | "--scan-interval" | "--vision-dir") {
+        } else if matches!(a.as_str(), "--data" | "--listen" | "--web" | "--name" | "--scan-interval" | "--max-requests" | "--vision-dir") {
             skip = true;
         } else if !a.starts_with("--") {
             out.push(a.as_str());
@@ -132,10 +132,18 @@ fn run(args: &[String]) -> Result<(), String> {
                 .map(|m| m.trim().parse::<u64>().map_err(|_| format!("--scan-interval takes minutes, not `{m}`")))
                 .transpose()?
                 .unwrap_or(15);
+            // requests answered at once (more are told to try again; the health check always answers)
+            let max_requests = option(args, "--max-requests")
+                .or_else(|| std::env::var("LIGHTCRAFT_MAX_REQUESTS").ok())
+                .map(|m| m.trim().parse::<usize>().map_err(|_| format!("--max-requests takes a number, not `{m}`")))
+                .transpose()?;
             let threads = std::env::var("LIGHTCRAFT_PREVIEW_THREADS").ok().and_then(|t| t.trim().parse::<usize>().ok());
             let mut cfg = Config::new(data.clone(), listen);
             cfg.vision_dir = Some(vision_dir(args, &data));
             cfg.web = web.clone();
+            if let Some(n) = max_requests {
+                cfg.max_requests = n.max(1);
+            }
             cfg.scan_interval = (minutes > 0).then(|| Duration::from_secs(minutes.saturating_mul(60)));
             cfg.preview_threads = threads.unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| (n.get() / 2).clamp(1, 4)));
             if let Some(n) = std::env::var("LIGHTCRAFT_RENDER_THREADS").ok().and_then(|t| t.trim().parse::<usize>().ok()) {

@@ -547,3 +547,42 @@ fn a_truncated_preview_is_not_kept() {
     drop(server);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+// ---- the HTTP layer ----
+
+/// Stalled uploads can't use the server up: with every place taken the health check still
+/// answers, everything else is told to try again, and the places are free once the uploads stop.
+/// (Before, 64 stalled requests made the server answer `503` to everything, health check included.)
+#[test]
+fn stalled_uploads_do_not_starve_the_server() {
+    let root = temp("starve");
+    let data = root.join("data");
+    accounts::set_user(&data, "ann", "correct horse", false).unwrap();
+    let mut cfg = Config::new(data, "127.0.0.1:0");
+    cfg.scan_interval = None;
+    cfg.preview_threads = 1;
+    cfg.max_requests = 2;
+    let server = Server::start(cfg).unwrap();
+    let base = format!("http://{}", server.addr());
+    let token = sign_in_raw(&base);
+    let (a, b) = (lightcraft_preview::hash_bytes(b"a").to_string(), lightcraft_preview::hash_bytes(b"b").to_string());
+    // two uploads that began and went quiet hold the two places
+    let held: Vec<_> = [a, b].iter().map(|h| broken_put(server.addr(), &format!("/api/blobs/original/{h}"), &token, 1000, &[7; 10], true)).collect();
+    std::thread::sleep(Duration::from_millis(400));
+    assert_eq!(call("GET", &format!("{base}/api/health"), "", None, &[]).0, 200, "the health check never waits for a place");
+    let (s, _, hs) = call("GET", &format!("{base}/api/me"), &token, None, &[]);
+    assert_eq!(s, 503, "no place left");
+    assert!(hs.iter().any(|(k, _)| k.eq_ignore_ascii_case("retry-after")));
+    drop(held);
+    let mut answered = 0;
+    for _ in 0..100 {
+        answered = call("GET", &format!("{base}/api/me"), &token, None, &[]).0;
+        if answered == 200 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(answered, 200, "the places are free again");
+    drop(server);
+    let _ = std::fs::remove_dir_all(&root);
+}
