@@ -9,6 +9,7 @@
 //!   location.json  (the folder the library was last opened from: see below)
 //!   sidecars.json  (when each XMP sidecar was last read or written: see `sidecar::SidecarTimes`)
 //!   thumbs/        (rendered thumbnail cache, safe to delete)
+//!   map-tiles/     (map tiles seen in the Map view, safe to delete)
 //!   Originals/     (photos imported with "copy into library")
 //! ```
 //!
@@ -168,6 +169,10 @@ impl Library {
     }
     pub fn thumbs_dir(&self) -> PathBuf {
         self.dir.join("thumbs")
+    }
+    /// Map tiles fetched for the Map view, safe to delete (see `lightcraft_engine::tiles`).
+    pub fn tiles_dir(&self) -> PathBuf {
+        self.dir.join("map-tiles")
     }
     pub fn originals_dir(&self) -> PathBuf {
         self.dir.join("Originals")

@@ -1604,6 +1604,12 @@ pub fn run(task: &Task) -> Done {
     .unwrap_or_else(|e| Done::failed(id, e))
 }
 
+/// The shared HTTP client (pure-Rust TLS, Mozilla roots): sync and map tiles use it.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn http_agent() -> &'static ureq::Agent {
+    net::agent()
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 mod net {
     use std::io::Read;
@@ -1615,7 +1621,7 @@ mod net {
     /// Responses read into memory are capped (control answers, not photo files).
     const TEXT_MAX: u64 = 256 << 20;
 
-    fn agent() -> &'static ureq::Agent {
+    pub(super) fn agent() -> &'static ureq::Agent {
         static AGENT: OnceLock<ureq::Agent> = OnceLock::new();
         AGENT.get_or_init(|| {
             // pure-Rust TLS (no C crypto), with the Mozilla root certificates

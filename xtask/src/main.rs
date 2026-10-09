@@ -5,6 +5,7 @@
 
 mod assets;
 mod bench;
+mod geodata;
 mod ico;
 mod layers;
 mod parity;
@@ -23,6 +24,8 @@ commands:
   bench [FILE] [--strict] [--threshold PCT]
                   run the render benchmark, append to target/bench/history.jsonl, compare CPU time with
                   the previous run (default input: corpus/raw/arw-sony-a7m3-compressed.arw)
+  geodata <dir>   rebuild crates/geo/data/{places,land}.bin from the GeoNames dumps (cities15000.txt, countryInfo.txt,
+                  admin1CodesASCII.txt) and Natural Earth's ne_110m_land.shp found in <dir> (see assets/ATTRIBUTION.md)
   ico <out.ico> <in.png>...
                   pack square PNGs (<= 256 px) into a Windows .ico (see packaging/icons.sh)
   layers          enforce the crate dependency layering (plan/architecture.md §3)
@@ -45,6 +48,7 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let rest: Vec<&str> = args.iter().skip(1).map(String::as_str).collect();
     let result = match args.first().map(String::as_str) {
+        Some("geodata") => geodata::run(&root(), &rest),
         Some("ico") => ico::run(&rest),
         Some("version") => version::run(&root(), &rest),
         Some("layers") => cmd_layers(),
@@ -159,22 +163,27 @@ fn ios_set() -> Result<Vec<String>, String> {
     Ok(portable_set()?.into_iter().chain(std::iter::once("lightcraft-ios".to_string())).collect())
 }
 
+/// Also lints the std clock (`xtask/wasm/clippy.toml`): it panics there, and `cargo check` can't see that.
 fn cmd_wasm() -> Result<(), String> {
-    check_target("wasm32-unknown-unknown", &wasm_set()?)
+    check_target("wasm32-unknown-unknown", &wasm_set()?, true)
 }
 
 /// iOS device target. A type-check only: it proves the crates have no desktop-only code on the iOS path (the
 /// engine, GPU and egui shell all compile for it), not that an app links and runs; that needs macOS + Xcode.
 fn cmd_ios() -> Result<(), String> {
-    check_target("aarch64-apple-ios", &ios_set()?)
+    check_target("aarch64-apple-ios", &ios_set()?, false)
 }
 
-fn check_target(target: &str, set: &[String]) -> Result<(), String> {
+fn check_target(target: &str, set: &[String], clock_lint: bool) -> Result<(), String> {
     let mut results = Vec::new();
     for pkg in set {
         let mut c = cargo();
-        c.args(["check", "--target", target, "-p", pkg]);
-        let ok = run(c, &format!("cargo check --target {target} -p {pkg}")).is_ok();
+        let tool = if clock_lint { "clippy" } else { "check" };
+        c.args([tool, "--target", target, "-p", pkg]);
+        if clock_lint {
+            c.env("CLIPPY_CONF_DIR", root().join("xtask/wasm")).args(["--", "-A", "clippy::all", "-D", "clippy::disallowed_methods"]);
+        }
+        let ok = run(c, &format!("cargo {tool} --target {target} -p {pkg}")).is_ok();
         results.push((pkg.clone(), ok));
     }
     println!("\n{target} check:");

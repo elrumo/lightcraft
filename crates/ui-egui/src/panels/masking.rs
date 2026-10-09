@@ -6,7 +6,7 @@ use lightcraft_develop::{ControlSpec, LocalAdjustments, MaskShape, Section, Trac
 use serde_json::json;
 
 use super::edit::apply_slider_out;
-use super::right::header;
+use super::right::tool_header;
 use crate::LightcraftApp;
 use crate::icons::{Icon, paint};
 use crate::theme::Tokens;
@@ -63,8 +63,12 @@ const TILE: f32 = 52.0;
 const TILE_GAP: f32 = 6.0;
 
 /// Columns and tile width of the Create New Mask grid in `width`: four tiles of up to 52 pt (at
-/// least 48, so the labels fit), else three (narrowed if even those don't fit).
-fn tile_layout(width: f32) -> (usize, f32) {
+/// least 48, so the labels fit), else three (narrowed if even those don't fit). On a phone five
+/// tiles share the whole width (two rows of the ten kinds).
+fn tile_layout(width: f32, compact: bool) -> (usize, f32) {
+    if compact {
+        return (5, ((width - 4.0 * TILE_GAP) / 5.0).floor().max(40.0));
+    }
     let tile = |n: f32| ((width - (n - 1.0) * TILE_GAP) / n).floor().min(TILE);
     if tile(4.0) >= 48.0 { (4, tile(4.0)) } else { (3, tile(3.0).max(24.0)) }
 }
@@ -72,58 +76,88 @@ fn tile_layout(width: f32) -> (usize, f32) {
 pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     let t = Tokens::get(ui.ctx());
     let d = app.session.develop_of(id).unwrap_or_default();
-    header(ui, "Masking");
-    egui::Frame::NONE.inner_margin(egui::Margin { left: 24, right: 22, top: 0, bottom: 10 }).show(ui, |ui| {
-        ui.label(egui::RichText::new(crate::i18n::tr("Create New Mask")).color(t.text_dim));
+    tool_header(ui, "Masking");
+    // a phone folds the kinds of masks away once there is a mask to work on
+    let fold = app.compact && !d.masks.is_empty();
+    let tiles_open = !fold || app.ui.flyout_open("maskNew");
+    if fold {
         ui.add_space(6.0);
-        let tiles: [(&str, &str, Icon); 10] = [
-            ("object", "Object", Icon::Subject),
-            ("prompt", "Describe", Icon::Subject),
-            ("subject", "Subject", Icon::Subject),
-            ("sky", "Sky", Icon::Sky),
-            ("background", "Background", Icon::Subject),
-            ("brush", "Brush", Icon::Brush),
-            ("linear", "Linear", Icon::Linear),
-            ("radial", "Radial", Icon::Radial),
-            ("luminanceRange", "Luminance", Icon::Sliders),
-            ("colorRange", "Color", Icon::Picker),
-        ];
-        // four 52 pt tiles a row when they fit, else as many as fit (at least three, shrunk)
-        let (cols, tile) = tile_layout(ui.available_width());
-        egui::Grid::new("mask-tiles").spacing(vec2(TILE_GAP, TILE_GAP)).show(ui, |ui| {
-            for (i, (kind, label, icon)) in tiles.iter().enumerate() {
-                let (r, resp) = ui.allocate_exact_size(vec2(tile, 52.0), Sense::click());
-                register(ui.ctx(), format!("maskNew:{kind}"), r);
-                ui.painter().rect_filled(r, 4.0, if resp.hovered() { t.hover } else { t.inset });
-                paint(ui.painter(), Rect::from_center_size(r.center() - vec2(0.0, 7.0), vec2(20.0, 20.0)), *icon, t.text_label);
-                ui.painter().text(pos2(r.center().x, r.bottom() - 9.0), Align2::CENTER_CENTER, *label, t.font(10.5), t.text_dim);
-                if resp.clicked() {
-                    match *kind {
-                        "colorRange" => {
-                            // an empty colour range; clicking the photo samples it
-                            let _ = app.run("mask.add", json!({"kind": "colorRange"}));
-                            app.ui.tool = "colorRange".into();
-                            app.toast(ui.ctx(), "Click the photo to pick a colour · ⇧-click adds more");
-                        }
-                        "object" => start_object(app, ui.ctx(), "new"),
-                        "prompt" => start_describe(app, "new"),
-                        "brush" | "linear" | "radial" => {
-                            app.ui.tool = kind.to_string();
-                            if *kind != "brush" {
-                                let _ = app.run("mask.add", json!({"kind": kind}));
+        if crate::widgets::flyout_row(ui, "maskNew", "New Mask", Icon::Plus, tiles_open).clicked() {
+            app.ui.toggle_flyout("maskNew");
+        }
+    }
+    egui::Frame::NONE.inner_margin(crate::widgets::margin(ui.ctx(), if fold { 6 } else { 0 }, 10)).show(ui, |ui| {
+        let compact = app.compact;
+        if tiles_open {
+            ui.label(egui::RichText::new(crate::i18n::tr("Create New Mask")).color(t.text_dim).size(if compact { 13.0 } else { 13.5 }));
+            ui.add_space(6.0);
+            let tiles: [(&str, &str, Icon); 10] = [
+                ("object", "Object", Icon::Subject),
+                ("prompt", "Describe", Icon::Subject),
+                ("subject", "Subject", Icon::Subject),
+                ("sky", "Sky", Icon::Sky),
+                ("background", "Background", Icon::Subject),
+                ("brush", "Brush", Icon::Brush),
+                ("linear", "Linear", Icon::Linear),
+                ("radial", "Radial", Icon::Radial),
+                ("luminanceRange", "Luminance", Icon::Sliders),
+                ("colorRange", "Color", Icon::Picker),
+            ];
+            // four 52 pt tiles a row when they fit, else as many as fit (at least three, shrunk)
+            let (cols, tile) = tile_layout(ui.available_width(), compact);
+            egui::Grid::new("mask-tiles").spacing(vec2(TILE_GAP, TILE_GAP)).show(ui, |ui| {
+                for (i, (kind, label, icon)) in tiles.iter().enumerate() {
+                    let (r, resp) = ui.allocate_exact_size(vec2(tile, if compact { 60.0 } else { 52.0 }), Sense::click());
+                    register(ui.ctx(), format!("maskNew:{kind}"), r);
+                    // (a phone's tiles are cards: white on the light sheet)
+                    let fill = if resp.is_pointer_button_down_on() || (resp.hovered() && !compact) {
+                        t.hover
+                    } else if compact {
+                        t.cell_selected
+                    } else {
+                        t.inset
+                    };
+                    ui.painter().rect_filled(r, if compact { 10.0 } else { 4.0 }, fill);
+                    let (glyph, up, label_up, font) = if compact { (24.0, 9.0, 11.0, 11.5) } else { (20.0, 7.0, 9.0, 10.5) };
+                    paint(ui.painter(), Rect::from_center_size(r.center() - vec2(0.0, up), vec2(glyph, glyph)), *icon, t.text_label);
+                    ui.painter().text(
+                        pos2(r.center().x, r.bottom() - label_up),
+                        Align2::CENTER_CENTER,
+                        crate::i18n::tr(label),
+                        t.font(font),
+                        t.text_dim,
+                    );
+                    if resp.clicked() {
+                        match *kind {
+                            "colorRange" => {
+                                // an empty colour range; clicking the photo samples it
+                                let _ = app.run("mask.add", json!({"kind": "colorRange"}));
+                                app.ui.tool = "colorRange".into();
+                                app.toast(ui.ctx(), "Click the photo to pick a colour · ⇧-click adds more");
+                            }
+                            "object" => start_object(app, ui.ctx(), "new"),
+                            "prompt" => start_describe(app, "new"),
+                            "brush" | "linear" | "radial" => {
+                                app.ui.tool = kind.to_string();
+                                if *kind != "brush" {
+                                    let _ = app.run("mask.add", json!({"kind": kind}));
+                                }
+                            }
+                            k => {
+                                let _ = app.run("mask.add", json!({"kind": k}));
                             }
                         }
-                        k => {
-                            let _ = app.run("mask.add", json!({"kind": k}));
+                        if fold {
+                            app.ui.toggle_flyout("maskNew");
                         }
                     }
+                    if i % cols == cols - 1 {
+                        ui.end_row();
+                    }
                 }
-                if i % cols == cols - 1 {
-                    ui.end_row();
-                }
-            }
-        });
-        describe_field(app, ui, true);
+            });
+            describe_field(app, ui, true);
+        }
         let seg = &app.session.segmenter;
         let status = if seg.analyzing() {
             Some("Analyzing the photo for AI masks…")
@@ -195,7 +229,8 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
                 }
                 continue;
             }
-            let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 30.0), Sense::click());
+            let compact = app.compact;
+            let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), if compact { 44.0 } else { 30.0 }), Sense::click());
             register(ui.ctx(), format!("mask:{}", m.id), r);
             ui.painter().rect_filled(
                 r,
@@ -209,23 +244,28 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
                 },
             );
             let icon = m.components.first().map(|c| kind_label(&c.shape).1).unwrap_or(Icon::Mask);
-            paint(ui.painter(), Rect::from_min_size(r.min + vec2(8.0, 7.0), vec2(16.0, 16.0)), icon, t.text_label);
+            let (glyph, text_x, font) = if compact { (20.0, 40.0, 15.0) } else { (16.0, 32.0, 13.0) };
+            paint(ui.painter(), Rect::from_center_size(pos2(r.left() + 8.0 + glyph / 2.0, r.center().y), vec2(glyph, glyph)), icon, t.text_label);
             ui.painter().text(
-                pos2(r.left() + 32.0, r.center().y),
+                pos2(r.left() + text_x, r.center().y),
                 Align2::LEFT_CENTER,
                 &m.name,
-                t.font(13.0),
+                t.font(font),
                 if m.visible { t.text } else { t.text_disabled },
             );
-            // show / hide on hover (and always while hidden)
+            // show / hide on hover (a finger has no hover: always, on a phone; and always while hidden)
             // (the pointer test, not `hovered`: over the eye, the row itself no longer counts as hovered)
-            if ui.rect_contains_pointer(r) || !m.visible {
-                let er = Rect::from_center_size(pos2(r.right() - 16.0, r.center().y), vec2(22.0, 22.0));
+            if compact || ui.rect_contains_pointer(r) || !m.visible {
+                let er = if compact {
+                    Rect::from_center_size(pos2(r.right() - 22.0, r.center().y), vec2(44.0, 44.0))
+                } else {
+                    Rect::from_center_size(pos2(r.right() - 16.0, r.center().y), vec2(22.0, 22.0))
+                };
                 register(ui.ctx(), format!("maskVisible:{}", m.id), er);
                 let eye = ui.interact(er, egui::Id::new(("maskVisible", m.id)), Sense::click());
                 paint(
                     ui.painter(),
-                    er.shrink(3.0),
+                    if compact { Rect::from_center_size(er.center(), vec2(22.0, 22.0)) } else { er.shrink(3.0) },
                     if m.visible { Icon::Eye } else { Icon::EyeOff },
                     if eye.hovered() { t.text } else { t.text_dim },
                 );
@@ -244,7 +284,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
                 // right under the selected mask: ＋ adds to it, − takes away from it (any mask
                 // type; Describe… opens its field here)
                 ui.horizontal(|ui| {
-                    ui.add_space(30.0);
+                    ui.add_space(if compact { 8.0 } else { 30.0 });
                     let plus = text_button(ui, &format!("maskPlus:{}", m.id), "+", false).on_hover_text(crate::i18n::tr("Add to this mask"));
                     egui::Popup::menu(&plus).show(|ui| component_menu(app, ui, "add"));
                     let minus = text_button(ui, &format!("maskMinus:{}", m.id), "−", false).on_hover_text(crate::i18n::tr("Subtract from this mask"));
@@ -261,7 +301,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     let Some(mid) = app.session.active_mask else { return };
     let Some(m) = d.masks.iter().find(|m| m.id == mid).cloned() else { return };
     divider(ui);
-    egui::Frame::NONE.inner_margin(egui::Margin { left: 24, right: 22, top: 8, bottom: 8 }).show(ui, |ui| {
+    egui::Frame::NONE.inner_margin(crate::widgets::margin(ui.ctx(), 8, 8)).show(ui, |ui| {
         for (i, c) in m.components.iter().enumerate() {
             let (kind, icon) = kind_label(&c.shape);
             let label = c.name.clone().unwrap_or_else(|| match &c.shape {
@@ -299,7 +339,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
                 }
                 // a long name is cut short (with …) before the options button, not past the panel
                 let text = format!("{op}{label}{}", if c.invert { " (inverted)" } else { "" });
-                let room = (ui.available_width() - 30.0).max(0.0);
+                let room = (ui.available_width() - if app.compact { 46.0 } else { 30.0 }).max(0.0);
                 let resp = ui.scope(|ui| {
                     ui.set_max_width(room);
                     ui.add(egui::Label::new(text).truncate().sense(Sense::click()))
@@ -311,7 +351,11 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
                 }
                 resp.context_menu(|ui| component_row_menu(app, ui, m.id, i, &label, m.components.len()));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let more = ui.small_button("…").on_hover_text(crate::i18n::tr("Component options"));
+                    let more = if app.compact {
+                        icon_button(ui, &format!("componentMenu{i}"), Icon::Dots, vec2(40.0, 40.0), false, true, "Component options")
+                    } else {
+                        ui.small_button("…").on_hover_text(crate::i18n::tr("Component options"))
+                    };
                     register(ui.ctx(), format!("button:componentMenu{i}"), more.rect);
                     egui::Popup::menu(&more).show(|ui| component_row_menu(app, ui, m.id, i, &label, m.components.len()));
                 });
@@ -425,7 +469,7 @@ fn overlay_options(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     if colored {
         ui.horizontal(|ui| {
             for c in OVERLAY_COLORS {
-                let (r, resp) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::click());
+                let (r, resp) = ui.allocate_exact_size(if crate::is_compact(ui.ctx()) { vec2(34.0, 34.0) } else { vec2(18.0, 18.0) }, Sense::click());
                 register(ui.ctx(), format!("maskOverlayColor:{:02x}{:02x}{:02x}", c[0], c[1], c[2]), r);
                 ui.painter().rect_filled(r.shrink(2.0), 3.0, egui::Color32::from_rgb(c[0], c[1], c[2]));
                 if app.ui.mask_overlay_color == c {
@@ -469,8 +513,9 @@ fn range_controls(app: &mut LightcraftApp, ui: &mut egui::Ui, comp: usize, shape
         MaskShape::LuminanceRange { lo, hi, lo_feather, hi_feather } => {
             ui.label(egui::RichText::new(crate::i18n::tr("Select Luminance Range")).color(t.text_dim).size(11.5));
             let (lo, hi) = (*lo, *hi);
-            let w = ui.available_width().min(240.0);
-            let (rect, resp) = ui.allocate_exact_size(vec2(w, 18.0), Sense::click_and_drag());
+            let touch = crate::is_compact(ui.ctx());
+            let w = if touch { ui.available_width() } else { ui.available_width().min(240.0) };
+            let (rect, resp) = ui.allocate_exact_size(vec2(w, if touch { 36.0 } else { 18.0 }), Sense::click_and_drag());
             register(ui.ctx(), format!("lumRange:{comp}"), rect);
             let p = ui.painter();
             // dark → light ramp, the selected span outlined
@@ -491,9 +536,10 @@ fn range_controls(app: &mut LightcraftApp, ui: &mut egui::Ui, comp: usize, shape
                 Stroke::new(1.5, t.accent),
                 egui::StrokeKind::Middle,
             );
+            let knob = if touch { 11.0 } else { 5.0 };
             for v in [lo, hi] {
-                p.circle_filled(pos2(x(v), rect.center().y), 5.0, egui::Color32::WHITE);
-                p.circle_stroke(pos2(x(v), rect.center().y), 5.0, Stroke::new(1.0, egui::Color32::from_gray(40)));
+                p.circle_filled(pos2(x(v), rect.center().y), knob, egui::Color32::WHITE);
+                p.circle_stroke(pos2(x(v), rect.center().y), knob, Stroke::new(1.0, egui::Color32::from_gray(40)));
             }
             // drag the nearer handle; one undo step per drag
             if resp.drag_started() {
@@ -783,7 +829,7 @@ fn component_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, op: &str) {
 
 fn brush_settings(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
-    egui::Frame::NONE.inner_margin(egui::Margin { left: 24, right: 22, top: 6, bottom: 0 }).show(ui, |ui| {
+    egui::Frame::NONE.inner_margin(crate::widgets::margin(ui.ctx(), 6, 0)).show(ui, |ui| {
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new(crate::i18n::tr("Brush")).font(t.semibold(13.0)));
             if text_button(ui, "brushAdd", crate::i18n::tr("Add"), !app.ui.brush_erase).clicked() {
@@ -794,8 +840,7 @@ fn brush_settings(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             }
         });
         let mut auto = app.ui.brush_auto_mask;
-        if ui
-            .checkbox(&mut auto, crate::i18n::tr("Auto Mask"))
+        if crate::widgets::check(ui, &mut auto, crate::i18n::tr("Auto Mask"))
             .on_hover_text(crate::i18n::tr("Paint only areas like the one under the brush"))
             .changed()
         {

@@ -12,6 +12,7 @@ repository = "https://github.com/storytold/lightcraft"
 [workspace.dependencies]
 # internal
 lightcraft-geom = { path = "crates/geom" }
+lightcraft-geo = { path = "crates/geo" }
 lightcraft-sysmem = { path = "crates/sysmem" }
 lightcraft-color = { path = "crates/color" }
 lightcraft-raster = { path = "crates/raster" }

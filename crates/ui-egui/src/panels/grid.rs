@@ -16,7 +16,7 @@ use crate::theme::Tokens;
 use crate::widgets::register;
 
 /// Thumbnail render size (pixels, long edge) for a cell of `pts` points.
-fn thumb_px(pts: f32, ppp: f32) -> usize {
+pub(super) fn thumb_px(pts: f32, ppp: f32) -> usize {
     let px = (pts * ppp).ceil() as usize;
     if px <= 256 {
         256
@@ -157,6 +157,7 @@ fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             ui.painter().text(pos2(hr.right() - 20.0, hr.center().y), Align2::RIGHT_CENTER, cnt, t.font(12.5), t.text_dim);
         }
     }
+    let chips = super::chips::with_understanding(app, chips);
     super::chips::show(app, ui, &chips);
     if app.ui.filter_bar {
         super::filterbar::show(app, ui);
@@ -176,16 +177,24 @@ fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             };
             super::empty_message(ui, ui.max_rect(), "No photos match the active filters", &body);
         } else if app.session.filter != Default::default() {
-            super::empty_message(
-                ui,
-                ui.max_rect(),
-                "No matching photos",
-                "A filter is hiding this view's photos: change it, or clear it (View → Clear Filters)",
-            );
+            let how = if app.compact {
+                "A filter is hiding this view's photos: change it, or clear it with the filter button"
+            } else {
+                "A filter is hiding this view's photos: change it, or clear it (View → Clear Filters)"
+            };
+            super::empty_message(ui, ui.max_rect(), "No matching photos", how);
         } else if app.session.source == lightcraft_engine::LibrarySource::Folder {
             super::empty_message(ui, ui.max_rect(), "No photos in this folder", "Turn on Include subfolders, or pick another folder under Local");
         } else {
-            super::empty_message(ui, ui.max_rect(), "No photos", "Import photos with File → Import Photos… (Cmd+Shift+I), or drop them here");
+            // (a phone has no File menu, shortcuts or dropping: its + button, or the … menu)
+            let how = if !app.compact {
+                "Import photos with File → Import Photos… (Cmd+Shift+I), or drop them here"
+            } else if app.services.host_pick.is_some() {
+                "Tap + to add photos from Photos or Files"
+            } else {
+                "Import photos with … → Import Photos…"
+            };
+            super::empty_message(ui, ui.max_rect(), "No photos", how);
         }
         return;
     }
@@ -601,18 +610,21 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
         p.image(tex.tex.id(), fit, uv, Color32::WHITE.gamma_multiply(fade));
         // (choosing by touch draws its own frame: `check_badge`)
         let choosing = app.compact && app.ui.select_mode;
+        // (the rings are the page's text colour: white on the dark pages, black on the light ones)
+        let dark = crate::theme::Tokens::is_dark(ui.ctx());
+        let (ring, ring_sel) = if dark { (Color32::WHITE, Color32::from_gray(170)) } else { (t.text, t.text_dim) };
         if active && !choosing && tiles {
-            p.rect_stroke(fit, 0.0, Stroke::new(2.0, Color32::WHITE), StrokeKind::Inside);
+            p.rect_stroke(fit, 0.0, Stroke::new(2.0, ring), StrokeKind::Inside);
         } else if active && !choosing {
-            p.rect_stroke(fit.expand(if square { 2.0 } else { 0.0 }), 0.0, Stroke::new(2.0, Color32::WHITE), StrokeKind::Outside);
+            p.rect_stroke(fit.expand(if square { 2.0 } else { 0.0 }), 0.0, Stroke::new(2.0, ring), StrokeKind::Outside);
         } else if selected && !choosing && tiles {
-            p.rect_stroke(fit, 0.0, Stroke::new(2.0, Color32::from_gray(170)), StrokeKind::Inside);
+            p.rect_stroke(fit, 0.0, Stroke::new(2.0, ring_sel), StrokeKind::Inside);
         } else if selected && !choosing {
-            p.rect_stroke(fit, 0.0, Stroke::new(2.0, Color32::from_gray(170)), StrokeKind::Outside);
+            p.rect_stroke(fit, 0.0, Stroke::new(2.0, ring_sel), StrokeKind::Outside);
         }
     } else {
         let ph = img_rect.shrink(if square && !tiles { 20.0 } else { 0.0 });
-        p.rect_filled(ph, 0.0, Color32::from_gray(38));
+        p.rect_filled(ph, 0.0, if crate::theme::Tokens::is_dark(ui.ctx()) { Color32::from_gray(38) } else { t.inset });
         if app.compact {
             let _ = ui.ctx().animate_bool_with_time(egui::Id::new(("thumb-in", id.0)), false, 0.0);
         }
@@ -661,17 +673,17 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
         }
         let mut x = bar.left() + 6.0;
         for i in 0..photo.rating {
-            paint(p, Rect::from_min_size(pos2(x + i as f32 * 13.0, bar.center().y - 6.0), vec2(12.0, 12.0)), Icon::StarFilled, t.star);
+            paint(p, Rect::from_min_size(pos2(x + i as f32 * 13.0, bar.center().y - 6.0), vec2(12.0, 12.0)), Icon::StarFilled, t.photo_star);
         }
         x += photo.rating as f32 * 13.0 + 4.0;
         match photo.flag {
-            Flag::Pick => paint(p, Rect::from_min_size(pos2(x, bar.center().y - 7.0), vec2(14.0, 14.0)), Icon::FlagPick, t.pick),
+            Flag::Pick => paint(p, Rect::from_min_size(pos2(x, bar.center().y - 7.0), vec2(14.0, 14.0)), Icon::FlagPick, t.photo_pick),
             Flag::Reject => paint(p, Rect::from_min_size(pos2(x, bar.center().y - 7.0), vec2(14.0, 14.0)), Icon::FlagReject, t.reject),
             Flag::None => {}
         }
         let mut right = bar.right();
         if photo.is_edited() {
-            paint(p, Rect::from_min_size(pos2(right - 20.0, bar.center().y - 7.0), vec2(14.0, 14.0)), Icon::Sliders, t.text_label);
+            paint(p, Rect::from_min_size(pos2(right - 20.0, bar.center().y - 7.0), vec2(14.0, 14.0)), Icon::Sliders, t.photo_star);
             right -= 20.0;
         }
         if let Some(l) = photo.label {

@@ -34,7 +34,11 @@ mod tests_ai_models;
 #[cfg(test)]
 mod tests_ai_search;
 #[cfg(test)]
+mod tests_appearance;
+#[cfg(test)]
 mod tests_compact;
+#[cfg(test)]
+mod tests_compact_editor;
 #[cfg(test)]
 mod tests_curve;
 #[cfg(test)]
@@ -43,6 +47,8 @@ mod tests_grid;
 mod tests_ios_host;
 #[cfg(test)]
 mod tests_library_problem;
+#[cfg(test)]
+mod tests_map;
 #[cfg(test)]
 mod tests_masking;
 #[cfg(test)]
@@ -148,6 +154,8 @@ pub struct Services {
     pub restore_library: Option<HostAction>,
     /// Runs self-hosted sync requests ([`sync_ui`]); `None`: this host doesn't sync.
     pub sync_exec: Option<sync_ui::SyncExec>,
+    /// Fetches map tiles for the Map view ([`panels::map`]); `None`: only the built-in map.
+    pub tile_exec: Option<panels::map::TileExec>,
     /// Exports go to the system's share sheet instead of a folder (iOS; see [`ShareExports`]).
     pub share_exports: Option<ShareExports>,
     /// The host's own pickers (iOS: Photos, Files): File ▸ Import from Photos… / from Files… /
@@ -189,6 +197,10 @@ pub struct LightcraftApp {
     /// Phone-sized window (content narrower than [`COMPACT_BELOW_PT`]): one panel at a time, tools in
     /// a bottom tab bar and sheet (`panels::compact`). Set every frame from the window width.
     pub compact: bool,
+    /// The UI is drawn dark (else light): the compact layout follows the appearance setting or the
+    /// system's, the desktop layout is always dark. Set every frame; a host that restyles its own
+    /// chrome (the status bar, the keyboard) reads it.
+    pub dark: bool,
     /// The host installed a native menu bar (no in-window menus then).
     pub native_menu: bool,
     /// Shortcuts the native menu bar currently handles (`Cmd+Z`, `G`…): the egui shortcut handler
@@ -263,12 +275,16 @@ pub struct LightcraftApp {
     pub library_problem: Option<panels::library_problem::LibraryProblem>,
     /// Self-hosted sync requests in flight, and the Settings ▸ Sync form.
     pub sync: sync_ui::SyncDriver,
+    /// The Map view: viewport, tiles, markers.
+    pub map: panels::map::MapState,
 }
 
 impl LightcraftApp {
     pub fn new(mut session: Session, services: Services) -> Self {
         // AI mask requests run on the model's worker; frames apply their results (never wait)
         session.segmenter.background = true;
+        // places and coastlines are parsed in the background, not on the first search
+        lightcraft_geo::preload();
         session.vision.background = true;
         Self {
             session,
@@ -279,6 +295,7 @@ impl LightcraftApp {
             caches: Caches::default(),
             integrated_titlebar: false,
             compact: false,
+            dark: true,
             native_menu: false,
             native_shortcuts: Default::default(),
             headless_host: false,
@@ -317,6 +334,7 @@ impl LightcraftApp {
             memory_applied: None,
             library_problem: None,
             sync: Default::default(),
+            map: Default::default(),
         }
     }
 
@@ -873,7 +891,11 @@ impl LightcraftApp {
         }
         self.compact = ctx.content_rect().width() < COMPACT_BELOW_PT;
         ctx.data_mut(|d| d.insert_temp(egui::Id::new("lc-compact"), self.compact));
-        theme::apply_layout(&ctx, self.compact);
+        // light, dark, or what the system prefers (the host says, in `RawInput::system_theme`)
+        let system = ctx.input(|i| i.raw.system_theme).map(|t| t == egui::Theme::Dark);
+        // (the desktop layout is dark either way, and the host's status bar follows what is drawn)
+        self.dark = !self.compact || self.ui.appearance.is_dark(system);
+        theme::apply_layout(&ctx, self.compact, self.dark);
         if self.compact {
             panels::compact::show(self, ui);
             self.widgets = widgets::take_registry(&ctx);
@@ -909,6 +931,7 @@ impl LightcraftApp {
             state::ViewMode::Survey => panels::compare::show_survey(self, ui),
             state::ViewMode::Reference => panels::compare::show_reference(self, ui),
             state::ViewMode::People => panels::people::show(self, ui),
+            state::ViewMode::Map => panels::map::show(self, ui),
         });
         panels::second::show(self, &ctx);
         panels::notices::show(self, &ctx);
@@ -1005,6 +1028,7 @@ pub struct Caches {
     keyword_tree: Option<(u64, std::sync::Arc<Vec<lightcraft_catalog::KeywordNode>>)>,
     people: Option<(u64, lightcraft_catalog::Filter, std::sync::Arc<Vec<lightcraft_catalog::Person>>)>,
     suggestions: Option<(u64, std::sync::Arc<Vec<String>>)>,
+    understood: Option<(u64, String, std::sync::Arc<Vec<lightcraft_catalog::search::Understood>>)>,
     counts: Option<(u64, LibraryCounts)>,
     date_groups: Option<(u64, std::sync::Arc<Vec<lightcraft_catalog::DateGroup>>)>,
     server_folders: Option<(u64, std::sync::Arc<std::collections::BTreeMap<String, usize>>)>,
@@ -1065,6 +1089,21 @@ impl Caches {
                 let t = std::sync::Arc::new(cat.people_in(&key));
                 self.people = Some((cat.revision, key, t.clone()));
                 t
+            }
+        }
+    }
+    /// What the search text was read as (places, dates), per catalog revision and text.
+    pub fn understood(
+        &mut self,
+        cat: &lightcraft_catalog::Catalog,
+        filter: &lightcraft_catalog::Filter,
+    ) -> std::sync::Arc<Vec<lightcraft_catalog::search::Understood>> {
+        match &self.understood {
+            Some((r, t, u)) if *r == cat.revision && *t == filter.text => u.clone(),
+            _ => {
+                let u = std::sync::Arc::new(cat.understood(filter));
+                self.understood = Some((cat.revision, filter.text.clone(), u.clone()));
+                u
             }
         }
     }

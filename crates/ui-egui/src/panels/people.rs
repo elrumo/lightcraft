@@ -255,6 +255,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     ui.painter().text(pos2(head.left() + PAD, head.center().y), Align2::LEFT_CENTER, crate::i18n::tr("People"), t.semibold(15.0), t.text);
     ui.painter().text(pos2(head.right() - PAD, head.center().y), Align2::RIGHT_CENTER, total.to_string(), t.font(13.0), t.text_dim);
     // the filters narrowing the list (a date, a keyword…), removable here
+    let chips = super::chips::with_understanding(app, chips);
     super::chips::show(app, ui, &chips);
     bar(app, ui);
     if total == 0 {

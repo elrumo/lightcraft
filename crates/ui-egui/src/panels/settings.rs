@@ -21,7 +21,7 @@ use serde_json::{Value, json};
 use crate::LightcraftApp;
 use crate::icons::Icon;
 use crate::panels::mobile;
-use crate::state::{GridBadges, PREVIEW_EDGES, StartupView};
+use crate::state::{Appearance, GridBadges, PREVIEW_EDGES, StartupView};
 use crate::theme::Tokens;
 use crate::widgets::register;
 
@@ -197,7 +197,8 @@ fn card_end(ui: &mut egui::Ui, t: &Tokens) {
     let Some(card) = ui.data(|d| d.get_temp::<Card>(card_id())) else { return };
     ui.data_mut(|d| d.remove::<Card>(card_id()));
     let r = Rect::from_min_max(pos2(ui.max_rect().left(), card.top), pos2(ui.max_rect().right(), ui.cursor().top()));
-    ui.painter().set(card.shape, egui::epaint::RectShape::filled(r, 10.0, t.inset));
+    // (iOS's grouped cards: the sheet colour in the dark appearance, white on the light page)
+    ui.painter().set(card.shape, egui::epaint::RectShape::filled(r, 10.0, t.cell_selected));
 }
 
 /// A whole phone row that reacts to a tap (`button:{id}` unless `id` is empty), lit while pressed.
@@ -926,6 +927,13 @@ fn smart_previews(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
 // ---------------------------------------------------------------------------------- Interface
 
 fn interface_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
+    // (the phone and tablet layouts are drawn light or dark; the desktop's is always dark)
+    if app.compact {
+        heading(ui, t, crate::i18n::tr("Appearance"));
+        let items: Vec<(Appearance, &str)> = Appearance::ALL.iter().map(|a| (*a, a.label())).collect();
+        pick(ui, t, "settingsAppearance", crate::i18n::tr("Appearance"), &items, &mut app.ui.appearance);
+        hint(ui, t, crate::i18n::tr("System follows the device's Display & Brightness setting."));
+    }
     // (the compact layout has no filmstrip)
     if !crate::is_compact(ui.ctx()) {
         heading(ui, t, crate::i18n::tr("Filmstrip"));
@@ -953,6 +961,37 @@ fn interface_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
         &[(I::Off, "Off"), (I::Basic, "File & date"), (I::Exposure, "Exposure")],
         &mut app.ui.info_overlay,
     );
+    heading(ui, t, crate::i18n::tr("Map"));
+    check(ui, "settings.mapOnline", &mut app.ui.settings.map_online, "Load map tiles from the internet");
+    hint(
+        ui,
+        t,
+        crate::i18n::tr(
+            "Off: the Map shows the built-in world map and tiles saved earlier. Place names and the photos' positions never leave your computer; a tile request tells the tile server which area you look at.",
+        ),
+    );
+    text_row(
+        ui,
+        t,
+        "mapTileUrl",
+        crate::i18n::tr("Tile server"),
+        &mut app.ui.settings.map_tile_url,
+        "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+        false,
+        260.0,
+    );
+    let custom = app.ui.settings.map_tile_url.trim();
+    if !custom.is_empty() && !lightcraft_geo::tiles::valid_template(custom) {
+        hint(ui, t, crate::i18n::tr("Not a tile address (it needs https://, {z}, {x} and {y}): the standard tiles are used."));
+    } else if custom.is_empty() {
+        hint(
+            ui,
+            t,
+            crate::i18n::tr(
+                "Empty: OpenStreetMap's standard tiles. They are meant for light use; for a busy shared deployment, use your own or a commercial tile server.",
+            ),
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------------------- Sync

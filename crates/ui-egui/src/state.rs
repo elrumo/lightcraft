@@ -18,6 +18,8 @@ pub enum ViewMode {
     Reference,
     /// A card per person named on faces (close-up, name, photo count).
     People,
+    /// The photos where they were taken, on a map.
+    Map,
 }
 
 /// The right-hand tool/panel shown next to the tool strip.
@@ -42,6 +44,48 @@ pub enum RightPanel {
 impl RightPanel {
     pub fn is_edit_tool(self) -> bool {
         matches!(self, RightPanel::Edit | RightPanel::Profiles | RightPanel::Crop | RightPanel::Remove | RightPanel::Masking | RightPanel::RedEye)
+    }
+}
+
+/// How the phone and tablet (compact) layout is coloured: like the system (the default), or always
+/// light or always dark. The desktop layout is dark whatever this says.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Appearance {
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
+impl Appearance {
+    pub const ALL: [Appearance; 3] = [Appearance::System, Appearance::Light, Appearance::Dark];
+
+    /// The name the control channel and the command ids use.
+    pub fn key(self) -> &'static str {
+        match self {
+            Appearance::System => "system",
+            Appearance::Light => "light",
+            Appearance::Dark => "dark",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Appearance::System => "System",
+            Appearance::Light => "Light",
+            Appearance::Dark => "Dark",
+        }
+    }
+
+    /// Whether the UI is drawn dark, given what the system prefers (`None`: it doesn't say, as on
+    /// a host that can't tell; dark, as the app always was).
+    pub fn is_dark(self, system: Option<bool>) -> bool {
+        match self {
+            Appearance::Light => false,
+            Appearance::Dark => true,
+            Appearance::System => system.unwrap_or(true),
+        }
     }
 }
 
@@ -146,6 +190,10 @@ pub struct AppSettings {
     pub external_editor: String,
     /// Memory the caches may hold together, in MB (0 = automatic; `app.memoryBudget`).
     pub memory_mb: u32,
+    /// Map: fetch map tiles from the network (off: only the built-in map and saved tiles).
+    pub map_online: bool,
+    /// Map: tile server URL with `{z}`, `{x}` and `{y}` (empty: OpenStreetMap's standard tiles).
+    pub map_tile_url: String,
     /// Filmstrip: file names above the thumbnails.
     pub film_names: bool,
     /// Filmstrip: rating / flag / edited badges on the thumbnails.
@@ -166,6 +214,8 @@ impl Default for AppSettings {
             preview_edge: 2560,
             external_editor: String::new(),
             memory_mb: 0,
+            map_online: true,
+            map_tile_url: String::new(),
             film_names: true,
             film_badges: true,
             grid_badges: GridBadges::Auto,
@@ -232,6 +282,18 @@ pub struct UiState {
     /// Compact layout: the Edit tool's group (`profile`, `light`, `color`, `effects`, `detail`,
     /// `optics`, `calibration`); a phone shows one group at a time, as Lightroom's mobile app does.
     pub edit_group: String,
+    /// Compact layout: light, dark, or like the system (`app.appearance.*`; Settings ▸ Interface).
+    pub appearance: Appearance,
+    /// Compact layout: how tall the tool sheet is, as the stop (0 small, 1 medium, 2 large) it was
+    /// last left at (the grabber at its top snaps between them).
+    pub sheet_detent: u8,
+    /// Compact layout: the crop screen's tab, Aspect (false) or Geometry (true).
+    #[serde(skip)]
+    pub crop_geometry: bool,
+    /// Compact layout: how many undo steps there were when the crop screen opened; ✕ goes back to
+    /// there.
+    #[serde(skip)]
+    pub crop_undo_base: Option<usize>,
     /// Compact layout: the searchable list of every command is open (the phone has no menu bar).
     #[serde(skip)]
     pub all_commands: bool,
@@ -305,6 +367,8 @@ pub struct UiState {
     #[serde(skip)]
     pub dragging_control: Option<String>,
     pub search: String,
+    /// Where the Map was looking (latitude, longitude, zoom) when it was last used.
+    pub map_view: Option<(f64, f64, f64)>,
     /// Focus the search field on the next frame (Edit → Find…).
     #[serde(skip)]
     pub focus_search: bool,
@@ -616,9 +680,14 @@ impl Default for UiState {
             select_mode: false,
             review: false,
             edit_group: "light".into(),
+            appearance: Appearance::System,
+            sheet_detent: 1,
+            crop_geometry: false,
+            crop_undo_base: None,
             all_commands: false,
             luminance_map_restore: None,
             view: ViewMode::Detail,
+            map_view: None,
             left_panel: false,
             left_width: LEFT_WIDTH.default,
             right_width: RIGHT_WIDTH.default,

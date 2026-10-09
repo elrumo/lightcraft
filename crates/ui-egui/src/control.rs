@@ -74,6 +74,7 @@ pub fn inspect(app: &LightcraftApp, ctx: &egui::Context) -> Value {
         "canvasRect": app.canvas_rect.map(rect_json),
         "imageRect": app.image_rect.map(rect_json),
         "scroll": {"grid": app.grid_scroll, "filmstrip": app.film_scroll},
+        "map": {"camera": app.map.camera().map(|(lat, lon, zoom)| json!({"lat": lat, "lon": lon, "zoom": zoom})), "located": app.map.located_points().len(), "markersDrawn": app.map.stats.markers_drawn, "tilesDrawn": app.map.stats.tiles_drawn, "standIns": app.map.stats.stand_ins, "tilesRequested": app.map.stats.tiles_requested, "tilesLoaded": app.map.stats.tiles_loaded, "tilesFailed": app.map.stats.tiles_failed},
         "active": app.session.active().map(|p| p.0),
         "selection": app.session.selection.ids.iter().map(|p| p.0).collect::<Vec<_>>(),
         "activeMask": app.session.active_mask,

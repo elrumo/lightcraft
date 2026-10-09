@@ -31,8 +31,18 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         super::empty_message(ui, r, "No photo selected", "Select a photo to edit");
         return;
     };
-    egui::ScrollArea::vertical().id_salt("right-scroll").auto_shrink([false, false]).show(ui, |ui| {
+    // (a phone's sheet starts each tool, and each Edit group, at its top, not where the last one was scrolled to)
+    let salt = if app.compact {
+        format!("right-scroll-{:?}-{}", app.ui.right, if app.ui.right == RightPanel::Edit { app.ui.edit_group.as_str() } else { "" })
+    } else {
+        "right-scroll".to_string()
+    };
+    let out = egui::ScrollArea::vertical().id_salt(salt).auto_shrink([false, false]).show(ui, |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
+        if app.compact {
+            // rows in the sheet are 36 pt, not 44: its own controls (sliders, buttons) size themselves
+            ui.spacing_mut().interact_size.y = 36.0;
+        }
         match app.ui.right {
             RightPanel::Edit => super::edit::show(app, ui, id),
             RightPanel::Profiles => super::profiles::show(app, ui, id),
@@ -47,28 +57,49 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             RightPanel::None => {}
         }
     });
+    // (the phone's sheet is only as tall as this)
+    if app.compact {
+        super::compact::note_sheet_content(app, ui.ctx(), out.content_size.y);
+    }
 }
 
 pub fn header(ui: &mut egui::Ui, title: &str) {
     let t = Tokens::get(ui.ctx());
-    let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 46.0), Sense::hover());
-    ui.painter().text(pos2(r.left() + 24.0, r.center().y + 2.0), Align2::LEFT_CENTER, crate::i18n::tr(title), t.semibold(15.0), t.text);
+    let compact = crate::is_compact(ui.ctx());
+    let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), if compact { 34.0 } else { 46.0 }), Sense::hover());
+    let x = r.left() + crate::widgets::side_pad(ui.ctx()).0;
+    ui.painter().text(
+        pos2(x, r.center().y + 2.0),
+        Align2::LEFT_CENTER,
+        crate::i18n::tr(title),
+        t.semibold(if compact { 14.0 } else { 15.0 }),
+        t.text,
+    );
+}
+
+/// The title of a tool's panel. A phone's tool bar already names the open tool, so its sheet
+/// starts with the tool's controls.
+pub fn tool_header(ui: &mut egui::Ui, title: &str) {
+    if !crate::is_compact(ui.ctx()) {
+        header(ui, title);
+    }
 }
 
 pub fn label_row(ui: &mut egui::Ui, label: &str, value: &str) {
     let t = Tokens::get(ui.ctx());
-    let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 24.0), Sense::hover());
-    ui.painter().text(pos2(r.left() + 24.0, r.center().y), Align2::LEFT_CENTER, crate::i18n::tr(label), t.font(12.5), t.text_dim);
+    let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), if crate::is_compact(ui.ctx()) { 30.0 } else { 24.0 }), Sense::hover());
+    let x = r.left() + crate::widgets::side_pad(ui.ctx()).0;
+    ui.painter().text(pos2(x, r.center().y), Align2::LEFT_CENTER, crate::i18n::tr(label), t.font(12.5), t.text_dim);
     ui.painter().text(pos2(r.left() + 110.0, r.center().y), Align2::LEFT_CENTER, value, t.font(12.5), t.text_label);
 }
 
 fn padded(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
-    egui::Frame::NONE.inner_margin(egui::Margin { left: 24, right: 22, top: 6, bottom: 6 }).show(ui, add);
+    egui::Frame::NONE.inner_margin(crate::widgets::margin(ui.ctx(), 6, 6)).show(ui, add);
 }
 
 fn crop(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     let d = app.session.develop_of(id).unwrap_or_default();
-    header(ui, "Crop");
+    tool_header(ui, "Crop");
     padded(ui, |ui| {
         ui.horizontal(|ui| {
             ui.label(crate::i18n::tr("Aspect Ratio"));
@@ -229,15 +260,23 @@ fn crop(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
 
 fn remove(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     let d = app.session.develop_of(id).unwrap_or_default();
-    header(ui, "Remove");
+    tool_header(ui, "Remove");
     padded(ui, |ui| {
-        ui.horizontal_wrapped(|ui| {
-            for (label, tool) in [("Remove", "remove"), ("Heal", "heal"), ("Clone", "clone")] {
-                if text_button(ui, &format!("removeMode-{tool}"), label, app.ui.tool == tool).clicked() {
-                    app.ui.tool = tool.into();
-                }
+        let modes = [("Remove", "remove"), ("Heal", "heal"), ("Clone", "clone")];
+        if app.compact {
+            let active = modes.iter().position(|(_, tool)| app.ui.tool == *tool);
+            if let Some(i) = crate::widgets::segmented(ui, "removeMode", &modes, active, 3) {
+                app.ui.tool = modes[i].1.into();
             }
-        });
+        } else {
+            ui.horizontal_wrapped(|ui| {
+                for (label, tool) in modes {
+                    if text_button(ui, &format!("removeMode-{tool}"), label, app.ui.tool == tool).clicked() {
+                        app.ui.tool = tool.into();
+                    }
+                }
+            });
+        }
         ui.add_space(8.0);
         ui.label(crate::i18n::tr_format!("{} spot(s) on this photo", d.spots.len()));
         ui.add_space(4.0);
@@ -406,7 +445,7 @@ fn red_eye(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
 
 fn info(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     let Some(p) = app.session.catalog.photo(id).cloned() else { return };
-    header(ui, "Info");
+    tool_header(ui, "Info");
     let t = Tokens::get(ui.ctx());
     padded(ui, |ui| {
         camera_card(ui, &p);
@@ -535,9 +574,20 @@ fn info(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         }
         if let Some((la, lo)) = m.gps {
             let pretty = format!("{:.5}° {}, {:.5}° {}", la.abs(), if la >= 0.0 { "N" } else { "S" }, lo.abs(), if lo >= 0.0 { "E" } else { "W" });
+            // where that is, in words (offline): "Madrid, Spain"
+            if let Some(place) = lightcraft_engine::map::place_of(&p).filter(|pl| pl.from_gps) {
+                ui.label(egui::RichText::new(place.display).size(12.5).color(t.text))
+                    .on_hover_text(crate::i18n::tr("Worked out from the GPS position"));
+            }
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new(pretty).size(11.0).color(t.text_dim));
                 if text_button(ui, "showOnMap", crate::i18n::tr("Show on Map"), false)
+                    .on_hover_text(crate::i18n::tr("Open the Map at this photo"))
+                    .clicked()
+                {
+                    let _ = app.run("view.map", json!({"lat": la, "lon": lo, "zoom": 16}));
+                }
+                if text_button(ui, "showInBrowser", crate::i18n::tr("In Browser"), false)
                     .on_hover_text(crate::i18n::tr("Open the place in OpenStreetMap"))
                     .clicked()
                 {
@@ -827,10 +877,13 @@ fn keyword_set(app: &mut LightcraftApp, ui: &mut egui::Ui, have: &[String]) {
         for (i, k) in kws.iter().enumerate() {
             let on = have.iter().any(|x| x.eq_ignore_ascii_case(k));
             let short = k.rsplit('|').next().unwrap_or(k);
+            let touch = app.compact;
             let r = ui
                 .add_sized(
-                    [bw, 22.0],
-                    egui::Button::new(egui::RichText::new(short).size(11.5).color(if on { t.text } else { t.text_label })).selected(on).truncate(),
+                    [bw, if touch { 36.0 } else { 22.0 }],
+                    egui::Button::new(egui::RichText::new(short).size(if touch { 13.5 } else { 11.5 }).color(if on { t.text } else { t.text_label }))
+                        .selected(on)
+                        .truncate(),
                 )
                 .on_hover_text(format!("{} — ⌥{}", k.replace('|', " › "), i + 1));
             register(ui.ctx(), format!("kwSet:{}", i + 1), r.rect);
@@ -962,17 +1015,19 @@ fn activity(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             ui.label(egui::RichText::new(crate::i18n::tr("No edits yet.")).color(t.text_dim));
         }
         for (i, h) in p.history.iter().enumerate().rev() {
-            let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 24.0), Sense::click());
+            // a finger needs 40 pt rows and has no hover
+            let touch = app.compact;
+            let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), if touch { 40.0 } else { 24.0 }), Sense::click());
             register(ui.ctx(), format!("history:{i}"), r);
-            if resp.hovered() {
+            if resp.is_pointer_button_down_on() || (resp.hovered() && !touch) {
                 ui.painter().rect_filled(r, 3.0, t.hover);
             }
-            paint(ui.painter(), Rect::from_min_size(r.min + vec2(0.0, 4.0), vec2(16.0, 16.0)), Icon::Clock, t.icon);
+            paint(ui.painter(), Rect::from_center_size(pos2(r.left() + 8.0, r.center().y), vec2(16.0, 16.0)), Icon::Clock, t.icon);
             ui.painter().text(
-                pos2(r.left() + 24.0, r.center().y),
+                pos2(r.left() + if touch { 28.0 } else { 24.0 }, r.center().y),
                 Align2::LEFT_CENTER,
                 crate::i18n::history_label(&h.label, &app.session.presets),
-                t.font(12.5),
+                t.font(if touch { 15.0 } else { 12.5 }),
                 t.text_label,
             );
             if resp.clicked() {

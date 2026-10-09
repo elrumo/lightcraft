@@ -127,6 +127,7 @@ const LAYOUT: &[(&str, &[&str])] = &[
             "view.compare",
             "view.survey",
             "view.people",
+            "view.map",
             "---",
             "view.leftPanel",
             "view.photoCounts",
@@ -304,6 +305,7 @@ pub fn checked(app: &LightcraftApp, id: &str) -> Option<bool> {
     match id {
         // Every language's command is checked when it is the active one.
         _ if crate::menus::language_from_command(id).is_some() => Some(crate::menus::language_from_command(id) == Some(u.language)),
+        _ if crate::menus::appearance_from_command(id).is_some() => Some(crate::menus::appearance_from_command(id) == Some(u.appearance)),
         "develop.autoSync" => Some(app.session.auto_sync),
         "view.photoCounts" => Some(u.show_counts),
         "view.secondWindow" => Some(u.second_window),
@@ -313,6 +315,7 @@ pub fn checked(app: &LightcraftApp, id: &str) -> Option<bool> {
         "view.compare" => Some(u.view == ViewMode::Compare),
         "view.survey" => Some(u.view == ViewMode::Survey),
         "view.people" => Some(u.view == ViewMode::People),
+        "view.map" => Some(u.view == ViewMode::Map),
         "view.reference" => Some(u.view == ViewMode::Reference),
         "view.leftPanel" => Some(u.left_panel),
         "view.faceBoxes" => Some(u.face_boxes),

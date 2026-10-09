@@ -23,13 +23,13 @@ duplicate Local entries #22, black GPU exports on an Intel iGPU #78).
 | Dimension | Estimate | What's true today | Biggest gaps |
 |---|---:|---|---|
 | **Feature checklist** | 79% | P0 core and P1 nearly complete: import (Add / Copy / Move, templates, devices), library, grid/loupe/compare/survey, every Edit slider, curves, colour grading, masking tools, crop/Upright, heal/clone, presets/profiles, versions/history, sync, export, menus, shortcuts | P1: lens-profile database, video playback/trim |
-| **RAW coverage** (formats people shoot) | ~50% | DNG (all kinds), CR2, ARW, NEF (uncompressed + Huffman lossless/lossy), uncompressed RAF/ORF, packed RW2, PEF; every container's embedded preview (incl. CR3) | **CR3** (every Canon since ~2018), compressed RAF/ORF, RW2 v4, Nikon lossy-after-split, Canon sRAW, AVIF. NEFs labelled compressed but stored uncompressed (Z 6 packed 14-bit, D850 12-bit uncompressed). Per-model verification is thin (~40 corpus files vs >1,000 models) |
+| **RAW coverage** (formats people shoot) | ~50% | DNG (all kinds), CR2, CR3 (lossless and both generations of C-RAW), ARW, NEF (uncompressed + Huffman lossless/lossy), uncompressed RAF/ORF, packed RW2, PEF; every container's embedded preview (incl. CR3) | **Exact CR3 C-RAW of the EOS R5 / R6 generation** (lossless CR3 and the C-RAW of the EOS R, 90D and M50 decode exactly, and R5 / R6 C-RAW approximately, all with white balance and a look fitted to the camera JPEG), compressed RAF/ORF, RW2 v4, Nikon lossy-after-split, Canon sRAW, AVIF. NEFs labelled compressed but stored uncompressed (Z 6 packed 14-bit, D850 12-bit uncompressed). Per-model verification is thin (~40 corpus files vs >1,000 models) |
 | **Colour & image quality** | ~55–65% | Pipeline is complete and fast; GPU path CPU-exact within 1/255 | **No measured camera calibration database**: ARW and NEF have a guarded per-file embedded-JPEG colour estimate (docs/camera-preview-colour.md); other non-DNG raws and rejected estimates use a neutral matrix. Colour fidelity remains incomplete. No lens-profile database. No measured fidelity against Lightroom (tone, highlights, texture/clarity, NR, sharpening are tuned by eye) |
 | **AI & computational** | ~15–20% | Assisted culling (focus, bursts), auto tone, HDR/panorama merge; subject/sky/background masks as classical heuristics; natural-language search (SigLIP 2), text-in-photo search (PP-OCRv6) and finding/naming people (YuNet + SFace), each opt-in with its own consented download, on the desktop and on the sync server (`docs/search-people.md`); Super Resolution (optional Nomos Uni SPAN 2× download, `docs/super-resolution.md`, on desktop and iPhone) | Real segmentation masks (subject, sky, people, objects, landscape, depth), AI denoise, lens blur, generative remove. Faces, text and search are verified on a handful of images, not benchmarked on a real library (accuracy of the face grouping, OCR speed of about a second a photo, no relevance cut-off). The model strategy is decided (licence-checked shortlist and runtime in `docs/ai-models.md`) except raw-domain denoise, which has no clean open model |
 | **Workflow & library** | ~85% (single machine) | Robust catalog (journal + snapshots, background compaction, crash-tested), 85k-photo libraries stay responsive, Local browsing with automatic cleanup, XMP interop, keywords, smart albums, Move import | Opening an 85k library takes 1.7–4.7 s; no tablet companion (#74, roadmap), shared albums, publish services, tethering. **Optional self-hosted sync** (docs/sync.md: `lightcraft-server`, one library shared by a user's desktop devices, previews and originals by content hash, field-level merges; photo folders already on the server read in place as library folders) is new and lightly tested (desktop, CLI and the web build; presets merge by id): running sync in the iOS spike (wired up and type-checked, not yet run on a simulator or iPhone) and eviction of downloaded originals are still to come |
-| **Classic modules** | ~30% | Geotagging from GPX track logs, soft proofing (partial), slideshow (basic) | **Map view, Book, Print, Slideshow module, Web, publish services**: ~40 tracker rows ⬜ |
+| **Classic modules** | ~35% | **Map view** (desktop, web, iOS: clustered markers, place search, offline world map; not yet run in a browser or on a device), geotagging from GPX track logs, offline reverse geocoding, soft proofing (partial), slideshow (basic) | **Book, Print, Slideshow module, Web, publish services**: ~40 tracker rows ⬜; Map: drag-to-geotag, saved locations, satellite layer |
 | **HDR & video** | 0% | | HDR edit/display/export; video play/trim/edit/export |
-| **Platform & robustness** | ~70% | macOS native; Windows/Linux builds; web via WASM; the egui app runs on the iOS simulator as a spike, with a compact touch layout (choosing photos and acting on them by touch included); its native host (Photos / Files pickers, share sheet, HEIC through ImageIO, lifecycle, memory budget) is written and type-checked but not yet run (see docs/ios.md, docs/ios-gaps.md); no-panic lints workspace-wide, `unsafe` confined to `crates/sysmem` and the iOS glue in `crates/ios-host`; failed saves are reported; GPU errors fall back to CPU | Windows installer UI unverified on Windows (PR #79); GPU path proven only on Apple + user reports; English, Simplified/Traditional Chinese and Japanese UI (see docs/localization.md); remaining technical errors; Traditional Chinese uses the Simplified Chinese font until craft-fonts has a TC face; accessibility partial; headless UI tests time out under machine load |
+| **Platform & robustness** | ~70% | macOS native; Windows/Linux builds; web via WASM; the egui app runs on the iOS simulator as a spike, with a compact touch layout (choosing photos and acting on them by touch included; iOS-style tab bar, sliders, Settings lists and alerts; light, dark or the device's appearance); its native host (Photos / Files pickers, share sheet, HEIC through ImageIO, lifecycle, memory budget) is written and type-checked but not yet run (see docs/ios.md, docs/ios-gaps.md); no-panic lints workspace-wide, `unsafe` confined to `crates/sysmem` and the iOS glue in `crates/ios-host`; failed saves are reported; GPU errors fall back to CPU | Windows installer UI unverified on Windows (PR #79); GPU path proven only on Apple + user reports; English, Simplified/Traditional Chinese and Japanese UI (see docs/localization.md); remaining technical errors; Traditional Chinese uses the Simplified Chinese font until craft-fonts has a TC face; accessibility partial; headless UI tests time out under machine load |
 
 ### By kind of user
 
@@ -37,7 +37,7 @@ duplicate Local entries #22, black GPU exports on an Intel iGPU #78).
 |---|---:|---|
 | JPEG / DNG shooter, single machine | ~85% | Fidelity polish, AI masks |
 | Nikon / Sony / older-Canon raw shooter | ~65% | Camera colour fidelity and coverage (ARW and NEF preview estimates are only a starting point) |
-| Canon CR3 / Fujifilm / Olympus shooter | ~35% | Their raws open as embedded previews only (CR3: the full-size JPEG with full metadata) |
+| Canon CR3 / Fujifilm / Olympus shooter | ~35% | Canon lossless raws and C-RAW decode (look fitted to the camera JPEG; the R5 / R6 generation of C-RAW approximately); Fujifilm and Olympus compressed raws open as embedded previews only (CR3: the full-size JPEG with full metadata) |
 | Lightroom Classic power user | ~45% | Print, Book, Map, publish, tethering |
 | Relies on AI (masks, denoise) | ~25% | Object / Describe masks via optional SAM 3 (download not yet hosted); no AI denoise |
 
@@ -48,7 +48,7 @@ Priorities, in order. Each points at tracker rows in [`docs/parity.md`](docs/par
 1. **Camera colour calibration of our own** (LR-PROF-CAMERACOLOR, P0): fit each camera to its own embedded JPEG, use
    matrices the files carry themselves, then chart shots. Sony ARW and Nikon NEF have the file-local fit (matrix + tone
    curve from their own JPEG); generalise it to the other makes' raws (RW2, PEF, ORF…), then validate fidelity.
-2. **Raw formats, clean-room** (LR-IMP-FORMATS, P0): **CR3** first, then compressed RAF / ORF, RW2 v4, NEF
+2. **Raw formats, clean-room** (LR-IMP-FORMATS, P0): **Exact CR3 C-RAW of the R5 / R6 generation** first (lossless CR3 and first-generation C-RAW decode exactly, R5 / R6 C-RAW approximately), then compressed RAF / ORF, RW2 v4, NEF
    lossy-after-split, sRAW. Decided 2026-10-05: write our own decoders from prose descriptions (never decoder source,
    no LGPL dependency); compressed NEF (#86) is the template.
 3. **Verified camera coverage** (LR-IMP-CAMERA-COVERAGE, P0): a CC0 sample per model in the corpus, each decoded and
@@ -63,7 +63,7 @@ Priorities, in order. Each points at tracker rows in [`docs/parity.md`](docs/par
    what's missing for those is measurement on a real library (grouping accuracy, OCR speed and recall, a relevance cut-off) and a
    device-side model on iOS. Next: depth (Depth Anything V2 Small: Depth Range, Lens Blur), AI denoise (SCUNet; raw-domain denoise
    needs a maintainer decision), Subject / Sky / People masks.
-7. **Then:** HDR (Q), the Classic output modules (Print first, then Map view, Book, Slideshow), video (R), localisation
+7. **Then:** HDR (Q), the Classic output modules (Print first, then Book, Slideshow; the Map view exists, see docs/map.md), video (R), localisation
    and accessibility.
 8. **Self-hosted sync, next steps** (LR-CLOUD-SYNC, P2, opt-in; local-first stays the default): a size budget for
    downloaded originals, resumable uploads, XMP written back to library folders (opt-in), then sync verified on an iPhone and sharing
@@ -90,7 +90,7 @@ hardening (#78), copyright metadata (#51), GPX geotagging (#60), import tag help
 | M8 | Heal / Remove | content-aware remove (PatchMatch), heal, clone, brush spots, visualize spots, red/pet eye | 6–10 | ✅ (content-aware remove by patch synthesis, heal, clone, auto source, visualize spots, red/pet eye) |
 | M9 | Presets, profiles, versions, sync | preset browser + amount, create/import presets, profile browser, versions, history, copy/paste/sync settings | 5–8 | ✅ |
 | M10 | Export & share | export dialog (JPEG/PNG/TIFF/DNG/AVIF/JXL/original), sizing, sharpening, metadata, watermark, naming, batch jobs, XMP sidecars, HDR export | 6–10 | 🚧 (all formats incl. DNG/original, sizing, presets, background jobs ✅; JXL encode, HDR export ⬜) |
-| M11 | RAW II | CR3, RAF (X-Trans), ORF, RW2, PEF, SRW, 3FR, IIQ + long tail; camera calibration DB; HEIC/AVIF/JXL import | 20–35 | 🚧 (RAF uncompressed, RW2 packed, PEF, ORF uncompressed ✅; **camera colour calibration** 🚧 (guarded ARW and NEF preview fitting; measured database still missing), CR3, compressed ORF/RAF ⬜) |
+| M11 | RAW II | CR3, RAF (X-Trans), ORF, RW2, PEF, SRW, 3FR, IIQ + long tail; camera calibration DB; HEIC/AVIF/JXL import | 20–35 | 🚧 (RAF uncompressed, RW2 packed, PEF, ORF uncompressed ✅; **camera colour calibration** 🚧 (guarded ARW and NEF preview fitting; measured database still missing), CR3 lossless ✅, C-RAW ✅ (R5 / R6 generation 🟡 approximate), compressed ORF/RAF ⬜) |
 | M12 | AI & smart features | subject/sky/background/people/object masks, semantic search, faces/People (permissively licensed models, pure-Rust inference) | 20–40 | 🟡 (semantic search, text in photos, people: done; masks open) |
 | M13 | Merge | HDR merge (deghost), panorama (projections, boundary warp, fill edges), HDR panorama | 10–15 | ✅ |
 | M14 | Video | import/playback/trim via FilmCraft crates, global edits + presets on video, video export | 6–10 | ⬜ |
@@ -124,7 +124,7 @@ trip, slideshow, auto import…) in ≈ 12 h on 2026-10-02; four to six parallel
 | Work package | Tracker rows | Agent-hours | Risk |
 |---|---|---:|---|
 | Remaining P0/P1 UI and library features (folder rename/move, keyword painter, people view…) | ≈ 8 | 5–10 | low |
-| Raw codecs: CR3 (CRX), compressed ORF / RAF, NEF lossy-after-split, RW2 v4, AVIF decode (JPEG XL DNG and HEIC decode now; JPEG XL DNG still to be checked on Adobe files) | LR-IMP-FORMATS | 40–80 | **high** — clean-room black-box analysis, no permissive specs |
+| Raw codecs: exact CR3 C-RAW of the R5 / R6 generation (the first generation and lossless CRX decode exactly, this one approximately), compressed ORF / RAF, NEF lossy-after-split, RW2 v4, AVIF decode (JPEG XL DNG and HEIC decode now; JPEG XL DNG still to be checked on Adobe files) | LR-IMP-FORMATS | 40–80 | **high** — clean-room black-box analysis, no permissive specs |
 | Lens-profile database of our own (calibration targets, fitting, data) | LR-EDIT-OPTICS-PROFILE | 15–30 | data collection |
 | Video: playback, trim, edits, export (pure-Rust decode, ideally shared with FilmCraft) | R. Video | 20–40 | medium |
 | AI: subject / sky / background / people / object masks, object-aware remove, AI denoise, super resolution, lens blur, people & faces, natural-language search, culling | ≈ 30 | 80–150 | **high** — permissively licensed weights, pure-Rust inference, maybe training |
@@ -183,7 +183,7 @@ Not decoded yet — preview only (no permissively licensed description; black-bo
 - **Panasonic RW2 raw format 4** (quantised): the block layout is known (0x4000-byte chunks rotated by 0x1ff8; 128-bit
   blocks of two 12-bit seeds plus four groups of a 2-bit scale and three 8-bit codes; scales 0/1 are ×1/×2 differences
   from the same-colour pixel two to the left), the reconstruction rule for scales 2/3 is not established.
-- **Olympus compressed ORF**, **Fujifilm compressed RAF**, **Canon CR3/CRX** (M11.1), **Canon sRAW/mRAW**, lossy DNG.
+- **Olympus compressed ORF**, **Fujifilm compressed RAF**, **Exact Canon CR3 C-RAW of the R5 / R6 generation** (M11.1e: the quantiser class map), **Canon sRAW/mRAW**, lossy DNG.
 
 **Camera colour matrices:** ARW files can use guarded, separate chromaticity and tone estimates from their own embedded JPEG (see `docs/camera-preview-colour.md`); this is a per-file camera-look estimate with relative WB, not measured calibration or absolute-Kelvin WB. Other non-DNG raws and rejected fits use the documented neutral fallback (camera RGB ≈ linear sRGB, flagged
 `matrix_is_fallback`) with the file's as-shot white-balance multipliers. Clean sources to evaluate next: manufacturer
@@ -199,6 +199,9 @@ own chart-based calibration (M11.4). Adobe matrices are never used.
   Local roots and cleanup, 85k-photo grid and catalog performance, background compaction, failed-save errors, GPU
   export hardening, clippy 1.99. Added the honest *Where we stand* assessment and *Where we're going* priorities; added
   tracker rows for camera colour, camera coverage and render fidelity.
+- 2026-10-08: Canon CR3 lossless (CRX, no wavelets) decodes in pure Rust, bit-exact against a reference decoder's output on
+  EOS R / R5 / R6 / 90D files (M11.1b): the entropy coder is JPEG-LS-style, found by black-box analysis of the bitstreams.
+  The camera's white balance and a look fitted to its JPEG follow (M11.1c); the lossy C-RAW mode follows (M11.1d: the first generation exactly, the R5 / R6 generation approximately); making the second generation exact (M11.1e) is next.
 
 ## Chinese and Japanese interfaces, and text watermarks
 

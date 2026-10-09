@@ -239,6 +239,7 @@ fn services() -> Services {
         restore_library: None,
         // self-hosted sync: each request on a worker thread
         sync_exec: Some(lightcraft_ui_egui::sync_ui::native_exec()),
+        tile_exec: Some(lightcraft_ui_egui::panels::map::native_exec()),
         share_exports: None,
         host_pick: None,
         // the system clipboard reaches text fields directly; no haptics

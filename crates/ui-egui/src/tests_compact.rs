@@ -590,6 +590,37 @@ fn a_double_tap_zooms_and_does_not_hide_the_bars() {
     assert!(!h.app.ui.review);
 }
 
+/// iOS: a tap on the photo is felt the moment the finger lifts, and the bars go as soon as no
+/// second tap has begun (not after a fixed wait); a double tap whose second finger came later than
+/// that still zooms, and puts the bars back.
+#[test]
+fn a_tap_is_felt_at_once_and_the_bars_go_soon_after() {
+    let mut h = first_photo([390.0, 844.0]);
+    let log = record_haptics(&mut h);
+    pointer(&mut h, &[("down", 0.5, 0.5), ("up", 0.5, 0.5)]);
+    assert_eq!(heard(&log), [Haptic::Light], "felt as the finger lifts");
+    assert!(!h.app.ui.review, "not yet: it may be a double tap's first");
+    frames(&mut h, 14);
+    assert!(h.app.ui.review, "gone within a quarter second");
+    assert_eq!(heard(&log), [], "felt once");
+    // a slow double tap: the bars have just gone when the second finger comes down
+    let r = h.request("engine.execute", json!({"command": "view.reviewMode", "params": {"on": false}}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    frames(&mut h, 60);
+    pointer(&mut h, &[("down", 0.5, 0.5), ("up", 0.5, 0.5)]);
+    for _ in 0..20 {
+        if h.app.ui.review {
+            break;
+        }
+        h.step();
+    }
+    assert!(h.app.ui.review);
+    pointer(&mut h, &[("down", 0.5, 0.5), ("up", 0.5, 0.5)]);
+    frames(&mut h, 60);
+    assert_ne!(h.app.ui.zoom, crate::state::Zoom::Fit, "zoomed");
+    assert!(!h.app.ui.review && has(&h, "icon:edit"), "and the bars are back");
+}
+
 /// No menu bar on a phone: the grid's and the photo's "…" menus, and every other command in the
 /// searchable All Commands list.
 #[test]

@@ -257,7 +257,7 @@ fn load_bytes_now(bytes: std::borrow::Cow<'_, [u8]>, max_edge: usize) -> Result<
         raw.opcodes.list3.retain(|op| !is_lens_opcode(op));
         // Previews and thumbnails bin the mosaic straight to (about) the size they need; only
         // larger levels (exports, 1:1) demosaic the whole sensor.
-        let t0 = std::time::Instant::now();
+        let t0 = web_time::Instant::now();
         // (mosaics bin only for previews: a bigger size is an export, which demosaics the whole sensor)
         let binned = match bin_factor(&raw, max_edge).filter(|_| !pre_binned && max_edge <= crate::media::SourceLevel::Preview.max_edge()) {
             Some(k) => raw.develop_binned(k, HIGHLIGHT_CLIP).map_err(|e| e.to_string())?,

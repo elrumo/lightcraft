@@ -1,4 +1,4 @@
-//! Estimate the starting look of a raw without a camera colour matrix (Sony ARW, Nikon NEF) from its
+//! Estimate the starting look of a raw without a camera colour matrix (Sony ARW, Nikon NEF, Canon CR3) from its
 //! own JPEG. Colour and luminance are fitted separately; the JPEG supplies correspondences only,
 //! never output pixels or a replacement for RAW editing.
 //! A global matrix can't follow the camera's hue-dependent rendering (the best matrix rendered a
@@ -31,7 +31,7 @@ pub(crate) const PROFILE_PROXY: usize = 192;
 /// as-shot look (`docs/camera-preview-colour.md`). The catalog's `Photo::relative_wb` matches the
 /// same formats by file extension.
 pub(crate) fn file_local_look(format: RawFormat) -> bool {
-    matches!(format, RawFormat::Arw | RawFormat::Nef | RawFormat::Nrw)
+    matches!(format, RawFormat::Arw | RawFormat::Nef | RawFormat::Nrw | RawFormat::Cr3)
 }
 
 pub(crate) fn fit_preview(raw: &RawImage, bytes: &[u8], transform: &CameraTransform) -> Option<CameraLook> {
@@ -731,8 +731,8 @@ mod tests {
     }
 
     #[test]
-    fn sony_and_nikon_raws_get_a_file_local_look() {
-        assert!([RawFormat::Arw, RawFormat::Nef, RawFormat::Nrw].into_iter().all(file_local_look));
+    fn sony_nikon_and_canon_cr3_raws_get_a_file_local_look() {
+        assert!([RawFormat::Arw, RawFormat::Nef, RawFormat::Nrw, RawFormat::Cr3].into_iter().all(file_local_look));
         assert!(![RawFormat::Dng, RawFormat::Cr2, RawFormat::Raf].into_iter().any(file_local_look));
     }
 
