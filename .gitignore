@@ -13,3 +13,4 @@ plan/
 *.safetensors.part
 *.onnx
 *.onnx.part
+dng-test.dng
