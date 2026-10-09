@@ -27,6 +27,7 @@ pub mod guard;
 pub mod import;
 mod import_move;
 pub mod library;
+pub mod map;
 pub mod media;
 pub mod memory;
 pub mod merge;
@@ -39,6 +40,7 @@ pub mod segment;
 pub mod sidecar;
 pub mod smart;
 pub mod sync;
+pub mod tiles;
 pub mod usage;
 mod view;
 pub mod vision;
@@ -749,6 +751,8 @@ mod tests_import_move;
 mod tests_libops;
 #[cfg(test)]
 mod tests_library;
+#[cfg(test)]
+mod tests_map;
 #[cfg(test)]
 mod tests_merge;
 #[cfg(test)]

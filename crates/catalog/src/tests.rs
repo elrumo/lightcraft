@@ -4,7 +4,7 @@ use lightcraft_develop::DevelopSettings;
 
 use super::*;
 
-fn photo(c: &mut Catalog, name: &str, date: &str) -> PhotoId {
+pub(crate) fn photo(c: &mut Catalog, name: &str, date: &str) -> PhotoId {
     let id = c.alloc_photo_id();
     let mut p = Photo::new(id, Source::Demo { scene: 1 }, name, "JPEG", 6000, 4000, "2026-09-30T10:00:00");
     p.captured = Some(date.to_string());

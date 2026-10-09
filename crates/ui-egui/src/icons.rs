@@ -65,6 +65,8 @@ pub enum Icon {
     Radial,
     Sky,
     Subject,
+    /// A map pin: a ring on a point.
+    Pin,
     Picker,
     Rotate,
     Flip,
@@ -423,6 +425,11 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
             pen.circle(10.0, 7.0, 3.0);
             pen.arc(10.0, 18.0, 6.5, 200.0, 340.0);
             pen.rect(2.5, 2.5, 17.5, 17.5, 2.0);
+        }
+        Pin => {
+            pen.arc(10.0, 8.0, 5.5, 140.0, 400.0);
+            pen.line(&[(5.8, 11.5), (10.0, 18.0), (14.2, 11.5)]);
+            pen.circle(10.0, 8.0, 1.8);
         }
         FaceBox => {
             pen.line(&[(2.5, 7.0), (2.5, 2.5), (7.0, 2.5)]);

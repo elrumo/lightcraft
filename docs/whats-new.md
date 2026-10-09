@@ -2,6 +2,17 @@
 
 ## October 2026
 
+### Map and places
+- **Map view** (View ▸ Map, or the pin in the bottom bar; on a phone, "…" ▸ Map): your photos where they were
+  taken, grouped into thumbnail markers with counts, on desktop, in the browser and on iPhone. Pan, zoom with the
+  wheel or a pinch, find a place by name, click a marker to zoom into it. It follows your search and filters.
+  The map works offline with a built-in world map; detailed tiles come from OpenStreetMap by default (or a server
+  you choose), are saved on disk, and can be switched off in Settings. See docs/map.md.
+- **Search by place.** `madrid` or `photos in Lisbon in june 2024` finds the photos taken there, from their GPS
+  position, with no internet and in several languages (`españa`, `Londres`, `東京`). Countries, regions, `or`,
+  years and months work too; the search chip shows how the text was read.
+- The Info panel names the place a GPS position is in (offline); Show on Map opens the Map at the photo.
+
 ### Export on iPhone
 - Sharing is a flow of its own, as in Lightroom's mobile app: the share button opens a sheet with a strip of your photos (tick the
   ones to send, or Select All) and round Share and Export As… buttons; Export As… has the file type, size, quality and watermark

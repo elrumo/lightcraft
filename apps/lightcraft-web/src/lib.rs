@@ -31,6 +31,8 @@ mod safety;
 #[cfg(target_arch = "wasm32")]
 mod sync;
 #[cfg(target_arch = "wasm32")]
+mod tiles;
+#[cfg(target_arch = "wasm32")]
 mod web;
 #[cfg(target_arch = "wasm32")]
 mod workers;

@@ -68,6 +68,7 @@ pub const FIELDS: &[(&str, &str, Kind)] = &[
     ("camera", "Camera", Kind::Text),
     ("lens", "Lens", Kind::Text),
     ("location", "Location", Kind::Text),
+    ("place", "Place (from GPS)", Kind::Text),
     ("creator", "Creator", Kind::Text),
     ("copyright", "Copyright", Kind::Text),
     ("copyrightStatus", "Copyright Status", Kind::Choice(&["copyrighted", "publicDomain", "unknown"])),
@@ -310,6 +311,14 @@ impl Rule {
             "camera" => text(&m.camera),
             "lens" => text(&m.lens),
             "location" => text(&[m.location.as_str(), &m.city, &m.state, &m.country].join(" ")),
+            // where the photo was taken: its GPS position (or place fields) understood against the
+            // offline gazetteer, so "madrid" covers the whole metropolitan area and "spain" the country
+            "place" => match op {
+                "isEmpty" => !crate::search::has_place(p),
+                "isNotEmpty" => crate::search::has_place(p),
+                "notContains" | "isNot" => !crate::search::photo_in_place(p, &want),
+                _ => crate::search::photo_in_place(p, &want),
+            },
             "creator" => text(&m.creator),
             "copyright" => text(&m.copyright),
             "copyrightStatus" => {
@@ -427,6 +436,31 @@ mod tests {
 
     fn rs(v: serde_json::Value) -> RuleSet {
         serde_json::from_value(v).unwrap()
+    }
+
+    #[test]
+    fn place_rule_understands_where_a_photo_was_taken() {
+        let cat = Catalog::new();
+        let mut p = photo(1);
+        let rule = |op: &str, v: &str| rs(json!({"rules": [{"field": "place", "op": op, "value": v}]}));
+        assert!(!rule("contains", "madrid").matches(&p, &cat), "no GPS, no place");
+        assert!(rule("isEmpty", "").matches(&p, &cat));
+        p.meta.gps = Some((40.4169, -3.7035)); // Puerta del Sol
+        for v in ["madrid", "Madrid", "spain", "españa"] {
+            assert!(rule("contains", v).matches(&p, &cat), "{v}");
+            assert!(rule("is", v).matches(&p, &cat), "{v}");
+            assert!(!rule("notContains", v).matches(&p, &cat), "{v}");
+        }
+        for v in ["paris", "france", "nowhere at all"] {
+            assert!(!rule("contains", v).matches(&p, &cat), "{v}");
+            assert!(rule("notContains", v).matches(&p, &cat), "{v}");
+        }
+        assert!(rule("isNotEmpty", "").matches(&p, &cat));
+        // place fields written by hand count too
+        let mut q = photo(2);
+        q.meta.city = "Madrid".into();
+        assert!(!rule("contains", "spain").matches(&q, &cat) && rule("contains", "madrid").matches(&q, &cat));
+        assert!(rule("isNotEmpty", "").matches(&q, &cat));
     }
 
     #[test]
