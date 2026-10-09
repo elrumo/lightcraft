@@ -1,4 +1,4 @@
-# Sony ARW and Nikon NEF starting look
+# Sony ARW, Nikon NEF and Canon CR3 starting look
 
 ARW and NEF decoding supply a Bayer mosaic and camera white-balance multipliers, but currently no measured camera colour matrix. Treating camera RGB as linear sRGB produces a dark, muted default rendering. The loader now estimates a file-local starting look from that file's embedded camera JPEG, only when a usable camera matrix is absent. All output pixels still come from the RAW mosaic; there is no JPEG replacement or uniform saturation boost.
 
@@ -37,6 +37,10 @@ Public CC0 samples (raw.pixls.us; 10 files, ILCE-6000, -6400 ×2, -6700, -7M3, -
 The same fit, gates and relative WB apply to NEF/NRW (issue #150: NEFs rendered muted and greenish). Public CC0 samples from raw.pixls.us (D750 12/14-bit, D780 12-bit, D850 12/14-bit, D7500 12/14-bit lossless and lossy, Z 50 12-bit) plus five local D7500 shots of an indoor event, rendered at 1200 px and compared with each file's embedded JPEG (mean CIE76 ΔE at 200 px): all 13 decodable files accepted, held-out RMS 0.11–0.24 → 0.01–0.09, ΔE 13–46 → 2.9–7.8 with matching mean lightness. The exception is a mixed-light D7500 scene (faces lit by a purple screen): accepted (RMS 0.156 → 0.057) but only ΔE 12.7 → 12.0, rendered warmer and lighter than the camera JPEG; the linear-display error the gate measures is dominated by the bright screen. Files that still open as the embedded preview (lossy-after-split, uncompressed data labelled compressed) are not fitted.
 
 Measuring this found a decoder bug: 12-bit NEFs store maker note `0x003d` BlackLevel in 14-bit units (D750 600, D780/Z 50 1008, D850/D7500 400, while their darkest samples are 150 / ~252 / 99), so 12-bit files rendered nearly black or with crushed shadows before any fit. The decoder now scales it to the sample depth; the fits for the same D7500 scene at 12 and 14 bits then agree (held-out RMS 0.042–0.049 vs 0.050–0.054; before, the 12-bit fits had to desaturate to compensate).
+
+### Canon CR3
+
+The same fit, gates and relative WB apply to lossless Canon CR3 (`RawFormat::Cr3`). The decoder reads the as-shot white balance from the `ColorData` array of the maker note in the file's timed-metadata (`CTMD`) sample — not from `CMT3`, whose maker note lacks it on current bodies — and ExifTool's `WB_RGGBLevelsAsShot` agrees on all five files (EOS R 2001/1582, R5 1577/2503, R6 1849/1678, 90D 2097/1376, M50 1452/1450 at G = 1024). Public CC0 samples from raw.pixls.us (EOS R, R5 crop mode, R6, 90D), rendered at 1200 px and compared with the file's embedded camera JPEG at 160 × 106 px (mean CIE76 ΔE, our own script, not the one of the sections above): 2.62 (R), 3.49 (R5), 2.72 (R6), 1.98 (90D), with mean lightness within 0.4 of the JPEG's. Side by side the renders show the same colours and detail (brick wall, fruit, clay figures, street). Only four bodies were looked at. C-RAW files (EOS R, 90D, M50, R5, R6) decode and take the same fit.
 
 On one sample, Exposure +1 EV, Saturation +100, Contrast +50, warm/cool WB, tint, highlights and shadows all changed the output. The same matrix and curve were selected for 400-pixel and full-resolution renders. Headless UI checks wait until the loupe reports `source: render` and no jobs remain; the camera JPEG stand-in does not count as verification.
 
