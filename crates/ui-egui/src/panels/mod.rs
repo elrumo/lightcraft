@@ -1,6 +1,7 @@
 //! Window regions and panels.
 
 pub mod ai_search;
+pub mod alert;
 pub mod bottombar;
 pub mod chips;
 pub mod compact;
@@ -26,7 +27,7 @@ pub mod settings;
 pub mod strip;
 pub mod topbar;
 
-use egui::{Align2, Rect, pos2, vec2};
+use egui::{Rect, pos2, vec2};
 
 use crate::LightcraftApp;
 use crate::theme::Tokens;
@@ -107,10 +108,19 @@ pub fn toast(app: &mut LightcraftApp, ctx: &egui::Context) {
     ctx.request_repaint_after(std::time::Duration::from_millis(30));
 }
 
-/// Paint a centred, dimmed message (empty states).
+/// Paint a centred, dimmed message (empty states). The lines wrap to the room there is: a phone's
+/// screen is narrower than most of the messages.
 pub fn empty_message(ui: &egui::Ui, rect: Rect, title: &str, body: &str) {
     let t = Tokens::get(ui.ctx());
     let p = ui.painter();
-    p.text(rect.center() - vec2(0.0, 12.0), Align2::CENTER_CENTER, crate::i18n::tr(title), t.semibold(18.0), t.text_label);
-    p.text(rect.center() + vec2(0.0, 14.0), Align2::CENTER_CENTER, crate::i18n::tr(body), t.font(13.0), t.text_dim);
+    let wrap = (rect.width() - 48.0).max(120.0);
+    let centred = |text: &str, font: egui::FontId, color: egui::Color32| {
+        let mut job = egui::text::LayoutJob::simple(crate::i18n::tr(text).to_string(), font, color, wrap);
+        job.halign = egui::Align::Center;
+        p.layout_job(job)
+    };
+    let (title, body) = (centred(title, t.semibold(18.0), t.text_label), centred(body, t.font(13.0), t.text_dim));
+    let top = rect.center().y - (title.size().y + 8.0 + body.size().y) / 2.0;
+    p.galley(pos2(rect.center().x, top), title.clone(), t.text_label);
+    p.galley(pos2(rect.center().x, top + title.size().y + 8.0), body, t.text_dim);
 }

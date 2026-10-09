@@ -31,7 +31,11 @@ pub mod widgets;
 #[cfg(test)]
 mod tests_ai_search;
 #[cfg(test)]
+mod tests_appearance;
+#[cfg(test)]
 mod tests_compact;
+#[cfg(test)]
+mod tests_compact_editor;
 #[cfg(test)]
 mod tests_curve;
 #[cfg(test)]
@@ -184,6 +188,10 @@ pub struct LightcraftApp {
     /// Phone-sized window (content narrower than [`COMPACT_BELOW_PT`]): one panel at a time, tools in
     /// a bottom tab bar and sheet (`panels::compact`). Set every frame from the window width.
     pub compact: bool,
+    /// The UI is drawn dark (else light): the compact layout follows the appearance setting or the
+    /// system's, the desktop layout is always dark. Set every frame; a host that restyles its own
+    /// chrome (the status bar, the keyboard) reads it.
+    pub dark: bool,
     /// The host installed a native menu bar (no in-window menus then).
     pub native_menu: bool,
     /// Shortcuts the native menu bar currently handles (`Cmd+Z`, `G`…): the egui shortcut handler
@@ -270,6 +278,7 @@ impl LightcraftApp {
             caches: Caches::default(),
             integrated_titlebar: false,
             compact: false,
+            dark: true,
             native_menu: false,
             native_shortcuts: Default::default(),
             headless_host: false,
@@ -845,7 +854,11 @@ impl LightcraftApp {
         }
         self.compact = ctx.content_rect().width() < COMPACT_BELOW_PT;
         ctx.data_mut(|d| d.insert_temp(egui::Id::new("lc-compact"), self.compact));
-        theme::apply_layout(&ctx, self.compact);
+        // light, dark, or what the system prefers (the host says, in `RawInput::system_theme`)
+        let system = ctx.input(|i| i.raw.system_theme).map(|t| t == egui::Theme::Dark);
+        // (the desktop layout is dark either way, and the host's status bar follows what is drawn)
+        self.dark = !self.compact || self.ui.appearance.is_dark(system);
+        theme::apply_layout(&ctx, self.compact, self.dark);
         if self.compact {
             panels::compact::show(self, ui);
             self.widgets = widgets::take_registry(&ctx);

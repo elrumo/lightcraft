@@ -1220,6 +1220,8 @@ fn crop_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respons
         mesh.indices.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
     }
     p.add(mesh);
+    // (a dark halo under the white, so the frame shows on a bright photo or a light canvas too)
+    p.add(egui::Shape::closed_line(pts.clone(), Stroke::new(3.0, Color32::from_black_alpha(90))));
     p.add(egui::Shape::closed_line(pts.clone(), Stroke::new(1.0, Color32::WHITE)));
     // overlay guides
     let lerp = |a: Pos2, b: Pos2, t: f32| a + (b - a) * t;
@@ -1237,6 +1239,9 @@ fn crop_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respons
     for (i, h) in handles.iter().enumerate() {
         register(ui.ctx(), format!("cropHandle:{i}"), Rect::from_center_size(*h, vec2(14.0, 14.0) * grow));
         let s = (if i < 4 { 12.0 } else { 9.0 }) * grow;
+        let halo = Color32::from_black_alpha(100);
+        p.rect_filled(Rect::from_center_size(*h, vec2(s + 2.0, 3.0 * grow + 2.0)), 0.0, halo);
+        p.rect_filled(Rect::from_center_size(*h, vec2(3.0 * grow + 2.0, s + 2.0)), 0.0, halo);
         p.rect_filled(Rect::from_center_size(*h, vec2(s, 3.0 * grow)), 0.0, Color32::WHITE);
         p.rect_filled(Rect::from_center_size(*h, vec2(3.0 * grow, s)), 0.0, Color32::WHITE);
     }

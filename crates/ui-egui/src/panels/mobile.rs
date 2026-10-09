@@ -113,7 +113,7 @@ pub fn page(ctx: &egui::Context, id: &str, title: &str, cancel: &str, ok: Option
     let drop = (1.0 - p) * (screen.bottom() - content.top());
     // dim what is behind while it slides in, and keep taps off it
     egui::Area::new(sid.with("dim")).order(egui::Order::Middle).fixed_pos(screen.min).show(ctx, |ui| {
-        ui.painter().rect_filled(screen, 0.0, Color32::from_black_alpha((150.0 * p) as u8));
+        ui.painter().rect_filled(screen, 0.0, Color32::from_black_alpha((t.scrim as f32 * p) as u8));
         let _ = ui.allocate_rect(screen, Sense::click());
     });
     let mut bar = Bar::default();
@@ -214,7 +214,7 @@ pub fn actions(ctx: &egui::Context, id: &str, title: Option<&str>, add: impl FnO
     // (in the foreground layer: over a page the menu was opened from, which it guards from taps;
     // shown after the page, it goes on top of it)
     egui::Area::new(sid.with("dim")).order(egui::Order::Foreground).fixed_pos(screen.min).show(ctx, |ui| {
-        let alpha = if anchor.is_some() { 60.0 } else { 120.0 };
+        let alpha = t.scrim as f32 * if anchor.is_some() { 0.4 } else { 0.8 };
         ui.painter().rect_filled(screen, 0.0, Color32::from_black_alpha((alpha * p) as u8));
         if ui.allocate_rect(screen, Sense::click()).clicked() {
             close = true;

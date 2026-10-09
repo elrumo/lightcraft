@@ -14,7 +14,7 @@ use std::rc::{Rc, Weak};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use lightcraft_engine::Session;
-use lightcraft_ios_host::{BackgroundTask, Lifecycle, PickKind, Picked};
+use lightcraft_ios_host::{BackgroundTask, InterfaceStyle, Lifecycle, PickKind, Picked};
 use lightcraft_ui_egui::haptics::Haptic;
 use lightcraft_ui_egui::prefs::PrefsWriter;
 use lightcraft_ui_egui::{LightcraftApp, PickSource, Services, ShareExports};
@@ -33,6 +33,8 @@ struct Host {
     background: Option<BackgroundTask>,
     /// UIKit's safe area as egui-winit last read it (it reads it only on some window events).
     safe_area: egui::SafeAreaInsets,
+    /// The style the app's windows were last forced to (so UIKit's chrome follows what the app draws).
+    style: Option<InterfaceStyle>,
 }
 
 impl Host {
@@ -43,9 +45,26 @@ impl Host {
         }
         self.app.logic(ctx);
         self.prefs.tick(&mut self.app, ctx);
+        self.follow_appearance(ctx);
         // an export kept going in the background has finished
         if self.background.is_some() && self.app.export.is_none() {
             self.background = None;
+        }
+    }
+
+    /// The status bar, the keyboard and the system's sheets take the style the app is drawn in
+    /// (light, dark, or the system's own); with "System" the system's style is looked at again
+    /// every couple of seconds, as nothing tells the app when it changes.
+    fn follow_appearance(&mut self, ctx: &egui::Context) {
+        let want = if self.app.dark { InterfaceStyle::Dark } else { InterfaceStyle::Light };
+        if self.style != Some(want) {
+            match lightcraft_ios_host::set_interface_style(Some(want)) {
+                Ok(()) => self.style = Some(want),
+                Err(e) => log::warn!("appearance: {e}"),
+            }
+        }
+        if self.app.ui.appearance == lightcraft_ui_egui::state::Appearance::System {
+            ctx.request_repaint_after(std::time::Duration::from_secs(2));
         }
     }
 
@@ -168,8 +187,20 @@ impl eframe::App for App {
             h.logic(ctx);
         }
     }
+    /// What shows behind the UI: in the status bar and home indicator areas, which the bars' colour
+    /// (black, or white in the light appearance) should fill, not eframe's dark grey.
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        let dark = self.0.try_borrow().map_or(true, |h| h.app.dark);
+        (if dark { egui::Color32::BLACK } else { egui::Color32::WHITE }).to_normalized_gamma_f32()
+    }
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {
         press_enter(raw, lightcraft_ios_host::take_return_presses());
+        // winit ignores the theme on iOS: the system's style is read from UIKit (the main screen's
+        // traits, which the app forcing a style on its windows doesn't change)
+        raw.system_theme = lightcraft_ios_host::system_interface_style().map(|s| match s {
+            InterfaceStyle::Light => egui::Theme::Light,
+            InterfaceStyle::Dark => egui::Theme::Dark,
+        });
         if let Ok(mut h) = self.0.try_borrow_mut() {
             if let Some(s) = raw.safe_area_insets {
                 h.safe_area = s;
@@ -468,7 +499,7 @@ pub fn run() -> eframe::Result {
             lightcraft_ui_egui::i18n::set_language(app.ui.language);
             app.notices.extend(prefs_warning);
             let prefs = PrefsWriter::new(&app, keep_prefs_file);
-            let host = Rc::new(RefCell::new(Host { app, prefs, inbox, background: None, safe_area: Default::default() }));
+            let host = Rc::new(RefCell::new(Host { app, prefs, inbox, background: None, safe_area: Default::default(), style: None }));
             let weak = Rc::downgrade(&host);
             if let Err(e) = lightcraft_ios_host::observe_lifecycle(Box::new(move |event| on_lifecycle(&weak, event))) {
                 log::error!("lifecycle notifications: {e}");
@@ -512,7 +543,7 @@ mod tests {
         let app = LightcraftApp::new(open_session(Some(lib)), Services::default());
         // keep_file: these tests never write the developer's own ui.json
         let prefs = PrefsWriter::new(&app, true);
-        Host { app, prefs, inbox: Inbox::default(), background: None, safe_area: Default::default() }
+        Host { app, prefs, inbox: Inbox::default(), background: None, safe_area: Default::default(), style: None }
     }
 
     /// Backgrounding saves the view and pauses the GPU; coming back resumes it.

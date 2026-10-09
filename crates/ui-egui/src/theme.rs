@@ -39,9 +39,20 @@ pub struct Tokens {
     pub star: Color32,
     pub pick: Color32,
     pub reject: Color32,
+    /// Ratings and flags drawn over a photo (a thumbnail's badges): light in both appearances, as
+    /// the photo under them isn't the page's colour.
+    pub photo_star: Color32,
+    pub photo_pick: Color32,
     /// Cautionary notices (e.g. a raw shown from its embedded preview): a muted amber.
     pub caution: Color32,
     pub mask_overlay: Color32,
+    /// An on / off switch's track when off, and when on (iOS's green).
+    pub switch_off: Color32,
+    pub switch_on: Color32,
+    /// The chosen segment of a segmented control (raised on its track).
+    pub segment_pill: Color32,
+    /// How dark the scrim behind a page or an action sheet gets (alpha of black, 0–255).
+    pub scrim: u8,
     // metrics (points)
     pub top_bar_h: f32,
     pub bottom_bar_h: f32,
@@ -80,9 +91,15 @@ impl Default for Tokens {
             accent: Color32::from_rgb(0x01, 0x65, 0xdd),
             star: Color32::from_rgb(0xd8, 0xd8, 0xd8),
             pick: Color32::from_rgb(0xf0, 0xf0, 0xf0),
+            photo_star: Color32::from_rgb(0xd8, 0xd8, 0xd8),
+            photo_pick: Color32::from_rgb(0xf0, 0xf0, 0xf0),
             reject: Color32::from_rgb(0xe0, 0x4a, 0x4a),
             caution: Color32::from_rgb(0xe3, 0xa8, 0x3c),
             mask_overlay: Color32::from_rgba_unmultiplied(0xe0, 0x20, 0x30, 110),
+            switch_off: Color32::from_rgb(0x39, 0x39, 0x3d),
+            switch_on: Color32::from_rgb(0x30, 0xd1, 0x58),
+            segment_pill: Color32::from_rgb(0x63, 0x63, 0x66),
+            scrim: 150,
             top_bar_h: 42.0,
             bottom_bar_h: 48.0,
             panel_w: 270.0,
@@ -99,6 +116,58 @@ impl Tokens {
     /// Apple's published dark-mode system colours (system blue, grouped backgrounds, separators,
     /// label greys), black behind photos as in Lightroom's mobile app.
     pub fn ios() -> Tokens {
+        Tokens::ios_for(true)
+    }
+
+    /// The phone / tablet look in iOS's light or dark appearance.
+    pub fn ios_for(dark: bool) -> Tokens {
+        if dark { Tokens::ios_dark() } else { Tokens::ios_light() }
+    }
+
+    /// iOS's light appearance: its system colours (`systemBackground` white behind photos and bars,
+    /// `secondarySystemBackground` for sheets and pages, system blue), the same roles as the dark ones.
+    fn ios_light() -> Tokens {
+        let rgb = Color32::from_rgb;
+        Tokens {
+            chrome: rgb(0xf2, 0xf2, 0xf7),
+            canvas: rgb(0xff, 0xff, 0xff),
+            grid_bg: rgb(0xff, 0xff, 0xff),
+            cell: rgb(0xf2, 0xf2, 0xf7),
+            cell_selected: rgb(0xff, 0xff, 0xff),
+            divider: rgb(0xc6, 0xc6, 0xc8),
+            inset: rgb(0xe5, 0xe5, 0xea),
+            field: rgb(0xe5, 0xe5, 0xea),
+            field_border: rgb(0xe5, 0xe5, 0xea),
+            button: rgb(0xe5, 0xe5, 0xea),
+            button_border: rgb(0xe5, 0xe5, 0xea),
+            hover: rgb(0xd1, 0xd1, 0xd6),
+            pressed: rgb(0xc7, 0xc7, 0xcc),
+            tool_active: rgb(0xe5, 0xe5, 0xea),
+            text: rgb(0x00, 0x00, 0x00),
+            text_label: rgb(0x1c, 0x1c, 0x1e),
+            text_dim: rgb(0x8e, 0x8e, 0x93),
+            text_disabled: rgb(0xc7, 0xc7, 0xcc),
+            icon: rgb(0x3c, 0x3c, 0x43),
+            track: rgb(0xd1, 0xd1, 0xd6),
+            thumb: rgb(0xff, 0xff, 0xff),
+            thumb_hover: rgb(0xff, 0xff, 0xff),
+            accent: rgb(0x00, 0x7a, 0xff),
+            star: rgb(0x3c, 0x3c, 0x43),
+            pick: rgb(0x1c, 0x1c, 0x1e),
+            photo_star: rgb(0xe5, 0xe5, 0xea),
+            photo_pick: rgb(0xff, 0xff, 0xff),
+            reject: rgb(0xff, 0x3b, 0x30),
+            caution: rgb(0xff, 0x95, 0x00),
+            switch_off: rgb(0xe5, 0xe5, 0xea),
+            switch_on: rgb(0x34, 0xc7, 0x59),
+            segment_pill: rgb(0xff, 0xff, 0xff),
+            scrim: 90,
+            ..Tokens::default()
+        }
+    }
+
+    /// iOS's dark appearance: Apple's dark-mode system colours.
+    fn ios_dark() -> Tokens {
         let rgb = Color32::from_rgb;
         Tokens {
             chrome: rgb(0x1c, 0x1c, 0x1e),
@@ -126,10 +195,17 @@ impl Tokens {
             accent: rgb(0x0a, 0x84, 0xff),
             star: rgb(0xe5, 0xe5, 0xea),
             pick: rgb(0xff, 0xff, 0xff),
+            photo_star: rgb(0xe5, 0xe5, 0xea),
+            photo_pick: rgb(0xff, 0xff, 0xff),
             reject: rgb(0xff, 0x45, 0x3a),
             caution: rgb(0xff, 0xd6, 0x0a),
             ..Tokens::default()
         }
+    }
+
+    /// Whether the UI is drawn dark now (the compact layout can be light; the desktop's never is).
+    pub fn is_dark(ctx: &egui::Context) -> bool {
+        ctx.data(|d| d.get_temp::<bool>(egui::Id::new("lc-dark"))).unwrap_or(true)
     }
 
     pub fn get(ctx: &egui::Context) -> Tokens {
@@ -198,24 +274,26 @@ fn craft_font_name(f: &lightcraft_engine::CraftFont) -> String {
 }
 
 pub fn apply(ctx: &egui::Context) {
-    apply_tokens(ctx, Tokens::default());
+    apply_tokens(ctx, Tokens::default(), true);
 }
 
-/// The look for the layout in use: iOS's (`Tokens::ios`, larger type, borderless rounded controls,
-/// 44 pt rows) for the compact layout, the desktop's otherwise. Cheap to call every frame: it only
-/// restyles when the layout changes.
-pub fn apply_layout(ctx: &egui::Context, compact: bool) {
-    let id = egui::Id::new("lc-styled-compact");
-    if ctx.data(|d| d.get_temp::<bool>(id)) == Some(compact) {
+/// The look for the layout in use: iOS's (`Tokens::ios_for`, larger type, borderless rounded
+/// controls, 44 pt rows) for the compact layout, in its light or dark appearance, the desktop's
+/// (always dark) otherwise. Cheap to call every frame: it only restyles when the layout or the
+/// appearance changes.
+pub fn apply_layout(ctx: &egui::Context, compact: bool, dark: bool) {
+    let dark = dark || !compact;
+    let id = egui::Id::new("lc-styled");
+    if ctx.data(|d| d.get_temp::<(bool, bool)>(id)) == Some((compact, dark)) {
         return;
     }
-    ctx.data_mut(|d| d.insert_temp(id, compact));
+    ctx.data_mut(|d| d.insert_temp(id, (compact, dark)));
     if !compact {
         apply(ctx);
         return;
     }
-    let t = Tokens::ios();
-    apply_tokens(ctx, t);
+    let t = Tokens::ios_for(dark);
+    apply_tokens(ctx, t, dark);
     ctx.global_style_mut(|s| {
         let v = &mut s.visuals;
         v.window_corner_radius = CornerRadius::same(13);
@@ -243,9 +321,15 @@ pub fn apply_layout(ctx: &egui::Context, compact: bool) {
     });
 }
 
-fn apply_tokens(ctx: &egui::Context, t: Tokens) {
+fn apply_tokens(ctx: &egui::Context, t: Tokens, dark: bool) {
+    // egui keeps one style per theme and switches by itself when the system's changes. Ours are
+    // set on the one in use, whichever look they give it, so egui is pinned to it (else a change of
+    // the system's theme would swap in egui's own, unstyled, other style under a light or dark
+    // appearance the user chose).
+    ctx.set_theme(egui::ThemePreference::Dark);
     ctx.data_mut(|d| d.insert_temp(egui::Id::NULL, t));
-    let mut v = Visuals::dark();
+    ctx.data_mut(|d| d.insert_temp(egui::Id::new("lc-dark"), dark));
+    let mut v = if dark { Visuals::dark() } else { Visuals::light() };
     v.panel_fill = t.chrome;
     v.window_fill = t.chrome;
     v.extreme_bg_color = t.field;
