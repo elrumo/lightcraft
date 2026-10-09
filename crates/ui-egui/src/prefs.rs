@@ -31,7 +31,7 @@ pub fn load_prefs_at(path: &std::path::Path) -> (Option<UiState>, Option<String>
     match serde_json::from_slice::<UiState>(&bytes) {
         Ok(ui) => (Some(ui.sanitized()), None, false),
         Err(e) => {
-            let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+            let secs = web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
             let keep = path.with_file_name(format!("ui.json.corrupt-{secs}"));
             let kept = std::fs::rename(path, &keep);
             let what = match &kept {

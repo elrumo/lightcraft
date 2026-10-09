@@ -33,7 +33,7 @@ pub fn install_hook(log: PathBuf) {
     panic::set_hook(Box::new(move |info| {
         default(info);
         let at = info.location().map(|l| format!("{}:{}", l.file(), l.line())).unwrap_or_default();
-        let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        let secs = web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
         let thread = std::thread::current().name().unwrap_or("unnamed").to_string();
         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&log) {
             let _ = writeln!(f, "{secs} [{thread}] panic at {at}: {}", panic_message(info.payload()));
