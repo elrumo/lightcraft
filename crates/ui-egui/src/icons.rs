@@ -96,6 +96,8 @@ pub enum Icon {
     Lens,
     /// Automatic settings: a wand with sparks.
     Wand,
+    /// Save to the device: an arrow going down into a tray.
+    Download,
 }
 
 struct Pen<'a> {
@@ -469,6 +471,11 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
             pen.line(&[(12.5, 4.5), (16.5, 4.5)]);
             pen.dot(7.0, 5.0, 0.9);
             pen.dot(16.0, 11.0, 0.9);
+        }
+        Download => {
+            pen.line(&[(4.0, 12.0), (4.0, 17.0), (16.0, 17.0), (16.0, 12.0)]);
+            pen.line(&[(10.0, 2.5), (10.0, 12.5)]);
+            pen.line(&[(6.5, 9.0), (10.0, 12.5), (13.5, 9.0)]);
         }
         Picker => {
             pen.line(&[(4.0, 16.0), (11.5, 8.5)]);

@@ -94,6 +94,69 @@ fn bar_button(ui: &mut egui::Ui, id: &str, label: &str, at: egui::Pos2, align: A
     resp.clicked()
 }
 
+/// What a page's bar holds at either end.
+#[derive(Clone, Copy, Debug)]
+pub enum Item<'a> {
+    None,
+    /// A text button; `true`: it can be tapped. A leading "‹" makes it a back button.
+    Text(&'a str, bool),
+    /// The page's action, in bold.
+    Strong(&'a str, bool),
+    /// An icon button (what a screen reader calls it; `true`: tinted with the accent colour).
+    Icon(Icon, &'a str, bool),
+    /// A text in an outlined capsule: a choice that applies to the page (Select All).
+    Pill(&'a str),
+}
+
+/// A page's bar: its title, what is at each end, and the widget ids of those two (`button:<id>`).
+#[derive(Clone, Copy, Debug)]
+pub struct PageBar<'a> {
+    pub title: &'a str,
+    pub left: Item<'a>,
+    pub right: Item<'a>,
+    pub left_id: &'a str,
+    pub right_id: &'a str,
+}
+
+/// One end of a page's bar, `align`ed to `at`; true when tapped.
+fn bar_item(ui: &mut egui::Ui, id: &str, item: Item, at: egui::Pos2, align: Align2) -> bool {
+    let t = Tokens::get(ui.ctx());
+    let left_of = |w: f32| if align == Align2::LEFT_CENTER { at.x } else { at.x - w };
+    match item {
+        Item::None => false,
+        Item::Text(label, enabled) => bar_button(ui, id, label, at, align, false, enabled),
+        Item::Strong(label, enabled) => bar_button(ui, id, label, at, align, true, enabled),
+        Item::Icon(icon, tip, accent) => {
+            let size = vec2(48.0, ROW_H);
+            let r = Rect::from_min_size(pos2(left_of(size.x), at.y - size.y / 2.0), size);
+            let resp = ui.interact(r, Id::new(("lc-bar", id)), Sense::click());
+            resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, crate::i18n::tr(tip)));
+            crate::widgets::register(ui.ctx(), format!("button:{id}"), r);
+            let ink = if accent { t.accent } else { t.text };
+            let color = if resp.is_pointer_button_down_on() { ink.gamma_multiply(0.6) } else { ink };
+            crate::icons::paint(ui.painter(), Rect::from_center_size(r.center(), vec2(22.0, 22.0)), icon, color);
+            resp.clicked()
+        }
+        Item::Pill(label) => {
+            let label = crate::i18n::tr(label);
+            let galley = ui.painter().layout_no_wrap(label.to_string(), t.font(15.0), t.text);
+            let size = vec2(galley.size().x + 28.0, 34.0);
+            let r = Rect::from_min_size(pos2(left_of(size.x + 12.0) + 6.0, at.y - size.y / 2.0), size);
+            let hit = r.expand2(vec2(6.0, (ROW_H - size.y) / 2.0));
+            let resp = ui.interact(hit, Id::new(("lc-bar", id)), Sense::click());
+            resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+            crate::widgets::register(ui.ctx(), format!("button:{id}"), hit);
+            let p = ui.painter();
+            if resp.is_pointer_button_down_on() {
+                p.rect_filled(r, size.y / 2.0, t.hover);
+            }
+            p.rect_stroke(r, size.y / 2.0, Stroke::new(1.0, t.text_disabled), egui::StrokeKind::Inside);
+            p.galley(r.center() - galley.size() / 2.0, galley, t.text);
+            resp.clicked()
+        }
+    }
+}
+
 /// A page covering the screen, sliding up from the bottom, as a phone shows dialogs and lists: a
 /// bar with `cancel` on the left, `title` in the middle and the `ok` action (if any) on the right,
 /// then `body`, which scrolls. It stays above the on-screen keyboard (the host counts the keyboard
@@ -102,6 +165,20 @@ fn bar_button(ui: &mut egui::Ui, id: &str, label: &str, at: egui::Pos2, align: A
 /// When `open` goes false the page slides back down, still drawn from `body` (so the caller keeps
 /// what it showed until `gone`) with a deaf bar; call it every frame, or [`hidden`].
 pub fn page(ctx: &egui::Context, id: &str, title: &str, cancel: &str, ok: Option<(&str, bool)>, open: bool, body: impl FnOnce(&mut egui::Ui)) -> Bar {
+    let bar = PageBar {
+        title,
+        left: if cancel.is_empty() { Item::None } else { Item::Text(cancel, true) },
+        right: ok.map_or(Item::None, |(label, enabled)| Item::Strong(label, enabled)),
+        left_id: "sheetCancel",
+        right_id: "sheetOk",
+    };
+    page_with(ctx, id, bar, open, body)
+}
+
+/// [`page`] with a bar of its own: icons or a capsule at its ends, and their widget ids. A tap on
+/// the left one is `Bar::cancel`, on the right one `Bar::ok`. Pages stack: one shown after another
+/// is drawn over it.
+pub fn page_with(ctx: &egui::Context, id: &str, bar_spec: PageBar, open: bool, body: impl FnOnce(&mut egui::Ui)) -> Bar {
     let t = Tokens::get(ctx);
     let sid = Id::new(("lc-sheet", id));
     let p = slide(ctx, sid, open);
@@ -128,12 +205,10 @@ pub fn page(ctx: &egui::Context, id: &str, title: &str, cancel: &str, ok: Option
         crate::widgets::register(ctx, "dialog:window", full);
         ui.painter().rect_filled(full, CornerRadius { nw: 12, ne: 12, sw: 0, se: 0 }, t.chrome);
         let bar_r = Rect::from_min_size(full.min, vec2(w, ROW_H));
-        let galley = ui.painter().layout(crate::i18n::tr(title).to_string(), t.semibold(17.0), t.text, (w - 200.0).max(80.0));
+        let galley = ui.painter().layout(crate::i18n::tr(bar_spec.title).to_string(), t.semibold(17.0), t.text, (w - 200.0).max(80.0));
         ui.painter().galley(bar_r.center() - galley.size() / 2.0, galley, t.text);
-        bar.cancel = bar_button(ui, "sheetCancel", cancel, bar_r.left_center() + vec2(4.0, 0.0), Align2::LEFT_CENTER, false, true);
-        if let Some((label, enabled)) = ok {
-            bar.ok = bar_button(ui, "sheetOk", label, bar_r.right_center() - vec2(4.0, 0.0), Align2::RIGHT_CENTER, true, enabled);
-        }
+        bar.cancel = bar_item(ui, bar_spec.left_id, bar_spec.left, bar_r.left_center() + vec2(4.0, 0.0), Align2::LEFT_CENTER);
+        bar.ok = bar_item(ui, bar_spec.right_id, bar_spec.right, bar_r.right_center() - vec2(4.0, 0.0), Align2::RIGHT_CENTER);
         if !open {
             // (sliding out: its bar's buttons are deaf)
             bar = Bar::default();

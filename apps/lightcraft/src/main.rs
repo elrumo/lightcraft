@@ -240,6 +240,7 @@ fn services() -> Services {
         // self-hosted sync: each request on a worker thread
         sync_exec: Some(lightcraft_ui_egui::sync_ui::native_exec()),
         share_exports: None,
+        save_to_photos: None,
         host_pick: None,
         // the system clipboard reaches text fields directly; no haptics
         haptic: None,

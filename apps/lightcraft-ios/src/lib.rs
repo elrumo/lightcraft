@@ -17,7 +17,7 @@ use lightcraft_engine::Session;
 use lightcraft_ios_host::{BackgroundTask, InterfaceStyle, Lifecycle, PickKind, Picked};
 use lightcraft_ui_egui::haptics::Haptic;
 use lightcraft_ui_egui::prefs::PrefsWriter;
-use lightcraft_ui_egui::{LightcraftApp, PickSource, Services, ShareExports};
+use lightcraft_ui_egui::{LightcraftApp, PickSource, SaveDone, Services, ShareExports};
 use serde_json::json;
 
 /// Picks the pickers delivered (from any thread), joined to the app on the next frame.
@@ -357,6 +357,7 @@ fn imageio_decode(bytes: &[u8], max: Option<(u32, u32)>) -> Result<lightcraft_co
 /// exports through the share sheet, sync requests on worker threads (pure-Rust TLS, Mozilla roots).
 fn services(ctx: egui::Context, inbox: Inbox, tmp: &Path) -> Services {
     let (import_dir, export_dir) = staging(tmp);
+    let repaint = ctx.clone();
     let pick: Rc<dyn Fn(PickSource) -> Result<(), String>> = Rc::new(move |source| {
         let (inbox, ctx) = (inbox.clone(), ctx.clone());
         let deliver = Box::new(move |p: Picked| {
@@ -384,6 +385,18 @@ fn services(ctx: egui::Context, inbox: Inbox, tmp: &Path) -> Services {
                 }
             }),
         }),
+        // Save to Photos (the share sheet's row, the photo's top bar): PhotoKit, add-only access
+        save_to_photos: Some(Box::new(move |files: &[String], done: SaveDone| {
+            let paths: Vec<PathBuf> = files.iter().map(PathBuf::from).collect();
+            let repaint = repaint.clone();
+            lightcraft_ios_host::save_to_photos(
+                &paths,
+                Box::new(move |result| {
+                    done(result);
+                    repaint.request_repaint();
+                }),
+            );
+        })),
         write: Some(Box::new(lightcraft_engine::export::write_file)),
         write_shared: Some(Arc::new(lightcraft_engine::export::write_file)),
         png: Some(Box::new(|img: &lightcraft_raster::Rgba8| {

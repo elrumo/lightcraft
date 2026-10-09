@@ -184,6 +184,7 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("dialog.captureTime", "Edit Capture Time…", None, "Photo"),
     ("photo.tagFromTracklog", "Auto-Tag from Tracklog…", None, "Photo"),
     ("app.exportPrevious", "Export with Previous", Some("Cmd+Alt+Shift+E"), "File"),
+    ("app.saveToPhotos", "Save to Photos", None, "File"),
 ];
 
 fn panel(app: &mut LightcraftApp, ctx: &egui::Context, p: RightPanel, name: &str) {
@@ -902,7 +903,21 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             // no previous export: 2048 px long edge; a previous full-size export: full size
             let full_size = opts.resize.is_none() && lightcraft_engine::export::ExportOptions::has_size_param(&prev);
             let resize = opts.resize.unwrap_or_default();
-            app.ui.dialog = Some(Dialog::Export { opts, full_size, resize, preset_name: String::new(), limit_kb: u("limitKb", 0) as u32, dir });
+            // a phone starts at the share sheet (where the host has one) with the photos to export chosen
+            let page = if crate::panels::export::has_sheet(app) { crate::state::ExportPage::Share } else { crate::state::ExportPage::Options };
+            let ids = if app.compact { crate::panels::export::initial_ids(app) } else { Vec::new() };
+            app.ui.dialog = Some(Dialog::Export {
+                opts,
+                full_size,
+                resize,
+                preset_name: String::new(),
+                limit_kb: u("limitKb", 0) as u32,
+                dir,
+                ids,
+                page,
+                then: crate::state::ExportThen::Share,
+                centered: false,
+            });
             Ok(Value::Null)
         }
         "merge.hdrLast" => crate::merge::start_last(app, "merge.hdr"),
@@ -1301,6 +1316,19 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             Some(prev) => crate::control::export_active(app, &prev),
             None => Err("nothing exported yet — use Export…".into()),
         },
+        "app.saveToPhotos" => {
+            // the last export's settings (else 2048 px JPEGs) and photos: the call's own `ids` / `preset` / … win
+            let mut params = match app.session.last_export.clone() {
+                Some(prev) if p.get("preset").is_none() => prev,
+                _ => lightcraft_engine::export::ExportOptions { resize: Some(Default::default()), ..Default::default() }.to_json(),
+            };
+            if let (Some(own), Some(extra)) = (params.as_object_mut(), p.as_object()) {
+                own.extend(extra.iter().map(|(k, v)| (k.clone(), v.clone())));
+            }
+            params["sendTo"] = json!("photos");
+            params["background"] = json!(true);
+            crate::control::export_active(app, &params)
+        }
         _ => return None,
     };
     Some(r)
@@ -1314,6 +1342,7 @@ pub fn ui_enabled(app: &LightcraftApp, id: &str) -> bool {
         }
         "photo.tagFromTracklog" => app.session.active().is_some() && app.services.pick_tracklog.is_some(),
         "app.exportPrevious" => app.session.active().is_some() && app.session.last_export.is_some(),
+        "app.saveToPhotos" => app.session.active().is_some() && app.services.save_to_photos.is_some(),
         "dialog.pasteSettings" => app.session.active().is_some() && app.session.clipboard.is_some(),
         "app.showInFinder" => {
             app.services.reveal.is_some()

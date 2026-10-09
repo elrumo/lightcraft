@@ -9,7 +9,7 @@
     <!-- sync with a LightCraft server on the home network (docs/sync.md); iOS asks once -->
     <key>NSLocalNetworkUsageDescription</key>
     <string>LightCraft syncs your library with your own LightCraft server, which can be on this network.</string>
-    <!-- Save Image in the share sheet (exports); importing uses the Photos picker, which needs no access -->
+    <!-- Save to Photos and Save Image in the share sheet (exports); importing uses the Photos picker, which needs no access -->
     <key>NSPhotoLibraryAddUsageDescription</key>
     <string>LightCraft saves the photos you export to your photo library.</string>
     <!-- iOS 27 traps apps without the scene lifecycle; winit has none, see Sources/LightCraftHost/SceneDelegate.m -->

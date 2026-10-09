@@ -87,6 +87,7 @@ const LAYOUT: &[(&str, &[&str])] = &[
             "---",
             "dialog.export",
             "app.exportPrevious",
+            "app.saveToPhotos",
             "@Export with Preset",
             "---",
             "library.toggleAutoWriteXmp",
@@ -279,6 +280,8 @@ fn host_supports(app: &LightcraftApp, id: &str) -> bool {
     match id {
         "file.backupLibrary" => app.services.backup_library.is_some(),
         "file.restoreLibrary" => app.services.restore_library.is_some(),
+        // iOS: the photo library
+        "app.saveToPhotos" => app.services.save_to_photos.is_some(),
         // the host's own pickers replace the desktop's file and folder dialogs (iOS)
         "file.importFromPhotos" | "file.importFromFiles" | "file.importFolderFromFiles" => app.services.host_pick.is_some(),
         "file.addPhotos" | "file.addFolder" | "@Import from Device" => app.services.host_pick.is_none(),

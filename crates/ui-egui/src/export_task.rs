@@ -15,6 +15,7 @@ use lightcraft_engine::export::{Destination, ExportOptions, PreparedExport, run_
 use serde_json::{Value, json};
 
 use crate::LightcraftApp;
+use crate::control::SendTo;
 use crate::theme::Tokens;
 
 pub struct ExportTask {
@@ -22,6 +23,8 @@ pub struct ExportTask {
     /// Photos started so far and the file in progress.
     pub progress: Arc<Mutex<(usize, String)>>,
     pub cancel: Arc<AtomicBool>,
+    /// Where the files go once they are written.
+    pub send: SendTo,
     rx: Receiver<Result<Vec<Value>, String>>,
 }
 
@@ -34,7 +37,7 @@ impl ExportTask {
 }
 
 /// Start exporting `items` in the background. Errors per photo are collected, not fatal.
-pub fn start(app: &mut LightcraftApp, items: Vec<PreparedExport>, opts: ExportOptions, to: Destination) -> Result<Value, String> {
+pub fn start(app: &mut LightcraftApp, items: Vec<PreparedExport>, opts: ExportOptions, to: Destination, send: SendTo) -> Result<Value, String> {
     if app.export.is_some() {
         return Err("an export is already running".into());
     }
@@ -58,17 +61,25 @@ pub fn start(app: &mut LightcraftApp, items: Vec<PreparedExport>, opts: ExportOp
     std::thread::Builder::new().name("export".into()).spawn(work).map_err(|e| e.to_string())?;
     #[cfg(target_arch = "wasm32")]
     work();
-    app.export = Some(ExportTask { total, progress, cancel, rx });
+    app.export = Some(ExportTask { total, progress, cancel, send, rx });
     Ok(json!({"background": true, "total": total}))
 }
 
 /// Per frame: draw the progress panel; when the batch finishes, report it.
 pub fn poll(app: &mut LightcraftApp, ctx: &egui::Context) {
+    // saves to the photo library finish on the host's own thread
+    let saved = std::mem::take(&mut *app.saved.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
+    for r in saved {
+        match r {
+            Ok(n) => app.toast(ctx, crate::i18n::tr_format!("Saved {n} photo{} to Photos", if n == 1 { "" } else { "s" }, n = n)),
+            Err(e) => app.toast_error(ctx, e),
+        }
+    }
     let Some(task) = &app.export else { return };
     match task.rx.try_recv() {
         Ok(r) => {
             let cancelled = task.cancel.load(Ordering::Relaxed);
-            let total = task.total;
+            let (total, send) = (task.total, task.send);
             app.export = None;
             let msg = match r {
                 Ok(files) => {
@@ -86,8 +97,12 @@ pub fn poll(app: &mut LightcraftApp, ctx: &egui::Context) {
                     if cancelled {
                         m += " · cancelled";
                     }
-                    crate::control::share_exported(app, &files);
+                    crate::control::deliver(app, &files, send);
                     app.last_export_result = Some(json!({"files": files, "cancelled": cancelled}));
+                    // (a save says how it went when it is done; nothing to add if it is going well)
+                    if send == SendTo::Photos && ok > 0 && failed.is_empty() && !cancelled {
+                        return;
+                    }
                     m
                 }
                 Err(e) => e,
@@ -97,6 +112,13 @@ pub fn poll(app: &mut LightcraftApp, ctx: &egui::Context) {
         Err(std::sync::mpsc::TryRecvError::Empty) => {
             let (done, current) = task.progress.lock().map(|g| g.clone()).unwrap_or_default();
             let (total, cancel) = (task.total, task.cancel.clone());
+            if app.compact {
+                if crate::panels::export::progress(ctx, done, total, &current, cancel.load(Ordering::Relaxed)) {
+                    cancel.store(true, Ordering::Relaxed);
+                }
+                ctx.request_repaint_after(std::time::Duration::from_millis(100));
+                return;
+            }
             let t = Tokens::get(ctx);
             egui::Window::new(crate::i18n::tr("Exporting"))
                 .title_bar(false)

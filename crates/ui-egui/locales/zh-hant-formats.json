@@ -65,6 +65,7 @@
   "Reset {name}": "重設{name}",
   "Reset {} Channel": "重設 {} 通道",
   "Saved export preset “{}”": "已儲存匯出預設集「{}」",
+  "Saved {n} photo{} to Photos": "已將 {n} 張照片儲存到「照片」{:.0}",
   "Show {hidden} hidden location{}": "顯示 {hidden} 個隱藏的位置{:.0}",
   "Showing {n} of {}": "顯示 {n}／{} 張",
   "Smart album: {}": "智慧型相簿：{}",

@@ -147,12 +147,20 @@ fn exports_go_to_the_share_sheet() {
     let last = app.session.last_export.clone().unwrap();
     assert!(last.get("dir").is_none(), "{last}");
 
-    // the dialog: no folder field, a line about the share sheet
+    // the dialog starts at the share sheet; the options have no folder field, just a line about it
     let mut h = Headless::new(app, [390.0, 844.0], 1.0);
     h.settle(SETTLE);
     let r = h.request("engine.execute", json!({"command": "dialog.export", "params": {}}), T);
     assert_eq!(r["ok"], true, "{r}");
     h.settle(SETTLE);
+    assert!(has(&h, "button:shareShare") && has(&h, "button:shareExportAs"));
+    for id in ["button:shareExportAs", "button:exportMore"] {
+        let r = h.request("ui.clickWidget", json!({"id": id}), T);
+        assert_eq!(r["ok"], true, "{id}: {r}");
+        for _ in 0..40 {
+            h.step();
+        }
+    }
     assert!(has(&h, "label:exportShareHelp"));
     assert!(!has(&h, "button:exportChooseFolder"));
     // a background export, and another one asked for meanwhile: refused before it could empty
