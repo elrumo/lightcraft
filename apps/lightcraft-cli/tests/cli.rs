@@ -154,8 +154,11 @@ fn snapshot_subcommand_renders_the_ui_headlessly() {
     std::fs::write(
         &script,
         format!(
-            "# comment\n{}\n{}\n{}\n{}\n",
+            "# comment\n{}\n{}\n{}\n{}\n{}\n",
             json!({"method": "ui.set", "params": {"view": "photoGrid"}}),
+            // thumbnails render in the background: wait for them, or the grid is darker than the
+            // dimmed shot below and the comparison depends on how busy the machine is
+            json!({"method": "ui.settle"}),
             json!({"method": "ui.screenshot"}),
             json!({"method": "engine.execute", "params": {"command": "dialog.export"}}),
             json!({"method": "ui.screenshot", "params": {"path": b.to_str().unwrap()}}),
@@ -168,7 +171,7 @@ fn snapshot_subcommand_renders_the_ui_headlessly() {
         .unwrap();
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     let replies: Vec<Value> = String::from_utf8_lossy(&o.stdout).lines().map(|l| serde_json::from_str(l).unwrap()).collect();
-    assert_eq!(replies.len(), 4);
+    assert_eq!(replies.len(), 5);
     assert!(replies.iter().all(|r| r["ok"] == true), "{replies:?}");
     for (p, dimmed) in [(&a, false), (&b, true)] {
         let d = lightcraft_codecs::decode(&std::fs::read(p).unwrap(), Default::default()).unwrap();
