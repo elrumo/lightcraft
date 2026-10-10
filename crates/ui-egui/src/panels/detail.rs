@@ -1639,6 +1639,22 @@ fn mask_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respons
             }
         }
     }
+    // Color Range: a click samples the colour under it for the selected mask; ⇧-click adds (up to 5)
+    if app.ui.tool == "colorRange" {
+        if resp.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
+        }
+        if resp.clicked()
+            && let Some(q) = resp.interact_pointer_pos()
+        {
+            let n = map.norm(q);
+            let add = ui.input(|i| i.modifiers.shift);
+            if let Err(e) = app.run("mask.sampleColor", json!({"x": n.x, "y": n.y, "add": add})) {
+                app.toast(ui.ctx(), e);
+            }
+        }
+        return;
+    }
     // Object tool: a click includes what's under it, ⌥-click leaves it out
     if app.ui.tool == "object" {
         if resp.hovered() {
@@ -1658,6 +1674,30 @@ fn mask_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respons
                 Err(e) => app.ai_error(ui.ctx(), e, Some(("object", "new"))),
             }
         }
+        return;
+    }
+    // the grip under the pointer: the selected mask's first, then the nearest
+    let reach = if app.compact { TOUCH_HANDLE_REACH } else { 10.0 };
+    let hit = |q: Pos2| {
+        grips
+            .iter()
+            .filter(|g| g.3.distance(q) < reach)
+            .min_by(|a, b| {
+                (Some(a.0) != active, a.3.distance(q)).partial_cmp(&(Some(b.0) != active, b.3.distance(q))).unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .copied()
+    };
+    // a phone: tapping a pin selects its mask and opens its options (also while painting)
+    if app.compact
+        && resp.clicked()
+        && let Some(q) = resp.interact_pointer_pos()
+        && let Some((mid, _, 0, at)) = hit(q)
+    {
+        if Some(mid) != active {
+            let _ = app.run("mask.select", json!({"id": mid}));
+        }
+        app.gesture = None;
+        super::mobile::open_menu(ui.ctx(), "maskPin", Rect::from_center_size(at, vec2(28.0, 28.0)));
         return;
     }
     // brush tool
@@ -1698,17 +1738,6 @@ fn mask_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respons
         }
         return;
     }
-    // the grip under the pointer: the selected mask's first, then the nearest
-    let reach = if app.compact { TOUCH_HANDLE_REACH } else { 10.0 };
-    let hit = |q: Pos2| {
-        grips
-            .iter()
-            .filter(|g| g.3.distance(q) < reach)
-            .min_by(|a, b| {
-                (Some(a.0) != active, a.3.distance(q)).partial_cmp(&(Some(b.0) != active, b.3.distance(q))).unwrap_or(std::cmp::Ordering::Equal)
-            })
-            .copied()
-    };
     if resp.clicked()
         && let Some(q) = resp.interact_pointer_pos()
         && let Some((mid, ..)) = hit(q)
@@ -1855,9 +1884,13 @@ fn remove_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respo
         return;
     }
     if resp.clicked()
-        && let Some((spot, ..)) = press.and_then(hit)
+        && let Some((spot, _, at, _)) = press.and_then(hit)
     {
         let _ = app.run("spot.select", json!({"index": spot}));
+        // a phone: the spot's options (its tool, a new source, delete) by its pin
+        if app.compact {
+            super::mobile::open_menu(ui.ctx(), "spotPin", Rect::from_center_size(at, vec2(28.0, 28.0)));
+        }
         return;
     }
     if let Some(q) = resp.interact_pointer_pos()

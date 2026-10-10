@@ -84,11 +84,15 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let tool = !app.ui.tool.is_empty() || matches!(app.ui.right, RightPanel::Crop | RightPanel::Masking | RightPanel::Remove | RightPanel::RedEye);
     app.ui.review &= detail && !tool;
     let bars = !app.ui.review;
-    // the Crop tool has a screen of its own in place of the bars and the sheet
-    let crop = super::crop_mobile::open(app);
-    super::crop_mobile::track(app, crop);
+    // Crop, Remove and Masking have a screen of their own in place of the bars and the sheet
+    let (crop, remove, masking) = (super::crop_mobile::open(app), super::remove_mobile::open(app), super::mask_mobile::open(app));
+    track_screen(app, crop || remove || masking);
     if crop {
         super::crop_mobile::show(app, ui, &t, landscape);
+    } else if remove {
+        super::remove_mobile::show(app, ui, &t, landscape);
+    } else if masking {
+        super::mask_mobile::show(app, ui, &t, landscape);
     } else {
         top_bar(app, ui, &t, bars);
         // the bars below are called every frame, shown or not, so that they slide in and out
@@ -108,6 +112,9 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             .show(ui, |ui| super::left::body(app, ui));
     }
     content(app, ui, bg);
+    if masking {
+        super::mask_mobile::floating(app, &ctx);
+    }
     albums(app, &ctx, albums_page);
     if !albums_page && !app.ui.select_mode {
         add_button(app, &ctx, &t);
@@ -117,6 +124,29 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     mobile::all_commands_page(app, &ctx);
     mobile::edit_menu(app, &ctx);
     mobile::stack_behind(&ctx, ui.layer_id(), backdrop);
+}
+
+/// Called every frame with whether a tool's screen (Crop, Remove, Masking) is open: remembers where
+/// the undo stack stood when it opened (and starts Crop on its Aspect tab).
+fn track_screen(app: &mut LightcraftApp, open: bool) {
+    match (open, app.ui.screen_undo_base) {
+        (true, None) => {
+            app.ui.screen_undo_base = Some(app.session.undo.len());
+            app.ui.crop_geometry = false;
+        }
+        (false, Some(_)) => app.ui.screen_undo_base = None,
+        _ => {}
+    }
+}
+
+/// A tool screen's ✕: undo every step taken since it opened, then back to Edit.
+pub(super) fn cancel_screen(app: &mut LightcraftApp) {
+    let _ = app.session.end_interaction();
+    let base = app.ui.screen_undo_base.unwrap_or(app.session.undo.len());
+    while app.session.undo.len() > base && app.run("edit.undo", json!({})).is_ok() {}
+    app.ui.tool.clear();
+    app.gesture = None;
+    app.ui.right = RightPanel::Edit;
 }
 
 /// The albums list (My Photos) as a page; choosing one closes it.
@@ -174,6 +204,8 @@ fn menus(app: &mut LightcraftApp, ctx: &egui::Context) {
         }
     });
     super::crop_mobile::menus(app, ctx);
+    super::remove_mobile::menus(app, ctx);
+    super::mask_mobile::menus(app, ctx);
     mobile::actions(ctx, "more", None, |ui| grid_more(app, ui));
     mobile::actions(ctx, "sort", Some("Sort"), |ui| sort_items(app, ui));
     mobile::actions(ctx, "photoMore", None, |ui| photo_more(app, ui));

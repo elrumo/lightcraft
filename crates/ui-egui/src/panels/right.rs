@@ -262,21 +262,14 @@ fn remove(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     let d = app.session.develop_of(id).unwrap_or_default();
     tool_header(ui, "Remove");
     padded(ui, |ui| {
-        let modes = [("Remove", "remove"), ("Heal", "heal"), ("Clone", "clone")];
-        if app.compact {
-            let active = modes.iter().position(|(_, tool)| app.ui.tool == *tool);
-            if let Some(i) = crate::widgets::segmented(ui, "removeMode", &modes, active, 3) {
-                app.ui.tool = modes[i].1.into();
-            }
-        } else {
-            ui.horizontal_wrapped(|ui| {
-                for (label, tool) in modes {
-                    if text_button(ui, &format!("removeMode-{tool}"), label, app.ui.tool == tool).clicked() {
-                        app.ui.tool = tool.into();
-                    }
+        // (a phone has its own Remove screen: `remove_mobile`)
+        ui.horizontal_wrapped(|ui| {
+            for (label, tool) in [("Remove", "remove"), ("Heal", "heal"), ("Clone", "clone")] {
+                if text_button(ui, &format!("removeMode-{tool}"), label, app.ui.tool == tool).clicked() {
+                    app.ui.tool = tool.into();
                 }
-            });
-        }
+            }
+        });
         ui.add_space(8.0);
         ui.label(crate::i18n::tr_format!("{} spot(s) on this photo", d.spots.len()));
         ui.add_space(4.0);
@@ -303,47 +296,12 @@ fn remove(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         ui.label(egui::RichText::new(crate::i18n::tr("Paint over a distraction on the photo to remove it.")).color(Tokens::get(ui.ctx()).text_dim));
     });
     // brush settings; with a spot selected they edit that spot too
-    let sel = app.session.active_spot.and_then(|i| d.spots.get(i).map(|sp| (i, sp.clone())));
-    if let Some((i, sp)) = &sel {
-        (app.ui.remove_size, app.ui.remove_feather, app.ui.remove_opacity) = (sp.size as f32, sp.feather as f32, sp.opacity as f32);
+    let sel = app.session.active_spot.and_then(|i| d.spots.get(i).map(|sp| (i, sp.mode)));
+    if let Some((i, mode)) = sel {
         divider(ui);
-        let mode = match sp.mode {
-            lightcraft_develop::SpotMode::Heal => "Heal",
-            lightcraft_develop::SpotMode::Clone => "Clone",
-            lightcraft_develop::SpotMode::Remove => "Remove",
-        };
-        super::edit::sub_title(ui, &crate::i18n::tr_format!("{mode} spot {} of {}", i + 1, d.spots.len(), mode = mode));
+        super::edit::sub_title(ui, &crate::i18n::tr_format!("{mode} spot {} of {}", i + 1, d.spots.len(), mode = spot_mode_name(mode)));
     }
-    let plain = |id: &'static str, label: &'static str, min: f64, max: f64, default: f64| lightcraft_develop::ControlSpec {
-        id,
-        label,
-        section: lightcraft_develop::Section::Detail,
-        min,
-        max,
-        default,
-        step: 1.0,
-        decimals: 0,
-        track: lightcraft_develop::Track::Plain,
-    };
-    let sliders = [
-        (plain("ui.removeSize", "Size", 1.0, 250.0, 20.0), "size", (app.ui.remove_size * 1000.0) as f64),
-        (plain("ui.removeFeather", "Feather", 0.0, 100.0, 50.0), "feather", app.ui.remove_feather as f64),
-        (plain("ui.removeOpacity", "Opacity", 0.0, 100.0, 100.0), "opacity", app.ui.remove_opacity as f64),
-    ];
-    for (spec, key, v) in sliders {
-        let out = slider(ui, &spec, v, true, None);
-        let scale = if key == "size" { 1000.0 } else { 1.0 };
-        if let Some(v) = out.value {
-            match key {
-                "size" => app.ui.remove_size = (v / scale) as f32,
-                "feather" => app.ui.remove_feather = v as f32,
-                _ => app.ui.remove_opacity = v as f32,
-            }
-        }
-        if sel.is_some() {
-            super::edit::apply_slider_out(app, &spec, out, |app, v| app.run("spot.update", json!({key: v / scale})));
-        }
-    }
+    spot_sliders(app, ui, &d, &["size", "feather", "opacity"]);
     if sel.is_some() {
         padded(ui, |ui| {
             ui.horizontal(|ui| {
@@ -385,6 +343,55 @@ fn remove(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             }
         }
     });
+}
+
+/// A spot tool's name.
+pub(super) fn spot_mode_name(mode: lightcraft_develop::SpotMode) -> &'static str {
+    match mode {
+        lightcraft_develop::SpotMode::Heal => "Heal",
+        lightcraft_develop::SpotMode::Clone => "Clone",
+        lightcraft_develop::SpotMode::Remove => "Remove",
+    }
+}
+
+/// The Remove tool's brush sliders (`keys` of size, feather, opacity): for the next spot painted,
+/// and the selected spot's own while one is selected.
+pub(super) fn spot_sliders(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &lightcraft_develop::DevelopSettings, keys: &[&str]) {
+    let sel = app.session.active_spot.and_then(|i| d.spots.get(i));
+    if let Some(sp) = sel {
+        (app.ui.remove_size, app.ui.remove_feather, app.ui.remove_opacity) = (sp.size as f32, sp.feather as f32, sp.opacity as f32);
+    }
+    let editing = sel.is_some();
+    let plain = |id: &'static str, label: &'static str, min: f64, max: f64, default: f64| lightcraft_develop::ControlSpec {
+        id,
+        label,
+        section: lightcraft_develop::Section::Detail,
+        min,
+        max,
+        default,
+        step: 1.0,
+        decimals: 0,
+        track: lightcraft_develop::Track::Plain,
+    };
+    let sliders = [
+        (plain("ui.removeSize", "Size", 1.0, 250.0, 20.0), "size", (app.ui.remove_size * 1000.0) as f64),
+        (plain("ui.removeFeather", "Feather", 0.0, 100.0, 50.0), "feather", app.ui.remove_feather as f64),
+        (plain("ui.removeOpacity", "Opacity", 0.0, 100.0, 100.0), "opacity", app.ui.remove_opacity as f64),
+    ];
+    for (spec, key, v) in sliders.into_iter().filter(|(_, key, _)| keys.contains(key)) {
+        let out = slider(ui, &spec, v, true, None);
+        let scale = if key == "size" { 1000.0 } else { 1.0 };
+        if let Some(v) = out.value {
+            match key {
+                "size" => app.ui.remove_size = (v / scale) as f32,
+                "feather" => app.ui.remove_feather = v as f32,
+                _ => app.ui.remove_opacity = v as f32,
+            }
+        }
+        if editing {
+            super::edit::apply_slider_out(app, &spec, out, |app, v| app.run("spot.update", json!({key: v / scale})));
+        }
+    }
 }
 
 fn red_eye(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {

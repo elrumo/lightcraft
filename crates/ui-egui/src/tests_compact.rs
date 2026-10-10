@@ -860,7 +860,7 @@ fn choices_tools_and_deleting_have_their_own_haptics() {
     // a photo open: picking a tool ticks, and so does a group of the Edit tool
     let mut h = detail([390.0, 844.0]);
     let log = record_haptics(&mut h);
-    click(&mut h, "icon:masking");
+    click(&mut h, "icon:info");
     assert_eq!(heard(&log), [Haptic::Selection]);
     click(&mut h, "icon:edit");
     let _ = heard(&log);

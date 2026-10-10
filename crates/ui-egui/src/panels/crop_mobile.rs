@@ -78,29 +78,6 @@ pub fn open(app: &LightcraftApp) -> bool {
     app.compact && app.ui.view == ViewMode::Detail && !app.ui.presets && app.ui.right == RightPanel::Crop && app.session.active().is_some()
 }
 
-/// Called every frame: remembers where the undo stack stood when the screen opened (and starts it
-/// on the Aspect tab).
-pub fn track(app: &mut LightcraftApp, open: bool) {
-    match (open, app.ui.crop_undo_base) {
-        (true, None) => {
-            app.ui.crop_undo_base = Some(app.session.undo.len());
-            app.ui.crop_geometry = false;
-        }
-        (false, Some(_)) => app.ui.crop_undo_base = None,
-        _ => {}
-    }
-}
-
-/// ✕: undo every step taken since the screen opened, then back to Edit.
-pub fn cancel(app: &mut LightcraftApp) {
-    let _ = app.session.end_interaction();
-    let base = app.ui.crop_undo_base.unwrap_or(app.session.undo.len());
-    while app.session.undo.len() > base && app.run("edit.undo", json!({})).is_ok() {}
-    app.ui.tool.clear();
-    app.gesture = None;
-    app.ui.right = RightPanel::Edit;
-}
-
 /// The screen's panels: the title, the tools under the photo, the tabs' panel and the bar. The photo
 /// takes what is left (`compact::content`).
 pub fn show(app: &mut LightcraftApp, ui: &mut Ui, t: &Tokens, landscape: bool) {
@@ -228,7 +205,7 @@ fn bottom_bar(app: &mut LightcraftApp, ui: &mut Ui, t: &Tokens) {
     ui.painter().text(r.center(), Align2::CENTER_CENTER, crate::i18n::tr("Crop & Rotate"), t.font(17.0), t.text);
     let mut left = ui.new_child(UiBuilder::new().max_rect(r.shrink2(vec2(6.0, 0.0))).layout(egui::Layout::left_to_right(egui::Align::Center)));
     if compact::bar_icon(&mut left, "cropCancel", Icon::Close, "Cancel", true).clicked() {
-        cancel(app);
+        compact::cancel_screen(app);
     }
     let mut right = ui.new_child(UiBuilder::new().max_rect(r.shrink2(vec2(6.0, 0.0))).layout(egui::Layout::right_to_left(egui::Align::Center)));
     if crate::glass::circle_button(&mut right, "icon:cropDone", Icon::Check, "Done", true, Some(t.accent)).clicked() {

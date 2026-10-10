@@ -290,10 +290,14 @@ pub struct UiState {
     /// Compact layout: the crop screen's tab, Aspect (false) or Geometry (true).
     #[serde(skip)]
     pub crop_geometry: bool,
-    /// Compact layout: how many undo steps there were when the crop screen opened; ✕ goes back to
-    /// there.
+    /// Compact layout: how many undo steps there were when a tool's screen (Crop, Remove, Masking)
+    /// opened; its ✕ goes back to there.
     #[serde(skip)]
-    pub crop_undo_base: Option<usize>,
+    pub screen_undo_base: Option<usize>,
+    /// Compact layout: the masking screen's group of the selected mask's sliders shown in its sheet
+    /// ("light", "color"…; empty: none).
+    #[serde(skip)]
+    pub mask_group: String,
     /// Compact layout: the searchable list of every command is open (the phone has no menu bar).
     #[serde(skip)]
     pub all_commands: bool,
@@ -727,7 +731,8 @@ impl Default for UiState {
             appearance: Appearance::System,
             sheet_detent: 1,
             crop_geometry: false,
-            crop_undo_base: None,
+            screen_undo_base: None,
+            mask_group: String::new(),
             all_commands: false,
             sync_popover: false,
             luminance_map_restore: None,

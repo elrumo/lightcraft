@@ -275,39 +275,130 @@ fn the_crop_screen_fits_a_phone_held_sideways() {
     assert!(photo.height() > 200.0, "the photo keeps its room: {photo:?}");
 }
 
-/// Remove on a phone: Remove / Heal / Clone are one segmented control.
-#[test]
-fn phone_remove_modes_are_a_segmented_control() {
-    let mut h = detail([390.0, 1000.0]);
-    h.app.ui.right = RightPanel::Remove;
-    h.app.ui.sheet_detent = 2;
+/// One-finger events in the photo's normalized coordinates, one request each (so each is a frame
+/// of its own, as a finger's samples are).
+fn finger(h: &mut Headless, events: &[(&str, f32, f32)]) {
+    for (k, x, y) in events {
+        let r = h.request("ui.pointer", json!({"events": [{"kind": k, "x": x, "y": y}]}), T);
+        assert_eq!(r["ok"], true, "{r}");
+    }
     h.settle(SETTLE);
-    let (heal, clone) = (rect(&h, "button:removeMode-heal"), rect(&h, "button:removeMode-clone"));
-    assert!((heal.center().y - clone.center().y).abs() < 0.5 && heal.height() >= 34.0, "{heal:?} {clone:?}");
-    click(&mut h, "button:removeMode-clone");
-    assert_eq!(h.app.ui.tool, "clone");
 }
 
-/// Masking on a phone: the ten kinds of mask are tiles across the whole width, folded away once a
-/// mask exists, and the mask list has finger-high rows with the eye always shown.
+fn develop(h: &Headless) -> std::sync::Arc<lightcraft_develop::DevelopSettings> {
+    h.app.session.develop_of(h.app.session.active().expect("photo")).expect("settings")
+}
+
+/// Remove on a phone is a screen of its own, as Lightroom's mobile app has it: the tool (one tile
+/// with a menu of Remove, Heal, Clone) beside its size, a bar with ✕ and ✓ instead of the tool bar;
+/// Heal and Clone add feather and opacity; ✕ undoes what was done there.
 #[test]
-fn phone_masking_tiles_fill_the_width_and_the_list_is_finger_high() {
-    let mut h = detail([390.0, 1000.0]);
-    h.app.ui.right = RightPanel::Masking;
-    h.app.ui.sheet_detent = 2;
+fn phone_remove_is_a_screen_with_the_tool_and_its_size() {
+    let mut h = detail([390.0, 844.0]);
+    click(&mut h, "icon:remove");
+    assert!(!has(&h, "icon:edit") && !has(&h, "sheet:grabber"), "the tool bar and the sheet make way");
+    let (tile, size) = (rect(&h, "button:removeTool"), rect(&h, "slider:ui.removeSize"));
+    assert!(tile.width() >= 44.0 && (size.center().y - tile.center().y).abs() < 30.0 && size.left() > tile.right(), "{tile:?} {size:?}");
+    assert!(!has(&h, "slider:ui.removeFeather"), "Remove has only a size");
+    click(&mut h, "button:removeTool");
+    click(&mut h, "button:removeMode-heal");
+    assert_eq!(h.app.ui.tool, "heal");
+    assert!(has(&h, "slider:ui.removeFeather") && has(&h, "slider:ui.removeOpacity"));
+    // a fast stroke (three samples far apart) is one spot; ✕ takes it back and leaves the screen
+    finger(&mut h, &[("down", 0.2, 0.4), ("drag", 0.5, 0.45), ("drag", 0.7, 0.6), ("up", 0.7, 0.6)]);
+    assert_eq!(develop(&h).spots.len(), 1);
+    assert!(develop(&h).spots[0].points.len() >= 3, "{:?}", develop(&h).spots[0].points);
+    click(&mut h, "icon:removeCancel");
+    assert!(develop(&h).spots.is_empty(), "✕ undid the spot");
+    assert_eq!(h.app.ui.right, RightPanel::Edit);
+}
+
+/// Tapping a spot's pin on a phone opens its options: its tool, and delete.
+#[test]
+fn phone_spot_pin_opens_its_options() {
+    let mut h = detail([390.0, 844.0]);
+    click(&mut h, "icon:remove");
+    finger(&mut h, &[("down", 0.4, 0.5), ("up", 0.4, 0.5)]);
+    assert_eq!(develop(&h).spots.len(), 1);
+    let r = h.request("engine.execute", json!({"command": "spot.select", "params": {"index": null}}), T);
+    assert_eq!(r["ok"], true, "{r}");
     h.settle(SETTLE);
-    let (first, last) = (rect(&h, "maskNew:object"), rect(&h, "maskNew:background"));
-    assert!((first.center().y - last.center().y).abs() < 0.5, "five to a row: {first:?} {last:?}");
-    assert!(last.right() > 390.0 - 24.0 && first.width() >= 60.0, "across the width: {first:?} {last:?}");
-    click(&mut h, "maskNew:radial");
-    let mask = h.app.session.develop_of(h.app.session.active().expect("photo")).expect("settings").masks[0].id;
-    assert!(has(&h, "flyout:maskNew") && !has(&h, "maskNew:object"), "the kinds fold away once there is a mask");
-    assert!(rect(&h, &format!("mask:{mask}")).height() >= 44.0);
-    let eye = rect(&h, &format!("maskVisible:{mask}"));
-    assert!(eye.width() >= 44.0 && eye.height() >= 44.0, "shown without a hover, and big enough: {eye:?}");
-    // the folded row opens them again
-    click(&mut h, "flyout:maskNew");
-    assert!(has(&h, "maskNew:object"));
+    click(&mut h, "spotPin:0");
+    assert_eq!(h.app.session.active_spot, Some(0));
+    assert!(has(&h, "actions:spotPin"), "the pin's menu is open");
+    click(&mut h, "button:spotMode-clone");
+    assert_eq!(develop(&h).spots[0].mode, lightcraft_develop::SpotMode::Clone);
+    click(&mut h, "spotPin:0");
+    click(&mut h, "button:spotDelete");
+    assert!(develop(&h).spots.is_empty());
+}
+
+/// Masking on a phone is a screen of its own: + opens Create New Mask (a list), the masks are
+/// tiles over the photo's right edge, the adjustment groups wait for a mask and open their sliders
+/// in a sheet; a mask's pin opens its options.
+#[test]
+fn phone_masking_is_a_screen_with_masks_over_the_photo() {
+    let mut h = detail([390.0, 844.0]);
+    click(&mut h, "icon:masking");
+    assert!(!has(&h, "icon:edit") && has(&h, "button:maskNew") && has(&h, "icon:maskDone"));
+    click(&mut h, "button:maskGroup-light");
+    assert!(h.app.ui.mask_group.is_empty(), "no mask yet: the groups wait");
+    click(&mut h, "button:maskNew");
+    assert!(has(&h, "actions:maskNew"));
+    click(&mut h, "button:maskNew-radial");
+    let mask = develop(&h).masks[0].id;
+    let tile = rect(&h, &format!("mask:{mask}"));
+    let photo = rect(&h, "canvas:image");
+    assert!(tile.right() > photo.center().x && tile.width() >= 44.0, "over the photo's right edge: {tile:?}");
+    click(&mut h, "button:maskGroup-light");
+    assert_eq!(h.app.ui.mask_group, "light");
+    assert!(has(&h, "slider:exposure") && !has(&h, "slider:saturation"), "the Light group's sliders");
+    // the pin's options
+    click(&mut h, &format!("maskPin:{mask}:0"));
+    assert!(has(&h, "actions:maskPin"));
+    click(&mut h, "button:maskPin-delete");
+    assert!(develop(&h).masks.is_empty());
+}
+
+/// A Color Range mask takes its colour from a tap on the photo, with the Masking tool open.
+#[test]
+fn phone_color_range_picks_from_a_tap() {
+    let mut h = detail([390.0, 844.0]);
+    click(&mut h, "icon:masking");
+    click(&mut h, "button:maskNew");
+    click(&mut h, "button:maskNew-colorRange");
+    finger(&mut h, &[("down", 0.5, 0.5), ("up", 0.5, 0.5)]);
+    match &develop(&h).masks[0].components[0].shape {
+        lightcraft_develop::MaskShape::ColorRange { samples, .. } => assert_eq!(samples.len(), 1),
+        other => panic!("a colour range: {other:?}"),
+    }
+}
+
+/// The brush on a phone: its tools in a column over the photo's left edge; a stroke painted fast
+/// is one mask with one stroke.
+#[test]
+fn phone_brush_paints_one_mask() {
+    let mut h = detail([390.0, 844.0]);
+    click(&mut h, "icon:masking");
+    click(&mut h, "button:maskNew");
+    click(&mut h, "button:maskNew-brush");
+    assert_eq!(h.app.ui.tool, "brush");
+    let (paint, photo) = (rect(&h, "button:brush-paint"), rect(&h, "canvas:image"));
+    assert!(paint.left() < photo.center().x && paint.width() >= 44.0, "over the photo's left edge: {paint:?}");
+    click(&mut h, "button:brush-erase");
+    assert!(h.app.ui.brush_erase);
+    click(&mut h, "button:brush-paint");
+    finger(&mut h, &[("down", 0.2, 0.4), ("drag", 0.5, 0.45), ("drag", 0.7, 0.6), ("up", 0.7, 0.6)]);
+    let masks = &develop(&h).masks;
+    assert_eq!(masks.len(), 1);
+    match &masks[0].components[..] {
+        [lightcraft_develop::MaskComponent { shape: lightcraft_develop::MaskShape::Brush { strokes }, .. }] => {
+            assert_eq!(strokes.len(), 1);
+            assert!(strokes[0].points.len() >= 3);
+        }
+        other => panic!("one brush part: {other:?}"),
+    }
+    assert!(has(&h, "component:0") && has(&h, "button:maskCombine"), "its part and ± under it");
 }
 
 /// iPad portrait keeps the tools in a panel on the right: the compact rows and margins are used
@@ -451,7 +542,7 @@ fn a_window_too_short_for_the_bars_does_not_panic() {
     h.settle(SETTLE);
 }
 
-/// Each tool's sheet starts at its top: scrolling Edit doesn't leave Masking scrolled too.
+/// Each tool's sheet starts at its top: scrolling Edit doesn't leave Info scrolled too.
 #[test]
 fn each_tool_starts_at_the_top_of_its_sheet() {
     let mut h = detail([390.0, 844.0]);
@@ -459,10 +550,10 @@ fn each_tool_starts_at_the_top_of_its_sheet() {
     let from = exposure.center() - vec2(0.0, 6.0);
     drag(&mut h, from, from - vec2(4.0, 120.0));
     assert!(rect(&h, "slider:light.exposure").top() < exposure.top() - 40.0, "Edit's sheet scrolled");
-    click(&mut h, "icon:masking");
+    click(&mut h, "icon:info");
     let grabber = rect(&h, "sheet:grabber");
-    let object = rect(&h, "maskNew:object");
-    assert!(object.top() >= grabber.bottom() - 1.0, "Masking starts at its first row: {object:?} under {grabber:?}");
+    let label = rect(&h, "label:red");
+    assert!(label.top() >= grabber.bottom() - 1.0, "Info starts at its first rows: {label:?} under {grabber:?}");
 }
 
 /// Settings on a phone is a list of pages (iOS's Settings app): no page's controls run past the

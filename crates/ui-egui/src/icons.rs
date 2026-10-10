@@ -136,6 +136,16 @@ pub enum Icon {
     Server,
     /// Two arrows chasing each other: sync now.
     Refresh,
+    /// Heal: a sticking plaster across.
+    Heal,
+    /// Clone: a rubber stamp.
+    Stamp,
+    /// A brush's feather: a dot that fades out at its edge.
+    Feather,
+    /// A brush's flow: a chequered square.
+    Flow,
+    /// Add to or subtract from a mask: a − and a + in two rings.
+    PlusMinus,
 }
 
 struct Pen<'a> {
@@ -682,6 +692,44 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
             pen.line(&[(16.5, 3.5), (16.3, 7.8), (12.0, 7.6)]);
             pen.arc(10.0, 10.0, 6.5, 20.0, 160.0);
             pen.line(&[(3.5, 16.5), (3.7, 12.2), (8.0, 12.4)]);
+        }
+        Heal => {
+            pen.closed(&[(17.4, 6.8), (13.2, 2.6), (2.6, 13.2), (6.8, 17.4)]);
+            pen.line(&[(13.9, 10.4), (9.6, 6.1)]);
+            pen.line(&[(10.4, 13.9), (6.1, 9.6)]);
+            for (x, y) in [(10.0, 10.0), (11.2, 8.8), (8.8, 11.2)] {
+                pen.dot(x, y, 0.55);
+            }
+        }
+        Stamp => {
+            pen.circle(10.0, 4.5, 2.2);
+            pen.line(&[(8.6, 6.4), (8.6, 10.5)]);
+            pen.line(&[(11.4, 6.4), (11.4, 10.5)]);
+            pen.rect(3.5, 10.5, 16.5, 14.0, 1.0);
+            pen.line(&[(3.5, 17.0), (16.5, 17.0)]);
+        }
+        Feather => {
+            for (r, a) in [(7.5, 0.18), (6.2, 0.35), (4.8, 0.6), (3.4, 1.0)] {
+                pen.p.circle_filled(pen.pt(10.0, 10.0), r * k, color.gamma_multiply(a));
+            }
+        }
+        Flow => {
+            pen.rect(3.0, 3.0, 17.0, 17.0, 1.5);
+            for i in 0..4 {
+                for j in 0..4 {
+                    if (i + j) % 2 == 0 {
+                        let (x, y) = (3.0 + i as f32 * 3.5, 3.0 + j as f32 * 3.5);
+                        pen.rect_fill(x, y, x + 3.5, y + 3.5, 0.0);
+                    }
+                }
+            }
+        }
+        PlusMinus => {
+            pen.circle(7.0, 12.0, 4.5);
+            pen.line(&[(5.0, 12.0), (9.0, 12.0)]);
+            pen.circle(13.0, 8.0, 4.5);
+            pen.line(&[(11.0, 8.0), (15.0, 8.0)]);
+            pen.line(&[(13.0, 6.0), (13.0, 10.0)]);
         }
     }
 }
