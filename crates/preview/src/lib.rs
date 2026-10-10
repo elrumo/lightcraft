@@ -86,6 +86,14 @@ impl PreviewCache {
         write();
     }
 
+    /// Drop one image (memory and disk).
+    pub fn remove(&self, key: Hash128) {
+        self.mem.lock().unwrap_or_else(|e| e.into_inner()).remove(&key);
+        if let Some(d) = &self.disk {
+            d.remove(key);
+        }
+    }
+
     /// Drop everything (memory and disk).
     pub fn clear(&self) {
         self.mem.lock().unwrap_or_else(|e| e.into_inner()).clear();

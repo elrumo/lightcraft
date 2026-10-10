@@ -183,6 +183,50 @@ pub(crate) fn content_op(id: lightcraft_catalog::PhotoId, ph: &lightcraft_catalo
     })
 }
 
+/// A raw catalogued as shown from its embedded preview (by a LightCraft that couldn't decode it yet)
+/// whose sensor data has just been developed: it and its virtual copies catch up with the file —
+/// its size, no more "Preview only" ([`content_op`]); one still as imported gets the raw defaults
+/// (as-shot white balance, sharpening, the file's lens correction) — and the thumbnails and views
+/// rendered from the embedded JPEG are dropped. Not an undo step: the user did nothing.
+pub(crate) fn heal_preview_only(s: &mut Session, id: lightcraft_catalog::PhotoId) {
+    let Some(master) = s.catalog.photo(id).map(|p| p.copy_of.unwrap_or(id)) else { return };
+    let Some(Source::File { path }) = s.catalog.photo(master).map(|p| p.source.clone()) else { return };
+    if s.media.file_probe.is_none() {
+        return;
+    }
+    let Some(Ok(info)) = crate::import::probe_paths(s, std::slice::from_ref(&path)).pop() else { return };
+    if info.preview_only.is_some() {
+        return;
+    }
+    let photos: Vec<std::sync::Arc<lightcraft_catalog::Photo>> =
+        s.catalog.photos().filter(|p| (p.id == master || p.copy_of == Some(master)) && p.preview_only.is_some()).cloned().collect();
+    let mut ops = Vec::new();
+    for p in &photos {
+        ops.extend(content_op(p.id, p, info.clone()));
+        if *p.develop == p.import_defaults() {
+            let mut fresh = (**p).clone();
+            (fresh.preview_only, fresh.as_shot_wb, fresh.embedded_lens) = (None, info.as_shot_wb, info.embedded_lens);
+            crate::import::apply_import_defaults(s, &mut fresh);
+            // ponytail: the catalog keeps no as-shot white balance / lens facts for a healed raw (no op sets them
+            // without a catalog format bump), so Reset goes back to the rendered-file defaults; the UI reads the
+            // decoder's lens facts instead (`Session::embedded_lens`)
+            if fresh.develop != p.develop {
+                ops.push(Op::SetDevelop { id: p.id, settings: fresh.develop, label: "Raw Defaults".into(), edited: p.edited.clone() });
+            }
+        }
+    }
+    if ops.is_empty() {
+        return;
+    }
+    if let Err(e) = s.apply_quiet(Op::Batch { ops }) {
+        log::warn!("can't mark {path} as decodable: {e}");
+        return;
+    }
+    for p in &photos {
+        s.forget_renders(p);
+    }
+}
+
 /// Ops that fill a photo's empty camera fields (camera, lens, exposure, GPS, capture time) from a fresh probe.
 fn fill_missing_meta(id: lightcraft_catalog::PhotoId, ph: &lightcraft_catalog::Photo, info: &crate::media::ProbeInfo) -> Vec<Op> {
     let (mut m, src) = (ph.meta.clone(), &info.meta);

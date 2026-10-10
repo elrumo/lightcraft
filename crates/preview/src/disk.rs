@@ -102,6 +102,11 @@ impl DiskCache {
         }
     }
 
+    /// Delete one image (the running total is corrected by the next prune's scan).
+    pub fn remove(&self, key: Hash128) {
+        let _ = std::fs::remove_file(self.path(key));
+    }
+
     /// All cache files (only names of the cache's own shape, see [`is_cache_file`]):
     /// (path, size, modified).
     fn scan(&self) -> Vec<(PathBuf, u64, std::time::SystemTime)> {

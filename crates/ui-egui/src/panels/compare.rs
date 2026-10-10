@@ -157,7 +157,7 @@ fn photo_tile(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, slot: Slo
         photo.height.max(1) as usize,
         &photo.develop,
         true,
-        photo.embedded_lens.as_ref(),
+        app.session.embedded_lens(id).as_ref(),
     );
     let aspect = frame.aspect() as f32;
     let native = [photo.width.max(1) as usize, photo.height.max(1) as usize];

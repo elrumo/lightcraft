@@ -736,16 +736,7 @@ impl crate::Session {
             ^ (level as u64) << 60
             ^ id.0.wrapping_mul(0x9e37_79b9_7f4a_7c15)
             ^ content.rotate_left(17);
-        let cache = thumb_bucket.map(|b| {
-            let k = Hasher128::new()
-                .str(&content_key(&p))
-                .u64(settings.hash64())
-                .u64(b as u64)
-                .u64(RENDER_CACHE_VERSION)
-                .u64(crate::camera_profiles::cache_key())
-                .finish();
-            (self.media.rendered.clone(), k)
-        });
+        let cache = thumb_bucket.map(|b| (self.media.rendered.clone(), Self::thumb_key(&p, &settings, b)));
         Some(RenderJob {
             photo: id,
             level,
@@ -855,6 +846,29 @@ impl crate::Session {
     }
 
     /// Size-independent cache key of a photo's view render (loupe) for its current settings.
+    /// Cache key of a grid thumbnail of `p` with `settings` in size bucket `b` ([`THUMB_SIZES`]).
+    fn thumb_key(p: &Photo, settings: &DevelopSettings, b: usize) -> Hash128 {
+        Hasher128::new()
+            .str(&content_key(p))
+            .u64(settings.hash64())
+            .u64(b as u64)
+            .u64(RENDER_CACHE_VERSION)
+            .u64(crate::camera_profiles::cache_key())
+            .finish()
+    }
+
+    /// Drop `p`'s cached thumbnails and view renders for its current settings (memory and disk):
+    /// they no longer show what its file renders to.
+    pub(crate) fn forget_renders(&self, p: &Photo) {
+        let cache = &self.media.rendered;
+        for b in THUMB_SIZES {
+            cache.remove(Self::thumb_key(p, &p.develop, b));
+        }
+        for crop in [true, false] {
+            cache.remove(Self::view_key(p, crop));
+        }
+    }
+
     fn view_key(p: &Photo, apply_crop: bool) -> Hash128 {
         Hasher128::new()
             .str(&content_key(p))
@@ -917,6 +931,10 @@ impl crate::Session {
     pub fn accept(&mut self, r: &RenderResult) {
         if let Some(src) = &r.loaded {
             self.media.insert_source(r.photo, r.level, src.clone());
+            // a raw catalogued as preview-only (by a build that couldn't decode it) just developed from its sensor data
+            if src.info.as_ref().is_some_and(|i| i.raw) && self.catalog.photo(r.photo).is_some_and(|p| p.preview_only.is_some()) {
+                crate::cmd::convert::heal_preview_only(self, r.photo);
+            }
         }
     }
 
@@ -971,6 +989,12 @@ impl crate::Session {
     pub fn source_info(&self, id: PhotoId) -> SourceInfo {
         let header = self.catalog.photo(id).map(|p| source_info(p)).unwrap_or_default();
         self.media.source_facts(id, header)
+    }
+
+    /// The lens correction photo `id`'s file embeds: the catalog's, else what its decoder found (a raw
+    /// imported as preview-only and decodable since has none in the catalog).
+    pub fn embedded_lens(&self, id: PhotoId) -> Option<lightcraft_develop::EmbeddedLens> {
+        self.catalog.photo(id).and_then(|p| p.embedded_lens).or_else(|| self.source_info(id).lens)
     }
 
     /// The source proxy for pixel-statistics commands (auto tone/WB), loading synchronously.

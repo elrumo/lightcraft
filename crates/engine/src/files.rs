@@ -637,6 +637,41 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// A raw catalogued as preview-only by a build that couldn't decode it (the iPhone's JPEG XL
+    /// DNGs before LightCraft read them) heals itself the first time it is developed from its
+    /// sensor data: no "Preview only", the raw defaults, and no undo step for it.
+    #[test]
+    fn a_preview_only_raw_that_decodes_now_heals_when_rendered() {
+        use serde_json::json;
+        let dir = std::env::temp_dir().join(format!("lc-heal-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("IMG_0001.dng");
+        std::fs::write(&path, cr3_with_preview(96, 64)).unwrap();
+        let mut s = crate::Session::new().with_fs();
+        let r = s.execute("library.import", &json!({"paths": [path.to_string_lossy()]})).unwrap();
+        let id = lightcraft_catalog::PhotoId(r["imported"][0].as_u64().unwrap());
+        let copy = lightcraft_catalog::PhotoId(s.execute("photo.virtualCopy", &json!({"ids": [id.0]})).unwrap()["ids"][0].as_u64().unwrap());
+        assert!(s.catalog.photo(copy).unwrap().preview_only.is_some());
+        let undo = s.undo.len();
+        // a newer LightCraft reads the file (here: the file became a DNG it decodes)
+        std::fs::write(&path, crate::tests_xmp::synthetic_dng_with(None, lightcraft_meta::Metadata::default())).unwrap();
+        s.media.forget(id);
+        let job = s.loupe_job(id, 48, 48, true).unwrap();
+        let r = job.run();
+        assert!(r.rendered.is_ok());
+        s.accept(&r);
+        for p in [id, copy] {
+            let p = s.catalog.photo(p).unwrap();
+            assert_eq!(p.preview_only, None, "healed");
+            assert!(p.develops_raw());
+            assert_eq!(p.develop.detail.sharpen_amount, 40.0, "an untouched photo gets the raw defaults");
+        }
+        assert_eq!(s.undo.len(), undo, "not an undo step");
+        drop(s);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn quick_jobs_show_embedded_previews_then_cached_renders() {
         use crate::media::QuickSource;

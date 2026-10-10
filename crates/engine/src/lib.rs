@@ -424,6 +424,15 @@ impl Session {
         }
     }
 
+    /// Apply an op that is saved and synced but not an undo step (the app catching up with a file,
+    /// nothing the user did).
+    pub(crate) fn apply_quiet(&mut self, op: Op) -> Result<()> {
+        let inv = self.catalog.apply(op.clone())?;
+        self.sync_record(&op, &inv);
+        self.pending_log.push(op);
+        Ok(())
+    }
+
     /// Fold the last `n` undo steps into one (commands that commit step by step because each op
     /// depends on the state the previous one left).
     pub fn merge_undo(&mut self, n: usize, label: &str) {

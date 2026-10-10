@@ -299,7 +299,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         ui.add_space(8.0);
     });
     section(app, ui, &d, "optics", "Optics", |app, ui, d| {
-        let has_lens = app.session.catalog.photo(id).is_some_and(|p| p.embedded_lens.is_some());
+        let has_lens = app.session.embedded_lens(id).is_some();
         egui::Frame::NONE.inner_margin(crate::widgets::margin(ui.ctx(), 4, 4)).show(ui, |ui| {
             let mut ca = d.optics.remove_ca;
             if crate::widgets::check(ui, &mut ca, crate::i18n::tr("Remove Chromatic Aberration")).changed() {
