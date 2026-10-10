@@ -4,7 +4,7 @@
 //! lightcraft-cli run [--demo | --library DIR | --connect [ADDR]] [--import PATH]… CMD [key=value…]…
 //! lightcraft-cli mcp [--connect [ADDR]] [--demo] [--compact] [FILES/FOLDERS…]
 //! lightcraft-cli render <in> -o <out> [--set control=value]… [--settings FILE.json] [--preset ID] [--size N] [--quality Q]
-//! lightcraft-cli snapshot [--library DIR | --demo] [--script FILE.jsonl] [-o OUT.png] [--size WxH] [--scale S] [FILES…]
+//! lightcraft-cli snapshot [--library DIR | --demo] [--script FILE.jsonl] [-o OUT.png] [--size WxH] [--scale S] [--safe-area T,B] [FILES…]
 //! lightcraft-cli merge hdr|panorama|hdr-panorama [OPTIONS] FILES…
 //! lightcraft-cli synth-merge hdr|panorama -o DIR
 //! lightcraft-cli commands [--json]
@@ -74,6 +74,8 @@ USAGE:
         -o, --output OUT  PNG path (a final screenshot is written here if the script took none)
         --size WxH        window size in points (default 1600x1000)
         --scale S         pixels per point (default 1)
+        --safe-area T,B   lay the app out inside a status bar T and a home indicator B points
+                          tall, as on a phone (e.g. 62,34 for an iPhone 17 Pro)
   lightcraft-cli merge hdr|panorama|hdr-panorama [OPTIONS] FILES…
       Photo Merge: writes <first>-HDR.dng / -Pano.dng / -HDR-Pano.dng next to the first file and
       prints the result as JSON. Options:
@@ -690,6 +692,7 @@ fn snapshot(args: &[String]) -> Result<(), String> {
     let mut output: Option<String> = None;
     let mut size = [1600.0f32, 1000.0];
     let mut scale = 1.0f32;
+    let mut safe_area: Option<(f32, f32)> = None;
     let mut files = Vec::new();
     let mut i = 0;
     while i < args.len() {
@@ -704,6 +707,16 @@ fn snapshot(args: &[String]) -> Result<(), String> {
                 size = [w.trim().parse().map_err(|_| "--size: bad width")?, h.trim().parse().map_err(|_| "--size: bad height")?];
             }
             "--scale" => scale = take_value(args, &mut i, "--scale")?.parse().map_err(|_| "--scale expects a number")?,
+            "--safe-area" => {
+                let v = take_value(args, &mut i, "--safe-area")?;
+                let (t, b) = v.split_once(',').ok_or("--safe-area expects TOP,BOTTOM, e.g. 62,34")?;
+                let (t, b): (f32, f32) =
+                    (t.trim().parse().map_err(|_| "--safe-area: bad top")?, b.trim().parse().map_err(|_| "--safe-area: bad bottom")?);
+                if !(t.is_finite() && b.is_finite() && t >= 0.0 && b >= 0.0) {
+                    return Err("--safe-area: TOP and BOTTOM are points, 0 or more".into());
+                }
+                safe_area = Some((t, b));
+            }
             a if a.starts_with('-') => return Err(format!("unknown option `{a}`")),
             f => files.push(f.to_string()),
         }
@@ -742,6 +755,9 @@ fn snapshot(args: &[String]) -> Result<(), String> {
     };
     let app = lightcraft_ui_egui::LightcraftApp::new(session, services);
     let mut h = Headless::new(app, size, scale);
+    if let Some((top, bottom)) = safe_area {
+        h.set_safe_area(top, bottom);
+    }
     let timeout = Duration::from_secs(60);
     let mut shots = 0usize;
     let next_path = |shots: &mut usize| -> Option<String> {

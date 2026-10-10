@@ -159,3 +159,26 @@ fn a_page_slides_up_opaque() {
     let px = img.pixels[800 * img.size[0] + 4];
     assert_eq!(px, crate::theme::Tokens::ios_for(false).chrome, "the page's own colour, not the grid through it");
 }
+
+/// The tool bar floats: its capsule stops short of the bottom of the safe area, and the sheet's
+/// colour carries on under it to the bottom of the screen (it used to sit on the safe area's edge,
+/// with the window's colour below).
+#[test]
+fn the_tool_bar_floats_over_the_sheets_colour() {
+    let mut h = phone([402.0, 874.0]);
+    h.set_safe_area(62.0, 34.0);
+    run(&mut h, "app.appearance.light", json!({}));
+    run(&mut h, "library.select", json!({"ids": [1]}));
+    h.app.ui.view = ViewMode::Detail;
+    h.app.ui.right = crate::state::RightPanel::Edit;
+    h.settle(SETTLE);
+    h.settle(SETTLE);
+    let edit = widget(&h, "icon:edit");
+    assert!(edit.bottom() <= 874.0 - 34.0 - 8.0, "a gap under the capsule: {edit:?}");
+    let img = h.paint();
+    let chrome = crate::theme::Tokens::ios_for(false).chrome;
+    // (beside the capsule, clear of its shadow, and at the bottom of the screen)
+    for (x, y) in [(4, (edit.bottom() + 4.0) as usize), (200, img.size[1] - 4)] {
+        assert_eq!(img.pixels[y * img.size[0] + x], chrome, "the sheet's colour under the bar at {x}, {y}");
+    }
+}

@@ -158,6 +158,12 @@ impl Headless {
         self.frames
     }
 
+    /// Lay the app out as a phone does, inside a status bar `top` and a home indicator `bottom`
+    /// points tall (see [`Self::safe_area`]).
+    pub fn set_safe_area(&mut self, top: f32, bottom: f32) {
+        self.safe_area = Some(egui::SafeAreaInsets(egui::epaint::MarginF32 { left: 0.0, right: 0.0, top, bottom }));
+    }
+
     /// `app.quit` was requested.
     pub fn quit_requested(&self) -> bool {
         self.quit

@@ -21,10 +21,15 @@ use crate::theme::Tokens;
 /// Height of the top bar: Apple's minimum touch target is 44 pt.
 const BAR_H: f32 = 44.0;
 /// Height of the tool bar and of the select action bar: a floating glass capsule 52 pt tall (iOS 26's
-/// tab bar) with a little room around it.
-const TAB_H: f32 = 60.0;
-/// Height of the Edit tool's group row (icon over label).
-const GROUP_H: f32 = 54.0;
+/// tab bar), a little room over it and a gap under it ([`FLOAT_GAP`]).
+const TAB_H: f32 = 66.0;
+/// The gap under a floating bar's capsule (the bar's colour carries on through it and the home
+/// indicator's strip, so the capsule floats rather than sitting on an edge).
+const FLOAT_GAP: f32 = 10.0;
+/// Height of the Edit tool's group row (icon over label, on a pill with room above and below).
+const GROUP_H: f32 = 60.0;
+/// A group's width in that row.
+const GROUP_W: f32 = 64.0;
 /// From this width (iPad) the tool sheet is a panel on the right and My Photos a column on the left,
 /// instead of a bottom sheet and a page of their own.
 pub const WIDE_PT: f32 = 600.0;
@@ -557,7 +562,8 @@ fn tool_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, rail: bool, 
         let capsule = if rail {
             full.shrink2(vec2(4.0, 0.0))
         } else {
-            egui::Rect::from_center_size(full.center(), vec2((full.width() - 28.0).min(480.0), full.height() - 8.0))
+            fill_below(ui, full, under);
+            floating_capsule(full)
         };
         // the tools share the capsule; a rail's don't stretch (52 pt apart, in the middle)
         let n = TOOLS.len() as f32;
@@ -613,13 +619,34 @@ fn tool_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, rail: bool, 
             }
         }
         ui.painter().set(glass_idx, glass::shape(ui.ctx(), capsule, if rail { 26.0 } else { capsule.height() / 2.0 }, None, 0.0));
-        ui.painter().set(pill_idx, selection_pill(ui.ctx(), egui::Id::new("compact-tool-pill"), chosen, rail));
+        let inset = if rail { vec2(8.0, 2.0) } else { vec2(2.0, 8.0) };
+        ui.painter().set(pill_idx, selection_pill(ui.ctx(), egui::Id::new("compact-tool-pill"), chosen, rail, inset));
     });
 }
 
-/// The lighter pill behind a bar's chosen item (`at`, none: it fades away), springing from the item
-/// chosen before to this one along the bar (down a rail).
-fn selection_pill(ctx: &egui::Context, id: egui::Id, at: Option<egui::Rect>, vertical: bool) -> egui::Shape {
+/// Where a bottom bar's floating capsule goes in the bar's `full` rect: 14 pt in from the sides (no
+/// wider than a phone's: on a tablet it sits in the middle), 4 pt down, [`FLOAT_GAP`] above the bottom.
+fn floating_capsule(full: egui::Rect) -> egui::Rect {
+    let w = (full.width() - 28.0).clamp(0.0, 480.0);
+    let top = full.top() + 4.0;
+    let bottom = (full.bottom() - FLOAT_GAP).max(top);
+    egui::Rect::from_x_y_ranges((full.center().x - w / 2.0)..=(full.center().x + w / 2.0), top..=bottom)
+}
+
+/// Paint `color` from the bottom of a bar (`full`) down to the screen's edge: the home indicator's
+/// strip (outside the safe area, so nothing else draws there) carries on the bar's colour.
+fn fill_below(ui: &egui::Ui, full: egui::Rect, color: egui::Color32) {
+    let screen = ui.ctx().viewport_rect();
+    if screen.bottom() > full.bottom() {
+        let mut p = ui.painter().clone();
+        p.set_clip_rect(screen);
+        p.rect_filled(egui::Rect::from_min_max(pos2(full.left(), full.bottom()), pos2(full.right(), screen.bottom())), 0.0, color);
+    }
+}
+
+/// The lighter pill behind a bar's chosen item (`at` less `inset`; none: it fades away), springing
+/// from the item chosen before to this one along the bar (down a rail).
+fn selection_pill(ctx: &egui::Context, id: egui::Id, at: Option<egui::Rect>, vertical: bool, inset: egui::Vec2) -> egui::Shape {
     let shown = glass::spring(ctx, id.with("alpha"), if at.is_some() { 1.0 } else { 0.0 }, 0.25, 1.0);
     let last = id.with("rect");
     let at = match at {
@@ -639,7 +666,7 @@ fn selection_pill(ctx: &egui::Context, id: egui::Id, at: Option<egui::Rect>, ver
     }
     let pos = glass::spring(ctx, id.with("pos"), along, 0.42, 0.72);
     let c = if vertical { pos2(at.center().x, pos) } else { pos2(pos, at.center().y) };
-    let r = egui::Rect::from_center_size(c, at.size() - if vertical { vec2(8.0, 2.0) } else { vec2(2.0, 8.0) });
+    let r = egui::Rect::from_center_size(c, (at.size() - inset).max(vec2(1.0, 1.0)));
     let ink = if Tokens::is_dark(ctx) { egui::Color32::from_white_alpha(30) } else { egui::Color32::from_black_alpha(14) };
     egui::Shape::rect_filled(r, r.height().min(r.width()) / 2.0, ink.gamma_multiply(shown.clamp(0.0, 1.0)))
 }
@@ -660,8 +687,8 @@ fn group_strip(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
         ui,
         |ui| {
             ui.horizontal_centered(|ui| {
-                ui.spacing_mut().item_spacing.x = 2.0;
-                ui.add_space(6.0);
+                ui.spacing_mut().item_spacing.x = 0.0;
+                ui.add_space(8.0);
                 // the chosen group's pill goes under the cells, and springs from one to the next
                 let (pill, origin) = (ui.painter().add(egui::Shape::Noop), ui.cursor().min.to_vec2());
                 let mut chosen = None;
@@ -669,7 +696,7 @@ fn group_strip(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
                     let _ = app.run("develop.auto", json!({}));
                     app.toast(ui.ctx(), "Auto settings applied");
                 }
-                let (sep, _) = ui.allocate_exact_size(vec2(13.0, 34.0), Sense::hover());
+                let (sep, _) = ui.allocate_exact_size(vec2(9.0, 30.0), Sense::hover());
                 ui.painter().vline(sep.center().x, sep.y_range(), Stroke::new(1.0, t.divider));
                 for (id, icon, label) in GROUPS {
                     let cell = group_cell(ui, &format!("group-{id}"), icon, label, app.ui.edit_group == id);
@@ -683,8 +710,9 @@ fn group_strip(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
                         }
                     }
                 }
-                ui.add_space(6.0);
-                let mut shape = selection_pill(ui.ctx(), egui::Id::new("compact-group-pill"), chosen, false);
+                ui.add_space(8.0);
+                // (as wide as a group, 6 pt clear of the row's top and bottom)
+                let mut shape = selection_pill(ui.ctx(), egui::Id::new("compact-group-pill"), chosen, false, vec2(0.0, 8.0));
                 shape.translate(origin);
                 ui.painter().set(pill, shape);
             });
@@ -697,12 +725,13 @@ fn group_strip(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
 fn group_cell(ui: &mut egui::Ui, id: &str, icon: Icon, label: &str, on: bool) -> egui::Response {
     let t = Tokens::get(ui.ctx());
     let label = crate::i18n::tr(label);
-    let (r, resp) = ui.allocate_exact_size(vec2(68.0, GROUP_H - 6.0), Sense::click());
+    let (r, resp) = ui.allocate_exact_size(vec2(GROUP_W, GROUP_H - 4.0), Sense::click());
     resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, on, label));
     crate::widgets::register(ui.ctx(), format!("button:{id}"), r);
     let color = if on || resp.is_pointer_button_down_on() { t.text } else { t.text_dim };
-    crate::icons::paint(ui.painter(), egui::Rect::from_center_size(r.center() - vec2(0.0, 8.0), vec2(20.0, 20.0)), icon, color);
-    ui.painter().text(r.center() + vec2(0.0, 14.0), Align2::CENTER_CENTER, label, t.font(11.5), color);
+    // (icon and name close together, so that the pill has room round them)
+    crate::icons::paint(ui.painter(), egui::Rect::from_center_size(r.center() - vec2(0.0, 8.0), vec2(19.0, 19.0)), icon, color);
+    ui.painter().text(r.center() + vec2(0.0, 11.5), Align2::CENTER_CENTER, label, t.font(11.0), color);
     if resp.clicked() {
         haptics::tap(ui.ctx(), Haptic::Selection);
     }
@@ -888,7 +917,8 @@ fn action_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, mut shown:
                 ("selDelete", Icon::Trash, "Delete"),
             ];
             // a floating glass capsule, as the tool bar
-            let capsule = ui.max_rect().shrink2(vec2(14.0, 4.0));
+            fill_below(ui, ui.max_rect(), t.grid_bg);
+            let capsule = floating_capsule(ui.max_rect());
             glass::paint(ui.painter(), capsule, capsule.height() / 2.0, None, 0.0);
             let w = (capsule.width() - 8.0) / actions.len() as f32;
             let inner = capsule.shrink2(vec2(4.0, 0.0));

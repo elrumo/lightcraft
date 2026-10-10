@@ -81,6 +81,7 @@ scissor clipping as egui's GPU backends, so the image matches the window (minus 
 
 ```text
 lightcraft-cli snapshot --demo -o grid.png --size 1600x1000 [--scale 2]
+lightcraft-cli snapshot --demo -o phone.png --size 402x874 --scale 3 --safe-area 62,34   # an iPhone's status bar and home indicator
 lightcraft-cli snapshot --library DIR --script tour.jsonl -o shot.png
 ```
 
