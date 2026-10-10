@@ -649,7 +649,13 @@ fn ios_segments(ui: &mut Ui, id: &str, items: Vec<(&str, String)>, active: Optio
     let t = Tokens::get(ui.ctx());
     let w = ui.available_width();
     let mut tapped = None;
-    for (row_i, row) in items.chunks(per_row.max(1)).enumerate() {
+    // as few rows as the labels need, filled evenly (five are 3 + 2, not 4 + 1)
+    let widest =
+        items.iter().map(|(l, _)| ui.painter().layout_no_wrap(crate::i18n::tr(l).to_string(), t.semibold(13.0), t.text).size().x).fold(0.0, f32::max);
+    let fit = ((w / (widest + 16.0)).floor() as usize).clamp(1, per_row.max(1));
+    let rows = items.len().div_ceil(fit).max(1);
+    let per_row = items.len().div_ceil(rows).max(1);
+    for (row_i, row) in items.chunks(per_row).enumerate() {
         // iOS 26's: a capsule track, the chosen segment on a raised capsule that slides to the one tapped
         let (track, _) = ui.allocate_exact_size(vec2(w, 36.0), Sense::hover());
         ui.painter().rect_filled(track, 18.0, t.inset);

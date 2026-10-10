@@ -79,8 +79,9 @@ fn matches(i: &egui::InputState, m: Modifiers, k: Key) -> bool {
 }
 
 pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
-    // don't steal keys from text fields
-    if ctx.egui_wants_keyboard_input() {
+    // don't steal keys from text fields, nor from a phone's open menu (Esc closing a photo's "…"
+    // menu went back to the grid too)
+    if ctx.egui_wants_keyboard_input() || crate::panels::mobile::any_actions_open(ctx) {
         return;
     }
     let mut fire: Vec<String> = Vec::new();

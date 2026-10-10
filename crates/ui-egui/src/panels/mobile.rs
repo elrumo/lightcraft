@@ -200,7 +200,8 @@ pub fn page_with(ctx: &egui::Context, id: &str, bar_spec: PageBar, open: bool, b
     });
     let mut bar = Bar::default();
     let top = content.top() + 8.0 + drop;
-    egui::Area::new(sid).order(egui::Order::Foreground).constrain(false).fixed_pos(pos2(content.left(), top)).show(ctx, |ui| {
+    // (opaque as it slides: not egui's fade-in of a new area, through which what is behind showed)
+    egui::Area::new(sid).order(egui::Order::Foreground).constrain(false).fade_in(false).fixed_pos(pos2(content.left(), top)).show(ctx, |ui| {
         let w = content.width();
         // the sheet reaches the bottom edge of the screen (behind the home indicator); its contents
         // stop at the safe area / keyboard
@@ -295,6 +296,12 @@ fn opened(ctx: &egui::Context, id: &str) -> Option<Option<Rect>> {
     ctx.data(|d| d.get_temp::<(String, Option<Rect>)>(open_id())).filter(|(o, _)| o == id).map(|(_, a)| a)
 }
 
+/// Some menu or action sheet is open (it has the keyboard: Esc closes it, and no shortcut fires
+/// behind it).
+pub fn any_actions_open(ctx: &egui::Context) -> bool {
+    ctx.data(|d| d.get_temp::<(String, Option<Rect>)>(open_id()).is_some())
+}
+
 /// The menu or action sheet `id` is open.
 pub fn actions_open(ctx: &egui::Context, id: &str) -> bool {
     opened(ctx, id).is_some()
@@ -365,7 +372,7 @@ pub fn actions_wide(ctx: &egui::Context, id: &str, title: Option<&str>, menu_w: 
     };
     // a pull-down grows out of its button with a little bounce, and shrinks back into it
     let grow = ctx.animate_bool_with_time(sid.with("grow"), !closing, if closing { LEAVE_S } else { 0.42 });
-    let shown = egui::Area::new(sid).order(egui::Order::Foreground).fixed_pos(pos).show(ctx, |ui| {
+    let shown = egui::Area::new(sid).order(egui::Order::Foreground).fade_in(false).fixed_pos(pos).show(ctx, |ui| {
         if anchor.is_some() {
             ui.multiply_opacity(p);
         }

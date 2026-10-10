@@ -957,14 +957,15 @@ fn common<T: PartialEq + Copy>(app: &LightcraftApp, ids: &[u64], f: impl Fn(&lig
     v.all(|x| x == first).then_some(first)
 }
 
-/// A finger-sized cell in an icon row (`button:<id>`), highlighted when `on`.
+/// A finger-sized cell in an icon row (`button:<id>`), on a round highlight when `on` or pressed.
 fn row_cell(ui: &mut egui::Ui, id: &str, tip: &str, on: bool) -> (egui::Rect, egui::Response) {
     let (r, resp) = ui.allocate_exact_size(vec2(44.0, 44.0), Sense::click());
     resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, on, crate::i18n::tr(tip)));
     crate::widgets::register(ui.ctx(), format!("button:{id}"), r);
     let t = Tokens::get(ui.ctx());
-    if on {
-        ui.painter().rect_filled(r.shrink(3.0), 6.0, t.tool_active);
+    // (a round highlight, as iOS marks the chosen one of a row of symbols)
+    if on || resp.is_pointer_button_down_on() {
+        ui.painter().circle_filled(r.center(), 19.0, t.tool_active);
     }
     (r, resp)
 }

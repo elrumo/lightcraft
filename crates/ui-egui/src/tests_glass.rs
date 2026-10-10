@@ -115,3 +115,47 @@ fn a_tiny_window_draws_the_glass_without_a_panic() {
     run(&mut h, "app.settings", json!({}));
     let _ = h.paint();
 }
+
+/// Esc closes a photo's "…" menu and does nothing else: the shortcut behind it (Back to Grid) used
+/// to fire too. Same for a page (Settings) open over the photo.
+#[test]
+fn escape_closes_a_menu_and_stays_on_the_photo() {
+    let mut h = phone([390.0, 844.0]);
+    run(&mut h, "library.select", json!({"ids": [1]}));
+    h.app.ui.view = ViewMode::Detail;
+    h.app.ui.right = crate::state::RightPanel::None;
+    h.settle(SETTLE);
+    let r = h.request("ui.clickWidget", json!({"id": "icon:photoMore"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    assert!(crate::panels::mobile::actions_open(&h.view.ctx, "photoMore"));
+    let r = h.request("ui.key", json!({"key": "Escape"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    assert!(!crate::panels::mobile::actions_open(&h.view.ctx, "photoMore"), "closed");
+    assert_eq!(h.app.ui.view, ViewMode::Detail, "still on the photo");
+    run(&mut h, "app.settings", json!({}));
+    let r = h.request("ui.key", json!({"key": "Escape"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    assert!(h.app.ui.dialog.is_none(), "the page closed");
+    assert_eq!(h.app.ui.view, ViewMode::Detail, "and the photo stayed");
+}
+
+/// A page is opaque while it slides up (egui fades a new area in by default, which let the grid
+/// show through the Albums page as it came up).
+#[test]
+fn a_page_slides_up_opaque() {
+    let mut h = phone([390.0, 844.0]);
+    run(&mut h, "app.appearance.light", json!({}));
+    h.app.ui.view = ViewMode::PhotoGrid;
+    h.settle(SETTLE);
+    h.app.ui.left_panel = true;
+    for _ in 0..4 {
+        h.step();
+    }
+    let img = h.paint();
+    // the page's left margin, a little above the bottom of the screen
+    let px = img.pixels[800 * img.size[0] + 4];
+    assert_eq!(px, crate::theme::Tokens::ios_for(false).chrome, "the page's own colour, not the grid through it");
+}

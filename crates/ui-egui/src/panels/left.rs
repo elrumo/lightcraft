@@ -30,30 +30,49 @@ fn row(
         None => label.to_string(),
     };
     resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, &name));
-    let inner = r.shrink2(vec2(8.0, 0.0));
+    // a phone's list is iOS's: 17 pt names after accent-tinted icons, a rounded highlight on the
+    // chosen row and under the finger
+    let phone = crate::is_compact(ui.ctx());
+    let inner = r.shrink2(vec2(8.0, if phone { 2.0 } else { 0.0 }));
+    let round = if phone { 10.0 } else { 4.0 };
     if selected {
-        ui.painter().rect_filled(inner, 4.0, t.canvas);
-    } else if resp.hovered() {
-        ui.painter().rect_filled(inner, 4.0, t.hover.gamma_multiply(0.6));
+        ui.painter().rect_filled(inner, round, if phone { t.tool_active } else { t.canvas });
+    } else if resp.hovered() || (phone && resp.is_pointer_button_down_on()) {
+        ui.painter().rect_filled(inner, round, t.hover.gamma_multiply(0.6));
     }
+    let (icon_size, label_x, font, count_font) = if phone { (21.0, 54.0, 17.0, 15.0) } else { (16.0, 42.0, 13.5, 12.5) };
     paint(
         ui.painter(),
-        Rect::from_min_size(pos2(r.left() + 18.0 + indent, r.center().y - 8.0), vec2(16.0, 16.0)),
+        Rect::from_center_size(pos2(r.left() + 18.0 + indent + icon_size / 2.0, r.center().y), vec2(icon_size, icon_size)),
         icon,
-        if selected { t.text } else { t.icon },
+        if phone {
+            t.accent
+        } else if selected {
+            t.text
+        } else {
+            t.icon
+        },
     );
     ui.painter().text(
-        pos2(r.left() + 42.0 + indent, r.center().y),
+        pos2(r.left() + label_x + indent, r.center().y),
         Align2::LEFT_CENTER,
         label,
-        t.font(13.5),
-        if selected { t.text } else { t.text_label },
+        t.font(font),
+        if selected || phone { t.text } else { t.text_label },
     );
     if let Some(n) = count.filter(|_| app.ui.show_counts) {
-        ui.painter().text(pos2(r.right() - 18.0, r.center().y), Align2::RIGHT_CENTER, n.to_string(), t.font(12.5), t.text_dim);
+        ui.painter().text(pos2(r.right() - 18.0, r.center().y), Align2::RIGHT_CENTER, n.to_string(), t.font(count_font), t.text_dim);
     }
     let _ = app;
     resp
+}
+
+/// A section's heading (My Photos, Albums, By Date…) in `font` and `color`; on a phone iOS's larger,
+/// bolder one.
+fn heading(ui: &egui::Ui, r: Rect, label: &str, font: egui::FontId, color: egui::Color32) {
+    let t = Tokens::get(ui.ctx());
+    let (font, color) = if crate::is_compact(ui.ctx()) { (t.semibold(20.0), t.text) } else { (font, color) };
+    ui.painter().text(pos2(r.left() + 18.0, r.center().y), Align2::LEFT_CENTER, crate::i18n::tr(label), font, color);
 }
 
 pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
@@ -72,7 +91,7 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
     ui.spacing_mut().item_spacing.y = 0.0;
     let (hr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 44.0), Sense::hover());
-    ui.painter().text(pos2(hr.left() + 18.0, hr.center().y), Align2::LEFT_CENTER, crate::i18n::tr("My Photos"), t.semibold(15.0), t.text);
+    heading(ui, hr, "My Photos", t.semibold(15.0), t.text);
     let counts = app.caches.counts(&app.session.catalog);
     let (total, picks, deleted) = (counts.total, counts.picks, counts.deleted);
     egui::ScrollArea::vertical().id_salt("left-scroll").auto_shrink([false, false]).show(ui, |ui| {
@@ -96,7 +115,7 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         ui.add_space(10.0);
         // Albums header
         let (ar, _) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::hover());
-        ui.painter().text(pos2(ar.left() + 18.0, ar.center().y), Align2::LEFT_CENTER, crate::i18n::tr("Albums"), t.semibold(13.5), t.text_label);
+        heading(ui, ar, "Albums", t.semibold(13.5), t.text_label);
         let mut hdr = ui.new_child(
             egui::UiBuilder::new()
                 .max_rect(Rect::from_min_max(pos2(ar.right() - 50.0, ar.top()), ar.right_bottom()))
@@ -128,7 +147,7 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         local_section(app, ui);
         // By date
         let (dr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::hover());
-        ui.painter().text(pos2(dr.left() + 18.0, dr.center().y), Align2::LEFT_CENTER, crate::i18n::tr("By Date"), t.semibold(13.5), t.text_label);
+        heading(ui, dr, "By Date", t.semibold(13.5), t.text_label);
         for g in app.caches.date_groups(&app.session.catalog).iter() {
             // year → month → day; a click filters by that prefix, the triangle opens a level
             if date_row(app, ui, &g.year, &crate::i18n::date_group_label(&g.year, true), g.count, 0.0) {
@@ -201,7 +220,7 @@ fn local_section(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     }
     let t = Tokens::get(ui.ctx());
     let (lr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::hover());
-    ui.painter().text(pos2(lr.left() + 18.0, lr.center().y), Align2::LEFT_CENTER, crate::i18n::tr("Local"), t.semibold(13.5), t.text_label);
+    heading(ui, lr, "Local", t.semibold(13.5), t.text_label);
     let home = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).unwrap_or_default();
     let mut builtin: Vec<(String, String)> = Vec::new();
     if !home.is_empty() {
@@ -701,7 +720,7 @@ fn server_folders_section(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         return;
     }
     let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::hover());
-    ui.painter().text(pos2(r.left() + 18.0, r.center().y), Align2::LEFT_CENTER, crate::i18n::tr("Server Folders"), t.semibold(13.5), t.text_label);
+    heading(ui, r, "Server Folders", t.semibold(13.5), t.text_label);
     server_folder_rows(app, ui, &folders, "", 0.0);
     ui.add_space(10.0);
 }
@@ -789,7 +808,7 @@ fn keywords_section(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     }
     ui.add_space(10.0);
     let (kr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::hover());
-    ui.painter().text(pos2(kr.left() + 18.0, kr.center().y), Align2::LEFT_CENTER, crate::i18n::tr("Keywords"), t.semibold(13.5), t.text_label);
+    heading(ui, kr, "Keywords", t.semibold(13.5), t.text_label);
     keyword_rows(app, ui, &tree, 0.0);
 }
 

@@ -71,6 +71,10 @@
 - Sliders have iOS 26's capsule thumb, which turns into a glass lens while you drag it; switches have the wider track
   and a knob that springs across; segmented controls slide their highlight to the segment you tap. The library has a
   large title, and Settings' cards are rounder.
+- Alerts (Delete) are iOS 26's: a rounder glass card, the text on the left, Cancel and the action as capsules side by
+  side, settling in from a touch larger. The Albums list reads as an iOS list (larger names, tinted icons, a rounded
+  highlight), and pages and menus slide in solid rather than fading through.
+- With a keyboard, Esc closes an open menu without also leaving the photo.
 
 ### Export on iPhone
 - Sharing is a flow of its own, as in Lightroom's mobile app: the share button opens a sheet with a strip of your photos (tick the
