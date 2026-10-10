@@ -20,12 +20,12 @@ use crate::theme::Tokens;
 
 /// Height of the top bar: Apple's minimum touch target is 44 pt.
 const BAR_H: f32 = 44.0;
-/// Height of the tool bar and of the select action bar: a floating glass capsule 52 pt tall (iOS 26's
-/// tab bar), a little room over it and a gap under it ([`FLOAT_GAP`]).
-const TAB_H: f32 = 66.0;
-/// The gap under a floating bar's capsule (the bar's colour carries on through it and the home
-/// indicator's strip, so the capsule floats rather than sitting on an edge).
-const FLOAT_GAP: f32 = 10.0;
+/// Height of the tool bar and of the select action bar: a glass capsule 52 pt tall (iOS 26's tab bar)
+/// with a little room over and under it ([`FLOAT_GAP`]).
+const TAB_H: f32 = 60.0;
+/// The room under a bar's capsule, at the bottom of the safe area (the bar's colour carries on
+/// through it and the home indicator's strip below).
+const FLOAT_GAP: f32 = 4.0;
 /// Height of the Edit tool's group row (icon over label, on a pill with room above and below).
 const GROUP_H: f32 = 60.0;
 /// A group's width in that row.
