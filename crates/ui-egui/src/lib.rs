@@ -28,6 +28,7 @@ pub mod superres;
 pub mod sync_ui;
 pub mod tasks;
 pub mod theme;
+pub mod trail;
 pub mod widgets;
 
 #[cfg(test)]

@@ -108,6 +108,22 @@ pub fn pick_source(
     Some(Point::new(n1.x - n0.x, n1.y - n0.y))
 }
 
+/// Distance from `q` to the stroke through `pts`: to its segments, so that a stroke painted fast
+/// (a finger's samples far apart) heals along its whole length, not in dabs; a lone point is a dab.
+fn dist_to_path(pts: &[(f32, f32)], q: (f32, f32)) -> f32 {
+    let seg = |a: (f32, f32), b: (f32, f32)| {
+        let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+        let len2 = dx * dx + dy * dy;
+        let t = if len2 > 0.0 { (((q.0 - a.0) * dx + (q.1 - a.1) * dy) / len2).clamp(0.0, 1.0) } else { 0.0 };
+        ((q.0 - a.0 - t * dx).powi(2) + (q.1 - a.1 - t * dy).powi(2)).sqrt()
+    };
+    match pts {
+        [] => f32::MAX,
+        [p] => seg(*p, *p),
+        _ => pts.windows(2).filter_map(|w| if let [a, b] = w { Some(seg(*a, *b)) } else { None }).fold(f32::MAX, f32::min),
+    }
+}
+
 /// Apply all spots to `img` (output resolution). `ppl` = output pixels per long-edge unit.
 pub fn apply(img: &mut Rgb32f, spots: &[Spot], frame: &Frame, ppl: f64) {
     if spots.is_empty() {
@@ -160,7 +176,7 @@ pub fn apply(img: &mut Rgb32f, spots: &[Spot], frame: &Frame, ppl: f64) {
         for y in 0..bh {
             for x in 0..bw {
                 let (px, py) = ((bx0 + x) as f32 + 0.5, (by0 + y) as f32 + 0.5);
-                let d = pts.iter().map(|p| ((px - p.0).powi(2) + (py - p.1).powi(2)).sqrt()).fold(f32::MAX, f32::min);
+                let d = dist_to_path(&pts, (px, py));
                 let inner = r * (1.0 - feather * 0.8);
                 alpha[y * bw + x] = (1.0 - smooth(inner, r, d)) * opacity;
                 if let Some(m) = hole.get_mut(y * bw + x) {
@@ -268,6 +284,24 @@ mod tests {
             let err: f32 = (0..3).map(|c| (got[c] - q[want][c]).abs()).sum();
             assert!(err < 0.05, "({x}, {y}): {got:?} vs {:?}", q[want]);
         }
+    }
+
+    /// A stroke painted fast has its samples far apart (a finger on a phone): it covers the line
+    /// between them, not just a dab at each end.
+    #[test]
+    fn a_stroke_covers_the_gaps_between_its_samples() {
+        let mut img = Rgb32f::from_fn(100, 100, |x, _| if x < 50 { [0.1; 3] } else { [0.9; 3] });
+        let frame = Frame::new(100, 100, &DevelopSettings::default(), true);
+        let spot = Spot {
+            mode: SpotMode::Clone,
+            points: vec![Point::new(0.1, 0.5), Point::new(0.4, 0.5)],
+            size: 0.03,
+            feather: 0.0,
+            source_offset: Some(Point::new(0.5, 0.0)),
+            ..Default::default()
+        };
+        apply(&mut img, &[spot], &frame, frame.px_per_long(100));
+        assert!(img.get(25, 50)[0] > 0.8, "half way between the samples: {:?}", img.get(25, 50));
     }
 
     #[test]

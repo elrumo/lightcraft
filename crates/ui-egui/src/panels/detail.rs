@@ -1677,12 +1677,13 @@ fn mask_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respons
                 _ => app.gesture = Some(Gesture::Brush { points: vec![n] }),
             }
         }
-        // the stroke being painted (the render shows it once it's committed)
-        if let Some(Gesture::Brush { points }) = &app.gesture {
-            for q in points {
-                p.circle_filled(map.screen(*q), r, tint);
-            }
-        }
+        // the stroke being painted, as one even trail (the render shows it once it's committed)
+        let pts: Vec<Pos2> = match &app.gesture {
+            Some(Gesture::Brush { points }) => points.iter().map(|q| map.screen(*q)).collect(),
+            _ => Vec::new(),
+        };
+        let ink = if app.ui.brush_erase { Color32::from_black_alpha(110) } else { tint };
+        crate::trail::paint(ui.ctx(), p, egui::Id::new("lc-trail-brush"), clip, &pts, r, crate::trail::Style::Fill, ink);
         if (resp.drag_stopped() || resp.clicked())
             && let Some(Gesture::Brush { points }) = app.gesture.take()
         {
@@ -1772,24 +1773,30 @@ fn pin(p: &egui::Painter, c: Pos2, sel: bool, touch: bool) {
 /// click a pin to select its spot, drag a target or source to move it, paint elsewhere to add one.
 fn remove_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Response, map: &CanvasMap, d: &DevelopSettings) {
     let long = (map.rect.width().max(map.rect.height())) as f64;
-    let p = ui.painter_at(app.canvas_rect.unwrap_or(map.rect));
+    let clip = app.canvas_rect.unwrap_or(map.rect);
+    let p = ui.painter_at(clip);
     let active = app.session.active_spot.filter(|i| *i < d.spots.len());
     // (spot, is source, screen centre, radius) of everything that can be grabbed
     let mut grips: Vec<(usize, bool, Pos2, f32)> = Vec::new();
     for (i, s) in d.spots.iter().enumerate() {
         let r = (s.size * long) as f32;
         let sel = Some(i) == active;
+        // each spot's outline (the brushed area's edge); a phone shows only the selected spot's, the
+        // others are their pins, as Lightroom's mobile app has it
+        let pts: Vec<Pos2> = if sel || !app.compact { s.points.iter().map(|q| map.screen(*q)).collect() } else { Vec::new() };
         let col = Color32::from_white_alpha(if sel { 230 } else { 150 });
-        for q in &s.points {
-            p.circle_stroke(map.screen(*q), r, Stroke::new(if sel { 1.5 } else { 1.0 }, col));
-        }
+        let outline = crate::trail::Style::Outline(if sel { 1.5 } else { 1.0 });
+        crate::trail::paint(ui.ctx(), &p, egui::Id::new(("lc-spot", i)), clip, &pts, r, outline, col);
         let Some(&t) = s.points.first() else { continue };
         let tq = map.screen(t);
-        if let Some(o) = s.source_offset.filter(|_| sel) {
+        let source = s.source_offset.filter(|_| sel);
+        let src_pts: Vec<Pos2> = match source {
+            Some(o) => s.points.iter().map(|q| map.screen(Point::new(q.x + o.x, q.y + o.y))).collect(),
+            None => Vec::new(),
+        };
+        crate::trail::paint(ui.ctx(), &p, egui::Id::new(("lc-spot-source", i)), clip, &src_pts, r, outline, Color32::from_white_alpha(170));
+        if let Some(o) = source {
             let sq = map.screen(Point::new(t.x + o.x, t.y + o.y));
-            for q in &s.points {
-                p.circle_stroke(map.screen(Point::new(q.x + o.x, q.y + o.y)), r, Stroke::new(1.0, Color32::from_white_alpha(170)));
-            }
             let dir = (tq - sq).normalized();
             p.arrow(sq + dir * r, (tq - sq) - dir * (2.0 * r).min((tq - sq).length()), Stroke::new(1.0, Color32::from_white_alpha(200)));
             register(ui.ctx(), format!("spotSource:{i}"), Rect::from_center_size(sq, vec2(14.0, 14.0)));
@@ -1862,11 +1869,12 @@ fn remove_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respo
             _ => app.gesture = Some(Gesture::Spot { points: vec![n] }),
         }
     }
-    if let Some(Gesture::Spot { points }) = &app.gesture {
-        for q in points {
-            p.circle_filled(map.screen(*q), r, Color32::from_white_alpha(60));
-        }
-    }
+    // the stroke being painted, as one even trail
+    let pts: Vec<Pos2> = match &app.gesture {
+        Some(Gesture::Spot { points }) => points.iter().map(|q| map.screen(*q)).collect(),
+        _ => Vec::new(),
+    };
+    crate::trail::paint(ui.ctx(), &p, egui::Id::new("lc-trail-spot"), clip, &pts, r, crate::trail::Style::Fill, Color32::from_white_alpha(90));
     if (resp.drag_stopped() || resp.clicked())
         && let Some(Gesture::Spot { points }) = app.gesture.take()
     {
