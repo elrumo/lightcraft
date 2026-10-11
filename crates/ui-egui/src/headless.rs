@@ -38,6 +38,8 @@ pub struct HeadlessView {
     frames: u64,
     /// The last frame's text-input request (what a host passes to the on-screen keyboard).
     pub ime: Option<egui::output::IMEOutput>,
+    /// The text the last frame asked the host to put on the clipboard (a browser allows that only during a tap).
+    pub copied: Option<String>,
 }
 
 impl Default for HeadlessView {
@@ -59,6 +61,7 @@ impl HeadlessView {
             size: egui::vec2(1600.0, 1000.0),
             frames: 0,
             ime: None,
+            copied: None,
         }
     }
 
@@ -93,6 +96,10 @@ impl HeadlessView {
         self.shapes = std::mem::take(&mut out.shapes);
         self.pixels_per_point = out.pixels_per_point;
         self.ime = out.platform_output.ime;
+        self.copied = out.platform_output.commands.iter().find_map(|c| match c {
+            egui::OutputCommand::CopyText(t) => Some(t.clone()),
+            _ => None,
+        });
         out.viewport_output.remove(&ViewportId::ROOT).map(|v| v.commands).unwrap_or_default()
     }
 
@@ -167,6 +174,12 @@ impl Headless {
     /// `app.quit` was requested.
     pub fn quit_requested(&self) -> bool {
         self.quit
+    }
+
+    /// Run one frame with these events in it (several at once, as a browser delivers a tap).
+    pub fn step_with(&mut self, events: impl IntoIterator<Item = egui::Event>) {
+        self.events.extend(events);
+        self.step();
     }
 
     /// Run one frame.

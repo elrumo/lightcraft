@@ -545,7 +545,8 @@ pub fn all_commands_page(app: &mut LightcraftApp, ctx: &egui::Context) {
 /// Select All and Paste without. A tap on a field that already has the keyboard, a double tap
 /// (which selects a word) or a long press opens it; typing, a choice or a tap elsewhere closes it.
 /// Touch screens only (a mouse has the keyboard's shortcuts). Its choices reach the field as the
-/// events those shortcuts make (`app.synthetic`, next frame); Paste reads the host's clipboard
+/// events those shortcuts make (`app.synthetic`, next frame; Cut and Copy in another pass of the tap's own
+/// frame, as a browser lets a page write the clipboard only then); Paste reads the host's clipboard
 /// (`Services::clipboard_text`). While it is open a tap elsewhere doesn't take the keyboard away.
 /// Call once a frame, after everything else is drawn. Buttons: `button:edit-<action>`.
 pub fn edit_menu(app: &mut LightcraftApp, ctx: &egui::Context) {
@@ -557,6 +558,18 @@ pub fn edit_menu(app: &mut LightcraftApp, ctx: &egui::Context) {
         ctx.data_mut(|d| d.insert_temp(id.with("press"), before));
     }
     ctx.data_mut(|d| d.insert_temp(id.with("before"), focused));
+    // The host raises the keyboard when egui reports a field's IME rect, and iOS Safari does so only for a focus
+    // made inside the tap. egui reports it only from the pass after the field takes focus and only once the field
+    // is on screen (a page slides in from below), so for a moment it doesn't: report the field's own rect then.
+    if let Some(field) = focused
+        && ctx.output(|o| o.ime).is_none()
+        && let Some(r) = ctx.read_response(field)
+    {
+        let rect = ctx.layer_transform_to_global(r.layer_id).unwrap_or_default() * r.rect;
+        ctx.output_mut(|o| {
+            o.ime = Some(egui::output::IMEOutput { purpose: egui::IMEPurpose::Normal, rect, cursor_rect: rect, should_interrupt_composition: false });
+        });
+    }
     let ime = ctx.output(|o| o.ime);
     let (Some(field), Some(ime), true) = (focused, ime, ctx.input(|i| i.has_touch_screen())) else {
         ctx.data_mut(|d| d.remove::<Id>(id));
@@ -604,8 +617,12 @@ pub fn edit_menu(app: &mut LightcraftApp, ctx: &egui::Context) {
         let command = egui::Modifiers::COMMAND;
         let key = |pressed| egui::Event::Key { key: egui::Key::A, physical_key: None, pressed, repeat: false, modifiers: command };
         match chosen {
-            Some("cut") => app.synthetic.push(egui::Event::Cut),
-            Some("copy") => app.synthetic.push(egui::Event::Copy),
+            Some(which @ ("cut" | "copy")) => {
+                // (a browser lets a page write the clipboard only inside the tap: another pass of this frame)
+                let event = if which == "cut" { egui::Event::Cut } else { egui::Event::Copy };
+                ctx.data_mut(|d| d.insert_temp(id.with("event"), event));
+                ctx.request_discard("edit menu: cut or copy");
+            }
             Some("paste") => {
                 if let Some(text) = app.services.clipboard_text.as_mut().and_then(|f| f()) {
                     app.synthetic.push(egui::Event::Paste(text));
@@ -629,6 +646,16 @@ pub fn edit_menu(app: &mut LightcraftApp, ctx: &egui::Context) {
     });
     let keep = if open { egui::SurrenderFocusOn::Never } else { egui::SurrenderFocusOn::Clicks };
     ctx.options_mut(|o| o.input_options.surrender_focus_on = keep);
+}
+
+/// Deliver the Cut or Copy the edit menu chose to its field, in the extra pass it asked for (or the next
+/// frame's first, when egui declines another pass). Call first thing in a pass.
+pub fn edit_menu_event(ctx: &egui::Context) {
+    let key = Id::new("lc-edit-menu").with("event");
+    if let Some(event) = ctx.data(|d| d.get_temp::<egui::Event>(key)) {
+        ctx.data_mut(|d| d.remove::<egui::Event>(key));
+        ctx.input_mut(|i| i.events.push(event));
+    }
 }
 
 /// The edit menu's bar: `items` (id, label) side by side in a glass capsule over the cursor, above

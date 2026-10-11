@@ -229,9 +229,9 @@ fn services(originals: Originals, backend: Option<Backend>, files: Files, frozen
         share_exports: None,
         save_to_photos: None,
         host_pick: None,
-        // the system clipboard reaches text fields directly; no haptics
+        // (a keyboard's ⌘V reaches text fields directly) no haptics
         haptic: None,
-        clipboard_text: None,
+        clipboard_text: Some(Box::new(read_clipboard)),
     }
 }
 
@@ -628,6 +628,25 @@ thread_local! {
     /// Commands from JavaScript ([`command`]), run on the next frame.
     static INBOX: std::cell::RefCell<Vec<(String, String, Reply)>> = const { std::cell::RefCell::new(Vec::new()) };
     static CTX: std::cell::RefCell<Option<egui::Context>> = const { std::cell::RefCell::new(None) };
+    /// Text read from the clipboard by a text field's Paste, delivered as a paste event on the next frame.
+    static PASTED: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Paste in a text field's touch edit menu (a phone's keyboard has no ⌘V). `navigator.clipboard.readText()`
+/// is asynchronous and only allowed during the tap, so it is started here and the text arrives as
+/// `Event::Paste` on a later frame (`WebApp::raw_input_hook`); this always returns `None`.
+fn read_clipboard() -> Option<String> {
+    let clipboard = js_sys::Reflect::get(&window()?.navigator(), &"clipboard".into()).ok().filter(|c| !c.is_undefined())?;
+    let read = js_sys::Reflect::get(&clipboard, &"readText".into()).ok()?.dyn_into::<js_sys::Function>().ok()?;
+    let promise = read.call0(&clipboard).ok()?.dyn_into::<js_sys::Promise>().ok()?;
+    wasm_bindgen_futures::spawn_local(async move {
+        // (refused or empty: the user didn't allow it, or there's nothing to paste)
+        if let Some(text) = wasm_bindgen_futures::JsFuture::from(promise).await.ok().and_then(|v| v.as_string()).filter(|t| !t.is_empty()) {
+            PASTED.with(|p| *p.borrow_mut() = Some(text));
+            CTX.with(|c| c.borrow().as_ref().map(egui::Context::request_repaint));
+        }
+    });
+    None
 }
 
 /// Run a command by id from JavaScript (automation, tests): `await command("library.info", "{}")`
@@ -700,6 +719,9 @@ impl eframe::App for WebApp {
     }
 
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {
+        if let Some(text) = PASTED.with(|p| p.borrow_mut().take()) {
+            raw.events.push(egui::Event::Paste(text));
+        }
         self.app.raw_input_hook(raw);
     }
 

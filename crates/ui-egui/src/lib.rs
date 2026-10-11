@@ -188,7 +188,9 @@ pub struct Services {
     /// gestures and choices (`haptics`).
     pub haptic: Option<haptics::PlayHaptic>,
     /// The system clipboard's text, for Paste in a text field's touch edit menu
-    /// (`panels::mobile::edit_menu`; iOS: the on-screen keyboard has no ⌘V).
+    /// (`panels::mobile::edit_menu`; iOS: the on-screen keyboard has no ⌘V). A host that can only
+    /// read it asynchronously (the web) starts the read here, returns `None` and sends the text
+    /// itself as an `egui::Event::Paste` on a later frame.
     pub clipboard_text: Option<Box<dyn FnMut() -> Option<String>>>,
 }
 
@@ -890,6 +892,7 @@ impl LightcraftApp {
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         i18n::set_language(self.ui.language);
         let ctx = ui.ctx().clone();
+        panels::mobile::edit_menu_event(&ctx);
         if !self.fonts_ready {
             ctx.request_repaint();
             return;

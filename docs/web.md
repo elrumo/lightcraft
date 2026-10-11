@@ -146,6 +146,15 @@ are the same in every version, so serve them with `Cache-Control: no-cache` (not
 - **Export downloads the file.** *Export…* (<kbd>⌘⇧E</kbd>) runs the same `app.export` path as
   the desktop app (`lightcraft_engine::export`: JPEG/PNG/TIFF/WebP, sizing, naming). The host's
   `write` service hands each file to the browser as a download instead of writing it to disk.
+- **Text on a phone.** Under 900 pt wide the page uses the phone layout (`docs/ios-gaps.md`). A tap
+  on a text field raises the on-screen keyboard, also for a field a tap opens by itself (New
+  Album): iOS Safari raises it only for a focus made inside the tap, so `panels::mobile::edit_menu`
+  reports the focused field's rect to eframe's hidden `<input>` in the tap's own frame instead of a
+  frame later. A second tap on the focused field opens the iOS-style edit menu (Select All / Cut /
+  Copy / Paste). Copy and Cut write the clipboard in another pass of the tap's frame (a browser
+  allows that only inside the tap); Paste reads `navigator.clipboard.readText()` there too, and
+  Safari asks to allow it (`web.rs` `read_clipboard`). Checked on the iOS 26.5 simulator's Safari
+  (keyboard, typing, Select All, Copy, Paste); not on a device, and not on Android Chrome.
 - **Automation.** `await lightcraft.command("library.info", "{}")` runs any engine or UI command
   by id on the next frame and resolves to the JSON result (`web.stats` reports storage, workers
   and the render queue). This is how the headless-Chrome checks drive the page.
