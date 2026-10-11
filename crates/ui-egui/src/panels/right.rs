@@ -626,7 +626,7 @@ fn info(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         // (cached answers, checked off the UI thread: unknown counts as online / no smart preview)
         if lightcraft_engine::sync::is_remote(&p) {
             // synced: the original is on the server
-            let s = app.session.media.synced_tiers.get(&lightcraft_engine::media::content_key(&p)).copied().unwrap_or(0);
+            let s = app.session.synced_tier(&p).unwrap_or(0);
             let text = match s {
                 2 => "Original on the sync server · editing the smart preview",
                 1 => "Original on the sync server · smart preview downloading",

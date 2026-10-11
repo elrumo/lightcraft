@@ -95,6 +95,9 @@ fn an_apple_proraw_works_through_the_client_and_the_server() {
     b.execute("sync.signIn", &json!({"server": url, "user": "ann", "password": "correct horse", "device": "ipad"})).unwrap();
     b.execute("sync.now", &json!({"wait": true})).unwrap();
     let bid = b.catalog.photos().next().unwrap().id;
+    // (its small preview comes down once a grid shows it)
+    b.thumb_job(bid, 256);
+    b.execute("sync.now", &json!({"wait": true})).unwrap();
     let (ra, rb) = (a.render_now(id, 600, 600).unwrap(), b.render_now(bid, 600, 600).unwrap());
     let bright = |img: &lightcraft_raster::Rgba8| {
         img.data.iter().map(|p| f64::from(p[0]) + f64::from(p[1]) + f64::from(p[2])).sum::<f64>() / (img.data.len() * 3) as f64

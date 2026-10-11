@@ -334,10 +334,13 @@ Each device keeps the **whole catalog** (it's small) and **downloads pixels as n
 
 | What | When | Used for |
 |---|---|---|
-| mini preview (≤ 512 px) | every photo whose original isn't here: the cells on screen first (the grid fills where you look, then the rest of the library) | grid and filmstrip thumbnails, rendered here with the current edits (never stale) |
+| mini preview (≤ 512 px) | a photo whose original isn't here, when the grid or filmstrip shows it (the cells on screen and a screen either side, the ones drawn last first; a cell scrolled past before its turn isn't downloaded) — or every such photo with *Download all small previews* | grid and filmstrip thumbnails, rendered here with the current edits (never stale) |
 | smart preview (≤ 2560 px) | the photo you open, and everything **made available offline** | the loupe, editing, exporting at preview size |
 | original | **Photo ▸ Download Originals**, or every photo with *Store the originals of all photos on this device* | full-size export, 1:1 |
 
+- **Download all small previews** (Settings ▸ Sync, or `sync.allPreviews {on}`): the whole library browses offline.
+  The setting says how many photos lack one and about how much they take (at what the server's small previews weigh
+  on average; `sync.usage` → `previewsLeft`). Off, the default: a library of 200,000 photos costs only what you look at.
 - **A size limit for downloaded originals** (Settings ▸ Sync ▸ Originals limit, or `sync.originalsBudget {mb}`): beyond
   it the originals used longest ago are deleted, and their photos are the server's again (previews stay; Download
   Originals brings one back). Never an original the server doesn't have, one that is open or selected, or one kept

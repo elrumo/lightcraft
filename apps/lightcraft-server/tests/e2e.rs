@@ -266,6 +266,9 @@ fn two_libraries_sync_through_the_server() {
     b.execute("sync.now", &json!({"wait": true})).unwrap();
     assert_eq!(b.catalog.len(), 2);
     assert!(b.catalog.photos().all(|p| matches!(&p.source, Source::File { path } if path.starts_with("web/"))));
+    // (a small preview comes down once a grid shows the photo)
+    b.thumb_job(ids[0], 256);
+    b.execute("sync.now", &json!({"wait": true})).unwrap();
     assert!(b.render_now(ids[0], 200, 200).is_ok(), "renders from the downloaded previews");
 
     // edits on both, merged

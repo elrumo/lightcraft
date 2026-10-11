@@ -53,6 +53,7 @@ fn usage(s: &mut Session, p: &Value) -> Result<Value> {
         s.sync_want_usage();
     }
     let (photos, remote) = s.photo_counts();
+    let left = s.sync_previews_left();
     let st = s.sync_state();
     Ok(json!({
         "server": st.and_then(|st| st.usage()),
@@ -60,6 +61,7 @@ fn usage(s: &mut Session, p: &Value) -> Result<Value> {
         "serverAgeSecs": st.and_then(|st| st.usage_age()).map(|a| a.as_secs()),
         "local": s.local_dirs().map(|d| crate::usage::measure(&d)),
         "photos": {"total": photos, "onlyPreviewsHere": remote},
+        "previewsLeft": left.map(|(n, bytes)| json!({"photos": n, "bytes": bytes})),
     }))
 }
 
@@ -180,6 +182,12 @@ fn originals_budget(s: &mut Session, p: &Value) -> Result<Value> {
     status(s, p)
 }
 
+fn all_previews(s: &mut Session, p: &Value) -> Result<Value> {
+    let on = p.get("on").and_then(Value::as_bool).ok_or_else(|| bad("sync.allPreviews", "missing `on` (true or false)"))?;
+    s.sync_all_previews(on)?;
+    status(s, p)
+}
+
 fn server_previews(s: &mut Session, p: &Value) -> Result<Value> {
     let on = p.get("on").and_then(Value::as_bool).ok_or_else(|| bad("sync.serverPreviews", "missing `on` (true or false)"))?;
     s.sync_server_previews(on)?;
@@ -289,7 +297,7 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!("sync.pause", "Pause Syncing", ["File"], None, "{on?: bool}: stop talking to the server for now (toggle without `on`)", synced, pause),
         cmd!(query "sync.status", "Sync Status", [], None, "{}: state (off / signedOut / idle / syncing / error), pending changes, transfers, error", always, status),
         cmd!(query "sync.usage", "Sync Storage", [], None,
-            "{refresh?: bool}: what this library takes on the sync server (originals, smart and small previews, library folders, the server's free disk) and on this computer (catalog, thumbnails, previews, downloaded originals, free disk), in bytes; photos with only previews here. The server's numbers are the last it gave (asked for again every 20 s while someone looks) unless `refresh` asks it now",
+            "{refresh?: bool}: what this library takes on the sync server (originals, smart and small previews, library folders, the server's free disk) and on this computer (catalog, thumbnails, previews, downloaded originals, free disk), in bytes; photos with only previews here; the small previews not downloaded yet (previewsLeft: photos, about how many bytes). The server's numbers are the last it gave (asked for again every 20 s while someone looks) unless `refresh` asks it now",
             synced, usage),
         cmd!(
             "sync.storeOriginalsLocally",
@@ -308,6 +316,15 @@ pub fn specs() -> Vec<CommandSpec> {
             "{mb: number | null}: keep the originals downloaded from the server under this many megabytes by deleting the ones used longest ago (never one the server doesn't have, one that is open, selected or available offline; not with Store Originals Locally); null: no limit",
             synced,
             originals_budget
+        ),
+        cmd!(
+            "sync.allPreviews",
+            "Download All Previews",
+            [],
+            None,
+            "{on: bool}: download the small previews of every photo whose original stays on the server, to browse them offline (sync.usage → previewsLeft says how many and about how many bytes); off: only the ones the grid shows, as it shows them",
+            synced,
+            all_previews
         ),
         cmd!(
             "sync.serverPreviews",

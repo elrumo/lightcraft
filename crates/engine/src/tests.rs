@@ -82,6 +82,21 @@ fn develop_set_and_interaction_coalesces() {
     assert_eq!(active_dev(&s).light.contrast, 100.0);
 }
 
+/// A slider drag changes the catalog every frame; the grid and filmstrip's list (a sort of the whole
+/// library) is made again once, when the drag ends, not on every frame of it.
+#[test]
+fn a_drag_keeps_the_photo_list_until_it_ends() {
+    let mut s = demo();
+    let (before, _) = s.visible_shared();
+    s.execute("develop.beginInteraction", &json!({"label": "Exposure"})).unwrap();
+    for v in [0.6, 0.8, 1.2] {
+        s.execute("develop.set", &json!({"control": "light.exposure", "value": v})).unwrap();
+        assert_eq!(s.visible_shared().0, before, "the same list while dragging");
+    }
+    s.execute("develop.endInteraction", &json!({})).unwrap();
+    assert_ne!(s.visible_shared().0, before, "made again for the edit");
+}
+
 #[test]
 fn copy_paste_sync_presets() {
     let mut s = demo();

@@ -298,7 +298,12 @@ fn two_devices_share_photos_edits_and_files() {
     sync(&mut b, &mut f);
     assert_eq!(b.catalog.len(), 2);
     assert!(b.catalog.photos().all(|p| is_remote(p)));
-    // grid thumbnails render from the mini previews, the loupe from the smart preview once here
+    // grid thumbnails render from the mini previews, downloaded as the grid shows them; the loupe
+    // from the smart preview once here
+    for id in &ids {
+        b.thumb_job(*id, 128);
+    }
+    sync(&mut b, &mut f);
     let thumb = b.render_now(ids[0], 128, 128).unwrap();
     assert!(thumb.image.width > 0);
     let smart_dir = root.join("b/Smart Previews");
@@ -889,7 +894,9 @@ fn a_library_fills_in_as_it_comes() {
     sync_until(&mut b, &mut f, &|s| s.sync_state().unwrap().reading().is_some());
     assert_eq!((in_library(&b), b.sync_state().unwrap().reading()), (1, Some((1, 2))), "the first page shows");
     assert_eq!(b.sync_state().unwrap().state(), "syncing");
-    // its preview downloads alongside the rest of the library
+    // its preview downloads alongside the rest of the library once the grid shows it
+    let shown = b.catalog.photos().find(|p| p.in_library()).unwrap().id;
+    b.thumb_job(shown, 128);
     let next = b.sync_tasks();
     let urls: Vec<&String> = next.iter().filter_map(|t| if let Task::Http { url, .. } = t { Some(url) } else { None }).collect();
     assert!(urls.iter().any(|u| u.contains("cursor=")) && urls.iter().any(|u| u.contains("/api/blobs/mini/")), "{urls:?}");
@@ -1113,10 +1120,10 @@ fn removals_win_over_pending_edits() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
-/// The mini preview of a thumbnail the grid asks for comes down before those of the photos not
-/// on screen, whatever their place in the library.
+/// Mini previews download as the grid asks for them, the cells drawn last first, and only those: a
+/// cell scrolled out of the grid's reach before its turn isn't downloaded.
 #[test]
-fn thumbnails_on_screen_download_first() {
+fn only_the_previews_the_grid_shows_download() {
     let mut f = Fake::new();
     let root = temp_dir("onscreen");
     for i in 0..8u8 {
@@ -1128,37 +1135,44 @@ fn thumbnails_on_screen_download_first() {
     assert_eq!(sync(&mut a, &mut f)["state"], "idle");
     let mut b = open(&root.join("b"));
     sign_in(&mut b);
+    let before = f.requests.len();
+    assert_eq!(sync(&mut b, &mut f)["state"], "idle");
+    assert!(!f.requests[before..].iter().any(|r| r.contains("/blobs/")), "nothing shown, nothing downloaded: {:?}", &f.requests[before..]);
     let mini = |t: &Task| match t {
         Task::Http { url, .. } => url.split_once("/api/blobs/mini/").map(|(_, key)| key.to_string()),
         Task::Proxies { .. } => None,
     };
-    // everything but the mini previews goes through; those stay out (in flight)
-    let mut held = Vec::new();
-    for _ in 0..100 {
-        let tasks = b.sync_tasks();
-        if tasks.is_empty() {
-            break;
-        }
-        for t in tasks {
-            if let Some(key) = mini(&t) {
-                held.push((key, t));
-            } else {
-                let d = f.handle(&t);
-                b.sync_done(d);
-            }
-        }
+    let ids: Vec<PhotoId> = b.catalog.photos().map(|p| p.id).collect();
+    let keys = |s: &Session, ids: &[PhotoId]| -> Vec<String> { ids.iter().map(|id| blob_key(s.catalog.photo(*id).unwrap()).unwrap()).collect() };
+    // the grid draws six cells: the first four go at once, in the order drawn
+    for id in &ids[..6] {
+        b.thumb_job(*id, 128);
     }
-    assert_eq!(held.len(), 4, "as many as go at once");
-    let key_of = |s: &Session, id: PhotoId| blob_key(s.catalog.photo(id).unwrap()).unwrap();
-    // the last photo of the library: four others would come before it
-    let last = b.catalog.photos().map(|p| p.id).filter(|id| held.iter().all(|(k, _)| *k != key_of(&b, *id))).last().unwrap();
-    // the grid draws its cell
-    assert!(b.thumb_job(last, 128).is_some());
-    let (_, t) = held.remove(0);
-    let d = f.handle(&t);
-    b.sync_done(d);
-    let next: Vec<String> = b.sync_tasks().iter().filter_map(mini).collect();
-    assert_eq!(next, vec![key_of(&b, last)]);
+    let held = b.sync_tasks();
+    assert_eq!(held.iter().filter_map(mini).collect::<Vec<_>>(), keys(&b, &ids[..4]));
+    // while they come, the grid scrolls on: the fifth and sixth cells leave its reach, the last two come
+    for _ in 0..40 {
+        b.thumb_job(ids[6], 128);
+        b.thumb_job(ids[7], 128);
+        assert!(b.sync_tasks().iter().all(|t| mini(t).is_none()), "four at a time");
+    }
+    // a preview arriving changes no photo: the library's lists (a sort of all of it) stay as they are
+    let (revision, generation) = (b.catalog.revision, b.visible_shared().0);
+    for t in held {
+        let d = f.handle(&t);
+        b.sync_done(d);
+    }
+    b.thumb_job(ids[6], 128);
+    b.thumb_job(ids[7], 128);
+    let next = b.sync_tasks();
+    assert_eq!((b.catalog.revision, b.visible_shared().0), (revision, generation));
+    assert_eq!(next.iter().filter_map(mini).collect::<Vec<_>>(), keys(&b, &ids[6..]));
+    for t in next {
+        let d = f.handle(&t);
+        b.sync_done(d);
+    }
+    let tiers: Vec<Option<u8>> = ids.iter().map(|id| b.synced_tier(b.catalog.photo(*id).unwrap())).collect();
+    assert_eq!(tiers, [1, 1, 1, 1, 0, 0, 1, 1].map(Some));
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -1175,6 +1189,8 @@ fn a_browser_shares_the_library_through_its_storage() {
     b.open_library_in(stores, false).unwrap();
     b.sync_store = Some(BrowserStore { prefix: "proxies/".into(), ..Default::default() });
     sign_in(&mut b);
+    // (every mini preview, not only the grid's)
+    b.execute("sync.allPreviews", &json!({"on": true})).unwrap();
     // the host: storage keys instead of files, previews built from stored originals
     let mut storage: HashMap<String, Vec<u8>> = HashMap::new();
     let browser = |f: &mut Fake, storage: &mut HashMap<String, Vec<u8>>, t: &Task| -> Done {
@@ -1228,7 +1244,8 @@ fn a_browser_shares_the_library_through_its_storage() {
     }
     assert!(storage.contains_key(&format!("proxies/{}.lcsp", key(&b, ids[0]))), "the open photo's smart preview");
     assert!(!storage.keys().any(|k| k.starts_with("originals/")), "no originals unless asked");
-    assert_eq!(b.media.synced_tiers.len(), 2, "both are photos without their original here");
+    let tiers: Vec<Option<u8>> = ids.iter().map(|id| b.synced_tier(b.catalog.photo(*id).unwrap())).collect();
+    assert_eq!(tiers, [Some(2), Some(1)], "both are photos without their original here: the open one has its smart preview");
 
     // a photo imported in the browser (stored there by content) is uploaded with its previews
     let png = root.join("c.png");
@@ -1255,6 +1272,8 @@ fn a_browser_shares_the_library_through_its_storage() {
     }
     sync(&mut a, &mut f);
     assert!(a.catalog.photo(id).is_some());
+    a.thumb_job(id, 128);
+    sync(&mut a, &mut f);
     assert!(root.join("a/Smart Previews").join(crate::sync::mini_file_name(a.catalog.photo(id).unwrap())).exists(), "A gets its preview");
     // an original asked for lands in storage, where the photo's path already points
     b.execute("sync.downloadOriginals", &json!({"ids": [ids[1].0]})).unwrap();
@@ -1318,6 +1337,7 @@ fn storage_numbers_come_from_the_server_and_from_this_computer() {
     a.sync_fetch_usage_with(&mut |t| f.handle(t));
     let u = a.sync_state().unwrap().usage().cloned().expect("the server answered");
     let bytes = |k: &str| f.blobs.iter().filter(|((kind, _), _)| kind == k).map(|(_, b)| b.len() as u64).sum::<u64>();
+    let mini_bytes = bytes("mini");
     assert_eq!((u.original.files, u.smart.files, u.mini.files), (2, 2, 2));
     assert_eq!(u.original.bytes, bytes("original"));
     assert_eq!(u.stored(), bytes("original") + bytes("smart") + bytes("mini"));
@@ -1332,14 +1352,25 @@ fn storage_numbers_come_from_the_server_and_from_this_computer() {
     assert_eq!(r["local"]["mini"]["files"], 2, "{r}");
     assert!(r["local"]["library"].as_u64().unwrap() > 0, "the catalog takes room: {r}");
 
-    // a second device has only previews of the photos: the grid's small ones
+    assert_eq!(r["previewsLeft"]["photos"], 0, "{r}");
+
+    // a second device has only previews of the photos: the grid's small ones, once it shows them
     let mut b = open(&root.join("b"));
     sign_in(&mut b);
     sync(&mut b, &mut f);
     assert_eq!(b.photo_counts(), (2, 2));
     let r = b.execute("sync.usage", &json!({})).unwrap();
     assert_eq!(r["photos"], json!({"total": 2, "onlyPreviewsHere": 2}));
+    assert_eq!(r["local"]["mini"]["files"], 0, "nothing shown, nothing downloaded: {r}");
+    // all of them on request, after an estimate at what the server's weigh
+    b.sync_fetch_usage_with(&mut |t| f.handle(t));
+    let r = b.execute("sync.usage", &json!({})).unwrap();
+    assert_eq!(r["previewsLeft"], json!({"photos": 2, "bytes": 2 * (mini_bytes / 2)}), "{r}");
+    assert_eq!(b.execute("sync.allPreviews", &json!({"on": true})).unwrap()["allPreviews"], true);
+    sync(&mut b, &mut f);
+    let r = b.execute("sync.usage", &json!({})).unwrap();
     assert_eq!(r["local"]["mini"]["files"], 2, "{r}");
+    assert_eq!(r["previewsLeft"]["photos"], 0, "{r}");
     assert_eq!(r["local"]["downloaded"]["files"], 0, "{r}");
     // an original on request is counted as downloaded
     let ids: Vec<u64> = b.catalog.photos().map(|p| p.id.0).collect();
@@ -1893,6 +1924,11 @@ fn what_is_being_sent_is_listed_with_its_progress() {
     sign_in(&mut b);
     let mut most_down = 0;
     for _ in 0..500 {
+        // (the grid shows every photo it has so far)
+        let shown: Vec<PhotoId> = b.catalog.photos().map(|p| p.id).collect();
+        for id in shown {
+            b.thumb_job(id, 128);
+        }
         let tasks = b.sync_tasks();
         let t = b.sync_transfers();
         most_down = most_down.max(t.downloads + t.downloads_done);
@@ -1927,5 +1963,149 @@ fn failing_transfers_say_why_and_are_forgotten_once_one_works() {
     let t = a.sync_transfers();
     assert_eq!((t.failing, t.error), (0, None));
     assert_eq!(f.blobs.len(), 3, "the original and both previews are there now");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// What a big synced library costs per frame and per edit (192k photos whose originals stay on the
+/// server, like a NAS library): `cargo test -p lightcraft-engine --release big_synced_library -- --ignored --nocapture`.
+#[test]
+#[ignore = "timing"]
+fn big_synced_library_timings() {
+    use std::time::Instant;
+    let n: usize = std::env::var("LC_BIG").ok().and_then(|v| v.parse().ok()).unwrap_or(192_000);
+    let mut f = Fake::new();
+    f.page = 2000;
+    let ops: Vec<Op> = (0..n)
+        .map(|i| {
+            let id = f.core.alloc_photo_id(0);
+            let hash = format!("{:032x}", (i as u128 + 1) * 7919);
+            let path = lightcraft_catalog::sync::original_path(&hash, &format!("IMG_{i}.CR2"));
+            let mut p = lightcraft_catalog::Photo::new(id, Source::File { path }, &format!("IMG_{i}.CR2"), "CR2", 6000, 4000, "2026-01-01T00:00:00Z");
+            p.content_hash = Some(hash);
+            Op::AddPhoto { photo: Box::new(p) }
+        })
+        .collect();
+    for chunk in ops.chunks(10_000) {
+        f.core.push(f.core.head(), chunk).unwrap();
+    }
+    let root = temp_dir("big");
+    let mut b = open(&root.join("b"));
+    sign_in(&mut b);
+    // the library comes in; photo files never do (held in flight)
+    let t0 = Instant::now();
+    let mut held = Vec::new();
+    for _ in 0..1000 {
+        let tasks = b.sync_tasks();
+        if tasks.is_empty() {
+            break;
+        }
+        for t in tasks {
+            if matches!(&t, Task::Http { url, .. } if url.contains("/api/blobs/")) {
+                held.push(t);
+            } else {
+                let d = f.handle(&t);
+                b.sync_done(d);
+            }
+        }
+    }
+    eprintln!("read {} photos in {:?}", b.catalog.len(), t0.elapsed());
+    let time = |what: &str, b: &mut Session, f: &mut dyn FnMut(&mut Session)| {
+        let t = Instant::now();
+        f(b);
+        eprintln!("{what}: {:.1} ms", t.elapsed().as_secs_f64() * 1e3);
+    };
+    time("visible (cold)", &mut b, &mut |b| {
+        b.visible();
+    });
+    time("sync_tasks (no change)", &mut b, &mut |b| {
+        b.sync_tasks();
+    });
+    time("state()", &mut b, &mut |b| {
+        b.sync_state().unwrap().state();
+    });
+    time("sync_transfers()", &mut b, &mut |b| {
+        b.sync_transfers();
+    });
+    let id = b.catalog.photos().next().unwrap().id;
+    b.selection = crate::Selection::single(id);
+    time("sync_tasks (active changed)", &mut b, &mut |b| {
+        held.extend(b.sync_tasks());
+    });
+    // a grid frame: three screens of cells ask for their thumbnails
+    let cells: Vec<PhotoId> = b.visible().iter().take(300).copied().collect();
+    time("grid frame (300 thumb_job + sync_tasks)", &mut b, &mut |b| {
+        for id in &cells {
+            b.thumb_job(*id, 256);
+        }
+        held.extend(b.sync_tasks());
+    });
+    time("next grid frame (the same cells)", &mut b, &mut |b| {
+        for id in &cells {
+            b.thumb_job(*id, 256);
+        }
+        held.extend(b.sync_tasks());
+    });
+    let photos: Vec<std::sync::Arc<lightcraft_catalog::Photo>> = cells.iter().map(|id| b.catalog.photo(*id).unwrap().clone()).collect();
+    time("300 synced_tier", &mut b, &mut |b| {
+        for p in &photos {
+            b.synced_tier(p);
+        }
+    });
+    time("300 source_ref", &mut b, &mut |b| {
+        for p in &photos {
+            b.media.source_ref(p, crate::media::SourceLevel::Thumb);
+        }
+    });
+    time("300 settings hash", &mut b, &mut |_| {
+        for p in &photos {
+            p.develop.hash64();
+        }
+    });
+    time("sync_tasks after an edit elsewhere (plan)", &mut b, &mut |b| {
+        b.catalog.revision += 1;
+        b.sync_tasks();
+    });
+    // a preview lands
+    let t = held.into_iter().find(|t| matches!(t, Task::Http { url, .. } if url.contains("/blobs/mini/"))).unwrap();
+    let Task::Http { url, save_to, .. } = &t else { panic!() };
+    let key = url.rsplit('/').next().unwrap().to_string();
+    f.blobs.insert(("mini".into(), key), b"x".to_vec());
+    let _ = save_to;
+    let d = f.handle(&t);
+    time("a preview lands (sync_done + sync_tasks + visible)", &mut b, &mut |b| {
+        b.sync_done(d.clone());
+        b.sync_tasks();
+        b.visible();
+    });
+    time("slider frame (develop.set during a drag + sync_tasks + visible)", &mut b, &mut |b| {
+        b.execute("develop.beginInteraction", &json!({"label": "Exposure"})).ok();
+        b.execute("develop.set", &json!({"control": "light.exposure", "value": 0.5})).unwrap();
+        b.sync_tasks();
+        b.visible();
+    });
+    time("drag ends: commit", &mut b, &mut |b| {
+        b.execute("develop.endInteraction", &json!({})).ok();
+    });
+    time("drag ends: sync_tasks", &mut b, &mut |b| {
+        b.sync_tasks();
+    });
+    time("drag ends: visible", &mut b, &mut |b| {
+        b.visible();
+    });
+    time("drag ends: source_total", &mut b, &mut |b| {
+        b.source_total();
+    });
+    time("all previews on (sync_tasks)", &mut b, &mut |b| {
+        b.execute("sync.allPreviews", &json!({"on": true})).unwrap();
+        b.sync_tasks();
+    });
+    time("an edit with all previews on (develop.set + sync_tasks + visible)", &mut b, &mut |b| {
+        b.execute("develop.set", &json!({"control": "light.exposure", "value": 0.7})).unwrap();
+        b.sync_tasks();
+        b.visible();
+    });
+    time("sync.usage (previews left, counted)", &mut b, &mut |b| {
+        b.sync_previews_left();
+    });
     let _ = std::fs::remove_dir_all(&root);
 }
