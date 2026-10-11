@@ -100,6 +100,9 @@ fn library_folders_are_read_in_place() {
     assert_eq!(folders.get("Photos"), Some(&3));
     assert_eq!(folders.get("Photos/2024/Trip"), Some(&2));
     let (a_id, b_id) = (by_place(&dev, "Photos/2024/Trip/a.png").unwrap().id, b.id);
+    // (a small preview comes down once a grid shows the photo)
+    dev.thumb_job(a_id, 256);
+    sync(&mut dev);
     assert!(dev.render_now(a_id, 64, 64).is_ok(), "renders from the previews the server built");
 
     // originals come straight from the folder; nothing was copied

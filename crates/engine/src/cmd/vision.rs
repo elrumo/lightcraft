@@ -62,7 +62,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Index Photos for Search",
             [],
             None,
-            "{ids?: [photo ids], wait?: bool} — compute the search vector of every library photo that has none yet (or of `ids`), from an unedited rendering, and, when text search is on (vision.setText) and its models are installed, read the text in each photo too (slower: the reading phase); in the background unless `wait`; needs the search model or the text models (vision.model.status) → {total, done, failed, running, cancelled, phase, error}. Watch vision.indexProgress; vision.indexCancel stops it",
+            "{ids?: [photo ids], wait?: bool} — compute the search vector of every library photo that has none yet (or of `ids`), from an unedited rendering (a synced photo whose original stays on the server has its small preview downloaded for it: waited for with `wait`, else it is indexed by a later run), and, when text search is on (vision.setText) and its models are installed, read the text in each photo too (slower: the reading phase); in the background unless `wait`; needs the search model or the text models (vision.model.status) → {total, done, failed, running, cancelled, phase, error}. Watch vision.indexProgress; vision.indexCancel stops it",
             always,
             |s, p| {
                 let wait = p.get("wait").and_then(Value::as_bool).unwrap_or(false);

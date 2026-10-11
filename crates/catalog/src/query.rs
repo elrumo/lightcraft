@@ -297,6 +297,12 @@ impl Catalog {
         v.into_iter().map(|p| p.id).collect()
     }
 
+    /// How many photos [`Catalog::query`] lists, without sorting them.
+    pub fn count(&self, filter: &Filter) -> usize {
+        let text = TextQuery::parse(&filter.text);
+        self.photos().filter(|p| filter.matches_with(p, self, &text)).count()
+    }
+
     /// The places and dates the search text of `filter` was read as ("photos in madrid in june"),
     /// for the interface to say so; see [`crate::search::Understood`].
     pub fn understood(&self, filter: &Filter) -> Vec<crate::search::Understood> {

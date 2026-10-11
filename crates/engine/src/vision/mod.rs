@@ -1295,10 +1295,22 @@ impl Session {
             Some(ids) => ids,
             None => self.catalog.photos().filter(|p| p.in_library()).map(|p| p.id).collect(),
         };
+        // synced photos whose pixels are only on the server: their small previews come down for this
+        // (the grid only fetches the ones it shows); waited for here when asked to wait, else they are
+        // left for the next run
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.sync_want_minis(&want) > 0 && wait {
+            self.sync_now(usize::MAX);
+        }
+        #[cfg(target_arch = "wasm32")]
+        self.sync_want_minis(&want);
         let (mut embed, mut read, mut scan): (Vec<(Key, RenderJob)>, Vec<(Key, RenderJob)>, Vec<(Key, RenderJob)>) =
             (Vec::new(), Vec::new(), Vec::new());
         let (mut failed, edge) = (0, self.vision.text_edge);
         for id in want {
+            if self.catalog.photo(id).and_then(|p| self.synced_tier(p)) == Some(0) {
+                continue;
+            }
             let Some(key) = self.catalog.photo(id).filter(|p| p.in_library()).map(|p| Key::of(&content_key(p))) else { continue };
             // (a photo is described and read once per content, whatever copies it has)
             let describe = semantic.is_some() && seen.insert(key);

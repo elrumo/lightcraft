@@ -1098,6 +1098,24 @@ fn sync_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
                     "Otherwise photos from other devices come down as previews: small ones for the grid, an editable smart preview when you open a photo or make an album available offline (right-click it), and the original when you ask (Photo > Download Originals).",
                 ),
             );
+            let mut all = c.all_previews;
+            let label = match app.session.sync_previews_left() {
+                Some((n, bytes)) if n > 0 && !all => {
+                    use crate::sync_ui::{bytes_label, count_label};
+                    format!("Download all small previews ({} photos, about {})", count_label(n as u64), bytes_label(bytes))
+                }
+                _ => crate::i18n::tr("Download all small previews").to_string(),
+            };
+            if check(ui, "sync.allPreviews", &mut all, &label) {
+                sync_cmd(app, ui, "sync.allPreviews", json!({"on": all}));
+            }
+            hint(
+                ui,
+                t,
+                crate::i18n::tr(
+                    "Otherwise the grid's small previews come down as you scroll to them. All of them: the whole library can be browsed offline.",
+                ),
+            );
             // the downloaded originals' budget (MB; 0: none); with every original kept it has no effect
             let mut budget = c.originals_budget_mb.unwrap_or(0);
             let sizes = [

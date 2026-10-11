@@ -637,7 +637,10 @@ impl Session {
             // the view fills in as the background checks find files gone
             key.1.push_str(&format!("|{}", self.media.availability.generation()));
         }
-        if self.visible_key.as_ref() != Some(&key) {
+        // a slider drag changes the active photo's settings every frame: the list stays as it was
+        // until the drag ends (one rebuild for the edit, not one per frame of a big library)
+        let dragging = self.interaction.is_some() && self.visible_key.as_ref().is_some_and(|k| k.1 == key.1);
+        if !dragging && self.visible_key.as_ref() != Some(&key) {
             // "in the last N days" rules count back from the session's clock
             lightcraft_catalog::rules::set_now(Some((self.clock)()));
             let mut f = self.source.to_filter(&self.filter, &self.catalog);
@@ -696,14 +699,15 @@ impl Session {
             return None;
         }
         let key = (self.catalog.revision, format!("{:?}|{:?}", self.source, self.browse));
-        if self.total.as_ref().map(|t| &t.0) != Some(&key) {
+        let dragging = self.interaction.is_some() && self.total.as_ref().is_some_and(|t| t.0.1 == key.1);
+        if !dragging && self.total.as_ref().map(|t| &t.0) != Some(&key) {
             let mut f = self.source.to_filter(&Filter::default(), &self.catalog);
             if self.source == LibrarySource::Folder {
                 let b = self.browse.clone().unwrap_or_default();
                 f.folder = Some(b.path);
                 f.subfolders = b.subfolders;
             }
-            let n = self.catalog.query(&f, &self.sort).len();
+            let n = self.catalog.count(&f);
             self.total = Some((key, n));
         }
         self.total.as_ref().map(|t| t.1)

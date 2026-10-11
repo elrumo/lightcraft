@@ -212,17 +212,17 @@ pub struct MediaCache {
     scenes: Vec<lightcraft_scenes::Scene>,
     /// Rendered thumbnails (memory, plus disk once a library is attached).
     pub rendered: Arc<PreviewCache>,
-    /// Synced photos whose original isn't here, by [`content_key`]: the best preview downloaded
-    /// so far (1 mini, 2 smart; kept by [`crate::sync`]). Part of render keys, so a view rendered
-    /// from the mini preview renders again once the smart one arrives.
-    pub synced_tiers: std::collections::HashMap<String, u8>,
     /// Grid and filmstrip thumbnails asked for that wait on their mini preview from the sync
     /// server, by photo: when (`thumb_tick`) and in which order they were last asked for.
-    /// [`crate::sync`] downloads the most recent first, so the cells on screen fill before the rest.
+    /// [`crate::sync`] downloads the most recent first, so the cells on screen fill before the rest,
+    /// and only those (the grid asks again every frame for the cells in its reach).
     pub thumb_asks: std::collections::HashMap<PhotoId, (u64, u64)>,
     /// Bumped once per sync step (a frame, in the app).
     pub thumb_tick: u64,
     thumb_seq: u64,
+    /// [`MediaCache::settings_hash`]es, by the settings' allocation (held, so it can't be changed in
+    /// place or reused for other settings meanwhile).
+    settings_hashes: std::collections::HashMap<usize, (Arc<DevelopSettings>, u64)>,
 }
 
 impl Default for MediaCache {
@@ -243,10 +243,10 @@ impl Default for MediaCache {
             availability: Default::default(),
             scenes: Vec::new(),
             rendered: Arc::new(PreviewCache::memory(rendered_budget(budget))),
-            synced_tiers: Default::default(),
             thumb_asks: Default::default(),
             thumb_tick: 0,
             thumb_seq: 0,
+            settings_hashes: Default::default(),
         }
     }
 }
@@ -379,6 +379,22 @@ impl MediaCache {
     }
 
     /// Forget a photo's decoded sources (e.g. after its file changed).
+    /// [`DevelopSettings::hash64`] of a photo's settings, kept: it writes them out as JSON (tens of
+    /// µs), and the grid needs it for every cell in reach every frame.
+    pub fn settings_hash(&mut self, s: &Arc<DevelopSettings>) -> u64 {
+        let at = Arc::as_ptr(s) as usize;
+        if let Some((_, h)) = self.settings_hashes.get(&at) {
+            return *h;
+        }
+        // (a few screens of cells' worth; settings no photo holds any more go with the rest)
+        if self.settings_hashes.len() >= 4096 {
+            self.settings_hashes.clear();
+        }
+        let h = s.hash64();
+        self.settings_hashes.insert(at, (s.clone(), h));
+        h
+    }
+
     pub fn forget(&mut self, id: PhotoId) {
         self.thumbs.remove(&id);
         self.previews.retain(|e| e.0 != id);
@@ -695,15 +711,14 @@ impl crate::Session {
     }
 
     /// A synced photo without any preview here was asked for (see [`MediaCache::thumb_asks`]).
+    /// (Not while syncing is paused or signed out: the asks would pile up, all as fresh as the last step.)
     fn note_thumb_ask(&mut self, id: PhotoId) {
+        if self.sync_state().is_none_or(|st| st.config.paused || !st.has_token())
+            || self.catalog.photo(id).and_then(|p| self.synced_tier(p)) != Some(0)
+        {
+            return;
+        }
         let m = &mut self.media;
-        if m.synced_tiers.is_empty() {
-            return;
-        }
-        let Some(p) = self.catalog.photo(id) else { return };
-        if m.synced_tiers.get(&content_key(p)) != Some(&0) {
-            return;
-        }
         m.thumb_seq = m.thumb_seq.wrapping_add(1);
         m.thumb_asks.insert(id, (m.thumb_tick, m.thumb_seq));
     }
@@ -727,16 +742,18 @@ impl crate::Session {
         // …and so is the file's content: a file changed on disk (Reload) renders afresh
         // …and, for a synced photo whose original isn't here, which of its previews it has
         let ck = content_key(&p);
-        let tier = self.media.synced_tiers.get(&ck).copied().unwrap_or(0);
+        let tier = self.synced_tier(&p).unwrap_or(0);
         let content = (Hasher128::new().str(&ck).finish().0 as u64) ^ u64::from(tier).wrapping_mul(0xd6e8_feb8_6659_fd93);
-        let key = settings.hash64()
+        // (the "before" settings are made afresh for each job: nothing to keep)
+        let settings_hash = if before { settings.hash64() } else { self.media.settings_hash(&settings) };
+        let key = settings_hash
             ^ ((max_w as u64) << 40)
             ^ ((max_h as u64) << 20)
             ^ (apply_crop as u64)
             ^ (level as u64) << 60
             ^ id.0.wrapping_mul(0x9e37_79b9_7f4a_7c15)
             ^ content.rotate_left(17);
-        let cache = thumb_bucket.map(|b| (self.media.rendered.clone(), Self::thumb_key(&p, &settings, b)));
+        let cache = thumb_bucket.map(|b| (self.media.rendered.clone(), Self::thumb_key(&p, settings_hash, b)));
         Some(RenderJob {
             photo: id,
             level,
@@ -847,10 +864,10 @@ impl crate::Session {
 
     /// Size-independent cache key of a photo's view render (loupe) for its current settings.
     /// Cache key of a grid thumbnail of `p` with `settings` in size bucket `b` ([`THUMB_SIZES`]).
-    fn thumb_key(p: &Photo, settings: &DevelopSettings, b: usize) -> Hash128 {
+    fn thumb_key(p: &Photo, settings_hash: u64, b: usize) -> Hash128 {
         Hasher128::new()
             .str(&content_key(p))
-            .u64(settings.hash64())
+            .u64(settings_hash)
             .u64(b as u64)
             .u64(RENDER_CACHE_VERSION)
             .u64(crate::camera_profiles::cache_key())
@@ -861,19 +878,20 @@ impl crate::Session {
     /// they no longer show what its file renders to.
     pub(crate) fn forget_renders(&self, p: &Photo) {
         let cache = &self.media.rendered;
+        let h = p.develop.hash64();
         for b in THUMB_SIZES {
-            cache.remove(Self::thumb_key(p, &p.develop, b));
+            cache.remove(Self::thumb_key(p, h, b));
         }
         for crop in [true, false] {
-            cache.remove(Self::view_key(p, crop));
+            cache.remove(Self::view_key(p, h, crop));
         }
     }
 
-    fn view_key(p: &Photo, apply_crop: bool) -> Hash128 {
+    fn view_key(p: &Photo, settings_hash: u64, apply_crop: bool) -> Hash128 {
         Hasher128::new()
             .str(&content_key(p))
             .str("view")
-            .u64(p.develop.hash64())
+            .u64(settings_hash)
             .u64(apply_crop as u64)
             .u64(RENDER_CACHE_VERSION)
             .u64(crate::camera_profiles::cache_key())
@@ -884,8 +902,9 @@ impl crate::Session {
     /// photo's view preview (memory, and disk with a library) for [`Self::quick_view_job`].
     pub fn loupe_job(&mut self, id: PhotoId, max_w: usize, max_h: usize, apply_crop: bool) -> Option<RenderJob> {
         let mut job = self.render_job(id, max_w, max_h, false, apply_crop)?;
-        let p = self.catalog.photo(id)?;
-        job.view_cache = Some((self.media.rendered.clone(), Self::view_key(p, apply_crop)));
+        let p = self.catalog.photo(id)?.clone();
+        let h = self.media.settings_hash(&p.develop);
+        job.view_cache = Some((self.media.rendered.clone(), Self::view_key(&p, h, apply_crop)));
         Some(job)
     }
 
@@ -903,8 +922,9 @@ impl crate::Session {
         let p = self.catalog.photo(id)?.clone();
         let small = self.thumb_job(id, THUMB_SIZES[THUMB_SIZES.len() - 1])?;
         // (the thumbnail job itself starts with the cached thumbnail, after the sharper embedded preview)
-        let cached = vec![(self.media.rendered.clone(), Self::view_key(&p, apply_crop))];
-        let h = Hasher128::new().str(&content_key(&p)).str("quick").u64(p.develop.hash64()).u64(apply_crop as u64).finish();
+        let settings_hash = self.media.settings_hash(&p.develop);
+        let cached = vec![(self.media.rendered.clone(), Self::view_key(&p, settings_hash, apply_crop))];
+        let h = Hasher128::new().str(&content_key(&p)).str("quick").u64(settings_hash).u64(apply_crop as u64).finish();
         let key = h.0 as u64;
         let embedded = self.embedded_of(&p).map(|(path, l)| (path, l, max_edge.clamp(1, SourceLevel::Preview.max_edge())));
         Some(QuickJob { photo: id, key, cached, embedded, small: apply_crop.then(|| Box::new(small)) })

@@ -9,9 +9,9 @@
 //!   them in place (CLI, tests).
 //! - **Pixels by content hash.** This device uploads the originals it has, with a smart preview
 //!   and a mini preview (≤ 512 px) it builds from each. It downloads the mini previews of the
-//!   other photos (grid thumbnails, rendered here with the current edits), the smart preview of
-//!   the photo being looked at and of everything made available offline, and originals when
-//!   asked to keep them. A downloaded original becomes the photo's file on this device. A photo
+//!   other photos as the grid shows them (thumbnails, rendered here with the current edits; all
+//!   of them with [`SyncConfig::all_previews`]), the smart preview of the photo being looked at and
+//!   of everything made available offline, and originals when asked to keep them. A downloaded original becomes the photo's file on this device. A photo
 //!   whose file isn't here renders from the best of those it has ([`crate::media::SourceRef::Synced`]).
 //!
 //! - **Presets** are one document on the server (`/api/presets`, versioned). A device sends its
@@ -75,6 +75,11 @@ const USAGE_EVERY: Duration = Duration::from_secs(20);
 const ACTIVITY_EVERY: Duration = Duration::from_secs(2);
 /// Long edge of the mini preview.
 pub const MINI_EDGE: usize = 512;
+/// A grid cell's mini preview is wanted while the cell asks for it again within this many sync
+/// steps (frames): one scrolled out of the grid's reach isn't downloaded.
+const ASK_TICKS: u64 = 30;
+/// What a mini preview is taken to weigh before the server says what its own weigh.
+const MINI_BYTES_GUESS: u64 = 60_000;
 /// The server's id spaces stay below this, so ids remain exact in JSON numbers read by
 /// JavaScript (`space << 32 | n` < 2^53).
 pub const MAX_SPACE: u32 = (1 << 21) - 1;
@@ -111,6 +116,9 @@ pub struct SyncConfig {
     /// (a phone saves its battery and memory; a browser tab its main thread, where decoding a large raw takes
     /// seconds). `None`: the platform's default, which is on for iOS and the browser.
     pub server_previews: Option<bool>,
+    /// Download the mini previews of every photo, not only of the ones the grid shows (browsing
+    /// offline, at the cost of the disk space [`Session::sync_previews_left`] estimates).
+    pub all_previews: bool,
     /// Version of the server's presets document this device last synced with.
     pub presets_version: u64,
     /// The same for the other shared documents ([`docs`]), by name.
@@ -273,6 +281,7 @@ enum Job {
         key: String,
         blob: Blob,
         dest: String,
+        id: PhotoId,
     },
 }
 
@@ -375,14 +384,30 @@ pub struct SyncState {
     /// Originals asked for (by content hash).
     want_originals: HashSet<String>,
     error: Option<String>,
-    /// What the transfer plan was made for (catalog revision, active photo, settings changes).
-    planned: Option<(u64, Option<PhotoId>, u64)>,
+    /// What the transfer plan was made for (catalog revision, settings changes). It holds the uploads,
+    /// the smart previews of what is kept offline and the originals to download; the active photo's
+    /// smart preview and the grid's mini previews are [`SyncState::urgent`], asked for every step.
+    planned: Option<(u64, u64)>,
     plan: VecDeque<Job>,
     /// Bumped when what to keep offline changes.
     plan_gen: u64,
+    /// With [`SyncConfig::all_previews`]: every mini preview missing here, and what that list was made
+    /// for (the number of photos, `minis_gen`). Not made again for each edit, as the plan is: it
+    /// takes a while in a big library.
+    minis: VecDeque<Job>,
+    minis_planned: Option<(usize, u64)>,
+    minis_gen: u64,
+    /// Mini previews of that list whose download failed: back in it once their wait is over.
+    minis_failed: Vec<(Instant, Job)>,
+    /// The active photo's smart preview and the mini previews the grid asks for, most recent first,
+    /// that haven't started.
+    urgent: Vec<Job>,
+    /// Mini previews still missing here, as last counted (photos in the library then, count; less
+    /// one for each that came since): see [`Session::sync_previews_left`].
+    minis_left: Option<(usize, usize)>,
     /// File names in the proxies folder (read once, then kept up to date).
     have: Option<HashSet<String>>,
-    /// A photo file arrived: renders that failed for want of it are tried again.
+    /// An original arrived: renders that failed for want of it are tried again.
     landed: bool,
     /// When downloaded originals are next checked against their budget (`None`: now).
     evict_at: Option<Instant>,
@@ -461,6 +486,12 @@ impl SyncState {
             planned: None,
             plan: VecDeque::new(),
             plan_gen: 0,
+            minis: VecDeque::new(),
+            minis_planned: None,
+            minis_gen: 0,
+            minis_failed: Vec::new(),
+            urgent: Vec::new(),
+            minis_left: None,
             have: None,
             landed: false,
             evict_at: None,
@@ -670,31 +701,19 @@ impl SyncState {
         Ok(())
     }
 
-    /// Photo file transfers queued or running: (uploads, downloads).
+    /// Photo file transfers queued or running: (uploads, downloads). (Every frame: the mini previews
+    /// of a big library are counted, not walked.)
     fn transfers(&self) -> (usize, usize) {
-        let all = || self.plan.iter().chain(self.ready.iter()).chain(self.jobs.values());
-        let downloads = all().filter(|j| matches!(j, Job::Get { .. })).count();
-        (all().count() - downloads, downloads)
+        let small = || self.plan.iter().chain(self.ready.iter()).chain(self.jobs.values()).chain(self.urgent.iter());
+        let downloads = small().filter(|j| matches!(j, Job::Get { .. })).count();
+        (small().count() - downloads, downloads + self.minis.len() + self.minis_failed.len())
     }
 
     /// What `sync.status` reports.
     pub fn status(&self) -> Value {
         let (uploads, downloads) = self.transfers();
-        let state = if !self.signed_in() {
-            "signedOut"
-        } else if self.conflict.is_some() {
-            "conflict"
-        } else if self.config.paused {
-            "paused"
-        } else if self.error.is_some() {
-            "error"
-        } else if self.control.is_some() || self.reading().is_some() || !self.outbox.is_empty() || uploads + downloads > 0 || self.login.is_some() {
-            "syncing"
-        } else {
-            "idle"
-        };
         json!({
-            "state": state,
+            "state": self.state(),
             "signedIn": self.signed_in(),
             "server": self.config.server,
             "user": self.config.user,
@@ -715,19 +734,26 @@ impl SyncState {
             "originalsBudgetMb": self.config.originals_budget_mb,
             "merged": self.merged,
             "serverPreviews": self.config.server_builds_previews(),
+            "allPreviews": self.config.all_previews,
             "paused": self.config.paused,
         })
     }
 
     /// The state for the topbar's cloud icon: `signedOut`, `conflict`, `paused`, `error`, `syncing` or `idle`.
     pub fn state(&self) -> &'static str {
-        match self.status()["state"].as_str() {
-            Some("conflict") => "conflict",
-            Some("paused") => "paused",
-            Some("error") => "error",
-            Some("syncing") => "syncing",
-            Some("idle") => "idle",
-            _ => "signedOut",
+        if !self.signed_in() {
+            "signedOut"
+        } else if self.conflict.is_some() {
+            "conflict"
+        } else if self.config.paused {
+            "paused"
+        } else if self.error.is_some() {
+            "error"
+        } else if self.control.is_some() || self.reading().is_some() || !self.outbox.is_empty() || self.transfers() != (0, 0) || self.login.is_some()
+        {
+            "syncing"
+        } else {
+            "idle"
         }
     }
 
@@ -853,6 +879,14 @@ pub struct Transfer {
     pub what: &'static str,
     /// The photo's file name (empty when it isn't in the library any more).
     pub name: String,
+}
+
+/// A synced photo's preview file names ([`Session::proxy_names`]), and which of them are here.
+struct ProxyNames {
+    smart: String,
+    mini: String,
+    has_smart: bool,
+    has_mini: bool,
 }
 
 /// The mini preview's file name in the proxies folder (beside the smart preview's).
@@ -1056,6 +1090,8 @@ impl Session {
                 st.blob_retry.clear();
                 st.plan_gen += 1;
             }
+            let failed = std::mem::take(&mut st.minis_failed);
+            st.minis.extend(failed.into_iter().map(|(_, job)| job));
         }
     }
 
@@ -1114,6 +1150,38 @@ impl Session {
         st.config.originals_budget_mb = mb;
         st.evict_at = None;
         st.plan_gen += 1;
+        self.persist()
+    }
+
+    /// Download the mini previews of these photos (synced ones whose original isn't here and that
+    /// have no preview here) whatever the grid shows: for work that needs their pixels, like indexing
+    /// them for search on this device. Returns how many are on their way.
+    pub fn sync_want_minis(&mut self, ids: &[PhotoId]) -> usize {
+        if self.sync.as_ref().is_some_and(|st| st.have.is_none()) {
+            let have = self.read_have();
+            if let Some(st) = self.sync.as_mut() {
+                st.have = Some(have);
+            }
+        }
+        let Some(st) = self.sync.as_ref() else { return 0 };
+        let now = Instant::now();
+        let jobs: Vec<Job> = ids.iter().filter_map(|id| self.catalog.photo(*id)).filter_map(|p| self.preview_get(st, p, Blob::Mini, now)).collect();
+        let n = jobs.len();
+        if let Some(st) = self.sync.as_mut() {
+            st.minis.extend(jobs);
+        }
+        n
+    }
+
+    /// Download the mini previews of every photo (or only of the ones the grid shows).
+    pub fn sync_all_previews(&mut self, on: bool) -> Result<()> {
+        let st = self.sync.as_mut().ok_or_else(|| EngineError::Other("this library isn't synced".into()))?;
+        st.config.all_previews = on;
+        st.minis_gen += 1;
+        if !on {
+            st.minis.clear();
+            st.minis_failed.clear();
+        }
         self.persist()
     }
 
@@ -1302,39 +1370,56 @@ impl Session {
         tasks
     }
 
-    /// Plan photo file transfers (when the library, the active photo or what to keep offline
-    /// changed) and start some.
+    /// Plan photo file transfers (when the library or what to keep changed) and start some: the
+    /// active photo's smart preview and the mini previews the grid asks for first.
     fn blob_tasks(&mut self, st: &mut SyncState, now: Instant, tasks: &mut Vec<Task>) {
         self.touch_active_original(st);
         if st.config.originals_budget_mb.is_some() && st.evict_at.is_none_or(|t| now >= t) {
             self.evict_originals(st);
             st.evict_at = Some(now + EVICT_EVERY);
         }
-        let dir = self.media.smart_dir.clone();
-        if dir.is_none() && self.sync_store.is_none() {
+        if self.media.smart_dir.is_none() && self.sync_store.is_none() {
             return;
+        }
+        if st.have.is_none() {
+            st.have = Some(self.read_have());
         }
         // a transfer that failed is tried again once its wait is over
         if st.blob_retry.values().any(|t| now >= *t) {
             st.blob_retry.retain(|_, t| now < *t);
             st.plan_gen += 1;
         }
-        let key = (self.catalog.revision, self.active(), st.plan_gen);
-        if st.planned != Some(key) {
-            if st.have.is_none() {
-                st.have = Some(match (&dir, &self.sync_store) {
-                    (Some(d), _) => read_names(d),
-                    (None, Some(s)) => s.proxies.clone(),
-                    (None, None) => HashSet::new(),
-                });
-            }
+        if st.minis_failed.iter().any(|(t, _)| now >= *t) {
+            let (waited, waiting) = std::mem::take(&mut st.minis_failed).into_iter().partition::<Vec<_>, _>(|(t, _)| now >= *t);
+            st.minis_failed = waiting;
+            st.minis.extend(waited.into_iter().map(|(_, job)| job));
+        }
+        // (a slider drag changes the catalog every frame, and nothing a plan is made of)
+        let key = (self.catalog.revision, st.plan_gen);
+        if st.planned != Some(key) && (self.interaction.is_none() || st.planned.is_none()) {
             st.plan = self.plan_blobs(st, now).into();
             st.planned = Some(key);
         }
+        let key = (self.catalog.len(), st.minis_gen);
+        if st.config.all_previews && st.minis_planned != Some(key) && self.interaction.is_none() {
+            st.minis = self.plan_minis(st, now).into();
+            st.minis_planned = Some(key);
+        }
+        let mut urgent = self.urgent_jobs(st, now).into_iter();
         while st.jobs.len() < BLOB_PARALLEL {
-            let Some(mut job) = st.ready.pop_front().or_else(|| st.plan.pop_front()) else { break };
+            let Some(mut job) = st.ready.pop_front().or_else(|| urgent.next()).or_else(|| st.plan.pop_front()).or_else(|| st.minis.pop_front())
+            else {
+                break;
+            };
             let target = job.target();
             if st.jobs.values().any(|j| j.target() == target) {
+                continue;
+            }
+            // (a preview of the lists that came meanwhile, asked for by the grid or the loupe)
+            if let Job::Get { blob: Blob::Mini | Blob::Smart, dest, .. } = &job
+                && let (Some(have), Some(name)) = (&st.have, Path::new(dest).file_name())
+                && have.contains(&*name.to_string_lossy())
+            {
                 continue;
             }
             if let Job::Proxies { key, id, .. } = &job {
@@ -1360,7 +1445,7 @@ impl Session {
                     let body = if *offset > 0 { Body::FileFrom(path.clone(), *offset) } else { Body::File(path.clone()) };
                     st.http("PUT", &format!("/api/blobs/{}/{key}{ask}", blob.name()), body, None)
                 }
-                Job::Get { key, blob, dest } => st.http("GET", &format!("/api/blobs/{}/{key}", blob.name()), Body::Empty, Some(dest.clone())),
+                Job::Get { key, blob, dest, .. } => st.http("GET", &format!("/api/blobs/{}/{key}", blob.name()), Body::Empty, Some(dest.clone())),
                 Job::Proxies { path, id, .. } => {
                     let Some((smart, mini)) = self.proxy_paths(*id) else { continue };
                     Task::Proxies { id: NEXT_TASK.fetch_add(1, Ordering::Relaxed), original: path.clone(), smart, mini }
@@ -1368,6 +1453,17 @@ impl Session {
             };
             st.jobs.insert(task.id(), job);
             tasks.push(task);
+        }
+        // (what waits, for the counts shown; asked for again next step)
+        st.urgent = urgent.collect();
+    }
+
+    /// The preview files in the previews folder, or in the host's storage.
+    fn read_have(&self) -> HashSet<String> {
+        match (&self.media.smart_dir, &self.sync_store) {
+            (Some(d), _) => read_names(d),
+            (None, Some(s)) => s.proxies.clone(),
+            (None, None) => HashSet::new(),
         }
     }
 
@@ -1384,14 +1480,80 @@ impl Session {
         Some((format!("{}{smart}", store.prefix), format!("{}{mini}", store.prefix)))
     }
 
+    /// Where a preview file named `name` ([`Session::proxy_names`]) goes: the previews folder, or the
+    /// host's storage.
+    fn proxy_dest(&self, name: &str) -> String {
+        match (&self.media.smart_dir, &self.sync_store) {
+            (Some(dir), _) => dir.join(name).to_string_lossy().to_string(),
+            (None, Some(s)) => format!("{}{name}", s.prefix),
+            (None, None) => name.to_string(),
+        }
+    }
+
     /// The file names [`Session::proxy_paths`] ends in, and which of them are here.
-    fn proxy_names(&self, p: &Photo, key: &str, have: &HashSet<String>) -> (String, String, bool, bool) {
+    fn proxy_names(&self, p: &Photo, key: &str, have: &HashSet<String>) -> ProxyNames {
         let (smart, mini) = match &self.sync_store {
             Some(_) if self.media.smart_dir.is_none() => store_proxy_names(key),
             _ => (crate::smart::file_name(p), mini_file_name(p)),
         };
-        let (s, m) = (have.contains(&smart), have.contains(&mini));
-        (smart, mini, s, m)
+        ProxyNames { has_smart: have.contains(&smart), has_mini: have.contains(&mini), smart, mini }
+    }
+
+    /// The server's key for a synced photo whose original isn't on this device (`None`: any other photo).
+    fn remote_key(&self, p: &Photo) -> Option<String> {
+        if !is_remote(p) {
+            return None;
+        }
+        let key = blob_key(p)?;
+        let in_store = self.media.smart_dir.is_none() && self.sync_store.as_ref().is_some_and(|s| s.originals.contains(&key));
+        (!in_store).then_some(key)
+    }
+
+    /// Which previews a synced photo whose original isn't on this device has here: 0 none, 1 the
+    /// mini, 2 the smart preview (`None`: not such a photo). Part of render keys, so a view rendered
+    /// from the mini preview renders again once the smart one arrives.
+    pub fn synced_tier(&self, p: &Photo) -> Option<u8> {
+        let st = self.sync.as_ref()?;
+        let key = self.remote_key(p)?;
+        let Some(have) = &st.have else { return Some(0) };
+        let n = self.proxy_names(p, &key, have);
+        Some(if n.has_smart { 2 } else { u8::from(n.has_mini) })
+    }
+
+    /// The download of `p`'s preview `blob` (a smart or mini one) when `p` is a synced photo whose
+    /// original isn't here, that preview isn't here (for a mini: nor the smart one), and no failure of
+    /// its files is being waited out.
+    fn preview_get(&self, st: &SyncState, p: &Photo, blob: Blob, now: Instant) -> Option<Job> {
+        let key = self.remote_key(p)?;
+        if st.blob_retry.get(&key).is_some_and(|t| now < *t) {
+            return None;
+        }
+        let n = self.proxy_names(p, &key, st.have.as_ref()?);
+        let name = match blob {
+            Blob::Smart if !n.has_smart => n.smart,
+            Blob::Mini if !n.has_smart && !n.has_mini => n.mini,
+            _ => return None,
+        };
+        Some(Job::Get { dest: self.proxy_dest(&name), key, blob, id: p.id })
+    }
+
+    /// The active photo's smart preview, then the mini previews of the cells the grid asked for in
+    /// its last [`ASK_TICKS`] steps, most recent first (in the order they were drawn): those not
+    /// here and not on their way. Cells scrolled out of reach are forgotten.
+    fn urgent_jobs(&mut self, st: &SyncState, now: Instant) -> Vec<Job> {
+        let tick = self.media.thumb_tick;
+        self.media.thumb_asks.retain(|_, (at, _)| tick.saturating_sub(*at) <= ASK_TICKS);
+        let mut asked: Vec<(std::cmp::Reverse<u64>, u64, PhotoId)> =
+            self.media.thumb_asks.iter().map(|(id, (at, seq))| (std::cmp::Reverse(*at), *seq, *id)).collect();
+        asked.sort_unstable();
+        let running: HashSet<String> = st.jobs.values().map(Job::target).collect();
+        let active = self.active().map(|id| (id, Blob::Smart));
+        active
+            .into_iter()
+            .chain(asked.into_iter().map(|(_, _, id)| (id, Blob::Mini)))
+            .filter_map(|(id, blob)| self.preview_get(st, self.catalog.photo(id)?, blob, now))
+            .filter(|job| !running.contains(&job.target()))
+            .collect()
     }
 
     /// Where downloaded originals are kept.
@@ -1399,30 +1561,30 @@ impl Session {
         self.library.as_ref().filter(|l| l.on_disk).map(|l| l.dir.join("sync").join("originals"))
     }
 
-    /// Photo file transfers this device needs: uploads of the originals it has that the server
-    /// doesn't, then downloads — the active photo's smart preview, the mini previews of the cells
-    /// on screen (most recently asked first, [`crate::media::MediaCache::thumb_asks`]), the smart
-    /// previews of what's available offline, the mini previews of every other photo whose file
-    /// isn't here, and wanted originals.
-    fn plan_blobs(&mut self, st: &SyncState, now: Instant) -> Vec<Job> {
-        let empty = HashSet::new();
-        let have = st.have.as_ref().unwrap_or(&empty);
+    /// Photo file transfers this device needs besides the previews on screen: uploads of the
+    /// originals it has that the server doesn't, the smart previews of what's available offline and
+    /// wanted originals. Made again whenever the library changes, so a synced photo that needs
+    /// none of these costs no allocation.
+    fn plan_blobs(&self, st: &SyncState, now: Instant) -> Vec<Job> {
         let retry_ok = |key: &str| st.blob_retry.get(key).is_none_or(|t| now >= *t);
         let mut offline: HashSet<PhotoId> = st.config.offline_photos.iter().copied().collect();
         for a in &st.config.offline_albums {
             offline.extend(self.catalog.album_photos(*a));
         }
-        let active = self.active();
         let originals_dir = self.originals_dir();
-        let (mut ups, mut smart, mut minis, mut originals) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
-        let (mut active_smart, mut asked) = (None, Vec::new());
-        let mut tiers = HashMap::new();
         let store = self.sync_store.as_ref().filter(|_| self.media.smart_dir.is_none());
-        let in_store = |key: &str| store.is_some_and(|s| s.originals.contains(key));
+        let originals = st.config.store_originals || !st.want_originals.is_empty();
+        let (mut ups, mut smart, mut downloads) = (Vec::new(), Vec::new(), Vec::new());
         for p in self.catalog.photos().filter(|p| !p.local && p.copy_of.is_none()) {
-            let (Some(key), Source::File { path }) = (blob_key(p), &p.source) else { continue };
+            let Source::File { path } = &p.source else { continue };
+            let remote = path.starts_with(PATH_PREFIX);
+            let pinned = remote && offline.contains(&p.id);
+            if remote && store.is_none() && !pinned && !originals {
+                continue;
+            }
+            let Some(key) = blob_key(p) else { continue };
             // this device has the file: on its disk, or in the host's storage
-            let here = match (path.starts_with(PATH_PREFIX), in_store(&key)) {
+            let here = match (remote, store.is_some_and(|s| s.originals.contains(&key))) {
                 (false, _) => Some(path.clone()),
                 (true, true) => Some(BrowserStore::original_key(&key)),
                 (true, false) => None,
@@ -1433,46 +1595,55 @@ impl Session {
                 }
                 continue;
             }
-            let (smart_name, mini_name, has_smart, has_mini) = self.proxy_names(p, &key, have);
-            let dest = |name: &str| match (&self.media.smart_dir, store) {
-                (Some(dir), _) => dir.join(name).to_string_lossy().to_string(),
-                (None, Some(s)) => format!("{}{name}", s.prefix),
-                (None, None) => name.to_string(),
-            };
-            tiers.insert(crate::media::content_key(p), if has_smart { 2 } else { u8::from(has_mini) });
-            if !retry_ok(&key) {
-                continue;
+            if pinned && let Some(job) = self.preview_get(st, p, Blob::Smart, now) {
+                smart.push(job);
             }
-            let pinned = offline.contains(&p.id);
-            if (pinned || active == Some(p.id)) && !has_smart {
-                let job = Job::Get { key: key.clone(), blob: Blob::Smart, dest: dest(&smart_name) };
-                if active == Some(p.id) { active_smart = Some(job) } else { smart.push(job) }
-            }
-            if !has_mini && !has_smart {
-                let job = Job::Get { key: key.clone(), blob: Blob::Mini, dest: dest(&mini_name) };
-                match self.media.thumb_asks.get(&p.id) {
-                    Some(&(tick, seq)) => asked.push(((std::cmp::Reverse(tick), seq), p.id, job)),
-                    None => minis.push(job),
-                }
-            }
-            if st.config.store_originals || st.want_originals.contains(&key) {
+            if (st.config.store_originals || st.want_originals.contains(&key)) && retry_ok(&key) {
                 let dest = match (&originals_dir, store) {
                     (Some(odir), _) => Some(odir.join(&key).join(file_name_of(path, &p.file_name)).to_string_lossy().to_string()),
                     (None, Some(_)) => Some(BrowserStore::original_key(&key)),
                     (None, None) => None,
                 };
                 if let Some(dest) = dest {
-                    originals.push(Job::Get { key, blob: Blob::Original, dest });
+                    downloads.push(Job::Get { key, blob: Blob::Original, dest, id: p.id });
                 }
             }
         }
-        self.media.synced_tiers = tiers;
-        // the cells on screen, in the order they were drawn, before the cells drawn earlier
-        asked.sort_by_key(|(order, _, _)| *order);
-        let waiting: HashSet<PhotoId> = asked.iter().map(|(_, id, _)| *id).collect();
-        self.media.thumb_asks.retain(|id, _| waiting.contains(id));
-        let asked = asked.into_iter().map(|(_, _, job)| job);
-        ups.into_iter().chain(active_smart).chain(asked).chain(smart).chain(minis).chain(originals).collect()
+        ups.into_iter().chain(smart).chain(downloads).collect()
+    }
+
+    /// With [`SyncConfig::all_previews`]: the mini previews of every synced photo whose original
+    /// isn't here and that has no preview here yet (one pass over the library: a while in a big one).
+    fn plan_minis(&self, st: &SyncState, now: Instant) -> Vec<Job> {
+        self.catalog.photos().filter(|p| p.copy_of.is_none()).filter_map(|p| self.preview_get(st, p, Blob::Mini, now)).collect()
+    }
+
+    /// Mini previews this device doesn't have yet (of synced photos whose original isn't here), and
+    /// about how many bytes downloading them all would take, at what the server's minis weigh on
+    /// average once it said so (`sync.usage`). Counted again when photos come or go (a while in a big
+    /// library); `None` while the server's library is still being read.
+    pub fn sync_previews_left(&mut self) -> Option<(usize, u64)> {
+        let st = self.sync.as_ref().filter(|st| st.reading().is_none())?;
+        let n = match st.minis_left {
+            Some((photos, n)) if photos == self.catalog.len() => n,
+            _ => {
+                let none = HashSet::new();
+                let have = st.have.as_ref().unwrap_or(&none);
+                let missing = |p: &Photo| {
+                    self.remote_key(p).is_some_and(|key| {
+                        let n = self.proxy_names(p, &key, have);
+                        !n.has_smart && !n.has_mini
+                    })
+                };
+                self.catalog.photos().filter(|p| p.copy_of.is_none() && missing(p)).count()
+            }
+        };
+        let each = st.usage.as_ref().map(|u| u.mini).filter(|m| m.files > 0).map_or(MINI_BYTES_GUESS, |m| m.bytes / m.files);
+        let photos = self.catalog.len();
+        if let Some(st) = self.sync.as_mut() {
+            st.minis_left = Some((photos, n));
+        }
+        Some((n, (n as u64).saturating_mul(each)))
     }
 
     /// A finished task.
@@ -2002,7 +2173,6 @@ impl Session {
         let Some(st) = &self.sync else { return Transfers::default() };
         let ((uploads_done, uploads), (downloads_done, downloads)) = st.progress();
         let file_name = |id: PhotoId| self.catalog.photo(id).map(|p| p.file_name.clone());
-        let by_key = |key: &str| self.catalog.photos().find(|p| has_key(p, key)).map(|p| p.file_name.clone());
         let mut running: Vec<Transfer> = st
             .jobs
             .values()
@@ -2016,14 +2186,14 @@ impl Session {
                     name: file_name(*id).unwrap_or_default(),
                 },
                 Job::Proxies { id, .. } => Transfer { upload: true, what: "building previews", name: file_name(*id).unwrap_or_default() },
-                Job::Get { key, blob, .. } => Transfer {
+                Job::Get { blob, id, .. } => Transfer {
                     upload: false,
                     what: match blob {
                         Blob::Original => "original",
                         Blob::Smart => "smart preview",
                         Blob::Mini => "preview",
                     },
-                    name: by_key(key).unwrap_or_default(),
+                    name: file_name(*id).unwrap_or_default(),
                 },
             })
             .collect();
@@ -2064,11 +2234,12 @@ impl Session {
     }
 
     fn job_done(&mut self, st: &mut SyncState, job: Job, d: &Done) {
+        // (planned again once the wait is over, see `blob_tasks`: not now, for a server that hasn't built
+        // the previews of thousands of photos yet answers each of them at once)
         let retry = |st: &mut SyncState, key: &str, why: String| {
             log::warn!("sync: {key}: {why}");
             st.transfer_error = Some(why);
             st.blob_retry.insert(key.to_string(), Instant::now() + BLOB_RETRY);
-            st.plan_gen += 1;
         };
         if d.status == 401 {
             st.signed_out("the server signed this device out: sign in again");
@@ -2131,19 +2302,36 @@ impl Session {
                     self.upload_finished(st, key);
                 }
             },
-            Job::Get { key, blob, dest } => {
+            Job::Get { key, blob, dest, id } => {
                 if !d.ok() {
                     retry(st, &key, why(d));
+                    if blob == Blob::Mini && st.config.all_previews {
+                        st.minis_failed.push((Instant::now() + BLOB_RETRY, Job::Get { key, blob, dest, id }));
+                    }
                     return;
                 }
                 st.down_done += 1;
                 st.transfer_error = None;
-                let ids: Vec<PhotoId> = self.catalog.photos().filter(|p| blob_key(p).as_deref() == Some(&key)).map(|p| p.id).collect();
                 self.media.availability.forget(&dest);
+                // (a mini preview replaces nothing decoded: the photo had no preview here)
+                let ids: Vec<PhotoId> =
+                    if blob == Blob::Mini { vec![id] } else { self.catalog.photos().filter(|p| has_key(p, &key)).map(|p| p.id).collect() };
                 for id in &ids {
                     self.media.forget(*id);
+                    self.media.thumb_asks.remove(id);
                 }
-                st.landed = true;
+                if blob == Blob::Mini
+                    && let Some((_, left)) = st.minis_left.as_mut()
+                {
+                    *left = left.saturating_sub(1);
+                }
+                // a preview changes the photo's render keys ([`Session::synced_tier`]): renders that failed for
+                // want of it are tried again without the library changing (which would redo every list of it)
+                st.landed |= blob == Blob::Original;
+                if blob == Blob::Original {
+                    // (here now: the plan goes back to skipping the photos that want nothing)
+                    st.want_originals.remove(&key);
+                }
                 if blob == Blob::Original && self.media.smart_dir.is_none() {
                     // in the host's storage now, where the photo's path already points
                     self.uploaded(st, key.clone());
@@ -2182,7 +2370,6 @@ impl Session {
                     }
                     have.insert(n);
                 }
-                st.planned = None;
             }
         }
     }
