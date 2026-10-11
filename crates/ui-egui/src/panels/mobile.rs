@@ -87,7 +87,9 @@ fn glass_end(ui: &mut egui::Ui, id: &str, tip: &str, face: Face, tint: Option<Co
     let left = if align == Align2::LEFT_CENTER { at.x + 8.0 } else { at.x - 8.0 - w };
     let glass = Rect::from_min_size(pos2(left, at.y - crate::glass::BUTTON_D / 2.0), vec2(w, crate::glass::BUTTON_D));
     let hit = glass.expand2(vec2(3.0, (ROW_H - glass.height()) / 2.0));
-    let resp = ui.interact(hit, Id::new(("lc-bar", id)), if enabled { Sense::click() } else { Sense::hover() });
+    // (scoped by the page: two pages are drawn at once while one slides out and the next comes up, and
+    // both have a "sheetCancel")
+    let resp = ui.interact(hit, ui.id().with(("lc-bar", id)), if enabled { Sense::click() } else { Sense::hover() });
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, crate::i18n::tr(tip)));
     crate::widgets::register(ui.ctx(), format!("button:{id}"), hit);
     let k = crate::glass::press(ui.ctx(), &resp);
