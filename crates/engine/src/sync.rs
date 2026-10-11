@@ -115,6 +115,25 @@ pub struct SyncConfig {
     pub presets_version: u64,
     /// The same for the other shared documents ([`docs`]), by name.
     pub docs_versions: std::collections::BTreeMap<String, u64>,
+    /// The server's library being read into this one page by page, shown as it arrives.
+    pub filling: Option<Filling>,
+}
+
+/// A device joining a server's library with no photos of its own takes the server's: each page
+/// of it goes into the library as it arrives ([`SyncConfig::filling`]), so its photos show (and
+/// their previews download) while the rest comes, and a read carries on after a restart.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Filling {
+    /// The copy of the server's library read: the op it is at.
+    pub seq: u64,
+    /// Where the next page starts; `None`: from the first page (the copy was gone).
+    pub next: Option<String>,
+    /// Photos read so far, and in the server's library.
+    pub read: usize,
+    pub total: usize,
+    /// Read again from the first page: changes made here meanwhile are made again at the end.
+    pub restarted: bool,
 }
 
 impl SyncConfig {
@@ -518,6 +537,8 @@ impl SyncState {
         // signed in but never joined to the server's library (closed while the choice at sign-in waited):
         // fetch it again, which asks again
         st.needs_snapshot |= st.config.library.is_empty() && !st.config.token.is_empty();
+        // a library being filled in from the server's: the rest of it
+        st.needs_snapshot |= st.config.filling.is_some();
         Some(st)
     }
 
@@ -667,7 +688,7 @@ impl SyncState {
             "paused"
         } else if self.error.is_some() {
             "error"
-        } else if self.control.is_some() || self.reading.is_some() || !self.outbox.is_empty() || uploads + downloads > 0 || self.login.is_some() {
+        } else if self.control.is_some() || self.reading().is_some() || !self.outbox.is_empty() || uploads + downloads > 0 || self.login.is_some() {
             "syncing"
         } else {
             "idle"
@@ -712,6 +733,9 @@ impl SyncState {
 
     /// While the server's library is read in pages: (photos read, photos it has).
     pub fn reading(&self) -> Option<(usize, usize)> {
+        if let Some(f) = &self.config.filling {
+            return Some((f.read, f.total));
+        }
         let r = self.reading.as_ref()?;
         Some((r.catalog.len(), r.total.unwrap_or(0)))
     }
@@ -1168,8 +1192,8 @@ impl Session {
         let Some(mut st) = self.sync.take() else { return Vec::new() };
         self.media.thumb_tick = self.media.thumb_tick.wrapping_add(1);
         if self.interaction.is_none() {
-            if let Some(snap) = st.held_snapshot.take() {
-                self.snapshot_done(&mut st, snap);
+            if let Some(page) = st.held_snapshot.take() {
+                self.page_done(&mut st, page);
             }
             if !st.held.is_empty() {
                 let held = std::mem::take(&mut st.held);
@@ -1202,7 +1226,11 @@ impl Session {
                 tasks.push(t);
             } else if !st.config.token.is_empty() {
                 if st.needs_snapshot {
-                    let path = match st.reading.as_ref().and_then(|r| r.next.as_deref()) {
+                    let next = match &st.config.filling {
+                        Some(f) => f.next.as_deref(),
+                        None => st.reading.as_ref().and_then(|r| r.next.as_deref()),
+                    };
+                    let path = match next {
                         Some(next) => format!("/api/snapshot?limit={SNAPSHOT_PAGE}&compact=1&cursor={next}"),
                         None => format!("/api/snapshot?limit={SNAPSHOT_PAGE}&compact=1"),
                     };
@@ -1262,7 +1290,7 @@ impl Session {
             st.activity_task = Some(t.id());
             tasks.push(t);
         }
-        if !st.config.token.is_empty() && !st.config.library.is_empty() && !st.needs_snapshot && !waiting {
+        if !st.config.token.is_empty() && !st.config.library.is_empty() && (!st.needs_snapshot || st.config.filling.is_some()) && !waiting {
             self.blob_tasks(&mut st, now, &mut tasks);
         }
         // nothing queued or running: the next batch of transfers counts from zero
@@ -1504,29 +1532,16 @@ impl Session {
             },
             Control::Snapshot => {
                 match (d.ok(), proto::Snapshot::from_json(&d.body).map_err(|e| format!("unexpected answer from the server ({e})"))) {
-                    (true, Ok(page)) => {
-                        let snap = match st.reading.take() {
-                            None => page,
-                            Some(mut read) => {
-                                if !read.add_page(page) {
-                                    return st.fail("the server's library changed while it was read: reading it again".into());
-                                }
-                                read
-                            }
-                        };
-                        if snap.next.is_some() {
-                            // (the next page on the next round)
-                            st.reading = Some(snap);
-                            st.succeeded();
-                        } else if self.interaction.is_some() {
-                            st.held_snapshot = Some(snap);
-                        } else {
-                            self.snapshot_done(st, snap);
-                        }
-                    }
+                    (true, Ok(page)) if self.interaction.is_some() => st.held_snapshot = Some(page),
+                    (true, Ok(page)) => self.page_done(st, page),
                     (true, Err(e)) => st.fail(e),
                     // the copy being read is gone: from the start
-                    (false, _) if d.status == 410 => st.reading = None,
+                    (false, _) if d.status == 410 => {
+                        st.reading = None;
+                        if let Some(f) = st.config.filling.as_mut() {
+                            f.next = None;
+                        }
+                    }
                     (false, _) => st.fail(why(d)),
                 }
             }
@@ -1644,6 +1659,107 @@ impl Session {
         st.presets_seen = None;
     }
 
+    /// A page of the server's library (or all of it, from a server that doesn't page): into the
+    /// library being filled in, or added to the pages read so far and, after the last, adopted.
+    fn page_done(&mut self, st: &mut SyncState, page: proto::Snapshot) {
+        if let Some(f) = st.config.filling.clone() {
+            if page.library != st.config.library {
+                // (the server's library was replaced meanwhile: that is said when it is adopted)
+                st.config.filling = None;
+            } else if f.next.is_none() {
+                return self.start_filling(st, page, true);
+            } else if page.seq != f.seq {
+                if let Some(f) = st.config.filling.as_mut() {
+                    f.next = None;
+                }
+                return st.fail("the server's library changed while it was read: reading it again".into());
+            } else {
+                return self.fill(st, page);
+            }
+        }
+        let first = st.reading.is_none();
+        let snap = match st.reading.take() {
+            None => page,
+            Some(mut read) => {
+                if !read.add_page(page) {
+                    return st.fail("the server's library changed while it was read: reading it again".into());
+                }
+                read
+            }
+        };
+        // joining with nothing of its own: the server's library replaces this one, so it shows as it comes
+        if first && snap.next.is_some() && st.config.library.is_empty() && !snap.library.is_empty() && !self.has_own_photos() {
+            return self.start_filling(st, snap, false);
+        }
+        if snap.next.is_some() {
+            // (the next page on the next round)
+            st.reading = Some(snap);
+            st.succeeded();
+        } else {
+            self.snapshot_done(st, snap);
+        }
+    }
+
+    /// The first page of the server's library becomes this one, the rest goes in as it comes
+    /// ([`Filling`]). `again`: a read that started over (its copy was gone).
+    fn start_filling(&mut self, st: &mut SyncState, page: proto::Snapshot, again: bool) {
+        let mut c = page.catalog;
+        lightcraft_catalog::sync::sanitize(&mut c);
+        c.set_id_space(st.config.space);
+        let restarted = again || st.config.filling.as_ref().is_some_and(|f| f.restarted);
+        st.config.filling = Some(Filling { seq: page.seq, next: page.next, read: c.len(), total: page.total.unwrap_or(0), restarted });
+        st.config.library = page.library;
+        st.planned = None;
+        self.forget_selection();
+        self.replace_catalog(c);
+        self.filled_if_done(st);
+    }
+
+    /// The next page of a library being filled in: its photos are added (logged like pulled changes).
+    fn fill(&mut self, st: &mut SyncState, page: proto::Snapshot) {
+        for p in page.catalog.photos() {
+            let op = Op::AddPhoto { photo: Box::new(Photo::clone(p)) };
+            match self.catalog.apply(op.clone()) {
+                Ok(_) => self.pending_log.push(op),
+                Err(e) => log::warn!("sync: photo {} of the server's library doesn't go in here ({e})", p.id.0),
+            }
+        }
+        if let Some(f) = st.config.filling.as_mut() {
+            f.read = f.read.saturating_add(page.catalog.len());
+            f.next = page.next;
+        }
+        self.filled_if_done(st);
+    }
+
+    /// After the last page: this library is at the copy's op, and pulls what changed since.
+    fn filled_if_done(&mut self, st: &mut SyncState) {
+        let Some(f) = st.config.filling.take_if(|f| f.next.is_none()) else {
+            return st.succeeded();
+        };
+        if f.restarted {
+            // what was changed here while it was read, made again on what was read the second time
+            let mut c = self.catalog.clone();
+            let dropped = st.outbox.rebase(&mut c);
+            st.outbox_changed();
+            if dropped > 0 {
+                log::info!("sync: {dropped} change(s) made here no longer apply to the server's library");
+            }
+            self.replace_catalog(c);
+        }
+        st.config.cursor = f.seq;
+        st.needs_snapshot = false;
+        st.planned = None;
+        st.succeeded();
+    }
+
+    /// Photos the user put in this library (not the demo photos a new one starts with, nor Local
+    /// records), or albums that hold some.
+    fn has_own_photos(&self) -> bool {
+        let user_photo = |p: &Photo| !p.local && !matches!(p.source, Source::Demo { .. });
+        self.catalog.photos().any(|p| user_photo(p))
+            || self.catalog.albums().any(|a| a.smart.is_some() || a.photos.iter().any(|id| self.catalog.photo(*id).is_some_and(|p| user_photo(p))))
+    }
+
     fn snapshot_done(&mut self, st: &mut SyncState, snap: proto::Snapshot) {
         match self.adopt_snapshot(st, snap) {
             Ok(()) => st.succeeded(),
@@ -1700,12 +1816,7 @@ impl Session {
             }
             // the procedural demo photos a new library starts with don't count: the server's
             // library replaces them (an empty one too: they are never uploaded on their own)
-            let user_photo = |p: &Photo| !p.local && !matches!(p.source, Source::Demo { .. });
-            let has_photos = self.catalog.photos().any(|p| user_photo(p))
-                || self
-                    .catalog
-                    .albums()
-                    .any(|a| a.smart.is_some() || a.photos.iter().any(|id| self.catalog.photo(*id).is_some_and(|p| user_photo(p))));
+            let has_photos = self.has_own_photos();
             let server_empty = snap.seq == 0 && snap.catalog.is_empty() && snap.catalog.albums().next().is_none();
             if server_empty && has_photos {
                 // the first device: upload this library

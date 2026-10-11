@@ -855,6 +855,94 @@ fn the_library_is_read_in_pages() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// Sync `s` until `stop` holds (or there is nothing left to do).
+fn sync_until(s: &mut Session, f: &mut Fake, stop: &dyn Fn(&Session) -> bool) {
+    s.sync_soon();
+    for _ in 0..100 {
+        let tasks = s.sync_tasks();
+        if tasks.is_empty() {
+            return;
+        }
+        for t in tasks {
+            let d = f.handle(&t);
+            s.sync_done(d);
+            if stop(s) {
+                return;
+            }
+        }
+    }
+}
+
+/// A device joining with nothing of its own fills in from the server's library page by page:
+/// photos show (and their previews download) as they come; a restart carries on where it was;
+/// changes made meanwhile survive the read starting over. A device with photos of its own reads
+/// the whole library before it is asked what to do with them.
+#[test]
+fn a_library_fills_in_as_it_comes() {
+    let mut f = Fake::new();
+    f.page = 1;
+    let (_a, root, ids) = first_device("fill", &mut f);
+    let in_library = |s: &Session| s.catalog.photos().filter(|p| p.in_library()).count();
+    let mut b = open(&root.join("b"));
+    sign_in(&mut b);
+    let before = f.requests.len();
+    sync_until(&mut b, &mut f, &|s| s.sync_state().unwrap().reading().is_some());
+    assert_eq!((in_library(&b), b.sync_state().unwrap().reading()), (1, Some((1, 2))), "the first page shows");
+    assert_eq!(b.sync_state().unwrap().state(), "syncing");
+    // its preview downloads alongside the rest of the library
+    let next = b.sync_tasks();
+    let urls: Vec<&String> = next.iter().filter_map(|t| if let Task::Http { url, .. } = t { Some(url) } else { None }).collect();
+    assert!(urls.iter().any(|u| u.contains("cursor=")) && urls.iter().any(|u| u.contains("/api/blobs/mini/")), "{urls:?}");
+    for t in next {
+        let d = f.handle(&t);
+        b.sync_done(d);
+    }
+    sync_until(&mut b, &mut f, &|_| false);
+    assert!(f.requests[before..].iter().any(|q| q.contains("cursor=")));
+    assert_eq!((in_library(&b), b.sync_state().unwrap().reading()), (2, None));
+    assert_eq!(b.sync_state().unwrap().config.cursor, f.core.head());
+
+    // the app quits after the first page: it carries on from the second
+    let mut c = open(&root.join("c"));
+    sign_in(&mut c);
+    sync_until(&mut c, &mut f, &|s| s.sync_state().unwrap().reading().is_some());
+    drop(c);
+    let mut c = open(&root.join("c"));
+    assert_eq!((in_library(&c), c.sync_state().unwrap().reading()), (1, Some((1, 2))), "kept on disk");
+    let before = f.requests.len();
+    assert_eq!(sync(&mut c, &mut f)["state"], "idle");
+    let r: Vec<_> = f.requests[before..].iter().filter(|q| q.contains("/api/snapshot")).collect();
+    assert!(r.len() == 1 && r[0].contains("cursor="), "{r:?}");
+    assert_eq!(in_library(&c), 2);
+
+    // a change made while the library fills in survives the read starting over
+    let mut d = open(&root.join("d"));
+    sign_in(&mut d);
+    sync_until(&mut d, &mut f, &|s| s.sync_state().unwrap().reading().is_some());
+    let first = d.catalog.photos().find(|p| p.in_library()).unwrap().id;
+    d.selection = crate::Selection::single(first);
+    d.execute("photo.rate", &json!({"rating": 2})).unwrap();
+    let other = if first == ids[0] { ids[1] } else { ids[0] };
+    for rating in 1..=4 {
+        // (newer readers: the copy D reads is dropped)
+        f.core.push(f.core.head(), &[Op::SetRating { id: other, rating }]).unwrap();
+        f.core.snapshot_page(None, 1).unwrap();
+    }
+    assert_eq!(sync(&mut d, &mut f)["state"], "idle");
+    assert_eq!((d.catalog.photo(first).unwrap().rating, d.catalog.photo(other).unwrap().rating), (2, 4));
+    assert_eq!(f.core.catalog().photo(first).unwrap().rating, 2, "and it reached the server");
+
+    // photos of its own: the whole library first, then the choice
+    let mut e = open(&root.join("e"));
+    write_png(&root.join("in-e/x.png"), 9);
+    e.execute("library.import", &json!({"paths": [root.join("in-e").to_string_lossy()]})).unwrap();
+    sign_in(&mut e);
+    let st = sync(&mut e, &mut f);
+    assert_eq!((st["state"].as_str(), st["conflict"]["there"]["photos"].as_u64()), (Some("conflict"), Some(2)), "{st}");
+    assert_eq!(in_library(&e), 1, "nothing of the server's shows before the choice");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// The server compacts its log while a device is away for long: it can't pull what's gone, so it
 /// reloads the library — and the changes it made meanwhile (the outbox) are replayed on top, not
 /// lost.

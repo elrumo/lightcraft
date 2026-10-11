@@ -265,7 +265,10 @@ that site's browser storage, so each site is a separate device. The admin page i
   only the demo photos uploads nothing: the empty server library replaces them.
 - **Other devices sign in from a new, empty library** (Settings ▸ General ▸ Open Library… → a new folder, or a fresh
   install: the iOS and web apps start that way) and get the server's library. A new library holding only the demo
-  photos counts as empty (the server's library replaces them).
+  photos counts as empty (the server's library replaces them). It fills in page by page (2,000 photos at a time,
+  compact and gzipped: measured at ~63 bytes a photo for a mostly unedited library, against ~3.4 KB written whole): photos show and their previews download as they
+  come, Sync status says how far it got, and quitting carries on where it was the next time (the read starts over
+  only if the server has dropped the copy it was serving, e.g. after a restart; changes made meanwhile are kept).
 - **A library that already has photos signed in to a server that has some too** is two libraries that never met: their ids mean different photos, so nothing
   syncs until you choose ([below](#when-this-library-and-the-servers-both-have-photos)), or tick *Combine with the photos already on the server* in Settings ▸ Sync (or
   `sync.signIn … merge=true`) to merge at once. A merge never removes anything on either side:

@@ -582,8 +582,10 @@ impl Session {
         // The snapshot is written by a worker thread (natively); appends go on meanwhile.
         // A failed compaction loses nothing (the log is kept whole and compacted later): it is
         // reported (`library.info` → `lastError`), not returned.
+        // (nor while the server's library fills this one in: once at the end, not a growing catalog every 2,000 photos)
         if lib.journal.wants_snapshot()
             && self.interaction.is_none()
+            && !self.sync.as_ref().is_some_and(|st| st.config.filling.is_some())
             && let Err(e) = lib.journal.snapshot_in_background(&self.catalog)
         {
             log::error!("library: compaction: {e}");
