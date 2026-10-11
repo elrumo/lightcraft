@@ -246,6 +246,21 @@ fn two_libraries_sync_through_the_server() {
         assert_eq!(n, 2, "{kind}");
     }
 
+    // the library in pages (a page names the next), or whole for devices from before paging
+    let token = sign_in_raw(&url);
+    let get = |path: &str| {
+        let (s, body, _) = call("GET", &format!("{url}{path}"), &token, None, &[]);
+        (s, json_of(&body))
+    };
+    let (s, first) = get("/api/snapshot?limit=1");
+    assert_eq!((s, first["catalog"]["photos"].as_object().unwrap().len(), first["total"].clone()), (200, 1, json!(2)), "{first}");
+    let (s, last) = get(&format!("/api/snapshot?limit=1&cursor={}", first["next"].as_str().unwrap()));
+    assert_eq!((s, last["catalog"]["photos"].as_object().unwrap().len(), last["next"].clone()), (200, 1, Value::Null), "{last}");
+    assert_eq!((last["library"].clone(), last["seq"].clone()), (first["library"].clone(), first["seq"].clone()));
+    assert_eq!(get("/api/snapshot?limit=1&cursor=99.1").0, 410);
+    let (s, whole) = get("/api/snapshot");
+    assert_eq!((s, whole["catalog"]["photos"].as_object().unwrap().len(), whole["next"].clone()), (200, 2, Value::Null));
+
     let mut b = open(&root.join("b"));
     sign_in(&mut b, &url);
     b.execute("sync.now", &json!({"wait": true})).unwrap();

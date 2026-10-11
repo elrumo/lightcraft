@@ -209,6 +209,10 @@ pub fn cloud_status(app: &LightcraftApp) -> (String, bool, bool) {
         "signedOut" => (format!("Signed out of {server}: sign in again in Settings > Sync"), false, false),
         "paused" => (format!("Syncing with {server} is paused"), false, false),
         "error" => (format!("Can't sync with {server}: {}\nLightCraft keeps trying.", st.error().unwrap_or("")), true, false),
+        "syncing" if st.reading().is_some() => {
+            let (read, total) = st.reading().unwrap_or_default();
+            (format!("Loading the library from {server}: {} of {} photos", count_label(read as u64), count_label(total as u64)), false, true)
+        }
         "syncing" => (
             format!("Syncing with {server}: {} change(s) to send, {} upload(s), {} download(s)", s["pending"], s["uploads"], s["downloads"]),
             false,

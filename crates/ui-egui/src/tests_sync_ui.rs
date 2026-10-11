@@ -76,7 +76,9 @@ fn exec_with(photos: u64, activity: proto::Activity, hang_files: bool) -> SyncEx
         let done = match (*method, path) {
             ("POST", "/api/login") => ok(json!({"token": "t1", "device": 1, "space": 1, "library": "lib-1"})),
             // (an empty server library is at op 0: the first device uploads its library)
-            ("GET", "/api/snapshot") => ok(json!({"library": "lib-1", "seq": if photos == 0 { 0 } else { 7 }, "catalog": catalog})),
+            ("GET", p) if p.starts_with("/api/snapshot") => {
+                ok(json!({"library": "lib-1", "seq": if photos == 0 { 0 } else { 7 }, "catalog": catalog}))
+            }
             ("POST", "/api/ops") => ok(json!({"head": 8})),
             // (photo files: never answered, so the transfers stay in flight and can be looked at)
             (_, p) if p.starts_with("/api/blobs/") && hang_files => return,

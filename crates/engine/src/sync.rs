@@ -63,6 +63,8 @@ const BLOB_RETRY: Duration = Duration::from_secs(60);
 /// Ops per push / pull.
 const PUSH_LIMIT: usize = 500;
 const PULL_LIMIT: usize = 2000;
+/// Photos per page when reading the server's library (the server also keeps a page to ~8 MiB).
+const SNAPSHOT_PAGE: usize = 2000;
 /// Photo file transfers at a time.
 const BLOB_PARALLEL: usize = 4;
 /// Downloaded originals are checked against their budget this often (and right after one arrives).
@@ -345,6 +347,8 @@ pub struct SyncState {
     held: Vec<(u64, Op)>,
     held_snapshot: Option<proto::Snapshot>,
     needs_snapshot: bool,
+    /// The server's library read so far, while it is read in pages (its `next` is where to go on).
+    reading: Option<proto::Snapshot>,
     /// Photo files whose transfer failed: not tried again before then.
     blob_retry: HashMap<String, Instant>,
     /// Originals the server refused (not the file their hash says): not sent again this session.
@@ -430,6 +434,7 @@ impl SyncState {
             held: Vec::new(),
             held_snapshot: None,
             needs_snapshot: false,
+            reading: None,
             blob_retry: HashMap::new(),
             refused: HashSet::new(),
             want_originals: HashSet::new(),
@@ -561,6 +566,7 @@ impl SyncState {
         self.usage_task = None;
         self.activity_task = None;
         self.conflict = None;
+        self.reading = None;
         self.transfer_error = None;
         self.error = Some(why.to_string());
     }
@@ -661,7 +667,7 @@ impl SyncState {
             "paused"
         } else if self.error.is_some() {
             "error"
-        } else if self.control.is_some() || !self.outbox.is_empty() || uploads + downloads > 0 || self.login.is_some() {
+        } else if self.control.is_some() || self.reading.is_some() || !self.outbox.is_empty() || uploads + downloads > 0 || self.login.is_some() {
             "syncing"
         } else {
             "idle"
@@ -675,6 +681,7 @@ impl SyncState {
             "library": self.config.library,
             "cursor": self.config.cursor,
             "pending": self.outbox.len(),
+            "reading": self.reading(),
             "uploads": uploads,
             "downloads": downloads,
             "uploadsDone": self.up_done,
@@ -701,6 +708,12 @@ impl SyncState {
             Some("idle") => "idle",
             _ => "signedOut",
         }
+    }
+
+    /// While the server's library is read in pages: (photos read, photos it has).
+    pub fn reading(&self) -> Option<(usize, usize)> {
+        let r = self.reading.as_ref()?;
+        Some((r.catalog.len(), r.total.unwrap_or(0)))
     }
 
     /// The last error, if the last request failed.
@@ -1189,7 +1202,11 @@ impl Session {
                 tasks.push(t);
             } else if !st.config.token.is_empty() {
                 if st.needs_snapshot {
-                    let t = st.http("GET", "/api/snapshot", Body::Empty, None);
+                    let path = match st.reading.as_ref().and_then(|r| r.next.as_deref()) {
+                        Some(next) => format!("/api/snapshot?limit={SNAPSHOT_PAGE}&cursor={next}"),
+                        None => format!("/api/snapshot?limit={SNAPSHOT_PAGE}"),
+                    };
+                    let t = st.http("GET", &path, Body::Empty, None);
                     st.control = Some((t.id(), Control::Snapshot));
                     tasks.push(t);
                 } else if st.pull_at.is_none_or(|t| now >= t) {
@@ -1486,9 +1503,29 @@ impl Session {
                 (false, _) => st.signed_out(&why(d)),
             },
             Control::Snapshot => match (d.ok(), decode::<proto::Snapshot>(d)) {
-                (true, Ok(snap)) if self.interaction.is_some() => st.held_snapshot = Some(snap),
-                (true, Ok(snap)) => self.snapshot_done(st, snap),
+                (true, Ok(page)) => {
+                    let snap = match st.reading.take() {
+                        None => page,
+                        Some(mut read) => {
+                            if !read.add_page(page) {
+                                return st.fail("the server's library changed while it was read: reading it again".into());
+                            }
+                            read
+                        }
+                    };
+                    if snap.next.is_some() {
+                        // (the next page on the next round)
+                        st.reading = Some(snap);
+                        st.succeeded();
+                    } else if self.interaction.is_some() {
+                        st.held_snapshot = Some(snap);
+                    } else {
+                        self.snapshot_done(st, snap);
+                    }
+                }
                 (true, Err(e)) => st.fail(e),
+                // the copy being read is gone: from the start
+                (false, _) if d.status == 410 => st.reading = None,
                 (false, _) => st.fail(why(d)),
             },
             Control::Pull => match d.status {
@@ -2200,8 +2237,10 @@ mod net {
 
     use super::Body;
 
-    /// Responses read into memory are capped (control answers, not photo files).
-    const TEXT_MAX: u64 = 256 << 20;
+    /// Responses read into memory are capped (control answers, not photo files). The largest is a
+    /// server from before paging sending the whole library at once (~4 KB a photo: 62,000 photos
+    /// already pass 256 MiB); a page of it is ~8 MiB.
+    const TEXT_MAX: u64 = 2 << 30;
 
     pub(super) fn agent() -> &'static ureq::Agent {
         static AGENT: OnceLock<ureq::Agent> = OnceLock::new();

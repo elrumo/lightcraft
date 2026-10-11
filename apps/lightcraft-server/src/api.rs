@@ -224,7 +224,7 @@ fn api(st: &State, req: &mut Request, method: &Method, path: &str, q: &str) -> R
             Err(e) => error(500, e),
         },
         (Method::Get, ["me"]) => me(st, &who),
-        (Method::Get, ["snapshot"]) => snapshot(st, &l, &who),
+        (Method::Get, ["snapshot"]) => snapshot(st, &l, &who, q),
         (Method::Get, ["usage"]) => usage(st, &l, &who),
         (Method::Get, ["activity"]) => activity(st, &l, &who),
         (Method::Get, ["ops"]) => ops(&l, q),
@@ -388,11 +388,22 @@ fn blob_usage(blobs: &Path, kind: &str) -> proto::Files {
     out
 }
 
-fn snapshot(st: &State, l: &Mutex<UserLib>, who: &Session) -> Resp {
+fn snapshot(st: &State, l: &Mutex<UserLib>, who: &Session, q: &str) -> Resp {
     let library = match st.accounts.lock().unwrap_or_else(PoisonError::into_inner).library_of(&who.user) {
         Ok(lib) => lib,
         Err(e) => return error(500, e),
     };
+    // in pages (devices since paging); without `limit`, the whole library at once (older devices)
+    if let Some(limit) = query(q, "limit").and_then(|v| v.parse::<usize>().ok()) {
+        let page = l.lock().unwrap_or_else(PoisonError::into_inner).core.snapshot_page(query(q, "cursor"), limit.clamp(1, PULL_MAX));
+        return match page {
+            Some(page) => match serde_json::to_vec(&proto::Snapshot { library, ..page }) {
+                Ok(body) => bytes(200, "application/json", body),
+                Err(e) => error(500, e),
+            },
+            None => error(410, "the library changed while it was read: read it again from the start"),
+        };
+    }
     let (seq, catalog) = l.lock().unwrap_or_else(PoisonError::into_inner).core.snapshot();
     let lib = Value::String(library).to_string();
     bytes(200, "application/json", format!("{{\"library\":{lib},\"seq\":{seq},\"catalog\":{catalog}}}").into_bytes())

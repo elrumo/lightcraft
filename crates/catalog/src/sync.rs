@@ -477,12 +477,23 @@ pub struct ServerCore {
     journal: Journal,
     catalog: Catalog,
     compact_bytes: u64,
+    /// The library as it was at op `seq`, kept while devices read it in pages
+    /// ([`ServerCore::snapshot_page`]), oldest first. Photos are shared with the live catalog, so
+    /// a copy costs its map, not its photos.
+    pins: Vec<(u64, Catalog)>,
 }
+
+/// Copies of the library kept for devices reading it in pages: one more device starting to read
+/// drops the oldest, whose reader starts again.
+const PINS_MAX: usize = 4;
+
+/// A page of the library holds about this much JSON (and at least one photo).
+const PAGE_BYTES: usize = 8 << 20;
 
 impl ServerCore {
     pub fn open(store: Box<dyn Store>) -> Result<ServerCore> {
         let (journal, catalog, _) = Journal::open(store)?;
-        Ok(ServerCore { journal, catalog, compact_bytes: COMPACT_BYTES })
+        Ok(ServerCore { journal, catalog, compact_bytes: COMPACT_BYTES, pins: Vec::new() })
     }
 
     /// Compact the log at this size instead of [`COMPACT_BYTES`] (tests).
@@ -567,6 +578,55 @@ impl ServerCore {
     pub fn snapshot(&self) -> (u64, String) {
         (self.head(), self.catalog.to_snapshot())
     }
+
+    /// The library in pages of at most `limit` photos, all as it was when the first page was read,
+    /// however the library changes meanwhile: `cursor` is `None` for the first page (which also
+    /// has the albums, stacks and the rest), then the last page's [`proto::Snapshot::next`].
+    /// `None`: that copy is gone (dropped for newer ones, or the server restarted and the library
+    /// changed since): read it again from the first page. The answer's `library` is left empty.
+    pub fn snapshot_page(&mut self, cursor: Option<&str>, limit: usize) -> Option<proto::Snapshot> {
+        let (seq, after) = match cursor {
+            None => (self.head(), None),
+            Some(c) => {
+                let (seq, after) = c.split_once('.')?;
+                (seq.parse().ok()?, Some(PhotoId(after.parse().ok()?)))
+            }
+        };
+        if !self.pins.iter().any(|(s, _)| *s == seq) {
+            // (a later page whose copy is gone can go on only if nothing changed since)
+            if seq != self.head() {
+                return None;
+            }
+            if self.pins.len() >= PINS_MAX {
+                self.pins.remove(0);
+            }
+            self.pins.push((seq, self.catalog.clone()));
+        }
+        let (_, all) = self.pins.iter().find(|(s, _)| *s == seq)?;
+        let mut page = match after {
+            Some(_) => Catalog::default(),
+            None => Catalog {
+                photos: Default::default(),
+                albums: all.albums.clone(),
+                next_photo: all.next_photo,
+                next_album: all.next_album,
+                stacks: all.stacks.clone(),
+                next_stack: all.next_stack,
+                label_names: all.label_names.clone(),
+                browsed: all.browsed.clone(),
+                revision: 0,
+            },
+        };
+        let from = after.map_or(std::ops::Bound::Unbounded, std::ops::Bound::Excluded);
+        let mut rest = all.photos.range((from, std::ops::Bound::Unbounded)).peekable();
+        let mut bytes = 0;
+        while let Some((id, p)) = rest.next_if(|_| page.photos.len() < limit.max(1) && (page.photos.is_empty() || bytes < PAGE_BYTES)) {
+            bytes += serde_json::to_vec(p).map_or(0, |j| j.len());
+            page.photos.insert(*id, p.clone());
+        }
+        let next = rest.peek().and_then(|_| page.photos.last_key_value()).map(|(id, _)| format!("{seq}.{}", id.0));
+        Some(proto::Snapshot { library: String::new(), seq, catalog: page, next, total: Some(all.photos.len()) })
+    }
 }
 
 /// The server API's JSON bodies (`/api/…`; every route but `login` wants
@@ -595,12 +655,34 @@ pub mod proto {
         pub library: String,
     }
 
-    /// `GET /api/snapshot`: the library after op `seq`.
+    /// `GET /api/snapshot`: the library after op `seq`. In pages with `?limit=N`, then
+    /// `?limit=N&cursor=<next>` until `next` is `None` ([`super::ServerCore::snapshot_page`];
+    /// `410`: that copy is gone, start again). A server older than paging answers the whole library
+    /// at once, without `next`.
     #[derive(Clone, Debug, Serialize, Deserialize)]
     pub struct Snapshot<C = Catalog> {
         pub library: String,
         pub seq: u64,
         pub catalog: C,
+        /// Where the next page starts (paged reads, until the last page).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub next: Option<String>,
+        /// Photos in the whole library (paged reads).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub total: Option<usize>,
+    }
+
+    impl Snapshot {
+        /// The next page read from the same copy of the library: its photos join these. `false`
+        /// (nothing added) when it is from another copy.
+        pub fn add_page(&mut self, page: Snapshot) -> bool {
+            if (&page.library, page.seq) != (&self.library, self.seq) {
+                return false;
+            }
+            self.catalog.photos.extend(page.catalog.photos);
+            self.next = page.next;
+            true
+        }
     }
 
     /// `GET /api/ops?since=N&limit=M`: the ops after `N` (`410 Gone`: reload the snapshot).

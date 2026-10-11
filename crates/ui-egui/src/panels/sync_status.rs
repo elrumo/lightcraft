@@ -50,6 +50,8 @@ struct View {
     host: String,
     error: Option<String>,
     photos: usize,
+    /// While the server's library is read in pages: (photos read, photos it has).
+    reading: Option<(usize, usize)>,
     transfers: Transfers,
     activity: Option<proto::Activity>,
     activity_error: Option<String>,
@@ -70,6 +72,7 @@ impl View {
             host,
             error: st.and_then(|st| st.error()).map(str::to_string),
             photos: app.session.catalog.photos().filter(|p| p.in_library()).count(),
+            reading: st.and_then(|st| st.reading()),
             transfers: app.session.sync_transfers(),
             activity: st.and_then(|st| st.activity()).cloned(),
             activity_error: st.and_then(|st| st.activity_error()).map(str::to_string),
@@ -337,6 +340,16 @@ fn conflict_text(c: Option<&ConflictInfo>) -> String {
 fn summary(v: &View) -> String {
     let t = &v.transfers;
     let mut parts = Vec::new();
+    if let Some((read, total)) = v.reading {
+        parts.push(format!(
+            "{} {} {} {} {}",
+            crate::i18n::tr("Loading the library:"),
+            count_label(read as u64),
+            crate::i18n::tr("of"),
+            count_label(total as u64),
+            crate::i18n::tr("photos")
+        ));
+    }
     if t.pending > 0 {
         parts.push(format!(
             "{} {}",

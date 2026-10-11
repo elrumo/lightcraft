@@ -51,6 +51,10 @@ struct Fake {
     no_activity: bool,
     /// Photo files can't be stored (the disk is full): why.
     put_fails: Option<String>,
+    /// Photos per page of the library (small, so reads take several pages); `whole_snapshot`: a
+    /// server from before paging (the whole library in one answer).
+    page: usize,
+    whole_snapshot: bool,
     requests: Vec<String>,
 }
 
@@ -71,6 +75,8 @@ impl Fake {
             activity: proto::Activity::default(),
             no_activity: false,
             put_fails: None,
+            page: 3,
+            whole_snapshot: false,
             requests: vec![],
         }
     }
@@ -111,10 +117,20 @@ impl Fake {
                 };
                 ok(serde_json::to_value(dev).unwrap())
             }
-            ("GET", "/api/snapshot") => {
-                let (seq, snap) = self.core.snapshot();
-                let catalog: Value = serde_json::from_str(&snap).unwrap();
-                ok(json!({"library": self.library, "seq": seq, "catalog": catalog}))
+            ("GET", p) if p.starts_with("/api/snapshot") => {
+                let q = p.split_once('?').map_or("", |(_, q)| q);
+                let arg = |k: &str| q.split('&').filter_map(|kv| kv.split_once('=')).find(|(key, _)| *key == k).map(|(_, v)| v);
+                match arg("limit").filter(|_| !self.whole_snapshot) {
+                    Some(limit) => match self.core.snapshot_page(arg("cursor"), limit.parse::<usize>().unwrap().min(self.page)) {
+                        Some(page) => ok(serde_json::to_value(proto::Snapshot { library: self.library.clone(), ..page }).unwrap()),
+                        None => status(410, json!({"error": "gone"})),
+                    },
+                    None => {
+                        let (seq, snap) = self.core.snapshot();
+                        let catalog: Value = serde_json::from_str(&snap).unwrap();
+                        ok(json!({"library": self.library, "seq": seq, "catalog": catalog}))
+                    }
+                }
             }
             ("GET", p) if p.starts_with("/api/ops?since=") => {
                 let q = p.trim_start_matches("/api/ops?since=");
@@ -440,7 +456,7 @@ fn a_library_with_photos_signing_in_to_a_server_that_has_one_waits_for_a_choice(
     assert_eq!(c.catalog.len(), 2, "nothing changed here");
     assert_eq!(f.core.catalog().len(), 2, "nor there");
     // only the sign-in and the server's library were asked for: nothing pulled, pushed or sent, however long it waits
-    assert_eq!(f.requests[before..], ["POST /api/login", "GET /api/snapshot"]);
+    assert_eq!(f.requests[before..], ["POST /api/login", "GET /api/snapshot?limit=2000"]);
     sync(&mut c, &mut f);
     assert_eq!(f.requests.len(), before + 2);
     // closing the library doesn't lose the question: the server's library is fetched again and asks again
@@ -449,7 +465,7 @@ fn a_library_with_photos_signing_in_to_a_server_that_has_one_waits_for_a_choice(
     let st = sync(&mut c, &mut f);
     assert_eq!(st["state"], "conflict", "{st}");
     assert_eq!(c.catalog.len(), 2);
-    assert_eq!(f.requests.last().map(String::as_str), Some("GET /api/snapshot"), "{:?}", f.requests);
+    assert!(f.requests.last().is_some_and(|r| r.starts_with("GET /api/snapshot")), "{:?}", f.requests);
     // a wrong password says so
     let mut d = open(&root.join("d"));
     d.execute("sync.signIn", &json!({"server": "http://fake", "user": "ann", "password": "nope"})).unwrap();
@@ -757,7 +773,80 @@ fn a_browser_exports_from_the_preview_and_says_what_to_do_beyond_its_size() {
 }
 
 fn snapshots(f: &Fake) -> usize {
-    f.requests.iter().filter(|r| *r == "GET /api/snapshot").count()
+    f.requests.iter().filter(|r| r.starts_with("GET /api/snapshot") && !r.contains("cursor=")).count()
+}
+
+/// The server's library is read in pages, all from the copy the first page came from: a change
+/// another device makes meanwhile arrives after it, as a change. A copy that is gone is read again
+/// from the start, and a server from before paging answers it whole.
+#[test]
+fn the_library_is_read_in_pages() {
+    let mut f = Fake::new();
+    f.page = 1;
+    let (_a, root, ids) = first_device("pages", &mut f);
+    let reads = |f: &Fake, from: usize| f.requests[from..].iter().filter(|r| r.starts_with("GET /api/snapshot")).cloned().collect::<Vec<_>>();
+    let mut b = open(&root.join("b"));
+    let before = f.requests.len();
+    sign_in(&mut b);
+    // (syncs `s`, calling `half_way` while the library is half read; how far it got)
+    fn read(s: &mut Session, f: &mut Fake, half_way: &mut dyn FnMut(&mut Fake)) -> Option<(usize, usize)> {
+        let mut progress = None;
+        s.sync_soon();
+        for _ in 0..100 {
+            let tasks = s.sync_tasks();
+            if tasks.is_empty() {
+                break;
+            }
+            for t in tasks {
+                let d = f.handle(&t);
+                s.sync_done(d);
+                if let Some(r) = s.sync_state().unwrap().reading() {
+                    progress = Some(r);
+                    half_way(f);
+                }
+            }
+        }
+        progress
+    }
+    // another device rates a photo half-way through
+    let progress = read(&mut b, &mut f, &mut |f: &mut Fake| {
+        if f.core.catalog().photo(ids[1]).unwrap().rating == 0 {
+            f.core.push(f.core.head(), &[Op::SetRating { id: ids[1], rating: 5 }]).unwrap();
+        }
+    });
+    assert_eq!(progress, Some((1, 2)), "the status says how far it got");
+    let r = reads(&f, before);
+    assert_eq!(r.len(), 2, "{r:?}");
+    assert!(r[1].contains("&cursor="), "{r:?}");
+    assert_eq!(b.sync_state().unwrap().reading(), None);
+    assert_eq!(b.catalog.photos().filter(|p| p.in_library()).count(), 2);
+    assert_eq!(b.catalog.photo(ids[1]).unwrap().rating, 5, "the change made half-way came after");
+    // the copy being read goes (newer readers took its place): read again from the start
+    let mut c = open(&root.join("c"));
+    sign_in(&mut c);
+    let before = f.requests.len();
+    read(&mut c, &mut f, &mut |f: &mut Fake| {
+        if f.core.catalog().photo(ids[0]).unwrap().rating == 0 {
+            for rating in 1..=4 {
+                f.core.push(f.core.head(), &[Op::SetRating { id: ids[0], rating }]).unwrap();
+                f.core.snapshot_page(None, 1).unwrap();
+            }
+        }
+    });
+    let r = reads(&f, before);
+    assert_eq!(r.iter().filter(|r| !r.contains("cursor=")).count(), 2, "{r:?}");
+    assert_eq!(c.sync_state().unwrap().error(), None);
+    assert_eq!(c.catalog.photo(ids[0]).unwrap().rating, 4);
+    // a server from before paging
+    f.whole_snapshot = true;
+    let mut d = open(&root.join("d"));
+    sign_in(&mut d);
+    let before = f.requests.len();
+    let st = sync(&mut d, &mut f);
+    assert_eq!(st["state"], "idle", "{st}");
+    assert_eq!(reads(&f, before).len(), 1);
+    assert_eq!((d.catalog.photo(ids[0]).unwrap().rating, d.catalog.photo(ids[1]).unwrap().rating), (4, 5));
+    let _ = std::fs::remove_dir_all(&root);
 }
 
 /// The server compacts its log while a device is away for long: it can't pull what's gone, so it

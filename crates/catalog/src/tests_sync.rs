@@ -245,6 +245,55 @@ fn server_core_orders_validates_and_persists() {
     assert_eq!((s.head(), s.catalog().photo(id).unwrap().rating), (2, 4));
 }
 
+/// The library is read in pages, all from the copy taken at the first page however the library
+/// changes meanwhile; a copy that is gone is read again, unless nothing changed since.
+#[test]
+fn snapshot_reads_in_pages_from_one_copy() {
+    let store = MemStore::new();
+    let mut s = ServerCore::open(Box::new(store.clone())).unwrap();
+    let mut c = Catalog::new();
+    c.set_id_space(1);
+    let mut ids = Vec::new();
+    for _ in 0..5 {
+        let add = add_photo(&mut c);
+        let Op::AddPhoto { photo } = &add else { panic!("{add:?}") };
+        ids.push(photo.id);
+        s.push(s.head(), &[add]).unwrap();
+    }
+    s.push(s.head(), &[Op::AddAlbum { album: Album::new(c.alloc_album_id(), "Trip") }]).unwrap();
+    let before = s.catalog().to_snapshot();
+    let mut read = s.snapshot_page(None, 2).unwrap();
+    assert_eq!((read.catalog.len(), read.catalog.albums().count(), read.total), (2, 1, Some(5)));
+    // another device changes the library half-way
+    s.push(s.head(), &[Op::SetRating { id: ids[4], rating: 5 }, add_photo(&mut c)]).unwrap();
+    let mut pages = 1;
+    while let Some(next) = read.next.clone() {
+        let page = s.snapshot_page(Some(&next), 2).unwrap();
+        assert_eq!(page.catalog.albums().count(), 0, "albums come with the first page only");
+        assert!(read.add_page(page));
+        pages += 1;
+    }
+    assert_eq!(pages, 3);
+    assert_eq!(read.catalog.to_snapshot(), before, "the library as it was at the first page");
+    // a page of another copy isn't added
+    let other = s.snapshot_page(None, 2).unwrap();
+    assert!(!read.add_page(other.clone()));
+    // the server restarted: the copy is gone; read again unless nothing changed since
+    let at_head = other.next.unwrap();
+    let gone = format!("{}.{}", read.seq, ids[1].0);
+    let mut s = ServerCore::open(Box::new(store)).unwrap();
+    assert!(s.snapshot_page(Some(&gone), 2).is_none());
+    assert_eq!(s.snapshot_page(Some(&at_head), 10).unwrap().catalog.len(), 4);
+    // only a few copies are kept: the oldest goes
+    for _ in 0..4 {
+        s.push(s.head(), &[add_photo(&mut c)]).unwrap();
+        s.snapshot_page(None, 1).unwrap();
+    }
+    assert!(s.snapshot_page(Some(&at_head), 10).is_none());
+    // a cursor that isn't one
+    assert!(s.snapshot_page(Some("x"), 10).is_none() && s.snapshot_page(Some("1.y"), 10).is_none());
+}
+
 /// A big log is compacted: devices far behind reload the library, the rest pull as before, and
 /// it reopens the same.
 #[test]
