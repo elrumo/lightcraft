@@ -447,6 +447,8 @@ server's state, replaying its other pending changes on top.
 ## Protocol
 
 JSON over HTTP; every route but `login` wants `Authorization: Bearer <token>`. Types: `lightcraft_catalog::sync::proto`.
+Big JSON answers (the library, pulled changes; 16 KiB and up) come gzipped to a device that sends
+`Accept-Encoding: gzip`, about a tenth of the bytes.
 
 | Route | Body → answer |
 |---|---|

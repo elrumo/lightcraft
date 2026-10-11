@@ -48,6 +48,28 @@ pub(crate) fn json(status: u16, v: &Value) -> Resp {
     bytes(status, "application/json", v.to_string().into_bytes())
 }
 
+/// A JSON answer that can be big (the library, pulled changes): gzipped when it is and the device
+/// takes gzip, a tenth of the bytes.
+fn big_json(req: &Request, body: Vec<u8>) -> Resp {
+    let takes_gzip = header_value(req, "Accept-Encoding").is_some_and(|v| v.split(',').any(|e| e.trim().starts_with("gzip")));
+    if takes_gzip && body.len() >= GZIP_MIN {
+        let mut z = flate2::write::GzEncoder::new(Vec::with_capacity(body.len() / 4), flate2::Compression::fast());
+        if z.write_all(&body).is_ok()
+            && let Ok(z) = z.finish()
+        {
+            let mut resp = bytes(200, "application/json", z);
+            if let Some(h) = header("Content-Encoding", "gzip") {
+                resp.add_header(h);
+            }
+            return resp;
+        }
+    }
+    bytes(200, "application/json", body)
+}
+
+/// Smaller answers aren't worth compressing.
+const GZIP_MIN: usize = 16 << 10;
+
 /// A JSON document that is already text.
 pub(crate) fn raw_json(status: u16, body: String) -> Resp {
     bytes(status, "application/json", body.into_bytes())
@@ -224,10 +246,10 @@ fn api(st: &State, req: &mut Request, method: &Method, path: &str, q: &str) -> R
             Err(e) => error(500, e),
         },
         (Method::Get, ["me"]) => me(st, &who),
-        (Method::Get, ["snapshot"]) => snapshot(st, &l, &who, q),
+        (Method::Get, ["snapshot"]) => snapshot(st, req, &l, &who, q),
         (Method::Get, ["usage"]) => usage(st, &l, &who),
         (Method::Get, ["activity"]) => activity(st, &l, &who),
-        (Method::Get, ["ops"]) => ops(&l, q),
+        (Method::Get, ["ops"]) => ops(req, &l, q),
         (Method::Post, ["ops"]) => push(st, req, &l, &who),
         (Method::Get, ["presets"]) => {
             let l = l.lock().unwrap_or_else(PoisonError::into_inner);
@@ -388,7 +410,7 @@ fn blob_usage(blobs: &Path, kind: &str) -> proto::Files {
     out
 }
 
-fn snapshot(st: &State, l: &Mutex<UserLib>, who: &Session, q: &str) -> Resp {
+fn snapshot(st: &State, req: &Request, l: &Mutex<UserLib>, who: &Session, q: &str) -> Resp {
     let library = match st.accounts.lock().unwrap_or_else(PoisonError::into_inner).library_of(&who.user) {
         Ok(lib) => lib,
         Err(e) => return error(500, e),
@@ -398,7 +420,7 @@ fn snapshot(st: &State, l: &Mutex<UserLib>, who: &Session, q: &str) -> Resp {
         let page = l.lock().unwrap_or_else(PoisonError::into_inner).core.snapshot_page(query(q, "cursor"), limit.clamp(1, PULL_MAX));
         return match page {
             Some(page) => match serde_json::to_vec(&proto::Snapshot { library, ..page }) {
-                Ok(body) => bytes(200, "application/json", body),
+                Ok(body) => big_json(req, body),
                 Err(e) => error(500, e),
             },
             None => error(410, "the library changed while it was read: read it again from the start"),
@@ -406,17 +428,24 @@ fn snapshot(st: &State, l: &Mutex<UserLib>, who: &Session, q: &str) -> Resp {
     }
     let (seq, catalog) = l.lock().unwrap_or_else(PoisonError::into_inner).core.snapshot();
     let lib = Value::String(library).to_string();
-    bytes(200, "application/json", format!("{{\"library\":{lib},\"seq\":{seq},\"catalog\":{catalog}}}").into_bytes())
+    big_json(req, format!("{{\"library\":{lib},\"seq\":{seq},\"catalog\":{catalog}}}").into_bytes())
 }
 
-fn ops(l: &Mutex<UserLib>, q: &str) -> Resp {
+fn ops(req: &Request, l: &Mutex<UserLib>, q: &str) -> Resp {
     let since = query(q, "since").and_then(|v| v.parse::<u64>().ok()).unwrap_or(0);
     let limit = query(q, "limit").and_then(|v| v.parse::<usize>().ok()).unwrap_or(1000).clamp(1, PULL_MAX);
     let mut l = l.lock().unwrap_or_else(PoisonError::into_inner);
     let presets = l.presets.version;
     let docs = l.docs.versions();
     match l.core.since(since, limit) {
-        Ok(Pull::Ops(ops)) => json(200, &json!(proto::Ops { head: l.core.head(), ops, presets, docs })),
+        Ok(Pull::Ops(ops)) => {
+            let body = serde_json::to_vec(&proto::Ops { head: l.core.head(), ops, presets, docs });
+            drop(l);
+            match body {
+                Ok(body) => big_json(req, body),
+                Err(e) => error(500, e),
+            }
+        }
         Ok(Pull::Gone) => error(410, "that is older than the server keeps: reload the library"),
         Err(e) => {
             log::error!("reading the log: {e}");

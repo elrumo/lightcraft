@@ -29,6 +29,7 @@ sha2 = { workspace = true }
 getrandom = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+flate2 = { workspace = true }
 log = { workspace = true }
 
 [dev-dependencies]

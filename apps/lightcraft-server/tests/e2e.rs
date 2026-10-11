@@ -302,6 +302,54 @@ fn two_libraries_sync_through_the_server() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// The library and pulled changes come gzipped to a device that takes gzip (a tenth of the
+/// bytes); a device that doesn't gets them as they are.
+#[test]
+fn big_answers_are_gzipped() {
+    use lightcraft_engine::catalog::{Catalog, Op, Photo};
+    use std::io::{Read, Write};
+    let root = temp("gzip");
+    let server = start(&root);
+    let url = format!("http://{}", server.addr());
+    let token = sign_in_raw(&url);
+    let mut c = Catalog::new();
+    c.set_id_space(1);
+    let ops: Vec<Op> = (0..60)
+        .map(|i| Op::AddPhoto {
+            photo: Box::new(Photo::new(c.alloc_photo_id(), Source::Demo { scene: 1 }, &format!("p{i}.jpg"), "JPEG", 60, 40, "2026-01-01T00:00:00")),
+        })
+        .collect();
+    let body = json!({"base": 0, "ops": ops}).to_string();
+    assert_eq!(call("POST", &format!("{url}/api/ops"), &token, Some(body.as_bytes()), &[]).0, 200);
+    let raw = |path: &str, gzip: bool| -> (String, Vec<u8>) {
+        let mut conn = std::net::TcpStream::connect(server.addr()).unwrap();
+        conn.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let accept = if gzip { "Accept-Encoding: gzip, br\r\n" } else { "" };
+        write!(conn, "GET {path} HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer {token}\r\n{accept}Connection: close\r\n\r\n").unwrap();
+        let mut got = Vec::new();
+        let _ = conn.read_to_end(&mut got);
+        let at = got.windows(4).position(|w| w == b"\r\n\r\n").unwrap();
+        (String::from_utf8_lossy(&got[..at]).to_ascii_lowercase(), got[at + 4..].to_vec())
+    };
+    for path in ["/api/snapshot?limit=100", "/api/snapshot", "/api/ops?since=0&limit=100"] {
+        let (head, plain) = raw(path, false);
+        assert!(!head.contains("content-encoding"), "{head}");
+        let (head, zipped) = raw(path, true);
+        assert!(head.contains("content-encoding: gzip"), "{path}: {head}");
+        let mut unzipped = Vec::new();
+        flate2::read::GzDecoder::new(zipped.as_slice()).read_to_end(&mut unzipped).unwrap();
+        assert_eq!(json_of(&unzipped), json_of(&plain), "{path}");
+        assert!(zipped.len() * 5 < plain.len(), "{path}: {} → {} bytes", plain.len(), zipped.len());
+    }
+    // (and a device reads it so)
+    let mut b = open(&root.join("b"));
+    sign_in(&mut b, &url);
+    b.execute("sync.now", &json!({"wait": true})).unwrap();
+    assert_eq!(b.catalog.photos().filter(|p| p.file_name.starts_with('p')).count(), 60);
+    drop(server);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 #[test]
 fn admin_page_sets_up_and_manages_users() {
     let root = temp("admin");
