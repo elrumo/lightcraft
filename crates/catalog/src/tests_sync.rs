@@ -294,6 +294,78 @@ fn snapshot_reads_in_pages_from_one_copy() {
     assert!(s.snapshot_page(Some("x"), 10).is_none() && s.snapshot_page(Some("1.y"), 10).is_none());
 }
 
+/// A merge patch turns its base back into what it was made from: changed members, nested
+/// objects, members gone (an enum's other variant, a map's key), arrays whole.
+#[test]
+fn merge_patches_round_trip() {
+    let cases = [
+        (json!({"a": 1, "b": {"x": 1, "y": 2}}), json!({"a": 1, "b": {"x": 1, "y": 3}})),
+        (json!({"shape": {"Radial": {"r": 1}}}), json!({"shape": {"Linear": {"a": 2}}})),
+        (json!({"m": {"k1": 1, "k2": 2}}), json!({"m": {"k1": 1}})),
+        (json!({"m": {"k1": 1}}), json!({"m": {}})),
+        (json!({"list": [1, 2, 3]}), json!({"list": [1, 3]})),
+        (json!({"o": null}), json!({"o": {"set": true}})),
+        (json!({"o": {"set": true}}), json!({"o": [1]})),
+        (json!({"a": 1}), json!(7)),
+        (json!({"a": 1}), json!({"a": 1, "new": "x"})),
+    ];
+    for (base, v) in cases {
+        let d = diff(&base, &v);
+        assert_eq!(patch(&base, &d), v, "{base} → {v} via {d}");
+    }
+    assert_eq!(diff(&json!({"a": 1, "b": 2}), &json!({"a": 1, "b": 2})), json!({}), "nothing differs: nothing written");
+    // (a member set to null comes back left out, which reads the same into an `Option`)
+    assert_eq!(patch(&json!({"o": {"k": 1}}), &diff(&json!({"o": {"k": 1}}), &json!({"o": null}))), json!({}));
+}
+
+/// Compact pages hold the same photos, edited or not, in a fraction of the bytes; a page that
+/// isn't compact reads as before.
+#[test]
+fn compact_pages_hold_the_same_photos() {
+    use lightcraft_develop::{Mask, MaskComponent, MaskOp, MaskShape, WbMode};
+    let mut s = server();
+    let mut c = Catalog::new();
+    c.set_id_space(1);
+    let mut edit = DevelopSettings::default();
+    lightcraft_develop::controls::set(&mut edit, "light.exposure", 1.25);
+    edit.wb.mode = WbMode::Auto;
+    edit.crop.aspect = Some((3, 2));
+    edit.disabled_sections.push("effects".into());
+    edit.masks.push(Mask {
+        id: 1,
+        components: vec![
+            MaskComponent { name: Some("sky".into()), op: MaskOp::Add, invert: false, shape: MaskShape::Sky },
+            MaskComponent {
+                name: None,
+                op: MaskOp::Add,
+                invert: true,
+                shape: MaskShape::Prompt { text: "the car".into(), seg: None, detail: vec![], edge: 0.0 },
+            },
+        ],
+        ..Default::default()
+    });
+    let mut look = DevelopSettings::default();
+    lightcraft_develop::controls::set(&mut look, "light.contrast", 20.0);
+    for i in 0..20 {
+        let Op::AddPhoto { mut photo } = add_photo(&mut c) else { panic!("not a photo") };
+        if i == 0 {
+            photo.develop = Arc::new(edit.clone());
+            photo.import_look = Some(Arc::new(look.clone()));
+            photo.versions.push(Version { name: "v1".into(), created: "2026-01-02T00:00:00".into(), settings: Arc::new(edit.clone()), auto: false });
+        }
+        s.push(s.head(), &[Op::AddPhoto { photo }]).unwrap();
+    }
+    let page = s.snapshot_page(None, 100).unwrap();
+    let full = serde_json::to_string(&page).unwrap();
+    let compact = serde_json::to_string(&compact_page(page.clone()).unwrap()).unwrap();
+    assert!(compact.starts_with("{\"defaults\":"), "{}", &compact[..40]);
+    let back = proto::Snapshot::from_json(&compact).unwrap();
+    assert_eq!(back.catalog, page.catalog);
+    assert_eq!((back.seq, back.next, back.total, back.defaults), (page.seq, None, Some(20), None));
+    assert!(compact.len() * 3 < full.len(), "{} → {} bytes", full.len(), compact.len());
+    assert_eq!(proto::Snapshot::from_json(&full).unwrap().catalog, page.catalog);
+}
+
 /// A big log is compacted: devices far behind reload the library, the rest pull as before, and
 /// it reopens the same.
 #[test]

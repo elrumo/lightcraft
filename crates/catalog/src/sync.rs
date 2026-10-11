@@ -625,8 +625,79 @@ impl ServerCore {
             page.photos.insert(*id, p.clone());
         }
         let next = rest.peek().and_then(|_| page.photos.last_key_value()).map(|(id, _)| format!("{seq}.{}", id.0));
-        Some(proto::Snapshot { library: String::new(), seq, catalog: page, next, total: Some(all.photos.len()) })
+        Some(proto::Snapshot { defaults: None, library: String::new(), seq, catalog: page, next, total: Some(all.photos.len()) })
     }
+}
+
+/// A page of the library for devices that read compact pages (`&compact=1`): each photo's develop
+/// settings (its edit, import look and versions) are written as what differs from `defaults` —
+/// these settings' defaults on this server — which come first in the page. Most photos are never
+/// edited, so a photo takes a few hundred bytes instead of a few KB; and as the page says what its
+/// photos are written against, defaults that change in a later version change no photo.
+pub fn compact_page(page: proto::Snapshot) -> serde_json::Result<proto::Snapshot<Value>> {
+    let defaults = serde_json::to_value(lightcraft_develop::DevelopSettings::default())?;
+    let mut catalog = serde_json::to_value(&page.catalog)?;
+    if let Some(Value::Object(photos)) = catalog.get_mut("photos") {
+        for p in photos.values_mut() {
+            each_settings(p, &mut |s| *s = diff(&defaults, s));
+        }
+    }
+    Ok(proto::Snapshot { defaults: Some(defaults), library: page.library, seq: page.seq, catalog, next: page.next, total: page.total })
+}
+
+/// The develop settings a photo holds (in its JSON form).
+fn each_settings(photo: &mut Value, f: &mut dyn FnMut(&mut Value)) {
+    for k in ["develop", "import_look"] {
+        if let Some(s) = photo.get_mut(k).filter(|s| !s.is_null()) {
+            f(s);
+        }
+    }
+    for k in ["versions", "history"] {
+        if let Some(Value::Array(steps)) = photo.get_mut(k) {
+            for s in steps.iter_mut().filter_map(|v| v.get_mut("settings")) {
+                f(s);
+            }
+        }
+    }
+}
+
+/// What turns `base` into `v` as a merge patch (RFC 7396): objects hold only the members that
+/// differ, `null` for one `v` doesn't have; anything else is `v` whole. [`patch`] undoes it, up to
+/// a `null` member being left out (the same to an `Option`).
+pub(crate) fn diff(base: &Value, v: &Value) -> Value {
+    let (Value::Object(b), Value::Object(o)) = (base, v) else { return v.clone() };
+    let mut d = serde_json::Map::new();
+    for (k, ov) in o {
+        match b.get(k) {
+            Some(bv) if bv == ov => {}
+            Some(bv @ Value::Object(_)) if ov.is_object() => {
+                d.insert(k.clone(), diff(bv, ov));
+            }
+            _ => {
+                d.insert(k.clone(), ov.clone());
+            }
+        }
+    }
+    for k in b.keys().filter(|k| !o.contains_key(*k)) {
+        d.insert(k.clone(), Value::Null);
+    }
+    Value::Object(d)
+}
+
+/// `base` with merge patch `p` ([`diff`]) applied.
+pub(crate) fn patch(base: &Value, p: &Value) -> Value {
+    let (Value::Object(b), Value::Object(ps)) = (base, p) else { return p.clone() };
+    let mut out = b.clone();
+    for (k, pv) in ps {
+        if pv.is_null() {
+            out.remove(k);
+        } else if let Some(bv) = out.get_mut(k).filter(|bv| bv.is_object() && pv.is_object()) {
+            *bv = patch(bv, pv);
+        } else {
+            out.insert(k.clone(), pv.clone());
+        }
+    }
+    Value::Object(out)
 }
 
 /// The server API's JSON bodies (`/api/…`; every route but `login` wants
@@ -661,6 +732,10 @@ pub mod proto {
     /// at once, without `next`.
     #[derive(Clone, Debug, Serialize, Deserialize)]
     pub struct Snapshot<C = Catalog> {
+        /// Compact pages ([`super::compact_page`], `&compact=1`): the develop settings the photos'
+        /// settings are written against. First, so a device tells a compact page by its start.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub defaults: Option<serde_json::Value>,
         pub library: String,
         pub seq: u64,
         pub catalog: C,
@@ -673,6 +748,21 @@ pub mod proto {
     }
 
     impl Snapshot {
+        /// A page or a whole library as a server sends it, compact pages filled in from their
+        /// `defaults`.
+        pub fn from_json(text: &str) -> serde_json::Result<Snapshot> {
+            if !text.starts_with("{\"defaults\":") {
+                return serde_json::from_str(text);
+            }
+            let Snapshot { defaults, library, seq, mut catalog, next, total } = serde_json::from_str::<Snapshot<serde_json::Value>>(text)?;
+            if let (Some(defaults), Some(serde_json::Value::Object(photos))) = (&defaults, catalog.get_mut("photos")) {
+                for p in photos.values_mut() {
+                    super::each_settings(p, &mut |s| *s = super::patch(defaults, s));
+                }
+            }
+            Ok(Snapshot { defaults: None, library, seq, catalog: serde_json::from_value(catalog)?, next, total })
+        }
+
         /// The next page read from the same copy of the library: its photos join these. `false`
         /// (nothing added) when it is from another copy.
         pub fn add_page(&mut self, page: Snapshot) -> bool {

@@ -1203,8 +1203,8 @@ impl Session {
             } else if !st.config.token.is_empty() {
                 if st.needs_snapshot {
                     let path = match st.reading.as_ref().and_then(|r| r.next.as_deref()) {
-                        Some(next) => format!("/api/snapshot?limit={SNAPSHOT_PAGE}&cursor={next}"),
-                        None => format!("/api/snapshot?limit={SNAPSHOT_PAGE}"),
+                        Some(next) => format!("/api/snapshot?limit={SNAPSHOT_PAGE}&compact=1&cursor={next}"),
+                        None => format!("/api/snapshot?limit={SNAPSHOT_PAGE}&compact=1"),
                     };
                     let t = st.http("GET", &path, Body::Empty, None);
                     st.control = Some((t.id(), Control::Snapshot));
@@ -1502,32 +1502,34 @@ impl Session {
                 }
                 (false, _) => st.signed_out(&why(d)),
             },
-            Control::Snapshot => match (d.ok(), decode::<proto::Snapshot>(d)) {
-                (true, Ok(page)) => {
-                    let snap = match st.reading.take() {
-                        None => page,
-                        Some(mut read) => {
-                            if !read.add_page(page) {
-                                return st.fail("the server's library changed while it was read: reading it again".into());
+            Control::Snapshot => {
+                match (d.ok(), proto::Snapshot::from_json(&d.body).map_err(|e| format!("unexpected answer from the server ({e})"))) {
+                    (true, Ok(page)) => {
+                        let snap = match st.reading.take() {
+                            None => page,
+                            Some(mut read) => {
+                                if !read.add_page(page) {
+                                    return st.fail("the server's library changed while it was read: reading it again".into());
+                                }
+                                read
                             }
-                            read
+                        };
+                        if snap.next.is_some() {
+                            // (the next page on the next round)
+                            st.reading = Some(snap);
+                            st.succeeded();
+                        } else if self.interaction.is_some() {
+                            st.held_snapshot = Some(snap);
+                        } else {
+                            self.snapshot_done(st, snap);
                         }
-                    };
-                    if snap.next.is_some() {
-                        // (the next page on the next round)
-                        st.reading = Some(snap);
-                        st.succeeded();
-                    } else if self.interaction.is_some() {
-                        st.held_snapshot = Some(snap);
-                    } else {
-                        self.snapshot_done(st, snap);
                     }
+                    (true, Err(e)) => st.fail(e),
+                    // the copy being read is gone: from the start
+                    (false, _) if d.status == 410 => st.reading = None,
+                    (false, _) => st.fail(why(d)),
                 }
-                (true, Err(e)) => st.fail(e),
-                // the copy being read is gone: from the start
-                (false, _) if d.status == 410 => st.reading = None,
-                (false, _) => st.fail(why(d)),
-            },
+            }
             Control::Pull => match d.status {
                 410 => st.needs_snapshot = true,
                 _ if d.ok() => match decode::<proto::Ops>(d) {

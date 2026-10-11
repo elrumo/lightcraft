@@ -122,7 +122,13 @@ impl Fake {
                 let arg = |k: &str| q.split('&').filter_map(|kv| kv.split_once('=')).find(|(key, _)| *key == k).map(|(_, v)| v);
                 match arg("limit").filter(|_| !self.whole_snapshot) {
                     Some(limit) => match self.core.snapshot_page(arg("cursor"), limit.parse::<usize>().unwrap().min(self.page)) {
-                        Some(page) => ok(serde_json::to_value(proto::Snapshot { library: self.library.clone(), ..page }).unwrap()),
+                        Some(page) => {
+                            let page = proto::Snapshot { library: self.library.clone(), ..page };
+                            assert_eq!(arg("compact"), Some("1"), "devices read compact pages");
+                            // (the text as the server writes it: `defaults` first)
+                            let body = serde_json::to_string(&lightcraft_catalog::sync::compact_page(page).unwrap()).unwrap();
+                            Done { id, status: 200, body }
+                        }
                         None => status(410, json!({"error": "gone"})),
                     },
                     None => {
@@ -456,7 +462,7 @@ fn a_library_with_photos_signing_in_to_a_server_that_has_one_waits_for_a_choice(
     assert_eq!(c.catalog.len(), 2, "nothing changed here");
     assert_eq!(f.core.catalog().len(), 2, "nor there");
     // only the sign-in and the server's library were asked for: nothing pulled, pushed or sent, however long it waits
-    assert_eq!(f.requests[before..], ["POST /api/login", "GET /api/snapshot?limit=2000"]);
+    assert_eq!(f.requests[before..], ["POST /api/login", "GET /api/snapshot?limit=2000&compact=1"]);
     sync(&mut c, &mut f);
     assert_eq!(f.requests.len(), before + 2);
     // closing the library doesn't lose the question: the server's library is fetched again and asks again

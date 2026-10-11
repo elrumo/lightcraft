@@ -418,11 +418,15 @@ fn snapshot(st: &State, req: &Request, l: &Mutex<UserLib>, who: &Session, q: &st
     // in pages (devices since paging); without `limit`, the whole library at once (older devices)
     if let Some(limit) = query(q, "limit").and_then(|v| v.parse::<usize>().ok()) {
         let page = l.lock().unwrap_or_else(PoisonError::into_inner).core.snapshot_page(query(q, "cursor"), limit.clamp(1, PULL_MAX));
-        return match page {
-            Some(page) => match serde_json::to_vec(&proto::Snapshot { library, ..page }) {
-                Ok(body) => big_json(req, body),
-                Err(e) => error(500, e),
-            },
+        let page = page.map(|p| proto::Snapshot { library, ..p });
+        let body = match page {
+            Some(p) if query(q, "compact") == Some("1") => Some(lightcraft_catalog::sync::compact_page(p).and_then(|p| serde_json::to_vec(&p))),
+            Some(p) => Some(serde_json::to_vec(&p)),
+            None => None,
+        };
+        return match body {
+            Some(Ok(body)) => big_json(req, body),
+            Some(Err(e)) => error(500, e),
             None => error(410, "the library changed while it was read: read it again from the start"),
         };
     }
