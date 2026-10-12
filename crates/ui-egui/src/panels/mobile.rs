@@ -344,7 +344,7 @@ pub fn actions_wide(ctx: &egui::Context, id: &str, title: Option<&str>, menu_w: 
     }
     // (in the foreground layer: over a page the menu was opened from, which it guards from taps;
     // shown after the page, it goes on top of it)
-    egui::Area::new(sid.with("dim")).order(egui::Order::Foreground).fixed_pos(screen.min).show(ctx, |ui| {
+    let dim = egui::Area::new(sid.with("dim")).order(egui::Order::Foreground).fixed_pos(screen.min).show(ctx, |ui| {
         let alpha = t.scrim as f32 * if anchor.is_some() { 0.4 } else { 0.8 };
         ui.painter().rect_filled(screen, 0.0, Color32::from_black_alpha((alpha * p) as u8));
         if ui.allocate_rect(screen, Sense::click()).clicked() {
@@ -415,6 +415,10 @@ pub fn actions_wide(ctx: &egui::Context, id: &str, title: Option<&str>, menu_w: 
         let pivot = a.center();
         ctx.transform_layer_shapes(shown.response.layer_id, egui::emath::TSTransform::new(pivot.to_vec2() * (1.0 - s), s));
     }
+    // (the menu sits directly on its dim, whichever was pressed last: egui brings an area that is
+    // pressed to the front and keeps that order when both show again, so after a tap outside closed
+    // it the menu would open under its own dim, greyed, every tap on it closing it)
+    ctx.set_sublayer(dim.response.layer_id, shown.response.layer_id);
     crate::widgets::register(ctx, format!("actions:{id}"), shown.response.rect);
     ctx.data_mut(|d| d.insert_temp(h_id, shown.response.rect.height()));
     if !closing && (close || ctx.input(|i| i.key_pressed(egui::Key::Escape))) {
