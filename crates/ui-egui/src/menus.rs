@@ -1666,6 +1666,8 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
         "file.importPresets" => {
             // files given by content (`[{name, data}]`: the browser's file chooser has no paths)
             let given: Vec<Value> = p.get(lightcraft_engine::inline_files::KEY).and_then(Value::as_array).cloned().unwrap_or_default();
+            // what a person picks (or drops) is shown first, to confirm; scripts and agents that name the files import at once
+            let mut review = p.get("review").and_then(Value::as_bool).unwrap_or(false);
             let paths: Vec<String> = match p.get("paths").and_then(Value::as_array) {
                 Some(a) => a.iter().filter_map(Value::as_str).map(str::to_string).collect(),
                 None if !given.is_empty() => Vec::new(),
@@ -1675,37 +1677,47 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
                         crate::i18n::tr("Presets & Profiles"),
                         crate::pick::PRESET_EXTENSIONS,
                     );
+                    let asked = {
+                        let mut a = p.as_object().cloned().unwrap_or_default();
+                        a.insert("review".into(), json!(true));
+                        Value::Object(a)
+                    };
                     let s = &app.services;
                     if s.host_files.is_some() && s.picker.is_none() && s.pick_preset_files.is_none() {
                         // the web, iOS: the host's own picker hands the files over later
-                        return Some(crate::pick::ask_host(app, id, p, req).map(|()| Value::Null));
+                        return Some(crate::pick::ask_host(app, id, &asked, req).map(|()| Value::Null));
                     }
-                    match crate::pick::ask(app, id, p, "paths", req, |s| s.pick_preset_files.as_mut().map(|f| f())) {
-                        Picked::Now(paths) => paths,
+                    match crate::pick::ask(app, id, &asked, "paths", req, |s| s.pick_preset_files.as_mut().map(|f| f())) {
+                        Picked::Now(paths) => {
+                            review = true;
+                            paths
+                        }
                         Picked::Later => return Some(Ok(Value::Null)),
                         Picked::Unavailable => return Some(Err("no file dialog on this platform".into())),
                     }
                 }
             };
+            // `name: reason` for each file that couldn't be imported, starting with those the picker couldn't hand over
+            let pick_failed: Vec<String> =
+                p.get("pickFailed").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).map(str::to_string).collect();
             if paths.is_empty() && given.is_empty() {
+                // (a picker that handed over nothing but a reason says it)
+                if review && !pick_failed.is_empty() {
+                    return Some(crate::preset_import::open(app, paths, given, pick_failed));
+                }
                 return Some(Ok(Value::Null));
+            }
+            if review {
+                return Some(crate::preset_import::open(app, paths, given, pick_failed));
             }
             // a LUT given by content can't become a profile: a profile is kept as a file in the library's folder
             let is_cube = |f: &Value| f.get("name").and_then(Value::as_str).is_some_and(|n| n.to_ascii_lowercase().ends_with(".cube"));
             let (cubes, preset_files): (Vec<Value>, Vec<Value>) = given.into_iter().partition(is_cube);
             // .cube LUTs (and those inside zips / folders) become profiles
-            let lut_paths: Vec<&String> = paths
-                .iter()
-                .filter(|p| {
-                    let l = p.to_ascii_lowercase();
-                    l.ends_with(".cube") || l.ends_with(".zip") || std::path::Path::new(p.as_str()).is_dir()
-                })
-                .collect();
+            let lut_paths = crate::preset_import::lut_paths(&paths);
             // one toast for both halves (a second toast would replace the first)
             let mut parts: Vec<String> = Vec::new();
-            // `name: reason` for each file that couldn't be imported, starting with those the picker couldn't hand over
-            let mut problems: Vec<String> =
-                p.get("pickFailed").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).map(str::to_string).collect();
+            let mut problems: Vec<String> = pick_failed;
             for c in &cubes {
                 let name = c.get("name").and_then(Value::as_str).unwrap_or_default();
                 problems.push(format!("{name}: {}", crate::i18n::tr("profiles can only be imported in the desktop and iOS apps")));
@@ -1735,7 +1747,7 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
                     }
                 }
             }
-            let preset_paths: Vec<&String> = paths.iter().filter(|p| !p.to_ascii_lowercase().ends_with(".cube")).collect();
+            let preset_paths = crate::preset_import::preset_paths(&paths);
             let no_presets = preset_paths.is_empty() && preset_files.is_empty();
             let r = if no_presets {
                 Ok(json!({"imported": [], "failed": [], "skipped": 0}))

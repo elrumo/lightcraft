@@ -261,5 +261,11 @@
   "{n} added to Apple Photos": "{n}件をAppleの写真に追加しました",
   "{n} photos opened for editing; each is stacked with its original": "{n}枚の写真を編集用に開きました。それぞれ元の写真とスタックされています",
   "Uses the MI-GAN model, a {:.0} MB download ({} licence). {}.": "MI-GANモデルを使用します（{:.0} MBのダウンロード、{}ライセンス）。{}。",
-  "Downloading MI-GAN… {:.0} %": "MI-GANをダウンロード中… {:.0} %"
+  "Downloading MI-GAN… {:.0} %": "MI-GANをダウンロード中… {:.0} %",
+  "Import {n} Preset{}": "{n}件のプリセットを読み込む{:.0}",
+  "Import {p} Profile{}": "{p}個のプロファイルを読み込む{:.0}",
+  "{n} preset{} in {g} group{}": "{n}件のプリセット（{g}グループ）{:.0}{:.0}",
+  "{p} profile{}": "{p}個のプロファイル{:.0}",
+  "{a} already in your library": "{a}件はすでにライブラリにあります",
+  "Not carried over: {what}": "引き継がなかった設定：{what}"
 }

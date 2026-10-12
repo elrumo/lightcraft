@@ -261,5 +261,11 @@
   "{n} photos · synced with {server}": "{n} photos · synchronisées avec {server}",
   "{n} photos, not saved": "{n} photos, non enregistrées",
   "Uses the MI-GAN model, a {:.0} MB download ({} licence). {}.": "Utilise le modèle MI-GAN, un téléchargement de {:.0} Mo (licence {}). {}.",
-  "Downloading MI-GAN… {:.0} %": "Téléchargement de MI-GAN… {:.0} %"
+  "Downloading MI-GAN… {:.0} %": "Téléchargement de MI-GAN… {:.0} %",
+  "Import {n} Preset{}": "Importer {n} préréglage{}",
+  "Import {p} Profile{}": "Importer {p} profil{}",
+  "{n} preset{} in {g} group{}": "{n} préréglage{} dans {g} groupe{}",
+  "{p} profile{}": "{p} profil{}",
+  "{a} already in your library": "{a} déjà dans la bibliothèque",
+  "Not carried over: {what}": "Non transféré : {what}"
 }

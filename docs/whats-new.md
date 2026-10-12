@@ -2,6 +2,19 @@
 
 ## 2026-10-12
 
+### Preview before you import presets
+- Importing presets now shows what is in the files before anything is added. The Import Presets dialog (a page on a
+  phone) lists the presets by group, each as your current photo would look with it, with what it changes, the
+  settings that can't be carried over, and any file that couldn't be read, with the reason. Import adds them and the
+  same dialog says how it went: what was added and where, what was skipped, what failed.
+- A zip with many presets (a pack from a shop, with folders, previews and a guide in it) imports in one go. Files
+  inside it that can't be read are named and the others still import; archives that claim to unpack to something huge
+  are refused.
+- On a phone, Show opens the Presets sheet on the group the new presets went to, with its chip in view.
+- Scripts and agents that name their files still import at once; `file.importPresets {review: true}` opens the dialog.
+  `preset.import {dryRun: true}` now reports what a real run would do, presets already there counted as skipped, and
+  takes `includeSettings`.
+
 ### Fewer false warnings when importing preset packs
 - Presets from commercial packs (`.xmp`) name Lightroom's default "Adobe Color" profile as a `Look` in every file, and
   the import used to list `Look` as a setting that couldn't be carried over. It no longer does: LightCraft's own

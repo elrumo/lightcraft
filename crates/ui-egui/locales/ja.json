@@ -2088,5 +2088,13 @@
   "Getting the MI-GAN model…": "MI-GANモデルを取得中…",
   "AI Remove isn't available in this build.": "このビルドではAI削除を使用できません。",
   "AI Remove needs its model: download it in the Remove panel. This stroke was filled from around it.": "AI削除にはモデルが必要です。削除パネルでダウンロードしてください。このストロークは周囲から補完しました。",
-  "The download stopped.": "ダウンロードが停止しました。"
+  "The download stopped.": "ダウンロードが停止しました。",
+  "Show Presets": "プリセットを表示",
+  "Nothing new: everything in these files is already in your library.": "新しいものはありません。これらのファイルの内容はすべてライブラリにあります。",
+  "There are no presets in these files.": "これらのファイルにプリセットはありません。",
+  "Find them in Presets:": "プリセット内の場所：",
+  "Couldn't be read": "読み込めなかったファイル",
+  "Import failed": "読み込みに失敗しました",
+  "Nothing new to import": "読み込む新しい項目はありません",
+  "Nothing was imported": "何も読み込まれませんでした"
 }

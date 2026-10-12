@@ -71,6 +71,7 @@ fn cancel_label(app: &LightcraftApp, dlg: &Dialog, informational: bool) -> &'sta
         Dialog::SuperRes { .. } => crate::superres::cancel_label(app),
         // (the choices are in the body: this one puts it off)
         Dialog::SyncChoice => "Decide Later",
+        Dialog::PresetImport { review } => crate::preset_import::cancel_label(review),
         _ if informational => "Done",
         _ => "Cancel",
     }
@@ -82,6 +83,7 @@ fn ok_label(app: &LightcraftApp, dlg: &Dialog, informational: bool) -> String {
     let compact = app.compact;
     let (installed, running, failed, nowhere) = sam_state(app);
     let label = match dlg {
+        Dialog::PresetImport { review } => return crate::preset_import::ok_label(review, compact),
         Dialog::Import { opts } if compact => return crate::i18n::tr_format!("Add {n}", n = opts.selected_paths().len()),
         Dialog::Import { opts } => {
             let n = opts.selected_paths().len();
@@ -200,6 +202,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
         Dialog::RenameAlbum { .. } => "Rename Album",
         Dialog::Rename { .. } => "Rename Photos",
         Dialog::Import { .. } => "Import Photos",
+        Dialog::PresetImport { .. } => "Import Presets",
         Dialog::LabelNames { .. } => "Edit Color Label Names",
         Dialog::CaptureTime { .. } => "Edit Capture Time",
         Dialog::RenameKeyword { .. } => "Rename Keyword",
@@ -245,6 +248,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
     // something (one Close, no Cancel / OK)
     let unusable_model = matches!(&dlg, Dialog::DenoiseModel { info, .. } | Dialog::FaceModel { info, .. } if info["kind"] == "unsupported");
     let informational = unusable_model
+        || matches!(&dlg, Dialog::PresetImport { review } if crate::preset_import::informational(review))
         || matches!(
             dlg,
             Dialog::About | Dialog::Shortcuts | Dialog::Settings { .. } | Dialog::SystemInfo { .. } | Dialog::AllMetadata { .. } | Dialog::WhatsNew
@@ -276,6 +280,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
     let default_width = match dlg {
         Dialog::Import { .. } => crate::import::DIALOG_SIZE[0],
         Dialog::SmartRules { .. } => 680.0,
+        Dialog::PresetImport { .. } => 520.0,
         Dialog::AllMetadata { .. } => 620.0,
         Dialog::FaceModel { .. } => 460.0,
         Dialog::LightroomCatalog { .. } => 440.0,
@@ -734,6 +739,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                 super::export::form(app, ui, super::export::Form { opts, full_size, resize, preset_name, limit_kb, dir }, super::export::Part::All);
             }
             Dialog::Merge { opts } => crate::merge::body(app, ui, opts),
+            Dialog::PresetImport { review } => crate::preset_import::body(app, ui, review),
             Dialog::Import { opts } if app.compact => crate::import::mobile_body(app, ui, opts),
             Dialog::Import { opts } => crate::import::body(app, ui, opts),
             Dialog::Settings { tab } => crate::panels::settings::body(app, ui, tab),
@@ -1513,6 +1519,8 @@ pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_jso
         }
         Dialog::Merge { opts } => crate::merge::start_final(app, opts),
         Dialog::Import { opts } => crate::import::start(app, opts),
+        // (Import replaces the dialog with one that says how it went; Show Presets closes it)
+        Dialog::PresetImport { review } => crate::preset_import::confirm(app, review),
         Dialog::ConfirmDelete { .. } => app.run("photo.delete", json!({})),
         // the catalog found: no file dialog; none: File ▸ Import Lightroom Catalog… asks for it
         Dialog::LightroomCatalog { catalog, .. } => {
@@ -1632,7 +1640,7 @@ pub(super) fn choices<V: PartialEq + Copy>(ui: &mut egui::Ui, label: &str, id: &
 /// Dialogs that Return confirms with nothing focused (those with text fields confirm from the
 /// field: `dialog_field`).
 fn return_confirms(dlg: &Dialog) -> bool {
-    matches!(dlg, Dialog::CopySettings { .. } | Dialog::PasteSettings { .. })
+    matches!(dlg, Dialog::CopySettings { .. } | Dialog::PasteSettings { .. } | Dialog::PresetImport { .. })
 }
 
 /// A dialog's one text field: it keeps the focus (except while its own menu has it) and opens

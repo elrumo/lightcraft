@@ -30,6 +30,7 @@ mod model_setup;
 pub mod panels;
 pub mod pick;
 pub mod prefs;
+pub mod preset_import;
 pub mod region;
 pub mod render;
 pub mod shortcuts;
@@ -408,6 +409,8 @@ pub struct LightcraftApp {
     pub copied: Option<String>,
     /// Native file dialogs up for commands (`pick`): each command runs again when its closes.
     pub(crate) pending_picks: Vec<pick::Pending>,
+    /// The group a phone's presets strip should show next (set when an import adds presets: the strip picks it up).
+    pub(crate) pending_strip_group: Option<String>,
     /// Modifiers announced for synthetic input (held from a button down to its release).
     synthetic_mods: egui::Modifiers,
     /// Clear `synthetic_mods` on the next frame.
@@ -548,6 +551,7 @@ impl LightcraftApp {
             synthetic: vec![],
             copied: None,
             pending_picks: vec![],
+            pending_strip_group: None,
             synthetic_mods: egui::Modifiers::NONE,
             synthetic_mods_release: false,
             styled: false,
@@ -1239,8 +1243,10 @@ impl LightcraftApp {
                 self.toast(ctx, e);
             }
             let (presets, photos) = split_presets(dropped);
-            if !presets.is_empty() {
-                let _ = self.run("file.importPresets", serde_json::json!({"paths": presets}));
+            if !presets.is_empty()
+                && let Err(e) = self.run("file.importPresets", serde_json::json!({"paths": presets, "review": true}))
+            {
+                self.toast_error(ctx, e);
             }
             // read and added on a worker thread (dropped folders can be large, or on a slow drive)
             if !photos.is_empty() {
