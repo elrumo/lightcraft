@@ -142,6 +142,9 @@ fn run(args: &[String]) -> Result<(), String> {
         ["serve"] => {
             let listen = option(args, "--listen").or_else(|| std::env::var("LIGHTCRAFT_LISTEN").ok()).unwrap_or_else(|| "127.0.0.1:8080".into());
             let web = option(args, "--web").or_else(|| std::env::var("LIGHTCRAFT_WEB").ok()).map(PathBuf::from).filter(|w| w.is_dir());
+            if let Some(w) = web.as_ref().filter(|w| !w.join("index.html").is_file()) {
+                log::warn!("the web build {} has no index.html: `/` will answer 404 (`cargo xtask web` writes it to target/web-site)", w.display());
+            }
             let users = accounts::read_users(&data)?;
             if users.users.is_empty() {
                 log::warn!("no users yet: add them on the admin page (/admin) or with `lightcraft-server user add NAME --data {}`", data.display());

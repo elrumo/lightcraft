@@ -30,12 +30,14 @@ RUN rustup target add wasm32-unknown-unknown
 COPY --from=wbg-version /wbg-version /wbg-version
 RUN cargo install wasm-bindgen-cli --locked --version "$(cat /wbg-version)"
 COPY . .
-# the bundle is target/web's files; its directories are the `web` profile's cargo output, not ours
+# the bundle is target/web-site's files (`xtask`'s SITE_DIR; target/web is the `web` profile's cargo output, not ours).
+# Without index.html the server answers `/` with {"error":"not found"} while /admin still works, so fail the build.
 RUN --mount=type=cache,id=lightcraft-registry-web,target=/usr/local/cargo/registry \
     --mount=type=cache,id=lightcraft-target-web,target=/src/target \
     cargo xtask web \
  && mkdir /out \
- && find target/web -maxdepth 1 -type f -exec cp {} /out/ \;
+ && find target/web-site -maxdepth 1 -type f -exec cp {} /out/ \; \
+ && test -f /out/index.html
 
 # The server is pure Rust, so a cross build needs only the target's linker and libc.
 FROM --platform=$BUILDPLATFORM rust:1-bookworm AS server

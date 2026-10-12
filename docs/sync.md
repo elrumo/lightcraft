@@ -63,7 +63,7 @@ reports its health to Docker (`lightcraft-server health`).
 ```sh
 cargo build --release -p lightcraft-server
 printf '%s\n' 'a long password' | target/release/lightcraft-server user add ann --data /srv/lightcraft
-target/release/lightcraft-server serve --data /srv/lightcraft --listen 127.0.0.1:8080 [--web target/web]
+target/release/lightcraft-server serve --data /srv/lightcraft --listen 127.0.0.1:8080 [--web target/web-site]
 ```
 
 | Command | What it does |
