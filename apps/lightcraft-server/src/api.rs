@@ -870,7 +870,7 @@ fn mime(path: &str) -> &'static str {
     }
 }
 
-/// The web build (`cargo xtask web` → `target/web/`), cross-origin isolated like the dev server,
+/// The web build (`cargo xtask web` → `target/web-site/`), cross-origin isolated like the dev server,
 /// with its precompressed copies when the browser takes them.
 fn web(st: &State, req: &Request, method: &Method, path: &str) -> Resp {
     if !matches!(method, Method::Get | Method::Head) {

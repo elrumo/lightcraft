@@ -100,10 +100,10 @@ container as `healthy`; `docker logs lightcraft` shows the setup code.
 ```sh
 rustup target add wasm32-unknown-unknown
 cargo install wasm-bindgen-cli --locked --version "$(sed -n '/^name = "wasm-bindgen"$/{n;s/version = "\(.*\)"/\1/p;}' Cargo.lock)"
-cargo xtask web                                   # the web app → target/web
+cargo xtask web                                   # the web app → target/web-site
 cargo build --release -p lightcraft-server        # → target/release/lightcraft-server
 sudo install -m 755 target/release/lightcraft-server /usr/local/bin/
-sudo mkdir -p /opt/lightcraft && sudo cp -r target/web /opt/lightcraft/web
+sudo mkdir -p /opt/lightcraft && sudo cp -r target/web-site /opt/lightcraft/web
 ```
 
 Run it as a service (Linux, systemd), on this machine only, behind Caddy or `tailscale serve`:

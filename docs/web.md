@@ -168,7 +168,7 @@ are the same in every version, so serve them with `Cache-Control: no-cache` (not
 
 ## Sync with your other devices
 
-`lightcraft-server` serves this build at `/` (`--web target/web`, or the Docker image), and the page signs in to the
+`lightcraft-server` serves this build at `/` (`--web target/web-site`, or the Docker image), and the page signs in to the
 server that serves it: Settings ▸ Sync has its address filled in. Synced photos come down as previews into browser
 storage (`proxies/<hash>.lcsp|.lcsm`; the render workers use them when the original isn't stored here, and so do auto
 tone, white-balance picks and exports up to 2560 px), originals only when asked (Photo ▸ Download Originals; a larger

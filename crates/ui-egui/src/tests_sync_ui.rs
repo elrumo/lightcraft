@@ -101,6 +101,11 @@ fn exec_with(photos: u64, activity: proto::Activity, hang_files: bool) -> SyncEx
 
 /// A library on disk with the PNGs `files` (name, seed) imported, in a window of `size`.
 fn app(tag: &str, files: &[(&str, u8)], exec: SyncExec, size: [f32; 2]) -> (Headless, PathBuf) {
+    app_at(tag, files, exec, size, 1.0)
+}
+
+/// [`app`] drawn at `pixels_per_point` (a phone's screen is 3×).
+fn app_at(tag: &str, files: &[(&str, u8)], exec: SyncExec, size: [f32; 2], pixels_per_point: f32) -> (Headless, PathBuf) {
     let root = temp(tag);
     for (name, seed) in files {
         write_png(&root.join("in").join(name), *seed);
@@ -117,7 +122,7 @@ fn app(tag: &str, files: &[(&str, u8)], exec: SyncExec, size: [f32; 2]) -> (Head
         s,
         Services { png: Some(png), write: Some(Box::new(lightcraft_engine::export::write_file)), sync_exec: Some(exec), ..Default::default() },
     );
-    let mut h = Headless::new(app, size, 1.0);
+    let mut h = Headless::new(app, size, pixels_per_point);
     h.app.ui.view = crate::state::ViewMode::PhotoGrid;
     h.settle(SETTLE);
     (h, root)
@@ -391,6 +396,191 @@ fn a_nearly_full_server_disk_is_a_warning_in_the_popover() {
     tap(&mut h, "icon:cloud");
     frames(&mut h, 30);
     assert!(!has(&h, "banner:serverDisk"));
+    drop(h);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// [`exec`] for a server busy with its library folders, whose usage answer is `usage`, and that
+/// leaves the changes sent to it unanswered once `hold` is set (they stay "to send").
+fn exec_busy(activity: proto::Activity, usage: Value, hold: std::sync::Arc<std::sync::atomic::AtomicBool>) -> SyncExec {
+    let inner = exec(0, activity);
+    Box::new(move |task: Task, tx, ctx| {
+        if let Task::Http { method, url, .. } = &task {
+            match (*method, url.strip_prefix("http://fake").unwrap_or("")) {
+                ("POST", "/api/ops") if hold.load(std::sync::atomic::Ordering::SeqCst) => return,
+                ("GET", "/api/usage") => {
+                    let _ = tx.send(Done { id: task.id(), status: 200, body: usage.to_string() });
+                    ctx.request_repaint();
+                    return;
+                }
+                _ => {}
+            }
+        }
+        inner(task, tx, ctx)
+    })
+}
+
+/// What a server scanning its library folders looks like: a change on its way, the scan and the
+/// previews with their bars, the files it couldn't read, and its disk. Every part is inside the
+/// popover, on a phone; with `LIGHTCRAFT_TEST_SHOTS` set, pictures of it (light and dark) go there.
+#[test]
+fn the_popover_shows_a_server_scanning_its_folders() {
+    let activity = proto::Activity {
+        scan: Some(proto::Scan {
+            scanning: true,
+            phase: "reading".into(),
+            done: 26,
+            todo: 182,
+            files: 192_377,
+            eta_secs: Some(17 * 60),
+            problems: 45,
+            ..Default::default()
+        }),
+        previews: proto::Progress { done: 1, total: 2, eta_secs: None },
+        ..Default::default()
+    };
+    let usage = json!({
+        "photos": 192_195u64,
+        "original": {"files": 4000, "bytes": 103_000_000_000u64},
+        "folders": {"files": 192_195u64, "bytes": 2_000_000_000_000u64},
+        "disk": {"total": 28_800_000_000_000u64, "free": 10_800_000_000_000u64},
+    });
+    let hold = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let (mut h, root) = app_at("busy", &[], exec_busy(activity, usage, hold.clone()), PHONE, 2.0);
+    sign_in(&mut h);
+    assert_eq!(state(&h), "idle");
+    // a change made now waits for the server
+    hold.store(true, std::sync::atomic::Ordering::SeqCst);
+    let r = h.request("engine.execute", json!({"command": "album.create", "params": {"name": "Trips"}}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    frames(&mut h, 10);
+    assert!(h.app.session.sync_transfers().pending > 0);
+    assert_eq!(state(&h), "syncing");
+    tap_no_settle(&mut h, "icon:cloud");
+    frames(&mut h, 40);
+    assert!(h.app.session.sync_state().unwrap().usage().is_some() && h.app.session.sync_state().unwrap().activity().is_some());
+    if let Some(dir) = std::env::var_os("LIGHTCRAFT_TEST_SHOTS") {
+        for mode in ["light", "dark"] {
+            let r = h.request("engine.execute", json!({"command": format!("app.appearance.{mode}")}), T);
+            assert_eq!(r["ok"], true, "{r}");
+            frames(&mut h, 20);
+            let path = std::path::Path::new(&dir).join(format!("sync-popover-{mode}.png"));
+            let r = h.request("ui.screenshot", json!({"path": path.to_string_lossy(), "headless": true}), T);
+            assert_eq!(r["ok"], true, "{r}");
+        }
+    }
+    let pop = rect_of(&h, "actions:syncStatus");
+    assert!(pop.left() >= 0.0 && pop.right() <= PHONE[0] && pop.bottom() <= PHONE[1], "{pop:?}");
+    for id in ["button:syncPause", "button:syncNow", "button:syncSettings"] {
+        let r = rect_of(&h, id);
+        assert!(pop.contains_rect(r), "{id} is inside the popover: {r:?} in {pop:?}");
+    }
+    drop(h);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// A server with everything to do, on a small phone: the sections scroll between the status and the
+/// buttons, which stay in reach (they used to scroll away under the sections).
+#[test]
+fn the_buttons_stay_in_reach_when_the_server_has_a_lot_to_do() {
+    let busy = proto::Progress { done: 10, total: 3000, eta_secs: Some(4000) };
+    let activity = proto::Activity {
+        scan: Some(proto::Scan {
+            scanning: true,
+            phase: "reading".into(),
+            done: 26,
+            todo: 182,
+            eta_secs: Some(60),
+            problems: 3,
+            ..Default::default()
+        }),
+        previews: busy,
+        search: Some(busy),
+        text: Some(busy),
+        faces: Some(busy),
+    };
+    let usage = json!({"photos": 5, "original": {"files": 3, "bytes": 3_000_000_000u64}, "folders": {"files": 900, "bytes": 9_000_000_000u64},
+        "disk": {"total": 500_000_000_000u64, "free": 200_000_000_000u64}});
+    let small = [375.0, 600.0];
+    let (mut h, root) = app("small", &[], exec_busy(activity, usage, Default::default()), small);
+    sign_in(&mut h);
+    tap(&mut h, "icon:cloud");
+    frames(&mut h, 40);
+    let pop = rect_of(&h, "actions:syncStatus");
+    assert!(pop.bottom() <= small[1] && pop.height() <= small[1] * 0.8 + 20.0, "{pop:?}");
+    let server = rect_of(&h, "section:syncServer");
+    assert!(server.height() > 300.0, "five rows of work and the unreadable files: {server:?}");
+    for id in ["button:syncPause", "button:syncNow", "button:syncSettings"] {
+        let r = rect_of(&h, id);
+        assert!(pop.contains_rect(r), "{id} is inside the popover: {r:?} in {pop:?}");
+    }
+    let storage = rect_of(&h, "section:syncStorage");
+    assert!(storage.top() > pop.bottom(), "storage is further down, to scroll to: {storage:?} in {pop:?}");
+    drop(h);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// A tap outside closes the popover; opened again, it is on top of its dim, not under it: drawn
+/// clear, and its buttons work (Pause used to close it instead, and it looked greyed).
+#[test]
+fn the_popover_opens_on_top_after_a_tap_outside_closed_it() {
+    let (mut h, root) = app("reopen", &[], exec(2, proto::Activity::default()), PHONE);
+    sign_in(&mut h);
+    for _ in 0..2 {
+        tap(&mut h, "icon:cloud");
+        frames(&mut h, 30);
+        assert!(has(&h, "actions:syncStatus"));
+        let pause = rect_of(&h, "button:syncPause");
+        let popover = egui::LayerId::new(egui::Order::Foreground, egui::Id::new(("lc-sheet", crate::panels::sync_status::ID)));
+        assert_eq!(h.view.ctx.layer_id_at(pause.center()), Some(popover), "the popover is on top");
+        h.request("ui.click", json!({"x": 200.0, "y": 800.0}), T);
+        h.settle(SETTLE);
+        frames(&mut h, 30);
+        assert!(!has(&h, "actions:syncStatus"), "a tap outside closes it");
+    }
+    tap(&mut h, "icon:cloud");
+    frames(&mut h, 30);
+    tap(&mut h, "button:syncPause");
+    assert!(h.app.session.sync_state().unwrap().config.paused, "Pause pauses");
+    assert!(has(&h, "actions:syncStatus"), "and the popover stays open");
+    drop(h);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// An error as long as a server's whole error page scrolls with the sections: the buttons stay on
+/// screen, in the popover.
+#[test]
+fn a_long_error_scrolls_and_the_buttons_stay() {
+    let fail = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let failing = fail.clone();
+    let inner = exec(2, proto::Activity::default());
+    let exec: SyncExec = Box::new(move |task: Task, tx, ctx| {
+        if let Task::Http { method: "POST", url, .. } = &task
+            && url.ends_with("/api/ops")
+            && failing.load(std::sync::atomic::Ordering::SeqCst)
+        {
+            let long = "upstream unavailable, try again later. ".repeat(40);
+            let _ = tx.send(Done { id: task.id(), status: 502, body: json!({"error": long}).to_string() });
+            ctx.request_repaint();
+            return;
+        }
+        inner(task, tx, ctx)
+    });
+    let (mut h, root) = app("longerror", &[], exec, PHONE);
+    sign_in(&mut h);
+    fail.store(true, std::sync::atomic::Ordering::SeqCst);
+    run(&mut h, "album.create", json!({"name": "Trips"}));
+    frames(&mut h, 20);
+    assert_eq!(state(&h), "error");
+    assert!(h.app.session.sync_state().unwrap().error().unwrap().len() > 1000, "the whole message is kept");
+    tap(&mut h, "icon:cloud");
+    frames(&mut h, 30);
+    let pop = rect_of(&h, "actions:syncStatus");
+    assert!(pop.bottom() <= PHONE[1], "{pop:?}");
+    for id in ["button:syncPause", "button:syncNow", "button:syncSettings"] {
+        let r = rect_of(&h, id);
+        assert!(pop.contains_rect(r), "{id} is inside the popover: {r:?} in {pop:?}");
+    }
     drop(h);
     let _ = std::fs::remove_dir_all(&root);
 }

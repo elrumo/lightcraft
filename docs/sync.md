@@ -63,7 +63,7 @@ reports its health to Docker (`lightcraft-server health`).
 ```sh
 cargo build --release -p lightcraft-server
 printf '%s\n' 'a long password' | target/release/lightcraft-server user add ann --data /srv/lightcraft
-target/release/lightcraft-server serve --data /srv/lightcraft --listen 127.0.0.1:8080 [--web target/web]
+target/release/lightcraft-server serve --data /srv/lightcraft --listen 127.0.0.1:8080 [--web target/web-site]
 ```
 
 | Command | What it does |
@@ -313,20 +313,29 @@ The **cloud button** — in the top bar on a computer, next to Select and "…" 
 stands (blue and turning while it works, amber with a red `!` on a problem, a choice waiting, signed out or saving
 trouble) and opens, as Lightroom's cloud does, a panel (`view.syncStatus`, File ▸ Sync Status):
 
-- **Where it stands:** up to date, syncing (with what's queued), paused, signed out, the last error (kept in full, wrapped), or the
-  choice above. A library that never synced says how to start (**Set Up Sync…**).
-- **On this device:** changes waiting to go, **photos being uploaded** and **files being downloaded** with a bar and
-  "12 of 56" (counted since the queue was last empty), and the names of the ones moving now.
-- **On the server:** what the server is doing for this library — scanning its library folders (listing, reading new
+- **Where it stands**, at the top: up to date, syncing, paused, signed out, can't sync (with the last error, kept in
+  full and wrapped), or the choice above, with the server's address under it. A library that never synced says how
+  to start (**Set Up Sync…**); signed out offers **Sign In…**, a choice waiting **Choose What to Do…**.
+- **This device:** loading the server's library, changes waiting to go, **photos being uploaded** and **files being
+  downloaded** with a bar and "12 of 56" (counted since the queue was last empty), and the names of the ones moving
+  now; files that couldn't be sent or received.
+- **Server:** what the server is doing for this library — scanning its library folders (listing, reading new
   photos: how many of how many, time left), building previews (of library-folder photos and of originals devices
-  uploaded), indexing photos for search, reading the text in them, finding people — or that it is idle (and when the
-  folders were last scanned). Asked of `GET /api/activity` every 2 seconds, only while the panel is open.
-- **Storage:** what the library takes on the server and how much room its disk has left.
-- **Pause / Resume syncing**, **Sync Now** and the gear (Settings ▸ Sync).
+  uploaded), indexing photos for search, reading the text in them, finding people — or that it has nothing to do
+  (and when the folders were last scanned); files or folders in the library folders it couldn't read (listed on the
+  admin page). Asked of `GET /api/activity` every 2 seconds, only while the panel is open.
+- **Storage:** what the library takes on the server, as a share of its disk with what is left free, and how many
+  photos are read in place from library folders.
+- **Pause / Resume**, **Sync Now** and the gear (Settings ▸ Sync), always at the bottom: when the server has a lot
+  to do on a small screen, the sections between the status and the buttons scroll.
+
+Each section is a rounded card with a row per piece of work; a server whose disk is almost full, and changes that
+can't be saved, are warnings above them.
 
 The same numbers are the `sync.activity` command (`lightcraft-cli run --library DIR sync.activity refresh=true`, MCP,
-control channel) and part of `sync.status`; `ui.inspect` and `ui.widgets` list the popover's buttons (`icon:cloud`,
-`actions:syncStatus`, `button:syncPause`, `button:syncNow`, `button:syncSettings`).
+control channel) and part of `sync.status`; `ui.inspect` and `ui.widgets` list the popover and its parts (`icon:cloud`,
+`actions:syncStatus`, `section:syncDevice`, `section:syncServer`, `section:syncStorage`, `banner:serverDisk`,
+`button:syncPause`, `button:syncNow`, `button:syncSettings`, `button:syncStatusPrimary`).
 
 ## Photos on a device
 
