@@ -140,6 +140,9 @@ pub fn rows_between(rows: &[GridRow], top: f32, bottom: f32) -> &[GridRow] {
 
 fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
+    if matches!(app.ui.view, ViewMode::PhotoGrid | ViewMode::SquareGrid) {
+        app.ui.grid_mode = app.ui.view;
+    }
     let (generation, ids) = app.session.visible_shared();
     // header: source title + count
     let sel_n = app.session.selection.ids.len();
@@ -355,8 +358,11 @@ fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                     cell(app, ui, id, r, square, true, ppp);
                 }
             }
+            homing(app, ui, &ids, &drawn, square);
             super::grid_zoom::remember(ui.ctx(), generation, app.ui.grid_columns, drawn);
-            long_press(app, ui, &ids, &lay, origin);
+            if super::detail::pulled(ui.ctx()) <= 0.0 {
+                long_press(app, ui, &ids, &lay, origin);
+            }
         }
         // back to the top (a tap on the top bar or the status bar), sliding there
         if std::mem::take(&mut app.ui.scroll_top) {
@@ -396,6 +402,36 @@ fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     app.caches.grid_stats.cells_visited += visited;
     app.renderer.evict_thumbs(&visible_ids, 600);
     let _ = (Color32::BLACK, StrokeKind::Inside, Stroke::NONE);
+}
+
+/// The photo let go on its way back from the loupe (`detail::homing`): it flies from where it was
+/// to its place in the grid, growing into its square's crop, over the cell (which waits for it).
+fn homing(app: &LightcraftApp, ui: &egui::Ui, ids: &[PhotoId], drawn: &[(usize, Rect)], square: bool) {
+    let Some(h) = super::detail::homing(ui.ctx()) else { return };
+    let Some(&(_, to)) = drawn.iter().find(|(i, _)| ids.get(*i).is_some_and(|id| id.0 == h.photo)) else { return };
+    let id = PhotoId(h.photo);
+    let tex = app.renderer.textures.get(&Slot::Main).filter(|t| t.photo == id).or_else(|| app.renderer.thumb(id));
+    let Some(tex) = tex else { return };
+    let now = ui.input(|i| i.time);
+    let k = egui::emath::easing::cubic_out((((now - h.since) / super::detail::HOMING_S) as f32).clamp(0.0, 1.0));
+    let [tw, th] = tex.size;
+    // (into a phone square the photo's middle, as the cell shows it)
+    let full = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
+    let end = if square && app.compact { cover_uv(tw as f32, th as f32) } else { full };
+    let uv = Rect::from_min_max(full.min.lerp(end.min, k), full.max.lerp(end.max, k));
+    let r = Rect::from_min_max(h.from.min.lerp(to.min, k), h.from.max.lerp(to.max, k));
+    let p = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("grid-homing"))).with_clip_rect(ui.clip_rect());
+    p.image(tex.tex.id(), r, uv, Color32::WHITE);
+    ui.ctx().request_repaint();
+}
+
+/// The photo lifted out of the grid (pulled down from the loupe, or flying back into place): its
+/// cell leaves the space empty for it.
+fn lifted(app: &LightcraftApp, ctx: &egui::Context) -> Option<PhotoId> {
+    if let Some(h) = super::detail::homing(ctx) {
+        return Some(PhotoId(h.photo));
+    }
+    (super::detail::pulled(ctx) > 0.0).then(|| app.session.active()).flatten()
 }
 
 /// The scroll offset that shows `jump` (a photo, or the first of a month or year) near the top.
@@ -902,6 +938,11 @@ pub const BACKGROUND_THUMB_PRIORITY: u32 = 3;
 fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square: bool, onscreen: bool, ppp: f32) {
     let t = Tokens::get(ui.ctx());
     let Some(photo) = app.session.catalog.photo(id).cloned() else { return };
+    // (the photo is out of its place: in the loupe being pulled down, or flying back)
+    if app.compact && lifted(app, ui.ctx()) == Some(id) {
+        register(ui.ctx(), format!("thumb:{}", id.0), r);
+        return;
+    }
     // (a phone's cells take only taps and long presses: a drag scrolls the grid)
     let resp = ui.interact(r, egui::Id::new(("cell", id.0)), if app.compact { Sense::click() } else { Sense::click_and_drag() });
     register(ui.ctx(), format!("thumb:{}", id.0), r);

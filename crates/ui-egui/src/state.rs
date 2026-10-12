@@ -644,6 +644,8 @@ pub struct UiState {
     /// Compact layout: where the grid goes on its next frame (after a change of span).
     #[serde(skip)]
     pub grid_jump: Option<GridJump>,
+    /// The grid last shown (justified or square): where Back from a photo goes.
+    pub grid_mode: ViewMode,
     /// Open the sync status popover this frame (`view.syncStatus`): under the top right corner,
     /// where a click on the cloud button would have put it.
     #[serde(skip)]
@@ -1286,6 +1288,7 @@ impl Default for UiState {
             grid_columns: 3,
             grid_span: GridSpan::All,
             grid_jump: None,
+            grid_mode: ViewMode::PhotoGrid,
             sync_popover: false,
             luminance_map_restore: None,
             view: ViewMode::Detail,
@@ -1465,6 +1468,9 @@ impl UiState {
     pub fn sanitized(mut self) -> Self {
         self.thumb_size = self.thumb_size.clamp(90.0, 480.0);
         self.grid_columns = crate::panels::grid_zoom::snap(self.grid_columns);
+        if !matches!(self.grid_mode, ViewMode::PhotoGrid | ViewMode::SquareGrid) {
+            self.grid_mode = ViewMode::PhotoGrid;
+        }
         self.left_width = LEFT_WIDTH.clamp(self.left_width);
         self.right_width = RIGHT_WIDTH.clamp(self.right_width);
         self.brush_size = self.brush_size.clamp(0.002, 0.5);

@@ -328,3 +328,52 @@ fn years_and_months_take_you_through_the_library_fast() {
     h.settle(SETTLE);
     assert!(!has(&h, "button:span-all"));
 }
+
+/// iOS Photos: pulling a photo down in the loupe takes it back to the grid. The photo follows the
+/// finger, smaller as it goes, the grid shows through behind it and the bars fade; let go far
+/// enough down, it flies back to its place in the grid (the one it was opened from); a short pull
+/// springs back.
+#[test]
+fn pulling_the_photo_down_goes_back_to_the_grid() {
+    let mut h = grid([390.0, 844.0]);
+    let ids: Vec<u64> = h.app.session.visible().iter().map(|i| i.0).collect();
+    let id = ids[1];
+    click(&mut h, &format!("thumb:{id}"));
+    assert_eq!(h.app.ui.view, ViewMode::Detail);
+    h.app.ui.right = crate::state::RightPanel::None;
+    h.settle(SETTLE);
+    let full = h.app.image_rect.unwrap();
+    let pointer = |h: &mut Headless, events: &[(&str, f32, f32)]| {
+        let ev: Vec<_> = events.iter().map(|(k, x, y)| json!({"kind": k, "x": x, "y": y})).collect();
+        let r = h.request("ui.pointer", json!({"events": ev}), T);
+        assert_eq!(r["ok"], true, "{r}");
+    };
+    // a short pull springs back
+    pointer(&mut h, &[("down", 0.5, 0.5), ("drag", 0.5, 0.53), ("drag", 0.5, 0.56), ("up", 0.5, 0.56)]);
+    frames(&mut h, 40);
+    assert_eq!(h.app.ui.view, ViewMode::Detail);
+    assert!((h.app.image_rect.unwrap().width() - full.width()).abs() < 1.0);
+    // a long one: mid-way the photo is smaller and lower, and the grid is behind it
+    pointer(&mut h, &[("down", 0.5, 0.5), ("drag", 0.5, 0.6), ("drag", 0.5, 0.75), ("drag", 0.5, 0.9)]);
+    frames(&mut h, 4);
+    assert!(crate::panels::detail::pulled(&h.view.ctx) > 0.05, "pulled");
+    assert!(has(&h, &format!("thumb:{}", ids[3])), "the grid shows behind the photo");
+    let (drawn, _) = h.app.loupe_shown.unwrap();
+    assert_eq!(drawn.0, id);
+    snap(&h, "loupe-pulled");
+    let r = h.request("ui.pointer", json!({"events": [{"kind": "drag", "x": 0.5, "y": 1.0}, {"kind": "up", "x": 0.5, "y": 1.0}]}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    frames(&mut h, 6);
+    assert_eq!(h.app.ui.view, ViewMode::SquareGrid, "back to the square grid it came from");
+    assert!(crate::panels::detail::homing(&h.view.ctx).is_some(), "the photo flies back to its place");
+    frames(&mut h, 30);
+    assert!(crate::panels::detail::homing(&h.view.ctx).is_none());
+    // in review mode a downward swipe rates instead (and stays)
+    click(&mut h, &format!("thumb:{id}"));
+    let r = h.request("engine.execute", json!({"command": "view.reviewMode", "params": {"on": true}}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    pointer(&mut h, &[("down", 0.5, 0.4), ("drag", 0.5, 0.6), ("drag", 0.5, 0.8), ("up", 0.5, 0.8)]);
+    frames(&mut h, 20);
+    assert_eq!(h.app.ui.view, ViewMode::Detail);
+}

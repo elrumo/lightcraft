@@ -402,9 +402,26 @@ fn content(app: &mut LightcraftApp, ui: &mut egui::Ui, bg: egui::Color32) {
         ViewMode::Detail => 1,
         _ => 2,
     };
-    let k = mobile::enter(ui.ctx(), egui::Id::new("compact-content-in"), kind, 0.22);
-    egui::CentralPanel::default().frame(egui::Frame::NONE.fill(bg)).show(ui, |ui| {
+    let mut k = mobile::enter(ui.ctx(), egui::Id::new("compact-content-in"), kind, 0.22);
+    // a photo pulled down shows the grid behind it, and one let go flies back into it: the grid was
+    // showing already, so it doesn't fade in
+    if super::detail::homing(ui.ctx()).is_some() {
+        k = 1.0;
+    }
+    let pull = if app.ui.view == ViewMode::Detail { super::detail::pulled(ui.ctx()) } else { 0.0 };
+    let fill = if pull > 0.0 { egui::Color32::TRANSPARENT } else { bg };
+    egui::CentralPanel::default().frame(egui::Frame::NONE.fill(fill)).show(ui, |ui| {
         ui.multiply_opacity(k);
+        if pull > 0.0 {
+            let behind = ui.max_rect();
+            let mut g = ui.new_child(egui::UiBuilder::new().max_rect(behind).id_salt("pulled-grid"));
+            let view = app.ui.view;
+            app.ui.view = app.ui.grid_mode;
+            super::grid::show(app, &mut g);
+            app.ui.view = view;
+            // the photo's own background thins out as it comes down
+            ui.painter().rect_filled(behind, 0.0, bg.gamma_multiply((1.0 - 1.8 * pull).clamp(0.0, 1.0)));
+        }
         match app.ui.view {
             ViewMode::Detail => super::detail::show(app, ui),
             ViewMode::Compare => super::compare::show_compare(app, ui),
@@ -458,6 +475,8 @@ fn top_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, mut shown: bo
                 (app.ui.select_mode, app.ui.view == ViewMode::Detail),
                 0.18,
             ));
+            // (a photo pulled down takes its bars with it)
+            ui.multiply_opacity(1.0 - super::detail::pulled(ui.ctx()));
             if app.ui.select_mode {
                 select_bar(app, ui, t, full);
             } else if app.ui.view == ViewMode::Detail {
@@ -656,6 +675,7 @@ fn tool_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, rail: bool, 
     let under = if !wide && (app.ui.right != RightPanel::None || app.ui.presets) { t.chrome } else { t.canvas };
     let bar = bar.show_separator_line(false).frame(egui::Frame::NONE.fill(if rail { t.canvas } else { under }));
     bar.show_collapsible(ui, &mut shown, |ui| {
+        ui.multiply_opacity(1.0 - super::detail::pulled(ui.ctx()));
         let has_photo = app.session.active().is_some();
         let full = ui.max_rect();
         // (no wider than a phone's: on a tablet the tools sit together in the middle)

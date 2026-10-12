@@ -613,7 +613,8 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
                         app.ui.view = ViewMode::People;
                         app.ui.person_page = Some(name);
                     }
-                    _ => app.ui.view = ViewMode::PhotoGrid,
+                    // the grid it was opened from (justified or square)
+                    _ => app.ui.view = if app.ui.grid_mode == ViewMode::SquareGrid { ViewMode::SquareGrid } else { ViewMode::PhotoGrid },
                 }
             }
             Ok(Value::Null)
