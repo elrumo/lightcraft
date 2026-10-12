@@ -214,19 +214,40 @@ fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     }
     let ppp = ui.ctx().pixels_per_point();
     let square = app.ui.view == ViewMode::SquareGrid;
-    // phone squares (Lightroom's mobile grid): edge to edge, three across, 2 pt apart
+    // a phone's Months and Years (`grid_dates`), faded in when the span changes
+    let span = if app.compact { app.ui.grid_span } else { crate::state::GridSpan::All };
+    if app.compact {
+        ui.multiply_opacity(super::mobile::enter(ui.ctx(), egui::Id::new("grid-span-in"), span, 0.25));
+    }
+    if span != crate::state::GridSpan::All {
+        super::grid_zoom::forget(ui.ctx());
+        super::grid_dates::show(app, ui, &ids, generation, span);
+        return;
+    }
+    // a phone: a pinch changes how many photos a row holds, the photos gliding to their new places
+    let zoom = if app.compact {
+        let area = ui.available_rect_before_wrap();
+        super::grid_zoom::update(app, ui, area, generation)
+    } else {
+        super::grid_zoom::Zoom::none()
+    };
+    // phone squares (Lightroom's mobile grid): edge to edge, three across by default, 2 pt apart
     let tiles = square && app.compact;
+    let cols = f32::from(app.ui.grid_columns.max(1));
     let avail_w = if tiles { ui.available_width() } else { ui.available_width() - 8.0 };
-    // phone: about three tiles across (and, through `resolve_group`, month headers rather than one per day)
+    // phone: about `grid_columns` photos across (and, through `resolve_group`, month headers rather
+    // than one per day at three)
     let target = if tiles {
-        ((avail_w - 2.0 * TILE_GAP) / 3.0).floor()
+        ((avail_w - (cols - 1.0) * TILE_GAP) / cols).floor().max(8.0)
     } else if app.compact {
-        (avail_w / 3.0).max(90.0)
+        (avail_w / cols).max(24.0)
     } else {
         app.ui.thumb_size
     };
     // ranked results (search by description) are in relevance order, not date order: no date headers
     let by = if app.session.filter.semantic.is_some() { GroupBy::None } else { resolve_group(app.session.sort.group, target) };
+    // (a phone heads its months, not its days: a day's few photos would leave most rows half empty)
+    let by = if app.compact && by == GroupBy::Day && app.session.sort.group == GroupBy::Auto { GroupBy::Month } else { by };
     let group_key = match app.session.source {
         lightcraft_engine::LibrarySource::RecentlyDeleted => None,
         lightcraft_engine::LibrarySource::RecentlyAdded => Some(SortKey::ImportDate),
@@ -251,22 +272,34 @@ fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         }
     };
     let stacks = app.caches.grid.stacks(stats, &app.session.catalog, generation);
-    let total_h = lay.height + 12.0;
+    // (a phone leaves room under the last row for the Years / Months / All capsule)
+    let total_h = lay.height + if app.compact { super::grid_dates::BOTTOM_ROOM } else { 12.0 };
     let active = app.session.selection.active;
+    // where the grid has to go this frame: the photo under the fingers stays under them when the
+    // columns change; a month or photo picked in Months
+    let top = ui.available_rect_before_wrap().top();
+    let mut forced: Option<f32> = None;
+    if zoom.changed
+        && let Some((i, u)) = zoom.anchor
+        && let Some(c) = lay.cells.get(i)
+    {
+        forced = Some(super::grid_zoom::offset_for(*c, u, zoom.focal, top));
+    }
+    if let Some(jump) = app.ui.grid_jump.take() {
+        forced = jump_offset(app, &ids, &lay, &runs, &jump).or(forced);
+    }
     // bring the active photo into view when it changes (keyboard, click, command) or the grid
     // comes back on screen; otherwise the scroll position is the user's
-    let scroll_to: Option<Rect> = if follow_active(ui.ctx(), egui::Id::new("grid-follow-active"), active) {
-        active.and_then(|a| ids.iter().position(|x| *x == a)).and_then(|i| lay.cells.get(i).copied())
-    } else {
-        None
-    };
+    let follow = follow_active(ui.ctx(), egui::Id::new("grid-follow-active"), active);
+    let scroll_to: Option<Rect> =
+        if follow && forced.is_none() { active.and_then(|a| ids.iter().position(|x| *x == a)).and_then(|i| lay.cells.get(i).copied()) } else { None };
     let mut visible_ids = HashSet::new();
     let mut visited = 0u64;
     // a phone: a finger's drag scrolls the grid (its cells take only taps), except while a
     // sideways drag is choosing photos (`drag_choose`)
     let source = if !app.compact {
         egui::scroll_area::ScrollSource::default()
-    } else if ui.data(|d| d.get_temp::<DragChoose>(egui::Id::new(DRAG_CHOOSE))).is_some() {
+    } else if zoom.pinching || ui.data(|d| d.get_temp::<DragChoose>(egui::Id::new(DRAG_CHOOSE))).is_some() {
         egui::scroll_area::ScrollSource { drag: egui::scroll_area::DragScroll::Never, ..Default::default() }
     } else {
         egui::scroll_area::ScrollSource::ALL
@@ -274,74 +307,117 @@ fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     // (a phone has its own handle to drag: `scrubber`)
     let bars =
         if app.compact { egui::scroll_area::ScrollBarVisibility::AlwaysHidden } else { egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded };
-    egui::ScrollArea::vertical().id_salt("grid-scroll").scroll_source(source).scroll_bar_visibility(bars).auto_shrink([false, false]).show_viewport(
-        ui,
-        |ui, viewport| {
-            let (area, _) = ui.allocate_exact_size(vec2(ui.available_width(), total_h), Sense::hover());
-            let origin = area.min;
-            app.grid_scroll = Some(viewport.top());
-            if let Some(r) = scroll_to {
-                ui.scroll_to_rect(r.translate(origin.to_vec2()), None);
+    let mut scroll =
+        egui::ScrollArea::vertical().id_salt("grid-scroll").scroll_source(source).scroll_bar_visibility(bars).auto_shrink([false, false]);
+    if let Some(o) = forced {
+        scroll = scroll.vertical_scroll_offset(o);
+    }
+    scroll.show_viewport(ui, |ui, viewport| {
+        let (area, _) = ui.allocate_exact_size(vec2(ui.available_width(), total_h), Sense::hover());
+        let origin = area.min;
+        app.grid_scroll = Some(viewport.top());
+        if let Some(r) = scroll_to {
+            ui.scroll_to_rect(r.translate(origin.to_vec2()), None);
+        }
+        // only the rows on screen and a screen above and below it (their thumbnails are prefetched);
+        // more of them while a pinch draws the grid smaller
+        let seen = zoom.visible(viewport, origin);
+        let prefetch = seen.expand2(vec2(0.0, viewport.height()));
+        let clip = ui.clip_rect();
+        let mut drawn: Vec<(usize, Rect)> = Vec::new();
+        for row in rows_between(&lay.rows, prefetch.top(), prefetch.bottom()) {
+            for i in row.start..row.end {
+                let (Some(&id), Some(&rect)) = (ids.get(i), lay.cells.get(i)) else { continue };
+                visited += 1;
+                if !rect.intersects(prefetch) {
+                    continue;
+                }
+                visible_ids.insert(id);
+                let r = zoom.place(i, rect.translate(origin.to_vec2()));
+                let onscreen = r.intersects(clip);
+                cell(app, ui, id, r, square, onscreen, ppp);
+                if let Some((sid, pos)) = stacks.get(&id) {
+                    stack_badge(app, ui, id, *sid, *pos, r, square);
+                }
+                if app.compact && onscreen {
+                    drawn.push((i, r));
+                }
             }
-            // only the rows on screen and a screen above and below it (their thumbnails are prefetched)
-            let prefetch = viewport.expand2(vec2(0.0, viewport.height()));
-            for row in rows_between(&lay.rows, prefetch.top(), prefetch.bottom()) {
-                for i in row.start..row.end {
-                    let (Some(&id), Some(&rect)) = (ids.get(i), lay.cells.get(i)) else { continue };
-                    visited += 1;
-                    if !rect.intersects(prefetch) {
-                        continue;
-                    }
+        }
+        if app.compact {
+            // photos gliding off the screen to places further up or down
+            let gone: Vec<usize> = zoom.gliding().filter(|i| !drawn.iter().any(|(d, _)| d == i)).collect();
+            for i in gone {
+                let (Some(&id), Some(&rect)) = (ids.get(i), lay.cells.get(i)) else { continue };
+                let r = zoom.place(i, rect.translate(origin.to_vec2()));
+                if r.intersects(clip) {
                     visible_ids.insert(id);
-                    let r = rect.translate(origin.to_vec2());
-                    let onscreen = rect.intersects(viewport);
-                    cell(app, ui, id, r, square, onscreen, ppp);
-                    if let Some((sid, pos)) = stacks.get(&id) {
-                        stack_badge(app, ui, id, *sid, *pos, r, square);
-                    }
+                    cell(app, ui, id, r, square, true, ppp);
                 }
             }
-            if app.compact {
-                long_press(app, ui, &ids, &lay, origin);
+            super::grid_zoom::remember(ui.ctx(), generation, app.ui.grid_columns, drawn);
+            long_press(app, ui, &ids, &lay, origin);
+        }
+        // back to the top (a tap on the top bar or the status bar), sliding there
+        if std::mem::take(&mut app.ui.scroll_top) {
+            ui.scroll_to_rect(Rect::from_min_size(origin, vec2(1.0, 1.0)), Some(egui::Align::TOP));
+        }
+        if app.compact && app.ui.select_mode {
+            drag_choose(app, ui, &ids, &lay, origin);
+        }
+        // date headers (top to bottom); the current group's header sticks to the top while its
+        // photos scroll by (not while a pinch moves the photos about)
+        let headers: &[Rect] = if zoom.moving() { &[] } else { &lay.headers };
+        let first = headers.partition_point(|h| h.bottom() < viewport.top());
+        for (g, hr) in headers.iter().enumerate().skip(first) {
+            if hr.top() > viewport.bottom() {
+                break;
             }
-            // back to the top (a tap on the top bar or the status bar), sliding there
-            if std::mem::take(&mut app.ui.scroll_top) {
-                ui.scroll_to_rect(Rect::from_min_size(origin, vec2(1.0, 1.0)), Some(egui::Align::TOP));
+            if let Some(run) = runs.get(g) {
+                group_header(app, ui, run, &ids, hr.translate(origin.to_vec2()), false);
             }
-            if app.compact && app.ui.select_mode {
-                drag_choose(app, ui, &ids, &lay, origin);
-            }
-            // date headers (top to bottom); the current group's header sticks to the top while its
-            // photos scroll by
-            let first = lay.headers.partition_point(|h| h.bottom() < viewport.top());
-            for (g, hr) in lay.headers.iter().enumerate().skip(first) {
-                if hr.top() > viewport.bottom() {
-                    break;
-                }
-                if let Some(run) = runs.get(g) {
-                    group_header(app, ui, run, &ids, hr.translate(origin.to_vec2()), false);
-                }
-            }
-            let sticky = lay.headers.partition_point(|h| h.top() <= viewport.top()).checked_sub(1);
-            if let Some(g) = sticky
-                && let Some(head) = lay.headers.get(g)
-                && head.top() < viewport.top()
-                && let Some(run) = runs.get(g)
-            {
-                // pushed up by the next header as it arrives
-                let next_top = lay.headers.get(g + 1).map(|h| h.top()).unwrap_or(f32::INFINITY);
-                let y = viewport.top().min(next_top - HEADER_H);
-                let hr = Rect::from_min_size(pos2(0.0, y), vec2(area.width(), HEADER_H)).translate(origin.to_vec2());
-                group_header(app, ui, run, &ids, hr, true);
-            }
-            if app.compact {
-                scrubber(app, ui, viewport, total_h, &ids, &lay);
-            }
-        },
-    );
+        }
+        let sticky = headers.partition_point(|h| h.top() <= viewport.top()).checked_sub(1);
+        if let Some(g) = sticky
+            && let Some(head) = headers.get(g)
+            && head.top() < viewport.top()
+            && let Some(run) = runs.get(g)
+        {
+            // pushed up by the next header as it arrives
+            let next_top = headers.get(g + 1).map(|h| h.top()).unwrap_or(f32::INFINITY);
+            let y = viewport.top().min(next_top - HEADER_H);
+            let hr = Rect::from_min_size(pos2(0.0, y), vec2(area.width(), HEADER_H)).translate(origin.to_vec2());
+            group_header(app, ui, run, &ids, hr, true);
+        }
+        if app.compact {
+            scrubber(app, ui, viewport, total_h, &ids, &lay);
+        }
+    });
     app.caches.grid_stats.cells_visited += visited;
     app.renderer.evict_thumbs(&visible_ids, 600);
     let _ = (Color32::BLACK, StrokeKind::Inside, Stroke::NONE);
+}
+
+/// The scroll offset that shows `jump` (a photo, or the first of a month or year) near the top.
+fn jump_offset(app: &LightcraftApp, ids: &[PhotoId], lay: &GridLayout, runs: &[DateRun], jump: &crate::state::GridJump) -> Option<f32> {
+    match jump {
+        crate::state::GridJump::Photo(id) => {
+            let i = ids.iter().position(|x| x.0 == *id)?;
+            // (a little below the top, with its date header above it)
+            lay.cells.get(i).map(|c| (c.top() - HEADER_H - 8.0).max(0.0))
+        }
+        crate::state::GridJump::Date(d) => {
+            if let Some(g) = runs.iter().position(|r| r.key.starts_with(d.as_str()))
+                && let Some(h) = lay.headers.get(g)
+            {
+                return Some(h.top().max(0.0));
+            }
+            let i = ids
+                .iter()
+                .position(|id| app.session.catalog.photo(*id).and_then(|p| p.captured.as_deref()).is_some_and(|c| c.starts_with(d.as_str())))?;
+            lay.cells.get(i).map(|c| (c.top() - HEADER_H - 8.0).max(0.0))
+        }
+    }
 }
 
 /// Memory key of a [`DragChoose`] in progress.

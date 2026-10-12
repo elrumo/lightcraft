@@ -244,3 +244,87 @@ fn the_scroll_handle_runs_through_the_grid_and_the_top_bar_goes_back_up() {
     frames(&mut h, 120);
     assert!(!has(&h, "grid:scrubber"));
 }
+
+/// iOS Photos / Lightroom mobile: spreading two fingers on the phone's grid shows fewer, larger
+/// photos (pinching, more and smaller); the photo under the fingers stays under them, the grid is
+/// drawn in between while the photos glide to their new places, and it settles at its new size.
+#[test]
+fn a_pinch_changes_the_photos_across_and_keeps_the_one_under_the_fingers() {
+    let mut h = grid([390.0, 844.0]);
+    assert_eq!(h.app.ui.grid_columns, 3);
+    let ids: Vec<u64> = h.app.session.visible().iter().map(|i| i.0).collect();
+    // (every square is as wide as the others: measure one on screen)
+    let width = |h: &Headless| h.app.widgets.iter().find(|(w, _)| w.starts_with("thumb:")).map(|(_, r)| r.width()).unwrap();
+    let small = width(&h);
+    let target = ids[4];
+    let at = rect_of(&h, &format!("thumb:{target}")).center();
+    // spread: half again as big
+    h.step_with([egui::Event::PointerMoved(at), egui::Event::Zoom(1.6)]);
+    assert_eq!(h.app.ui.grid_columns, 2, "one fewer across");
+    frames(&mut h, 3);
+    let mid = rect_of(&h, &format!("thumb:{target}"));
+    assert!(mid.contains(at) || mid.center().distance(at) < 120.0, "it stays near the fingers while gliding: {mid:?} {at:?}");
+    h.settle(SETTLE);
+    frames(&mut h, 30);
+    let big = width(&h);
+    assert!(big > small * 1.4, "bigger photos: {small} → {big}");
+    // (the columns put it on the left or the right; up and down it stays where the fingers are)
+    let after = rect_of(&h, &format!("thumb:{target}"));
+    assert!(after.y_range().contains(at.y), "the photo under the fingers is still level with them: {after:?} {at:?}");
+    snap(&h, "grid-two-across");
+    // pinch: smaller, more across, step by step
+    for _ in 0..3 {
+        let p = rect_of(&h, &format!("thumb:{target}")).center();
+        h.step_with([egui::Event::PointerMoved(p), egui::Event::Zoom(0.6)]);
+        h.settle(SETTLE);
+        frames(&mut h, 30);
+    }
+    assert!(h.app.ui.grid_columns >= 5, "{}", h.app.ui.grid_columns);
+    assert!(width(&h) < small, "smaller than at the start");
+    snap(&h, "grid-many-across");
+    // a command does the same, and the count is kept in the settings
+    let r = h.request("engine.execute", json!({"command": "view.gridColumns", "params": {"columns": 3}}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    frames(&mut h, 30);
+    assert_eq!(h.app.ui.grid_columns, 3);
+    assert!((width(&h) - small).abs() < 1.0);
+    let saved = serde_json::to_value(&h.app.ui).unwrap();
+    assert_eq!(saved["gridColumns"], 3);
+}
+
+/// Years / Months / All under the phone's grid: Months shows a few photos of each month under its
+/// name, Years a card a year; a year opens its months, a month's photo opens All at that photo.
+#[test]
+fn years_and_months_take_you_through_the_library_fast() {
+    let mut h = grid([390.0, 844.0]);
+    for id in ["button:span-years", "button:span-months", "button:span-all"] {
+        assert!(has(&h, id), "{id}");
+    }
+    click(&mut h, "button:span-months");
+    assert_eq!(h.app.ui.grid_span, crate::state::GridSpan::Months);
+    let months: Vec<String> = h.app.widgets.iter().filter_map(|(w, _)| w.strip_prefix("month:").map(str::to_string)).collect();
+    assert!(!months.is_empty(), "a heading per month");
+    assert!(h.app.widgets.iter().any(|(w, _)| w.starts_with("dateTile:")), "with some of its photos");
+    snap(&h, "grid-months");
+    click(&mut h, "button:span-years");
+    let years: Vec<String> = h.app.widgets.iter().filter_map(|(w, _)| w.strip_prefix("year:").map(str::to_string)).collect();
+    assert!(!years.is_empty());
+    snap(&h, "grid-years");
+    // a year opens its months
+    let year = years.last().unwrap().clone();
+    click(&mut h, &format!("year:{year}"));
+    assert_eq!(h.app.ui.grid_span, crate::state::GridSpan::Months);
+    assert!(has(&h, &format!("month:{}", months.iter().find(|m| m.starts_with(&year)).unwrap())), "the year's months are on screen");
+    // a month's photo opens All with that photo on screen
+    let tile = h.app.widgets.iter().map(|(w, _)| w.clone()).find(|w| w.starts_with("dateTile:")).unwrap();
+    let id = tile.trim_start_matches("dateTile:").to_string();
+    click(&mut h, &tile);
+    assert_eq!(h.app.ui.grid_span, crate::state::GridSpan::All);
+    let r = rect_of(&h, &format!("thumb:{id}"));
+    assert!(r.top() >= 0.0 && r.bottom() <= 844.0, "the photo is in view: {r:?}");
+    // choosing photos puts the capsule away
+    click(&mut h, "button:select");
+    h.settle(SETTLE);
+    assert!(!has(&h, "button:span-all"));
+}

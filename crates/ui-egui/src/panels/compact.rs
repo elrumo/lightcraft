@@ -120,6 +120,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     if !albums_page && !app.ui.select_mode {
         add_button(app, &ctx, &t);
     }
+    span_bar(app, &ctx, &t, !albums_page && !app.ui.select_mode);
     menus(app, &ctx);
     overlays(app, &ctx);
     mobile::all_commands_page(app, &ctx);
@@ -186,6 +187,57 @@ fn add_button(app: &mut LightcraftApp, ctx: &egui::Context, t: &Tokens) {
         if resp.clicked() {
             mobile::open_menu(ui.ctx(), "add", r);
         }
+    });
+}
+
+/// A segment of the Years / Months / All capsule.
+const SPAN_W: f32 = 72.0;
+const SPAN_H: f32 = 44.0;
+
+/// Years, Months and All under the grid, as iOS's Photos has them: a glass capsule at the bottom
+/// with a pill that springs to the span chosen (`view.gridSpan`; widgets `button:span-<id>`). It
+/// slides away while photos are chosen or a page covers the grid.
+fn span_bar(app: &mut LightcraftApp, ctx: &egui::Context, t: &Tokens, shown: bool) {
+    let grid = matches!(app.ui.view, ViewMode::PhotoGrid | ViewMode::SquareGrid);
+    let shown = shown && grid && !app.session.visible().is_empty();
+    let k = ctx.animate_bool_with_time(egui::Id::new("span-bar-shown"), shown, 0.25);
+    if k <= 0.0 {
+        return;
+    }
+    let screen = ctx.content_rect();
+    let w = SPAN_W * 3.0;
+    // (level with the + button, in the middle unless that would run into it)
+    let mut x = screen.center().x;
+    if app.services.host_pick.is_some() {
+        x = x.min(screen.right() - 20.0 - ADD_D - 10.0 - w / 2.0).max(screen.left() + 8.0 + w / 2.0);
+    }
+    let centre = pos2(x, screen.bottom() - 20.0 - ADD_D / 2.0 + (1.0 - k) * 90.0);
+    let capsule = egui::Rect::from_center_size(centre, vec2(w, SPAN_H));
+    egui::Area::new(egui::Id::new("compact_span")).order(egui::Order::Foreground).fixed_pos(capsule.min).show(ctx, |ui| {
+        ui.multiply_opacity(k);
+        let (r, _) = ui.allocate_exact_size(capsule.size(), Sense::hover());
+        let p = ui.painter();
+        // (the thicker glass of menus: the words must read over any photo)
+        glass::paint(p, r, SPAN_H / 2.0, Some(glass::menu_fill(ui.ctx())), 0.0);
+        let pill = p.add(egui::Shape::Noop);
+        let mut chosen = None;
+        for (i, span) in crate::state::GridSpan::ALL.into_iter().enumerate() {
+            let seg = egui::Rect::from_min_size(r.min + vec2(i as f32 * SPAN_W, 0.0), vec2(SPAN_W, SPAN_H));
+            let resp = ui.interact(seg, egui::Id::new(("span", span.id())), if shown { Sense::click() } else { Sense::hover() });
+            let on = app.ui.grid_span == span;
+            resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, on, crate::i18n::tr(span.label())));
+            crate::widgets::register(ui.ctx(), format!("button:span-{}", span.id()), seg);
+            if on {
+                chosen = Some(seg);
+            }
+            let ink = if on { t.text } else { t.text_dim };
+            ui.painter().text(seg.center(), Align2::CENTER_CENTER, crate::i18n::tr(span.label()), t.semibold(15.0), ink);
+            if resp.clicked() && !on {
+                haptics::tap(ui.ctx(), Haptic::Selection);
+                let _ = app.run("view.gridSpan", json!({"span": span.id()}));
+            }
+        }
+        ui.painter().set(pill, selection_pill(ui.ctx(), egui::Id::new("span-pill"), chosen, false, vec2(8.0, 8.0)));
     });
 }
 

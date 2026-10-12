@@ -189,6 +189,9 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("view.filterSheet", "Filter…", None, ""),
     // compact layout: back to the top of the grid (iOS: a tap on the status bar or the top bar)
     ("view.scrollToTop", "Scroll to Top", None, ""),
+    // compact layout: photos across the grid (a pinch), and every photo / months / years
+    ("view.gridColumns", "Grid Columns", None, ""),
+    ("view.gridSpan", "Years, Months or All Photos", None, ""),
     ("file.addPhotos", "Import Photos…", Some("Cmd+Shift+I"), "File"),
     // the host's own pickers (iOS); only in hosts that have them
     ("file.importFromPhotos", "Import from Photos…", None, "File"),
@@ -985,6 +988,34 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
                 None => app.ui.hidden_locations.clear(),
             }
             Ok(json!({"hidden": app.ui.hidden_locations}))
+        }
+        "view.gridColumns" => {
+            // {columns: n (snapped to the nearest the grid offers) | step: ±1 (fewer / more)}
+            let now = app.ui.grid_columns;
+            let columns = match (p.get("columns").and_then(Value::as_u64), p.get("step").and_then(Value::as_i64)) {
+                (Some(n), _) => crate::panels::grid_zoom::snap(u8::try_from(n.min(255)).unwrap_or(u8::MAX)),
+                (None, Some(step)) => crate::panels::grid_zoom::step(now, step),
+                (None, None) => return Some(Err("view.gridColumns: give `columns` or `step`".into())),
+            };
+            app.ui.grid_columns = columns;
+            Ok(json!({"columns": columns}))
+        }
+        "view.gridSpan" => {
+            // {span: "all" | "months" | "years", photo?: id, date?: "2025" | "2025-08" (where to go)}
+            let Some(span) = p.get("span").and_then(Value::as_str).and_then(crate::state::GridSpan::from_id) else {
+                return Some(Err("view.gridSpan: `span` is all, months or years".into()));
+            };
+            if !matches!(app.ui.view, ViewMode::PhotoGrid | ViewMode::SquareGrid) {
+                app.ui.view = ViewMode::SquareGrid;
+            }
+            app.ui.select_mode = false;
+            app.ui.grid_span = span;
+            app.ui.grid_jump = match (p.get("photo").and_then(Value::as_u64), p.get("date").and_then(Value::as_str)) {
+                (Some(id), _) => Some(crate::state::GridJump::Photo(id)),
+                (None, Some(d)) => Some(crate::state::GridJump::Date(d.to_string())),
+                _ => None,
+            };
+            Ok(json!({"span": span.id()}))
         }
         "view.scrollToTop" => {
             app.ui.scroll_top = true;

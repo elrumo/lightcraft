@@ -19,6 +19,8 @@ pub mod faces;
 pub mod filter_sheet;
 pub mod filterbar;
 pub mod grid;
+pub mod grid_dates;
+pub mod grid_zoom;
 pub mod keymap;
 pub mod keyword_list;
 pub mod keywording;
