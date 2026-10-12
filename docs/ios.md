@@ -233,9 +233,10 @@ layout and interaction only: no Adobe icons, artwork, fonts, presets or screensh
    list. Touch: a tap opens a photo, pinch zooms, two fingers pan, a sideways drag on a fitted photo carries it
    like a carousel (the next / previous one slides in beside it and settles when let go), a single tap hides the bars
    (review mode: the photo fills the screen and an up / down swipe rates it on the left half or flags it on the
-   right, the stars and flag following the finger as it moves), double tap zooms, sliders follow a finger's sideways movement (a tap leaves them alone, an up
+   right, the stars and flag following the finger as it moves), double tap zooms (in Crop it resets the crop), sliders follow a finger's sideways movement (a tap leaves them alone, an up
    or down drag scrolls), crop handles
-   and mask / spot pins are about a finger wide, press-and-hold opens context menus (egui's own long-touch) except in
+   and mask / spot pins are about a finger wide, press-and-hold opens context menus (egui's own long-touch) except on
+   the photo in the loupe, where a finger held still shows the Before until it lifts, and in
    the grid, where it starts choosing photos (taps then add and remove them; an action bar rates, flags, labels, adds
    to an album, exports, copies / pastes settings or deletes them). The on-screen keyboard rises for text fields,
    Return confirms them, and the layout moves above it. Check it headless with `lightcraft-cli snapshot --demo --size
