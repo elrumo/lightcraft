@@ -1,14 +1,19 @@
 //! The sync status popover: what the cloud button (the top bar's, or the phone grid's) opens, as
 //! Lightroom's mobile app shows what its cloud is doing. In one panel:
 //!
-//! - **where syncing stands** — up to date, syncing, paused, signed out, a problem, or the choice a
-//!   sign-in is waiting for (this library and the server's both have photos);
-//! - **On this device** — changes waiting to go, photos being uploaded and files being downloaded
+//! - **where syncing stands** (at the top) — up to date, syncing, paused, signed out, a problem, or
+//!   the choice a sign-in is waiting for (this library and the server's both have photos), and the
+//!   server it syncs with;
+//! - **This device** — changes waiting to go, photos being uploaded and files being downloaded
 //!   ("12 of 56", with the names of the ones moving now);
-//! - **On the server** — what the server is doing for this library: scanning its library folders,
+//! - **Server** — what the server is doing for this library: scanning its library folders,
 //!   building previews, indexing photos for search (`GET /api/activity`);
 //! - **Storage** — what the library takes on the server and how much room its disk has left;
-//! - **Pause / Sync Now / Settings**.
+//! - **Pause / Sync Now / Settings** (at the bottom).
+//!
+//! Each section is a rounded card on the popover's glass, as iOS groups a list: a row per piece of
+//! work, with its icon, how far it is and a bar. The status and the buttons stay put while the
+//! sections between them scroll (a server with a lot to do on a small phone).
 //!
 //! The panel is a pull-down of [`mobile`] (a tap outside closes it) kept current while it is open:
 //! the engine asks the server again every couple of seconds only while somebody looks.
@@ -31,8 +36,18 @@ use crate::widgets::register;
 pub const ID: &str = "syncStatus";
 /// Its width on a desktop (a phone's is the screen's, less its margins).
 const WIDTH: f32 = 380.0;
-/// A tappable row's height.
-const ROW: f32 = 48.0;
+/// The space between the popover's edges and what is in it.
+const PAD: f32 = 16.0;
+/// A card's corner radius and inner padding.
+const CARD_R: f32 = 16.0;
+const CARD_PAD: f32 = 12.0;
+/// A card row's icon (a tinted disc) and the gap between it and the text.
+const ICON_D: f32 = 30.0;
+const ICON_GAP: f32 = 12.0;
+/// The height of the buttons at the bottom.
+const BUTTON_H: f32 = 40.0;
+/// The room the buttons take, with the space around them.
+const FOOTER_H: f32 = 14.0 + BUTTON_H + 10.0;
 
 /// Open the popover under `anchor`, the button that was pressed.
 pub fn open(ctx: &egui::Context, anchor: Rect) {
@@ -89,6 +104,7 @@ impl View {
 }
 
 /// What a press in the popover asks for (done after it is drawn).
+#[derive(Clone, Copy)]
 enum Act {
     PauseToggle,
     SyncNow,
@@ -114,12 +130,8 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
     let max_h = ctx.content_rect().height() * 0.78;
     let mut act = None;
     mobile::actions_wide(ctx, ID, None, WIDTH, |ui| {
-        // (an area lays its content out in the size it had last frame, and the contents change size
-        // as answers come in: the scroll area is given its own room, or it could never grow)
         ui.set_max_height(max_h);
-        egui::ScrollArea::vertical().id_salt("syncStatusScroll").max_height(max_h).auto_shrink([false, true]).show(ui, |ui| {
-            act = content(app, ui);
-        });
+        act = content(app, ui, max_h);
     });
     match act {
         None => {}
@@ -145,64 +157,81 @@ fn report(app: &mut LightcraftApp, ctx: &egui::Context, id: &str, params: serde_
     }
 }
 
-/// The panel's contents; the press, if any.
-fn content(app: &mut LightcraftApp, ui: &mut egui::Ui) -> Option<Act> {
+/// The panel's contents, at most `max_h` tall; the press, if any.
+fn content(app: &LightcraftApp, ui: &mut egui::Ui, max_h: f32) -> Option<Act> {
     let t = Tokens::get(ui.ctx());
     let v = View::read(app);
     let mut act = None;
     ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
-    padded(ui, 14.0, |ui| header(ui, &t, &v, &mut act));
+    let s = status(&t, &v);
+    let top = ui.cursor().top();
+    padded(ui, 12.0, 0.0, |ui| header(ui, &t, &s));
+    // (an area lays its content out in the size it had last frame, and the contents change size
+    // as answers come in: the scroll area is given its own room, or it could never grow)
+    let footer_h = if v.joined() { FOOTER_H } else { 14.0 };
+    let room = (max_h - (ui.cursor().top() - top) - footer_h).max(120.0);
+    egui::ScrollArea::vertical().id_salt("syncStatusScroll").max_height(room).auto_shrink([false, true]).show(ui, |ui| {
+        padded(ui, 0.0, 0.0, |ui| body(ui, &t, &v, &s, &mut act));
+    });
+    if v.joined() {
+        padded(ui, 14.0, 10.0, |ui| footer(ui, &t, &v, &mut act));
+    } else {
+        ui.add_space(14.0);
+    }
+    act
+}
+
+/// What is between the status and the buttons (and scrolls): the status's sentence and its button,
+/// warnings, then the sections.
+fn body(ui: &mut egui::Ui, t: &Tokens, v: &View, s: &Status, act: &mut Option<Act>) {
+    if let Some((note, color)) = s.note.as_ref().filter(|(n, _)| !n.is_empty()) {
+        ui.add_space(10.0);
+        text(ui, 13.5, *color, note.as_str());
+    }
+    if let Some((label, what)) = s.primary {
+        ui.add_space(14.0);
+        let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 44.0), Sense::hover());
+        if capsule(ui, t, r, "syncStatusPrimary", label, Face::Label(None), true) {
+            *act = Some(what);
+        }
+    }
     if let Some((n, why)) = &v.unsaved {
-        rule(ui, &t);
         let text = format!(
             "{n} change{} saved in memory but not written to disk: {why}. LightCraft retries automatically; quitting now would lose {}.",
             if *n == 1 { "" } else { "s" },
             if *n == 1 { "it" } else { "them" }
         );
-        padded(ui, 12.0, |ui| banner(ui, &t, "unsaved", "Changes aren't saved", &text));
+        ui.add_space(14.0);
+        banner(ui, t, "unsaved", t.reject, "Changes aren't saved", &text);
     }
     if let Some(d) = v.usage.as_ref().and_then(|u| u.disk).filter(low) {
-        rule(ui, &t);
         let text = format!(
             "Only {} of its {} disk is left. New photos may not upload until some space is freed on the server.",
             bytes_label(d.free),
             bytes_label(d.total)
         );
-        padded(ui, 12.0, |ui| banner(ui, &t, "serverDisk", "The server is almost out of space", &text));
+        ui.add_space(14.0);
+        banner(ui, t, "serverDisk", t.caution, "The server is almost out of space", &text);
     }
     if v.joined() {
-        rule(ui, &t);
-        padded(ui, 12.0, |ui| device(ui, &t, &v));
-        rule(ui, &t);
-        padded(ui, 12.0, |ui| server(ui, &t, &v));
-
+        section(ui, t, "This device");
+        card(ui, "syncDevice", |ui| rows(ui, t, &device(t, v)));
+        section(ui, t, "Server");
+        card(ui, "syncServer", |ui| rows(ui, t, &server(t, v)));
         if let Some(u) = &v.usage {
-            rule(ui, &t);
-            padded(ui, 12.0, |ui| storage(ui, &t, &v, u));
+            section(ui, t, "Storage");
+            card(ui, "syncStorage", |ui| storage(ui, t, u));
         }
-        rule(ui, &t);
-        footer(ui, &t, &v, &mut act);
     }
-    act
 }
 
-/// The content in a column inset 16 pt from the panel's sides.
-fn padded(ui: &mut egui::Ui, vertical: f32, add: impl FnOnce(&mut egui::Ui)) {
-    egui::Frame::NONE.inner_margin(Margin { left: 16, right: 16, top: vertical as i8, bottom: vertical as i8 }).show(ui, |ui| {
+/// The content in a column inset from the panel's sides.
+fn padded(ui: &mut egui::Ui, top: f32, bottom: f32, add: impl FnOnce(&mut egui::Ui)) {
+    let m = Margin { left: PAD as i8, right: PAD as i8, top: top as i8, bottom: bottom as i8 };
+    egui::Frame::NONE.inner_margin(m).show(ui, |ui| {
         ui.set_width(ui.available_width());
         add(ui);
     });
-}
-
-fn rule(ui: &mut egui::Ui, t: &Tokens) {
-    let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
-    ui.painter().hline(r.x_range(), r.center().y, Stroke::new(1.0, t.divider));
-}
-
-/// A small heading over a section.
-fn heading(ui: &mut egui::Ui, t: &Tokens, text: &str) {
-    ui.label(egui::RichText::new(crate::i18n::tr(text).to_uppercase()).size(11.5).color(t.text_dim));
-    ui.add_space(6.0);
 }
 
 /// Wrapped text.
@@ -210,22 +239,203 @@ fn text(ui: &mut egui::Ui, size: f32, color: Color32, s: impl Into<String>) {
     ui.label(egui::RichText::new(s.into()).size(size).color(color));
 }
 
-/// A problem: a red `!`, what it is and why.
-fn banner(ui: &mut egui::Ui, t: &Tokens, id: &str, title: &str, why: &str) {
+/// `s` on one line of at most `max_w` points (cut with "…").
+fn one_line(ui: &egui::Ui, s: &str, font: egui::FontId, color: Color32, max_w: f32) -> std::sync::Arc<egui::Galley> {
+    egui::WidgetText::from(egui::RichText::new(s).font(font).color(color)).into_galley(
+        ui,
+        Some(egui::TextWrapMode::Truncate),
+        max_w.max(20.0),
+        egui::TextStyle::Body,
+    )
+}
+
+/// The fill of a card on the popover's glass: a grey that darkens the light glass and lightens the
+/// dark one, as iOS fills grouped rows in a popover.
+fn card_fill(ctx: &egui::Context) -> Color32 {
+    Color32::from_rgba_unmultiplied(118, 118, 128, if Tokens::is_dark(ctx) { 46 } else { 26 })
+}
+
+/// A wash of `tint` for what stands behind a coloured glyph or a warning.
+fn wash(ctx: &egui::Context, tint: Color32) -> Color32 {
+    tint.gamma_multiply(if Tokens::is_dark(ctx) { 0.24 } else { 0.14 })
+}
+
+/// The empty part of a bar on a card (the theme's track is for the panels, and gets lost on a dark
+/// card).
+fn track(ctx: &egui::Context, t: &Tokens) -> Color32 {
+    t.text_dim.gamma_multiply(if Tokens::is_dark(ctx) { 0.38 } else { 0.28 })
+}
+
+/// Black or white, whichever reads on `fill`.
+fn ink_on(fill: Color32) -> Color32 {
+    let luma = fill.r() as u32 * 299 + fill.g() as u32 * 587 + fill.b() as u32 * 114;
+    if luma > 170_000 { Color32::BLACK } else { Color32::WHITE }
+}
+
+/// The name of a group of rows, over its card.
+fn section(ui: &mut egui::Ui, t: &Tokens, title: &str) {
+    ui.add_space(18.0);
+    let g = one_line(ui, crate::i18n::tr(title), t.semibold(13.0), t.text_dim, ui.available_width() - CARD_PAD);
+    let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), g.size().y), Sense::hover());
+    ui.painter().galley(pos2(r.left() + CARD_PAD, r.top()), g, t.text_dim);
+    ui.add_space(6.0);
+}
+
+/// A rounded card (`section:{id}`) behind what `add` puts in it.
+fn card(ui: &mut egui::Ui, id: &str, add: impl FnOnce(&mut egui::Ui)) {
+    let under = ui.painter().add(egui::Shape::Noop);
+    let r = egui::Frame::NONE
+        .inner_margin(Margin::symmetric(CARD_PAD as i8, 0))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            add(ui);
+        })
+        .response
+        .rect;
+    ui.painter().set(under, egui::epaint::RectShape::filled(r, CARD_R, card_fill(ui.ctx())));
+    register(ui.ctx(), format!("section:{id}"), r);
+}
+
+/// What a row's disc shows.
+#[derive(Clone, Copy)]
+enum Glyph {
+    Icon(Icon),
+    /// A `!`: something went wrong.
+    Alert,
+}
+
+/// `glyph` in `tint` on a disc washed with it, filling `r`.
+fn disc(ui: &egui::Ui, t: &Tokens, r: Rect, glyph: Glyph, tint: Color32) {
+    let p = ui.painter();
+    p.circle_filled(r.center(), r.width() / 2.0, wash(ui.ctx(), tint));
+    match glyph {
+        Glyph::Icon(icon) => paint(p, Rect::from_center_size(r.center(), r.size() * 0.56), icon, tint),
+        Glyph::Alert => {
+            p.text(r.center(), egui::Align2::CENTER_CENTER, "!", t.semibold(r.width() * 0.52), tint);
+        }
+    }
+}
+
+/// One line of a card: a piece of work, or how things stand.
+struct Row {
+    glyph: Glyph,
+    tint: Color32,
+    title: String,
+    /// How far it is ("12 of 56"), on the right.
+    value: String,
+    /// Its bar, when it can tell how far it is.
+    fraction: Option<f32>,
+    /// Smaller lines under it.
+    detail: Vec<String>,
+}
+
+impl Row {
+    fn new(glyph: Glyph, tint: Color32, title: impl Into<String>) -> Row {
+        Row { glyph, tint, title: title.into(), value: String::new(), fraction: None, detail: Vec::new() }
+    }
+
+    fn value(mut self, value: impl Into<String>) -> Row {
+        self.value = value.into();
+        self
+    }
+
+    fn fraction(mut self, f: f32) -> Row {
+        self.fraction = Some(f);
+        self
+    }
+
+    fn detail(mut self, line: impl Into<String>) -> Row {
+        let line = line.into();
+        if !line.is_empty() {
+            self.detail.push(line);
+        }
+        self
+    }
+}
+
+/// `rows` one under the other, a hairline between them from where their text starts.
+fn rows(ui: &mut egui::Ui, t: &Tokens, rows: &[Row]) {
+    for (i, row) in rows.iter().enumerate() {
+        if i > 0 {
+            let r = ui.max_rect();
+            ui.painter().hline((r.left() + ICON_D + ICON_GAP)..=(r.right() + CARD_PAD), ui.cursor().top(), Stroke::new(0.5, t.divider));
+        }
+        draw_row(ui, t, row);
+    }
+}
+
+/// A row: its disc, then its title and value, its bar and its detail, all centred on the disc.
+fn draw_row(ui: &mut egui::Ui, t: &Tokens, row: &Row) {
+    const V: f32 = 11.0;
+    const BAR: f32 = 4.0;
     let w = ui.available_width();
-    let top = ui.cursor().top();
-    ui.horizontal_top(|ui| {
-        let (r, _) = ui.allocate_exact_size(vec2(28.0, 28.0), Sense::hover());
-        ui.painter().circle_filled(r.center(), 11.0, t.reject);
-        ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, "!", t.semibold(13.0), Color32::WHITE);
-        ui.add_space(10.0);
-        ui.vertical(|ui| {
-            ui.set_width(w - 38.0);
-            ui.label(egui::RichText::new(crate::i18n::tr(title)).font(t.semibold(14.5)).color(t.text));
-            text(ui, 13.0, t.text_dim, why);
-        });
-    });
-    register(ui.ctx(), format!("banner:{id}"), Rect::from_min_max(pos2(ui.min_rect().left(), top), pos2(ui.min_rect().right(), ui.cursor().top())));
+    let text_x = ICON_D + ICON_GAP;
+    let text_w = (w - text_x).max(60.0);
+    let p = ui.painter();
+    let value_g = p.layout_no_wrap(row.value.clone(), t.font(13.5), t.text_dim);
+    let title_w = (text_w - if row.value.is_empty() { 0.0 } else { value_g.size().x + 10.0 }).max(60.0);
+    let title_g = p.layout(row.title.clone(), t.font(15.0), t.text, title_w);
+    let top_h = title_g.size().y.max(value_g.size().y);
+    let detail_g: Vec<_> = row.detail.iter().map(|d| p.layout(d.clone(), t.font(12.5), t.text_dim, text_w)).collect();
+    let bar_h = if row.fraction.is_some() { 8.0 + BAR } else { 0.0 };
+    let detail_h: f32 = detail_g.iter().map(|g| 3.0 + g.size().y).sum();
+    let content_h = top_h + bar_h + detail_h;
+    let (r, _) = ui.allocate_exact_size(vec2(w, content_h.max(ICON_D) + 2.0 * V), Sense::hover());
+    disc(ui, t, Rect::from_center_size(pos2(r.left() + ICON_D / 2.0, r.center().y), vec2(ICON_D, ICON_D)), row.glyph, row.tint);
+    let p = ui.painter();
+    let x = r.left() + text_x;
+    let mut y = r.center().y - content_h / 2.0;
+    p.galley(pos2(x, y + (top_h - title_g.size().y) / 2.0), title_g, t.text);
+    if !row.value.is_empty() {
+        p.galley(pos2(r.right() - value_g.size().x, y + (top_h - value_g.size().y) / 2.0), value_g, t.text_dim);
+    }
+    y += top_h;
+    if let Some(f) = row.fraction {
+        let track = Rect::from_min_size(pos2(x, y + 8.0), vec2(r.right() - x, BAR));
+        p.rect_filled(track, BAR / 2.0, self::track(ui.ctx(), t));
+        let f = f.clamp(0.0, 1.0);
+        if f > 0.0 {
+            let mut fill = track;
+            fill.set_width((track.width() * f).max(BAR));
+            p.rect_filled(fill, BAR / 2.0, row.tint);
+        }
+        y += bar_h;
+    }
+    for g in detail_g {
+        y += 3.0;
+        let gh = g.size().y;
+        p.galley(pos2(x, y), g, t.text_dim);
+        y += gh;
+    }
+}
+
+/// A problem above the sections (`banner:{id}`): a `!` in `tint`, what it is and why, on a card
+/// washed with it.
+fn banner(ui: &mut egui::Ui, t: &Tokens, id: &str, tint: Color32, title: &str, why: &str) {
+    const D: f32 = 22.0;
+    let under = ui.painter().add(egui::Shape::Noop);
+    let r = egui::Frame::NONE
+        .inner_margin(Margin::same(CARD_PAD as i8))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            let w = ui.available_width();
+            ui.horizontal_top(|ui| {
+                let (r, _) = ui.allocate_exact_size(vec2(D, D), Sense::hover());
+                ui.painter().circle_filled(r.center(), D / 2.0, tint);
+                ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, "!", t.semibold(13.0), ink_on(tint));
+                ui.add_space(10.0);
+                ui.vertical(|ui| {
+                    ui.set_width(w - D - 10.0);
+                    ui.label(egui::RichText::new(crate::i18n::tr(title)).font(t.semibold(14.5)).color(t.text));
+                    ui.add_space(2.0);
+                    text(ui, 13.0, t.text_dim, why);
+                });
+            });
+        })
+        .response
+        .rect;
+    ui.painter().set(under, egui::epaint::RectShape::filled(r, CARD_R, wash(ui.ctx(), tint)));
+    register(ui.ctx(), format!("banner:{id}"), r);
 }
 
 /// The server's disk is nearly full: less than 1 GB or 2 % left.
@@ -233,89 +443,147 @@ fn low(d: &proto::Disk) -> bool {
     d.total > 0 && (d.free < 1_000_000_000 || d.free.saturating_mul(50) < d.total)
 }
 
-/// A button as a row of its own (a whole-width tap target): `icon`, `label`, true when pressed.
-fn button(ui: &mut egui::Ui, t: &Tokens, id: &str, icon: Option<Icon>, label: &str, color: Color32) -> bool {
-    let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 40.0), Sense::click());
+/// What a [`capsule`] shows.
+#[derive(Clone, Copy)]
+enum Face {
+    /// Its label, after the icon when both fit.
+    Label(Option<Icon>),
+    /// Only the icon (the label is what a screen reader says).
+    Icon(Icon),
+}
+
+/// A button (`button:{id}`) drawn as a capsule filling `rect`: the accent's when `prominent`, else
+/// a card's grey. True when pressed.
+fn capsule(ui: &mut egui::Ui, t: &Tokens, rect: Rect, id: &str, label: &str, face: Face, prominent: bool) -> bool {
+    let label = crate::i18n::tr(label);
+    let resp = ui.interact(rect, egui::Id::new(("sync-status", id)), Sense::click());
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
-    register(ui.ctx(), format!("button:{id}"), r);
-    let fill = if resp.is_pointer_button_down_on() { t.pressed } else { t.hover };
-    ui.painter().rect_filled(r, 9.0, fill);
-    let g = ui.painter().layout_no_wrap(crate::i18n::tr(label).to_string(), t.semibold(15.0), color);
-    let icon_w = if icon.is_some() { 24.0 } else { 0.0 };
-    let x = r.center().x - (g.size().x + icon_w) / 2.0;
-    if let Some(icon) = icon {
-        paint(ui.painter(), Rect::from_center_size(pos2(x + 9.0, r.center().y), vec2(18.0, 18.0)), icon, color);
+    register(ui.ctx(), format!("button:{id}"), rect);
+    let dark = Tokens::is_dark(ui.ctx());
+    let (fill, ink) = if prominent { (t.accent, Color32::WHITE) } else { (card_fill(ui.ctx()), t.text) };
+    let p = ui.painter();
+    p.rect_filled(rect, rect.height() / 2.0, fill);
+    // (lit under the pointer, more while pressed)
+    let lit = if resp.is_pointer_button_down_on() {
+        36
+    } else if resp.hovered() {
+        16
+    } else {
+        0
+    };
+    if lit > 0 {
+        let over = if dark || prominent { Color32::from_white_alpha(lit) } else { Color32::from_black_alpha(lit) };
+        p.rect_filled(rect, rect.height() / 2.0, over);
     }
-    ui.painter().galley(pos2(x + icon_w, r.center().y - g.size().y / 2.0), g, color);
+    match face {
+        Face::Icon(icon) => paint(p, Rect::from_center_size(rect.center(), vec2(20.0, 20.0)), icon, if prominent { ink } else { t.text_dim }),
+        Face::Label(icon) => {
+            const ICON: f32 = 18.0;
+            const GAP: f32 = 6.0;
+            let room = rect.width() - 24.0;
+            let g = one_line(ui, label, t.semibold(15.0), ink, room);
+            // (the icon gives way to a label that needs its room)
+            let icon = icon.filter(|_| g.size().x + ICON + GAP <= room);
+            let lead = if icon.is_some() { ICON + GAP } else { 0.0 };
+            let x = rect.center().x - (g.size().x + lead) / 2.0;
+            let p = ui.painter();
+            if let Some(icon) = icon {
+                paint(p, Rect::from_min_size(pos2(x, rect.center().y - ICON / 2.0), vec2(ICON, ICON)), icon, ink);
+            }
+            p.galley(pos2(x + lead, rect.center().y - g.size().y / 2.0), g, ink);
+        }
+    }
     resp.clicked()
 }
 
 // -------------------------------------------------------------------------------------- header
 
-/// The cloud, how syncing stands, and what to do about it.
-fn header(ui: &mut egui::Ui, t: &Tokens, v: &View, act: &mut Option<Act>) {
-    let host = &v.host;
-    let (title, body, color): (String, String, Color32) = match v.state {
-        "off" => (
-            crate::i18n::tr("This library is only on this device").to_string(),
-            crate::i18n::tr("Sync it with your own LightCraft server to use its photos and edits on your other devices.").to_string(),
-            t.text,
-        ),
-        "signedOut" => (
-            format!("{} {host}", crate::i18n::tr("Signed out of")),
-            v.error.clone().unwrap_or_else(|| {
-                crate::i18n::tr("Sign in again to keep syncing. Changes made meanwhile wait on this device; nothing is lost.").to_string()
-            }),
-            t.caution,
-        ),
-        "conflict" => (format!("{host} {}", crate::i18n::tr("has a library already")), conflict_text(v.conflict.as_ref()), t.caution),
-        "paused" => (
-            crate::i18n::tr("Syncing is paused").to_string(),
-            format!("{} {host}.", crate::i18n::tr("Changes wait on this device until you resume. Server:")),
-            t.text,
-        ),
-        "error" => (
-            format!("{} {host}", crate::i18n::tr("Can't sync with")),
-            format!("{} {}", v.error.clone().unwrap_or_default(), crate::i18n::tr("LightCraft keeps trying; changes wait on this device.")),
-            t.caution,
-        ),
-        "syncing" => (format!("{} {host}", crate::i18n::tr("Syncing with")), summary(v), t.accent),
-        _ => (
-            format!("{} {host}", crate::i18n::tr("Up to date with")),
-            format!("{} {}", count_label(v.photos as u64), crate::i18n::tr("photos")),
-            t.text,
-        ),
-    };
-    let problem = matches!(v.state, "error" | "signedOut" | "conflict");
+/// How syncing stands, as the header says it.
+struct Status {
+    glyph: Icon,
+    tint: Color32,
+    /// A red `!` on the disc: something needs the user.
+    problem: bool,
+    title: String,
+    /// The server (and for an up-to-date library, its size).
+    sub: String,
+    /// A sentence under them, and its colour.
+    note: Option<(String, Color32)>,
+    /// The one thing to do about it: (label, press).
+    primary: Option<(&'static str, Act)>,
+}
+
+fn status(t: &Tokens, v: &View) -> Status {
+    let host = v.host.clone();
+    let tr = |s: &str| crate::i18n::tr(s).to_string();
+    let plain = |glyph, tint, title: String, sub: String| Status { glyph, tint, problem: false, title, sub, note: None, primary: None };
+    match v.state {
+        "off" => Status {
+            note: Some((tr("Sync it with your own LightCraft server to use its photos and edits on your other devices."), t.text_dim)),
+            primary: Some(("Set Up Sync…", Act::Settings)),
+            ..plain(Icon::Cloud, t.text_dim, tr("This library is only on this device"), String::new())
+        },
+        "signedOut" => Status {
+            problem: true,
+            note: Some((
+                v.error.clone().unwrap_or_else(|| tr("Sign in again to keep syncing. Changes made meanwhile wait on this device; nothing is lost.")),
+                t.text_dim,
+            )),
+            primary: Some(("Sign In…", Act::SignIn)),
+            ..plain(Icon::Cloud, t.caution, tr("Signed out"), host)
+        },
+        "conflict" => Status {
+            problem: true,
+            note: Some((conflict_text(v.conflict.as_ref()), t.text_dim)),
+            primary: Some(("Choose What to Do…", Act::Choose)),
+            ..plain(Icon::Cloud, t.caution, tr("The server has a library already"), host)
+        },
+        "paused" => Status {
+            note: Some((tr("Changes wait on this device until you resume."), t.text_dim)),
+            ..plain(Icon::Pause, t.text_dim, tr("Syncing is paused"), host)
+        },
+        "error" => Status {
+            problem: true,
+            note: Some((
+                format!("{} {}", v.error.clone().unwrap_or_default(), tr("LightCraft keeps trying; changes wait on this device.")).trim().to_string(),
+                t.text,
+            )),
+            ..plain(Icon::Cloud, t.caution, tr("Can't sync"), host)
+        },
+        "syncing" => plain(Icon::Refresh, t.accent, tr("Syncing"), host),
+        _ => {
+            let count = photos(v.photos as u64);
+            let sub = if host.is_empty() { count } else { format!("{host} · {count}") };
+            plain(Icon::Check, t.switch_on, tr("Up to date"), sub)
+        }
+    }
+}
+
+/// The status: a disc, what is going on and with which server (its sentence and button are the
+/// top of [`body`], which scrolls: an error can be long).
+fn header(ui: &mut egui::Ui, t: &Tokens, s: &Status) {
+    const D: f32 = 44.0;
     let w = ui.available_width();
-    ui.horizontal_top(|ui| {
-        let (r, _) = ui.allocate_exact_size(vec2(32.0, 32.0), Sense::hover());
-        paint(ui.painter(), r.shrink(3.0), Icon::Cloud, if problem { t.caution } else { color });
-        if problem {
-            let c = r.right_top() + vec2(-3.0, 6.0);
-            ui.painter().circle_filled(c, 7.0, t.reject);
-            ui.painter().text(c, egui::Align2::CENTER_CENTER, "!", t.semibold(10.0), Color32::WHITE);
-        }
-        ui.add_space(10.0);
-        ui.vertical(|ui| {
-            ui.set_width(w - 32.0 - 10.0);
-            ui.label(egui::RichText::new(title).font(t.semibold(16.0)).color(t.text));
-            ui.add_space(2.0);
-            // (the cloud and its badge say it is a problem; an error's own words stand out)
-            text(ui, 13.5, if v.state == "error" { t.caution } else { t.text_dim }, body);
-        });
-    });
-    let (label, what) = match v.state {
-        "off" => ("Set Up Sync…", Some(Act::Settings)),
-        "signedOut" => ("Sign In…", Some(Act::SignIn)),
-        "conflict" => ("Choose What to Do…", Some(Act::Choose)),
-        _ => ("", None),
-    };
-    if let Some(what) = what {
-        ui.add_space(12.0);
-        if button(ui, t, "syncStatusPrimary", None, label, t.accent) {
-            *act = Some(what);
-        }
+    let text_w = (w - D - 12.0).max(60.0);
+    let title_g = ui.painter().layout(s.title.clone(), t.semibold(17.0), t.text, text_w);
+    let sub_g = (!s.sub.is_empty()).then(|| ui.painter().layout(s.sub.clone(), t.font(13.5), t.text_dim, text_w));
+    let text_h = title_g.size().y + sub_g.as_ref().map_or(0.0, |g| 1.0 + g.size().y);
+    let (r, _) = ui.allocate_exact_size(vec2(w, text_h.max(D)), Sense::hover());
+    let tile = Rect::from_min_size(pos2(r.left(), r.center().y - D / 2.0), vec2(D, D));
+    disc(ui, t, tile, Glyph::Icon(s.glyph), s.tint);
+    let p = ui.painter();
+    if s.problem {
+        let c = tile.right_top() + vec2(-5.0, 5.0);
+        p.circle_filled(c, 8.0, t.reject);
+        p.text(c, egui::Align2::CENTER_CENTER, "!", t.semibold(11.0), Color32::WHITE);
+    }
+    let x = tile.right() + 12.0;
+    let mut y = r.center().y - text_h / 2.0;
+    let title_h = title_g.size().y;
+    p.galley(pos2(x, y), title_g, t.text);
+    y += title_h + 1.0;
+    if let Some(g) = sub_g {
+        p.galley(pos2(x, y), g, t.text_dim);
     }
 }
 
@@ -323,108 +591,72 @@ fn header(ui: &mut egui::Ui, t: &Tokens, v: &View, act: &mut Option<Act>) {
 fn conflict_text(c: Option<&ConflictInfo>) -> String {
     match c {
         Some(c) => format!(
-            "{} {} {}, {} {} {}. {}",
+            "{} {}, {} {}. {}",
             crate::i18n::tr("This library has"),
-            count_label(c.here.photos as u64),
-            crate::i18n::tr("photos"),
+            photos(c.here.photos as u64),
             crate::i18n::tr("the server's has"),
-            count_label(c.there.photos as u64),
-            crate::i18n::tr("photos"),
+            photos(c.there.photos as u64),
             crate::i18n::tr("Nothing syncs until you choose how to combine them.")
         ),
         None => crate::i18n::tr("Nothing syncs until you choose how to combine the two libraries.").to_string(),
     }
 }
 
-/// "3 changes to send, 12 of 56 uploaded, 30 files to download" for the header while syncing.
-fn summary(v: &View) -> String {
-    let t = &v.transfers;
-    let mut parts = Vec::new();
-    if let Some((read, total)) = v.reading {
-        parts.push(format!(
-            "{} {} {} {} {}",
-            crate::i18n::tr("Loading the library:"),
-            count_label(read as u64),
-            crate::i18n::tr("of"),
-            count_label(total as u64),
-            crate::i18n::tr("photos")
-        ));
-    }
-    if t.pending > 0 {
-        parts.push(format!(
-            "{} {}",
-            count_label(t.pending as u64),
-            crate::i18n::tr(if t.pending == 1 { "change to send" } else { "changes to send" })
-        ));
-    }
-    if t.uploads > 0 {
-        parts.push(format!("{} {}", count_label(t.uploads as u64), crate::i18n::tr(if t.uploads == 1 { "upload left" } else { "uploads left" })));
-    }
-    if t.downloads > 0 {
-        parts.push(format!(
-            "{} {}",
-            count_label(t.downloads as u64),
-            crate::i18n::tr(if t.downloads == 1 { "download left" } else { "downloads left" })
-        ));
-    }
-    if parts.is_empty() { crate::i18n::tr("Checking with the server…").to_string() } else { parts.join(" · ") }
+/// "1 photo", "12 photos".
+fn photos(n: u64) -> String {
+    format!("{} {}", count_label(n), crate::i18n::tr(if n == 1 { "photo" } else { "photos" }))
 }
 
-// ------------------------------------------------------------------------------- On this device
+/// "12 of 56".
+fn of(done: u64, total: u64) -> String {
+    format!("{} {} {}", count_label(done), crate::i18n::tr("of"), count_label(total))
+}
 
-fn device(ui: &mut egui::Ui, t: &Tokens, v: &View) {
-    heading(ui, t, "On this device");
+// ---------------------------------------------------------------------------------- This device
+
+fn device(t: &Tokens, v: &View) -> Vec<Row> {
     let tr = &v.transfers;
-    let mut shown = false;
-    if tr.pending > 0 {
-        shown = true;
-        task(ui, t, Icon::Refresh, "Sending changes", &count_label(tr.pending as u64), None, &[], t.accent);
-    }
-    if tr.uploads > 0 {
-        shown = true;
-        let total = tr.uploads_done + tr.uploads;
-        let running = names(&tr.running, true);
-        task(
-            ui,
-            t,
-            Icon::Upload,
-            "Uploading photos",
-            &format!("{} {} {}", count_label(tr.uploads_done as u64), crate::i18n::tr("of"), count_label(total as u64)),
-            Some(tr.uploads_done as f32 / total.max(1) as f32),
-            &running,
-            t.accent,
+    let mut out = Vec::new();
+    if let Some((read, total)) = v.reading {
+        out.push(
+            Row::new(Glyph::Icon(Icon::Download), t.accent, crate::i18n::tr("Loading the library"))
+                .value(of(read as u64, total as u64))
+                .fraction(fraction(read as u64, total as u64)),
         );
     }
+    if tr.pending > 0 {
+        out.push(Row::new(Glyph::Icon(Icon::Refresh), t.accent, crate::i18n::tr("Sending changes")).value(count_label(tr.pending as u64)));
+    }
+    if tr.uploads > 0 {
+        let total = tr.uploads_done + tr.uploads;
+        let mut row = Row::new(Glyph::Icon(Icon::Upload), t.accent, crate::i18n::tr("Uploading photos"))
+            .value(of(tr.uploads_done as u64, total as u64))
+            .fraction(fraction(tr.uploads_done as u64, total as u64));
+        row.detail = names(&tr.running, true);
+        out.push(row);
+    }
     if tr.downloads > 0 {
-        shown = true;
         let total = tr.downloads_done + tr.downloads;
-        let running = names(&tr.running, false);
         let what = match tr.running.iter().filter(|r| !r.upload).map(|r| r.what).collect::<std::collections::BTreeSet<_>>().iter().next() {
             Some(&"original") => "Downloading originals",
             Some(&"smart preview") => "Downloading previews to edit",
             _ => "Downloading previews",
         };
-        task(
-            ui,
-            t,
-            Icon::Download,
-            what,
-            &format!("{} {} {}", count_label(tr.downloads_done as u64), crate::i18n::tr("of"), count_label(total as u64)),
-            Some(tr.downloads_done as f32 / total.max(1) as f32),
-            &running,
-            t.accent,
-        );
+        let mut row = Row::new(Glyph::Icon(Icon::Download), t.accent, crate::i18n::tr(what))
+            .value(of(tr.downloads_done as u64, total as u64))
+            .fraction(fraction(tr.downloads_done as u64, total as u64));
+        row.detail = names(&tr.running, false);
+        out.push(row);
     }
     if let Some(e) = &tr.error {
-        shown = true;
-        ui.add_space(4.0);
         let n = count_label(tr.failing.max(1) as u64);
-        let what = if tr.failing == 1 { "file couldn't" } else { "files couldn't" };
-        text(ui, 12.5, t.caution, format!("{n} {what} be sent or received: {e}. LightCraft tries again every minute."));
+        let what = crate::i18n::tr(if tr.failing == 1 { "file couldn't be sent or received" } else { "files couldn't be sent or received" });
+        out.push(Row::new(Glyph::Alert, t.caution, format!("{n} {what}")).detail(format!("{e}. LightCraft tries again every minute.")));
     }
-    if !shown {
-        text(ui, 14.0, t.text_dim, crate::i18n::tr("Everything on this device is up to date."));
+    if out.is_empty() {
+        out.push(Row::new(Glyph::Icon(Icon::Check), t.text_dim, crate::i18n::tr("Nothing to send or receive")));
     }
+    out
 }
 
 /// "IMG_0231.CR3 · original" for the files moving now (at most three, and how many more).
@@ -441,134 +673,60 @@ fn names(running: &[Transfer], upload: bool) -> Vec<String> {
     out
 }
 
-/// One piece of work: an icon, what it is, how far (on the right), a bar when it has a fraction,
-/// and lines of detail under it.
-#[allow(clippy::too_many_arguments)]
-fn task(ui: &mut egui::Ui, t: &Tokens, icon: Icon, title: &str, value: &str, fraction: Option<f32>, detail: &[String], tint: Color32) {
-    const ICON_W: f32 = 28.0;
-    let w = ui.available_width();
-    let value_g = ui.painter().layout_no_wrap(value.to_string(), t.font(13.5), t.text_dim);
-    let title_g = ui.painter().layout(crate::i18n::tr(title).to_string(), t.font(15.0), t.text, (w - ICON_W - value_g.size().x - 12.0).max(60.0));
-    let top_h = title_g.size().y.max(value_g.size().y).max(20.0);
-    let detail_g: Vec<_> = detail.iter().map(|d| ui.painter().layout(d.clone(), t.font(12.5), t.text_dim, w - ICON_W)).collect();
-    let detail_h: f32 = detail_g.iter().map(|g| g.size().y + 2.0).sum();
-    let bar_h = if fraction.is_some() { 12.0 } else { 0.0 };
-    let h = top_h + bar_h + if detail_g.is_empty() { 0.0 } else { detail_h + 2.0 } + 8.0;
-    let (r, _) = ui.allocate_exact_size(vec2(w, h), Sense::hover());
-    let p = ui.painter();
-    paint(p, Rect::from_center_size(pos2(r.left() + 9.0, r.top() + top_h / 2.0), vec2(18.0, 18.0)), icon, tint);
-    p.galley(pos2(r.left() + ICON_W, r.top() + (top_h - title_g.size().y) / 2.0), title_g, t.text);
-    p.galley(pos2(r.right() - value_g.size().x, r.top() + (top_h - value_g.size().y) / 2.0), value_g, t.text_dim);
-    let mut y = r.top() + top_h;
-    if let Some(f) = fraction {
-        let track = Rect::from_min_size(pos2(r.left() + ICON_W, y + 5.0), vec2(w - ICON_W, 4.0));
-        p.rect_filled(track, 2.0, t.track);
-        let mut fill = track;
-        fill.set_width((track.width() * f.clamp(0.0, 1.0)).max(if f > 0.0 { 3.0 } else { 0.0 }));
-        p.rect_filled(fill, 2.0, tint);
-        y += bar_h;
-    }
-    y += 2.0;
-    for g in detail_g {
-        let gh = g.size().y;
-        p.galley(pos2(r.left() + ICON_W, y), g, t.text_dim);
-        y += gh + 2.0;
-    }
-}
+// --------------------------------------------------------------------------------------- Server
 
-// ------------------------------------------------------------------------------- On the server
-
-fn server(ui: &mut egui::Ui, t: &Tokens, v: &View) {
-    heading(ui, t, "On the server");
+fn server(t: &Tokens, v: &View) -> Vec<Row> {
     let Some(a) = &v.activity else {
-        match &v.activity_error {
-            Some(e) => text(ui, 13.5, t.text_dim, format!("{} {e}", crate::i18n::tr("Can't tell what the server is doing:"))),
-            None => text(ui, 14.0, t.text_dim, crate::i18n::tr("Asking the server…")),
-        }
-        return;
+        return vec![match &v.activity_error {
+            Some(e) => Row::new(Glyph::Alert, t.caution, crate::i18n::tr("Can't tell what the server is doing")).detail(e.clone()),
+            None => Row::new(Glyph::Icon(Icon::Server), t.text_dim, crate::i18n::tr("Asking the server…")),
+        }];
     };
-    let mut shown = false;
+    let mut out = Vec::new();
     if let Some(s) = a.scan.as_ref().filter(|s| s.scanning) {
-        shown = true;
-        let title = "Scanning library folders";
-        match s.phase.as_str() {
+        let row = Row::new(Glyph::Icon(Icon::Folder), t.accent, crate::i18n::tr("Scanning library folders"));
+        out.push(match s.phase.as_str() {
             "reading" => {
                 let mut detail = vec![crate::i18n::tr("Reading new photos").to_string()];
                 detail.extend(s.eta_secs.map(eta));
-                task(
-                    ui,
-                    t,
-                    Icon::Folder,
-                    title,
-                    &format!("{} {} {}", count_label(s.done), crate::i18n::tr("of"), count_label(s.todo)),
-                    Some(fraction(s.done, s.todo)),
-                    &[detail.join(" · ")],
-                    t.accent,
-                );
+                row.value(of(s.done, s.todo)).fraction(fraction(s.done, s.todo)).detail(detail.join(" · "))
             }
-            "listing" => task(
-                ui,
-                t,
-                Icon::Folder,
-                title,
-                &format!("{} {}", count_label(s.files), crate::i18n::tr("found")),
-                None,
-                &[crate::i18n::tr("Looking for photos").to_string()],
-                t.accent,
-            ),
-            _ => task(ui, t, Icon::Folder, title, "", None, &[crate::i18n::tr("Finishing up").to_string()], t.accent),
-        }
-    }
-    if a.previews.active() {
-        shown = true;
-        progress(ui, t, Icon::Photos, "Building previews", &a.previews);
+            "listing" => row.value(format!("{} {}", count_label(s.files), crate::i18n::tr("found"))).detail(crate::i18n::tr("Looking for photos")),
+            _ => row.detail(crate::i18n::tr("Finishing up")),
+        });
     }
     for (icon, title, p) in [
+        (Icon::Photos, "Building previews", Some(a.previews)),
         (Icon::Search, "Indexing photos for search", a.search),
         (Icon::Info, "Reading the text in photos", a.text),
         (Icon::Subject, "Finding people in photos", a.faces),
     ] {
         if let Some(p) = p.filter(|p| p.active()) {
-            shown = true;
-            progress(ui, t, icon, title, &p);
+            out.push(
+                Row::new(Glyph::Icon(icon), t.accent, crate::i18n::tr(title))
+                    .value(of(p.done, p.total))
+                    .fraction(fraction(p.done, p.total))
+                    .detail(p.eta_secs.map(eta).unwrap_or_default()),
+            );
         }
     }
-    if !shown {
+    if out.is_empty() {
         let last = a
             .scan
             .as_ref()
             .and_then(|s| s.last_scan)
-            .map(|at| format!(" {} {}.", crate::i18n::tr("Library folders were scanned"), ago(at)))
+            .map(|at| format!("{} {}", crate::i18n::tr("Library folders were scanned"), ago(at)))
             .unwrap_or_default();
-        text(ui, 14.0, t.text_dim, format!("{}{last}", crate::i18n::tr("The server isn't doing anything for this library right now.")));
+        out.push(Row::new(Glyph::Icon(Icon::Check), t.text_dim, crate::i18n::tr("Nothing to do right now")).detail(last));
     }
     if let Some(s) = a.scan.as_ref().filter(|s| s.problems > 0) {
-        ui.add_space(4.0);
-        text(
-            ui,
-            12.5,
-            t.caution,
-            format!(
-                "{} {}",
-                count_label(s.problems),
-                crate::i18n::tr("files or folders in the library folders couldn't be read (see the admin page).")
-            ),
+        let what = crate::i18n::tr(if s.problems == 1 { "file or folder couldn't be read" } else { "files or folders couldn't be read" });
+        out.push(
+            Row::new(Glyph::Alert, t.caution, format!("{} {what}", count_label(s.problems)))
+                .detail(crate::i18n::tr("They're listed on the server's admin page.")),
         );
     }
-}
-
-fn progress(ui: &mut egui::Ui, t: &Tokens, icon: Icon, title: &str, p: &proto::Progress) {
-    let detail: Vec<String> = p.eta_secs.map(eta).into_iter().collect();
-    task(
-        ui,
-        t,
-        icon,
-        title,
-        &format!("{} {} {}", count_label(p.done), crate::i18n::tr("of"), count_label(p.total)),
-        Some(fraction(p.done, p.total)),
-        &detail,
-        t.accent,
-    );
+    out
 }
 
 fn fraction(done: u64, total: u64) -> f32 {
@@ -595,85 +753,85 @@ fn ago(unix_secs: u64) -> String {
     }
 }
 
-// ------------------------------------------------------------------------------------ Storage
+// -------------------------------------------------------------------------------------- Storage
 
-fn storage(ui: &mut egui::Ui, t: &Tokens, v: &View, u: &proto::Usage) {
-    heading(ui, t, "Storage");
-    let line = format!(
-        "{} {} {}",
-        bytes_label(u.stored()),
-        crate::i18n::tr("used on"),
-        if v.host.is_empty() { crate::i18n::tr("the server").to_string() } else { v.host.clone() }
-    );
-    text(ui, 15.0, t.text, line);
+/// What this library takes (the accent's dot and share of the bar), the rest of the server's disk
+/// in use (grey) and what is free; then the photos read in place from library folders.
+fn storage(ui: &mut egui::Ui, t: &Tokens, u: &proto::Usage) {
+    const BAR: f32 = 6.0;
+    ui.add_space(12.0);
+    let w = ui.available_width();
+    let value_g = ui.painter().layout_no_wrap(bytes_label(u.stored()), t.semibold(15.0), t.text);
+    let label_g = one_line(ui, crate::i18n::tr("This library"), t.font(15.0), t.text, w - 14.0 - value_g.size().x - 10.0);
+    let (r, _) = ui.allocate_exact_size(vec2(w, label_g.size().y.max(value_g.size().y)), Sense::hover());
+    let p = ui.painter();
+    p.circle_filled(pos2(r.left() + 4.0, r.center().y), 4.0, t.accent);
+    p.galley(pos2(r.left() + 14.0, r.center().y - label_g.size().y / 2.0), label_g, t.text);
+    p.galley(pos2(r.right() - value_g.size().x, r.center().y - value_g.size().y / 2.0), value_g, t.text);
     if let Some(d) = u.disk {
-        ui.add_space(6.0);
-        let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 6.0), Sense::hover());
+        ui.add_space(10.0);
+        let (r, _) = ui.allocate_exact_size(vec2(w, BAR), Sense::hover());
         let total = d.total.max(1) as f32;
         let used = d.total.saturating_sub(d.free);
         let at = |bytes: u64| r.left() + r.width() * (bytes as f32 / total).clamp(0.0, 1.0);
         let p = ui.painter();
-        p.rect_filled(r, 3.0, t.track);
-        p.rect_filled(Rect::from_min_max(r.min, pos2(at(used), r.bottom())), 3.0, t.text_disabled);
+        p.rect_filled(r, BAR / 2.0, track(ui.ctx(), t));
+        p.rect_filled(Rect::from_min_max(r.min, pos2(at(used), r.bottom())), BAR / 2.0, t.text_dim.gamma_multiply(0.75));
         let ours = u.stored().min(used);
-        p.rect_filled(Rect::from_min_size(r.min, vec2((at(ours) - r.left()).max(if ours > 0 { 3.0 } else { 0.0 }), r.height())), 3.0, t.accent);
-        ui.add_space(6.0);
+        if ours > 0 {
+            p.rect_filled(Rect::from_min_size(r.min, vec2((at(ours) - r.left()).max(BAR), BAR)), BAR / 2.0, t.accent);
+        }
+        ui.add_space(8.0);
         text(ui, 12.5, t.text_dim, format!("{} {} {}", bytes_label(d.free), crate::i18n::tr("free of"), bytes_label(d.total)));
     }
     if u.folders.files > 0 {
-        ui.add_space(4.0);
-        text(
-            ui,
-            12.5,
-            t.text_dim,
-            format!("{} {}", count_label(u.folders.files), crate::i18n::tr("photos are read from library folders on the server (not copied).")),
-        );
+        ui.add_space(3.0);
+        text(ui, 12.5, t.text_dim, format!("{} {}", count_label(u.folders.files), crate::i18n::tr("photos from library folders, not copied")));
+    }
+    ui.add_space(12.0);
+}
+
+// --------------------------------------------------------------------------------------- Footer
+
+/// Pause (or Resume) and Sync Now side by side, then the gear (Settings ▸ Sync).
+fn footer(ui: &mut egui::Ui, t: &Tokens, v: &View, act: &mut Option<Act>) {
+    const GAP: f32 = 8.0;
+    let paused = v.state == "paused";
+    let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), BUTTON_H), Sense::hover());
+    let gear = Rect::from_min_size(pos2(r.right() - BUTTON_H, r.top()), vec2(BUTTON_H, BUTTON_H));
+    let half = ((gear.left() - GAP - r.left() - GAP) / 2.0).max(40.0);
+    let pause = Rect::from_min_size(r.min, vec2(half, BUTTON_H));
+    let now = Rect::from_min_size(pos2(pause.right() + GAP, r.top()), vec2(half, BUTTON_H));
+    let (label, icon) = if paused { ("Resume", Icon::Play) } else { ("Pause", Icon::Pause) };
+    if capsule(ui, t, pause, "syncPause", label, Face::Label(Some(icon)), false) {
+        *act = Some(Act::PauseToggle);
+    }
+    if capsule(ui, t, now, "syncNow", "Sync Now", Face::Label(Some(Icon::Refresh)), true) {
+        *act = Some(Act::SyncNow);
+    }
+    if capsule(ui, t, gear, "syncSettings", "Sync Settings", Face::Icon(Icon::Gear), false) {
+        *act = Some(Act::Settings);
     }
 }
 
-// ------------------------------------------------------------------------------------- Footer
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-/// Pause (or resume), Sync Now and Settings, side by side.
-fn footer(ui: &mut egui::Ui, t: &Tokens, v: &View, act: &mut Option<Act>) {
-    let paused = v.state == "paused";
-    let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), ROW), Sense::hover());
-    let cell = |x0: f32, x1: f32| Rect::from_min_max(pos2(r.left() + x0, r.top()), pos2(r.left() + x1, r.bottom()));
-    let w = r.width();
-    let gear = cell(w - 52.0, w);
-    let now = cell(w - 52.0 - 112.0, w - 52.0);
-    let pause = cell(0.0, w - 52.0 - 112.0);
-    let press = |rect: Rect, id: &str, label: &str, icon: Icon, left: bool, color: Color32, ui: &mut egui::Ui| -> bool {
-        let resp = ui.interact(rect, egui::Id::new(("sync-status", id)), Sense::click());
-        resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
-        register(ui.ctx(), format!("button:{id}"), rect);
-        let c = if resp.is_pointer_button_down_on() { color.gamma_multiply(0.6) } else { color };
-        let p = ui.painter();
-        let icon_r = |x: f32| Rect::from_center_size(pos2(x, rect.center().y), vec2(20.0, 20.0));
-        if label.is_empty() {
-            paint(p, icon_r(rect.center().x), icon, c);
-        } else {
-            let g = p.layout_no_wrap(crate::i18n::tr(label).to_string(), t.font(15.0), c);
-            let x0 = if left { rect.left() + 16.0 } else { rect.center().x - (g.size().x + 26.0) / 2.0 };
-            paint(p, icon_r(x0 + 10.0), icon, c);
-            p.galley(pos2(x0 + 26.0, rect.center().y - g.size().y / 2.0), g, c);
-        }
-        resp.clicked()
-    };
-    if press(
-        pause,
-        "syncPause",
-        if paused { "Resume syncing" } else { "Pause syncing" },
-        if paused { Icon::Play } else { Icon::Pause },
-        true,
-        t.text,
-        ui,
-    ) {
-        *act = Some(Act::PauseToggle);
+    #[test]
+    fn ink_reads_on_its_fill() {
+        assert_eq!(ink_on(Color32::from_rgb(0xff, 0xd6, 0x0a)), Color32::BLACK, "dark mode's yellow");
+        assert_eq!(ink_on(Color32::from_rgb(0xff, 0x95, 0x00)), Color32::WHITE, "light mode's orange");
+        assert_eq!(ink_on(Color32::from_rgb(0xe3, 0xa8, 0x3c)), Color32::BLACK, "the desktop's amber");
+        assert_eq!(ink_on(Color32::from_rgb(0xff, 0x3b, 0x30)), Color32::WHITE);
     }
-    if press(now, "syncNow", "Sync Now", Icon::Refresh, false, t.accent, ui) {
-        *act = Some(Act::SyncNow);
-    }
-    if press(gear, "syncSettings", "", Icon::Gear, false, t.text_dim, ui) {
-        *act = Some(Act::Settings);
+
+    #[test]
+    fn rows_say_how_far() {
+        let r = Row::new(Glyph::Alert, Color32::RED, "x").value("1 of 2").fraction(0.5).detail("").detail("why");
+        assert_eq!((r.value.as_str(), r.fraction, r.detail.len()), ("1 of 2", Some(0.5), 1), "an empty detail adds no line");
+        assert!(fraction(1, 0) <= 0.0, "nothing to do is no progress, not a division by zero");
+        assert_eq!(of(26, 182), "26 of 182");
+        assert_eq!((photos(1).as_str(), photos(1200).as_str()), ("1 photo", "1,200 photos"));
     }
 }

@@ -310,6 +310,17 @@ mod tests {
     }
 
     #[test]
+    fn server_image_copies_the_bundle_directory() {
+        // The Docker image copies the bundle out of `target/<SITE_DIR>`; pointing it anywhere else
+        // (it once said `target/web`, the cargo profile directory) ships a server without
+        // index.html, which answers `/` with {"error":"not found"} while /admin still works.
+        let dockerfile = std::fs::read_to_string(root().join("apps/lightcraft-server/Dockerfile")).unwrap();
+        let copies = dockerfile.lines().any(|l| l.contains(&format!("find target/{SITE_DIR} ")) && l.contains("cp "));
+        assert!(copies, "apps/lightcraft-server/Dockerfile no longer copies target/{SITE_DIR}");
+        assert!(dockerfile.contains("test -f /out/index.html"), "the Dockerfile must fail the build when the bundle has no index.html");
+    }
+
+    #[test]
     fn wasm_mime() {
         assert_eq!(mime(Path::new("a/lightcraft_web_bg.wasm")), "application/wasm");
         assert_eq!(mime(Path::new("index.html")), "text/html; charset=utf-8");
