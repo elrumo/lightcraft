@@ -5,7 +5,7 @@
 
 use std::sync::mpsc::Sender;
 
-use lightcraft_engine::sync::{Body, Done, Task};
+use lightcraft_engine::cloud_sync::{Body, Done, Task};
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
 
@@ -39,7 +39,7 @@ async fn run(task: &Task, backend: Option<&Backend>) -> Result<Done, String> {
     match task {
         Task::Proxies { id, original, smart, mini } => {
             let bytes = backend.read(original).await?.ok_or_else(|| format!("{original}: not in browser storage"))?;
-            let (s, m) = lightcraft_engine::smart::encode_pair(&bytes, lightcraft_engine::sync::MINI_EDGE)?;
+            let (s, m) = lightcraft_engine::smart::encode_pair(&bytes, lightcraft_engine::cloud_sync::MINI_EDGE)?;
             backend.write(smart, &s).await?;
             backend.write(mini, &m).await?;
             Ok(Done { id: *id, status: 200, body: String::new() })

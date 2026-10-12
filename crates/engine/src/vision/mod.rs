@@ -437,7 +437,7 @@ impl Vision {
 
     /// Start downloading the model on a background thread. `Ok(false)` when it is installed or
     /// downloading already.
-    pub fn start_download(&self) -> Result<bool, String> {
+    pub fn start_download(&self, activity: &crate::activity::Activity) -> Result<bool, String> {
         if !self.local_available() {
             return Err("natural-language search is not available in this build".into());
         }
@@ -455,10 +455,21 @@ impl Vision {
                     dir.display()
                 ));
             }
-            self.download.start("search", lightcraft_vision::models::SIGLIP_FILES, mirrors, dir, lightcraft_vision::models::Options::default())
+            self.download.start(
+                "search",
+                lightcraft_vision::models::SIGLIP_FILES,
+                mirrors,
+                dir,
+                lightcraft_vision::models::Options::default(),
+                activity,
+                "SigLIP 2",
+            )
         }
         #[cfg(not(feature = "vision"))]
-        Ok(false)
+        {
+            let _ = activity;
+            Ok(false)
+        }
     }
 
     /// Stop a running download (its partial files stay, to resume). False when none runs.
@@ -521,7 +532,7 @@ impl Vision {
 
     /// Start downloading the text-reading models on a background thread. `Ok(false)` when they
     /// are installed or downloading already.
-    pub fn start_text_download(&self) -> Result<bool, String> {
+    pub fn start_text_download(&self, activity: &crate::activity::Activity) -> Result<bool, String> {
         if !self.text_available() {
             return Err("reading the text in photos is not available in this build".into());
         }
@@ -533,10 +544,13 @@ impl Vision {
             let dir = self.text_dir().ok_or("no folder is set for the search models")?;
             let env = std::env::var(lightcraft_vision::models::MIRRORS_ENV).ok();
             let parts = lightcraft_vision::models::ocr_downloads(&dir, env.as_deref(), self.mirrors_file.as_deref());
-            self.text_download.start_parts("text", parts, lightcraft_vision::models::Options::default())
+            self.text_download.start_parts("text", parts, lightcraft_vision::models::Options::default(), activity, "PP-OCRv6 small")
         }
         #[cfg(not(feature = "vision"))]
-        Ok(false)
+        {
+            let _ = activity;
+            Ok(false)
+        }
     }
 
     /// Stop a running text-model download (its partial files stay, to resume). False when none runs.
@@ -637,7 +651,7 @@ impl Vision {
 
     /// Start downloading the face models on a background thread. `Ok(false)` when they are
     /// installed or downloading already.
-    pub fn start_faces_download(&self) -> Result<bool, String> {
+    pub fn start_faces_download(&self, activity: &crate::activity::Activity) -> Result<bool, String> {
         if !self.faces_available() {
             return Err("finding people in photos is not available in this build".into());
         }
@@ -649,10 +663,13 @@ impl Vision {
             let dir = self.faces_dir().ok_or("no folder is set for the search models")?;
             let env = std::env::var(lightcraft_vision::models::MIRRORS_ENV).ok();
             let parts = lightcraft_vision::models::face_downloads(&dir, env.as_deref(), self.mirrors_file.as_deref());
-            self.faces_download.start_parts("faces", parts, lightcraft_vision::models::Options::default())
+            self.faces_download.start_parts("faces", parts, lightcraft_vision::models::Options::default(), activity, "YuNet + SFace")
         }
         #[cfg(not(feature = "vision"))]
-        Ok(false)
+        {
+            let _ = activity;
+            Ok(false)
+        }
     }
 
     /// Stop a running face-model download (its partial files stay, to resume). False when none runs.
@@ -1145,6 +1162,9 @@ pub fn neutral_from_preview(photo: &lightcraft_catalog::Photo, preview: &std::pa
     let edge = edge.clamp(16, SourceLevel::Preview.max_edge());
     let level = SourceLevel::for_size(edge);
     let job = RenderJob {
+        request_id: 0,
+        cache_generation: 0,
+        source_key: None,
         photo: photo.id,
         level,
         source: SourceRef::Smart { path: preview.to_path_buf() },
@@ -1156,6 +1176,7 @@ pub fn neutral_from_preview(photo: &lightcraft_catalog::Photo, preview: &std::pa
         cache: None,
         stages: None,
         view_cache: None,
+        display: None,
     };
     guard::catch("rendering a photo for search", || job.run().rendered.map(|r| r.image))?
 }

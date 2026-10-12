@@ -560,7 +560,7 @@ fn a_zoomed_photo_is_not_covered_by_its_neighbour() {
     use crate::state::Zoom;
     let mut h = first_photo([390.0, 844.0]);
     let next = h.app.session.visible()[1];
-    h.app.ui.zoom = Zoom::Percent(300);
+    h.app.ui.zoom = Zoom::Percent(300.0);
     h.app.ui.zoom_anim = false;
     h.settle(SETTLE);
     // the next photo's render, in a colour no photo has: one frame, before a refresh can replace it

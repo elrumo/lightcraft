@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use egui::{Color32, Margin, Rect, Sense, Stroke, pos2, vec2};
 use lightcraft_catalog::sync::proto;
-use lightcraft_engine::sync::{ConflictInfo, Transfer, Transfers};
+use lightcraft_engine::cloud_sync::{ConflictInfo, Transfer, Transfers};
 use serde_json::json;
 
 use crate::LightcraftApp;

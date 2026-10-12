@@ -11,13 +11,13 @@
 //! ([`ThumbIndex`]).
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use lightcraft_engine::catalog::Source;
 use lightcraft_engine::develop::{DevelopSettings, EmbeddedLens};
 use lightcraft_engine::media::{DecodedSource, MediaCache, RenderJob, SourceLevel, SourceRef};
 use lightcraft_engine::pipeline::{Quality, RenderRequest, Rendered, SourceInfo, StageCache};
-use lightcraft_preview::Lru;
+use lightcraft_preview::{Hash128, Lru, PreviewCache};
 use serde::{Deserialize, Serialize};
 
 use crate::store::hash_of_path;
@@ -25,6 +25,10 @@ use crate::store::hash_of_path;
 /// One render request for a worker.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WireJob {
+    #[serde(default)]
+    pub cache_generation: u64,
+    #[serde(default)]
+    pub source_identity: Option<String>,
     pub level: SourceLevel,
     pub origin: Source,
     /// Decode the source at most this long.
@@ -32,6 +36,8 @@ pub struct WireJob {
     pub raw: bool,
     #[serde(default)]
     pub relative_wb: bool,
+    #[serde(default)]
+    pub legacy_relative_wb: bool,
     pub as_shot_temp: f64,
     pub as_shot_tint: f64,
     pub lens: Option<EmbeddedLens>,
@@ -49,6 +55,9 @@ pub struct WireJob {
     /// The request's diagnostic overlay (`Overlay::to_parts`).
     #[serde(default)]
     pub overlay: (u8, f64),
+    /// Render only this window `[x, y, w, h]` of the output `max_w × max_h` describes (a zoomed view).
+    #[serde(default)]
+    pub window: Option<[usize; 4]>,
 }
 
 impl WireJob {
@@ -61,11 +70,14 @@ impl WireJob {
             SourceRef::Synced { max_edge, .. } | SourceRef::Bytes { max_edge, .. } => *max_edge,
         };
         WireJob {
+            cache_generation: job.cache_generation,
+            source_identity: job.source_key.map(|key| key.to_string()),
             level: job.level,
             origin: job.origin.clone(),
             max_edge,
             raw: job.info.raw,
             relative_wb: job.info.relative_wb,
+            legacy_relative_wb: job.info.legacy_relative_wb,
             as_shot_temp: job.info.as_shot_temp,
             as_shot_tint: job.info.as_shot_tint,
             lens: job.info.lens,
@@ -78,6 +90,7 @@ impl WireJob {
             thumb_cached,
             stages: job.stages.is_some().then(|| view.to_string()),
             overlay: job.request.overlay.to_parts(),
+            window: job.request.window.map(|w| [w.x, w.y, w.w, w.h]),
         }
     }
 
@@ -88,6 +101,7 @@ impl WireJob {
             as_shot_tint: self.as_shot_tint,
             lens: self.lens,
             relative_wb: self.relative_wb,
+            legacy_relative_wb: self.legacy_relative_wb,
             ..Default::default()
         }
     }
@@ -103,14 +117,16 @@ impl WireJob {
             space: lightcraft_engine::pipeline::OutputSpace::Srgb,
             depth: lightcraft_engine::pipeline::OutputDepth::U8,
             proof: None,
+            window: self.window.map(|[x, y, w, h]| lightcraft_engine::pipeline::PixelWindow { x, y, w, h }),
+            display: None,
         }
     }
 
     /// Identifies the decoded source this job needs.
     fn source_key(&self) -> String {
         match &self.origin {
-            Source::File { path } => format!("{}:{path}", self.max_edge),
-            Source::Demo { scene } => format!("{}:demo:{scene}", self.max_edge),
+            Source::File { path } => format!("{}:{:?}:{}:{path}", self.cache_generation, self.source_identity, self.max_edge),
+            Source::Demo { scene } => format!("{}:{:?}:{}:demo:{scene}", self.cache_generation, self.source_identity, self.max_edge),
         }
     }
 
@@ -123,9 +139,9 @@ impl WireJob {
 /// Storage keys of a synced photo's previews, best for `max_edge` first (the mini preview serves
 /// thumbnails, the smart one everything larger).
 pub fn proxy_keys(hash: &str, max_edge: usize) -> [String; 2] {
-    let (smart, mini) = lightcraft_engine::sync::store_proxy_names(hash);
+    let (smart, mini) = lightcraft_engine::cloud_sync::store_proxy_names(hash);
     let (smart, mini) = (format!("proxies/{smart}"), format!("proxies/{mini}"));
-    if max_edge <= lightcraft_engine::sync::MINI_EDGE { [mini, smart] } else { [smart, mini] }
+    if max_edge <= lightcraft_engine::cloud_sync::MINI_EDGE { [mini, smart] } else { [smart, mini] }
 }
 
 pub fn thumb_storage_key(hex: &str) -> String {
@@ -172,13 +188,13 @@ impl WorkerCore {
                     // the catalog's); kept only when it is the right one for this size
                     (Source::File { .. }, Some(bytes)) if lightcraft_engine::smart::is_smart_preview(bytes) => {
                         let (mut image, camera_tone) = lightcraft_engine::smart::decode(bytes)?;
-                        let small = image.width.max(image.height) <= lightcraft_engine::sync::MINI_EDGE;
+                        let small = image.width.max(image.height) <= lightcraft_engine::cloud_sync::MINI_EDGE;
                         if image.width.max(image.height) > job.max_edge {
                             use lightcraft_raster::resample::{Filter, fit};
                             image = fit(&image, job.max_edge, job.max_edge, Filter::Mitchell);
                         }
-                        let src = DecodedSource { image: Arc::new(image), info: None, camera_tone };
-                        if small && job.max_edge > lightcraft_engine::sync::MINI_EDGE {
+                        let src = DecodedSource { image: Arc::new(image), info: None, camera_tone, denoised: None };
+                        if small && job.max_edge > lightcraft_engine::cloud_sync::MINI_EDGE {
                             // the smart preview is on its way: don't keep the stand-in
                             let info = src.info_or(job.info());
                             return Ok(lightcraft_engine::pipeline::render(&src.image, &info, &job.settings, &job.request()));
@@ -198,13 +214,18 @@ impl WorkerCore {
             }
         };
         let info = src.info_or(job.info());
-        Ok(match &job.stages {
+        let mut rendered = match &job.stages {
             Some(view) => {
                 let st = self.stages.entry(view.clone()).or_default().clone();
                 lightcraft_engine::pipeline::render_cached(&src.image, &info, &job.settings, &job.request(), &st)
             }
             None => lightcraft_engine::pipeline::render(&src.image, &info, &job.settings, &job.request()),
-        })
+        };
+        // an HDR edit's histogram shows its HDR range (as on native)
+        if let Some(h) = lightcraft_engine::pipeline::hdr_histogram(&src.image, &info, &job.settings, &job.request()) {
+            rendered.histogram = h;
+        }
+        Ok(rendered)
     }
 }
 
@@ -212,6 +233,8 @@ impl WorkerCore {
 /// pruned like the native disk cache (least recently used first, down to 80 % of the budget).
 #[derive(Default, Serialize, Deserialize)]
 pub struct ThumbIndex {
+    #[serde(default)]
+    namespace: u64,
     /// hex key → (bytes, last use).
     entries: HashMap<String, (u64, u64)>,
     clock: u64,
@@ -222,6 +245,24 @@ pub struct ThumbIndex {
 }
 
 impl ThumbIndex {
+    pub fn namespace(&self) -> u64 {
+        self.namespace
+    }
+
+    /// A persistent new namespace prevents late old workers restoring an invalidated disk hit.
+    pub fn cache_key(&self, key: Hash128) -> String {
+        if self.namespace == 0 {
+            return key.to_string();
+        }
+        lightcraft_preview::Hasher128::new().str(&key.to_string()).str("cleared").u64(self.namespace).finish().to_string()
+    }
+
+    pub fn invalidate(&mut self) -> Vec<String> {
+        self.namespace = self.namespace.wrapping_add(1);
+        self.total = 0;
+        self.dirty = true;
+        self.entries.drain().map(|(key, _)| key).collect()
+    }
     pub fn from_json(bytes: &[u8]) -> ThumbIndex {
         let mut i: ThumbIndex = serde_json::from_slice(bytes).unwrap_or_default();
         i.total = i.entries.values().map(|e| e.0).sum();
@@ -299,10 +340,123 @@ impl ThumbIndex {
     }
 }
 
+/// Which rendered-thumbnail cache, at which generation, the stored thumbnails ([`ThumbIndex`])
+/// belong to (main thread). Clearing the previews bumps the cache's generation, and opening
+/// another library replaces the cache: either makes every stored thumbnail obsolete.
+pub struct CacheWatch(Option<(Weak<PreviewCache>, u64)>);
+
+impl CacheWatch {
+    /// Watch `active`, the session's cache when the workers start: the persisted index belongs
+    /// to it at its current generation. (Without this baseline, the first observation after a
+    /// clear would only record the cleared generation and keep the obsolete thumbnails.)
+    pub fn new(active: &Arc<PreviewCache>) -> CacheWatch {
+        CacheWatch(Some((Arc::downgrade(active), active.generation())))
+    }
+
+    /// The watched cache, while it's alive.
+    pub fn cache(&self) -> Option<Arc<PreviewCache>> {
+        self.0.as_ref().and_then(|(cache, _)| cache.upgrade())
+    }
+
+    /// `cache` at `generation` is the active one now. If it was cleared or replaced since the
+    /// last observation, invalidate `index` and return the keys whose files should be deleted.
+    pub fn observe(&mut self, cache: &Arc<PreviewCache>, generation: u64, index: &mut ThumbIndex) -> Vec<String> {
+        let changed = self.0.as_ref().is_some_and(|(old, g)| old.as_ptr() != Arc::as_ptr(cache) || *g != generation);
+        self.0 = Some((Arc::downgrade(cache), generation));
+        if changed { index.invalidate() } else { Vec::new() }
+    }
+}
+
+/// Hands out the positions that render workers will have in the main thread's worker list.
+/// A worker that fails to start gets no position, so the position a callback captures stays the
+/// index of its own worker in that list (#229).
+#[derive(Debug, Default)]
+pub struct WorkerSlots {
+    next: usize,
+}
+
+impl WorkerSlots {
+    /// The position the worker being started will have, if it comes up.
+    pub fn peek(&self) -> usize {
+        self.next
+    }
+
+    /// The worker at [`Self::peek`] came up and was added to the list.
+    pub fn commit(&mut self) {
+        self.next += 1;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use lightcraft_engine::Session;
+
+    // Issue #229: a failed worker attempt must not shift the positions of the workers after it
+    #[test]
+    fn a_failed_worker_attempt_leaves_no_gap_in_the_slots() {
+        let mut slots = WorkerSlots::default();
+        let mut taken = Vec::new();
+        for attempt_ok in [false, true, true, true] {
+            let i = slots.peek();
+            if attempt_ok {
+                taken.push(i);
+                slots.commit();
+            }
+        }
+        assert_eq!(taken, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn clearing_index_changes_disk_namespace_and_survives_restart() {
+        let key = lightcraft_preview::hash_bytes(b"thumbnail");
+        let mut index = ThumbIndex::default();
+        let old = index.cache_key(key);
+        assert_eq!(old, key.to_string());
+        index.insert(&old, 100);
+        assert_eq!(index.invalidate(), vec![old.clone()]);
+        let new = index.cache_key(key);
+        assert_ne!(old, new);
+        index.insert(&new, 100);
+        let reopened = ThumbIndex::from_json(&index.to_json());
+        assert_eq!(reopened.cache_key(key), new);
+        assert!(!reopened.contains(&old));
+        assert!(reopened.contains(&new));
+    }
+
+    // Issue #323: a worker given a zoomed view's window renders that window, not the whole frame
+    #[test]
+    fn a_window_job_crosses_the_wire_and_renders_the_same_window() {
+        use lightcraft_engine::pipeline::PixelWindow;
+        let mut s = Session::with_demo();
+        let id = s.visible_cloned()[0];
+        let win = PixelWindow { x: 300, y: 200, w: 160, h: 120 };
+        let job = s.region_job(id, 1920, 1280, win, true).unwrap();
+        let wire = WireJob::from_job(&job, false, "Region");
+        let wire: WireJob = serde_json::from_str(&serde_json::to_string(&wire).unwrap()).unwrap();
+        assert_eq!(wire.request().window, Some(win));
+        let mut core = WorkerCore::default();
+        let a = core.render(&wire, None).unwrap();
+        let b = job.run().rendered.unwrap();
+        assert_eq!((a.image.width, a.image.height), (160, 120));
+        assert_eq!((b.image.width, b.image.height), (160, 120));
+        // the worker renders on the CPU; the engine job uses a GPU when the machine has one, which
+        // stays within docs/gpu-pipeline.md's bound (≤ 3 LSB per channel) rather than bit-exact
+        let max = a.image.data.iter().zip(&b.image.data).flat_map(|(p, q)| (0..3).map(move |c| p[c].abs_diff(q[c]))).max();
+        assert!(max.is_some_and(|m| m <= 3), "max channel difference {max:?}");
+    }
+
+    // a job from before windows existed has none
+    #[test]
+    fn a_job_without_a_window_field_has_no_window() {
+        let mut s = Session::with_demo();
+        let id = s.visible_cloned()[0];
+        let wire = WireJob::from_job(&s.thumb_job(id, 128).unwrap(), false, "Thumb");
+        let mut v = serde_json::to_value(&wire).unwrap();
+        v.as_object_mut().unwrap().remove("window");
+        let old: WireJob = serde_json::from_value(v).unwrap();
+        assert_eq!(old.request().window, None);
+    }
 
     #[test]
     fn wire_job_renders_like_the_engine() {
@@ -330,11 +484,14 @@ mod tests {
         let hash = crate::store::content_hash(&bytes);
         let origin = Source::File { path: crate::store::original_path(&hash, "a.png") };
         let job = WireJob {
+            cache_generation: 0,
+            source_identity: None,
             level: SourceLevel::Thumb,
             origin,
             max_edge: 512,
             raw: false,
             relative_wb: false,
+            legacy_relative_wb: false,
             as_shot_temp: 6500.0,
             as_shot_tint: 0.0,
             lens: None,
@@ -347,6 +504,7 @@ mod tests {
             thumb_cached: false,
             stages: Some("Main".into()),
             overlay: (0, 0.0),
+            window: None,
         };
         let mut core = WorkerCore::default();
         assert_eq!(core.needs_original(&job).as_deref(), Some(hash.as_str()));
@@ -354,6 +512,68 @@ mod tests {
         let r = core.render(&job, Some(&bytes)).unwrap();
         assert_eq!(r.image.width, 32);
         assert_eq!(core.needs_original(&job), None, "decoded source is kept");
+        let mut reloaded = job.clone();
+        reloaded.source_identity = Some("changed content".into());
+        assert_eq!(core.needs_original(&reloaded).as_deref(), Some(hash.as_str()), "content reload must not reuse an old decoded source");
+        let mut refreshed = job.clone();
+        refreshed.cache_generation = 1;
+        assert_eq!(core.needs_original(&refreshed).as_deref(), Some(hash.as_str()), "explicit refresh must not reuse the old decoded source");
+    }
+
+    /// The persisted index as a restarted page loads it: one stored thumbnail.
+    fn persisted_index(key: Hash128) -> (ThumbIndex, String) {
+        let mut index = ThumbIndex::default();
+        let hex = index.cache_key(key);
+        index.insert(&hex, 100);
+        (ThumbIndex::from_json(&index.to_json()), hex)
+    }
+
+    #[test]
+    fn clearing_previews_before_the_first_request_invalidates_stored_thumbnails() {
+        let key = lightcraft_preview::hash_bytes(b"thumbnail");
+        let (mut index, old) = persisted_index(key);
+        let cache = Arc::new(PreviewCache::memory(1 << 20));
+        let mut watch = CacheWatch::new(&cache);
+        let mut gone = Vec::new();
+        // each frame (`Workers::finished`) observes the watched cache, even with no requests
+        let mut frame = |watch: &mut CacheWatch, index: &mut ThumbIndex| {
+            if let Some(c) = watch.cache() {
+                gone.extend(watch.observe(&c, c.generation(), index));
+            }
+        };
+        frame(&mut watch, &mut index); // an empty filtered view: no render request yet
+        cache.clear(); // File ▸ Clear Preview Cache
+        frame(&mut watch, &mut index);
+        // the filter is removed: the first thumbnail request (`Workers::try_start`)
+        gone.extend(watch.observe(&cache, cache.generation(), &mut index));
+        let disk_key = index.cache_key(key);
+        assert!(!index.touch(&disk_key), "the pre-clear thumbnail must not be read back");
+        assert_eq!(gone, vec![old.clone()], "the stored file is deleted");
+        assert_ne!(disk_key, old, "a fresh namespace: a late old write can't come back");
+        assert!(index.dirty, "the invalidated index is saved");
+    }
+
+    #[test]
+    fn replacing_the_cache_before_the_first_request_invalidates_stored_thumbnails() {
+        let key = lightcraft_preview::hash_bytes(b"thumbnail");
+        let (mut index, old) = persisted_index(key);
+        let first = Arc::new(PreviewCache::memory(1 << 20));
+        let mut watch = CacheWatch::new(&first);
+        let other = Arc::new(PreviewCache::memory(1 << 20)); // another library, generation 0 again
+        assert_eq!(watch.observe(&other, other.generation(), &mut index), vec![old]);
+    }
+
+    #[test]
+    fn a_normal_start_keeps_stored_thumbnails() {
+        let key = lightcraft_preview::hash_bytes(b"thumbnail");
+        let (mut index, old) = persisted_index(key);
+        let cache = Arc::new(PreviewCache::memory(1 << 20));
+        let mut watch = CacheWatch::new(&cache);
+        for _ in 0..3 {
+            assert!(watch.observe(&cache, cache.generation(), &mut index).is_empty());
+        }
+        assert_eq!(index.cache_key(key), old);
+        assert!(index.touch(&old), "persisted thumbnails survive a restart");
     }
 
     /// A synced photo whose original isn't in this browser renders from its downloaded
@@ -361,14 +581,17 @@ mod tests {
     #[test]
     fn worker_renders_synced_photos_from_their_previews() {
         let png = crate::store::png_bytes(1200, 800);
-        let (smart, mini) = lightcraft_engine::smart::encode_pair(&png, lightcraft_engine::sync::MINI_EDGE).unwrap();
+        let (smart, mini) = lightcraft_engine::smart::encode_pair(&png, lightcraft_engine::cloud_sync::MINI_EDGE).unwrap();
         let hash = crate::store::content_hash(&png);
         let job = |max_edge: usize, size: usize| WireJob {
+            cache_generation: 0,
+            source_identity: None,
             level: if max_edge <= 512 { SourceLevel::Thumb } else { SourceLevel::Preview },
             origin: Source::File { path: crate::store::original_path(&hash, "a.png") },
             max_edge,
             raw: false,
             relative_wb: false,
+            legacy_relative_wb: false,
             as_shot_temp: 6500.0,
             as_shot_tint: 0.0,
             lens: None,
@@ -381,6 +604,7 @@ mod tests {
             thumb_cached: false,
             stages: None,
             overlay: (0, 0.0),
+            window: None,
         };
         assert_eq!(proxy_keys(&hash, 512)[0], format!("proxies/{hash}.lcsm"), "the mini preview first for thumbnails");
         assert_eq!(proxy_keys(&hash, 2560)[0], format!("proxies/{hash}.lcsp"));

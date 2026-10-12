@@ -6,8 +6,11 @@
 //!   profiles (matrix/TRC exactly, LUT/CMYK via the `moxcms` CMS), 16-bit and float precision are
 //!   preserved. EXIF/XMP/ICC blobs are passed through untouched; orientation is reported, never applied.
 //! - [`to_working`] converts a decode result to linear Rec.2020 D65 (the pipeline working space).
+//! - [`read_header`] reads a file's stored dimensions and orientation from its headers, without
+//!   decoding pixels (import probes).
 //! - [`decode_thumbnail`] is the fast path for grid thumbnails (EXIF thumbnail or DCT-scaled decode).
-//! - [`encode`] writes JPEG, PNG, TIFF, lossless WebP and (native, feature `avif`) AVIF, embedding
+//! - [`encode`] writes JPEG, PNG, TIFF, lossless WebP and, on native targets, AVIF (feature `avif`) and
+//!   JPEG XL ([`encode_jxl`], feature `jxl`), embedding
 //!   ICC/EXIF/XMP. [`icc::write_matrix_trc`] builds profiles for export.
 //!
 //! No decoder panics on malformed input (property-tested).
@@ -15,16 +18,20 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod convert;
+pub mod display;
 pub mod encode;
 pub mod exif;
+pub mod gainmap;
 mod heif;
 pub mod icc;
 mod jpeg;
 pub mod jpeg_par;
 #[cfg(feature = "jxl")]
 mod jxl;
+mod jxl_encode;
 mod other;
 mod png_codec;
+pub mod proof;
 mod psd;
 mod sniff;
 pub mod space;
@@ -33,8 +40,10 @@ mod tiff_codec;
 mod webp;
 
 pub use encode::{
-    ChromaSubsampling, EncodeImage, EncodeMeta, Samples, TiffCompression, encode_avif, encode_jpeg, encode_png, encode_tiff, encode_webp_lossless,
+    ChromaSubsampling, EncodeImage, EncodeMeta, HDR_REFERENCE_WHITE_NITS, Samples, TiffCompression, encode_avif, encode_avif_pq, encode_jpeg,
+    encode_png, encode_png_pq, encode_psd, encode_tiff, encode_webp_lossless,
 };
+pub use jxl_encode::{JxlColour, JxlEffort, JxlOptions, encode_jxl};
 pub use sniff::{Format, sniff};
 pub use space::{NamedSpace, SourceSpace, SpaceOrigin, Trc};
 pub use system::{SystemDecodeFn, SystemImage, SystemPixels, clear_system_decoder, has_system_decoder, set_system_decoder};
@@ -159,10 +168,67 @@ pub fn decode(bytes: &[u8], opts: DecodeOptions) -> Result<Decoded> {
     std::panic::catch_unwind(|| decode_unguarded(bytes, format, &opts)).unwrap_or_else(|_| Err(Error::Malformed(format, "decoder panicked".into())))
 }
 
+/// What a file's headers say about its image: enough to catalogue it without decoding pixels.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Header {
+    pub format: Format,
+    /// Full-resolution stored dimensions, orientation **not** applied ([`Decoded::source_width`]).
+    pub width: u32,
+    pub height: u32,
+    /// EXIF/TIFF orientation 1..=8, 1 when absent ([`Decoded::orientation`]).
+    pub orientation: u16,
+}
+
+/// Read the stored dimensions and orientation of any format [`decode`] supports, agreeing with
+/// what a decode reports, without decoding pixels: JPEG, PNG, TIFF, WebP, PSD and HEIF are read
+/// from their headers (markers, chunks, IFD, resources, boxes). GIF, BMP and JPEG XL fall back to
+/// a small decode.
+///
+/// The header readers also refuse what a decode would refuse before reaching the pixels (an
+/// unsupported layout, compression or frame type) and files whose image data is cut short
+/// (truncated: the data runs past the end of the file, or a JPEG's markers don't reach its
+/// end-of-image marker). Damage *inside* compressed data that is all present is only found by a
+/// decode. Malformed input yields an error, never a panic (as for [`decode`], a panic inside a
+/// third-party parser is caught on unwinding targets).
+pub fn read_header(bytes: &[u8]) -> Result<Header> {
+    let format = sniff(bytes).ok_or(Error::UnknownFormat)?;
+    std::panic::catch_unwind(|| read_header_unguarded(bytes, format))
+        .unwrap_or_else(|_| Err(Error::Malformed(format, "header reader panicked".into())))
+}
+
+/// [`read_header`] without the panic guard (for fuzzing our own code paths).
+#[doc(hidden)]
+pub fn read_header_unguarded(bytes: &[u8], format: Format) -> Result<Header> {
+    let (width, height, orientation) = match format {
+        Format::Jpeg => jpeg::header(bytes)?,
+        Format::Png => png_codec::header(bytes)?,
+        Format::Tiff => tiff_codec::header(bytes)?,
+        Format::WebP => webp::header(bytes)?,
+        Format::Psd => psd::header(bytes)?,
+        Format::Heif => heif::header(bytes)?,
+        // rare here (or, for JPEG XL, without a header reader yet): a small decode, as before
+        _ => {
+            let d = decode_unguarded(bytes, format, &DecodeOptions::fit(64, 64))?;
+            (d.source_width, d.source_height, d.orientation)
+        }
+    };
+    Ok(Header { format, width, height, orientation })
+}
+
+/// Decode a JPEG preview with its enclosing container's colour space as a fallback.
+/// A JPEG carrying ICC or EXIF metadata keeps its own interpretation. The fallback is applied
+/// before transfer decoding and linear-light resizing, never to already-resampled pixels.
+pub fn decode_jpeg_with_fallback(bytes: &[u8], opts: DecodeOptions, fallback: NamedSpace) -> Result<Decoded> {
+    std::panic::catch_unwind(|| jpeg::decode_with_fallback(bytes, &opts, Some(fallback)))
+        .unwrap_or_else(|_| Err(Error::Malformed(Format::Jpeg, "decoder panicked".into())))
+}
+
 /// [`decode`] without the panic guard (for fuzzing our own code paths).
 #[doc(hidden)]
 pub fn decode_unguarded(bytes: &[u8], format: Format, opts: &DecodeOptions) -> Result<Decoded> {
     let opts = *opts;
+    // The reason a format can't be decoded lives in one place, `Format::not_decodable`.
+    let unsupported = || Err(Error::Unsupported(format, format.not_decodable().unwrap_or("not decodable in this build")));
     match format {
         Format::Jpeg => jpeg::decode(bytes, &opts),
         Format::Png => png_codec::decode(bytes, &opts),
@@ -173,13 +239,11 @@ pub fn decode_unguarded(bytes: &[u8], format: Format, opts: &DecodeOptions) -> R
         #[cfg(feature = "jxl")]
         Format::Jxl => jxl::decode(bytes, &opts),
         #[cfg(not(feature = "jxl"))]
-        Format::Jxl => Err(Error::Unsupported(format, "built without the `jxl` feature")),
-        // the system's decoder when the host installed one (iOS: ImageIO), see `system`
-        Format::Avif => {
-            system::decode(bytes, format, &opts).unwrap_or(Err(Error::Unsupported(format, "no pure-Rust, permissively licensed AV1 decoder yet")))
-        }
+        Format::Jxl => unsupported(),
+        // the system's decoder first when the host installed one (iOS: ImageIO), see `system`
         Format::Heif => system::decode(bytes, format, &opts).unwrap_or_else(|| heif::decode(bytes, &opts)),
-        Format::RawTiffLike | Format::RawOther => Err(Error::Unsupported(format, "camera raw: decode with lightcraft-raw")),
+        Format::Avif => system::decode(bytes, format, &opts).unwrap_or_else(unsupported),
+        Format::RawTiffLike | Format::RawOther => unsupported(),
     }
 }
 
@@ -223,11 +287,19 @@ pub struct ThumbnailOptions {
     /// smaller size). Defaults to `max_edge`, i.e. only previews that need no upscaling. Lower it
     /// (e.g. 160 for typical EXIF thumbnails) for an instant placeholder.
     pub min_embedded_edge: u32,
+    /// Maximum source pixels for fallback decoding (default 64 MP). Non-JPEG formats
+    /// decode at source resolution before resizing, so output size does not bound memory.
+    #[serde(default = "thumbnail_max_pixels")]
+    pub max_pixels: u64,
+}
+
+fn thumbnail_max_pixels() -> u64 {
+    64_000_000
 }
 
 impl ThumbnailOptions {
     pub fn new(max_edge: u32) -> Self {
-        ThumbnailOptions { max_edge, min_embedded_edge: max_edge }
+        ThumbnailOptions { max_edge, min_embedded_edge: max_edge, max_pixels: thumbnail_max_pixels() }
     }
 }
 
@@ -246,7 +318,7 @@ pub fn decode_thumbnail_with(bytes: &[u8], opts: &ThumbnailOptions) -> Result<Th
     {
         return Ok(t);
     }
-    let d = decode(bytes, DecodeOptions::fit(max_edge, max_edge))?;
+    let d = decode(bytes, DecodeOptions { max_size: Some((max_edge, max_edge)), max_pixels: opts.max_pixels })?;
     Ok(Thumbnail {
         image: d.to_srgb8(),
         orientation: d.orientation,

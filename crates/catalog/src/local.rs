@@ -284,6 +284,8 @@ impl Op {
             | Op::SetFile { id, .. }
             | Op::Relink { id, .. }
             | Op::SetContent { id, .. }
+            | Op::SetEmbeddedLens { id, .. }
+            | Op::SetAsShotWb { id, .. }
             | Op::SetServerPath { id, .. } => out(*id),
             Op::AddAlbum { album } => {
                 album.photos.iter().for_each(|p| out(*p));
@@ -296,10 +298,13 @@ impl Op {
             Op::RemoveAlbum { .. }
             | Op::RenameAlbum { .. }
             | Op::MoveAlbum { .. }
+            | Op::SetAlbumOrder { .. }
             | Op::SetAlbumRules { .. }
             | Op::RemoveStack { .. }
             | Op::SetLabelName { .. }
-            | Op::SetBrowsed { .. } => {}
+            | Op::SetKeyword { .. }
+            | Op::SetBrowsed { .. }
+            | Op::SetFolderRecord { .. } => {}
         }
     }
 }

@@ -217,7 +217,12 @@ impl eframe::App for App {
             ui.scope_builder(egui::UiBuilder::new().max_rect(safe), |ui| h.app.ui(ui));
         }
     }
-    fn on_exit(&mut self) {
+}
+
+/// eframe drops the app when it exits. (Not `eframe::App::on_exit`: its signature changes with
+/// eframe's `glow` feature, which the desktop app turns on and a workspace build unifies.)
+impl Drop for App {
+    fn drop(&mut self) {
         if let Ok(mut h) = self.0.try_borrow_mut() {
             h.lifecycle(Lifecycle::WillTerminate);
         }
@@ -500,7 +505,7 @@ pub fn run() -> eframe::Result {
     lightcraft_codecs::set_system_decoder(&[lightcraft_codecs::Format::Heif, lightcraft_codecs::Format::Avif], imageio_decode);
     let tmp = std::env::temp_dir();
     clean_staging(&tmp);
-    let (prefs, prefs_warning, keep_prefs_file) = lightcraft_ui_egui::prefs::load_prefs();
+    let (prefs, prefs_warning, keep_prefs_file) = lightcraft_ui_egui::prefs::load_prefs(false);
     if let Some(p) = &prefs {
         lightcraft_engine::gpu::set_enabled(p.settings.gpu);
     }
@@ -608,7 +613,7 @@ mod tests {
         std::fs::write(staged.join("IMG_0001.png"), png).unwrap();
         h.joined(&ctx, Picked { files: vec![staged.join("IMG_0001.png")], failed: vec!["IMG_0002: gone".into()], cancelled: false });
         assert!(h.app.scan.is_some(), "the review scans the picked copies");
-        assert!(h.app.ui.toast.as_ref().is_some_and(|(t, _)| t.contains("couldn't be")), "{:?}", h.app.ui.toast);
+        assert!(h.app.ui.toast.as_ref().is_some_and(|(t, _, _)| t.contains("couldn't be")), "{:?}", h.app.ui.toast);
         drop(h);
         let _ = std::fs::remove_dir_all(&root);
     }

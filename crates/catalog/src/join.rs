@@ -277,6 +277,7 @@ fn join_albums(local: &Catalog, server: &mut Catalog, outbox: &mut Outbox, photo
                     cover: a.cover.and_then(|c| photos.get(&c).copied()),
                     smart,
                     quick: a.quick,
+                    order: a.order,
                 };
                 if apply(server, outbox, Op::AddAlbum { album }) {
                     placed.insert(a.id, id);

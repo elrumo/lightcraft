@@ -183,7 +183,7 @@ impl Enhancer {
 
     /// Start downloading model `id` on a background thread. `Ok(false)` when it is installed or
     /// a download is running already. The caller must have the user's consent.
-    pub fn start_download(&self, id: &str) -> std::result::Result<bool, String> {
+    pub fn start_download(&self, id: &str, activity: &crate::activity::Activity) -> std::result::Result<bool, String> {
         #[cfg(feature = "enhance")]
         {
             let spec = Self::spec(id)?;
@@ -195,7 +195,7 @@ impl Enhancer {
             if mirrors.is_empty() {
                 return Err(spec.no_mirrors_message());
             }
-            let started = self.download.start(spec.id, spec.files, mirrors, dir, lightcraft_fetch::Options::default())?;
+            let started = self.download.start(spec.id, spec.files, mirrors, dir, lightcraft_fetch::Options::default(), activity, spec.label)?;
             if started {
                 *self.fetching.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(spec.id);
             }
@@ -203,7 +203,7 @@ impl Enhancer {
         }
         #[cfg(not(feature = "enhance"))]
         {
-            let _ = id;
+            let _ = (id, activity);
             Err("AI enhancement is not available in this build".into())
         }
     }
@@ -304,7 +304,7 @@ impl Session {
             ));
         }
         let model = self.enhancer.model_file(SUPER_RES_MODEL).ok_or("the Super Resolution model has no file")?;
-        let meta = crate::export::export_metadata(&photo, &export);
+        let meta = crate::export::export_metadata(&photo, &self.catalog, &export);
         let render = self.export_job(id, w, h, lightcraft_pipeline::OutputSpace::Srgb, lightcraft_pipeline::OutputDepth::U16)?;
         Ok(SuperResJob { render, export, meta, model, dir: folder, stem, max_output_pixels: max, tile: self.enhancer.tile, photo: id, size: (w, h) })
     }

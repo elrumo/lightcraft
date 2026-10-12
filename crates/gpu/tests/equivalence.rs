@@ -6,7 +6,9 @@
 
 use std::sync::Arc;
 
-use lightcraft_develop::{BrushStroke, DevelopSettings, Mask, MaskComponent, MaskOp, MaskShape, Spot, Treatment, VignetteStyle, WbMode, Wheel};
+use lightcraft_develop::{
+    BrushStroke, DevelopSettings, Mask, MaskComponent, MaskOp, MaskShape, Process, Spot, Treatment, VignetteStyle, WbMode, Wheel,
+};
 use lightcraft_geom::{Orientation, Point, Rect};
 use lightcraft_pipeline::{Quality, RenderRequest, SourceInfo, StageCache, render};
 use lightcraft_raster::{Rgb32f, Rgba8};
@@ -406,6 +408,59 @@ fn gpu_matches_cpu() {
     eprintln!("worst: mean {:.4} LSB, max {} LSB", worst.0, worst.1);
 }
 
+/// Issue #523: a raw's clipped highlights rebuilt as the raw decode does it (fully clipped ones to the neutral of
+/// the colour model applied after them, here a look whose rows don't sum to one) stay neutral when darkened, on
+/// the GPU as on the CPU, and the two renders agree.
+#[test]
+fn clipped_highlights_stay_neutral_on_both() {
+    if !gpu() {
+        return;
+    }
+    let wb = [2.4f32, 1.0, 1.6];
+    let look = lightcraft_color::Mat3([[0.42, 0.548, 0.04], [0.246, 0.728, 0.033], [-0.247, 0.679, 0.447]]);
+    let luma = |c: [f64; 3]| (0..3).map(|i| c[i] * f64::from(lightcraft_color::LUMA_2020[i])).sum::<f64>();
+    let n = look.inverse().unwrap().apply([1.0; 3]);
+    let white = n.map(|v| (v * luma(look.apply([1.0; 3])) / luma(look.apply(n))) as f32);
+    // a grey wall with a fully clipped light, a light clipped in green only, and a dark bar with a purple fringe
+    // in front of the second
+    let mut cam = Rgb32f::from_fn(320, 240, |x, y| {
+        let d = |cx: f32| ((x as f32 - cx).powi(2) + (y as f32 - 120.0).powi(2)).sqrt();
+        if d(90.0) < 50.0 {
+            [1.0; 3]
+        } else if (226..232).contains(&x) && (70..170).contains(&y) {
+            [0.02, 0.03, 0.02]
+        } else if (x == 225 || x == 232) && (70..170).contains(&y) {
+            [0.3, 0.25, 0.6]
+        } else if d(228.0) < 50.0 {
+            [0.6 / wb[0], 1.0, 0.7 / wb[2]]
+        } else {
+            [0.3 / wb[0], 0.3, 0.3 / wb[2]]
+        }
+    });
+    lightcraft_raw::highlight::reconstruct_with(&mut cam, wb, 0.99, white);
+    let m = look.to_f32();
+    let src = Arc::new(cam.map(|p| {
+        let c = [p[0] * wb[0], p[1] * wb[1], p[2] * wb[2]];
+        std::array::from_fn(|i| (m[i][0] * c[0] + m[i][1] * c[1] + m[i][2] * c[2]).max(0.0))
+    }));
+    let info = SourceInfo { raw: true, ..Default::default() };
+    let req = RenderRequest::fit(320, 240);
+    let mut h100 = DevelopSettings::default();
+    h100.light.highlights = -100.0;
+    let mut issue = DevelopSettings::default();
+    let l = &mut issue.light;
+    (l.exposure, l.contrast, l.highlights, l.shadows, l.whites, l.blacks) = (-0.88, 5.0, -75.0, 52.0, 6.0, -37.0);
+    for (name, s) in [("clipped highlights -100", h100), ("clipped highlights #523", issue)] {
+        check(name, &src, &info, &s, &req);
+        let cpu = render(&src, &info, &s, &req).image;
+        let gpu = lightcraft_gpu::render(&src, &info, &s, &req, None).expect("gpu render").image;
+        for (who, img) in [("CPU", &cpu), ("GPU", &gpu)] {
+            let p = img.get(90, 120);
+            assert!(p[1] < 250 && p[0].max(p[1]).max(p[2]) - p[0].min(p[1]).min(p[2]) <= 1, "{name} {who}: clipped light {p:?}");
+        }
+    }
+}
+
 #[test]
 fn rendered_sources_and_other_scenes() {
     if !gpu() {
@@ -430,7 +485,6 @@ fn geometry_variants() {
     if !gpu() {
         return;
     }
-    use lightcraft_develop::{EmbeddedLens, EmbeddedVignette, EmbeddedWarp};
     let src = scene(2, 900, 600);
     let raw = SourceInfo { raw: true, ..Default::default() };
     use Orientation::*;
@@ -445,7 +499,19 @@ fn geometry_variants() {
             check(&format!("{o:?} crop={crop}"), &src, &raw, &s, &req);
         }
     }
-    // embedded DNG lens corrections (per-plane warp + vignette) with manual CA
+}
+
+#[test]
+fn embedded_lens_perspective_edges_match() {
+    if !gpu() {
+        return;
+    }
+    use lightcraft_develop::{EmbeddedLens, EmbeddedVignette, EmbeddedWarp};
+    let src = scene(2, 900, 600);
+    let raw = SourceInfo { raw: true, ..Default::default() };
+    // The unrotated case includes a position only 0.000035 px outside the edge.
+    // f32 classification previously sampled the photo instead of blank canvas.
+    // Embedded DNG lens corrections (per-plane warp + vignette) with manual CA.
     let lens = EmbeddedLens {
         warp: Some(EmbeddedWarp {
             planes: [[1.0, -0.03, 0.01, 0.0, 0.001, -0.002], [1.0, -0.028, 0.01, 0.0, 0.001, -0.002], [1.0, -0.026, 0.01, 0.0, 0.001, -0.002]],
@@ -453,6 +519,7 @@ fn geometry_variants() {
             radius: 0.6,
         }),
         vignette: Some(EmbeddedVignette { k: [0.4, -0.1, 0.02, 0.0, 0.0], center: Point::new(0.5, 0.5), radius: 0.6 }),
+        stages: Default::default(),
     };
     let info = SourceInfo { lens: Some(lens), ..raw };
     let mut s = DevelopSettings::default();
@@ -460,7 +527,7 @@ fn geometry_variants() {
     s.optics.ca_red = 30.0;
     s.geometry.horizontal = -15.0;
     check("embedded lens + perspective", &src, &info, &s, &RenderRequest::fit(700, 700));
-    s.orientation = Rotate270;
+    s.orientation = Orientation::Rotate270;
     check("embedded lens rotated", &src, &info, &s, &RenderRequest::fit(700, 700));
 }
 
@@ -483,6 +550,48 @@ fn cached_renders_match_uncached() {
         let warm = lightcraft_gpu::render(&src, &info, &s, &req, Some(&cache)).expect("gpu");
         let fresh = lightcraft_gpu::render(&src, &info, &s, &req, None).expect("gpu");
         assert_eq!(warm.image, fresh.image, "step {k}");
+    }
+}
+
+/// Issue #632: the Highlights / Shadows base of each process (V1: the edge-aware filter of log
+/// luminance; V2: of its fine median, a radius that grows with the render) matches the CPU's, and
+/// a warm cache never hands one process the other's base.
+#[test]
+fn highlights_shadows_base_matches_on_every_process() {
+    if !gpu() {
+        return;
+    }
+    let raw = SourceInfo { raw: true, ..Default::default() };
+    let src = scene(0, 2400, 1600);
+    let cache = StageCache::default();
+    for &(w, h) in &[(720, 480), (2400, 1600)] {
+        let req = RenderRequest::fit(w, h);
+        for p in Process::ALL {
+            let mut s = DevelopSettings { process: p.version(), ..DevelopSettings::default() };
+            s.light.highlights = -100.0;
+            s.light.shadows = 60.0;
+            check(&format!("{p:?} highlights/shadows {w}"), &src, &raw, &s, &req);
+            typical(&mut s);
+            check(&format!("{p:?} typical {w}"), &src, &raw, &s, &req);
+            s.masks = vec![Mask {
+                components: vec![MaskComponent {
+                    name: None,
+                    op: MaskOp::Add,
+                    invert: false,
+                    shape: MaskShape::Linear { start: Point::new(0.5, 0.0), end: Point::new(0.5, 0.9) },
+                }],
+                adjust: lightcraft_develop::LocalAdjustments { highlights: -70.0, shadows: 40.0, ..Default::default() },
+                ..Default::default()
+            }];
+            check(&format!("{p:?} local highlights {w}"), &src, &raw, &s, &req);
+        }
+        for p in [Process::V1, Process::V2, Process::V1, Process::V2] {
+            let mut s = DevelopSettings { process: p.version(), ..DevelopSettings::default() };
+            s.light.highlights = -100.0;
+            let warm = lightcraft_gpu::render(&src, &raw, &s, &req, Some(&cache)).expect("gpu");
+            let fresh = lightcraft_gpu::render(&src, &raw, &s, &req, None).expect("gpu");
+            assert_eq!(warm.image, fresh.image, "{p:?} at {w} px, cached");
+        }
     }
 }
 
@@ -627,4 +736,124 @@ fn output_spaces_match() {
             check(&format!("{space:?} {name}"), &src, &raw, &s, &req);
         }
     }
+}
+
+#[test]
+fn tint_directions_match_cpu_for_raw_and_rendered_sources() {
+    if !gpu() {
+        return;
+    }
+    let src = Arc::new(Rgb32f::filled(64, 64, [0.18; 3]));
+    for info in [
+        SourceInfo::default(),
+        SourceInfo { raw: true, relative_wb: true, ..Default::default() },
+        SourceInfo { raw: true, as_shot_temp: 4200.0, as_shot_tint: 15.0, ..Default::default() },
+    ] {
+        for delta in [-50.0, 50.0] {
+            let mut s = DevelopSettings::default();
+            s.wb.mode = WbMode::Custom;
+            s.wb.temp = info.as_shot_temp;
+            s.wb.tint = info.as_shot_tint + delta;
+            check("tint direction", &src, &info, &s, &RenderRequest::fit(64, 64));
+        }
+    }
+}
+
+/// Issue #323: windows of a zoomed frame. The GPU renders the window like the CPU does: the
+/// vignette and airlight belong to the whole frame, spots grow the window they work on.
+#[test]
+fn windows_match() {
+    if !gpu() {
+        return;
+    }
+    use lightcraft_pipeline::PixelWindow;
+    let src = scene(1, 960, 640);
+    let info = SourceInfo { raw: true, ..Default::default() };
+    let win = PixelWindow { x: 1200, y: 800, w: 640, h: 480 };
+    let req = RenderRequest { window: Some(win), ..RenderRequest::fit(3000, 2000) };
+    let mut cases = cases();
+    cases.push(("vignette at the corner", |s| {
+        s.vignette.amount = -80.0;
+        s.vignette.midpoint = 10.0;
+    }));
+    cases.push(("spot reading from outside", |s| {
+        s.spots.push(Spot {
+            points: vec![Point::new(0.45, 0.45)],
+            size: 0.03,
+            feather: 30.0,
+            opacity: 100.0,
+            source_offset: Some(Point::new(0.15, 0.0)),
+            ..Default::default()
+        });
+    }));
+    for (name, edit) in cases {
+        let mut s = DevelopSettings::default();
+        edit(&mut s);
+        let name = format!("window: {name}");
+        check(&name, &src, &info, &s, &req);
+    }
+    // the corner window (where the vignette is strong)
+    let mut s = DevelopSettings::default();
+    s.vignette.amount = -80.0;
+    s.vignette.midpoint = 10.0;
+    let corner = RenderRequest { window: Some(PixelWindow { x: 2360, y: 1520, w: 640, h: 480 }), ..RenderRequest::fit(3000, 2000) };
+    check("window: vignette corner", &src, &info, &s, &corner);
+}
+
+/// Issue #323: a window of a 24 MP photo is cut from a source of 288 MB on the device. Keeping that
+/// upload with the view's stages counted it against the stage budget on every tick of a drag and
+/// got the stages cleared, and the upload and resampling redone: the window's stages are its own
+/// pixels, not the photo's.
+// (these two share the process's one big source: a test lock keeps them from replacing each other's)
+static BIG_SOURCE_TESTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[test]
+fn a_window_does_not_keep_the_whole_source_on_the_device() {
+    let _lock = BIG_SOURCE_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+    if !gpu() {
+        return;
+    }
+    use lightcraft_pipeline::PixelWindow;
+    let src = scene(1, 6000, 4000);
+    let info = SourceInfo { raw: true, ..Default::default() };
+    let stages = StageCache::default();
+    let s = DevelopSettings::default();
+    let req = RenderRequest { window: Some(PixelWindow { x: 2000, y: 1500, w: 640, h: 480 }), ..RenderRequest::fit(6000, 4000) };
+    let _ = lightcraft_gpu::render(&src, &info, &s, &req, Some(&stages)).expect("gpu render");
+    let held = lightcraft_gpu::stage_bytes(&stages);
+    assert!(held < 100 << 20, "the view's GPU stages hold {} MiB for a 640×480 window", held >> 20);
+    // …and the next tick of a drag reuses what is there
+    let mut s2 = s.clone();
+    s2.light.exposure = 0.5;
+    let again = lightcraft_gpu::render(&src, &info, &s2, &req, Some(&stages)).expect("gpu render");
+    assert_eq!((again.image.width, again.image.height), (640, 480));
+    assert!(lightcraft_gpu::stage_bytes(&stages) < 100 << 20);
+}
+
+/// …but the 288 MB is uploaded once for every window of every view of the photo, not once per
+/// window: panning at 1:1, and the Before and After windows, share one device copy of it, which
+/// goes when the app idles (`trim_pool(0)`).
+#[test]
+fn windows_of_a_big_photo_share_one_uploaded_source() {
+    let _lock = BIG_SOURCE_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+    if !gpu() {
+        return;
+    }
+    use lightcraft_pipeline::PixelWindow;
+    let src = scene(1, 6000, 4000);
+    let info = SourceInfo { raw: true, ..Default::default() };
+    let s = DevelopSettings::default();
+    let (after, before) = (StageCache::default(), StageCache::default());
+    let at = |x: usize| RenderRequest { window: Some(PixelWindow { x, y: 1500, w: 640, h: 480 }), ..RenderRequest::fit(6000, 4000) };
+    let start = lightcraft_gpu::source_uploads();
+    for (cache, x) in [(&after, 1000), (&after, 1256), (&after, 1512), (&before, 1512), (&before, 1768)] {
+        lightcraft_gpu::render(&src, &info, &s, &at(x), Some(cache)).expect("gpu render");
+    }
+    assert_eq!(lightcraft_gpu::source_uploads() - start, 1, "one upload for five windows of two views");
+    assert!(lightcraft_gpu::shared_source_bytes() >= 280_000_000, "{}", lightcraft_gpu::shared_source_bytes());
+    assert!(lightcraft_gpu::stage_bytes(&after) < 100 << 20, "and it is not in the views' stages");
+    lightcraft_gpu::trim_pool(0);
+    assert_eq!(lightcraft_gpu::shared_source_bytes(), 0, "an idle app gives it back");
+    lightcraft_gpu::render(&src, &info, &s, &at(1000), Some(&after)).expect("gpu render");
+    assert_eq!(lightcraft_gpu::source_uploads() - start, 2);
 }

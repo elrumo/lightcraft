@@ -1,16 +1,22 @@
 # LightCraft — instructions for agents
 
-LightCraft is a clean-room, open-source, pure-Rust photo library + non-destructive raw developer targeting Adobe Lightroom parity (and beyond). Native on macOS, Windows, Linux; web via WASM. Sibling of `../pdfcraft` (Acrobat), `../photocraft` (Photoshop), `../drawcraft` (Illustrator) and `../filmcraft` (Premiere), with the same conventions.
+LightCraft is a clean-room, open-source, pure-Rust photo library + non-destructive raw developer targeting Adobe Lightroom parity (and beyond). Native on macOS, Windows, Linux; web via WASM. Sibling of `../pdfcraft` (Acrobat), `../photocraft` (Photoshop), `../vectorcraft` (Illustrator) and `../filmcraft` (Premiere), with the same conventions.
 
 ## Start every session here
 1. Read `plan/STATUS.md` (current milestone, next unchecked task, blockers).
 2. Read the task in `plan/execution-plan.md` §3, the relevant section of `plan/architecture.md`, and the README/docs of the crate you touch. Behaviour/visual reference: `plan/lightroom/` (incl. `10-observed-ui.md` + screenshots).
-3. **Know where we stand:** read [`ROADMAP.md`](ROADMAP.md) → *Where we stand* (honest assessment by dimension and
-   by kind of user) and *Where we're going* (ordered priorities). The checklist counts features that *exist*; the real
-   gaps are quality and coverage: camera colour calibration, CR3 / compressed raws, per-model verification, render
-   fidelity against Lightroom, AI models, HDR / video / Classic modules. A ✅ row is not proof of parity — if you find a
-   ✅ feature that is wrong or incomplete, downgrade it to 🟡 with a note.
-4. **Pick work** from [`docs/parity.md`](docs/parity.md) → *Top gaps* (ordered by user impact; the tracker has one row per feature, menu item and shortcut). When you land a feature, update its row(s) and the gap list in the same commit, and the *Where we stand* / *Where we're going* sections of `ROADMAP.md` when a listed gap closes; `cargo xtask parity` (part of `ci`) checks that every `cmd:`/`ctl:` id and path the tracker cites still exists, and `cargo xtask parity --write` refreshes its summary.
+3. **Know where we stand:** read [`ROADMAP.md`](ROADMAP.md) (stage, headline numbers, every dimension) and, for
+   method and evidence, [`docs/target-app-parity.md`](docs/target-app-parity.md). The checklist counts features that
+   *exist*; the real gaps are quality and coverage: camera colour calibration, CR3 / compressed raws, per-model
+   verification, render fidelity against Lightroom, AI models, HDR / video / Classic modules (raw detail:
+   [`docs/raw-parity.md`](docs/raw-parity.md)). A ✅ row is not proof of parity — if you find a ✅ feature that is
+   wrong or incomplete, downgrade it to 🟡 with a note.
+4. **Pick work** from [`docs/gaps.md`](docs/gaps.md) (ranked by user impact; `B` marks beta blockers). The row-by-row
+   tracker is [`docs/parity-checklist.md`](docs/parity-checklist.md) (one row per feature, menu item and shortcut).
+   When you land a feature, update its row(s) and the gap entry in the same commit, and the numbers in `ROADMAP.md` /
+   `docs/target-app-parity.md` when a listed gap closes (bump each doc's *Last updated* line and revision history, per
+   craftrules `standards/progress-docs.md`); `cargo xtask parity` (part of `ci`) checks that every `cmd:`/`ctl:` id and
+   path the tracker cites still exists, and `cargo xtask parity --write` refreshes its summary.
 5. Follow the autonomous operation protocol (`plan/execution-plan.md` §7). Don't stop to ask unless §7 lists the decision as the user's.
 
 `plan/` is gitignored (local-only).
@@ -58,6 +64,10 @@ of it. Full standard: `../craftrules/standards/never-crash.md`
 - **Pure Rust** in the product. No C/C++ dependencies.
 - **Layering** (`plan/architecture.md` §3, enforced by `cargo xtask layers`): nothing below L5 depends on egui/eframe/winit/rfd.
 - **Everything is a command** (`crates/engine`): id, label, menu path, shortcut, params, enabled(), run(). UI, CLI, control channel and MCP all dispatch by id. Every slider is a `develop` control spec.
+- **Long-running work shows in the activity stack** ([`docs/background-tasks.md`](docs/background-tasks.md)): anything
+  that runs off the UI thread and can take more than a moment holds a `TaskGuard` from `session.activity.start(kind,
+  label, cancel)` for its whole run. It adopts the cancel flag the job already checks (`Cancel::Flag`), or uses
+  `Cancel::No` when the job can't stop. No progress window, panel or progress toast of its own; its tests assert the row.
 - **Resolution independence:** settings use normalized image coordinates and relative radii; previews and exports must match.
 - **Quality gates** before every commit: `cargo xtask ci` (fmt, clippy -D warnings, tests, layers, assets, wasm, ios). The `ios` step is a type-check for `aarch64-apple-ios` (`rustup target add aarch64-apple-ios`); see `docs/ios.md`.
 - **Commits:** one task id per commit (`M2.3: local Laplacian highlights/shadows`). Only green states. End messages with the attribution line required by the environment.
@@ -77,9 +87,10 @@ of it. Full standard: `../craftrules/standards/never-crash.md`
   font files here (Inter, already in `assets/fonts/`, is the one exception); add new fonts to craft-fonts. LightCraft
   uses it as the optional build input `CRAFT_FONTS_DIR`: `git clone https://github.com/storytold/craft-fonts ../craft-fonts`
   then `CRAFT_FONTS_DIR=../craft-fonts cargo run -p lightcraft` (or any cargo/xtask command). `crates/engine/build.rs`
-  embeds the manifest's fonts as `lightcraft_engine::CRAFT_FONTS` (wasm32: BIZ UDPGothic Regular only); the UI
-  (`theme::font_definitions`) and the export watermark renderer use its CJK faces (picked by script) as fallbacks after Inter. Unset,
-  `CRAFT_FONTS` is empty: everything builds, tests and runs, but Japanese text has no glyphs. Releases always build
+  embeds the manifest's fonts as `lightcraft_engine::CRAFT_FONTS` (wasm32: BIZ UDPGothic Regular only); `cargo xtask web`
+  ships Noto Sans CJK SC Regular as a separate asset loaded by the UI before startup. The UI
+  (`theme::font_definitions`) and the export watermark renderer use CJK faces (picked by script) as fallbacks after Inter; the UI also falls back on the faces of other scripts (Thai, Arabic, …). Unset,
+  `CRAFT_FONTS` is empty: everything builds, tests and runs, but Chinese and Japanese text lack glyphs. Releases always build
   with it (`release.yml`, `CRAFT_FONTS_REQUIRED=1`) and ship the fonts' OFL licences. Tests that need these fonts skip
   without it; the FreeBSD CI job runs them with it. Rules: craftrules
   [`standards/fonts.md`](https://github.com/storytold/craftrules/blob/main/standards/fonts.md).
@@ -105,6 +116,9 @@ of it. Full standard: `../craftrules/standards/never-crash.md`
   the running app). See `docs/mcp.md`. Quick non-UI checks: `lightcraft-cli render in.jpg -o out.jpg --set light.exposure=1`.
 - Export goes through `lightcraft_engine::export` (one encoder for app, CLI, MCP and web); UI-only commands live in
   `crates/ui-egui/src/menus.rs`.
+- Text boxes use `crates/ui-egui/src/text_field.rs` (`TextField`), not `egui::TextEdit`: it gives every field the
+  Cut / Copy / Paste / Select All menu, Esc restoring the text, and reports how an edit ended. Give each a widget id
+  that is unique on screen. Older fields still on `TextEdit` move over as they are touched.
 - Shell gotcha: `mv`/`cp` are aliased interactive here — use `/bin/mv -f` / `/bin/cp -f`.
 - Parallel agents: separate git worktrees and `CARGO_TARGET_DIR=target/agent-<name>`; each agent uses its **own control port** (pick one in 18000–19999, never the default 7980) and its own scratch subfolder (`<scratch>/<agent-name>/`) — never `rm -rf` shared paths; delete your target dir when done (disk is shared); keep every `Cargo.toml` valid at all times (the `crates/*` glob means one broken manifest breaks everyone).
 - Test corpora: `cargo xtask corpus --download` into `corpus/` (gitignored, CC0 only). Never commit media.
@@ -125,4 +139,8 @@ of it. Full standard: `../craftrules/standards/never-crash.md`
 ## Map of the code
 `geom`, `color`, `raster`, `tiff` (L0) → `raw`, `codecs`, `meta`, `develop` (L1) → `pipeline` → `catalog` → `engine`
 → `ui-egui`, `mcp` (L5) → apps `lightcraft` (desktop), `lightcraft-cli` (render/commands/MCP), `lightcraft-server`
-(optional self-hosted sync, `docs/sync.md`). `scenes` generates demo photos. `xtask` = tooling (`ci`, `layers`, `assets`, `parity`, `wasm`, `corpus`, `stats`).
+(optional self-hosted sync, `docs/sync.md`), `lightcraft-ios` (iPhone/iPad, `docs/ios.md`). `scenes` generates demo
+photos. `xtask` = tooling (`ci`, `layers`, `assets`, `parity`, `wasm`, `ios`, `corpus`, `geodata`, `stats`). `flake.nix` +
+`nix/package.nix` = the Nix package (`nix build` builds both binaries with the craft-fonts input, installs the
+desktop file/icons/AppStream metadata and runs `cargo test --workspace`; `nix develop` = dev shell). Community-maintained and not
+in CI: it may lag behind the workspace; see README → Quick start.

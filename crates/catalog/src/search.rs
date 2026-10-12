@@ -357,7 +357,7 @@ fn contains_ci(hay: &str, needle: &str) -> bool {
 
 pub(crate) fn has_person(p: &Photo, name: &str) -> bool {
     let name = name.trim().to_lowercase();
-    p.meta.regions.iter().any(|r| r.kind == lightcraft_meta::RegionKind::Face && r.name.as_deref().is_some_and(|n| n.to_lowercase() == name))
+    p.people().iter().any(|n| n.to_lowercase() == name)
 }
 
 /// `field:value` (already lower-cased).
@@ -390,7 +390,7 @@ fn field_matches(p: &Photo, t: &str) -> bool {
         "person" | "who" => has_person(p, val),
         "type" | "kind" => format!("{:?}", p.kind).eq_ignore_ascii_case(val),
         "edited" => yes(val) == p.is_edited(),
-        "date" => p.date().starts_with(val),
+        "date" => p.captured.as_deref().is_some_and(|c| c.starts_with(val)),
         "copy" | "virtual" => yes(val) == p.copy_of.is_some(),
         "name" | "file" => p.file_name.to_lowercase().contains(val),
         "gps" | "geotagged" | "located" => yes(val) == p.meta.gps.is_some(),

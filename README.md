@@ -13,6 +13,11 @@
 <h3 align="center">Your photos. Your pixels. Your machine.</h3>
 
 <p align="center">
+  <a href="README.md">English</a> ·
+  <a href="README.zh-hans.md">简体中文</a>
+</p>
+
+<p align="center">
   <b>Photo library and raw development; an open-source, clean-room reimplementation of Adobe Lightroom, rebuilt in pure Rust.</b><br>
   Native on macOS, Windows and Linux. In the browser via WebAssembly. Drivable end to end by AI agents over MCP.
 </p>
@@ -59,6 +64,7 @@
   <a href="#feature-status">Status</a> ·
   <a href="#quick-start">Quick start</a> ·
   <a href="ROADMAP.md">Roadmap</a> ·
+  <a href="#downloads">Downloads</a> ·
   <a href="#the-crafting-apps">Crafting Apps</a>
 </p>
 
@@ -202,7 +208,7 @@ A library that stays out of your way: **All Photos**, **Recently Added**, **Pick
 `rating:>3 flag:pick iso:>800 camera:x2 date:2026-04 keyword:mountains`, and places and dates the way you'd say
 them: `madrid`, `photos in lisbon in june 2024`, `españa or portugal` (by GPS, offline; [docs/map.md](docs/map.md)).
 The **Map** shows your photos where they were taken, on desktop, web and iPhone. Every view sorts by capture date,
-import date, edit date, name, rating or size. The justified **Photo Grid** and **Square Grid** views are virtualized,
+import date, edit date, name, rating, size or at random (a stable shuffle; View → Sort → Reshuffle for a new one). The justified **Photo Grid** and **Square Grid** views are virtualized,
 so they stay smooth whether you have forty photos or forty thousand.
 
 <table>
@@ -235,11 +241,11 @@ lightcraft --control 7980 ~/Pictures/trip
 {"method": "ui.screenshot",    "params": {"path": "after.png"}}
 ```
 
-- **91 engine commands** and **48 UI commands.** List them all with `engine.commands`; read every slider's range,
-  default and current value with `develop.controls`.
-- **MCP server.** `lightcraft-cli mcp` gives Claude (or any MCP client) ~100 tools: import, query, develop, mask,
-  render (returned as an image), export. It runs headless, or attached to the running app with screenshots, clicks
-  and gestures. See [docs/mcp.md](docs/mcp.md).
+- **Command registry.** `engine.commands` lists the available commands; `develop.controls` lists every slider's
+  range, default and current value.
+- **MCP server.** `lightcraft-cli mcp` exposes the command registry to Claude (or any MCP client), alongside
+  helpers for import, query, develop, mask, render (returned as an image) and export. It runs headless, or attached
+  to the running app with screenshots, clicks and gestures. See [docs/mcp.md](docs/mcp.md).
 
   ```sh
   cargo build --release -p lightcraft-cli
@@ -250,6 +256,20 @@ lightcraft --control 7980 ~/Pictures/trip
   path=out.jpg longEdge=2048` runs any chain of commands (headless, on a saved library, or against the running app)
   and prints one JSON result per command; `lightcraft-cli render in.dng -o out.jpg --set light.exposure=0.7 --preset …`.
 - **Undo for everything**, including agent actions: a slider drag (or a scripted burst of updates) is one undo step.
+- **Contact sheets (native app / CLI):** select photos, then **File → Contact Sheet PDF…**. Choose A4 or Letter, landscape,
+  rows/columns and filename captions; save a paginated PDF and print it from your PDF viewer. Exports use the
+  current edits, fit each photo without further cropping, and render at 150 dpi in sRGB. The background export
+  supports cancellation and protects originals and XMP sidecars. From the CLI:
+
+  ```sh
+  lightcraft-cli run --import ~/Pictures/shoot library.selectAll export.contactSheet path=Contact.pdf paper=a4 columns=3 rows=4 captions=true
+  ```
+
+  `export.contactSheet` also accepts explicit `ids`, `landscape=true`, and `paper=letter`. It replaces an existing
+  output only after the entire PDF succeeds. Limits: 1,000 photos, 100 pages, 256 MiB; captions are rasterized
+  with the same font coverage as watermarks (CJK requires craft-fonts), with long names shortened in the middle.
+  This is a contact-sheet workflow,
+  not a printer-driver or custom picture-package layout editor.
 - **Every widget is addressable** (`ui.widgets`) and clickable by name, so agents operate the real UI, not a
   side door.
 - The screenshots in this README were produced end to end by the [`docs/showcase/`](docs/showcase/) scripts.
@@ -259,9 +279,10 @@ lightcraft --control 7980 ~/Pictures/trip
 
 ## Fast, native, private
 
-- **Pure Rust, no C.** Our own RAW decoders (DNG, Canon CR2, Sony ARW, Nikon NEF, Fujifilm RAF incl. X-Trans,
-  Panasonic RW2, Pentax PEF, Olympus ORF), our own colour science, our own pipeline. JPEG, PNG, TIFF, WebP, PSD
-  composites and JPEG XL open today.
+- **Pure Rust, no C.** Our own RAW decoders (DNG, Canon CR2/CR3, Sony ARW, Nikon NEF, Fujifilm RAF incl. X-Trans,
+  Panasonic RW2 / Leica RWL, Pentax PEF, Olympus ORF), our own colour science, our own pipeline. JPEG, PNG, TIFF, WebP,
+  PSD composites and JPEG XL open today; HEIC/HEIF photos too with `--features heif` (HEVC is a build-time choice,
+  as in PhotoCraft).
 - **Scene-referred & wide-gamut.** Linear Rec.2020 float internally, Bradford-adapted white balance, gamut mapping
   instead of clipping, a filmic shoulder for raw and pixel-exact pass-through for JPEGs you haven't touched.
 - **Resolution-independent edits.** Radii and brush sizes are relative to the image, so a 400 px preview, your
@@ -269,7 +290,8 @@ lightcraft --control 7980 ~/Pictures/trip
 - **GPU-accelerated, CPU-exact.** The whole develop pipeline runs as wgpu compute kernels (Metal / Vulkan / DX12),
   checked against the CPU pipeline to within 1/255. On a 24 MP raw (Apple M4 Pro): a slider update re-renders in
   ~4 ms, a cold 2.5 MP loupe in ~30 ms, and a full-size export in ~0.3 s including a parallel JPEG encode.
-  Without a GPU the same pipeline runs on all CPU cores, redoing only the stages a slider affects.
+  Without a GPU the same pipeline runs on all CPU cores, redoing only the stages a slider affects. Batch exports
+  render several photos side by side, so one's decode and encode overlap another's render.
 - **Instant culling.** Opening a raw shows its embedded camera preview or cached render within ~0.1 s while the
   full render follows (~0.2–0.5 s for 24 MP). The next and previous photos are prepared in the background, so stepping
   through a shoot takes ~50 ms per photo.
@@ -290,18 +312,21 @@ lightcraft --control 7980 ~/Pictures/trip
 
 ## Feature status
 
-LightCraft is young and moving fast. **Where we honestly stand** (details in the [roadmap](ROADMAP.md#where-we-stand)):
+LightCraft is young and moving fast: **alpha**. **Where we honestly stand** (details in the [roadmap](ROADMAP.md) and
+[docs/target-app-parity.md](docs/target-app-parity.md)):
 
-- **By feature count we're at ~79%** of Lightroom (core features 98%), tracked row by row in
-  [docs/parity.md](docs/parity.md).
-- **As a day-to-day Lightroom replacement we're nearer 60–70%.** It's great for JPEG/DNG and most Nikon / Sony /
-  older-Canon raws on one machine.
+- **By feature count we're at ~81%** of Lightroom (core features 98%), tracked row by row in
+  [docs/parity-checklist.md](docs/parity-checklist.md).
+- **As a day-to-day Lightroom replacement we're nearer 61% for the whole product, ~49% for a typical working photographer and ~64% for
+  casual use.** It's great for JPEG/DNG and most Sony / Panasonic /
+  Fujifilm / Nikon / older-Canon raws on one machine; see [docs/raw-parity.md](docs/raw-parity.md) for your camera.
 - **The biggest gaps:**
-  - **camera colour calibration:** raws other than DNG develop with a neutral colour matrix today, so colour is muted;
-  - **Compressed Fujifilm / Olympus raws:** these open as embedded previews only (Canon lossless CR3 and C-RAW decode; the EOS R5 / R6 generation of C-RAW approximately: its quantiser steps are estimated, so a few percent of the samples are a few counts off);
+  - **camera colour calibration:** Sony, Nikon, Panasonic, Fujifilm and Canon CR3 raws have guarded estimates from their camera JPEGs, with built-in ILCE-7CR, ILCE-7M4, X-H2S and X-T4 profiles; measured calibration is missing, and other raws or rejected fits retain a neutral matrix;
+  - **compressed Olympus raws and unsupported CR3 variants:** these use embedded JPEG previews when present. Fujifilm lossless/lossy compressed RAF now decodes sensor data; [verification and existing-library reload instructions](docs/raf-compression.md);
   - **AI masks and denoise:** subject and sky selection are classical heuristics;
-  - **HDR, video and the Classic Print / Book / Map modules.**
-- **What's next:** see [where we're going](ROADMAP.md#where-were-going).
+  - **network libraries:** a preview reads the raw's header and its embedded JPEG only (56.5 MB → 5.9 MB, 10 s → 1 s on the test share), but the *developed* picture still needs the sensor data over the wire; see [docs/raw-preview-reads.md](docs/raw-preview-reads.md);
+  - **on-screen HDR display, video and the Classic Print / Book / Map modules.**
+- **What's next:** see [the ranked gaps](docs/gaps.md) and [the roadmap](docs/roadmap.md).
 
 | Area | Status |
 |---|---|
@@ -311,20 +336,21 @@ LightCraft is young and moving fast. **Where we honestly stand** (details in the
 | Masking: brush, linear, radial, luminance/colour range, add/subtract/intersect | ✅ (AI subject/sky use classical heuristics for now) |
 | Crop, straighten tool + auto straighten, flip, rotate, aspect ratios, overlays | ✅ |
 | Profiles (Color, Neutral, Vivid, Landscape, Portrait, Monochrome: our own looks), presets, versions, history, copy/paste/sync settings | ✅ |
-| Camera colour: DNG files use their own matrices | ✅ · our own calibration for other raws ⬜ (top priority; neutral fallback today) |
+| Camera colour: DNG files use their own matrices | ✅ DNG · 🚧 own Sony/Fujifilm profiles; measured calibration database missing |
 | Native macOS menu bar (generated from the command registry), control channel + every widget addressable, headless UI snapshots | ✅ |
-| RAW: DNG, CR2, ARW, NEF (uncompressed + lossless/lossy compressed), Fujifilm RAF (uncompressed, Bayer + X-Trans), Panasonic RW2, Pentax PEF, Olympus ORF (uncompressed), Canon CR3 (lossless and C-RAW; R5 / R6 C-RAW approximately); embedded previews for every format incl. CR3 | ✅ · exact R5 / R6 C-RAW, compressed RAF/ORF decode ⬜ |
-| Detail: sharpening, luminance + colour noise reduction | ✅ · AI Denoise, Super Resolution ⬜ |
+| RAW: DNG, CR2, CR3 (lossless CRX Bayer and version 0x100/0x200 C-RAW), ARW, NEF (uncompressed + lossless/lossy compressed, incl. lossy after split), Fujifilm RAF (uncompressed + lossless/lossy compressed, Bayer + X-Trans), Panasonic RW2 / Leica RWL / Panasonic RAW (every raw format, DMC-LX1 to DC-S1RM2), Pentax PEF, Olympus ORF (uncompressed, 12.8 bpp), Samsung SRW (uncompressed); embedded previews for every format incl. CR3 | 🚧 · other CR3 variants, compressed ORF / SRW and Nikon HE NEF decode ⬜ ([raw parity](docs/raw-parity.md)) |
+| Detail: sharpening, luminance + colour noise reduction | ✅ · AI Denoise 🚧 (Bayer, user-installed weights), Super Resolution 🚧 (2×, optional model download; [docs/super-resolution.md](docs/super-resolution.md)) |
 | Remove (content-aware fill) / Heal / Clone spots (auto source, editable pins), Visualize Spots, Red Eye and Pet Eye (auto pupil detection, catchlight) | ✅ |
-| Export: JPEG / PNG / TIFF / WebP / AVIF / DNG / original, sizing, file-size limit, output sharpening, naming templates, batch, metadata policy, text or image watermark | ✅ · HDR export ⬜ |
+| Export: JPEG / PNG / TIFF / WebP / AVIF / DNG / original, sizing, file-size limit, output sharpening, naming templates, batch, metadata policy, text or image watermark | ✅ |
+| HDR: HDR editing with a headroom limit, SDR rendition, Visualize HDR; export as ISO 21496-1 gain map JPEG, PQ AVIF or 32-bit float TIFF | ✅ · HDR display ⬜ |
 | Library persistence (crash-safe op log + snapshots, background compaction, failed saves reported), disk thumbnail cache | ✅ |
 | Import: Add in place / Copy / Move, rename and folder templates, devices, duplicate detection, watched folders; Local folder browsing | ✅ |
 | MCP server (headless or live app, persistent libraries), CLI, control channel | ✅ |
 | XMP sidecars (read/write, auto-write), reading `crs:` develop settings, preset files (`.lcpreset`, XMP presets) | ✅ |
-| Optics (distortion, vignetting, auto + manual CA, defringe, DNG-embedded lens corrections), Geometry (transforms, Constrain Crop), Upright (Auto/Level/Vertical/Full/Guided) | ✅ · camera lens profiles (our own) ⬜ |
+| Optics (distortion, vignetting, auto + manual CA, defringe, lens corrections embedded in DNG files and Panasonic / Leica RW2 / RWL distortion data), Geometry (transforms, Constrain Crop), Upright (Auto/Level/Vertical/Full/Guided) | ✅ · camera lens profiles (our own) ⬜ |
 | Photo Merge: HDR (auto-align, deghost), Panorama (spherical/cylindrical/perspective, boundary warp, auto crop), HDR Panorama → DNG | ✅ |
 | GPU pipeline (wgpu compute, CPU-exact within 1/255), CPU fallback on device limits / errors | ✅ · WebGPU in the browser 🚧 |
-| AI: segmentation masks, AI denoise, super resolution, faces; HDR editing; video | ⬜ (see [roadmap](ROADMAP.md#where-were-going)) |
+| AI: segmentation masks, AI denoise, super resolution, faces; video | 🚧 (see [gaps](docs/gaps.md)) |
 | Web build (same UI in the browser via WASM): persistent library in OPFS/IndexedDB, Web Worker rendering, export downloads | ✅ · WebGPU, Safari/Firefox testing 🚧 |
 
 <sub>✅ works today · 🚧 in progress · ⬜ not started</sub>
@@ -332,6 +358,8 @@ LightCraft is young and moving fast. **Where we honestly stand** (details in the
 <br>
 
 ## Quick start
+
+Workspace builds, including the desktop, web and CLI applications, require Rust 1.95 or newer.
 
 ```sh
 git clone https://github.com/storytold/lightcraft && cd lightcraft
@@ -344,6 +372,14 @@ cargo run --release -p lightcraft-cli -- render photo.jpg -o out.jpg --set light
 cargo xtask ci                                          # fmt, clippy, tests, layering, wasm and iOS checks
 ```
 
+CI defaults to line-table debug information and one build job per 1.5 GB of RAM
+available when it starts (at most one per CPU; 4 if memory can't be read), so an
+8 GB machine with 6 GB free builds with 4, and a busy machine with little free
+builds with fewer. Test threads follow, capped at 4. Full-debuginfo linkers, one
+per CPU, otherwise exhaust RAM before any test runs. GPU coverage is unchanged. Explicit
+`CARGO_PROFILE_DEV_DEBUG`, `CARGO_BUILD_JOBS` and `RUST_TEST_THREADS` settings
+override these defaults. Ordinary development commands keep their own settings.
+
 **Chinese and Japanese text** need the shared font repo, an optional build input (official releases always include it):
 
 ```sh
@@ -352,13 +388,52 @@ CRAFT_FONTS_DIR=../craft-fonts cargo run --release -p lightcraft
 ```
 
 Without it LightCraft builds and runs the same, but Chinese and Japanese text have no glyphs. Fonts are never committed to this
-repo; see [craftrules `standards/fonts.md`](https://github.com/storytold/craftrules/blob/main/standards/fonts.md).
+repo — the standard for what goes there lives with it: see the [craft-fonts README](https://github.com/storytold/craft-fonts#readme).
 
-**Interface language:** **Edit → Language** (English, 简体中文, 繁體中文（台灣）, 日本語) or **Settings → General →
+**Interface language:** **Edit → Language** (English, 简体中文, 繁體中文（台灣）, 日本語, Português (Brasil), Español, Deutsch, Русский, Français) or **Settings → General →
 Language**; the choice applies immediately and persists. See [docs/localization.md](docs/localization.md).
+
+**Logs:** the desktop app writes its log to standard error and to `logs/lightcraft.log` in its settings folder
+(Linux `$XDG_CONFIG_HOME/lightcraft/logs/`, by default `~/.config/lightcraft/logs/`; macOS
+`~/Library/Application Support/LightCraft/logs/`; Windows `%APPDATA%\LightCraft\logs\`), never in the library. A
+launch from a desktop menu or the Dock has no terminal, so attach this file to a bug report (**Help ▸ Open Log
+Folder** shows it in the file manager). Each start moves the
+previous log to `lightcraft.1.log` and that one to `lightcraft.2.log`, so the log of a run that crashed survives the
+next start; the file stops growing at 16 MiB, `--version` and `--help` write none, and runs with
+`LIGHTCRAFT_NO_PREFS` log to standard error only. By default LightCraft's own crates log at `info` and everything else
+at `warn`. `LIGHTCRAFT_LOG=info` or `debug` works as before (that level for LightCraft's own crates, warnings and
+errors from the rest; any other value: warnings and errors only) and wins over `RUST_LOG`, which otherwise replaces
+the default with env_logger-style directives such as `RUST_LOG=debug` or `RUST_LOG=warn,lightcraft_pipeline=trace` (a
+directive ending in `*` covers every target starting with it, as in `lightcraft*=debug`). Panics are recorded there
+too, and still in `lightcraft-panics.log` in the temp folder. The logger is `apps/lightcraft/src/logging.rs`.
 
 The web build needs the `wasm32-unknown-unknown` target and the matching `wasm-bindgen` CLI
 (`cargo xtask web` prints the exact install command); see [docs/web.md](docs/web.md).
+
+**Nix** builds the desktop app and `lightcraft-cli` (the Nix build always includes the craft-fonts input, so Japanese
+text has glyphs):
+
+```sh
+nix run github:storytold/lightcraft                    # the desktop app
+nix build github:storytold/lightcraft                  # → ./result/bin/{lightcraft,lightcraft-cli}
+nix develop github:storytold/lightcraft                # rust toolchain + native deps + fonts
+```
+
+In a flake configuration (NixOS, home-manager, nix-darwin):
+
+```nix
+# flake.nix
+inputs.lightcraft.url = "github:storytold/lightcraft";
+# optional: build against your own nixpkgs instead of the one LightCraft pins
+# inputs.lightcraft.inputs.nixpkgs.follows = "nixpkgs";
+
+# then, in a NixOS or home-manager module (where `inputs` is in scope):
+nixpkgs.overlays = [ inputs.lightcraft.overlays.default ];   # makes `pkgs.lightcraft` available
+environment.systemPackages = [ pkgs.lightcraft ];           # home-manager: home.packages = [ pkgs.lightcraft ];
+```
+
+`nix build` installs the same desktop file, hicolor icons and AppStream metadata as the .deb/.rpm, and runs
+`cargo test --workspace` as its check phase (skip it with `pkgs.lightcraft.overrideAttrs { doCheck = false; }`).
 
 **Keyboard:** <kbd>G</kbd> grid · <kbd>D</kbd> detail · <kbd>E</kbd> edit · <kbd>C</kbd> crop · <kbd>M</kbd> masking ·
 <kbd>Shift</kbd>+<kbd>P</kbd> presets · <kbd>\\</kbd> original · <kbd>Y</kbd> before/after · <kbd>Z</kbd> zoom ·
@@ -388,6 +463,60 @@ Humans and agents follow the same rules, so read [AGENTS.md](AGENTS.md) first. T
   [AGENTS.md](AGENTS.md#never-crash-outranks-feature-work).
 
 Questions, ideas or a bug you'd like to talk through first? Bring them to [Discord](https://discord.gg/artcraft).
+
+<br>
+
+## Downloads
+
+**New to LightCraft?** Download it from the [LightCraft page on getartcraft.com](https://getartcraft.com/apps/lightcraft). That's the easiest way to install it.
+
+**Want a specific build or format?** On GitHub, the [latest release](https://github.com/storytold/lightcraft/releases/latest) has every build listed below, and [all releases](https://github.com/storytold/lightcraft/releases) has earlier versions and their notes. `<ver>` in the file names is the version number, and `SHA256SUMS.txt` lists a checksum for every file.
+
+### Windows
+
+| Build | Installer | Portable |
+|---|---|---|
+| x64 (64-bit Intel/AMD) | `lightcraft-<ver>-windows-x64.msi` | `lightcraft-<ver>-windows-x64-portable.zip` |
+| arm64 (Snapdragon and other ARM PCs) | `lightcraft-<ver>-windows-arm64.msi` | `lightcraft-<ver>-windows-arm64-portable.zip` |
+| x86 (32-bit) | `lightcraft-<ver>-windows-x86.msi` | `lightcraft-<ver>-windows-x86-portable.zip` |
+
+Installers and executables are code-signed. The installer asks where to install (`C:\Program Files\LightCraft` by
+default; upgrades stay in the folder you chose) and ends on a page confirming LightCraft was installed, with an
+option to start it. For unattended installs: `msiexec /i lightcraft-<ver>-windows-x64.msi /qn INSTALLFOLDER="D:\Apps\LightCraft\"`.
+
+### macOS
+
+| Build | File | Notes |
+|---|---|---|
+| App, universal (Apple silicon + Intel) | `lightcraft-<ver>-macos-universal.dmg` | Signed and notarized |
+| Command-line tool, universal | `lightcraft-cli-<ver>-macos-universal.zip` | Signed and notarized |
+
+### Linux
+
+| Format | x86_64 | aarch64 (ARM64) | Notes |
+|---|---|---|---|
+| AppImage | `lightcraft-<ver>-linux-x86_64.AppImage` | `lightcraft-<ver>-linux-aarch64.AppImage` | Runs anywhere; updates itself with [AppImageUpdate](https://github.com/AppImageCommunity/AppImageUpdate) (`.zsync` files) |
+| Flatpak | `lightcraft-<ver>-linux-x86_64.flatpak` | `lightcraft-<ver>-linux-aarch64.flatpak` | Sandboxed; `flatpak install --user <file>` |
+| Debian/Ubuntu | `lightcraft-<ver>-linux-x86_64.deb` | `lightcraft-<ver>-linux-aarch64.deb` | |
+| Fedora/RHEL/openSUSE | `lightcraft-<ver>-linux-x86_64.rpm` | `lightcraft-<ver>-linux-aarch64.rpm` | |
+| Tarball | `lightcraft-<ver>-linux-x86_64.tar.gz` | `lightcraft-<ver>-linux-aarch64.tar.gz` | Unpack anywhere |
+
+RISC-V (riscv64): `lightcraft-<ver>-linux-riscv64.tar.gz`, a tarball only (glibc 2.39 or newer, e.g. Ubuntu 24.04+).
+
+On a Wayland desktop LightCraft runs through XWayland when it is available, because only X11 gives
+windows file drag-and-drop; set `LIGHTCRAFT_WAYLAND=1` to use native Wayland (sharper fractional scaling, no drop).
+
+### FreeBSD
+
+| Build | File |
+|---|---|
+| x86_64 | `lightcraft-<ver>-freebsd-x86_64.tar.gz` |
+
+### Web (WebAssembly)
+
+| Build | File | Notes |
+|---|---|---|
+| Static site | `lightcraft-web-<ver>.zip` | Runs in a modern browser; host it on any static server |
 
 <br>
 
@@ -463,3 +592,5 @@ Forks and modified versions must remove them.
 ## Star history
 
 [![Star History Chart](https://api.star-history.com/svg?repos=storytold/lightcraft&type=Date&legend=top-left)](https://www.star-history.com/?repos=storytold%2Flightcraft&type=date&legend=top-left)
+
+Library, Tools, and Presets panels can be regrouped, split, floated within the app window, closed, and reopened. Tools keeps the current Edit/Crop/Masking mode; the photo view and filmstrip stay together. Drag a panel header to a target edge or another header. Its context menu offers Float panel, Move to group, and Close panel. Existing panel toggles reopen panels at their saved location; Reset Panel Layout restores the app layout. Floating panels remain inside the current app window.

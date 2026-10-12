@@ -17,14 +17,20 @@ fn main() {
         println!("{path}: {} bytes, {} tracks", bytes.len(), cr3.tracks.len());
         for (i, t) in cr3.tracks.iter().enumerate() {
             match &t.kind {
-                Cr3TrackKind::Raw { width, height, cmp1, iad1 } => {
-                    println!("  track {i}: raw {width}x{height} sample {:?}\n    {cmp1:?}\n    {iad1:?}", t.data);
+                Cr3TrackKind::Raw { width, height, .. } => {
+                    println!(
+                        "  track {i}: raw {width}x{height} sample {:?}\n    {:?}\n    {:?}",
+                        t.data,
+                        t.compression(&bytes),
+                        t.image_area(&bytes)
+                    );
                 }
                 other => println!("  track {i}: {other:?} sample {:?}", t.data),
             }
         }
-        let Some(t) = cr3.raw_track() else { continue };
-        let (Some((at, len)), Cr3TrackKind::Raw { cmp1: Some(c), .. }) = (t.data, &t.kind) else { continue };
+        // the full-size raw: the largest raw track with a coding header (the reduced raw is one too)
+        let full = cr3.tracks.iter().filter_map(|t| Some((t.data?, t.compression(&bytes)?))).max_by_key(|(_, c)| c.width as u64 * c.height as u64);
+        let Some(((at, len), c)) = full else { continue };
         let sample = &bytes[at..at + len];
         let n = hex_len.unwrap_or((c.header_size as usize).min(2048)).min(sample.len());
         println!("  full-size raw sample: {len} bytes at {at}; first {n}:");

@@ -56,7 +56,7 @@ fn without_the_model_the_switch_offers_it_and_strokes_fill_from_around_them() {
     let s = spots(&h);
     assert_eq!(s.len(), 1);
     assert!(s[0].fill.is_none());
-    assert!(h.app.ui.toast.as_ref().is_some_and(|(t, _)| t.contains("model")), "{:?}", h.app.ui.toast);
+    assert!(h.app.ui.toast.as_ref().is_some_and(|(t, _, _)| t.contains("model")), "{:?}", h.app.ui.toast);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -65,18 +65,16 @@ fn without_the_model_the_switch_offers_it_and_strokes_fill_from_around_them() {
 #[test]
 fn the_browser_fetch_is_asked_first_then_offers_the_download() {
     let dir = tmp("erase-web");
-    let (h, _) = app(&dir);
+    let (mut h, _) = app(&dir);
     let asked = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let log = asked.clone();
-    let mut app = h.app;
-    app.services = Services {
+    h.app.services = Services {
         erase_model: Some(Box::new(move |download, tx, _ctx| {
             log.lock().unwrap().push(download);
             let _ = tx.send(if download { Ok(b"not the model".to_vec()) } else { Err(crate::erase::NOT_STORED.into()) });
         })),
         ..Default::default()
     };
-    let mut h = Headless::new(app, [1200.0, 800.0], 1.0);
     remove_tool(&mut h);
     assert_eq!(*asked.lock().unwrap(), [false], "storage is looked in once, nothing is downloaded");
     assert!(h.app.widgets.iter().any(|(w, _)| w == "button:removeAiDownload"));

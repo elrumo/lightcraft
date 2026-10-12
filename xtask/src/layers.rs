@@ -39,11 +39,18 @@ pub const TABLE: &[(&str, Class)] = &[
     ("tiff", Class::Layer(0)),
     ("sysmem", Class::Layer(0)),
     ("fetch", Class::Layer(0)),
+    ("denoise-core", Class::Layer(1)),
+    ("denoise", Class::Layer(1)),
+    ("heif", Class::Layer(0)),
     ("raw", Class::Layer(1)),
     ("codecs", Class::Layer(1)),
     ("meta", Class::Layer(1)),
     ("geo", Class::Layer(1)),
     ("develop", Class::Layer(1)),
+    ("lensdb", Class::Layer(2)),
+    ("inpaint", Class::Layer(1)),
+    ("faces", Class::Layer(1)),
+    ("geocode", Class::Layer(1)),
     ("scenes", Class::Layer(1)),
     ("pipeline", Class::Layer(2)),
     ("gpu", Class::Layer(3)),
@@ -78,6 +85,7 @@ pub const INTRA_LAYER_ORDER: &[&[&str]] = &[
     &["geom", "color", "raster"],
     &["vision", "erase", "enhance"],
     &["tiff", "raster"],
+    &["denoise-core", "denoise"],
     &["meta", "raw"],
     &["meta", "codecs"],
     &["meta", "develop"],
@@ -95,7 +103,7 @@ fn intra_layer_allowed(from: &str, to: &str) -> bool {
 
 /// External crates that constitute a UI toolkit / windowing dependency.
 /// Entries ending in `*` are prefixes.
-pub const UI_CRATES: &[&str] = &["egui", "eframe", "winit", "egui_kittest", "rfd", "bevy*"];
+pub const UI_CRATES: &[&str] = &["craft-ui", "egui", "eframe", "winit", "egui_kittest", "rfd", "bevy*"];
 
 /// First layer allowed to use UI crates.
 pub const UI_MIN_LAYER: u8 = 5;
@@ -296,7 +304,7 @@ mod tests {
 
     #[test]
     fn ui_crates_forbidden_below_l5() {
-        for dep in ["egui", "eframe", "winit", "rfd"] {
+        for dep in ["craft-ui", "egui", "eframe", "winit", "rfd"] {
             let v = check(&[c("lightcraft-engine", &[(dep, Normal, false)])]);
             assert!(matches!(v[..], [Violation::UiBelowL5 { .. }]), "{dep}");
         }

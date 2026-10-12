@@ -1,11 +1,11 @@
-//! Export: encode a rendered image to JPEG / PNG / TIFF / WebP / AVIF (or copy the original / write a
+//! Export: encode a rendered image to JPEG / PNG / TIFF / WebP / AVIF / JPEG XL (or copy the original / write a
 //! DNG, each with the edits in XMP) in sRGB, Display P3, Adobe RGB
 //! (1998) compatible, ProPhoto RGB or Rec. 2020 with an embedded ICC profile we generate from the
 //! published primaries and curves, optional output sharpening and a JPEG file-size limit. Pure (bytes in, bytes out) so the desktop
 //! app, CLI, MCP and the web build share it; writing the file is the caller's job.
 
-pub use lightcraft_codecs::TiffCompression;
-use lightcraft_codecs::{ChromaSubsampling, EncodeImage, EncodeMeta, NamedSpace, Samples, encode, icc};
+use lightcraft_codecs::{ChromaSubsampling, EncodeImage, EncodeMeta, JxlColour, JxlOptions, NamedSpace, Samples, encode, icc};
+pub use lightcraft_codecs::{JxlEffort, TiffCompression};
 use lightcraft_meta::{DateTime, Gps, Metadata};
 pub use lightcraft_pipeline::{DeepImage, DeepSamples, OutputDepth, OutputSpace};
 use lightcraft_raster::Rgba8;
@@ -18,8 +18,12 @@ pub enum ExportFormat {
     Jpeg,
     Png,
     Tiff,
+    /// A flat PSD (8/16-bit, no layers): what an image editor such as PhotoCraft saves back to.
+    Psd,
     Webp,
     Avif,
+    /// JPEG XL: lossy (VarDCT) or lossless, 8/16-bit, HDR as Rec. 2020 PQ.
+    Jxl,
     /// The original file, unchanged, with an XMP sidecar holding the edits.
     Original,
     /// A DNG of the raw data (raw photos only), the edits embedded as XMP.
@@ -32,8 +36,10 @@ impl ExportFormat {
             "jpeg" | "jpg" => Self::Jpeg,
             "png" => Self::Png,
             "tiff" | "tif" => Self::Tiff,
+            "psd" => Self::Psd,
             "webp" => Self::Webp,
             "avif" => Self::Avif,
+            "jxl" | "jpegxl" | "jpeg-xl" | "jpeg_xl" => Self::Jxl,
             "original" => Self::Original,
             "dng" => Self::Dng,
             _ => return None,
@@ -44,8 +50,10 @@ impl ExportFormat {
             Self::Jpeg => "jpg",
             Self::Png => "png",
             Self::Tiff => "tif",
+            Self::Psd => "psd",
             Self::Webp => "webp",
             Self::Avif => "avif",
+            Self::Jxl => "jxl",
             // the original keeps its own extension (see `ExportOptions::file_name_for`)
             Self::Original => "",
             Self::Dng => "dng",
@@ -209,8 +217,15 @@ pub struct Watermark {
     /// 0..1.
     pub opacity: f32,
     pub anchor: Anchor,
-    /// Margin as a fraction of the short edge.
-    pub inset: f32,
+    /// Margin from the left or right edge, as a fraction of the short edge (unused when the anchor
+    /// is centred across: top, center, bottom).
+    pub inset_x: f32,
+    /// Margin from the top or bottom edge, as a fraction of the short edge (unused when the anchor
+    /// is centred down: left, center, right).
+    pub inset_y: f32,
+    /// Degrees clockwise: 0, 90, 180 or 270 (anything else draws unrotated). The watermark is
+    /// sized before it is turned, and the insets are measured to the turned watermark.
+    pub rotation: u16,
     /// sRGB colour.
     pub color: [u8; 3],
     /// Soft dark drop shadow for legibility on bright areas.
@@ -232,13 +247,38 @@ impl Default for Watermark {
             size: 0.035,
             opacity: 0.7,
             anchor: Anchor::BottomRight,
-            inset: 0.025,
+            inset_x: 0.025,
+            inset_y: 0.025,
+            rotation: 0,
             color: [255; 3],
             shadow: true,
             image: String::new(),
             image_width: 0.2,
             target: None,
         }
+    }
+}
+
+impl Watermark {
+    /// `rotation` in clockwise quarter turns.
+    fn quarter_turns(&self) -> u8 {
+        match self.rotation {
+            90 => 1,
+            180 => 2,
+            270 => 3,
+            _ => 0,
+        }
+    }
+}
+
+/// Where the point `(x, y)` of a `w × h` box lands when the box is turned `turns` quarter turns
+/// clockwise (for pixel coordinates: the turned box is `h × w` for odd turns).
+fn turn(turns: u8, x: f32, y: f32, w: f32, h: f32) -> (f32, f32) {
+    match turns {
+        1 => (h - 1.0 - y, x),
+        2 => (w - 1.0 - x, h - 1.0 - y),
+        3 => (y, w - 1.0 - x),
+        _ => (x, y),
     }
 }
 
@@ -258,10 +298,59 @@ fn watermark_fonts(craft: &'static [crate::fonts::CraftFont]) -> Vec<ab_glyph::F
         .collect()
 }
 
+/// Shape a whole grapheme in one cell. CJK uses vertical origins and forms; Latin stays upright.
+/// Unlike Unicode presentation-form characters, GSUB works with BIZ UD fonts too.
+fn watermark_cell_glyphs(
+    font: &ab_glyph::FontRef<'_>,
+    data: &harfrust::ShaperData,
+    text: &str,
+    vertical: bool,
+    px: f32,
+    left: f32,
+    top: f32,
+) -> Option<Vec<ab_glyph::Glyph>> {
+    use ab_glyph::{Font, ScaleFont};
+    let face = harfrust::FontRef::new(font.font_data()).ok()?;
+    let mut buf = harfrust::UnicodeBuffer::new();
+    buf.push_str(text);
+    buf.set_direction(if vertical { harfrust::Direction::TopToBottom } else { harfrust::Direction::LeftToRight });
+    buf.guess_segment_properties();
+    let shaped = data.shaper(&face).build().shape(buf, harfrust::ShapeOptions::new());
+    if shaped.glyph_infos().is_empty() {
+        return None;
+    }
+    let sf = font.as_scaled(px);
+    let (sx, sy) = (sf.h_scale_factor(), sf.v_scale_factor());
+    let advance_x = shaped.glyph_positions().iter().map(|p| p.x_advance as f32 * sx).sum::<f32>();
+    let advance_y = shaped.glyph_positions().iter().map(|p| -(p.y_advance as f32) * sy).sum::<f32>();
+    let (mut x, mut y) = if vertical { (left + px / 2.0, top + (px - advance_y) / 2.0) } else { (left + (px - advance_x) / 2.0, top + sf.ascent()) };
+    let mut glyphs = Vec::new();
+    for (info, pos) in shaped.glyph_infos().iter().zip(shaped.glyph_positions()) {
+        let gid = u16::try_from(info.glyph_id).ok().filter(|g| *g != 0)?;
+        let pen = ab_glyph::point(x + pos.x_offset as f32 * sx, y - pos.y_offset as f32 * sy);
+        glyphs.push(ab_glyph::GlyphId(gid).with_scale_and_position(px, pen));
+        x += pos.x_advance as f32 * sx;
+        y -= pos.y_advance as f32 * sy;
+    }
+    Some(glyphs)
+}
+
 /// Draw `wm` onto `img` (straight alpha blending of the encoded values).
 pub fn draw_watermark(img: &mut Rgba8, wm: &Watermark) {
+    blend_watermark(img, wm, 1.0);
+}
+
+/// Draw `wm` onto `img`, a preview of an export whose short edge is `export_short_edge` pixels.
+/// The smallest text size and shadow offset scale with the preview, so it looks like the file.
+pub fn draw_watermark_preview(img: &mut Rgba8, wm: &Watermark, export_short_edge: usize) {
+    let short = img.width.min(img.height);
+    let scale = if export_short_edge == 0 { 1.0 } else { short as f32 / export_short_edge as f32 };
+    blend_watermark(img, wm, scale);
+}
+
+fn blend_watermark(img: &mut Rgba8, wm: &Watermark, floor_scale: f32) {
     let width = img.width;
-    watermark_coverage(img.width, img.height, wm, crate::fonts::CRAFT_FONTS, |x, y, k, col| {
+    watermark_coverage(img.width, img.height, wm, crate::fonts::CRAFT_FONTS, floor_scale, |x, y, k, col| {
         let p = &mut img.data[y * width + x];
         for c in 0..3 {
             p[c] = (p[c] as f32 + (col[c] as f32 - p[c] as f32) * k).round() as u8;
@@ -274,14 +363,14 @@ pub fn draw_watermark(img: &mut Rgba8, wm: &Watermark) {
 pub fn draw_watermark_deep(img: &mut DeepImage, wm: &Watermark) {
     let (width, trc) = (img.width, img.space.trc());
     match &mut img.samples {
-        DeepSamples::U16(v) => watermark_coverage(img.width, img.height, wm, crate::fonts::CRAFT_FONTS, |x, y, k, col| {
+        DeepSamples::U16(v) => watermark_coverage(img.width, img.height, wm, crate::fonts::CRAFT_FONTS, 1.0, |x, y, k, col| {
             let i = (y * width + x) * 3;
             for c in 0..3 {
                 let p = v[i + c] as f32;
                 v[i + c] = (p + (col[c] as f32 * 257.0 - p) * k).round().clamp(0.0, 65535.0) as u16;
             }
         }),
-        DeepSamples::F32(v) => watermark_coverage(img.width, img.height, wm, crate::fonts::CRAFT_FONTS, |x, y, k, col| {
+        DeepSamples::F32(v) => watermark_coverage(img.width, img.height, wm, crate::fonts::CRAFT_FONTS, 1.0, |x, y, k, col| {
             let i = (y * width + x) * 3;
             for c in 0..3 {
                 let target = trc.decode(col[c] as f32 / 255.0);
@@ -293,12 +382,14 @@ pub fn draw_watermark_deep(img: &mut DeepImage, wm: &Watermark) {
 
 /// Lay out `wm` on a `width × height` image and call `blend(x, y, coverage × opacity, colour)` for
 /// every covered pixel (shadow pass first). `craft` is [`crate::fonts::CRAFT_FONTS`] (a parameter
-/// so tests can render without it).
+/// so tests can render without it). `floor_scale` is this image's size over the exported file's
+/// (1 when drawing the file itself): the 6 px minimum text size is a minimum in the file.
 fn watermark_coverage(
     width: usize,
     height: usize,
     wm: &Watermark,
     craft: &'static [crate::fonts::CraftFont],
+    floor_scale: f32,
     mut blend_px: impl FnMut(usize, usize, f32, [u8; 3]),
 ) {
     use ab_glyph::{Font, PxScale, ScaleFont, point};
@@ -312,8 +403,13 @@ fn watermark_coverage(
     }
     let fonts = watermark_fonts(craft);
     let Some(latin) = fonts.first() else { return };
+    let vertical_data: Vec<_> = if wm.vertical {
+        fonts.iter().map(|font| harfrust::FontRef::new(font.font_data()).ok().map(|face| harfrust::ShaperData::new(&face))).collect()
+    } else {
+        Vec::new()
+    };
     let short = width.min(height) as f32;
-    let px = (wm.size.clamp(0.005, 0.5) * short).max(6.0);
+    let px = (wm.size.clamp(0.005, 0.5) * short).max(6.0 * floor_scale);
     let mut glyphs = Vec::new();
     let mut x = 0.0f32;
     let mut y = 0.0f32;
@@ -321,8 +417,13 @@ fn watermark_coverage(
     let mut prev = None;
     let columns = text.split('\n').count();
     let mut column = 0usize;
-    for original in text.chars() {
-        if original == '\n' {
+    use unicode_segmentation::UnicodeSegmentation;
+    // Horizontal watermarks retain scalar layout and kerning; only vertical cells use graphemes.
+    let cells: Box<dyn Iterator<Item = &str>> =
+        if wm.vertical { Box::new(text.graphemes(true)) } else { Box::new(text.char_indices().filter_map(|(i, c)| text.get(i..i + c.len_utf8()))) };
+    for cell in cells {
+        let Some(original) = cell.chars().next() else { continue };
+        if cell == "\n" || (wm.vertical && cell == "\r\n") {
             if wm.vertical {
                 column = column.saturating_add(1);
                 tw = tw.max(y);
@@ -334,6 +435,24 @@ fn watermark_coverage(
             }
             prev = None;
             continue;
+        }
+        let cjk = matches!(original as u32, 0x3000..=0x30FF | 0x3400..=0x9FFF | 0xFF01..=0xFF60);
+        if wm.vertical && (cjk || cell.chars().count() > 1) {
+            let left = columns.saturating_sub(column.saturating_add(1)) as f32 * px;
+            let shaped = fonts.iter().zip(&vertical_data).enumerate().find_map(|(face, (font, data))| {
+                let data = data.as_ref()?;
+                let cluster = watermark_cell_glyphs(font, data, cell, cjk, px, left, y)?;
+                let substituted = cluster.len() != 1 || cluster.first().is_some_and(|g| g.id != font.glyph_id(original));
+                if cjk && !substituted && matches!(original, '、' | '。' | 'ー' | '（' | '）' | '「' | '」' | '『' | '』' | '【' | '】') {
+                    return None;
+                }
+                Some((face, cluster))
+            });
+            if let Some((face, cluster)) = shaped {
+                glyphs.extend(cluster.into_iter().map(|g| (face, g, None)));
+                y += px;
+                continue;
+            }
         }
         let vertical_form = match original {
             '、' => '︑',
@@ -373,18 +492,21 @@ fn watermark_coverage(
         }
     }
     let (tw, th) = if wm.vertical { (columns as f32 * px, tw.max(y)) } else { (tw.max(x), y + px) };
-    let inset = wm.inset.clamp(0.0, 0.4) * short;
+    // laid out unturned in a tw × th box, placed by the box it becomes
+    let turns = wm.quarter_turns();
+    let (bw, bh) = if turns % 2 == 1 { (th, tw) } else { (tw, th) };
+    let (ix, iy) = (wm.inset_x.clamp(0.0, 0.4) * short, wm.inset_y.clamp(0.0, 0.4) * short);
     let (w, h) = (width as f32, height as f32);
     use Anchor::*;
     let ox = match wm.anchor {
-        TopLeft | Left | BottomLeft => inset,
-        Top | Center | Bottom => (w - tw) / 2.0,
-        TopRight | Right | BottomRight => w - inset - tw,
+        TopLeft | Left | BottomLeft => ix,
+        Top | Center | Bottom => (w - bw) / 2.0,
+        TopRight | Right | BottomRight => w - ix - bw,
     };
     let oy = match wm.anchor {
-        TopLeft | Top | TopRight => inset,
-        Left | Center | Right => (h - th) / 2.0,
-        BottomLeft | Bottom | BottomRight => h - inset - th,
+        TopLeft | Top | TopRight => iy,
+        Left | Center | Right => (h - bh) / 2.0,
+        BottomLeft | Bottom | BottomRight => h - iy - bh,
     };
     let alpha = wm.opacity.clamp(0.0, 1.0);
     let mut blend = |gx: i32, gy: i32, cov: f32, col: [u8; 3], a: f32| {
@@ -394,7 +516,7 @@ fn watermark_coverage(
         blend_px(gx as usize, gy as usize, (cov * a).clamp(0.0, 1.0), col);
     };
     let passes: &[(f32, [u8; 3], f32)] =
-        if wm.shadow { &[((px * 0.05).max(1.0), [0, 0, 0], 0.45), (0.0, wm.color, 1.0)] } else { &[(0.0, wm.color, 1.0)] };
+        if wm.shadow { &[((px * 0.05).max(floor_scale), [0, 0, 0], 0.45), (0.0, wm.color, 1.0)] } else { &[(0.0, wm.color, 1.0)] };
     for &(off, col, a) in passes {
         for (face, g, rotation) in &glyphs {
             if let Some(o) = fonts.get(*face).and_then(|font| font.outline_glyph(g.clone())) {
@@ -405,6 +527,8 @@ fn watermark_coverage(
                         Some((cx, cy)) => (cx - (sy - cy), cy + (sx - cx)),
                         None => (sx, sy),
                     };
+                    // turned with the box; the shadow still falls down and to the right
+                    let (sx, sy) = turn(turns, sx, sy, tw, th);
                     blend((ox + off + sx) as i32, (oy + off + sy) as i32, cov, col, a * alpha);
                 });
             }
@@ -449,19 +573,22 @@ fn logo_coverage(width: usize, height: usize, wm: &Watermark, mut blend_px: impl
         [p[0] as f32 * a, p[1] as f32 * a, p[2] as f32 * a, a]
     });
     let scaled = lightcraft_raster::resample::resize(&pre, lw, lh, lightcraft_raster::resample::Filter::Mitchell);
-    let inset = wm.inset.clamp(0.0, 0.4) * width.min(height) as f32;
-    let (w, h, lwf, lhf) = (width as f32, height as f32, lw as f32, lh as f32);
+    let short = width.min(height) as f32;
+    let (ix, iy) = (wm.inset_x.clamp(0.0, 0.4) * short, wm.inset_y.clamp(0.0, 0.4) * short);
+    let turns = wm.quarter_turns();
+    let (bw, bh) = if turns % 2 == 1 { (lh, lw) } else { (lw, lh) };
+    let (w, h, lwf, lhf) = (width as f32, height as f32, bw as f32, bh as f32);
     use Anchor::*;
     let ox = match wm.anchor {
-        TopLeft | Left | BottomLeft => inset,
+        TopLeft | Left | BottomLeft => ix,
         Top | Center | Bottom => (w - lwf) / 2.0,
-        TopRight | Right | BottomRight => w - inset - lwf,
+        TopRight | Right | BottomRight => w - ix - lwf,
     }
     .max(0.0) as usize;
     let oy = match wm.anchor {
-        TopLeft | Top | TopRight => inset,
+        TopLeft | Top | TopRight => iy,
         Left | Center | Right => (h - lhf) / 2.0,
-        BottomLeft | Bottom | BottomRight => h - inset - lhf,
+        BottomLeft | Bottom | BottomRight => h - iy - lhf,
     }
     .max(0.0) as usize;
     let space = wm.target.unwrap_or(OutputSpace::Srgb);
@@ -470,7 +597,8 @@ fn logo_coverage(width: usize, height: usize, wm: &Watermark, mut blend_px: impl
         for x in 0..lw {
             let [r, g, b, a] = scaled.get(x, y);
             let a = a.clamp(0.0, 1.0);
-            let (px, py) = (ox + x, oy + y);
+            let (tx, ty) = turn(turns, x as f32, y as f32, lw as f32, lh as f32);
+            let (px, py) = (ox + tx as usize, oy + ty as usize);
             if a <= 1e-4 || px >= width || py >= height {
                 continue;
             }
@@ -499,7 +627,7 @@ pub enum MetadataPolicy {
 #[serde(default, rename_all = "camelCase")]
 pub struct ExportOptions {
     pub format: ExportFormat,
-    /// 1–100 (JPEG, AVIF).
+    /// 1–100 (JPEG, AVIF, lossy JPEG XL).
     pub quality: u8,
     /// Output size (`None` = full size).
     pub resize: Option<Resize>,
@@ -530,15 +658,33 @@ pub struct ExportOptions {
     pub remove_location: bool,
     /// Text watermark (none when absent or the text is empty).
     pub watermark: Option<Watermark>,
-    /// Output colour space (AVIF is always sRGB: its muxer cannot embed a profile).
+    /// Output colour space (AVIF is always sRGB: its muxer cannot embed a profile; lossy JPEG XL
+    /// writes Adobe RGB and ProPhoto as Rec. 2020, see [`ExportOptions::effective_space`]).
     pub color_space: OutputSpace,
-    /// Bits per channel: 8, 16 (PNG, TIFF), 32 (TIFF: float, linear) or 10 (AVIF); `None` = the
+    /// Bits per channel: 8, 16 (PNG, TIFF, JPEG XL), 32 (TIFF: float, linear) or 10 (AVIF); `None` = the
     /// format's default (TIFF 16, everything else 8). See [`ExportOptions::effective_depth`].
     pub bit_depth: Option<u8>,
-    /// Have the sync server render this photo ([`crate::sync::render_on_server`]) instead of this device. Also what
+    /// Have the sync server render this photo ([`crate::cloud_sync::render_on_server`]) instead of this device. Also what
     /// happens when the render wouldn't fit this device's memory ([`crate::memory::export_limit`]) and the photo is
     /// on the server.
     pub on_server: bool,
+    /// HDR output for photos edited in HDR: JPEG as an ISO 21496-1 gain map JPEG (the SDR
+    /// rendition plus a gain map, so the file looks right everywhere; quality as set, `limit_kb`
+    /// not applied), AVIF as 10-bit Rec. 2020 PQ, PNG as 16-bit Rec. 2020 PQ (`cICP`; viewers
+    /// without cICP support show it as sRGB, washed out), JPEG XL as 16-bit Rec. 2020 PQ, 32-bit float
+    /// TIFF with the highlights above SDR white kept. Other formats, and photos without an HDR
+    /// edit, are SDR.
+    pub hdr: bool,
+    /// JPEG XL: mathematically lossless instead of lossy (`quality` is then unused).
+    pub jxl_lossless: bool,
+    /// JPEG XL: encoder effort (time spent for a smaller file).
+    pub jxl_effort: JxlEffort,
+    /// JPEG XL: progressive file (a coarse image first, refined as it loads).
+    pub jxl_progressive: bool,
+    /// After the export, add the files written to Apple Photos (macOS only; see [`AfterExport`]).
+    pub add_to_photos: bool,
+    /// The Photos album they go into, made when missing (empty = none).
+    pub photos_album: String,
 }
 
 impl Default for ExportOptions {
@@ -563,16 +709,321 @@ impl Default for ExportOptions {
             color_space: OutputSpace::Srgb,
             bit_depth: None,
             on_server: false,
+            hdr: false,
+            jxl_lossless: false,
+            jxl_effort: JxlEffort::Normal,
+            jxl_progressive: false,
+            add_to_photos: false,
+            photos_album: String::new(),
         }
     }
 }
 
+/// The `app.export` params that are not export options: which photos, where to, a preset to start
+/// from, and the desktop app's background flag.
+pub const TARGET_PARAMS: &[&str] = &["id", "ids", "path", "dir", "preset", "background"];
+
+/// The export option params [`ExportOptions::from_json`] reads (and [`ExportOptions::to_json`] writes).
+pub const OPTION_PARAMS: &[&str] = &[
+    "format",
+    "quality",
+    "resize",
+    "longEdge",
+    "shortEdge",
+    "width",
+    "height",
+    "megapixels",
+    "percent",
+    "dontEnlarge",
+    "ppi",
+    "limitKb",
+    "sharpen",
+    "sharpenAmount",
+    "naming",
+    "startNumber",
+    "subfolder",
+    "conflict",
+    "tiffCompression",
+    "dngCompression",
+    "metadata",
+    "removeLocation",
+    "watermark",
+    "colorSpace",
+    "bitDepth",
+    "hdr",
+    "jxlLossless",
+    "jxlEffort",
+    "jxlProgressive",
+    "addToPhotos",
+    "photosAlbum",
+    "onServer",
+];
+
+/// Why an export can't add its files to Apple Photos on this platform (`None`: it can, when the
+/// session has the runner; see [`crate::Session::after_export`]).
+pub fn apple_photos_unsupported() -> Option<&'static str> {
+    (!cfg!(target_os = "macos")).then_some("Apple Photos is only available on macOS")
+}
+
+/// The keys of a `watermark` object ([`Watermark`], camelCase). `inset` sets `insetX` and `insetY`
+/// together (what versions before the two margins wrote); either of those, when given, wins.
+pub const WATERMARK_PARAMS: &[&str] =
+    &["text", "vertical", "size", "opacity", "anchor", "insetX", "insetY", "inset", "rotation", "color", "shadow", "image", "imageWidth"];
+
+/// Text height as a fraction of the short edge: the range the renderer draws without clamping.
+pub const WATERMARK_SIZE_RANGE: (f32, f32) = (0.005, 0.5);
+/// Margin as a fraction of the short edge.
+pub const WATERMARK_INSET_RANGE: (f32, f32) = (0.0, 0.4);
+/// A graphic's width as a fraction of the photo's width.
+pub const WATERMARK_IMAGE_WIDTH_RANGE: (f32, f32) = (0.01, 1.0);
+
+/// Levenshtein distance, for "did you mean" on a misspelled key (both inputs are short).
+fn edit_distance(a: &str, b: &str) -> usize {
+    let (a, b): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    for (i, ca) in a.iter().enumerate() {
+        let mut cur = vec![i + 1; b.len() + 1];
+        for (j, cb) in b.iter().enumerate() {
+            let sub = prev.get(j).copied().unwrap_or(0) + usize::from(ca != cb);
+            let del = prev.get(j + 1).copied().unwrap_or(0) + 1;
+            let ins = cur.get(j).copied().unwrap_or(0) + 1;
+            if let Some(c) = cur.get_mut(j + 1) {
+                *c = sub.min(del).min(ins);
+            }
+        }
+        prev = cur;
+    }
+    prev.last().copied().unwrap_or(0)
+}
+
+/// `unknown parameter \`k\``, naming the closest known key when one is near.
+fn unknown_key(what: &str, k: &str, known: &[&str]) -> String {
+    let near = known.iter().map(|n| (edit_distance(&k.to_ascii_lowercase(), &n.to_ascii_lowercase()), *n)).filter(|(d, _)| *d <= 2).min();
+    match near {
+        Some((_, n)) => format!("unknown {what} `{k}` (did you mean `{n}`?)"),
+        None => format!("unknown {what} `{k}` (one of {})", known.join(", ")),
+    }
+}
+
+/// A JSON integer (`92`; never `92.5` or `"92"`), as [`ExportOptions::from_json`] reads them.
+fn whole(v: &serde_json::Value) -> Option<i64> {
+    v.as_i64()
+}
+
+/// A `watermark` object as a [`Watermark`]; a legacy `inset` fills whichever of `insetX` and
+/// `insetY` is missing.
+fn watermark_from_json(v: &serde_json::Value) -> serde_json::Result<Watermark> {
+    let mut v = v.clone();
+    if let Some(o) = v.as_object_mut()
+        && let Some(inset) = o.remove("inset")
+    {
+        o.entry("insetX").or_insert_with(|| inset.clone());
+        o.entry("insetY").or_insert(inset);
+    }
+    serde_json::from_value(v)
+}
+
 impl ExportOptions {
+    /// Stored export settings (a saved preset, `prefs.json ▸ lastExport`) with the keys an older or
+    /// newer version may have written and this one doesn't know dropped, also inside `watermark`.
+    /// [`ExportOptions::validate`] is strict about what a caller types; settings saved on disk are
+    /// not the caller's typo, and refusing them would make a preset or Export with Previous fail
+    /// for good after an update.
+    pub fn known_keys_only(p: &serde_json::Value) -> serde_json::Value {
+        let mut p = p.clone();
+        if let Some(o) = p.as_object_mut() {
+            o.retain(|k, _| OPTION_PARAMS.contains(&k.as_str()) || TARGET_PARAMS.contains(&k.as_str()));
+            if let Some(w) = o.get_mut("watermark").and_then(serde_json::Value::as_object_mut) {
+                w.retain(|k, _| WATERMARK_PARAMS.contains(&k.as_str()));
+            }
+        }
+        p
+    }
+
+    /// Strict [`ExportOptions::from_json`] for a command that is about to export (issue #181): an
+    /// unknown parameter or a value that cannot be read as what it is for is an error, never a
+    /// silent default. `app.export` targets (`id`, `ids`, `path`, `dir`, `preset`, `background`)
+    /// are accepted and left to the caller.
+    pub fn from_params(p: &serde_json::Value) -> crate::Result<Self> {
+        Self::validate("app.export", p)?;
+        Ok(Self::from_json(p))
+    }
+
+    /// Check `app.export` params for `cmd` (the command named in the error): every key must be an
+    /// export option ([`OPTION_PARAMS`]) or a target ([`TARGET_PARAMS`]), every value must be the
+    /// kind of thing its key takes, and a `watermark` object must hold only [`WATERMARK_PARAMS`]
+    /// with its sizes in range (issue #183). `null` means "not given", as a dropped key does.
+    pub fn validate(cmd: &str, p: &serde_json::Value) -> crate::Result<()> {
+        use serde_json::Value;
+        let bad = |msg: String| crate::cmd::bad(cmd, msg);
+        let Some(obj) = p.as_object() else { return Err(bad("params must be an object".into())) };
+        let known: Vec<&str> = OPTION_PARAMS.iter().chain(TARGET_PARAMS).copied().collect();
+        let int = |k: &str, v: &Value, lo: i64, hi: i64| -> crate::Result<i64> {
+            whole(v).filter(|i| (lo..=hi).contains(i)).ok_or_else(|| bad(format!("`{k}` must be an integer {lo}..{hi}")))
+        };
+        let num = |k: &str, v: &Value, lo: f64, hi: f64| -> crate::Result<f64> {
+            v.as_f64().filter(|f| f.is_finite() && (lo..=hi).contains(f)).ok_or_else(|| bad(format!("`{k}` must be a number {lo}..{hi}")))
+        };
+        fn string<'a>(cmd: &str, k: &str, v: &'a Value) -> crate::Result<&'a str> {
+            v.as_str().ok_or_else(|| crate::cmd::bad(cmd, format!("`{k}` must be a string")))
+        }
+        let boolean = |k: &str, v: &Value| -> crate::Result<bool> { v.as_bool().ok_or_else(|| bad(format!("`{k}` must be true or false"))) };
+        let one_of = |k: &str, v: &Value, options: &[&str]| -> crate::Result<()> {
+            let s = string(cmd, k, v)?;
+            if options.iter().any(|o| o.eq_ignore_ascii_case(s)) { Ok(()) } else { Err(bad(format!("`{k}` must be one of {}", options.join("|")))) }
+        };
+        for (k, v) in obj {
+            if v.is_null() {
+                continue;
+            }
+            match k.as_str() {
+                "format" => {
+                    if ExportFormat::parse(string(cmd, k, v)?).is_none() {
+                        return Err(bad(format!("`{k}` must be one of jpeg|png|tiff|webp|avif|jxl|dng|original")));
+                    }
+                }
+                "quality" => {
+                    int(k, v, 1, 100)?;
+                }
+                "ppi" => {
+                    int(k, v, 1, u16::MAX as i64)?;
+                }
+                "limitKb" => {
+                    int(k, v, 0, u32::MAX as i64)?;
+                }
+                "startNumber" => {
+                    int(k, v, 0, 999_999)?;
+                }
+                "bitDepth" => {
+                    if !matches!(whole(v), Some(8 | 10 | 16 | 32)) {
+                        return Err(bad(format!("`{k}` must be 8, 10, 16 or 32")));
+                    }
+                }
+                "longEdge" | "shortEdge" | "width" | "height" | "megapixels" | "percent" => {
+                    num(k, v, 0.0, 1.0e9)?;
+                }
+                "resize" => {
+                    let Some(r) = v.as_object() else { return Err(bad(format!("`{k}` must be an object {{mode, value, height?, dontEnlarge?}}"))) };
+                    if let Some(x) = r.keys().find(|x| !matches!(x.as_str(), "mode" | "value" | "height" | "dontEnlarge")) {
+                        return Err(bad(unknown_key("resize key", x, &["mode", "value", "height", "dontEnlarge"])));
+                    }
+                    serde_json::from_value::<Resize>(v.clone()).map_err(|e| bad(format!("`{k}`: {e}")))?;
+                }
+                "dontEnlarge" | "removeLocation" | "background" | "hdr" | "jxlLossless" | "jxlProgressive" | "onServer" => {
+                    boolean(k, v)?;
+                }
+                "addToPhotos" => {
+                    if boolean(k, v)?
+                        && let Some(why) = apple_photos_unsupported()
+                    {
+                        return Err(bad(format!("`{k}`: {why}")));
+                    }
+                }
+                "photosAlbum" => {
+                    if string(cmd, k, v)?.contains('\0') {
+                        return Err(bad(format!("`{k}` can't contain a NUL character")));
+                    }
+                }
+                "naming" | "subfolder" | "path" | "dir" | "preset" => {
+                    string(cmd, k, v)?;
+                }
+                "sharpen" => one_of(k, v, &["none", "screen", "matte", "glossy"])?,
+                "sharpenAmount" => one_of(k, v, &["low", "standard", "high"])?,
+                "conflict" => one_of(k, v, &["unique", "overwrite", "skip"])?,
+                "tiffCompression" => one_of(k, v, &["none", "lzw", "zip", "deflate"])?,
+                "jxlEffort" => one_of(k, v, &["fast", "normal"])?,
+                "dngCompression" => {
+                    serde_json::from_value::<DngCompression>(v.clone())
+                        .map_err(|_| bad(format!("`{k}` must be one of lossless|deflate|uncompressed")))?;
+                }
+                "metadata" => one_of(k, v, &["all", "allExceptCamera", "copyright", "none"])?,
+                "colorSpace" => {
+                    if OutputSpace::parse(string(cmd, k, v)?).is_none() {
+                        return Err(bad(format!("`{k}` must be one of srgb|displayP3|adobeRgb|proPhoto|rec2020")));
+                    }
+                }
+                "watermark" => Self::validate_watermark(cmd, v)?,
+                "id" => {
+                    int(k, v, 0, i64::MAX)?;
+                }
+                "ids" => {
+                    let ok = v.as_array().is_some_and(|a| a.iter().all(|x| x.is_u64()));
+                    if !ok {
+                        return Err(bad(format!("`{k}` must be an array of photo ids")));
+                    }
+                }
+                _ => return Err(bad(unknown_key("parameter", k, &known))),
+            }
+        }
+        Ok(())
+    }
+
+    /// A `watermark` value: text, or an object of [`WATERMARK_PARAMS`] (issue #183).
+    fn validate_watermark(cmd: &str, v: &serde_json::Value) -> crate::Result<()> {
+        use serde_json::Value;
+        let bad = |msg: String| crate::cmd::bad(cmd, msg);
+        let obj = match v {
+            Value::String(_) => return Ok(()),
+            Value::Object(o) => o,
+            _ => {
+                return Err(bad(
+                    "`watermark` must be text or an object {text, vertical, size, opacity, anchor, insetX, insetY, inset, rotation, color, shadow, image, imageWidth}".into(),
+                ));
+            }
+        };
+        let frac = |k: &str, v: &Value, (lo, hi): (f32, f32), unit: &str| -> crate::Result<()> {
+            match v.as_f64() {
+                Some(f) if f.is_finite() && (f64::from(lo)..=f64::from(hi)).contains(&f) => Ok(()),
+                _ => Err(bad(format!("`watermark.{k}` must be a number {lo}..{hi} ({unit})"))),
+            }
+        };
+        for (k, v) in obj {
+            if v.is_null() {
+                continue;
+            }
+            match k.as_str() {
+                "text" | "image" => {
+                    v.as_str().ok_or_else(|| bad(format!("`watermark.{k}` must be a string")))?;
+                }
+                "vertical" | "shadow" => {
+                    v.as_bool().ok_or_else(|| bad(format!("`watermark.{k}` must be true or false")))?;
+                }
+                "size" => frac(k, v, WATERMARK_SIZE_RANGE, "fraction of the short edge")?,
+                "opacity" => frac(k, v, (0.0, 1.0), "0 = invisible, 1 = solid")?,
+                "insetX" | "insetY" | "inset" => frac(k, v, WATERMARK_INSET_RANGE, "fraction of the short edge")?,
+                "imageWidth" => frac(k, v, WATERMARK_IMAGE_WIDTH_RANGE, "fraction of the photo's width")?,
+                "rotation" => {
+                    if !matches!(whole(v), Some(0 | 90 | 180 | 270)) {
+                        return Err(bad("`watermark.rotation` must be 0, 90, 180 or 270 (degrees clockwise)".into()));
+                    }
+                }
+                "anchor" => {
+                    serde_json::from_value::<Anchor>(v.clone()).map_err(|_| {
+                        bad("`watermark.anchor` must be one of topLeft|top|topRight|left|center|right|bottomLeft|bottom|bottomRight".into())
+                    })?;
+                }
+                "color" => {
+                    let ok = v.as_array().is_some_and(|a| a.len() == 3 && a.iter().all(|c| matches!(whole(c), Some(0..=255))));
+                    if !ok {
+                        return Err(bad("`watermark.color` must be [r, g, b] with 0..255 each (sRGB)".into()));
+                    }
+                }
+                _ => return Err(bad(unknown_key("watermark key", k, WATERMARK_PARAMS))),
+            }
+        }
+        watermark_from_json(v).map(|_| ()).map_err(|e| bad(format!("`watermark`: {e}")))
+    }
+
     /// Read options from command params (`format`, `quality`, `limitKb`, `sharpen`, `sharpenAmount`,
-    /// `naming`, `metadata`, `removeLocation`, `watermark`, `colorSpace`, `bitDepth`, `ppi`) and the
+    /// `naming`, `metadata`, `removeLocation`, `watermark`, `colorSpace`, `bitDepth`, `ppi`,
+    /// `addToPhotos`, `photosAlbum`) and the
     /// size: one of `longEdge`, `shortEdge`, `width`, `height` (both = fit inside W × H),
     /// `megapixels`, `percent` (absent or 0 = full size), or a [`Resize`] object as `resize`; plus
     /// `dontEnlarge` (default true).
+    ///
+    /// Lenient: anything unknown or unreadable falls back to the default, which suits stored
+    /// prefs and dialog prefill. A command that is about to export uses
+    /// [`ExportOptions::from_params`], which validates first.
     pub fn from_json(p: &serde_json::Value) -> Self {
         use serde_json::Value;
         let d = Self::default();
@@ -604,13 +1055,19 @@ impl ExportOptions {
             remove_location: p.get("removeLocation").and_then(Value::as_bool).unwrap_or(d.remove_location),
             watermark: match p.get("watermark") {
                 Some(Value::String(t)) => Some(Watermark { text: t.clone(), ..Default::default() }),
-                Some(v @ Value::Object(_)) => serde_json::from_value(v.clone()).ok(),
+                Some(v @ Value::Object(_)) => watermark_from_json(v).ok(),
                 _ => None,
             }
             .filter(|w: &Watermark| !w.text.trim().is_empty() || !w.image.trim().is_empty()),
             color_space: s("colorSpace").and_then(OutputSpace::parse).unwrap_or(d.color_space),
             bit_depth: u("bitDepth").filter(|b| matches!(b, 8 | 10 | 16 | 32)).map(|b| b as u8),
             on_server: p.get("onServer").and_then(Value::as_bool).unwrap_or(d.on_server),
+            hdr: p.get("hdr").and_then(Value::as_bool).unwrap_or(d.hdr),
+            jxl_lossless: p.get("jxlLossless").and_then(Value::as_bool).unwrap_or(d.jxl_lossless),
+            jxl_effort: s("jxlEffort").and_then(JxlEffort::parse).unwrap_or(d.jxl_effort),
+            jxl_progressive: p.get("jxlProgressive").and_then(Value::as_bool).unwrap_or(d.jxl_progressive),
+            add_to_photos: p.get("addToPhotos").and_then(Value::as_bool).unwrap_or(d.add_to_photos),
+            photos_album: s("photosAlbum").map_or(d.photos_album, |a| a.trim().to_string()),
         }
     }
 
@@ -676,13 +1133,21 @@ impl ExportOptions {
     pub fn effective_depth(&self) -> OutputDepth {
         match (self.format, self.bit_depth) {
             (ExportFormat::Jpeg | ExportFormat::Webp | ExportFormat::Original | ExportFormat::Dng, _) => OutputDepth::U8,
+            (ExportFormat::Png, _) if self.hdr => OutputDepth::F32Hdr,
             (ExportFormat::Png, Some(16 | 32)) => OutputDepth::U16,
             (ExportFormat::Png, _) => OutputDepth::U8,
             (ExportFormat::Tiff, Some(8)) => OutputDepth::U8,
+            (ExportFormat::Tiff, Some(32)) if self.hdr => OutputDepth::F32Hdr,
             (ExportFormat::Tiff, Some(32)) => OutputDepth::F32Linear,
             (ExportFormat::Tiff, _) => OutputDepth::U16,
+            (ExportFormat::Psd, Some(8)) => OutputDepth::U8,
+            (ExportFormat::Psd, _) => OutputDepth::U16,
+            (ExportFormat::Avif, _) if self.hdr => OutputDepth::F32Hdr,
             (ExportFormat::Avif, Some(10 | 16 | 32)) => OutputDepth::U16,
             (ExportFormat::Avif, _) => OutputDepth::U8,
+            (ExportFormat::Jxl, _) if self.hdr => OutputDepth::F32Hdr,
+            (ExportFormat::Jxl, Some(10 | 16 | 32)) => OutputDepth::U16,
+            (ExportFormat::Jxl, _) => OutputDepth::U8,
         }
     }
 
@@ -692,13 +1157,46 @@ impl ExportOptions {
             ExportFormat::Jpeg | ExportFormat::Webp | ExportFormat::Original | ExportFormat::Dng => &[(8, "8-bit")],
             ExportFormat::Png => &[(8, "8-bit"), (16, "16-bit")],
             ExportFormat::Tiff => &[(16, "16-bit"), (8, "8-bit"), (32, "32-bit float")],
+            ExportFormat::Psd => &[(16, "16-bit"), (8, "8-bit")],
             ExportFormat::Avif => &[(8, "8-bit"), (10, "10-bit")],
+            ExportFormat::Jxl => &[(8, "8-bit"), (16, "16-bit")],
         }
     }
 
-    /// The colour space the file is actually written in (AVIF: sRGB).
+    /// Whether these options write HDR files (for photos edited in HDR): JPEG (gain map), AVIF,
+    /// PNG or JPEG XL (PQ) or 32-bit float TIFF with [`ExportOptions::hdr`].
+    pub fn hdr_output(&self) -> bool {
+        self.hdr
+            && matches!(
+                (self.format, self.bit_depth),
+                (ExportFormat::Jpeg | ExportFormat::Avif | ExportFormat::Png | ExportFormat::Jxl, _) | (ExportFormat::Tiff, Some(32))
+            )
+    }
+
+    /// The colour space the file is actually written in (AVIF: sRGB; AVIF, PNG and JPEG XL HDR:
+    /// Rec. 2020; lossy JPEG XL: Adobe RGB and ProPhoto as Rec. 2020, the widest space its encoder
+    /// can declare without a profile).
     pub fn effective_space(&self) -> OutputSpace {
-        if self.format == ExportFormat::Avif { OutputSpace::Srgb } else { self.color_space }
+        match self.format {
+            ExportFormat::Avif | ExportFormat::Png | ExportFormat::Jxl if self.hdr => OutputSpace::Rec2020,
+            ExportFormat::Avif => OutputSpace::Srgb,
+            ExportFormat::Jxl if !self.jxl_lossless && matches!(self.color_space, OutputSpace::AdobeRgb | OutputSpace::ProPhoto) => {
+                OutputSpace::Rec2020
+            }
+            _ => self.color_space,
+        }
+    }
+
+    /// The JPEG XL encoder settings for these options, writing samples in `space`.
+    fn jxl(&self, space: OutputSpace, hdr: bool) -> JxlOptions {
+        let colour = match space {
+            _ if hdr => JxlColour::Rec2020Pq,
+            OutputSpace::DisplayP3 => JxlColour::DisplayP3,
+            OutputSpace::Rec2020 => JxlColour::Rec2020,
+            // lossless files carry the ICC profile; lossy ones never get here (`effective_space`)
+            OutputSpace::Srgb | OutputSpace::AdobeRgb | OutputSpace::ProPhoto => JxlColour::Srgb,
+        };
+        JxlOptions { quality: self.quality, lossless: self.jxl_lossless, effort: self.jxl_effort, progressive: self.jxl_progressive, colour }
     }
 
     /// Output file name for photo `p` at 1-based position `seq` in a batch (the original's
@@ -808,13 +1306,8 @@ pub fn encode_image(img: &Rgba8, o: &ExportOptions) -> Result<Vec<u8>, String> {
 
 /// Like [`encode_image`], embedding `meta` (already filtered by the policy) as EXIF + XMP.
 pub fn encode_with_metadata(img: &Rgba8, o: &ExportOptions, meta: Option<&Metadata>) -> Result<Vec<u8>, String> {
-    let mut img = img.clone();
-    output_sharpen(&mut img, o.sharpen, o.sharpen_amount);
+    let img = finish_8bit(img, o);
     let space = o.effective_space();
-    if let Some(wm) = &o.watermark {
-        let wm = Watermark { color: srgb8_in(space, wm.color), target: Some(space), ..wm.clone() };
-        draw_watermark(&mut img, &wm);
-    }
     let profile = icc::write_named(named_space(space));
     let exif = meta.map(lightcraft_meta::write_exif);
     let xmp = meta.map(|m| lightcraft_meta::write_xmp(m, None));
@@ -850,11 +1343,62 @@ pub fn encode_with_metadata(img: &Rgba8, o: &ExportOptions, meta: Option<&Metada
         }
         ExportFormat::Png => encode::encode_png(&e, &meta),
         ExportFormat::Tiff => encode::encode_tiff(&e, o.tiff_compression, &meta),
+        ExportFormat::Psd => encode::encode_psd(&e, &meta),
         ExportFormat::Webp => encode::encode_webp_lossless(&e, &meta),
         ExportFormat::Avif => encode::encode_avif(&e, o.quality, 8, &meta),
+        ExportFormat::Jxl => lightcraft_codecs::encode_jxl(&e, &o.jxl(space, false), &meta),
         f @ (ExportFormat::Original | ExportFormat::Dng) => return Err(format!("{f:?} export does not encode pixels")),
     };
     r.map_err(|e| e.to_string())
+}
+
+/// Output sharpening and the watermark on an 8-bit render in `o.effective_space()`.
+fn finish_8bit(img: &Rgba8, o: &ExportOptions) -> Rgba8 {
+    let mut img = img.clone();
+    output_sharpen(&mut img, o.sharpen, o.sharpen_amount);
+    let space = o.effective_space();
+    if let Some(wm) = &o.watermark {
+        let wm = Watermark { color: srgb8_in(space, wm.color), target: Some(space), ..wm.clone() };
+        draw_watermark(&mut img, &wm);
+    }
+    img
+}
+
+/// Output sharpening and the watermark on a high-bit-depth render.
+fn finish_deep(mut img: DeepImage, o: &ExportOptions) -> DeepImage {
+    output_sharpen_deep(&mut img, o.sharpen, o.sharpen_amount);
+    if let Some(wm) = &o.watermark {
+        let wm = Watermark { color: srgb8_in(img.space, wm.color), target: Some(img.space), ..wm.clone() };
+        draw_watermark_deep(&mut img, &wm);
+    }
+    img
+}
+
+/// Encode an ISO 21496-1 gain map JPEG from the SDR rendition `sdr` (8-bit, in the output space)
+/// and the HDR rendition `hdr` (float linear, same space and size). The gain map is measured
+/// against the base as written, so its 8-bit rounding is handed back by the map.
+pub fn encode_gain_map_jpeg(sdr: &Rgba8, hdr: &DeepImage, o: &ExportOptions, meta: Option<&Metadata>) -> Result<Vec<u8>, String> {
+    use lightcraft_codecs::gainmap;
+    let base = finish_8bit(sdr, o);
+    let hdr = finish_deep(hdr.clone(), o);
+    let DeepSamples::F32(hv) = &hdr.samples else {
+        return Err("HDR export needs a float HDR render".into());
+    };
+    let (w, h) = (base.width, base.height);
+    if (hdr.width, hdr.height) != (w, h) || hv.len() < w * h * 3 {
+        return Err("HDR and SDR renders differ in size".into());
+    }
+    let space = o.effective_space();
+    let trc = space.trc();
+    let sdr_lin: Vec<[f32; 3]> = base.data.iter().map(|p| [0, 1, 2].map(|c| trc.decode(p[c] as f32 / 255.0))).collect();
+    let hdr_lin: &[[f32; 3]] = hv.as_chunks::<3>().0;
+    let (map, gm) = gainmap::compute(&sdr_lin, hdr_lin, w, h, space.luma(), &gainmap::GainMapOptions::default()).map_err(|e| e.to_string())?;
+    let profile = icc::write_named(named_space(space));
+    let exif = meta.map(lightcraft_meta::write_exif);
+    let xmp = meta.map(|m| lightcraft_meta::write_xmp(m, None));
+    let em = EncodeMeta { icc: Some(&profile), exif: exif.as_deref(), xmp: xmp.as_deref(), ppi: Some(o.ppi) };
+    let sub = if o.limit_kb.is_some() { ChromaSubsampling::S420 } else { ChromaSubsampling::S444 };
+    gainmap::encode_jpeg(&EncodeImage::rgba8(&base), &map, &gm, o.quality, sub, &em).map_err(|e| e.to_string())
 }
 
 /// The codecs' name of an output space (for its ICC profile).
@@ -899,12 +1443,8 @@ pub fn encode_deep(img: &DeepImage, o: &ExportOptions, meta: Option<&Metadata>) 
 /// [`encode_deep`] for an image nothing else needs: no copy of it is made, and it is freed as
 /// soon as it is encoded, so a huge image (a Super Resolution result) is in memory once, not
 /// twice, next to its encoding.
-pub fn encode_deep_owned(mut img: DeepImage, o: &ExportOptions, meta: Option<&Metadata>) -> Result<Vec<u8>, String> {
-    output_sharpen_deep(&mut img, o.sharpen, o.sharpen_amount);
-    if let Some(wm) = &o.watermark {
-        let wm = Watermark { color: srgb8_in(img.space, wm.color), target: Some(img.space), ..wm.clone() };
-        draw_watermark_deep(&mut img, &wm);
-    }
+pub fn encode_deep_owned(img: DeepImage, o: &ExportOptions, meta: Option<&Metadata>) -> Result<Vec<u8>, String> {
+    let img = finish_deep(img, o);
     let profile = match img.samples {
         DeepSamples::F32(_) => icc::write_matrix_trc(&img.space.rgb_space(), &lightcraft_codecs::Trc::Linear),
         DeepSamples::U16(_) => icc::write_named(named_space(img.space)),
@@ -917,27 +1457,33 @@ pub fn encode_deep_owned(mut img: DeepImage, o: &ExportOptions, meta: Option<&Me
         DeepSamples::U16(v) => EncodeImage::new(w, h, 3, Samples::U16(v)),
         DeepSamples::F32(v) => EncodeImage::new(w, h, 3, Samples::F32(v)),
     };
-    let r = match o.format {
-        ExportFormat::Png => encode::encode_png(&e, &meta),
-        ExportFormat::Tiff => encode::encode_tiff(&e, o.tiff_compression, &meta),
-        ExportFormat::Avif => encode::encode_avif(&e, o.quality, 8, &meta),
-        f => return Err(format!("{f:?} export is 8-bit only")),
+    let r = match (o.format, &img.samples) {
+        (ExportFormat::Png, DeepSamples::F32(v)) if img.space == OutputSpace::Rec2020 => lightcraft_codecs::encode_png_pq(w, h, v, &meta),
+        (ExportFormat::Png, _) => encode::encode_png(&e, &meta),
+        (ExportFormat::Tiff, _) => encode::encode_tiff(&e, o.tiff_compression, &meta),
+        (ExportFormat::Psd, _) => encode::encode_psd(&e, &meta),
+        (ExportFormat::Avif, DeepSamples::F32(v)) if img.space == OutputSpace::Rec2020 => {
+            lightcraft_codecs::encode_avif_pq(w, h, v, o.quality, 8, &meta)
+        }
+        (ExportFormat::Avif, _) => encode::encode_avif(&e, o.quality, 8, &meta),
+        (ExportFormat::Jxl, DeepSamples::F32(_)) if img.space == OutputSpace::Rec2020 => {
+            lightcraft_codecs::encode_jxl(&e, &o.jxl(img.space, true), &meta)
+        }
+        (ExportFormat::Jxl, DeepSamples::U16(_)) => lightcraft_codecs::encode_jxl(&e, &o.jxl(img.space, false), &meta),
+        (f, _) => return Err(format!("{f:?} export is 8-bit only")),
     };
     r.map_err(|e| e.to_string())
 }
 
-/// Parse a shutter speed such as `1/250`, `0.5` or `2"` into seconds.
-fn parse_shutter(s: &str) -> Option<f64> {
-    let s = s.trim().trim_end_matches(['s', '"']).trim();
-    match s.split_once('/') {
-        Some((n, d)) => Some(n.trim().parse::<f64>().ok()? / d.trim().parse::<f64>().ok()?),
-        None => s.parse().ok(),
-    }
-    .filter(|v: &f64| v.is_finite() && *v > 0.0)
+/// Whether the export of `photo` under `o` leaves out its location (GPS and place names).
+/// (`photo` and `catalog` let library-level privacy rules add to the export option.)
+pub fn removes_location(_photo: &lightcraft_catalog::Photo, _catalog: &lightcraft_catalog::Catalog, o: &ExportOptions) -> bool {
+    o.remove_location
 }
 
 /// The metadata to embed for `photo` under `o.metadata` / `o.remove_location`. `None` = embed nothing.
-pub fn export_metadata(photo: &lightcraft_catalog::Photo, o: &ExportOptions) -> Option<Metadata> {
+/// Keywords follow the catalog's keyword list (`Catalog::export_keywords`).
+pub fn export_metadata(photo: &lightcraft_catalog::Photo, catalog: &lightcraft_catalog::Catalog, o: &ExportOptions) -> Option<Metadata> {
     let m = &photo.meta;
     let text = |s: &str| (!s.trim().is_empty()).then(|| s.to_string());
     // copyright info (also under "copyright only"): notice, creator, status, usage terms, info URL
@@ -965,7 +1511,9 @@ pub fn export_metadata(photo: &lightcraft_catalog::Photo, o: &ExportOptions) -> 
         out.state = text(&m.state);
         out.country = text(&m.country);
     }
-    out.keywords = m.keywords.clone();
+    let keywords = catalog.export_keywords(&m.keywords);
+    out.keywords = keywords.flat;
+    out.hierarchical_keywords = keywords.hierarchical;
     out.capture_time = photo.captured.as_deref().and_then(DateTime::parse_iso);
     out.rating = (photo.rating > 0).then_some(photo.rating as i8);
     // Pixels are exported upright: orientation is baked in.
@@ -978,7 +1526,7 @@ pub fn export_metadata(photo: &lightcraft_catalog::Photo, o: &ExportOptions) -> 
         out.lens_model = text(&m.lens);
         out.focal_length = m.focal_mm.map(f64::from);
         out.f_number = m.aperture.map(f64::from);
-        out.exposure_time = parse_shutter(&m.shutter);
+        out.exposure_time = lightcraft_catalog::parse_shutter_seconds(&m.shutter);
         out.iso = m.iso;
     }
     Some(out)
@@ -993,6 +1541,9 @@ pub struct Exported {
     /// Files written next to it, named like it with another extension: `(extension, bytes)` (the
     /// XMP sidecar of an `Original` export).
     pub sidecars: Vec<(&'static str, Vec<u8>)>,
+    /// Set when the render was tried on the GPU and fell back to the CPU: why (see
+    /// `docs/gpu-pipeline.md`). The file holds the CPU render either way.
+    pub gpu_fallback: Option<String>,
 }
 
 /// Output size of photo `p` under `o` (its cropped full size when `o.resize` is `None`).
@@ -1019,18 +1570,23 @@ pub struct PreparedExport {
     work: Work,
     /// The library's originals, which [`run_batch`] never writes over (shared by a batch).
     guard: std::sync::Arc<crate::originals::OriginalGuard>,
+    /// Estimated working memory of [`Self::run`] (bytes), held from [`crate::memory::export_gate`]
+    /// while it runs beside other photos of a batch.
+    weight: usize,
 }
 
 struct RenderWork {
     job: crate::media::RenderJob,
+    /// The HDR rendition of a gain map JPEG (`job` renders its SDR base).
+    hdr_job: Option<crate::media::RenderJob>,
     meta: Option<Metadata>,
     opts: ExportOptions,
 }
 
-/// An export the sync server renders ([`crate::sync::render_on_server`]).
+/// An export the sync server renders ([`crate::cloud_sync::render_on_server`]).
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))] // (the web build can't make the call)
 struct ServerWork {
-    target: crate::sync::RenderTarget,
+    target: crate::cloud_sync::RenderTarget,
     request: lightcraft_catalog::sync::proto::Render,
     /// The size asked for (what the export reports).
     size: (usize, usize),
@@ -1047,6 +1603,8 @@ enum Work {
         read: Option<crate::merge::ByteReader>,
         packet: String,
         dng: Option<DngCompression>,
+        /// The original must not carry a location ([`removes_location`]).
+        remove_location: bool,
         label: String,
         size: (usize, usize),
     },
@@ -1079,7 +1637,16 @@ fn prepare_guarded(
 ) -> Result<PreparedExport, String> {
     let p = session.catalog.photo(id).ok_or("no such photo")?;
     let file_name = o.file_name_for(p, seq);
-    let work = if o.format.is_rendered() {
+    // HDR output only for photos edited in HDR; the rest of the batch exports as usual
+    let sdr_opts;
+    let o = if o.hdr && !p.develop.hdr.enabled {
+        sdr_opts = ExportOptions { hdr: false, ..o.clone() };
+        &sdr_opts
+    } else {
+        o
+    };
+    let (full_px, long) = ((p.width as usize).saturating_mul(p.height as usize), p.width.max(p.height) as usize);
+    let (work, weight) = if o.format.is_rendered() {
         let (w, h) = output_size(p, o);
         // what this render needs against what this device may use: over it, the sync server renders (or says why not)
         let need = crate::memory::export_need(crate::media::export_source_pixels(p, w.max(h)), w.saturating_mul(h));
@@ -1099,7 +1666,15 @@ fn prepare_guarded(
             let settings = serde_json::to_value(&*p.develop).map_err(|e| e.to_string())?;
             let request =
                 lightcraft_catalog::sync::proto::Render { hash: target.hash.clone(), name: p.file_name.clone(), settings, export: o.to_json() };
-            return Ok(PreparedExport { photo: id, file_name, work: Work::Server(Box::new(ServerWork { target, request, size: (w, h) })), guard });
+            // (here: the file it downloads)
+            let weight = w.saturating_mul(h).saturating_mul(4);
+            return Ok(PreparedExport {
+                photo: id,
+                file_name,
+                work: Work::Server(Box::new(ServerWork { target, request, size: (w, h) })),
+                guard,
+                weight,
+            });
         }
         // a browser that doesn't hold the original renders from the photo's preview, up to the preview's size
         if let (Some(store), lightcraft_catalog::Source::File { path }) = (&session.sync_store, &p.source)
@@ -1113,23 +1688,42 @@ fn prepare_guarded(
                 crate::media::SourceLevel::Preview.max_edge()
             ));
         }
-        let meta = export_metadata(p, o);
+        let meta = export_metadata(p, &session.catalog, o);
+        let gain_map = o.hdr_output() && o.format == ExportFormat::Jpeg;
         let job = session.export_job(id, w, h, o.effective_space(), o.effective_depth())?;
-        Work::Render(Box::new(RenderWork { job, meta, opts: o.clone() }))
+        let weight = render_weight(full_px, long, job.level, w.saturating_mul(h));
+        let hdr_job = if gain_map { Some(session.export_job(id, w, h, o.effective_space(), OutputDepth::F32Hdr)?) } else { None };
+        (Work::Render(Box::new(RenderWork { job, hdr_job, meta, opts: o.clone() })), weight)
     } else {
         let lightcraft_catalog::Source::File { path } = &p.source else {
             return Err(format!("{} is a generated demo photo: it has no original file to export", p.file_name));
         };
-        Work::File {
+        let dng = (o.format == ExportFormat::Dng).then_some(o.dng_compression);
+        // the file's bytes; a DNG also decodes the raw data (16-bit samples) and writes it again
+        let weight = (p.file_size as usize).saturating_add(if dng.is_some() { full_px.saturating_mul(6) } else { 0 });
+        let work = Work::File {
             path: path.clone(),
             read: session.media.file_bytes.clone(),
-            packet: crate::sidecar::sidecar_packet(p, &session.catalog),
-            dng: (o.format == ExportFormat::Dng).then_some(o.dng_compression),
+            packet: crate::sidecar::sidecar_packet_with(p, &session.catalog, removes_location(p, &session.catalog, o)),
+            dng,
+            remove_location: removes_location(p, &session.catalog, o),
             label: p.file_name.clone(),
             size: (p.width as usize, p.height as usize),
-        }
+        };
+        (work, weight)
     };
-    Ok(PreparedExport { photo: id, file_name, work, guard })
+    Ok(PreparedExport { photo: id, file_name, work, guard, weight })
+}
+
+/// Working memory of rendering a photo of `full_px` pixels (long edge `long`) from source level
+/// `level` into `out_px` output pixels: the decoded source (linear RGB f32, 12 B/px) plus the
+/// pipeline's planes and the encoded output (~36 B per output pixel). Measured: a 24 MP export
+/// peaks at ~1.2 GB, one at 2048 px from the 2560 px preview at ~150 MB.
+fn render_weight(full_px: usize, long: usize, level: crate::media::SourceLevel, out_px: usize) -> usize {
+    let edge = level.max_edge().min(long.max(1));
+    let scale = edge as f64 / long.max(1) as f64;
+    let src_px = (full_px as f64 * scale * scale).min(usize::MAX as f64 / 64.0) as usize;
+    src_px.saturating_mul(12).saturating_add(out_px.saturating_mul(36))
 }
 
 impl PreparedExport {
@@ -1137,25 +1731,47 @@ impl PreparedExport {
         let file_name = self.file_name;
         match self.work {
             Work::Render(w) => {
-                let RenderWork { job, meta, opts } = *w;
-                let r = job.run().rendered?;
-                let bytes = encode_rendered(&r, &opts, meta.as_ref())?;
-                Ok(Exported { file_name, bytes, width: r.image.width, height: r.image.height, sidecars: Vec::new() })
+                let RenderWork { job, hdr_job, meta, opts } = *w;
+                let result = job.run();
+                let r = result.rendered?;
+                let gpu_fallback = result.gpu_fallback;
+                let bytes = match hdr_job {
+                    Some(hj) => {
+                        let hr = hj.run().rendered?;
+                        let hdr = hr.deep.ok_or("the HDR render has no float samples")?;
+                        encode_gain_map_jpeg(&r.image, &hdr, &opts, meta.as_ref())?
+                    }
+                    None => encode_rendered(&r, &opts, meta.as_ref())?,
+                };
+                Ok(Exported { file_name, bytes, width: r.image.width, height: r.image.height, sidecars: Vec::new(), gpu_fallback })
             }
             #[cfg(not(target_arch = "wasm32"))]
             Work::Server(w) => {
-                let bytes = crate::sync::render_on_server(&w.target, &w.request)?;
-                Ok(Exported { file_name, bytes, width: w.size.0, height: w.size.1, sidecars: Vec::new() })
+                let bytes = crate::cloud_sync::render_on_server(&w.target, &w.request)?;
+                Ok(Exported { file_name, bytes, width: w.size.0, height: w.size.1, sidecars: Vec::new(), gpu_fallback: None })
             }
             #[cfg(target_arch = "wasm32")]
             Work::Server(_) => Err("rendering on the server needs the desktop or iOS app".to_string()),
-            Work::File { path, read, packet, dng, label, size } => {
+            Work::File { path, read, packet, dng, label, size, remove_location } => {
                 let bytes = match &read {
                     Some(r) => r(&path)?,
                     None => std::fs::read(&path).map_err(|e| format!("{path}: {e}"))?,
                 };
                 let Some(dng) = dng else {
-                    return Ok(Exported { file_name, bytes, width: size.0, height: size.1, sidecars: vec![("xmp", packet.into_bytes())] });
+                    // the file is copied byte for byte: refuse rather than leak a location it embeds
+                    if remove_location && lightcraft_meta::extract(&bytes).gps.is_some() {
+                        return Err(format!(
+                            "{label}: can't remove the location from an original file that embeds GPS; export as JPEG, TIFF or DNG instead"
+                        ));
+                    }
+                    return Ok(Exported {
+                        file_name,
+                        bytes,
+                        width: size.0,
+                        height: size.1,
+                        sidecars: vec![("xmp", packet.into_bytes())],
+                        gpu_fallback: None,
+                    });
                 };
                 if lightcraft_raw::probe(&bytes).is_none() {
                     return Err(format!("{label}: DNG export needs a raw photo"));
@@ -1169,7 +1785,7 @@ impl PreparedExport {
                 };
                 let dng = lightcraft_raw::write_dng(&raw, &lightcraft_raw::DngWriteOptions { xmp: Some(packet), compression, ..Default::default() })
                     .map_err(|e| e.to_string())?;
-                Ok(Exported { file_name, bytes: dng, width: raw.width, height: raw.height, sidecars: Vec::new() })
+                Ok(Exported { file_name, bytes: dng, width: raw.width, height: raw.height, sidecars: Vec::new(), gpu_fallback: None })
             }
         }
     }
@@ -1195,6 +1811,104 @@ pub enum DngCompression {
 pub struct Destination {
     pub dir: String,
     pub exact: Option<String>,
+}
+
+/// What happens after an export has written its files (Lightroom's Post-Processing): nothing, or
+/// adding them to Apple Photos ([`ExportOptions::add_to_photos`]). Made by
+/// [`crate::Session::after_export`] before the export starts, so an export asking for something
+/// this session can't do fails before writing anything; for Photos it holds the import slot
+/// (a [`crate::apple_photos::Reservation`]) until the files are handed over, and frees it when
+/// dropped unused (the export failed or never ran). `Send`: a background export takes it to its
+/// worker.
+#[derive(Default)]
+pub struct AfterExport {
+    #[cfg(not(target_arch = "wasm32"))]
+    apple_photos: Option<crate::apple_photos::Reservation>,
+}
+
+impl AfterExport {
+    /// Add the files to Apple Photos with `runner`, into `album` when it isn't blank, reserving
+    /// the import slot of `imports` now. (Front ends get this from
+    /// [`crate::Session::after_export`], which checks the platform first.)
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn apple_photos(runner: crate::apple_photos::Runner, album: &str, imports: &crate::apple_photos::Imports) -> Result<Self, String> {
+        Ok(Self { apple_photos: Some(imports.reserve(runner, album)?) })
+    }
+
+    /// Nothing to do.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn is_none(&self) -> bool {
+        self.apple_photos.is_none()
+    }
+
+    /// Nothing to do.
+    #[cfg(target_arch = "wasm32")]
+    pub fn is_none(&self) -> bool {
+        true
+    }
+
+    /// Do it now for an export's per-photo results ([`run_batch`]'s: only the files written
+    /// count), waiting for Photos: for a worker thread (the app's background export) or a caller
+    /// without a window (MCP, lightcraft-cli). `None` when there was nothing to do, else the
+    /// outcome to report as the export's `applePhotos`: the finished job (`{job, running: false,
+    /// requested, album}` with `{imported, ids, warning?}`, `{error}`, or `{skipped}` when the
+    /// export was cancelled or wrote nothing). Never fails the export: its files are written
+    /// either way.
+    pub fn run(self, files: &[serde_json::Value], cancelled: bool) -> Option<serde_json::Value> {
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(r) = self.apple_photos {
+            return Some(r.run(files, cancelled));
+        }
+        let _ = (files, cancelled);
+        None
+    }
+
+    /// Like [`AfterExport::run`], without waiting: Photos works on a worker thread and the
+    /// outcome is the running job (`{job, running: true, requested, album}`; its result comes
+    /// from `export.photosImports`, and the desktop app announces it). For a caller on the UI
+    /// thread, which must not wait minutes for Photos.
+    pub fn start(self, files: &[serde_json::Value]) -> Option<serde_json::Value> {
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(r) = self.apple_photos {
+            return Some(r.start(files));
+        }
+        let _ = files;
+        None
+    }
+
+    /// [`AfterExport::start`] where the session answers on a UI thread
+    /// ([`crate::Session::apple_photos_background`]), else [`AfterExport::run`].
+    pub fn finish(self, s: &crate::Session, files: &[serde_json::Value]) -> Option<serde_json::Value> {
+        #[cfg(not(target_arch = "wasm32"))]
+        if s.apple_photos_background {
+            return self.start(files);
+        }
+        let _ = s;
+        self.run(files, false)
+    }
+}
+
+impl crate::Session {
+    /// What an export with `o` does after writing its files; an error, before anything is written,
+    /// when it asks for Apple Photos and this platform or session has no way to reach it, or
+    /// another import is reserved or running. For Photos the import slot is reserved from now on.
+    pub fn after_export(&self, o: &ExportOptions) -> Result<AfterExport, String> {
+        if !o.add_to_photos {
+            return Ok(AfterExport::default());
+        }
+        if let Some(why) = apple_photos_unsupported() {
+            return Err(why.into());
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let runner = self.apple_photos.clone().ok_or_else(|| crate::apple_photos::unavailable().to_string())?;
+            let mut after = AfterExport::apple_photos(runner, &o.photos_album, &self.apple_photos_imports)?;
+            after.apple_photos = after.apple_photos.map(|r| r.shown_in(self.activity.clone()));
+            Ok(after)
+        }
+        #[cfg(target_arch = "wasm32")]
+        Err("Apple Photos is only available on macOS".into())
+    }
 }
 
 /// Export `ids` in order ([`prepare_batch`] + [`run_batch`]), stopping at the first error.
@@ -1246,6 +1960,11 @@ fn sidecar_path(main: &str, ext: &str) -> String {
 /// policy. `progress(done, next file)` is called before each photo; returning false cancels the
 /// rest. Returns one JSON object per photo: `{path, width, height, bytes, sidecars}`,
 /// `{skipped: path}` or (unless `stop_on_error`) `{photo, file, error}`.
+///
+/// Several photos render side by side ([`export_parallelism`], within the memory of
+/// [`crate::memory::export_gate`]), so one photo's decode, encode or GPU wait overlaps another's
+/// render (issue #496). Paths, writes, results and `progress` still follow the batch order, and the
+/// files are the same as one at a time.
 pub fn run_batch(
     items: Vec<PreparedExport>,
     o: &ExportOptions,
@@ -1255,31 +1974,226 @@ pub fn run_batch(
     stop_on_error: bool,
     progress: &mut dyn FnMut(usize, &str) -> bool,
 ) -> Result<Vec<serde_json::Value>, String> {
-    use serde_json::json;
-    let join = |a: &str, b: &str| if a.is_empty() { b.to_string() } else { format!("{}/{b}", a.trim_end_matches('/')) };
-    let dir = if o.subfolder.is_empty() { to.dir.clone() } else { join(&to.dir, &o.subfolder) };
-    let single = items.len() == 1;
-    let mut taken = std::collections::HashSet::new();
-    let mut out = Vec::new();
-    for (i, item) in items.into_iter().enumerate() {
-        if !progress(i, &item.file_name) {
-            break;
+    let lanes = export_parallelism(items.len());
+    run_batch_with(items, &mut Placer::new(o, to, write, exists, stop_on_error), progress, lanes)
+}
+
+/// How many photos of a batch of `n` render side by side. Each render already spreads its rows
+/// over every core; the others fill the cores while it decodes, encodes or waits for the GPU.
+/// One on wasm32 (no threads).
+pub fn export_parallelism(n: usize) -> usize {
+    if cfg!(target_arch = "wasm32") {
+        return 1;
+    }
+    let cores = std::thread::available_parallelism().map_or(1, |c| c.get());
+    (cores / 4).clamp(1, 4).min(n.max(1))
+}
+
+/// [`run_batch`] with `lanes` photos in flight (the calling thread is one of them).
+fn run_batch_with(
+    items: Vec<PreparedExport>,
+    placer: &mut Placer<'_>,
+    progress: &mut dyn FnMut(usize, &str) -> bool,
+    lanes: usize,
+) -> Result<Vec<serde_json::Value>, String> {
+    placer.single = items.len() == 1;
+    if lanes <= 1 || items.len() <= 1 {
+        for (i, item) in items.into_iter().enumerate() {
+            if !progress(i, &item.file_name) {
+                break;
+            }
+            let (photo, name, guard) = (item.photo, item.file_name.clone(), item.guard.clone());
+            placer.place(photo, name, &guard, run_gated(item))?;
         }
-        let (photo, name, guard) = (item.photo, item.file_name.clone(), item.guard.clone());
-        let e = match item.run() {
-            Ok(e) => e,
-            Err(err) if stop_on_error => return Err(err),
-            Err(err) => {
-                out.push(json!({"photo": photo.0, "file": name, "error": err}));
+        return Ok(std::mem::take(&mut placer.out));
+    }
+    let heads: Vec<_> = items.iter().map(|i| (i.photo, i.file_name.clone(), i.guard.clone())).collect();
+    let queue = Queue {
+        lane: std::sync::Mutex::new(Lane { items: items.into_iter().map(Some).collect(), next: 0, placed: 0, stop: false, done: Default::default() }),
+        cv: std::sync::Condvar::new(),
+        ahead: lanes,
+    };
+    std::thread::scope(|sc| {
+        for k in 1..lanes {
+            let q = &queue;
+            // a lane that can't start leaves its photos to the others (and to this thread)
+            if std::thread::Builder::new().name(format!("export-{k}")).spawn_scoped(sc, move || q.work()).is_err() {
+                break;
+            }
+        }
+        let placed = || {
+            for (i, (photo, name, guard)) in heads.into_iter().enumerate() {
+                if !progress(i, &name) {
+                    break;
+                }
+                let e = queue.result(i);
+                placer.place(photo, name, &guard, e)?;
+            }
+            Ok::<_, String>(())
+        };
+        let r = placed();
+        queue.stop();
+        r
+    })?;
+    Ok(std::mem::take(&mut placer.out))
+}
+
+/// Run one photo's export holding its working memory from [`crate::memory::export_gate`]; a panic
+/// becomes that photo's error, not the batch's end.
+fn run_gated(item: PreparedExport) -> Result<Exported, String> {
+    let _held = crate::memory::export_gate().acquire(item.weight);
+    let what = format!("exporting {}", item.file_name);
+    crate::guard::catch(&what, || item.run()).and_then(|r| r)
+}
+
+/// The photos of a batch shared by its lanes: each lane takes the next one, at most
+/// [`Queue::ahead`] past the last placed. That bounds the finished files waiting in memory for
+/// their turn too (their working memory is given back to the gate as soon as they are encoded).
+struct Queue {
+    lane: std::sync::Mutex<Lane>,
+    cv: std::sync::Condvar,
+    ahead: usize,
+}
+
+struct Lane {
+    items: Vec<Option<PreparedExport>>,
+    /// The next photo to start.
+    next: usize,
+    /// Photos handed to the placer so far.
+    placed: usize,
+    stop: bool,
+    done: std::collections::HashMap<usize, Result<Exported, String>>,
+}
+
+impl Lane {
+    fn take_next(&mut self) -> Option<(usize, PreparedExport)> {
+        let i = self.next;
+        let item = self.items.get_mut(i)?.take()?;
+        self.next += 1;
+        Some((i, item))
+    }
+}
+
+impl Queue {
+    fn lock(&self) -> std::sync::MutexGuard<'_, Lane> {
+        self.lane.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn wait<'a>(&self, g: std::sync::MutexGuard<'a, Lane>) -> std::sync::MutexGuard<'a, Lane> {
+        self.cv.wait(g).unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn finish(&self, i: usize, r: Result<Exported, String>) {
+        self.lock().done.insert(i, r);
+        self.cv.notify_all();
+    }
+
+    /// A lane thread: run photos until none is left or the batch stops.
+    fn work(&self) {
+        loop {
+            let mut l = self.lock();
+            let (i, item) = loop {
+                if l.stop || l.next >= l.items.len() {
+                    return;
+                }
+                if l.next < l.placed.saturating_add(self.ahead) {
+                    match l.take_next() {
+                        Some(t) => break t,
+                        None => return,
+                    }
+                }
+                l = self.wait(l);
+            };
+            drop(l);
+            self.finish(i, run_gated(item));
+        }
+    }
+
+    /// Photo `i`'s result, waiting for it; run here when no lane has started it yet.
+    fn result(&self, i: usize) -> Result<Exported, String> {
+        let mut l = self.lock();
+        loop {
+            if let Some(r) = l.done.remove(&i) {
+                l.placed = i + 1;
+                drop(l);
+                self.cv.notify_all();
+                return r;
+            }
+            if l.next == i {
+                let Some((_, item)) = l.take_next() else {
+                    return Err("export: photo missing from the batch".into());
+                };
+                drop(l);
+                self.finish(i, run_gated(item));
+                l = self.lock();
                 continue;
+            }
+            l = self.wait(l);
+        }
+    }
+
+    fn stop(&self) {
+        self.lock().stop = true;
+        self.cv.notify_all();
+    }
+}
+
+/// Where a batch's files go: each photo's path (subfolder, conflict policy, sidecars, never an
+/// original) and its write, in batch order.
+struct Placer<'a> {
+    o: &'a ExportOptions,
+    to: &'a Destination,
+    dir: String,
+    single: bool,
+    taken: std::collections::HashSet<String>,
+    out: Vec<serde_json::Value>,
+    write: &'a mut dyn FnMut(&str, &[u8]) -> Result<(), String>,
+    exists: &'a dyn Fn(&str) -> bool,
+    stop_on_error: bool,
+}
+
+fn join_path(a: &str, b: &str) -> String {
+    if a.is_empty() { b.to_string() } else { format!("{}/{b}", a.trim_end_matches('/')) }
+}
+
+impl<'a> Placer<'a> {
+    fn new(
+        o: &'a ExportOptions,
+        to: &'a Destination,
+        write: &'a mut dyn FnMut(&str, &[u8]) -> Result<(), String>,
+        exists: &'a dyn Fn(&str) -> bool,
+        stop_on_error: bool,
+    ) -> Placer<'a> {
+        let dir = if o.subfolder.is_empty() { to.dir.clone() } else { join_path(&to.dir, &o.subfolder) };
+        Placer { o, to, dir, single: false, taken: Default::default(), out: Vec::new(), write, exists, stop_on_error }
+    }
+
+    /// Place photo `photo`'s export result (file `name`): write it and record the outcome. `Err`
+    /// only when it failed and `stop_on_error` is set.
+    fn place(
+        &mut self,
+        photo: lightcraft_catalog::PhotoId,
+        name: String,
+        guard: &crate::originals::OriginalGuard,
+        e: Result<Exported, String>,
+    ) -> Result<(), String> {
+        use serde_json::json;
+        let (o, dir, exists) = (self.o, &self.dir, self.exists);
+        let e = match e {
+            Ok(e) => e,
+            Err(err) if self.stop_on_error => return Err(err),
+            Err(err) => {
+                self.out.push(json!({"photo": photo.0, "file": name, "error": err}));
+                return Ok(());
             }
         };
         // the exported file and its sidecars
         let group = |main: &str| std::iter::once(main.to_string()).chain(e.sidecars.iter().map(|(x, _)| sidecar_path(main, x))).collect::<Vec<_>>();
-        let path = match to.exact.as_deref().filter(|_| single) {
+        let path = match self.to.exact.as_deref().filter(|_| self.single) {
             Some(p) => Ok(p.to_string()),
             None => {
-                let path = join(&dir, &e.file_name);
+                let path = join_path(dir, &e.file_name);
+                let taken = &self.taken;
                 let busy = |main: &str| group(main).iter().any(|p| taken.contains(p) || exists(p));
                 if !busy(&path) {
                     Ok(path)
@@ -1287,12 +2201,12 @@ pub fn run_batch(
                     match o.conflict {
                         Conflict::Overwrite => Ok(path),
                         Conflict::Skip => {
-                            out.push(json!({"skipped": path}));
-                            continue;
+                            self.out.push(json!({"skipped": path}));
+                            return Ok(());
                         }
                         Conflict::Unique => {
                             let (stem, ext) = e.file_name.rsplit_once('.').map_or((e.file_name.as_str(), None), |(a, b)| (a, Some(b)));
-                            let name = |n: usize| join(&dir, &ext.map_or(format!("{stem}-{n}"), |x| format!("{stem}-{n}.{x}")));
+                            let name = |n: usize| join_path(dir, &ext.map_or(format!("{stem}-{n}"), |x| format!("{stem}-{n}.{x}")));
                             (2..1_000_000).map(name).find(|p| !busy(p)).ok_or_else(|| format!("{path}: no free file name"))
                         }
                     }
@@ -1300,6 +2214,7 @@ pub fn run_batch(
             }
         };
         let file = path.clone().unwrap_or_else(|_| name.clone());
+        let write = &mut *self.write;
         let written = path.and_then(|path| {
             let files = group(&path);
             // never over an original, whatever the conflict policy or the exact path said
@@ -1316,14 +2231,18 @@ pub fn run_batch(
         });
         match written {
             Ok((path, files, sidecars)) => {
-                taken.extend(files);
-                out.push(json!({"path": path, "width": e.width, "height": e.height, "bytes": e.bytes.len(), "sidecars": sidecars}));
+                self.taken.extend(files);
+                let mut entry = json!({"path": path, "width": e.width, "height": e.height, "bytes": e.bytes.len(), "sidecars": sidecars});
+                if let Some(why) = &e.gpu_fallback {
+                    entry["gpuFallback"] = json!(why);
+                }
+                self.out.push(entry);
             }
-            Err(err) if stop_on_error => return Err(err),
-            Err(err) => out.push(json!({"photo": photo.0, "file": file, "error": err})),
+            Err(err) if self.stop_on_error => return Err(err),
+            Err(err) => self.out.push(json!({"photo": photo.0, "file": file, "error": err})),
         }
+        Ok(())
     }
-    Ok(out)
 }
 
 #[cfg(test)]
@@ -1371,9 +2290,28 @@ mod tests {
         assert!(img.data[3][0] < 80 && img.data[4][0] > 170);
     }
 
+    /// Exported files carry keywords as Lightroom Classic writes them: names flat in `dc:subject`
+    /// (with the keywords containing them), full paths in `lr:hierarchicalSubject`, and nothing of
+    /// a keyword left out of export. They used to carry the `a|b` paths in `dc:subject`.
+    #[test]
+    fn exported_keywords_follow_their_options() {
+        use lightcraft_catalog::{Catalog, Op, Photo, PhotoId, Source, keywords::KeywordInfo};
+        let mut c = Catalog::new();
+        c.apply(Op::SetKeyword { path: "Places".into(), info: Some(KeywordInfo { include_on_export: false, ..KeywordInfo::default() }) }).unwrap();
+        c.apply(Op::SetKeyword { path: "draft".into(), info: Some(KeywordInfo { include_on_export: false, ..KeywordInfo::default() }) }).unwrap();
+        let mut p = Photo::new(PhotoId(1), Source::Demo { scene: 0 }, "a.jpg", "jpeg", 10, 10, "2026-09-30T00:00:00");
+        p.meta.keywords = vec!["Places|Lisbon".into(), "travel|Italy".into(), "draft".into()];
+        let m = export_metadata(&p, &c, &ExportOptions::default()).unwrap();
+        assert_eq!(m.keywords, ["Lisbon", "Italy", "travel"]);
+        assert_eq!(m.hierarchical_keywords, ["Places|Lisbon", "travel|Italy"]);
+        let jpg = encode_with_metadata(&test_image(), &ExportOptions::default(), Some(&m)).unwrap();
+        let back = lightcraft_meta::extract(&jpg);
+        assert_eq!((back.keywords, back.hierarchical_keywords), (m.keywords.clone(), m.hierarchical_keywords.clone()));
+    }
+
     #[test]
     fn metadata_policies() {
-        use lightcraft_catalog::{Photo, PhotoId, Source};
+        use lightcraft_catalog::{Catalog, Photo, PhotoId, Source};
         let mut p = Photo::new(PhotoId(1), Source::Demo { scene: 0 }, "a.jpg", "jpeg", 10, 10, "2026-09-30T00:00:00");
         p.meta.camera = "Synthetic X2".into();
         p.meta.copyright = "(c) Me".into();
@@ -1382,21 +2320,21 @@ mod tests {
         p.meta.copyright_url = "https://example.com/rights".into();
         p.meta.shutter = "1/250".into();
         p.meta.gps = Some((43.0, -110.0));
-        let all = export_metadata(&p, &ExportOptions::default()).unwrap();
+        let all = export_metadata(&p, &Catalog::new(), &ExportOptions::default()).unwrap();
         assert_eq!(all.model.as_deref(), Some("Synthetic X2"));
         assert!((all.exposure_time.unwrap() - 0.004).abs() < 1e-9);
         assert!(all.gps.is_some());
         let o = ExportOptions { metadata: MetadataPolicy::AllExceptCamera, remove_location: true, ..Default::default() };
-        let m = export_metadata(&p, &o).unwrap();
+        let m = export_metadata(&p, &Catalog::new(), &o).unwrap();
         assert!(m.model.is_none() && m.gps.is_none() && m.copyright.is_some());
-        let c = export_metadata(&p, &ExportOptions { metadata: MetadataPolicy::Copyright, ..Default::default() }).unwrap();
+        let c = export_metadata(&p, &Catalog::new(), &ExportOptions { metadata: MetadataPolicy::Copyright, ..Default::default() }).unwrap();
         assert!(c.model.is_none() && c.gps.is_none() && c.copyright.as_deref() == Some("(c) Me"));
         // "copyright only" keeps all the copyright info: status, usage terms, info URL
         assert_eq!(
             (c.copyright_marked, c.usage_terms.as_deref(), c.copyright_url.as_deref()),
             (Some(true), Some("Editorial use only"), Some("https://example.com/rights"))
         );
-        assert!(export_metadata(&p, &ExportOptions { metadata: MetadataPolicy::None, ..Default::default() }).is_none());
+        assert!(export_metadata(&p, &Catalog::new(), &ExportOptions { metadata: MetadataPolicy::None, ..Default::default() }).is_none());
         // embedded and readable back from the JPEG
         let jpg = encode_with_metadata(&test_image(), &ExportOptions::default(), Some(&all)).unwrap();
         let back = lightcraft_meta::extract(&jpg);
@@ -1426,6 +2364,95 @@ mod tests {
         assert!(ExportOptions::from_json(&serde_json::json!({"watermark": ""})).watermark.is_none());
     }
 
+    /// Horizontal and vertical margins move a text watermark separately; settings saved with one
+    /// `inset` (before the two margins) read as both, and either new key overrides it.
+    #[test]
+    fn watermark_insets_are_horizontal_and_vertical() {
+        // gaps between the drawn text and the right and bottom edges of a 400 × 300 image
+        let gaps = |wm: &Watermark| {
+            let mut img = Rgba8::new(400, 300);
+            draw_watermark(&mut img, wm);
+            let lit: Vec<(usize, usize)> = (0..300).flat_map(|y| (0..400).map(move |x| (x, y))).filter(|&(x, y)| img.get(x, y)[0] > 128).collect();
+            let right = lit.iter().map(|p| p.0).max().unwrap();
+            let bottom = lit.iter().map(|p| p.1).max().unwrap();
+            (399 - right as i64, 299 - bottom as i64)
+        };
+        let base = Watermark { text: "LC".into(), size: 0.1, opacity: 1.0, shadow: false, inset_x: 0.0, inset_y: 0.0, ..Default::default() };
+        let (r0, b0) = gaps(&base);
+        // 0.2 and 0.1 of the 300 px short edge
+        let (r1, b1) = gaps(&Watermark { inset_x: 0.2, ..base.clone() });
+        assert!((r1 - r0 - 60).abs() <= 1 && (b1 - b0).abs() <= 1, "horizontal: {r0},{b0} → {r1},{b1}");
+        let (r2, b2) = gaps(&Watermark { inset_y: 0.1, ..base.clone() });
+        assert!((r2 - r0).abs() <= 1 && (b2 - b0 - 30).abs() <= 1, "vertical: {r0},{b0} → {r2},{b2}");
+        // the old single margin
+        let wm = |w: serde_json::Value| ExportOptions::from_json(&json!({"watermark": w})).watermark.unwrap();
+        let old = wm(json!({"text": "LC", "inset": 0.1}));
+        assert_eq!((old.inset_x, old.inset_y), (0.1, 0.1));
+        let mixed = wm(json!({"text": "LC", "inset": 0.1, "insetY": 0.3}));
+        assert_eq!((mixed.inset_x, mixed.inset_y), (0.1, 0.3));
+        assert!(ExportOptions::from_params(&json!({"watermark": {"text": "LC", "inset": 0.1}})).is_ok());
+        // saved and read back as the two margins
+        let o = ExportOptions { watermark: Some(Watermark { inset_x: 0.05, inset_y: 0.15, ..base }), ..Default::default() };
+        let saved = o.to_json();
+        assert!(saved["watermark"].get("inset").is_none(), "{saved}");
+        assert_eq!(ExportOptions::from_json(&saved).watermark.map(|w| (w.inset_x, w.inset_y)), Some((0.05, 0.15)));
+    }
+
+    /// A turned text watermark is placed by its turned box: taller than wide at 90° and 270°, the
+    /// same corner and insets, and an unknown angle draws it unturned.
+    #[test]
+    fn watermark_rotation_turns_the_text_in_its_corner() {
+        let lit = |wm: &Watermark| {
+            let mut img = Rgba8::new(400, 300);
+            draw_watermark(&mut img, wm);
+            let on: Vec<(usize, usize)> = (0..300).flat_map(|y| (0..400).map(move |x| (x, y))).filter(|&(x, y)| img.get(x, y)[0] > 128).collect();
+            let (x0, x1) = (on.iter().map(|p| p.0).min().unwrap(), on.iter().map(|p| p.0).max().unwrap());
+            let (y0, y1) = (on.iter().map(|p| p.1).min().unwrap(), on.iter().map(|p| p.1).max().unwrap());
+            (x0, x1, y0, y1, img)
+        };
+        let base = Watermark { text: "LightCraft".into(), size: 0.08, opacity: 1.0, shadow: false, inset_x: 0.0, inset_y: 0.0, ..Default::default() };
+        let (a0, a1, b0, b1, flat) = lit(&base);
+        assert!(a1 - a0 > 2 * (b1 - b0), "unturned text is wide");
+        for rotation in [90, 270] {
+            let (x0, x1, y0, y1, _) = lit(&Watermark { rotation, ..base.clone() });
+            assert!(y1 - y0 > 2 * (x1 - x0), "{rotation}°: tall");
+            assert!(x1 >= 390 && y1 >= 290, "{rotation}°: still in the bottom-right corner ({x1}, {y1})");
+            // 0.1 × 300 px further from the right edge
+            let (_, moved, ..) = lit(&Watermark { rotation, inset_x: 0.1, ..base.clone() });
+            assert!((x1 as i64 - moved as i64 - 30).abs() <= 1, "{rotation}°: {x1} → {moved}");
+        }
+        let (x0, x1, y0, y1, _) = lit(&Watermark { rotation: 180, ..base.clone() });
+        assert!(((x1 - x0) as i64 - (a1 - a0) as i64).abs() <= 2 && ((y1 - y0) as i64 - (b1 - b0) as i64).abs() <= 2, "180°: same size");
+        assert!(x1 >= 390 && y1 >= 290, "180°: same corner");
+        let (.., odd) = lit(&Watermark { rotation: 45, ..base.clone() });
+        assert_eq!(odd.data, flat.data, "an angle that isn't a quarter turn draws unturned");
+        // saved and read back; older settings have none
+        let o = ExportOptions { watermark: Some(Watermark { rotation: 270, ..base }), ..Default::default() };
+        assert_eq!(ExportOptions::from_json(&o.to_json()).watermark.map(|w| w.rotation), Some(270));
+        assert_eq!(ExportOptions::from_json(&json!({"watermark": {"text": "x"}})).watermark.map(|w| w.rotation), Some(0));
+    }
+
+    /// A preview keeps the export's 6 px minimum text size as a share of the photo: a watermark
+    /// clamped to 6 px in a 150 px export covers the same share of a 600 px preview.
+    #[test]
+    fn watermark_preview_scales_the_minimum_text_size() {
+        let wm = Watermark { text: "LightCraft".into(), size: 0.01, opacity: 1.0, shadow: false, ..Default::default() };
+        let rows = |img: &Rgba8| (0..img.height).filter(|&y| (0..img.width).any(|x| img.get(x, y)[0] > 64)).count() as f32;
+        let mut export = Rgba8::new(200, 150);
+        draw_watermark(&mut export, &wm);
+        let mut preview = Rgba8::new(800, 600);
+        draw_watermark_preview(&mut preview, &wm, 150);
+        let mut unscaled = Rgba8::new(800, 600);
+        draw_watermark(&mut unscaled, &wm);
+        let (export_share, preview_share) = (rows(&export) / 150.0, rows(&preview) / 600.0);
+        assert!((preview_share - export_share).abs() < 0.02, "export {export_share}, preview {preview_share}");
+        assert!(rows(&unscaled) < rows(&preview) / 2.0, "the unscaled 6 px floor would draw it too small");
+        // drawn at the export's own size, the preview is the export
+        let mut same = Rgba8::new(200, 150);
+        draw_watermark_preview(&mut same, &wm, 150);
+        assert_eq!(same.data, export.data);
+    }
+
     fn vertical_japanese() -> Watermark {
         let options =
             ExportOptions::from_json(&json!({"watermark": {"text": "日本語", "vertical": true, "size": 0.1, "shadow": false, "opacity": 1.0}}));
@@ -1449,8 +2476,103 @@ mod tests {
         assert_eq!(watermark_fonts(&[]).len(), 1, "Inter only");
         for wm in [vertical_japanese(), Watermark { text: "LightCraft 日本語".into(), ..Watermark::default() }] {
             let mut covered = 0usize;
-            watermark_coverage(400, 300, &wm, &[], |_, _, k, _| covered += usize::from(k > 0.0));
+            watermark_coverage(400, 300, &wm, &[], 1.0, |_, _, k, _| covered += usize::from(k > 0.0));
             assert!(covered > 0, "{:?} draws something", wm.text);
+        }
+    }
+
+    #[test]
+    fn biz_ud_vertical_watermarks_place_punctuation_at_the_top_right() {
+        use ab_glyph::Font;
+        let Some(entry) = crate::fonts::CRAFT_FONTS.iter().find(|f| f.family == "BIZ UDMincho") else {
+            eprintln!("skipped: built without BIZ UDMincho from craft-fonts");
+            return;
+        };
+        let font = ab_glyph::FontRef::try_from_slice(entry.bytes).unwrap();
+        // BIZ UDMincho has no Unicode presentation-form characters: the old fallback drew 、。.
+        assert_eq!(font.glyph_id('︑').0, 0);
+        assert_eq!(font.glyph_id('︒').0, 0);
+        let data = harfrust::ShaperData::new(&harfrust::FontRef::new(entry.bytes).unwrap());
+        for ch in ['、', '。'] {
+            let glyph = watermark_cell_glyphs(&font, &data, &ch.to_string(), true, 100.0, 0.0, 0.0).unwrap().remove(0);
+            assert_ne!(glyph.id, font.glyph_id(ch), "the font's vertical alternate for {ch}");
+            let rect = font.outline_glyph(glyph).unwrap().px_bounds();
+            assert!(rect.min.x > 50.0 && rect.max.y < 50.0, "{ch} in the upper right: {rect:?}");
+        }
+        let craft = Box::leak(
+            vec![crate::fonts::CraftFont { family: entry.family, style: entry.style, scripts: entry.scripts, bytes: entry.bytes }].into_boxed_slice(),
+        );
+        let wm = Watermark {
+            text: "、。".into(),
+            vertical: true,
+            size: 0.1,
+            anchor: Anchor::TopLeft,
+            inset_x: 0.0,
+            inset_y: 0.0,
+            shadow: false,
+            opacity: 1.0,
+            ..Default::default()
+        };
+        let mut pixels = Vec::new();
+        watermark_coverage(400, 300, &wm, craft, 1.0, |x, y, k, _| {
+            if k > 0.5 {
+                pixels.push((x, y));
+            }
+        });
+        assert!(!pixels.is_empty());
+        for (x, y) in pixels {
+            assert!(x > 15 && y % 30 < 15, "actual export coverage at the upper right of the 30 px cell: {x}, {y}");
+        }
+    }
+
+    #[test]
+    fn vertical_watermarks_keep_combining_marks_in_one_cell() {
+        let coverage = |text: &str, craft| {
+            let wm = Watermark {
+                text: text.into(),
+                vertical: true,
+                size: 0.1,
+                anchor: Anchor::Center,
+                inset_x: 0.0,
+                inset_y: 0.0,
+                shadow: false,
+                opacity: 1.0,
+                ..Default::default()
+            };
+            let mut pixels = vec![0.0f32; 400 * 300];
+            watermark_coverage(400, 300, &wm, craft, 1.0, |x, y, k, _| pixels[y * 400 + x] = k);
+            assert!(pixels.iter().any(|&k| k > 0.0));
+            pixels
+        };
+        let compare = |a: &str, b: &str, craft| {
+            let (a_pixels, b_pixels) = (coverage(a, craft), coverage(b, craft));
+            let difference = a_pixels.iter().zip(&b_pixels).position(|(a, b)| a != b);
+            assert!(difference.is_none(), "{a:?} vs {b:?}: first differing pixel {difference:?}");
+        };
+        for (composed, decomposed) in [("éA", "e\u{301}A"), ("Å\nA", "A\u{30a}\nA"), ("A\nB", "A\r\nB"), ("日A", "日\u{e0100}A")] {
+            compare(composed, decomposed, &[]);
+        }
+        if crate::fonts::CRAFT_FONTS.iter().any(|f| f.family == "BIZ UDMincho") {
+            for (composed, decomposed) in [("が日", "か\u{3099}日"), ("ぱ\n日", "は\u{309a}\n日")] {
+                compare(composed, decomposed, crate::fonts::CRAFT_FONTS);
+            }
+        } else {
+            eprintln!("skipped Japanese comparisons: built without BIZ UDMincho from craft-fonts");
+        }
+    }
+
+    #[test]
+    fn upright_watermark_cell_retains_multiple_glyphs() {
+        use ab_glyph::{Font, ScaleFont};
+        let font = ab_glyph::FontRef::try_from_slice(WATERMARK_FONT).unwrap();
+        let data = harfrust::ShaperData::new(&harfrust::FontRef::new(WATERMARK_FONT).unwrap());
+        // There is no precomposed A with a combining long solidus overlay.
+        let glyphs = watermark_cell_glyphs(&font, &data, "A\u{338}", false, 30.0, 0.0, 0.0).unwrap();
+        assert_eq!(glyphs.len(), 2, "retain the base and the separately positioned combining glyph");
+        let baseline = font.as_scaled(30.0).ascent();
+        for glyph in glyphs {
+            assert!((glyph.position.y - baseline).abs() < 1.0, "no extra vertical cell for the mark");
+            assert!(font.outline_glyph(glyph).is_some(), "both glyphs have ink");
         }
     }
 
@@ -1474,7 +2596,7 @@ mod tests {
         let w = lit.iter().map(|p| p.0).max().unwrap() - lit.iter().map(|p| p.0).min().unwrap();
         let h = lit.iter().map(|p| p.1).max().unwrap() - lit.iter().map(|p| p.1).min().unwrap();
         assert!(h > w * 2, "vertical Japanese must extend down the column");
-        let two = Watermark { text: "日\n本".into(), anchor: Anchor::TopLeft, inset: 0.0, ..wm };
+        let two = Watermark { text: "日\n本".into(), anchor: Anchor::TopLeft, inset_x: 0.0, inset_y: 0.0, ..wm };
         img.data.fill([0, 0, 0, 255]);
         draw_watermark(&mut img, &two);
         for (text, dx) in [("本", 0), ("日", 30)] {
@@ -1500,13 +2622,44 @@ mod tests {
         std::fs::write(&logo_path, png).unwrap();
         let mut img = Rgba8::new(400, 300);
         img.data.iter_mut().for_each(|p| *p = [0, 0, 0, 255]);
-        let wm = Watermark { image: logo_path.to_string_lossy().into(), image_width: 0.25, opacity: 1.0, inset: 0.0, ..Default::default() };
+        let wm = Watermark {
+            image: logo_path.to_string_lossy().into(),
+            image_width: 0.25,
+            opacity: 1.0,
+            inset_x: 0.0,
+            inset_y: 0.0,
+            ..Default::default()
+        };
         draw_watermark(&mut img, &wm);
         // 100 px wide × 50 px high in the bottom-right corner
         assert!(img.get(310, 280)[0] > 200, "opaque half: {:?}", img.get(310, 280));
         assert_eq!(img.get(390, 280), [0, 0, 0, 255], "transparent half leaves the photo");
         assert_eq!(img.get(310, 240), [0, 0, 0, 255], "above the logo");
         assert_eq!(img.get(10, 10), [0, 0, 0, 255]);
+        // 30 px from the right edge and 15 px from the bottom: x 270..370, y 235..285
+        let mut img = Rgba8::new(400, 300);
+        img.data.iter_mut().for_each(|p| *p = [0, 0, 0, 255]);
+        draw_watermark(&mut img, &Watermark { inset_x: 0.1, inset_y: 0.05, ..wm.clone() });
+        assert!(img.get(272, 283)[0] > 200, "inside the moved logo: {:?}", img.get(272, 283));
+        assert_eq!(img.get(267, 283), [0, 0, 0, 255], "left of the logo");
+        assert_eq!(img.get(272, 288), [0, 0, 0, 255], "below the logo");
+        // turned: 180° puts the opaque half on the right; 90° clockwise puts it on top of a 50 × 100 box
+        let turned = |rotation: u16| {
+            let mut img = Rgba8::new(400, 300);
+            img.data.iter_mut().for_each(|p| *p = [0, 0, 0, 255]);
+            draw_watermark(&mut img, &Watermark { rotation, ..wm.clone() });
+            img
+        };
+        let half = turned(180);
+        assert!(half.get(390, 280)[0] > 200 && half.get(310, 280) == [0, 0, 0, 255]);
+        let quarter = turned(90);
+        assert!(quarter.get(375, 220)[0] > 200, "top half of the turned logo: {:?}", quarter.get(375, 220));
+        assert_eq!(quarter.get(375, 280), [0, 0, 0, 255], "its transparent half below");
+        assert_eq!(quarter.get(340, 220), [0, 0, 0, 255], "left of the 50 px wide box");
+        assert!(quarter.get(352, 202)[0] > 200 && quarter.get(398, 248)[0] > 200, "the whole box is covered");
+        // three quarter turns: the opaque half at the bottom
+        let three = turned(270);
+        assert!(three.get(375, 280)[0] > 200 && three.get(375, 220) == [0, 0, 0, 255]);
         // an image-only watermark survives the params (no text needed)
         let o = ExportOptions::from_json(&json!({"watermark": {"image": logo_path.to_string_lossy(), "imageWidth": 0.1}}));
         assert_eq!(o.watermark.as_ref().map(|w| w.image_width), Some(0.1));
@@ -1757,6 +2910,75 @@ mod tests {
     }
 
     #[test]
+    fn jxl_options() {
+        assert_eq!(ExportFormat::parse("JPEG-XL"), Some(ExportFormat::Jxl));
+        let o = ExportOptions::from_params(&json!({"format": "jxl", "jxlLossless": true, "jxlEffort": "fast", "jxlProgressive": true})).unwrap();
+        assert_eq!((o.format, o.jxl_lossless, o.jxl_effort, o.jxl_progressive), (ExportFormat::Jxl, true, JxlEffort::Fast, true));
+        assert_eq!(ExportOptions::from_json(&o.to_json()), o, "saved presets keep the JPEG XL settings");
+        assert!(ExportOptions::from_params(&json!({"jxlEffort": "best"})).is_err());
+        assert!(ExportOptions::from_params(&json!({"jxlLossless": "yes"})).is_err());
+        let space = |lossless, color_space, hdr| {
+            ExportOptions { format: ExportFormat::Jxl, jxl_lossless: lossless, color_space, hdr, ..Default::default() }.effective_space()
+        };
+        assert_eq!(space(false, OutputSpace::DisplayP3, false), OutputSpace::DisplayP3);
+        assert_eq!(space(false, OutputSpace::ProPhoto, false), OutputSpace::Rec2020, "lossy has no ProPhoto enum");
+        assert_eq!(space(true, OutputSpace::ProPhoto, false), OutputSpace::ProPhoto, "lossless keeps the profile");
+        assert_eq!(space(true, OutputSpace::Srgb, true), OutputSpace::Rec2020);
+        let o = ExportOptions { format: ExportFormat::Jxl, hdr: true, ..Default::default() };
+        assert!(o.hdr_output());
+        assert_eq!(o.effective_depth(), OutputDepth::F32Hdr);
+        assert_eq!(ExportFormat::Jxl.extension(), "jxl");
+    }
+
+    #[test]
+    fn jxl_every_space_round_trips() {
+        // wide-gamut green stays outside sRGB in P3, Rec. 2020 and (lossless) ProPhoto files
+        for (lossless, space) in [
+            (false, OutputSpace::Srgb),
+            (false, OutputSpace::DisplayP3),
+            (false, OutputSpace::Rec2020),
+            (true, OutputSpace::DisplayP3),
+            (true, OutputSpace::AdobeRgb),
+            (true, OutputSpace::ProPhoto),
+        ] {
+            let o = ExportOptions { format: ExportFormat::Jxl, color_space: space, jxl_lossless: lossless, quality: 95, ..Default::default() };
+            let png = ExportOptions { format: ExportFormat::Png, color_space: space, ..Default::default() };
+            let img = p3_green(space);
+            let bytes = encode_image(&img, &o).unwrap();
+            assert_eq!(lightcraft_codecs::sniff(&bytes), Some(lightcraft_codecs::Format::Jxl));
+            let (got, _) = decoded_in_srgb(&bytes);
+            let (want, _) = decoded_in_srgb(&encode_image(&img, &png).unwrap());
+            for c in 0..3 {
+                assert!((got[c] - want[c]).abs() < 0.01, "{space:?} lossless={lossless}: {got:?} vs PNG {want:?}");
+            }
+            if space != OutputSpace::Srgb {
+                assert!(got[0] < -0.03 || got[2] < -0.03, "{space:?}: outside sRGB after the round trip: {got:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn jxl_sixteen_bit() {
+        let o = ExportOptions {
+            format: ExportFormat::Jxl,
+            bit_depth: Some(16),
+            jxl_lossless: true,
+            color_space: OutputSpace::DisplayP3,
+            ..Default::default()
+        };
+        assert_eq!(o.effective_depth(), OutputDepth::U16);
+        let (levels8, _) = distinct_levels(
+            &encode_rendered(&ramp(OutputDepth::U8, OutputSpace::DisplayP3), &ExportOptions { bit_depth: Some(8), ..o.clone() }, None).unwrap(),
+        );
+        let (levels, d) = distinct_levels(&encode_rendered(&ramp(OutputDepth::U16, OutputSpace::DisplayP3), &o, None).unwrap());
+        assert_eq!(d.bit_depth, 16);
+        assert!(levels > 10 * levels8, "{levels} vs {levels8}");
+        // lossy 16-bit encodes too
+        let lossy = ExportOptions { jxl_lossless: false, ..o };
+        assert!(encode_rendered(&ramp(OutputDepth::U16, OutputSpace::DisplayP3), &lossy, None).is_ok());
+    }
+
+    #[test]
     fn bit_depth_options_per_format() {
         let d = |format, bit_depth| ExportOptions { format, bit_depth, ..Default::default() }.effective_depth();
         assert_eq!(d(ExportFormat::Jpeg, Some(16)), OutputDepth::U8);
@@ -1766,7 +2988,9 @@ mod tests {
         assert_eq!(d(ExportFormat::Avif, Some(10)), OutputDepth::U16);
         assert_eq!(ExportOptions::from_json(&serde_json::json!({"bitDepth": 16})).bit_depth, Some(16));
         assert_eq!(ExportOptions::from_json(&serde_json::json!({"bitDepth": 12})).bit_depth, None);
-        for f in [ExportFormat::Jpeg, ExportFormat::Png, ExportFormat::Tiff, ExportFormat::Webp, ExportFormat::Avif] {
+        assert_eq!(d(ExportFormat::Jxl, Some(16)), OutputDepth::U16);
+        assert_eq!(d(ExportFormat::Jxl, None), OutputDepth::U8);
+        for f in [ExportFormat::Jpeg, ExportFormat::Png, ExportFormat::Tiff, ExportFormat::Webp, ExportFormat::Avif, ExportFormat::Jxl] {
             let first = ExportOptions::bit_depths(f)[0].0;
             let def = d(f, None);
             assert_eq!(d(f, Some(first)), def, "{f:?}: the first choice is the default");
@@ -1782,5 +3006,243 @@ mod tests {
             Ok(b) => assert_eq!(&b[4..8], b"ftyp"),
             Err(e) => assert!(e.contains("not available"), "{e}"),
         }
+    }
+
+    /// Issue #181: a command about to export refuses what `from_json` would silently default —
+    /// unknown keys (naming the nearest known one) and values of the wrong kind or range.
+    #[test]
+    fn export_params_are_validated() {
+        use serde_json::json;
+        let err = |p: serde_json::Value| ExportOptions::from_params(&p).err().map(|e| e.to_string()).unwrap_or_default();
+        let e = err(json!({"longEdgee": 400}));
+        assert!(e.starts_with("invalid parameters for `app.export`: unknown parameter `longEdgee` (did you mean `longEdge`?)"), "{e}");
+        assert!(err(json!({"qualty": 5})).contains("did you mean `quality`"));
+        assert!(err(json!({"longEdge": "banana"})).contains("`longEdge` must be a number"));
+        assert!(err(json!({"quality": 0})).contains("`quality` must be an integer 1..100"));
+        assert!(err(json!({"quality": "5"})).contains("`quality` must be an integer"));
+        assert!(err(json!({"quality": 92.5})).contains("`quality` must be an integer"));
+        assert!(err(json!({"sharpen": "lots"})).contains("`sharpen` must be one of none|screen|matte|glossy"));
+        assert!(err(json!({"format": "bmp"})).contains("`format` must be one of"));
+        assert!(err(json!({"bitDepth": 12})).contains("`bitDepth` must be 8, 10, 16 or 32"));
+        assert!(err(json!({"colorSpace": "cmyk"})).contains("`colorSpace` must be one of"));
+        assert!(err(json!({"dontEnlarge": "no"})).contains("`dontEnlarge` must be true or false"));
+        assert!(err(json!({"resize": {"mode": "longEdge", "valeu": 10}})).contains("did you mean `value`"));
+        assert!(err(json!({"resize": {"mode": "diagonal", "value": 10}})).contains("`resize`:"));
+        assert!(err(json!({"ids": [1, "x"]})).contains("`ids` must be an array of photo ids"));
+        assert!(err(json!("jpeg")).contains("params must be an object"));
+        assert!(
+            ExportOptions::validate("export.savePreset", &json!({"qualty": 5}))
+                .unwrap_err()
+                .to_string()
+                .starts_with("invalid parameters for `export.savePreset`")
+        );
+        // everything the presets, the dialog, Export with Previous and `render --opt` send passes
+        for p in builtin_presets() {
+            ExportOptions::from_params(&p.params).unwrap_or_else(|e| panic!("{}: {e}", p.name));
+        }
+        let full = ExportOptions {
+            resize: Some(Resize::default()),
+            limit_kb: Some(500),
+            watermark: Some(Watermark { text: "©".into(), ..Default::default() }),
+            bit_depth: Some(16),
+            ..Default::default()
+        };
+        let mut j = full.to_json();
+        for (k, v) in [
+            ("dir", json!("/tmp/out")),
+            ("background", json!(true)),
+            ("preset", json!("x")),
+            ("ids", json!([1, 2])),
+            ("id", json!(1)),
+            ("path", json!("a.jpg")),
+        ] {
+            j[k] = v;
+        }
+        assert_eq!(ExportOptions::from_params(&j).unwrap(), full);
+        // Add to Apple Photos (issue #236): a switch and an album name; on only where Photos is
+        assert!(err(json!({"addToPhotos": "yes"})).contains("`addToPhotos` must be true or false"));
+        assert!(err(json!({"photosAlbum": 3})).contains("`photosAlbum` must be a string"));
+        assert!(err(json!({"photosAlbum": "a\0b"})).contains("NUL"));
+        assert!(err(json!({"photosAlbm": "x"})).contains("did you mean `photosAlbum`"));
+        let album = ExportOptions { photos_album: "Trip “2026” \\ \"x\"".into(), ..Default::default() };
+        assert_eq!(ExportOptions::from_params(&album.to_json()).unwrap(), album);
+        let on = ExportOptions { add_to_photos: true, ..album };
+        if cfg!(target_os = "macos") {
+            assert_eq!(ExportOptions::from_params(&on.to_json()).unwrap(), on);
+        } else {
+            assert!(err(on.to_json()).contains("Apple Photos is only available on macOS"));
+            // stored settings (a preset or Export with Previous made on a Mac) still read
+            assert!(ExportOptions::from_json(&on.to_json()).add_to_photos);
+        }
+        assert_eq!(ExportOptions::from_json(&json!({"photosAlbum": "  Trip  "})).photos_album, "Trip");
+        assert_eq!(ExportOptions::from_params(&ExportOptions::default().to_json()).unwrap(), ExportOptions::default());
+        // null is "not given", as a dropped key is
+        ExportOptions::from_params(&json!({"quality": 92, "longEdge": null, "watermark": null})).unwrap();
+    }
+
+    /// Issue #183: the `watermark` object's keys, kinds and ranges are checked (and documented in
+    /// the `app.export` param string), instead of unknown keys passing and sizes clamping silently.
+    #[test]
+    fn watermark_params_are_validated() {
+        use serde_json::json;
+        let err = |w: serde_json::Value| ExportOptions::from_params(&json!({"watermark": w})).err().map(|e| e.to_string()).unwrap_or_default();
+        assert!(err(json!(5)).contains(
+            "`watermark` must be text or an object {text, vertical, size, opacity, anchor, insetX, insetY, inset, rotation, color, shadow, image, imageWidth}"
+        ));
+        assert!(err(json!({"text": "x", "bogus": 1})).contains(
+            "unknown watermark key `bogus` (one of text, vertical, size, opacity, anchor, insetX, insetY, inset, rotation, color, shadow, image, imageWidth)"
+        ));
+        assert!(err(json!({"text": "x", "sizee": 0.1})).contains("did you mean `size`"));
+        for size in [json!(3), json!(0.5001), json!(0), json!("big")] {
+            let e = err(json!({"text": "x", "size": size}));
+            assert!(e.contains("`watermark.size` must be a number 0.005..0.5 (fraction of the short edge)"), "{size}: {e}");
+        }
+        assert!(err(json!({"text": "x", "opacity": 1.5})).contains("`watermark.opacity` must be a number 0..1"));
+        assert!(err(json!({"text": "x", "inset": -0.1})).contains("`watermark.inset` must be a number 0..0.4"));
+        assert!(err(json!({"text": "x", "insetX": 0.5})).contains("`watermark.insetX` must be a number 0..0.4"));
+        assert!(err(json!({"text": "x", "insetY": "far"})).contains("`watermark.insetY` must be a number 0..0.4"));
+        for rotation in [json!(45), json!(-90), json!(360), json!("90"), json!(90.5)] {
+            let e = err(json!({"text": "x", "rotation": rotation}));
+            assert!(e.contains("`watermark.rotation` must be 0, 90, 180 or 270 (degrees clockwise)"), "{rotation}: {e}");
+        }
+        assert!(ExportOptions::from_params(&json!({"watermark": {"text": "x", "rotation": 270}})).is_ok());
+        assert!(err(json!({"image": "logo.png", "imageWidth": 2})).contains("`watermark.imageWidth` must be a number 0.01..1"));
+        assert!(err(json!({"text": "x", "anchor": "middle"})).contains("`watermark.anchor` must be one of"));
+        assert!(err(json!({"text": "x", "color": [255, 255]})).contains("`watermark.color` must be [r, g, b]"));
+        assert!(err(json!({"text": "x", "color": [255, 255, 256]})).contains("`watermark.color`"));
+        assert!(err(json!({"text": "x", "vertical": "yes"})).contains("`watermark.vertical` must be true or false"));
+        assert!(err(json!({"text": 7})).contains("`watermark.text` must be a string"));
+        // the documented shapes pass and read as before
+        let o = ExportOptions::from_params(&json!({"watermark": "© me"})).unwrap();
+        assert_eq!(o.watermark.map(|w| w.text).as_deref(), Some("© me"));
+        let w = json!({"text": "日本語", "vertical": true, "size": 0.1, "opacity": 0.5, "anchor": "topLeft", "inset": 0.05, "color": [0, 0, 0], "shadow": false, "image": "", "imageWidth": 0.3});
+        let wm = ExportOptions::from_params(&json!({"watermark": w})).unwrap().watermark.unwrap();
+        assert!((wm.size - 0.1).abs() < 1e-6 && wm.vertical && wm.anchor == Anchor::TopLeft && wm.color == [0, 0, 0] && !wm.shadow);
+        assert_eq!(ExportOptions::from_params(&json!({"watermark": {"text": "x", "size": 0.5}})).unwrap().watermark.map(|w| w.size), Some(0.5));
+        // the Export dialog's sliders (1–15 % size, 5–100 % opacity, 2–100 % width) stay inside the accepted ranges
+        assert!(WATERMARK_SIZE_RANGE.0 <= 0.01 && WATERMARK_SIZE_RANGE.1 >= 0.15);
+        assert!(WATERMARK_IMAGE_WIDTH_RANGE.0 <= 0.02 && WATERMARK_IMAGE_WIDTH_RANGE.1 >= 1.0);
+    }
+
+    /// A batch with `lanes` photos in flight into a fake folder `out` (nothing exists there):
+    /// results, writes (path, bytes) and progress calls; `progress` returns false at `cancel_at`.
+    #[allow(clippy::type_complexity)]
+    fn lanes_batch(
+        s: &mut crate::Session,
+        ids: &[lightcraft_catalog::PhotoId],
+        o: &ExportOptions,
+        lanes: usize,
+        stop_on_error: bool,
+        cancel_at: usize,
+    ) -> (Result<Vec<serde_json::Value>, String>, Vec<(String, Vec<u8>)>, Vec<(usize, String)>) {
+        let items = prepare_batch(s, ids, o).unwrap();
+        let to = Destination { dir: "out".into(), exact: None };
+        let mut written = Vec::new();
+        let mut write = |p: &str, b: &[u8]| {
+            written.push((p.to_string(), b.to_vec()));
+            Ok(())
+        };
+        let mut seen = Vec::new();
+        let mut progress = |i: usize, name: &str| {
+            seen.push((i, name.to_string()));
+            i < cancel_at
+        };
+        let files = run_batch_with(items, &mut Placer::new(o, &to, &mut write, &|_| false, stop_on_error), &mut progress, lanes);
+        (files, written, seen)
+    }
+
+    /// The files of a batch without their byte counts: a GPU render (when another test turns the
+    /// GPU off mid-run) may differ from a CPU one by an LSB, never in name, size or order.
+    fn shape(files: &[serde_json::Value]) -> Vec<serde_json::Value> {
+        files.iter().map(|f| json!({"path": f["path"], "width": f["width"], "height": f["height"], "error": f["error"]})).collect()
+    }
+
+    /// Issue #675: a batch reports a render that fell back from the GPU to the CPU on that file's
+    /// entry (`gpuFallback`, the render's own reason) and says nothing on the others.
+    #[test]
+    fn a_batch_reports_a_gpu_fallback_on_the_file_it_hit() {
+        if !lightcraft_gpu::available() {
+            eprintln!("skipped: no GPU adapter ({:?})", lightcraft_gpu::unavailable_reason());
+            return;
+        }
+        let mut s = crate::Session::with_demo();
+        let ids: Vec<_> = s.visible().iter().copied().take(2).collect();
+        let o = ExportOptions::from_json(&json!({"format": "png", "width": 64}));
+        // one lane: both photos render on this thread, and the fault hits the first render here
+        lightcraft_gpu::inject_fault(lightcraft_gpu::Fault::Limit(1 << 10));
+        let (files, _, _) = lanes_batch(&mut s, &ids, &o, 1, true, usize::MAX);
+        let files = files.unwrap();
+        assert_eq!(files.len(), 2, "{files:?}");
+        let why: Vec<_> = files.iter().filter_map(|f| f.get("gpuFallback").and_then(serde_json::Value::as_str)).collect();
+        assert_eq!(why.len(), 1, "exactly one file fell back: {files:?}");
+        assert!(why[0].contains("limit"), "{files:?}");
+        assert!(files[1].get("gpuFallback").is_none(), "the second render was fine: {files:?}");
+        assert!(lightcraft_gpu::available(), "a limit is no device failure");
+    }
+
+    // Issue #496: photos rendered side by side give the same files, names, order and progress as
+    // one at a time, and a cancel stops at the same photo
+    #[test]
+    fn side_by_side_batches_match_one_at_a_time() {
+        let mut s = crate::Session::with_demo();
+        let ids: Vec<_> = s.visible().iter().copied().take(5).collect();
+        // one name for all: the Unique numbering follows the order the files are placed in
+        let o = ExportOptions::from_json(&json!({"format": "png", "width": 40, "naming": "same"}));
+        let (files, written, seen) = lanes_batch(&mut s, &ids, &o, 1, true, usize::MAX);
+        let files = files.unwrap();
+        let paths: Vec<_> = written.iter().map(|(p, _)| p.clone()).collect();
+        assert_eq!(paths, ["out/same.png", "out/same-2.png", "out/same-3.png", "out/same-4.png", "out/same-5.png"]);
+        let heights: std::collections::HashSet<_> = files.iter().map(|f| f["height"].as_u64()).collect();
+        assert!(heights.len() > 1, "photos of different shapes show the order: {files:?}");
+        for lanes in [2, 3, 8] {
+            let (f, w, sn) = lanes_batch(&mut s, &ids, &o, lanes, true, usize::MAX);
+            assert_eq!(shape(&f.unwrap()), shape(&files), "{lanes} lanes");
+            assert_eq!(w.iter().map(|(p, _)| p.clone()).collect::<Vec<_>>(), paths, "{lanes} lanes");
+            assert_eq!(sn, seen, "{lanes} lanes");
+        }
+        let (f, w, sn) = lanes_batch(&mut s, &ids, &o, 3, true, 2);
+        assert_eq!(shape(&f.unwrap()), shape(&files[..2]));
+        assert_eq!((w.len(), sn.len()), (2, 3), "photos past the cancel are never written");
+    }
+
+    // A photo that fails is reported in its place while the others are exported; with
+    // stop_on_error the batch ends there and nothing after it is written
+    #[test]
+    fn side_by_side_batches_report_failures_in_order() {
+        use lightcraft_catalog::{Op, Photo, PhotoId, Source};
+        let mut s = crate::Session::with_demo();
+        let mut ids: Vec<_> = s.visible().iter().copied().take(3).collect();
+        let gone =
+            Photo::new(PhotoId(9_496), Source::File { path: "no/such/dir/gone.jpg".into() }, "gone.jpg", "JPEG", 600, 400, "2026-10-09T00:00:00");
+        s.catalog.apply(Op::AddPhoto { photo: Box::new(gone) }).unwrap();
+        ids.insert(1, PhotoId(9_496));
+        let o = ExportOptions::from_json(&json!({"format": "jpeg", "width": 40}));
+        let (files, written, _) = lanes_batch(&mut s, &ids, &o, 3, false, usize::MAX);
+        let files = files.unwrap();
+        assert_eq!(files.len(), 4);
+        assert_eq!((files[1]["photo"].as_u64(), files[1]["file"].as_str()), (Some(9_496), Some("gone.jpg")), "{files:?}");
+        assert!(files[1]["error"].is_string());
+        assert!([0, 2, 3].iter().all(|&i| files[i]["path"].is_string()), "{files:?}");
+        assert_eq!(written.len(), 3);
+        let one = lanes_batch(&mut s, &ids, &o, 1, false, usize::MAX).0.unwrap();
+        assert_eq!(shape(&files), shape(&one));
+
+        let (r, written, _) = lanes_batch(&mut s, &ids, &o, 3, true, usize::MAX);
+        assert!(r.is_err());
+        assert_eq!(written.len(), 1, "only the photo before the failure");
+    }
+
+    #[test]
+    fn export_weights_follow_the_source_and_output_sizes() {
+        use crate::media::SourceLevel;
+        let mb = |b: usize| b >> 20;
+        // a full-size 24 MP export (measured peak ~1.2 GB)
+        assert_eq!(mb(render_weight(6000 * 4000, 6000, SourceLevel::Full, 6000 * 4000)), 1098);
+        // 2048 px from the 2560 px preview (measured ~150 MB)
+        assert_eq!(mb(render_weight(6000 * 4000, 6000, SourceLevel::Preview, 2048 * 1365)), 145);
+        // a photo smaller than the preview level is its own source
+        assert_eq!(render_weight(1000 * 500, 1000, SourceLevel::Preview, 0), 1000 * 500 * 12);
+        assert_eq!(render_weight(0, 0, SourceLevel::Full, 0), 0);
+        assert!(render_weight(usize::MAX, 1, SourceLevel::Full, usize::MAX) > 0, "no overflow");
     }
 }

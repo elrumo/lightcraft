@@ -75,7 +75,7 @@ fn tree(dir: &Path) -> BTreeSet<String> {
 
 fn rating_of(sidecar: &Path) -> Option<u8> {
     let text = std::fs::read_to_string(sidecar).ok()?;
-    lightcraft_engine::sidecar::parse_sidecar(&text, false).ok()?.rating
+    lightcraft_engine::sidecar::parse_sidecar(&text, lightcraft_engine::crs::Target::Rendered).ok()?.rating
 }
 
 struct Fx {

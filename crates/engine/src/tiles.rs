@@ -118,7 +118,7 @@ fn load_inner(req: &TileRequest) -> Result<Tile, String> {
 #[cfg(not(target_arch = "wasm32"))]
 fn fetch(url: &str) -> Result<Vec<u8>, String> {
     use std::io::Read;
-    let mut resp = crate::sync::http_agent().get(url).header("User-Agent", USER_AGENT).call().map_err(|e| e.to_string())?;
+    let mut resp = crate::cloud_sync::http_agent().get(url).header("User-Agent", USER_AGENT).call().map_err(|e| e.to_string())?;
     let status = resp.status().as_u16();
     if status != 200 {
         return Err(format!("tile server answered {status}"));

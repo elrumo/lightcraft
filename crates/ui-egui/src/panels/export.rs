@@ -54,6 +54,24 @@ const PPI: ControlSpec = spec("export.ppi", "Resolution (ppi)", 1.0, 1200.0, 240
 const WM_IMAGE_WIDTH: ControlSpec = spec("export.watermarkImageWidth", "Width (% of photo)", 2.0, 100.0, 20.0, 1.0);
 const WM_SIZE: ControlSpec = spec("export.watermarkSize", "Size (% of short edge)", 1.0, 15.0, 3.5, 0.5);
 const WM_OPACITY: ControlSpec = spec("export.watermarkOpacity", "Opacity (%)", 5.0, 100.0, 70.0, 1.0);
+const WM_INSET_X: ControlSpec =
+    ControlSpec { decimals: 1, ..spec("export.watermarkInsetX", "Horizontal inset (% of short edge)", 0.0, 40.0, 2.5, 0.5) };
+const WM_INSET_Y: ControlSpec =
+    ControlSpec { decimals: 1, ..spec("export.watermarkInsetY", "Vertical inset (% of short edge)", 0.0, 40.0, 2.5, 0.5) };
+
+/// All nine positions supported by both the text and graphic watermark renderer.
+/// Keep them in grid order so bottom-centre and edge-centre anchors are available in Export.
+const WM_POSITIONS: [(P, &str); 9] = [
+    (P::TopLeft, "↖"),
+    (P::Top, "↑"),
+    (P::TopRight, "↗"),
+    (P::Left, "←"),
+    (P::Center, "•"),
+    (P::Right, "→"),
+    (P::BottomLeft, "↙"),
+    (P::Bottom, "↓"),
+    (P::BottomRight, "↘"),
+];
 
 /// The export settings: the desktop dialog's body, and a phone's "More Options" page.
 pub fn form(app: &mut LightcraftApp, ui: &mut egui::Ui, f: Form<'_>, part: Part) {
@@ -112,8 +130,10 @@ pub fn form(app: &mut LightcraftApp, ui: &mut egui::Ui, f: Form<'_>, part: Part)
                 (F::Jpeg, "JPEG"),
                 (F::Png, "PNG"),
                 (F::Tiff, "TIFF"),
+                (F::Psd, "PSD"),
                 (F::Webp, "WebP"),
                 (F::Avif, "AVIF"),
+                (F::Jxl, "JPEG XL"),
                 (F::Dng, "DNG"),
                 (F::Original, "Original files"),
             ],
@@ -139,7 +159,22 @@ pub fn form(app: &mut LightcraftApp, ui: &mut egui::Ui, f: Form<'_>, part: Part)
         choices(ui, "Bit depth", "exportBitDepth", depths, &mut bd);
         opts.bit_depth = Some(bd);
     }
+    if matches!(opts.format, F::Jpeg | F::Tiff | F::Avif | F::Png | F::Jxl) {
+        let tip = "Photos edited in HDR: JPEG with an HDR gain map (looks right everywhere, brighter highlights on HDR displays), AVIF as 10-bit, PNG and JPEG XL as 16-bit Rec. 2020 PQ; TIFF needs 32-bit float";
+        crate::widgets::check(ui, &mut opts.hdr, "HDR output").on_hover_text(tip);
+        if opts.hdr && !opts.hdr_output() {
+            ui.label(RichText::new("HDR TIFF needs 32-bit float.").color(t.text_dim));
+        }
+    }
     if !rendered {
+    } else if opts.format == F::Avif && opts.hdr {
+        ui.label(RichText::new("Color space: Rec. 2020 PQ (HDR AVIF)").color(t.text_dim));
+    } else if opts.format == F::Png && opts.hdr {
+        ui.label(RichText::new("Color space: Rec. 2020 PQ, 16-bit (HDR PNG)").color(t.text_dim)).on_hover_text(
+            "Viewers that don't read the PNG cICP chunk show PQ values as sRGB: flat and washed out. For a picture that looks right everywhere, use JPEG (gain map).",
+        );
+    } else if opts.format == F::Jxl && opts.hdr {
+        ui.label(RichText::new("Color space: Rec. 2020 PQ (HDR JPEG XL)").color(t.text_dim));
     } else if opts.format == F::Avif {
         ui.label(RichText::new(crate::i18n::tr("Color space: sRGB (AVIF)")).color(t.text_dim));
     } else {
@@ -151,12 +186,26 @@ pub fn form(app: &mut LightcraftApp, ui: &mut egui::Ui, f: Form<'_>, part: Part)
             &[(C::Srgb, "sRGB"), (C::DisplayP3, "P3"), (C::AdobeRgb, "Adobe RGB"), (C::ProPhoto, "ProPhoto"), (C::Rec2020, "Rec.2020")],
             &mut opts.color_space,
         );
+        if opts.effective_space() != opts.color_space {
+            let note = "Lossy JPEG XL writes Adobe RGB and ProPhoto as Rec. 2020; choose Lossless to keep them.";
+            ui.label(RichText::new(crate::i18n::tr(note)).color(t.text_dim));
+        }
     }
-    if part == Part::All && matches!(opts.format, F::Jpeg | F::Avif) {
+    if opts.format == F::Jxl {
+        let tip = "Mathematically lossless: every pixel is kept exactly (larger files)";
+        crate::widgets::check(ui, &mut opts.jxl_lossless, crate::i18n::tr("Lossless")).on_hover_text(crate::i18n::tr(tip));
+    }
+    if part == Part::All && (matches!(opts.format, F::Jpeg | F::Avif) || (opts.format == F::Jxl && !opts.jxl_lossless)) {
         let mut q = opts.quality as f64;
         if num(ui, &QUALITY, &mut q) {
             opts.quality = q as u8;
         }
+    }
+    if opts.format == F::Jxl {
+        use lightcraft_engine::export::JxlEffort as E;
+        choices(ui, "Effort", "exportJxlEffort", &[(E::Fast, "Fast"), (E::Normal, "Normal")], &mut opts.jxl_effort);
+        let tip = "Shows a coarse version first and refines it as the file loads";
+        crate::widgets::check(ui, &mut opts.jxl_progressive, crate::i18n::tr("Progressive")).on_hover_text(crate::i18n::tr(tip));
     }
     if opts.format == F::Jpeg {
         let mut k = *limit_kb as f64;
@@ -190,8 +239,16 @@ pub fn form(app: &mut LightcraftApp, ui: &mut egui::Ui, f: Form<'_>, part: Part)
         if crate::widgets::check(ui, &mut wm_on, crate::i18n::tr("Watermark")).changed() {
             opts.watermark = wm_on.then(|| Watermark { text: "© ".into(), ..Default::default() });
         }
+        let wm_shown = opts.watermark.clone();
+        if let Some(wm) = &wm_shown {
+            watermark_preview(app, ui, wm, (!*full_size).then_some(*resize));
+        }
         if let Some(wm) = &mut opts.watermark {
             watermark_form(app, ui, wm);
+        }
+        if opts.watermark != wm_shown {
+            // the preview above was drawn with the old settings
+            ui.ctx().request_repaint();
         }
     }
     ui.add_space(4.0);
@@ -212,7 +269,7 @@ pub fn form(app: &mut LightcraftApp, ui: &mut egui::Ui, f: Form<'_>, part: Part)
     let naming_id = egui::Id::new("export-naming");
     let tags_open = field(ui, "File name", |ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
-        let w = (ui.available_width() - 50.0).max(80.0);
+        let w = crate::import::tag_field_width(ui);
         ui.add(crate::widgets::touch_field(
             ui,
             egui::TextEdit::singleline(&mut opts.naming).id(naming_id).hint_text("{name}-{seq}  ·  {date}  ·  {title}  ·  {folder}").desired_width(w),
@@ -261,6 +318,25 @@ pub fn form(app: &mut LightcraftApp, ui: &mut egui::Ui, f: Form<'_>, part: Part)
     }
     use lightcraft_engine::export::Conflict as K;
     choices(ui, "If file exists", "exportConflict", &[(K::Unique, "Add number"), (K::Overwrite, "Overwrite"), (K::Skip, "Skip")], &mut opts.conflict);
+    // After export: Apple Photos imports the files written (macOS only)
+    #[cfg(target_os = "macos")]
+    {
+        let r = ui.checkbox(&mut opts.add_to_photos, crate::i18n::tr("Add to Apple Photos"));
+        register(ui.ctx(), "exportAddToPhotos", r.rect);
+        if opts.add_to_photos {
+            field(ui, "Album", |ui| {
+                ui.add(egui::TextEdit::singleline(&mut opts.photos_album).hint_text(crate::i18n::tr("none")).desired_width(f32::INFINITY))
+            });
+            ui.label(
+                RichText::new(crate::i18n::tr("The first time, macOS asks whether LightCraft may control Photos.")).size(11.0).color(t.text_dim),
+            );
+        }
+    }
+    // nowhere to add them: a setting carried over from a Mac is dropped, not refused
+    #[cfg(not(target_os = "macos"))]
+    {
+        opts.add_to_photos = false;
+    }
     ui.add_space(4.0);
     field(ui, "Save preset", |ui| {
         trailing_button_row(ui, |ui| {
@@ -281,6 +357,117 @@ pub fn form(app: &mut LightcraftApp, ui: &mut egui::Ui, f: Form<'_>, part: Part)
             ));
         });
     });
+}
+
+/// The Export dialog's watermark preview: the first exported photo, as wide as the dialog whatever
+/// its shape, with the watermark drawn on it as the file will have it at size `resize` (`None` =
+/// full size). On a worker thread, once per photo, catalog change and size step, the cached
+/// thumbnail comes first (at once, a little soft) and then a render at the preview's own pixel size
+/// replaces it. The watermark is redrawn on a copy only when it, the output size or the picture
+/// changes, which is quick at this size, so the preview follows the sliders.
+fn watermark_preview(
+    app: &mut LightcraftApp,
+    ui: &mut egui::Ui,
+    wm: &lightcraft_engine::export::Watermark,
+    resize: Option<lightcraft_engine::export::Resize>,
+) {
+    use std::hash::{Hash, Hasher};
+    // (pictures received so far: 1 the thumbnail, 2 the sharp render; the latest, or why none came)
+    type Base = std::sync::Arc<std::sync::Mutex<(u8, Option<Result<lightcraft_raster::Rgba8, String>>)>>;
+    type Shown = (u64, u8, lightcraft_engine::export::Watermark, usize, egui::TextureHandle);
+    let t = Tokens::get(ui.ctx());
+    let Some(&id) = app.session.targets(&json!({})).first() else { return };
+    let Some(photo) = app.session.catalog.photo(id).cloned() else { return };
+    let (out_w, out_h) = lightcraft_engine::export::output_size(&photo, &lightcraft_engine::export::ExportOptions { resize, ..Default::default() });
+    let export_short = out_w.min(out_h);
+    // pixels across the dialog, in steps so a scroll bar or a point of layout doesn't re-render
+    let step = 128.0;
+    let px = ((ui.available_width() * ui.ctx().pixels_per_point() / step).ceil() * step).clamp(step, 2048.0) as usize;
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    (id, app.session.catalog.revision, px).hash(&mut h);
+    let key = h.finish();
+    let ctx = ui.ctx().clone();
+    let (base_id, shown_id) = (egui::Id::new("export-wm-preview-base"), egui::Id::new("export-wm-preview-shown"));
+    let base = match ctx.data(|d| d.get_temp::<(u64, Base)>(base_id)) {
+        Some((k, base)) if k == key => base,
+        _ => {
+            let base: Base = Default::default();
+            // the thumbnail, then as wide as the dialog (a tall photo up to three times that high)
+            let jobs: Vec<_> = [app.session.thumb_job(id, 512), app.session.render_job(id, px, px * 3, false, true)].into_iter().flatten().collect();
+            // the web build has no worker thread: a full render there would hold up the page
+            #[cfg(target_arch = "wasm32")]
+            let jobs: Vec<_> = jobs.into_iter().take(1).collect();
+            if jobs.is_empty() {
+                *base.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = (1, Some(Err("no such photo".into())));
+            } else {
+                let (out, repaint) = (base.clone(), ctx.clone());
+                let work = move || {
+                    for job in jobs {
+                        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job.run().rendered.map(|r| r.image)))
+                            .unwrap_or_else(|_| Err("the preview failed unexpectedly".into()));
+                        let mut got = out.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                        // a failed sharp render keeps the thumbnail
+                        if r.is_ok() || !matches!(got.1, Some(Ok(_))) {
+                            *got = (got.0.saturating_add(1), Some(r));
+                            repaint.request_repaint();
+                        }
+                    }
+                };
+                #[cfg(not(target_arch = "wasm32"))]
+                if let Err(e) = std::thread::Builder::new().name("lc-watermark-preview".into()).spawn(work) {
+                    log::warn!("watermark preview: {e}");
+                }
+                #[cfg(target_arch = "wasm32")]
+                work();
+            }
+            ctx.data_mut(|d| d.insert_temp(base_id, (key, base.clone())));
+            base
+        }
+    };
+    let shown = ctx.data(|d| d.get_temp::<Shown>(shown_id));
+    let stage = base.lock().unwrap_or_else(std::sync::PoisonError::into_inner).0;
+    let tex = match shown {
+        Some((k, g, w, s, tex)) if k == key && g == stage && &w == wm && s == export_short => tex,
+        _ => {
+            let photo_px = match &base.lock().unwrap_or_else(std::sync::PoisonError::into_inner).1 {
+                Some(Ok(img)) => Ok(img.clone()),
+                Some(Err(e)) => Err(Some(e.clone())),
+                None => Err(None),
+            };
+            let mut img = match photo_px {
+                Ok(img) => img,
+                Err(e) => {
+                    let note = if e.is_some() { "Preview unavailable" } else { "Loading preview…" };
+                    let r = ui.label(egui::RichText::new(crate::i18n::tr(note)).color(t.text_dim));
+                    if let Some(e) = e {
+                        r.on_hover_text(e);
+                    }
+                    return;
+                }
+            };
+            lightcraft_engine::export::draw_watermark_preview(&mut img, wm, export_short);
+            // shown through the monitor profile like every other preview
+            if let Some(d) = app.renderer.display()
+                && let Err(e) = d.profile.from_srgb(&mut img)
+            {
+                log::warn!("display profile: {e}");
+            }
+            let color = std::sync::Arc::new(egui::ColorImage::from_rgba_unmultiplied([img.width, img.height], &img.as_bytes()));
+            let tex = match shown {
+                Some((.., mut tex)) => {
+                    tex.set(color, egui::TextureOptions::LINEAR);
+                    tex
+                }
+                None => ctx.load_texture("export-wm-preview", color, egui::TextureOptions::LINEAR),
+            };
+            ctx.data_mut(|d| d.insert_temp(shown_id, (key, stage, wm.clone(), export_short, tex.clone())));
+            tex
+        }
+    };
+    let size = tex.size_vec2();
+    let scale = ui.available_width() / size.x.max(1.0);
+    let r = ui.vertical_centered(|ui| ui.add(egui::Image::new((tex.id(), size * scale)))).inner;
+    crate::widgets::register(ui.ctx(), "image:exportWatermarkPreview", r.rect);
 }
 
 /// A watermark's controls: text or a graphic, where it goes, how big and how strong.
@@ -325,17 +512,12 @@ fn watermark_form(app: &mut LightcraftApp, ui: &mut egui::Ui, wm: &mut Watermark
         field(ui, "Text", |ui| {
             ui.add(crate::widgets::touch_field(
                 ui,
-                egui::TextEdit::multiline(&mut wm.text).desired_rows(2).hint_text("© Your Name").desired_width(f32::INFINITY),
+                egui::TextEdit::multiline(&mut wm.text).desired_rows(2).hint_text(crate::i18n::tr("© Your Name")).desired_width(f32::INFINITY),
             ))
         });
     }
-    choices(
-        ui,
-        "Position",
-        "exportWmAnchor",
-        &[(P::TopLeft, "↖"), (P::TopRight, "↗"), (P::Center, "•"), (P::BottomLeft, "↙"), (P::BottomRight, "↘")],
-        &mut wm.anchor,
-    );
+    choices(ui, "Position", "exportWmAnchor", &WM_POSITIONS, &mut wm.anchor);
+    choices(ui, "Rotate", "exportWmRotation", &[(0u16, "0°"), (90, "90°"), (180, "180°"), (270, "270°")], &mut wm.rotation);
     let mut size = wm.size as f64 * 100.0;
     if !graphic && num(ui, &WM_SIZE, &mut size) {
         wm.size = (size / 100.0) as f32;
@@ -343,6 +525,16 @@ fn watermark_form(app: &mut LightcraftApp, ui: &mut egui::Ui, wm: &mut Watermark
     let mut op = wm.opacity as f64 * 100.0;
     if num(ui, &WM_OPACITY, &mut op) {
         wm.opacity = (op / 100.0) as f32;
+    }
+    // like Lightroom Classic: a margin from the side edges and one from the top and bottom
+    // edges, each unused (greyed) when the position is centred along that axis
+    let across = !matches!(wm.anchor, P::Top | P::Center | P::Bottom);
+    if let Some(v) = crate::widgets::slider(ui, &WM_INSET_X, wm.inset_x as f64 * 100.0, across, None).value {
+        wm.inset_x = (v / 100.0) as f32;
+    }
+    let down = !matches!(wm.anchor, P::Left | P::Center | P::Right);
+    if let Some(v) = crate::widgets::slider(ui, &WM_INSET_Y, wm.inset_y as f64 * 100.0, down, None).value {
+        wm.inset_y = (v / 100.0) as f32;
     }
     if !graphic {
         crate::widgets::check(ui, &mut wm.shadow, crate::i18n::tr("Shadow"));
@@ -1087,4 +1279,29 @@ pub fn progress(ctx: &egui::Context, done: usize, total: usize, current: &str, s
             cancel = resp.clicked();
         });
     cancel
+}
+
+#[cfg(test)]
+mod watermark_position_tests {
+    use super::WM_POSITIONS;
+    use lightcraft_engine::export::Anchor;
+
+    #[test]
+    fn export_dialog_offers_every_rendered_anchor_exactly_once() {
+        let anchors = [
+            Anchor::TopLeft,
+            Anchor::Top,
+            Anchor::TopRight,
+            Anchor::Left,
+            Anchor::Center,
+            Anchor::Right,
+            Anchor::BottomLeft,
+            Anchor::Bottom,
+            Anchor::BottomRight,
+        ];
+        assert_eq!(WM_POSITIONS.len(), anchors.len());
+        for anchor in anchors {
+            assert_eq!(WM_POSITIONS.iter().filter(|(position, _)| *position == anchor).count(), 1);
+        }
+    }
 }

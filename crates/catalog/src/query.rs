@@ -45,6 +45,10 @@ pub struct Filter {
     pub deleted: bool,
     /// Capture date prefix (`2026`, `2026-04`, `2026-04-12`).
     pub date: Option<String>,
+    /// A folder the library's photos were imported from: those photos and the ones imported from
+    /// the folders inside it (see [`crate::folders`]). Photos only browsed in Local are never part
+    /// of it, unlike [`Filter::folder`].
+    pub library_folder: Option<String>,
     /// A keyword; hierarchical keywords match their children too (`travel` finds `travel|italy`).
     pub keyword: Option<String>,
     /// A person: photos with a named face region of this name (case-insensitive), as read from XMP.
@@ -84,6 +88,9 @@ pub enum SortKey {
     FileName,
     Rating,
     FileSize,
+    /// A shuffle fixed by [`Sort::seed`]: the same seed always gives the same order, and photos
+    /// added or edited later never reshuffle the others. Pick a new seed to reshuffle.
+    Random,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -93,17 +100,42 @@ pub struct Sort {
     pub ascending: bool,
     /// Date headers in the grid (date sort keys only).
     pub group: crate::GroupBy,
+    /// Which shuffle [`SortKey::Random`] gives (ignored by the other keys).
+    pub seed: u64,
 }
 
 impl Default for Sort {
     fn default() -> Self {
-        Sort { key: SortKey::CaptureDate, ascending: false, group: crate::GroupBy::Auto }
+        Sort { key: SortKey::CaptureDate, ascending: false, group: crate::GroupBy::Auto, seed: 0 }
     }
+}
+
+/// splitmix64 finaliser: a stateless, platform-independent mix (no RNG state, no `rand` version
+/// to drift), so a seed names the same shuffle on every machine.
+pub fn mix64(x: u64) -> u64 {
+    let mut z = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+/// A photo's place in the shuffle for `seed`.
+fn shuffle_rank(seed: u64, id: PhotoId) -> u64 {
+    mix64(mix64(seed) ^ id.0)
 }
 
 impl Filter {
     /// Human-readable summary of the active rules (smart album tooltips, `album.list`).
     pub fn describe(&self) -> String {
+        self.describe_in(None)
+    }
+
+    /// [`Filter::describe`] naming the albums its rules test (`RuleSet::describe_with`).
+    pub fn describe_with(&self, cat: &crate::Catalog) -> String {
+        self.describe_in(Some(cat))
+    }
+
+    fn describe_in(&self, cat: Option<&crate::Catalog>) -> String {
         let mut v: Vec<String> = Vec::new();
         if self.rating > 0 {
             let op = match self.rating_op {
@@ -134,6 +166,7 @@ impl Filter {
             ("camera", &self.camera),
             ("lens", &self.lens),
             ("date", &self.date),
+            ("folder", &self.library_folder),
             ("imported", &self.imported),
         ] {
             if let Some(x) = val {
@@ -153,9 +186,16 @@ impl Filter {
             v.push(format!("looks like “{}”", q.trim()));
         }
         if let Some(rs) = self.rule_set.as_ref().filter(|r| !r.rules.is_empty()) {
-            v.push(rs.describe());
+            v.push(cat.map_or_else(|| rs.describe(), |c| rs.describe_with(c)));
         }
         if v.is_empty() { "all photos".into() } else { v.join(", ") }
+    }
+
+    /// The albums this filter tests: its album field and its rules' Album rules.
+    pub fn albums_tested(&self) -> Vec<crate::AlbumId> {
+        let mut out: Vec<crate::AlbumId> = self.album.into_iter().collect();
+        out.extend(self.rule_set.as_ref().map(crate::RuleSet::albums_tested).unwrap_or_default());
+        out
     }
 
     /// Whether matches depend on the clock (only "in the last…" rules do).
@@ -163,14 +203,23 @@ impl Filter {
         self.rule_set.as_ref().is_some_and(crate::RuleSet::depends_on_now)
     }
 
-    /// Whether `p` passes. Parses the search text each call: when testing many photos, parse it
-    /// once ([`TextQuery::parse`]) and use [`Filter::matches_with`].
+    /// Whether `p` passes. Reads the search text each call: [`Catalog::query`] and
+    /// [`Catalog::count`] read it once for all photos.
     pub fn matches(&self, p: &Photo, cat: &Catalog) -> bool {
-        self.matches_with(p, cat, &TextQuery::parse(&self.text))
+        self.matches_in(p, cat, self.library_root().as_deref(), &TextQuery::parse(&self.text))
     }
 
-    /// [`Filter::matches`] with the search text already compiled from `self.text`.
-    pub fn matches_with(&self, p: &Photo, cat: &Catalog, text: &TextQuery) -> bool {
+    /// [`Filter::library_folder`] as a folder identity ([`folder_key`]); `None` without a choice.
+    fn library_root(&self) -> Option<String> {
+        // as given: a folder may be named with spaces at its edge, and trimming would make it
+        // another folder
+        self.library_folder.as_deref().filter(|d| !d.trim().is_empty()).map(folder_key)
+    }
+
+    /// [`Filter::matches`] with the library folder already turned into its identity and the search
+    /// text compiled from `self.text`, so a query over a big library does that once, not once per
+    /// photo.
+    fn matches_in(&self, p: &Photo, cat: &Catalog, root: Option<&str>, text: &TextQuery) -> bool {
         if p.deleted != self.deleted {
             return false;
         }
@@ -229,12 +278,18 @@ impl Filter {
             return false;
         }
         if let Some(from) = &self.date_from
-            && p.date() < from.as_str()
+            && match p.captured.as_deref() {
+                Some(c) => c < from.as_str(),
+                None => true,
+            }
         {
             return false;
         }
         if let Some(to) = &self.date_to
-            && p.date().get(..to.len()).unwrap_or(p.date()) > to.as_str()
+            && match p.captured.as_deref() {
+                Some(c) => c.get(..to.len()).unwrap_or(c) > to.as_str(),
+                None => true,
+            }
         {
             return false;
         }
@@ -244,7 +299,12 @@ impl Filter {
             return false;
         }
         if let Some(d) = &self.date
-            && !p.date().starts_with(d.as_str())
+            && !p.captured.as_deref().is_some_and(|c| c.starts_with(d.as_str()))
+        {
+            return false;
+        }
+        if let Some(root) = root
+            && !photo_in_root(p, root)
         {
             return false;
         }
@@ -281,15 +341,17 @@ impl Catalog {
     /// Photos matching `filter`, in `sort` order (ties broken by id for stability).
     pub fn query(&self, filter: &Filter, sort: &Sort) -> Vec<PhotoId> {
         let text = TextQuery::parse(&filter.text);
-        let mut v: Vec<&Photo> = self.photos().map(|p| p.as_ref()).filter(|p| filter.matches_with(p, self, &text)).collect();
+        let root = filter.library_root();
+        let mut v: Vec<&Photo> = self.photos().map(|p| p.as_ref()).filter(|p| filter.matches_in(p, self, root.as_deref(), &text)).collect();
         v.sort_by(|a, b| {
             let o = match sort.key {
-                SortKey::CaptureDate => a.date().cmp(b.date()),
+                SortKey::CaptureDate => a.captured.cmp(&b.captured).then_with(|| a.imported.cmp(&b.imported)),
                 SortKey::ImportDate => a.imported.cmp(&b.imported),
                 SortKey::EditDate => a.edited.cmp(&b.edited),
                 SortKey::FileName => a.file_name.to_lowercase().cmp(&b.file_name.to_lowercase()),
                 SortKey::Rating => a.rating.cmp(&b.rating),
                 SortKey::FileSize => a.file_size.cmp(&b.file_size),
+                SortKey::Random => shuffle_rank(sort.seed, a.id).cmp(&shuffle_rank(sort.seed, b.id)),
             }
             .then(a.id.cmp(&b.id));
             if sort.ascending { o } else { o.reverse() }
@@ -300,7 +362,8 @@ impl Catalog {
     /// How many photos [`Catalog::query`] lists, without sorting them.
     pub fn count(&self, filter: &Filter) -> usize {
         let text = TextQuery::parse(&filter.text);
-        self.photos().filter(|p| filter.matches_with(p, self, &text)).count()
+        let root = filter.library_root();
+        self.photos().filter(|p| filter.matches_in(p, self, root.as_deref(), &text)).count()
     }
 
     /// The places and dates the search text of `filter` was read as ("photos in madrid in june"),
@@ -318,7 +381,7 @@ impl Catalog {
         use std::collections::BTreeMap;
         let mut years: BTreeMap<&str, (BTreeMap<&str, usize>, BTreeMap<&str, usize>)> = BTreeMap::new();
         for p in self.photos().filter(|p| p.in_library()) {
-            let d = p.date();
+            let Some(d) = p.captured.as_deref() else { continue };
             if d.len() >= 10 {
                 let (months, days) = years.entry(&d[..4]).or_default();
                 *months.entry(&d[..7]).or_default() += 1;
@@ -364,7 +427,8 @@ impl Catalog {
         let filter = Filter { person: None, ..filter.clone() };
         let mut m: std::collections::HashMap<String, (Person, f64)> = Default::default();
         let text = TextQuery::parse(&filter.text);
-        for p in self.photos().filter(|p| filter.matches_with(p, self, &text)) {
+        let root = filter.library_root();
+        for p in self.photos().filter(|p| filter.matches_in(p, self, root.as_deref(), &text)) {
             let mut seen: Vec<String> = Vec::new();
             for r in p.meta.regions.iter().filter(|r| r.kind == lightcraft_meta::RegionKind::Face) {
                 let Some(name) = r.name.as_deref().map(str::trim).filter(|n| !n.is_empty()) else { continue };
@@ -439,12 +503,18 @@ pub fn in_folder(path: &str, dir: &str, deep: bool) -> bool {
     !rest.is_empty() && (deep || !rest.contains(['/', '\\']))
 }
 
-/// A folder path's identity, for telling whether two spellings name the same folder: `/` and
-/// `\\` are both separators, repeated separators, `.` and a trailing separator are dropped,
-/// `..` is resolved lexically, a Windows verbatim prefix (`\\?\`) is removed and the drive
-/// letter lower-cased; on Windows (case-insensitive file names) the whole path is lower-cased.
-/// No file-system access: the paths compared should already be absolute.
-pub fn folder_key(path: &str) -> String {
+/// A path read the way [`folder_key`] reads it: the part `..` can't climb above (`//server/share`,
+/// `c:`; empty for `/` and relative paths), the names below it, and whether it is absolute.
+pub(crate) struct SplitPath {
+    pub prefix: String,
+    pub parts: Vec<String>,
+    pub absolute: bool,
+}
+
+/// Both separators, repeated separators (also between a server and its share), `.` and a
+/// trailing separator dropped, `..` resolved lexically, a Windows verbatim prefix removed;
+/// `lower_drive` lower-cases a drive letter (the identity does, a display name wants it as is).
+pub(crate) fn split_path(path: &str, lower_drive: bool) -> SplitPath {
     let mut s = path.replace('\\', "/");
     if let Some(rest) = s.strip_prefix("//?/").or_else(|| s.strip_prefix("//./")) {
         s = match rest.strip_prefix("UNC/") {
@@ -452,28 +522,39 @@ pub fn folder_key(path: &str) -> String {
             None => rest.to_string(),
         };
     }
-    // the part `..` can't climb above: `//server/share`, `c:` or `/`
     let (prefix, rest) = if let Some(unc) = s.strip_prefix("//").filter(|u| !u.is_empty() && !u.starts_with('/')) {
-        let mut it = unc.splitn(3, '/');
-        let (server, share, rest) = (it.next().unwrap_or(""), it.next().unwrap_or(""), it.next().unwrap_or(""));
-        (format!("//{server}/{share}"), rest.to_string())
-    } else if s.len() >= 2 && s.as_bytes()[1] == b':' && s.as_bytes()[0].is_ascii_alphabetic() {
-        (s[..2].to_ascii_lowercase(), s[2..].to_string())
+        let mut segs = unc.split('/').filter(|x| !x.is_empty());
+        let (server, share) = (segs.next().unwrap_or(""), segs.next().unwrap_or(""));
+        (format!("//{server}/{share}"), segs.collect::<Vec<_>>().join("/"))
+    } else if let (true, Some(drive), Some(rest)) = (matches!(s.as_bytes(), [a, b':', ..] if a.is_ascii_alphabetic()), s.get(..2), s.get(2..)) {
+        (if lower_drive { drive.to_ascii_lowercase() } else { drive.to_string() }, rest.to_string())
     } else {
         (String::new(), s.clone())
     };
     let absolute = rest.starts_with('/') || !prefix.is_empty();
-    let mut parts: Vec<&str> = Vec::new();
+    let mut parts: Vec<String> = Vec::new();
     for c in rest.split('/') {
         match c {
             "" | "." => {}
-            ".." if parts.last().is_some_and(|p| *p != "..") => {
+            ".." if parts.last().is_some_and(|p| p != "..") => {
                 parts.pop();
             }
             ".." if absolute => {}
-            c => parts.push(c),
+            c => parts.push(c.to_string()),
         }
     }
+    SplitPath { prefix, parts, absolute }
+}
+
+/// A folder path's identity, for telling whether two spellings name the same folder: `/` and
+/// `\\` are both separators, repeated separators, `.` and a trailing separator are dropped,
+/// `..` is resolved lexically, a Windows verbatim prefix (`\\?\`) is removed and the drive
+/// letter lower-cased; on Windows (case-insensitive file names) the whole path is lower-cased.
+/// File names are otherwise compared as written, so on a case-insensitive disk elsewhere
+/// (macOS, a Samba share) two spellings that differ in case are two folders here.
+/// No file-system access: the paths compared should already be absolute.
+pub fn folder_key(path: &str) -> String {
+    let SplitPath { prefix, parts, absolute } = split_path(path, true);
     let key = if absolute { format!("{prefix}/{}", parts.join("/")) } else { parts.join("/") };
     if cfg!(windows) { key.to_lowercase() } else { key }
 }
@@ -481,8 +562,51 @@ pub fn folder_key(path: &str) -> String {
 /// Whether `path` is folder `root` or lies somewhere inside it, however either is spelled
 /// (see [`folder_key`]).
 pub fn folder_within(path: &str, root: &str) -> bool {
-    let (p, r) = (folder_key(path), folder_key(root));
-    p == r || (p.starts_with(&r) && (r.ends_with('/') || p[r.len()..].starts_with('/')))
+    key_within(&folder_key(path), &folder_key(root))
+}
+
+/// The names below folder `root` that lead to `path`, as the caller spelled them (`None` when
+/// `path` is not at or inside `root`; empty when it is `root`). Compared by [`folder_key`], but
+/// the names keep their case, which the key lowers on Windows.
+pub fn folder_rest(path: &str, root: &str) -> Option<Vec<String>> {
+    if !key_within(&folder_key(path), &folder_key(root)) {
+        return None;
+    }
+    let depth = split_path(root, false).parts.len();
+    Some(split_path(path, false).parts.into_iter().skip(depth).collect())
+}
+
+/// Whether a library photo (not one only browsed in Local) lies in the folder whose
+/// [`folder_key`] is `root`. A plain POSIX path (no `\`, `.`, `..`, repeated or trailing
+/// separators) is its own identity, so it is read without building a key for it: the check runs
+/// for every photo of the library on each refresh, and this keeps it cheap.
+pub(crate) fn photo_in_root(p: &Photo, root: &str) -> bool {
+    if p.local {
+        return false;
+    }
+    let crate::Source::File { path } = &p.source else { return false };
+    let plain = path.starts_with('/')
+        && !path.starts_with("//")
+        && !path.ends_with('/')
+        && !path.contains(['\\'])
+        && !path.contains("//")
+        && !path.contains("/.");
+    if !cfg!(windows) && plain && root.starts_with('/') && !root.starts_with("//") {
+        let r = root.trim_end_matches('/');
+        return path.strip_prefix(r).is_some_and(|rest| rest.starts_with('/'));
+    }
+    crate::local::folder_of(p).is_some_and(|f| key_within(&f, root))
+}
+
+/// [`folder_within`] for two paths already turned into their [`folder_key`].
+pub(crate) fn key_within(p: &str, r: &str) -> bool {
+    // `.` or `a/..` name no folder: not "everything"
+    if r.is_empty() {
+        return false;
+    }
+    // a disk's root key ends in `/` (`c:/`, `//srv/share/`), a folder's does not: same folder
+    let (p, r) = (p.trim_end_matches('/'), r.trim_end_matches('/'));
+    p == r || p.strip_prefix(r).is_some_and(|rest| rest.starts_with('/'))
 }
 
 /// The kind of Photo Merge result a file is, from the name merges give it (`IMG_1-HDR.dng`,

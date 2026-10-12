@@ -1,13 +1,14 @@
 //! DNG (Adobe Digital Negative Specification 1.7): raw IFD selection, pixel data (via [`crate::tiffraw`]),
 //! linearization, black/white levels, active area, default crop, CFA description, colour tags, opcode lists.
 
+use crate::gaintable::GainTableMap;
 use crate::profile::{HsvTable, ProfileLook, ToneCurve};
 use crate::tiffraw::{BinSpec, Packing, read_binned, read_image_in};
 use crate::{BlackLevel, Cfa, ColorData, Mat3, Mode, RawData, RawError, RawFormat, RawImage, Rect, Result, opcodes};
 use lightcraft_color::Xy;
 use lightcraft_geom::Orientation;
 use lightcraft_tiff::tags::{self as t, photometric};
-use lightcraft_tiff::{Ifd, Tiff};
+use lightcraft_tiff::{ByteOrder, Ifd, Tiff};
 
 /// The main raw IFD: full-resolution (NewSubfileType 0) CFA or LinearRaw image with the most pixels.
 pub(crate) fn raw_ifd(tiff: &Tiff) -> Option<&Ifd> {
@@ -16,6 +17,76 @@ pub(crate) fn raw_ifd(tiff: &Tiff) -> Option<&Ifd> {
         .filter(|i| i.u32(t::NEW_SUBFILE_TYPE).unwrap_or(0) == 0)
         .filter(|i| matches!(i.u16(t::PHOTOMETRIC), Some(photometric::CFA) | Some(photometric::LINEAR_RAW)))
         .max_by_key(|i| i.u64(t::IMAGE_WIDTH).unwrap_or(0).saturating_mul(i.u64(t::IMAGE_LENGTH).unwrap_or(0)))
+}
+
+/// Undo the DNG 1.7 row/column interleave, which reorders the stored raster without changing its
+/// size: with `RowInterleaveFactor = n` the rows are stored as `n` consecutive fields, field `g`
+/// holding rows `g, g+n, g+2n, …` of the image (and likewise for columns).
+///
+/// The tag counts fields, not a divisor of the raster — see [`field_map`] — so a dimension the
+/// factor does not divide is decoded, with the trailing fields short, rather than refused.
+///
+/// Left alone, a file like this decodes as `n × m` scaled-down copies of the scene, one per
+/// field, with the CFA pattern then read across permuted samples — so it is not merely misplaced,
+/// it is the wrong colour as well (`RowInterleaveFactor = ColumnInterleaveFactor = 2` is what DNG
+/// 1.7 JPEG XL files from Adobe's converter carry).
+fn deinterleave(data: &mut RawData, w: usize, h: usize, cpp: usize, rows: usize, cols: usize) -> Result<()> {
+    if rows <= 1 && cols <= 1 {
+        return Ok(());
+    }
+    // The spec sets no bound on the value (it is only "the number of interleaved fields"); this
+    // caps the field table we build and the permutation, and rejects a hostile tag.
+    if !(1..=16).contains(&rows) || !(1..=16).contains(&cols) {
+        return Err(RawError::Unsupported(format!("interleave factors {rows} × {cols}")));
+    }
+    let (map_r, map_c) = (field_map(h, rows), field_map(w, cols));
+    let dest = |r: usize, c: usize| map_r[r] * w + map_c[c];
+    match data {
+        RawData::U16(v) => permute(v, w, h, cpp, dest),
+        RawData::F32(v) => permute(v, w, h, cpp, dest),
+    }
+}
+
+/// The stored-line → image-line map for one axis: a factor of `n` splits `len` lines into `n`
+/// interleaved fields, field `g` holding lines `g, g+n, g+2n, …`. The fields are stored
+/// consecutively, so field `g` starts at stored line `offs[g]` and its `k`-th line is image line
+/// `g + n*k`. Field sizes follow from the round-robin split — field `g` has `ceil((len - g) / n)`
+/// lines — so when `n` does not divide `len` the trailing fields are short, and when `n` exceeds
+/// `len` the trailing fields are empty.
+fn field_map(len: usize, n: usize) -> Vec<usize> {
+    let mut offs = Vec::with_capacity(n + 1);
+    let mut acc = 0usize;
+    for g in 0..=n {
+        offs.push(acc);
+        if g < n && g < len {
+            acc += (len - 1 - g) / n + 1;
+        }
+    }
+    let mut map = vec![0usize; len];
+    for g in 0..n {
+        for (k, i) in (offs[g]..offs[g + 1]).enumerate() {
+            map[i] = g + n * k;
+        }
+    }
+    map
+}
+
+/// Move every `cpp`-sample pixel of `v` from its stored position to `dest(r, c)`, the image
+/// position it belongs at. The permutation is not its own inverse, so it needs a destination.
+fn permute<T: Copy + Default, F: Fn(usize, usize) -> usize>(v: &mut Vec<T>, w: usize, h: usize, cpp: usize, dest: F) -> Result<()> {
+    let n = w.checked_mul(h).and_then(|n| n.checked_mul(cpp)).ok_or_else(|| RawError::Corrupt("image too large".into()))?;
+    if v.len() != n {
+        return Err(RawError::Corrupt("mosaic size does not match the image".into()));
+    }
+    let mut out = vec![T::default(); n];
+    for r in 0..h {
+        for c in 0..w {
+            let (from, to) = ((r * w + c) * cpp, dest(r, c) * cpp);
+            out[to..to + cpp].copy_from_slice(&v[from..from + cpp]);
+        }
+    }
+    *v = out;
+    Ok(())
 }
 
 fn mat3(v: Option<Vec<f64>>) -> Option<Mat3> {
@@ -33,7 +104,8 @@ fn vec3(v: Option<Vec<f64>>) -> Option<[f64; 3]> {
 }
 
 /// Colour tags: DNG puts them in IFD0, but some writers use the raw IFD; prefer the raw IFD.
-pub(crate) fn color_data(ifd0: &Ifd, raw: &Ifd) -> ColorData {
+/// `order` is the file's byte order (for the binary gain-table-map tags).
+pub(crate) fn color_data(ifd0: &Ifd, raw: &Ifd, order: ByteOrder) -> ColorData {
     let get = |tag: u16| raw.f64s(tag).or_else(|| ifd0.f64s(tag));
     let geti = |tag: u16| raw.u16(tag).or_else(|| ifd0.u16(tag));
     ColorData {
@@ -46,13 +118,16 @@ pub(crate) fn color_data(ifd0: &Ifd, raw: &Ifd) -> ColorData {
         as_shot_white_xy: get(t::AS_SHOT_WHITE_XY).filter(|v| v.len() == 2 && v[0] > 0.0 && v[1] > 0.0).map(|v| Xy::new(v[0], v[1])),
         baseline_exposure: get(t::BASELINE_EXPOSURE).and_then(|v| v.first().copied()).filter(|v| v.is_finite()).unwrap_or(0.0)
             + get(t::BASELINE_EXPOSURE_OFFSET).and_then(|v| v.first().copied()).filter(|v| v.is_finite()).unwrap_or(0.0),
-        profile: profile_look(ifd0, raw),
+        // DNG 1.7 BaselineSharpness (IFD 0 or the enhanced IFD); implausible values are ignored
+        baseline_sharpness: get(t::BASELINE_SHARPNESS).and_then(|v| v.first().copied()).filter(|v| v.is_finite() && *v > 0.0 && *v <= 16.0),
+        profile: profile_look(ifd0, raw, order),
     }
 }
 
-/// The profile look tags (`ProfileHueSatMap*`, `ProfileLookTable*`, `ProfileToneCurve`); malformed
-/// ones are ignored. Like the colour tags, read from the raw IFD first, else IFD 0.
-pub(crate) fn profile_look(ifd0: &Ifd, raw: &Ifd) -> ProfileLook {
+/// The profile look tags (`ProfileHueSatMap*`, `ProfileLookTable*`, `ProfileToneCurve`,
+/// `ProfileGainTableMap*`); malformed ones are ignored. Like the colour tags, read from the raw IFD
+/// first, else IFD 0.
+pub(crate) fn profile_look(ifd0: &Ifd, raw: &Ifd, order: ByteOrder) -> ProfileLook {
     let pick = |tag: u16| if raw.contains(tag) { raw } else { ifd0 };
     let table = |dims: u16, data: u16, enc: u16| {
         let ifd = pick(dims);
@@ -67,53 +142,57 @@ pub(crate) fn profile_look(ifd0: &Ifd, raw: &Ifd) -> ProfileLook {
         ],
         look_table: table(t::PROFILE_LOOK_TABLE_DIMS, t::PROFILE_LOOK_TABLE_DATA, t::PROFILE_LOOK_TABLE_ENCODING),
         tone_curve: pick(t::PROFILE_TONE_CURVE).f64s(t::PROFILE_TONE_CURVE).and_then(|v| ToneCurve::from_tag(&v)),
+        gain_table_map: gain_table_map(ifd0, raw, order),
     }
 }
 
-/// Final position of each of `n` stored rows (or columns) that hold `f` interleaved fields one after the other:
-/// field `i` has the final rows `i`, `i + f`, `i + 2f`…, and earlier fields take the remainder when `f` doesn't
-/// divide `n`.
-fn field_positions(n: usize, f: usize) -> Vec<usize> {
-    (0..f).flat_map(|field| (0..n.saturating_sub(field).div_ceil(f)).map(move |k| k * f + field)).collect()
-}
-
-/// Undo `RowInterleaveFactor` / `ColumnInterleaveFactor` (DNG 1.2 / 1.7.1): Adobe's lossy JPEG XL mosaics store the
-/// four colour planes of a 2×2 pattern as quarter-size fields, which compress better. It is a pass over the whole
-/// frame — a tile may straddle two fields. A no-op without the tags or without samples (header mode).
-fn deinterleave(raw: &Ifd, data: &mut RawData, w: usize, h: usize, cpp: usize) -> Result<()> {
-    let factor = |tag, n: usize| match raw.u64(tag) {
-        None | Some(0 | 1) => Ok(1),
-        Some(f) => match usize::try_from(f) {
-            Ok(f) if f <= n.min(64) => Ok(f),
-            _ => Err(RawError::Corrupt(format!("interleave factor {f} for {n} samples"))),
-        },
-    };
-    let (rows, cols) = (factor(t::ROW_INTERLEAVE_FACTOR, h)?, factor(t::COLUMN_INTERLEAVE_FACTOR, w)?);
-    if (rows, cols) == (1, 1) {
-        return Ok(());
-    }
-    fn go<T: Copy>(src: &[T], w: usize, cpp: usize, ry: &[usize], rx: &[usize]) -> Option<Vec<T>> {
-        let mut out = src.to_vec();
-        for (sy, &fy) in ry.iter().enumerate() {
-            for (sx, &fx) in rx.iter().enumerate() {
-                let (s, d) = ((sy * w + sx) * cpp, (fy * w + fx) * cpp);
-                out.get_mut(d..d + cpp)?.copy_from_slice(src.get(s..s + cpp)?);
-            }
-        }
-        Some(out)
-    }
-    let (ry, rx) = (field_positions(h, rows), field_positions(w, cols));
-    let done = match data {
-        RawData::U16(v) if !v.is_empty() => go(v, w, cpp, &ry, &rx).map(RawData::U16),
-        RawData::F32(v) if !v.is_empty() => go(v, w, cpp, &ry, &rx).map(RawData::F32),
-        _ => return Ok(()),
-    };
-    *data = done.ok_or_else(|| RawError::Corrupt("interleaved image smaller than its size".into()))?;
-    Ok(())
+/// The gain table map (DNG 1.7 precedence): `ProfileGainTableMap2` from IFD 0 (the embedded
+/// camera profile), else from the raw IFD; else `ProfileGainTableMap` from the raw IFD (where DNG
+/// 1.6 put it, and where Apple writes it), else from IFD 0 (where DNG 1.7 says it was meant to be).
+/// A malformed tag falls through to the next one.
+fn gain_table_map(ifd0: &Ifd, raw: &Ifd, order: ByteOrder) -> Option<GainTableMap> {
+    let parse = |ifd: &Ifd, tag: u16| ifd.bytes(tag).and_then(|b| GainTableMap::parse(b, order, tag == t::PROFILE_GAIN_TABLE_MAP_2));
+    parse(ifd0, t::PROFILE_GAIN_TABLE_MAP_2)
+        .or_else(|| parse(raw, t::PROFILE_GAIN_TABLE_MAP_2))
+        .or_else(|| parse(raw, t::PROFILE_GAIN_TABLE_MAP))
+        .or_else(|| parse(ifd0, t::PROFILE_GAIN_TABLE_MAP))
 }
 
 pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
-    decode_with(bytes, mode, None)?.ok_or_else(|| RawError::Unsupported("binned decode of this image".into()))
+    decode_as(bytes, mode, RawFormat::Dng)
+}
+
+/// Whether a TIFF that is not a DNG describes a raw image the way DNG does: a full-resolution CFA IFD
+/// and DNG's own statement of the white balance (`AsShotNeutral`, in IFD0 or the raw IFD), in a coding
+/// [`decode_as`] reads: uncompressed, or lossless JPEG whose scan header the lossless decoder accepts.
+/// Such files (Hasselblad 3FR and FFF) carry no DNG version tag, so they are not DNGs, but nothing else
+/// in them needs a maker-specific reader. Without the white-balance tag nothing in the file says how
+/// to read its colour, and the file stays an undecodable raw.
+pub(crate) fn is_plain_cfa_tiff(tiff: &Tiff, bytes: &[u8]) -> bool {
+    let Some(raw) = raw_ifd(tiff) else { return false };
+    if !raw.contains(t::AS_SHOT_NEUTRAL) && !tiff.ifds.first().is_some_and(|i| i.contains(t::AS_SHOT_NEUTRAL)) {
+        return false;
+    }
+    let Ok(info) = raw.image() else { return false };
+    if info.samples_per_pixel != 1 || !(1..=16).contains(&info.bits()) || info.sample_format == 3 {
+        return false;
+    }
+    match info.compression {
+        t::compression::NONE => true,
+        t::compression::JPEG => info
+            .chunks(bytes.len() as u64)
+            .first()
+            .and_then(|c| lightcraft_tiff::image::chunk_bytes(bytes, c))
+            .is_some_and(|src| crate::ljpeg::frame_info(src).is_ok()),
+        _ => false,
+    }
+}
+
+/// [`decode`] for the TIFF-based raws that follow the DNG layout without being DNGs (`format` says
+/// which). They differ in one respect: when the raw IFD states no `CFAPattern`, the layout is RGGB
+/// anchored at the sensor origin.
+pub(crate) fn decode_as(bytes: &[u8], mode: Mode, format: RawFormat) -> Result<RawImage> {
+    decode_with(bytes, mode, format, None)?.ok_or_else(|| RawError::Unsupported("binned decode of this image".into()))
 }
 
 /// A decode that reduces the image while reading it ([`crate::decode_binned`]).
@@ -122,24 +201,35 @@ pub(crate) struct Bin {
     pub clip: f32,
 }
 
-/// [`decode`], or with `bin` the image reduced to `k × k` blocks as its tiles are decoded: the returned image is the
-/// binned one (an ordinary, smaller `RawImage`, its crop applied), and the full-size samples are never held. `None`
-/// when `bin` was asked for and the image can't be binned that way: only three-samples-per-pixel integer data with
-/// a flat black level and no opcodes (Apple ProRAW, Adobe's linear DNGs) can.
-pub(crate) fn decode_with(bytes: &[u8], mode: Mode, bin: Option<Bin>) -> Result<Option<RawImage>> {
+/// [`decode_as`], or with `bin` the image reduced to `k × k` blocks as its tiles are decoded: the returned image is
+/// the binned one (an ordinary, smaller `RawImage`, its crop applied), and the full-size samples are never held.
+/// `None` when `bin` was asked for and the image can't be binned that way: only three-samples-per-pixel integer data
+/// with a flat black level, no opcodes and no interleave (Apple ProRAW, Adobe's linear DNGs) can.
+pub(crate) fn decode_with(bytes: &[u8], mode: Mode, format: RawFormat, bin: Option<Bin>) -> Result<Option<RawImage>> {
     let tiff = Tiff::parse(bytes)?;
     let ifd0 = &tiff.ifds[0];
     let raw = raw_ifd(&tiff).ok_or_else(|| RawError::Corrupt("DNG without a raw image IFD".into()))?;
+    // GoPro's GPR: a DNG whose raw data is VC-5 coded, which is not decoded (yet). Named here, before
+    // the generic "TIFF compression 9" of the chunk decoder. Header mode still describes the file
+    // (a GPR has no embedded preview, and a library keeps the photo with this reason shown, as it
+    // does for any file whose pixels fail to decode, rather than refusing to import it).
+    if mode == Mode::Full
+        && let Some(c) = raw.u16(t::COMPRESSION).filter(|&c| c == t::compression::VC5)
+    {
+        return Err(RawError::Unsupported(format!("DNG compression {c} (GoPro VC-5) is not decoded yet")));
+    }
     let info = raw.image()?;
     let (w, h, cpp) = (info.width as usize, info.height as usize, info.samples_per_pixel as usize);
     if !(1..=4).contains(&cpp) {
         return Err(RawError::Unsupported(format!("{cpp} samples per pixel")));
     }
-    let white_tag: Vec<f32> = raw.f64s(t::WHITE_LEVEL).unwrap_or_default().into_iter().map(|v| v as f32).filter(|v| *v > 0.0).collect();
     let bits = info.bits() as u32;
     let float = info.sample_format == 3;
     let default_white = if float { 1.0 } else { ((1u64 << bits.min(16)) - 1) as f32 };
-    let white = if white_tag.is_empty() { vec![default_white] } else { white_tag.clone() };
+    let mut white: Vec<f32> = raw.f64s(t::WHITE_LEVEL).unwrap_or_default().into_iter().map(|v| v as f32).filter(|v| *v > 0.0).collect();
+    if white.is_empty() {
+        white = vec![default_white];
+    }
 
     let dim = raw.u64s(t::BLACK_LEVEL_REPEAT_DIM).unwrap_or_default();
     let (br, bc) = match dim.as_slice() {
@@ -177,7 +267,13 @@ pub(crate) fn decode_with(bytes: &[u8], mode: Mode, bin: Option<Bin>) -> Result<
             [r, c] if (1..=16).contains(r) && (1..=16).contains(c) => (*r as usize, *c as usize),
             _ => return Err(RawError::Corrupt("bad CFARepeatPatternDim".into())),
         };
-        let pat = raw.bytes(t::CFA_PATTERN_EP).ok_or_else(|| RawError::Corrupt("missing CFAPattern".into()))?;
+        // a TIFF that is not a DNG may leave the layout out: RGGB from the sensor origin
+        let assumed = [0u8, 1, 1, 2];
+        let pat = match raw.bytes(t::CFA_PATTERN_EP) {
+            Some(p) => p,
+            None if format != RawFormat::Dng && (rows, cols) == (2, 2) => &assumed,
+            None => return Err(RawError::Corrupt("missing CFAPattern".into())),
+        };
         if pat.len() != rows * cols {
             return Err(RawError::Corrupt("CFAPattern size mismatch".into()));
         }
@@ -203,11 +299,11 @@ pub(crate) fn decode_with(bytes: &[u8], mode: Mode, bin: Option<Bin>) -> Result<
     metadata.width = Some(crop.width as u32);
     metadata.height = Some(crop.height as u32);
 
-    // `WhiteLevel` speaks of the values after the linearization table (Apple's ProRAW has a 1024-entry one over 10-bit
-    // codes and a white level of 65535), so only without a table does it say how to scale JPEG XL samples
+    // linearization table (integer data only)
     let table: Option<Vec<u16>> =
         raw.u64s(t::LINEARIZATION_TABLE).filter(|t| !t.is_empty()).map(|t| t.iter().map(|&x| x.min(65535) as u16).collect());
-    let jxl_white = if table.is_some() { None } else { white_tag.iter().copied().reduce(f32::max) };
+    let interleave = |tag| raw.u16(tag).map(usize::from).unwrap_or(1);
+    let (rows, cols) = (interleave(t::ROW_INTERLEAVE_FACTOR), interleave(t::COLUMN_INTERLEAVE_FACTOR));
     let (mut width, mut height, mut active_area, mut crop) = (w, h, active_area, crop);
     let data = match bin {
         Some(b) => {
@@ -223,6 +319,8 @@ pub(crate) fn decode_with(bytes: &[u8], mode: Mode, bin: Option<Bin>) -> Result<
                 || float
                 || !flat_black
                 || !no_opcodes
+                || rows > 1
+                || cols > 1
                 || !(2..=64).contains(&b.k)
                 || bw == 0
                 || bh == 0
@@ -236,15 +334,19 @@ pub(crate) fn decode_with(bytes: &[u8], mode: Mode, bin: Option<Bin>) -> Result<
             });
             let spec =
                 BinSpec { k: b.k, origin: (active_area.x + region.x, active_area.y + region.y), size: (bw, bh), table: table.as_deref(), clip_at };
-            let data = read_binned(bytes, &info, tiff.order, jxl_white, &spec)?;
+            let data = read_binned(bytes, &info, tiff.order, &spec)?;
             (width, height) = (bw, bh);
             active_area = Rect::new(0, 0, bw, bh);
             crop = active_area;
             data
         }
         None => {
-            let mut data = read_image_in(mode, bytes, &info, tiff.order, Packing::Msb, jxl_white)?;
-            deinterleave(raw, &mut data, w, h, cpp)?;
+            let mut data = read_image_in(mode, bytes, &info, tiff.order, Packing::Msb)?;
+            // DNG 1.7 interleaved storage: the raster is a permutation of the mosaic, so undo it before
+            // anything reads a sample as a pixel.
+            if mode == Mode::Full {
+                deinterleave(&mut data, w, h, cpp, rows, cols)?;
+            }
             if let (RawData::U16(v), Some(table)) = (&mut data, &table) {
                 let last = table.len() - 1;
                 v.iter_mut().for_each(|s| *s = table[(*s as usize).min(last)]);
@@ -253,7 +355,7 @@ pub(crate) fn decode_with(bytes: &[u8], mode: Mode, bin: Option<Bin>) -> Result<
         }
     };
     let img = RawImage {
-        format: RawFormat::Dng,
+        format,
         width,
         height,
         cpp,
@@ -265,12 +367,116 @@ pub(crate) fn decode_with(bytes: &[u8], mode: Mode, bin: Option<Bin>) -> Result<
         active_area,
         crop,
         orientation: Orientation::from_exif(ifd0.u16(t::ORIENTATION).unwrap_or(1)),
-        color: color_data(ifd0, raw),
+        color: color_data(ifd0, raw, tiff.order),
         wb_multipliers: None,
-        linearized: table.is_some(),
+        linearized: table.is_some() && !float,
         opcodes,
         metadata,
     };
     img.validate_for(mode)?;
     Ok(Some(img))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Store `image` the way DNG 1.7 interleaves it: row `r` of the image is written to stored row
+    /// `(r % rows) * (h / rows) + r / rows`, and columns likewise. This is the inverse of
+    /// [`deinterleave`]'s destination map for a raster the factor divides, i.e. what a writer
+    /// produces (the short-trailing-field case is covered by the hand-written fixtures below).
+    fn interleave(image: &[u16], w: usize, h: usize, rows: usize, cols: usize) -> Vec<u16> {
+        let (gh, gw) = (h / rows, w / cols);
+        let mut out = vec![0u16; w * h];
+        for r in 0..h {
+            for c in 0..w {
+                out[((r % rows) * gh + r / rows) * w + (c % cols) * gw + c / cols] = image[r * w + c];
+            }
+        }
+        out
+    }
+
+    fn samples(d: &RawData) -> Vec<u16> {
+        match d {
+            RawData::U16(v) => v.clone(),
+            RawData::F32(_) => Vec::new(),
+        }
+    }
+
+    /// The image `image` laid out in stored order, given the image line each stored row and column
+    /// holds. Written out by hand from the tag's plain reading, so it does not share a formula with
+    /// the code under test.
+    fn store(image: &[u16], w: usize, rows_img: &[usize], cols_img: &[usize]) -> Vec<u16> {
+        let mut out = vec![0u16; image.len()];
+        for (sr, &ir) in rows_img.iter().enumerate() {
+            for (sc, &ic) in cols_img.iter().enumerate() {
+                out[sr * w + sc] = image[ir * w + ic];
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn deinterleaves_an_interleaved_raster() {
+        // 3×3 rather than 2×2 on purpose: the 2×2 permutation is its own inverse, so a 2×2 fixture
+        // would pass even with the direction of the permutation reversed. This is the shape a DNG
+        // 1.7 file caught in the wild carried (JPEG XL, `RowInterleaveFactor`/`ColumnInterleaveFactor`
+        // both 2) — its real-file ground truth is that it renders bit-identical to its
+        // non-interleaved twin.
+        let (w, h, rows, cols) = (12, 9, 3, 3);
+        let image: Vec<u16> = (0..w * h).map(|i| i as u16).collect();
+        let mut data = RawData::U16(interleave(&image, w, h, rows, cols));
+        assert_ne!(samples(&data), image, "the fixture has to actually be permuted");
+        deinterleave(&mut data, w, h, 1, rows, cols).unwrap();
+        assert_eq!(samples(&data), image);
+
+        // 2×2 as well, the shape Adobe's converter writes.
+        let (w2, h2) = (12, 8);
+        let image2: Vec<u16> = (0..w2 * h2).map(|i| i as u16).collect();
+        let mut two = RawData::U16(interleave(&image2, w2, h2, 2, 2));
+        deinterleave(&mut two, w2, h2, 1, 2, 2).unwrap();
+        assert_eq!(samples(&two), image2);
+    }
+
+    #[test]
+    fn deinterleave_pins_the_field_direction() {
+        // Hand-computed ground truth for the tag's plain reading ("field g holds lines g, g+n,
+        // g+2n, …"). The 3×3 test above round-trips against a helper written from the same reading
+        // of the tag, so it fixes consistency but not the direction; and a 2×2 fixture cannot tell
+        // the two directions apart, being its own inverse. These maps are written out literally so
+        // a reversed permutation fails here. 3 row fields of h = 9 start at stored rows 0, 3, 6 and
+        // hold image rows [0,3,6,1,4,7,2,5,8]; 2 column fields of w = 4 give [0,2,1,3].
+        let (w, h) = (4, 9);
+        let image: Vec<u16> = (0..(w * h) as u16).collect();
+        let mut data = RawData::U16(store(&image, w, &[0, 3, 6, 1, 4, 7, 2, 5, 8], &[0, 2, 1, 3]));
+        assert_ne!(samples(&data), image, "the fixture has to actually be permuted");
+        deinterleave(&mut data, w, h, 1, 3, 2).unwrap();
+        assert_eq!(samples(&data), image);
+    }
+
+    #[test]
+    fn deinterleaves_a_raster_the_factor_does_not_divide() {
+        // The spec fixes the number of fields, not that the size is a multiple of it: h = 7 over 3
+        // row fields is 3 + 2 + 2 (the round-robin split), so field 0 starts at stored row 0 holding
+        // image rows 0, 3, 6; field 1 at stored row 3 holding 1, 4; field 2 at stored row 5 holding
+        // 2, 5. Columns: w = 5 over 2 fields is 3 + 2 → image columns [0,2,4,1,3].
+        let (w, h) = (5, 7);
+        let image: Vec<u16> = (0..(w * h) as u16).collect();
+        let mut data = RawData::U16(store(&image, w, &[0, 3, 6, 1, 4, 2, 5], &[0, 2, 4, 1, 3]));
+        assert_ne!(samples(&data), image, "the fixture has to actually be permuted");
+        deinterleave(&mut data, w, h, 1, 3, 2).unwrap();
+        assert_eq!(samples(&data), image);
+    }
+
+    #[test]
+    fn deinterleave_is_a_no_op_at_one_and_refuses_a_hostile_factor() {
+        let image: Vec<u16> = (0..48).collect();
+        let mut plain = RawData::U16(image.clone());
+        deinterleave(&mut plain, 8, 6, 1, 1, 1).unwrap();
+        assert_eq!(samples(&plain), image);
+
+        // A hostile factor is an error, not a scrambled image.
+        let mut hostile = RawData::U16(image);
+        assert!(deinterleave(&mut hostile, 8, 6, 1, 1 << 20, 1).is_err());
+    }
 }

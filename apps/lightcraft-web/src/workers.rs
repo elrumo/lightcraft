@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use js_sys::{Array, Object, Reflect, Uint8Array, Uint32Array};
 use lightcraft_engine::catalog::PhotoId;
-use lightcraft_engine::media::{DISK_CACHE_BYTES, RenderJob, RenderResult, SourceLevel};
+use lightcraft_engine::media::{RenderJob, RenderResult, SourceLevel};
 use lightcraft_engine::pipeline::Rendered;
 use lightcraft_preview::{Hash128, PreviewCache};
 use lightcraft_raster::{Histogram, Rgba8};
@@ -27,7 +27,7 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 
 use crate::backend::Backend;
-use crate::wire::{ThumbIndex, WireJob, WorkerCore, thumb_storage_key};
+use crate::wire::{CacheWatch, ThumbIndex, WireJob, WorkerCore, WorkerSlots, thumb_storage_key};
 
 /// Storage key of the thumbnail index.
 pub const THUMB_INDEX: &str = "thumbs/index.json";
@@ -140,11 +140,7 @@ async fn handle(scope: &web_sys::DedicatedWorkerGlobalScope, backend: Option<Bac
         Ok((r, stored)) => {
             let rgba = Uint8Array::from(r.image.as_bytes().as_ref());
             let h = &r.histogram;
-            let hist = Uint32Array::new_with_length(4 * 256 + 1);
-            for (i, ch) in [&h.r, &h.g, &h.b, &h.luma].into_iter().enumerate() {
-                hist.subarray((i * 256) as u32, ((i + 1) * 256) as u32).copy_from(ch);
-            }
-            hist.set_index(1024, h.total);
+            let hist = Uint32Array::from(h.to_words().as_slice());
             set(&out, "ok", &true.into());
             set(&out, "w", &(r.image.width as u32).into());
             set(&out, "h", &(r.image.height as u32).into());
@@ -168,6 +164,10 @@ async fn handle(scope: &web_sys::DedicatedWorkerGlobalScope, backend: Option<Bac
 // main side
 
 struct Busy {
+    disk_key: Option<String>,
+    namespace: u64,
+    request_id: u64,
+    cache_generation: u64,
     id: u32,
     slot: Slot,
     photo: PhotoId,
@@ -184,12 +184,17 @@ struct W {
 }
 
 struct Inner {
+    /// The rendered-thumbnail cache the stored thumbnails belong to.
+    preview_generation: CacheWatch,
     workers: Vec<W>,
     done: Vec<(Slot, RenderResult, f64)>,
     next_id: u32,
     /// (photo, level) → worker that last decoded it.
     affinity: HashMap<(PhotoId, SourceLevel), usize>,
     index: ThumbIndex,
+    /// The session's thumbnail cache budget in bytes. Kept here because the prune happens on a
+    /// worker message, where the session is out of reach; the app refreshes it every frame.
+    budget: u64,
     backend: Option<Backend>,
     ctx: egui::Context,
     /// Jobs finished by workers / inline (for diagnostics).
@@ -198,19 +203,46 @@ struct Inner {
     inline_this_frame: bool,
 }
 
+impl Inner {
+    fn observe_cache(&mut self, cache: &Arc<PreviewCache>, generation: u64) {
+        let gone = self.preview_generation.observe(cache, generation, &mut self.index);
+        if !gone.is_empty()
+            && let Some(backend) = self.backend.clone()
+        {
+            wasm_bindgen_futures::spawn_local(async move {
+                for key in gone {
+                    let _ = backend.remove(&thumb_storage_key(&key)).await;
+                }
+            });
+        }
+    }
+}
+
 /// The main thread's handle on the render workers.
 #[derive(Clone)]
 pub struct Workers(Rc<RefCell<Inner>>);
 
 impl Workers {
     /// Start `n` workers (none: every job runs inline). `store` is the backend kind for workers.
-    pub fn start(n: usize, store: &str, backend: Option<Backend>, index: ThumbIndex, ctx: egui::Context) -> Workers {
+    /// `index` lists the stored thumbnails of `cache`, the session's rendered-thumbnail cache
+    /// now: watching it from the start, a clear before the first render request still counts.
+    pub fn start(
+        n: usize,
+        store: &str,
+        backend: Option<Backend>,
+        index: ThumbIndex,
+        cache: &Arc<PreviewCache>,
+        budget: u64,
+        ctx: egui::Context,
+    ) -> Workers {
         let w = Workers(Rc::new(RefCell::new(Inner {
+            preview_generation: CacheWatch::new(cache),
             workers: Vec::new(),
             done: Vec::new(),
             next_id: 0,
             affinity: HashMap::new(),
             index,
+            budget,
             backend,
             ctx,
             remote_done: 0,
@@ -222,14 +254,17 @@ impl Workers {
             log::warn!("render workers: no compiled module on the page (window.lightcraftModule); rendering on the main thread");
             return w;
         }
-        for i in 0..n {
+        let mut slots = WorkerSlots::default();
+        for attempt in 0..n {
+            // The callbacks name their worker by its place in `workers`; a failed attempt takes none.
+            let i = slots.peek();
             let opts = web_sys::WorkerOptions::new();
             opts.set_type(web_sys::WorkerType::Module);
-            opts.set_name(&format!("lightcraft-render-{i}"));
+            opts.set_name(&format!("lightcraft-render-{attempt}"));
             let worker = match web_sys::Worker::new_with_options("./worker.js", &opts) {
                 Ok(x) => x,
                 Err(e) => {
-                    log::warn!("render worker {i}: {e:?}");
+                    log::warn!("render worker {attempt}: {e:?}");
                     continue;
                 }
             };
@@ -245,10 +280,15 @@ impl Workers {
             set(&init, "module", &module);
             set(&init, "store", &store.into());
             if let Err(e) = worker.post_message(&init) {
-                log::warn!("render worker {i}: {e:?}");
+                log::warn!("render worker {attempt}: {e:?}");
+                // It never joins the list, so it must not answer to the index of the next worker.
+                worker.set_onmessage(None);
+                worker.set_onerror(None);
+                worker.terminate();
                 continue;
             }
             w.0.borrow_mut().workers.push(W { worker, ready: false, dead: false, busy: None });
+            slots.commit();
         }
         w
     }
@@ -261,7 +301,18 @@ impl Workers {
             w.dead = true;
             w.worker.terminate();
             if let Some(b) = w.busy.take() {
-                let r = RenderResult { photo: b.photo, level: b.level, key: b.key, rendered: Err(msg), loaded: None, quick: None };
+                let r = RenderResult {
+                    request_id: b.request_id,
+                    source_key: None,
+                    photo: b.photo,
+                    level: b.level,
+                    key: b.key,
+                    rendered: Err(msg),
+                    gpu_fallback: None,
+                    loaded: None,
+                    quick: None,
+                    display: None,
+                };
                 g.done.push((b.slot, r, 0.0));
             }
         }
@@ -284,12 +335,8 @@ impl Workers {
             let (wd, ht) = (get(&data, "w").as_f64().unwrap_or(0.0) as usize, get(&data, "h").as_f64().unwrap_or(0.0) as usize);
             let rgba = Uint8Array::new(&get(&data, "rgba")).to_vec();
             let hist = Uint32Array::new(&get(&data, "hist")).to_vec();
-            match Rgba8::from_bytes(wd, ht, &rgba) {
-                Some(image) if hist.len() == 1025 => {
-                    let ch = |k: usize| hist[k * 256..(k + 1) * 256].to_vec();
-                    let histogram = Histogram { r: ch(0), g: ch(1), b: ch(2), luma: ch(3), total: hist[1024] };
-                    Ok(Rendered { image, histogram, deep: None })
-                }
+            match (Rgba8::from_bytes(wd, ht, &rgba), Histogram::from_words(&hist)) {
+                (Some(image), Some(histogram)) => Ok(Rendered { image, histogram, deep: None }),
                 _ => Err("render worker: bad image".to_string()),
             }
         } else {
@@ -297,16 +344,21 @@ impl Workers {
         };
         if let Ok(r) = &rendered
             && let Some((cache, key)) = &b.cache
+            && cache.generation() == b.cache_generation
+            && b.namespace == g.index.namespace()
         {
-            cache.put(*key, Arc::new(r.image.clone()));
-            let hex = key.to_string();
+            cache.put_at(b.cache_generation, *key, Arc::new(r.image.clone()));
+            let hex = b.disk_key.clone().unwrap_or_else(|| key.to_string());
             let stored = get(&data, "stored").as_f64().unwrap_or(0.0) as u64;
             if get(&data, "cacheMiss").is_truthy() {
                 g.index.remove(&hex);
             }
             if stored > 0 {
                 g.index.insert(&hex, stored);
-                let gone = g.index.prune(DISK_CACHE_BYTES);
+                // The session's own budget (`library.preferences ▸ cacheMb`), not the native
+                // default: the browser accepted the setting, so it has to be the one enforced
+                // (#245).
+                let gone = g.index.prune(g.budget);
                 if !gone.is_empty()
                     && let Some(be) = g.backend.clone()
                 {
@@ -320,8 +372,33 @@ impl Workers {
             }
         }
         g.affinity.insert((b.photo, b.level), i);
+        // A cleared worker may finish writing after the initial deletion. Its old namespace
+        // is never reused, so removing this file cannot delete a replacement's cache entry.
+        if let Some((cache, _)) = &b.cache
+            && (cache.generation() != b.cache_generation || b.namespace != g.index.namespace())
+            && let (Some(backend), Some(key)) = (g.backend.clone(), b.disk_key.clone())
+        {
+            wasm_bindgen_futures::spawn_local(async move {
+                let _ = backend.remove(&thumb_storage_key(&key)).await;
+            });
+        }
         g.remote_done += 1;
-        g.done.push((b.slot, RenderResult { photo: b.photo, level: b.level, key: b.key, rendered, loaded: None, quick: None }, ms));
+        g.done.push((
+            b.slot,
+            RenderResult {
+                request_id: b.request_id,
+                source_key: None,
+                photo: b.photo,
+                level: b.level,
+                key: b.key,
+                rendered,
+                gpu_fallback: None,
+                loaded: None,
+                quick: None,
+                display: None,
+            },
+            ms,
+        ));
     }
 
     /// The thumbnail index as JSON if it changed since the last call (the host saves it).
@@ -341,25 +418,38 @@ impl Workers {
         let ready = g.workers.iter().filter(|w| w.ready && !w.dead).count();
         (alive, ready, g.remote_done, g.inline_done)
     }
+
+    /// The budget the thumbnail index is pruned to. The app refreshes it from the session every
+    /// frame, so `library.preferences ▸ cacheMb` applies to the next stored thumbnail.
+    pub fn set_budget(&self, bytes: u64) {
+        self.0.borrow_mut().budget = bytes;
+    }
 }
 
 impl RenderOffload for Workers {
     fn try_start(&mut self, slot: Slot, job: RenderJob) -> Option<RenderJob> {
         let mut g = self.0.borrow_mut();
         let g = &mut *g;
+        if let Some((cache, _)) = job.cache.as_ref().or(job.view_cache.as_ref()) {
+            g.observe_cache(cache, job.cache_generation);
+        }
         // rendered thumbnail in memory: no worker needed
         if let Some((cache, key)) = &job.cache
-            && let Some(img) = cache.get(*key)
+            && let Some(img) = cache.get_at(job.cache_generation, *key)
         {
             let image = Arc::unwrap_or_clone(img);
             let histogram = Histogram::of_srgb8(&image);
             let r = RenderResult {
+                request_id: job.request_id,
+                source_key: job.source_key,
                 photo: job.photo,
                 level: job.level,
                 key: job.key,
                 rendered: Ok(Rendered { image, histogram, deep: None }),
+                gpu_fallback: None,
                 loaded: None,
                 quick: None,
+                display: None,
             };
             g.done.push((slot, r, 0.0));
             return None;
@@ -387,25 +477,45 @@ impl RenderOffload for Workers {
         let Some(i) = pick else { return Some(job) };
         // decided here, so the next job for this photo follows even before this one finishes
         g.affinity.insert((job.photo, job.level), i);
-        let thumb_cached = job.cache.as_ref().is_some_and(|(_, k)| g.index.touch(&k.to_string()));
-        let wire = WireJob::from_job(&job, thumb_cached, &format!("{slot:?}"));
+        let disk_key = job.cache.as_ref().map(|(_, key)| g.index.cache_key(*key));
+        let thumb_cached = disk_key.as_ref().is_some_and(|key| g.index.touch(key));
+        let mut wire = WireJob::from_job(&job, thumb_cached, &format!("{slot:?}"));
+        // The namespace also changes when a new library's cache starts again at generation zero.
+        wire.cache_generation = g.index.namespace();
+        wire.thumb = disk_key.clone();
         let Ok(text) = serde_json::to_string(&wire) else { return Some(job) };
         g.next_id = g.next_id.wrapping_add(1);
         let id = g.next_id;
         let msg = Object::new();
         set(&msg, "id", &id.into());
         set(&msg, "job", &text.into());
+        let namespace = g.index.namespace();
         let w = &mut g.workers[i];
         if let Err(e) = w.worker.post_message(&msg) {
             log::warn!("render worker {i}: {e:?}");
             return Some(job);
         }
-        w.busy = Some(Busy { id, slot, photo: job.photo, level: job.level, key: job.key, cache: job.cache });
+        w.busy = Some(Busy {
+            disk_key,
+            namespace,
+            request_id: job.request_id,
+            cache_generation: job.cache_generation,
+            id,
+            slot,
+            photo: job.photo,
+            level: job.level,
+            key: job.key,
+            cache: job.cache,
+        });
         None
     }
 
     fn finished(&mut self) -> Vec<(Slot, RenderResult, f64)> {
         let mut g = self.0.borrow_mut();
+        // Persist invalidation even when the cleared library has no visible render requests.
+        if let Some(cache) = g.preview_generation.cache() {
+            g.observe_cache(&cache, cache.generation());
+        }
         g.inline_this_frame = false;
         std::mem::take(&mut g.done)
     }

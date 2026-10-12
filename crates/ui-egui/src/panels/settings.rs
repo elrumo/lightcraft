@@ -1,9 +1,10 @@
-//! The Settings dialog (⌘,): General, Import, Performance, Interface, Sync, AI Models.
+//! The Settings dialog (⌘,): General, Import, Performance, Display, Interface, Faces, AI Denoise,
+//! Sync, AI Models.
 //!
 //! Changes apply immediately (no OK/Cancel). Where they are stored:
 //! - **app settings** ([`crate::state::AppSettings`]: startup view, delete confirmation, GPU,
-//!   preview size, filmstrip/grid badges, last library) and Auto Advance live in the UI state,
-//!   saved by the host in its config folder (`ui.json`);
+//!   preview size, filmstrip/grid badges, last library, monitor profile) and Auto Advance live in
+//!   the UI state, saved by the host in its config folder (`ui.json`);
 //! - **library settings** (import defaults, XMP sidecars, thumbnail cache size) go through the
 //!   `library.preferences` / `library.xmpPreferences` commands into the library's `prefs.json`,
 //!   so they travel with the library.
@@ -21,7 +22,7 @@ use serde_json::{Value, json};
 use crate::LightcraftApp;
 use crate::icons::Icon;
 use crate::panels::mobile;
-use crate::state::{Appearance, GridBadges, PREVIEW_EDGES, StartupView};
+use crate::state::{Appearance, GridBadges, PREVIEW_LIMITS, StartupView};
 use crate::theme::Tokens;
 use crate::widgets::register;
 
@@ -30,7 +31,10 @@ pub const TABS: &[(&str, &str)] = &[
     ("general", "General"),
     ("import", "Import"),
     ("performance", "Performance"),
+    ("display", "Display"),
     ("interface", "Interface"),
+    ("faces", "Faces"),
+    ("denoise", "AI Denoise"),
     ("sync", "Sync"),
     ("models", "AI Models"),
 ];
@@ -45,11 +49,14 @@ const LABEL_W: f32 = 150.0;
 const IOS: bool = cfg!(target_os = "ios");
 
 /// The phone's list: each tab's icon and the colour of its tile (iOS's system colours).
-const TAB_TILES: [(Icon, Color32); 6] = [
+const TAB_TILES: [(Icon, Color32); 9] = [
     (Icon::Gear, Color32::from_rgb(0x8e, 0x8e, 0x93)),
     (Icon::Photos, Color32::from_rgb(0x30, 0xd1, 0x58)),
     (Icon::Wand, Color32::from_rgb(0xff, 0x9f, 0x0a)),
+    (Icon::Monitor, Color32::from_rgb(0x64, 0xd2, 0xff)),
     (Icon::Eye, Color32::from_rgb(0x5e, 0x5c, 0xe6)),
+    (Icon::FaceBox, Color32::from_rgb(0xff, 0x37, 0x5f)),
+    (Icon::Detail, Color32::from_rgb(0xac, 0x8e, 0x68)),
     (Icon::Cloud, Color32::from_rgb(0x0a, 0x84, 0xff)),
     (Icon::Subject, Color32::from_rgb(0xbf, 0x5a, 0xf2)),
 ];
@@ -72,9 +79,7 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, tab: &mut String) {
         return;
     }
     let t = Tokens::get(ui.ctx());
-    ui.set_min_width(crate::panels::modal_width(ui.ctx(), 560.0));
-    ui.set_min_height(330.0);
-    // (wrapping: on a phone the six tabs don't fit in one row)
+    ui.set_width((ui.ctx().content_rect().width() - 64.0).clamp(240.0, 560.0));
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         for (id, label) in TABS {
@@ -88,17 +93,13 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, tab: &mut String) {
     match tab.as_str() {
         "import" => import_tab(app, ui, &t),
         "performance" => performance_tab(app, ui, &t),
+        "display" => display_tab(app, ui, &t),
         "interface" => interface_tab(app, ui, &t),
-        "sync" => {
-            // (the storage numbers make this tab long)
-            let h = (ui.ctx().content_rect().height() - 240.0).max(300.0);
-            egui::ScrollArea::vertical().max_height(h).auto_shrink([false, true]).show(ui, |ui| sync_tab(app, ui, &t));
-        }
-        "models" => {
-            // (five models make this tab long)
-            let h = (ui.ctx().content_rect().height() - 240.0).max(300.0);
-            egui::ScrollArea::vertical().max_height(h).auto_shrink([false, true]).show(ui, |ui| crate::panels::ai_models::tab(app, ui, &t));
-        }
+        "faces" => super::faces::settings_tab(app, ui, &t),
+        "denoise" => super::denoise::settings_tab(app, ui, &t),
+        // (long tabs: the dialog's options scroll, `dialogs::dialog_body`)
+        "sync" => sync_tab(app, ui, &t),
+        "models" => crate::panels::ai_models::tab(app, ui, &t),
         _ => general_tab(app, ui, &t),
     }
 }
@@ -122,7 +123,10 @@ fn phone_body(app: &mut LightcraftApp, ui: &mut egui::Ui, tab: &mut String) {
             "general" => general_tab(app, ui, &t),
             "import" => import_tab(app, ui, &t),
             "performance" => performance_tab(app, ui, &t),
+            "display" => display_tab(app, ui, &t),
             "interface" => interface_tab(app, ui, &t),
+            "faces" => super::faces::settings_tab(app, ui, &t),
+            "denoise" => super::denoise::settings_tab(app, ui, &t),
             "sync" => sync_tab(app, ui, &t),
             "models" => crate::panels::ai_models::tab(app, ui, &t),
             _ => list(app, ui, &t, tab),
@@ -154,7 +158,7 @@ fn list(app: &LightcraftApp, ui: &mut egui::Ui, t: &Tokens, tab: &mut String) {
     }
     card_end(ui, t);
     ui.add_space(28.0);
-    for ((id, label), (icon, tile)) in TABS.iter().zip(TAB_TILES) {
+    for ((id, label), (icon, tile)) in TABS.iter().zip(TAB_TILES).filter(|((id, _), _)| !(IOS && *id == "display")) {
         let value = match *id {
             "sync" if app.session.sync_conflict().is_some() => crate::i18n::tr("Choose…"),
             "sync" if synced.is_some() => crate::i18n::tr("On"),
@@ -414,7 +418,7 @@ fn text_row(ui: &mut egui::Ui, t: &Tokens, id: &str, label: &str, value: &mut St
     r
 }
 
-fn heading(ui: &mut egui::Ui, t: &Tokens, text: &str) {
+pub(super) fn heading(ui: &mut egui::Ui, t: &Tokens, text: &str) {
     if crate::is_compact(ui.ctx()) {
         // iOS: small grey capitals over the card
         card_end(ui, t);
@@ -462,7 +466,7 @@ fn row<R>(ui: &mut egui::Ui, t: &Tokens, label: &str, add: impl FnOnce(&mut egui
 }
 
 /// A note. On the phone it goes under the card above it, as iOS's section footers do.
-fn hint(ui: &mut egui::Ui, t: &Tokens, text: &str) {
+pub(super) fn hint(ui: &mut egui::Ui, t: &Tokens, text: &str) {
     if crate::is_compact(ui.ctx()) {
         card_end(ui, t);
         ui.add_space(7.0);
@@ -476,7 +480,7 @@ fn hint(ui: &mut egui::Ui, t: &Tokens, text: &str) {
 }
 
 /// A checkbox addressable as `check:{id}` (on the phone, a row with a switch); true when toggled.
-fn check(ui: &mut egui::Ui, id: &str, value: &mut bool, label: &str) -> bool {
+pub(super) fn check(ui: &mut egui::Ui, id: &str, value: &mut bool, label: &str) -> bool {
     let r = if crate::is_compact(ui.ctx()) {
         card_row(ui, &Tokens::get(ui.ctx()), 16.0);
         egui::Frame::NONE
@@ -491,7 +495,7 @@ fn check(ui: &mut egui::Ui, id: &str, value: &mut bool, label: &str) -> bool {
 }
 
 /// Mutually exclusive buttons (`button:{id}-{index}`).
-fn choices<V: PartialEq + Copy>(ui: &mut egui::Ui, id: &str, options: &[(V, &str)], value: &mut V) -> bool {
+pub(super) fn choices<V: PartialEq + Copy>(ui: &mut egui::Ui, id: &str, options: &[(V, &str)], value: &mut V) -> bool {
     let mut changed = false;
     ui.spacing_mut().item_spacing.x = 4.0;
     for (i, (v, l)) in options.iter().enumerate() {
@@ -523,6 +527,9 @@ fn general_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
             if action(ui, t, "settingsOpenLibrary", "Open Library…", can, false) {
                 let _ = app.run("app.openLibrary", json!({}));
             }
+            if action(ui, t, "settingsNewLibrary", "New Library…", can, false) {
+                let _ = app.run("app.newLibrary", json!({}));
+            }
             if !can {
                 hint(ui, t, crate::i18n::tr("not available here"));
             }
@@ -543,19 +550,47 @@ fn general_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
     if IOS {
         return;
     }
-    heading(ui, t, crate::i18n::tr("External Editor"));
-    row(ui, t, crate::i18n::tr("Application"), |ui| {
-        let r = ui
-            .add(egui::TextEdit::singleline(&mut app.ui.settings.external_editor).hint_text(crate::i18n::tr("System default")).desired_width(220.0));
-        register(ui.ctx(), "field:externalEditor", r.rect);
+    heading(ui, t, crate::i18n::tr("External Editing"));
+    row(ui, t, crate::i18n::tr("PhotoCraft"), |ui| {
+        crate::text_field::TextField::singleline("field:photocraftPath", &mut app.ui.settings.photocraft_path)
+            .hint(crate::i18n::tr("Found automatically"))
+            .width(220.0)
+            .show(ui);
     });
+    edit_file_rows(ui, t, "photocraftFile", &mut app.ui.settings.photocraft_file);
     hint(
         ui,
         t,
         crate::i18n::tr(
-            "Photo ▸ Edit in External Editor (⇧⌘E) renders a 16-bit TIFF copy, stacks it with the original and opens it here (an app name on macOS, a program path elsewhere).",
+            "Photo ▸ Edit In ▸ Edit in PhotoCraft (⇧⌘E, or right-click a photo) renders a copy with your edits, stacks it with the original and opens it in PhotoCraft. Save there and the copy updates here. As PSD, PhotoCraft saves straight back to it. Leave the location empty unless you use a portable copy.",
         ),
     );
+    row(ui, t, crate::i18n::tr("Other editor"), |ui| {
+        crate::text_field::TextField::singleline("field:externalEditor", &mut app.ui.settings.external_editor)
+            .hint(crate::i18n::tr("System default"))
+            .width(220.0)
+            .show(ui);
+    });
+    edit_file_rows(ui, t, "externalFile", &mut app.ui.settings.external_file);
+    hint(ui, t, crate::i18n::tr("Edit in Other Editor (⌥⌘E) opens the copy in this application (an app name on macOS, a program path elsewhere)."));
+}
+
+/// The file Edit In hands an editor: format, colour space and bit depth (`button:{id}Format-…`).
+fn edit_file_rows(ui: &mut egui::Ui, t: &Tokens, id: &str, file: &mut crate::state::EditFile) {
+    use crate::state::{EditFormat, EditSpace};
+    row(ui, t, "", |ui| {
+        choices(ui, &format!("{id}Format"), &[(EditFormat::Psd, "PSD"), (EditFormat::Tiff, "TIFF")], &mut file.format);
+        ui.separator();
+        choices(ui, &format!("{id}Depth"), &[(16u8, "16-bit"), (8, "8-bit")], &mut file.bit_depth);
+    });
+    row(ui, t, "", |ui| {
+        choices(
+            ui,
+            &format!("{id}Space"),
+            &[(EditSpace::AdobeRgb, "Adobe RGB"), (EditSpace::ProPhoto, "ProPhoto"), (EditSpace::DisplayP3, "P3"), (EditSpace::Srgb, "sRGB")],
+            &mut file.color_space,
+        );
+    });
 }
 
 // -------------------------------------------------------------------------------------- Import
@@ -570,20 +605,27 @@ fn preset_combo(
     current: Option<&str>,
     none_label: &str,
 ) -> Option<Option<String>> {
-    let name = |pid: &str| app.session.presets.iter().find(|p| p.id == pid).map(|p| p.name.clone()).unwrap_or_else(|| format!("{pid} (missing)"));
-    let text = current.map(name).unwrap_or_else(|| none_label.to_string());
+    let name = |pid: &str| {
+        app.session
+            .presets
+            .iter()
+            .find(|p| p.id == pid)
+            .map(|p| crate::i18n::builtin_label(&p.name, p.builtin).to_string())
+            .unwrap_or_else(|| crate::i18n::tr_format!("{pid} (missing)", pid = pid))
+    };
+    let text = current.map(name).unwrap_or_else(|| crate::i18n::tr(none_label).to_string());
     let mut out = None;
     select(ui, t, id, label, text, |ui| {
-        if option(ui, id, 0, current.is_none(), none_label) {
+        if option(ui, id, 0, current.is_none(), crate::i18n::tr(none_label)) {
             out = Some(None);
         }
         let mut last = "";
         for (i, p) in app.session.presets.iter().enumerate() {
             if p.group != last {
                 last = &p.group;
-                group(ui, t, last);
+                group(ui, t, crate::i18n::builtin_label(last, p.builtin));
             }
-            if option(ui, id, i + 1, current == Some(p.id.as_str()), &p.name) {
+            if option(ui, id, i + 1, current == Some(p.id.as_str()), crate::i18n::builtin_label(&p.name, p.builtin)) {
                 out = Some(Some(p.id.clone()));
             }
         }
@@ -635,9 +677,15 @@ fn import_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
                 };
                 let mut pick = None;
                 let label = match current {
-                    Some(RAW_DEFAULT) => "Same as raw default".to_string(),
-                    None => "LightCraft Default".to_string(),
-                    Some(pid) => app.session.presets.iter().find(|p| p.id == pid).map(|p| p.name.clone()).unwrap_or_else(|| pid.to_string()),
+                    Some(RAW_DEFAULT) => crate::i18n::tr("Same as raw default").to_string(),
+                    None => crate::i18n::tr("LightCraft Default").to_string(),
+                    Some(pid) => app
+                        .session
+                        .presets
+                        .iter()
+                        .find(|p| p.id == pid)
+                        .map(|p| crate::i18n::builtin_label(&p.name, p.builtin).to_string())
+                        .unwrap_or_else(|| pid.to_string()),
                 };
                 let id = format!("settingsCamera-{i}");
                 select(ui, t, &id, cam, label, |ui| {
@@ -648,7 +696,7 @@ fn import_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
                         pick = Some(json!({"camera": cam, "preset": null}));
                     }
                     for (j, p) in app.session.presets.iter().enumerate() {
-                        if option(ui, &id, j + 2, current == Some(p.id.as_str()), &p.name) {
+                        if option(ui, &id, j + 2, current == Some(p.id.as_str()), crate::i18n::builtin_label(&p.name, p.builtin)) {
                             pick = Some(json!({"camera": cam, "preset": p.id}));
                         }
                     }
@@ -690,7 +738,7 @@ fn import_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
         let cur = d.metadata_preset.clone();
         let mut pick = None;
         let id = "settingsMetaPreset";
-        select(ui, t, id, crate::i18n::tr("Metadata preset"), cur.clone().unwrap_or_else(|| "None".into()), |ui| {
+        select(ui, t, id, crate::i18n::tr("Metadata preset"), cur.clone().unwrap_or_else(|| crate::i18n::tr("None").into()), |ui| {
             if option(ui, id, 0, cur.is_none(), crate::i18n::tr("None")) {
                 pick = Some(String::new());
             }
@@ -747,7 +795,7 @@ fn import_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
         heading(ui, t, crate::i18n::tr("Auto Import"));
         hint(ui, t, crate::i18n::tr("Photos that arrive in this folder (tethering, a scanner, a sync app) are added as soon as they're complete."));
         row(ui, t, crate::i18n::tr("Watched folder"), |ui| {
-            ui.label(RichText::new(d.auto_folder.clone().unwrap_or_else(|| "Off".into())).color(t.text));
+            ui.label(RichText::new(d.auto_folder.clone().unwrap_or_else(|| crate::i18n::tr("Off").into())).color(t.text));
             let can = app.services.pick_folder.is_some();
             let r = ui.add_enabled(can, egui::Button::new(crate::i18n::tr("Choose…")));
             register(ui.ctx(), "button:settingsAutoFolder", r.rect);
@@ -799,10 +847,17 @@ fn performance_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
         format!("GPU: {}", gpu::adapter_name().unwrap_or_else(|| "starting…".into()))
     };
     hint(ui, t, &status);
-    let opts: Vec<(u32, String)> = PREVIEW_EDGES.iter().map(|e| (*e, format!("{e} px"))).collect();
+    let opts: Vec<(u32, String)> =
+        PREVIEW_LIMITS.iter().map(|e| (*e, if *e == 0 { crate::i18n::tr("Automatic").to_string() } else { format!("{e} px") })).collect();
     let opts: Vec<(u32, &str)> = opts.iter().map(|(e, l)| (*e, l.as_str())).collect();
-    pick(ui, t, "settingsPreview", crate::i18n::tr("Preview size"), &opts, &mut app.ui.settings.preview_edge);
-    hint(ui, t, crate::i18n::tr("Largest long edge the Detail view renders at; larger is sharper on big displays but slower."));
+    pick(ui, t, "settingsPreview", crate::i18n::tr("Preview size"), &opts, &mut app.ui.settings.preview_limit);
+    hint(
+        ui,
+        t,
+        crate::i18n::tr(
+            "Automatic renders the Detail view at the size it is shown, up to the photo's own pixels. Choose a size to cap it: smaller is faster.",
+        ),
+    );
     let auto = crate::i18n::tr_format!("Automatic ({} MB)", lightcraft_engine::memory::default_budget() >> 20);
     let opts = [(0u32, auto.as_str()), (512, "512 MB"), (1024, "1 GB"), (2048, "2 GB"), (4096, "4 GB")];
     pick(ui, t, "settingsMemory", crate::i18n::tr("Memory for caches"), &opts, &mut app.ui.settings.memory_mb);
@@ -945,13 +1000,88 @@ fn smart_previews(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
 
 // ---------------------------------------------------------------------------------- Interface
 
+/// The monitor profile (`app.displayProfile`): previews are shown through the display's ICC
+/// profile, so wide-gamut and calibrated displays show colours as they are.
+fn display_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
+    heading(ui, t, crate::i18n::tr("Monitor profile"));
+    let current = app.renderer.display().cloned();
+    let screen = current.as_ref().is_some_and(|d| d.path == crate::SCREEN_PROFILE);
+    row(ui, t, crate::i18n::tr("Profile"), |ui| {
+        let name = match &current {
+            Some(d) => d.profile.description.clone(),
+            None => crate::i18n::tr("None (the display is treated as sRGB)").to_string(),
+        };
+        ui.label(RichText::new(name).color(t.text));
+        if screen {
+            hint(ui, t, crate::i18n::tr("this screen's profile"));
+        }
+    });
+    row(ui, t, "", |ui| {
+        let can = app.services.pick_display_profile.is_some();
+        let r = ui.add_enabled(can, egui::Button::new(crate::i18n::tr("Choose Profile…")));
+        register(ui.ctx(), "button:settingsDisplayProfile", r.rect);
+        if r.clicked()
+            && let Some(path) = app.services.pick_display_profile.as_mut().and_then(|pick| pick().into_iter().next())
+        {
+            app.ui.settings.display_profile = path;
+        }
+        // with no profile chosen, previews follow the screen's own profile where the host knows it
+        let none = if app.services.screen_profile.is_some() { crate::i18n::tr("Use Screen Profile") } else { crate::i18n::tr("Use sRGB") };
+        let r = ui.add_enabled(!app.ui.settings.display_profile.is_empty(), egui::Button::new(none));
+        register(ui.ctx(), "button:settingsDisplayProfileNone", r.rect);
+        if r.clicked() {
+            app.ui.settings.display_profile.clear();
+        }
+        if !can {
+            hint(ui, t, crate::i18n::tr("not available here"));
+        }
+    });
+    if let Some(e) = &app.display_error {
+        ui.label(RichText::new(e).size(11.0).color(t.reject));
+    }
+    if let Some(d) = &current {
+        let info = d.describe();
+        if !screen {
+            row(ui, t, crate::i18n::tr("File"), |ui| {
+                ui.label(RichText::new(&d.path).size(11.0).color(t.text_dim));
+            });
+        }
+        row(ui, t, crate::i18n::tr("Type"), |ui| {
+            let kind = match d.profile.kind {
+                lightcraft_engine::display::DisplayKind::MatrixTrc => crate::i18n::tr("Matrix/TRC"),
+                lightcraft_engine::display::DisplayKind::Lut => crate::i18n::tr("LUT-based"),
+            };
+            ui.label(RichText::new(kind).color(t.text));
+        });
+        row(ui, t, crate::i18n::tr("Primaries (x, y)"), |ui| {
+            let p = &info["primaries"];
+            let xy = |(k, l): (&str, &str)| format!("{l} {:.3}, {:.3}", p[k][0].as_f64().unwrap_or(0.0), p[k][1].as_f64().unwrap_or(0.0));
+            let text = [("red", "R"), ("green", "G"), ("blue", "B")].map(xy).join("   ");
+            ui.label(RichText::new(text).size(11.0).color(t.text_dim));
+        });
+    }
+    hint(
+        ui,
+        t,
+        crate::i18n::tr(
+            "Photos are shown through your monitor's ICC profile, so colours are right on wide-gamut and calibrated displays, and the Detail view uses the display's whole gamut. The histogram, the preview caches and exports are not affected.",
+        ),
+    );
+    #[cfg(target_os = "linux")]
+    hint(ui, t, crate::i18n::tr("Profiles assigned in your desktop's colour settings are usually in ~/.local/share/icc."));
+}
+
 fn interface_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
-    // (the phone and tablet layouts are drawn light or dark; the desktop's is always dark)
+    // (the phone and tablet layouts are drawn light, dark or as the system is; the desktop's has
+    // its themes)
     if app.compact {
         heading(ui, t, crate::i18n::tr("Appearance"));
         let items: Vec<(Appearance, &str)> = Appearance::ALL.iter().map(|a| (*a, a.label())).collect();
         pick(ui, t, "settingsAppearance", crate::i18n::tr("Appearance"), &items, &mut app.ui.appearance);
         hint(ui, t, crate::i18n::tr("System follows the device's Display & Brightness setting."));
+    } else {
+        let system = app.system_theme(ui.ctx());
+        appearance(ui, t, &mut app.ui.settings, system);
     }
     // (the compact layout has no filmstrip)
     if !crate::is_compact(ui.ctx()) {
@@ -1010,6 +1140,229 @@ fn interface_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
                 "Empty: OpenStreetMap's standard tiles. They are meant for light use; for a busy shared deployment, use your own or a commercial tile server.",
             ),
         );
+    }
+}
+
+/// Appearance Mode (`button:settingsAppearance-{0,1,2}`: Auto, Dark, Light) above the light and
+/// dark theme cards (`radio:theme-{id}`), each with a preview of the chosen theme. The card in
+/// use is outlined. Applied on the next frame ([`LightcraftApp::sync_theme`]).
+fn appearance(ui: &mut egui::Ui, t: &Tokens, s: &mut crate::state::AppSettings, system: Option<egui::Theme>) {
+    use crate::state::{AppearanceMode as M, DarkTheme, LightTheme};
+    heading(ui, t, crate::i18n::tr("Appearance"));
+    ui.label(RichText::new(crate::i18n::tr("Appearance Mode")).color(t.text_label));
+    ui.horizontal_wrapped(|ui| {
+        choices(ui, "settingsAppearance", &[(M::Auto, "Sync with System"), (M::Dark, "Dark Mode"), (M::Light, "Light Mode")], &mut s.appearance_mode);
+    });
+    ui.add_space(4.0);
+    let light_active = s.theme(system) == s.light_theme.kind();
+    let available = ui.available_width();
+    let mut cards = |ui: &mut egui::Ui, width: f32| {
+        ui.spacing_mut().item_spacing.x = 12.0;
+        let light: Vec<_> = LightTheme::ALL.iter().map(|l| (*l, l.kind())).collect();
+        theme_card(ui, t, "Light Theme", light_active, &light, &mut s.light_theme, &mut s.favorite_themes, width);
+        let dark: Vec<_> = DarkTheme::ALL.iter().map(|d| (*d, d.kind())).collect();
+        theme_card(ui, t, "Dark Theme", !light_active, &dark, &mut s.dark_theme, &mut s.favorite_themes, width);
+    };
+    if available < 440.0 {
+        ui.vertical(|ui| cards(ui, available));
+    } else {
+        ui.horizontal_top(|ui| cards(ui, ((available - 12.0) / 2.0).floor()));
+    }
+    ui.add_space(2.0);
+}
+
+/// One family's card: its title (and "Active" when it is the one shown), a preview of the
+/// selected theme and a radio button per theme.
+fn theme_card<V: PartialEq + Copy>(
+    ui: &mut egui::Ui,
+    t: &Tokens,
+    title: &str,
+    active: bool,
+    options: &[(V, crate::theme::ThemeKind)],
+    value: &mut V,
+    favorites: &mut Vec<String>,
+    width: f32,
+) {
+    egui::Frame::new()
+        .fill(t.inset)
+        .stroke(egui::Stroke::new(1.0, if active { t.accent } else { t.field_border }))
+        .corner_radius(6)
+        .inner_margin(8)
+        .show(ui, |ui| {
+            ui.vertical(|ui| {
+                let inner = (width - 18.0).clamp(120.0, 240.0);
+                ui.set_width(inner);
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(crate::i18n::tr(title)).font(t.semibold(12.0)).color(t.text));
+                    if active {
+                        ui.label(RichText::new(crate::i18n::tr("In Use")).size(11.0).color(t.accent));
+                    }
+                });
+                let shown = options.iter().find(|(v, _)| v == value).or(options.first()).map(|(_, k)| *k).unwrap_or_default();
+                theme_preview(ui, shown, inner);
+                for (v, kind) in options {
+                    let row = egui::Rect::from_min_size(ui.cursor().min, egui::vec2(ui.available_width(), 24.0));
+                    let hovered = ui.ctx().pointer_hover_pos().is_some_and(|p| row.contains(p));
+                    ui.horizontal(|ui| {
+                        let r = ui.radio_value(value, *v, crate::i18n::tr(kind.label()));
+                        register(ui.ctx(), format!("radio:theme-{}", kind.id()), r.rect);
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let favorite = favorites.iter().any(|id| id == kind.id());
+                            let r = ui
+                                .add_visible(favorite || hovered, egui::Button::new("").min_size(egui::vec2(24.0, 24.0)).frame(false))
+                                .on_hover_text(crate::i18n::tr(if favorite { "Remove from favorites" } else { "Add to favorites" }));
+                            r.widget_info(|| {
+                                egui::WidgetInfo::labeled(
+                                    egui::WidgetType::Button,
+                                    true,
+                                    format!(
+                                        "{}: {}",
+                                        crate::i18n::tr(if favorite { "Remove from favorites" } else { "Add to favorites" }),
+                                        crate::i18n::tr(kind.label())
+                                    ),
+                                )
+                            });
+                            register(ui.ctx(), format!("button:themeFavorite-{}", kind.id()), r.rect);
+                            if favorite || hovered {
+                                crate::icons::paint(
+                                    ui.painter(),
+                                    r.rect.shrink(4.0),
+                                    if favorite { crate::icons::Icon::StarFilled } else { crate::icons::Icon::Star },
+                                    if favorite { t.accent } else { t.text_dim },
+                                );
+                            }
+                            if r.clicked() {
+                                if favorite {
+                                    favorites.retain(|id| id != kind.id());
+                                } else {
+                                    favorites.push(kind.id().into());
+                                }
+                            }
+                        });
+                    });
+                }
+            });
+        });
+}
+
+/// A small LightCraft window painted with `kind`'s tokens: the top bar with its search field, the
+/// photo with the filmstrip under it, the Edit panel (histogram and sliders), the tool strip and
+/// the bottom bar.
+fn theme_preview(ui: &mut egui::Ui, kind: crate::theme::ThemeKind, width: f32) {
+    use egui::{Color32, Rect, Stroke, StrokeKind, pos2, vec2};
+    let p = Tokens::for_kind(kind);
+    let (rect, _) = ui.allocate_exact_size(vec2(width, (width * 0.56).round().min(130.0)), egui::Sense::hover());
+    let painter = ui.painter_at(rect);
+    let bar = |y: f32, x: f32, w: f32, c: Color32| painter.rect_filled(Rect::from_min_size(pos2(x, y), vec2(w, 2.0)), 1.0, c);
+    painter.rect_filled(rect, 3.0, p.canvas);
+    // top bar: sidebar and back icons, the centred search field, icons on the right
+    let top = Rect::from_min_size(rect.min, vec2(rect.width(), 13.0));
+    painter.rect_filled(top, 0.0, p.chrome);
+    for x in [6.0, 14.0, 20.0] {
+        painter.rect_filled(Rect::from_min_size(top.min + vec2(x, 4.5), vec2(4.0, 4.0)), 1.0, p.icon);
+    }
+    let search = Rect::from_center_size(top.center(), vec2(rect.width() * 0.34, 8.0));
+    painter.rect(search, 2.0, p.field, Stroke::new(1.0, p.field_border), StrokeKind::Inside);
+    bar(search.center().y - 1.0, search.center().x - 9.0, 18.0, p.text_dim);
+    for i in 0..4 {
+        painter.rect_filled(Rect::from_min_size(pos2(top.right() - 10.0 - i as f32 * 9.0, top.top() + 4.5), vec2(4.0, 4.0)), 2.0, p.icon);
+    }
+    // bottom bar: view buttons, rating stars, a button
+    let bottom = Rect::from_min_max(pos2(rect.left(), rect.bottom() - 12.0), rect.max);
+    painter.rect_filled(bottom, 0.0, p.chrome);
+    for x in [6.0, 13.0, 20.0] {
+        painter.rect_filled(Rect::from_min_size(bottom.min + vec2(x, 4.0), vec2(4.0, 4.0)), 1.0, p.icon);
+    }
+    let stars_x = bottom.center().x - 30.0;
+    for i in 0..5 {
+        painter.circle_filled(pos2(stars_x + i as f32 * 5.0, bottom.center().y), 1.4, p.star);
+    }
+    let copy = Rect::from_min_size(pos2(stars_x + 28.0, bottom.top() + 2.5), vec2(30.0, 7.0));
+    painter.rect(copy, 3.0, p.button, Stroke::new(1.0, p.button_border), StrokeKind::Inside);
+    // tool strip on the right edge, the first tool (Edit) active
+    let strip = Rect::from_min_max(pos2(rect.right() - 12.0, top.bottom()), pos2(rect.right(), bottom.top()));
+    painter.rect_filled(strip, 0.0, p.chrome);
+    painter.line_segment([strip.left_top(), strip.left_bottom()], Stroke::new(1.0, p.divider));
+    for i in 0..5 {
+        let r = Rect::from_min_size(pos2(strip.left() + 3.0, strip.top() + 4.0 + i as f32 * 9.0), vec2(6.0, 6.0));
+        if i == 0 {
+            painter.rect_filled(r.expand(1.5), 1.5, p.tool_active);
+        }
+        painter.rect_stroke(r, 1.0, Stroke::new(1.0, if i == 0 { p.text } else { p.icon }), StrokeKind::Inside);
+    }
+    // Edit panel: histogram, then labelled sliders
+    let panel = Rect::from_min_max(pos2(strip.left() - (rect.width() * 0.27).round(), top.bottom()), pos2(strip.left(), bottom.top()));
+    painter.rect_filled(panel, 0.0, p.chrome);
+    painter.line_segment([panel.left_top(), panel.left_bottom()], Stroke::new(1.0, p.divider));
+    let hist = Rect::from_min_size(panel.min + vec2(4.0, 4.0), vec2(panel.width() - 8.0, 14.0));
+    painter.rect_filled(hist, 1.0, p.inset);
+    let curve = [0.2, 0.55, 0.9, 0.7, 0.5, 0.62, 0.4, 0.3, 0.18, 0.1];
+    let mut pts = vec![hist.left_bottom()];
+    for (i, h) in curve.iter().enumerate() {
+        pts.push(pos2(hist.left() + hist.width() * i as f32 / (curve.len() - 1) as f32, hist.bottom() - hist.height() * h));
+    }
+    pts.push(hist.right_bottom());
+    // the area under the curve, a column per stretch between two points
+    for pair in pts.windows(2) {
+        if let [a, b] = pair {
+            let r = Rect::from_min_max(pos2(a.x, a.y.max(b.y)), pos2(b.x, hist.bottom()));
+            painter.rect_filled(r, 0.0, p.track.gamma_multiply(0.5));
+        }
+    }
+    painter.add(egui::Shape::line(pts, Stroke::new(1.0, p.text_dim)));
+    let sliders = [0.55, 0.62, 0.35, 0.7, 0.6, 0.45];
+    let mut y = hist.bottom() + 7.0;
+    bar(y, panel.left() + 5.0, 14.0, p.text);
+    y += 6.0;
+    for v in sliders {
+        if y + 7.0 > panel.bottom() {
+            break;
+        }
+        bar(y, panel.left() + 5.0, 12.0, p.text_label);
+        bar(y, panel.right() - 10.0, 5.0, p.text_dim);
+        let track_y = y + 5.0;
+        painter.line_segment([pos2(panel.left() + 5.0, track_y), pos2(panel.right() - 5.0, track_y)], Stroke::new(1.0, p.track));
+        painter.circle_filled(pos2(panel.left() + 5.0 + (panel.width() - 10.0) * v, track_y), 1.8, p.thumb);
+        y += 10.0;
+    }
+    // the photo (its own colours: a photo looks the same in every theme) above the filmstrip
+    let film = Rect::from_min_max(pos2(rect.left(), bottom.top() - 18.0), pos2(panel.left(), bottom.top()));
+    let stage = Rect::from_min_max(pos2(rect.left(), top.bottom()), pos2(panel.left(), film.top()));
+    let photo = Rect::from_center_size(stage.center(), vec2(stage.width() * 0.62, stage.height() - 8.0));
+    painter.rect_filled(photo, 0.0, Color32::from_rgb(0x6f, 0x8f, 0xb4));
+    let horizon = photo.top() + photo.height() * 0.62;
+    painter.add(egui::Shape::convex_polygon(
+        vec![
+            pos2(photo.left(), horizon),
+            pos2(photo.left() + photo.width() * 0.3, photo.top() + photo.height() * 0.3),
+            pos2(photo.left() + photo.width() * 0.55, horizon),
+        ],
+        Color32::from_rgb(0x4a, 0x55, 0x66),
+        Stroke::NONE,
+    ));
+    painter.add(egui::Shape::convex_polygon(
+        vec![
+            pos2(photo.left() + photo.width() * 0.35, horizon),
+            pos2(photo.left() + photo.width() * 0.68, photo.top() + photo.height() * 0.2),
+            pos2(photo.right(), horizon),
+        ],
+        Color32::from_rgb(0x5a, 0x63, 0x72),
+        Stroke::NONE,
+    ));
+    painter.rect_filled(Rect::from_min_max(pos2(photo.left(), horizon), photo.max), 0.0, Color32::from_rgb(0x3d, 0x5a, 0x3a));
+    painter.line_segment([film.left_top(), film.right_top()], Stroke::new(1.0, p.divider));
+    for i in 0..5 {
+        let cell = Rect::from_min_size(pos2(film.left() + 4.0 + i as f32 * 17.0, film.top() + 3.0), vec2(15.0, 12.0));
+        if cell.right() > film.right() - 2.0 {
+            break;
+        }
+        let selected = i == 1;
+        painter.rect_filled(cell, 0.0, if selected { p.cell_selected } else { p.cell });
+        let thumb = cell.shrink(2.5);
+        painter.rect_filled(thumb, 0.0, Color32::from_rgb(0x6f + 8 * i as u8, 0x80, 0x8f));
+        if selected {
+            painter.rect_stroke(thumb, 0.0, Stroke::new(1.0, p.pick), StrokeKind::Outside);
+        }
     }
 }
 
@@ -1157,9 +1510,9 @@ fn sync_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
         other => {
             let known = other.map(|(_, _, c)| c);
             if let Some(c) = &known {
-                if app.sync.form.server.is_empty() {
-                    app.sync.form.server = c.server.clone();
-                    app.sync.form.user = c.user.clone();
+                if app.cloud_sync.form.server.is_empty() {
+                    app.cloud_sync.form.server = c.server.clone();
+                    app.cloud_sync.form.user = c.user.clone();
                 }
                 if let Some(e) = app.session.sync_state().and_then(|st| st.error()) {
                     info(ui, t, crate::i18n::tr("Status"), e, t.caution);
@@ -1168,7 +1521,7 @@ fn sync_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
             if crate::is_compact(ui.ctx()) {
                 heading(ui, t, crate::i18n::tr("Account"));
             }
-            let mut form = std::mem::take(&mut app.sync.form);
+            let mut form = std::mem::take(&mut app.cloud_sync.form);
             text_row(ui, t, "syncServer", crate::i18n::tr("Server"), &mut form.server, "https://photos.example.com", false, 260.0);
             text_row(
                 ui,
@@ -1203,7 +1556,7 @@ fn sync_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
                     sync_cmd(app, ui, "sync.signIn", p);
                 }
             });
-            app.sync.form = form;
+            app.cloud_sync.form = form;
             hint(
                 ui,
                 t,
@@ -1357,8 +1710,8 @@ fn storage_section(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, serve
         hint(ui, t, &format!("{}: {e}", crate::i18n::tr("The server can't say how much it stores")));
     }
 
-    let Some(l) = app.session.local_dirs().and(app.sync.storage.local.clone()) else { return };
-    let (photos, remote) = app.sync.storage.counts;
+    let Some(l) = app.session.local_dirs().and(app.cloud_sync.storage.local.clone()) else { return };
+    let (photos, remote) = app.cloud_sync.storage.counts;
     heading(ui, t, crate::i18n::tr("On this computer"));
     let text = if remote == 0 {
         format!("{} · all with their original here", count_label(photos as u64))
@@ -1393,21 +1746,237 @@ fn storage_section(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, serve
 
 /// `app.openLibrary {path?}`: close the current library and open (or create) the one at `path`,
 /// or a folder chosen in a dialog. Remembered as the library to open at launch.
+///
+/// A Lightroom Classic catalog (its folder, an `.lrdata` / `.lrcat-data` folder or the `.lrcat`
+/// itself, see [`lightcraft_engine::lightroom_folder`]) is not opened: the current library stays
+/// and a dialog offers Import Lightroom Catalog… instead; returns `{opened: false,
+/// lightroomCatalog: <.lrcat path or null>, path}`.
 pub fn open_library(app: &mut LightcraftApp, p: &Value) -> Result<Value, String> {
+    if crate::lightroom_import::is_running(app) {
+        return Err("wait for Lightroom catalog import to finish before switching libraries".into());
+    }
     let path = match p.get("path").and_then(Value::as_str) {
         Some(x) => x.to_string(),
-        None => match app.services.pick_folder.as_mut() {
-            Some(pick) => match pick() {
-                Some(x) => x,
-                None => return Ok(Value::Null),
-            },
-            None => return Err("no folder dialog on this platform".into()),
-        },
+        None => {
+            let req = crate::pick::PickRequest::folder(crate::i18n::tr("Open Library"));
+            match crate::pick::ask(app, "app.openLibrary", p, "path", req, |s| s.pick_folder.as_mut().and_then(|f| f()).map(|x| vec![x])) {
+                crate::pick::Picked::Now(v) => match v.into_iter().next() {
+                    Some(x) => x,
+                    None => return Ok(Value::Null),
+                },
+                crate::pick::Picked::Later => return Ok(Value::Null),
+                crate::pick::Picked::Unavailable => return Err("no folder dialog on this platform".into()),
+            }
+        }
     };
+    // A Lightroom catalog folder (or part of one) is not a library: before closing the library
+    // open now, offer to import it instead (issue #891). The engine refuses it too.
+    if let Some(place) = lightcraft_engine::lightroom_folder::lightroom_catalog_at(std::path::Path::new(&path)) {
+        let catalog = place.catalog.map(|c| c.to_string_lossy().into_owned());
+        let err = lightcraft_engine::EngineError::LightroomCatalog { path: path.clone().into(), catalog: catalog.clone().map(Into::into) };
+        // the library problem window (no library could be opened) shows the error instead
+        if app.library_problem.is_some() {
+            return Err(err.to_string());
+        }
+        app.ui.dialog = Some(crate::state::Dialog::LightroomCatalog { folder: path.clone(), catalog: catalog.clone() });
+        return Ok(json!({"opened": false, "lightroomCatalog": catalog, "path": path}));
+    }
+    // a remembered library that is gone: say so (and forget it) instead of creating an empty one there
+    if app.ui.settings.recent_libraries.contains(&path) && !std::path::Path::new(&path).exists() {
+        app.ui.settings.recent_libraries.retain(|r| r != &path);
+        return Err(format!("{path}: the library is no longer there (moved, renamed or on a disconnected drive); removed from Open Recent Library"));
+    }
+    switch_library(app, &path)
+}
+
+/// Close the current library and open the one at `path`. If it can't be opened (locked by
+/// another program, unreadable, a file), the error is returned and the current library stays open:
+/// the target is checked before anything is closed, and if opening it still fails the previous
+/// library is opened again (both errors are reported if that fails too).
+fn switch_library(app: &mut LightcraftApp, path: &str) -> Result<Value, String> {
+    let dir = app.session.check_library(std::path::Path::new(path)).map_err(|e| format!("{path}: {e}"))?;
+    let path = dir.to_string_lossy().into_owned();
+    // the library being left goes in the list too (also when it was opened at launch)
+    let previous_dir = app.session.library.as_ref().filter(|l| l.on_disk).map(|l| l.dir.clone());
+    let previous = previous_dir.as_ref().map(|d| d.to_string_lossy().into_owned());
     app.session.close_library().map_err(|e| e.to_string())?;
-    app.session.open_library(&path, false).map_err(|e| e.to_string())?;
+    let opened = app.session.open_library(&dir, false).map(|_| ()).map_err(|e| format!("{path}: {e}"));
+    app.lightroom_last = None;
     app.renderer.forget_all();
     app.ui.compare = None;
+    if let Err(err) = opened {
+        let Some(prev) = previous_dir else { return Err(err) };
+        return match app.session.open_library(&prev, false) {
+            Ok(_) => Err(err),
+            Err(e) => Err(format!("{err}; reopening the previous library {} failed too: {e}", prev.display())),
+        };
+    }
     app.ui.settings.library_path = path.clone();
-    Ok(json!({"path": path, "photos": app.session.catalog.len()}))
+    if let Some(prev) = previous.filter(|p| p != &path && !app.ui.settings.recent_libraries.contains(p)) {
+        remember_library(&mut app.ui.settings.recent_libraries, &prev);
+    }
+    remember_library(&mut app.ui.settings.recent_libraries, &path);
+    Ok(json!({"path": path, "name": library_name(&dir), "photos": app.session.catalog.len()}))
+}
+
+/// Put `path` first in the recent list, without duplicates, capped at [`RECENT_LIBRARIES`].
+pub fn remember_library(recent: &mut Vec<String>, path: &str) {
+    recent.retain(|r| r != path);
+    recent.insert(0, path.to_string());
+    recent.truncate(crate::state::RECENT_LIBRARIES);
+}
+
+/// A library's name as people see it: its folder's name.
+pub fn library_name(dir: &std::path::Path) -> String {
+    dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| dir.display().to_string())
+}
+
+/// The open library's name (`None`: in memory, nothing is saved).
+pub fn open_library_name(app: &LightcraftApp) -> Option<String> {
+    app.session.library.as_ref().filter(|l| l.on_disk).map(|l| library_name(&l.dir))
+}
+
+/// `app.newLibrary {path?, name?}`: create a library and switch to it. With `name`, the library
+/// is the folder `name` inside `path` (or inside a location chosen in a dialog); without it,
+/// `path` itself, or a new folder named after the default library. The folder must not hold a
+/// library already, nor anything else.
+pub fn new_library(app: &mut LightcraftApp, p: &Value) -> Result<Value, String> {
+    if crate::lightroom_import::is_running(app) {
+        return Err("wait for Lightroom catalog import to finish before switching libraries".into());
+    }
+    let name = match p.get("name") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(s)) => Some(valid_library_name(s)?),
+        Some(_) => return Err("app.newLibrary: name must be a string".into()),
+    };
+    // from the menu: ask for the name first (default prefilled), then for the location
+    if name.is_none() && p.get("path").is_none() && app.services.pick_folder.is_some() {
+        crate::panels::dialogs::prompt(
+            app,
+            "New Library",
+            "Library name",
+            lightcraft_engine::library::DEFAULT_NAME,
+            "app.newLibrary",
+            json!({}),
+            "name",
+        );
+        return Ok(Value::Null);
+    }
+    let (location, picked) = match p.get("path").and_then(Value::as_str) {
+        Some(x) => (std::path::PathBuf::from(x), false),
+        None => {
+            let req = crate::pick::PickRequest::folder(crate::i18n::tr("New Library: Choose Where to Put It"));
+            match crate::pick::ask(app, "app.newLibrary", p, "path", req, |s| s.pick_folder.as_mut().and_then(|f| f()).map(|x| vec![x])) {
+                crate::pick::Picked::Now(v) => match v.into_iter().next() {
+                    Some(x) => (std::path::PathBuf::from(x), true),
+                    None => return Ok(Value::Null),
+                },
+                crate::pick::Picked::Later => return Ok(Value::Null),
+                crate::pick::Picked::Unavailable => return Err("no folder dialog on this platform".into()),
+            }
+        }
+    };
+    let dir = match name {
+        Some(n) => location.join(n),
+        // a chosen location gets a new folder in it, named after the default library
+        None if picked => free_name(&location, lightcraft_engine::library::DEFAULT_NAME),
+        None => location,
+    };
+    if lightcraft_engine::library::is_library(&dir) {
+        return Err(format!("{}: there is a library here already; open it with File ▸ Open Library…", dir.display()));
+    }
+    if dir.is_file() {
+        return Err(format!("{}: is a file; a library is a folder", dir.display()));
+    }
+    if std::fs::read_dir(&dir).is_ok_and(|mut d| d.next().is_some()) {
+        return Err(format!("{}: the folder isn't empty; choose an empty folder or a new name", dir.display()));
+    }
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: can't create the library folder: {e}", dir.display()))?;
+    switch_library(app, &dir.to_string_lossy())
+}
+
+/// Characters a folder name can't hold on Windows (and `/`, which no system allows).
+const RESERVED_NAME_CHARS: [char; 9] = ['<', '>', ':', '"', '/', '\\', '|', '?', '*'];
+
+fn valid_library_name(s: &str) -> Result<&str, String> {
+    let n = s.trim();
+    // Windows drops trailing dots and spaces from a folder name: refuse them rather than
+    // creating a folder whose name differs from the one asked for (spaces around the name
+    // are trimmed first)
+    let bad = n.is_empty() || n == "." || n == ".." || n.ends_with(['.', ' ']) || n.contains(RESERVED_NAME_CHARS) || n.chars().any(char::is_control);
+    if bad {
+        return Err(format!(
+            "app.newLibrary: {s:?} can't be a library name (a folder name without < > : \" / \\ | ? * and not ending in a dot or space)"
+        ));
+    }
+    Ok(n)
+}
+
+/// `base` inside `location`, or `base 2`, `base 3`… if that is taken.
+fn free_name(location: &std::path::Path, base: &str) -> std::path::PathBuf {
+    let first = location.join(base);
+    if !first.exists() {
+        return first;
+    }
+    (2..1000u32).map(|i| location.join(format!("{base} {i}"))).find(|p| !p.exists()).unwrap_or(first)
+}
+
+/// `app.recentLibraries {clear?: bool}`: the recently opened libraries, newest first, as
+/// `[{path, name, exists, open}]` (`exists: false`: moved or on a disconnected drive). `clear`
+/// forgets them all.
+pub fn recent_libraries(app: &mut LightcraftApp, p: &Value) -> Result<Value, String> {
+    if p.get("clear").and_then(Value::as_bool) == Some(true) {
+        app.ui.settings.recent_libraries.clear();
+    }
+    let open = app.session.library.as_ref().filter(|l| l.on_disk).map(|l| l.dir.clone());
+    let list: Vec<Value> = app
+        .ui
+        .settings
+        .recent_libraries
+        .iter()
+        .map(|r| {
+            let d = std::path::Path::new(r);
+            json!({"path": r, "name": library_name(d), "exists": d.is_dir(), "open": open.as_deref() == Some(d)})
+        })
+        .collect();
+    Ok(Value::Array(list))
+}
+
+// ---------------------------------------------------------------------------- Display profile
+
+/// `app.displayProfile {path?: string | null}`: show previews through this monitor ICC profile
+/// (`""` or `null`: none, the profile of the screen showing the window where the host knows it
+/// (macOS), else the display is treated as sRGB) and keep it as the setting; no `path`: report
+/// only. A file that can't be used is an error and changes nothing. Returns the profile in use:
+/// `{path, description, kind (matrix|lut), primaries {red, green, blue: [x, y]}}`, with
+/// `path: null, screen: true` for the screen's profile.
+pub fn display_profile(app: &mut LightcraftApp, p: &Value) -> Result<Value, String> {
+    let path = match p.get("path") {
+        None => None,
+        Some(Value::Null) => Some(String::new()),
+        Some(Value::String(s)) => Some(s.trim().to_string()),
+        Some(_) => return Err("app.displayProfile: path must be a string or null".into()),
+    };
+    if let Some(path) = path {
+        let d = lightcraft_engine::display::Display::load_opt(&path).map_err(|e| format!("app.displayProfile: {e}"))?;
+        app.renderer.set_display(d);
+        app.ui.settings.display_profile = path.clone();
+        app.display_applied = Some(path);
+        app.display_error = None;
+        app.screen_profile = None;
+        app.screen_profile_read = None;
+        if app.ui.settings.display_profile.is_empty() {
+            app.apply_screen_profile();
+        }
+    }
+    Ok(match app.renderer.display() {
+        Some(d) if d.path == crate::SCREEN_PROFILE => {
+            let mut v = d.describe();
+            v["path"] = Value::Null;
+            v["screen"] = json!(true);
+            v
+        }
+        Some(d) => d.describe(),
+        None => json!({"path": null, "description": "sRGB (no display profile)"}),
+    })
 }

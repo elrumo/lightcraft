@@ -14,6 +14,7 @@ let d: Decoded = decode(&bytes, DecodeOptions::default())?;
 let working: Rgb32f = to_working(&d);                    // linear Rec.2020 D65 (Bradford)
 let fast = decode(&bytes, DecodeOptions::fit(2048, 2048))?; // JPEG: DCT-domain 1/2..1/8 scaling
 let t: Thumbnail = decode_thumbnail(&bytes, 256)?;       // embedded EXIF/MPF preview or scaled decode
+let h: Header = read_header(&bytes)?;                    // stored width/height + orientation, no pixels decoded
 
 let icc = icc::write_named(NamedSpace::DisplayP3);       // or icc::write_matrix_trc(&space, &Trc::…)
 let meta = EncodeMeta { icc: Some(&icc), exif: Some(&exif), xmp: Some(&xmp) };
@@ -22,7 +23,20 @@ encode_png(&EncodeImage::new(w, h, 4, Samples::U16(&px)), &meta)?;
 encode_tiff(&EncodeImage::new(w, h, 3, Samples::F32(&px)), TiffCompression::Deflate, &meta)?;
 encode_webp_lossless(&img, &meta)?;
 encode_avif(&img, 70, 6, &meta)?;                        // native + feature `avif`
+encode_jxl(&img, &JxlOptions { quality: 90, ..Default::default() }, &meta)?; // native + feature `jxl`
+
+// HDR gain map JPEG (ISO 21496-1): SDR + HDR renditions → base + gain map, and back
+let (map, gm) = gainmap::compute(&sdr_linear, &hdr_linear, w, h, luma, &GainMapOptions::default())?;
+gainmap::encode_jpeg(&EncodeImage::new(w, h, 3, Samples::U8(&base8)), &map, &gm, 90, ChromaSubsampling::S444, &meta)?;
+let found = gainmap::read_jpeg(&bytes);                  // ours, cameras', Lightroom's
+gainmap::apply(&mut base_linear, w, h, &found.gain, &found.meta, 1.0)?;
 ```
+
+Thumbnail fallback decoding limits the source to 64 million pixels by default.
+Non-JPEG decoders allocate at source resolution before resizing, even for a tiny
+thumbnail. Use `decode_thumbnail_with` and `ThumbnailOptions::max_pixels` to set
+a different source budget. Oversized sources return `Error::TooLarge`; embedded
+JPEG previews can still be used without decoding the full source image.
 
 `Format::RawTiffLike` (DNG, CR2, NEF, ARW, PEF, ORF, RW2, SRW, …) and `Format::RawOther` (CR3, RAF,
 CRW, MRW, X3F) are detected so the engine can route them to `lightcraft-raw`; `decode` returns
@@ -38,9 +52,10 @@ CRW, MRW, X3F) are detected so the engine can route them to `lightcraft-raw`; `d
 | WebP | lossy + lossless, alpha, first frame of animations | lossless only | ICCP/EXIF/XMP chunks |
 | GIF / BMP | yes (first GIF frame) | — | via `image` |
 | PSD / PSB | merged composite: 8/16/32-bit gray, RGB, CMYK, indexed, duotone (as gray); raw/RLE | — | ICC (1039), EXIF (1058), XMP (1060); ZIP-compressed composite, Lab and 1-bit unsupported |
-| JPEG XL | yes (jxl-oxide, feature `jxl`, default on) | — | enum colour → rendered straight to linear Rec.2020; ICC → our ICC path; orientation applied by the decoder (reported as 1) |
-| AVIF | **no** | yes (ravif/rav1e, native only, feature `avif`) | 8-bit sRGB, EXIF; no ICC in the muxer |
-| HEIC/HEIF | yes (`heic-rs`, pure Rust; the host's decoder first when it installed one, e.g. ImageIO on iOS): grids, 8/10-bit, `irot`/`imir`/`clap` applied (reported as 1); colour from `nclx`, else the HEVC VUI | — | ICC, EXIF; no alpha (`auxC`) item |
+| JPEG XL | yes (jxl-oxide, feature `jxl`, default on) | yes (jixel, `encode_jxl`, feature `jxl`, native only): lossy VarDCT / lossless Modular, 8/16-bit, effort (fast / normal), progressive; HDR as 16-bit Rec. 2020 PQ | decode: enum colour → rendered straight to linear Rec.2020 (XYB via linear sRGB primaries); ICC → our ICC path; orientation applied by the decoder (reported as 1). Encode: lossy files declare an enum encoding (sRGB, Display P3, Rec. 2020 BT.709 curve, Rec. 2020 PQ), lossless ones embed the ICC profile; EXIF / XMP in `Exif` / `xml ` boxes |
+| AVIF | **no** (the host's decoder when it installed one, e.g. ImageIO on iOS) | yes (ravif/rav1e, native only, feature `avif`) | 8/10-bit sRGB, EXIF; no ICC in the muxer. HDR: `encode_avif_pq` writes 10-bit BT.2020 PQ (SDR white at 203 cd/m², CICP `nclx` + `clli`) |
+| HEIC/HEIF | yes with feature `heif`, default on in this fork (lightcraft-heif: heic-rs + libheif-matching colour; 4:2:0/mono, 8–10-bit, grids, irot/imir/clap, ICC/nclx/VUI, EXIF/XMP, thumbnail item); the host's decoder first when it installed one (ImageIO on iOS) | — | 4:2:2/4:4:4 (Canon/Sony HIF) unsupported |
+| Gain map JPEG (HDR) | gain map found and decoded (`gainmap::read_jpeg`): ISO 21496-1 metadata, else Adobe `hdrgm` XMP | yes (`gainmap::encode_jpeg`) | CIPA DC-007 MPF index (gain map typed `0x050000`), ISO 21496-1 APP2 on both images, `hdrgm` + Container XMP for Android/Chrome, Apple `HDRGainMap`/`HDRToneMap` XMP; gain maps are never used as thumbnails |
 
 ## Colour
 
@@ -49,6 +64,10 @@ Decoders never guess silently; `SourceSpace::origin` says where the interpretati
 or CMYK profile converted by the CMS straight to linear Rec.2020), `Container` (PNG chunks, JXL enum,
 EXIF `R03` Adobe RGB hint), `Untagged` (assumed sRGB; untagged float data assumed linear),
 `IccUnsupported` (profile present but unusable → **sRGB fallback**), `Naive` (CMYK without profile).
+
+`decode_jpeg_with_fallback(bytes, opts, space)` lets an enclosing RAW container supply the colour
+space of a JPEG with no ICC or EXIF metadata. It applies the transfer curve before linear-light
+resizing; a JPEG carrying its own metadata retains its existing interpretation.
 
 ICC profiles are parsed with `moxcms` (v2/v4, `curv`/`para` TRCs, `chad`); sRGB, Display P3,
 Adobe RGB (1998), ProPhoto (ROMM) and Rec.2020 are recognised by colorants. `icc::write_matrix_trc`
@@ -69,6 +88,7 @@ All pure Rust, verified with `cargo info` / `cargo tree`:
 | image (gif, bmp only) | MIT OR Apache-2.0 | GIF/BMP |
 | moxcms | BSD-3-Clause OR Apache-2.0 | ICC parse/write, CMS |
 | jxl-oxide | MIT OR Apache-2.0 | JPEG XL decode |
+| jixel | BSD-3-Clause OR Apache-2.0 | JPEG XL encode (native only) |
 | ravif (+ rav1e, avif-serialize) | BSD-3-Clause / BSD-2-Clause | AVIF encode (native only; heavy to compile) |
 
 Deliberately **not** used: anything AGPL from imazen (heic, zenjpeg, jxl-encoder, rav1d-safe),
@@ -89,13 +109,13 @@ Run `cargo test --release -p lightcraft-codecs --test bench -- --ignored --nocap
 
 ## Gaps / limitations
 
-- **AVIF decode**: no permissively licensed, pure-Rust AV1 decoder exists today (dav1d is C,
+- **AVIF decode**: no permissively licensed, pure-Rust AV1 decoder exists today (dav1d is C;
   rav1d-safe is AGPL). Files are sniffed and rejected with `Error::Unsupported` unless the host
-  installed a system decoder.
-- **HEIC**: `heic-rs` 0.1 ignores the VUI colour description when a file has no `nclx` box (every
-  iPhone photo), so `heif.rs` drives its public pieces with the VUI read from the SPS; drop that
-  once `heic-rs` reads it. Inter-predicted reference picture sets in a still's SPS (none seen) fall
-  back to BT.709 limited range. HEIC is decoded whole (no scaled or embedded-thumbnail path).
+  installed a system decoder (`set_system_decoder`).
+- **HEIC** needs the `heif` feature (on by default in this fork; upstream leaves it off because HEVC
+  patents are the distributor's call); without it and without a system decoder,
+  `Error::Unsupported` says the build has no HEIC support. 4:2:2 and 4:4:4 HEIF (Canon/Sony HIF) is
+  refused: heic-rs 0.1.1 loses sync on those bitstreams.
 - JPEG: arithmetic coding unsupported (as in both decoders); extended XMP (> 64 KiB) neither read
   nor written; EXIF > 64 KiB not written. The encoder uses standard Huffman tables (interleaved
   baseline) for maximum compatibility.

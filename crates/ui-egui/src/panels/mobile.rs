@@ -562,6 +562,7 @@ pub fn edit_menu(app: &mut LightcraftApp, ctx: &egui::Context) {
     // made inside the tap. egui reports it only from the pass after the field takes focus and only once the field
     // is on screen (a page slides in from below), so for a moment it doesn't: report the field's own rect then.
     if let Some(field) = focused
+        && ctx.input(|i| i.has_touch_screen())
         && ctx.output(|o| o.ime).is_none()
         && let Some(r) = ctx.read_response(field)
     {

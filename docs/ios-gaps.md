@@ -3,7 +3,7 @@
 What the iPhone / iPad build of LightCraft still lacks, in two parts: **A.** things we know are unfinished in what
 exists (the compact layout and the iOS host), and **B.** what Lightroom's mobile app does that LightCraft does not
 yet. Status of the app itself: [`ios.md`](ios.md). Desktop feature parity has its own tracker:
-[`parity.md`](parity.md); rows there that are ⬜ also apply on the phone and are not repeated here.
+[`parity-checklist.md`](parity-checklist.md); rows there that are ⬜ also apply on the phone and are not repeated here.
 
 Feature names are our own words (no Adobe text, screenshots or assets; see `CLAUDE.md`, *Assets*). Part B comes from
 the mobile app's public behaviour and should be re-checked against the installed app (read-only, `plan/lightroom/`)
@@ -118,17 +118,17 @@ mark: not started.
 
 ### B4. Editing
 
-(Desktop rows in [`parity.md`](parity.md) apply too; these are the mobile-specific ones.)
+(Desktop rows in [`parity-checklist.md`](parity-checklist.md) apply too; these are the mobile-specific ones.)
 
 | # | Feature | Pri | Needs |
 |---|---|---|---|
-| B4.1 | AI subject, sky, background and object selection for masks; people masks with face / body parts | P1 | models; `parity.md` K rows ⬜ |
+| B4.1 | AI subject, sky, background and object selection for masks; people masks with face / body parts | P1 | models; `parity-checklist.md` K rows ⬜ |
 | B4.2 | Generative remove / object removal beyond clone-heal | P2 | model |
 | B4.3 | Lens blur from a depth map (the phone's depth data or estimated) | P2 | partly present (`lens_blur`), depth model missing |
-| B4.4 | Denoise and super resolution (Enhance) | P1 | `parity.md` P rows ⬜ |
+| B4.4 | Denoise and super resolution (Enhance) | P1 | `parity-checklist.md` P rows ⬜ |
 | B4.5 | Versions and history on the phone: pick a version, tap a history step | P1 | exists on desktop (`RightPanel::Versions`); no compact entry (A2.11) |
 | B4.6 | Edit a pre-selected set: copy / paste settings across selected photos, sync, apply the last edit, with checkboxes for what to paste | P1 | engine has it; no compact UI (A2.9) |
-| B4.7 | HDR editing and display: edit and export HDR photos (gain map HEIC / AVIF), show them on an HDR display | P1 | `parity.md` Q rows ⬜; EDR output on Metal |
+| B4.7 | HDR editing and display: edit and export HDR photos (gain map HEIC / AVIF), show them on an HDR display | P1 | `parity-checklist.md` Q rows ⬜; EDR output on Metal |
 | B4.8 | Geometry on touch: guided Upright by drawing lines with a finger, straighten by dragging the dial, rotate / flip buttons | P1 | tools exist; no touch pass |
 | B4.9 | Selective-adjustment gestures: a local adjustment pin you slide to change the amount, with a ring showing the radial / linear region while dragging | P1 | mask overlay exists |
 | B4.10 | Colour grading wheels sized for a finger, with a "Reset" per wheel | P1 | A2.3 |

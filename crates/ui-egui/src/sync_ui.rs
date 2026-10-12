@@ -7,7 +7,7 @@
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::Duration;
 
-use lightcraft_engine::sync::{Done, POLL, Task};
+use lightcraft_engine::cloud_sync::{Done, POLL, Task};
 use lightcraft_engine::usage::LocalUsage;
 
 use crate::LightcraftApp;
@@ -23,7 +23,7 @@ pub fn native_exec() -> SyncExec {
         let id = task.id();
         let done = tx.clone();
         let spawned = std::thread::Builder::new().name("lc-sync".into()).spawn(move || {
-            let _ = tx.send(lightcraft_engine::sync::run(&task));
+            let _ = tx.send(lightcraft_engine::cloud_sync::run(&task));
             ctx.request_repaint();
         });
         if let Err(e) = spawned {
@@ -91,7 +91,7 @@ pub fn storage_poll(app: &mut LightcraftApp, ctx: &egui::Context, refresh: bool)
     #[cfg(not(target_arch = "wasm32"))]
     {
         let now = ctx.input(|i| i.time);
-        let s = &mut app.sync.storage;
+        let s = &mut app.cloud_sync.storage;
         if let Some(rx) = &s.measuring {
             match rx.try_recv() {
                 Ok(u) => {
@@ -109,7 +109,7 @@ pub fn storage_poll(app: &mut LightcraftApp, ctx: &egui::Context, refresh: bool)
             && (refresh || s.at.is_none_or(|t| now - t >= MEASURE_EVERY))
             && let Some(dirs) = app.session.local_dirs()
         {
-            app.sync.storage.counts = app.session.photo_counts();
+            app.cloud_sync.storage.counts = app.session.photo_counts();
             let (tx, rx) = channel();
             let ctx = ctx.clone();
             let spawned = std::thread::Builder::new().name("lc-usage".into()).spawn(move || {
@@ -117,10 +117,10 @@ pub fn storage_poll(app: &mut LightcraftApp, ctx: &egui::Context, refresh: bool)
                 ctx.request_repaint();
             });
             match spawned {
-                Ok(_) => app.sync.storage.measuring = Some(rx),
+                Ok(_) => app.cloud_sync.storage.measuring = Some(rx),
                 Err(e) => {
                     log::warn!("storage: can't start a thread: {e}");
-                    app.sync.storage.at = Some(now);
+                    app.cloud_sync.storage.at = Some(now);
                 }
             }
         }
@@ -161,8 +161,8 @@ pub fn count_label(n: u64) -> String {
 
 /// Hand finished tasks to the engine and start the next ones (cheap when there's nothing to do).
 pub fn poll(app: &mut LightcraftApp, ctx: &egui::Context) {
-    while let Ok(d) = app.sync.rx.try_recv() {
-        app.sync.in_flight = app.sync.in_flight.saturating_sub(1);
+    while let Ok(d) = app.cloud_sync.rx.try_recv() {
+        app.cloud_sync.in_flight = app.cloud_sync.in_flight.saturating_sub(1);
         app.session.sync_done(d);
     }
     // a link just made goes on the clipboard
@@ -172,11 +172,11 @@ pub fn poll(app: &mut LightcraftApp, ctx: &egui::Context) {
     }
     // two libraries with photos met: ask what to do about it (once; nothing syncs meanwhile)
     if app.session.sync_conflict().is_some() {
-        if !std::mem::replace(&mut app.sync.choice_asked, true) {
+        if !std::mem::replace(&mut app.cloud_sync.choice_asked, true) {
             app.ui.dialog = Some(crate::state::Dialog::SyncChoice);
         }
     } else {
-        app.sync.choice_asked = false;
+        app.cloud_sync.choice_asked = false;
     }
     let Some(exec) = app.services.sync_exec.as_ref() else { return };
     let Some(st) = app.session.sync_state() else { return };
@@ -184,15 +184,15 @@ pub fn poll(app: &mut LightcraftApp, ctx: &egui::Context) {
         return;
     }
     let focused = ctx.input(|i| i.focused);
-    if focused && !app.sync.focused {
+    if focused && !app.cloud_sync.focused {
         app.session.sync_soon();
     }
-    app.sync.focused = focused;
+    app.cloud_sync.focused = focused;
     for t in app.session.sync_tasks() {
-        app.sync.in_flight += 1;
-        exec(t, app.sync.tx.clone(), ctx.clone());
+        app.cloud_sync.in_flight += 1;
+        exec(t, app.cloud_sync.tx.clone(), ctx.clone());
     }
-    let busy = app.sync.in_flight > 0 || app.session.sync_state().is_some_and(|st| st.state() == "syncing");
+    let busy = app.cloud_sync.in_flight > 0 || app.session.sync_state().is_some_and(|st| st.state() == "syncing");
     ctx.request_repaint_after(if busy { Duration::from_millis(500) } else { POLL });
 }
 

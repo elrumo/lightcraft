@@ -127,7 +127,8 @@ fn bottom_bar(app: &mut LightcraftApp, ui: &mut Ui, t: &Tokens) {
     icons::paint(ui.painter(), Rect::from_center_size(info.center(), vec2(20.0, 20.0)), Icon::Info, t.text_label);
     if resp.clicked() {
         let help = match tool(app).1 {
-            SpotMode::Remove => "Paint over a distraction to remove it. Tap a pin for its options.",
+            // (Content-Aware has no tile on the phone yet: it is never the tool in hand here)
+            SpotMode::Remove | SpotMode::Fill => "Paint over a distraction to remove it. Tap a pin for its options.",
             SpotMode::Heal => "Paint over a blemish: it is healed from a nearby area, which you can drag. Tap a pin for its options.",
             SpotMode::Clone => "Paint over an area to copy another over it; drag the source to choose it. Tap a pin for its options.",
         };

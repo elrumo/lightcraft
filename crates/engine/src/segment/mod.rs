@@ -158,7 +158,14 @@ impl Segmenter {
     /// Whether this build can compute AI masks at all.
     pub const AVAILABLE: bool = cfg!(feature = "sam");
 
-    /// Whether the model's files are in place.
+    pub fn remote_endpoint(&self) -> Option<String> {
+        #[cfg(feature = "sam")]
+        return lightcraft_segment::remote::configured();
+        #[cfg(not(feature = "sam"))]
+        None
+    }
+
+    /// Whether the local model files are in place.
     pub fn installed(&self) -> bool {
         #[cfg(feature = "sam")]
         if let Some(dir) = &self.dir {
@@ -234,6 +241,10 @@ impl Segmenter {
         if self.disabled {
             return Err("AI masks are turned off: turn the SAM 3 model on in Settings → AI Models.".into());
         }
+        #[cfg(feature = "sam")]
+        if lightcraft_segment::remote::configured().is_some() {
+            return Ok(PathBuf::new());
+        }
         let dir = self.dir.clone().ok_or("no folder is set for the SAM 3 model")?;
         if self.installed() {
             return Ok(dir);
@@ -252,7 +263,7 @@ impl Segmenter {
 
     /// Start downloading the model (on a background thread; see `segment.model.download`).
     /// `Ok(false)` when it is installed or downloading already.
-    pub fn start_download(&self) -> Result<bool, String> {
+    pub fn start_download(&self, activity: &crate::activity::Activity) -> Result<bool, String> {
         if !Self::AVAILABLE {
             return Err("AI masks are not available in this build".into());
         }
@@ -266,11 +277,11 @@ impl Segmenter {
             if mirrors.is_empty() {
                 return Err(lightcraft_segment::fetch::no_mirrors_message());
             }
-            self.download.start("SAM 3", lightcraft_segment::fetch::SAM3_FILES, mirrors, dir, lightcraft_segment::fetch::Options::default())
+            self.download.start("SAM 3", lightcraft_segment::fetch::SAM3_FILES, mirrors, dir, lightcraft_segment::fetch::options(), activity, "SAM 3")
         }
         #[cfg(not(feature = "sam"))]
         {
-            let _ = dir;
+            let _ = (dir, activity);
             Ok(false)
         }
     }

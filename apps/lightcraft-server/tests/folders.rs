@@ -235,7 +235,7 @@ fn uploads_of_folder_files_are_not_duplicated() {
     sync(&mut dev);
     assert_eq!(dev.catalog.len(), 2);
     let a = by_place(&dev, "photos/a.png").expect("the uploaded photo has its place in the folder");
-    assert!(!lightcraft_engine::sync::is_remote(a), "the device keeps its own file");
+    assert!(!lightcraft_engine::cloud_sync::is_remote(a), "the device keeps its own file");
 
     drop(server);
     let _ = std::fs::remove_dir_all(&root);

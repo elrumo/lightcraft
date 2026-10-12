@@ -11,7 +11,7 @@ use lightcraft_catalog::sync::proto::{Disk, Files};
 use serde::Serialize;
 
 use crate::Session;
-use crate::sync::is_remote;
+use crate::cloud_sync::is_remote;
 
 /// Deepest folder level counted (copied originals may sit in dated sub-folders). A folder tree
 /// is never followed through links, so this only bounds an unusually deep one.

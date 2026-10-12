@@ -15,7 +15,7 @@ pub struct ModelSpec {
     pub label: &'static str,
     /// What it does for the user.
     pub purpose: &'static str,
-    pub files: &'static [FileSpec],
+    pub files: &'static [FileSpec<'static>],
     /// Environment variable with extra mirrors (base URLs separated by commas, spaces or
     /// newlines), tried before the built-in ones.
     pub mirrors_env: &'static str,

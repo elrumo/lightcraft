@@ -44,7 +44,7 @@ pub fn specs() -> Vec<CommandSpec> {
                         ),
                     ));
                 }
-                let started = s.vision.start_download().map_err(|e| bad(c, e))?;
+                let started = s.vision.start_download(&s.activity).map_err(|e| bad(c, e))?;
                 Ok(json!({"started": started, "installed": s.vision.installed(), "downloading": s.vision.download_status()["running"]}))
             }
         ),
@@ -137,7 +137,7 @@ pub fn specs() -> Vec<CommandSpec> {
                         ),
                     ));
                 }
-                let started = s.vision.start_text_download().map_err(|e| bad(c, e))?;
+                let started = s.vision.start_text_download(&s.activity).map_err(|e| bad(c, e))?;
                 Ok(json!({"started": started, "installed": s.vision.text_installed(), "downloading": s.vision.text_download_status()["running"]}))
             }
         ),
@@ -184,7 +184,7 @@ pub fn specs() -> Vec<CommandSpec> {
                         ),
                     ));
                 }
-                let started = s.vision.start_faces_download().map_err(|e| bad(c, e))?;
+                let started = s.vision.start_faces_download(&s.activity).map_err(|e| bad(c, e))?;
                 Ok(json!({"started": started, "installed": s.vision.faces_installed(), "downloading": s.vision.faces_download_status()["running"]}))
             }
         ),
