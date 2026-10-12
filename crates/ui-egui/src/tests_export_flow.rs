@@ -155,7 +155,7 @@ impl Phone {
     }
 
     fn toast(&self) -> String {
-        self.h.app.ui.toast.as_ref().map(|(t, _)| t.clone()).unwrap_or_default()
+        self.h.app.ui.toast.as_ref().map(|(t, _, _)| t.clone()).unwrap_or_default()
     }
 
     fn photo(&self, n: usize) -> u64 {

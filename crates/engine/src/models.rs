@@ -352,11 +352,11 @@ impl Session {
     pub fn start_model_download(&self, id: &str) -> Result<bool, String> {
         self.model_entry(id)?;
         match id {
-            SAM3 => self.segmenter.start_download(),
-            SEARCH => self.vision.start_download(),
-            TEXT => self.vision.start_text_download(),
-            FACES => self.vision.start_faces_download(),
-            other => self.enhancer.start_download(other),
+            SAM3 => self.segmenter.start_download(&self.activity),
+            SEARCH => self.vision.start_download(&self.activity),
+            TEXT => self.vision.start_text_download(&self.activity),
+            FACES => self.vision.start_faces_download(&self.activity),
+            other => self.enhancer.start_download(other, &self.activity),
         }
     }
 

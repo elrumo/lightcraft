@@ -8,7 +8,7 @@ use std::time::Duration;
 use lightcraft_catalog::sync::proto;
 use lightcraft_catalog::{Catalog, Op, Photo, PhotoId, Source};
 use lightcraft_engine::Session;
-use lightcraft_engine::sync::{Done, Task};
+use lightcraft_engine::cloud_sync::{Done, Task};
 use serde_json::{Value, json};
 
 use crate::headless::Headless;
@@ -155,7 +155,7 @@ fn sign_in(h: &mut Headless) {
     run(h, "sync.signIn", json!({"server": "http://fake", "user": "ann", "password": "pw", "device": "test"}));
     for _ in 0..40 {
         frames(h, 5);
-        if h.app.session.sync_state().is_some_and(|st| st.state() != "syncing" || st.conflict().is_some()) && h.app.sync.in_flight == 0 {
+        if h.app.session.sync_state().is_some_and(|st| st.state() != "syncing" || st.conflict().is_some()) && h.app.cloud_sync.in_flight == 0 {
             break;
         }
     }
@@ -331,7 +331,7 @@ fn the_status_on_a_phone_wraps_instead_of_being_cut_off() {
     assert!(status.left() >= 0.0 && status.right() <= PHONE[0], "inside the screen: {status:?}");
     // the same through a server address too long for its row
     let long = "https://a-rather-long-host-name.photos.example.com:8443/lightcraft";
-    h.app.sync.form.server = long.into();
+    h.app.cloud_sync.form.server = long.into();
     tap(&mut h, "button:syncSignOut");
     assert!(has(&h, "field:syncServer"));
     drop(h);

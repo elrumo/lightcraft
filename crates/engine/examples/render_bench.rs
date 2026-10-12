@@ -93,7 +93,9 @@ fn main() {
         for path in &args {
             let bytes = std::fs::read(path).expect("read");
             println!("{path}");
-            let raw = lightcraft_raw::decode(&bytes).expect("decode");
+            let mut raw = lightcraft_raw::decode(&bytes).expect("decode");
+            // as the loader does: lens corrections are applied by the pipeline, not in the raw develop
+            raw.opcodes.list3.retain(|op| !op.is_lens_correction());
             println!("  {}×{} cpp {} cfa {:?}", raw.width, raw.height, raw.cpp, raw.cfa.as_ref().map(|c| c.name()));
             println!("  {:<36} {}", "raw decode:", best(n, || drop(lightcraft_raw::decode(&bytes).expect("decode"))));
             println!("  {:<36} {}", "normalize:", best(n, || drop(raw.normalized().expect("norm"))));
@@ -245,18 +247,20 @@ fn main() {
         }
     }
     if run("batch") && args.len() > 1 {
-        // full-size JPEG export of all the files given (decode + render + encode)
-        use lightcraft_engine::export::export_photo;
+        // full-size JPEG export of all the files given (decode + render + encode), as the Export
+        // dialog runs it: several photos side by side (`export_parallelism`), files discarded
+        use lightcraft_engine::export::{Destination, export_batch};
         let mut session = lightcraft_engine::Session::new().with_fs();
         let r = session.execute("library.import", &serde_json::json!({"paths": args})).expect("import");
         let ids: Vec<_> = r["imported"].as_array().expect("ids").iter().filter_map(|v| v.as_u64()).map(lightcraft_engine::catalog::PhotoId).collect();
-        let items: Vec<_> = ids.iter().enumerate().map(|(i, id)| (*id, i + 1)).collect();
         let o = ExportOptions::default();
-        row(&format!("batch export of {} files (decode+render+JPEG):", items.len()), &mut |g| {
+        let lanes = lightcraft_engine::export::export_parallelism(ids.len());
+        row(&format!("batch export of {} files, {lanes} at a time (decode+render+JPEG):", ids.len()), &mut |g| {
             lightcraft_engine::gpu::set_enabled(g);
-            for &(id, seq) in &items {
-                drop(export_photo(&mut session, id, &o, seq).expect("export"));
-                session.media.forget(id); // as in a batch: every original is decoded once
+            let files = export_batch(&mut session, &ids, &o, &Destination::default(), &mut |_, _| Ok(()), &|_| false).expect("export");
+            assert_eq!(files.len(), ids.len());
+            for &id in &ids {
+                session.media.forget(id); // every original is decoded once per run
             }
         });
         lightcraft_engine::gpu::set_enabled(true);

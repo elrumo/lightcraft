@@ -154,7 +154,7 @@ pub fn poll(app: &mut LightcraftApp, ctx: &egui::Context) {
         Err(TryRecvError::Empty) => {
             let f = t.progress.lock().map(|g| *g).unwrap_or(0.0);
             let now = ctx.input(|i| i.time);
-            app.ui.toast = Some((crate::i18n::tr_format!("Enlarging… {:.0}%", f * 100.0), now + 0.5));
+            app.ui.toast = Some((crate::i18n::tr_format!("Enlarging… {:.0}%", f * 100.0), now + 0.5, None));
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
         }
     }

@@ -394,7 +394,8 @@ fn phone_brush_paints_one_mask() {
     match &masks[0].components[..] {
         [lightcraft_develop::MaskComponent { shape: lightcraft_develop::MaskShape::Brush { strokes }, .. }] => {
             assert_eq!(strokes.len(), 1);
-            assert!(strokes[0].points.len() >= 3);
+            // (a finger held still records nothing more: the two places it was dragged to)
+            assert!(strokes[0].points.len() >= 2, "{:?}", strokes[0].points);
         }
         other => panic!("one brush part: {other:?}"),
     }

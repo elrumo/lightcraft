@@ -20,11 +20,7 @@ const THUMB_EDGE: usize = 128;
 
 pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
-    egui::Panel::right("presets_panel")
-        .exact_size(t.panel_w)
-        .resizable(false)
-        .frame(egui::Frame::NONE.fill(t.chrome).stroke(egui::Stroke::new(1.0, t.divider)))
-        .show(ui, |ui| body(app, ui));
+    egui::Frame::NONE.fill(t.chrome).stroke(egui::Stroke::new(1.0, t.divider)).show(ui, |ui| body(app, ui));
 }
 
 /// The presets list: the column left of the tool strip on desktop, a tool sheet in the compact layout.

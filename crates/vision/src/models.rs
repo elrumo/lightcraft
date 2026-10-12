@@ -52,7 +52,7 @@ pub fn mirrors(env: Option<&str>, file: Option<&Path>) -> Vec<String> {
 pub struct OcrPart {
     /// Its folder inside the OCR model folder (`det`, `rec`), where the reader loads it from.
     pub dir: &'static str,
-    pub files: &'static [FileSpec],
+    pub files: &'static [FileSpec<'static>],
     pub default_mirror: &'static str,
 }
 
@@ -130,7 +130,7 @@ pub const FACE_LICENCES: [(&str, &str); 2] = [
 ];
 
 /// One download: the files, the mirrors to try for them, and the folder they go into.
-pub type Download = (&'static [FileSpec], Vec<String>, std::path::PathBuf);
+pub type Download = (&'static [FileSpec<'static>], Vec<String>, std::path::PathBuf);
 
 /// What to download for `parts` into `dir`: per part, the files, the mirrors to try (the user's
 /// first, each keeping the files under `<base>/<folder>/<part's folder>/`; then the pinned default)

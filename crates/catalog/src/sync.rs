@@ -76,6 +76,8 @@ pub fn key_of(op: &Op) -> Option<String> {
         Op::SetAnalysis { id, .. } => p(id, "analysis"),
         Op::SetContent { id, .. } => p(id, "content"),
         Op::SetServerPath { id, .. } => p(id, "serverPath"),
+        Op::SetEmbeddedLens { id, .. } => p(id, "embeddedLens"),
+        Op::SetAsShotWb { id, .. } => p(id, "asShotWb"),
         Op::AddAlbum { album } => a(&album.id, "add"),
         Op::RemoveAlbum { id } => a(id, "remove"),
         Op::RenameAlbum { id, .. } => a(id, "name"),
@@ -83,11 +85,15 @@ pub fn key_of(op: &Op) -> Option<String> {
         Op::SetAlbumPhotos { id, .. } => a(id, "photos"),
         Op::SetAlbumCover { id, .. } => a(id, "cover"),
         Op::SetAlbumRules { id, .. } => a(id, "rules"),
+        Op::SetAlbumOrder { id, .. } => a(id, "order"),
         Op::AddStack { stack } => Some(format!("s{}.add", stack.id.0)),
         Op::RemoveStack { id } => Some(format!("s{}.remove", id.0)),
         Op::SetStack { id, .. } => Some(format!("s{}.set", id.0)),
         Op::SetLabelName { label, .. } => Some(format!("label.{label:?}")),
-        Op::SetLocal { .. }
+        Op::SetKeyword { path, .. } => Some(format!("keyword.{}", crate::keywords::clean(path).to_lowercase())),
+        // folder records are about folders on this device's disk
+        Op::SetFolderRecord { .. }
+        | Op::SetLocal { .. }
         | Op::SetHistory { .. }
         | Op::PushHistory { .. }
         | Op::SetFile { .. }
@@ -120,6 +126,8 @@ fn photo_of(op: &Op) -> Option<PhotoId> {
         | Op::SetCaptured { id, .. }
         | Op::SetAnalysis { id, .. }
         | Op::SetContent { id, .. }
+        | Op::SetEmbeddedLens { id, .. }
+        | Op::SetAsShotWb { id, .. }
         | Op::SetServerPath { id, .. } => Some(*id),
         _ => None,
     }
@@ -297,7 +305,8 @@ impl Outbox {
     }
 
     /// Queue a whole library, for a server that has none yet (the first device uploading its
-    /// library): photos, then folders before what they hold, albums, stacks and label names.
+    /// library): photos, then folders before what they hold, albums, stacks, label names and the
+    /// keyword list.
     /// Local records stay on this device.
     pub fn seed(&mut self, c: &Catalog) {
         let shared = |id: &PhotoId| c.photo(*id).is_some_and(|p| !p.local);
@@ -326,6 +335,9 @@ impl Outbox {
         }
         for (label, name) in &c.label_names {
             self.upsert(Op::SetLabelName { label: *label, name: Some(name.clone()) }, Op::SetLabelName { label: *label, name: None });
+        }
+        for k in c.listed_keywords() {
+            self.upsert(Op::SetKeyword { path: k.path.clone(), info: Some(k.info.clone()) }, Op::SetKeyword { path: k.path.clone(), info: None });
         }
     }
 
@@ -614,6 +626,8 @@ impl ServerCore {
                 next_stack: all.next_stack,
                 label_names: all.label_names.clone(),
                 browsed: all.browsed.clone(),
+                keyword_list: all.keyword_list.clone(),
+                folder_records: all.folder_records.clone(),
                 revision: 0,
             },
         };

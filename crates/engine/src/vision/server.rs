@@ -15,7 +15,7 @@ use serde_json::{Value, json};
 
 use super::{Cluster, FaceRef, FaceSpec, IndexSpec, TextSpec, with_faces, with_index, with_text};
 use crate::Session;
-use crate::sync::{Body, Done, SyncState};
+use crate::cloud_sync::{Body, Done, SyncState};
 
 /// Vectors in one upload (`records × (16 + 2 × dim)` bytes: ~6 MB for SigLIP 2).
 pub const SHARE_CHUNK: usize = 4000;
@@ -184,7 +184,7 @@ impl Session {
                 break;
             }
             for t in tasks {
-                let done = crate::sync::run(&t);
+                let done = crate::cloud_sync::run(&t);
                 self.sync_done(done);
             }
         }

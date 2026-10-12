@@ -1,221 +1,190 @@
 # LightCraft roadmap
 
-Milestones toward full Adobe Lightroom parity (cloud Lightroom first, then every Lightroom Classic module), with wall-clock
-estimates for continuous (24/7) agent-driven development with 4–6 parallel agents. Estimates are calibrated on the sibling
-projects (DrawCraft reached its first four milestones in ≈ 4½ h) and are revised as milestones land.
+**Stage: alpha** · next: beta, ~14 points and ~340–600 h away
 
-## Where we stand
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (EOS R5 Mark II CR3 verified; RAW decoding 77%) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6
 
-*Honest assessment, 2026-10-05. Agents: read this before picking work. The checklist in
-[`docs/parity.md`](docs/parity.md) counts features that **exist**; this section is about whether a photographer can
-**switch** from Lightroom. Update it when a gap below closes.*
+One-page summary of how close LightCraft is to Adobe Lightroom. Agents: read this, then pick work
+from [docs/gaps.md](docs/gaps.md). The full assessment, method and evidence are in
+[docs/target-app-parity.md](docs/target-app-parity.md).
 
-**In one line:** the checklist says **79%** (P0 98.5%, P1 95.9%, P2 39%), but measured by whether a working
-photographer could replace Lightroom without noticing, we are at roughly **60–70%**. The remaining gap is mostly
-**quality of results and camera coverage**, not missing buttons.
+## Headline numbers
 
-Caveat on the checklist: ✅ is set by whoever lands a feature, and nobody has systematically checked rows against
-Lightroom's behaviour or output. Bugs keep turning up in ✅ areas (CR2 colour-filter phase on some Canon models #85,
-duplicate Local entries #22, black GPU exports on an Intel iGPU #78).
-
-### By dimension
-
-| Dimension | Estimate | What's true today | Biggest gaps |
-|---|---:|---|---|
-| **Feature checklist** | 79% | P0 core and P1 nearly complete: import (Add / Copy / Move, templates, devices), library, grid/loupe/compare/survey, every Edit slider, curves, colour grading, masking tools, crop/Upright, heal/clone, presets/profiles, versions/history, sync, export, menus, shortcuts | P1: lens-profile database, video playback/trim |
-| **RAW coverage** (formats people shoot) | ~50% | DNG (all kinds), CR2, CR3 (lossless and both generations of C-RAW), ARW, NEF (uncompressed + Huffman lossless/lossy), uncompressed RAF/ORF, packed RW2, PEF; every container's embedded preview (incl. CR3) | **Exact CR3 C-RAW of the EOS R5 / R6 generation** (lossless CR3 and the C-RAW of the EOS R, 90D and M50 decode exactly, and R5 / R6 C-RAW approximately, all with white balance and a look fitted to the camera JPEG), compressed RAF/ORF, RW2 v4, Nikon lossy-after-split, Canon sRAW, AVIF. NEFs labelled compressed but stored uncompressed (Z 6 packed 14-bit, D850 12-bit uncompressed). Per-model verification is thin (~40 corpus files vs >1,000 models) |
-| **Colour & image quality** | ~55–65% | Pipeline is complete and fast; GPU path CPU-exact within 1/255 | **No measured camera calibration database**: ARW and NEF have a guarded per-file embedded-JPEG colour estimate (docs/camera-preview-colour.md); other non-DNG raws and rejected estimates use a neutral matrix. Colour fidelity remains incomplete. No lens-profile database. No measured fidelity against Lightroom (tone, highlights, texture/clarity, NR, sharpening are tuned by eye) |
-| **AI & computational** | ~15–20% | Assisted culling (focus, bursts), auto tone, HDR/panorama merge; subject/sky/background masks as classical heuristics; natural-language search (SigLIP 2), text-in-photo search (PP-OCRv6) and finding/naming people (YuNet + SFace), each opt-in with its own consented download, on the desktop and on the sync server (`docs/search-people.md`); Super Resolution (optional Nomos Uni SPAN 2× download, `docs/super-resolution.md`, on desktop and iPhone) | Real segmentation masks (subject, sky, people, objects, landscape, depth), AI denoise, lens blur, generative remove. Faces, text and search are verified on a handful of images, not benchmarked on a real library (accuracy of the face grouping, OCR speed of about a second a photo, no relevance cut-off). The model strategy is decided (licence-checked shortlist and runtime in `docs/ai-models.md`) except raw-domain denoise, which has no clean open model |
-| **Workflow & library** | ~85% (single machine) | Robust catalog (journal + snapshots, background compaction, crash-tested), 85k-photo libraries stay responsive, Local browsing with automatic cleanup, XMP interop, keywords, smart albums, Move import | Opening an 85k library takes 1.7–4.7 s; no tablet companion (#74, roadmap), shared albums, publish services, tethering. **Optional self-hosted sync** (docs/sync.md: `lightcraft-server`, one library shared by a user's desktop devices, previews and originals by content hash, field-level merges; photo folders already on the server read in place as library folders) is new and lightly tested (desktop, CLI, the web build and the iOS simulator; presets, sets and LUT profiles merge item by item; a library that already has photos can merge into the server's; read-only album links; opt-in writable folders): what is missing is a real iPhone over real TLS, soak time on big libraries, and anything beyond a read-only link for sharing |
-| **Classic modules** | ~35% | **Map view** (desktop, web, iOS: clustered markers, place search, offline world map; not yet run in a browser or on a device), geotagging from GPX track logs, offline reverse geocoding, soft proofing (partial), slideshow (basic) | **Book, Print, Slideshow module, Web, publish services**: ~40 tracker rows ⬜; Map: drag-to-geotag, saved locations, satellite layer |
-| **HDR & video** | 0% | | HDR edit/display/export; video play/trim/edit/export |
-| **Platform & robustness** | ~70% | macOS native; Windows/Linux builds; web via WASM; the egui app runs on the iOS simulator as a spike, with a compact touch layout (choosing photos and acting on them by touch included; iOS-style tab bar, sliders, Settings lists and alerts; light, dark or the device's appearance); its native host (Photos / Files pickers, share sheet, HEIC through ImageIO, lifecycle, memory budget) is written and type-checked but not yet run (see docs/ios.md, docs/ios-gaps.md); no-panic lints workspace-wide, `unsafe` confined to `crates/sysmem` and the iOS glue in `crates/ios-host`; failed saves are reported; GPU errors fall back to CPU | Windows installer UI unverified on Windows (PR #79); GPU path proven only on Apple + user reports; English, Simplified/Traditional Chinese and Japanese UI (see docs/localization.md); remaining technical errors; Traditional Chinese uses the Simplified Chinese font until craft-fonts has a TC face; accessibility partial; headless UI tests time out under machine load |
-
-### By kind of user
-
-| User | Readiness | What blocks them |
+| | Value | Kind |
 |---|---:|---|
-| JPEG / DNG shooter, single machine | ~85% | Fidelity polish, AI masks |
-| Nikon / Sony / older-Canon raw shooter | ~65% | Camera colour fidelity and coverage (ARW and NEF preview estimates are only a starting point) |
-| Canon CR3 / Fujifilm / Olympus shooter | ~35% | Canon lossless raws and C-RAW decode (look fitted to the camera JPEG; the R5 / R6 generation of C-RAW approximately); Fujifilm and Olympus compressed raws open as embedded previews only (CR3: the full-size JPEG with full metadata) |
-| Lightroom Classic power user | ~45% | Print, Book, Map, publish, tethering |
-| Relies on AI (masks, denoise) | ~25% | Object / Describe masks via optional SAM 3 (download not yet hosted); no AI denoise |
+| **Feature breadth** (checklist) | **81.1%** of 517 rows (P0 98.0%, P1 95.1%, P2 46.9%) | measured: [parity-checklist.md](docs/parity-checklist.md) recount |
+| **Feature breadth** (weighted by use) | **~77%** | estimated |
+| **Ready for real work** (full target) | **~61%** (56–66%) | estimated: weighted sum over the dimensions |
+| **Mainstream practitioner** | **~49%** (44–54%) | estimated |
+| **Essentials user** | **~64%** (59–69%) | estimated |
+| Remaining to **beta** | **~340–600 h** (Opus 5.5 agent hours, ~60% parallel) | estimated |
+| Remaining to **full parity** | **~1,000–1,800 h** (~70% parallel) | estimated |
 
-## Where we're going
+Each audience with its own hours (Opus 5.5 agent wall-clock hours to ~95%):
 
-Priorities, in order. Each points at tracker rows in [`docs/parity.md`](docs/parity.md) → *Top gaps*.
+| Audience | Ready | Opus 5.5 agent wall-clock hours to ~95% | Work that dominates |
+|---|---:|---:|---|
+| Full target (ready for real work) | **~61%** | **1,000–1,800 h** (~70% parallelizes) | raw colour, lens and camera data; AI models; Classic output modules; localization; plug-in ecosystem |
+| Mainstream practitioner | **~49%** | **450–840 h** (~60% parallelizes) | camera colour and render fidelity; CR3 / ORF / HE NEF; lens database; subject / sky masks; Lightroom XMP exchange; stability |
+| Essentials user | **~64%** | **160–300 h** (~50% parallelizes) | default raw look for popular cameras; launch stability; basic-slider feel; opening CR3 / HEIC files people send |
 
-1. **Camera colour calibration of our own** (LR-PROF-CAMERACOLOR, P0): fit each camera to its own embedded JPEG, use
-   matrices the files carry themselves, then chart shots. Sony ARW and Nikon NEF have the file-local fit (matrix + tone
-   curve from their own JPEG); generalise it to the other makes' raws (RW2, PEF, ORF…), then validate fidelity.
-2. **Raw formats, clean-room** (LR-IMP-FORMATS, P0): **Exact CR3 C-RAW of the R5 / R6 generation** first (lossless CR3 and first-generation C-RAW decode exactly, R5 / R6 C-RAW approximately), then compressed RAF / ORF, RW2 v4, NEF
-   lossy-after-split, sRAW. Decided 2026-10-05: write our own decoders from prose descriptions (never decoder source,
-   no LGPL dependency); compressed NEF (#86) is the template.
-3. **Verified camera coverage** (LR-IMP-CAMERA-COVERAGE, P0): a CC0 sample per model in the corpus, each decoded and
-   checked for plausible colour; fix per-model bugs (#85).
-4. **Render fidelity suite** (LR-BEHAV-RENDER-FIDELITY, P1): measure our output against Lightroom on the same CC0 raws
-   (references stay in the local `plan/`), then tune against the numbers.
-5. **Lens profiles of our own** (LR-EDIT-OPTICS-PROFILE, P1).
-6. **AI models** (strategy in `docs/ai-models.md`; every model is listed, downloaded and deleted in Settings → AI Models): permissively
-   licensed, optional, downloaded on consent, run in pure Rust. Object / Describe masks run Meta's SAM 3 (non-OSI SAM License;
-   CDN mirrors still to be set up, docs/ai-masks.md); **Super Resolution** runs Nomos Uni SPAN 2× (docs/super-resolution.md);
-   natural-language search, text in photos and finding / naming people (`docs/search-people.md`) are done end to end, each opt-in;
-   what's missing for those is measurement on a real library (grouping accuracy, OCR speed and recall, a relevance cut-off) and a
-   device-side model on iOS. Next: depth (Depth Anything V2 Small: Depth Range, Lens Blur), AI denoise (SCUNet; raw-domain denoise
-   needs a maintainer decision), Subject / Sky / People masks.
-7. **Then:** HDR (Q), the Classic output modules (Print first, then Book, Slideshow; the Map view exists, see docs/map.md), video (R), localisation
-   and accessibility.
-8. **Self-hosted sync, next steps** (LR-CLOUD-SYNC, P2, opt-in; local-first stays the default): the limits list in
-   `docs/sync.md` is closed — a size budget for downloaded originals, resumable uploads, a log that keeps its tail
-   (devices a little behind don't reload), a hardened HTTP layer, CORS for a web build on another site, presets / sets /
-   LUT profiles that follow the user, merging a library that already has photos, read-only album links, XMP sidecars
-   written back to opt-in writable folders and uploads filed into an imports folder. What is left is verification on
-   real hardware (sync on a physical iPhone and over real TLS from iOS; the new pieces against a real NAS and a
-   long-lived library) and sharing that is more than a read-only link (several people adding to an album).
+The gap between breadth and readiness is quality and coverage, not missing buttons: camera colour is
+estimated rather than measured, CR3 decodes on four verified Canon bodies, compressed ORF and HE NEF
+open as previews, rendering is tuned by eye, AI masks are heuristics, there is no lens database, and
+tests run in CI on FreeBSD only. **Why alpha:** core workflows run end to end, but readiness is below
+the ~75% beta bar (it is above the ~40% alpha bar) and Lightroom's main inputs, raw files, still have blocking gaps (Canon, ~30% of
+raw users, decodes CR3 on four verified bodies). It passes the alpha gate: all six core workflows
+(import, cull, develop, save and reopen, batch looks, export) work end to end on macOS
+([docs/roadmap.md](docs/roadmap.md#alpha-gate)). The three readiness numbers and their weights and discounts are in
+[target-app-parity.md](docs/target-app-parity.md#ready-for-real-work-mainstream-practitioner-and-essentials-user).
+Hours are calibrated on this repo's PR history; see
+[target-app-parity.md](docs/target-app-parity.md#how-hours-are-calibrated).
 
-Already closed in the week of 2026-10-03: compressed NEF (#10), Move import (#29), per-library smart-preview folder,
-Local roots / cleanup, grid and catalog performance at 85k photos (#35, #37), failed-save reporting, GPU export
-hardening (#78), copyright metadata (#51), GPX geotagging (#60), import tag help and folder templates (#31, #32).
+## By dimension
 
-## Milestones
+| Dimension | Ready | Breadth | Remaining | Doc |
+|---|---:|---:|---:|---|
+| Features | ~61% | ~77% (checklist 81.1%) | 600–1,100 h | [target-app-parity](docs/target-app-parity.md#features) |
+| ↳ RAW cameras, colour, lens profiles | ~56% | 81% of 1,446 Adobe models decode, 16% verified | 255–480 h | [raw-parity](docs/raw-parity.md) |
+| UI/UX fidelity | ~70% | ~85% | 40–70 h | [ui-parity](docs/ui-parity.md) |
+| File formats (non-raw) | ~70% | ~85% | 30–55 h | [file-format-parity](docs/file-format-parity.md) |
+| Hardware | ~40% | ~50% | 40–80 h | [hardware-parity](docs/hardware-parity.md) |
+| Localization | ~52% of the 12 key languages | 7 of 12 present | 130–210 h (+145–255 h new scripts) | [localization-parity](docs/localization-parity.md) |
+| Performance | ~70% | ~80% | 30–50 h | [target-app-parity](docs/target-app-parity.md#by-dimension) |
+| Stability | ~60% | — | 30–60 h | [target-app-parity](docs/target-app-parity.md#by-dimension) |
+| Platforms | ~60% | macOS, Windows, Linux, FreeBSD, web | 25–45 h | [target-app-parity](docs/target-app-parity.md#by-dimension) |
+| Ecosystem / plug-ins | ~15% | ~25% | 40–80 h | [target-app-parity](docs/target-app-parity.md#by-dimension) |
+| AI features | ~20% | ~30% | 120–220 h (overlaps features) | [target-app-parity](docs/target-app-parity.md#ai) |
 
-**Status legend:** ✅ done · 🚧 in progress · ⬜ not started
+## Features
 
-| # | Milestone | Scope (summary) | Estimate (h) | Status |
-|---|---|---|---|---|
-| M0 | Skeleton + visual shell | workspace, xtask CI + layering, geom/color/raster, develop model, pipeline v0, catalog v0, engine commands, Lightroom-look UI (grid, loupe, filmstrip, Edit panel), control channel, MCP, web build | 3–5 | ✅ |
-| M1 | Library core | import (JPEG/PNG/TIFF/WebP), EXIF/XMP, persistent catalog (op log + snapshots), albums, ratings/flags/labels, filter/search/sort, thumbnail cache, 100k-photo grid | 6–10 | ✅ (100k-photo grid scale test pending) |
-| M2 | Pipeline v1 (quality) | WB temp/tint, profiles, local tone mapping (highlights/shadows), curves, HSL, point colour, colour grading, texture/clarity/dehaze, vignette, grain, B&W, auto tone/WB, histogram, before/after | 10–15 | ✅ (look tuning vs our references ongoing) |
-| M3 | RAW I | TIFF/DNG (LJ92, deflate, tiles, opcodes), demosaic (AHD/PPG/bilinear), highlight recovery, DNG colour model, CR2, NEF, ARW, embedded previews | 10–15 | 🚧 (DNG, CR2, ARW, NEF uncompressed + Huffman lossless/lossy, embedded previews ✅; NEF lossy-after-split ⬜) |
-| M4 | Crop, geometry, optics | crop tool + overlays, straighten, Upright (auto/level/vertical/full/guided), manual transforms, CA, defringe, manual lens corrections | 6–10 | ✅ |
-| M5 | Performance | source pyramids, wgpu compute pipeline (CPU oracle), draft/full renders, prefetch, budgets (16 ms slider updates on 24 MP) | 10–15 | 🚧 (stage cache, source pyramid, wgpu pipeline, prefetch, memory budget ✅; colour NR at half resolution, GPU histogram ⬜) |
-| M6 | Masking | brush, linear/radial gradients, colour/luminance/depth range, add/subtract/intersect/invert, all local adjustments, masks panel | 8–12 | 🚧 (brush/linear/radial/colour/luminance range, add/subtract/intersect, masks panel ✅; depth range, AI masks ⬜) |
-| M7 | Detail | sharpening + masking preview, luminance/colour NR, Denoise, Raw Details, Super Resolution | 6–10 | 🚧 (sharpening, luminance/colour NR ✅; AI Denoise, Raw Details, Super Resolution ⬜) |
-| M8 | Heal / Remove | content-aware remove (PatchMatch), heal, clone, brush spots, visualize spots, red/pet eye | 6–10 | ✅ (content-aware remove by patch synthesis, heal, clone, auto source, visualize spots, red/pet eye) |
-| M9 | Presets, profiles, versions, sync | preset browser + amount, create/import presets, profile browser, versions, history, copy/paste/sync settings | 5–8 | ✅ |
-| M10 | Export & share | export dialog (JPEG/PNG/TIFF/DNG/AVIF/JXL/original), sizing, sharpening, metadata, watermark, naming, batch jobs, XMP sidecars, HDR export | 6–10 | 🚧 (all formats incl. DNG/original, sizing, presets, background jobs ✅; JXL encode, HDR export ⬜) |
-| M11 | RAW II | CR3, RAF (X-Trans), ORF, RW2, PEF, SRW, 3FR, IIQ + long tail; camera calibration DB; HEIC/AVIF/JXL import | 20–35 | 🚧 (RAF uncompressed, RW2 packed, PEF, ORF uncompressed ✅; **camera colour calibration** 🚧 (guarded ARW and NEF preview fitting; measured database still missing), CR3 lossless ✅, C-RAW ✅ (R5 / R6 generation 🟡 approximate), compressed ORF/RAF ⬜) |
-| M12 | AI & smart features | subject/sky/background/people/object masks, semantic search, faces/People (permissively licensed models, pure-Rust inference) | 20–40 | 🟡 (semantic search, text in photos, people: done; masks open) |
-| M13 | Merge | HDR merge (deghost), panorama (projections, boundary warp, fill edges), HDR panorama | 10–15 | ✅ |
-| M14 | Video | import/playback/trim via FilmCraft crates, global edits + presets on video, video export | 6–10 | ⬜ |
-| M15 | Classic modules | Map, Book, Slideshow, Print, Web; smart collections, stacks, virtual copies, publish services, tethering | 25–40 | 🚧 (smart albums, stacks, virtual copies, compare/survey ✅; Map/Book/Slideshow/Print/Web ⬜) |
-| M16 | 1.0 polish | preferences, shortcut editor, accessibility, localization, packaging (dmg/msi/AppImage/web), hardening | 10–20 | 🚧 (settings, keyboard shortcuts sheet, packaging basics ✅; English/Chinese (Simplified, Traditional)/Japanese localisation 🟡; accessibility and further locales ⬜) |
-
-## Parity estimate (feature count updated 2026-10-05; effort estimate from 2026-10-02)
-
-**By feature count** — from `docs/parity.md` (one row per Lightroom feature, menu item and shortcut; `cargo xtask
-parity` prints this line on every run, so it stays current):
-
-| Scope | Weighted completion | Rows | 2026-10-02 |
+| Area | Ready | Breadth | Remaining |
 |---|---:|---:|---:|
-| P0 (core) | **98.5%** | 200 | 98.7% |
-| P1 (important parity) | **95.9%** | 147 | 94.4% |
-| P2 (later / AI / niche, incl. Classic modules) | **39.2%** | 158 | 29.4% |
-| **All in-scope rows** | **79.2%** | 505 | 75.6% |
+| Import and library | 80% | 90% | 25–45 h |
+| RAW decoding and camera coverage | 77% | 81% | 120–220 h |
+| Colour, camera profiles, render fidelity | 35% | 65% | 80–150 h |
+| Global develop adjustments | 70% | 93% | 30–60 h |
+| Optics, lens profiles, crop and geometry | 50% | 80% | 40–80 h |
+| Masking | 45% | 67% | 60–110 h |
+| Remove, heal, Enhance | 30% | 45% | 70–130 h |
+| Presets, profiles, versions, sync | 85% | 95% | 8–15 h |
+| Export | 75% | 89% | 15–30 h |
+| Merge and HDR | 60% | 85% | 20–35 h |
+| Views, compare, zoom, culling | 70% | 90% | 15–30 h |
+| Classic output modules (Map, Book, Slideshow, Print, publish, tethering) | 10% | 15% | 90–150 h |
+| Video | 0% | 0% | 25–45 h |
 
-The 2026-10-05 count includes three new 🟡 rows that make quality gaps visible (camera colour calibration, verified
-camera coverage, render fidelity), which is why P0 dipped slightly.
+Weights and evidence: [target-app-parity.md](docs/target-app-parity.md#features).
 
-✅ counts 1, 🟡 ½, ⬜ 0; out-of-scope rows (cloud sharing, Adobe accounts…) are left out.
+## Languages
 
-**By remaining effort** — rows are not equal: a shortcut and the whole Book module are one row each, and what is
-left is the heavy part (AI, video, Classic output modules, undocumented raw codecs). Remaining work in **Opus agent-hours**
-(one agent working continuously; calibrated on this project — a single lead agent closed ≈ 45 tracker rows of
-UI/feature work in ≈ 5 h on 2026-10-01, and ≈ 60 more (preset import incl. `.lrtemplate` / DNG / zip and masks, smart-album
-rule editor, auto sync, keyword and label sets, import options and DNG conversion, smart previews, external-editor round
-trip, slideshow, auto import…) in ≈ 12 h on 2026-10-02; four to six parallel agents built M0–M13 in ≈ 25 active hours):
+Measured from `crates/ui-egui/locales` (share of 2,304 catalog messages translated); none is `full`
+while lower-layer errors stay English. Detail: [localization-parity.md](docs/localization-parity.md).
 
-| Work package | Tracker rows | Agent-hours | Risk |
+| Language | Code | Translated | Status |
 |---|---|---:|---|
-| Remaining P0/P1 UI and library features (folder rename/move, keyword painter, people view…) | ≈ 8 | 5–10 | low |
-| Raw codecs: exact CR3 C-RAW of the R5 / R6 generation (the first generation and lossless CRX decode exactly, this one approximately), compressed ORF / RAF, NEF lossy-after-split, RW2 v4, AVIF decode (JPEG XL DNG and HEIC decode now; JPEG XL DNG still to be checked on Adobe files) | LR-IMP-FORMATS | 40–80 | **high** — clean-room black-box analysis, no permissive specs |
-| Lens-profile database of our own (calibration targets, fitting, data) | LR-EDIT-OPTICS-PROFILE | 15–30 | data collection |
-| Video: playback, trim, edits, export (pure-Rust decode, ideally shared with FilmCraft) | R. Video | 20–40 | medium |
-| AI: subject / sky / background / people / object masks, object-aware remove, AI denoise, super resolution, lens blur, people & faces, natural-language search, culling | ≈ 30 | 80–150 | **high** — permissively licensed weights, pure-Rust inference, maybe training |
-| HDR editing, display, visualisation and export | Q. HDR, LR-EXP-HDR | 15–25 | medium |
-| Classic modules: Map, Book, Slideshow module, Print, publish services, tethering, soft proofing | ≈ 50 | 60–100 | medium (large, well-understood) |
-| Smaller P2 items: Enhance dialog, export to Photos, help / what's new, accessibility, localisation, sidecar variants | ≈ 15 | 12–25 | low |
-| Look tuning, performance budgets (colour NR at half resolution on CPU + GPU, 100k-photo library), packaging, hardening | — | 25–45 | medium |
-| **Total remaining** | | **≈ 270–505** | |
+| English | en | 100% | full (source) |
+| Simplified Chinese | zh-hans | 87% | partial |
+| Spanish | es | 86% | partial |
+| Hindi | hi | 0% | none (no Devanagari shaping) |
+| Arabic | ar | 0% | none (no RTL / shaping) |
+| French | fr | 88% | partial |
+| Portuguese (Brazil) | pt-br | 85% | partial |
+| Indonesian | id | 0% | none |
+| Japanese | ja | 87% | partial |
+| German | de | 91% | partial |
+| Korean | ko | 0% | none (no Hangul face) |
+| Vietnamese | vi | 0% | none |
 
-Spent so far ≈ 105–145 agent-hours, so **by effort the project is ≈ 20–35% of the way to complete Lightroom + Classic
-parity**, and ≈ 45–60% of the way for cloud-Lightroom parity without AI and the Classic modules (remaining ≈ 130–255 h,
-most of it the raw codecs, lens data, video and HDR).
+Also shipped: Traditional Chinese (87%), Russian (74%), Ukrainian (99%).
 
-**Wall clock:** ≈ 270–505 h for one agent working alone; with 4–6 parallel agents (≈ 70% parallel efficiency, merges and
-CI under load cost the rest) **≈ 65–125 h of continuous work**. The AI package and the raw codecs carry most of the
-uncertainty: they can finish faster if suitable permissive models / documentation turn up, or stall on licensing.
+## Upcoming
 
-## Totals
+Ranked toward beta; detail in [docs/roadmap.md](docs/roadmap.md), gaps in [docs/gaps.md](docs/gaps.md).
 
-Remaining from 2026-10-02 evening (see *Parity estimate* above for the breakdown):
+1. Camera colour of our own: measured calibration for the popular models (50–90 h)
+2. CR3 for every Canon body (25–45 h)
+3. Render-fidelity suite against Lightroom, then tuning (30–60 h)
+4. Full-resolution zoom (8–15 h)
+5. AI masks: Subject / Sky / People (40–70 h + model decision)
+6. Compressed ORF and HE NEF (28–55 h)
+7. Lens profile database of our own (40–80 h)
+8. Tests in CI on macOS, Windows and Linux (6–12 h)
+9. Per-model raw verification (20–35 h)
 
-| Target | Remaining agent-hours | Wall clock, 4–6 parallel agents |
-|---|---:|---:|
-| Cloud-Lightroom parity without AI or Classic modules | ≈ 130–255 h | ≈ 35–65 h |
-| Full parity incl. AI, video and the Classic modules | ≈ 270–505 h | ≈ 65–125 h |
+## Fork additions
 
-The milestone estimates in the table above were made before work started and are kept for calibration (M0–M13 took
-≈ 25 active hours with parallel agents against an estimate of ≈ 110–170 h for those milestones).
+This fork adds features upstream doesn't have; they are outside the numbers above, and their rows are in
+[parity-checklist.md](docs/parity-checklist.md).
 
-## Risks that coding hours alone don't retire
+| Feature | State | Missing |
+|---|---|---|
+| **Optional self-hosted sync** (`lightcraft-server`, [sync.md](docs/sync.md); local-first stays the default) | One library shared by a user's devices (desktop, CLI, web build, iOS app): previews and originals by content hash, field-level merges, photo folders already on the server read in place; presets, sets and LUT profiles follow the user; a library that already has photos can merge into the server's; read-only album links; opt-in writable folders (XMP sidecars written back, uploads filed into an imports folder); a size budget for downloaded originals, resumable uploads, small previews downloaded as the grid shows them | Verification on real hardware (a physical iPhone over real TLS, a real NAS, a long-lived library); sharing beyond a read-only link |
+| **iPhone / iPad app** (`apps/lightcraft-ios`, `crates/ios-host`; [ios.md](docs/ios.md)) | The egui app with a compact touch layout: phone grid, touch sliders, crop, Remove and Masking screens, an iOS 26 glass look, export with Save to Photos; native host (Photos / Files pickers, share sheet, HEIC through ImageIO, lifecycle, memory budget). Checked on the simulator, partly on an iPhone | Most of the host on a device; Lightroom-mobile features ([ios-gaps.md](docs/ios-gaps.md)) |
+| **Map view and place search** (`crates/geo`, [map.md](docs/map.md)) | Desktop, web and iOS: clustered thumbnail markers, an offline world map plus OpenStreetMap tiles, place search (`madrid`, `photos in lisbon in june 2024`) and the place in Info, offline from GeoNames | Not yet run in a browser or on a device; drag-to-geotag, saved locations, a satellite layer |
+| **Search by description, text in photos, People** (`crates/vision`, [search-people.md](docs/search-people.md)) | SigLIP 2, PP-OCRv6 and YuNet + SFace, each an opt-in consented download, on the desktop and on the sync server | Measured on a handful of images only (face grouping accuracy, OCR at about a second a photo, no relevance cut-off); a device-side model on iOS |
+| **Super Resolution** (`crates/enhance`, [super-resolution.md](docs/super-resolution.md)) | Nomos Uni SPAN 2× (optional download) on desktop and iPhone; every optional model listed, downloaded and deleted in Settings → AI Models ([ai-models.md](docs/ai-models.md)) | Enlarges the rendered photo, not the raw data; no preview in the dialog |
+| **Content-aware Remove by patch synthesis** (M8.4) and **panorama Fill Edges** (M13) | Remove fills from synthesized texture seeded by the spot's source; a stitched panorama's empty corners are filled with continued texture | Rows or tiles in strong perspective can come out at the wrong angle |
 
-- **AI features** (subject/sky/people masks, generative remove) need model weights with licences we can ship; classical
-  fallbacks first. No permissively licensed sky-segmentation or raw-denoise model was found — we may need to train our own.
-- **Camera colour and lens data** is a data problem: we never use Adobe's matrices, DCPs or LCPs. DNG-embedded data first,
-  then our own calibration; long-tail camera/lens coverage grows over time.
-- **Raw-format sources:** decided 2026-10-05: decoders are written from *prose* format descriptions (even ones
-  published alongside GPL code); decoder source is never read. Still open: freedom-to-operate review for local
-  Laplacian filters, PatchMatch and HEVC (HEIC).
-- **Look parity** with Adobe's default rendering is tuned by eye today; the planned fidelity suite (LR-BEHAV-RENDER-FIDELITY)
-  turns it into measured comparisons against local-only Lightroom references.
+Next for the fork: sync and the iOS app verified on real hardware; then depth (Depth Range, Lens Blur) and sharing
+beyond a read-only link.
 
-## Raw format coverage and known gaps
+## Progress log
 
-Decoded (CC0 corpus from raw.pixls.us, `cargo xtask corpus --download`, `crates/raw/tests/corpus.rs`): DNG (uncompressed,
-LJ92, lossy JPEG / Smart Previews, Deflate, float, linear), CR2, ARW (uncompressed, ARW2, LJ92; as-shot white balance and black level of pre-2017 bodies from the enciphered
-maker-note `Tag2010` and the encrypted `SR2SubIFD`, both recovered by black-box analysis, `crates/raw/src/vendor/arw.rs`), NEF/NRW uncompressed and Huffman-compressed (lossless, lossy type 1/2, 12/14-bit), RAF uncompressed (Bayer and
-X-Trans), RW2 packed 12/14-bit, PEF (uncompressed and Huffman), ORF uncompressed (16-bit and 12-bit packed). Every
-supported container also yields its embedded JPEG preview (CR3 too), and the engine shows that preview for raw variants
-it can't decode yet.
+- 2026-10-11: Canon EOS R5 Mark II C-RAW decodes from sensor data (57% of its files opened as a
+  preview): the CRX QP map's first-symbol literal and limited-length escape; four CC0 R5 Mark II files
+  pinned, the QP maps of 33,665 private C-RAW files decode exactly ([cr3.md](docs/cr3.md)). 235 models
+  verified; RAW decoding 76% → 77%; headline numbers unchanged.
+- **2026-10-10 (UI docking):** Library, Tools, and Presets panels can be regrouped, split, floated within the app window, closed, and reopened. Tools keeps the current Edit/Crop/Masking mode; the photo view and filmstrip stay together. Panel moves and reset are available as UI commands, and saved UI preferences retain arrangements. Widget state styling uses the shared `craft-ui` theme helper, retaining the dark palette, typography, spacing and per-state borders. No readiness percentage change.
+- 2026-10-10 (RAW): RAW measured model by model against Adobe's 1,446-model list (234 verified, 943
+  unverified, 233 preview-only, 36 unsupported; ~84% of photographers' cameras decode, ~40% on a
+  verified body). Full ~61%, mainstream ~49%, essentials ~64%; beta ~14 points away.
+- 2026-10-10 (final): full ready is a weighted sum over the dimensions (~59%; method aligned with
+  the standard); mainstream practitioner ~51% (450–840 h), essentials user ~63% (160–300 h);
+  alpha gate passes.
+- 2026-10-10: full re-measure for the progress-docs standard: stage alpha, ready ~55%, checklist
+  81.1%; new docs (target-app-parity, gaps, roadmap, architecture, raw / file-format / hardware / UI
+  / localization parity); `docs/parity.md` renamed `docs/parity-checklist.md`. Landed today: Nikon
+  lossy-after-split NEF (#633), ORF 12.8 bpp (#651), HDR gain map JPEG / PQ AVIF / float TIFF export
+  (#646), Lightroom-like Auto (#628), activity stack.
+- 2026-10-09: Sony ILCE-7CR camera colour: bundled profile from 125 photos; on 26 withheld photos mean
+  ΔE vs the camera JPEG 4.07 → 3.29. HEIC in release builds (#609), Samsung uncompressed SRW,
+  contact-sheet PDF export, Ukrainian and French UI, release v0.5.0.
+- 2026-10-08: independent Rust CR3 lossless and version 0x100/0x200 C-RAW decoding, six exact
+  full-sensor regressions on M50 / R100 / R8; guarded CR3 camera-JPEG colour fitting
+  ([cr3.md](docs/cr3.md)).
+- 2026-10-08: Fujifilm lossless / lossy compressed RAF: pure-Rust striped decoder, full sensor arrays
+  verified on 17 CC0 and 7 supplied files (13 bodies). Fujifilm camera colour: bundled X-H2S / X-T4
+  profiles from 201 / 545 photos; on 150 withheld files mean ΔE X-H2S 1.70 → 1.62, X-T4 2.43 → 2.34.
+  AI RAW denoise (#384), Lightroom catalog import, German, Spanish and Russian UI.
+- 2026-10-07: Panasonic RW2 / Leica RWL / Panasonic RAW decode in every raw format, established on
+  178 CC0 files from 118 bodies; RW2 file-local camera look (140 of 174 files). Faces: recognition in
+  pure Rust and People view.
+- 2026-10-03 – 10-05: community PRs (#42–#51, #60) and 25+ issues: compressed NEF, Move import,
+  folder templates, Local roots and cleanup, 85k-photo grid and catalog performance, background
+  compaction, failed-save errors, GPU export hardening. Added the honest *Where we stand* assessment
+  and tracker rows for camera colour, camera coverage and render fidelity.
+- 2026-10-02: parity estimate added (`cargo xtask parity` prints weighted completion); milestones
+  refreshed.
+- 2026-10-01: RAW II formats: RAF (uncompressed Bayer + X-Trans), RW2 (packed), PEF (incl. Huffman),
+  ORF (uncompressed); embedded previews for every container incl. CR3; raw corpus test with 37 CC0
+  samples.
+- 2026-09-30 (later): app running with the full Lightroom-style UI; pipeline v0; DNG / CR2 / ARW;
+  README showcase. ≈ 8 h elapsed.
+- 2026-09-30: roadmap created; M0 in progress; research docs (Lightroom reference, Rust imaging
+  ecosystem) complete.
 
-Not decoded yet — preview only (no permissively licensed description; black-box analysis incomplete):
-- **Nikon "lossy after split" NEF** (non-zero split row in maker note `0x0096`, e.g. some D3400/D5000/D5200/D5500/D5600
-  files): rows above the split decode with the regular lossy table; from the split row on a different code is used
-  that our black-box analysis has not recovered yet (none of the four regular tables fits, also not with byte
-  alignment or reset predictors at the split row). The other Nikon Huffman variants are decoded (`crates/raw/src/vendor/nefc.rs` documents the analysis).
-- **Panasonic RW2 raw format 4** (quantised): the block layout is known (0x4000-byte chunks rotated by 0x1ff8; 128-bit
-  blocks of two 12-bit seeds plus four groups of a 2-bit scale and three 8-bit codes; scales 0/1 are ×1/×2 differences
-  from the same-colour pixel two to the left), the reconstruction rule for scales 2/3 is not established.
-- **Olympus compressed ORF**, **Fujifilm compressed RAF**, **Exact Canon CR3 C-RAW of the R5 / R6 generation** (M11.1e: the quantiser class map), **Canon sRAW/mRAW**, lossy DNG.
+## Revision history
 
-**Camera colour matrices:** ARW files can use guarded, separate chromaticity and tone estimates from their own embedded JPEG (see `docs/camera-preview-colour.md`); this is a per-file camera-look estimate with relative WB, not measured calibration or absolute-Kelvin WB. Other non-DNG raws and rejected fits use the documented neutral fallback (camera RGB ≈ linear sRGB, flagged
-`matrix_is_fallback`) with the file's as-shot white-balance multipliers. Clean sources to evaluate next: manufacturer
-matrices stored in the files themselves (Olympus ImageProcessing `ColorMatrix`, Pentax/Panasonic equivalents) and our
-own chart-based calibration (M11.4). Adobe matrices are never used.
-
-## Log
-- 2026-09-30: roadmap created; M0 in progress; research docs (Lightroom reference, Rust imaging ecosystem) complete.
-- 2026-09-30 (later): app running with the full Lightroom-style UI; pipeline v0; DNG/CR2/ARW; README showcase. ≈ 8 h elapsed.
-- 2026-10-02: parity estimate added (xtask parity prints weighted completion); milestone statuses refreshed.
-- 2026-10-01: RAW II formats: RAF (uncompressed Bayer + X-Trans), RW2 (packed), PEF (incl. Huffman), ORF (uncompressed); embedded previews for every container incl. CR3; raw corpus test with 37 CC0 samples.
-- 2026-10-03 – 10-05: community PRs (#42–#51, #60) and 25+ issues landed: compressed NEF, Move import, folder templates,
-  Local roots and cleanup, 85k-photo grid and catalog performance, background compaction, failed-save errors, GPU
-  export hardening, clippy 1.99. Added the honest *Where we stand* assessment and *Where we're going* priorities; added
-  tracker rows for camera colour, camera coverage and render fidelity.
-- 2026-10-08: Canon CR3 lossless (CRX, no wavelets) decodes in pure Rust, bit-exact against a reference decoder's output on
-  EOS R / R5 / R6 / 90D files (M11.1b): the entropy coder is JPEG-LS-style, found by black-box analysis of the bitstreams.
-  The camera's white balance and a look fitted to its JPEG follow (M11.1c); the lossy C-RAW mode follows (M11.1d: the first generation exactly, the R5 / R6 generation approximately); making the second generation exact (M11.1e) is next.
-
-## Chinese and Japanese interfaces, and text watermarks
-
-English, Simplified Chinese, Traditional Chinese (Taiwan) and Japanese interface languages are persisted in UI state, and the
-language table (`crates/ui-egui/src/i18n.rs`) drives the menus, settings and fonts, so another
-language is a table entry plus two catalogs (docs/localization.md). Core menus and panels are
-translated; untranslated text retains English. CJK glyphs (Chinese: Noto Sans CJK SC; Japanese UI:
-BIZ UDPGothic; watermarks: BIZ UDMincho) come from storytold/craft-fonts, embedded by builds made
-with the optional `CRAFT_FONTS_DIR` input (all releases), so no system fonts are needed. Text watermarks now accept
-`vertical: true` in export JSON/presets and expose an orientation selector. Japanese
-characters stay upright in top-to-bottom columns, with newlines starting columns to the
-left. This is basic lettering, without tate-chu-yoko, ruby, kinsoku, or general vertical
-OpenType shaping. The same coverage renderer serves 8/16/32-bit exports.
+| Date | Change | Summary |
+|---|---|---|
+| 2026-10-12 | minor | Upstream merged into this fork; *Fork additions* lists the fork-only features (sync, iOS app, map, search / People, Super Resolution, patch-synthesis Remove); numbers unchanged |
+| 2026-10-11 | minor | EOS R5 Mark II CR3 verified: CR3 on four verified bodies, RAW decoding 76% → 77%; headline numbers unchanged |
+| 2026-10-10 | minor | RAW measured model by model; RAW decode and colour as explicit rows: full 59% → 61%, mainstream 51% → 49%, essentials 63% → 64%; beta ~14 points |
+| 2026-10-10 | minor | Full ready restored to the additive weighted sum (~59%; method aligned with the standard, no new evidence); hours per audience; beta ~16 points away |
+| 2026-10-10 | minor | Mainstream practitioner and essentials user numbers; full ready 55% → 46% (method written down); beta 340–600 h |
+| 2026-10-10 | minor | Alpha gate added (core-workflow check): passes, stays alpha |
+| 2026-10-10 | major | Restructured to the progress-docs standard; re-measured; *Where we stand*, *Parity estimate* and *Totals* moved to docs/target-app-parity.md, milestones and risks to docs/roadmap.md, raw coverage to docs/raw-parity.md, catalog migration to docs/file-format-parity.md, CJK notes to docs/localization-parity.md |
+| 2026-10-08 | minor | *Where we stand* by dimension and by kind of user |
+| 2026-10-02 | major | Parity estimate and effort table |
+| 2026-09-30 | major | Created |

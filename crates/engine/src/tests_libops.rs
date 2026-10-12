@@ -273,7 +273,7 @@ fn import_review_preview_and_options() {
     let mut s = Session::new().with_fs();
     s.open_library(&lib, false).unwrap();
     // c.png is already in the library
-    s.execute("library.import", &json!({"paths": [src.join("sub/c.png").to_string_lossy()]})).unwrap();
+    s.execute("library.import", &json!({"paths": [src.join("sub").join("c.png").to_string_lossy()]})).unwrap();
     let n0 = s.catalog.len();
     let undo0 = s.undo.len();
     let pv = s.execute("library.importPreview", &json!({"paths": [src.to_string_lossy()]})).unwrap();
@@ -355,9 +355,9 @@ fn label_sets_and_xmp_label_names() {
     p.label = Some(ColorLabel::Green);
     let x = crate::sidecar::sidecar_packet(&p, &s.catalog);
     assert!(x.contains("Approved"), "{x}");
-    let sc = crate::sidecar::parse_sidecar(&x, false).unwrap().resolve_label(&s.catalog);
+    let sc = crate::sidecar::parse_sidecar(&x, crate::crs::Target::Rendered).unwrap().resolve_label(&s.catalog);
     assert_eq!(sc.label, Some(Some(ColorLabel::Green)));
-    let plain = crate::sidecar::parse_sidecar(&x.replace("Approved", "Blue"), false).unwrap().resolve_label(&s.catalog);
+    let plain = crate::sidecar::parse_sidecar(&x.replace("Approved", "Blue"), crate::crs::Target::Rendered).unwrap().resolve_label(&s.catalog);
     assert_eq!(plain.label, Some(Some(ColorLabel::Blue)), "colour names still work");
     s.execute("label.deleteSet", &json!({"name": "Studio"})).unwrap();
     assert!(s.execute("label.deleteSet", &json!({"name": "Review"})).is_err(), "built-ins stay");
@@ -465,4 +465,127 @@ fn tracklog_auto_tag() {
     assert!(s.execute("photo.autoTagTracklog", &json!({"gpx": "<gpx><trk><trkseg/></trk></gpx>", "ids": [ids[0]]})).is_err());
     assert!(s.execute("photo.autoTagTracklog", &json!({"gpx": GPX, "ids": [ids[0]], "offset": "noon"})).is_err());
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ---- random sort: Given the library, When the user picks Random, Then the grid is a stable shuffle
+
+#[test]
+fn random_sort_is_stable_until_reshuffled() {
+    use lightcraft_catalog::SortKey;
+    let mut s = Session::with_demo();
+    let dated = s.visible_cloned();
+    s.execute("library.sort", &json!({"key": "random", "seed": 11})).unwrap();
+    assert_eq!((s.sort.key, s.sort.seed), (SortKey::Random, 11));
+    let a = s.visible_cloned();
+    assert_ne!(a, dated);
+    let mut sorted = a.clone();
+    sorted.sort();
+    let mut all = dated.clone();
+    all.sort();
+    assert_eq!(sorted, all, "a permutation of the same photos");
+    // an unrelated catalog change must not move anything
+    let first = a[0];
+    s.execute("photo.rate", &json!({"rating": 4, "ids": [first.0]})).unwrap();
+    assert_eq!(s.visible_cloned(), a, "same seed, same grid after an edit");
+    assert_eq!(s.execute("library.groups", &json!({})).unwrap(), json!([]), "no date headers for a shuffle");
+    // Reshuffle picks a new seed (and works even with a frozen clock)
+    s.execute("library.shuffle", &json!({})).unwrap();
+    let seed1 = s.sort.seed;
+    assert_eq!(s.sort.key, SortKey::Random);
+    assert_ne!(seed1, 11);
+    assert_ne!(s.visible_cloned(), a);
+    s.execute("library.shuffle", &json!({"seed": null})).unwrap();
+    assert_ne!(s.sort.seed, seed1, "every reshuffle is new, and a null seed means none given");
+    assert!(s.sort.seed < 1 << 53, "seeds survive a round trip through a JSON double");
+    // an explicit seed is reproducible
+    s.execute("library.shuffle", &json!({"seed": 11})).unwrap();
+    assert_eq!(s.visible_cloned(), a);
+}
+
+#[test]
+fn random_sort_rejects_bad_params() {
+    let mut s = Session::with_demo();
+    let before = s.sort;
+    assert!(s.execute("library.sort", &json!({"seed": "x"})).is_err());
+    assert!(s.execute("library.sort", &json!({"seed": -1})).is_err());
+    assert!(s.execute("library.shuffle", &json!({"seed": 1.5})).is_err());
+    assert!(s.execute("library.sort", &json!({"seed": 1u64 << 53})).is_err(), "beyond what a JSON double holds exactly");
+    assert!(s.execute("library.sort", &json!({"seed": (1u64 << 53) - 1})).is_ok());
+    assert_eq!(s.sort.key, before.key, "a rejected command leaves the sort alone");
+}
+
+#[test]
+fn random_sort_applies_to_albums_too() {
+    let mut s = Session::with_demo();
+    s.execute("library.sort", &json!({"key": "random", "seed": 5})).unwrap();
+    let all = s.visible_cloned();
+    // manual order shows newest-first (descending), i.e. the reverse of this insertion order, so it
+    // differs from the shuffle unless Random really overrides it
+    let ids: Vec<u64> = all.iter().take(12).map(|i| i.0).collect();
+    let album = s.execute("album.create", &json!({"name": "Shuffled"})).unwrap()["id"].as_u64().unwrap();
+    s.execute("album.addPhotos", &json!({"id": album, "ids": ids})).unwrap();
+    s.execute("library.source", &json!({"kind": "album", "id": album})).unwrap();
+    let in_album = s.visible_cloned();
+    assert_eq!(in_album.len(), 12);
+    let expect: Vec<_> = all.iter().filter(|i| in_album.contains(i)).copied().collect();
+    assert_eq!(in_album, expect, "the album shows its photos in the shuffle's order, not manual order");
+}
+
+/// Choosing Random from another sort is a fresh shuffle (not the fixed seed-0 order); picking it
+/// again, or changing only the direction, keeps the shuffle on screen; an explicit seed wins.
+#[test]
+fn choosing_random_starts_a_fresh_shuffle() {
+    let mut s = Session::with_demo();
+    assert_eq!(s.sort.seed, 0);
+    s.execute("library.sort", &json!({"key": "random"})).unwrap();
+    let first = s.sort.seed;
+    assert_ne!(first, 0, "the first Random is not the fixed seed-0 order");
+    s.execute("library.sort", &json!({"key": "random"})).unwrap();
+    s.execute("library.sort", &json!({"ascending": true})).unwrap();
+    assert_eq!(s.sort.seed, first, "already random: the shuffle stays");
+    s.execute("library.sort", &json!({"key": "fileName"})).unwrap();
+    s.execute("library.sort", &json!({"key": "random"})).unwrap();
+    assert_ne!(s.sort.seed, first, "coming back to Random reshuffles");
+    s.execute("library.sort", &json!({"key": "rating"})).unwrap();
+    s.execute("library.sort", &json!({"key": "random", "seed": 42})).unwrap();
+    assert_eq!(s.sort.seed, 42, "an explicit seed is honoured");
+    assert!(s.sort.seed < 1 << 53);
+}
+
+fn capture_time_raw_metadata_session(raw: Option<&str>) -> Session {
+    use lightcraft_catalog::{Op, Photo, PhotoId, Source};
+    let mut s = Session::new();
+    let id = PhotoId(1);
+    let mut p = Photo::new(id, Source::Demo { scene: 0 }, "one.jpg", "JPEG", 4, 3, "2026-04-01T00:00:00");
+    p.captured = raw.map(str::to_string);
+    s.catalog.apply(Op::AddPhoto { photo: Box::new(p) }).unwrap();
+    s.selection = crate::Selection::single(id);
+    s
+}
+
+#[test]
+fn capture_time_invalid_calendar_anchor_keeps_other_targets_and_redo() {
+    use lightcraft_catalog::{Op, Photo, PhotoId, Source};
+    for raw in ["2026-02-30T12:00:00", "2026x03x01T12:00:00"] {
+        let mut s = capture_time_raw_metadata_session(Some(raw));
+        let peer = PhotoId(2);
+        let mut p = Photo::new(peer, Source::Demo { scene: 0 }, "peer.jpg", "JPEG", 4, 3, "2026-10-09T00:00:00");
+        p.captured = Some("2026-03-01T12:00:00.25+02:00".into());
+        s.catalog.apply(Op::AddPhoto { photo: Box::new(p) }).unwrap();
+        s.commit("Earlier rating", Op::SetRating { id: peer, rating: 4 }).unwrap();
+        s.execute("edit.undo", &json!({})).unwrap();
+        s.selection.ids = vec![PhotoId(1), peer];
+        s.selection.active = Some(PhotoId(1));
+        let before = s.catalog.clone();
+        let selection = s.selection.clone();
+        let undo: Vec<_> = s.undo.iter().map(|e| (e.label.clone(), e.op.clone())).collect();
+        let redo: Vec<_> = s.redo.iter().map(|e| (e.label.clone(), e.op.clone())).collect();
+        let log = s.pending_log.clone();
+        assert!(s.execute("photo.setCaptureTime", &json!({"time": "2026-03-03T12:00:00"})).is_err(), "{raw}");
+        assert_eq!(s.catalog, before);
+        assert_eq!(s.selection, selection);
+        assert_eq!(s.undo.iter().map(|e| (e.label.clone(), e.op.clone())).collect::<Vec<_>>(), undo);
+        assert_eq!(s.redo.iter().map(|e| (e.label.clone(), e.op.clone())).collect::<Vec<_>>(), redo);
+        assert_eq!(s.pending_log, log);
+    }
 }

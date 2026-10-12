@@ -1,8 +1,7 @@
-//! Reading the pixel data of a TIFF IFD (strips or tiles; uncompressed, lossless JPEG, lossy JPEG, Deflate, JPEG XL),
-//! in parallel.
+//! Reading the pixel data of a TIFF IFD (strips or tiles; uncompressed, lossless/lossy JPEG, Deflate, JPEG XL), in parallel.
 
 use crate::unpack::*;
-use crate::{MAX_SAMPLES, RawData, RawError, Result, jxl, ljpeg};
+use crate::{MAX_SAMPLES, RawData, RawError, Result, ljpeg};
 use lightcraft_tiff::image::{Chunk, ImageInfo, chunk_bytes};
 use lightcraft_tiff::{ByteOrder, tags::compression as comp};
 use rayon::prelude::*;
@@ -17,9 +16,12 @@ pub enum Packing {
     Lsb,
     /// Each sample stored in 16 bits in file byte order, regardless of `bits`.
     Word16,
+    /// MSB-first bit stream inside 32-bit words stored in file byte order ([`unpack_words32_msb`]); rows start on a
+    /// word boundary.
+    Words32Msb,
 }
 
-enum ChunkPx {
+pub(crate) enum ChunkPx {
     U16(Vec<u16>),
     F32(Vec<f32>),
 }
@@ -57,38 +59,31 @@ pub fn check_image(data: &[u8], info: &ImageInfo) -> Result<usize> {
 }
 
 /// Read the samples of `info` in `mode`: [`Mode::Header`] only checks them ([`check_image`]) and
-/// returns no samples (floating-point data as an empty `F32`). `white` is the DNG `WhiteLevel`, which decides how
-/// JPEG XL tiles are scaled to integers.
-pub(crate) fn read_image_in(
-    mode: crate::Mode,
-    data: &[u8],
-    info: &ImageInfo,
-    order: ByteOrder,
-    packing: Packing,
-    white: Option<f32>,
-) -> Result<RawData> {
+/// returns no samples (floating-point data as an empty `F32`).
+pub(crate) fn read_image_in(mode: crate::Mode, data: &[u8], info: &ImageInfo, order: ByteOrder, packing: Packing) -> Result<RawData> {
     match mode {
-        crate::Mode::Full => read_image_with(data, info, order, packing, white),
+        crate::Mode::Full => read_image(data, info, order, packing),
         crate::Mode::Header => {
             check_image(data, info)?;
-            // a JPEG XL tile the decoder rejects (wrong channel count, bigger than its chunk) must fail here too
-            if info.compression == comp::JPEG_XL
-                && let Some(c) = info.chunks(data.len() as u64).first()
-                && let Some(src) = chunk_bytes(data, c)
-            {
-                let cpp = if info.planar == 2 { 1 } else { info.samples_per_pixel as usize };
-                let (cw, ch) = (c.width as usize, c.height as usize);
-                let h = jxl::header(src, cw.saturating_mul(ch).saturating_mul(cpp))?;
-                if h.channels != cpp || h.width > cw || h.height > ch {
-                    return Err(RawError::Corrupt(format!("JPEG XL tile of {}×{}×{} in a {cw}×{ch}×{cpp} chunk", h.width, h.height, h.channels)));
-                }
-            }
             // a lossless-JPEG layout the decoder rejects (subsampled components, e.g. Sony's
-            // lossless M/S sizes) must fail here too, as the full decode will
-            if info.compression == 7
-                && let Some(src) = info.chunks(data.len() as u64).first().and_then(|c| chunk_bytes(data, c))
+            // lossless M/S sizes) must fail here too, as the full decode will; likewise a JPEG XL
+            // chunk whose headers don't match the IFD
+            let first = info.chunks(data.len() as u64).first().copied();
+            if let Some(c) = first
+                && let Some(src) = chunk_bytes(data, &c)
             {
-                ljpeg::frame_info(src)?;
+                match info.compression {
+                    7 => {
+                        ljpeg::frame_info(src)?;
+                    }
+                    comp::JPEG_XL => {
+                        let planar = info.planar == 2 && info.samples_per_pixel > 1;
+                        let cpp = if planar { 1 } else { info.samples_per_pixel as usize };
+                        let (cw, ch, vw, vh) = chunk_dims(info, &c);
+                        jxl_chunk_check(src, cw, ch, vw, vh, cpp, info.bits() as u32, info.sample_format == 3)?;
+                    }
+                    _ => {}
+                }
             }
             Ok(if info.sample_format == 3 { RawData::F32(Vec::new()) } else { RawData::U16(Vec::new()) })
         }
@@ -97,11 +92,6 @@ pub(crate) fn read_image_in(
 
 /// Decode all chunks of `info` into one buffer of `width × height × cpp` samples.
 pub fn read_image(data: &[u8], info: &ImageInfo, order: ByteOrder, packing: Packing) -> Result<RawData> {
-    read_image_with(data, info, order, packing, None)
-}
-
-/// [`read_image`] with the DNG `WhiteLevel`, which decides how JPEG XL tiles are scaled to integers.
-fn read_image_with(data: &[u8], info: &ImageInfo, order: ByteOrder, packing: Packing, white: Option<f32>) -> Result<RawData> {
     let (w, h) = (info.width as usize, info.height as usize);
     let total = check_image(data, info)?;
     let cpp = info.samples_per_pixel as usize;
@@ -113,7 +103,7 @@ fn read_image_with(data: &[u8], info: &ImageInfo, order: ByteOrder, packing: Pac
         u16: if float { Vec::new() } else { vec![0u16; total] },
         f32: if float { vec![0f32; total] } else { Vec::new() },
     });
-    visit_chunks(data, info, order, packing, white, |c, px| {
+    visit_chunks(data, info, order, packing, |c, px| {
         let mut o = out.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let Placed { u16, f32 } = &mut *o;
         match &px {
@@ -127,15 +117,9 @@ fn read_image_with(data: &[u8], info: &ImageInfo, order: ByteOrder, packing: Pac
 
 /// Decode the chunks of `info` in parallel and hand each to `sink` as soon as it is decoded (on the worker
 /// thread, so the sink locks only what it must). Fails with the error of the first chunk that failed when none
-/// decoded; chunks that fail among others are skipped, as a damaged tile shouldn't lose the photo.
-fn visit_chunks(
-    data: &[u8],
-    info: &ImageInfo,
-    order: ByteOrder,
-    packing: Packing,
-    white: Option<f32>,
-    sink: impl Fn(&Chunk, ChunkPx) + Sync,
-) -> Result<()> {
+/// decoded; chunks that fail among others are skipped, as a damaged tile shouldn't lose the photo — except JPEG XL
+/// tiles: one that cannot be decoded is not a partial image, and the file stays preview-only.
+fn visit_chunks(data: &[u8], info: &ImageInfo, order: ByteOrder, packing: Packing, sink: impl Fn(&Chunk, ChunkPx) + Sync) -> Result<()> {
     let cpp = info.samples_per_pixel as usize;
     let planar = info.planar == 2 && cpp > 1;
     let ccpp = if planar { 1 } else { cpp };
@@ -143,7 +127,7 @@ fn visit_chunks(
     // (chunks decoded, the error of the first chunk that failed, in chunk order)
     let status = std::sync::Mutex::new((0usize, None::<(usize, RawError)>));
     info.chunks(data.len() as u64).par_iter().for_each(|c| {
-        let r = decode_chunk(data, info, c, order, packing, ccpp, bits, float, white);
+        let r = decode_chunk(data, info, c, order, packing, ccpp, bits, float);
         let ok = r.is_ok();
         match r {
             Ok(px) => sink(c, px),
@@ -159,10 +143,11 @@ fn visit_chunks(
         }
     });
     let (ok, err) = status.into_inner().unwrap_or_else(std::sync::PoisonError::into_inner);
-    if ok == 0 {
-        return Err(err.map(|(_, e)| e).unwrap_or_else(|| RawError::Corrupt("no decodable chunks".into())));
+    match err {
+        Some((_, e)) if ok == 0 || info.compression == comp::JPEG_XL => Err(e),
+        None if ok == 0 => Err(RawError::Corrupt("no decodable chunks".into())),
+        _ => Ok(()),
     }
-    Ok(())
 }
 
 /// The image being assembled from its chunks.
@@ -187,13 +172,13 @@ pub(crate) struct BinSpec<'a> {
 /// Read a three-samples-per-pixel image already reduced to `spec`'s blocks: each block is the mean of its samples,
 /// or their maximum where one reaches the clip level. The full-size samples are never held: each chunk is added into
 /// the (much smaller) block sums as soon as it is decoded.
-pub(crate) fn read_binned(data: &[u8], info: &ImageInfo, order: ByteOrder, white: Option<f32>, spec: &BinSpec) -> Result<RawData> {
+pub(crate) fn read_binned(data: &[u8], info: &ImageInfo, order: ByteOrder, spec: &BinSpec) -> Result<RawData> {
     check_image(data, info)?;
     let (k, (bw, bh)) = (spec.k, spec.size);
     let n = bw.checked_mul(bh).and_then(|v| v.checked_mul(3)).ok_or(RawError::Limit("image too large"))?;
     // sums of up to k² 16-bit samples fit 32 bits for k ≤ 255
     let acc = std::sync::Mutex::new((vec![0u32; n], vec![0u16; n]));
-    visit_chunks(data, info, order, Packing::Msb, white, |c, px| {
+    visit_chunks(data, info, order, Packing::Msb, |c, px| {
         let ChunkPx::U16(v) = px else { return };
         let (cw, ch) = (c.width as usize, c.height as usize);
         let (cx, cy) = (c.x as usize, c.y as usize);
@@ -280,19 +265,9 @@ fn place<T: Copy>(dst: &mut [T], src: &[T], c: &Chunk, (w, h): (usize, usize), c
 }
 
 #[allow(clippy::too_many_arguments)]
-fn decode_chunk(
-    data: &[u8],
-    info: &ImageInfo,
-    c: &Chunk,
-    order: ByteOrder,
-    packing: Packing,
-    cpp: usize,
-    bits: u32,
-    float: bool,
-    white: Option<f32>,
-) -> Result<ChunkPx> {
+fn decode_chunk(data: &[u8], info: &ImageInfo, c: &Chunk, order: ByteOrder, packing: Packing, cpp: usize, bits: u32, float: bool) -> Result<ChunkPx> {
     let src = chunk_bytes(data, c).ok_or_else(|| RawError::Corrupt("chunk offset past end of file".into()))?;
-    let (cw, ch) = (c.width as usize, c.height as usize);
+    let (cw, ch, vw, vh) = chunk_dims(info, c);
     let n = cw.checked_mul(ch).and_then(|v| v.checked_mul(cpp)).ok_or(RawError::Limit("chunk too large"))?;
     if n > MAX_SAMPLES {
         return Err(RawError::Limit("chunk too large"));
@@ -330,17 +305,32 @@ fn decode_chunk(
             let raw = inflate(src, row_bytes * ch)?;
             unpack_chunk(&raw, order, packing, cw, ch, cpp, bits, float, info.predictor)
         }
-        comp::JPEG_XL => {
-            let tile = jxl::decode(src, cw, ch, cpp)?;
-            Ok(if float {
-                ChunkPx::F32(tile.placed(cw, ch, cpp, |f| f))
-            } else {
-                let scale = tile.int_scale(white);
-                ChunkPx::U16(tile.placed(cw, ch, cpp, |f| (f * scale).round().clamp(0.0, 65535.0) as u16))
-            })
-        }
+        comp::JPEG_XL => jxl_chunk(src, cw, ch, vw, vh, cpp, bits, float),
         other => Err(RawError::Unsupported(format!("TIFF compression {other}"))),
     }
+}
+
+/// A chunk's nominal size and the part of it inside the image (smaller for edge tiles).
+fn chunk_dims(info: &ImageInfo, c: &Chunk) -> (usize, usize, usize, usize) {
+    let (cw, ch) = (c.width as usize, c.height as usize);
+    let vw = cw.min(info.width.saturating_sub(c.x) as usize);
+    let vh = ch.min(info.height.saturating_sub(c.y) as usize);
+    (cw, ch, vw, vh)
+}
+
+#[cfg(feature = "jxl")]
+use crate::jxl::{check as jxl_chunk_check, decode as jxl_chunk};
+
+#[cfg(not(feature = "jxl"))]
+#[allow(clippy::too_many_arguments)]
+fn jxl_chunk(_: &[u8], _: usize, _: usize, _: usize, _: usize, _: usize, _: u32, _: bool) -> Result<ChunkPx> {
+    Err(RawError::Unsupported("JPEG XL DNG (built without the `jxl` feature)".into()))
+}
+
+#[cfg(not(feature = "jxl"))]
+#[allow(clippy::too_many_arguments)]
+fn jxl_chunk_check(src: &[u8], cw: usize, ch: usize, vw: usize, vh: usize, cpp: usize, bits: u32, float: bool) -> Result<()> {
+    jxl_chunk(src, cw, ch, vw, vh, cpp, bits, float).map(|_| ())
 }
 
 /// Decode one baseline JPEG chunk to 8-bit samples: (samples, width, height, channels).
@@ -426,6 +416,7 @@ fn unpack_chunk(
         (16, _) | (_, Packing::Word16) => (row_n * 2, 1),
         (_, Packing::Msb) => ((row_n * bits as usize).div_ceil(8), 2),
         (_, Packing::Lsb) => ((row_n * bits as usize).div_ceil(8), 3),
+        (_, Packing::Words32Msb) => ((row_n * bits as usize).div_ceil(32) * 4, 4),
     };
     for y in 0..ch {
         let s = src.get(y * row_bytes..).unwrap_or(&[]);
@@ -435,6 +426,7 @@ fn unpack_chunk(
             0 => row.iter_mut().zip(s).for_each(|(o, &b)| *o = b as u16),
             1 => read_u16s(s, order, row),
             2 => unpack_msb(s, bits, row),
+            4 => unpack_words32_msb(s, order, bits, row),
             _ => unpack_lsb(s, bits, row),
         }
         if factor > 0 {

@@ -67,7 +67,7 @@ fn download(s: &mut Session, p: &Value) -> Result<Value> {
             },
         ));
     }
-    let started = s.enhancer.start_download(id).map_err(EngineError::Other)?;
+    let started = s.enhancer.start_download(id, &s.activity).map_err(EngineError::Other)?;
     Ok(json!({"started": started, "installed": s.enhancer.installed(id), "downloading": s.enhancer.download_status().1.running}))
 }
 

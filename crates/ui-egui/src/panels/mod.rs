@@ -1,5 +1,6 @@
 //! Window regions and panels.
 
+pub mod activity;
 pub mod ai_models;
 pub mod ai_search;
 pub mod alert;
@@ -9,12 +10,17 @@ pub mod compact;
 pub mod compare;
 pub mod crop_mobile;
 pub mod crop_overlay;
+pub mod denoise;
 pub mod detail;
 pub mod dialogs;
 pub mod edit;
 pub mod export;
+pub mod faces;
 pub mod filterbar;
 pub mod grid;
+pub mod keymap;
+pub mod keyword_list;
+pub mod keywording;
 pub mod left;
 pub mod library_problem;
 pub mod map;
@@ -23,6 +29,7 @@ pub mod masking;
 pub mod mobile;
 pub mod notices;
 pub mod people;
+pub mod person;
 pub mod presets;
 pub mod profiles;
 pub mod remove_mobile;
@@ -34,6 +41,7 @@ pub mod strip;
 pub mod sync_choice;
 pub mod sync_status;
 pub mod topbar;
+pub mod unnamed;
 
 use egui::{Rect, pos2, vec2};
 
@@ -89,7 +97,7 @@ pub fn modal_width(ctx: &egui::Context, want: f32) -> f32 {
 /// The HUD toast at the bottom centre of the canvas.
 pub fn toast(app: &mut LightcraftApp, ctx: &egui::Context) {
     let now = ctx.input(|i| i.time);
-    let Some((text, until)) = app.ui.toast.clone() else { return };
+    let Some((text, until, label)) = app.ui.toast.clone() else { return };
     if now > until {
         app.ui.toast = None;
         return;
@@ -103,22 +111,26 @@ pub fn toast(app: &mut LightcraftApp, ctx: &egui::Context) {
         d.insert_temp(egui::Id::new("toast-seen"), (u, at));
         at
     });
-    let rise = egui::emath::easing::cubic_out(((now - seen) / 0.2).clamp(0.0, 1.0) as f32);
+    // (a phone's rises in; the desktop's is there at once)
+    let rise = if crate::is_compact(ctx) { egui::emath::easing::cubic_out(((now - seen) / 0.2).clamp(0.0, 1.0) as f32) } else { 1.0 };
     let fade = fade * rise;
     let mut painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("toast")));
     // long messages (a save warning, the web build's notices) wrap within the canvas
     let wrap = (canvas.width() - 80.0).clamp(200.0, 720.0);
-    let galley = painter.layout(text, t.font(14.0), t.text.gamma_multiply(fade), wrap);
+    let (background, foreground) = label.map(crate::theme::label_toast_colors).unwrap_or((egui::Color32::from_black_alpha(200), t.text));
+    let foreground = foreground.gamma_multiply(fade);
+    let galley = painter.layout(text, t.font(14.0), foreground, wrap);
     let size = vec2(galley.size().x + 40.0, (galley.size().y + 22.0).max(40.0));
     let r = Rect::from_center_size(pos2(canvas.center().x, canvas.bottom() - 60.0 + (1.0 - rise) * 14.0), size);
     if crate::is_compact(ctx) {
-        // a phone's: a capsule of glass
+        // a phone's: a capsule of glass (a colour label's toast keeps its colour)
         painter.multiply_opacity(fade);
-        crate::glass::paint(&painter, r, (size.y / 2.0).min(22.0), Some(crate::glass::menu_fill(ctx)), 0.0);
+        let fill = if label.is_some() { background } else { crate::glass::menu_fill(ctx) };
+        crate::glass::paint(&painter, r, (size.y / 2.0).min(22.0), Some(fill), 0.0);
     } else {
-        painter.rect_filled(r, 6.0, egui::Color32::from_black_alpha((200.0 * fade) as u8));
+        painter.rect_filled(r, 6.0, background.gamma_multiply(fade));
     }
-    painter.galley(r.center() - galley.size() / 2.0, galley, t.text);
+    painter.galley(r.center() - galley.size() / 2.0, galley, foreground);
     ctx.request_repaint_after(std::time::Duration::from_millis(30));
 }
 

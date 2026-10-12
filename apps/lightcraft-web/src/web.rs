@@ -169,6 +169,9 @@ fn services(originals: Originals, backend: Option<Backend>, files: Files, frozen
     let restore_backend = backend.clone();
     let sync_backend = backend.clone();
     Services {
+        picker: None,
+        pick_display_profile: None,
+        screen_profile: None,
         backup_library: Some(Box::new(move |session: &mut Session| {
             let Some(b) = backup_backend.clone() else { return Err("nothing is stored in this browser session (?store=memory)".into()) };
             // the photos' own names for the originals in the zip
@@ -205,10 +208,16 @@ fn services(originals: Originals, backend: Option<Backend>, files: Files, frozen
             open_picker(originals.clone(), backend.clone(), ctx.clone());
             Vec::new() // files arrive asynchronously and are imported on a later frame
         })),
+        pick_denoise_model: None,
         // Preset files: browser pickers are asynchronous; not wired on the web yet.
         pick_preset_files: None,
         pick_tracklog: None,
+        pick_lightroom_catalog: None,
+        // Face models need a folder to live in; the web has none.
+        pick_model_file: None,
         save_preset_file: None,
+        pick_keyword_list: None,
+        save_keyword_list: None,
         pick_curve_preset_files: None,
         save_curve_preset_file: None,
         write: Some(Box::new(download)),
@@ -218,7 +227,9 @@ fn services(originals: Originals, backend: Option<Backend>, files: Files, frozen
             lightcraft_codecs::encode_png(&lightcraft_codecs::EncodeImage::rgba8(img), &lightcraft_codecs::EncodeMeta::default()).unwrap_or_default()
         })),
         reveal: None,
+        log_file: None,
         open_with: None,
+        check_editor: None,
         open_url: Some(Box::new(|url: &str| {
             let w = web_sys::window().ok_or("no window")?;
             w.open_with_url_and_target(url, "_blank").map(|_| ()).map_err(|_| "the browser blocked the new tab".to_string())
@@ -232,6 +243,8 @@ fn services(originals: Originals, backend: Option<Backend>, files: Files, frozen
         // the system clipboard reaches text fields directly; no haptics
         haptic: None,
         clipboard_text: None,
+        // the browser reports prefers-color-scheme to egui
+        system_theme: None,
     }
 }
 
@@ -274,7 +287,7 @@ struct Boot {
     /// The library folder in storage (`library`, or a restored backup's).
     lib_dir: String,
     /// What storage holds for sync: preview files (`proxies/`) and originals by hash.
-    stored: Option<lightcraft_engine::sync::BrowserStore>,
+    stored: Option<lightcraft_engine::cloud_sync::BrowserStore>,
 }
 
 async fn boot(opts: Options) -> Boot {
@@ -360,7 +373,7 @@ async fn boot(opts: Options) -> Boot {
             |dir: &'static str| async move { b.list(dir).await.unwrap_or_default().into_iter().collect::<std::collections::HashSet<String>>() };
         let proxies = list(crate::sync::PROXIES.trim_end_matches('/')).await;
         let originals = list("originals").await;
-        stored = Some(lightcraft_engine::sync::BrowserStore { prefix: crate::sync::PROXIES.into(), proxies, originals });
+        stored = Some(lightcraft_engine::cloud_sync::BrowserStore { prefix: crate::sync::PROXIES.into(), proxies, originals });
     }
     log::info!(
         "lightcraft: storage {} opened in {:.0} ms ({} thumbnails indexed, {:.1} MB)",
@@ -391,7 +404,7 @@ struct WebApp {
 }
 
 impl WebApp {
-    fn new(cc: &eframe::CreationContext<'_>, boot: Boot) -> Self {
+    fn new(cc: &eframe::CreationContext<'_>, boot: Boot, chinese_font: Vec<u8>) -> Self {
         let Boot { opts, backend, files, index, lib_dir, stored } = boot;
         let originals = Originals::default();
         let t = perf_now();
@@ -438,7 +451,8 @@ impl WebApp {
         // sync keeps photo files in browser storage
         session.sync_store = stored;
         let frozen = Rc::new(Cell::new(false));
-        let mut app = LightcraftApp::new(session, services(originals.clone(), backend.clone(), files.clone(), frozen.clone(), cc.egui_ctx.clone()));
+        let mut app = LightcraftApp::new(session, services(originals.clone(), backend.clone(), files.clone(), frozen.clone(), cc.egui_ctx.clone()))
+            .with_chinese_font(chinese_font);
         let ui_written = files.get("ui.json").unwrap_or_default();
         if let Ok(ui) = serde_json::from_slice::<UiState>(&ui_written) {
             app.ui = ui;
@@ -447,14 +461,24 @@ impl WebApp {
         app.library_problem = problem;
         // the server that serves this page is the one to sign in to
         if let Some(origin) = window().and_then(|w| w.location().origin().ok()).filter(|o| o.starts_with("http")) {
-            app.sync.form.server = origin;
+            app.cloud_sync.form.server = origin;
         }
         let n = opts.workers.unwrap_or_else(|| {
             let cores = window().map_or(1, |w| w.navigator().hardware_concurrency() as usize);
             cores.saturating_sub(1).clamp(1, 4)
         });
-        let workers =
-            (n > 0).then(|| Workers::start(n, backend.as_ref().map_or("memory", |b| b.kind()), backend.clone(), index, cc.egui_ctx.clone()));
+        let cache = app.session.media.rendered.clone();
+        let workers = (n > 0).then(|| {
+            Workers::start(
+                n,
+                backend.as_ref().map_or("memory", |b| b.kind()),
+                backend.clone(),
+                index,
+                &cache,
+                app.session.cache_bytes(),
+                cc.egui_ctx.clone(),
+            )
+        });
         if let Some(w) = &workers {
             app.renderer.set_offload(Box::new(w.clone()));
         }
@@ -677,11 +701,16 @@ impl eframe::App for WebApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         for text in safety::take_notices() {
             let now = ctx.input(|i| i.time);
-            self.app.ui.toast = Some((text, now + NOTICE_SECS));
+            self.app.ui.toast = Some((text, now + NOTICE_SECS, None));
         }
         self.run_inbox();
         self.import_dropped(ctx);
         self.load_originals(ctx);
+        if let Some(w) = &self.workers {
+            // `library.preferences ▸ cacheMb` is read by the session; the worker index prunes on
+            // its own thread, so it gets the budget every frame and applies it on the next store.
+            w.set_budget(self.app.session.cache_bytes());
+        }
         self.app.logic(ctx);
         self.save();
         if let Some(b) = self.bench.as_mut()
@@ -712,12 +741,15 @@ impl eframe::App for WebApp {
     }
 }
 
-/// Start the app (called by `index.html` after instantiating the module).
+/// Start the app with the separately fetched Simplified Chinese font (empty in font-free builds).
 #[wasm_bindgen]
-pub fn start() {
+pub fn start(chinese_font: Vec<u8>) {
     eframe::WebLogger::init(log::LevelFilter::Info).ok();
     safety::install_panic_hook();
     log::info!("lightcraft: wasm instantiated at {:.0} ms", perf_now());
+    if chinese_font.is_empty() {
+        log::warn!("lightcraft: no Simplified Chinese font supplied; Chinese-only glyphs will show as boxes");
+    }
     let opts = Options::from_url();
     wasm_bindgen_futures::spawn_local(async move {
         // one tab per library: two would each keep their own copy and overwrite each other's saves
@@ -738,7 +770,7 @@ pub fn start() {
         };
         let boot = boot(opts).await;
         let runner = eframe::WebRunner::new();
-        let r = runner.start(canvas, eframe::WebOptions::default(), Box::new(move |cc| Ok(Box::new(WebApp::new(cc, boot))))).await;
+        let r = runner.start(canvas, eframe::WebOptions::default(), Box::new(move |cc| Ok(Box::new(WebApp::new(cc, boot, chinese_font))))).await;
         match r {
             Ok(()) => {
                 if let Some(el) = window().and_then(|w| w.document()).and_then(|d| d.get_element_by_id("lightcraft_loading")) {

@@ -8,8 +8,10 @@ use std::sync::{Arc, Mutex};
 
 use lightcraft_fetch::{self as fetch, Options, Progress};
 
+use crate::activity::{Activity, Cancel, Unit};
+
 /// A set of files, the mirrors to try for them, and the folder they go into.
-pub type Part = (&'static [fetch::FileSpec], Vec<String>, PathBuf);
+pub type Part = (&'static [fetch::FileSpec<'static>], Vec<String>, PathBuf);
 
 /// What the session sees of a download.
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
@@ -34,7 +36,7 @@ struct Text {
 #[derive(Default)]
 struct Shared {
     running: AtomicBool,
-    cancel: AtomicBool,
+    cancel: Arc<AtomicBool>,
     finished: AtomicBool,
     done: AtomicU64,
     total: AtomicU64,
@@ -95,22 +97,26 @@ impl Downloader {
         running
     }
 
-    /// Start downloading `files` from `mirrors` into `dir` on a background thread. False when
-    /// one is already running.
+    /// Start downloading `files` from `mirrors` into `dir` on a background thread, shown in the activity stack as
+    /// `name` (its ✕ cancels like [`Downloader::cancel`]). False when one is already running.
+    #[allow(clippy::too_many_arguments)]
     pub fn start(
         &self,
         label: &'static str,
-        files: &'static [fetch::FileSpec],
+        files: &'static [fetch::FileSpec<'static>],
         mirrors: Vec<String>,
         dir: PathBuf,
         opts: Options,
+        activity: &Activity,
+        name: &str,
     ) -> Result<bool, String> {
-        self.start_parts(label, vec![(files, mirrors, dir)], opts)
+        self.start_parts(label, vec![(files, mirrors, dir)], opts, activity, name)
     }
 
     /// Start downloading several sets of files, one after the other (each with its own mirrors and
-    /// folder), as one download: one progress, one cancel. False when one is already running.
-    pub fn start_parts(&self, label: &'static str, parts: Vec<Part>, opts: Options) -> Result<bool, String> {
+    /// folder), as one download: one progress, one cancel, one row in the activity stack. False when
+    /// one is already running.
+    pub fn start_parts(&self, label: &'static str, parts: Vec<Part>, opts: Options, activity: &Activity, name: &str) -> Result<bool, String> {
         let s = self.shared.clone();
         if s.running.swap(true, Ordering::SeqCst) {
             return Ok(false);
@@ -122,6 +128,10 @@ impl Downloader {
         // nothing else runs while `running` was false
         *lock(&s.text) = Text::default();
         *lock(&self.last) = Text::default();
+        let task = activity.start("download", "Downloading model", Cancel::Flag(s.cancel.clone()));
+        task.set_unit(Unit::Bytes);
+        task.detail(name);
+        task.progress(0, s.total.load(Ordering::SeqCst));
         let guard = Running(s.clone());
         let spawned = std::thread::Builder::new().name(format!("{label}-download")).spawn(move || {
             let s = guard.0.clone();
@@ -136,6 +146,7 @@ impl Downloader {
                             // (sizes the files don't pin are learnt from the server)
                             s.total.store(p.total, Ordering::SeqCst);
                         }
+                        task.progress(s.done.load(Ordering::SeqCst), s.total.load(Ordering::SeqCst));
                         if p.file != last_file {
                             last_file.clone_from(&p.file);
                             lock(&s.text).file.clone_from(&p.file);

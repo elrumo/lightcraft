@@ -15,8 +15,10 @@ const T: Duration = Duration::from_secs(20);
 /// The app in a window tall enough for every model's card (a click goes to where a widget is
 /// drawn, and doesn't scroll to it).
 fn app(dir: &std::path::Path) -> (Headless, lightcraft_catalog::PhotoId) {
-    let (h, id) = small_app(dir);
-    (Headless::new(h.app, [1200.0, 1800.0], 1.0), id)
+    // (a `Headless` is dropped, not taken apart: its `Drop` waits for Photos imports)
+    let (mut h, id) = small_app(dir);
+    h.size = egui::vec2(1200.0, 1800.0);
+    (h, id)
 }
 
 fn open_tab(h: &mut Headless) {

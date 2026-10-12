@@ -47,6 +47,51 @@ fn v1_library_loads_and_is_upgraded() {
     assert_eq!((r.replayed, r.upgraded_from), (1, None));
 }
 
+/// A library saved before albums could be ordered by hand opens as it was and is rewritten in the current format.
+#[test]
+fn v2_library_loads_and_is_upgraded() {
+    let (base, log, full) = legacy_parts();
+    let m = MemStore::new();
+    m.set(SNAPSHOT, format!("{{\"format\":\"lightcraft-catalog\",\"version\":2,\"seq\":2,\"catalog\":{}}}\n", base.to_snapshot()).into_bytes());
+    m.set(LOG, log.into_bytes());
+    let (_, c, r) = Journal::open(Box::new(m.clone())).unwrap();
+    assert_eq!(c.to_snapshot(), full.to_snapshot());
+    assert_eq!((r.replayed, r.upgraded_from), (1, Some(2)));
+    assert_eq!(snapshot_version(&m), u64::from(VERSION));
+}
+
+/// A library saved before keywords could be listed on their own opens as it was and is rewritten
+/// in the current format.
+#[test]
+fn v3_library_loads_and_is_upgraded() {
+    let (base, log, full) = legacy_parts();
+    let m = MemStore::new();
+    m.set(SNAPSHOT, format!("{{\"format\":\"lightcraft-catalog\",\"version\":3,\"seq\":2,\"catalog\":{}}}\n", base.to_snapshot()).into_bytes());
+    m.set(LOG, log.into_bytes());
+    let (_, c, r) = Journal::open(Box::new(m.clone())).unwrap();
+    assert_eq!(c.to_snapshot(), full.to_snapshot());
+    assert_eq!((r.replayed, r.upgraded_from), (1, Some(3)));
+    assert_eq!(snapshot_version(&m), u64::from(VERSION));
+}
+
+/// Before it merged upstream's formats 3..7, this fork wrote `SetServerPath` (now format 8) as
+/// format 3: such a library opens with its server paths and is rewritten in the current format.
+#[test]
+fn fork_v3_library_with_server_paths_loads_and_is_upgraded() {
+    let (base, _, _) = legacy_parts();
+    let id = base.photos().next().unwrap().id;
+    let op = Op::SetServerPath { id, path: Some("Photos/IMG_1.jpg".into()) };
+    let mut full = base.clone();
+    full.apply(op.clone()).unwrap();
+    let m = MemStore::new();
+    m.set(SNAPSHOT, format!("{{\"format\":\"lightcraft-catalog\",\"version\":3,\"seq\":2,\"catalog\":{}}}\n", base.to_snapshot()).into_bytes());
+    m.set(LOG, format!("{}\n", encode_record(3, &op)).into_bytes());
+    let (_, c, r) = Journal::open(Box::new(m.clone())).unwrap();
+    assert_eq!(c.to_snapshot(), full.to_snapshot());
+    assert_eq!((r.replayed, r.upgraded_from), (1, Some(3)));
+    assert_eq!(snapshot_version(&m), u64::from(VERSION));
+}
+
 #[test]
 fn versionless_log_only_library_is_upgraded() {
     let mut c = Catalog::new();
@@ -179,9 +224,14 @@ fn op_variants_are_versioned() {
             | Op::SetLabelName { .. }
             | Op::Batch { .. } => 1,
             Op::SetBrowsed { .. } => 2,
-            Op::SetServerPath { .. } => 3,
+            Op::SetAlbumOrder { .. } => 3,
+            Op::SetEmbeddedLens { .. } => 4,
+            Op::SetKeyword { .. } => 5,
+            Op::SetFolderRecord { .. } => 6,
+            Op::SetAsShotWb { .. } => 7,
+            Op::SetServerPath { .. } => 8,
         }
     }
-    let newest = since(&Op::SetServerPath { id: crate::PhotoId(1), path: None });
+    let newest = since(&Op::SetServerPath { id: PhotoId(1), path: None });
     assert_eq!(newest, VERSION, "the newest op's version must be the current format version");
 }

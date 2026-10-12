@@ -14,7 +14,7 @@
 //! offer the choice again.
 
 use egui::{Color32, Margin, Sense, pos2, vec2};
-use lightcraft_engine::sync::ConflictInfo;
+use lightcraft_engine::cloud_sync::ConflictInfo;
 use serde_json::{Value, json};
 
 use crate::LightcraftApp;

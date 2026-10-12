@@ -8,6 +8,40 @@ use crate::icons::{Icon, paint};
 use crate::theme::Tokens;
 use crate::widgets::{icon_button, register};
 
+/// The bar doubles as the window's title bar: dragging its empty space moves the window and a
+/// double-click zooms or restores it. Registered before the bar's widgets so they win the click.
+fn window_handle(app: &LightcraftApp, ui: &mut egui::Ui, content: Rect, margin_left: f32, margin_right: f32) {
+    use crate::titlebar::{Gesture, WindowState, command_for};
+    let bar = Rect::from_min_max(pos2(content.left() - margin_left, content.top()), pos2(content.right() + margin_right, content.bottom()));
+    register(ui.ctx(), "region:titlebar", bar);
+    let handle = egui::Id::new("titlebar-handle");
+    let resp = ui.interact(bar, handle, Sense::click_and_drag());
+    // a press that began on a button or the search field is theirs: dragging off it must not move the window
+    // (while pressing, egui hovers every widget under the pointer; once the drag starts, only the dragged one)
+    let ctx = ui.ctx().clone();
+    let memo = egui::Id::new("titlebar-press-on-widget");
+    if resp.is_pointer_button_down_on() && ctx.input(|i| i.pointer.primary_pressed()) {
+        let hovered = ctx.interaction_snapshot(|s| s.hovered.clone());
+        let on_widget =
+            hovered.iter().any(|id| *id != handle && ctx.read_response(*id).is_some_and(|r| r.sense.senses_click() || r.sense.senses_drag()));
+        ctx.data_mut(|d| d.insert_temp(memo, on_widget));
+    }
+    let on_widget = ctx.data(|d| d.get_temp::<bool>(memo)).unwrap_or(false);
+    let gesture = if resp.double_clicked_by(egui::PointerButton::Primary) {
+        Some(Gesture::DoubleClicked)
+    } else if resp.drag_started_by(egui::PointerButton::Primary) && !on_widget {
+        Some(Gesture::DragStarted)
+    } else {
+        None
+    };
+    if let Some(g) = gesture {
+        let window = WindowState { maximized: ui.input(|i| i.viewport().maximized).unwrap_or(false), fullscreen: app.window_is_fullscreen };
+        if let Some(cmd) = command_for(g, window) {
+            ui.ctx().send_viewport_cmd(cmd);
+        }
+    }
+}
+
 pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
     let left = if app.integrated_titlebar { 78 } else { 10 };
@@ -16,7 +50,11 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         .frame(egui::Frame::NONE.fill(t.chrome).inner_margin(egui::Margin { left, right: 12, top: 0, bottom: 0 }))
         .show(ui, |ui| {
             let full = ui.max_rect();
-            let mut sw = 640.0f32.min(full.width() - 460.0).max(200.0);
+            if app.integrated_titlebar {
+                window_handle(app, ui, full, left as f32, 12.0);
+            }
+            // room for the filter icon and the six icons on the right
+            let mut sw = 640.0f32.min(full.width() - 540.0).max(200.0);
             if !app.native_menu {
                 // leave room for the in-window menus left of the (centred) search field
                 let menus_right = full.left() + 140.0 + crate::menubar::bar_width(ui) + 24.0;
@@ -42,7 +80,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             });
             // search field (centred on the window)
             let sr = Rect::from_center_size(pos2(full.center().x, full.center().y), vec2(sw, 28.0));
-            let id = egui::Id::new("search-field");
+            let id = crate::text_field::id("field:search");
             if std::mem::take(&mut app.ui.focus_search) {
                 ui.memory_mut(|m| m.request_focus(id));
             }
@@ -54,7 +92,6 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 Stroke::new(1.0, if focused { t.accent } else { t.field_border }),
                 StrokeKind::Inside,
             );
-            register(ui.ctx(), "field:search", sr);
             let mut child =
                 ui.new_child(egui::UiBuilder::new().max_rect(sr.shrink2(vec2(10.0, 4.0))).layout(egui::Layout::left_to_right(egui::Align::Center)));
             let empty = app.ui.search.is_empty();
@@ -67,14 +104,13 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 child.painter().galley(pos2(x0 + 24.0, sr.center().y - g.size().y / 2.0), g, t.text_dim);
             }
             let pill_w = crate::panels::ai_search::pill_width(app);
-            let resp = child.add(
-                egui::TextEdit::singleline(&mut app.ui.search)
-                    .id(id)
-                    .frame(egui::Frame::NONE)
-                    .desired_width(sr.width() - 20.0 - pill_w)
-                    .font(t.font(13.5))
-                    .text_color(t.text),
-            );
+            let resp = crate::text_field::TextField::singleline("field:search", &mut app.ui.search)
+                .frame(false)
+                .width(sr.width() - 20.0 - pill_w)
+                .font(t.font(13.5))
+                .text_color(t.text)
+                .show(&mut child)
+                .response;
             if app.ui.ai_search {
                 // describing a photo: Return searches; emptying the field leaves the results
                 if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
@@ -171,6 +207,50 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 }
                 x -= 40.0;
             }
+            // Appearance Mode: a click steps Auto → Light → Dark → Auto; the icon shows the mode
+            let (icon, mode) = appearance_icon(app.ui.settings.appearance_mode);
+            let r = Rect::from_center_size(pos2(x, full.center().y), vec2(28.0, 28.0));
+            let tip = format!("{}: {}", crate::i18n::tr("Appearance Mode"), crate::i18n::tr(mode));
+            let resp = ui.interact(r, egui::Id::new(("top", "appearance")), Sense::click()).on_hover_text(tip);
+            register(ui.ctx(), "icon:appearance", r);
+            paint(ui.painter(), r.shrink(5.0), icon, if resp.hovered() { t.text } else { t.icon });
+            if resp.clicked() {
+                let _ = app.run("view.appearance", json!({}));
+            }
+            resp.context_menu(|ui| {
+                let settings = ui.button(crate::i18n::tr("Appearance Settings…"));
+                register(ui.ctx(), "menu:appearanceSettings", settings.rect);
+                if settings.clicked() {
+                    let _ = app.run("app.settings", json!({"tab": "interface"}));
+                    ui.close();
+                }
+                let favorites = app.ui.settings.favorite_themes.clone();
+                for dark in [false, true] {
+                    let group: Vec<_> =
+                        crate::theme::ThemeKind::ALL.iter().filter(|k| k.is_dark() == dark && favorites.iter().any(|id| id == k.id())).collect();
+                    if !group.is_empty() {
+                        ui.separator();
+                    }
+                    for kind in group {
+                        let r = ui.selectable_label(app.ui.settings.theme(app.system_theme(ui.ctx())) == *kind, crate::i18n::tr(kind.label()));
+                        register(ui.ctx(), format!("menu:themeFavorite-{}", kind.id()), r.rect);
+                        if r.clicked() {
+                            let _ = app.run("view.theme", json!({"theme": kind.id()}));
+                            ui.close();
+                        }
+                    }
+                }
+            });
             let _ = Align2::CENTER_CENTER;
         });
+}
+
+/// The appearance button's icon and the mode's name for its tooltip.
+pub fn appearance_icon(mode: crate::state::AppearanceMode) -> (Icon, &'static str) {
+    use crate::state::AppearanceMode;
+    match mode {
+        AppearanceMode::Auto => (Icon::Monitor, "Sync with System"),
+        AppearanceMode::Light => (Icon::Sun, "Light Mode"),
+        AppearanceMode::Dark => (Icon::Moon, "Dark Mode"),
+    }
 }

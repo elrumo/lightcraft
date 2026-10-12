@@ -21,36 +21,52 @@ web-time = { workspace = true }
 lightcraft-preview = { workspace = true }
 lightcraft-codecs = { workspace = true }
 lightcraft-raw = { workspace = true }
+lightcraft-denoise-core = { workspace = true }
+lightcraft-denoise = { workspace = true, optional = true }
 lightcraft-meta = { workspace = true }
 lightcraft-geo = { workspace = true }
+lightcraft-lensdb = { workspace = true }
+lightcraft-faces = { workspace = true }
 miniz_oxide = { workspace = true }
 lightcraft-merge = { workspace = true }
+lightcraft-geocode = { workspace = true }
 rayon = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 log = { workspace = true }
 ab_glyph = { workspace = true }
+# Apply the font’s vertical substitutions and origins to Japanese watermarks.
+harfrust = { version = "0.12", default-features = false, features = ["std"] }
+unicode-segmentation = "1.13"
 lightcraft-segment = { workspace = true, optional = true }
-lightcraft-fetch = { workspace = true, optional = true }
 lightcraft-enhance = { workspace = true, optional = true }
 # the store, index and traits only; the model itself is the `vision` feature
 lightcraft-vision = { workspace = true }
 
-[features]
-# AI masks with SAM 3 (Object / Describe). Off for the web and CLI builds.
-sam = ["dep:lightcraft-segment", "dep:lightcraft-fetch"]
-# Natural-language search with SigLIP 2, reading the text in photos (PP-OCRv6) and, later, People. Off for the web and CLI builds.
-vision = ["lightcraft-vision/siglip", "lightcraft-vision/onnx", "dep:lightcraft-fetch"]
-# AI Super Resolution (Photo → Enhance). Off for the web and CLI builds.
-enhance = ["dep:lightcraft-enhance", "dep:lightcraft-fetch"]
-
+# model downloads and the sync client run natively only (the web build fetches no models)
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+lightcraft-fetch = { workspace = true }
 ureq = { workspace = true }
 rustls-rustcrypto = { workspace = true }
 
+[features]
+# AI masks with SAM 3 (Object / Describe). Off for the web and CLI builds.
+sam = ["dep:lightcraft-segment"]
+denoise = ["dep:lightcraft-denoise", "lightcraft-denoise/runtime", "lightcraft-gpu/denoise"]
+rawnind-model = ["denoise", "lightcraft-denoise/rawnind-model", "lightcraft-denoise-core/rawnind-model"]
+# Natural-language search with SigLIP 2, reading the text in photos (PP-OCRv6) and, later, People. Off for the web and CLI builds.
+vision = ["lightcraft-vision/siglip", "lightcraft-vision/onnx"]
+# AI Super Resolution (Photo → Enhance). Off for the web and CLI builds.
+enhance = ["dep:lightcraft-enhance"]
+
 [dev-dependencies]
+# HDR JPEG XL tests read the file's colour encoding
+jxl-oxide = { workspace = true }
+# Lossless synthetic HEIC files (the import test; decoded when the codecs' `heif` feature is on).
+lightcraft-heif = { workspace = true, features = ["testdata"] }
 libc = { workspace = true }
+lightcraft-tiff = { workspace = true }
 
 [dev-dependencies.lightcraft-vision]
 workspace = true

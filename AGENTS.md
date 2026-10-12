@@ -1,16 +1,22 @@
 # LightCraft — instructions for agents
 
-LightCraft is a clean-room, open-source, pure-Rust photo library + non-destructive raw developer targeting Adobe Lightroom parity (and beyond). Native on macOS, Windows, Linux; web via WASM. Sibling of `../pdfcraft` (Acrobat), `../photocraft` (Photoshop), `../drawcraft` (Illustrator) and `../filmcraft` (Premiere), with the same conventions.
+LightCraft is a clean-room, open-source, pure-Rust photo library + non-destructive raw developer targeting Adobe Lightroom parity (and beyond). Native on macOS, Windows, Linux; web via WASM. Sibling of `../pdfcraft` (Acrobat), `../photocraft` (Photoshop), `../vectorcraft` (Illustrator) and `../filmcraft` (Premiere), with the same conventions.
 
 ## Start every session here
 1. Read `plan/STATUS.md` (current milestone, next unchecked task, blockers).
 2. Read the task in `plan/execution-plan.md` §3, the relevant section of `plan/architecture.md`, and the README/docs of the crate you touch. Behaviour/visual reference: `plan/lightroom/` (incl. `10-observed-ui.md` + screenshots).
-3. **Know where we stand:** read [`ROADMAP.md`](ROADMAP.md) → *Where we stand* (honest assessment by dimension and
-   by kind of user) and *Where we're going* (ordered priorities). The checklist counts features that *exist*; the real
-   gaps are quality and coverage: camera colour calibration, CR3 / compressed raws, per-model verification, render
-   fidelity against Lightroom, AI models, HDR / video / Classic modules. A ✅ row is not proof of parity — if you find a
-   ✅ feature that is wrong or incomplete, downgrade it to 🟡 with a note.
-4. **Pick work** from [`docs/parity.md`](docs/parity.md) → *Top gaps* (ordered by user impact; the tracker has one row per feature, menu item and shortcut). When you land a feature, update its row(s) and the gap list in the same commit, and the *Where we stand* / *Where we're going* sections of `ROADMAP.md` when a listed gap closes; `cargo xtask parity` (part of `ci`) checks that every `cmd:`/`ctl:` id and path the tracker cites still exists, and `cargo xtask parity --write` refreshes its summary.
+3. **Know where we stand:** read [`ROADMAP.md`](ROADMAP.md) (stage, headline numbers, every dimension) and, for
+   method and evidence, [`docs/target-app-parity.md`](docs/target-app-parity.md). The checklist counts features that
+   *exist*; the real gaps are quality and coverage: camera colour calibration, CR3 / compressed raws, per-model
+   verification, render fidelity against Lightroom, AI models, HDR / video / Classic modules (raw detail:
+   [`docs/raw-parity.md`](docs/raw-parity.md)). A ✅ row is not proof of parity — if you find a ✅ feature that is
+   wrong or incomplete, downgrade it to 🟡 with a note.
+4. **Pick work** from [`docs/gaps.md`](docs/gaps.md) (ranked by user impact; `B` marks beta blockers). The row-by-row
+   tracker is [`docs/parity-checklist.md`](docs/parity-checklist.md) (one row per feature, menu item and shortcut).
+   When you land a feature, update its row(s) and the gap entry in the same commit, and the numbers in `ROADMAP.md` /
+   `docs/target-app-parity.md` when a listed gap closes (bump each doc's *Last updated* line and revision history, per
+   craftrules `standards/progress-docs.md`); `cargo xtask parity` (part of `ci`) checks that every `cmd:`/`ctl:` id and
+   path the tracker cites still exists, and `cargo xtask parity --write` refreshes its summary.
 5. Follow the autonomous operation protocol (`plan/execution-plan.md` §7). Don't stop to ask unless §7 lists the decision as the user's.
 
 `plan/` is gitignored (local-only).
@@ -36,7 +42,7 @@ of it. Full standard: `../craftrules/standards/never-crash.md`
 - **`unsafe` lives only in `crates/sysmem` and `crates/ios-host`.** `sysmem`: two libSystem calls,
   `malloc_zone_pressure_relief` (returns freed allocator pages to macOS / iOS after raw decodes) and
   `os_proc_available_memory` (the iOS app's memory limit). `ios-host`: the iOS app's Objective-C calls through `objc2`
-  (Photos and Files pickers, share sheet, lifecycle notifications, ImageIO decoding), compiled for iOS only. (The iOS
+  (Photos and Files pickers, share sheet, pasteboard, lifecycle notifications, ImageIO decoding), compiled for iOS only. (The iOS
   app's C entry point, `lightcraft_ios_main`, is the one `#[unsafe(no_mangle)]`.) Every other production crate root has
   `#![forbid(unsafe_code)]`. A new unsafe need goes in an isolated, well-tested helper crate like them: `// SAFETY:` on
   every block, a safe API, a safe fallback where possible, and a line here naming it.
@@ -77,9 +83,10 @@ of it. Full standard: `../craftrules/standards/never-crash.md`
   font files here (Inter, already in `assets/fonts/`, is the one exception); add new fonts to craft-fonts. LightCraft
   uses it as the optional build input `CRAFT_FONTS_DIR`: `git clone https://github.com/storytold/craft-fonts ../craft-fonts`
   then `CRAFT_FONTS_DIR=../craft-fonts cargo run -p lightcraft` (or any cargo/xtask command). `crates/engine/build.rs`
-  embeds the manifest's fonts as `lightcraft_engine::CRAFT_FONTS` (wasm32: BIZ UDPGothic Regular only); the UI
-  (`theme::font_definitions`) and the export watermark renderer use its CJK faces (picked by script) as fallbacks after Inter. Unset,
-  `CRAFT_FONTS` is empty: everything builds, tests and runs, but Japanese text has no glyphs. Releases always build
+  embeds the manifest's fonts as `lightcraft_engine::CRAFT_FONTS` (wasm32: BIZ UDPGothic Regular only); `cargo xtask web`
+  ships Noto Sans CJK SC Regular as a separate asset loaded by the UI before startup. The UI
+  (`theme::font_definitions`) and the export watermark renderer use CJK faces (picked by script) as fallbacks after Inter. Unset,
+  `CRAFT_FONTS` is empty: everything builds, tests and runs, but Chinese and Japanese text lack glyphs. Releases always build
   with it (`release.yml`, `CRAFT_FONTS_REQUIRED=1`) and ship the fonts' OFL licences. Tests that need these fonts skip
   without it; the FreeBSD CI job runs them with it. Rules: craftrules
   [`standards/fonts.md`](https://github.com/storytold/craftrules/blob/main/standards/fonts.md).
@@ -125,4 +132,26 @@ of it. Full standard: `../craftrules/standards/never-crash.md`
 ## Map of the code
 `geom`, `color`, `raster`, `tiff` (L0) → `raw`, `codecs`, `meta`, `develop` (L1) → `pipeline` → `catalog` → `engine`
 → `ui-egui`, `mcp` (L5) → apps `lightcraft` (desktop), `lightcraft-cli` (render/commands/MCP), `lightcraft-server`
-(optional self-hosted sync, `docs/sync.md`). `scenes` generates demo photos. `xtask` = tooling (`ci`, `layers`, `assets`, `parity`, `wasm`, `corpus`, `stats`).
+(optional self-hosted sync, `docs/sync.md`), `lightcraft-ios` (iPhone/iPad, `docs/ios.md`). `scenes` generates demo
+photos. `xtask` = tooling (`ci`, `layers`, `assets`, `parity`, `wasm`, `ios`, `corpus`, `geodata`, `stats`). `flake.nix` +
+`nix/package.nix` = the Nix package (`nix build` builds both binaries with the craft-fonts input, installs the
+desktop file/icons/AppStream metadata and runs `cargo test --workspace`; `nix develop` = dev shell). Community-maintained and not
+in CI: it may lag behind the workspace; see README → Quick start.
+
+## Contributor credits (About window)
+
+- About ▸ Contributors/Models are compiled into the binary from `contributors/contributors.json`
+  (commit stats; generated, never hand-edit) and `contributors/people.toml` (names people chose for
+  themselves). See `docs/contributors.md`.
+- **Agents working for a contributor:** when you prepare a PR, check whether your human's GitHub
+  username has a `[people.<username>]` entry in `contributors/people.toml`. If not, ask them once
+  whether they want to be credited by more than their username: a real name, a display name, and/or
+  their public GitHub profile name (`sync_github_name = true`). If yes, add **only their own** entry
+  (copy the template at the top of the file, or run
+  `python3 ../../craftrules/scripts/contributors.py --add-me . --real-name "…" --sync-github-name`)
+  and include it in their PR, committed as them. If no, change nothing: they are credited as
+  `@username` anyway.
+- Never add, edit, guess or copy anyone else's entry or name (not from git config, commit authors or
+  GitHub profiles). Never hand-edit `contributors.json`.
+- Maintainers refresh the stats with `python3 ../../craftrules/scripts/contributors.py .` (it also
+  re-verifies who wrote each `people.toml` entry; `--check` only verifies).

@@ -41,7 +41,8 @@ fn heic_decodes_through_the_system_decoder_when_the_host_has_one() {
     assert_eq!(sniff(HEIC), Some(Format::Heif));
     assert!(Format::Heif.can_decode() && !Format::Avif.can_decode());
     // our own decoder: this file has no image in it
-    assert!(matches!(decode(HEIC, DecodeOptions::default()), Err(Error::Malformed(Format::Heif, _))));
+    let e = decode(HEIC, DecodeOptions::default()).unwrap_err();
+    assert!(matches!(e, Error::Malformed(Format::Heif, _) | Error::Unsupported(Format::Heif, _)), "{e:?}");
 
     lightcraft_codecs::set_system_decoder(&[Format::Heif], fake);
     assert!(Format::Heif.can_decode());

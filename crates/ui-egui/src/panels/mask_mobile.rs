@@ -339,10 +339,11 @@ fn mask_column(app: &mut LightcraftApp, ctx: &egui::Context, canvas: Rect) {
                 if resp.clicked() {
                     haptics::tap(ctx, Haptic::Selection);
                     ctx.data_mut(|d| d.insert_temp(Id::new("mask-comp-menu"), k));
-                    // a painted part puts the brush in hand
+                    // a painted part puts the brush in hand (a Subtract part is painted with
+                    // positive paint too: its op takes it away)
                     if matches!(c.shape, MaskShape::Brush { .. }) && app.ui.tool != "brush" {
                         app.ui.tool = "brush".into();
-                        app.ui.brush_erase = c.op == MaskOp::Subtract;
+                        app.ui.brush_erase = false;
                     } else {
                         mobile::open_menu(ctx, "maskComp", resp.rect);
                     }

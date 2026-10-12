@@ -45,7 +45,12 @@
 //! | (none) | early builds: a log without a snapshot | |
 //! | 1 | up to v0.2.0 | |
 //! | 2 | after v0.2.0 | `Op::SetBrowsed`, `Catalog.browsed`, `Photo.local_baseline` |
-//! | 3 | after v0.2.1 | `Op::SetServerPath`, `Photo.server_path` (library folders on the sync server) |
+//! | 3 | albums by hand | `Op::SetAlbumOrder`, `Album.order` |
+//! | 4 | Reload reads lens data | `Op::SetEmbeddedLens` |
+//! | 5 | the keyword list | `Op::SetKeyword`, `Catalog.keyword_list` |
+//! | 6 | folder labels | `Op::SetFolderRecord`, `Catalog.folder_records` |
+//! | 7 | Kelvin white balance for raws whose camera has matrices (#730) | `Op::SetAsShotWb`, `WhiteBalance.scale` |
+//! | 8 | library folders on the sync server | `Op::SetServerPath`, `Photo.server_path` (this fork's format 3 before it merged formats 3..7 from upstream; its format-3 libraries still open, as every op in them is known) |
 //!
 //! Rules:
 //! - **Bump [`VERSION`]** (and add a row above) in the change that adds an [`Op`] variant or a
@@ -70,7 +75,7 @@ pub const LOG: &str = "catalog.log";
 const FORMAT: &str = "lightcraft-catalog";
 /// The catalog format this build writes (and the newest it reads). See the module docs →
 /// *Format versions*; bump it whenever an [`Op`] variant or a serialized field is added.
-pub const VERSION: u32 = 3;
+pub const VERSION: u32 = 8;
 
 /// [`Journal::records_since`] finds its place in the log through an index with one entry per this
 /// many records.

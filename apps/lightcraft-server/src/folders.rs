@@ -341,7 +341,8 @@ fn describe(file: &Found, hash: &str, bytes: &[u8], now: &str) -> Result<(Photo,
     let packet = sidecar::find_sidecar(&file.path.to_string_lossy(), SidecarNaming::Stem)
         .and_then(|f| std::fs::read_to_string(f).ok())
         .or_else(|| info.xmp.filter(|_| raw));
-    let sc = packet.and_then(|x| sidecar::parse_sidecar(&x, raw).map_err(|e| log::warn!("{}: XMP: {e}", file.key)).ok());
+    let target = lightcraft_engine::crs::Target::for_photo(&p);
+    let sc = packet.and_then(|x| sidecar::parse_sidecar(&x, target).map_err(|e| log::warn!("{}: XMP: {e}", file.key)).ok());
     Ok((p, sc))
 }
 
@@ -610,7 +611,7 @@ fn reread_sidecars(lib: &Mutex<UserLib>, read: &[(Found, Option<String>)], note_
         let id = l.index.files.get(&f.key).and_then(|e| e.photo).map(PhotoId);
         // (a photo removed on a device stays removed; a sidecar that's gone states nothing)
         let (Some(p), Some(x), false) = (id.and_then(|id| l.core.catalog().photo(id)), packet, note_only) else { continue };
-        match sidecar::parse_sidecar(x, p.kind == MediaKind::Raw) {
+        match sidecar::parse_sidecar(x, lightcraft_engine::crs::Target::for_photo(p)) {
             Ok(sc) => {
                 let sc = sc.resolve_label(l.core.catalog());
                 ops.extend(sidecar::sidecar_ops(p, &sc, now, sidecar::READ_LABEL).into_iter().map(|op| (op, i)));
@@ -808,7 +809,7 @@ pub fn build_previews(blobs: &Path, hash: &str, file: &Path) -> Result<bool, Str
     // a huge file (a scan, a PSB) is read whole and decoded: one at a time
     static BIG: Mutex<()> = Mutex::new(());
     let _one = (std::fs::metadata(file).map_or(0, |m| m.len()) > READ_WHOLE).then(|| lock(&BIG));
-    lightcraft_engine::guard::catch("building previews", || lightcraft_engine::sync::build_proxies(&f, &s, &m))??;
+    lightcraft_engine::guard::catch("building previews", || lightcraft_engine::cloud_sync::build_proxies(&f, &s, &m))??;
     Ok(true)
 }
 
