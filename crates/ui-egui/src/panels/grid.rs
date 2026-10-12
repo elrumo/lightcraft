@@ -271,61 +271,74 @@ fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     } else {
         egui::scroll_area::ScrollSource::ALL
     };
-    egui::ScrollArea::vertical().id_salt("grid-scroll").scroll_source(source).auto_shrink([false, false]).show_viewport(ui, |ui, viewport| {
-        let (area, _) = ui.allocate_exact_size(vec2(ui.available_width(), total_h), Sense::hover());
-        let origin = area.min;
-        app.grid_scroll = Some(viewport.top());
-        if let Some(r) = scroll_to {
-            ui.scroll_to_rect(r.translate(origin.to_vec2()), None);
-        }
-        // only the rows on screen and a screen above and below it (their thumbnails are prefetched)
-        let prefetch = viewport.expand2(vec2(0.0, viewport.height()));
-        for row in rows_between(&lay.rows, prefetch.top(), prefetch.bottom()) {
-            for i in row.start..row.end {
-                let (Some(&id), Some(&rect)) = (ids.get(i), lay.cells.get(i)) else { continue };
-                visited += 1;
-                if !rect.intersects(prefetch) {
-                    continue;
+    // (a phone has its own handle to drag: `scrubber`)
+    let bars =
+        if app.compact { egui::scroll_area::ScrollBarVisibility::AlwaysHidden } else { egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded };
+    egui::ScrollArea::vertical().id_salt("grid-scroll").scroll_source(source).scroll_bar_visibility(bars).auto_shrink([false, false]).show_viewport(
+        ui,
+        |ui, viewport| {
+            let (area, _) = ui.allocate_exact_size(vec2(ui.available_width(), total_h), Sense::hover());
+            let origin = area.min;
+            app.grid_scroll = Some(viewport.top());
+            if let Some(r) = scroll_to {
+                ui.scroll_to_rect(r.translate(origin.to_vec2()), None);
+            }
+            // only the rows on screen and a screen above and below it (their thumbnails are prefetched)
+            let prefetch = viewport.expand2(vec2(0.0, viewport.height()));
+            for row in rows_between(&lay.rows, prefetch.top(), prefetch.bottom()) {
+                for i in row.start..row.end {
+                    let (Some(&id), Some(&rect)) = (ids.get(i), lay.cells.get(i)) else { continue };
+                    visited += 1;
+                    if !rect.intersects(prefetch) {
+                        continue;
+                    }
+                    visible_ids.insert(id);
+                    let r = rect.translate(origin.to_vec2());
+                    let onscreen = rect.intersects(viewport);
+                    cell(app, ui, id, r, square, onscreen, ppp);
+                    if let Some((sid, pos)) = stacks.get(&id) {
+                        stack_badge(app, ui, id, *sid, *pos, r, square);
+                    }
                 }
-                visible_ids.insert(id);
-                let r = rect.translate(origin.to_vec2());
-                let onscreen = rect.intersects(viewport);
-                cell(app, ui, id, r, square, onscreen, ppp);
-                if let Some((sid, pos)) = stacks.get(&id) {
-                    stack_badge(app, ui, id, *sid, *pos, r, square);
+            }
+            if app.compact {
+                long_press(app, ui, &ids, &lay, origin);
+            }
+            // back to the top (a tap on the top bar or the status bar), sliding there
+            if std::mem::take(&mut app.ui.scroll_top) {
+                ui.scroll_to_rect(Rect::from_min_size(origin, vec2(1.0, 1.0)), Some(egui::Align::TOP));
+            }
+            if app.compact && app.ui.select_mode {
+                drag_choose(app, ui, &ids, &lay, origin);
+            }
+            // date headers (top to bottom); the current group's header sticks to the top while its
+            // photos scroll by
+            let first = lay.headers.partition_point(|h| h.bottom() < viewport.top());
+            for (g, hr) in lay.headers.iter().enumerate().skip(first) {
+                if hr.top() > viewport.bottom() {
+                    break;
+                }
+                if let Some(run) = runs.get(g) {
+                    group_header(app, ui, run, &ids, hr.translate(origin.to_vec2()), false);
                 }
             }
-        }
-        if app.compact {
-            long_press(app, ui, &ids, &lay, origin);
-        }
-        if app.compact && app.ui.select_mode {
-            drag_choose(app, ui, &ids, &lay, origin);
-        }
-        // date headers (top to bottom); the current group's header sticks to the top while its
-        // photos scroll by
-        let first = lay.headers.partition_point(|h| h.bottom() < viewport.top());
-        for (g, hr) in lay.headers.iter().enumerate().skip(first) {
-            if hr.top() > viewport.bottom() {
-                break;
+            let sticky = lay.headers.partition_point(|h| h.top() <= viewport.top()).checked_sub(1);
+            if let Some(g) = sticky
+                && let Some(head) = lay.headers.get(g)
+                && head.top() < viewport.top()
+                && let Some(run) = runs.get(g)
+            {
+                // pushed up by the next header as it arrives
+                let next_top = lay.headers.get(g + 1).map(|h| h.top()).unwrap_or(f32::INFINITY);
+                let y = viewport.top().min(next_top - HEADER_H);
+                let hr = Rect::from_min_size(pos2(0.0, y), vec2(area.width(), HEADER_H)).translate(origin.to_vec2());
+                group_header(app, ui, run, &ids, hr, true);
             }
-            if let Some(run) = runs.get(g) {
-                group_header(app, ui, run, &ids, hr.translate(origin.to_vec2()), false);
+            if app.compact {
+                scrubber(app, ui, viewport, total_h, &ids, &lay);
             }
-        }
-        let sticky = lay.headers.partition_point(|h| h.top() <= viewport.top()).checked_sub(1);
-        if let Some(g) = sticky
-            && let Some(head) = lay.headers.get(g)
-            && head.top() < viewport.top()
-            && let Some(run) = runs.get(g)
-        {
-            // pushed up by the next header as it arrives
-            let next_top = lay.headers.get(g + 1).map(|h| h.top()).unwrap_or(f32::INFINITY);
-            let y = viewport.top().min(next_top - HEADER_H);
-            let hr = Rect::from_min_size(pos2(0.0, y), vec2(area.width(), HEADER_H)).translate(origin.to_vec2());
-            group_header(app, ui, run, &ids, hr, true);
-        }
-    });
+        },
+    );
     app.caches.grid_stats.cells_visited += visited;
     app.renderer.evict_thumbs(&visible_ids, 600);
     let _ = (Color32::BLACK, StrokeKind::Inside, Stroke::NONE);
@@ -434,7 +447,8 @@ fn long_press(app: &mut LightcraftApp, ui: &egui::Ui, ids: &[PhotoId], lay: &Gri
         return;
     }
     let (Some(o), Some(start), Some(p)) = (press, start, pos) else { return };
-    if (p - o).length() > LONG_PRESS_SLOP {
+    // (a finger held on the scroll handle is scrubbing, not pressing the photo under it)
+    if (p - o).length() > LONG_PRESS_SLOP || scrubber_hit(ui).is_some_and(|r| r.contains(o)) {
         return;
     }
     let Some(i) = cell_at(lay, origin, o) else { return };
@@ -455,6 +469,130 @@ fn long_press(app: &mut LightcraftApp, ui: &egui::Ui, ids: &[PhotoId], lay: &Gri
         let _ = app.run("view.selectMode", json!({"on": true, "id": id.0}));
     }
     ui.data_mut(|d| d.insert_temp(egui::Id::new(DRAG_CHOOSE), DragChoose { start: i, adding, base, last: Some(i) }));
+}
+
+/// The scroll handle's size (points): a capsule at the grid's right edge, as Lightroom's mobile app
+/// and iOS's long lists have it.
+const SCRUB_W: f32 = 6.0;
+const SCRUB_H: f32 = 48.0;
+/// How long the handle stays after the grid stops moving (s).
+const SCRUB_LINGER: f64 = 1.4;
+
+/// The scroll handle between frames: the offset last seen, when the grid last moved, and where on
+/// the handle the finger holds it (while dragged).
+#[derive(Clone, Copy, Debug)]
+struct Scrub {
+    offset: f32,
+    moved_at: f64,
+    grab: Option<f32>,
+}
+
+impl Default for Scrub {
+    fn default() -> Self {
+        // (a grid that hasn't moved since it was first drawn shows no handle)
+        Scrub { offset: 0.0, moved_at: f64::NEG_INFINITY, grab: None }
+    }
+}
+
+fn scrub_id() -> egui::Id {
+    egui::Id::new("grid-scrubber")
+}
+
+/// Where the scroll handle can be taken hold of (last frame), while it shows.
+fn scrubber_hit(ui: &egui::Ui) -> Option<Rect> {
+    ui.data(|d| d.get_temp::<Option<Rect>>(scrub_id().with("hit"))).flatten()
+}
+
+/// The phone grid's scroll handle (widget `grid:scrubber`): it shows while the grid moves and for a
+/// moment after, and dragging it runs through the whole library at once, the month of the photos
+/// at the top of the screen in a bubble beside it, as iOS's Photos and Lightroom's mobile app do.
+/// It drives egui's own scroll state (`scroll_with_delta_animation`, which also stops a fling), so
+/// a tap on the top bar or the status bar still slides back to the top. It only takes a finger on
+/// the handle itself, never on the photos at the grid's edge.
+fn scrubber(app: &LightcraftApp, ui: &mut egui::Ui, viewport: Rect, content_h: f32, ids: &[PhotoId], lay: &GridLayout) {
+    let t = Tokens::get(ui.ctx());
+    let key = scrub_id();
+    let clip = ui.clip_rect();
+    let max = content_h - viewport.height();
+    let mut st: Scrub = ui.data(|d| d.get_temp(key)).unwrap_or_default();
+    let now = ui.input(|i| i.time);
+    // nothing to run through: a screen or two of photos scroll well enough by hand
+    if max < viewport.height() || !max.is_finite() {
+        ui.data_mut(|d| {
+            d.insert_temp(key, Scrub::default());
+            d.insert_temp(key.with("hit"), None::<Rect>);
+        });
+        return;
+    }
+    if (viewport.top() - st.offset).abs() > 0.5 {
+        (st.offset, st.moved_at) = (viewport.top(), now);
+    }
+    let travel = (clip.top() + 8.0)..=(clip.bottom() - 8.0 - SCRUB_H).max(clip.top() + 8.0);
+    let span = (travel.end() - travel.start()).max(1.0);
+    let y = travel.start() + (viewport.top() / max).clamp(0.0, 1.0) * span;
+    let lingering = now - st.moved_at < SCRUB_LINGER;
+    let shown = ui.ctx().animate_bool_with_time(key.with("shown"), lingering || st.grab.is_some(), 0.2);
+    if lingering {
+        ui.ctx().request_repaint_after(std::time::Duration::from_millis(200));
+    }
+    let hit = Rect::from_min_max(pos2(clip.right() - 44.0, y - 12.0), pos2(clip.right(), y + SCRUB_H + 12.0));
+    let live = shown > 0.3 || st.grab.is_some();
+    if live {
+        let resp = ui.interact(hit, key.with("drag"), Sense::drag());
+        register(ui.ctx(), "grid:scrubber", hit);
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ScrollBar, true, crate::i18n::tr("Scroll")));
+        let pointer = ui.input(|i| i.pointer.interact_pos());
+        if resp.drag_started()
+            && let Some(p) = pointer
+        {
+            st.grab = Some(p.y - y);
+            haptics::tap(ui.ctx(), Haptic::Selection);
+        }
+        if resp.dragged()
+            && let (Some(p), Some(g)) = (pointer, st.grab)
+        {
+            let top = (p.y - g).clamp(*travel.start(), *travel.end());
+            let want = (top - travel.start()) / span * max;
+            // (an instant scroll by the difference: egui keeps the offset, and a fling still under
+            // way is stopped)
+            ui.scroll_with_delta_animation(vec2(0.0, viewport.top() - want), egui::style::ScrollAnimation::none());
+            st.moved_at = now;
+        }
+        if resp.drag_stopped() || !ui.input(|i| i.pointer.primary_down()) {
+            st.grab = None;
+        }
+    } else {
+        st.grab = None;
+    }
+    ui.data_mut(|d| {
+        d.insert_temp(key, st);
+        d.insert_temp(key.with("hit"), live.then_some(hit));
+    });
+    if shown <= 0.0 {
+        return;
+    }
+    // the handle: a capsule that widens while held
+    let held = ui.ctx().animate_bool_with_time(key.with("held"), st.grab.is_some(), 0.15);
+    let w = SCRUB_W + 3.0 * held;
+    let handle = Rect::from_min_size(pos2(clip.right() - 5.0 - w, y), vec2(w, SCRUB_H));
+    let p = ui.painter();
+    let ink = if Tokens::is_dark(ui.ctx()) { Color32::WHITE } else { Color32::from_gray(30) };
+    p.rect_filled(handle.expand(1.0), w / 2.0 + 1.0, Color32::from_black_alpha((60.0 * shown) as u8));
+    p.rect_filled(handle, w / 2.0, ink.gamma_multiply(0.85 * shown));
+    // while held: the month at the top of the screen beside it
+    if held > 0.0
+        && let Some(row) = rows_between(&lay.rows, viewport.top(), viewport.top() + 1.0).first()
+        && let Some(captured) = ids.get(row.start).and_then(|id| app.session.catalog.photo(*id)).and_then(|p| p.captured.clone())
+        && let Some(month) = captured.get(..7)
+    {
+        let label = crate::i18n::date_group_label(month, false);
+        let g = p.layout_no_wrap(label, t.semibold(15.0), t.text);
+        let bubble = Rect::from_min_size(pos2(handle.left() - 14.0 - g.size().x - 28.0, handle.center().y - 18.0), vec2(g.size().x + 28.0, 36.0));
+        let mut p = p.clone().with_layer_id(egui::LayerId::new(egui::Order::Foreground, key.with("bubble")));
+        p.set_opacity(held);
+        crate::glass::paint(&p, bubble, 18.0, None, 0.0);
+        p.galley(bubble.center() - g.size() / 2.0, g, t.text);
+    }
 }
 
 /// Should a scrolling photo strip (`key`: the grid, the filmstrip) bring the active photo into

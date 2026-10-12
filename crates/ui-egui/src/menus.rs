@@ -187,6 +187,8 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("view.reviewMode", "Rate & Review", None, ""),
     // compact layout: the Filter page (the filter button over the grid)
     ("view.filterSheet", "Filter…", None, ""),
+    // compact layout: back to the top of the grid (iOS: a tap on the status bar or the top bar)
+    ("view.scrollToTop", "Scroll to Top", None, ""),
     ("file.addPhotos", "Import Photos…", Some("Cmd+Shift+I"), "File"),
     // the host's own pickers (iOS); only in hosts that have them
     ("file.importFromPhotos", "Import from Photos…", None, "File"),
@@ -983,6 +985,10 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
                 None => app.ui.hidden_locations.clear(),
             }
             Ok(json!({"hidden": app.ui.hidden_locations}))
+        }
+        "view.scrollToTop" => {
+            app.ui.scroll_top = true;
+            Ok(Value::Null)
         }
         "view.filterSheet" => {
             // {list?: "type" | "camera" | "people" | "location" | "keyword" | "edited", close?: bool}

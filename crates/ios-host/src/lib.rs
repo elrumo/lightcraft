@@ -1,8 +1,9 @@
 //! LightCraft on iOS: what the app needs from the system that egui and winit don't give it — the
 //! Photos and Files pickers, the share sheet, saving to the photo library, the pasteboard, haptic
 //! feedback, the app's lifecycle (backgrounding, memory warnings, time to finish work in the
-//! background) and ImageIO's decoder for HEIC / HEIF (the iPhone's own photos), whose formats have
-//! no pure-Rust decoder (`lightcraft_codecs::set_system_decoder`).
+//! background), taps on the status bar (which scroll the grid back to the top) and ImageIO's decoder
+//! for HEIC / HEIF (the iPhone's own photos), whose formats have no pure-Rust decoder
+//! (`lightcraft_codecs::set_system_decoder`).
 //!
 //! The Objective-C calls go through `objc2` (Rust bindings to the system frameworks; no C or
 //! Objective-C code is compiled) and live in `ios` (compiled for iOS only). This crate is allowed
@@ -258,6 +259,36 @@ pub fn return_pressed() {
 /// drops, so the app turns these into Enter key presses (which confirm a text field).
 pub fn take_return_presses() -> u32 {
     RETURN_PRESSES.swap(0, Ordering::Relaxed)
+}
+
+/// Taps on the status bar that the app hasn't taken yet.
+static STATUS_BAR_TAPS: AtomicU32 = AtomicU32::new(0);
+
+/// The status bar was tapped (iOS asked the app's decoy scroll view to scroll to the top).
+pub fn status_bar_tapped() {
+    STATUS_BAR_TAPS.fetch_add(1, Ordering::Relaxed);
+}
+
+/// Status-bar taps since the last call: each scrolls the app's own scrolling content (the grid) back
+/// to the top, as iOS does for its lists.
+pub fn take_status_bar_taps() -> u32 {
+    STATUS_BAR_TAPS.swap(0, Ordering::Relaxed)
+}
+
+/// Have taps on the status bar counted ([`take_status_bar_taps`]), calling `f` on the main thread
+/// after each (to wake the app). The app draws its own scrolling, so UIKit is given a scroll view
+/// of the app's to tell: call once the app has its window, on the main thread; later calls do
+/// nothing.
+pub fn observe_status_bar_taps(f: Box<dyn Fn()>) -> Result<(), String> {
+    #[cfg(target_os = "ios")]
+    {
+        ios::status_bar::observe(f)
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        let _ = f;
+        Err(ONLY_IOS.into())
+    }
 }
 
 /// How iOS draws the app's windows (and its own chrome over them): light or dark.

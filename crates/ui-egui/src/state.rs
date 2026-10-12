@@ -588,6 +588,10 @@ pub struct UiState {
     /// opens (`type`, `camera`, `people`, `location`, `keyword`, `edited`); `view.filterSheet`.
     #[serde(skip)]
     pub filter_sheet: Option<String>,
+    /// Compact layout: scroll the grid back to its top on the next frame (a tap on the top bar or,
+    /// on iOS, on the status bar; `view.scrollToTop`).
+    #[serde(skip)]
+    pub scroll_top: bool,
     /// Open the sync status popover this frame (`view.syncStatus`): under the top right corner,
     /// where a click on the cloud button would have put it.
     #[serde(skip)]
@@ -1226,6 +1230,7 @@ impl Default for UiState {
             mask_group: String::new(),
             all_commands: false,
             filter_sheet: None,
+            scroll_top: false,
             sync_popover: false,
             luminance_map_restore: None,
             view: ViewMode::Detail,

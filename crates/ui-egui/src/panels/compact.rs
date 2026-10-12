@@ -390,6 +390,15 @@ fn top_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, mut shown: bo
         .frame(egui::Frame::NONE.fill(t.canvas).inner_margin(egui::Margin::symmetric(6, 0)))
         .show_collapsible(ui, &mut shown, |ui| {
             let full = ui.max_rect();
+            // over the grid, a tap on the bar between its buttons slides the grid back to its top, as a
+            // tap on the status bar does in iOS's lists (the buttons, added after, take their own taps)
+            if matches!(app.ui.view, ViewMode::PhotoGrid | ViewMode::SquareGrid) && !app.ui.select_mode {
+                let bar = ui.interact(full, egui::Id::new("compact-top-tap"), Sense::click());
+                crate::widgets::register(ui.ctx(), "bar:top", full);
+                if bar.clicked() {
+                    let _ = app.run("view.scrollToTop", json!({}));
+                }
+            }
             // (the bar's contents fade in when it turns into another: grid, photo, choosing)
             ui.multiply_opacity(mobile::enter(
                 ui.ctx(),

@@ -198,3 +198,49 @@ fn the_filter_button_opens_the_filter_page_and_its_lists() {
     h.settle(SETTLE);
     assert!(!has(&h, "sheet:filter"), "the page slid away");
 }
+
+/// The grid's scroll position (the top of what is on screen, in the grid's own points).
+fn offset(h: &Headless) -> f32 {
+    h.app.grid_scroll.unwrap_or(f32::NAN)
+}
+
+/// The phone grid's scroll handle shows while the grid moves, and dragging it runs through the
+/// whole grid (its own taps never reach the photos under it); a tap on the top bar between its
+/// buttons slides back to the top (`view.scrollToTop`, which iOS's status-bar tap also runs).
+#[test]
+fn the_scroll_handle_runs_through_the_grid_and_the_top_bar_goes_back_up() {
+    let mut h = grid([390.0, 520.0]);
+    assert!(!has(&h, "grid:scrubber"), "hidden until the grid moves");
+    let middle = egui::pos2(195.0, 300.0);
+    h.step_with([egui::Event::PointerMoved(middle)]);
+    let r = h.request("ui.scroll", json!({"dy": -200.0}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    frames(&mut h, 20);
+    assert!(offset(&h) > 50.0, "{}", offset(&h));
+    assert!(has(&h, "grid:scrubber"), "it shows while the grid moves");
+    let handle = rect_of(&h, "grid:scrubber");
+    let at = handle.center();
+    let bottom = egui::pos2(at.x, 520.0);
+    h.step_with([egui::Event::PointerMoved(at), button(true, at)]);
+    for k in 1..=10 {
+        h.step_with([egui::Event::PointerMoved(at.lerp(bottom, k as f32 / 10.0))]);
+    }
+    h.step_with([button(false, bottom)]);
+    frames(&mut h, 4);
+    let low = offset(&h);
+    assert!(!h.app.ui.select_mode && h.app.ui.view == ViewMode::SquareGrid, "the photos under it saw nothing");
+    snap(&h, "grid-scrubbed");
+    // the end of the grid: scrolling further by hand moves no more
+    h.step_with([egui::Event::PointerMoved(middle)]);
+    let r = h.request("ui.scroll", json!({"dy": -5000.0}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    frames(&mut h, 30);
+    assert!((offset(&h) - low).abs() < 2.0, "the handle took the grid to its end: {low} vs {}", offset(&h));
+    // the top bar's empty middle goes back up
+    click(&mut h, "bar:top");
+    frames(&mut h, 30);
+    assert!(offset(&h) < 1.0, "{}", offset(&h));
+    // in the far future the handle has gone again
+    frames(&mut h, 120);
+    assert!(!has(&h, "grid:scrubber"));
+}
