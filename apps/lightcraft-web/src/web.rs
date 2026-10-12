@@ -169,8 +169,11 @@ fn services(originals: Originals, backend: Option<Backend>, files: Files, frozen
     let restore_backend = backend.clone();
     let sync_backend = backend.clone();
     let erase_backend = backend.clone();
+    let chooser_ctx = ctx.clone();
     Services {
         picker: None,
+        // Import Profiles & Presets…: the chosen files are read into memory and handed over by content
+        host_files: Some(Box::new(move |req| crate::chooser::pick(req, chooser_ctx.clone()))),
         pick_display_profile: None,
         screen_profile: None,
         backup_library: Some(Box::new(move |session: &mut Session| {
@@ -210,7 +213,7 @@ fn services(originals: Originals, backend: Option<Backend>, files: Files, frozen
             Vec::new() // files arrive asynchronously and are imported on a later frame
         })),
         pick_denoise_model: None,
-        // Preset files: browser pickers are asynchronous; not wired on the web yet.
+        // preset files come through `host_files` (the browser's chooser answers later, by content)
         pick_preset_files: None,
         pick_tracklog: None,
         pick_lightroom_catalog: None,

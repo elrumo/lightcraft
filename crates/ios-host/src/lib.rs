@@ -20,7 +20,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 mod ios;
 
 /// What a picker handed over: copies of the chosen files in the staging folder (the app's to
-/// move into its library), and what couldn't be copied.
+/// move into its library, or read), and what couldn't be copied.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Picked {
     pub files: Vec<PathBuf>,
@@ -39,6 +39,9 @@ pub enum PickKind {
     Files,
     /// A folder from Files: the photos in it and its subfolders.
     Folder,
+    /// Files from Files named with one of these extensions (without dots; presets, LUTs…), any
+    /// number of them.
+    Documents(&'static [&'static str]),
 }
 
 /// Called once, on any thread, with everything the picker handed over.

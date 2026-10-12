@@ -146,6 +146,12 @@ whose portable helpers (safe file names, unique paths, the folder walk) are test
   ProRAW DNG when there is one, else the HEIC or JPEG); the Files picker hands over copies; a folder is read in place
   under its security scope (at most 5000 photos, 12 levels deep). Everything is copied into `tmp/Import/` and opens the
   import review, which *moves* it into the library's `Originals/` (`file.addPhotos {staged: true}`: no "add in place").
+- **Presets.** File ▸ Import Profiles & Presets… and the Presets panel's ⋯ ▸ Import Presets… open the Files picker for
+  preset files (`.lcpreset`, `.xmp`, `.lrtemplate`, `.zip`, `.dng`, Luminar `.lmp` / `.mplumpack`, `.cube` LUTs;
+  `PickKind::Documents`, a type per extension). Its copies land in `tmp/Import/` and `file.importPresets` reads them
+  there (`Services::host_files`, `pick::ask_host`); `.cube` files become profiles in the library's `Profiles/`.
+  Imported presets sync like the others ([sync.md](sync.md)). *Written and type-checked, not yet run on the simulator
+  or a device.*
 - **Export.** Every export is written to `tmp/Exports/` (emptied first) and opens the share sheet: Save Image (to
   Photos), Save to Files, AirDrop, Mail, other apps. The export dialog has no folder field (`Services::share_exports`).
   **Save to Photos** (the share sheet's row and the photo's save button; `Services::save_to_photos`) skips the share sheet:
