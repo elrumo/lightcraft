@@ -1009,7 +1009,7 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
                 return Some(Err("view.gridSpan: `span` is all, months or years".into()));
             };
             if !matches!(app.ui.view, ViewMode::PhotoGrid | ViewMode::SquareGrid) {
-                app.ui.view = ViewMode::SquareGrid;
+                app.ui.view = if app.ui.grid_mode == ViewMode::SquareGrid { ViewMode::SquareGrid } else { ViewMode::PhotoGrid };
             }
             app.ui.select_mode = false;
             app.ui.grid_span = span;
@@ -1045,7 +1045,7 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
                 return Some(Err(format!("view.filterSheet: unknown list `{list}`")));
             }
             if !matches!(app.ui.view, ViewMode::PhotoGrid | ViewMode::SquareGrid) {
-                app.ui.view = ViewMode::PhotoGrid;
+                app.ui.view = if app.ui.grid_mode == ViewMode::SquareGrid { ViewMode::SquareGrid } else { ViewMode::PhotoGrid };
             }
             app.ui.filter_sheet = Some(list.to_string());
             Ok(json!({"open": true, "list": list}))
