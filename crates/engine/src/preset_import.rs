@@ -628,6 +628,7 @@ fn read_into(name: &str, bytes: &[u8], group: Option<String>, in_archive: bool, 
                 Ok(z) => z,
                 Err(e) => return out.failed.push((name.to_string(), e)),
             };
+            let (had_presets, had_failures) = (out.presets.len(), out.failed.len());
             out.failed.extend(z.failed.into_iter().map(|(inner, why)| (format!("{name}/{inner}"), why)));
             for (inner, data) in z.files {
                 let dir_group =
@@ -636,6 +637,10 @@ fn read_into(name: &str, bytes: &[u8], group: Option<String>, in_archive: bool, 
                 read_into(&inner, &data, dir_group, true, &mut inside);
                 out.presets.extend(inside.presets);
                 out.failed.extend(inside.failed.into_iter().map(|(f, why)| (format!("{name}/{f}"), why)));
+            }
+            // (an archive with nothing in it we can read says so)
+            if out.presets.len() == had_presets && out.failed.len() == had_failures {
+                out.failed.push((name.to_string(), NO_PRESETS_IN_ARCHIVE.to_string()));
             }
         }
         "lmp" => one(crate::preset_luminar::read_lmp(name, bytes, group).map(|i| vec![i])),
@@ -943,6 +948,20 @@ text]], z = ZSTR "loc" }"#,
         let err = read_presets("Pack.zip", &zip(&[("Pack/Broken.xmp", b"<not xml")], true), None).unwrap_err();
         assert!(err.contains("Broken.xmp"), "{err}");
         assert_eq!(read_presets("Empty.zip", &zip(&[("a.txt", b"x")], true), None).unwrap_err(), NO_PRESETS_IN_ARCHIVE);
+    }
+
+    #[test]
+    fn an_archive_with_nothing_to_read_says_so_instead_of_being_ignored() {
+        let photos = zip(&[("a.jpg", b"\xff\xd8"), ("Guide.pdf", b"%PDF")], true);
+        let r = read_presets_report("Photos.zip", &photos, None);
+        assert!(r.presets.is_empty());
+        assert_eq!(r.failed, [("Photos.zip".to_string(), NO_PRESETS_IN_ARCHIVE.to_string())]);
+        let mut s = crate::Session::with_demo();
+        let out = s.execute("preset.import", &json!({"files": crate::inline_files::to_param([("Photos.zip", photos.as_slice())])})).unwrap();
+        assert_eq!(out["failed"], json!([["Photos.zip", NO_PRESETS_IN_ARCHIVE]]), "{out}");
+        // an archive with presets in it doesn't get the extra line
+        let r = read_presets_report("Pack.zip", &pack(), None);
+        assert!(r.failed.is_empty(), "{:?}", r.failed);
     }
 
     #[test]
