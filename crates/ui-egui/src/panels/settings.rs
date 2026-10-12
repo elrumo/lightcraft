@@ -186,7 +186,7 @@ fn card_id() -> egui::Id {
 
 /// Before a phone row: start a card, or draw the hairline between this row and the one above
 /// (from `inset`, where the row's text starts, to the card's edge, as iOS does).
-fn card_row(ui: &mut egui::Ui, t: &Tokens, inset: f32) {
+pub(super) fn card_row(ui: &mut egui::Ui, t: &Tokens, inset: f32) {
     let y = ui.cursor().top();
     if ui.data(|d| d.get_temp::<Card>(card_id())).is_some() {
         let r = ui.max_rect();
@@ -198,7 +198,7 @@ fn card_row(ui: &mut egui::Ui, t: &Tokens, inset: f32) {
 }
 
 /// Close the card the rows above are on (if any): its rounded background goes behind them.
-fn card_end(ui: &mut egui::Ui, t: &Tokens) {
+pub(super) fn card_end(ui: &mut egui::Ui, t: &Tokens) {
     let Some(card) = ui.data(|d| d.get_temp::<Card>(card_id())) else { return };
     ui.data_mut(|d| d.remove::<Card>(card_id()));
     let r = Rect::from_min_max(pos2(ui.max_rect().left(), card.top), pos2(ui.max_rect().right(), ui.cursor().top()));
@@ -208,7 +208,7 @@ fn card_end(ui: &mut egui::Ui, t: &Tokens) {
 }
 
 /// A whole phone row that reacts to a tap (`button:{id}` unless `id` is empty), lit while pressed.
-fn tap_row(ui: &mut egui::Ui, t: &Tokens, id: &str, label: &str, h: f32, inset: f32, enabled: bool) -> (Rect, egui::Response) {
+pub(super) fn tap_row(ui: &mut egui::Ui, t: &Tokens, id: &str, label: &str, h: f32, inset: f32, enabled: bool) -> (Rect, egui::Response) {
     card_row(ui, t, inset);
     let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), h), if enabled { Sense::click() } else { Sense::hover() });
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
@@ -222,7 +222,7 @@ fn tap_row(ui: &mut egui::Ui, t: &Tokens, id: &str, label: &str, h: f32, inset: 
 }
 
 /// `text` as one line of at most `max_w` points (cut with "…").
-fn line(ui: &egui::Ui, text: &str, size: f32, color: Color32, max_w: f32) -> std::sync::Arc<egui::Galley> {
+pub(super) fn line(ui: &egui::Ui, text: &str, size: f32, color: Color32, max_w: f32) -> std::sync::Arc<egui::Galley> {
     egui::WidgetText::from(RichText::new(text).size(size).color(color)).into_galley(
         ui,
         Some(egui::TextWrapMode::Truncate),

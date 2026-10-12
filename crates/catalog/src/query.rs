@@ -53,6 +53,10 @@ pub struct Filter {
     pub keyword: Option<String>,
     /// A person: photos with a named face region of this name (case-insensitive), as read from XMP.
     pub person: Option<String>,
+    /// A place: photos whose location, city, state / province or country is this name
+    /// (case-insensitive), as [`Catalog::places`] lists them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub place: Option<String>,
     pub camera: Option<String>,
     /// Lens (case-insensitive substring).
     pub lens: Option<String>,
@@ -163,6 +167,7 @@ impl Filter {
         for (name, val) in [
             ("keyword", &self.keyword),
             ("person", &self.person),
+            ("place", &self.place),
             ("camera", &self.camera),
             ("lens", &self.lens),
             ("date", &self.date),
@@ -333,6 +338,11 @@ impl Filter {
         {
             return false;
         }
+        if let Some(place) = &self.place
+            && !at_place(p, place)
+        {
+            return false;
+        }
         text.matches(p)
     }
 }
@@ -401,6 +411,28 @@ impl Catalog {
             .collect()
     }
 
+    /// The places the library's photos were taken in, with how many photos each: every location,
+    /// city, state / province and country named in their metadata (names that differ only in case
+    /// are one place, shown as first seen; a photo counts once for each). Most photos first, then
+    /// by name. What [`Filter::place`] picks from.
+    pub fn places(&self) -> Vec<(String, usize)> {
+        let mut m: std::collections::HashMap<String, (String, usize)> = Default::default();
+        for p in self.photos().filter(|p| p.in_library()) {
+            let mut seen: Vec<String> = Vec::new();
+            for name in place_names(p) {
+                let key = name.to_lowercase();
+                if seen.contains(&key) {
+                    continue;
+                }
+                m.entry(key.clone()).or_insert_with(|| (name.to_string(), 0)).1 += 1;
+                seen.push(key);
+            }
+        }
+        let mut v: Vec<(String, usize)> = m.into_values().collect();
+        v.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.to_lowercase().cmp(&b.0.to_lowercase())));
+        v
+    }
+
     /// All keywords with usage counts, sorted by name.
     pub fn keywords(&self) -> Vec<(String, usize)> {
         let mut m: std::collections::BTreeMap<String, usize> = Default::default();
@@ -450,6 +482,21 @@ impl Catalog {
         v.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())));
         v
     }
+}
+
+/// The place names in a photo's metadata (location, city, state / province, country), trimmed,
+/// empty ones left out.
+fn place_names(p: &Photo) -> impl Iterator<Item = &str> {
+    [p.meta.location.as_str(), p.meta.city.as_str(), p.meta.state.as_str(), p.meta.country.as_str()]
+        .into_iter()
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+}
+
+/// Whether `p` was taken at `place`: one of its place names is that name (case-insensitive).
+pub fn at_place(p: &Photo, place: &str) -> bool {
+    let place = place.trim();
+    place_names(p).any(|n| n.eq_ignore_ascii_case(place))
 }
 
 /// A person named on faces in the library ([`Catalog::people`]).

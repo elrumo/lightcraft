@@ -116,6 +116,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         super::mask_mobile::floating(app, &ctx);
     }
     albums(app, &ctx, albums_page);
+    super::filter_sheet::show(app, &ctx);
     if !albums_page && !app.ui.select_mode {
         add_button(app, &ctx, &t);
     }
@@ -561,14 +562,20 @@ pub fn grid_header(app: &mut LightcraftApp, ui: &mut egui::Ui, hr: egui::Rect, c
     let right = egui::Rect::from_min_max(pos2(hr.right() - 104.0, hr.top()), pos2(hr.right() - 12.0, hr.bottom()));
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(right).layout(egui::Layout::right_to_left(egui::Align::Center)));
     child.spacing_mut().item_spacing.x = 0.0;
-    let tapped = glass::group(&mut child, &[("icon:sort", Icon::Sort, "Sort", true), ("icon:filter", Icon::Filter, "Filter Bar", true)]);
+    let tapped = glass::group(&mut child, &[("icon:sort", Icon::Sort, "Sort", true), ("icon:filter", Icon::Filter, "Filter", true)]);
     if let Some(sort) = tapped.first()
         && sort.clicked()
     {
         mobile::open_menu(ui.ctx(), "sort", sort.rect);
     }
-    if tapped.get(1).is_some_and(|r| r.clicked()) {
-        let _ = app.run("view.filterBar", json!({}));
+    if let Some(filter) = tapped.get(1) {
+        // (a dot on the button while a filter hides photos)
+        if app.session.filter != lightcraft_catalog::Filter::default() {
+            ui.painter().circle_filled(filter.rect.right_top() + vec2(-9.0, 9.0), 4.0, t.accent);
+        }
+        if filter.clicked() {
+            let _ = app.run("view.filterSheet", json!({}));
+        }
     }
     // the count, where there's room for it before the buttons
     let after = title_r.right() + 4.0;

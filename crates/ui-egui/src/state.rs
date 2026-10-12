@@ -584,6 +584,10 @@ pub struct UiState {
     /// Compact layout: the searchable list of every command is open (the phone has no menu bar).
     #[serde(skip)]
     pub all_commands: bool,
+    /// Compact layout: the Filter page is open, at its first list (`""`) or at one of the lists it
+    /// opens (`type`, `camera`, `people`, `location`, `keyword`, `edited`); `view.filterSheet`.
+    #[serde(skip)]
+    pub filter_sheet: Option<String>,
     /// Open the sync status popover this frame (`view.syncStatus`): under the top right corner,
     /// where a click on the cloud button would have put it.
     #[serde(skip)]
@@ -1221,6 +1225,7 @@ impl Default for UiState {
             screen_undo_base: None,
             mask_group: String::new(),
             all_commands: false,
+            filter_sheet: None,
             sync_popover: false,
             luminance_map_restore: None,
             view: ViewMode::Detail,

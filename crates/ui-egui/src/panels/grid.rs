@@ -296,6 +296,9 @@ fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 }
             }
         }
+        if app.compact {
+            long_press(app, ui, &ids, &lay, origin);
+        }
         if app.compact && app.ui.select_mode {
             drag_choose(app, ui, &ids, &lay, origin);
         }
@@ -350,10 +353,7 @@ struct DragChoose {
 fn drag_choose(app: &mut LightcraftApp, ui: &egui::Ui, ids: &[PhotoId], lay: &GridLayout, origin: egui::Pos2) {
     let key = egui::Id::new(DRAG_CHOOSE);
     let (down, press, pos) = ui.input(|i| (i.pointer.primary_down(), i.pointer.press_origin(), i.pointer.interact_pos()));
-    let at = |p: egui::Pos2| -> Option<usize> {
-        let local = p - origin.to_vec2();
-        rows_between(&lay.rows, local.y, local.y).iter().flat_map(|r| r.start..r.end).find(|i| lay.cells.get(*i).is_some_and(|c| c.contains(local)))
-    };
+    let at = |p: egui::Pos2| cell_at(lay, origin, p);
     let mut state: Option<DragChoose> = ui.data(|d| d.get_temp(key));
     if !down {
         if state.is_some() {
@@ -388,6 +388,73 @@ fn drag_choose(app: &mut LightcraftApp, ui: &egui::Ui, ids: &[PhotoId], lay: &Gr
         let _ = app.run("library.select", json!({"ids": chosen}));
     }
     ui.data_mut(|d| d.insert_temp(key, s));
+}
+
+/// The photo (index into the grid's photos) whose cell holds screen point `p`; `origin` is where the
+/// grid's content starts on screen.
+fn cell_at(lay: &GridLayout, origin: egui::Pos2, p: egui::Pos2) -> Option<usize> {
+    let local = p - origin.to_vec2();
+    rows_between(&lay.rows, local.y, local.y).iter().flat_map(|r| r.start..r.end).find(|i| lay.cells.get(*i).is_some_and(|c| c.contains(local)))
+}
+
+/// Memory key: a long press was answered during the press in progress (its release is not a tap).
+const LONG_PRESS: &str = "grid-long-press";
+/// How long a finger rests on a photo before choosing starts: iOS's long press.
+pub const LONG_PRESS_SECS: f64 = 0.5;
+/// How far (points) a finger may wander and still be holding still.
+const LONG_PRESS_SLOP: f32 = 10.0;
+
+/// Whether the press in progress (or the one just released) was a long press: its tap is not one.
+fn long_pressed(ui: &egui::Ui) -> bool {
+    ui.data(|d| d.get_temp::<bool>(egui::Id::new(LONG_PRESS))).unwrap_or(false)
+}
+
+/// A long press on a phone's photo, answered while the finger is still down, as iOS Photos does:
+/// it starts choosing photos with that one (while choosing, it chooses or unchooses it), and a drag
+/// that follows, in any direction, chooses the run to the photo under the finger (`drag_choose`).
+/// egui's own long touch waits 0.8 s, needs a touch screen, and fires only if a frame happens to
+/// run then; this one asks for that frame, and a mouse held down works the same.
+fn long_press(app: &mut LightcraftApp, ui: &egui::Ui, ids: &[PhotoId], lay: &GridLayout, origin: egui::Pos2) {
+    let key = egui::Id::new(LONG_PRESS);
+    let (pressed, down, press, start, pos, now, touches) = ui.input(|i| {
+        (
+            i.pointer.any_pressed(),
+            i.pointer.primary_down(),
+            i.pointer.press_origin(),
+            i.pointer.press_start_time(),
+            i.pointer.interact_pos(),
+            i.time,
+            i.multi_touch().is_some(),
+        )
+    });
+    if pressed {
+        ui.data_mut(|d| d.remove::<bool>(key));
+    }
+    if !down || touches || long_pressed(ui) {
+        return;
+    }
+    let (Some(o), Some(start), Some(p)) = (press, start, pos) else { return };
+    if (p - o).length() > LONG_PRESS_SLOP {
+        return;
+    }
+    let Some(i) = cell_at(lay, origin, o) else { return };
+    let Some(&id) = ids.get(i) else { return };
+    let held = now - start;
+    if held < LONG_PRESS_SECS {
+        // nothing else may come in while the finger rests: wake up when the time is up
+        ui.ctx().request_repaint_after(std::time::Duration::try_from_secs_f64(LONG_PRESS_SECS - held).unwrap_or_default());
+        return;
+    }
+    ui.data_mut(|d| d.insert_temp(key, true));
+    haptics::tap(ui.ctx(), Haptic::Medium);
+    let base: Vec<u64> = if app.ui.select_mode { app.session.selection.ids.iter().map(|p| p.0).collect() } else { Vec::new() };
+    let adding = !(app.ui.select_mode && app.session.selection.contains(id));
+    if app.ui.select_mode {
+        let _ = app.run("library.select", json!({"ids": [id.0], "mode": "toggle"}));
+    } else {
+        let _ = app.run("view.selectMode", json!({"on": true, "id": id.0}));
+    }
+    ui.data_mut(|d| d.insert_temp(egui::Id::new(DRAG_CHOOSE), DragChoose { start: i, adding, base, last: Some(i) }));
 }
 
 /// Should a scrolling photo strip (`key`: the grid, the filmstrip) bring the active photo into
@@ -809,16 +876,19 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
         // touch: a tap opens the photo (no double-tap, no modifiers); choosing photos, it adds or
         // removes it; a long press starts choosing (there is no right click: the action bar and
         // Menu have what the context menu would)
+        // (a long press is answered while the finger is down, `long_press`: its release is no tap)
+        let tapped = resp.clicked() && !long_pressed(ui);
         if app.ui.select_mode {
             check_badge(ui, img_rect, selected, &t, egui::Id::new(("check", id.0)));
-            if resp.clicked() {
+            if tapped {
                 let _ = app.run("library.select", json!({"ids": [id.0], "mode": "toggle"}));
                 haptics::tap(ui.ctx(), Haptic::Selection);
             }
-        } else if resp.clicked() {
+        } else if tapped {
             let _ = app.run("library.select", json!({"ids": [id.0]}));
             let _ = app.run("view.detail", json!({}));
-        } else if resp.long_touched() || resp.secondary_clicked() {
+        } else if resp.clicked_by(egui::PointerButton::Secondary) {
+            // a right click (a mouse on a narrow window) starts choosing too
             let _ = app.run("view.selectMode", json!({"on": true, "id": id.0}));
             haptics::tap(ui.ctx(), Haptic::Medium);
         }

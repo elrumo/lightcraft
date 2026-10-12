@@ -185,6 +185,8 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("view.selectMode", "Select Photos", None, ""),
     // compact layout: a photo with the bars away, where swipes rate and flag it
     ("view.reviewMode", "Rate & Review", None, ""),
+    // compact layout: the Filter page (the filter button over the grid)
+    ("view.filterSheet", "Filter…", None, ""),
     ("file.addPhotos", "Import Photos…", Some("Cmd+Shift+I"), "File"),
     // the host's own pickers (iOS); only in hosts that have them
     ("file.importFromPhotos", "Import from Photos…", None, "File"),
@@ -981,6 +983,22 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
                 None => app.ui.hidden_locations.clear(),
             }
             Ok(json!({"hidden": app.ui.hidden_locations}))
+        }
+        "view.filterSheet" => {
+            // {list?: "type" | "camera" | "people" | "location" | "keyword" | "edited", close?: bool}
+            if p.get("close").and_then(Value::as_bool) == Some(true) {
+                app.ui.filter_sheet = None;
+                return Some(Ok(json!({"open": false})));
+            }
+            let list = p.get("list").and_then(Value::as_str).unwrap_or("");
+            if !list.is_empty() && !crate::panels::filter_sheet::LISTS.iter().any(|(id, _, _)| *id == list) {
+                return Some(Err(format!("view.filterSheet: unknown list `{list}`")));
+            }
+            if !matches!(app.ui.view, ViewMode::PhotoGrid | ViewMode::SquareGrid) {
+                app.ui.view = ViewMode::PhotoGrid;
+            }
+            app.ui.filter_sheet = Some(list.to_string());
+            Ok(json!({"open": true, "list": list}))
         }
         "view.filterBar" => {
             app.ui.filter_bar = !app.ui.filter_bar;

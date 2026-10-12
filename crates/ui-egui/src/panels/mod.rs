@@ -16,6 +16,7 @@ pub mod dialogs;
 pub mod edit;
 pub mod export;
 pub mod faces;
+pub mod filter_sheet;
 pub mod filterbar;
 pub mod grid;
 pub mod keymap;
