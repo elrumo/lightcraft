@@ -417,7 +417,7 @@ pipeline and encoder as the apps, and sends the image back, which the device sav
 |---|---|
 | photos (added, removed, Recently Deleted), ratings, flags, colour labels, label names | where the original is on this disk (renames and relinks of files), Local folders browsed |
 | develop settings, versions (incl. automatic ones), capture time edits | edit **History** (each device keeps its own steps) |
-| user presets (create, rename, move, delete, favourite) | favourites among the built-in presets, recent profiles |
+| user presets (created or imported on any device, the web and iOS included; rename, move, delete, favourite) | favourites among the built-in presets, recent profiles |
 | export, metadata and filter presets, curve presets, colour-label and keyword sets, LUT profiles (with their `.cube` files), the import defaults that don't name a place | the watched folder for auto import, the folders and the external editor, the cache size, the search-sharing choices |
 | metadata and keywords, analysis results | undo / redo |
 | albums, folders, smart albums, stacks | the view (`view.json`, `ui.json`) |
@@ -440,7 +440,9 @@ another device got there first it pulls, merges, and sends again. What the merge
 - **During a slider drag** nothing from the server is applied; it waits until you let go.
 - **Presets** are one document on the server, merged by preset id against the copy both sides last agreed on: a preset
   deleted on one device stays deleted unless the other changed it meanwhile, presets added on both are all kept, and
-  one edited on both merges field by field. A preset created on a synced device gets an id that includes its id space.
+  one edited on both merges field by field. A preset created on a synced device gets an id that includes its id space;
+  an imported one gets an id named by its content (its name, group and settings), so a preset pack imported on two
+  devices is one set of presets, and two different presets that share a name both stay.
 
 Ids never collide: the server gives each device an id space at sign-in, and ids a device hands out are
 `space · 2³² + n` (still exact in JavaScript). The library uploaded first keeps the ids it had.

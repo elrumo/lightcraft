@@ -103,25 +103,73 @@ pub fn expand_preset_paths(paths: &[String]) -> Vec<String> {
     out
 }
 
+/// `v` as JSON text with every object's keys sorted, however it was built (at most `depth`
+/// levels; deeper values are written as `null`).
+fn canonical_json(v: &Value, depth: usize, out: &mut String) {
+    match v {
+        _ if depth == 0 => out.push_str("null"),
+        Value::Object(o) => {
+            let mut keys: Vec<&String> = o.keys().collect();
+            keys.sort();
+            out.push('{');
+            for (i, k) in keys.into_iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                out.push_str(&Value::String(k.clone()).to_string());
+                out.push(':');
+                canonical_json(o.get(k).unwrap_or(&Value::Null), depth - 1, out);
+            }
+            out.push('}');
+        }
+        Value::Array(a) => {
+            out.push('[');
+            for (i, x) in a.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                canonical_json(x, depth - 1, out);
+            }
+            out.push(']');
+        }
+        other => out.push_str(&other.to_string()),
+    }
+}
+
+/// The id an imported preset gets: named by its content (name, group and settings), so the same
+/// preset imported on two synced devices is one preset there, and two different presets that share
+/// a name stay two (an id taken from the file, or from the name, would make one of them replace
+/// the other when the devices sync). Stable across builds and platforms (FNV-1a over canonical
+/// JSON).
+pub fn imported_preset_id(p: &Preset) -> String {
+    let mut text = String::new();
+    canonical_json(&json!([p.group, p.name, p.settings]), 64, &mut text);
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in text.as_bytes() {
+        h ^= u64::from(*b);
+        h = h.wrapping_mul(0x0100_0000_01b3);
+    }
+    format!("user.imp.{h:016x}")
+}
+
 impl Session {
     /// Add imported presets. Identical presets (same name, group and settings) already present are
-    /// skipped; id clashes get a fresh id. Returns the ids added.
+    /// skipped; the others get the id [`imported_preset_id`] names them by (with `-2`, `-3`… in the
+    /// rare case it is taken, by a preset edited since it was imported). Returns the ids added.
     pub fn add_presets(&mut self, presets: Vec<Preset>) -> Vec<String> {
         let mut added = Vec::new();
         for mut p in presets {
             if self.presets.iter().any(|q| q.name == p.name && q.group == p.group && q.settings == p.settings) {
                 continue;
             }
-            if p.id.trim().is_empty() || p.id.starts_with("lc.") || self.presets.iter().any(|q| q.id == p.id) {
-                let base = format!("user.{}", slug(&format!("{}-{}", p.group, p.name)));
-                let mut id = base.clone();
-                let mut n = 2;
-                while self.presets.iter().any(|q| q.id == id) {
-                    id = format!("{base}-{n}");
-                    n += 1;
-                }
-                p.id = id;
+            let base = imported_preset_id(&p);
+            let mut id = base.clone();
+            let mut n = 2;
+            while self.presets.iter().any(|q| q.id == id) {
+                id = format!("{base}-{n}");
+                n += 1;
             }
+            p.id = id;
             p.builtin = false;
             added.push(p.id.clone());
             self.presets.push(p);
@@ -602,6 +650,88 @@ mod tests {
         assert!(id.starts_with("user."));
         assert!(s.presets.iter().find(|p| p.id == builtin.id).unwrap().builtin, "built-in untouched");
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// An XMP preset (hand-written for these tests, not a third-party preset).
+    fn xmp_preset(exposure: &str) -> String {
+        format!(
+            r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+          <rdf:Description rdf:about="" xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"
+            crs:PresetType="Normal" crs:Exposure2012="{exposure}" crs:Contrast2012="+10"/></rdf:RDF></x:xmpmeta>"#
+        )
+    }
+
+    /// Files handed over by content (the browser's file chooser has no paths) import like files
+    /// on disk: zips and all, a folder in the name gives the group, and bad entries are reported.
+    #[test]
+    fn presets_import_from_files_given_by_content() {
+        let lc = to_lcpreset(&[Preset {
+            id: "user.s7-3.mine".into(),
+            name: "Mine".into(),
+            group: "Travel".into(),
+            settings: json!({"color": {"vibrance": 12.0}}),
+            favorite: true,
+            builtin: false,
+        }]);
+        let zip = crate::preset_import::tests::zip(&[("Film Pack/Warm.xmp", xmp_preset("+0.40").as_bytes())], true);
+        let files = crate::inline_files::to_param([
+            ("Pack/Soft.xmp", xmp_preset("+0.20").as_bytes()),
+            ("mine.lcpreset", lc.as_bytes()),
+            ("bundle.zip", zip.as_slice()),
+            ("notes.txt", b"not a preset".as_slice()),
+        ]);
+        let mut bad = files.as_array().unwrap().clone();
+        bad.push(json!({"name": "broken.xmp", "data": "%%%"}));
+        let mut s = Session::with_demo();
+        let r = s.execute("preset.import", &json!({"files": bad})).unwrap();
+        let got: Vec<(&str, &str)> =
+            r["imported"].as_array().unwrap().iter().map(|i| (i["name"].as_str().unwrap(), i["group"].as_str().unwrap())).collect();
+        assert_eq!(got, [("Soft", "Pack"), ("Mine", "Travel"), ("Warm", "Film Pack")], "{r}");
+        let failed: Vec<&str> = r["failed"].as_array().unwrap().iter().map(|f| f[0].as_str().unwrap()).collect();
+        assert_eq!(failed, ["notes.txt", "broken.xmp"], "{r}");
+        assert_eq!(r["imported"][1]["file"], "mine.lcpreset");
+        let soft = r["imported"][0]["id"].as_str().unwrap().to_string();
+        s.execute("preset.apply", &json!({"id": soft})).unwrap();
+        assert_eq!(s.develop_of(s.active().unwrap()).unwrap().light.exposure, 0.2);
+        // the same files again: nothing new
+        let r = s.execute("preset.import", &json!({"files": files})).unwrap();
+        assert_eq!((r["imported"].as_array().unwrap().len(), r["skipped"].as_u64()), (0, Some(3)), "{r}");
+        // paths and files together; neither is an error
+        assert!(s.execute("preset.import", &json!({})).is_err());
+        assert!(s.execute("preset.import", &json!({"paths": [], "files": []})).is_err());
+    }
+
+    /// Imported presets are named by their content: the same preset gets the same id in any
+    /// library (so synced devices see one), different presets with the same name get different ones.
+    #[test]
+    fn imported_presets_are_named_by_their_content() {
+        let one = |exposure: &str| {
+            let mut s = Session::new();
+            let files = crate::inline_files::to_param([("Look.xmp", xmp_preset(exposure).as_bytes())]);
+            let r = s.execute("preset.import", &json!({"files": files})).unwrap();
+            let dry = s.execute("preset.import", &json!({"files": files, "dryRun": true})).unwrap();
+            let id = r["imported"][0]["id"].as_str().unwrap().to_string();
+            assert_eq!(dry["imported"][0]["id"].as_str(), Some(id.as_str()), "a dry run names the same id");
+            (s, id)
+        };
+        let (mut a, id) = one("+0.30");
+        let (_, same) = one("+0.30");
+        let (_, other) = one("+0.60");
+        assert_eq!(id, same);
+        assert_ne!(id, other);
+        assert!(id.starts_with("user.imp.") && id.len() == "user.imp.".len() + 16, "{id}");
+        // key order doesn't matter, the values do
+        let p = |settings: Value| Preset { id: String::new(), name: "N".into(), group: "G".into(), settings, favorite: false, builtin: false };
+        assert_eq!(
+            imported_preset_id(&p(json!({"light": {"exposure": 0.3, "contrast": 10.0}, "color": {}}))),
+            imported_preset_id(&p(json!({"color": {}, "light": {"contrast": 10.0, "exposure": 0.3}})))
+        );
+        // edited after its import, then imported again: kept apart under a fresh id
+        let i = a.presets.iter().position(|x| x.id == id).unwrap();
+        a.presets[i].settings = json!({"light": {"exposure": 1.0}});
+        let files = crate::inline_files::to_param([("Look.xmp", xmp_preset("+0.30").as_bytes())]);
+        let r = a.execute("preset.import", &json!({"files": files})).unwrap();
+        assert_eq!(r["imported"][0]["id"].as_str(), Some(format!("{id}-2").as_str()), "{r}");
     }
 
     #[test]

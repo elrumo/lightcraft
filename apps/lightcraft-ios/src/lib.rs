@@ -16,6 +16,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use lightcraft_engine::Session;
 use lightcraft_ios_host::{BackgroundTask, InterfaceStyle, Lifecycle, PickKind, Picked};
 use lightcraft_ui_egui::haptics::Haptic;
+use lightcraft_ui_egui::pick::{HostPicked, PickRequest};
 use lightcraft_ui_egui::prefs::PrefsWriter;
 use lightcraft_ui_egui::{LightcraftApp, PickSource, SaveDone, Services, ShareExports};
 use serde_json::json;
@@ -326,6 +327,29 @@ fn is_photo(p: &Path) -> bool {
     p.extension().and_then(|e| e.to_str()).is_some_and(|e| lightcraft_engine::import::EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
 }
 
+/// What the Files picker handed over for a command ([`Services::host_files`]): the copies' paths.
+fn host_picked(p: Picked) -> HostPicked {
+    HostPicked { paths: p.files.iter().map(|f| f.to_string_lossy().to_string()).collect(), files: Vec::new(), failed: p.failed }
+}
+
+/// The Files picker for a command's files (File ▸ Import Profiles & Presets…, the Presets panel's
+/// Import Presets…): files of the request's extensions, copied into `staging`; the copies' paths
+/// come back through the channel.
+fn pick_documents(req: PickRequest, staging: &Path, ctx: egui::Context) -> Result<std::sync::mpsc::Receiver<HostPicked>, String> {
+    use lightcraft_ui_egui::pick::PickKind as Dialog;
+    if !matches!(req.kind, Dialog::Files | Dialog::File) {
+        return Err("only files can be chosen here".into());
+    }
+    let extensions = req.filter.map_or(&[][..], |f| f.1);
+    let (tx, rx) = std::sync::mpsc::channel();
+    let deliver = Box::new(move |p: Picked| {
+        let _ = tx.send(host_picked(p));
+        ctx.request_repaint();
+    });
+    lightcraft_ios_host::pick(PickKind::Documents(extensions), staging, |_| false, deliver)?;
+    Ok(rx)
+}
+
 fn pick_kind(s: PickSource) -> PickKind {
     match s {
         PickSource::Photos => PickKind::Photos,
@@ -373,6 +397,7 @@ fn imageio_decode(bytes: &[u8], max: Option<(u32, u32)>) -> Result<lightcraft_co
 fn services(ctx: egui::Context, inbox: Inbox, tmp: &Path) -> Services {
     let (import_dir, export_dir) = staging(tmp);
     let repaint = ctx.clone();
+    let (documents_dir, documents_ctx) = (import_dir.clone(), ctx.clone());
     let pick: Rc<dyn Fn(PickSource) -> Result<(), String>> = Rc::new(move |source| {
         let (inbox, ctx) = (inbox.clone(), ctx.clone());
         let deliver = Box::new(move |p: Picked| {
@@ -383,6 +408,8 @@ fn services(ctx: egui::Context, inbox: Inbox, tmp: &Path) -> Services {
     });
     let photos = pick.clone();
     Services {
+        // Import Profiles & Presets…: the Files picker; its copies are read where they are
+        host_files: Some(Box::new(move |req| pick_documents(req, &documents_dir, documents_ctx.clone()))),
         // Import Photos… (and its shortcut on an iPad keyboard): the Photos picker
         pick_files: Some(Box::new(move || {
             if let Err(e) = photos(PickSource::Photos) {
@@ -628,6 +655,24 @@ mod tests {
         assert!(
             is_photo(Path::new("/a/IMG_1.HEIC")) && is_photo(Path::new("b.dng")) && !is_photo(Path::new("IMG_1.AAE")) && !is_photo(Path::new("x"))
         );
+    }
+
+    /// The Files picker's copies reach a command as paths (Import Presets…); off iOS there's no
+    /// picker to show, and the command says so.
+    #[test]
+    fn document_picks_hand_over_their_copies() {
+        let p = Picked { files: vec!["/tmp/Import/pick-1/Look.xmp".into()], failed: vec!["Old.zip: gone".into()], cancelled: false };
+        let h = host_picked(p);
+        assert_eq!((h.paths, h.files.len(), h.failed), (vec!["/tmp/Import/pick-1/Look.xmp".to_string()], 0, vec!["Old.zip: gone".to_string()]));
+        assert_eq!(host_picked(Picked { cancelled: true, ..Default::default() }), HostPicked::default());
+        let root = temp("documents");
+        let files = lightcraft_ui_egui::pick::PickRequest::files(None, "Presets", lightcraft_ui_egui::pick::PRESET_EXTENSIONS);
+        let folder = lightcraft_ui_egui::pick::PickRequest::folder("Folder");
+        assert!(pick_documents(folder, &root, egui::Context::default()).is_err_and(|e| e.contains("only files")));
+        if !cfg!(target_os = "ios") {
+            assert!(pick_documents(files, &root, egui::Context::default()).is_err(), "no picker off iOS");
+        }
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

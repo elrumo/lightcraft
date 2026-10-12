@@ -1,4 +1,5 @@
-//! The Photos picker (PHPickerViewController) and the Files picker (UIDocumentPickerViewController).
+//! The Photos picker (PHPickerViewController) and the Files picker (UIDocumentPickerViewController),
+//! for photos, a folder of photos, or files of given extensions (presets).
 //!
 //! Both hand over copies: the Photos picker lends each file only for the duration of a callback
 //! (on a background queue), the Files picker copies files into the app's tmp folder or, for a
@@ -18,7 +19,7 @@ use objc2_photos_ui::{
     PHPickerConfiguration, PHPickerConfigurationAssetRepresentationMode, PHPickerFilter, PHPickerResult, PHPickerViewControllerDelegate,
 };
 use objc2_ui_kit::{UIDocumentPickerDelegate, UIDocumentPickerViewController, UIResponder, UIViewController};
-use objc2_uniform_type_identifiers::{UTType, UTTypeFolder, UTTypeImage, UTTypeRAWImage};
+use objc2_uniform_type_identifiers::{UTType, UTTypeData, UTTypeFolder, UTTypeImage, UTTypeRAWImage};
 
 use crate::{Accept, Deliver, PickKind, Picked};
 
@@ -130,9 +131,23 @@ pub fn pick(kind: PickKind, staging: &Path, accept: Accept, deliver: Deliver) ->
     let job = Job { batch, accept, deliver };
     match kind {
         PickKind::Photos => pick_photos(mtm, job),
-        PickKind::Files => pick_documents(mtm, job, false),
-        PickKind::Folder => pick_documents(mtm, job, true),
+        // SAFETY: reading UniformTypeIdentifiers' type constants (immutable framework statics).
+        PickKind::Files => pick_documents(mtm, job, unsafe { NSArray::from_slice(&[UTTypeImage, UTTypeRAWImage]) }, false),
+        // SAFETY: as above.
+        PickKind::Folder => pick_documents(mtm, job, unsafe { NSArray::from_slice(&[UTTypeFolder]) }, true),
+        PickKind::Documents(extensions) => pick_documents(mtm, job, extension_types(extensions), false),
     }
+}
+
+/// The types of files named with these extensions. The system makes one up for an extension it
+/// doesn't know (`.lcpreset`), which files named so have too. None at all: any file.
+fn extension_types(extensions: &[&str]) -> Retained<NSArray<UTType>> {
+    let types: Vec<Retained<UTType>> = extensions.iter().filter_map(|e| UTType::typeWithFilenameExtension(&NSString::from_str(e))).collect();
+    if types.is_empty() {
+        // SAFETY: reading a UniformTypeIdentifiers type constant (an immutable framework static).
+        return unsafe { NSArray::from_slice(&[UTTypeData]) };
+    }
+    NSArray::from_retained_slice(&types)
 }
 
 fn pick_photos(mtm: MainThreadMarker, job: Job) -> Result<(), String> {
@@ -161,9 +176,7 @@ fn pick_photos(mtm: MainThreadMarker, job: Job) -> Result<(), String> {
     super::present(mtm, &picker)
 }
 
-fn pick_documents(mtm: MainThreadMarker, job: Job, folder: bool) -> Result<(), String> {
-    // SAFETY: reading UniformTypeIdentifiers' type constants (immutable framework statics).
-    let types = unsafe { if folder { NSArray::from_slice(&[UTTypeFolder]) } else { NSArray::from_slice(&[UTTypeImage, UTTypeRAWImage]) } };
+fn pick_documents(mtm: MainThreadMarker, job: Job, types: Retained<NSArray<UTType>>, folder: bool) -> Result<(), String> {
     // files: copies made for us (no security scope to manage); a folder: opened in place, read
     // while its security scope is held
     let picker = UIDocumentPickerViewController::initForOpeningContentTypes_asCopy(UIDocumentPickerViewController::alloc(mtm), &types, !folder);

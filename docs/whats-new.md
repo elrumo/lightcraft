@@ -1,5 +1,17 @@
 # What's new in LightCraft
 
+## 2026-10-12
+
+### Import presets on the web and on iPhone and iPad
+- Presets panel ▸ ⋯ ▸ Import Presets… (and File ▸ Import Profiles & Presets…) did nothing in the browser and in the iOS
+  app. The browser now opens its file chooser and the iOS app the Files picker, for `.xmp`, `.lrtemplate`, `.zip`
+  packs, "DNG presets", `.lcpreset` and Luminar looks; `.cube` LUT profiles too on iOS (not in the browser yet). If
+  importing can't start, the button now says why instead of doing nothing.
+- With self-hosted sync, imported presets reach your other devices like the ones you create. A preset pack imported
+  on two devices stays one set of presets, and two different presets that happen to share a name both stay (one used
+  to replace the other).
+- Agents and scripts can pass preset files by content: `preset.import {files: [{name, data}]}` (`data` base64).
+
 ## 2026-10-11
 
 ### JPEG XL export

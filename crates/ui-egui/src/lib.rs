@@ -239,6 +239,11 @@ pub struct Services {
     /// (`pick`; #191). With it, the synchronous pickers below serve only the buttons inside
     /// dialogs; without it (the web, tests) they answer the commands too.
     pub picker: Option<pick::Picker>,
+    /// The host's own file picker, which hands files over later, by content or as copies (the web:
+    /// the browser's file chooser; iOS: the Files picker). Commands that can take files that way
+    /// ask it ([`pick::ask_host`]; File ▸ Import Profiles & Presets…) when the dialogs above aren't
+    /// there.
+    pub host_files: Option<pick::HostPicker>,
     /// Show an open dialog for photos; returns paths.
     pub pick_files: Option<PickFiles>,
     /// Local ONNX model; a manifest must accompany it.
