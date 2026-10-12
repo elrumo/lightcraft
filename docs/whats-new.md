@@ -1,5 +1,19 @@
 # What's new in LightCraft
 
+## 2026-10-12
+
+### A tidier sync status popover
+- The cloud button's popover is reorganised. The status at the top says what is going on (Syncing, Up to date,
+  Syncing is paused, Can't sync, Signed out) with the server's address under it, shown once instead of in two
+  places. **This device**, **Server** and **Storage** are rounded cards with one row per piece of work: an icon, how
+  far it is, a slim bar and the time left.
+- Files or folders the server couldn't read, and files that couldn't be sent or received, are warning rows in their
+  card instead of loose orange text.
+- Pause / Resume, Sync Now and Settings are buttons at the bottom that stay there: when the server has a lot to do
+  on a small phone, the cards between them scroll.
+- Fixed: after a tap or click outside closed the popover (or a pull-down menu on a phone), it opened under its own
+  dimming the next time, greyed out, and tapping Pause or Sync Now closed it instead of doing anything.
+
 ## 2026-10-11
 
 ### JPEG XL export
