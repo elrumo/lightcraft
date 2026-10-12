@@ -735,6 +735,44 @@ fn only_a_finger_held_still_on_the_photo_shows_the_before() {
     finger(&mut h, &[("up", 0.5, 0.5)]);
 }
 
+/// A finger's double tap on the photo in the crop tool resets the crop, with a light tap, and keeps
+/// the tool open (undo brings the crop back); an uncropped photo is left alone, with no undo step.
+/// A mouse's double-click inside the box still applies the crop.
+#[test]
+fn a_double_tap_on_the_photo_resets_the_crop() {
+    let mut h = first_photo([390.0, 844.0]);
+    let log = record_haptics(&mut h);
+    let id = h.app.session.active().expect("active photo");
+    let crop = |h: &Headless| h.app.session.develop_of(id).expect("settings").crop;
+    let double = [("down", 0.5, 0.5), ("up", 0.5, 0.5), ("down", 0.5, 0.5), ("up", 0.5, 0.5)];
+    h.app.ui.right = RightPanel::Crop;
+    h.settle(SETTLE);
+    let steps = h.app.session.undo.len();
+    finger(&mut h, &double);
+    assert_eq!(crop(&h), Default::default());
+    assert_eq!(h.app.session.undo.len(), steps, "nothing to reset: no undo step");
+    assert_eq!(heard(&log), []);
+    let r = h.request("engine.execute", json!({"command": "crop.set", "params": {"rect": [0.2, 0.25, 0.7, 0.8], "angle": 4.0}}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    let cropped = crop(&h);
+    assert_ne!(cropped, Default::default());
+    frames(&mut h, 60); // (taps soon after the last two would count as a triple tap)
+    finger(&mut h, &double);
+    assert_eq!(crop(&h), Default::default(), "reset");
+    assert_eq!(h.app.ui.right, RightPanel::Crop, "the tool stays open");
+    assert_eq!(heard(&log), [Haptic::Light]);
+    let r = h.request("engine.execute", json!({"command": "edit.undo"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    assert_eq!(crop(&h), cropped, "undo brings it back");
+    frames(&mut h, 60);
+    pointer(&mut h, &double);
+    h.settle(SETTLE);
+    assert_ne!(h.app.ui.right, RightPanel::Crop, "a mouse's double-click applies the crop");
+    assert_eq!(crop(&h), cropped);
+}
+
 /// On a tablet (the full layout, where a click zooms) the hold shows the Before too, and its lift
 /// doesn't zoom.
 #[test]

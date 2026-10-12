@@ -1549,6 +1549,12 @@ fn before_hold(ui: &egui::Ui, resp: &egui::Response, allowed: bool) -> BeforeHol
     h
 }
 
+/// Is a finger on a touch screen behind this frame's pointer input (rather than a mouse)? Also in
+/// the frame a finger lifts: its touch has ended then, but the end comes with the pointer's release.
+fn touch_input(ui: &egui::Ui) -> bool {
+    ui.input(|i| i.any_touches() || i.events.iter().any(|e| matches!(e, egui::Event::Touch { .. })))
+}
+
 /// Two-finger gestures on the loupe: pinch zooms (back to Fit when it shrinks past the fitted
 /// size), two fingers pan a zoomed photo. Returns whether two or more fingers are down, so the
 /// one-finger pan and swipe stand down.
@@ -1826,14 +1832,23 @@ fn crop_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respons
     // the angle next to the pointer, drawn once this frame's rotation is applied (below)
     let readout_at = pointer.filter(|_| rotating);
     let mut shown_angle = d.crop.geometry.angle;
-    // double-click inside the crop box applies the crop (same as Return / Done)
+    // a finger's double tap on the photo resets the crop (the tool stays open; ✕ or undo bring it
+    // back); a mouse's double-click inside the crop box applies it (same as Return / Done)
     if resp.double_clicked()
         && let Some(q) = resp.interact_pointer_pos()
-        && inside(q)
-        && grab(q).is_none()
     {
-        let _ = app.run("tool.done", json!({}));
-        return;
+        if touch_input(ui) {
+            if map.rect.contains(q) {
+                if d.crop != Default::default() {
+                    let _ = app.run("crop.reset", json!({}));
+                    haptics::tap(ui.ctx(), Haptic::Light);
+                }
+                return;
+            }
+        } else if inside(q) && grab(q).is_none() {
+            let _ = app.run("tool.done", json!({}));
+            return;
+        }
     }
     if resp.drag_started()
         && let Some(q) = resp.interact_pointer_pos()
