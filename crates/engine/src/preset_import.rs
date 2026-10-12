@@ -695,6 +695,42 @@ text]], z = ZSTR "loc" }"#,
         assert!(read_presets("plain.jpg", b"\xff\xd8 no xmp", None).is_err());
     }
 
+    /// A pack-style XMP preset (written for this test): attributes for the settings, `Alt` text for
+    /// the name, and a `Look` block naming `look` (the shape preset packs write).
+    fn pack_preset(look: &str, stubbed: bool, profile: Option<&str>) -> String {
+        let profile = profile.map(|p| format!(" crs:CameraProfile=\"{p}\"")).unwrap_or_default();
+        format!(
+            r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+<rdf:Description rdf:about="" xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"
+ crs:PresetType="Normal" crs:Cluster="" crs:UUID="AB12" crs:SupportsAmount="True" crs:Version="15.4" crs:ProcessVersion="15.4"
+ crs:Exposure2012="0.00" crs:Highlights2012="-12" crs:Vibrance="-8" crs:ToneCurveName2012="Custom" crs:HasSettings="True"{profile}>
+ <crs:Name><rdf:Alt><rdf:li xml:lang="x-default">Pack Look</rdf:li></rdf:Alt></crs:Name>
+ <crs:Group><rdf:Alt><rdf:li xml:lang="x-default"/></rdf:Alt></crs:Group>
+ <crs:Look>
+  <rdf:Description crs:Name="{look}" crs:Amount="1" crs:UUID="B952" crs:SupportsAmount="false" crs:Stubbed="{stubbed}">
+   <crs:Group><rdf:Alt><rdf:li xml:lang="x-default">Profiles</rdf:li></rdf:Alt></crs:Group>
+  </rdf:Description>
+ </crs:Look>
+</rdf:Description>
+</rdf:RDF></x:xmpmeta>"#
+        )
+    }
+
+    #[test]
+    fn default_profile_looks_in_preset_packs_are_not_reported() {
+        // Lightroom's default profiles are named by nearly every preset in a pack; our own starting look
+        // stands in for them, so they are not "settings we couldn't carry over" (as in sidecars)
+        for look in ["Adobe Color", "Adobe Standard"] {
+            let v = read_presets("Pack Look.xmp", pack_preset(look, true, Some(look)).as_bytes(), None).unwrap();
+            assert_eq!(v[0].preset.name, "Pack Look");
+            assert_eq!(v[0].preset.settings["light"]["highlights"], json!(-12.0));
+            assert!(v[0].unmapped.is_empty(), "{look}: {:?}", v[0].unmapped);
+        }
+        // another editor's own look or profile is still reported
+        let v = read_presets("Pack Look.xmp", pack_preset("Warm Film", true, Some("Camera Faithful")).as_bytes(), None).unwrap();
+        assert_eq!(v[0].unmapped, ["CameraProfile", "Look"]);
+    }
+
     #[test]
     fn zip_bundles_with_folders_as_groups() {
         for deflate in [false, true] {

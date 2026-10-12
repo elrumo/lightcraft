@@ -2,6 +2,12 @@
 
 ## 2026-10-12
 
+### Fewer false warnings when importing preset packs
+- Presets from commercial packs (`.xmp`) name Lightroom's default "Adobe Color" profile as a `Look` in every file, and
+  the import used to list `Look` as a setting that couldn't be carried over. It no longer does: LightCraft's own
+  starting look stands in for that profile, as it already did for photos' sidecars. A preset whose look or profile
+  has any other name is still reported.
+
 ### Import presets on the web and on iPhone and iPad
 - Presets panel ▸ ⋯ ▸ Import Presets… (and File ▸ Import Profiles & Presets…) did nothing in the browser and in the iOS
   app. The browser now opens its file chooser and the iOS app the Files picker, for `.xmp`, `.lrtemplate`, `.zip`
