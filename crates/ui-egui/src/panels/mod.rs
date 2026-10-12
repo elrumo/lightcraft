@@ -32,6 +32,7 @@ pub mod masking;
 pub mod mobile;
 pub mod notices;
 pub mod people;
+pub mod people_mobile;
 pub mod person;
 pub mod presets;
 pub mod profiles;

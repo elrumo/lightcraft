@@ -189,6 +189,8 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("view.filterSheet", "Filter…", None, ""),
     // compact layout: back to the top of the grid (iOS: a tap on the status bar or the top bar)
     ("view.scrollToTop", "Scroll to Top", None, ""),
+    // compact layout: the next tap on the photo marks a face there and asks who it is
+    ("view.tagFace", "Tag a Face", None, ""),
     // compact layout: photos across the grid (a pinch), and every photo / months / years
     ("view.gridColumns", "Grid Columns", None, ""),
     ("view.gridSpan", "Years, Months or All Photos", None, ""),
@@ -1017,6 +1019,16 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
                 _ => None,
             };
             Ok(json!({"span": span.id()}))
+        }
+        "view.tagFace" => {
+            // {on?: bool (default: toggle)}: only over a photo; face boxes come on with it
+            let on = p.get("on").and_then(Value::as_bool).unwrap_or(!app.ui.tag_face);
+            app.ui.tag_face = on && app.ui.view == ViewMode::Detail && app.session.active().is_some();
+            if app.ui.tag_face {
+                app.ui.face_boxes = true;
+                app.ui.review = false;
+            }
+            Ok(json!({"on": app.ui.tag_face}))
         }
         "view.scrollToTop" => {
             app.ui.scroll_top = true;

@@ -129,6 +129,8 @@ mod tests_panels;
 #[cfg(test)]
 mod tests_people;
 #[cfg(test)]
+mod tests_people_phone;
+#[cfg(test)]
 mod tests_preset_import;
 #[cfg(test)]
 mod tests_preview_limit;

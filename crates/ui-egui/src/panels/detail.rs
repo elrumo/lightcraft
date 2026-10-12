@@ -747,7 +747,19 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     if !fullscreen && !review {
         filter_pill(app, ui, canvas);
     }
-    if app.ui.face_boxes {
+    if app.compact {
+        // a phone: the faces are framed with their names under them, a tap names one (not in review
+        // mode, where the photo is alone, nor with a drawing tool in hand)
+        let drawing = matches!(right, RightPanel::Crop | RightPanel::Masking | RightPanel::Remove | RightPanel::RedEye) || !app.ui.tool.is_empty();
+        if (app.ui.face_boxes || app.ui.tag_face) && !review && !fullscreen && !drawing && !navigating {
+            let screen = |x: f64, y: f64| map.screen(Point::new(x, y));
+            let norm = |p: Pos2| {
+                let n = map.norm(p);
+                (n.x, n.y)
+            };
+            super::people_mobile::loupe_faces(app, ui, &screen, &norm, img_rect, &photo, d.orientation);
+        }
+    } else if app.ui.face_boxes {
         // a name box left open on another photo is dropped
         if app.ui.name_edit.as_ref().is_some_and(|e| e.photo != id.0) {
             app.ui.name_edit = None;

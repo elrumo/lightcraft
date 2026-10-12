@@ -646,6 +646,13 @@ pub struct UiState {
     pub grid_jump: Option<GridJump>,
     /// The grid last shown (justified or square): where Back from a photo goes.
     pub grid_mode: ViewMode,
+    /// Compact layout: the page a name is typed on (a face, a person found in the photos, a
+    /// person's new name, a face marked by hand), while it is open.
+    #[serde(skip)]
+    pub face_naming: Option<crate::panels::people_mobile::Naming>,
+    /// Compact layout: the next tap on the photo marks a face there (`view.tagFace`).
+    #[serde(skip)]
+    pub tag_face: bool,
     /// Open the sync status popover this frame (`view.syncStatus`): under the top right corner,
     /// where a click on the cloud button would have put it.
     #[serde(skip)]
@@ -1289,6 +1296,8 @@ impl Default for UiState {
             grid_span: GridSpan::All,
             grid_jump: None,
             grid_mode: ViewMode::PhotoGrid,
+            face_naming: None,
+            tag_face: false,
             sync_popover: false,
             luminance_map_restore: None,
             view: ViewMode::Detail,

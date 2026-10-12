@@ -117,6 +117,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     }
     albums(app, &ctx, albums_page);
     super::filter_sheet::show(app, &ctx);
+    super::people_mobile::naming_page(app, &ctx);
     if !albums_page && !app.ui.select_mode {
         add_button(app, &ctx, &t);
     }
@@ -381,6 +382,14 @@ fn photo_more(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         }
     }
     mobile::row_gap(ui);
+    // the people in it: their faces framed and named on the photo, and a face to mark by hand
+    if mobile::row_checked(ui, "faceBoxes", Some(Icon::FaceBox), crate::i18n::tr("Faces"), true, Some(app.ui.face_boxes)) {
+        run_cmd(app, &ctx, "view.faceBoxes", json!({}));
+    }
+    if mobile::row(ui, "tagFace", Some(Icon::Person), crate::i18n::tr("Tag a Face"), true) {
+        run_cmd(app, &ctx, "view.tagFace", json!({"on": true}));
+    }
+    mobile::row_gap(ui);
     let ba = app.ui.before_after != crate::state::BeforeAfter::Off;
     if mobile::row_checked(ui, "beforeAfter", Some(Icon::BeforeAfter), crate::i18n::tr("Before / After"), true, Some(ba)) {
         run_cmd(app, &ctx, "view.beforeAfter", json!({}));
@@ -483,6 +492,8 @@ fn top_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, mut shown: bo
                 photo_bar(app, ui);
             } else if app.ui.view == ViewMode::Map {
                 map_bar(app, ui);
+            } else if app.ui.view == ViewMode::People {
+                people_bar(app, ui, t);
             } else {
                 grid_bar(app, ui, t);
             }
@@ -564,6 +575,28 @@ fn map_bar(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         ui.add_space(2.0);
         if bar_icon(ui, "back", Icon::ChevronLeft, "Back", true).clicked() {
             let _ = app.run("view.photoGrid", json!({}));
+        }
+    });
+}
+
+/// Over People: back (from a person's page to everyone, from everyone to the grid) and the
+/// person's name in the middle.
+fn people_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
+    let full = ui.max_rect();
+    if let Some(name) = app.ui.person_page.clone() {
+        let shown = super::people::fit(ui.painter(), &name, t.semibold(17.0), full.width() - 120.0);
+        ui.painter().text(full.center(), Align2::CENTER_CENTER, shown, t.semibold(17.0), t.text);
+    }
+    ui.horizontal_centered(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        ui.add_space(2.0);
+        if bar_icon(ui, "back", Icon::ChevronLeft, "Back", true).clicked() {
+            if app.ui.person_page.is_some() {
+                let _ = app.run("view.people", json!({}));
+            } else {
+                let grid = if app.ui.grid_mode == ViewMode::SquareGrid { "view.squareGrid" } else { "view.photoGrid" };
+                let _ = app.run(grid, json!({}));
+            }
         }
     });
 }

@@ -417,6 +417,47 @@ fn resizing_a_region_validates_clamps_undoes_and_leaves_the_sidecar_alone() {
     let _ = std::fs::remove_dir_all(&src);
 }
 
+/// Marking a face by hand (the phone's "Tag a Face"): a new face region, named or not, clamped into
+/// the photo, one undo step, the sidecar left alone; hostile input changes nothing.
+#[test]
+fn adding_a_face_box_by_hand_validates_names_undoes_and_leaves_the_sidecar_alone() {
+    let src = temp_dir("region-add");
+    write_png(&src.join("portrait.png"), 9);
+    std::fs::write(src.join("portrait.xmp"), MWG_REGIONS).unwrap();
+    let mut s = Session::new().with_fs();
+    s.execute("library.import", &json!({"paths": [src.to_string_lossy()]})).unwrap();
+    let id = s.active().unwrap();
+    s.execute("library.xmpPreferences", &json!({"autoWrite": true})).unwrap();
+    let before = std::fs::read(src.join("portrait.xmp")).unwrap();
+    let n = s.catalog.photo(id).unwrap().meta.regions.len();
+    let add = |s: &mut Session, p: serde_json::Value| s.execute("photo.addRegion", &p);
+    for bad in [
+        json!({}),
+        json!({"rect": {"x0": 0.1, "y0": 0.1, "x1": 0.1, "y1": 0.5}}),
+        json!({"rect": {"x0": "a", "y0": 0.1, "x1": 0.5, "y1": 0.5}}),
+        json!({"rect": {"x0": 0.1, "y0": 0.1, "x1": 0.5, "y1": f64::NAN}}),
+        json!({"rect": {"x0": 0.1, "y0": 0.1, "x1": 0.5, "y1": 0.5}, "name": 5}),
+        json!({"rect": {"x0": 0.1, "y0": 0.1, "x1": 0.5, "y1": 0.5}, "name": "x".repeat(201)}),
+        json!({"id": 999_999, "rect": {"x0": 0.1, "y0": 0.1, "x1": 0.5, "y1": 0.5}}),
+    ] {
+        assert!(add(&mut s, bad.clone()).is_err(), "{bad}");
+    }
+    assert_eq!(s.catalog.photo(id).unwrap().meta.regions.len(), n);
+    let r = add(&mut s, json!({"rect": {"x0": 0.9, "y0": -0.5, "x1": 0.6, "y1": 0.3}, "name": "  Ana  "})).unwrap();
+    assert_eq!(r["index"], n);
+    let region = s.catalog.photo(id).unwrap().meta.regions[n].clone();
+    assert_eq!((region.rect.x0, region.rect.y0, region.rect.x1, region.rect.y1), (0.6, 0.0, 0.9, 0.3));
+    assert_eq!((region.kind, region.name.as_deref()), (lightcraft_meta::RegionKind::Face, Some("Ana")));
+    assert!(s.catalog.people().iter().any(|p| p.name == "Ana"), "a named face makes a person");
+    let r = add(&mut s, json!({"rect": {"x0": 0.1, "y0": 0.1, "x1": 0.2, "y1": 0.2}, "name": ""})).unwrap();
+    assert_eq!(r["name"], serde_json::Value::Null, "an empty name is no name");
+    assert_eq!(std::fs::read(src.join("portrait.xmp")).unwrap(), before, "the sidecar is untouched");
+    s.execute("edit.undo", &json!({})).unwrap();
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(s.catalog.photo(id).unwrap().meta.regions.len(), n);
+    let _ = std::fs::remove_dir_all(&src);
+}
+
 /// Re-reading a sidecar: one that has `mwg-rs:Regions` is authoritative, so an emptied region list
 /// clears the stale regions; one without `mwg-rs:Regions` (an app that doesn't do regions) leaves the
 /// photo's regions alone.

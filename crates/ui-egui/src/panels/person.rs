@@ -62,7 +62,7 @@ pub fn parse(v: &Value) -> PersonPage {
 
 /// The page for `name`, asked for again only when the catalog changed, or (while the scan runs) at most once a second
 /// as it learns more faces.
-fn page_for(app: &mut LightcraftApp, name: &str, now: f64) -> Arc<PersonPage> {
+pub(super) fn page_for(app: &mut LightcraftApp, name: &str, now: f64) -> Arc<PersonPage> {
     let (rev, indexed) = (app.session.catalog.revision, app.caches.faces_indexed);
     if let Some((n, r, i, at, page)) = &app.caches.person_page
         && n == name
