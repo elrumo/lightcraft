@@ -301,6 +301,24 @@ fn sidecars(path: &str) -> Vec<(PathBuf, SidecarNaming, bool)> {
     v
 }
 
+/// The sidecars of `path` that are there ([`sidecars`]), one per file: on a case-insensitive volume
+/// `.xmp` and `.XMP` name the same file, and the spelling its folder lists is kept, so a renamed
+/// sidecar keeps its own spelling (`IMG_1.xmp` → `Trip_1.xmp`, not `Trip_1.XMP`).
+fn existing_sidecars(fs: &dyn MoveFs, path: &str) -> Vec<(PathBuf, SidecarNaming, bool)> {
+    let mut out: Vec<(PathBuf, SidecarNaming, bool)> = Vec::new();
+    for c in sidecars(path).into_iter().filter(|(p, _, _)| fs.is_file(p)) {
+        match out.iter_mut().find(|(kept, _, _)| fs.same_file(kept, &c.0)) {
+            Some(kept) => {
+                if !fs.listed(&kept.0) && fs.listed(&c.0) {
+                    *kept = c;
+                }
+            }
+            None => out.push(c),
+        }
+    }
+    out
+}
+
 /// The file-system primitives renaming uses. [`RealFs`] is the disk; tests substitute a model of
 /// a case-insensitive or case-sensitive volume (and inject failures).
 pub(crate) trait MoveFs {
@@ -319,6 +337,15 @@ pub(crate) trait MoveFs {
     /// Another photo file beside the stem-named sidecar `sidecar` that shares its stem (e.g.
     /// `IMG_1.JPG` for `IMG_1.xmp`), which still uses that sidecar.
     fn stem_sibling(&self, sidecar: &Path) -> Option<String>;
+    /// `p`'s folder lists an entry spelled exactly like it. On a case-insensitive volume
+    /// `IMG_1.XMP` also answers for a file named `IMG_1.xmp`, but only one spelling is the file's
+    /// name. When in doubt (the folder can't be read): `true`.
+    fn listed(&self, p: &Path) -> bool {
+        let (Some(dir), Some(name)) = (p.parent(), p.file_name()) else { return true };
+        let dir = if dir.as_os_str().is_empty() { Path::new(".") } else { dir };
+        // ponytail: one folder listing per call; called only for a sidecar that answers to two spellings
+        std::fs::read_dir(dir).map_or(true, |entries| entries.flatten().any(|e| e.file_name() == name))
+    }
     /// Content observed in a packet, independent of its pathname or inode. Model volumes
     /// override this; disk implementations stream a bounded buffer without retaining the XML.
     fn packet_version(&self, path: &Path) -> std::io::Result<PacketVersion> {
@@ -707,7 +734,7 @@ pub(crate) fn move_file_with(fs: &dyn MoveFs, from: &str, to: &str) -> std::resu
         .collect();
     move_one(fs, f, t).map_err(|e| fail(format!("rename {from}: {e}")))?;
     let mut done: Vec<SidecarMove> = Vec::new();
-    let mut remaining = sidecars(from).into_iter().filter(|(sc, _, _)| fs.is_file(sc)).map(|(sc, naming, upper)| {
+    let mut remaining = existing_sidecars(fs, from).into_iter().map(|(sc, naming, upper)| {
         let mut dst = crate::sidecar::sidecar_path(to, naming);
         if upper {
             dst = dst.with_extension("XMP");
@@ -1223,6 +1250,10 @@ pub(crate) mod tests {
             self.files.borrow_mut().remove(i);
             Ok(())
         }
+        fn listed(&self, p: &Path) -> bool {
+            let p = Self::norm(p);
+            self.files.borrow().iter().any(|(f, _)| *f == p)
+        }
         fn stem_sibling(&self, sidecar: &Path) -> Option<String> {
             let stem = Self::norm(&sidecar.with_extension(""));
             self.files.borrow().iter().map(|(f, _)| f.clone()).find(|f| {
@@ -1497,6 +1528,21 @@ pub(crate) mod tests {
                     ("/p/b.CR3.XMP".into(), "Raw edits".into()),
                     ("/p/b.XMP".into(), "Shared edits".into()),
                 ]
+            );
+        }
+    }
+
+    /// On a case-insensitive volume `a.XMP` also answers for `a.xmp`: a renamed sidecar keeps the
+    /// spelling its folder lists, whichever case that is.
+    #[test]
+    fn a_renamed_sidecar_keeps_its_own_spelling() {
+        for (ci, ext) in [(true, "xmp"), (true, "XMP"), (false, "xmp"), (false, "XMP")] {
+            let fs = FakeFs::new(ci, &[("/p/a.CR3", "raw"), (&format!("/p/a.{ext}"), "edits"), (&format!("/p/a.CR3.{ext}"), "own")]);
+            move_file_with(&fs, "/p/a.CR3", "/p/b.CR3").unwrap();
+            assert_eq!(
+                fs.listing(),
+                vec![("/p/b.CR3".into(), "raw".into()), (format!("/p/b.CR3.{ext}"), "own".into()), (format!("/p/b.{ext}"), "edits".into()),],
+                "case-insensitive: {ci}"
             );
         }
     }
