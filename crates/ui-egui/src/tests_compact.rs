@@ -52,6 +52,18 @@ fn pointer(h: &mut Headless, events: &[(&str, f32, f32)]) {
     assert_eq!(r["ok"], true, "{r}");
 }
 
+/// The same with a finger on a touch screen: its touch events come with the pointer's.
+fn finger(h: &mut Headless, events: &[(&str, f32, f32)]) {
+    let ev: Vec<_> = events.iter().map(|(k, x, y)| json!({"kind": k, "x": x, "y": y})).collect();
+    let r = h.request("ui.pointer", json!({"events": ev, "touch": true}), T);
+    assert_eq!(r["ok"], true, "{r}");
+}
+
+/// The loupe shows the Before alone, labelled so.
+fn shows_before(h: &Headless) -> bool {
+    h.app.loupe_before && h.painted_text().iter().any(|t| t == "Before")
+}
+
 /// A phone with the first photo of the view open (a next one, no previous) and no tool in hand.
 fn first_photo(size: [f32; 2]) -> Headless {
     let mut h = detail(size);
@@ -642,6 +654,100 @@ fn a_tap_is_felt_at_once_and_the_bars_go_soon_after() {
     frames(&mut h, 60);
     assert_ne!(h.app.ui.zoom, crate::state::Zoom::Fit, "zoomed");
     assert!(!h.app.ui.review && has(&h, "icon:edit"), "and the bars are back");
+}
+
+/// iOS gap A2.14: a finger held still on the photo shows the Before, with a medium tap, until it
+/// lifts; the lift is no tap (the bars stay, the photo stays at Fit). Held past egui's own long
+/// touch it opens no context menu.
+#[test]
+fn a_finger_held_on_the_photo_shows_the_before_until_it_lifts() {
+    let mut h = first_photo([390.0, 844.0]);
+    let log = record_haptics(&mut h);
+    let id = h.app.session.active();
+    finger(&mut h, &[("down", 0.5, 0.5)]);
+    assert!(!shows_before(&h), "not at once: it may be a tap");
+    frames(&mut h, 30);
+    assert!(shows_before(&h), "held half a second: the Before");
+    assert_eq!(heard(&log), [Haptic::Medium]);
+    let r = h.request("ui.inspect", json!({}), T);
+    assert_eq!(r["result"]["loupe"]["before"], true, "{r}");
+    // (lifted before egui's long touch, the release would be a tap)
+    finger(&mut h, &[("up", 0.5, 0.5)]);
+    assert!(!shows_before(&h), "lifted: the After");
+    frames(&mut h, 30);
+    assert!(!h.app.ui.review && has(&h, "icon:edit"), "the lift was no tap: the bars stay");
+    assert_eq!(h.app.ui.zoom, crate::state::Zoom::Fit);
+    assert_eq!(h.app.session.active(), id);
+    assert_eq!(heard(&log), [], "felt once");
+    // held past egui's long touch (0.8 s): still the Before, and no context menu over it
+    finger(&mut h, &[("down", 0.5, 0.5)]);
+    frames(&mut h, 70);
+    assert!(shows_before(&h));
+    assert!(!egui::Popup::is_any_open(&h.view.ctx), "no context menu");
+    finger(&mut h, &[("up", 0.5, 0.5)]);
+    assert!(!shows_before(&h));
+    frames(&mut h, 30);
+    assert!(!h.app.ui.review && !egui::Popup::is_any_open(&h.view.ctx));
+}
+
+/// A press that is something else never shows the Before: a quick tap (the bars go), a finger that
+/// moves first (a swipe), a mouse held down (the start of a pan), a finger with a tool in hand.
+#[test]
+fn only_a_finger_held_still_on_the_photo_shows_the_before() {
+    let mut h = first_photo([390.0, 844.0]);
+    let id = h.app.session.active();
+    let watch = |h: &mut Headless, n: u32| -> bool {
+        let mut seen = false;
+        for _ in 0..n {
+            h.step();
+            seen |= h.app.loupe_before;
+        }
+        seen
+    };
+    finger(&mut h, &[("down", 0.5, 0.5), ("up", 0.5, 0.5)]);
+    assert!(!watch(&mut h, 30), "a tap");
+    assert!(h.app.ui.review, "which hides the bars");
+    let r = h.request("engine.execute", json!({"command": "view.reviewMode", "params": {"on": false}}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    frames(&mut h, 30);
+    // up / down, so the photo stays (sideways would carry it to the next)
+    finger(&mut h, &[("down", 0.5, 0.5), ("drag", 0.5, 0.55)]);
+    assert!(!watch(&mut h, 40), "a finger that moved first");
+    finger(&mut h, &[("up", 0.5, 0.55)]);
+    assert_eq!(h.app.session.active(), id);
+    pointer(&mut h, &[("down", 0.5, 0.5)]);
+    assert!(!watch(&mut h, 40), "a mouse");
+    pointer(&mut h, &[("up", 0.5, 0.5)]);
+    let r = h.request("engine.execute", json!({"command": "view.reviewMode", "params": {"on": false}}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    frames(&mut h, 30);
+    let r = h.request("engine.execute", json!({"command": "tool.wbPicker"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    frames(&mut h, 30); // (the Edit sheet it opens slides up, and the photo with it)
+    // (held past the Before's wait, but lifted before egui's long touch: the selector's click)
+    finger(&mut h, &[("down", 0.5, 0.5)]);
+    assert!(!watch(&mut h, 30), "the white-balance selector takes the press");
+    finger(&mut h, &[("up", 0.5, 0.5)]);
+    assert_eq!(h.app.ui.tool, "", "and picks with it");
+    // and the same finger, held, shows it
+    finger(&mut h, &[("down", 0.5, 0.5)]);
+    assert!(watch(&mut h, 40));
+    finger(&mut h, &[("up", 0.5, 0.5)]);
+}
+
+/// On a tablet (the full layout, where a click zooms) the hold shows the Before too, and its lift
+/// doesn't zoom.
+#[test]
+fn on_a_tablet_the_lift_from_a_hold_does_not_zoom() {
+    let mut h = first_photo([1180.0, 820.0]);
+    assert!(!h.app.compact);
+    finger(&mut h, &[("down", 0.5, 0.5)]);
+    frames(&mut h, 30);
+    assert!(shows_before(&h));
+    finger(&mut h, &[("up", 0.5, 0.5)]);
+    frames(&mut h, 30);
+    assert!(!shows_before(&h));
+    assert_eq!(h.app.ui.zoom, crate::state::Zoom::Fit, "the lift was no click");
 }
 
 /// No menu bar on a phone: the grid's and the photo's "…" menus, and every other command in the

@@ -322,10 +322,10 @@ pub fn helper_tools(has_ui: bool) -> Vec<Value> {
             tool(
                 "pointer_gesture",
                 "Pointer gesture",
-                "Replay a pointer gesture on the photo in normalized image coordinates (0..1, origin top-left): brush strokes, gradient drags, crop handles, heal spots. Needs the Detail view.",
+                "Replay a pointer gesture on the photo in normalized image coordinates (0..1, origin top-left): brush strokes, gradient drags, crop handles, heal spots. Needs the Detail view. `touch`: a finger on a touch screen instead of a mouse (a finger held still on the photo shows the Before until an `up` lifts it).",
                 json!({
                     "events": {"type": "array", "items": {"type": "object", "properties": {"kind": {"type": "string", "enum": ["down", "drag", "move", "up"]}, "x": {"type": "number"}, "y": {"type": "number"}}, "required": ["kind", "x", "y"]}},
-                    "alt": {"type": "boolean"}, "shift": {"type": "boolean"}, "cmd": {"type": "boolean"}
+                    "alt": {"type": "boolean"}, "shift": {"type": "boolean"}, "cmd": {"type": "boolean"}, "touch": {"type": "boolean"}
                 }),
                 &["events"],
             ),
@@ -776,7 +776,7 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, args: &Value) -> ToolResult {
         "press_key" => ToolResult::from(b.call("ui.key", obj(args, &["key", "cmd", "shift", "alt", "ctrl"]))),
         "type_text" => ToolResult::from(b.call("ui.text", obj(args, &["text"]))),
         "clipboard" => ToolResult::from(b.call("ui.clipboard", obj(args, &["action", "text"]))),
-        "pointer_gesture" => ToolResult::from(b.call("ui.pointer", obj(args, &["events", "alt", "shift", "cmd"]))),
+        "pointer_gesture" => ToolResult::from(b.call("ui.pointer", obj(args, &["events", "alt", "shift", "cmd", "touch"]))),
         other => ToolResult::error(format!("unknown tool `{other}` (see tools/list)")),
     }
 }
