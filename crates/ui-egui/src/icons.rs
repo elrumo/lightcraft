@@ -44,6 +44,8 @@ pub enum Icon {
     Person,
     /// A camera: a body with a lens.
     Camera,
+    /// Reset: an arrow turning back over a line.
+    Reset,
     Gear,
     Filmstrip,
     BeforeAfter,
@@ -451,6 +453,11 @@ fn paint_with(p: &Painter, rect: Rect, icon: Icon, color: Color32, turn: Option<
         Person => {
             pen.circle(10.0, 6.5, 3.4);
             pen.arc(10.0, 18.5, 7.0, 200.0, 340.0);
+        }
+        Reset => {
+            pen.arc(11.0, 12.0, 5.5, 180.0, 360.0);
+            pen.line(&[(3.0, 9.5), (5.5, 12.5), (8.0, 9.5)]);
+            pen.line(&[(3.0, 16.5), (17.0, 16.5)]);
         }
         Camera => {
             pen.rect(2.5, 6.0, 17.5, 16.0, 2.0);

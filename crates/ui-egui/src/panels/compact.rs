@@ -263,6 +263,7 @@ fn menus(app: &mut LightcraftApp, ctx: &egui::Context) {
     mobile::actions(ctx, "more", None, |ui| grid_more(app, ui));
     mobile::actions(ctx, "sort", Some("Sort"), |ui| sort_items(app, ui));
     mobile::actions(ctx, "photoMore", None, |ui| photo_more(app, ui));
+    mobile::actions(ctx, "undoMenu", None, |ui| undo_menu(app, ui));
     let ids: Vec<u64> = app.session.selection.ids.iter().map(|id| id.0).collect();
     mobile::actions(ctx, "selRate", Some("Rating"), |ui| rating_items(app, ui, &ids));
     mobile::actions(ctx, "selFlag", Some("Flag"), |ui| flag_items(app, ui, &ids));
@@ -348,6 +349,60 @@ fn sort_items(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     }
     if mobile::row_checked(ui, "sort-descending", None, crate::i18n::tr("Descending"), true, Some(!asc)) {
         run_cmd(app, &ctx, "library.sort", json!({"ascending": false}));
+    }
+}
+
+/// The photo's undo menu, as Lightroom's mobile app has it: undo and redo side by side (the menu
+/// stays open, for stepping back and forth), then Reset (every edit, one undo step), Versions and
+/// History. Widgets `button:undoStep`, `button:redoStep`, `button:undoReset`, `button:undoVersions`,
+/// `button:undoHistory`.
+fn undo_menu(app: &mut LightcraftApp, ui: &mut egui::Ui) {
+    let ctx = ui.ctx().clone();
+    let t = Tokens::get(&ctx);
+    let w = ui.available_width();
+    let (row, _) = ui.allocate_exact_size(vec2(w, 52.0), Sense::hover());
+    let steps = [
+        ("undoStep", Icon::Undo, "Undo", "edit.undo", lightcraft_engine::cmd::can_undo(&app.session).is_ok()),
+        ("redoStep", Icon::Redo, "Redo", "edit.redo", lightcraft_engine::cmd::can_redo(&app.session).is_ok()),
+    ];
+    for (i, (id, icon, tip, cmd, enabled)) in steps.into_iter().enumerate() {
+        let cell = egui::Rect::from_min_size(row.min + vec2(i as f32 * w / 2.0, 0.0), vec2(w / 2.0, row.height()));
+        let resp = ui.interact(cell, egui::Id::new(("undo-menu", id)), if enabled { Sense::click() } else { Sense::hover() });
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, crate::i18n::tr(tip)));
+        crate::widgets::register(&ctx, format!("button:{id}"), cell);
+        if enabled && resp.is_pointer_button_down_on() {
+            let spot = cell.shrink2(vec2(10.0, 4.0));
+            ui.painter().rect_filled(
+                spot,
+                12.0,
+                if Tokens::is_dark(&ctx) { egui::Color32::from_white_alpha(28) } else { egui::Color32::from_black_alpha(16) },
+            );
+        }
+        crate::icons::paint(
+            ui.painter(),
+            egui::Rect::from_center_size(cell.center(), vec2(24.0, 24.0)),
+            icon,
+            if enabled { t.text } else { t.text_disabled },
+        );
+        // (the menu stays: a step back can be followed by another, or taken again)
+        if resp.clicked() {
+            run_cmd(app, &ctx, cmd, json!({}));
+            haptics::tap(&ctx, Haptic::Light);
+        }
+    }
+    mobile::row_gap(ui);
+    let has_photo = app.session.active().is_some();
+    if mobile::row(ui, "undoReset", Some(Icon::Reset), crate::i18n::tr("Reset"), has_photo) {
+        run_cmd(app, &ctx, "develop.reset", json!({}));
+        haptics::tap(&ctx, Haptic::Light);
+    }
+    for (id, cmd, icon, label) in
+        [("undoVersions", "panel.versions", Icon::Versions, "Versions"), ("undoHistory", "panel.activity", Icon::Activity, "History")]
+    {
+        if mobile::row(ui, id, Some(icon), crate::i18n::tr(label), has_photo) {
+            app.ui.presets = false;
+            run_cmd(app, &ctx, cmd, json!({}));
+        }
     }
 }
 
@@ -489,7 +544,7 @@ fn top_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, mut shown: bo
             if app.ui.select_mode {
                 select_bar(app, ui, t, full);
             } else if app.ui.view == ViewMode::Detail {
-                photo_bar(app, ui);
+                photo_bar(app, ui, t);
             } else if app.ui.view == ViewMode::Map {
                 map_bar(app, ui);
             } else if app.ui.view == ViewMode::People {
@@ -602,8 +657,9 @@ fn people_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
 }
 
 /// Over a photo: back on the left; undo, then share, save and "…" sharing one glass capsule on the
-/// right, as iOS 26 groups a bar's buttons (a long press on undo opens the history).
-fn photo_bar(app: &mut LightcraftApp, ui: &mut egui::Ui) {
+/// right, as iOS 26 groups a bar's buttons. Undo opens its menu (`undo_menu`), as Lightroom's mobile
+/// app has it; a long press on it opens the history.
+fn photo_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
     ui.horizontal_centered(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
         ui.add_space(2.0);
@@ -636,13 +692,20 @@ fn photo_bar(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 let _ = app.run("dialog.export", json!({}));
             }
             ui.add_space(6.0);
-            let can_undo = lightcraft_engine::cmd::can_undo(&app.session).is_ok();
-            let undo = bar_icon(ui, "undo", Icon::Undo, "Undo", can_undo);
+            // (a corner mark says it opens a menu: undo, redo, reset, versions)
+            let undo = bar_icon(ui, "undo", Icon::Undo, "Undo, Redo and Reset", app.session.active().is_some());
+            let mark = undo.rect.center() + vec2(9.0, 9.0);
+            let ink = if app.session.active().is_some() { t.text } else { t.text_disabled };
+            ui.painter().add(egui::Shape::convex_polygon(
+                vec![mark + vec2(3.5, -3.5), mark + vec2(3.5, 3.5), mark + vec2(-3.5, 3.5)],
+                ink,
+                Stroke::NONE,
+            ));
             if undo.clicked() {
-                let _ = app.run("edit.undo", json!({}));
+                mobile::open_menu(ui.ctx(), "undoMenu", undo.rect);
                 haptics::tap(ui.ctx(), Haptic::Light);
             }
-            if undo.long_touched() || undo.secondary_clicked() {
+            if undo.long_touched() || undo.clicked_by(egui::PointerButton::Secondary) {
                 app.ui.presets = false;
                 let _ = app.run("panel.activity", json!({}));
             }
