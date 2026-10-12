@@ -355,6 +355,7 @@ fn big_answers_are_gzipped() {
 
 #[test]
 fn admin_page_sets_up_and_manages_users() {
+    use std::io::{Read, Write};
     let root = temp("admin");
     let server = Server::start(Config::new(root.join("data"), "127.0.0.1:0")).unwrap();
     let base = format!("http://{}", server.addr());
@@ -371,6 +372,27 @@ fn admin_page_sets_up_and_manages_users() {
             && v.contains("frame-ancestors 'none'"))
     );
     assert_eq!(req("GET", "/admin/admin.js", "", None).0, 200);
+    // (its files go out gzipped to a browser that takes it, and `304` to one that has them already)
+    let raw = |extra: &str| -> (String, Vec<u8>) {
+        let mut conn = std::net::TcpStream::connect(server.addr()).unwrap();
+        conn.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        write!(conn, "GET /admin/admin.js HTTP/1.1\r\nHost: x\r\n{extra}Connection: close\r\n\r\n").unwrap();
+        let mut got = Vec::new();
+        let _ = conn.read_to_end(&mut got);
+        let at = got.windows(4).position(|w| w == b"\r\n\r\n").unwrap();
+        (String::from_utf8_lossy(&got[..at]).to_string(), got[at + 4..].to_vec())
+    };
+    let (head, plain) = raw("");
+    assert!(head.starts_with("HTTP/1.1 200") && !head.to_ascii_lowercase().contains("content-encoding"), "{head}");
+    let (head, zipped) = raw("Accept-Encoding: gzip\r\n");
+    assert!(head.to_ascii_lowercase().contains("content-encoding: gzip"), "{head}");
+    let mut unzipped = Vec::new();
+    flate2::read::GzDecoder::new(zipped.as_slice()).read_to_end(&mut unzipped).unwrap();
+    assert_eq!(unzipped, plain);
+    assert!(zipped.len() * 2 < plain.len(), "{} → {} bytes", plain.len(), zipped.len());
+    let etag = head.lines().find_map(|l| l.strip_prefix("ETag: ")).unwrap();
+    let (head, body) = raw(&format!("If-None-Match: {etag}\r\n"));
+    assert!(head.starts_with("HTTP/1.1 304") && body.is_empty(), "{head}");
     let (s, _, h) = req("GET", "/admin/icon.png", "", None);
     assert_eq!(s, 200);
     assert!(h.iter().any(|(k, v)| k.eq_ignore_ascii_case("content-type") && v == "image/png"));
@@ -398,10 +420,22 @@ fn admin_page_sets_up_and_manages_users() {
     assert_eq!(req("POST", "/api/admin/users", &ann, Some(json!({"name": "../x", "password": "long enough"}))).0, 400);
     assert_eq!(req("POST", "/api/admin/users", &ann, Some(json!({"name": "bob", "password": "long enough"}))).0, 200);
     assert_eq!(req("POST", "/api/admin/users", &ann, Some(json!({"name": "bob", "password": "long enough"}))).0, 400, "no silent overwrite");
+    // ann has a photo file of 1234 bytes
+    let blobs = root.join("data/users/ann/blobs/original/ab");
+    std::fs::create_dir_all(&blobs).unwrap();
+    std::fs::write(blobs.join("ab".repeat(16)), vec![0u8; 1234]).unwrap();
     let users = req("GET", "/api/admin/users", &ann, None).1;
     let names: Vec<&str> = users.as_array().unwrap().iter().map(|u| u["name"].as_str().unwrap()).collect();
     assert_eq!(names, ["ann", "bob"]);
     assert_eq!(users[0]["admin"], true);
+    // (the totals of photo files are counted in the background: null until they are, never waited for)
+    assert!(users[0]["bytes"].is_null() || users[0]["bytes"] == 1234, "{users}");
+    let counted = (0..200).any(|_| {
+        let u = req("GET", "/api/admin/users", &ann, None).1;
+        std::thread::sleep(std::time::Duration::from_millis(25));
+        u[0]["bytes"] == 1234 && u[1]["bytes"] == 0
+    });
+    assert!(counted, "the totals never arrived");
     assert_eq!(login("bob", "long enough").0, 401, "not an admin");
     let bob_device = device("bob", "long enough").1;
     let bob_token = bob_device["token"].as_str().unwrap().to_string();

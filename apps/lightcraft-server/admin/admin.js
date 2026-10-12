@@ -10,8 +10,12 @@ let token = sessionStorage.getItem(KEY) || '';
 let me = '';
 let routeSeq = 0;
 let foldersOf = null;
+let shownUser = '';
 let timer = null;
+let recountTimer = null;
 let scanWorking = false;
+const cache = new Map(); // GET path -> its last answer and when it came
+const inflight = new Map(); // GET path -> the request on its way
 
 /** An element with attributes and children (strings become text nodes). */
 function el(tag, attrs, ...kids) {
@@ -59,7 +63,47 @@ async function api(method, path, body) {
     const msg = (data && data.error) || 'the server answered ' + r.status;
     throw new Error(msg.charAt(0).toUpperCase() + msg.slice(1));
   }
+  if (method !== 'GET') {
+    // (something changed: what was read before is not to be shown as current)
+    cache.clear();
+    inflight.clear();
+  }
   return data;
+}
+
+/** GET `path`; asking for what is already on its way shares that request. */
+function get(path) {
+  let p = inflight.get(path);
+  if (!p) {
+    const current = () => inflight.get(path) === p;
+    p = api('GET', path)
+      .then((data) => {
+        if (current()) cache.set(path, { data, at: Date.now() });
+        return data;
+      })
+      .finally(() => current() && inflight.delete(path));
+    inflight.set(path, p);
+  }
+  return p;
+}
+
+/**
+ * Ask for `paths` (all at once) and show them: from the last answers at once if there are, then from
+ * fresh ones if they differ (answers less than a second old are fresh). `paint(answers)`; nothing
+ * is painted for a view left meanwhile. Resolves to the freshest answers.
+ */
+async function swr(paths, paint) {
+  const seq = routeSeq;
+  const old = paths.map((p) => cache.get(p));
+  const had = old.every(Boolean);
+  const recent = had && old.every((o) => Date.now() - o.at < 1000);
+  const asked = recent ? [] : paths.map(get);
+  const before = had ? old.map((o) => o.data) : null;
+  if (had) paint(before);
+  if (recent) return before;
+  const now = await Promise.all(asked);
+  if (seq === routeSeq && !(had && JSON.stringify(before) === JSON.stringify(now))) paint(now);
+  return now;
 }
 
 // ------------------------------------------------------------- formatting
@@ -75,6 +119,9 @@ function bytes(x) {
   const i = Math.min(u.length - 1, Math.floor(Math.log(x) / Math.log(1000)));
   return (x / Math.pow(1000, i)).toFixed(i ? 1 : 0) + ' ' + u[i];
 }
+
+/** A size the server is still counting (`null`) shows as … */
+const size = (x) => (x === null ? '…' : bytes(x));
 
 function ago(secs) {
   const d = secs - Date.now() / 1000;
@@ -237,6 +284,7 @@ async function route() {
   if ($('dash').hidden) return;
   const [, view, name, tab] = location.hash.split('/');
   clearTimeout(timer);
+  clearTimeout(recountTimer);
   foldersOf = null;
   scanWorking = false;
   const v = view === 'users' && name ? 'user' : VIEWS.includes(view) ? view : 'overview';
@@ -244,25 +292,35 @@ async function route() {
     if (a.dataset.nav === (v === 'user' ? 'users' : v)) a.setAttribute('aria-current', 'page');
     else a.removeAttribute('aria-current');
   }
-  const seq = ++routeSeq;
+  ++routeSeq;
+  // (the page is shown at once, with what was last known; the answers fill it in)
+  for (const s of document.querySelectorAll('[data-view]')) {
+    const was = !s.hidden;
+    s.hidden = s.dataset.view !== v;
+    if (!s.hidden && !was) window.scrollTo(0, 0);
+  }
   const load = { overview: loadOverview, users: loadUsers, storage: loadStorage, user: () => loadUser(decode(name), tab === 'folders' || tab === 'shares' ? tab : 'devices') }[v];
   try {
     await load();
   } catch (e) {
     fail(e);
   }
-  if (seq !== routeSeq) return;
-  for (const s of document.querySelectorAll('[data-view]')) {
-    const was = !s.hidden;
-    s.hidden = s.dataset.view !== v;
-    if (!s.hidden && !was) window.scrollTo(0, 0);
-  }
+}
+
+/** Sizes the server is still counting are asked for again soon. */
+function recount(users) {
+  clearTimeout(recountTimer);
+  if (users.some((u) => u.bytes === null)) recountTimer = setTimeout(route, 1500);
 }
 
 // --------------------------------------------------------------- overview
 
-async function loadOverview() {
-  const [s, users] = await Promise.all([api('GET', 'status'), api('GET', 'users')]);
+function loadOverview() {
+  return swr(['status', 'users'], showOverview);
+}
+
+function showOverview([s, users]) {
+  recount(users);
   setMe(s.me);
   $('stUsers').textContent = n(users.length);
   $('stPhotos').textContent = n(users.reduce((a, u) => a + u.photos, 0));
@@ -299,8 +357,12 @@ async function copyOrigin() {
 
 // ------------------------------------------------------------------ users
 
-async function loadUsers() {
-  const users = await api('GET', 'users');
+function loadUsers() {
+  return swr(['users'], showUsers);
+}
+
+function showUsers([users]) {
+  recount(users);
   const body = $('users').querySelector('tbody');
   body.replaceChildren();
   if (!users.length) body.append(emptyRow(6, 'users', 'No users yet. Add the people who use this server.'));
@@ -316,7 +378,7 @@ async function loadUsers() {
         el('td', { class: 'num' }, n(u.photos)),
         el('td', { class: 'num opt' }, n(u.albums)),
         el('td', { class: 'num opt' }, n(u.devices)),
-        el('td', { class: 'num' }, bytes(u.bytes)),
+        el('td', { class: 'num' }, size(u.bytes)),
         el('td', { class: 'chev-col' }, el('span', { class: 'chev' }, icon('chevron'))),
       ),
     );
@@ -343,23 +405,50 @@ function addUser() {
 
 // --------------------------------------------------------------- one user
 
-async function loadUser(name, tab) {
-  const users = await api('GET', 'users');
-  const u = users.find((x) => x.name === name);
-  if (!u) {
-    toast('There is no user ' + name + '.', 'negative');
-    location.hash = '#/users';
-    return;
-  }
+function loadUser(name, tab) {
   paintAvatar($('uAvatar'), name, 'xl');
   $('uName').textContent = name;
+  if (name !== shownUser) {
+    // (not the last user's numbers, devices or folders)
+    shownUser = name;
+    $('uRole').replaceChildren();
+    for (const id of ['uPhotos', 'uAlbums', 'uDevices', 'uBytes']) $(id).textContent = '–';
+    for (const t of ['devices', 'shares', 'folders']) $(t).querySelector('tbody').replaceChildren();
+    for (const c of document.querySelectorAll('.scan')) c.hidden = true;
+    for (const c of document.querySelectorAll('.tabs .count')) c.textContent = '';
+  }
+  for (const a of document.querySelectorAll('.tabs a')) {
+    a.href = '#/users/' + enc(name) + '/' + a.dataset.tab;
+    a.setAttribute('aria-selected', String(a.dataset.tab === tab));
+  }
+  for (const p of document.querySelectorAll('[data-panel]')) p.hidden = p.dataset.panel !== tab;
+  $('addFolder').onclick = () => addFolder(name);
+  $('scanNow').onclick = () => scanNow(name);
+  if (tab === 'folders') foldersOf = name;
+  // (the user and the tab's list are asked for together)
+  const seq = routeSeq;
+  const list = (tab === 'folders' ? loadFolders : tab === 'shares' ? loadShares : loadDevices)(name);
+  const known = swr(['users'], ([users]) => showUser(name, users)).then(([users]) => {
+    if (seq === routeSeq && !users.some((x) => x.name === name)) {
+      toast('There is no user ' + name + '.', 'negative');
+      location.hash = '#/users';
+    }
+  });
+  // (no such user: the users list says so, once)
+  return Promise.all([known, list.catch((e) => { if (!/^No user /.test(e.message)) throw e; })]);
+}
+
+function showUser(name, users) {
+  recount(users);
+  const u = users.find((x) => x.name === name);
+  if (!u) return;
   const role = el('div', { class: 'btn-group' }, u.admin ? badge('Administrator', 'accent') : badge('User'));
   if (name === me) role.append(badge('You'));
   $('uRole').replaceChildren(role);
   $('uPhotos').textContent = n(u.photos);
   $('uAlbums').textContent = n(u.albums);
   $('uDevices').textContent = n(u.devices);
-  $('uBytes').textContent = bytes(u.bytes);
+  $('uBytes').textContent = size(u.bytes);
 
   const only = u.admin && users.filter((x) => x.admin).length < 2;
   const why = only ? name + ' is the only administrator.' : '';
@@ -374,22 +463,9 @@ async function loadUser(name, tab) {
 
   const counts = { devices: u.devices, folders: (u.folders || []).length, shares: u.shares || 0 };
   for (const a of document.querySelectorAll('.tabs a')) {
-    a.href = '#/users/' + enc(name) + '/' + a.dataset.tab;
-    a.setAttribute('aria-selected', String(a.dataset.tab === tab));
     let c = a.querySelector('.count');
     if (!c) a.append((c = el('span', { class: 'count' })));
     c.textContent = n(counts[a.dataset.tab]);
-  }
-  for (const p of document.querySelectorAll('[data-panel]')) p.hidden = p.dataset.panel !== tab;
-  $('addFolder').onclick = () => addFolder(name);
-  $('scanNow').onclick = () => scanNow(name);
-  if (tab === 'folders') {
-    foldersOf = name;
-    await loadFolders(name);
-  } else if (tab === 'shares') {
-    await loadShares(name);
-  } else {
-    await loadDevices(name);
   }
 }
 
@@ -440,8 +516,11 @@ function removeUser(name) {
 
 // ---------------------------------------------------------------- devices
 
-async function loadDevices(name) {
-  const list = await api('GET', 'users/' + enc(name) + '/devices');
+function loadDevices(name) {
+  return swr(['users/' + enc(name) + '/devices'], ([list]) => showDevices(name, list));
+}
+
+function showDevices(name, list) {
   const body = $('devices').querySelector('tbody');
   body.replaceChildren();
   if (!list.length) body.append(emptyRow(4, 'device', 'No devices are signed in as ' + name + '.'));
@@ -482,8 +561,11 @@ function revoke(name, d, label) {
 
 // ----------------------------------------------------------- shared links
 
-async function loadShares(name) {
-  const list = await api('GET', 'users/' + enc(name) + '/shares');
+function loadShares(name) {
+  return swr(['users/' + enc(name) + '/shares'], ([list]) => showShares(name, list));
+}
+
+function showShares(name, list) {
   const body = $('shares').querySelector('tbody');
   body.replaceChildren();
   if (!list.length) body.append(emptyRow(4, 'copy', name + ' has no shared links.'));
@@ -523,8 +605,14 @@ function revokeShare(name, s) {
 
 // -------------------------------------------------------- library folders
 
-async function loadFolders(name) {
-  showFolders(name, await api('GET', 'users/' + enc(name) + '/folders'));
+function loadFolders(name) {
+  return swr(['users/' + enc(name) + '/folders'], ([r]) => showFolders(name, r));
+}
+
+/** The folders again, while a scan or the previews are going on. */
+async function pollFolders(name) {
+  const r = await get('users/' + enc(name) + '/folders');
+  if (foldersOf === name) showFolders(name, r);
 }
 
 function scanInfo(s) {
@@ -610,7 +698,7 @@ function showFolders(name, r) {
   errs.hidden = !all.length;
   clearTimeout(timer);
   const working = !!(s.scanning || s.previews);
-  if (working) timer = setTimeout(() => foldersOf === name && loadFolders(name).catch(fail), 2000);
+  if (working) timer = setTimeout(() => foldersOf === name && pollFolders(name).catch(fail), 2000);
   else if (scanWorking) route(); // done: the photo counts changed
   scanWorking = working;
 }
@@ -695,7 +783,7 @@ async function scanNow(name) {
     $('scanTitle').textContent = 'Scanning…';
     $('scanNow').disabled = true;
     clearTimeout(timer);
-    timer = setTimeout(() => foldersOf === name && loadFolders(name).catch(fail), 1000);
+    timer = setTimeout(() => foldersOf === name && pollFolders(name).catch(fail), 1000);
   } catch (e) {
     fail(e);
   }
@@ -703,8 +791,12 @@ async function scanNow(name) {
 
 // ---------------------------------------------------------------- storage
 
-async function loadStorage() {
-  const [s, users] = await Promise.all([api('GET', 'status'), api('GET', 'users')]);
+function loadStorage() {
+  return swr(['status', 'users'], showStorage);
+}
+
+function showStorage([s, users]) {
+  recount(users);
   $('diskBox').hidden = !s.disk;
   $('diskNone').hidden = !!s.disk;
   if (s.disk) {
@@ -716,14 +808,14 @@ async function loadStorage() {
     $('diskFree').textContent = bytes(s.disk.free) + ' free of ' + bytes(s.disk.total) + ', on the disk that holds ' + s.data + '.';
   }
   const list = $('usage');
-  const sorted = users.slice().sort((a, b) => b.bytes - a.bytes);
+  const sorted = users.slice().sort((a, b) => (b.bytes || 0) - (a.bytes || 0));
   const top = sorted.length ? sorted[0].bytes : 0;
   list.replaceChildren();
   if (!sorted.length) list.append(el('li', { class: 'muted' }, 'No users yet.'));
   for (const u of sorted) {
     const meter = el('div', { class: 'meter' }, el('div', {}));
-    list.append(el('li', {}, avatar(u.name), el('a', { class: 'name', href: '#/users/' + enc(u.name) }, u.name), meter, el('span', { class: 'bytes' }, bytes(u.bytes))));
-    meter.firstElementChild.style.width = (top ? (100 * u.bytes) / top : 0).toFixed(1) + '%';
+    list.append(el('li', {}, avatar(u.name), el('a', { class: 'name', href: '#/users/' + enc(u.name) }, u.name), meter, el('span', { class: 'bytes' }, size(u.bytes))));
+    meter.firstElementChild.style.width = (top ? (100 * (u.bytes || 0)) / top : 0).toFixed(1) + '%';
   }
 }
 
@@ -822,8 +914,10 @@ async function signIn(user, password) {
 async function start() {
   $('origin').value = location.origin;
   if (token) {
+    // (nearly every page needs the users: asked for with the sign-in check, not after it)
+    get('users').catch(() => {});
     try {
-      setMe((await api('GET', 'status')).me);
+      setMe((await get('status')).me);
       showDash();
       return;
     } catch (e) {

@@ -187,7 +187,7 @@ pub fn handle(st: &State, req: &mut Request) -> Resp {
     } else if is_api {
         api(st, req, &method, path, q)
     } else if path == "/admin" || path.starts_with("/admin/") {
-        crate::admin::page(&method, path)
+        crate::admin::page(req, &method, path)
     } else {
         web(st, req, &method, path)
     };

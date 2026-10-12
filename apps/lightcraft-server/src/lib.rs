@@ -111,6 +111,8 @@ pub struct State {
     pub(crate) setup: Mutex<Option<String>>,
     pub(crate) setup_tries: AtomicU32,
     pub(crate) accounts: Mutex<accounts::Accounts>,
+    /// What the admin page shows of each user's photo files ([`admin::Sizes`]).
+    pub(crate) sizes: admin::Sizes,
     pub(crate) libs: Mutex<HashMap<String, Arc<Mutex<api::UserLib>>>>,
     /// Library folder scans and preview building.
     pub(crate) folders: folders::Scanner,
@@ -156,6 +158,7 @@ impl Server {
         let state = Arc::new(State {
             vision: vision::Search::new(vision_dir, cfg.embedder).with_reader(cfg.text_reader).with_finder(cfg.face_finder),
             accounts: Mutex::new(accounts::Accounts::new(&cfg.data)),
+            sizes: admin::Sizes::default(),
             listen: addr.to_string(),
             setup: Mutex::new(setup),
             setup_tries: AtomicU32::new(0),
@@ -170,6 +173,8 @@ impl Server {
             shares: Mutex::new(links),
             writer: writeback::Writer::new(),
         });
+        // (counted now, so the admin page has the numbers by the time anyone opens it)
+        state.sizes.refresh(&state.data);
         let st = state.clone();
         let http = bound.serve(Arc::new(move |req: &mut http::Request| api::handle(&st, req)))?;
         let mut workers = Vec::new();

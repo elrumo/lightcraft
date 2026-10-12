@@ -552,6 +552,26 @@ fn a_sideways_drag_carries_the_photo_like_a_carousel() {
     assert_ne!(h.app.session.active(), Some(next), "a flick changes photo");
 }
 
+/// iOS: a zoomed photo is drawn alone. Its neighbours wait beside a fitted photo; at the same zoom
+/// their rects are far wider than the screen, and one drawn over the photo covered half of it.
+#[test]
+fn a_zoomed_photo_is_not_covered_by_its_neighbour() {
+    use crate::render::{Slot, Tex};
+    use crate::state::Zoom;
+    let mut h = first_photo([390.0, 844.0]);
+    let next = h.app.session.visible()[1];
+    h.app.ui.zoom = Zoom::Percent(300);
+    h.app.ui.zoom_anim = false;
+    h.settle(SETTLE);
+    // the next photo's render, in a colour no photo has: one frame, before a refresh can replace it
+    let magenta = egui::Color32::from_rgb(255, 0, 255);
+    let tex = h.view.ctx.load_texture("neighbour", egui::ColorImage::filled([4, 4], magenta), Default::default());
+    let size = [4, 4];
+    h.app.renderer.textures.insert(Slot::Prefetch(0), Tex { key: 0, photo: next, tex, size, histogram: None, ms: 0.0, quick: None, pixels: None });
+    h.step();
+    assert!(!h.paint().pixels.contains(&magenta), "the neighbour is drawn over the zoomed photo");
+}
+
 /// iOS: before the first photo there is nothing to carry in: the photo gives way grudgingly and
 /// comes back.
 #[test]

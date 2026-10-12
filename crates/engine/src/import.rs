@@ -967,6 +967,8 @@ pub fn commit_prepared(s: &mut Session, opts: &ImportOptions, now: &str, prepare
                     crate::sidecar::merge_into(&mut p, sc, &now);
                     report.sidecars += 1;
                 }
+                // "added" is the day the photo was taken (the import time only for an undated one)
+                p.imported = p.date().to_string();
                 if let Some(mp) = opts.metadata_preset.as_ref().and_then(|n| s.metadata_presets.iter().find(|m| m.name.eq_ignore_ascii_case(n))) {
                     crate::cmd::metadata::apply_to(&mut p.meta, &mp.fields);
                 }

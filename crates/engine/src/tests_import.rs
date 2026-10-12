@@ -158,6 +158,26 @@ fn write_sidecar(path: &Path, xmp: &str, secs: u64) {
     f.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs)).unwrap();
 }
 
+/// "Added" is the day a photo was taken; only an undated photo is added on the day of the import.
+#[test]
+fn imported_photos_are_added_the_day_they_were_taken() {
+    let src = temp_dir("taken");
+    write_png(&src.join("dated.png"), 1);
+    std::fs::write(
+        src.join("dated.xmp"),
+        r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description rdf:about="" xmlns:exif="http://ns.adobe.com/exif/1.0/" exif:DateTimeOriginal="2020-02-03T04:05:06"/></rdf:RDF></x:xmpmeta>"#,
+    )
+    .unwrap();
+    write_png(&src.join("undated.png"), 2);
+    let mut s = Session::new().with_fs();
+    let r = s.execute("library.import", &json!({"paths": [src.to_string_lossy()]})).unwrap();
+    assert_eq!(ids(&r, "imported"), 2, "{r}");
+    let added = |name: &str| s.catalog.photos().find(|p| p.file_name == name).map(|p| (p.captured.clone(), p.imported.clone()));
+    assert_eq!(added("dated.png"), Some((Some("2020-02-03T04:05:06".into()), "2020-02-03T04:05:06".into())));
+    assert_eq!(added("undated.png"), Some((None, (s.clock)())));
+    let _ = std::fs::remove_dir_all(&src);
+}
+
 #[test]
 fn browsing_again_reads_sidecars_changed_by_another_app() {
     let root = temp_dir("reread");

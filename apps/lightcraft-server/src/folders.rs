@@ -526,6 +526,8 @@ fn commit(lib: &Mutex<UserLib>, batch: &mut Vec<FileRead>, found: &HashSet<Strin
                         let sc = sc.resolve_label(l.core.catalog());
                         sidecar::merge_into(&mut p, &sc, now);
                     }
+                    // "added" is the day the photo was taken (the scan time only for an undated one)
+                    p.imported = p.date().to_string();
                     e.photo = Some(p.id.0);
                     e.sidecar = r.file.sidecar;
                     ops.push((Op::AddPhoto { photo: Box::new(p) }, i));

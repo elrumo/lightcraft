@@ -170,6 +170,41 @@ fn library_folders_are_read_in_place() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// A photo the scan finds is "added" the day it was taken (the day of the scan only when undated).
+#[test]
+fn scanned_photos_are_added_the_day_they_were_taken() {
+    let root = temp("taken");
+    let photos = root.join("photos");
+    write_png(&photos.join("dated.png"), 1);
+    std::fs::write(
+        photos.join("dated.xmp"),
+        r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description rdf:about="" xmlns:exif="http://ns.adobe.com/exif/1.0/" exif:DateTimeOriginal="2020-02-03T04:05:06"/></rdf:RDF></x:xmpmeta>"#,
+    )
+    .unwrap();
+    write_png(&photos.join("undated.png"), 2);
+    let data = root.join("data");
+    accounts::set_user(&data, "ann", "correct horse", false).unwrap();
+    let mut cfg = Config::new(&data, "127.0.0.1:0");
+    cfg.scan_interval = None;
+    cfg.preview_threads = 1;
+    let server = Server::start(cfg).unwrap();
+    accounts::add_folder(&data, "ann", &photos.to_string_lossy(), None).unwrap();
+    server.scan("ann");
+    scanned(&server, 0);
+    let mut dev = Session::new().with_fs();
+    dev.open_library(root.join("device"), false).unwrap();
+    let url = format!("http://{}", server.addr());
+    dev.execute("sync.signIn", &json!({"server": url, "user": "ann", "password": "correct horse", "device": "test"})).unwrap();
+    sync(&mut dev);
+    let dated = by_place(&dev, "photos/dated.png").expect("dated");
+    assert_eq!((dated.captured.as_deref(), dated.imported.as_str()), (Some("2020-02-03T04:05:06"), "2020-02-03T04:05:06"));
+    let undated = by_place(&dev, "photos/undated.png").expect("undated");
+    assert_eq!(undated.captured, None);
+    assert!(undated.imported.as_str() > "2026", "an undated photo is added when the scan found it: {}", undated.imported);
+    drop(server);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// A device's upload of a file that is in a library folder: the folder's copy is used, no second
 /// photo, no copy of the original on the server.
 #[test]

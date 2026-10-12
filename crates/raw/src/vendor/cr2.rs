@@ -75,8 +75,15 @@ pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
     let chunk = lightcraft_tiff::image::Chunk { index: 0, x: 0, y: 0, width: 0, height: 0, plane: 0, offset: off, len };
     let src = chunk_bytes(bytes, &chunk).ok_or_else(|| RawError::Corrupt("raw strip outside file".into()))?;
     let (fw, fh, nc, prec) = ljpeg::frame_info(src)?;
+    // the raw strip is the end of the file: one running past it means the copy or download was cut short
+    let cut_short = |e| match off.saturating_add(len) {
+        end if end > bytes.len() as u64 => {
+            RawError::Corrupt(format!("the file is truncated ({} of {end} bytes; the copy or download was cut short)", bytes.len()))
+        }
+        _ => e,
+    };
     let frame = match mode {
-        Mode::Full => Some(ljpeg::decode(src, (fw * fh * nc).min(crate::MAX_SAMPLES))?),
+        Mode::Full => Some(ljpeg::decode(src, (fw * fh * nc).min(crate::MAX_SAMPLES)).map_err(cut_short)?),
         Mode::Header => None,
     };
     let total = match &frame {
@@ -171,7 +178,7 @@ pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use lightcraft_tiff::{ByteOrder, IfdBuilder, ImageData, TiffWriter, Value};
+    use lightcraft_tiff::{ByteOrder, IfdBuilder, TiffWriter, Value};
 
     /// Build a synthetic CR2: IFD0..IFD2 placeholders + IFD3 holding a sliced 2-component LJ92 frame.
     pub(crate) fn synthetic_cr2(w: usize, h: usize, slices: Option<[u16; 3]>) -> (Vec<u8>, Vec<u16>) {
@@ -207,11 +214,17 @@ pub(crate) mod tests {
         if let Some(s) = slices {
             ifd3.set(CR2_SLICE, Value::Short(s.to_vec()));
         }
-        ifd3.set_image(ImageData::Strips { rows_per_strip: h as u32, strips: vec![enc] });
+        ifd3.set(t::STRIP_BYTE_COUNTS, Value::Long(vec![enc.len() as u32]));
+        // the strip ends the file, as in real files: write the IFDs once to learn where it starts
         // (real files also carry a "CR\x02\0" signature at offset 8; probe recognises the structure without it)
-        let bytes = TiffWriter::new(ByteOrder::Little, false)
-            .write(&[ifd0, IfdBuilder::new().with(1, Value::Short(vec![0])), IfdBuilder::new().with(1, Value::Short(vec![0])), ifd3])
-            .unwrap();
+        let write = |strip_at: usize| {
+            let mut ifd3 = ifd3.clone();
+            ifd3.set(t::STRIP_OFFSETS, Value::Long(vec![strip_at as u32]));
+            let empty = IfdBuilder::new().with(1, Value::Short(vec![0]));
+            TiffWriter::new(ByteOrder::Little, false).write(&[ifd0.clone(), empty.clone(), empty, ifd3]).unwrap()
+        };
+        let mut bytes = write(write(0).len());
+        bytes.extend_from_slice(&enc);
         (bytes, img)
     }
 
@@ -229,6 +242,17 @@ pub(crate) mod tests {
             assert_eq!(r.metadata.iso, Some(400));
             assert!(r.develop(crate::Method::Ahd).is_ok());
         }
+    }
+
+    #[test]
+    fn truncated_file_says_so() {
+        let (bytes, _) = synthetic_cr2(64, 40, None);
+        let raw = Tiff::parse(&bytes).unwrap();
+        let ifd3 = raw_ifd(&raw).unwrap();
+        let (off, len) = (ifd3.u64(t::STRIP_OFFSETS).unwrap() as usize, ifd3.u64(t::STRIP_BYTE_COUNTS).unwrap() as usize);
+        assert_eq!(off + len, bytes.len(), "the strip ends the file");
+        let e = crate::decode(&bytes[..off + len / 2]).unwrap_err().to_string();
+        assert!(e.contains("truncated"), "{e}");
     }
 
     #[test]

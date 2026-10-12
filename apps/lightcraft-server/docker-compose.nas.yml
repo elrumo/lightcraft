@@ -4,6 +4,8 @@
 #
 #   Container Manager > Registry > Settings > Add: https://registry.eliasruiz.com (your login),
 #   then Registry > search "library/lightcraft" > Download (tag latest).
+#   Every `make push-server` also tags its version (0.2.3...): put one below instead of latest to stay
+#   on it, or to go back to it.
 #   Container Manager > Project > Create, paste this file, set the photo path below, Build.
 #   Open http://<nas>:8080/admin, enter the setup code from the project's log.
 

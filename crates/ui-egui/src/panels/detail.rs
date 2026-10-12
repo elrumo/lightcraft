@@ -352,7 +352,9 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         }
     }
     app.loupe_shown = Some((id, shown));
-    for (nid, r) in near.iter().filter(|(_, r)| r.intersects(canvas)) {
+    // (neighbours wait beside a fitted photo only: zoomed, their rects, at this zoom, are far wider
+    // than the canvas and would be drawn over the photo)
+    for (nid, r) in near.iter().filter(|(_, r)| !zoomed && r.intersects(canvas)) {
         if let Some(t) = tex_of(&app.renderer, *nid) {
             p.image(t.tex.id(), *r, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
         }

@@ -14,16 +14,20 @@
 //! The page is ours, embedded in the binary (`admin/`), and served with a strict Content
 //! Security Policy: no inline script or style, nothing from other origins, no framing.
 
+use std::collections::HashMap;
 use std::path::Path;
-use std::sync::PoisonError;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
+use std::time::{Duration, Instant};
 
 use crate::http::{Header, Method, Request, Response, StatusCode};
 use serde::Deserialize;
 use serde_json::{Value, json};
+use sha2::Digest;
 
 use crate::State;
 use crate::accounts::{self, LoginError};
-use crate::api::{Resp, error, header_value, json, read_json, read_small_json};
+use crate::api::{Resp, error, header, header_value, json, read_json, read_small_json};
 
 const INDEX: &str = include_str!("../admin/index.html");
 const SCRIPT: &str = include_str!("../admin/admin.js");
@@ -33,6 +37,53 @@ const ICON: &[u8] = include_bytes!("../../../assets/app-icon/hicolor/64x64/apps/
 
 /// Wrong setup codes before a new one is made.
 const SETUP_TRIES: u32 = 10;
+
+/// How long the bytes of a user's photo files are trusted before they are walked again.
+const SIZES_TTL: Duration = Duration::from_secs(60);
+
+/// The bytes of each user's photo files. Counting them stats every file, which takes seconds on a
+/// NAS disk, so the admin page is answered from the last count and a new one runs in the
+/// background (the first when the server starts).
+#[derive(Default)]
+pub struct Sizes {
+    known: Arc<Mutex<HashMap<String, (Instant, u64)>>>,
+    walking: Arc<AtomicBool>,
+}
+
+impl Sizes {
+    /// The last count of `name`'s bytes (`None`: not counted yet).
+    fn get(&self, name: &str) -> Option<u64> {
+        self.known.lock().unwrap_or_else(PoisonError::into_inner).get(name).map(|&(_, bytes)| bytes)
+    }
+
+    /// Forget the counts (files were removed): the next ones are made in the background.
+    fn clear(&self) {
+        self.known.lock().unwrap_or_else(PoisonError::into_inner).clear();
+    }
+
+    /// Count the users whose bytes are unknown or old, in the background, one walk at a time.
+    pub fn refresh(&self, data: &Path) {
+        let Ok(f) = accounts::read_users(data) else { return };
+        let stale: Vec<String> = {
+            let known = self.known.lock().unwrap_or_else(PoisonError::into_inner);
+            f.users.keys().filter(|n| known.get(*n).is_none_or(|(at, _)| at.elapsed() > SIZES_TTL)).cloned().collect()
+        };
+        if stale.is_empty() || self.walking.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let (known, walking, data) = (self.known.clone(), self.walking.clone(), data.to_path_buf());
+        let spawned = std::thread::Builder::new().name("lc-sizes".into()).spawn(move || {
+            for name in stale {
+                let bytes = size_of(&accounts::user_dir(&data, &name).join("blobs"), 3);
+                known.lock().unwrap_or_else(PoisonError::into_inner).insert(name, (Instant::now(), bytes));
+            }
+            walking.store(false, Ordering::Release);
+        });
+        if spawned.is_err() {
+            self.walking.store(false, Ordering::Release);
+        }
+    }
+}
 
 /// Headers every admin page file gets.
 fn page_headers(ctype: &str) -> Vec<Header> {
@@ -44,7 +95,7 @@ fn page_headers(ctype: &str) -> Vec<Header> {
         ),
         ("X-Content-Type-Options", "nosniff"),
         ("Referrer-Policy", "no-referrer"),
-        ("Cache-Control", "no-store"),
+        ("Cache-Control", "no-cache"),
         ("Cross-Origin-Opener-Policy", "same-origin"),
         ("Cross-Origin-Resource-Policy", "same-origin"),
     ]
@@ -53,21 +104,61 @@ fn page_headers(ctype: &str) -> Vec<Header> {
     .collect()
 }
 
-/// `/admin`, `/admin/admin.js`, `/admin/admin.css`, `/admin/icon.png`.
-pub fn page(method: &Method, path: &str) -> Resp {
+/// A page file as served: the bytes, gzipped, and the tag that says whether the browser's copy is current.
+struct Asset {
+    ctype: &'static str,
+    raw: &'static [u8],
+    gz: Vec<u8>,
+    etag: String,
+}
+
+/// The page's files, by path. Built once: they are in the binary and never change.
+fn assets() -> &'static HashMap<&'static str, Asset> {
+    static ASSETS: std::sync::OnceLock<HashMap<&'static str, Asset>> = std::sync::OnceLock::new();
+    ASSETS.get_or_init(|| {
+        let files: [(&str, &str, &'static [u8]); 4] = [
+            ("/admin", "text/html; charset=utf-8", INDEX.as_bytes()),
+            ("/admin/admin.js", "text/javascript; charset=utf-8", SCRIPT.as_bytes()),
+            ("/admin/admin.css", "text/css; charset=utf-8", STYLE.as_bytes()),
+            ("/admin/icon.png", "image/png", ICON),
+        ];
+        files
+            .into_iter()
+            .map(|(path, ctype, raw)| {
+                let mut z = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
+                let gz =
+                    std::io::Write::write_all(&mut z, raw).ok().and_then(|()| z.finish().ok()).filter(|g| g.len() < raw.len()).unwrap_or_default();
+                let etag = format!("\"{}\"", sha2::Sha256::digest(raw).iter().take(8).map(|b| format!("{b:02x}")).collect::<String>());
+                (path, Asset { ctype, raw, gz, etag })
+            })
+            .collect()
+    })
+}
+
+/// `/admin`, `/admin/admin.js`, `/admin/admin.css`, `/admin/icon.png`: gzipped to browsers that take it, and
+/// answered `304` to one that already has them (the browser asks every time, so a new server version shows at once).
+pub fn page(req: &Request, method: &Method, path: &str) -> Resp {
     if !matches!(method, Method::Get | Method::Head) {
         return error(405, "GET or HEAD");
     }
-    let (ctype, body) = match path.trim_end_matches('/') {
-        "/admin" | "/admin/index.html" => ("text/html; charset=utf-8", INDEX.as_bytes()),
-        "/admin/admin.js" => ("text/javascript; charset=utf-8", SCRIPT.as_bytes()),
-        "/admin/admin.css" => ("text/css; charset=utf-8", STYLE.as_bytes()),
-        "/admin/icon.png" => ("image/png", ICON),
-        _ => return error(404, "not found"),
+    let path = match path.trim_end_matches('/') {
+        "/admin/index.html" => "/admin",
+        p => p,
     };
-    let bytes = body.to_vec();
-    let len = bytes.len();
-    Response::new(StatusCode(200), page_headers(ctype), Box::new(std::io::Cursor::new(bytes)), Some(len), None)
+    let Some(a) = assets().get(path) else { return error(404, "not found") };
+    let mut headers = page_headers(a.ctype);
+    headers.extend(header("ETag", &a.etag));
+    headers.extend(header("Vary", "Accept-Encoding"));
+    if header_value(req, "If-None-Match").is_some_and(|v| v.split(',').any(|t| t.trim() == a.etag)) {
+        return Response::new(StatusCode(304), headers, Box::new(std::io::empty()), Some(0), None);
+    }
+    let gzip = !a.gz.is_empty() && header_value(req, "Accept-Encoding").is_some_and(|v| v.split(',').any(|e| e.trim().starts_with("gzip")));
+    let body = if gzip { a.gz.clone() } else { a.raw.to_vec() };
+    if gzip {
+        headers.extend(header("Content-Encoding", "gzip"));
+    }
+    let len = body.len();
+    Response::new(StatusCode(200), headers, Box::new(std::io::Cursor::new(body)), Some(len), None)
 }
 
 /// A new one-time setup code (`ABCD-1234`), when the server has no admin yet.
@@ -243,6 +334,9 @@ pub fn api(st: &State, req: &mut Request, method: &Method, rest: &str) -> Resp {
             let g = read_json::<Gc>(req).unwrap_or_default();
             match crate::gc::run(&st.data, g.dry_run) {
                 Ok(r) => {
+                    if !g.dry_run {
+                        st.sizes.clear();
+                    }
                     log::info!("admin {me}: gc{} removed {} file(s)", if g.dry_run { " (dry run)" } else { "" }, r.removed);
                     Ok(json!({"dryRun": g.dry_run, "removed": r.removed, "bytes": r.bytes, "kept": r.kept, "errors": r.errors}))
                 }
@@ -342,7 +436,7 @@ fn size_of(dir: &Path, depth: u32) -> u64 {
             Ok(m) if m.is_file() => m.len(),
             _ => 0,
         })
-        .sum()
+        .fold(0, u64::saturating_add)
 }
 
 fn status(st: &State, me: &str) -> Value {
@@ -361,6 +455,7 @@ fn status(st: &State, me: &str) -> Value {
 
 fn users(st: &State) -> AdminResult {
     let f = accounts::read_users(&st.data).map_err(|e| Ok((500, e)))?;
+    st.sizes.refresh(&st.data);
     let mut out = Vec::new();
     for (name, u) in &f.users {
         let devices = st.accounts.lock().unwrap_or_else(PoisonError::into_inner).devices_of(name).len();
@@ -371,10 +466,9 @@ fn users(st: &State) -> AdminResult {
                 (0, 0)
             }
         };
-        let bytes = size_of(&accounts::user_dir(&st.data, name).join("blobs"), 3);
         let folders: Vec<Value> = u.folders.iter().map(|f| json!({"name": f.name, "path": f.path})).collect();
         out.push(json!({
-            "name": name, "admin": u.admin, "photos": photos, "albums": albums, "devices": devices, "bytes": bytes,
+            "name": name, "admin": u.admin, "photos": photos, "albums": albums, "devices": devices, "bytes": st.sizes.get(name),
             "shares": st.shares.lock().unwrap_or_else(PoisonError::into_inner).list(name).len(),
             "folders": folders, "scan": st.folders.status(name),
         }));
