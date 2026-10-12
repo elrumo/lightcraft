@@ -11,7 +11,7 @@ pub enum Haptic {
     Selection,
     /// A small thing landed: a rating kept, a photo settled, the bars shown or hidden, a reset.
     Light,
-    /// A mode began: choosing photos by a long press.
+    /// A mode began: choosing photos by a long press, or the Before held up by one.
     Medium,
     /// Something is going away: Delete.
     Warning,

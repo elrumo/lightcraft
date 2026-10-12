@@ -432,6 +432,9 @@ pub struct LightcraftApp {
     /// What the loupe drew last frame: photo and source ("render", "cached", "embedded", "small",
     /// "thumb", "none").
     pub loupe_shown: Option<(lightcraft_catalog::PhotoId, &'static str)>,
+    /// The loupe showed the Before alone last frame: the Before view, `\` held or a finger held
+    /// on the photo.
+    pub loupe_before: bool,
     /// The window render the loupe asked for last, by job key (see [`region`]); kept for the few
     /// windows whose textures can be on screen, and for the inspector.
     pub region_view: Option<region::RegionView>,
@@ -556,6 +559,7 @@ impl LightcraftApp {
             gesture: None,
             brush_live: None,
             loupe_shown: None,
+            loupe_before: false,
             region_view: None,
             region_before_view: None,
             size_hold: Default::default(),
@@ -1338,7 +1342,10 @@ impl LightcraftApp {
             return;
         }
         let n = match self.synthetic[0] {
-            egui::Event::PointerMoved(_) | egui::Event::PointerButton { .. } | egui::Event::MouseWheel { .. } => 1,
+            // (a finger's touch events come in the frame of the pointer event they go with)
+            egui::Event::PointerMoved(_) | egui::Event::PointerButton { .. } | egui::Event::MouseWheel { .. } | egui::Event::Touch { .. } => {
+                1 + self.synthetic.iter().skip(1).take_while(|e| matches!(e, egui::Event::Touch { .. })).count()
+            }
             _ => self.synthetic.iter().position(|e| matches!(e, egui::Event::Key { pressed: false, .. })).map_or(self.synthetic.len(), |i| i + 1),
         };
         if let Some(egui::Event::PointerMoved(p) | egui::Event::PointerButton { pos: p, .. }) = self.synthetic.first() {

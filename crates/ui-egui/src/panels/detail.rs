@@ -446,7 +446,10 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let resp = ui.interact(canvas, egui::Id::new("loupe"), Sense::click_and_drag());
     let zoomed = img_rect.width() > canvas.width() + 1.0 || img_rect.height() > canvas.height() + 1.0;
     let tool_free = !matches!(right, RightPanel::Crop | RightPanel::Masking | RightPanel::Remove | RightPanel::RedEye) && app.ui.tool.is_empty();
-    let live = app.compact && tool_free && !zoomed && !app.ui.zoom_anim && !ui.input(|i| i.multi_touch().is_some());
+    // a finger held on the photo shows the Before until it lifts (side by side, it is on screen)
+    let hold = before_hold(ui, &resp, tool_free && !split);
+    let held = hold.on || hold.lifted;
+    let live = app.compact && tool_free && !zoomed && !app.ui.zoom_anim && !held && !ui.input(|i| i.multi_touch().is_some());
     let slide = if app.compact { swipe(app, ui, &resp, canvas, id, live) } else { 0.0 };
     let img_rect = img_rect.translate(vec2(slide, 0.0));
     // request renders: the loupe at display resolution (drafts during drags)
@@ -551,7 +554,8 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     {
         app.renderer.request_quick(Slot::Preview, q, 110);
     }
-    let show_before = app.ui.before_after == BeforeAfter::Original || ui.input(|i| i.key_down(egui::Key::Backslash));
+    let show_before = app.ui.before_after == BeforeAfter::Original || hold.on || ui.input(|i| i.key_down(egui::Key::Backslash));
+    app.loupe_before = show_before && !split;
     if (split || show_before || split_view)
         && let Some(job) = app.session.render_job(id, sw.max(8), sh.max(8), true, !crop_tool)
     {
@@ -650,7 +654,11 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         p.text(label_at(img_rect, main_area), Align2::LEFT_CENTER, crate::i18n::tr("After"), t.font(12.0), t.text_dim);
     } else if show_before {
         shown = draw(Slot::Before, img_rect, canvas);
-        p.text(pos2(img_rect.left() + 8.0, img_rect.top() + 14.0), Align2::LEFT_CENTER, crate::i18n::tr("Before"), t.font(12.0), t.text);
+        // on the part of the photo in view, legible on a bright one
+        let g = p.layout_no_wrap(crate::i18n::tr("Before").to_owned(), t.font(12.0), Color32::WHITE);
+        let bg = Rect::from_min_size(img_rect.intersect(canvas).left_top() + vec2(8.0, 8.0), g.size() + vec2(16.0, 8.0));
+        p.rect_filled(bg, 4.0, Color32::from_black_alpha(160));
+        p.galley(bg.min + vec2(8.0, 4.0), g, Color32::WHITE);
     } else if let Some((_key, label)) = &hover_key
         && let Some(tex) = app.renderer.textures.get(&Slot::Hover).filter(|t| t.photo == id)
     {
@@ -797,7 +805,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                     }
                     _ => map,
                 };
-                general_interaction(app, ui, &resp, &map, img_rect, main_area, native, aspect)
+                general_interaction(app, ui, &resp, &map, img_rect, main_area, native, aspect, held)
             }
         }
     }
@@ -805,6 +813,10 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     navigator(app, ui, canvas, img_rect, id);
     if let Some(why) = photo.preview_only.as_deref().filter(|_| !fullscreen && !review) {
         preview_only_pill(ui, canvas, why);
+    }
+    // (a finger held on the photo shows the Before: egui's long touch opens no menu then)
+    if hold.on && resp.long_touched() {
+        return;
     }
     resp.context_menu(|ui| {
         ui.menu_button(crate::i18n::tr("Zoom"), |ui| {
@@ -1304,6 +1316,9 @@ const SLIDE_SETTLE: f32 = 10.0;
 const TAP_GAP_S: f64 = 0.2;
 /// How long the ring that answers a tap on the phone loupe lasts (seconds).
 const TAP_RING_S: f64 = 0.35;
+/// A finger held still this long on the photo shows the Before until it lifts (a slow tap is well
+/// under it; iOS's own long press takes half a second).
+const HOLD_S: f64 = 0.4;
 /// How long the review readout's pop lasts (seconds).
 const POP_S: f64 = 0.45;
 
@@ -1339,6 +1354,18 @@ struct LoupeTap {
     pos: Pos2,
     pending: bool,
     toggled: bool,
+}
+
+/// A finger held on the photo to see the Before, kept from frame to frame.
+#[derive(Clone, Copy, Default)]
+struct BeforeHold {
+    /// The press this follows (when it came down), and whether it can no longer become a hold.
+    press: Option<f64>,
+    void: bool,
+    /// The Before is showing.
+    on: bool,
+    /// The finger lifted from a hold this frame: its release is no tap.
+    lifted: bool,
 }
 
 /// What a rating / flag swipe in progress (or just lifted) is showing: (stars, flag).
@@ -1482,6 +1509,52 @@ fn swipe(app: &mut LightcraftApp, ui: &egui::Ui, resp: &egui::Response, canvas: 
     drawn.unwrap_or(s.off)
 }
 
+/// Press and hold: a finger held still on the photo for [`HOLD_S`] shows the Before, as holding `\`
+/// does, until it lifts (as Lightroom's mobile app shows the original). A finger that moves first is
+/// a swipe or a pan and a second one a pinch; touch only, since a mouse held down starts a pan. Run
+/// before the photo is drawn; `allowed`: no tool takes the press.
+fn before_hold(ui: &egui::Ui, resp: &egui::Response, allowed: bool) -> BeforeHold {
+    let key = egui::Id::new("loupe-hold");
+    let mut h: BeforeHold = ui.data(|d| d.get_temp(key)).unwrap_or_default();
+    let (touch, start, moved, fingers, now) = ui.input(|i| {
+        let moved = i.pointer.total_drag_delta().map_or(0.0, |d| d.length());
+        (i.any_touches(), i.pointer.press_start_time(), moved, i.multi_touch().is_some(), i.time)
+    });
+    let slop = ui.ctx().options(|o| o.input_options.max_click_dist);
+    match start.filter(|_| touch) {
+        // no finger down: the After is back
+        None => h = BeforeHold { lifted: h.on, ..Default::default() },
+        Some(t0) => {
+            if h.press != Some(t0) {
+                h = BeforeHold { press: Some(t0), ..Default::default() };
+            }
+            h.lifted = false;
+            if !h.on && !h.void {
+                let held = now - t0;
+                if moved > slop || fingers || !allowed {
+                    h.void = true;
+                } else if held < HOLD_S {
+                    ui.ctx().request_repaint_after(std::time::Duration::try_from_secs_f64(HOLD_S - held).unwrap_or_default());
+                } else if resp.is_pointer_button_down_on() || resp.long_touched() {
+                    // (it came down on the photo, not on a button over it)
+                    h.on = true;
+                    haptics::tap(ui.ctx(), Haptic::Medium);
+                } else {
+                    h.void = true;
+                }
+            }
+        }
+    }
+    ui.data_mut(|d| d.insert_temp(key, h));
+    h
+}
+
+/// Is a finger on a touch screen behind this frame's pointer input (rather than a mouse)? Also in
+/// the frame a finger lifts: its touch has ended then, but the end comes with the pointer's release.
+fn touch_input(ui: &egui::Ui) -> bool {
+    ui.input(|i| i.any_touches() || i.events.iter().any(|e| matches!(e, egui::Event::Touch { .. })))
+}
+
 /// Two-finger gestures on the loupe: pinch zooms (back to Fit when it shrinks past the fitted
 /// size), two fingers pan a zoomed photo. Returns whether two or more fingers are down, so the
 /// one-finger pan and swipe stand down.
@@ -1542,6 +1615,7 @@ fn general_interaction(
     canvas: Rect,
     native: [usize; 2],
     aspect: f32,
+    held: bool,
 ) {
     if app.ui.tool == "wbPicker" {
         if resp.clicked()
@@ -1575,9 +1649,11 @@ fn general_interaction(
     }
     let zoomed = img.width() > canvas.width() + 1.0 || img.height() > canvas.height() + 1.0;
     let two_fingers = touch_gestures(app, ui, img, canvas, native, aspect, zoomed);
+    // (a finger lifting from a hold on the Before is no tap, and while it holds it doesn't pan)
+    let (clicked, double_clicked) = (resp.clicked() && !held, resp.double_clicked() && !held);
     // click toggles Fit ↔ the chosen click-zoom ratio at the clicked point; drag pans when zoomed.
     // On a touch layout only a double tap zooms (a single tap must not move the photo).
-    if resp.double_clicked() || (resp.clicked() && !zoomed && !app.compact) {
+    if double_clicked || (clicked && !zoomed && !app.compact) {
         if let Some(q) = resp.interact_pointer_pos() {
             let u = ((q.x - img.left()) / img.width()).clamp(0.0, 1.0);
             let v = ((q.y - img.top()) / img.height()).clamp(0.0, 1.0);
@@ -1585,11 +1661,11 @@ fn general_interaction(
         }
         app.ui.zoom = if matches!(app.ui.zoom, Zoom::Fit) { Zoom::Percent(app.ui.click_zoom as f32) } else { Zoom::Fit };
         app.ui.zoom_anim = true;
-    } else if resp.clicked() && zoomed && !app.compact {
+    } else if clicked && zoomed && !app.compact {
         app.ui.zoom = Zoom::Fit;
         app.ui.zoom_anim = true;
     }
-    if zoomed && resp.dragged() && !two_fingers {
+    if zoomed && resp.dragged() && !two_fingers && !held {
         pan_image(app, canvas, img, resp.drag_delta());
     }
     if app.compact {
@@ -1597,13 +1673,13 @@ fn general_interaction(
         // first, and is answered at once: a light haptic, and a ring where the finger lifted
         let (key, now) = (egui::Id::new("loupe-tap"), ui.input(|i| i.time));
         let mut tap = ui.data(|m| m.get_temp(key)).unwrap_or(LoupeTap { at: f64::NEG_INFINITY, ..Default::default() });
-        if resp.double_clicked() {
+        if double_clicked {
             // (a double tap slower than the wait has already changed the bars: they go back)
             if tap.toggled {
                 let _ = app.run("view.reviewMode", json!({}));
             }
             (tap.pending, tap.toggled) = (false, false);
-        } else if resp.clicked() {
+        } else if clicked {
             tap = LoupeTap { at: now, pos: resp.interact_pointer_pos().unwrap_or(canvas.center()), pending: true, toggled: false };
             haptics::tap(ui.ctx(), Haptic::Light);
         } else if resp.drag_started() {
@@ -1756,14 +1832,23 @@ fn crop_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respons
     // the angle next to the pointer, drawn once this frame's rotation is applied (below)
     let readout_at = pointer.filter(|_| rotating);
     let mut shown_angle = d.crop.geometry.angle;
-    // double-click inside the crop box applies the crop (same as Return / Done)
+    // a finger's double tap on the photo resets the crop (the tool stays open; ✕ or undo bring it
+    // back); a mouse's double-click inside the crop box applies it (same as Return / Done)
     if resp.double_clicked()
         && let Some(q) = resp.interact_pointer_pos()
-        && inside(q)
-        && grab(q).is_none()
     {
-        let _ = app.run("tool.done", json!({}));
-        return;
+        if touch_input(ui) {
+            if map.rect.contains(q) {
+                if d.crop != Default::default() {
+                    let _ = app.run("crop.reset", json!({}));
+                    haptics::tap(ui.ctx(), Haptic::Light);
+                }
+                return;
+            }
+        } else if inside(q) && grab(q).is_none() {
+            let _ = app.run("tool.done", json!({}));
+            return;
+        }
     }
     if resp.drag_started()
         && let Some(q) = resp.interact_pointer_pos()
