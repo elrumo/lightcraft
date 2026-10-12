@@ -119,7 +119,8 @@ impl SettingsGroup {
     }
 }
 
-/// The subset of `s` covering `groups`, as a partial JSON object.
+/// The subset of `s` covering `groups`, as a partial JSON object. AI Remove fills are pictures of
+/// this photo, so copied spots leave them behind (on another photo they fill from around them).
 pub fn extract_groups(s: &DevelopSettings, groups: &[SettingsGroup]) -> Value {
     let full = s.to_json();
     let mut out = Map::new();
@@ -128,6 +129,11 @@ pub fn extract_groups(s: &DevelopSettings, groups: &[SettingsGroup]) -> Value {
             if let Some(v) = full.get(*k) {
                 out.insert((*k).to_string(), v.clone());
             }
+        }
+    }
+    if let Some(Value::Array(spots)) = out.get_mut("spots") {
+        for spot in spots.iter_mut().filter_map(Value::as_object_mut) {
+            spot.remove("fill");
         }
     }
     Value::Object(out)
@@ -251,6 +257,18 @@ mod tests {
         assert_eq!(b.light.exposure, 1.0);
         assert_eq!(b.effects.clarity, 30.0);
         assert_eq!(b.crop.geometry.angle, 0.0);
+    }
+
+    #[test]
+    fn copied_spots_leave_their_ai_fills_behind() {
+        let mut a = DevelopSettings::default();
+        let fill = crate::SpotFill::from_linear(2, 2, [0.4, 0.4, 0.6, 0.6], &[[0.5; 3]; 4]);
+        a.spots.push(crate::Spot { points: vec![lightcraft_geom::Point::new(0.5, 0.5)], fill, ..Default::default() });
+        let v = extract_groups(&a, &[SettingsGroup::Spots]);
+        assert!(v["spots"][0].get("fill").is_none(), "{v}");
+        let b = apply_partial(&DevelopSettings::default(), &v, 1.0);
+        assert_eq!(b.spots.len(), 1);
+        assert_eq!((b.spots[0].points.clone(), b.spots[0].fill.clone()), (a.spots[0].points.clone(), None));
     }
 
     #[test]

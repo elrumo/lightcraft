@@ -34,6 +34,7 @@ lightcraft-mcp = { path = "crates/mcp" }
 lightcraft-fetch = { path = "crates/fetch" }
 lightcraft-segment = { path = "crates/segment" }
 lightcraft-enhance = { path = "crates/enhance" }
+lightcraft-erase = { path = "crates/erase" }
 # no model by default: crates that want SigLIP 2 ask for `features = ["siglip"]`
 lightcraft-vision = { path = "crates/vision", default-features = false }
 
@@ -162,3 +163,11 @@ heic-rs = { opt-level = 3 }
 jpeg-encoder = { opt-level = 3 }
 png = { opt-level = 3 }
 miniz_oxide = { opt-level = 3 }
+# AI Remove's network (MI-GAN on rten): opt-level "s" would slow every fill
+lightcraft-erase = { opt-level = 3 }
+rten = { opt-level = 3 }
+rten-base = { opt-level = 3 }
+rten-gemm = { opt-level = 3 }
+rten-simd = { opt-level = 3 }
+rten-tensor = { opt-level = 3 }
+rten-vecmath = { opt-level = 3 }

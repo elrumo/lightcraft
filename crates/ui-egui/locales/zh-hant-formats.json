@@ -133,5 +133,7 @@
   "{n} photos on this device": "此裝置上有 {n} 張照片",
   "{n} photos, not saved": "{n} 張照片（不會儲存）",
   "Enlarging… {:.0}%": "正在放大… {:.0}%",
-  "Super Resolution failed: {e}": "超解析度失敗：{e}"
+  "Super Resolution failed: {e}": "超解析度失敗：{e}",
+  "Uses the MI-GAN model, a {:.0} MB download ({} licence). {}.": "使用 MI-GAN 模型（需下載 {:.0} MB，{} 授權）。{}。",
+  "Downloading MI-GAN… {:.0} %": "正在下載 MI-GAN… {:.0} %"
 }

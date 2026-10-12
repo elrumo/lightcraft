@@ -16,8 +16,9 @@ Models whose licence allows redistribution (Apache-2.0, MIT, BSD, CC-BY) can be 
 licence text and attribution next to them; gated or custom-licence models (SAM 3) cannot, and need the user's own
 mirror or a manual install ([ai-masks.md](ai-masks.md)).
 
-Today: **SAM 3** (Object and Describe masks, [ai-masks.md](ai-masks.md)) and **Nomos Uni SPAN 2×** (Super
-Resolution, [super-resolution.md](super-resolution.md)). The rest of this page is the research behind what to add next
+Today: **SAM 3** (Object and Describe masks, [ai-masks.md](ai-masks.md)), **Nomos Uni SPAN 2×** (Super
+Resolution, [super-resolution.md](super-resolution.md)) and **MI-GAN** (AI Remove, [ai-remove.md](ai-remove.md): the
+one model that also runs in the browser, on rten, from `crates/erase`). The rest of this page is the research behind what to add next
 (2026-10-08; read from each repo's LICENSE and each Hugging Face model card — **re-check the licence of a model when
 you add it**, and write the verdict and the URL you read in its `ModelSpec`).
 
@@ -70,9 +71,17 @@ settled before LightCraft hosts a mirror.
 | Personal aesthetic score | linear head on the SigLIP embedding, trained on the user's ratings | n/a | 0 | |
 | Objects without SAM 3's 3.4 GB | SAM 2.1 tiny/small | Apache-2.0 / Apache-2.0 | 39–46 M params | `hiera` in `candle-transformers` |
 | Sky | Sky U²-Net small | MIT / MIT | ~2 MB | training data not stated |
-| Remove (large areas) | MI-GAN | MIT / MIT | 29.5 MB | separable convs, no FFT; Places2/FFHQ terms unverified |
+| Remove (large areas) | MI-GAN | MIT / MIT | 29.5 MB | **in use** (AI Remove, rten; `migan.onnx` from the authors' Hugging Face repo, MIT); separable convs, no FFT; Places2/FFHQ terms unverified |
+| Generative expand, large holes | LaMa (big-lama; fp32 ONNX export `Carve/LaMa-ONNX`) | Apache-2.0 / Apache-2.0 | 208 MB | runs on rten as is (its FFTs are MatMul / Einsum / Cos / Sin), checked 2026-10-12: right on a synthetic hole, 7–11 s per 512 × 512 pass on a busy Apple-silicon CPU (MI-GAN: ~1 s), so desktop only; on a square crop widened back to 3:2 it continued sky, sea, bushes and a film border plausibly but softly, a little cleaner than MI-GAN; Places2 terms unverified |
 
 Subject, Sky, People and Landscape masks can use SAM 3's Describe path with fixed prompts for users who have it.
+
+**Generative expand (outpainting), checked 2026-10-12.** Nothing permissively licensed reaches Lightroom's (diffusion)
+quality at a size a laptop, phone or browser can run. MI-GAN and LaMa (above) extend simple surroundings (sky, sea,
+foliage, texture) at 512 × 512 over the whole canvas, so the new strip is soft and can't hold new objects. Diffusion
+inpainting: Kandinsky 2.2 inpaint is Apache-2.0 but a 15 GB repository with no pure-Rust implementation;
+Stable Diffusion inpainting (CreativeML OpenRAIL-M) and SDXL inpainting (OpenRAIL++) carry use-based restrictions;
+FLUX.1 Fill is non-commercial. Classical fallback already in the code: the panorama's content-aware Fill Edges.
 
 ## Do not use
 

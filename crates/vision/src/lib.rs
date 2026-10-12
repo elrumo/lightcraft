@@ -21,7 +21,7 @@ pub mod index;
 pub mod models;
 #[cfg(all(feature = "onnx", not(target_arch = "wasm32")))]
 pub mod ocr;
-#[cfg(all(feature = "onnx", not(target_arch = "wasm32")))]
+// protobuf bytes only (no runtime), so it builds everywhere: the web eraser uses it too
 pub mod onnxfix;
 pub mod reader;
 #[cfg(all(feature = "siglip", not(target_arch = "wasm32")))]

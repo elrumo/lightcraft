@@ -681,6 +681,7 @@ pub fn specs() -> Vec<CommandSpec> {
                         feather: base.feather,
                         opacity: 100.0,
                         source_offset: None,
+                        fill: None,
                     };
                     spot.source_offset = pick_source(s, id, &dd, &spot, None);
                     dd.spots.push(spot);
@@ -694,7 +695,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Add Remove Spot",
             [],
             None,
-            "{mode?: remove|heal|clone, points: [[x,y],…], size?: fraction of long edge, feather?, opacity?, source?: [dx,dy] (default: the best match nearby)} — selects the new spot; returns {index}",
+            "{mode?: remove|heal|clone, points: [[x,y],…], size?: fraction of long edge, feather?, opacity?, source?: [dx,dy] (default: the best match nearby), ai?: bool (Remove only: the AI Remove model paints the fill)} — selects the new spot; returns {index}",
             has_active,
             |s, p| {
                 let mode: SpotMode =
@@ -715,18 +716,46 @@ pub fn specs() -> Vec<CommandSpec> {
                     feather: f64_or(p, "feather", d.feather).clamp(0.0, 100.0),
                     opacity: f64_or(p, "opacity", d.opacity).clamp(0.0, 100.0),
                     source_offset: point(p, "source"),
+                    fill: None,
                 };
+                let ai = p.get("ai").and_then(Value::as_bool).unwrap_or(false);
+                if ai && mode != SpotMode::Remove {
+                    return Err(bad("spot.add", "AI fills Remove spots only"));
+                }
                 let id = s.active().ok_or_else(|| bad("spot.add", "no active photo"))?;
                 let mut dd = (*s.develop_of(id).unwrap_or_default()).clone();
-                if spot.source_offset.is_none() {
+                if spot.source_offset.is_none() && !ai {
                     // resolve the automatic source now: it gets a pin and stays put at every size
                     spot.source_offset = pick_source(s, id, &dd, &spot, None);
                 }
                 dd.spots.push(spot);
                 let n = dd.spots.len();
-                s.set_develop(id, dd, "Remove")?;
+                if ai {
+                    s.erase_spot(id, &mut dd, n - 1).map_err(|e| bad("spot.add", e))?;
+                }
+                s.set_develop(id, dd, if ai { "AI Remove" } else { "Remove" })?;
                 s.active_spot = Some(n - 1);
                 Ok(json!({"index": n - 1}))
+            }
+        ),
+        cmd!(
+            "spot.erase",
+            "AI Remove Spot",
+            [],
+            None,
+            "{index? (the selected spot)} — (re)fills a Remove spot with the AI Remove model, e.g. after moving or resizing it",
+            has_active,
+            |s, p| {
+                let c = "spot.erase";
+                let i = spot_index(s, p, c)?;
+                let id = s.active().ok_or_else(|| bad(c, "no active photo"))?;
+                let mut dd = (*s.develop_of(id).unwrap_or_default()).clone();
+                if dd.spots.get(i).is_none_or(|sp| sp.mode != SpotMode::Remove) {
+                    return Err(bad(c, "AI fills Remove spots only"));
+                }
+                s.erase_spot(id, &mut dd, i).map_err(|e| bad(c, e))?;
+                s.set_develop(id, dd, "AI Remove")?;
+                Ok(json!({"index": i}))
             }
         ),
         cmd!("spot.select", "Select Spot", [], None, "{index|null}", has_active, |s, p| {
@@ -756,7 +785,11 @@ pub fn specs() -> Vec<CommandSpec> {
                     let sp = &mut spots[i];
                     if let Some(d) = point(p, "move") {
                         sp.points.iter_mut().for_each(|q| *q = Point::new(q.x + d.x, q.y + d.y));
-                        // the source moves along (its offset is relative to the target)
+                        // the source moves along (its offset is relative to the target); so does an
+                        // AI fill, until `spot.erase` paints the new place
+                        if let Some(f) = sp.fill.as_mut() {
+                            f.rect = [f.rect[0] + d.x, f.rect[1] + d.y, f.rect[2] + d.x, f.rect[3] + d.y];
+                        }
                     }
                     if let Some(o) = point(p, "source") {
                         sp.source_offset = Some(o);

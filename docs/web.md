@@ -60,6 +60,11 @@ the module stays well under Cloudflare's 25 MiB per-file limit: measured 2026-10
 without craft-fonts and 21.8 MB with it (brotli 3.8 MB / 6.3 MB). Without it the web build
 works, but Japanese text has no glyphs.
 
+**AI Remove** (rten, the MI-GAN runner) adds 2.2 MB to the module (+0.42 MB brotli): measured 2026-10-12 without
+craft-fonts or wasm-opt, 21.8 MB → 24.0 MB. rten stays at opt-level 3: at "s" it is no smaller and a fill takes ten
+times longer. With craft-fonts the module now needs `wasm-opt` to stay under Cloudflare's 25 MiB per-file limit;
+check the size table `cargo xtask web` prints before deploying.
+
 ## Deploying: headers
 
 `cargo xtask web --serve` sends these on every response. A production server may send them too;
@@ -172,6 +177,9 @@ sign-in then belong to that site's browser storage. See [sync.md](sync.md).
 
 ## Not yet
 
+- **AI Remove runs on the main thread** (a few seconds a stroke; a "Removing with AI…" notice shows first). Its model
+  (MI-GAN, 30 MB, [ai-remove.md](ai-remove.md)) is fetched from Hugging Face only when the user presses Download, and
+  kept in the site's storage (`models/migan/`).
 - **Exports and auto-adjustments run on the main thread** (they need the original's pixels
   there). Right after a reload, the first such command on a photo whose original isn't in memory
   yet fails with "still loading" and works a moment later.

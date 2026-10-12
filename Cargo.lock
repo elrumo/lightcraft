@@ -3134,6 +3134,7 @@ dependencies = [
  "lightcraft-color",
  "lightcraft-develop",
  "lightcraft-enhance",
+ "lightcraft-erase",
  "lightcraft-fetch",
  "lightcraft-geo",
  "lightcraft-geom",
@@ -3166,8 +3167,21 @@ dependencies = [
  "candle-nn",
  "lightcraft-codecs",
  "lightcraft-color",
+ "lightcraft-erase",
  "lightcraft-fetch",
  "lightcraft-raster",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "lightcraft-erase"
+version = "0.2.1"
+dependencies = [
+ "lightcraft-raster",
+ "lightcraft-vision",
+ "rten",
+ "rten-tensor",
+ "sha2",
  "thiserror 2.0.21",
 ]
 

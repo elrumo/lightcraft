@@ -1389,5 +1389,13 @@
   "Selecting…": "正在選取…",
   "Refining the mask…": "正在調整遮色片…",
   "Show Overlay": "顯示疊加",
-  "Refine Edges": "調整邊緣"
+  "Refine Edges": "調整邊緣",
+  "Generative AI": "生成式 AI",
+  "Removing with AI…": "正在用 AI 移除…",
+  "Fill with what is most likely behind the stroke (the MI-GAN model) instead of texture from around it": "用筆觸後面最可能的內容（MI-GAN 模型）填補，而不是周圍的紋理",
+  "AI Remove is turned off in Settings → AI Models.": "AI 移除已在「設定 → AI 模型」中關閉。",
+  "Getting the MI-GAN model…": "正在取得 MI-GAN 模型…",
+  "AI Remove isn't available in this build.": "此版本不提供 AI 移除。",
+  "AI Remove needs its model: download it in the Remove panel. This stroke was filled from around it.": "AI 移除需要模型：請在移除面板中下載。此筆觸已用周圍內容填補。",
+  "The download stopped.": "下載已停止。"
 }

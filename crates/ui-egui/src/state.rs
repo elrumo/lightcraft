@@ -459,6 +459,9 @@ pub struct UiState {
     pub remove_size: f32,
     pub remove_feather: f32,
     pub remove_opacity: f32,
+    /// Remove tool ▸ Generative AI: new Remove strokes are filled by the AI Remove model (saved in
+    /// `ui.json`, so it stays as the user left it).
+    pub remove_ai: bool,
     /// Selected Point Color sample.
     pub point_color: usize,
     /// Point Color "Visualize range": the selected sample's range in colour, the rest grey.
@@ -808,6 +811,7 @@ impl Default for UiState {
             remove_size: 0.02,
             remove_feather: 50.0,
             remove_opacity: 100.0,
+            remove_ai: false,
             point_color: 0,
             point_color_visualize: false,
             eye: 0,

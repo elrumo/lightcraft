@@ -7,6 +7,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 pub mod control;
+pub mod erase;
 pub mod export_task;
 pub mod glass;
 pub mod haptics;
@@ -43,6 +44,8 @@ mod tests_compact;
 mod tests_compact_editor;
 #[cfg(test)]
 mod tests_curve;
+#[cfg(test)]
+mod tests_erase;
 #[cfg(test)]
 mod tests_export_flow;
 #[cfg(test)]
@@ -187,6 +190,9 @@ pub struct Services {
     /// Plays haptic feedback (iOS: the Taptic Engine); the compact layout asks for it on touch
     /// gestures and choices (`haptics`).
     pub haptic: Option<haptics::PlayHaptic>,
+    /// Fetches AI Remove's model in the browser build ([`erase::ModelFetch`]); `None`: the
+    /// engine downloads it (desktop and phone apps).
+    pub erase_model: Option<erase::ModelFetch>,
     /// The system clipboard's text, for Paste in a text field's touch edit menu
     /// (`panels::mobile::edit_menu`; iOS: the on-screen keyboard has no ⌘V). A host that can only
     /// read it asynchronously (the web) starts the read here, returns `None` and sends the text
@@ -274,6 +280,8 @@ pub struct LightcraftApp {
     pub merge: merge::MergeState,
     /// AI Super Resolution: the running job.
     pub superres: superres::SuperResState,
+    /// AI Remove: a fill waiting for its notice, the browser build's model fetch.
+    pub erase: erase::EraseState,
     /// The saved choice of AI models turned off has been applied to the session.
     models_synced: bool,
     /// An import in progress (the import review dialog's batches).
@@ -349,6 +357,7 @@ impl LightcraftApp {
             loupe_shown: None,
             merge: merge::MergeState::default(),
             superres: superres::SuperResState::default(),
+            erase: erase::EraseState::default(),
             models_synced: false,
             import: None,
             scan: None,
@@ -744,6 +753,7 @@ impl LightcraftApp {
         self.renderer.poll(ctx, &mut self.session);
         merge::poll(self, ctx);
         superres::poll(self, ctx);
+        erase::poll(self, ctx);
         self.sync_models();
         import::poll_scan(self, ctx);
         import::tick(self, ctx);

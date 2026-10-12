@@ -1880,6 +1880,10 @@ fn remove_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respo
         if resp.drag_stopped() {
             app.gesture = None;
             let _ = app.run("develop.endInteraction", json!({}));
+            // an AI spot moved: its fill went along, paint the new place
+            if !source && d.spots.get(spot).is_some_and(|sp| sp.fill.is_some()) {
+                crate::erase::queue(app, ui.ctx(), "spot.erase", json!({"index": spot}));
+            }
         }
         return;
     }
@@ -1917,10 +1921,15 @@ fn remove_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respo
             _ => "remove",
         };
         let pts: Vec<[f64; 2]> = points.iter().map(|q| [q.x, q.y]).collect();
-        let _ = app.run(
-            "spot.add",
-            json!({"mode": mode, "points": pts, "size": app.ui.remove_size, "feather": app.ui.remove_feather, "opacity": app.ui.remove_opacity}),
-        );
+        let params =
+            json!({"mode": mode, "points": pts, "size": app.ui.remove_size, "feather": app.ui.remove_feather, "opacity": app.ui.remove_opacity});
+        if mode == "remove" && crate::erase::wanted(app, ui.ctx()) {
+            let mut params = params;
+            params["ai"] = json!(true);
+            crate::erase::queue(app, ui.ctx(), "spot.add", params);
+        } else {
+            let _ = app.run("spot.add", params);
+        }
     }
 }
 

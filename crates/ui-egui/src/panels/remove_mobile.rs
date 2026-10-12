@@ -1,7 +1,8 @@
 //! The Remove screen of the compact (phone) layout, modelled on Lightroom's mobile app. While the
 //! Remove tool is open it takes the screen over from the tool bar and the tool sheet: the photo
 //! with its spots; under it a panel with the tool — Remove, Heal or Clone, one tile that opens a
-//! menu of the three — beside its brush size (Heal and Clone also have feather and opacity); and a
+//! menu of the three — beside its brush size (Heal and Clone also have feather and opacity, Remove
+//! the Generative AI switch); and a
 //! bar with ✕, the tool's name and ✓. Paint over a distraction to remove it; tap a spot's pin for
 //! its options (its tool, another source, delete). Edits apply live: ✓ keeps them, ✕ undoes every
 //! step taken since the screen opened. Undo and a "…" menu (Find Dust Spots, Visualize Spots,
@@ -78,7 +79,9 @@ pub fn show(app: &mut LightcraftApp, ui: &mut Ui, t: &Tokens, landscape: bool) {
 
 /// The panel's height: the tool and Size, then a slider row for each of the others it has.
 fn panel_height(app: &LightcraftApp) -> f32 {
-    let rows = if tool(app).1 == SpotMode::Remove { 0.0 } else { 2.0 } + if app.ui.visualize_spots { 1.0 } else { 0.0 };
+    // Remove has the Generative AI switch (and the model's download offer under it while it's missing)
+    let tool_rows = if tool(app).1 == SpotMode::Remove { 1.0 + crate::erase::extra_rows(app) } else { 2.0 };
+    let rows = tool_rows + if app.ui.visualize_spots { 1.0 } else { 0.0 };
     FIRST_ROW_H + rows * TOUCH_SLIDER_ROW_H + 8.0
 }
 
@@ -156,6 +159,12 @@ fn panel(app: &mut LightcraftApp, ui: &mut Ui, t: &Tokens) {
     super::right::spot_sliders(app, &mut size, &d, &["size"]);
     if tool(app).1 != SpotMode::Remove {
         super::right::spot_sliders(app, ui, &d, &["feather", "opacity"]);
+    } else {
+        ui.add_space(6.0);
+        egui::Frame::NONE.inner_margin(egui::Margin::symmetric(16, 0)).show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 4.0;
+            crate::erase::switch(app, ui);
+        });
     }
     if app.ui.visualize_spots {
         let spec = lightcraft_develop::ControlSpec {

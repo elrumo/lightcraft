@@ -25,6 +25,8 @@ lightcraft-meta = { workspace = true }
 lightcraft-geo = { workspace = true }
 miniz_oxide = { workspace = true }
 lightcraft-merge = { workspace = true }
+# AI Remove (MI-GAN on rten): built everywhere, the web included; the model is downloaded on request
+lightcraft-erase = { workspace = true }
 rayon = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -133,5 +133,7 @@
   "{n} photos on this device": "このデバイスに{n}枚",
   "{n} photos, not saved": "{n}枚（保存されません）",
   "Enlarging… {:.0}%": "拡大中… {:.0}%",
-  "Super Resolution failed: {e}": "超解像に失敗：{e}"
+  "Super Resolution failed: {e}": "超解像に失敗：{e}",
+  "Uses the MI-GAN model, a {:.0} MB download ({} licence). {}.": "MI-GANモデルを使用します（{:.0} MBのダウンロード、{}ライセンス）。{}。",
+  "Downloading MI-GAN… {:.0} %": "MI-GANをダウンロード中… {:.0} %"
 }

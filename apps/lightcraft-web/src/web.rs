@@ -168,6 +168,7 @@ fn services(originals: Originals, backend: Option<Backend>, files: Files, frozen
     let (backup_backend, backup_files) = (backend.clone(), files);
     let restore_backend = backend.clone();
     let sync_backend = backend.clone();
+    let erase_backend = backend.clone();
     Services {
         backup_library: Some(Box::new(move |session: &mut Session| {
             let Some(b) = backup_backend.clone() else { return Err("nothing is stored in this browser session (?store=memory)".into()) };
@@ -225,6 +226,7 @@ fn services(originals: Originals, backend: Option<Backend>, files: Files, frozen
         })),
         pick_folder: None,
         sync_exec: Some(crate::sync::exec(sync_backend)),
+        erase_model: Some(crate::erase::exec(erase_backend)),
         tile_exec: Some(crate::tiles::exec()),
         share_exports: None,
         save_to_photos: None,

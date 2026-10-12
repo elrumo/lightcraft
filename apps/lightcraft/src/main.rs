@@ -246,6 +246,8 @@ fn services() -> Services {
         // the system clipboard reaches text fields directly; no haptics
         haptic: None,
         clipboard_text: None,
+        // AI Remove's model comes with the engine's downloader
+        erase_model: None,
     }
 }
 

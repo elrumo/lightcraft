@@ -869,11 +869,15 @@ pub struct Spot {
     pub opacity: f64,
     /// Source offset (normalized) from the target; None = auto (content-aware remove).
     pub source_offset: Option<Point>,
+    /// AI Remove (Remove ▸ Generative AI): what the model painted under the stroke (Remove spots only). Without it a
+    /// Remove spot is filled with texture from around it when it renders.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fill: Option<crate::segmask::SpotFill>,
 }
 
 impl Default for Spot {
     fn default() -> Self {
-        Self { mode: SpotMode::Remove, points: Vec::new(), size: 0.02, feather: 50.0, opacity: 100.0, source_offset: None }
+        Self { mode: SpotMode::Remove, points: Vec::new(), size: 0.02, feather: 50.0, opacity: 100.0, source_offset: None, fill: None }
     }
 }
 

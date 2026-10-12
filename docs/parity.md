@@ -29,7 +29,7 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | F. Edit panel — global adjustments (EDIT) | 42 | 2 | 4 | 1 | 28/28 (100%) | 13/14 (93%) |
 | G. Profiles (PROF) | 6 | 2 | 3 | 0 | 3/4 (75%) | 2/3 (67%) |
 | H. Crop & rotate (CROP) | 9 | 0 | 0 | 1 | 6/6 (100%) | 3/3 (100%) |
-| I. Remove / healing (REM) | 8 | 0 | 2 | 2 | 4/4 (100%) | 3/3 (100%) |
+| I. Remove / healing (REM) | 8 | 1 | 2 | 1 | 4/4 (100%) | 3/3 (100%) |
 | J. Red eye (EYE) | 2 | 0 | 0 | 0 | — | 1/1 (100%) |
 | K. Masking (MASK) | 14 | 4 | 5 | 0 | 8/8 (100%) | 5/5 (100%) |
 | L. Presets (PRE) | 6 | 0 | 1 | 1 | 2/2 (100%) | 2/2 (100%) |
@@ -48,9 +48,9 @@ and prints the summary; `cargo xtask parity --write` refreshes the summary table
 | Y. Menus | 83 | 2 | 3 | 5 | 47/47 (100%) | 23/23 (100%) |
 | Z. Keyboard shortcuts (desktop) | 74 | 3 | 3 | 1 | 49/52 (94%) | 22/23 (96%) |
 | Lightroom Classic extras | 32 | 12 | 37 | 8 | — | 21/22 (95%) |
-| **Total** | 395 | 47 | 76 | 30 | 194/200 (97%) | 140/150 (93%) |
+| **Total** | 395 | 48 | 76 | 29 | 194/200 (97%) | 140/150 (93%) |
 
-Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **80.8%** of 518 in-scope rows — P0 98.5% of 200 · P1 95.7% of 150 · P2 46.4% of 168.
+Weighted completion (✅ = 1, 🟡 = ½, 🚫 left out): **80.7%** of 519 in-scope rows — P0 98.5% of 200 · P1 95.7% of 150 · P2 46.4% of 169.
 <!-- /parity:summary -->
 
 ## Top gaps
@@ -77,7 +77,7 @@ Take the first one nobody is working on.
    people (SigLIP 2, PP-OCRv6, YuNet + SFace; `docs/search-people.md`) are done and download from Hugging Face by default.
    Subject / Sky / People could use SAM 3 with fixed prompts. **Super Resolution** works (Nomos Uni SPAN 2×, 4.5 MB, downloaded
    from its author's public repository; `docs/super-resolution.md`); every model is listed, downloaded, turned off and deleted in
-   Settings → AI Models. The researched, licence-checked shortlist for the rest (depth, denoise, SAM 2.1, MI-GAN) and the runtime
+   Settings → AI Models. **AI Remove** runs MI-GAN (LR-REM-GEN 🟡, `docs/ai-remove.md`). The researched, licence-checked shortlist for the rest (depth, denoise, SAM 2.1) and the runtime
    decision are in `docs/ai-models.md`; **AI denoise has no clean open raw-domain model** (the only raw-trained one is GPL-3), a
    maintainer decision.
 7. **HDR** (Q. HDR, LR-EXP-HDR), **video** (R. Video), **Classic output modules** (Book, Slideshow module,
@@ -311,10 +311,10 @@ under the UI command that wraps it (a no-op error); the UI command now wins.
 
 | Id | Feature | Tier | Status | Evidence | Missing / notes |
 |---|---|---|---|---|---|
-| LR-REM-CONTENTAWARE | Content-aware remove | P1 | ✅ | `cmd:spot.add` (`mode: remove`), `crates/pipeline/src/spots.rs`, `crates/pipeline/src/inpaint.rs` | the stroke is filled with texture synthesized from around it (exemplar-based completion with PatchMatch, coarse to fine; the spot's source seeds and joins the search, so Refresh Source / dragging it changes the fill); preview and export synthesize the same structure; heals from the source when nothing around fits. Matches are translations only: rows or tiles in strong perspective can continue at the wrong angle (use Heal / Clone there) |
+| LR-REM-CONTENTAWARE | Content-aware remove | P1 | ✅ | `cmd:spot.add` (`mode: remove`), `crates/pipeline/src/spots.rs`, `crates/pipeline/src/inpaint.rs` | the stroke is filled with texture synthesized from around it (exemplar-based completion with PatchMatch, coarse to fine; the spot's source seeds and joins the search, so Refresh Source / dragging it changes the fill); preview and export synthesize the same structure; heals from the source when nothing around fits. Matches are translations only: rows or tiles in strong perspective can continue at the wrong angle (use Heal / Clone, or Generative AI — LR-REM-GEN — there) |
 | LR-REM-HEAL | Heal | P0 | ✅ | `cmd:spot.add` (`mode: heal`) | |
 | LR-REM-CLONE | Clone | P0 | ✅ | `cmd:spot.add` (`mode: clone`) | |
-| LR-REM-GEN | Generative remove | OOS | 🚫 | | |
+| LR-REM-GEN | Generative remove | P2 | 🟡 | `cmd:spot.add` (`ai`), `cmd:spot.erase`, `crates/erase/src/lib.rs`, `crates/engine/src/erase.rs`, `crates/pipeline/src/spots.rs`, `crates/ui-egui/src/erase.rs`, `apps/lightcraft-web/src/erase.rs`, `docs/ai-remove.md` | Remove ▸ Generative AI: a local model, MI-GAN (MIT; optional 30 MB download after consent, pinned SHA-256; pure-Rust rten on desktop, iPhone and in the browser), paints what is likely behind the stroke from ~4× its area; stored with the spot (renders and exports never run the model; copies of spots leave it behind); broad structure from the model, grain and fine texture from the patch synthesis, tones matched to the surroundings so later white balance follows; moving the pin paints again. Not Lightroom's cloud diffusion fill: one result, no variations; at most 512 × 512 painted pixels over the area; busy scenes (crowds) can grow person-like shapes; Upright / lens changes after painting misalign the fill (move the pin); in the browser it runs on the page's thread (a few seconds a stroke); verified on two CC0 photos and synthetic tests only |
 | LR-REM-DETECT | Object detection for remove | P2 | ⬜ | | |
 | LR-REM-BRUSH-PARAMS | Brush size / feather / opacity | P0 | ✅ | `cmd:spot.add` (`size`, `feather`, `opacity`), `cmd:brush.smaller`, `cmd:brush.larger`, `cmd:brush.featherLess`, `cmd:brush.featherMore`, `crates/ui-egui/src/panels/right.rs` | Size / Feather / Opacity sliders (for new spots and the selected one); `[` `]` size, ⇧`[` ⇧`]` feather (also the Masking brush) |
 | LR-REM-SPOT-EDIT | Edit existing spots | P0 | ✅ | `cmd:spot.select`, `cmd:spot.update`, `cmd:spot.refreshSource`, `cmd:spot.delete` | click a pin to select, drag target or source, ⌫ deletes the selected spot, `/` picks another source; automatic sources are resolved when the spot is added |

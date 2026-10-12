@@ -1,4 +1,5 @@
-//! Model segmentations stored with a mask ([`SegMask`]), so rendering never needs the model.
+//! Model results stored with the settings, so rendering never needs the model: segmentations
+//! with a mask ([`SegMask`]) and AI Remove fills with a spot ([`SpotFill`]).
 
 use serde::{Deserialize, Serialize};
 
@@ -81,6 +82,85 @@ pub(crate) fn de_detail<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<Se
         }
     }
     d.deserialize_seq(Capped)
+}
+
+/// Largest side of a stored [`SpotFill`] (hostile input caps the allocation; the app stores at
+/// most the model's 512).
+pub const MAX_FILL_SIDE: usize = 1024;
+/// Encoding gamma of [`SpotFill`] pixels.
+const FILL_GAMMA: f32 = 2.2;
+
+/// Pixels a model painted for a Remove spot (AI Remove, `lightcraft-erase`), stored with the spot
+/// so rendering never needs the model. `w × h` RGB over the part `rect` of the image (normalized
+/// `[x0, y0, x1, y1]`, the coordinates of the spot's points): the scene-linear light of the
+/// retouching stage, encoded `255 · (v / scale)^(1/2.2)`, row-major, each byte stored as its
+/// difference from the one to its left (smooth pictures deflate better), deflated and base64
+/// encoded. Around the stroke the pixels are the photo as it was when the fill was made, which
+/// lets a render match the fill to the photo's current tones.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SpotFill {
+    pub w: u32,
+    pub h: u32,
+    pub rect: [f64; 4],
+    /// Linear value of code 255.
+    pub scale: f32,
+    pub data: String,
+}
+
+impl SpotFill {
+    /// From `w × h` linear pixels over `rect`; `None` for an empty or oversized picture.
+    pub fn from_linear(w: usize, h: usize, rect: [f64; 4], px: &[[f32; 3]]) -> Option<SpotFill> {
+        if w == 0 || h == 0 || w > MAX_FILL_SIDE || h > MAX_FILL_SIDE || px.len() != w * h {
+            return None;
+        }
+        let scale = px.iter().flatten().copied().filter(|v| v.is_finite()).fold(0.0f32, f32::max).max(1e-6);
+        let mut q = Vec::with_capacity(px.len() * 3);
+        for row in px.chunks(w) {
+            let mut prev = [0u8; 3];
+            for p in row {
+                for (c, v) in p.iter().enumerate() {
+                    let code = (255.0 * (v / scale).clamp(0.0, 1.0).powf(1.0 / FILL_GAMMA)).round() as u8;
+                    q.push(code.wrapping_sub(prev[c]));
+                    prev[c] = code;
+                }
+            }
+        }
+        let data = base64_encode(&miniz_oxide::deflate::compress_to_vec(&q, 8));
+        Some(SpotFill { w: w as u32, h: h as u32, rect, scale, data })
+    }
+
+    /// The covered part, normalized; `None` when damaged.
+    pub fn bounds(&self) -> Option<[f64; 4]> {
+        let r = self.rect;
+        (r.iter().all(|v| v.is_finite()) && r[2] > r[0] && r[3] > r[1]).then_some(r)
+    }
+
+    /// The linear pixels, or `None` when the data is damaged or claims an absurd size.
+    pub fn pixels(&self) -> Option<Vec<[f32; 3]>> {
+        let (w, h) = (self.w as usize, self.h as usize);
+        if w == 0 || h == 0 || w > MAX_FILL_SIDE || h > MAX_FILL_SIDE || !self.scale.is_finite() || self.scale <= 0.0 {
+            return None;
+        }
+        let n = w * h * 3;
+        let q = miniz_oxide::inflate::decompress_to_vec_with_limit(&base64_decode(&self.data)?, n).ok()?;
+        if q.len() != n {
+            return None;
+        }
+        let lut: Vec<f32> = (0..=255u8).map(|c| self.scale * (f32::from(c) / 255.0).powf(FILL_GAMMA)).collect();
+        let mut out = Vec::with_capacity(w * h);
+        for row in q.chunks(w * 3) {
+            let mut prev = [0u8; 3];
+            for d in row.chunks(3) {
+                let mut p = [0.0f32; 3];
+                for c in 0..3 {
+                    prev[c] = prev[c].wrapping_add(d.get(c).copied().unwrap_or(0));
+                    p[c] = lut.get(usize::from(prev[c])).copied().unwrap_or(0.0);
+                }
+                out.push(p);
+            }
+        }
+        Some(out)
+    }
 }
 
 const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -168,6 +248,34 @@ mod tests {
         let back: crate::DevelopSettings = serde_json::from_str(&serde_json::to_string(&d).unwrap()).unwrap();
         let crate::MaskShape::Prompt { detail, .. } = &back.masks[0].components[0].shape else { panic!("a Prompt") };
         assert_eq!(detail.len(), MAX_DETAIL);
+    }
+
+    #[test]
+    fn a_fill_round_trips_within_its_quantization() {
+        let (w, h) = (23, 9);
+        let px: Vec<[f32; 3]> = (0..w * h).map(|i| [(i % w) as f32 * 0.05, 0.3, (i / w) as f32 * 0.2 + 0.01]).collect();
+        let f = SpotFill::from_linear(w, h, [0.1, 0.2, 0.3, 0.4], &px).unwrap();
+        let back = f.pixels().unwrap();
+        assert_eq!(back.len(), px.len());
+        for (a, b) in px.iter().zip(&back) {
+            for c in 0..3 {
+                // one 8-bit step of a gamma-2.2 code, relative to the value (plus a floor near black)
+                assert!((a[c] - b[c]).abs() <= a[c] * 0.02 + f.scale * 2e-4, "{a:?} vs {b:?}");
+            }
+        }
+        assert_eq!(f.bounds(), Some([0.1, 0.2, 0.3, 0.4]));
+    }
+
+    #[test]
+    fn a_damaged_fill_is_none() {
+        let f = SpotFill::from_linear(4, 4, [0.0, 0.0, 1.0, 1.0], &[[0.5; 3]; 16]).unwrap();
+        assert!(SpotFill { w: 5, ..f.clone() }.pixels().is_none(), "size mismatch");
+        assert!(SpotFill { w: 100_000, ..f.clone() }.pixels().is_none(), "absurd size");
+        assert!(SpotFill { scale: f32::NAN, ..f.clone() }.pixels().is_none());
+        assert!(SpotFill { data: "!!".into(), ..f.clone() }.pixels().is_none());
+        assert!(SpotFill { rect: [0.5, 0.0, 0.2, 1.0], ..f.clone() }.bounds().is_none());
+        assert!(SpotFill::from_linear(0, 4, [0.0; 4], &[]).is_none());
+        assert!(SpotFill::from_linear(2, 2, [0.0; 4], &[[0.0; 3]; 3]).is_none());
     }
 
     #[test]

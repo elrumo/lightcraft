@@ -74,8 +74,27 @@ pub const NOMOS_SPAN_2X: ModelSpec = ModelSpec {
     home_url: "https://huggingface.co/Phips/2xNomosUni_span_multijpg",
 };
 
+/// MI-GAN: AI Remove (see `lightcraft_erase`, which pins the file and says where it comes from).
+pub const MIGAN: ModelSpec = ModelSpec {
+    id: lightcraft_erase::ID,
+    label: lightcraft_erase::LABEL,
+    purpose: "AI Remove (Remove tool ▸ Generative AI)",
+    files: &[FileSpec {
+        name: lightcraft_erase::FILE,
+        size: Some(lightcraft_erase::FILE_SIZE),
+        sha256: Some(lightcraft_erase::FILE_SHA256),
+        max: lightcraft_erase::FILE_SIZE,
+    }],
+    mirrors_env: "LIGHTCRAFT_MIGAN_MIRRORS",
+    default_mirrors: &[lightcraft_erase::BASE_URL],
+    licence: lightcraft_erase::LICENCE,
+    licence_url: lightcraft_erase::LICENCE_URL,
+    credit: lightcraft_erase::CREDIT,
+    home_url: lightcraft_erase::HOME_URL,
+};
+
 /// Every enhancement model, for listings.
-pub const ALL: &[&ModelSpec] = &[&NOMOS_SPAN_2X];
+pub const ALL: &[&ModelSpec] = &[&NOMOS_SPAN_2X, &MIGAN];
 
 /// The enhancement model with this id.
 pub fn find(id: &str) -> Option<&'static ModelSpec> {
