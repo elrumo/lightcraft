@@ -1034,7 +1034,39 @@ fn choices_tools_and_deleting_have_their_own_haptics() {
     h.app.run("develop.set", json!({"values": {"light.exposure": 0.7}})).unwrap();
     h.settle(SETTLE);
     click(&mut h, "icon:undo");
+    let _ = heard(&log);
+    click(&mut h, "button:undoStep");
     assert_eq!(heard(&log), [Haptic::Light]);
+}
+
+/// Lightroom's mobile app: the photo's undo button opens a menu with undo and redo side by side
+/// (it stays open to step back and forth), then Reset and Versions (and History).
+#[test]
+fn the_undo_button_opens_undo_redo_reset_and_versions() {
+    let mut h = detail([390.0, 844.0]);
+    h.app.ui.right = RightPanel::None;
+    let id = h.app.session.active().unwrap();
+    let exposure = |h: &Headless| h.app.session.catalog.photo(id).unwrap().develop.light.exposure;
+    let before = exposure(&h);
+    h.app.run("develop.set", json!({"values": {"light.exposure": 0.7}})).unwrap();
+    h.settle(SETTLE);
+    click(&mut h, "icon:undo");
+    for w in ["button:undoStep", "button:redoStep", "button:undoReset", "button:undoVersions", "button:undoHistory"] {
+        assert!(has(&h, w), "{w}");
+    }
+    frames(&mut h, 30);
+    crate::tests_grid_touch::snap(&h, "undo-menu");
+    click(&mut h, "button:undoStep");
+    assert_eq!(exposure(&h), before, "undone");
+    assert!(has(&h, "button:redoStep"), "the menu stays open");
+    click(&mut h, "button:redoStep");
+    assert!((exposure(&h) - 0.7).abs() < 1e-6, "redone");
+    click(&mut h, "button:undoReset");
+    assert_eq!(exposure(&h), 0.0, "every edit reset");
+    assert!(!has(&h, "button:undoStep"), "a row closes the menu");
+    click(&mut h, "icon:undo");
+    click(&mut h, "button:undoVersions");
+    assert_eq!(h.app.ui.right, RightPanel::Versions);
 }
 
 /// A phone in its grid, nothing open.

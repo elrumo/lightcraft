@@ -2,6 +2,49 @@
 
 use serde::{Deserialize, Serialize};
 
+/// How the phone's grid spans the library: every photo, a few of each month, or one card a year
+/// (as iOS's Photos offers them, `view.gridSpan`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum GridSpan {
+    #[default]
+    All,
+    Months,
+    Years,
+}
+
+impl GridSpan {
+    pub const ALL: [GridSpan; 3] = [GridSpan::Years, GridSpan::Months, GridSpan::All];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            GridSpan::All => "all",
+            GridSpan::Months => "months",
+            GridSpan::Years => "years",
+        }
+    }
+
+    pub fn from_id(id: &str) -> Option<GridSpan> {
+        GridSpan::ALL.into_iter().find(|s| s.id() == id)
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            GridSpan::All => "All",
+            GridSpan::Months => "Months",
+            GridSpan::Years => "Years",
+        }
+    }
+}
+
+/// Where the phone's grid goes once it is drawn in its new span: a photo, or the first photo of a
+/// month (`2025-08`) or a year (`2025`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum GridJump {
+    Photo(u64),
+    Date(String),
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ViewMode {
@@ -584,6 +627,32 @@ pub struct UiState {
     /// Compact layout: the searchable list of every command is open (the phone has no menu bar).
     #[serde(skip)]
     pub all_commands: bool,
+    /// Compact layout: the Filter page is open, at its first list (`""`) or at one of the lists it
+    /// opens (`type`, `camera`, `people`, `location`, `keyword`, `edited`); `view.filterSheet`.
+    #[serde(skip)]
+    pub filter_sheet: Option<String>,
+    /// Compact layout: scroll the grid back to its top on the next frame (a tap on the top bar or,
+    /// on iOS, on the status bar; `view.scrollToTop`).
+    #[serde(skip)]
+    pub scroll_top: bool,
+    /// Compact layout: photos across a row of the grid (a pinch changes it; one of
+    /// `panels::grid_zoom::STEPS`; `view.gridColumns`).
+    pub grid_columns: u8,
+    /// Compact layout: every photo, months or years (`view.gridSpan`).
+    #[serde(skip)]
+    pub grid_span: GridSpan,
+    /// Compact layout: where the grid goes on its next frame (after a change of span).
+    #[serde(skip)]
+    pub grid_jump: Option<GridJump>,
+    /// The grid last shown (justified or square): where Back from a photo goes.
+    pub grid_mode: ViewMode,
+    /// Compact layout: the page a name is typed on (a face, a person found in the photos, a
+    /// person's new name, a face marked by hand), while it is open.
+    #[serde(skip)]
+    pub face_naming: Option<crate::panels::people_mobile::Naming>,
+    /// Compact layout: the next tap on the photo marks a face there (`view.tagFace`).
+    #[serde(skip)]
+    pub tag_face: bool,
     /// Open the sync status popover this frame (`view.syncStatus`): under the top right corner,
     /// where a click on the cloud button would have put it.
     #[serde(skip)]
@@ -1221,6 +1290,14 @@ impl Default for UiState {
             screen_undo_base: None,
             mask_group: String::new(),
             all_commands: false,
+            filter_sheet: None,
+            scroll_top: false,
+            grid_columns: 3,
+            grid_span: GridSpan::All,
+            grid_jump: None,
+            grid_mode: ViewMode::PhotoGrid,
+            face_naming: None,
+            tag_face: false,
             sync_popover: false,
             luminance_map_restore: None,
             view: ViewMode::Detail,
@@ -1399,6 +1476,10 @@ impl UiState {
     /// Clamp values restored from disk.
     pub fn sanitized(mut self) -> Self {
         self.thumb_size = self.thumb_size.clamp(90.0, 480.0);
+        self.grid_columns = crate::panels::grid_zoom::snap(self.grid_columns);
+        if !matches!(self.grid_mode, ViewMode::PhotoGrid | ViewMode::SquareGrid) {
+            self.grid_mode = ViewMode::PhotoGrid;
+        }
         self.left_width = LEFT_WIDTH.clamp(self.left_width);
         self.right_width = RIGHT_WIDTH.clamp(self.right_width);
         self.brush_size = self.brush_size.clamp(0.002, 0.5);

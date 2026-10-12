@@ -91,6 +91,8 @@ mod tests_grading;
 #[cfg(test)]
 mod tests_grid;
 #[cfg(test)]
+mod tests_grid_touch;
+#[cfg(test)]
 mod tests_info_dialogs;
 #[cfg(test)]
 mod tests_ios_host;
@@ -126,6 +128,8 @@ mod tests_open_lightroom;
 mod tests_panels;
 #[cfg(test)]
 mod tests_people;
+#[cfg(test)]
+mod tests_people_phone;
 #[cfg(test)]
 mod tests_preset_import;
 #[cfg(test)]
@@ -1668,6 +1672,8 @@ pub struct Caches {
     date_groups: Option<(u64, std::sync::Arc<Vec<lightcraft_catalog::DateGroup>>)>,
     server_folders: Option<(u64, std::sync::Arc<std::collections::BTreeMap<String, usize>>)>,
     filter_values: Option<(u64, std::sync::Arc<FilterValues>)>,
+    /// The phone Filter page's lists, with counts (`panels::filter_sheet`).
+    filter_choices: Option<(u64, std::sync::Arc<panels::filter_sheet::Choices>)>,
     album_counts: Option<(u64, std::sync::Arc<std::collections::HashMap<lightcraft_catalog::AlbumId, usize>>)>,
     /// How often the album counts were recomputed (tests check that unchanged frames don't).
     pub album_count_scans: usize,
@@ -1924,6 +1930,11 @@ impl Caches {
                 v
             }
         }
+    }
+    /// Cameras, people, places and keywords in the library with their photo counts (the phone's
+    /// Filter page).
+    pub fn filter_choices(&mut self, cat: &lightcraft_catalog::Catalog) -> std::sync::Arc<panels::filter_sheet::Choices> {
+        panels::filter_sheet::choices_for(&mut self.filter_choices, cat)
     }
     /// Keyword suggestions for a photo with `current` keywords and the typed `prefix`.
     pub fn suggestions(&mut self, cat: &lightcraft_catalog::Catalog, current: &[String], prefix: &str, n: usize) -> std::sync::Arc<Vec<String>> {

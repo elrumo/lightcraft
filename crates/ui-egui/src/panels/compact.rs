@@ -116,9 +116,12 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         super::mask_mobile::floating(app, &ctx);
     }
     albums(app, &ctx, albums_page);
+    super::filter_sheet::show(app, &ctx);
+    super::people_mobile::naming_page(app, &ctx);
     if !albums_page && !app.ui.select_mode {
         add_button(app, &ctx, &t);
     }
+    span_bar(app, &ctx, &t, !albums_page && !app.ui.select_mode);
     menus(app, &ctx);
     overlays(app, &ctx);
     mobile::all_commands_page(app, &ctx);
@@ -188,6 +191,57 @@ fn add_button(app: &mut LightcraftApp, ctx: &egui::Context, t: &Tokens) {
     });
 }
 
+/// A segment of the Years / Months / All capsule.
+const SPAN_W: f32 = 72.0;
+const SPAN_H: f32 = 44.0;
+
+/// Years, Months and All under the grid, as iOS's Photos has them: a glass capsule at the bottom
+/// with a pill that springs to the span chosen (`view.gridSpan`; widgets `button:span-<id>`). It
+/// slides away while photos are chosen or a page covers the grid.
+fn span_bar(app: &mut LightcraftApp, ctx: &egui::Context, t: &Tokens, shown: bool) {
+    let grid = matches!(app.ui.view, ViewMode::PhotoGrid | ViewMode::SquareGrid);
+    let shown = shown && grid && !app.session.visible().is_empty();
+    let k = ctx.animate_bool_with_time(egui::Id::new("span-bar-shown"), shown, 0.25);
+    if k <= 0.0 {
+        return;
+    }
+    let screen = ctx.content_rect();
+    let w = SPAN_W * 3.0;
+    // (level with the + button, in the middle unless that would run into it)
+    let mut x = screen.center().x;
+    if app.services.host_pick.is_some() {
+        x = x.min(screen.right() - 20.0 - ADD_D - 10.0 - w / 2.0).max(screen.left() + 8.0 + w / 2.0);
+    }
+    let centre = pos2(x, screen.bottom() - 20.0 - ADD_D / 2.0 + (1.0 - k) * 90.0);
+    let capsule = egui::Rect::from_center_size(centre, vec2(w, SPAN_H));
+    egui::Area::new(egui::Id::new("compact_span")).order(egui::Order::Foreground).fixed_pos(capsule.min).show(ctx, |ui| {
+        ui.multiply_opacity(k);
+        let (r, _) = ui.allocate_exact_size(capsule.size(), Sense::hover());
+        let p = ui.painter();
+        // (the thicker glass of menus: the words must read over any photo)
+        glass::paint(p, r, SPAN_H / 2.0, Some(glass::menu_fill(ui.ctx())), 0.0);
+        let pill = p.add(egui::Shape::Noop);
+        let mut chosen = None;
+        for (i, span) in crate::state::GridSpan::ALL.into_iter().enumerate() {
+            let seg = egui::Rect::from_min_size(r.min + vec2(i as f32 * SPAN_W, 0.0), vec2(SPAN_W, SPAN_H));
+            let resp = ui.interact(seg, egui::Id::new(("span", span.id())), if shown { Sense::click() } else { Sense::hover() });
+            let on = app.ui.grid_span == span;
+            resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, on, crate::i18n::tr(span.label())));
+            crate::widgets::register(ui.ctx(), format!("button:span-{}", span.id()), seg);
+            if on {
+                chosen = Some(seg);
+            }
+            let ink = if on { t.text } else { t.text_dim };
+            ui.painter().text(seg.center(), Align2::CENTER_CENTER, crate::i18n::tr(span.label()), t.semibold(15.0), ink);
+            if resp.clicked() && !on {
+                haptics::tap(ui.ctx(), Haptic::Selection);
+                let _ = app.run("view.gridSpan", json!({"span": span.id()}));
+            }
+        }
+        ui.painter().set(pill, selection_pill(ui.ctx(), egui::Id::new("span-pill"), chosen, false, vec2(8.0, 8.0)));
+    });
+}
+
 /// Every menu and action sheet of the compact layout (each draws only while it's open).
 fn menus(app: &mut LightcraftApp, ctx: &egui::Context) {
     mobile::actions(ctx, "add", None, |ui| {
@@ -209,6 +263,7 @@ fn menus(app: &mut LightcraftApp, ctx: &egui::Context) {
     mobile::actions(ctx, "more", None, |ui| grid_more(app, ui));
     mobile::actions(ctx, "sort", Some("Sort"), |ui| sort_items(app, ui));
     mobile::actions(ctx, "photoMore", None, |ui| photo_more(app, ui));
+    mobile::actions(ctx, "undoMenu", None, |ui| undo_menu(app, ui));
     let ids: Vec<u64> = app.session.selection.ids.iter().map(|id| id.0).collect();
     mobile::actions(ctx, "selRate", Some("Rating"), |ui| rating_items(app, ui, &ids));
     mobile::actions(ctx, "selFlag", Some("Flag"), |ui| flag_items(app, ui, &ids));
@@ -297,6 +352,60 @@ fn sort_items(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     }
 }
 
+/// The photo's undo menu, as Lightroom's mobile app has it: undo and redo side by side (the menu
+/// stays open, for stepping back and forth), then Reset (every edit, one undo step), Versions and
+/// History. Widgets `button:undoStep`, `button:redoStep`, `button:undoReset`, `button:undoVersions`,
+/// `button:undoHistory`.
+fn undo_menu(app: &mut LightcraftApp, ui: &mut egui::Ui) {
+    let ctx = ui.ctx().clone();
+    let t = Tokens::get(&ctx);
+    let w = ui.available_width();
+    let (row, _) = ui.allocate_exact_size(vec2(w, 52.0), Sense::hover());
+    let steps = [
+        ("undoStep", Icon::Undo, "Undo", "edit.undo", lightcraft_engine::cmd::can_undo(&app.session).is_ok()),
+        ("redoStep", Icon::Redo, "Redo", "edit.redo", lightcraft_engine::cmd::can_redo(&app.session).is_ok()),
+    ];
+    for (i, (id, icon, tip, cmd, enabled)) in steps.into_iter().enumerate() {
+        let cell = egui::Rect::from_min_size(row.min + vec2(i as f32 * w / 2.0, 0.0), vec2(w / 2.0, row.height()));
+        let resp = ui.interact(cell, egui::Id::new(("undo-menu", id)), if enabled { Sense::click() } else { Sense::hover() });
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, crate::i18n::tr(tip)));
+        crate::widgets::register(&ctx, format!("button:{id}"), cell);
+        if enabled && resp.is_pointer_button_down_on() {
+            let spot = cell.shrink2(vec2(10.0, 4.0));
+            ui.painter().rect_filled(
+                spot,
+                12.0,
+                if Tokens::is_dark(&ctx) { egui::Color32::from_white_alpha(28) } else { egui::Color32::from_black_alpha(16) },
+            );
+        }
+        crate::icons::paint(
+            ui.painter(),
+            egui::Rect::from_center_size(cell.center(), vec2(24.0, 24.0)),
+            icon,
+            if enabled { t.text } else { t.text_disabled },
+        );
+        // (the menu stays: a step back can be followed by another, or taken again)
+        if resp.clicked() {
+            run_cmd(app, &ctx, cmd, json!({}));
+            haptics::tap(&ctx, Haptic::Light);
+        }
+    }
+    mobile::row_gap(ui);
+    let has_photo = app.session.active().is_some();
+    if mobile::row(ui, "undoReset", Some(Icon::Reset), crate::i18n::tr("Reset"), has_photo) {
+        run_cmd(app, &ctx, "develop.reset", json!({}));
+        haptics::tap(&ctx, Haptic::Light);
+    }
+    for (id, cmd, icon, label) in
+        [("undoVersions", "panel.versions", Icon::Versions, "Versions"), ("undoHistory", "panel.activity", Icon::Activity, "History")]
+    {
+        if mobile::row(ui, id, Some(icon), crate::i18n::tr(label), has_photo) {
+            app.ui.presets = false;
+            run_cmd(app, &ctx, cmd, json!({}));
+        }
+    }
+}
+
 /// A photo's "…" menu: rating, flag and label, then copying edits, its other panels, deleting.
 fn photo_more(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let ctx = ui.ctx().clone();
@@ -328,6 +437,14 @@ fn photo_more(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         }
     }
     mobile::row_gap(ui);
+    // the people in it: their faces framed and named on the photo, and a face to mark by hand
+    if mobile::row_checked(ui, "faceBoxes", Some(Icon::FaceBox), crate::i18n::tr("Faces"), true, Some(app.ui.face_boxes)) {
+        run_cmd(app, &ctx, "view.faceBoxes", json!({}));
+    }
+    if mobile::row(ui, "tagFace", Some(Icon::Person), crate::i18n::tr("Tag a Face"), true) {
+        run_cmd(app, &ctx, "view.tagFace", json!({"on": true}));
+    }
+    mobile::row_gap(ui);
     let ba = app.ui.before_after != crate::state::BeforeAfter::Off;
     if mobile::row_checked(ui, "beforeAfter", Some(Icon::BeforeAfter), crate::i18n::tr("Before / After"), true, Some(ba)) {
         run_cmd(app, &ctx, "view.beforeAfter", json!({}));
@@ -349,9 +466,26 @@ fn content(app: &mut LightcraftApp, ui: &mut egui::Ui, bg: egui::Color32) {
         ViewMode::Detail => 1,
         _ => 2,
     };
-    let k = mobile::enter(ui.ctx(), egui::Id::new("compact-content-in"), kind, 0.22);
-    egui::CentralPanel::default().frame(egui::Frame::NONE.fill(bg)).show(ui, |ui| {
+    let mut k = mobile::enter(ui.ctx(), egui::Id::new("compact-content-in"), kind, 0.22);
+    // a photo pulled down shows the grid behind it, and one let go flies back into it: the grid was
+    // showing already, so it doesn't fade in
+    if super::detail::homing(ui.ctx()).is_some() {
+        k = 1.0;
+    }
+    let pull = if app.ui.view == ViewMode::Detail { super::detail::pulled(ui.ctx()) } else { 0.0 };
+    let fill = if pull > 0.0 { egui::Color32::TRANSPARENT } else { bg };
+    egui::CentralPanel::default().frame(egui::Frame::NONE.fill(fill)).show(ui, |ui| {
         ui.multiply_opacity(k);
+        if pull > 0.0 {
+            let behind = ui.max_rect();
+            let mut g = ui.new_child(egui::UiBuilder::new().max_rect(behind).id_salt("pulled-grid"));
+            let view = app.ui.view;
+            app.ui.view = app.ui.grid_mode;
+            super::grid::show(app, &mut g);
+            app.ui.view = view;
+            // the photo's own background thins out as it comes down
+            ui.painter().rect_filled(behind, 0.0, bg.gamma_multiply((1.0 - 1.8 * pull).clamp(0.0, 1.0)));
+        }
         match app.ui.view {
             ViewMode::Detail => super::detail::show(app, ui),
             ViewMode::Compare => super::compare::show_compare(app, ui),
@@ -389,6 +523,15 @@ fn top_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, mut shown: bo
         .frame(egui::Frame::NONE.fill(t.canvas).inner_margin(egui::Margin::symmetric(6, 0)))
         .show_collapsible(ui, &mut shown, |ui| {
             let full = ui.max_rect();
+            // over the grid, a tap on the bar between its buttons slides the grid back to its top, as a
+            // tap on the status bar does in iOS's lists (the buttons, added after, take their own taps)
+            if matches!(app.ui.view, ViewMode::PhotoGrid | ViewMode::SquareGrid) && !app.ui.select_mode {
+                let bar = ui.interact(full, egui::Id::new("compact-top-tap"), Sense::click());
+                crate::widgets::register(ui.ctx(), "bar:top", full);
+                if bar.clicked() {
+                    let _ = app.run("view.scrollToTop", json!({}));
+                }
+            }
             // (the bar's contents fade in when it turns into another: grid, photo, choosing)
             ui.multiply_opacity(mobile::enter(
                 ui.ctx(),
@@ -396,12 +539,16 @@ fn top_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, mut shown: bo
                 (app.ui.select_mode, app.ui.view == ViewMode::Detail),
                 0.18,
             ));
+            // (a photo pulled down takes its bars with it)
+            ui.multiply_opacity(1.0 - super::detail::pulled(ui.ctx()));
             if app.ui.select_mode {
                 select_bar(app, ui, t, full);
             } else if app.ui.view == ViewMode::Detail {
-                photo_bar(app, ui);
+                photo_bar(app, ui, t);
             } else if app.ui.view == ViewMode::Map {
                 map_bar(app, ui);
+            } else if app.ui.view == ViewMode::People {
+                people_bar(app, ui, t);
             } else {
                 grid_bar(app, ui, t);
             }
@@ -487,9 +634,32 @@ fn map_bar(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     });
 }
 
+/// Over People: back (from a person's page to everyone, from everyone to the grid) and the
+/// person's name in the middle.
+fn people_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
+    let full = ui.max_rect();
+    if let Some(name) = app.ui.person_page.clone() {
+        let shown = super::people::fit(ui.painter(), &name, t.semibold(17.0), full.width() - 120.0);
+        ui.painter().text(full.center(), Align2::CENTER_CENTER, shown, t.semibold(17.0), t.text);
+    }
+    ui.horizontal_centered(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        ui.add_space(2.0);
+        if bar_icon(ui, "back", Icon::ChevronLeft, "Back", true).clicked() {
+            if app.ui.person_page.is_some() {
+                let _ = app.run("view.people", json!({}));
+            } else {
+                let grid = if app.ui.grid_mode == ViewMode::SquareGrid { "view.squareGrid" } else { "view.photoGrid" };
+                let _ = app.run(grid, json!({}));
+            }
+        }
+    });
+}
+
 /// Over a photo: back on the left; undo, then share, save and "…" sharing one glass capsule on the
-/// right, as iOS 26 groups a bar's buttons (a long press on undo opens the history).
-fn photo_bar(app: &mut LightcraftApp, ui: &mut egui::Ui) {
+/// right, as iOS 26 groups a bar's buttons. Undo opens its menu (`undo_menu`), as Lightroom's mobile
+/// app has it; a long press on it opens the history.
+fn photo_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
     ui.horizontal_centered(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
         ui.add_space(2.0);
@@ -522,13 +692,20 @@ fn photo_bar(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 let _ = app.run("dialog.export", json!({}));
             }
             ui.add_space(6.0);
-            let can_undo = lightcraft_engine::cmd::can_undo(&app.session).is_ok();
-            let undo = bar_icon(ui, "undo", Icon::Undo, "Undo", can_undo);
+            // (a corner mark says it opens a menu: undo, redo, reset, versions)
+            let undo = bar_icon(ui, "undo", Icon::Undo, "Undo, Redo and Reset", app.session.active().is_some());
+            let mark = undo.rect.center() + vec2(9.0, 9.0);
+            let ink = if app.session.active().is_some() { t.text } else { t.text_disabled };
+            ui.painter().add(egui::Shape::convex_polygon(
+                vec![mark + vec2(3.5, -3.5), mark + vec2(3.5, 3.5), mark + vec2(-3.5, 3.5)],
+                ink,
+                Stroke::NONE,
+            ));
             if undo.clicked() {
-                let _ = app.run("edit.undo", json!({}));
+                mobile::open_menu(ui.ctx(), "undoMenu", undo.rect);
                 haptics::tap(ui.ctx(), Haptic::Light);
             }
-            if undo.long_touched() || undo.secondary_clicked() {
+            if undo.long_touched() || undo.clicked_by(egui::PointerButton::Secondary) {
                 app.ui.presets = false;
                 let _ = app.run("panel.activity", json!({}));
             }
@@ -561,14 +738,20 @@ pub fn grid_header(app: &mut LightcraftApp, ui: &mut egui::Ui, hr: egui::Rect, c
     let right = egui::Rect::from_min_max(pos2(hr.right() - 104.0, hr.top()), pos2(hr.right() - 12.0, hr.bottom()));
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(right).layout(egui::Layout::right_to_left(egui::Align::Center)));
     child.spacing_mut().item_spacing.x = 0.0;
-    let tapped = glass::group(&mut child, &[("icon:sort", Icon::Sort, "Sort", true), ("icon:filter", Icon::Filter, "Filter Bar", true)]);
+    let tapped = glass::group(&mut child, &[("icon:sort", Icon::Sort, "Sort", true), ("icon:filter", Icon::Filter, "Filter", true)]);
     if let Some(sort) = tapped.first()
         && sort.clicked()
     {
         mobile::open_menu(ui.ctx(), "sort", sort.rect);
     }
-    if tapped.get(1).is_some_and(|r| r.clicked()) {
-        let _ = app.run("view.filterBar", json!({}));
+    if let Some(filter) = tapped.get(1) {
+        // (a dot on the button while a filter hides photos)
+        if app.session.filter != lightcraft_catalog::Filter::default() {
+            ui.painter().circle_filled(filter.rect.right_top() + vec2(-9.0, 9.0), 4.0, t.accent);
+        }
+        if filter.clicked() {
+            let _ = app.run("view.filterSheet", json!({}));
+        }
     }
     // the count, where there's room for it before the buttons
     let after = title_r.right() + 4.0;
@@ -588,6 +771,7 @@ fn tool_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, rail: bool, 
     let under = if !wide && (app.ui.right != RightPanel::None || app.ui.presets) { t.chrome } else { t.canvas };
     let bar = bar.show_separator_line(false).frame(egui::Frame::NONE.fill(if rail { t.canvas } else { under }));
     bar.show_collapsible(ui, &mut shown, |ui| {
+        ui.multiply_opacity(1.0 - super::detail::pulled(ui.ctx()));
         let has_photo = app.session.active().is_some();
         let full = ui.max_rect();
         // (no wider than a phone's: on a tablet the tools sit together in the middle)

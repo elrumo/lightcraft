@@ -38,6 +38,14 @@ pub enum Icon {
     Circle,
     FlagPick,
     FlagReject,
+    /// A flag with a tick on it: only the picked photos.
+    FlagChecked,
+    /// A person: a head over shoulders.
+    Person,
+    /// A camera: a body with a lens.
+    Camera,
+    /// Reset: an arrow turning back over a line.
+    Reset,
     Gear,
     Filmstrip,
     BeforeAfter,
@@ -436,6 +444,25 @@ fn paint_with(p: &Painter, rect: Rect, icon: Icon, color: Color32, turn: Option<
         FlagPick => {
             pen.line(&[(5.0, 17.0), (5.0, 3.5)]);
             pen.closed(&[(5.0, 3.5), (15.0, 3.5), (12.5, 7.0), (15.0, 10.5), (5.0, 10.5)]);
+        }
+        FlagChecked => {
+            pen.line(&[(5.0, 17.0), (5.0, 3.5)]);
+            pen.closed(&[(5.0, 3.5), (15.0, 3.5), (12.5, 7.0), (15.0, 10.5), (5.0, 10.5)]);
+            pen.line(&[(7.3, 7.1), (8.9, 8.7), (11.8, 5.2)]);
+        }
+        Person => {
+            pen.circle(10.0, 6.5, 3.4);
+            pen.arc(10.0, 18.5, 7.0, 200.0, 340.0);
+        }
+        Reset => {
+            pen.arc(11.0, 12.0, 5.5, 180.0, 360.0);
+            pen.line(&[(3.0, 9.5), (5.5, 12.5), (8.0, 9.5)]);
+            pen.line(&[(3.0, 16.5), (17.0, 16.5)]);
+        }
+        Camera => {
+            pen.rect(2.5, 6.0, 17.5, 16.0, 2.0);
+            pen.line(&[(7.0, 6.0), (8.3, 3.8), (11.7, 3.8), (13.0, 6.0)]);
+            pen.circle(10.0, 11.0, 3.0);
         }
         FlagReject => {
             pen.line(&[(5.0, 17.0), (5.0, 3.5)]);

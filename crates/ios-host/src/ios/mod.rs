@@ -9,6 +9,7 @@ pub mod pasteboard;
 pub mod photos;
 pub mod pickers;
 pub mod share;
+pub mod status_bar;
 
 use objc2::MainThreadMarker;
 use objc2::rc::Retained;

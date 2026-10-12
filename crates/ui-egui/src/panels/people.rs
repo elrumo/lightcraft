@@ -73,7 +73,7 @@ fn plain(e: &str) -> String {
 
 /// The people found in the photos that nobody has named (or named, with faces to confirm), as the
 /// engine lists them; recomputed when the faces, the catalog or the user's naming change.
-fn found(app: &mut LightcraftApp) -> std::sync::Arc<Vec<Value>> {
+pub(super) fn found(app: &mut LightcraftApp) -> std::sync::Arc<Vec<Value>> {
     let v = &app.session.vision;
     let key = (v.faces_found(), v.faces_scanned(), app.session.catalog.revision, v.faces, v.people_rev());
     if let Some((k, list)) = &app.ui.people_found
@@ -92,7 +92,7 @@ fn found(app: &mut LightcraftApp) -> std::sync::Arc<Vec<Value>> {
 }
 
 /// What the top of the view has to say about finding people.
-fn bar(app: &mut LightcraftApp, ui: &mut egui::Ui) {
+pub(super) fn bar(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let v = &app.session.vision;
     if !v.faces_available() {
         return;
@@ -287,6 +287,10 @@ pub fn frame(app: &mut LightcraftApp, ctx: &egui::Context) {
 }
 
 pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
+    // a phone has its own, drawn as iOS draws its People album
+    if app.compact {
+        return super::people_mobile::show(app, ui);
+    }
     if let Some(name) = app.ui.person_page.clone() {
         return super::person::show(app, ui, &name);
     }

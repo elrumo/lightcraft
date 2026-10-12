@@ -450,8 +450,22 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let hold = before_hold(ui, &resp, tool_free && !split);
     let held = hold.on || hold.lifted;
     let live = app.compact && tool_free && !zoomed && !app.ui.zoom_anim && !held && !ui.input(|i| i.multi_touch().is_some());
-    let slide = if app.compact { swipe(app, ui, &resp, canvas, id, live) } else { 0.0 };
-    let img_rect = img_rect.translate(vec2(slide, 0.0));
+    let moved = if app.compact { swipe(app, ui, &resp, canvas, id, live) } else { Moved::default() };
+    let slide = moved.slide;
+    let mut img_rect = img_rect.translate(vec2(slide, 0.0));
+    // pulled down: the photo follows the finger, smaller the further it goes; the grid shows through
+    // behind it (`compact::content`)
+    let pull_k = (moved.pull.y / canvas.height().max(1.0)).clamp(0.0, 1.0);
+    if moved.pull != Vec2::ZERO {
+        img_rect = Rect::from_center_size(img_rect.center() + moved.pull, img_rect.size() * (1.0 - PULL_SHRINK * pull_k));
+    }
+    ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("loupe-pull"), if moved.dismiss { 0.0 } else { pull_k }));
+    if moved.dismiss {
+        // let go: back to the grid, the photo flying to its place there
+        let now = ui.input(|i| i.time);
+        ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("loupe-homing"), Homing { photo: id.0, from: img_rect, since: now }));
+        let _ = app.run("view.back", json!({}));
+    }
     // request renders: the loupe at display resolution (drafts during drags)
     let interacting = app.session.interaction.is_some();
     let scale = if interacting { 0.6 } else { 1.0 };
@@ -741,7 +755,19 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     if !fullscreen && !review {
         filter_pill(app, ui, canvas);
     }
-    if app.ui.face_boxes {
+    if app.compact {
+        // a phone: the faces are framed with their names under them, a tap names one (not in review
+        // mode, where the photo is alone, nor with a drawing tool in hand)
+        let drawing = matches!(right, RightPanel::Crop | RightPanel::Masking | RightPanel::Remove | RightPanel::RedEye) || !app.ui.tool.is_empty();
+        if (app.ui.face_boxes || app.ui.tag_face) && !review && !fullscreen && !drawing && !navigating {
+            let screen = |x: f64, y: f64| map.screen(Point::new(x, y));
+            let norm = |p: Pos2| {
+                let n = map.norm(p);
+                (n.x, n.y)
+            };
+            super::people_mobile::loupe_faces(app, ui, &screen, &norm, img_rect, &photo, d.orientation);
+        }
+    } else if app.ui.face_boxes {
         // a name box left open on another photo is dropped
         if app.ui.name_edit.as_ref().is_some_and(|e| e.photo != id.0) {
             app.ui.name_edit = None;
@@ -1344,6 +1370,50 @@ struct Swipe {
     shown: Option<(u8, u8)>,
     /// The photo this ran for last, to slide in a change made by anything but the finger.
     id: u64,
+    /// A pull down (back to the grid): the photo's offset from rest, and whether the finger has it.
+    pull: Vec2,
+    pulling: bool,
+}
+
+/// What a one-finger drag on the phone loupe made of the photo this frame.
+#[derive(Clone, Copy, Default)]
+struct Moved {
+    /// Sideways from rest (the carousel), in points.
+    slide: f32,
+    /// Pulled down (and sideways with it) from rest, in points.
+    pull: Vec2,
+    /// Let go far or fast enough down: back to the grid.
+    dismiss: bool,
+}
+
+/// A pull down this far (points), or a flick down this fast (points per second), goes back to the grid.
+const PULL_DISMISS: f32 = 110.0;
+const PULL_FLING: f32 = 700.0;
+/// How much smaller the photo is pulled all the way down the screen.
+const PULL_SHRINK: f32 = 0.45;
+
+/// How far the photo is pulled down this frame, as a part of the screen (0..1): the grid shows
+/// through behind it and the bars fade as it goes (`compact::content`, `compact::top_bar`).
+pub fn pulled(ctx: &egui::Context) -> f32 {
+    ctx.data(|d| d.get_temp::<f32>(egui::Id::new("loupe-pull"))).unwrap_or(0.0)
+}
+
+/// A photo let go on its way back to the grid: it flies from where it was to its place there.
+#[derive(Clone, Copy, Debug)]
+pub struct Homing {
+    pub photo: u64,
+    pub from: Rect,
+    pub since: f64,
+}
+
+/// How long the photo takes to fly back to its place in the grid (s).
+pub const HOMING_S: f64 = 0.32;
+
+/// The photo flying back to the grid, while it does.
+pub fn homing(ctx: &egui::Context) -> Option<Homing> {
+    let h: Homing = ctx.data(|d| d.get_temp(egui::Id::new("loupe-homing")))?;
+    let now = ctx.input(|i| i.time);
+    (now - h.since < HOMING_S).then_some(h)
 }
 
 /// The phone loupe's last tap: when and where it lifted, whether the bars are still to change for
@@ -1408,13 +1478,15 @@ fn has_neighbours(app: &mut LightcraftApp, id: PhotoId) -> (bool, bool) {
 /// finger: sideways across a fitted photo carries it, with its neighbours alongside, and letting go
 /// settles on the next / previous photo (far or fast enough) or back; up / down, in review mode,
 /// rates (left half) or flags (right half). Returns the photo's offset from rest, in points.
-fn swipe(app: &mut LightcraftApp, ui: &egui::Ui, resp: &egui::Response, canvas: Rect, id: PhotoId, live: bool) -> f32 {
+fn swipe(app: &mut LightcraftApp, ui: &egui::Ui, resp: &egui::Response, canvas: Rect, id: PhotoId, live: bool) -> Moved {
     let key = egui::Id::new("loupe-swipe");
     let mut s: Swipe = ui.data(|d| d.get_temp(key)).unwrap_or_default();
     let now = ui.input(|i| i.time);
     if now - s.t > 0.25 {
         (s.off, s.id) = (0.0, id.0); // (it was off screen a while: it starts at rest)
+        (s.pull, s.pulling) = (Vec2::ZERO, false);
     }
+    let mut dismiss = false;
     s.t = now;
     let w = canvas.width() + SLIDE_GAP;
     if !resp.dragged() && !resp.drag_stopped() {
@@ -1444,12 +1516,18 @@ fn swipe(app: &mut LightcraftApp, ui: &egui::Ui, resp: &egui::Response, canvas: 
         s.v = ui.input(|i| i.pointer.velocity().x);
         if s.sideways.is_none() && s.d.length() > 8.0 {
             s.sideways = Some(s.d.x.abs() > s.d.y.abs());
+            // down, with no rating to give: the photo is pulled back towards the grid
+            s.pulling = s.sideways == Some(false) && !app.ui.review && s.d.y > 0.0;
         }
         if s.sideways == Some(true) {
             let (prev, next) = has_neighbours(app, id);
             let want = s.base + s.d.x;
             // nothing beyond the first and last photo: it gives way only grudgingly
             s.off = if (want > 0.0 && !prev) || (want < 0.0 && !next) { want * 0.3 } else { want };
+        } else if s.pulling {
+            // the photo follows the finger down (and sideways with it); back up past where it began
+            // it gives way only grudgingly
+            s.pull = vec2(s.d.x, if s.d.y >= 0.0 { s.d.y } else { s.d.y * 0.3 });
         } else if s.sideways == Some(false) && app.ui.review {
             // up / down: the stars (left half) or the flag (right half) follow the finger
             if s.shown.is_none() {
@@ -1467,6 +1545,14 @@ fn swipe(app: &mut LightcraftApp, ui: &egui::Ui, resp: &egui::Response, canvas: 
             s.shown = Some(now_shown);
         }
     } else {
+        if resp.drag_stopped() && s.pulling {
+            let vy = ui.input(|i| i.pointer.velocity().y);
+            dismiss = s.pull.y > PULL_DISMISS || (vy > PULL_FLING && s.pull.y > 24.0);
+            if dismiss {
+                haptics::tap(ui.ctx(), Haptic::Light);
+            }
+            (s.pulling, s.sideways) = (false, None);
+        }
         if resp.drag_stopped() {
             match s.sideways.filter(|_| live) {
                 Some(true) => {
@@ -1501,12 +1587,23 @@ fn swipe(app: &mut LightcraftApp, ui: &egui::Ui, resp: &egui::Response, canvas: 
                 s.off = 0.0;
             }
         }
+        // a pull let go short of the grid springs back (one that went back is drawn where it was)
+        if !s.pulling && s.pull != Vec2::ZERO && !dismiss {
+            s.pull *= (-SLIDE_SETTLE * 1.4 * ui.input(|i| i.stable_dt)).exp();
+            if s.pull.length() < 0.5 {
+                s.pull = Vec2::ZERO;
+            }
+        }
     }
-    if s.off != 0.0 {
+    if s.off != 0.0 || s.pull != Vec2::ZERO {
         ui.ctx().request_repaint();
     }
+    let pull = s.pull;
+    if dismiss {
+        s.pull = Vec2::ZERO;
+    }
     ui.data_mut(|d| d.insert_temp(key, s));
-    drawn.unwrap_or(s.off)
+    Moved { slide: drawn.unwrap_or(s.off), pull, dismiss }
 }
 
 /// Press and hold: a finger held still on the photo for [`HOLD_S`] shows the Before, as holding `\`

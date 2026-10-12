@@ -185,6 +185,15 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("view.selectMode", "Select Photos", None, ""),
     // compact layout: a photo with the bars away, where swipes rate and flag it
     ("view.reviewMode", "Rate & Review", None, ""),
+    // compact layout: the Filter page (the filter button over the grid)
+    ("view.filterSheet", "Filter…", None, ""),
+    // compact layout: back to the top of the grid (iOS: a tap on the status bar or the top bar)
+    ("view.scrollToTop", "Scroll to Top", None, ""),
+    // compact layout: the next tap on the photo marks a face there and asks who it is
+    ("view.tagFace", "Tag a Face", None, ""),
+    // compact layout: photos across the grid (a pinch), and every photo / months / years
+    ("view.gridColumns", "Grid Columns", None, ""),
+    ("view.gridSpan", "Years, Months or All Photos", None, ""),
     ("file.addPhotos", "Import Photos…", Some("Cmd+Shift+I"), "File"),
     // the host's own pickers (iOS); only in hosts that have them
     ("file.importFromPhotos", "Import from Photos…", None, "File"),
@@ -606,7 +615,8 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
                         app.ui.view = ViewMode::People;
                         app.ui.person_page = Some(name);
                     }
-                    _ => app.ui.view = ViewMode::PhotoGrid,
+                    // the grid it was opened from (justified or square)
+                    _ => app.ui.view = if app.ui.grid_mode == ViewMode::SquareGrid { ViewMode::SquareGrid } else { ViewMode::PhotoGrid },
                 }
             }
             Ok(Value::Null)
@@ -981,6 +991,64 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
                 None => app.ui.hidden_locations.clear(),
             }
             Ok(json!({"hidden": app.ui.hidden_locations}))
+        }
+        "view.gridColumns" => {
+            // {columns: n (snapped to the nearest the grid offers) | step: ±1 (fewer / more)}
+            let now = app.ui.grid_columns;
+            let columns = match (p.get("columns").and_then(Value::as_u64), p.get("step").and_then(Value::as_i64)) {
+                (Some(n), _) => crate::panels::grid_zoom::snap(u8::try_from(n.min(255)).unwrap_or(u8::MAX)),
+                (None, Some(step)) => crate::panels::grid_zoom::step(now, step),
+                (None, None) => return Some(Err("view.gridColumns: give `columns` or `step`".into())),
+            };
+            app.ui.grid_columns = columns;
+            Ok(json!({"columns": columns}))
+        }
+        "view.gridSpan" => {
+            // {span: "all" | "months" | "years", photo?: id, date?: "2025" | "2025-08" (where to go)}
+            let Some(span) = p.get("span").and_then(Value::as_str).and_then(crate::state::GridSpan::from_id) else {
+                return Some(Err("view.gridSpan: `span` is all, months or years".into()));
+            };
+            if !matches!(app.ui.view, ViewMode::PhotoGrid | ViewMode::SquareGrid) {
+                app.ui.view = if app.ui.grid_mode == ViewMode::SquareGrid { ViewMode::SquareGrid } else { ViewMode::PhotoGrid };
+            }
+            app.ui.select_mode = false;
+            app.ui.grid_span = span;
+            app.ui.grid_jump = match (p.get("photo").and_then(Value::as_u64), p.get("date").and_then(Value::as_str)) {
+                (Some(id), _) => Some(crate::state::GridJump::Photo(id)),
+                (None, Some(d)) => Some(crate::state::GridJump::Date(d.to_string())),
+                _ => None,
+            };
+            Ok(json!({"span": span.id()}))
+        }
+        "view.tagFace" => {
+            // {on?: bool (default: toggle)}: only over a photo; face boxes come on with it
+            let on = p.get("on").and_then(Value::as_bool).unwrap_or(!app.ui.tag_face);
+            app.ui.tag_face = on && app.ui.view == ViewMode::Detail && app.session.active().is_some();
+            if app.ui.tag_face {
+                app.ui.face_boxes = true;
+                app.ui.review = false;
+            }
+            Ok(json!({"on": app.ui.tag_face}))
+        }
+        "view.scrollToTop" => {
+            app.ui.scroll_top = true;
+            Ok(Value::Null)
+        }
+        "view.filterSheet" => {
+            // {list?: "type" | "camera" | "people" | "location" | "keyword" | "edited", close?: bool}
+            if p.get("close").and_then(Value::as_bool) == Some(true) {
+                app.ui.filter_sheet = None;
+                return Some(Ok(json!({"open": false})));
+            }
+            let list = p.get("list").and_then(Value::as_str).unwrap_or("");
+            if !list.is_empty() && !crate::panels::filter_sheet::LISTS.iter().any(|(id, _, _)| *id == list) {
+                return Some(Err(format!("view.filterSheet: unknown list `{list}`")));
+            }
+            if !matches!(app.ui.view, ViewMode::PhotoGrid | ViewMode::SquareGrid) {
+                app.ui.view = if app.ui.grid_mode == ViewMode::SquareGrid { ViewMode::SquareGrid } else { ViewMode::PhotoGrid };
+            }
+            app.ui.filter_sheet = Some(list.to_string());
+            Ok(json!({"open": true, "list": list}))
         }
         "view.filterBar" => {
             app.ui.filter_bar = !app.ui.filter_bar;

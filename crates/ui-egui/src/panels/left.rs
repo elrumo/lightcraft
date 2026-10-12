@@ -73,7 +73,8 @@ fn row_sensed(
     sense: Sense,
     mark: Option<egui::Color32>,
 ) -> egui::Response {
-    let label = if matches!(id, "all" | "recentlyAdded" | "picks" | "missing" | "recentlyDeleted") { crate::i18n::tr(label) } else { label };
+    let label =
+        if matches!(id, "all" | "recentlyAdded" | "picks" | "people" | "missing" | "recentlyDeleted") { crate::i18n::tr(label) } else { label };
     let t = Tokens::get(ui.ctx());
     // a phone's list is iOS's: 17 pt names after accent-tinted icons, a rounded highlight on the
     // chosen row and under the finger
@@ -627,15 +628,29 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 // where the visible part of the content ends (screen x), for what stays at the edge
                 d.insert_temp(egui::Id::new("left-visible-right"), ui.cursor().left() + viewport.max.x);
             });
+            // (while People is shown, it is the row that is chosen)
+            let people_shown = app.ui.view == crate::state::ViewMode::People;
             let src = app.session.source;
             for (id, icon, label, count, s) in [
                 ("all", Icon::Photos, "All Photos", Some(total), LibrarySource::All),
                 ("recentlyAdded", Icon::Clock, "Recently Added", None, LibrarySource::RecentlyAdded),
-                ("picks", Icon::FlagPick, "Picks", Some(picks), LibrarySource::Picks),
             ] {
-                if row(app, ui, id, icon, label, count, src == s, 0.0).clicked() {
+                if row(app, ui, id, icon, label, count, src == s && !people_shown, 0.0).clicked() {
                     let _ = app.run("library.source", json!({"kind": id}));
+                    leave_people(app);
                 }
+            }
+            // the people named in the photos (the People view; on a phone, a screen of its own)
+            let people = app.caches.people(&app.session.catalog, &lightcraft_catalog::Filter::default()).len();
+            if row(app, ui, "people", Icon::Person, "People", Some(people), people_shown, 0.0).clicked() {
+                let _ = app.run("view.people", json!({}));
+                if app.compact {
+                    app.ui.left_panel = false;
+                }
+            }
+            if row(app, ui, "picks", Icon::FlagPick, "Picks", Some(picks), src == LibrarySource::Picks && !people_shown, 0.0).clicked() {
+                let _ = app.run("library.source", json!({"kind": "picks"}));
+                leave_people(app);
             }
             // photos whose files can't be found (checked every few seconds, not every frame)
             let missing = missing_count(app, ui);
@@ -710,6 +725,18 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 ui.ctx().request_repaint();
             }
         });
+    }
+}
+
+/// A collection picked while People is shown: its photos, in the grid People was opened from.
+fn leave_people(app: &mut LightcraftApp) {
+    if app.ui.view == crate::state::ViewMode::People {
+        app.ui.person_page = None;
+        app.ui.view = if app.ui.grid_mode == crate::state::ViewMode::SquareGrid {
+            crate::state::ViewMode::SquareGrid
+        } else {
+            crate::state::ViewMode::PhotoGrid
+        };
     }
 }
 

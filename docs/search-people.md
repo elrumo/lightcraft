@@ -83,6 +83,11 @@ they are in, in one undoable step (a person on a bad day may be two cards: name 
 person show up as a **Confirm** button on their card (nothing is written until you click it); a click on a face shows
 that person's photos.
 
+**Where to find it:** the People row of the albums sidebar (or View ▸ People). On a phone it is a screen of round
+faces: tap a face to name it (the people it looks like are offered), a person to see their page (rename them everywhere,
+✓ / ✕ the faces that look like them, Confirm All), and in the photo editor tap a face on the photo to name it, or mark one
+the finder missed with **Tag a Face** in the photo's "…" menu (`photo.addRegion`).
+
 **It is opt-in, local and deletable.** Off by default, per library. Nothing is downloaded or looked at until you agree:
 the bar shows the two models, their size (about 39 MB), where they are kept and their licences first. The models are
 **YuNet** (finds faces; MIT, Shiqi Yu) and **SFace** (tells them apart; Apache-2.0, BUPT) from the OpenCV Zoo, run by a pure-Rust

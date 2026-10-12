@@ -36,6 +36,9 @@ struct Host {
     safe_area: egui::SafeAreaInsets,
     /// The style the app's windows were last forced to (so UIKit's chrome follows what the app draws).
     style: Option<InterfaceStyle>,
+    /// Taps on the status bar reach the app (`lightcraft_ios_host::observe_status_bar_taps`, set up
+    /// once the window exists).
+    status_bar: bool,
 }
 
 impl Host {
@@ -44,12 +47,32 @@ impl Host {
         for p in picks {
             self.joined(ctx, p);
         }
+        self.status_bar_taps(ctx);
         self.app.logic(ctx);
         self.prefs.tick(&mut self.app, ctx);
         self.follow_appearance(ctx);
         // an export kept going in the background has finished
         if self.background.is_some() && self.app.export.is_none() {
             self.background = None;
+        }
+    }
+
+    /// A tap on the status bar slides the grid back to its top, as it does iOS's own lists. UIKit is
+    /// told about the app's scrolling once its window is there.
+    fn status_bar_taps(&mut self, ctx: &egui::Context) {
+        // (only UIKit has a status bar to tap)
+        if !self.status_bar && cfg!(target_os = "ios") {
+            let wake = ctx.clone();
+            match lightcraft_ios_host::observe_status_bar_taps(Box::new(move || wake.request_repaint())) {
+                Ok(()) => self.status_bar = true,
+                // (no window on the very first frames: asked again on the next)
+                Err(e) => log::debug!("status bar taps: {e}"),
+            }
+        }
+        if lightcraft_ios_host::take_status_bar_taps() > 0
+            && let Err(e) = self.app.run("view.scrollToTop", json!({}))
+        {
+            log::warn!("scroll to top: {e}");
         }
     }
 
@@ -557,7 +580,8 @@ pub fn run() -> eframe::Result {
             lightcraft_ui_egui::i18n::set_language(app.ui.language);
             app.notices.extend(prefs_warning);
             let prefs = PrefsWriter::new(&app, keep_prefs_file);
-            let host = Rc::new(RefCell::new(Host { app, prefs, inbox, background: None, safe_area: Default::default(), style: None }));
+            let host =
+                Rc::new(RefCell::new(Host { app, prefs, inbox, background: None, safe_area: Default::default(), style: None, status_bar: false }));
             let weak = Rc::downgrade(&host);
             if let Err(e) = lightcraft_ios_host::observe_lifecycle(Box::new(move |event| on_lifecycle(&weak, event))) {
                 log::error!("lifecycle notifications: {e}");
@@ -601,7 +625,7 @@ mod tests {
         let app = LightcraftApp::new(open_session(Some(lib)), Services::default());
         // keep_file: these tests never write the developer's own ui.json
         let prefs = PrefsWriter::new(&app, true);
-        Host { app, prefs, inbox: Inbox::default(), background: None, safe_area: Default::default(), style: None }
+        Host { app, prefs, inbox: Inbox::default(), background: None, safe_area: Default::default(), style: None, status_bar: false }
     }
 
     /// Backgrounding saves the view and pauses the GPU; coming back resumes it.

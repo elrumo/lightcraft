@@ -752,6 +752,51 @@ pub fn specs() -> Vec<CommandSpec> {
                 Ok(json!({"rect": {"x0": x0, "y0": y0, "x1": x1, "y1": y1}}))
             }
         ),
+        cmd!(
+            "photo.addRegion",
+            "Add Face Box",
+            [],
+            None,
+            "{id?, rect: {x0, y0, x1, y1}, name?} → {index} — mark a face the detector missed (normalized, in the photo's upright frame; clamped to the photo, at least 0.5 % each way), named or not, in the catalog; undoable. Like photo.setRegion it never rewrites the XMP sidecar",
+            always,
+            |s, p| {
+                const C: &str = "photo.addRegion";
+                let id = p.get("id").and_then(Value::as_u64).map(PhotoId).or_else(|| s.active()).ok_or_else(|| bad(C, "no photo"))?;
+                let r = p.get("rect").ok_or_else(|| bad(C, "missing `rect`"))?;
+                let num = |k: &str| {
+                    r.get(k).and_then(Value::as_f64).filter(|v| v.is_finite()).ok_or_else(|| bad(C, format!("`rect.{k}` must be a finite number")))
+                };
+                let (a, b, c, d) = (num("x0")?, num("y0")?, num("x1")?, num("y1")?);
+                let (x0, x1) = (a.min(c).clamp(0.0, 1.0), a.max(c).clamp(0.0, 1.0));
+                let (y0, y1) = (b.min(d).clamp(0.0, 1.0), b.max(d).clamp(0.0, 1.0));
+                if x1 - x0 < 0.005 || y1 - y0 < 0.005 {
+                    return Err(bad(C, "the box would be too small"));
+                }
+                let name = match p.get("name") {
+                    None | Some(Value::Null) => None,
+                    Some(Value::String(n)) => Some(n.trim().to_string()).filter(|n| !n.is_empty()),
+                    Some(_) => return Err(bad(C, "`name` must be a string")),
+                };
+                if name.as_ref().is_some_and(|n| n.chars().count() > 200) {
+                    return Err(bad(C, "the name is longer than 200 characters"));
+                }
+                let mut meta = s.catalog.photo(id).ok_or_else(|| bad(C, "no such photo"))?.meta.clone();
+                // (a photo has a few faces: a runaway script must not grow one without bound)
+                if meta.regions.len() >= 500 {
+                    return Err(bad(C, "this photo already has 500 regions"));
+                }
+                meta.regions.push(lightcraft_meta::Region {
+                    rect: lightcraft_geom::Rect { x0, y0, x1, y1 },
+                    kind: lightcraft_meta::RegionKind::Face,
+                    name: name.clone(),
+                    description: None,
+                });
+                let index = meta.regions.len() - 1;
+                s.commit(if name.is_some() { "Name Face" } else { "Add Face Box" }, Op::SetMeta { id, meta: Box::new(meta) })?;
+                s.skip_auto_write = true;
+                Ok(json!({"id": id.0, "index": index, "name": name}))
+            }
+        ),
         // ---- delete / restore
         cmd!("photo.delete", "Delete Photo", ["Photo"], Some("Delete"), "{ids?} — moves to Recently Deleted", has_selection, |s, p| {
             let before = s.visible_cloned();

@@ -694,3 +694,32 @@ fn undated_photos_group_under_unknown_date_and_sort_together() {
     let filter_year = Filter { date: Some("2026".into()), ..Default::default() };
     assert_eq!(c.query(&filter_year, &Sort { key: SortKey::CaptureDate, ascending: false, ..Default::default() }), vec![p_dated2, p_dated1]);
 }
+
+/// The filter sheet's Location list: every place named in the photos' metadata, counted once a
+/// photo, and the filter that keeps a place's photos.
+#[test]
+fn places_are_listed_with_counts_and_filter_by_any_place_field() {
+    let mut c = Catalog::new();
+    let at = |c: &mut Catalog, name: &str, city: &str, country: &str| {
+        let id = photo(c, name, "2026-04-01T10:00:00");
+        let mut m = c.photo(id).unwrap().meta.clone();
+        (m.city, m.country) = (city.to_string(), country.to_string());
+        c.apply(Op::SetMeta { id, meta: Box::new(m) }).unwrap();
+        id
+    };
+    let a = at(&mut c, "a.jpg", "Sitges", "Spain");
+    let b = at(&mut c, "b.jpg", "sitges ", "Spain");
+    let d = at(&mut c, "d.jpg", "Lisbon", "Portugal");
+    let _nowhere = photo(&mut c, "e.jpg", "2026-04-01T10:00:00");
+    assert_eq!(c.places(), vec![("Sitges".to_string(), 2), ("Spain".to_string(), 2), ("Lisbon".to_string(), 1), ("Portugal".to_string(), 1)]);
+    let only = |place: &str| {
+        let mut v = c.query(&Filter { place: Some(place.into()), ..Default::default() }, &Sort::default());
+        v.sort();
+        v
+    };
+    assert_eq!(only("SITGES"), vec![a, b]);
+    assert_eq!(only("Spain"), vec![a, b]);
+    assert_eq!(only("Portugal"), vec![d]);
+    assert!(only("Madrid").is_empty());
+    assert!(Filter { place: Some("Spain".into()), ..Default::default() }.describe().contains("place Spain"));
+}

@@ -140,6 +140,9 @@ pub fn rows_between(rows: &[GridRow], top: f32, bottom: f32) -> &[GridRow] {
 
 fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
+    if matches!(app.ui.view, ViewMode::PhotoGrid | ViewMode::SquareGrid) {
+        app.ui.grid_mode = app.ui.view;
+    }
     let (generation, ids) = app.session.visible_shared();
     // header: source title + count
     let sel_n = app.session.selection.ids.len();
@@ -214,19 +217,40 @@ fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     }
     let ppp = ui.ctx().pixels_per_point();
     let square = app.ui.view == ViewMode::SquareGrid;
-    // phone squares (Lightroom's mobile grid): edge to edge, three across, 2 pt apart
+    // a phone's Months and Years (`grid_dates`), faded in when the span changes
+    let span = if app.compact { app.ui.grid_span } else { crate::state::GridSpan::All };
+    if app.compact {
+        ui.multiply_opacity(super::mobile::enter(ui.ctx(), egui::Id::new("grid-span-in"), span, 0.25));
+    }
+    if span != crate::state::GridSpan::All {
+        super::grid_zoom::forget(ui.ctx());
+        super::grid_dates::show(app, ui, &ids, generation, span);
+        return;
+    }
+    // a phone: a pinch changes how many photos a row holds, the photos gliding to their new places
+    let zoom = if app.compact {
+        let area = ui.available_rect_before_wrap();
+        super::grid_zoom::update(app, ui, area, generation)
+    } else {
+        super::grid_zoom::Zoom::none()
+    };
+    // phone squares (Lightroom's mobile grid): edge to edge, three across by default, 2 pt apart
     let tiles = square && app.compact;
+    let cols = f32::from(app.ui.grid_columns.max(1));
     let avail_w = if tiles { ui.available_width() } else { ui.available_width() - 8.0 };
-    // phone: about three tiles across (and, through `resolve_group`, month headers rather than one per day)
+    // phone: about `grid_columns` photos across (and, through `resolve_group`, month headers rather
+    // than one per day at three)
     let target = if tiles {
-        ((avail_w - 2.0 * TILE_GAP) / 3.0).floor()
+        ((avail_w - (cols - 1.0) * TILE_GAP) / cols).floor().max(8.0)
     } else if app.compact {
-        (avail_w / 3.0).max(90.0)
+        (avail_w / cols).max(24.0)
     } else {
         app.ui.thumb_size
     };
     // ranked results (search by description) are in relevance order, not date order: no date headers
     let by = if app.session.filter.semantic.is_some() { GroupBy::None } else { resolve_group(app.session.sort.group, target) };
+    // (a phone heads its months, not its days: a day's few photos would leave most rows half empty)
+    let by = if app.compact && by == GroupBy::Day && app.session.sort.group == GroupBy::Auto { GroupBy::Month } else { by };
     let group_key = match app.session.source {
         lightcraft_engine::LibrarySource::RecentlyDeleted => None,
         lightcraft_engine::LibrarySource::RecentlyAdded => Some(SortKey::ImportDate),
@@ -251,35 +275,59 @@ fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         }
     };
     let stacks = app.caches.grid.stacks(stats, &app.session.catalog, generation);
-    let total_h = lay.height + 12.0;
+    // (a phone leaves room under the last row for the Years / Months / All capsule)
+    let total_h = lay.height + if app.compact { super::grid_dates::BOTTOM_ROOM } else { 12.0 };
     let active = app.session.selection.active;
+    // where the grid has to go this frame: the photo under the fingers stays under them when the
+    // columns change; a month or photo picked in Months
+    let top = ui.available_rect_before_wrap().top();
+    let mut forced: Option<f32> = None;
+    if zoom.changed
+        && let Some((i, u)) = zoom.anchor
+        && let Some(c) = lay.cells.get(i)
+    {
+        forced = Some(super::grid_zoom::offset_for(*c, u, zoom.focal, top));
+    }
+    if let Some(jump) = app.ui.grid_jump.take() {
+        forced = jump_offset(app, &ids, &lay, &runs, &jump).or(forced);
+    }
     // bring the active photo into view when it changes (keyboard, click, command) or the grid
     // comes back on screen; otherwise the scroll position is the user's
-    let scroll_to: Option<Rect> = if follow_active(ui.ctx(), egui::Id::new("grid-follow-active"), active) {
-        active.and_then(|a| ids.iter().position(|x| *x == a)).and_then(|i| lay.cells.get(i).copied())
-    } else {
-        None
-    };
+    let follow = follow_active(ui.ctx(), egui::Id::new("grid-follow-active"), active);
+    let scroll_to: Option<Rect> =
+        if follow && forced.is_none() { active.and_then(|a| ids.iter().position(|x| *x == a)).and_then(|i| lay.cells.get(i).copied()) } else { None };
     let mut visible_ids = HashSet::new();
     let mut visited = 0u64;
     // a phone: a finger's drag scrolls the grid (its cells take only taps), except while a
     // sideways drag is choosing photos (`drag_choose`)
     let source = if !app.compact {
         egui::scroll_area::ScrollSource::default()
-    } else if ui.data(|d| d.get_temp::<DragChoose>(egui::Id::new(DRAG_CHOOSE))).is_some() {
+    } else if zoom.pinching || ui.data(|d| d.get_temp::<DragChoose>(egui::Id::new(DRAG_CHOOSE))).is_some() {
         egui::scroll_area::ScrollSource { drag: egui::scroll_area::DragScroll::Never, ..Default::default() }
     } else {
         egui::scroll_area::ScrollSource::ALL
     };
-    egui::ScrollArea::vertical().id_salt("grid-scroll").scroll_source(source).auto_shrink([false, false]).show_viewport(ui, |ui, viewport| {
+    // (a phone has its own handle to drag: `scrubber`)
+    let bars =
+        if app.compact { egui::scroll_area::ScrollBarVisibility::AlwaysHidden } else { egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded };
+    let mut scroll =
+        egui::ScrollArea::vertical().id_salt("grid-scroll").scroll_source(source).scroll_bar_visibility(bars).auto_shrink([false, false]);
+    if let Some(o) = forced {
+        scroll = scroll.vertical_scroll_offset(o);
+    }
+    scroll.show_viewport(ui, |ui, viewport| {
         let (area, _) = ui.allocate_exact_size(vec2(ui.available_width(), total_h), Sense::hover());
         let origin = area.min;
         app.grid_scroll = Some(viewport.top());
         if let Some(r) = scroll_to {
             ui.scroll_to_rect(r.translate(origin.to_vec2()), None);
         }
-        // only the rows on screen and a screen above and below it (their thumbnails are prefetched)
-        let prefetch = viewport.expand2(vec2(0.0, viewport.height()));
+        // only the rows on screen and a screen above and below it (their thumbnails are prefetched);
+        // more of them while a pinch draws the grid smaller
+        let seen = zoom.visible(viewport, origin);
+        let prefetch = seen.expand2(vec2(0.0, viewport.height()));
+        let clip = ui.clip_rect();
+        let mut drawn: Vec<(usize, Rect)> = Vec::new();
         for row in rows_between(&lay.rows, prefetch.top(), prefetch.bottom()) {
             for i in row.start..row.end {
                 let (Some(&id), Some(&rect)) = (ids.get(i), lay.cells.get(i)) else { continue };
@@ -288,21 +336,46 @@ fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                     continue;
                 }
                 visible_ids.insert(id);
-                let r = rect.translate(origin.to_vec2());
-                let onscreen = rect.intersects(viewport);
+                let r = zoom.place(i, rect.translate(origin.to_vec2()));
+                let onscreen = r.intersects(clip);
                 cell(app, ui, id, r, square, onscreen, ppp);
                 if let Some((sid, pos)) = stacks.get(&id) {
                     stack_badge(app, ui, id, *sid, *pos, r, square);
                 }
+                if app.compact && onscreen {
+                    drawn.push((i, r));
+                }
             }
+        }
+        if app.compact {
+            // photos gliding off the screen to places further up or down
+            let gone: Vec<usize> = zoom.gliding().filter(|i| !drawn.iter().any(|(d, _)| d == i)).collect();
+            for i in gone {
+                let (Some(&id), Some(&rect)) = (ids.get(i), lay.cells.get(i)) else { continue };
+                let r = zoom.place(i, rect.translate(origin.to_vec2()));
+                if r.intersects(clip) {
+                    visible_ids.insert(id);
+                    cell(app, ui, id, r, square, true, ppp);
+                }
+            }
+            homing(app, ui, &ids, &drawn, square);
+            super::grid_zoom::remember(ui.ctx(), generation, app.ui.grid_columns, drawn);
+            if super::detail::pulled(ui.ctx()) <= 0.0 {
+                long_press(app, ui, &ids, &lay, origin);
+            }
+        }
+        // back to the top (a tap on the top bar or the status bar), sliding there
+        if std::mem::take(&mut app.ui.scroll_top) {
+            ui.scroll_to_rect(Rect::from_min_size(origin, vec2(1.0, 1.0)), Some(egui::Align::TOP));
         }
         if app.compact && app.ui.select_mode {
             drag_choose(app, ui, &ids, &lay, origin);
         }
         // date headers (top to bottom); the current group's header sticks to the top while its
-        // photos scroll by
-        let first = lay.headers.partition_point(|h| h.bottom() < viewport.top());
-        for (g, hr) in lay.headers.iter().enumerate().skip(first) {
+        // photos scroll by (not while a pinch moves the photos about)
+        let headers: &[Rect] = if zoom.moving() { &[] } else { &lay.headers };
+        let first = headers.partition_point(|h| h.bottom() < viewport.top());
+        for (g, hr) in headers.iter().enumerate().skip(first) {
             if hr.top() > viewport.bottom() {
                 break;
             }
@@ -310,22 +383,77 @@ fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 group_header(app, ui, run, &ids, hr.translate(origin.to_vec2()), false);
             }
         }
-        let sticky = lay.headers.partition_point(|h| h.top() <= viewport.top()).checked_sub(1);
+        let sticky = headers.partition_point(|h| h.top() <= viewport.top()).checked_sub(1);
         if let Some(g) = sticky
-            && let Some(head) = lay.headers.get(g)
+            && let Some(head) = headers.get(g)
             && head.top() < viewport.top()
             && let Some(run) = runs.get(g)
         {
             // pushed up by the next header as it arrives
-            let next_top = lay.headers.get(g + 1).map(|h| h.top()).unwrap_or(f32::INFINITY);
+            let next_top = headers.get(g + 1).map(|h| h.top()).unwrap_or(f32::INFINITY);
             let y = viewport.top().min(next_top - HEADER_H);
             let hr = Rect::from_min_size(pos2(0.0, y), vec2(area.width(), HEADER_H)).translate(origin.to_vec2());
             group_header(app, ui, run, &ids, hr, true);
+        }
+        if app.compact {
+            scrubber(app, ui, viewport, total_h, &ids, &lay);
         }
     });
     app.caches.grid_stats.cells_visited += visited;
     app.renderer.evict_thumbs(&visible_ids, 600);
     let _ = (Color32::BLACK, StrokeKind::Inside, Stroke::NONE);
+}
+
+/// The photo let go on its way back from the loupe (`detail::homing`): it flies from where it was
+/// to its place in the grid, growing into its square's crop, over the cell (which waits for it).
+fn homing(app: &LightcraftApp, ui: &egui::Ui, ids: &[PhotoId], drawn: &[(usize, Rect)], square: bool) {
+    let Some(h) = super::detail::homing(ui.ctx()) else { return };
+    let Some(&(_, to)) = drawn.iter().find(|(i, _)| ids.get(*i).is_some_and(|id| id.0 == h.photo)) else { return };
+    let id = PhotoId(h.photo);
+    let tex = app.renderer.textures.get(&Slot::Main).filter(|t| t.photo == id).or_else(|| app.renderer.thumb(id));
+    let Some(tex) = tex else { return };
+    let now = ui.input(|i| i.time);
+    let k = egui::emath::easing::cubic_out((((now - h.since) / super::detail::HOMING_S) as f32).clamp(0.0, 1.0));
+    let [tw, th] = tex.size;
+    // (into a phone square the photo's middle, as the cell shows it)
+    let full = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
+    let end = if square && app.compact { cover_uv(tw as f32, th as f32) } else { full };
+    let uv = Rect::from_min_max(full.min.lerp(end.min, k), full.max.lerp(end.max, k));
+    let r = Rect::from_min_max(h.from.min.lerp(to.min, k), h.from.max.lerp(to.max, k));
+    let p = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("grid-homing"))).with_clip_rect(ui.clip_rect());
+    p.image(tex.tex.id(), r, uv, Color32::WHITE);
+    ui.ctx().request_repaint();
+}
+
+/// The photo lifted out of the grid (pulled down from the loupe, or flying back into place): its
+/// cell leaves the space empty for it.
+fn lifted(app: &LightcraftApp, ctx: &egui::Context) -> Option<PhotoId> {
+    if let Some(h) = super::detail::homing(ctx) {
+        return Some(PhotoId(h.photo));
+    }
+    (super::detail::pulled(ctx) > 0.0).then(|| app.session.active()).flatten()
+}
+
+/// The scroll offset that shows `jump` (a photo, or the first of a month or year) near the top.
+fn jump_offset(app: &LightcraftApp, ids: &[PhotoId], lay: &GridLayout, runs: &[DateRun], jump: &crate::state::GridJump) -> Option<f32> {
+    match jump {
+        crate::state::GridJump::Photo(id) => {
+            let i = ids.iter().position(|x| x.0 == *id)?;
+            // (a little below the top, with its date header above it)
+            lay.cells.get(i).map(|c| (c.top() - HEADER_H - 8.0).max(0.0))
+        }
+        crate::state::GridJump::Date(d) => {
+            if let Some(g) = runs.iter().position(|r| r.key.starts_with(d.as_str()))
+                && let Some(h) = lay.headers.get(g)
+            {
+                return Some(h.top().max(0.0));
+            }
+            let i = ids
+                .iter()
+                .position(|id| app.session.catalog.photo(*id).and_then(|p| p.captured.as_deref()).is_some_and(|c| c.starts_with(d.as_str())))?;
+            lay.cells.get(i).map(|c| (c.top() - HEADER_H - 8.0).max(0.0))
+        }
+    }
 }
 
 /// Memory key of a [`DragChoose`] in progress.
@@ -350,10 +478,7 @@ struct DragChoose {
 fn drag_choose(app: &mut LightcraftApp, ui: &egui::Ui, ids: &[PhotoId], lay: &GridLayout, origin: egui::Pos2) {
     let key = egui::Id::new(DRAG_CHOOSE);
     let (down, press, pos) = ui.input(|i| (i.pointer.primary_down(), i.pointer.press_origin(), i.pointer.interact_pos()));
-    let at = |p: egui::Pos2| -> Option<usize> {
-        let local = p - origin.to_vec2();
-        rows_between(&lay.rows, local.y, local.y).iter().flat_map(|r| r.start..r.end).find(|i| lay.cells.get(*i).is_some_and(|c| c.contains(local)))
-    };
+    let at = |p: egui::Pos2| cell_at(lay, origin, p);
     let mut state: Option<DragChoose> = ui.data(|d| d.get_temp(key));
     if !down {
         if state.is_some() {
@@ -388,6 +513,198 @@ fn drag_choose(app: &mut LightcraftApp, ui: &egui::Ui, ids: &[PhotoId], lay: &Gr
         let _ = app.run("library.select", json!({"ids": chosen}));
     }
     ui.data_mut(|d| d.insert_temp(key, s));
+}
+
+/// The photo (index into the grid's photos) whose cell holds screen point `p`; `origin` is where the
+/// grid's content starts on screen.
+fn cell_at(lay: &GridLayout, origin: egui::Pos2, p: egui::Pos2) -> Option<usize> {
+    let local = p - origin.to_vec2();
+    rows_between(&lay.rows, local.y, local.y).iter().flat_map(|r| r.start..r.end).find(|i| lay.cells.get(*i).is_some_and(|c| c.contains(local)))
+}
+
+/// Memory key: a long press was answered during the press in progress (its release is not a tap).
+const LONG_PRESS: &str = "grid-long-press";
+/// How long a finger rests on a photo before choosing starts: iOS's long press.
+pub const LONG_PRESS_SECS: f64 = 0.5;
+/// How far (points) a finger may wander and still be holding still.
+const LONG_PRESS_SLOP: f32 = 10.0;
+
+/// Whether the press in progress (or the one just released) was a long press: its tap is not one.
+fn long_pressed(ui: &egui::Ui) -> bool {
+    ui.data(|d| d.get_temp::<bool>(egui::Id::new(LONG_PRESS))).unwrap_or(false)
+}
+
+/// A long press on a phone's photo, answered while the finger is still down, as iOS Photos does:
+/// it starts choosing photos with that one (while choosing, it chooses or unchooses it), and a drag
+/// that follows, in any direction, chooses the run to the photo under the finger (`drag_choose`).
+/// egui's own long touch waits 0.8 s, needs a touch screen, and fires only if a frame happens to
+/// run then; this one asks for that frame, and a mouse held down works the same.
+fn long_press(app: &mut LightcraftApp, ui: &egui::Ui, ids: &[PhotoId], lay: &GridLayout, origin: egui::Pos2) {
+    let key = egui::Id::new(LONG_PRESS);
+    let (pressed, down, press, start, pos, now, touches) = ui.input(|i| {
+        (
+            i.pointer.any_pressed(),
+            i.pointer.primary_down(),
+            i.pointer.press_origin(),
+            i.pointer.press_start_time(),
+            i.pointer.interact_pos(),
+            i.time,
+            i.multi_touch().is_some(),
+        )
+    });
+    if pressed {
+        ui.data_mut(|d| d.remove::<bool>(key));
+    }
+    if !down || touches || long_pressed(ui) {
+        return;
+    }
+    let (Some(o), Some(start), Some(p)) = (press, start, pos) else { return };
+    // (a finger held on the scroll handle is scrubbing, not pressing the photo under it)
+    if (p - o).length() > LONG_PRESS_SLOP || scrubber_hit(ui).is_some_and(|r| r.contains(o)) {
+        return;
+    }
+    let Some(i) = cell_at(lay, origin, o) else { return };
+    let Some(&id) = ids.get(i) else { return };
+    let held = now - start;
+    if held < LONG_PRESS_SECS {
+        // nothing else may come in while the finger rests: wake up when the time is up
+        ui.ctx().request_repaint_after(std::time::Duration::try_from_secs_f64(LONG_PRESS_SECS - held).unwrap_or_default());
+        return;
+    }
+    ui.data_mut(|d| d.insert_temp(key, true));
+    haptics::tap(ui.ctx(), Haptic::Medium);
+    let base: Vec<u64> = if app.ui.select_mode { app.session.selection.ids.iter().map(|p| p.0).collect() } else { Vec::new() };
+    let adding = !(app.ui.select_mode && app.session.selection.contains(id));
+    if app.ui.select_mode {
+        let _ = app.run("library.select", json!({"ids": [id.0], "mode": "toggle"}));
+    } else {
+        let _ = app.run("view.selectMode", json!({"on": true, "id": id.0}));
+    }
+    ui.data_mut(|d| d.insert_temp(egui::Id::new(DRAG_CHOOSE), DragChoose { start: i, adding, base, last: Some(i) }));
+}
+
+/// The scroll handle's size (points): a capsule at the grid's right edge, as Lightroom's mobile app
+/// and iOS's long lists have it.
+const SCRUB_W: f32 = 6.0;
+const SCRUB_H: f32 = 48.0;
+/// How long the handle stays after the grid stops moving (s).
+const SCRUB_LINGER: f64 = 1.4;
+
+/// The scroll handle between frames: the offset last seen, when the grid last moved, and where on
+/// the handle the finger holds it (while dragged).
+#[derive(Clone, Copy, Debug)]
+struct Scrub {
+    offset: f32,
+    moved_at: f64,
+    grab: Option<f32>,
+}
+
+impl Default for Scrub {
+    fn default() -> Self {
+        // (a grid that hasn't moved since it was first drawn shows no handle)
+        Scrub { offset: 0.0, moved_at: f64::NEG_INFINITY, grab: None }
+    }
+}
+
+fn scrub_id() -> egui::Id {
+    egui::Id::new("grid-scrubber")
+}
+
+/// Where the scroll handle can be taken hold of (last frame), while it shows.
+fn scrubber_hit(ui: &egui::Ui) -> Option<Rect> {
+    ui.data(|d| d.get_temp::<Option<Rect>>(scrub_id().with("hit"))).flatten()
+}
+
+/// The phone grid's scroll handle (widget `grid:scrubber`): it shows while the grid moves and for a
+/// moment after, and dragging it runs through the whole library at once, the month of the photos
+/// at the top of the screen in a bubble beside it, as iOS's Photos and Lightroom's mobile app do.
+/// It drives egui's own scroll state (`scroll_with_delta_animation`, which also stops a fling), so
+/// a tap on the top bar or the status bar still slides back to the top. It only takes a finger on
+/// the handle itself, never on the photos at the grid's edge.
+fn scrubber(app: &LightcraftApp, ui: &mut egui::Ui, viewport: Rect, content_h: f32, ids: &[PhotoId], lay: &GridLayout) {
+    let t = Tokens::get(ui.ctx());
+    let key = scrub_id();
+    let clip = ui.clip_rect();
+    let max = content_h - viewport.height();
+    let mut st: Scrub = ui.data(|d| d.get_temp(key)).unwrap_or_default();
+    let now = ui.input(|i| i.time);
+    // nothing to run through: a screen or two of photos scroll well enough by hand
+    if max < viewport.height() || !max.is_finite() {
+        ui.data_mut(|d| {
+            d.insert_temp(key, Scrub::default());
+            d.insert_temp(key.with("hit"), None::<Rect>);
+        });
+        return;
+    }
+    if (viewport.top() - st.offset).abs() > 0.5 {
+        (st.offset, st.moved_at) = (viewport.top(), now);
+    }
+    let travel = (clip.top() + 8.0)..=(clip.bottom() - 8.0 - SCRUB_H).max(clip.top() + 8.0);
+    let span = (travel.end() - travel.start()).max(1.0);
+    let y = travel.start() + (viewport.top() / max).clamp(0.0, 1.0) * span;
+    let lingering = now - st.moved_at < SCRUB_LINGER;
+    let shown = ui.ctx().animate_bool_with_time(key.with("shown"), lingering || st.grab.is_some(), 0.2);
+    if lingering {
+        ui.ctx().request_repaint_after(std::time::Duration::from_millis(200));
+    }
+    let hit = Rect::from_min_max(pos2(clip.right() - 44.0, y - 12.0), pos2(clip.right(), y + SCRUB_H + 12.0));
+    let live = shown > 0.3 || st.grab.is_some();
+    if live {
+        let resp = ui.interact(hit, key.with("drag"), Sense::drag());
+        register(ui.ctx(), "grid:scrubber", hit);
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ScrollBar, true, crate::i18n::tr("Scroll")));
+        let pointer = ui.input(|i| i.pointer.interact_pos());
+        if resp.drag_started()
+            && let Some(p) = pointer
+        {
+            st.grab = Some(p.y - y);
+            haptics::tap(ui.ctx(), Haptic::Selection);
+        }
+        if resp.dragged()
+            && let (Some(p), Some(g)) = (pointer, st.grab)
+        {
+            let top = (p.y - g).clamp(*travel.start(), *travel.end());
+            let want = (top - travel.start()) / span * max;
+            // (an instant scroll by the difference: egui keeps the offset, and a fling still under
+            // way is stopped)
+            ui.scroll_with_delta_animation(vec2(0.0, viewport.top() - want), egui::style::ScrollAnimation::none());
+            st.moved_at = now;
+        }
+        if resp.drag_stopped() || !ui.input(|i| i.pointer.primary_down()) {
+            st.grab = None;
+        }
+    } else {
+        st.grab = None;
+    }
+    ui.data_mut(|d| {
+        d.insert_temp(key, st);
+        d.insert_temp(key.with("hit"), live.then_some(hit));
+    });
+    if shown <= 0.0 {
+        return;
+    }
+    // the handle: a capsule that widens while held
+    let held = ui.ctx().animate_bool_with_time(key.with("held"), st.grab.is_some(), 0.15);
+    let w = SCRUB_W + 3.0 * held;
+    let handle = Rect::from_min_size(pos2(clip.right() - 5.0 - w, y), vec2(w, SCRUB_H));
+    let p = ui.painter();
+    let ink = if Tokens::is_dark(ui.ctx()) { Color32::WHITE } else { Color32::from_gray(30) };
+    p.rect_filled(handle.expand(1.0), w / 2.0 + 1.0, Color32::from_black_alpha((60.0 * shown) as u8));
+    p.rect_filled(handle, w / 2.0, ink.gamma_multiply(0.85 * shown));
+    // while held: the month at the top of the screen beside it
+    if held > 0.0
+        && let Some(row) = rows_between(&lay.rows, viewport.top(), viewport.top() + 1.0).first()
+        && let Some(captured) = ids.get(row.start).and_then(|id| app.session.catalog.photo(*id)).and_then(|p| p.captured.clone())
+        && let Some(month) = captured.get(..7)
+    {
+        let label = crate::i18n::date_group_label(month, false);
+        let g = p.layout_no_wrap(label, t.semibold(15.0), t.text);
+        let bubble = Rect::from_min_size(pos2(handle.left() - 14.0 - g.size().x - 28.0, handle.center().y - 18.0), vec2(g.size().x + 28.0, 36.0));
+        let mut p = p.clone().with_layer_id(egui::LayerId::new(egui::Order::Foreground, key.with("bubble")));
+        p.set_opacity(held);
+        crate::glass::paint(&p, bubble, 18.0, None, 0.0);
+        p.galley(bubble.center() - g.size() / 2.0, g, t.text);
+    }
 }
 
 /// Should a scrolling photo strip (`key`: the grid, the filmstrip) bring the active photo into
@@ -621,6 +938,11 @@ pub const BACKGROUND_THUMB_PRIORITY: u32 = 3;
 fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square: bool, onscreen: bool, ppp: f32) {
     let t = Tokens::get(ui.ctx());
     let Some(photo) = app.session.catalog.photo(id).cloned() else { return };
+    // (the photo is out of its place: in the loupe being pulled down, or flying back)
+    if app.compact && lifted(app, ui.ctx()) == Some(id) {
+        register(ui.ctx(), format!("thumb:{}", id.0), r);
+        return;
+    }
     // (a phone's cells take only taps and long presses: a drag scrolls the grid)
     let resp = ui.interact(r, egui::Id::new(("cell", id.0)), if app.compact { Sense::click() } else { Sense::click_and_drag() });
     register(ui.ctx(), format!("thumb:{}", id.0), r);
@@ -809,16 +1131,19 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
         // touch: a tap opens the photo (no double-tap, no modifiers); choosing photos, it adds or
         // removes it; a long press starts choosing (there is no right click: the action bar and
         // Menu have what the context menu would)
+        // (a long press is answered while the finger is down, `long_press`: its release is no tap)
+        let tapped = resp.clicked() && !long_pressed(ui);
         if app.ui.select_mode {
             check_badge(ui, img_rect, selected, &t, egui::Id::new(("check", id.0)));
-            if resp.clicked() {
+            if tapped {
                 let _ = app.run("library.select", json!({"ids": [id.0], "mode": "toggle"}));
                 haptics::tap(ui.ctx(), Haptic::Selection);
             }
-        } else if resp.clicked() {
+        } else if tapped {
             let _ = app.run("library.select", json!({"ids": [id.0]}));
             let _ = app.run("view.detail", json!({}));
-        } else if resp.long_touched() || resp.secondary_clicked() {
+        } else if resp.clicked_by(egui::PointerButton::Secondary) {
+            // a right click (a mouse on a narrow window) starts choosing too
             let _ = app.run("view.selectMode", json!({"on": true, "id": id.0}));
             haptics::tap(ui.ctx(), Haptic::Medium);
         }
