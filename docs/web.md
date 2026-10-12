@@ -193,7 +193,9 @@ sign-in then belong to that site's browser storage. See [sync.md](sync.md).
   (`originals/<hash>`; they are kept, and included in backups); restored-over libraries stay in
   storage until the site's data is cleared; backups larger than 4 GB need zip64, which isn't
   written yet.
-- **Preset files** (import/export `.json`) aren't wired to browser pickers yet.
+- **Exporting presets** (File ▸ Export Presets…) and **importing `.cube` LUT profiles** need a file on disk: not in
+  the browser yet. Importing presets works (File ▸ Import Profiles & Presets…, Presets panel ▸ ⋯ ▸ Import Presets…):
+  the browser's file chooser opens, and the chosen files are read into memory and imported by content.
 - **Control channel / MCP.** These are desktop-only, because they need a TCP socket.
 - **AVIF export** is untested in the browser; it's the one encoder that may not be wasm-safe.
 - **JPEG XL export** is native only: the encoder (`jixel`) starts threads of its own, which wasm32 has not got; the

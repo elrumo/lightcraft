@@ -9,6 +9,11 @@
 //! with the answer filled in under the parameter it was missing. Hosts without a `Picker` (the
 //! web, where browser pickers are asynchronous already; tests) answer through the synchronous
 //! services as before.
+//!
+//! Hosts whose own picker can't give the app a path it may keep, or any at all (the browser's file
+//! chooser; iOS, whose Files picker hands over copies), install a [`HostPicker`] instead, for the
+//! commands that ask it ([`ask_host`]): the command runs again with the chosen files under `paths`
+//! (copies the host made) or `files` (read into memory; [`lightcraft_engine::inline_files`]).
 
 use crate::{LightcraftApp, Services};
 use serde_json::{Value, json};
@@ -66,14 +71,50 @@ pub const CURVE_PRESET_EXTENSIONS: &[&str] = &["lccurve", "json"];
 /// channel with the chosen paths (none = cancelled). `Err` when no dialog could be started.
 pub type Picker = Box<dyn FnMut(PickRequest) -> Result<Receiver<Vec<String>>, String>>;
 
+/// A file the host's picker read into memory (the browser's file chooser gives no path).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PickedFile {
+    pub name: String,
+    pub bytes: Vec<u8>,
+}
+
+/// What the host's own picker handed over ([`HostPicker`]); nothing chosen = cancelled.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct HostPicked {
+    /// Copies the host made where the app can read them (iOS: its staging folder).
+    pub paths: Vec<String>,
+    /// Files read into memory, without a path (the web).
+    pub files: Vec<PickedFile>,
+    /// One message per chosen file that couldn't be handed over.
+    pub failed: Vec<String>,
+}
+
+impl HostPicked {
+    fn is_empty(&self) -> bool {
+        self.paths.is_empty() && self.files.is_empty()
+    }
+}
+
+/// The host's own file picker (the web: the browser's file chooser; iOS: the Files picker), for
+/// the commands that take files by content as well as by path ([`ask_host`]): shows the request
+/// and answers through the channel once the files are handed over. `Err` when it can't show this
+/// request (a folder or a save dialog, say).
+pub type HostPicker = Box<dyn FnMut(PickRequest) -> Result<Receiver<HostPicked>, String>>;
+
+/// How a dialog up for a command answers.
+enum Answer {
+    /// [`Picker`]: the paths go under `key`.
+    Paths { key: &'static str, kind: PickKind, rx: Receiver<Vec<String>> },
+    /// [`HostPicker`]: `paths` and `files`.
+    Host(Receiver<HostPicked>),
+}
+
 /// A dialog that is up for a command. When it closes, the command runs again with the answer
-/// under `key`.
+/// filled in.
 pub struct Pending {
     pub command: String,
     params: Value,
-    key: &'static str,
-    kind: PickKind,
-    rx: Receiver<Vec<String>>,
+    answer: Answer,
 }
 
 /// How a command's request for a path was answered.
@@ -105,7 +146,7 @@ pub fn ask(
         let kind = request.kind;
         match start(request) {
             Ok(rx) => {
-                app.pending_picks.push(Pending { command: command.to_string(), params: params.clone(), key, kind, rx });
+                app.pending_picks.push(Pending { command: command.to_string(), params: params.clone(), answer: Answer::Paths { key, kind, rx } });
                 return Picked::Later;
             }
             Err(e) => log::warn!("{command}: no background file dialog ({e}); asking on the UI thread"),
@@ -115,6 +156,38 @@ pub fn ask(
         Some(paths) => Picked::Now(paths),
         None => Picked::Unavailable,
     }
+}
+
+/// Ask the host's own picker ([`Services::host_files`]) for files for `command`, which was run
+/// with `params` but without `paths` or `files`. It returns at once; when the files have been
+/// handed over the command runs again with them under `paths` (copies the host made) and `files`
+/// (read into memory: `[{name, data}]`, see [`lightcraft_engine::inline_files`]), and with the
+/// messages for files that couldn't be handed over under `pickFailed`. A pick still waiting for the
+/// command is dropped: the host shows one picker at a time, so the person can only be asking again
+/// because the last one closed without saying so (a browser that sends no `cancel`).
+/// `Err`: this host has no such picker, or can't show this request.
+pub fn ask_host(app: &mut LightcraftApp, command: &str, params: &Value, request: PickRequest) -> Result<(), String> {
+    let start = app.services.host_files.as_mut().ok_or("no file dialog on this platform")?;
+    let rx = start(request)?;
+    app.pending_picks.retain(|p| p.command != command);
+    app.pending_picks.push(Pending { command: command.to_string(), params: params.clone(), answer: Answer::Host(rx) });
+    Ok(())
+}
+
+/// `params` with what the host's picker handed over (see [`ask_host`]).
+pub fn with_host_answer(params: &Value, picked: &HostPicked) -> Value {
+    let mut p = params.as_object().cloned().unwrap_or_default();
+    if !picked.paths.is_empty() {
+        p.insert("paths".into(), json!(picked.paths));
+    }
+    if !picked.files.is_empty() {
+        let files = lightcraft_engine::inline_files::to_param(picked.files.iter().map(|f| (f.name.as_str(), f.bytes.as_slice())));
+        p.insert(lightcraft_engine::inline_files::KEY.into(), files);
+    }
+    if !picked.failed.is_empty() {
+        p.insert("pickFailed".into(), json!(picked.failed));
+    }
+    Value::Object(p)
 }
 
 /// `params` with the dialog's answer under `key`: the whole list for a `paths` key, the first
@@ -138,9 +211,28 @@ pub fn poll(app: &mut LightcraftApp, ctx: &egui::Context) {
     let mut answered = Vec::new();
     let mut waiting = Vec::new();
     for p in std::mem::take(&mut app.pending_picks) {
-        match p.rx.try_recv() {
-            Ok(paths) if paths.is_empty() => {}
-            Ok(paths) => answered.push((p, paths)),
+        let got = match &p.answer {
+            Answer::Paths { key, kind, rx } => match rx.try_recv() {
+                Ok(paths) if paths.is_empty() => Ok(None),
+                Ok(paths) => Ok(Some(with_answer(&p.params, key, *kind, &paths))),
+                Err(e) => Err(e),
+            },
+            Answer::Host(rx) => match rx.try_recv() {
+                Ok(picked) if picked.is_empty() => {
+                    // nothing came through: say why, if the host said
+                    if let Some(why) = picked.failed.first() {
+                        log::warn!("{}: {:?}", p.command, picked.failed);
+                        app.toast_error(ctx, why.clone());
+                    }
+                    Ok(None)
+                }
+                Ok(picked) => Ok(Some(with_host_answer(&p.params, &picked))),
+                Err(e) => Err(e),
+            },
+        };
+        match got {
+            Ok(Some(params)) => answered.push((p.command, params)),
+            Ok(None) => {}
             Err(TryRecvError::Empty) => waiting.push(p),
             Err(TryRecvError::Disconnected) => log::warn!("{}: the file dialog ended without an answer", p.command),
         }
@@ -150,9 +242,8 @@ pub fn poll(app: &mut LightcraftApp, ctx: &egui::Context) {
         ctx.request_repaint_after(std::time::Duration::from_millis(250));
     }
     app.pending_picks = waiting;
-    for (p, paths) in answered {
-        let params = with_answer(&p.params, p.key, p.kind, &paths);
-        if let Err(e) = app.run(&p.command, params) {
+    for (command, params) in answered {
+        if let Err(e) = app.run(&command, params) {
             app.toast_error(ctx, e);
         }
     }

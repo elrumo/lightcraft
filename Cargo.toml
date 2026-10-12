@@ -56,6 +56,7 @@ rayon = "1"
 proptest = "1"
 bytemuck = { version = "1", features = ["derive"] }
 crc32fast = "1"
+base64 = "0.23" # files handed to commands by content (`files: [{name, data}]`)
 half = "2" # f16 storage of embeddings (lightcraft-vision)
 siphasher = "1"
 libc = "0.2" # dev-only: process CPU time in benches

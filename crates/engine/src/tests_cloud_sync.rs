@@ -1085,6 +1085,48 @@ fn presets_sync_and_deletions_stick() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// An XMP preset named `name` (hand-written for these tests).
+fn xmp_look(name: &str, exposure: &str) -> String {
+    format!(
+        r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+      <rdf:Description rdf:about="" xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/" crs:PresetType="Normal"
+        crs:Name="{name}" crs:Group="Film" crs:Exposure2012="{exposure}"/></rdf:RDF></x:xmpmeta>"#
+    )
+}
+
+fn import_look(s: &mut Session, name: &str, exposure: &str) -> String {
+    let files = crate::inline_files::to_param([("look.xmp", xmp_look(name, exposure).as_bytes())]);
+    let r = s.execute("preset.import", &json!({"files": files})).unwrap();
+    r["imported"][0]["id"].as_str().map(str::to_string).unwrap_or_default()
+}
+
+/// Imported presets reach the other devices. Two devices importing different presets that share a
+/// name keep both, and the same preset imported on both stays one.
+#[test]
+fn imported_presets_sync_without_replacing_each_other() {
+    let mut f = Fake::new();
+    let (mut a, mut b, root) = two_devices("presets-imported", &mut f);
+    let portra = import_look(&mut a, "Portra", "+0.30");
+    sync(&mut a, &mut f);
+    sync(&mut b, &mut f);
+    let on_b = b.presets.iter().find(|p| p.id == portra).expect("A's import reached B");
+    assert_eq!((on_b.name.as_str(), on_b.group.as_str()), ("Portra", "Film"));
+    // both import a "Gold" of their own before syncing, and the same "Velvia"
+    let gold_a = import_look(&mut a, "Gold", "+0.10");
+    let gold_b = import_look(&mut b, "Gold", "+0.90");
+    assert_ne!(gold_a, gold_b);
+    assert_eq!(import_look(&mut a, "Velvia", "-0.20"), import_look(&mut b, "Velvia", "-0.20"));
+    sync(&mut a, &mut f);
+    sync(&mut b, &mut f);
+    sync(&mut a, &mut f);
+    for s in [&a, &b] {
+        assert_eq!(preset_names(s), ["Gold", "Gold", "Portra", "Velvia"]);
+        let gold: Vec<f64> = s.presets.iter().filter(|p| p.name == "Gold").filter_map(|p| p.settings["light"]["exposure"].as_f64()).collect();
+        assert!(gold.contains(&0.1) && gold.contains(&0.9), "each keeps its own settings: {gold:?}");
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 #[test]
 fn merging_preset_lists() {
     use crate::cloud_sync::merge_presets;

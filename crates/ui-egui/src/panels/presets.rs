@@ -57,12 +57,19 @@ fn list(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         let r = crate::widgets::check(ui, &mut app.ui.preset_thumbs, crate::i18n::tr("Show Thumbnails"));
         register(ui.ctx(), "presetMenu:thumbnails", r.rect);
         ui.separator();
-        if ui.button(crate::i18n::tr("Import Presets…")).clicked() {
-            let _ = app.run("file.importPresets", json!({}));
+        // (a failure is said, never dropped: a button that does nothing looks broken)
+        let r = ui.button(crate::i18n::tr("Import Presets…"));
+        register(ui.ctx(), "presetMenu:import", r.rect);
+        if r.clicked()
+            && let Err(e) = app.run("file.importPresets", json!({}))
+        {
+            app.toast_error(ui.ctx(), e);
         }
         let any_user = app.session.presets.iter().any(|p| !p.builtin);
-        if ui.add_enabled(any_user, egui::Button::new(crate::i18n::tr("Export User Presets…"))).clicked() {
-            let _ = app.run("file.exportPresets", json!({}));
+        if ui.add_enabled(any_user, egui::Button::new(crate::i18n::tr("Export User Presets…"))).clicked()
+            && let Err(e) = app.run("file.exportPresets", json!({}))
+        {
+            app.toast_error(ui.ctx(), e);
         }
     });
     divider(ui);

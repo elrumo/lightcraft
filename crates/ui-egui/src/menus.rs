@@ -1664,14 +1664,22 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             }
         }
         "file.importPresets" => {
-            let paths = match p.get("paths").and_then(Value::as_array) {
+            // files given by content (`[{name, data}]`: the browser's file chooser has no paths)
+            let given: Vec<Value> = p.get(lightcraft_engine::inline_files::KEY).and_then(Value::as_array).cloned().unwrap_or_default();
+            let paths: Vec<String> = match p.get("paths").and_then(Value::as_array) {
                 Some(a) => a.iter().filter_map(Value::as_str).map(str::to_string).collect(),
+                None if !given.is_empty() => Vec::new(),
                 None => {
                     let req = PickRequest::files(
                         Some(crate::i18n::tr("Import Presets").into()),
                         crate::i18n::tr("Presets & Profiles"),
                         crate::pick::PRESET_EXTENSIONS,
                     );
+                    let s = &app.services;
+                    if s.host_files.is_some() && s.picker.is_none() && s.pick_preset_files.is_none() {
+                        // the web, iOS: the host's own picker hands the files over later
+                        return Some(crate::pick::ask_host(app, id, p, req).map(|()| Value::Null));
+                    }
                     match crate::pick::ask(app, id, p, "paths", req, |s| s.pick_preset_files.as_mut().map(|f| f())) {
                         Picked::Now(paths) => paths,
                         Picked::Later => return Some(Ok(Value::Null)),
@@ -1679,9 +1687,12 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
                     }
                 }
             };
-            if paths.is_empty() {
+            if paths.is_empty() && given.is_empty() {
                 return Some(Ok(Value::Null));
             }
+            // a LUT given by content can't become a profile: a profile is kept as a file in the library's folder
+            let is_cube = |f: &Value| f.get("name").and_then(Value::as_str).is_some_and(|n| n.to_ascii_lowercase().ends_with(".cube"));
+            let (cubes, preset_files): (Vec<Value>, Vec<Value>) = given.into_iter().partition(is_cube);
             // .cube LUTs (and those inside zips / folders) become profiles
             let lut_paths: Vec<&String> = paths
                 .iter()
@@ -1692,8 +1703,13 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
                 .collect();
             // one toast for both halves (a second toast would replace the first)
             let mut parts: Vec<String> = Vec::new();
-            // `name: reason` for each file that couldn't be imported
-            let mut problems: Vec<String> = Vec::new();
+            // `name: reason` for each file that couldn't be imported, starting with those the picker couldn't hand over
+            let mut problems: Vec<String> =
+                p.get("pickFailed").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).map(str::to_string).collect();
+            for c in &cubes {
+                let name = c.get("name").and_then(Value::as_str).unwrap_or_default();
+                problems.push(format!("{name}: {}", crate::i18n::tr("profiles can only be imported in the desktop and iOS apps")));
+            }
             let mut profiles_result = Value::Null;
             if !lut_paths.is_empty() {
                 match app.session.execute("profile.import", &json!({"paths": lut_paths})) {
@@ -1720,12 +1736,13 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
                 }
             }
             let preset_paths: Vec<&String> = paths.iter().filter(|p| !p.to_ascii_lowercase().ends_with(".cube")).collect();
-            let r = if preset_paths.is_empty() {
+            let no_presets = preset_paths.is_empty() && preset_files.is_empty();
+            let r = if no_presets {
                 Ok(json!({"imported": [], "failed": [], "skipped": 0}))
             } else {
-                app.session.execute("preset.import", &json!({"paths": preset_paths})).map_err(|e| e.to_string())
+                app.session.execute("preset.import", &json!({"paths": preset_paths, "files": preset_files})).map_err(|e| e.to_string())
             };
-            if let (false, Ok(v)) = (preset_paths.is_empty(), &r) {
+            if let (false, Ok(v)) = (no_presets, &r) {
                 let n = v["imported"].as_array().map_or(0, Vec::len);
                 let failed = v["failed"].as_array().map_or(0, Vec::len);
                 let profile_news = !parts.is_empty() || !problems.is_empty();

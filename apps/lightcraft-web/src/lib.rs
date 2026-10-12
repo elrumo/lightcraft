@@ -8,7 +8,8 @@
 //!   ([`store`]); a new library starts with the procedural demo photos;
 //! - renders run in Web Workers, each a second instance of this module ([`wire`], `workers`), and
 //!   fall back to the main thread (one job per frame) if workers can't start;
-//! - export downloads the file through the browser;
+//! - export downloads the file through the browser; presets are imported from the browser's file
+//!   chooser, read into memory ([`chooser`]);
 //! - self-hosted sync (`docs/sync.md`) talks to the server that serves the page, with `fetch`
 //!   (`sync`); synced previews and originals are kept in browser storage.
 //!
@@ -20,6 +21,7 @@
 
 pub mod backup;
 pub mod bench;
+pub mod chooser;
 pub mod files;
 pub mod store;
 pub mod wire;

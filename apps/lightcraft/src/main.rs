@@ -424,6 +424,8 @@ fn services(cc: &eframe::CreationContext<'_>, log_file: Option<&std::path::Path>
         share_exports: None,
         save_to_photos: None,
         host_pick: None,
+        // the native dialogs above give paths
+        host_files: None,
         // the system clipboard reaches text fields directly; no haptics
         haptic: None,
         clipboard_text: None,
