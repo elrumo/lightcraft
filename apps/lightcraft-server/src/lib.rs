@@ -56,7 +56,7 @@ pub struct Config {
     pub data: PathBuf,
     /// `host:port` to listen on.
     pub listen: String,
-    /// The web build to serve at `/` (`cargo xtask web` → `target/web/`).
+    /// The web build to serve at `/` (`cargo xtask web` → `target/web-site/`).
     pub web: Option<PathBuf>,
     /// Requests answered at once (more get `503`; the health check always answers). How long
     /// connections may stall and how many there can be: [`http::Limits`].
