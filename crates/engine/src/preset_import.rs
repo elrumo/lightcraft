@@ -28,45 +28,128 @@ pub const PRESET_EXTS: &[&str] = &["xmp", "lrtemplate", "zip", "dng", "lmp", "mp
 
 // ------------------------------------------------------------------------------------- zip
 
+/// What one archive may expand to. Presets, LUTs and "DNG presets" are small, so a header that claims
+/// more is damage or a zip bomb: refused, never allocated.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ZipLimits {
+    /// One file, once unpacked (bytes).
+    pub file: usize,
+    /// All the files read from the archive.
+    pub total: usize,
+}
+
+pub(crate) const ZIP_LIMITS: ZipLimits = ZipLimits { file: 256 << 20, total: 1 << 30 };
+
+/// What reading a zip archive gave: the files asked for, and those that couldn't be read (path
+/// inside the archive, reason).
+#[derive(Clone, Debug, Default)]
+pub struct Zipped {
+    pub files: Vec<(String, Vec<u8>)>,
+    pub failed: Vec<(String, String)>,
+}
+
+/// `N` bytes of `bytes` at `at`, if they are all there.
+fn le<const N: usize>(bytes: &[u8], at: usize) -> Option<[u8; N]> {
+    bytes.get(at..at.checked_add(N)?)?.try_into().ok()
+}
+
 /// The files of a zip archive: (path inside the archive, bytes). Stored and deflated entries;
-/// directories, macOS resource forks and hidden files are skipped.
+/// directories, macOS resource forks and hidden files are skipped. The first entry that can't be read
+/// is an error; [`read_zip_where`] reads only what it is asked for and reports each failure.
 pub fn read_zip(bytes: &[u8]) -> Result<Vec<(String, Vec<u8>)>, String> {
-    let u16_at = |o: usize| bytes.get(o..o + 2).map(|b| u16::from_le_bytes([b[0], b[1]]) as usize);
-    let u32_at = |o: usize| bytes.get(o..o + 4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as usize);
+    let z = scan_zip(bytes, |_| true, ZIP_LIMITS)?;
+    match z.failed.into_iter().next() {
+        Some((name, why)) => Err(format!("{name}: {why}")),
+        None => Ok(z.files),
+    }
+}
+
+/// The files of a zip archive that `wanted` (given the path inside it) says yes to, and those of them
+/// that couldn't be read. Other entries (preview images, PDFs…) are never unpacked. Only a damaged
+/// archive as a whole is an error.
+pub fn read_zip_where(bytes: &[u8], wanted: impl Fn(&str) -> bool) -> Result<Zipped, String> {
+    scan_zip(bytes, wanted, ZIP_LIMITS)
+}
+
+pub(crate) fn scan_zip(bytes: &[u8], wanted: impl Fn(&str) -> bool, limits: ZipLimits) -> Result<Zipped, String> {
+    const BAD: &str = "bad zip";
+    let u16_at = |o: usize| le::<2>(bytes, o).map(|b| usize::from(u16::from_le_bytes(b)));
+    let u32_at = |o: usize| le::<4>(bytes, o).and_then(|b| usize::try_from(u32::from_le_bytes(b)).ok());
+    let sum = |parts: &[usize]| parts.iter().try_fold(0usize, |a, &b| a.checked_add(b)).ok_or(BAD);
     // end of central directory: the last "PK\x05\x06" within the trailing 64 KiB + 22 bytes
     let tail = bytes.len().saturating_sub(65_557);
-    let eocd = (tail..bytes.len().saturating_sub(21)).rev().find(|&i| bytes[i..].starts_with(b"PK\x05\x06")).ok_or("not a zip file")?;
-    let count = u16_at(eocd + 10).ok_or("bad zip")?;
-    let mut at = u32_at(eocd + 16).ok_or("bad zip")?;
-    let mut out = Vec::new();
+    let eocd = (tail..bytes.len().saturating_sub(21))
+        .rev()
+        .find(|&i| bytes.get(i..).is_some_and(|b| b.starts_with(b"PK\x05\x06")))
+        .ok_or("not a zip file")?;
+    let count = u16_at(sum(&[eocd, 10])?).ok_or(BAD)?;
+    let mut at = u32_at(sum(&[eocd, 16])?).ok_or(BAD)?;
+    let mut out = Zipped::default();
+    let mut total = 0usize;
     for _ in 0..count {
         if !bytes.get(at..).is_some_and(|b| b.starts_with(b"PK\x01\x02")) {
             return Err("bad zip central directory".into());
         }
-        let method = u16_at(at + 10).ok_or("bad zip")?;
-        let csize = u32_at(at + 20).ok_or("bad zip")?;
-        let usize_ = u32_at(at + 24).ok_or("bad zip")?;
-        let (nlen, xlen, clen) = (u16_at(at + 28).ok_or("bad zip")?, u16_at(at + 30).ok_or("bad zip")?, u16_at(at + 32).ok_or("bad zip")?);
-        let local = u32_at(at + 42).ok_or("bad zip")?;
-        let name = String::from_utf8_lossy(bytes.get(at + 46..at + 46 + nlen).ok_or("bad zip")?).replace('\\', "/");
-        at += 46 + nlen + xlen + clen;
+        let field16 = |o: usize| u16_at(sum(&[at, o])?).ok_or(BAD);
+        let field32 = |o: usize| u32_at(sum(&[at, o])?).ok_or(BAD);
+        let (flags, method) = (field16(8)?, field16(10)?);
+        let (csize, size) = (field32(20)?, field32(24)?);
+        let (nlen, xlen, clen) = (field16(28)?, field16(30)?, field16(32)?);
+        let local = field32(42)?;
+        let name_at = sum(&[at, 46])?;
+        let name_bytes = bytes.get(name_at..sum(&[name_at, nlen])?).ok_or(BAD)?;
+        let name = String::from_utf8_lossy(name_bytes).replace('\\', "/");
+        at = sum(&[name_at, nlen, xlen, clen])?;
         let skip = name.ends_with('/') || name.split('/').any(|p| p.starts_with('.') || p == "__MACOSX");
-        if skip {
+        if skip || !wanted(&name) {
             continue;
         }
-        if !bytes.get(local..).is_some_and(|b| b.starts_with(b"PK\x03\x04")) {
-            return Err(format!("{name}: bad local header"));
+        let entry = ZipEntry { flags, method, csize, size, local };
+        match unpack(bytes, &entry, limits.file.min(limits.total.saturating_sub(total))) {
+            Ok(content) => {
+                total = total.saturating_add(content.len());
+                out.files.push((name, content));
+            }
+            Err(why) => out.failed.push((name, why)),
         }
-        let data_at = local + 30 + u16_at(local + 26).ok_or("bad zip")? + u16_at(local + 28).ok_or("bad zip")?;
-        let data = bytes.get(data_at..data_at + csize).ok_or_else(|| format!("{name}: truncated"))?;
-        let content = match method {
-            0 => data.to_vec(),
-            8 => miniz_oxide::inflate::decompress_to_vec_with_limit(data, usize_.max(1) * 2 + 1024).map_err(|e| format!("{name}: {e:?}"))?,
-            m => return Err(format!("{name}: unsupported compression method {m}")),
-        };
-        out.push((name, content));
     }
     Ok(out)
+}
+
+/// One central-directory record's numbers.
+struct ZipEntry {
+    flags: usize,
+    method: usize,
+    csize: usize,
+    size: usize,
+    local: usize,
+}
+
+/// The unpacked bytes of one entry, at most `room` of them.
+fn unpack(bytes: &[u8], e: &ZipEntry, room: usize) -> Result<Vec<u8>, String> {
+    const BAD: &str = "bad zip";
+    if e.flags & 1 != 0 {
+        return Err("password-protected".into());
+    }
+    // (the sizes are the file's own claims: nothing is allocated for them before they are checked)
+    let too_big = || "too large to unpack".to_string();
+    if e.size > room || (e.method == 0 && e.csize > room) {
+        return Err(too_big());
+    }
+    if !bytes.get(e.local..).is_some_and(|b| b.starts_with(b"PK\x03\x04")) {
+        return Err("bad local header".into());
+    }
+    let name_len = le::<2>(bytes, e.local.saturating_add(26)).map(|b| usize::from(u16::from_le_bytes(b))).ok_or(BAD)?;
+    let extra_len = le::<2>(bytes, e.local.saturating_add(28)).map(|b| usize::from(u16::from_le_bytes(b))).ok_or(BAD)?;
+    let data_at = [e.local, 30, name_len, extra_len].iter().try_fold(0usize, |a, &b| a.checked_add(b)).ok_or(BAD)?;
+    let data = bytes.get(data_at..data_at.checked_add(e.csize).ok_or(BAD)?).ok_or("truncated")?;
+    match e.method {
+        0 => Ok(data.to_vec()),
+        8 => miniz_oxide::inflate::decompress_to_vec_with_limit(data, e.size.saturating_add(1024).min(room.saturating_add(1)))
+            .map_err(|err| format!("can't be unpacked ({:?})", err.status))
+            .and_then(|v| if v.len() > room { Err(too_big()) } else { Ok(v) }),
+        m => Err(format!("unsupported compression method {m}")),
+    }
 }
 
 // ------------------------------------------------------------------------------- Lua tables
@@ -488,56 +571,99 @@ pub(crate) fn build(props: &Props, values: &crate::crs_masks::Values, name: Stri
     Some(Imported { preset: Preset { id, name, group, settings, favorite: false, builtin: false }, unmapped })
 }
 
+/// No preset anywhere in an archive.
+pub const NO_PRESETS_IN_ARCHIVE: &str = "no presets in this archive";
+
+/// What reading a preset file (or an archive of them) gave.
+#[derive(Clone, Debug, Default)]
+pub struct Read {
+    pub presets: Vec<Imported>,
+    /// The files that couldn't be read, with the reason: the file itself, or (in an archive) its path
+    /// inside it, after the archive's name.
+    pub failed: Vec<(String, String)>,
+}
+
+/// Whether a file inside an archive is one we read as a preset.
+fn is_preset_file(inner: &str) -> bool {
+    let ext = Path::new(inner).extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+    (PRESET_EXTS.contains(&ext.as_str()) || ext == crate::presets::LCPRESET_EXT) && ext != "zip"
+}
+
 /// Read the presets in file `name` (`bytes`); `group` names the group when the file doesn't
-/// (its folder). Zip bundles are read recursively.
+/// (its folder). Zip bundles are read recursively. The presets found, or why there are none.
 pub fn read_presets(name: &str, bytes: &[u8], group: Option<String>) -> Result<Vec<Imported>, String> {
+    let r = read_presets_report(name, bytes, group);
+    if !r.presets.is_empty() {
+        return Ok(r.presets);
+    }
+    Err(match r.failed.as_slice() {
+        [] => NO_PRESETS_IN_ARCHIVE.to_string(),
+        [(file, why)] if file == name => why.clone(),
+        failed => failed.iter().map(|(f, why)| format!("{f}: {why}")).collect::<Vec<_>>().join("; "),
+    })
+}
+
+/// [`read_presets`] that says what couldn't be read as well: a bundle with one unreadable file still
+/// gives the others.
+pub fn read_presets_report(name: &str, bytes: &[u8], group: Option<String>) -> Read {
+    let mut out = Read::default();
+    read_into(name, bytes, group, false, &mut out);
+    out
+}
+
+fn read_into(name: &str, bytes: &[u8], group: Option<String>, in_archive: bool, out: &mut Read) {
     let path = Path::new(name);
     let stem = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "Preset".into());
     let ext = path.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+    let mut one = |r: Result<Vec<Imported>, String>| match r {
+        Ok(v) => out.presets.extend(v),
+        // (a photo in a bundle that carries no edits is a sample picture, not a preset that failed)
+        Err(_) if in_archive && ext == "dng" => {}
+        Err(e) => out.failed.push((name.to_string(), e)),
+    };
     match ext.as_str() {
+        "zip" if in_archive => {}
         "zip" => {
-            let mut out = Vec::new();
-            let mut errors = Vec::new();
-            for (inner, data) in read_zip(bytes)? {
-                let iext = Path::new(&inner).extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
-                if !(PRESET_EXTS.contains(&iext.as_str()) || iext == crate::presets::LCPRESET_EXT) || iext == "zip" {
-                    continue;
-                }
+            let z = match read_zip_where(bytes, is_preset_file) {
+                Ok(z) => z,
+                Err(e) => return out.failed.push((name.to_string(), e)),
+            };
+            out.failed.extend(z.failed.into_iter().map(|(inner, why)| (format!("{name}/{inner}"), why)));
+            for (inner, data) in z.files {
                 let dir_group =
                     inner.rsplit_once('/').and_then(|(d, _)| group_from_dir(d)).or_else(|| group_from_dir(&stem)).or_else(|| group.clone());
-                match read_presets(&inner, &data, dir_group) {
-                    Ok(v) => out.extend(v),
-                    Err(e) => errors.push(format!("{inner}: {e}")),
-                }
+                let mut inside = Read::default();
+                read_into(&inner, &data, dir_group, true, &mut inside);
+                out.presets.extend(inside.presets);
+                out.failed.extend(inside.failed.into_iter().map(|(f, why)| (format!("{name}/{f}"), why)));
             }
-            if out.is_empty() {
-                return Err(if errors.is_empty() { "no presets in this archive".into() } else { errors.join("; ") });
-            }
-            Ok(out)
         }
-        "lmp" => crate::preset_luminar::read_lmp(name, bytes, group).map(|i| vec![i]),
-        "mplumpack" => crate::preset_luminar::read_mplumpack(name, bytes),
+        "lmp" => one(crate::preset_luminar::read_lmp(name, bytes, group).map(|i| vec![i])),
+        "mplumpack" => one(crate::preset_luminar::read_mplumpack(name, bytes)),
         "lrtemplate" => {
             let text = String::from_utf8_lossy(bytes);
-            let (title, props, values) = lrtemplate_props(text.trim_start_matches('\u{feff}'))?;
-            build(&props, &values, title.unwrap_or(stem), group, false)
-                .map(|i| vec![i])
-                .ok_or_else(|| "no develop settings we can use in this template".into())
+            one(lrtemplate_props(text.trim_start_matches('\u{feff}')).and_then(|(title, props, values)| {
+                build(&props, &values, title.unwrap_or(stem), group, false)
+                    .map(|i| vec![i])
+                    .ok_or_else(|| "no develop settings we can use in this template".into())
+            }))
         }
         "xmp" => {
             let text = String::from_utf8_lossy(bytes);
-            let d = lightcraft_meta::parse_xmp(text.trim_start_matches('\u{feff}')).map_err(|e| e.to_string())?;
-            let props = &d.properties;
-            let name = props.get("crs:Name").and_then(|v| v.first()).map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).unwrap_or(stem);
-            build(props, &d.values, name, group, false).map(|i| vec![i]).ok_or_else(|| "no develop settings in this XMP file".into())
+            one(lightcraft_meta::parse_xmp(text.trim_start_matches('\u{feff}')).map_err(|e| e.to_string()).and_then(|d| {
+                let props = &d.properties;
+                let title = props.get("crs:Name").and_then(|v| v.first()).map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).unwrap_or(stem);
+                build(props, &d.values, title, group, false).map(|i| vec![i]).ok_or_else(|| "no develop settings in this XMP file".into())
+            }))
         }
         // a photo carrying its edits (mobile "DNG presets", edited JPEG / TIFF)
         "dng" | "jpg" | "jpeg" | "tif" | "tiff" => {
-            let xmp = embedded_xmp(bytes).ok_or("this photo carries no edits (no XMP)")?;
-            let d = lightcraft_meta::parse_xmp(&xmp).map_err(|e| e.to_string())?;
-            build(&d.properties, &d.values, stem, group, true).map(|i| vec![i]).ok_or_else(|| "this photo carries no edits we can use".into())
+            one(embedded_xmp(bytes).ok_or_else(|| "this photo carries no edits (no XMP)".to_string()).and_then(|xmp| {
+                let d = lightcraft_meta::parse_xmp(&xmp).map_err(|e| e.to_string())?;
+                build(&d.properties, &d.values, stem, group, true).map(|i| vec![i]).ok_or_else(|| "this photo carries no edits we can use".into())
+            }))
         }
-        _ => crate::presets::parse_preset_file(name, bytes).map(|v| {
+        _ => one(crate::presets::parse_preset_file(name, bytes).map(|v| {
             v.into_iter()
                 .map(|mut p| {
                     if p.group == "Imported Presets"
@@ -548,7 +674,7 @@ pub fn read_presets(name: &str, bytes: &[u8], group: Option<String>) -> Result<V
                     Imported { preset: p, unmapped: Vec::new() }
                 })
                 .collect()
-        }),
+        })),
     }
 }
 
@@ -749,6 +875,133 @@ text]], z = ZSTR "loc" }"#,
         }
         assert!(read_presets("empty.zip", &zip(&[("a.txt", b"x")], true), None).is_err());
         assert!(read_presets("bad.zip", b"not a zip", None).is_err());
+    }
+
+    /// A hand-written XMP preset with its own name and exposure.
+    fn named_xmp(name: &str, exposure: &str) -> String {
+        format!(
+            r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+<rdf:Description rdf:about="" xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/" crs:Name="{name}" crs:Exposure2012="{exposure}"/>
+</rdf:RDF></x:xmpmeta>"#
+        )
+    }
+
+    /// A pack as a shop ships it: folders by format, the same looks as `.xmp`, `.lrtemplate` and a
+    /// mobile `.dng`, plus the previews and the guide that come with it.
+    fn pack() -> Vec<u8> {
+        let (a, b, c) = (named_xmp("Soft", "0.25"), named_xmp("Warm", "0.5"), named_xmp("Cool", "-0.5"));
+        let mut dng = b"II*\0 binary junk ".to_vec();
+        dng.extend_from_slice(a.as_bytes());
+        zip(
+            &[
+                ("Gridfiti Pack/Lightroom Classic/Presets/Soft.xmp", a.as_bytes()),
+                ("Gridfiti Pack/Lightroom Classic/Presets/Warm.xmp", b.as_bytes()),
+                ("Gridfiti Pack/Lightroom Classic/Presets/Cool.xmp", c.as_bytes()),
+                ("Gridfiti Pack/Mobile (DNG)/Soft.dng", &dng),
+                ("Gridfiti Pack/Mobile (DNG)/Sample photo.dng", b"II*\0 a raw with no edits"),
+                ("Gridfiti Pack/Previews/Soft.jpg", b"\xff\xd8 not a preset"),
+                ("Gridfiti Pack/Guide.pdf", b"%PDF"),
+            ],
+            true,
+        )
+    }
+
+    #[test]
+    fn a_pack_zip_gives_every_preset_once_in_the_packs_group() {
+        let r = read_presets_report("Gridfiti Pack.zip", &pack(), None);
+        let names: Vec<_> = r.presets.iter().map(|i| (i.preset.name.as_str(), i.preset.group.as_str())).collect();
+        // (the mobile copy of Soft reads as the same look: the import adds it once)
+        assert_eq!(
+            names,
+            [("Soft", "Gridfiti Pack"), ("Warm", "Gridfiti Pack"), ("Cool", "Gridfiti Pack"), ("Soft", "Gridfiti Pack")],
+            "{:?}",
+            r.failed
+        );
+        // a raw photo in the pack without edits is a sample, previews and guides aren't read at all
+        assert!(r.failed.is_empty(), "{:?}", r.failed);
+        let mut s = crate::Session::with_demo();
+        let before = s.presets.len();
+        let r = s.execute("preset.import", &json!({"files": crate::inline_files::to_param([("Gridfiti Pack.zip", pack().as_slice())])})).unwrap();
+        assert_eq!((r["imported"].as_array().unwrap().len(), r["skipped"].as_u64(), r["failed"].as_array().unwrap().len()), (3, Some(1), 0), "{r}");
+        assert_eq!(s.presets.len(), before + 3);
+    }
+
+    #[test]
+    fn one_unreadable_file_in_a_pack_does_not_lose_the_others() {
+        let (good, odd) = (named_xmp("Good", "0.1"), named_xmp("Odd", "0.2"));
+        let mut z = zip(&[("Pack/Good.xmp", good.as_bytes()), ("Pack/Odd.xmp", odd.as_bytes()), ("Pack/Broken.xmp", b"<not xml")], false);
+        // "Odd.xmp" is password-protected (the flag is in its central-directory record)
+        let at = z.windows(4).enumerate().filter(|(_, w)| *w == b"PK\x01\x02").nth(1).map(|(i, _)| i).unwrap();
+        z[at + 8] = 1;
+        let r = read_presets_report("Pack.zip", &z, None);
+        assert_eq!(r.presets.iter().map(|i| i.preset.name.as_str()).collect::<Vec<_>>(), ["Good"]);
+        let failed: Vec<_> = r.failed.iter().map(|(f, _)| f.as_str()).collect();
+        assert_eq!(failed, ["Pack.zip/Pack/Odd.xmp", "Pack.zip/Pack/Broken.xmp"], "{:?}", r.failed);
+        assert!(r.failed[0].1.contains("password"), "{:?}", r.failed);
+        // read_presets still gives the presets there are, and an error only when there are none
+        assert_eq!(read_presets("Pack.zip", &z, None).unwrap().len(), 1);
+        let err = read_presets("Pack.zip", &zip(&[("Pack/Broken.xmp", b"<not xml")], true), None).unwrap_err();
+        assert!(err.contains("Broken.xmp"), "{err}");
+        assert_eq!(read_presets("Empty.zip", &zip(&[("a.txt", b"x")], true), None).unwrap_err(), NO_PRESETS_IN_ARCHIVE);
+    }
+
+    #[test]
+    fn a_dry_run_says_what_a_real_run_would_do() {
+        let mut s = crate::Session::with_demo();
+        let files = crate::inline_files::to_param([("Gridfiti Pack.zip", pack().as_slice())]);
+        let dry = s.execute("preset.import", &json!({"files": files, "dryRun": true, "includeSettings": true})).unwrap();
+        assert_eq!((dry["imported"].as_array().unwrap().len(), dry["skipped"].as_u64()), (3, Some(1)), "{dry}");
+        assert_eq!(dry["imported"][1]["settings"]["light"]["exposure"], json!(0.5), "{dry}");
+        assert!(s.presets.iter().all(|p| p.group != "Gridfiti Pack"), "a dry run adds nothing");
+        // without includeSettings the entries stay small
+        let quiet = s.execute("preset.import", &json!({"files": files, "dryRun": true})).unwrap();
+        assert!(quiet["imported"][0].get("settings").is_none());
+        // after the real run, the same pack is all "already there"
+        let real = s.execute("preset.import", &json!({"files": files})).unwrap();
+        assert_eq!(real["imported"].as_array().unwrap().len(), 3);
+        let again = s.execute("preset.import", &json!({"files": files, "dryRun": true})).unwrap();
+        assert_eq!((again["imported"].as_array().unwrap().len(), again["skipped"].as_u64()), (0, Some(4)), "{again}");
+    }
+
+    #[test]
+    fn archives_that_claim_more_than_they_may_unpack_to_are_refused_not_allocated() {
+        // an entry whose header claims 4 GB, one that really unpacks to 64 KiB, and an honest small one
+        let big = vec![0u8; 64 << 10];
+        let mut z = zip(&[("Lie.xmp", &big), ("Big.xmp", &big), ("Fine.xmp", b"small")], true);
+        let first = z.windows(4).position(|w| w == b"PK\x01\x02").unwrap();
+        z[first + 24..first + 28].copy_from_slice(&u32::MAX.to_le_bytes());
+        let limits = ZipLimits { file: 1 << 10, total: 1 << 20 };
+        let r = scan_zip(&z, |_| true, limits).unwrap();
+        let failed: Vec<_> = r.failed.iter().map(|(f, why)| (f.as_str(), why.contains("too large"))).collect();
+        assert_eq!(failed, [("Lie.xmp", true), ("Big.xmp", true)], "{:?}", r.failed);
+        assert_eq!(r.files.iter().map(|(n, d)| (n.as_str(), d.len())).collect::<Vec<_>>(), [("Fine.xmp", 5)]);
+        // the whole archive's budget counts too
+        let small = zip(&[("a.xmp", &[1u8; 600]), ("b.xmp", &[2u8; 600])], false);
+        let r = scan_zip(&small, |_| true, ZipLimits { file: 1 << 10, total: 1000 }).unwrap();
+        assert_eq!((r.files.len(), r.failed.len()), (1, 1), "{:?}", r.failed);
+        // a failure's text is a short reason, never the bytes that were unpacked so far
+        assert!(r.failed.iter().all(|(_, why)| why.len() < 80), "{:?}", r.failed);
+    }
+
+    #[test]
+    fn damaged_archives_are_errors_not_panics() {
+        let z = zip(&[("A.xmp", named_xmp("A", "1").as_bytes())], true);
+        // every prefix and every single-byte corruption of the headers is an answer, never a panic
+        for cut in 0..z.len() {
+            let _ = scan_zip(&z[..cut], |_| true, ZIP_LIMITS);
+        }
+        for i in 0..z.len() {
+            let mut bad = z.clone();
+            bad[i] ^= 0xff;
+            let _ = scan_zip(&bad, |_| true, ZIP_LIMITS);
+        }
+        // offsets near the end of what a header can hold
+        let mut far = z.clone();
+        let cd = far.windows(4).position(|w| w == b"PK\x01\x02").unwrap();
+        far[cd + 42..cd + 46].copy_from_slice(&u32::MAX.to_le_bytes());
+        far[cd + 20..cd + 24].copy_from_slice(&u32::MAX.to_le_bytes());
+        let r = scan_zip(&far, |_| true, ZIP_LIMITS).unwrap();
+        assert_eq!((r.files.len(), r.failed.len()), (0, 1), "{:?}", r.failed);
     }
 
     #[test]

@@ -62,20 +62,22 @@ fn cube_files(paths: &[String]) -> (Vec<(String, String, Option<String>)>, Vec<V
                     continue;
                 }
             };
-            for (inner, data) in crate::preset_import::read_zip(&b).unwrap_or_default() {
-                if inner.to_ascii_lowercase().ends_with(".cube") {
-                    let ip = Path::new(&inner);
-                    let group = ip
-                        .parent()
-                        .and_then(|d| d.file_name())
-                        .map(|n| n.to_string_lossy().to_string())
-                        .or_else(|| path.file_stem().map(|n| n.to_string_lossy().to_string()));
-                    out.push((
-                        ip.file_stem().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
-                        String::from_utf8_lossy(&data).to_string(),
-                        group,
-                    ));
-                }
+            // (a zip of presets has none of these, and one that can't be read is the presets' to report)
+            let cube = |n: &str| n.to_ascii_lowercase().ends_with(".cube");
+            let z = crate::preset_import::read_zip_where(&b, cube).unwrap_or_default();
+            failed.extend(z.failed.iter().map(|(inner, why)| json!([inner, why])));
+            for (inner, data) in z.files {
+                let ip = Path::new(&inner);
+                let group = ip
+                    .parent()
+                    .and_then(|d| d.file_name())
+                    .map(|n| n.to_string_lossy().to_string())
+                    .or_else(|| path.file_stem().map(|n| n.to_string_lossy().to_string()));
+                out.push((
+                    ip.file_stem().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
+                    String::from_utf8_lossy(&data).to_string(),
+                    group,
+                ));
             }
         } else {
             match std::fs::read_to_string(path) {
@@ -94,8 +96,10 @@ fn import(s: &mut Session, p: &Value) -> Result<Value> {
     if paths.is_empty() {
         return Err(bad(C, "no paths"));
     }
+    // a dry run reads and checks the files and says what it would add, writing nothing
+    let dry = p.get("dryRun").and_then(Value::as_bool).unwrap_or(false);
     let dir = profiles_dir(s);
-    if let Some(d) = &dir {
+    if let Some(d) = dir.as_ref().filter(|_| !dry) {
         std::fs::create_dir_all(d).map_err(|e| bad(C, format!("{}: {e}", d.display())))?;
     }
     let (files, mut failed) = cube_files(&paths);
@@ -117,6 +121,10 @@ fn import(s: &mut Session, p: &Value) -> Result<Value> {
             id = format!("lut:{slug}-{n}");
             n += 1;
         }
+        if dry {
+            imported.push(json!({"id": id, "name": display, "group": group}));
+            continue;
+        }
         let file = match &dir {
             Some(d) => {
                 let f = d.join(format!("{}.cube", id.trim_start_matches("lut:")));
@@ -134,7 +142,9 @@ fn import(s: &mut Session, p: &Value) -> Result<Value> {
         s.lut_profiles.push(LutProfile { id: id.clone(), name: display.clone(), group: group.clone(), file });
         imported.push(json!({"id": id, "name": display, "group": group}));
     }
-    s.save_prefs()?;
+    if !dry {
+        s.save_prefs()?;
+    }
     Ok(json!({"imported": imported, "failed": failed}))
 }
 
@@ -145,7 +155,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Import Profiles",
             [],
             None,
-            "{paths: [.cube file, folder or .zip]} — 3D LUTs become creative profiles (Amount 0–200 %; rendered on the CPU) in the profile browser's groups (folder / zip name, else Imported) → {imported: [{id, name, group}], failed}",
+            "{paths: [.cube file, folder or .zip], dryRun? (check the files and say what would be imported, writing nothing)} — 3D LUTs become creative profiles (Amount 0–200 %; rendered on the CPU) in the profile browser's groups (folder / zip name, else Imported) → {imported: [{id, name, group}], failed}",
             always,
             import
         ),

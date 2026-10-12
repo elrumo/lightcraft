@@ -153,13 +153,19 @@ pub fn imported_preset_id(p: &Preset) -> String {
 }
 
 impl Session {
+    /// Whether a preset with the same name, group and settings is already here (what
+    /// [`Session::add_presets`] skips).
+    pub fn has_identical_preset(&self, p: &Preset) -> bool {
+        self.presets.iter().any(|q| q.name == p.name && q.group == p.group && q.settings == p.settings)
+    }
+
     /// Add imported presets. Identical presets (same name, group and settings) already present are
     /// skipped; the others get the id [`imported_preset_id`] names them by (with `-2`, `-3`… in the
     /// rare case it is taken, by a preset edited since it was imported). Returns the ids added.
     pub fn add_presets(&mut self, presets: Vec<Preset>) -> Vec<String> {
         let mut added = Vec::new();
         for mut p in presets {
-            if self.presets.iter().any(|q| q.name == p.name && q.group == p.group && q.settings == p.settings) {
+            if self.has_identical_preset(&p) {
                 continue;
             }
             let base = imported_preset_id(&p);
@@ -708,10 +714,13 @@ mod tests {
         let one = |exposure: &str| {
             let mut s = Session::new();
             let files = crate::inline_files::to_param([("Look.xmp", xmp_preset(exposure).as_bytes())]);
-            let r = s.execute("preset.import", &json!({"files": files})).unwrap();
             let dry = s.execute("preset.import", &json!({"files": files, "dryRun": true})).unwrap();
+            let r = s.execute("preset.import", &json!({"files": files})).unwrap();
             let id = r["imported"][0]["id"].as_str().unwrap().to_string();
             assert_eq!(dry["imported"][0]["id"].as_str(), Some(id.as_str()), "a dry run names the same id");
+            // (once it is there, a dry run reports it as skipped, as a real run would)
+            let again = s.execute("preset.import", &json!({"files": files, "dryRun": true})).unwrap();
+            assert_eq!((again["imported"].as_array().map(Vec::len), again["skipped"].as_u64()), (Some(0), Some(1)), "{again}");
             (s, id)
         };
         let (mut a, id) = one("+0.30");
