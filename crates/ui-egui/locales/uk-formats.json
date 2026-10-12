@@ -259,5 +259,7 @@
   "{n} Selected": "Вибрано: {n}",
   "{n} photos on this device": "Фото на цьому пристрої: {n}",
   "{n} photos · synced with {server}": "Фото: {n} · синхронізовано з {server}",
-  "{n} photos, not saved": "Фото: {n}, не збережено"
+  "{n} photos, not saved": "Фото: {n}, не збережено",
+  "Uses the MI-GAN model, a {:.0} MB download ({} licence). {}.": "Використовується модель MI-GAN, завантаження {:.0} МБ (ліцензія {}). {}.",
+  "Downloading MI-GAN… {:.0} %": "Завантаження MI-GAN… {:.0} %"
 }

@@ -125,6 +125,7 @@ This fork adds features upstream doesn't have; they are outside the numbers abov
 | **Search by description, text in photos, People** (`crates/vision`, [search-people.md](docs/search-people.md)) | SigLIP 2, PP-OCRv6 and YuNet + SFace, each an opt-in consented download, on the desktop and on the sync server | Measured on a handful of images only (face grouping accuracy, OCR at about a second a photo, no relevance cut-off); a device-side model on iOS |
 | **Super Resolution** (`crates/enhance`, [super-resolution.md](docs/super-resolution.md)) | Nomos Uni SPAN 2× (optional download) on desktop and iPhone; every optional model listed, downloaded and deleted in Settings → AI Models ([ai-models.md](docs/ai-models.md)) | Enlarges the rendered photo, not the raw data; no preview in the dialog |
 | **Content-aware Remove by patch synthesis** (M8.4) and **panorama Fill Edges** (M13) | Remove fills from synthesized texture seeded by the spot's source; a stitched panorama's empty corners are filled with continued texture | Rows or tiles in strong perspective can come out at the wrong angle |
+| **AI Remove** (`crates/erase`, [ai-remove.md](docs/ai-remove.md)) | Remove ▸ Generative AI: MI-GAN (MIT, optional download, pinned SHA-256) on rten fills a stroke on desktop, iPhone and the web; the fill is stored with the spot, so renders and exports never run the model | Not run on an iPhone yet |
 
 Next for the fork: sync and the iOS app verified on real hardware; then depth (Depth Range, Lens Blur) and sharing
 beyond a read-only link.

@@ -33,6 +33,7 @@ pub mod display;
 #[cfg(any(feature = "sam", feature = "vision", feature = "enhance"))]
 mod download;
 pub mod enhance;
+pub mod erase;
 pub mod export;
 pub mod face_download;
 #[cfg(not(target_arch = "wasm32"))]
@@ -251,6 +252,8 @@ pub struct Session {
     pub segmenter: segment::Segmenter,
     /// AI Super Resolution: the models and where they live.
     pub enhancer: enhance::Enhancer,
+    /// AI Remove's model, once loaded.
+    pub eraser: erase::EraseModel,
     /// Search by description: the model, the library's index of photo vectors and the work in flight.
     pub vision: vision::Vision,
     /// Selected spot (Remove panel), by index into the active photo's spots.
@@ -388,6 +391,7 @@ impl Session {
             active_mask: None,
             segmenter: segment::Segmenter::default(),
             enhancer: enhance::Enhancer::default(),
+            eraser: erase::EraseModel::default(),
             vision: vision::Vision::default(),
             active_spot: None,
             library: None,

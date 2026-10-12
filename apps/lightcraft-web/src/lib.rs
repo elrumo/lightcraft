@@ -27,6 +27,8 @@ pub mod wire;
 #[cfg(target_arch = "wasm32")]
 mod backend;
 #[cfg(target_arch = "wasm32")]
+mod erase;
+#[cfg(target_arch = "wasm32")]
 mod safety;
 #[cfg(target_arch = "wasm32")]
 mod sync;

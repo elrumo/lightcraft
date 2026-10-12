@@ -366,6 +366,11 @@
   that needs a model offers the download too. See `docs/ai-models.md`.
 
 ### Remove
+- **AI Remove** (Remove ▸ Generative AI): a small neural network, MI-GAN, paints what is most likely behind the stroke, so a
+  person on a beach or a sign on a wall goes away with the shoreline or the wall continued through, not just texture
+  copied from around it. It runs on your computer, iPhone or in the browser; the model (30 MB, MIT licence) is
+  downloaded only when you press Download. The result is kept with the spot, so exports look like the preview, and
+  moving the spot's pin paints it again. See [ai-remove.md](ai-remove.md) for its limits.
 - Content-aware Remove: painting over a distraction now fills it with texture synthesized from around it,
   continuing edges, horizons and patterns through the stroke, instead of healing from one copied spot. The spot's
   source still counts (it seeds the fill and is searched too), so Refresh Source (`/`) or dragging the source

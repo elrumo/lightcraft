@@ -26,9 +26,11 @@ fn open_tab(h: &mut Headless) {
     settle(h);
 }
 
-/// Scroll the dialog's list until the widget is inside the dialog window (a click goes to where a
-/// widget is drawn and doesn't scroll to it, as a user would).
+/// Scroll the dialog's list until the widget is inside the dialog window and stays put (a click
+/// goes to where a widget is drawn and doesn't scroll to it, as a user would; a smooth scroll still
+/// moving would carry the widget away from under it).
 fn reveal(h: &mut Headless, id: &str) {
+    let mut last: Option<Value> = None;
     for _ in 0..40 {
         let all = h.request("ui.widgets", json!({}), T);
         let rect = |name: &str| all["result"].as_array().and_then(|a| a.iter().find(|x| x["id"] == name)).map(|x| x["rect"].clone());
@@ -36,9 +38,14 @@ fn reveal(h: &mut Headless, id: &str) {
         let n = |v: &Value, i: usize| v[i].as_f64().unwrap_or(0.0);
         let (wx, wy, ww, wh) = (n(&win, 0), n(&win, 1), n(&win, 2), n(&win, 3));
         let (ry, rh) = (n(&r, 1), n(&r, 3));
-        // inside, clear of the tab bar above and the Close button below
+        // inside, clear of the tab bar above and the Close button below, and no longer moving
         if ry >= wy + 80.0 && ry + rh <= wy + wh - 50.0 {
-            return;
+            if last.as_ref() == Some(&r) {
+                return;
+            }
+            last = Some(r);
+            settle(h);
+            continue;
         }
         h.request("ui.move", json!({"x": wx + ww / 2.0, "y": wy + wh / 2.0}), T);
         h.request("ui.scroll", json!({"dy": if ry > wy + wh / 2.0 { -160.0 } else { 160.0 }}), T);

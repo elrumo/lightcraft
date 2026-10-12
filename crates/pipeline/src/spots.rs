@@ -5,6 +5,9 @@
 //!   (frequency separation — a fast, stable approximation of gradient-domain healing).
 //! - **Remove** fills the stroke with texture synthesized from around it ([`crate::inpaint`]), seeded
 //!   by and searching the spot's source too; it heals from the source when nothing around fits.
+//!   With **AI Remove** the spot carries what a model painted under it ([`SpotFill`], made by
+//!   [`erase_input`] and [`EraseInput::finish`] around the model), matched to the photo's current
+//!   tones from the stroke's surroundings as Heal does, so a later white balance change follows.
 //!   Automatic sources: candidate offsets on rings around the spot are scored by how well the
 //!   source's surrounding annulus matches the target's.
 //! - **Fill** (content-aware) rebuilds the spot from patches of its surroundings instead of one
@@ -12,9 +15,10 @@
 //!   structure is chosen at a scale set by the spot's size (the same at preview and export size).
 //!   Deterministic; the source offset is ignored.
 
-use lightcraft_develop::{Spot, SpotMode};
-use lightcraft_geom::Point;
+use lightcraft_develop::{DevelopSettings, Spot, SpotFill, SpotMode};
+use lightcraft_geom::{Affine, CropGeometry, Point, Rect};
 use lightcraft_raster::Rgb32f;
+use lightcraft_raster::resample::{Filter, fit};
 
 use crate::geometry::Frame;
 
@@ -340,13 +344,24 @@ pub fn apply(img: &mut Rgb32f, spots: &[Spot], frame: &Frame, ppl: f64) {
         if fill {
             fill_box(&mut src, &tgt, &alpha, bw, bh);
         }
+        // AI Remove: the stored fill, tone-matched below like a heal
+        let baked = if remove { spot.fill.as_ref().and_then(|f| sample_fill(f, &frame.out_to_norm(w, h), (bx0, by0, bw), &tgt)) } else { None };
+        let tone_match = baked.is_some();
         // Remove: synthesize; the seed follows the spot, so a fill doesn't change when others do
         let seed = spot.points.first().map_or(0, |p| p.x.to_bits() ^ p.y.to_bits().rotate_left(32));
-        let filled = if remove { crate::inpaint::fill(img, bx0, by0, bw, bh, &hole, r, offset, seed) } else { None };
+        let filled = match baked {
+            // the model's fill gives the structure, the synthesized one the photo's grain and fine texture
+            Some(ai) => Some(match crate::inpaint::fill(img, bx0, by0, bw, bh, &hole, r, offset, seed) {
+                Some(pm) => with_detail(ai, pm, bw, bh, (r * DETAIL).max(1.0)),
+                None => ai,
+            }),
+            None if remove => crate::inpaint::fill(img, bx0, by0, bw, bh, &hole, r, offset, seed),
+            None => None,
+        };
         let heal = match filled {
             Some(f) => {
                 src = f;
-                false
+                tone_match
             }
             None => matches!(spot.mode, SpotMode::Remove | SpotMode::Heal),
         };
@@ -397,10 +412,157 @@ pub fn apply(img: &mut Rgb32f, spots: &[Spot], frame: &Frame, ppl: f64) {
     }
 }
 
+/// Context AI Remove gives the model on every side of a spot's box, in box long sides. Less makes
+/// the hole a big part of what the model sees, and in a crowd it paints another person into it
+/// (checked on CC0 beach photos: 0.25 and 0.5 did, 1.5 and 2 didn't); more costs resolution.
+const CONTEXT: f64 = 1.5;
+/// Below this scale (in spot radii) a baked fill keeps the model's picture; above it, the grain
+/// and fine texture come from the fill synthesized from the photo, which the model (at 512 × 512
+/// over an area larger than the spot) smooths away.
+const DETAIL: f32 = 0.1;
+
+/// `ai`'s broad structure with `pm`'s fine detail (both `bw × bh`): `blur(ai) + pm − blur(pm)`.
+fn with_detail(ai: Vec<[f32; 3]>, pm: Vec<[f32; 3]>, bw: usize, bh: usize, sigma: f32) -> Vec<[f32; 3]> {
+    let (ai, pm) = (Rgb32f { width: bw, height: bh, data: ai }, Rgb32f { width: bw, height: bh, data: pm });
+    let (al, pl) = (lightcraft_raster::blur::gaussian(&ai, sigma), lightcraft_raster::blur::gaussian(&pm, sigma));
+    al.data.iter().zip(&pm.data).zip(&pl.data).map(|((a, p), l)| std::array::from_fn(|c| a[c] + p[c] - l[c])).collect()
+}
+
+/// A stored AI fill over a box of output pixels (`bx0`, `by0`, `bw` wide, `tgt.len() / bw` high):
+/// `tgt` where the fill doesn't reach; `None` when the fill is damaged.
+fn sample_fill(f: &SpotFill, to_norm: &Affine, (bx0, by0, bw): (usize, usize, usize), tgt: &[[f32; 3]]) -> Option<Vec<[f32; 3]>> {
+    let r = f.bounds()?;
+    let img = Rgb32f { width: f.w as usize, height: f.h as usize, data: f.pixels()? };
+    let (fw, fh) = (img.width as f64, img.height as f64);
+    let (sx, sy) = (fw / (r[2] - r[0]), fh / (r[3] - r[1]));
+    let bw = bw.max(1);
+    let out = tgt
+        .iter()
+        .enumerate()
+        .map(|(i, t)| {
+            let n = to_norm.apply(Point::new((bx0 + i % bw) as f64 + 0.5, (by0 + i / bw) as f64 + 0.5));
+            let (x, y) = ((n.x - r[0]) * sx, (n.y - r[1]) * sy);
+            if (0.0..=fw).contains(&x) && (0.0..=fh).contains(&y) { img.sample_bilinear(x as f32, y as f32) } else { *t }
+        })
+        .collect();
+    Some(out)
+}
+
+/// Longest side of the area around a stroke that AI Remove renders for the model (it sees 512 ×
+/// 512 pixels; a little more keeps the photo around the stroke sharp in the stored fill).
+const ERASE_RENDER: f64 = 1024.0;
+/// Longest side of a stored fill (the model's own resolution).
+const ERASE_STORE: usize = 512;
+
+/// What AI Remove gives the model for one spot, and what it needs to store the answer.
+pub struct EraseInput {
+    /// The area around the stroke, display-encoded (`(v / scale)^(1/2.2)`, 0..=1) for the model.
+    pub image: Rgb32f,
+    /// The pixels to fill (the stroke), one per pixel of `image`.
+    pub hole: Vec<bool>,
+    /// That area at the retouching stage, linear: white balanced, earlier spots applied.
+    lin: Rgb32f,
+    scale: f32,
+    /// The area, normalized `[x0, y0, x1, y1]`.
+    rect: [f64; 4],
+    /// The spot's box in `image` (what the spot renders over): x0, y0, x1, y1.
+    keep: [usize; 4],
+    /// The area's longest side in pixels of the source it was rendered from.
+    pub native: f64,
+}
+
+/// The input AI Remove needs for spot `index` of `s` on `src`: the stroke and the photo around
+/// it (the stroke's box and [`CONTEXT`] times its long side on every side, at most 2:1), rendered to
+/// the retouching stage with the spots before this one, at the source's resolution up to 1024
+/// pixels. `None` for a spot without points or outside the image.
+pub fn erase_input(src: &Rgb32f, info: &crate::SourceInfo, s: &DevelopSettings, index: usize) -> Option<EraseInput> {
+    let spot = s.spots.get(index)?;
+    let frame = crate::frame_for(src, info, s, false);
+    let (ow, oh) = (frame.ow, frame.oh);
+    let r = (spot.size * ow.max(oh)).max(1.0);
+    let pts: Vec<(f64, f64)> = spot.points.iter().map(|p| (p.x * ow, p.y * oh)).collect();
+    if pts.is_empty() || !pts.iter().all(|p| p.0.is_finite() && p.1.is_finite()) || !r.is_finite() {
+        return None;
+    }
+    // the spot's box as `apply` paints it (the stroke and a radius around it), in the image
+    let fold = |f: fn(f64, f64) -> f64, init: f64, k: fn(&(f64, f64)) -> f64| pts.iter().map(k).fold(init, f);
+    let bx = [
+        fold(f64::min, f64::MAX, |p| p.0) - 2.0 * r,
+        fold(f64::min, f64::MAX, |p| p.1) - 2.0 * r,
+        fold(f64::max, f64::MIN, |p| p.0) + 2.0 * r,
+        fold(f64::max, f64::MIN, |p| p.1) + 2.0 * r,
+    ];
+    let bx = [bx[0].max(0.0), bx[1].max(0.0), bx[2].min(ow), bx[3].min(oh)];
+    if bx[2] - bx[0] < 1.0 || bx[3] - bx[1] < 1.0 {
+        return None;
+    }
+    // context on every side, then no flatter than 2:1
+    let m = CONTEXT * (bx[2] - bx[0]).max(bx[3] - bx[1]);
+    let (mut cw, mut ch) = (bx[2] - bx[0] + 2.0 * m, bx[3] - bx[1] + 2.0 * m);
+    cw = cw.max(ch / 2.0).min(ow);
+    ch = ch.max(cw / 2.0).min(oh);
+    let (cx, cy) = ((bx[0] + bx[2]) / 2.0, (bx[1] + bx[3]) / 2.0);
+    let x0 = (cx - cw / 2.0).clamp(0.0, ow - cw);
+    let y0 = (cy - ch / 2.0).clamp(0.0, oh - ch);
+    let rect = [x0 / ow, y0 / oh, (x0 + cw) / ow, (y0 + ch) / oh];
+    // render the area alone: a crop of exactly it, no flips, the spots before this one
+    let mut area = s.clone();
+    area.crop.geometry = CropGeometry { rect: Rect { x0: rect[0], y0: rect[1], x1: rect[2], y1: rect[3] }, angle: 0.0 };
+    (area.crop.flip_h, area.crop.flip_v) = (false, false);
+    area.spots.truncate(index);
+    let native = cw.max(ch);
+    let side = native.min(ERASE_RENDER).round().max(1.0) as usize;
+    let p = crate::plan(src, info, &area, &crate::RenderRequest::fit(side, side));
+    let mut lin = p.frame.sample(src, p.w, p.h);
+    crate::lin_cpu(&mut lin, info, &p);
+    let (w, h) = (lin.width, lin.height);
+    let (kx, ky) = (cw / w as f64, ch / h as f64);
+    // the stroke, half a pixel wider so its edge is filled too
+    let reach = (r + 0.5 * kx.max(ky)) as f32;
+    let pts32: Vec<(f32, f32)> = pts.iter().map(|p| (p.0 as f32, p.1 as f32)).collect();
+    let hole: Vec<bool> = (0..w * h)
+        .map(|i| dist_to_path(&pts32, ((x0 + ((i % w) as f64 + 0.5) * kx) as f32, (y0 + ((i / w) as f64 + 0.5) * ky) as f32)) < reach)
+        .collect();
+    // exposure for the model: the area's bright end (99th percentile) near white
+    let mut bright: Vec<f32> = lin.data.iter().map(|p| p[0].max(p[1]).max(p[2])).filter(|v| v.is_finite()).collect();
+    let at = (bright.len() * 99 / 100).min(bright.len().saturating_sub(1));
+    let scale = if bright.is_empty() { 1.0 } else { *bright.select_nth_unstable_by(at, f32::total_cmp).1 }.max(1e-4);
+    let image = lin.map(|p| p.map(|v| (v / scale).clamp(0.0, 1.0).powf(1.0 / 2.2)));
+    let px = |v: f64, k: f64, n: usize| ((v / k).max(0.0) as usize).min(n);
+    let keep = [px(bx[0] - x0, kx, w), px(bx[1] - y0, ky, h), px((bx[2] - x0) / kx + 0.999, 1.0, w), px((bx[3] - y0) / ky + 0.999, 1.0, h)];
+    (keep[2] > keep[0] && keep[3] > keep[1]).then_some(EraseInput { image, hole, lin, scale, rect, keep, native })
+}
+
+impl EraseInput {
+    /// The spot's fill from the model's answer `filled` (the same size as [`Self::image`], display
+    /// encoded): its pixels in the stroke, the photo's around it, over the spot's box at no more
+    /// than 512 pixels a side. `None` when `filled` doesn't match.
+    pub fn finish(&self, filled: &Rgb32f) -> Option<SpotFill> {
+        let (w, h) = (self.image.width, self.image.height);
+        if filled.width != w || filled.height != h || filled.data.len() != w * h {
+            return None;
+        }
+        let [x0, y0, x1, y1] = self.keep;
+        let boxed = Rgb32f::from_fn(x1 - x0, y1 - y0, |x, y| {
+            let (x, y) = (x0 + x, y0 + y);
+            if self.hole.get(y * w + x).copied().unwrap_or(false) {
+                filled.get(x, y).map(|e| self.scale * e.clamp(0.0, 1.0).powf(2.2))
+            } else {
+                self.lin.get(x, y)
+            }
+        });
+        let small = fit(&boxed, ERASE_STORE, ERASE_STORE, Filter::Mitchell);
+        let [r0, r1, r2, r3] = self.rect;
+        let (nx, ny) = ((r2 - r0) / w as f64, (r3 - r1) / h as f64);
+        let rect = [r0 + x0 as f64 * nx, r1 + y0 as f64 * ny, r0 + x1 as f64 * nx, r1 + y1 as f64 * ny];
+        let px: Vec<[f32; 3]> = small.data.iter().map(|p| p.map(|v| v.max(0.0))).collect();
+        SpotFill::from_linear(small.width, small.height, rect, &px)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lightcraft_develop::DevelopSettings;
 
     #[test]
     fn remove_erases_a_dot() {
@@ -529,6 +691,95 @@ mod tests {
             apply(&mut img, &[spot], &frame, frame.px_per_long(40));
             assert!(img.data.iter().flatten().all(|v| v.is_finite()));
         }
+    }
+
+    /// A stand-in for the model: the hole gets the mean of the display values around it.
+    fn flat_fill(input: &EraseInput) -> Rgb32f {
+        let (mut sum, mut n) = ([0.0f32; 3], 0.0f32);
+        for (p, h) in input.image.data.iter().zip(&input.hole) {
+            if !h {
+                (0..3).for_each(|c| sum[c] += p[c]);
+                n += 1.0;
+            }
+        }
+        let mean = sum.map(|v| v / n.max(1.0));
+        let mut out = input.image.clone();
+        out.data.iter_mut().zip(&input.hole).filter(|(_, h)| **h).for_each(|(p, _)| *p = mean);
+        out
+    }
+
+    /// Grey with a black square in the middle, and a Remove spot over it baked with `flat_fill`.
+    fn baked(n: usize) -> (Rgb32f, DevelopSettings) {
+        let img = Rgb32f::from_fn(
+            n,
+            n,
+            |x, y| if (n * 2 / 5..n * 3 / 5).contains(&x) && (n * 2 / 5..n * 3 / 5).contains(&y) { [0.0; 3] } else { [0.3; 3] },
+        );
+        let mut s = DevelopSettings::default();
+        s.spots.push(Spot { points: vec![Point::new(0.5, 0.5)], size: 0.16, feather: 0.0, ..Default::default() });
+        let input = erase_input(&img, &crate::SourceInfo::default(), &s, 0).unwrap();
+        assert!(input.hole.iter().any(|h| *h) && input.hole.iter().any(|h| !*h));
+        assert_eq!(input.hole.len(), input.image.width * input.image.height);
+        s.spots[0].fill = input.finish(&flat_fill(&input));
+        assert!(s.spots[0].fill.is_some());
+        (img, s)
+    }
+
+    #[test]
+    fn an_ai_fill_is_painted_and_follows_the_photos_tones() {
+        let (img, s) = baked(200);
+        let frame = Frame::new(200, 200, &s, true);
+        // the white balance of the stage doesn't touch a neutral grey; compare with the grey around
+        let around = {
+            let mut probe = img.clone();
+            crate::local::white_balance(&mut probe, &crate::SourceInfo::default(), &s);
+            probe.get(10, 10)[1]
+        };
+        let mut out = img.clone();
+        crate::local::white_balance(&mut out, &crate::SourceInfo::default(), &s);
+        apply(&mut out, &s.spots, &frame, frame.px_per_long(200));
+        let c = out.get(100, 100);
+        assert!((c[1] - around).abs() < 0.03 * around.max(0.01), "the square is filled: {c:?} vs {around}");
+        // a brighter photo (exposure or white balance before the retouching stage): the fill follows
+        let mut bright = img.map(|p| p.map(|v| v * 2.0));
+        crate::local::white_balance(&mut bright, &crate::SourceInfo::default(), &s);
+        apply(&mut bright, &s.spots, &frame, frame.px_per_long(200));
+        let c = bright.get(100, 100);
+        assert!((c[1] - 2.0 * around).abs() < 0.06 * around.max(0.01), "tones follow: {c:?} vs {}", 2.0 * around);
+        // at another output size the same fill lands in the same place
+        let mut small = lightcraft_raster::resample::resize(&img, 100, 100, Filter::Box);
+        crate::local::white_balance(&mut small, &crate::SourceInfo::default(), &s);
+        apply(&mut small, &s.spots, &frame, frame.px_per_long(100));
+        assert!((small.get(50, 50)[1] - around).abs() < 0.03 * around.max(0.01), "{:?}", small.get(50, 50));
+    }
+
+    #[test]
+    fn a_damaged_ai_fill_falls_back_to_the_usual_remove() {
+        let (img, mut s) = baked(120);
+        if let Some(f) = s.spots[0].fill.as_mut() {
+            f.data = "damaged!".into();
+        }
+        let frame = Frame::new(120, 120, &s, true);
+        let mut out = img.clone();
+        apply(&mut out, &s.spots, &frame, frame.px_per_long(120));
+        assert!(out.get(60, 60)[1] > 0.2, "filled from around it: {:?}", out.get(60, 60));
+    }
+
+    #[test]
+    fn erase_input_refuses_what_it_cannot_fill() {
+        let img = Rgb32f::filled(50, 40, [0.2; 3]);
+        let info = crate::SourceInfo::default();
+        let mut s = DevelopSettings::default();
+        assert!(erase_input(&img, &info, &s, 0).is_none(), "no spot");
+        s.spots.push(Spot { points: vec![], ..Default::default() });
+        assert!(erase_input(&img, &info, &s, 0).is_none(), "no points");
+        s.spots[0].points = vec![Point::new(f64::NAN, 0.5)];
+        assert!(erase_input(&img, &info, &s, 0).is_none(), "not a number");
+        s.spots[0].points = vec![Point::new(9.0, 9.0)];
+        assert!(erase_input(&img, &info, &s, 0).is_none(), "outside the image");
+        s.spots[0].points = vec![Point::new(0.5, 0.5)];
+        let input = erase_input(&img, &info, &s, 0).unwrap();
+        assert!(input.finish(&Rgb32f::new(3, 3)).is_none(), "an answer of the wrong size");
     }
 
     #[test]

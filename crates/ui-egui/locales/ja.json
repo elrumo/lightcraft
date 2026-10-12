@@ -2080,5 +2080,13 @@
   "Adding to Apple Photos…": "Appleの写真に追加中…",
   "not added to Apple Photos (cancelled)": "Appleの写真には追加されませんでした（キャンセル）",
   "The first time, macOS asks whether LightCraft may control Photos.": "初回は、LightCraftに写真の操作を許可するかmacOSが確認します。",
-  "Adding to Apple Photos": "Appleの写真に追加中"
+  "Adding to Apple Photos": "Appleの写真に追加中",
+  "Generative AI": "生成AI",
+  "Removing with AI…": "AIで削除中…",
+  "Fill with what is most likely behind the stroke (the MI-GAN model) instead of texture from around it": "周囲の質感ではなく、ストロークの後ろにありそうな内容で埋めます（MI-GANモデル）",
+  "AI Remove is turned off in Settings → AI Models.": "AI削除は「設定 → AIモデル」でオフになっています。",
+  "Getting the MI-GAN model…": "MI-GANモデルを取得中…",
+  "AI Remove isn't available in this build.": "このビルドではAI削除を使用できません。",
+  "AI Remove needs its model: download it in the Remove panel. This stroke was filled from around it.": "AI削除にはモデルが必要です。削除パネルでダウンロードしてください。このストロークは周囲から補完しました。",
+  "The download stopped.": "ダウンロードが停止しました。"
 }

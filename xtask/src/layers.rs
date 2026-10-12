@@ -60,6 +60,7 @@ pub const TABLE: &[(&str, Class)] = &[
     ("merge", Class::Layer(3)),
     ("segment", Class::Layer(3)),
     ("enhance", Class::Layer(3)),
+    ("erase", Class::Layer(3)),
     ("vision", Class::Layer(3)),
     ("engine", Class::Layer(4)),
     ("ui-egui", Class::Layer(5)),
@@ -79,8 +80,10 @@ pub const TABLE: &[(&str, Class)] = &[
 /// Explicit orderings *within* a layer (earlier may be used by later).
 /// L0: `raster` builds on `color` and `geom`; `color` uses `geom` for matrices.
 /// L1: `raw` and `codecs` read metadata through `meta`; `develop` uses `meta` for XMP.
+/// L3: `erase` loads its ONNX model with `vision`'s fixes; `enhance` downloads `erase`'s model.
 pub const INTRA_LAYER_ORDER: &[&[&str]] = &[
     &["geom", "color", "raster"],
+    &["vision", "erase", "enhance"],
     &["tiff", "raster"],
     &["denoise-core", "denoise"],
     &["meta", "raw"],

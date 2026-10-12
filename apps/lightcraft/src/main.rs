@@ -428,6 +428,8 @@ fn services(cc: &eframe::CreationContext<'_>, log_file: Option<&std::path::Path>
         haptic: None,
         clipboard_text: None,
         system_theme: appearance::service(),
+        // AI Remove's model comes with the engine's downloader
+        erase_model: None,
     }
 }
 

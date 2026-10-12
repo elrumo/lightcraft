@@ -2078,5 +2078,13 @@
   "Adding to Apple Photos…": "正在加入 Apple 照片…",
   "not added to Apple Photos (cancelled)": "未加入 Apple 照片（已取消）",
   "The first time, macOS asks whether LightCraft may control Photos.": "第一次使用時，macOS 會詢問是否允許 LightCraft 控制「照片」。",
-  "Adding to Apple Photos": "正在加入 Apple 照片"
+  "Adding to Apple Photos": "正在加入 Apple 照片",
+  "Generative AI": "生成式 AI",
+  "Removing with AI…": "正在用 AI 移除…",
+  "Fill with what is most likely behind the stroke (the MI-GAN model) instead of texture from around it": "用筆觸後面最可能的內容（MI-GAN 模型）填補，而不是周圍的紋理",
+  "AI Remove is turned off in Settings → AI Models.": "AI 移除已在「設定 → AI 模型」中關閉。",
+  "Getting the MI-GAN model…": "正在取得 MI-GAN 模型…",
+  "AI Remove isn't available in this build.": "此版本不提供 AI 移除。",
+  "AI Remove needs its model: download it in the Remove panel. This stroke was filled from around it.": "AI 移除需要模型：請在移除面板中下載。此筆觸已用周圍內容填補。",
+  "The download stopped.": "下載已停止。"
 }

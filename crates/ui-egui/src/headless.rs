@@ -85,6 +85,8 @@ pub struct HeadlessView {
     pub clipboard: String,
     /// Events the host owes the next frame (a paste request's paste, as a desktop host sends it).
     owed: Vec<egui::Event>,
+    /// The text the last frame asked the host to put on the clipboard (a browser allows that only during a tap).
+    pub copied: Option<String>,
 }
 
 impl Default for HeadlessView {
@@ -108,6 +110,7 @@ impl HeadlessView {
             ime: None,
             clipboard: String::new(),
             owed: vec![],
+            copied: None,
         }
     }
 
@@ -155,6 +158,10 @@ impl HeadlessView {
         self.shapes = std::mem::take(&mut out.shapes);
         self.pixels_per_point = out.pixels_per_point;
         self.ime = out.platform_output.ime.take();
+        self.copied = out.platform_output.commands.iter().find_map(|c| match c {
+            egui::OutputCommand::CopyText(t) => Some(t.clone()),
+            _ => None,
+        });
         for c in &out.platform_output.commands {
             if let egui::OutputCommand::CopyText(text) = c {
                 self.clipboard.clone_from(text);
@@ -317,6 +324,12 @@ impl Headless {
     /// `app.quit` was requested.
     pub fn quit_requested(&self) -> bool {
         self.quit
+    }
+
+    /// Run one frame with these events in it (several at once, as a browser delivers a tap).
+    pub fn step_with(&mut self, events: impl IntoIterator<Item = egui::Event>) {
+        self.events.extend(events);
+        self.step();
     }
 
     /// Run one frame.

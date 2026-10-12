@@ -918,6 +918,81 @@ fn phone_settings_is_a_list_of_pages() {
     assert_eq!(h.app.ui.dialog, None);
 }
 
+/// A text field reports its IME rect (the host's cue to focus its hidden input and so raise a phone's
+/// keyboard) in the very frame it takes focus: a web host must focus that input inside the tap, and
+/// iOS Safari shows the keyboard for nothing else.
+#[test]
+fn a_field_reports_its_ime_rect_in_the_frame_that_focuses_it() {
+    let mut h = phone(Services::default());
+    h.app.ui.all_commands = true;
+    h.settle(SETTLE);
+    let at = rect_of(&h, "field:allCommandsSearch").center();
+    let button = |pressed| egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
+    let touch = |phase| egui::Event::Touch { device_id: egui::TouchDeviceId(0), id: egui::TouchId(0), phase, pos: at, force: None };
+    // (a touch screen focuses a field when the finger lifts, a frame after egui last had it)
+    h.app.synthetic.extend([touch(egui::TouchPhase::Start), touch(egui::TouchPhase::End)]);
+    h.settle(SETTLE);
+    h.app.synthetic.extend([egui::Event::PointerMoved(at), button(true), button(false)]);
+    for _ in 0..30 {
+        h.step();
+        if h.view.ctx.memory(|m| m.focused()).is_some() {
+            assert!(h.view.ime.is_some(), "the field has the focus but the host hasn't been told");
+            return;
+        }
+    }
+    panic!("the tap never focused the field");
+}
+
+/// A tap that opens a page whose field takes the keyboard by itself (New Album) reports the field's IME rect
+/// in the frame of the tap: the host raises the keyboard only for a focus made inside the tap. The frames are
+/// a browser's: the finger down; the finger up with the touch's own press (queued from `touchstart`); the rest.
+#[test]
+fn a_tap_that_opens_a_field_reports_its_ime_rect_in_the_tap() {
+    let mut h = grid([390.0, 844.0]);
+    let at = rect_of(&h, "icon:more").center();
+    let touch = |phase, pos| egui::Event::Touch { device_id: egui::TouchDeviceId(0), id: egui::TouchId(0), phase, pos, force: None };
+    let button = |pressed, pos| egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
+    let tap = |h: &mut Headless, pos: egui::Pos2| -> bool {
+        h.step_with([button(true, pos)]);
+        h.step_with([button(true, pos), touch(egui::TouchPhase::Start, pos), button(false, pos)]);
+        let reported = h.view.ime.is_some();
+        h.step_with([button(false, pos), egui::Event::PointerGone, touch(egui::TouchPhase::End, pos)]);
+        reported
+    };
+    tap(&mut h, at);
+    h.settle(SETTLE);
+    let id = h.app.widgets.iter().map(|(w, _)| w.clone()).find(|w| w.contains("newAlbum")).expect("a New Album row");
+    let row = rect_of(&h, &id).center();
+    let reported = tap(&mut h, row);
+    assert!(matches!(h.app.ui.dialog, Some(crate::state::Dialog::NewAlbum { .. })), "the tap opened New Album: {:?}", h.app.ui.dialog);
+    assert!(reported, "the new field has the focus but the host hasn't been told in the tap");
+}
+
+/// The edit menu's Cut and Copy put their text on the clipboard in the frame of the tap that chose them:
+/// a browser lets a page write the clipboard only then (Safari: inside the tap's own event handler).
+#[test]
+fn the_edit_menus_copy_writes_the_clipboard_within_its_tap() {
+    let mut h = phone(Services::default());
+    h.app.ui.all_commands = true;
+    h.settle(SETTLE);
+    let field = rect_of(&h, "field:allCommandsSearch");
+    let touch = |phase| egui::Event::Touch { device_id: egui::TouchDeviceId(0), id: egui::TouchId(0), phase, pos: field.center(), force: None };
+    h.app.synthetic.extend([touch(egui::TouchPhase::Start), touch(egui::TouchPhase::End)]);
+    h.settle(SETTLE);
+    tap(&mut h, "field:allCommandsSearch");
+    let r = h.request("ui.text", json!({"text": "export"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    tap(&mut h, "field:allCommandsSearch");
+    tap(&mut h, "button:edit-selectAll");
+    let at = rect_of(&h, "button:edit-copy").center();
+    let button = |pressed| egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
+    // (a move, the finger down, the finger up: the third frame is the tap)
+    h.app.synthetic.extend([egui::Event::PointerMoved(at), button(true), button(false)]);
+    frames(&mut h, 3);
+    assert_eq!(h.view.copied.as_deref(), Some("export"), "Copy waited for a later frame");
+}
+
 /// A text field's edit menu on a touch screen: the first tap gives the field the keyboard, the next
 /// one opens Select All / Paste; Select All offers Cut and Copy; Paste puts the clipboard's text in
 /// the field, which keeps the keyboard throughout.

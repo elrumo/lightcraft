@@ -259,5 +259,7 @@
   "not added to Apple Photos: {e}": "Appleの写真に追加されませんでした：{e}",
   "{n} added to Apple Photos album “{album}”": "{n}件をAppleの写真のアルバム「{album}」に追加しました",
   "{n} added to Apple Photos": "{n}件をAppleの写真に追加しました",
-  "{n} photos opened for editing; each is stacked with its original": "{n}枚の写真を編集用に開きました。それぞれ元の写真とスタックされています"
+  "{n} photos opened for editing; each is stacked with its original": "{n}枚の写真を編集用に開きました。それぞれ元の写真とスタックされています",
+  "Uses the MI-GAN model, a {:.0} MB download ({} licence). {}.": "MI-GANモデルを使用します（{:.0} MBのダウンロード、{}ライセンス）。{}。",
+  "Downloading MI-GAN… {:.0} %": "MI-GANをダウンロード中… {:.0} %"
 }

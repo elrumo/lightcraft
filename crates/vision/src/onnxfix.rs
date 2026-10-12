@@ -2,6 +2,9 @@
 //!
 //! - `Dropout` nodes (which only do something while training, and which older exports spell with
 //!   a `ratio` attribute rten doesn't take) become `Identity`;
+//! - a `Cast` to `uint8` (a type rten has no casts to) becomes `Identity`: the graphs that use one
+//!   (MI-GAN's pipeline) only pass whole numbers 0..=255 through it (after a `Round` or a clip),
+//!   so the float values go on unchanged;
 //! - every operator gets a name of its own (`<name>.op`): some exports (MXNet's, like SFace) name
 //!   each operator after the value it produces, and rten looks values up by name, so a graph
 //!   where `fc1` is both a BatchNorm and its output can't be planned.
@@ -24,6 +27,11 @@ const NODE_OUTPUT: u64 = 2;
 const NODE_NAME: u64 = 3;
 const NODE_OP_TYPE: u64 = 4;
 const NODE_ATTRIBUTE: u64 = 5;
+/// `AttributeProto.name` and `AttributeProto.i`.
+const ATTR_NAME: u64 = 1;
+const ATTR_INT: u64 = 3;
+/// `TensorProto.DataType.UINT8`.
+const UINT8: u64 = 2;
 /// Added to every operator's name (see the module docs).
 const NAME_SUFFIX: &str = ".op";
 
@@ -105,14 +113,28 @@ fn put_field(out: &mut Vec<u8>, number: u64, wire: u8, payload: &[u8]) {
     out.extend_from_slice(payload);
 }
 
-/// A node with its own name, and a `Dropout` as an `Identity` (its first input to its first output).
+/// Whether a `Cast` node's attributes say `to = uint8`.
+fn casts_to_uint8(fs: &[Field<'_>]) -> Result<bool, Error> {
+    for f in fs.iter().filter(|f| f.number == NODE_ATTRIBUTE && f.wire == 2) {
+        let a = fields(f.payload)?;
+        if a.iter().any(|x| x.number == ATTR_NAME && x.payload == b"to") {
+            let Some(i) = a.iter().find(|x| x.number == ATTR_INT && x.wire == 0) else { return Ok(false) };
+            return Ok(varint(i.payload, &mut 0)? == UINT8);
+        }
+    }
+    Ok(false)
+}
+
+/// A node with its own name, and a `Dropout` or a `Cast` to `uint8` as an `Identity` (its first
+/// input to its first output).
 fn fix_node(node: &[u8]) -> Result<Vec<u8>, Error> {
     let fs = fields(node)?;
-    let is_dropout = fs.iter().any(|f| f.number == NODE_OP_TYPE && f.payload == b"Dropout");
+    let op = |name: &[u8]| fs.iter().any(|f| f.number == NODE_OP_TYPE && f.payload == name);
+    let identity = op(b"Dropout") || (op(b"Cast") && casts_to_uint8(&fs)?);
     let mut out = Vec::with_capacity(node.len() + 8);
     let (mut inputs, mut outputs) = (0, 0);
     for f in &fs {
-        if !is_dropout {
+        if !identity {
             if f.number == NODE_NAME {
                 let mut name = f.payload.to_vec();
                 name.extend_from_slice(NAME_SUFFIX.as_bytes());
@@ -245,6 +267,27 @@ mod tests {
         // the fields around the graph are kept
         assert!(fixed.ends_with(b"after the graph"));
         assert!(fixed.windows(4).any(|w| w == b"test"));
+    }
+
+    /// A `Cast` node with one attribute `to = to`.
+    fn cast(name: &str, to: u8) -> Vec<u8> {
+        let mut n = Vec::new();
+        string(&mut n, NODE_INPUT, "x");
+        string(&mut n, NODE_OUTPUT, "y");
+        string(&mut n, NODE_NAME, name);
+        string(&mut n, NODE_OP_TYPE, "Cast");
+        let mut a = Vec::new();
+        string(&mut a, ATTR_NAME, "to");
+        put_field(&mut a, ATTR_INT, 0, &[to]);
+        put_field(&mut a, 20, 0, &[2]);
+        put_field(&mut n, NODE_ATTRIBUTE, 2, &a);
+        n
+    }
+
+    #[test]
+    fn a_cast_to_uint8_becomes_identity_and_other_casts_stay() {
+        let fixed = inference_only(&model(&[cast("to_u8", 2), cast("to_f32", 1)])).unwrap();
+        assert_eq!(ops(&fixed), [("Identity".to_string(), "to_u8.op".to_string(), 1, 1, 0), ("Cast".to_string(), "to_f32.op".to_string(), 1, 1, 1)]);
     }
 
     #[test]

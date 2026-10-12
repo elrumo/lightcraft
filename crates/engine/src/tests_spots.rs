@@ -65,3 +65,45 @@ fn a_content_aware_spot_has_no_source() {
     assert_eq!(serde_json::to_value(sp).unwrap()["mode"], "fill");
     assert!(s.execute("spot.update", &json!({"mode": "nonsense"})).is_err());
 }
+
+/// AI Remove without its model says so (the apps offer the download on that message) and adds
+/// nothing; a model that isn't the pinned file is refused.
+#[test]
+fn ai_remove_without_its_model_says_so_and_adds_nothing() {
+    let mut s = Session::with_demo();
+    let e = s.execute("spot.add", &json!({"points": [[0.4, 0.5]], "ai": true})).unwrap_err().to_string();
+    assert!(e.contains(crate::erase::NOT_INSTALLED), "{e}");
+    assert!(spots(&s).is_empty());
+    assert!(!s.eraser_ready());
+    assert!(s.execute("spot.add", &json!({"mode": "heal", "points": [[0.4, 0.5]], "ai": true})).is_err(), "AI fills Remove spots only");
+    assert!(s.install_eraser(b"not the model").is_err());
+    s.execute("spot.add", &json!({"mode": "clone", "points": [[0.4, 0.5]], "source": [0.1, 0.0]})).unwrap();
+    assert!(s.execute("spot.erase", &json!({"index": 0})).is_err(), "a Clone spot");
+}
+
+/// With the model (when a copy is at `$LIGHTCRAFT_MIGAN`; it is never part of the repository) an
+/// AI spot carries its fill, one undo step; moving the spot moves the fill until it is redone.
+#[test]
+fn ai_remove_stores_the_models_fill_with_the_spot() {
+    let Some(path) = std::env::var_os("LIGHTCRAFT_MIGAN") else { return };
+    let mut s = Session::with_demo();
+    s.install_eraser(&std::fs::read(path).unwrap()).unwrap();
+    assert!(s.eraser_ready());
+    let r = s.execute("spot.add", &json!({"points": [[0.4, 0.5], [0.45, 0.52]], "size": 0.03, "ai": true})).unwrap();
+    assert_eq!(r["index"], 0);
+    let sp = &spots(&s)[0];
+    let f = sp.fill.as_ref().expect("a fill");
+    let [x0, y0, x1, y1] = f.bounds().unwrap();
+    assert!(x0 < 0.37 && x1 > 0.48 && y0 < 0.47 && y1 > 0.55, "the fill covers the stroke: {:?}", f.rect);
+    assert!(f.w.max(f.h) <= 512 && f.pixels().is_some());
+    assert_eq!(sp.source_offset, None, "no source pin for an AI spot");
+    // it renders without the model being asked again (the fill is stored), and exports the same
+    s.execute("spot.update", &json!({"move": [0.1, 0.0]})).unwrap();
+    let moved = spots(&s)[0].fill.clone().unwrap();
+    assert!((moved.rect[0] - x0 - 0.1).abs() < 1e-9);
+    s.execute("spot.erase", &json!({})).unwrap();
+    let redone = spots(&s)[0].fill.clone().unwrap();
+    assert_ne!(redone.data, moved.data, "painted again at the new place");
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(spots(&s)[0].fill.as_ref().map(|f| f.rect), Some(moved.rect));
+}

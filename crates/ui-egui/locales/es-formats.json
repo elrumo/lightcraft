@@ -259,5 +259,7 @@
   "{n} Selected": "{n} seleccionadas",
   "{n} photos on this device": "{n} fotos en este dispositivo",
   "{n} photos · synced with {server}": "{n} fotos · sincronizadas con {server}",
-  "{n} photos, not saved": "{n} fotos, sin guardar"
+  "{n} photos, not saved": "{n} fotos, sin guardar",
+  "Uses the MI-GAN model, a {:.0} MB download ({} licence). {}.": "Usa el modelo MI-GAN, una descarga de {:.0} MB (licencia {}). {}.",
+  "Downloading MI-GAN… {:.0} %": "Descargando MI-GAN… {:.0} %"
 }

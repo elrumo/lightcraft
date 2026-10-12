@@ -12,6 +12,7 @@ pub mod control;
 pub mod credits;
 pub mod date_picker;
 pub mod docking;
+pub mod erase;
 pub mod export_task;
 pub mod glass;
 pub mod haptics;
@@ -77,6 +78,8 @@ mod tests_date_picker;
 mod tests_dialog_fit;
 #[cfg(test)]
 mod tests_dialogs;
+#[cfg(test)]
+mod tests_erase;
 #[cfg(test)]
 mod tests_export_flow;
 #[cfg(test)]
@@ -303,8 +306,13 @@ pub struct Services {
     /// Plays haptic feedback (iOS: the Taptic Engine); the compact layout asks for it on touch
     /// gestures and choices (`haptics`).
     pub haptic: Option<haptics::PlayHaptic>,
+    /// Fetches AI Remove's model in the browser build ([`erase::ModelFetch`]); `None`: the
+    /// engine downloads it (desktop and phone apps).
+    pub erase_model: Option<erase::ModelFetch>,
     /// The system clipboard's text, for Paste in a text field's touch edit menu
-    /// (`panels::mobile::edit_menu`; iOS: the on-screen keyboard has no ⌘V).
+    /// (`panels::mobile::edit_menu`; iOS: the on-screen keyboard has no ⌘V). A host that can only
+    /// read it asynchronously (the web) starts the read here, returns `None` and sends the text
+    /// itself as an `egui::Event::Paste` on a later frame.
     pub clipboard_text: Option<Box<dyn FnMut() -> Option<String>>>,
     /// The system appearance for Appearance Mode ▸ Auto, ahead of egui's own report.
     pub system_theme: Option<SystemThemeFn>,
@@ -440,6 +448,8 @@ pub struct LightcraftApp {
     pub merge: merge::MergeState,
     /// AI Super Resolution: the running job.
     pub superres: superres::SuperResState,
+    /// AI Remove: a fill waiting for its notice, the browser build's model fetch.
+    pub erase: erase::EraseState,
     /// The saved choice of AI models turned off has been applied to the session.
     models_synced: bool,
     /// An import in progress (the import review dialog's batches).
@@ -551,6 +561,7 @@ impl LightcraftApp {
             compare_hold_until: f64::NEG_INFINITY,
             merge: merge::MergeState::default(),
             superres: superres::SuperResState::default(),
+            erase: erase::EraseState::default(),
             models_synced: false,
             import: None,
             scan: None,
@@ -1132,6 +1143,7 @@ impl LightcraftApp {
         self.renderer.poll(ctx, &mut self.session);
         merge::poll(self, ctx);
         superres::poll(self, ctx);
+        erase::poll(self, ctx);
         self.sync_models();
         import::poll_scan(self, ctx);
         sync::poll(self, ctx);
@@ -1411,6 +1423,7 @@ impl LightcraftApp {
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         i18n::set_language(self.ui.language);
         let ctx = ui.ctx().clone();
+        panels::mobile::edit_menu_event(&ctx);
         if !self.fonts_ready {
             ctx.request_repaint();
             return;
