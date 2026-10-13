@@ -1048,13 +1048,23 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                 body_h = dialog_body(ui, (!import).then_some(title.as_str()), body_max, &mut body);
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
+                    // Studio: capsules, the action in the accent colour (as on the admin page)
+                    let capsule = |text: egui::WidgetText| {
+                        let b = egui::Button::new(text);
+                        if t.cards() { b.corner_radius(t.button_radius).min_size(egui::vec2(64.0, 26.0)) } else { b }
+                    };
                     if !informational {
-                        let r = ui.button(crate::i18n::tr(cancel));
+                        let r = ui.add(capsule(crate::i18n::tr(cancel).into()));
                         crate::widgets::register(ui.ctx(), "button:dialogCancel", r.rect);
                         cancel_tapped = r.clicked();
                     }
                     if !ok.is_empty() {
-                        let r = ui.add_enabled(can_confirm, egui::Button::new(ok.as_str()));
+                        let button = if t.cards() && can_confirm {
+                            capsule(egui::RichText::new(ok.as_str()).color(egui::Color32::WHITE).strong().into()).fill(t.accent)
+                        } else {
+                            capsule(ok.as_str().into())
+                        };
+                        let r = ui.add_enabled(can_confirm, button);
                         crate::widgets::register(ui.ctx(), "button:dialogOk", r.rect);
                         ok_tapped = r.clicked();
                     }

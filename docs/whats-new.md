@@ -2,6 +2,14 @@
 
 ## 2026-10-13
 
+### Studio: a new look, in light and dark
+- Settings ▸ Interface (and View ▸ Appearance) has a new theme in each family, **Studio Light** and **Studio Dark**,
+  in the style of the server's admin page. The panels float as rounded cards on a soft backdrop, with the tool strip as a
+  card of its own beside them. Buttons are borderless capsules, and a dialog's main action is blue.
+  Fields, menus and dialogs are rounder, and sliders fill from their default to a solid handle, so you can see at a
+  glance how far a setting has moved. The photo's canvas stays a quiet neutral grey.
+- Charcoal, Midnight, Silver and Paper look exactly as before. Each theme card's preview shows the Studio layout.
+
 ### Double-click a panel border to reset its width
 - Double-clicking the border you drag to resize the Library, Tools or Presets panel puts that panel back at its usual width.
 

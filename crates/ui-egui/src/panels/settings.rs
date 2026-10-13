@@ -1247,42 +1247,38 @@ fn theme_card<V: PartialEq + Copy>(
 
 /// A small LightCraft window painted with `kind`'s tokens: the top bar with its search field, the
 /// photo with the filmstrip under it, the Edit panel (histogram and sliders), the tool strip and
-/// the bottom bar.
+/// the bottom bar. A Studio theme's preview shows its panels as cards on the backdrop.
 fn theme_preview(ui: &mut egui::Ui, kind: crate::theme::ThemeKind, width: f32) {
     use egui::{Color32, Rect, Stroke, StrokeKind, pos2, vec2};
     let p = Tokens::for_kind(kind);
     let (rect, _) = ui.allocate_exact_size(vec2(width, (width * 0.56).round().min(130.0)), egui::Sense::hover());
     let painter = ui.painter_at(rect);
     let bar = |y: f32, x: f32, w: f32, c: Color32| painter.rect_filled(Rect::from_min_size(pos2(x, y), vec2(w, 2.0)), 1.0, c);
-    painter.rect_filled(rect, 3.0, p.canvas);
+    // (cards: the gap between them and their rounding, at this scale)
+    let cards = p.cards();
+    let (gap, round) = if cards { (2.0, 2.5) } else { (0.0, 0.0) };
+    painter.rect_filled(rect, 3.0, if cards { p.backdrop } else { p.canvas });
     // top bar: sidebar and back icons, the centred search field, icons on the right
     let top = Rect::from_min_size(rect.min, vec2(rect.width(), 13.0));
-    painter.rect_filled(top, 0.0, p.chrome);
+    painter.rect_filled(top, 0.0, p.backdrop);
     for x in [6.0, 14.0, 20.0] {
         painter.rect_filled(Rect::from_min_size(top.min + vec2(x, 4.5), vec2(4.0, 4.0)), 1.0, p.icon);
     }
     let search = Rect::from_center_size(top.center(), vec2(rect.width() * 0.34, 8.0));
-    painter.rect(search, 2.0, p.field, Stroke::new(1.0, p.field_border), StrokeKind::Inside);
+    painter.rect(search, if cards { 4.0 } else { 2.0 }, p.field, Stroke::new(1.0, p.field_border), StrokeKind::Inside);
     bar(search.center().y - 1.0, search.center().x - 9.0, 18.0, p.text_dim);
     for i in 0..4 {
         painter.rect_filled(Rect::from_min_size(pos2(top.right() - 10.0 - i as f32 * 9.0, top.top() + 4.5), vec2(4.0, 4.0)), 2.0, p.icon);
     }
-    // bottom bar: view buttons, rating stars, a button
-    let bottom = Rect::from_min_max(pos2(rect.left(), rect.bottom() - 12.0), rect.max);
-    painter.rect_filled(bottom, 0.0, p.chrome);
-    for x in [6.0, 13.0, 20.0] {
-        painter.rect_filled(Rect::from_min_size(bottom.min + vec2(x, 4.0), vec2(4.0, 4.0)), 1.0, p.icon);
+    let body = Rect::from_min_max(pos2(rect.left() + gap, top.bottom()), pos2(rect.right() - gap, rect.bottom() - gap));
+    // tool strip on the right edge, the first tool (Edit) active; the bottom bar runs under it
+    // unless the photo is a card of its own, which holds the bottom bar
+    let strip_bottom = if cards { body.bottom() } else { body.bottom() - 12.0 };
+    let strip = Rect::from_min_max(pos2(body.right() - 12.0, body.top()), pos2(body.right(), strip_bottom));
+    painter.rect_filled(strip, round, p.chrome);
+    if !cards {
+        painter.line_segment([strip.left_top(), strip.left_bottom()], Stroke::new(1.0, p.divider));
     }
-    let stars_x = bottom.center().x - 30.0;
-    for i in 0..5 {
-        painter.circle_filled(pos2(stars_x + i as f32 * 5.0, bottom.center().y), 1.4, p.star);
-    }
-    let copy = Rect::from_min_size(pos2(stars_x + 28.0, bottom.top() + 2.5), vec2(30.0, 7.0));
-    painter.rect(copy, 3.0, p.button, Stroke::new(1.0, p.button_border), StrokeKind::Inside);
-    // tool strip on the right edge, the first tool (Edit) active
-    let strip = Rect::from_min_max(pos2(rect.right() - 12.0, top.bottom()), pos2(rect.right(), bottom.top()));
-    painter.rect_filled(strip, 0.0, p.chrome);
-    painter.line_segment([strip.left_top(), strip.left_bottom()], Stroke::new(1.0, p.divider));
     for i in 0..5 {
         let r = Rect::from_min_size(pos2(strip.left() + 3.0, strip.top() + 4.0 + i as f32 * 9.0), vec2(6.0, 6.0));
         if i == 0 {
@@ -1291,9 +1287,12 @@ fn theme_preview(ui: &mut egui::Ui, kind: crate::theme::ThemeKind, width: f32) {
         painter.rect_stroke(r, 1.0, Stroke::new(1.0, if i == 0 { p.text } else { p.icon }), StrokeKind::Inside);
     }
     // Edit panel: histogram, then labelled sliders
-    let panel = Rect::from_min_max(pos2(strip.left() - (rect.width() * 0.27).round(), top.bottom()), pos2(strip.left(), bottom.top()));
-    painter.rect_filled(panel, 0.0, p.chrome);
-    painter.line_segment([panel.left_top(), panel.left_bottom()], Stroke::new(1.0, p.divider));
+    let panel_right = strip.left() - gap;
+    let panel = Rect::from_min_max(pos2(panel_right - (rect.width() * 0.27).round(), body.top()), pos2(panel_right, strip_bottom));
+    painter.rect_filled(panel, round, p.chrome);
+    if !cards {
+        painter.line_segment([panel.left_top(), panel.left_bottom()], Stroke::new(1.0, p.divider));
+    }
     let hist = Rect::from_min_size(panel.min + vec2(4.0, 4.0), vec2(panel.width() - 8.0, 14.0));
     painter.rect_filled(hist, 1.0, p.inset);
     let curve = [0.2, 0.55, 0.9, 0.7, 0.5, 0.62, 0.4, 0.3, 0.18, 0.1];
@@ -1321,13 +1320,43 @@ fn theme_preview(ui: &mut egui::Ui, kind: crate::theme::ThemeKind, width: f32) {
         bar(y, panel.left() + 5.0, 12.0, p.text_label);
         bar(y, panel.right() - 10.0, 5.0, p.text_dim);
         let track_y = y + 5.0;
-        painter.line_segment([pos2(panel.left() + 5.0, track_y), pos2(panel.right() - 5.0, track_y)], Stroke::new(1.0, p.track));
-        painter.circle_filled(pos2(panel.left() + 5.0 + (panel.width() - 10.0) * v, track_y), 1.8, p.thumb);
+        let (from, to) = (panel.left() + 5.0, panel.right() - 5.0);
+        let x = from + (to - from) * v;
+        if p.filled_sliders {
+            // a rounded track, filled from its middle (the default) to the handle
+            painter.line_segment([pos2(from, track_y), pos2(to, track_y)], Stroke::new(1.5, p.track));
+            let mid = (from + to) / 2.0;
+            painter.line_segment([pos2(mid.min(x), track_y), pos2(mid.max(x), track_y)], Stroke::new(1.5, p.thumb));
+            painter.circle_filled(pos2(x, track_y), 2.2, p.thumb);
+        } else {
+            painter.line_segment([pos2(from, track_y), pos2(to, track_y)], Stroke::new(1.0, p.track));
+            painter.circle_filled(pos2(x, track_y), 1.8, p.thumb);
+        }
         y += 10.0;
     }
-    // the photo (its own colours: a photo looks the same in every theme) above the filmstrip
-    let film = Rect::from_min_max(pos2(rect.left(), bottom.top() - 18.0), pos2(panel.left(), bottom.top()));
-    let stage = Rect::from_min_max(pos2(rect.left(), top.bottom()), pos2(panel.left(), film.top()));
+    // the photo card (its own colours: a photo looks the same in every theme) above the filmstrip,
+    // above the bottom bar: view buttons, rating stars, a button
+    let photo_card = Rect::from_min_max(pos2(body.left(), body.top()), pos2(panel.left() - gap, body.bottom()));
+    let bottom = if cards {
+        Rect::from_min_max(pos2(photo_card.left(), photo_card.bottom() - 12.0), photo_card.max)
+    } else {
+        Rect::from_min_max(pos2(rect.left(), rect.bottom() - 12.0), rect.max)
+    };
+    let film = Rect::from_min_max(pos2(photo_card.left(), bottom.top() - 18.0), pos2(photo_card.right(), bottom.top()));
+    let stage = Rect::from_min_max(photo_card.min, pos2(photo_card.right(), film.top()));
+    if cards {
+        painter.rect_filled(photo_card, round, p.canvas);
+    }
+    painter.rect_filled(bottom, egui::CornerRadius { nw: 0, ne: 0, sw: round as u8, se: round as u8 }, p.chrome);
+    for x in [6.0, 13.0, 20.0] {
+        painter.rect_filled(Rect::from_min_size(bottom.min + vec2(x, 4.0), vec2(4.0, 4.0)), 1.0, p.icon);
+    }
+    let stars_x = bottom.center().x - 30.0;
+    for i in 0..5 {
+        painter.circle_filled(pos2(stars_x + i as f32 * 5.0, bottom.center().y), 1.4, p.star);
+    }
+    let copy = Rect::from_min_size(pos2(stars_x + 28.0, bottom.top() + 2.5), vec2(30.0, 7.0));
+    painter.rect(copy, if cards { 3.5 } else { 3.0 }, p.button, Stroke::new(1.0, p.button_border), StrokeKind::Inside);
     let photo = Rect::from_center_size(stage.center(), vec2(stage.width() * 0.62, stage.height() - 8.0));
     painter.rect_filled(photo, 0.0, Color32::from_rgb(0x6f, 0x8f, 0xb4));
     let horizon = photo.top() + photo.height() * 0.62;
