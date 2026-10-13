@@ -19,8 +19,8 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 |---|---:|---:|---:|---:|---:|
 | S0 | 8 | 7 | 0 | 0 | 8/15 |
 | S1 | 0 | 0 | 168 | 0 | 0/168 |
-| S2 | 0 | 0 | 80 | 22 | 22/102 |
-| **Total** | 8 | 7 | 248 | 22 | 30/285 |
+| S2 | 0 | 0 | 80 | 23 | 23/103 |
+| **Total** | 8 | 7 | 248 | 23 | 31/286 |
 <!-- /ios-parity:summary -->
 
 ## Screens
@@ -322,3 +322,4 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | dialog:SynchronizeFolder | S2 | 🚫 |  | no watched folders in the iOS sandbox |
 | dialog:About | S1 | ⬜ |  |  |
 | dialog:Shortcuts | S2 | ⬜ |  |  |
+| dialog:EditIn | S2 | 🚫 |  | no external editors on iOS |
