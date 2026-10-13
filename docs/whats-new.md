@@ -34,6 +34,20 @@
 ### Double-click a panel border to reset its width
 - Double-clicking the border you drag to resize the Library, Tools or Presets panel puts that panel back at its usual width.
 
+### Storage counts the photos in your server's library folders
+- A library of 192,870 photos on a server read as using 104 GB: the admin page, Settings ▸ Sync ▸ Storage and the
+  cloud popover counted only what LightCraft keeps itself (previews, and originals devices uploaded) and left out the
+  2.5 TB of photos in the library folders, which the server reads where they are. The total now counts them. Settings
+  lists the library folders just above the total; the popover and the admin page's user page say how much of the total
+  they are; the Users and Storage pages show the same figure.
+- The bar still shows the server's disk: the library folders are drawn in it only when they are on the same disk as the
+  server's data. Redeploy the server as well as updating the app: the admin page's numbers come from the server.
+
+### A long album name on the phone is cut short
+- The title above the photo grid on a phone ran under the filter and sort buttons when the album, folder or collection
+  had a long name ("Manifestación Vivienda" lost its end). It is now cut short with … before the ▾ and the buttons;
+  tapping it still opens the albums list.
+
 ### Light themes: no more black borders
 - The borders between panels, and the bar above the filmstrip, were black in Silver and Paper; they now use each theme's own
   divider colour. The format label on Square Grid cells is readable in the light themes too.
