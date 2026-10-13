@@ -8,6 +8,7 @@
 
 pub mod album_picker;
 pub mod brush_live;
+pub mod camera_import;
 pub mod control;
 pub mod credits;
 pub mod date_picker;
@@ -58,11 +59,13 @@ mod tests_ai_search;
 #[cfg(test)]
 mod tests_album_picker;
 #[cfg(test)]
+mod tests_albums_phone;
+#[cfg(test)]
 mod tests_appearance;
 #[cfg(test)]
 mod tests_before_after;
 #[cfg(test)]
-mod tests_albums_phone;
+mod tests_camera_import;
 #[cfg(test)]
 mod tests_compact;
 #[cfg(test)]
@@ -171,6 +174,7 @@ use std::sync::mpsc::{Receiver, Sender};
 use lightcraft_engine::Session;
 use serde_json::Value;
 
+pub use camera_import::{CameraHost, CameraKind, CopyDone, HostCamera, HostContents, HostCopied, HostTransfer};
 pub use control::{ControlRequest, ControlResponse};
 pub use state::UiState;
 
@@ -328,6 +332,9 @@ pub struct Services {
     /// The host's own pickers (iOS: Photos, Files): File ▸ Import from Photos… / from Files… /
     /// Folder from Files…, and the compact grid's + button.
     pub host_pick: Option<HostPick>,
+    /// Cameras, phones and cards the host reads itself (iOS, macOS: ImageCaptureCore): File ▸
+    /// Import from Device, the phone's + ▸ Connected Camera/Card ([`camera_import`]).
+    pub cameras: Option<Box<dyn CameraHost>>,
     /// Plays haptic feedback (iOS: the Taptic Engine); the compact layout asks for it on touch
     /// gestures and choices (`haptics`).
     pub haptic: Option<haptics::PlayHaptic>,
@@ -486,6 +493,16 @@ pub struct LightcraftApp {
     pub import: Option<import::ImportTask>,
     /// A folder scan in progress (feeds the import review).
     pub scan: Option<import::ScanTask>,
+    /// Photos being copied off a camera, to be imported ([`camera_import`]).
+    pub camera_copy: Option<camera_import::CameraCopy>,
+    /// Cameras and cards seen connected, and since when the app has looked (s): a new one opens
+    /// the import ([`camera_import`]).
+    pub(crate) devices_seen: Option<(f64, std::collections::HashSet<String>)>,
+    /// Camera thumbnails that couldn't be had (not asked again in this review).
+    pub(crate) camera_thumbs_failed: std::collections::HashSet<render::Slot>,
+    /// The camera thumbnails held as textures, least recently drawn first
+    /// ([`camera_import::MAX_THUMBNAILS`]).
+    pub(crate) camera_thumbs: std::collections::VecDeque<render::Slot>,
     /// A Synchronize Folder scan in progress (feeds its dialog).
     pub sync: Option<sync::SyncTask>,
     /// `session.folder_changes` came from the Synchronize Folder dialog (and goes with it).
@@ -597,6 +614,10 @@ impl LightcraftApp {
             models_synced: false,
             import: None,
             scan: None,
+            camera_copy: None,
+            devices_seen: None,
+            camera_thumbs_failed: Default::default(),
+            camera_thumbs: Default::default(),
             sync: None,
             sync_owns_changes: false,
             sync_run: None,
@@ -1180,6 +1201,7 @@ impl LightcraftApp {
         erase::poll(self, ctx);
         self.sync_models();
         import::poll_scan(self, ctx);
+        camera_import::poll(self, ctx);
         sync::poll(self, ctx);
         sync::poll_run(self, ctx);
         import::tick(self, ctx);
@@ -1697,6 +1719,8 @@ pub struct Caches {
     counts: Option<(u64, LibraryCounts)>,
     date_groups: Option<(u64, std::sync::Arc<Vec<lightcraft_catalog::DateGroup>>)>,
     server_folders: Option<(u64, std::sync::Arc<std::collections::BTreeMap<String, usize>>)>,
+    /// The library's photos keyed to spot a camera's files it already has, by library revision.
+    library_index: camera_import::IndexCache,
     filter_values: Option<(u64, std::sync::Arc<FilterValues>)>,
     /// The phone Filter page's lists, with counts (`panels::filter_sheet`).
     filter_choices: Option<(u64, std::sync::Arc<panels::filter_sheet::Choices>)>,
@@ -1782,6 +1806,10 @@ impl Caches {
                 t
             }
         }
+    }
+    /// The library's photos keyed to spot a camera's files it already has.
+    pub fn library_index(&mut self, cat: &lightcraft_catalog::Catalog) -> std::sync::Arc<lightcraft_engine::devices::LibraryIndex> {
+        self.library_index.get(cat)
     }
     /// The library's keyword tree.
     pub fn keyword_tree(&mut self, cat: &lightcraft_catalog::Catalog) -> std::sync::Arc<Vec<lightcraft_catalog::KeywordNode>> {

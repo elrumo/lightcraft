@@ -13,11 +13,12 @@ import PackageDescription
 let rustLib = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent(".rust").path
 
 /// What the Rust code calls into: winit / wgpu (UIKit, Metal, QuartzCore…), lightcraft-ios-host
-/// (PhotosUI, Photos, ImageIO, UniformTypeIdentifiers), rustls' system bits (Security).
+/// (PhotosUI, Photos, ImageIO, UniformTypeIdentifiers), lightcraft-capture (ImageCaptureCore:
+/// cameras and card readers), rustls' system bits (Security).
 let frameworks = [
     "UIKit", "Foundation", "CoreFoundation", "CoreGraphics", "QuartzCore", "Metal", "MetalKit", "IOSurface",
     "CoreText", "Security", "AVFoundation", "CoreMedia", "CoreVideo",
-    "PhotosUI", "Photos", "ImageIO", "UniformTypeIdentifiers",
+    "PhotosUI", "Photos", "ImageIO", "UniformTypeIdentifiers", "ImageCaptureCore",
 ]
 
 let package = Package(

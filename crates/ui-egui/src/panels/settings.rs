@@ -909,6 +909,10 @@ fn cameras(app: &LightcraftApp) -> Vec<String> {
 
 fn import_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
     let d = app.session.import_defaults.clone();
+    heading(ui, t, crate::i18n::tr("Cameras and cards"));
+    row(ui, t, "", |ui| {
+        check(ui, "settings.importOnConnect", &mut app.ui.settings.import_on_connect, "Show the import when a camera or memory card is connected");
+    });
     heading(ui, t, crate::i18n::tr("Raw defaults"));
     hint(ui, t, crate::i18n::tr("Settings new raw photos start from. Changing them doesn't touch photos already in the library."));
     if let Some(v) = preset_combo(app, ui, t, "settingsRawPreset", crate::i18n::tr("Raw photos"), d.raw_preset.as_deref(), "LightCraft Default") {

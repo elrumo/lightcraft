@@ -270,5 +270,9 @@
   "Not carried over: {what}": "引き継がなかった設定：{what}",
   "{n} items": "{n} 項目",
   "{label}, {n} items": "{label}、{n} 項目",
-  "Add to {album}": "{album} に追加"
+  "Add to {album}": "{album} に追加",
+  "Reading {name}… {n} photos so far": "{name}を読み取り中… これまでに{n}枚",
+  "Photos not copied from {name}: {n}": "{name}からコピーできなかった写真：{n}枚",
+  "No photos could be copied from {name}": "{name}から写真をコピーできませんでした",
+  "{name} connected": "{name}が接続されました"
 }

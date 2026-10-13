@@ -270,5 +270,9 @@
   "Not carried over: {what}": "Не перенесено: {what}",
   "{n} items": "Елементів: {n}",
   "{label}, {n} items": "{label}, елементів: {n}",
-  "Add to {album}": "Додати до «{album}»"
+  "Add to {album}": "Додати до «{album}»",
+  "Reading {name}… {n} photos so far": "Читання {name}… поки що фото: {n}",
+  "Photos not copied from {name}: {n}": "Не скопійовано фото з {name}: {n}",
+  "No photos could be copied from {name}": "Не вдалося скопіювати фото з {name}",
+  "{name} connected": "{name} підключено"
 }

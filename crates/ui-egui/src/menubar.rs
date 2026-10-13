@@ -302,7 +302,9 @@ fn host_supports(app: &LightcraftApp, id: &str) -> bool {
         "app.saveToPhotos" => app.services.save_to_photos.is_some(),
         // the host's own pickers replace the desktop's file and folder dialogs (iOS)
         "file.importFromPhotos" | "file.importFromFiles" | "file.importFolderFromFiles" => app.services.host_pick.is_some(),
-        "file.addPhotos" | "file.addFolder" | "@Import from Device" => app.services.host_pick.is_none(),
+        "file.addPhotos" | "file.addFolder" => app.services.host_pick.is_none(),
+        // (iOS: the cameras and cards plugged into the iPad)
+        "@Import from Device" => app.services.host_pick.is_none() || app.services.cameras.is_some(),
         "photo.restore" | "photo.deletePermanently" => selection_deleted(app),
         "photo.delete" => !selection_deleted(app),
         // ⌫ in an album: the choice Delete Photo (⌘⌫) is the alternative to
@@ -621,12 +623,20 @@ fn expanded(app: &LightcraftApp, name: &str) -> Option<Vec<MenuNode>> {
             v
         }
         "Import from Device" => {
-            let devices = lightcraft_engine::devices::devices();
-            if devices.is_empty() {
-                vec![item("file.addFromDevice", Value::Null, "No Camera or Card Found", None, false, None)]
-            } else {
-                devices.into_iter().map(|d| item("file.addFromDevice", json!({"path": d.path}), format!("{}…", d.name), None, true, None)).collect()
+            // cards mounted as disks, then the cameras and phones the host reads itself (macOS)
+            let mut v: Vec<MenuNode> = lightcraft_engine::devices::devices()
+                .into_iter()
+                .map(|d| item("file.addFromDevice", json!({"path": d.path}), format!("{}…", d.name), None, true, None))
+                .collect();
+            v.extend(
+                crate::camera_import::cameras(app)
+                    .into_iter()
+                    .map(|c| item("file.addFromDevice", json!({"camera": c.id}), format!("{}…", c.name), None, true, None)),
+            );
+            if v.is_empty() {
+                v.push(item("file.addFromDevice", Value::Null, "No Camera or Card Found", None, false, None));
             }
+            v
         }
         "Metadata Preset" => {
             let sel = !app.session.selection.ids.is_empty() || has;
