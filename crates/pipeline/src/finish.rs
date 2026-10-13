@@ -1,7 +1,7 @@
 //! The per-pixel stage: everything after the spatial planes are ready, in one parallel pass.
 
-use lightcraft_color::luminance_2020;
 use lightcraft_color::Map3;
+use lightcraft_color::luminance_2020;
 use lightcraft_color::spline::{Lut1, MonotoneCurve};
 use lightcraft_color::transfer::linear_to_srgb;
 use lightcraft_develop::{DevelopSettings, LocalAdjustments, Process, ToneCurve, VignetteStyle};
