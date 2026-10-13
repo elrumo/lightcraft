@@ -21,6 +21,7 @@ lightcraft-pipeline = { workspace = true }
 lightcraft-catalog = { workspace = true }
 web-time = { workspace = true }
 lightcraft-engine = { workspace = true }
+lightcraft-apphost = { workspace = true }
 lightcraft-preview = { workspace = true }
 egui = { workspace = true }
 serde = { workspace = true }
