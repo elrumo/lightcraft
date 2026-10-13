@@ -11,6 +11,9 @@
 //!   dialog of their own (the MCP server's headless backend, the SwiftUI app).
 //! - [`startup`]: how a mobile app opens its library, sizes its memory budget and keeps its
 //!   staging folders (both iOS apps).
+//! - `host` (native only): the engine on a thread of its own, driven by JSON requests and
+//!   answering with events and leased pictures, for a frontend that isn't Rust (the SwiftUI app,
+//!   through the C ABI in `apps/lightcraft-ios-swift`).
 //!
 //! The rule (`CLAUDE.md`, *Non-negotiables*): when a second UI first needs logic that sits in
 //! `ui-egui`, it moves here (threads, scheduling, background pumps, post-command policy), to the
@@ -20,5 +23,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 pub mod export;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod host;
 pub mod render;
 pub mod startup;
