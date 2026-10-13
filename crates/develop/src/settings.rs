@@ -1163,6 +1163,17 @@ impl Hdr {
 }
 
 impl DevelopSettings {
+    /// These settings with profile `id` (at full amount when it is another profile): what a profile
+    /// browser's thumbnail shows.
+    pub fn with_profile(&self, id: &str) -> DevelopSettings {
+        let mut s = self.clone();
+        if s.profile.id != id {
+            s.profile.id = id.to_string();
+            s.profile.amount = 100.0;
+        }
+        s
+    }
+
     /// The settings an SDR render uses: unchanged when HDR is off; otherwise HDR off and the
     /// SDR rendition offsets applied to exposure, contrast, highlights, shadows, whites, clarity.
     pub fn sdr_rendition(&self) -> std::borrow::Cow<'_, DevelopSettings> {

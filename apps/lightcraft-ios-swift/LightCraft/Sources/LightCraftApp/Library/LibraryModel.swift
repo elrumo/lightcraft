@@ -20,6 +20,9 @@ final class LibraryModel {
 
     private var pages: [Int: [PhotoSummary]] = [:]
     private var loading: Set<Int> = []
+    /// Pages whose photos changed (a rating, an edit): kept (the loupe finds its photo in them) and
+    /// read again when they are next shown.
+    private var stale: Set<Int> = []
     /// Bumped when the photo list is another one: pages loading for the old list are dropped.
     private var generation = 0
     static let pageSize = 200
@@ -29,6 +32,7 @@ final class LibraryModel {
         guard index >= 0, index < count else { return nil }
         let page = index / Self.pageSize
         if let p = pages[page] {
+            if stale.contains(page), let engine { load(page, engine) }
             let i = index - page * Self.pageSize
             return i < p.count ? p[i] : nil
         }
@@ -62,6 +66,7 @@ final class LibraryModel {
             guard mine == generation else { return }
             loading.remove(page)
             if let result {
+                stale.remove(page)
                 pages[page] = result.photos
                 if result.total != count { count = result.total }
             }
@@ -77,6 +82,7 @@ final class LibraryModel {
         generation += 1
         pages.removeAll()
         loading.removeAll()
+        stale.removeAll()
         self.count = count
         await refreshState(engine)
         await reloadGroups(engine)
@@ -94,13 +100,12 @@ final class LibraryModel {
     func refresh(_ engine: Engine, keeping visible: Range<Int>?) async {
         let mine = generation
         let wanted = Set(visible.map { stride(from: $0.lowerBound / Self.pageSize, through: max($0.lowerBound, $0.upperBound - 1) / Self.pageSize, by: 1) }.map(Array.init) ?? [])
-        // pages off screen are read again when they come back
-        for page in pages.keys where !wanted.contains(page) {
-            pages[page] = nil
-        }
+        // pages off screen are read again when they are next shown (kept meanwhile)
+        stale.formUnion(pages.keys.filter { !wanted.contains($0) })
         for page in wanted.sorted() {
             let params: JSONValue = ["offset": .int(Int64(page * Self.pageSize)), "limit": .int(Int64(Self.pageSize))]
             guard let result = try? await engine.execute("catalog.query", params, as: PhotoPage.self), mine == generation else { continue }
+            stale.remove(page)
             pages[page] = result.photos
             count = result.total
         }

@@ -137,23 +137,12 @@ final class ImportModel {
         return out
     }
 
-    /// Move the staged files into the library, in the album the grid shows when it's a plain one.
+    /// Review the staged files (`import.scan`), then the review moves the chosen ones into the
+    /// library.
     private func importStaged(_ paths: [String], failed: Int, _ model: AppModel) async {
-        guard !paths.isEmpty else {
-            if failed > 0 { model.show(String(localized: "\(failed) photos couldn't be read"), error: true) }
-            return
-        }
-        var params: [String: JSONValue] = ["paths": .array(paths.map { .string($0) }), "mode": "move"]
-        if let album = model.plainAlbum {
-            params["album"] = .int(Int64(clamping: album))
-        }
-        guard let r = await model.run("library.import", .object(params)) else { return }
-        let imported = r["imported"].array?.count ?? 0
-        let duplicates = r["duplicates"].array?.count ?? 0
-        var parts = [String(localized: "Added \(imported) photos")]
-        if duplicates > 0 { parts.append(String(localized: "\(duplicates) already in the library")) }
-        if failed > 0 { parts.append(String(localized: "\(failed) couldn't be read")) }
-        model.show(parts.joined(separator: " · "))
+        if failed > 0 { model.show(String(localized: "\(failed) photos couldn't be read"), error: true) }
+        guard !paths.isEmpty else { return }
+        await model.reviewImport(paths)
     }
 }
 

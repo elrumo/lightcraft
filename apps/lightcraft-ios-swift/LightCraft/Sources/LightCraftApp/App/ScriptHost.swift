@@ -51,6 +51,13 @@ final class ScriptHost {
                 "photos": .int(Int64(clamping: model.library.count)),
                 "state": (try? JSONValue.encode(model.state)) ?? .null,
                 "perf": perf,
+                "images": [
+                    "thumbs": .int(Int64(model.images.pictures.keys.filter { $0.hasPrefix("thumb") }.count)),
+                    "requested": .int(Int64(model.thumbRequests)),
+                    "retained": .array(model.lastRetain.sorted().map { .int(Int64(clamping: $0)) }),
+                    "slots": .array(model.images.pictures.keys.sorted().prefix(40).map { .string($0) }),
+                    "failed": .object(model.images.failed.mapValues { .string($0) }),
+                ],
             ]
         case "ui.set":
             if let span = params["span"].string, let s = Prefs.GridSpan(rawValue: span) {

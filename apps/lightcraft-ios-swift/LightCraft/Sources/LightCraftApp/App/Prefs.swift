@@ -25,7 +25,7 @@ final class Prefs {
         mapTiles = store.object(forKey: "mapTiles") as? Bool ?? true
     }
 
-    enum Appearance: String, CaseIterable, Identifiable {
+    nonisolated enum Appearance: String, CaseIterable, Identifiable {
         case system, light, dark
         var id: String { rawValue }
         var label: LocalizedStringKey {
@@ -45,7 +45,7 @@ final class Prefs {
     }
 
     /// Years, Months or every photo (the capsule under the grid).
-    enum GridSpan: String, CaseIterable, Identifiable {
+    nonisolated enum GridSpan: String, CaseIterable, Identifiable {
         case years, months, all
         var id: String { rawValue }
         var label: LocalizedStringKey {
@@ -58,7 +58,7 @@ final class Prefs {
     }
 
     /// When a grid cell shows its rating, flag and label.
-    enum Badges: String, CaseIterable, Identifiable {
+    nonisolated enum Badges: String, CaseIterable, Identifiable {
         case auto, always, never
         var id: String { rawValue }
         var label: LocalizedStringKey {
@@ -71,7 +71,7 @@ final class Prefs {
     }
 
     /// What the loupe writes over a photo.
-    enum InfoOverlay: String, CaseIterable, Identifiable {
+    nonisolated enum InfoOverlay: String, CaseIterable, Identifiable {
         case off, file, exposure
         var id: String { rawValue }
         var label: LocalizedStringKey {

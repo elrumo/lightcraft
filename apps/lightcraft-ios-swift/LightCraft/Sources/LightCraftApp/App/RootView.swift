@@ -51,6 +51,9 @@ struct RootView: View {
         .overlay(alignment: .top) {
             ToastView()
         }
+        .overlay(alignment: .bottom) {
+            ActivityHUD()
+        }
         .preferredColorScheme(model.prefs.appearance.scheme)
     }
 
@@ -86,7 +89,7 @@ struct SheetContent: View {
         case .shareLink(let id, let name): ShareLinkSheet(album: id, name: name)
         case .about: AboutView()
         case .keywords: KeywordsSheet()
-        case .importReview: EmptyView()
+        case .importReview: ImportReviewSheet()
         case .history(let versions): HistorySheet(versions: versions)
         case .copySettings: CopySettingsSheet(pasteOnto: nil)
         case .pasteSettings(let ids): CopySettingsSheet(pasteOnto: ids)
@@ -122,6 +125,47 @@ struct ToastView: View {
             }
         }
         .animation(.snappy, value: model.toast)
+    }
+}
+
+/// What runs in the background (an import, a scan, an export when its page is closed) as a glass
+/// capsule over the bottom: how far it is, and ✕.
+struct ActivityHUD: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        let rows = model.activity.filter { ["import", "scan", "previews", "download"].contains($0.kind) || ($0.kind == "export" && model.sheet?.id != "export") }
+        VStack(spacing: 6) {
+            ForEach(rows) { row in
+                HStack(spacing: 10) {
+                    if row.total > 0 {
+                        ProgressView(value: Double(row.done), total: Double(row.total)).frame(width: 70)
+                    } else {
+                        ProgressView()
+                    }
+                    Group {
+                        if row.total > 0 {
+                            Text("\(Text(LocalizedStringKey(row.label))) \(row.done)/\(row.total)")
+                        } else {
+                            Text(LocalizedStringKey(row.label))
+                        }
+                    }
+                    .font(.footnote).lineLimit(1)
+                    if row.cancellable {
+                        Button("Cancel", systemImage: "xmark.circle.fill") {
+                            model.perform("activity.cancel", ["id": .int(Int64(clamping: row.id))])
+                        }
+                        .labelStyle(.iconOnly)
+                        .disabled(row.cancelling)
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .glassEffect(.regular, in: .capsule)
+            }
+        }
+        .padding(.bottom, model.path.isEmpty ? 84 : 120)
+        .animation(.snappy, value: rows.map(\.id))
     }
 }
 

@@ -30,10 +30,15 @@ struct HistorySheet: View {
                                 model.perform("version.restore", ["index": .int(Int64(i))])
                                 dismiss()
                             } label: {
-                                VStack(alignment: .leading) {
-                                    Text(v.name)
-                                    if let created = v.created {
-                                        Text(InfoPanel.date(created)).font(.caption).foregroundStyle(.secondary)
+                                HStack(spacing: 12) {
+                                    VariantPreview(which: ["version": .int(Int64(i))])
+                                        .frame(width: 64, height: 44)
+                                        .clipShape(.rect(cornerRadius: 6))
+                                    VStack(alignment: .leading) {
+                                        Text(v.name)
+                                        if let created = v.created {
+                                            Text(InfoPanel.date(created)).font(.caption).foregroundStyle(.secondary)
+                                        }
                                     }
                                 }
                             }

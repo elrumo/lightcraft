@@ -52,12 +52,12 @@ struct CropOverlay: View {
         .overlay {
             Color.clear
                 .contentShape(Rectangle())
-                .gesture(dragGesture)
-                .onTapGesture(count: 2) { location in
-                    if let c = screenCorners, Path({ p in p.addLines(c); p.closeSubpath() }).contains(location) {
+                .highPriorityGesture(dragGesture)
+                .simultaneousGesture(SpatialTapGesture(count: 2).onEnded { tap in
+                    if let c = screenCorners, Path({ p in p.addLines(c); p.closeSubpath() }).contains(tap.location) {
                         model.perform("crop.reset")
                     }
-                }
+                })
         }
         .task(id: model.state.catalogRevision) { await load() }
         .accessibilityElement()
@@ -86,7 +86,7 @@ struct CropOverlay: View {
         return crop.straight(x: n.x, y: n.y)
     }
 
-    private struct CropDrag: Equatable {
+    private nonisolated struct CropDrag: Equatable {
         /// `topLeft`…`left`, `move`, or `rotate`.
         let handle: String
         let start: [Double]

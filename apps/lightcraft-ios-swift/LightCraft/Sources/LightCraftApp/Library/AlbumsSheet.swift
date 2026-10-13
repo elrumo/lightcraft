@@ -192,7 +192,8 @@ struct AlbumRowLabel: View {
                     }
                 }
                 .clipShape(.rect(cornerRadius: 8))
-                .task(id: cover) { if let cover { model.requestThumb(cover, edge: 256) } }
+                .task(id: cover) { if let cover { model.wantThumb(cover, edge: 256) } }
+                .onDisappear { if let cover { model.thumbDisappeared(cover) } }
             VStack(alignment: .leading, spacing: 1) {
                 Text(title).foregroundStyle(.primary)
                 if let count {

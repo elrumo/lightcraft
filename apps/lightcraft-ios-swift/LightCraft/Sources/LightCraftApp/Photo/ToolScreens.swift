@@ -408,7 +408,7 @@ struct MaskAdjustments: View {
         }
     }
 
-    private struct Key: Hashable {
+    private nonisolated struct Key: Hashable {
         let mask: JSONValue
         let revision: UInt64
     }
@@ -463,8 +463,14 @@ struct RemoveTools: View {
                 }
             }
             .padding(.horizontal, 16)
-            Text(spots.isEmpty ? String(localized: "Paint over what to take away.") : String(localized: "^[\(spots.count) spot](inflect: true) · tap a pin for more"))
-                .font(.footnote).foregroundStyle(.secondary)
+            Group {
+                if spots.isEmpty {
+                    Text("Paint over what to take away.")
+                } else {
+                    Text("^[\(spots.count) spot](inflect: true) · tap a pin for more")
+                }
+            }
+            .font(.footnote).foregroundStyle(.secondary)
             ScreenBar(title: "Remove", base: base)
         }
         .padding(.top, 8)

@@ -18,9 +18,9 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | Phase | ✅ | 🟡 | ⬜ | 🚫 | Done or out of scope |
 |---|---:|---:|---:|---:|---:|
 | S0 | 9 | 6 | 0 | 0 | 9/15 |
-| S1 | 62 | 21 | 84 | 0 | 62/167 |
+| S1 | 70 | 16 | 81 | 0 | 70/167 |
 | S2 | 1 | 0 | 79 | 22 | 23/102 |
-| **Total** | 72 | 27 | 163 | 22 | 94/284 |
+| **Total** | 80 | 22 | 160 | 22 | 102/284 |
 <!-- /ios-parity:summary -->
 
 ## Screens
@@ -44,12 +44,12 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | screen:compact.gridPinch | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/GridView.swift` | pinch through 1, 2, 3, 4, 5, 7, 10, 14 columns, selection haptic per step |
 | screen:compact.gridDates | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/DateBlocksView.swift`, `crates/engine/src/tests_libops.rs` | Years / Months / All capsule; Months and Years from `library.blocks` (moved from egui) |
 | screen:compact.scrubber | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/GridView.swift` | over 200 photos: a handle down the right edge with the month in a bubble |
-| screen:compact.tool.presets | S1 | 🟡 | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/Panels.swift` | groups, favourites, user presets, Amount 0–200 %, create, update, delete; no live preview thumbnails yet |
+| screen:compact.tool.presets | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/Panels.swift`, `crates/apphost/src/host/tests.rs` | groups, favourites, user presets with live previews of the photo (`render.variant`), Amount 0–200 %, create, update, delete |
 | screen:compact.tool.crop | S1 | 🟡 | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/ToolScreens.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/CropOverlay.swift` | frame with handles over the whole photo (`crop.drag`, rotate outside, double tap resets), dial, auto, lock, rotate, flips, aspect tiles and ratios, Geometry tab (Upright, sliders, Constrain Crop), ✕ undoes to where it opened (`edit.undoTo`); no guided upright or straighten line yet |
 | screen:compact.tool.masking | S1 | 🟡 | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/ToolScreens.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/MaskCanvas.swift` | create (subject, sky, background, gradients, ranges, brush), select, hide, invert, duplicate, delete, adjustments from `mask.controls`, brush painting, colour range sampling; no gradient handles or combine yet |
 | screen:compact.tool.remove | S1 | 🟡 | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/ToolScreens.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/RemoveCanvas.swift` | Remove / Heal / Clone, size, feather, opacity, paint on the photo, pins (mode, new source, delete, move), Find Dust, Delete All; no Visualize Spots yet |
 | screen:compact.tool.info | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/Panels.swift` | file, date, size, camera, lens, exposure, place (→ Map), rating, flag, label, title, caption, keywords |
-| screen:compact.edit.profile | S1 | 🟡 | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/EditGroupPanel.swift` | profile menu by group with favourites and recent, favourite toggle, Amount; no browser with thumbnails yet |
+| screen:compact.edit.profile | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/EditGroupPanel.swift` | profile browser: groups, favourites, recent, live thumbnails (`render.variant`), Amount |
 | screen:compact.edit.color | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/EditGroupPanel.swift`, `crates/engine/src/tests_libops.rs` | white balance presets, picker (tap → `develop.wbPick`), B&W, Temp/Tint on the photo's own scale (`develop.controls`: Kelvin for raws, relative for rendered files), Vibrance, Saturation, flyouts |
 | screen:compact.edit.effects | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/EditGroupPanel.swift` | Texture, Clarity, Dehaze, vignette style and sliders, grain |
 | screen:compact.edit.detail | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/EditGroupPanel.swift` | every Detail slider from the engine (AI Denoise isn't in the iOS build) |
@@ -60,8 +60,8 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | screen:compact.edit.grading | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/EditGroupPanel.swift` | Shadows / Midtones / Highlights / Global wheel (one undo step a drag, double tap resets), luminance, Blending, Balance |
 | screen:compact.edit.pointColor | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/CurveEditor.swift`, `crates/engine/src/tests_color.rs` | eyedropper (tap the photo), swatches from `pointColor.list`, shifts and ranges, delete |
 | screen:compact.undoMenu | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/HistorySheet.swift` | Undo and Redo side by side (the menu stays open), Reset, Versions, History |
-| screen:compact.export | S1 | 🟡 | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Share/ExportSheet.swift` | the photos, Share (system share sheet), Save to Photos (add-only), file type, size, quality, watermark, metadata, location; exports run on the engine thread, no progress card or presets yet |
-| screen:compact.importReview | S1 | ⬜ |  |  |
+| screen:compact.export | S1 | 🟡 | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Share/ExportSheet.swift` | the photos, Share (system share sheet), Save to Photos (add-only), file type, size, quality, watermark, metadata, location; exports run in the background with progress and Cancel; no export presets or More Options page yet |
+| screen:compact.importReview | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Share/ImportReview.swift`, `crates/apphost/src/host/tests.rs` | Photos / Files / folder picks scanned (`import.scan`), three across with checks and thumbnails, duplicates, in library and Recently Deleted marked; album (or a new one), keywords, preset, what to do with deleted ones; imported in the background (`import.start`, one undo step) |
 | screen:compact.settings | S1 | 🟡 | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | the library, General, Import, Performance, Interface, Sync, AI Models; no Faces section yet |
 | screen:compact.sync | S1 | 🟡 | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift`, `crates/apphost/src/sync.rs` | sign in, account, Sync Now, pause, On This Device options, shared links, sign out, the cloud button and status page, the conflict choice; the host drives the sync (shared with egui); no storage section yet |
 | screen:compact.people | S1 | 🟡 | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/PeopleView.swift`, `crates/apphost/src/faces.rs` | people and unnamed groups, name a group, a person's photos; the host paces the face scan; face crops aren't rendered yet (the photo is shown) |
@@ -149,7 +149,7 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | ui:view.infoOverlay | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | Settings ▸ Interface ▸ Info Overlay |
 | ui:view.navigator | S2 | ⬜ |  |  |
 | ui:panel.edit | S0 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | the tool bar |
-| ui:panel.profiles | S1 | ⬜ |  |  |
+| ui:panel.profiles | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/EditGroupPanel.swift` | Edit ▸ Profile |
 | ui:panel.crop | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | the tool bar |
 | ui:panel.remove | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | the tool bar |
 | ui:panel.masking | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | the tool bar |
@@ -219,9 +219,9 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | ui:view.gridColumns | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/GridView.swift` | pinch |
 | ui:view.gridSpan | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LibraryScreen.swift` | Years / Months / All |
 | ui:file.addPhotos | S1 | ⬜ |  |  |
-| ui:file.importFromPhotos | S1 | 🟡 | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Share/ImportModel.swift` | the Photos picker (originals), imported at once; no review page yet |
-| ui:file.importFromFiles | S1 | 🟡 | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Share/ImportModel.swift` | the Files picker, imported at once; no review page yet |
-| ui:file.importFolderFromFiles | S1 | 🟡 | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Share/ImportModel.swift` | a folder from Files (≤ 5000 photos, 12 levels), imported at once |
+| ui:file.importFromPhotos | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Share/ImportModel.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Share/ImportReview.swift` | the Photos picker (originals), then the review |
+| ui:file.importFromFiles | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Share/ImportModel.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Share/ImportReview.swift` | the Files picker, then the review |
+| ui:file.importFolderFromFiles | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Share/ImportModel.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Share/ImportReview.swift` | a folder (≤ 5000 photos, 12 levels), then the review |
 | ui:file.addFolder | S2 | 🚫 |  | the desktop folder dialog; iOS uses `file.importFolderFromFiles` |
 | ui:file.importLightroom | S2 | ⬜ |  |  |
 | ui:file.addFromDevice | S2 | ⬜ |  |  |
@@ -285,7 +285,7 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | dialog:RenameAlbum | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/AlbumsSheet.swift` | an album's menu ▸ Rename… |
 | dialog:TextPrompt | S1 | ⬜ |  |  |
 | dialog:CaptureTime | S2 | ⬜ |  |  |
-| dialog:Import | S1 | ⬜ |  |  |
+| dialog:Import | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Share/ImportReview.swift` | the phone review |
 | dialog:PresetImport | S1 | ⬜ |  |  |
 | dialog:LabelNames | S2 | ⬜ |  |  |
 | dialog:Rename | S2 | ⬜ |  |  |

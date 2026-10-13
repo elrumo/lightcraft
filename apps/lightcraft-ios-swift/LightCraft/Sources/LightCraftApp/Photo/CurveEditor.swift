@@ -117,7 +117,7 @@ private struct PointCurve: View {
         .accessibilityValue("\(shown.count) points")
     }
 
-    private struct SampleKey: Hashable {
+    private nonisolated struct SampleKey: Hashable {
         let channel: String
         let revision: UInt64
     }

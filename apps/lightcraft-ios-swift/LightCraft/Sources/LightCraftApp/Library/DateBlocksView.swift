@@ -47,7 +47,7 @@ struct DateBlocksView: View {
         .sensoryFeedback(.impact(weight: .light), trigger: span)
     }
 
-    private struct Key: Hashable {
+    private nonisolated struct Key: Hashable {
         let span: Prefs.GridSpan
         let gen: UInt64
         let rev: UInt64

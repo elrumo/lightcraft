@@ -58,11 +58,13 @@ struct PhotoPager: View {
     @Binding var review: Bool
     @State private var position: Int?
     @State private var zoomed = false
+    /// Where the photo opened is in the grid (found once: pages being read again mustn't lose it).
+    @State private var startIndex: Int?
 
     var body: some View {
         let library = model.library
         Group {
-            if let startIndex = library.index(of: start) {
+            if let startIndex = startIndex ?? library.index(of: start) {
                 ScrollView(.horizontal) {
                     LazyHStack(spacing: 0) {
                         ForEach(0..<library.count, id: \.self) { i in
@@ -76,7 +78,10 @@ struct PhotoPager: View {
                 .scrollIndicators(.hidden)
                 .scrollPosition(id: $position)
                 .scrollDisabled(zoomed || model.editor.dragging != nil || model.editor.tool?.hasScreen == true)
-                .onAppear { if position == nil { position = startIndex } }
+                .onAppear {
+                    if position == nil { position = startIndex }
+                    self.startIndex = startIndex
+                }
                 .onChange(of: position) { _, i in
                     guard let i, let photo = library.photo(at: i, model.engine) else { return }
                     Task { await model.select(photo.id) }
@@ -116,9 +121,10 @@ private struct PhotoPage: View {
                     .resizable()
                     .scaledToFit()
                     .padding(24)
-                    .task { model.requestThumb(photo.id, edge: 768) }
+                    .task { model.thumbAppeared(photo.id); model.requestThumb(photo.id, edge: 768) }
+                    .onDisappear { model.thumbDisappeared(photo.id) }
             } else {
-                ProgressView().task { model.requestThumb(photo.id, edge: 768) }
+                ProgressView().task { model.thumbAppeared(photo.id); model.requestThumb(photo.id, edge: 768) }
             }
         } else {
             ProgressView()
@@ -625,7 +631,7 @@ struct ToolScreenBar: View {
 
 #if os(iOS)
 /// A review swipe: which side, where it started, where it is.
-struct ReviewSwipe: Equatable {
+nonisolated struct ReviewSwipe: Equatable {
     let stars: Bool
     let startRating: Int
     let startFlag: Int

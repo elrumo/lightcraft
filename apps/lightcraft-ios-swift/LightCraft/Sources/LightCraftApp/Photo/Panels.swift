@@ -39,22 +39,27 @@ struct PresetsPanel: View {
                     }
                 )
             }
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: 8)], spacing: 8) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 84), spacing: 8)], spacing: 10) {
                 ForEach(shown) { preset in
                     Button {
                         applied = preset.id
                         amount = 100
                         apply(preset.id, amount: 100, replacing: false)
                     } label: {
-                        Text(preset.name)
-                            .font(.footnote.weight(.medium))
-                            .multilineTextAlignment(.center)
-                            .frame(maxWidth: .infinity, minHeight: 54)
-                            .padding(4)
-                            .background(applied == preset.id ? Color.accentColor.opacity(0.25) : Color(uiColor: .tertiarySystemFill), in: .rect(cornerRadius: 10))
-                            .overlay(alignment: .topTrailing) {
-                                if preset.favorite { Image(systemName: "star.fill").font(.caption2).padding(5).foregroundStyle(.yellow) }
-                            }
+                        VStack(spacing: 4) {
+                            VariantPreview(which: ["preset": .string(preset.id)])
+                                .aspectRatio(1, contentMode: .fit)
+                                .clipShape(.rect(cornerRadius: 10))
+                                .overlay {
+                                    if applied == preset.id { RoundedRectangle(cornerRadius: 10).strokeBorder(Color.accentColor, lineWidth: 2) }
+                                }
+                                .overlay(alignment: .topTrailing) {
+                                    if preset.favorite { Image(systemName: "star.fill").font(.caption2).padding(5).foregroundStyle(.yellow) }
+                                }
+                            Text(preset.name)
+                                .font(.caption2.weight(.medium))
+                                .lineLimit(1)
+                        }
                     }
                     .buttonStyle(.plain)
                     .contextMenu {
@@ -105,6 +110,33 @@ struct PresetsPanel: View {
             if replacing { await model.run("edit.undo") }
             await model.run("preset.apply", ["id": .string(id), "amount": .double(amount)])
         }
+    }
+}
+
+/// A preview of the active photo with a preset, a profile or a version (asked for again when the
+/// photo or its edits change).
+struct VariantPreview: View {
+    @Environment(AppModel.self) private var model
+    let which: JSONValue
+    @State private var slot: String?
+
+    var body: some View {
+        Color(uiColor: .tertiarySystemFill)
+            .overlay {
+                if let slot, let p = model.images.pictures[slot] {
+                    Image(decorative: p.image, scale: 1).resizable().scaledToFill()
+                }
+            }
+            .clipped()
+            .task(id: Key(which: which, photo: model.state.active, revision: model.state.catalogRevision)) {
+                if model.state.interaction == nil, let s = await model.requestVariant(which) { slot = s }
+            }
+    }
+
+    private nonisolated struct Key: Hashable {
+        let which: JSONValue
+        let photo: UInt64?
+        let revision: UInt64
     }
 }
 
@@ -190,7 +222,7 @@ struct InfoPanel: View {
         .task(id: Key(photo: model.state.active, revision: model.state.catalogRevision)) { await load() }
     }
 
-    private struct Key: Hashable {
+    private nonisolated struct Key: Hashable {
         let photo: UInt64?
         let revision: UInt64
     }

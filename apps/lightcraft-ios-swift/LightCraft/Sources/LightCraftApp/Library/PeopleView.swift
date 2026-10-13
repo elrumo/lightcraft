@@ -127,7 +127,8 @@ private struct FaceDisc: View {
                 }
             }
             .clipShape(Circle())
-            .task(id: photo) { if let photo { model.requestThumb(photo, edge: 256) } }
+            .task(id: photo) { if let photo { model.wantThumb(photo, edge: 256) } }
+            .onDisappear { if let photo { model.thumbDisappeared(photo) } }
     }
 }
 
@@ -248,7 +249,8 @@ private struct MapMarker: View {
                 }
             }
             .shadow(radius: 3)
-            .task(id: front) { if let front { model.requestThumb(front, edge: 128) } }
+            .task(id: front) { if let front { model.wantThumb(front, edge: 128) } }
+            .onDisappear { if let front { model.thumbDisappeared(front) } }
             .accessibilityLabel("\(count) photos")
     }
 }

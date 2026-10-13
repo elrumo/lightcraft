@@ -186,63 +186,66 @@ struct DateHeader: View {
     }
 }
 
-/// One square of the grid: the photo filling it, its marks, and whether it's chosen.
+/// One square of the grid: a placeholder until its page of photos has loaded, then the photo.
 struct GridCell: View {
     @Environment(AppModel.self) private var model
     let index: Int
+    let namespace: Namespace.ID
+
+    var body: some View {
+        if let photo = model.library.photo(at: index, model.engine) {
+            PhotoCell(photo: photo, namespace: namespace)
+        } else {
+            Color(uiColor: .secondarySystemBackground)
+                .aspectRatio(1, contentMode: .fit)
+        }
+    }
+}
+
+/// A photo in the grid: its picture filling the square, its marks, and whether it's chosen.
+struct PhotoCell: View {
+    @Environment(AppModel.self) private var model
+    let photo: PhotoSummary
     let namespace: Namespace.ID
     /// Pixels asked for on the long edge (the engine rounds it to its own sizes).
     private var edge: Int { model.prefs.gridColumns <= 2 ? 768 : 384 }
 
     var body: some View {
-        let photo = model.library.photo(at: index, model.engine)
+        let chosen = model.library.selected.contains(photo.id)
         Color(uiColor: .secondarySystemBackground)
             .aspectRatio(1, contentMode: .fit)
             .overlay {
-                if let photo, let picture = model.images.thumb(photo.id) {
+                if let picture = model.images.thumb(photo.id) {
                     Image(decorative: picture.image, scale: 1)
                         .resizable()
                         .scaledToFill()
                         .transition(.opacity)
                 }
             }
-            .overlay(alignment: .bottom) {
-                if let photo { CellBadges(photo: photo) }
+            .overlay(alignment: .bottom) { CellBadges(photo: photo) }
+            .overlay {
+                if photo.isReject { Color.black.opacity(0.45) }
             }
             .overlay {
-                if let photo, photo.isReject {
-                    Color.black.opacity(0.45)
-                }
-            }
-            .overlay {
-                if let photo, model.selectMode {
-                    SelectionMark(chosen: model.library.selected.contains(photo.id))
-                }
+                if model.selectMode { SelectionMark(chosen: chosen) }
             }
             .clipped()
             .contentShape(Rectangle())
-            .matchedTransitionSource(id: photo?.id ?? 0, in: namespace)
-            .task(id: TaskKey(photo: photo?.id, revision: model.state.catalogRevision)) {
-                // asked again when the library changes (an edit): the engine answers only what changed
-                if let id = photo?.id { model.requestThumb(id, edge: edge) }
-            }
-            .onAppear { if let id = photo?.id { model.thumbAppeared(id) } }
-            .onDisappear { if let id = photo?.id { model.thumbDisappeared(id) } }
-            .onTapGesture { tapped(photo) }
-            .onLongPressGesture(minimumDuration: 0.5) { longPressed(photo) }
+            .matchedTransitionSource(id: photo.id, in: namespace)
+            // on screen (render.retain keeps its render queued), and asked again when the library
+            // changes (an edit): the engine answers only what changed
+            .onAppear { model.thumbAppeared(photo.id) }
+            .onDisappear { model.thumbDisappeared(photo.id) }
+            .task(id: model.state.catalogRevision) { model.requestThumb(photo.id, edge: edge) }
+            .onTapGesture { tapped() }
+            .onLongPressGesture(minimumDuration: 0.5) { longPressed() }
             .accessibilityElement()
-            .accessibilityLabel(photo.map { $0.title ?? $0.fileName } ?? "")
+            .accessibilityLabel(photo.title ?? photo.fileName)
             .accessibilityAddTraits(.isButton)
-            .accessibilityAddTraits(model.selectMode && photo.map { model.library.selected.contains($0.id) } == true ? .isSelected : [])
+            .accessibilityAddTraits(model.selectMode && chosen ? .isSelected : [])
     }
 
-    private struct TaskKey: Hashable {
-        let photo: UInt64?
-        let revision: UInt64
-    }
-
-    private func tapped(_ photo: PhotoSummary?) {
-        guard let photo else { return }
+    private func tapped() {
         if model.selectMode {
             model.perform("library.select", ["ids": [.int(Int64(clamping: photo.id))], "mode": "toggle"])
         } else {
@@ -250,8 +253,7 @@ struct GridCell: View {
         }
     }
 
-    private func longPressed(_ photo: PhotoSummary?) {
-        guard let photo else { return }
+    private func longPressed() {
         if !model.selectMode {
             model.selectMode = true
             model.perform("library.select", ["ids": [.int(Int64(clamping: photo.id))]])

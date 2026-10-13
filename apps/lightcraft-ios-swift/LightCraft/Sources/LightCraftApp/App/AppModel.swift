@@ -56,7 +56,7 @@ nonisolated enum Sheet: Identifiable, Hashable {
 }
 
 /// A short message over the screen.
-struct Toast: Equatable {
+nonisolated struct Toast: Equatable {
     var text: String
     var error = false
     var id = UUID()
@@ -82,6 +82,8 @@ final class AppModel {
     var asking: String?
     /// Ask before moving these photos to Recently Deleted.
     var confirmDelete: [UInt64]?
+    /// The import review's files (`import.scan`), while it is open.
+    var importReview: ImportReviewData?
     let prefs = Prefs()
     let images = ImageStore()
     let library = LibraryModel()
@@ -191,9 +193,11 @@ final class AppModel {
             }
             return
         }
+        // a drag (slider, crop, brush) changes the catalog at every step: the grid follows once it ends
+        let changed = new.catalogRevision != old.catalogRevision || (old.interaction != nil && new.interaction == nil)
         if new.visibleGen != old.visibleGen {
             Task { await library.reload(engine, count: new.visibleCount) }
-        } else if new.catalogRevision != old.catalogRevision {
+        } else if changed && new.interaction == nil {
             Task {
                 await library.refresh(engine, keeping: visibleRange)
                 await library.refreshState(engine)
@@ -211,9 +215,20 @@ final class AppModel {
 
     // MARK: pictures
 
+    /// Thumbnails asked for and retain lists sent (automation: `ui.inspect`).
+    private(set) var thumbRequests = 0
+    private(set) var lastRetain: [UInt64] = []
+
     /// Ask for a grid thumbnail (cheap to repeat: the engine answers only what changed).
     func requestThumb(_ photo: UInt64, edge: Int) {
+        thumbRequests += 1
         engine?.send("render.thumb", ["photo": .int(Int64(clamping: photo)), "edge": .int(Int64(clamping: edge))])
+    }
+
+    /// A thumbnail on screen outside the grid (a cover, a marker…): kept by `render.retain`, asked for.
+    func wantThumb(_ photo: UInt64, edge: Int) {
+        thumbAppeared(photo)
+        requestThumb(photo, edge: edge)
     }
 
     func thumbAppeared(_ photo: UInt64) {
@@ -234,6 +249,7 @@ final class AppModel {
         Task {
             try? await Task.sleep(for: .milliseconds(250))
             retainScheduled = false
+            lastRetain = Array(visibleThumbs)
             engine?.send("render.retain", ["thumbs": .array(visibleThumbs.map { .int(Int64(clamping: $0)) })])
             images.trimThumbs(keeping: visibleThumbs)
         }
@@ -259,6 +275,15 @@ final class AppModel {
     func requestDraft() {
         guard let v = lastView else { return }
         requestView(v.photo, width: v.width, height: v.height, draft: true)
+    }
+
+    /// A preview of the active photo with a preset, a profile or a version (`render.variant`): the
+    /// slot its picture comes in.
+    func requestVariant(_ which: JSONValue, edge: Int = 160) async -> String? {
+        guard let engine else { return nil }
+        var p = which
+        p["edge"] = .int(Int64(edge))
+        return try? await engine.request("render.variant", p)["slot"].string
     }
 
     /// Prepare the photos either side of the loupe's.
@@ -332,6 +357,50 @@ final class AppModel {
     var plainAlbum: UInt64? {
         guard let s = library.state?.source, s.kind == "album", let id = s.id else { return nil }
         return albums.node(id)?.isPlain == true ? id : nil
+    }
+
+    // MARK: import
+
+    /// Scan `paths` (staged copies of what was picked) and open the review.
+    func reviewImport(_ paths: [String]) async {
+        guard let engine else { return }
+        importReview = nil
+        sheet = .importReview
+        do {
+            let r = try await engine.request("import.scan", ["paths": .array(paths.map { .string($0) })])
+            let candidates = r["candidates"].array ?? []
+            if candidates.isEmpty {
+                sheet = nil
+                show(String(localized: "No photos found"))
+            } else {
+                importReview = ImportReviewData(candidates: candidates)
+            }
+        } catch {
+            sheet = nil
+            show(error.localizedDescription, error: true)
+        }
+    }
+
+    /// Import what the review chose (`import.start`), in the background; say how it went.
+    func importChosen(_ params: JSONValue) async {
+        guard let engine else { return }
+        do {
+            let r = try await engine.request("import.start", params)
+            let n = { (k: String) in Int(r[k].int ?? 0) }
+            var parts: [String] = []
+            if r["cancelled"].bool == true {
+                parts.append(String(localized: "Import cancelled · \(n("imported")) added"))
+            } else if n("imported") == 0, n("restored") > 0 {
+                parts.append(String(localized: "Restored \(n("restored")) from Recently Deleted"))
+            } else {
+                parts.append(String(localized: "Imported \(n("imported")) photos"))
+            }
+            if n("duplicates") > 0 { parts.append(String(localized: "\(n("duplicates")) duplicates skipped")) }
+            if n("failed") > 0 { parts.append(String(localized: "\(n("failed")) not readable")) }
+            show(parts.joined(separator: " · "), error: n("failed") > 0 && n("imported") == 0)
+        } catch {
+            show(error.localizedDescription, error: true)
+        }
     }
 
     /// Ids as engine params.

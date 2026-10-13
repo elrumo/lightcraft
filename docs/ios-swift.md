@@ -30,8 +30,9 @@ engine, pipeline, catalog, … (shared with the desktop, web and egui iOS apps)
   owns it and runs every command, render request and background pump, as the egui app's UI thread does. Swift never
   waits on a lock held by background work.
 - **The host drives the background work.** Between requests the engine thread does what the egui app's frame loop does:
-  renders, saving, the activity stack and the self-hosted sync (`apphost::sync`, shared with egui: requests on worker
-  threads, answers applied on the engine thread, a pull when the app comes back to the front).
+  renders, saving, the activity stack, the self-hosted sync (`apphost::sync`: requests on worker threads, answers
+  applied on the engine thread, a pull when the app comes back to the front), the face scan's pace (`apphost::faces`),
+  exports (`apphost::export::Batch`) and imports (`apphost::import`), all shared with egui.
 - **Messages, not calls.** Swift sends JSON requests and reads JSON events from a queue it polls on a thread of its
   own (`EventPump`). Commands go through `Session::execute`, the entry point every frontend uses, so the Swift app gets
   every engine command (363) without binding code per command.
@@ -89,13 +90,17 @@ host's: `badRequest`, `unknownMethod`, `panic`, `closed`, `timeout`).
 
 | Method | Params | Does |
 |---|---|---|
-| `engine.execute` | `{command, params}` | any engine command, and `app.export` (Export Now) |
+| `engine.execute` | `{command, params}` | any engine command, and `app.export` (Export Now: on a worker with an activity row, ✕ stops it; answered when it ends, `cancelled` when stopped) |
+| `import.scan` | `{paths}` | the files and folders for the import review, scanned on a worker (answered when done: `{candidates}`, each with `inTrash`) |
+| `import.start` | `{paths \| indexes, …library.import params, albumName?}` | imports in the background in batches (one undo step; answered when done with what it added) |
 | `engine.commands` | | every command with whether it can run now and why not |
 | `host.state` | | the state below |
 | `host.lifecycle` | `{event}` | `resignActive`, `background` (save, pause the GPU, free memory), `active`, `memoryWarning`, `terminate` |
 | `render.thumb` | `{photo, edge, priority?}` | a grid thumbnail (embedded raw previews first; cheap to repeat) |
 | `render.view` | `{photo?, width, height, draft?, before?, applyCrop?}` | the loupe's picture (`main`; a stand-in in `preview` until it is there) |
 | `render.prefetch` | `{photos, width, height}` | prepares the neighbours |
+| `render.variant` | `{photo?, preset \| profile \| version, amount?, edge?}` | a preview of the photo with a preset, profile or version (slot `variant:<key>`) |
+| `render.candidate` | `{index, edge?}` | an import candidate's thumbnail (slot `import:<index>`) |
 | `render.cancel` | `{slots}` | stops rendering for slots |
 | `render.retain` | `{thumbs, max?}` | the thumbnails on screen (queued renders of others are dropped) |
 | `ui.reply` | `{id, result \| error}` | the app's answer to a `uiRequest` |

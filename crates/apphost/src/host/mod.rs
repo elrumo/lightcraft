@@ -17,6 +17,10 @@
 //! - `render.thumb {photo, edge, priority?}`, `render.view {photo?, width, height, draft?, before?,
 //!   applyCrop?}`, `render.prefetch {photos, width, height}`, `render.cancel {slots}`,
 //!   `render.retain {thumbs, max?}` — pictures arrive as `image` events.
+//! - `import.scan {paths}` — the files and folders for the import review (answered when the scan
+//!   ends: `{candidates}`, each with `inTrash`); `render.candidate {index, edge?}` — a candidate's
+//!   thumbnail (slot `import:<index>`); `import.start {paths | indexes, …library.import params,
+//!   albumName?}` — import in the background (answered when it ends: what it added).
 //! - `ui.reply {id, result | error}` — the frontend's answer to a `uiRequest` (automation).
 //!
 //! Between requests the thread drives what the egui app's frame loop drives: renders, saving, the
@@ -56,6 +60,8 @@ const ACTIVITY_EVERY: Duration = Duration::from_millis(100);
 const SCRIPT_TIMEOUT: Duration = Duration::from_secs(120);
 /// Priority of preparing the neighbouring photos (as the egui loupe does).
 const PREFETCH_PRIORITY: u32 = 4;
+/// How long a preview (`render.variant`) is asked for again while it hasn't rendered.
+const VARIANT_WANTED: Duration = Duration::from_secs(10);
 /// Thumbnails kept known to the scheduler beyond what `render.retain` lists.
 const MAX_THUMBS: usize = 600;
 
@@ -250,6 +256,55 @@ struct Engine {
     last_request: Instant,
     /// When face recognition's scan is pumped next ([`crate::faces`]).
     faces_next: Instant,
+    /// `app.export` running on its worker: answered when it ends.
+    export: Option<PendingExport>,
+    /// `import.scan` running on its worker, and the candidates of the last one (`render.candidate`).
+    scan: Option<PendingScan>,
+    candidates: Vec<lightcraft_engine::import::ImportCandidate>,
+    /// `import.start` running: answered when it ends.
+    import: Option<PendingImport>,
+    /// Wakes the thread (a worker has something for it).
+    wake: Sender<Msg>,
+    /// Previews asked for (`render.variant`) and not rendered yet: asked again every tick (the
+    /// scheduler drops variants nobody has asked for lately), for a while.
+    variants: HashMap<u64, (lightcraft_engine::media::RenderJob, Instant)>,
+}
+
+/// A scan for the import review the frontend asked for.
+struct PendingScan {
+    id: u64,
+    reply: Option<Sender<Event>>,
+    scan: crate::import::Scan,
+}
+
+/// An import the frontend asked for: its batches are added to the catalog on this thread as its
+/// worker readies them.
+struct PendingImport {
+    id: u64,
+    reply: Option<Sender<Event>>,
+    run: crate::import::Run,
+    tally: crate::import::Tally,
+    /// Its row in the activity stack (✕ stops it: no further files are started).
+    guard: lightcraft_engine::activity::TaskGuard,
+    undo0: usize,
+    cancelled: bool,
+}
+
+/// Wakes the engine thread when an import's worker has readied a batch.
+struct WakeOnReady(Sender<Msg>);
+
+impl crate::import::Watch for WakeOnReady {
+    fn ready(&self) {
+        let _ = self.0.send(Msg::Wake);
+    }
+}
+
+/// An export the frontend asked for, running in the background ([`crate::export::Batch`]): the
+/// request it answers when it ends.
+struct PendingExport {
+    id: u64,
+    reply: Option<Sender<Event>>,
+    batch: crate::export::Batch,
 }
 
 impl Engine {
@@ -275,6 +330,7 @@ impl Engine {
             None => Scheduler::default(),
         };
         let sync_wake = wake.clone();
+        let host_wake = wake.clone();
         sched.set_notify(Some(Arc::new(move || {
             let _ = wake.send(Msg::Wake);
         })));
@@ -301,6 +357,12 @@ impl Engine {
             in_front: true,
             last_request: Instant::now(),
             faces_next: Instant::now(),
+            export: None,
+            scan: None,
+            candidates: Vec::new(),
+            import: None,
+            wake: host_wake,
+            variants: HashMap::new(),
         })
     }
 
@@ -369,6 +431,22 @@ impl Engine {
             self.events.push(Event::UiRequest { id: self.next_ui, method: req.method, params: req.params }.to_value());
             return None;
         }
+        // scanning and importing run on workers: answered when they end
+        if req.method == "import.scan" || req.method == "import.start" {
+            let scan = req.method == "import.scan";
+            return lightcraft_engine::guard::catch(&format!("`{}`", req.method), || {
+                if scan { self.start_scan(id, call, &req.params) } else { self.start_import(id, call, &req.params) }
+            })
+            .unwrap_or_else(|e| Some(Event::err(id, ErrorBody::new("panic", e))));
+        }
+        // Export Now runs on a worker (its row in the activity stack, ✕ stops it): answered when it ends
+        if matches!(req.method.as_str(), "engine.execute" | "ui.menu.invoke" | "command")
+            && req.params.get("command").or(req.params.get("id")).and_then(Value::as_str) == Some("app.export")
+        {
+            let params = req.params.get("params").cloned().filter(|v| !v.is_null()).unwrap_or_else(|| json!({}));
+            return lightcraft_engine::guard::catch("`app.export`", || self.start_export(id, call, &params))
+                .unwrap_or_else(|e| Some(Event::err(id, ErrorBody::new("panic", e))));
+        }
         let method = req.method.clone();
         let result = lightcraft_engine::guard::catch(&format!("`{method}`"), || self.dispatch(&req.method, &req.params))
             .unwrap_or_else(|e| Err(ErrorBody::new("panic", e)));
@@ -386,9 +464,6 @@ impl Engine {
             "engine.execute" | "ui.menu.invoke" | "command" => {
                 let cmd = p.get("command").or(p.get("id")).and_then(Value::as_str).ok_or_else(|| bad("missing `command`"))?;
                 let params = p.get("params").cloned().filter(|v| !v.is_null()).unwrap_or_else(|| json!({}));
-                if cmd == "app.export" {
-                    return crate::export::export_now(&mut self.session, &params, &mut |_, _, _| true).map_err(|e| ErrorBody::new("other", e));
-                }
                 self.session.execute(cmd, &params).map_err(|e| ErrorBody::engine(&e))
             }
             "engine.commands" => {
@@ -440,6 +515,41 @@ impl Engine {
                 self.busy = true;
                 Ok(json!({"slot": slot.name()}))
             }
+            "render.candidate" => {
+                let i = p.get("index").and_then(Value::as_u64).ok_or_else(|| bad("missing `index`"))?;
+                let edge = size(p.get("edge")).unwrap_or(256);
+                let c = usize::try_from(i).ok().and_then(|i| self.candidates.get(i)).cloned().ok_or_else(|| bad("no such candidate"))?;
+                let slot = Slot::Import(u32::try_from(i).unwrap_or(u32::MAX));
+                if let Some(job) = self.session.candidate_thumb_job(&c, edge, i) {
+                    self.sched.request_quick(slot, job, 4);
+                    self.busy = true;
+                }
+                Ok(json!({"slot": slot.name()}))
+            }
+            "render.variant" => {
+                let id = photo(p, &self.session).ok_or_else(|| bad("no photo"))?;
+                let edge = size(p.get("edge")).unwrap_or(160);
+                let d = self.session.develop_of(id).ok_or_else(|| bad("no such photo"))?;
+                let settings = if let Some(pid) = p.get("preset").and_then(Value::as_str) {
+                    let preset = self.session.presets.iter().find(|x| x.id == pid).ok_or_else(|| bad(&format!("no preset `{pid}`")))?;
+                    preset.apply(&d, p.get("amount").and_then(Value::as_f64).unwrap_or(100.0).clamp(0.0, 200.0) / 100.0)
+                } else if let Some(profile) = p.get("profile").and_then(Value::as_str) {
+                    d.with_profile(profile)
+                } else if let Some(v) = p.get("version").and_then(Value::as_u64) {
+                    let photo = self.session.catalog.photo(id).ok_or_else(|| bad("no such photo"))?;
+                    let version = usize::try_from(v).ok().and_then(|v| photo.versions.get(v)).ok_or_else(|| bad("no such version"))?;
+                    (*version.settings).clone()
+                } else {
+                    return Err(bad("give `preset`, `profile` or `version`"));
+                };
+                let job = self.session.variant_job(id, &settings, edge).ok_or_else(|| bad("no such photo"))?;
+                let key = job.key;
+                if self.sched.variant(job.clone()).is_none() {
+                    self.variants.insert(key, (job, Instant::now()));
+                    self.busy = true;
+                }
+                Ok(json!({"slot": Slot::Variant(key).name()}))
+            }
             "render.prefetch" => {
                 let (w, h) = (size(p.get("width")).unwrap_or(1024), size(p.get("height")).unwrap_or(1024));
                 let photos = p.get("photos").and_then(Value::as_array).ok_or_else(|| bad("missing `photos`"))?;
@@ -482,6 +592,13 @@ impl Engine {
 
     /// Collect finished renders, save, and report what changed.
     fn tick(&mut self) {
+        // previews still wanted: asked again (until they render, for a few seconds)
+        let now = Instant::now();
+        let sched = &mut self.sched;
+        self.variants.retain(|_, (job, at)| now.duration_since(*at) < VARIANT_WANTED && sched.variant(job.clone()).is_none());
+        if !self.variants.is_empty() {
+            self.busy = true;
+        }
         let mut collect = Collect::default();
         let polled = self.sched.poll(&mut self.session, &mut collect);
         for (slot, image) in collect.0 {
@@ -519,6 +636,9 @@ impl Engine {
             self.events.push(Event::Ask { dialog: "syncChoice".into(), params: json!({}) }.to_value());
         }
         self.pump_faces();
+        self.poll_export();
+        self.poll_scan();
+        self.poll_import();
         self.session.persist_if_dirty();
         let state = self.snapshot();
         if self.state.as_ref() != Some(&state) {
@@ -533,6 +653,180 @@ impl Engine {
                 self.activity = Some((tasks, now));
             }
         }
+    }
+
+    /// Start `app.export` on a worker; `None` (answered when it ends) or the error now.
+    fn start_export(&mut self, id: u64, call: Option<&Sender<Event>>, params: &Value) -> Option<Event> {
+        if self.export.is_some() {
+            return Some(Event::err(id, ErrorBody::new("other", "an export is already running")));
+        }
+        let started = crate::export::prepare(&mut self.session, params).and_then(|prepared| {
+            let write: crate::export::SharedWrite = Arc::new(lightcraft_engine::export::write_file);
+            crate::export::Batch::start(&self.session, prepared, write, "Adding to Apple Photos…".into())
+        });
+        match started {
+            Ok(batch) => {
+                self.export = Some(PendingExport { id, reply: call.cloned(), batch });
+                None
+            }
+            Err(e) => Some(Event::err(id, ErrorBody::new("other", e))),
+        }
+    }
+
+    /// Start scanning `paths` for the import review; `None` (answered when it ends) or the error now.
+    fn start_scan(&mut self, id: u64, call: Option<&Sender<Event>>, p: &Value) -> Option<Event> {
+        let bad = |m: &str| Some(Event::err(id, ErrorBody::new("badParams", format!("`import.scan`: {m}"))));
+        if self.scan.is_some() || self.import.is_some() {
+            return Some(Event::err(id, ErrorBody::new("other", "an import is running")));
+        }
+        if !self.session.library.as_ref().is_some_and(|l| l.on_disk) {
+            return Some(Event::err(id, ErrorBody::new("other", "photos can't be imported: the library isn't saved on this device")));
+        }
+        let paths: Vec<String> =
+            p.get("paths").and_then(Value::as_array).into_iter().flatten().filter_map(|v| v.as_str().map(str::to_string)).collect();
+        if paths.is_empty() {
+            return bad("missing `paths`");
+        }
+        self.sched.forget_imports();
+        self.candidates.clear();
+        let scan = crate::import::Scan::start(&mut self.session, &paths, "Scanning folder");
+        self.scan = Some(PendingScan { id, reply: call.cloned(), scan });
+        None
+    }
+
+    /// A scan that has ended: the candidates (each with `inTrash` when its duplicate is in
+    /// Recently Deleted), kept for `render.candidate`.
+    fn poll_scan(&mut self) {
+        let Some(outcome) =
+            self.scan.as_ref().and_then(|p| if p.scan.cancelled() { Some(Err("cancelled".into())) } else { p.scan.poll("Looking for photos…") })
+        else {
+            return;
+        };
+        let Some(p) = self.scan.take() else { return };
+        let event = match outcome {
+            Ok(out) => {
+                self.session.import_probes = out.probes;
+                let catalog = &self.session.catalog;
+                let candidates: Vec<Value> = out
+                    .candidates
+                    .iter()
+                    .map(|c| {
+                        let mut v = serde_json::to_value(c).unwrap_or_default();
+                        let trashed = c.duplicate.is_some() && c.existing.is_some_and(|e| catalog.photo(PhotoId(e)).is_some_and(|ph| ph.deleted));
+                        v["inTrash"] = json!(trashed);
+                        v
+                    })
+                    .collect();
+                self.candidates = out.candidates;
+                Event::ok(p.id, json!({"candidates": candidates}))
+            }
+            Err(e) => Event::err(p.id, ErrorBody::new("other", e)),
+        };
+        Self::reply(&self.events, p.reply, event);
+    }
+
+    /// Start importing (`paths`, or `indexes` of the last scan's candidates, with `library.import`'s
+    /// params; `albumName` makes a new album first); `None` (answered when it ends) or the error now.
+    fn start_import(&mut self, id: u64, call: Option<&Sender<Event>>, p: &Value) -> Option<Event> {
+        if self.import.is_some() || self.scan.is_some() {
+            return Some(Event::err(id, ErrorBody::new("other", "an import is running")));
+        }
+        let mut paths: Vec<String> =
+            p.get("paths").and_then(Value::as_array).into_iter().flatten().filter_map(|v| v.as_str().map(str::to_string)).collect();
+        for i in p.get("indexes").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_u64) {
+            if let Some(c) = usize::try_from(i).ok().and_then(|i| self.candidates.get(i)) {
+                paths.push(c.path.clone());
+            }
+        }
+        if paths.is_empty() {
+            return Some(Event::err(id, ErrorBody::new("badParams", "`import.start`: no photos chosen")));
+        }
+        let undo0 = self.session.undo.len();
+        let mut params = p.clone();
+        if let Some(o) = params.as_object_mut() {
+            o.remove("paths");
+            o.remove("indexes");
+        }
+        // a new album, named in the review, is made first
+        if let Some(name) = p.get("albumName").and_then(Value::as_str).map(str::trim).filter(|n| !n.is_empty()) {
+            match self.session.execute("album.create", &json!({"name": name})) {
+                Ok(r) => params["album"] = r["id"].clone(),
+                Err(e) => return Some(Event::err(id, ErrorBody::engine(&e))),
+            }
+            if let Some(o) = params.as_object_mut() {
+                o.remove("albumName");
+            }
+        }
+        let watch: Arc<dyn crate::import::Watch> = Arc::new(WakeOnReady(self.wake.clone()));
+        match crate::import::Run::begin(&mut self.session, paths, &params, Some(watch)) {
+            Ok(run) => {
+                let guard = self.session.activity.start("import", "Importing", lightcraft_engine::activity::Cancel::Flag(run.cancel.clone()));
+                self.import = Some(PendingImport { id, reply: call.cloned(), run, tally: Default::default(), guard, undo0, cancelled: false });
+                None
+            }
+            Err(e) => Some(Event::err(id, ErrorBody::new("other", e))),
+        }
+    }
+
+    /// Add the batches the import's worker has readied; when it is done, one undo step, the first
+    /// photo selected, and the answer (the tally; `cancelled` when ✕ stopped it).
+    fn poll_import(&mut self) {
+        let Some(imp) = self.import.as_mut() else { return };
+        let batches = imp.run.next_batches();
+        let finished = batches.is_none();
+        for prepared in batches.into_iter().flatten() {
+            let n = prepared.len();
+            match crate::import::commit(&mut self.session, &mut imp.run, prepared) {
+                Ok(v) => imp.tally.add(&v),
+                Err(e) => {
+                    log::warn!("import: {e}");
+                    imp.tally.failed += n;
+                }
+            }
+        }
+        let (done, total) = (imp.run.done.load(std::sync::atomic::Ordering::Relaxed), imp.run.total.load(std::sync::atomic::Ordering::Relaxed));
+        imp.guard.progress(done as u64, total as u64);
+        imp.cancelled |= imp.guard.is_cancelled();
+        if !finished {
+            self.busy = true;
+            return;
+        }
+        let Some(imp) = self.import.take() else { return };
+        let steps = self.session.undo.len().saturating_sub(imp.undo0);
+        self.session.merge_undo(steps, &imp.tally.label());
+        if let Some(first) = imp.tally.first {
+            let _ = self.session.execute("library.select", &json!({"ids": [first]}));
+        }
+        self.sched.forget_imports();
+        let mut out = imp.tally.to_json();
+        out["cancelled"] = json!(imp.cancelled);
+        out["album"] = json!(imp.run.album);
+        Self::reply(&self.events, imp.reply, Event::ok(imp.id, out));
+    }
+
+    /// Answer a request that waited: on its own channel (`Host::call`), else as an event.
+    fn reply(events: &Events, reply: Option<Sender<Event>>, event: Event) {
+        match reply {
+            Some(tx) => {
+                let _ = tx.send(event);
+            }
+            None => events.push(event.to_value()),
+        }
+    }
+
+    /// An export that has ended: its answer (the files; `cancelled` when ✕ stopped it).
+    fn poll_export(&mut self) {
+        let Some(outcome) = self.export.as_ref().and_then(|p| p.batch.poll()) else { return };
+        let Some(p) = self.export.take() else { return };
+        let event = match outcome {
+            Ok((files, photos, cancelled)) => {
+                let mut out = crate::export::answer(files, photos);
+                out["cancelled"] = json!(cancelled);
+                Event::ok(p.id, out)
+            }
+            Err(e) => Event::err(p.id, ErrorBody::new("other", e)),
+        };
+        Self::reply(&self.events, p.reply, event);
     }
 
     /// Face recognition's background scan (Settings ▸ Faces): the next photos for its workers, as

@@ -76,10 +76,7 @@ struct ExportSheet: View {
                 }
                 if working {
                     Section {
-                        HStack {
-                            ProgressView()
-                            Text(ids.count == 1 ? String(localized: "Exporting…") : String(localized: "Exporting \(ids.count) photos…"))
-                        }
+                        ExportProgress()
                     }
                 }
             }
@@ -111,6 +108,14 @@ struct ExportSheet: View {
         params["conflict"] = "unique"
         guard let r = await model.run("app.export", .object(params)) else { return }
         let urls = (r["files"].array ?? []).compactMap { $0["path"].string }.map { URL(fileURLWithPath: $0) }
+        let failed = (r["files"].array ?? []).compactMap { $0["error"].string }
+        if r["cancelled"].bool == true {
+            model.show(String(localized: "Export cancelled"))
+            if urls.isEmpty { return }
+        } else if let first = failed.first {
+            model.show(String(localized: "\(failed.count) failed: \(first)"), error: true)
+        }
+        guard !urls.isEmpty else { return }
         switch to {
         case .share:
             sharing = urls
@@ -134,6 +139,36 @@ struct ExportSheet: View {
         try await PHPhotoLibrary.shared().performChanges {
             for url in urls {
                 PHAssetCreationRequest.forAsset().addResource(with: .photo, fileURL: url, options: nil)
+            }
+        }
+    }
+}
+
+/// The export running: how far it is, the file in hand, and Cancel (its activity row).
+struct ExportProgress: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        let row = model.activity.first { $0.kind == "export" }
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(row.map { $0.total > 0 ? String(localized: "Exporting \($0.done) of \($0.total)") : String(localized: "Exporting…") } ?? String(localized: "Exporting…"))
+                    .font(.headline)
+                Spacer()
+                if let row, row.cancellable {
+                    Button(row.cancelling ? "Stopping…" : "Cancel", role: .destructive) {
+                        model.perform("activity.cancel", ["id": .int(Int64(clamping: row.id))])
+                    }
+                    .disabled(row.cancelling)
+                }
+            }
+            if let row, row.total > 0 {
+                ProgressView(value: Double(row.done), total: Double(row.total))
+            } else {
+                ProgressView()
+            }
+            if let detail = row?.detail, !detail.isEmpty {
+                Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
         }
     }
@@ -199,7 +234,8 @@ private struct ExportThumb: View {
                 }
             }
             .clipShape(.rect(cornerRadius: 8))
-            .task { model.requestThumb(photo, edge: 256) }
+            .task { model.wantThumb(photo, edge: 256) }
+            .onDisappear { model.thumbDisappeared(photo) }
     }
 }
 #endif

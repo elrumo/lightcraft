@@ -79,69 +79,79 @@ struct Flyout<Content: View>: View {
     }
 }
 
-/// Profile: the profile (by group, favourites first) and how strongly it applies.
+/// Profile: the profiles of a group as live thumbnails of the photo (favourites and recent first),
+/// a tap applies one; and how strongly the applied one works.
 private struct ProfileGroup: View {
     @Environment(AppModel.self) private var model
     @State private var menu: ProfilesMenu?
+    @State private var group = ""
 
     var body: some View {
         let current = model.editor.setting("profile", "id").string ?? "lc.color"
         let name = menu?.name(of: current) ?? current
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("Profile").font(.subheadline).foregroundStyle(.secondary)
+                Text(name).font(.headline)
                 Spacer()
-                Menu {
-                    if let menu {
-                        if !menu.favorites.isEmpty {
-                            Section("Favorites") { profileButtons(menu.favorites, current) }
-                        }
-                        if !menu.recent.isEmpty {
-                            Section("Recent") { profileButtons(menu.recent, current) }
-                        }
-                        ForEach(menu.groups, id: \.name) { group in
-                            Menu(group.name) { profileButtons(group.profiles, current) }
-                        }
-                    }
-                } label: {
-                    HStack(spacing: 4) {
-                        Text(name).font(.body.weight(.semibold))
-                        Image(systemName: "chevron.up.chevron.down").font(.caption)
-                    }
+                Picker("Group", selection: $group) {
+                    if menu?.favorites.isEmpty == false { Text("Favorites").tag("★") }
+                    if menu?.recent.isEmpty == false { Text("Recent").tag("recent") }
+                    ForEach(menu?.groups ?? [], id: \.name) { Text($0.name).tag($0.name) }
                 }
-                Button {
-                    let fav = menu?.isFavorite(current) ?? false
-                    model.perform("profile.favorite", ["id": .string(current), "favorite": .bool(!fav)])
-                    Task { await load() }
-                } label: {
-                    Image(systemName: menu?.isFavorite(current) == true ? "star.fill" : "star")
-                }
-                .accessibilityLabel("Favorite Profile")
+                .pickerStyle(.menu)
             }
             if current != "lc.color" {
                 Sliders(section: "profile")
+            }
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 84), spacing: 8)], spacing: 10) {
+                ForEach(shown, id: \.id) { p in
+                    Button {
+                        model.perform("develop.profile", ["id": .string(p.id)])
+                    } label: {
+                        VStack(spacing: 4) {
+                            VariantPreview(which: ["profile": .string(p.id)])
+                                .aspectRatio(1, contentMode: .fit)
+                                .clipShape(.rect(cornerRadius: 10))
+                                .overlay {
+                                    if p.id == current { RoundedRectangle(cornerRadius: 10).strokeBorder(Color.accentColor, lineWidth: 2) }
+                                }
+                                .overlay(alignment: .topTrailing) {
+                                    if menu?.isFavorite(p.id) == true { Image(systemName: "star.fill").font(.caption2).padding(5).foregroundStyle(.yellow) }
+                                }
+                            Text(p.name).font(.caption2.weight(.medium)).lineLimit(1)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .contextMenu {
+                        let fav = menu?.isFavorite(p.id) == true
+                        Button(fav ? "Remove from Favorites" : "Add to Favorites", systemImage: fav ? "star.slash" : "star") {
+                            model.perform("profile.favorite", ["id": .string(p.id), "favorite": .bool(!fav)])
+                            Task { await load() }
+                        }
+                    }
+                    .accessibilityAddTraits(p.id == current ? .isSelected : [])
+                }
             }
         }
         .task(id: model.state.catalogRevision) { await load() }
     }
 
-    @ViewBuilder private func profileButtons(_ items: [ProfilesMenu.Item], _ current: String) -> some View {
-        ForEach(items, id: \.id) { p in
-            Button {
-                model.perform("develop.profile", ["id": .string(p.id)])
-            } label: {
-                if p.id == current {
-                    Label(p.name, systemImage: "checkmark")
-                } else {
-                    Text(p.name)
-                }
-            }
+    private var shown: [ProfilesMenu.Item] {
+        guard let menu else { return [] }
+        switch group {
+        case "★": return menu.favorites
+        case "recent": return menu.recent
+        default: return menu.groups.first { $0.name == group }?.profiles ?? menu.groups.first?.profiles ?? []
         }
     }
 
     private func load() async {
         guard let engine = model.engine else { return }
         menu = try? await engine.execute("profiles.menu", [:], as: ProfilesMenu.self)
+        if group.isEmpty, let menu {
+            let current = model.editor.setting("profile", "id").string ?? ""
+            group = menu.groups.first { g in g.profiles.contains { $0.id == current } }?.name ?? menu.groups.first?.name ?? ""
+        }
     }
 }
 
