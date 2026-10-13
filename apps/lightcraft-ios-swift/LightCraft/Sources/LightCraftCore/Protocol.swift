@@ -79,6 +79,9 @@ public struct HostState: Codable, Sendable, Equatable {
     public var redo: String?
     /// A slider drag in progress (its label).
     public var interaction: String?
+    /// The Masking tool's selected mask and the Remove tool's selected spot.
+    public var activeMask: UInt32?
+    public var activeSpot: Int?
     public var unsaved: Int = 0
     /// The server sync (`nil`: a local library with no server).
     public var sync: SyncSummary?

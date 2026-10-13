@@ -722,3 +722,56 @@ fn rendered_photos_show_white_balance_relative() {
     s.execute("develop.set", &json!({"control": "wb.tintRel", "value": -10})).unwrap();
     assert_eq!(s.develop_of(s.active().unwrap()).unwrap().wb.tint, -10.0);
 }
+
+/// Masks on the photo: the selected radial's handles and outline, a press on a handle or inside the
+/// ellipse grabs it, and a drag resizes or moves it (one undo step inside an interaction).
+#[test]
+fn mask_handles_grab_and_drag() {
+    let mut s = Session::with_demo();
+    s.execute("mask.add", &json!({"kind": "radial", "center": [0.5, 0.5], "rx": 0.2, "ry": 0.1})).unwrap();
+    let h = s.execute("mask.handles", &json!({})).unwrap();
+    let grips = h["grips"].as_array().unwrap();
+    assert_eq!(grips.len(), 6, "pin + 4 edges + rotation: {h}");
+    assert_eq!(h["outlines"][0].as_array().unwrap().len(), 64);
+    let edge = grips.iter().find(|g| g["handle"] == 1).unwrap();
+    assert_eq!(edge["kind"], "radial");
+    let at = edge["at"].clone();
+    let g = s.execute("mask.grab", &json!({"at": at, "reach": 0.02})).unwrap();
+    assert_eq!(g["handle"], 1, "{g}");
+    let (x, y) = (at[0].as_f64().unwrap(), at[1].as_f64().unwrap());
+    s.execute("develop.beginInteraction", &json!({"label": "Edit Mask"})).unwrap();
+    let p = json!({"id": g["mask"], "component": 0, "handle": 1, "shape": g["shape"], "from": [x, y], "to": [x + 0.05, y]});
+    s.execute("mask.drag", &p).unwrap();
+    s.execute("mask.drag", &json!({"id": g["mask"], "component": 0, "handle": 1, "shape": g["shape"], "from": [x, y], "to": [x + 0.1, y]})).unwrap();
+    s.execute("develop.endInteraction", &json!({})).unwrap();
+    let after = s.execute("mask.grab", &json!({"at": [0.5, 0.5], "reach": 0.0})).unwrap();
+    assert_eq!(after["handle"], 0, "inside the ellipse takes the whole mask");
+    let rx = after["shape"]["rx"].as_f64().unwrap();
+    assert!(rx > 0.25, "{after}");
+    s.execute("edit.undo", &json!({})).unwrap();
+    let undone = s.execute("mask.grab", &json!({"at": [0.5, 0.5], "reach": 0.0})).unwrap();
+    assert!((undone["shape"]["rx"].as_f64().unwrap() - 0.2).abs() < 1e-9, "one undo step: {undone}");
+    assert_eq!(s.execute("mask.grab", &json!({"at": [0.02, 0.02], "reach": 0.01})).unwrap(), json!(null));
+}
+
+/// A mask's own controls: Refine Edges, and a luminance range's bounds kept in order.
+#[test]
+fn mask_shape_controls_list_and_set() {
+    let mut s = Session::with_demo();
+    s.execute("mask.add", &json!({"kind": "luminanceRange"})).unwrap();
+    let c = s.execute("mask.shapeControls", &json!({})).unwrap();
+    assert_eq!(c["refine"]["id"], "refine", "{c}");
+    let ids: Vec<&str> = c["components"][0]["controls"].as_array().unwrap().iter().map(|v| v["id"].as_str().unwrap()).collect();
+    assert_eq!(ids, ["lo", "hi", "smoothness"]);
+    assert_eq!(c["components"][0]["kind"], "luminanceRange");
+    s.execute("mask.setShapeControl", &json!({"component": 0, "control": "lo", "value": 10})).unwrap();
+    s.execute("mask.setShapeControl", &json!({"component": 0, "control": "hi", "value": 40})).unwrap();
+    s.execute("mask.setShapeControl", &json!({"component": 0, "control": "lo", "value": 90})).unwrap();
+    s.execute("mask.setShapeControl", &json!({"control": "refine", "value": 30})).unwrap();
+    let c = s.execute("mask.shapeControls", &json!({})).unwrap();
+    let lo = c["components"][0]["controls"][0]["value"].as_f64().unwrap();
+    assert!((lo - 39.0).abs() < 1e-6, "the low bound stays under the high one: {c}");
+    assert_eq!(c["refine"]["value"], 30.0);
+    assert!(s.execute("mask.setShapeControl", &json!({"component": 0, "control": "edge", "value": 1})).is_err());
+    assert!(s.execute("mask.setShapeControl", &json!({"control": "lo", "value": 1})).is_err(), "a mask itself has no range");
+}

@@ -285,3 +285,17 @@ fn presets_profiles_and_versions_preview() {
     h.submit(&req(6, "render.variant", json!({"edge": 96}))).unwrap();
     assert!(h.reply_to(6)["error"].is_object(), "nothing to preview");
 }
+
+/// `render.view`'s overlay: the selected mask with its colour, Visualize Spots, nothing for nonsense.
+#[test]
+fn view_overlays_parse() {
+    use lightcraft_pipeline::{MaskView, Overlay};
+    assert_eq!(
+        overlay(Some(&json!({"kind": "mask", "id": 3, "color": [1, 2, 3], "opacity": 80}))),
+        Overlay::Mask { id: 3, view: MaskView::default(), color: [1, 2, 3], opacity: 80 }
+    );
+    assert_eq!(overlay(Some(&json!({"kind": "spots", "threshold": 900}))), Overlay::Spots(100));
+    assert_eq!(overlay(Some(&json!({"kind": "mask"}))), Overlay::None, "a mask overlay needs its id");
+    assert_eq!(overlay(Some(&json!("hdr"))), Overlay::None);
+    assert_eq!(overlay(None), Overlay::None);
+}

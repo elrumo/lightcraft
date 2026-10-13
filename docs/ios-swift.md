@@ -97,7 +97,7 @@ host's: `badRequest`, `unknownMethod`, `panic`, `closed`, `timeout`).
 | `host.state` | | the state below |
 | `host.lifecycle` | `{event}` | `resignActive`, `background` (save, pause the GPU, free memory), `active`, `memoryWarning`, `terminate` |
 | `render.thumb` | `{photo, edge, priority?}` | a grid thumbnail (embedded raw previews first; cheap to repeat) |
-| `render.view` | `{photo?, width, height, draft?, before?, applyCrop?}` | the loupe's picture (`main`; a stand-in in `preview` until it is there) |
+| `render.view` | `{photo?, width, height, draft?, before?, applyCrop?, overlay?: {kind: mask, id, view?, color?, opacity?} \| {kind: spots, threshold?} \| {kind: pointColor, index} \| {kind: hdr}}` | the loupe's picture (`main`; a stand-in in `preview` until it is there), with a diagnostic overlay (the selected mask, Visualize Spots…) |
 | `render.prefetch` | `{photos, width, height}` | prepares the neighbours |
 | `render.variant` | `{photo?, preset \| profile \| version, amount?, edge?}` | a preview of the photo with a preset, profile or version (slot `variant:<key>`) |
 | `render.candidate` | `{index, edge?}` | an import candidate's thumbnail (slot `import:<index>`) |
@@ -108,7 +108,8 @@ host's: `badRequest`, `unknownMethod`, `panic`, `closed`, `timeout`).
 Events: `reply`; `image {slot, photo, key, token, width, height, final, draft, quick?, ms, histogram?}` (slots
 `thumb:<id>`, `thumbQuick:<id>`, `main`, `preview`, `before`…); `renderFailed {slot, photo, key, error}`; `state {state:
 {catalogRevision, visibleGen, visibleCount, libraryGeneration, active, selectionCount, undo, redo, interaction,
-unsaved, sync?}}` when any of it changes (`sync`: the server sync for the cloud icon, `{state, server, pending, uploads,
+activeMask, activeSpot, unsaved, sync?}}` when any of it changes (`activeMask` / `activeSpot`: the Masking tool's
+selected mask and the Remove tool's selected spot, wherever they were chosen) (`sync`: the server sync for the cloud icon, `{state, server, pending, uploads,
 downloads, reading, error}`; absent for a local library); `activity {tasks}` (the activity stack); `message {text,
 level}`; `copy {text}` (put it on the clipboard: a share link just made); `ask {dialog, params}` (show a dialog the
 engine needs an answer from: `syncChoice`); `uiRequest {id, method, params}`; `closed`. One of each is in `LightCraft/Tests/LightCraftCoreTests/Fixtures/protocol.json`, written by

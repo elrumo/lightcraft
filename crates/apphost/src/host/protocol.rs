@@ -101,6 +101,11 @@ pub struct HostState {
     pub redo: Option<String>,
     /// A slider drag in progress (its label).
     pub interaction: Option<String>,
+    /// The Masking tool's selected mask and the Remove tool's selected spot.
+    #[serde(default)]
+    pub active_mask: Option<u32>,
+    #[serde(default)]
+    pub active_spot: Option<usize>,
     /// Changes the photo's catalog not on disk yet: the count (0 when everything is saved).
     pub unsaved: usize,
     /// The server sync, for the cloud icon (`None`: a local library, no server):

@@ -7,7 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::settings::DevelopSettings;
+use crate::settings::{DevelopSettings, MaskShape};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -166,6 +166,53 @@ pub const LOCAL_AMOUNT: ControlSpec = ControlSpec {
     decimals: 0,
     track: Track::Plain,
 };
+
+const fn shape(id: &'static str, label: &'static str, min: f64, max: f64, default: f64, track: Track) -> ControlSpec {
+    ControlSpec { id, label, section: Section::Light, min, max, default, step: 1.0, decimals: 0, track }
+}
+
+/// A mask's Refine Edges (`mask.refine`, 0–100): its edges snap to the photo's.
+pub const MASK_REFINE: ControlSpec = shape("refine", "Refine Edges", 0.0, 100.0, 0.0, Track::Plain);
+const RANGE_LO: ControlSpec = shape("lo", "Range Low", 0.0, 100.0, 0.0, Track::Gradient { from: "#000000", to: "#ffffff" });
+const RANGE_HI: ControlSpec = shape("hi", "Range High", 0.0, 100.0, 100.0, Track::Gradient { from: "#000000", to: "#ffffff" });
+const SMOOTHNESS: ControlSpec = shape("smoothness", "Smoothness", 0.0, 100.0, 20.0, Track::Plain);
+const COLOR_REFINE: ControlSpec = shape("refine", "Refine", 0.0, 100.0, 50.0, Track::Plain);
+const EDGE: ControlSpec = shape("edge", "Edge", -100.0, 100.0, 0.0, Track::Centered);
+
+/// A mask part's own controls, with their values: a luminance range's bounds (percent) and
+/// smoothness, a colour range's refine, an AI selection's edge (−100 harder … 100 softer). Other
+/// shapes have none. Every UI shows these (`mask.shapeControls`).
+pub fn shape_controls(shape: &MaskShape) -> Vec<(ControlSpec, f64)> {
+    match shape {
+        MaskShape::LuminanceRange { lo, hi, lo_feather, hi_feather } => {
+            vec![(RANGE_LO, lo * 100.0), (RANGE_HI, hi * 100.0), (SMOOTHNESS, ((lo_feather + hi_feather) / 2.0 / 0.5 * 100.0).clamp(0.0, 100.0))]
+        }
+        MaskShape::ColorRange { refine, .. } => vec![(COLOR_REFINE, *refine)],
+        MaskShape::Object { edge, .. } | MaskShape::Prompt { edge, .. } => vec![(EDGE, *edge)],
+        _ => Vec::new(),
+    }
+}
+
+/// `shape` with its control `id` ([`shape_controls`]) at `v`, clamped (a luminance range's low
+/// bound stays under its high one); `None` when the shape has no such control or `v` isn't a number.
+pub fn set_shape_control(shape: &MaskShape, id: &str, v: f64) -> Option<MaskShape> {
+    if !v.is_finite() {
+        return None;
+    }
+    let mut s = shape.clone();
+    match (&mut s, id) {
+        (MaskShape::LuminanceRange { lo, hi, .. }, "lo") => *lo = (v / 100.0).clamp(0.0, (*hi - 0.01).max(0.0)),
+        (MaskShape::LuminanceRange { lo, hi, .. }, "hi") => *hi = (v / 100.0).clamp((*lo + 0.01).min(1.0), 1.0),
+        (MaskShape::LuminanceRange { lo_feather, hi_feather, .. }, "smoothness") => {
+            let f = v.clamp(0.0, 100.0) / 100.0 * 0.5;
+            (*lo_feather, *hi_feather) = (f, f);
+        }
+        (MaskShape::ColorRange { refine, .. }, "refine") => *refine = v.clamp(0.0, 100.0),
+        (MaskShape::Object { edge, .. } | MaskShape::Prompt { edge, .. }, "edge") => *edge = v.clamp(-100.0, 100.0),
+        _ => return None,
+    }
+    Some(s)
+}
 
 /// White balance of a rendered photo (a JPEG, a HEIC, a raw developed from its own look): Temp on
 /// a −100…100 scale relative to the photo's own colour (a mired shift, as Lightroom shows it for such
@@ -583,5 +630,26 @@ mod tests {
         assert_eq!(e.format(0.5), "+0.50");
         assert_eq!(e.format(-1.0), "-1.00");
         assert_eq!(find("wb.temp").unwrap().format(5500.0), "5500");
+    }
+
+    #[test]
+    fn a_luminance_range_keeps_its_bounds_in_order() {
+        let r = MaskShape::LuminanceRange { lo: 0.2, hi: 0.6, lo_feather: 0.1, hi_feather: 0.1 };
+        let c: Vec<(&str, f64)> = shape_controls(&r).iter().map(|(s, v)| (s.id, *v)).collect();
+        assert_eq!(c.len(), 3);
+        assert!((c[0].1 - 20.0).abs() < 1e-9 && (c[1].1 - 60.0).abs() < 1e-9 && (c[2].1 - 20.0).abs() < 1e-9, "{c:?}");
+        // the low bound can't pass the high one, nor the high the low
+        let Some(MaskShape::LuminanceRange { lo, .. }) = set_shape_control(&r, "lo", 90.0) else { panic!() };
+        assert!((lo - 0.59).abs() < 1e-9);
+        let Some(MaskShape::LuminanceRange { hi, .. }) = set_shape_control(&r, "hi", -5.0) else { panic!() };
+        assert!((hi - 0.21).abs() < 1e-9);
+        let Some(MaskShape::LuminanceRange { lo_feather, hi_feather, .. }) = set_shape_control(&r, "smoothness", 100.0) else { panic!() };
+        assert_eq!((lo_feather, hi_feather), (0.5, 0.5));
+        assert!(set_shape_control(&r, "edge", 1.0).is_none(), "not a control of a range");
+        assert!(set_shape_control(&r, "lo", f64::NAN).is_none());
+        // a corrupt range doesn't panic
+        let bad = MaskShape::LuminanceRange { lo: f64::NAN, hi: f64::NAN, lo_feather: 0.0, hi_feather: 0.0 };
+        assert!(set_shape_control(&bad, "lo", 50.0).is_some() && set_shape_control(&bad, "hi", 50.0).is_some());
+        assert!(shape_controls(&MaskShape::Sky).is_empty());
     }
 }

@@ -262,7 +262,18 @@ final class AppModel {
         if draft {
             draftAskedAt = .now
         }
-        engine.send("render.view", ["photo": .int(Int64(clamping: photo)), "width": .int(Int64(clamping: width)), "height": .int(Int64(clamping: height)), "draft": .bool(draft), "applyCrop": .bool(applyCrop)])
+        var p: [String: JSONValue] = ["photo": .int(Int64(clamping: photo)), "width": .int(Int64(clamping: width)), "height": .int(Int64(clamping: height)), "draft": .bool(draft), "applyCrop": .bool(applyCrop)]
+        if let viewOverlay { p["overlay"] = viewOverlay }
+        engine.send("render.view", .object(p))
+    }
+
+    /// What the loupe draws over the photo: in Masking, the selected mask (Show Overlay).
+    var viewOverlay: JSONValue? {
+        guard editor.tool == .masking, prefs.maskOverlay, let mask = state.activeMask else { return nil }
+        return [
+            "kind": "mask", "id": .int(Int64(mask)), "view": .string(prefs.maskOverlayMode),
+            "color": .array(prefs.maskOverlayColor.map { .int(Int64($0)) }), "opacity": .double(prefs.maskOverlayOpacity),
+        ]
     }
 
     /// The Before of `photo`, at the loupe's size.

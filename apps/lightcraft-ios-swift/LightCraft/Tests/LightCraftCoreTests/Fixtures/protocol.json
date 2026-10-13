@@ -67,6 +67,8 @@
       "kind": "state",
       "state": {
         "active": 7,
+        "activeMask": 2,
+        "activeSpot": null,
         "catalogRevision": 12,
         "interaction": null,
         "libraryGeneration": 2,

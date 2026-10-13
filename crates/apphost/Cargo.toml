@@ -11,6 +11,7 @@ workspace = true
 [dependencies]
 lightcraft-engine = { workspace = true }
 lightcraft-catalog = { workspace = true }
+lightcraft-pipeline = { workspace = true }
 lightcraft-preview = { workspace = true }
 lightcraft-raster = { workspace = true }
 lightcraft-sysmem = { workspace = true }

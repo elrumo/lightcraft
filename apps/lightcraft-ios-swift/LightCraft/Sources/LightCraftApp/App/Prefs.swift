@@ -23,6 +23,11 @@ final class Prefs {
         clickZoom = store.object(forKey: "clickZoom") as? Double ?? 2
         haptics = store.object(forKey: "haptics") as? Bool ?? true
         mapTiles = store.object(forKey: "mapTiles") as? Bool ?? true
+        maskOverlay = store.object(forKey: "maskOverlay") as? Bool ?? true
+        maskPins = store.object(forKey: "maskPins") as? Bool ?? true
+        maskOverlayMode = store.string(forKey: "maskOverlayMode") ?? "color"
+        maskOverlayColor = store.array(forKey: "maskOverlayColor") as? [Int] ?? [230, 30, 40]
+        maskOverlayOpacity = store.object(forKey: "maskOverlayOpacity") as? Double ?? 50
     }
 
     nonisolated enum Appearance: String, CaseIterable, Identifiable {
@@ -99,6 +104,14 @@ final class Prefs {
     var clickZoom: Double { didSet { store.set(clickZoom, forKey: "clickZoom") } }
     var haptics: Bool { didSet { store.set(haptics, forKey: "haptics") } }
     var mapTiles: Bool { didSet { store.set(mapTiles, forKey: "mapTiles") } }
+    /// Masking: the selected mask drawn over the photo, how (`color`, `colorOnBw`, `imageOnBlack`,
+    /// `imageOnWhite`, `whiteOnBlack`), in what colour (sRGB) and how strongly (0–100).
+    var maskOverlay: Bool { didSet { store.set(maskOverlay, forKey: "maskOverlay") } }
+    var maskOverlayMode: String { didSet { store.set(maskOverlayMode, forKey: "maskOverlayMode") } }
+    var maskOverlayColor: [Int] { didSet { store.set(maskOverlayColor, forKey: "maskOverlayColor") } }
+    var maskOverlayOpacity: Double { didSet { store.set(maskOverlayOpacity, forKey: "maskOverlayOpacity") } }
+    /// Masking: every mask's pin on the photo.
+    var maskPins: Bool { didSet { store.set(maskPins, forKey: "maskPins") } }
 
     /// The steps a pinch moves the grid through.
     static let columnSteps = [1, 2, 3, 4, 5, 7, 10, 14]

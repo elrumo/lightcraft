@@ -32,6 +32,8 @@ fn fixtures() -> Value {
         undo: Some("Exposure".into()),
         redo: None,
         interaction: None,
+        active_mask: Some(2),
+        active_spot: None,
         unsaved: 0,
         sync: Some(
             json!({"state": "syncing", "server": "https://photos.example", "pending": 2, "uploads": 1, "downloads": 0, "reading": null, "error": null}),

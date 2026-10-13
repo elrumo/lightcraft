@@ -15,6 +15,11 @@ struct PhotoScreen: View {
         let editor = model.editor
         VStack(spacing: 0) {
             PhotoPager(start: start, review: $review)
+                .overlay(alignment: .topTrailing) {
+                    if editor.tool == .masking, !review {
+                        MaskColumn().padding(10).transition(.move(edge: .trailing).combined(with: .opacity))
+                    }
+                }
             if !review {
                 if let tool = editor.tool, tool.hasScreen {
                     ToolScreenBar(tool: tool)
@@ -31,10 +36,15 @@ struct PhotoScreen: View {
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 UndoMenu()
-                Button("Share", systemImage: "square.and.arrow.up") {
-                    if let id = model.state.active { model.sheet = .export([id]) }
+                if editor.tool == .masking {
+                    MaskOverlayButton()
+                    MaskMoreMenu()
+                } else {
+                    Button("Share", systemImage: "square.and.arrow.up") {
+                        if let id = model.state.active { model.sheet = .export([id]) }
+                    }
+                    PhotoMoreMenu()
                 }
-                PhotoMoreMenu()
             }
         }
         .navigationBarTitleDisplayMode(.inline)
@@ -140,6 +150,7 @@ nonisolated struct ViewRequest: Hashable {
     let revision: UInt64
     let dragging: Bool
     let crop: Bool
+    let overlay: JSONValue?
 }
 
 /// The active photo, fitted: pinch to zoom, drag to pan, double tap to zoom in and back, a tap to
@@ -190,7 +201,7 @@ struct ZoomablePhoto: View {
                 CropOverlay(photo: photo, rect: rect)
             } else if model.editor.tool == .remove, !showBefore, let rect = shownRect(picture) {
                 RemoveCanvas(photo: photo, rect: rect)
-            } else if model.editor.tool == .masking, model.editor.maskTool != nil, !showBefore, let rect = shownRect(picture) {
+            } else if model.editor.tool == .masking, !showBefore, let rect = shownRect(picture) {
                 MaskCanvas(photo: photo, rect: rect)
             }
         }
@@ -324,7 +335,7 @@ struct ZoomablePhoto: View {
             w *= maxEdge / long
             h *= maxEdge / long
         }
-        return ViewRequest(photo: photo, width: Int(w), height: Int(h), revision: model.state.catalogRevision, dragging: model.state.interaction != nil, crop: model.editor.tool != .crop)
+        return ViewRequest(photo: photo, width: Int(w), height: Int(h), revision: model.state.catalogRevision, dragging: model.state.interaction != nil, crop: model.editor.tool != .crop, overlay: model.viewOverlay)
     }
 
     private var magnify: some Gesture {

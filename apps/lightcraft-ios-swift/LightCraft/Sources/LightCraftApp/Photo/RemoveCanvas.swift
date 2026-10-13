@@ -28,7 +28,7 @@ struct RemoveCanvas: View {
             .allowsHitTesting(false)
             ForEach(Array(spots.enumerated()), id: \.offset) { i, spot in
                 if let at = pin(spot) {
-                    let chosen = model.library.state?.activeSpot == i
+                    let chosen = model.state.activeSpot == i
                     Circle()
                         .fill(chosen ? Color.accentColor : .white)
                         .stroke(.black.opacity(0.4), lineWidth: 1)
