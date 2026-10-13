@@ -353,9 +353,9 @@ pub fn api(st: &State, req: &mut Request, method: &Method, rest: &str) -> Resp {
             log::info!("admin {me}: reading the text in photos turned {}", if b.enabled { "on" } else { "off" });
             Ok(search(st))
         }),
-        (Method::Post, ["search", "download"]) => read_json::<Licence>(req).map_err(Err).and_then(|l| fetch_models(st, me, Part::Search, l)),
-        (Method::Post, ["search", "text", "download"]) => read_json::<Licence>(req).map_err(Err).and_then(|l| fetch_models(st, me, Part::Text, l)),
-        (Method::Post, ["search", "faces", "download"]) => read_json::<Licence>(req).map_err(Err).and_then(|l| fetch_models(st, me, Part::Faces, l)),
+        (Method::Post, ["search", "download"]) => read_json::<Licence>(req).map_err(Err).and_then(|l| fetch_models(st, &me, Part::Search, l)),
+        (Method::Post, ["search", "text", "download"]) => read_json::<Licence>(req).map_err(Err).and_then(|l| fetch_models(st, &me, Part::Text, l)),
+        (Method::Post, ["search", "faces", "download"]) => read_json::<Licence>(req).map_err(Err).and_then(|l| fetch_models(st, &me, Part::Faces, l)),
         (Method::Delete, ["search", "download"]) => {
             st.vision.switch.cancel(Part::Search);
             Ok(search(st))
