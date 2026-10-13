@@ -2137,9 +2137,12 @@ fn show_in_finder(app: &mut LightcraftApp) -> Result<Value, String> {
 }
 
 /// Photo ▸ Edit In: render a copy of each selected photo with its edits (stacked on its original)
-/// as Settings ▸ External Editing asks for that editor, then open them there. `p` may override the
-/// file (`format`, `colorSpace`, `bitDepth`) and the editor (`app`). PhotoCraft is checked first,
-/// so a missing editor leaves no copy behind.
+/// as Settings ▸ External Editing asks for that editor, then open them there. When every selected
+/// photo is an image file (not a raw), the Edit Photo dialog asks first whether to edit that copy, a
+/// plain copy of the file or the original (Lightroom Classic's); `p.mode` (render, copy or
+/// original) answers it. `p` may also override the file (`format`, `colorSpace`, `bitDepth`) and
+/// the editor (`app`). The editor is checked first, so a missing one leaves no copy behind. The
+/// files opened are watched for what the editor saves ([`LightcraftApp::check_external_edits`]).
 fn edit_in(app: &mut LightcraftApp, ctx: &egui::Context, p: &Value, photocraft: bool) -> Result<Value, String> {
     let settings = &app.ui.settings;
     let (file, configured) = if photocraft {
@@ -2155,6 +2158,10 @@ fn edit_in(app: &mut LightcraftApp, ctx: &egui::Context, p: &Value, photocraft: 
         app.toast(ctx, e.clone());
         return Err(e);
     }
+    if p.get("mode").is_none() && edits_image_files(app) {
+        app.ui.dialog = Some(Dialog::EditIn { photocraft, mode: app.ui.settings.edit_in_mode });
+        return Ok(json!({"dialog": "editIn"}));
+    }
     let mut params = file.params();
     if let (Some(o), Some(given)) = (params.as_object_mut(), p.as_object()) {
         for (k, v) in given.iter().filter(|(k, _)| k.as_str() != "app") {
@@ -2162,27 +2169,44 @@ fn edit_in(app: &mut LightcraftApp, ctx: &egui::Context, p: &Value, photocraft: 
         }
     }
     let r = app.session.execute("photo.editExternal", &params).map_err(|e| e.to_string())?;
-    // every selected photo got a copy (#920); each opens in the editor
-    let copies: Vec<(String, Option<u64>)> = r["copies"]
+    // every selected photo got a file (#920); each opens in the editor and is watched
+    let copies: Vec<String> = r["copies"]
         .as_array()
-        .map(|c| c.iter().map(|c| (c["path"].as_str().unwrap_or_default().to_string(), c["id"].as_u64())).collect())
-        .unwrap_or_else(|| vec![(r["path"].as_str().unwrap_or_default().to_string(), r["id"].as_u64())]);
+        .map(|c| c.iter().map(|c| c["path"].as_str().unwrap_or_default().to_string()).collect())
+        .unwrap_or_else(|| vec![r["path"].as_str().unwrap_or_default().to_string()]);
+    if let Ok(track) = serde_json::from_value::<Vec<lightcraft_engine::cmd::TrackedEdit>>(r["track"].clone()) {
+        let list = &mut app.ui.external_edits;
+        list.retain(|t| !track.iter().any(|n| n.path == t.path));
+        list.extend(track);
+        let extra = list.len().saturating_sub(lightcraft_engine::cmd::MAX_TRACKED);
+        list.drain(..extra);
+    }
     let mut failed = None;
-    for (path, id) in &copies {
-        if let Some(id) = id {
-            app.ui.external_edits.push(*id);
-        }
+    for path in &copies {
         if let Some(Err(e)) = app.services.open_with.as_mut().map(|f| f(path, &editor)) {
             failed = Some(e);
         }
     }
+    let original = r["mode"] == "original";
     match (failed, copies.as_slice()) {
         (Some(e), _) => app.toast(ctx, crate::i18n::tr_format!("Couldn't open the editor: {e}", e = e)),
-        (None, [(path, _)]) => {
+        (None, [path]) => {
             let name = std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-            app.toast(ctx, crate::i18n::tr_format!("{name} opened for editing; it is stacked with the original", name = name));
+            if original {
+                app.toast(ctx, crate::i18n::tr_format!("{name} opened for editing", name = name));
+            } else {
+                app.toast(ctx, crate::i18n::tr_format!("{name} opened for editing; it is stacked with the original", name = name));
+            }
         }
+        _ if original => app.toast(ctx, crate::i18n::tr_format!("{n} photos opened for editing", n = copies.len())),
         _ => app.toast(ctx, crate::i18n::tr_format!("{n} photos opened for editing; each is stacked with its original", n = copies.len())),
     }
     Ok(r)
+}
+
+/// Whether Edit In asks how to hand the photos over: every selected photo is an image file
+/// (TIFF, PSD, JPEG, PNG…) whose own file an editor can open. A raw only gets a rendered copy.
+fn edits_image_files(app: &LightcraftApp) -> bool {
+    let ids = app.session.targets(&json!({}));
+    !ids.is_empty() && ids.iter().all(|id| app.session.catalog.photo(*id).is_some_and(|ph| lightcraft_engine::cmd::can_edit_original(ph)))
 }

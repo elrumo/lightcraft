@@ -270,5 +270,9 @@
   "Not carried over: {what}": "Не перенесено: {what}",
   "{n} items": "Элементов: {n}",
   "{label}, {n} items": "{label}, элементов: {n}",
-  "Add to {album}": "Добавить в «{album}»"
+  "Add to {album}": "Добавить в «{album}»",
+  "Added {name}, saved in the external editor, to its stack": "{name}, сохранённый во внешнем редакторе, добавлен в его стопку",
+  "Added {n} files saved in the external editor to their stacks": "Файлы, сохранённые во внешнем редакторе ({n}), добавлены в их стопки",
+  "{name} opened for editing": "{name} открыт для редактирования",
+  "{n} photos opened for editing": "Фото открыты для редактирования: {n}"
 }

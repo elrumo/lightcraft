@@ -270,5 +270,9 @@
   "Not carried over: {what}": "Nicht übernommen: {what}",
   "{n} items": "{n} Elemente",
   "{label}, {n} items": "{label}, {n} Elemente",
-  "Add to {album}": "Zu „{album}“ hinzufügen"
+  "Add to {album}": "Zu „{album}“ hinzufügen",
+  "Added {name}, saved in the external editor, to its stack": "{name}, im externen Editor gespeichert, zu seinem Stapel hinzugefügt",
+  "Added {n} files saved in the external editor to their stacks": "{n} im externen Editor gespeicherte Dateien zu ihren Stapeln hinzugefügt",
+  "{name} opened for editing": "{name} zum Bearbeiten geöffnet",
+  "{n} photos opened for editing": "{n} Fotos zur Bearbeitung geöffnet"
 }
