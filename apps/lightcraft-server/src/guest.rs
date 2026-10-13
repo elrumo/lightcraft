@@ -214,7 +214,7 @@ pub fn upload(st: &State, req: &mut Request, token: &str, user: &str, link: &Lin
         kept.push((f, p, dest));
     }
     // the library: new photos in the server's id space, then the album with all of them
-    let (added, previews) = {
+    let (added, already, previews) = {
         let mut l = l.lock().unwrap_or_else(PoisonError::into_inner);
         let album = AlbumId(share.album);
         match l.core.catalog().album(album) {
@@ -253,11 +253,15 @@ pub fn upload(st: &State, req: &mut Request, token: &str, user: &str, link: &Lin
             ops.iter().filter(|(_, i)| !refused.contains(i)).filter_map(|(_, i)| ids.get(*i).copied().flatten()).collect();
         let mut members = l.core.catalog().album(album).map(|a| a.photos.clone()).unwrap_or_default();
         let before = members.len();
-        let mut added = 0usize;
+        let (mut added, mut already) = (0usize, 0usize);
         for (i, id) in ids.iter().enumerate() {
             let Some(id) = id else { continue };
             let is_new = ops.iter().any(|(op, j)| *j == i && matches!(op, Op::AddPhoto { .. }));
-            if (is_new && !new_ids.contains(id)) || members.contains(id) {
+            if is_new && !new_ids.contains(id) {
+                continue;
+            }
+            if members.contains(id) {
+                already += 1;
                 continue;
             }
             members.push(*id);
@@ -270,7 +274,7 @@ pub fn upload(st: &State, req: &mut Request, token: &str, user: &str, link: &Lin
             return failed(500, token, "The server couldn't put the photos in the album.");
         }
         let previews: Vec<(String, PathBuf)> = kept.iter().map(|(f, _, dest)| (f.hash.clone(), dest.clone())).collect();
-        (added, previews)
+        (added, already, previews)
     };
     for (hash, dest) in previews {
         if dest.is_file() {
@@ -286,7 +290,8 @@ pub fn upload(st: &State, req: &mut Request, token: &str, user: &str, link: &Lin
         if skipped > 0 { format!(" ({skipped} left out)") } else { String::new() }
     );
     drop(cleanup);
-    see_other(&format!("/s/{token}?added={added}&skipped={skipped}"), None)
+    let already = if already > 0 { format!("&already={already}") } else { String::new() };
+    see_other(&format!("/s/{token}?added={added}&skipped={skipped}{already}"), None)
 }
 
 /// The photo for a visitor's file (its id is given when it goes into the library).

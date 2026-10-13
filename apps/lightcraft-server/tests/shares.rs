@@ -552,9 +552,10 @@ fn visitors_add_photos_to_an_album_whose_link_takes_them() {
     // d is new, c is in the library (not in the album), a is in the album already, the text isn't a photo
     let (s, _, hs) = send("POST", &format!("{}/s/{token}/upload", fx.base), &[("Content-Type", &ctype)], Some(&body));
     assert_eq!(s, 303);
-    assert_eq!(header(&hs, "location"), Some(format!("/s/{token}?added=2&skipped=1").as_str()));
-    let page = text(fx.page(&format!("/s/{token}?added=2&skipped=1")).1);
+    assert_eq!(header(&hs, "location"), Some(format!("/s/{token}?added=2&skipped=1&already=1").as_str()));
+    let page = text(fx.page(&format!("/s/{token}?added=2&skipped=1&already=1")).1);
     assert!(page.contains("4 photos") && page.contains("2 photos were added") && page.contains("1 file was left out"), "{page}");
+    assert!(page.contains("1 photo was in the album already"), "{page}");
     // the owner's devices get them, in the album
     fx.device.execute("sync.now", &json!({"wait": true})).unwrap();
     let cat = &fx.device.catalog;

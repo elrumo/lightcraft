@@ -569,9 +569,12 @@ fn gallery(st: &State, req: &Request, token: &str, user: &str, link: &Link, q: &
     }
     // (numbers only: nothing the visitor typed is shown back)
     let num = |k: &str| crate::api::query(q, k).and_then(|v| v.parse::<usize>().ok()).unwrap_or(0);
-    let (added, skipped) = (num("added"), num("skipped"));
+    let (added, skipped, already) = (num("added"), num("skipped"), num("already"));
     if added > 0 {
         h.push_str(&format!("<p class=\"note\" role=\"status\">Thank you: {} added to the album.</p>", plural(added, "photo was", "photos were")));
+    }
+    if already > 0 {
+        h.push_str(&format!("<p class=\"note\" role=\"status\">{} in the album already.</p>", plural(already, "photo was", "photos were")));
     }
     if skipped > 0 {
         h.push_str(&format!(
