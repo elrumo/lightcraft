@@ -208,6 +208,9 @@ sign-in then belong to that site's browser storage. See [sync.md](sync.md).
 - **AI Remove runs on the main thread** (a few seconds a stroke; a "Removing with AI…" notice shows first). Its model
   (MI-GAN, 30 MB, [ai-remove.md](ai-remove.md)) is fetched from Hugging Face only when the user presses Download, and
   kept in the site's storage (`models/migan/`).
+- **Generative Expand runs on the main thread too** (Crop ▸ Expand ▸ Generate, [generative-expand.md](generative-expand.md)):
+  one MI-GAN pass at 512 pixels and the texture synthesis, a few seconds; the same stored MI-GAN, or Classic without
+  a download. LaMa (208 MB) isn't offered in the browser.
 - **Exports and auto-adjustments run on the main thread** (they need the original's pixels
   there). Right after a reload, the first such command on a photo whose original isn't in memory
   yet fails with "still loading" and works a moment later.

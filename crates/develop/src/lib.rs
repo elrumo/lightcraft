@@ -13,7 +13,7 @@ pub mod settings;
 
 pub use controls::{CONTROLS, ControlSpec, Section, Track};
 pub use presets::{Preset, SettingsGroup, apply_partial, extract_groups};
-pub use segmask::{SegMask, SpotFill};
+pub use segmask::{ExpandFill, SegMask, SpotFill};
 pub use settings::*;
 
 use serde_json::Value;

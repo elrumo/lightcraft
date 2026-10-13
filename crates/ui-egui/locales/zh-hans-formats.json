@@ -270,5 +270,9 @@
   "Not carried over: {what}": "未沿用：{what}",
   "{n} items": "{n} 项",
   "{label}, {n} items": "{label}，{n} 项",
-  "Add to {album}": "添加到“{album}”"
+  "Add to {album}": "添加到“{album}”",
+  "Uses the {} model, a {:.0} MB download ({} licence). {}.": "使用 {} 模型（需下载 {:.0} MB，{} 许可证）。{}。",
+  "New area painted with {}": "已用 {} 生成新区域",
+  "{note} · {:.0} MB download": "{note} · 需下载 {:.0} MB",
+  "The new area was painted by {by} on this device.": "新区域已在此设备上生成（{by}）。"
 }

@@ -63,7 +63,7 @@ impl Session {
     }
 
     /// The model, loaded once (from the models folder the first time).
-    fn eraser(&self) -> Result<Arc<Eraser>, String> {
+    pub(crate) fn eraser(&self) -> Result<Arc<Eraser>, String> {
         if self.enhancer.disabled.contains(lightcraft_erase::ID) {
             return Err("AI Remove is turned off: turn its model on in Settings → AI Models.".into());
         }

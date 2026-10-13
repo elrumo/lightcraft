@@ -270,5 +270,9 @@
   "Not carried over: {what}": "引き継がなかった設定：{what}",
   "{n} items": "{n} 項目",
   "{label}, {n} items": "{label}、{n} 項目",
-  "Add to {album}": "{album} に追加"
+  "Add to {album}": "{album} に追加",
+  "Uses the {} model, a {:.0} MB download ({} licence). {}.": "{}モデルを使用します（{:.0} MBのダウンロード、{}ライセンス）。{}。",
+  "New area painted with {}": "{}で新しい領域を生成しました",
+  "{note} · {:.0} MB download": "{note} · {:.0} MBのダウンロード",
+  "The new area was painted by {by} on this device.": "新しい領域はこのデバイス上で生成されました（{by}）。"
 }

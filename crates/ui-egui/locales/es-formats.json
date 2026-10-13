@@ -270,5 +270,9 @@
   "Not carried over: {what}": "No transferido: {what}",
   "{n} items": "{n} elementos",
   "{label}, {n} items": "{label}, {n} elementos",
-  "Add to {album}": "Añadir a {album}"
+  "Add to {album}": "Añadir a {album}",
+  "Uses the {} model, a {:.0} MB download ({} licence). {}.": "Usa el modelo {}, una descarga de {:.0} MB (licencia {}). {}.",
+  "New area painted with {}": "Área nueva pintada con {}",
+  "{note} · {:.0} MB download": "{note} · descarga de {:.0} MB",
+  "The new area was painted by {by} on this device.": "El área nueva se pintó en este dispositivo ({by})."
 }

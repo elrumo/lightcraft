@@ -615,8 +615,9 @@ pub fn render(
     // 1. geometry (on the CPU when the source exceeds the device's buffer limit)
     let sampled = match &cached {
         Some(e) => e.sampled.clone(),
-        // (a WarpRectilinear2 chain also goes to the CPU: its degree-14 polynomial needs f64)
-        None if gpu.fits(src.data.len() * 3) && !plan.frame.warp.as_ref().is_some_and(|w| w.needs_f64()) => {
+        // (a WarpRectilinear2 chain also goes to the CPU: its degree-14 polynomial needs f64; so
+        // does Generative Expand, whose fill is put in at the resample)
+        None if gpu.fits(src.data.len() * 3) && !plan.frame.warp.as_ref().is_some_and(|w| w.needs_f64()) && !plan.frame.expands() => {
             let upload = || gpu.upload(rgb_words(src));
             // (a source too big for a view's stages to keep is the one shared copy: a window is
             // cut from the photo's own pixels, and what its stages keep is its own sampled pixels)
@@ -738,6 +739,9 @@ pub fn render(
         return None;
     }
     let mut image = image;
+    // Generative Expand: area past the photo with nothing generated yet is transparent (after the
+    // check above, which reads alpha)
+    lightcraft_pipeline::expand::mark_missing(&mut image, &plan.frame);
     let overlay_mask = overlay_mask.map(|r| match r {
         Ok(b) => cx.read_plane(&b, w, h),
         // a hidden mask: evaluate it on the CPU
