@@ -619,6 +619,7 @@ fn reason(code: u16) -> &'static str {
         206 => "Partial Content",
         301 => "Moved Permanently",
         302 => "Found",
+        303 => "See Other",
         304 => "Not Modified",
         400 => "Bad Request",
         401 => "Unauthorized",
@@ -637,6 +638,7 @@ fn reason(code: u16) -> &'static str {
         431 => "Request Header Fields Too Large",
         500 => "Internal Server Error",
         503 => "Service Unavailable",
+        507 => "Insufficient Storage",
         _ => "Status",
     }
 }

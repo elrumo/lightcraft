@@ -17,7 +17,13 @@
 //! <data>/users/<name>/presets.json        { version, presets }
 //! <data>/users/<name>/devices.json        signed-in devices (token hashes, id spaces)
 //! <data>/users/<name>/folders.json        the user's library folders as last scanned
+//! <data>/users/<name>/shares.json         album links (tokens, passwords' hashes)
 //! ```
+//!
+//! **Album links** ([`shares`]): a page of an album for anyone with its link, no account — by day, a page per
+//! photo, a slideshow, Download All ([`zip`]), optionally a password, optionally a form through which visitors
+//! add photos ([`guest`], [`multipart`]). **Storage limits** ([`accounts::User::quota`]) cap what the server keeps
+//! for a user: uploads over one are refused with `507`.
 //!
 //! **Library folders** ([`folders`]): photo folders already on the server, given to a user by an
 //! admin, are read in place — never copied, moved or written — and their photos join the user's
@@ -35,13 +41,16 @@ pub mod cors;
 pub mod docs;
 pub mod folders;
 pub mod gc;
+pub mod guest;
 pub mod http;
+pub mod multipart;
 pub mod render;
 pub mod shares;
 pub mod switch;
 pub mod throttle;
 pub mod vision;
 pub mod writeback;
+pub mod zip;
 
 use std::collections::HashMap;
 use std::net::SocketAddr;

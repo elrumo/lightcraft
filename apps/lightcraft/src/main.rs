@@ -26,10 +26,10 @@ mod alloc_release;
 mod appearance;
 mod control_server;
 mod dialog_filter;
-mod editors;
-mod logging;
 #[cfg(target_os = "macos")]
 mod drag_pointer;
+mod editors;
+mod logging;
 #[cfg(target_os = "macos")]
 mod native_menu;
 #[cfg(target_os = "macos")]
