@@ -160,7 +160,7 @@ fn sign_in(h: &mut Headless) {
     run(h, "sync.signIn", json!({"server": "http://fake", "user": "ann", "password": "pw", "device": "test"}));
     for _ in 0..40 {
         frames(h, 5);
-        if h.app.session.sync_state().is_some_and(|st| st.state() != "syncing" || st.conflict().is_some()) && h.app.cloud_sync.in_flight == 0 {
+        if h.app.session.sync_state().is_some_and(|st| st.state() != "syncing" || st.conflict().is_some()) && h.app.cloud_sync.driver.in_flight == 0 {
             break;
         }
     }
@@ -718,7 +718,7 @@ fn share_link_asks_how_the_link_works_and_settings_show_the_limit() {
     assert_eq!(h.request("ui.dialog.confirm", json!({}), T)["ok"], true);
     for _ in 0..20 {
         frames(&mut h, 5);
-        if !asked.lock().unwrap().is_empty() && h.app.cloud_sync.in_flight == 0 {
+        if !asked.lock().unwrap().is_empty() && h.app.cloud_sync.driver.in_flight == 0 {
             break;
         }
     }

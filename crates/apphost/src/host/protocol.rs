@@ -103,6 +103,11 @@ pub struct HostState {
     pub interaction: Option<String>,
     /// Changes the photo's catalog not on disk yet: the count (0 when everything is saved).
     pub unsaved: usize,
+    /// The server sync, for the cloud icon (`None`: a local library, no server):
+    /// `{state: signedOut|conflict|paused|error|syncing|idle, server, pending, uploads, downloads,
+    /// reading: [read, total]|null, error}` (`sync.status` has the rest).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sync: Option<Value>,
 }
 
 /// An event, `{"kind": "...", ...}`.
@@ -146,6 +151,11 @@ pub enum Event {
     Activity { tasks: Vec<TaskInfo> },
     /// Something to tell the user (English: the key the frontend translates).
     Message { text: String, level: String },
+    /// Put `text` on the clipboard (a share link just made).
+    Copy { text: String },
+    /// Show a dialog the engine needs an answer from: `syncChoice` (signing in met a server that has
+    /// a library already: `sync.resolveConflict`).
+    Ask { dialog: String, params: Value },
     /// An automation script asks the UI (`ui.screenshot`, `ui.inspect`…): answer with
     /// `ui.reply {id, result | error}`.
     UiRequest { id: u64, method: String, params: Value },

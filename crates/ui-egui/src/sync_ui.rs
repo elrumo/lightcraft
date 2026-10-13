@@ -1,13 +1,15 @@
-//! Self-hosted sync on the frame loop (`docs/sync.md`): the engine says what to send next
-//! ([`lightcraft_engine::Session::sync_tasks`]), the host runs it ([`crate::Services::sync_exec`]:
-//! a worker thread on the desktop) and the answers come back here, so a slow or absent server
-//! never holds a frame. Pulls every few seconds while signed in, and when the window comes back
-//! to the front.
+//! Self-hosted sync on the frame loop (`docs/sync.md`): [`lightcraft_apphost::sync::Driver`] (shared
+//! with the SwiftUI app's engine host) hands the engine's requests to [`crate::Services::sync_exec`]
+//! (a worker thread on the desktop) and their answers back, so a slow or absent server never holds a
+//! frame. Pulls every few seconds while signed in, and when the window comes back to the front.
 
-use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::mpsc::Sender;
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::mpsc::{Receiver, channel};
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
 
-use lightcraft_engine::cloud_sync::{Done, POLL, Task};
+use lightcraft_engine::cloud_sync::{Done, Task};
 use lightcraft_engine::usage::LocalUsage;
 
 use crate::LightcraftApp;
@@ -19,17 +21,7 @@ pub type SyncExec = Box<dyn Fn(Task, Sender<Done>, egui::Context)>;
 /// files), answered through the channel.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn native_exec() -> SyncExec {
-    Box::new(|task, tx, ctx| {
-        let id = task.id();
-        let done = tx.clone();
-        let spawned = std::thread::Builder::new().name("lc-sync".into()).spawn(move || {
-            let _ = tx.send(lightcraft_engine::cloud_sync::run(&task));
-            ctx.request_repaint();
-        });
-        if let Err(e) = spawned {
-            let _ = done.send(Done::failed(id, format!("can't start a sync thread: {e}")));
-        }
-    })
+    Box::new(|task, tx, ctx| lightcraft_apphost::sync::native_exec(move || ctx.request_repaint())(task, tx))
 }
 
 /// The Settings > Sync form (never saved: the password only goes to the server).
@@ -42,24 +34,12 @@ pub struct SyncForm {
     pub merge: bool,
 }
 
+#[derive(Default)]
 pub struct SyncDriver {
-    tx: Sender<Done>,
-    rx: Receiver<Done>,
-    /// Tasks handed to the host and not answered yet.
-    pub in_flight: usize,
-    focused: bool,
+    /// Requests in flight and their answers (shared with the engine host).
+    pub driver: lightcraft_apphost::sync::Driver,
     pub form: SyncForm,
     pub storage: Storage,
-    /// The choice after signing in to a server that has a library already was put to the user (once
-    /// per sign-in: it can be put off, and is offered again from the cloud button and Settings).
-    choice_asked: bool,
-}
-
-impl Default for SyncDriver {
-    fn default() -> Self {
-        let (tx, rx) = channel();
-        SyncDriver { tx, rx, in_flight: 0, focused: false, form: SyncForm::default(), storage: Storage::default(), choice_asked: false }
-    }
 }
 
 /// How often this computer's folders are measured again while Settings ▸ Sync is open.
@@ -161,39 +141,21 @@ pub fn count_label(n: u64) -> String {
 
 /// Hand finished tasks to the engine and start the next ones (cheap when there's nothing to do).
 pub fn poll(app: &mut LightcraftApp, ctx: &egui::Context) {
-    while let Ok(d) = app.cloud_sync.rx.try_recv() {
-        app.cloud_sync.in_flight = app.cloud_sync.in_flight.saturating_sub(1);
-        app.session.sync_done(d);
-    }
+    let focused = ctx.input(|i| i.focused);
+    let exec = app.services.sync_exec.as_ref().map(|exec| move |t: Task, tx: Sender<Done>| exec(t, tx, ctx.clone()));
+    let polled = app.cloud_sync.driver.poll(&mut app.session, focused, exec.as_ref().map(|e| e as &dyn Fn(Task, Sender<Done>)));
     // a link just made goes on the clipboard
-    if let Some(url) = app.session.sync_take_new_link() {
+    if let Some(url) = polled.link {
         ctx.copy_text(url.clone());
         app.toast_for(ctx, format!("Link copied: {url}"), 4.0);
     }
     // two libraries with photos met: ask what to do about it (once; nothing syncs meanwhile)
-    if app.session.sync_conflict().is_some() {
-        if !std::mem::replace(&mut app.cloud_sync.choice_asked, true) {
-            app.ui.dialog = Some(crate::state::Dialog::SyncChoice);
-        }
-    } else {
-        app.cloud_sync.choice_asked = false;
+    if polled.ask_conflict {
+        app.ui.dialog = Some(crate::state::Dialog::SyncChoice);
     }
-    let Some(exec) = app.services.sync_exec.as_ref() else { return };
-    let Some(st) = app.session.sync_state() else { return };
-    if !st.signed_in() || st.config.paused {
-        return;
+    if let Some(again) = polled.again {
+        ctx.request_repaint_after(again);
     }
-    let focused = ctx.input(|i| i.focused);
-    if focused && !app.cloud_sync.focused {
-        app.session.sync_soon();
-    }
-    app.cloud_sync.focused = focused;
-    for t in app.session.sync_tasks() {
-        app.cloud_sync.in_flight += 1;
-        exec(t, app.cloud_sync.tx.clone(), ctx.clone());
-    }
-    let busy = app.cloud_sync.in_flight > 0 || app.session.sync_state().is_some_and(|st| st.state() == "syncing");
-    ctx.request_repaint_after(if busy { Duration::from_millis(500) } else { POLL });
 }
 
 /// The top bar cloud icon's tooltip, and whether it shows a problem / activity. (English only for

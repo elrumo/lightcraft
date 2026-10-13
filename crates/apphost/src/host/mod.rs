@@ -18,6 +18,10 @@
 //!   applyCrop?}`, `render.prefetch {photos, width, height}`, `render.cancel {slots}`,
 //!   `render.retain {thumbs, max?}` — pictures arrive as `image` events.
 //! - `ui.reply {id, result | error}` — the frontend's answer to a `uiRequest` (automation).
+//!
+//! Between requests the thread drives what the egui app's frame loop drives: renders, saving, the
+//! activity stack and the self-hosted sync ([`crate::sync`]; a share link comes as a `copy` event,
+//! the choice after signing in to a server that has a library as `ask {dialog: "syncChoice"}`).
 
 pub mod leases;
 pub mod protocol;
@@ -31,6 +35,7 @@ use std::time::{Duration, Instant};
 
 use lightcraft_catalog::PhotoId;
 use lightcraft_engine::Session;
+use lightcraft_engine::cloud_sync::{Done, Task};
 use lightcraft_raster::Rgba8;
 use serde_json::{Value, json};
 
@@ -236,6 +241,15 @@ struct Engine {
     ui_pending: HashMap<u64, (u64, Sender<Event>)>,
     next_ui: u64,
     busy: bool,
+    /// Self-hosted sync: requests in flight on worker threads ([`crate::sync`]).
+    sync: crate::sync::Driver,
+    sync_exec: Box<dyn Fn(Task, Sender<Done>)>,
+    /// The app is in front (`host.lifecycle`): coming back pulls from the server at once.
+    in_front: bool,
+    /// When the frontend last asked for something (the user is at work: background scans hold back).
+    last_request: Instant,
+    /// When face recognition's scan is pumped next ([`crate::faces`]).
+    faces_next: Instant,
 }
 
 impl Engine {
@@ -260,9 +274,13 @@ impl Engine {
             Some(n) => Scheduler::with_worker_threads(n),
             None => Scheduler::default(),
         };
+        let sync_wake = wake.clone();
         sched.set_notify(Some(Arc::new(move || {
             let _ = wake.send(Msg::Wake);
         })));
+        let sync_exec = Box::new(crate::sync::native_exec(move || {
+            let _ = sync_wake.send(Msg::Wake);
+        }));
         let library = session.library.as_ref().filter(|l| l.on_disk).map(|l| l.dir.display().to_string());
         let opened = json!({"library": library, "photos": session.catalog.len(), "demo": demo, "warnings": warnings});
         Ok(Engine {
@@ -278,6 +296,11 @@ impl Engine {
             ui_pending: HashMap::new(),
             next_ui: 0,
             busy: false,
+            sync: crate::sync::Driver::default(),
+            sync_exec,
+            in_front: true,
+            last_request: Instant::now(),
+            faces_next: Instant::now(),
         })
     }
 
@@ -334,6 +357,9 @@ impl Engine {
     /// The answer to `req`, or `None` when it comes later (a `uiRequest` forwarded to the frontend).
     fn answer(&mut self, req: Request, call: Option<&Sender<Event>>) -> Option<Event> {
         let id = req.id;
+        if req.method != "host.state" {
+            self.last_request = Instant::now();
+        }
         if req.method.starts_with("ui.") && req.method != "ui.reply" && req.method != "ui.render" && req.method != "ui.menu.invoke" {
             let Some(reply) = call else {
                 return Some(Event::err(id, ErrorBody::new("unknownMethod", format!("`{}` is answered by the UI itself", req.method))));
@@ -484,6 +510,15 @@ impl Engine {
             self.events.push(Event::RenderFailed { slot: slot.name(), photo, key, error }.to_value());
         }
         self.busy = polled.wake_after.is_some_and(|d| d <= BUSY_TICK);
+        let synced = self.sync.poll(&mut self.session, self.in_front, Some(&*self.sync_exec));
+        if let Some(url) = synced.link {
+            self.events.push(Event::Copy { text: url.clone() }.to_value());
+            self.events.push(Event::Message { text: format!("Link copied: {url}"), level: "info".into() }.to_value());
+        }
+        if synced.ask_conflict {
+            self.events.push(Event::Ask { dialog: "syncChoice".into(), params: json!({}) }.to_value());
+        }
+        self.pump_faces();
         self.session.persist_if_dirty();
         let state = self.snapshot();
         if self.state.as_ref() != Some(&state) {
@@ -500,6 +535,27 @@ impl Engine {
         }
     }
 
+    /// Face recognition's background scan (Settings ▸ Faces): the next photos for its workers, as
+    /// fast as what the user is doing allows.
+    fn pump_faces(&mut self) {
+        let now = Instant::now();
+        if now < self.faces_next {
+            return;
+        }
+        let worked = now.duration_since(self.last_request).as_secs_f64();
+        let pace = crate::faces::pace_for(self.in_front, !self.in_front, worked, worked, false);
+        let answer = self.session.execute("faces.pump", &json!({"pace": pace})).unwrap_or(Value::Null);
+        let wait = crate::faces::next_pump(&answer);
+        if wait > 0.0 && wait < IDLE_TICK.as_secs_f64() {
+            // photos waiting for the workers: look again soon (the loop ticks fast meanwhile)
+            self.faces_next = now + Duration::from_secs_f64(wait);
+            self.busy = true;
+        } else {
+            // idle or off: every idle tick is soon enough (switching it on is seen at once)
+            self.faces_next = now + Duration::from_secs_f64(wait.max(IDLE_TICK.as_secs_f64()));
+        }
+    }
+
     fn snapshot(&mut self) -> HostState {
         let (visible_gen, visible) = self.session.visible_shared();
         HostState {
@@ -513,6 +569,7 @@ impl Engine {
             redo: self.session.redo.last().map(|u| u.label.clone()),
             interaction: self.session.interaction.as_ref().map(|i| i.label.clone()),
             unsaved: self.session.unsaved().map_or(0, |(n, _)| n),
+            sync: crate::sync::summary(&self.session),
         }
     }
 
@@ -527,15 +584,22 @@ impl Engine {
     fn lifecycle(&mut self, event: &str) -> Result<(), String> {
         log::info!("lifecycle: {event}");
         match event {
-            "resignActive" => self.save(),
+            "resignActive" => {
+                self.in_front = false;
+                self.save();
+            }
             "background" => {
+                self.in_front = false;
                 self.save();
                 // no GPU in the background, and a much smaller memory limit
                 lightcraft_engine::gpu::pause();
                 let freed = self.session.release_memory();
                 log::info!("background: {} MB of decoded photos released", freed >> 20);
             }
-            "foreground" | "active" => lightcraft_engine::gpu::resume(),
+            "foreground" | "active" => {
+                self.in_front = true;
+                lightcraft_engine::gpu::resume();
+            }
             "memoryWarning" => {
                 let freed = self.session.release_memory();
                 log::warn!("memory warning: {} MB of decoded photos released", freed >> 20);
