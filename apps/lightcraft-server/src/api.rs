@@ -18,6 +18,7 @@ use serde_json::{Value, json};
 
 use crate::State;
 use crate::accounts::{self, LoginError, Session};
+use crate::folders::PreviewState;
 
 /// Largest JSON body (a push is at most a few hundred ops).
 pub const JSON_MAX: u64 = 64 << 20;
@@ -586,11 +587,19 @@ fn blob(st: &State, req: &mut Request, method: &Method, l: &Mutex<UserLib>, user
     let hash = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
     match method {
         Method::Head | Method::Get => {
-            let f = match std::fs::File::open(&path) {
+            let mut f = match std::fs::File::open(&path) {
                 Ok(f) => Some(f),
                 Err(_) if kind == "original" => folder_original(st, l, user, &hash),
                 Err(_) => None,
             };
+            // a device shows a photo whose preview isn't built yet: build it before the rest, and say so
+            if f.is_none() && kind != "original" && matches!(method, Method::Get) {
+                match rush_preview(st, l, user, &dir, &hash) {
+                    Some(PreviewState::Built) => f = std::fs::File::open(&path).ok(),
+                    Some(state) => return preview_not_yet(state),
+                    None => {}
+                }
+            }
             let Some(mut f) = f else {
                 // an original may be part-way: say how far
                 let have = if kind == "original" { std::fs::metadata(part_path(&dir, &hash)).map(|m| m.len()).unwrap_or(0) } else { 0 };
@@ -638,6 +647,28 @@ fn blob(st: &State, req: &mut Request, method: &Method, l: &Mutex<UserLib>, user
         }
         _ => error(405, "HEAD, GET or PUT"),
     }
+}
+
+/// A device asked for a preview that isn't there, for a photo whose original this server has (uploaded, or in a
+/// library folder): have its previews built before the rest of the queue ([`crate::folders::Scanner::rush`]).
+/// `None`: the server has no such original, so there is nothing to wait for.
+fn rush_preview(st: &State, l: &Mutex<UserLib>, user: &str, dir: &Path, hash: &str) -> Option<PreviewState> {
+    let original = blob_path(dir, "original", hash).filter(|p| p.is_file()).or_else(|| folder_original_path(st, l, user, hash))?;
+    Some(st.folders.rush(dir, user, hash.to_string(), original))
+}
+
+/// The answer to a preview that isn't there yet: `404` as for any file the server doesn't have, and in the body, which
+/// devices from before it ignore, whether the server is making it (`queued`: ask again in a few seconds) or can't (`failed`).
+fn preview_not_yet(state: PreviewState) -> Resp {
+    let msg = match state {
+        PreviewState::Failed => "the server can't make this preview",
+        _ => "the server is making this preview",
+    };
+    let mut resp = json(404, &json!({"error": msg, "previews": state.word()}));
+    if state == PreviewState::Queued {
+        header("Retry-After", "3").into_iter().for_each(|h| resp.add_header(h));
+    }
+    resp
 }
 
 /// How long a render waits for a free place before the device is told to try again.

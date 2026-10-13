@@ -169,7 +169,12 @@ fn tile(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, onscre
     let resp = ui.interact(r, egui::Id::new(("date-tile", id.0, r.min.x as i32)), Sense::click());
     register(ui.ctx(), format!("dateTile:{}", id.0), r);
     let ppp = ui.ctx().pixels_per_point();
-    super::grid::request_thumb(app, id, super::grid::thumb_px(r.width().max(r.height()), ppp), if onscreen { 10 } else { 5 });
+    super::grid::request_thumb(
+        app,
+        id,
+        super::grid::thumb_px(r.width().max(r.height()), ppp),
+        if onscreen { 10 } else { super::grid::PREFETCH_THUMB_PRIORITY },
+    );
     let p = ui.painter();
     match app.renderer.thumb(id) {
         Some(tex) => {
