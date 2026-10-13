@@ -1799,7 +1799,9 @@ mod tests {
         h.step();
         let later = rows(&h);
         assert!((5..60).contains(&later.len()), "{} rows built", later.len());
-        let deep = later.iter().filter_map(|w| w.strip_prefix("preset:user.big.")).filter_map(|n| n.parse::<usize>().ok()).max();
+        // (imported presets are named by their content in this fork: the row's number is in its name)
+        let look = |id: &str| h.app.session.presets.iter().find(|p| p.id == id).and_then(|p| p.name.strip_prefix("Look ")?.parse::<usize>().ok());
+        let deep = later.iter().filter_map(|w| w.strip_prefix("preset:")).filter_map(look).max();
         assert!(deep.is_some_and(|n| n > 500), "scrolled rows: {later:?}");
     }
 
