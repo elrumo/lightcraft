@@ -261,12 +261,17 @@ on there and then). The loupe's name box offers the same ("Set up name suggestio
 does a person's page.
 
 **People** shows a card for each named person (their face, with the number of photos they are in on the picture) and, below
-a line, the **Unnamed faces**: every face nobody has named, as cropped pictures. With recognition running, faces that look
-alike are next to each other (put in order by looking at every pair, for up to the first 1,500 embedded faces), and a face
-the named ones recognise carries the name they suggest along its bottom edge; click that name to accept it for that face.
-To name a group: click faces to select them (Shift-click selects a range, **Select all** takes every one listed), type a
-name in the bar that appears (people already named complete as you type), press Enter: all of them are named at once, as
-one undo step. Selecting names nothing.
+a line, the **Unnamed faces**: the faces nobody has named, one cropped picture per person (their biggest face, with how many
+faces they have on it). Faces are one person when recognition groups them (each face joins the person whose average face
+it is at least the model's match threshold like, the same grouping the face finder of `search-people.md` uses, for up to
+the first 1,500 embedded faces), and the faces it hasn't grouped when the face finder found them to be one person, on
+this computer or, for a device that finds no faces itself (the web build, iOS), on the sync server: a face region is
+matched to a found face on the same photo by their boxes overlapping. A person the named ones recognise carries the name
+they suggest along its bottom edge; click that name to accept it for all their faces. To name people: click them to
+select their faces (Shift-click selects a range, **Select all** takes every face listed), type a name in the bar that
+appears (people already named complete as you type), press Enter: all of them are named at once, as one undo step.
+Selecting names nothing. A face grouped with the wrong person is named with them; fix it from that face's box in the
+photo.
 
 The thumbnail-size slider in the bottom bar sizes the faces here too, with limits of their own. Every face is shown by the
 same kind of box: the detector's own box once the scan has looked at it (kept beside its embedding), so a loosely drawn box
@@ -296,7 +301,7 @@ suggestions it would make and how many were right.
 
 All of this is reachable from the control channel, the CLI and MCP: `faces.models.list`, `faces.models.inspect {path}`,
 `faces.models.install {path, acknowledged: true, activate?}`, `faces.models.download {id, acknowledged: true}` (then `faces.models.downloads`, which also installs what has arrived, and `faces.models.downloadCancel {id}`), `faces.models.remove {id}`, `faces.models.select {id}`,
-`faces.enable {enabled?}`, `faces.detect {ids?, apply?}`, `faces.index {budgetMs?, ids?}`, `faces.pump` (what the app calls every frame), `faces.suggest {ids?, threshold?, margin?}`, `faces.person {name, more?}` (a person's faces and the unnamed faces that look like them), `faces.unnamed {limit?}` (every unnamed face, look-alikes together, with suggested names), `faces.setName {id?, index, name}`, `faces.nameFaces {faces: [{photo, index}], name}` (name many at once, one undo step) and `faces.evaluate`. `acknowledged` must be `true`: the caller has shown the user the terms and the user agreed. Installing makes the model the one in use and switches recognition on unless `activate` is `false`.
+`faces.enable {enabled?}`, `faces.detect {ids?, apply?}`, `faces.index {budgetMs?, ids?}`, `faces.pump` (what the app calls every frame), `faces.suggest {ids?, threshold?, margin?}`, `faces.person {name, more?}` (a person's faces and the unnamed faces that look like them), `faces.unnamed {limit?}` (every unnamed face with its `group`, each person's faces together, with suggested names), `faces.setName {id?, index, name}`, `faces.nameFaces {faces: [{photo, index}], name}` (name many at once, one undo step) and `faces.evaluate`. `acknowledged` must be `true`: the caller has shown the user the terms and the user agreed. Installing makes the model the one in use and switches recognition on unless `activate` is `false`.
 
 ## Find Blemishes
 
