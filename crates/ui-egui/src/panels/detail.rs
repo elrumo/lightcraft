@@ -237,17 +237,76 @@ pub(crate) fn output_px(frame: &Frame) -> [usize; 2] {
     [px(w), px(h)]
 }
 
-/// Ease the loupe rect toward `target` while a click-zoom animation runs; otherwise follow it exactly.
+/// Where the loupe drew the photo last frame, and the click zoom under way (`LoupeAnim`).
+fn loupe_ids() -> (egui::Id, egui::Id) {
+    (egui::Id::new("loupe_shown"), egui::Id::new("loupe_anim"))
+}
+
+/// Make the loupe's next animation start from `rect` (where the photo was shown in the grid).
+fn loupe_from(ctx: &egui::Context, rect: Rect) {
+    let (shown_id, anim_id) = loupe_ids();
+    ctx.data_mut(|d| {
+        d.insert_temp(shown_id, rect);
+        d.remove::<LoupeAnim>(anim_id);
+    });
+}
+
+/// How long a click zoom, or a photo growing out of its thumbnail, takes (s).
+const LOUPE_ZOOM_S: f64 = 0.22;
+
+/// A click-zoom under way: the rect it started from and when (s).
+#[derive(Clone, Copy)]
+struct LoupeAnim {
+    from: Rect,
+    to: Rect,
+    start: f64,
+}
+
+/// Ease the loupe rect toward `target` while a click-zoom animation runs (fast at first, settling
+/// into place, like the other transitions); otherwise follow it exactly. A target that drifts while
+/// it runs (a panel sliding) is followed; one that jumps (clicked again) starts over from where the
+/// photo is.
 fn animated_rect(ctx: &egui::Context, anim: &mut bool, target: Rect) -> Rect {
-    let t = if *anim { 0.22 } else { 0.0 };
-    let id = egui::Id::new("loupe_anim");
-    let v = |k: &str, x: f32| ctx.animate_value_with_time(id.with(k), x, t);
-    let (c, s) = (target.center(), target.size());
-    let r = Rect::from_center_size(pos2(v("cx", c.x), v("cy", c.y)), vec2(v("w", s.x), v("h", s.y)));
-    if *anim && (r.center() - c).abs().max_elem() < 0.5 && (r.size() - s).abs().max_elem() < 0.5 {
-        *anim = false;
-    }
+    const SECS: f64 = LOUPE_ZOOM_S;
+    let (shown_id, anim_id) = loupe_ids();
+    let now = ctx.input(|i| i.time);
+    let r = if *anim {
+        let run = ctx.data_mut(|d| {
+            let from = d.get_temp::<Rect>(shown_id).unwrap_or(target);
+            let fresh = LoupeAnim { from, to: target, start: now };
+            let run = match d.get_temp::<LoupeAnim>(anim_id) {
+                Some(run) if !jumped(run.to, target) => LoupeAnim { to: target, ..run },
+                _ => fresh,
+            };
+            d.insert_temp(anim_id, run);
+            run
+        });
+        let k = ((now - run.start) / SECS).clamp(0.0, 1.0) as f32;
+        if k >= 1.0 {
+            *anim = false;
+            target
+        } else {
+            ctx.request_repaint();
+            run.from.lerp_towards(&target, egui::emath::easing::cubic_out(k))
+        }
+    } else {
+        target
+    };
+    ctx.data_mut(|d| {
+        d.insert_temp(shown_id, r);
+        if !*anim {
+            d.remove::<LoupeAnim>(anim_id);
+        }
+    });
     r
+}
+
+/// Whether the loupe's target moved more in one frame than a panel sliding moves it: a fifth of
+/// its size or more.
+fn jumped(was: Rect, now: Rect) -> bool {
+    let size = was.size().max(now.size()).max(vec2(1.0, 1.0));
+    let d = (now.min - was.min).abs().max((now.max - was.max).abs());
+    d.x > size.x * 0.2 || d.y > size.y * 0.2
 }
 
 /// Whether an overlay can be rendered on a region tile without changing what the tile means.
@@ -1452,12 +1511,10 @@ pub(crate) fn view_changed(app: &mut LightcraftApp, ctx: &egui::Context) {
         let tile: Option<Tile> = ctx.data(|d| d.get_temp(egui::Id::new("grid-active-tile")));
         // (drawn in the frame before: the grid was on show with this photo in it)
         if let Some(tile) = tile.filter(|t| Some(PhotoId(t.photo)) == active && t.frame + 2 >= ctx.cumulative_frame_nr()) {
-            let id = egui::Id::new("loupe_anim");
-            let r = tile.rect;
-            for (k, v) in [("cx", r.center().x), ("cy", r.center().y), ("w", r.width()), ("h", r.height())] {
-                let _ = ctx.animate_value_with_time(id.with(k), v, 0.0);
-            }
+            loupe_from(ctx, tile.rect);
             app.ui.zoom_anim = true;
+            let since = ctx.input(|i| i.time);
+            ctx.data_mut(|d| d.insert_temp(egui::Id::new("loupe-growing"), (tile.photo, since)));
         }
     } else if was == ViewMode::Detail
         && grid(now)
@@ -1467,6 +1524,13 @@ pub(crate) fn view_changed(app: &mut LightcraftApp, ctx: &egui::Context) {
         let since = ctx.input(|i| i.time);
         ctx.data_mut(|d| d.insert_temp(egui::Id::new("loupe-homing"), Homing { photo: id.0, from, since }));
     }
+}
+
+/// The photo growing out of its thumbnail as it opens, while it does, and how far it has (0 … 1).
+pub fn growing(ctx: &egui::Context) -> Option<(PhotoId, f32)> {
+    let (photo, since): (u64, f64) = ctx.data(|d| d.get_temp(egui::Id::new("loupe-growing")))?;
+    let k = (ctx.input(|i| i.time) - since) / LOUPE_ZOOM_S;
+    (0.0..1.0).contains(&k).then_some((PhotoId(photo), k as f32))
 }
 
 /// The photo flying back to the grid, while it does.
@@ -3010,6 +3074,43 @@ fn film_badges(p: &egui::Painter, t: &Tokens, fr: Rect, ph: &lightcraft_catalog:
     }
     if edited {
         paint(p, Rect::from_min_size(pos2(bar.right() - 13.0, y - 5.0), vec2(10.0, 10.0)), Icon::Sliders, t.text_label);
+    }
+}
+
+#[cfg(test)]
+mod loupe_anim_tests {
+    use super::animated_rect;
+    use egui::{Rect, pos2, vec2};
+
+    /// The loupe's left edge in each frame (1/60 s apart) of a click zoom from `a` to `b` started at
+    /// frame 1, and whether it was still running.
+    fn run(a: Rect, b: Rect, frames: usize) -> Vec<(f32, bool)> {
+        let ctx = egui::Context::default();
+        let mut anim = false;
+        (0..frames)
+            .map(|f| {
+                let input = egui::RawInput { time: Some(f as f64 / 60.0), ..Default::default() };
+                anim |= f == 1;
+                let mut r = 0.0;
+                let mut full = ctx.run_ui(input, |_| r = animated_rect(&ctx, &mut anim, if f == 0 { a } else { b }).left());
+                full.textures_delta.clear();
+                (r, anim)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_click_zoom_eases_out_and_lands_on_its_target() {
+        let a = Rect::from_min_size(pos2(0.0, 0.0), vec2(100.0, 100.0));
+        let b = Rect::from_min_size(pos2(-300.0, -300.0), vec2(700.0, 700.0));
+        let xs = run(a, b, 30);
+        assert_eq!(xs[0], (0.0, false), "follows its target exactly when not animating");
+        assert_eq!(xs[1].0, 0.0, "starts where the photo was");
+        // eased out: the first half of the run covers well over half the way
+        let half = xs[8].0;
+        assert!(half < -200.0 && half > -300.0, "{xs:?}");
+        assert!(xs.windows(2).all(|w| w[1].0 <= w[0].0), "only moves one way: {xs:?}");
+        assert_eq!(*xs.last().unwrap(), (-300.0, false), "lands and stops");
     }
 }
 

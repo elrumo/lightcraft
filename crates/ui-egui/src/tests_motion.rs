@@ -96,11 +96,39 @@ fn a_photo_opened_from_the_grid_grows_out_of_its_thumbnail_and_flies_back() {
     h.settle(SETTLE);
     let end = h.app.image_rect.unwrap();
     assert!(first.width() < end.width() * 0.8, "starts small: {first:?} → {end:?}");
-    assert!(tile.contains(first.center()), "where its thumbnail was: {tile:?}, {first:?}");
+    // (a frame or two in, eased out: well on its way, still much nearer its thumbnail than its place)
+    let (from_tile, to_end) = ((first.center() - tile.center()).length(), (first.center() - end.center()).length());
+    assert!(from_tile < to_end * 0.5, "where its thumbnail was: {tile:?}, {first:?} → {end:?}");
     // back to the grid: it flies home, and its cell waits for it
     set(&mut h, json!({"view": "photoGrid"}));
     let flying = crate::panels::detail::homing(&h.view.ctx).expect("on its way back");
     assert_eq!(flying.photo, id.0);
     h.settle(SETTLE);
     assert!(crate::panels::detail::homing(&h.view.ctx).is_none(), "landed");
+}
+
+#[test]
+fn on_a_phone_a_photo_opened_grows_over_the_grid_left_behind_it() {
+    let app = LightcraftApp::new(lightcraft_engine::Session::with_demo(), Services { png: None, ..Default::default() });
+    let mut h = Headless::new(app, [390.0, 844.0], 1.0);
+    h.settle(SETTLE);
+    assert!(h.app.compact, "the phone layout");
+    let ids = h.app.session.visible_cloned();
+    let (id, other) = (ids[0], ids[1]);
+    let r = h.request("engine.execute", json!({"command": "library.select", "params": {"ids": [id.0]}}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    set(&mut h, json!({"view": "photoGrid"}));
+    h.settle(SETTLE);
+    assert!(widget(&h, &format!("thumb:{}", id.0)).is_some(), "its cell");
+    set(&mut h, json!({"view": "detail"}));
+    steps(&mut h, 2);
+    let (growing, k) = crate::panels::detail::growing(&h.view.ctx).expect("growing out of its thumbnail");
+    assert_eq!(growing, id);
+    assert!(k > 0.0 && k < 1.0, "{k}");
+    // the grid is still drawn behind it (its other cells), not faded out under a fading-in photo
+    assert!(widget(&h, &format!("thumb:{}", other.0)).is_some(), "the grid behind");
+    h.settle(SETTLE);
+    assert!(crate::panels::detail::growing(&h.view.ctx).is_none(), "grown");
+    assert!(widget(&h, &format!("thumb:{}", other.0)).is_none(), "the grid gone once the photo is in");
 }
