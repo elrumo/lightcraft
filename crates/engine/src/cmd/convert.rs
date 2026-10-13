@@ -4,10 +4,11 @@
 
 use std::path::Path;
 
-use lightcraft_catalog::{MediaKind, Op, Source};
+use lightcraft_catalog::{MediaKind, Op, PhotoId, Source};
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use super::{CommandSpec, bad, cmd, has_active, has_selection};
+use super::{CommandSpec, always, bad, cmd, has_active, has_selection};
 use crate::{Result, Session};
 
 /// `<stem>.dng`, then `<stem>-2.dng`, `<stem>-3.dng`… next to `path`.
@@ -119,9 +120,39 @@ pub fn specs() -> Vec<CommandSpec> {
     )]
 }
 
-/// Edit in an external editor, the engine half: render the photo with its edits as a 16-bit
-/// TIFF (or PSD, or 8-bit) next to the original (`<name>-Edit.tif`, never overwriting), add it to
-/// the library and stack it on top of the original. The host opens the file in the editor.
+/// How Photo ▸ Edit In hands a photo to the editor (`mode` of `photo.editExternal`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EditMode {
+    /// A copy rendered with the photo's edits (any photo): Edit a Copy with LightCraft Adjustments.
+    Render,
+    /// A copy of the photo's file, without the edits: Edit a Copy.
+    Copy,
+    /// The photo's own file: Edit Original. Its edits stay on top of what the editor saves.
+    Original,
+}
+
+impl EditMode {
+    fn name(self) -> &'static str {
+        match self {
+            EditMode::Render => "render",
+            EditMode::Copy => "copy",
+            EditMode::Original => "original",
+        }
+    }
+}
+
+/// Whether Photo ▸ Edit In can hand over photo `ph`'s own file (Edit Original, Edit a Copy): an
+/// image file a pixel editor opens and saves as it is (TIFF, PSD, JPEG, PNG…), not a raw (developed
+/// from its sensor data), a video or a generated demo photo.
+pub fn can_edit_original(ph: &lightcraft_catalog::Photo) -> bool {
+    ph.kind == MediaKind::Image && matches!(ph.source, Source::File { .. })
+}
+
+/// Edit in an external editor, the engine half. `mode` render (default): render the photo with its
+/// edits as a 16-bit TIFF (or PSD, or 8-bit) next to the original (`<name>-Edit.tif`, never
+/// overwriting), add it to the library and stack it on top of the original; copy: the same with a
+/// plain copy of the file; original: the photo's own file, nothing made. The host opens the files in
+/// the editor and keeps `track`, for `photo.checkExternalEdits` to bring back what the editor saves.
 fn edit_external(s: &mut Session, p: &Value) -> Result<Value> {
     const C: &str = "photo.editExternal";
     let mut ids = s.targets(p);
@@ -131,6 +162,23 @@ fn edit_external(s: &mut Session, p: &Value) -> Result<Value> {
     }
     if ids.len() > MAX_EDIT_COPIES {
         return Err(bad(C, format!("{} photos selected: edit at most {MAX_EDIT_COPIES} at a time", ids.len())));
+    }
+    let mode = match super::str_param(p, "mode").unwrap_or("render") {
+        "render" => EditMode::Render,
+        "copy" => EditMode::Copy,
+        "original" => EditMode::Original,
+        m => return Err(bad(C, format!("mode {m:?}: use render, copy or original"))),
+    };
+    if mode != EditMode::Render
+        && let Some(ph) = ids.iter().filter_map(|id| s.catalog.photo(*id)).find(|ph| !can_edit_original(ph))
+    {
+        return Err(bad(
+            C,
+            format!(
+                "{}: only an image file (TIFF, PSD, JPEG, PNG…) can be edited as it is, not a raw, a video or a generated photo: use mode render",
+                ph.file_name
+            ),
+        ));
     }
     let space = match super::str_param(p, "colorSpace").unwrap_or("adobeRgb") {
         "srgb" => lightcraft_pipeline::OutputSpace::Srgb,
@@ -158,12 +206,28 @@ fn edit_external(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let mut copies = Vec::new();
     for id in ids {
-        copies.push(edit_copy(s, p, id, &opts)?);
+        copies.push(match mode {
+            EditMode::Render => edit_copy(s, p, id, &opts)?,
+            EditMode::Copy => {
+                let (new, path) = copy_file_photo(s, C, id, "-Edit", false, "Edit a Copy")?;
+                let _ = s.execute("stack.group", &json!({"ids": [new.0, id.0], "top": new.0, "collapsed": false}));
+                json!({"path": path, "id": new.0, "original": id.0})
+            }
+            EditMode::Original => {
+                let ph = s.catalog.photo(id).ok_or_else(|| bad(C, format!("no photo {}", id.0)))?;
+                let Source::File { path } = &ph.source else { return Err(bad(C, "a generated demo photo has no file")) };
+                json!({"path": path, "id": id.0, "original": id.0})
+            }
+        });
     }
-    let new: Vec<lightcraft_catalog::PhotoId> = copies.iter().filter_map(|c| c["id"].as_u64()).map(lightcraft_catalog::PhotoId).collect();
-    s.selection = crate::Selection { active: new.first().copied(), ids: new };
+    if mode != EditMode::Original {
+        let new: Vec<PhotoId> = copies.iter().filter_map(|c| c["id"].as_u64()).map(PhotoId).collect();
+        s.selection = crate::Selection { active: new.first().copied(), ids: new };
+    }
+    let now = now_ms();
+    let track: Vec<TrackedEdit> = copies.iter().filter_map(|c| c["path"].as_str()).map(|path| TrackedEdit::new(path, now)).collect();
     let first = copies.first().cloned().unwrap_or(Value::Null);
-    Ok(json!({"path": first["path"], "id": first["id"], "original": first["original"], "copies": copies}))
+    Ok(json!({"path": first["path"], "id": first["id"], "original": first["original"], "mode": mode.name(), "copies": copies, "track": track}))
 }
 
 /// Most photos one Edit In renders (each becomes a full-size file on disk and a library photo).
@@ -171,7 +235,7 @@ const MAX_EDIT_COPIES: usize = 50;
 
 /// One photo's edit copy for [`edit_external`]: rendered with `opts` next to its original (a demo
 /// photo into `dir`), added to the library and stacked on top of the original, expanded.
-fn edit_copy(s: &mut Session, p: &Value, id: lightcraft_catalog::PhotoId, opts: &crate::export::ExportOptions) -> Result<Value> {
+fn edit_copy(s: &mut Session, p: &Value, id: PhotoId, opts: &crate::export::ExportOptions) -> Result<Value> {
     const C: &str = "photo.editExternal";
     let ph = s.catalog.photo(id).cloned().ok_or_else(|| bad(C, format!("no photo {}", id.0)))?;
     let dir = match &ph.source {
@@ -197,6 +261,180 @@ fn edit_copy(s: &mut Session, p: &Value, id: lightcraft_catalog::PhotoId, opts: 
     // stack: the edit on top of the original, expanded so both show
     let _ = s.execute("stack.group", &json!({"ids": [new, id.0], "top": new, "collapsed": false}));
     Ok(json!({"path": out, "id": new, "original": id.0}))
+}
+
+/// A file handed to an external editor (Photo ▸ Edit In), watched for what the editor saves
+/// ([`check_external`]). The host keeps the list (the app, in its settings file, so the watch
+/// outlives a restart); `photo.editExternal` gives the entries and `photo.checkExternalEdits`
+/// returns the list brought up to date.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TrackedEdit {
+    pub path: String,
+    /// A file the editor saves beside it under its name after this (ms since the Unix epoch) is its
+    /// Save As: when it was handed over, then each time it was checked. `None`: now.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub since: Option<u64>,
+    /// When it was handed over, or last seen changed: watched for [`TRACK_FOR_MS`] after. `None`: now.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub touched: Option<u64>,
+    /// Its size and modification time (ms) when last read: only a change is read again.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub modified: Option<u64>,
+}
+
+impl TrackedEdit {
+    /// `path`, handed over at `now` (ms), as it is on disk now.
+    fn new(path: &str, now: u64) -> TrackedEdit {
+        let (size, modified) = stamp(path).unzip();
+        TrackedEdit { path: path.to_string(), since: Some(now), touched: Some(now), size, modified }
+    }
+}
+
+/// How long a file handed to an external editor is watched after it was handed over or last
+/// seen changed: two weeks.
+const TRACK_FOR_MS: u64 = 14 * 24 * 3600 * 1000;
+/// Most files watched at once ([`TrackedEdit`]): the oldest are dropped first.
+pub const MAX_TRACKED: usize = 200;
+/// Slack when comparing a file's time with the clock (FAT keeps times to 2 s).
+const CLOCK_SLACK_MS: u64 = 2000;
+/// What an editor's Save As writes that the library takes in: rendered image formats.
+const SAVE_AS_EXTENSIONS: &[&str] = &["tif", "tiff", "psd", "png", "jpg", "jpeg", "webp", "jxl", "heic", "heif", "gif", "bmp"];
+
+/// Wall-clock milliseconds since the Unix epoch.
+fn now_ms() -> u64 {
+    web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+}
+
+/// A file's time in ms since the Unix epoch (0 before it).
+fn millis(t: std::time::SystemTime) -> u64 {
+    t.duration_since(std::time::UNIX_EPOCH).map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+}
+
+/// (size, modified ms) of the file at `path`, `None` when there is no such file.
+fn stamp(path: &str) -> Option<(u64, u64)> {
+    let m = std::fs::metadata(path).ok().filter(std::fs::Metadata::is_file)?;
+    Some((m.len(), m.modified().map_or(0, millis)))
+}
+
+/// Whether a library photo shows the file at `path` (one in Recently Deleted included: importing
+/// it would bring that photo back).
+fn in_library(s: &Session, path: &str) -> bool {
+    s.catalog.photos().any(|p| matches!(&p.source, Source::File { path: q } if q == path))
+}
+
+/// A folder's files, listed once per check: (name, path, modified ms).
+type Listing = Vec<(std::ffi::OsString, String, u64)>;
+
+/// What the editor saved beside `path` under its name with another extension at or after `since`
+/// (Save As: `pier-Edit.psd` beside `pier-Edit.tif`), and the library doesn't have.
+fn saved_as(s: &Session, path: &str, since: u64, listings: &mut std::collections::HashMap<std::path::PathBuf, Listing>) -> Vec<String> {
+    let p = Path::new(path);
+    let (Some(dir), Some(stem), Some(name)) = (p.parent(), p.file_stem(), p.file_name()) else { return Vec::new() };
+    let listing = listings.entry(dir.to_path_buf()).or_insert_with(|| {
+        let Ok(entries) = std::fs::read_dir(dir) else { return Vec::new() };
+        entries
+            .flatten()
+            .filter_map(|e| {
+                let m = e.metadata().ok().filter(std::fs::Metadata::is_file)?;
+                Some((e.file_name(), e.path().to_string_lossy().to_string(), m.modified().map_or(0, millis)))
+            })
+            .collect()
+    });
+    let mut found: Vec<String> = listing
+        .iter()
+        .filter(|(n, q, modified)| {
+            let q = Path::new(q);
+            n.as_os_str() != name
+                && q.file_stem() == Some(stem)
+                && q.extension().is_some_and(|e| SAVE_AS_EXTENSIONS.contains(&e.to_string_lossy().to_lowercase().as_str()))
+                && modified.saturating_add(CLOCK_SLACK_MS) >= since
+        })
+        .map(|(_, q, _)| q.clone())
+        .filter(|q| !in_library(s, q))
+        .collect();
+    found.sort();
+    found
+}
+
+/// What the external editor saved (Photo ▸ Edit In), for the files handed to it: a changed file
+/// is read again (`photo.reload`; only those whose size or time changed are read), and a file
+/// saved beside one under its name with another extension (Save As) is imported and stacked on
+/// top of its photo. Files that are gone, or not watched any more, drop off the list; files that
+/// aren't photos of this library are left as they are (another library may have them).
+fn check_external(s: &mut Session, p: &Value) -> Result<Value> {
+    const C: &str = "photo.checkExternalEdits";
+    let files: Vec<TrackedEdit> = match p.get("files") {
+        None | Some(Value::Null) => Vec::new(),
+        Some(v) => serde_json::from_value(v.clone()).map_err(|e| bad(C, format!("files: {e}")))?,
+    };
+    let now = now_ms();
+    let selection = s.selection.clone();
+    let mut listings = std::collections::HashMap::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut out: Vec<TrackedEdit> = Vec::new();
+    // (index in `out`, its photos, the stamp read now) for the files that changed
+    let mut changed: Vec<(usize, Vec<PhotoId>, (u64, u64))> = Vec::new();
+    let mut added = Vec::new();
+    let files = files.get(files.len().saturating_sub(MAX_TRACKED)..).unwrap_or_default().to_vec();
+    // the library photos showing each file (one pass over the library)
+    let wanted: std::collections::HashSet<&str> = files.iter().map(|f| f.path.as_str()).collect();
+    let mut by_path: std::collections::HashMap<String, Vec<PhotoId>> = std::collections::HashMap::new();
+    for ph in s.catalog.photos().filter(|p| p.copy_of.is_none() && !p.deleted) {
+        if let Source::File { path } = &ph.source
+            && wanted.contains(path.as_str())
+        {
+            by_path.entry(path.clone()).or_default().push(ph.id);
+        }
+    }
+    for f in files {
+        let touched = f.touched.unwrap_or(now);
+        if f.path.is_empty() || now.saturating_sub(touched) > TRACK_FOR_MS || !seen.insert(f.path.clone()) {
+            continue;
+        }
+        let Some(now_stamp) = stamp(&f.path) else { continue };
+        let photos = by_path.remove(&f.path).unwrap_or_default();
+        let Some(&base) = photos.first() else {
+            out.push(TrackedEdit { since: Some(f.since.unwrap_or(now)), touched: Some(touched), ..f });
+            continue;
+        };
+        let (path, since) = (f.path.clone(), f.since.unwrap_or(now));
+        if (f.size, f.modified) != (Some(now_stamp.0), Some(now_stamp.1)) {
+            changed.push((out.len(), photos, now_stamp));
+        }
+        out.push(TrackedEdit { since: Some(now), touched: Some(touched), ..f });
+        // the editor's Save As: on top of the photo's stack
+        for path in saved_as(s, &path, since, &mut listings) {
+            let imported = match s.execute("library.import", &json!({"paths": [path]})) {
+                Ok(r) => r["imported"].get(0).and_then(Value::as_u64),
+                Err(e) => {
+                    log::warn!("{path}: {e}");
+                    None
+                }
+            };
+            let Some(new) = imported else { continue };
+            let _ = s.execute("stack.group", &json!({"ids": [new, base.0], "top": new, "collapsed": false}));
+            added.push(json!({"path": path, "id": new, "original": base.0}));
+            seen.insert(path.clone());
+            out.push(TrackedEdit::new(&path, now));
+        }
+    }
+    let ids: Vec<PhotoId> = changed.iter().flat_map(|(_, photos, _)| photos.iter().copied()).collect();
+    let (reloaded, unreadable) = if ids.is_empty() { (Vec::new(), Vec::new()) } else { reload_ids(s, &ids)? };
+    for (i, photos, (size, modified)) in changed {
+        // a file that couldn't be read (still being written) is read again next time
+        let Some(t) = out.get_mut(i).filter(|_| !photos.iter().all(|id| unreadable.contains(id))) else { continue };
+        (t.size, t.modified, t.touched) = (Some(size), Some(modified), Some(now));
+    }
+    s.selection = selection;
+    let start = out.len().saturating_sub(MAX_TRACKED);
+    Ok(json!({
+        "reloaded": reloaded.iter().map(|i| i.0).collect::<Vec<_>>(),
+        "added": added,
+        "files": out.get(start..).unwrap_or_default(),
+    }))
 }
 
 /// The op that brings a photo up to date with what its file is now (`info`, a fresh probe), or
@@ -319,6 +557,12 @@ pub(crate) fn as_shot_wb_op(id: lightcraft_catalog::PhotoId, ph: &lightcraft_cat
 /// dimensions and content hash, cached sources dropped. → {reloaded: [ids]}
 fn reload(s: &mut Session, p: &Value) -> Result<Value> {
     let ids = s.targets(p);
+    let (reloaded, _) = reload_ids(s, &ids)?;
+    Ok(json!({"reloaded": reloaded.iter().map(|i| i.0).collect::<Vec<_>>()}))
+}
+
+/// [`reload`] for `ids`: (the photos brought up to date, those whose file couldn't be read).
+fn reload_ids(s: &mut Session, ids: &[PhotoId]) -> Result<(Vec<PhotoId>, Vec<PhotoId>)> {
     let paths: Vec<(lightcraft_catalog::PhotoId, String)> = ids
         .iter()
         .filter_map(|id| match s.catalog.photo(*id).map(|ph| ph.source.clone()) {
@@ -329,8 +573,12 @@ fn reload(s: &mut Session, p: &Value) -> Result<Value> {
     let probed = crate::import::probe_paths(s, &paths.iter().map(|(_, p)| p.clone()).collect::<Vec<_>>());
     let mut ops = Vec::new();
     let mut reloaded = Vec::new();
+    let mut unreadable = Vec::new();
     for ((id, _), info) in paths.into_iter().zip(probed) {
-        let (Ok(info), Some(ph)) = (info, s.catalog.photo(id)) else { continue };
+        let (Ok(info), Some(ph)) = (info, s.catalog.photo(id)) else {
+            unreadable.push(id);
+            continue;
+        };
         // camera fields the catalog lacks (e.g. a raw imported before its format was read) are filled in;
         // nothing already set is overwritten
         let meta_ops = fill_missing_meta(id, ph, &info);
@@ -356,7 +604,7 @@ fn reload(s: &mut Session, p: &Value) -> Result<Value> {
     if !ops.is_empty() {
         s.commit("Reload Changed Files", Op::Batch { ops })?;
     }
-    Ok(json!({"reloaded": reloaded.iter().map(|i| i.0).collect::<Vec<_>>()}))
+    Ok((reloaded, unreadable))
 }
 
 /// Duplicate: copy the file next to itself (`<name>-copy`, never overwriting) and add it with the
@@ -365,37 +613,10 @@ fn duplicate(s: &mut Session, p: &Value) -> Result<Value> {
     const C: &str = "photo.duplicate";
     let mut made = Vec::new();
     for id in s.targets(p) {
-        let Some(ph) = s.catalog.photo(id).map(|p| (**p).clone()) else { continue };
-        let Source::File { path } = &ph.source else { return Err(bad(C, "a generated demo photo has no file to duplicate")) };
-        let src = Path::new(path);
-        let stem = src.file_stem().map(|x| x.to_string_lossy().to_string()).unwrap_or_else(|| "photo".into());
-        let ext = src.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
-        let dir = src.parent().unwrap_or(Path::new(""));
-        let mut dst = dir.join(format!("{stem}-copy{ext}"));
-        let mut n = 2;
-        while dst.exists() {
-            dst = dir.join(format!("{stem}-copy-{n}{ext}"));
-            n += 1;
+        if s.catalog.photo(id).is_none() {
+            continue;
         }
-        std::fs::copy(src, &dst).map_err(|e| bad(C, format!("{path}: {e}")))?;
-        let new = s.catalog.alloc_photo_id();
-        let mut q = ph.clone();
-        q.id = new;
-        q.source = Source::File { path: dst.to_string_lossy().to_string() };
-        q.file_name = dst.file_name().map(|x| x.to_string_lossy().to_string()).unwrap_or_default();
-        // the same bytes, but its own photo: no duplicate-content clash, no shared history
-        q.content_hash = q.content_hash.map(|h| format!("{h}:dup{}", new.0));
-        q.copy_of = None;
-        q.copy_name = None;
-        q.history.clear();
-        q.versions.retain(|v| !v.auto);
-        let mut ops = vec![Op::AddPhoto { photo: Box::new(q) }];
-        for a in s.catalog.albums().filter(|a| !a.is_smart() && !a.folder && a.photos.contains(&id)) {
-            let mut photos = a.photos.clone();
-            photos.push(new);
-            ops.push(Op::SetAlbumPhotos { id: a.id, photos });
-        }
-        s.commit("Duplicate", Op::Batch { ops })?;
+        let (new, _) = copy_file_photo(s, C, id, "-copy", true, "Duplicate")?;
         made.push(new);
     }
     s.merge_undo(made.len(), "Duplicate");
@@ -403,6 +624,51 @@ fn duplicate(s: &mut Session, p: &Value) -> Result<Value> {
         s.selection = crate::Selection { ids: made.clone(), active: Some(*last) };
     }
     Ok(json!({"ids": made.iter().map(|i| i.0).collect::<Vec<_>>()}))
+}
+
+/// Copy photo `id`'s file next to it as `<name><suffix>` (then `<name><suffix>-2`…, never
+/// overwriting) and add the copy as a photo of its own, one undo step named `label`, with the same
+/// metadata, rating, flag, label and albums, and the photo's develop settings (`keep_edits`) or
+/// those import gave it. → (the new photo, its file)
+fn copy_file_photo(s: &mut Session, cmd: &str, id: PhotoId, suffix: &str, keep_edits: bool, label: &str) -> Result<(PhotoId, String)> {
+    let ph = s.catalog.photo(id).map(|p| (**p).clone()).ok_or_else(|| bad(cmd, format!("no photo {}", id.0)))?;
+    let Source::File { path } = &ph.source else { return Err(bad(cmd, "a generated demo photo has no file to copy")) };
+    let src = Path::new(path);
+    let stem = src.file_stem().map(|x| x.to_string_lossy().to_string()).unwrap_or_else(|| "photo".into());
+    let ext = src.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
+    let dir = src.parent().unwrap_or(Path::new(""));
+    let mut dst = dir.join(format!("{stem}{suffix}{ext}"));
+    let mut n = 2;
+    while dst.exists() {
+        dst = dir.join(format!("{stem}{suffix}-{n}{ext}"));
+        n += 1;
+    }
+    std::fs::copy(src, &dst).map_err(|e| bad(cmd, format!("{path}: {e}")))?;
+    let new = s.catalog.alloc_photo_id();
+    let mut q = ph.clone();
+    q.id = new;
+    q.source = Source::File { path: dst.to_string_lossy().to_string() };
+    q.file_name = dst.file_name().map(|x| x.to_string_lossy().to_string()).unwrap_or_default();
+    // the same bytes, but its own photo: no duplicate-content clash, no shared history
+    q.content_hash = q.content_hash.map(|h| format!("{h}:dup{}", new.0));
+    q.copy_of = None;
+    q.copy_name = None;
+    q.history.clear();
+    if keep_edits {
+        q.versions.retain(|v| !v.auto);
+    } else {
+        q.develop = std::sync::Arc::new(ph.import_defaults());
+        q.edited = None;
+        q.versions.clear();
+    }
+    let mut ops = vec![Op::AddPhoto { photo: Box::new(q) }];
+    for a in s.catalog.albums().filter(|a| !a.is_smart() && !a.folder && a.photos.contains(&id)) {
+        let mut photos = a.photos.clone();
+        photos.push(new);
+        ops.push(Op::SetAlbumPhotos { id: a.id, photos });
+    }
+    s.commit(label, Op::Batch { ops })?;
+    Ok((new, dst.to_string_lossy().to_string()))
 }
 
 pub fn edit_specs() -> Vec<CommandSpec> {
@@ -430,9 +696,18 @@ pub fn edit_specs() -> Vec<CommandSpec> {
             "Edit Copy for External Editor",
             [],
             None,
-            "{ids?, colorSpace?: adobeRgb (default) | proPhoto | displayP3 | srgb, format?: tiff (default) | psd, bitDepth?: 16 (default) | 8, dir?} — render each selected photo (or `ids`, at most 50) with its edits as `<name>-Edit.tif` (or `.psd`, flat, which PhotoCraft saves back to in place) next to it, add each stacked on its original and select the copies → {path, id, original (the first copy), copies: [{path, id, original}]} (the app then opens them in the external editor)",
+            "{ids?, mode?: render (default) | copy | original, colorSpace?: adobeRgb (default) | proPhoto | displayP3 | srgb, format?: tiff (default) | psd, bitDepth?: 16 (default) | 8, dir?} — the files the external editor opens for each selected photo (or `ids`, at most 50). render: the photo with its edits as `<name>-Edit.tif` (or `.psd`, flat, which PhotoCraft saves back to in place) next to it; copy: a plain copy of its file, `<name>-Edit.<ext>`, without the edits; either is added stacked on its original and the copies are selected. original: the photo's own file (its edits stay on top of what the editor saves). copy and original take image files only (TIFF, PSD, JPEG, PNG…), not raws → {path, id, original (the first file), mode, copies: [{path, id, original}], track: [{path, since, touched, size, modified}] (the files to watch with photo.checkExternalEdits)} (the app then opens them in the external editor)",
             has_active,
             edit_external
+        ),
+        cmd!(
+            "photo.checkExternalEdits",
+            "Check External Edits",
+            [],
+            None,
+            "{files: [{path, since?, touched?, size?, modified?}]} — bring back what the external editor saved to the files photo.editExternal handed it (`track`; times in ms since the Unix epoch): a file whose size or time changed is read again (as photo.reload), and a file it saved beside one under its name with another extension (Save As: `pier-Edit.psd` beside `pier-Edit.tif`) since `since` is imported and stacked on top of that photo. Files are watched for two weeks after they were handed over or last changed, at most 200; a file that is gone drops off, one that isn't a photo of this library is left as it is → {reloaded: [photoId], added: [{path, id, original}], files: (the list to keep)}",
+            always,
+            check_external
         ),
     ]
 }

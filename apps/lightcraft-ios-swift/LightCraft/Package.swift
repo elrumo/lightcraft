@@ -3,7 +3,7 @@
 // the C ABI of liblightcraft_bridge.a (apps/lightcraft-ios-swift, docs/ios-swift.md).
 //
 // Built with xtool (https://github.com/xtool-org/xtool; Linux, Windows (WSL) or macOS) or Xcode
-// (../xcode/project.yml). `../run.sh` builds the Rust library into `.rust/` first.
+// (../xcode/LightCraft.xcodeproj). `../run.sh` builds the Rust library into `.rust/` first.
 // `swift test` (macOS) runs LightCraftCoreTests against a macOS build of the same library
 // (`../run.sh --test`). LightCraftCore and its tests also build on Linux (`cargo xtask swift-test`);
 // the app target is iOS only.

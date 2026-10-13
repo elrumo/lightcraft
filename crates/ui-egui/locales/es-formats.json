@@ -273,5 +273,9 @@
   "Add to {album}": "Añadir a {album}",
   "{name} opened in the other editor": "{name} abierto en el otro editor",
   "{n} originals opened in the other editor": "{n} originales abiertos en el otro editor",
-  "· {in_source} identical copies": "· {in_source} copias idénticas"
+  "· {in_source} identical copies": "· {in_source} copias idénticas",
+  "Added {name}, saved in the external editor, to its stack": "{name}, guardado en el editor externo, se añadió a su pila",
+  "Added {n} files saved in the external editor to their stacks": "Se añadieron {n} archivos guardados en el editor externo a sus pilas",
+  "{name} opened for editing": "{name} abierta para editar",
+  "{n} photos opened for editing": "{n} fotos abiertas para editar"
 }

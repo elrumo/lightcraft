@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- Merged by xtool over its default Info.plist. Keep in step with ../xcode/project.yml (the Xcode
-     alternative on a Mac). SwiftUI's App is scene-based: no delegate class to name. -->
+<!-- The app's Info.plist keys, for both builds: xtool merges them over its default Info.plist, and
+     the Xcode project (../xcode) over the one it generates. SwiftUI's App is scene-based: no
+     delegate class to name. -->
 <plist version="1.0">
 <dict>
     <key>CFBundleDisplayName</key>

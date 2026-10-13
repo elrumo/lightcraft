@@ -103,6 +103,7 @@ fn ok_label(app: &LightcraftApp, dlg: &Dialog, informational: bool) -> String {
         Dialog::KeywordTag { editing: None, .. } => "Create",
         Dialog::KeywordTag { .. } => "Save",
         Dialog::RemoveFolder { .. } => "Remove",
+        Dialog::EditIn { .. } => "Edit",
         Dialog::ShareLink { .. } => "Create Link",
         Dialog::LightroomCatalog { .. } => "Import Lightroom Catalog…",
         Dialog::SynchronizeFolder { .. } => "Synchronize",
@@ -225,6 +226,8 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
         Dialog::SmartRules { id: None, .. } => "New Smart Album",
         Dialog::SmartRules { .. } => "Edit Smart Album",
         Dialog::AutoStack { .. } => "Auto-Stack by Capture Time",
+        Dialog::EditIn { photocraft: true, .. } => "Edit Photo with PhotoCraft",
+        Dialog::EditIn { .. } => "Edit Photo in Other Editor",
         Dialog::CreatePreset { .. } => "Create Preset",
         Dialog::CopySettings { .. } => "Choose Edit Settings to Copy",
         Dialog::PasteSettings { .. } => "Paste Selected Settings",
@@ -303,6 +306,14 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
     let mut body = |ui: &mut egui::Ui| {
         ui.spacing_mut().item_spacing.y = 8.0;
         match &mut dlg {
+            Dialog::EditIn { mode, .. } => {
+                for m in crate::state::EditInMode::ALL {
+                    let (label, what) = m.label();
+                    let r = ui.radio_value(mode, m, crate::i18n::tr(label));
+                    crate::widgets::register(ui.ctx(), format!("radio:editIn-{}", m.param()), r.rect);
+                    ui.indent(("editIn", m.param()), |ui| ui.label(egui::RichText::new(crate::i18n::tr(what)).color(t.text_dim)));
+                }
+            }
             Dialog::AutoStack { gap } => {
                 ui.label(egui::RichText::new(crate::i18n::tr("Stack photos taken within this time of each other:")).color(t.text_label));
                 let r = ui.add(
@@ -1540,6 +1551,11 @@ pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_jso
         }
         Dialog::MergeKeywords { from, into } => app.run("keyword.merge", json!({"from": from, "into": into})),
         Dialog::AutoStack { gap } => app.run("stack.auto", json!({"gap": gap})),
+        Dialog::EditIn { photocraft, mode } => {
+            app.ui.settings.edit_in_mode = *mode;
+            let command = if *photocraft { "photo.editInPhotoCraft" } else { "photo.editInExternal" };
+            app.run(command, json!({"mode": mode.param()}))
+        }
         Dialog::DenoiseModel { info, accepted } => crate::panels::denoise::install(app, info, *accepted),
         Dialog::FaceModel { path, info, accepted } => crate::panels::faces::install(app, path, info, *accepted),
         Dialog::AllMetadata { .. } | Dialog::SystemInfo { .. } | Dialog::WhatsNew => Ok(serde_json::Value::Null),
@@ -1754,7 +1770,7 @@ fn share_link_body(
 /// Dialogs that Return confirms with nothing focused (those with text fields confirm from the
 /// field: `dialog_field`).
 fn return_confirms(dlg: &Dialog) -> bool {
-    matches!(dlg, Dialog::CopySettings { .. } | Dialog::PasteSettings { .. } | Dialog::PresetImport { .. })
+    matches!(dlg, Dialog::CopySettings { .. } | Dialog::PasteSettings { .. } | Dialog::PresetImport { .. } | Dialog::EditIn { .. })
 }
 
 /// A dialog's one text field: it keeps the focus (except while its own menu has it) and opens
