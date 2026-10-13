@@ -305,13 +305,14 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
         match &mut dlg {
             Dialog::AutoStack { gap } => {
                 ui.label(egui::RichText::new(crate::i18n::tr("Stack photos taken within this time of each other:")).color(t.text_label));
-                ui.add(
+                let r = ui.add(
                     egui::Slider::new(gap, 0.0..=86400.0)
                         .logarithmic(true)
                         .smallest_positive(1.0)
                         .custom_formatter(|v, _| crate::panels::dialogs::fmt_gap(v))
                         .custom_parser(|s| s.trim().trim_end_matches('s').parse().ok()),
                 );
+                crate::widgets::named(r, crate::i18n::tr("Stack photos taken within this time of each other:"));
                 let preview = app.session.execute("stack.auto", &json!({"gap": *gap, "preview": true})).unwrap_or_default();
                 let scope = if app.session.selection.ids.len() > 1 { "the selected photos" } else { "the photos in view" };
                 ui.label(
@@ -394,10 +395,13 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
             }
             Dialog::AllMetadata { title, rows, search } => {
                 ui.label(egui::RichText::new(title.as_str()).color(t.text_label));
-                let r = ui.add(crate::widgets::text_box(
-                    ui,
-                    egui::TextEdit::singleline(search).hint_text(crate::i18n::tr("Filter fields")).desired_width(f32::INFINITY),
-                ));
+                let r = crate::widgets::named(
+                    ui.add(crate::widgets::text_box(
+                        ui,
+                        egui::TextEdit::singleline(search).hint_text(crate::i18n::tr("Filter fields")).desired_width(f32::INFINITY),
+                    )),
+                    crate::i18n::tr("Filter fields"),
+                );
                 crate::widgets::register(ui.ctx(), "field:metadataSearch", r.rect);
                 let q = search.trim().to_lowercase();
                 let keep = |n: &str, v: &str| q.is_empty() || n.to_lowercase().contains(&q) || v.to_lowercase().contains(&q);
@@ -440,10 +444,13 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                 });
             }
             Dialog::SmartRules { id, name, rules, .. } => {
-                let r = ui.add(crate::widgets::text_box(
-                    ui,
-                    egui::TextEdit::singleline(name).hint_text(crate::i18n::tr("Name")).desired_width(f32::INFINITY),
-                ));
+                let r = crate::widgets::named(
+                    ui.add(crate::widgets::text_box(
+                        ui,
+                        egui::TextEdit::singleline(name).hint_text(crate::i18n::tr("Name")).desired_width(f32::INFINITY),
+                    )),
+                    crate::i18n::tr("Name"),
+                );
                 crate::widgets::register(ui.ctx(), "field:smartName", r.rect);
                 ui.add_space(6.0);
                 // the folder an album made from a folder view carries is not in the editor, but it counts
@@ -567,18 +574,24 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                     field(ui, &colour, |ui| {
                         let (r, _) = ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::hover());
                         ui.painter().circle_filled(r.center(), 6.0, crate::panels::grid::label_color(*l));
-                        let te = ui.add(crate::widgets::text_box(
-                            ui,
-                            egui::TextEdit::singleline(&mut names[i]).hint_text(colour.as_str()).desired_width(f32::INFINITY),
-                        ));
+                        let te = crate::widgets::named(
+                            ui.add(crate::widgets::text_box(
+                                ui,
+                                egui::TextEdit::singleline(&mut names[i]).hint_text(colour.as_str()).desired_width(f32::INFINITY),
+                            )),
+                            crate::i18n::tr(&colour),
+                        );
                         crate::widgets::register(ui.ctx(), format!("field:labelName-{}", colour.to_lowercase()), te.rect);
                     });
                 }
                 field(ui, "Save as set", |ui| {
-                    let te = ui.add(crate::widgets::text_box(
-                        ui,
-                        egui::TextEdit::singleline(save_as).hint_text(crate::i18n::tr("Optional name")).desired_width(f32::INFINITY),
-                    ));
+                    let te = crate::widgets::named(
+                        ui.add(crate::widgets::text_box(
+                            ui,
+                            egui::TextEdit::singleline(save_as).hint_text(crate::i18n::tr("Optional name")).desired_width(f32::INFINITY),
+                        )),
+                        crate::i18n::tr("Save as set"),
+                    );
                     crate::widgets::register(ui.ctx(), "field:labelSetName", te.rect);
                 });
                 ui.label(
@@ -595,8 +608,13 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                 let tags_open = field(ui, "Template", |ui| {
                     ui.spacing_mut().item_spacing.x = 4.0;
                     let w = crate::import::tag_field_width(ui);
-                    let r = ui
-                        .add(crate::widgets::text_box(ui, egui::TextEdit::singleline(template).id(template_id).hint_text("{name}").desired_width(w)));
+                    let r = crate::widgets::named(
+                        ui.add(crate::widgets::text_box(
+                            ui,
+                            egui::TextEdit::singleline(template).id(template_id).hint_text("{name}").desired_width(w),
+                        )),
+                        crate::i18n::tr("Template"),
+                    );
                     crate::widgets::register(ui.ctx(), "field:renameTemplate", r.rect);
                     crate::import::tag_toggle(ui, "renameTemplate")
                 });
@@ -687,7 +705,18 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                     confirm = true;
                 }
             }
-            Dialog::NewAlbum { name, .. } | Dialog::RenameAlbum { name, .. } => {
+            Dialog::NewAlbum { name, folder, include_selected, .. } => {
+                if dialog_field(ui, "field:albumName", name, "Name") {
+                    confirm = true;
+                }
+                // as in Lightroom, the option is only there when something is selected
+                if !*folder && !app.session.targets(&json!({})).is_empty() {
+                    ui.add_space(6.0);
+                    let r = ui.checkbox(include_selected, crate::i18n::tr("Include selected photos"));
+                    crate::widgets::register(ui.ctx(), "check:albumIncludeSelected", r.rect);
+                }
+            }
+            Dialog::RenameAlbum { name, .. } => {
                 if dialog_field(ui, "field:albumName", name, "Name") {
                     confirm = true;
                 }
@@ -698,14 +727,20 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                 }
             }
             Dialog::CreatePreset { name, group, groups } => {
-                ui.add(crate::widgets::text_box(
-                    ui,
-                    egui::TextEdit::singleline(name).hint_text(crate::i18n::tr("Preset name")).desired_width(f32::INFINITY),
-                ));
-                ui.add(crate::widgets::text_box(
-                    ui,
-                    egui::TextEdit::singleline(group).hint_text(crate::i18n::tr("Group")).desired_width(f32::INFINITY),
-                ));
+                crate::widgets::named(
+                    ui.add(crate::widgets::text_box(
+                        ui,
+                        egui::TextEdit::singleline(name).hint_text(crate::i18n::tr("Preset name")).desired_width(f32::INFINITY),
+                    )),
+                    crate::i18n::tr("Preset name"),
+                );
+                crate::widgets::named(
+                    ui.add(crate::widgets::text_box(
+                        ui,
+                        egui::TextEdit::singleline(group).hint_text(crate::i18n::tr("Group")).desired_width(f32::INFINITY),
+                    )),
+                    crate::i18n::tr("Group"),
+                );
                 ui.label(egui::RichText::new(crate::i18n::tr("Settings to include")).color(t.text_dim));
                 group_checklist(ui, "presetInclude", groups);
             }
@@ -1386,8 +1421,8 @@ pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_jso
             }
             r
         }
-        Dialog::NewAlbum { name, folder, parent } => {
-            created_in(app, "album.create", json!({"name": name, "folder": folder, "addSelected": !folder, "parent": parent}))
+        Dialog::NewAlbum { name, folder, parent, include_selected } => {
+            created_in(app, "album.create", json!({"name": name, "folder": folder, "addSelected": !folder && *include_selected, "parent": parent}))
         }
         Dialog::RenameAlbum { id, name } => app.run("album.rename", json!({"id": id, "name": name})),
         Dialog::ShareLink { id, days, originals, upload, password, .. } => {

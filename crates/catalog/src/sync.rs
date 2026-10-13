@@ -96,6 +96,7 @@ pub fn key_of(op: &Op) -> Option<String> {
         | Op::SetLocal { .. }
         | Op::SetHistory { .. }
         | Op::PushHistory { .. }
+        | Op::SetHistoryCursor { .. }
         | Op::SetFile { .. }
         | Op::Relink { .. }
         | Op::SetBrowsed { .. }
@@ -143,6 +144,7 @@ pub fn portable(p: &Photo) -> Photo {
         p.source = Source::File { path: original_path(hash, &p.file_name) };
     }
     p.history.clear();
+    p.history_cursor = None;
     p.local = false;
     p.local_baseline = None;
     p

@@ -270,5 +270,8 @@
   "Not carried over: {what}": "引き継がなかった設定：{what}",
   "{n} items": "{n} 項目",
   "{label}, {n} items": "{label}、{n} 項目",
-  "Add to {album}": "{album} に追加"
+  "Add to {album}": "{album} に追加",
+  "{name} opened in the other editor": "{name}を別のエディタで開きました",
+  "{n} originals opened in the other editor": "{n}個の元ファイルを別のエディタで開きました",
+  "· {in_source} identical copies": "・同一のコピー {in_source} 件"
 }
