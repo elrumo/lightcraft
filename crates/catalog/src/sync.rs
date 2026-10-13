@@ -845,6 +845,13 @@ pub mod proto {
         pub expires: Option<u64>,
         /// Visitors may download the original files, not only see the pictures.
         pub originals: bool,
+        /// Visitors type a password before they see anything (the server keeps only its hash). Servers
+        /// from before passwords leave it out.
+        #[serde(default)]
+        pub password: bool,
+        /// Visitors may add photos to the album (they become the owner's photos, in this album).
+        #[serde(default)]
+        pub upload: bool,
     }
 
     /// `POST /api/shares`.
@@ -855,6 +862,12 @@ pub mod proto {
         /// The link ends after this many days (`None`: it doesn't).
         pub expires_days: Option<u32>,
         pub originals: bool,
+        /// Visitors must type this first (`None` or empty: no password). At least 4 characters.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub password: Option<String>,
+        /// Visitors may add photos to the album.
+        #[serde(skip_serializing_if = "std::ops::Not::not")]
+        pub upload: bool,
     }
 
     /// `GET` / `PUT /api/docs/<name>`: one of the small documents a user's devices share beside the library
@@ -919,6 +932,9 @@ pub mod proto {
         pub folders: Files,
         /// The disk the server keeps its data on (`None`: it can't tell).
         pub disk: Option<Disk>,
+        /// The most the server keeps for this user, in bytes ([`Usage::stored`] counts against it; `None`: no
+        /// limit). An upload that would go over it is refused with `507`.
+        pub quota: Option<u64>,
     }
 
     impl Usage {

@@ -35,13 +35,16 @@ pub mod cors;
 pub mod docs;
 pub mod folders;
 pub mod gc;
+pub mod guest;
 pub mod http;
+pub mod multipart;
 pub mod render;
 pub mod shares;
 pub mod switch;
 pub mod throttle;
 pub mod vision;
 pub mod writeback;
+pub mod zip;
 
 use std::collections::HashMap;
 use std::net::SocketAddr;

@@ -40,6 +40,8 @@ mod docs;
 mod evict;
 mod shares;
 
+pub use shares::{SHARE_PASSWORD_MAX, SHARE_PASSWORD_MIN, ShareOptions};
+
 pub const CONFIG: &str = "sync.json";
 pub const OUTBOX: &str = "sync.outbox";
 pub const UPLOADED: &str = "sync.uploaded";
