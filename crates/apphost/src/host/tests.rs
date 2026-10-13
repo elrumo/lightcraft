@@ -194,3 +194,94 @@ fn a_script_runs_and_writes_its_replies() {
     drop(h);
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+// Export Now runs on a worker: the engine keeps answering meanwhile, the activity stack shows it,
+// and the files come in the reply when it ends; a second export waits its turn
+#[test]
+fn exports_run_in_the_background_and_answer_when_done() {
+    let h = demo();
+    let dir = std::env::temp_dir().join(format!("lc-host-export-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let ids: Vec<u64> =
+        h.call(&req(1, "engine.execute", json!({"command": "catalog.query", "params": {"limit": 4}})), Duration::from_secs(30))["result"]["photos"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| p["id"].as_u64().unwrap())
+            .collect();
+    let params = json!({"dir": dir.to_string_lossy(), "ids": ids, "longEdge": 64, "format": "png"});
+    h.submit(&req(2, "engine.execute", json!({"command": "app.export", "params": params}))).unwrap();
+    h.submit(&req(3, "engine.execute", json!({"command": "app.export", "params": params}))).unwrap();
+    h.submit(&req(4, "host.state", json!({}))).unwrap();
+    // the state answers while the export runs; the second export is refused
+    let state = h.reply_to(4);
+    assert!(state["result"]["visibleCount"].as_u64().unwrap() > 0, "{state}");
+    let second = h.reply_to(3);
+    assert!(second["error"]["message"].as_str().unwrap().contains("already running"), "{second}");
+    let done = h.reply_to(2);
+    let files = done["result"]["files"].as_array().unwrap();
+    assert_eq!(files.len(), 4, "{done}");
+    assert_eq!(done["result"]["cancelled"], false);
+    assert!(Path::new(files[0]["path"].as_str().unwrap()).is_file());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// Import as the phone does it: scan for the review (a thumbnail for a candidate), then import the
+// chosen ones in the background — one undo step, the first photo selected
+#[test]
+fn photos_are_scanned_reviewed_and_imported_in_the_background() {
+    let base = std::env::temp_dir().join(format!("lc-host-import-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let (src, lib, tmp) = (base.join("src"), base.join("lib"), base.join("tmp"));
+    std::fs::create_dir_all(&tmp).unwrap();
+    let mut demo = Session::with_demo();
+    let ids: Vec<u64> = demo.visible_cloned().iter().take(3).map(|id| id.0).collect();
+    crate::export::export_now(&mut demo, &json!({"dir": src.to_string_lossy(), "ids": ids, "longEdge": 48, "format": "png"}), &mut |_, _, _| true)
+        .unwrap();
+    let config = OpenConfig {
+        library: Some(lib.to_string_lossy().to_string()),
+        tmp: Some(tmp.to_string_lossy().to_string()),
+        render_threads: Some(2),
+        ..Default::default()
+    };
+    let h = Watch::new(Host::open(config).unwrap().0);
+    let before = h.call(&req(9, "host.state", json!({})), Duration::from_secs(30))["result"]["visibleCount"].as_u64().unwrap();
+    h.submit(&req(1, "import.scan", json!({"paths": [src.to_string_lossy()]}))).unwrap();
+    let scan = h.reply_to(1);
+    let candidates = scan["result"]["candidates"].as_array().unwrap();
+    assert_eq!(candidates.len(), 3, "{scan}");
+    assert_eq!(candidates[0]["inTrash"], false);
+    h.submit(&req(2, "render.candidate", json!({"index": 0, "edge": 64}))).unwrap();
+    assert_eq!(h.reply_to(2)["result"]["slot"], "import:0");
+    h.wait_for(|e| e["kind"] == "image" && e["slot"] == "import:0");
+    h.submit(&req(3, "import.start", json!({"indexes": [0, 1, 2], "mode": "add", "albumName": "Trip"}))).unwrap();
+    let done = h.reply_to(3);
+    assert_eq!(done["result"]["imported"], 3, "{done}");
+    assert_eq!(done["result"]["cancelled"], false);
+    assert!(done["result"]["album"].as_u64().is_some(), "a new album: {done}");
+    let state = h.call(&req(4, "host.state", json!({})), Duration::from_secs(30));
+    assert_eq!(state["result"]["visibleCount"].as_u64(), Some(before + 3), "{state}");
+    assert_eq!(state["result"]["undo"], "Add 3 Photos");
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+// Previews of a preset, a profile and a version on the active photo come as `variant:` pictures
+#[test]
+fn presets_profiles_and_versions_preview() {
+    let h = demo();
+    let preset = h.call(&req(1, "engine.execute", json!({"command": "presets.list"})), Duration::from_secs(30))["result"][0]["id"].clone();
+    h.submit(&req(2, "render.variant", json!({"preset": preset, "edge": 96}))).unwrap();
+    let slot = h.reply_to(2)["result"]["slot"].as_str().unwrap().to_string();
+    assert!(slot.starts_with("variant:"), "{slot}");
+    let img = h.wait_for(|e| e["kind"] == "image" && e["slot"] == slot.as_str());
+    assert!(img["width"].as_u64().unwrap() <= 96, "{img}");
+    h.submit(&req(3, "render.variant", json!({"profile": "lc.mono", "edge": 96}))).unwrap();
+    let mono = h.reply_to(3)["result"]["slot"].as_str().unwrap().to_string();
+    assert_ne!(mono, slot, "another look, another picture");
+    h.wait_for(|e| e["kind"] == "image" && e["slot"] == mono.as_str());
+    h.call(&req(4, "engine.execute", json!({"command": "version.create", "params": {"name": "A"}})), Duration::from_secs(30));
+    h.submit(&req(5, "render.variant", json!({"version": 0, "edge": 96}))).unwrap();
+    assert!(h.reply_to(5)["result"]["slot"].as_str().unwrap().starts_with("variant:"));
+    h.submit(&req(6, "render.variant", json!({"edge": 96}))).unwrap();
+    assert!(h.reply_to(6)["error"].is_object(), "nothing to preview");
+}

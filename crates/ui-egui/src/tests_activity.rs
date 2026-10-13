@@ -269,7 +269,7 @@ fn import_cancelled_by_command_reports_cancelled() {
     let (mut h, dir) = slow_import("cancel", n);
     let undo0 = h.app.session.undo.len();
     crate::import::start_paths(&mut h.app, vec![dir.to_string_lossy().to_string()]).unwrap();
-    assert!(h.step_until(Duration::from_secs(60), |h| h.app.import.as_ref().is_some_and(|t| t.imported >= 2)));
+    assert!(h.step_until(Duration::from_secs(60), |h| h.app.import.as_ref().is_some_and(|t| t.tally.imported >= 2)));
     let tasks = h.app.session.activity.list();
     assert_eq!(tasks.first().map(|t| t.kind), Some("import"), "{tasks:?}");
     h.app.session.activity.cancel(tasks[0].id).unwrap();

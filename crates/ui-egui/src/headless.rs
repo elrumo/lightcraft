@@ -2058,7 +2058,7 @@ mod tests {
         let row = h.app.session.activity.list().into_iter().find(|r| r.kind == "export").expect("the export's row");
         assert!(!row.cancellable, "{row:?}");
         assert!(h.app.session.activity.cancel(row.id).is_err(), "Photos can't be stopped once asked");
-        let current = h.app.export.as_ref().map(|e| e.progress.lock().unwrap().1.clone()).unwrap_or_default();
+        let current = h.app.export.as_ref().map(|e| e.batch.progress.lock().unwrap().1.clone()).unwrap_or_default();
         assert_eq!(current, "Wird zu Apple Fotos hinzugefügt…");
         // the row says so on the next frame (issue #345)
         h.step();

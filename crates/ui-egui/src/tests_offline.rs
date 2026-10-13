@@ -154,7 +154,7 @@ fn import_reads_files_off_the_ui_thread_and_can_be_cancelled() {
     // some batches arrive; meanwhile every frame is quick
     let t0 = Instant::now();
     let mut worst = Duration::ZERO;
-    while h.app.import.as_ref().is_some_and(|t| t.imported < 8) && t0.elapsed() < Duration::from_secs(60) {
+    while h.app.import.as_ref().is_some_and(|t| t.tally.imported < 8) && t0.elapsed() < Duration::from_secs(60) {
         let f = Instant::now();
         h.step();
         worst = worst.max(f.elapsed());
