@@ -42,9 +42,10 @@ const SETUP_TRIES: u32 = 10;
 /// How long the bytes of a user's photo files are trusted before they are walked again.
 const SIZES_TTL: Duration = Duration::from_secs(60);
 
-/// The bytes of each user's photo files. Counting them stats every file, which takes seconds on a
-/// NAS disk, so the admin page is answered from the last count and a new one runs in the
-/// background (the first when the server starts).
+/// The bytes of the photo files the server keeps for each user (uploaded originals and previews). Counting
+/// them stats every file, which takes seconds on a NAS disk, so the admin page is answered from the last
+/// count and a new one runs in the background (the first when the server starts). The photos in a user's
+/// library folders aren't walked: the index of those knows their sizes.
 #[derive(Default)]
 pub struct Sizes {
     known: Arc<Mutex<HashMap<String, (Instant, u64)>>>,
@@ -627,16 +628,24 @@ fn users(st: &State) -> AdminResult {
     let mut out = Vec::new();
     for (name, u) in &f.users {
         let devices = st.accounts.lock().unwrap_or_else(PoisonError::into_inner).devices_of(name).len();
-        let (photos, albums) = match crate::api::lib(st, name) {
-            Ok(l) => l.lock().unwrap_or_else(PoisonError::into_inner).counts(),
+        let (photos, albums, in_folders) = match crate::api::lib(st, name) {
+            Ok(l) => {
+                let l = l.lock().unwrap_or_else(PoisonError::into_inner);
+                let (photos, albums) = l.counts();
+                (photos, albums, l.index.folder_total().bytes)
+            }
             Err(e) => {
                 log::error!("{e}");
-                (0, 0)
+                (0, 0, 0)
             }
         };
         let folders: Vec<Value> = u.folders.iter().map(|f| json!({"name": f.name, "path": f.path})).collect();
         out.push(json!({
-            "name": name, "admin": u.admin, "photos": photos, "albums": albums, "devices": devices, "bytes": st.sizes.get(name),
+            "name": name, "admin": u.admin, "photos": photos, "albums": albums, "devices": devices,
+            // what their photos take on the server in all: the files kept for them (counted in the background:
+            // null until they are) and the photos in their library folders, which are only read
+            "bytes": st.sizes.get(name).map(|kept| kept.saturating_add(in_folders)), "folderBytes": in_folders,
+            // (their storage limit counts the files kept for them only)
             "quota": u.quota,
             "shares": st.shares.lock().unwrap_or_else(PoisonError::into_inner).list(name).len(),
             "folders": folders, "scan": st.folders.status(name),

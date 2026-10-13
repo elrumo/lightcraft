@@ -1922,13 +1922,13 @@ fn shared_links(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
     }
 }
 
-/// A disk's bar: what this library takes of it, what else is on it, what is free.
-fn disk_bar(ui: &mut egui::Ui, t: &Tokens, library: u64, disk: lightcraft_catalog::sync::proto::Disk) {
+/// A disk's bar: what the library (`whose`) takes of it, what else is on it, what is free.
+fn disk_bar(ui: &mut egui::Ui, t: &Tokens, whose: &str, library: u64, disk: lightcraft_catalog::sync::proto::Disk) {
     use crate::sync_ui::bytes_label;
     let used = disk.total.saturating_sub(disk.free);
     let legend = format!(
         "{}: {}\n{}: {}\n{}: {}",
-        crate::i18n::tr("LightCraft"),
+        whose,
         bytes_label(library),
         crate::i18n::tr("Everything else"),
         bytes_label(used.saturating_sub(library)),
@@ -1994,26 +1994,29 @@ fn storage_section(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, serve
             info(ui, t, crate::i18n::tr("Originals"), &files(u.original), t.text);
             info(ui, t, crate::i18n::tr("Smart previews"), &files(u.smart), t.text);
             info(ui, t, crate::i18n::tr("Small previews"), &files(u.mini), t.text);
-            info(ui, t, crate::i18n::tr("Total"), &bytes_label(u.stored()), t.text);
-            // (an admin's limit on what the server keeps for this user)
+            if u.folders.files > 0 {
+                info(ui, t, crate::i18n::tr("Library folders"), &files(u.folders), t.text);
+            }
+            // (everything the rows above take: the photos read in place from library folders are the library's too)
+            info(ui, t, crate::i18n::tr("Total"), &bytes_label(u.total()), t.text);
+            // (an admin's limit on what the server keeps for this user: library folders don't count)
             let full = u.quota.is_some_and(|q| u.stored() >= q.saturating_mul(9) / 10);
             if let Some(q) = u.quota {
                 let text = format!("{} of {} used", bytes_label(u.stored()), bytes_label(q));
                 info(ui, t, crate::i18n::tr("Storage limit"), &text, if full { t.caution } else { t.text });
             }
-            if u.folders.files > 0 {
-                info(ui, t, crate::i18n::tr("Library folders"), &files(u.folders), t.text);
-            }
             if let Some(d) = u.disk {
                 let text = format!("{} free of {}", bytes_label(d.free), bytes_label(d.total));
                 info(ui, t, crate::i18n::tr("Server disk"), &text, t.text);
-                disk_bar(ui, t, u.stored(), d);
+                disk_bar(ui, t, crate::i18n::tr("This library"), u.on_disk(), d);
             }
             if u.folders.files > 0 {
                 hint(
                     ui,
                     t,
-                    crate::i18n::tr("Library folders are read where they are on the server and never copied, so they aren't part of the total."),
+                    crate::i18n::tr(
+                        "Library folders are read where they are on the server and never copied, so LightCraft keeps only their previews. The total counts their photos too: they take that room on the server.",
+                    ),
                 );
             }
             if full {
@@ -2054,7 +2057,7 @@ fn storage_section(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, serve
     if let Some(d) = l.disk {
         let text = format!("{} free of {}", bytes_label(d.free), bytes_label(d.total));
         info(ui, t, crate::i18n::tr("This disk"), &text, t.text);
-        disk_bar(ui, t, l.total(), d);
+        disk_bar(ui, t, crate::i18n::tr("LightCraft"), l.total(), d);
     }
     hint(
         ui,
