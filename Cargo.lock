@@ -3343,6 +3343,7 @@ dependencies = [
  "lightcraft-catalog",
  "lightcraft-develop",
  "lightcraft-engine",
+ "lightcraft-pipeline",
  "lightcraft-preview",
  "lightcraft-raster",
  "lightcraft-sysmem",

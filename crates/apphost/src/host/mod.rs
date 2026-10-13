@@ -503,7 +503,8 @@ impl Engine {
                     Slot::Before
                 } else {
                     let job = self.session.loupe_job(id, w, h, apply_crop).ok_or_else(|| bad("no such photo"))?;
-                    self.sched.request(Slot::Main, if draft { job.draft() } else { job }, 100);
+                    let job = if draft { job.draft() } else { job }.with_overlay(overlay(p.get("overlay")));
+                    self.sched.request(Slot::Main, job, 100);
                     // until the loupe has this photo: its cached render, embedded preview or thumbnail
                     if self.sched.textures.get(&Slot::Main).is_none_or(|t| t.photo != id)
                         && let Some(q) = self.session.quick_view_job(id, w.max(h), apply_crop)
@@ -862,6 +863,8 @@ impl Engine {
             undo: self.session.undo.last().map(|u| u.label.clone()),
             redo: self.session.redo.last().map(|u| u.label.clone()),
             interaction: self.session.interaction.as_ref().map(|i| i.label.clone()),
+            active_mask: self.session.active_mask,
+            active_spot: self.session.active_spot,
             unsaved: self.session.unsaved().map_or(0, |(n, _)| n),
             sync: crate::sync::summary(&self.session),
         }
@@ -936,6 +939,31 @@ pub(crate) fn beside(script: &Path, path: &str) -> String {
         return dir.join(p).to_string_lossy().to_string();
     }
     path.to_string()
+}
+
+/// `render.view`'s `overlay`: `{kind: "mask", id, view?, color?: [r,g,b], opacity?}`, `{kind: "spots",
+/// threshold?}`, `{kind: "pointColor", index}` or `{kind: "hdr"}`; anything else draws none.
+fn overlay(v: Option<&Value>) -> lightcraft_pipeline::Overlay {
+    use lightcraft_pipeline::{MaskView, Overlay};
+    let Some(v) = v else { return Overlay::None };
+    let num = |k: &str, max: f64, d: f64| v.get(k).and_then(Value::as_f64).filter(|n| n.is_finite()).unwrap_or(d).round().clamp(0.0, max);
+    match v.get("kind").and_then(Value::as_str) {
+        Some("mask") => {
+            let Some(id) = v.get("id").and_then(Value::as_u64) else { return Overlay::None };
+            let c = v.get("color").and_then(Value::as_array);
+            let ch = |i: usize, d: u8| c.and_then(|c| c.get(i)).and_then(Value::as_u64).map_or(d, |n| n.min(255) as u8);
+            Overlay::Mask {
+                id: id.min(u64::from(u16::MAX)) as u16,
+                view: v.get("view").and_then(Value::as_str).and_then(MaskView::parse).unwrap_or_default(),
+                color: [ch(0, 230), ch(1, 30), ch(2, 40)],
+                opacity: num("opacity", 100.0, 50.0) as u8,
+            }
+        }
+        Some("spots") => Overlay::Spots(num("threshold", 100.0, 50.0) as u8),
+        Some("pointColor") => v.get("index").and_then(Value::as_u64).map_or(Overlay::None, |i| Overlay::PointColorRange(i.min(255) as u8)),
+        Some("hdr") => Overlay::HdrRange,
+        _ => Overlay::None,
+    }
 }
 
 #[cfg(test)]
