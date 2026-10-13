@@ -204,8 +204,7 @@ fn sidebar_sections_collapse_and_remember_it() {
     let click = |h: &mut Headless, id: &str| {
         let r = h.request("ui.clickWidget", json!({"id": id}), T);
         assert_eq!(r["ok"], true, "{r}");
-        h.step();
-        h.step();
+        h.settle(SETTLE);
     };
     // By Date lists years while open; its header folds them away and back
     assert!(has(&h, "sidebarSection:byDate"));
@@ -1037,8 +1036,7 @@ fn album_folders_have_a_disclosure_triangle() {
     let toggle = |h: &mut Headless, id: u64| {
         let r = h.request("ui.clickWidget", json!({"id": format!("albumToggle:{id}")}), T);
         assert_eq!(r["ok"], true, "{r}");
-        h.step();
-        h.step();
+        h.settle(SETTLE);
     };
     // folders start open and show their albums; only folders get a triangle
     assert!(has(&h, &format!("source:album:{best}")), "open by default");
@@ -1120,8 +1118,7 @@ fn albums_are_created_inside_the_chosen_folder() {
     for f in [europe, trips] {
         let r = h.request("ui.clickWidget", json!({"id": format!("albumToggle:{f}")}), T);
         assert_eq!(r["ok"], true, "{r}");
-        h.step();
-        h.step();
+        h.settle(SETTLE);
     }
     assert!(!has(&h, &format!("source:folder:{europe}")), "Trips is folded");
     let album = create(&mut h, "dialog.newAlbum", "Day 1", Some(europe));
@@ -1496,8 +1493,7 @@ fn a_dragged_album_opens_the_folder_it_hovers_over() {
     let mut t = album_tree();
     let r = t.h.request("ui.clickWidget", json!({"id": format!("albumToggle:{}", t.trips)}), T);
     assert_eq!(r["ok"], true, "{r}");
-    t.h.step();
-    t.h.step();
+    t.h.settle(SETTLE);
     assert!(!t.h.app.widgets.iter().any(|(w, _)| *w == format!("source:folder:{}", t.sub)), "Trips is folded");
     // where Sub's row will be once Trips is open: one row below it
     let trips = t.row(t.trips);
@@ -1535,8 +1531,7 @@ fn has(h: &Headless, id: &str) -> bool {
 fn click(h: &mut Headless, id: &str) {
     let r = h.request("ui.clickWidget", json!({"id": id}), T);
     assert_eq!(r["ok"], true, "{r}");
-    h.step();
-    h.step();
+    h.settle(SETTLE);
 }
 
 /// Photos imported from two folders: the sidebar's Folders section lists them, choosing one
