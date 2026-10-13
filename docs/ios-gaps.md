@@ -4,6 +4,9 @@ What the iPhone / iPad build of LightCraft still lacks, in two parts: **A.** thi
 exists (the compact layout and the iOS host), and **B.** what Lightroom's mobile app does that LightCraft does not
 yet. Status of the app itself: [`ios.md`](ios.md). Desktop feature parity has its own tracker:
 [`parity-checklist.md`](parity-checklist.md); rows there that are ⬜ also apply on the phone and are not repeated here.
+The native SwiftUI app that is to replace this one ([`ios-swift.md`](ios-swift.md)) gets several rows here from the
+system (A1.9 text input, A1.10 scenes, A2.15 accessibility, A2.16–A2.18 drag and drop, iPad keyboard and pointer, Pencil,
+A2.20 / A2.23 the system font and Liquid Glass); its own progress is `apps/lightcraft-ios-swift/PARITY.md`.
 
 Feature names are our own words (no Adobe text, screenshots or assets; see `CLAUDE.md`, *Assets*). Part B comes from
 the mobile app's public behaviour and should be re-checked against the installed app (read-only, `plan/lightroom/`)
@@ -97,7 +100,7 @@ mark: not started.
 | B2.1 | Library sync between devices (edits, ratings, albums, presets) | P1 | runs on the simulator: the user's own `lightcraft-server` ([`sync.md`](sync.md)), Menu → Settings → Sync (sign-in, upload with resume, server-built previews, pulling another device's photos, downloading an original: `ios.md` → *Checked by hand*); not yet on a device (keyboard entry, TLS, backgrounding) |
 | B2.2 | Smart previews / originals management: keep previews on the phone and originals elsewhere, download on demand, free up space | P1 | sync has the tiers (mini / smart previews, originals on request, albums kept offline) and a size limit for downloaded originals (Settings ▸ Sync ▸ Originals limit; the least recently used go first); no compact UI for offline albums |
 | B2.3 | Desktop ↔ phone handoff over the local network or iCloud (open the same catalog) | P2 | B2.1 shares one library through the server; no direct device-to-device handoff |
-| B2.4 | Shared albums with comments, likes and per-viewer permissions | P2 | read-only album links are in (Share Link on an album; `sync.md` → *Share an album*); comments, likes and per-viewer permissions are not planned (sync is one person's devices) |
+| B2.4 | Shared albums with comments, likes and per-viewer permissions | P2 | album links are in (Share Link… on an album; `sync.md` → *Share an album*): a password, Download All, and visitors adding photos to the album; comments, likes and per-viewer permissions are not planned (sync is one person's devices) |
 | B2.5 | Web galleries (publish an album as a page) | P2 | the sync server serves an album as a page behind a link (B2.4); a public gallery with its own address is not planned |
 | B2.6 | Share edits as a link or as a preset file; share a photo with a preset embedded | P1 | preset export exists (`file.exportPresets`); needs A1.3 |
 | B2.7 | Share a before / after image or a time-lapse of the edit history | P2 | |

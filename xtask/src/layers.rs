@@ -17,6 +17,10 @@ pub enum Class {
     Testkit,
     /// Binaries and build tooling: exempt from the rules.
     Exempt,
+    /// An app with a non-Rust UI (the SwiftUI iOS app's bridge): exempt from the layer order like
+    /// an app, but it may not pull in a Rust UI toolkit or `ui-egui` (its UI is native; shared
+    /// frontend logic lives in `apphost`).
+    HeadlessApp,
 }
 
 impl Class {
@@ -25,7 +29,7 @@ impl Class {
             Class::Layer(l) => Some(l),
             Class::Standalone => Some(0),
             Class::Testkit => Some(5),
-            Class::Exempt => None,
+            Class::Exempt | Class::HeadlessApp => None,
         }
     }
 }
@@ -65,6 +69,9 @@ pub const TABLE: &[(&str, Class)] = &[
     ("erase", Class::Layer(3)),
     ("vision", Class::Layer(3)),
     ("engine", Class::Layer(4)),
+    // the frontend runtime shared by every UI (render scheduling, background pumps, the engine
+    // thread the SwiftUI app talks to); above `engine` in the L4 chain below
+    ("apphost", Class::Layer(4)),
     ("ui-egui", Class::Layer(5)),
     ("mcp", Class::Layer(5)),
     ("testkit", Class::Testkit),
@@ -74,8 +81,10 @@ pub const TABLE: &[(&str, Class)] = &[
     ("web", Class::Exempt),
     ("server", Class::Exempt),
     ("ios", Class::Exempt),
-    // the iOS app's native glue (UIKit, PhotosUI, ImageIO through objc2); used only by `ios`
+    // the iOS apps' native glue (UIKit, PhotosUI, ImageIO through objc2); used only by `ios` and `ios-swift`
     ("ios-host", Class::Exempt),
+    // the SwiftUI iOS app's C ABI over `apphost` (docs/ios-swift.md)
+    ("ios-swift", Class::HeadlessApp),
     ("xtask", Class::Exempt),
 ];
 
@@ -83,6 +92,7 @@ pub const TABLE: &[(&str, Class)] = &[
 /// L0: `raster` builds on `color` and `geom`; `color` uses `geom` for matrices.
 /// L1: `raw` and `codecs` read metadata through `meta`; `develop` uses `meta` for XMP.
 /// L3: `erase` loads its ONNX model with `vision`'s fixes; `enhance` downloads `erase`'s model.
+/// L4: `apphost` runs frontends on top of `engine`.
 pub const INTRA_LAYER_ORDER: &[&[&str]] = &[
     &["geom", "color", "raster"],
     &["vision", "erase", "enhance"],
@@ -93,6 +103,7 @@ pub const INTRA_LAYER_ORDER: &[&[&str]] = &[
     &["meta", "develop"],
     &["develop", "scenes"],
     &["codecs", "raw"],
+    &["engine", "apphost"],
 ];
 
 fn intra_layer_allowed(from: &str, to: &str) -> bool {
@@ -154,6 +165,7 @@ pub enum Violation {
     StandaloneHasWorkspaceDep { krate: String, dep: String },
     TestkitAsNormalDep { krate: String },
     UiBelowL5 { krate: String, dep: String, layer: u8 },
+    UiInHeadlessApp { krate: String, dep: String },
 }
 
 impl std::fmt::Display for Violation {
@@ -174,6 +186,9 @@ impl std::fmt::Display for Violation {
             Violation::UiBelowL5 { krate, dep, layer } => {
                 write!(f, "{krate} (L{layer}) depends on UI crate `{dep}`; UI toolkits are only allowed in L5+")
             }
+            Violation::UiInHeadlessApp { krate, dep } => {
+                write!(f, "{krate} has a native UI and may not depend on `{dep}`; put shared frontend logic in lightcraft-apphost")
+            }
         }
     }
 }
@@ -187,6 +202,14 @@ pub fn check(crates: &[Crate]) -> Vec<Violation> {
             continue;
         };
         if class == Class::Exempt {
+            continue;
+        }
+        if class == Class::HeadlessApp {
+            for d in &c.deps {
+                if d.kind != DepKind::Dev && (is_ui_crate(&d.name) || short_name(&d.name) == "ui-egui") {
+                    out.push(Violation::UiInHeadlessApp { krate: c.name.clone(), dep: d.name.clone() });
+                }
+            }
             continue;
         }
         let layer = class.layer().unwrap_or(0);
@@ -261,6 +284,7 @@ pub fn describe(class: Option<Class>) -> String {
         Some(Class::Standalone) => "L0 standalone".into(),
         Some(Class::Testkit) => "testkit".into(),
         Some(Class::Exempt) => "exempt".into(),
+        Some(Class::HeadlessApp) => "app, no Rust UI".into(),
         None => "UNREGISTERED".into(),
     }
 }
@@ -319,6 +343,25 @@ mod tests {
         assert!(matches!(&v[..], [Violation::Unregistered { krate }] if krate == "lightcraft-mystery"));
         assert!(!check(&[c("lightcraft-pipeline", &[("lightcraft-testkit", Normal, true)])]).is_empty());
         assert!(check(&[c("lightcraft-pipeline", &[("lightcraft-testkit", Dev, true)])]).is_empty());
+    }
+
+    #[test]
+    fn apphost_sits_above_engine() {
+        assert!(check(&[c("lightcraft-apphost", &[("lightcraft-engine", Normal, true), ("lightcraft-preview", Normal, true)])]).is_empty());
+        assert!(!check(&[c("lightcraft-engine", &[("lightcraft-apphost", Normal, true)])]).is_empty());
+        assert!(check(&[c("lightcraft-ui-egui", &[("lightcraft-apphost", Normal, true)])]).is_empty());
+        let v = check(&[c("lightcraft-apphost", &[("egui", Normal, false)])]);
+        assert!(matches!(v[..], [Violation::UiBelowL5 { layer: 4, .. }]), "{v:?}");
+    }
+
+    #[test]
+    fn swift_bridge_has_no_rust_ui() {
+        let ok = c("lightcraft-ios-swift", &[("lightcraft-apphost", Normal, true), ("lightcraft-ios-host", Normal, true)]);
+        assert!(check(&[ok]).is_empty());
+        for dep in ["egui", "eframe", "winit", "lightcraft-ui-egui"] {
+            let v = check(&[c("lightcraft-ios-swift", &[(dep, Normal, dep.starts_with("lightcraft"))])]);
+            assert!(matches!(v[..], [Violation::UiInHeadlessApp { .. }]), "{dep}: {v:?}");
+        }
     }
 
     #[test]

@@ -11,8 +11,10 @@ What you'll have at the end:
   or moved, and written to (XMP sidecars, and a folder for your devices' uploads) only if you switch that on per
   folder ([library folders](sync.md#library-folders-photos-already-on-the-server)).
 - **Links to albums** that anyone you send them to can open in a browser, with no account
-  ([sharing](sync.md#share-an-album)); you can revoke them any time.
-- **The web app** at the server's address, and an **admin page** at `/admin` for users, devices and folders.
+  ([sharing](sync.md#share-an-album)): the photos by day, a slideshow, Download All, an optional password, and
+  optionally a form for them to add their own photos to the album. You can revoke them any time.
+- **The web app** at the server's address, and an **admin page** at `/admin` for users, devices, folders and
+  each user's [storage limit](sync.md#storage-limits).
 
 Sync is optional: LightCraft works without an account or a server, and nothing leaves a device until it signs in.
 
@@ -262,6 +264,8 @@ lightcraft-cli run --library ~/LightCraft-synced sync.signIn server=photos.examp
   ```
 
 - **Storage clean-up** (admin page, or `lightcraft-server gc`): removes files of photos deleted for good.
+- **Storage limits** (admin page ▸ Users ▸ the user ▸ Storage limit, or `lightcraft-server user quota ann 200G`): the
+  most the server keeps for one person; uploads over it wait, nothing is deleted. Library folders don't count.
 - **Logs:** `docker compose logs -f lightcraft`; `LIGHTCRAFT_LOG=debug` for more.
 - **Scans of library folders:** every 15 minutes (`LIGHTCRAFT_SCAN_INTERVAL`, minutes; `0` = only at start and from
   the admin page's **Scan now**). A disk that isn't mounted is skipped, never read as everything deleted.
@@ -280,6 +284,7 @@ lightcraft-cli run --library ~/LightCraft-synced sync.signIn server=photos.examp
 | A library folder `isn't there (not mounted?)` / `is empty but had photos` | The path is the one inside the container (`/photos/…`); check the volume mount, and that uid 10001 can read it. |
 | Photos without thumbnails for a while | Their previews are still being built (admin page ▸ Users ▸ the user ▸ Library folders shows how many are left). |
 | Uploads of big raws fail behind your own proxy | Allow large request bodies (nginx: `client_max_body_size 0;`). |
+| `over the storage limit` | The user's [storage limit](sync.md#storage-limits) is reached: raise it on the admin page, or free room (delete photos for good, then clean up storage). |
 
 ## Security checklist
 
@@ -287,8 +292,9 @@ lightcraft-cli run --library ~/LightCraft-synced sync.signIn server=photos.examp
 - Strong passwords (8 characters at least are required). Sign out devices you no longer use (admin page ▸ Users ▸ the user ▸ Devices).
 - Library folders mounted read-only (`:ro`), unless you want the server to write XMP sidecars or file uploads there
   (then mount that one `:rw`, make it writable for uid 10001, and switch it on in the admin page).
-- Album links are secret addresses: send them to people you'd send the photos to, give them an end date, and revoke
-  the ones you no longer need (Settings ▸ Sync ▸ Shared Links, or the admin page).
+- Album links are secret addresses: send them to people you'd send the photos to, give them an end date (and a
+  password, for one that may travel further), and revoke the ones you no longer need (Settings ▸ Sync ▸ Shared Links,
+  or the admin page). A link that lets people add photos fills its owner's storage: give that user a storage limit.
 - The web app on another site needs that site named with `--cors-origin` (`LIGHTCRAFT_CORS`); leave it off otherwise.
 - Keep the server and the apps updated together.
 

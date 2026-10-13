@@ -3337,6 +3337,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "lightcraft-apphost"
+version = "0.7.0"
+dependencies = [
+ "lightcraft-catalog",
+ "lightcraft-develop",
+ "lightcraft-engine",
+ "lightcraft-preview",
+ "lightcraft-raster",
+ "lightcraft-sysmem",
+ "log",
+ "serde",
+ "serde_json",
+ "web-time",
+]
+
+[[package]]
 name = "lightcraft-capture"
 version = "0.7.0"
 dependencies = [
@@ -3626,6 +3642,7 @@ version = "0.7.0"
 dependencies = [
  "eframe",
  "egui",
+ "lightcraft-apphost",
  "lightcraft-codecs",
  "lightcraft-engine",
  "lightcraft-ios-host",
@@ -3641,6 +3658,7 @@ name = "lightcraft-ios-host"
 version = "0.7.0"
 dependencies = [
  "block2 0.6.2",
+ "lightcraft-codecs",
  "log",
  "objc2 0.6.4",
  "objc2-core-foundation",
@@ -3651,6 +3669,17 @@ dependencies = [
  "objc2-photos-ui",
  "objc2-ui-kit 0.3.2",
  "objc2-uniform-type-identifiers 0.3.2",
+]
+
+[[package]]
+name = "lightcraft-ios-swift"
+version = "0.7.0"
+dependencies = [
+ "lightcraft-apphost",
+ "lightcraft-engine",
+ "lightcraft-ios-host",
+ "log",
+ "serde_json",
 ]
 
 [[package]]
@@ -3666,6 +3695,7 @@ dependencies = [
 name = "lightcraft-mcp"
 version = "0.7.0"
 dependencies = [
+ "lightcraft-apphost",
  "lightcraft-codecs",
  "lightcraft-engine",
  "lightcraft-raster",
@@ -3833,6 +3863,7 @@ dependencies = [
  "craft-ui",
  "egui",
  "egui_kittest",
+ "lightcraft-apphost",
  "lightcraft-capture",
  "lightcraft-catalog",
  "lightcraft-codecs",

@@ -1,6 +1,6 @@
 # Architecture
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** major (created from the code; the full design notes stay in the local `plan/architecture.md`) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6
+> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** minor (the `apphost` layer and the SwiftUI iOS app's C ABI) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6
 
 How LightCraft is built today. The longer design document (`plan/architecture.md`) is local-only
 (`plan/` is gitignored); this page is the committed, current summary. Sizes are Rust lines counted
@@ -17,9 +17,14 @@ L5 depends on egui, eframe, winit or rfd, and that each crate only uses lower la
 | L1 | `raw` (22.3k), `codecs` (7.3k), `meta` (4.3k), `develop` (2.5k), `denoise-core` (2.2k), `denoise` (2.7k), `faces` (5.3k), `scenes` (1.0k), `heif` (2.1k, optional) | Raw decoders and demosaic, DNG colour model; standard codecs and encoders; EXIF/XMP/IPTC; the non-destructive edit model and control specs; AI denoise; face detection and recognition; procedural demo photos; HEIC |
 | L2 | `pipeline` (9.8k) | The develop pipeline: scene-referred float, resolution independent; the CPU reference (oracle) for everything else |
 | L3 | `catalog` (11.0k), `gpu` (5.1k), `preview` (1.3k), `merge` (3.8k), `segment` (2.3k) | Library model and persistence; wgpu compute twin of the pipeline; thumbnail/preview cache and job pool; HDR and panorama merge; SAM 3 segmentation |
-| L4 | `engine` (53.2k) | Session, command registry (everything is a command), history, render and export jobs, import, Lightroom catalog and preset import, faces index, view-models |
+| L4 | `engine` (53.2k), then `apphost` | Session, command registry (everything is a command), history, render and export jobs, import, Lightroom catalog and preset import, faces index, view-models; `apphost` is the frontend runtime every UI shares (render scheduling, background pumps, and the engine thread the SwiftUI app talks to) |
 | L5 | `ui-egui` (46.9k), `mcp` (2.3k) | The Lightroom-style egui interface (swappable); the MCP server |
-| L6 | `apps/lightcraft` (2.8k), `apps/lightcraft-cli` (1.5k), `apps/lightcraft-web` (3.4k), `xtask` (2.7k) | Desktop app (eframe + wgpu, native menus, control server), CLI (render, commands, calibrate, snapshot, MCP), WASM build, tooling |
+| L6 | `apps/lightcraft` (2.8k), `apps/lightcraft-cli` (1.5k), `apps/lightcraft-web` (3.4k), `apps/lightcraft-ios`, `apps/lightcraft-ios-swift`, `xtask` (2.7k) | Desktop app (eframe + wgpu, native menus, control server), CLI (render, commands, calibrate, snapshot, MCP), WASM build, the iOS app on egui, the SwiftUI iOS app's C ABI (no Rust UI allowed: `HeadlessApp` in `layers.rs`), tooling |
+
+**Frontends.** egui (desktop, web, the current iOS app) and SwiftUI (the native iOS app, [ios-swift.md](ios-swift.md))
+drive the same engine. Logic a second UI needs moves below the UIs rather than being written twice: geometry and edit
+math into `geom` / `develop` / `color`, session behaviour into engine commands, and threads, scheduling and
+post-command policy into `apphost` (the extraction rule in `CLAUDE.md`).
 
 ## Data model
 
@@ -68,3 +73,4 @@ test FreeBSD and Windows ARM64, lint packaging, and build releases.
 | Date | Change | Summary |
 |---|---|---|
 | 2026-10-10 | major | Created from the code (crate sizes, layers, data model, rendering, control, gates) |
+| 2026-10-13 | minor | `apphost` (L4, after `engine`) and the SwiftUI iOS app's C ABI (`apps/lightcraft-ios-swift`); the extraction rule |

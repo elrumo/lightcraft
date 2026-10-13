@@ -1,0 +1,97 @@
+# The SwiftUI iOS app (apps/lightcraft-ios-swift, docs/ios-swift.md): what Linux can't check. The
+# Rust side (the engine host, the C ABI and its header check, the protocol fixtures) is in
+# `cargo xtask ci` everywhere; this builds and tests the Swift side on macOS with Xcode 26:
+#
+# - the Swift package's tests (LightCraftCoreTests) against the Rust library built for macOS;
+# - the package and the app for the iOS simulator and, unsigned, for a device;
+# - the library exports exactly the header's functions;
+# - the app on a simulator, driven by ci/tour.jsonl: its screenshots are uploaded.
+name: iOS (SwiftUI)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - apps/lightcraft-ios-swift/**
+      - crates/apphost/**
+      - crates/engine/src/cmd/**
+      - crates/preview/**
+      - crates/ios-host/**
+      - Cargo.lock
+      - .github/workflows/ios-swift.yml
+  schedule:
+    - cron: "17 5 * * 1" # weekly, so drift in the runner images and Xcode shows up
+  workflow_dispatch:
+
+concurrency:
+  group: ios-swift-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  IPHONEOS_DEPLOYMENT_TARGET: "26.0"
+  MACOSX_DEPLOYMENT_TARGET: "26.0"
+
+jobs:
+  swift:
+    name: SwiftUI app
+    runs-on: macos-26
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          targets: aarch64-apple-ios, aarch64-apple-ios-sim, aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: ios-swift
+      - name: Xcode 26
+        run: |
+          xcode=$(find /Applications -maxdepth 1 -name 'Xcode_26*.app' | sort -V | tail -1)
+          if [ -n "$xcode" ]; then sudo xcode-select -s "$xcode"; fi
+          xcodebuild -version
+          swift --version
+      - name: Rust tests (engine host, C ABI, header, fixtures)
+        run: cargo test -p lightcraft-apphost -p lightcraft-ios-swift
+      - name: Swift tests (macOS, against the real engine)
+        run: apps/lightcraft-ios-swift/run.sh --test --debug
+      - name: The library exports exactly the header's functions
+        run: |
+          header=apps/lightcraft-ios-swift/LightCraft/Sources/CLightCraftBridge/include/lightcraft_bridge.h
+          lib=apps/lightcraft-ios-swift/LightCraft/.rust/liblightcraft_bridge.a
+          grep -oE '\blc_[a-z_]+\(' "$header" | tr -d '(' | sed 's/^/_/' | sort -u > want.txt
+          nm -gU "$lib" 2>/dev/null | awk '$2 == "T" && $3 ~ /^_lc_/ {print $3}' | sort -u > have.txt
+          diff want.txt have.txt
+      - name: Rust library for the simulator
+        run: |
+          cargo build -p lightcraft-ios-swift --target aarch64-apple-ios-sim
+          cp -f target/aarch64-apple-ios-sim/debug/liblightcraft_bridge.a apps/lightcraft-ios-swift/LightCraft/.rust/
+      - name: Swift package for the simulator
+        working-directory: apps/lightcraft-ios-swift/LightCraft
+        run: xcodebuild -scheme LightCraft-Package -destination 'generic/platform=iOS Simulator' -derivedDataPath "$RUNNER_TEMP/pkg" build
+      - name: App for the simulator (Xcode project)
+        working-directory: apps/lightcraft-ios-swift/xcode
+        run: |
+          xcodebuild -project LightCraft.xcodeproj -scheme LightCraft -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' -derivedDataPath "$RUNNER_TEMP/app" \
+            CODE_SIGNING_ALLOWED=NO build
+      - name: App for a device (unsigned)
+        working-directory: apps/lightcraft-ios-swift/xcode
+        run: |
+          xcodebuild -project LightCraft.xcodeproj -scheme LightCraft -configuration Debug \
+            -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/device" \
+            CODE_SIGNING_ALLOWED=NO build
+      - name: Run on a simulator (tour)
+        run: apps/lightcraft-ios-swift/ci/sim-tour.sh "$RUNNER_TEMP/app/Build/Products/Debug-iphonesimulator/LightCraft.app" "$RUNNER_TEMP/tour"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: ios-swift-tour
+          path: ${{ runner.temp }}/tour
+          if-no-files-found: warn
+          retention-days: 14

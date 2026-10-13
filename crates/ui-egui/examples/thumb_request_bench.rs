@@ -6,7 +6,7 @@ use lightcraft_ui_egui::{
     LightcraftApp, Services,
     headless::Headless,
     panels::grid::request_thumb,
-    render::{RenderOffload, Slot, Tex},
+    render::{RenderOffload, Slot, Tex, TexView},
 };
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
@@ -113,7 +113,17 @@ fn micro(points: usize, pending: bool) {
             let key = app.session.thumb_job(id, 384).unwrap().key;
             app.renderer.textures.insert(
                 Slot::Thumb(id),
-                Tex { key, photo: id, tex: texture.clone(), size: [1, 1], histogram: None, ms: 0.0, quick: None, pixels: None },
+                Tex {
+                    key,
+                    photo: id,
+                    size: [1, 1],
+                    histogram: None,
+                    ms: 0.0,
+                    quick: None,
+                    request_id: 0,
+                    draft: false,
+                    view: TexView { tex: texture.clone(), pixels: None },
+                },
             );
         }
         request_thumb(&mut app, id, 384, 10);

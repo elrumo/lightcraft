@@ -104,6 +104,8 @@ fn ok_label(app: &LightcraftApp, dlg: &Dialog, informational: bool) -> String {
         Dialog::KeywordTag { editing: None, .. } => "Create",
         Dialog::KeywordTag { .. } => "Save",
         Dialog::RemoveFolder { .. } => "Remove",
+        Dialog::EditIn { .. } => "Edit",
+        Dialog::ShareLink { .. } => "Create Link",
         Dialog::LightroomCatalog { .. } => "Import Lightroom Catalog…",
         Dialog::SynchronizeFolder { .. } => "Synchronize",
         Dialog::Export { .. } => "Export",
@@ -201,6 +203,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
         Dialog::NewAlbum { folder: true, .. } => "Create Folder",
         Dialog::NewAlbum { .. } => "Create Album",
         Dialog::RenameAlbum { .. } => "Rename Album",
+        Dialog::ShareLink { .. } => "Share Link",
         Dialog::Rename { .. } => "Rename Photos",
         Dialog::Import { .. } => "Import Photos",
         Dialog::PresetImport { .. } => "Import Presets",
@@ -224,6 +227,8 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
         Dialog::SmartRules { id: None, .. } => "New Smart Album",
         Dialog::SmartRules { .. } => "Edit Smart Album",
         Dialog::AutoStack { .. } => "Auto-Stack by Capture Time",
+        Dialog::EditIn { photocraft: true, .. } => "Edit Photo with PhotoCraft",
+        Dialog::EditIn { .. } => "Edit Photo in Other Editor",
         Dialog::CreatePreset { .. } => "Create Preset",
         Dialog::CopySettings { .. } => "Choose Edit Settings to Copy",
         Dialog::PasteSettings { .. } => "Paste Selected Settings",
@@ -260,7 +265,9 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
         || !matches!(
             &dlg,
             Dialog::DenoiseModel { accepted: false, .. } | Dialog::FaceModel { accepted: false, .. } | Dialog::SynchronizeFolder { counts: None, .. }
-        ) && !matches!(&dlg, Dialog::SmartRules { id, rules, .. } if !rules.check_for(&app.session.catalog, id.map(lightcraft_catalog::AlbumId)).is_empty());
+        ) && !matches!(&dlg, Dialog::SmartRules { id, rules, .. } if !rules.check_for(&app.session.catalog, id.map(lightcraft_catalog::AlbumId)).is_empty())
+        // (a link's password, if there is one, is long enough)
+        && !matches!(&dlg, Dialog::ShareLink { password, .. } if !password.is_empty() && password.chars().count() < lightcraft_engine::cloud_sync::SHARE_PASSWORD_MIN);
     // (taken before `body` borrows the dialog)
     let confirm_delete = if let Dialog::ConfirmDelete { count } = &dlg { Some(*count) } else { None };
     let ok = ok_label(app, &dlg, informational);
@@ -300,6 +307,14 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
     let mut body = |ui: &mut egui::Ui| {
         ui.spacing_mut().item_spacing.y = 8.0;
         match &mut dlg {
+            Dialog::EditIn { mode, .. } => {
+                for m in crate::state::EditInMode::ALL {
+                    let (label, what) = m.label();
+                    let r = ui.radio_value(mode, m, crate::i18n::tr(label));
+                    crate::widgets::register(ui.ctx(), format!("radio:editIn-{}", m.param()), r.rect);
+                    ui.indent(("editIn", m.param()), |ui| ui.label(egui::RichText::new(crate::i18n::tr(what)).color(t.text_dim)));
+                }
+            }
             Dialog::AutoStack { gap } => {
                 ui.label(egui::RichText::new(crate::i18n::tr("Stack photos taken within this time of each other:")).color(t.text_label));
                 ui.add(
@@ -686,6 +701,11 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
             }
             Dialog::NewAlbum { name, .. } | Dialog::RenameAlbum { name, .. } => {
                 if dialog_field(ui, "field:albumName", name, "Name") {
+                    confirm = true;
+                }
+            }
+            Dialog::ShareLink { name, days, originals, upload, password, .. } => {
+                if share_link_body(ui, &t, name, days, originals, upload, password) {
                     confirm = true;
                 }
             }
@@ -1126,6 +1146,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                         | Dialog::KeywordTag { .. }
                         | Dialog::KeywordSet { .. }
                         | Dialog::SynchronizeFolder { .. }
+                        | Dialog::ShareLink { .. }
                 ) =>
             {
                 app.toast(ctx, e)
@@ -1381,6 +1402,14 @@ pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_jso
             created_in(app, "album.create", json!({"name": name, "folder": folder, "addSelected": !folder, "parent": parent}))
         }
         Dialog::RenameAlbum { id, name } => app.run("album.rename", json!({"id": id, "name": name})),
+        Dialog::ShareLink { id, days, originals, upload, password, .. } => {
+            let mut p = json!({"id": id, "expiresDays": days, "originals": originals, "upload": upload});
+            if !password.is_empty() {
+                p["password"] = json!(password);
+            }
+            // (the link arrives with the next sync, and goes on the clipboard: `sync_ui::poll`)
+            app.run("album.share", p)
+        }
         Dialog::TextPrompt { value, command, params, key, .. } => {
             let mut p = params.clone();
             p[key.as_str()] = json!(value.trim());
@@ -1488,6 +1517,11 @@ pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_jso
         }
         Dialog::MergeKeywords { from, into } => app.run("keyword.merge", json!({"from": from, "into": into})),
         Dialog::AutoStack { gap } => app.run("stack.auto", json!({"gap": gap})),
+        Dialog::EditIn { photocraft, mode } => {
+            app.ui.settings.edit_in_mode = *mode;
+            let command = if *photocraft { "photo.editInPhotoCraft" } else { "photo.editInExternal" };
+            app.run(command, json!({"mode": mode.param()}))
+        }
         Dialog::DenoiseModel { info, accepted } => crate::panels::denoise::install(app, info, *accepted),
         Dialog::FaceModel { path, info, accepted } => crate::panels::faces::install(app, path, info, *accepted),
         Dialog::AllMetadata { .. } | Dialog::SystemInfo { .. } | Dialog::WhatsNew => Ok(serde_json::Value::Null),
@@ -1656,10 +1690,53 @@ pub(super) fn choices<V: PartialEq + Copy>(ui: &mut egui::Ui, label: &str, id: &
     });
 }
 
+/// Share Link…: when the link ends, what visitors may do, and an optional password. True when Return in the
+/// password field confirms.
+fn share_link_body(
+    ui: &mut egui::Ui,
+    t: &Tokens,
+    name: &str,
+    days: &mut u32,
+    originals: &mut bool,
+    upload: &mut bool,
+    password: &mut String,
+) -> bool {
+    ui.label(egui::RichText::new(name).strong().color(t.text));
+    ui.label(
+        egui::RichText::new(crate::i18n::tr(
+            "Anyone with the link can see this album in a browser, without an account: its photos by day, as you have edited them, one by one or as a slideshow.",
+        ))
+        .color(t.text_dim),
+    );
+    let ends: [(u32, &str); 5] = [(0, "Never"), (1, "1 Day"), (7, "1 Week"), (30, "1 Month"), (365, "1 Year")];
+    choices(ui, "Link Ends", "shareEnds", &ends, days);
+    let r = crate::widgets::check(ui, originals, crate::i18n::tr("People can download the originals"));
+    crate::widgets::register(ui.ctx(), "check:shareOriginals", r.rect);
+    let r = crate::widgets::check(ui, upload, crate::i18n::tr("People can add photos to this album"));
+    crate::widgets::register(ui.ctx(), "check:shareUpload", r.rect);
+    if *upload {
+        ui.label(egui::RichText::new(crate::i18n::tr("Photos people add become yours: in this album, on all your devices.")).color(t.text_dim));
+    }
+    ui.label(egui::RichText::new(crate::i18n::tr("Password (optional)")).color(t.text_label));
+    let mut field = crate::text_field::TextField::singleline("field:sharePassword", password)
+        .password(true)
+        .hint(crate::i18n::tr("No password"))
+        .width(f32::INFINITY);
+    if crate::is_compact(ui.ctx()) {
+        field = field.font(egui::FontId::proportional(17.0)).margin(egui::Margin::symmetric(12, 10));
+    }
+    let r = field.show(ui);
+    // (the server's shortest, `SHARE_PASSWORD_MIN`)
+    let short = !password.is_empty() && password.chars().count() < lightcraft_engine::cloud_sync::SHARE_PASSWORD_MIN;
+    let note = if short { "A password has at least 4 characters." } else { "Visitors type it before they see anything." };
+    ui.label(egui::RichText::new(crate::i18n::tr(note)).color(if short { t.caution } else { t.text_dim }));
+    r.ending == Some(crate::text_field::Ending::Return) && !short
+}
+
 /// Dialogs that Return confirms with nothing focused (those with text fields confirm from the
 /// field: `dialog_field`).
 fn return_confirms(dlg: &Dialog) -> bool {
-    matches!(dlg, Dialog::CopySettings { .. } | Dialog::PasteSettings { .. } | Dialog::PresetImport { .. })
+    matches!(dlg, Dialog::CopySettings { .. } | Dialog::PasteSettings { .. } | Dialog::PresetImport { .. } | Dialog::EditIn { .. })
 }
 
 /// A dialog's one text field: it keeps the focus (except while its own menu has it) and opens

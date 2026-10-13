@@ -16,6 +16,28 @@
   Cameras and cards.
 - Every import now lists its photos by the day they were taken, with a box per day.
 
+### Shared albums, like a photo service's
+- Right-click an album ▸ **Share Link…** now asks how the link works: when it ends, whether people can download the
+  originals, whether they can **add their own photos** to the album, and an optional **password**.
+- The page people open shows the album's photos by the day they were taken. A photo opens large, and the arrow keys
+  step through the album; **Slideshow** plays it by itself. **Download All** gets every original in one ZIP.
+- Photos people add become yours, in the album, on all your devices. Chat apps show the album's name and first
+  photo for the link, unless it has a password.
+
+### Storage limits on your server
+- An admin can give each person a storage limit on the server (admin page ▸ Users ▸ Storage limit, or
+  `lightcraft-server user quota`). Settings ▸ Sync ▸ Storage shows how much of it you use.
+
+### Edit In: edit the original, and saves always come back
+- Photo ▸ Edit In on a TIFF, PSD, JPEG or PNG asks how to hand it over, as Lightroom Classic does: **Edit a Copy with
+  LightCraft Adjustments**, **Edit a Copy** (the file as it is, without your edits) or **Edit Original** (the file
+  itself; your edits stay on top of what the editor saves). Your last choice is picked next time. Raws still get a
+  copy with your edits.
+- What the editor saves now comes back even after you quit and reopen LightCraft, or if you saved while LightCraft was
+  closed: the files are watched for two weeks.
+- If the editor saves under the same name with another extension (Save As a PSD of the TIFF you were given), the new
+  file is added on top of the stack.
+
 ### A clearer Settings window
 - Settings (⌘,) has its sections in a sidebar on the left, each with its own icon: General, Interface, Display, Import
   and Performance, then the AI features, then Sync, which shows whether it is on. The section you open gets a title

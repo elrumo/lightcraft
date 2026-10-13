@@ -1,6 +1,6 @@
 # File format parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** major (created; formats measured from the code and the target's Info.plist) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** minor (PSD write ✅: export and Edit In write flat 8/16-bit PSDs, and what an external editor saves, a Save As as a PSD included, comes back) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6
 
 Every format Lightroom reads or writes, with our support, fidelity and tests. Camera raw formats are
 deep enough to have their own document: [raw-parity.md](raw-parity.md).
@@ -18,7 +18,7 @@ import and export formats. Ours come from `crates/codecs/src/sniff.rs`, `crates/
 | JPEG | ✅ | ✅ | ✅ (parallel decoder, ICC, EXIF orientation) | ✅ quality, size limit, ICC, metadata | `crates/codecs/src/jpeg.rs`, export tests |
 | TIFF | ✅ 8/16/32-bit | ✅ 8/16-bit, LZW/ZIP | ✅ 1–64-bit integer, 16–64-bit float, bilevel, CCITT fax, WhiteIsZero | ✅ 8/16-bit, 32-bit float linear, none / LZW / ZIP | `crates/tiff`, `crates/codecs/src/tiff_codec.rs` |
 | PNG | ✅ | ✅ | ✅ | ✅ | |
-| PSD / PSB | ✅ (maximized-compatibility composite) | ✅ (Classic: PSD export, edit-in round trip) | ✅ merged composite | ⬜ (external-editor round trip writes 16-bit TIFF) | `crates/codecs/src/psd.rs` |
+| PSD / PSB | ✅ (maximized-compatibility composite) | ✅ (Classic: PSD export, edit-in round trip) | ✅ merged composite | ✅ PSD, flat 8/16-bit with ICC (export, Edit In); ⬜ PSB. Edit In round trip: an editor's saves over the file come back, and so does its Save As beside it (e.g. a PSD of the TIFF copy, added to the stack) | `crates/codecs/src/psd.rs`, `crates/engine/src/tests_external_edit.rs` |
 | HEIC / HEIF | ✅ | ⬜ (Classic) / HDR only | ✅ in every release build (`crates/heif`, heic-rs) | ⬜ | `heif` feature on by packaging scripts |
 | AVIF | ✅ | ✅ (HDR) | ⬜ recognised, not decoded (no permissive pure-Rust AV1 decoder) | ✅ 8/10-bit, PQ HDR | |
 | JPEG XL | ✅ | ✅ | ✅ (`jxl-oxide`) incl. DNG 1.7 JXL tiles | ✅ lossy / lossless, 8/16-bit, PQ HDR (`jixel`, native only; ⬜ web) | `crates/engine/src/tests_export.rs` |
@@ -63,13 +63,13 @@ import and export formats. Ours come from `crates/codecs/src/sniff.rs`, `crates/
 
 | Part | Weight | Ready for real work | Kind |
 |---|---:|---:|---|
-| Standard image import / export | 35% | ~85% | estimated (table above; missing: AVIF read, PSD write, lossy DNG) |
+| Standard image import / export | 35% | ~85% | estimated (table above; missing: AVIF read, lossy DNG) |
 | Sidecars, metadata, presets | 25% | ~85% | estimated |
 | Lightroom catalog migration | 25% | ~50% | estimated (one-way, approximate rendering of unsupported settings) |
 | HDR, print, video output | 15% | ~35% | estimated |
 | **Non-raw file formats** | 100% | **~70%** | estimated; raw is in [raw-parity.md](raw-parity.md) (~50%) |
 
-Remaining: **26–47 h** (AVIF decode 8–15 h if a permissive decoder is written or found; PSD write 4–8 h; lossy DNG and Render to DNG 4–8 h; HLG 3–5 h; catalog import depth 8–12 h).
+Remaining: **22–39 h** (AVIF decode 8–15 h if a permissive decoder is written or found; lossy DNG and Render to DNG 4–8 h; HLG 3–5 h; catalog import depth 8–12 h).
 
 ## Revision history
 
@@ -77,3 +77,4 @@ Remaining: **26–47 h** (AVIF decode 8–15 h if a permissive decoder is writte
 |---|---|---|
 | 2026-10-10 | major | Created from the code and the installed Lightroom's document types |
 | 2026-10-10 | minor | JPEG XL export (#247): JXL write ✅ (native only), PQ JPEG XL HDR |
+| 2026-10-13 | minor | PSD write ✅ (it landed with Edit in PhotoCraft, #953; the row still said the round trip wrote TIFF only); the Edit In round trip brings back an editor's Save As beside the file. Remaining hours without PSD write |

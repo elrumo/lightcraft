@@ -58,6 +58,23 @@ impl Sizes {
         self.known.lock().unwrap_or_else(PoisonError::into_inner).get(name).map(|&(_, bytes)| bytes)
     }
 
+    /// What `name` keeps here now: the last count and what arrived since (counted here and now when it never
+    /// was: the first upload after a start or a clean-up waits for it).
+    pub(crate) fn used(&self, data: &Path, name: &str) -> u64 {
+        if let Some(bytes) = self.get(name) {
+            return bytes;
+        }
+        let bytes = size_of(&accounts::user_dir(data, name).join("blobs"), 3);
+        self.known.lock().unwrap_or_else(PoisonError::into_inner).entry(name.to_string()).or_insert((Instant::now(), bytes)).1
+    }
+
+    /// `bytes` more arrived for `name` (an upload), until the next count.
+    pub(crate) fn add(&self, name: &str, bytes: u64) {
+        if let Some(e) = self.known.lock().unwrap_or_else(PoisonError::into_inner).get_mut(name) {
+            e.1 = e.1.saturating_add(bytes);
+        }
+    }
+
     /// Forget the counts (files were removed): the next ones are made in the background.
     fn clear(&self) {
         self.known.lock().unwrap_or_else(PoisonError::into_inner).clear();
@@ -233,6 +250,12 @@ struct Enabled {
     enabled: bool,
 }
 
+/// `PUT /api/admin/users/<name>/quota`: `{quota: bytes}`, or `{quota: null}` for no limit.
+#[derive(Deserialize)]
+struct Quota {
+    quota: Option<u64>,
+}
+
 #[derive(Deserialize, Default)]
 #[serde(default)]
 struct Licence {
@@ -282,6 +305,15 @@ pub fn api(st: &State, req: &mut Request, method: &Method, rest: &str) -> Resp {
         (Method::Put, ["users", name, "admin"]) => read_json::<Admin>(req)
             .map_err(Err)
             .and_then(|a| accounts::set_admin(&st.data, name, a.admin).map(|()| json!({})).map_err(|e| Ok((409, e)))),
+        (Method::Put, ["users", name, "quota"]) => read_json::<Quota>(req).map_err(Err).and_then(|q| {
+            let code = if accounts::read_users(&st.data).is_ok_and(|f| f.users.contains_key(*name)) { 400 } else { 404 };
+            accounts::set_quota(&st.data, name, q.quota).map_err(|e| Ok((code, e)))?;
+            match q.quota {
+                Some(b) => log::info!("admin {me}: {name} may keep {b} bytes on the server"),
+                None => log::info!("admin {me}: {name} has no storage limit"),
+            }
+            Ok(json!({"quota": q.quota}))
+        }),
         (Method::Delete, ["users", name]) => remove_user(st, name),
         (Method::Get, ["users", name, "devices"]) => devices(st, name),
         (Method::Delete, ["users", name, "devices", id]) => match id.parse::<u64>() {
@@ -613,6 +645,8 @@ fn users(st: &State) -> AdminResult {
             // what their photos take on the server in all: the files kept for them (counted in the background:
             // null until they are) and the photos in their library folders, which are only read
             "bytes": st.sizes.get(name).map(|kept| kept.saturating_add(in_folders)), "folderBytes": in_folders,
+            // (their storage limit counts the files kept for them only)
+            "quota": u.quota,
             "shares": st.shares.lock().unwrap_or_else(PoisonError::into_inner).list(name).len(),
             "folders": folders, "scan": st.folders.status(name),
         }));

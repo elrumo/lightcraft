@@ -656,6 +656,94 @@ fn a_long_error_scrolls_and_the_buttons_stay() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// Share Link… asks how the link works before it is made: when it ends, what visitors may do, a password
+/// (too short is said, and refused); the server is asked for exactly that, and the new link goes on the
+/// clipboard. The link is listed with its password and uploads, and the device learns its storage limit
+/// (Settings ▸ Sync ▸ Storage shows it).
+#[test]
+fn share_link_asks_how_the_link_works_and_settings_show_the_limit() {
+    let asked = std::sync::Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
+    let seen = asked.clone();
+    let inner = exec(0, proto::Activity::default());
+    let exec: SyncExec = Box::new(move |task: Task, tx, ctx| {
+        let id = task.id();
+        let answer = |v: Value| {
+            let _ = tx.send(Done { id, status: 200, body: v.to_string() });
+            ctx.request_repaint();
+        };
+        match &task {
+            Task::Http { method: "POST", url, body, .. } if url.ends_with("/api/shares") => {
+                let sent: Value = match body {
+                    lightcraft_engine::cloud_sync::Body::Json(b) => serde_json::from_str(b).unwrap_or(Value::Null),
+                    _ => Value::Null,
+                };
+                seen.lock().unwrap().push(sent.clone());
+                answer(json!({"id": "l1", "token": "tok", "album": sent["album"], "name": "Trip", "created": 1, "expires": 604_801,
+                              "originals": sent["originals"], "password": sent.get("password").is_some(), "upload": sent["upload"]}));
+            }
+            Task::Http { method: "GET", url, .. } if url.ends_with("/api/usage") => {
+                answer(json!({"photos": 1, "original": {"files": 1, "bytes": 19_000_000u64}, "quota": 20_000_000u64}));
+            }
+            _ => inner(task, tx, ctx),
+        }
+    });
+    let (mut h, root) = app("sharelink", &[], exec, [1280.0, 800.0]);
+    let early = run(&mut h, "album.create", json!({"name": "Early"}))["id"].as_u64().unwrap();
+    // not signed in: nothing to make the link
+    let r = h.request("engine.execute", json!({"command": "dialog.shareLink", "params": {"id": early}}), T);
+    assert!(r["ok"] == false && r["error"].as_str().is_some_and(|e| e.contains("sign in")), "{r}");
+    // (an empty library takes the server's at sign-in: the album is made after)
+    sign_in(&mut h);
+    let trip = run(&mut h, "album.create", json!({"name": "Trip"}))["id"].as_u64().unwrap();
+    let folder = run(&mut h, "album.create", json!({"name": "Places", "folder": true}))["id"].as_u64().unwrap();
+    assert_eq!(h.request("engine.execute", json!({"command": "dialog.shareLink", "params": {"id": folder}}), T)["ok"], false, "not a folder");
+    run(&mut h, "dialog.shareLink", json!({"id": trip}));
+    assert!(matches!(&h.app.ui.dialog, Some(Dialog::ShareLink { id, days: 0, upload: false, .. }) if *id == trip), "{:?}", h.app.ui.dialog);
+    for id in ["check:shareOriginals", "check:shareUpload", "field:sharePassword", "button:shareEnds-2"] {
+        assert!(has(&h, id), "{id}");
+    }
+    tap(&mut h, "button:shareEnds-2");
+    tap(&mut h, "check:shareUpload");
+    tap(&mut h, "field:sharePassword");
+    assert_eq!(h.request("ui.text", json!({"text": "abc"}), T)["ok"], true);
+    h.settle(SETTLE);
+    assert!(matches!(&h.app.ui.dialog, Some(Dialog::ShareLink { password, days: 7, upload: true, .. }) if password == "abc"));
+    assert!(!serde_json::to_string(&h.app.ui.dialog).unwrap().contains("abc"), "the password isn't in the dialog's state as reported");
+    // too short: said in the dialog, and refused (the dialog stays)
+    assert!(has(&h, "button:dialogOk"));
+    assert_eq!(h.request("ui.dialog.confirm", json!({}), T)["ok"], false);
+    assert!(matches!(h.app.ui.dialog, Some(Dialog::ShareLink { .. })));
+    assert_eq!(h.request("ui.text", json!({"text": "d"}), T)["ok"], true);
+    h.settle(SETTLE);
+    assert_eq!(h.request("ui.dialog.confirm", json!({}), T)["ok"], true);
+    for _ in 0..20 {
+        frames(&mut h, 5);
+        if !asked.lock().unwrap().is_empty() && h.app.cloud_sync.in_flight == 0 {
+            break;
+        }
+    }
+    h.settle(SETTLE);
+    assert_eq!(
+        asked.lock().unwrap().clone(),
+        [json!({"album": trip, "expiresDays": 7, "originals": false, "password": "abcd", "upload": true})],
+        "what the server was asked for"
+    );
+    assert!(h.app.ui.toast.as_ref().is_some_and(|(t, ..)| t.contains("http://fake/s/tok")), "{:?}", h.app.ui.toast);
+    let listed = run(&mut h, "shares.list", json!({}));
+    assert_eq!((listed["shares"][0]["password"].as_bool(), listed["shares"][0]["upload"].as_bool()), (Some(true), Some(true)), "{listed}");
+    // (asked on the next frames, through the fake server: `refresh` would ask over the network here and now)
+    for _ in 0..20 {
+        run(&mut h, "sync.usage", json!({}));
+        frames(&mut h, 5);
+        if h.app.session.sync_state().is_some_and(|st| st.usage().is_some()) {
+            break;
+        }
+    }
+    assert_eq!(h.app.session.sync_state().and_then(|st| st.usage()).and_then(|u| u.quota), Some(20_000_000));
+    drop(h);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// Requests for a server's photo files that wait until the test answers them: a slow network.
 type Held = std::sync::Arc<std::sync::Mutex<Vec<(Task, std::sync::mpsc::Sender<Done>)>>>;
 
