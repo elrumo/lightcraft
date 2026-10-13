@@ -319,6 +319,19 @@ fn tiff_samples_narrower_than_a_byte() {
     assert!(decode(&packed_tiff(10, 2, 1, 1, &rows[..3]), DecodeOptions::default()).is_err());
 }
 
+/// A strip past the `tiff` crate's default 128 MiB chunk limit: a file that keeps its whole picture
+/// in one strip (a 16-bit RGB of 23 MP or more, as some multi-GB edited TIFFs do) was refused
+/// with "decoder limits exceeded". The limit counts the strip's stated length, so the pixels here
+/// are two bytes followed by padding, which keeps the test light.
+#[test]
+fn tiff_strip_larger_than_128_mib() {
+    let mut strip = vec![0u8; (128 << 20) + 1];
+    strip[1] = 255;
+    let d = decode(&packed_tiff(2, 1, 8, 1, &strip), DecodeOptions::default()).unwrap();
+    assert_eq!((d.width, d.height), (2, 1));
+    assert!(d.image.get(0, 0)[1] < 1e-6 && d.image.get(1, 0)[1] > 0.999);
+}
+
 #[test]
 fn webp_lossless_exact() {
     let img = gradient(31, 19);

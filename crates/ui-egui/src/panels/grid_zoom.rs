@@ -251,8 +251,7 @@ pub fn pinch_thumbs(app: &mut LightcraftApp, ui: &egui::Ui, area: Rect, cells: &
     }
     app.ui.thumb_size = size;
     let shift = egui::vec2(area.left(), area.top() - scroll);
-    let shown: Vec<(usize, Rect)> =
-        cells.iter().enumerate().map(|(i, c)| (i, c.translate(shift))).filter(|(_, r)| r.intersects(area)).collect();
+    let shown: Vec<(usize, Rect)> = cells.iter().enumerate().map(|(i, c)| (i, c.translate(shift))).filter(|(_, r)| r.intersects(area)).collect();
     (zoom.changed, zoom.focal, zoom.anchor) = (true, at, anchor(&shown, at));
     zoom
 }

@@ -34,6 +34,7 @@ use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use lightcraft_engine::catalog::sync::original_path;
+use lightcraft_engine::catalog::sync::proto::Files;
 use lightcraft_engine::catalog::{MediaKind, Op, Photo, PhotoId, Source};
 use lightcraft_engine::sidecar::{self, SidecarData, SidecarNaming};
 use serde::{Deserialize, Serialize};
@@ -160,6 +161,25 @@ impl Index {
     /// Has a photo file with content `hash` (the server needs no upload of it).
     pub fn has(&self, hash: &str) -> bool {
         self.by_hash.contains_key(hash)
+    }
+
+    /// The photo files the last scan found, by library folder (its name): how many, and the bytes
+    /// they take. A file that has gone missing isn't counted: its photo stays in the library, but
+    /// nothing is left on the disk.
+    pub fn folder_files(&self) -> BTreeMap<&str, Files> {
+        let mut by_folder: BTreeMap<&str, Files> = BTreeMap::new();
+        for (key, e) in self.files.iter().filter(|(_, e)| !e.missing) {
+            let folder = key.split_once('/').map_or("", |(folder, _)| folder);
+            let f = by_folder.entry(folder).or_default();
+            *f = f.plus(Files { files: 1, bytes: e.size });
+        }
+        by_folder
+    }
+
+    /// Every photo file in the library folders ([`Index::folder_files`] added up): what they take
+    /// on the server's disks, though the server only reads them.
+    pub fn folder_total(&self) -> Files {
+        self.folder_files().values().fold(Files::default(), |all, f| all.plus(*f))
     }
 }
 
