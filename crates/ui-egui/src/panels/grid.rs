@@ -449,11 +449,14 @@ fn homing(app: &LightcraftApp, ui: &egui::Ui, ids: &[PhotoId], drawn: &[(usize, 
     ui.ctx().request_repaint();
 }
 
-/// The photo lifted out of the grid (pulled down from the loupe, or flying back into place): its
-/// cell leaves the space empty for it.
+/// The photo lifted out of the grid (growing out of it into the loupe, pulled down from the loupe,
+/// or flying back into place): its cell leaves the space empty for it.
 fn lifted(app: &LightcraftApp, ctx: &egui::Context) -> Option<PhotoId> {
     if let Some(h) = super::detail::homing(ctx) {
         return Some(PhotoId(h.photo));
+    }
+    if let Some((id, _)) = super::detail::growing(ctx) {
+        return Some(id);
     }
     (super::detail::pulled(ctx) > 0.0).then(|| app.session.active()).flatten()
 }

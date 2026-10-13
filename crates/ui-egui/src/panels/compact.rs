@@ -574,18 +574,29 @@ fn content(app: &mut LightcraftApp, ui: &mut egui::Ui, bg: egui::Color32) {
         k = 1.0;
     }
     let pull = if app.ui.view == ViewMode::Detail { super::detail::pulled(ui.ctx()) } else { 0.0 };
-    let fill = if pull > 0.0 { egui::Color32::TRANSPARENT } else { bg };
+    // a photo opened grows over the grid, which stays behind it until the photo's background has
+    // come in (it doesn't fade in: it was there, under the finger)
+    let grown = if app.ui.view == ViewMode::Detail { super::detail::growing(ui.ctx()).map(|(_, g)| g) } else { None };
+    if grown.is_some() {
+        k = 1.0;
+    }
+    let behind_grid = pull > 0.0 || grown.is_some();
+    let fill = if behind_grid { egui::Color32::TRANSPARENT } else { bg };
     egui::CentralPanel::default().frame(egui::Frame::NONE.fill(fill)).show(ui, |ui| {
         ui.multiply_opacity(k);
-        if pull > 0.0 {
+        if behind_grid {
             let behind = ui.max_rect();
             let mut g = ui.new_child(egui::UiBuilder::new().max_rect(behind).id_salt("pulled-grid"));
             let view = app.ui.view;
             app.ui.view = app.ui.grid_mode;
             super::grid::show(app, &mut g);
             app.ui.view = view;
-            // the photo's own background thins out as it comes down
-            ui.painter().rect_filled(behind, 0.0, bg.gamma_multiply((1.0 - 1.8 * pull).clamp(0.0, 1.0)));
+            // the photo's own background thins out as it comes down, and comes in as it grows
+            let cover = match grown {
+                Some(g) => egui::emath::easing::cubic_out(g),
+                None => (1.0 - 1.8 * pull).clamp(0.0, 1.0),
+            };
+            ui.painter().rect_filled(behind, 0.0, bg.gamma_multiply(cover));
         }
         match app.ui.view {
             ViewMode::Detail => super::detail::show(app, ui),
