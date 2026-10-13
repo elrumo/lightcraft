@@ -794,6 +794,13 @@ pub fn specs() -> Vec<CommandSpec> {
                 if x1 - x0 < 0.005 || y1 - y0 < 0.005 {
                     return Err(bad(C, "the box would be too small"));
                 }
+                // as shown: back through the edit's rotation and flips to the upright frame
+                let lightcraft_geom::Rect { x0, y0, x1, y1 } = if p.get("shown").and_then(Value::as_bool) == Some(true) {
+                    let orient = s.develop_of(id).map(|d| d.orientation).unwrap_or_default();
+                    orient.inverse().map_norm_rect(lightcraft_geom::Rect { x0, y0, x1, y1 })
+                } else {
+                    lightcraft_geom::Rect { x0, y0, x1, y1 }
+                };
                 let mut meta = s.catalog.photo(id).ok_or_else(|| bad(C, "no such photo"))?.meta.clone();
                 let region = meta.regions.get_mut(index).ok_or_else(|| bad(C, "no such region"))?;
                 region.rect = lightcraft_geom::Rect { x0, y0, x1, y1 };
@@ -803,11 +810,38 @@ pub fn specs() -> Vec<CommandSpec> {
             }
         ),
         cmd!(
+            query "photo.faces",
+            "Faces on the Photo",
+            [],
+            None,
+            "{id?} → [{index, rect: [x0, y0, x1, y1], name}] the photo's face boxes as the edit shows it (rotated and flipped: the normalized coordinates view.frame maps); `index` is the one photo.setRegion, photo.removeRegion and faces.setName take",
+            always,
+            |s, p| {
+                const C: &str = "photo.faces";
+                let id = p.get("id").and_then(Value::as_u64).map(PhotoId).or_else(|| s.active()).ok_or_else(|| bad(C, "no photo"))?;
+                let photo = s.catalog.photo(id).ok_or_else(|| bad(C, "no such photo"))?;
+                let orient = s.develop_of(id).map(|d| d.orientation).unwrap_or_default();
+                Ok(Value::Array(
+                    photo
+                        .meta
+                        .regions
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, r)| r.kind == lightcraft_meta::RegionKind::Face)
+                        .map(|(index, r)| {
+                            let q = orient.map_norm_rect(r.rect);
+                            json!({"index": index, "rect": [q.x0, q.y0, q.x1, q.y1], "name": r.name})
+                        })
+                        .collect(),
+                ))
+            }
+        ),
+        cmd!(
             "photo.addRegion",
             "Add Face Box",
             [],
             None,
-            "{id?, rect: {x0, y0, x1, y1}, name?} → {index} — mark a face the detector missed (normalized, in the photo's upright frame; clamped to the photo, at least 0.5 % each way), named or not, in the catalog; undoable. Like photo.setRegion it never rewrites the XMP sidecar",
+            "{id?, rect: {x0, y0, x1, y1}, shown?: bool, name?} → {index} — mark a face the detector missed (normalized, in the photo's upright frame, or with `shown` as the edit shows it: rotated and flipped, the coordinates of photo.faces and view.frame; clamped to the photo, at least 0.5 % each way), named or not, in the catalog; undoable. Like photo.setRegion it never rewrites the XMP sidecar",
             always,
             |s, p| {
                 const C: &str = "photo.addRegion";
@@ -822,6 +856,13 @@ pub fn specs() -> Vec<CommandSpec> {
                 if x1 - x0 < 0.005 || y1 - y0 < 0.005 {
                     return Err(bad(C, "the box would be too small"));
                 }
+                // as shown: back through the edit's rotation and flips to the upright frame
+                let lightcraft_geom::Rect { x0, y0, x1, y1 } = if p.get("shown").and_then(Value::as_bool) == Some(true) {
+                    let orient = s.develop_of(id).map(|d| d.orientation).unwrap_or_default();
+                    orient.inverse().map_norm_rect(lightcraft_geom::Rect { x0, y0, x1, y1 })
+                } else {
+                    lightcraft_geom::Rect { x0, y0, x1, y1 }
+                };
                 let name = match p.get("name") {
                     None | Some(Value::Null) => None,
                     Some(Value::String(n)) => Some(n.trim().to_string()).filter(|n| !n.is_empty()),

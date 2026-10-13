@@ -775,3 +775,24 @@ fn mask_shape_controls_list_and_set() {
     assert!(s.execute("mask.setShapeControl", &json!({"component": 0, "control": "edge", "value": 1})).is_err());
     assert!(s.execute("mask.setShapeControl", &json!({"control": "lo", "value": 1})).is_err(), "a mask itself has no range");
 }
+
+/// Faces as the edit shows them: a box tagged on a rotated photo lands in the upright frame and
+/// comes back where it was tapped.
+#[test]
+fn faces_are_tagged_and_listed_as_shown() {
+    let mut s = Session::with_demo();
+    s.execute("photo.rotateRight", &json!({})).unwrap();
+    let shown = json!({"x0": 0.1, "y0": 0.2, "x1": 0.3, "y1": 0.5});
+    let r = s.execute("photo.addRegion", &json!({"rect": shown, "shown": true, "name": "Ana"})).unwrap();
+    let faces = s.execute("photo.faces", &json!({})).unwrap();
+    let face = faces.as_array().unwrap().iter().find(|f| f["index"] == r["index"]).unwrap().clone();
+    let got: Vec<f64> = face["rect"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
+    for (a, b) in got.iter().zip([0.1, 0.2, 0.3, 0.5]) {
+        assert!((a - b).abs() < 1e-9, "{face}");
+    }
+    assert_eq!(face["name"], "Ana");
+    // stored upright: not where it was tapped on the rotated photo
+    let id = s.active().unwrap();
+    let stored = s.catalog.photo(id).unwrap().meta.regions.last().unwrap().rect;
+    assert!((stored.x0 - 0.1).abs() > 1e-6 || (stored.y0 - 0.2).abs() > 1e-6, "{stored:?}");
+}
