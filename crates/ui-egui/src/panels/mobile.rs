@@ -194,14 +194,16 @@ pub fn page_with(ctx: &egui::Context, id: &str, bar_spec: PageBar, open: bool, b
         d.insert_temp(presented_id(), most.max(p));
     });
     // dim what is behind while it slides in, and keep taps off it
-    egui::Area::new(sid.with("dim")).order(egui::Order::Middle).fixed_pos(screen.min).show(ctx, |ui| {
+    egui::Area::new(sid.with("dim")).order(egui::Order::Middle).constrain_to(screen).fixed_pos(screen.min).show(ctx, |ui| {
         ui.painter().rect_filled(screen, 0.0, Color32::from_black_alpha((t.scrim as f32 * p) as u8));
         let _ = ui.allocate_rect(screen, Sense::click());
     });
     let mut bar = Bar::default();
     let top = content.top() + 8.0 + drop;
+    // (down to the screen's edge: an area otherwise stops at the safe area)
+    let area = egui::Area::new(sid).constrain_to(screen).constrain(false);
     // (opaque as it slides: not egui's fade-in of a new area, through which what is behind showed)
-    egui::Area::new(sid).order(egui::Order::Foreground).constrain(false).fade_in(false).fixed_pos(pos2(content.left(), top)).show(ctx, |ui| {
+    area.order(egui::Order::Foreground).fade_in(false).fixed_pos(pos2(content.left(), top)).show(ctx, |ui| {
         let w = content.width();
         // the sheet reaches the bottom edge of the screen (behind the home indicator); its contents
         // stop at the safe area / keyboard
@@ -338,13 +340,13 @@ pub fn actions_wide(ctx: &egui::Context, id: &str, title: Option<&str>, menu_w: 
     let screen = ctx.viewport_rect();
     let mut close = false;
     if closing {
-        egui::Area::new(sid.with("block")).order(egui::Order::Tooltip).fixed_pos(screen.min).show(ctx, |ui| {
+        egui::Area::new(sid.with("block")).order(egui::Order::Tooltip).constrain_to(screen).fixed_pos(screen.min).show(ctx, |ui| {
             let _ = ui.allocate_rect(screen, Sense::click_and_drag());
         });
     }
     // (in the foreground layer: over a page the menu was opened from, which it guards from taps;
     // shown after the page, it goes on top of it)
-    let dim = egui::Area::new(sid.with("dim")).order(egui::Order::Foreground).fixed_pos(screen.min).show(ctx, |ui| {
+    let dim = egui::Area::new(sid.with("dim")).order(egui::Order::Foreground).constrain_to(screen).fixed_pos(screen.min).show(ctx, |ui| {
         let alpha = t.scrim as f32 * if anchor.is_some() { 0.4 } else { 0.8 };
         ui.painter().rect_filled(screen, 0.0, Color32::from_black_alpha((alpha * p) as u8));
         if ui.allocate_rect(screen, Sense::click()).clicked() {

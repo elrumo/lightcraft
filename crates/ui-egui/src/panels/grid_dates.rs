@@ -25,7 +25,13 @@ const HEAD_H: f32 = 52.0;
 /// A tile's corners.
 const ROUND: u8 = 14;
 /// Room under the last block for the Years / Months / All capsule.
-pub const BOTTOM_ROOM: f32 = 84.0;
+const BOTTOM_ROOM: f32 = 84.0;
+
+/// Room under the end of a phone's grid in `ui`: for the capsule, and for the home indicator when the
+/// grid runs on under it (`compact::content`).
+pub fn bottom_room(ui: &egui::Ui) -> f32 {
+    BOTTOM_ROOM + (ui.max_rect().bottom() - ui.ctx().content_rect().bottom()).max(0.0)
+}
 
 /// One month or year: its key (`2025-08`, `2025`; empty for photos with no date), how many photos
 /// it has, and the ones it shows (indices into the grid's photos), the best first.
@@ -215,7 +221,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, ids: &[PhotoId], generat
         tops.push(y);
         y += block_h(span, b, w);
     }
-    let total = y + BOTTOM_ROOM;
+    let total = y + bottom_room(ui);
     // a jump: to a year's first month
     let jump = match app.ui.grid_jump.take() {
         Some(GridJump::Date(d)) => blocks.iter().position(|b| b.key.starts_with(&d)).and_then(|i| tops.get(i).copied()),

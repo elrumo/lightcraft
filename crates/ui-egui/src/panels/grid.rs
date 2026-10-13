@@ -276,7 +276,7 @@ fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     };
     let stacks = app.caches.grid.stacks(stats, &app.session.catalog, generation);
     // (a phone leaves room under the last row for the Years / Months / All capsule)
-    let total_h = lay.height + if app.compact { super::grid_dates::BOTTOM_ROOM } else { 12.0 };
+    let total_h = lay.height + if app.compact { super::grid_dates::bottom_room(ui) } else { 12.0 };
     let active = app.session.selection.active;
     // where the grid has to go this frame: the photo under the fingers stays under them when the
     // columns change; a month or photo picked in Months
@@ -639,7 +639,9 @@ fn scrubber(app: &LightcraftApp, ui: &mut egui::Ui, viewport: Rect, content_h: f
     if (viewport.top() - st.offset).abs() > 0.5 {
         (st.offset, st.moved_at) = (viewport.top(), now);
     }
-    let travel = (clip.top() + 8.0)..=(clip.bottom() - 8.0 - SCRUB_H).max(clip.top() + 8.0);
+    // (it stops above the home indicator, which the grid runs on under)
+    let bottom = clip.bottom().min(ui.ctx().content_rect().bottom());
+    let travel = (clip.top() + 8.0)..=(bottom - 8.0 - SCRUB_H).max(clip.top() + 8.0);
     let span = (travel.end() - travel.start()).max(1.0);
     let y = travel.start() + (viewport.top() / max).clamp(0.0, 1.0) * span;
     let lingering = now - st.moved_at < SCRUB_LINGER;

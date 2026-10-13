@@ -476,6 +476,13 @@ fn content(app: &mut LightcraftApp, ui: &mut egui::Ui, bg: egui::Color32) {
     let fill = if pull > 0.0 { egui::Color32::TRANSPARENT } else { bg };
     egui::CentralPanel::default().frame(egui::Frame::NONE.fill(fill)).show(ui, |ui| {
         ui.multiply_opacity(k);
+        // the grid runs on under the home indicator, as iOS's do (its last row scrolls clear of it)
+        let grid = matches!(app.ui.view, ViewMode::PhotoGrid | ViewMode::SquareGrid);
+        let mut to_bottom = if grid { to_screen_bottom(ui, fill) } else { None };
+        let ui = match to_bottom.as_mut() {
+            Some(below) => below,
+            None => ui,
+        };
         if pull > 0.0 {
             let behind = ui.max_rect();
             let mut g = ui.new_child(egui::UiBuilder::new().max_rect(behind).id_salt("pulled-grid"));
@@ -496,6 +503,21 @@ fn content(app: &mut LightcraftApp, ui: &mut egui::Ui, bg: egui::Color32) {
             ViewMode::PhotoGrid | ViewMode::SquareGrid => super::grid::show(app, ui),
         }
     });
+}
+
+/// A child of the content's `ui` reaching down to the bottom of the screen, behind the home
+/// indicator (outside the safe area the host lays the app out in), `fill` painted there. None when
+/// a bar sits under the content, whose colour carries on there instead (`fill_below`).
+fn to_screen_bottom(ui: &mut egui::Ui, fill: egui::Color32) -> Option<egui::Ui> {
+    let (screen, safe, r) = (ui.ctx().viewport_rect(), ui.ctx().content_rect(), ui.max_rect());
+    if r.bottom() + 0.5 < safe.bottom() || screen.bottom() <= r.bottom() + 0.5 {
+        return None;
+    }
+    let full = egui::Rect::from_min_max(r.min, pos2(r.right(), screen.bottom()));
+    let mut below = ui.new_child(egui::UiBuilder::new().max_rect(full).layout(*ui.layout()));
+    below.set_clip_rect(full);
+    below.painter().rect_filled(egui::Rect::from_min_max(r.left_bottom(), full.max), 0.0, fill);
+    Some(below)
 }
 
 fn overlays(app: &mut LightcraftApp, ctx: &egui::Context) {
@@ -557,7 +579,7 @@ fn top_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, mut shown: bo
 
 /// Over the grid: Select and the "…" menu (the collection is the grid's own title row).
 fn grid_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
-    ui.add_space(6.0);
+    // (centred in the bar, as the photo's are: any lower and the bar cuts their bottoms off)
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
         let more = glass::circle_button(ui, "icon:more", Icon::Dots, "More", true, None);
@@ -851,7 +873,7 @@ fn floating_capsule(full: egui::Rect) -> egui::Rect {
 
 /// Paint `color` from the bottom of a bar (`full`) down to the screen's edge: the home indicator's
 /// strip (outside the safe area, so nothing else draws there) carries on the bar's colour.
-fn fill_below(ui: &egui::Ui, full: egui::Rect, color: egui::Color32) {
+pub(super) fn fill_below(ui: &egui::Ui, full: egui::Rect, color: egui::Color32) {
     let screen = ui.ctx().viewport_rect();
     if screen.bottom() > full.bottom() {
         let mut p = ui.painter().clone();
