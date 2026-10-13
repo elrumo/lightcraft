@@ -615,7 +615,7 @@ function showShares(name, list) {
       el(
         'tr',
         {},
-        el('td', {}, el('div', { class: 'who-cell' }, el('span', { class: 'thing' }, icon('copy')), el('div', {}, el('b', {}, s.name), el('span', { class: 'sub' }, s.originals ? 'Originals can be downloaded' : 'Pictures only')))),
+        el('td', {}, el('div', { class: 'who-cell' }, el('span', { class: 'thing' }, icon('copy')), el('div', {}, el('b', {}, s.name), el('span', { class: 'sub' }, [s.originals ? 'Originals can be downloaded' : 'Pictures only', s.password && 'Password', s.upload && 'Visitors add photos'].filter(Boolean).join(' · '))))),
         el('td', { class: 'opt', title: date(s.created) }, ago(s.created)),
         el('td', {}, ends),
         el('td', { class: 'end' }, el('button', { type: 'button', class: 'btn quiet', onclick: () => revokeShare(name, s) }, icon('trash'), 'Revoke')),
