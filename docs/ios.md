@@ -291,6 +291,16 @@ and `crates/ios-host` (see `CLAUDE.md`, *Never crash*).
   four; frames took under 0.5 ms of layout, the slowest update 28 ms. Not measured yet: a raw decode (no raw on the
   device without importing the user's photos or the CC0 corpus), the storage-buffer limits (A1.12) and the process's
   peak memory (the caches' total is what is known).
+  **Decision (2026-10-13): a native SwiftUI app over a C ABI** ([ios-swift.md](ios-swift.md)), targeting iOS 26 and
+  later, reusing the whole Rust core. Why: the open rows in [ios-gaps.md](ios-gaps.md) that this app can't close without
+  rebuilding UIKit inside egui (`UITextInput` and CJK composition A1.9, scenes A1.10, VoiceOver and Dynamic Type A2.15,
+  drag and drop A2.16, iPad keyboard, pointer and multiwindow A2.17, Apple Pencil A2.18, the system font and real
+  Liquid Glass A2.20 / A2.23) come with the system in a native UI. The engine was built for a second frontend: one
+  JSON entry point (`Session::execute`), controls described as data (`develop.controls`), renders that return plain
+  RGBA. Staged: phone parity first, then the full iPad layout; this egui app stays and keeps building until the Swift
+  app passes its parity gate (`apps/lightcraft-ios-swift/PARITY.md`), then it is removed. Most of the work is the UI
+  itself and moving the logic that still lives in `ui-egui` down to shared crates so both UIs use it; the order of
+  work is in [ios-swift.md](ios-swift.md) → *Plan*.
 - **Phase 1, platform glue (written; run it):** host crate, pickers, sandbox paths, memory budget, GPU pause/resume,
   HEIC via ImageIO, JPEG/DNG/ProRAW verified on real files.
 - **Phase 2, mobile UI:** grid, loupe with gestures, bottom-sheet edit tools, presets, crop, masks, export; adaptive

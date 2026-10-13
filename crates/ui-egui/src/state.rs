@@ -345,6 +345,9 @@ pub struct AppSettings {
     pub photocraft_path: String,
     /// The file Edit in PhotoCraft hands over.
     pub photocraft_file: EditFile,
+    /// How Edit In hands an image file over (the Edit Photo dialog's last choice; a raw always
+    /// gets a rendered copy).
+    pub edit_in_mode: EditInMode,
     /// Memory the caches may hold together, in MB (0 = automatic; `app.memoryBudget`).
     pub memory_mb: u32,
     /// Map: fetch map tiles from the network (off: only the built-in map and saved tiles).
@@ -389,6 +392,7 @@ impl Default for AppSettings {
             external_file: EditFile::default(),
             photocraft_path: String::new(),
             photocraft_file: EditFile { format: EditFormat::Psd, ..EditFile::default() },
+            edit_in_mode: EditInMode::Render,
             memory_mb: 0,
             map_online: true,
             map_tile_url: String::new(),
@@ -425,6 +429,44 @@ pub enum EditFormat {
     Tiff,
     /// A flat PSD: PhotoCraft saves back to it in place (a TIFF it saves only through Save As).
     Psd,
+}
+
+/// How Photo ▸ Edit In hands an image file (TIFF, PSD, JPEG, PNG…) to the editor: the choice the
+/// Edit Photo dialog offers (`mode` of `photo.editExternal`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum EditInMode {
+    /// A copy rendered with the LightCraft edits.
+    #[default]
+    Render,
+    /// A copy of the file, without the edits.
+    Copy,
+    /// The file itself; the edits stay on top of what the editor saves.
+    Original,
+}
+
+impl EditInMode {
+    pub const ALL: [EditInMode; 3] = [EditInMode::Render, EditInMode::Copy, EditInMode::Original];
+
+    /// The `mode` param of `photo.editExternal`.
+    pub fn param(self) -> &'static str {
+        match self {
+            EditInMode::Render => "render",
+            EditInMode::Copy => "copy",
+            EditInMode::Original => "original",
+        }
+    }
+
+    /// The Edit Photo dialog's choice, and what it does.
+    pub fn label(self) -> (&'static str, &'static str) {
+        match self {
+            EditInMode::Render => {
+                ("Edit a Copy with LightCraft Adjustments", "A copy of the file with your edits applied, stacked with the original.")
+            }
+            EditInMode::Copy => ("Edit a Copy", "A copy of the original file, without your edits, stacked with it."),
+            EditInMode::Original => ("Edit Original", "The file itself. Your edits stay in LightCraft, on top of what the editor saves."),
+        }
+    }
 }
 
 /// The colour space of the Edit In copy.
@@ -769,10 +811,13 @@ pub struct UiState {
     pub unnamed_focus: bool,
     /// Local sidebar locations hidden with “Remove from Local” (folders on disk are untouched).
     pub hidden_locations: Vec<String>,
-    /// Copies opened in an external editor this session (reloaded when the window is focused
-    /// again), and whether the window had focus last frame.
-    #[serde(skip)]
-    pub external_edits: Vec<u64>,
+    /// Files opened in an external editor (Photo ▸ Edit In), watched for what it saves: checked
+    /// (`photo.checkExternalEdits`) when the window is focused again and at launch, so a save made
+    /// after a restart, or while LightCraft was closed, still comes back. Paths, not photo ids: the
+    /// list belongs to the app, not a library.
+    pub external_edits: Vec<lightcraft_engine::cmd::TrackedEdit>,
+    /// Whether the window had focus last frame (false at launch: the first focused frame checks
+    /// the external edits).
     #[serde(skip)]
     pub was_focused: bool,
     /// When the watched folder was last scanned (egui time).
@@ -1026,6 +1071,18 @@ pub enum Dialog {
         id: u64,
         name: String,
     },
+    /// Share Link… (an album's menu): how the link to album `id` works before it is made (`album.share`). The
+    /// password is never kept with the window state, nor told to the control channel.
+    ShareLink {
+        id: u64,
+        name: String,
+        /// Days until the link ends (0: when revoked).
+        days: u32,
+        originals: bool,
+        upload: bool,
+        #[serde(skip)]
+        password: String,
+    },
     /// One text field; OK runs `command` with `params` plus `{key: value}` (rename a preset or a
     /// version, move a preset to a new group…).
     TextPrompt {
@@ -1118,6 +1175,13 @@ pub enum Dialog {
     MergeKeywords {
         from: Vec<String>,
         into: String,
+    },
+    /// Photo ▸ Edit In on image files: edit a copy with the edits, a plain copy, or the original
+    /// (Lightroom Classic's Edit Photo dialog). `photocraft`: Edit in PhotoCraft, else the other
+    /// editor.
+    EditIn {
+        photocraft: bool,
+        mode: EditInMode,
     },
     /// Auto-stack by capture time: the largest gap between consecutive shots, in seconds.
     AutoStack {
@@ -1371,7 +1435,7 @@ impl Default for UiState {
             hidden_locations: Vec::new(),
             dragging_control: None,
             external_edits: Vec::new(),
-            was_focused: true,
+            was_focused: false,
             auto_import_at: 0.0,
             search: String::new(),
             focus_search: false,

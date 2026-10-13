@@ -45,6 +45,10 @@ pub struct User {
     /// File and folder names the scan of those folders skips, wherever they are (see
     /// `lightcraft_engine::import::is_ignored`): `*.fcpbundle`, `Proxy Media`.
     pub ignore: Vec<String>,
+    /// The most bytes the server keeps for this user in its own store (uploaded originals and
+    /// previews; library folders don't count). `None`: no limit. Only an admin sets it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quota: Option<u64>,
 }
 
 /// One of a user's library folders: a folder on the server, shown to devices by `name`.
@@ -148,14 +152,14 @@ pub fn read_users(data: &Path) -> Result<UsersFile, String> {
     read_json(&data.join(USERS))
 }
 
-fn hash_password(password: &str) -> Result<String, String> {
+pub(crate) fn hash_password(password: &str) -> Result<String, String> {
     let mut salt = [0u8; 16];
     getrandom::fill(&mut salt).map_err(|e| format!("no random numbers: {e}"))?;
     let salt = SaltString::encode_b64(&salt).map_err(|e| e.to_string())?;
     argon2::Argon2::default().hash_password(password.as_bytes(), &salt).map(|h| h.to_string()).map_err(|e| e.to_string())
 }
 
-fn password_ok(stored: &str, password: &str) -> bool {
+pub(crate) fn password_ok(stored: &str, password: &str) -> bool {
     PasswordHash::new(stored).is_ok_and(|h| argon2::Argon2::default().verify_password(password.as_bytes(), &h).is_ok())
 }
 
@@ -304,6 +308,53 @@ pub fn set_ignore(data: &Path, user: &str, list: &[String]) -> Result<Vec<String
     f.users.get_mut(user).ok_or_else(|| format!("no user `{user}`"))?.ignore = list.clone();
     write_json(&data.join(USERS), &f)?;
     Ok(list)
+}
+
+/// The smallest storage limit (anything less couldn't hold one photo's previews).
+pub const QUOTA_MIN: u64 = 16 << 20;
+
+/// Limit what the server keeps for `user` to `quota` bytes (`None`: no limit). Files already over it
+/// stay; new uploads are refused until there is room.
+pub fn set_quota(data: &Path, user: &str, quota: Option<u64>) -> Result<(), String> {
+    if quota.is_some_and(|q| q < QUOTA_MIN) {
+        return Err(format!("a storage limit is at least {} MB", QUOTA_MIN >> 20));
+    }
+    let mut f = read_users(data)?;
+    f.users.get_mut(user).ok_or_else(|| format!("no user `{user}`"))?.quota = quota;
+    write_json(&data.join(USERS), &f)
+}
+
+/// `user`'s storage limit, if they have one.
+pub fn quota_of(data: &Path, user: &str) -> Option<u64> {
+    read_users(data).ok()?.users.get(user)?.quota
+}
+
+/// A size as typed: bytes, or a number with a unit, as disks are sold (`500M`, `50G`, `1.5T`, `20GB`: powers
+/// of 1000, as the admin page shows sizes; `50GiB`: powers of 1024). `off`, `none` or `unlimited`: no limit
+/// (`Ok(None)`).
+pub fn parse_size(s: &str) -> Result<Option<u64>, String> {
+    let t = s.trim().to_ascii_lowercase();
+    if matches!(t.as_str(), "off" | "none" | "unlimited" | "0") {
+        return Ok(None);
+    }
+    let (t, base) = match t.strip_suffix("ib") {
+        Some(t) => (t, 1024f64),
+        None => (t.strip_suffix('b').unwrap_or(&t), 1000f64),
+    };
+    let t = t.trim();
+    let (num, power) = match t.char_indices().last() {
+        Some((i, 'k')) => (t.get(..i).unwrap_or(""), 1),
+        Some((i, 'm')) => (t.get(..i).unwrap_or(""), 2),
+        Some((i, 'g')) => (t.get(..i).unwrap_or(""), 3),
+        Some((i, 't')) => (t.get(..i).unwrap_or(""), 4),
+        _ => (t, 0),
+    };
+    let n: f64 = num.trim().parse().map_err(|_| format!("`{s}` isn't a size (like 500M, 50G or 1T; `off` for no limit)"))?;
+    let bytes = n * base.powi(power);
+    if !bytes.is_finite() || bytes < 1.0 || bytes >= u64::MAX as f64 {
+        return Err(format!("`{s}` isn't a size (like 500M, 50G or 1T; `off` for no limit)"));
+    }
+    Ok(Some(bytes as u64))
 }
 
 /// Is there an admin yet? (Until there is, `/admin` asks for the setup code.)

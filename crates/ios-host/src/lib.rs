@@ -237,9 +237,65 @@ pub fn decode_image(bytes: &[u8], max: Option<(u32, u32)>) -> Result<Image, Stri
     }
 }
 
+/// ImageIO's decode as `lightcraft-codecs` takes it (HEIC / HEIF and AVIF have no pure-Rust
+/// decoder): pixels as stored, premultiplied, in the image's own colour space.
+fn system_image(i: Image) -> lightcraft_codecs::SystemImage {
+    lightcraft_codecs::SystemImage {
+        width: i.width,
+        height: i.height,
+        pixels: match i.pixels {
+            Pixels::Rgba8(v) => lightcraft_codecs::SystemPixels::Rgba8(v),
+            Pixels::Rgba16(v) => lightcraft_codecs::SystemPixels::Rgba16(v),
+        },
+        premultiplied: true,
+        bit_depth: i.bit_depth,
+        icc: i.icc,
+        exif: None,
+        orientation: i.orientation,
+        source_width: i.source_width,
+        source_height: i.source_height,
+    }
+}
+
+fn imageio_decode(bytes: &[u8], max: Option<(u32, u32)>) -> Result<lightcraft_codecs::SystemImage, String> {
+    decode_image(bytes, max).map(system_image)
+}
+
+/// Decode HEIC / HEIF and AVIF through ImageIO from now on ([`decode_image`]). Called once at
+/// start-up by the iOS apps (elsewhere the decode fails with "only on iOS").
+pub fn install_imageio_decoder() {
+    lightcraft_codecs::set_system_decoder(&[lightcraft_codecs::Format::Heif, lightcraft_codecs::Format::Avif], imageio_decode);
+}
+
+/// Sends every log record to the system log ([`console`]) and appends it to `lightcraft-ios.log`
+/// in the app's tmp dir: a bundled app's stderr isn't shown anywhere.
+struct FileLog;
+
+impl log::Log for FileLog {
+    fn enabled(&self, m: &log::Metadata) -> bool {
+        m.level() <= log::Level::Info
+    }
+    fn log(&self, r: &log::Record) {
+        use std::io::Write;
+        let line = format!("{} {}: {}", r.level(), r.target(), r.args());
+        console(&line);
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(std::env::temp_dir().join("lightcraft-ios.log")) {
+            let _ = writeln!(f, "{line}");
+        }
+    }
+    fn flush(&self) {}
+}
+
+/// Log to the system log and to `lightcraft-ios.log` in the app's tmp folder (info and above).
+/// The first logger installed in a process wins.
+pub fn install_logger() {
+    static LOG: FileLog = FileLog;
+    let _ = log::set_logger(&LOG).map(|()| log::set_max_level(log::LevelFilter::Info));
+}
+
 /// One line to the system log (NSLog: the device console, `idevicesyslog` on Linux, Console.app on
-/// a Mac), through the app's Objective-C host (`lightcraft_host_log`,
-/// `apps/lightcraft-ios/xtool/Sources/LightCraftHost`). Elsewhere: nothing.
+/// a Mac), through the app's host (`lightcraft_host_log`: the Objective-C host's `LightCraftMain.m`
+/// in the egui app, an `@_cdecl` function in the SwiftUI app). Elsewhere: nothing.
 pub fn console(line: &str) {
     #[cfg(target_os = "ios")]
     ios::console(line);
@@ -462,6 +518,23 @@ pub fn copy_folder(folder: &Path, dir: &Path, accept: Accept) -> Picked {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn imageio_results_become_codec_images() {
+        let i = Image {
+            width: 2,
+            height: 1,
+            pixels: Pixels::Rgba16(vec![65535, 0, 0, 65535, 0, 65535, 0, 65535]),
+            bit_depth: 10,
+            icc: None,
+            orientation: 8,
+            source_width: 4000,
+            source_height: 2000,
+        };
+        let s = system_image(i);
+        assert!(s.premultiplied && s.bit_depth == 10 && s.orientation == 8 && s.source_width == 4000);
+        assert!(matches!(s.pixels, lightcraft_codecs::SystemPixels::Rgba16(ref v) if v.len() == 8));
+    }
 
     fn temp(tag: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("lc-ios-host-{tag}-{}", std::process::id()));

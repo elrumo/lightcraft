@@ -4,9 +4,9 @@
 use std::f32::consts::{PI, TAU};
 use std::sync::OnceLock;
 
+use lightcraft_color::Map3;
 use lightcraft_color::perceptual::{hsv_to_rgb, lab_to_lch, lch_to_lab, oklab_from_2020, oklab_to_2020};
 use lightcraft_color::{Mat3, REC2020, SRGB};
-use lightcraft_color::Map3;
 use lightcraft_develop::{Calibration, DevelopSettings, MIXER_HUES, PointColor};
 
 /// OkLCh hue angle (radians) of a pure sRGB colour with HSV hue `deg`.
