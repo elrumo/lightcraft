@@ -1326,7 +1326,7 @@ fn options(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDialog) {
             let tags_open = field(ui, "Template", |ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
                 let w = tag_field_width(ui);
-                let r = ui.add(crate::widgets::touch_field(
+                let r = ui.add(crate::widgets::text_box(
                     ui,
                     egui::TextEdit::singleline(&mut d.folder_template).id(folders_id).hint_text(DEFAULT_FOLDER_TEMPLATE).desired_width(w),
                 ));
@@ -1361,7 +1361,7 @@ fn options(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDialog) {
         let tags_open = field(ui, "Rename", |ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
             let w = tag_field_width(ui);
-            let r = ui.add(crate::widgets::touch_field(
+            let r = ui.add(crate::widgets::text_box(
                 ui,
                 egui::TextEdit::singleline(&mut d.rename)
                     .id(rename_id)
@@ -1443,7 +1443,7 @@ fn options(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDialog) {
             }
         });
         if d.album.is_none() && !d.new_album.is_empty() {
-            let r = ui.add(crate::widgets::touch_field(ui, egui::TextEdit::singleline(&mut d.new_album).desired_width(f32::INFINITY)));
+            let r = ui.add(crate::widgets::text_box(ui, egui::TextEdit::singleline(&mut d.new_album).desired_width(f32::INFINITY)));
             register(ui.ctx(), "field:importAlbumName", r.rect);
         }
     });
@@ -1488,7 +1488,7 @@ fn options(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDialog) {
         });
     }
     field(ui, "Keywords", |ui| {
-        let r = ui.add(crate::widgets::touch_field(
+        let r = ui.add(crate::widgets::text_box(
             ui,
             egui::TextEdit::singleline(&mut d.keywords).hint_text(crate::i18n::tr("comma, separated")).desired_width(f32::INFINITY),
         ));

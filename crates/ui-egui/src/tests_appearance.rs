@@ -138,13 +138,74 @@ fn auto_follows_the_system_and_falls_back_to_dark() {
     assert_eq!(crate::theme::current(&ctx), Some(ThemeKind::Silver));
 }
 
+/// The Studio design (the server admin page's look) has a light and a dark theme: each joins its
+/// own family in the View menu, the commands, `ui.set` and the saved settings, and brings its
+/// shape (panel cards, capsule buttons, rounder windows) where the classic themes keep theirs.
+#[test]
+fn studio_comes_in_both_appearances() {
+    let mut a = app();
+    let r = a.run("view.theme", json!({"theme": "studioLight"})).unwrap();
+    assert_eq!((a.ui.settings.appearance_mode, a.ui.settings.light_theme), (AppearanceMode::Light, LightTheme::StudioLight));
+    assert_eq!(r["lightTheme"], "studioLight");
+    let r = a.run("view.theme", json!({"theme": "studioDark"})).unwrap();
+    assert_eq!((a.ui.settings.appearance_mode, a.ui.settings.dark_theme), (AppearanceMode::Dark, DarkTheme::StudioDark));
+    assert_eq!((r["darkTheme"].as_str(), r["lightTheme"].as_str()), (Some("studioDark"), Some("studioLight")));
+    assert_eq!(a.ui.settings.theme(None), ThemeKind::StudioDark);
+    assert_eq!(a.ui.settings.theme(Some(egui::Theme::Light)), ThemeKind::StudioDark, "Dark mode ignores the system");
+    a.run("view.appearance", json!({"mode": "auto"})).unwrap();
+    assert_eq!(a.ui.settings.theme(Some(egui::Theme::Light)), ThemeKind::StudioLight);
+    // each belongs to its own family only
+    let ctx = egui::Context::default();
+    for bad in [json!({"darkTheme": "studioLight"}), json!({"lightTheme": "studioDark"}), json!({"darkTheme": "studio"})] {
+        let (req, _) = crate::control::ControlRequest::new("ui.set", json!({ "settings": bad }));
+        let crate::control::Outcome::Done(reply) = crate::control::handle(&mut a, &ctx, &req) else { panic!("expected a reply") };
+        assert_eq!(reply["ok"], false, "{bad} accepted");
+    }
+    let restarted: UiState = serde_json::from_str(&serde_json::to_string(&a.ui).unwrap()).unwrap();
+    assert_eq!((restarted.settings.dark_theme, restarted.settings.light_theme), (DarkTheme::StudioDark, LightTheme::StudioLight));
+    // the menu lists them with their families, checked
+    let text = serde_json::to_string(&crate::menubar::menu_bar(&a)).unwrap();
+    assert!(text.contains(r#""params":{"theme":"studioDark"}"#) && text.contains(r#""params":{"theme":"studioLight"}"#));
+    assert!(text.contains(r#""Studio Dark""#) && text.contains(r#""Studio Light""#));
+    // shape: Studio's own, the classic themes' unchanged
+    for kind in ThemeKind::ALL {
+        let t = crate::theme::Tokens::for_kind(kind);
+        assert_eq!(kind.is_studio(), t.cards(), "{kind:?}");
+        if kind.is_studio() {
+            assert!(t.button_radius >= 12 && t.window_radius > 6 && t.filled_sliders && t.dock_gap > 4.0, "{kind:?}");
+        } else {
+            assert_eq!((t.control_radius, t.button_radius, t.window_radius, t.dock_gap, t.backdrop), (4, 4, 6, 4.0, t.chrome), "{kind:?}");
+            assert!(!t.filled_sliders);
+        }
+    }
+    // applied: egui's own widgets and windows take the Studio radii
+    crate::theme::apply_kind(&ctx, ThemeKind::StudioLight);
+    let style = ctx.global_style();
+    assert_eq!(style.visuals.window_corner_radius, egui::CornerRadius::same(14));
+    assert_eq!(style.visuals.widgets.inactive.corner_radius, egui::CornerRadius::same(6));
+    crate::theme::apply_kind(&ctx, ThemeKind::Charcoal);
+    assert_eq!(ctx.global_style().visuals.widgets.inactive.corner_radius, egui::CornerRadius::same(4));
+}
+
 #[test]
 fn view_menu_lists_modes_and_themes_with_checks() {
     let mut a = app();
     a.run("view.theme", json!({"theme": "paper"})).unwrap();
     let menus = crate::menubar::menu_bar(&a);
     let text = serde_json::to_string(&menus).unwrap();
-    for label in ["Appearance", "Sync with System", "Light Mode", "Dark Mode", "Next Appearance Mode", "Charcoal", "Midnight", "Silver", "Paper"] {
+    for label in [
+        "Appearance",
+        "Sync with System",
+        "Light Mode",
+        "Dark Mode",
+        "Next Appearance Mode",
+        "Charcoal",
+        "Midnight",
+        "Studio Dark",
+        "Silver",
+        "Paper",
+        "Studio Light",
+    ] {
         assert!(text.contains(&format!("\"{label}\"")), "{label} missing from the menus");
     }
     assert!(text.contains(r#""params":{"theme":"paper"}"#));
@@ -176,6 +237,12 @@ fn the_top_bar_button_and_settings_cards_drive_the_mode() {
     h.step();
     assert_eq!(h.app.ui.settings.appearance_mode, AppearanceMode::Dark);
     assert_eq!(crate::theme::current(&h.view.ctx), Some(ThemeKind::Charcoal));
+    // the Studio theme of the family in use
+    assert_eq!(h.request("ui.clickWidget", json!({"id": "radio:theme-studioDark"}), T)["ok"], true);
+    h.step();
+    h.step();
+    assert_eq!(h.app.ui.settings.dark_theme, DarkTheme::StudioDark);
+    assert_eq!(crate::theme::current(&h.view.ctx), Some(ThemeKind::StudioDark));
 }
 
 #[test]

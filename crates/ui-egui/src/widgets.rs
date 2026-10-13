@@ -411,6 +411,13 @@ pub fn slider(ui: &mut Ui, spec: &ControlSpec, value: f64, enabled: bool, label_
         paint_ios_slider(ui, track_rect, &spec.track, &t, tx, to_x(spec.default), enabled, lens);
         return out;
     }
+    if t.filled_sliders {
+        paint_filled_slider(ui, track_rect, &spec.track, &t, tx, to_x(spec.default), enabled, hovered);
+        if hovered {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+        }
+        return out;
+    }
     let ring = 7.0;
     paint_track(ui, track_rect, &spec.track, &t, tx, ring);
     let p = ui.painter();
@@ -427,6 +434,51 @@ pub fn slider(ui: &mut Ui, spec: &ControlSpec, value: f64, enabled: bool, label_
         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
     }
     out
+}
+
+/// A desktop slider the Studio way: a 4 pt rounded track, filled in `thumb` from where the
+/// control's default is to the handle (an edited slider shows how far it went; a centred one fills
+/// outward from its middle), and a solid round handle ringed in the panel's colour, which grows a
+/// little under the pointer. Gradient tracks (temperature, hue…) keep their colours and no fill.
+fn paint_filled_slider(ui: &Ui, rect: Rect, track: &Track, t: &Tokens, thumb_x: f32, from_x: f32, enabled: bool, hovered: bool) {
+    let p = ui.painter();
+    let y = rect.center().y;
+    const HALF: f32 = 2.0;
+    let bar = |a: f32, b: f32| Rect::from_min_max(pos2(a.min(b), y - HALF), pos2(a.max(b), y + HALF));
+    if let Some(stops) = track_stops(track) {
+        let n = stops.len().max(2) - 1;
+        let steps = 48;
+        for i in 0..steps {
+            let (a, b) = (i as f32 / steps as f32, (i + 1) as f32 / steps as f32);
+            let seg = (a * n as f32).floor() as usize;
+            let c = lerp(stops[seg.min(n)], stops[(seg + 1).min(n)], a * n as f32 - seg as f32);
+            let c = if enabled { c } else { c.gamma_multiply(0.5) };
+            // (the end segments carry the track's rounded ends)
+            let r = egui::CornerRadius {
+                nw: if i == 0 { HALF as u8 } else { 0 },
+                sw: if i == 0 { HALF as u8 } else { 0 },
+                ne: if i + 1 == steps { HALF as u8 } else { 0 },
+                se: if i + 1 == steps { HALF as u8 } else { 0 },
+            };
+            p.rect_filled(bar(rect.left() + rect.width() * a, rect.left() + rect.width() * b + 0.5), r, c);
+        }
+    } else {
+        p.rect_filled(bar(rect.left(), rect.right()), HALF, t.track);
+        if enabled && (thumb_x - from_x).abs() >= 0.5 {
+            p.rect_filled(bar(from_x, thumb_x), HALF, t.thumb);
+        }
+    }
+    let center = pos2(thumb_x, y);
+    let radius = if hovered && enabled { 7.0 } else { 6.0 };
+    let handle = if !enabled {
+        t.text_disabled
+    } else if hovered {
+        t.thumb_hover
+    } else {
+        t.thumb
+    };
+    p.circle_filled(center, radius + 2.0, t.chrome);
+    p.circle_filled(center, radius, handle);
 }
 
 /// A touch slider drawn as iOS 26 draws its own: a 6 pt track, filled with the accent colour from
@@ -631,12 +683,14 @@ pub fn flyout_row(ui: &mut Ui, id: &str, title: &str, icon: Icon, open: bool) ->
     resp
 }
 
-/// `edit` as the layout wants its text fields: on a phone 44 pt tall with 17 pt text and room
-/// around it, as iOS draws a rounded text field (egui's own is ~24 pt: too tight for a finger and
-/// for the edit menu); unchanged on the desktop.
-pub fn touch_field<'t>(ui: &Ui, edit: egui::TextEdit<'t>) -> egui::TextEdit<'t> {
+/// The room inside a desktop text box around its text (egui's own 4 × 2 pt felt cramped).
+pub const FIELD_MARGIN: egui::Margin = egui::Margin { left: 8, right: 8, top: 5, bottom: 5 };
+
+/// A text box's padding: [`FIELD_MARGIN`] on the desktop; on a phone iOS's 44 pt row, its larger
+/// type and the text centred in it.
+pub fn text_box<'t>(ui: &Ui, edit: egui::TextEdit<'t>) -> egui::TextEdit<'t> {
     if !crate::is_compact(ui.ctx()) {
-        return edit;
+        return edit.margin(FIELD_MARGIN);
     }
     edit.font(egui::FontId::proportional(17.0))
         .margin(egui::Margin::symmetric(12, 10))
@@ -733,7 +787,7 @@ pub fn text_button(ui: &mut Ui, id: &str, label: &str, active: bool) -> Response
     } else {
         t.button
     };
-    p.rect(r, CornerRadius::same(4), fill, Stroke::new(1.0, t.button_border), StrokeKind::Inside);
+    p.rect(r, CornerRadius::same(t.button_radius), fill, Stroke::new(1.0, t.button_border), StrokeKind::Inside);
     p.galley(r.center() - galley.size() / 2.0, galley, t.text);
     resp
 }
@@ -766,7 +820,7 @@ pub fn segmented(ui: &mut Ui, id: &str, items: &[(&str, &str)], active: Option<u
                     t.button
                 };
                 let p = ui.painter();
-                p.rect(r, CornerRadius::same(4), fill, Stroke::new(1.0, t.button_border), StrokeKind::Inside);
+                p.rect(r, CornerRadius::same(t.button_radius), fill, Stroke::new(1.0, t.button_border), StrokeKind::Inside);
                 p.text(r.center(), Align2::CENTER_CENTER, label, t.semibold(11.5), t.text);
                 if resp.clicked() {
                     clicked = Some(i);
@@ -850,10 +904,11 @@ pub fn icon_button(ui: &mut Ui, id: &str, icon: Icon, size: egui::Vec2, active: 
     register(ui.ctx(), format!("icon:{id}"), r);
     let p = ui.painter();
     let sq = Rect::from_center_size(r.center(), vec2(32.0f32.min(size.x), 32.0f32.min(size.y)));
+    let corner = f32::from(t.control_radius) + if t.cards() { 2.0 } else { 0.0 };
     if active {
-        p.rect_filled(sq, 4.0, t.tool_active);
+        p.rect_filled(sq, corner, t.tool_active);
     } else if resp.hovered() && enabled {
-        p.rect_filled(sq, 4.0, t.hover.gamma_multiply(0.7));
+        p.rect_filled(sq, corner, t.hover.gamma_multiply(0.7));
     }
     let c = if !enabled {
         t.text_disabled

@@ -2392,6 +2392,14 @@ mod tests {
         h.request("ui.set", json!({"view": "detail", "right": "info"}), t);
         h.settle(SETTLE);
         for (key, text) in [("altText", "A lake at dawn"), ("usageTerms", "Editorial use only"), ("city", "Zermatt")] {
+            // (the panel scrolls: bring the field into view first)
+            if key == "city" {
+                h.request("ui.hoverWidget", json!({"id": "field:usageTerms"}), t);
+                h.request("ui.scroll", json!({"dy": -400.0}), t);
+                for _ in 0..4 {
+                    h.step();
+                }
+            }
             let r = h.request("ui.clickWidget", json!({"id": format!("field:{key}")}), t);
             assert_eq!(r["ok"], true, "{r}");
             h.request("ui.key", json!({"key": "A", "cmd": true}), t);

@@ -270,7 +270,7 @@ pub fn form(app: &mut LightcraftApp, ui: &mut egui::Ui, f: Form<'_>, part: Part)
     let tags_open = field(ui, "File name", |ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         let w = crate::import::tag_field_width(ui);
-        ui.add(crate::widgets::touch_field(
+        ui.add(crate::widgets::text_box(
             ui,
             egui::TextEdit::singleline(&mut opts.naming).id(naming_id).hint_text("{name}-{seq}  ·  {date}  ·  {title}  ·  {folder}").desired_width(w),
         ));
@@ -306,11 +306,11 @@ pub fn form(app: &mut LightcraftApp, ui: &mut egui::Ui, f: Form<'_>, part: Part)
                 {
                     *dir = d;
                 }
-                ui.add(crate::widgets::touch_field(ui, egui::TextEdit::singleline(dir).desired_width(ui.available_width())));
+                ui.add(crate::widgets::text_box(ui, egui::TextEdit::singleline(dir).desired_width(ui.available_width())));
             });
         });
         field(ui, "Subfolder", |ui| {
-            ui.add(crate::widgets::touch_field(
+            ui.add(crate::widgets::text_box(
                 ui,
                 egui::TextEdit::singleline(&mut opts.subfolder).hint_text(crate::i18n::tr("none")).desired_width(f32::INFINITY),
             ))
@@ -325,7 +325,10 @@ pub fn form(app: &mut LightcraftApp, ui: &mut egui::Ui, f: Form<'_>, part: Part)
         register(ui.ctx(), "exportAddToPhotos", r.rect);
         if opts.add_to_photos {
             field(ui, "Album", |ui| {
-                ui.add(egui::TextEdit::singleline(&mut opts.photos_album).hint_text(crate::i18n::tr("none")).desired_width(f32::INFINITY))
+                ui.add(crate::widgets::text_box(
+                    ui,
+                    egui::TextEdit::singleline(&mut opts.photos_album).hint_text(crate::i18n::tr("none")).desired_width(f32::INFINITY),
+                ))
             });
             ui.label(
                 RichText::new(crate::i18n::tr("The first time, macOS asks whether LightCraft may control Photos.")).size(11.0).color(t.text_dim),
@@ -351,7 +354,7 @@ pub fn form(app: &mut LightcraftApp, ui: &mut egui::Ui, f: Form<'_>, part: Part)
                     Err(e) => app.toast(ui.ctx(), e),
                 }
             }
-            ui.add(crate::widgets::touch_field(
+            ui.add(crate::widgets::text_box(
                 ui,
                 egui::TextEdit::singleline(preset_name).hint_text(crate::i18n::tr("Preset name")).desired_width(ui.available_width()),
             ));
@@ -491,7 +494,7 @@ fn watermark_form(app: &mut LightcraftApp, ui: &mut egui::Ui, wm: &mut Watermark
                 {
                     wm.image = f;
                 }
-                ui.add(crate::widgets::touch_field(
+                ui.add(crate::widgets::text_box(
                     ui,
                     egui::TextEdit::singleline(&mut wm.image).hint_text("logo.png").desired_width(ui.available_width()),
                 ));
@@ -510,7 +513,7 @@ fn watermark_form(app: &mut LightcraftApp, ui: &mut egui::Ui, wm: &mut Watermark
             &mut wm.vertical,
         );
         field(ui, "Text", |ui| {
-            ui.add(crate::widgets::touch_field(
+            ui.add(crate::widgets::text_box(
                 ui,
                 egui::TextEdit::multiline(&mut wm.text).desired_rows(2).hint_text(crate::i18n::tr("© Your Name")).desired_width(f32::INFINITY),
             ))
@@ -1197,8 +1200,8 @@ fn options_body(ui: &mut egui::Ui, f: Form<'_>, n: usize) -> bool {
             opts.watermark = on.then(|| Watermark { text: "© ".into(), ..Default::default() });
         }
         if let Some(wm) = opts.watermark.as_mut().filter(|w| w.image.is_empty()) {
-            let r = ui
-                .add(crate::widgets::touch_field(ui, egui::TextEdit::singleline(&mut wm.text).hint_text("© Your Name").desired_width(f32::INFINITY)));
+            let r =
+                ui.add(crate::widgets::text_box(ui, egui::TextEdit::singleline(&mut wm.text).hint_text("© Your Name").desired_width(f32::INFINITY)));
             register(ui.ctx(), "field:exportWatermarkText", r.rect);
             ui.add_space(10.0);
         }

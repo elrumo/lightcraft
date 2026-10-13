@@ -2,6 +2,35 @@
 
 ## 2026-10-13
 
+### A clearer Settings window
+- Settings (⌘,) has its sections in a sidebar on the left, each with its own icon: General, Interface, Display, Import
+  and Performance, then the AI features, then Sync, which shows whether it is on. The section you open gets a title
+  and a line saying what it is for, and scrolls on its own, so the sidebar and Close stay where they are.
+- Settings are grouped on rounded cards under short headings: one row per setting, its name on the left and its
+  control on the right. On / off settings are switches, and the notes sit right under what they explain.
+  Long lists (the language) are drop-down menus, and long paths are cut short, with the full path on hover. This is
+  the same in every theme.
+
+### Roomier text boxes
+- Text boxes across the app (search, names, keywords, export and import fields, Settings) have more room around their
+  text, so they no longer feel cramped.
+
+### Studio: a new look, in light and dark
+- Settings ▸ Interface (and View ▸ Appearance) has a new theme in each family, **Studio Light** and **Studio Dark**,
+  in the style of the server's admin page. The panels float as rounded cards on a soft backdrop, with the tool strip as a
+  card of its own beside them. Buttons are borderless capsules, and a dialog's main action is blue.
+  Fields, menus and dialogs are rounder, and sliders fill from their default to a solid handle, so you can see at a
+  glance how far a setting has moved. The photo's canvas stays a quiet neutral grey.
+- Charcoal, Midnight, Silver and Paper look exactly as before. Each theme card's preview shows the Studio layout.
+
+### Every photo on screen gets its preview from the server
+- On a device that shows photos only the server has (the iPhone and iPad app, the web app, a second computer), the grid
+  used to fill in only the first few cells and leave the rest empty. Now every photo you are looking at downloads its
+  small preview, however slowly the server answers, and the ones on screen come before those just above and below.
+- When the server hasn't built a photo's preview yet (a library folder it is still scanning), it now builds that one
+  first and the app asks again a few seconds later, instead of waiting a minute and leaving the cell empty meanwhile.
+  Photos the server has no original of still wait a minute between tries, as before.
+
 ### Double-click a panel border to reset its width
 - Double-clicking the border you drag to resize the Library, Tools or Presets panel puts that panel back at its usual width.
 

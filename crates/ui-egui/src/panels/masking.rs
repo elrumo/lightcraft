@@ -192,7 +192,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             if let Some((rid, name)) = app.ui.renaming_mask.as_mut().filter(|(rid, _)| *rid == m.id) {
                 // inline rename: Enter (or leaving the field) commits, Escape cancels
                 let rid = *rid;
-                let r = ui.add(crate::widgets::touch_field(
+                let r = ui.add(crate::widgets::text_box(
                     ui,
                     egui::TextEdit::singleline(name).desired_width(ui.available_width()).id_salt(("maskRename", rid)),
                 ));
@@ -295,7 +295,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
                 };
                 if let Some((_, _, name)) = app.ui.renaming_component.as_mut().filter(|(mid, k, _)| *mid == m.id && *k == i) {
                     // inline rename: Enter (or leaving the field) commits, Escape cancels
-                    let r = ui.add(crate::widgets::touch_field(
+                    let r = ui.add(crate::widgets::text_box(
                         ui,
                         egui::TextEdit::singleline(name).desired_width(ui.available_width() - 30.0).id_salt(("compRename", m.id, i)),
                     ));
@@ -799,7 +799,7 @@ pub(super) fn describe_field(app: &mut LightcraftApp, ui: &mut egui::Ui, new_mas
         if text_button(ui, "maskDescribeGo", crate::i18n::tr("Select"), false).clicked() {
             submit = true;
         }
-        let r = ui.add(crate::widgets::touch_field(
+        let r = ui.add(crate::widgets::text_box(
             ui,
             egui::TextEdit::singleline(&mut text)
                 .hint_text(crate::i18n::tr("e.g. sky · the red car · car, road"))
