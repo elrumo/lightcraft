@@ -270,5 +270,9 @@
   "Not carried over: {what}": "Не перенесено: {what}",
   "{n} items": "Елементів: {n}",
   "{label}, {n} items": "{label}, елементів: {n}",
-  "Add to {album}": "Додати до «{album}»"
+  "Add to {album}": "Додати до «{album}»",
+  "Uses the {} model, a {:.0} MB download ({} licence). {}.": "Використовується модель {}, завантаження {:.0} МБ (ліцензія {}). {}.",
+  "New area painted with {}": "Нову ділянку домальовано ({})",
+  "{note} · {:.0} MB download": "{note} · завантаження {:.0} МБ",
+  "The new area was painted by {by} on this device.": "Нову ділянку домальовано на цьому пристрої ({by})."
 }

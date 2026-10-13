@@ -131,6 +131,11 @@ pub struct DevelopSettings {
     pub optics: Optics,
     pub geometry: Geometry,
     pub crop: Crop,
+    /// Generative Expand's fill: what a model painted past the photo's edges ([`Crop::expand`]).
+    /// A picture of this photo, so it is kept out of the copyable groups (Copy Settings, presets,
+    /// sync) and dropped when Expand is turned off. Not written while there is none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expand_fill: Option<crate::segmask::ExpandFill>,
     pub orientation: Orientation,
     pub masks: Vec<Mask>,
     pub spots: Vec<Spot>,
@@ -166,6 +171,7 @@ impl Default for DevelopSettings {
             optics: Optics::default(),
             geometry: Geometry::default(),
             crop: Crop::default(),
+            expand_fill: None,
             orientation: Orientation::Normal,
             masks: Vec::new(),
             spots: Vec::new(),
@@ -818,6 +824,11 @@ pub struct Crop {
     pub aspect: Option<(u32, u32)>,
     pub flip_h: bool,
     pub flip_v: bool,
+    /// Generative Expand: the crop may reach past the photo's edges (up to
+    /// [`lightcraft_geom::EXPAND_MAX`] of its size on each side), and the area there is filled from
+    /// [`DevelopSettings::expand_fill`] (neutral until it is generated). Not written while off.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub expand: bool,
 }
 
 // ---------------------------------------------------------------------------------------------

@@ -311,6 +311,9 @@ fn crop(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         }
     });
     divider(ui);
+    header(ui, "Generative Expand");
+    padded(ui, |ui| crate::expand::panel(app, ui, id, &d));
+    divider(ui);
     header(ui, "Geometry");
     padded(ui, |ui| {
         ui.label(crate::i18n::tr("Upright"));

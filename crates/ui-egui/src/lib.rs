@@ -13,6 +13,7 @@ pub mod credits;
 pub mod date_picker;
 pub mod docking;
 pub mod erase;
+pub mod expand;
 pub mod export_task;
 pub mod file_drop;
 pub mod glass;
@@ -85,6 +86,8 @@ mod tests_dialog_fit;
 mod tests_dialogs;
 #[cfg(test)]
 mod tests_erase;
+#[cfg(test)]
+mod tests_expand;
 #[cfg(test)]
 mod tests_export_flow;
 #[cfg(test)]
@@ -1178,6 +1181,7 @@ impl LightcraftApp {
         merge::poll(self, ctx);
         superres::poll(self, ctx);
         erase::poll(self, ctx);
+        expand::poll(self, ctx);
         self.sync_models();
         import::poll_scan(self, ctx);
         sync::poll(self, ctx);

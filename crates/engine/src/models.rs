@@ -314,7 +314,8 @@ impl Session {
                     licence: m.licence,
                     licence_url: m.licence_url,
                     download_bytes: m.bytes(),
-                    available: Enhancer::AVAILABLE,
+                    // (LaMa is too large and slow for a phone)
+                    available: Enhancer::AVAILABLE && !(m.desktop_only && cfg!(any(target_os = "ios", target_os = "android"))),
                     installed: e.installed(m.id),
                     enabled: !e.disabled.contains(m.id),
                     can_disable: true,
@@ -350,7 +351,10 @@ impl Session {
     /// Start downloading model `id` in the background (the caller has the user's consent).
     /// `Ok(false)`: it is installed or a download runs already.
     pub fn start_model_download(&self, id: &str) -> Result<bool, String> {
-        self.model_entry(id)?;
+        let entry = self.model_entry(id)?;
+        if !entry.info.available {
+            return Err(format!("{} isn't available on this device", entry.info.label));
+        }
         match id {
             SAM3 => self.segmenter.start_download(&self.activity),
             SEARCH => self.vision.start_download(&self.activity),
