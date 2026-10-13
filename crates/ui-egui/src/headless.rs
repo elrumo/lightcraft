@@ -1556,19 +1556,19 @@ mod tests {
         }
         h.step();
         let top = h.app.widgets.iter().rev().find(|(w, _)| *w == format!("presetGroup:{first}")).map(|(_, r)| *r).unwrap();
-        let r = h.request("ui.dragWidget", json!({"id": format!("presetGroup:{last}"), "toX": top.center().x, "toY": top.top() + 3.0, "steps": 12}), t);
+        let r =
+            h.request("ui.dragWidget", json!({"id": format!("presetGroup:{last}"), "toX": top.center().x, "toY": top.top() + 3.0, "steps": 12}), t);
         assert_eq!(r["ok"], true, "{r}");
         h.step();
         let now = h.app.session.preset_groups();
         assert_eq!(now[0], last, "{now:?}");
         assert_eq!(now[1..], groups[..groups.len() - 1]);
-        // a drag that ends where it started is not a move
-        let r = h.request("ui.dragWidget", json!({"id": format!("presetGroup:{last}"), "dy": 6, "steps": 4}), t);
+        // a drag that ends where it started is not a move, nor a click that unfolds the group
+        let r = h.request("ui.dragWidget", json!({"id": format!("presetGroup:{last}"), "dy": 12, "steps": 6}), t);
         assert_eq!(r["ok"], true, "{r}");
         h.step();
         assert_eq!(h.app.session.preset_groups(), now);
-        // a click still folds and unfolds a group
-        assert!(!h.app.widgets.iter().any(|(w, _)| w.starts_with("preset:")), "all folded");
+        assert!(!h.app.widgets.iter().any(|(w, _)| w.starts_with("preset:")), "all still folded");
     }
 
     /// Presets column: resting on a preset previews it in the loupe without a history entry;
