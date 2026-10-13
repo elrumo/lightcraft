@@ -93,7 +93,7 @@ type Asked = std::sync::Arc<std::sync::Mutex<Vec<(crate::pick::PickRequest, std:
 
 /// A windowless app whose host has only its own file picker, as the web and iOS apps do: each
 /// request is recorded with the sender that answers it.
-fn app_with_host_picker() -> (Headless, Asked) {
+fn app_with_host_picker(size: [f32; 2]) -> (Headless, Asked) {
     let mut app = LightcraftApp::new(lightcraft_engine::Session::with_demo(), Services { png: None, ..Default::default() });
     let asked: Asked = Default::default();
     let a = asked.clone();
@@ -102,7 +102,7 @@ fn app_with_host_picker() -> (Headless, Asked) {
         a.lock().unwrap().push((req, tx));
         Ok(rx)
     }));
-    let mut h = Headless::new(app, [1200.0, 800.0], 1.0);
+    let mut h = Headless::new(app, size, 1.0);
     h.settle(SETTLE);
     (h, asked)
 }
@@ -206,7 +206,7 @@ fn open_review(h: &mut Headless, paths: &[&str]) -> serde_json::Value {
 #[test]
 fn the_hosts_own_picker_imports_what_it_hands_over() {
     use crate::pick::{HostPicked, PickKind, PickedFile};
-    let (mut h, asked) = app_with_host_picker();
+    let (mut h, asked) = app_with_host_picker([1200.0, 800.0]);
     let r = h.request("engine.execute", json!({"command": "file.importPresets", "params": {}}), T);
     assert_eq!(r["ok"], true, "{r}");
     {
@@ -276,6 +276,22 @@ fn the_hosts_own_picker_imports_what_it_hands_over() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// On an iPhone (the compact layout) the Files picker's answer reaches the command too: the review
+/// opens once the files are handed over.
+#[test]
+fn on_a_phone_the_hosts_picker_answer_runs_the_command_again() {
+    use crate::pick::{HostPicked, PickedFile};
+    let (mut h, asked) = app_with_host_picker([402.0, 874.0]);
+    assert!(h.app.compact);
+    h.app.run("file.importPresets", json!({})).unwrap();
+    assert_eq!((asked.lock().unwrap().len(), h.app.pending_picks.len()), (1, 1));
+    let files = vec![PickedFile { name: "Soft.xmp".into(), bytes: xmp("Soft", "+0.25") }];
+    asked.lock().unwrap()[0].1.send(HostPicked { files, ..Default::default() }).unwrap();
+    h.settle(SETTLE);
+    assert!(h.app.pending_picks.is_empty(), "the answer was taken");
+    assert_eq!(review(&h).items.iter().map(|i| i.preset.name.as_str()).collect::<Vec<_>>(), ["Soft"]);
+}
+
 /// The Presets panel's Import Presets… (its ⋯ menu, on phones too) opens the host's picker, and a
 /// host that has no picker at all says so instead of doing nothing.
 #[test]
@@ -291,7 +307,7 @@ fn the_panels_import_button_opens_the_picker_or_says_why_not() {
         h.settle(SETTLE);
         click(h, "icon:presetMore");
     };
-    let (mut h, asked) = app_with_host_picker();
+    let (mut h, asked) = app_with_host_picker([1200.0, 800.0]);
     open_menu(&mut h);
     click(&mut h, "presetMenu:import");
     assert_eq!(asked.lock().unwrap().len(), 1, "the picker is up");

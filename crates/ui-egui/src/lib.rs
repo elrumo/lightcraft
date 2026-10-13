@@ -1153,6 +1153,8 @@ impl LightcraftApp {
         }
         self.last_time = now;
         self.drain_control(ctx);
+        // a file dialog closed: run its command again (here, not in `ui`: the phone and full-screen layouts return early there)
+        pick::poll(self, ctx);
         self.apply_settings(ctx);
         if !self.synthetic.is_empty() {
             ctx.request_repaint();
@@ -1500,7 +1502,6 @@ impl LightcraftApp {
         export_task::poll(self, &ctx);
         panels::activity::show(self, &ctx);
         export_task::poll_photos(self, &ctx);
-        pick::poll(self, &ctx);
         panels::grid::drag_feedback(self, &ctx);
         panels::left::album_drag_feedback(self, &ctx);
         panels::left::section_drag_feedback(self, &ctx);
