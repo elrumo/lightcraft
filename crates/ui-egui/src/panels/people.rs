@@ -508,7 +508,8 @@ fn found_card(app: &mut LightcraftApp, ui: &mut egui::Ui, p: &Value, r: Rect, ed
             painter.text(pos2(r.left() + 2.0, face.bottom() + 46.0), Align2::LEFT_CENTER, count, t.font(12.0), t.text_dim);
             let b = Rect::from_min_size(pos2(r.left(), face.bottom() + 6.0), vec2(edge, 26.0));
             let mut text = app.ui.people_names.get(id).cloned().unwrap_or_default();
-            let res = ui.put(b, egui::TextEdit::singleline(&mut text).hint_text(crate::i18n::tr("Who is this?")));
+            let res =
+                ui.put(b, egui::TextEdit::singleline(&mut text).hint_text(crate::i18n::tr("Who is this?")).margin(egui::Margin::symmetric(8, 4)));
             register(ui.ctx(), format!("field:personName:{id}"), res.rect);
             app.ui.people_names.insert(id.to_string(), text.clone());
             if res.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) && !text.trim().is_empty() {

@@ -351,6 +351,38 @@ fn gaps_between_docked_panes_use_the_divider_colour_in_every_theme() {
     }
 }
 
+/// Studio's panels are cards (the server admin page's look): their corners are cut round to the
+/// backdrop, and they float the gap's width from the window's edge and from the tool strip, itself a
+/// card. The classic themes keep their flush, square panels.
+#[test]
+fn studio_panels_are_rounded_cards_on_the_backdrop() {
+    use crate::theme::{ThemeKind, Tokens};
+    let mut h = app();
+    for kind in ThemeKind::ALL {
+        h.app.run("view.theme", json!({"theme": kind.id()})).unwrap();
+        for _ in 0..3 {
+            h.step();
+        }
+        let t = Tokens::for_kind(kind);
+        let img = h.paint();
+        let left = rect(&h, "panel:left_panel");
+        // 2 px in from the library card's bottom-left corner, along the diagonal: outside a 12 pt rounding
+        let corner = img[((left.left() + 2.0) as usize, (left.bottom() - 3.0) as usize)];
+        // between the window's left edge and the card
+        let edge = img[(2, left.center().y as usize)];
+        if kind.is_studio() {
+            assert_eq!(corner, t.divider, "{kind:?}: rounded corner");
+            assert_eq!(edge, t.divider, "{kind:?}: gap at the window's edge");
+            // the tool strip: a card, the window's backdrop beyond its right edge
+            let strip = rect(&h, "icon:edit");
+            assert_eq!(img[((strip.right() + 2.0) as usize, strip.center().y as usize)], t.backdrop, "{kind:?}: tool strip card");
+        } else {
+            assert_ne!(corner, t.divider, "{kind:?}: square corner");
+            assert_ne!(edge, t.divider, "{kind:?}: the panel reaches the window's edge");
+        }
+    }
+}
+
 /// The bar above the filmstrip is the theme's divider colour too, not a fixed dark grey.
 #[test]
 fn filmstrip_top_bar_uses_the_divider_colour_in_every_theme() {

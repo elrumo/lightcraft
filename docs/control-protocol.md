@@ -97,7 +97,8 @@ views, and only apply over their image areas. Panning stops at the image edges.
 
 The interface theme is `view.appearance {mode?: "auto" | "light" | "dark"}` (no mode: the next one,
 Auto → Light → Dark → Auto, like the top bar's `icon:appearance` button) and `view.theme {theme:
-"charcoal" | "midnight" | "silver" | "paper"}`, which picks a theme and fixes the mode to its family.
+"charcoal" | "midnight" | "studioDark" | "silver" | "paper" | "studioLight"}`, which picks a theme and fixes the
+mode to its family (the Studio themes are one design in both families: panel cards, capsule buttons).
 Both reply `{mode, darkTheme, lightTheme}`; the same values are `settings.appearanceMode`,
 `settings.darkTheme` and `settings.lightTheme` in `ui.set`. Auto follows the system (on Linux the
 XDG desktop portal, watched for changes rather than polled) and is dark when the system says nothing.

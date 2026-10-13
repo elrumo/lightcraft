@@ -47,7 +47,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let left = if app.integrated_titlebar { 78 } else { 10 };
     egui::Panel::top("top_bar")
         .exact_size(t.top_bar_h)
-        .frame(egui::Frame::NONE.fill(t.chrome).inner_margin(egui::Margin { left, right: 12, top: 0, bottom: 0 }))
+        .frame(egui::Frame::NONE.fill(t.backdrop).inner_margin(egui::Margin { left, right: 12, top: 0, bottom: 0 }))
         .show(ui, |ui| {
             let full = ui.max_rect();
             if app.integrated_titlebar {
