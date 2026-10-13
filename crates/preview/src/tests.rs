@@ -307,13 +307,54 @@ fn pool_drop_is_bounded_when_a_job_never_ends() {
 }
 
 #[test]
-fn pool_stops_after_a_job_panicked_and_when_dropped_by_its_own_job() {
-    // a worker that unwound is not waited for
-    let mut p: JobPool<u8, ()> = JobPool::new(1);
-    p.submit(1, 0, 1, Box::new(|| panic!("a job panics (expected in this test)")));
-    while p.live_workers() > 0 {
-        std::thread::yield_now();
+fn pool_notifies_after_each_finished_job() {
+    // a host that sleeps between frames is woken once per result, and the result is there by then
+    let mut p: JobPool<u8, u8> = JobPool::new(2);
+    let (tx, rx) = std::sync::mpsc::channel();
+    p.set_notify(Some(Arc::new(move || {
+        let _ = tx.send(());
+    })));
+    for i in 0..5 {
+        p.submit(i, 0, 1, Box::new(move || i));
     }
+    let mut got = Vec::new();
+    for _ in 0..5 {
+        rx.recv_timeout(std::time::Duration::from_secs(30)).unwrap();
+        got.push(p.try_recv().expect("notified after the result was sent").result);
+    }
+    got.sort_unstable();
+    assert_eq!(got, vec![0, 1, 2, 3, 4]);
+    // inline (wasm, tests) too, and `None` stops it
+    let mut p: JobPool<u8, u8> = JobPool::new(0);
+    let (tx, rx) = std::sync::mpsc::channel();
+    p.set_notify(Some(Arc::new(move || {
+        let _ = tx.send(());
+    })));
+    p.submit(1, 0, 1, Box::new(|| 1));
+    p.run_inline(1);
+    assert!(rx.try_recv().is_ok());
+    p.set_notify(None);
+    p.submit(2, 0, 1, Box::new(|| 2));
+    p.run_inline(1);
+    assert!(rx.try_recv().is_err());
+}
+
+#[test]
+fn pool_stops_after_a_job_panicked_and_when_dropped_by_its_own_job() {
+    // a job that panics takes only itself down: the worker runs the next one, and stops when asked
+    let mut p: JobPool<u8, u8> = JobPool::new(1);
+    p.submit(1, 0, 9, Box::new(|| panic!("a job panics (expected in this test)")));
+    p.submit(2, 0, 1, Box::new(|| 2));
+    let t0 = std::time::Instant::now();
+    let done = loop {
+        if let Some(d) = p.try_recv() {
+            break d;
+        }
+        assert!(t0.elapsed() < std::time::Duration::from_secs(30), "the worker died with the panicking job");
+        std::thread::yield_now();
+    };
+    assert_eq!((done.slot, done.result), (2, 2), "the panicking job has no result");
+    assert_eq!(p.live_workers(), 1);
     assert!(p.shutdown(std::time::Duration::from_secs(30)));
 
     // the last owner of a pool is one of its jobs: the worker must not wait for (or join) itself

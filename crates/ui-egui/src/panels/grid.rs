@@ -941,83 +941,24 @@ fn group_header(app: &mut LightcraftApp, ui: &mut egui::Ui, run: &DateRun, ids: 
     }
 }
 
-/// Request a grid/filmstrip thumbnail at `priority`. An unedited raw without a thumbnail texture
-/// gets its embedded camera preview, and the render of the raw behind it follows in the background
-/// — except where that render would only redraw what the embedded JPEG already shows (see
-/// [`lightcraft_engine::media::Session::embedded_thumb_is_final`]), which for a folder of raws on a
-/// network share is the difference between reading every file whole and reading a preview each.
+/// Request a grid/filmstrip thumbnail at `priority` (the shared rules:
+/// [`lightcraft_apphost::render::Scheduler::request_thumb`]).
 pub fn request_thumb(app: &mut LightcraftApp, id: PhotoId, size: usize, priority: u32) {
-    // A slider drag changes the photo every frame: its thumbnail follows once the drag ends, so its
-    // renders (a raw decode the first time) don't compete with the loupe's drafts.
-    if app.session.interaction.as_ref().is_some_and(|i| i.photo == id) && app.renderer.thumb(id).is_some() {
-        return;
-    }
-    let bucket = lightcraft_engine::media::thumb_bucket(size);
-    let shown = priority > PREFETCH_THUMB_PRIORITY;
-    // A synced photo whose preview hasn't come down yet has no picture, and the render that failed for want of it
-    // is remembered (`thumb_current`): without this the grid would ask for it once and the download would be
-    // forgotten a few frames later, leaving the cell empty for good while it stays on screen.
-    if app.renderer.thumb(id).is_none() {
-        app.session.note_thumb_ask(id, shown);
-    }
-    if let Some(photo) = app.session.catalog.photo(id)
-        && app.renderer.thumb_current(photo, bucket, priority)
-    {
-        return;
-    }
-    // The camera's embedded preview is this photo's thumbnail (unedited raw): once its quick render
-    // has arrived there is nothing left to ask for. Without this the grid would rebuild the render
-    // job — and its cache key — on every frame, which is what the embedded-thumbnail record settles.
-    if let Some(photo) = app.session.catalog.photo(id)
-        && (app.renderer.thumb_quick_is_final(photo, bucket, priority) || app.renderer.thumb_quick_pending(photo, bucket))
-    {
-        return;
-    }
-    let Some(job) = app.session.thumb_job_for(id, size, shown) else { return };
+    let built = app.renderer.request_thumb(&mut app.session, id, size, priority);
     #[cfg(test)]
-    {
+    if built {
         app.renderer.thumb_jobs_built += 1;
     }
-    let quick = if app.renderer.textures.contains_key(&Slot::Thumb(id)) { None } else { app.session.quick_thumb_job(&job) };
-    // A cached render is a stand-in for whatever comes next; an embedded camera preview of an
-    // unedited raw is the picture itself, so no sensor decode is scheduled behind it.
-    let embedded_is_final =
-        quick.is_some() && app.session.catalog.photo(id).is_some_and(|p| skips_the_real_render(app.session.embedded_thumb_is_final(p), true));
-    if let Some(photo) = app.session.catalog.photo(id) {
-        if embedded_is_final {
-            app.renderer.remember_embedded_thumb(photo, bucket, job.key);
-        } else {
-            app.renderer.remember_thumb(photo, bucket, job.key, quick.is_some());
-        }
-    }
-    match quick {
-        Some(q) => {
-            app.renderer.request_quick(Slot::ThumbQuick(id), q, priority + 1);
-            if !embedded_is_final && !app.renderer.is_pending(Slot::ThumbQuick(id)) {
-                app.renderer.request(Slot::Thumb(id), job, BACKGROUND_THUMB_PRIORITY);
-            }
-        }
-        None => app.renderer.request(Slot::Thumb(id), job, priority),
-    }
+    #[cfg(not(test))]
+    let _ = built;
 }
 
-/// Whether a photo's grid thumbnail is already the picture it should show, so the render of the raw
-/// behind it is skipped. `embedded_is_final` is the engine's answer
-/// ([`lightcraft_engine::media::Session::embedded_thumb_is_final`]: the photo is an unedited raw
-/// whose camera JPEG the viewer is showing) and `from_embedded` says the stand-in actually came from
-/// the embedded preview rather than a cached render of the file.
-///
-/// Skipping matters where the file is expensive to read: decoding a 56 MB Fuji RAF to draw a 512 px
-/// thumbnail — which the 4 416 × 2 944 embedded JPEG already covers — cost 45 s a photo over a
-/// 1.2 MB/s share, and the queue it built delayed the render the user was waiting for.
-pub(crate) fn skips_the_real_render(embedded_is_final: bool, from_embedded: bool) -> bool {
-    embedded_is_final && from_embedded
-}
-
+#[cfg(test)]
+pub(crate) use lightcraft_apphost::render::skips_the_real_render;
 /// Rendered thumbnails replacing embedded previews: after everything on screen.
-pub const BACKGROUND_THUMB_PRIORITY: u32 = 3;
+pub const BACKGROUND_THUMB_PRIORITY: u32 = lightcraft_apphost::render::BACKGROUND_THUMB_PRIORITY;
 /// A thumbnail in the grid's reach above and below the screen (everything above this is on screen or wanted now).
-pub const PREFETCH_THUMB_PRIORITY: u32 = 5;
+pub const PREFETCH_THUMB_PRIORITY: u32 = lightcraft_apphost::render::PREFETCH_THUMB_PRIORITY;
 
 fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square: bool, onscreen: bool, ppp: f32) {
     let t = Tokens::get(ui.ctx());
