@@ -9,6 +9,7 @@ mod geodata;
 mod ico;
 mod layers;
 mod parity;
+mod parity_ios;
 mod stats;
 mod version;
 mod web;
@@ -29,9 +30,11 @@ commands:
   ico <out.ico> <in.png>...
                   pack square PNGs (<= 256 px) into a Windows .ico (see packaging/icons.sh)
   layers          enforce the crate dependency layering (plan/architecture.md §3)
-  parity [--write]
+  parity [--write] [--ios-gate S0|S1|S2]
                   check docs/parity-checklist.md (every cmd:/ctl: id and path it cites exists) and print the
-                  Lightroom parity summary; --write refreshes the summary table in the document
+                  Lightroom parity summary; then apps/lightcraft-ios-swift/PARITY.md (every egui UI command
+                  and dialog has a row); --write refreshes both summaries; --ios-gate fails unless every
+                  SwiftUI-app row up to that phase is done or out of scope (docs/ios-swift.md)
   wasm            cargo check --target wasm32-unknown-unknown for the wasm-safe crates (+ the web app)
   ios             cargo check --target aarch64-apple-ios for the same crates (+ the iOS app; needs `rustup target add aarch64-apple-ios`;
                   type-checks only: building and running on a device needs macOS + Xcode)
@@ -57,7 +60,10 @@ fn main() -> ExitCode {
         Some("layers") => cmd_layers(),
         Some("assets") => assets::run(&root()),
         Some("bench") => bench::run(&root(), &rest),
-        Some("parity") => parity::run(&root(), rest.contains(&"--write")),
+        Some("parity") => {
+            let gate = rest.iter().position(|a| *a == "--ios-gate").map(|i| rest.get(i + 1).copied().unwrap_or(""));
+            parity::run(&root(), rest.contains(&"--write"), gate)
+        }
         Some("wasm") => cmd_wasm(),
         Some("ios") => cmd_ios(),
         Some("swift-test") => cmd_swift_test(),
@@ -340,7 +346,7 @@ fn cmd_ci() -> Result<(), String> {
                 run(c, "cargo test --workspace")
             }),
         ),
-        ("parity", Box::new(|| parity::run(&root(), false))),
+        ("parity", Box::new(|| parity::run(&root(), false, None))),
         ("layers", Box::new(cmd_layers)),
         ("assets", Box::new(|| assets::run(&root()))),
         ("wasm", Box::new(cmd_wasm)),
