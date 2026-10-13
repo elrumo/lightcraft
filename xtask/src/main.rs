@@ -35,6 +35,9 @@ commands:
   wasm            cargo check --target wasm32-unknown-unknown for the wasm-safe crates (+ the web app)
   ios             cargo check --target aarch64-apple-ios for the same crates (+ the iOS app; needs `rustup target add aarch64-apple-ios`;
                   type-checks only: building and running on a device needs macOS + Xcode)
+  swift-test      the SwiftUI app's LightCraftCore tests on this machine: builds the Rust bridge library
+                  (lightcraft-ios-swift) for the host into its Swift package and runs `swift test` there
+                  (needs a Swift 6.2 toolchain: `swift` on PATH or $SWIFT; not part of ci, see docs/ios-swift.md)
   web [--serve [port]] [--dev]
                   build the browser app (apps/lightcraft-web) into <target>/web-site/;
                   --serve serves it on http://127.0.0.1:<port> (default 8080)
@@ -57,6 +60,7 @@ fn main() -> ExitCode {
         Some("parity") => parity::run(&root(), rest.contains(&"--write")),
         Some("wasm") => cmd_wasm(),
         Some("ios") => cmd_ios(),
+        Some("swift-test") => cmd_swift_test(),
         Some("web") => web::run(&rest),
         Some("ci") => cmd_ci(),
         Some("corpus") => cmd_corpus(rest.contains(&"--download")),
@@ -248,6 +252,25 @@ fn cmd_wasm() -> Result<(), String> {
 /// engine, GPU and egui shell all compile for it), not that an app links and runs; that needs macOS + Xcode.
 fn cmd_ios() -> Result<(), String> {
     check_target("aarch64-apple-ios", &ios_set()?, false)
+}
+
+/// `swift test` for the SwiftUI app's Swift package (`apps/lightcraft-ios-swift/LightCraft`), with the
+/// Rust bridge library built for this machine. On a Mac it runs every test; on Linux the package's
+/// Foundation-only part (LightCraftCore) and its tests.
+fn cmd_swift_test() -> Result<(), String> {
+    let swift = std::env::var("SWIFT").unwrap_or_else(|_| "swift".into());
+    let mut c = cargo();
+    c.args(["build", "-p", "lightcraft-ios-swift"]);
+    run(c, "cargo build -p lightcraft-ios-swift")?;
+    let target = std::env::var_os("CARGO_TARGET_DIR").map_or_else(|| root().join("target"), PathBuf::from);
+    let package = root().join("apps/lightcraft-ios-swift/LightCraft");
+    let rust = package.join(".rust");
+    std::fs::create_dir_all(&rust).map_err(|e| format!("{}: {e}", rust.display()))?;
+    let lib = target.join("debug/liblightcraft_bridge.a");
+    std::fs::copy(&lib, rust.join("liblightcraft_bridge.a")).map_err(|e| format!("{}: {e}", lib.display()))?;
+    let mut s = Command::new(&swift);
+    s.current_dir(&package).arg("test");
+    run(s, &format!("{swift} test (in {})", package.display()))
 }
 
 fn check_target(target: &str, set: &[String], clock_lint: bool) -> Result<(), String> {
