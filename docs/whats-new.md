@@ -14,6 +14,11 @@
 - The bar still shows the server's disk: the library folders are drawn in it only when they are on the same disk as the
   server's data. Redeploy the server as well as updating the app: the admin page's numbers come from the server.
 
+### A long album name on the phone is cut short
+- The title above the photo grid on a phone ran under the filter and sort buttons when the album, folder or collection
+  had a long name ("Manifestación Vivienda" lost its end). It is now cut short with … before the ▾ and the buttons;
+  tapping it still opens the albums list.
+
 ### Light themes: no more black borders
 - The borders between panels, and the bar above the filmstrip, were black in Silver and Paper; they now use each theme's own
   divider colour. The format label on Square Grid cells is readable in the light themes too.
