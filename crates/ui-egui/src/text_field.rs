@@ -202,7 +202,9 @@ impl<'a> TextField<'a> {
         if let Some(align) = self.align {
             edit = edit.horizontal_align(align);
         }
-        if let Some(margin) = self.margin {
+        // (a framed desktop field is padded as the other text boxes are, `widgets::text_box`)
+        let margin = self.margin.or((self.frame && !crate::is_compact(ui.ctx())).then_some(crate::widgets::FIELD_MARGIN));
+        if let Some(margin) = margin {
             edit = edit.margin(margin);
         }
         if let Some(rows) = self.rows {

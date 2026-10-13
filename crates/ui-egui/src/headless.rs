@@ -1556,19 +1556,19 @@ mod tests {
         }
         h.step();
         let top = h.app.widgets.iter().rev().find(|(w, _)| *w == format!("presetGroup:{first}")).map(|(_, r)| *r).unwrap();
-        let r = h.request("ui.dragWidget", json!({"id": format!("presetGroup:{last}"), "toX": top.center().x, "toY": top.top() + 3.0, "steps": 12}), t);
+        let r =
+            h.request("ui.dragWidget", json!({"id": format!("presetGroup:{last}"), "toX": top.center().x, "toY": top.top() + 3.0, "steps": 12}), t);
         assert_eq!(r["ok"], true, "{r}");
         h.step();
         let now = h.app.session.preset_groups();
         assert_eq!(now[0], last, "{now:?}");
         assert_eq!(now[1..], groups[..groups.len() - 1]);
-        // a drag that ends where it started is not a move
-        let r = h.request("ui.dragWidget", json!({"id": format!("presetGroup:{last}"), "dy": 6, "steps": 4}), t);
+        // a drag that ends where it started is not a move, nor a click that unfolds the group
+        let r = h.request("ui.dragWidget", json!({"id": format!("presetGroup:{last}"), "dy": 12, "steps": 6}), t);
         assert_eq!(r["ok"], true, "{r}");
         h.step();
         assert_eq!(h.app.session.preset_groups(), now);
-        // a click still folds and unfolds a group
-        assert!(!h.app.widgets.iter().any(|(w, _)| w.starts_with("preset:")), "all folded");
+        assert!(!h.app.widgets.iter().any(|(w, _)| w.starts_with("preset:")), "all still folded");
     }
 
     /// Presets column: resting on a preset previews it in the loupe without a history entry;
@@ -2392,6 +2392,14 @@ mod tests {
         h.request("ui.set", json!({"view": "detail", "right": "info"}), t);
         h.settle(SETTLE);
         for (key, text) in [("altText", "A lake at dawn"), ("usageTerms", "Editorial use only"), ("city", "Zermatt")] {
+            // (the panel scrolls: bring the field into view first)
+            if key == "city" {
+                h.request("ui.hoverWidget", json!({"id": "field:usageTerms"}), t);
+                h.request("ui.scroll", json!({"dy": -400.0}), t);
+                for _ in 0..4 {
+                    h.step();
+                }
+            }
             let r = h.request("ui.clickWidget", json!({"id": format!("field:{key}")}), t);
             assert_eq!(r["ok"], true, "{r}");
             h.request("ui.key", json!({"key": "A", "cmd": true}), t);

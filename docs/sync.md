@@ -214,7 +214,10 @@ can make such folders a user's **library folders** (admin page › Users › the
     content. Previews stay in the server's store.
 - **Scans** run when the server starts, every 15 minutes (`--scan-interval`), when a folder is added and on demand
   (**Scan now**, `lightcraft-server scan`). Files whose size and time didn't change aren't read again.
-  - a new file becomes a new photo, with smart and mini previews built on the server (`LIGHTCRAFT_PREVIEW_THREADS`);
+  - a new file becomes a new photo, with smart and mini previews built on the server (`LIGHTCRAFT_PREVIEW_THREADS`),
+    in the order the scan found the files — except a photo a device is showing and doesn't have a preview of yet:
+    asked for, its previews are built before the rest (see [Photos on a device](#photos-on-a-device)), so what a phone
+    shows doesn't wait for the rest of a big library's previews;
   - a file that moved or was renamed keeps its photo, edits and albums (same content, its old place gone);
   - a file changed in place keeps its photo and edits and gets new previews;
   - a copy of a file is a photo of its own;
@@ -351,10 +354,15 @@ Each device keeps the **whole catalog** (it's small) and **downloads pixels as n
 
 | What | When | Used for |
 |---|---|---|
-| mini preview (≤ 512 px) | a photo whose original isn't here, when the grid or filmstrip shows it (the cells on screen and a screen either side, the ones drawn last first; a cell scrolled past before its turn isn't downloaded) — or every such photo with *Download all small previews* | grid and filmstrip thumbnails, rendered here with the current edits (never stale) |
+| mini preview (≤ 512 px) | a photo whose original isn't here, when the grid or filmstrip shows it (the cells on screen first, then a screen either side; a cell that stays drawn keeps its place in the line however long the ones before it take, one scrolled past before its turn isn't downloaded) — or every such photo with *Download all small previews* | grid and filmstrip thumbnails, rendered here with the current edits (never stale) |
 | smart preview (≤ 2560 px) | the photo you open, and everything **made available offline** | the loupe, editing, exporting at preview size |
 | original | **Photo ▸ Download Originals**, or every photo with *Store the originals of all photos on this device* | full-size export, 1:1 |
 
+- **A preview the server hasn't built yet** (a library folder it is still scanning, an original a device uploaded without
+  previews): the server builds it before the rest of its queue and answers `404` with `{"previews": "queued"}`, and the
+  device asks again after a few seconds (not a failed transfer: nothing is reported, and it isn't the minute a file the
+  server doesn't have waits). `{"previews": "failed"}` is a file the server couldn't read; a plain `404` is a photo it
+  has no original of. A `HEAD` only looks.
 - **Download all small previews** (Settings ▸ Sync, or `sync.allPreviews {on}`): the whole library browses offline.
   The setting says how many photos lack one and about how much they take (at what the server's small previews weigh
   on average; `sync.usage` → `previewsLeft`). Off, the default: a library of 200,000 photos costs only what you look at.
@@ -487,7 +495,7 @@ Big JSON answers (the library, pulled changes; 16 KiB and up) come gzipped to a 
 | `GET /api/activity` | what the server is doing for this user now ([`proto::Activity`](../crates/catalog/src/sync.rs)): `{scan: {scanning, phase, done, todo, files, etaSecs, lastScan, problems} \| null, previews: {done, total, etaSecs}, search, text, faces: {done, total, etaSecs} \| null}`; `scan` is null for a user without library folders, the others null when not installed / not turned on. A server older than the route answers `404` |
 | `GET /api/ops?since=N&limit=M` | `{head, ops: [[seq, op]…], presets}` (presets = the presets document's version) · `410`: reload the snapshot |
 | `POST /api/ops` | `{base, ops}` → `200 {head}` · `409 {head}` (behind: pull first) · `422 {index, error}` (op `index` doesn't apply; nothing was) |
-| `HEAD`/`GET`/`PUT /api/blobs/{original\|smart\|mini}/{hash}` | photo files by 128-bit content hash; `GET` takes `Range`; an original is only kept if its bytes hash to its name, previews must be LightCraft previews and arrive whole. **Resuming an upload:** an original that breaks off is kept (`tmp/original-<hash>.part`); `HEAD` of a file the server doesn't have yet answers `404` with `Upload-Offset: N` (the bytes kept, `0` if none), and `PUT` with `Content-Range: bytes N-<last>/<total>` carries on from there (`409` with `{"offset": N}` if the server has another number of bytes or another request is writing the file; a plain `PUT` starts over). Downloads of originals resume with `Range` |
+| `HEAD`/`GET`/`PUT /api/blobs/{original\|smart\|mini}/{hash}` | photo files by 128-bit content hash; `GET` takes `Range`; `GET` of a preview the server hasn't built yet (and has the original of) puts its build first in line and answers `404` `{"error": …, "previews": "queued" \| "failed"}` with `Retry-After: 3`; an original is only kept if its bytes hash to its name, previews must be LightCraft previews and arrive whole. **Resuming an upload:** an original that breaks off is kept (`tmp/original-<hash>.part`); `HEAD` of a file the server doesn't have yet answers `404` with `Upload-Offset: N` (the bytes kept, `0` if none), and `PUT` with `Content-Range: bytes N-<last>/<total>` carries on from there (`409` with `{"offset": N}` if the server has another number of bytes or another request is writing the file; a plain `PUT` starts over). Downloads of originals resume with `Range` |
 | `GET`/`PUT /api/presets` | `{version, presets}`; `PUT` with a stale `version` → `412` with the current document |
 | `GET`/`POST /api/shares`, `DELETE /api/shares/{id}` | the user's album links ([`proto::Share`](../crates/catalog/src/sync.rs)): `{shares: [...]}`; `POST {album, expiresDays?, originals?}` → the new link (`400` for a folder or smart album, `404` no such album, `409` over 200 links); `DELETE` takes one back |
 | `GET /s/{token}`, `GET /s/{token}/{photo}/{thumb\|view\|original}` | **no sign-in**: the album's page and its pictures ([above](#share-an-album)); `404` for anything else (unknown, ended or revoked token, a photo not in the album, `original` on a link that doesn't offer it), `429` when an address keeps guessing, `503` + `Retry-After` while the server is busy rendering |

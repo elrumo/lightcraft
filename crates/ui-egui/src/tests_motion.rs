@@ -121,7 +121,7 @@ fn temp_frames() {
         let r = h.request("engine.execute", json!({"command": "library.select", "params": {"ids": [3]}}), T);
         assert_eq!(r["ok"], true, "{r}");
         h.settle(SETTLE);
-        let mut shoot = |h: &mut Headless, name: &str, frames: usize, every: usize| {
+        let shoot = |h: &mut Headless, name: &str, frames: usize, every: usize| {
             for f in 0..frames {
                 if f % every == 0 {
                     save(h, &format!("{tag}-{name}-{f:02}"));

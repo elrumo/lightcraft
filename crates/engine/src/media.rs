@@ -127,6 +127,20 @@ pub type FileLoader = Arc<dyn Fn(&str, usize) -> Result<(Rgb32f, SourceInfo), St
 /// original is here (or may be), or the preview isn't (yet).
 pub type ProxyBytes = Arc<dyn Fn(&str, usize) -> Option<Arc<[u8]>> + Send + Sync>;
 
+/// Photos whose arrived previews are remembered at most, until a host takes them ([`MediaCache::note_arrived`]).
+const ARRIVED_MAX: usize = 4096;
+
+/// A grid cell waiting for its mini preview from the sync server ([`MediaCache::thumb_asks`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ThumbAsk {
+    /// [`MediaCache::thumb_tick`] when the cell was last asked for.
+    pub tick: u64,
+    /// Which came first within a tick: the cells are asked for in the order they are drawn.
+    pub seq: u64,
+    /// The cell is on screen, not only in the grid's reach above and below it: it is served first.
+    pub shown: bool,
+}
+
 /// A raw file's embedded (camera-rendered) preview as display sRGB, oriented, no larger than
 /// `max_edge` (set by the app). `None`: no usable preview.
 pub type PreviewLoader = Arc<dyn Fn(&str, usize) -> Option<Rgba8> + Send + Sync>;
@@ -377,12 +391,19 @@ pub struct MediaCache {
     pub rendered: Arc<PreviewCache>,
     /// Grid and filmstrip thumbnails asked for that wait on their mini preview from the sync
     /// server, by photo: when (`thumb_tick`) and in which order they were last asked for.
-    /// [`crate::cloud_sync`] downloads the most recent first, so the cells on screen fill before the rest,
-    /// and only those (the grid asks again every frame for the cells in its reach).
-    pub thumb_asks: std::collections::HashMap<PhotoId, (u64, u64)>,
+    /// [`crate::cloud_sync`] downloads the cells on screen first, the most recent ask first, and only
+    /// the cells that are asked for again: a host asks every frame for each cell it still shows that has
+    /// no picture ([`Session::note_thumb_ask`]), because a render that failed for want of the preview is
+    /// remembered and so isn't asked for again by itself.
+    pub thumb_asks: std::collections::HashMap<PhotoId, ThumbAsk>,
     /// Bumped once per sync step (a frame, in the app).
     pub thumb_tick: u64,
     thumb_seq: u64,
+    /// Photos whose preview came down from the sync server since a host last looked
+    /// ([`MediaCache::take_arrived`]; `arrived_all`: too many to list). A render that failed for want of it
+    /// is asked for again, though no photo or library changed.
+    arrived: Vec<PhotoId>,
+    arrived_all: bool,
     /// Which photos have a cached denoised picture, and how to read it.
     pub denoise: DenoiseIndex,
 }
@@ -455,6 +476,8 @@ impl Default for MediaCache {
             rendered: Arc::new(PreviewCache::memory(rendered_budget(budget))),
             thumb_asks: Default::default(),
             thumb_tick: 0,
+            arrived: Vec::new(),
+            arrived_all: false,
             thumb_seq: 0,
             denoise: DenoiseIndex::default(),
         }
@@ -623,6 +646,24 @@ impl MediaCache {
         self.thumbs.remove(&id);
         self.previews.retain(|e| e.0 != id);
         self.full.retain(|e| e.0 != id);
+    }
+
+    /// A preview of `id` came down from the sync server: a host that remembers a render that failed for want of
+    /// it must try again ([`MediaCache::take_arrived`]). Nothing about the photo or the library changed, and
+    /// bumping the library's revision for each of hundreds of previews would redo every list of it.
+    pub fn note_arrived(&mut self, id: PhotoId) {
+        if self.arrived.len() < ARRIVED_MAX {
+            self.arrived.push(id);
+        } else {
+            self.arrived_all = true;
+        }
+    }
+
+    /// The photos whose preview came down since the last call; `None`: more than are kept, so all of them may have.
+    pub fn take_arrived(&mut self) -> Option<Vec<PhotoId>> {
+        let all = std::mem::take(&mut self.arrived_all);
+        let ids = std::mem::take(&mut self.arrived);
+        (!all).then_some(ids)
     }
 
     /// (decoded thumbnail sources, bytes).
@@ -1125,22 +1166,39 @@ impl crate::Session {
     /// A grid/filmstrip thumbnail job: the long edge is rounded up to one of [`THUMB_SIZES`]
     /// (≥ `long_edge`) and the result comes from / goes to the thumbnail cache (memory + disk).
     pub fn thumb_job(&mut self, id: PhotoId, long_edge: usize) -> Option<RenderJob> {
+        self.thumb_job_for(id, long_edge, true)
+    }
+
+    /// [`Session::thumb_job`] for a cell that is `shown` on screen, or only in the grid's reach (its
+    /// preview comes after those on screen).
+    pub fn thumb_job_for(&mut self, id: PhotoId, long_edge: usize, shown: bool) -> Option<RenderJob> {
         let b = thumb_bucket(long_edge);
-        self.note_thumb_ask(id);
+        self.note_thumb_ask(id, shown);
         self.build_job(id, b, b, false, true, Some(b))
     }
 
-    /// A synced photo without any preview here was asked for (see [`MediaCache::thumb_asks`]).
+    /// A synced photo without any preview here was asked for (see [`MediaCache::thumb_asks`]). A host
+    /// calls this every frame for each cell it shows that has no picture yet — also when it doesn't build
+    /// the cell's render job again, as it doesn't while a render that failed for want of the preview stands
+    /// — so the ask lasts exactly as long as the cell is drawn. A photo that has a preview here, or isn't
+    /// a synced one, is no ask, and costs a lookup.
     /// (Not while syncing is paused or signed out: the asks would pile up, all as fresh as the last step.)
-    fn note_thumb_ask(&mut self, id: PhotoId) {
-        if self.sync_state().is_none_or(|st| st.config.paused || !st.has_token())
-            || self.catalog.photo(id).and_then(|p| self.synced_tier(p)) != Some(0)
-        {
+    pub fn note_thumb_ask(&mut self, id: PhotoId, shown: bool) {
+        if self.sync_state().is_none_or(|st| st.config.paused || !st.has_token()) {
+            return;
+        }
+        // (the cell asked a moment ago: no need to look at its files again)
+        if let Some(ask) = self.media.thumb_asks.get_mut(&id) {
+            self.media.thumb_seq = self.media.thumb_seq.wrapping_add(1);
+            *ask = ThumbAsk { tick: self.media.thumb_tick, seq: self.media.thumb_seq, shown };
+            return;
+        }
+        if self.catalog.photo(id).and_then(|p| self.synced_tier(p)) != Some(0) {
             return;
         }
         let m = &mut self.media;
         m.thumb_seq = m.thumb_seq.wrapping_add(1);
-        m.thumb_asks.insert(id, (m.thumb_tick, m.thumb_seq));
+        m.thumb_asks.insert(id, ThumbAsk { tick: m.thumb_tick, seq: m.thumb_seq, shown });
     }
 
     fn build_job(

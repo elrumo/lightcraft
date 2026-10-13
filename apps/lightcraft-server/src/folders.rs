@@ -877,6 +877,101 @@ impl PreviewState {
 /// A preview to build: the user, the content hash, the file.
 type Job = (String, String, PathBuf);
 
+/// How many previews that devices asked for wait to be built before the rest (see [`Jobs::rush`]); the
+/// oldest asks beyond it go back to their place in the queue, so photos scrolled past don't hold up the ones on screen.
+const URGENT_MAX: usize = 256;
+
+/// Where a preview waiting to be built, or being built, stands ([`Jobs`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Stage {
+    /// In `queue`, where a scan put it.
+    Waiting,
+    /// In `urgent` (`in_queue`: and still, further back, in `queue`).
+    Urgent { in_queue: bool },
+    /// A builder thread has it.
+    Building,
+}
+
+/// The previews to build: every one waiting or being built, the order scans found them in, and the ones
+/// a device asked for, which go first. A preview is in `live` once, whichever queue holds its job (a job
+/// that went first leaves its old place behind in `queue`, skipped when it comes up).
+#[derive(Default)]
+struct Jobs {
+    queue: VecDeque<Job>,
+    urgent: VecDeque<Job>,
+    live: HashMap<(String, String), Stage>,
+}
+
+impl Jobs {
+    fn key(job: &Job) -> (String, String) {
+        (job.0.clone(), job.1.clone())
+    }
+
+    /// Wait for a scan's turn, unless that preview is waiting or being built already. Whether it is new.
+    fn push(&mut self, job: Job) -> bool {
+        let key = Self::key(&job);
+        if self.live.contains_key(&key) {
+            return false;
+        }
+        self.live.insert(key, Stage::Waiting);
+        self.queue.push_back(job);
+        true
+    }
+
+    /// Go before the scans' jobs (a device is showing this photo), after the ones asked for earlier (so the cells
+    /// a grid draws first are built first). Asking again changes nothing; once more than [`URGENT_MAX`] wait, the
+    /// oldest asks go back to the queue. Whether the preview is new (not waiting or being built already).
+    fn rush(&mut self, job: Job) -> bool {
+        let key = Self::key(&job);
+        let (new, in_queue) = match self.live.get(&key) {
+            None => (true, false),
+            Some(Stage::Waiting) => (false, true),
+            Some(Stage::Urgent { .. } | Stage::Building) => return false,
+        };
+        self.live.insert(key, Stage::Urgent { in_queue });
+        self.urgent.push_back(job);
+        while self.urgent.len() > URGENT_MAX {
+            let Some(old) = self.urgent.pop_front() else { break };
+            let key = Self::key(&old);
+            if let Some(Stage::Urgent { in_queue }) = self.live.get(&key).copied() {
+                self.live.insert(key, Stage::Waiting);
+                if !in_queue {
+                    self.queue.push_back(old);
+                }
+            }
+        }
+        new
+    }
+
+    /// The next preview to build: the first asked for, else the first a scan found.
+    fn next(&mut self) -> Option<Job> {
+        while let Some(job) = self.urgent.pop_front() {
+            let key = Self::key(&job);
+            if matches!(self.live.get(&key), Some(Stage::Urgent { .. })) {
+                self.live.insert(key, Stage::Building);
+                return Some(job);
+            }
+        }
+        while let Some(job) = self.queue.pop_front() {
+            let key = Self::key(&job);
+            match self.live.get_mut(&key) {
+                Some(stage @ Stage::Waiting) => {
+                    *stage = Stage::Building;
+                    return Some(job);
+                }
+                // (asked for since, and built or being built there: this is the place it left)
+                Some(Stage::Urgent { in_queue }) => *in_queue = false,
+                _ => {}
+            }
+        }
+        None
+    }
+
+    fn done(&mut self, user: &str, hash: &str) {
+        self.live.remove(&(user.to_string(), hash.to_string()));
+    }
+}
+
 /// Scans and preview building in the background, for every user with library folders.
 pub struct Scanner {
     /// Scan every user's folders this often (`None`: only at start and on demand).
@@ -884,7 +979,7 @@ pub struct Scanner {
     wanted: Mutex<BTreeSet<String>>,
     wake: Condvar,
     status: Mutex<BTreeMap<String, Status>>,
-    jobs: Mutex<(VecDeque<Job>, HashSet<(String, String)>)>,
+    jobs: Mutex<Jobs>,
     jobs_wake: Condvar,
     /// Per user, the batch of previews being built: when it began, how many are done, how many in all.
     runs: Mutex<HashMap<String, (Instant, usize, usize, u64)>>,
@@ -900,7 +995,7 @@ impl Scanner {
             wanted: Mutex::new(BTreeSet::new()),
             wake: Condvar::new(),
             status: Mutex::new(BTreeMap::new()),
-            jobs: Mutex::new((VecDeque::new(), HashSet::new())),
+            jobs: Mutex::new(Jobs::default()),
             jobs_wake: Condvar::new(),
             runs: Mutex::new(HashMap::new()),
             failed: Mutex::new(HashMap::new()),
@@ -917,7 +1012,7 @@ impl Scanner {
     pub fn status(&self, user: &str) -> Status {
         let mut s = lock(&self.status).get(user).cloned().unwrap_or_default();
         // (waiting or being built)
-        s.previews = lock(&self.jobs).1.iter().filter(|(u, _)| u == user).count();
+        s.previews = lock(&self.jobs).live.keys().filter(|(u, _)| u == user).count();
         if let Some(&(began, done, total, bytes)) = lock(&self.runs).get(user) {
             (s.previews_done, s.previews_total, s.previews_eta_secs) = (done, total, eta(began, done, total));
             s.previews_bytes = bytes;
@@ -944,11 +1039,27 @@ impl Scanner {
             return PreviewState::Failed;
         }
         let mut j = lock(&self.jobs);
-        if j.1.insert((user.to_string(), hash.clone())) {
+        if j.push((user.to_string(), hash, file)) {
             lock(&self.runs).entry(user.to_string()).or_insert_with(|| (Instant::now(), 0, 0, 0)).2 += 1;
-            j.0.push_back((user.to_string(), hash, file));
             self.jobs_wake.notify_one();
         }
+        PreviewState::Queued
+    }
+
+    /// Have a photo file's previews built before the others waiting (unless they are there, or failed
+    /// before): a device asked for one and is showing the photo. What is now the case.
+    pub(crate) fn rush(&self, blobs: &Path, user: &str, hash: String, file: PathBuf) -> PreviewState {
+        if !previews_missing(blobs, &hash) {
+            return PreviewState::Built;
+        }
+        if lock(&self.failed).contains_key(&(user.to_string(), hash.clone())) {
+            return PreviewState::Failed;
+        }
+        let mut j = lock(&self.jobs);
+        if j.rush((user.to_string(), hash, file)) {
+            lock(&self.runs).entry(user.to_string()).or_insert_with(|| (Instant::now(), 0, 0, 0)).2 += 1;
+        }
+        self.jobs_wake.notify_one();
         PreviewState::Queued
     }
 
@@ -1061,7 +1172,7 @@ pub(crate) fn run_previews(st: &Arc<State>) {
                 if sc.stop.load(Ordering::SeqCst) {
                     return;
                 }
-                if let Some(job) = j.0.pop_front() {
+                if let Some(job) = j.next() {
                     break job;
                 }
                 j = sc.jobs_wake.wait_timeout(j, Duration::from_secs(5)).unwrap_or_else(PoisonError::into_inner).0;
@@ -1070,7 +1181,7 @@ pub(crate) fn run_previews(st: &Arc<State>) {
         let (user, hash, file) = job;
         let blobs = accounts::user_dir(&st.data, &user).join("blobs");
         let r = build_previews(&blobs, &hash, &file);
-        lock(&sc.jobs).1.remove(&(user.clone(), hash.clone()));
+        lock(&sc.jobs).done(&user, &hash);
         if r.is_ok() {
             st.vision.wake();
         }
@@ -1096,6 +1207,90 @@ pub(crate) fn run_previews(st: &Arc<State>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn job(user: &str, n: u32) -> Job {
+        (user.to_string(), format!("{n:032x}"), PathBuf::from(format!("/photos/{n}.jpg")))
+    }
+
+    fn built(j: &mut Jobs, n: usize) -> Vec<String> {
+        (0..n)
+            .filter_map(|_| {
+                let job = j.next()?;
+                j.done(&job.0, &job.1);
+                Some(job.1.trim_start_matches('0').to_string())
+            })
+            .collect()
+    }
+
+    #[test]
+    fn previews_a_device_asked_for_are_built_before_the_rest() {
+        let mut j = Jobs::default();
+        for n in 1..=6 {
+            assert!(j.push(job("ann", n)));
+        }
+        assert!(!j.push(job("ann", 3)), "waiting already");
+        assert!(!j.rush(job("ann", 5)), "not a new preview, but it goes first");
+        assert!(!j.rush(job("ann", 4)));
+        assert!(j.rush(job("ann", 9)), "a preview no scan queued");
+        assert!(!j.rush(job("ann", 5)), "asked for before: it keeps its place");
+        assert_eq!(j.live.len(), 7);
+        // the asks in the order made, then the scans' in theirs; what went first isn't built twice
+        assert_eq!(built(&mut j, 10), ["5", "4", "9", "1", "2", "3", "6"]);
+        assert!(j.live.is_empty() && j.queue.is_empty() && j.urgent.is_empty());
+        // (and another user's photo with the same hash is another preview)
+        assert!(j.push(job("ann", 1)) && j.push(job("bob", 1)));
+    }
+
+    #[test]
+    fn a_preview_being_built_is_not_started_again_by_an_ask() {
+        let mut j = Jobs::default();
+        j.push(job("ann", 1));
+        j.push(job("ann", 2));
+        let first = j.next().expect("a job");
+        assert_eq!(first.1, job("ann", 1).1);
+        assert!(!j.rush(job("ann", 1)), "being built");
+        assert!(j.urgent.is_empty());
+        j.done(&first.0, &first.1);
+        assert_eq!(built(&mut j, 5), ["2"]);
+    }
+
+    #[test]
+    fn asks_beyond_the_limit_give_way_to_newer_ones_and_are_still_built() {
+        let mut j = Jobs::default();
+        let total = URGENT_MAX as u32 + 10;
+        for n in 1..=total {
+            j.push(job("ann", n));
+        }
+        // the grid scrolls: every photo is asked for in turn, the first ones long gone by the end
+        for n in 1..=total {
+            j.rush(job("ann", n));
+        }
+        assert_eq!(j.urgent.len(), URGENT_MAX);
+        let order = built(&mut j, total as usize + 5);
+        assert_eq!(order.len(), total as usize, "none lost, none twice");
+        // the asks that kept their place went first, in the order made; those that gave way follow, in the queue's order
+        let hex = |n: u32| format!("{n:x}");
+        assert_eq!(order.first(), Some(&hex(11)));
+        assert_eq!(order.get(URGENT_MAX), Some(&hex(1)));
+        let mut sorted = order.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(sorted.len(), total as usize);
+        assert!(j.live.is_empty());
+    }
+
+    #[test]
+    fn an_ask_that_gave_way_without_a_place_in_the_queue_gets_one() {
+        let mut j = Jobs::default();
+        // photos nobody scanned (an original a device uploaded), asked for past the limit
+        for n in 1..=URGENT_MAX as u32 + 3 {
+            assert!(j.rush(job("ann", n)));
+        }
+        assert_eq!(j.queue.len(), 3, "the three oldest are waiting their turn now");
+        let order = built(&mut j, 2 * URGENT_MAX);
+        assert_eq!(order.len(), URGENT_MAX + 3);
+        assert!(j.live.is_empty());
+    }
 
     #[test]
     fn eta_waits_for_a_rate_then_extrapolates() {

@@ -11,7 +11,7 @@ use lightcraft_catalog::PhotoId;
 use lightcraft_engine::denoise::PhotoState;
 use serde_json::{Value, json};
 
-use super::settings::{check, choices, heading, hint};
+use super::settings::{card_row, check, choices, heading, hint};
 use crate::LightcraftApp;
 use crate::theme::Tokens;
 use crate::widgets::register;
@@ -220,7 +220,10 @@ pub fn detail_status(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, am
 /// The Settings ▸ Denoise tab.
 pub fn settings_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
     let list = models(app, ui.ctx());
-    heading(ui, t, "AI Denoise");
+    // (the desktop section's title says it)
+    if crate::is_compact(ui.ctx()) {
+        heading(ui, t, "AI Denoise");
+    }
     crate::model_setup::notice(app, ui, "denoise");
     if list["dir"].is_null() {
         hint(ui, t, "This build has nowhere to keep denoise models, so AI Denoise is not available. (The desktop app has.)");
@@ -396,7 +399,11 @@ fn model_row(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, m: &Value, 
     let (installed, selected) = (m["installed"].as_bool() == Some(true), m["selected"].as_bool() == Some(true));
     let dl_state = if installed { None } else { dl.and_then(|d| d["state"].as_str()) };
     let host = if can_run { m["downloadHost"].as_str().unwrap_or("").to_string() } else { String::new() };
-    egui::Frame::NONE.inner_margin(egui::Margin::symmetric(0, 3)).show(ui, |ui| {
+    // (in a desktop Settings section, a row on its card; the phone's page lists them as they are)
+    if !crate::is_compact(ui.ctx()) {
+        card_row(ui, t, 0.0);
+    }
+    egui::Frame::NONE.inner_margin(egui::Margin::symmetric(0, 5)).show(ui, |ui| {
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
                 ui.horizontal(|ui| {
