@@ -188,6 +188,14 @@ impl Workspace {
                     permissions,
                 )
                 .map_err(|error| error.to_string())?;
+            // (put back beside the photo afresh: at the width it had, not half the room)
+            let width = match location.as_ref().map(|l| (&l.placement, l.size)) {
+                Some((Placement::Split(Zone::Left | Zone::Right), Some(SplitSize::FixedFirst(width) | SplitSize::FixedSecond(width)))) => Some(width),
+                _ => default_width(panel),
+            };
+            if let Some(width) = width {
+                next.set_width(panel, width)?;
+            }
         }
         next.validate()?;
         *self = next;

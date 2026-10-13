@@ -24,8 +24,8 @@ fn curve_open(channel: &str) -> Headless {
         h.app.ui.toggle_flyout("curve");
     }
     h.app.ui.curve_channel = channel.into();
-    h.step();
-    h.step();
+    // (the panel slides in and the section and flyout fold open: let them get there)
+    h.settle(T);
     h
 }
 
