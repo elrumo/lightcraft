@@ -24,7 +24,7 @@ struct ProtocolTests {
 
     @Test func everyEventKindDecodes() throws {
         let all = try events()
-        #expect(all.count == 10)
+        #expect(all.count == 12)
         for event in all {
             if case .unknown(let kind) = event {
                 Issue.record("an event of kind \(kind) didn't decode")
@@ -62,6 +62,10 @@ struct ProtocolTests {
         guard case .uiRequest(4, "ui.screenshot", let params) = all[8] else { Issue.record("\(all[8])"); return }
         #expect(params["path"].string == "/tmp/shot.png")
         guard case .closed = all[9] else { Issue.record("\(all[9])"); return }
+        #expect(state.sync?.state == "syncing" && state.sync?.uploads == 1 && state.sync?.reading == nil)
+        guard case .copy(let text) = all[10] else { Issue.record("\(all[10])"); return }
+        #expect(text.hasPrefix("https://"))
+        guard case .ask("syncChoice", _) = all[11] else { Issue.record("\(all[11])"); return }
     }
 
     @Test func requestsAndConfigEncodeAsTheEngineReadsThem() throws {

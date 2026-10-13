@@ -72,6 +72,15 @@
         "libraryGeneration": 2,
         "redo": null,
         "selectionCount": 1,
+        "sync": {
+          "downloads": 0,
+          "error": null,
+          "pending": 2,
+          "reading": null,
+          "server": "https://photos.example",
+          "state": "syncing",
+          "uploads": 1
+        },
         "undo": "Exposure",
         "unsaved": 0,
         "visibleCount": 30,
@@ -110,6 +119,15 @@
     },
     {
       "kind": "closed"
+    },
+    {
+      "kind": "copy",
+      "text": "https://photos.example/s/abc"
+    },
+    {
+      "dialog": "syncChoice",
+      "kind": "ask",
+      "params": {}
     }
   ],
   "openConfig": {

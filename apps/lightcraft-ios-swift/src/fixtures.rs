@@ -33,6 +33,9 @@ fn fixtures() -> Value {
         redo: None,
         interaction: None,
         unsaved: 0,
+        sync: Some(
+            json!({"state": "syncing", "server": "https://photos.example", "pending": 2, "uploads": 1, "downloads": 0, "reading": null, "error": null}),
+        ),
     };
     let events = vec![
         Event::ok(1, json!({"photos": [], "total": 0})),
@@ -69,6 +72,8 @@ fn fixtures() -> Value {
         Event::Message { text: "Saved".into(), level: "info".into() },
         Event::UiRequest { id: 4, method: "ui.screenshot".into(), params: json!({"path": "/tmp/shot.png"}) },
         Event::Closed,
+        Event::Copy { text: "https://photos.example/s/abc".into() },
+        Event::Ask { dialog: "syncChoice".into(), params: json!({}) },
     ];
     let request = Request { id: 5, method: "render.view".into(), params: json!({"photo": 7, "width": 1600, "height": 1067, "draft": true}) };
     let config =

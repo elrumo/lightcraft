@@ -11,6 +11,9 @@
 //!   dialog of their own (the MCP server's headless backend, the SwiftUI app).
 //! - [`startup`]: how a mobile app opens its library, sizes its memory budget and keeps its
 //!   staging folders (both iOS apps).
+//! - [`faces`]: how fast face recognition's background scan may work, from what the user is doing.
+//! - [`sync`]: self-hosted sync driven from the frontend's loop (requests on worker threads, answers
+//!   applied between frames or ticks).
 //! - `host` (native only): the engine on a thread of its own, driven by JSON requests and
 //!   answering with events and leased pictures, for a frontend that isn't Rust (the SwiftUI app,
 //!   through the C ABI in `apps/lightcraft-ios-swift`).
@@ -23,7 +26,9 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 pub mod export;
+pub mod faces;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod host;
 pub mod render;
 pub mod startup;
+pub mod sync;

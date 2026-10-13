@@ -80,8 +80,23 @@ public struct HostState: Codable, Sendable, Equatable {
     /// A slider drag in progress (its label).
     public var interaction: String?
     public var unsaved: Int = 0
+    /// The server sync (`nil`: a local library with no server).
+    public var sync: SyncSummary?
 
     public init() {}
+}
+
+/// The server sync as the cloud icon shows it (`sync.status` has the rest).
+public struct SyncSummary: Codable, Sendable, Equatable {
+    /// `signedOut`, `conflict`, `paused`, `error`, `syncing` or `idle`.
+    public var state: String
+    public var server: String
+    public var pending: Int = 0
+    public var uploads: Int = 0
+    public var downloads: Int = 0
+    /// While the server's library is read: (photos read, photos it has).
+    public var reading: [Int]?
+    public var error: String?
 }
 
 /// A new picture for a slot (`thumb:42`, `thumbQuick:42`, `main`, `preview`, `before`…).
@@ -142,6 +157,10 @@ public enum EngineEvent: Sendable {
     /// An automation script asks the UI: answer with `ui.reply {id, result | error}`.
     case uiRequest(id: UInt64, method: String, params: JSONValue)
     case closed
+    /// Put `text` on the clipboard (a share link just made).
+    case copy(String)
+    /// Show a dialog the engine needs an answer from (`syncChoice`).
+    case ask(dialog: String, params: JSONValue)
     /// A kind this build doesn't know (a newer engine).
     case unknown(kind: String)
 }
@@ -152,7 +171,7 @@ struct WireEvent: Decodable {
     let event: EngineEvent
 
     enum Keys: String, CodingKey {
-        case kind, id, result, error, slot, photo, state, tasks, text, level, method, params
+        case kind, id, result, error, slot, photo, state, tasks, text, level, method, params, dialog
     }
 
     init(from decoder: any Decoder) throws {
@@ -183,6 +202,10 @@ struct WireEvent: Decodable {
             return .uiRequest(id: try c.decode(UInt64.self, forKey: .id), method: try c.decode(String.self, forKey: .method), params: try c.decodeIfPresent(JSONValue.self, forKey: .params) ?? .null)
         case "closed":
             return .closed
+        case "copy":
+            return .copy(try c.decode(String.self, forKey: .text))
+        case "ask":
+            return .ask(dialog: try c.decode(String.self, forKey: .dialog), params: try c.decodeIfPresent(JSONValue.self, forKey: .params) ?? .null)
         default:
             return .unknown(kind: kind)
         }

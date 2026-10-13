@@ -1,6 +1,8 @@
 # The SwiftUI iOS app
 
-**Status: foundation in place (Phase S0); runs on an iOS 26.5 simulator (2026-10-13), not yet on a device.** A native SwiftUI app for iPhone and iPad
+**Status: S1 under way (2026-10-14): the phone layout (grid with Months / Years, albums, filter, select mode, the photo
+with its tools and every Edit group, Crop, Masking, Remove, export and share, Settings, sync, People, Map) runs on an
+iOS 26.5 simulator; not yet on a device.** Row by row: `apps/lightcraft-ios-swift/PARITY.md`. A native SwiftUI app for iPhone and iPad
 (iOS 26 and later) that runs the whole Rust core: the engine, the develop pipeline, the catalog, sync, export. It is to
 replace the egui iOS app ([ios.md](ios.md)) once it passes its parity gate. The decision and its reasons are in
 [ios.md](ios.md) → *Plan*, Phase 0. What iOS still lacks overall: [ios-gaps.md](ios-gaps.md).
@@ -27,6 +29,9 @@ engine, pipeline, catalog, … (shared with the desktop, web and egui iOS apps)
 - **One engine thread.** `Session` is `Send` but not `Sync`, so one thread (`lc-engine`, `crates/apphost/src/host`)
   owns it and runs every command, render request and background pump, as the egui app's UI thread does. Swift never
   waits on a lock held by background work.
+- **The host drives the background work.** Between requests the engine thread does what the egui app's frame loop does:
+  renders, saving, the activity stack and the self-hosted sync (`apphost::sync`, shared with egui: requests on worker
+  threads, answers applied on the engine thread, a pull when the app comes back to the front).
 - **Messages, not calls.** Swift sends JSON requests and reads JSON events from a queue it polls on a thread of its
   own (`EventPump`). Commands go through `Session::execute`, the entry point every frontend uses, so the Swift app gets
   every engine command (363) without binding code per command.
@@ -98,8 +103,10 @@ host's: `badRequest`, `unknownMethod`, `panic`, `closed`, `timeout`).
 Events: `reply`; `image {slot, photo, key, token, width, height, final, draft, quick?, ms, histogram?}` (slots
 `thumb:<id>`, `thumbQuick:<id>`, `main`, `preview`, `before`…); `renderFailed {slot, photo, key, error}`; `state {state:
 {catalogRevision, visibleGen, visibleCount, libraryGeneration, active, selectionCount, undo, redo, interaction,
-unsaved}}` when any of it changes; `activity {tasks}` (the activity stack); `message {text, level}`; `uiRequest {id,
-method, params}`; `closed`. One of each is in `LightCraft/Tests/LightCraftCoreTests/Fixtures/protocol.json`, written by
+unsaved, sync?}}` when any of it changes (`sync`: the server sync for the cloud icon, `{state, server, pending, uploads,
+downloads, reading, error}`; absent for a local library); `activity {tasks}` (the activity stack); `message {text,
+level}`; `copy {text}` (put it on the clipboard: a share link just made); `ask {dialog, params}` (show a dialog the
+engine needs an answer from: `syncChoice`); `uiRequest {id, method, params}`; `closed`. One of each is in `LightCraft/Tests/LightCraftCoreTests/Fixtures/protocol.json`, written by
 the Rust test `fixtures_match_the_protocol` (`LIGHTCRAFT_BLESS=1` rewrites it) and decoded by the Swift tests.
 
 A slider drag: `develop.beginInteraction {label}`, then `develop.set {control, value}` with at most one in flight (the

@@ -426,7 +426,7 @@ impl Headless {
             || self.app.export.is_some()
             || self.app.session.denoise_busy()
             || !self.app.tasks.is_empty()
-            || self.app.cloud_sync.in_flight > 0
+            || self.app.cloud_sync.driver.in_flight > 0
             || !self.app.synthetic.is_empty()
             || !self.events.is_empty()
     }

@@ -8,7 +8,9 @@ import UIKit
 /// engine answers `engine.*`, `render.*` and `host.*` itself and asks the app for the rest.
 /// - `ui.screenshot {path}`: the window as a PNG.
 /// - `ui.inspect`: the screen, the photo, the state and timings (`perf`).
-/// - `ui.set {screen: grid | photo | edit | commands, photo?}`: go there.
+/// - `ui.set {screen?: grid | photo | edit | crop | masking | remove | presets | info | commands |
+///   people | map, photo?, span?: all | months | years, group?: light | color…, sheet?: albums |
+///   filter | settings | export | sync | history | versions | keywords | about | none, select?}`: go there.
 @Observable
 final class ScriptHost {
     func answer(id: UInt64, method: String, params: JSONValue, model: AppModel) {
@@ -46,25 +48,60 @@ final class ScriptHost {
             return [
                 "screen": .string(model.screenName),
                 "photo": photo,
-                "photos": .int(Int64(clamping: model.library.photos.count)),
+                "photos": .int(Int64(clamping: model.library.count)),
                 "state": (try? JSONValue.encode(model.state)) ?? .null,
                 "perf": perf,
             ]
         case "ui.set":
+            if let span = params["span"].string, let s = Prefs.GridSpan(rawValue: span) {
+                model.prefs.gridSpan = s
+            }
+            if let group = params["group"].string {
+                model.prefs.editGroup = group
+            }
+            if let select = params["select"].bool {
+                model.selectMode = select
+            }
             switch params["screen"].string {
+            case nil:
+                break
             case "grid":
-                model.editing = false
+                model.sheet = nil
+                model.editor.tool = nil
                 model.path = []
-            case "photo", "edit":
-                let id = params["photo"].int.flatMap { UInt64(exactly: $0) } ?? model.library.photos.first?.id
+            case "photo", "edit", "crop", "masking", "remove", "presets", "info":
+                let id = params["photo"].int.flatMap { UInt64(exactly: $0) } ?? model.library.loaded(at: 0)?.id
                 guard let id else { throw ErrorBody(code: "badParams", message: "no photo") }
-                model.path = [.photo(id)]
-                model.editing = params["screen"].string == "edit"
+                model.sheet = nil
+                if case .photo(let shown) = model.path.last, shown == id {
+                } else {
+                    model.path = [.photo(id)]
+                    await model.select(id)
+                }
+                let screen = params["screen"].string ?? "photo"
+                model.editor.tool = screen == "photo" ? nil : Tool(rawValue: screen)
             case "commands":
-                model.editing = false
                 model.path = [.commands]
+            case "people":
+                model.path = [.people]
+            case "map":
+                model.path = [.map]
             default:
-                throw ErrorBody(code: "badParams", message: "`screen`: grid, photo, edit or commands")
+                throw ErrorBody(code: "badParams", message: "`screen`: grid, photo, edit, crop, masking, remove, presets, info, commands, people or map")
+            }
+            if let sheet = params["sheet"].string {
+                switch sheet {
+                case "albums": model.sheet = .albums
+                case "filter": model.sheet = .filter
+                case "settings": model.sheet = .settings(params["section"].string)
+                case "export": model.sheet = .export(model.state.active.map { [$0] } ?? [])
+                case "sync": model.sheet = .syncStatus
+                case "history": model.sheet = .history(versions: false)
+                case "versions": model.sheet = .history(versions: true)
+                case "keywords": model.sheet = .keywords
+                case "about": model.sheet = .about
+                default: model.sheet = nil
+                }
             }
             return [:]
         default:
