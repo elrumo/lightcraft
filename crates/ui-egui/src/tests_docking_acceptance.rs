@@ -402,6 +402,9 @@ fn double_clicking_a_divider_resets_the_panel_beside_it_to_its_default_width() {
 fn a_divider_beside_presets_resets_only_the_panel_it_sizes() {
     use crate::state::RIGHT_WIDTH;
     let mut h = app();
+    // Library (268) + the photo's 360 minimum + Presets (400) + Tools (410) + the tool strip don't
+    // fit in 1400 pt: the photo would keep its minimum by drawing Presets narrower than it is set.
+    h.size = egui::vec2(1600.0, 1000.0);
     h.app.ui.presets = true;
     for _ in 0..4 {
         h.step();
