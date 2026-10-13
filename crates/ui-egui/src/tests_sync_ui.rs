@@ -479,6 +479,77 @@ fn the_popover_shows_a_server_scanning_its_folders() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// With `LIGHTCRAFT_TEST_SHOTS` set, a picture of the screen (light and dark) goes there as `name-light.png` and `name-dark.png`.
+fn shot(h: &mut Headless, name: &str) {
+    let Some(dir) = std::env::var_os("LIGHTCRAFT_TEST_SHOTS") else { return };
+    for mode in ["light", "dark"] {
+        let r = h.request("engine.execute", json!({"command": format!("app.appearance.{mode}")}), T);
+        assert_eq!(r["ok"], true, "{r}");
+        frames(h, 20);
+        let path = std::path::Path::new(&dir).join(format!("{name}-{mode}.png"));
+        let r = h.request("ui.screenshot", json!({"path": path.to_string_lossy(), "headless": true}), T);
+        assert_eq!(r["ok"], true, "{r}");
+    }
+}
+
+/// A library whose photos are read in place from the server's library folders (2.5 TB of them, with
+/// 104 GB of previews kept): its storage is the 2.6 TB, in Settings ▸ Sync ▸ Storage and in the
+/// popover. Both said 104 GB, as if the photos weren't there.
+#[test]
+fn the_storage_total_counts_the_photos_read_in_place_from_library_folders() {
+    let usage = json!({
+        "photos": 192_870u64,
+        "smart": {"files": 147_821u64, "bytes": 98_000_000_000u64},
+        "mini": {"files": 147_823u64, "bytes": 5_800_000_000u64},
+        "folders": {"files": 192_438u64, "bytes": 2_500_000_000_000u64},
+        "foldersOnDisk": 2_500_000_000_000u64,
+        "disk": {"total": 28_800_000_000_000u64, "free": 10_700_000_000_000u64},
+    });
+    let desktop = [1280.0, 1400.0];
+
+    // Settings ▸ Sync ▸ Storage: the library folders are a row of the sum, the total is the sum
+    let (mut h, root) = app("total-settings", &[], exec_busy(proto::Activity::default(), usage.clone(), Default::default()), desktop);
+    sign_in(&mut h);
+    run(&mut h, "app.settings", json!({"tab": "sync"}));
+    assert!(h.step_until(T, |h| h.app.session.sync_state().is_some_and(|st| st.usage().is_some())), "the server was asked");
+    frames(&mut h, 10);
+    let text = h.painted_text();
+    let at = |what: &str| text.iter().position(|t| t == what).unwrap_or_else(|| panic!("`{what}` isn't on screen: {text:?}"));
+    assert_eq!(text[at("Library folders") + 1], "2.5 TB · 192,438 files", "{text:?}");
+    assert!(at("Library folders") < at("Total"), "the total comes after the rows it adds up: {text:?}");
+    assert_eq!(text[at("Total") + 1], "2.6 TB", "previews and photos: {text:?}");
+    assert!(!text.iter().any(|t| t == "104 GB"), "not just the previews' 104 GB: {text:?}");
+    shot(&mut h, "storage-settings");
+    drop(h);
+    let _ = std::fs::remove_dir_all(&root);
+
+    // the popover: the same total, and how much of it is read in place
+    let (mut h, root) = app("total-popover", &[], exec_busy(proto::Activity::default(), usage, Default::default()), desktop);
+    sign_in(&mut h);
+    tap_no_settle(&mut h, "icon:cloud");
+    assert!(h.step_until(T, |h| h.app.session.sync_state().is_some_and(|st| st.usage().is_some())), "the server was asked");
+    frames(&mut h, 10);
+    let text = h.painted_text();
+    assert!(text.iter().any(|t| t == "2.6 TB"), "{text:?}");
+    assert!(text.iter().any(|t| t == "Includes 192,438 photos (2.5 TB) read in place from library folders"), "{text:?}");
+    assert!(!text.iter().any(|t| t == "104 GB"), "{text:?}");
+    shot(&mut h, "storage-popover");
+    drop(h);
+    let _ = std::fs::remove_dir_all(&root);
+
+    // a server with no library folders: what it keeps is the total, and nothing is said of folders
+    let (mut h, root) = app("total-none", &[], exec(0, proto::Activity::default()), desktop);
+    sign_in(&mut h);
+    tap_no_settle(&mut h, "icon:cloud");
+    assert!(h.step_until(T, |h| h.app.session.sync_state().is_some_and(|st| st.usage().is_some())), "the server was asked");
+    frames(&mut h, 10);
+    let text = h.painted_text();
+    assert!(text.iter().any(|t| t == "3.0 GB"), "{text:?}");
+    assert!(!text.iter().any(|t| t.starts_with("Includes ")), "{text:?}");
+    drop(h);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// A server with everything to do, on a small phone: the sections scroll between the status and the
 /// buttons, which stay in reach (they used to scroll away under the sections).
 #[test]
@@ -669,6 +740,99 @@ fn share_link_asks_how_the_link_works_and_settings_show_the_limit() {
         }
     }
     assert_eq!(h.app.session.sync_state().and_then(|st| st.usage()).and_then(|u| u.quota), Some(20_000_000));
+    drop(h);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Requests for a server's photo files that wait until the test answers them: a slow network.
+type Held = std::sync::Arc<std::sync::Mutex<Vec<(Task, std::sync::mpsc::Sender<Done>)>>>;
+
+/// [`exec`] for a server of `photos` photos whose files (`/api/blobs/…`) are held in `held`.
+fn exec_held(photos: u64, held: Held) -> SyncExec {
+    let inner = exec(photos, proto::Activity::default());
+    Box::new(move |task, tx, ctx| {
+        if matches!(&task, Task::Http { url, .. } if url.contains("/api/blobs/")) {
+            held.lock().unwrap().push((task, tx));
+        } else {
+            inner(task, tx, ctx);
+        }
+    })
+}
+
+/// Answer what is held: a mini preview comes as the file the device asked for, anything else isn't there. How many.
+fn answer_held(held: &Held, mini: &[u8]) -> usize {
+    let tasks = std::mem::take(&mut *held.lock().unwrap());
+    let n = tasks.len();
+    for (task, tx) in tasks {
+        let Task::Http { id, url, save_to, .. } = task else { continue };
+        let done = match save_to {
+            Some(dest) if url.contains("/api/blobs/mini/") => {
+                std::fs::create_dir_all(Path::new(&dest).parent().unwrap()).unwrap();
+                std::fs::write(&dest, mini).unwrap();
+                Done { id, status: 200, body: String::new() }
+            }
+            _ => Done { id, status: 404, body: json!({"error": "not here"}).to_string() },
+        };
+        let _ = tx.send(done);
+    }
+    n
+}
+
+/// Photos on the server that this device has no preview of fill the grid with empty cells, and every one of them comes
+/// down — not only the first few — however slowly the server answers: a cell that is still on screen stays asked for.
+/// (The grid builds a cell's render job once, and the render that failed for want of the preview isn't asked for again,
+/// so asks that weren't renewed lapsed after thirty frames and the rest of the grid stayed empty.)
+#[test]
+fn every_cell_on_screen_gets_its_preview_however_slow_the_server() {
+    const N: usize = 40;
+    let held: Held = Default::default();
+    let (mut h, root) = app("slow-minis", &[], exec_held(N as u64, held.clone()), PHONE);
+    // (the requests for photo files wait in `held`: nothing here settles)
+    let r = h.request(
+        "engine.execute",
+        json!({"command": "sync.signIn", "params": {"server": "http://fake", "user": "ann", "password": "pw", "device": "test"}}),
+        T,
+    );
+    assert_eq!(r["ok"], true, "{r}");
+    for _ in 0..80 {
+        frames(&mut h, 5);
+        if h.app.session.catalog.len() == N {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(h.app.session.catalog.len(), N);
+    write_png(&root.join("mini.png"), 7);
+    let (_, mini) =
+        lightcraft_engine::smart::encode_pair(&std::fs::read(root.join("mini.png")).unwrap(), lightcraft_engine::cloud_sync::MINI_EDGE).unwrap();
+    // the server answers four requests at a time, with forty frames of the grid in between
+    let (mut answered, mut idle) = (0, 0);
+    while idle < 3 {
+        frames(&mut h, 40);
+        let n = answer_held(&held, &mini);
+        answered += n;
+        idle = if n == 0 { idle + 1 } else { 0 };
+        frames(&mut h, 5);
+    }
+    // the cells the grid draws are the screen and a screen either side of it: more than the four a time the server answers
+    let drawn: Vec<PhotoId> =
+        h.app.widgets.iter().filter_map(|(w, _)| w.strip_prefix("thumb:")).filter_map(|n| n.parse().ok()).map(PhotoId).collect();
+    assert!(drawn.len() > 8, "the grid draws a screenful: {drawn:?}");
+    let tier = |h: &Headless, id: PhotoId| h.app.session.catalog.photo(id).and_then(|p| h.app.session.synced_tier(p));
+    let missing: Vec<PhotoId> = drawn.iter().copied().filter(|id| tier(&h, *id) != Some(1)).collect();
+    assert!(missing.is_empty(), "{answered} previews came down, but not those of {} of the {} cells drawn: {missing:?}", missing.len(), drawn.len());
+    // (and nothing beyond the grid's reach is downloaded)
+    let beyond = h.app.session.catalog.photos().filter(|p| !drawn.contains(&p.id)).filter(|p| tier(&h, p.id) != Some(0)).count();
+    assert_eq!(beyond, 0, "only the cells in reach download");
+    // and the cells show them
+    let shown = h.step_until(Duration::from_secs(20), |h| drawn.iter().all(|id| h.app.renderer.thumb(*id).is_some()));
+    let why: Vec<String> = drawn
+        .iter()
+        .filter(|id| h.app.renderer.thumb(**id).is_none())
+        .take(3)
+        .map(|id| format!("{id:?}: {:?} (tier {:?})", h.app.renderer.failure(crate::render::Slot::Thumb(*id)), tier(&h, *id)))
+        .collect();
+    assert!(shown, "the cells draw the previews: {why:?}");
     drop(h);
     let _ = std::fs::remove_dir_all(&root);
 }

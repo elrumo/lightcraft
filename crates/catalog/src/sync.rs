@@ -906,6 +906,13 @@ pub mod proto {
         pub bytes: u64,
     }
 
+    impl Files {
+        /// These files and `other`'s together.
+        pub fn plus(self, other: Files) -> Files {
+            Files { files: self.files.saturating_add(other.files), bytes: self.bytes.saturating_add(other.bytes) }
+        }
+    }
+
     /// A file system's size and what is left on it.
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
     pub struct Disk {
@@ -916,7 +923,7 @@ pub mod proto {
     /// `GET /api/usage`: what the user's library takes on the server. An answer may be a few
     /// seconds old (the server walks every photo file).
     #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-    #[serde(default)]
+    #[serde(default, rename_all = "camelCase")]
     pub struct Usage {
         pub photos: u64,
         pub albums: u64,
@@ -927,9 +934,14 @@ pub mod proto {
         pub original: Files,
         pub smart: Files,
         pub mini: Files,
-        /// Photos in the user's library folders: read where they are on the server, never copied,
-        /// so not part of what LightCraft stores.
+        /// Photos in the user's library folders: read where they are on the server and never
+        /// copied, so LightCraft keeps only their previews. They are still the library's photos
+        /// and take that room: [`Usage::total`] counts them.
         pub folders: Files,
+        /// Of `folders`' bytes, those on the same disk as the server's data (`disk`): they use up
+        /// that disk's room like the files LightCraft keeps there. The others are on another
+        /// disk (a backup drive, a second NAS). A server that doesn't say (0) is read as none.
+        pub folders_on_disk: u64,
         /// The disk the server keeps its data on (`None`: it can't tell).
         pub disk: Option<Disk>,
         /// The most the server keeps for this user, in bytes ([`Usage::stored`] counts against it; `None`: no
@@ -938,9 +950,22 @@ pub mod proto {
     }
 
     impl Usage {
-        /// Bytes of the files LightCraft keeps for this user (not the library folders).
+        /// Bytes of the files LightCraft keeps for this user: uploaded originals and the previews
+        /// (not the photos in library folders).
         pub fn stored(&self) -> u64 {
             self.original.bytes.saturating_add(self.smart.bytes).saturating_add(self.mini.bytes)
+        }
+
+        /// Bytes the user's library takes on the server in all: what LightCraft keeps and the
+        /// photos it reads in place from library folders.
+        pub fn total(&self) -> u64 {
+            self.stored().saturating_add(self.folders.bytes)
+        }
+
+        /// Bytes the library takes of the server's `disk`: what LightCraft keeps there and the
+        /// library folders that are on it.
+        pub fn on_disk(&self) -> u64 {
+            self.stored().saturating_add(self.folders_on_disk.min(self.folders.bytes))
         }
     }
 
@@ -1004,5 +1029,53 @@ pub mod proto {
                 || self.previews.active()
                 || [self.search, self.text, self.faces].into_iter().flatten().any(|p| p.active())
         }
+    }
+}
+
+#[cfg(test)]
+mod usage_tests {
+    use super::proto::{Disk, Files, Usage};
+
+    fn files(files: u64, bytes: u64) -> Files {
+        Files { files, bytes }
+    }
+
+    /// 98 GB of smart and 5.8 GB of small previews, and 2.5 TB of photos read in place: the library
+    /// takes 2.6 TB, though LightCraft itself keeps only 104 GB of it.
+    #[test]
+    fn the_total_counts_the_photos_read_in_place() {
+        let u = Usage {
+            smart: files(147_821, 98_000_000_000),
+            mini: files(147_823, 5_800_000_000),
+            folders: files(192_438, 2_500_000_000_000),
+            folders_on_disk: 2_500_000_000_000,
+            disk: Some(Disk { total: 28_800_000_000_000, free: 10_700_000_000_000 }),
+            ..Default::default()
+        };
+        assert_eq!(u.stored(), 103_800_000_000, "what LightCraft keeps");
+        assert_eq!(u.total(), 2_603_800_000_000, "what the library takes in all");
+        assert_eq!(u.on_disk(), u.total(), "all of it is on the server's disk");
+        // folders on another disk take room there, not on the server's
+        let elsewhere = Usage { folders_on_disk: 0, ..u.clone() };
+        assert_eq!((elsewhere.total(), elsewhere.on_disk()), (2_603_800_000_000, 103_800_000_000));
+        // a server that says nothing of disks (an older one) is read as none on it
+        let older: Usage = serde_json::from_str(r#"{"smart": {"files": 1, "bytes": 10}, "folders": {"files": 2, "bytes": 90}}"#).unwrap();
+        assert_eq!((older.stored(), older.total(), older.on_disk()), (10, 100, 10));
+        // never more on the disk than the folders hold, and sums that can't overflow
+        let odd = Usage { folders: files(1, 5), folders_on_disk: 99, ..Default::default() };
+        assert_eq!(odd.on_disk(), 5);
+        let huge = Usage { original: files(1, u64::MAX), folders: files(1, 7), folders_on_disk: 7, ..Default::default() };
+        assert_eq!((huge.total(), huge.on_disk()), (u64::MAX, u64::MAX));
+        assert_eq!(files(1, u64::MAX).plus(files(2, 5)), files(3, u64::MAX));
+    }
+
+    /// The new field is `foldersOnDisk` on the wire, like the other multi-word names of the protocol.
+    #[test]
+    fn the_new_field_is_camel_case_and_the_old_ones_keep_their_names() {
+        let u = Usage { photos: 3, folders: files(2, 9), folders_on_disk: 4, ..Default::default() };
+        let json = serde_json::to_value(&u).unwrap();
+        assert_eq!(json["foldersOnDisk"], 4);
+        assert_eq!((json["photos"].clone(), json["folders"]["bytes"].clone()), (3.into(), 9.into()));
+        assert_eq!(serde_json::from_value::<Usage>(json).unwrap(), u);
     }
 }

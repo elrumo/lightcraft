@@ -18,6 +18,7 @@ use serde_json::{Value, json};
 
 use crate::State;
 use crate::accounts::{self, LoginError, Session};
+use crate::folders::PreviewState;
 
 /// Largest JSON body (a push is at most a few hundred ops).
 pub const JSON_MAX: u64 = 64 << 20;
@@ -343,9 +344,11 @@ fn me(st: &State, who: &Session) -> Resp {
 }
 
 /// What the user's library takes here: their photo files by kind, the photos in their library
-/// folders (read where they are, not stored), and how much room the disk has left.
+/// folders (read where they are, not stored, but they take that room too; and how many of those
+/// bytes are on the data's own disk), and how much room the disk has left.
 fn usage(st: &State, l: &Mutex<UserLib>, who: &Session) -> Resp {
-    let (dir, mut u) = {
+    use lightcraft_engine::usage::{disk_space, same_disk};
+    let (dir, mut u, places) = {
         let l = l.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some((at, u)) = &l.usage
             && at.elapsed() < USAGE_TTL
@@ -353,19 +356,27 @@ fn usage(st: &State, l: &Mutex<UserLib>, who: &Session) -> Resp {
             return json(200, &json!(u));
         }
         let (photos, albums) = l.counts();
-        let mut folders = proto::Files::default();
-        for e in l.index.files.values().filter(|e| !e.missing) {
-            folders.files += 1;
-            folders.bytes = folders.bytes.saturating_add(e.size);
-        }
-        (l.dir.clone(), proto::Usage { photos: photos as u64, albums: albums as u64, folders, ..Default::default() })
+        let by_folder = l.index.folder_files();
+        let folders = by_folder.values().fold(proto::Files::default(), |all, f| all.plus(*f));
+        // where each library folder is on the server, with the bytes it holds
+        let places: Vec<(PathBuf, u64)> =
+            by_folder.iter().filter_map(|(name, f)| Some((PathBuf::from(l.index.roots.get(*name)?), f.bytes))).collect();
+        (l.dir.clone(), proto::Usage { photos: photos as u64, albums: albums as u64, folders, ..Default::default() }, places)
     };
     // (the folders are walked without the library locked: pushes and pulls go on meanwhile)
     let blobs = dir.join("blobs");
     u.original = blob_usage(&blobs, "original");
     u.smart = blob_usage(&blobs, "smart");
     u.mini = blob_usage(&blobs, "mini");
-    u.disk = lightcraft_engine::usage::disk_space(&st.data);
+    u.disk = disk_space(&st.data);
+    // a library folder on the data's own disk takes its room like the files kept there; one on another
+    // disk (a backup drive, a second NAS) doesn't
+    if let Some(data) = u.disk {
+        u.folders_on_disk = places
+            .iter()
+            .filter(|(root, _)| disk_space(root).is_some_and(|d| same_disk(d, data)))
+            .fold(0, |bytes, (_, here)| u64::saturating_add(bytes, *here));
+    }
     u.quota = accounts::quota_of(&st.data, &who.user);
     u.devices = st.accounts.lock().unwrap_or_else(PoisonError::into_inner).devices_of(&who.user).len() as u64;
     l.lock().unwrap_or_else(PoisonError::into_inner).usage = Some((Instant::now(), u.clone()));
@@ -587,11 +598,19 @@ fn blob(st: &State, req: &mut Request, method: &Method, l: &Mutex<UserLib>, user
     let hash = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
     match method {
         Method::Head | Method::Get => {
-            let f = match std::fs::File::open(&path) {
+            let mut f = match std::fs::File::open(&path) {
                 Ok(f) => Some(f),
                 Err(_) if kind == "original" => folder_original(st, l, user, &hash),
                 Err(_) => None,
             };
+            // a device shows a photo whose preview isn't built yet: build it before the rest, and say so
+            if f.is_none() && kind != "original" && matches!(method, Method::Get) {
+                match rush_preview(st, l, user, &dir, &hash) {
+                    Some(PreviewState::Built) => f = std::fs::File::open(&path).ok(),
+                    Some(state) => return preview_not_yet(state),
+                    None => {}
+                }
+            }
             let Some(mut f) = f else {
                 // an original may be part-way: say how far
                 let have = if kind == "original" { std::fs::metadata(part_path(&dir, &hash)).map(|m| m.len()).unwrap_or(0) } else { 0 };
@@ -657,6 +676,28 @@ pub(crate) fn over_quota(st: &State, user: &str, incoming: u64) -> Option<Resp> 
     }
     let gb = |b: u64| format!("{:.1} GB", b as f64 / 1e9);
     Some(error(507, format!("over the storage limit: {} of {} used on the server; ask its admin for more room", gb(used), gb(quota))))
+}
+
+/// A device asked for a preview that isn't there, for a photo whose original this server has (uploaded, or in a
+/// library folder): have its previews built before the rest of the queue ([`crate::folders::Scanner::rush`]).
+/// `None`: the server has no such original, so there is nothing to wait for.
+fn rush_preview(st: &State, l: &Mutex<UserLib>, user: &str, dir: &Path, hash: &str) -> Option<PreviewState> {
+    let original = blob_path(dir, "original", hash).filter(|p| p.is_file()).or_else(|| folder_original_path(st, l, user, hash))?;
+    Some(st.folders.rush(dir, user, hash.to_string(), original))
+}
+
+/// The answer to a preview that isn't there yet: `404` as for any file the server doesn't have, and in the body, which
+/// devices from before it ignore, whether the server is making it (`queued`: ask again in a few seconds) or can't (`failed`).
+fn preview_not_yet(state: PreviewState) -> Resp {
+    let msg = match state {
+        PreviewState::Failed => "the server can't make this preview",
+        _ => "the server is making this preview",
+    };
+    let mut resp = json(404, &json!({"error": msg, "previews": state.word()}));
+    if state == PreviewState::Queued {
+        header("Retry-After", "3").into_iter().for_each(|h| resp.add_header(h));
+    }
+    resp
 }
 
 /// How long a render waits for a free place before the device is told to try again.

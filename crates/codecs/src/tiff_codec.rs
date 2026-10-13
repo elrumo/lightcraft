@@ -15,7 +15,7 @@ fn err(e: impl std::fmt::Display) -> Error {
 }
 
 pub(crate) fn decode(bytes: &[u8], opts: &DecodeOptions) -> Result<Decoded> {
-    let mut d = Decoder::new(std::io::Cursor::new(bytes)).map_err(err)?.with_limits(limits(opts));
+    let mut d = Decoder::new(std::io::Cursor::new(bytes)).map_err(err)?.with_limits(limits(opts, bytes.len()));
     let (w, h) = d.dimensions().map_err(err)?;
     check_size(F, w as u64, h as u64, opts)?;
     let ct = d.colortype().map_err(err)?;
@@ -92,9 +92,14 @@ pub(crate) fn decode(bytes: &[u8], opts: &DecodeOptions) -> Result<Decoded> {
     finish(F, raw, meta, (w, h), opts)
 }
 
-fn limits(opts: &DecodeOptions) -> Limits {
+/// The `tiff` crate's limits for decoding a file of `file_len` bytes. A strip or tile may be as long
+/// as the file: one that holds the whole picture is past the crate's 128 MiB default from a 16-bit
+/// RGB of 23 MP on. Every decompressor reads the chunk from the bytes already in memory, so a stated
+/// length can't make it allocate more than the file; the pixels are bounded by `decoding_buffer_size`.
+fn limits(opts: &DecodeOptions, file_len: usize) -> Limits {
     let mut limits = Limits::default();
     limits.decoding_buffer_size = opts.max_pixels.saturating_mul(4 * 8).min(usize::MAX as u64) as usize;
+    limits.intermediate_buffer_size = limits.intermediate_buffer_size.max(file_len);
     limits.ifd_value_size = 32 << 20;
     limits
 }
@@ -126,7 +131,7 @@ fn layout(ct: ColorType, compression: Option<u32>, planar: bool) -> Result<(Mode
 /// as a decode would refuse it: a layout or compression we can't decode, or strips/tiles that
 /// start past the end of the file (truncated). The compressed data itself is not checked.
 pub(crate) fn header(bytes: &[u8]) -> Result<(u32, u32, u16)> {
-    let mut d = Decoder::new(std::io::Cursor::new(bytes)).map_err(err)?.with_limits(limits(&DecodeOptions::default()));
+    let mut d = Decoder::new(std::io::Cursor::new(bytes)).map_err(err)?.with_limits(limits(&DecodeOptions::default(), bytes.len()));
     let (w, h) = d.dimensions().map_err(err)?;
     check_size(F, w as u64, h as u64, &DecodeOptions::default())?;
     let ct = d.colortype().map_err(err)?;
