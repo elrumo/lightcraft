@@ -18,9 +18,9 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | Phase | ✅ | 🟡 | ⬜ | 🚫 | Done or out of scope |
 |---|---:|---:|---:|---:|---:|
 | S0 | 8 | 7 | 0 | 0 | 8/15 |
-| S1 | 0 | 0 | 165 | 0 | 0/165 |
-| S2 | 0 | 0 | 80 | 21 | 21/101 |
-| **Total** | 8 | 7 | 245 | 21 | 29/281 |
+| S1 | 0 | 0 | 167 | 0 | 0/167 |
+| S2 | 0 | 0 | 80 | 22 | 22/102 |
+| **Total** | 8 | 7 | 247 | 22 | 30/284 |
 <!-- /ios-parity:summary -->
 
 ## Screens
@@ -196,6 +196,7 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | ui:dialog.autoStack | S2 | ⬜ |  |  |
 | ui:dialog.copySettings | S1 | ⬜ |  |  |
 | ui:dialog.pasteSettings | S1 | ⬜ |  |  |
+| ui:dialog.shareLink | S1 | ⬜ |  |  |
 | ui:view.focusSearch | S2 | ⬜ |  |  |
 | ui:dialog.export | S1 | ⬜ |  |  |
 | ui:dialog.contactSheet | S2 | ⬜ |  |  |
@@ -318,3 +319,5 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | dialog:SynchronizeFolder | S2 | 🚫 |  | no watched folders in the iOS sandbox |
 | dialog:About | S1 | ⬜ |  |  |
 | dialog:Shortcuts | S2 | ⬜ |  |  |
+| dialog:ShareLink | S1 | ⬜ |  |  |
+| dialog:EditIn | S2 | 🚫 |  | opens another desktop app on the file; iOS apps are sandboxed (the share sheet covers it) |
