@@ -677,12 +677,14 @@ pub fn flyout_row(ui: &mut Ui, id: &str, title: &str, icon: Icon, open: bool) ->
     resp
 }
 
-/// `edit` as the layout wants its text fields: on a phone 44 pt tall with 17 pt text and room
-/// around it, as iOS draws a rounded text field (egui's own is ~24 pt: too tight for a finger and
-/// for the edit menu); unchanged on the desktop.
-pub fn touch_field<'t>(ui: &Ui, edit: egui::TextEdit<'t>) -> egui::TextEdit<'t> {
+/// The room inside a desktop text box around its text (egui's own 4 × 2 pt felt cramped).
+pub const FIELD_MARGIN: egui::Margin = egui::Margin { left: 8, right: 8, top: 5, bottom: 5 };
+
+/// A text box's padding: [`FIELD_MARGIN`] on the desktop; on a phone iOS's 44 pt row, its larger
+/// type and the text centred in it.
+pub fn text_box<'t>(ui: &Ui, edit: egui::TextEdit<'t>) -> egui::TextEdit<'t> {
     if !crate::is_compact(ui.ctx()) {
-        return edit;
+        return edit.margin(FIELD_MARGIN);
     }
     edit.font(egui::FontId::proportional(17.0))
         .margin(egui::Margin::symmetric(12, 10))

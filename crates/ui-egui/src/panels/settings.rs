@@ -1,6 +1,12 @@
 //! The Settings dialog (⌘,): General, Import, Performance, Display, Interface, Faces, AI Denoise,
 //! Sync, AI Models.
 //!
+//! On the desktop the sections are a sidebar on the left of the dialog (each with its icon on a
+//! coloured tile) beside the open one, which scrolls on its own under its title and a line saying
+//! what it is for. Its settings are grouped on rounded cards under small headings: a row per
+//! setting, its name on the left and its control on the right, on / off settings as switches, and
+//! notes in grey under the row they explain (or under a heading, for the whole group).
+//!
 //! Changes apply immediately (no OK/Cancel). Where they are stored:
 //! - **app settings** ([`crate::state::AppSettings`]: startup view, delete confirmation, GPU,
 //!   preview size, filmstrip/grid badges, last library, monitor profile) and Auto Advance live in
@@ -44,6 +50,19 @@ const CACHE_SIZES: [u32; 5] = [512, 1024, 2048, 4096, 8192];
 
 const LABEL_W: f32 = 150.0;
 
+/// A desktop choice with more options than this is a combo box rather than a row of buttons.
+const PICK_BUTTONS: usize = 6;
+
+/// The desktop Settings: the sidebar's width, a row's height, how far a card reaches past the rows
+/// on it (their text lines up with the headings above the cards).
+const SIDEBAR_W: f32 = 188.0;
+const DESK_ROW_H: f32 = 34.0;
+const CARD_PAD: f32 = 12.0;
+
+/// The desktop sidebar's groups of sections, a line between them: the library and how LightCraft
+/// looks and works, then the AI features, then sync.
+const SIDEBAR: [&[&str]; 3] = [&["general", "interface", "display", "import", "performance"], &["faces", "denoise", "models"], &["sync"]];
+
 /// The iOS app's library lives in its container: no folder to choose or watch, no external editor,
 /// no other app to read XMP sidecars, no Local folders. Those settings aren't offered there.
 const IOS: bool = cfg!(target_os = "ios");
@@ -72,35 +91,139 @@ pub fn phone_title(tab: &str) -> (&'static str, Option<&'static str>) {
     }
 }
 
-/// The dialog body for `tab` (the tab bar switches `tab`).
-pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, tab: &mut String) {
+/// The desktop Settings' height, given the room the dialog has for it (`max`): as much as fits, up
+/// to a comfortable height (in a short window the sidebar scrolls too).
+pub fn desktop_height(max: f32) -> f32 {
+    if max.is_nan() { 620.0 } else { max.clamp(1.0, 620.0) }
+}
+
+/// The dialog body for `tab`: on the desktop the sidebar ([`sidebar`], which switches `tab`) beside
+/// the open section, which scrolls on its own within [`desktop_height`]`(max_height)`.
+pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, tab: &mut String, max_height: f32) {
     if crate::is_compact(ui.ctx()) {
         phone_body(app, ui, tab);
         return;
     }
     let t = Tokens::get(ui.ctx());
-    ui.set_width((ui.ctx().content_rect().width() - 64.0).clamp(240.0, 560.0));
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
-        for (id, label) in TABS {
-            if crate::widgets::text_button(ui, &format!("settingsTab-{id}"), label, tab == id).clicked() {
+    let width = (ui.ctx().content_rect().width() - 80.0).clamp(560.0, 860.0);
+    let (outer, _) = ui.allocate_exact_size(vec2(width, desktop_height(max_height)), Sense::hover());
+    let side = Rect::from_min_size(outer.min, vec2(SIDEBAR_W, outer.height()));
+    ui.scope_builder(egui::UiBuilder::new().max_rect(side), |ui| {
+        egui::ScrollArea::vertical().id_salt("settings-sidebar").auto_shrink([false, false]).show(ui, |ui| sidebar(app, ui, &t, tab));
+    });
+    let line_x = (side.right() + 12.0).round() + 0.5;
+    ui.painter().vline(line_x, outer.y_range(), Stroke::new(1.0, t.divider));
+    let page = Rect::from_min_max(pos2(line_x + 1.0, outer.top()), outer.max);
+    ui.scope_builder(egui::UiBuilder::new().max_rect(page), |ui| {
+        // (each section starts at its top)
+        egui::ScrollArea::vertical().id_salt(("settings-page", tab.clone())).auto_shrink([false, false]).show(ui, |ui| {
+            egui::Frame::NONE.inner_margin(Margin { left: 20 + CARD_PAD as i8, right: 10 + CARD_PAD as i8, top: 0, bottom: 12 }).show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                page_header(ui, &t, tab.as_str());
+                let column = Column { left: ui.max_rect().left(), right: ui.max_rect().right(), top: ui.cursor().top() };
+                ui.data_mut(|d| {
+                    d.remove::<Card>(card_id());
+                    d.insert_temp(column_id(), column);
+                });
+                ui.spacing_mut().item_spacing.y = 4.0;
+                match tab.as_str() {
+                    "import" => import_tab(app, ui, &t),
+                    "performance" => performance_tab(app, ui, &t),
+                    "display" => display_tab(app, ui, &t),
+                    "interface" => interface_tab(app, ui, &t),
+                    "faces" => super::faces::settings_tab(app, ui, &t),
+                    "denoise" => super::denoise::settings_tab(app, ui, &t),
+                    "sync" => sync_tab(app, ui, &t),
+                    "models" => crate::panels::ai_models::tab(app, ui, &t),
+                    _ => general_tab(app, ui, &t),
+                }
+                card_end(ui, &t);
+                ui.data_mut(|d| d.remove::<Column>(column_id()));
+            });
+        });
+    });
+}
+
+/// The desktop sidebar: a row per section, its icon on a coloured tile (as on the phone's list), the
+/// open one highlighted, a line between the groups ([`SIDEBAR`]). A click opens the section
+/// (`button:settingsTab-{id}`); Sync says whether it is on.
+fn sidebar(app: &LightcraftApp, ui: &mut egui::Ui, t: &Tokens, tab: &mut String) {
+    let open = if TABS.iter().any(|(id, _)| id == tab) { tab.clone() } else { "general".to_string() };
+    ui.spacing_mut().item_spacing.y = 2.0;
+    for (g, group) in SIDEBAR.iter().enumerate() {
+        if g > 0 {
+            let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 13.0), Sense::hover());
+            ui.painter().hline((r.left() + 8.0)..=(r.right() - 8.0), r.center().y, Stroke::new(1.0, t.divider));
+        }
+        for &id in group.iter().filter(|id| !(IOS && **id == "display")) {
+            let Some(i) = TABS.iter().position(|(tid, _)| *tid == id) else { continue };
+            let (Some((_, label)), Some((icon, tile))) = (TABS.get(i), TAB_TILES.get(i)) else { continue };
+            let label = crate::i18n::tr(label);
+            let on = open == id;
+            let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 32.0), Sense::click());
+            register(ui.ctx(), format!("button:settingsTab-{id}"), r);
+            resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, on, label));
+            let radius = f32::from(t.control_radius) + 2.0;
+            if on {
+                ui.painter().rect_filled(r, radius, t.tool_active);
+            } else if resp.hovered() {
+                ui.painter().rect_filled(r, radius, t.hover.gamma_multiply(0.6));
+            }
+            let tile_r = Rect::from_min_size(pos2(r.left() + 8.0, r.center().y - 10.0), vec2(20.0, 20.0));
+            ui.painter().rect_filled(tile_r, 5.0, *tile);
+            crate::icons::paint(ui.painter(), tile_r.shrink(3.5), *icon, Color32::WHITE);
+            let value = if id == "sync" { sync_value(app) } else { "" };
+            let value = line(ui, value, 11.5, t.text_dim, 70.0);
+            let text_x = tile_r.right() + 10.0;
+            let max_w = r.right() - 8.0 - value.size().x - 6.0 - text_x;
+            let font = if on { t.semibold(13.0) } else { t.font(13.0) };
+            let name = egui::WidgetText::from(RichText::new(label).font(font)).into_galley(
+                ui,
+                Some(egui::TextWrapMode::Truncate),
+                max_w.max(20.0),
+                egui::TextStyle::Body,
+            );
+            ui.painter().galley(pos2(text_x, r.center().y - name.size().y / 2.0), name, if on { t.text } else { t.text_label });
+            ui.painter().galley(pos2(r.right() - 8.0 - value.size().x, r.center().y - value.size().y / 2.0), value, t.text_dim);
+            if resp.clicked() {
                 *tab = id.to_string();
             }
         }
-    });
-    ui.separator();
+    }
+}
+
+/// Whether this library syncs (the Sync section's value in the sidebar and on the phone's list).
+fn sync_value(app: &LightcraftApp) -> &'static str {
+    if app.session.sync_conflict().is_some() {
+        crate::i18n::tr("Choose…")
+    } else if app.session.sync_state().is_some_and(|s| s.signed_in()) {
+        crate::i18n::tr("On")
+    } else {
+        crate::i18n::tr("Off")
+    }
+}
+
+/// A desktop section's title, and a line saying what it is for.
+fn page_header(ui: &mut egui::Ui, t: &Tokens, tab: &str) {
+    let title = TABS.iter().find(|(id, _)| *id == tab).map_or("General", |(_, label)| *label);
     ui.add_space(2.0);
-    match tab.as_str() {
-        "import" => import_tab(app, ui, &t),
-        "performance" => performance_tab(app, ui, &t),
-        "display" => display_tab(app, ui, &t),
-        "interface" => interface_tab(app, ui, &t),
-        "faces" => super::faces::settings_tab(app, ui, &t),
-        "denoise" => super::denoise::settings_tab(app, ui, &t),
-        // (long tabs: the dialog's options scroll, `dialogs::dialog_body`)
-        "sync" => sync_tab(app, ui, &t),
-        "models" => crate::panels::ai_models::tab(app, ui, &t),
-        _ => general_tab(app, ui, &t),
+    ui.label(RichText::new(crate::i18n::tr(title)).font(t.semibold(20.0)).color(t.text));
+    ui.label(RichText::new(crate::i18n::tr(blurb(tab))).size(12.5).color(t.text_dim));
+    ui.add_space(10.0);
+}
+
+/// What a section is for, under its title on the desktop.
+fn blurb(tab: &str) -> &'static str {
+    match tab {
+        "import" => "How new photos start out: their develop settings, metadata and sidecars, and a folder to watch.",
+        "performance" => "Rendering, previews and the caches that keep browsing quick.",
+        "display" => "Show colours accurately on your monitor.",
+        "interface" => "How LightCraft looks, and what the grid, filmstrip and photo view show.",
+        "faces" => "Find the people in your photos and suggest who they are. It all happens on this computer.",
+        "denoise" => "Clean the noise out of raw photos with an AI model that runs on this computer.",
+        "models" => "Download, turn on and remove the optional AI models.",
+        "sync" => "Keep this library in step with your other devices through your own LightCraft server.",
+        _ => "Language, your library, how LightCraft starts, and the editors it hands photos to.",
     }
 }
 
@@ -160,9 +283,7 @@ fn list(app: &LightcraftApp, ui: &mut egui::Ui, t: &Tokens, tab: &mut String) {
     ui.add_space(28.0);
     for ((id, label), (icon, tile)) in TABS.iter().zip(TAB_TILES).filter(|((id, _), _)| !(IOS && *id == "display")) {
         let value = match *id {
-            "sync" if app.session.sync_conflict().is_some() => crate::i18n::tr("Choose…"),
-            "sync" if synced.is_some() => crate::i18n::tr("On"),
-            "sync" => crate::i18n::tr("Off"),
+            "sync" => sync_value(app),
             "general" => app.ui.language.name(),
             _ => "",
         };
@@ -172,28 +293,69 @@ fn list(app: &LightcraftApp, ui: &mut egui::Ui, t: &Tokens, tab: &mut String) {
     }
 }
 
-/// The phone's rows sit on a rounded card: the first row after a heading or a note starts one,
-/// whose background [`card_end`] draws behind them once the run is over.
+/// The rows sit on a rounded card: the first row after a heading or (on the phone) a note starts
+/// one, whose background [`card_end`] draws behind them once the run is over.
 #[derive(Clone, Copy)]
 struct Card {
     shape: egui::layers::ShapeIdx,
     top: f32,
+    /// Where the last row started (a row asked twice, by a row and the switch on it, is one).
+    last: f32,
 }
 
 fn card_id() -> egui::Id {
     egui::Id::new("lc-settings-card")
 }
 
-/// Before a phone row: start a card, or draw the hairline between this row and the one above
-/// (from `inset`, where the row's text starts, to the card's edge, as iOS does).
+/// Where the open desktop section's rows go, left and right (cards reach [`CARD_PAD`] past them),
+/// and where its settings start (under its title). Set only while a desktop section is drawn: the
+/// helpers below lay rows out on cards then, as they always did otherwise.
+#[derive(Clone, Copy)]
+struct Column {
+    left: f32,
+    right: f32,
+    top: f32,
+}
+
+fn column_id() -> egui::Id {
+    egui::Id::new("lc-settings-column")
+}
+
+fn column(ui: &egui::Ui) -> Option<Column> {
+    if crate::is_compact(ui.ctx()) {
+        return None;
+    }
+    ui.data(|d| d.get_temp::<Column>(column_id()))
+}
+
+/// Before a row: start a card, or draw the line between this row and the one above (on the phone a
+/// hairline from `inset`, where the row's text starts, to the card's edge, as iOS does; on the
+/// desktop a gap in the dialog's colour across the card).
 pub(super) fn card_row(ui: &mut egui::Ui, t: &Tokens, inset: f32) {
+    let desktop = column(ui);
+    // (a desktop row outside a Settings section: no card)
+    if desktop.is_none() && !crate::is_compact(ui.ctx()) {
+        return;
+    }
     let y = ui.cursor().top();
-    if ui.data(|d| d.get_temp::<Card>(card_id())).is_some() {
-        let r = ui.max_rect();
-        ui.painter().hline((r.left() + inset)..=r.right(), y, Stroke::new(0.5, t.divider));
-    } else {
-        let shape = ui.painter().add(egui::Shape::Noop);
-        ui.data_mut(|d| d.insert_temp(card_id(), Card { shape, top: y }));
+    match ui.data(|d| d.get_temp::<Card>(card_id())) {
+        Some(card) if (y - card.last).abs() < 0.5 => {}
+        Some(card) => {
+            match desktop {
+                Some(col) => {
+                    ui.painter().hline(col.left..=(col.right + CARD_PAD), y - 2.0, Stroke::new(1.0, t.chrome));
+                }
+                None => {
+                    let r = ui.max_rect();
+                    ui.painter().hline((r.left() + inset)..=r.right(), y, Stroke::new(0.5, t.divider));
+                }
+            }
+            ui.data_mut(|d| d.insert_temp(card_id(), Card { last: y, ..card }));
+        }
+        None => {
+            let shape = ui.painter().add(egui::Shape::Noop);
+            ui.data_mut(|d| d.insert_temp(card_id(), Card { shape, top: y, last: y }));
+        }
     }
 }
 
@@ -201,6 +363,11 @@ pub(super) fn card_row(ui: &mut egui::Ui, t: &Tokens, inset: f32) {
 pub(super) fn card_end(ui: &mut egui::Ui, t: &Tokens) {
     let Some(card) = ui.data(|d| d.get_temp::<Card>(card_id())) else { return };
     ui.data_mut(|d| d.remove::<Card>(card_id()));
+    if let Some(col) = column(ui) {
+        let r = Rect::from_min_max(pos2(col.left - CARD_PAD, card.top - 4.0), pos2(col.right + CARD_PAD, ui.cursor().top()));
+        ui.painter().set(card.shape, egui::epaint::RectShape::filled(r, f32::from(t.control_radius) + 4.0, t.inset));
+        return;
+    }
     let r = Rect::from_min_max(pos2(ui.max_rect().left(), card.top), pos2(ui.max_rect().right(), ui.cursor().top()));
     // (iOS's grouped cards, as round as iOS 26 draws them: the sheet colour in the dark
     // appearance, white on the light page)
@@ -314,26 +481,32 @@ fn select(ui: &mut egui::Ui, t: &Tokens, id: &str, label: &str, value: String, i
         return;
     }
     row(ui, t, label, |ui| {
-        let r = egui::ComboBox::from_id_salt(id).width(240.0).selected_text(value).show_ui(ui, items);
+        let r = egui::ComboBox::from_id_salt(id).width(220.0).selected_text(value).show_ui(ui, items);
         register(ui.ctx(), format!("combo:{id}"), r.response.rect);
     });
 }
 
 /// A labelled choice among a few `options`: mutually exclusive buttons on the desktop
-/// (`button:{id}-{i}`), a pull-down menu on the phone. True when it changed.
+/// (`button:{id}-{i}`; a combo box `combo:{id}` when there are more than [`PICK_BUTTONS`]), a
+/// pull-down menu on the phone. True when it changed.
 fn pick<V: PartialEq + Copy>(ui: &mut egui::Ui, t: &Tokens, id: &str, label: &str, options: &[(V, &str)], value: &mut V) -> bool {
-    if !crate::is_compact(ui.ctx()) {
+    if !crate::is_compact(ui.ctx()) && options.len() <= PICK_BUTTONS {
         return row(ui, t, label, |ui| choices(ui, id, options, value));
     }
     let current = options.iter().find(|(v, _)| *v == *value).map(|(_, l)| crate::i18n::tr(l)).unwrap_or_default();
     let mut chosen = None;
-    menu_row(ui, t, id, label, current, |ui| {
+    let items = |ui: &mut egui::Ui| {
         for (i, (v, l)) in options.iter().enumerate() {
             if option(ui, id, i, *v == *value, crate::i18n::tr(l)) {
                 chosen = Some(*v);
             }
         }
-    });
+    };
+    if crate::is_compact(ui.ctx()) {
+        menu_row(ui, t, id, label, current, items);
+    } else {
+        select(ui, t, id, label, current.to_string(), items);
+    }
     match chosen {
         Some(v) if v != *value => {
             *value = v;
@@ -411,7 +584,7 @@ fn text_row(ui: &mut egui::Ui, t: &Tokens, id: &str, label: &str, value: &mut St
                     .desired_width(ui.available_width()),
             )
         } else {
-            ui.add(edit.desired_width(width.min(ui.available_width())))
+            ui.add(crate::widgets::text_box(ui, edit.desired_width(width.min(ui.available_width()))))
         }
     });
     register(ui.ctx(), format!("field:{id}"), r.rect);
@@ -428,6 +601,16 @@ pub(super) fn heading(ui: &mut egui::Ui, t: &Tokens, text: &str) {
             ui.label(RichText::new(crate::i18n::tr(text).to_uppercase()).size(13.0).color(t.text_dim));
         });
         ui.add_space(7.0);
+        return;
+    }
+    if let Some(col) = column(ui) {
+        card_end(ui, t);
+        // (a heading under the section's title needs no gap of its own)
+        if ui.cursor().top() > col.top + 1.0 {
+            ui.add_space(14.0);
+        }
+        ui.label(RichText::new(crate::i18n::tr(text)).font(t.semibold(13.5)).color(t.text));
+        ui.add_space(6.0);
         return;
     }
     ui.add_space(4.0);
@@ -455,6 +638,21 @@ fn row<R>(ui: &mut egui::Ui, t: &Tokens, label: &str, add: impl FnOnce(&mut egui
             })
             .inner;
     }
+    if column(ui).is_some() {
+        // a Settings section's row, on its card: the name on the left, the controls at the end
+        card_row(ui, t, 0.0);
+        let w = ui.available_width();
+        return ui
+            .allocate_ui_with_layout(vec2(w, DESK_ROW_H), Layout::left_to_right(Align::Center), |ui| {
+                ui.set_min_height(DESK_ROW_H);
+                if !label.is_empty() {
+                    ui.add(egui::Label::new(RichText::new(crate::i18n::tr(label)).color(t.text)).wrap_mode(egui::TextWrapMode::Extend));
+                    ui.add_space(12.0);
+                }
+                trailing(ui, add)
+            })
+            .inner;
+    }
     ui.horizontal(|ui| {
         ui.allocate_ui_with_layout(egui::vec2(LABEL_W, 24.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
             ui.set_min_width(LABEL_W);
@@ -463,6 +661,26 @@ fn row<R>(ui: &mut egui::Ui, t: &Tokens, label: &str, add: impl FnOnce(&mut egui
         add(ui)
     })
     .inner
+}
+
+/// `add`'s widgets at the end of the row, in the order they are added. Their width is measured and
+/// kept for the next pass; a pass whose widths changed (the first one, a row that grew) is
+/// discarded, so a row is never seen out of place.
+fn trailing<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    // (the row's own id: rows without a name, or with the same one, are told apart)
+    let id = ui.unique_id().with("trailing");
+    let room = ui.available_width();
+    let known = ui.data(|d| d.get_temp::<f32>(id));
+    let width = known.unwrap_or(room).min(room);
+    ui.add_space((room - width).max(0.0));
+    let start = ui.cursor().left();
+    let out = add(ui);
+    let used = (ui.min_rect().right() - start).max(0.0);
+    if known.is_none_or(|w| (w - used).abs() > 0.5) {
+        ui.data_mut(|d| d.insert_temp(id, used));
+        ui.ctx().request_discard("a Settings row's width");
+    }
+    out
 }
 
 /// A note. On the phone it goes under the card above it, as iOS's section footers do.
@@ -476,11 +694,24 @@ pub(super) fn hint(ui: &mut egui::Ui, t: &Tokens, text: &str) {
         ui.add_space(10.0);
         return;
     }
+    if column(ui).is_some() {
+        // under the row it explains, on its card; under a heading, for the whole group
+        let on_card = ui.data(|d| d.get_temp::<Card>(card_id())).is_some();
+        ui.label(RichText::new(crate::i18n::tr(text)).size(if on_card { 11.5 } else { 12.0 }).color(t.text_dim));
+        ui.add_space(4.0);
+        return;
+    }
     ui.label(RichText::new(crate::i18n::tr(text)).size(11.0).color(t.text_dim));
 }
 
-/// A checkbox addressable as `check:{id}` (on the phone, a row with a switch); true when toggled.
+/// A checkbox addressable as `check:{id}` (a row with a switch on the phone, and in a desktop
+/// Settings section); true when toggled.
 pub(super) fn check(ui: &mut egui::Ui, id: &str, value: &mut bool, label: &str) -> bool {
+    if column(ui).is_some() {
+        let r = switch_row(ui, value, crate::i18n::tr(label));
+        register(ui.ctx(), format!("check:{id}"), r.rect);
+        return r.changed();
+    }
     let r = if crate::is_compact(ui.ctx()) {
         card_row(ui, &Tokens::get(ui.ctx()), 16.0);
         egui::Frame::NONE
@@ -492,6 +723,34 @@ pub(super) fn check(ui: &mut egui::Ui, id: &str, value: &mut bool, label: &str) 
     };
     register(ui.ctx(), format!("check:{id}"), r.rect);
     r.changed()
+}
+
+/// A desktop Settings row that is an on / off choice: its name (wrapping when long) on the left, a
+/// switch on the right in the accent colour when on. The whole row takes the click.
+fn switch_row(ui: &mut egui::Ui, on: &mut bool, label: &str) -> egui::Response {
+    let t = Tokens::get(ui.ctx());
+    card_row(ui, &t, 0.0);
+    let enabled = ui.is_enabled();
+    let w = ui.available_width();
+    let text = egui::WidgetText::from(RichText::new(label).color(if enabled { t.text } else { t.text_disabled }));
+    let galley = text.into_galley(ui, Some(egui::TextWrapMode::Wrap), (w - 56.0).max(40.0), egui::TextStyle::Body);
+    let (r, mut resp) = ui.allocate_exact_size(vec2(w, (galley.size().y + 14.0).max(DESK_ROW_H)), Sense::click());
+    if resp.clicked() && enabled {
+        *on = !*on;
+        resp.mark_changed();
+    }
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, enabled, *on, galley.text()));
+    let k = ui.ctx().animate_bool_with_time(resp.id.with("switch"), *on, 0.12);
+    let p = ui.painter();
+    p.galley(pos2(r.left(), r.center().y - galley.size().y / 2.0), galley, t.text);
+    let sw = Rect::from_min_size(pos2(r.right() - 34.0, r.center().y - 10.0), vec2(34.0, 20.0));
+    let track = crate::widgets::lerp(t.track, t.accent, k);
+    p.rect_filled(sw, 10.0, if enabled { track } else { track.gamma_multiply(0.5) });
+    if resp.hovered() && enabled {
+        p.rect_filled(sw, 10.0, Color32::from_white_alpha(18));
+    }
+    p.circle_filled(pos2(sw.left() + 10.0 + (sw.width() - 20.0) * k, sw.center().y), 8.0, Color32::WHITE);
+    resp
 }
 
 /// Mutually exclusive buttons (`button:{id}-{index}`).
@@ -520,7 +779,7 @@ fn general_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
             None => crate::i18n::tr("In memory — nothing is saved").to_string(),
         };
         row(ui, t, crate::i18n::tr("Location"), |ui| {
-            ui.label(RichText::new(location).color(t.text));
+            ui.add(egui::Label::new(RichText::new(location.clone()).color(t.text_label)).truncate()).on_hover_text(location);
         });
         row(ui, t, "", |ui| {
             let can = app.services.pick_folder.is_some();
@@ -578,12 +837,12 @@ fn general_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
 /// The file Edit In hands an editor: format, colour space and bit depth (`button:{id}Format-…`).
 fn edit_file_rows(ui: &mut egui::Ui, t: &Tokens, id: &str, file: &mut crate::state::EditFile) {
     use crate::state::{EditFormat, EditSpace};
-    row(ui, t, "", |ui| {
+    row(ui, t, crate::i18n::tr("Format"), |ui| {
         choices(ui, &format!("{id}Format"), &[(EditFormat::Psd, "PSD"), (EditFormat::Tiff, "TIFF")], &mut file.format);
         ui.separator();
         choices(ui, &format!("{id}Depth"), &[(16u8, "16-bit"), (8, "8-bit")], &mut file.bit_depth);
     });
-    row(ui, t, "", |ui| {
+    row(ui, t, crate::i18n::tr("Color space"), |ui| {
         choices(
             ui,
             &format!("{id}Space"),
@@ -764,7 +1023,10 @@ fn import_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
         let id = egui::Id::new("settingsIgnore");
         let value = d.ignore.join("\n");
         let mut text: String = ui.data(|m| m.get_temp(id)).unwrap_or(value.clone());
-        let r = ui.add(egui::TextEdit::multiline(&mut text).desired_rows(4).desired_width(f32::INFINITY).hint_text("*.fcpbundle"));
+        let r = ui.add(crate::widgets::text_box(
+            ui,
+            egui::TextEdit::multiline(&mut text).desired_rows(4).desired_width(f32::INFINITY).hint_text("*.fcpbundle"),
+        ));
         register(ui.ctx(), "field:settings.ignore", r.rect);
         if r.lost_focus()
             && text != value
@@ -819,7 +1081,8 @@ fn import_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
             row(ui, t, crate::i18n::tr("Album"), |ui| {
                 let id = egui::Id::new("auto-album");
                 let mut name = ui.data(|m| m.get_temp::<String>(id)).unwrap_or_else(|| d.auto_album.clone().unwrap_or_default());
-                let r = ui.add(egui::TextEdit::singleline(&mut name).hint_text(crate::i18n::tr("None")).desired_width(180.0));
+                let r = ui
+                    .add(crate::widgets::text_box(ui, egui::TextEdit::singleline(&mut name).hint_text(crate::i18n::tr("None")).desired_width(200.0)));
                 if r.lost_focus() {
                     let _ = app.run("library.autoImport", json!({"album": name.trim()}));
                 }
@@ -962,8 +1225,7 @@ fn smart_previews(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
     }
     let existing = ["move", "leave", "discard"][mode.min(2) as usize];
     let mut result = None;
-    ui.horizontal(|ui| {
-        ui.add_space(LABEL_W);
+    row(ui, t, "", |ui| {
         if app.services.pick_folder.is_some() {
             let r = ui.button(crate::i18n::tr("Choose Folder…"));
             register(ui.ctx(), "button:settingsSmartChoose", r.rect);
@@ -1043,7 +1305,7 @@ fn display_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
         let info = d.describe();
         if !screen {
             row(ui, t, crate::i18n::tr("File"), |ui| {
-                ui.label(RichText::new(&d.path).size(11.0).color(t.text_dim));
+                ui.add(egui::Label::new(RichText::new(&d.path).size(11.5).color(t.text_dim)).truncate()).on_hover_text(&d.path);
             });
         }
         row(ui, t, crate::i18n::tr("Type"), |ui| {
@@ -1149,13 +1411,19 @@ fn interface_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
 fn appearance(ui: &mut egui::Ui, t: &Tokens, s: &mut crate::state::AppSettings, system: Option<egui::Theme>) {
     use crate::state::{AppearanceMode as M, DarkTheme, LightTheme};
     heading(ui, t, crate::i18n::tr("Appearance"));
-    ui.label(RichText::new(crate::i18n::tr("Appearance Mode")).color(t.text_label));
-    ui.horizontal_wrapped(|ui| {
+    row(ui, t, crate::i18n::tr("Appearance Mode"), |ui| {
         choices(ui, "settingsAppearance", &[(M::Auto, "Sync with System"), (M::Dark, "Dark Mode"), (M::Light, "Light Mode")], &mut s.appearance_mode);
     });
-    ui.add_space(4.0);
+    card_end(ui, t);
+    ui.add_space(8.0);
     let light_active = s.theme(system) == s.light_theme.kind();
-    let available = ui.available_width();
+    // (in a Settings section, out to the edges of the cards above and below)
+    let mut area = ui.available_rect_before_wrap();
+    if let Some(col) = column(ui) {
+        area.min.x = col.left - CARD_PAD;
+        area.max.x = col.right + CARD_PAD;
+    }
+    let available = area.width();
     let mut cards = |ui: &mut egui::Ui, width: f32| {
         ui.spacing_mut().item_spacing.x = 12.0;
         let light: Vec<_> = LightTheme::ALL.iter().map(|l| (*l, l.kind())).collect();
@@ -1163,11 +1431,13 @@ fn appearance(ui: &mut egui::Ui, t: &Tokens, s: &mut crate::state::AppSettings, 
         let dark: Vec<_> = DarkTheme::ALL.iter().map(|d| (*d, d.kind())).collect();
         theme_card(ui, t, "Dark Theme", !light_active, &dark, &mut s.dark_theme, &mut s.favorite_themes, width);
     };
-    if available < 440.0 {
-        ui.vertical(|ui| cards(ui, available));
-    } else {
-        ui.horizontal_top(|ui| cards(ui, ((available - 12.0) / 2.0).floor()));
-    }
+    ui.scope_builder(egui::UiBuilder::new().max_rect(area), |ui| {
+        if available < 440.0 {
+            ui.vertical(|ui| cards(ui, available));
+        } else {
+            ui.horizontal_top(|ui| cards(ui, ((available - 12.0) / 2.0).floor()));
+        }
+    });
     ui.add_space(2.0);
 }
 
@@ -1185,12 +1455,12 @@ fn theme_card<V: PartialEq + Copy>(
 ) {
     egui::Frame::new()
         .fill(t.inset)
-        .stroke(egui::Stroke::new(1.0, if active { t.accent } else { t.field_border }))
-        .corner_radius(6)
+        .stroke(egui::Stroke::new(if active { 1.5 } else { 1.0 }, if active { t.accent } else { t.field_border }))
+        .corner_radius(f32::from(t.control_radius) + 4.0)
         .inner_margin(8)
         .show(ui, |ui| {
             ui.vertical(|ui| {
-                let inner = (width - 18.0).clamp(120.0, 240.0);
+                let inner = (width - 18.0).clamp(120.0, 320.0);
                 ui.set_width(inner);
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(crate::i18n::tr(title)).font(t.semibold(12.0)).color(t.text));
@@ -1405,7 +1675,10 @@ fn sync_cmd(app: &mut LightcraftApp, ui: &egui::Ui, id: &str, p: Value) {
 }
 
 fn sync_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
-    heading(ui, t, crate::i18n::tr("Sync"));
+    // (the desktop section's title says it)
+    if crate::is_compact(ui.ctx()) {
+        heading(ui, t, crate::i18n::tr("Sync"));
+    }
     hint(
         ui,
         t,

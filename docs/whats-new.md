@@ -2,6 +2,19 @@
 
 ## 2026-10-13
 
+### A clearer Settings window
+- Settings (⌘,) has its sections in a sidebar on the left, each with its own icon: General, Interface, Display, Import
+  and Performance, then the AI features, then Sync, which shows whether it is on. The section you open gets a title
+  and a line saying what it is for, and scrolls on its own, so the sidebar and Close stay where they are.
+- Settings are grouped on rounded cards under short headings: one row per setting, its name on the left and its
+  control on the right. On / off settings are switches, and the notes sit right under what they explain.
+  Long lists (the language) are drop-down menus, and long paths are cut short, with the full path on hover. This is
+  the same in every theme.
+
+### Roomier text boxes
+- Text boxes across the app (search, names, keywords, export and import fields, Settings) have more room around their
+  text, so they no longer feel cramped.
+
 ### Studio: a new look, in light and dark
 - Settings ▸ Interface (and View ▸ Appearance) has a new theme in each family, **Studio Light** and **Studio Dark**,
   in the style of the server's admin page. The panels float as rounded cards on a soft backdrop, with the tool strip as a
