@@ -1055,6 +1055,8 @@ mod tests_expand;
 #[cfg(test)]
 mod tests_export;
 #[cfg(test)]
+mod tests_external_edit;
+#[cfg(test)]
 mod tests_face_models;
 #[cfg(test)]
 #[cfg(not(target_arch = "wasm32"))]

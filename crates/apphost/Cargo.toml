@@ -1,0 +1,23 @@
+[package]
+name = "lightcraft-apphost"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "LightCraft frontend runtime (L4, above the engine): render scheduling, background pumps and the engine thread every UI shares"
+
+[lints]
+workspace = true
+
+[dependencies]
+lightcraft-engine = { workspace = true }
+lightcraft-catalog = { workspace = true }
+lightcraft-preview = { workspace = true }
+lightcraft-raster = { workspace = true }
+lightcraft-sysmem = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+log = { workspace = true }
+web-time = { workspace = true }
+
+[dev-dependencies]
+lightcraft-develop = { workspace = true }
