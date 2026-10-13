@@ -25,6 +25,7 @@ final class Prefs {
         mapTiles = store.object(forKey: "mapTiles") as? Bool ?? true
         maskOverlay = store.object(forKey: "maskOverlay") as? Bool ?? true
         maskPins = store.object(forKey: "maskPins") as? Bool ?? true
+        faceBoxes = store.bool(forKey: "faceBoxes")
         maskOverlayMode = store.string(forKey: "maskOverlayMode") ?? "color"
         maskOverlayColor = store.array(forKey: "maskOverlayColor") as? [Int] ?? [230, 30, 40]
         maskOverlayOpacity = store.object(forKey: "maskOverlayOpacity") as? Double ?? 50
@@ -112,6 +113,8 @@ final class Prefs {
     var maskOverlayOpacity: Double { didSet { store.set(maskOverlayOpacity, forKey: "maskOverlayOpacity") } }
     /// Masking: every mask's pin on the photo.
     var maskPins: Bool { didSet { store.set(maskPins, forKey: "maskPins") } }
+    /// The faces on a photo framed, their names under them.
+    var faceBoxes: Bool { didSet { store.set(faceBoxes, forKey: "faceBoxes") } }
 
     /// The steps a pinch moves the grid through.
     static let columnSteps = [1, 2, 3, 4, 5, 7, 10, 14]

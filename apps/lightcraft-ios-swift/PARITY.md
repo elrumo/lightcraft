@@ -18,9 +18,9 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | Phase | ✅ | 🟡 | ⬜ | 🚫 | Done or out of scope |
 |---|---:|---:|---:|---:|---:|
 | S0 | 9 | 6 | 0 | 0 | 9/15 |
-| S1 | 75 | 15 | 77 | 0 | 75/167 |
+| S1 | 92 | 15 | 60 | 0 | 92/167 |
 | S2 | 1 | 0 | 79 | 22 | 23/102 |
-| **Total** | 85 | 21 | 156 | 22 | 107/284 |
+| **Total** | 102 | 21 | 139 | 22 | 124/284 |
 <!-- /ios-parity:summary -->
 
 ## Screens
@@ -105,7 +105,7 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | ui:view.people | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/PeopleView.swift` | albums ▸ People, grid "…" ▸ People |
 | ui:view.map | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/PeopleView.swift` | grid "…" ▸ Map, Info ▸ the place |
 | ui:view.person | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/PeopleView.swift` | a named person opens their page |
-| ui:view.faceBoxes | S1 | ⬜ |  |  |
+| ui:view.faceBoxes | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/FacesOverlay.swift` | the photo's "…" ▸ Faces: boxes from `photo.faces`, names or `faces.suggest` guesses under them, a tap names one |
 | ui:view.reference | S2 | ⬜ |  |  |
 | ui:photo.setReference | S2 | ⬜ |  |  |
 | ui:compare.swap | S2 | ⬜ |  |  |
@@ -114,7 +114,7 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | ui:view.autoAdvance | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | Settings ▸ General ▸ Auto Advance |
 | ui:view.filmstrip | S2 | ⬜ |  |  |
 | ui:view.leftPanel | S2 | ⬜ |  |  |
-| ui:view.beforeAfter | S1 | ⬜ |  |  |
+| ui:view.beforeAfter | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | the photo's "…" ▸ Before / After: side by side on a wide screen, stacked on a tall one |
 | ui:view.beforeAfterSplit | S2 | ⬜ |  |  |
 | ui:view.beforeAfterTopBottom | S2 | ⬜ |  |  |
 | ui:view.beforeAfterSplitTopBottom | S2 | ⬜ |  |  |
@@ -163,19 +163,19 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | ui:dialog.syncChoice | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | the host asks (`ask {dialog: syncChoice}`); Settings ▸ Sync |
 | ui:panel.close | S1 | ⬜ |  |  |
 | ui:section.light | S0 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/EditGroupPanel.swift` | sliders from `develop.controls` |
-| ui:section.color | S1 | ⬜ |  |  |
-| ui:section.effects | S1 | ⬜ |  |  |
-| ui:section.detail | S1 | ⬜ |  |  |
-| ui:section.optics | S1 | ⬜ |  |  |
+| ui:section.color | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/EditGroupPanel.swift` | Edit ▸ Color |
+| ui:section.effects | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/EditGroupPanel.swift` | Edit ▸ Effects |
+| ui:section.detail | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/EditGroupPanel.swift` | Edit ▸ Detail |
+| ui:section.optics | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/EditGroupPanel.swift` | Edit ▸ Optics |
 | ui:tool.brush | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/MaskCanvas.swift` | Masking ▸ + ▸ Brush |
-| ui:tool.linear | S1 | ⬜ |  |  |
-| ui:tool.radial | S1 | ⬜ |  |  |
+| ui:tool.linear | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/MaskingScreen.swift` | Masking ▸ + ▸ Linear Gradient |
+| ui:tool.radial | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/MaskingScreen.swift` | Masking ▸ + ▸ Radial Gradient |
 | ui:tool.wbPicker | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/EditGroupPanel.swift` | Color ▸ eyedropper, then a tap on the photo |
-| ui:tool.none | S1 | ⬜ |  |  |
-| ui:brush.smaller | S1 | ⬜ |  |  |
-| ui:brush.larger | S1 | ⬜ |  |  |
-| ui:brush.featherLess | S1 | ⬜ |  |  |
-| ui:brush.featherMore | S1 | ⬜ |  |  |
+| ui:tool.none | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/MaskingScreen.swift` | the brush's Done |
+| ui:brush.smaller | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/MaskingScreen.swift` | the brush's Size slider (no keyboard on a phone) |
+| ui:brush.larger | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/MaskingScreen.swift` | the brush's Size slider |
+| ui:brush.featherLess | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/MaskingScreen.swift` | the brush's Feather slider |
+| ui:brush.featherMore | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/MaskingScreen.swift` | the brush's Feather slider |
 | ui:dialog.newAlbum | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/AlbumsSheet.swift` | albums ▸ +, grid "…", Add to Album |
 | ui:dialog.newFolder | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/AlbumsSheet.swift` | albums ▸ + ▸ Folder |
 | ui:dialog.smartAlbum | S1 | ⬜ |  |  |
@@ -187,7 +187,7 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | ui:view.secondWindow | S2 | ⬜ |  |  |
 | ui:tool.keywordPainter | S2 | ⬜ |  |  |
 | ui:view.gridInfo | S2 | ⬜ |  |  |
-| ui:view.appearance | S1 | ⬜ |  |  |
+| ui:view.appearance | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | Settings ▸ Interface ▸ Appearance |
 | ui:view.theme | S2 | 🚫 |  | the system appearance (`app.appearance.*`) is the theme on iOS |
 | ui:dialog.allMetadata | S1 | ⬜ |  |  |
 | ui:dialog.faceModel | S1 | ⬜ |  |  |
@@ -215,10 +215,10 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | ui:view.reviewMode | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | a tap on the photo |
 | ui:view.filterSheet | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/FilterSheet.swift` | the grid header's filter button |
 | ui:view.scrollToTop | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/GridView.swift` | the status bar tap (a native scroll view) |
-| ui:view.tagFace | S1 | ⬜ |  |  |
+| ui:view.tagFace | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/FacesOverlay.swift` | the photo's "…" ▸ Tag a Face: a tap marks a box there (`photo.addRegion {shown}`) and asks who it is |
 | ui:view.gridColumns | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/GridView.swift` | pinch |
 | ui:view.gridSpan | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LibraryScreen.swift` | Years / Months / All |
-| ui:file.addPhotos | S1 | ⬜ |  |  |
+| ui:file.addPhotos | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LibraryScreen.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Share/ImportModel.swift` | the library's Import menu (Photos, Files, a folder), then the review |
 | ui:file.importFromPhotos | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Share/ImportModel.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Share/ImportReview.swift` | the Photos picker (originals), then the review |
 | ui:file.importFromFiles | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Share/ImportModel.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Share/ImportReview.swift` | the Files picker, then the review |
 | ui:file.importFolderFromFiles | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Share/ImportModel.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Share/ImportReview.swift` | a folder (≤ 5000 photos, 12 levels), then the review |
@@ -264,7 +264,7 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | ui:dialog.captureTime | S2 | ⬜ |  |  |
 | ui:photo.tagFromTracklog | S2 | ⬜ |  |  |
 | ui:app.exportPrevious | S2 | ⬜ |  |  |
-| ui:app.saveToPhotos | S1 | ⬜ |  |  |
+| ui:app.saveToPhotos | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Share/ExportSheet.swift` | Share ▸ Save to Photos |
 | ui:app.language.english | S1 | ⬜ |  | iOS per-app language (Settings ▸ LightCraft ▸ Language) or an in-app override: open question (`docs/ios-swift.md`) |
 | ui:app.language.simplifiedChinese | S1 | ⬜ |  | iOS per-app language (Settings ▸ LightCraft ▸ Language) or an in-app override: open question (`docs/ios-swift.md`) |
 | ui:app.language.traditionalChinese | S1 | ⬜ |  | iOS per-app language (Settings ▸ LightCraft ▸ Language) or an in-app override: open question (`docs/ios-swift.md`) |

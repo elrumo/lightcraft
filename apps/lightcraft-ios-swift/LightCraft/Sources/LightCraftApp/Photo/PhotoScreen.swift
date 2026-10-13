@@ -180,8 +180,12 @@ struct ZoomablePhoto: View {
 
     var body: some View {
         let picture = showBefore ? (model.images.before(for: photo) ?? model.images.view(for: photo)) : model.images.view(for: photo)
+        let compare = model.editor.beforeAfter && model.editor.tool?.hasScreen != true
         ZStack {
-            if let picture {
+            if compare {
+                BeforeAfterView(photo: photo, wide: canvas.width > canvas.height)
+                    .padding(review ? 0 : margin)
+            } else if let picture {
                 Image(decorative: picture.image, scale: 1)
                     .resizable()
                     .scaledToFit()
@@ -203,6 +207,10 @@ struct ZoomablePhoto: View {
                 RemoveCanvas(photo: photo, rect: rect)
             } else if model.editor.tool == .masking, !showBefore, let rect = shownRect(picture) {
                 MaskCanvas(photo: photo, rect: rect)
+            } else if model.prefs.faceBoxes || model.editor.tagFace, model.editor.tool?.hasScreen != true, !compare, !showBefore, !review,
+                      let rect = shownRect(picture)
+            {
+                FacesOverlay(photo: photo, rect: rect)
             }
         }
         .overlay(alignment: .topLeading) { InfoOverlay(photo: photo).opacity(review ? 0 : 1) }
@@ -250,6 +258,10 @@ struct ZoomablePhoto: View {
         .task(id: request) {
             guard let r = request, !r.dragging else { return }
             model.requestView(r.photo, width: r.width, height: r.height, applyCrop: r.crop)
+            if compare { model.requestBefore(photo) }
+        }
+        .onChange(of: compare) { _, on in
+            if on { model.requestBefore(photo) }
         }
         .onChange(of: photo) {
             zoom = 1; zoomAtStart = 1; pan = .zero; panAtStart = .zero; zoomed = false
@@ -609,6 +621,15 @@ struct PhotoMoreMenu: View {
                 Button("Reset All Edits", systemImage: "arrow.counterclockwise") { model.perform("develop.reset") }
             }
             Section {
+                Toggle("Faces", systemImage: "person.crop.square", isOn: Binding(get: { model.prefs.faceBoxes }, set: { model.prefs.faceBoxes = $0 }))
+                Button("Tag a Face", systemImage: "person.crop.rectangle.badge.plus") {
+                    model.prefs.faceBoxes = true
+                    model.editor.tagFace = true
+                    if model.editor.tool?.hasScreen == true { model.editor.tool = .edit }
+                }
+                Toggle("Before / After", systemImage: "rectangle.split.2x1", isOn: Binding(get: { model.editor.beforeAfter }, set: { model.editor.beforeAfter = $0 }))
+            }
+            Section {
                 Button("Versions", systemImage: "square.stack") { model.sheet = .history(versions: true) }
                 Button("History", systemImage: "clock.arrow.circlepath") { model.sheet = .history(versions: false) }
                 Button("Keywords", systemImage: "tag") { model.sheet = .keywords }
@@ -681,6 +702,43 @@ struct ReviewHUD: View {
         .padding(.bottom, 24)
         .animation(.snappy, value: rating)
         .animation(.snappy, value: flag)
+    }
+}
+#endif
+
+#if os(iOS)
+/// Before / After: the photo as it was and as it is, side by side on a wide screen, one above the
+/// other on a tall one.
+struct BeforeAfterView: View {
+    @Environment(AppModel.self) private var model
+    let photo: UInt64
+    let wide: Bool
+
+    var body: some View {
+        let layout = wide ? AnyLayout(HStackLayout(spacing: 12)) : AnyLayout(VStackLayout(spacing: 12))
+        layout {
+            half(model.images.before(for: photo), "Before")
+            half(model.images.view(for: photo), "After")
+        }
+    }
+
+    private func half(_ picture: ImageStore.Picture?, _ label: LocalizedStringKey) -> some View {
+        Color.clear
+            .overlay {
+                if let picture {
+                    Image(decorative: picture.image, scale: 1).resizable().scaledToFit()
+                } else {
+                    ProgressView()
+                }
+            }
+            .overlay(alignment: .bottomLeading) {
+                Text(label)
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 10).padding(.vertical, 4)
+                    .glassEffect(.regular, in: .capsule)
+                    .padding(8)
+            }
+            .accessibilityElement(children: .combine)
     }
 }
 #endif

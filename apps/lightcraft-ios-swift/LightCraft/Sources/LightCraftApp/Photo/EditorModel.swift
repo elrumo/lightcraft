@@ -113,6 +113,10 @@ final class EditorModel {
     var brushFlow = 100.0
     var brushErase = false
     var brushAutoMask = false
+    /// Before / After: the photo as it was beside it as it is.
+    var beforeAfter = false
+    /// Tag a Face: the next tap on the photo marks a face there.
+    var tagFace = false
 
     enum Pick {
         case whiteBalance, pointColor
