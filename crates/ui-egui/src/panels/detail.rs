@@ -1748,6 +1748,14 @@ fn general_interaction(
     let two_fingers = touch_gestures(app, ui, img, canvas, native, aspect, zoomed);
     // (a finger lifting from a hold on the Before is no tap, and while it holds it doesn't pan)
     let (clicked, double_clicked) = (resp.clicked() && !held, resp.double_clicked() && !held);
+    // a double-click leaves the editor for the grid (the first click's zoom is taken back, so the
+    // photo isn't left magnified); on a touch layout the double tap zooms, below
+    if double_clicked && !app.compact {
+        app.ui.zoom = Zoom::Fit;
+        app.ui.zoom_anim = false;
+        let _ = app.run("view.back", json!({}));
+        return;
+    }
     // click toggles Fit ↔ the chosen click-zoom ratio at the clicked point; drag pans when zoomed.
     // On a touch layout only a double tap zooms (a single tap must not move the photo).
     if double_clicked || (clicked && !zoomed && !app.compact) {

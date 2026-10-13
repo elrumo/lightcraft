@@ -231,6 +231,9 @@ fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let zoom = if app.compact {
         let area = ui.available_rect_before_wrap();
         super::grid_zoom::update(app, ui, area, generation)
+    } else if let (Some(prev), Some(scroll)) = (app.caches.grid.layout.as_ref().map(|(_, l)| Arc::clone(l)), app.grid_scroll) {
+        // a desktop: a trackpad pinch sizes the thumbnails
+        super::grid_zoom::pinch_thumbs(app, ui, ui.available_rect_before_wrap(), &prev.cells, scroll)
     } else {
         super::grid_zoom::Zoom::none()
     };

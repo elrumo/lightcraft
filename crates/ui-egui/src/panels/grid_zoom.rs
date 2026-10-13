@@ -237,6 +237,26 @@ pub fn update(app: &mut LightcraftApp, ui: &egui::Ui, area: Rect, generation: u6
     zoom
 }
 
+/// A pinch on a desktop trackpad (or ⌘ / Ctrl + wheel) over the grid at `area`: the thumbnails grow
+/// as the fingers spread and shrink as they close, the photo under the pointer staying under it.
+/// `cells` and `scroll` are last frame's layout (the grid's own coordinates) and scroll offset.
+pub fn pinch_thumbs(app: &mut LightcraftApp, ui: &egui::Ui, area: Rect, cells: &[Rect], scroll: f32) -> Zoom {
+    let mut zoom = Zoom::none();
+    let (delta, hover) = ui.input(|i| (i.zoom_delta(), i.pointer.hover_pos()));
+    let Some(at) = hover.filter(|p| area.contains(*p)) else { return zoom };
+    // (the slider's range)
+    let size = (app.ui.thumb_size * delta).clamp(90.0, 480.0);
+    if !delta.is_finite() || delta <= 0.0 || (size - app.ui.thumb_size).abs() < 1e-3 {
+        return zoom;
+    }
+    app.ui.thumb_size = size;
+    let shift = egui::vec2(area.left(), area.top() - scroll);
+    let shown: Vec<(usize, Rect)> =
+        cells.iter().enumerate().map(|(i, c)| (i, c.translate(shift))).filter(|(_, r)| r.intersects(area)).collect();
+    (zoom.changed, zoom.focal, zoom.anchor) = (true, at, anchor(&shown, at));
+    zoom
+}
+
 /// The photo drawn under `focal` (else the nearest), and where in it `focal` is.
 fn anchor(rects: &[(usize, Rect)], focal: Pos2) -> Option<(usize, Vec2)> {
     let (i, r) = rects

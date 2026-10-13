@@ -1,5 +1,12 @@
 # What's new in LightCraft
 
+## 2026-10-13
+
+### Pinch the photo grid; double-click a photo to go back
+- On a Mac trackpad, pinching the photo grid makes the thumbnails bigger or smaller, as it does on the iPhone and iPad.
+  The photo under the pointer stays under it. ⌘ + scroll (Ctrl on Windows and Linux) does the same, and the slider in the bottom bar still works.
+- Double-clicking the photo in the editor takes you back to the grid. A single click still zooms to 1:1.
+
 ## 2026-10-12
 
 ### Preview before you import presets

@@ -3884,6 +3884,68 @@ mod tests {
         assert_eq!(h.app.ui.pan, (0.5, 0.5));
     }
 
+    /// A trackpad pinch over the desktop grid sizes the thumbnails (spreading: bigger) within the slider's
+    /// range, and the photo under the pointer stays under it.
+    #[test]
+    fn trackpad_pinch_sizes_the_grid_thumbnails_about_the_pointer() {
+        let mut h = demo([1000.0, 700.0]);
+        let t = Duration::from_secs(10);
+        h.app.ui.thumb_size = 100.0;
+        h.settle(SETTLE);
+        let thumbs = |h: &mut Headless| {
+            h.request("ui.widgets", json!({"filter": "thumb:"}), t);
+            h.step();
+            let w = h.request("ui.widgets", json!({"filter": "thumb:"}), t);
+            w["result"].as_array().cloned().unwrap_or_default()
+        };
+        let rect = |w: &serde_json::Value| {
+            let r: Vec<f32> = w["rect"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap() as f32).collect();
+            egui::Rect::from_min_size(egui::pos2(r[0], r[1]), egui::vec2(r[2], r[3]))
+        };
+        let all = thumbs(&mut h);
+        assert!(all.len() > 4, "{all:?}");
+        // a photo a few rows down, its centre under the pointer
+        let pick = all.iter().find(|w| rect(w).top() > 300.0).unwrap_or(&all[all.len() - 1]).clone();
+        let at = rect(&pick).center();
+        h.request("ui.move", json!({"x": at.x, "y": at.y}), t);
+        h.request("ui.zoom", json!({"factor": 1.5}), t);
+        h.settle(SETTLE);
+        assert!((h.app.ui.thumb_size - 150.0).abs() < 0.01, "{}", h.app.ui.thumb_size);
+        let id = pick["id"].as_str().unwrap();
+        let after = thumbs(&mut h).into_iter().find(|w| w["id"] == id).map(|w| rect(&w));
+        if let Some(r) = after {
+            assert!(r.y_range().contains(at.y), "the photo under the pointer moved away: {r:?} vs {at:?}");
+        }
+        h.request("ui.zoom", json!({"factor": 1e6}), t);
+        assert_eq!(h.app.ui.thumb_size, 480.0);
+        h.request("ui.zoom", json!({"factor": 1e-6}), t);
+        assert_eq!(h.app.ui.thumb_size, 90.0);
+        // over the toolbar the grid is not pinched
+        h.request("ui.move", json!({"x": 10, "y": 10}), t);
+        h.request("ui.zoom", json!({"factor": 2}), t);
+        assert_eq!(h.app.ui.thumb_size, 90.0);
+    }
+
+    /// A double-click on the photo in the editor goes back to the grid (it used to zoom).
+    #[test]
+    fn double_clicking_the_photo_in_the_editor_goes_back_to_the_grid() {
+        use crate::state::{ViewMode, Zoom};
+        let mut h = demo([1200.0, 760.0]);
+        let t = Duration::from_secs(10);
+        h.request("ui.set", json!({"view": "detail", "right": "edit"}), t);
+        h.settle(SETTLE);
+        // (a single click still zooms)
+        h.request("ui.clickWidget", json!({"id": "canvas:image"}), t);
+        h.settle(SETTLE);
+        assert!(matches!(h.app.ui.zoom, Zoom::Percent(_)), "{:?}", h.app.ui.zoom);
+        h.request("ui.set", json!({"zoom": "fit"}), t);
+        h.settle(SETTLE);
+        h.request("ui.clickWidget", json!({"id": "canvas:image", "count": 2}), t);
+        h.settle(SETTLE);
+        assert_eq!(h.app.ui.view, ViewMode::PhotoGrid);
+        assert_eq!(h.app.ui.zoom, Zoom::Fit);
+    }
+
     #[test]
     fn mouse_wheel_zooms_the_loupe_with_and_without_ctrl() {
         use crate::state::Zoom;
