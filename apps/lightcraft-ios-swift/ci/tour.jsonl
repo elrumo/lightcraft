@@ -1,0 +1,15 @@
+{"method": "host.state"}
+{"sleep": 2000}
+{"method": "ui.screenshot", "params": {"path": "tour-grid.png"}}
+{"method": "ui.set", "params": {"screen": "photo"}}
+{"sleep": 3000}
+{"method": "ui.screenshot", "params": {"path": "tour-loupe.png"}}
+{"method": "ui.set", "params": {"screen": "edit"}}
+{"sleep": 1500}
+{"method": "engine.execute", "params": {"command": "develop.set", "params": {"control": "light.exposure", "value": 1.0}}}
+{"sleep": 3000}
+{"method": "ui.screenshot", "params": {"path": "tour-edit.png"}}
+{"method": "ui.set", "params": {"screen": "commands"}}
+{"sleep": 1500}
+{"method": "ui.screenshot", "params": {"path": "tour-commands.png"}}
+{"method": "ui.inspect"}
