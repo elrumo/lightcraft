@@ -129,9 +129,10 @@ screens, tabs on a phone), follows the system's light or dark mode, and confirms
 - **Overview:** users, photos, signed-in devices and free disk space at a glance; **Connect a device** (the address
   to type into Settings ▸ Sync on each device, the one you opened the page with, with a Copy button); and the
   server's details: version, data folder, the address it listens on, whether it serves the web build.
-- **Users:** every user with their photo, album and device counts and storage used; **Add user**. Open a user for
-  their page: reset the password, make or remove an admin, remove the user (their files stay in `users/NAME/` until
-  you delete them), and two tabs:
+- **Users:** every user with their photo, album and device counts and storage used (the files the server keeps for
+  them *and* the photos in their library folders, which it only reads: a user page says how much of it is each);
+  **Add user**. Open a user for their page: reset the password, make or remove an admin, remove the user (their
+  files stay in `users/NAME/` until you delete them), and two tabs:
   - **Devices:** their signed-in devices (name, id, when signed in, last seen); sign one out (it must sign in again).
   - **Shared links:** the [album links](#share-an-album) they made; revoke one.
   - **Library folders:** their [library folders](#library-folders-photos-already-on-the-server): add one (a path on
@@ -145,7 +146,7 @@ screens, tabs on a phone), follows the system's light or dark mode, and confirms
   finds the faces in photos, one person at a time because faces are personal data. Each needs a model: if it isn't on
   the server yet the page shows its size and licence, downloads it onto the server (resumable, you can leave the page)
   and turns it on. Turning a switch off keeps the files. It also shows how far each user's photos have got.
-- **Storage:** the disk holding the data folder (used and free), storage used by each user, and photo-file clean-up
+- **Storage:** the disk holding the data folder (used and free), storage used by each user (as above), and photo-file clean-up
   (**Check for unused files** = `gc --dry-run`, then **Remove files** = `gc`).
 
 **First run:** while no user is an admin, the server prints a one-time **setup code** to its log
@@ -330,8 +331,9 @@ trouble) and opens, as Lightroom's cloud does, a panel (`view.syncStatus`, File 
   uploaded), indexing photos for search, reading the text in them, finding people — or that it has nothing to do
   (and when the folders were last scanned); files or folders in the library folders it couldn't read (listed on the
   admin page). Asked of `GET /api/activity` every 2 seconds, only while the panel is open.
-- **Storage:** what the library takes on the server, as a share of its disk with what is left free, and how many
-  photos are read in place from library folders.
+- **Storage:** what the library takes on the server in all (what the server keeps of it, plus the photos read in
+  place from library folders), as a share of its disk with what is left free, and how much of the total is those
+  photos.
 - **Pause / Resume**, **Sync Now** and the gear (Settings ▸ Sync), always at the bottom: when the server has a lot
   to do on a small screen, the sections between the status and the buttons scroll.
 
@@ -374,16 +376,18 @@ Each device keeps the **whole catalog** (it's small) and **downloads pixels as n
 **Settings ▸ Sync ▸ Storage** shows what this library takes, refreshed while the page is open (**Refresh** asks
 at once):
 
-- **On the server:** the originals it keeps, smart previews and small previews (each with its file count), their
-  total, the **library folders** (photos read where they are on the server, never copied, so not in the total) and
-  how much room the server's disk has left (the bar: this library, everything else, free).
+- **On the server:** the originals it keeps, smart previews and small previews (each with its file count), the
+  **library folders** (photos read where they are on the server and never copied: LightCraft keeps only their
+  previews, but they take that room too), the **total** of all those rows, and how much room the server's disk has
+  left (the bar: this library, everything else, free). A library folder is drawn in the bar only when it is on the same
+  disk as the server's data (a folder on another disk takes room there, not here); the total counts it either way.
 - **On this computer:** the originals downloaded from the server, smart and small previews, the thumbnail cache,
   copies imported into the library, the catalog and edits, their total and the disk's free space. Photos you
   imported from folders on this computer stay where they are and aren't counted. The header says how many photos
   have only previews here.
 
 The same numbers, in bytes, are the `sync.usage` command (`lightcraft-cli run --library DIR sync.usage refresh=true`,
-MCP, control channel). Disk space comes from `df`, so it's missing on Windows and in the browser.
+MCP, control channel); `serverTotal` is the server's total. Disk space comes from `df`, so it's missing on Windows and in the browser.
 
 ## Share an album
 
@@ -479,7 +483,7 @@ Big JSON answers (the library, pulled changes; 16 KiB and up) come gzipped to a 
 | `POST /api/logout` | signs this device out |
 | `GET /api/me` | `{user, device, library, devices}` |
 | `GET /api/snapshot?limit=N[&compact=1][&cursor=C]` | `{defaults, library, seq, catalog, next, total}`: the library after change `seq`, in pages of at most `N` photos (and about 8 MiB), like a cloud photo service's asset listing. With `compact=1` each photo's develop settings (edit, import look, versions) are a JSON merge patch (RFC 7396) against the page's `defaults` (the server's default settings, written first), so an unedited photo takes a few hundred bytes, not ~4 KB, and a default changed in a later version changes no photo. The first page (no `cursor`) also has the albums, stacks and the rest; each page's `next` is the next page's `cursor`, absent on the last; `total` is the library's photo count. Every page comes from the copy taken at the first page, however the library changes meanwhile; the device adopts it after the last page, then pulls the changes since `seq`. `410`: that copy is gone (the server keeps four, and a restart keeps none unless nothing changed): start again. Without `limit` (devices from before paging): the whole library in one answer |
-| `GET /api/usage` | what this user takes on the server ([`proto::Usage`](../crates/catalog/src/sync.rs)): `{photos, albums, devices, original, smart, mini, folders: {files, bytes}, disk: {total, free}}`; a few seconds old at most. A server older than the route answers `404` |
+| `GET /api/usage` | what this user takes on the server ([`proto::Usage`](../crates/catalog/src/sync.rs)): `{photos, albums, devices, original, smart, mini, folders: {files, bytes}, foldersOnDisk, disk: {total, free}}`; a few seconds old at most. `original`, `smart` and `mini` are the files the server keeps; `folders` the photos it reads in place from the user's library folders, and `foldersOnDisk` how many of their bytes are on the same disk as its data. What the library takes in all is `original + smart + mini + folders`; `foldersOnDisk` is for the disk's bar (a server that doesn't say it has none on its disk). A server older than the route answers `404` |
 | `GET /api/activity` | what the server is doing for this user now ([`proto::Activity`](../crates/catalog/src/sync.rs)): `{scan: {scanning, phase, done, todo, files, etaSecs, lastScan, problems} \| null, previews: {done, total, etaSecs}, search, text, faces: {done, total, etaSecs} \| null}`; `scan` is null for a user without library folders, the others null when not installed / not turned on. A server older than the route answers `404` |
 | `GET /api/ops?since=N&limit=M` | `{head, ops: [[seq, op]…], presets}` (presets = the presets document's version) · `410`: reload the snapshot |
 | `POST /api/ops` | `{base, ops}` → `200 {head}` · `409 {head}` (behind: pull first) · `422 {index, error}` (op `index` doesn't apply; nothing was) |

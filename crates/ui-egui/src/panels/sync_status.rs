@@ -755,13 +755,14 @@ fn ago(unix_secs: u64) -> String {
 
 // -------------------------------------------------------------------------------------- Storage
 
-/// What this library takes (the accent's dot and share of the bar), the rest of the server's disk
-/// in use (grey) and what is free; then the photos read in place from library folders.
+/// What this library takes in all (the accent's dot), its share of the server's disk (the accent's
+/// part of the bar), the rest of the disk in use (grey) and what is free; then how much of the total
+/// is photos read in place from library folders.
 fn storage(ui: &mut egui::Ui, t: &Tokens, u: &proto::Usage) {
     const BAR: f32 = 6.0;
     ui.add_space(12.0);
     let w = ui.available_width();
-    let value_g = ui.painter().layout_no_wrap(bytes_label(u.stored()), t.semibold(15.0), t.text);
+    let value_g = ui.painter().layout_no_wrap(bytes_label(u.total()), t.semibold(15.0), t.text);
     let label_g = one_line(ui, crate::i18n::tr("This library"), t.font(15.0), t.text, w - 14.0 - value_g.size().x - 10.0);
     let (r, _) = ui.allocate_exact_size(vec2(w, label_g.size().y.max(value_g.size().y)), Sense::hover());
     let p = ui.painter();
@@ -777,7 +778,7 @@ fn storage(ui: &mut egui::Ui, t: &Tokens, u: &proto::Usage) {
         let p = ui.painter();
         p.rect_filled(r, BAR / 2.0, track(ui.ctx(), t));
         p.rect_filled(Rect::from_min_max(r.min, pos2(at(used), r.bottom())), BAR / 2.0, t.text_dim.gamma_multiply(0.75));
-        let ours = u.stored().min(used);
+        let ours = u.on_disk().min(used);
         if ours > 0 {
             p.rect_filled(Rect::from_min_size(r.min, vec2((at(ours) - r.left()).max(BAR), BAR)), BAR / 2.0, t.accent);
         }
@@ -786,7 +787,10 @@ fn storage(ui: &mut egui::Ui, t: &Tokens, u: &proto::Usage) {
     }
     if u.folders.files > 0 {
         ui.add_space(3.0);
-        text(ui, 12.5, t.text_dim, format!("{} {}", count_label(u.folders.files), crate::i18n::tr("photos from library folders, not copied")));
+        let tr = crate::i18n::tr;
+        let line =
+            format!("{} {} ({}) {}", tr("Includes"), photos(u.folders.files), bytes_label(u.folders.bytes), tr("read in place from library folders"));
+        text(ui, 12.5, t.text_dim, line);
     }
     ui.add_space(12.0);
 }

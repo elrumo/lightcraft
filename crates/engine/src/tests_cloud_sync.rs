@@ -1383,12 +1383,14 @@ fn storage_numbers_come_from_the_server_and_from_this_computer() {
     assert_eq!((u.original.files, u.smart.files, u.mini.files), (2, 2, 2));
     assert_eq!(u.original.bytes, bytes("original"));
     assert_eq!(u.stored(), bytes("original") + bytes("smart") + bytes("mini"));
+    assert_eq!(u.total(), u.stored(), "this server reads no library folders");
     assert_eq!((u.photos, u.disk), (2, Some(proto::Disk { total: 1000, free: 400 })));
     assert!(a.sync_state().unwrap().usage_error().is_none());
 
     // the command says both sides: this device made the previews it uploaded
     let r = a.execute("sync.usage", &json!({})).unwrap();
     assert_eq!(r["server"]["original"]["files"], 2, "{r}");
+    assert_eq!(r["serverTotal"].as_u64(), Some(u.total()), "{r}");
     assert_eq!(r["photos"], json!({"total": 2, "onlyPreviewsHere": 0}));
     assert_eq!(r["local"]["smart"]["files"], 2, "{r}");
     assert_eq!(r["local"]["mini"]["files"], 2, "{r}");

@@ -479,6 +479,77 @@ fn the_popover_shows_a_server_scanning_its_folders() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// With `LIGHTCRAFT_TEST_SHOTS` set, a picture of the screen (light and dark) goes there as `name-light.png` and `name-dark.png`.
+fn shot(h: &mut Headless, name: &str) {
+    let Some(dir) = std::env::var_os("LIGHTCRAFT_TEST_SHOTS") else { return };
+    for mode in ["light", "dark"] {
+        let r = h.request("engine.execute", json!({"command": format!("app.appearance.{mode}")}), T);
+        assert_eq!(r["ok"], true, "{r}");
+        frames(h, 20);
+        let path = std::path::Path::new(&dir).join(format!("{name}-{mode}.png"));
+        let r = h.request("ui.screenshot", json!({"path": path.to_string_lossy(), "headless": true}), T);
+        assert_eq!(r["ok"], true, "{r}");
+    }
+}
+
+/// A library whose photos are read in place from the server's library folders (2.5 TB of them, with
+/// 104 GB of previews kept): its storage is the 2.6 TB, in Settings ▸ Sync ▸ Storage and in the
+/// popover. Both said 104 GB, as if the photos weren't there.
+#[test]
+fn the_storage_total_counts_the_photos_read_in_place_from_library_folders() {
+    let usage = json!({
+        "photos": 192_870u64,
+        "smart": {"files": 147_821u64, "bytes": 98_000_000_000u64},
+        "mini": {"files": 147_823u64, "bytes": 5_800_000_000u64},
+        "folders": {"files": 192_438u64, "bytes": 2_500_000_000_000u64},
+        "foldersOnDisk": 2_500_000_000_000u64,
+        "disk": {"total": 28_800_000_000_000u64, "free": 10_700_000_000_000u64},
+    });
+    let desktop = [1280.0, 1400.0];
+
+    // Settings ▸ Sync ▸ Storage: the library folders are a row of the sum, the total is the sum
+    let (mut h, root) = app("total-settings", &[], exec_busy(proto::Activity::default(), usage.clone(), Default::default()), desktop);
+    sign_in(&mut h);
+    run(&mut h, "app.settings", json!({"tab": "sync"}));
+    assert!(h.step_until(T, |h| h.app.session.sync_state().is_some_and(|st| st.usage().is_some())), "the server was asked");
+    frames(&mut h, 10);
+    let text = h.painted_text();
+    let at = |what: &str| text.iter().position(|t| t == what).unwrap_or_else(|| panic!("`{what}` isn't on screen: {text:?}"));
+    assert_eq!(text[at("Library folders") + 1], "2.5 TB · 192,438 files", "{text:?}");
+    assert!(at("Library folders") < at("Total"), "the total comes after the rows it adds up: {text:?}");
+    assert_eq!(text[at("Total") + 1], "2.6 TB", "previews and photos: {text:?}");
+    assert!(!text.iter().any(|t| t == "104 GB"), "not just the previews' 104 GB: {text:?}");
+    shot(&mut h, "storage-settings");
+    drop(h);
+    let _ = std::fs::remove_dir_all(&root);
+
+    // the popover: the same total, and how much of it is read in place
+    let (mut h, root) = app("total-popover", &[], exec_busy(proto::Activity::default(), usage, Default::default()), desktop);
+    sign_in(&mut h);
+    tap_no_settle(&mut h, "icon:cloud");
+    assert!(h.step_until(T, |h| h.app.session.sync_state().is_some_and(|st| st.usage().is_some())), "the server was asked");
+    frames(&mut h, 10);
+    let text = h.painted_text();
+    assert!(text.iter().any(|t| t == "2.6 TB"), "{text:?}");
+    assert!(text.iter().any(|t| t == "Includes 192,438 photos (2.5 TB) read in place from library folders"), "{text:?}");
+    assert!(!text.iter().any(|t| t == "104 GB"), "{text:?}");
+    shot(&mut h, "storage-popover");
+    drop(h);
+    let _ = std::fs::remove_dir_all(&root);
+
+    // a server with no library folders: what it keeps is the total, and nothing is said of folders
+    let (mut h, root) = app("total-none", &[], exec(0, proto::Activity::default()), desktop);
+    sign_in(&mut h);
+    tap_no_settle(&mut h, "icon:cloud");
+    assert!(h.step_until(T, |h| h.app.session.sync_state().is_some_and(|st| st.usage().is_some())), "the server was asked");
+    frames(&mut h, 10);
+    let text = h.painted_text();
+    assert!(text.iter().any(|t| t == "3.0 GB"), "{text:?}");
+    assert!(!text.iter().any(|t| t.starts_with("Includes ")), "{text:?}");
+    drop(h);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// A server with everything to do, on a small phone: the sections scroll between the status and the
 /// buttons, which stay in reach (they used to scroll away under the sections).
 #[test]
