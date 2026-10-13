@@ -276,7 +276,7 @@ fn entrance(ui: &egui::Ui, rect: Rect) -> (f32, f32) {
 /// The disclosure triangle at the left of a tree row (`indent` is the row's): right-pointing
 /// when closed, down when open, registered as widget `widget` for the control channel. Returns
 /// its response: the caller flips the open state on `clicked()`.
-fn disclosure_triangle(ui: &mut egui::Ui, row: &egui::Response, indent: f32, open: bool, id: egui::Id, widget: String) -> egui::Response {
+fn disclosure_triangle(ui: &mut egui::Ui, row: &egui::Response, indent: f32, turn: f32, id: egui::Id, widget: String) -> egui::Response {
     let t = Tokens::get(ui.ctx());
     if crate::is_compact(ui.ctx()) {
         // a phone's: a chevron at the row's end (where the count was), finger-sized, as iOS's outline lists have it
@@ -285,10 +285,9 @@ fn disclosure_triangle(ui: &mut egui::Ui, row: &egui::Response, indent: f32, ope
         let tr = ui.interact(hit, id, Sense::click());
         register(ui.ctx(), widget, hit);
         let (dy, alpha) = entrance(ui, row.rect);
-        let icon = if open { Icon::ChevronDown } else { Icon::ChevronRight };
         let mut p = ui.painter().clone();
         p.multiply_opacity(alpha);
-        paint(&p, Rect::from_center_size(hit.center() + vec2(0.0, dy), vec2(16.0, 16.0)), icon, t.text_dim);
+        crate::icons::paint_turned(&p, Rect::from_center_size(hit.center() + vec2(0.0, dy), vec2(16.0, 16.0)), Icon::ChevronRight, t.text_dim, turn);
         return tr;
     }
     let c = pos2(row.rect.left() + 10.0 + indent, row.rect.center().y);
@@ -296,7 +295,7 @@ fn disclosure_triangle(ui: &mut egui::Ui, row: &egui::Response, indent: f32, ope
     let tr = ui.interact(tri, id, Sense::click());
     register(ui.ctx(), widget, tri);
     let col = if tr.hovered() { t.text } else { t.text_dim };
-    ui.painter().add(egui::Shape::convex_polygon(triangle_points(c, open), col, egui::Stroke::NONE));
+    ui.painter().add(egui::Shape::convex_polygon(triangle_points(c, turn), col, egui::Stroke::NONE));
     tr
 }
 
@@ -314,7 +313,8 @@ fn set_tree_open(ui: &egui::Ui, key: egui::Id, open: bool) {
 /// Keywords): a click flips `open` and remembers it under `key`. Returns the triangle's response
 /// (it sits on the row and takes its clicks, so a row's context menu is attached to it too).
 fn tree_toggle(ui: &mut egui::Ui, row: &egui::Response, indent: f32, key: egui::Id, open: &mut bool, widget: String) -> egui::Response {
-    let tri = disclosure_triangle(ui, row, indent, *open, key.with("triangle"), widget);
+    let turn = crate::motion::chevron_turn(ui.ctx(), key, *open);
+    let tri = disclosure_triangle(ui, row, indent, turn, key.with("triangle"), widget);
     if tri.clicked() {
         *open = !*open;
         set_tree_open(ui, key, *open);
@@ -324,13 +324,11 @@ fn tree_toggle(ui: &mut egui::Ui, row: &egui::Response, indent: f32, key: egui::
     tri
 }
 
-/// A disclosure triangle around `c`: pointing down when open, right when closed.
-fn triangle_points(c: egui::Pos2, open: bool) -> Vec<egui::Pos2> {
-    if open {
-        vec![c + vec2(-4.0, -2.0), c + vec2(4.0, -2.0), c + vec2(0.0, 3.0)]
-    } else {
-        vec![c + vec2(-2.0, -4.0), c + vec2(3.0, 0.0), c + vec2(-2.0, 4.0)]
-    }
+/// A disclosure triangle around `c`: pointing right when closed, turned `turn` radians clockwise
+/// (a quarter turn points it down: open).
+fn triangle_points(c: egui::Pos2, turn: f32) -> Vec<egui::Pos2> {
+    let (s, k) = turn.sin_cos();
+    [vec2(-2.0, -4.0), vec2(3.0, 0.0), vec2(-2.0, 4.0)].into_iter().map(|v| c + vec2(v.x * k - v.y * s, v.x * s + v.y * k)).collect()
 }
 
 /// A heading (My Photos, a section's title…) at `at` in `font` and `color`; on a phone iOS's larger,
@@ -388,14 +386,19 @@ fn section(
         }
     }
     let open = section_header(app, ui, section, header, rows, false).open;
-    if open {
+    crate::motion::fold(ui, section_fold_id(section), open, |ui| {
         let rows_from = ui.cursor().top();
         body(app, ui);
         if ui.cursor().top() <= rows_from {
             empty_hint(ui, section);
         }
-    }
+    });
     PlacedSection { section, top: header.top(), bottom: ui.cursor().top(), open, rows }
+}
+
+/// What a sidebar section's rows fold under (`motion::fold`).
+fn section_fold_id(section: SidebarSection) -> egui::Id {
+    egui::Id::new(("sidebar-section", section.id()))
 }
 
 /// Where what the panel shows of the sidebar's content ends (screen x): the content is wider
@@ -575,11 +578,13 @@ fn section_header(app: &mut LightcraftApp, ui: &mut egui::Ui, section: SidebarSe
         let title = heading(ui, pos2(r.left() + 18.0, r.center().y), section.title(), t.semibold(13.5), t.text_label);
         let c = pos2(title.right() + 14.0, r.center().y + 1.0);
         register(ui.ctx(), format!("{widget}Chevron:{id}"), Rect::from_center_size(c, vec2(14.0, 14.0)));
-        paint(ui.painter(), Rect::from_center_size(c, vec2(14.0, 14.0)), if open { Icon::ChevronDown } else { Icon::ChevronRight }, t.text_dim);
+        let turn = crate::motion::chevron_turn(ui.ctx(), section_fold_id(section), open);
+        crate::icons::paint_turned(ui.painter(), Rect::from_center_size(c, vec2(14.0, 14.0)), Icon::ChevronRight, t.text_dim, turn);
     } else {
         let c = pos2(r.left() + 10.0, r.center().y);
         register(ui.ctx(), format!("{widget}Chevron:{id}"), Rect::from_center_size(c, vec2(14.0, 14.0)));
-        ui.painter().add(egui::Shape::convex_polygon(triangle_points(c, open), col, egui::Stroke::NONE));
+        let turn = crate::motion::chevron_turn(ui.ctx(), section_fold_id(section), open);
+        ui.painter().add(egui::Shape::convex_polygon(triangle_points(c, turn), col, egui::Stroke::NONE));
         heading(ui, pos2(r.left() + 18.0, r.center().y), section.title(), t.semibold(13.5), t.text_label);
     }
     let button = header_button(section);
@@ -1019,18 +1024,25 @@ fn albums_rows(app: &mut LightcraftApp, ui: &mut egui::Ui, reveal: Option<u64>) 
 fn date_rows(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let groups = app.caches.date_groups(&app.session.catalog);
     for g in groups.iter() {
-        if date_row(app, ui, &g.year, &crate::i18n::date_group_label(&g.year, true), g.count, 0.0) {
+        let open = date_row(app, ui, &g.year, &crate::i18n::date_group_label(&g.year, true), g.count, 0.0);
+        crate::motion::fold(ui, date_open_id(&g.year), open, |ui| {
             for (m, n) in &g.months {
                 let label = crate::i18n::date_group_label(m, true);
-                if date_row(app, ui, m, &label, *n, 16.0) {
+                let open = date_row(app, ui, m, &label, *n, 16.0);
+                crate::motion::fold(ui, date_open_id(m), open, |ui| {
                     for (d, n) in g.days.iter().filter(|(d, _)| d.starts_with(m.as_str())) {
                         let label = crate::i18n::date_group_label(d, true);
                         date_row(app, ui, d, &label, *n, 32.0);
                     }
-                }
+                });
             }
-        }
+        });
     }
+}
+
+/// Where whether the By Date row `key` is open is kept (and what its rows fold under).
+fn date_open_id(key: &str) -> egui::Id {
+    egui::Id::new(("date-open", key.to_string()))
 }
 
 /// How many library photos have no file (Local browse records are not checked; see
@@ -1385,16 +1397,16 @@ fn folder_tree(
             let _ = f(path);
         }
     });
-    if open && indent < 12.0 * 8.0 {
+    crate::motion::fold(ui, open_id, open && indent < 12.0 * 8.0, |ui| {
         for (n, p) in subfolders(ui, path) {
             folder_tree(app, ui, &n, &p, indent + 12.0, current, reveal, false);
         }
-    }
+    });
 }
 
 /// One By Date row (`key`: `YYYY`, `YYYY-MM` or `YYYY-MM-DD`); returns whether it is open.
 fn date_row(app: &mut LightcraftApp, ui: &mut egui::Ui, key: &str, label: &str, count: usize, indent: f32) -> bool {
-    let open_id = egui::Id::new(("date-open", key.to_string()));
+    let open_id = date_open_id(key);
     let mut open = tree_open(ui, open_id, false);
     let sel = app.session.filter.date.as_deref() == Some(key);
     let resp = row(app, ui, &format!("date:{key}"), Icon::Clock, label, Some(count), sel, indent);
@@ -1463,9 +1475,7 @@ fn albums_tree(app: &mut LightcraftApp, ui: &mut egui::Ui, all: &AlbumKids, pare
                 set_tree_open(ui, open_id, !open);
             }
             album_row_menu(app, ui, &resp, a, phone);
-            if draw_open {
-                albums_tree(app, ui, all, Some(a.id), indent + 16.0, open_to);
-            }
+            crate::motion::fold(ui, open_id, draw_open, |ui| albums_tree(app, ui, all, Some(a.id), indent + 16.0, open_to));
         } else {
             let sel = app.session.source == LibrarySource::Album(a.id);
             let icon = if a.is_smart() { Icon::SmartAlbum } else { Icon::Album };
@@ -2124,9 +2134,7 @@ fn folder_rows(app: &mut LightcraftApp, ui: &mut egui::Ui, nodes: &[FolderNode],
             }
         }
         row_menu(app, &resp, n);
-        if open && !n.children.is_empty() {
-            folder_rows(app, ui, &n.children, indent + 16.0);
-        }
+        crate::motion::fold(ui, open_id, open && !n.children.is_empty(), |ui| folder_rows(app, ui, &n.children, indent + 16.0));
     }
 }
 
@@ -2325,9 +2333,7 @@ fn server_folder_rows(app: &mut LightcraftApp, ui: &mut egui::Ui, all: &std::col
                 }
             }
         });
-        if open {
-            server_folder_rows(app, ui, all, path, indent + 16.0);
-        }
+        crate::motion::fold(ui, open_id, open, |ui| server_folder_rows(app, ui, all, path, indent + 16.0));
     }
 }
 
@@ -2368,9 +2374,7 @@ fn keyword_rows(app: &mut LightcraftApp, ui: &mut egui::Ui, nodes: &[KeywordNode
                 let _ = app.run("keyword.delete", json!({"keyword": n.path}));
             }
         });
-        if open && !n.children.is_empty() {
-            keyword_rows(app, ui, &n.children, indent + 16.0);
-        }
+        crate::motion::fold(ui, open_id, open && !n.children.is_empty(), |ui| keyword_rows(app, ui, &n.children, indent + 16.0));
     }
 }
 

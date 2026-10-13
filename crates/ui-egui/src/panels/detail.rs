@@ -365,13 +365,10 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let full = ui.max_rect();
     let fullscreen = app.ui.fullscreen;
     // the compact layout has no filmstrip (it would eat the loupe)
-    let show_film = app.ui.filmstrip && !fullscreen && !app.compact;
-    let film_h = if show_film { t.film_h } else { 0.0 };
+    let film_h = film_height(ui.ctx(), app.ui.filmstrip, !fullscreen && !app.compact);
     let canvas = Rect::from_min_max(full.min, pos2(full.right(), full.bottom() - film_h));
     app.canvas_rect = Some(canvas);
-    if show_film {
-        filmstrip(app, ui, Rect::from_min_max(pos2(full.left(), canvas.bottom()), full.max));
-    }
+    filmstrip_rising(app, ui, full, film_h);
     let Some(id) = app.session.active() else {
         super::empty_message(ui, canvas, "No photo selected", "Choose a photo in the grid or filmstrip");
         return;
@@ -1416,6 +1413,61 @@ pub struct Homing {
 
 /// How long the photo takes to fly back to its place in the grid (s).
 pub const HOMING_S: f64 = 0.32;
+
+/// Where the active photo's thumbnail was drawn in the grid, and in which frame: the whole photo's
+/// rect (past the cell's edges where the cell shows only its middle). A photo opened from the grid
+/// grows out of it.
+#[derive(Clone, Copy, Debug)]
+struct Tile {
+    photo: u64,
+    rect: Rect,
+    frame: u64,
+}
+
+/// The grid drew the active photo `id`'s thumbnail at `shown`, the part `uv` of the photo.
+pub(crate) fn note_tile(ctx: &egui::Context, id: PhotoId, shown: Rect, uv: Rect) {
+    let size = vec2(shown.width() / uv.width().max(1e-3), shown.height() / uv.height().max(1e-3));
+    let rect = Rect::from_min_size(shown.min - vec2(uv.min.x * size.x, uv.min.y * size.y), size);
+    let frame = ctx.cumulative_frame_nr();
+    ctx.data_mut(|d| d.insert_temp(egui::Id::new("grid-active-tile"), Tile { photo: id.0, rect, frame }));
+}
+
+/// Call each frame before the view is drawn: when it has just changed between the grid and the
+/// photo, a photo opened from the grid grows out of its thumbnail, and one put away flies back to
+/// its place there ([`homing`], drawn by the grid).
+pub(crate) fn view_changed(app: &mut LightcraftApp, ctx: &egui::Context) {
+    use crate::state::ViewMode;
+    let key = egui::Id::new("view-shown");
+    let now = app.ui.view;
+    let was = ctx
+        .data_mut(|d| {
+            let was = d.get_temp::<ViewMode>(key);
+            d.insert_temp(key, now);
+            was
+        })
+        .unwrap_or(now);
+    let grid = |v: ViewMode| matches!(v, ViewMode::PhotoGrid | ViewMode::SquareGrid);
+    let active = app.session.active();
+    if grid(was) && now == ViewMode::Detail {
+        let tile: Option<Tile> = ctx.data(|d| d.get_temp(egui::Id::new("grid-active-tile")));
+        // (drawn in the frame before: the grid was on show with this photo in it)
+        if let Some(tile) = tile.filter(|t| Some(PhotoId(t.photo)) == active && t.frame + 2 >= ctx.cumulative_frame_nr()) {
+            let id = egui::Id::new("loupe_anim");
+            let r = tile.rect;
+            for (k, v) in [("cx", r.center().x), ("cy", r.center().y), ("w", r.width()), ("h", r.height())] {
+                let _ = ctx.animate_value_with_time(id.with(k), v, 0.0);
+            }
+            app.ui.zoom_anim = true;
+        }
+    } else if was == ViewMode::Detail
+        && grid(now)
+        && homing(ctx).is_none()
+        && let (Some(id), Some(from)) = (active, app.image_rect)
+    {
+        let since = ctx.input(|i| i.time);
+        ctx.data_mut(|d| d.insert_temp(egui::Id::new("loupe-homing"), Homing { photo: id.0, from, since }));
+    }
+}
 
 /// The photo flying back to the grid, while it does.
 pub fn homing(ctx: &egui::Context) -> Option<Homing> {
@@ -2810,6 +2862,28 @@ fn eye_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Response
 /// ellipsis. Counts characters, not bytes, so a CJK name is never cut inside a character (#266).
 fn film_label(name: &str) -> String {
     if name.chars().nth(14).is_some() { format!("{}…", name.chars().take(13).collect::<String>()) } else { name.to_string() }
+}
+
+/// How much of the filmstrip is up under the photo this frame (points): turned on it slides up
+/// into place, turned off back down out of sight. Where it has no place (`room` false: full
+/// screen, the phone) it is down at once.
+pub(crate) fn film_height(ctx: &egui::Context, on: bool, room: bool) -> f32 {
+    if !room {
+        return 0.0;
+    }
+    (Tokens::get(ctx).film_h * crate::motion::openness(ctx, egui::Id::new("filmstrip-up"), on, crate::motion::SLIDE_S)).round()
+}
+
+/// The filmstrip with `h` points of it up from the bottom of `full` (all of it, or its top while it
+/// slides).
+pub(crate) fn filmstrip_rising(app: &mut LightcraftApp, ui: &mut egui::Ui, full: Rect, h: f32) {
+    if h <= 0.0 {
+        return;
+    }
+    let strip = Rect::from_min_size(pos2(full.left(), full.bottom() - h), vec2(full.width(), Tokens::get(ui.ctx()).film_h));
+    let mut film = ui.new_child(egui::UiBuilder::new().max_rect(strip));
+    film.shrink_clip_rect(full);
+    filmstrip(app, &mut film, strip);
 }
 
 pub(crate) fn filmstrip(app: &mut LightcraftApp, ui: &mut egui::Ui, r: Rect) {

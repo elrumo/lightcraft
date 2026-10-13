@@ -265,24 +265,3 @@ fn a_dropped_folder_gets_its_tiles_once_it_is_read() {
     assert!(pending.is_empty());
     let _ = std::fs::remove_dir_all(&dir);
 }
-
-// TEMPORARY: a picture to look at the tiles (removed before the commit)
-#[test]
-fn zz_visual_tmp() {
-    let (mut h, files, dir) = setup("visual", 14, 400);
-    let trip = album(&mut h, "Trip");
-    show(&mut h, trip);
-    drop_files(&mut h, &files);
-    for _ in 0..3 {
-        h.step();
-        std::thread::sleep(Duration::from_millis(150));
-    }
-    let image = h.paint();
-    let [w, hh] = image.size;
-    let rgba: Vec<u8> = image.pixels.iter().flat_map(|c| c.to_array()).collect();
-    let img = lightcraft_raster::Rgba8::from_bytes(w, hh, &rgba).unwrap();
-    let png = lightcraft_codecs::encode_png(&lightcraft_codecs::EncodeImage::rgba8(&img), &lightcraft_codecs::EncodeMeta::default()).unwrap();
-    std::fs::write("/private/tmp/claude-501/-Users-eliasruizmonserrat-Documents-local-projects-personalProjects-lightcraft/ef8eddb3-b0ef-4dc3-8ae2-aa2ef03f0540/scratchpad/tiles-full.png", png).unwrap();
-    finish(&mut h);
-    let _ = std::fs::remove_dir_all(&dir);
-}

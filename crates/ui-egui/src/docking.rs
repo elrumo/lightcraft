@@ -440,42 +440,86 @@ pub fn show(app: &mut crate::LightcraftApp, ui: &mut egui::Ui) {
     style.border = egui::Stroke::new(1.0, t.divider);
     style.accent = t.accent;
     style.font = t.font(12.0);
+    style.gap = t.dock_gap;
     // The gaps between panes (the drag borders) show what is behind the dock. Left alone that is
     // eframe's near-black clear colour: invisible in the dark themes, harsh black bars in the light ones.
     let area = ui.available_rect_before_wrap();
     ui.painter().rect_filled(area, 0.0, t.divider);
+    // Panel cards (Studio) float the gap's width from the window's left and bottom edges and from
+    // the tool strip; the top bar above already leaves room.
+    let cards = t.cards();
+    let dock_rect =
+        if cards { egui::Rect::from_min_max(area.min + egui::vec2(t.dock_gap, 0.0), area.max - egui::vec2(t.dock_gap, t.dock_gap)) } else { area };
     // Tool and preset panels publish hover previews before the photo consumes them.
     let mut canvas = None;
     // Where each panel's body is drawn, to tell which divider a double-click lands on.
     let mut bodies = Vec::new();
-    let output = DockArea::new(egui::Id::new("lightcraft-docking")).show_with_limits(
-        ui,
-        &workspace.layout,
-        &style,
-        |panel| crate::i18n::tr(panel.label()).into(),
-        permissions,
-        panel_limits,
-        |ui, panel| {
-            bodies.push((*panel, ui.max_rect()));
-            match panel {
-                Panel::Canvas => {
-                    canvas = Some(ui.new_child(egui::UiBuilder::new().id_salt("photo-view").max_rect(ui.max_rect())));
-                }
-                Panel::Library => {
-                    crate::widgets::register(ui.ctx(), "panel:left_panel", ui.max_rect());
-                    crate::panels::left::show(app, ui);
-                }
-                Panel::Tools => {
-                    crate::widgets::register(ui.ctx(), "panel:right_panel", ui.max_rect());
-                    crate::panels::right::show(app, ui);
-                }
-                Panel::Presets => {
-                    crate::widgets::register(ui.ctx(), "panel:presets", ui.max_rect());
-                    crate::panels::presets::show(app, ui);
-                }
-            }
-        },
-    );
+    // panels being shown or hidden slide in and out, the photo making room or taking it back
+    let (drawn, slides) = sliding(ui.ctx(), &workspace);
+    if !slides.is_empty() {
+        style.min_pane = 0.0;
+    }
+    let output = ui
+        .scope_builder(egui::UiBuilder::new().max_rect(dock_rect), |ui| {
+            DockArea::new(egui::Id::new("lightcraft-docking")).show_with_limits(
+                ui,
+                &drawn,
+                &style,
+                |panel| crate::i18n::tr(panel.label()).into(),
+                permissions,
+                |panel| {
+                    let mut limits = panel_limits(panel);
+                    if slides.iter().any(|s| s.panel == *panel) {
+                        limits.min.x = 0.0;
+                    }
+                    limits
+                },
+                |ui, panel| {
+                    let rect = ui.max_rect();
+                    bodies.push((*panel, rect));
+                    if *panel == Panel::Canvas {
+                        canvas = Some(ui.new_child(egui::UiBuilder::new().id_salt("photo-view").max_rect(rect)));
+                        return;
+                    }
+                    // (one sliding is drawn whole, the part not in yet past the edge it comes from)
+                    let whole = match slides.iter().find(|s| s.panel == *panel) {
+                        Some(s) if s.left => egui::Rect::from_min_max(egui::pos2(rect.right() - s.full, rect.top()), rect.max),
+                        Some(s) => egui::Rect::from_min_size(rect.min, egui::vec2(s.full, rect.height())),
+                        None => rect,
+                    };
+                    let ui = &mut ui.new_child(egui::UiBuilder::new().id_salt("panel-body").max_rect(whole).layout(*ui.layout()));
+                    match panel {
+                        Panel::Canvas => {}
+                        Panel::Library => {
+                            crate::widgets::register(ui.ctx(), "panel:left_panel", rect);
+                            crate::panels::left::show(app, ui);
+                        }
+                        Panel::Tools => {
+                            crate::widgets::register(ui.ctx(), "panel:right_panel", rect);
+                            // sliding away, it still shows the tool it had (the app has moved on); a new
+                            // tool's controls fade in
+                            let last = egui::Id::new("dock-tools-last");
+                            let tool = match app.ui.right {
+                                crate::state::RightPanel::None => ui.data(|d| d.get_temp(last)).unwrap_or(crate::state::RightPanel::None),
+                                now => now,
+                            };
+                            ui.data_mut(|d| d.insert_temp(last, tool));
+                            let had = std::mem::replace(&mut app.ui.right, tool);
+                            ui.multiply_opacity(crate::panels::mobile::enter(ui.ctx(), egui::Id::new("dock-tools-in"), tool, crate::motion::FADE_S));
+                            crate::panels::right::show(app, ui);
+                            if app.ui.right == tool {
+                                app.ui.right = had;
+                            }
+                        }
+                        Panel::Presets => {
+                            crate::widgets::register(ui.ctx(), "panel:presets", rect);
+                            crate::panels::presets::show(app, ui);
+                        }
+                    }
+                },
+            )
+        })
+        .inner;
     if let Some(mut canvas) = canvas {
         let ui = &mut canvas;
         crate::panels::bottombar::show(app, ui);
@@ -488,15 +532,30 @@ pub fn show(app: &mut crate::LightcraftApp, ui: &mut egui::Ui) {
             t.grid_bg
         };
         crate::panels::compare::prepare(app);
-        egui::CentralPanel::default().frame(egui::Frame::NONE.fill(bg)).show(ui, |ui| match app.ui.view {
-            crate::state::ViewMode::PhotoGrid | crate::state::ViewMode::SquareGrid => crate::panels::grid::show(app, ui),
-            crate::state::ViewMode::Detail => crate::panels::detail::show(app, ui),
-            crate::state::ViewMode::Compare => crate::panels::compare::show_compare(app, ui),
-            crate::state::ViewMode::Survey => crate::panels::compare::show_survey(app, ui),
-            crate::state::ViewMode::Reference => crate::panels::compare::show_reference(app, ui),
-            crate::state::ViewMode::People => crate::panels::people::show(app, ui),
-            crate::state::ViewMode::Map => crate::panels::map::show(app, ui),
+        // a view fades in over the last (the photo grows out of its thumbnail, and flies back into it)
+        crate::panels::detail::view_changed(app, ui.ctx());
+        let grid = matches!(app.ui.view, crate::state::ViewMode::PhotoGrid | crate::state::ViewMode::SquareGrid);
+        let view = if grid { crate::state::ViewMode::PhotoGrid } else { app.ui.view };
+        let k = crate::panels::mobile::enter(ui.ctx(), egui::Id::new("view-in"), view, crate::motion::FADE_S);
+        egui::CentralPanel::default().frame(egui::Frame::NONE.fill(bg)).show(ui, |ui| {
+            ui.multiply_opacity(k);
+            match app.ui.view {
+                crate::state::ViewMode::PhotoGrid | crate::state::ViewMode::SquareGrid => crate::panels::grid::show(app, ui),
+                crate::state::ViewMode::Detail => crate::panels::detail::show(app, ui),
+                crate::state::ViewMode::Compare => crate::panels::compare::show_compare(app, ui),
+                crate::state::ViewMode::Survey => crate::panels::compare::show_survey(app, ui),
+                crate::state::ViewMode::Reference => crate::panels::compare::show_reference(app, ui),
+                crate::state::ViewMode::People => crate::panels::people::show(app, ui),
+                crate::state::ViewMode::Map => crate::panels::map::show(app, ui),
+            }
         });
+    }
+    if cards {
+        // last, over everything the panels drew (they fill their rectangles square)
+        let painter = ui.painter().with_clip_rect(area);
+        for rect in group_rects(&drawn, &bodies, style.tab_height) {
+            round_corners(&painter, rect, t.card_radius, t.divider);
+        }
     }
 
     let rendered = workspace;
@@ -508,7 +567,8 @@ pub fn show(app: &mut crate::LightcraftApp, ui: &mut egui::Ui) {
     }
     publish_visibility(app, &workspace);
     app.ui.docking = Some(workspace);
-    if stale {
+    // (while panels slide, what was drawn isn't the layout: moves and resizes wait until they are in place)
+    if stale || !slides.is_empty() {
         return;
     }
     for action in output.actions {
@@ -529,6 +589,142 @@ pub fn show(app: &mut crate::LightcraftApp, ui: &mut egui::Ui) {
             }
         }
     }
+}
+
+/// A side panel on its way in or out this frame: its width once it is all there, and whether it is
+/// left of the photo (it slides in from the left edge) or right.
+struct Slide {
+    panel: Panel,
+    full: f32,
+    left: bool,
+}
+
+/// What to draw this frame: `workspace`'s layout with the panels being shown or hidden at the
+/// width they have got to (one being hidden is put back where it was until it has gone). Only a
+/// panel docked on its own beside the rest slides; one floating, tabbed or above or below another
+/// comes and goes at once.
+fn sliding(ctx: &egui::Context, workspace: &Workspace) -> (Layout<Panel>, Vec<Slide>) {
+    let mut drawn = workspace.clone();
+    let mut slides = Vec::new();
+    for panel in [Panel::Library, Panel::Presets, Panel::Tools] {
+        let open = workspace.layout.contains(&panel);
+        let k = crate::motion::openness(ctx, egui::Id::new(("dock-slide", panel.id())), open, crate::motion::SLIDE_S);
+        if (open && k >= 1.0) || (!open && k <= 0.0) {
+            continue;
+        }
+        let mut next = drawn.clone();
+        if !open && next.set_visible(panel, true).is_err() {
+            continue;
+        }
+        if let Some((full, left)) = narrow(&mut next.layout, panel, k) {
+            drawn = next;
+            slides.push(Slide { panel, full, left });
+        }
+    }
+    (drawn.layout, slides)
+}
+
+/// Make `panel`, docked on its own beside the rest, `k` of its width. Returns its whole width and
+/// whether it is on the left; `None` (nothing changed) where it isn't docked so.
+fn narrow(layout: &mut Layout<Panel>, panel: Panel, k: f32) -> Option<(f32, bool)> {
+    let alone = |node: &Node<Panel>| matches!(node, Node::Tabs { panels, .. } if panels.as_slice() == [panel]);
+    let mut nodes: Vec<&mut Node<Panel>> = layout.root.iter_mut().collect();
+    while let Some(node) = nodes.pop() {
+        let Node::Split { axis, size, first, second } = node else { continue };
+        if *axis == SplitAxis::Horizontal {
+            match *size {
+                SplitSize::FixedFirst(width) if alone(first) => {
+                    *size = SplitSize::FixedFirst(width * k);
+                    return Some((width, true));
+                }
+                SplitSize::FixedSecond(width) if alone(second) => {
+                    *size = SplitSize::FixedSecond(width * k);
+                    return Some((width, false));
+                }
+                _ => {}
+            }
+        }
+        nodes.push(first);
+        nodes.push(second);
+    }
+    None
+}
+
+/// Where each docked group is drawn, its tab strip and its body, from where its panels' bodies
+/// were (`bodies`): a group of tabs shows its active panel under a strip `tab_h` tall (the photo
+/// view, alone and protected, has none); a stack runs from its first header to its last. Floating
+/// groups, and a stack with no panel open, are left out.
+fn group_rects(layout: &Layout<Panel>, bodies: &[(Panel, egui::Rect)], tab_h: f32) -> Vec<egui::Rect> {
+    let body = |panel: &Panel| bodies.iter().find(|(p, _)| p == panel).map(|(_, r)| *r);
+    let mut out = Vec::new();
+    let mut nodes: Vec<&Node<Panel>> = layout.root.iter().collect();
+    while let Some(node) = nodes.pop() {
+        match node {
+            Node::Split { first, second, .. } => {
+                nodes.push(first);
+                nodes.push(second);
+            }
+            Node::Tabs { panels, active } => {
+                let Some(r) = panels.get(*active).and_then(body) else { continue };
+                let bare = panels.len() == 1 && panels.iter().all(|p| permissions(p) == Permissions::PROTECTED);
+                out.push(if bare { r } else { egui::Rect::from_min_max(egui::pos2(r.left(), r.top() - tab_h), r.max) });
+            }
+            Node::Stack { entries } => {
+                let open: Vec<(usize, egui::Rect)> =
+                    entries.iter().enumerate().filter(|(_, e)| e.open).filter_map(|(i, e)| body(&e.panel).map(|r| (i, r))).collect();
+                let (Some(&(first_i, first)), Some(&(last_i, last))) = (open.first(), open.last()) else { continue };
+                let top = first.top() - (first_i + 1) as f32 * tab_h;
+                let bottom = last.bottom() + entries.len().saturating_sub(last_i + 1) as f32 * tab_h;
+                out.push(egui::Rect::from_min_max(egui::pos2(first.left(), top), egui::pos2(first.right(), bottom)));
+            }
+        }
+    }
+    out
+}
+
+/// Round `rect`'s corners to `radius` by painting `backdrop` over what lies outside each rounded
+/// corner: panels fill their rectangles square, so a card's rounding is cut out of them afterwards.
+/// Each cut-out reaches a point past the rectangle (into the gap, the same colour) so its edges
+/// meet the card's at right angles rather than in a sliver.
+pub fn round_corners(painter: &egui::Painter, rect: egui::Rect, radius: f32, backdrop: egui::Color32) {
+    let r = radius.min(rect.width() / 2.0).min(rect.height() / 2.0);
+    if r.is_nan() || r < 1.0 {
+        return;
+    }
+    const OUT: f32 = 1.0;
+    const STEPS: usize = 12;
+    for (corner, sx, sy) in
+        [(rect.left_top(), -1.0, -1.0), (rect.right_top(), 1.0, -1.0), (rect.right_bottom(), 1.0, 1.0), (rect.left_bottom(), -1.0, 1.0)]
+    {
+        let out = egui::vec2(sx, sy);
+        let center = corner - out * r;
+        let mut points = Vec::with_capacity(STEPS + 4);
+        points.push(corner + out * OUT);
+        points.push(egui::pos2(corner.x + sx * OUT, center.y));
+        for i in 0..=STEPS {
+            let a = i as f32 / STEPS as f32 * std::f32::consts::FRAC_PI_2;
+            points.push(center + egui::vec2(sx * a.cos(), sy * a.sin()) * r);
+        }
+        points.push(egui::pos2(center.x, corner.y + sy * OUT));
+        // epaint fills a closed path as a fan from its first point (the corner, which sees the whole
+        // cut-out), after reversing a path wound the other way: wind it so it isn't reversed
+        if wound_backwards(&points) {
+            points[1..].reverse();
+        }
+        painter.add(egui::Shape::convex_polygon(points, backdrop, egui::Stroke::NONE));
+    }
+}
+
+/// Whether epaint would reverse `points` before filling them (its signed-area test).
+fn wound_backwards(points: &[egui::Pos2]) -> bool {
+    let Some(last) = points.last() else { return false };
+    let mut previous = *last;
+    let mut area = 0.0f64;
+    for p in points {
+        area += f64::from(previous.x * p.y - p.x * previous.y);
+        previous = *p;
+    }
+    area < 0.0
 }
 
 /// The panels whose width the divider at `pos` sets: the neighbour fixed on that side of its split

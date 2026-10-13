@@ -1023,6 +1023,22 @@ pub fn specs() -> Vec<CommandSpec> {
             ok()
         }),
         cmd!(
+            "preset.moveGroup",
+            "Reorder Preset Group",
+            [],
+            None,
+            "{group, to: index} — the order the Presets panel shows the groups in (synced) → {groups}",
+            always,
+            |s, p| {
+                let c = "preset.moveGroup";
+                let group = str_param(p, "group").ok_or_else(|| bad(c, "missing group"))?;
+                let to = p.get("to").and_then(Value::as_u64).ok_or_else(|| bad(c, "missing to"))?;
+                let groups = s.move_preset_group(group, usize::try_from(to).unwrap_or(usize::MAX)).map_err(|e| bad(c, e))?;
+                s.save_prefs()?;
+                Ok(json!({"groups": groups}))
+            }
+        ),
+        cmd!(
             "preset.update",
             "Update Preset with Current Settings",
             [],

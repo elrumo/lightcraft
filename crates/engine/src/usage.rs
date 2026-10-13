@@ -122,6 +122,7 @@ pub fn disk_space(dir: &Path) -> Option<Disk> {
 /// `df -Pk`'s one line for the file system: `name 1024-blocks used available capacity mount`.
 /// The name and the mount point may hold spaces, so the numbers are found by the `%` that ends
 /// the capacity column.
+#[cfg_attr(not(all(unix, not(target_os = "ios"))), allow(dead_code))]
 fn parse_df(text: &str) -> Option<Disk> {
     let cols: Vec<&str> = text.lines().nth(1)?.split_whitespace().collect();
     let k = |s: &str| s.parse::<u64>().ok().map(|n| n.saturating_mul(1024));

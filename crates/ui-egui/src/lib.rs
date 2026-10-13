@@ -28,6 +28,7 @@ pub mod menubar;
 pub mod menus;
 pub mod merge;
 mod model_setup;
+pub mod motion;
 pub mod panels;
 pub mod pick;
 pub mod prefs;
@@ -126,6 +127,8 @@ mod tests_masking;
 mod tests_masking_layout;
 #[cfg(test)]
 mod tests_menubar;
+#[cfg(test)]
+mod tests_motion;
 #[cfg(test)]
 mod tests_offline;
 #[cfg(test)]

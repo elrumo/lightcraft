@@ -235,6 +235,9 @@ pub struct Session {
     /// Groups last used for Copy (Lightroom remembers them).
     pub copy_groups: Vec<lightcraft_develop::SettingsGroup>,
     pub presets: Vec<lightcraft_develop::Preset>,
+    /// The order the user dragged the preset groups into (`preset.moveGroup`; groups not listed follow
+    /// by name, see [`Session::preset_groups`]). Persisted in prefs.json and synced.
+    pub preset_group_order: Vec<String>,
     /// Favourite profile ids (persisted with the library, like preset favourites).
     pub profile_favorites: Vec<String>,
     /// Recently applied profile ids, newest first (at most [`presets::RECENT_PROFILES`]).
@@ -382,6 +385,7 @@ impl Session {
             previous_active: None,
             copy_groups: lightcraft_develop::SettingsGroup::default_copy(),
             presets: presets::builtin(),
+            preset_group_order: Vec::new(),
             profile_favorites: Vec::new(),
             profile_recent: Vec::new(),
             journal: Vec::new(),

@@ -1,7 +1,7 @@
 //! Settings that follow a user to their other devices: export, metadata and filter presets, curve
-//! presets, colour-label and keyword sets, LUT profiles and the import defaults that don't name a
-//! place on one computer. Each is a small document on the server (`GET` / `PUT /api/docs/<name>`,
-//! [`proto::Doc`]) — a JSON list — kept like the user presets ([`super::merge_presets`]): a device
+//! presets, colour-label and keyword sets, LUT profiles, the order of the develop preset groups and
+//! the import defaults that don't name a place on one computer. Each is a small document on the
+//! server (`GET` / `PUT /api/docs/<name>`, [`proto::Doc`]) — a JSON list — kept like the user presets ([`super::merge_presets`]): a device
 //! sends its list when it changes, and merges the server's against the copy both last agreed on,
 //! item by item, so a preset deleted on one device stays deleted and ones added on two devices are
 //! all kept.
@@ -30,7 +30,7 @@ enum Key {
 }
 
 /// The documents, in the order they are synced.
-const SPECS: [(&str, Key); 8] = [
+const SPECS: [(&str, Key); 9] = [
     ("export-presets", Key::Name),
     ("metadata-presets", Key::Name),
     ("filter-presets", Key::Name),
@@ -39,6 +39,7 @@ const SPECS: [(&str, Key); 8] = [
     ("keyword-sets", Key::Name),
     ("lut-profiles", Key::Id),
     ("prefs", Key::Id),
+    ("preset-groups", Key::Id),
 ];
 
 /// Items taken from the server per document at most (untrusted input).
@@ -49,6 +50,8 @@ const CUBE_MAX: usize = 4 << 20;
 const NAME_MAX: usize = 200;
 /// The id of the one item of the `prefs` document.
 const IMPORT_ITEM: &str = "import";
+/// The id of the one item of the `preset-groups` document (its `groups`: the order of the preset groups).
+const GROUPS_ITEM: &str = "order";
 /// The import defaults that name a place on one computer: not shared.
 const LOCAL_IMPORT: [&str; 3] = ["autoFolder", "autoCopy", "autoAlbum"];
 
@@ -148,6 +151,9 @@ impl Session {
                 }
                 vec![v]
             }
+            // (nothing until the user reorders: a device that never did doesn't send a default)
+            "preset-groups" if self.preset_group_order.is_empty() => Vec::new(),
+            "preset-groups" => vec![json!({"id": GROUPS_ITEM, "groups": self.preset_group_order})],
             _ => Vec::new(),
         }
     }
@@ -170,6 +176,7 @@ impl Session {
             }
             "lut-profiles" => self.set_lut_profiles(items),
             "prefs" => self.set_import_defaults(items),
+            "preset-groups" => self.set_preset_group_order(items),
             _ => return Ok(()),
         }
         self.save_prefs()
@@ -188,6 +195,21 @@ impl Session {
         if let Ok(d) = serde_json::from_value(mine) {
             self.import_defaults = d;
         }
+    }
+
+    /// The order of the preset groups the other device shares.
+    fn set_preset_group_order(&mut self, items: &[Value]) {
+        let Some(order) = items.iter().find(|v| v.get("id").and_then(Value::as_str) == Some(GROUPS_ITEM)).and_then(|v| v["groups"].as_array()) else {
+            return;
+        };
+        let mut seen = HashSet::new();
+        self.preset_group_order = order
+            .iter()
+            .take(ITEMS_MAX)
+            .filter_map(Value::as_str)
+            .filter(|g| !g.trim().is_empty() && g.chars().count() <= NAME_MAX && seen.insert(*g))
+            .map(str::to_string)
+            .collect();
     }
 
     /// Install the LUT profiles in `items` (each carries its `.cube` text): a new one is written to

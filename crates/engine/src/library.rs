@@ -232,6 +232,8 @@ struct PrefsFile {
     label_sets: Vec<crate::cmd::manage::LabelSet>,
     /// Imported LUT profiles.
     lut_profiles: Vec<crate::cmd::lut_profiles::LutProfile>,
+    /// The order of the preset groups (`preset.moveGroup`).
+    preset_group_order: Vec<String>,
     /// Keyword sets, the one in use, recent keywords.
     keyword_sets: Vec<crate::cmd::keywords::KeywordSet>,
     keyword_set: Option<String>,
@@ -468,6 +470,7 @@ impl Session {
         self.label_sets = prefs.label_sets;
         self.lut_profiles = prefs.lut_profiles;
         crate::cmd::lut_profiles::register_all(self);
+        self.preset_group_order = prefs.preset_group_order;
         self.keyword_sets = prefs.keyword_sets;
         self.keyword_set = prefs.keyword_set;
         self.recent_keywords = prefs.recent_keywords;
@@ -827,6 +830,7 @@ impl Session {
             curve_presets: self.curve_presets.clone(),
             label_sets: self.label_sets.clone(),
             lut_profiles: self.lut_profiles.clone(),
+            preset_group_order: self.preset_group_order.clone(),
             keyword_sets: self.keyword_sets.clone(),
             keyword_set: self.keyword_set.clone(),
             recent_keywords: self.recent_keywords.clone(),

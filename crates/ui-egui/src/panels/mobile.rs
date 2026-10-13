@@ -639,7 +639,7 @@ pub fn all_commands_page(app: &mut LightcraftApp, ctx: &egui::Context) {
     let open = app.ui.all_commands;
     let bar = page(ctx, "allCommands", "All Commands", "Close", None, open, |ui| {
         let commands = all_commands(app);
-        let r = ui.add(crate::widgets::touch_field(
+        let r = ui.add(crate::widgets::text_box(
             ui,
             egui::TextEdit::singleline(&mut query).hint_text(crate::i18n::tr("Search")).desired_width(f32::INFINITY),
         ));

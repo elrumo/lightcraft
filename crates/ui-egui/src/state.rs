@@ -45,7 +45,7 @@ pub enum GridJump {
     Date(String),
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ViewMode {
     /// Justified rows ("Photo Grid").
@@ -66,7 +66,7 @@ pub enum ViewMode {
 }
 
 /// The right-hand tool/panel shown next to the tool strip.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum RightPanel {
     #[default]
@@ -278,6 +278,7 @@ pub enum DarkTheme {
     #[default]
     Charcoal,
     Midnight,
+    StudioDark,
 }
 
 /// The theme the light appearance uses.
@@ -287,24 +288,27 @@ pub enum LightTheme {
     #[default]
     Silver,
     Paper,
+    StudioLight,
 }
 
 impl DarkTheme {
-    pub const ALL: [DarkTheme; 2] = [DarkTheme::Charcoal, DarkTheme::Midnight];
+    pub const ALL: [DarkTheme; 3] = [DarkTheme::Charcoal, DarkTheme::Midnight, DarkTheme::StudioDark];
     pub fn kind(self) -> crate::theme::ThemeKind {
         match self {
             DarkTheme::Charcoal => crate::theme::ThemeKind::Charcoal,
             DarkTheme::Midnight => crate::theme::ThemeKind::Midnight,
+            DarkTheme::StudioDark => crate::theme::ThemeKind::StudioDark,
         }
     }
 }
 
 impl LightTheme {
-    pub const ALL: [LightTheme; 2] = [LightTheme::Silver, LightTheme::Paper];
+    pub const ALL: [LightTheme; 3] = [LightTheme::Silver, LightTheme::Paper, LightTheme::StudioLight];
     pub fn kind(self) -> crate::theme::ThemeKind {
         match self {
             LightTheme::Silver => crate::theme::ThemeKind::Silver,
             LightTheme::Paper => crate::theme::ThemeKind::Paper,
+            LightTheme::StudioLight => crate::theme::ThemeKind::StudioLight,
         }
     }
 }
@@ -502,6 +506,8 @@ impl AppSettings {
             ThemeKind::Midnight => self.dark_theme = DarkTheme::Midnight,
             ThemeKind::Silver => self.light_theme = LightTheme::Silver,
             ThemeKind::Paper => self.light_theme = LightTheme::Paper,
+            ThemeKind::StudioDark => self.dark_theme = DarkTheme::StudioDark,
+            ThemeKind::StudioLight => self.light_theme = LightTheme::StudioLight,
         }
         self.appearance_mode = if kind.is_dark() { AppearanceMode::Dark } else { AppearanceMode::Light };
     }
