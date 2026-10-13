@@ -584,3 +584,96 @@ fn a_long_error_scrolls_and_the_buttons_stay() {
     drop(h);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// Requests for a server's photo files that wait until the test answers them: a slow network.
+type Held = std::sync::Arc<std::sync::Mutex<Vec<(Task, std::sync::mpsc::Sender<Done>)>>>;
+
+/// [`exec`] for a server of `photos` photos whose files (`/api/blobs/…`) are held in `held`.
+fn exec_held(photos: u64, held: Held) -> SyncExec {
+    let inner = exec(photos, proto::Activity::default());
+    Box::new(move |task, tx, ctx| {
+        if matches!(&task, Task::Http { url, .. } if url.contains("/api/blobs/")) {
+            held.lock().unwrap().push((task, tx));
+        } else {
+            inner(task, tx, ctx);
+        }
+    })
+}
+
+/// Answer what is held: a mini preview comes as the file the device asked for, anything else isn't there. How many.
+fn answer_held(held: &Held, mini: &[u8]) -> usize {
+    let tasks = std::mem::take(&mut *held.lock().unwrap());
+    let n = tasks.len();
+    for (task, tx) in tasks {
+        let Task::Http { id, url, save_to, .. } = task else { continue };
+        let done = match save_to {
+            Some(dest) if url.contains("/api/blobs/mini/") => {
+                std::fs::create_dir_all(Path::new(&dest).parent().unwrap()).unwrap();
+                std::fs::write(&dest, mini).unwrap();
+                Done { id, status: 200, body: String::new() }
+            }
+            _ => Done { id, status: 404, body: json!({"error": "not here"}).to_string() },
+        };
+        let _ = tx.send(done);
+    }
+    n
+}
+
+/// Photos on the server that this device has no preview of fill the grid with empty cells, and every one of them comes
+/// down — not only the first few — however slowly the server answers: a cell that is still on screen stays asked for.
+/// (The grid builds a cell's render job once, and the render that failed for want of the preview isn't asked for again,
+/// so asks that weren't renewed lapsed after thirty frames and the rest of the grid stayed empty.)
+#[test]
+fn every_cell_on_screen_gets_its_preview_however_slow_the_server() {
+    const N: usize = 40;
+    let held: Held = Default::default();
+    let (mut h, root) = app("slow-minis", &[], exec_held(N as u64, held.clone()), PHONE);
+    // (the requests for photo files wait in `held`: nothing here settles)
+    let r = h.request(
+        "engine.execute",
+        json!({"command": "sync.signIn", "params": {"server": "http://fake", "user": "ann", "password": "pw", "device": "test"}}),
+        T,
+    );
+    assert_eq!(r["ok"], true, "{r}");
+    for _ in 0..80 {
+        frames(&mut h, 5);
+        if h.app.session.catalog.len() == N {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(h.app.session.catalog.len(), N);
+    write_png(&root.join("mini.png"), 7);
+    let (_, mini) =
+        lightcraft_engine::smart::encode_pair(&std::fs::read(root.join("mini.png")).unwrap(), lightcraft_engine::cloud_sync::MINI_EDGE).unwrap();
+    // the server answers four requests at a time, with forty frames of the grid in between
+    let (mut answered, mut idle) = (0, 0);
+    while idle < 3 {
+        frames(&mut h, 40);
+        let n = answer_held(&held, &mini);
+        answered += n;
+        idle = if n == 0 { idle + 1 } else { 0 };
+        frames(&mut h, 5);
+    }
+    // the cells the grid draws are the screen and a screen either side of it: more than the four a time the server answers
+    let drawn: Vec<PhotoId> =
+        h.app.widgets.iter().filter_map(|(w, _)| w.strip_prefix("thumb:")).filter_map(|n| n.parse().ok()).map(PhotoId).collect();
+    assert!(drawn.len() > 8, "the grid draws a screenful: {drawn:?}");
+    let tier = |h: &Headless, id: PhotoId| h.app.session.catalog.photo(id).and_then(|p| h.app.session.synced_tier(p));
+    let missing: Vec<PhotoId> = drawn.iter().copied().filter(|id| tier(&h, *id) != Some(1)).collect();
+    assert!(missing.is_empty(), "{answered} previews came down, but not those of {} of the {} cells drawn: {missing:?}", missing.len(), drawn.len());
+    // (and nothing beyond the grid's reach is downloaded)
+    let beyond = h.app.session.catalog.photos().filter(|p| !drawn.contains(&p.id)).filter(|p| tier(&h, p.id) != Some(0)).count();
+    assert_eq!(beyond, 0, "only the cells in reach download");
+    // and the cells show them
+    let shown = h.step_until(Duration::from_secs(20), |h| drawn.iter().all(|id| h.app.renderer.thumb(*id).is_some()));
+    let why: Vec<String> = drawn
+        .iter()
+        .filter(|id| h.app.renderer.thumb(**id).is_none())
+        .take(3)
+        .map(|id| format!("{id:?}: {:?} (tier {:?})", h.app.renderer.failure(crate::render::Slot::Thumb(*id)), tier(&h, *id)))
+        .collect();
+    assert!(shown, "the cells draw the previews: {why:?}");
+    drop(h);
+    let _ = std::fs::remove_dir_all(&root);
+}
