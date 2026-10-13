@@ -691,6 +691,7 @@ mod tests {
         assert!(h.app.session.catalog.photo(PhotoId(3)).unwrap().deleted, "OK deletes it");
 
         // outside an album ⌫ deletes, with no question while "Confirm before deleting" is off
+        h.app.ui.settings.confirm_delete = false;
         h.app.session.execute("library.source", &json!({"kind": "all"})).unwrap();
         h.app.session.execute("library.select", &json!({"ids": [4], "active": 4})).unwrap();
         key(&mut h, "delete", false);

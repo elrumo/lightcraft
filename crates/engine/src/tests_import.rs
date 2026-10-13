@@ -161,7 +161,8 @@ fn write_sidecar(path: &Path, xmp: &str, secs: u64) {
     f.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs)).unwrap();
 }
 
-/// "Added" is the day a photo was taken; only an undated photo is added on the day of the import.
+/// "Added" is the day a photo was taken; a photo its metadata doesn't date is added on the day of the
+/// import (its capture date is the file's).
 #[test]
 fn imported_photos_are_added_the_day_they_were_taken() {
     let src = temp_dir("taken");
@@ -177,7 +178,7 @@ fn imported_photos_are_added_the_day_they_were_taken() {
     assert_eq!(ids(&r, "imported"), 2, "{r}");
     let added = |name: &str| s.catalog.photos().find(|p| p.file_name == name).map(|p| (p.captured.clone(), p.imported.clone()));
     assert_eq!(added("dated.png"), Some((Some("2020-02-03T04:05:06".into()), "2020-02-03T04:05:06".into())));
-    assert_eq!(added("undated.png"), Some((None, (s.clock)())));
+    assert_eq!(added("undated.png"), Some((Some("2026-01-14T05:58:48".into()), (s.clock)())));
     let _ = std::fs::remove_dir_all(&src);
 }
 

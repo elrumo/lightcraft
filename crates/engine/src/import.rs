@@ -1080,10 +1080,6 @@ impl ImportJob {
             if info.captured.is_none() {
                 info.captured = sidecar.as_ref().and_then(|sc| sc.captured.clone());
             }
-            // no date in the file or its sidecar: the file's own date, as Lightroom does
-            if info.captured.is_none() {
-                info.captured = info.file_modified.clone();
-            }
             let stored = match (mode, &self.copy_root) {
                 (ImportMode::Copy | ImportMode::Move, Some(root))
                     if !crate::import_move::inside(Path::new(&path), root)
@@ -1092,7 +1088,8 @@ impl ImportJob {
                     // the templates see the photo as it will be catalogued (undated: the import time)
                     let own = Path::new(&path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
                     let mut q = Photo::new(PhotoId(0), Source::File { path: path.clone() }, &own, &info.format, 0, 0, &self.now);
-                    q.captured = info.captured.clone();
+                    // (no date in the file or its sidecar: the file's own, as the import will date it)
+                    q.captured = info.captured.clone().or_else(|| info.file_modified.clone());
                     q.meta = info.meta.clone();
                     let name = opts.rename.as_deref().filter(|t| !t.trim().is_empty()).map(|t| {
                         let n = crate::rename::expand(t, &q, self.seq);
@@ -1420,7 +1417,9 @@ pub fn commit_prepared(s: &mut Session, opts: &ImportOptions, now: &str, prepare
                 let mut p = Photo::new(id, Source::File { path: stored }, &name, &info.format, info.width, info.height, &now);
                 p.kind = info.kind;
                 p.file_size = info.file_size;
-                p.captured = info.captured;
+                // no date in the file or its sidecar: the file's own date, as Lightroom does
+                let dated = info.captured.is_some();
+                p.captured = info.captured.or(info.file_modified);
                 p.meta = info.meta;
                 p.as_shot_wb = info.as_shot_wb;
                 p.content_hash = info.content_hash;
@@ -1435,8 +1434,10 @@ pub fn commit_prepared(s: &mut Session, opts: &ImportOptions, now: &str, prepare
                         warning
                     }));
                 }
-                // "added" is the day the photo was taken (the import time only for an undated one)
-                p.imported = p.date().to_string();
+                // "added" is the day the photo was taken (the import time for one its metadata doesn't date)
+                if dated {
+                    p.imported = p.date().to_string();
+                }
                 if let Some(mp) = opts.metadata_preset.as_ref().and_then(|n| s.metadata_presets.iter().find(|m| m.name.eq_ignore_ascii_case(n))) {
                     crate::cmd::metadata::apply_to(&mut p.meta, &mp.fields);
                 }
