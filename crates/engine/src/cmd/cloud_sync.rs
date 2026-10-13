@@ -57,6 +57,8 @@ fn usage(s: &mut Session, p: &Value) -> Result<Value> {
     let st = s.sync_state();
     Ok(json!({
         "server": st.and_then(|st| st.usage()),
+        // all of it: what the server keeps and the photos it reads in place from library folders
+        "serverTotal": st.and_then(|st| st.usage()).map(|u| u.total()),
         "serverError": st.and_then(|st| st.usage_error()),
         "serverAgeSecs": st.and_then(|st| st.usage_age()).map(|a| a.as_secs()),
         "local": s.local_dirs().map(|d| crate::usage::measure(&d)),
@@ -204,7 +206,13 @@ fn album_share(s: &mut Session, p: &Value) -> Result<Value> {
         },
     };
     let days = p.get("expiresDays").and_then(Value::as_u64).map(|d| d.min(3650) as u32).filter(|d| *d > 0);
-    s.sync_share_album(id, days, bool_or(p, "originals", false))?;
+    let options = crate::cloud_sync::ShareOptions {
+        expires_days: days,
+        originals: bool_or(p, "originals", false),
+        password: str_param(p, "password").map(str::to_string),
+        upload: bool_or(p, "upload", false),
+    };
+    s.sync_share_album(id, options)?;
     Ok(json!({"started": true, "album": id.0}))
 }
 
@@ -219,7 +227,10 @@ fn shares_list(s: &mut Session, p: &Value) -> Result<Value> {
     let (links, error) = s.sync_shares();
     let links: Vec<Value> = links
         .into_iter()
-        .map(|(l, url)| json!({"id": l.id, "album": l.album, "name": l.name, "url": url, "created": l.created, "expires": l.expires, "originals": l.originals}))
+        .map(|(l, url)| {
+            json!({"id": l.id, "album": l.album, "name": l.name, "url": url, "created": l.created, "expires": l.expires, "originals": l.originals,
+                   "password": l.password, "upload": l.upload})
+        })
         .collect();
     Ok(json!({"shares": links, "error": error}))
 }
@@ -297,7 +308,7 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!("sync.pause", "Pause Syncing", ["File"], None, "{on?: bool}: stop talking to the server for now (toggle without `on`)", synced, pause),
         cmd!(query "sync.status", "Sync Status", [], None, "{}: state (off / signedOut / idle / syncing / error), pending changes, transfers, error", always, status),
         cmd!(query "sync.usage", "Sync Storage", [], None,
-            "{refresh?: bool}: what this library takes on the sync server (originals, smart and small previews, library folders, the server's free disk) and on this computer (catalog, thumbnails, previews, downloaded originals, free disk), in bytes; photos with only previews here; the small previews not downloaded yet (previewsLeft: photos, about how many bytes). The server's numbers are the last it gave (asked for again every 20 s while someone looks) unless `refresh` asks it now",
+            "{refresh?: bool}: what this library takes on the sync server (originals, smart and small previews, library folders, `serverTotal`: all of those, the server's free disk) and on this computer (catalog, thumbnails, previews, downloaded originals, free disk), in bytes; photos with only previews here; the small previews not downloaded yet (previewsLeft: photos, about how many bytes). The server's numbers are the last it gave (asked for again every 20 s while someone looks) unless `refresh` asks it now",
             synced, usage),
         cmd!(
             "sync.storeOriginalsLocally",
@@ -340,7 +351,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Share Link",
             [],
             None,
-            "{id?, expiresDays?: n, originals?: bool}: make a link to an album (default: the album shown) that anyone can open in a browser, no account needed: its pictures as they are edited now, and the originals if `originals`; ends after `expiresDays` or when revoked. The address arrives with the next sync (sync.now wait=true), then shares.list shows it",
+            "{id?, expiresDays?: n, originals?: bool, password?: text, upload?: bool}: make a link to an album (default: the album shown) that anyone can open in a browser, no account needed: its photos by day as they are edited now, a page per photo and a slideshow; the originals if `originals` (one by one, or Download All as a ZIP); a `password` (4 to 256 characters) visitors type first; with `upload`, visitors may add photos, which become this library's photos in the album; ends after `expiresDays` or when revoked. The address arrives with the next sync (sync.now wait=true), then shares.list shows it",
             signed_in,
             album_share
         ),

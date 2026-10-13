@@ -346,7 +346,8 @@ fn swiping_up_or_down_on_a_photo_rates_and_flags_it() {
         let y = img.center().y;
         let r = h.request("ui.drag", json!({"x": x, "y": y, "toX": x + 2.0, "toY": y + dy, "steps": 12}), T);
         assert_eq!(r["ok"], true, "{r}");
-        h.settle(SETTLE);
+        // (a couple of frames, not `settle`: that would wait out the readout's pop)
+        frames(h, 2);
     };
     let left = img.left() + img.width() * 0.25;
     let right = img.left() + img.width() * 0.75;

@@ -574,18 +574,29 @@ fn content(app: &mut LightcraftApp, ui: &mut egui::Ui, bg: egui::Color32) {
         k = 1.0;
     }
     let pull = if app.ui.view == ViewMode::Detail { super::detail::pulled(ui.ctx()) } else { 0.0 };
-    let fill = if pull > 0.0 { egui::Color32::TRANSPARENT } else { bg };
+    // a photo opened grows over the grid, which stays behind it until the photo's background has
+    // come in (it doesn't fade in: it was there, under the finger)
+    let grown = if app.ui.view == ViewMode::Detail { super::detail::growing(ui.ctx()).map(|(_, g)| g) } else { None };
+    if grown.is_some() {
+        k = 1.0;
+    }
+    let behind_grid = pull > 0.0 || grown.is_some();
+    let fill = if behind_grid { egui::Color32::TRANSPARENT } else { bg };
     egui::CentralPanel::default().frame(egui::Frame::NONE.fill(fill)).show(ui, |ui| {
         ui.multiply_opacity(k);
-        if pull > 0.0 {
+        if behind_grid {
             let behind = ui.max_rect();
             let mut g = ui.new_child(egui::UiBuilder::new().max_rect(behind).id_salt("pulled-grid"));
             let view = app.ui.view;
             app.ui.view = app.ui.grid_mode;
             super::grid::show(app, &mut g);
             app.ui.view = view;
-            // the photo's own background thins out as it comes down
-            ui.painter().rect_filled(behind, 0.0, bg.gamma_multiply((1.0 - 1.8 * pull).clamp(0.0, 1.0)));
+            // the photo's own background thins out as it comes down, and comes in as it grows
+            let cover = match grown {
+                Some(g) => egui::emath::easing::cubic_out(g),
+                None => (1.0 - 1.8 * pull).clamp(0.0, 1.0),
+            };
+            ui.painter().rect_filled(behind, 0.0, bg.gamma_multiply(cover));
         }
         match app.ui.view {
             ViewMode::Detail => super::detail::show(app, ui),
@@ -821,11 +832,19 @@ fn photo_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
 pub fn grid_header(app: &mut LightcraftApp, ui: &mut egui::Ui, hr: egui::Rect, count: &str) {
     let t = Tokens::get(ui.ctx());
     let title = crate::i18n::source_label(app.session.source, &app.session.catalog);
-    // (a large title, as iOS's Photos heads its library)
-    let galley = ui.painter().layout_no_wrap(title, t.semibold(28.0), t.text);
+    // where the buttons are (the sort and filter capsule, 92 pt wide, 12 pt in from the edge)
+    let right = egui::Rect::from_min_max(pos2(hr.right() - 104.0, hr.top()), pos2(hr.right() - 12.0, hr.bottom()));
+    // (a large title, as iOS's Photos heads its library; a long name is cut short with … before the ▾ and
+    // the buttons, not run under them: 16 pt in from the edge, 30 pt for the ▾ and its padding, an 8 pt gap)
+    let room = (right.left() - 8.0 - (hr.left() + 16.0) - 30.0).max(24.0);
+    let galley = crate::widgets::one_line(ui.painter(), &title, t.semibold(28.0), t.text, room);
     let title_r = egui::Rect::from_min_size(pos2(hr.left() + 16.0, hr.center().y - 20.0), vec2(galley.size().x + 30.0, 40.0));
-    let resp = ui.interact(title_r, egui::Id::new("compact-collection"), Sense::click());
+    let mut resp = ui.interact(title_r, egui::Id::new("compact-collection"), Sense::click());
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, crate::i18n::tr("Albums")));
+    if galley.elided {
+        // (the whole name, where there is a pointer to rest on it)
+        resp = resp.on_hover_text(title);
+    }
     crate::widgets::register(ui.ctx(), "button:collections", title_r);
     let color = if resp.is_pointer_button_down_on() { t.text_dim } else { t.text };
     ui.painter().galley(pos2(title_r.left(), hr.center().y - galley.size().y / 2.0), galley.clone(), color);
@@ -838,7 +857,6 @@ pub fn grid_header(app: &mut LightcraftApp, ui: &mut egui::Ui, hr: egui::Rect, c
     if resp.clicked() {
         let _ = app.run("view.leftPanel", json!({}));
     }
-    let right = egui::Rect::from_min_max(pos2(hr.right() - 104.0, hr.top()), pos2(hr.right() - 12.0, hr.bottom()));
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(right).layout(egui::Layout::right_to_left(egui::Align::Center)));
     child.spacing_mut().item_spacing.x = 0.0;
     let tapped = glass::group(&mut child, &[("icon:sort", Icon::Sort, "Sort", true), ("icon:filter", Icon::Filter, "Filter", true)]);

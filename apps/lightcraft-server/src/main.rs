@@ -5,6 +5,7 @@
 //! lightcraft-server user add NAME [--admin]   (password: typed, stdin, or $LIGHTCRAFT_PASSWORD)
 //! lightcraft-server user passwd NAME
 //! lightcraft-server user admin NAME on|off
+//! lightcraft-server user quota NAME SIZE|off
 //! lightcraft-server user remove NAME
 //! lightcraft-server user list
 //! lightcraft-server device list NAME
@@ -41,6 +42,7 @@ const USAGE: &str = "usage:
   lightcraft-server user passwd|remove NAME
   lightcraft-server user admin NAME on|off    (admins manage the server at /admin)
   lightcraft-server user faces NAME on|off    (find the people in NAME's photos; needs `model download --faces`)
+  lightcraft-server user quota NAME SIZE|off  (the most the server keeps for NAME: 500M, 50G, 1T; library folders don't count)
   lightcraft-server user list
   lightcraft-server device list NAME
   lightcraft-server device revoke NAME ID
@@ -73,6 +75,15 @@ impl log::Log for Stderr {
         }
     }
     fn flush(&self) {}
+}
+
+/// Bytes as a person reads them (powers of 1000, as the admin page shows them and `user quota` takes them).
+fn human(b: u64) -> String {
+    let units = [("TB", 1e12), ("GB", 1e9), ("MB", 1e6), ("KB", 1e3)];
+    match units.iter().find(|(_, size)| b as f64 >= *size) {
+        Some((unit, size)) => format!("{} {unit}", format!("{:.1}", b as f64 / size).trim_end_matches(".0")),
+        None => format!("{b} bytes"),
+    }
 }
 
 fn option(args: &[String], name: &str) -> Option<String> {
@@ -206,6 +217,15 @@ fn run(args: &[String]) -> Result<(), String> {
             println!("{name}: finding the people in their photos is {}", if *on == "on" { "on (once the face models are installed)" } else { "off" });
             Ok(())
         }
+        ["user", "quota", name, size] => {
+            let quota = accounts::parse_size(size)?;
+            accounts::set_quota(&data, name, quota)?;
+            match quota {
+                Some(b) => println!("{name} may keep {} on the server", human(b)),
+                None => println!("{name} has no storage limit"),
+            }
+            Ok(())
+        }
         ["user", "passwd", name] => {
             accounts::set_user(&data, name, &password()?, true)?;
             println!("changed {name}'s password");
@@ -218,7 +238,8 @@ fn run(args: &[String]) -> Result<(), String> {
         }
         ["user", "list"] => {
             for (name, u) in accounts::read_users(&data)?.users {
-                println!("{name}{}{}", if u.admin { "\tadmin" } else { "" }, if u.faces { "\tfaces" } else { "" });
+                let quota = u.quota.map(|q| format!("\tlimit {}", human(q))).unwrap_or_default();
+                println!("{name}{}{}{quota}", if u.admin { "\tadmin" } else { "" }, if u.faces { "\tfaces" } else { "" });
             }
             Ok(())
         }

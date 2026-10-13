@@ -123,6 +123,17 @@ function bytes(x) {
 /** A size the server is still counting (`null`) shows as … */
 const size = (x) => (x === null ? '…' : bytes(x));
 
+/**
+ * What a user's storage is made of, when they have library folders: the files the server keeps for them (uploads and
+ * previews) and their photos in those folders, which it only reads, in place. `u.bytes` counts both.
+ */
+function storageParts(u) {
+  if (u.bytes === null || !u.folderBytes) return '';
+  // (a size doesn't break between its number and its unit)
+  const fixed = (x) => bytes(x).replace(' ', '\u00a0');
+  return fixed(u.bytes - u.folderBytes) + ' kept by LightCraft · ' + fixed(u.folderBytes) + ' in library folders';
+}
+
 function ago(secs) {
   const d = secs - Date.now() / 1000;
   for (const [u, s] of [['year', 31536000], ['month', 2592000], ['week', 604800], ['day', 86400], ['hour', 3600], ['minute', 60]]) {
@@ -221,6 +232,7 @@ function field(f) {
     required: f.required !== false,
     minlength: f.minlength,
     pattern: f.pattern,
+    step: f.step,
     placeholder: f.placeholder,
     autocomplete: f.autocomplete || 'off',
     spellcheck: 'false',
@@ -385,7 +397,7 @@ function showUsers([users]) {
         el('td', { class: 'num' }, n(u.photos)),
         el('td', { class: 'num opt' }, n(u.albums)),
         el('td', { class: 'num opt' }, n(u.devices)),
-        el('td', { class: 'num' }, size(u.bytes)),
+        el('td', { class: 'num', title: storageParts(u) }, size(u.bytes)),
         el('td', { class: 'chev-col' }, el('span', { class: 'chev' }, icon('chevron'))),
       ),
     );
@@ -420,6 +432,7 @@ function loadUser(name, tab) {
     shownUser = name;
     $('uRole').replaceChildren();
     for (const id of ['uPhotos', 'uAlbums', 'uDevices', 'uBytes']) $(id).textContent = '–';
+    $('uBytesNote').textContent = '';
     for (const t of ['devices', 'shares', 'folders']) $(t).querySelector('tbody').replaceChildren();
     for (const c of document.querySelectorAll('.scan')) c.hidden = true;
     for (const c of document.querySelectorAll('.tabs .count')) c.textContent = '';
@@ -456,6 +469,16 @@ function showUser(name, users) {
   $('uAlbums').textContent = n(u.albums);
   $('uDevices').textContent = n(u.devices);
   $('uBytes').textContent = size(u.bytes);
+  $('uBytesNote').textContent = storageParts(u);
+  // (the limit counts what LightCraft keeps for them, not their library folders)
+  const limit = $('uQuotaText');
+  const meter = $('uQuotaMeter');
+  limit.hidden = meter.hidden = !u.quota;
+  if (u.quota) {
+    const kept = Math.max(0, (u.bytes || 0) - (u.folderBytes || 0));
+    limit.textContent = size(u.bytes === null ? null : kept) + ' of ' + bytes(u.quota) + ' allowed';
+    fill(meter, kept / u.quota);
+  }
 
   const only = u.admin && users.filter((x) => x.admin).length < 2;
   const why = only ? name + ' is the only administrator.' : '';
@@ -465,6 +488,7 @@ function showUser(name, users) {
     b.title = why;
   }
   $('uPassword').onclick = () => resetPassword(name);
+  $('uQuota').onclick = () => setQuota(name, u.quota);
   $('uAdmin').onclick = () => setAdmin(name, !u.admin);
   $('uRemove').onclick = () => removeUser(name);
 
@@ -485,6 +509,25 @@ function resetPassword(name) {
     action: async (v) => {
       await api('PUT', 'users/' + enc(name) + '/password', { password: v.password });
       toast(name + "'s password was changed.");
+    },
+  });
+}
+
+/** The most the server keeps for a user (uploaded originals and previews; library folders don't count). */
+function setQuota(name, quota) {
+  return ask({
+    title: 'Storage limit for ' + name,
+    text:
+      'The most the server keeps for ' + name + ': the originals their devices upload, previews, and photos added through their shared links. ' +
+      'Photos in library folders don\'t count. Over the limit, uploads wait until there is room; nothing is deleted. Leave it empty for no limit.',
+    fields: [{ name: 'gb', label: 'Limit in GB', type: 'number', step: 'any', required: false, value: quota ? String(Math.round(quota / 1e8) / 10) : '', placeholder: 'No limit', help: 'At least 0.1 GB.' }],
+    ok: 'Set limit',
+    action: async (v) => {
+      const gb = v.gb.trim() === '' ? null : Number(v.gb);
+      if (gb !== null && !(gb >= 0.1)) throw new Error('Type a size of at least 0.1 GB, or leave it empty for no limit.');
+      await api('PUT', 'users/' + enc(name) + '/quota', { quota: gb === null ? null : Math.round(gb * 1e9) });
+      toast(gb === null ? name + ' has no storage limit.' : name + ' may keep ' + bytes(gb * 1e9) + ' on the server.');
+      await route();
     },
   });
 }
@@ -587,7 +630,7 @@ function showShares(name, list) {
       el(
         'tr',
         {},
-        el('td', {}, el('div', { class: 'who-cell' }, el('span', { class: 'thing' }, icon('copy')), el('div', {}, el('b', {}, s.name), el('span', { class: 'sub' }, s.originals ? 'Originals can be downloaded' : 'Pictures only')))),
+        el('td', {}, el('div', { class: 'who-cell' }, el('span', { class: 'thing' }, icon('copy')), el('div', {}, el('b', {}, s.name), el('span', { class: 'sub' }, [s.originals ? 'Originals can be downloaded' : 'Pictures only', s.password && 'Password', s.upload && 'Visitors add photos'].filter(Boolean).join(' · '))))),
         el('td', { class: 'opt', title: date(s.created) }, ago(s.created)),
         el('td', {}, ends),
         el('td', { class: 'end' }, el('button', { type: 'button', class: 'btn quiet', onclick: () => revokeShare(name, s) }, icon('trash'), 'Revoke')),
@@ -821,7 +864,7 @@ function showStorage([s, users]) {
   if (!sorted.length) list.append(el('li', { class: 'muted' }, 'No users yet.'));
   for (const u of sorted) {
     const meter = el('div', { class: 'meter' }, el('div', {}));
-    list.append(el('li', {}, avatar(u.name), el('a', { class: 'name', href: '#/users/' + enc(u.name) }, u.name), meter, el('span', { class: 'bytes' }, size(u.bytes))));
+    list.append(el('li', { title: storageParts(u) }, avatar(u.name), el('a', { class: 'name', href: '#/users/' + enc(u.name) }, u.name), meter, el('span', { class: 'bytes' }, size(u.bytes))));
     meter.firstElementChild.style.width = (top ? (100 * (u.bytes || 0)) / top : 0).toFixed(1) + '%';
   }
 }

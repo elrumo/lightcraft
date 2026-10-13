@@ -2,6 +2,18 @@
 
 ## 2026-10-13
 
+### Shared albums, like a photo service's
+- Right-click an album ▸ **Share Link…** now asks how the link works: when it ends, whether people can download the
+  originals, whether they can **add their own photos** to the album, and an optional **password**.
+- The page people open shows the album's photos by the day they were taken. A photo opens large, and the arrow keys
+  step through the album; **Slideshow** plays it by itself. **Download All** gets every original in one ZIP.
+- Photos people add become yours, in the album, on all your devices. Chat apps show the album's name and first
+  photo for the link, unless it has a password.
+
+### Storage limits on your server
+- An admin can give each person a storage limit on the server (admin page ▸ Users ▸ Storage limit, or
+  `lightcraft-server user quota`). Settings ▸ Sync ▸ Storage shows how much of it you use.
+
 ### Edit In: edit the original, and saves always come back
 - Photo ▸ Edit In on a TIFF, PSD, JPEG or PNG asks how to hand it over, as Lightroom Classic does: **Edit a Copy with
   LightCraft Adjustments**, **Edit a Copy** (the file as it is, without your edits) or **Edit Original** (the file
@@ -33,8 +45,30 @@
   glance how far a setting has moved. The photo's canvas stays a quiet neutral grey.
 - Charcoal, Midnight, Silver and Paper look exactly as before. Each theme card's preview shows the Studio layout.
 
+### Every photo on screen gets its preview from the server
+- On a device that shows photos only the server has (the iPhone and iPad app, the web app, a second computer), the grid
+  used to fill in only the first few cells and leave the rest empty. Now every photo you are looking at downloads its
+  small preview, however slowly the server answers, and the ones on screen come before those just above and below.
+- When the server hasn't built a photo's preview yet (a library folder it is still scanning), it now builds that one
+  first and the app asks again a few seconds later, instead of waiting a minute and leaving the cell empty meanwhile.
+  Photos the server has no original of still wait a minute between tries, as before.
+
 ### Double-click a panel border to reset its width
 - Double-clicking the border you drag to resize the Library, Tools or Presets panel puts that panel back at its usual width.
+
+### Storage counts the photos in your server's library folders
+- A library of 192,870 photos on a server read as using 104 GB: the admin page, Settings ▸ Sync ▸ Storage and the
+  cloud popover counted only what LightCraft keeps itself (previews, and originals devices uploaded) and left out the
+  2.5 TB of photos in the library folders, which the server reads where they are. The total now counts them. Settings
+  lists the library folders just above the total; the popover and the admin page's user page say how much of the total
+  they are; the Users and Storage pages show the same figure.
+- The bar still shows the server's disk: the library folders are drawn in it only when they are on the same disk as the
+  server's data. Redeploy the server as well as updating the app: the admin page's numbers come from the server.
+
+### A long album name on the phone is cut short
+- The title above the photo grid on a phone ran under the filter and sort buttons when the album, folder or collection
+  had a long name ("Manifestación Vivienda" lost its end). It is now cut short with … before the ▾ and the buttons;
+  tapping it still opens the albums list.
 
 ### Light themes: no more black borders
 - The borders between panels, and the bar above the filmstrip, were black in Silver and Paper; they now use each theme's own

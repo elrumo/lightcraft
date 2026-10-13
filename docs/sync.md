@@ -16,8 +16,10 @@ in, and only to the server you name.
 - **Clients:** the desktop app (Settings ▸ Sync), the web build the server serves (open the server's address in a
   browser, Settings ▸ Sync), the iOS app (a spike: [ios.md](ios.md)) and `lightcraft-cli`/MCP. The protocol is plain
   HTTP + JSON and the device side is sans-IO Rust (`crates/engine/src/sync.rs`, `crates/catalog/src/sync.rs`).
-- **It is one person's devices.** Other people see an album through a read-only [link](#share-an-album) (no account);
-  there are no shared libraries or albums several people edit.
+- **It is one person's devices.** Other people see an album through a [link](#share-an-album) (no account): a
+  timeline of its photos, a slideshow, Download All, optionally a password, and optionally a form to **add their own
+  photos** to it, as a shared album of a cloud photo service collects everyone's pictures of a trip. There are no
+  shared libraries, and no accounts for other people.
   A second library can **join** the server's ([when both have photos](#when-this-library-and-the-servers-both-have-photos)).
 
 ## Run a server
@@ -71,6 +73,7 @@ target/release/lightcraft-server serve --data /srv/lightcraft --listen 127.0.0.1
 | `serve [--listen HOST:PORT] [--web DIR] [--scan-interval MIN] [--max-requests N] [--cors-origin SITE]…` | Serve (default `127.0.0.1:8080`, only this computer; `$LIGHTCRAFT_LISTEN`). `--web` (`$LIGHTCRAFT_WEB`): the `cargo xtask web` bundle, served at `/` with the same cross-origin isolation headers as the dev server. `--scan-interval` (`$LIGHTCRAFT_SCAN_INTERVAL`, default 15): minutes between scans of the library folders, 0 = at start and on demand only. `--max-requests` (`$LIGHTCRAFT_MAX_REQUESTS`, default 64): requests answered at once, more are told to try again (the health check never waits). `--cors-origin` (once per site; `$LIGHTCRAFT_CORS`, comma-separated; `*` = any site): web builds hosted on another site may call the API ([below](#a-web-build-on-another-site)). `$LIGHTCRAFT_PREVIEW_THREADS`: threads building their previews (default half the cores, 1–4). `$LIGHTCRAFT_RENDER_THREADS`: photos rendered at once for devices that [export on the server](#exporting-on-the-server) (default 1; a render takes about as much memory as the same export on a desktop) |
 | `user add NAME [--admin]` / `user passwd NAME` | Add a user / change a password (first line of stdin, or `$LIGHTCRAFT_PASSWORD`; 8 characters at least). Works while the server runs |
 | `user admin NAME on\|off` | Let a user sign in to [the admin page](#the-admin-page), or stop them (the last admin stays) |
+| `user quota NAME SIZE\|off` | The most the server keeps for `NAME` ([storage limits](#storage-limits)): `500M`, `50G`, `1.5T` (powers of 1000, as the admin page shows sizes; `50GiB`: of 1024); `off` = no limit |
 | `user remove NAME` / `user list` | Remove a user (signs out every device; their files stay in `users/NAME/`) |
 | `device list NAME` / `device revoke NAME ID` | A user's signed-in devices; sign one out (it must sign in again) |
 | `folder add NAME PATH [--name FOLDER]` | Make `PATH` (a folder on the server) one of `NAME`'s [library folders](#library-folders-photos-already-on-the-server), shown on devices as `FOLDER` (default: its own name) |
@@ -106,12 +109,12 @@ certificate from Let's Encrypt or Tailscale works as is; a self-signed one doesn
 ### What the server keeps
 
 ```text
-<data>/users.json                              users: argon2id password hash, library id, admin
+<data>/users.json                              users: argon2id password hash, library id, admin, storage limit
 <data>/users/<name>/library/catalog.log        every change from every device, in order
 <data>/users/<name>/blobs/<kind>/<xx>/<hash>   photo files by content: original | smart | mini
 <data>/users/<name>/presets.json               user presets { version, presets }
 <data>/users/<name>/docs/<name>.json           the other shared settings { version, items }, one file each
-<data>/users/<name>/shares.json                album links (with their tokens: server's eyes only)
+<data>/users/<name>/shares.json                album links (with their tokens and passwords' argon2id hashes: server's eyes only)
 <data>/users/<name>/shares/cache/              pictures rendered for album links (made again on request)
 <data>/users/<name>/devices.json               signed-in devices: name, id space, SHA-256 of the token
 <data>/users/<name>/folders.json               library folders as last scanned: each file's size, time, hash, photo
@@ -129,9 +132,11 @@ screens, tabs on a phone), follows the system's light or dark mode, and confirms
 - **Overview:** users, photos, signed-in devices and free disk space at a glance; **Connect a device** (the address
   to type into Settings ▸ Sync on each device, the one you opened the page with, with a Copy button); and the
   server's details: version, data folder, the address it listens on, whether it serves the web build.
-- **Users:** every user with their photo, album and device counts and storage used; **Add user**. Open a user for
-  their page: reset the password, make or remove an admin, remove the user (their files stay in `users/NAME/` until
-  you delete them), and two tabs:
+- **Users:** every user with their photo, album and device counts and storage used (the files the server keeps for
+  them *and* the photos in their library folders, which it only reads: a user page says how much of it is each);
+  **Add user**. Open a user for their page: reset the password, make or remove an admin, remove the user (their
+  files stay in `users/NAME/` until you delete them), and two tabs:
+  - **Storage limit:** the most the server keeps for them ([below](#storage-limits)), and how much of it they use.
   - **Devices:** their signed-in devices (name, id, when signed in, last seen); sign one out (it must sign in again).
   - **Shared links:** the [album links](#share-an-album) they made; revoke one.
   - **Library folders:** their [library folders](#library-folders-photos-already-on-the-server): add one (a path on
@@ -145,7 +150,7 @@ screens, tabs on a phone), follows the system's light or dark mode, and confirms
   finds the faces in photos, one person at a time because faces are personal data. Each needs a model: if it isn't on
   the server yet the page shows its size and licence, downloads it onto the server (resumable, you can leave the page)
   and turns it on. Turning a switch off keeps the files. It also shows how far each user's photos have got.
-- **Storage:** the disk holding the data folder (used and free), storage used by each user, and photo-file clean-up
+- **Storage:** the disk holding the data folder (used and free), storage used by each user (as above), and photo-file clean-up
   (**Check for unused files** = `gc --dry-run`, then **Remove files** = `gc`).
 
 **First run:** while no user is an admin, the server prints a one-time **setup code** to its log
@@ -161,6 +166,21 @@ An admin is also an ordinary user with a library of their own.
 The data folder, the listen address and the domain are deployment settings, so the page shows them but doesn't change
 them: `--data` / `LIGHTCRAFT_DATA`, `--listen` / `LIGHTCRAFT_LISTEN`, and the domain in the reverse proxy
 (`LIGHTCRAFT_DOMAIN` with the compose file). Its JSON API is under `/api/admin/` (`apps/lightcraft-server/src/admin.rs`).
+
+### Storage limits
+
+An admin can limit what the server keeps for a user, as a family plan's share of a cloud service: admin page ›
+Users › the user › **Storage limit**, or `lightcraft-server user quota ann 200G` (`off` lifts it). What counts is
+what the server stores for them: the originals their devices upload, smart and small previews, and photos visitors
+add through their [album links](#share-an-album). **Library folders don't count** (they are the admin's folders,
+read in place).
+
+- An upload that would go over the limit is refused (`507`, with how much is used of how much): a device keeps the
+  photo and tries again later, as after any failed upload (the sync popover says why); a visitor's form says the
+  album's owner has no room left. Nothing already on the server is deleted.
+- Devices are told the limit (`GET /api/usage` → `quota`): **Settings ▸ Sync ▸ Storage** shows "x of y used", and
+  warns at 90 %.
+- The smallest limit is 16 MB. Without one (the default) a user may fill the disk.
 
 ## Search by description
 
@@ -213,7 +233,10 @@ can make such folders a user's **library folders** (admin page › Users › the
     content. Previews stay in the server's store.
 - **Scans** run when the server starts, every 15 minutes (`--scan-interval`), when a folder is added and on demand
   (**Scan now**, `lightcraft-server scan`). Files whose size and time didn't change aren't read again.
-  - a new file becomes a new photo, with smart and mini previews built on the server (`LIGHTCRAFT_PREVIEW_THREADS`);
+  - a new file becomes a new photo, with smart and mini previews built on the server (`LIGHTCRAFT_PREVIEW_THREADS`),
+    in the order the scan found the files — except a photo a device is showing and doesn't have a preview of yet:
+    asked for, its previews are built before the rest (see [Photos on a device](#photos-on-a-device)), so what a phone
+    shows doesn't wait for the rest of a big library's previews;
   - a file that moved or was renamed keeps its photo, edits and albums (same content, its old place gone);
   - a file changed in place keeps its photo and edits and gets new previews;
   - a copy of a file is a photo of its own;
@@ -330,8 +353,9 @@ trouble) and opens, as Lightroom's cloud does, a panel (`view.syncStatus`, File 
   uploaded), indexing photos for search, reading the text in them, finding people — or that it has nothing to do
   (and when the folders were last scanned); files or folders in the library folders it couldn't read (listed on the
   admin page). Asked of `GET /api/activity` every 2 seconds, only while the panel is open.
-- **Storage:** what the library takes on the server, as a share of its disk with what is left free, and how many
-  photos are read in place from library folders.
+- **Storage:** what the library takes on the server in all (what the server keeps of it, plus the photos read in
+  place from library folders), as a share of its disk with what is left free, and how much of the total is those
+  photos.
 - **Pause / Resume**, **Sync Now** and the gear (Settings ▸ Sync), always at the bottom: when the server has a lot
   to do on a small screen, the sections between the status and the buttons scroll.
 
@@ -349,10 +373,15 @@ Each device keeps the **whole catalog** (it's small) and **downloads pixels as n
 
 | What | When | Used for |
 |---|---|---|
-| mini preview (≤ 512 px) | a photo whose original isn't here, when the grid or filmstrip shows it (the cells on screen and a screen either side, the ones drawn last first; a cell scrolled past before its turn isn't downloaded) — or every such photo with *Download all small previews* | grid and filmstrip thumbnails, rendered here with the current edits (never stale) |
+| mini preview (≤ 512 px) | a photo whose original isn't here, when the grid or filmstrip shows it (the cells on screen first, then a screen either side; a cell that stays drawn keeps its place in the line however long the ones before it take, one scrolled past before its turn isn't downloaded) — or every such photo with *Download all small previews* | grid and filmstrip thumbnails, rendered here with the current edits (never stale) |
 | smart preview (≤ 2560 px) | the photo you open, and everything **made available offline** | the loupe, editing, exporting at preview size |
 | original | **Photo ▸ Download Originals**, or every photo with *Store the originals of all photos on this device* | full-size export, 1:1 |
 
+- **A preview the server hasn't built yet** (a library folder it is still scanning, an original a device uploaded without
+  previews): the server builds it before the rest of its queue and answers `404` with `{"previews": "queued"}`, and the
+  device asks again after a few seconds (not a failed transfer: nothing is reported, and it isn't the minute a file the
+  server doesn't have waits). `{"previews": "failed"}` is a file the server couldn't read; a plain `404` is a photo it
+  has no original of. A `HEAD` only looks.
 - **Download all small previews** (Settings ▸ Sync, or `sync.allPreviews {on}`): the whole library browses offline.
   The setting says how many photos lack one and about how much they take (at what the server's small previews weigh
   on average; `sync.usage` → `previewsLeft`). Off, the default: a library of 200,000 photos costs only what you look at.
@@ -374,36 +403,59 @@ Each device keeps the **whole catalog** (it's small) and **downloads pixels as n
 **Settings ▸ Sync ▸ Storage** shows what this library takes, refreshed while the page is open (**Refresh** asks
 at once):
 
-- **On the server:** the originals it keeps, smart previews and small previews (each with its file count), their
-  total, the **library folders** (photos read where they are on the server, never copied, so not in the total) and
-  how much room the server's disk has left (the bar: this library, everything else, free).
+- **On the server:** the originals it keeps, smart previews and small previews (each with its file count), the
+  **library folders** (photos read where they are on the server and never copied: LightCraft keeps only their
+  previews, but they take that room too), the **total** of all those rows, and how much room the server's disk has
+  left (the bar: this library, everything else, free). A library folder is drawn in the bar only when it is on the same
+  disk as the server's data (a folder on another disk takes room there, not here); the total counts it either way.
 - **On this computer:** the originals downloaded from the server, smart and small previews, the thumbnail cache,
   copies imported into the library, the catalog and edits, their total and the disk's free space. Photos you
   imported from folders on this computer stay where they are and aren't counted. The header says how many photos
   have only previews here.
 
 The same numbers, in bytes, are the `sync.usage` command (`lightcraft-cli run --library DIR sync.usage refresh=true`,
-MCP, control channel). Disk space comes from `df`, so it's missing on Windows and in the browser.
+MCP, control channel); `serverTotal` is the server's total. Disk space comes from `df`, so it's missing on Windows and in the browser.
 
 ## Share an album
 
-Right-click an album in the sidebar ▸ **Share Link** (or `album.share id=… [expiresDays=…] [originals=true]`): the
-server makes a link, `https://photos.example.com/s/<a long random token>`, and the app puts it on the clipboard.
-Whoever has it opens a plain page of the album in any browser — no account, nothing to install, no script:
+Right-click an album in the sidebar ▸ **Share Link…**: choose when the link ends (never, a day, a week, a month, a
+year), whether people can **download the originals**, whether they can **add photos**, and an optional **password**,
+then **Create Link**. The server makes the link, `https://photos.example.com/s/<a long random token>`, and the app
+puts it on the clipboard (`album.share id=… [expiresDays=…] [originals=true] [password=…] [upload=true]`, or the
+dialog: `dialog.shareLink id=…`). Whoever has it opens the album in any browser — no account, nothing to install:
 
-- The pictures are the photos **as you have edited them now** (rendered on the server by the same pipeline an export
-  uses, 400 px in the grid and 1600 px when opened), without their metadata (no location, no camera serial number).
-  Edit a photo and the link shows the new version. The first visit builds the pictures (a few seconds each for large
-  raws; the server renders one at a time by default, `LIGHTCRAFT_RENDER_THREADS`); they are kept after that.
-- The link can **end** after some days and can let visitors **download the originals**; the default is pictures only,
-  until revoked.
-- Settings ▸ Sync ▸ **Shared Links** lists them with **Copy Link** and **Revoke** (`shares.list`, `album.unshare id=…`);
-  an admin can revoke any user's on the admin page. A revoked, ended or unknown link is the same plain "not found", and
-  guessing is throttled by address.
+- **A timeline:** the album's photos by the day they were taken (oldest first), with the days it spans. Each photo
+  opens on a page of its own, large, with the ones before and after it (**← →** step through them, **Esc** goes
+  back: the page's one small script, allowed by its hash and nothing else). **Slideshow** goes through the album by
+  itself, five seconds a photo, round and round (no script: the page moves on by itself).
+- **The pictures are the photos as you have edited them now** (rendered on the server by the same pipeline an export
+  uses, 400 px in the grid and 1600 px when opened), without their metadata (no location, no camera serial number):
+  the pages show the day a photo was taken, nothing more. Edit a photo and the link shows the new version. The first
+  visit builds the pictures (a few seconds each for large raws; the server renders one at a time by default,
+  `LIGHTCRAFT_RENDER_THREADS`); they are kept after that.
+- **Download originals** (if the link allows it): one by one, or the whole album with **Download All**, one ZIP of
+  the original files as they are (streamed: no waiting for it to be made, its size known from the start).
+- **A password** (if the link has one, 4 to 256 characters): the page asks for it before it shows anything, not even
+  the album's name. The right one opens this link in that browser for 30 days (a cookie for this link only); wrong
+  ones are throttled like sign-ins. The server keeps only the password's argon2id hash.
+- **Add photos** (if the link takes them): a form under the photos, with an optional name. What a visitor sends
+  becomes **your** photos, in this album, on all your devices — like a photo imported on one of them: its original
+  kept by the server (or filed in your imports folder, if you have one), its previews built there, then indexed for
+  search like any other. A file your library has already is that photo, put in the album; a file that isn't a photo
+  or video the server can read is left out; the page says how many were added, left out, or in the album already. A visitor's name becomes the photo's
+  Creator when the file names none. Up to 2 GB a file, 8 GB and 500 files at a time, and within your
+  [storage limit](#storage-limits) — set one for a link you post somewhere public.
+- **Link previews:** a chat app shows the album's name, its photo count and its first picture for the link (Open
+  Graph). A link with a password shows none of that.
+- The link can **end** after some days; the default is never, until revoked.
+- Settings ▸ Sync ▸ **Shared Links** lists them, with what each allows, **Copy Link** and **Revoke** (`shares.list`,
+  `album.unshare id=…`); an admin can revoke any user's on the admin page. A revoked, ended or unknown link is the same
+  plain "not found", and guessing is throttled by address.
 - Only plain albums can be shared (not folders or smart albums), and only the album's own photos are reachable through
   its link. A photo whose file the server doesn't have yet is left out of the page until it is uploaded.
-- The pages ask search engines to stay away and carry their own styles; the link is the secret, so send it to the people
-  you mean it for. It is read-only: visitors can't change or add anything.
+- The pages ask search engines to stay away and carry their own styles; the link is the secret, so send it to the
+  people you mean it for. Visitors can add photos only on a link that lets them; they can never change, remove or
+  edit any.
 
 ## Exporting on the server
 
@@ -479,14 +531,15 @@ Big JSON answers (the library, pulled changes; 16 KiB and up) come gzipped to a 
 | `POST /api/logout` | signs this device out |
 | `GET /api/me` | `{user, device, library, devices}` |
 | `GET /api/snapshot?limit=N[&compact=1][&cursor=C]` | `{defaults, library, seq, catalog, next, total}`: the library after change `seq`, in pages of at most `N` photos (and about 8 MiB), like a cloud photo service's asset listing. With `compact=1` each photo's develop settings (edit, import look, versions) are a JSON merge patch (RFC 7396) against the page's `defaults` (the server's default settings, written first), so an unedited photo takes a few hundred bytes, not ~4 KB, and a default changed in a later version changes no photo. The first page (no `cursor`) also has the albums, stacks and the rest; each page's `next` is the next page's `cursor`, absent on the last; `total` is the library's photo count. Every page comes from the copy taken at the first page, however the library changes meanwhile; the device adopts it after the last page, then pulls the changes since `seq`. `410`: that copy is gone (the server keeps four, and a restart keeps none unless nothing changed): start again. Without `limit` (devices from before paging): the whole library in one answer |
-| `GET /api/usage` | what this user takes on the server ([`proto::Usage`](../crates/catalog/src/sync.rs)): `{photos, albums, devices, original, smart, mini, folders: {files, bytes}, disk: {total, free}}`; a few seconds old at most. A server older than the route answers `404` |
+| `GET /api/usage` | what this user takes on the server ([`proto::Usage`](../crates/catalog/src/sync.rs)): `{photos, albums, devices, original, smart, mini, folders: {files, bytes}, foldersOnDisk, disk: {total, free}, quota}`; a few seconds old at most. `original`, `smart` and `mini` are the files the server keeps; `folders` the photos it reads in place from the user's library folders, and `foldersOnDisk` how many of their bytes are on the same disk as its data. What the library takes in all is `original + smart + mini + folders`; `foldersOnDisk` is for the disk's bar (a server that doesn't say it has none on its disk). `quota` is their [storage limit](#storage-limits) in bytes (`null`: none); it counts `original + smart + mini` only. A server older than the route answers `404` |
 | `GET /api/activity` | what the server is doing for this user now ([`proto::Activity`](../crates/catalog/src/sync.rs)): `{scan: {scanning, phase, done, todo, files, etaSecs, lastScan, problems} \| null, previews: {done, total, etaSecs}, search, text, faces: {done, total, etaSecs} \| null}`; `scan` is null for a user without library folders, the others null when not installed / not turned on. A server older than the route answers `404` |
 | `GET /api/ops?since=N&limit=M` | `{head, ops: [[seq, op]…], presets}` (presets = the presets document's version) · `410`: reload the snapshot |
 | `POST /api/ops` | `{base, ops}` → `200 {head}` · `409 {head}` (behind: pull first) · `422 {index, error}` (op `index` doesn't apply; nothing was) |
-| `HEAD`/`GET`/`PUT /api/blobs/{original\|smart\|mini}/{hash}` | photo files by 128-bit content hash; `GET` takes `Range`; an original is only kept if its bytes hash to its name, previews must be LightCraft previews and arrive whole. **Resuming an upload:** an original that breaks off is kept (`tmp/original-<hash>.part`); `HEAD` of a file the server doesn't have yet answers `404` with `Upload-Offset: N` (the bytes kept, `0` if none), and `PUT` with `Content-Range: bytes N-<last>/<total>` carries on from there (`409` with `{"offset": N}` if the server has another number of bytes or another request is writing the file; a plain `PUT` starts over). Downloads of originals resume with `Range` |
+| `HEAD`/`GET`/`PUT /api/blobs/{original\|smart\|mini}/{hash}` | photo files by 128-bit content hash; `GET` takes `Range`; `GET` of a preview the server hasn't built yet (and has the original of) puts its build first in line and answers `404` `{"error": …, "previews": "queued" \| "failed"}` with `Retry-After: 3`; an original is only kept if its bytes hash to its name, previews must be LightCraft previews and arrive whole; a `PUT` over the user's [storage limit](#storage-limits) is `507`. **Resuming an upload:** an original that breaks off is kept (`tmp/original-<hash>.part`); `HEAD` of a file the server doesn't have yet answers `404` with `Upload-Offset: N` (the bytes kept, `0` if none), and `PUT` with `Content-Range: bytes N-<last>/<total>` carries on from there (`409` with `{"offset": N}` if the server has another number of bytes or another request is writing the file; a plain `PUT` starts over). Downloads of originals resume with `Range` |
 | `GET`/`PUT /api/presets` | `{version, presets}`; `PUT` with a stale `version` → `412` with the current document |
-| `GET`/`POST /api/shares`, `DELETE /api/shares/{id}` | the user's album links ([`proto::Share`](../crates/catalog/src/sync.rs)): `{shares: [...]}`; `POST {album, expiresDays?, originals?}` → the new link (`400` for a folder or smart album, `404` no such album, `409` over 200 links); `DELETE` takes one back |
-| `GET /s/{token}`, `GET /s/{token}/{photo}/{thumb\|view\|original}` | **no sign-in**: the album's page and its pictures ([above](#share-an-album)); `404` for anything else (unknown, ended or revoked token, a photo not in the album, `original` on a link that doesn't offer it), `429` when an address keeps guessing, `503` + `Retry-After` while the server is busy rendering |
+| `GET`/`POST /api/shares`, `DELETE /api/shares/{id}` | the user's album links ([`proto::Share`](../crates/catalog/src/sync.rs): `password` and `upload` say what each asks and allows): `{shares: [...]}`; `POST {album, expiresDays?, originals?, password?, upload?}` → the new link (`400` for a folder or smart album or a password under 4 characters, `404` no such album, `409` over 200 links); `DELETE` takes one back |
+| `GET /s/{token}`, `GET /s/{token}/{photo}[?play=1]`, `GET /s/{token}/{photo}/{thumb\|view\|original}`, `GET /s/{token}/download` | **no sign-in**: the album's page, a photo's page (`play`: the slideshow), the pictures, and Download All (a ZIP of the originals) ([above](#share-an-album)); `404` for anything else (unknown, ended or revoked token, a photo not in the album, `original` or `download` on a link that doesn't offer them), `401` until a link's password was typed, `429` when an address keeps guessing, `503` + `Retry-After` while the server is busy rendering |
+| `POST /s/{token}/unlock`, `POST /s/{token}/upload` | **no sign-in**: a link's password (`password=…`, a form; the answer sets the cookie that opens the link), and photos a visitor adds (`multipart/form-data`, field `photos`, optional `name`; `303` back to the album with `?added=N&skipped=M`; `403` on a link that doesn't take photos, `507` over the owner's [storage limit](#storage-limits)) |
 | `GET`/`PUT /api/docs/{name}` | the other shared settings, `name` one of `export-presets`, `metadata-presets`, `filter-presets`, `curve-presets`, `label-sets`, `keyword-sets`, `lut-profiles`, `prefs`, `preset-groups` (the order of the develop preset groups): `{version, items}` (a list; at most 24 MiB), merged by the devices item by item like presets; `PUT` with a stale `version` → `412` with the current document; another name → `404`. Their versions come with every pull (`docs`) |
 | `POST /api/render` | `{hash, name, settings, export}` → the encoded image (`X-LightCraft-Size: WxH`): the photo with this original, rendered with these edits and [export options](#exporting-on-the-server) · `404` no such original (or a server older than the route) · `422` can't be rendered · `503` busy, `Retry-After` |
 | `GET /api/health` | `{ok, version}` (no sign-in) |
@@ -530,8 +583,9 @@ v1, honestly:
   need the original: **Photo ▸ Download Originals** first (the export says so). The browser can't have the server
   render a photo (export runs on the page's main thread), as the desktop and iOS apps can.
 - **Settings that describe one computer stay on it**, by design: the folders (library, smart previews, the watched folder for auto import), the cache size, the external editor, what is shared for search, the window layout.
-- **Sharing is links to a read-only page**: no accounts for other people, no shared albums that several people add
-  to, and no comments or favourites on the page.
+- **Sharing is links to a page**: visitors can see, download (if allowed) and add photos (if allowed), but there are
+  no accounts for other people, no comments or likes on the page, and an album shared with several people is still
+  one person's album (theirs to edit).
 - **The server compacts its log** into a snapshot at 64 MiB and keeps the newest 16 MiB of it (tens of thousands of
   changes): a device behind by more than that reloads the library. (A device that is only a little behind keeps
   pulling; a pull reads just the part of the log it asks for.)

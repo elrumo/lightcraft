@@ -188,6 +188,14 @@ impl Workspace {
                     permissions,
                 )
                 .map_err(|error| error.to_string())?;
+            // (put back beside the photo afresh: at the width it had, not half the room)
+            let width = match location.as_ref().map(|l| (&l.placement, l.size)) {
+                Some((Placement::Split(Zone::Left | Zone::Right), Some(SplitSize::FixedFirst(width) | SplitSize::FixedSecond(width)))) => Some(width),
+                _ => default_width(panel),
+            };
+            if let Some(width) = width {
+                next.set_width(panel, width)?;
+            }
         }
         next.validate()?;
         *self = next;
@@ -571,7 +579,16 @@ pub fn show(app: &mut crate::LightcraftApp, ui: &mut egui::Ui) {
     if stale || !slides.is_empty() {
         return;
     }
+    // A divider (or a floating panel's grip or corner) is dragged from the frame its button goes
+    // down, and egui's pointer delta for that frame runs from where the pointer was the frame
+    // before: a press that arrives with the pointer's move onto a divider would resize by that
+    // whole jump, and the double-click below would then miss the divider it moved. Only movement
+    // while the button is held resizes or moves a panel.
+    let drag_started = ui.ctx().drag_started_id().is_some();
     for action in output.actions {
+        if drag_started && matches!(action, Action::ResizeSplit { .. } | Action::ResizeStack { .. } | Action::MoveFloating { .. }) {
+            continue;
+        }
         if let Err(error) = serde_json::to_value(action)
             .map_err(|error| error.to_string())
             .and_then(|action| command_impl(app, false, &json!({"action": action}), true))
@@ -579,9 +596,16 @@ pub fn show(app: &mut crate::LightcraftApp, ui: &mut egui::Ui) {
             app.ui.toast = Some((format!("Panel move was not applied: {error}"), ui.input(|input| input.time) + 8.0, None));
         }
     }
-    // A double-click on a divider returns the panel it sizes to its default width.
-    let double_click =
-        ui.input(|input| if input.pointer.button_double_clicked(egui::PointerButton::Primary) { input.pointer.interact_pos() } else { None });
+    // A double-click on a divider returns the panel it sizes to its default width. egui counts a
+    // click as a triple click when the click before last came within 0.6 s, wherever it was: a
+    // click anywhere just before a double-click on a divider turns that double-click into a triple
+    // one. Both mean "this click is a quick repeat at the same spot", and a reset is idempotent.
+    let double_click = ui.input(|input| {
+        let pointer = &input.pointer;
+        (pointer.button_double_clicked(egui::PointerButton::Primary) || pointer.button_triple_clicked(egui::PointerButton::Primary))
+            .then(|| pointer.interact_pos())
+            .flatten()
+    });
     if let Some(pos) = double_click.filter(|pos| ui.ctx().layer_id_at(*pos) == Some(ui.layer_id())) {
         for panel in divider_owners(&rendered.layout, &bodies, style.gap, area, pos) {
             if let Err(error) = command_impl(app, false, &json!({"operation": "resetWidth", "panel": panel.id()}), true) {
