@@ -383,6 +383,7 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context, req: &ControlRequest
                             | crate::state::Dialog::SamModel { .. }
                             | crate::state::Dialog::SuperRes { .. }
                             | crate::state::Dialog::SmartRules { .. }
+                            | crate::state::Dialog::ShareLink { .. }
                     ))
                     || (r.is_ok() && crate::panels::dialogs::keeps_open(app, &d))
                 {

@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~14 points and ~340–600 h away
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (EOS R5 Mark II CR3 verified; RAW decoding 77%) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** minor (sync server: shared album links with passwords and guest uploads, per-user storage limits) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6
 
 One-page summary of how close LightCraft is to Adobe Lightroom. Agents: read this, then pick work
 from [docs/gaps.md](docs/gaps.md). The full assessment, method and evidence are in
@@ -119,7 +119,7 @@ This fork adds features upstream doesn't have; they are outside the numbers abov
 
 | Feature | State | Missing |
 |---|---|---|
-| **Optional self-hosted sync** (`lightcraft-server`, [sync.md](docs/sync.md); local-first stays the default) | One library shared by a user's devices (desktop, CLI, web build, iOS app): previews and originals by content hash, field-level merges, photo folders already on the server read in place; presets, sets and LUT profiles follow the user; a library that already has photos can merge into the server's; read-only album links; opt-in writable folders (XMP sidecars written back, uploads filed into an imports folder); a size budget for downloaded originals, resumable uploads, small previews downloaded as the grid shows them | Verification on real hardware (a physical iPhone over real TLS, a real NAS, a long-lived library); sharing beyond a read-only link |
+| **Optional self-hosted sync** (`lightcraft-server`, [sync.md](docs/sync.md); local-first stays the default) | One library shared by a user's devices (desktop, CLI, web build, iOS app): previews and originals by content hash, field-level merges, photo folders already on the server read in place; presets, sets and LUT profiles follow the user; a library that already has photos can merge into the server's; album links (a timeline by day, a page per photo, a slideshow, Download All, an optional password, optionally a form for visitors to add photos to the album); per-user storage limits; opt-in writable folders (XMP sidecars written back, uploads filed into an imports folder); a size budget for downloaded originals, resumable uploads, small previews downloaded as the grid shows them | Verification on real hardware (a physical iPhone over real TLS, a real NAS, a long-lived library); comments and likes on shared albums, accounts for other people |
 | **iPhone / iPad app** (`apps/lightcraft-ios`, `crates/ios-host`; [ios.md](docs/ios.md)) | The egui app with a compact touch layout: phone grid, touch sliders, crop, Remove and Masking screens, an iOS 26 glass look, export with Save to Photos; native host (Photos / Files pickers, share sheet, HEIC through ImageIO, lifecycle, memory budget). Checked on the simulator, partly on an iPhone | Most of the host on a device; Lightroom-mobile features ([ios-gaps.md](docs/ios-gaps.md)) |
 | **Map view and place search** (`crates/geo`, [map.md](docs/map.md)) | Desktop, web and iOS: clustered thumbnail markers, an offline world map plus OpenStreetMap tiles, place search (`madrid`, `photos in lisbon in june 2024`) and the place in Info, offline from GeoNames | Not yet run in a browser or on a device; drag-to-geotag, saved locations, a satellite layer |
 | **Search by description, text in photos, People** (`crates/vision`, [search-people.md](docs/search-people.md)) | SigLIP 2, PP-OCRv6 and YuNet + SFace, each an opt-in consented download, on the desktop and on the sync server | Measured on a handful of images only (face grouping accuracy, OCR at about a second a photo, no relevance cut-off); a device-side model on iOS |
@@ -128,10 +128,15 @@ This fork adds features upstream doesn't have; they are outside the numbers abov
 | **AI Remove** (`crates/erase`, [ai-remove.md](docs/ai-remove.md)) | Remove ▸ Generative AI: MI-GAN (MIT, optional download, pinned SHA-256) on rten fills a stroke on desktop, iPhone and the web; the fill is stored with the spot, so renders and exports never run the model | Not run on an iPhone yet |
 
 Next for the fork: sync and the iOS app verified on real hardware; then depth (Depth Range, Lens Blur) and sharing
-beyond a read-only link.
+between people with accounts (comments, likes, shared libraries).
 
 ## Progress log
 
+- 2026-10-13: The sync server's album links grow into shared albums, as photo services have them: Share Link… asks
+  when the link ends, whether people may download the originals or **add their own photos** (they become the owner's,
+  in the album, on every device), and for an optional **password**; the page goes by day, opens each photo large
+  (← →), plays a slideshow and offers Download All (a streamed ZIP). Admins can give each user a **storage limit**
+  ([sync.md](docs/sync.md#share-an-album)).
 - 2026-10-11: Canon EOS R5 Mark II C-RAW decodes from sensor data (57% of its files opened as a
   preview): the CRX QP map's first-symbol literal and limited-length escape; four CC0 R5 Mark II files
   pinned, the QP maps of 33,665 private C-RAW files decode exactly ([cr3.md](docs/cr3.md)). 235 models
@@ -179,6 +184,7 @@ beyond a read-only link.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | Sync server: album links with passwords, guest uploads, Download All, photo pages and a slideshow; per-user storage limits; *Fork additions* row and *Next* updated; numbers unchanged |
 | 2026-10-12 | minor | Upstream merged into this fork; *Fork additions* lists the fork-only features (sync, iOS app, map, search / People, Super Resolution, patch-synthesis Remove); numbers unchanged |
 | 2026-10-11 | minor | EOS R5 Mark II CR3 verified: CR3 on four verified bodies, RAW decoding 76% → 77%; headline numbers unchanged |
 | 2026-10-10 | minor | RAW measured model by model; RAW decode and colour as explicit rows: full 59% → 61%, mainstream 51% → 49%, essentials 63% → 64%; beta ~14 points |

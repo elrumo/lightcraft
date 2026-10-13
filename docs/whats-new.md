@@ -2,6 +2,18 @@
 
 ## 2026-10-13
 
+### Shared albums, like a photo service's
+- Right-click an album ▸ **Share Link…** now asks how the link works: when it ends, whether people can download the
+  originals, whether they can **add their own photos** to the album, and an optional **password**.
+- The page people open shows the album's photos by the day they were taken. A photo opens large, and the arrow keys
+  step through the album; **Slideshow** plays it by itself. **Download All** gets every original in one ZIP.
+- Photos people add become yours, in the album, on all your devices. Chat apps show the album's name and first
+  photo for the link, unless it has a password.
+
+### Storage limits on your server
+- An admin can give each person a storage limit on the server (admin page ▸ Users ▸ Storage limit, or
+  `lightcraft-server user quota`). Settings ▸ Sync ▸ Storage shows how much of it you use.
+
 ### A clearer Settings window
 - Settings (⌘,) has its sections in a sidebar on the left, each with its own icon: General, Interface, Display, Import
   and Performance, then the AI features, then Sync, which shows whether it is on. The section you open gets a title

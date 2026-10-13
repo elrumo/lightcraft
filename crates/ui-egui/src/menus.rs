@@ -145,6 +145,8 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("brush.featherLess", "Decrease Brush Feather", Some("Shift+["), "Window>Tools"),
     ("brush.featherMore", "Increase Brush Feather", Some("Shift+]"), "Window>Tools"),
     ("dialog.newAlbum", "New Album…", Some("Cmd+N"), "File"),
+    // {id?}: how a link to an album (default: the one shown) works, then `album.share`
+    ("dialog.shareLink", "Share Link…", None, ""),
     ("dialog.newFolder", "New Folder…", Some("Cmd+Shift+N"), "File"),
     ("dialog.smartAlbum", "New Smart Album…", None, "File"),
     ("view.photoCounts", "Show Photo Counts", None, "View"),
@@ -1198,6 +1200,25 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
         "dialog.newAlbum" => {
             app.ui.dialog =
                 Some(Dialog::NewAlbum { name: p.get("name").and_then(Value::as_str).unwrap_or("").into(), folder: false, parent: parent_param(p) });
+            Ok(Value::Null)
+        }
+        "dialog.shareLink" => {
+            let id = match p.get("id").and_then(Value::as_u64) {
+                Some(id) => id,
+                None => match app.session.source {
+                    lightcraft_engine::LibrarySource::Album(a) => a.0,
+                    _ => return Some(Err("missing `id` (or show an album first)".into())),
+                },
+            };
+            let name = match app.session.catalog.album(lightcraft_catalog::AlbumId(id)) {
+                Some(a) if !a.folder && !a.is_smart() => a.name.clone(),
+                Some(_) => return Some(Err("only an album of photos can be shared: not a folder or a smart album".into())),
+                None => return Some(Err(format!("no album {id}"))),
+            };
+            if !app.session.sync_state().is_some_and(|st| st.signed_in()) {
+                return Some(Err("sign in to a sync server first (Settings › Sync): it makes the link and shows the album".into()));
+            }
+            app.ui.dialog = Some(Dialog::ShareLink { id, name, days: 0, originals: false, upload: false, password: String::new() });
             Ok(Value::Null)
         }
         "dialog.autoStack" => {

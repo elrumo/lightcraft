@@ -182,7 +182,7 @@ pub fn handle(st: &State, req: &mut Request) -> Resp {
     }
     let mut resp = if path == "/s" || path.starts_with("/s/") {
         // a shared album: for anyone with the link
-        crate::shares::public(st, req, &method, path)
+        crate::shares::public(st, req, &method, path, q)
     } else if let Some(rest) = path.strip_prefix("/api/admin/") {
         crate::admin::api(st, req, &method, rest)
     } else if is_api {
@@ -377,6 +377,7 @@ fn usage(st: &State, l: &Mutex<UserLib>, who: &Session) -> Resp {
             .filter(|(root, _)| disk_space(root).is_some_and(|d| same_disk(d, data)))
             .fold(0, |bytes, (_, here)| u64::saturating_add(bytes, *here));
     }
+    u.quota = accounts::quota_of(&st.data, &who.user);
     u.devices = st.accounts.lock().unwrap_or_else(PoisonError::into_inner).devices_of(&who.user).len() as u64;
     l.lock().unwrap_or_else(PoisonError::into_inner).usage = Some((Instant::now(), u.clone()));
     json(200, &json!(u))
@@ -643,9 +644,16 @@ fn blob(st: &State, req: &mut Request, method: &Method, l: &Mutex<UserLib>, user
             Response::new(StatusCode(status), headers, Box::new(f.take(n)), size, None)
         }
         Method::Put => {
+            let incoming = req.body_length().map_or(0, |n| n as u64);
+            if let Some(r) = over_quota(st, user, incoming) {
+                return r;
+            }
             // `?previews=1` on an original: the device asks the server to build its previews
             let previews = kind == "original" && req.url().split_once('?').is_some_and(|(_, q)| query(q, "previews") == Some("1"));
             let resp = put_blob(st, req, &dir, kind, &path);
+            if resp.status_code().0 == 200 {
+                st.sizes.add(user, incoming);
+            }
             if kind == "original" && resp.status_code().0 == 200 {
                 // (an imports folder takes it)
                 st.writer.file_uploads(user);
@@ -657,6 +665,17 @@ fn blob(st: &State, req: &mut Request, method: &Method, l: &Mutex<UserLib>, user
         }
         _ => error(405, "HEAD, GET or PUT"),
     }
+}
+
+/// `507` when `incoming` more bytes would take `user` over their storage limit ([`accounts::User::quota`]).
+pub(crate) fn over_quota(st: &State, user: &str, incoming: u64) -> Option<Resp> {
+    let quota = accounts::quota_of(&st.data, user)?;
+    let used = st.sizes.used(&st.data, user);
+    if used.saturating_add(incoming) <= quota {
+        return None;
+    }
+    let gb = |b: u64| format!("{:.1} GB", b as f64 / 1e9);
+    Some(error(507, format!("over the storage limit: {} of {} used on the server; ask its admin for more room", gb(used), gb(quota))))
 }
 
 /// A device asked for a preview that isn't there, for a photo whose original this server has (uploaded, or in a
