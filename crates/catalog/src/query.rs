@@ -433,6 +433,22 @@ impl Catalog {
         v
     }
 
+    /// The cameras the library's photos were taken with, with how many photos each, the way
+    /// [`Filter::camera`] matches them: names that differ only in case are one (shown as first
+    /// seen). Most photos first, then by name.
+    pub fn cameras(&self) -> Vec<(String, usize)> {
+        let mut m: std::collections::HashMap<String, (String, usize)> = Default::default();
+        for p in self.photos().filter(|p| p.in_library()) {
+            let name = p.meta.camera.trim();
+            if !name.is_empty() {
+                m.entry(name.to_lowercase()).or_insert_with(|| (name.to_string(), 0)).1 += 1;
+            }
+        }
+        let mut v: Vec<(String, usize)> = m.into_values().collect();
+        v.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.to_lowercase().cmp(&b.0.to_lowercase())));
+        v
+    }
+
     /// All keywords with usage counts, sorted by name.
     pub fn keywords(&self) -> Vec<(String, usize)> {
         let mut m: std::collections::BTreeMap<String, usize> = Default::default();

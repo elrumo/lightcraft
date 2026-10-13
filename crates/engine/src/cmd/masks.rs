@@ -514,6 +514,33 @@ pub fn specs() -> Vec<CommandSpec> {
                 })
             }
         ),
+        cmd!(
+            query "mask.controls",
+            "List Mask Adjustments",
+            [],
+            None,
+            "{id?} → [{id, label, min, max, default, step, decimals, track, value}] the mask's Amount and local adjustment sliders with its values (ids as `mask.adjust` takes them)",
+            has_active,
+            |s, p| {
+                let c = "mask.controls";
+                let mid = mask_id(p, s.active_mask, c)?;
+                let id = s.active().ok_or_else(|| bad(c, "no active photo"))?;
+                let d = s.develop_of(id).unwrap_or_default();
+                let m = d.masks.iter().find(|m| m.id == mid).ok_or_else(|| bad(c, format!("no mask {mid}")))?;
+                let values = serde_json::to_value(m.adjust).unwrap_or_default();
+                let specs = std::iter::once(&lightcraft_develop::controls::LOCAL_AMOUNT).chain(lightcraft_develop::controls::LOCAL.iter());
+                Ok(Value::Array(
+                    specs
+                        .map(|spec| {
+                            let mut v = serde_json::to_value(spec).unwrap_or_default();
+                            v["section"] = json!("mask");
+                            v["value"] = values.get(spec.id).cloned().unwrap_or(json!(spec.default));
+                            v
+                        })
+                        .collect(),
+                ))
+            }
+        ),
         cmd!("mask.select", "Select Mask", [], None, "{id|null}", has_active, |s, p| {
             s.active_mask = p.get("id").and_then(Value::as_u64).map(|v| v as u32);
             ok()

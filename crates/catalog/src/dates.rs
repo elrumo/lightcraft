@@ -148,7 +148,70 @@ pub fn group_label(key: &str) -> String {
     }
 }
 
+/// One month or year of the phone grid's Months / Years views: its key (`2025-08`, `2025`; empty for
+/// photos with no date), how many photos it has, and the ones it shows (indices into the list), the
+/// best first.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DateBlock {
+    pub key: String,
+    pub count: usize,
+    pub shown: Vec<usize>,
+}
+
 impl Catalog {
+    /// The photos in `ids` grouped by capture month (`key_len` 7) or year (4), in the order they
+    /// come, each group showing up to `show` of them: the best (picked, then most stars) and the
+    /// rest spread evenly through it, in the group's own order.
+    pub fn date_blocks(&self, ids: &[PhotoId], key_len: usize, show: usize) -> Vec<DateBlock> {
+        let mut out: Vec<(String, Vec<usize>)> = Vec::new();
+        let mut at: std::collections::HashMap<String, usize> = Default::default();
+        for (i, id) in ids.iter().enumerate() {
+            let key = self.photo(*id).and_then(|p| p.captured.as_deref().and_then(|c| c.get(..key_len)).map(str::to_string)).unwrap_or_default();
+            match at.get(&key) {
+                Some(b) => {
+                    if let Some((_, members)) = out.get_mut(*b) {
+                        members.push(i);
+                    }
+                }
+                None => {
+                    at.insert(key.clone(), out.len());
+                    out.push((key, vec![i]));
+                }
+            }
+        }
+        let score = |i: usize| ids.get(i).and_then(|id| self.photo(*id)).map_or((false, 0), |p| (p.flag == crate::Flag::Pick, p.rating));
+        out.into_iter()
+            .map(|(key, members)| {
+                let best = members.iter().copied().max_by_key(|i| (score(*i), std::cmp::Reverse(*i))).unwrap_or(0);
+                let mut shown = vec![best];
+                let want = show.min(members.len());
+                let n = members.len();
+                let mut k = 0;
+                while shown.len() < want && k < n {
+                    // spread through the month: the photos at even steps from its start
+                    let pick = members.get(k * n / want.max(1)).copied().unwrap_or(best);
+                    if !shown.contains(&pick) {
+                        shown.push(pick);
+                    }
+                    k += 1;
+                }
+                for m in &members {
+                    if shown.len() >= want {
+                        break;
+                    }
+                    if !shown.contains(m) {
+                        shown.push(*m);
+                    }
+                }
+                // the rest in the month's own order
+                if let Some(rest) = shown.get_mut(1..) {
+                    rest.sort_unstable();
+                }
+                DateBlock { key, count: n, shown }
+            })
+            .collect()
+    }
+
     /// Split `ids` (the grid order) into runs of the same day / month / year for `key`'s date.
     /// Members of a stack share the group of the stack's first photo in the list, so a stack is
     /// never split by a header. Empty for sort keys without a date and for [`GroupBy::None`]

@@ -12,30 +12,9 @@ use crate::icons::{Icon, paint};
 use crate::theme::Tokens;
 use crate::widgets::{divider, icon_button, one_line, register, slider, text_button};
 
-const fn spec(id: &'static str, label: &'static str, min: f64, max: f64, step: f64, decimals: u8, track: Track) -> ControlSpec {
-    ControlSpec { id, label, section: Section::Light, min, max, default: 0.0, step, decimals, track }
-}
-
-/// Local adjustment sliders (key = `LocalAdjustments` field name).
-pub const LOCAL: &[ControlSpec] = &[
-    spec("temp", "Temp", -100.0, 100.0, 1.0, 0, Track::Temp),
-    spec("tint", "Tint", -100.0, 100.0, 1.0, 0, Track::Tint),
-    spec("exposure", "Exposure", -4.0, 4.0, 0.01, 2, Track::Centered),
-    spec("contrast", "Contrast", -100.0, 100.0, 1.0, 0, Track::Centered),
-    spec("highlights", "Highlights", -100.0, 100.0, 1.0, 0, Track::Centered),
-    spec("shadows", "Shadows", -100.0, 100.0, 1.0, 0, Track::Centered),
-    spec("whites", "Whites", -100.0, 100.0, 1.0, 0, Track::Centered),
-    spec("blacks", "Blacks", -100.0, 100.0, 1.0, 0, Track::Centered),
-    spec("texture", "Texture", -100.0, 100.0, 1.0, 0, Track::Centered),
-    spec("clarity", "Clarity", -100.0, 100.0, 1.0, 0, Track::Centered),
-    spec("dehaze", "Dehaze", -100.0, 100.0, 1.0, 0, Track::Centered),
-    spec("hue", "Hue", -100.0, 100.0, 1.0, 0, Track::Rainbow),
-    spec("saturation", "Saturation", -100.0, 100.0, 1.0, 0, Track::Gradient { from: "#7a7a7a", to: "#e04a3a" }),
-    spec("sharpness", "Sharpness", -100.0, 100.0, 1.0, 0, Track::Centered),
-    spec("noise", "Noise", -100.0, 100.0, 1.0, 0, Track::Centered),
-    spec("moire", "Moiré", -100.0, 100.0, 1.0, 0, Track::Centered),
-    spec("defringe", "Defringe", -100.0, 100.0, 1.0, 0, Track::Centered),
-];
+/// Local adjustment sliders (key = `LocalAdjustments` field name), shared with the SwiftUI app's
+/// `mask.controls`.
+pub use lightcraft_develop::controls::LOCAL;
 
 pub fn local_get(a: &LocalAdjustments, key: &str) -> f64 {
     serde_json::to_value(a).ok().and_then(|v| v.get(key).and_then(|x| x.as_f64())).unwrap_or(0.0)
@@ -424,17 +403,7 @@ pub(crate) const COMPONENT_KINDS: [(&str, &str); 8] = [
 
 /// The selected mask's Amount: how strongly its adjustments apply (0–200 %).
 pub(super) fn amount_slider(app: &mut LightcraftApp, ui: &mut egui::Ui, m: &lightcraft_develop::Mask) {
-    let amt = ControlSpec {
-        id: "amount",
-        label: "Amount",
-        section: Section::Light,
-        min: 0.0,
-        max: 200.0,
-        default: 100.0,
-        step: 1.0,
-        decimals: 0,
-        track: Track::Plain,
-    };
+    let amt = lightcraft_develop::controls::LOCAL_AMOUNT;
     let out = slider(ui, &amt, m.adjust.amount, true, None);
     apply_slider_out(app, &amt, out, |app, v| app.run("mask.adjust", json!({"values": {"amount": v}})));
 }

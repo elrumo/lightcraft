@@ -33,7 +33,7 @@ pub mod sync;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-pub use dates::{DateRun, GroupBy};
+pub use dates::{DateBlock, DateRun, GroupBy};
 pub use folders::{FolderNode, FolderRecord};
 pub use journal::{Journal, LoadReport, PersistStats, SnapshotPolicy, SnapshotTiming};
 pub use keywords::KeywordNode;

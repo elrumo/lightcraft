@@ -170,16 +170,72 @@ pub fn specs() -> Vec<CommandSpec> {
                 })
                 .unwrap_or(Value::Null))
         }),
-        cmd!(query "develop.controls", "List Develop Controls", [], None, "{section?} — every slider with range, default and current value", always, |s, p| {
-            let d = s.active().and_then(|id| s.develop_of(id)).unwrap_or_default();
+        cmd!(
+            query "view.frame",
+            "Photo Frame",
+            [],
+            None,
+            "{id?, applyCrop?: true} → {aspect, width, height, toNorm: [a,b,c,d,e,f], fromNorm, crop: {rect, angle, quad: [[x,y] ×4: top-left, top-right, bottom-right, bottom-left of the unflipped crop], toStraight: [6] (image → the straightened frame crop.drag takes), flipH, flipV}} how the photo as shown (cropped, straightened, flipped) maps to the normalized image coordinates masks, spots, the crop and the pickers take: toNorm maps (u, v) in 0..1 across the shown image (top-left first) as (a·u + c·v + e, b·u + d·v + f); fromNorm is its inverse; width × height is the shown image at the photo's own resolution",
+            always,
+            |s, p| {
+                let c = "view.frame";
+                let id = p.get("id").and_then(Value::as_u64).map(PhotoId).or(s.active()).ok_or_else(|| bad(c, "no photo (pass `id`)"))?;
+                let photo = s.catalog.photo(id).ok_or_else(|| bad(c, format!("no photo {}", id.0)))?;
+                let (sw, sh) = (photo.width.max(1) as usize, photo.height.max(1) as usize);
+                let d = s.develop_of(id).unwrap_or_default();
+                let apply = p.get("applyCrop").and_then(Value::as_bool).unwrap_or(true);
+                let frame = lightcraft_pipeline::geometry::Frame::with_lens(sw, sh, &d, apply, s.embedded_lens(id).as_ref());
+                let (w, h) = frame.native_size();
+                let (w, h) = (if w.is_finite() { w.round().clamp(1.0, 1e9) } else { 1.0 }, if h.is_finite() { h.round().clamp(1.0, 1e9) } else { 1.0 });
+                let to = frame.out_to_norm(w as usize, h as usize) * lightcraft_geom::Affine::scale(w, h);
+                let from = to.inverse().unwrap_or(lightcraft_geom::Affine::IDENTITY);
+                // the crop on the whole photo (the crop tool's frame): its corners, and how a point of the photo maps to
+                // the straightened frame `crop.drag` takes
+                let g = d.crop.geometry;
+                let quad = lightcraft_pipeline::geometry::Frame { crop: g, ..frame.clone() }.crop_quad_norm();
+                let (ow, oh) = (frame.ow.max(1.0), frame.oh.max(1.0));
+                let centre = lightcraft_geom::Point::new(ow / 2.0, oh / 2.0);
+                let straight = lightcraft_geom::Affine::scale(1.0 / ow, 1.0 / oh)
+                    * lightcraft_geom::Affine::rotate_about(g.angle.to_radians(), centre)
+                    * lightcraft_geom::Affine::scale(ow, oh);
+                Ok(json!({
+                    "aspect": w / h, "width": w, "height": h, "toNorm": to.0, "fromNorm": from.0,
+                    "crop": {
+                        "rect": [g.rect.x0, g.rect.y0, g.rect.x1, g.rect.y1],
+                        "angle": g.angle,
+                        "quad": quad.iter().map(|q| [q.x, q.y]).collect::<Vec<_>>(),
+                        "toStraight": straight.0,
+                        "flipH": d.crop.flip_h,
+                        "flipV": d.crop.flip_v,
+                    },
+                }))
+            }
+        ),
+        cmd!(query "develop.controls", "List Develop Controls", [], None, "{section?} — every slider with range, default and current value; white balance as the active photo shows it: Kelvin (the effective white for As Shot and presets) for a raw, `wb.tempRel` / `wb.tintRel` (−100…100, relative to the photo's own colour; `develop.set` takes them) for a rendered photo", always, |s, p| {
+            let active = s.active();
+            let d = active.and_then(|id| s.develop_of(id)).unwrap_or_default();
             let sec = p.get("section").and_then(|v| serde_json::from_value::<lightcraft_develop::Section>(v.clone()).ok());
+            // white balance as this photo shows it (the egui app's Color group does the same)
+            let photo = active.and_then(|id| s.catalog.photo(id));
+            let raw = photo.is_some_and(|p| p.develops_raw() && !p.relative_wb());
+            // (with no photo, the plain table: Kelvin)
+            let relative = photo.is_some() && !raw;
+            let as_shot_rel = d.wb.mode == lightcraft_develop::WbMode::AsShot && photo.is_some_and(|p| p.relative_wb());
+            let effective = (raw && photo.is_some()).then(|| active.map(|id| lightcraft_pipeline::local::effective_wb(&s.source_info(id), &d))).flatten();
             Ok(Value::Array(
                 CONTROLS
                     .iter()
                     .filter(|c| sec.is_none_or(|x| x == c.section))
                     .map(|c| {
-                        let mut v = serde_json::to_value(c).unwrap_or_default();
-                        v["value"] = json!(controls::get(&d, c.id));
+                        let (spec, value) = match c.id {
+                            "wb.temp" if relative => (&controls::WB_TEMP_REL, if as_shot_rel { 0.0 } else { controls::kelvin_to_relative(d.wb.temp) }),
+                            "wb.tint" if relative => (&controls::WB_TINT_REL, if as_shot_rel { 0.0 } else { d.wb.tint.clamp(-100.0, 100.0) }),
+                            "wb.temp" => (c, effective.map_or(d.wb.temp, |e| e.0)),
+                            "wb.tint" => (c, effective.map_or(d.wb.tint, |e| e.1)),
+                            _ => (c, controls::get(&d, c.id).unwrap_or(c.default)),
+                        };
+                        let mut v = serde_json::to_value(spec).unwrap_or_default();
+                        v["value"] = json!(value);
                         v
                     })
                     // indexed controls of the list elements that exist (`pointColor.0.hueShift`, …)

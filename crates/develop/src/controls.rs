@@ -128,6 +128,82 @@ macro_rules! controls {
     };
 }
 
+const fn local(id: &'static str, label: &'static str, min: f64, max: f64, step: f64, decimals: u8, track: Track) -> ControlSpec {
+    ControlSpec { id, label, section: Section::Light, min, max, default: 0.0, step, decimals, track }
+}
+
+/// A mask's local adjustment sliders, in panel order (id = the `LocalAdjustments` field name, as
+/// `mask.adjust` takes it). The Masking panels of every UI draw these.
+pub const LOCAL: &[ControlSpec] = &[
+    local("temp", "Temp", -100.0, 100.0, 1.0, 0, Track::Temp),
+    local("tint", "Tint", -100.0, 100.0, 1.0, 0, Track::Tint),
+    local("exposure", "Exposure", -4.0, 4.0, 0.01, 2, Track::Centered),
+    local("contrast", "Contrast", -100.0, 100.0, 1.0, 0, Track::Centered),
+    local("highlights", "Highlights", -100.0, 100.0, 1.0, 0, Track::Centered),
+    local("shadows", "Shadows", -100.0, 100.0, 1.0, 0, Track::Centered),
+    local("whites", "Whites", -100.0, 100.0, 1.0, 0, Track::Centered),
+    local("blacks", "Blacks", -100.0, 100.0, 1.0, 0, Track::Centered),
+    local("texture", "Texture", -100.0, 100.0, 1.0, 0, Track::Centered),
+    local("clarity", "Clarity", -100.0, 100.0, 1.0, 0, Track::Centered),
+    local("dehaze", "Dehaze", -100.0, 100.0, 1.0, 0, Track::Centered),
+    local("hue", "Hue", -100.0, 100.0, 1.0, 0, Track::Rainbow),
+    local("saturation", "Saturation", -100.0, 100.0, 1.0, 0, Track::Gradient { from: "#7a7a7a", to: "#e04a3a" }),
+    local("sharpness", "Sharpness", -100.0, 100.0, 1.0, 0, Track::Centered),
+    local("noise", "Noise", -100.0, 100.0, 1.0, 0, Track::Centered),
+    local("moire", "Moiré", -100.0, 100.0, 1.0, 0, Track::Centered),
+    local("defringe", "Defringe", -100.0, 100.0, 1.0, 0, Track::Centered),
+];
+
+/// How strongly a mask applies its adjustments (`mask.adjust {amount}`, percent).
+pub const LOCAL_AMOUNT: ControlSpec = ControlSpec {
+    id: "amount",
+    label: "Amount",
+    section: Section::Light,
+    min: 0.0,
+    max: 200.0,
+    default: 100.0,
+    step: 1.0,
+    decimals: 0,
+    track: Track::Plain,
+};
+
+/// White balance of a rendered photo (a JPEG, a HEIC, a raw developed from its own look): Temp on
+/// a −100…100 scale relative to the photo's own colour (a mired shift, as Lightroom shows it for such
+/// files). Every UI shows it in place of the Kelvin slider for these photos.
+pub const WB_TEMP_REL: ControlSpec = ControlSpec {
+    id: "wb.tempRel",
+    label: "Temp",
+    section: Section::Color,
+    min: -100.0,
+    max: 100.0,
+    default: 0.0,
+    step: 1.0,
+    decimals: 0,
+    track: Track::Temp,
+};
+/// [`WB_TEMP_REL`]'s Tint (the stored tint, −100…100).
+pub const WB_TINT_REL: ControlSpec = ControlSpec {
+    id: "wb.tintRel",
+    label: "Tint",
+    section: Section::Color,
+    min: -100.0,
+    max: 100.0,
+    default: 0.0,
+    step: 1.0,
+    decimals: 0,
+    track: Track::Tint,
+};
+
+/// A Kelvin temperature on [`WB_TEMP_REL`]'s scale.
+pub fn kelvin_to_relative(k: f64) -> f64 {
+    ((1e6 / 6500.0 - 1e6 / k) / 0.8).clamp(-100.0, 100.0)
+}
+
+/// [`WB_TEMP_REL`]'s scale in Kelvin.
+pub fn relative_to_kelvin(r: f64) -> f64 {
+    1e6 / (1e6 / 6500.0 - r.clamp(-100.0, 100.0) * 0.8)
+}
+
 use Track::*;
 
 controls! {
