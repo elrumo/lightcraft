@@ -37,21 +37,24 @@ fn steps(h: &mut Headless, n: usize) {
 }
 
 #[test]
-fn the_tools_panel_slides_out_and_back_in() {
-    let mut h = demo(json!({"view": "detail", "right": "edit"}));
-    let full = widget(&h, "panel:right_panel").expect("the tools panel").width();
+fn the_tools_panel_slides_in_and_back_out() {
+    // shut from the start, the Presets panel too (where it was can't be restored: it opens afresh)
+    let mut h = demo(json!({"view": "detail", "right": "none", "presets": false, "leftPanel": true}));
+    assert!(widget(&h, "panel:right_panel").is_none());
+    set(&mut h, json!({"right": "edit"}));
+    steps(&mut h, 2);
+    let full = crate::state::RIGHT_WIDTH.default;
+    let coming = widget(&h, "panel:right_panel").map_or(0.0, |r| r.width());
+    assert!(coming > 1.0 && coming < full - 1.0, "on its way in: {coming} of {full}");
+    h.settle(SETTLE);
+    // at its own width, not half the room
+    assert_eq!(widget(&h, "panel:right_panel").map(|r| r.width()), Some(full));
     set(&mut h, json!({"right": "none"}));
     steps(&mut h, 4);
     let going = widget(&h, "panel:right_panel").map_or(0.0, |r| r.width());
     assert!(going > 1.0 && going < full - 1.0, "on its way out: {going} of {full}");
     h.settle(SETTLE);
     assert!(widget(&h, "panel:right_panel").is_none(), "gone");
-    set(&mut h, json!({"right": "edit"}));
-    steps(&mut h, 2);
-    let coming = widget(&h, "panel:right_panel").map_or(0.0, |r| r.width());
-    assert!(coming > 1.0 && coming < full - 1.0, "on its way in: {coming} of {full}");
-    h.settle(SETTLE);
-    assert_eq!(widget(&h, "panel:right_panel").map(|r| r.width()), Some(full));
 }
 
 #[test]
@@ -100,50 +103,4 @@ fn a_photo_opened_from_the_grid_grows_out_of_its_thumbnail_and_flies_back() {
     assert_eq!(flying.photo, id.0);
     h.settle(SETTLE);
     assert!(crate::panels::detail::homing(&h.view.ctx).is_none(), "landed");
-}
-
-// TEMP-FRAMES: throwaway frame capture for looking at the transitions; removed before commit
-#[test]
-#[ignore]
-fn temp_frames() {
-    let dir = std::env::var("FRAMES_DIR").unwrap();
-    let save = |h: &Headless, name: &str| {
-        let img = h.paint();
-        let rgba: Vec<u8> = img.pixels.iter().flat_map(|c| c.to_array()).collect();
-        let r = lightcraft_raster::Rgba8::from_bytes(img.size[0], img.size[1], &rgba).unwrap();
-        let png = lightcraft_codecs::encode_png(&lightcraft_codecs::EncodeImage::rgba8(&r), &lightcraft_codecs::EncodeMeta::default()).unwrap();
-        std::fs::write(format!("{dir}/{name}.png"), png).unwrap();
-    };
-    for (tag, size, view) in [("desk", [1400.0, 900.0], "photoGrid"), ("phone", [390.0, 844.0], "squareGrid")] {
-        let app = LightcraftApp::new(lightcraft_engine::Session::with_demo(), Services { png: None, ..Default::default() });
-        let mut h = Headless::new(app, size, 1.0);
-        set(&mut h, json!({"view": view, "right": "none", "leftPanel": tag == "desk"}));
-        let r = h.request("engine.execute", json!({"command": "library.select", "params": {"ids": [3]}}), T);
-        assert_eq!(r["ok"], true, "{r}");
-        h.settle(SETTLE);
-        let mut shoot = |h: &mut Headless, name: &str, frames: usize, every: usize| {
-            for f in 0..frames {
-                if f % every == 0 {
-                    save(h, &format!("{tag}-{name}-{f:02}"));
-                }
-                h.step();
-            }
-        };
-        set(&mut h, json!({"view": "detail"}));
-        shoot(&mut h, "a-open", 16, 3);
-        h.settle(SETTLE);
-        if tag == "desk" {
-            set(&mut h, json!({"right": "edit"}));
-            shoot(&mut h, "b-tools", 14, 3);
-            h.settle(SETTLE);
-            h.request("ui.clickWidget", json!({"id": "section:color"}), T);
-            shoot(&mut h, "c-color", 12, 3);
-            h.settle(SETTLE);
-            set(&mut h, json!({"leftPanel": false, "filmstrip": false}));
-            shoot(&mut h, "d-left", 14, 3);
-            h.settle(SETTLE);
-        }
-        set(&mut h, json!({"view": view, "right": "none"}));
-        shoot(&mut h, "e-back", 22, 3);
-    }
 }
