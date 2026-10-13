@@ -1976,5 +1976,13 @@
   "Nothing was imported": "Rien n’a été importé",
   "Create New": "Créer",
   "Add Photos From": "Ajouter des photos depuis",
-  "Smart Album from Filter": "Album intelligent depuis le filtre"
+  "Smart Album from Filter": "Album intelligent depuis le filtre",
+  "Edit Photo with PhotoCraft": "Modifier la photo avec PhotoCraft",
+  "Edit Photo in Other Editor": "Modifier la photo dans un autre éditeur",
+  "Edit a Copy with LightCraft Adjustments": "Modifier une copie avec les réglages LightCraft",
+  "A copy of the file with your edits applied, stacked with the original.": "Une copie du fichier avec vos retouches appliquées, empilée avec l’original.",
+  "Edit a Copy": "Modifier une copie",
+  "A copy of the original file, without your edits, stacked with it.": "Une copie du fichier original, sans vos retouches, empilée avec lui.",
+  "Edit Original": "Modifier l’original",
+  "The file itself. Your edits stay in LightCraft, on top of what the editor saves.": "Le fichier lui-même. Vos retouches restent dans LightCraft, par-dessus ce que l’éditeur enregistre."
 }
