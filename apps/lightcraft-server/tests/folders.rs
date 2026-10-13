@@ -6,8 +6,9 @@ use std::time::Duration;
 
 use lightcraft_engine::Session;
 use lightcraft_engine::catalog::Source;
+use lightcraft_engine::catalog::sync::proto::Usage;
 use lightcraft_server::{Config, Server, accounts, folders};
-use serde_json::json;
+use serde_json::{Value, json};
 
 fn temp(tag: &str) -> PathBuf {
     let d = std::env::temp_dir().join(format!("lc-server-folders-{tag}-{}", std::process::id()));
@@ -93,6 +94,16 @@ fn library_folders_are_read_in_place() {
     assert_eq!((u["server"]["folders"]["files"].as_u64(), u["server"]["folders"]["bytes"].as_u64()), (Some(3), Some(on_disk)), "{u}");
     assert_eq!(u["server"]["original"]["files"], 0, "folder photos are never copied: {u}");
     assert_eq!(u["server"]["mini"]["files"], 3, "{u}");
+    // ...but they are the library's photos and take that room: its total counts them, on top of the
+    // previews the server keeps of them
+    let usage: Usage = serde_json::from_value(u["server"].clone()).unwrap();
+    assert!(usage.stored() > 0, "the previews: {u}");
+    assert_eq!(usage.total(), usage.stored() + on_disk, "{u}");
+    if usage.disk.is_some() {
+        // (these folders are on the disk of the server's data)
+        assert_eq!(usage.folders_on_disk, on_disk, "{u}");
+        assert_eq!(usage.on_disk(), usage.total(), "{u}");
+    }
     let b = by_place(&dev, "Photos/2024/Trip/b.png").expect("b in its folder");
     assert_eq!((b.rating, b.meta.keywords.clone()), (4, vec!["beach".to_string()]));
     assert!(matches!(&b.source, Source::File { path } if path.starts_with("web/")));
@@ -431,6 +442,78 @@ fn the_scan_of_library_folders_is_reported_to_devices() {
     assert_eq!(r["server"]["previews"]["total"], 0, "all previews are built: {r}");
     drop(server);
     let _ = std::fs::remove_dir_all(&root);
+}
+
+/// The admin page's storage per user is what their photos take on the server: the files kept for them
+/// (the previews of their library folders' photos) and the photos in those folders, which are only read.
+/// It used to be the first alone, so a library of terabytes read in place showed as a few gigabytes.
+#[test]
+fn the_admin_page_counts_the_photos_in_library_folders_in_a_users_storage() {
+    let root = temp("admin-storage");
+    let photos = root.join("nas/photos");
+    write_png(&photos.join("2024/a.png"), 1);
+    write_png(&photos.join("2024/b.png"), 2);
+    write_png(&photos.join("c.png"), 3);
+    let data = root.join("data");
+    accounts::set_user(&data, "ann", "correct horse", false).unwrap();
+    accounts::set_admin(&data, "ann", true).unwrap();
+    accounts::set_user(&data, "bob", "another horse", false).unwrap();
+    accounts::add_folder(&data, "ann", &photos.to_string_lossy(), Some("Photos")).unwrap();
+    let start = || {
+        let mut cfg = Config::new(&data, "127.0.0.1:0");
+        cfg.scan_interval = None;
+        cfg.preview_threads = 1;
+        Server::start(cfg).unwrap()
+    };
+    // (the files kept for a user are counted when the server starts and then every minute: let it
+    // build the previews first and count them on the next start)
+    let server = start();
+    let st = scanned(&server, 0);
+    assert_eq!((st.files, st.added), (3, 3), "{st:?}");
+    drop(server);
+    let server = start();
+    let url = format!("http://{}", server.addr());
+    scanned(&server, 0);
+
+    let agent: ureq::Agent = ureq::Agent::config_builder().http_status_as_error(false).build().into();
+    let json_of = |mut r: ureq::http::Response<ureq::Body>| -> Value { serde_json::from_slice(&r.body_mut().read_to_vec().unwrap()).unwrap() };
+    let login =
+        agent.post(format!("{url}/api/admin/login")).send(json!({"user": "ann", "password": "correct horse"}).to_string().as_bytes()).unwrap();
+    let token = json_of(login)["token"].as_str().unwrap().to_string();
+    let users =
+        || -> Value { json_of(agent.get(format!("{url}/api/admin/users")).header("Authorization", format!("Bearer {token}")).call().unwrap()) };
+    // (null until counted)
+    let mut seen = users();
+    for _ in 0..400 {
+        if !seen[0]["bytes"].is_null() && !seen[1]["bytes"].is_null() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+        seen = users();
+    }
+    let size = |f: &str| std::fs::metadata(photos.join(f)).unwrap().len();
+    let in_folders = size("2024/a.png") + size("2024/b.png") + size("c.png");
+    let kept: u64 = ["smart", "mini"].iter().map(|k| bytes_in(&data.join("users/ann/blobs").join(k))).sum();
+    assert!(kept > 0, "the server kept previews of the three photos");
+    let (ann, bob) = (&seen[0], &seen[1]);
+    assert_eq!((ann["name"].as_str(), bob["name"].as_str()), (Some("ann"), Some("bob")), "{seen}");
+    assert_eq!(ann["folderBytes"].as_u64(), Some(in_folders), "{seen}");
+    assert_eq!(ann["bytes"].as_u64(), Some(kept + in_folders), "previews and photos: {seen}");
+    // a user without library folders: only what the server keeps for them (nothing here)
+    assert_eq!((bob["bytes"].as_u64(), bob["folderBytes"].as_u64()), (Some(0), Some(0)), "{seen}");
+    // a photo that goes missing from its folder stops counting at once (the previews stay until a count)
+    std::fs::remove_file(photos.join("c.png")).unwrap();
+    server.scan("ann");
+    scanned(&server, 1);
+    assert_eq!(users()[0]["folderBytes"].as_u64(), Some(size("2024/a.png") + size("2024/b.png")), "two photos are left");
+    drop(server);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Bytes of the files under `dir`.
+fn bytes_in(dir: &Path) -> u64 {
+    let Ok(rd) = std::fs::read_dir(dir) else { return 0 };
+    rd.flatten().map(|e| if e.path().is_dir() { bytes_in(&e.path()) } else { e.metadata().map_or(0, |m| m.len()) }).sum()
 }
 
 /// A device that shows a photo whose preview isn't built yet is told the server is making it, and the server makes it

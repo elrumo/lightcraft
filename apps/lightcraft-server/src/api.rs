@@ -344,9 +344,11 @@ fn me(st: &State, who: &Session) -> Resp {
 }
 
 /// What the user's library takes here: their photo files by kind, the photos in their library
-/// folders (read where they are, not stored), and how much room the disk has left.
+/// folders (read where they are, not stored, but they take that room too; and how many of those
+/// bytes are on the data's own disk), and how much room the disk has left.
 fn usage(st: &State, l: &Mutex<UserLib>, who: &Session) -> Resp {
-    let (dir, mut u) = {
+    use lightcraft_engine::usage::{disk_space, same_disk};
+    let (dir, mut u, places) = {
         let l = l.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some((at, u)) = &l.usage
             && at.elapsed() < USAGE_TTL
@@ -354,19 +356,27 @@ fn usage(st: &State, l: &Mutex<UserLib>, who: &Session) -> Resp {
             return json(200, &json!(u));
         }
         let (photos, albums) = l.counts();
-        let mut folders = proto::Files::default();
-        for e in l.index.files.values().filter(|e| !e.missing) {
-            folders.files += 1;
-            folders.bytes = folders.bytes.saturating_add(e.size);
-        }
-        (l.dir.clone(), proto::Usage { photos: photos as u64, albums: albums as u64, folders, ..Default::default() })
+        let by_folder = l.index.folder_files();
+        let folders = by_folder.values().fold(proto::Files::default(), |all, f| all.plus(*f));
+        // where each library folder is on the server, with the bytes it holds
+        let places: Vec<(PathBuf, u64)> =
+            by_folder.iter().filter_map(|(name, f)| Some((PathBuf::from(l.index.roots.get(*name)?), f.bytes))).collect();
+        (l.dir.clone(), proto::Usage { photos: photos as u64, albums: albums as u64, folders, ..Default::default() }, places)
     };
     // (the folders are walked without the library locked: pushes and pulls go on meanwhile)
     let blobs = dir.join("blobs");
     u.original = blob_usage(&blobs, "original");
     u.smart = blob_usage(&blobs, "smart");
     u.mini = blob_usage(&blobs, "mini");
-    u.disk = lightcraft_engine::usage::disk_space(&st.data);
+    u.disk = disk_space(&st.data);
+    // a library folder on the data's own disk takes its room like the files kept there; one on another
+    // disk (a backup drive, a second NAS) doesn't
+    if let Some(data) = u.disk {
+        u.folders_on_disk = places
+            .iter()
+            .filter(|(root, _)| disk_space(root).is_some_and(|d| same_disk(d, data)))
+            .fold(0, |bytes, (_, here)| u64::saturating_add(bytes, *here));
+    }
     u.devices = st.accounts.lock().unwrap_or_else(PoisonError::into_inner).devices_of(&who.user).len() as u64;
     l.lock().unwrap_or_else(PoisonError::into_inner).usage = Some((Instant::now(), u.clone()));
     json(200, &json!(u))
