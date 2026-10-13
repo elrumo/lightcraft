@@ -74,11 +74,9 @@ jobs:
       - name: Swift package for the simulator
         working-directory: apps/lightcraft-ios-swift/LightCraft
         run: xcodebuild -scheme LightCraft-Package -destination 'generic/platform=iOS Simulator' -derivedDataPath "$RUNNER_TEMP/pkg" build
-      - name: App for the simulator (XcodeGen project)
+      - name: App for the simulator (Xcode project)
         working-directory: apps/lightcraft-ios-swift/xcode
         run: |
-          brew install xcodegen
-          xcodegen
           xcodebuild -project LightCraft.xcodeproj -scheme LightCraft -configuration Debug \
             -destination 'generic/platform=iOS Simulator' -derivedDataPath "$RUNNER_TEMP/app" \
             CODE_SIGNING_ALLOWED=NO build

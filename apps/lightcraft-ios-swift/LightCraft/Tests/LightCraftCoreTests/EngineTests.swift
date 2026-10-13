@@ -16,7 +16,7 @@ struct EngineTests {
     }
 
     /// The first event `match` accepts, within 30 s.
-    private func next<T: Sendable>(_ engine: Engine, _ match: @Sendable (EngineEvent) -> T?) async throws -> T {
+    private func next<T: Sendable>(_ engine: Engine, _ match: @escaping @Sendable (EngineEvent) -> T?) async throws -> T {
         try await withThrowingTaskGroup(of: T?.self) { group in
             group.addTask {
                 for await event in engine.events {

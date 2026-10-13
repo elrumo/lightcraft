@@ -1,6 +1,6 @@
 # The SwiftUI iOS app
 
-**Status: foundation in place (Phase S0); not yet run on a simulator or a device.** A native SwiftUI app for iPhone and iPad
+**Status: foundation in place (Phase S0); runs on an iOS 26.5 simulator (2026-10-13), not yet on a device.** A native SwiftUI app for iPhone and iPad
 (iOS 26 and later) that runs the whole Rust core: the engine, the develop pipeline, the catalog, sync, export. It is to
 replace the egui iOS app ([ios.md](ios.md)) once it passes its parity gate. The decision and its reasons are in
 [ios.md](ios.md) → *Plan*, Phase 0. What iOS still lacks overall: [ios-gaps.md](ios-gaps.md).
@@ -115,8 +115,12 @@ aarch64-apple-ios --release`, `IPHONEOS_DEPLOYMENT_TARGET=26.0`) into `LightCraf
 `ai.storyteller.lightcraft.swift` while both apps exist (the SwiftUI app takes `ai.storyteller.lightcraft.ios` at the
 cut-over, so installed libraries carry over). *Not yet tried.*
 
-**With Xcode, on a Mac:** `cd apps/lightcraft-ios-swift/xcode && xcodegen && open LightCraft.xcodeproj` (a pre-build
-phase builds the Rust library for the SDK being built; set `DEVELOPMENT_TEAM` for a device).
+**With Xcode, on a Mac:** `open apps/lightcraft-ios-swift/xcode/LightCraft.xcodeproj`, pick a simulator or your
+device and Run. A pre-build phase (`xcode/build-rust.sh`) builds the Rust library for the SDK being built (debug for
+Debug, `--release` for Release). The app target compiles `LightCraft/Sources/LightCraftApp` as a synchronized folder
+(new Swift files there need no project edit) over the package's `LightCraftCore` and `LightCraftImaging`, and takes
+its Info.plist keys from `LightCraft/Info.plist`, the file xtool uses. For a device, choose your team under Signing &
+Capabilities (or pass `DEVELOPMENT_TEAM=<team>` to `xcodebuild`).
 
 **Tests:** `apps/lightcraft-ios-swift/run.sh --test` (macOS) builds the library for the Mac and runs `swift test`:
 `ProtocolTests` (every event and request shape) and `EngineTests` (the real engine: commands, a thumbnail's pixels, a
@@ -160,12 +164,12 @@ drag and drop, Apple Pencil); **S3** removes the egui iOS app.
 | SW0.4 | Shared export and start-up (`apphost::export`, `apphost::startup`, the ImageIO decoder and logger in `ios-host`) | done |
 | SW0.5 | The engine thread, protocol, event queue, leases, automation script runner | done |
 | SW0.6 | The bridge crate and its C ABI; header check; protocol fixtures | done |
-| SW0.7 | The Swift package (`LightCraftCore`, `LightCraftImaging`, the app target), xtool and Xcode projects | written, built only by CI |
-| SW0.8 | Vertical slice: grid, loupe, Light sliders from `develop.controls`, undo, All Commands | written, built only by CI |
-| SW0.9 | Automation: `LIGHTCRAFT_SCRIPT`, `ui.screenshot`, `ui.inspect`, `ui.set` | written, built only by CI |
+| SW0.7 | The Swift package (`LightCraftCore`, `LightCraftImaging`, the app target), xtool and Xcode projects | done (Xcode; xtool not yet tried) |
+| SW0.8 | Vertical slice: grid, loupe, Light sliders from `develop.controls`, undo, All Commands | done (simulator) |
+| SW0.9 | Automation: `LIGHTCRAFT_SCRIPT`, `ui.screenshot`, `ui.inspect`, `ui.set` | done (simulator) |
 | SW0.10 | Parity manifest (`apps/lightcraft-ios-swift/PARITY.md`) checked by `cargo xtask parity` | done |
 | SW0.11 | macOS CI workflow (`.github/workflows/ios-swift.yml`) | done |
-| SW0.12 | First run on a simulator and a device; latency against the budgets (slider ≤ 16 ms draft, loupe ≤ 60 ms) | |
+| SW0.12 | First run on a simulator and a device; latency against the budgets (slider ≤ 16 ms draft, loupe ≤ 60 ms) | simulator: `ci/tour.jsonl` passes, edits persist across launches; device and release-build latency not yet |
 
 S1, in order (each first moves what it needs out of `ui-egui`): lifecycle and background exports (SW1.1); import from
 Photos and Files with the review (SW1.2, the import worker → `apphost`); HEIC / ProRAW on a device (SW1.3); the export

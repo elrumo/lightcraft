@@ -6,14 +6,20 @@ import Testing
 /// The protocol's shapes, as the Rust side writes them (apps/lightcraft-ios-swift/src/fixtures.rs
 /// → Fixtures/protocol.json): a change on one side the other doesn't follow fails here.
 struct ProtocolTests {
-    private func fixtures() throws -> JSONValue {
+    private func fixtureData() throws -> Data {
         let url = try #require(Bundle.module.url(forResource: "protocol", withExtension: "json", subdirectory: "Fixtures"))
-        return try JSONDecoder().decode(JSONValue.self, from: Data(contentsOf: url))
+        return try Data(contentsOf: url)
     }
 
+    private func fixtures() throws -> JSONValue {
+        try JSONDecoder().decode(JSONValue.self, from: fixtureData())
+    }
+
+    /// Decoded from the file's bytes, as `EventPump` decodes `lc_poll`'s: a round trip through
+    /// `JSONValue` would lose render keys above `Int64.max`.
     private func events() throws -> [EngineEvent] {
-        let data = try JSONEncoder().encode(try fixtures()["events"])
-        return try JSONDecoder().decode([WireEvent].self, from: data).map(\.event)
+        struct File: Decodable { let events: [WireEvent] }
+        return try JSONDecoder().decode(File.self, from: fixtureData()).events.map(\.event)
     }
 
     @Test func everyEventKindDecodes() throws {
