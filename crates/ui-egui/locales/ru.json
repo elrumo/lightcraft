@@ -2168,5 +2168,13 @@
   "Nothing was imported": "Ничего не импортировано",
   "Create New": "Создать",
   "Add Photos From": "Добавить фото из",
-  "Smart Album from Filter": "Смарт-альбом из фильтра"
+  "Smart Album from Filter": "Смарт-альбом из фильтра",
+  "Edit Photo with PhotoCraft": "Редактировать фото в PhotoCraft",
+  "Edit Photo in Other Editor": "Редактировать фото в другом редакторе",
+  "Edit a Copy with LightCraft Adjustments": "Редактировать копию с настройками LightCraft",
+  "A copy of the file with your edits applied, stacked with the original.": "Копия файла с применёнными правками, в стопке с оригиналом.",
+  "Edit a Copy": "Редактировать копию",
+  "A copy of the original file, without your edits, stacked with it.": "Копия исходного файла без ваших правок, в стопке с ним.",
+  "Edit Original": "Редактировать оригинал",
+  "The file itself. Your edits stay in LightCraft, on top of what the editor saves.": "Сам файл. Ваши правки остаются в LightCraft и применяются поверх того, что сохранит редактор."
 }

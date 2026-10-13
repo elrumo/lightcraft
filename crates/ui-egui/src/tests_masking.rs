@@ -1015,7 +1015,9 @@ fn edit_in_photocraft_opens_a_psd_copy() {
     h.app.ui.settings.photocraft_path = "/opt/pc/photocraft".into();
     h.app.ui.settings.photocraft_file.format = crate::state::EditFormat::Tiff;
     h.app.ui.settings.photocraft_file.bit_depth = 8;
-    let r = h.request("engine.execute", json!({"command": "photo.editInPhotoCraft", "params": {"dir": dir.to_string_lossy()}}), T);
+    // (the PSD copy is selected now, an image file: `mode` answers the Edit Photo dialog)
+    let params = json!({"command": "photo.editInPhotoCraft", "params": {"dir": dir.to_string_lossy(), "mode": "render"}});
+    let r = h.request("engine.execute", params, T);
     assert_eq!(r["ok"], true, "{r}");
     let last = opened.lock().unwrap().last().cloned().unwrap();
     assert!(last.0.ends_with(".tif") && last.1 == "/opt/pc/photocraft", "{last:?}");

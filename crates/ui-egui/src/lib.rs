@@ -88,6 +88,8 @@ mod tests_erase;
 #[cfg(test)]
 mod tests_export_flow;
 #[cfg(test)]
+mod tests_external_edit;
+#[cfg(test)]
 mod tests_file_drop;
 #[cfg(test)]
 mod tests_filmstrip;
@@ -864,6 +866,34 @@ impl LightcraftApp {
         self.ui.toast = Some((text.into(), t + secs, None));
     }
 
+    /// Bring back what the external editor saved (Photo ▸ Edit In) to the files it was handed:
+    /// changed files are read again, a Save As beside one is added to its stack, and the watch
+    /// list is kept as the engine leaves it. Not while the library couldn't be opened: the
+    /// session open then is a stand-in, which must neither take the files in nor mark them seen.
+    pub(crate) fn check_external_edits(&mut self, ctx: &egui::Context) {
+        if self.ui.external_edits.is_empty() || self.library_problem.is_some() {
+            return;
+        }
+        let files = serde_json::to_value(&self.ui.external_edits).unwrap_or_default();
+        let r = match self.session.execute("photo.checkExternalEdits", &serde_json::json!({"files": files})) {
+            Ok(r) => r,
+            Err(e) => return log::warn!("checking the external edits: {e}"),
+        };
+        if let Ok(list) = serde_json::from_value(r["files"].clone()) {
+            self.ui.external_edits = list;
+        }
+        let added = r["added"].as_array().map_or(0, Vec::len);
+        let name = |path: &str| std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        if added == 1 {
+            let name = name(r["added"][0]["path"].as_str().unwrap_or_default());
+            self.toast(ctx, crate::i18n::tr_format!("Added {name}, saved in the external editor, to its stack", name = name));
+        } else if added > 1 {
+            self.toast(ctx, crate::i18n::tr_format!("Added {n} files saved in the external editor to their stacks", n = added));
+        } else if r["reloaded"].as_array().is_some_and(|a| !a.is_empty()) {
+            self.toast(ctx, crate::i18n::tr("Updated the edits saved in the external editor"));
+        }
+    }
+
     /// Reverse geocoding: say how a place-names download ended (a failure stays readable, with what to do).
     fn place_names_outcome(&mut self, ctx: &egui::Context) {
         use lightcraft_engine::cmd::geocode::DownloadOutcome;
@@ -1190,15 +1220,10 @@ impl LightcraftApp {
         self.save_status(ctx);
         self.slideshow_tick(ctx);
         panels::faces::pump(self, ctx);
-        // back from an external editor: pick up the files it saved
+        // back from an external editor (or launched): pick up the files it saved
         let focused = ctx.input(|i| i.focused);
-        if focused && !self.ui.was_focused && !self.ui.external_edits.is_empty() {
-            let ids = self.ui.external_edits.clone();
-            if let Ok(r) = self.session.execute("photo.reload", &serde_json::json!({"ids": ids}))
-                && r["reloaded"].as_array().is_some_and(|a| !a.is_empty())
-            {
-                self.toast(ctx, "Updated the edits saved in the external editor");
-            }
+        if focused && !self.ui.was_focused {
+            self.check_external_edits(ctx);
         }
         self.ui.was_focused = focused;
         // auto import: list the watched folder every few seconds (on a worker thread: it may be on

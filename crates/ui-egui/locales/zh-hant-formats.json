@@ -270,5 +270,9 @@
   "Not carried over: {what}": "未沿用：{what}",
   "{n} items": "{n} 個項目",
   "{label}, {n} items": "{label}，{n} 個項目",
-  "Add to {album}": "加入「{album}」"
+  "Add to {album}": "加入「{album}」",
+  "Added {name}, saved in the external editor, to its stack": "已將在外部編輯器中儲存的 {name} 加入其堆疊",
+  "Added {n} files saved in the external editor to their stacks": "已將在外部編輯器中儲存的 {n} 個檔案加入各自的堆疊",
+  "{name} opened for editing": "已開啟 {name} 進行編輯",
+  "{n} photos opened for editing": "已開啟 {n} 張照片進行編輯"
 }
