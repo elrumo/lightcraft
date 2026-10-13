@@ -4,13 +4,14 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use lightcraft_catalog::sync::{PushError, ServerCore, proto};
 use lightcraft_catalog::{MemStore, Op, PhotoId, Source};
 use serde_json::{Value, json};
 
 use crate::Session;
-use crate::cloud_sync::{Body, Done, Task, blob_key, is_remote, server_address};
+use crate::cloud_sync::{BUILDING_RETRY, Body, Done, Task, blob_key, is_remote, server_address};
 
 fn temp_dir(tag: &str) -> PathBuf {
     let d = std::env::temp_dir().join(format!("lc-sync-{tag}-{}", std::process::id()));
@@ -55,6 +56,8 @@ struct Fake {
     /// server from before paging (the whole library in one answer).
     page: usize,
     whole_snapshot: bool,
+    /// Photos (by hash) whose previews the server is still making: asked for, it says so (`404`, `previews: "queued"`).
+    building: std::collections::HashSet<String>,
     requests: Vec<String>,
 }
 
@@ -77,6 +80,7 @@ impl Fake {
             put_fails: None,
             page: 3,
             whole_snapshot: false,
+            building: Default::default(),
             requests: vec![],
         }
     }
@@ -229,6 +233,9 @@ impl Fake {
                         }
                         other => panic!("{other:?}"),
                     },
+                    "GET" if kind != "original" && self.building.contains(hash) => {
+                        status(404, json!({"error": "the server is making this preview", "previews": "queued"}))
+                    }
                     "GET" => match self.blobs.get(&k) {
                         Some(b) => {
                             let dest = save_to.as_ref().unwrap();
@@ -1215,6 +1222,152 @@ fn only_the_previews_the_grid_shows_download() {
     }
     let tiers: Vec<Option<u8>> = ids.iter().map(|id| b.synced_tier(b.catalog.photo(*id).unwrap())).collect();
     assert_eq!(tiers, [1, 1, 1, 1, 0, 0, 1, 1].map(Some));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// The grid builds a cell's render job once; the render that fails for want of the preview is remembered, so it
+/// isn't asked for again by itself. A cell that is still shown keeps its download through [`Session::note_thumb_ask`],
+/// every frame, however long the ones before it take.
+#[test]
+fn cells_still_shown_are_downloaded_in_turn_however_slow_the_queue() {
+    let mut f = Fake::new();
+    let root = temp_dir("shown-all");
+    for i in 0..8u8 {
+        write_png(&root.join(format!("in/{i}.png")), i * 20);
+    }
+    let mut a = open(&root.join("a"));
+    a.execute("library.import", &json!({"paths": [root.join("in").to_string_lossy()]})).unwrap();
+    sign_in(&mut a);
+    assert_eq!(sync(&mut a, &mut f)["state"], "idle");
+    let mut b = open(&root.join("b"));
+    sign_in(&mut b);
+    assert_eq!(sync(&mut b, &mut f)["state"], "idle");
+    let mini = |t: &Task| matches!(t, Task::Http { url, .. } if url.contains("/api/blobs/mini/"));
+    let ids: Vec<PhotoId> = b.catalog.photos().map(|p| p.id).collect();
+    for id in &ids {
+        b.thumb_job(*id, 128);
+    }
+    let mut held = b.sync_tasks();
+    assert_eq!(held.iter().filter(|t| mini(t)).count(), 4);
+    // each batch of four takes forty frames, in which the grid asks for nothing but what it still shows
+    for round in 0.. {
+        assert!(round < 8, "eight photos, four at a time");
+        for _ in 0..40 {
+            for id in &ids {
+                b.note_thumb_ask(*id, true);
+            }
+            assert!(b.sync_tasks().iter().all(|t| !mini(t)), "four at a time");
+        }
+        for t in std::mem::take(&mut held) {
+            let d = f.handle(&t);
+            b.sync_done(d);
+        }
+        for id in &ids {
+            b.note_thumb_ask(*id, true);
+        }
+        held = b.sync_tasks();
+        if held.is_empty() {
+            break;
+        }
+    }
+    let tiers: Vec<Option<u8>> = ids.iter().map(|id| b.synced_tier(b.catalog.photo(*id).unwrap())).collect();
+    assert_eq!(tiers, vec![Some(1); 8], "every cell that stayed on screen got its preview");
+    // and a photo that has its preview is no ask, whatever the host does
+    b.note_thumb_ask(ids[0], true);
+    assert!(b.media.thumb_asks.is_empty(), "{:?}", b.media.thumb_asks);
+    // a host that remembers a render that failed for want of a preview is told which ones came, once (the library
+    // itself didn't change)
+    let revision = b.catalog.revision;
+    let mut arrived = b.media.take_arrived().expect("a few");
+    arrived.sort();
+    let mut want = ids.clone();
+    want.sort();
+    assert_eq!(arrived, want);
+    assert_eq!(b.media.take_arrived(), Some(vec![]));
+    assert_eq!(b.catalog.revision, revision);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// The cells on screen come down before the ones only in the grid's reach above and below, whatever was drawn first.
+#[test]
+fn cells_on_screen_download_before_those_in_the_grids_reach() {
+    let mut f = Fake::new();
+    let root = temp_dir("shown-first");
+    for i in 0..6u8 {
+        write_png(&root.join(format!("in/{i}.png")), i * 30);
+    }
+    let mut a = open(&root.join("a"));
+    a.execute("library.import", &json!({"paths": [root.join("in").to_string_lossy()]})).unwrap();
+    sign_in(&mut a);
+    assert_eq!(sync(&mut a, &mut f)["state"], "idle");
+    let mut b = open(&root.join("b"));
+    sign_in(&mut b);
+    assert_eq!(sync(&mut b, &mut f)["state"], "idle");
+    let ids: Vec<PhotoId> = b.catalog.photos().map(|p| p.id).collect();
+    let keys: Vec<String> = ids.iter().map(|id| blob_key(b.catalog.photo(*id).unwrap()).unwrap()).collect();
+    // the grid draws its reach above the screen first, then the screen, then the reach below it
+    for (i, id) in ids.iter().enumerate() {
+        b.thumb_job_for(*id, 128, (2..5).contains(&i));
+    }
+    let asked: Vec<String> = b
+        .sync_tasks()
+        .iter()
+        .filter_map(|t| match t {
+            Task::Http { url, .. } => url.split_once("/api/blobs/mini/").map(|(_, key)| key.to_string()),
+            Task::Proxies { .. } => None,
+        })
+        .collect();
+    assert_eq!(asked, [&keys[2], &keys[3], &keys[4], &keys[0]].map(Clone::clone), "the screen's three, then the first of the reach");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// A preview the server says it is making is not a failed transfer: nothing is reported, and it is asked for again
+/// after seconds, not after the minute a file the server doesn't have waits. A server from before the answer (a plain
+/// `404`) is waited out the old way.
+#[test]
+fn a_preview_the_server_is_building_is_asked_for_again_soon() {
+    let mut f = Fake::new();
+    let (_a, root, ids) = first_device("building", &mut f);
+    let mut b = open(&root.join("b"));
+    sign_in(&mut b);
+    sync(&mut b, &mut f);
+    let key = |s: &Session, id: PhotoId| blob_key(s.catalog.photo(id).unwrap()).unwrap();
+    // the server is making the first photo's previews, and never heard of the second's
+    f.building.insert(key(&b, ids[0]));
+    f.blobs.remove(&("mini".to_string(), key(&b, ids[1])));
+    let minis = |tasks: &[Task]| tasks.iter().filter(|t| matches!(t, Task::Http { url, .. } if url.contains("/api/blobs/mini/"))).count();
+    for id in &ids {
+        b.thumb_job(*id, 128);
+    }
+    let held = b.sync_tasks();
+    assert_eq!(minis(&held), 2);
+    for t in &held {
+        let d = f.handle(t);
+        b.sync_done(d);
+    }
+    let t = b.sync_transfers();
+    assert_eq!((t.failing, t.error.is_some()), (1, true), "only the photo the server doesn't have failed: {t:?}");
+    let wait = b.sync_building_wait(ids[0]).expect("waits");
+    assert!(wait > Duration::from_secs(1) && wait <= BUILDING_RETRY, "{wait:?}");
+    // (the cells are drawn on: nothing is asked for before the wait is over)
+    for id in &ids {
+        b.note_thumb_ask(*id, true);
+    }
+    assert_eq!(minis(&b.sync_tasks()), 0);
+    // the server made them meanwhile
+    f.building.clear();
+    b.sync_end_building_waits();
+    for id in &ids {
+        b.note_thumb_ask(*id, true);
+    }
+    let next = b.sync_tasks();
+    assert_eq!(minis(&next), 1, "the first photo's preview is asked for again; the second waits its minute");
+    for t in &next {
+        let d = f.handle(t);
+        b.sync_done(d);
+    }
+    assert_eq!(b.synced_tier(b.catalog.photo(ids[0]).unwrap()), Some(1));
+    assert_eq!(b.sync_transfers().failing, 1);
     let _ = std::fs::remove_dir_all(&root);
 }
 

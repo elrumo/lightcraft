@@ -76,8 +76,12 @@ const ACTIVITY_EVERY: Duration = Duration::from_secs(2);
 /// Long edge of the mini preview.
 pub const MINI_EDGE: usize = 512;
 /// A grid cell's mini preview is wanted while the cell asks for it again within this many sync
-/// steps (frames): one scrolled out of the grid's reach isn't downloaded.
+/// steps (frames): one scrolled out of the grid's reach isn't downloaded. (A cell that is drawn asks
+/// every frame, see [`Session::note_thumb_ask`].)
 const ASK_TICKS: u64 = 30;
+/// A preview the server said it is building is asked for again after this long (it builds the ones a
+/// device asks for before the rest, so it takes seconds, not the minute of [`BLOB_RETRY`]).
+pub(crate) const BUILDING_RETRY: Duration = Duration::from_secs(4);
 /// What a mini preview is taken to weigh before the server says what its own weigh.
 const MINI_BYTES_GUESS: u64 = 60_000;
 /// The server's id spaces stay below this, so ids remain exact in JSON numbers read by
@@ -379,6 +383,9 @@ pub struct SyncState {
     reading: Option<proto::Snapshot>,
     /// Photo files whose transfer failed: not tried again before then.
     blob_retry: HashMap<String, Instant>,
+    /// Previews the server said it is building (answer `previews: "queued"`): not asked for again before
+    /// then. Not a failure: nothing is shown as one, and no plan is made again when the wait is over.
+    building: HashMap<String, Instant>,
     /// Originals the server refused (not the file their hash says): not sent again this session.
     refused: HashSet<String>,
     /// Originals asked for (by content hash).
@@ -480,6 +487,7 @@ impl SyncState {
             needs_snapshot: false,
             reading: None,
             blob_retry: HashMap::new(),
+            building: HashMap::new(),
             refused: HashSet::new(),
             want_originals: HashSet::new(),
             error: None,
@@ -917,6 +925,12 @@ pub fn is_remote(p: &Photo) -> bool {
 
 fn decode<T: serde::de::DeserializeOwned>(d: &Done) -> std::result::Result<T, String> {
     serde_json::from_str(&d.body).map_err(|e| format!("unexpected answer from the server ({e})"))
+}
+
+/// Does the answer to a preview's download say the server is making that preview (`previews: "queued"`)? A
+/// server from before it did answers a plain `404`.
+fn server_is_building(d: &Done) -> bool {
+    serde_json::from_str::<Value>(&d.body).ok().is_some_and(|v| v["previews"].as_str() == Some("queued"))
 }
 
 /// Why a request failed, for the user.
@@ -1389,6 +1403,8 @@ impl Session {
             st.blob_retry.retain(|_, t| now < *t);
             st.plan_gen += 1;
         }
+        // (the grid asks for these again on its own: no plan to make)
+        st.building.retain(|_, t| now < *t);
         if st.minis_failed.iter().any(|(t, _)| now >= *t) {
             let (waited, waiting) = std::mem::take(&mut st.minis_failed).into_iter().partition::<Vec<_>, _>(|(t, _)| now >= *t);
             st.minis_failed = waiting;
@@ -1467,6 +1483,21 @@ impl Session {
         }
     }
 
+    /// How much longer the server's building of `id`'s preview is waited for (tests).
+    #[cfg(test)]
+    pub(crate) fn sync_building_wait(&self, id: PhotoId) -> Option<Duration> {
+        let key = blob_key(self.catalog.photo(id)?)?;
+        self.sync.as_ref()?.building.get(&key)?.checked_duration_since(Instant::now())
+    }
+
+    /// The previews the server was building are asked for again (tests: instead of waiting seconds).
+    #[cfg(test)]
+    pub(crate) fn sync_end_building_waits(&mut self) {
+        if let Some(st) = self.sync.as_mut() {
+            st.building.clear();
+        }
+    }
+
     /// Where a photo's smart and mini previews live on this device: files in the previews folder,
     /// else keys in the host's storage (`None`: neither).
     fn proxy_paths(&self, id: PhotoId) -> Option<(String, String)> {
@@ -1521,11 +1552,11 @@ impl Session {
     }
 
     /// The download of `p`'s preview `blob` (a smart or mini one) when `p` is a synced photo whose
-    /// original isn't here, that preview isn't here (for a mini: nor the smart one), and no failure of
-    /// its files is being waited out.
+    /// original isn't here, that preview isn't here (for a mini: nor the smart one), no failure of
+    /// its files is being waited out and the server isn't building it right now.
     fn preview_get(&self, st: &SyncState, p: &Photo, blob: Blob, now: Instant) -> Option<Job> {
         let key = self.remote_key(p)?;
-        if st.blob_retry.get(&key).is_some_and(|t| now < *t) {
+        if st.blob_retry.get(&key).is_some_and(|t| now < *t) || st.building.get(&key).is_some_and(|t| now < *t) {
             return None;
         }
         let n = self.proxy_names(p, &key, st.have.as_ref()?);
@@ -1538,19 +1569,20 @@ impl Session {
     }
 
     /// The active photo's smart preview, then the mini previews of the cells the grid asked for in
-    /// its last [`ASK_TICKS`] steps, most recent first (in the order they were drawn): those not
-    /// here and not on their way. Cells scrolled out of reach are forgotten.
+    /// its last [`ASK_TICKS`] steps — those on screen before those only in its reach, the most recent
+    /// ask first (within a step, in the order the cells were drawn): the ones not here and not on their
+    /// way. Cells scrolled out of reach are forgotten.
     fn urgent_jobs(&mut self, st: &SyncState, now: Instant) -> Vec<Job> {
         let tick = self.media.thumb_tick;
-        self.media.thumb_asks.retain(|_, (at, _)| tick.saturating_sub(*at) <= ASK_TICKS);
-        let mut asked: Vec<(std::cmp::Reverse<u64>, u64, PhotoId)> =
-            self.media.thumb_asks.iter().map(|(id, (at, seq))| (std::cmp::Reverse(*at), *seq, *id)).collect();
+        self.media.thumb_asks.retain(|_, a| tick.saturating_sub(a.tick) <= ASK_TICKS);
+        let mut asked: Vec<(bool, std::cmp::Reverse<u64>, u64, PhotoId)> =
+            self.media.thumb_asks.iter().map(|(id, a)| (!a.shown, std::cmp::Reverse(a.tick), a.seq, *id)).collect();
         asked.sort_unstable();
         let running: HashSet<String> = st.jobs.values().map(Job::target).collect();
         let active = self.active().map(|id| (id, Blob::Smart));
         active
             .into_iter()
-            .chain(asked.into_iter().map(|(_, _, id)| (id, Blob::Mini)))
+            .chain(asked.into_iter().map(|(_, _, _, id)| (id, Blob::Mini)))
             .filter_map(|(id, blob)| self.preview_get(st, self.catalog.photo(id)?, blob, now))
             .filter(|job| !running.contains(&job.target()))
             .collect()
@@ -2303,6 +2335,15 @@ impl Session {
                 }
             },
             Job::Get { key, blob, dest, id } => {
+                // a preview the server hasn't built yet and now builds first: not a failure, asked for again soon
+                // (the bulk of "download all previews" walks on, and comes back to it in its own time)
+                if d.status == 404 && blob != Blob::Original && server_is_building(d) {
+                    st.building.insert(key.clone(), Instant::now() + BUILDING_RETRY);
+                    if blob == Blob::Mini && st.config.all_previews {
+                        st.minis_failed.push((Instant::now() + BLOB_RETRY, Job::Get { key, blob, dest, id }));
+                    }
+                    return;
+                }
                 if !d.ok() {
                     retry(st, &key, why(d));
                     if blob == Blob::Mini && st.config.all_previews {
@@ -2319,6 +2360,8 @@ impl Session {
                 for id in &ids {
                     self.media.forget(*id);
                     self.media.thumb_asks.remove(id);
+                    // (a grid cell that remembers its render failed for want of the file asks again)
+                    self.media.note_arrived(*id);
                 }
                 if blob == Blob::Mini
                     && let Some((_, left)) = st.minis_left.as_mut()

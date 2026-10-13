@@ -432,3 +432,78 @@ fn the_scan_of_library_folders_is_reported_to_devices() {
     drop(server);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// A device that shows a photo whose preview isn't built yet is told the server is making it, and the server makes it
+/// before the rest of its queue: the answer to the next ask is the preview.
+#[test]
+fn a_preview_a_device_asks_for_is_built_at_once() {
+    let root = temp("rush");
+    let photos = root.join("nas/photos");
+    for (i, name) in ["a.png", "b.png", "c.png"].iter().enumerate() {
+        write_png(&photos.join(name), i as u8 + 1);
+    }
+    let data = root.join("data");
+    accounts::set_user(&data, "ann", "correct horse", false).unwrap();
+    accounts::add_folder(&data, "ann", &photos.to_string_lossy(), Some("Photos")).unwrap();
+    let mut cfg = Config::new(&data, "127.0.0.1:0");
+    cfg.scan_interval = None;
+    cfg.preview_threads = 1;
+    let server = Server::start(cfg).unwrap();
+    let url = format!("http://{}", server.addr());
+    scanned(&server, 0);
+    let mut dev = Session::new().with_fs();
+    dev.open_library(root.join("device"), false).unwrap();
+    dev.execute("sync.signIn", &json!({"server": url, "user": "ann", "password": "correct horse", "device": "test"})).unwrap();
+    sync(&mut dev);
+    let hash = by_place(&dev, "Photos/b.png").unwrap().content_hash.clone().unwrap();
+    let token = serde_json::from_slice::<serde_json::Value>(&std::fs::read(root.join("device/sync.json")).unwrap()).unwrap()["token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let agent: ureq::Agent = ureq::Agent::config_builder().http_status_as_error(false).build().into();
+    let call = |method: &str, kind: &str, hash: &str| {
+        let req = agent.run(
+            ureq::http::Request::builder()
+                .method(method)
+                .uri(format!("{url}/api/blobs/{kind}/{hash}"))
+                .header("Authorization", format!("Bearer {token}"))
+                .body(())
+                .unwrap(),
+        );
+        let mut r = req.unwrap();
+        let retry = r.headers().get("Retry-After").and_then(|v| v.to_str().ok()).map(str::to_string);
+        (r.status().as_u16(), r.body_mut().read_to_vec().unwrap(), retry)
+    };
+    let blobs = data.join("users/ann/blobs");
+    let files = |kind: &str| blobs.join(kind).join(&hash[..2]).join(&hash);
+    let said = |body: &[u8]| serde_json::from_slice::<serde_json::Value>(body).ok().and_then(|v| v["previews"].as_str().map(str::to_string));
+
+    // the previews are gone (cleaned away, or never built): asking for one is what builds them
+    for kind in ["smart", "mini"] {
+        std::fs::remove_file(files(kind)).unwrap();
+    }
+    let (status, body, _) = call("HEAD", "mini", &hash);
+    assert_eq!((status, said(&body)), (404, None), "a HEAD only looks");
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(!files("mini").exists(), "…and builds nothing");
+    let (status, body, retry_after) = call("GET", "mini", &hash);
+    assert_eq!((status, said(&body).as_deref(), retry_after.as_deref()), (404, Some("queued"), Some("3")), "{}", String::from_utf8_lossy(&body));
+    let mut served = None;
+    for _ in 0..200 {
+        let (status, body, _) = call("GET", "mini", &hash);
+        if status == 200 {
+            served = Some(body);
+            break;
+        }
+        assert_eq!(said(&body).as_deref(), Some("queued"), "still being made: {}", String::from_utf8_lossy(&body));
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(served.is_some_and(|b| !b.is_empty()), "the preview comes once it is built");
+    assert!(lightcraft_engine::smart::is_valid(&files("smart")), "both previews are built together");
+
+    // a hash the server has no photo for has nothing to wait for
+    let (status, body, retry) = call("GET", "mini", &"ab".repeat(16));
+    assert_eq!((status, said(&body), retry), (404, None, None));
+    drop(server);
+    let _ = std::fs::remove_dir_all(&root);
+}
