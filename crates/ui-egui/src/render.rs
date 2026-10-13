@@ -734,6 +734,24 @@ impl Renderer {
         self.textures.keys().filter(|s| matches!(s, Slot::Thumb(_) | Slot::ThumbQuick(_))).count()
     }
 
+    /// A synced photo's preview came down from the server: the render of its thumbnail that failed for want of it
+    /// ("still downloading") is no longer what the grid should remember — asking again builds the job with its new
+    /// render key, and the cell draws the picture. (The library didn't change: a revision of it is what ends other failures.)
+    fn preview_arrived(&mut self, session: &mut Session) {
+        match session.media.take_arrived() {
+            Some(ids) => {
+                for id in ids {
+                    self.failed.remove(&Slot::Thumb(id));
+                    self.thumb_inputs.remove(&id);
+                }
+            }
+            None => {
+                self.failed.retain(|slot, _| !matches!(slot, Slot::Thumb(_)));
+                self.thumb_inputs.clear();
+            }
+        }
+    }
+
     /// Collect finished jobs into textures. Returns true if anything changed.
     pub fn poll(&mut self, ctx: &egui::Context, session: &mut Session) -> bool {
         let cache = &session.media.rendered;
@@ -743,6 +761,7 @@ impl Renderer {
         }
         self.preview_generation = Some((Arc::downgrade(cache), generation));
         self.catalog_rev = session.catalog.revision;
+        self.preview_arrived(session);
         self.frame += 1;
         self.trim_stages();
         // wasm: run one job per frame on this thread, timed with the host clock

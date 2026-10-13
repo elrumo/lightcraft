@@ -276,6 +276,8 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
     // own so the size it is given doesn't carry over to the other dialogs. Its content scrolls
     // rather than growing the window when the options below the grid get taller (e.g. Copy).
     let import = matches!(dlg, Dialog::Import { .. });
+    // the desktop Settings scrolls each section on its own, beside its sidebar
+    let settings_page = !compact && matches!(dlg, Dialog::Settings { .. });
     let window_id = window_id(&dlg);
     let default_width = match dlg {
         Dialog::Import { .. } => crate::import::DIALOG_SIZE[0],
@@ -388,7 +390,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
             }
             Dialog::AllMetadata { title, rows, search } => {
                 ui.label(egui::RichText::new(title.as_str()).color(t.text_label));
-                let r = ui.add(crate::widgets::touch_field(
+                let r = ui.add(crate::widgets::text_box(
                     ui,
                     egui::TextEdit::singleline(search).hint_text(crate::i18n::tr("Filter fields")).desired_width(f32::INFINITY),
                 ));
@@ -434,7 +436,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                 });
             }
             Dialog::SmartRules { id, name, rules, .. } => {
-                let r = ui.add(crate::widgets::touch_field(
+                let r = ui.add(crate::widgets::text_box(
                     ui,
                     egui::TextEdit::singleline(name).hint_text(crate::i18n::tr("Name")).desired_width(f32::INFINITY),
                 ));
@@ -498,7 +500,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                 let params = match mode.as_str() {
                     "set" => {
                         field(ui, "New time", |ui| {
-                            let r = ui.add(crate::widgets::touch_field(
+                            let r = ui.add(crate::widgets::text_box(
                                 ui,
                                 egui::TextEdit::singleline(time).hint_text("2026-09-30 14:05:00").desired_width(f32::INFINITY),
                             ));
@@ -561,7 +563,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                     field(ui, &colour, |ui| {
                         let (r, _) = ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::hover());
                         ui.painter().circle_filled(r.center(), 6.0, crate::panels::grid::label_color(*l));
-                        let te = ui.add(crate::widgets::touch_field(
+                        let te = ui.add(crate::widgets::text_box(
                             ui,
                             egui::TextEdit::singleline(&mut names[i]).hint_text(colour.as_str()).desired_width(f32::INFINITY),
                         ));
@@ -569,7 +571,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                     });
                 }
                 field(ui, "Save as set", |ui| {
-                    let te = ui.add(crate::widgets::touch_field(
+                    let te = ui.add(crate::widgets::text_box(
                         ui,
                         egui::TextEdit::singleline(save_as).hint_text(crate::i18n::tr("Optional name")).desired_width(f32::INFINITY),
                     ));
@@ -589,10 +591,8 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                 let tags_open = field(ui, "Template", |ui| {
                     ui.spacing_mut().item_spacing.x = 4.0;
                     let w = crate::import::tag_field_width(ui);
-                    let r = ui.add(crate::widgets::touch_field(
-                        ui,
-                        egui::TextEdit::singleline(template).id(template_id).hint_text("{name}").desired_width(w),
-                    ));
+                    let r = ui
+                        .add(crate::widgets::text_box(ui, egui::TextEdit::singleline(template).id(template_id).hint_text("{name}").desired_width(w)));
                     crate::widgets::register(ui.ctx(), "field:renameTemplate", r.rect);
                     crate::import::tag_toggle(ui, "renameTemplate")
                 });
@@ -689,11 +689,11 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                 }
             }
             Dialog::CreatePreset { name, group, groups } => {
-                ui.add(crate::widgets::touch_field(
+                ui.add(crate::widgets::text_box(
                     ui,
                     egui::TextEdit::singleline(name).hint_text(crate::i18n::tr("Preset name")).desired_width(f32::INFINITY),
                 ));
-                ui.add(crate::widgets::touch_field(
+                ui.add(crate::widgets::text_box(
                     ui,
                     egui::TextEdit::singleline(group).hint_text(crate::i18n::tr("Group")).desired_width(f32::INFINITY),
                 ));
@@ -742,7 +742,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
             Dialog::PresetImport { review } => crate::preset_import::body(app, ui, review),
             Dialog::Import { opts } if app.compact => crate::import::mobile_body(app, ui, opts),
             Dialog::Import { opts } => crate::import::body(app, ui, opts),
-            Dialog::Settings { tab } => crate::panels::settings::body(app, ui, tab),
+            Dialog::Settings { tab } => crate::panels::settings::body(app, ui, tab, body_max),
             Dialog::SamModel { error, .. } => sam_model_body(app, ui, error.as_deref()),
             Dialog::SuperRes { error } => crate::superres::body(app, ui, error.as_deref()),
             Dialog::SyncChoice => choice_made |= super::sync_choice::body(app, ui),
@@ -1045,16 +1045,34 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
             .default_width(default_width)
             .show(ctx, |ui| {
                 ui.spacing_mut().item_spacing.y = 8.0;
-                body_h = dialog_body(ui, (!import).then_some(title.as_str()), body_max, &mut body);
+                body_h = if settings_page {
+                    body(ui);
+                    Some(crate::panels::settings::desktop_height(body_max))
+                } else {
+                    dialog_body(ui, (!import).then_some(title.as_str()), body_max, &mut body)
+                };
                 ui.add_space(4.0);
-                ui.horizontal(|ui| {
+                // (Settings' Close sits at its end, under the section)
+                let layout =
+                    if settings_page { egui::Layout::right_to_left(egui::Align::Center) } else { egui::Layout::left_to_right(egui::Align::Center) };
+                ui.allocate_ui_with_layout(egui::vec2(ui.available_width(), 26.0), layout, |ui| {
+                    // Studio: capsules, the action in the accent colour (as on the admin page)
+                    let capsule = |text: egui::WidgetText| {
+                        let b = egui::Button::new(text);
+                        if t.cards() { b.corner_radius(t.button_radius).min_size(egui::vec2(64.0, 26.0)) } else { b }
+                    };
                     if !informational {
-                        let r = ui.button(crate::i18n::tr(cancel));
+                        let r = ui.add(capsule(crate::i18n::tr(cancel).into()));
                         crate::widgets::register(ui.ctx(), "button:dialogCancel", r.rect);
                         cancel_tapped = r.clicked();
                     }
                     if !ok.is_empty() {
-                        let r = ui.add_enabled(can_confirm, egui::Button::new(ok.as_str()));
+                        let button = if t.cards() && can_confirm {
+                            capsule(egui::RichText::new(ok.as_str()).color(egui::Color32::WHITE).strong().into()).fill(t.accent)
+                        } else {
+                            capsule(ok.as_str().into())
+                        };
+                        let r = ui.add_enabled(can_confirm, button);
                         crate::widgets::register(ui.ctx(), "button:dialogOk", r.rect);
                         ok_tapped = r.clicked();
                     }
@@ -1650,7 +1668,7 @@ fn return_confirms(dlg: &Dialog) -> bool {
 fn dialog_field(ui: &mut egui::Ui, widget: &str, text: &mut String, hint: &str) -> bool {
     let mut field = crate::text_field::TextField::singleline(widget, text).hint(crate::i18n::tr(hint)).width(f32::INFINITY).select_on_focus(true);
     if crate::is_compact(ui.ctx()) {
-        // a phone's: as iOS draws a text field, big enough for a finger (`widgets::touch_field`)
+        // a phone's: as iOS draws a text field, big enough for a finger (`widgets::text_box`)
         field = field.font(egui::FontId::proportional(17.0)).margin(egui::Margin::symmetric(12, 10));
     }
     let r = field.show(ui);
