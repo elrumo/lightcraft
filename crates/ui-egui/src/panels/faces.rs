@@ -11,7 +11,7 @@
 use egui::RichText;
 use serde_json::{Value, json};
 
-use super::settings::{check, heading, hint};
+use super::settings::{card_row, check, heading, hint};
 use crate::LightcraftApp;
 use crate::theme::Tokens;
 use crate::widgets::register;
@@ -210,11 +210,10 @@ pub fn settings_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
     // (issue #678), so it can only be switched off, with the hint below saying what to do first
     let usable =
         list["embedder"].as_str().is_some_and(|id| list["models"].as_array().into_iter().flatten().any(|m| m["id"] == id && m["installed"] == true));
-    let r = ui
-        .add_enabled(on || (runtime && usable), egui::Checkbox::new(&mut on, crate::i18n::tr("Recognise faces (experimental)")))
-        .on_disabled_hover_text(crate::i18n::tr("Choose a model below (Use) to start."));
-    register(ui.ctx(), "check:settings.facesEnabled", r.rect);
-    if r.changed() {
+    // (a switch row, `check:settings.facesEnabled`; off and greyed until there is a model to run)
+    let changed =
+        ui.add_enabled_ui(on || (runtime && usable), |ui| check(ui, "settings.facesEnabled", &mut on, "Recognise faces (experimental)")).inner;
+    if changed {
         match app.run("faces.enable", json!({"enabled": on})) {
             Ok(_) => app.caches.faces_epoch += 1,
             Err(e) => app.toast(ui.ctx(), e),
@@ -283,7 +282,11 @@ fn model_row(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, m: &Value, 
     let dl_state = if installed { None } else { dl.and_then(|d| d["state"].as_str()) };
     // a build that cannot run recognition models has no use for a download
     let host = if can_run { m["downloadHost"].as_str().unwrap_or("").to_string() } else { String::new() };
-    egui::Frame::NONE.inner_margin(egui::Margin::symmetric(0, 3)).show(ui, |ui| {
+    // (in a desktop Settings section, a row on its card; the phone's page lists them as they are)
+    if !crate::is_compact(ui.ctx()) {
+        card_row(ui, t, 0.0);
+    }
+    egui::Frame::NONE.inner_margin(egui::Margin::symmetric(0, 5)).show(ui, |ui| {
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
                 ui.horizontal(|ui| {
@@ -601,7 +604,7 @@ pub fn name_editor(
     let shown = egui::Area::new(egui::Id::new("face-name-editor")).order(egui::Order::Foreground).fixed_pos(at).constrain(true).show(ctx, |ui| {
         egui::Frame::popup(ui.style()).show(ui, |ui| {
             ui.set_min_width(230.0);
-            let r = ui.add(egui::TextEdit::singleline(&mut edit.text).hint_text("Name").desired_width(220.0));
+            let r = ui.add(crate::widgets::text_box(ui, egui::TextEdit::singleline(&mut edit.text).hint_text("Name").desired_width(220.0)));
             register(ui.ctx(), "field:faceName", r.rect);
             if edit.fresh {
                 r.request_focus();

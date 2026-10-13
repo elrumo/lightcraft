@@ -93,9 +93,10 @@ fn export_dialog_is_unchanged_in_a_tall_window() {
     let h = export_dialog([1600.0, 1000.0]);
     assert_fits(&h, "Export at 1600×1000");
     let dialog = rect(&h, "dialog:window");
-    // (846 tall as before #781: the whole dialog, nothing scrolled away; 615 wide since the
-    // format row gained JPEG XL, #780; 30 more on macOS for its Add to Apple Photos row)
-    let tall = if cfg!(target_os = "macos") { 876.0 } else { 846.0 };
+    // (858 tall: the whole dialog, nothing scrolled away, as before #781 plus 12 since its two text
+    // boxes got roomier; 615 wide since the format row gained JPEG XL, #780; 30 more on macOS for
+    // its Add to Apple Photos row)
+    let tall = if cfg!(target_os = "macos") { 888.0 } else { 858.0 };
     assert!((dialog.height() - tall).abs() <= 1.0, "{dialog:?}");
     assert!((dialog.width() - 615.2).abs() <= 1.0, "{dialog:?}");
 }
@@ -132,4 +133,43 @@ fn a_dialog_list_shrinks_to_fit_a_short_window() {
     assert!(shrink > 0.0, "the list gave up room");
     let dialog = rect(&h, "dialog:window");
     assert!(dialog.height() <= 320.0, "{dialog:?}");
+}
+
+// Scenario: Settings lists its sections in a sidebar beside the open one; a setting's control sits
+// at the end of its row, a switch row toggles on a click anywhere on it, the section scrolls on its
+// own while the sidebar stays put, and its text boxes have room around their text
+#[test]
+fn settings_sections_sit_in_a_sidebar_beside_the_open_one() {
+    let mut h = demo([1300.0, 820.0]);
+    open(&mut h, "app.settings");
+    assert_fits(&h, "Settings");
+    let ids = ["general", "interface", "display", "import", "performance", "faces", "denoise", "models", "sync"];
+    let tabs: Vec<egui::Rect> = ids.iter().map(|id| rect(&h, &format!("button:settingsTab-{id}"))).collect();
+    for (pair, id) in tabs.windows(2).zip(ids.iter().skip(1)) {
+        assert!(pair[1].top() >= pair[0].bottom() - 0.5 && (pair[1].left() - pair[0].left()).abs() < 0.5, "{id} under the one before");
+    }
+    let dialog = rect(&h, "dialog:window");
+    assert!(tabs[0].left() - dialog.left() < 40.0, "the sidebar is on the dialog's left: {:?} in {dialog:?}", tabs[0]);
+    // the open section is right of the sidebar, its controls at the end of their rows
+    let confirm = rect(&h, "check:settings.confirmDelete");
+    assert!(confirm.left() > tabs[0].right() + 10.0, "{confirm:?}");
+    let detail = rect(&h, "button:settingsStartup-2");
+    assert!((detail.right() - confirm.right()).abs() <= 1.0, "Startup's choices end where the switch row does: {detail:?} {confirm:?}");
+    // a text box has room around its text (egui's own is about 21 pt tall)
+    assert!(rect(&h, "field:photocraftPath").height() >= 26.0, "{:?}", rect(&h, "field:photocraftPath"));
+    // the section scrolls; the sidebar doesn't
+    h.request("ui.hoverWidget", json!({"id": "check:settings.confirmDelete"}), T);
+    h.request("ui.scroll", json!({"dy": -200.0}), T);
+    h.settle(T);
+    assert!(rect(&h, "check:settings.confirmDelete").top() < confirm.top() - 50.0, "the section scrolled");
+    assert_eq!(rect(&h, "button:settingsTab-general"), tabs[0], "the sidebar stayed put");
+    // a click anywhere on a switch row toggles it
+    let before = h.app.ui.settings.confirm_delete;
+    assert_eq!(h.request("ui.clickWidget", json!({"id": "check:settings.confirmDelete"}), T)["ok"], true);
+    h.step();
+    assert_ne!(h.app.ui.settings.confirm_delete, before);
+    // and the sidebar opens a section
+    assert_eq!(h.request("ui.clickWidget", json!({"id": "button:settingsTab-performance"}), T)["ok"], true);
+    h.step();
+    assert_eq!(h.app.ui.dialog, Some(crate::state::Dialog::Settings { tab: "performance".into() }));
 }

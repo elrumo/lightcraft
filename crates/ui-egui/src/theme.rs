@@ -2,8 +2,15 @@
 //! reference app's dark theme (see plan/lightroom/10-observed-ui.md); everything is our own code.
 //!
 //! Themes come in two families, picked by the Appearance Mode setting (Settings ▸ Interface):
-//! - dark: **Charcoal** (the default, the observed dark look) and **Midnight** (near black);
-//! - light: **Silver** (light grey chrome) and **Paper** (near white).
+//! - dark: **Charcoal** (the default, the observed dark look), **Midnight** (near black) and
+//!   **Studio Dark**;
+//! - light: **Silver** (light grey chrome), **Paper** (near white) and **Studio Light**.
+//!
+//! The two Studio themes are one design in both appearances, the look of the server's admin page
+//! (`apps/lightcraft-server/admin`): its neutral greys and blue accent, panels floating as rounded
+//! cards on the window's backdrop, borderless capsule buttons, rounder fields, menus and dialogs,
+//! and sliders with a filled track and a solid handle. Shape is part of the tokens
+//! ([`Tokens::card_radius`] and the radii after it), so the classic themes keep their flush, square look.
 //!
 //! The compact (phone / tablet) layout has its own look instead, iOS's light or dark one
 //! ([`Tokens::ios_for`], [`apply_compact`]).
@@ -83,6 +90,24 @@ pub struct Tokens {
     pub segment_pill: Color32,
     /// How dark the scrim behind a page or an action sheet gets (alpha of black, 0–255).
     pub scrim: u8,
+    /// What the panels sit on: the top bar and the tool strip (`chrome` in the classic themes).
+    pub backdrop: Color32,
+    // shape
+    /// Docked panels' corner radius. 0 (the classic themes): panels meet edge to edge, `dock_gap`
+    /// apart. More: each is a card with rounded corners floating on `backdrop`, `dock_gap` from its
+    /// neighbours and from the window's edges, and the tool strip is a card of its own.
+    pub card_radius: f32,
+    /// The gap between docked panels (where their resize handles are).
+    pub dock_gap: f32,
+    /// Corner radius of egui's controls (buttons, fields, combo boxes) and the tool strip's squares.
+    pub control_radius: u8,
+    /// Corner radius of our own push buttons (Auto, B&W…) and segmented controls; 255 for capsules.
+    pub button_radius: u8,
+    /// Corner radius of windows, dialogs, menus and popups.
+    pub window_radius: u8,
+    /// Desktop sliders drawn the Studio way: a thicker rounded track filled with `thumb` from the
+    /// control's default to the handle, and a solid handle (rather than a hollow ring on a hairline).
+    pub filled_sliders: bool,
     // metrics (points)
     pub top_bar_h: f32,
     pub bottom_bar_h: f32,
@@ -101,13 +126,23 @@ pub enum ThemeKind {
     Midnight,
     Silver,
     Paper,
+    /// The Studio design in the dark appearance (the server admin page's dark look).
+    StudioDark,
+    /// The Studio design in the light appearance (the server admin page's light look).
+    StudioLight,
 }
 
 impl ThemeKind {
-    pub const ALL: [ThemeKind; 4] = [ThemeKind::Charcoal, ThemeKind::Midnight, ThemeKind::Silver, ThemeKind::Paper];
+    pub const ALL: [ThemeKind; 6] =
+        [ThemeKind::Charcoal, ThemeKind::Midnight, ThemeKind::StudioDark, ThemeKind::Silver, ThemeKind::Paper, ThemeKind::StudioLight];
 
     pub fn is_dark(self) -> bool {
-        matches!(self, ThemeKind::Charcoal | ThemeKind::Midnight)
+        matches!(self, ThemeKind::Charcoal | ThemeKind::Midnight | ThemeKind::StudioDark)
+    }
+
+    /// The Studio design (floating panel cards, capsule buttons), in either appearance.
+    pub fn is_studio(self) -> bool {
+        matches!(self, ThemeKind::StudioDark | ThemeKind::StudioLight)
     }
 
     /// The theme's id (settings value and command suffix).
@@ -117,6 +152,8 @@ impl ThemeKind {
             ThemeKind::Midnight => "midnight",
             ThemeKind::Silver => "silver",
             ThemeKind::Paper => "paper",
+            ThemeKind::StudioDark => "studioDark",
+            ThemeKind::StudioLight => "studioLight",
         }
     }
 
@@ -127,6 +164,8 @@ impl ThemeKind {
             ThemeKind::Midnight => "Midnight",
             ThemeKind::Silver => "Silver",
             ThemeKind::Paper => "Paper",
+            ThemeKind::StudioDark => "Studio Dark",
+            ThemeKind::StudioLight => "Studio Light",
         }
     }
 }
@@ -168,6 +207,13 @@ impl Default for Tokens {
             switch_on: Color32::from_rgb(0x30, 0xd1, 0x58),
             segment_pill: Color32::from_rgb(0x63, 0x63, 0x66),
             scrim: 150,
+            backdrop: Color32::from_rgb(0x2d, 0x2d, 0x2d),
+            card_radius: 0.0,
+            dock_gap: 4.0,
+            control_radius: 4,
+            button_radius: 4,
+            window_radius: 6,
+            filled_sliders: false,
             top_bar_h: 42.0,
             bottom_bar_h: 48.0,
             panel_w: 270.0,
@@ -198,6 +244,7 @@ impl Tokens {
         let rgb = Color32::from_rgb;
         Tokens {
             chrome: rgb(0xf2, 0xf2, 0xf7),
+            backdrop: rgb(0xf2, 0xf2, 0xf7),
             canvas: rgb(0xff, 0xff, 0xff),
             grid_bg: rgb(0xff, 0xff, 0xff),
             cell: rgb(0xf2, 0xf2, 0xf7),
@@ -239,6 +286,7 @@ impl Tokens {
         let rgb = Color32::from_rgb;
         Tokens {
             chrome: rgb(0x1c, 0x1c, 0x1e),
+            backdrop: rgb(0x1c, 0x1c, 0x1e),
             canvas: rgb(0x00, 0x00, 0x00),
             grid_bg: rgb(0x00, 0x00, 0x00),
             cell: rgb(0x1c, 0x1c, 0x1e),
@@ -276,11 +324,12 @@ impl Tokens {
         ctx.data(|d| d.get_temp::<bool>(egui::Id::new("lc-dark"))).unwrap_or(true)
     }
 
-    /// The tokens of `kind`. Metrics are shared; only colours change.
+    /// The tokens of `kind`. Metrics are shared; the classic themes change only colours, the Studio
+    /// ones shape too.
     pub fn for_kind(kind: ThemeKind) -> Tokens {
         let rgb = |v: u32| Color32::from_rgb((v >> 16) as u8, (v >> 8) as u8, v as u8);
         let base = Tokens::default();
-        match kind {
+        let tokens = match kind {
             ThemeKind::Charcoal => base,
             ThemeKind::Midnight => Tokens {
                 chrome: rgb(0x1e1e1e),
@@ -359,7 +408,107 @@ impl Tokens {
                 caution: rgb(0xb0761a),
                 ..base
             },
+            ThemeKind::StudioDark => return Tokens::studio(true),
+            ThemeKind::StudioLight => return Tokens::studio(false),
+        };
+        // the bars are the panels' colour: one surface, flush
+        Tokens { backdrop: tokens.chrome, ..tokens }
+    }
+
+    /// The Studio design, after the server's admin page (`apps/lightcraft-server/admin/admin.css`):
+    /// its neutral greys (a backdrop, white or near-black cards on it, a lighter fill for buttons
+    /// and fields), its blue accent, capsule buttons, rounded fields, cards, menus and dialogs, and
+    /// filled sliders. The photo's own canvas stays a quiet neutral so colours are judged fairly.
+    fn studio(dark: bool) -> Tokens {
+        let rgb = |v: u32| Color32::from_rgb((v >> 16) as u8, (v >> 8) as u8, v as u8);
+        let shape = Tokens {
+            card_radius: 12.0,
+            dock_gap: 8.0,
+            control_radius: 6,
+            button_radius: 255,
+            window_radius: 14,
+            filled_sliders: true,
+            strip_w: 52.0,
+            ..Tokens::default()
+        };
+        if dark {
+            Tokens {
+                backdrop: rgb(0x111111),
+                chrome: rgb(0x1e1e1e),
+                canvas: rgb(0x1b1b1b),
+                grid_bg: rgb(0x1e1e1e),
+                cell: rgb(0x262626),
+                cell_selected: rgb(0x283766),
+                divider: rgb(0x111111),
+                inset: rgb(0x262626),
+                field: rgb(0x161616),
+                field_border: rgb(0x444444),
+                button: rgb(0x2c2c2c),
+                button_border: rgb(0x2c2c2c),
+                hover: rgb(0x393939),
+                pressed: rgb(0x444444),
+                tool_active: rgb(0x323232),
+                text: rgb(0xf2f2f2),
+                text_label: rgb(0xdbdbdb),
+                text_dim: rgb(0x8f8f8f),
+                text_disabled: rgb(0x575757),
+                icon: rgb(0xafafaf),
+                track: rgb(0x444444),
+                thumb: rgb(0xdbdbdb),
+                thumb_hover: rgb(0xffffff),
+                accent: rgb(0x4f74fc),
+                star: rgb(0xdbdbdb),
+                pick: rgb(0xf2f2f2),
+                reject: rgb(0xe0412d),
+                caution: rgb(0xf68511),
+                switch_off: rgb(0x444444),
+                switch_on: rgb(0x4f74fc),
+                segment_pill: rgb(0x444444),
+                scrim: 153,
+                ..shape
+            }
+        } else {
+            Tokens {
+                backdrop: rgb(0xebebeb),
+                chrome: rgb(0xffffff),
+                canvas: rgb(0xf7f7f7),
+                grid_bg: rgb(0xffffff),
+                cell: rgb(0xf3f3f3),
+                cell_selected: rgb(0xdfe7ff),
+                divider: rgb(0xebebeb),
+                inset: rgb(0xf3f3f3),
+                field: rgb(0xffffff),
+                field_border: rgb(0xd5d5d5),
+                button: rgb(0xebebeb),
+                button_border: rgb(0xebebeb),
+                hover: rgb(0xe1e1e1),
+                pressed: rgb(0xd5d5d5),
+                tool_active: rgb(0xe9e9e9),
+                text: rgb(0x131313),
+                text_label: rgb(0x292929),
+                text_dim: rgb(0x6e6e6e),
+                text_disabled: rgb(0xb1b1b1),
+                icon: rgb(0x505050),
+                track: rgb(0xdadada),
+                thumb: rgb(0x3d3d3d),
+                thumb_hover: rgb(0x131313),
+                accent: rgb(0x3b63fb),
+                star: rgb(0x2c2c2c),
+                pick: rgb(0x131313),
+                reject: rgb(0xd73220),
+                caution: rgb(0xc95f00),
+                switch_off: rgb(0xd5d5d5),
+                switch_on: rgb(0x3b63fb),
+                segment_pill: rgb(0xffffff),
+                scrim: 102,
+                ..shape
+            }
         }
+    }
+
+    /// Whether docked panels are cards floating on the backdrop (the Studio themes).
+    pub fn cards(&self) -> bool {
+        self.card_radius > 0.0
     }
 
     pub fn get(ctx: &egui::Context) -> Tokens {
@@ -545,8 +694,9 @@ fn apply_tokens(ctx: &egui::Context, t: Tokens, dark: bool) {
     v.extreme_bg_color = t.field;
     v.faint_bg_color = t.inset;
     v.window_stroke = Stroke::new(1.0, t.button_border);
-    v.window_corner_radius = CornerRadius::same(6);
-    v.menu_corner_radius = CornerRadius::same(6);
+    v.window_corner_radius = CornerRadius::same(t.window_radius);
+    // (a menu is smaller than a dialog: a little less round)
+    v.menu_corner_radius = CornerRadius::same(t.window_radius.min(10));
     v.selection.bg_fill = t.accent.gamma_multiply(0.6);
     v.selection.stroke = Stroke::new(1.0, t.accent);
     v.override_text_color = Some(t.text_label);
@@ -556,17 +706,23 @@ fn apply_tokens(ctx: &egui::Context, t: Tokens, dark: bool) {
     let w = &mut v.widgets;
     craft_ui::theme::WidgetPalette { noninteractive: t.chrome, inactive: t.button, hovered: t.hover, active: t.pressed, open: t.hover }.apply_to(
         w,
-        CornerRadius::same(4),
+        CornerRadius::same(t.control_radius),
         Stroke::new(1.0, t.text_label),
     );
     w.noninteractive.bg_stroke = Stroke::new(1.0, t.divider);
     w.inactive.bg_stroke = Stroke::new(1.0, t.button_border);
+    if t.cards() {
+        // (egui fills a focused window's title bar with this: Studio's dialogs are one surface,
+        // their title on it as on the admin page's)
+        w.open.weak_bg_fill = t.chrome;
+    }
     ctx.set_visuals_of(egui::Theme::Dark, v.clone());
     ctx.set_visuals_of(egui::Theme::Light, v);
     ctx.set_theme(if dark { egui::Theme::Dark } else { egui::Theme::Light });
     ctx.all_styles_mut(|s| {
         s.spacing.item_spacing = egui::vec2(6.0, 4.0);
-        s.spacing.button_padding = egui::vec2(8.0, 3.0);
+        // (capsule buttons need a little more room at their ends)
+        s.spacing.button_padding = egui::vec2(if t.button_radius > 12 { 12.0 } else { 8.0 }, 3.0);
         s.spacing.interact_size.y = 22.0;
         s.text_styles.insert(egui::TextStyle::Body, FontId::proportional(13.0));
         s.text_styles.insert(egui::TextStyle::Button, FontId::proportional(13.0));
