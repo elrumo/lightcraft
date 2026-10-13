@@ -159,6 +159,7 @@
         <div class="user-title"><h1 id="uName"></h1><div id="uRole"></div></div>
         <div class="btn-group">
           <button type="button" class="btn secondary" id="uPassword"><svg class="icon"><use href="#i-key"/></svg><span>Reset password</span></button>
+          <button type="button" class="btn secondary" id="uQuota"><svg class="icon"><use href="#i-storage"/></svg><span>Storage limit</span></button>
           <button type="button" class="btn secondary" id="uAdmin"><svg class="icon"><use href="#i-shield"/></svg><span></span></button>
           <button type="button" class="btn negative-outline" id="uRemove"><svg class="icon"><use href="#i-trash"/></svg><span>Remove user</span></button>
         </div>
@@ -167,7 +168,7 @@
         <div class="stat"><span class="stat-label">Photos</span><span class="stat-value" id="uPhotos"></span></div>
         <div class="stat"><span class="stat-label">Albums</span><span class="stat-value" id="uAlbums"></span></div>
         <div class="stat"><span class="stat-label">Devices</span><span class="stat-value" id="uDevices"></span></div>
-        <div class="stat"><span class="stat-label">Storage used</span><span class="stat-value" id="uBytes"></span><span class="stat-note" id="uBytesNote"></span></div>
+        <div class="stat"><span class="stat-label">Storage used</span><span class="stat-value" id="uBytes"></span><span class="stat-note" id="uBytesNote"></span><span class="stat-note" id="uQuotaText" hidden></span><div class="meter small" id="uQuotaMeter" hidden><div></div></div></div>
       </div>
       <div class="tabs" role="tablist">
         <a role="tab" data-tab="devices"><svg class="icon"><use href="#i-device"/></svg><span>Devices</span></a>

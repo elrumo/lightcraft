@@ -1022,6 +1022,18 @@ pub enum Dialog {
         id: u64,
         name: String,
     },
+    /// Share Link… (an album's menu): how the link to album `id` works before it is made (`album.share`). The
+    /// password is never kept with the window state, nor told to the control channel.
+    ShareLink {
+        id: u64,
+        name: String,
+        /// Days until the link ends (0: when revoked).
+        days: u32,
+        originals: bool,
+        upload: bool,
+        #[serde(skip)]
+        password: String,
+    },
     /// One text field; OK runs `command` with `params` plus `{key: value}` (rename a preset or a
     /// version, move a preset to a new group…).
     TextPrompt {
