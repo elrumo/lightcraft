@@ -221,6 +221,7 @@ function field(f) {
     required: f.required !== false,
     minlength: f.minlength,
     pattern: f.pattern,
+    step: f.step,
     placeholder: f.placeholder,
     autocomplete: f.autocomplete || 'off',
     spellcheck: 'false',
@@ -456,6 +457,13 @@ function showUser(name, users) {
   $('uAlbums').textContent = n(u.albums);
   $('uDevices').textContent = n(u.devices);
   $('uBytes').textContent = size(u.bytes);
+  const limit = $('uQuotaText');
+  const meter = $('uQuotaMeter');
+  limit.hidden = meter.hidden = !u.quota;
+  if (u.quota) {
+    limit.textContent = 'of ' + bytes(u.quota) + ' allowed';
+    fill(meter, (u.bytes || 0) / u.quota);
+  }
 
   const only = u.admin && users.filter((x) => x.admin).length < 2;
   const why = only ? name + ' is the only administrator.' : '';
@@ -465,6 +473,7 @@ function showUser(name, users) {
     b.title = why;
   }
   $('uPassword').onclick = () => resetPassword(name);
+  $('uQuota').onclick = () => setQuota(name, u.quota);
   $('uAdmin').onclick = () => setAdmin(name, !u.admin);
   $('uRemove').onclick = () => removeUser(name);
 
@@ -485,6 +494,25 @@ function resetPassword(name) {
     action: async (v) => {
       await api('PUT', 'users/' + enc(name) + '/password', { password: v.password });
       toast(name + "'s password was changed.");
+    },
+  });
+}
+
+/** The most the server keeps for a user (uploaded originals and previews; library folders don't count). */
+function setQuota(name, quota) {
+  return ask({
+    title: 'Storage limit for ' + name,
+    text:
+      'The most the server keeps for ' + name + ': the originals their devices upload, previews, and photos added through their shared links. ' +
+      'Photos in library folders don\'t count. Over the limit, uploads wait until there is room; nothing is deleted. Leave it empty for no limit.',
+    fields: [{ name: 'gb', label: 'Limit in GB', type: 'number', step: 'any', required: false, value: quota ? String(Math.round(quota / 1e8) / 10) : '', placeholder: 'No limit', help: 'At least 0.1 GB.' }],
+    ok: 'Set limit',
+    action: async (v) => {
+      const gb = v.gb.trim() === '' ? null : Number(v.gb);
+      if (gb !== null && !(gb >= 0.1)) throw new Error('Type a size of at least 0.1 GB, or leave it empty for no limit.');
+      await api('PUT', 'users/' + enc(name) + '/quota', { quota: gb === null ? null : Math.round(gb * 1e9) });
+      toast(gb === null ? name + ' has no storage limit.' : name + ' may keep ' + bytes(gb * 1e9) + ' on the server.');
+      await route();
     },
   });
 }

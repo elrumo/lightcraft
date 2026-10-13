@@ -22,6 +22,23 @@ pub(super) enum Kind {
     Revoke(String),
 }
 
+/// The shortest and longest password an album link may have (as the server takes them).
+pub const SHARE_PASSWORD_MIN: usize = 4;
+pub const SHARE_PASSWORD_MAX: usize = 256;
+
+/// How a new album link works ([`Session::sync_share_album`]).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ShareOptions {
+    /// It ends after this many days (`None`: when revoked).
+    pub expires_days: Option<u32>,
+    /// Visitors may download the originals (one by one, or all of them as a ZIP).
+    pub originals: bool,
+    /// Visitors type this first (`None` or empty: no password).
+    pub password: Option<String>,
+    /// Visitors may add photos to the album: they become this library's photos, in the album.
+    pub upload: bool,
+}
+
 #[derive(Default)]
 pub struct ShareState {
     list: Vec<proto::Share>,
@@ -64,7 +81,15 @@ fn not_signed_in() -> EngineError {
 impl Session {
     /// Ask the server for a link to album `album` (a plain album: not a folder or a smart album). The new link
     /// arrives with a later [`Session::sync_done`]; see [`Session::sync_take_new_link`].
-    pub fn sync_share_album(&mut self, album: AlbumId, expires_days: Option<u32>, originals: bool) -> Result<()> {
+    pub fn sync_share_album(&mut self, album: AlbumId, options: ShareOptions) -> Result<()> {
+        let ShareOptions { expires_days, originals, password, upload } = options;
+        let password = password.filter(|p| !p.is_empty());
+        if let Some(p) = &password {
+            let n = p.chars().count();
+            if !(SHARE_PASSWORD_MIN..=SHARE_PASSWORD_MAX).contains(&n) {
+                return Err(EngineError::Other(format!("a link's password has {SHARE_PASSWORD_MIN} to {SHARE_PASSWORD_MAX} characters")));
+            }
+        }
         match self.catalog.album(album) {
             None => return Err(EngineError::Other(format!("no album {}", album.0))),
             Some(a) if a.folder || a.is_smart() => {
@@ -73,8 +98,8 @@ impl Session {
             Some(_) => {}
         }
         let st = self.sync.as_mut().filter(|st| st.has_token()).ok_or_else(not_signed_in)?;
-        let body =
-            serde_json::to_string(&proto::NewShare { album: album.0, expires_days, originals }).map_err(|e| EngineError::Other(e.to_string()))?;
+        let body = serde_json::to_string(&proto::NewShare { album: album.0, expires_days, originals, password, upload })
+            .map_err(|e| EngineError::Other(e.to_string()))?;
         st.shares.error = None;
         st.queue_share(Kind::Create, "POST", "/api/shares", Body::Json(body));
         Ok(())
