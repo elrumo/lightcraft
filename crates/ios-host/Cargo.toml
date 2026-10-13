@@ -16,6 +16,7 @@ todo = "warn"
 
 [dependencies]
 log = { workspace = true }
+lightcraft-codecs = { workspace = true }
 
 [target.'cfg(target_os = "ios")'.dependencies]
 objc2 = "0.6"

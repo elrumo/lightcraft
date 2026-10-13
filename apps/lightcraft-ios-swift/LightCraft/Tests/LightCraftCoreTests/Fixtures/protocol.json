@@ -1,0 +1,135 @@
+{
+  "events": [
+    {
+      "id": 1,
+      "kind": "reply",
+      "result": {
+        "photos": [],
+        "total": 0
+      }
+    },
+    {
+      "error": {
+        "code": "unknownCommand",
+        "message": "unknown command `no.such`"
+      },
+      "id": 2,
+      "kind": "reply"
+    },
+    {
+      "draft": true,
+      "final": false,
+      "height": 1067,
+      "histogram": {
+        "b": [
+          0
+        ],
+        "g": [
+          0
+        ],
+        "luma": [
+          0
+        ],
+        "r": [
+          0
+        ],
+        "total": 1
+      },
+      "key": 18446744073709551000,
+      "kind": "image",
+      "ms": 12.5,
+      "photo": 7,
+      "slot": "main",
+      "token": 99,
+      "width": 1600
+    },
+    {
+      "draft": false,
+      "final": false,
+      "height": 171,
+      "key": 5,
+      "kind": "image",
+      "ms": 3.0,
+      "photo": 7,
+      "quick": "embedded",
+      "slot": "thumb:7",
+      "token": 100,
+      "width": 256
+    },
+    {
+      "error": "the file is missing",
+      "key": 6,
+      "kind": "renderFailed",
+      "photo": 8,
+      "slot": "thumb:8"
+    },
+    {
+      "kind": "state",
+      "state": {
+        "active": 7,
+        "catalogRevision": 12,
+        "interaction": null,
+        "libraryGeneration": 2,
+        "redo": null,
+        "selectionCount": 1,
+        "undo": "Exposure",
+        "unsaved": 0,
+        "visibleCount": 30,
+        "visibleGen": 40
+      }
+    },
+    {
+      "kind": "activity",
+      "tasks": [
+        {
+          "ageMs": 1200,
+          "cancellable": true,
+          "cancelling": false,
+          "detail": "IMG_0001.jpg",
+          "done": 1,
+          "id": 3,
+          "kind": "export",
+          "label": "Exporting 2 photos",
+          "total": 2,
+          "unit": "count"
+        }
+      ]
+    },
+    {
+      "kind": "message",
+      "level": "info",
+      "text": "Saved"
+    },
+    {
+      "id": 4,
+      "kind": "uiRequest",
+      "method": "ui.screenshot",
+      "params": {
+        "path": "/tmp/shot.png"
+      }
+    },
+    {
+      "kind": "closed"
+    }
+  ],
+  "openConfig": {
+    "availableMemory": null,
+    "demo": true,
+    "deviceName": "iPhone",
+    "home": "/home",
+    "library": null,
+    "renderThreads": null,
+    "script": null,
+    "tmp": "/tmp"
+  },
+  "request": {
+    "id": 5,
+    "method": "render.view",
+    "params": {
+      "draft": true,
+      "height": 1067,
+      "photo": 7,
+      "width": 1600
+    }
+  }
+}

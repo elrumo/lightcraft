@@ -1,0 +1,9 @@
+# xtool project file (docs/ios-swift.md → Build and run). xtool prefixes the bundle ID when it signs
+# for a device with a free Apple ID. A bundle ID of its own while the egui app (apps/lightcraft-ios)
+# is still installed beside it; the SwiftUI app takes ai.storyteller.lightcraft.ios at the cut-over.
+version: 1
+bundleID: ai.storyteller.lightcraft.swift
+product: LightCraft
+# merged over xtool's default Info.plist
+infoPath: Info.plist
+iconPath: ../../../assets/app-icon/lightcraft-1024.png

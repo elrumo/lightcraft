@@ -8,12 +8,10 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 use std::cell::RefCell;
-use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::rc::{Rc, Weak};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use lightcraft_engine::Session;
 use lightcraft_ios_host::{BackgroundTask, InterfaceStyle, Lifecycle, PickKind, Picked};
 use lightcraft_ui_egui::haptics::Haptic;
 use lightcraft_ui_egui::pick::{HostPicked, PickRequest};
@@ -253,27 +251,6 @@ impl Drop for App {
     }
 }
 
-/// Sends every log record to the system log (NSLog, through the Objective-C host) and appends it to
-/// `lightcraft-ios.log` in the app's tmp dir: a bundled app's stderr isn't shown anywhere, and winit
-/// exits the process on iOS when eframe fails to start.
-struct FileLog;
-
-impl log::Log for FileLog {
-    fn enabled(&self, m: &log::Metadata) -> bool {
-        m.level() <= log::Level::Info
-    }
-    fn log(&self, r: &log::Record) {
-        use std::io::Write;
-        let line = format!("{} {}: {}", r.level(), r.target(), r.args());
-        // the device console too (`idevicesyslog | grep LightCraft`, Console.app)
-        lightcraft_ios_host::console(&line);
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(std::env::temp_dir().join("lightcraft-ios.log")) {
-            let _ = writeln!(f, "{line}");
-        }
-    }
-    fn flush(&self) {}
-}
-
 /// egui-wgpu's default device limits ask for more than some Metal adapters offer (the simulator
 /// allows 15 inter-stage shader variables, the default wants 16), so request defaults clamped to
 /// what the adapter has.
@@ -288,61 +265,6 @@ fn wgpu_options() -> eframe::egui_wgpu::WgpuConfiguration {
         });
     }
     c
-}
-
-/// Where the library lives: `$LIGHTCRAFT_LIBRARY`, else `LightCraft Library` in the app's Documents
-/// folder (on iOS `$HOME` is the app's container: kept across launches and updates, backed up).
-pub fn library_dir(library: Option<OsString>, home: Option<OsString>) -> Option<PathBuf> {
-    lightcraft_engine::library::default_dir_in(library, home, true)
-}
-
-/// The library on the device (a new one starts with the demo photos), or, when it can't be opened,
-/// the in-memory demo library — nothing saved, no sync — with the reason in the log.
-pub fn open_session(dir: Option<&Path>) -> Session {
-    match dir {
-        Some(dir) => {
-            let mut s = Session::new().with_fs().with_system_clock();
-            match s.open_library(dir, true) {
-                Ok(r) => {
-                    let replayed = r.replayed;
-                    log::info!("library {}: {} photos, {replayed} log records replayed", dir.display(), s.catalog.len());
-                    return s;
-                }
-                Err(e) => log::error!("can't open the library {}: {e}; using an in-memory demo library (not saved, can't sync)", dir.display()),
-            }
-        }
-        None => log::error!("no home folder for the library; using an in-memory demo library (not saved, can't sync)"),
-    }
-    Session::with_demo().with_fs().with_system_clock()
-}
-
-/// AI Super Resolution on the phone: the model (a few MB, downloaded when the user agrees) goes in
-/// `Library/Caches`, which iOS never backs up and may empty when storage runs low (the app offers
-/// the download again), and the work is sized to half of the memory iOS lets the app use (the
-/// caches have their own third).
-pub fn configure_enhancer(enhancer: &mut lightcraft_engine::enhance::Enhancer, home: Option<&std::ffi::OsStr>, available: Option<usize>) {
-    enhancer.dir = home.map(|h| PathBuf::from(h).join("Library/Caches/LightCraft/models"));
-    // (unknown: assume little)
-    enhancer.limit_memory(available.map_or(512 << 20, |a| a / 2));
-}
-
-/// The staging folders in the app's tmp folder: copies the pickers made (moved into the library
-/// by the import review) and the last export (handed to the share sheet).
-fn staging(tmp: &Path) -> (PathBuf, PathBuf) {
-    (tmp.join("Import"), tmp.join("Exports"))
-}
-
-/// What a previous run left there: picks the review didn't take (cancelled, duplicates) and
-/// exports that were shared or dismissed.
-fn clean_staging(tmp: &Path) {
-    let (import, export) = staging(tmp);
-    for d in [import, export] {
-        if let Err(e) = std::fs::remove_dir_all(&d)
-            && e.kind() != std::io::ErrorKind::NotFound
-        {
-            log::warn!("{}: {e}", d.display());
-        }
-    }
 }
 
 /// Files a folder pick copies: the formats the library imports.
@@ -391,34 +313,10 @@ fn play_haptic(h: Haptic) {
     });
 }
 
-/// ImageIO's decode as `lightcraft-codecs` takes it (HEIC / HEIF and AVIF have no pure-Rust
-/// decoder): pixels as stored, premultiplied, in the image's own colour space.
-fn system_image(i: lightcraft_ios_host::Image) -> lightcraft_codecs::SystemImage {
-    lightcraft_codecs::SystemImage {
-        width: i.width,
-        height: i.height,
-        pixels: match i.pixels {
-            lightcraft_ios_host::Pixels::Rgba8(v) => lightcraft_codecs::SystemPixels::Rgba8(v),
-            lightcraft_ios_host::Pixels::Rgba16(v) => lightcraft_codecs::SystemPixels::Rgba16(v),
-        },
-        premultiplied: true,
-        bit_depth: i.bit_depth,
-        icc: i.icc,
-        exif: None,
-        orientation: i.orientation,
-        source_width: i.source_width,
-        source_height: i.source_height,
-    }
-}
-
-fn imageio_decode(bytes: &[u8], max: Option<(u32, u32)>) -> Result<lightcraft_codecs::SystemImage, String> {
-    lightcraft_ios_host::decode_image(bytes, max).map(system_image)
-}
-
 /// What the app can do on iOS: the Photos and Files pickers (their copies arrive in `inbox`),
 /// exports through the share sheet, sync requests on worker threads (pure-Rust TLS, Mozilla roots).
 fn services(ctx: egui::Context, inbox: Inbox, tmp: &Path) -> Services {
-    let (import_dir, export_dir) = staging(tmp);
+    let (import_dir, export_dir) = lightcraft_apphost::startup::staging(tmp);
     let repaint = ctx.clone();
     let (documents_dir, documents_ctx) = (import_dir.clone(), ctx.clone());
     let pick: Rc<dyn Fn(PickSource) -> Result<(), String>> = Rc::new(move |source| {
@@ -543,18 +441,14 @@ fn on_lifecycle(host: &Weak<RefCell<Host>>, event: Lifecycle) {
 
 /// Runs the app; returns when the event loop ends (on iOS, normally never).
 pub fn run() -> eframe::Result {
-    let _ = log::set_logger(&FileLog).map(|()| log::set_max_level(log::LevelFilter::Info));
+    lightcraft_ios_host::install_logger();
     lightcraft_engine::guard::install_hook(std::env::temp_dir().join("lightcraft-panics.log"));
     // caches sized to what iOS lets this app use, before anything is cached
     let available = lightcraft_sysmem::available_memory();
-    let budget = lightcraft_engine::memory::set_budget(lightcraft_engine::memory::budget_for_limit(available));
-    log::info!("memory: {} MB available to the app, budget {} MB", available.map_or(0, |a| a >> 20), budget >> 20);
-    lightcraft_engine::memory::set_release_hook(|| {
-        let _ = lightcraft_sysmem::release_free_memory();
-    });
-    lightcraft_codecs::set_system_decoder(&[lightcraft_codecs::Format::Heif, lightcraft_codecs::Format::Avif], imageio_decode);
+    lightcraft_apphost::startup::set_memory_budget(available);
+    lightcraft_ios_host::install_imageio_decoder();
     let tmp = std::env::temp_dir();
-    clean_staging(&tmp);
+    lightcraft_apphost::startup::clean_staging(&tmp);
     let (prefs, prefs_warning, keep_prefs_file) = lightcraft_ui_egui::prefs::load_prefs(false);
     if let Some(p) = &prefs {
         lightcraft_engine::gpu::set_enabled(p.settings.gpu);
@@ -563,10 +457,10 @@ pub fn run() -> eframe::Result {
         "LightCraft",
         eframe::NativeOptions { wgpu_options: wgpu_options(), ..Default::default() },
         Box::new(move |cc| {
-            let dir = library_dir(std::env::var_os("LIGHTCRAFT_LIBRARY"), std::env::var_os("HOME"));
+            let dir = lightcraft_apphost::startup::library_dir(std::env::var_os("LIGHTCRAFT_LIBRARY"), std::env::var_os("HOME"));
             let inbox = Inbox::default();
-            let mut session = open_session(dir.as_deref());
-            configure_enhancer(&mut session.enhancer, std::env::var_os("HOME").as_deref(), available);
+            let (mut session, _) = lightcraft_apphost::startup::open_session(dir.as_deref());
+            lightcraft_apphost::startup::configure_enhancer(&mut session.enhancer, std::env::var_os("HOME").as_deref(), available);
             let mut app = LightcraftApp::new(session, services(cc.egui_ctx.clone(), inbox.clone(), &tmp));
             match prefs {
                 Some(ui) => app.ui = ui,
@@ -622,7 +516,7 @@ mod tests {
     }
 
     fn host(lib: &Path) -> Host {
-        let app = LightcraftApp::new(open_session(Some(lib)), Services::default());
+        let app = LightcraftApp::new(lightcraft_apphost::startup::open_session(Some(lib)).0, Services::default());
         // keep_file: these tests never write the developer's own ui.json
         let prefs = PrefsWriter::new(&app, true);
         Host { app, prefs, inbox: Inbox::default(), background: None, safe_area: Default::default(), style: None, status_bar: false }
@@ -697,23 +591,6 @@ mod tests {
             assert!(pick_documents(files, &root, egui::Context::default()).is_err(), "no picker off iOS");
         }
         let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn imageio_results_become_codec_images() {
-        let i = lightcraft_ios_host::Image {
-            width: 2,
-            height: 1,
-            pixels: lightcraft_ios_host::Pixels::Rgba16(vec![65535, 0, 0, 65535, 0, 65535, 0, 65535]),
-            bit_depth: 10,
-            icc: None,
-            orientation: 8,
-            source_width: 4000,
-            source_height: 2000,
-        };
-        let s = system_image(i);
-        assert!(s.premultiplied && s.bit_depth == 10 && s.orientation == 8 && s.source_width == 4000);
-        assert!(matches!(s.pixels, lightcraft_codecs::SystemPixels::Rgba16(ref v) if v.len() == 8));
     }
 
     /// The keyboard's Return confirms a single-line field: it loses focus with Enter pressed (A1.9).
@@ -798,72 +675,5 @@ mod tests {
         assert_eq!(lines.len(), 3, "{out}");
         assert!(lines[1].contains("not a request") && lines[2].contains("\"result\":7"), "{out}");
         let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn staging_is_cleaned_at_launch() {
-        let tmp = temp("staging");
-        let (import, export) = staging(&tmp);
-        std::fs::create_dir_all(import.join("pick-1")).unwrap();
-        std::fs::create_dir_all(&export).unwrap();
-        std::fs::write(export.join("old.jpg"), b"x").unwrap();
-        clean_staging(&tmp);
-        assert!(!import.exists() && !export.exists());
-        clean_staging(&tmp); // nothing there: fine
-        let _ = std::fs::remove_dir_all(&tmp);
-    }
-
-    #[test]
-    fn the_library_is_kept_in_documents() {
-        let dir = library_dir(None, Some("/var/mobile/Containers/Data/Application/X".into()));
-        assert_eq!(dir, Some(PathBuf::from("/var/mobile/Containers/Data/Application/X/Documents/LightCraft Library")));
-        assert_eq!(library_dir(Some("/tmp/lib".into()), Some("/home".into())), Some(PathBuf::from("/tmp/lib")));
-        assert_eq!(library_dir(Some("".into()), None), None);
-    }
-
-    #[test]
-    fn a_saved_library_can_sign_in_and_the_fallback_says_why_not() {
-        let root = std::env::temp_dir().join(format!("lightcraft-ios-test-{}", std::process::id()));
-        let home = root.join("home");
-        let dir = library_dir(None, Some(home.into_os_string())).unwrap();
-        let mut s = open_session(Some(&dir));
-        assert_ne!(s.catalog.len(), 0, "a new library starts with the demo photos");
-        assert!(dir.is_dir());
-        s.sync_sign_in("photos.example.com", "ann", "a password", "iPhone").unwrap();
-        drop(s);
-        // reopened: the same library, still signed in to the same server
-        let s = open_session(Some(&dir));
-        assert_eq!(s.sync_state().map(|st| st.status()["server"].clone()), Some("https://photos.example.com".into()));
-        drop(s);
-        // a library that can't be opened (a file in the way) falls back to the demo, which can't sync
-        let blocked = root.join("blocked");
-        std::fs::write(&blocked, b"not a folder").unwrap();
-        let mut s = open_session(Some(&blocked));
-        assert_ne!(s.catalog.len(), 0);
-        assert!(s.sync_sign_in("https://photos.example.com", "ann", "a password", "iPhone").is_err());
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    /// Super Resolution on the phone: the model goes where iOS never backs it up, and the work is
-    /// sized to the memory the app has.
-    #[test]
-    fn the_phone_keeps_models_in_caches_and_sizes_the_work_to_its_memory() {
-        use lightcraft_engine::enhance::Enhancer;
-        let home = std::ffi::OsString::from("/var/mobile/Containers/Data/Application/ABC");
-        let mut e = Enhancer::default();
-        configure_enhancer(&mut e, Some(&home), Some(3 << 30));
-        assert_eq!(e.dir.as_deref(), Some(Path::new("/var/mobile/Containers/Data/Application/ABC/Library/Caches/LightCraft/models")));
-        // half of 3 GB: small tiles, and room for a 9 MP photo's enlargement (36 MP out), not a 12 MP one's
-        assert_eq!(e.tile, Some(192));
-        let max = e.max_output_pixels.unwrap();
-        assert!((34_000_000..40_000_000).contains(&max), "{max}");
-        // an old phone with little to spare, and one that can't say: still a usable, smaller limit
-        configure_enhancer(&mut e, Some(&home), Some(400 << 20));
-        assert_eq!(e.max_output_pixels, Some(4_000_000));
-        configure_enhancer(&mut e, Some(&home), None);
-        assert!(e.max_output_pixels.is_some_and(|m| m >= 4_000_000 && m < max));
-        // no home folder: nowhere to put it (the dialog says so), never a guess
-        configure_enhancer(&mut e, None, Some(3 << 30));
-        assert_eq!(e.dir, None);
     }
 }
