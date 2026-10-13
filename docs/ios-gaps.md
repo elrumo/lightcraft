@@ -4,6 +4,9 @@ What the iPhone / iPad build of LightCraft still lacks, in two parts: **A.** thi
 exists (the compact layout and the iOS host), and **B.** what Lightroom's mobile app does that LightCraft does not
 yet. Status of the app itself: [`ios.md`](ios.md). Desktop feature parity has its own tracker:
 [`parity-checklist.md`](parity-checklist.md); rows there that are ⬜ also apply on the phone and are not repeated here.
+The native SwiftUI app that is to replace this one ([`ios-swift.md`](ios-swift.md)) gets several rows here from the
+system (A1.9 text input, A1.10 scenes, A2.15 accessibility, A2.16–A2.18 drag and drop, iPad keyboard and pointer, Pencil,
+A2.20 / A2.23 the system font and Liquid Glass); its own progress is `apps/lightcraft-ios-swift/PARITY.md`.
 
 Feature names are our own words (no Adobe text, screenshots or assets; see `CLAUDE.md`, *Assets*). Part B comes from
 the mobile app's public behaviour and should be re-checked against the installed app (read-only, `plan/lightroom/`)
