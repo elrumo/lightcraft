@@ -25,7 +25,7 @@ for arg in "$@"; do
         --simulator) simulator=1 ;;
         --build-only) mode=build ;;
         --ipa) mode=ipa ;;
-        --test) mode=test ;;
+        --test) mode="test" ;;
         -h | --help) sed -n '2,13p' "$0"; exit 0 ;;
         *) ;;
     esac
