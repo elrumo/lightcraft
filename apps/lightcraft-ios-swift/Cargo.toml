@@ -1,0 +1,29 @@
+[package]
+name = "lightcraft-ios-swift"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "LightCraft's SwiftUI iOS app: the C ABI (lc_*) the Swift package in LightCraft/ calls, over lightcraft-apphost's engine host (docs/ios-swift.md)"
+
+# Opts out of the workspace lints only so its one ABI module (src/abi.rs) can be allowed `unsafe`;
+# the rest of the crate denies it. See CLAUDE.md, Never crash.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+dbg_macro = "warn"
+todo = "warn"
+
+[lib]
+name = "lightcraft_bridge"
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+lightcraft-apphost = { workspace = true }
+lightcraft-engine = { workspace = true, features = ["enhance"] }
+serde_json = { workspace = true }
+log = { workspace = true }
+
+[target.'cfg(target_os = "ios")'.dependencies]
+lightcraft-ios-host = { workspace = true }

@@ -233,9 +233,10 @@ fn wasm_set() -> Result<Vec<String>, String> {
     Ok(portable_set()?.into_iter().chain(std::iter::once("lightcraft-web".to_string())).collect())
 }
 
-/// Workspace packages that must build for iOS: the portable set plus the iOS app.
+/// Workspace packages that must build for iOS: the portable set plus the iOS apps (egui, and the
+/// SwiftUI app's Rust side).
 fn ios_set() -> Result<Vec<String>, String> {
-    Ok(portable_set()?.into_iter().chain(std::iter::once("lightcraft-ios".to_string())).collect())
+    Ok(portable_set()?.into_iter().chain(["lightcraft-ios".to_string(), "lightcraft-ios-swift".to_string()]).collect())
 }
 
 /// Also lints the std clock (`xtask/wasm/clippy.toml`): it panics there, and `cargo check` can't see that.
