@@ -193,6 +193,53 @@ pub fn specs() -> Vec<CommandSpec> {
             has_active,
             targeted
         ),
+        cmd!(
+            query "pointColor.list",
+            "List Point Colors",
+            [],
+            None,
+            "{} → [{index, lum, chroma, hue, swatch: \"#rrggbb\"}] the active photo's picked colours, each with an sRGB swatch to show",
+            has_active,
+            |s, _| {
+                let id = s.active().ok_or_else(|| bad("pointColor.list", "no active photo"))?;
+                let d = s.develop_of(id).unwrap_or_default();
+                let out: Vec<Value> = d
+                    .point_colors
+                    .iter()
+                    .enumerate()
+                    .map(|(i, p)| {
+                        let [r, g, b] = lightcraft_color::perceptual::oklch_to_srgb8(p.lum as f32, p.chroma as f32, p.hue as f32);
+                        json!({"index": i, "lum": p.lum, "chroma": p.chroma, "hue": p.hue, "swatch": format!("#{r:02x}{g:02x}{b:02x}")})
+                    })
+                    .collect();
+                Ok(Value::Array(out))
+            }
+        ),
+        cmd!(
+            query "curve.sample",
+            "Sample Point Curve",
+            [],
+            None,
+            "{channel?: master|red|green|blue, n?: 2..1024 (64)} → {points: [[x,y]], samples: [y]} the active photo's point curve and its values at n even steps from 0 to 1 (what an editor draws)",
+            has_active,
+            |s, p| {
+                let c = "curve.sample";
+                let id = s.active().ok_or_else(|| bad(c, "no active photo"))?;
+                let n = p.get("n").and_then(Value::as_u64).unwrap_or(64).clamp(2, 1024) as usize;
+                let d = s.develop_of(id).unwrap_or_default();
+                let pts = match p.get("channel").and_then(Value::as_str).unwrap_or("master") {
+                    "master" => &d.curve.master,
+                    "red" => &d.curve.red,
+                    "green" => &d.curve.green,
+                    "blue" => &d.curve.blue,
+                    _ => return Err(bad(c, "channel must be master|red|green|blue")),
+                };
+                let pts: Vec<(f64, f64)> = if pts.len() < 2 { vec![(0.0, 0.0), (1.0, 1.0)] } else { pts.iter().map(|q| (q.x, q.y)).collect() };
+                let curve = MonotoneCurve::new(&pts);
+                let samples: Vec<f64> = (0..n).map(|i| curve.eval(i as f64 / (n - 1) as f64).clamp(0.0, 1.0)).collect();
+                Ok(json!({"points": pts.iter().map(|(x, y)| [*x, *y]).collect::<Vec<_>>(), "samples": samples}))
+            }
+        ),
         cmd!("pointColor.delete", "Delete Point Color Sample", [], None, "{index}", has_active, |s, p| {
             let c = "pointColor.delete";
             let i = index(p, c)?;

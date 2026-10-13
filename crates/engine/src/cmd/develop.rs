@@ -172,6 +172,17 @@ pub fn specs() -> Vec<CommandSpec> {
                 if vals.is_empty() {
                     return Err(bad("develop.set", "give `control`+`value` or `values`"));
                 }
+                // a rendered photo's white balance on its relative scale (`develop.controls` lists it so)
+                for (k, v) in vals.iter_mut() {
+                    match k.as_str() {
+                        "wb.tempRel" => {
+                            *k = "wb.temp".into();
+                            *v = controls::relative_to_kelvin(*v);
+                        }
+                        "wb.tintRel" => *k = "wb.tint".into(),
+                        _ => {}
+                    }
+                }
                 for (k, _) in &vals {
                     if controls::find(k).is_none() {
                         return Err(bad("develop.set", format!("unknown control `{k}`")));

@@ -538,6 +538,56 @@ pub fn specs() -> Vec<CommandSpec> {
                 Ok(serde_json::to_value(s.catalog.date_runs(&vis, s.sort.key, by)).unwrap_or_default())
             }
         ),
+        cmd!(
+            query "library.blocks",
+            "Months and Years",
+            [],
+            None,
+            "{span: months|years} → [{key, label, count, photos: [{index, id, captured}]}] the grid's photos by capture month (up to 6 shown: the best first, the rest spread through the month) or year (its best one): the phone grid's Months and Years",
+            always,
+            |s, p| {
+                let (key_len, show) = match str_param(p, "span") {
+                    Some("years") => (4, 1),
+                    Some("months") | None => (7, 6),
+                    Some(_) => return Err(bad("library.blocks", "span must be months|years")),
+                };
+                let vis = s.visible_cloned();
+                let blocks = s.catalog.date_blocks(&vis, key_len, show);
+                let out: Vec<Value> = blocks
+                    .into_iter()
+                    .map(|b| {
+                        let photos: Vec<Value> = b
+                            .shown
+                            .iter()
+                            .filter_map(|&i| {
+                                let id = *vis.get(i)?;
+                                Some(json!({"index": i, "id": id.0, "captured": s.catalog.photo(id).and_then(|p| p.captured.clone())}))
+                            })
+                            .collect();
+                        json!({"label": lightcraft_catalog::dates::group_label(&b.key), "key": b.key, "count": b.count, "photos": photos})
+                    })
+                    .collect();
+                Ok(Value::Array(out))
+            }
+        ),
+        cmd!(
+            query "library.facets",
+            "Filter Choices",
+            [],
+            None,
+            "{field: camera|person|place|keyword} → [{value, count}] the values the filter can pick for `field`, each with how many of the library's photos have it (most first; keywords by name)",
+            always,
+            |s, p| {
+                let values = match str_param(p, "field") {
+                    Some("camera") => s.catalog.cameras(),
+                    Some("person") => s.catalog.people().into_iter().map(|p| (p.name, p.count)).collect(),
+                    Some("place") => s.catalog.places(),
+                    Some("keyword") => s.catalog.keywords(),
+                    _ => return Err(bad("library.facets", "field must be camera|person|place|keyword")),
+                };
+                Ok(Value::Array(values.into_iter().map(|(value, count)| json!({"value": value, "count": count})).collect()))
+            }
+        ),
         // ---- selection
         cmd!(
             "library.select",

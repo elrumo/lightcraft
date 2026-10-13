@@ -33,6 +33,68 @@ fn date_groups_follow_sort_and_grouping() {
     assert!(s.execute("library.sort", &json!({"group": "week"})).is_err());
 }
 
+/// Months and Years: every photo counted once, the best photo first, a pick wins.
+#[test]
+fn months_and_years_show_the_best_photos() {
+    let mut s = Session::with_demo();
+    let vis = s.visible_cloned();
+    let months = s.execute("library.blocks", &json!({"span": "months"})).unwrap();
+    let months = months.as_array().unwrap();
+    let total: u64 = months.iter().map(|b| b["count"].as_u64().unwrap()).sum();
+    assert_eq!(total as usize, vis.len());
+    for b in months {
+        let shown = b["photos"].as_array().unwrap();
+        assert!(!shown.is_empty() && shown.len() <= 6, "{b}");
+        assert_eq!(b["key"].as_str().unwrap().len(), 7);
+        assert!(b["label"].as_str().unwrap().contains("20"), "{b}");
+    }
+    // with no picks or stars anywhere, picking a photo makes it its month's first
+    let all: Vec<u64> = vis.iter().map(|id| id.0).collect();
+    s.execute("photo.flag", &json!({"ids": all, "flag": "none"})).unwrap();
+    s.execute("photo.rate", &json!({"ids": all, "rating": 0})).unwrap();
+    let last = months.last().unwrap()["photos"].as_array().unwrap().last().unwrap()["id"].as_u64().unwrap();
+    s.execute("photo.flag", &json!({"ids": [last], "flag": "pick"})).unwrap();
+    let again = s.execute("library.blocks", &json!({"span": "months"})).unwrap();
+    assert_eq!(again.as_array().unwrap().last().unwrap()["photos"][0]["id"].as_u64(), Some(last));
+    let years = s.execute("library.blocks", &json!({"span": "years"})).unwrap();
+    assert_eq!(years.as_array().unwrap()[0]["photos"].as_array().unwrap().len(), 1);
+    assert!(s.execute("library.blocks", &json!({"span": "weeks"})).is_err());
+}
+
+/// The filter's lists: each value with its count, cameras most used first.
+#[test]
+fn facets_list_the_filter_choices() {
+    let mut s = Session::with_demo();
+    let cams = s.execute("library.facets", &json!({"field": "camera"})).unwrap();
+    let cams = cams.as_array().unwrap();
+    assert!(!cams.is_empty());
+    let counts: Vec<u64> = cams.iter().map(|c| c["count"].as_u64().unwrap()).collect();
+    assert!(counts.windows(2).all(|w| w[0] >= w[1]), "{counts:?}");
+    let kw = s.execute("library.facets", &json!({"field": "keyword"})).unwrap();
+    assert!(kw.as_array().unwrap().iter().any(|k| k["value"] == "desert"), "{kw}");
+    assert!(s.execute("library.facets", &json!({"field": "colour"})).is_err());
+}
+
+/// A tool screen's Cancel: the stack's depth when it opened, then undo back to it in one call.
+#[test]
+fn undo_stack_lists_and_undoes_to_a_depth() {
+    let mut s = Session::with_demo();
+    let base = s.execute("edit.stack", &json!({})).unwrap()["depth"].as_u64().unwrap();
+    s.execute("develop.set", &json!({"control": "light.exposure", "value": 1.0})).unwrap();
+    s.execute("develop.set", &json!({"control": "light.contrast", "value": 20})).unwrap();
+    let st = s.execute("edit.stack", &json!({})).unwrap();
+    assert_eq!(st["depth"].as_u64(), Some(base + 2));
+    assert_eq!(st["undo"].as_array().unwrap().len() as u64, base + 2);
+    let r = s.execute("edit.undoTo", &json!({"depth": base})).unwrap();
+    assert_eq!(r["undone"], 2);
+    let st = s.execute("edit.stack", &json!({})).unwrap();
+    assert_eq!(st["depth"].as_u64(), Some(base));
+    assert_eq!(st["redo"].as_array().unwrap().len(), 2, "{st}");
+    let d = s.develop_of(s.active().unwrap()).unwrap();
+    assert_eq!(d.light.exposure, 0.0);
+    assert!(s.execute("edit.undoTo", &json!({})).is_err());
+}
+
 fn temp_dir(tag: &str) -> std::path::PathBuf {
     let d = std::env::temp_dir().join(format!("lc-libops-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);
@@ -588,4 +650,75 @@ fn capture_time_invalid_calendar_anchor_keeps_other_targets_and_redo() {
         assert_eq!(s.redo.iter().map(|e| (e.label.clone(), e.op.clone())).collect::<Vec<_>>(), redo);
         assert_eq!(s.pending_log, log);
     }
+}
+
+/// A mask's sliders, as every Masking panel draws them: Amount first, values from the mask.
+#[test]
+fn mask_controls_list_the_local_sliders_with_values() {
+    let mut s = Session::with_demo();
+    let r = s.execute("mask.add", &json!({"kind": "radial"})).unwrap();
+    let id = r["activeMask"].as_u64().unwrap();
+    s.execute("mask.adjust", &json!({"id": id, "values": {"exposure": 1.5, "amount": 80}})).unwrap();
+    let c = s.execute("mask.controls", &json!({})).unwrap();
+    let c = c.as_array().unwrap();
+    assert_eq!(c[0]["id"], "amount");
+    assert_eq!(c[0]["value"], 80.0);
+    let exp = c.iter().find(|x| x["id"] == "exposure").unwrap();
+    assert_eq!(exp["value"], 1.5);
+    assert_eq!(exp["min"], -4.0);
+    assert_eq!(c.len(), lightcraft_develop::controls::LOCAL.len() + 1);
+    assert!(s.execute("mask.controls", &json!({"id": 999})).is_err());
+}
+
+/// The shown photo's frame: an uncropped photo maps straight through; a crop maps the shown
+/// corners onto the crop's corners, and fromNorm takes them back.
+#[test]
+fn view_frame_maps_the_shown_photo_to_image_coordinates() {
+    let mut s = Session::with_demo();
+    let f = s.execute("view.frame", &json!({})).unwrap();
+    let t: Vec<f64> = f["toNorm"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
+    let apply = |m: &[f64], u: f64, v: f64| (m[0] * u + m[2] * v + m[4], m[1] * u + m[3] * v + m[5]);
+    let (x, y) = apply(&t, 1.0, 1.0);
+    assert!((x - 1.0).abs() < 1e-9 && (y - 1.0).abs() < 1e-9, "{f}");
+    s.execute("crop.set", &json!({"rect": [0.25, 0.25, 0.75, 0.5]})).unwrap();
+    let f = s.execute("view.frame", &json!({})).unwrap();
+    let t: Vec<f64> = f["toNorm"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
+    let back: Vec<f64> = f["fromNorm"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
+    let (x0, y0) = apply(&t, 0.0, 0.0);
+    let (x1, y1) = apply(&t, 1.0, 1.0);
+    assert!((x0 - 0.25).abs() < 1e-6 && (y0 - 0.25).abs() < 1e-6 && (x1 - 0.75).abs() < 1e-6 && (y1 - 0.5).abs() < 1e-6, "{f}");
+    let (u, v) = apply(&back, 0.5, 0.375);
+    assert!((u - 0.5).abs() < 1e-6 && (v - 0.5).abs() < 1e-6);
+    // the crop tool shows the whole photo, with the crop's corners on it
+    let whole = s.execute("view.frame", &json!({"applyCrop": false})).unwrap();
+    assert!(whole["width"].as_f64().unwrap() > f["width"].as_f64().unwrap());
+    let quad = &whole["crop"]["quad"];
+    assert_eq!(quad[0], json!([0.25, 0.25]), "{whole}");
+    assert_eq!(quad[2], json!([0.75, 0.5]));
+    assert_eq!(whole["crop"]["rect"], json!([0.25, 0.25, 0.75, 0.5]));
+    // unstraightened, the straightened frame is the photo's own
+    let st: Vec<f64> = whole["crop"]["toStraight"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
+    let (sx, sy) = apply(&st, 0.3, 0.6);
+    assert!((sx - 0.3).abs() < 1e-9 && (sy - 0.6).abs() < 1e-9);
+}
+
+/// A rendered photo's white balance is on the relative scale in `develop.controls`, and setting it
+/// there sets the Kelvin value it stands for.
+#[test]
+fn rendered_photos_show_white_balance_relative() {
+    let mut s = Session::with_demo();
+    let c = s.execute("develop.controls", &json!({"section": "color"})).unwrap();
+    let temp = c.as_array().unwrap().iter().find(|x| x["id"] == "wb.tempRel").cloned().unwrap();
+    assert_eq!(temp["min"], -100.0);
+    assert_eq!(temp["value"], 0.0, "as shot: the photo's own colour");
+    assert!(!c.as_array().unwrap().iter().any(|x| x["id"] == "wb.temp"), "{c}");
+    s.execute("develop.set", &json!({"control": "wb.tempRel", "value": 25})).unwrap();
+    let d = s.develop_of(s.active().unwrap()).unwrap();
+    assert!((lightcraft_develop::controls::kelvin_to_relative(d.wb.temp) - 25.0).abs() < 1e-6, "{}", d.wb.temp);
+    assert_eq!(d.wb.mode, lightcraft_develop::WbMode::Custom);
+    let c = s.execute("develop.controls", &json!({"section": "color"})).unwrap();
+    let temp = c.as_array().unwrap().iter().find(|x| x["id"] == "wb.tempRel").cloned().unwrap();
+    assert!((temp["value"].as_f64().unwrap() - 25.0).abs() < 1e-6);
+    s.execute("develop.set", &json!({"control": "wb.tintRel", "value": -10})).unwrap();
+    assert_eq!(s.develop_of(s.active().unwrap()).unwrap().wb.tint, -10.0);
 }

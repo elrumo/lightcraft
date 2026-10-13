@@ -4,7 +4,7 @@
 use egui::epaint::{Mesh, Vertex};
 use egui::{Align2, Color32, Pos2, Rect, RichText, Sense, Stroke, pos2, vec2};
 use lightcraft_catalog::PhotoId;
-use lightcraft_develop::{ControlSpec, DevelopSettings, Section, Track, WbMode, controls};
+use lightcraft_develop::{ControlSpec, DevelopSettings, WbMode, controls};
 use lightcraft_geom::Point;
 use serde_json::{Value, json};
 
@@ -41,35 +41,16 @@ pub(crate) fn control(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &DevelopSet
     apply_slider_out(app, spec, out, |app, v| app.run("develop.set", json!({"control": id, "value": v})));
 }
 
-/// Relative temperature scale for rendered (non-raw) files: −100..100 ↔ Kelvin via mired shift.
-const REL_TEMP: ControlSpec = ControlSpec {
-    id: "wb.tempRel",
-    label: "Temp",
-    section: Section::Color,
-    min: -100.0,
-    max: 100.0,
-    default: 0.0,
-    step: 1.0,
-    decimals: 0,
-    track: Track::Temp,
-};
-const REL_TINT: ControlSpec = ControlSpec {
-    id: "wb.tintRel",
-    label: "Tint",
-    section: Section::Color,
-    min: -100.0,
-    max: 100.0,
-    default: 0.0,
-    step: 1.0,
-    decimals: 0,
-    track: Track::Tint,
-};
+/// Relative temperature scale for rendered (non-raw) files: −100..100 ↔ Kelvin via mired shift
+/// (shared with the SwiftUI app through `develop.controls`).
+const REL_TEMP: ControlSpec = controls::WB_TEMP_REL;
+const REL_TINT: ControlSpec = controls::WB_TINT_REL;
 
 fn k_to_rel(k: f64) -> f64 {
-    ((1e6 / 6500.0 - 1e6 / k) / 0.8).clamp(-100.0, 100.0)
+    controls::kelvin_to_relative(k)
 }
 fn rel_to_k(r: f64) -> f64 {
-    1e6 / (1e6 / 6500.0 - r * 0.8)
+    controls::relative_to_kelvin(r)
 }
 
 pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
@@ -1168,10 +1149,7 @@ fn mixer(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &DevelopSettings) {
 
 /// Display colour of an OkLCh sample (lightness, chroma, hue in degrees).
 fn oklch_color(l: f64, c: f64, h_deg: f64) -> Color32 {
-    use lightcraft_color::perceptual::{lch_to_lab, oklab_to_2020};
-    let lin = oklab_to_2020(lch_to_lab([l as f32, c as f32, (h_deg as f32).to_radians()]));
-    let s = lightcraft_color::REC2020.to_space(&lightcraft_color::SRGB).apply_f32(lin);
-    let e = s.map(|v| (lightcraft_color::transfer::linear_to_srgb(v.clamp(0.0, 1.0)) * 255.0).round() as u8);
+    let e = lightcraft_color::perceptual::oklch_to_srgb8(l as f32, c as f32, h_deg as f32);
     Color32::from_rgb(e[0], e[1], e[2])
 }
 
