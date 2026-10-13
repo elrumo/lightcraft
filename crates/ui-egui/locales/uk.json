@@ -2176,5 +2176,13 @@
   "Smart Album from Filter": "Смарт-альбом із фільтра",
   "No graphics processor found: LightCraft renders on the CPU, which is much slower. Details in Help → System Info.": "Графічний процесор не знайдено: LightCraft виконує рендеринг на ЦП, а це набагато повільніше. Докладніше: Довідка → Інформація про систему.",
   "On NixOS, start it from `nix develop`.": "У NixOS запускайте його з `nix develop`.",
-  "Files with the same content as another file in this import: only the first is imported.": "Файли з тим самим вмістом, що й інший файл цього імпорту: імпортується лише перший."
+  "Files with the same content as another file in this import: only the first is imported.": "Файли з тим самим вмістом, що й інший файл цього імпорту: імпортується лише перший.",
+  "Edit Photo with PhotoCraft": "Редагувати фото в PhotoCraft",
+  "Edit Photo in Other Editor": "Редагувати фото в іншому редакторі",
+  "Edit a Copy with LightCraft Adjustments": "Редагувати копію з налаштуваннями LightCraft",
+  "A copy of the file with your edits applied, stacked with the original.": "Копія файлу із застосованими змінами, у стосі з оригіналом.",
+  "Edit a Copy": "Редагувати копію",
+  "A copy of the original file, without your edits, stacked with it.": "Копія оригінального файлу без ваших змін, у стосі з ним.",
+  "Edit Original": "Редагувати оригінал",
+  "The file itself. Your edits stay in LightCraft, on top of what the editor saves.": "Сам файл. Ваші зміни лишаються в LightCraft і застосовуються поверх того, що збереже редактор."
 }

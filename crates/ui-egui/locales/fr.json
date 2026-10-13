@@ -1982,5 +1982,13 @@
   "Smart Album from Filter": "Album intelligent depuis le filtre",
   "No graphics processor found: LightCraft renders on the CPU, which is much slower. Details in Help → System Info.": "Aucun processeur graphique trouvé : LightCraft effectue le rendu sur le processeur, ce qui est beaucoup plus lent. Détails dans Aide → Informations système.",
   "On NixOS, start it from `nix develop`.": "Sous NixOS, lancez-le depuis `nix develop`.",
-  "Files with the same content as another file in this import: only the first is imported.": "Fichiers au contenu identique à un autre fichier de cette importation : seul le premier est importé."
+  "Files with the same content as another file in this import: only the first is imported.": "Fichiers au contenu identique à un autre fichier de cette importation : seul le premier est importé.",
+  "Edit Photo with PhotoCraft": "Modifier la photo avec PhotoCraft",
+  "Edit Photo in Other Editor": "Modifier la photo dans un autre éditeur",
+  "Edit a Copy with LightCraft Adjustments": "Modifier une copie avec les réglages LightCraft",
+  "A copy of the file with your edits applied, stacked with the original.": "Une copie du fichier avec vos retouches appliquées, empilée avec l’original.",
+  "Edit a Copy": "Modifier une copie",
+  "A copy of the original file, without your edits, stacked with it.": "Une copie du fichier original, sans vos retouches, empilée avec lui.",
+  "Edit Original": "Modifier l’original",
+  "The file itself. Your edits stay in LightCraft, on top of what the editor saves.": "Le fichier lui-même. Vos retouches restent dans LightCraft, par-dessus ce que l’éditeur enregistre."
 }

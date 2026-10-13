@@ -2120,5 +2120,13 @@
   "Smart Album from Filter": "フィルターからスマートアルバム",
   "No graphics processor found: LightCraft renders on the CPU, which is much slower. Details in Help → System Info.": "グラフィックプロセッサが見つかりません。LightCraftはCPUで描画するため、かなり遅くなります。詳細は「ヘルプ → システム情報」を参照してください。",
   "On NixOS, start it from `nix develop`.": "NixOSでは `nix develop` から起動してください。",
-  "Files with the same content as another file in this import: only the first is imported.": "この読み込み内の別のファイルと内容が同じファイルです。最初のファイルだけが読み込まれます。"
+  "Files with the same content as another file in this import: only the first is imported.": "この読み込み内の別のファイルと内容が同じファイルです。最初のファイルだけが読み込まれます。",
+  "Edit Photo with PhotoCraft": "PhotoCraftで写真を編集",
+  "Edit Photo in Other Editor": "他のエディターで写真を編集",
+  "Edit a Copy with LightCraft Adjustments": "LightCraftの補正を適用したコピーを編集",
+  "A copy of the file with your edits applied, stacked with the original.": "編集内容を適用したファイルのコピー。元の写真とスタックにします。",
+  "Edit a Copy": "コピーを編集",
+  "A copy of the original file, without your edits, stacked with it.": "編集内容を含まない元のファイルのコピー。元の写真とスタックにします。",
+  "Edit Original": "元のファイルを編集",
+  "The file itself. Your edits stay in LightCraft, on top of what the editor saves.": "ファイルそのもの。編集内容はLightCraftに残り、エディターで保存した内容の上に適用されます。"
 }

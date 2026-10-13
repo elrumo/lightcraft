@@ -2118,5 +2118,13 @@
   "Smart Album from Filter": "從篩選器建立智慧型相簿",
   "No graphics processor found: LightCraft renders on the CPU, which is much slower. Details in Help → System Info.": "找不到圖形處理器：LightCraft 改用 CPU 算繪，速度會慢很多。詳情請見「說明 → 系統資訊」。",
   "On NixOS, start it from `nix develop`.": "在 NixOS 上，請從 `nix develop` 啟動。",
-  "Files with the same content as another file in this import: only the first is imported.": "與本次匯入中另一個檔案內容相同的檔案：只匯入第一個。"
+  "Files with the same content as another file in this import: only the first is imported.": "與本次匯入中另一個檔案內容相同的檔案：只匯入第一個。",
+  "Edit Photo with PhotoCraft": "使用 PhotoCraft 編輯照片",
+  "Edit Photo in Other Editor": "在其他編輯器中編輯照片",
+  "Edit a Copy with LightCraft Adjustments": "編輯套用 LightCraft 調整的拷貝",
+  "A copy of the file with your edits applied, stacked with the original.": "套用了你的編輯的檔案拷貝，與原始照片堆疊在一起。",
+  "Edit a Copy": "編輯拷貝",
+  "A copy of the original file, without your edits, stacked with it.": "不含你的編輯的原始檔案拷貝，與原始照片堆疊在一起。",
+  "Edit Original": "編輯原始檔案",
+  "The file itself. Your edits stay in LightCraft, on top of what the editor saves.": "檔案本身。你的編輯保留在 LightCraft 中，疊加在編輯器儲存的內容之上。"
 }

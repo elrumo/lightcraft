@@ -1528,6 +1528,9 @@ fn folders_app_with_services(paths: &[&str], size: [f32; 2], services: Services)
     let mut h = Headless::new(app, size, 1.0);
     let r = h.request("ui.set", json!({"view": "photoGrid", "leftPanel": true}), T);
     assert_eq!(r["ok"], true, "{r}");
+    // (Local lists this computer's Pictures, Desktop, Downloads and home folder: taken out, so the
+    // Folders rows sit at the same height on every computer)
+    exec(&mut h, "view.sidebarSection", json!({"section": "local", "show": false}));
     h.settle(SETTLE);
     h
 }
