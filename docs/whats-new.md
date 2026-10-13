@@ -23,6 +23,14 @@
   glance how far a setting has moved. The photo's canvas stays a quiet neutral grey.
 - Charcoal, Midnight, Silver and Paper look exactly as before. Each theme card's preview shows the Studio layout.
 
+### Every photo on screen gets its preview from the server
+- On a device that shows photos only the server has (the iPhone and iPad app, the web app, a second computer), the grid
+  used to fill in only the first few cells and leave the rest empty. Now every photo you are looking at downloads its
+  small preview, however slowly the server answers, and the ones on screen come before those just above and below.
+- When the server hasn't built a photo's preview yet (a library folder it is still scanning), it now builds that one
+  first and the app asks again a few seconds later, instead of waiting a minute and leaving the cell empty meanwhile.
+  Photos the server has no original of still wait a minute between tries, as before.
+
 ### Double-click a panel border to reset its width
 - Double-clicking the border you drag to resize the Library, Tools or Presets panel puts that panel back at its usual width.
 

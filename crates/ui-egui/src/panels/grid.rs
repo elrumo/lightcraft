@@ -907,6 +907,13 @@ pub fn request_thumb(app: &mut LightcraftApp, id: PhotoId, size: usize, priority
         return;
     }
     let bucket = lightcraft_engine::media::thumb_bucket(size);
+    let shown = priority > PREFETCH_THUMB_PRIORITY;
+    // A synced photo whose preview hasn't come down yet has no picture, and the render that failed for want of it
+    // is remembered (`thumb_current`): without this the grid would ask for it once and the download would be
+    // forgotten a few frames later, leaving the cell empty for good while it stays on screen.
+    if app.renderer.thumb(id).is_none() {
+        app.session.note_thumb_ask(id, shown);
+    }
     if let Some(photo) = app.session.catalog.photo(id)
         && app.renderer.thumb_current(photo, bucket, priority)
     {
@@ -920,7 +927,7 @@ pub fn request_thumb(app: &mut LightcraftApp, id: PhotoId, size: usize, priority
     {
         return;
     }
-    let Some(job) = app.session.thumb_job(id, size) else { return };
+    let Some(job) = app.session.thumb_job_for(id, size, shown) else { return };
     #[cfg(test)]
     {
         app.renderer.thumb_jobs_built += 1;
@@ -963,6 +970,8 @@ pub(crate) fn skips_the_real_render(embedded_is_final: bool, from_embedded: bool
 
 /// Rendered thumbnails replacing embedded previews: after everything on screen.
 pub const BACKGROUND_THUMB_PRIORITY: u32 = 3;
+/// A thumbnail in the grid's reach above and below the screen (everything above this is on screen or wanted now).
+pub const PREFETCH_THUMB_PRIORITY: u32 = 5;
 
 fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square: bool, onscreen: bool, ppp: f32) {
     let t = Tokens::get(ui.ctx());
@@ -1005,7 +1014,7 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
     };
     // thumbnail
     let size = thumb_px(img_rect.width().max(img_rect.height()), ppp);
-    request_thumb(app, id, size, if onscreen { 10 } else { 5 });
+    request_thumb(app, id, size, if onscreen { 10 } else { PREFETCH_THUMB_PRIORITY });
     // (choosing by touch draws its own frame: `check_badge`)
     let choosing = app.compact && app.ui.select_mode;
     // (the rings are the page's text colour: white on the dark pages, black on the light ones)
