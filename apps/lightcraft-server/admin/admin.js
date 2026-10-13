@@ -123,6 +123,17 @@ function bytes(x) {
 /** A size the server is still counting (`null`) shows as … */
 const size = (x) => (x === null ? '…' : bytes(x));
 
+/**
+ * What a user's storage is made of, when they have library folders: the files the server keeps for them (uploads and
+ * previews) and their photos in those folders, which it only reads, in place. `u.bytes` counts both.
+ */
+function storageParts(u) {
+  if (u.bytes === null || !u.folderBytes) return '';
+  // (a size doesn't break between its number and its unit)
+  const fixed = (x) => bytes(x).replace(' ', '\u00a0');
+  return fixed(u.bytes - u.folderBytes) + ' kept by LightCraft · ' + fixed(u.folderBytes) + ' in library folders';
+}
+
 function ago(secs) {
   const d = secs - Date.now() / 1000;
   for (const [u, s] of [['year', 31536000], ['month', 2592000], ['week', 604800], ['day', 86400], ['hour', 3600], ['minute', 60]]) {
@@ -385,7 +396,7 @@ function showUsers([users]) {
         el('td', { class: 'num' }, n(u.photos)),
         el('td', { class: 'num opt' }, n(u.albums)),
         el('td', { class: 'num opt' }, n(u.devices)),
-        el('td', { class: 'num' }, size(u.bytes)),
+        el('td', { class: 'num', title: storageParts(u) }, size(u.bytes)),
         el('td', { class: 'chev-col' }, el('span', { class: 'chev' }, icon('chevron'))),
       ),
     );
@@ -420,6 +431,7 @@ function loadUser(name, tab) {
     shownUser = name;
     $('uRole').replaceChildren();
     for (const id of ['uPhotos', 'uAlbums', 'uDevices', 'uBytes']) $(id).textContent = '–';
+    $('uBytesNote').textContent = '';
     for (const t of ['devices', 'shares', 'folders']) $(t).querySelector('tbody').replaceChildren();
     for (const c of document.querySelectorAll('.scan')) c.hidden = true;
     for (const c of document.querySelectorAll('.tabs .count')) c.textContent = '';
@@ -456,6 +468,7 @@ function showUser(name, users) {
   $('uAlbums').textContent = n(u.albums);
   $('uDevices').textContent = n(u.devices);
   $('uBytes').textContent = size(u.bytes);
+  $('uBytesNote').textContent = storageParts(u);
 
   const only = u.admin && users.filter((x) => x.admin).length < 2;
   const why = only ? name + ' is the only administrator.' : '';
@@ -821,7 +834,7 @@ function showStorage([s, users]) {
   if (!sorted.length) list.append(el('li', { class: 'muted' }, 'No users yet.'));
   for (const u of sorted) {
     const meter = el('div', { class: 'meter' }, el('div', {}));
-    list.append(el('li', {}, avatar(u.name), el('a', { class: 'name', href: '#/users/' + enc(u.name) }, u.name), meter, el('span', { class: 'bytes' }, size(u.bytes))));
+    list.append(el('li', { title: storageParts(u) }, avatar(u.name), el('a', { class: 'name', href: '#/users/' + enc(u.name) }, u.name), meter, el('span', { class: 'bytes' }, size(u.bytes))));
     meter.firstElementChild.style.width = (top ? (100 * (u.bytes || 0)) / top : 0).toFixed(1) + '%';
   }
 }

@@ -227,3 +227,40 @@ fn delete_outside_an_album_asks_first() {
     assert_eq!(h.app.ui.dialog, Some(Dialog::ConfirmDelete { count: 1 }));
     assert!(!h.app.session.catalog.photo(id).unwrap().deleted);
 }
+
+/// The grid's title on a phone is a large one with a ▾, and the sort and filter buttons sit at the
+/// end of its row. An album called "Manifestación Vivienda" ran under them, with its end hidden: a
+/// name too long for the room is cut short with …, before the ▾, and one that fits is left whole.
+#[test]
+fn a_long_collection_name_is_cut_short_before_the_buttons() {
+    let open = |h: &mut Headless, name: &str| {
+        let r = h.request("engine.execute", json!({"command": "album.create", "params": {"name": name}}), T);
+        assert_eq!(r["ok"], true, "{r}");
+        let id = album(h, name);
+        let r = h.request("engine.execute", json!({"command": "library.source", "params": {"kind": "album", "id": id.0}}), T);
+        assert_eq!(r["ok"], true, "{r}");
+        h.settle(SETTLE);
+    };
+    for width in [320.0, 375.0, 402.0, 430.0] {
+        let mut app = LightcraftApp::new(Session::with_demo(), Services { png: None, ..Default::default() });
+        app.ui.view = ViewMode::SquareGrid;
+        let mut h = Headless::new(app, [width, 844.0], 1.0);
+        h.settle(SETTLE);
+        // a short name keeps all its room: the ▾ follows it closely
+        open(&mut h, "Trip");
+        let short = rect_of(&h, "button:collections");
+        assert!(short.width() < 130.0, "{width}: {short:?}");
+        for long in ["Manifestación Vivienda", "Manifestación por la vivienda en Madrid, el 5 de abril, con las fotos de toda la marcha"] {
+            open(&mut h, long);
+            snap(&h, &format!("collection-title-{width}-{}", long.len()));
+            let (title, filter) = (rect_of(&h, "button:collections"), rect_of(&h, "icon:filter"));
+            assert!(title.right() <= filter.left(), "{width}, {long}: the name stops before the buttons: {title:?} {filter:?}");
+            assert!(title.width() > short.width(), "{width}, {long}: it takes the room there is: {title:?} {short:?}");
+            // (and tapping it still opens the albums)
+            click(&mut h, "button:collections");
+            assert!(h.app.ui.left_panel, "{width}, {long}");
+            click(&mut h, "button:sheetCancel");
+            assert!(!h.app.ui.left_panel);
+        }
+    }
+}

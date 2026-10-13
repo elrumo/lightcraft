@@ -119,6 +119,15 @@ pub fn disk_space(dir: &Path) -> Option<Disk> {
     }
 }
 
+/// Whether two answers of [`disk_space`] are about the same file system: the same size, and the
+/// same room left to within a thousandth of it (the answers come moments apart, so a little that
+/// was written in between shows). Two folders on one disk (bind mounts of a NAS volume, btrfs
+/// subvolumes of one pool) answer alike; two disks almost never do. A file system with no size
+/// (`/proc` and the like) is nothing's disk.
+pub fn same_disk(a: Disk, b: Disk) -> bool {
+    a.total > 0 && a.total == b.total && a.free.abs_diff(b.free) <= a.total / 1000
+}
+
 /// `df -Pk`'s one line for the file system: `name 1024-blocks used available capacity mount`.
 /// The name and the mount point may hold spaces, so the numbers are found by the `%` that ends
 /// the capacity column.
@@ -231,6 +240,22 @@ mod tests {
         assert_eq!(parse_df(spaced), Some(Disk { total: 1000 * 1024, free: 600 * 1024 }));
         assert_eq!(parse_df("garbage"), None);
         assert_eq!(parse_df("h\nonly three cols"), None);
+    }
+
+    #[test]
+    fn disks_are_told_apart_by_their_size_and_what_is_left() {
+        let tb = 1_000_000_000_000u64;
+        let a = Disk { total: 28 * tb, free: 10 * tb };
+        assert!(same_disk(a, a));
+        // `df` asked twice, a moment apart: some megabytes were written in between
+        assert!(same_disk(a, Disk { free: a.free - 50_000_000, ..a }));
+        assert!(same_disk(Disk { free: a.free - 50_000_000, ..a }, a));
+        // another disk: a different size, or the same size with other contents
+        assert!(!same_disk(a, Disk { total: 14 * tb, free: 10 * tb }));
+        assert!(!same_disk(a, Disk { free: 9 * tb, ..a }));
+        // a file system with no size isn't anything's disk
+        assert!(!same_disk(Disk::default(), Disk::default()));
+        assert!(!same_disk(Disk { total: 0, free: 0 }, a));
     }
 
     #[cfg(all(unix, not(target_os = "ios")))]

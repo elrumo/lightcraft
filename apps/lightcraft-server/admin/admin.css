@@ -334,6 +334,8 @@ main > section { animation: enter 0.18s ease-out; }
 }
 .stat-label { color: var(--text-3); font-size: 13px; font-weight: 600; }
 .stat-value { color: var(--heading); font-size: 28px; font-weight: 800; line-height: 1.2; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.stat-note { color: var(--text-3); font-size: 13px; line-height: 1.4; }
+.stat-note:empty { display: none; }
 .stat .meter { margin-top: 8px; }
 
 /* steps */
