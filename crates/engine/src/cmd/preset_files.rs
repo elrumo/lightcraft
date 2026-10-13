@@ -3,7 +3,7 @@
 use serde_json::{Value, json};
 
 use super::{CommandSpec, always, bad, cmd, str_param};
-use crate::preset_import::{group_from_dir, read_presets};
+use crate::preset_import::{Read, group_from_dir, read_presets_report};
 use crate::presets::{LCPRESET_EXT, expand_preset_paths, imported_preset_id, to_lcpreset};
 use crate::{Result, Session};
 
@@ -17,33 +17,41 @@ struct Imports {
     imported: Vec<Value>,
     failed: Vec<Value>,
     skipped: usize,
+    /// A dry run adds nothing, so what it has counted is kept to tell repeats (the same preset as
+    /// `.xmp` and as `.lrtemplate` in one pack) from new presets, as a real run would.
+    counted: Vec<lightcraft_develop::Preset>,
 }
 
 impl Imports {
-    /// Add the presets read from `file` (or say why none could be).
-    fn take(
-        &mut self,
-        s: &mut Session,
-        file: &str,
-        read: std::result::Result<Vec<crate::preset_import::Imported>, String>,
-        group: Option<&str>,
-        dry: bool,
-    ) {
-        let list = match read {
-            Ok(list) => list,
-            Err(e) => {
-                self.failed.push(json!([file, e]));
-                return;
-            }
-        };
-        for mut it in list {
+    /// Add the presets read from `file`, and say why the others couldn't be read. A dry run adds
+    /// nothing; `settings` puts each preset's settings in its entry (for a preview).
+    fn take(&mut self, s: &mut Session, file: &str, read: crate::preset_import::Read, group: Option<&str>, dry: bool, settings: bool) {
+        self.failed.extend(read.failed.into_iter().map(|(f, why)| json!([f, why])));
+        for mut it in read.presets {
             if let Some(g) = group {
                 it.preset.group = g.to_string();
             }
             let (name, grp) = (it.preset.name.clone(), it.preset.group.clone());
-            let id = if dry { Some(imported_preset_id(&it.preset)) } else { s.add_presets(vec![it.preset]).pop() };
+            let shown = settings.then(|| it.preset.settings.clone());
+            let id = if dry {
+                let repeat = s.has_identical_preset(&it.preset)
+                    || self.counted.iter().any(|q| q.name == it.preset.name && q.group == it.preset.group && q.settings == it.preset.settings);
+                let id = imported_preset_id(&it.preset);
+                if !repeat {
+                    self.counted.push(it.preset);
+                }
+                (!repeat).then_some(id)
+            } else {
+                s.add_presets(vec![it.preset]).pop()
+            };
             match id {
-                Some(id) => self.imported.push(json!({"id": id, "name": name, "group": grp, "file": file, "unmapped": it.unmapped})),
+                Some(id) => {
+                    let mut entry = json!({"id": id, "name": name, "group": grp, "file": file, "unmapped": it.unmapped});
+                    if let (Some(settings), Some(o)) = (shown, entry.as_object_mut()) {
+                        o.insert("settings".into(), settings);
+                    }
+                    self.imported.push(entry);
+                }
                 None => self.skipped += 1,
             }
         }
@@ -58,6 +66,7 @@ fn import(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let group = str_param(p, "group").map(str::trim).filter(|g| !g.is_empty()).map(str::to_string);
     let dry = p.get("dryRun").and_then(Value::as_bool).unwrap_or(false);
+    let settings = p.get("includeSettings").and_then(Value::as_bool).unwrap_or(false);
     let mut out = Imports::default();
     for top in &paths {
         let from_dir = std::path::Path::new(top).is_dir();
@@ -67,8 +76,11 @@ fn import(s: &mut Session, p: &Value) -> Result<Value> {
             let base = std::path::Path::new(top).parent().unwrap_or(std::path::Path::new(""));
             let rel = std::path::Path::new(&f).parent().and_then(|d| d.strip_prefix(base).ok()).map(|d| d.to_string_lossy().to_string());
             let dir_group = rel.filter(|_| from_dir).and_then(|d| group_from_dir(&d));
-            let read = std::fs::read(&f).map_err(|e| e.to_string()).and_then(|b| read_presets(&f, &b, dir_group));
-            out.take(s, &f, read, group.as_deref(), dry);
+            let read = match std::fs::read(&f) {
+                Ok(b) => read_presets_report(&f, &b, dir_group),
+                Err(e) => Read { failed: vec![(f.clone(), e.to_string())], ..Default::default() },
+            };
+            out.take(s, &f, read, group.as_deref(), dry, settings);
         }
     }
     // files given by content: a name with folders in it (`Pack/Look.xmp`) names the group as a folder would
@@ -76,8 +88,15 @@ fn import(s: &mut Session, p: &Value) -> Result<Value> {
         match f {
             Ok((name, bytes)) => {
                 let dir_group = name.rsplit_once(['/', '\\']).and_then(|(d, _)| group_from_dir(d));
-                let read = read_presets(crate::inline_files::base_name(&name), &bytes, dir_group);
-                out.take(s, &name, read, group.as_deref(), dry);
+                let base = crate::inline_files::base_name(&name);
+                let mut read = read_presets_report(base, &bytes, dir_group);
+                // (failures name the file as it was given, folders and all)
+                for (file, _) in &mut read.failed {
+                    if let Some(rest) = file.strip_prefix(base) {
+                        *file = format!("{name}{rest}");
+                    }
+                }
+                out.take(s, &name, read, group.as_deref(), dry, settings);
             }
             Err((name, e)) => out.failed.push(json!([name, e])),
         }
@@ -120,7 +139,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Import Presets",
             [],
             None,
-            "{paths?: [file or folder], files?: [{name, data: base64}] (files given by content, e.g. from a browser), group?, dryRun?} — .lcpreset, XMP presets, .lrtemplate, photos carrying edits (DNG/JPEG/TIFF \"DNG presets\"), Luminar looks (.lmp, .mplumpack collections) and .zip bundles of these; folders give their name as group; each preset gets an id named by its content (the same preset imported on two synced devices stays one); crs: fields mapped per docs/xmp-interop.md → {imported: [{id,name,group,file,unmapped}], skipped, failed}",
+            "{paths?: [file or folder], files?: [{name, data: base64}] (files given by content, e.g. from a browser), group?, dryRun? (report what a real run would add and skip, adding nothing), includeSettings? (with each imported preset's settings, for a preview)} — .lcpreset, XMP presets, .lrtemplate, photos carrying edits (DNG/JPEG/TIFF \"DNG presets\"), Luminar looks (.lmp, .mplumpack collections) and .zip bundles of these; folders give their name as group; each preset gets an id named by its content (the same preset imported on two synced devices stays one); crs: fields mapped per docs/xmp-interop.md → {imported: [{id,name,group,file,unmapped}], skipped, failed}",
             always,
             import
         ),

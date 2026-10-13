@@ -261,5 +261,11 @@
   "{n} added to Apple Photos": "已将 {n} 个添加到 Apple 照片",
   "{n} photos opened for editing; each is stacked with its original": "已打开 {n} 张照片进行编辑；每张都与其原片堆叠在一起",
   "Uses the MI-GAN model, a {:.0} MB download ({} licence). {}.": "使用 MI-GAN 模型（需下载 {:.0} MB，{} 许可证）。{}。",
-  "Downloading MI-GAN… {:.0} %": "正在下载 MI-GAN… {:.0} %"
+  "Downloading MI-GAN… {:.0} %": "正在下载 MI-GAN… {:.0} %",
+  "Import {n} Preset{}": "导入 {n} 个预设{0:.0}",
+  "Import {p} Profile{}": "导入 {p} 个配置文件{0:.0}",
+  "{n} preset{} in {g} group{}": "{n} 个预设，{g} 个分组{0:.0}{1:.0}",
+  "{p} profile{}": "{p} 个配置文件{0:.0}",
+  "{a} already in your library": "{a} 个已在图库中",
+  "Not carried over: {what}": "未沿用：{what}"
 }

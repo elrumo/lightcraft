@@ -1035,6 +1035,10 @@ pub enum Dialog {
     Import {
         opts: Box<crate::import::ImportDialog>,
     },
+    /// The Import Presets review (File → Import Profiles & Presets…), then how the import went.
+    PresetImport {
+        review: Box<crate::preset_import::Review>,
+    },
     /// Edit the colour label names (red, yellow, green, blue, purple; empty = the colour's name).
     LabelNames {
         names: Vec<String>,

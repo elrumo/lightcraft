@@ -1952,5 +1952,13 @@
   "Adding to Apple Photos…": "Adicionando ao Fotos da Apple…",
   "not added to Apple Photos (cancelled)": "não adicionadas ao Fotos da Apple (cancelado)",
   "The first time, macOS asks whether LightCraft may control Photos.": "Na primeira vez, o macOS pergunta se o LightCraft pode controlar o Fotos.",
-  "Adding to Apple Photos": "Adicionando ao Fotos da Apple"
+  "Adding to Apple Photos": "Adicionando ao Fotos da Apple",
+  "Show Presets": "Mostrar predefinições",
+  "Nothing new: everything in these files is already in your library.": "Nada novo: tudo o que está nestes arquivos já está na biblioteca.",
+  "There are no presets in these files.": "Estes arquivos não contêm predefinições.",
+  "Find them in Presets:": "Disponíveis em Predefinições:",
+  "Couldn't be read": "Não foi possível ler",
+  "Import failed": "Falha na importação",
+  "Nothing new to import": "Nada novo para importar",
+  "Nothing was imported": "Nada foi importado"
 }

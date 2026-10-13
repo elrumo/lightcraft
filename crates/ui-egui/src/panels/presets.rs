@@ -219,6 +219,11 @@ fn strip(app: &mut LightcraftApp, ui: &mut egui::Ui, active: Option<PhotoId>, cu
         groups.entry(p.group.clone()).or_default().push(p.clone());
     }
     let key = egui::Id::new("preset-strip-group");
+    // an import just added presets: show the group they went to, and its chip too
+    let show_chosen = app.pending_strip_group.is_some();
+    if let Some(g) = app.pending_strip_group.take() {
+        ui.data_mut(|d| d.insert_temp(key, g));
+    }
     let in_last = |items: &Vec<Preset>| last.is_some_and(|l| items.iter().any(|p| p.id == l));
     let chosen: Option<String> = ui
         .data(|d| d.get_temp::<String>(key))
@@ -237,7 +242,11 @@ fn strip(app: &mut LightcraftApp, ui: &mut egui::Ui, active: Option<PhotoId>, cu
             ui.add_space(pad);
             for (g, items) in &groups {
                 let builtin = items.iter().any(|p| p.builtin);
-                if crate::widgets::text_button(ui, &format!("presetGroup:{g}"), crate::i18n::builtin_label(g, builtin), *g == chosen).clicked() {
+                let chip = crate::widgets::text_button(ui, &format!("presetGroup:{g}"), crate::i18n::builtin_label(g, builtin), *g == chosen);
+                if show_chosen && *g == chosen {
+                    chip.scroll_to_me(Some(egui::Align::Center));
+                }
+                if chip.clicked() {
                     picked = g.clone();
                 }
             }

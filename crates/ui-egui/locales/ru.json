@@ -2144,5 +2144,13 @@
   "Adding to Apple Photos…": "Добавление в Apple Фото…",
   "not added to Apple Photos (cancelled)": "не добавлено в Apple Фото (отменено)",
   "The first time, macOS asks whether LightCraft may control Photos.": "В первый раз macOS спросит, может ли LightCraft управлять приложением «Фото».",
-  "Adding to Apple Photos": "Добавление в Apple Фото"
+  "Adding to Apple Photos": "Добавление в Apple Фото",
+  "Show Presets": "Показать пресеты",
+  "Nothing new: everything in these files is already in your library.": "Нового нет: всё из этих файлов уже есть в библиотеке.",
+  "There are no presets in these files.": "В этих файлах нет пресетов.",
+  "Find them in Presets:": "Их можно найти в разделе «Пресеты»:",
+  "Couldn't be read": "Не удалось прочитать",
+  "Import failed": "Не удалось импортировать",
+  "Nothing new to import": "Нечего импортировать",
+  "Nothing was imported": "Ничего не импортировано"
 }

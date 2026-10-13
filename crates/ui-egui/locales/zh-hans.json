@@ -2124,5 +2124,13 @@
   "Getting the MI-GAN model…": "正在获取 MI-GAN 模型…",
   "AI Remove isn't available in this build.": "此版本不提供 AI 移除。",
   "AI Remove needs its model: download it in the Remove panel. This stroke was filled from around it.": "AI 移除需要模型：请在移除面板中下载。此笔触已用周围内容填充。",
-  "The download stopped.": "下载已停止。"
+  "The download stopped.": "下载已停止。",
+  "Show Presets": "显示预设",
+  "Nothing new: everything in these files is already in your library.": "没有新内容：这些文件中的所有内容都已在图库中。",
+  "There are no presets in these files.": "这些文件中没有预设。",
+  "Find them in Presets:": "可在“预设”中找到：",
+  "Couldn't be read": "无法读取",
+  "Import failed": "导入失败",
+  "Nothing new to import": "没有可导入的新内容",
+  "Nothing was imported": "未导入任何内容"
 }

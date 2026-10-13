@@ -149,7 +149,7 @@ whose portable helpers (safe file names, unique paths, the folder walk) are test
 - **Presets.** File ▸ Import Profiles & Presets… and the Presets panel's ⋯ ▸ Import Presets… open the Files picker for
   preset files (`.lcpreset`, `.xmp`, `.lrtemplate`, `.zip`, `.dng`, Luminar `.lmp` / `.mplumpack`, `.cube` LUTs;
   `PickKind::Documents`, a type per extension). Its copies land in `tmp/Import/` and `file.importPresets` reads them
-  there (`Services::host_files`, `pick::ask_host`); `.cube` files become profiles in the library's `Profiles/`.
+  there (`Services::host_files`, `pick::ask_host`); `.cube` files become profiles in the library's `Profiles/`. The Import Presets page shows what the files hold first (the presets by group on the open photo, what couldn't be read), and Import adds them; the Presets sheet then shows the first group they went to, its chip in view ([xmp-interop.md](xmp-interop.md) → *Preset files*).
   Imported presets sync like the others ([sync.md](sync.md)). *Written and type-checked, not yet run on the simulator
   or a device.*
 - **Export.** Every export is written to `tmp/Exports/` (emptied first) and opens the share sheet: Save Image (to

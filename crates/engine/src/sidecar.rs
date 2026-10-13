@@ -230,9 +230,7 @@ pub fn parse_sidecar(xmp: &str, target: crate::crs::Target) -> std::result::Resu
             let (partial, unmapped) = crate::crs::to_partial_report(&d.properties, Some(&d.values), target, crate::crs_masks::DEFAULT_ASPECT);
             // Lightroom's default profiles are named by nearly every sidecar; our own starting look stands
             // in for them, so only another profile is worth a warning
-            let profile = crate::crs::camera_profile_name(&d.properties)
-                .filter(|name| !matches!(name.trim(), "Adobe Standard" | "Adobe Color"))
-                .map(str::to_string);
+            let profile = crate::crs::camera_profile_name(&d.properties).filter(|name| !crate::crs::is_default_profile(name)).map(str::to_string);
             if let Some(name) = profile {
                 out.warnings.push(crate::import::ImportWarning {
                     path: String::new(),
