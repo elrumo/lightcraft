@@ -58,11 +58,11 @@ mod tests_ai_search;
 #[cfg(test)]
 mod tests_album_picker;
 #[cfg(test)]
+mod tests_albums_phone;
+#[cfg(test)]
 mod tests_appearance;
 #[cfg(test)]
 mod tests_before_after;
-#[cfg(test)]
-mod tests_albums_phone;
 #[cfg(test)]
 mod tests_compact;
 #[cfg(test)]
