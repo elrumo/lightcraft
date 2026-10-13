@@ -270,5 +270,8 @@
   "Not carried over: {what}": "Nicht übernommen: {what}",
   "{n} items": "{n} Elemente",
   "{label}, {n} items": "{label}, {n} Elemente",
-  "Add to {album}": "Zu „{album}“ hinzufügen"
+  "Add to {album}": "Zu „{album}“ hinzufügen",
+  "{name} opened in the other editor": "{name} im anderen Editor geöffnet",
+  "{n} originals opened in the other editor": "{n} Originale im anderen Editor geöffnet",
+  "· {in_source} identical copies": "· {in_source} identische Kopien"
 }

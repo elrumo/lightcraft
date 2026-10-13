@@ -270,5 +270,8 @@
   "Not carried over: {what}": "Не перенесено: {what}",
   "{n} items": "Елементів: {n}",
   "{label}, {n} items": "{label}, елементів: {n}",
-  "Add to {album}": "Додати до «{album}»"
+  "Add to {album}": "Додати до «{album}»",
+  "{name} opened in the other editor": "{name} відкрито в іншому редакторі",
+  "{n} originals opened in the other editor": "Відкрито оригіналів в іншому редакторі: {n}",
+  "· {in_source} identical copies": "· ідентичних копій: {in_source}"
 }

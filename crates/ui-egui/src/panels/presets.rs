@@ -3,9 +3,12 @@
 //! committed), optional live thumbnails, amount slider, create/favourite, import/export of preset
 //! files.
 
+use std::sync::Arc;
+
 use egui::{Align2, Color32, Rect, Sense, pos2, vec2};
 use lightcraft_catalog::PhotoId;
 use lightcraft_develop::{ControlSpec, DevelopSettings, Preset, Section, Track};
+use lightcraft_engine::presets::PresetList;
 use serde_json::json;
 
 use crate::icons::{Icon, paint};
@@ -17,9 +20,37 @@ use crate::{HoverPreview, LightcraftApp};
 const THUMB_EDGE: usize = 128;
 
 /// The presets by group, in the order the user put the groups in ([`lightcraft_engine::Session::preset_groups`]).
-fn grouped(app: &LightcraftApp) -> Vec<(String, Vec<Preset>)> {
+fn grouped_presets(app: &LightcraftApp) -> Vec<(String, Vec<Preset>)> {
     let s = &app.session;
     s.preset_groups().into_iter().map(|g| (g.clone(), s.presets.iter().filter(|p| p.group == g).cloned().collect())).collect()
+}
+
+/// The preset amount slider may replace only the undo step it created.
+#[derive(Clone)]
+struct AppliedPreset {
+    id: String,
+    amount: f64,
+    selected: Vec<lightcraft_catalog::PhotoId>,
+    active: Option<lightcraft_catalog::PhotoId>,
+    commits: u64,
+}
+
+impl AppliedPreset {
+    fn new(session: &lightcraft_engine::Session, id: String, amount: f64) -> Self {
+        Self { id, amount, selected: session.selection.ids.clone(), active: session.active(), commits: session.commits() }
+    }
+
+    fn is_current(&self, session: &lightcraft_engine::Session) -> bool {
+        self.selected == session.selection.ids
+            && self.active == session.active()
+            && self.commits == session.commits()
+            && session.interaction.is_none()
+            && session.redo.is_empty()
+            && session
+                .undo
+                .last()
+                .is_some_and(|entry| session.presets.iter().any(|preset| preset.id == self.id && entry.label == format!("Preset: {}", preset.name)))
+    }
 }
 
 pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
@@ -56,7 +87,7 @@ fn list(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     if icon_button(&mut hdr, "presetCreate", Icon::Plus, vec2(28.0, 28.0), false, app.session.active().is_some(), "Create Preset…").clicked() {
         app.ui.dialog = Some(crate::state::Dialog::create_preset());
     }
-    let more = icon_button(&mut hdr, "presetMore", Icon::More, vec2(28.0, 28.0), false, true, "More preset options");
+    let more = icon_button(&mut hdr, "presetMore", Icon::More, vec2(28.0, 28.0), false, true, crate::i18n::tr("More preset options"));
     egui::Popup::menu(&more).show(|ui| {
         let r = crate::widgets::check(ui, &mut app.ui.preset_thumbs, crate::i18n::tr("Show Thumbnails"));
         register(ui.ctx(), "presetMenu:thumbnails", r.rect);
@@ -79,8 +110,8 @@ fn list(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     divider(ui);
     // amount slider (applies to the last applied preset)
     let amt_id = egui::Id::new("preset-amount");
-    let last: Option<(String, f64)> = ui.data(|d| d.get_temp(amt_id));
-    if let Some((pid, amount)) = last.clone() {
+    let last: Option<AppliedPreset> = ui.data(|d| d.get_temp(amt_id));
+    if let Some(last) = last.clone().filter(|last| last.is_current(&app.session)) {
         let spec = ControlSpec {
             id: "presetAmount",
             label: "Amount",
@@ -92,34 +123,42 @@ fn list(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             decimals: 0,
             track: Track::Plain,
         };
-        let out = slider(ui, &spec, amount, true, None);
-        if let Some(v) = out.value {
-            // re-apply from the pre-preset state: undo last preset step then apply with the new amount
-            let _ = app.run("edit.undo", json!({}));
-            let _ = app.run("preset.apply", json!({"id": pid, "amount": v}));
-            ui.data_mut(|d| d.insert_temp(amt_id, (pid, v)));
+        let out = slider(ui, &spec, last.amount, true, None);
+        if let Some(v) = out.value
+            && app.run("edit.undo", json!({})).is_ok()
+        {
+            // Only replace the most recent preset; never undo intervening edits.
+            if app.run("preset.apply", json!({"id": &last.id, "amount": v})).is_ok() {
+                ui.data_mut(|d| d.insert_temp(amt_id, AppliedPreset::new(&app.session, last.id, v)));
+            } else {
+                let _ = app.run("edit.redo", json!({}));
+                ui.data_mut(|d| d.remove::<AppliedPreset>(amt_id));
+            }
         }
         divider(ui);
+    } else {
+        ui.data_mut(|d| d.remove::<AppliedPreset>(amt_id));
     }
     let active = app.session.active();
     let current = active.and_then(|id| app.session.develop_of(id)).map(|d| (*d).clone());
     if compact {
-        strip(app, ui, active, current.as_ref(), last.as_ref().map(|(pid, _)| pid.as_str()));
+        strip(app, ui, active, current.as_ref(), last.as_ref().map(|l| l.id.as_str()));
         return;
     }
     let thumbs = app.ui.preset_thumbs && active.is_some();
     let row_h = if thumbs { 54.0 } else { 26.0 };
+    let groups = grouped(ui.ctx(), &app.session);
     let scroll = egui::ScrollArea::vertical().id_salt("presets-scroll").auto_shrink([false, false]).show(ui, |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
         // a group header dragged up or down puts the group elsewhere (`preset.moveGroup`)
         let drag_id = egui::Id::new("preset-group-drag");
         let dragging: Option<String> = ui.data(|d| d.get_temp(drag_id));
-        let groups = grouped(app);
         let mut headers: Vec<(String, Rect)> = Vec::with_capacity(groups.len());
-        for (g, items) in groups {
-            // A group holding stock presets is a stock group (shown in the UI language), even
-            // when user presets share its name; a group of user presets keeps its name.
-            let builtin = items.iter().any(|p| p.builtin);
+        // Only the rows in view are laid out, drawn and given thumbnails: a Lightroom collection
+        // imported whole is 10 000+ presets, and building every row each frame took seconds.
+        let visible = ui.clip_rect().expand(row_h);
+        for grp in groups.iter() {
+            let (g, builtin) = (grp.name.clone(), grp.builtin);
             let open_id = egui::Id::new(("preset-group", &g));
             let open: bool = ui.data(|d| d.get_temp(open_id)).unwrap_or(true);
             let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 32.0), Sense::click_and_drag());
@@ -157,11 +196,16 @@ fn list(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             if !open {
                 continue;
             }
-            for pr in items {
+            let (first, end) = rows_in_view(ui.cursor().top(), row_h, grp.items.len(), visible);
+            if first > 0 {
+                ui.allocate_space(vec2(ui.available_width(), first as f32 * row_h));
+            }
+            for &i in grp.items.get(first..end).unwrap_or_default() {
+                let Some(pr) = app.session.presets.get(i).cloned() else { continue };
                 let (pid, name, fav) = (pr.id.clone(), crate::i18n::builtin_label(&pr.name, pr.builtin).to_string(), pr.favorite);
                 let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), row_h), Sense::click());
                 register(ui.ctx(), format!("preset:{pid}"), r);
-                let is_last = last.as_ref().is_some_and(|(l, _)| *l == pid);
+                let is_last = last.as_ref().is_some_and(|l| l.id == pid);
                 if is_last {
                     ui.painter().rect_filled(r, 0.0, t.tool_active);
                 } else if resp.hovered() {
@@ -193,13 +237,15 @@ fn list(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                         ui.data_mut(|d| d.insert_temp(egui::Id::new("last-preset-hover"), (id, pr.clone(), label)));
                     }
                 }
-                if resp.clicked() {
-                    let _ = app.run("preset.apply", json!({"id": pid, "amount": 100}));
-                    ui.data_mut(|d| d.insert_temp(amt_id, (pid.clone(), 100.0)));
+                if resp.clicked() && app.run("preset.apply", json!({"id": pid, "amount": 100})).is_ok() {
+                    ui.data_mut(|d| d.insert_temp(amt_id, AppliedPreset::new(&app.session, pid.clone(), 100.0)));
                     ui.data_mut(|d| d.remove::<(lightcraft_catalog::PhotoId, Preset, String)>(egui::Id::new("last-preset-hover")));
                     app.toast(ui.ctx(), crate::i18n::tr_format!("Preset: {name}", name = name));
                 }
                 resp.context_menu(|ui| preset_menu(app, ui, &pr, &name));
+            }
+            if end < grp.items.len() {
+                ui.allocate_space(vec2(ui.available_width(), (grp.items.len() - end) as f32 * row_h));
             }
         }
         if let Some(g) = dragging {
@@ -258,7 +304,7 @@ const TILE: f32 = 84.0;
 /// short sheet, where a list of rows wanted most of the screen. Only the tiles on screen are rendered.
 fn strip(app: &mut LightcraftApp, ui: &mut egui::Ui, active: Option<PhotoId>, current: Option<&DevelopSettings>, last: Option<&str>) {
     let t = Tokens::get(ui.ctx());
-    let mut groups = grouped(app);
+    let mut groups = grouped_presets(app);
     let key = egui::Id::new("preset-strip-group");
     // an import just added presets: show the group they went to, and its chip too
     let show_chosen = app.pending_strip_group.is_some();
@@ -374,10 +420,8 @@ fn preset_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, pr: &Preset, name: &s
         crate::panels::dialogs::prompt(app, "Rename Preset", "Preset name", name, "preset.rename", json!({"id": pid}), "name");
     }
     ui.menu_button(crate::i18n::tr("Move to Group"), |ui| {
-        let mut groups: Vec<String> = app.session.presets.iter().filter(|p| !p.builtin).map(|p| p.group.clone()).collect();
-        groups.sort();
-        groups.dedup();
-        for g in groups.iter().filter(|g| **g != group) {
+        let groups = grouped(ui.ctx(), &app.session);
+        for g in groups.iter().filter(|x| x.user && x.name != group).map(|x| &x.name) {
             if ui.button(g).clicked() {
                 let _ = app.run("preset.move", json!({"id": pid, "group": g}));
             }
@@ -392,6 +436,110 @@ fn preset_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, pr: &Preset, name: &s
     }
 }
 
+/// A preset group as the panel lists it: indices into the session's presets.
+struct Group {
+    name: String,
+    /// Holds a stock preset: a stock group (shown in the UI language), even when user presets
+    /// share its name; a group of user presets keeps its name.
+    builtin: bool,
+    /// Holds a user preset (a Move to Group target).
+    user: bool,
+    items: Vec<usize>,
+}
+
+/// The presets by group (groups in the user's order, [`lightcraft_engine::Session::preset_groups`];
+/// presets in list order), rebuilt only when the list (its generation) or the group order changed.
+fn grouped(ctx: &egui::Context, session: &lightcraft_engine::Session) -> Arc<Vec<Group>> {
+    type Cached = (u64, Vec<String>, Arc<Vec<Group>>);
+    let id = egui::Id::new("presets-grouped");
+    let presets = &session.presets;
+    if let Some((generation, order, groups)) = ctx.data(|d| d.get_temp::<Cached>(id))
+        && generation == presets.generation()
+        && order == session.preset_group_order
+    {
+        return groups;
+    }
+    let mut by_name: std::collections::HashMap<&str, Group> = std::collections::HashMap::new();
+    for (i, p) in presets.iter().enumerate() {
+        let g = by_name.entry(&p.group).or_insert_with(|| Group { name: p.group.clone(), builtin: false, user: false, items: Vec::new() });
+        g.builtin |= p.builtin;
+        g.user |= !p.builtin;
+        g.items.push(i);
+    }
+    let groups = Arc::new(session.preset_groups().iter().filter_map(|g| by_name.remove(g.as_str())).collect::<Vec<_>>());
+    ctx.data_mut(|d| d.insert_temp(id, (presets.generation(), session.preset_group_order.clone(), groups.clone())));
+    groups
+}
+
+/// The presets as the rows of a picker (a combo box's list), in list order with a header row
+/// wherever the group changes. Only the rows in view are built (10 000+ presets made an open
+/// picker take seconds a frame). Returns the id of the preset clicked.
+pub fn picker_rows(ui: &mut egui::Ui, salt: &str, presets: &PresetList, selected: Option<&str>) -> Option<String> {
+    let id = egui::Id::new("preset-picker-rows");
+    let rows = match ui.ctx().data(|d| d.get_temp::<(u64, Arc<Vec<PickRow>>)>(id)) {
+        Some((generation, rows)) if generation == presets.generation() => rows,
+        _ => {
+            let mut rows = Vec::with_capacity(presets.len() + 16);
+            let mut group: Option<&str> = None;
+            for (i, p) in presets.iter().enumerate() {
+                if group != Some(p.group.as_str()) {
+                    group = Some(&p.group);
+                    rows.push(PickRow::Header(crate::i18n::builtin_label(&p.group, p.builtin).to_string()));
+                }
+                rows.push(PickRow::Preset(i));
+            }
+            let rows = Arc::new(rows);
+            ui.ctx().data_mut(|d| d.insert_temp(id, (presets.generation(), rows.clone())));
+            rows
+        }
+    };
+    let row_h = ui.spacing().interact_size.y;
+    let mut out = None;
+    egui::ScrollArea::vertical().id_salt(("preset-picker", salt)).max_height(300.0).auto_shrink([false, true]).show_rows(
+        ui,
+        row_h,
+        rows.len(),
+        |ui, range| {
+            for row in rows.get(range).unwrap_or_default() {
+                let size = vec2(ui.available_width(), row_h);
+                match row {
+                    PickRow::Header(g) => {
+                        ui.add_sized(size, egui::Label::new(egui::RichText::new(g).size(10.5).weak()));
+                    }
+                    PickRow::Preset(i) => {
+                        let Some(p) = presets.get(*i) else { continue };
+                        let label = crate::i18n::builtin_label(&p.name, p.builtin);
+                        if ui.add_sized(size, egui::Button::selectable(selected == Some(p.id.as_str()), label)).clicked() {
+                            out = Some(p.id.clone());
+                        }
+                    }
+                }
+            }
+        },
+    );
+    out
+}
+
+#[derive(Clone)]
+enum PickRow {
+    /// A group's name (in the UI language for stock groups).
+    Header(String),
+    /// An index into the session's presets.
+    Preset(usize),
+}
+
+/// The rows `first..end` of a block of `n` rows `row_h` high starting at `top` that meet
+/// `visible`.
+fn rows_in_view(top: f32, row_h: f32, n: usize, visible: Rect) -> (usize, usize) {
+    if row_h <= 0.0 || !top.is_finite() {
+        return (0, n);
+    }
+    // `as usize` saturates (negative and NaN give 0)
+    let first = (((visible.top() - top) / row_h).floor() as usize).min(n);
+    let end = (((visible.bottom() - top) / row_h).ceil() as usize).clamp(first, n);
+    (first, end)
+}
+
 /// The part of a `size` image that covers `r` (centre crop), as texture coordinates.
 pub fn cover_uv(r: Rect, size: [usize; 2]) -> Rect {
     let a = size[0] as f32 / size[1].max(1) as f32;
@@ -402,5 +550,34 @@ pub fn cover_uv(r: Rect, size: [usize; 2]) -> Rect {
     } else {
         let f = a / ra;
         Rect::from_min_max(pos2(0.0, (1.0 - f) / 2.0), pos2(1.0, (1.0 + f) / 2.0))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn amount_slider_does_not_undo_a_later_edit() {
+        let mut session = lightcraft_engine::Session::with_demo();
+        let pid = "lc.golden-hour";
+        session.execute("preset.apply", &json!({"id": pid})).unwrap();
+        let state = AppliedPreset::new(&session, pid.into(), 100.0);
+        assert!(state.is_current(&session));
+
+        session.execute("develop.set", &json!({"values": {"light.exposure": 0.75}})).unwrap();
+        assert!(!state.is_current(&session), "a newer edit owns the undo step");
+    }
+
+    #[test]
+    fn amount_slider_does_not_undo_on_another_photo() {
+        let mut session = lightcraft_engine::Session::with_demo();
+        let pid = "lc.golden-hour";
+        session.execute("preset.apply", &json!({"id": pid})).unwrap();
+        let state = AppliedPreset::new(&session, pid.into(), 100.0);
+        let active = session.active();
+        let other = session.visible().iter().copied().find(|id| Some(*id) != active).unwrap();
+        session.execute("library.select", &json!({"ids": [other.0]})).unwrap();
+        assert!(!state.is_current(&session), "the preset belongs to the earlier selection");
     }
 }

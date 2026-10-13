@@ -270,5 +270,8 @@
   "Not carried over: {what}": "未沿用：{what}",
   "{n} items": "{n} 個項目",
   "{label}, {n} items": "{label}，{n} 個項目",
-  "Add to {album}": "加入「{album}」"
+  "Add to {album}": "加入「{album}」",
+  "{name} opened in the other editor": "已在其他編輯器中開啟 {name}",
+  "{n} originals opened in the other editor": "已在其他編輯器中開啟 {n} 個原始檔案",
+  "· {in_source} identical copies": "· {in_source} 個相同副本"
 }
