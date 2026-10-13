@@ -270,5 +270,9 @@
   "Not carried over: {what}": "Не перенесено: {what}",
   "{n} items": "Элементов: {n}",
   "{label}, {n} items": "{label}, элементов: {n}",
-  "Add to {album}": "Добавить в «{album}»"
+  "Add to {album}": "Добавить в «{album}»",
+  "Reading {name}… {n} photos so far": "Чтение {name}… пока фото: {n}",
+  "Photos not copied from {name}: {n}": "Не скопировано фото с {name}: {n}",
+  "No photos could be copied from {name}": "Не удалось скопировать фото с {name}",
+  "{name} connected": "{name} подключено"
 }

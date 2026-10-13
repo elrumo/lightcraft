@@ -1976,5 +1976,16 @@
   "Nothing was imported": "Nada foi importado",
   "Create New": "Criar novo",
   "Add Photos From": "Adicionar fotos de",
-  "Smart Album from Filter": "Álbum inteligente a partir do filtro"
+  "Smart Album from Filter": "Álbum inteligente a partir do filtro",
+  "Copying from camera": "Copiando da câmera",
+  "Connected Camera/Card": "Câmera/cartão conectado",
+  "Connected Cameras and Cards": "Câmeras e cartões conectados",
+  "No camera or card connected: plug in a camera or a card reader (USB-C or Lightning), then try again": "Nenhuma câmera ou cartão conectado: conecte uma câmera ou um leitor de cartões (USB-C ou Lightning) e tente novamente",
+  "Cameras and cards": "Câmeras e cartões",
+  "Show the import when a camera or memory card is connected": "Mostrar a importação quando uma câmera ou cartão de memória for conectado",
+  "No photos on it": "Nenhuma foto nele",
+  "No Date": "Sem data",
+  " · File ▸ Import from Device": " · Arquivo → Importar de dispositivo",
+  " · + ▸ Connected Camera/Card": " · + → Câmera/cartão conectado",
+  "The photos are copied into the library; the originals on the camera or card are left as they are.": "As fotos são copiadas para a biblioteca; os originais na câmera ou no cartão ficam como estão."
 }

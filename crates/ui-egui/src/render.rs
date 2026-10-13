@@ -54,6 +54,9 @@ pub enum Slot {
     Hover,
     /// An import candidate's thumbnail in the import review dialog (by index).
     Import(u32),
+    /// A thumbnail a camera made of one of its files, in the import review (by a hash of the
+    /// camera's and the file's ids: the review's order changes as the camera catalogues).
+    Camera(u64),
     /// The second window's view of the active photo.
     Second,
 }
@@ -956,12 +959,22 @@ impl Renderer {
 
     /// Drop the import review thumbnails (a new review, or the dialog closed).
     pub fn forget_imports(&mut self) {
-        self.pool.reprioritize(|s, p| if matches!(s, Slot::Import(_)) { None } else { Some(p) });
-        self.queue.retain(|q| !matches!(q.slot, Slot::Import(_)));
-        self.pending.retain(|s, _| !matches!(s, Slot::Import(_)));
-        self.request_ids.retain(|s, _| !matches!(s, Slot::Import(_)));
-        self.textures.retain(|s, _| !matches!(s, Slot::Import(_)));
-        self.quick_tried.retain(|s, _| !matches!(s, Slot::Import(_)));
+        let review = |s: &Slot| matches!(s, Slot::Import(_) | Slot::Camera(_));
+        self.pool.reprioritize(|s, p| if review(s) { None } else { Some(p) });
+        self.queue.retain(|q| !review(&q.slot));
+        self.pending.retain(|s, _| !review(s));
+        self.request_ids.retain(|s, _| !review(s));
+        self.textures.retain(|s, _| !review(s));
+        self.quick_tried.retain(|s, _| !review(s));
+    }
+
+    /// Show `img` in `slot` (an image the app already has, such as a thumbnail a camera made).
+    pub fn put_image(&mut self, ctx: &egui::Context, slot: Slot, img: &lightcraft_raster::Rgba8) {
+        let color = std::sync::Arc::new(color_image(img));
+        let pixels = self.keep_pixels.then(|| color.clone());
+        let tex = ctx.load_texture(format!("{slot:?}"), color, egui::TextureOptions::LINEAR);
+        self.textures
+            .insert(slot, Tex { key: 0, photo: PhotoId(0), tex, size: [img.width, img.height], histogram: None, ms: 0.0, quick: None, pixels });
     }
 
     /// Drop thumbnails that aren't in `keep` (bounded memory for huge libraries), and queued

@@ -2112,5 +2112,16 @@
   "Nothing was imported": "何も読み込まれませんでした",
   "Create New": "新規作成",
   "Add Photos From": "写真の追加元",
-  "Smart Album from Filter": "フィルターからスマートアルバム"
+  "Smart Album from Filter": "フィルターからスマートアルバム",
+  "Copying from camera": "カメラからコピー中",
+  "Connected Camera/Card": "接続されたカメラ/カード",
+  "Connected Cameras and Cards": "接続されたカメラとカード",
+  "No camera or card connected: plug in a camera or a card reader (USB-C or Lightning), then try again": "カメラやカードが接続されていません。カメラまたはカードリーダー（USB-C または Lightning）を接続してから、もう一度お試しください",
+  "Cameras and cards": "カメラとカード",
+  "Show the import when a camera or memory card is connected": "カメラやメモリーカードが接続されたら読み込みを表示",
+  "No photos on it": "写真がありません",
+  "No Date": "日付なし",
+  " · File ▸ Import from Device": " · ファイル → デバイスから読み込む",
+  " · + ▸ Connected Camera/Card": " · + → 接続されたカメラ/カード",
+  "The photos are copied into the library; the originals on the camera or card are left as they are.": "写真はライブラリにコピーされます。カメラやカード上のオリジナルはそのまま残ります。"
 }

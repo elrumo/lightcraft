@@ -2168,5 +2168,16 @@
   "Nothing was imported": "Ничего не импортировано",
   "Create New": "Создать",
   "Add Photos From": "Добавить фото из",
-  "Smart Album from Filter": "Смарт-альбом из фильтра"
+  "Smart Album from Filter": "Смарт-альбом из фильтра",
+  "Copying from camera": "Копирование с камеры",
+  "Connected Camera/Card": "Подключённая камера/карта",
+  "Connected Cameras and Cards": "Подключённые камеры и карты",
+  "No camera or card connected: plug in a camera or a card reader (USB-C or Lightning), then try again": "Камера или карта не подключены: подключите камеру или кардридер (USB-C или Lightning) и повторите попытку",
+  "Cameras and cards": "Камеры и карты",
+  "Show the import when a camera or memory card is connected": "Показывать импорт при подключении камеры или карты памяти",
+  "No photos on it": "Фото нет",
+  "No Date": "Без даты",
+  " · File ▸ Import from Device": " · Файл → Импорт с устройства",
+  " · + ▸ Connected Camera/Card": " · + → Подключённая камера/карта",
+  "The photos are copied into the library; the originals on the camera or card are left as they are.": "Фото копируются в библиотеку; оригиналы на камере или карте остаются как есть."
 }

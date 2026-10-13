@@ -26,10 +26,10 @@ mod alloc_release;
 mod appearance;
 mod control_server;
 mod dialog_filter;
-mod editors;
-mod logging;
 #[cfg(target_os = "macos")]
 mod drag_pointer;
+mod editors;
+mod logging;
 #[cfg(target_os = "macos")]
 mod native_menu;
 #[cfg(target_os = "macos")]
@@ -237,6 +237,9 @@ fn services(cc: &eframe::CreationContext<'_>, log_file: Option<&std::path::Path>
     let ctx = cc.egui_ctx.clone();
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     let _ = DIALOG_PARENT.set(rfd::FileDialog::new().set_parent(cc));
+    // cameras in PTP mode and iPhones (macOS, ImageCaptureCore; cards mounted as disks are found
+    // under /Volumes by the engine): copied into a temporary folder, then imported
+    let cameras = lightcraft_ui_egui::camera_import::system_cameras(&ctx, std::env::temp_dir().join("LightCraft Camera Import"));
     Services {
         // Commands' file dialogs run on their own thread (#191): a dialog on the UI thread
         // stopped the window answering the compositor, which then reported the app as hung.
@@ -431,6 +434,7 @@ fn services(cc: &eframe::CreationContext<'_>, log_file: Option<&std::path::Path>
         share_exports: None,
         save_to_photos: None,
         host_pick: None,
+        cameras,
         // the native dialogs above give paths
         host_files: None,
         // the system clipboard reaches text fields directly; no haptics

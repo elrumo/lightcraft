@@ -270,5 +270,9 @@
   "Not carried over: {what}": "Non transféré : {what}",
   "{n} items": "{n} éléments",
   "{label}, {n} items": "{label}, {n} éléments",
-  "Add to {album}": "Ajouter à {album}"
+  "Add to {album}": "Ajouter à {album}",
+  "Reading {name}… {n} photos so far": "Lecture de {name}… {n} photos pour l’instant",
+  "Photos not copied from {name}: {n}": "Photos non copiées depuis {name} : {n}",
+  "No photos could be copied from {name}": "Aucune photo n’a pu être copiée depuis {name}",
+  "{name} connected": "{name} connecté"
 }

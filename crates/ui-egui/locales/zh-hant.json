@@ -2110,5 +2110,16 @@
   "Nothing was imported": "未匯入任何內容",
   "Create New": "新增",
   "Add Photos From": "加入照片來源",
-  "Smart Album from Filter": "從篩選器建立智慧型相簿"
+  "Smart Album from Filter": "從篩選器建立智慧型相簿",
+  "Copying from camera": "正在從相機拷貝",
+  "Connected Camera/Card": "已連接的相機/記憶卡",
+  "Connected Cameras and Cards": "已連接的相機和記憶卡",
+  "No camera or card connected: plug in a camera or a card reader (USB-C or Lightning), then try again": "未連接相機或記憶卡：請接上相機或讀卡機（USB-C 或 Lightning）後再試一次",
+  "Cameras and cards": "相機和記憶卡",
+  "Show the import when a camera or memory card is connected": "連接相機或記憶卡時顯示匯入",
+  "No photos on it": "上面沒有照片",
+  "No Date": "無日期",
+  " · File ▸ Import from Device": " · 檔案 → 從裝置匯入",
+  " · + ▸ Connected Camera/Card": " · + → 已連接的相機/記憶卡",
+  "The photos are copied into the library; the originals on the camera or card are left as they are.": "照片會拷貝到照片庫中；相機或記憶卡上的原件保持不變。"
 }

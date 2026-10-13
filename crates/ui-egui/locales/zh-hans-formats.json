@@ -270,5 +270,9 @@
   "Not carried over: {what}": "未沿用：{what}",
   "{n} items": "{n} 项",
   "{label}, {n} items": "{label}，{n} 项",
-  "Add to {album}": "添加到“{album}”"
+  "Add to {album}": "添加到“{album}”",
+  "Reading {name}… {n} photos so far": "正在读取{name}… 目前 {n} 张照片",
+  "Photos not copied from {name}: {n}": "未能从{name}拷贝的照片：{n} 张",
+  "No photos could be copied from {name}": "无法从{name}拷贝照片",
+  "{name} connected": "{name}已连接"
 }

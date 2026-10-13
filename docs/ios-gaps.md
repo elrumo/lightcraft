@@ -86,7 +86,7 @@ mark: not started.
 | B1.2 | RAW (DNG) capture, including ProRAW, written straight into the library | P2 | AVFoundation, DNG writer |
 | B1.3 | HDR capture and in-app multi-frame HDR / panorama merge on the phone | P2 | `crates/merge` has HDR / pano rows as ⬜ on desktop too |
 | B1.4 | Camera presets: apply a look live in the viewfinder | P2 | B1.1, GPU preview |
-| B1.5 | Import from a camera or card reader over USB (iPad) with a thumbnail grid and selective import | P1 | ImageCaptureCore glue |
+| B1.5 | 🟡 Import from a camera or card reader plugged into the iPhone or iPad: `lightcraft-capture` watches for them through ImageCaptureCore (asking the user's permission the first time one is opened, `NSCameraUsageDescription`) and + ▸ Connected Camera/Card (or File ▸ Import from Device on an iPad held sideways, or simply connecting one) opens the import review on it: its photos by day as it catalogues them, newest day first, a box per day and one for the device, the camera's own thumbnails, a Raw tag, and what the library already has greyed out and not selectable; Import copies the chosen files into `tmp/Import/` and moves them into the library. Written, clippy-clean for `aarch64-apple-ios`; the review and the import tested headless with a stand-in camera | P1 | run on a device: an SD card reader, a camera over USB-C (PTP), the permission prompt; Delete from the card |
 | B1.6 | Live Photos / burst handling, Portrait-mode depth data (for depth-based masks) | P2 | ImageIO |
 | B1.7 | Video: import, trim, and the same colour edits on video clips | P2 | video pipeline (`ROADMAP.md`: video is out of scope for now) |
 
