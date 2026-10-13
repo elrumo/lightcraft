@@ -402,6 +402,13 @@ fn filmstrip_top_bar_uses_the_divider_colour_in_every_theme() {
 }
 
 fn double_click(h: &mut Headless, pos: egui::Pos2) {
+    // egui counts a click within 0.6 s of the one before the last as a third, wherever it was: let earlier clicks go stale
+    for _ in 0..45 {
+        h.step();
+    }
+    // arrive first: a press after a jump is a drag by the distance jumped
+    h.app.synthetic.push(Event::PointerMoved(pos));
+    h.step();
     release(h, pos);
     release(h, pos);
     for _ in 0..3 {
@@ -435,22 +442,24 @@ fn a_divider_beside_presets_resets_only_the_panel_it_sizes() {
     use crate::state::RIGHT_WIDTH;
     let mut h = app();
     h.app.ui.presets = true;
-    for _ in 0..4 {
+    // (long enough for the panel to be all the way in, should opening it slide)
+    for _ in 0..30 {
         h.step();
     }
-    let resize = craft_ui::docking::Action::<Panel>::ResizeSplit { path: vec![true, false], size: craft_ui::layout::SplitSize::FixedSecond(400.0) };
+    // (widths that leave the photo its minimum in the 1400 pt headless window beside the Library)
+    let resize = craft_ui::docking::Action::<Panel>::ResizeSplit { path: vec![true, false], size: craft_ui::layout::SplitSize::FixedSecond(350.0) };
     h.app.run("ui.dock", json!({"action": resize})).unwrap();
-    let reply = h.request("ui.set", json!({"rightWidth": 410.0}), std::time::Duration::from_secs(20));
+    let reply = h.request("ui.set", json!({"rightWidth": 330.0}), std::time::Duration::from_secs(20));
     assert_eq!(reply["ok"], true, "{reply}");
     for _ in 0..4 {
         h.step();
     }
     let (presets, tools) = (rect(&h, "panel:presets"), rect(&h, "panel:right_panel"));
-    assert!((presets.width() - 400.0).abs() < 1.0 && (tools.width() - 410.0).abs() < 1.0, "{presets:?} {tools:?}");
+    assert!((presets.width() - 350.0).abs() < 1.0 && (tools.width() - 330.0).abs() < 1.0, "{presets:?} {tools:?}");
     double_click(&mut h, egui::pos2(tools.left() - 2.0, tools.center().y));
     let presets = rect(&h, "panel:presets");
     assert_eq!(h.app.ui.right_width, RIGHT_WIDTH.default, "the Presets | Tools divider sizes Tools");
-    assert!((presets.width() - 400.0).abs() < 1.0, "Presets keeps its width: {presets:?}");
+    assert!((presets.width() - 350.0).abs() < 1.0, "Presets keeps its width: {presets:?}");
     double_click(&mut h, egui::pos2(presets.left() - 2.0, presets.center().y));
     let presets = rect(&h, "panel:presets");
     assert!((presets.width() - 300.0).abs() < 1.0, "the photo | Presets divider sizes Presets: {presets:?}");

@@ -1700,6 +1700,33 @@ fn import_defaults_travel_but_not_the_watched_folder() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// The order the user drags the preset groups into follows them to their other devices, and is kept
+/// when the library is reopened.
+#[test]
+fn the_order_of_the_preset_groups_follows_the_user() {
+    let mut f = Fake::new();
+    let (mut a, mut b, root) = two_devices("preset-groups", &mut f);
+    let first = a.preset_groups();
+    let last = first.last().unwrap().clone();
+    a.execute("preset.moveGroup", &json!({"group": last, "to": 0})).unwrap();
+    sync(&mut a, &mut f);
+    sync(&mut b, &mut f);
+    assert_eq!(b.preset_groups()[0], last);
+    assert_eq!(b.preset_groups(), a.preset_groups());
+    // B puts it back at the end: A follows, and keeps that order when reopened
+    b.execute("preset.moveGroup", &json!({"group": last, "to": 999})).unwrap();
+    sync(&mut b, &mut f);
+    sync(&mut a, &mut f);
+    assert_eq!(a.preset_groups(), first);
+    drop(a);
+    let mut a = open(&root.join("a"));
+    assert_eq!(a.preset_groups(), first);
+    let before = f.requests.len();
+    sync(&mut a, &mut f);
+    assert!(!f.requests[before..].iter().any(|r| r.starts_with("PUT /api/docs/")), "nothing new to send: {:?}", &f.requests[before..]);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// A server from before the documents answers 404: the rest of the sync goes on, with no error and no
 /// retrying every second.
 #[test]

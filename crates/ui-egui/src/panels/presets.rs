@@ -3,8 +3,6 @@
 //! committed), optional live thumbnails, amount slider, create/favourite, import/export of preset
 //! files.
 
-use std::collections::BTreeMap;
-
 use egui::{Align2, Color32, Rect, Sense, pos2, vec2};
 use lightcraft_catalog::PhotoId;
 use lightcraft_develop::{ControlSpec, DevelopSettings, Preset, Section, Track};
@@ -17,6 +15,12 @@ use crate::{HoverPreview, LightcraftApp};
 
 /// Long edge of preset thumbnails (px).
 const THUMB_EDGE: usize = 128;
+
+/// The presets by group, in the order the user put the groups in ([`lightcraft_engine::Session::preset_groups`]).
+fn grouped(app: &LightcraftApp) -> Vec<(String, Vec<Preset>)> {
+    let s = &app.session;
+    s.preset_groups().into_iter().map(|g| (g.clone(), s.presets.iter().filter(|p| p.group == g).cloned().collect())).collect()
+}
 
 pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
@@ -107,18 +111,28 @@ fn list(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let row_h = if thumbs { 54.0 } else { 26.0 };
     let scroll = egui::ScrollArea::vertical().id_salt("presets-scroll").auto_shrink([false, false]).show(ui, |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
-        let mut groups: BTreeMap<String, Vec<Preset>> = BTreeMap::new();
-        for p in &app.session.presets {
-            groups.entry(p.group.clone()).or_default().push(p.clone());
-        }
+        // a group header dragged up or down puts the group elsewhere (`preset.moveGroup`)
+        let drag_id = egui::Id::new("preset-group-drag");
+        let dragging: Option<String> = ui.data(|d| d.get_temp(drag_id));
+        let groups = grouped(app);
+        let mut headers: Vec<(String, Rect)> = Vec::with_capacity(groups.len());
         for (g, items) in groups {
             // A group holding stock presets is a stock group (shown in the UI language), even
             // when user presets share its name; a group of user presets keeps its name.
             let builtin = items.iter().any(|p| p.builtin);
             let open_id = egui::Id::new(("preset-group", &g));
             let open: bool = ui.data(|d| d.get_temp(open_id)).unwrap_or(true);
-            let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 32.0), Sense::click());
+            let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 32.0), Sense::click_and_drag());
             register(ui.ctx(), format!("presetGroup:{g}"), r);
+            headers.push((g.clone(), r));
+            if resp.drag_started() {
+                ui.data_mut(|d| d.insert_temp(drag_id, g.clone()));
+            }
+            if dragging.as_ref() == Some(&g) {
+                ui.painter().rect_filled(r, 0.0, t.hover.gamma_multiply(0.7));
+            } else if resp.hovered() && dragging.is_none() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+            }
             paint(
                 ui.painter(),
                 Rect::from_center_size(pos2(r.left() + 22.0, r.center().y), vec2(12.0, 12.0)),
@@ -188,6 +202,9 @@ fn list(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 resp.context_menu(|ui| preset_menu(app, ui, &pr, &name));
             }
         }
+        if let Some(g) = dragging {
+            drop_group(app, ui, drag_id, &g, &headers);
+        }
         ui.add_space(30.0);
     });
     let last_hover_id = egui::Id::new("last-preset-hover");
@@ -206,6 +223,33 @@ fn list(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     }
 }
 
+/// While group `dragged` is dragged: a line where it would go, between the `headers` (top to
+/// bottom), and the move on release.
+fn drop_group(app: &mut LightcraftApp, ui: &mut egui::Ui, drag_id: egui::Id, dragged: &str, headers: &[(String, Rect)]) {
+    let t = Tokens::get(ui.ctx());
+    ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+    let (pos, down) = ui.input(|i| (i.pointer.latest_pos(), i.pointer.primary_down()));
+    let from = headers.iter().position(|(g, _)| g == dragged);
+    // the gap before the first header below the pointer (or after the last group)
+    let slot = pos.map(|p| headers.iter().position(|(_, r)| p.y < r.center().y).unwrap_or(headers.len()));
+    let to = match (from, slot) {
+        (Some(f), Some(s)) if s != f && s != f + 1 => Some(if s > f { s - 1 } else { s }),
+        _ => None,
+    };
+    if let (Some(to), Some(s)) = (to, slot) {
+        let y = headers.get(s).map_or(ui.cursor().top(), |(_, r)| r.top()) + 1.0;
+        let (x0, x1) = (ui.max_rect().left() + 18.0, ui.max_rect().right() - 8.0);
+        ui.painter().circle_stroke(pos2(x0, y), 3.0, egui::Stroke::new(1.5, t.accent));
+        ui.painter().line_segment([pos2(x0 + 3.0, y), pos2(x1.max(x0 + 3.0), y)], egui::Stroke::new(2.0, t.accent));
+        if !down && let Err(e) = app.run("preset.moveGroup", json!({"group": dragged, "to": to})) {
+            app.toast_error(ui.ctx(), e);
+        }
+    }
+    if !down {
+        ui.data_mut(|d| d.remove_temp::<String>(drag_id));
+    }
+}
+
 /// The edge of a preset tile on a phone.
 const TILE: f32 = 84.0;
 
@@ -214,10 +258,7 @@ const TILE: f32 = 84.0;
 /// short sheet, where a list of rows wanted most of the screen. Only the tiles on screen are rendered.
 fn strip(app: &mut LightcraftApp, ui: &mut egui::Ui, active: Option<PhotoId>, current: Option<&DevelopSettings>, last: Option<&str>) {
     let t = Tokens::get(ui.ctx());
-    let mut groups: BTreeMap<String, Vec<Preset>> = BTreeMap::new();
-    for p in &app.session.presets {
-        groups.entry(p.group.clone()).or_default().push(p.clone());
-    }
+    let mut groups = grouped(app);
     let key = egui::Id::new("preset-strip-group");
     // an import just added presets: show the group they went to, and its chip too
     let show_chosen = app.pending_strip_group.is_some();
@@ -227,9 +268,9 @@ fn strip(app: &mut LightcraftApp, ui: &mut egui::Ui, active: Option<PhotoId>, cu
     let in_last = |items: &Vec<Preset>| last.is_some_and(|l| items.iter().any(|p| p.id == l));
     let chosen: Option<String> = ui
         .data(|d| d.get_temp::<String>(key))
-        .filter(|g| groups.contains_key(g))
+        .filter(|g| groups.iter().any(|(k, _)| k == g))
         .or_else(|| groups.iter().find(|(_, items)| in_last(items)).map(|(g, _)| g.clone()))
-        .or_else(|| groups.keys().next().cloned());
+        .or_else(|| groups.first().map(|(g, _)| g.clone()));
     let Some(chosen) = chosen else { return };
     let pad = crate::widgets::side_pad(ui.ctx()).0;
     let hidden = egui::scroll_area::ScrollBarVisibility::AlwaysHidden;
@@ -255,7 +296,7 @@ fn strip(app: &mut LightcraftApp, ui: &mut egui::Ui, active: Option<PhotoId>, cu
     });
     ui.data_mut(|d| d.insert_temp(key, picked.clone()));
     ui.add_space(10.0);
-    let items = groups.remove(&picked).unwrap_or_default();
+    let items = groups.iter().position(|(g, _)| *g == picked).map(|i| groups.swap_remove(i).1).unwrap_or_default();
     egui::ScrollArea::horizontal().id_salt(("preset-tiles", &picked)).scroll_bar_visibility(hidden).show(ui, |ui| {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 10.0;

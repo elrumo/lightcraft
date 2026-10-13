@@ -1,6 +1,6 @@
 //! Small documents a user's devices share beside the library: their export, metadata and filter
-//! presets, curve presets, label and keyword sets, LUT profiles and a few preferences
-//! (`GET` / `PUT /api/docs/<name>`). The server doesn't read them: a document is a versioned JSON
+//! presets, curve presets, label and keyword sets, LUT profiles, the order of the develop preset
+//! groups and a few preferences (`GET` / `PUT /api/docs/<name>`). The server doesn't read them: a document is a versioned JSON
 //! array the devices merge themselves (like the presets document, `/api/presets`), so a change
 //! made on two devices at once is merged by the second one to write, not lost. A `PUT` names the
 //! version it changed; a stale one gets `412` with the current document.
@@ -14,8 +14,17 @@ use lightcraft_catalog::sync::proto::Doc;
 
 /// The documents a device may keep here. (Preferences that name a place on one computer — folders,
 /// caches, the external editor — are not among them: they stay per device.)
-pub const NAMES: [&str; 8] =
-    ["export-presets", "metadata-presets", "filter-presets", "curve-presets", "label-sets", "keyword-sets", "lut-profiles", "prefs"];
+pub const NAMES: [&str; 9] = [
+    "export-presets",
+    "metadata-presets",
+    "filter-presets",
+    "curve-presets",
+    "label-sets",
+    "keyword-sets",
+    "lut-profiles",
+    "prefs",
+    "preset-groups",
+];
 
 /// The largest document (the LUT profiles carry their `.cube` files).
 pub const MAX: u64 = 24 << 20;

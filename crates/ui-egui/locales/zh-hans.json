@@ -1029,6 +1029,8 @@
   "Move Folder To…": "将文件夹移动到…",
   "Move Mask": "移动蒙版",
   "Move Preset to Group": "将预设移动到分组",
+  "Reorder Preset Group": "调整预设分组顺序",
+  "List Preset Groups": "列出预设分组",
   "Move Up in Stack": "在堆叠中上移",
   "Move the files (into the library's Originals/, or a folder you choose), removing them from the source": "移动文件 (移到图库的 Originals/，或你选择的文件夹)，并从源位置移除",
   "Move them": "移动它们",
