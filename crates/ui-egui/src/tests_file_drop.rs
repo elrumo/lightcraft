@@ -265,3 +265,63 @@ fn a_dropped_folder_gets_its_tiles_once_it_is_read() {
     assert!(pending.is_empty());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn the_tiles_fill_the_rows_in_order_and_only_those_on_screen_are_drawn() {
+    let n = 14;
+    let (mut h, files, dir) = setup("layout", n, 200);
+    let trip = album(&mut h, "Trip");
+    show(&mut h, trip);
+    drop_files(&mut h, &files);
+    let pending = h.app.import.as_ref().and_then(|t| t.pending()).expect("a drop has tiles").clone();
+    let drawn = tiles(&h, n);
+    assert_eq!(pending.len(), n, "nothing is in the catalog yet");
+    let cols = in_rows(&drawn);
+    assert!(drawn.len() > cols, "several rows on screen: {drawn:?}");
+    // a window 900 points tall shows only some of them: the rest are left out until it shows them
+    assert!(drawn.len() < n, "{} of {n} tiles drawn: {drawn:?}", drawn.len());
+    assert!(drawn.iter().all(|r| r.top() < h.size.y), "every tile drawn is on screen: {drawn:?}");
+    let last = drawn.last().expect("tiles on screen");
+    assert!(last.bottom() >= h.size.y, "and they go down to the bottom of the window: {last:?}");
+    let text = h.painted_text();
+    assert!(text.iter().any(|t| t == "IMG_000"), "each tile shows its file's name, without the extension: {text:?}");
+    assert!(!text.iter().any(|t| t.starts_with(&format!("IMG_{:03}", n - 1))), "{text:?}");
+    assert!(!text.iter().any(|t| t.ends_with(".jpg")), "{text:?}");
+
+    h.size.y = 1600.0;
+    h.step();
+    let all = tiles(&h, n);
+    assert_eq!(pending.len(), n, "nothing is in the catalog yet");
+    assert_eq!(all.len(), n, "a taller window shows every tile: {all:?}");
+    assert_eq!(in_rows(&all), cols);
+    assert_eq!(all[..drawn.len()], drawn[..], "the tiles on screen before stay where they were");
+    let text = h.painted_text();
+    assert!((0..n).all(|i| text.contains(&format!("IMG_{i:03}"))), "{text:?}");
+    finish(&mut h);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The places of the first tiles registered, up to the first one that is not (off screen).
+fn tiles(h: &Headless, n: usize) -> Vec<egui::Rect> {
+    (0..n).map_while(|i| h.app.widgets.iter().find(|(w, _)| *w == format!("pending:{i}")).map(|(_, r)| *r)).collect()
+}
+
+/// Checks that the tiles are squares of one size laid out in rows, left to right and top to
+/// bottom like the grid's, and returns how many a row holds.
+fn in_rows(tiles: &[egui::Rect]) -> usize {
+    let first = tiles[0];
+    assert!(first.width() > 0.0 && (first.width() - first.height()).abs() < 0.01, "a square: {first:?}");
+    let cols = tiles.iter().take_while(|r| r.top() == first.top()).count();
+    for (i, pair) in tiles.windows(2).enumerate() {
+        let (a, b) = (pair[0], pair[1]);
+        assert_eq!(b.size(), first.size(), "tile {} is the size of the others", i + 1);
+        if (i + 1) % cols == 0 {
+            assert_eq!(b.left(), first.left(), "tile {} starts a row", i + 1);
+            assert!(b.top() > a.bottom(), "tile {} is below the row before", i + 1);
+        } else {
+            assert_eq!(b.top(), a.top(), "tile {} is in the row of the one before", i + 1);
+            assert!(b.left() > a.right(), "tile {} is right of the one before", i + 1);
+        }
+    }
+    cols
+}
