@@ -495,12 +495,12 @@ fn a_slot_runs_one_job_at_a_time() {
     assert_eq!(most.load(Ordering::SeqCst), 1, "slot 1 ran two jobs at once");
 }
 
-/// A job that panics still frees its slot: the slot's next job runs (on another worker).
+/// A job that panics still frees its slot: the slot's next job runs (and the worker lives on).
 #[test]
 fn a_panicking_job_frees_its_slot() {
     let mut p: JobPool<u8, u32> = JobPool::new(2);
     p.submit(1, 1, 9, Box::new(|| panic!("simulated render panic")));
-    assert!(eventually(10, || !p.is_queued(1) && p.live_workers() == 1));
+    assert!(eventually(10, || !p.is_queued(1) && p.live_workers() == 2));
     p.submit(1, 2, 9, Box::new(|| 2));
     let mut got = None;
     assert!(eventually(10, || {
