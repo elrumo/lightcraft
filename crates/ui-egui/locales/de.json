@@ -2118,5 +2118,8 @@
   "Couldn't be read": "Konnten nicht gelesen werden",
   "Import failed": "Import fehlgeschlagen",
   "Nothing new to import": "Nichts Neues zu importieren",
-  "Nothing was imported": "Es wurde nichts importiert"
+  "Nothing was imported": "Es wurde nichts importiert",
+  "Create New": "Neu erstellen",
+  "Add Photos From": "Fotos hinzufügen aus",
+  "Smart Album from Filter": "Smart-Album aus Filter"
 }

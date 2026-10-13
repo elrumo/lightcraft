@@ -267,5 +267,8 @@
   "{n} preset{} in {g} group{}": "{n} 個預設集，{g} 個群組{:.0}{:.0}",
   "{p} profile{}": "{p} 個描述檔{:.0}",
   "{a} already in your library": "{a} 個已在照片庫中",
-  "Not carried over: {what}": "未沿用：{what}"
+  "Not carried over: {what}": "未沿用：{what}",
+  "{n} items": "{n} 個項目",
+  "{label}, {n} items": "{label}，{n} 個項目",
+  "Add to {album}": "加入「{album}」"
 }

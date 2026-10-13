@@ -5,7 +5,7 @@
 //! of them needs the model.
 //!
 //! ```text
-//! GET  /api/search/status            {available, installed, model, dim, indexed, total, text: {installed, engine, indexed}}
+//! GET  /api/search/status            {available, installed, enabled, installing, model, dim, indexed, total, text: {installed, engine, indexed}}
 //! GET  /api/search?q=…&limit=…       {query, ids: [photo id], scores: [f32], indexed, total}
 //! GET  /api/index/embeddings/keys    {model, dim, keys: [content hash]} the server already has
 //! POST /api/index/embeddings         records a device computed (see `lightcraft_vision::EmbeddingIndex::export`)
@@ -20,9 +20,10 @@
 //!
 //! Vectors are filed by content hash, from a neutral (unedited) rendering of the mini preview, in
 //! `<data>/users/<name>/search/<model>.bin`: derived data, safe to delete. The model is not part
-//! of LightCraft: an admin installs it (`lightcraft-server model download --accept-licences`)
-//! and it loads on first use and unloads when idle (~1.5 GB while loaded). Until then every route
-//! says so instead of failing.
+//! of LightCraft: an admin installs it from the admin page (Search) or with `lightcraft-server
+//! model download --accept-licences`, and can turn it off again ([`crate::switch`]; `installed` is
+//! false while it is off). It loads on first use and unloads when idle (~1.5 GB while loaded).
+//! Until then every route says so instead of failing.
 //!
 //! Faces are personal data and off by default: an admin turns finding people on for a user
 //! (`lightcraft-server user faces NAME on`) after installing the face models (`model download
@@ -53,6 +54,7 @@ use serde_json::json;
 use crate::State;
 use crate::accounts;
 use crate::api::{self, Resp, UserLib, error};
+use crate::switch::{Part, Switch};
 
 /// Long edge of the rendering a photo is embedded from.
 const THUMB_EDGE: usize = 512;
@@ -107,6 +109,8 @@ pub struct Search {
     failed_faces: Mutex<HashSet<(String, Key)>>,
     /// The last problem indexing a user's photos.
     problems: Mutex<HashMap<String, String>>,
+    /// Whether an admin turned search on, and the model download they started ([`switch`]).
+    pub(crate) switch: Switch,
 }
 
 impl Search {
@@ -131,7 +135,14 @@ impl Search {
             failed_text: Mutex::new(HashSet::new()),
             failed_faces: Mutex::new(HashSet::new()),
             problems: Mutex::new(HashMap::new()),
+            switch: Switch::default(),
         }
+    }
+
+    /// Keeps the on/off setting in `data` (without it search is always on).
+    pub fn with_data(mut self, data: &Path) -> Search {
+        self.switch = Switch::new(data);
+        self
     }
 
     /// Finds faces with `finder` instead of YuNet and SFace from the model folder (tests).
@@ -223,9 +234,25 @@ impl Search {
         self.dir.join(lightcraft_engine::vision::TEXT_DIR)
     }
 
-    /// Whether the text-reading models' files are in place.
-    pub fn text_installed(&self) -> bool {
+    /// Whether the text-reading models' files are in place (whether or not an admin has reading on).
+    pub fn text_files_installed(&self) -> bool {
         self.injected_reader.is_some() || lightcraft_vision::ocr::is_model_dir(&self.text_dir())
+    }
+
+    /// Whether the server reads the text in photos now: the models are in place and an admin has
+    /// not turned reading off.
+    pub fn text_installed(&self) -> bool {
+        self.text_files_installed() && self.switch.text_enabled()
+    }
+
+    /// Turn reading the text in photos on or off for every device. Off, the reader leaves memory
+    /// (what was read is kept).
+    pub fn set_text_enabled(&self, on: bool) -> Result<(), String> {
+        self.switch.set_text_enabled(on)?;
+        if !on {
+            self.unload_text();
+        }
+        Ok(())
     }
 
     /// The reader's engine id (known without loading it).
@@ -245,6 +272,9 @@ impl Search {
         if let Some(r) = slot.as_ref() {
             self.touch();
             return Ok(r.clone());
+        }
+        if !self.switch.text_enabled() {
+            return Err("reading the text in photos is turned off on this server (an admin turns it on from the admin page)".into());
         }
         if !self.text_installed() {
             return Err(format!(
@@ -299,16 +329,57 @@ impl Search {
 
     pub(crate) fn shut_down(&self) {
         self.stop.store(true, Ordering::SeqCst);
+        self.switch.shut_down();
         self.wake.notify_all();
     }
 
-    /// Whether the model's files are in place.
-    pub fn installed(&self) -> bool {
+    /// Whether the model's files are in place (whether or not an admin has search turned on).
+    pub fn files_installed(&self) -> bool {
         self.injected.is_some() || lightcraft_vision::siglip::is_model_dir(&self.dir)
     }
 
+    /// Whether the server searches by description now: the model is in place and an admin has not
+    /// turned search off.
+    pub fn installed(&self) -> bool {
+        self.files_installed() && self.switch.enabled()
+    }
+
+    /// Where the search model's files go (`<data>/models/siglip2`).
+    pub fn model_dir(&self) -> &Path {
+        &self.dir
+    }
+
+    /// The model is in memory.
+    pub fn loaded(&self) -> bool {
+        self.injected.is_some() || lock(&self.model).is_some()
+    }
+
+    /// Turn search by description on or off for every device. Off, the model leaves memory (the
+    /// photos' vectors are kept: turning it on again needs no new indexing).
+    pub fn set_enabled(&self, on: bool) -> Result<(), String> {
+        self.switch.set_enabled(on)?;
+        if !on {
+            self.unload();
+        }
+        Ok(())
+    }
+
+    /// Fetch `part`'s models on a thread (the admin page), from the same mirrors the command line
+    /// uses. False when they are in place already, or being fetched.
+    pub fn start_download(&self, part: Part) -> Result<bool, String> {
+        let there = match part {
+            Part::Search => self.files_installed(),
+            Part::Text => self.text_files_installed(),
+            Part::Faces => self.faces_installed(),
+        };
+        if there {
+            return Ok(false);
+        }
+        self.switch.start(part, &self.dir, mirrors_file(&self.dir))
+    }
+
     /// The model's id and vector length (known without loading it).
-    fn spec(&self) -> (String, usize) {
+    pub(crate) fn spec(&self) -> (String, usize) {
         match &self.injected {
             Some(m) => (m.model_id().to_string(), m.dim()),
             None => (lightcraft_vision::siglip::MODEL_ID.to_string(), lightcraft_vision::siglip::DIM),
@@ -321,6 +392,9 @@ impl Search {
 
     /// The model, loaded first if needed (seconds; others wait for the one load).
     fn model(&self) -> Result<Arc<dyn Embedder>, String> {
+        if !self.switch.enabled() {
+            return Err("search by description is turned off on this server (an admin turns it on from the admin page)".into());
+        }
         if let Some(m) = &self.injected {
             return Ok(m.clone());
         }
@@ -370,7 +444,30 @@ impl Search {
         Ok(ix)
     }
 
+    /// The text reader and what it read leave memory.
+    fn unload_text(&self) {
+        if lock(&self.reader).take().is_some() {
+            log::info!("the text-reading models were unloaded");
+        }
+        lock(&self.texts).clear();
+    }
+
+    /// The search model and the vectors leave memory.
+    fn unload(&self) {
+        if lock(&self.model).take().is_some() {
+            log::info!("the search model was unloaded");
+        }
+        lock(&self.indexes).clear();
+    }
+
     fn unload_if_idle(&self) {
+        // (an admin who turned search off, even from the command line, gets the memory back too)
+        if !self.switch.enabled() {
+            self.unload();
+        }
+        if !self.switch.text_enabled() {
+            self.unload_text();
+        }
         let idle = lock(&self.used).is_some_and(|t| t.elapsed() >= IDLE_UNLOAD);
         if idle {
             // (a request holding an index keeps it until it is done)
@@ -695,6 +792,9 @@ pub(crate) fn status(st: &State, l: &Mutex<UserLib>, user: &str) -> Resp {
         &json!({
             "available": true,
             "installed": v.installed(),
+            // (an admin's switch, and whether they are fetching the model: why `installed` is false)
+            "enabled": v.switch.enabled(),
+            "installing": v.switch.status(Part::Search).running,
             "model": model,
             "dim": dim,
             "indexed": indexed,
@@ -756,8 +856,9 @@ pub(crate) fn search(st: &State, l: &Mutex<UserLib>, user: &str, q: &str) -> Res
     let total = hashed(&lock(l)).len();
     // the photos with the query's words in them come first, then the ones that look like it
     let words = match v.text_index(&st.data, user, false) {
-        Ok(Some(ix)) => lock(&ix).search(&query, limit),
-        Ok(None) => Vec::new(),
+        // (an admin who turned reading off turned finding by it off too: what was read is kept)
+        Ok(Some(ix)) if v.switch.text_enabled() => lock(&ix).search(&query, limit),
+        Ok(_) => Vec::new(),
         Err(e) => return error(500, e),
     };
     let looks = match v.model() {
@@ -1065,6 +1166,11 @@ pub fn download_text_models(dir: &Path, mirrors_file: Option<&Path>) -> Result<(
         models::download(files, &mirrors, &to, &Options::default(), &cancel, &mut report).map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+/// The file of extra download locations (one base URL per line) beside the model folder.
+pub fn mirrors_file(dir: &Path) -> Option<PathBuf> {
+    dir.parent().map(|p| p.join("siglip2-mirrors.txt"))
 }
 
 /// `lightcraft-server model download`: fetches the model into `dir` (resuming, verified).

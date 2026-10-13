@@ -1960,5 +1960,8 @@
   "Couldn't be read": "Illisibles",
   "Import failed": "Échec de l’importation",
   "Nothing new to import": "Rien de nouveau à importer",
-  "Nothing was imported": "Rien n’a été importé"
+  "Nothing was imported": "Rien n’a été importé",
+  "Create New": "Créer",
+  "Add Photos From": "Ajouter des photos depuis",
+  "Smart Album from Filter": "Album intelligent depuis le filtre"
 }

@@ -100,6 +100,83 @@ pub(crate) fn color_image(img: &lightcraft_raster::Rgba8) -> egui::ColorImage {
     egui::ColorImage { size: [img.width, img.height], source_size: egui::vec2(img.width as f32, img.height as f32), pixels }
 }
 
+/// How large a draft (the loupe's render while a slider drags) may be, learned from how long this
+/// host takes to render one. The old fixed 0.6 scale is a few ms on a GPU for Exposure or
+/// Highlights, but Temperature and Noise Reduction rebuild every spatial plane (30–100 ms even on
+/// the GPU, `render_bench`), and the browser build has no GPU at all: it renders on one CPU thread at
+/// 100–300 ns per pixel, where that scale is a few frames a second.
+/// The scale is chosen once per drag and only goes down during it: a draft of another size starts
+/// from a cold stage cache, so a scale that moved with every sample would be slower than either.
+#[derive(Debug, Default)]
+pub struct DraftBudget {
+    /// Smoothed render time per output pixel (ms) of drafts that ran on a warm stage cache.
+    ms_per_px: Option<f64>,
+    /// Size of the last draft that finished: the next one of the same size was warm.
+    last: Option<[usize; 2]>,
+    /// The scale the drag in progress renders at.
+    frozen: Option<f32>,
+    /// The scale the latest drag rendered at (diagnostics).
+    last_scale: Option<f32>,
+}
+
+impl DraftBudget {
+    /// What a draft should take (ms): about two frames at 60 Hz. (A browser renders the drafts of a
+    /// drag on several workers in turn, so this is the lag behind the slider, not the update rate.)
+    const TARGET_MS: f64 = 40.0;
+    /// Linear scale limits. The ceiling is the scale drafts always had.
+    const MAX: f32 = 0.6;
+    const MIN: f32 = 0.2;
+    /// Before anything is measured: a CPU-only host (the browser) starts small.
+    const GUESS: f32 = if cfg!(target_arch = "wasm32") { 0.35 } else { Self::MAX };
+
+    /// A draft of `size` finished in `ms`.
+    pub fn note(&mut self, size: [usize; 2], ms: f64) {
+        let warm = self.last == Some(size);
+        self.last = Some(size);
+        let px = size[0] as f64 * size[1] as f64;
+        if warm && ms > 0.0 && px > 0.0 {
+            let c = ms / px;
+            self.ms_per_px = Some(self.ms_per_px.map_or(c, |old| old + (c - old) * 0.3));
+        }
+    }
+
+    /// The linear scale of a draft of a render that is `full_px` pixels at full size: 1 when no
+    /// slider is dragging.
+    pub fn scale(&mut self, interacting: bool, full_px: f64) -> f32 {
+        if !interacting {
+            // (the full-size render that follows replaces the stage cache: the next drag starts cold)
+            self.frozen = None;
+            self.last = None;
+            return 1.0;
+        }
+        let want = match self.ms_per_px {
+            Some(c) if c > 0.0 => ((Self::TARGET_MS / c / full_px.max(1.0)).sqrt() as f32).clamp(Self::MIN, Self::MAX),
+            _ => Self::GUESS,
+        };
+        // (steps of 0.05, so the render size doesn't change with every sample)
+        let want = if want.is_finite() { (want * 20.0).round() / 20.0 } else { Self::GUESS };
+        let scale = match self.frozen {
+            Some(f) if want >= f * 0.75 => f,
+            _ => want,
+        };
+        self.frozen = Some(scale);
+        self.last_scale = Some(scale);
+        scale
+    }
+
+    /// The linear scale of a zoomed view's window draft, given the whole-frame draft's `scale`: windows
+    /// hold only what is on screen and were always drafted at full size, which a fast host still does
+    /// (`scale` at its ceiling); a slower one shrinks them in proportion to how far the frame's draft went down.
+    pub fn window_scale(scale: f32) -> f32 {
+        if scale.is_finite() { (scale / Self::MAX).clamp(Self::MIN / Self::MAX, 1.0) } else { 1.0 }
+    }
+
+    /// For diagnostics: the scale of the latest drag, and the learned render cost (ms per megapixel).
+    pub fn report(&self) -> (Option<f32>, Option<f64>) {
+        (self.last_scale, self.ms_per_px.map(|c| c * 1e6))
+    }
+}
+
 /// How far over the budget the open photo's window and before caches may run before they are cut.
 const HARD_FACTOR: usize = 4;
 
@@ -189,6 +266,10 @@ pub struct Renderer {
     pending: HashMap<Slot, (u64, u32)>,
     pub textures: HashMap<Slot, Tex>,
     pub last_main_ms: f64,
+    /// How big the loupe's drafts may be on this host (see [`DraftBudget`]).
+    draft: DraftBudget,
+    /// Request ids of the loupe's latest drafts: their results teach `draft` the host's speed.
+    draft_ids: Vec<u64>,
     /// Jobs finished since start (for inspect/perf).
     pub completed: u64,
     /// Keep a CPU copy of every texture so the UI can be rasterized headlessly (set when the app
@@ -267,6 +348,8 @@ impl Renderer {
             pending: HashMap::new(),
             textures: HashMap::new(),
             last_main_ms: 0.0,
+            draft: DraftBudget::default(),
+            draft_ids: Vec::new(),
             completed: 0,
             keep_pixels: false,
             keep_neighbours: false,
@@ -410,6 +493,17 @@ impl Renderer {
         self.queue.iter().any(|q| q.slot == slot) || self.pool.is_queued(slot)
     }
 
+    /// The linear scale the loupe renders at: 1 unless a slider is dragging, then what this host
+    /// renders in time (see [`DraftBudget`]). `full_px`: the pixels of the undrafted render.
+    pub fn draft_scale(&mut self, interacting: bool, full_px: f64) -> f32 {
+        self.draft.scale(interacting, full_px)
+    }
+
+    /// What the draft budget has learned (see [`DraftBudget::report`]).
+    pub fn draft_report(&self) -> (Option<f32>, Option<f64>) {
+        self.draft.report()
+    }
+
     /// Is the slot's current texture (or pending request) already for `key`?
     /// Key of what `slot` shows or is rendering next (the pending request wins).
     pub fn wanted(&self, slot: Slot) -> Option<u64> {
@@ -429,6 +523,12 @@ impl Renderer {
         self.pending.insert(slot, (job.key, priority));
         job.request_id = lightcraft_preview::next_tick();
         self.request_ids.insert(slot, job.request_id);
+        if slot == Slot::Main && job.request.quality == lightcraft_engine::pipeline::Quality::Draft {
+            if self.draft_ids.len() >= 32 {
+                self.draft_ids.remove(0);
+            }
+            self.draft_ids.push(job.request_id);
+        }
         // (an offload keeps its own per-view stage caches; the flag tells it to)
         let job = if slot.is_view() { job.with_stages(self.stages.entry(slot).or_default().clone()) } else { job };
         if self.offload.is_some() {
@@ -759,6 +859,10 @@ impl Renderer {
             }
             if slot == Slot::Main {
                 self.last_main_ms = ms;
+                if let Some(i) = self.draft_ids.iter().position(|id| *id == r.request_id) {
+                    self.draft_ids.swap_remove(i);
+                    self.draft.note([img.width, img.height], ms);
+                }
             }
             changed = true;
         }
@@ -1030,6 +1134,28 @@ mod thumbnail_tests {
         }
         assert_eq!(app.renderer.thumb_jobs_built, 1);
         assert_eq!(app.renderer.queue.len(), 1);
+    }
+
+    // A slider drag changes the photo every frame: its thumbnail keeps what it shows until the drag
+    // ends, instead of taking a worker from the loupe on every tick
+    #[test]
+    fn a_drag_renders_no_thumbnail_of_the_photo_it_edits() {
+        let (mut app, work, ctx) = fixture();
+        request(&mut app);
+        let (slot, job) = take_job(&work);
+        finish(&mut app, &work, &ctx, slot, job.run());
+        assert_eq!(app.renderer.thumb_jobs_built, 1);
+        app.run("library.select", serde_json::json!({"ids": [1]})).unwrap();
+        app.run("develop.beginInteraction", serde_json::json!({"label": "Exposure"})).unwrap();
+        for k in 1..=30 {
+            app.run("develop.set", serde_json::json!({"control": "light.exposure", "value": 0.05 * f64::from(k)})).unwrap();
+            request(&mut app);
+        }
+        assert_eq!(app.renderer.thumb_jobs_built, 1, "no thumbnail job per tick");
+        assert!(work.borrow().jobs.is_empty());
+        app.run("develop.endInteraction", serde_json::json!({})).unwrap();
+        request(&mut app);
+        assert_eq!(app.renderer.thumb_jobs_built, 2, "the thumbnail catches up once the drag ends");
     }
 
     #[test]
@@ -1404,5 +1530,94 @@ mod color_image_tests {
     fn an_empty_image_is_an_empty_texture() {
         let img = lightcraft_raster::Rgba8::new(0, 0);
         assert!(color_image(&img).pixels.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod draft_budget_tests {
+    use super::*;
+
+    /// A host that renders `ns_per_px` per pixel, after two drafts of one size (the first is cold).
+    fn learned(ns_per_px: f64) -> DraftBudget {
+        let mut b = DraftBudget::default();
+        let size = [1000, 700];
+        for _ in 0..4 {
+            b.note(size, ns_per_px * 1e-6 * 700_000.0);
+        }
+        b
+    }
+
+    #[test]
+    fn nothing_is_drafted_when_no_slider_drags() {
+        assert_eq!(learned(100.0).scale(false, 3e6), 1.0);
+    }
+
+    #[test]
+    fn a_fast_host_keeps_the_old_scale_and_a_slow_one_shrinks_the_draft() {
+        // a GPU: a few ms for a 1.5 MP draft
+        assert_eq!(learned(3.0).scale(true, 3e6), DraftBudget::MAX);
+        // the browser's CPU worker: ~100 ns a pixel makes 0.4 MP the most that fits 40 ms
+        let s = learned(100.0).scale(true, 3e6);
+        let px = 3e6 * f64::from(s) * f64::from(s);
+        assert!((0.25e6..0.5e6).contains(&px), "scale {s} is {px} px");
+        // a hopeless host stops at the floor
+        assert_eq!(learned(10_000.0).scale(true, 3e6), DraftBudget::MIN);
+    }
+
+    #[test]
+    fn a_draft_of_a_new_size_is_cold_and_teaches_nothing() {
+        let mut b = DraftBudget::default();
+        b.note([800, 600], 900.0);
+        b.note([400, 300], 900.0);
+        assert_eq!(b.scale(true, 3e6), DraftBudget::GUESS, "no two drafts of one size yet");
+        b.note([400, 300], 12.0);
+        assert!(b.scale(false, 3e6) == 1.0 && b.ms_per_px.is_some_and(|c| (c - 1e-4).abs() < 1e-9));
+    }
+
+    #[test]
+    fn the_scale_holds_during_a_drag_and_only_goes_down() {
+        let mut b = learned(3.0);
+        let first = b.scale(true, 3e6);
+        assert_eq!(first, DraftBudget::MAX);
+        // a little noise in the samples moves nothing
+        b.note([1000, 700], 2.6);
+        assert_eq!(b.scale(true, 3e6), first);
+        // a slider that turns out much slower (it redoes more per tick) shrinks the draft...
+        for _ in 0..12 {
+            b.note([1000, 700], 70.0);
+        }
+        let smaller = b.scale(true, 3e6);
+        assert!(smaller < first * 0.75 && smaller >= DraftBudget::MIN, "{smaller}");
+        // ...and a fast tick afterwards doesn't grow it back mid-drag
+        for _ in 0..30 {
+            b.note([1000, 700], 2.0);
+        }
+        assert_eq!(b.scale(true, 3e6), smaller);
+        // the next drag starts afresh from what was learned last
+        assert_eq!(b.scale(false, 3e6), 1.0);
+        assert_eq!(b.scale(true, 3e6), DraftBudget::MAX);
+    }
+
+    // A fast host keeps drafting a zoomed view's windows at full size; a slower one shrinks them with the frame's draft
+    #[test]
+    fn windows_shrink_only_as_far_as_the_frame_draft_is_below_the_fast_hosts() {
+        assert_eq!(DraftBudget::window_scale(DraftBudget::MAX), 1.0);
+        assert_eq!(DraftBudget::window_scale(1.0), 1.0);
+        assert!((DraftBudget::window_scale(0.3) - 0.5).abs() < 1e-6);
+        assert!((DraftBudget::window_scale(DraftBudget::MIN) - DraftBudget::MIN / DraftBudget::MAX).abs() < 1e-6);
+        assert_eq!(DraftBudget::window_scale(f32::NAN), 1.0);
+        assert!(DraftBudget::window_scale(0.0) >= DraftBudget::MIN / DraftBudget::MAX);
+    }
+
+    #[test]
+    fn hostile_numbers_give_a_scale_in_range() {
+        for full in [0.0, -1.0, f64::NAN, f64::INFINITY, 1e300] {
+            let s = learned(100.0).scale(true, full);
+            assert!((DraftBudget::MIN..=DraftBudget::MAX).contains(&s), "full_px {full}: {s}");
+            let mut b = DraftBudget::default();
+            b.note([0, 0], f64::NAN);
+            b.note([0, 0], f64::INFINITY);
+            assert!(b.scale(true, full) > 0.0);
+        }
     }
 }

@@ -50,6 +50,19 @@ fn permissions(panel: &Panel) -> Permissions {
     if *panel == Panel::Canvas { Permissions::PROTECTED } else { Permissions::default() }
 }
 
+/// The Presets panel's starting width (the side panels' are `state::LEFT_WIDTH` / `RIGHT_WIDTH`).
+const PRESETS_WIDTH: f32 = 300.0;
+
+/// The width a double-click on a panel's divider returns it to; the photo view has none.
+fn default_width(panel: Panel) -> Option<f32> {
+    match panel {
+        Panel::Canvas => None,
+        Panel::Library => Some(crate::state::LEFT_WIDTH.default),
+        Panel::Tools => Some(crate::state::RIGHT_WIDTH.default),
+        Panel::Presets => Some(PRESETS_WIDTH),
+    }
+}
+
 fn tabs(panel: Panel) -> Node<Panel> {
     Node::Tabs { panels: vec![panel], active: 0 }
 }
@@ -77,7 +90,7 @@ impl Default for Workspace {
                     split(
                         SplitAxis::Horizontal,
                         SplitSize::FixedSecond(crate::state::RIGHT_WIDTH.default),
-                        split(SplitAxis::Horizontal, SplitSize::FixedSecond(300.0), tabs(Panel::Canvas), tabs(Panel::Presets)),
+                        split(SplitAxis::Horizontal, SplitSize::FixedSecond(PRESETS_WIDTH), tabs(Panel::Canvas), tabs(Panel::Presets)),
                         tabs(Panel::Tools),
                     ),
                 )),
@@ -225,6 +238,7 @@ impl Workspace {
             "open" => return self.reveal(panel),
             "close" => Action::Close { panel },
             "activate" => Action::Activate { panel },
+            "resetWidth" => return self.set_width(panel, default_width(panel).ok_or("that panel has no width to reset")?),
             "setStackOpen" => Action::SetStackOpen { panel, open: params.get("open").and_then(Value::as_bool).ok_or("open must be a boolean")? },
             "resizeStack" => {
                 let value = params.get("height").ok_or("height is required")?;
@@ -277,7 +291,11 @@ impl Workspace {
                 };
                 Action::Move { panel, anchor, placement }
             }
-            _ => return Err("operation must be open, close, activate, float, move, moveFloating, resizeSplit, setStackOpen or resizeStack".into()),
+            _ => {
+                return Err(
+                    "operation must be open, close, activate, float, move, moveFloating, resizeSplit, resetWidth, setStackOpen or resizeStack".into(),
+                );
+            }
         };
         self.apply(action)
     }
@@ -422,8 +440,14 @@ pub fn show(app: &mut crate::LightcraftApp, ui: &mut egui::Ui) {
     style.border = egui::Stroke::new(1.0, t.divider);
     style.accent = t.accent;
     style.font = t.font(12.0);
+    // The gaps between panes (the drag borders) show what is behind the dock. Left alone that is
+    // eframe's near-black clear colour: invisible in the dark themes, harsh black bars in the light ones.
+    let area = ui.available_rect_before_wrap();
+    ui.painter().rect_filled(area, 0.0, t.divider);
     // Tool and preset panels publish hover previews before the photo consumes them.
     let mut canvas = None;
+    // Where each panel's body is drawn, to tell which divider a double-click lands on.
+    let mut bodies = Vec::new();
     let output = DockArea::new(egui::Id::new("lightcraft-docking")).show_with_limits(
         ui,
         &workspace.layout,
@@ -431,19 +455,25 @@ pub fn show(app: &mut crate::LightcraftApp, ui: &mut egui::Ui) {
         |panel| crate::i18n::tr(panel.label()).into(),
         permissions,
         panel_limits,
-        |ui, panel| match panel {
-            Panel::Canvas => {
-                canvas = Some(ui.new_child(egui::UiBuilder::new().id_salt("photo-view").max_rect(ui.max_rect())));
+        |ui, panel| {
+            bodies.push((*panel, ui.max_rect()));
+            match panel {
+                Panel::Canvas => {
+                    canvas = Some(ui.new_child(egui::UiBuilder::new().id_salt("photo-view").max_rect(ui.max_rect())));
+                }
+                Panel::Library => {
+                    crate::widgets::register(ui.ctx(), "panel:left_panel", ui.max_rect());
+                    crate::panels::left::show(app, ui);
+                }
+                Panel::Tools => {
+                    crate::widgets::register(ui.ctx(), "panel:right_panel", ui.max_rect());
+                    crate::panels::right::show(app, ui);
+                }
+                Panel::Presets => {
+                    crate::widgets::register(ui.ctx(), "panel:presets", ui.max_rect());
+                    crate::panels::presets::show(app, ui);
+                }
             }
-            Panel::Library => {
-                crate::widgets::register(ui.ctx(), "panel:left_panel", ui.max_rect());
-                crate::panels::left::show(app, ui);
-            }
-            Panel::Tools => {
-                crate::widgets::register(ui.ctx(), "panel:right_panel", ui.max_rect());
-                crate::panels::right::show(app, ui);
-            }
-            Panel::Presets => crate::panels::presets::show(app, ui),
         },
     );
     if let Some(mut canvas) = canvas {
@@ -489,21 +519,58 @@ pub fn show(app: &mut crate::LightcraftApp, ui: &mut egui::Ui) {
             app.ui.toast = Some((format!("Panel move was not applied: {error}"), ui.input(|input| input.time) + 8.0, None));
         }
     }
+    // A double-click on a divider returns the panel it sizes to its default width.
+    let double_click =
+        ui.input(|input| if input.pointer.button_double_clicked(egui::PointerButton::Primary) { input.pointer.interact_pos() } else { None });
+    if let Some(pos) = double_click.filter(|pos| ui.ctx().layer_id_at(*pos) == Some(ui.layer_id())) {
+        for panel in divider_owners(&rendered.layout, &bodies, style.gap, area, pos) {
+            if let Err(error) = command_impl(app, false, &json!({"operation": "resetWidth", "panel": panel.id()}), true) {
+                app.ui.toast = Some((format!("Panel width was not reset: {error}"), ui.input(|input| input.time) + 8.0, None));
+            }
+        }
+    }
 }
 
-/// Keep the established ui.set width controls connected to the panel's current parent split.
-pub(crate) fn set_widths(state: &mut crate::UiState, params: &Value) -> Result<(), String> {
-    state.left_width = crate::state::LEFT_WIDTH.clamp(state.left_width);
-    state.right_width = crate::state::RIGHT_WIDTH.clamp(state.right_width);
-    let Some(workspace) = state.docking.as_mut() else {
-        return Ok(());
+/// The panels whose width the divider at `pos` sets: the neighbour fixed on that side of its split
+/// (the Presets | Tools divider sizes Tools, not Presets). `bodies` are where the panels were drawn.
+fn divider_owners(layout: &Layout<Panel>, bodies: &[(Panel, egui::Rect)], gap: f32, area: egui::Rect, pos: egui::Pos2) -> Vec<Panel> {
+    // craft-ui's divider handle also grabs this far to either side of the gap.
+    const GRAB: f32 = 3.0;
+    let owns = |panel: Panel, left_of_divider: bool| {
+        layout.location(&panel).is_ok_and(|location| {
+            location.floating.is_none()
+                && if left_of_divider {
+                    matches!((location.placement, location.size), (Placement::Split(Zone::Left), Some(SplitSize::FixedFirst(_))))
+                } else {
+                    matches!((location.placement, location.size), (Placement::Split(Zone::Right), Some(SplitSize::FixedSecond(_))))
+                }
+        })
     };
-    workspace.validate()?;
-    for (key, panel, width) in [("leftWidth", Panel::Library, state.left_width), ("rightWidth", Panel::Tools, state.right_width)] {
-        if params.get(key).is_none() {
-            continue;
+    let mut owners = Vec::new();
+    if !area.contains(pos) {
+        return owners;
+    }
+    for &(left, a) in bodies {
+        for &(right, b) in bodies {
+            let between = b.left() - a.right();
+            if between > 0.0 && between <= gap + 0.5 && pos.x >= a.right() - GRAB && pos.x <= b.left() + GRAB {
+                if owns(left, true) {
+                    owners.push(left);
+                }
+                if owns(right, false) {
+                    owners.push(right);
+                }
+            }
         }
-        if let Some((_, location)) = workspace.hidden.iter_mut().find(|(id, _)| *id == panel) {
+    }
+    owners
+}
+
+impl Workspace {
+    /// Set `panel`'s width wherever it sits: closed (kept for when it reopens), floating, or beside a
+    /// sibling (the width of its parent split; a vertical split's height is left alone).
+    fn set_width(&mut self, panel: Panel, width: f32) -> Result<(), String> {
+        if let Some((_, location)) = self.hidden.iter_mut().find(|(id, _)| *id == panel) {
             if let Some(rect) = &mut location.floating {
                 rect[2] = width;
             }
@@ -512,15 +579,14 @@ pub(crate) fn set_widths(state: &mut crate::UiState, params: &Value) -> Result<(
                 Placement::Split(Zone::Right) => location.size = Some(SplitSize::FixedSecond(width)),
                 _ => {} // Width controls do not rewrite a saved vertical split's height.
             }
-            continue;
+            return Ok(());
         }
-        if let Some(group) = workspace.layout.floating.iter().find(|group| group.panels.contains(&panel)) {
+        if let Some(group) = self.layout.floating.iter().find(|group| group.panels.contains(&panel)) {
             let mut rect = group.rect;
             rect[2] = width;
-            workspace.apply(Action::MoveFloating { panel, rect })?;
-            continue;
+            return self.apply(Action::MoveFloating { panel, rect });
         }
-        let mut nodes = workspace.layout.root.as_ref().map(|node| vec![(node, Vec::new())]).unwrap_or_default();
+        let mut nodes = self.layout.root.as_ref().map(|node| vec![(node, Vec::new())]).unwrap_or_default();
         let mut change = None;
         while let Some((node, path)) = nodes.pop() {
             if let Node::Split { axis, first, second, .. } = node {
@@ -545,8 +611,24 @@ pub(crate) fn set_widths(state: &mut crate::UiState, params: &Value) -> Result<(
                 nodes.push((first, first_path));
             }
         }
-        if let Some(action) = change {
-            workspace.apply(action)?;
+        match change {
+            Some(action) => self.apply(action),
+            None => Ok(()),
+        }
+    }
+}
+
+/// Keep the established ui.set width controls connected to the panel's current parent split.
+pub(crate) fn set_widths(state: &mut crate::UiState, params: &Value) -> Result<(), String> {
+    state.left_width = crate::state::LEFT_WIDTH.clamp(state.left_width);
+    state.right_width = crate::state::RIGHT_WIDTH.clamp(state.right_width);
+    let Some(workspace) = state.docking.as_mut() else {
+        return Ok(());
+    };
+    workspace.validate()?;
+    for (key, panel, width) in [("leftWidth", Panel::Library, state.left_width), ("rightWidth", Panel::Tools, state.right_width)] {
+        if params.get(key).is_some() {
+            workspace.set_width(panel, width)?;
         }
     }
     Ok(())

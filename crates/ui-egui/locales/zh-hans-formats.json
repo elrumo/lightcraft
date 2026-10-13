@@ -267,5 +267,8 @@
   "{n} preset{} in {g} group{}": "{n} 个预设，{g} 个分组{0:.0}{1:.0}",
   "{p} profile{}": "{p} 个配置文件{0:.0}",
   "{a} already in your library": "{a} 个已在图库中",
-  "Not carried over: {what}": "未沿用：{what}"
+  "Not carried over: {what}": "未沿用：{what}",
+  "{n} items": "{n} 项",
+  "{label}, {n} items": "{label}，{n} 项",
+  "Add to {album}": "添加到“{album}”"
 }

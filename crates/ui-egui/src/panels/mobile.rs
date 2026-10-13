@@ -87,7 +87,8 @@ fn glass_end(ui: &mut egui::Ui, id: &str, tip: &str, face: Face, tint: Option<Co
     let left = if align == Align2::LEFT_CENTER { at.x + 8.0 } else { at.x - 8.0 - w };
     let glass = Rect::from_min_size(pos2(left, at.y - crate::glass::BUTTON_D / 2.0), vec2(w, crate::glass::BUTTON_D));
     let hit = glass.expand2(vec2(3.0, (ROW_H - glass.height()) / 2.0));
-    let resp = ui.interact(hit, Id::new(("lc-bar", id)), if enabled { Sense::click() } else { Sense::hover() });
+    // (two pages can be up at once with the same buttons: the id is the page's own)
+    let resp = ui.interact(hit, ui.id().with(("lc-bar", id)), if enabled { Sense::click() } else { Sense::hover() });
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, crate::i18n::tr(tip)));
     crate::widgets::register(ui.ctx(), format!("button:{id}"), hit);
     let k = crate::glass::press(ui.ctx(), &resp);
@@ -183,22 +184,32 @@ pub fn page_with(ctx: &egui::Context, id: &str, bar_spec: PageBar, open: bool, b
     let sid = Id::new(("lc-sheet", id));
     let p = slide(ctx, sid, open);
     if p <= 0.0 {
+        ctx.data_mut(|d| d.remove::<f32>(sid.with("pull").with("from")));
         return Bar { gone: true, ..Bar::default() };
     }
     let content = ctx.content_rect();
     let screen = ctx.viewport_rect();
-    let drop = (1.0 - p) * (screen.bottom() - content.top());
+    let travel = screen.bottom() - content.top();
+    // pulled down by its bar, or by its content when that is scrolled to its top, it follows the
+    // finger and closes when let go far enough down (as `Bar::cancel`)
+    let at_rest = Rect::from_min_max(pos2(content.left(), content.top() + 8.0), screen.max);
+    let (scroll, at_top) = ctx.data(|d| (d.get_temp::<[Id; 2]>(sid.with("scroll-ids")), d.get_temp::<bool>(sid.with("at-top")).unwrap_or(true)));
+    let pulled = pull(ctx, sid, at_rest, scroll.as_ref().map_or(&[][..], |s| &s[..]), |o| at_top || o.y < at_rest.top() + ROW_H);
+    let pulled_shut = pulled.1 && open;
+    let drop = pulled_drop(ctx, sid, p, travel, pulled);
+    // how far up it is: the dim and the screen behind follow a pull too
+    let up = (1.0 - drop / travel.max(1.0)).clamp(0.0, 1.0);
     // (the screen behind steps back as it comes up: `stack_behind`)
     ctx.data_mut(|d| {
         let most = d.get_temp::<f32>(presented_id()).unwrap_or(0.0);
-        d.insert_temp(presented_id(), most.max(p));
+        d.insert_temp(presented_id(), most.max(up));
     });
     // dim what is behind while it slides in, and keep taps off it
     egui::Area::new(sid.with("dim")).order(egui::Order::Middle).fixed_pos(screen.min).show(ctx, |ui| {
-        ui.painter().rect_filled(screen, 0.0, Color32::from_black_alpha((t.scrim as f32 * p) as u8));
+        ui.painter().rect_filled(screen, 0.0, Color32::from_black_alpha((t.scrim as f32 * up) as u8));
         let _ = ui.allocate_rect(screen, Sense::click());
     });
-    let mut bar = Bar::default();
+    let mut bar = Bar { cancel: pulled_shut, ..Bar::default() };
     let top = content.top() + 8.0 + drop;
     // (opaque as it slides: not egui's fade-in of a new area, through which what is behind showed)
     egui::Area::new(sid).order(egui::Order::Foreground).constrain(false).fade_in(false).fixed_pos(pos2(content.left(), top)).show(ctx, |ui| {
@@ -207,13 +218,15 @@ pub fn page_with(ctx: &egui::Context, id: &str, bar_spec: PageBar, open: bool, b
         // stop at the safe area / keyboard
         let full = Rect::from_min_max(pos2(content.left(), top), pos2(content.right(), screen.bottom().max(top + ROW_H)));
         let _ = ui.allocate_rect(full, Sense::hover());
+        // (its colour goes on under the home indicator: the area's own clip stops at the safe area)
+        ui.set_clip_rect(full);
         crate::widgets::register(ctx, format!("sheet:{id}"), full);
         crate::widgets::register(ctx, "dialog:window", full);
         ui.painter().rect_filled(full, CornerRadius { nw: PAGE_R, ne: PAGE_R, sw: 0, se: 0 }, t.chrome);
         let bar_r = Rect::from_min_size(full.min, vec2(w, ROW_H));
         let galley = ui.painter().layout(crate::i18n::tr(bar_spec.title).to_string(), t.semibold(17.0), t.text, (w - 200.0).max(80.0));
         ui.painter().galley(bar_r.center() - galley.size() / 2.0, galley, t.text);
-        bar.cancel = bar_item(ui, bar_spec.left_id, bar_spec.left, bar_r.left_center() + vec2(4.0, 0.0), Align2::LEFT_CENTER);
+        bar.cancel |= bar_item(ui, bar_spec.left_id, bar_spec.left, bar_r.left_center() + vec2(4.0, 0.0), Align2::LEFT_CENTER);
         bar.ok = bar_item(ui, bar_spec.right_id, bar_spec.right, bar_r.right_center() - vec2(4.0, 0.0), Align2::RIGHT_CENTER);
         if !open {
             // (sliding out: its bar's buttons are deaf)
@@ -224,19 +237,124 @@ pub fn page_with(ctx: &egui::Context, id: &str, bar_spec: PageBar, open: bool, b
             Rect::from_min_max(pos2(full.left(), bar_r.bottom() + 1.0), pos2(full.right(), (content.bottom() + drop).max(bar_r.bottom() + 1.0)));
         let mut child = ui.new_child(UiBuilder::new().max_rect(body_r).id_salt(sid.with("body")));
         child.set_clip_rect(body_r.intersect(ui.clip_rect()));
-        egui::ScrollArea::vertical().id_salt(sid.with("scroll")).auto_shrink([false, false]).show(&mut child, |ui| {
+        let out = egui::ScrollArea::vertical().id_salt(sid.with("scroll")).auto_shrink([false, false]).show(&mut child, |ui| {
             egui::Frame::NONE.inner_margin(egui::Margin { left: 16, right: 16, top: 12, bottom: 24 }).show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 ui.spacing_mut().item_spacing.y = 10.0;
                 body(ui);
             });
         });
+        // (a list of its own inside, like the albums', says where it is scrolled: `scrolled`)
+        let (top, inner) = ctx.data(|d| d.get_temp::<(bool, Id)>(sid.with("inner"))).unwrap_or((true, out.id));
+        ctx.data_mut(|d| {
+            d.insert_temp(sid.with("scroll-ids"), [out.id, inner]);
+            d.insert_temp(sid.with("at-top"), out.state.offset.y <= 0.5 && top);
+            d.remove::<(bool, Id)>(sid.with("inner"));
+        });
     });
     bar
 }
 
+/// A page's body that scrolls a list of its own (the albums) says where that list is, so that a
+/// pull down on it closes the page only from its top. Call while drawing the page `id`.
+pub fn scrolled<R>(ctx: &egui::Context, id: &str, list: &egui::scroll_area::ScrollAreaOutput<R>) {
+    let at = (list.state.offset.y <= 0.5, list.id);
+    ctx.data_mut(|d| d.insert_temp(Id::new(("lc-sheet", id)).with("inner"), at));
+}
+
 /// A page's top corners, rounder than they were before iOS 26.
 const PAGE_R: u8 = 24;
+
+/// How far (points) a finger moves down before a sheet follows it.
+const PULL_SLOP: f32 = 10.0;
+/// A sheet let go this far down, or flicked down this fast (points per second), closes.
+const PULL_CLOSE: f32 = 120.0;
+const PULL_FLICK: f32 = 700.0;
+
+/// A pull of a sheet in progress: where the finger came down and whether the sheet follows it.
+#[derive(Clone, Copy, Debug)]
+struct Pull {
+    origin: egui::Pos2,
+    /// The finger came down where it may pull (the bar, or content scrolled to its top).
+    grabbed: bool,
+    following: bool,
+}
+
+/// Something inside a sheet has the finger this frame (an album being carried): the sheet must not
+/// follow it down. Call every frame while it lasts.
+pub fn hold(ctx: &egui::Context) {
+    let frame = ctx.cumulative_frame_nr();
+    ctx.data_mut(|d| d.insert_temp(Id::new("lc-sheet-hold"), frame));
+}
+
+fn held(ctx: &egui::Context) -> bool {
+    let at = ctx.data(|d| d.get_temp::<u64>(Id::new("lc-sheet-hold")));
+    at.is_some_and(|f| f + 1 >= ctx.cumulative_frame_nr())
+}
+
+/// A sheet pulled down by the finger, as iOS's are: a press inside `sheet` where `grab` says it may
+/// pull, that then moves down more than sideways, drags the sheet down with it (unless a widget
+/// other than the `scroll` areas took the drag: a slider, a text field). Returns how far it is pulled this
+/// frame (springing back once let go) and whether it was just let go far or fast enough to close.
+fn pull(ctx: &egui::Context, id: Id, sheet: Rect, scroll: &[Id], grab: impl Fn(egui::Pos2) -> bool) -> (f32, bool) {
+    let key = id.with("pull");
+    // (only where nothing is over it: a menu or another sheet on top takes its own pulls)
+    let on_top = |o: egui::Pos2| ctx.layer_id_at(o) == Some(egui::LayerId::new(egui::Order::Foreground, id));
+    let (pressed, down, origin, pos, vy) =
+        ctx.input(|i| (i.pointer.any_pressed(), i.pointer.primary_down(), i.pointer.press_origin(), i.pointer.latest_pos(), i.pointer.velocity().y));
+    let mut st = ctx.data(|d| d.get_temp::<Pull>(key));
+    if pressed {
+        st = origin.filter(|o| sheet.contains(*o) && on_top(*o)).map(|o| Pull { origin: o, grabbed: grab(o), following: false });
+    }
+    let mut closed = false;
+    let mut by = None;
+    if let (Some(s), Some(p)) = (st.as_mut(), pos) {
+        let d = p - s.origin;
+        let free = ctx.dragged_id().is_none_or(|w| scroll.iter().any(|s| w == s.with("area")));
+        if down && !s.following && s.grabbed && d.y > PULL_SLOP && d.y > d.x.abs() && free && !held(ctx) {
+            s.following = true;
+        }
+        if s.following {
+            if down {
+                by = Some(d.y.max(0.0));
+            } else {
+                closed = d.y > PULL_CLOSE.min(sheet.height() * 0.4) || vy > PULL_FLICK;
+            }
+        }
+    }
+    if !down {
+        st = None;
+    }
+    ctx.data_mut(|d| {
+        d.remove::<Pull>(key);
+        if let Some(s) = st {
+            d.insert_temp(key, s);
+        }
+    });
+    // (followed exactly while held; let go, it springs back up)
+    let shown = ctx.animate_value_with_time(key.with("at"), by.unwrap_or(0.0), if by.is_some() { 0.0 } else { 0.25 });
+    (shown, closed)
+}
+
+/// How far below its place to draw a sheet that slides `slide` points down when shut (`p`: its
+/// slide progress) and is pulled by the finger ([`pull`]): let go to close, it carries on down from
+/// where the finger left it instead of springing back first.
+fn pulled_drop(ctx: &egui::Context, id: Id, p: f32, slide: f32, pulled: (f32, bool)) -> f32 {
+    let from = id.with("pull").with("from");
+    let (by, closed) = pulled;
+    if closed {
+        ctx.data_mut(|d| d.insert_temp(from, by));
+    }
+    match ctx.data(|d| d.get_temp::<f32>(from)) {
+        // (sliding away, or left open by its caller: then it springs back)
+        Some(f) if p < 1.0 || closed => f + (1.0 - p) * (slide - f).max(0.0),
+        Some(_) => {
+            ctx.data_mut(|d| d.remove::<f32>(from));
+            by
+        }
+        None => by + (1.0 - p) * slide,
+    }
+}
 
 /// Where the pages say how far up they are this frame (the most of any), for [`stack_behind`].
 fn presented_id() -> Id {
@@ -331,7 +449,10 @@ pub fn actions_wide(ctx: &egui::Context, id: &str, title: Option<&str>, menu_w: 
         }
         // (leaving: where it was)
         None if p > 0.0 => ctx.data(|d| d.get_temp::<Option<Rect>>(last)).flatten(),
-        None => return,
+        None => {
+            ctx.data_mut(|d| d.remove::<f32>(sid.with("pull").with("from")));
+            return;
+        }
     };
     let t = Tokens::get(ctx);
     let content = ctx.content_rect();
@@ -366,8 +487,12 @@ pub fn actions_wide(ctx: &egui::Context, id: &str, title: Option<&str>, menu_w: 
             (w, pos2(x, y + (1.0 - p) * if y < a.top() { 6.0 } else { -6.0 }))
         }
         None => {
+            // an action sheet pulled down follows the finger, and closes when let go far enough
             let w = (content.width() - 16.0).min(ACTIONS_MAX_W);
-            (w, pos2(content.center().x - w / 2.0, content.bottom() - 8.0 - h + (1.0 - p) * (h + 40.0)))
+            let at_rest = Rect::from_min_size(pos2(content.center().x - w / 2.0, content.bottom() - 8.0 - h), vec2(w, h));
+            let pulled = if closing { (0.0, false) } else { pull(ctx, sid, at_rest, &[], |_| true) };
+            close |= pulled.1;
+            (w, at_rest.min + vec2(0.0, pulled_drop(ctx, sid, p, h + 40.0, pulled)))
         }
     };
     // a pull-down grows out of its button with a little bounce, and shrinks back into it
@@ -430,6 +555,16 @@ pub fn actions_wide(ctx: &egui::Context, id: &str, title: Option<&str>, menu_w: 
 /// `checked` is `Some(true)`) or else the icon at the leading edge, then the label; a rounded
 /// highlight under the finger. True when tapped; a tap closes the menu.
 pub fn row_checked(ui: &mut egui::Ui, id: &str, icon: Option<Icon>, label: &str, enabled: bool, checked: Option<bool>) -> bool {
+    row_inked(ui, id, icon, label, enabled, checked, None)
+}
+
+/// A [`row`] for something that can't be taken back (Delete), in red as iOS draws those.
+pub fn row_danger(ui: &mut egui::Ui, id: &str, icon: Icon, label: &str) -> bool {
+    let red = Tokens::get(ui.ctx()).reject;
+    row_inked(ui, id, Some(icon), label, true, None, Some(red))
+}
+
+fn row_inked(ui: &mut egui::Ui, id: &str, icon: Option<Icon>, label: &str, enabled: bool, checked: Option<bool>, ink: Option<Color32>) -> bool {
     let t = Tokens::get(ui.ctx());
     let w = ui.available_width();
     let (r, resp) = ui.allocate_exact_size(vec2(w, 44.0), if enabled { Sense::click() } else { Sense::hover() });
@@ -443,7 +578,7 @@ pub fn row_checked(ui: &mut egui::Ui, id: &str, icon: Option<Icon>, label: &str,
         let spot = r.shrink2(vec2(6.0, 1.0));
         p.rect_filled(spot, 12.0, if Tokens::is_dark(ui.ctx()) { Color32::from_white_alpha(28) } else { Color32::from_black_alpha(16) });
     }
-    let color = if enabled { t.text } else { t.text_disabled };
+    let color = if enabled { ink.unwrap_or(t.text) } else { t.text_disabled };
     let lead = pos2(r.left() + 30.0, r.center().y);
     if checked == Some(true) {
         crate::icons::paint(p, Rect::from_center_size(lead, vec2(16.0, 16.0)), Icon::Check, color);

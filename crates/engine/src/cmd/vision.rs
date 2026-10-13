@@ -106,6 +106,20 @@ pub fn specs() -> Vec<CommandSpec> {
             }
         ),
         cmd!(
+            "vision.setLocalOnly",
+            "Search on This Device Only",
+            [],
+            None,
+            "{on: bool} — whether searching by description stays on this device (its model, downloaded here: vision.model.download) even when the sync server can search for it. Off by default: a server whose admin turned search on answers every device's searches, so nobody downloads the model; on, no search text is sent to the server (sending the search data, vision.setShare, is its own choice). Saved with the library; no effect on a device that can't run the model → {enabled}",
+            always,
+            |s, p| {
+                let on = p.get("on").and_then(Value::as_bool).ok_or_else(|| bad("vision.setLocalOnly", "missing `on`"))?;
+                s.vision.local_only = on;
+                s.save_prefs()?;
+                Ok(json!({"enabled": on}))
+            }
+        ),
+        cmd!(
             "vision.setText",
             "Search the Text in Photos",
             [],

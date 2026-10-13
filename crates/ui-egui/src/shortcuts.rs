@@ -425,7 +425,21 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
             app.toast(ctx, e);
         }
     }
-    for f in fire {
+    for mut f in fire {
+        // ⌫ in a grid takes the photos out of the album on screen (⌘⌫ deletes them, after asking);
+        // anywhere else it deletes, as it always did
+        if f == "album.removePhotos" {
+            if let Some(album) = crate::menus::removable_album(app).filter(|_| library_grid(app)) {
+                let n = app.session.targets(&json!({})).len();
+                let name = app.session.catalog.album(album).map(|a| a.name.clone()).unwrap_or_default();
+                if app.run("album.removePhotos", json!({"id": album.0})).is_ok() {
+                    let what = crate::i18n::tr_format!("{n} photo{}", if n == 1 { "" } else { "s" }, n = n);
+                    app.toast(ctx, crate::i18n::tr_format!("Removed {what} from {name}", name = name, what = what));
+                }
+                continue;
+            }
+            f = "photo.delete".into();
+        }
         if let Some(rest) = f.strip_prefix("rate:") {
             let (n, adv) = rest.split_once(':').unwrap_or(("0", "0"));
             cull(app, "photo.rate", json!({"rating": n.parse::<u8>().unwrap_or(0)}), adv == "1");
@@ -619,6 +633,46 @@ mod tests {
             assert_eq!(h.app.session.catalog.photo(PhotoId(1)).unwrap().flag, Flag::None);
             assert_eq!(h.app.session.active(), Some(PhotoId(1)));
         }
+    }
+
+    /// In an album's grid ⌫ takes the photo out of the album and keeps it in the library; ⌘⌫ asks,
+    /// then moves it to Recently Deleted. Outside an album ⌫ deletes, as before.
+    #[test]
+    fn backspace_removes_from_the_album_and_cmd_backspace_deletes_after_asking() {
+        use crate::state::Dialog;
+        use lightcraft_catalog::PhotoId;
+        let t = std::time::Duration::from_secs(20);
+        let mut h = library();
+        let album = h.app.session.execute("album.create", &json!({"name": "Keepers"})).unwrap()["id"].as_u64().unwrap();
+        h.app.session.execute("library.select", &json!({"ids": [1, 2, 3], "active": 1})).unwrap();
+        h.app.session.execute("album.addPhotos", &json!({"id": album})).unwrap();
+        h.app.session.execute("library.source", &json!({"kind": "album", "id": album})).unwrap();
+        h.app.session.execute("library.select", &json!({"ids": [2], "active": 2})).unwrap();
+        let album_photos = |h: &crate::headless::Headless| h.app.session.catalog.album(lightcraft_catalog::AlbumId(album)).unwrap().photos.clone();
+        assert_eq!(album_photos(&h), [PhotoId(1), PhotoId(2), PhotoId(3)]);
+
+        key(&mut h, "delete", false);
+        assert_eq!(album_photos(&h), [PhotoId(1), PhotoId(3)], "⌫ removes the photo from the album");
+        assert!(!h.app.session.catalog.photo(PhotoId(2)).unwrap().deleted, "…and does not delete it");
+        assert_eq!(h.app.ui.dialog, None);
+        assert_eq!(h.app.session.active(), Some(PhotoId(3)), "the selection moves on");
+
+        let r = h.request("ui.key", json!({"key": "delete", "cmd": true}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(h.app.ui.dialog, Some(Dialog::ConfirmDelete { count: 1 }), "⌘⌫ asks first");
+        assert!(!h.app.session.catalog.photo(PhotoId(3)).unwrap().deleted);
+        assert_eq!(h.request("ui.dialog.cancel", json!({}), t)["ok"], true);
+        assert!(!h.app.session.catalog.photo(PhotoId(3)).unwrap().deleted, "Cancel keeps it");
+        h.request("ui.key", json!({"key": "delete", "cmd": true}), t);
+        assert_eq!(h.request("ui.dialog.confirm", json!({}), t)["ok"], true);
+        assert!(h.app.session.catalog.photo(PhotoId(3)).unwrap().deleted, "OK deletes it");
+
+        // outside an album ⌫ deletes, with no question while "Confirm before deleting" is off
+        h.app.session.execute("library.source", &json!({"kind": "all"})).unwrap();
+        h.app.session.execute("library.select", &json!({"ids": [4], "active": 4})).unwrap();
+        key(&mut h, "delete", false);
+        assert!(h.app.session.catalog.photo(PhotoId(4)).unwrap().deleted);
+        assert_eq!(h.app.ui.dialog, None);
     }
 
     #[test]

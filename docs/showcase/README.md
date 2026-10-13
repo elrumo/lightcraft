@@ -16,3 +16,5 @@ for f in docs/images/*.png; do sips -s format jpeg -s formatOptions 82 "$f" --ou
 ```
 
 `run.py` sends each JSON line (`{"method":…,"params":…}` or `{"sleep": seconds}`) to `127.0.0.1:7980`.
+
+`web-drag-bench.js` is not a screenshot script: it times slider drags in the browser build from the console (see `docs/web.md`, Measuring).

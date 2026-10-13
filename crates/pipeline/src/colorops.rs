@@ -6,12 +6,13 @@ use std::sync::OnceLock;
 
 use lightcraft_color::perceptual::{hsv_to_rgb, lab_to_lch, lch_to_lab, oklab_from_2020, oklab_to_2020};
 use lightcraft_color::{Mat3, REC2020, SRGB};
+use lightcraft_color::Map3;
 use lightcraft_develop::{Calibration, DevelopSettings, MIXER_HUES, PointColor};
 
 /// OkLCh hue angle (radians) of a pure sRGB colour with HSV hue `deg`.
 pub fn oklch_hue_of_srgb_hue(deg: f64) -> f32 {
     let c = hsv_to_rgb(deg as f32, 1.0, 1.0);
-    let lin = c.map(lightcraft_color::transfer::srgb_to_linear);
+    let lin = c.map3(lightcraft_color::transfer::srgb_to_linear);
     let m = SRGB.to_space(&REC2020).apply_f32(lin);
     lab_to_lch(oklab_from_2020(m))[2]
 }
@@ -312,7 +313,7 @@ pub fn calibrate(c: [f32; 3], m: Option<&[[f32; 3]; 3]>, shadow_tint: f32) -> [f
         let w = 1.0 - smooth(-5.0, -0.5, (y0.max(1e-7) / 0.18).log2());
         c[1] *= (1.0 - SHADOW_TINT * shadow_tint * w).max(0.0);
         let y1 = lightcraft_color::luminance_2020(c).max(1e-9);
-        c = c.map(|v| v * y0 / y1);
+        c = c.map3(|v| v * y0 / y1);
     }
     c
 }

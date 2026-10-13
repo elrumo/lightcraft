@@ -217,7 +217,7 @@ pub fn panel(app: &mut LightcraftApp, ctx: &egui::Context, field: Rect) {
         .filter(|j| !j.finished.load(std::sync::atomic::Ordering::Relaxed))
         .map(|j| (j.done.load(std::sync::atomic::Ordering::Relaxed), j.total));
     let (installed, searching, indexed) = (v.installed(), v.searching(), v.indexed());
-    let (local, server_ready) = (v.local_available(), v.server_ready());
+    let (local, server_ready) = (v.local_available(), v.use_server());
     // what the sync server has done, when this device searches through it
     let server = v.server_status().map(|s| (s["indexed"].as_u64().unwrap_or(0) as usize, s["total"].as_u64().unwrap_or(0) as usize));
     let total = if installed { total_photos(app) } else { 0 };
@@ -280,6 +280,22 @@ fn share_row(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     }
 }
 
+/// For a device that could run the model next to a server that can search: where searches run.
+/// Ticked, the model is downloaded here and the server is never asked; unticked (the default), the
+/// server's model answers and nothing is downloaded.
+fn source_row(app: &mut LightcraftApp, ui: &mut egui::Ui) {
+    let v = &app.session.vision;
+    if !v.local_available() || !v.server_ready() {
+        return;
+    }
+    let mut on = v.local_only;
+    let r = crate::widgets::check(ui, &mut on, crate::i18n::tr("Search on this device only, not through my server"));
+    register(ui.ctx(), "check:describeLocalOnly", r.rect);
+    if r.changed() {
+        let _ = app.run("vision.setLocalOnly", json!({"on": on}));
+    }
+}
+
 /// For a device that has the model: whether search also reads the words printed in photos. Ticking
 /// it asks first when the models (a small download of their own) aren't there yet.
 fn text_row(app: &mut LightcraftApp, ui: &mut egui::Ui) {
@@ -336,6 +352,15 @@ fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, which: &Panel, download: &se
                 ))
                 .color(t.text_dim),
             );
+            if app.session.vision.server_waiting().is_some() {
+                ui.label(
+                    egui::RichText::new(crate::i18n::tr(
+                        "Your server can search too: once an administrator turns that on in the server's admin page (Search), nothing needs downloading here.",
+                    ))
+                    .color(t.text_dim),
+                );
+            }
+            source_row(app, ui);
             let r = ui.link(crate::i18n::tr("Read the licence")).on_hover_text(LICENSE_URL);
             register(ui.ctx(), "link:describeLicense", r.rect);
             if r.clicked() {
@@ -387,6 +412,7 @@ fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, which: &Panel, download: &se
             ui.label(crate::i18n::tr_format!("{indexed} of {total} photos can be searched.", indexed = indexed, total = total));
             text_row(app, ui);
             share_row(app, ui);
+            source_row(app, ui);
             let r = ui.button(crate::i18n::tr("Prepare the Rest"));
             register(ui.ctx(), "button:describeIndex", r.rect);
             if r.clicked()
@@ -396,11 +422,23 @@ fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, which: &Panel, download: &se
             }
         }
         Panel::ServerNoModel => {
-            ui.label(crate::i18n::tr("Your server can search by description, but its search model isn't installed yet."));
-            ui.label(
-                egui::RichText::new(crate::i18n::tr("Whoever runs the server installs it with: lightcraft-server model download --accept-licences"))
+            let (off, installing) = app.session.vision.server_waiting().unwrap_or_default();
+            if installing {
+                ui.label(crate::i18n::tr("Your server is downloading its search model. Search will work here as soon as it's done."));
+            } else if off {
+                ui.label(crate::i18n::tr("Search by description is turned off on your server."));
+                ui.label(
+                    egui::RichText::new(crate::i18n::tr("An administrator can turn it on in the server's admin page (Search).")).color(t.text_dim),
+                );
+            } else {
+                ui.label(crate::i18n::tr("Your server can search by description, but its search model isn't installed yet."));
+                ui.label(
+                    egui::RichText::new(crate::i18n::tr(
+                        "An administrator installs it from the server's admin page (Search), or with: lightcraft-server model download --accept-licences",
+                    ))
                     .color(t.text_dim),
-            );
+                );
+            }
         }
         Panel::ServerIndexing { indexed, total } => {
             ui.label(crate::i18n::tr_format!("Your server has {indexed} of {total} photos ready to search.", indexed = indexed, total = total));
@@ -475,6 +513,11 @@ fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, which: &Panel, download: &se
         Panel::Hint => {
             text_row(app, ui);
             share_row(app, ui);
+            source_row(app, ui);
+            let v = &app.session.vision;
+            if !v.installed() && v.use_server() && v.server_status().is_some_and(|s| s["installed"].as_bool() == Some(true)) {
+                ui.label(egui::RichText::new(crate::i18n::tr("Searching with your server's model: nothing to download here.")).color(t.text_dim));
+            }
             ui.label(
                 egui::RichText::new(crate::i18n::tr("Describe what you're looking for, for example “a dog on a beach at sunset”, and press Return."))
                     .color(t.text_dim),

@@ -267,5 +267,8 @@
   "{n} preset{} in {g} group{}": "Пресетов: {n}, групп: {g}{:.0}{:.0}",
   "{p} profile{}": "Профилей: {p}{:.0}",
   "{a} already in your library": "Уже в библиотеке: {a}",
-  "Not carried over: {what}": "Не перенесено: {what}"
+  "Not carried over: {what}": "Не перенесено: {what}",
+  "{n} items": "Элементов: {n}",
+  "{label}, {n} items": "{label}, элементов: {n}",
+  "Add to {album}": "Добавить в «{album}»"
 }

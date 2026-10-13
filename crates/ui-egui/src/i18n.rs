@@ -299,6 +299,24 @@ pub fn date_group_label(key: &str, short: bool) -> String {
     tr(&label).to_string()
 }
 
+/// A count with its thousands grouped as the UI language writes them (41,721; 41.721; 41 721).
+pub fn grouped(n: usize) -> String {
+    let sep = match language() {
+        Locale::De | Locale::Es | Locale::PtBr => '.',
+        Locale::Fr | Locale::Ru | Locale::Uk => '\u{a0}',
+        Locale::En | Locale::Ja | Locale::ZhHans | Locale::ZhHant => ',',
+    };
+    let digits = n.to_string();
+    let mut out = String::with_capacity(digits.len() * 2);
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(sep);
+        }
+        out.push(c);
+    }
+    out
+}
+
 /// A capture time for display in the UI language (English: "March 30, 2022 at 10:11:11 PM");
 /// the metadata itself is never rewritten, and a value that doesn't parse is shown as it is.
 pub fn display_time(iso: &str) -> String {
@@ -431,6 +449,12 @@ pub fn rules_label(rules: &lightcraft_catalog::RuleSet, catalog: &lightcraft_cat
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn counts_group_their_thousands() {
+        let (a, b, c) = (grouped(7), grouped(1000), grouped(41_721_000));
+        assert_eq!((a.as_str(), b.as_str(), c.as_str()), ("7", "1,000", "41,721,000"));
+    }
 
     #[test]
     fn every_language_has_a_catalog_covering_the_source() {

@@ -267,5 +267,8 @@
   "{n} preset{} in {g} group{}": "Наборів налаштувань: {n}, груп: {g}{:.0}{:.0}",
   "{p} profile{}": "Профілів: {p}{:.0}",
   "{a} already in your library": "Уже в бібліотеці: {a}",
-  "Not carried over: {what}": "Не перенесено: {what}"
+  "Not carried over: {what}": "Не перенесено: {what}",
+  "{n} items": "Елементів: {n}",
+  "{label}, {n} items": "{label}, елементів: {n}",
+  "Add to {album}": "Додати до «{album}»"
 }

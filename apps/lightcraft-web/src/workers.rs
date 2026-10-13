@@ -19,7 +19,7 @@ use std::sync::Arc;
 use js_sys::{Array, Object, Reflect, Uint8Array, Uint32Array};
 use lightcraft_engine::catalog::PhotoId;
 use lightcraft_engine::media::{RenderJob, RenderResult, SourceLevel};
-use lightcraft_engine::pipeline::Rendered;
+use lightcraft_engine::pipeline::{Quality, Rendered};
 use lightcraft_preview::{Hash128, PreviewCache};
 use lightcraft_raster::{Histogram, Rgba8};
 use lightcraft_ui_egui::render::{RenderOffload, Slot};
@@ -27,7 +27,7 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 
 use crate::backend::Backend;
-use crate::wire::{CacheWatch, ThumbIndex, WireJob, WorkerCore, WorkerSlots, thumb_storage_key};
+use crate::wire::{CacheWatch, MAX_PIPELINE, ThumbIndex, WireJob, WorkerCore, WorkerSlots, choose_worker, thumb_storage_key};
 
 /// Storage key of the thumbnail index.
 pub const THUMB_INDEX: &str = "thumbs/index.json";
@@ -191,6 +191,9 @@ struct Inner {
     next_id: u32,
     /// (photo, level) → worker that last decoded it.
     affinity: HashMap<(PhotoId, SourceLevel), usize>,
+    /// (photo, level) → the workers that decoded it, in the order they took it: a drag's drafts are
+    /// rendered by them in turn ([`choose_worker`]).
+    warm: HashMap<(PhotoId, SourceLevel), Vec<usize>>,
     index: ThumbIndex,
     /// The session's thumbnail cache budget in bytes. Kept here because the prune happens on a
     /// worker message, where the session is out of reach; the app refreshes it every frame.
@@ -241,6 +244,7 @@ impl Workers {
             done: Vec::new(),
             next_id: 0,
             affinity: HashMap::new(),
+            warm: HashMap::new(),
             index,
             budget,
             backend,
@@ -297,6 +301,9 @@ impl Workers {
         let msg = get(&e, "message").as_string().unwrap_or_else(|| format!("{e:?}"));
         log::error!("render worker {i} failed: {msg}");
         let mut g = self.0.borrow_mut();
+        for holders in g.warm.values_mut() {
+            holders.retain(|&j| j != i);
+        }
         if let Some(w) = g.workers.get_mut(i) {
             w.dead = true;
             w.worker.terminate();
@@ -466,17 +473,28 @@ impl RenderOffload for Workers {
             g.done.push((slot, r, now() - t0));
             return None;
         }
-        let free = |w: &W| w.ready && !w.dead && w.busy.is_none();
-        let pick = match g.affinity.get(&(job.photo, job.level)) {
-            // a decoded preview-level source, or the loupe's stage cache, is worth waiting for; a
-            // thumbnail isn't
-            Some(&i) if g.workers.get(i).is_some_and(free) => Some(i),
-            Some(&i) if (job.level == SourceLevel::Preview || job.stages.is_some()) && g.workers.get(i).is_some_and(|w| !w.dead) => None,
-            _ => g.workers.iter().position(free),
-        };
+        let free: Vec<bool> = g.workers.iter().map(|w| w.ready && !w.dead && w.busy.is_none()).collect();
+        let alive: Vec<bool> = g.workers.iter().map(|w| !w.dead).collect();
+        let key = (job.photo, job.level);
+        // a decoded preview-level source, or the loupe's stage cache, is worth waiting for; a
+        // thumbnail isn't. A drag's drafts of a view don't wait: a render takes a few tens of ms
+        // and one worker can't keep up with the slider, so the idle ones take turns (each holds its
+        // own decoded copy and stage cache: a few tens of MB; an original, `Full`, is kept to one;
+        // a small draft is cut from the thumbnail-level source)
+        let strict = job.level == SourceLevel::Preview || job.stages.is_some();
+        let pipelined = job.stages.is_some() && job.level != SourceLevel::Full && job.request.quality == Quality::Draft;
+        let warm = g.warm.get(&key).map_or(&[][..], Vec::as_slice);
+        let pick = choose_worker(&free, &alive, g.affinity.get(&key).copied(), warm, strict, pipelined, MAX_PIPELINE);
         let Some(i) = pick else { return Some(job) };
         // decided here, so the next job for this photo follows even before this one finishes
-        g.affinity.insert((job.photo, job.level), i);
+        g.affinity.insert(key, i);
+        if g.warm.len() > 256 {
+            g.warm.clear();
+        }
+        let holders = g.warm.entry(key).or_default();
+        if !holders.contains(&i) {
+            holders.push(i);
+        }
         let disk_key = job.cache.as_ref().map(|(_, key)| g.index.cache_key(*key));
         let thumb_cached = disk_key.as_ref().is_some_and(|key| g.index.touch(key));
         let mut wire = WireJob::from_job(&job, thumb_cached, &format!("{slot:?}"));

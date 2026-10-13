@@ -2094,5 +2094,8 @@
   "Couldn't be read": "無法讀取",
   "Import failed": "匯入失敗",
   "Nothing new to import": "沒有可匯入的新內容",
-  "Nothing was imported": "未匯入任何內容"
+  "Nothing was imported": "未匯入任何內容",
+  "Create New": "新增",
+  "Add Photos From": "加入照片來源",
+  "Smart Album from Filter": "從篩選器建立智慧型相簿"
 }

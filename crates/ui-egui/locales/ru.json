@@ -2152,5 +2152,8 @@
   "Couldn't be read": "Не удалось прочитать",
   "Import failed": "Не удалось импортировать",
   "Nothing new to import": "Нечего импортировать",
-  "Nothing was imported": "Ничего не импортировано"
+  "Nothing was imported": "Ничего не импортировано",
+  "Create New": "Создать",
+  "Add Photos From": "Добавить фото из",
+  "Smart Album from Filter": "Смарт-альбом из фильтра"
 }

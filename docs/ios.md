@@ -219,7 +219,7 @@ layout and interaction only: no Adobe icons, artwork, fonts, presets or screensh
    (900 pt; `LightcraftApp::compact`), i.e. iPhones and iPads in portrait; iPad landscape (1024 pt and more) keeps the
    desktop layout. It follows Lightroom's mobile app for layout and behaviour and iOS for its look (`Tokens::ios`:
    Apple's system colours in light or dark, as Settings ▸ Interface or the device says, 44 pt rows; [ios-gaps.md](ios-gaps.md) A2.22–A2.25), and has **no menu bar**.
-   The grid: the collection as its title (▾ opens the albums list as a page), filter and sort beside it, Select and
+   The grid: the collection as its title (▾ opens the albums sheet, styled as Lightroom's mobile app's: tiles, counts, ✕, Create New; hold an album to carry it into a folder), filter and sort beside it, Select and
    "…" (import, new album, sort, settings, help…) above, square tiles three across and edge to edge with the photo
    filling each (Square Thumbnails, the default on a first start; justified rows otherwise) under month headers, and a
    round + (the host's pickers). A photo: back, undo, share and "…" (rating, flag, label, copy / paste / reset edits,
@@ -235,7 +235,7 @@ layout and interaction only: no Adobe icons, artwork, fonts, presets or screensh
    lock the aspect, rotate, more) under it, Aspect (Original, Ratios, Instagram, TikTok) and Geometry (Upright, sliders) tabs,
    and ✕ / ✓ at the bottom; ✕ undoes everything done since it opened.
    Dialogs are pages sliding up from the bottom (Cancel, title and action
-   in the bar), menus are iOS pull-downs or action sheets, and every other command is in a searchable All Commands
+   in the bar; a pull down closes them, and action sheets), menus are iOS pull-downs or action sheets, and every other command is in a searchable All Commands
    list. Touch: a tap opens a photo, pinch zooms, two fingers pan, a sideways drag on a fitted photo carries it
    like a carousel (the next / previous one slides in beside it and settles when let go), a single tap hides the bars
    (review mode: the photo fills the screen and an up / down swipe rates it on the left half or flags it on the

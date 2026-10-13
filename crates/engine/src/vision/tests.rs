@@ -331,3 +331,48 @@ fn indexing_can_be_cancelled() {
     s.execute("vision.index", &json!({"wait": true})).unwrap();
     assert_eq!(s.vision.indexed(), s.vision_keys().len());
 }
+
+#[test]
+fn a_device_set_to_search_on_its_own_ignores_the_server_and_remembers_it() {
+    let dir = temp_dir("local-only");
+    let mut s = Session::new();
+    s.open_library(&dir, true).unwrap();
+    s.vision.set_embedder(Arc::new(FakeEmbedder));
+    s.vision.set_server_status(Some(json!({"available": true, "installed": true})));
+    assert!(s.vision.use_server(), "a server that can search answers by default: nothing to download here");
+    assert_eq!(s.execute("vision.model.status", &json!({})).unwrap()["localOnly"], false);
+
+    s.execute("vision.setLocalOnly", &json!({"on": true})).unwrap();
+    assert!(!s.vision.use_server());
+    assert_eq!(s.execute("vision.model.status", &json!({})).unwrap()["localOnly"], true);
+    s.close_library().ok();
+    drop(s);
+
+    let mut again = Session::new();
+    again.open_library(&dir, true).unwrap();
+    assert!(again.vision.local_only, "saved with the library");
+    let _ = std::fs::remove_dir_all(&dir);
+
+    // a device that can't run the model has no choice: it searches through the server
+    let mut thin = Session::with_demo();
+    thin.vision.thin = true;
+    thin.vision.set_server_status(Some(json!({"available": true, "installed": true})));
+    thin.execute("vision.setLocalOnly", &json!({"on": true})).unwrap();
+    assert!(thin.vision.use_server());
+}
+
+#[test]
+fn a_server_that_is_not_ready_says_why() {
+    let mut s = Session::with_demo();
+    let waiting = |s: &mut Session, status: Value| {
+        s.vision.set_server_status(Some(status));
+        s.vision.server_waiting()
+    };
+    // (turned off by an admin, being installed now)
+    assert_eq!(waiting(&mut s, json!({"available": true, "installed": false, "enabled": false})), Some((true, false)));
+    assert_eq!(waiting(&mut s, json!({"available": true, "installed": false, "enabled": true, "installing": true})), Some((false, true)));
+    // an older server says nothing of either
+    assert_eq!(waiting(&mut s, json!({"available": true, "installed": false})), Some((false, false)));
+    assert_eq!(waiting(&mut s, json!({"available": true, "installed": true})), None, "it can search");
+    assert_eq!(waiting(&mut s, json!({"available": false})), None, "it can't search at all");
+}

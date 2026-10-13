@@ -2083,10 +2083,17 @@ pub fn menu_entries(app: &LightcraftApp) -> Vec<MenuEntry> {
     v
 }
 
-/// With Settings → General → "Confirm before deleting" on, open the confirmation dialog instead
-/// of deleting; true when it did (the dialog's OK runs `photo.delete`).
+/// The album on screen when photos can be taken out of it (not a smart album or a folder of them).
+pub fn removable_album(app: &LightcraftApp) -> Option<lightcraft_catalog::AlbumId> {
+    let lightcraft_engine::LibrarySource::Album(id) = app.session.source else { return None };
+    app.session.catalog.album(id).is_some_and(|a| !a.folder && !a.is_smart()).then_some(id)
+}
+
+/// With Settings → General → "Confirm before deleting" on, or in an album (where ⌫ only removes
+/// from the album, so deleting from the library is asked about), open the confirmation dialog
+/// instead of deleting; true when it did (the dialog's OK runs `photo.delete`).
 pub fn confirm_delete(app: &mut LightcraftApp) -> bool {
-    if !app.ui.settings.confirm_delete {
+    if !app.ui.settings.confirm_delete && removable_album(app).is_none() {
         return false;
     }
     let count = app.session.targets(&json!({})).len();

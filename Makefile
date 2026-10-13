@@ -54,3 +54,13 @@ push-server:
 
 server-version:
 	@$(next_version)
+
+# Build LightCraft.app (ad-hoc signed unless MACOS_SIGN_IDENTITY is set) and its DMG.
+#
+#   make macos-app                   # this Mac's architecture -> target/macos-package/LightCraft.app
+#   make macos-app ARCH=universal    # or x86_64; set CRAFT_FONTS_DIR=../craft-fonts for CJK glyphs
+ARCH ?= $(shell uname -m | sed 's/arm64/aarch64/')
+
+.PHONY: macos-app
+macos-app:
+	packaging/macos/package.sh --arch $(ARCH)

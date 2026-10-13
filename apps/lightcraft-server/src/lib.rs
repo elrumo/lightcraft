@@ -11,6 +11,7 @@
 //!
 //! ```text
 //! <data>/users.json                       users: argon2 password hash, library id
+//! <data>/search.json                      { enabled }: search by description on or off (admin page)
 //! <data>/users/<name>/library/            the op log (catalog.log)
 //! <data>/users/<name>/blobs/<kind>/<xx>/<hash>   original | smart | mini
 //! <data>/users/<name>/presets.json        { version, presets }
@@ -37,6 +38,7 @@ pub mod gc;
 pub mod http;
 pub mod render;
 pub mod shares;
+pub mod switch;
 pub mod throttle;
 pub mod vision;
 pub mod writeback;
@@ -156,7 +158,7 @@ impl Server {
         let vision_dir = cfg.vision_dir.clone().unwrap_or_else(|| cfg.data.join("models").join("siglip2"));
         let links = shares::Index::load(&cfg.data);
         let state = Arc::new(State {
-            vision: vision::Search::new(vision_dir, cfg.embedder).with_reader(cfg.text_reader).with_finder(cfg.face_finder),
+            vision: vision::Search::new(vision_dir, cfg.embedder).with_data(&cfg.data).with_reader(cfg.text_reader).with_finder(cfg.face_finder),
             accounts: Mutex::new(accounts::Accounts::new(&cfg.data)),
             sizes: admin::Sizes::default(),
             listen: addr.to_string(),

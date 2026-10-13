@@ -169,6 +169,13 @@ function fill(meter, fraction) {
   bar.className = f > 0.9 ? 'negative' : f > 0.75 ? 'notice' : '';
 }
 
+/** A meter that shows how far something is, not how full something is (no warning colours). */
+function progress(meter, fraction) {
+  const bar = meter.firstElementChild;
+  bar.style.width = (100 * Math.max(0, Math.min(1, fraction || 0))).toFixed(1) + '%';
+  bar.className = '';
+}
+
 function emptyRow(cols, name, text) {
   return el('tr', { class: 'empty' }, el('td', { colspan: cols }, icon(name), text));
 }
@@ -278,7 +285,7 @@ function ask({ title, text, fields, ok, danger, action }) {
 
 // ---------------------------------------------------------------- routing
 
-const VIEWS = ['overview', 'users', 'storage'];
+const VIEWS = ['overview', 'users', 'search', 'storage'];
 
 async function route() {
   if ($('dash').hidden) return;
@@ -299,7 +306,7 @@ async function route() {
     s.hidden = s.dataset.view !== v;
     if (!s.hidden && !was) window.scrollTo(0, 0);
   }
-  const load = { overview: loadOverview, users: loadUsers, storage: loadStorage, user: () => loadUser(decode(name), tab === 'folders' || tab === 'shares' ? tab : 'devices') }[v];
+  const load = { overview: loadOverview, users: loadUsers, search: loadSearch, storage: loadStorage, user: () => loadUser(decode(name), tab === 'folders' || tab === 'shares' ? tab : 'devices') }[v];
   try {
     await load();
   } catch (e) {
@@ -819,6 +826,232 @@ function showStorage([s, users]) {
   }
 }
 
+// ----------------------------------------------------------------- search
+
+/** What each switch says about itself: its words, and where it keeps its state in `/api/admin/search`. */
+const FEATURES = {
+  sr: {
+    path: 'search',
+    pick: (s) => s,
+    users: 'indexed',
+    what: 'search model',
+    on: 'On: every device signed in to this server searches here.',
+    off: 'Off. The model stays on this server, so turning this on again needs no download.',
+    needs: (f) => 'Needs the search model: ' + bytes(f.sizeBytes) + ', downloaded once onto this server.',
+    getting: 'Downloading the search model onto this server…',
+    label: 'Photos are described once the model is ready.',
+    idle: 'Nothing is described while search is off.',
+    title: 'Download the search model?',
+    ask: (f) =>
+      'Search by description uses an AI model that understands photos and words. It is not part of LightCraft: it is SigLIP 2 from Google, a ' +
+      bytes(f.sizeBytes) + ' download onto this server under the ' + f.license + '. Downloading it means accepting that licence: ' + f.licenseUrl +
+      " Afterwards the server describes every user's photos in the background, and their devices search through it.",
+    done: 'Search is on for everyone on this server.',
+  },
+  tx: {
+    path: 'search/text',
+    pick: (s) => s.text,
+    users: 'read',
+    what: 'text-reading models',
+    on: "On: the server reads the words in every user's photos in the background, and searches find photos by them.",
+    off: 'Off. What was read is kept, so turning this on again picks up where it left off.',
+    needs: (f) => 'Needs the text-reading models: ' + bytes(f.sizeBytes) + ', downloaded once onto this server.',
+    getting: 'Downloading the text-reading models onto this server…',
+    label: 'Photos are read once the models are ready.',
+    idle: 'Nothing is read while this is off.',
+    title: 'Download the text-reading models?',
+    ask: (f) =>
+      'Finding words in photos uses two small AI models that read text, in English, Chinese, Japanese and many other languages. They are not part of LightCraft: they are PP-OCRv6 from Baidu, a ' +
+      bytes(f.sizeBytes) + ' download onto this server under the ' + f.license + '. Downloading them means accepting that licence: ' + f.licenseUrl +
+      " Afterwards the server reads every user's photos in the background, about a second each.",
+    done: 'Finding photos by their words is on for everyone on this server.',
+  },
+};
+
+function loadSearch() {
+  return swr(['search'], showSearch);
+}
+
+/** The progress of a download in the fetch box with prefix `p`, or the box hidden. */
+function showFetch(p, d) {
+  $(p + 'Fetch').hidden = !d.running;
+  if (d.running) {
+    const f = d.total ? d.done / d.total : 0;
+    $(p + 'FetchText').textContent = bytes(d.done) + ' of ' + bytes(d.total) + (d.file ? ' · ' + d.file : '');
+    $(p + 'FetchPct').textContent = Math.round(100 * f) + '%';
+    progress($(p + 'FetchBar').parentElement, f);
+  }
+}
+
+/** A download the admin cancelled is not an error. */
+function showFetchError(p, d, installed) {
+  const failed = d.error && !d.running && !installed && !/cancel/i.test(d.error);
+  $(p + 'Error').hidden = !failed;
+  if (failed) $(p + 'Error').querySelector('p').textContent = d.error + ' Start it again to resume where it stopped.';
+}
+
+function fact(list, k, v, code) {
+  list.append(el('dt', {}, k), el('dd', { class: code ? 'code' : null }, v));
+}
+
+function showFeature(p, s) {
+  const F = FEATURES[p];
+  const f = F.pick(s);
+  const d = f.download;
+  $(p + 'Switch').checked = f.enabled && (f.installed || d.running);
+  $(p + 'Switch').disabled = false;
+  $(p + 'Help').textContent = d.running ? F.getting : f.active ? F.on : f.installed ? F.off : F.needs(f);
+  showFetch(p, d);
+  showFetchError(p, d, f.installed);
+  const facts = $(p + 'Facts');
+  facts.replaceChildren();
+  if (p === 'sr') {
+    fact(facts, 'Model', s.model + (s.installed ? '' : ' (not downloaded)'));
+    fact(facts, 'Licence', el('a', { href: f.licenseUrl, target: '_blank', rel: 'noopener noreferrer' }, f.license));
+    fact(facts, 'Kept in', s.dir, true);
+    if (f.active) fact(facts, 'In memory', s.loaded ? 'Yes (it unloads after ten idle minutes)' : 'Not now (it loads on the first search)');
+  } else {
+    fact(facts, 'Models', f.installed ? 'PP-OCRv6 (installed)' : 'PP-OCRv6 (not downloaded)');
+    fact(facts, 'Licence', el('a', { href: f.licenseUrl, target: '_blank', rel: 'noopener noreferrer' }, f.license));
+  }
+  const list = $(p + 'Users');
+  list.replaceChildren();
+  let any = false;
+  for (const u of s.users) {
+    const done = u[F.users];
+    if (done === null || done === undefined) continue;
+    any = true;
+    const meter = el('div', { class: 'meter' }, el('div', {}));
+    list.append(el('li', {}, avatar(u.name), el('a', { class: 'name', href: '#/users/' + enc(u.name) }, u.name), meter, el('span', { class: 'bytes' }, n(done) + ' / ' + n(u.total))));
+    progress(meter, u.total ? done / u.total : 1);
+  }
+  const none = $(p + 'UsersNone');
+  none.hidden = any;
+  none.textContent = f.active ? 'No users yet.' : d.running ? F.label : F.idle;
+  return d.running || (f.active && s.users.some((u) => u[F.users] !== null && u[F.users] < u.total));
+}
+
+function showPeople(s) {
+  const f = s.faces;
+  const d = f.download;
+  showFetch('fc', d);
+  showFetchError('fc', d, f.installed);
+  $('fcGet').hidden = f.installed || d.running;
+  const needs = $('fcNeeds');
+  needs.hidden = f.installed;
+  needs.textContent = d.running ? 'Downloading the face models onto this server…' : 'Needs the face models: ' + bytes(f.sizeBytes) + ', downloaded once onto this server.';
+  const list = $('fcUsers');
+  list.replaceChildren();
+  if (!f.installed) return d.running;
+  for (const u of s.users) {
+    const input = el('input', { type: 'checkbox', role: 'switch', 'aria-label': 'Find the people in ' + u.name + "'s photos" });
+    input.checked = u.faces;
+    input.addEventListener('change', () => togglePeople(u, input));
+    const text = u.faces ? (u.found === null ? 'Waiting for the server…' : n(u.found) + ' of ' + n(u.total) + ' photos looked at') : 'Off';
+    list.append(el('li', {}, avatar(u.name), el('a', { class: 'name', href: '#/users/' + enc(u.name) }, u.name), el('span', { class: 'bytes' }, text), el('label', { class: 'switch' }, input)));
+  }
+  if (!s.users.length) list.append(el('li', { class: 'muted' }, 'No users yet.'));
+  return s.users.some((u) => u.faces && u.found !== null && u.found < u.total);
+}
+
+function showSearch([s]) {
+  const again = [showFeature('sr', s), showFeature('tx', s), showPeople(s)].some(Boolean);
+  clearTimeout(timer);
+  // (downloads and describing run on the server: watch them)
+  if (again) timer = setTimeout(route, 2000);
+}
+
+/** Turn a feature on or off; turning it on without its models asks first, then downloads them. */
+async function toggleFeature(p, e) {
+  const F = FEATURES[p];
+  const sw = e.target;
+  const want = sw.checked;
+  sw.disabled = true;
+  try {
+    const s = await api('GET', 'search');
+    const f = F.pick(s);
+    if (!want) {
+      if (f.download.running) await api('DELETE', F.path + '/download');
+      await api('PUT', F.path, { enabled: false });
+      toast('Turned off.', 'info');
+    } else if (f.installed) {
+      await api('PUT', F.path, { enabled: true });
+      toast(F.done);
+    } else {
+      const ok = await ask({ title: F.title, text: F.ask(f), ok: 'Download and turn on', action: () => api('POST', F.path + '/download', { acknowledged: true }) });
+      if (ok) toast('Downloading the ' + F.what + '. You can leave this page: it keeps going.', 'info');
+    }
+  } catch (x) {
+    fail(x);
+  } finally {
+    // (shows what is true now, whichever way it went, and puts the switch back if it was cancelled)
+    await route();
+  }
+}
+
+async function downloadFaces() {
+  const btn = $('fcDownload');
+  busy(btn, true);
+  try {
+    const s = await api('GET', 'search');
+    const f = s.faces;
+    const ok = await ask({
+      title: 'Download the face models?',
+      text:
+        'Finding people uses two small AI models: YuNet finds faces and SFace tells them apart. They are not part of LightCraft. Together they are a ' +
+        bytes(f.sizeBytes) + ' download onto this server, under ' + f.licenses.map((l) => 'the ' + l.name + ' (' + l.url + ')').join(' and ') +
+        '. Downloading them means accepting those licences. Nothing is looked at until you turn it on for a user.',
+      ok: 'Download',
+      action: () => api('POST', 'search/faces/download', { acknowledged: true }),
+    });
+    if (ok) toast('Downloading the face models. You can leave this page: it keeps going.', 'info');
+  } catch (x) {
+    fail(x);
+  } finally {
+    busy(btn, false);
+    await route();
+  }
+}
+
+/** Finding the people in a user's photos: turning it on asks first, because faces are personal data. */
+async function togglePeople(u, input) {
+  const want = input.checked;
+  input.disabled = true;
+  try {
+    if (want) {
+      const ok = await ask({
+        title: 'Find the people in ' + u.name + "'s photos?",
+        text:
+          'The server will look at the faces in ' + u.name + "'s photos and group them into people, which they name on their own devices. What it finds stays on this server, and " +
+          u.name + ' can delete all of it from their devices (Forget All Faces). Only do this if they agree.',
+        ok: 'Turn on',
+        action: () => api('PUT', 'users/' + enc(u.name) + '/faces', { enabled: true }),
+      });
+      if (ok) toast('Looking for the people in ' + u.name + "'s photos.", 'info');
+    } else {
+      await api('PUT', 'users/' + enc(u.name) + '/faces', { enabled: false });
+      toast('Stopped looking for people in ' + u.name + "'s photos. What was found stays until they delete it.", 'info');
+    }
+  } catch (x) {
+    fail(x);
+  } finally {
+    await route();
+  }
+}
+
+async function cancelDownload(p) {
+  const btn = $(p + 'Cancel');
+  busy(btn, true);
+  try {
+    await api('DELETE', (p === 'fc' ? 'search/faces' : FEATURES[p].path) + '/download');
+  } catch (x) {
+    fail(x);
+  } finally {
+    busy(btn, false);
+    await route();
+  }
+}
+
 let unused = 0;
 
 function gcResult(kind, title, text) {
@@ -974,6 +1207,9 @@ document.addEventListener('DOMContentLoaded', () => {
   $('addUser').addEventListener('click', addUser);
   $('gcCheck').addEventListener('click', gcCheck);
   $('gcRun').addEventListener('click', gcRun);
+  for (const p of ['sr', 'tx']) $(p + 'Switch').addEventListener('change', (e) => toggleFeature(p, e));
+  for (const p of ['sr', 'tx', 'fc']) $(p + 'Cancel').addEventListener('click', () => cancelDownload(p));
+  $('fcDownload').addEventListener('click', downloadFaces);
   window.addEventListener('hashchange', route);
   start();
 });

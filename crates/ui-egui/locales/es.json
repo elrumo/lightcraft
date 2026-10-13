@@ -1960,5 +1960,8 @@
   "Couldn't be read": "No se pudieron leer",
   "Import failed": "Error al importar",
   "Nothing new to import": "Nada nuevo que importar",
-  "Nothing was imported": "No se importó nada"
+  "Nothing was imported": "No se importó nada",
+  "Create New": "Crear nuevo",
+  "Add Photos From": "Añadir fotos desde",
+  "Smart Album from Filter": "Álbum inteligente desde filtro"
 }

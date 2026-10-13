@@ -76,45 +76,39 @@ fn row_sensed(
     let label =
         if matches!(id, "all" | "recentlyAdded" | "picks" | "people" | "missing" | "recentlyDeleted") { crate::i18n::tr(label) } else { label };
     let t = Tokens::get(ui.ctx());
-    // a phone's list is iOS's: 17 pt names after accent-tinted icons, a rounded highlight on the
-    // chosen row and under the finger
     let phone = crate::is_compact(ui.ctx());
-    let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), if phone { crate::TOUCH_ROW_H } else { 29.0 }), sense);
+    let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), if phone { PHONE_ROW_H } else { 29.0 }), sense);
     register(ui.ctx(), format!("source:{id}"), r);
     let said = spoken.unwrap_or(label);
     let name = match count {
+        Some(n) if id.starts_with("folder:") => crate::i18n::tr_format!("{label}, {n} items", label = said, n = n),
         Some(n) => crate::i18n::tr_format!("{label}, {n} photos", label = said, n = n),
         None => said.to_string(),
     };
     resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, &name));
+    if phone {
+        return phone_row(app, ui, resp, id, icon, label, count, selected, indent, mark);
+    }
     // what is visible of the row: when the sidebar is scrolled sideways its bars and counts end at
     // the panel's edge, not at the end of the (wider) content
     let visible_right: f32 = ui.data(|d| d.get_temp(egui::Id::new("left-visible-right"))).unwrap_or(f32::MAX);
     let edge = r.right().min(visible_right);
-    let pad = if phone { 2.0 } else { 0.0 };
-    let inner = Rect::from_min_max(r.min + vec2(8.0, pad), pos2((r.right() - 8.0).min(edge - 8.0).max(r.left() + 8.0), r.bottom() - pad));
-    let round = if phone { 10.0 } else { 4.0 };
+    let inner = Rect::from_min_max(r.min + vec2(8.0, 0.0), pos2((r.right() - 8.0).min(edge - 8.0).max(r.left() + 8.0), r.bottom()));
     if selected {
-        ui.painter().rect_filled(inner, round, if phone { t.tool_active } else { t.canvas });
+        ui.painter().rect_filled(inner, 4.0, t.canvas);
         register(ui.ctx(), format!("highlight:{id}"), inner);
-    } else if resp.hovered() || (phone && resp.is_pointer_button_down_on()) {
-        ui.painter().rect_filled(inner, round, t.hover.gamma_multiply(0.6));
+    } else if resp.hovered() {
+        ui.painter().rect_filled(inner, 4.0, t.hover.gamma_multiply(0.6));
     }
-    let (icon_size, label_x, font_size, count_size) = if phone { (21.0, 54.0, 17.0, 15.0) } else { (16.0, 42.0, 13.5, 12.5) };
+    let (icon_size, label_x, font_size, count_size) = (16.0, 42.0, 13.5, 12.5);
     paint(
         ui.painter(),
         Rect::from_center_size(pos2(r.left() + 18.0 + indent + icon_size / 2.0, r.center().y), vec2(icon_size, icon_size)),
         icon,
-        if phone {
-            t.accent
-        } else if selected {
-            t.text
-        } else {
-            t.icon
-        },
+        if selected { t.text } else { t.icon },
     );
     let font = t.font(font_size);
-    let color = if selected || phone { t.text } else { t.text_label };
+    let color = if selected { t.text } else { t.text_label };
     // a count of nothing is there, but fainter: the rows that hold photos stand out
     let count_color = |n: usize| if n == 0 { t.text_dim.gamma_multiply(0.55) } else { t.text_dim };
     let count_galley = count.filter(|_| app.ui.show_counts).map(|n| ui.painter().layout_no_wrap(n.to_string(), t.font(count_size), count_color(n)));
@@ -149,11 +143,154 @@ fn row_sensed(
     resp
 }
 
+/// Height of a row on a phone: an icon tile beside two lines, as Lightroom's mobile app lists albums.
+const PHONE_ROW_H: f32 = 64.0;
+/// The side of a phone row's icon tile.
+const TILE: f32 = 44.0;
+/// Room at a phone row's end for its "…" (album and folder rows) or its disclosure chevron.
+const PHONE_TRAIL: f32 = 44.0;
+
+/// A row on a phone: its icon on a rounded tile (an album folder's a bare, larger folder), the name
+/// with the count under it (a folder's: how many albums it holds), a rounded highlight across the
+/// row when chosen and under the finger, and a "…" at the end of album and folder rows (the caller
+/// answers it: [`more_button`]). Rows slide up into place as the list opens ([`entrance`]).
+#[allow(clippy::too_many_arguments)]
+fn phone_row(
+    app: &LightcraftApp,
+    ui: &mut egui::Ui,
+    resp: egui::Response,
+    id: &str,
+    icon: Icon,
+    label: &str,
+    count: Option<usize>,
+    selected: bool,
+    indent: f32,
+    mark: Option<egui::Color32>,
+) -> egui::Response {
+    let t = Tokens::get(ui.ctx());
+    let (dy, alpha) = entrance(ui, resp.rect);
+    let r = resp.rect.translate(vec2(0.0, dy));
+    let edge = r.right().min(visible_right(ui));
+    let mut p = ui.painter().clone();
+    p.multiply_opacity(alpha);
+    let inner = Rect::from_min_max(pos2(r.left() + 8.0, r.top() + 2.0), pos2((edge - 8.0).max(r.left() + 8.0), r.bottom() - 2.0));
+    if selected {
+        p.rect_filled(inner, 12.0, t.hover);
+        register(ui.ctx(), format!("highlight:{id}"), inner);
+    } else if resp.is_pointer_button_down_on() {
+        p.rect_filled(inner, 12.0, t.hover.gamma_multiply(0.6));
+    }
+    let folder = id.starts_with("folder:");
+    let tile = Rect::from_min_size(pos2(r.left() + 16.0 + indent, r.center().y - TILE / 2.0), vec2(TILE, TILE));
+    if folder {
+        paint(&p, tile.shrink(1.0), Icon::Folder, t.text_dim);
+    } else {
+        p.rect_filled(tile, 6.0, if selected { t.field.gamma_multiply(0.7) } else { t.field });
+        paint(&p, Rect::from_center_size(tile.center(), vec2(22.0, 22.0)), icon, t.text);
+    }
+    let x = tile.right() + 14.0;
+    let more = folder || id.starts_with("album:");
+    // (room is kept at the end for a "…" or a disclosure chevron)
+    let mut right = edge - 16.0 - PHONE_TRAIL;
+    if more {
+        paint(&p, Rect::from_center_size(more_rect(r, edge).center(), vec2(20.0, 20.0)), Icon::Dots, t.text);
+    }
+    if let Some(c) = mark {
+        p.circle_filled(pos2(right - 4.0, r.center().y), 4.0, c);
+        register(ui.ctx(), format!("labelMark:{id}"), Rect::from_center_size(pos2(right - 4.0, r.center().y), vec2(8.0, 8.0)));
+        right -= MARK_W;
+    }
+    let room = (right - x).max(0.0);
+    let font = t.font(17.0);
+    let measure = |s: &str| p.layout_no_wrap(s.to_string(), font.clone(), t.text).size().x;
+    let shown = if measure(label) <= room { label.to_string() } else { crate::widgets::elide_head(label, room, measure) };
+    let sub = count.filter(|_| app.ui.show_counts).map(|n| {
+        let n = crate::i18n::grouped(n);
+        if folder { crate::i18n::tr_format!("{n} items", n = n) } else { n }
+    });
+    let title_y = if sub.is_some() { r.center().y - 10.0 } else { r.center().y };
+    let label_rect = p.text(pos2(x, title_y), Align2::LEFT_CENTER, &shown, font.clone(), t.text);
+    register(ui.ctx(), format!("label:{id}"), label_rect);
+    if let Some(sub) = sub {
+        let rect = p.text(pos2(x, r.center().y + 12.0), Align2::LEFT_CENTER, sub, t.font(15.0), t.text_dim);
+        register(ui.ctx(), format!("count:{id}"), rect);
+    }
+    if shown != label { resp.on_hover_text(label) } else { resp }
+}
+
+/// Where a phone row's "…" is: at its end, finger-sized.
+fn more_rect(row: Rect, edge: f32) -> Rect {
+    Rect::from_center_size(pos2(edge - 16.0 - PHONE_TRAIL / 2.0, row.center().y), vec2(PHONE_TRAIL, PHONE_TRAIL))
+}
+
+/// The "…" at the end of a phone's album or folder row (`more:<row id>`): a tap opens the row's menu
+/// there, the one a right click opens on a desktop ([`folder_menu`]).
+fn more_button(ui: &mut egui::Ui, row: &egui::Response, widget: &str) {
+    let r = more_rect(row.rect, row.rect.right().min(visible_right(ui)));
+    let b = ui.interact(r, row.id.with("more"), Sense::click());
+    b.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, crate::i18n::tr("More")));
+    register(ui.ctx(), format!("more:{widget}"), r);
+    if b.clicked() {
+        open_row_menu(ui.ctx(), row, r.center());
+    }
+}
+
+/// Open the menu of `row` ([`row_popup`]) at `at`, as its right click would at the pointer.
+fn open_row_menu(ctx: &egui::Context, row: &egui::Response, at: egui::Pos2) {
+    ctx.data_mut(|d| d.insert_temp(row.id.with("menu-at"), at));
+    egui::Popup::open_id(ctx, egui::Popup::default_response_id(row));
+}
+
+/// A row's context menu: at the pointer for a right click (or a long press), else where
+/// [`open_row_menu`] opened it (a phone's "…").
+fn row_popup(row: &egui::Response) -> egui::Popup<'_> {
+    let key = row.id.with("menu-at");
+    if row.secondary_clicked() {
+        row.ctx.data_mut(|d| d.remove::<egui::Pos2>(key));
+    }
+    let popup = egui::Popup::context_menu(row);
+    match row.ctx.data(|d| d.get_temp::<egui::Pos2>(key)) {
+        Some(at) => popup.anchor(at),
+        None => popup,
+    }
+}
+
+/// Memory key: when the albums list last opened (a phone's page), for [`entrance`].
+pub(crate) const OPENED_AT: &str = "left-opened-at";
+
+/// A phone's rows coming in as the albums list opens: each slides up a little and fades in, a beat
+/// after the one above it, as iOS lists cascade. How far down to draw what is at `rect` now, and
+/// its opacity.
+fn entrance(ui: &egui::Ui, rect: Rect) -> (f32, f32) {
+    const SECS: f64 = 0.38;
+    let Some(opened) = ui.data(|d| d.get_temp::<f64>(egui::Id::new(OPENED_AT))) else { return (0.0, 1.0) };
+    let delay = (f64::from((rect.top() - ui.clip_rect().top()).max(0.0) / PHONE_ROW_H) * 0.03).min(0.4);
+    let k = ((ui.input(|i| i.time) - opened - delay) / SECS).clamp(0.0, 1.0) as f32;
+    if k < 1.0 {
+        ui.ctx().request_repaint();
+    }
+    let e = egui::emath::easing::cubic_out(k);
+    ((1.0 - e) * 22.0, e)
+}
+
 /// The disclosure triangle at the left of a tree row (`indent` is the row's): right-pointing
 /// when closed, down when open, registered as widget `widget` for the control channel. Returns
 /// its response: the caller flips the open state on `clicked()`.
 fn disclosure_triangle(ui: &mut egui::Ui, row: &egui::Response, indent: f32, open: bool, id: egui::Id, widget: String) -> egui::Response {
     let t = Tokens::get(ui.ctx());
+    if crate::is_compact(ui.ctx()) {
+        // a phone's: a chevron at the row's end (where the count was), finger-sized, as iOS's outline lists have it
+        let edge = row.rect.right().min(visible_right(ui));
+        let hit = Rect::from_center_size(pos2(edge - 16.0 - PHONE_TRAIL / 2.0, row.rect.center().y), vec2(PHONE_TRAIL, PHONE_TRAIL));
+        let tr = ui.interact(hit, id, Sense::click());
+        register(ui.ctx(), widget, hit);
+        let (dy, alpha) = entrance(ui, row.rect);
+        let icon = if open { Icon::ChevronDown } else { Icon::ChevronRight };
+        let mut p = ui.painter().clone();
+        p.multiply_opacity(alpha);
+        paint(&p, Rect::from_center_size(hit.center() + vec2(0.0, dy), vec2(16.0, 16.0)), icon, t.text_dim);
+        return tr;
+    }
     let c = pos2(row.rect.left() + 10.0 + indent, row.rect.center().y);
     let tri = Rect::from_center_size(c, vec2(14.0, 14.0));
     let tr = ui.interact(tri, id, Sense::click());
@@ -208,6 +345,14 @@ fn heading(ui: &egui::Ui, at: egui::Pos2, label: &str, font: egui::FontId, color
 const SECTION_GAP: f32 = 10.0;
 /// Height of a section's header.
 const SECTION_HEADER: f32 = 34.0;
+/// On a phone: more room above a section, and a taller header for its larger title.
+const PHONE_SECTION_GAP: f32 = 20.0;
+const PHONE_SECTION_HEADER: f32 = 48.0;
+
+/// A section header's height here (a phone's is taller).
+fn header_h(ui: &egui::Ui) -> f32 {
+    if crate::is_compact(ui.ctx()) { PHONE_SECTION_HEADER } else { SECTION_HEADER }
+}
 
 /// One sidebar section: the gap above it, its header, and (while it is open) the rows `body`
 /// draws. Every section goes through here, so they all fold, space and announce themselves alike.
@@ -219,13 +364,16 @@ fn section(
     rows: usize,
     body: impl FnOnce(&mut LightcraftApp, &mut egui::Ui),
 ) -> PlacedSection {
-    ui.add_space(SECTION_GAP);
-    let (header, _) = ui.allocate_exact_size(vec2(ui.available_width(), SECTION_HEADER), Sense::hover());
-    // a hairline in the gap above tells the sections apart
+    let phone = crate::is_compact(ui.ctx());
+    ui.add_space(if phone { PHONE_SECTION_GAP } else { SECTION_GAP });
+    let (header, _) = ui.allocate_exact_size(vec2(ui.available_width(), header_h(ui)), Sense::hover());
+    // a hairline in the gap above tells the sections apart (a phone's bold headings need none)
     let t = Tokens::get(ui.ctx());
     let edge = visible_right(ui).min(header.right());
     let y = header.top() - SECTION_GAP / 2.0;
-    ui.painter().hline(header.left() + 18.0..=(edge - 18.0).max(header.left() + 18.0), y, egui::Stroke::new(1.0, t.divider));
+    if !phone {
+        ui.painter().hline(header.left() + 18.0..=(edge - 18.0).max(header.left() + 18.0), y, egui::Stroke::new(1.0, t.divider));
+    }
     let show = egui::Id::new("left-show-section");
     if let Some((asked, frame)) = ui.data(|d| d.get_temp::<(SidebarSection, u64)>(show))
         && asked == section
@@ -262,9 +410,10 @@ fn visible_right(ui: &egui::Ui) -> f32 {
 /// next section's header pushes it out as it arrives. `view_top`: where the visible part starts.
 fn pinned_header(app: &mut LightcraftApp, ui: &mut egui::Ui, placed: &[PlacedSection], view_top: f32) {
     let pinned = placed.iter().find(|p| p.open && p.top < view_top && p.bottom > view_top);
+    let h = header_h(ui);
     let rect = pinned.map(|p| {
-        let top = view_top.min(p.bottom - SECTION_HEADER);
-        Rect::from_x_y_ranges(ui.max_rect().x_range(), top..=top + SECTION_HEADER)
+        let top = view_top.min(p.bottom - h);
+        Rect::from_x_y_ranges(ui.max_rect().x_range(), top..=top + h)
     });
     // rows ask where it is (next frame: they are laid out before it)
     ui.data_mut(|d| d.insert_temp(egui::Id::new("left-pinned-rect"), rect));
@@ -392,7 +541,11 @@ fn section_header(app: &mut LightcraftApp, ui: &mut egui::Ui, section: SidebarSe
     let id = section.id();
     let title = crate::i18n::tr(section.title());
     let (interact, widget) = if pinned { ("sidebar-section-pinned", "sidebarSectionPinned") } else { ("sidebar-section", "sidebarSection") };
-    let resp = ui.interact(r, ui.id().with((interact, id)), Sense::click_and_drag());
+    // (a phone's finger on a header scrolls the list: sections move with its menu's Move Up / Down)
+    let phone = crate::is_compact(ui.ctx());
+    let resp = ui.interact(r, ui.id().with((interact, id)), if phone { Sense::click() } else { Sense::click_and_drag() });
+    // (on a phone it comes in with the rows: `entrance`)
+    let first = ui.painter().add(egui::Shape::Noop);
     register(ui.ctx(), format!("{widget}:{id}"), r);
     let toggled = resp.clicked();
     if toggled {
@@ -416,11 +569,19 @@ fn section_header(app: &mut LightcraftApp, ui: &mut egui::Ui, section: SidebarSe
         let bar = Rect::from_min_max(r.min + vec2(8.0, 2.0), pos2((edge - 8.0).max(r.left() + 8.0), r.bottom() - 2.0));
         ui.painter().rect_filled(bar, 4.0, t.hover.gamma_multiply(0.6));
     }
-    let c = pos2(r.left() + 10.0, r.center().y);
-    register(ui.ctx(), format!("{widget}Chevron:{id}"), Rect::from_center_size(c, vec2(14.0, 14.0)));
     let col = if hovered { t.text } else { t.text_dim };
-    ui.painter().add(egui::Shape::convex_polygon(triangle_points(c, open), col, egui::Stroke::NONE));
-    heading(ui, pos2(r.left() + 18.0, r.center().y), section.title(), t.semibold(13.5), t.text_label);
+    if phone {
+        // iOS's: the title, and a chevron after it that turns down while the section is open
+        let title = heading(ui, pos2(r.left() + 18.0, r.center().y), section.title(), t.semibold(13.5), t.text_label);
+        let c = pos2(title.right() + 14.0, r.center().y + 1.0);
+        register(ui.ctx(), format!("{widget}Chevron:{id}"), Rect::from_center_size(c, vec2(14.0, 14.0)));
+        paint(ui.painter(), Rect::from_center_size(c, vec2(14.0, 14.0)), if open { Icon::ChevronDown } else { Icon::ChevronRight }, t.text_dim);
+    } else {
+        let c = pos2(r.left() + 10.0, r.center().y);
+        register(ui.ctx(), format!("{widget}Chevron:{id}"), Rect::from_center_size(c, vec2(14.0, 14.0)));
+        ui.painter().add(egui::Shape::convex_polygon(triangle_points(c, open), col, egui::Stroke::NONE));
+        heading(ui, pos2(r.left() + 18.0, r.center().y), section.title(), t.semibold(13.5), t.text_label);
+    }
     let button = header_button(section);
     // (an album being dragged puts "Top Level" in the Albums header)
     let room = !(section == SidebarSection::Albums && app.ui.dragging_album.is_some());
@@ -435,6 +596,15 @@ fn section_header(app: &mut LightcraftApp, ui: &mut egui::Ui, section: SidebarSe
     }
     if let Some(button) = button {
         show_header_button(app, ui, r, &button);
+    }
+    if phone && !pinned {
+        let (dy, alpha) = entrance(ui, r);
+        if alpha < 1.0 {
+            let last = ui.painter().add(egui::Shape::Noop);
+            ui.ctx().graphics_mut(|g| g.entry(ui.layer_id()).transform_range(first, last, egui::emath::TSTransform::from_translation(vec2(0.0, dy))));
+            // (faded by the page's own colour over where it is drawn now)
+            ui.painter().rect_filled(r.translate(vec2(0.0, dy)).expand2(vec2(0.0, 2.0)), 0.0, t.chrome.gamma_multiply(1.0 - alpha));
+        }
     }
     HeaderOutcome { open, toggled }
 }
@@ -491,6 +661,12 @@ fn show_header_button(app: &mut LightcraftApp, ui: &mut egui::Ui, header: Rect, 
         HeaderAction::Run(run) => {
             if resp.clicked() {
                 run(app, ui.ctx());
+            }
+        }
+        // (a phone's Albums + opens the Create New sheet: `new_album_rows`)
+        HeaderAction::Menu(_) if button.id == "albumNew" && crate::is_compact(ui.ctx()) => {
+            if resp.clicked() {
+                super::mobile::open_actions(ui.ctx(), "newAlbum");
             }
         }
         HeaderAction::Menu(items) => {
@@ -589,17 +765,23 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
 /// a page of its own in the compact layout.
 pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
+    let phone = crate::is_compact(ui.ctx());
+    crate::file_drop::note_sidebar(ui.ctx(), ui.max_rect());
+    // a phone's albums page: under its own title "Albums" the list starts at once
+    let page = phone && ui.ctx().content_rect().width() < super::compact::WIDE_PT;
     {
         ui.spacing_mut().item_spacing.y = 0.0;
         // the title offers the sections' menu too: where hidden sections come back from
-        let (hr, title) = ui.allocate_exact_size(vec2(ui.available_width(), 44.0), Sense::click());
+        let (hr, title) = ui.allocate_exact_size(vec2(ui.available_width(), if page { 6.0 } else { 44.0 }), Sense::click());
         register(ui.ctx(), "sidebarTitle", hr);
         title.context_menu(|ui| sections_menu(app, ui, None));
         // the open library's name under the title, so nobody edits in the wrong one (issue #902)
         let library = crate::panels::settings::open_library_name(app);
         let title_y = if library.is_some() { hr.center().y - 7.0 } else { hr.center().y };
-        heading(ui, pos2(hr.left() + 18.0, title_y), "My Photos", t.semibold(15.0), t.text);
-        if let Some(name) = library {
+        if !page {
+            heading(ui, pos2(hr.left() + 18.0, title_y), "My Photos", t.semibold(15.0), t.text);
+        }
+        if let Some(name) = library.as_ref().filter(|_| !page) {
             ui.painter().with_clip_rect(hr.shrink2(vec2(18.0, 0.0))).text(
                 pos2(hr.left() + 18.0, hr.center().y + 10.0),
                 Align2::LEFT_CENTER,
@@ -614,7 +796,25 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         }
         let counts = app.caches.counts(&app.session.catalog);
         let (total, picks, deleted) = (counts.total, counts.picks, counts.deleted);
-        egui::ScrollArea::both().id_salt("left-scroll").auto_shrink([false, false]).show_viewport(ui, |ui, viewport| {
+        let carrying = app.ui.dragging_album.is_some() || app.ui.dragging_section.is_some();
+        let mut scroll = egui::ScrollArea::both().id_salt("left-scroll").auto_shrink([false, false]);
+        if phone && carrying {
+            // (a finger carrying an album moves it, not the list: the list scrolls at its edges, `drag_auto_scroll`)
+            scroll = scroll.scroll_source(egui::scroll_area::ScrollSource { drag: egui::scroll_area::DragScroll::Never, ..Default::default() });
+        }
+        let out = scroll.show_viewport(ui, |ui, viewport| {
+            if page && let Some(name) = &library {
+                // the open library's name, so nobody edits in the wrong one (issue #902)
+                let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 26.0), Sense::hover());
+                ui.painter().with_clip_rect(r.shrink2(vec2(16.0, 0.0))).text(
+                    r.left_center() + vec2(16.0, 0.0),
+                    Align2::LEFT_CENTER,
+                    name,
+                    t.font(13.0),
+                    t.text_dim,
+                );
+                register(ui.ctx(), "label:libraryName", r);
+            }
             drag_auto_scroll(app, ui);
             // where the visible part of the content starts (screen y), for the pinned header
             let view_top = ui.cursor().top() + viewport.min.y;
@@ -714,10 +914,14 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 };
                 placed.push(at);
             }
-            // room below the last section (a section dragged to the end is dropped here)
-            ui.add_space(SECTION_GAP * 2.0);
+            // room below the last section (a section dragged to the end is dropped here; on a phone,
+            // the last rows scroll up clear of Create New)
+            ui.add_space(if page { CREATE_H + 40.0 } else { SECTION_GAP * 2.0 });
             pinned_header(app, ui, &placed, view_top);
             section_drag(app, ui, &placed);
+            if page {
+                create_new(ui);
+            }
             // what the rows asked for becomes next frame's width
             let next = ui.data(|d| d.get_temp::<f32>(egui::Id::new("left-content-width-next"))).unwrap_or(0.0);
             if (next - content_width(ui.ctx())).abs() > 0.5 {
@@ -725,6 +929,63 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 ui.ctx().request_repaint();
             }
         });
+        if page {
+            super::mobile::scrolled(ui.ctx(), "albums", &out);
+            if carrying {
+                super::mobile::hold(ui.ctx());
+            }
+        }
+    }
+}
+
+/// Height of the phone's Create New capsule.
+const CREATE_H: f32 = 52.0;
+
+/// A phone's "+ Create New" (`button:createNew`): an outlined capsule floating over the bottom of the
+/// albums list, as Lightroom's mobile app has it. It offers what Albums' + does (the `newAlbum` sheet,
+/// [`new_album_rows`]). Call last in the list's scroll area.
+fn create_new(ui: &mut egui::Ui) {
+    let t = Tokens::get(ui.ctx());
+    let view = ui.clip_rect();
+    let label = crate::i18n::tr("Create New");
+    let galley = ui.painter().layout_no_wrap(label.to_string(), t.semibold(17.0), t.text);
+    let w = galley.size().x + 18.0 + 10.0 + 2.0 * 24.0;
+    let r = Rect::from_center_size(pos2(view.center().x, view.bottom() - 16.0 - CREATE_H / 2.0), vec2(w, CREATE_H));
+    let resp = ui.interact(r, egui::Id::new("left-create-new"), Sense::click());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+    register(ui.ctx(), "button:createNew", r);
+    let k = crate::glass::press(ui.ctx(), &resp);
+    let r = r.expand(2.0 * k);
+    let p = ui.painter();
+    p.rect_filled(r, CREATE_H / 2.0, t.chrome);
+    p.rect_stroke(r, CREATE_H / 2.0, egui::Stroke::new(2.0, t.text.gamma_multiply(0.85)), egui::StrokeKind::Inside);
+    let left = r.center().x - (galley.size().x + 28.0) / 2.0;
+    paint(p, Rect::from_min_size(pos2(left, r.center().y - 9.0), vec2(18.0, 18.0)), Icon::Plus, t.text);
+    p.galley(pos2(left + 28.0, r.center().y - galley.size().y / 2.0), galley, t.text);
+    if resp.clicked() {
+        super::mobile::open_actions(ui.ctx(), "newAlbum");
+    }
+}
+
+/// The phone's Create New sheet: what Albums' + offers ([`new_album_menu`]) as finger-sized rows.
+pub(crate) fn new_album_rows(app: &mut LightcraftApp, ui: &mut egui::Ui) {
+    for (id, icon, label, command) in [
+        ("newAlbum", Icon::Album, "Album", "dialog.newAlbum"),
+        ("newSmartAlbum", Icon::SmartAlbum, "Smart Album", "dialog.smartAlbum"),
+        ("newSmartAlbumFromFilter", Icon::Filter, "Smart Album from Filter", "dialog.newSmartAlbum"),
+        ("newFolder", Icon::Folder, "Folder", "dialog.newFolder"),
+    ] {
+        if super::mobile::row(ui, id, Some(icon), crate::i18n::tr(label), true)
+            && let Err(e) = app.run(command, json!({}))
+        {
+            app.toast(ui.ctx(), e);
+        }
+    }
+    if app.session.catalog.album_children_are_ordered(None) {
+        super::mobile::row_gap(ui);
+        if super::mobile::row(ui, "sortAlbums", Some(Icon::Sort), crate::i18n::tr("Sort Albums A–Z"), true) {
+            let _ = app.run("album.sort", json!({}));
+        }
     }
 }
 
@@ -1163,6 +1424,9 @@ type AlbumKids = std::collections::HashMap<Option<AlbumId>, Vec<Album>>;
 /// `open_to`: folders forced open this frame (the way down to an album that was just made).
 fn albums_tree(app: &mut LightcraftApp, ui: &mut egui::Ui, all: &AlbumKids, parent: Option<AlbumId>, indent: f32, open_to: &[AlbumId]) {
     let Some(kids) = all.get(&parent) else { return };
+    // a phone's finger scrolls the list: a row is picked up by holding it (`lift`), not by any drag
+    let phone = crate::is_compact(ui.ctx());
+    let sense = if phone { Sense::click() } else { Sense::click_and_drag() };
     for a in kids {
         if a.folder {
             let open_id = egui::Id::new(("folder-open", a.id.0));
@@ -1171,12 +1435,16 @@ fn albums_tree(app: &mut LightcraftApp, ui: &mut egui::Ui, all: &AlbumKids, pare
                 open = true;
                 set_tree_open(ui, open_id, true);
             }
-            let resp =
-                row_sensed(app, ui, &format!("folder:{}", a.id.0), Icon::Folder, &a.name, None, None, false, indent, Sense::click_and_drag(), None);
-            // a folder is no source, so its row folds it too; the triangle is the same click, aimed
             let has_children = all.get(&Some(a.id)).is_some_and(|v| !v.is_empty());
+            // (a phone says how many albums it holds; it folds by a tap on the row)
+            let items = phone.then(|| all.get(&Some(a.id)).map_or(0, Vec::len));
+            let resp = row_sensed(app, ui, &format!("folder:{}", a.id.0), Icon::Folder, &a.name, None, items, false, indent, sense, None);
+            // a folder is no source, so its row folds it too; the triangle is the same click, aimed
             if resp.drag_started() {
                 app.ui.dragging_album = Some(a.id.0);
+            }
+            if phone {
+                lift(app, ui, &resp, a.id.0);
             }
             if album_drag_over(app, ui, &resp, a, has_children.then_some(&mut open), indent) {
                 set_tree_open(ui, open_id, true);
@@ -1184,17 +1452,17 @@ fn albums_tree(app: &mut LightcraftApp, ui: &mut egui::Ui, all: &AlbumKids, pare
             // what this frame draws; a click shows from the next one
             let draw_open = open;
             let mut toggled = false;
-            if has_children {
+            if has_children && !phone {
                 let tri = tree_toggle(ui, &resp, indent, open_id, &mut open, format!("albumToggle:{}", a.id.0));
                 toggled = tri.clicked();
                 // the triangle sits on the row and takes its clicks: the menu opens from it too
                 folder_menu(app, &tri, a);
             }
             // one click, one toggle: the triangle's is not the row's as well
-            if resp.clicked() && !toggled {
+            if resp.clicked() && !toggled && !lifted(ui) {
                 set_tree_open(ui, open_id, !open);
             }
-            folder_menu(app, &resp, a);
+            album_row_menu(app, ui, &resp, a, phone);
             if draw_open {
                 albums_tree(app, ui, all, Some(a.id), indent + 16.0, open_to);
             }
@@ -1211,16 +1479,20 @@ fn albums_tree(app: &mut LightcraftApp, ui: &mut egui::Ui, all: &AlbumKids, pare
             // a smart album whose rules no longer check (an album they test was deleted) says so
             let problems = app.caches.smart_album_problems(&app.session.catalog).get(&a.id).cloned().unwrap_or_default();
             let label = if problems.is_empty() { label } else { format!("⚠ {label}") };
-            let mut resp = row_sensed(app, ui, &format!("album:{}", a.id.0), icon, &label, None, Some(n), sel, indent, Sense::click_and_drag(), None);
+            let mut resp = row_sensed(app, ui, &format!("album:{}", a.id.0), icon, &label, None, Some(n), sel, indent, sense, None);
             if !problems.is_empty() {
                 crate::widgets::register(ui.ctx(), format!("albumProblem:{}", a.id.0), resp.rect);
             }
             if resp.drag_started() {
                 app.ui.dragging_album = Some(a.id.0);
             }
+            if phone {
+                lift(app, ui, &resp, a.id.0);
+            }
             album_drag_over(app, ui, &resp, a, None, indent);
             if !a.is_smart() {
                 drop_target(app, ui, &resp, a);
+                file_drop_target(ui, &resp, a);
             }
             if let Some(rules) = &a.smart {
                 // one tooltip: the rules, then what needs fixing in them
@@ -1237,17 +1509,78 @@ fn albums_tree(app: &mut LightcraftApp, ui: &mut egui::Ui, all: &AlbumKids, pare
             }
             if app.session.sync_state().is_some_and(|st| st.config.offline_albums.contains(&a.id)) {
                 let t = Tokens::get(ui.ctx());
-                let c = pos2(resp.rect.right().min(visible_right(ui)) - 46.0, resp.rect.center().y);
+                let c = pos2(resp.rect.right().min(visible_right(ui)) - if phone { 16.0 + PHONE_TRAIL + 10.0 } else { 46.0 }, resp.rect.center().y);
                 paint(ui.painter(), Rect::from_center_size(c, vec2(12.0, 12.0)), Icon::Check, t.text_dim);
                 register(ui.ctx(), format!("offline:album:{}", a.id.0), Rect::from_center_size(c, vec2(12.0, 12.0)));
                 resp = resp.on_hover_text(crate::i18n::tr("Available offline on this device"));
             }
-            if resp.clicked() {
+            if resp.clicked() && !lifted(ui) {
                 let _ = app.run("library.source", json!({"kind": "album", "id": a.id.0}));
             }
-            folder_menu(app, &resp, a);
+            album_row_menu(app, ui, &resp, a, phone);
         }
     }
+}
+
+/// An album or folder row's menu ([`folder_menu`]): a right click on a desktop; on a phone its "…"
+/// ([`more_button`]), and a row held still and let go without moving (`lift` picked it up). Not
+/// while it is carried, so the press that carries it doesn't also open the menu.
+fn album_row_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Response, a: &Album, phone: bool) {
+    if !phone {
+        folder_menu(app, resp, a);
+        return;
+    }
+    let kind = if a.folder { "folder" } else { "album" };
+    more_button(ui, resp, &format!("{kind}:{}", a.id.0));
+    if app.ui.dragging_album == Some(a.id.0) {
+        // dimmed where it was while the finger carries it
+        let t = Tokens::get(ui.ctx());
+        ui.painter().rect_filled(resp.rect, 0.0, t.chrome.gamma_multiply(0.55));
+        if ui.input(|i| i.pointer.primary_released()) && !moved(ui) {
+            let at = ui.input(|i| i.pointer.interact_pos()).unwrap_or(resp.rect.center());
+            open_row_menu(ui.ctx(), resp, at);
+            app.ui.dragging_album = None;
+        }
+        return;
+    }
+    folder_menu(app, resp, a);
+}
+
+/// Memory key: the press in progress picked up a row (its release is not a tap).
+const LIFTED: &str = "left-lifted";
+/// How far (points) a finger may wander and still be holding still.
+const LIFT_SLOP: f32 = 10.0;
+
+/// The press in progress (or the one just let go) picked up a row.
+fn lifted(ui: &egui::Ui) -> bool {
+    ui.data(|d| d.get_temp::<bool>(egui::Id::new(LIFTED))).unwrap_or(false)
+}
+
+/// The finger has moved off where it came down.
+fn moved(ui: &egui::Ui) -> bool {
+    ui.input(|i| i.pointer.press_origin().zip(i.pointer.interact_pos()).is_some_and(|(o, p)| (p - o).length() > LIFT_SLOP))
+}
+
+/// A phone's album or folder row held still for a moment is picked up, as iOS's drag and drop
+/// lifts things: a tap of haptics, and the finger then carries it to a folder (or to Albums' header
+/// for the top level, `album_drag_over`) while the list scrolls at its edges. Let go where it was,
+/// it opens its menu instead (`album_row_menu`).
+fn lift(app: &mut LightcraftApp, ui: &egui::Ui, resp: &egui::Response, id: u64) {
+    if ui.input(|i| i.pointer.any_pressed()) {
+        ui.data_mut(|d| d.remove::<bool>(egui::Id::new(LIFTED)));
+    }
+    if app.ui.dragging_album.is_some() || !resp.is_pointer_button_down_on() || lifted(ui) || moved(ui) || ui.input(|i| i.multi_touch().is_some()) {
+        return;
+    }
+    let held = ui.input(|i| i.pointer.press_start_time().map(|t| i.time - t)).unwrap_or(0.0);
+    if held < super::grid::LONG_PRESS_SECS {
+        // nothing else may come in while the finger rests: wake up when the time is up
+        ui.ctx().request_repaint_after(std::time::Duration::try_from_secs_f64(super::grid::LONG_PRESS_SECS - held).unwrap_or_default());
+        return;
+    }
+    ui.data_mut(|d| d.insert_temp(egui::Id::new(LIFTED), true));
+    crate::haptics::tap(ui.ctx(), crate::haptics::Haptic::Medium);
+    app.ui.dragging_album = Some(id);
 }
 
 /// Whether the pointer is over `rect` and over what the panel shows of it (a row scrolled out of
@@ -1502,11 +1835,20 @@ pub fn album_drag_feedback(app: &mut LightcraftApp, ctx: &egui::Context) {
     let (Some(pos), Some(name)) = (pos, app.session.catalog.album(AlbumId(id)).map(|a| a.name.clone())) else { return };
     let t = Tokens::get(ctx);
     ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
-    egui::Area::new(egui::Id::new("drag-album")).order(egui::Order::Tooltip).interactable(false).fixed_pos(pos + vec2(14.0, 10.0)).show(ctx, |ui| {
-        egui::Frame::NONE.fill(t.accent).corner_radius(10.0).inner_margin(egui::Margin::symmetric(9, 3)).show(ui, |ui| {
-            ui.label(egui::RichText::new(name).color(egui::Color32::WHITE).font(t.semibold(12.0)));
+    // (on a phone, above the finger, where it can be seen, and larger)
+    let phone = crate::is_compact(ctx);
+    let (at, pivot, size, margin) = if phone {
+        (pos - vec2(0.0, 34.0), Align2::CENTER_BOTTOM, 15.0, egui::Margin::symmetric(14, 8))
+    } else {
+        (pos + vec2(14.0, 10.0), Align2::LEFT_TOP, 12.0, egui::Margin::symmetric(9, 3))
+    };
+    let chip =
+        egui::Area::new(egui::Id::new("drag-album")).order(egui::Order::Tooltip).interactable(false).pivot(pivot).fixed_pos(at).show(ctx, |ui| {
+            egui::Frame::NONE.fill(t.accent).corner_radius(if phone { 16.0 } else { 10.0 }).inner_margin(margin).show(ui, |ui| {
+                ui.label(egui::RichText::new(name).color(egui::Color32::WHITE).font(t.semibold(size)));
+            });
         });
-    });
+    register(ctx, "drag:album", chip.response.rect);
 }
 
 /// An album row while photos are dragged from the grid: highlighted under the pointer; a
@@ -1554,8 +1896,23 @@ fn drop_target(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Response
     }
 }
 
+/// An album row while files are dragged in from outside the app: lit up under the pointer, where a
+/// drop there goes ([`crate::file_drop`]).
+fn file_drop_target(ui: &egui::Ui, resp: &egui::Response, a: &Album) {
+    let Some(at) = crate::file_drop::pointer(ui.ctx()) else { return };
+    // only where the row can be seen: not scrolled out of the sidebar or beneath the pinned header
+    if !crate::docking::drop_target(ui, resp.rect, Some(at)) || pinned_rect(ui).is_some_and(|r| r.contains(at)) {
+        return;
+    }
+    let t = Tokens::get(ui.ctx());
+    let r = resp.rect.shrink2(vec2(8.0, 1.0));
+    ui.painter().rect_filled(r, 4.0, t.accent.gamma_multiply(0.22));
+    ui.painter().rect_stroke(r, 4.0, egui::Stroke::new(1.5, t.accent), egui::StrokeKind::Inside);
+    crate::file_drop::set_over(ui.ctx(), a.id.0);
+}
+
 fn folder_menu(app: &mut LightcraftApp, resp: &egui::Response, a: &Album) {
-    resp.context_menu(|ui| {
+    row_popup(resp).show(|ui| {
         if a.folder {
             // the same commands as File ▸ New…, aimed at this folder
             ui.menu_button(crate::i18n::tr("New"), |ui| {
@@ -1909,7 +2266,7 @@ fn server_folders_section(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         return;
     }
     ui.add_space(SECTION_GAP);
-    let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), SECTION_HEADER), Sense::hover());
+    let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), header_h(ui)), Sense::hover());
     heading(ui, pos2(r.left() + 18.0, r.center().y), "Server Folders", t.semibold(13.5), t.text_label);
     server_folder_rows(app, ui, &folders, "", 0.0);
 }

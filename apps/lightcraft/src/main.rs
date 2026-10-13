@@ -29,6 +29,8 @@ mod dialog_filter;
 mod editors;
 mod logging;
 #[cfg(target_os = "macos")]
+mod drag_pointer;
+#[cfg(target_os = "macos")]
 mod native_menu;
 #[cfg(target_os = "macos")]
 mod screen_profile;
@@ -358,6 +360,11 @@ fn services(cc: &eframe::CreationContext<'_>, log_file: Option<&std::path::Path>
         screen_profile: Some(Box::new(screen_profile::icc)),
         #[cfg(not(target_os = "macos"))]
         screen_profile: None,
+        // winit gives no pointer position while files are dragged in: AppKit does (the album under them)
+        #[cfg(target_os = "macos")]
+        file_drag_pointer: Some(Box::new(drag_pointer::pointer)),
+        #[cfg(not(target_os = "macos"))]
+        file_drag_pointer: None,
         pick_display_profile: Some(Box::new(|| {
             let mut d = file_dialog()
                 .set_title(lightcraft_ui_egui::i18n::tr("Choose Monitor Profile"))

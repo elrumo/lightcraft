@@ -213,6 +213,23 @@ fn main() {
             t.detail.nr_luminance = 30.0 + k % 50.0;
             drop(develop(&preview, &info, &t, &view, Some(&caches[g as usize]), g));
         });
+        // white balance changes what every spatial plane is computed from: the dearest drag of a raw edit
+        for (name, req) in [("draft 1152×768", &draft), ("1920×1280", &view)] {
+            for g in backends {
+                drop(develop(&preview, &info, &s, req, Some(&caches[*g as usize]), *g));
+            }
+            row(&format!("loupe {name} temperature drag (warm):"), &mut |g| {
+                let mut t = s.clone();
+                k += 1.0;
+                t.wb = lightcraft_develop::WhiteBalance {
+                    mode: lightcraft_develop::WbMode::Custom,
+                    temp: 4500.0 + (k % 60.0) * 50.0,
+                    tint: 0.0,
+                    scale: lightcraft_develop::WbScale::Kelvin,
+                };
+                drop(develop(&preview, &info, &t, req, Some(&caches[g as usize]), g));
+            });
+        }
     }
     if run("finish") {
         // per-pixel stage cost by feature (warm cache: exposure changes only)

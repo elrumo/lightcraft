@@ -29,7 +29,7 @@ const SETTINGS_KEY: &str = "Cmd+,";
 /// or the active mask): left to the egui handler, which knows the context.
 const CONTEXTUAL: &[&str] = &["X", "Delete"];
 /// Shortcuts text fields need while they have focus.
-const TEXT_EDIT: &[&str] = &["Cmd+A", "Cmd+C", "Cmd+V", "Cmd+X", "Cmd+Z", "Cmd+Shift+Z"];
+const TEXT_EDIT: &[&str] = &["Cmd+A", "Cmd+C", "Cmd+V", "Cmd+X", "Cmd+Z", "Cmd+Shift+Z", "Cmd+Delete"];
 
 enum Handle {
     Plain(MenuItem),
@@ -467,7 +467,8 @@ mod tests {
         assert_eq!(accelerator("G"), Some(Accelerator::new(Modifiers::empty(), Code::KeyG)));
         assert_eq!(accelerator("Cmd+'"), Some(Accelerator::new(Modifiers::META, Code::Quote)));
         assert_eq!(accelerator("Escape"), None);
-        assert!(yields_to_text("G") && yields_to_text("Delete") && yields_to_text("Cmd+V"));
+        // ⌘⌫ deletes to the line start in a text field, so it can't delete the photo meanwhile
+        assert!(yields_to_text("G") && yields_to_text("Delete") && yields_to_text("Cmd+V") && yields_to_text("Cmd+Delete"));
         assert!(!yields_to_text("Cmd+Shift+E"));
         // every registry shortcut that a menu shows maps (or is deliberately left to egui)
         let app = LightcraftApp::new(lightcraft_engine::Session::with_demo(), Default::default());

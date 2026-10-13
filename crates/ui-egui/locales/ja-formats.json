@@ -267,5 +267,8 @@
   "{n} preset{} in {g} group{}": "{n}件のプリセット（{g}グループ）{:.0}{:.0}",
   "{p} profile{}": "{p}個のプロファイル{:.0}",
   "{a} already in your library": "{a}件はすでにライブラリにあります",
-  "Not carried over: {what}": "引き継がなかった設定：{what}"
+  "Not carried over: {what}": "引き継がなかった設定：{what}",
+  "{n} items": "{n} 項目",
+  "{label}, {n} items": "{label}、{n} 項目",
+  "Add to {album}": "{album} に追加"
 }

@@ -78,6 +78,11 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     if app.ui.select_mode && !matches!(app.ui.view, ViewMode::PhotoGrid | ViewMode::SquareGrid) {
         app.ui.select_mode = false;
     }
+    // choosing photos for an album ends with choosing (Add or Cancel): back to the album
+    if let Some(album) = app.ui.adding_to.filter(|_| !app.ui.select_mode) {
+        app.ui.adding_to = None;
+        let _ = app.run("library.source", json!({"kind": "album", "id": album}));
+    }
     // the albums list: a column on a tablet, a page sliding over the grid on a phone
     let albums_page = app.ui.left_panel && !wide;
     // review mode (bars away, swipes rate) belongs to a photo with no tool in hand
@@ -152,12 +157,89 @@ pub(super) fn cancel_screen(app: &mut LightcraftApp) {
     app.ui.right = RightPanel::Edit;
 }
 
-/// The albums list (My Photos) as a page; choosing one closes it.
+/// The albums list (My Photos) as a page with a ✕ at its top right, as Lightroom's mobile app has
+/// it; choosing an album, the ✕ or a pull down closes it. Its rows come in one after another
+/// (`left::entrance`), counted from when it opened.
 fn albums(app: &mut LightcraftApp, ctx: &egui::Context, open: bool) {
     let src = app.session.source;
-    let bar = mobile::page(ctx, "albums", "Albums", "Done", None, open, |ui| super::left::body(app, ui));
-    if bar.cancel || (open && app.session.source != src) {
+    let was = egui::Id::new("compact-albums-open");
+    if open && !ctx.data(|d| d.get_temp::<bool>(was)).unwrap_or(false) {
+        let now = ctx.input(|i| i.time);
+        ctx.data_mut(|d| d.insert_temp(egui::Id::new(super::left::OPENED_AT), now));
+    }
+    ctx.data_mut(|d| d.insert_temp(was, open));
+    let bar = mobile::PageBar {
+        title: "Albums",
+        left: mobile::Item::None,
+        right: mobile::Item::Text("Close", true),
+        left_id: "sheetOk",
+        right_id: "sheetCancel",
+    };
+    let bar = mobile::page_with(ctx, "albums", bar, open, |ui| {
+        // (edge to edge, as Lightroom's list is: not inside the page's margins)
+        let r = ui.max_rect().expand2(vec2(16.0, 0.0));
+        let mut list = ui.new_child(egui::UiBuilder::new().max_rect(r));
+        list.set_clip_rect(ui.clip_rect().expand2(vec2(16.0, 0.0)));
+        super::left::body(app, &mut list);
+    });
+    if bar.cancel || bar.ok || (open && app.session.source != src) {
         app.ui.left_panel = false;
+    }
+}
+
+/// The album the grid shows, when photos can be put in and taken out of it by hand (not a smart
+/// album's, nor a folder's).
+fn plain_album(app: &LightcraftApp) -> Option<u64> {
+    match app.session.source {
+        lightcraft_engine::LibrarySource::Album(id) => app.session.catalog.album(id).filter(|a| !a.is_smart() && !a.folder).map(|a| a.id.0),
+        _ => None,
+    }
+}
+
+/// The album's + ▸ From LightCraft: All Photos to choose from, with Add in place of the action bar
+/// (`adding_bar`); choosing ends back in the album (`show`).
+fn start_adding(app: &mut LightcraftApp, album: u64) {
+    app.ui.adding_to = Some(album);
+    let _ = app.run("library.source", json!({"kind": "all"}));
+    let _ = app.run("view.selectMode", json!({"on": true}));
+}
+
+/// Delete tapped (the select bar's, or a photo's "…" ▸ Delete): in an album, a choice between taking
+/// the photos out of it and deleting them (`delete_rows`); deleting asks first either way.
+fn delete_tapped(app: &mut LightcraftApp, ctx: &egui::Context) {
+    haptics::tap(ctx, Haptic::Warning);
+    if plain_album(app).is_some() {
+        mobile::open_actions(ctx, "deleteChoice");
+    } else {
+        confirm_delete(app);
+    }
+}
+
+/// Ask before the photos go to Recently Deleted (the alert's Delete runs `photo.delete`).
+fn confirm_delete(app: &mut LightcraftApp) {
+    let count = app.session.targets(&json!({})).len();
+    if count > 0 {
+        app.ui.dialog = Some(crate::state::Dialog::ConfirmDelete { count });
+    }
+}
+
+/// The choice Delete offers in an album: Remove from Album, or Delete (from the library).
+fn delete_rows(app: &mut LightcraftApp, ui: &mut egui::Ui) {
+    let ids: Vec<u64> = app.session.targets(&json!({})).iter().map(|p| p.0).collect();
+    if let Some(album) = plain_album(app)
+        && mobile::row(ui, "removeFromAlbum", Some(Icon::Album), crate::i18n::tr("Remove from Album"), !ids.is_empty())
+    {
+        match app.run("album.removePhotos", json!({"id": album, "ids": ids})) {
+            // (they have left the grid: nothing chosen is out of sight)
+            Ok(_) if app.ui.select_mode => {
+                let _ = app.run("library.select", json!({"ids": []}));
+            }
+            Ok(_) => {}
+            Err(e) => app.toast(ui.ctx(), e),
+        }
+    }
+    if mobile::row_danger(ui, "deleteFromLibrary", Icon::Trash, crate::i18n::tr("Delete")) {
+        confirm_delete(app);
     }
 }
 
@@ -167,7 +249,7 @@ const ADD_D: f32 = 56.0;
 /// The phone's add-photos button: a round + of tinted glass over the grid's bottom right corner, offering the
 /// host's pickers (Photos, Files, a folder) in a menu. Only in hosts that have them (iOS).
 fn add_button(app: &mut LightcraftApp, ctx: &egui::Context, t: &Tokens) {
-    if app.services.host_pick.is_none() || !matches!(app.ui.view, ViewMode::PhotoGrid | ViewMode::SquareGrid) {
+    if (app.services.host_pick.is_none() && plain_album(app).is_none()) || !matches!(app.ui.view, ViewMode::PhotoGrid | ViewMode::SquareGrid) {
         return;
     }
     let screen = ctx.content_rect();
@@ -244,7 +326,20 @@ fn span_bar(app: &mut LightcraftApp, ctx: &egui::Context, t: &Tokens, shown: boo
 
 /// Every menu and action sheet of the compact layout (each draws only while it's open).
 fn menus(app: &mut LightcraftApp, ctx: &egui::Context) {
-    mobile::actions(ctx, "add", None, |ui| {
+    mobile::actions(ctx, "add", Some("Add Photos From"), |ui| {
+        // in an album, the library's own photos too
+        let album = plain_album(app);
+        if let Some(album) = album
+            && mobile::row(ui, "addFromLibrary", Some(Icon::Album), crate::i18n::tr("LightCraft"), true)
+        {
+            start_adding(app, album);
+        }
+        if app.services.host_pick.is_none() {
+            return;
+        }
+        if album.is_some() {
+            mobile::row_gap(ui);
+        }
         for (id, icon, label) in [
             ("file.importFromPhotos", Icon::Photos, "From Photos…"),
             ("file.importFromFiles", Icon::Folder, "From Files…"),
@@ -257,6 +352,8 @@ fn menus(app: &mut LightcraftApp, ctx: &egui::Context) {
             }
         }
     });
+    mobile::actions(ctx, "newAlbum", Some("Create New"), |ui| super::left::new_album_rows(app, ui));
+    mobile::actions(ctx, "deleteChoice", None, |ui| delete_rows(app, ui));
     super::crop_mobile::menus(app, ctx);
     super::remove_mobile::menus(app, ctx);
     super::mask_mobile::menus(app, ctx);
@@ -451,8 +548,7 @@ fn photo_more(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     }
     mobile::row_gap(ui);
     if mobile::row(ui, "deletePhoto", Some(Icon::Trash), crate::i18n::tr("Delete Photo"), true) {
-        haptics::tap(&ctx, Haptic::Warning);
-        run_cmd(app, &ctx, "photo.delete", json!({}));
+        delete_tapped(app, &ctx);
     }
     if mobile::row(ui, "allCommands", Some(Icon::Search), crate::i18n::tr("All Commands…"), true) {
         app.ui.all_commands = true;
@@ -508,6 +604,8 @@ fn overlays(app: &mut LightcraftApp, ctx: &egui::Context) {
     crate::import::progress(app, &ctx);
     crate::import::scan_progress(app, &ctx);
     crate::export_task::poll(app, &ctx);
+    // an album carried in the albums list: its name over the finger, and the end of a drag let go anywhere
+    super::left::album_drag_feedback(app, &ctx);
     super::toast(app, &ctx);
 }
 
@@ -1092,7 +1190,12 @@ fn ease_to(ctx: &egui::Context, id: egui::Id, target: f32) -> f32 {
 /// The top bar while choosing photos: Cancel, how many are chosen, Select All / Deselect All.
 fn select_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, full: egui::Rect) {
     let n = app.session.selection.ids.len();
-    let title = if n == 0 { crate::i18n::tr("Select Photos").to_string() } else { crate::i18n::tr_format!("{n} Selected", n = n) };
+    let adding = app.ui.adding_to.and_then(|a| app.session.catalog.album(lightcraft_catalog::AlbumId(a))).map(|a| a.name.clone());
+    let title = match adding {
+        Some(album) => crate::i18n::tr_format!("Add to {album}", album = album),
+        None if n == 0 => crate::i18n::tr("Select Photos").to_string(),
+        None => crate::i18n::tr_format!("{n} Selected", n = n),
+    };
     ui.painter().text(full.center(), Align2::CENTER_CENTER, title, t.semibold(17.0), t.text);
     ui.horizontal_centered(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
@@ -1121,6 +1224,10 @@ fn action_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, mut shown:
         ui,
         &mut shown,
         |ui| {
+            if let Some(album) = app.ui.adding_to {
+                adding_bar(app, ui, t, album);
+                return;
+            }
             // (sliding away after Cancel, it must not delete anything)
             let any = app.ui.select_mode && !app.session.selection.ids.is_empty();
             let actions = [
@@ -1149,19 +1256,35 @@ fn action_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, mut shown:
                         "selExport" => {
                             let _ = app.run("dialog.export", json!({}));
                         }
-                        "selDelete" => {
-                            haptics::tap(ui.ctx(), Haptic::Warning);
-                            // (asks first when Settings say so; the photos go to Recently Deleted)
-                            if let Err(e) = crate::menubar::run_item(app, "photo.delete", json!({})) {
-                                app.toast(ui.ctx(), e);
-                            }
-                        }
+                        "selDelete" => delete_tapped(app, ui.ctx()),
                         _ => mobile::open_menu(ui.ctx(), id, r.rect),
                     }
                 }
             });
         },
     );
+}
+
+/// While photos are chosen for an album (`adding_to`): how many, and Add (`button:addToAlbum`),
+/// which puts them in it and goes back to the album.
+fn adding_bar(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, album: u64) {
+    fill_below(ui, ui.max_rect(), t.grid_bg);
+    let capsule = floating_capsule(ui.max_rect());
+    glass::paint(ui.painter(), capsule, capsule.height() / 2.0, None, 0.0);
+    let ids = app.session.selection.ids.clone();
+    let count = crate::i18n::tr_format!("{n} Selected", n = ids.len());
+    ui.painter().text(capsule.left_center() + vec2(22.0, 0.0), Align2::LEFT_CENTER, count, t.font(15.0), t.text_dim);
+    let inner = capsule.shrink2(vec2(6.0, 0.0));
+    ui.scope_builder(egui::UiBuilder::new().max_rect(inner).layout(egui::Layout::right_to_left(egui::Align::Center)), |ui| {
+        let tint = (!ids.is_empty()).then_some(t.accent);
+        if glass::capsule_button(ui, "button:addToAlbum", "Add", tint).clicked() && !ids.is_empty() {
+            match app.run("album.addPhotos", json!({"id": album, "ids": ids.iter().map(|p| p.0).collect::<Vec<u64>>()})) {
+                Ok(r) => super::grid::toast_skipped(app, ui.ctx(), &r),
+                Err(e) => app.toast(ui.ctx(), e),
+            }
+            let _ = app.run("view.selectMode", json!({"on": false}));
+        }
+    });
 }
 
 /// One action of the select bar (`icon:<id>`): its icon, lit while pressed.

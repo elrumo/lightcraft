@@ -256,6 +256,35 @@ compilation: ~0.4 s once per process — the desktop app starts it on a backgrou
 (`lightcraft_gpu::warm_up`), so the first loupe render doesn't wait for it; other processes create
 the device on their first GPU render. `lightcraft_gpu::ready()` asks without blocking.
 
+## Drafts during slider drags
+While a slider drags, the loupe renders a draft (`RenderJob::draft`: smaller wide-radius blurs, a smaller picture).
+The picture's linear scale used to be a fixed 0.6 of the loupe's size; it now comes from `DraftBudget`
+(`crates/ui-egui/src/render.rs`), which learns the host's cost per pixel from the drafts that finish and picks
+the scale once per drag, between 0.2 and 0.6, aiming at about 40 ms a tick. A host that renders 0.6 in time
+(a GPU, for Exposure, Highlights, Clarity: 3–16 ms) keeps 0.6. The ones that don't shrink: the browser, whose CPU
+pipeline costs 100–500 ns a pixel (docs/web.md), and the sliders that rebuild every spatial plane, White Balance
+and Noise Reduction, which are 30–100 ms a tick even on the GPU at 1920 × 1280 (`render_bench`, M1 Max, 20 MP CR3,
+2026-10-13, on a machine so loaded that only CPU time was usable):
+
+| drag, warm (CPU time, one thread)   | ms | ns per pixel |
+|-------------------------------------|---:|-------------:|
+| exposure, 1920 × 1280               | 329 | 134 |
+| highlights / clarity, draft 1152 × 768 | 119 / 115 | 135 / 130 |
+| noise reduction, draft / 1920 × 1280 | 163 / 767 | 184 / 312 |
+| temperature, draft 1152 × 768       | 228 | 258 |
+| the same exposure drag + vibrance / saturation | 621 | 253 |
+
+On the GPU the same drags are 4 (exposure), 3 (highlights, clarity), 12 / 24 (noise reduction, draft / full) and
+11 ms (temperature, draft) of CPU time, and 16 / 4 / 4 / 45–103 / 33 ms of wall clock on that loaded machine.
+Vibrance and Saturation nearly double the per-pixel stage (OkLab: three `cbrt` per pixel). A sample of the
+single-thread bench puts ~75 % of the time in the per-pixel closure itself and ~23 % in `log2f`, `expf` and
+`exp2f`. A CPU profile of a browser worker (names kept, a fast-compile build) found another ~27 % in
+`[f32; 3]::map` (`try_map`, the array drain), left as calls instead of inlined; the per-pixel loops now use
+`lightcraft_color::Map3::map3` (always inlined, same order, same results: the pipeline and colour tests pass
+unchanged), which took the learned cost from 362 to 286 ms per megapixel and the sharp render after a release from
+~1040 to ~780 ms in that browser (alternating runs on a loaded Mac). Drafts also skip the filmstrip thumbnail of the
+photo being dragged (`grid::request_thumb`): a render per tick of a picture nobody is looking at.
+
 ## Opening a photo (M5.4)
 - The loupe shows a stand-in at once (`media::QuickJob`): the photo's cached view render for its
   current settings, else (raws with their import look) the embedded camera JPEG, else a

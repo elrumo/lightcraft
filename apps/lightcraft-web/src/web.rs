@@ -176,6 +176,7 @@ fn services(originals: Originals, backend: Option<Backend>, files: Files, frozen
         host_files: Some(Box::new(move |req| crate::chooser::pick(req, chooser_ctx.clone()))),
         pick_display_profile: None,
         screen_profile: None,
+        file_drag_pointer: None,
         backup_library: Some(Box::new(move |session: &mut Session| {
             let Some(b) = backup_backend.clone() else { return Err("nothing is stored in this browser session (?store=memory)".into()) };
             // the photos' own names for the originals in the zip
@@ -693,6 +694,7 @@ impl WebApp {
     fn web_stats(&self) -> serde_json::Value {
         let (alive, ready, remote, inline) = self.workers.as_ref().map_or((0, 0, 0, 0), Workers::stats);
         let (orig_n, orig_bytes) = self.originals.usage();
+        let (draft_scale, draft_ms_per_mpx) = self.app.renderer.draft_report();
         json!({
             "storage": self.backend.as_ref().map_or("memory", |b| b.kind()),
             "library": self.lib_dir,
@@ -704,6 +706,7 @@ impl WebApp {
             "originalBytesInMemory": orig_bytes,
             "renderQueue": self.app.renderer.queued(),
             "rendersInFlight": self.app.renderer.in_flight(),
+            "draft": {"scale": draft_scale, "msPerMpx": draft_ms_per_mpx, "lastMainMs": self.app.renderer.last_main_ms},
             "thumbTextures": self.app.renderer.thumb_textures(),
         })
     }

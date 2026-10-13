@@ -573,3 +573,16 @@ main > section { animation: enter 0.18s ease-out; }
   .usage li { grid-template-columns: 28px minmax(0, 1fr) auto; }
   .usage .meter { grid-column: 2 / -1; }
 }
+
+/* ------------------------------------------------------------------ search */
+.fetch { margin: 20px 0 4px; }
+.fetch-head { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 8px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.fetch-head span:first-child { min-width: 0; overflow-wrap: anywhere; }
+#srFacts { margin-bottom: 12px; }
+.panel > .switch + .alert, .panel > .alert + .facts { margin-top: 16px; }
+@media (max-width: 440px) { .sidenav a .icon { display: none; } }
+
+.people { list-style: none; margin: 16px 0 0; padding: 0; display: flex; flex-direction: column; gap: 14px; }
+.people li { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto auto; gap: 12px; align-items: center; }
+.people .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--heading); font-weight: 600; }
+.people .bytes { color: var(--text-3); font-variant-numeric: tabular-nums; text-align: right; }

@@ -15,9 +15,10 @@ An existing library needs no re-import: photos that had a position already have 
 
 View ▸ Map, the pin button in the bottom bar, or Show on Map in the Info panel. On a phone: "…" ▸ Map.
 
-- Photos taken close together are one **marker**: the best-rated photo's thumbnail with a count. Click a marker to
-  zoom into what it holds (a single photo is selected, double-click opens it). The context menu zooms to a
-  marker's photos, selects them, or shows them in the grid.
+- Photos taken close together are one **marker**: a small picture of what it holds (up to four of its photos, the
+  best-rated first, spread through the group) with a count. **Click or tap a marker to see its photos in the grid**,
+  and only those; the "Only N photos" chip above the grid takes that off. ⌘ / Shift-click adds them to the selection
+  instead. The context menu zooms to a marker's photos, selects them, or shows them in the grid.
 - The map shows the photos of the current view and filter, and fits them whenever the search or filter changes:
   type `photos in portugal` in the search field, then open the Map.
 - Drag to pan; scroll, pinch, double-click or `+` / `−` to zoom; the corner-brackets button fits all photos.

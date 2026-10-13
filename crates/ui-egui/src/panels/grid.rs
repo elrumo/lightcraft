@@ -184,6 +184,16 @@ fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         super::filterbar::show(app, ui);
     }
     app.canvas_rect = Some(ui.max_rect());
+    // photos dropped on the window: a tile for each until it is in the catalog (after the last row)
+    let dropped = crate::file_drop::pending(app);
+    if ids.is_empty()
+        && let Some(pend) = &dropped
+        && chips.is_empty()
+        && app.session.filter == Default::default()
+    {
+        crate::file_drop::show_alone(app, ui, pend);
+        return;
+    }
     if ids.is_empty() {
         if !chips.is_empty() {
             let body = match total {
@@ -279,7 +289,8 @@ fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     };
     let stacks = app.caches.grid.stacks(stats, &app.session.catalog, generation);
     // (a phone leaves room under the last row for the Years / Months / All capsule)
-    let total_h = lay.height + if app.compact { super::grid_dates::BOTTOM_ROOM } else { 12.0 };
+    let tiles_h = dropped.as_ref().map_or(0.0, |p| crate::file_drop::height(p.len(), avail_w, crate::file_drop::side(app)));
+    let total_h = lay.height + tiles_h + if app.compact { super::grid_dates::BOTTOM_ROOM } else { 12.0 };
     let active = app.session.selection.active;
     // where the grid has to go this frame: the photo under the fingers stays under them when the
     // columns change; a month or photo picked in Months
@@ -349,6 +360,11 @@ fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                     drawn.push((i, r));
                 }
             }
+        }
+        if let Some(pend) = &dropped {
+            let block = Rect::from_min_size(origin + vec2(0.0, lay.height), vec2(avail_w, tiles_h));
+            crate::file_drop::reveal_now(ui, block);
+            crate::file_drop::paint_block(ui, pend, block, viewport.translate(origin.to_vec2()), crate::file_drop::side(app));
         }
         if app.compact {
             // photos gliding off the screen to places further up or down
@@ -880,6 +896,11 @@ fn group_header(app: &mut LightcraftApp, ui: &mut egui::Ui, run: &DateRun, ids: 
 /// [`lightcraft_engine::media::Session::embedded_thumb_is_final`]), which for a folder of raws on a
 /// network share is the difference between reading every file whole and reading a preview each.
 pub fn request_thumb(app: &mut LightcraftApp, id: PhotoId, size: usize, priority: u32) {
+    // a slider drag changes the photo every frame: its thumbnail keeps what it shows (a render per
+    // tick would take a worker from the loupe) and catches up once the drag ends
+    if app.session.interaction.as_ref().is_some_and(|i| i.photo == id) && app.renderer.textures.contains_key(&Slot::Thumb(id)) {
+        return;
+    }
     let bucket = lightcraft_engine::media::thumb_bucket(size);
     if let Some(photo) = app.session.catalog.photo(id)
         && app.renderer.thumb_current(photo, bucket, priority)
@@ -1046,7 +1067,7 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
         let fmt = photo.format.clone();
         let g = p.layout_no_wrap(fmt, t.semibold(9.0), t.text_label);
         let br = Rect::from_min_size(pos2(r.right() - g.size().x - 14.0, r.top() + 5.0), g.size() + vec2(8.0, 3.0));
-        p.rect_filled(br, 2.0, Color32::from_gray(26));
+        p.rect_filled(br, 2.0, if Tokens::is_dark(ui.ctx()) { Color32::from_gray(26) } else { t.inset });
         p.galley(br.min + vec2(4.0, 1.5), g, t.text_label);
     }
     let show_badges = match app.ui.settings.grid_badges {
@@ -1521,16 +1542,11 @@ pub fn context_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         });
         register(ui.ctx(), "button:contextAddToAlbum", add.response.rect);
     }
-    // in a (non-smart) album: take the selection out of it, or make this photo its cover
-    if let lightcraft_engine::LibrarySource::Album(aid) = app.session.source
-        && app.session.catalog.album(aid).is_some_and(|a| !a.folder && !a.is_smart())
+    // in a (non-smart) album: make this photo its cover (taking photos out of it is by Delete Photo)
+    if let Some(aid) = crate::menus::removable_album(app)
+        && ui.button(crate::i18n::tr("Set as Album Cover")).clicked()
     {
-        if ui.button(crate::i18n::tr("Remove from Album")).clicked() {
-            let _ = app.run("album.removePhotos", json!({"id": aid.0}));
-        }
-        if ui.button(crate::i18n::tr("Set as Album Cover")).clicked() {
-            let _ = app.run("album.setCover", json!({"id": aid.0, "photo": id.0}));
-        }
+        let _ = app.run("album.setCover", json!({"id": aid.0, "photo": id.0}));
     }
     if ui.button(crate::i18n::tr("Rename…")).clicked() {
         let _ = app.run("dialog.rename", json!({}));
@@ -1647,8 +1663,20 @@ pub fn context_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         if ui.button(crate::i18n::tr("Delete Permanently")).clicked() {
             let _ = app.run("photo.deletePermanently", json!({}));
         }
-    } else if ui.button(crate::i18n::tr("Delete Photo")).clicked() {
-        let _ = app.run("photo.delete", json!({}));
+    } else {
+        // in a (non-smart) album: out of the album (⌫), or out of the library (⌘⌫, after asking)
+        if let Some(aid) = crate::menus::removable_album(app) {
+            let remove = ui.button(crate::i18n::tr("Remove from Album"));
+            register(ui.ctx(), "button:contextRemoveFromAlbum", remove.rect);
+            if remove.clicked() {
+                let _ = app.run("album.removePhotos", json!({"id": aid.0}));
+            }
+        }
+        let delete = ui.button(crate::i18n::tr("Delete Photo"));
+        register(ui.ctx(), "button:contextDeletePhoto", delete.rect);
+        if delete.clicked() && !crate::menus::confirm_delete(app) {
+            let _ = app.run("photo.delete", json!({}));
+        }
     }
 }
 

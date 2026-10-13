@@ -2,10 +2,65 @@
 
 ## 2026-10-13
 
+### Double-click a panel border to reset its width
+- Double-clicking the border you drag to resize the Library, Tools or Presets panel puts that panel back at its usual width.
+
+### Light themes: no more black borders
+- The borders between panels, and the bar above the filmstrip, were black in Silver and Paper; they now use each theme's own
+  divider colour. The format label on Square Grid cells is readable in the light themes too.
+
 ### Pinch the photo grid; double-click a photo to go back
 - On a Mac trackpad, pinching the photo grid makes the thumbnails bigger or smaller, as it does on the iPhone and iPad.
   The photo under the pointer stays under it. ⌘ + scroll (Ctrl on Windows and Linux) does the same, and the slider in the bottom bar still works.
 - Double-clicking the photo in the editor takes you back to the grid. A single click still zooms to 1:1.
+
+### Drop photos on an album, and watch them arrive
+- Drag photos or folders from Finder onto an album in the sidebar: the album lights up under them and the photos are
+  added to it. Dropped on the photo grid they go to the album the grid shows (or just the library, when it shows no
+  album). The album lights up on macOS; Windows and Linux add to the shown album until they can tell where the pointer is.
+- The moment you let go the grid shows a tile for each photo, with an arrow badge that turns while the photo is being
+  added. A tile becomes its photo as soon as it is in the library.
+
+### Search by description for everyone, from the server
+- The server's admin page has a **Search** section: one switch turns search by description on for every device that
+  signs in to the server. If the model isn't on the server yet it shows its size and licence, downloads it onto the
+  server and turns search on, so the web app, iPhone and other computers no longer each download 1.5 GB. Turning it
+  off keeps the files; `lightcraft-server model enable|disable` does the same from a shell.
+- The same page switches **Words in photos** on for everyone (the server reads the text in each user's photos) and
+  has a **People** section: download the face models, then turn finding people on one user at a time, with a
+  confirmation because faces are personal data. `lightcraft-server model enable|disable --text` is the shell version.
+- On a desktop, **Search on this device only, not through my server** keeps searching (and the model download) on the
+  computer. The Describe panel now says whether the server's search is off or still downloading.
+
+### AI Denoise can download its model
+- Settings ▸ AI Denoise now has a **Download** button for the RawNIND model (31 MB model inside a 58 MB download from
+  GitHub). It shows the model's terms first (GPL-3.0 weights), checks the file, installs it and starts using it.
+  Install from file… is still there for your own model.
+
+### Map markers show your photos, and a tap opens them
+- A marker on the Map is now a small picture of the photos it holds (up to four, the best-rated one first, spread
+  through the group) instead of one thumbnail on blank cards; the count stays in its corner.
+- Tapping (or clicking) a marker shows its photos in the grid, and only those; the "Only N photos" chip above the grid
+  takes the narrowing off. ⌘ / Shift-click adds them to the selection instead. A marker used to zoom in: pinch,
+  double-tap, or the marker's menu (Zoom to these photos) still do.
+
+### ⌫ takes a photo out of the album, ⌘⌫ deletes it
+- In an album's grid, ⌫ now removes the selected photos from the album and leaves them in your library; the selection
+  moves on to the next photo, and Undo puts them back. ⌘⌫ (Ctrl+⌫ on Windows and Linux) deletes them, and in an
+  album it always asks first. Everywhere else ⌫ still deletes, as before.
+- Photo ▸ Remove from Album (⌫) appears while an album is open, and the photo's right-click menu lists Remove from
+  Album next to Delete Photo. You can still give either command another key under Help ▸ Keyboard Shortcuts.
+
+### Sliders keep up with your hand, in the browser and on slow renders
+- In the browser, dragging a slider on a big photo updated the picture only a few times a second and the sharp
+  version took seconds to arrive after you let go. While you drag, the photo is now drawn at a size this browser can
+  render in time (soft, then sharp when you let go), the render workers take turns on the ticks instead of one
+  doing them all, and the filmstrip no longer re-renders the thumbnail of the photo you are dragging. On a 20 MP
+  raw in a Retina-size window the picture updated 1–7 times a second while dragging; now 45–55. The first drag
+  after opening a photo is slower while the workers get the photo ready.
+- The same size rule applies in the app on slow renders: White Balance and Noise Reduction drags (the sliders that
+  recompute the whole picture) draw a smaller draft on a big display, and a computer without a usable GPU does too.
+  Sliders that were already quick are unchanged.
 
 ## 2026-10-12
 

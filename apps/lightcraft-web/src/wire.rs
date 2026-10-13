@@ -387,10 +387,77 @@ impl WorkerSlots {
     }
 }
 
+/// How many workers may hold one photo's decoded view at once (a pipelined drag uses them in turn).
+pub const MAX_PIPELINE: usize = 3;
+
+/// Which render worker takes a job: `Some(i)`, or `None` to wait for one.
+///
+/// `free[i]`: worker `i` is up and idle; `alive[i]`: it still runs (busy or not). `preferred` is the
+/// worker that last rendered the photo's view (its decoded source and stage cache). A job that is
+/// `strict` (a preview-level source or a stage-cached view) waits for it, as moving on would decode
+/// the source again and redo the cached stages. Except a `pipelined` one, a draft of a slider drag:
+/// waiting for one worker is what makes a drag lag, so it goes to another worker that holds the
+/// source (`warm`), else to an idle one that will load it (up to `max_warm` workers per photo),
+/// else waits.
+pub fn choose_worker(
+    free: &[bool],
+    alive: &[bool],
+    preferred: Option<usize>,
+    warm: &[usize],
+    strict: bool,
+    pipelined: bool,
+    max_warm: usize,
+) -> Option<usize> {
+    let is_free = |i: usize| free.get(i).copied().unwrap_or(false);
+    let first_free = || (0..free.len()).find(|&i| is_free(i));
+    match preferred {
+        Some(i) if is_free(i) => Some(i),
+        Some(i) if strict && alive.get(i).copied().unwrap_or(false) => {
+            if !pipelined {
+                return None;
+            }
+            warm.iter().copied().find(|&j| is_free(j)).or_else(|| if warm.len() < max_warm { first_free() } else { None })
+        }
+        _ => first_free(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use lightcraft_engine::Session;
+
+    // The preferred worker keeps a photo's jobs while it is idle; a strict job waits for it when busy
+    #[test]
+    fn jobs_go_to_the_preferred_worker_and_strict_ones_wait_for_it() {
+        let (free, alive) = ([true, true, true], [true; 3]);
+        assert_eq!(choose_worker(&free, &alive, Some(2), &[2], true, false, 3), Some(2));
+        assert_eq!(choose_worker(&free, &alive, None, &[], false, false, 3), Some(0));
+        let busy = [true, false, true];
+        assert_eq!(choose_worker(&busy, &alive, Some(1), &[1], true, false, 3), None, "waits for the worker that has the source");
+        assert_eq!(choose_worker(&busy, &alive, Some(1), &[1], false, false, 3), Some(0), "a thumbnail takes any idle worker");
+        // a worker that died is not waited for
+        assert_eq!(choose_worker(&busy, &[true, false, true], Some(1), &[1], true, false, 3), Some(0));
+    }
+
+    // A drag's drafts go to other workers instead of queueing behind the one that is busy
+    #[test]
+    fn a_pipelined_draft_uses_the_other_warm_workers_then_recruits_then_waits() {
+        let alive = [true; 4];
+        // worker 1 is busy: the idle warm worker 0 takes it
+        assert_eq!(choose_worker(&[true, false, true, true], &alive, Some(1), &[0, 1], true, true, 3), Some(0));
+        // no warm worker is idle: an idle one that has not got the photo yet is recruited
+        assert_eq!(choose_worker(&[false, false, true, true], &alive, Some(1), &[0, 1], true, true, 3), Some(2));
+        // enough hold the photo already: the draft waits for one of them
+        assert_eq!(choose_worker(&[false, false, false, true], &alive, Some(1), &[0, 1, 2], true, true, 3), None);
+        // a single busy worker with nobody else idle waits too
+        assert_eq!(choose_worker(&[false], &[true], Some(0), &[0], true, true, 3), None);
+        // nothing known yet: any idle worker
+        assert_eq!(choose_worker(&[false, true], &[true, true], None, &[], true, true, 3), Some(1));
+        // hostile inputs: indices outside the lists are never picked or waited for
+        assert_eq!(choose_worker(&[true], &[true], Some(9), &[7, 8], true, true, 3), Some(0));
+        assert_eq!(choose_worker(&[], &[], Some(0), &[0], true, true, 3), None);
+    }
 
     // Issue #229: a failed worker attempt must not shift the positions of the workers after it
     #[test]

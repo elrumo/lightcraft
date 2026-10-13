@@ -53,6 +53,12 @@ const MAX_TEXTURES: usize = 160;
 const RETRY_SECS: f64 = 20.0;
 /// Edge of a photo marker (points).
 const MARKER: f32 = 46.0;
+/// Photos a marker pictures at most (its front one and up to three more).
+const PICTURED: usize = 4;
+/// Gap between the photos of a marker (points).
+const GAP: f32 = 1.5;
+/// Thumbnail textures kept while the map is shown (the grid keeps as many).
+const MAX_THUMBS: usize = 600;
 /// Photos closer than this on screen share a marker (points).
 const CLUSTER_PX: f64 = 64.0;
 const HEADER_H: f32 = 44.0;
@@ -702,6 +708,51 @@ fn fit_glyph(p: &egui::Painter, c: Pos2, color: Color32) {
 
 // ---- markers ------------------------------------------------------------------------------
 
+/// The photos a marker is a picture of: the one that stands for the group first, then others
+/// spread through it, so a big group shows a few different pictures (at most [`PICTURED`]).
+fn preview_ids(c: &Cluster, points: &[Point]) -> Vec<PhotoId> {
+    let n = c.members.len();
+    let id_at = |i: usize| c.members.get(i % n.max(1)).and_then(|m| points.get(*m as usize)).map(|p| PhotoId(p.id));
+    let others = n.min(PICTURED).saturating_sub(1);
+    let mut out: Vec<PhotoId> = points.get(c.front as usize).map(|p| PhotoId(p.id)).into_iter().collect();
+    for j in 0..others {
+        // the middle of the j-th of `others` equal parts of the group, or the next photo on from
+        // there that isn't pictured yet
+        let start = (2 * j + 1).saturating_mul(n) / (2 * others);
+        if let Some(id) = (0..n).filter_map(|k| id_at(start + k)).find(|id| !out.contains(id)) {
+            out.push(id);
+        }
+    }
+    out
+}
+
+/// Where the `k` pictures of a marker go inside `r`: one fills it, two stand side by side, three
+/// are a tall one beside two small ones, four make a square.
+fn preview_tiles(r: Rect, k: usize) -> Vec<Rect> {
+    let (w, h) = ((r.width() - GAP) / 2.0, (r.height() - GAP) / 2.0);
+    let (right, below) = (r.min.x + w + GAP, r.min.y + h + GAP);
+    let (tall, small) = (vec2(w, r.height()), vec2(w, h));
+    let left_half = Rect::from_min_size(r.min, tall);
+    let right_half = Rect::from_min_size(pos2(right, r.min.y), tall);
+    let top_right = Rect::from_min_size(pos2(right, r.min.y), small);
+    let bottom_right = Rect::from_min_size(pos2(right, below), small);
+    match k {
+        0 | 1 => vec![r],
+        2 => vec![left_half, right_half],
+        3 => vec![left_half, top_right, bottom_right],
+        _ => vec![Rect::from_min_size(r.min, small), top_right, Rect::from_min_size(pos2(r.min.x, below), small), bottom_right],
+    }
+}
+
+/// The part of a texture of `size` that fills `dest` without stretching (its middle).
+fn cover_uv_in(size: [usize; 2], dest: Rect) -> Rect {
+    let (tw, th) = (size[0].max(1) as f32, size[1].max(1) as f32);
+    let (dw, dh) = (dest.width().max(1.0), dest.height().max(1.0));
+    // the share of the texture's width and height that has the shape of `dest`
+    let (kx, ky) = if tw / th > dw / dh { (th * dw / dh / tw, 1.0) } else { (1.0, tw * dh / dw / th) };
+    Rect::from_min_max(pos2((1.0 - kx) / 2.0, (1.0 - ky) / 2.0), pos2((1.0 + kx) / 2.0, (1.0 + ky) / 2.0))
+}
+
 fn draw_markers(app: &mut LightcraftApp, ui: &mut egui::Ui, rect: Rect, v: &Viewport) {
     let t = Tokens::get(ui.ctx());
     let markers = markers_for(app, v.zoom);
@@ -709,6 +760,8 @@ fn draw_markers(app: &mut LightcraftApp, ui: &mut egui::Ui, rect: Rect, v: &View
     let ppp = ui.ctx().pixels_per_point();
     let mut hovered: Option<(Rect, usize)> = None;
     let mut drawn = 0;
+    // the photos pictured on the markers in view: their thumbnails stay, others go when there are too many
+    let mut keep: std::collections::HashSet<PhotoId> = Default::default();
     // the selected photos, so their markers show it
     let selected: std::collections::HashSet<u64> = app.session.selection.ids.iter().map(|i| i.0).collect();
     let active = app.session.selection.active.map(|i| i.0);
@@ -730,23 +783,22 @@ fn draw_markers(app: &mut LightcraftApp, ui: &mut egui::Ui, rect: Rect, v: &View
             hovered = Some((r, ci));
         }
         let p = ui.painter();
-        // a stack: frames behind the front one
-        if n > 1 {
-            for off in [6.0f32, 3.0] {
-                let b = r.translate(vec2(off, -off));
-                p.rect(b, 5.0, Color32::from_gray(235), Stroke::new(1.0, Color32::from_gray(150)), StrokeKind::Inside);
+        p.rect_filled(r.translate(vec2(0.0, 2.0)).expand(1.0), 6.0, Color32::from_black_alpha(70));
+        // white shows between the photos
+        p.rect_filled(r, 5.0, Color32::WHITE);
+        // the marker is a picture of what it holds: up to four of its photos, the front one first
+        let pictured = preview_ids(c, &points);
+        for (id, tile) in pictured.iter().zip(preview_tiles(r.shrink(1.5), pictured.len())) {
+            super::grid::request_thumb(app, *id, super::grid::thumb_px(MARKER, ppp), if *id == front { 8 } else { 7 });
+            let p = ui.painter();
+            if let Some(tex) = app.renderer.thumb(*id) {
+                p.image(tex.tex.id(), tile, cover_uv_in(tex.size, tile), Color32::WHITE);
+            } else {
+                p.rect_filled(tile, 0.0, t.cell);
             }
         }
-        p.rect_filled(r.translate(vec2(0.0, 2.0)).expand(1.0), 6.0, Color32::from_black_alpha(70));
-        super::grid::request_thumb(app, front, super::grid::thumb_px(MARKER, ppp), 8);
+        keep.extend(pictured);
         let p = ui.painter();
-        p.rect_filled(r, 5.0, t.cell);
-        if let Some(tex) = app.renderer.thumb(front) {
-            let [tw, th] = tex.size;
-            p.image(tex.tex.id(), r.shrink(1.5), super::grid::cover_uv(tw as f32, th as f32), Color32::WHITE);
-        } else {
-            paint(p, r.shrink(12.0), Icon::Pin, t.text_dim);
-        }
         let ring = if any_selected && active.is_some_and(|a| c.members.iter().any(|i| points.get(*i as usize).is_some_and(|p| p.id == a))) {
             Stroke::new(3.0, t.accent)
         } else if any_selected {
@@ -766,6 +818,7 @@ fn draw_markers(app: &mut LightcraftApp, ui: &mut egui::Ui, rect: Rect, v: &View
         marker_actions(app, ui, &resp, v, c, &points, front);
     }
     app.map.stats.markers_drawn = drawn;
+    app.renderer.evict_thumbs(&keep, MAX_THUMBS);
     if let Some((r, ci)) = hovered
         && let Some(c) = markers.get(ci)
     {
@@ -783,24 +836,17 @@ fn draw_markers(app: &mut LightcraftApp, ui: &mut egui::Ui, rect: Rect, v: &View
     }
 }
 
-/// What clicking a marker does: a photo is selected (double-click: opened); a group zooms in to
-/// show what is in it — or, when it can't split any further, selects it. The context menu does
-/// the rest.
+/// What clicking or tapping a marker does: the grid shows its photos (and only those); with ⌘ or
+/// Shift held they are added to the selection instead. The context menu zooms to them, selects them
+/// or shows them in the grid.
 fn marker_actions(app: &mut LightcraftApp, ui: &egui::Ui, resp: &egui::Response, v: &Viewport, c: &Cluster, points: &[Point], front: PhotoId) {
     let ids: Vec<u64> = c.members.iter().filter_map(|i| points.get(*i as usize).map(|p| p.id)).collect();
     let n = ids.len();
-    let mode = if ui.input(|i| i.modifiers.command || i.modifiers.shift) { "add" } else { "replace" };
-    if resp.double_clicked() && n == 1 {
-        let _ = app.run("library.select", json!({"ids": ids, "mode": "replace"}));
-        let _ = app.run("view.detail", json!({}));
-    } else if resp.clicked() {
-        if n == 1 || v.zoom >= f64::from(MAX_ZOOM) - 2.5 {
-            let _ = app.run("library.select", json!({"ids": ids, "active": front.0, "mode": mode}));
+    if resp.clicked() {
+        if ui.input(|i| i.modifiers.command || i.modifiers.shift) {
+            let _ = app.run("library.select", json!({"ids": ids, "active": front.0, "mode": "add"}));
         } else {
-            let (a, b) = (unproject(c.bounds.0), unproject(c.bounds.1));
-            let mut z = *v;
-            z.fit((a.0.min(b.0), a.1.min(b.1)), (a.0.max(b.0), a.1.max(b.1)), 110.0, f64::from(MAX_ZOOM) - 2.0);
-            app.map.target = Some((z.center, z.zoom.max(v.zoom + 1.0).min(f64::from(MAX_ZOOM))));
+            show_in_grid(app, &ids);
         }
     }
     resp.context_menu(|ui| {
@@ -847,10 +893,12 @@ pub fn open(app: &mut LightcraftApp, p: &serde_json::Value) -> Result<serde_json
     Ok(json!({"photos": photos.len(), "located": located, "camera": app.map.camera().map(|(la, lo, z)| json!({"lat": la, "lon": lo, "zoom": z}))}))
 }
 
-/// Narrow the library to exactly these photos and go to the grid.
+/// Narrow the library to exactly these photos and go to the grid (the square one if that is the
+/// grid in use).
 pub fn show_in_grid(app: &mut LightcraftApp, ids: &[u64]) {
     let _ = app.run("library.filter", json!({"only": ids}));
-    let _ = app.run("view.photoGrid", json!({}));
+    let grid = if app.ui.grid_mode == crate::state::ViewMode::SquareGrid { "view.squareGrid" } else { "view.photoGrid" };
+    let _ = app.run(grid, json!({}));
 }
 
 /// The photos whose markers are inside `v`.
@@ -883,6 +931,66 @@ mod tests {
         // the parent of the zoom-0 tile never asked for: z - levels can't go below 0
         let (anc, _) = ancestor_uv(TileId { z: 1, x: 1, y: 1 }, 1);
         assert_eq!(anc, TileId { z: 0, x: 0, y: 0 });
+    }
+
+    fn group(members: &[u32], front: u32) -> Cluster {
+        let w = project(0.0, 0.0);
+        Cluster { at: w, members: members.to_vec(), front, bounds: (w, w) }
+    }
+
+    fn points(n: u32) -> Vec<Point> {
+        (0..n).map(|i| Point { id: 1000 + u64::from(i), lat: 0.0, lon: 0.0, weight: 0 }).collect()
+    }
+
+    #[test]
+    fn a_marker_pictures_its_front_photo_and_others_spread_through_its_group() {
+        let pts = points(100);
+        assert_eq!(preview_ids(&group(&[7], 7), &pts), vec![PhotoId(1007)]);
+        assert_eq!(preview_ids(&group(&[3, 9], 9), &pts), vec![PhotoId(1009), PhotoId(1003)]);
+        // a small group shows every one of its photos
+        let all = preview_ids(&group(&[1, 2, 3, 4], 3), &pts);
+        assert_eq!(all[0], PhotoId(1003));
+        let mut sorted = all.clone();
+        sorted.sort();
+        assert_eq!(sorted, vec![PhotoId(1001), PhotoId(1002), PhotoId(1003), PhotoId(1004)]);
+        // a big one shows four different photos, the front one first, from all over it
+        let members: Vec<u32> = (0..100).collect();
+        assert_eq!(preview_ids(&group(&members, 42), &pts), vec![PhotoId(1042), PhotoId(1016), PhotoId(1050), PhotoId(1083)]);
+        // members or a front pointing nowhere don't panic
+        assert_eq!(preview_ids(&group(&[500, 1], 500), &pts), vec![PhotoId(1001)]);
+        assert!(preview_ids(&group(&[], 0), &[]).is_empty());
+    }
+
+    #[test]
+    fn the_pictures_of_a_marker_tile_it_without_overlapping() {
+        let r = Rect::from_min_size(pos2(10.0, 20.0), vec2(43.0, 43.0));
+        assert_eq!(preview_tiles(r, 1), vec![r]);
+        for k in 0..=5 {
+            let tiles = preview_tiles(r, k);
+            assert_eq!(tiles.len(), k.clamp(1, 4), "{k} pictures");
+            for (i, a) in tiles.iter().enumerate() {
+                assert!(r.expand(1e-3).contains_rect(*a) && a.width() > 10.0 && a.height() > 10.0, "{a:?} in {r:?}");
+                assert!(tiles[i + 1..].iter().all(|b| !a.intersects(*b)), "{k} pictures overlap: {tiles:?}");
+            }
+        }
+        // four make a square of four equal pictures
+        let four = preview_tiles(r, 4);
+        assert!(four.iter().all(|t| (t.width() - four[0].width()).abs() < 1e-4 && (t.height() - four[0].height()).abs() < 1e-4));
+    }
+
+    #[test]
+    fn a_picture_fills_its_tile_from_the_middle_without_stretching() {
+        let tile = |w: f32, h: f32| Rect::from_min_size(pos2(0.0, 0.0), vec2(w, h));
+        // a wide photo in a square tile: its middle third
+        let uv = cover_uv_in([300, 100], tile(20.0, 20.0));
+        assert!((uv.width() - 1.0 / 3.0).abs() < 1e-5 && uv.height() == 1.0 && (uv.center().x - 0.5).abs() < 1e-6, "{uv:?}");
+        // the same photo in a tall half of the marker: a narrower slice
+        assert!((cover_uv_in([300, 100], tile(10.0, 20.0)).width() - 1.0 / 6.0).abs() < 1e-5);
+        // a tall photo in a wide tile: a band across its middle
+        let uv = cover_uv_in([100, 300], tile(30.0, 10.0));
+        assert!(uv.width() == 1.0 && (uv.height() - 1.0 / 9.0).abs() < 1e-5, "{uv:?}");
+        // an empty texture or tile divides nothing by zero
+        assert!(cover_uv_in([0, 0], tile(0.0, 0.0)).width().is_finite());
     }
 
     #[test]

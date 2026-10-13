@@ -196,6 +196,8 @@ Invoke these UI commands through `engine.execute`, for example `{"command":"ui.d
 Advanced `ui.dock` operations use the same validated transaction as pointer gestures:
 `moveFloating` updates `rect`, `resizeSplit` accepts a boolean child `path` and
 `size` (`{"Ratio":0.5}`, `{"FixedFirst":280}`, or `{"FixedSecond":280}`),
+`resetWidth` puts `panel` back at its default width (what a double-click on its divider does;
+the photo view has none),
 `setStackOpen` takes `open`, and `resizeStack` takes a point `height` or null.
 A center `move` can include `before` (panel ID or null to append) for tab order.
 The equivalent `{"action": ...}` form accepts a serialized shared docking action;

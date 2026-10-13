@@ -123,7 +123,7 @@ Back up `<data>` like any folder (stop the server, or copy `catalog.log` first a
 
 ### The admin page
 
-`https://<your server>/admin` manages the server from a browser. It has three sections (a side bar on wide
+`https://<your server>/admin` manages the server from a browser. It has four sections (a side bar on wide
 screens, tabs on a phone), follows the system's light or dark mode, and confirms anything destructive in a dialog:
 
 - **Overview:** users, photos, signed-in devices and free disk space at a glance; **Connect a device** (the address
@@ -139,6 +139,12 @@ screens, tabs on a phone), follows the system's light or dark mode, and confirms
     scan (**Skipped names**), **Scan now**, and what the
     last scan found (new, moved, changed, missing, files that couldn't be read) with progress while it scans and
     while previews are built.
+- **Search:** what the server does with each user's photos so their devices don't have to. A switch turns search by
+  description on for every device that signs in (the web app, iPhone, other computers find photos by describing them
+  without downloading the model); another does the same for finding photos by the words printed in them; **People**
+  finds the faces in photos, one person at a time because faces are personal data. Each needs a model: if it isn't on
+  the server yet the page shows its size and licence, downloads it onto the server (resumable, you can leave the page)
+  and turns it on. Turning a switch off keeps the files. It also shows how far each user's photos have got.
 - **Storage:** the disk holding the data folder (used and free), storage used by each user, and photo-file clean-up
   (**Check for unused files** = `gc --dry-run`, then **Remove files** = `gc`).
 
@@ -159,9 +165,9 @@ them: `--data` / `LIGHTCRAFT_DATA`, `--listen` / `LIGHTCRAFT_LISTEN`, and the do
 ## Search by description
 
 The server can also search each user's photos by what is in them, so the web build, iOS and other
-computers need no model: `GET /api/search?q=…`, an index of vectors per user that devices may add to, and
-`lightcraft-server model download --accept-licences` to install the model (about 1.5 GB, loaded on first use, ~1.9 GB of
-memory while loaded). It can also read the text in photos (`model download --text`) and, for a user an admin allows
+computers need no model: `GET /api/search?q=…`, an index of vectors per user that devices may add to, and the admin
+page's **Search** switch (or `lightcraft-server model download --accept-licences`) to install the model (about 1.5 GB,
+loaded on first use, ~1.9 GB of memory while loaded). `lightcraft-server model disable|enable [--text]` are the switches from a shell. It can also read the text in photos (`model download --text`) and, for a user an admin allows
 (`lightcraft-server user faces NAME on`, after `model download --faces`), find the people in their photos for devices to
 name. Routes, privacy and limits: [`search-people.md`](search-people.md).
 

@@ -16,6 +16,13 @@ to its licence, and everything else works without it.
   are then indexed in the background (you can search the ones that are ready meanwhile).
 - **A device with no model** (the web build, iOS, or a desktop that didn't download it) searches through the sync server when
   the server can: the switch appears once the server says so, and the panel says how many photos the server has ready.
+  An administrator turns that on once for everyone from the server's admin page (**Search**), so no device downloads the
+  model. If it is off or still downloading, the panel says so instead of offering a download it can't use (on a device
+  that can't run the model).
+- **This device only:** a desktop next to a server that can search answers from the server by default and offers no
+  download. Tick **Search on this device only, not through my server** (or `vision.setLocalOnly`; saved with the library)
+  to keep searching on this computer: the panel then offers the model's download, and no search text is sent to the
+  server (sending the search data is its own, separate choice below). Unticking goes back to the server.
 - **CLI / MCP / control channel:**
 
   | Command | What it does |
@@ -23,7 +30,8 @@ to its licence, and everything else works without it.
   | `vision.model.status` | whether the model is installed and loaded, how many photos are indexed, the server's state, sharing |
   | `vision.model.download {acknowledged: true}` / `vision.model.cancel` | download (resumable, SHA-256-checked) or stop |
   | `vision.index {wait?, ids?}` / `vision.indexProgress` / `vision.indexCancel` | embed the photos that have no vector yet |
-  | `library.search {q, limit?, wait?, source?}` | `source`: `local`, `server`, or `auto` (this device's index when it covers the library, else the server's) |
+  | `library.search {q, limit?, wait?, source?}` | `source`: `local`, `server`, or `auto` (this device's index when it covers the library, else the server's; always this device's when `vision.setLocalOnly` is on) |
+  | `vision.setLocalOnly {on}` | search on this device only, never through the sync server (saved with the library; no effect on a device that can't run the model) |
   | `vision.share {wait?}` / `vision.setShare {on}` | send this device's vectors (and text) to the server, once or whenever new photos are indexed |
   | `vision.setText {on}` | also read and search the text printed in photos (off until turned on; saved with the library) |
   | `vision.setFaces {on}` / `vision.faces.download {acknowledged: true}` / `vision.faces.cancel` | find the people in photos (off until turned on and the user agreed to the models), and download or stop the face models |
@@ -60,7 +68,7 @@ Traditional), Japanese and 46 other languages. It is a separate, opt-in step wit
   forms don't matter, hiragana and katakana are the same, one wrong letter in a word of five or more still matches, and
   Chinese/Japanese match as phrases or when most of their character pairs are there. Text search works without the
   description model.
-- **On the server:** with the models installed (`lightcraft-server model download --accept-licences --text`) the server reads
+- **On the server:** with the models installed (the admin page's **Search ▸ Words in photos**, or `lightcraft-server model download --accept-licences --text`; `model disable --text` or the switch turns it off, keeping what was read) the server reads
   each photo's smart preview, 25 photos at a time so new photos are never kept waiting, and `GET /api/search` merges the
   words and the looks; a desktop can send what it read (`vision.share`, same opt-in as the vectors) — the server keeps text
   for photos of that user's library only and refuses another reader's or a damaged upload whole. A server that only has text
@@ -106,7 +114,9 @@ of the person's faces; SFace's own pair threshold is 0.363) are one person. On p
 scores 0.86 and different people 0.11–0.16; a photo takes about 150 ms to look at on a laptop. Faces are looked at in the
 same background pass as the description and the text, from a 1280 px unedited rendering.
 
-**On the server** (faces are personal data, so it is separate and off): install the models once and allow each user:
+**On the server** (faces are personal data, so it is separate and off): install the models once and allow each user,
+on the admin page (**Search ▸ People**: download the models after reading their licences, then a switch per user that asks
+before it turns on) or from a shell:
 
 ```sh
 lightcraft-server model download --accept-licences --faces
@@ -138,17 +148,40 @@ The server indexes each user's photos from the previews it already keeps (a work
 scan builds one, and every 30 s) and answers searches:
 
 ```text
-GET  /api/search/status            {available, installed, model, dim, indexed, total, text: {installed, engine, indexed}}
+GET  /api/search/status            {available, installed, enabled, installing, model, dim, indexed, total, text: {installed, engine, indexed}}
 GET  /api/search?q=…&limit=…       {query, ids: [photo id], scores: [f32], indexed, total}
 GET  /api/index/embeddings/keys    {model, dim, keys: [content hash]}      what the server already has
 POST /api/index/embeddings         vectors a device computed (checked whole; see below)
 ```
 
-An admin installs the model once (never without the flag; Docker: `docker compose exec lightcraft-server …`):
+An admin turns search on for everyone from the admin page (**Search**): the switch shows the model's size and licence,
+downloads it onto the server after the admin agrees (resumable, SHA-256-checked, it keeps going if the page is closed)
+and turns search on. The same from a shell (never without the flag; Docker: `docker compose exec lightcraft-server …`):
 
 ```sh
 lightcraft-server model status
 lightcraft-server model download --accept-licences      # about 1.5 GB, Google's Apache License 2.0
+lightcraft-server model disable                         # off for every device; the files and vectors stay
+lightcraft-server model enable
+lightcraft-server model disable --text                  # the same for reading the text in photos
+```
+
+The switches are `<data>/search.json` (`{"enabled": bool, "text": bool}`; no file means on, so a server that already had the model keeps
+searching). A running server notices a change within its next 30 s tick or at the next request, and drops the model from
+memory when it is off. While it is off, `/api/search/status` says `installed: false, enabled: false` (and `installing`
+while the admin page's download runs), so devices stop asking and say why. Admin routes (admin session token):
+
+```text
+GET    /api/admin/search            {enabled, installed, active, loaded, model, dim, dir, sizeBytes, license, licenseUrl, download,
+                                     text: {enabled, installed, active, sizeBytes, license, licenseUrl, download},
+                                     faces: {installed, sizeBytes, licenses, download},
+                                     users: [{name, faces, total, indexed, read, found}]}   (null: not done for this server)
+PUT    /api/admin/search            {enabled}: the switch; the model stays on disk when off
+PUT    /api/admin/search/text       {enabled}: the same for reading the text in photos (what was read is kept)
+POST   /api/admin/search[/text|/faces]/download   {acknowledged: true}: download those models if they aren't there (400 without the
+                                     licence agreed); for search and text that turns it on too
+DELETE /api/admin/search[/text|/faces]/download   stop the download (a new one resumes it)
+PUT    /api/admin/users/NAME/faces  {enabled}: find the people in that user's photos (needs the face models)
 ```
 
 Until it is installed every route says so (`503`) instead of failing, and uploads are still accepted. Old servers answer

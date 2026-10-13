@@ -201,6 +201,49 @@ fn a_server_that_cannot_search_adds_no_switch() {
 }
 
 #[test]
+fn a_device_can_choose_to_search_on_its_own_instead_of_the_server() {
+    let mut h = window(false);
+    if !h.app.session.vision.local_available() {
+        return;
+    }
+    h.app.session.vision.set_server_status(Some(json!({"available": true, "installed": true, "indexed": 4, "total": 4})));
+    h.step();
+    click(&mut h, "button:describeSearch");
+    h.step();
+    h.step();
+    // the server's model answers: nothing to download, and the choice is there
+    assert!(has(&h, "panel:describe:hint") && has(&h, "check:describeLocalOnly"));
+    assert!(!has(&h, "button:describeDownload"));
+    assert!(!h.app.session.vision.local_only, "off until the user turns it on");
+
+    // on this device only: the server is out of it, so the model is offered
+    click(&mut h, "check:describeLocalOnly");
+    h.step();
+    h.step();
+    assert!(h.app.session.vision.local_only);
+    assert!(has(&h, "panel:describe:install") && has(&h, "button:describeDownload"));
+    assert!(has(&h, "check:describeLocalOnly"), "and the way back to the server");
+
+    click(&mut h, "check:describeLocalOnly");
+    h.step();
+    h.step();
+    assert!(!h.app.session.vision.local_only);
+    assert!(has(&h, "panel:describe:hint") && !has(&h, "button:describeDownload"));
+}
+
+#[test]
+fn a_device_that_cannot_run_the_model_is_told_why_the_server_cannot_search_yet() {
+    let mut h = window(false);
+    h.app.session.vision.thin = true;
+    h.app.session.vision.set_server_status(Some(json!({"available": true, "installed": false, "enabled": false})));
+    h.step();
+    click(&mut h, "button:describeSearch");
+    h.step();
+    assert!(has(&h, "panel:describe:serverNoModel"));
+    assert!(!has(&h, "button:describeDownload") && !has(&h, "check:describeLocalOnly"), "no model to download here, and no choice");
+}
+
+#[test]
 fn the_choice_to_send_search_data_to_the_server_is_a_checkbox_where_it_applies() {
     let mut h = window(true);
     h.app.session.vision.set_server_status(Some(json!({"available": true, "installed": true, "indexed": 4, "total": 4})));

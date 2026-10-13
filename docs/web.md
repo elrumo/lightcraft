@@ -148,6 +148,32 @@ are the same in every version, so serve them with `Cache-Control: no-cache` (not
   storage itself, keeps decoded sources and the loupe's stage cache, renders, and transfers the
   RGBA bytes back. Jobs for a photo go back to the worker that decoded it. This needs no wasm
   threads or `SharedArrayBuffer`. If no worker starts, rendering falls back to the main thread.
+- **Slider drags.** The browser has no GPU pipeline (it is the CPU one, a few hundred nanoseconds per
+  output pixel per worker), so a drag cannot re-render the loupe at canvas size on every tick: on a
+  Retina window that was 1–7 picture updates a second, and the sharp picture after the release
+  took 1–5 s. Two things keep a drag moving:
+  - **The draft shrinks to what the browser can render in time.** While a slider drags, the loupe renders a
+    draft; `DraftBudget` (`crates/ui-egui/src/render.rs`) learns how long this host takes per pixel from the drafts
+    that finish and picks the draft's linear scale (0.2–0.6 of the loupe size, aiming at about 40 ms a tick; a
+    GPU host stays at 0.6) once per drag: it only goes down during the drag, as a draft of another size starts
+    from a cold stage cache. A zoomed view's windows (always drafted at full size before) shrink in proportion
+    once the frame's draft is below 0.6, so a fast host keeps them as they were. The sharp render comes on release.
+  - **The workers take turns.** One worker could not keep up with the slider and the others sat idle, so a
+    draft of a view goes to another worker that already holds the photo, or to an idle one that loads it (up to
+    three per photo, `wire::choose_worker`, `MAX_PIPELINE`), instead of waiting for the one that rendered the
+    last tick; results that arrive late are dropped by the loupe as before. An original (the `Full` level) is
+    kept to one worker. The first drag of a photo is slower while the others decode their copy.
+  - The filmstrip thumbnail of the photo being dragged keeps its picture until the drag ends (a render per
+    tick used to take a worker from the loupe).
+
+  Measured 2026-10-13 with `docs/showcase/web-drag-bench.js`, Chrome on an M1 Max that was running at a load
+  average of 600+ (so read these as a ratio, not as what a quiet machine does): a 1728 × 907 window at 2×, a 20 MP
+  Canon CR3, Exposure / Highlights / Temperature drags. Before: 0.7–6.7 picture updates a second, 1.3–5.7 s to the
+  sharp picture after the release. After, on the production build (fat LTO): 40–60 updates a second, the main
+  thread's animation frames still at the display's rate, ~1.0–1.3 s to the sharp picture; the first drag of a
+  photo ~10 a second. The drafts are soft at the 0.2 floor (about 0.13 MP on that window) — that is the price of
+  a CPU pipeline at ~300 ns a pixel here; the per-pixel stage got ~20 % cheaper from an always-inlined array map
+  ([gpu-pipeline.md](gpu-pipeline.md#drafts-during-slider-drags)).
 - **Every develop control** (sliders, curves, mixer, grading, masking, crop…) works as it does
   on the desktop, since it's the same crate.
 - **Export downloads the file.** *Export…* (<kbd>⌘⇧E</kbd>) runs the same `app.export` path as
@@ -219,3 +245,15 @@ lightcraft-bench {"first_frame_ms":…,"thumbs_done_ms":…,"slider_draft_ms":[�
 - `slider_draft_ms`: time from the `develop.set` command until the new loupe texture is ready.
 - `slider_job_ms`: the pipeline's share of that time.
 - `release_full_ms`: the full-quality render after the drag ends.
+
+The numbers follow the window: the loupe is rendered at canvas size × `devicePixelRatio`, and the render costs
+the same per pixel whatever the photo, so a 900 × 600 headless window (0.1 MP drafts, the table above) and a
+1728 × 907 Retina window (3 MP full, 0.4 MP drafts) differ ~10×. Measure at the size you care about, with a real
+raw (`?bench` opens the first demo photo, which is procedural) and from the same browser the users have. Not
+`?store=memory` with a photo you import: the workers have no storage to read its original from, and every
+render fails. `await lightcraft.command("web.stats", "{}")` reports `draft` (`scale` of the latest drag,
+`msPerMpx` learned, `lastMainMs`) beside the workers and the render queue.
+[`docs/showcase/web-drag-bench.js`](showcase/web-drag-bench.js) does the whole drag measurement from the console:
+it drops a raw served beside the page, drags Exposure, Temperature and Highlights once per animation frame, and
+prints the picture updates per second, the slowest animation frame and the time the sharp render takes after the
+release.

@@ -798,7 +798,7 @@ pub fn specs() -> Vec<CommandSpec> {
             }
         ),
         // ---- delete / restore
-        cmd!("photo.delete", "Delete Photo", ["Photo"], Some("Delete"), "{ids?} — moves to Recently Deleted", has_selection, |s, p| {
+        cmd!("photo.delete", "Delete Photo", ["Photo"], Some("Cmd+Delete"), "{ids?} — moves to Recently Deleted", has_selection, |s, p| {
             let before = s.visible_cloned();
             let v = for_targets(s, p, "Delete", |id| Some(Op::SetDeleted { id, deleted: true }))?;
             select_after_deletion(s, &before);
@@ -1355,17 +1355,34 @@ pub fn specs() -> Vec<CommandSpec> {
                 Ok(result)
             }
         ),
-        cmd!("album.removePhotos", "Remove from Album", [], None, "{id: albumId, ids?}", has_selection, |s, p| {
-            let id = album_param(p, "id", "album.removePhotos")?;
-            let targets = ids_param(p).unwrap_or_else(|| s.targets(&Value::Null));
-            let al = s.catalog.album(id).ok_or_else(|| bad("album.removePhotos", "no such album"))?;
-            if al.is_smart() {
-                return Err(bad("album.removePhotos", "smart albums update automatically: change their rules"));
+        cmd!(
+            "album.removePhotos",
+            "Remove from Album",
+            ["Photo"],
+            Some("Delete"),
+            "{id?: albumId (default: the album on screen), ids?}",
+            has_selection,
+            |s, p| {
+                let id = match (opt_album_param(p, "id", "album.removePhotos")?, s.source) {
+                    (Some(id), _) | (None, LibrarySource::Album(id)) => id,
+                    _ => return Err(bad("album.removePhotos", "missing album `id` (no album on screen)")),
+                };
+                let targets = ids_param(p).unwrap_or_else(|| s.targets(&Value::Null));
+                let al = s.catalog.album(id).ok_or_else(|| bad("album.removePhotos", "no such album"))?;
+                if al.is_smart() {
+                    return Err(bad("album.removePhotos", "smart albums update automatically: change their rules"));
+                }
+                let photos: Vec<PhotoId> = al.photos.iter().copied().filter(|x| !targets.contains(x)).collect();
+                let on_screen = s.source == LibrarySource::Album(id);
+                let before = if on_screen { s.visible_cloned() } else { Vec::new() };
+                s.commit("Remove from Album", Op::SetAlbumPhotos { id, photos })?;
+                if on_screen {
+                    // as after a delete: the selection moves on to the next photo left in the album
+                    select_after_deletion(s, &before);
+                }
+                ok()
             }
-            let photos: Vec<PhotoId> = al.photos.iter().copied().filter(|x| !targets.contains(x)).collect();
-            s.commit("Remove from Album", Op::SetAlbumPhotos { id, photos })?;
-            ok()
-        }),
+        ),
         cmd!("album.setCover", "Set as Album Cover", [], None, "{id: albumId, photo?: photoId}", has_active, |s, p| {
             let id = album_param(p, "id", "album.setCover")?;
             let photo = p.get("photo").and_then(Value::as_u64).map(PhotoId).or(s.active());

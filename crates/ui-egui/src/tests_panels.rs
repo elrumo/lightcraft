@@ -2128,6 +2128,45 @@ fn local_photos_cannot_be_added_to_albums_until_they_join_my_photos() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// In an album, right-click offers Remove from Album (the photo stays in the library) beside Delete
+/// Photo (which asks first there).
+#[test]
+fn right_click_in_an_album_offers_remove_from_album_beside_delete() {
+    let mut h = demo([1400.0, 900.0], json!({"view": "photoGrid", "leftPanel": true}));
+    let ids: Vec<u64> = h.app.session.visible_cloned().iter().take(3).map(|p| p.0).collect();
+    let album = h.app.session.execute("album.create", &json!({"name": "Keepers"})).unwrap()["id"].as_u64().unwrap();
+    h.app.session.execute("library.select", &json!({"ids": ids})).unwrap();
+    h.app.session.execute("album.addPhotos", &json!({"id": album})).unwrap();
+    h.app.session.execute("library.source", &json!({"kind": "album", "id": album})).unwrap();
+    h.step();
+    h.step();
+    let photo = lightcraft_catalog::PhotoId(ids[1]);
+    // (a right-click inside the selection keeps all of it: act on this photo alone)
+    h.app.session.execute("library.select", &json!({"ids": [photo.0], "active": photo.0})).unwrap();
+    let right_click = |h: &mut crate::headless::Headless| {
+        let thumb = widget(h, &format!("thumb:{}", photo.0));
+        let r = h.request("ui.click", json!({"x": thumb.center().x, "y": thumb.center().y, "button": "right"}), T);
+        assert_eq!(r["ok"], true, "{r}");
+        h.step();
+        h.step();
+    };
+    right_click(&mut h);
+    let r = h.request("ui.clickWidget", json!({"id": "button:contextDeletePhoto"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.step();
+    assert_eq!(h.app.ui.dialog, Some(crate::state::Dialog::ConfirmDelete { count: 1 }), "deleting from an album asks first");
+    assert!(!h.app.session.catalog.photo(photo).unwrap().deleted);
+    h.request("ui.dialog.cancel", json!({}), T);
+    h.step();
+    right_click(&mut h);
+    let r = h.request("ui.clickWidget", json!({"id": "button:contextRemoveFromAlbum"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.step();
+    let left = &h.app.session.catalog.album(lightcraft_catalog::AlbumId(album)).unwrap().photos;
+    assert!(!left.contains(&photo) && left.len() == 2, "{left:?}");
+    assert!(!h.app.session.catalog.photo(photo).unwrap().deleted, "still in the library");
+}
+
 /// Issue #676: right-click ▸ Add to Album offers New Album… like the Photo menu does, also when
 /// the library has no album yet (the submenu used to come up empty); the new album holds the photo.
 #[test]

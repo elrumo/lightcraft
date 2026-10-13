@@ -14,6 +14,7 @@ pub mod date_picker;
 pub mod docking;
 pub mod erase;
 pub mod export_task;
+pub mod file_drop;
 pub mod glass;
 pub mod haptics;
 pub mod headless;
@@ -60,6 +61,8 @@ mod tests_appearance;
 #[cfg(test)]
 mod tests_before_after;
 #[cfg(test)]
+mod tests_albums_phone;
+#[cfg(test)]
 mod tests_compact;
 #[cfg(test)]
 mod tests_compact_editor;
@@ -83,6 +86,8 @@ mod tests_dialogs;
 mod tests_erase;
 #[cfg(test)]
 mod tests_export_flow;
+#[cfg(test)]
+mod tests_file_drop;
 #[cfg(test)]
 mod tests_filmstrip;
 #[cfg(test)]
@@ -188,6 +193,9 @@ pub type OpenWithFn = Box<dyn FnMut(&str, &str) -> Result<(), String>>;
 /// The ICC profile of the screen showing the window, as the system colour-manages it (`None`:
 /// not known).
 pub type ScreenProfileFn = Box<dyn FnMut() -> Option<Vec<u8>>>;
+/// Where the pointer is in the window while files are dragged in from outside it, in points from its
+/// top left (`None`: not known). winit sends no pointer position during such a drag.
+pub type FileDragPointerFn = Box<dyn FnMut() -> Option<egui::Pos2>>;
 /// Whether an external editor can be started (its name as in [`Services::open_with`]); the
 /// error says why not and what to do (e.g. PhotoCraft isn't installed).
 pub type CheckEditorFn = Box<dyn Fn(&str) -> Result<(), String>>;
@@ -264,6 +272,10 @@ pub struct Services {
     /// The profile of the screen showing the window, used while none is chosen in Settings ▸
     /// Display (macOS, whose windows aren't colour-managed: issue #787).
     pub screen_profile: Option<ScreenProfileFn>,
+    /// The pointer while files are dragged in from outside the window (macOS). Without it the album
+    /// under them can't be told, so the sidebar doesn't light one up and a drop goes to the album
+    /// the grid shows.
+    pub file_drag_pointer: Option<FileDragPointerFn>,
     /// Save dialog for an exported `.lcpreset` file.
     pub save_preset_file: Option<SaveFile>,
     /// Open dialog for a keyword list file (`.txt`, Photo Supreme's `.utf8`; File ▸ Import Keywords…).
@@ -1234,6 +1246,7 @@ impl LightcraftApp {
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
+            file_drop::track(self, ctx);
             let dropped: Vec<String> =
                 ctx.input(|i| i.raw.dropped_files.iter().map(|f| f.path().to_string_lossy().to_string()).filter(|p| !p.is_empty()).collect());
             // preset files import as presets, everything else as photos
@@ -1250,12 +1263,15 @@ impl LightcraftApp {
             {
                 self.toast_error(ctx, e);
             }
-            // read and added on a worker thread (dropped folders can be large, or on a slow drive)
+            // read and added on a worker thread (dropped folders can be large, or on a slow drive), into
+            // the album they were dropped on or the one shown; the grid holds a tile for each meanwhile
             if !photos.is_empty() {
                 if self.lightroom.is_some() {
                     self.toast(ctx, "Finish Lightroom catalog import before adding photos");
-                } else if let Err(e) = import::start_paths(self, photos) {
+                } else if let Err(e) = import::start_dropped(self, photos, file_drop::destination(self, ctx)) {
                     self.toast(ctx, e);
+                } else {
+                    file_drop::reveal(ctx);
                 }
             }
         }

@@ -267,5 +267,8 @@
   "{n} preset{} in {g} group{}": "{n} Vorgabe(n) in {g} Gruppe(n){:.0}{:.0}",
   "{p} profile{}": "{p} Profil(e){:.0}",
   "{a} already in your library": "{a} bereits in der Bibliothek",
-  "Not carried over: {what}": "Nicht übernommen: {what}"
+  "Not carried over: {what}": "Nicht übernommen: {what}",
+  "{n} items": "{n} Elemente",
+  "{label}, {n} items": "{label}, {n} Elemente",
+  "Add to {album}": "Zu „{album}“ hinzufügen"
 }

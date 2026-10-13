@@ -2,7 +2,7 @@
 
 use std::sync::OnceLock;
 
-use crate::{Mat3, REC2020};
+use crate::{Map3, Mat3, REC2020};
 
 const XYZ_TO_LMS: Mat3 = Mat3([
     [0.818_933_010_1, 0.361_866_742_4, -0.128_859_713_7],
@@ -56,7 +56,7 @@ pub fn oklab_matrices() -> [[[f32; 3]; 3]; 4] {
 #[inline]
 pub fn oklab_from_2020(rgb: [f32; 3]) -> [f32; 3] {
     let m = mats();
-    let lms = mul(&m.to_lms, rgb).map(f32::cbrt);
+    let lms = mul(&m.to_lms, rgb).map3(f32::cbrt);
     mul(&m.to_lab, lms)
 }
 
@@ -64,7 +64,7 @@ pub fn oklab_from_2020(rgb: [f32; 3]) -> [f32; 3] {
 #[inline]
 pub fn oklab_to_2020(lab: [f32; 3]) -> [f32; 3] {
     let m = mats();
-    let lms = mul(&m.from_lab, lab).map(|v| v * v * v);
+    let lms = mul(&m.from_lab, lab).map3(|v| v * v * v);
     mul(&m.from_lms, lms)
 }
 

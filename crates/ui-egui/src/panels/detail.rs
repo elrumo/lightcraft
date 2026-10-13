@@ -269,6 +269,8 @@ struct WindowCtx {
     texture_side: usize,
     crop_tool: bool,
     interacting: bool,
+    /// The linear scale drafts render at during a drag (1 otherwise).
+    draft_scale: f32,
     /// Hash of the photo's develop settings.
     look: u64,
     /// A pinch or two-finger scroll is running: keep the windows there are.
@@ -298,11 +300,13 @@ fn request_window(app: &mut LightcraftApp, c: &WindowCtx, v: &WindowView) -> Opt
     if c.holding {
         return if v.before { app.region_before_view } else { app.region_view }.filter(|w| w.photo == c.id);
     }
-    let (fw, fh) =
-        if c.aspect >= 1.0 { (frame_edge as f32, frame_edge as f32 / c.aspect) } else { (frame_edge as f32 * c.aspect, frame_edge as f32) };
+    // a drag renders the frame, and so its windows, as small as it renders the whole frame (a 1:1
+    // window is several megapixels); the picture is drawn magnified until the drag ends
+    let edge = ((frame_edge as f32 * c.draft_scale).round() as usize).clamp(8, frame_edge.max(8));
+    let (fw, fh) = if c.aspect >= 1.0 { (edge as f32, edge as f32 / c.aspect) } else { (edge as f32 * c.aspect, edge as f32) };
     let (fw, fh) = (fw.round().max(1.0) as usize, fh.round().max(1.0) as usize);
     // what is on screen, in pixels of the window's frame (the drawn frame, scaled)
-    let to_px = c.ppp * frame_edge as f32 / c.drawn_long.max(1.0);
+    let to_px = c.ppp * edge as f32 / c.drawn_long.max(1.0);
     let visible = (
         to_px * (v.visible.left() - v.target.left()),
         to_px * (v.visible.top() - v.target.top()),
@@ -468,13 +472,16 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     }
     // request renders: the loupe at display resolution (drafts during drags)
     let interacting = app.session.interaction.is_some();
-    let scale = if interacting { 0.6 } else { 1.0 };
     // render at the final size: a click-zoom animation only changes how the result is drawn
     let native_long = native[0].max(native[1]);
     let drawn_long = target_rect.width().max(target_rect.height()) * ppp;
     // the whole frame at about canvas size; the zoomed part of it is a window render (below)
     let look = d.hash64();
     let overlay = view_overlay(app, &d);
+    // a drag renders a draft: smaller the slower this host renders (a browser has no GPU)
+    let full_edge = app.ui.settings.loupe_edge(drawn_long.min(canvas.width().max(canvas.height()) * ppp), native_long, texture_side) as f64;
+    let long_over_short = f64::from(aspect).max(1e-3).max(1.0 / f64::from(aspect).max(1e-3));
+    let scale = app.renderer.draft_scale(interacting, full_edge * full_edge / long_over_short);
     // Diagnostic views that need whole-frame context, soft proofing, or reads too far for one
     // window still render the whole frame at the size it is drawn. A mask overlay is window-safe.
     let sizes = crate::region::ViewSizes {
@@ -590,6 +597,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         texture_side,
         crop_tool,
         interacting,
+        draft_scale: crate::render::DraftBudget::window_scale(scale),
         look,
         holding: navigating || app.size_hold.holding(now),
     };
@@ -2807,7 +2815,7 @@ fn film_label(name: &str) -> String {
 pub(crate) fn filmstrip(app: &mut LightcraftApp, ui: &mut egui::Ui, r: Rect) {
     let t = Tokens::get(ui.ctx());
     ui.painter().rect_filled(r, 0.0, t.canvas);
-    ui.painter().rect_filled(Rect::from_min_size(r.min, vec2(r.width(), 4.0)), 0.0, Color32::from_gray(0x20));
+    ui.painter().rect_filled(Rect::from_min_size(r.min, vec2(r.width(), 4.0)), 0.0, t.divider);
     let ids = app.session.visible_cloned();
     let active = app.session.selection.active;
     let cell_w = 120.0;

@@ -174,6 +174,20 @@ pub fn luminance_2020(c: [f32; 3]) -> f32 {
     c[0] * LUMA_2020[0] + c[1] * LUMA_2020[1] + c[2] * LUMA_2020[2]
 }
 
+/// `[f32; 3]::map` that is always inlined, for the per-pixel loops. The standard one goes through
+/// `try_map` and an array drain; the wasm build (size-optimised outside the pipeline crates, 16
+/// codegen units) left those as calls, ~a quarter of a render worker's time in a profile.
+pub trait Map3 {
+    fn map3(self, f: impl FnMut(f32) -> f32) -> Self;
+}
+
+impl Map3 for [f32; 3] {
+    #[inline(always)]
+    fn map3(self, mut f: impl FnMut(f32) -> f32) -> Self {
+        [f(self[0]), f(self[1]), f(self[2])]
+    }
+}
+
 /// An sRGB 8-bit colour, for UI and swatches.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Rgb8(pub u8, pub u8, pub u8);

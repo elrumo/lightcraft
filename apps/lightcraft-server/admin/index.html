@@ -100,6 +100,7 @@
   <nav class="sidenav" aria-label="Sections">
     <a href="#/overview" data-nav="overview"><svg class="icon"><use href="#i-overview"/></svg><span>Overview</span></a>
     <a href="#/users" data-nav="users"><svg class="icon"><use href="#i-users"/></svg><span>Users</span></a>
+    <a href="#/search" data-nav="search"><svg class="icon"><use href="#i-sparkle"/></svg><span>Search</span></a>
     <a href="#/storage" data-nav="storage"><svg class="icon"><use href="#i-storage"/></svg><span>Storage</span></a>
   </nav>
 
@@ -218,6 +219,61 @@
           </div>
           <div class="meter" id="scanBar" hidden><div></div></div>
           <div class="alert negative" id="scanErrors" hidden><svg class="icon"><use href="#i-alert"/></svg><div><b>Some files couldn't be read</b><ul></ul></div></div>
+        </section>
+      </div>
+    </section>
+
+    <!-- Search -->
+    <section data-view="search" hidden>
+      <div class="page-head"><div><h1>Search</h1><p class="lead">What the server does with your users' photos so their devices don't have to: find them by description, by the words printed in them, and by the people in them. Each needs a model, downloaded once onto this server.</p></div></div>
+      <div class="columns">
+        <section class="panel">
+          <h2>Search by description</h2>
+          <label class="switch" for="srSwitch">
+            <input type="checkbox" id="srSwitch" role="switch">
+            <span><span class="label">Search for everyone on this server</span><span class="help" id="srHelp"></span></span>
+          </label>
+          <div class="fetch" id="srFetch" hidden>
+            <div class="fetch-head"><span id="srFetchText"></span><span id="srFetchPct"></span></div>
+            <div class="meter large"><div id="srFetchBar"></div></div>
+            <div class="btn-row"><button type="button" class="btn secondary" id="srCancel">Cancel download</button></div>
+          </div>
+          <div class="alert negative" id="srError" role="alert" hidden><svg class="icon"><use href="#i-alert"/></svg><div><b>The download didn't finish</b><p></p></div></div>
+          <dl class="facts" id="srFacts"></dl>
+          <h3>Photos described</h3>
+          <ul class="usage" id="srUsers"></ul>
+          <p class="muted" id="srUsersNone" hidden></p>
+          <p class="muted">Someone who prefers to search on their own computer can still choose that in LightCraft's search panel.</p>
+        </section>
+        <section class="panel">
+          <h2>Words in photos</h2>
+          <label class="switch" for="txSwitch">
+            <input type="checkbox" id="txSwitch" role="switch">
+            <span><span class="label">Find photos by the text printed in them</span><span class="help" id="txHelp"></span></span>
+          </label>
+          <div class="fetch" id="txFetch" hidden>
+            <div class="fetch-head"><span id="txFetchText"></span><span id="txFetchPct"></span></div>
+            <div class="meter large"><div id="txFetchBar"></div></div>
+            <div class="btn-row"><button type="button" class="btn secondary" id="txCancel">Cancel download</button></div>
+          </div>
+          <div class="alert negative" id="txError" role="alert" hidden><svg class="icon"><use href="#i-alert"/></svg><div><b>The download didn't finish</b><p></p></div></div>
+          <dl class="facts" id="txFacts"></dl>
+          <h3>Photos read</h3>
+          <ul class="usage" id="txUsers"></ul>
+          <p class="muted" id="txUsersNone" hidden></p>
+        </section>
+        <section class="panel">
+          <h2>People</h2>
+          <p class="muted">The server can find the faces in a user's photos and group them into people, which they name on their own devices. Faces are personal data, so this is off for everyone until you turn it on for them, one person at a time. They can delete everything found, from their devices.</p>
+          <div class="fetch" id="fcFetch" hidden>
+            <div class="fetch-head"><span id="fcFetchText"></span><span id="fcFetchPct"></span></div>
+            <div class="meter large"><div id="fcFetchBar"></div></div>
+            <div class="btn-row"><button type="button" class="btn secondary" id="fcCancel">Cancel download</button></div>
+          </div>
+          <div class="alert negative" id="fcError" role="alert" hidden><svg class="icon"><use href="#i-alert"/></svg><div><b>The download didn't finish</b><p></p></div></div>
+          <div class="btn-row" id="fcGet" hidden><button type="button" class="btn accent" id="fcDownload"><svg class="icon"><use href="#i-sparkle"/></svg><span>Download the face models</span></button></div>
+          <p class="muted" id="fcNeeds" hidden></p>
+          <ul class="people" id="fcUsers"></ul>
         </section>
       </div>
     </section>

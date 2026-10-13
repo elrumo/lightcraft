@@ -1,6 +1,7 @@
 //! The per-pixel stage: everything after the spatial planes are ready, in one parallel pass.
 
 use lightcraft_color::luminance_2020;
+use lightcraft_color::Map3;
 use lightcraft_color::spline::{Lut1, MonotoneCurve};
 use lightcraft_color::transfer::linear_to_srgb;
 use lightcraft_develop::{DevelopSettings, LocalAdjustments, Process, ToneCurve, VignetteStyle};
@@ -333,13 +334,13 @@ pub(crate) fn finish_deep(
     let trc = fp.out_trc;
     let samples = match depth {
         OutputDepth::F32Linear => {
-            let v = finish_with(p, &fp, true, |e| e.map(|v| srgb_to_linear(v.clamp(0.0, 1.0))));
+            let v = finish_with(p, &fp, true, |e| e.map3(|v| srgb_to_linear(v.clamp(0.0, 1.0))));
             DeepSamples::F32(v.into_flattened())
         }
         OutputDepth::F32Hdr => {
             // the sRGB curve extended past 1 (it is unbounded), so values up to `peak` survive
             let peak = fp.peak;
-            let v = finish_with(p, &fp, true, |e| e.map(|v| srgb_to_linear(v.max(0.0)).clamp(0.0, peak)));
+            let v = finish_with(p, &fp, true, |e| e.map3(|v| srgb_to_linear(v.max(0.0)).clamp(0.0, peak)));
             DeepSamples::F32(v.into_flattened())
         }
         _ => {
@@ -403,7 +404,7 @@ pub(crate) fn finish_with<T: Copy + Default + Send>(
         for (x, px) in row.iter_mut().enumerate() {
             let i = y * w + x;
             let raw = p.img.data[i];
-            let mut c = if gain == 1.0 { raw } else { raw.map(|v| v * gain) };
+            let mut c = if gain == 1.0 { raw } else { raw.map3(|v| v * gain) };
             let l_pre = p.log_l.data[i];
             let l0 = l_pre + ev;
 
@@ -441,7 +442,7 @@ pub(crate) fn finish_with<T: Copy + Default + Send>(
                 let k = df * defringe_weight(c, p.log_l.data[i] - b.data[i]);
                 if k > 0.0 {
                     let y = luminance_2020(c);
-                    c = c.map(|v| v + (y - v) * k);
+                    c = c.map3(|v| v + (y - v) * k);
                 }
             }
 
@@ -453,23 +454,23 @@ pub(crate) fn finish_with<T: Copy + Default + Send>(
                 let d = (dark.data[i] / air_pre).clamp(0.0, 1.0);
                 if dz > 0.0 {
                     let t = (1.0 - 0.95 * dz.min(1.0) * d).max(0.12);
-                    c = c.map(|v| ((v - air * (1.0 - t)) / t).max(0.0));
+                    c = c.map3(|v| ((v - air * (1.0 - t)) / t).max(0.0));
                 } else {
                     let k = (-dz).min(1.0) * 0.7 * (0.35 + 0.65 * d);
-                    c = c.map(|v| v + (air * 0.9 - v) * k);
+                    c = c.map3(|v| v + (air * 0.9 - v) * k);
                 }
             }
 
             // --- local exposure / temp / tint
             if l_exp != 0.0 {
                 let g = l_exp.exp2();
-                c = c.map(|v| v * g);
+                c = c.map3(|v| v * g);
             }
             if l_temp != 0.0 || l_tint != 0.0 {
                 let y0 = luminance_2020(c);
                 c = [c[0] * (1.0 + 0.3 * l_temp), c[1] * (1.0 - 0.22 * l_tint), c[2] * (1.0 - 0.3 * l_temp).max(0.0)];
                 let y1 = luminance_2020(c).max(1e-9);
-                c = c.map(|v| v * y0 / y1);
+                c = c.map3(|v| v * y0 / y1);
             }
 
             // --- local tone in log luminance
@@ -522,7 +523,7 @@ pub(crate) fn finish_with<T: Copy + Default + Send>(
             }
             if delta != 0.0 {
                 let g = delta.exp2();
-                c = c.map(|v| v * g);
+                c = c.map3(|v| v * g);
             }
 
             // --- calibration (scene linear, before the tone map)
@@ -533,15 +534,15 @@ pub(crate) fn finish_with<T: Copy + Default + Send>(
             // --- tone map on luminance, highlight desaturation
             let yl = luminance_2020(c);
             let o = tone.apply(yl);
-            let mut d = if yl > 1e-9 { c.map(|v| v * o / yl) } else { [0.0; 3] };
+            let mut d = if yl > 1e-9 { c.map3(|v| v * o / yl) } else { [0.0; 3] };
             let k = tone.chroma_scale(o);
             if k != 1.0 {
-                d = d.map(|v| o + (v - o) * k);
+                d = d.map3(|v| o + (v - o) * k);
             }
             let mx = d[0].max(d[1]).max(d[2]);
             if mx > peak {
                 let t = ((mx - peak) / (mx - o).max(1e-6)).clamp(0.0, 1.0);
-                d = d.map(|v| v + (o - v) * t);
+                d = d.map3(|v| v + (o - v) * t);
             }
 
             // --- colour
@@ -568,15 +569,15 @@ pub(crate) fn finish_with<T: Copy + Default + Send>(
                             f += (1.0 - f) * v.highlights * smooth(0.4, 1.0, lum);
                         }
                         if v.style == VignetteStyle::PaintOverlay {
-                            d = d.map(|c| c * (1.0 - (-v.amount) * t) + 0.0);
+                            d = d.map3(|c| c * (1.0 - (-v.amount) * t) + 0.0);
                         } else {
-                            d = d.map(|c| c * f);
+                            d = d.map3(|c| c * f);
                         }
                     } else if hdr {
                         // lighten towards SDR white; never pull HDR highlights down to it
-                        d = d.map(|c| c + (1.0 - c).max(0.0) * v.amount * t * 0.85);
+                        d = d.map3(|c| c + (1.0 - c).max(0.0) * v.amount * t * 0.85);
                     } else {
-                        d = d.map(|c| c + (1.0 - c) * v.amount * t * 0.85);
+                        d = d.map3(|c| c + (1.0 - c) * v.amount * t * 0.85);
                     }
                 }
             }
@@ -611,7 +612,7 @@ pub(crate) fn finish_with<T: Copy + Default + Send>(
             // --- encode, curves, grain
             let mut e = if hdr {
                 // HDR: the (unbounded) sRGB curve, so values above SDR white encode above 1
-                r.map(|v| {
+                r.map3(|v| {
                     if v > 1.0 {
                         linear_to_srgb(v)
                     } else if exact {
@@ -621,9 +622,9 @@ pub(crate) fn finish_with<T: Copy + Default + Send>(
                     }
                 })
             } else if exact {
-                r.map(|v| linear_to_srgb(v.clamp(0.0, 1.0)))
+                r.map3(|v| linear_to_srgb(v.clamp(0.0, 1.0)))
             } else {
-                r.map(|v| encode_srgb(srgb, v))
+                r.map3(|v| encode_srgb(srgb, v))
             };
             if let Some(l) = curves {
                 let e0 = e;
@@ -648,17 +649,17 @@ pub(crate) fn finish_with<T: Copy + Default + Send>(
                     lum = lum.clamp(0.0, 1.0);
                 }
                 let k = amt * g * (0.35 + 2.6 * lum * (1.0 - lum));
-                e = e.map(|v| v + k);
+                e = e.map3(|v| v + k);
             }
             let e = match &p_lut {
                 Some((l, k)) if hdr => {
                     // the LUT sees SDR values; the part above SDR white is carried over
-                    let c = e.map(|v| v.clamp(0.0, 1.0));
+                    let c = e.map3(|v| v.clamp(0.0, 1.0));
                     let m = l.apply(c);
                     [e[0] + (m[0] - c[0]) * k, e[1] + (m[1] - c[1]) * k, e[2] + (m[2] - c[2]) * k]
                 }
                 Some((l, k)) => {
-                    let m = l.apply(e.map(|v| v.clamp(0.0, 1.0)));
+                    let m = l.apply(e.map3(|v| v.clamp(0.0, 1.0)));
                     [e[0] + (m[0] - e[0]) * k, e[1] + (m[1] - e[1]) * k, e[2] + (m[2] - e[2]) * k]
                 }
                 None => e,
@@ -709,7 +710,7 @@ pub fn gamut_map_to(r: [f32; 3], luma: [f32; 3], peak: f32) -> ([f32; 3], f32) {
             t = t.min((peak - yy) / (c - yy).max(1e-9));
         }
     }
-    if t < 1.0 { (r.map(|c| yy + (c - yy) * t), t) } else { (r, 1.0) }
+    if t < 1.0 { (r.map3(|c| yy + (c - yy) * t), t) } else { (r, 1.0) }
 }
 
 /// Local Defringe weight of a scene-linear colour `c` whose log luminance differs by `det` from
@@ -736,7 +737,7 @@ pub fn refine_saturation(before: [f32; 3], after: [f32; 3], refine: f32) -> [f32
         return after;
     }
     let k = (s0 / s1).powf(1.0 - refine).clamp(0.0, 4.0);
-    after.map(|v| y1 + (v - y1) * k)
+    after.map3(|v| y1 + (v - y1) * k)
 }
 
 pub const SRGB_LUT_N: usize = 4096;

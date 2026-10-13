@@ -247,6 +247,8 @@ struct PrefsFile {
     forget_local_days: Option<u32>,
     /// Send the search vectors to the sync server (`vision.setShare`).
     search_share: bool,
+    /// Search on this device only, never through the sync server (`vision.setLocalOnly`).
+    search_local_only: bool,
     /// Also read and search the text in photos (`vision.setText`).
     search_text: bool,
     /// Find the faces in photos and group them into people (`vision.setFaces`).
@@ -473,6 +475,7 @@ impl Session {
         self.cache_mb = prefs.cache_mb;
         self.forget_local_days = prefs.forget_local_days.unwrap_or(lightcraft_catalog::DEFAULT_FORGET_DAYS);
         self.vision.share_with_server = prefs.search_share;
+        self.vision.local_only = prefs.search_local_only;
         self.vision.text = prefs.search_text;
         self.vision.faces = prefs.search_faces;
         self.smart_previews_dir = prefs.smart_previews_dir.filter(|_| on_disk).map(PathBuf::from);
@@ -832,6 +835,7 @@ impl Session {
             smart_previews_dir: self.smart_previews_dir.as_ref().map(|d| d.to_string_lossy().to_string()),
             forget_local_days: Some(self.forget_local_days),
             search_share: self.vision.share_with_server,
+            search_local_only: self.vision.local_only,
             search_text: self.vision.text,
             search_faces: self.vision.faces,
         })

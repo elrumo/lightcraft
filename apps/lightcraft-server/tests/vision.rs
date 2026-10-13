@@ -829,3 +829,113 @@ fn a_thin_client_lists_and_names_the_servers_people_and_can_make_it_forget() {
     accounts::set_faces(&f.data, "ann", false).unwrap();
     assert_eq!(get(&f.ann, "/api/people/status").1["photos"], 0, "the server forgot");
 }
+
+fn admin_login(server: &Server, user: &str, password: &str) -> Who {
+    let url = format!("http://{}", server.addr());
+    let body = json!({"user": user, "password": password}).to_string();
+    let mut r = agent().post(format!("{url}/api/admin/login")).header("Content-Type", "application/json").send(body.as_bytes()).unwrap();
+    assert_eq!(r.status().as_u16(), 200);
+    let token = json_body(&mut r)["token"].as_str().unwrap().to_string();
+    Who { url, token }
+}
+
+fn put(w: &Who, path: &str, body: Value) -> (u16, Value) {
+    let mut r =
+        agent().put(format!("{}{path}", w.url)).header("Authorization", format!("Bearer {}", w.token)).send(body.to_string().as_bytes()).unwrap();
+    let status = r.status().as_u16();
+    (status, json_body(&mut r))
+}
+
+#[test]
+fn an_admin_turns_search_on_and_off_for_every_device() {
+    let f = fixture("switch", Some(Arc::new(FakeEmbedder)));
+    indexed(&f, 4);
+    accounts::set_admin(&f.data, "ann", true).unwrap();
+    let admin = admin_login(&f.server, "ann", "correct horse");
+
+    // with the model in place it is on, and the page can see how far each user's photos are
+    let s = get(&admin, "/api/admin/search").1;
+    assert_eq!((&s["enabled"], &s["installed"], &s["active"]), (&json!(true), &json!(true), &json!(true)), "{s}");
+    let (ann, bob) = (
+        json!({"name": "ann", "faces": false, "total": 4, "indexed": 4, "read": null, "found": null}),
+        json!({"name": "bob", "faces": false, "total": 0, "indexed": 0, "read": null, "found": null}),
+    );
+    assert_eq!(s["users"], json!([ann, bob]), "{s}");
+    // a device's token never opens the admin routes
+    assert_eq!(get(&f.ann, "/api/admin/search").0, 401);
+
+    // off: devices are told the server can't search (they stop asking), and a search says why
+    let (status, s) = put(&admin, "/api/admin/search", json!({"enabled": false}));
+    assert_eq!((status, &s["active"], &s["installed"]), (200, &json!(false), &json!(true)), "{s}");
+    let (_, s) = get(&f.ann, "/api/search/status");
+    assert_eq!((&s["installed"], &s["enabled"]), (&json!(false), &json!(false)), "{s}");
+    let (status, r) = get(&f.ann, "/api/search?q=red");
+    assert_eq!(status, 503, "{r}");
+    assert!(r["error"].as_str().unwrap().contains("turned off"), "{r}");
+
+    // on again: the vectors are still there, nothing is described twice
+    put(&admin, "/api/admin/search", json!({"enabled": true}));
+    let s = indexed(&f, 4);
+    assert_eq!(s["installed"], true, "{s}");
+    assert!(!ranked(&get(&f.ann, "/api/search?q=red").1).is_empty());
+
+    // fetching the model is only after the licence was agreed to; with it in place there is nothing to fetch
+    let (status, r) = post(&admin, "/api/admin/search/download", b"{}");
+    assert_eq!(status, 400, "{r}");
+    assert!(r["error"].as_str().unwrap().contains("acknowledged"), "{r}");
+    put(&admin, "/api/admin/search", json!({"enabled": false}));
+    let (status, s) = post(&admin, "/api/admin/search/download", br#"{"acknowledged": true}"#);
+    assert_eq!((status, &s["enabled"], &s["download"]["running"]), (200, &json!(true), &json!(false)), "{s}");
+
+    // a restart keeps the choice
+    put(&admin, "/api/admin/search", json!({"enabled": false}));
+    let Fixture { server, data, .. } = f;
+    drop(server);
+    let server = start(&data, Some(Arc::new(FakeEmbedder)));
+    let ann = login(&server, "ann", "correct horse");
+    assert_eq!(get(&ann, "/api/search/status").1["installed"], false);
+    assert!(!admin_login(&server, "ann", "correct horse").token.is_empty(), "the admin can still sign in");
+}
+
+#[test]
+fn an_admin_turns_text_reading_and_people_on_from_the_admin_page() {
+    let f = fixture_full("switch-more", Some(Arc::new(FakeEmbedder)), Some(Arc::new(FakeReader)), Some(Arc::new(lightcraft_vision::fake::FakeFaces)));
+    accounts::set_admin(&f.data, "ann", true).unwrap();
+    let admin = admin_login(&f.server, "ann", "correct horse");
+
+    // with the reader in place it is on; people have no switch of their own, only per user
+    let s = get(&admin, "/api/admin/search").1;
+    assert_eq!((&s["text"]["enabled"], &s["text"]["installed"], &s["text"]["active"]), (&json!(true), &json!(true), &json!(true)), "{s}");
+    assert_eq!((&s["faces"]["installed"], &s["users"][0]["faces"]), (&json!(true), &json!(false)), "{s}");
+    assert_eq!(get(&f.ann, "/api/search/status").1["text"]["installed"], true);
+
+    // text off: devices are told the server doesn't read (and the describing switch is its own)
+    let (status, s) = put(&admin, "/api/admin/search/text", json!({"enabled": false}));
+    assert_eq!((status, &s["text"]["active"], &s["text"]["installed"], &s["active"]), (200, &json!(false), &json!(true), &json!(true)), "{s}");
+    assert_eq!(get(&f.ann, "/api/search/status").1["text"]["installed"], false);
+    put(&admin, "/api/admin/search/text", json!({"enabled": true}));
+    assert_eq!(get(&f.ann, "/api/search/status").1["text"]["installed"], true);
+
+    // the licence comes first, for each set of models
+    for path in ["/api/admin/search/text/download", "/api/admin/search/faces/download"] {
+        let (status, r) = post(&admin, path, b"{}");
+        assert_eq!(status, 400, "{path}: {r}");
+        assert!(r["error"].as_str().unwrap().contains("acknowledged"), "{r}");
+        let (status, r) = post(&admin, path, br#"{"acknowledged": true}"#);
+        assert_eq!((status, &r["text"]["download"]["running"]), (200, &json!(false)), "{path}: nothing to fetch, they are there: {r}");
+    }
+
+    // people: per user, and only when an admin says so
+    assert_eq!(get(&f.ann, "/api/people/status").1["enabled"], false);
+    let (status, s) = put(&admin, "/api/admin/users/ann/faces", json!({"enabled": true}));
+    assert_eq!((status, &s["users"][0]["faces"], &s["users"][1]["faces"]), (200, &json!(true), &json!(false)), "{s}");
+    looked(&f, 4);
+    assert_eq!(get(&f.ann, "/api/people/status").1["enabled"], true);
+    assert_eq!(get(&admin, "/api/admin/search").1["users"][0]["found"], 4);
+    let bob = login(&f.server, "bob", "battery staple");
+    assert_eq!(get(&bob, "/api/people/clusters").0, 403, "bob's is off, and his own");
+    assert_eq!(put(&admin, "/api/admin/users/nobody/faces", json!({"enabled": true})).0, 404);
+    assert_eq!(put(&admin, "/api/admin/users/..%2Fx/faces", json!({"enabled": true})).0, 400);
+    assert_eq!(put(&admin, "/api/admin/users/ann/faces", json!({"enabled": false})).0, 200);
+    assert_eq!(get(&f.ann, "/api/people/status").1["enabled"], false);
+}

@@ -220,6 +220,7 @@ const LAYOUT: &[(&str, &[&str])] = &[
             "photo.makeAvailableOffline",
             "sync.downloadOriginals",
             "---",
+            "album.removePhotos",
             "photo.delete",
             "photo.restore",
             "photo.deletePermanently",
@@ -304,6 +305,8 @@ fn host_supports(app: &LightcraftApp, id: &str) -> bool {
         "file.addPhotos" | "file.addFolder" | "@Import from Device" => app.services.host_pick.is_none(),
         "photo.restore" | "photo.deletePermanently" => selection_deleted(app),
         "photo.delete" => !selection_deleted(app),
+        // ⌫ in an album: the choice Delete Photo (⌘⌫) is the alternative to
+        "album.removePhotos" => crate::menus::removable_album(app).is_some(),
         // only once this library syncs (Settings ▸ Sync), on a host that can
         "sync.now" | "sync.pause" | "sync.downloadOriginals" | "album.makeAvailableOffline" | "photo.makeAvailableOffline" => {
             app.services.sync_exec.is_some() && app.session.sync_state().is_some()

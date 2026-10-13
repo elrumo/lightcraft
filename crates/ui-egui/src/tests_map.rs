@@ -6,11 +6,13 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
+use lightcraft_catalog::PhotoId;
 use lightcraft_engine::Session;
 use lightcraft_engine::tiles::{Tile, TileResult};
 use serde_json::json;
 
 use crate::headless::Headless;
+use crate::state::ViewMode;
 use crate::{LightcraftApp, Services};
 
 const T: Duration = Duration::from_secs(30);
@@ -81,17 +83,98 @@ fn photos_with_a_position_are_markers() {
     assert!(!near.is_empty() && near.len() <= 2, "the two central photos: {near:?}");
 }
 
-#[test]
-fn clicking_a_marker_selects_its_photo() {
-    let (mut h, ids) = map(Services::default(), json!({"view": "map"}));
-    let r = h.request("engine.execute", json!({"command": "view.map", "params": {"lat": 48.8584, "lon": 2.2945, "zoom": 14}}), T);
+/// Look at a position, as `view.map` does.
+fn look_at(h: &mut Headless, lat: f64, lon: f64, zoom: f64) {
+    let r = h.request("engine.execute", json!({"command": "view.map", "params": {"lat": lat, "lon": lon, "zoom": zoom}}), T);
     assert_eq!(r["ok"], true, "{r}");
     h.settle(SETTLE);
+}
+
+fn visible(h: &mut Headless) -> Vec<u64> {
+    let mut v: Vec<u64> = h.app.session.visible_cloned().iter().map(|i| i.0).collect();
+    v.sort_unstable();
+    v
+}
+
+#[test]
+fn tapping_a_marker_shows_its_photos_in_the_grid() {
+    let (mut h, ids) = map(Services::default(), json!({"view": "map"}));
+    // at street level Madrid's two central photos are one marker, 14 m apart
+    look_at(&mut h, 40.4169, -3.7035, 15.0);
+    let on_screen = markers(&h);
+    assert_eq!(on_screen.len(), 1, "{on_screen:?}");
+    let r = h.request("ui.clickWidget", json!({"id": on_screen[0]}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    assert_eq!(h.app.ui.view, ViewMode::PhotoGrid);
+    let mut want = vec![ids[0], ids[1]];
+    want.sort_unstable();
+    assert_eq!(visible(&mut h), want, "the grid holds the marker's photos and no others");
+    // and the filter that narrows it can be taken off
+    let chips = lightcraft_engine::filter_chips(&h.app.session.filter, &h.app.session.catalog);
+    assert_eq!(chips.len(), 1, "{chips:?}");
+    h.request("engine.execute", json!({"command": "library.filter", "params": chips[0].clear.clone()}), T);
+    assert!(visible(&mut h).len() > 2);
+}
+
+#[test]
+fn tapping_a_single_photo_marker_shows_that_photo() {
+    let (mut h, ids) = map(Services::default(), json!({"view": "map"}));
+    look_at(&mut h, 48.8584, 2.2945, 14.0);
     assert_eq!(markers(&h), vec![format!("marker:{}", ids[3])], "Paris only");
     let r = h.request("ui.clickWidget", json!({"id": format!("marker:{}", ids[3])}), T);
     assert_eq!(r["ok"], true, "{r}");
     h.settle(SETTLE);
+    assert_eq!(h.app.ui.view, ViewMode::PhotoGrid);
+    assert_eq!(visible(&mut h), vec![ids[3]]);
+}
+
+#[test]
+fn tapping_a_marker_on_a_phone_shows_its_photos_in_the_grid() {
+    let (session, ids) = library();
+    let mut h = Headless::new(LightcraftApp::new(session, Services { png: None, ..Default::default() }), [390.0, 844.0], 1.0);
+    h.request("ui.set", json!({"view": "map"}), T);
+    h.settle(SETTLE);
+    assert!(h.app.compact);
+    look_at(&mut h, 48.8584, 2.2945, 14.0);
+    let r = h.request("ui.clickWidget", json!({"id": format!("marker:{}", ids[3])}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    assert_eq!(h.app.ui.view, ViewMode::PhotoGrid);
+    assert_eq!(visible(&mut h), vec![ids[3]]);
+    assert!(widget(&h, "chip:0").is_some(), "the grid says it is narrowed, and its chip takes that off");
+}
+
+#[test]
+fn a_marker_of_several_photos_is_a_picture_of_several_of_them() {
+    let (mut h, ids) = map(Services::default(), json!({"view": "map"}));
+    h.settle(SETTLE);
+    // everything is in view: Madrid's three photos share a marker or two, and each one is drawn on it
+    for (i, id) in ids.iter().take(3).enumerate() {
+        assert!(h.app.renderer.thumb(PhotoId(*id)).is_some(), "Madrid's photo {i} is pictured on its marker");
+    }
+}
+
+#[test]
+fn tapping_a_marker_keeps_the_square_grid() {
+    let (mut h, ids) = map(Services::default(), json!({"view": "map"}));
+    h.app.ui.grid_mode = ViewMode::SquareGrid;
+    look_at(&mut h, 48.8584, 2.2945, 14.0);
+    h.request("ui.clickWidget", json!({"id": format!("marker:{}", ids[3])}), T);
+    h.settle(SETTLE);
+    assert_eq!(h.app.ui.view, ViewMode::SquareGrid);
+}
+
+#[test]
+fn shift_clicking_a_marker_selects_its_photos_and_stays_on_the_map() {
+    let (mut h, ids) = map(Services::default(), json!({"view": "map"}));
+    look_at(&mut h, 48.8584, 2.2945, 14.0);
+    let r = h.request("ui.clickWidget", json!({"id": format!("marker:{}", ids[3]), "shift": true}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    assert_eq!(h.app.ui.view, ViewMode::Map);
     assert_eq!(h.app.session.selection.active.map(|i| i.0), Some(ids[3]));
+    assert!(h.app.session.filter == Default::default(), "the library was not narrowed");
 }
 
 #[test]
@@ -265,4 +348,11 @@ fn map_screenshots() {
         phone.step();
     }
     shot(&mut phone, "map-phone.png");
+    // tapping the marker of three photos shows them in the grid
+    let marker = markers(&phone).into_iter().find(|m| ids.iter().take(3).any(|i| *m == format!("marker:{i}"))).unwrap_or_default();
+    phone.request("ui.clickWidget", json!({"id": marker}), T);
+    for _ in 0..8 {
+        phone.step();
+    }
+    shot(&mut phone, "map-phone-tapped.png");
 }

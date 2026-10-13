@@ -267,5 +267,8 @@
   "{n} preset{} in {g} group{}": "{n} ajuste{0} preestablecido{0} en {g} grupo{1}",
   "{p} profile{}": "{p} perfil(es){:.0}",
   "{a} already in your library": "{a} ya en la biblioteca",
-  "Not carried over: {what}": "No transferido: {what}"
+  "Not carried over: {what}": "No transferido: {what}",
+  "{n} items": "{n} elementos",
+  "{label}, {n} items": "{label}, {n} elementos",
+  "Add to {album}": "Añadir a {album}"
 }

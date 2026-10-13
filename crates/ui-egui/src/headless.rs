@@ -261,6 +261,26 @@ pub struct Headless {
     pub window_commands: Vec<ViewportCommand>,
     /// The pointer cursor the last frame asked for (what a real host would show).
     pub last_cursor: egui::CursorIcon,
+    /// Files being dragged over the window from outside it (reported every frame until emptied).
+    pub hovering_files: Vec<std::path::PathBuf>,
+    /// Files dropped on the window: reported in the next frame only.
+    pub dropped_files: Vec<std::path::PathBuf>,
+}
+
+/// A file dropped on the simulated window.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug)]
+struct DroppedPath(std::path::PathBuf);
+
+#[cfg(not(target_arch = "wasm32"))]
+impl egui::DroppedFile for DroppedPath {
+    fn path(&self) -> &std::path::Path {
+        &self.0
+    }
+
+    fn bytes(&self) -> Result<Vec<u8>, String> {
+        std::fs::read(&self.0).map_err(|e| e.to_string())
+    }
 }
 
 /// A headless run (`lightcraft-cli snapshot`, tests) is a one-shot process: however it ends, it
@@ -303,6 +323,8 @@ impl Headless {
             window_maximized: false,
             window_commands: vec![],
             last_cursor: egui::CursorIcon::Default,
+            hovering_files: vec![],
+            dropped_files: vec![],
         }
     }
 
@@ -337,6 +359,16 @@ impl Headless {
         (self.size, self.pixels_per_point) = bounded_viewport(self.size, self.pixels_per_point);
         let mut raw = HeadlessView::raw_input(self.size, self.pixels_per_point, self.time, std::mem::take(&mut self.events));
         raw.system_theme = self.system_theme;
+        // (like egui-winit: the files hovering are cleared by the drop that follows)
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let dropped = std::mem::take(&mut self.dropped_files);
+            if !dropped.is_empty() {
+                self.hovering_files.clear();
+            }
+            raw.hovered_files = self.hovering_files.iter().map(|p| egui::HoveredFile { path: Some(p.clone()), ..Default::default() }).collect();
+            raw.dropped_files = dropped.into_iter().map(|p| std::sync::Arc::new(DroppedPath(p)) as egui::DroppedFileHandle).collect();
+        }
         raw.safe_area_insets = self.safe_area;
         raw.viewports.entry(ViewportId::ROOT).or_default().maximized = Some(self.window_maximized);
         raw.max_texture_side = (self.reported_texture_side != Some(self.max_texture_side)).then_some(self.max_texture_side);

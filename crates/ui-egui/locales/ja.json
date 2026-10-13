@@ -2096,5 +2096,8 @@
   "Couldn't be read": "読み込めなかったファイル",
   "Import failed": "読み込みに失敗しました",
   "Nothing new to import": "読み込む新しい項目はありません",
-  "Nothing was imported": "何も読み込まれませんでした"
+  "Nothing was imported": "何も読み込まれませんでした",
+  "Create New": "新規作成",
+  "Add Photos From": "写真の追加元",
+  "Smart Album from Filter": "フィルターからスマートアルバム"
 }

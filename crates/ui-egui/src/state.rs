@@ -601,6 +601,11 @@ pub struct UiState {
     /// works on the chosen ones). Entered with Select or a long press; `view.selectMode`.
     #[serde(skip)]
     pub select_mode: bool,
+    /// Compact layout: photos are being chosen from the library to add to this album (the album's +
+    /// ▸ LightCraft): All Photos in select mode, with Add in place of the action bar. Leaving select
+    /// mode goes back to the album.
+    #[serde(skip)]
+    pub adding_to: Option<u64>,
     /// Compact layout: rate-and-review mode on a photo (a tap on it): the bars slide away and an up
     /// or down swipe rates it (left half) or flags it (right half). `view.reviewMode`.
     #[serde(skip)]
@@ -1286,6 +1291,7 @@ impl Default for UiState {
             preview_build_seen: None,
             unsaved_seen: false,
             select_mode: false,
+            adding_to: None,
             review: false,
             edit_group: "light".into(),
             appearance: Appearance::System,

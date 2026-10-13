@@ -114,7 +114,7 @@ copy_docs "$APP/Contents/Resources/Licenses"
 
 # Remove inherited build-time extended attributes BEFORE code signing.
 # Never repair, re-sign or strip metadata from the published release after signing.
-xattr -cr "$APP"
+/usr/bin/xattr -cr "$APP"
 
 # Sign inside-out: nested code first, then the bundle itself (no --deep on the final signature).
 # Today the only nested code is the main executable; frameworks/helpers would be signed here too.
@@ -187,7 +187,7 @@ verify_dmg_app() {
   fi
   if [ "$rc" != 0 ]; then
     echo "error: published-image app verification failed; reject $DMG" >&2
-    xattr -lr "$mount/LightCraft.app" >&2 || true
+    /usr/bin/xattr -lr "$mount/LightCraft.app" >&2 || true
   fi
   if ! hdiutil_retry detach "$mount" >/dev/null; then
     echo "error: could not detach verification mount" >&2

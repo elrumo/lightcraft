@@ -258,6 +258,10 @@ pub struct Vision {
     /// user's other devices needn't compute them again. Off until the user turns it on
     /// (persisted in the library's prefs.json).
     pub share_with_server: bool,
+    /// Search on this device only: never ask the sync server to search, even when it can (the
+    /// model is downloaded here instead). Off until the user turns it on (persisted in the
+    /// library's prefs.json). Ignored on a device that can't run the model.
+    pub local_only: bool,
     /// Also read the text in photos and search it. Off until the user turns it on (persisted in
     /// the library's prefs.json): reading is slow and needs its own download.
     pub text: bool,
@@ -300,6 +304,7 @@ impl Default for Vision {
             mirrors_file: None,
             background: false,
             share_with_server: false,
+            local_only: false,
             text: false,
             faces: false,
             thin: false,
@@ -349,6 +354,23 @@ impl Vision {
     /// The sync server can search now (its model is installed).
     pub fn server_ready(&self) -> bool {
         self.remote.ready()
+    }
+
+    /// Searches go to the sync server: it can search, and this device wasn't set to search on its
+    /// own (a device that can't run the model has no choice).
+    pub fn use_server(&self) -> bool {
+        self.remote.ready() && !(self.local_only && self.local_available())
+    }
+
+    /// The sync server said its search is off or not installed yet: `(turned off by an admin,
+    /// being installed now)`. `None` when it can search, or isn't known to support it.
+    pub fn server_waiting(&self) -> Option<(bool, bool)> {
+        if !self.remote.supported() || self.remote.ready() {
+            return None;
+        }
+        let s = self.remote.status.as_ref()?;
+        // (older servers say nothing of either: not turned off, not installing)
+        Some((s["enabled"].as_bool() == Some(false), s["installing"].as_bool() == Some(true)))
     }
 
     /// What the sync server last said about its search: `{available, installed, indexed, total, …}`.
@@ -1233,6 +1255,7 @@ impl Session {
             "available": v.available(),
             "localAvailable": v.local_available(),
             "server": {"supported": v.remote.supported(), "ready": v.remote.ready(), "status": v.remote.status},
+            "localOnly": v.local_only,
             "share": {"enabled": v.share_with_server, "running": v.remote.share.running, "sent": v.remote.share.sent, "error": v.remote.share.error},
             "installed": v.installed(),
             "dir": v.dir.as_ref().map(|d| d.display().to_string()),
@@ -1410,7 +1433,8 @@ impl Session {
         let use_server = match source {
             "local" => false,
             "server" => true,
-            "auto" | "" => !(local && self.vision_local_covers()) && server,
+            // (a device set to search on its own never asks the server unless told to: `server`)
+            "auto" | "" => !(local && (self.vision.local_only || self.vision_local_covers())) && server,
             other => return Err(format!("unknown source `{other}` (auto|local|server)")),
         };
         if use_server {

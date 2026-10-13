@@ -51,6 +51,7 @@ const USAGE: &str = "usage:
   lightcraft-server folder list [NAME]
   lightcraft-server folder ignore NAME [PATTERN…]   (names the scan skips, like '*.fcpbundle'; none: show them, '': clear)
   lightcraft-server scan [NAME]                (read the library folders now)
+  lightcraft-server model enable|disable [--text]   (search by description, or with --text reading the text in photos, for every device that signs in; on once the models are installed, off keeps the files)
   lightcraft-server model status|download [--accept-licences] [--text] [--faces] [--vision-dir DIR]   (the search model: about 1.5 GB, Google's Apache License 2.0; --text adds the models that read the text in photos: about 31 MB, Baidu's Apache License 2.0; --faces adds the models that find and tell apart faces: about 39 MB, MIT and Apache 2.0)
   lightcraft-server gc [--dry-run]
   lightcraft-server health                     (is the server answering? exit status)
@@ -300,13 +301,28 @@ fn run(args: &[String]) -> Result<(), String> {
             Ok(())
         }
         ["model", "status"] => {
+            let sw = lightcraft_server::switch::Switch::new(&data);
+            let on = |b: bool| if b { "on (once the models are installed)" } else { "off" };
+            println!("search by description for every device: {}\nreading the text in photos: {}\n", on(sw.enabled()), on(sw.text_enabled()));
             println!("{}", lightcraft_server::vision::model_status(&vision_dir(args, &data)));
+            Ok(())
+        }
+        ["model", on @ ("enable" | "disable")] => {
+            let sw = lightcraft_server::switch::Switch::new(&data);
+            let text = args.iter().any(|a| a == "--text");
+            if text {
+                sw.set_text_enabled(*on == "enable")?;
+            } else {
+                sw.set_enabled(*on == "enable")?;
+            }
+            let what = if text { "reading the text in photos" } else { "search by description" };
+            println!("{what} is {} (a running server notices within a minute)", if *on == "enable" { "on" } else { "off" });
             Ok(())
         }
         ["model", "download"] => {
             let dir = vision_dir(args, &data);
             let (text, accepted) = (args.iter().any(|a| a == "--text"), args.iter().any(|a| a == "--accept-licences"));
-            let mirrors = dir.parent().map(|p| p.join("siglip2-mirrors.txt"));
+            let mirrors = lightcraft_server::vision::mirrors_file(&dir);
             let search_missing = !lightcraft_vision::siglip::is_model_dir(&dir);
             let text_missing = text && !lightcraft_vision::ocr::is_model_dir(&dir.join(lightcraft_engine::vision::TEXT_DIR));
             let faces = args.iter().any(|a| a == "--faces");

@@ -2132,5 +2132,8 @@
   "Couldn't be read": "无法读取",
   "Import failed": "导入失败",
   "Nothing new to import": "没有可导入的新内容",
-  "Nothing was imported": "未导入任何内容"
+  "Nothing was imported": "未导入任何内容",
+  "Create New": "新建",
+  "Add Photos From": "添加照片来源",
+  "Smart Album from Filter": "从筛选器创建智能相册"
 }

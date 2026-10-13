@@ -16,16 +16,17 @@ An active slider gesture finishes before the pending action resumes.
 
 **No model weights are bundled.** Models live in the per-user `denoise-models` folder
 (override with `LIGHTCRAFT_DENOISE_MODELS`). Settings provides **Install from file…**
-for a user-supplied ONNX file with a `denoise-model.json` beside it. The default build
-offers no model downloads. The separate `rawnind-model` Cargo feature enables the
-pinned RawNIND offer only when a release's model policy permits it.
+for a user-supplied ONNX file with a `denoise-model.json` beside it, and a **Download**
+button for the pinned RawNIND model (the desktop app and CLI build with the `rawnind-model`
+Cargo feature by default; `--no-default-features --features denoise` leaves the offer out and
+Settings says the build offers no model downloads).
 Terms must be acknowledged before installation or
 download. Downloads use the shared pure-Rust `lightcraft-fetch` client, with resume,
 progress, cancellation, size limits and SHA-256 verification.
 
 RawNIND's optional ONNX weights are **GPL-3.0**, as recorded in the pinned model catalog.
 They are downloaded separately after consent and read by our own Rust executor.
-Whether releases should offer this download remains a maintainer policy decision;
+The maintainer chose to offer this download in the default desktop and CLI builds (2026-10-13);
 permissively licensed or independently trained weights remain a gap. This is not a
 claim that optional downloading settles licensing questions. No GPL decoder or neural
 runtime code is included. Model metadata is in `crates/denoise-core/src/known.rs`.

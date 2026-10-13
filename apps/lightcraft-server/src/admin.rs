@@ -28,6 +28,7 @@ use sha2::Digest;
 use crate::State;
 use crate::accounts::{self, LoginError};
 use crate::api::{Resp, error, header, header_value, json, read_json, read_small_json};
+use crate::switch::Part;
 
 const INDEX: &str = include_str!("../admin/index.html");
 const SCRIPT: &str = include_str!("../admin/admin.js");
@@ -226,6 +227,17 @@ struct Ignore {
     ignore: Vec<String>,
 }
 
+#[derive(Deserialize)]
+struct Enabled {
+    enabled: bool,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct Licence {
+    acknowledged: bool,
+}
+
 #[derive(Deserialize, Default)]
 #[serde(default, rename_all = "camelCase")]
 struct Gc {
@@ -330,6 +342,39 @@ pub fn api(st: &State, req: &mut Request, method: &Method, rest: &str) -> Resp {
             st.folders.request(name);
             folders(st, name)
         }
+        (Method::Get, ["search"]) => Ok(search(st)),
+        (Method::Put, ["search"]) => read_json::<Enabled>(req).map_err(Err).and_then(|b| {
+            st.vision.set_enabled(b.enabled).map_err(|e| Ok((500, e)))?;
+            log::info!("admin {me}: search by description turned {}", if b.enabled { "on" } else { "off" });
+            Ok(search(st))
+        }),
+        (Method::Put, ["search", "text"]) => read_json::<Enabled>(req).map_err(Err).and_then(|b| {
+            st.vision.set_text_enabled(b.enabled).map_err(|e| Ok((500, e)))?;
+            log::info!("admin {me}: reading the text in photos turned {}", if b.enabled { "on" } else { "off" });
+            Ok(search(st))
+        }),
+        (Method::Post, ["search", "download"]) => read_json::<Licence>(req).map_err(Err).and_then(|l| fetch_models(st, me, Part::Search, l)),
+        (Method::Post, ["search", "text", "download"]) => read_json::<Licence>(req).map_err(Err).and_then(|l| fetch_models(st, me, Part::Text, l)),
+        (Method::Post, ["search", "faces", "download"]) => read_json::<Licence>(req).map_err(Err).and_then(|l| fetch_models(st, me, Part::Faces, l)),
+        (Method::Delete, ["search", "download"]) => {
+            st.vision.switch.cancel(Part::Search);
+            Ok(search(st))
+        }
+        (Method::Delete, ["search", "text", "download"]) => {
+            st.vision.switch.cancel(Part::Text);
+            Ok(search(st))
+        }
+        (Method::Delete, ["search", "faces", "download"]) => {
+            st.vision.switch.cancel(Part::Faces);
+            Ok(search(st))
+        }
+        // (faces are personal data: found only for a user an admin turned it on for)
+        (Method::Put, ["users", name, "faces"]) => read_json::<Enabled>(req).map_err(Err).and_then(|b| {
+            accounts::set_faces(&st.data, name, b.enabled).map_err(|e| Ok((404, e)))?;
+            log::info!("admin {me}: finding the people in {name}'s photos turned {}", if b.enabled { "on" } else { "off" });
+            st.vision.wake();
+            Ok(search(st))
+        }),
         (Method::Post, ["gc"]) => {
             let g = read_json::<Gc>(req).unwrap_or_default();
             match crate::gc::run(&st.data, g.dry_run) {
@@ -449,6 +494,97 @@ fn status(st: &State, me: &str) -> Value {
         "listen": st.listen,
         "web": st.web.as_ref().map(|w| w.to_string_lossy().to_string()),
         "disk": disk(&st.data).map(|(total, free)| json!({"total": total, "free": free})),
+        "users": users,
+    })
+}
+
+/// What an admin agrees to before a download: its size, and its licences.
+fn terms(part: Part) -> (f64, String) {
+    use lightcraft_engine::vision::{
+        FACE_BYTES, FACE_LICENSES, LICENSE_NAME, LICENSE_URL, MODEL_BYTES, TEXT_BYTES, TEXT_LICENSE_NAME, TEXT_LICENSE_URL,
+    };
+    match part {
+        Part::Search => (MODEL_BYTES as f64, format!("{LICENSE_NAME} ({LICENSE_URL})")),
+        Part::Text => (TEXT_BYTES as f64, format!("{TEXT_LICENSE_NAME} ({TEXT_LICENSE_URL})")),
+        Part::Faces => {
+            (FACE_BYTES as f64, format!("{} ({}) and {} ({})", FACE_LICENSES[0].0, FACE_LICENSES[0].1, FACE_LICENSES[1].0, FACE_LICENSES[1].1))
+        }
+    }
+}
+
+/// Fetch `part`'s models, once the licence was agreed to. For search and text that also turns it
+/// on (nobody fetches a model to leave it off); people are turned on per user.
+fn fetch_models(st: &State, me: &str, part: Part, l: Licence) -> AdminResult {
+    let (bytes, licences) = terms(part);
+    if !l.acknowledged {
+        let (what, size) = match part {
+            Part::Search => ("the search model", format!("{:.1} GB", bytes / 1e9)),
+            Part::Text => ("the text-reading models", format!("{:.0} MB", bytes / 1e6)),
+            Part::Faces => ("the face models", format!("{:.0} MB", bytes / 1e6)),
+        };
+        return Err(Ok((400, format!("{what}: a {size} download under the {licences}: send `acknowledged: true` once you agree to it"))));
+    }
+    match part {
+        Part::Search => st.vision.set_enabled(true),
+        Part::Text => st.vision.set_text_enabled(true),
+        Part::Faces => Ok(()),
+    }
+    .map_err(|e| Ok((500, e)))?;
+    let started = st.vision.start_download(part).map_err(|e| Ok((500, e)))?;
+    log::info!("admin {me}: {part:?} models{}", if started { ": downloading" } else { ": already there" });
+    Ok(search(st))
+}
+
+/// `GET /api/admin/search`: what the server does with the photos (describe, read the text, find the
+/// people), each one's models and download, and how far each user's photos are.
+fn search(st: &State) -> Value {
+    use lightcraft_engine::vision::{
+        FACE_BYTES, FACE_LICENSES, LICENSE_NAME, LICENSE_URL, MODEL_BYTES, TEXT_BYTES, TEXT_LICENSE_NAME, TEXT_LICENSE_URL,
+    };
+    let v = &st.vision;
+    let (model, dim) = v.spec();
+    // (what the server has indexed only matters while it does something)
+    let busy = v.installed() || v.text_installed() || v.faces_installed();
+    let users: Vec<Value> = accounts::read_users(&st.data)
+        .map(|f| f.users.into_iter().map(|(name, u)| (name, u.faces)).collect::<Vec<_>>())
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(name, faces)| {
+            let (a, b, c) = match busy.then(|| crate::api::lib(st, &name).ok()).flatten() {
+                Some(lib) => crate::vision::progress(st, &lib, &name),
+                None => (None, None, None),
+            };
+            let total = a.as_ref().or(b.as_ref()).or(c.as_ref()).map(|p| p.total);
+            json!({"name": name, "faces": faces, "total": total, "indexed": a.map(|p| p.done), "read": b.map(|p| p.done), "found": c.map(|p| p.done)})
+        })
+        .collect();
+    json!({
+        "enabled": v.switch.enabled(),
+        "installed": v.files_installed(),
+        "active": v.installed(),
+        "loaded": v.loaded(),
+        "model": model,
+        "dim": dim,
+        "dir": v.model_dir().to_string_lossy(),
+        "sizeBytes": MODEL_BYTES,
+        "license": LICENSE_NAME,
+        "licenseUrl": LICENSE_URL,
+        "download": v.switch.status(Part::Search),
+        "text": {
+            "enabled": v.switch.text_enabled(),
+            "installed": v.text_files_installed(),
+            "active": v.text_installed(),
+            "sizeBytes": TEXT_BYTES,
+            "license": TEXT_LICENSE_NAME,
+            "licenseUrl": TEXT_LICENSE_URL,
+            "download": v.switch.status(Part::Text),
+        },
+        "faces": {
+            "installed": v.faces_installed(),
+            "sizeBytes": FACE_BYTES,
+            "licenses": FACE_LICENSES.iter().map(|(name, url)| json!({"name": name, "url": url})).collect::<Vec<_>>(),
+            "download": v.switch.status(Part::Faces),
+        },
         "users": users,
     })
 }
