@@ -342,6 +342,8 @@ fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         let prefetch = seen.expand2(vec2(0.0, viewport.height()));
         let clip = ui.clip_rect();
         let mut drawn: Vec<(usize, Rect)> = Vec::new();
+        // (a photo flying back from the loupe lands in its cell: `homing`)
+        let flying = super::detail::homing(ui.ctx()).is_some();
         for row in rows_between(&lay.rows, prefetch.top(), prefetch.bottom()) {
             for i in row.start..row.end {
                 let (Some(&id), Some(&rect)) = (ids.get(i), lay.cells.get(i)) else { continue };
@@ -356,7 +358,7 @@ fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 if let Some((sid, pos)) = stacks.get(&id) {
                     stack_badge(app, ui, id, *sid, *pos, r, square);
                 }
-                if app.compact && onscreen {
+                if (app.compact || flying) && onscreen {
                     drawn.push((i, r));
                 }
             }
@@ -366,6 +368,7 @@ fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             crate::file_drop::reveal_now(ui, block);
             crate::file_drop::paint_block(ui, pend, block, viewport.translate(origin.to_vec2()), crate::file_drop::side(app));
         }
+        homing(app, ui, &ids, &drawn, square);
         if app.compact {
             // photos gliding off the screen to places further up or down
             let gone: Vec<usize> = zoom.gliding().filter(|i| !drawn.iter().any(|(d, _)| d == i)).collect();
@@ -377,7 +380,6 @@ fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                     cell(app, ui, id, r, square, true, ppp);
                 }
             }
-            homing(app, ui, &ids, &drawn, square);
             super::grid_zoom::remember(ui.ctx(), generation, app.ui.grid_columns, drawn);
             if super::detail::pulled(ui.ctx()) <= 0.0 {
                 long_press(app, ui, &ids, &lay, origin);
@@ -434,6 +436,9 @@ fn homing(app: &LightcraftApp, ui: &egui::Ui, ids: &[PhotoId], drawn: &[(usize, 
     let now = ui.input(|i| i.time);
     let k = egui::emath::easing::cubic_out((((now - h.since) / super::detail::HOMING_S) as f32).clamp(0.0, 1.0));
     let [tw, th] = tex.size;
+    // (a desktop's square cell has the photo inset under its name, fitted as `cell` draws it)
+    let to = if square && !app.compact { Rect::from_min_max(to.min + vec2(10.0, 24.0), to.max - vec2(10.0, 10.0)) } else { to };
+    let to = if square && app.compact { to } else { super::detail::fit_texture_rect(to, [tw, th]) };
     // (into a phone square the photo's middle, as the cell shows it)
     let full = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
     let end = if square && app.compact { cover_uv(tw as f32, th as f32) } else { full };
@@ -963,7 +968,7 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
     let t = Tokens::get(ui.ctx());
     let Some(photo) = app.session.catalog.photo(id).cloned() else { return };
     // (the photo is out of its place: in the loupe being pulled down, or flying back)
-    if app.compact && lifted(app, ui.ctx()) == Some(id) {
+    if lifted(app, ui.ctx()) == Some(id) {
         register(ui.ctx(), format!("thumb:{}", id.0), r);
         return;
     }
@@ -1015,6 +1020,9 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
         // a thumbnail that was not there yet fades in (one that was, shows at once: it has no stored 0)
         let fade = if app.compact { ui.ctx().animate_bool_with_time(egui::Id::new(("thumb-in", id.0)), true, 0.2) } else { 1.0 };
         p.image(tex.tex.id(), fit, uv, Color32::WHITE.gamma_multiply(fade));
+        if active {
+            super::detail::note_tile(ui.ctx(), id, fit, uv);
+        }
         if active && !choosing && tiles {
             p.rect_stroke(fit, 0.0, Stroke::new(2.0, ring), StrokeKind::Inside);
         } else if active && !choosing {

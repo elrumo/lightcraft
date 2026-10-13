@@ -434,13 +434,19 @@ impl Headless {
     /// Run frames until nothing is pending (renders finished, input consumed) for a few frames in
     /// a row, or `timeout` passes. Returns whether it settled.
     pub fn settle(&mut self, timeout: Duration) -> bool {
+        // (a second at most: something may ask to be redrawn every frame for good)
+        const MOVING_FRAMES: u32 = 60;
         let t0 = Instant::now();
         let mut quiet = 0;
+        let mut moving = 0;
         loop {
             self.step();
             if self.busy() {
                 quiet = 0;
                 std::thread::sleep(Duration::from_millis(1));
+            } else if self.view.ctx.requested_repaint_last_pass() && moving < MOVING_FRAMES {
+                // a panel sliding, a section folding, a photo flying: let it get where it's going
+                moving += 1;
             } else {
                 quiet += 1;
             }
@@ -1531,6 +1537,38 @@ mod tests {
         assert_eq!(h.app.session.profile_favorites, ["lc.portrait"]);
         assert_eq!(photo(&h).develop.profile.id, "lc.vivid", "the star doesn't apply");
         h.settle(SETTLE);
+    }
+
+    /// Presets column: dragging a group's header above another puts the group there (and keeps it
+    /// there: the order is the session's, synced); dropping it where it already is changes nothing.
+    #[test]
+    fn dragging_a_preset_group_reorders_the_groups() {
+        let mut h = demo([1400.0, 2000.0]);
+        let t = Duration::from_secs(10);
+        h.request("ui.set", json!({"view": "detail"}), t);
+        h.request("engine.execute", json!({"command": "panel.presets"}), t);
+        h.settle(SETTLE);
+        let groups = h.app.session.preset_groups();
+        let (first, last) = (groups[0].clone(), groups.last().unwrap().clone());
+        // every group folded, so all the headers are on screen
+        for g in &groups {
+            h.request("ui.clickWidget", json!({"id": format!("presetGroup:{g}")}), t);
+        }
+        h.step();
+        let top = h.app.widgets.iter().rev().find(|(w, _)| *w == format!("presetGroup:{first}")).map(|(_, r)| *r).unwrap();
+        let r = h.request("ui.dragWidget", json!({"id": format!("presetGroup:{last}"), "toX": top.center().x, "toY": top.top() + 3.0, "steps": 12}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        h.step();
+        let now = h.app.session.preset_groups();
+        assert_eq!(now[0], last, "{now:?}");
+        assert_eq!(now[1..], groups[..groups.len() - 1]);
+        // a drag that ends where it started is not a move
+        let r = h.request("ui.dragWidget", json!({"id": format!("presetGroup:{last}"), "dy": 6, "steps": 4}), t);
+        assert_eq!(r["ok"], true, "{r}");
+        h.step();
+        assert_eq!(h.app.session.preset_groups(), now);
+        // a click still folds and unfolds a group
+        assert!(!h.app.widgets.iter().any(|(w, _)| w.starts_with("preset:")), "all folded");
     }
 
     /// Presets column: resting on a preset previews it in the loupe without a history entry;

@@ -153,6 +153,32 @@ pub fn imported_preset_id(p: &Preset) -> String {
 }
 
 impl Session {
+    /// The preset groups in the order the Presets panel shows them: the user's order
+    /// ([`Session::preset_group_order`]), then the groups it doesn't list, by name.
+    pub fn preset_groups(&self) -> Vec<String> {
+        let mut rest: Vec<&str> = self.presets.iter().map(|p| p.group.as_str()).collect();
+        rest.sort_unstable();
+        rest.dedup();
+        let mut out: Vec<String> = Vec::new();
+        for g in self.preset_group_order.iter().filter(|g| rest.contains(&g.as_str())) {
+            if !out.contains(g) {
+                out.push(g.clone());
+            }
+        }
+        out.extend(rest.into_iter().filter(|g| !self.preset_group_order.iter().any(|o| o == g)).map(str::to_string));
+        out
+    }
+
+    /// Move preset group `group` to position `to` of [`Session::preset_groups`] (clamped to the end).
+    pub fn move_preset_group(&mut self, group: &str, to: usize) -> Result<Vec<String>, String> {
+        let mut order = self.preset_groups();
+        let from = order.iter().position(|g| g == group).ok_or_else(|| format!("unknown preset group `{group}`"))?;
+        let g = order.remove(from);
+        order.insert(to.min(order.len()), g);
+        self.preset_group_order = order.clone();
+        Ok(order)
+    }
+
     /// Whether a preset with the same name, group and settings is already here (what
     /// [`Session::add_presets`] skips).
     pub fn has_identical_preset(&self, p: &Preset) -> bool {
@@ -601,6 +627,33 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    /// Groups dragged into an order keep it; groups it doesn't name follow by name, names of groups that
+    /// are gone are skipped, and a bad move is an error, not a panic.
+    #[test]
+    fn preset_groups_keep_the_users_order() {
+        let mut s = Session::new();
+        let by_name = s.preset_groups();
+        assert!(by_name.windows(2).all(|w| w[0] < w[1]), "by name until reordered: {by_name:?}");
+        let last = by_name.last().unwrap().clone();
+        let r = s.execute("preset.moveGroup", &json!({"group": last, "to": 0})).unwrap();
+        assert_eq!(r["groups"][0], json!(last));
+        assert_eq!(s.preset_groups()[1..], by_name[..by_name.len() - 1]);
+        // a group made later goes last; one that's gone is skipped
+        s.preset_group_order.insert(1, "Gone".into());
+        s.preset_group_order.push(last.clone());
+        s.presets.push(Preset { id: "u.a".into(), name: "A".into(), group: "AAA".into(), settings: json!({}), favorite: false, builtin: false });
+        let now = s.preset_groups();
+        assert_eq!((now.first(), now.last()), (Some(&last), Some(&"AAA".to_string())));
+        assert!(!now.contains(&"Gone".to_string()));
+        assert_eq!(now.iter().filter(|g| **g == last).count(), 1, "a group named twice shows once");
+        // past the end is the end
+        s.execute("preset.moveGroup", &json!({"group": last, "to": u64::MAX})).unwrap();
+        assert_eq!(s.preset_groups().last(), Some(&last));
+        assert!(s.execute("preset.moveGroup", &json!({"group": "Nope", "to": 0})).is_err());
+        assert!(s.execute("preset.moveGroup", &json!({"group": last, "to": -1})).is_err());
+        assert_eq!(s.execute("presets.groups", &json!({})).unwrap(), json!(s.preset_groups()));
     }
 
     #[test]

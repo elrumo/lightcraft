@@ -109,12 +109,15 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         sheet(app, ui, &t, wide, landscape, detail && bars && (app.ui.right != RightPanel::None || app.ui.presets));
     }
     let bg = if detail { t.canvas } else { t.grid_bg };
-    if app.ui.left_panel && wide {
+    if wide {
+        // (sliding in and out at the left edge)
+        let mut open = app.ui.left_panel;
         egui::Panel::left("compact_sources")
             .resizable(false)
+            .drag_to_open(false)
             .exact_size(SIDE_W)
             .frame(egui::Frame::NONE.fill(t.chrome).stroke(egui::Stroke::new(1.0, t.divider)))
-            .show(ui, |ui| super::left::body(app, ui));
+            .show_collapsible(ui, &mut open, |ui| super::left::body(app, ui));
     }
     content(app, ui, bg);
     if masking {
@@ -556,6 +559,8 @@ fn photo_more(app: &mut LightcraftApp, ui: &mut egui::Ui) {
 }
 
 fn content(app: &mut LightcraftApp, ui: &mut egui::Ui, bg: egui::Color32) {
+    // a photo opened grows out of its thumbnail, one put away flies back into it
+    super::detail::view_changed(app, ui.ctx());
     // the grid and the photo fade into each other (between the two grids, the tiles stay put)
     let kind = match app.ui.view {
         ViewMode::PhotoGrid | ViewMode::SquareGrid => 0,

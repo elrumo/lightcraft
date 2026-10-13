@@ -45,7 +45,7 @@ pub enum GridJump {
     Date(String),
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ViewMode {
     /// Justified rows ("Photo Grid").
@@ -66,7 +66,7 @@ pub enum ViewMode {
 }
 
 /// The right-hand tool/panel shown next to the tool strip.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum RightPanel {
     #[default]

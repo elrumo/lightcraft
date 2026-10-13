@@ -214,20 +214,18 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             if flyout_row(ui, "sdrRendition", "SDR Rendition", Icon::Sliders, open).clicked() {
                 app.ui.toggle_flyout("sdrRendition");
             }
-            if open {
+            crate::motion::fold(ui, flyout_id("sdrRendition"), open, |ui| {
                 for c in ["hdr.sdrBrightness", "hdr.sdrContrast", "hdr.sdrHighlights", "hdr.sdrShadows", "hdr.sdrWhites", "hdr.sdrClarity"] {
                     control(app, ui, d, c, true);
                 }
                 ui.add_space(6.0);
-            }
+            });
         }
         let open = app.ui.flyout_open("curve");
         if flyout_row(ui, "curve", crate::i18n::tr("Curve"), Icon::Curve, open).clicked() {
             app.ui.toggle_flyout("curve");
         }
-        if open {
-            curve_editor(app, ui, id, d);
-        }
+        crate::motion::fold(ui, flyout_id("curve"), open, |ui| curve_editor(app, ui, id, d));
         ui.add_space(8.0);
     });
     section(app, ui, &d, "color", "Color", |app, ui, d| {
@@ -281,25 +279,19 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         if flyout_row(ui, "mixer", if crate::is_bw(d) { "B&W Mixer" } else { "Color Mixer" }, Icon::Radial, open).clicked() {
             app.ui.toggle_flyout("mixer");
         }
-        if open {
-            mixer(app, ui, d);
-        }
+        crate::motion::fold(ui, flyout_id("mixer"), open, |ui| mixer(app, ui, d));
         if !crate::is_bw(d) {
             let open = app.ui.flyout_open("pointColor");
             if flyout_row(ui, "pointColor", crate::i18n::tr("Point Color"), Icon::Picker, open).clicked() {
                 app.ui.toggle_flyout("pointColor");
             }
-            if open {
-                point_color(app, ui, d);
-            }
+            crate::motion::fold(ui, flyout_id("pointColor"), open, |ui| point_color(app, ui, d));
         }
         let open = app.ui.flyout_open("grading");
         if flyout_row(ui, "grading", crate::i18n::tr("Color Grading"), Icon::Presets, open).clicked() {
             app.ui.toggle_flyout("grading");
         }
-        if open {
-            grading(app, ui, d, id);
-        }
+        crate::motion::fold(ui, flyout_id("grading"), open, |ui| grading(app, ui, d, id));
         ui.add_space(8.0);
     });
     section(app, ui, &d, "effects", "Effects", |app, ui, d| {
@@ -390,7 +382,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         if flyout_row(ui, "defringe", crate::i18n::tr("Defringe"), Icon::Picker, open).clicked() {
             app.ui.toggle_flyout("defringe");
         }
-        if open {
+        crate::motion::fold(ui, flyout_id("defringe"), open, |ui| {
             control(app, ui, d, "optics.defringePurple", true);
             let on = d.optics.defringe_purple_amount > 0.0;
             control(app, ui, d, "optics.defringePurpleHueLo", on);
@@ -402,7 +394,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             sub_title(ui, crate::i18n::tr("Lateral Chromatic Aberration"));
             control(app, ui, d, "optics.caRed", true);
             control(app, ui, d, "optics.caBlue", true);
-        }
+        });
         ui.add_space(8.0);
     });
     // Lightroom Classic's Calibration panel (the cloud app hides it): last, like there.
@@ -549,10 +541,13 @@ fn section(
     } else if resp.clicked() {
         app.ui.toggle_section(id);
     }
-    if open {
-        body(app, ui, d);
-    }
+    crate::motion::fold(ui, crate::widgets::section_fold_id(id), open, |ui| body(app, ui, d));
     divider(ui);
+}
+
+/// What a flyout's body folds under (`motion::fold`).
+fn flyout_id(id: &str) -> egui::Id {
+    egui::Id::new(("edit-flyout", id))
 }
 
 // ------------------------------------------------------------------------------ histogram

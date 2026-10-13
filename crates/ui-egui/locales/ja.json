@@ -651,6 +651,8 @@
   "Move Folder": "フォルダを移動",
   "Move Mask": "マスクを移動",
   "Move Preset to Group": "プリセットをグループに移動",
+  "Reorder Preset Group": "プリセットグループを並べ替え",
+  "List Preset Groups": "プリセットグループを一覧表示",
   "Move Preset to New Group": "プリセットを新しいグループに移動",
   "Move Up": "上へ移動",
   "Move in Stack": "スタック内で移動",

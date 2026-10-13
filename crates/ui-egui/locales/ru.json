@@ -705,6 +705,8 @@
   "Move Folder To…": "Переместить папку в…",
   "Move Mask": "Переместить маску",
   "Move Preset to Group": "Переместить пресет в группу",
+  "Reorder Preset Group": "Изменить порядок группы пресетов",
+  "List Preset Groups": "Список групп пресетов",
   "Move Up in Stack": "Поднять в стопке",
   "Move the files (into the library's Originals/, or a folder you choose), removing them from the source": "Переместить файлы (в папку «Originals/» библиотеки или в выбранную папку), удалив их из источника",
   "Move them": "Переместить их",

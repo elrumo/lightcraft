@@ -569,7 +569,8 @@ pub fn section_header(ui: &mut Ui, id: &str, title: &str, open: bool, enabled: O
         p.rect_filled(r, 0.0, t.chrome.gamma_multiply(1.06));
     }
     let chev = Rect::from_center_size(pos2(r.left() + 30.0, r.center().y), vec2(14.0, 14.0));
-    paint(p, chev, if open { Icon::ChevronDown } else { Icon::ChevronRight }, t.text_label);
+    // (it turns down as the body folds open)
+    crate::icons::paint_turned(p, chev, Icon::ChevronRight, t.text_label, crate::motion::chevron_turn(ui.ctx(), section_fold_id(id), open));
     p.text(pos2(r.left() + 44.0, r.center().y), Align2::LEFT_CENTER, title, t.semibold(14.0), t.text);
     let mut toggled = None;
     // shown while the pointer is anywhere on the header: `resp.hovered()` turns false as soon as the
@@ -590,6 +591,11 @@ pub fn section_header(ui: &mut Ui, id: &str, title: &str, open: bool, enabled: O
         }
     }
     (resp, toggled)
+}
+
+/// What the body under the [`section_header`] `id` folds under (`motion::fold`).
+pub fn section_fold_id(id: &str) -> egui::Id {
+    egui::Id::new(("section", id))
 }
 
 /// Thin divider between groups.

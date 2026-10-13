@@ -1029,6 +1029,8 @@
   "Move Folder To…": "將資料夾移至…",
   "Move Mask": "移動遮色片",
   "Move Preset to Group": "將預設集移至群組",
+  "Reorder Preset Group": "重新排列預設集群組",
+  "List Preset Groups": "列出預設集群組",
   "Move Up in Stack": "在堆疊中上移",
   "Move the files (into the library's Originals/, or a folder you choose), removing them from the source": "移動檔案（至照片庫的 Originals/ 或指定資料夾），並從來源移除",
   "Move them": "移動這些照片",
