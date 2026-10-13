@@ -11,6 +11,11 @@
 //! No worker outlives its pool by more than a deadline (issue #620: a render still inside the GPU
 //! driver while the process exits crashes there): [`JobPool::shutdown`] and dropping the pool
 //! discard the queued jobs and wait, bounded, for the running ones.
+//!
+//! A host that sleeps between frames (the SwiftUI app's engine thread) learns that a job finished
+//! from [`JobPool::set_notify`] instead of polling. A job that panics takes only itself down: the
+//! worker logs it and carries on (owners that need an answer for every job, like the render
+//! scheduler, turn panics into failed results inside the job).
 
 use std::hash::Hash;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -19,6 +24,9 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 pub type Job<R> = Box<dyn FnOnce() -> R + Send>;
+
+/// Called after a finished job's result is ready to be received (see [`JobPool::set_notify`]).
+pub type Notify = Arc<dyn Fn() + Send + Sync>;
 
 struct Entry<S, R> {
     slot: S,
@@ -32,6 +40,8 @@ struct Shared<S, R> {
     queue: Mutex<Vec<Entry<S, R>>>,
     cv: Condvar,
     shutdown: AtomicBool,
+    /// Told after every finished job ([`JobPool::set_notify`]).
+    notify: Mutex<Option<Notify>>,
     /// The worker threads that have not ended yet, and the signal that one did.
     #[cfg(not(target_arch = "wasm32"))]
     live: Mutex<Vec<std::thread::ThreadId>>,
@@ -75,6 +85,7 @@ impl<S: Copy + Eq + Hash + Send + 'static, R: Send + 'static> JobPool<S, R> {
                 queue: Mutex::new(Vec::new()),
                 cv: Condvar::new(),
                 shutdown: AtomicBool::new(false),
+                notify: Mutex::new(None),
                 #[cfg(not(target_arch = "wasm32"))]
                 live: Mutex::new(Vec::new()),
                 #[cfg(not(target_arch = "wasm32"))]
@@ -119,11 +130,17 @@ impl<S: Copy + Eq + Hash + Send + 'static, R: Send + 'static> JobPool<S, R> {
                     let _ended = Ended(&shared);
                     while let Some(e) = take(&shared, true) {
                         let t0 = std::time::Instant::now();
-                        let result = (e.job)();
-                        let done = Done { slot: e.slot, key: e.key, result, ms: t0.elapsed().as_secs_f64() * 1000.0 };
+                        let (slot, key, job) = (e.slot, e.key, e.job);
+                        // a panicking job is lost, not the worker (the pool would shrink with every one)
+                        let Ok(result) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(job)) else {
+                            log::error!("job pool: a job panicked; its result is lost");
+                            continue;
+                        };
+                        let done = Done { slot, key, result, ms: t0.elapsed().as_secs_f64() * 1000.0 };
                         if tx.send(done).is_err() {
                             break;
                         }
+                        notify(&shared);
                     }
                 });
                 match spawned {
@@ -153,6 +170,13 @@ impl<S: Copy + Eq + Hash + Send + 'static, R: Send + 'static> JobPool<S, R> {
             close(&self.shared);
             true
         }
+    }
+
+    /// Call `notify` (from the worker's thread) after every job that finishes from now on, once its
+    /// result can be received with [`Self::try_recv`]; `None` stops it. For hosts that wait for
+    /// work instead of polling every frame.
+    pub fn set_notify(&self, notify: Option<Notify>) {
+        *self.shared.notify.lock().unwrap_or_else(|e| e.into_inner()) = notify;
     }
 
     /// Worker threads that have not ended (0 before the first job, and on wasm).
@@ -221,9 +245,18 @@ impl<S: Copy + Eq + Hash + Send + 'static, R: Send + 'static> JobPool<S, R> {
             let Some(e) = take(&self.shared, false) else { break };
             let result = (e.job)();
             let _ = self.tx.send(Done { slot: e.slot, key: e.key, result, ms: 0.0 });
+            notify(&self.shared);
             ran += 1;
         }
         ran
+    }
+}
+
+/// Tell the owner a job finished (outside the lock: the callback may take its own locks).
+fn notify<S, R>(shared: &Shared<S, R>) {
+    let f = shared.notify.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    if let Some(f) = f {
+        f();
     }
 }
 
@@ -245,7 +278,7 @@ fn take<S, R>(shared: &Shared<S, R>, wait: bool) -> Option<Entry<S, R>> {
     }
 }
 
-/// Takes a worker off the live list when its thread ends (also when a job panicked).
+/// Takes a worker off the live list when its thread ends (also if it unwinds).
 #[cfg(not(target_arch = "wasm32"))]
 struct Ended<'a, S, R>(&'a Shared<S, R>);
 

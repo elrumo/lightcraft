@@ -1,0 +1,5 @@
+module CLightCraftBridge [system] {
+    header "include/lightcraft_bridge.h"
+    link "lightcraft_bridge"
+    export *
+}

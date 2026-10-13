@@ -1,0 +1,52 @@
+# XcodeGen spec (`cd apps/lightcraft-ios-swift/xcode && xcodegen && open LightCraft.xcodeproj`): the
+# SwiftUI app for the debugger, Instruments and the simulator on a Mac. xtool (../run.sh) is the
+# other way to build. Keep the Info.plist keys in step with ../LightCraft/Info.plist.
+name: LightCraft
+options:
+  bundleIdPrefix: ai.storyteller
+  deploymentTarget:
+    iOS: "26.0"
+packages:
+  LightCraft:
+    path: ../LightCraft
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    CODE_SIGN_STYLE: Automatic
+    DEVELOPMENT_TEAM: ""   # set your team to run on a device
+targets:
+  LightCraft:
+    type: application
+    platform: iOS
+    supportedDestinations: [iOS]
+    scheme: {}
+    # the app's sources, compiled here over the package's libraries
+    sources: [../LightCraft/Sources/LightCraftApp]
+    dependencies:
+      - package: LightCraft
+        product: LightCraftCore
+      - package: LightCraft
+        product: LightCraftImaging
+    info:
+      path: Info.plist
+      properties:
+        CFBundleDisplayName: LightCraft
+        NSLocalNetworkUsageDescription: LightCraft syncs your library with your own LightCraft server, which can be on this network.
+        NSPhotoLibraryAddUsageDescription: LightCraft saves the photos you export to your photo library.
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+        UISupportedInterfaceOrientations~ipad: [UIInterfaceOrientationPortrait, UIInterfaceOrientationPortraitUpsideDown, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ai.storyteller.lightcraft.swift
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+        EXCLUDED_ARCHS[sdk=iphonesimulator*]: x86_64   # Apple-silicon simulator only
+        LIBRARY_SEARCH_PATHS: ["$(BUILT_PRODUCTS_DIR)"]
+    preBuildScripts:
+      - name: Build Rust (cargo)
+        script: '"$SRCROOT/build-rust.sh"'
+        basedOnDependencyAnalysis: false
