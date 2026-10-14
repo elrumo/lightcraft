@@ -267,6 +267,8 @@ struct Engine {
     merge: crate::merge::Runner,
     merge_preview: Option<(u64, Option<Sender<Event>>)>,
     merge_shown: u64,
+    /// Export with Previous runs so far (each writes into a staging folder of its own).
+    export_runs: u64,
     /// The zoom window last asked for (`render.view {zoom}`): its image event says where it goes.
     region: Option<RegionShown>,
     /// `import.scan` running on its worker, and the candidates of the last one (`render.candidate`).
@@ -393,6 +395,7 @@ impl Engine {
             merge: crate::merge::Runner::default(),
             merge_preview: None,
             merge_shown: 0,
+            export_runs: 0,
             region: None,
             scan: None,
             candidates: Vec::new(),
@@ -489,6 +492,29 @@ impl Engine {
         {
             let params = req.params.get("params").cloned().filter(|v| !v.is_null()).unwrap_or_else(|| json!({}));
             return lightcraft_engine::guard::catch("`enhance.superRes`", || self.start_super_res(id, call, &params))
+                .unwrap_or_else(|e| Some(Event::err(id, ErrorBody::new("panic", e))));
+        }
+        // Export with Previous: the last export's options, for the photos chosen now; on a worker like Export Now
+        if req.method == "host.exportPrevious" {
+            let Some(prev) = self.session.last_export.clone() else {
+                return Some(Event::err(id, ErrorBody::new("other", "nothing exported yet: use Export…")));
+            };
+            let mut params = lightcraft_engine::export::ExportOptions::known_keys_only(&prev);
+            if let Some(o) = params.as_object_mut() {
+                o.remove("ids");
+                o.remove("id");
+                // no folder of the user's (a phone shares what it writes): a staging one of its own
+                if !o.contains_key("dir") {
+                    self.export_runs += 1;
+                    let dir = crate::startup::staging(&self.tmp).1.join(format!("previous-{}", self.export_runs));
+                    if let Err(e) = std::fs::create_dir_all(&dir) {
+                        return Some(Event::err(id, ErrorBody::new("other", format!("{}: {e}", dir.display()))));
+                    }
+                    o.insert("dir".into(), json!(dir.to_string_lossy()));
+                    o.insert("conflict".into(), json!("unique"));
+                }
+            }
+            return lightcraft_engine::guard::catch("`host.exportPrevious`", || self.start_export(id, call, &params))
                 .unwrap_or_else(|e| Some(Event::err(id, ErrorBody::new("panic", e))));
         }
         // a merge preview: answered when its picture is drawn (a newer one answers the older "cancelled")
@@ -787,6 +813,8 @@ impl Engine {
         });
         match started {
             Ok(batch) => {
+                // for Export with Previous (the phone's export folder is a staging one: not kept)
+                crate::export::remember(&mut self.session, params, None);
                 self.export = Some(PendingExport { id, reply: call.cloned(), batch });
                 None
             }

@@ -19,8 +19,8 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 |---|---:|---:|---:|---:|---:|
 | S0 | 15 | 0 | 0 | 0 | 15/15 |
 | S1 | 164 | 0 | 0 | 3 | 167/167 |
-| S2 | 55 | 0 | 25 | 22 | 77/102 |
-| **Total** | 234 | 0 | 25 | 25 | 259/284 |
+| S2 | 64 | 0 | 14 | 24 | 88/102 |
+| **Total** | 243 | 0 | 14 | 27 | 270/284 |
 <!-- /ios-parity:summary -->
 
 ## Screens
@@ -74,7 +74,7 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | screen:compact.accessibility | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/GridView.swift` | every icon-only control has a VoiceOver label; grid photos are buttons named by title or file with their stars, pick or reject and edited as the value; text follows Dynamic Type (the tool, group and mask bars and the grid badges through `@ScaledMetric`, capped at xxxLarge so the bars keep their shape); checked at accessibility-extra-large on the simulator |
 | screen:compact.localization | S1 | ✅ | `xtask/src/swift_strings.rs`, `apps/lightcraft-ios-swift/locales/keys.json`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Localization/es.lproj/Localizable.strings` | the egui languages through iOS localisation: `cargo xtask swift-strings` makes each `Localizable.strings` from the egui catalogs and the app's own; engine labels looked up at run time; dates formatted by iOS |
 | screen:ipad.splitView | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/App/RootView.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/AlbumsSheet.swift` | an iPad: the albums list as a sidebar column beside the grid (NavigationSplitView); it steps aside while a photo is open; checked on an iPad Pro 11" simulator |
-| screen:ipad.inspector | S2 | ⬜ |  |  |
+| screen:ipad.inspector | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | an iPad's tools in a column beside the photo (the side panel, 340 pt), as egui's right panel |
 | screen:ipad.menuBar | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/App/MenuBar.swift`, `crates/apphost/src/ui_commands.rs` | the iPadOS menu bar: File, Edit, Photo, View, Window, Help with the engine's menu commands and egui's UI commands this app has (`host.uiCommands`, the table moved from egui into `apphost`), enabled for what is selected; built without a crash on the iPad simulator |
 | screen:ipad.keyboard | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/App/MenuBar.swift` | egui's default keys on the menu items (a hardware keyboard; ⌘ held lists them); the system's own keys stay the system's and a shared key goes to the first item (UIKit refuses duplicates) |
 | screen:ipad.pointer | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/GridView.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | the pointer lifts a grid photo and highlights a tool under it; system controls follow the pointer themselves |
@@ -139,7 +139,7 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | ui:view.cropOverlayOrientation | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/ToolScreens.swift` | Crop ▸ ⋯ ▸ Cycle Overlay Orientation (triangle and spiral) |
 | ui:view.back | S0 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/App/RootView.swift` | the navigation stack |
 | ui:tool.done | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/ToolScreens.swift` | a tool screen's ✓ |
-| ui:view.filterBar | S2 | ⬜ |  |  |
+| ui:view.filterBar | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/FilterSheet.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LibraryScreen.swift` | the filter sheet (stars, flags, labels, type, camera, people, place, keyword) and the chips over the grid do the filter bar's work |
 | ui:local.addRoot | S2 | 🚫 |  | no Local folders in the iOS sandbox (photos are copied into the library) |
 | ui:local.hide | S2 | 🚫 |  | no Local folders in the iOS sandbox |
 | ui:local.restoreHidden | S2 | 🚫 |  | no Local folders in the iOS sandbox |
@@ -225,10 +225,10 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | ui:file.addFolder | S2 | 🚫 |  | the desktop folder dialog; iOS uses `file.importFolderFromFiles` |
 | ui:file.importLightroom | S2 | ⬜ |  |  |
 | ui:file.addFromDevice | S2 | ⬜ |  |  |
-| ui:file.findMissing | S2 | ⬜ |  |  |
-| ui:file.backupLibrary | S2 | ⬜ |  |  |
-| ui:file.restoreLibrary | S2 | ⬜ |  |  |
-| ui:photo.locate | S2 | ⬜ |  |  |
+| ui:file.findMissing | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LibraryDialogs.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/DateFolderLists.swift` | Albums ▸ Folders ▸ Find Missing Photos…: a folder from Files (`library.findMissing`; it searches on the engine thread, where egui uses a worker) |
+| ui:file.backupLibrary | S2 | 🚫 |  | the web app's only (its library lives in the browser): on iOS the library is a folder in the app's Documents, kept by the device's and iCloud backups; the egui iOS app has none either |
+| ui:file.restoreLibrary | S2 | 🚫 |  | as Back Up Library: web only |
+| ui:photo.locate | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LibraryDialogs.swift` | a photo's "…" ▸ Locate Missing File…: its file from Files (`photo.relink`) |
 | ui:dialog.saveMetadataPreset | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LibraryDialogs.swift` | select bar or a photo's "…" ▸ Metadata Presets…: apply, delete, save the photo's as a preset |
 | ui:app.quit | S2 | 🚫 |  | iOS apps are not quit by the app |
 | ui:file.importPresets | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PresetImportSheet.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/Panels.swift` | Presets ▸ ⊕ ▸ Import Presets… (Files): the review, then Import (`preset.importReview`, `preset.importRun`, shared with egui) |
@@ -247,7 +247,7 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | ui:app.systemInfo | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | About ▸ System Info (`about.systemInfo`, plus the app's own rows) |
 | ui:app.openLogFolder | S2 | 🚫 |  | no folders to open on iOS; sharing the log is `docs/ios-gaps.md` B5.3 |
 | ui:app.whatsNew | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | About ▸ What's New (`about.whatsNew`) |
-| ui:dialog.cull | S2 | ⬜ |  |  |
+| ui:dialog.cull | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LibraryDialogs.swift` | select bar "…" ▸ Assisted Culling…: reject below a focus score, pick the sharpest of each burst (`photo.analyze`); checked on the simulator |
 | ui:app.help | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LibraryScreen.swift` | grid "…" ▸ Help |
 | ui:app.discord | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | About ▸ the links (`about.links`) |
 | ui:app.feedback | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | About ▸ Send Feedback… |
@@ -262,8 +262,8 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | ui:dialog.rename | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LibraryDialogs.swift` | select bar or a photo's "…" ▸ Rename…: template with its tags (`photo.renameTokens`), live preview (`photo.renamePreview`), `photo.rename` |
 | ui:dialog.labelNames | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LibraryDialogs.swift` | grid "…" ▸ Color Label Names…: the five names and the label sets (apply, save, delete) |
 | ui:dialog.captureTime | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LibraryDialogs.swift` | Rename's menu ▸ Edit Capture Time…: adjust to a time (the others move by as much), set each, shift by time zone (`photo.setCaptureTime`) |
-| ui:photo.tagFromTracklog | S2 | ⬜ |  |  |
-| ui:app.exportPrevious | S2 | ⬜ |  |  |
+| ui:photo.tagFromTracklog | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LibraryDialogs.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/App/RootView.swift` | select bar "…" ▸ Auto-Tag from Tracklog…: a .gpx from Files (`photo.autoTagTracklog`) |
+| ui:app.exportPrevious | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LibraryDialogs.swift`, `crates/apphost/src/export.rs` | select bar "…" ▸ Export with Previous: the last export's options (remembered by `apphost::export::remember`, shared with egui) for the chosen photos, then the share sheet (`host.exportPrevious`); checked on the simulator |
 | ui:app.saveToPhotos | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Share/ExportSheet.swift` | Share ▸ Save to Photos |
 | ui:app.language.english | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | iOS per-app language (Settings ▸ LightCraft ▸ Language ▸ English), opened from Settings ▸ Interface ▸ Language |
 | ui:app.language.simplifiedChinese | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | iOS per-app language (Settings ▸ LightCraft ▸ Language ▸ 简体中文), opened from Settings ▸ Interface ▸ Language |
@@ -298,7 +298,7 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | dialog:AutoStack | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LibraryDialogs.swift` | Auto-Stack sheet |
 | dialog:NewSmartAlbum | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/AlbumsSheet.swift` | as `ui:dialog.newSmartAlbum` |
 | dialog:WhatsNew | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | as `ui:app.whatsNew` |
-| dialog:Cull | S2 | ⬜ |  |  |
+| dialog:Cull | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LibraryDialogs.swift` | the Assisted Culling sheet |
 | dialog:DenoiseModel | S1 | 🚫 |  | iOS builds have no AI Denoise or SAM 3: the engine's `denoise` and `sam` features are off for iOS (the egui iOS app has only `enhance` too) |
 | dialog:FaceModel | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/FacesSettings.swift` | the terms sheet for a model file or a download (nothing fetched or installed before they are accepted) |
 | dialog:SystemInfo | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | as `ui:app.systemInfo` |
@@ -315,7 +315,7 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | dialog:LightroomCatalog | S2 | ⬜ |  |  |
 | dialog:ConfirmDelete | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/App/RootView.swift` | an alert before Recently Deleted |
 | dialog:SyncChoice | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | add to the server's library, use it, or don't sync |
-| dialog:RemoveFolder | S2 | ⬜ |  |  |
+| dialog:RemoveFolder | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/DateFolderLists.swift` | Albums ▸ Folders ▸ a folder's menu ▸ Remove Folder from Library… (asks; `library.removeFolder`) |
 | dialog:SynchronizeFolder | S2 | 🚫 |  | no watched folders in the iOS sandbox |
 | dialog:About | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` |  |
 | dialog:Shortcuts | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/App/MenuBar.swift` | the Keyboard Shortcuts sheet; checked on the iPad simulator |

@@ -87,6 +87,7 @@ func dateTitle(key: String, label: String, weekday: Bool = true) -> String {
 /// counts (`library.folders`); a tap shows a folder's photos (`library.source {libraryFolder}`).
 struct LibraryFoldersView: View {
     @Environment(AppModel.self) private var model
+    @State private var removing: FolderNode?
     @State private var tree: [FolderNode] = []
 
     var body: some View {
@@ -106,6 +107,11 @@ struct LibraryFoldersView: View {
                     }
                 }
                 .foregroundStyle(.primary)
+                .contextMenu {
+                    Button(node.volume ? "Remove Disk from Library…" : "Remove Folder from Library…", systemImage: "folder.badge.minus", role: .destructive) {
+                        removing = node
+                    }
+                }
             }
             if tree.isEmpty {
                 Text("No folders yet: photos imported from Files show their folders here.").foregroundStyle(.secondary)
@@ -113,6 +119,19 @@ struct LibraryFoldersView: View {
         }
         .navigationTitle("Folders")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button("Find Missing Photos…", systemImage: "magnifyingglass") { model.picker = .findMissing }
+            }
+        }
+        .confirmationDialog(removing.map { String(localized: "Remove “\($0.name)” from the library?") } ?? "",
+                            isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }), titleVisibility: .visible) {
+            Button("Remove", role: .destructive) {
+                if let f = removing { model.perform("library.removeFolder", ["path": .string(f.path), "disk": .bool(f.volume)]) }
+            }
+        } message: {
+            Text("Its photos go to Recently Deleted; no file is touched.")
+        }
         .task(id: model.state.catalogRevision) {
             guard let engine = model.engine else { return }
             tree = (try? await engine.execute("library.folders", [:], as: [FolderNode].self)) ?? []

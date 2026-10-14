@@ -1,6 +1,7 @@
 #if os(iOS)
 import LightCraftCore
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// The navigation root: the library, the photo and other screens pushed over it, the pages that
 /// slide up (`model.sheet`), and the messages over everything.
@@ -32,6 +33,12 @@ struct RootView: View {
         .sheet(item: $model.sheet) { sheet in
             SheetContent(sheet: sheet)
                 .environment(model)
+        }
+        .fileImporter(isPresented: Binding(get: { model.picker != nil }, set: { if !$0 { model.picker = nil } }),
+                      allowedContentTypes: model.picker.map(Self.types) ?? [.item]) { result in
+            guard let pick = model.picker, case .success(let url) = result else { return }
+            model.picker = nil
+            Task { await model.picked(url, for: pick) }
         }
         .fullScreenCover(item: $model.cover) { cover in
             Group {
@@ -66,6 +73,15 @@ struct RootView: View {
             await model.loadMenus()
         }
         .haptic(trigger: model.haptic) { _, h in h.seq == 0 ? nil : h.feedback }
+    }
+
+    /// What the picker offers for each kind of pick.
+    private static func types(_ pick: FilePick) -> [UTType] {
+        switch pick {
+        case .tracklog: [UTType(filenameExtension: "gpx") ?? .xml, .xml]
+        case .findMissing: [.folder]
+        case .locate: [.image, .rawImage, .item]
+        }
     }
 
     /// The library and the screens pushed over it.
@@ -147,6 +163,8 @@ struct SheetContent: View {
         case .contactSheet(let ids): ContactSheetSheet(ids: ids)
         case .merge(let command, let ids): MergeSheet(command: command, ids: ids)
         case .shortcuts: ShortcutsSheet()
+        case .cull(let ids): CullSheet(ids: ids)
+        case .shareFiles(let paths): ActivityView(urls: paths.map { URL(fileURLWithPath: $0) }) { model.sheet = nil }
         case .newSmartAlbumFromView:
             // the grid as it is shown (source and filter) becomes a smart album
             AlbumNameSheet(title: "New Smart Album", action: "Create", name: "") { name in

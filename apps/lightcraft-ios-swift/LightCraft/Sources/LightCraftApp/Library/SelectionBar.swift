@@ -201,6 +201,12 @@ struct PhotoManageItems: View {
             Button("Edit Capture Time…", systemImage: "calendar.badge.clock") { model.sheet = .captureTime(ids) }
             Button("Metadata Presets…", systemImage: "text.badge.checkmark") { model.sheet = .metadataPresets(ids) }
             Button("Contact Sheet…", systemImage: "doc.richtext") { model.sheet = .contactSheet(ids) }
+            Button("Export with Previous", systemImage: "square.and.arrow.up.on.square") { Task { await model.exportPrevious() } }
+            Button("Assisted Culling…", systemImage: "wand.and.stars.inverse") { model.sheet = .cull(ids) }
+            Button("Auto-Tag from Tracklog…", systemImage: "location.north.line") { model.picker = .tracklog(ids) }
+            if ids.count == 1, let id = ids.first {
+                Button("Locate Missing File…", systemImage: "questionmark.folder") { model.picker = .locate(id) }
+            }
         }
         .disabled(ids.isEmpty)
         if ids.count > 1 {

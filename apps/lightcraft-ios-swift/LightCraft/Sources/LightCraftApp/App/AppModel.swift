@@ -18,6 +18,16 @@ nonisolated enum Route: Hashable {
     case survey([UInt64])
 }
 
+/// What a file or folder is picked for.
+nonisolated enum FilePick: Hashable {
+    /// A GPS track log (.gpx) to tag `ids` from.
+    case tracklog([UInt64])
+    /// A folder the missing photos may be in.
+    case findMissing
+    /// The file of a photo whose original has moved.
+    case locate(UInt64)
+}
+
 /// What covers the whole screen.
 nonisolated enum Cover: String, Identifiable {
     case slideshow, lightsOut
@@ -56,6 +66,8 @@ nonisolated enum Sheet: Identifiable, Hashable {
     case contactSheet([UInt64])
     case merge(String, [UInt64])
     case shortcuts
+    case cull([UInt64])
+    case shareFiles([String])
 
     var id: String {
         switch self {
@@ -89,6 +101,8 @@ nonisolated enum Sheet: Identifiable, Hashable {
         case .contactSheet: "contactSheet"
         case .merge(let command, _): command
         case .shortcuts: "shortcuts"
+        case .cull: "cull"
+        case .shareFiles: "shareFiles"
         }
     }
 }
@@ -117,6 +131,8 @@ final class AppModel {
     var menuEngine: [CommandInfo] = []
     /// The photo Reference View shows beside the one being edited.
     var reference: UInt64?
+    /// A file or folder the app is asking for (RootView's picker), and what it is for.
+    var picker: FilePick?
     /// The slideshow or Lights Out, over everything.
     var cover: Cover?
     /// On an iPad, whether the albums column shows beside the grid.

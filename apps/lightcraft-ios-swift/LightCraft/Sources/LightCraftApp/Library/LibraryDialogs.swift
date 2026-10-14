@@ -556,6 +556,88 @@ struct ContactSheetSheet: View {
     }
 }
 
+/// Assisted Culling: the chosen photos scored for focus, look-alike bursts grouped; optionally the
+/// blurry ones rejected and the sharpest of each burst picked (`photo.analyze`).
+struct CullSheet: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    let ids: [UInt64]
+    @State private var rejectBelow: Double = 0
+    @State private var pickBest = true
+    @State private var working = false
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    VStack(alignment: .leading) {
+                        LabeledContent("Reject below focus", value: Int(rejectBelow).formatted())
+                        Slider(value: $rejectBelow, in: 0...80, step: 1)
+                    }
+                } footer: {
+                    Text(rejectBelow > 0 ? "Blurry photos below the score are flagged as rejects." : "0: nothing is rejected.")
+                }
+                Section {
+                    Toggle("Pick the sharpest photo of each burst", isOn: $pickBest)
+                } footer: {
+                    Text(ids.isEmpty ? "The photos in view are scored." : "\(ids.count) photos are scored.")
+                }
+            }
+            .navigationTitle("Assisted Culling")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel", systemImage: "xmark") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Cull") {
+                        working = true
+                        var p: [String: JSONValue] = ["pickBest": .bool(pickBest)]
+                        if !ids.isEmpty { p["ids"] = AppModel.ids(ids) }
+                        if rejectBelow > 0 { p["rejectBelow"] = .double(rejectBelow) }
+                        Task {
+                            if await model.run("photo.analyze", .object(p)) != nil { dismiss() }
+                            working = false
+                        }
+                    }
+                    .disabled(working)
+                }
+            }
+            .overlay { if working { ProgressView() } }
+        }
+        .presentationDetents([.medium])
+    }
+}
+
+extension AppModel {
+    /// A file or folder picked for `pick`: read while the system lets the app (it's another app's).
+    func picked(_ url: URL, for pick: FilePick) async {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        switch pick {
+        case .tracklog(let ids):
+            var p: [String: JSONValue] = ["path": .string(url.path)]
+            if !ids.isEmpty { p["ids"] = AppModel.ids(ids) }
+            if let r = await run("photo.autoTagTracklog", .object(p)) {
+                show(String(localized: "\(r["tagged"].int ?? 0) photos tagged with a location"))
+            }
+        case .findMissing:
+            if let r = await run("library.findMissing", ["folder": .string(url.path)]) {
+                show(String(localized: "\(r["relinked"].int ?? r["found"].array.map { Int64($0.count) } ?? 0) photos found"))
+            }
+        case .locate(let id):
+            if await run("photo.relink", ["id": .int(Int64(clamping: id)), "path": .string(url.path)]) != nil {
+                show(String(localized: "Photo found"))
+            }
+        }
+    }
+
+    /// Export with Previous: the chosen photos with the last export's options, then the share sheet.
+    func exportPrevious() async {
+        guard let r = await request("host.exportPrevious") else { return }
+        let paths = (r["files"].array ?? []).compactMap { $0["path"].string }
+        if !paths.isEmpty { sheet = .shareFiles(paths) }
+    }
+}
+
 /// A file to hand to the share sheet.
 struct SharedFile: Identifiable {
     let id = UUID()
