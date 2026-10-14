@@ -132,6 +132,11 @@ final class EditorModel {
     var cropDraw: String?
     /// Reference View: the reference photo beside the one being edited.
     var referenceView = false
+    /// Soft proofing: the photo as `proofSpace` (srgb, displayP3, adobeRgb, proPhoto, rec2020) holds
+    /// it, with what it can't marked when `proofWarning`.
+    var softProof = false
+    var proofSpace = "srgb"
+    var proofWarning = false
     /// Light ▸ HDR ▸ Visualize: what the HDR rendition puts above SDR white, painted by how far.
     var visualizeHdr = false
     /// Red Eye: a pet's eyes, and the correction chosen (its sliders).

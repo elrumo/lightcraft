@@ -19,8 +19,8 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 |---|---:|---:|---:|---:|---:|
 | S0 | 15 | 0 | 0 | 0 | 15/15 |
 | S1 | 164 | 0 | 0 | 3 | 167/167 |
-| S2 | 64 | 0 | 14 | 24 | 88/102 |
-| **Total** | 243 | 0 | 14 | 27 | 270/284 |
+| S2 | 65 | 0 | 13 | 24 | 89/102 |
+| **Total** | 244 | 0 | 13 | 27 | 271/284 |
 <!-- /ios-parity:summary -->
 
 ## Screens
@@ -128,7 +128,7 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | ui:view.zoomOut | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | pinch in |
 | ui:view.clipping | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | a tap on the histogram: red around a photo with whites clipped, blue with blacks (the host sends the clipped shares) |
 | ui:view.visualizeHdr | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/EditGroupPanel.swift` | Edit ▸ Light ▸ HDR ▸ Visualize HDR (`render.view {overlay: hdr}`) |
-| ui:view.softProof | S2 | ⬜ |  |  |
+| ui:view.softProof | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | the photo's "…" ▸ Soft Proofing, Proof As, Destination Gamut Warning (`render.view {proof}`): paper-white surround, "Proof Preview · <space>" |
 | ui:view.histogram | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | the photo's "…" ▸ Histogram: luminance and R, G, B over the photo, with the clipping triangles |
 | ui:view.maskOverlay | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/ToolScreens.swift` | Masking ▸ eye button (`render.view {overlay}`) |
 | ui:view.maskOverlayMode | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/ToolScreens.swift` | Masking ▸ ⋯ ▸ Overlay Options ▸ Show As |

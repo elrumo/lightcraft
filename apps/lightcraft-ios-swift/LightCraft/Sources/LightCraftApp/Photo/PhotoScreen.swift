@@ -222,6 +222,7 @@ nonisolated struct ViewRequest: Hashable {
     let dragging: Bool
     let crop: Bool
     let overlay: JSONValue?
+    let proof: JSONValue?
     let zoom: ZoomRequest?
 }
 
@@ -323,6 +324,16 @@ struct ZoomablePhoto: View {
                     if c[0] > 0.003 { Rectangle().stroke(.blue, lineWidth: 2).frame(width: rect.width + 6, height: rect.height + 6).position(x: rect.midX, y: rect.midY) }
                 }
                 .allowsHitTesting(false)
+            }
+        }
+        // soft proofing: a paper-white surround and the proof's name, as Lightroom shows it
+        .background { if model.editor.softProof { Color.white } }
+        .overlay(alignment: .top) {
+            if model.editor.softProof {
+                Text("Proof Preview · \(SoftProof.label(model.editor.proofSpace))")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.black.opacity(0.7))
+                    .padding(6)
             }
         }
         .overlay(alignment: .topLeading) {
@@ -473,7 +484,7 @@ struct ZoomablePhoto: View {
             h *= maxEdge / long
         }
         return ViewRequest(photo: photo, width: Int(max(w, 1)), height: Int(max(h, 1)), revision: model.state.catalogRevision, dragging: model.state.interaction != nil,
-                           crop: model.editor.tool != .crop, overlay: model.viewOverlay, zoom: zoomRequest)
+                           crop: model.editor.tool != .crop, overlay: model.viewOverlay, proof: model.viewProof, zoom: zoomRequest)
     }
 
     /// The settled zoom's view (`nil` at fit): the photo's long edge as drawn and what is on screen.
@@ -797,6 +808,14 @@ struct PhotoMoreMenu: View {
                     Text("Split Top / Bottom").tag("splitTopBottom")
                 }
                 .pickerStyle(.menu)
+                Toggle("Soft Proofing", systemImage: "printer", isOn: Binding(get: { model.editor.softProof }, set: { model.editor.softProof = $0 }))
+                if model.editor.softProof {
+                    Picker("Proof As", systemImage: "paintpalette", selection: Binding(get: { model.editor.proofSpace }, set: { model.editor.proofSpace = $0 })) {
+                        ForEach(SoftProof.spaces, id: \.0) { Text(LocalizedStringKey($0.1)).tag($0.0) }
+                    }
+                    .pickerStyle(.menu)
+                    Toggle("Destination Gamut Warning", systemImage: "exclamationmark.triangle", isOn: Binding(get: { model.editor.proofWarning }, set: { model.editor.proofWarning = $0 }))
+                }
                 Toggle("Histogram", systemImage: "chart.bar.xaxis", isOn: Binding(get: { model.prefs.showHistogram }, set: { model.prefs.showHistogram = $0 }))
                 Button("Red Eye", systemImage: "eye") {
                     model.perform("develop.cancelInteraction")
@@ -1080,6 +1099,16 @@ struct HistogramView: View {
             .overlay {
                 if model.prefs.showClipping { Circle().stroke(color.opacity(0.6), lineWidth: 1).frame(width: 14, height: 14) }
             }
+    }
+}
+/// Soft proofing's spaces, as the engine names them and as people do.
+enum SoftProof {
+    static let spaces: [(String, String)] = [
+        ("srgb", "sRGB"), ("displayP3", "Display P3"), ("adobeRgb", "Adobe RGB"), ("proPhoto", "ProPhoto RGB"), ("rec2020", "Rec. 2020"),
+    ]
+
+    static func label(_ space: String) -> String {
+        spaces.first { $0.0 == space }?.1 ?? space
     }
 }
 #endif

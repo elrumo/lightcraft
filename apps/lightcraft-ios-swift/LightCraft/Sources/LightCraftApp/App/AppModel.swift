@@ -340,11 +340,17 @@ final class AppModel {
         }
         var p: [String: JSONValue] = ["photo": .int(Int64(clamping: photo)), "width": .int(Int64(clamping: width)), "height": .int(Int64(clamping: height)), "draft": .bool(draft), "applyCrop": .bool(applyCrop)]
         if let viewOverlay { p["overlay"] = viewOverlay }
+        if let viewProof { p["proof"] = viewProof }
         // zoomed in: the window on screen comes sharp, at the zoom scale (`region`)
         if let zoom = draft ? lastZoom : zoom {
             p["zoom"] = ["drawn": .int(Int64(zoom.drawn)), "visible": .array(zoom.visible.map { .double(Double($0) / 1000) })]
         }
         engine.send("render.view", .object(p))
+    }
+
+    /// Soft proofing (`render.view {proof}`).
+    var viewProof: JSONValue? {
+        editor.softProof ? ["space": .string(editor.proofSpace), "destWarning": .bool(editor.proofWarning)] : nil
     }
 
     /// What the loupe draws over the photo: in Masking, the selected mask (Show Overlay); in Remove,
