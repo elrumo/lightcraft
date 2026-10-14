@@ -8,6 +8,7 @@ import SwiftUI
 /// Range, a tap samples the colour to select (`mask.sampleColor`).
 struct MaskCanvas: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.preferredPencilDoubleTapAction) private var pencilAction
     let photo: UInt64
     /// Where the shown photo is drawn.
     let rect: CGRect
@@ -17,6 +18,8 @@ struct MaskCanvas: View {
     @State private var drag: MaskDrag?
     @State private var grabbing = false
     @State private var menu: JSONValue?
+    /// Where a hovering Apple Pencil or pointer is: the brush's size drawn there.
+    @State private var hover: CGPoint?
 
     /// How far (points) from a handle or pin a finger still takes it.
     private static let reach: CGFloat = 28
@@ -25,6 +28,12 @@ struct MaskCanvas: View {
         let tool = model.editor.maskTool
         Canvas { ctx, _ in
             drawHandles(ctx)
+            if tool == "brush", let hover, trail.isEmpty {
+                let r = brushRadius
+                let ring = Path(ellipseIn: CGRect(x: hover.x - r, y: hover.y - r, width: r * 2, height: r * 2))
+                ctx.stroke(ring, with: .color(.black.opacity(0.5)), lineWidth: 3)
+                ctx.stroke(ring, with: .color(model.editor.brushErase ? .red : .white), lineWidth: 1.5)
+            }
             guard trail.count > 0 else { return }
             var p = Path()
             p.addLines(trail)
@@ -34,7 +43,7 @@ struct MaskCanvas: View {
         .allowsHitTesting(false)
         .overlay {
             if tool == "brush" {
-                Color.clear.contentShape(Rectangle()).gesture(paint)
+                Color.clear.contentShape(Rectangle()).gesture(paint).onContinuousHover(perform: hovered)
             } else if tool == "colorRange" {
                 Color.clear.contentShape(Rectangle()).onTapGesture { location in
                     guard let n = norm(location) else { return }
@@ -57,7 +66,21 @@ struct MaskCanvas: View {
             }
         }
         .haptic(.selection, trigger: drag?.mask)
+        // Apple Pencil: a double tap swaps the brush between paint and erase, when the system's
+        // Pencil setting asks to switch tools
+        .onPencilDoubleTap(perform: pencilTapped)
         .task(id: Key(revision: model.state.catalogRevision, mask: model.state.activeMask)) { await load() }
+    }
+
+    private func hovered(_ phase: HoverPhase) {
+        if case .active(let at) = phase { hover = at } else { hover = nil }
+    }
+
+    private func pencilTapped(_: PencilDoubleTapGestureValue) {
+        let swaps: Bool = pencilAction == .switchEraser || pencilAction == .switchPrevious
+        guard model.editor.maskTool == "brush", swaps else { return }
+        model.editor.brushErase.toggle()
+        model.buzz(.selection)
     }
 
     private nonisolated struct Key: Hashable {

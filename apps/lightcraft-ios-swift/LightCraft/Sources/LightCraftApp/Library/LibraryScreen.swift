@@ -15,6 +15,7 @@ struct LibraryScreen: View {
     /// This device or the sync server can search by description (`vision.model.status`).
     @State private var describes = false
     @State private var painterText = ""
+    @State private var dropping = false
 
     var body: some View {
         @Bindable var prefs = model.prefs
@@ -29,6 +30,17 @@ struct LibraryScreen: View {
         }
         .safeAreaInset(edge: .top, spacing: 0) {
             if !model.selectMode { LibraryHeader() }
+        }
+        // pictures dropped from another app (Files, Photos, Safari…) are imported
+        .dropDestination(for: GridDrop.self) { items, _ in
+            let files = items.compactMap { if case .file(let f) = $0 { f } else { nil } }
+            importer.dropped(files, model)
+            return !files.isEmpty
+        } isTargeted: { dropping = $0 }
+        .overlay {
+            if dropping {
+                RoundedRectangle(cornerRadius: 16).stroke(.tint, lineWidth: 3).padding(4).allowsHitTesting(false)
+            }
         }
         .overlay(alignment: .bottom) {
             if model.selectMode {
@@ -482,6 +494,17 @@ private struct SearchBar: View {
     private func submit() {
         let q = model.searchText.trimmingCharacters(in: .whitespaces)
         if scope == .describe, !q.isEmpty { model.perform("library.search", ["q": .string(q)]) }
+    }
+}
+/// What is dropped on the grid: a picture from another app (imported), or text — the grid's own
+/// photos carried back (`PhotoDrag` offers its ids as text too, taken first here), which are left alone.
+nonisolated enum GridDrop: Transferable {
+    case text
+    case file(StagedFile)
+
+    static var transferRepresentation: some TransferRepresentation {
+        ProxyRepresentation(importing: { (_: String) in GridDrop.text })
+        ProxyRepresentation(importing: { (f: StagedFile) in GridDrop.file(f) })
     }
 }
 #endif

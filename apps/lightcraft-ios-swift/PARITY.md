@@ -19,8 +19,8 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 |---|---:|---:|---:|---:|---:|
 | S0 | 15 | 0 | 0 | 0 | 15/15 |
 | S1 | 164 | 0 | 0 | 3 | 167/167 |
-| S2 | 70 | 0 | 8 | 24 | 94/102 |
-| **Total** | 249 | 0 | 8 | 27 | 276/284 |
+| S2 | 72 | 0 | 5 | 25 | 97/102 |
+| **Total** | 251 | 0 | 5 | 28 | 279/284 |
 <!-- /ios-parity:summary -->
 
 ## Screens
@@ -81,8 +81,8 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | screen:ipad.compare | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/ViewModes.swift` | Compare: the Select beside a Candidate, Swap, Make Select, the candidates one by one; a tap makes a side active (`render.variant {edited}`); checked on the iPad simulator |
 | screen:ipad.survey | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/ViewModes.swift` | Survey: the chosen photos as large as the screen allows; a tap makes one active, ✕ takes it out, a double tap opens it; checked on the iPad simulator |
 | screen:ipad.multiwindow | S2 | ⬜ |  |  |
-| screen:ipad.dragDrop | S2 | ⬜ |  |  |
-| screen:ipad.pencil | S2 | ⬜ |  |  |
+| screen:ipad.dragDrop | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/GridView.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LibraryScreen.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/AlbumsSheet.swift`, `crates/apphost/src/host/tests.rs` | pictures dropped on the grid from another app are imported (the import review); while choosing, the chosen photos are carried onto an album (added) or into another app (a JPEG as edited, `app.export {remember: false}`); a long press still starts choosing. Not tried with a real drag: the simulator's synthetic touches don't lift one |
+| screen:ipad.pencil | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/MaskCanvas.swift` | Masking ▸ Brush: an Apple Pencil double tap swaps paint and erase (when the system's Pencil setting switches tools); a hovering Pencil or pointer shows the brush's size. Not tried with a Pencil (the simulator has none) |
 | screen:ipad.externalDisplay | S2 | ⬜ |  |  |
 
 ## UI commands
@@ -224,7 +224,7 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | ui:file.importFolderFromFiles | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Share/ImportModel.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Share/ImportReview.swift` | a folder (≤ 5000 photos, 12 levels), then the review |
 | ui:file.addFolder | S2 | 🚫 |  | the desktop folder dialog; iOS uses `file.importFolderFromFiles` |
 | ui:file.importLightroom | S2 | ⬜ |  |  |
-| ui:file.addFromDevice | S2 | ⬜ |  |  |
+| ui:file.addFromDevice | S2 | 🚫 |  | iOS shows an app no camera or card reader except through Files: Add Photos ▸ Folder from Files… reads a card's DCIM folder; egui's ImageCaptureCore import (`origin/claude/import-from-camera`) isn't in main yet |
 | ui:file.findMissing | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LibraryDialogs.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/DateFolderLists.swift` | Albums ▸ Folders ▸ Find Missing Photos…: a folder from Files (`library.findMissing`; it searches on the engine thread, where egui uses a worker) |
 | ui:file.backupLibrary | S2 | 🚫 |  | the web app's only (its library lives in the browser): on iOS the library is a folder in the app's Documents, kept by the device's and iCloud backups; the egui iOS app has none either |
 | ui:file.restoreLibrary | S2 | 🚫 |  | as Back Up Library: web only |

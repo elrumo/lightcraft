@@ -120,6 +120,11 @@ final class ImportModel {
         }
     }
 
+    /// Pictures dropped on the grid from another app (already copied into a batch folder).
+    func dropped(_ files: [StagedFile], _ model: AppModel) {
+        Task { await importStaged(files.map(\.url.path), failed: 0, model) }
+    }
+
     /// The picture files under `root` (at most `maxFolderFiles`, `maxFolderDepth` levels down).
     nonisolated static func pictures(in root: URL) -> [URL] {
         guard let walk = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.contentTypeKey, .isRegularFileKey], options: [.skipsHiddenFiles]) else { return [] }

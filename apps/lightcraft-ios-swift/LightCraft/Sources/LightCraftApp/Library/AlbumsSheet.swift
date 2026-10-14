@@ -186,7 +186,14 @@ private struct AlbumTreeRow: View {
                 .environment(model)
         }
         .dropDestination(for: String.self) { items, _ in
-            node.folder && AlbumDrag.move(items, into: node.id, model)
+            // photos carried here are added to the album; an album, moved into the folder
+            let photos = PhotoDrag.ids(items)
+            if !node.folder, !photos.isEmpty {
+                model.perform("album.addPhotos", ["id": .int(Int64(clamping: node.id)), "ids": AppModel.ids(photos)])
+                model.buzz(.medium)
+                return true
+            }
+            return node.folder && AlbumDrag.move(items, into: node.id, model)
         }
         if node.folder && open {
             ForEach(node.children) { child in

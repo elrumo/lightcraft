@@ -298,6 +298,9 @@ struct PhotoCell: View {
             .task(id: model.state.catalogRevision) { model.requestThumb(photo.id, edge: edge) }
             .onTapGesture { tapped() }
             .onLongPressGesture(minimumDuration: 0.5) { longPressed() }
+            // choosing photos: the chosen ones are lifted and carried onto an album (added to it) or
+            // into another app (a JPEG); not otherwise, where a long press starts choosing
+            .modifier(DragChosen(on: model.selectMode && model.library.selected.contains(photo.id), photo: photo.id))
             .accessibilityElement()
             .accessibilityLabel(photo.title ?? photo.fileName)
             .accessibilityValue(Self.spoken(photo))
@@ -485,5 +488,65 @@ struct Choosing {
     let adding: Bool
     let base: [UInt64]
     var last: Int?
+}
+/// The chosen photos carried from a chosen one (with how many on the picture).
+private struct DragChosen: ViewModifier {
+    @Environment(AppModel.self) private var model
+    let on: Bool
+    let photo: UInt64
+
+    func body(content: Content) -> some View {
+        if on {
+            let ids = Array(model.library.selected)
+            content.draggable(PhotoDrag(ids: ids, engine: model.engine)) {
+                if let picture = model.images.thumb(photo) {
+                    Image(decorative: picture.image, scale: 1).resizable().scaledToFill()
+                        .frame(width: 120, height: 120).clipShape(.rect(cornerRadius: 8))
+                        .overlay(alignment: .topTrailing) {
+                            if ids.count > 1 {
+                                Text(verbatim: "\(ids.count)").font(.caption.bold()).padding(6).background(.tint, in: .circle).foregroundStyle(.white).padding(4)
+                            }
+                        }
+                }
+            }
+        } else {
+            content
+        }
+    }
+}
+
+/// Photos carried from the grid: onto an album (`lightcraft-photos:` ids, added to it) or into
+/// another app, which gets a JPEG of the first as edited (`app.export`, not remembered for Export
+/// with Previous).
+nonisolated struct PhotoDrag: Transferable {
+    let ids: [UInt64]
+    let engine: Engine?
+
+    static let prefix = "lightcraft-photos:"
+
+    static var transferRepresentation: some TransferRepresentation {
+        // (the picture first: another app takes the richest form it can; this app's drops ask for the text)
+        // ponytail: another app gets the first photo only; a file per photo needs a multi-item drag
+        FileRepresentation(exportedContentType: .jpeg) { drag in SentTransferredFile(try await drag.exported()) }
+        ProxyRepresentation { (drag: PhotoDrag) in prefix + drag.ids.map(String.init).joined(separator: ",") }
+    }
+
+    /// The photo ids a dropped text names (`lightcraft-photos:1,2`), if any.
+    static func ids(_ items: [String]) -> [UInt64] {
+        items.flatMap { item -> [UInt64] in
+            guard item.hasPrefix(prefix) else { return [] }
+            return item.dropFirst(prefix.count).split(separator: ",").compactMap { UInt64($0) }
+        }
+    }
+
+    private func exported() async throws -> URL {
+        guard let engine, let id = ids.first else { throw CocoaError(.fileNoSuchFile) }
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appending(path: "Drag").appending(path: UUID().uuidString.prefix(8).description)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let r = try await engine.execute("app.export", ["dir": .string(dir.path), "ids": [.int(Int64(clamping: id))], "format": "jpeg",
+                                                         "longEdge": 4096, "conflict": "unique", "remember": false])
+        guard let path = r["files"][0]["path"].string else { throw CocoaError(.fileWriteUnknown) }
+        return URL(fileURLWithPath: path)
+    }
 }
 #endif

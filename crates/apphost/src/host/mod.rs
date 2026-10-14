@@ -826,6 +826,10 @@ impl Engine {
         if self.export.is_some() {
             return Some(Event::err(id, ErrorBody::new("other", "an export is already running")));
         }
+        // a photo dragged into another app (`remember: false`) isn't what Export with Previous repeats
+        let mut params = params.clone();
+        let remember = params.as_object_mut().and_then(|o| o.remove("remember")) != Some(Value::Bool(false));
+        let params = &params;
         let started = crate::export::prepare(&mut self.session, params).and_then(|prepared| {
             let write: crate::export::SharedWrite = Arc::new(lightcraft_engine::export::write_file);
             crate::export::Batch::start(&self.session, prepared, write, "Adding to Apple Photos…".into())
@@ -833,7 +837,9 @@ impl Engine {
         match started {
             Ok(batch) => {
                 // for Export with Previous (the phone's export folder is a staging one: not kept)
-                crate::export::remember(&mut self.session, params, None);
+                if remember {
+                    crate::export::remember(&mut self.session, params, None);
+                }
                 self.export = Some(PendingExport { id, reply: call.cloned(), batch });
                 None
             }
