@@ -610,12 +610,22 @@ pub fn specs() -> Vec<CommandSpec> {
             "Straighten",
             [],
             None,
-            "{angle: degrees -45..45} — keeps the largest crop of the current aspect",
+            "{angle: degrees -45..45} or {line: [dx, dy]} (a line drawn along something that should be level or plumb, across the photo as shown, y down) — keeps the largest crop of the current aspect",
             has_active,
             |s, p| {
-                let id = active(s, "crop.straighten")?;
+                let c = "crop.straighten";
+                let id = active(s, c)?;
                 let (w, h) = crop_dims(s, id);
-                let angle = f64_req(p, "angle", "crop.straighten")?.clamp(-45.0, 45.0);
+                let angle = match p.get("line").and_then(Value::as_array) {
+                    Some(l) => {
+                        let (dx, dy) = (l.first().and_then(Value::as_f64), l.get(1).and_then(Value::as_f64));
+                        dx.zip(dy)
+                            .and_then(|(dx, dy)| lightcraft_geom::straighten_for_line(dx, dy))
+                            .ok_or_else(|| bad(c, "`line` must be [dx, dy], not zero"))?
+                    }
+                    None => f64_req(p, "angle", c)?,
+                }
+                .clamp(-45.0, 45.0);
                 edit(s, "crop.straighten", "Straighten", |d| {
                     // keep the current crop if it still fits, else the largest of its aspect that does
                     d.crop.geometry = d.crop.geometry.with_angle(angle, w, h);
@@ -774,15 +784,22 @@ pub fn specs() -> Vec<CommandSpec> {
             "Guided Upright Guides",
             [],
             None,
-            "{guides: [[x0,y0,x1,y1], …] (≤ 4, normalized coords of the lens-corrected image), add?: bool (append one guide, dropping the oldest beyond 4)} — switches Upright to Guided",
+            "{guides: [[x0,y0,x1,y1], …] (≤ 4, normalized coords of the lens-corrected image; with shown: true, the image coordinates view.frame maps to, as the photo is drawn now), add?: bool (append one guide, dropping the oldest beyond 4)} — switches Upright to Guided",
             has_active,
             |s, p| {
                 let parse = |v: &Value| -> Option<(Point, Point)> {
                     let a: Vec<f64> = v.as_array()?.iter().filter_map(Value::as_f64).collect();
                     (a.len() == 4 && a.iter().all(|x| x.is_finite())).then(|| (Point::new(a[0], a[1]), Point::new(a[2], a[3])))
                 };
-                let guides: Vec<(Point, Point)> =
+                let mut guides: Vec<(Point, Point)> =
                     p.get("guides").and_then(Value::as_array).map(|a| a.iter().filter_map(parse).collect()).unwrap_or_default();
+                if bool_or(p, "shown", false) {
+                    let id = active(s, "geometry.guides")?;
+                    let frame = guide_frame(s, id);
+                    for g in &mut guides {
+                        *g = (frame.transformed_to_corrected(g.0), frame.transformed_to_corrected(g.1));
+                    }
+                }
                 let add = bool_or(p, "add", false);
                 edit(s, "geometry.guides", "Guided Upright", |d| {
                     if add {
@@ -1197,4 +1214,12 @@ pub fn specs() -> Vec<CommandSpec> {
             ok()
         }),
     ]
+}
+
+/// The photo's geometry as the crop tool draws it (whole, uncropped): guides go between its image
+/// coordinates and the lens-corrected ones `geometry.guides` keeps.
+pub(crate) fn guide_frame(s: &Session, id: PhotoId) -> lightcraft_pipeline::geometry::Frame {
+    let (sw, sh) = s.catalog.photo(id).map_or((1, 1), |p| (p.width.max(1) as usize, p.height.max(1) as usize));
+    let d = s.develop_of(id).unwrap_or_default();
+    lightcraft_pipeline::geometry::Frame::with_lens(sw, sh, &d, false, s.embedded_lens(id).as_ref())
 }

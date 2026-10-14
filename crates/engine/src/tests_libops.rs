@@ -921,3 +921,22 @@ fn named_people_are_listed_with_their_faces() {
     s.execute("edit.undo", &json!({})).unwrap();
     assert_eq!(s.execute("people.named", &json!({})).unwrap()[0]["name"].as_str(), Some("Ana"));
 }
+
+#[test]
+fn a_drawn_line_straightens_and_guides_go_on_as_shown() {
+    let mut s = Session::with_demo();
+    let id = s.visible_shared().1[0];
+    s.execute("library.select", &json!({"ids": [id.0], "active": id.0})).unwrap();
+    s.execute("crop.straighten", &json!({"line": [100.0, 10.0]})).unwrap();
+    let angle = s.develop_of(id).unwrap().crop.geometry.angle;
+    assert!((angle + 5.71).abs() < 0.01, "{angle}");
+    assert!(s.execute("crop.straighten", &json!({"line": [0.0, 0.0]})).is_err());
+    // a guide drawn on the photo as shown comes back where it was drawn
+    s.execute("geometry.guides", &json!({"guides": [[0.2, 0.1, 0.22, 0.9]], "shown": true})).unwrap();
+    let f = s.execute("view.frame", &json!({"applyCrop": false})).unwrap();
+    let g: Vec<f64> = f["guides"][0].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
+    for (got, want) in g.iter().zip([0.2, 0.1, 0.22, 0.9]) {
+        assert!((got - want).abs() < 0.02, "{g:?}");
+    }
+    assert_eq!(s.develop_of(id).unwrap().geometry.upright, lightcraft_develop::Upright::Guided);
+}

@@ -3040,15 +3040,8 @@ fn straighten_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::R
         app.gesture = None;
         let v = b - a;
         if v.length() > 8.0 {
-            let mut deg = v.y.atan2(v.x).to_degrees() as f64;
-            // fold to the nearest axis: a line closer to vertical straightens plumb lines
-            while deg > 45.0 {
-                deg -= 90.0;
-            }
-            while deg < -45.0 {
-                deg += 90.0;
-            }
-            let _ = app.run("crop.straighten", json!({"angle": (-deg * 100.0).round() / 100.0}));
+            // (a line closer to vertical straightens plumb lines)
+            let _ = app.run("crop.straighten", json!({"line": [v.x, v.y]}));
         }
         if !held {
             app.ui.tool.clear();
