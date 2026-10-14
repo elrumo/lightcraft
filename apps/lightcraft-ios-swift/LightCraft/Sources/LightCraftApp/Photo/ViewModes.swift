@@ -23,7 +23,7 @@ struct PhotoPicture: View {
                 }
             }
             .onGeometryChange(for: CGSize.self) { $0.size } action: { size = $0 }
-            .task(id: Key(photo: photo, edge: edge, revision: model.state.catalogRevision)) {
+            .task(id: Key(photo: photo, edge: edge, revision: model.settledRevision)) {
                 model.wantThumb(photo, edge: 256)
                 guard let engine = model.engine, edge > 0 else { return }
                 slot = (try? await engine.request("render.variant", ["photo": .int(Int64(clamping: photo)), "edited": true, "edge": .int(Int64(edge))]))?["slot"].string

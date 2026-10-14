@@ -143,7 +143,7 @@ struct PhotoScreen: View {
     }
 
     private var photoPager: some View {
-        PhotoPager(start: start, review: $review)
+        PhotoPager(start: start, startIndex: model.library.index(of: start), review: $review)
             .overlay(alignment: .topTrailing) {
                 if model.editor.tool == .masking, !review {
                     MaskColumn().padding(10).transition(.move(edge: .trailing).combined(with: .opacity))
@@ -196,6 +196,19 @@ struct PhotoPager: View {
     @State private var zoomed = false
     /// Where the photo opened is in the grid (found once: pages being read again mustn't lose it).
     @State private var startIndex: Int?
+    /// The photo a swipe selected, until the engine says it's the active one (states from earlier
+    /// swipes mustn't pull the pager back).
+    @State private var asked: UInt64?
+
+    /// `startIndex`: where `start` is in the grid, when its page is loaded. The scroll view opens on
+    /// it from its first layout: set later (on appear), the first page could take its place and
+    /// become the photo selected.
+    init(start: UInt64, startIndex: Int?, review: Binding<Bool>) {
+        self.start = start
+        _review = review
+        _position = State(initialValue: startIndex)
+        _startIndex = State(initialValue: startIndex)
+    }
 
     var body: some View {
         let library = model.library
@@ -220,16 +233,25 @@ struct PhotoPager: View {
                 }
                 .onChange(of: position) { _, i in
                     guard let i, let photo = library.photo(at: i, model.engine) else { return }
-                    Task { await model.select(photo.id) }
+                    if photo.id != model.state.active {
+                        asked = photo.id
+                        Task { await model.select(photo.id) }
+                    }
                     var near: [UInt64] = []
                     if let next = library.photo(at: i + 1, model.engine) { near.append(next.id) }
                     if let prev = library.photo(at: i - 1, model.engine) { near.append(prev.id) }
                     model.prefetch(near)
                 }
                 .haptic(.impact(weight: .light), trigger: position)
-                .onChange(of: model.state.active) { _, active in
-                    // the engine moved on (Auto Advance, next / previous): follow it
-                    guard let active, let i = library.index(of: active), i != position else { return }
+                // the active photo's place: the engine moved on (Auto Advance, next / previous), or the
+                // grid's order changed under it (an import, a sync, sorting by edit time) — the page
+                // shown stays the photo being edited
+                .onChange(of: model.state.active.flatMap { library.index(of: $0) }) { _, i in
+                    if let a = asked {
+                        guard model.state.active == a else { return }
+                        asked = nil
+                    }
+                    guard let i, i != position else { return }
                     withAnimation(.snappy) { position = i }
                 }
             } else {
@@ -301,6 +323,8 @@ struct ZoomablePhoto: View {
     @State private var pan: CGSize = .zero
     @State private var panAtStart: CGSize = .zero
     @State private var canvas: CGSize = .zero
+    /// The render asked for last.
+    @State private var lastRequest: ViewRequest?
     @State private var showBefore = false
     /// How the shown photo maps to image coordinates (taps on it for the pickers and tools).
     @State private var frame: PhotoFrame?
@@ -324,6 +348,8 @@ struct ZoomablePhoto: View {
                 Image(decorative: picture.image, scale: 1)
                     .resizable()
                     .scaledToFit()
+                    // the crop's Expand: what the photo doesn't cover yet comes transparent
+                    .background { if model.editor.setting("crop", "expand").bool == true { Checkerboard() } }
                     .padding(review ? 0 : margin)
                     .scaleEffect(zoom)
                     .offset(pan)
@@ -443,6 +469,13 @@ struct ZoomablePhoto: View {
         .onGeometryChange(for: CGSize.self) { $0.size } action: { canvas = $0 }
         .task(id: request) {
             guard let r = request, !r.dragging else { return }
+            // only the size moved (a panel sliding in or out, a rotation): one render once it has
+            // settled, not one a frame (the next frame's change cancels this wait)
+            if let last = lastRequest, last.photo == r.photo, last.revision == r.revision, last.width != r.width || last.height != r.height {
+                try? await Task.sleep(for: .milliseconds(120))
+                guard !Task.isCancelled else { return }
+            }
+            lastRequest = r
             model.requestView(r.photo, width: r.width, height: r.height, applyCrop: r.crop, zoom: r.zoom)
             if compare { model.requestBefore(photo) }
         }

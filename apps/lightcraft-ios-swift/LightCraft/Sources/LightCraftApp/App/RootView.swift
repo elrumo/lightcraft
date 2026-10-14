@@ -71,7 +71,7 @@ struct RootView: View {
         }
         .preferredColorScheme(model.prefs.appearance.scheme)
         // the menu bar's commands, enabled for what is selected now
-        .task(id: MenuKey(revision: model.state.catalogRevision, active: model.state.active, selected: model.state.selectionCount, engine: model.engine != nil)) {
+        .task(id: MenuKey(revision: model.settledRevision, active: model.state.active, selected: model.state.selectionCount, engine: model.engine != nil)) {
             await model.loadMenus()
         }
         .haptic(trigger: model.haptic) { _, h in h.seq == 0 ? nil : h.feedback }
@@ -175,6 +175,7 @@ struct SheetContent: View {
         case .editSidebar: EditSidebarSheet()
         case .cull(let ids): CullSheet(ids: ids)
         case .lightroom(let folder): LightroomSheet(folder: folder)
+        case .cameraImport: CameraImportSheet()
         case .shareFiles(let paths): ActivityView(urls: paths.map { URL(fileURLWithPath: $0) }) { model.sheet = nil }
         case .newSmartAlbumFromView:
             // the grid as it is shown (source and filter) becomes a smart album
@@ -222,7 +223,10 @@ struct ActivityHUD: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        let rows = model.activity.filter { ["import", "scan", "previews", "download", "superRes"].contains($0.kind) || ($0.kind == "export" && model.sheet?.id != "export") }
+        let rows = model.activity.filter {
+            ["import", "scan", "previews", "download", "superRes"].contains($0.kind) || ($0.kind == "export" && model.sheet?.id != "export")
+                || ($0.kind == "expand" && model.editor.tool != .crop)
+        }
         VStack(spacing: 6) {
             ForEach(rows) { row in
                 HStack(spacing: 10) {

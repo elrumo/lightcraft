@@ -38,7 +38,7 @@ struct DateBlocksView: View {
                 if let key { proxy.scrollTo(key, anchor: .top) }
             }
         }
-        .task(id: Key(span: span, gen: model.state.visibleGen, rev: model.state.catalogRevision)) {
+        .task(id: Key(span: span, gen: model.state.visibleGen, rev: model.settledRevision)) {
             guard let engine = model.engine else { return }
             let name = span == .years ? "years" : "months"
             blocks = (try? await engine.execute("library.blocks", ["span": .string(name)], as: [DateBlockInfo].self)) ?? []
@@ -157,7 +157,7 @@ private struct BlockTile: View {
             }
             .clipShape(.rect(cornerRadius: 14))
             .contentShape(.rect(cornerRadius: 14))
-            .task(id: model.state.catalogRevision) { model.requestThumb(photo, edge: 768) }
+            .task(id: model.settledRevision) { model.requestThumb(photo, edge: 768) }
             .onAppear { model.thumbAppeared(photo) }
             .onDisappear { model.thumbDisappeared(photo) }
     }

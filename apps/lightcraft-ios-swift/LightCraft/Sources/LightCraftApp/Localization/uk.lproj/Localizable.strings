@@ -9,10 +9,12 @@
 "#106): a DNG is checked against the raw data, written to a temp file, synced and read back before it gets its" = "#106): DNG перевіряється за даними RAW, записується до тимчасового файлу, синхронізується й перечитується, перш ніж отримати";
 "% of all commits" = "% усіх комітів";
 "%@ Label" = "Мітка: %1$@";
+"%@ connected" = "%1$@ підключено";
 "%@ curve" = "Крива: %@";
 "%@ free of %@" = "Вільно %1$@ з %2$@";
 "%@ of %@ used" = "Зайнято %1$@ з %2$@";
 "%@ wheel" = "Колесо: %@";
+"%@ · %lld MB download" = "%1$@ · завантаження %2$lld МБ";
 "%lld" = "%1$lld";
 "%lld %%" = "%1$lld %%";
 "%lld GB" = "%1$lld ГБ";
@@ -321,6 +323,7 @@
 "Camera-Specific Defaults" = "Типові налаштування для камери";
 "Cameras and Cards" = "Камери й карти";
 "Cameras and cards" = "Камери й картки";
+"Can't Read It" = "Не вдається прочитати";
 "Can't sync" = "Не вдається синхронізувати";
 "Cancel" = "Скасувати";
 "Cancel AI Mask Model Download" = "Скасувати завантаження моделі масок ШІ";
@@ -751,7 +754,7 @@
 "Every face named %@ gets the new name; a name someone already has puts them together." = "Кожне обличчя з іменем %@ отримає нове ім’я; якщо таке ім’я вже є в когось, їх буде об’єднано.";
 "Existing previews" = "Наявні перегляди";
 "Exit" = "Вийти";
-"Expand" = "Розгорнути";
+"Expand" = "Розширити";
 "Expand All Stacks" = "Розгорнути всі стоси";
 "Expand Stack" = "Розгорнути стос";
 "Expand/Collapse Stack" = "Розгорнути/згорнути стос";
@@ -1021,6 +1024,7 @@
 "Image on Black" = "Зображення на чорному";
 "Image on White" = "Зображення на білому";
 "Import" = "Імпорт";
+"Import %lld Photos" = "Імпортувати фото: %lld";
 "Import Curve Presets…" = "Імпортувати набори налаштувань кривої…";
 "Import Date" = "Дата імпорту";
 "Import Keywords" = "Імпортувати ключові слова";
@@ -1037,6 +1041,7 @@
 "Import Profiles & Presets…" = "Імпортувати профілі й набори налаштувань…";
 "Import as New" = "Імпортувати як нове";
 "Import as new" = "Імпортувати як нове";
+"Import cancelled" = "Імпорт скасовано";
 "Import cancelled · %lld added" = "Імпорт скасовано · додано: %lld";
 "Import failed" = "Не вдалося імпортувати";
 "Import from Device" = "Імпортувати з пристрою";
@@ -1175,6 +1180,7 @@
 "Lens Corrections" = "Корекція об’єктива";
 "Let the Server Build Previews" = "Дозволити серверу створювати перегляди";
 "Let the crop reach past the photo's edges and paint the new area on this computer" = "Дає кадру вийти за краї фото й домальовує нову ділянку на цьому комп’ютері";
+"Lets the crop reach past the photo's edges, to paint the new area" = "Дає змогу кадру виходити за краї фото, щоб домалювати нову область";
 "Level" = "Рівень";
 "Library" = "Бібліотека";
 "Library Folders" = "Теки бібліотеки";
@@ -1202,6 +1208,7 @@
 "LightCraft couldn't open the library at" = "LightCraft не вдалося відкрити бібліотеку в";
 "LightCraft couldn't start" = "LightCraft не вдалося запустити";
 "LightCraft does not know this model, so it assumed:" = "LightCraft не знає цю модель, тому припускає:";
+"LightCraft isn't allowed to read cameras and cards: allow it in Settings ▸ Privacy & Security" = "LightCraft не може читати камери й картки: дозвольте це в «Параметри» ▸ «Приватність і безпека»";
 "LightCraft keeps trying." = "LightCraft продовжує спроби.";
 "LightCraft may not add to your photo library: allow it in Settings ▸ Privacy ▸ Photos." = "LightCraft не може додавати фото до вашої фототеки: дозвольте це в розділі «Налаштування ▸ Конфіденційність і безпека ▸ Фото».";
 "LightCraft no longer crashes at launch on Windows PCs whose Vulkan driver is broken (issue #136, e.g. some Intel UHD" = "LightCraft більше не падає під час запуску на ПК Windows із несправним драйвером Vulkan (проблема #136, наприклад, деякі Intel UHD";
@@ -1469,6 +1476,7 @@
 "No photo has it; the keywords below it go too." = "Його не має жодне фото; вкладені в нього ключові слова теж зникнуть.";
 "No photo selected" = "Фото не вибрано";
 "No photos" = "Немає фото";
+"No photos could be copied from %@" = "Не вдалося скопіювати фото з %1$@";
 "No photos found" = "Фото не знайдено";
 "No photos in that folder" = "У цій теці немає фото";
 "No photos in this folder" = "У цій теці немає фото";
@@ -1624,6 +1632,7 @@
 "Photo ▸ Edit in External Editor (⇧⌘E) renders a 16-bit TIFF copy, stacks it with the original and opens it here (an app name on macOS, a program path elsewhere)." = "Фото → Редагувати в зовнішньому редакторі (⇧⌘E) створює 16-бітну копію TIFF, додає її до стосу з оригіналом і відкриває тут (назва застосунку в macOS, шлях до програми в інших системах).";
 "Photos" = "Фото";
 "Photos in Recently Deleted can be restored from the app: right-click ▸ Restore (or Delete Permanently), also in the" = "Фото в нещодавно видалених можна відновити із застосунку: права кнопка → Відновити (або Видалити назавжди), також у";
+"Photos not copied from %@: %lld" = "Не скопійовано фото з %1$@: %2$lld";
 "Photos per Bracket" = "Фото в серії експозицій";
 "Photos per bracket (0 = auto)" = "Фото в серії експозицій (0 = автоматично)";
 "Photos seen in Local but never added or changed leave the catalog when their folder hasn't been browsed for this long (checked when the library opens). Files stay on disk; browsing the folder shows them again." = "Фото, переглянуті в локальних, але ніколи не додані й не змінені, вилучаються з каталогу, якщо їхню теку не оглядали протягом цього часу (перевіряється під час відкриття бібліотеки). Файли залишаються на диску; огляд теки знову їх показує.";
@@ -1647,6 +1656,7 @@
 "Place Names Status" = "Стан назв місць";
 "Place names download cancelled" = "Завантаження назв місць скасовано";
 "Place names downloaded" = "Назви місць завантажено";
+"Plug in a camera or a card reader (USB-C or Lightning), then try again." = "Підключіть камеру або кардридер (USB-C або Lightning) і спробуйте ще раз.";
 "Point Color" = "Точковий колір";
 "Point Curve" = "Точкова крива";
 "Point Curve Presets" = "Набори налаштувань точкової кривої";
@@ -1751,6 +1761,7 @@
 "Read mode" = "Режим читання";
 "Read the SAM License" = "Прочитати ліцензію SAM";
 "Reading" = "Читання";
+"Reading %@… %lld photos so far" = "Читання %1$@… поки що фото: %2$lld";
 "Reading Lightroom catalog" = "Читання каталогу Lightroom";
 "Reading Lightroom catalog…" = "Читання каталогу Lightroom…";
 "Reading a sidecar replaces the photo's rating, labels, metadata and edits with what it says." = "Читання файлу XMP замінює оцінку, мітки, метадані та обробку фото його вмістом.";
@@ -2191,6 +2202,7 @@
 "Stopped" = "Зупинено";
 "Stopped by an error (see the log)" = "Зупинено через помилку (див. журнал)";
 "Stopping…" = "Зупинення…";
+"Stops painting the new area" = "Зупиняє домальовування нової області";
 "Storage" = "Сховище";
 "Storage limit" = "Ліміт сховища";
 "Store All Originals on This Device" = "Зберігати всі оригінали на цьому пристрої";
@@ -2287,6 +2299,7 @@
 "That isn't JSON: %@" = "Це не JSON: %@";
 "That key can't be used as a shortcut" = "Цю клавішу не можна використовувати як скорочення";
 "The SAM 3 model is installed: Object and Describe masks are ready." = "Модель SAM 3 встановлено: маски «Об’єкт» і «Описати» готові.";
+"The camera is locked: unlock it to read its photos" = "Камеру заблоковано: розблокуйте її, щоб прочитати фото";
 "The catalog has a format version (issue #102). Opening a library from an older LightCraft upgrades it; a library" = "Каталог має версію формату (проблема #102). Відкриття бібліотеки старішого LightCraft оновлює її; бібліотека,";
 "The checkerboard shows area with nothing in it yet: Generate fills it." = "Шаховий фон — ще порожня ділянка: «Створити» заповнить її.";
 "The control port (`--control`) closes a connection as soon as it receives anything that isn't a JSON request" = "Порт керування (`--control`) закриває з’єднання, щойно отримує щось, що не є запитом JSON";
@@ -2301,6 +2314,7 @@
 "The library is up to date with this folder." = "Бібліотека відповідає цій теці.";
 "The model is kept on this computer only. LightCraft never uploads or shares it." = "Модель зберігається лише на цьому комп’ютері. LightCraft ніколи не вивантажує й не поширює її.";
 "The model is kept on this device only. LightCraft never uploads or shares it." = "Модель зберігається лише на цьому пристрої. LightCraft ніколи її не вивантажує й не передає.";
+"The new area was painted by %@ on this device." = "Нову ділянку домальовано на цьому пристрої (%1$@).";
 "The number at the end of the original name (IMG_0042 → 0042)" = "Число в кінці початкової назви (IMG_0042 → 0042)";
 "The original extension is always added; {ext} only puts it inside the name as well." = "Початкове розширення завжди додається; {ext} лише вставляє його також усередину назви.";
 "The original files, unchanged, each with an XMP sidecar holding its edits." = "Початкові файли без змін, кожен із супровідним XMP зі змінами.";
@@ -2427,6 +2441,7 @@
 "User" = "Користувач";
 "User Presets" = "Власні набори налаштувань";
 "Username" = "Ім’я користувача";
+"Uses the %@ model, a %lld MB download (%@ licence). %@." = "Використовується модель %1$@, завантаження %2$lld МБ (ліцензія %3$@). %4$@.";
 "Uses the MI-GAN model, a %lld MB download (%@). %@." = "Використовує модель MI-GAN, завантаження — %lld МБ (%@). %@.";
 "Value" = "Значення";
 "Variance" = "Дисперсія";
@@ -2718,6 +2733,7 @@
 "{date} is the capture time; a photo without one uses the time it was imported." = "{date} — час знімання; фото без нього використовує час імпорту.";
 "© 2026 Your Name" = "© 2026 Ваше ім’я";
 "© Your Name" = "© Ваше ім’я";
+"· %lld already in the library" = "· уже в бібліотеці: %1$lld";
 "· ^[%lld photo](inflect: true)" = "· %lld фото";
 "− harder border · + softer border" = "− твердіша межа · + м’якша межа";
 "≤  at most" = "≤  щонайбільше";

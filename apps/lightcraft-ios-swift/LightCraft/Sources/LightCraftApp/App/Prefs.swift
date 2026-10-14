@@ -29,6 +29,8 @@ final class Prefs {
         maskPins = store.object(forKey: "maskPins") as? Bool ?? true
         faceBoxes = store.bool(forKey: "faceBoxes")
         removeAI = store.bool(forKey: "removeAI")
+        expandModel = store.string(forKey: "expandModel") ?? "auto"
+        importOnConnect = store.object(forKey: "importOnConnect") as? Bool ?? true
         cropGuide = store.string(forKey: "cropGuide") ?? "thirds"
         cropGuideOrientation = store.integer(forKey: "cropGuideOrientation")
         showHistogram = store.bool(forKey: "showHistogram")
@@ -155,6 +157,11 @@ final class Prefs {
     var faceBoxes: Bool { didSet { store.set(faceBoxes, forKey: "faceBoxes") } }
     /// Remove's Generative AI: strokes are filled by the MI-GAN model (when it's here).
     var removeAI: Bool { didSet { store.set(removeAI, forKey: "removeAI") } }
+    /// Crop ▸ Expand's Fill With: the model Generate paints with (`crop.expandModels` ids; `auto`:
+    /// the default).
+    var expandModel: String { didSet { store.set(expandModel, forKey: "expandModel") } }
+    /// Show the import when a camera or memory card is plugged in.
+    var importOnConnect: Bool { didSet { store.set(importOnConnect, forKey: "importOnConnect") } }
     /// The crop tool's composition guide (`crop.guides` kinds) and how the asymmetric ones turn (0–3).
     var cropGuide: String { didSet { store.set(cropGuide, forKey: "cropGuide") } }
     var cropGuideOrientation: Int { didSet { store.set(cropGuideOrientation, forKey: "cropGuideOrientation") } }

@@ -109,7 +109,7 @@ struct HistorySheet: View {
                     Button("Done", systemImage: "checkmark") { dismiss() }
                 }
             }
-            .task(id: model.state.catalogRevision) { await load() }
+            .task(id: model.settledRevision) { await load() }
             .alert("Rename Version", isPresented: Binding(get: { naming != nil }, set: { if !$0 { naming = nil } })) {
                 TextField("Name", text: $name)
                 Button("Rename") {
@@ -174,7 +174,7 @@ struct KeywordsSheet: View {
                     Button("Done", systemImage: "checkmark") { dismiss() }
                 }
             }
-            .task(id: model.state.catalogRevision) { await load() }
+            .task(id: model.settledRevision) { await load() }
             .task(id: typed) {
                 guard let engine = model.engine else { return }
                 let r = try? await engine.execute("keyword.suggest", ["prefix": .string(typed), "limit": 8])

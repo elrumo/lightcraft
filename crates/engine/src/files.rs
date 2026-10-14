@@ -127,6 +127,35 @@ fn ext_upper(name: &str) -> String {
     std::path::Path::new(name).extension().map(|e| e.to_string_lossy().to_uppercase()).unwrap_or_default()
 }
 
+/// A raw's `format`: its file name's extension (it tells `RW2` from `RWL`, `3FR` from `IIQ`), unless the name
+/// isn't a raw's (a ProRAW the system handed over as `IMG_8918.jpeg`, or no extension): then the container the
+/// decoder found, when that names the format (the generic TIFF raws keep the extension).
+fn raw_format_name(name: &str, found: lightcraft_raw::RawFormat) -> String {
+    use lightcraft_raw::RawFormat as F;
+    let ext = ext_upper(name);
+    if !matches!(ext.as_str(), "" | "JPG" | "JPEG" | "PNG" | "TIF" | "TIFF" | "HEIC" | "HEIF" | "WEBP") {
+        return ext;
+    }
+    match found {
+        F::Dng => "DNG",
+        F::Cr2 => "CR2",
+        F::Cr3 => "CR3",
+        F::Nef => "NEF",
+        F::Nrw => "NRW",
+        F::Arw => "ARW",
+        F::Raf => "RAF",
+        F::Orf => "ORF",
+        F::Rw2 => "RW2",
+        F::Pef => "PEF",
+        F::Srw => "SRW",
+        F::Crw => "CRW",
+        F::Mrw => "MRW",
+        F::X3f => "X3F",
+        _ => return ext,
+    }
+    .to_string()
+}
+
 /// Probe a file's bytes: kind, dimensions (oriented), metadata. No pixel data is decompressed:
 /// raws are described from their headers ([`lightcraft_raw::probe_info`]), other images too
 /// ([`lightcraft_codecs::read_header`], which refuses truncated files but can't see damage inside
@@ -135,7 +164,7 @@ pub fn probe_bytes(name: &str, bytes: &[u8]) -> Result<ProbeInfo, String> {
     let content_hash = Some(lightcraft_preview::hash_bytes(bytes).to_string());
     let m = lightcraft_meta::extract(bytes);
     let (meta, captured) = meta_of(&m);
-    if lightcraft_raw::probe(bytes).is_some() {
+    if let Some(found) = lightcraft_raw::probe(bytes) {
         let raw = match lightcraft_raw::probe_info(bytes).map_err(|e| preview_reason(bytes, e)) {
             Ok(r) => r,
             Err(Ok(why)) => {
@@ -144,7 +173,7 @@ pub fn probe_bytes(name: &str, bytes: &[u8]) -> Result<ProbeInfo, String> {
                 return Ok(ProbeInfo {
                     width: w,
                     height: h,
-                    format: ext_upper(name),
+                    format: raw_format_name(name, found),
                     kind: MediaKind::Raw,
                     file_size: bytes.len() as u64,
                     captured,
@@ -172,7 +201,7 @@ pub fn probe_bytes(name: &str, bytes: &[u8]) -> Result<ProbeInfo, String> {
             embedded_lens,
             width: w,
             height: h,
-            format: ext_upper(name),
+            format: raw_format_name(name, found),
             kind: MediaKind::Raw,
             file_size: bytes.len() as u64,
             captured,
@@ -1402,6 +1431,17 @@ mod tests {
         assert!(probe_bytes("x.jpg", b"not an image").is_err());
     }
 
+    /// A DNG the system handed over as `IMG_8918.jpeg` (the Photos picker does, for ProRAW) is a DNG in the
+    /// catalogue; a raw's own extension still wins (`RWL` stays `RWL`).
+    #[test]
+    fn raw_under_a_picture_name_reports_its_container() {
+        let dng = crate::tests_xmp::synthetic_dng_with(None, Default::default());
+        for (name, want) in [("x.dng", "DNG"), ("IMG_8918.jpeg", "DNG"), ("IMG_8918.JPG", "DNG"), ("IMG_8918", "DNG"), ("x.rwl", "RWL")] {
+            let p = probe_bytes(name, &dng).unwrap();
+            assert_eq!((p.kind, p.format.as_str()), (MediaKind::Raw, want), "{name}");
+        }
+    }
+
     /// Issue #1212: a transparent PNG develops on white (what renders, previews, exports and contact sheets
     /// start from), not on the black its transparent pixels store.
     #[test]
@@ -2106,9 +2146,9 @@ mod tests {
     }
 
     /// The Profile option "Camera local tone mapping" renders the map by position (in the raw's
-    /// active area, whatever the photo's orientation), and only when it's on.
+    /// active area, whatever the photo's orientation): on by default, nothing when turned off.
     #[test]
-    fn dng_gain_table_map_renders_when_asked() {
+    fn dng_gain_table_map_renders_by_default() {
         use lightcraft_pipeline::{RenderRequest, render};
         use lightcraft_raw::gaintable::GainTableMap;
         let plain = crate::tests_xmp::synthetic_dng_with(None, Default::default());
@@ -2132,13 +2172,17 @@ mod tests {
         assert!(info.local_tone.is_some() && plain_info.local_tone.is_none());
         let req = RenderRequest::fit(64, 64);
         let mut s = lightcraft_develop::DevelopSettings::default();
+        assert!(s.profile.camera_local_tone, "on by default");
+        assert!(!s.to_json().to_string().contains("camera_local_tone"), "omitted when on: older settings keep their hash");
+        let old: lightcraft_develop::DevelopSettings = serde_json::from_str(r#"{"profile": {"id": "lc.color"}}"#).unwrap();
+        assert!(old.profile.camera_local_tone, "settings saved without the field render the map");
         // (darker, so that ×4 never reaches white)
         s.light.exposure = -3.0;
+        let on = render(&img, &info, &s, &req).image;
+        s.profile.camera_local_tone = false;
+        assert!(s.to_json().to_string().contains("camera_local_tone"), "off is part of the settings (and their hash)");
         let off = render(&img, &info, &s, &req).image;
         assert_eq!(off.data, render(&img, &plain_info, &s, &req).image.data, "off: the map changes nothing");
-        s.profile.camera_local_tone = true;
-        assert!(s.to_json().to_string().contains("camera_local_tone"), "the option is part of the settings (and their hash)");
-        let on = render(&img, &info, &s, &req).image;
         // brightness gained, per column: none at the left edge, most at the right
         let column = |im: &lightcraft_raster::Rgba8, x: usize| (0..im.height).map(|y| im.data[y * im.width + x][1] as f32).sum::<f32>();
         let gain = |x: usize| column(&on, x) / column(&off, x).max(1.0);

@@ -278,6 +278,24 @@ fn photos_are_scanned_reviewed_and_imported_in_the_background() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
+// The state's `presetsGeneration` moves when the preset list changes (the Swift app's Presets panel
+// reads the list again then: presets the sync brings show without reopening it), and not otherwise
+#[test]
+fn the_state_says_when_the_presets_change() {
+    let h = demo();
+    let generation = |h: &Host, id: u64| h.call(&req(id, "host.state", json!({})), Duration::from_secs(30))["result"]["presetsGeneration"].clone();
+    let before = generation(&h, 1);
+    assert!(before.as_u64().is_some(), "{before}");
+    h.call(&req(2, "engine.execute", json!({"command": "photo.rate", "params": {"rating": 3}})), Duration::from_secs(30));
+    assert_eq!(generation(&h, 3), before, "a rating leaves the presets alone");
+    let r = h.call(&req(4, "engine.execute", json!({"command": "preset.create", "params": {"name": "Mine"}})), Duration::from_secs(30));
+    assert!(r["result"].is_object(), "{r}");
+    let after = generation(&h, 5);
+    assert_ne!(after, before);
+    let state = h.wait_for(|e| e["kind"] == "state" && e["state"]["presetsGeneration"] == after);
+    assert_eq!(state["state"]["presetsGeneration"], after);
+}
+
 // Previews of a preset, a profile and a version on the active photo come as `variant:` pictures
 #[test]
 fn presets_profiles_and_versions_preview() {
@@ -306,6 +324,11 @@ fn view_overlays_parse() {
     assert_eq!(
         overlay(Some(&json!({"kind": "mask", "id": 3, "color": [1, 2, 3], "opacity": 80}))),
         Overlay::Mask { id: 3, view: MaskView::default(), color: [1, 2, 3], opacity: 80 }
+    );
+    assert_eq!(
+        overlay(Some(&json!({"kind": "allMasks", "opacity": 30}))),
+        Overlay::AllMasks { view: MaskView::default(), color: [230, 30, 40], opacity: 30 },
+        "every mask at once (Show All Mask Overlays)"
     );
     assert_eq!(overlay(Some(&json!({"kind": "spots", "threshold": 900}))), Overlay::Spots(100));
     assert_eq!(overlay(Some(&json!({"kind": "mask"}))), Overlay::None, "a mask overlay needs its id");
@@ -476,4 +499,24 @@ fn a_lightroom_catalog_is_read_in_the_background() {
     let none = inspect(3, json!({"path": dir.join("Empty").to_string_lossy()}));
     assert!(none["error"]["message"].as_str().unwrap().contains("no Lightroom Classic catalog"), "{none}");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+// Generative Expand started without waiting (as the phone's Generate does): the host stores the fill
+// when the job ends and says so, and the engine answers meanwhile
+#[test]
+fn a_background_generate_is_stored_when_it_ends() {
+    let h = demo();
+    let ask = |id: u64, command: &str, params: Value| {
+        h.call(&req(id, "engine.execute", json!({"command": command, "params": params})), Duration::from_secs(30))
+    };
+    ask(1, "crop.expand", json!({"on": true}));
+    ask(2, "crop.set", json!({"rect": [0.0, -0.2, 1.0, 1.0]}));
+    let started = ask(3, "crop.generate", json!({"model": "classic", "wait": false}));
+    assert_eq!(started["result"]["started"], true, "{started}");
+    let said = h.wait_for(|e| e["kind"] == "message");
+    assert!(said["text"].as_str().unwrap_or_default().starts_with("New area painted with"), "{said}");
+    let got = ask(4, "develop.get", json!({}));
+    assert_eq!(got["result"]["expand_fill"]["model"], "classic", "{got}");
+    let models = ask(5, "crop.expandModels", json!({}));
+    assert!(models["result"]["running"].is_null(), "nothing left running: {models}");
 }

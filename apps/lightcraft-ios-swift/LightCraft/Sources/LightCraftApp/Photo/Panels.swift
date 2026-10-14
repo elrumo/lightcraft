@@ -87,7 +87,8 @@ struct PresetsPanel: View {
                 }
             }
         }
-        .task { await load() }
+        // first shown, and whenever the preset list changes (an import, or presets the sync brings)
+        .task(id: model.state.presetsGeneration) { await load() }
         .onChange(of: model.sheet == nil) { _, closed in
             // a preset made in Create Preset
             if closed { Task { await load() } }
@@ -176,7 +177,7 @@ struct VariantPreview: View {
                 }
             }
             .clipped()
-            .task(id: Key(which: which, photo: model.state.active, revision: model.state.catalogRevision)) {
+            .task(id: Key(which: which, photo: model.state.active, revision: model.settledRevision)) {
                 if model.state.interaction == nil, let s = await model.requestVariant(which) { slot = s }
             }
     }
@@ -258,7 +259,7 @@ struct InfoPanel: View {
             if old == .title { save("title", title) }
             if old == .caption { save("caption", caption) }
         }
-        .task(id: Key(photo: model.state.active, revision: model.state.catalogRevision)) { await load() }
+        .task(id: Key(photo: model.state.active, revision: model.settledRevision)) { await load() }
     }
 
     private nonisolated struct Key: Hashable {

@@ -190,6 +190,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = ../LightCraft/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = LightCraft;
+				INFOPLIST_KEY_NSCameraUsageDescription = "LightCraft reads the photos on a camera or memory card you connect, so you can import them.";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "LightCraft syncs your library with your own LightCraft server, which can be on this network.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "LightCraft saves the photos you export to your photo library.";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
@@ -223,6 +224,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = ../LightCraft/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = LightCraft;
+				INFOPLIST_KEY_NSCameraUsageDescription = "LightCraft reads the photos on a camera or memory card you connect, so you can import them.";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "LightCraft syncs your library with your own LightCraft server, which can be on this network.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "LightCraft saves the photos you export to your photo library.";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";

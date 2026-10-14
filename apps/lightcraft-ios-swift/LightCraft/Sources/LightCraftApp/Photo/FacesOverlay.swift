@@ -56,7 +56,7 @@ struct FacesOverlay: View {
             }
         }
         .sheet(item: $naming) { FaceNameSheet(target: $0) }
-        .task(id: Key(photo: photo, revision: model.state.catalogRevision)) { await load() }
+        .task(id: Key(photo: photo, revision: model.settledRevision)) { await load() }
     }
 
     private nonisolated struct Key: Hashable {

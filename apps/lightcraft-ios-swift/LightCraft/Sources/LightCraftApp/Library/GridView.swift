@@ -303,7 +303,7 @@ struct PhotoCell: View {
             // changes (an edit): the engine answers only what changed
             .onAppear { model.thumbAppeared(photo.id) }
             .onDisappear { model.thumbDisappeared(photo.id) }
-            .task(id: model.state.catalogRevision) { model.requestThumb(photo.id, edge: edge) }
+            .task(id: model.settledRevision) { model.requestThumb(photo.id, edge: edge) }
             .onTapGesture { tapped() }
             .onLongPressGesture(minimumDuration: 0.5) { longPressed() }
             // choosing photos: the chosen ones are lifted and carried onto an album (added to it) or

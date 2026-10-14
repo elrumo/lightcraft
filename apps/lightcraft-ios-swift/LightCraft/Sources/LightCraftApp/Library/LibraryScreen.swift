@@ -95,7 +95,7 @@ struct LibraryScreen: View {
                 leaveDescribed()
             }
         }
-        .task(id: model.state.catalogRevision) {
+        .task(id: model.settledRevision) {
             guard let engine = model.engine else { return }
             describes = (try? await engine.execute("vision.model.status"))?["available"].bool ?? false
         }
@@ -245,6 +245,13 @@ struct LibraryScreen: View {
                 Button("Photos…", systemImage: "photo.on.rectangle") { importer.pickingPhotos = true }
                 Button("Files…", systemImage: "folder") { importer.pickingFiles = true }
                 Button("Folder from Files…", systemImage: "folder.badge.plus") { importer.pickingFolder = true }
+                Button("Connected Camera/Card", systemImage: "sdcard") {
+                    if model.cameras.devices.isEmpty {
+                        model.show(String(localized: "No camera or card connected: plug in a camera or a card reader (USB-C or Lightning), then try again"))
+                    } else {
+                        model.sheet = .cameraImport
+                    }
+                }
                 Button("Lightroom Classic Catalog…", systemImage: "square.stack.3d.up") { model.picker = .lightroom }
             }
         } label: {

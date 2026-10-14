@@ -99,7 +99,7 @@ struct KeywordListView: View {
         .sheet(item: $exported) { file in
             ActivityView(urls: [file.url]) { exported = nil }
         }
-        .task(id: model.state.catalogRevision) {
+        .task(id: model.settledRevision) {
             guard let engine = model.engine else { return }
             tree = (try? await engine.execute("keyword.list", [:], as: [KeywordNode].self)) ?? []
         }

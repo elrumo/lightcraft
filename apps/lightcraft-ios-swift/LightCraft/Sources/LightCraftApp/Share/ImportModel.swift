@@ -1,5 +1,6 @@
 #if os(iOS)
 import Foundation
+import ImageIO
 import LightCraftCore
 import Observation
 import PhotosUI
@@ -151,18 +152,35 @@ final class ImportModel {
     }
 }
 
-/// A file the Photos picker handed over, in the picker's own temporary folder.
+/// A file the Photos picker handed over (or another app dropped), in the system's own temporary folder.
 nonisolated struct StagedFile: Transferable {
     let url: URL
 
     static var transferRepresentation: some TransferRepresentation {
-        FileRepresentation(importedContentType: .image) { received in
-            // the picker's copy goes away when this returns: keep our own
-            let dir = try ImportModel.batchDir()
-            let dest = ImportModel.unique(received.file.lastPathComponent, in: dir)
-            try FileManager.default.copyItem(at: received.file, to: dest)
-            return StagedFile(url: dest)
-        }
+        // a raw (ProRAW's DNG) before any image, as the egui host's picker asks
+        FileRepresentation(importedContentType: .rawImage) { try stage($0.file) }
+        FileRepresentation(importedContentType: .image) { try stage($0.file) }
+    }
+
+    /// The system's copy goes away when the import returns: keep our own.
+    private static func stage(_ file: URL) throws -> StagedFile {
+        let dir = try ImportModel.batchDir()
+        let dest = ImportModel.unique(name(of: file), in: dir)
+        try FileManager.default.copyItem(at: file, to: dest)
+        return StagedFile(url: dest)
+    }
+
+    /// `file`'s name, with the extension of the format ImageIO finds in it when the name says another: the
+    /// Photos picker handed an iPhone 17 Pro's ProRAW (a DNG) over as `IMG_8918.jpeg` (iOS 27.2), and the
+    /// library, exports and sync keep the name.
+    static func name(of file: URL) -> String {
+        let name = file.lastPathComponent
+        guard let source = CGImageSourceCreateWithURL(file as CFURL, nil),
+              let id = CGImageSourceGetType(source) as String?,
+              let found = UTType(id), let ext = found.preferredFilenameExtension,
+              UTType(filenameExtension: file.pathExtension)?.conforms(to: found) != true
+        else { return name }
+        return (name as NSString).deletingPathExtension + "." + ext
     }
 }
 #endif

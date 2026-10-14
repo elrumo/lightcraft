@@ -7,10 +7,12 @@
 " · in a burst" = " · en una ráfaga";
 "% of all commits" = "% de todos los commits";
 "%@ Label" = "Etiqueta %1$@";
+"%@ connected" = "%1$@ conectado";
 "%@ curve" = "Curva %@";
 "%@ free of %@" = "%1$@ libres de %2$@";
 "%@ of %@ used" = "%1$@ de %2$@ usados";
 "%@ wheel" = "Rueda %@";
+"%@ · %lld MB download" = "%1$@ · descarga de %2$lld MB";
 "%lld" = "%1$lld";
 "%lld %%" = "%1$lld %%";
 "%lld GB" = "%1$lld GB";
@@ -301,6 +303,7 @@
 "Camera-Specific Defaults" = "Valores predeterminados específicos de la cámara";
 "Cameras and Cards" = "Cámaras y tarjetas";
 "Cameras and cards" = "Cámaras y tarjetas";
+"Can't Read It" = "No se puede leer";
 "Can't sync" = "No se puede sincronizar";
 "Cancel" = "Cancelar";
 "Cancel AI Mask Model Download" = "Cancelar la descarga del modelo de máscaras con IA";
@@ -720,7 +723,7 @@
 "Every face named %@ gets the new name; a name someone already has puts them together." = "Todas las caras llamadas %@ reciben el nombre nuevo; si alguien ya tiene ese nombre, se unen.";
 "Existing previews" = "Vistas previas existentes";
 "Exit" = "Salir";
-"Expand" = "Expandir";
+"Expand" = "Ampliar";
 "Expand All Stacks" = "Expandir todas las pilas";
 "Expand Stack" = "Expandir pila";
 "Expand/Collapse Stack" = "Expandir/contraer pila";
@@ -983,6 +986,7 @@
 "Image on Black" = "Imagen sobre negro";
 "Image on White" = "Imagen sobre blanco";
 "Import" = "Importar";
+"Import %lld Photos" = "Importar %lld fotos";
 "Import Curve Presets…" = "Importar ajustes preestablecidos de curva…";
 "Import Date" = "Fecha de importación";
 "Import Keywords" = "Importar palabras clave";
@@ -999,6 +1003,7 @@
 "Import Profiles & Presets…" = "Importar perfiles y ajustes preestablecidos…";
 "Import as New" = "Importar como nuevas";
 "Import as new" = "Importar como nuevas";
+"Import cancelled" = "Importación cancelada";
 "Import cancelled · %lld added" = "Importación cancelada · %lld añadidas";
 "Import failed" = "Error al importar";
 "Import from Device" = "Importar desde dispositivo";
@@ -1132,6 +1137,7 @@
 "Lens Corrections" = "Correcciones de lente";
 "Let the Server Build Previews" = "Dejar que el servidor genere las vistas previas";
 "Let the crop reach past the photo's edges and paint the new area on this computer" = "Deja que el recorte sobrepase los bordes de la foto y pinta el área nueva en este ordenador";
+"Lets the crop reach past the photo's edges, to paint the new area" = "Deja que el recorte vaya más allá de los bordes de la foto, para pintar la zona nueva";
 "Letter" = "Carta";
 "Level" = "Nivel";
 "Library" = "Biblioteca";
@@ -1159,6 +1165,7 @@
 "LightCraft couldn't open the library at" = "LightCraft no pudo abrir la biblioteca en";
 "LightCraft couldn't start" = "LightCraft no pudo iniciarse";
 "LightCraft does not know this model, so it assumed:" = "LightCraft no conoce este modelo, así que supuso:";
+"LightCraft isn't allowed to read cameras and cards: allow it in Settings ▸ Privacy & Security" = "LightCraft no tiene permiso para leer cámaras y tarjetas: permítelo en Ajustes ▸ Privacidad y seguridad";
 "LightCraft keeps trying." = "LightCraft sigue intentándolo.";
 "LightCraft may not add to your photo library: allow it in Settings ▸ Privacy ▸ Photos." = "LightCraft no tiene permiso para añadir a tu fototeca: actívalo en Ajustes ▸ Privacidad y seguridad ▸ Fotos.";
 "LightCraft on GitHub" = "LightCraft en GitHub";
@@ -1421,6 +1428,7 @@
 "No photo has it; the keywords below it go too." = "Ninguna foto la tiene; las palabras clave que contiene también se eliminan.";
 "No photo selected" = "No hay ninguna foto seleccionada";
 "No photos" = "Sin fotos";
+"No photos could be copied from %@" = "No se pudo copiar ninguna foto de %1$@";
 "No photos found" = "No se encontraron fotos";
 "No photos in that folder" = "No hay fotos en esa carpeta";
 "No photos in this folder" = "No hay fotos en esta carpeta";
@@ -1572,6 +1580,7 @@
 "Photo found" = "Foto encontrada";
 "Photo ▸ Edit in External Editor (⇧⌘E) renders a 16-bit TIFF copy, stacks it with the original and opens it here (an app name on macOS, a program path elsewhere)." = "Foto → Editar en el editor externo (⇧⌘E) renderiza una copia TIFF de 16 bits, la apila con el original y la abre aquí (un nombre de aplicación en macOS, una ruta de programa en otros sistemas).";
 "Photos" = "Fotos";
+"Photos not copied from %@: %lld" = "Fotos no copiadas de %1$@: %2$lld";
 "Photos per Bracket" = "Fotos por horquillado";
 "Photos per bracket (0 = auto)" = "Fotos por horquillado (0 = automático)";
 "Photos seen in Local but never added or changed leave the catalog when their folder hasn't been browsed for this long (checked when the library opens). Files stay on disk; browsing the folder shows them again." = "Las fotos vistas en Local, pero nunca añadidas ni modificadas, salen del catálogo cuando su carpeta no se ha explorado durante este tiempo (se comprueba al abrir la biblioteca). Los archivos permanecen en el disco; al explorar la carpeta vuelven a aparecer.";
@@ -1594,6 +1603,7 @@
 "Place Names Status" = "Estado de los nombres de lugares";
 "Place names download cancelled" = "Descarga de nombres de lugares cancelada";
 "Place names downloaded" = "Nombres de lugares descargados";
+"Plug in a camera or a card reader (USB-C or Lightning), then try again." = "Conecta una cámara o un lector de tarjetas (USB-C o Lightning) y vuelve a intentarlo.";
 "Point Color" = "Color de punto";
 "Point Curve" = "Curva de puntos";
 "Point Curve Presets" = "Ajustes preestablecidos de curva de puntos";
@@ -1697,6 +1707,7 @@
 "Read mode" = "Modo de lectura";
 "Read the SAM License" = "Leer la licencia de SAM";
 "Reading" = "Leyendo";
+"Reading %@… %lld photos so far" = "Leyendo %1$@… %2$lld fotos por ahora";
 "Reading Lightroom catalog" = "Leyendo catálogo de Lightroom";
 "Reading Lightroom catalog…" = "Leyendo catálogo de Lightroom…";
 "Reading a sidecar replaces the photo's rating, labels, metadata and edits with what it says." = "Leer un archivo complementario sustituye la valoración, las etiquetas, los metadatos y las ediciones de la foto por lo que contiene.";
@@ -2128,6 +2139,7 @@
 "Stopped" = "Detenido";
 "Stopped by an error (see the log)" = "Detenido por un error (ver el registro)";
 "Stopping…" = "Deteniendo…";
+"Stops painting the new area" = "Deja de pintar la zona nueva";
 "Storage" = "Almacenamiento";
 "Storage limit" = "Límite de almacenamiento";
 "Store All Originals on This Device" = "Guardar todos los originales en este dispositivo";
@@ -2223,6 +2235,7 @@
 "That isn't JSON: %@" = "Eso no es JSON: %@";
 "That key can't be used as a shortcut" = "Esa tecla no se puede usar como método abreviado";
 "The SAM 3 model is installed: Object and Describe masks are ready." = "El modelo SAM 3 está instalado: las máscaras Objeto y Describir están listas.";
+"The camera is locked: unlock it to read its photos" = "La cámara está bloqueada: desbloquéala para leer sus fotos";
 "The checkerboard shows area with nothing in it yet: Generate fills it." = "El damero muestra el área que aún está vacía: Generar la rellena.";
 "The denoise model is installed and in use: the AI Denoise Amount slider under Detail now works" = "El modelo de reducción de ruido está instalado y en uso: el regulador Cantidad de reducción de ruido con IA, en Detalle, ya funciona";
 "The download didn't work:" = "La descarga no funcionó:";
@@ -2235,6 +2248,7 @@
 "The library is up to date with this folder." = "La biblioteca está al día con esta carpeta.";
 "The model is kept on this computer only. LightCraft never uploads or shares it." = "El modelo se guarda solo en este equipo. LightCraft nunca lo sube ni lo comparte.";
 "The model is kept on this device only. LightCraft never uploads or shares it." = "El modelo se guarda solo en este dispositivo. LightCraft nunca lo sube ni lo comparte.";
+"The new area was painted by %@ on this device." = "El área nueva se pintó en este dispositivo (%1$@).";
 "The number at the end of the original name (IMG_0042 → 0042)" = "El número al final del nombre original (IMG_0042 → 0042)";
 "The original extension is always added; {ext} only puts it inside the name as well." = "La extensión original siempre se añade; {ext} solo la incluye también dentro del nombre.";
 "The original files, unchanged, each with an XMP sidecar holding its edits." = "Los archivos originales, sin cambios, cada uno con un archivo XMP complementario que contiene sus ediciones.";
@@ -2360,6 +2374,7 @@
 "User" = "Usuario";
 "User Presets" = "Ajustes preestablecidos del usuario";
 "Username" = "Nombre de usuario";
+"Uses the %@ model, a %lld MB download (%@ licence). %@." = "Usa el modelo %1$@, una descarga de %2$lld MB (licencia %3$@). %4$@.";
 "Uses the MI-GAN model, a %lld MB download (%@). %@." = "Usa el modelo MI-GAN, una descarga de %lld MB (%@). %@.";
 "Value" = "Valor";
 "Variance" = "Varianza";
@@ -2562,6 +2577,7 @@
 "{date} is the capture time; a photo without one uses the time it was imported." = "{date} es la hora de captura; una foto sin ella usa la hora en que se importó.";
 "© 2026 Your Name" = "© 2026 Nombre y apellidos";
 "© Your Name" = "© Nombre y apellidos";
+"· %lld already in the library" = "· ya en la biblioteca: %1$lld";
 "· ^[%lld photo](inflect: true)" = "· ^[%lld foto](inflect: true)";
 "− harder border · + softer border" = "− borde más duro · + borde más suave";
 "≤  at most" = "≤  como máximo";

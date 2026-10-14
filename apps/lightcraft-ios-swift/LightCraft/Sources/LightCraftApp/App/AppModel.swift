@@ -72,6 +72,7 @@ nonisolated enum Sheet: Identifiable, Hashable {
     case cull([UInt64])
     case lightroom(URL)
     case shareFiles([String])
+    case cameraImport
 
     var id: String {
         switch self {
@@ -109,6 +110,7 @@ nonisolated enum Sheet: Identifiable, Hashable {
         case .cull: "cull"
         case .lightroom: "lightroom"
         case .shareFiles: "shareFiles"
+        case .cameraImport: "cameraImport"
         }
     }
 }
@@ -180,6 +182,8 @@ final class AppModel {
     let albums = AlbumsModel()
     let editor = EditorModel()
     let script = ScriptHost()
+    /// Cameras and card readers plugged in (ImageCaptureCore), for Add Photos ▸ Connected Camera/Card.
+    let cameras = Cameras()
 
     /// The loupe's last render request: drafts during a slider drag go at the same size.
     private(set) var lastView: (photo: UInt64, width: Int, height: Int)?
@@ -214,6 +218,16 @@ final class AppModel {
             await library.reload(engine, count: state.visibleCount)
             await albums.reload(engine)
             superResAvailable = (try? await engine.execute("enhance.model.status"))?["available"].bool == true
+            // a camera or card plugged in: its import (Settings ▸ Import ▸ Cameras and cards), or a word
+            cameras.connected = { [weak self] device in
+                guard let self else { return }
+                if self.prefs.importOnConnect, self.sheet == nil, self.path.isEmpty {
+                    self.sheet = .cameraImport
+                } else {
+                    self.show(String(localized: "\(device.name ?? "") connected"))
+                }
+            }
+            cameras.start()
         } catch {
             startError = error.localizedDescription
         }
@@ -279,6 +293,11 @@ final class AppModel {
 
     private func stateChanged(from old: HostState, to new: HostState) {
         state = new
+        // what isn't drawn live during a drag (menus, the grid under the photo, lists, previews)
+        // catches up when it ends: at every step it would keep the engine from the drafts
+        if new.interaction == nil, settledRevision != new.catalogRevision {
+            settledRevision = new.catalogRevision
+        }
         guard let engine else { return }
         if new.libraryGeneration != old.libraryGeneration {
             images.forgetAll()
@@ -308,9 +327,12 @@ final class AppModel {
             if new.interaction == nil {
                 Task { await editor.reload(self) }
             }
-            albums.scheduleReload(engine)
+            if new.interaction == nil { albums.scheduleReload(engine) }
         }
     }
+
+    /// The catalog's revision, held while a drag (a slider, the crop, a brush) is under way.
+    private(set) var settledRevision: UInt64 = 0
 
     // MARK: pictures
 
@@ -388,7 +410,14 @@ final class AppModel {
         if editor.tool == .edit, editor.visualizeHdr, editor.hdr {
             return ["kind": "hdr"]
         }
-        guard editor.tool == .masking, prefs.maskOverlay, let mask = state.activeMask else { return nil }
+        guard editor.tool == .masking else { return nil }
+        if editor.maskOverlayAll {
+            return [
+                "kind": "allMasks", "view": .string(prefs.maskOverlayMode),
+                "color": .array(prefs.maskOverlayColor.map { .int(Int64($0)) }), "opacity": .double(prefs.maskOverlayOpacity),
+            ]
+        }
+        guard prefs.maskOverlay, let mask = state.activeMask else { return nil }
         return [
             "kind": "mask", "id": .int(Int64(mask)), "view": .string(prefs.maskOverlayMode),
             "color": .array(prefs.maskOverlayColor.map { .int(Int64($0)) }), "opacity": .double(prefs.maskOverlayOpacity),

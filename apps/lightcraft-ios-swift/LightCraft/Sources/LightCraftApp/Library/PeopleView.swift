@@ -85,7 +85,7 @@ struct PeopleView: View {
             }
         }
         .navigationTitle("People")
-        .task(id: model.state.catalogRevision) { await load() }
+        .task(id: model.settledRevision) { await load() }
         .sheet(item: $naming) { FaceNameSheet(target: $0) }
         .alert("Who Is This?", isPresented: Binding(get: { cluster != nil }, set: { if !$0 { cluster = nil } })) {
             TextField("Name", text: $name)
@@ -230,7 +230,7 @@ struct PersonView: View {
         .haptic(.selection, trigger: confirmed.count)
         .navigationTitle(shown)
         .navigationBarTitleDisplayMode(.inline)
-        .task(id: Load(name: shown, revision: model.state.catalogRevision)) {
+        .task(id: Load(name: shown, revision: model.settledRevision)) {
             guard let engine = model.engine else { return }
             info = (try? await engine.execute("faces.person", ["name": .string(shown)])) ?? .null
             let people = (try? await engine.execute("people.named"))?.array ?? []
@@ -287,7 +287,7 @@ struct FaceDisc: View {
                 }
             }
             .clipShape(shape)
-            .task(id: Key(photo: photo, rect: rect, revision: model.state.catalogRevision)) {
+            .task(id: Key(photo: photo, rect: rect, revision: model.settledRevision)) {
                 guard let photo, let engine = model.engine else { return }
                 if rect.isNull {
                     model.wantThumb(photo, edge: 256)
