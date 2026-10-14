@@ -1,0 +1,27 @@
+[package]
+name = "lightcraft-capture"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Cameras, phones and memory cards through Apple's ImageCaptureCore (iOS and macOS), through objc2: which are connected, what is on them (with thumbnails), copying files off them. Allowed `unsafe` for its Objective-C calls; elsewhere every call says it is unavailable."
+
+# Opts out of the workspace lints only so its Objective-C calls can be allowed in one module
+# (each `unsafe` block has a SAFETY comment); see crates/ios-host and CLAUDE.md, Never crash.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+dbg_macro = "warn"
+todo = "warn"
+
+[dependencies]
+log = { workspace = true }
+
+[target.'cfg(any(target_os = "ios", target_os = "macos"))'.dependencies]
+objc2 = "0.6"
+block2 = "0.6"
+dispatch2 = "0.3"
+objc2-foundation = "0.3"
+objc2-image-capture-core = "0.3"
+# (the camera delegate's thumbnail callback names CGImage)
+objc2-core-graphics = { version = "0.3", default-features = false, features = ["std", "CGImage"] }

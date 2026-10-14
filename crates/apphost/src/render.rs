@@ -61,6 +61,10 @@ pub enum Slot {
     Hover,
     /// An import candidate's thumbnail in the import review dialog (by index).
     Import(u32),
+    /// A thumbnail a camera made of one of its files, in the import review (by a hash of the
+    /// camera's and the file's ids: the review's order changes as the camera catalogues). Shown
+    /// as the frontend puts it there; never rendered.
+    Camera(u64),
     /// The second window's view of the active photo.
     Second,
     /// A slider drag's live HDR histogram: a small full-quality render of an HDR edit, beside the
@@ -389,6 +393,7 @@ impl Slot {
             Slot::Variant(k) => format!("variant:{k}"),
             Slot::Hover => "hover".into(),
             Slot::Import(i) => format!("import:{i}"),
+            Slot::Camera(k) => format!("camera:{k}"),
             Slot::Second => "second".into(),
             Slot::HdrHistogram => "hdrHistogram".into(),
         }
@@ -413,6 +418,7 @@ impl Slot {
             "variant" => Slot::Variant(num()?),
             "hover" => Slot::Hover,
             "import" => Slot::Import(n.parse().ok()?),
+            "camera" => Slot::Camera(num()?),
             "second" => Slot::Second,
             "hdrHistogram" => Slot::HdrHistogram,
             _ => return None,
@@ -1184,12 +1190,13 @@ impl<V> Scheduler<V> {
 
     /// Drop the import review thumbnails (a new review, or the dialog closed).
     pub fn forget_imports(&mut self) {
-        self.pool.reprioritize(|s, p| if matches!(s, Slot::Import(_)) { None } else { Some(p) });
-        self.queue.retain(|q| !matches!(q.slot, Slot::Import(_)));
-        self.pending.retain(|s, _| !matches!(s, Slot::Import(_)));
-        self.request_ids.retain(|s, _| !matches!(s, Slot::Import(_)));
-        self.textures.retain(|s, _| !matches!(s, Slot::Import(_)));
-        self.quick_tried.retain(|s, _| !matches!(s, Slot::Import(_)));
+        let review = |s: &Slot| matches!(s, Slot::Import(_) | Slot::Camera(_));
+        self.pool.reprioritize(|s, p| if review(s) { None } else { Some(p) });
+        self.queue.retain(|q| !review(&q.slot));
+        self.pending.retain(|s, _| !review(s));
+        self.request_ids.retain(|s, _| !review(s));
+        self.textures.retain(|s, _| !review(s));
+        self.quick_tried.retain(|s, _| !review(s));
     }
 
     /// Drop thumbnails that aren't in `keep` (bounded memory for huge libraries), and queued

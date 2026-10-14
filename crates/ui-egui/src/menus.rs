@@ -1393,12 +1393,25 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             }
         }
         "file.addFromDevice" => {
-            // a camera / card: review its DCIM folder, copying into the library by default
-            let path = match p.get("path").and_then(Value::as_str) {
-                Some(x) => x.to_string(),
+            // a camera the host reads itself (`camera`: its id from `file.cameras`): the review
+            // lists its files as it catalogues them
+            if let Some(id) = p.get("camera").and_then(Value::as_str) {
+                return Some(crate::camera_import::open(app, id));
+            }
+            // a camera / card mounted as a disk: review its DCIM folder, copying into the library by default
+            let (path, name) = match p.get("path").and_then(Value::as_str) {
+                Some(x) => {
+                    // (its name from the last scan: no disk is touched on this thread)
+                    let name = lightcraft_engine::devices::devices().into_iter().find(|d| d.path == x).map(|d| d.name).unwrap_or_default();
+                    (x.to_string(), name)
+                }
                 None => match lightcraft_engine::devices::devices_now().into_iter().next() {
-                    Some(d) => d.path,
-                    None => return Some(Err("no camera or memory card found".into())),
+                    Some(d) => (d.path, d.name),
+                    // none mounted: the first camera the host reads
+                    None => match crate::camera_import::cameras(app).into_iter().next() {
+                        Some(c) => return Some(crate::camera_import::open(app, &c.id)),
+                        None => return Some(Err("no camera or memory card found".into())),
+                    },
                 },
             };
             let r = crate::import::open(app, vec![path]);
@@ -1407,9 +1420,13 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
                 && let Some(t) = &mut app.scan
             {
                 t.copy = true;
+                t.device = name;
             }
             import_into_album(app, p, r)
         }
+        // the cameras, phones and cards the host reads itself (`file.addFromDevice {camera: id}`);
+        // those mounted as disks are `library.devices`
+        "file.cameras" => Ok(json!(crate::camera_import::cameras(app))),
         "file.importFromPhotos" | "file.importFromFiles" | "file.importFolderFromFiles" => {
             // the host's picker shows over the app; its picks come back as file.addPhotos {staged}
             let source = match id {

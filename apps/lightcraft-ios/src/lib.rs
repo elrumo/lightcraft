@@ -319,6 +319,7 @@ fn services(ctx: egui::Context, inbox: Inbox, tmp: &Path) -> Services {
     let (import_dir, export_dir) = lightcraft_apphost::startup::staging(tmp);
     let repaint = ctx.clone();
     let (documents_dir, documents_ctx) = (import_dir.clone(), ctx.clone());
+    let (camera_dir, camera_ctx) = (import_dir.clone(), ctx.clone());
     let pick: Rc<dyn Fn(PickSource) -> Result<(), String>> = Rc::new(move |source| {
         let (inbox, ctx) = (inbox.clone(), ctx.clone());
         let deliver = Box::new(move |p: Picked| {
@@ -339,6 +340,9 @@ fn services(ctx: egui::Context, inbox: Inbox, tmp: &Path) -> Services {
             Vec::new() // the picks arrive later, through the inbox
         })),
         host_pick: Some(Box::new(move |s| pick(s))),
+        // cameras and card readers plugged into the iPhone or iPad (ImageCaptureCore): their
+        // photos are copied into the staging folder, then moved into the library
+        cameras: lightcraft_ui_egui::camera_import::system_cameras(&camera_ctx, camera_dir),
         share_exports: Some(ShareExports {
             dir: export_dir.to_string_lossy().to_string(),
             share: Box::new(|files: &[String]| {

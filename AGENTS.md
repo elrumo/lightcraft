@@ -39,11 +39,13 @@ of it. Full standard: `../craftrules/standards/never-crash.md`
   fallback (`unwrap_or…`) only where it can't silently corrupt a document. An unfinished feature returns an
   "unsupported" error or is disabled. Sole exception: a provably infallible literal, as `#[allow(clippy::expect_used)]`
   + `.expect("why it can't fail")`.
-- **`unsafe` lives only in `crates/sysmem`, `crates/ios-host` and `apps/lightcraft-ios-swift/src/abi.rs`.** `sysmem`: two libSystem calls,
+- **`unsafe` lives only in `crates/sysmem`, `crates/ios-host`, `crates/capture` and `apps/lightcraft-ios-swift/src/abi.rs`.** `sysmem`: two libSystem calls,
   `malloc_zone_pressure_relief` (returns freed allocator pages to macOS / iOS after raw decodes) and
   `os_proc_available_memory` (the iOS app's memory limit). `ios-host`: the iOS app's Objective-C calls through `objc2`
   (Photos and Files pickers, share sheet, pasteboard, lifecycle notifications, ImageIO decoding, status-bar taps), compiled for iOS only. (The iOS
-  app's C entry point, `lightcraft_ios_main`, is the one `#[unsafe(no_mangle)]` there.) `abi.rs`: the C ABI the SwiftUI iOS
+  app's C entry point, `lightcraft_ios_main`, is the one `#[unsafe(no_mangle)]` there.) `capture`: ImageCaptureCore through
+  `objc2` (cameras, phones and card readers: listing, thumbnails, copying files off them), compiled for iOS and macOS
+  only and used by `ui-egui`'s `camera_import::system_cameras`. `abi.rs`: the C ABI the SwiftUI iOS
   app calls (`lc_*`, `docs/ios-swift.md`): one helper reads a caller's byte slice, handles are registry keys (never
   pointers), outputs are leases freed by token, and every entry runs under `catch_unwind`. Every other production crate root has
   `#![forbid(unsafe_code)]`. A new unsafe need goes in an isolated, well-tested helper crate like them: `// SAFETY:` on

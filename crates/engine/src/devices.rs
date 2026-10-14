@@ -1,17 +1,26 @@
 //! Cameras and memory cards: mounted volumes with a `DCIM` folder (the DCF layout every camera
 //! writes). Listed by `library.devices`; the app offers them under File → Import from Device, and
-//! the import review copies from them into the library.
+//! the import review copies from them into the library. On Linux that includes cameras and phones
+//! that GVfs mounts over PTP or MTP (`$XDG_RUNTIME_DIR/gvfs/gphoto2:host=…`, `mtp:host=…`), whose
+//! `DCIM` is one folder down, in a storage folder.
 //!
 //! Menus are rebuilt every frame (even with their popups closed), so [`devices`] never touches the
 //! disk: it serves the last scan and, when that is older than [`MAX_AGE`], starts one background
 //! rescan (coalesced; no lock is held while it runs). A changed result calls the [`on_change`]
 //! hook, which the UI uses to repaint, so hot-plugged cards still appear. [`devices_now`] scans
 //! synchronously for explicit requests (`library.devices`, Add from Device without a path).
+//!
+//! Cameras that don't mount as a disk (PTP cameras and phones on macOS, every camera and card on
+//! iOS) are read by the host itself (ImageCaptureCore); their files are [`CameraFile`]s, not paths,
+//! until they are copied off. [`LibraryIndex`] tells which of them the library already has without
+//! reading them.
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use serde::Serialize;
+use lightcraft_catalog::{Catalog, PhotoId};
+use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Device {
@@ -44,9 +53,35 @@ fn mount_parents() -> Vec<std::path::PathBuf> {
         }
         out.push("/media".into());
         out.push("/mnt".into());
+        // cameras (PTP) and phones (MTP) that GNOME's GVfs mounts through FUSE
+        if let Some(run) = std::env::var_os("XDG_RUNTIME_DIR") {
+            out.push(std::path::PathBuf::from(run).join("gvfs"));
+        }
     }
     out
 }
+
+/// A GVfs mount of a camera or phone (`gphoto2:host=Canon_Inc._Canon_Digital_Camera`,
+/// `mtp:host=Google_Pixel_7_2A1B…`): its `DCIM` is in a storage folder below the root.
+fn gvfs_device(root: &std::path::Path) -> bool {
+    root.file_name().is_some_and(|n| {
+        let n = n.to_string_lossy();
+        ["gphoto2:", "mtp:"].iter().any(|p| n.starts_with(p)) && n.contains("host=")
+    })
+}
+
+/// A GVfs mount's name as the device's: `Canon Inc. Canon Digital Camera`.
+fn gvfs_name(mount: &str) -> String {
+    let host = mount.split_once("host=").map_or(mount, |(_, h)| h);
+    // (MTP hosts are URL-escaped: `%5Busb%3A001%2C004%5D`; such a name has nothing better)
+    let host = host.split(',').next().unwrap_or(host).replace('_', " ");
+    let name = host.trim();
+    if name.is_empty() || name.contains('%') { "Camera".to_string() } else { name.to_string() }
+}
+
+/// How many folders below a GVfs mount are searched for its `DCIM` (storages: a phone's internal
+/// storage and an SD card, a camera's two card slots).
+const MAX_STORAGES: usize = 8;
 
 type Scanner = dyn Fn() -> Vec<Device> + Send + Sync;
 type Notify = dyn Fn() + Send + Sync;
@@ -180,13 +215,36 @@ pub fn devices_in(parents: &[std::path::PathBuf], extra: Vec<std::path::PathBuf>
     roots.extend(extra);
     let mut out: Vec<Device> = Vec::new();
     for root in roots {
-        let Some(dcim) = dcim_in(&root) else { continue };
         let name = root.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| root.to_string_lossy().to_string());
-        if !out.iter().any(|d| d.root == root.to_string_lossy()) {
-            out.push(Device { name, path: dcim.to_string_lossy().to_string(), root: root.to_string_lossy().to_string() });
+        let found: Vec<(String, std::path::PathBuf)> = if gvfs_device(&root) {
+            let device = gvfs_name(&name);
+            let storages = gvfs_storages(&root);
+            let several = storages.len() > 1;
+            storages.into_iter().map(|(storage, dcim)| (if several { format!("{device} — {storage}") } else { device.clone() }, dcim)).collect()
+        } else {
+            dcim_in(&root).map(|d| (name, d)).into_iter().collect()
+        };
+        for (name, dcim) in found {
+            let path = dcim.to_string_lossy().to_string();
+            if !out.iter().any(|d| d.path == path) {
+                out.push(Device { name, path, root: root.to_string_lossy().to_string() });
+            }
         }
     }
     out
+}
+
+/// The storages of a GVfs camera or phone that have a `DCIM` folder: (storage name, its `DCIM`).
+fn gvfs_storages(root: &std::path::Path) -> Vec<(String, std::path::PathBuf)> {
+    let Ok(rd) = std::fs::read_dir(root) else { return Vec::new() };
+    let mut dirs: Vec<std::path::PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.is_dir()).take(MAX_STORAGES).collect();
+    dirs.sort();
+    dirs.into_iter()
+        .filter_map(|d| {
+            let dcim = dcim_in(&d)?;
+            Some((d.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(), dcim))
+        })
+        .collect()
 }
 
 /// The volume's `DCIM` folder: the usual spellings are checked directly, so a volume's root is
@@ -199,6 +257,108 @@ pub fn dcim_in(root: &std::path::Path) -> Option<std::path::PathBuf> {
         return None;
     }
     std::fs::read_dir(root).ok()?.flatten().map(|e| e.path()).find(|p| p.file_name().is_some_and(|n| n.eq_ignore_ascii_case("DCIM")) && p.is_dir())
+}
+
+/// A file on a camera, phone or card that the host reads itself (iOS and macOS: ImageCaptureCore).
+/// It has no path: it is copied off the device only when it is imported.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct CameraFile {
+    /// The host's handle for it, unique on its device.
+    pub id: String,
+    /// Its name on the device (`IMG_0042.CR3`).
+    pub name: String,
+    /// Bytes.
+    pub size: u64,
+    /// When it was taken, as the library keeps capture times: local time, ISO 8601
+    /// (`2026-10-03T14:22:05`).
+    pub captured: Option<String>,
+    /// `captured` is the date in the file's metadata (EXIF), not the device's date for the file.
+    pub exif_dated: bool,
+    /// A raw file (the device says so, or its extension does).
+    pub raw: bool,
+    /// Pixels, when the device knows (0 otherwise).
+    pub width: u32,
+    pub height: u32,
+}
+
+impl CameraFile {
+    /// The day it was taken (`2026-10-03`), if known.
+    pub fn day(&self) -> Option<&str> {
+        capture_day(self.captured.as_deref())
+    }
+}
+
+/// The `YYYY-MM-DD` of an ISO 8601 capture time.
+pub fn capture_day(captured: Option<&str>) -> Option<&str> {
+    let d = captured?.get(..10)?;
+    let b = d.as_bytes();
+    let digits = |r: std::ops::Range<usize>| b.get(r).is_some_and(|s| s.iter().all(u8::is_ascii_digit));
+    (digits(0..4) && b.get(4) == Some(&b'-') && digits(5..7) && b.get(7) == Some(&b'-') && digits(8..10)).then_some(d)
+}
+
+/// A capture time down to the second, `T` between date and time (`2026-10-03T14:22:05`), for
+/// comparing times written slightly differently (a space instead of `T`, fractions, a zone).
+fn capture_second(captured: Option<&str>) -> Option<String> {
+    let s = captured?.trim();
+    let head = s.get(..19)?;
+    capture_day(Some(head))?;
+    Some(head.replacen(' ', "T", 1))
+}
+
+/// `img_0042.cr3` for `IMG_0042.CR3`, and the name import gives a copy whose name was taken in the
+/// destination folder (`IMG_0042-1.CR3`) for the same original.
+fn name_keys(name: &str) -> Vec<String> {
+    let lower = name.trim().to_lowercase();
+    let mut keys = vec![lower.clone()];
+    let (stem, ext) = match lower.rsplit_once('.') {
+        Some((s, e)) if !s.is_empty() => (s, format!(".{e}")),
+        _ => (lower.as_str(), String::new()),
+    };
+    if let Some((base, n)) = stem.rsplit_once('-')
+        && !base.is_empty()
+        && !n.is_empty()
+        && n.bytes().all(|b| b.is_ascii_digit())
+    {
+        keys.push(format!("{base}{ext}"));
+    }
+    keys
+}
+
+/// The library's photos keyed to spot a camera file it already has without reading the file
+/// (which may be on a camera at USB 2 speed): the same size and the same name (a copy renamed
+/// `IMG_0042-1.CR3` because the name was taken counts as `IMG_0042.CR3`), and the same capture time
+/// to the second when both sides know it (the camera's from the file's EXIF date). Photos in
+/// Recently Deleted don't count: importing the
+/// file again brings them back (the import's `onDeleted`). A miss costs little: the import still
+/// recognises a file whose bytes the library has, and skips it.
+#[derive(Debug, Default)]
+pub struct LibraryIndex {
+    by_key: HashMap<(String, u64), Vec<(PhotoId, Option<String>)>>,
+}
+
+impl LibraryIndex {
+    pub fn new(catalog: &Catalog) -> Self {
+        let mut by_key: HashMap<(String, u64), Vec<(PhotoId, Option<String>)>> = HashMap::new();
+        for p in catalog.photos() {
+            if p.deleted || p.local || p.copy_of.is_some() || p.file_size == 0 {
+                continue;
+            }
+            for key in name_keys(&p.file_name) {
+                by_key.entry((key, p.file_size)).or_default().push((p.id, capture_second(p.captured.as_deref())));
+            }
+        }
+        LibraryIndex { by_key }
+    }
+
+    /// The library photo `file` is, if it has it.
+    pub fn find(&self, file: &CameraFile) -> Option<PhotoId> {
+        // Only a date from the file's metadata is the one the library keeps: without one, import
+        // dates the photo by its copy's file date, which is when it was copied.
+        let when = capture_second(file.captured.as_deref().filter(|_| file.exif_dated));
+        let key = (file.name.trim().to_lowercase(), file.size);
+        self.by_key.get(&key)?.iter().find(|(_, t)| t.is_none() || when.is_none() || *t == when).map(|(id, _)| *id)
+    }
 }
 
 #[cfg(test)]
@@ -223,6 +383,94 @@ mod tests {
             assert!(p.is_dir() && p.file_name().is_some_and(|n| n.eq_ignore_ascii_case("DCIM")), "{x:?}");
         }
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// GVfs mounts of a camera (PTP) and a phone (MTP, two storages): each storage with a DCIM
+    /// is a device, named after the camera, its DCIM one folder down.
+    #[test]
+    fn gvfs_cameras_and_phones_are_devices() {
+        let base = std::env::temp_dir().join(format!("lc-devices-gvfs-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(base.join("gphoto2:host=Canon_Inc._Canon_Digital_Camera/store_00010001/DCIM/100CANON")).unwrap();
+        std::fs::create_dir_all(base.join("mtp:host=Google_Pixel_7_2A1B/Internal shared storage/DCIM/Camera")).unwrap();
+        std::fs::create_dir_all(base.join("mtp:host=Google_Pixel_7_2A1B/SD card/DCIM")).unwrap();
+        std::fs::create_dir_all(base.join("mtp:host=Google_Pixel_7_2A1B/SD card/Music")).unwrap();
+        std::fs::create_dir_all(base.join("smb-share:server=nas,share=photos/DCIM")).unwrap();
+        let d = devices_in(std::slice::from_ref(&base), Vec::new());
+        let names: Vec<&str> = d.iter().map(|x| x.name.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                "Canon Inc. Canon Digital Camera",
+                "Google Pixel 7 2A1B — Internal shared storage",
+                "Google Pixel 7 2A1B — SD card",
+                "smb-share:server=nas,share=photos"
+            ],
+            "{d:?}"
+        );
+        assert!(d[0].path.ends_with("store_00010001/DCIM"), "{:?}", d[0]);
+        assert_eq!(gvfs_name("mtp:host=%5Busb%3A001%2C004%5D"), "Camera");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    fn photo(id: u64, name: &str, size: u64, captured: Option<&str>) -> lightcraft_catalog::Photo {
+        let mut p = lightcraft_catalog::Photo::new(
+            PhotoId(id),
+            lightcraft_catalog::Source::File { path: format!("/lib/{name}") },
+            name,
+            "CR3",
+            6000,
+            4000,
+            "2026-10-03",
+        );
+        p.file_size = size;
+        p.captured = captured.map(str::to_string);
+        p
+    }
+
+    fn file(name: &str, size: u64, captured: Option<&str>) -> CameraFile {
+        CameraFile {
+            id: name.into(),
+            name: name.into(),
+            size,
+            captured: captured.map(str::to_string),
+            exif_dated: captured.is_some(),
+            ..Default::default()
+        }
+    }
+
+    /// Camera files the library has are found by name and size (a copy renamed `-1` counts), the
+    /// capture time breaking ties; photos in Recently Deleted and Local don't count.
+    #[test]
+    fn camera_files_already_in_the_library_are_found() {
+        let mut c = Catalog::new();
+        let mut add = |p: lightcraft_catalog::Photo| {
+            c.apply(lightcraft_catalog::Op::AddPhoto { photo: Box::new(p) }).unwrap();
+        };
+        add(photo(1, "IMG_0001.CR3", 30_000_000, Some("2026-10-03T14:22:05")));
+        add(photo(2, "IMG_0002-1.CR3", 31_000_000, Some("2026-10-03 14:22:07.120")));
+        add(photo(3, "DSC-7.JPG", 4_000_000, None));
+        let mut gone = photo(4, "IMG_0004.CR3", 32_000_000, None);
+        gone.deleted = true;
+        add(gone);
+        let mut local = photo(5, "IMG_0005.CR3", 33_000_000, None);
+        local.local = true;
+        add(local);
+        let ix = LibraryIndex::new(&c);
+        assert_eq!(ix.find(&file("IMG_0001.CR3", 30_000_000, Some("2026-10-03T14:22:05"))), Some(PhotoId(1)));
+        assert_eq!(ix.find(&file("img_0001.cr3", 30_000_000, None)), Some(PhotoId(1)), "case and an unknown time");
+        assert_eq!(ix.find(&file("IMG_0001.CR3", 30_000_001, None)), None, "another size");
+        assert_eq!(ix.find(&file("IMG_0001.CR3", 30_000_000, Some("2026-10-03T14:22:06"))), None, "another second");
+        // a file without an EXIF date: the camera gives its file date, the library the copy's
+        let undated = CameraFile { exif_dated: false, ..file("IMG_0001.CR3", 30_000_000, Some("2026-10-01T08:00:00")) };
+        assert_eq!(ix.find(&undated), Some(PhotoId(1)), "a file date is not compared");
+        assert_eq!(ix.find(&file("IMG_0002.CR3", 31_000_000, Some("2026-10-03T14:22:07"))), Some(PhotoId(2)), "imported as -1");
+        assert_eq!(ix.find(&file("DSC-7.JPG", 4_000_000, Some("2025-01-01T00:00:00"))), Some(PhotoId(3)), "a name with a dash");
+        assert_eq!(ix.find(&file("IMG_0004.CR3", 32_000_000, None)), None, "in Recently Deleted");
+        assert_eq!(ix.find(&file("IMG_0005.CR3", 33_000_000, None)), None, "Local, not in the library");
+        assert_eq!(file("a", 1, Some("2026-08-03T10:00:00")).day(), Some("2026-08-03"));
+        assert_eq!(file("a", 1, Some("garbage")).day(), None);
+        assert_eq!(file("a", 1, Some("2026-ä")).day(), None, "not cut inside a character");
     }
 
     fn card(name: &str) -> Device {

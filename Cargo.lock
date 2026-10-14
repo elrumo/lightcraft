@@ -3357,6 +3357,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "lightcraft-capture"
+version = "0.7.1"
+dependencies = [
+ "block2 0.6.2",
+ "dispatch2",
+ "log",
+ "objc2 0.6.4",
+ "objc2-core-graphics",
+ "objc2-foundation 0.3.2",
+ "objc2-image-capture-core",
+]
+
+[[package]]
 name = "lightcraft-catalog"
 version = "0.7.1"
 dependencies = [
@@ -3855,6 +3868,7 @@ dependencies = [
  "egui",
  "egui_kittest",
  "lightcraft-apphost",
+ "lightcraft-capture",
  "lightcraft-catalog",
  "lightcraft-codecs",
  "lightcraft-color",
@@ -4651,6 +4665,20 @@ dependencies = [
  "libc",
  "objc2 0.6.4",
  "objc2-core-foundation",
+]
+
+[[package]]
+name = "objc2-image-capture-core"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6b153f2757b48c47daa739a4c8f27ec2912ddbfe5cb6fd28738ec5d6e1a0e83a"
+dependencies = [
+ "block2 0.6.2",
+ "libc",
+ "objc2 0.6.4",
+ "objc2-core-foundation",
+ "objc2-core-graphics",
+ "objc2-foundation 0.3.2",
 ]
 
 [[package]]
