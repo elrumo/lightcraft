@@ -22,17 +22,20 @@
 "%lld faces learned." = "已學習 %lld 張人臉。";
 "%lld failed: %@" = "%lld 個失敗：%@";
 "%lld found · %lld selected" = "找到 %1$lld 張 · 已選取 %2$lld 張";
+"%lld keywords added, %lld updated" = "已新增 %lld 個關鍵字，已更新 %lld 個";
 "%lld not readable" = "%lld 個無法讀取";
 "%lld of %lld photos" = "%1$lld／%2$lld 張照片";
 "%lld of 4 guides — drag along lines that should be vertical or horizontal." = "已繪製 %1$lld／4 條參考線 — 沿應為垂直或水平的線條拖曳。";
 "%lld photos" = "%1$lld 張照片";
 "%lld photos couldn't be read" = "%lld 張照片無法讀取";
+"%lld photos on %lld pages" = "%lld 張照片，共 %lld 頁";
 "%lld photos on this device" = "此裝置上有 %1$lld 張照片";
 "%lld photos · synced with %@" = "%1$lld 張照片 · 已與 %2$@ 同步";
 "%lld photos, not saved" = "%1$lld 張照片（不會儲存）";
 "%lld points" = "%lld 點";
 "%lld presets to add" = "要新增 %lld 個預設集";
 "%lld profiles to add" = "要新增 %lld 個描述檔";
+"%lld stacks of %lld photos" = "%lld 個堆疊（共 %lld 張照片）";
 "%lld stars" = "%lld 顆星";
 "%lld were here already" = "%lld 個已存在";
 "& Containing" = "及上層";
@@ -60,6 +63,8 @@
 "A keyword set needs a name" = "關鍵字集需要名稱";
 "A one-time download of about" = "一次性下載，大小約";
 "A photo library and raw developer in pure Rust, open source (MIT OR Apache-2.0)." = "以純 Rust 打造的照片庫與 RAW 顯影工具，開放原始碼（MIT OR Apache-2.0）。";
+"A tap puts the keyword on the chosen photos, or takes it off when they all have it." = "輕點即可將關鍵字加入所選照片；若所選照片都已有該關鍵字，則將其移除。";
+"A tap puts the preset on the chosen photos: its text replaces theirs, its keywords are added." = "輕點即可將預設集套用到所選照片：其文字會取代原有文字，其關鍵字會被加入。";
 "AI Denoise" = "AI Denoise";
 "AI Denoise Model" = "AI Denoise Model";
 "AI Denoise is enabled on the requesting photo" = "AI Denoise is enabled on the requesting photo";
@@ -125,6 +130,7 @@
 "Adding to Apple Photos" = "正在加入 Apple 照片";
 "Adding to Apple Photos…" = "正在加入 Apple 照片…";
 "Adjust" = "調整";
+"Adjust to a Time" = "調整為指定時間";
 "Advanced search…" = "進階搜尋…";
 "After" = "編輯後";
 "After 30 days" = "30 天後";
@@ -154,6 +160,7 @@
 "Alt Text" = "替代文字";
 "Always" = "一律";
 "Amount" = "強度";
+"An empty name gives the colour its own name back." = "名稱留空會還原該顏色的預設名稱。";
 "Analyzing the photo for AI masks…" = "正在分析照片以建立 AI 遮色片…";
 "Analyzing the photo…" = "正在分析照片…";
 "Angle" = "角度";
@@ -389,6 +396,7 @@
 "Color Grading" = "色彩分級";
 "Color Label" = "色彩標籤";
 "Color Label Names" = "色彩標籤名稱";
+"Color Label Names…" = "色彩標籤名稱…";
 "Color Label Sets" = "色彩標籤集";
 "Color Mixer" = "混色器";
 "Color Noise Reduction" = "色彩雜訊抑制";
@@ -401,6 +409,7 @@
 "Color space" = "色彩空間";
 "Color space: sRGB (AVIF)" = "色彩空間：sRGB（AVIF）";
 "Colors" = "色彩";
+"Columns" = "欄數";
 "Combine files…" = "合併檔案…";
 "Combine with the Server's Library" = "與伺服器的照片庫合併";
 "Command Journal" = "指令記錄";
@@ -419,6 +428,8 @@
 "Confirm before deleting" = "刪除前確認";
 "Confirm before moving photos to Recently Deleted" = "將照片移至「最近刪除」前確認";
 "Constrain Crop" = "限制裁切範圍";
+"Contact Sheet" = "接觸印樣";
+"Contact Sheet…" = "接觸印樣…";
 "Content-Aware" = "內容感知";
 "Continue" = "繼續";
 "Continue Without Saving" = "繼續使用但不儲存";
@@ -513,6 +524,7 @@
 "Date" = "日期";
 "Date Added" = "加入日期";
 "Date Groups" = "日期群組";
+"Date and Time" = "日期與時間";
 "Day" = "日";
 "Daylight" = "日光";
 "Days" = "天";
@@ -522,6 +534,7 @@
 "Decrease Rating" = "降低評分";
 "Deep Sky" = "深邃天空";
 "Defringe" = "去除邊緣色差";
+"Deghost" = "去除鬼影";
 "Deghost Amount" = "去除鬼影強度";
 "Dehaze" = "去朦朧";
 "Delete" = "刪除";
@@ -552,6 +565,7 @@
 "Delete Red Eye" = "刪除紅眼校正";
 "Delete Red Eye Correction" = "刪除紅眼校正";
 "Delete Spot" = "刪除斑點";
+"Delete Unused Keywords" = "刪除未使用的關鍵字";
 "Delete Version" = "刪除版本";
 "Delete all" = "全部刪除";
 "Delete all spots" = "刪除所有斑點";
@@ -682,6 +696,8 @@
 "Enter a date as YYYY-MM-DD HH:MM:SS" = "請以 YYYY-MM-DD HH:MM:SS 格式輸入日期";
 "Erase" = "擦除";
 "Every EXIF, GPS and XMP field in the file" = "檔案中的所有 EXIF、GPS 與 XMP 欄位";
+"Every chosen photo gets this time." = "所選的每張照片都會設為此時間。";
+"Every chosen photo moves by this many hours." = "所選的每張照片都會位移這麼多小時。";
 "Every face named %@ gets the new name; a name someone already has puts them together." = "所有名為 %@ 的人臉都會改為新名稱；若該名稱已有人使用，兩者會合併。";
 "Existing previews" = "現有預覽";
 "Exit" = "結束";
@@ -695,6 +711,7 @@
 "Export Album…" = "匯出相簿…";
 "Export As…" = "匯出為…";
 "Export Containing Keywords" = "匯出上層關鍵字";
+"Export Curve Presets…" = "匯出曲線預設集…";
 "Export Group…" = "匯出群組…";
 "Export Keywords" = "匯出關鍵字";
 "Export Keywords…" = "匯出關鍵字…";
@@ -742,6 +759,7 @@
 "File Extension" = "副檔名";
 "File Format" = "檔案格式";
 "File Name" = "檔案名稱";
+"File Names" = "檔案名稱";
 "File Path" = "檔案路徑";
 "File Size" = "檔案大小";
 "File Type" = "檔案類型";
@@ -941,6 +959,7 @@
 "Image on Black" = "黑底影像";
 "Image on White" = "白底影像";
 "Import" = "匯入";
+"Import Curve Presets…" = "匯入曲線預設集…";
 "Import Date" = "匯入日期";
 "Import Folder from Files…" = "從「檔案」匯入資料夾…";
 "Import Keywords" = "匯入關鍵字";
@@ -966,6 +985,7 @@
 "Import new photos" = "匯入新照片";
 "Import photos with File → Import Photos… (Cmd+Shift+I), or drop them here" = "使用「檔案 → 匯入照片…」（Cmd+Shift+I），或將照片拖放至此";
 "Imported" = "已匯入";
+"Imported %lld curve presets" = "已匯入 %lld 個曲線預設集";
 "Imported %lld photos" = "已匯入 %lld 張照片";
 "Imported %lld presets" = "已匯入 %lld 個預設集";
 "Imported %lld profiles (Profile browser ▸ their groups)" = "已匯入 %lld 個描述檔（描述檔瀏覽器 ▸ 其群組）";
@@ -1032,6 +1052,7 @@
 "It keeps going in the background; search the ones that are ready now." = "它會在背景繼續處理；已準備好的照片現在就可以搜尋。";
 "It runs on this computer, only when you ask, and you can forget everything it found at any time." = "僅在你需要時於本機執行，而且你可以隨時清除它找到的全部內容。";
 "It tests this album, so testing it back would loop" = "它引用了此相簿，反過來引用會形成循環";
+"Its copyright, creator and place." = "此照片的著作權、創作者和位置。";
 "Its denoised picture is not made yet, and pictures are not made on their own (Settings, AI Denoise)." = "Its denoised picture is not made yet, and pictures are not made on their own (Settings, AI Denoise).";
 "JPEG (Large)" = "JPEG（大尺寸）";
 "JPEG (Small)" = "JPEG（小尺寸）";
@@ -1044,6 +1065,7 @@
 "Keyboard Shortcuts" = "鍵盤快速鍵";
 "Keyboard shortcuts" = "鍵盤快速鍵";
 "Keyword" = "關鍵字";
+"Keyword %lld" = "關鍵字 %lld";
 "Keyword Count" = "關鍵字數量";
 "Keyword List" = "關鍵字清單";
 "Keyword Lists" = "關鍵字清單";
@@ -1051,6 +1073,7 @@
 "Keyword Painter" = "關鍵字筆刷";
 "Keyword Set" = "關鍵字集";
 "Keyword Sets" = "關鍵字集";
+"Keyword Sets…" = "關鍵字集…";
 "Keyword Suggestions" = "關鍵字建議";
 "Keyword Tag Options" = "關鍵字標記選項";
 "Keyword to paint" = "要塗上的關鍵字";
@@ -1059,9 +1082,11 @@
 "Keywords (K)" = "關鍵字（K）";
 "Keywords (comma separated)" = "關鍵字（以逗號分隔）";
 "Keywords (⌥1–⌥9)" = "關鍵字 (⌥1–⌥9)";
+"Keywords in This Set" = "此集中的關鍵字";
 "Keywords you add appear here; ⌥1–⌥9 apply them." = "新增的關鍵字會顯示於此；⌥1–⌥9 可套用。";
 "Label" = "標籤";
 "Label Set" = "標籤集";
+"Label Sets" = "標籤集";
 "Landscape" = "風景";
 "Landscape (wide)" = "橫向";
 "Landscape 1.91 × 1" = "橫向 1.91 × 1";
@@ -1164,6 +1189,7 @@
 "Magenta Saturation" = "洋紅色飽和度";
 "Make Available Offline" = "設為可離線使用";
 "Make Candidate the Select" = "將候選照片設為選定照片";
+"Make PDF" = "製作 PDF";
 "Make it now" = "Make it now";
 "Make the denoised picture of the photos I am looking at" = "Make the denoised picture of the photos I am looking at";
 "Making the link: it's copied when it's ready" = "正在建立連結：完成後會自動複製";
@@ -1181,6 +1207,7 @@
 "Matte Paper" = "霧面紙";
 "Matte Soft" = "柔和霧面";
 "Med" = "中";
+"Medium" = "中";
 "Medium (2048 px)" = "中（2048 px）";
 "Medium Contrast" = "中等對比";
 "Megapixels" = "百萬像素";
@@ -1190,8 +1217,10 @@
 "Memory for caches" = "快取記憶體";
 "Menu" = "選單";
 "Merge" = "合併";
+"Merge Into…" = "合併至…";
 "Merge Keywords" = "合併關鍵字";
 "Merge into…" = "合併至…";
+"Merge “%@” Into" = "將「%@」合併到";
 "Merged" = "已合併";
 "Merged PRs" = "已合併的 PR";
 "Merging" = "正在合併";
@@ -1200,6 +1229,7 @@
 "Metadata" = "中繼資料";
 "Metadata Preset" = "中繼資料預設集";
 "Metadata Presets" = "中繼資料預設集";
+"Metadata Presets…" = "中繼資料預設集…";
 "Metadata preset" = "中繼資料預設集";
 "Metadata read" = "已讀取中繼資料";
 "Midnight" = "午夜";
@@ -1242,6 +1272,7 @@
 "Move Preset to New Group" = "將預設集移至新群組";
 "Move Selected Photos Here" = "將所選照片移至此處";
 "Move Sidebar Section" = "移動側邊欄區段";
+"Move To…" = "移至…";
 "Move Up" = "上移";
 "Move Up in Stack" = "在堆疊中上移";
 "Move in Stack" = "在堆疊中移動";
@@ -1254,6 +1285,7 @@
 "Move to Folder…" = "移至資料夾…";
 "Move to Group" = "移至群組";
 "Move to group" = "移至群組";
+"Move “%@” To" = "將「%@」移到";
 "Move: the files are moved to the folder below; each original (and its XMP sidecar) is removed from the source only after its copy is verified. Duplicates and files that fail stay where they are." = "移動：檔案會移至下方資料夾；每份原始檔案及 XMP 附屬檔案只會在複本通過驗證後才從來源移除。重複及失敗的檔案會留在原處。";
 "Moves every photo imported from this disk to Recently Deleted; no file is touched" = "將從此磁碟匯入的所有照片移至「最近刪除」；不會更動任何檔案";
 "Moves the files and their XMP sidecars into this folder; never overwrites" = "將檔案及其 XMP 附屬檔案移至此資料夾；絕不覆寫";
@@ -1287,9 +1319,11 @@
 "New Folder on Disk…" = "在磁碟上新增資料夾…";
 "New Folder…" = "新增資料夾…";
 "New Group…" = "新增群組…";
+"New Keyword Set" = "新增關鍵字集";
 "New Library" = "新增圖庫";
 "New Library: Choose Where to Put It" = "新增圖庫：選擇存放位置";
 "New Library…" = "新增圖庫…";
+"New Set…" = "新增集…";
 "New Smart Album" = "新增智慧型相簿";
 "New Smart Album from Filter…" = "依篩選條件新增智慧型相簿…";
 "New Smart Album…" = "新增智慧型相簿…";
@@ -1343,6 +1377,7 @@
 "No matching commands" = "沒有符合的命令";
 "No matching photos" = "沒有符合的照片";
 "No metadata found" = "找不到中繼資料";
+"No metadata presets yet" = "尚無中繼資料預設集";
 "No model credits were built into this copy." = "此版本未內建模型致謝資訊。";
 "No named people in these photos" = "這些照片中沒有已命名的人物";
 "No named people yet" = "尚無已命名的人物";
@@ -1507,6 +1542,7 @@
 "Photo Merge" = "照片合併";
 "Photo ▸ Edit in External Editor (⇧⌘E) renders a 16-bit TIFF copy, stacks it with the original and opens it here (an app name on macOS, a program path elsewhere)." = "「照片 → 在外部編輯器中編輯」（⇧⌘E）會算繪 16 位元 TIFF 副本，與原始照片堆疊後在此開啟（macOS 填應用程式名稱，其他平台填程式路徑）。";
 "Photos" = "照片";
+"Photos per Bracket" = "每組包圍曝光的照片數";
 "Photos per bracket (0 = auto)" = "每組包圍曝光的照片數（0 = 自動）";
 "Photos seen in Local but never added or changed leave the catalog when their folder hasn't been browsed for this long (checked when the library opens). Files stay on disk; browsing the folder shows them again." = "曾在本機瀏覽、但未加入或變更的照片，在其資料夾超過此期間未瀏覽時會移出目錄（開啟照片庫時檢驗）。檔案仍保留在磁碟上，再次瀏覽資料夾即可重新顯示。";
 "Photos stay in All Photos. Deleting a folder also deletes its albums." = "照片會保留在「所有照片」中。刪除資料夾也會刪除其中的相簿。";
@@ -1782,6 +1818,7 @@
 "Rotate Right" = "向右旋轉";
 "Roughness" = "粗糙度";
 "Roundness" = "圓度";
+"Rows" = "列數";
 "Rule" = "規則";
 "Rules" = "規則";
 "Rules in this group" = "此群組中的規則";
@@ -1800,14 +1837,19 @@
 "Save Color Label Set" = "儲存色彩標籤集";
 "Save Current Filter as Preset…" = "將目前篩選條件儲存為預設集…";
 "Save Current Keywords as Set…" = "將目前關鍵字儲存為關鍵字集…";
+"Save Curve Preset" = "儲存曲線預設集";
 "Save Export Preset" = "儲存匯出預設集";
 "Save Filter Preset" = "儲存篩選預設集";
 "Save Keyword Set" = "儲存關鍵字集";
+"Save Label Set" = "儲存標籤集";
 "Save Metadata Preset" = "儲存中繼資料預設集";
 "Save Metadata Preset…" = "儲存中繼資料預設集…";
 "Save Metadata to File" = "將中繼資料儲存至檔案";
 "Save Point Curve Preset" = "儲存點曲線預設集";
+"Save Point Curve as Preset…" = "將點曲線儲存為預設集…";
 "Save Point Curve…" = "儲存點曲線…";
+"Save Set" = "儲存集";
+"Save This Photo's as a Preset…" = "將此照片的中繼資料儲存為預設集…";
 "Save as Preset" = "儲存為預設集";
 "Save as Preset…" = "儲存為預設集…";
 "Save as Set…" = "儲存為標籤集…";
@@ -1881,10 +1923,12 @@
 "Set Color Label" = "設定色彩標籤";
 "Set Crop" = "設定裁切";
 "Set Develop Values" = "設定顯像參數";
+"Set Each Photo" = "逐張設定";
 "Set Flag" = "設定旗標";
 "Set Image Zoom and Pan" = "設定影像縮放與平移";
 "Set Keyboard Shortcut" = "設定鍵盤快速鍵";
 "Set Mask Adjustments" = "設定遮色片調整";
+"Set Name" = "關鍵字集名稱";
 "Set Point Curve" = "設定點曲線";
 "Set Profile" = "設定描述檔";
 "Set Rating" = "設定評分";
@@ -1901,6 +1945,7 @@
 "Set the mix from the photo's colours" = "依照片色彩設定混色";
 "Set up AI Denoise…" = "Set up AI Denoise…";
 "Set up sync to see it on your other devices." = "設定同步後，即可在你的其他裝置上查看。";
+"Sets" = "集";
 "Settings" = "設定";
 "Settings file problem" = "設定檔有問題";
 "Settings new raw photos start from. Changing them doesn't touch photos already in the library." = "新 RAW 照片使用的初始設定。變更不會影響照片庫中已有的照片。";
@@ -1924,6 +1969,7 @@
 "Sharpness" = "銳利度";
 "Shift" = "位移量";
 "Shift by" = "位移";
+"Shift by Time Zone" = "依時區位移";
 "Short Edge" = "短邊";
 "Show" = "顯示";
 "Show All" = "全部顯示";
@@ -2038,6 +2084,7 @@
 "Standard" = "標準";
 "Star rating (0–5)" = "星級評分（0–5）";
 "Stars" = "星等";
+"Start Number" = "起始編號";
 "Start at" = "起始值";
 "Start number" = "起始編號";
 "Starting" = "正在開始";
@@ -2164,6 +2211,7 @@
 "The original files, unchanged, each with an XMP sidecar holding its edits." = "保留未變更的原始檔案，每個檔案附有記錄編輯設定的 XMP 附屬檔案。";
 "The photo has these settings" = "此照片具有這些設定";
 "The photo is enlarged to twice its width and height with an AI model, with your edits applied, and added next to the original (a 16-bit sRGB TIFF), stacked with it. The original isn't changed. This takes a while on large photos." = "使用 AI 模型將照片的寬度與高度放大為兩倍，套用您的編輯，並將結果（16 位元 sRGB TIFF）新增到原照片旁，與其堆疊。原照片不會被變更。較大的照片需要一些時間。";
+"The photo shown gets this time; the others move by as much, keeping their spacing." = "目前顯示的照片會設為此時間；其他照片位移相同幅度，保持原有間隔。";
 "The photos are copied into the library; the originals in Photos and Files are left as they are." = "照片會複製到照片庫；「照片」與「檔案」中的原始檔案維持原狀。";
 "The photos are copied into the library; the originals in Photos or Files are left as they are." = "照片會拷貝到圖庫；「照片」或「檔案」中的原始照片保持不變。";
 "The processor does the work." = "The processor does the work.";
@@ -2208,6 +2256,7 @@
 "Thursday" = "星期四";
 "Tick the box to accept the model's terms first" = "Tick the box to accept the model's terms first";
 "Tile server" = "圖磚伺服器";
+"Time Between Stacks" = "堆疊間隔時間";
 "Time zone" = "時區";
 "Tint" = "色調";
 "Title" = "標題";
@@ -2380,6 +2429,7 @@
 "a removed photo" = "一張已移除的照片";
 "all" = "全部";
 "and" = "且";
+"and %lld more" = "另有 %lld 項";
 "any" = "任一";
 "are empty" = "為空";
 "aren't empty" = "不為空";

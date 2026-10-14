@@ -22,17 +22,20 @@
 "%lld faces learned." = "%lld件の顔を学習しました。";
 "%lld failed: %@" = "%lld件が失敗しました：%@";
 "%lld found · %lld selected" = "%1$lld枚検出・%2$lld枚選択";
+"%lld keywords added, %lld updated" = "キーワードを%lld件追加、%lld件更新";
 "%lld not readable" = "%lld件は読み込めません";
 "%lld of %lld photos" = "%2$lld枚中%1$lld枚";
 "%lld of 4 guides — drag along lines that should be vertical or horizontal." = "ガイド4本中%1$lld本：垂直または水平にする線に沿ってドラッグ";
 "%lld photos" = "%1$lld枚";
 "%lld photos couldn't be read" = "%lld枚の写真を読み込めませんでした";
+"%lld photos on %lld pages" = "%lld枚の写真（%lldページ）";
 "%lld photos on this device" = "このデバイスに%1$lld枚";
 "%lld photos · synced with %@" = "%1$lld枚・%2$@と同期";
 "%lld photos, not saved" = "%1$lld枚（保存されません）";
 "%lld points" = "%lldポイント";
 "%lld presets to add" = "追加するプリセット：%lld件";
 "%lld profiles to add" = "追加するプロファイル：%lld件";
+"%lld stacks of %lld photos" = "%lld個のスタック（%lld枚の写真）";
 "%lld stars" = "星%lldつ";
 "%lld were here already" = "%lld件は追加済みでした";
 "& Containing" = "と親キーワード";
@@ -60,6 +63,8 @@
 "A keyword set needs a name" = "キーワードセットには名前が必要です";
 "A one-time download of about" = "1回限りのダウンロード：約";
 "A photo library and raw developer in pure Rust, open source (MIT OR Apache-2.0)." = "純粋なRustで書かれた写真ライブラリ兼RAW現像アプリ。オープンソース（MIT OR Apache-2.0）。";
+"A tap puts the keyword on the chosen photos, or takes it off when they all have it." = "タップすると、選択した写真にキーワードを付けます。すべての写真に付いている場合は外します。";
+"A tap puts the preset on the chosen photos: its text replaces theirs, its keywords are added." = "タップすると、選択した写真にプリセットを適用します。テキストは置き換えられ、キーワードは追加されます。";
 "AI Denoise" = "AI Denoise";
 "AI Denoise Model" = "AI Denoise Model";
 "AI Denoise is enabled on the requesting photo" = "AI Denoise is enabled on the requesting photo";
@@ -125,6 +130,7 @@
 "Adding to Apple Photos" = "Appleの写真に追加中";
 "Adding to Apple Photos…" = "Appleの写真に追加中…";
 "Adjust" = "調整";
+"Adjust to a Time" = "指定の日時に合わせる";
 "Advanced search…" = "高度な検索…";
 "After" = "編集後";
 "After 30 days" = "30日後";
@@ -154,6 +160,7 @@
 "Alt Text" = "代替テキスト";
 "Always" = "常に";
 "Amount" = "適用量";
+"An empty name gives the colour its own name back." = "名前を空にすると、その色の元の名前に戻ります。";
 "Analyzing the photo for AI masks…" = "AIマスク用に写真を解析中…";
 "Analyzing the photo…" = "写真を解析中…";
 "Angle" = "角度";
@@ -389,6 +396,7 @@
 "Color Grading" = "カラーグレーディング";
 "Color Label" = "カラーラベル";
 "Color Label Names" = "カラーラベル名";
+"Color Label Names…" = "カラーラベル名…";
 "Color Label Sets" = "カラーラベルセット";
 "Color Mixer" = "カラーミキサー";
 "Color Noise Reduction" = "カラーノイズ軽減";
@@ -401,6 +409,7 @@
 "Color space" = "色空間";
 "Color space: sRGB (AVIF)" = "色空間：sRGB（AVIF）";
 "Colors" = "カラー";
+"Columns" = "列数";
 "Combine files…" = "ファイルを結合…";
 "Combine with the Server's Library" = "サーバーのライブラリと統合";
 "Command Journal" = "コマンド記録";
@@ -419,6 +428,8 @@
 "Confirm before deleting" = "削除前に確認";
 "Confirm before moving photos to Recently Deleted" = "「最近削除した写真」に移動する前に確認";
 "Constrain Crop" = "切り抜きを制限";
+"Contact Sheet" = "コンタクトシート";
+"Contact Sheet…" = "コンタクトシート…";
 "Content-Aware" = "コンテンツに応じる";
 "Continue" = "続行";
 "Continue Without Saving" = "保存せずに続行";
@@ -513,6 +524,7 @@
 "Date" = "日付";
 "Date Added" = "追加日";
 "Date Groups" = "日付グループ";
+"Date and Time" = "日付と時刻";
 "Day" = "日";
 "Daylight" = "昼光";
 "Days" = "日";
@@ -522,6 +534,7 @@
 "Decrease Rating" = "評価を下げる";
 "Deep Sky" = "ディープスカイ";
 "Defringe" = "フリンジ軽減";
+"Deghost" = "ゴースト除去";
 "Deghost Amount" = "ゴースト除去量";
 "Dehaze" = "かすみの除去";
 "Delete" = "削除";
@@ -552,6 +565,7 @@
 "Delete Red Eye" = "赤目補正を削除";
 "Delete Red Eye Correction" = "赤目補正を削除";
 "Delete Spot" = "スポットを削除";
+"Delete Unused Keywords" = "使用されていないキーワードを削除";
 "Delete Version" = "バージョンを削除";
 "Delete all" = "すべて削除";
 "Delete all spots" = "すべてのスポットを削除";
@@ -682,6 +696,8 @@
 "Enter a date as YYYY-MM-DD HH:MM:SS" = "日付を YYYY-MM-DD HH:MM:SS の形式で入力してください";
 "Erase" = "消去";
 "Every EXIF, GPS and XMP field in the file" = "ファイル内のすべてのEXIF・GPS・XMP情報";
+"Every chosen photo gets this time." = "選択したすべての写真にこの時刻を設定します。";
+"Every chosen photo moves by this many hours." = "選択したすべての写真をこの時間分ずらします。";
 "Every face named %@ gets the new name; a name someone already has puts them together." = "「%@」と名付けたすべての顔に新しい名前が付きます。すでに使われている名前を付けると、同じ人物としてまとめられます。";
 "Existing previews" = "既存のプレビュー";
 "Exit" = "終了";
@@ -695,6 +711,7 @@
 "Export Album…" = "アルバムを書き出す…";
 "Export As…" = "形式を指定して書き出し…";
 "Export Containing Keywords" = "親キーワードを書き出す";
+"Export Curve Presets…" = "カーブのプリセットを書き出す…";
 "Export Group…" = "グループを書き出す…";
 "Export Keywords" = "キーワードを書き出し";
 "Export Keywords…" = "キーワードを書き出し…";
@@ -742,6 +759,7 @@
 "File Extension" = "拡張子";
 "File Format" = "ファイル形式";
 "File Name" = "ファイル名";
+"File Names" = "ファイル名";
 "File Path" = "ファイルの場所";
 "File Size" = "ファイルサイズ";
 "File Type" = "ファイルの種類";
@@ -941,6 +959,7 @@
 "Image on Black" = "黒背景に画像";
 "Image on White" = "白背景に画像";
 "Import" = "読み込み";
+"Import Curve Presets…" = "カーブのプリセットを読み込む…";
 "Import Date" = "読み込み日時";
 "Import Folder from Files…" = "「ファイル」のフォルダを読み込む…";
 "Import Keywords" = "キーワードを読み込み";
@@ -966,6 +985,7 @@
 "Import new photos" = "新しい写真を読み込む";
 "Import photos with File → Import Photos… (Cmd+Shift+I), or drop them here" = "「ファイル → 写真を読み込む…」（⌘⇧I）から読み込むか、ここに写真をドロップしてください";
 "Imported" = "読み込み済み";
+"Imported %lld curve presets" = "カーブのプリセットを%lld件読み込みました";
 "Imported %lld photos" = "%lld枚の写真を読み込みました";
 "Imported %lld presets" = "%lld件のプリセットを読み込みました";
 "Imported %lld profiles (Profile browser ▸ their groups)" = "%lld件のプロファイルを読み込みました（プロファイルブラウザ ▸ 各グループ）";
@@ -1032,6 +1052,7 @@
 "It keeps going in the background; search the ones that are ready now." = "処理はバックグラウンドで続きます。準備ができた写真はすぐに検索できます。";
 "It runs on this computer, only when you ask, and you can forget everything it found at any time." = "このコンピューター上で、ご指示があったときだけ実行します。見つかった内容はいつでもすべて消去できます。";
 "It tests this album, so testing it back would loop" = "このアルバムを条件にしているため、逆に指定すると循環します";
+"Its copyright, creator and place." = "この写真の著作権、作成者、場所。";
 "Its denoised picture is not made yet, and pictures are not made on their own (Settings, AI Denoise)." = "Its denoised picture is not made yet, and pictures are not made on their own (Settings, AI Denoise).";
 "JPEG (Large)" = "JPEG（大）";
 "JPEG (Small)" = "JPEG（小）";
@@ -1044,6 +1065,7 @@
 "Keyboard Shortcuts" = "キーボードショートカット";
 "Keyboard shortcuts" = "キーボードショートカット";
 "Keyword" = "キーワード";
+"Keyword %lld" = "キーワード %lld";
 "Keyword Count" = "キーワード数";
 "Keyword List" = "キーワードリスト";
 "Keyword Lists" = "キーワードリスト";
@@ -1051,6 +1073,7 @@
 "Keyword Painter" = "キーワード付けツール";
 "Keyword Set" = "キーワードセット";
 "Keyword Sets" = "キーワードセット";
+"Keyword Sets…" = "キーワードセット…";
 "Keyword Suggestions" = "キーワード候補";
 "Keyword Tag Options" = "キーワードタグのオプション";
 "Keyword to paint" = "写真に付けるキーワード";
@@ -1059,9 +1082,11 @@
 "Keywords (K)" = "キーワード（K）";
 "Keywords (comma separated)" = "キーワード（カンマ区切り）";
 "Keywords (⌥1–⌥9)" = "キーワード (⌥1–⌥9)";
+"Keywords in This Set" = "このセットのキーワード";
 "Keywords you add appear here; ⌥1–⌥9 apply them." = "追加したキーワードはここに表示されます（⌥1〜⌥9で適用）";
 "Label" = "ラベル";
 "Label Set" = "ラベルセット";
+"Label Sets" = "ラベルセット";
 "Landscape" = "風景";
 "Landscape (wide)" = "横長";
 "Landscape 1.91 × 1" = "横長 1.91 × 1";
@@ -1082,6 +1107,7 @@
 "Lens Blur" = "レンズぼかし";
 "Lens Corrections" = "レンズ補正";
 "Let the Server Build Previews" = "サーバーにプレビューを作成させる";
+"Letter" = "レター";
 "Level" = "水平";
 "Library" = "ライブラリ";
 "Library Info" = "ライブラリ情報";
@@ -1164,6 +1190,7 @@
 "Magenta Saturation" = "マゼンタの彩度";
 "Make Available Offline" = "オフラインで使用可能にする";
 "Make Candidate the Select" = "候補の写真を選択側にする";
+"Make PDF" = "PDFを作成";
 "Make it now" = "Make it now";
 "Make the denoised picture of the photos I am looking at" = "Make the denoised picture of the photos I am looking at";
 "Making the link: it's copied when it's ready" = "リンクを作成中：準備ができるとコピーされます";
@@ -1181,6 +1208,7 @@
 "Matte Paper" = "マット紙";
 "Matte Soft" = "ソフトマット";
 "Med" = "中";
+"Medium" = "中";
 "Medium (2048 px)" = "中（2048 px）";
 "Medium Contrast" = "コントラスト（中）";
 "Megapixels" = "メガピクセル";
@@ -1190,8 +1218,10 @@
 "Memory for caches" = "キャッシュ用メモリ";
 "Menu" = "メニュー";
 "Merge" = "合成";
+"Merge Into…" = "統合先…";
 "Merge Keywords" = "キーワードを統合";
 "Merge into…" = "統合先…";
+"Merge “%@” Into" = "「%@」の統合先";
 "Merged" = "合成済み";
 "Merged PRs" = "マージしたPR";
 "Merging" = "合成中";
@@ -1200,6 +1230,7 @@
 "Metadata" = "メタデータ";
 "Metadata Preset" = "メタデータプリセット";
 "Metadata Presets" = "メタデータプリセット";
+"Metadata Presets…" = "メタデータプリセット…";
 "Metadata preset" = "メタデータプリセット";
 "Metadata read" = "メタデータ読み込み";
 "Midnight" = "ミッドナイト";
@@ -1242,6 +1273,7 @@
 "Move Preset to New Group" = "プリセットを新しいグループに移動";
 "Move Selected Photos Here" = "選択した写真をここへ移動";
 "Move Sidebar Section" = "サイドバーのセクションを移動";
+"Move To…" = "移動先…";
 "Move Up" = "上へ移動";
 "Move Up in Stack" = "スタック内で上に移動";
 "Move in Stack" = "スタック内で移動";
@@ -1254,6 +1286,7 @@
 "Move to Folder…" = "フォルダへ移動…";
 "Move to Group" = "グループに移動";
 "Move to group" = "グループに移動";
+"Move “%@” To" = "「%@」の移動先";
 "Move: the files are moved to the folder below; each original (and its XMP sidecar) is removed from the source only after its copy is verified. Duplicates and files that fail stay where they are." = "下のフォルダへ移動します。コピーを検証してから元のファイルとXMPを削除します。重複や失敗したファイルは元の場所に残します";
 "Moves every photo imported from this disk to Recently Deleted; no file is touched" = "このディスクから読み込んだすべての写真を「最近削除した写真」に移動します。ファイルには手を加えません";
 "Moves the files and their XMP sidecars into this folder; never overwrites" = "ファイルと XMP サイドカーをこのフォルダへ移動します。上書きはしません";
@@ -1287,9 +1320,11 @@
 "New Folder on Disk…" = "ディスクに新規フォルダ…";
 "New Folder…" = "新しいフォルダ…";
 "New Group…" = "新しいグループ…";
+"New Keyword Set" = "新規キーワードセット";
 "New Library" = "新しいライブラリ";
 "New Library: Choose Where to Put It" = "新しいライブラリ：保存場所を選択";
 "New Library…" = "新しいライブラリ…";
+"New Set…" = "新規セット…";
 "New Smart Album" = "新しいスマートアルバム";
 "New Smart Album from Filter…" = "現在のフィルターからスマートアルバムを作成…";
 "New Smart Album…" = "新しいスマートアルバム…";
@@ -1343,6 +1378,7 @@
 "No matching commands" = "一致するコマンドはありません";
 "No matching photos" = "一致する写真がありません";
 "No metadata found" = "メタデータがありません";
+"No metadata presets yet" = "メタデータプリセットはまだありません";
 "No model credits were built into this copy." = "このビルドにはモデルのクレジットが含まれていません";
 "No named people in these photos" = "これらの写真に名前付きの人物はいません";
 "No named people yet" = "名前付きの人物はまだいません";
@@ -1507,6 +1543,7 @@
 "Photo Merge" = "写真を合成";
 "Photo ▸ Edit in External Editor (⇧⌘E) renders a 16-bit TIFF copy, stacks it with the original and opens it here (an app name on macOS, a program path elsewhere)." = "「写真 → 外部エディターで編集」（⇧⌘E）で16ビットTIFFコピーを作成し、元画像とスタックにまとめて開きます。Macではアプリ名を指定してください";
 "Photos" = "写真";
+"Photos per Bracket" = "ブラケットあたりの枚数";
 "Photos per bracket (0 = auto)" = "ブラケットあたりの枚数（0 = 自動）";
 "Photos seen in Local but never added or changed leave the catalog when their folder hasn't been browsed for this long (checked when the library opens). Files stay on disk; browsing the folder shows them again." = "ローカルで参照しただけの写真は、この期間フォルダを開いていなければカタログから外します。ファイルはディスクに残り、再びフォルダを開くと表示されます";
 "Photos stay in All Photos. Deleting a folder also deletes its albums." = "写真は「すべての写真」に残ります。フォルダを削除すると、その中のアルバムも削除されます。";
@@ -1782,6 +1819,7 @@
 "Rotate Right" = "右に回転";
 "Roughness" = "粗さ";
 "Roundness" = "丸み";
+"Rows" = "行数";
 "Rule" = "条件";
 "Rules" = "条件";
 "Rules in this group" = "このグループの条件";
@@ -1800,14 +1838,19 @@
 "Save Color Label Set" = "カラーラベルセットを保存";
 "Save Current Filter as Preset…" = "現在のフィルターをプリセットとして保存…";
 "Save Current Keywords as Set…" = "現在のキーワードをセットとして保存…";
+"Save Curve Preset" = "カーブのプリセットを保存";
 "Save Export Preset" = "書き出しプリセットを保存";
 "Save Filter Preset" = "フィルタープリセットを保存";
 "Save Keyword Set" = "キーワードセットを保存";
+"Save Label Set" = "ラベルセットを保存";
 "Save Metadata Preset" = "メタデータプリセットを保存";
 "Save Metadata Preset…" = "メタデータプリセットを保存…";
 "Save Metadata to File" = "メタデータをファイルに保存";
 "Save Point Curve Preset" = "ポイントカーブのプリセットを保存";
+"Save Point Curve as Preset…" = "ポイントカーブをプリセットとして保存…";
 "Save Point Curve…" = "ポイントカーブを保存…";
+"Save Set" = "セットを保存";
+"Save This Photo's as a Preset…" = "この写真のメタデータをプリセットとして保存…";
 "Save as Preset" = "プリセットとして保存";
 "Save as Preset…" = "プリセットとして保存…";
 "Save as Set…" = "セットとして保存…";
@@ -1881,10 +1924,12 @@
 "Set Color Label" = "カラーラベルを設定";
 "Set Crop" = "切り抜きを設定";
 "Set Develop Values" = "現像設定を変更";
+"Set Each Photo" = "写真ごとに設定";
 "Set Flag" = "フラグを設定";
 "Set Image Zoom and Pan" = "画像のズームとパンを設定";
 "Set Keyboard Shortcut" = "キーボードショートカットを設定";
 "Set Mask Adjustments" = "マスクの調整を設定";
+"Set Name" = "セット名";
 "Set Point Curve" = "ポイントカーブを変更";
 "Set Profile" = "プロファイルを設定";
 "Set Rating" = "評価を設定";
@@ -1901,6 +1946,7 @@
 "Set the mix from the photo's colours" = "写真の色からミックスを自動設定";
 "Set up AI Denoise…" = "Set up AI Denoise…";
 "Set up sync to see it on your other devices." = "同期を設定すると、ほかのデバイスでも表示できます。";
+"Sets" = "セット";
 "Settings" = "設定";
 "Settings file problem" = "設定ファイルの問題";
 "Settings new raw photos start from. Changing them doesn't touch photos already in the library." = "新しく読み込むRAW写真の初期設定です。既存の写真には影響しません";
@@ -1924,6 +1970,7 @@
 "Sharpness" = "シャープネス";
 "Shift" = "ずらす量";
 "Shift by" = "時刻をずらす";
+"Shift by Time Zone" = "タイムゾーンでずらす";
 "Short Edge" = "短辺";
 "Show" = "表示";
 "Show All" = "すべて表示";
@@ -2038,6 +2085,7 @@
 "Standard" = "標準";
 "Star rating (0–5)" = "星の評価（0–5）";
 "Stars" = "星";
+"Start Number" = "開始番号";
 "Start at" = "開始番号";
 "Start number" = "開始番号";
 "Starting" = "開始中";
@@ -2164,6 +2212,7 @@
 "The original files, unchanged, each with an XMP sidecar holding its edits." = "元のファイルを変更せず、編集内容を保存したXMPサイドカーファイルを添えて書き出します";
 "The photo has these settings" = "この写真に適用されている設定";
 "The photo is enlarged to twice its width and height with an AI model, with your edits applied, and added next to the original (a 16-bit sRGB TIFF), stacked with it. The original isn't changed. This takes a while on large photos." = "AIモデルで写真の幅と高さを2倍に拡大します。編集内容が反映された状態で、元の写真の隣に（16ビットsRGBのTIFFとして）追加され、元の写真とスタックされます。元の写真は変更されません。大きな写真では時間がかかります。";
+"The photo shown gets this time; the others move by as much, keeping their spacing." = "表示中の写真にこの時刻を設定し、ほかの写真も同じだけずらして間隔を保ちます。";
 "The photos are copied into the library; the originals in Photos and Files are left as they are." = "写真はライブラリにコピーされます。「写真」や「ファイル」にある元の写真はそのまま残ります。";
 "The photos are copied into the library; the originals in Photos or Files are left as they are." = "写真はライブラリにコピーされます。「写真」や「ファイル」にある元の写真はそのまま残ります。";
 "The processor does the work." = "The processor does the work.";
@@ -2208,6 +2257,7 @@
 "Thursday" = "木曜日";
 "Tick the box to accept the model's terms first" = "Tick the box to accept the model's terms first";
 "Tile server" = "タイルサーバー";
+"Time Between Stacks" = "スタック間の時間";
 "Time zone" = "タイムゾーン";
 "Tint" = "色かぶり補正";
 "Title" = "タイトル";
@@ -2380,6 +2430,7 @@
 "a removed photo" = "削除された写真";
 "all" = "すべて";
 "and" = "と";
+"and %lld more" = "ほか%lld件";
 "any" = "いずれか";
 "are empty" = "が空";
 "aren't empty" = "が空でない";

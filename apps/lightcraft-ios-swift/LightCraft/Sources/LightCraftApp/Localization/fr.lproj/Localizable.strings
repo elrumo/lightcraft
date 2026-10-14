@@ -23,16 +23,19 @@
 "%lld faces learned." = "%lld visage(s) appris.";
 "%lld failed: %@" = "%1$lld en échec : %2$@";
 "%lld found · %lld selected" = "%1$lld trouvé(s) · %2$lld sélectionné(s)";
+"%lld keywords added, %lld updated" = "%1$lld mot(s)-clé(s) ajouté(s), %2$lld mis à jour";
 "%lld not readable" = "%lld illisible(s)";
 "%lld of %lld photos" = "%1$lld sur %2$lld photos";
 "%lld of 4 guides — drag along lines that should be vertical or horizontal." = "%1$lld guides sur 4 — faites-les glisser le long des lignes qui doivent être verticales ou horizontales.";
 "%lld photos" = "%1$lld photos";
 "%lld photos couldn't be read" = "%lld photo(s) n'ont pas pu être lues";
+"%lld photos on %lld pages" = "%1$lld photo(s) sur %2$lld page(s)";
 "%lld photos on this device" = "%1$lld photos sur cet appareil";
 "%lld photos · synced with %@" = "%1$lld photos · synchronisées avec %2$@";
 "%lld photos, not saved" = "%1$lld photos, non enregistrées";
 "%lld presets to add" = "%lld préréglage(s) à ajouter";
 "%lld profiles to add" = "%lld profil(s) à ajouter";
+"%lld stacks of %lld photos" = "%1$lld pile(s) de %2$lld photo(s)";
 "%lld stars" = "%lld étoile(s)";
 "%lld were here already" = "%lld déjà présent(s)";
 "& Containing" = "et parents";
@@ -57,6 +60,8 @@
 "A keyword set needs a name" = "Un jeu de mots-clés doit avoir un nom";
 "A one-time download of about" = "Un téléchargement unique d'environ";
 "A photo library and raw developer in pure Rust, open source (MIT OR Apache-2.0)." = "Une photothèque et un logiciel de développement RAW en Rust pur, open source (MIT OR Apache-2.0).";
+"A tap puts the keyword on the chosen photos, or takes it off when they all have it." = "Un toucher applique le mot-clé aux photos choisies, ou le retire si toutes l'ont déjà.";
+"A tap puts the preset on the chosen photos: its text replaces theirs, its keywords are added." = "Un toucher applique le préréglage aux photos choisies : son texte remplace le leur et ses mots-clés sont ajoutés.";
 "AI Denoise" = "Débruitage IA";
 "AI Denoise Model" = "Modèle de débruitage IA";
 "AI Denoise is enabled on the requesting photo" = "Le débruitage IA est activé sur la photo à l'origine de la demande";
@@ -119,6 +124,7 @@
 "Adding Lightroom photos…" = "Ajout des photos Lightroom…";
 "Adding to Apple Photos" = "Ajout à Apple Photos";
 "Adding to Apple Photos…" = "Ajout à Apple Photos…";
+"Adjust to a Time" = "Ajuster à une heure";
 "Advanced search…" = "Recherche avancée…";
 "After" = "Après";
 "After 30 days" = "Après 30 jours";
@@ -147,6 +153,7 @@
 "Alt Text" = "Texte alternatif";
 "Always" = "Toujours";
 "Amount" = "Quantité";
+"An empty name gives the colour its own name back." = "Un nom vide rend à la couleur son nom d'origine.";
 "Analyzing the photo for AI masks…" = "Analyse de la photo pour les masques IA…";
 "Angle" = "Angle";
 "Any" = "Au moins une";
@@ -377,6 +384,7 @@
 "Color Grading" = "Étalonnage des couleurs";
 "Color Label" = "Étiquette de couleur";
 "Color Label Names" = "Noms des étiquettes de couleur";
+"Color Label Names…" = "Noms des étiquettes de couleur…";
 "Color Label Sets" = "Jeux d'étiquettes de couleur";
 "Color Mixer" = "Mélangeur de couleurs";
 "Color Noise Reduction" = "Réduction du bruit de couleur";
@@ -389,6 +397,7 @@
 "Color space" = "Espace colorimétrique";
 "Color space: sRGB (AVIF)" = "Espace colorimétrique : sRGB (AVIF)";
 "Colors" = "Couleurs";
+"Columns" = "Colonnes";
 "Combine files…" = "Combiner des fichiers…";
 "Combine with the Server's Library" = "Fusionner avec la bibliothèque du serveur";
 "Command Journal" = "Journal des commandes";
@@ -407,6 +416,8 @@
 "Confirm before deleting" = "Confirmer avant de supprimer";
 "Confirm before moving photos to Recently Deleted" = "Confirmer avant de déplacer des photos vers Supprimées récemment";
 "Constrain Crop" = "Contraindre le recadrage";
+"Contact Sheet" = "Planche-contact";
+"Contact Sheet…" = "Planche-contact…";
 "Content-Aware" = "Contenu pris en compte";
 "Continue" = "Continuer";
 "Continue Without Saving" = "Continuer sans enregistrer";
@@ -500,6 +511,7 @@
 "Date" = "Date";
 "Date Added" = "Date d'ajout";
 "Date Groups" = "Groupes par date";
+"Date and Time" = "Date et heure";
 "Day" = "Jour";
 "Daylight" = "Lumière du jour";
 "Days" = "Jours";
@@ -509,6 +521,7 @@
 "Decrease Rating" = "Diminuer la note";
 "Deep Sky" = "Ciel profond";
 "Defringe" = "Supprimer les franges";
+"Deghost" = "Suppression des images fantômes";
 "Deghost Amount" = "Quantité de suppression des images fantômes";
 "Dehaze" = "Correction du voile";
 "Delete" = "Supprimer";
@@ -539,6 +552,7 @@
 "Delete Red Eye" = "Supprimer les yeux rouges";
 "Delete Red Eye Correction" = "Supprimer la correction des yeux rouges";
 "Delete Spot" = "Supprimer la tache";
+"Delete Unused Keywords" = "Supprimer les mots-clés inutilisés";
 "Delete Version" = "Supprimer la version";
 "Delete all" = "Tout supprimer";
 "Delete all spots" = "Supprimer toutes les taches";
@@ -663,6 +677,8 @@
 "Enter a date as YYYY-MM-DD HH:MM:SS" = "Saisissez une date au format AAAA-MM-JJ HH:MM:SS";
 "Erase" = "Effacer";
 "Every EXIF, GPS and XMP field in the file" = "Tous les champs EXIF, GPS et XMP du fichier";
+"Every chosen photo gets this time." = "Toutes les photos choisies reçoivent cette heure.";
+"Every chosen photo moves by this many hours." = "Chaque photo choisie est décalée de ce nombre d'heures.";
 "Every face named %@ gets the new name; a name someone already has puts them together." = "Chaque visage nommé %@ reçoit le nouveau nom ; un nom déjà attribué à quelqu'un les regroupe.";
 "Existing previews" = "Aperçus existants";
 "Exit" = "Quitter";
@@ -676,6 +692,7 @@
 "Export Album…" = "Exporter l'album…";
 "Export As…" = "Exporter sous…";
 "Export Containing Keywords" = "Exporter les mots-clés parents";
+"Export Curve Presets…" = "Exporter les préréglages de courbe…";
 "Export Group…" = "Exporter le groupe…";
 "Export Keywords" = "Exporter les mots-clés";
 "Export Keywords…" = "Exporter les mots-clés…";
@@ -723,6 +740,7 @@
 "File Extension" = "Extension de fichier";
 "File Format" = "Format de fichier";
 "File Name" = "Nom de fichier";
+"File Names" = "Noms de fichier";
 "File Path" = "Chemin du fichier";
 "File Size" = "Taille du fichier";
 "File Type" = "Type de fichier";
@@ -911,6 +929,7 @@
 "Image on Black" = "Image sur noir";
 "Image on White" = "Image sur blanc";
 "Import" = "Importer";
+"Import Curve Presets…" = "Importer des préréglages de courbe…";
 "Import Date" = "Date d'importation";
 "Import Keywords" = "Importer des mots-clés";
 "Import Keywords…" = "Importer des mots-clés…";
@@ -933,6 +952,7 @@
 "Import new photos" = "Importer les nouvelles photos";
 "Import photos with File → Import Photos… (Cmd+Shift+I), or drop them here" = "Importez des photos avec Fichier → Importer des photos… (Cmd+Maj+I) ou déposez-les ici";
 "Imported" = "Importées";
+"Imported %lld curve presets" = "%lld préréglage(s) de courbe importé(s)";
 "Imported %lld photos" = "%lld photo(s) importée(s)";
 "Imported %lld presets" = "%lld préréglage(s) importé(s)";
 "Imported %lld profiles (Profile browser ▸ their groups)" = "%lld profil(s) importé(s) (Navigateur de profils ▸ leurs groupes)";
@@ -995,6 +1015,7 @@
 "It Isn't" = "Ce n'est pas ça";
 "It is not a face recognition model LightCraft understands" = "Ce n'est pas un modèle de reconnaissance faciale que LightCraft comprend";
 "It tests this album, so testing it back would loop" = "Il teste cet album : le tester en retour créerait une boucle";
+"Its copyright, creator and place." = "Son copyright, son créateur et son lieu.";
 "Its denoised picture is not made yet, and pictures are not made on their own (Settings, AI Denoise)." = "Son image débruitée n'est pas encore générée, et les images ne sont pas générées automatiquement (Réglages, Débruitage IA).";
 "JPEG (Large)" = "JPEG (grand)";
 "JPEG (Small)" = "JPEG (petit)";
@@ -1007,6 +1028,7 @@
 "Keyboard Shortcuts" = "Raccourcis clavier";
 "Keyboard shortcuts" = "Raccourcis clavier";
 "Keyword" = "Mot-clé";
+"Keyword %lld" = "Mot-clé %lld";
 "Keyword Count" = "Nombre de mots-clés";
 "Keyword List" = "Liste des mots-clés";
 "Keyword Lists" = "Listes de mots-clés";
@@ -1014,6 +1036,7 @@
 "Keyword Painter" = "Pinceau de mots-clés";
 "Keyword Set" = "Jeu de mots-clés";
 "Keyword Sets" = "Jeux de mots-clés";
+"Keyword Sets…" = "Jeux de mots-clés…";
 "Keyword Suggestions" = "Suggestions de mots-clés";
 "Keyword Tag Options" = "Options du mot-clé";
 "Keyword to paint" = "Mot-clé à appliquer";
@@ -1022,9 +1045,11 @@
 "Keywords (K)" = "Mots-clés (K)";
 "Keywords (comma separated)" = "Mots-clés (séparés par des virgules)";
 "Keywords (⌥1–⌥9)" = "Mots-clés (⌥1–⌥9)";
+"Keywords in This Set" = "Mots-clés de ce jeu";
 "Keywords you add appear here; ⌥1–⌥9 apply them." = "Les mots-clés que vous ajoutez apparaissent ici ; ⌥1–⌥9 les appliquent.";
 "Label" = "Étiquette";
 "Label Set" = "Jeu d'étiquettes";
+"Label Sets" = "Jeux d'étiquettes";
 "Landscape" = "Paysage";
 "Landscape (wide)" = "Paysage (large)";
 "Landscape 1.91 × 1" = "Paysage 1,91 × 1";
@@ -1045,6 +1070,7 @@
 "Lens Blur" = "Flou de l'objectif";
 "Lens Corrections" = "Corrections de l'objectif";
 "Let the Server Build Previews" = "Laisser le serveur générer les aperçus";
+"Letter" = "Lettre US";
 "Level" = "Niveau";
 "Library" = "Bibliothèque";
 "Library Info" = "Informations sur la bibliothèque";
@@ -1125,6 +1151,7 @@
 "Magenta Saturation" = "Saturation magenta";
 "Make Available Offline" = "Rendre disponible hors ligne";
 "Make Candidate the Select" = "Faire de la candidate la sélection";
+"Make PDF" = "Créer le PDF";
 "Make it now" = "La générer maintenant";
 "Make the denoised picture of the photos I am looking at" = "Générer l'image débruitée des photos que je regarde";
 "Making the link: it's copied when it's ready" = "Création du lien : il est copié dès qu'il est prêt";
@@ -1142,6 +1169,7 @@
 "Matte Paper" = "Papier mat";
 "Matte Soft" = "Mat doux";
 "Med" = "Moyen";
+"Medium" = "Moyen";
 "Medium (2048 px)" = "Moyen (2048 px)";
 "Medium Contrast" = "Contraste moyen";
 "Megapixels" = "Mégapixels";
@@ -1151,8 +1179,10 @@
 "Memory for caches" = "Mémoire pour les caches";
 "Menu" = "Menu";
 "Merge" = "Fusionner";
+"Merge Into…" = "Fusionner dans…";
 "Merge Keywords" = "Fusionner les mots-clés";
 "Merge into…" = "Fusionner dans…";
+"Merge “%@” Into" = "Fusionner « %@ » dans";
 "Merged" = "Fusionnées";
 "Merged PRs" = "PR fusionnées";
 "Merging" = "Fusion en cours";
@@ -1161,6 +1191,7 @@
 "Metadata" = "Métadonnées";
 "Metadata Preset" = "Préréglage de métadonnées";
 "Metadata Presets" = "Préréglages de métadonnées";
+"Metadata Presets…" = "Préréglages de métadonnées…";
 "Metadata preset" = "Préréglage de métadonnées";
 "Metadata read" = "Métadonnées lues";
 "Midnight" = "Minuit";
@@ -1203,6 +1234,7 @@
 "Move Preset to New Group" = "Déplacer le préréglage vers un nouveau groupe";
 "Move Selected Photos Here" = "Déplacer ici les photos sélectionnées";
 "Move Sidebar Section" = "Déplacer la section de la barre latérale";
+"Move To…" = "Déplacer vers…";
 "Move Up" = "Monter";
 "Move Up in Stack" = "Monter dans la pile";
 "Move in Stack" = "Déplacer dans la pile";
@@ -1215,6 +1247,7 @@
 "Move to Folder…" = "Déplacer vers un dossier…";
 "Move to Group" = "Déplacer vers un groupe";
 "Move to group" = "Move to group";
+"Move “%@” To" = "Déplacer « %@ » vers";
 "Move: the files are moved to the folder below; each original (and its XMP sidecar) is removed from the source only after its copy is verified. Duplicates and files that fail stay where they are." = "Déplacer : les fichiers sont déplacés dans le dossier ci-dessous ; chaque original (et son fichier annexe XMP) n'est retiré de la source qu'après vérification de sa copie. Les doublons et les fichiers en échec restent à leur place.";
 "Moves every photo imported from this disk to Recently Deleted; no file is touched" = "Déplace toutes les photos importées depuis ce disque vers Supprimées récemment ; aucun fichier n'est touché";
 "Moves the files and their XMP sidecars into this folder; never overwrites" = "Déplace les fichiers et leurs fichiers annexes XMP dans ce dossier ; n'écrase jamais rien";
@@ -1247,9 +1280,11 @@
 "New Folder on Disk…" = "Nouveau dossier sur le disque…";
 "New Folder…" = "Nouveau dossier…";
 "New Group…" = "Nouveau groupe…";
+"New Keyword Set" = "Nouveau jeu de mots-clés";
 "New Library" = "Nouvelle bibliothèque";
 "New Library: Choose Where to Put It" = "Nouvelle bibliothèque : choisir son emplacement";
 "New Library…" = "Nouvelle bibliothèque…";
+"New Set…" = "Nouveau jeu…";
 "New Smart Album" = "Nouvel album intelligent";
 "New Smart Album from Filter…" = "Nouvel album intelligent à partir du filtre…";
 "New Smart Album…" = "Nouvel album intelligent…";
@@ -1301,6 +1336,7 @@
 "No matching commands" = "Aucune commande correspondante";
 "No matching photos" = "Aucune photo correspondante";
 "No metadata found" = "Aucune métadonnée trouvée";
+"No metadata presets yet" = "Aucun préréglage de métadonnées pour l'instant";
 "No model credits were built into this copy." = "Aucun crédit de modèle n'est inclus dans cette copie.";
 "No named people in these photos" = "Aucune personne nommée dans ces photos";
 "No named people yet" = "Aucune personne nommée pour l'instant";
@@ -1450,6 +1486,7 @@
 "Photo Merge" = "Fusion de photos";
 "Photo ▸ Edit in External Editor (⇧⌘E) renders a 16-bit TIFF copy, stacks it with the original and opens it here (an app name on macOS, a program path elsewhere)." = "Photo → Modifier dans l'éditeur externe (⇧⌘E) génère une copie TIFF 16 bits, l'empile avec l'original et l'ouvre ici (un nom d'application sur macOS, un chemin de programme ailleurs).";
 "Photos" = "Photos";
+"Photos per Bracket" = "Photos par bracketing";
 "Photos per bracket (0 = auto)" = "Photos par bracketing (0 = auto)";
 "Photos seen in Local but never added or changed leave the catalog when their folder hasn't been browsed for this long (checked when the library opens). Files stay on disk; browsing the folder shows them again." = "Les photos vues dans Local mais jamais ajoutées ni modifiées quittent le catalogue lorsque leur dossier n'a pas été parcouru depuis cette durée (vérifié à l'ouverture de la bibliothèque). Les fichiers restent sur le disque ; parcourir le dossier les fait réapparaître.";
 "Photos stay in All Photos. Deleting a folder also deletes its albums." = "Les photos restent dans Toutes les photos. Supprimer un dossier supprime aussi ses albums.";
@@ -1718,6 +1755,7 @@
 "Rotate Right" = "Pivoter à droite";
 "Roughness" = "Rugosité";
 "Roundness" = "Arrondi";
+"Rows" = "Lignes";
 "Rule" = "Règle";
 "Rules" = "Règles";
 "Rules in this group" = "Règles de ce groupe";
@@ -1736,14 +1774,19 @@
 "Save Color Label Set" = "Enregistrer le jeu d'étiquettes de couleur";
 "Save Current Filter as Preset…" = "Enregistrer le filtre actuel comme préréglage…";
 "Save Current Keywords as Set…" = "Enregistrer les mots-clés actuels comme jeu…";
+"Save Curve Preset" = "Enregistrer le préréglage de courbe";
 "Save Export Preset" = "Enregistrer le préréglage d'exportation";
 "Save Filter Preset" = "Enregistrer le préréglage de filtre";
 "Save Keyword Set" = "Enregistrer le jeu de mots-clés";
+"Save Label Set" = "Enregistrer le jeu d'étiquettes";
 "Save Metadata Preset" = "Enregistrer le préréglage de métadonnées";
 "Save Metadata Preset…" = "Enregistrer le préréglage de métadonnées…";
 "Save Metadata to File" = "Enregistrer les métadonnées dans le fichier";
 "Save Point Curve Preset" = "Enregistrer le préréglage de courbe de points";
+"Save Point Curve as Preset…" = "Enregistrer la courbe de points comme préréglage…";
 "Save Point Curve…" = "Enregistrer la courbe de points…";
+"Save Set" = "Enregistrer le jeu";
+"Save This Photo's as a Preset…" = "Enregistrer les métadonnées de cette photo comme préréglage…";
 "Save as Preset" = "Enregistrer comme préréglage";
 "Save as Preset…" = "Enregistrer comme préréglage…";
 "Save as Set…" = "Enregistrer comme jeu…";
@@ -1806,10 +1849,12 @@
 "Set Color Label" = "Définir l'étiquette de couleur";
 "Set Crop" = "Définir le recadrage";
 "Set Develop Values" = "Définir les valeurs de développement";
+"Set Each Photo" = "Définir chaque photo";
 "Set Flag" = "Définir le drapeau";
 "Set Image Zoom and Pan" = "Définir le zoom et le déplacement de l'image";
 "Set Keyboard Shortcut" = "Définir le raccourci clavier";
 "Set Mask Adjustments" = "Définir les réglages du masque";
+"Set Name" = "Nom du jeu";
 "Set Point Curve" = "Définir la courbe de points";
 "Set Profile" = "Définir le profil";
 "Set Rating" = "Définir la note";
@@ -1826,6 +1871,7 @@
 "Set the mix from the photo's colours" = "Définir le mixage à partir des couleurs de la photo";
 "Set up AI Denoise…" = "Configurer le débruitage IA…";
 "Set up sync to see it on your other devices." = "Configurez la synchronisation pour le voir sur vos autres appareils.";
+"Sets" = "Jeux";
 "Settings" = "Réglages";
 "Settings file problem" = "Problème avec le fichier de réglages";
 "Settings new raw photos start from. Changing them doesn't touch photos already in the library." = "Réglages de départ des nouvelles photos RAW. Les modifier n'affecte pas les photos déjà présentes dans la bibliothèque.";
@@ -1849,6 +1895,7 @@
 "Sharpness" = "Netteté";
 "Shift" = "Décaler";
 "Shift by" = "Décaler de";
+"Shift by Time Zone" = "Décaler selon le fuseau horaire";
 "Short Edge" = "Petit côté";
 "Show" = "Afficher";
 "Show All" = "Tout afficher";
@@ -1958,6 +2005,7 @@
 "Stacks" = "Piles";
 "Standard" = "Standard";
 "Star rating (0–5)" = "Note en étoiles (0–5)";
+"Start Number" = "Numéro de départ";
 "Start at" = "Commencer à";
 "Start number" = "Numéro de départ";
 "Starting" = "Démarrage";
@@ -2078,6 +2126,7 @@
 "The original files, unchanged, each with an XMP sidecar holding its edits." = "Les fichiers originaux, inchangés, chacun avec un fichier annexe XMP contenant ses retouches.";
 "The photo has these settings" = "La photo a ces réglages";
 "The photo is enlarged to twice its width and height with an AI model, with your edits applied, and added next to the original (a 16-bit sRGB TIFF), stacked with it. The original isn't changed. This takes a while on large photos." = "La photo est agrandie au double de sa largeur et de sa hauteur avec un modèle IA, vos retouches appliquées, puis ajoutée à côté de l'original (un TIFF sRGB 16 bits), empilée avec lui. L'original n'est pas modifié. Cela prend du temps sur les grandes photos.";
+"The photo shown gets this time; the others move by as much, keeping their spacing." = "La photo affichée reçoit cette heure ; les autres sont décalées d'autant, en conservant leur écart.";
 "The photos are copied into the library; the originals in Photos and Files are left as they are." = "Les photos sont copiées dans la bibliothèque ; les originaux dans Photos et Fichiers restent intacts.";
 "The processor does the work." = "Le processeur effectue le travail.";
 "The server can't say how much it stores: %@" = "Le serveur ne peut pas indiquer ce qu’il stocke : %@";
@@ -2116,6 +2165,7 @@
 "Thumbnails" = "Miniatures";
 "Thursday" = "Jeudi";
 "Tick the box to accept the model's terms first" = "Cochez d'abord la case pour accepter les conditions du modèle";
+"Time Between Stacks" = "Intervalle entre les piles";
 "Time zone" = "Fuseau horaire";
 "Tint" = "Nuance";
 "Title" = "Titre";
@@ -2275,6 +2325,7 @@
 "a removed photo" = "une photo supprimée";
 "all" = "toutes";
 "and" = "et";
+"and %lld more" = "et %lld de plus";
 "any" = "au moins une";
 "are empty" = "sont vides";
 "aren't empty" = "ne sont pas vides";

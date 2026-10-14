@@ -22,17 +22,20 @@
 "%lld faces learned." = "已学习 %lld 张人脸。";
 "%lld failed: %@" = "%lld 个失败：%@";
 "%lld found · %lld selected" = "找到 %1$lld 张 · 已选 %2$lld 张";
+"%lld keywords added, %lld updated" = "已添加 %lld 个关键字，已更新 %lld 个";
 "%lld not readable" = "%lld 个无法读取";
 "%lld of %lld photos" = "%2$lld 张照片中的 %1$lld 张";
 "%lld of 4 guides — drag along lines that should be vertical or horizontal." = "已画 %1$lld 条参考线（共 4 条）— 沿应为垂直或水平的线拖动。";
 "%lld photos" = "%lld 张照片";
 "%lld photos couldn't be read" = "%lld 张照片无法读取";
+"%lld photos on %lld pages" = "%lld 张照片，共 %lld 页";
 "%lld photos on this device" = "此设备上有 %1$lld 张照片";
 "%lld photos · synced with %@" = "%1$lld 张照片 · 已与 %2$@ 同步";
 "%lld photos, not saved" = "%1$lld 张照片（不会保存）";
 "%lld points" = "%lld 个点";
 "%lld presets to add" = "要添加 %lld 个预设";
 "%lld profiles to add" = "要添加 %lld 个配置文件";
+"%lld stacks of %lld photos" = "%lld 个堆叠（共 %lld 张照片）";
 "%lld stars" = "%lld 星";
 "%lld were here already" = "%lld 张已存在";
 "& Containing" = "及上级";
@@ -60,6 +63,8 @@
 "A keyword set needs a name" = "关键字集需要名称";
 "A one-time download of about" = "一次性下载，大小约";
 "A photo library and raw developer in pure Rust, open source (MIT OR Apache-2.0)." = "纯 Rust 编写的照片图库和 RAW 编辑器，开源（MIT OR Apache-2.0）。";
+"A tap puts the keyword on the chosen photos, or takes it off when they all have it." = "轻点即可将关键字添加到所选照片；如果所选照片都已有该关键字，则将其移除。";
+"A tap puts the preset on the chosen photos: its text replaces theirs, its keywords are added." = "轻点即可将预设应用到所选照片：其文本会替换原有文本，其关键字会被添加。";
 "AI Denoise" = "AI 降噪";
 "AI Denoise Model" = "AI 降噪模型";
 "AI Denoise is enabled on the requesting photo" = "已在发起请求的照片上启用 AI 降噪";
@@ -126,6 +131,7 @@
 "Adding to Apple Photos" = "正在添加到 Apple 照片";
 "Adding to Apple Photos…" = "正在添加到 Apple 照片…";
 "Adjust" = "调整";
+"Adjust to a Time" = "调整到指定时间";
 "Advanced search…" = "高级搜索…";
 "After" = "修改后";
 "After 30 days" = "30 天后";
@@ -155,6 +161,7 @@
 "Alt Text" = "替代文本";
 "Always" = "始终";
 "Amount" = "数量";
+"An empty name gives the colour its own name back." = "名称留空将恢复该颜色的默认名称。";
 "Analyzing the photo for AI masks…" = "正在分析照片以生成 AI 蒙版…";
 "Analyzing the photo…" = "正在分析照片…";
 "Angle" = "角度";
@@ -393,6 +400,7 @@
 "Color Grading" = "颜色分级";
 "Color Label" = "颜色标签";
 "Color Label Names" = "颜色标签名称";
+"Color Label Names…" = "颜色标签名称…";
 "Color Label Sets" = "颜色标签集";
 "Color Mixer" = "颜色混合器";
 "Color Noise Reduction" = "颜色降噪";
@@ -405,6 +413,7 @@
 "Color space" = "色彩空间";
 "Color space: sRGB (AVIF)" = "色彩空间：sRGB（AVIF）";
 "Colors" = "颜色";
+"Columns" = "列数";
 "Combine files…" = "合并文件…";
 "Combine with the Server's Library" = "与服务器图库合并";
 "Command Journal" = "命令日志";
@@ -423,6 +432,8 @@
 "Confirm before deleting" = "删除前确认";
 "Confirm before moving photos to Recently Deleted" = "将照片移到“最近删除”前确认";
 "Constrain Crop" = "限制裁剪";
+"Contact Sheet" = "联系表";
+"Contact Sheet…" = "联系表…";
 "Content-Aware" = "内容识别";
 "Continue" = "继续";
 "Continue Without Saving" = "不保存继续";
@@ -517,6 +528,7 @@
 "Date" = "日期";
 "Date Added" = "添加日期";
 "Date Groups" = "日期分组";
+"Date and Time" = "日期和时间";
 "Day" = "日";
 "Daylight" = "日光";
 "Days" = "天";
@@ -526,6 +538,7 @@
 "Decrease Rating" = "降低星级";
 "Deep Sky" = "深邃天空";
 "Defringe" = "去边";
+"Deghost" = "去重影";
 "Deghost Amount" = "去伪影量";
 "Dehaze" = "去朦胧";
 "Delete" = "删除";
@@ -556,6 +569,7 @@
 "Delete Red Eye" = "删除红眼校正";
 "Delete Red Eye Correction" = "删除红眼校正";
 "Delete Spot" = "删除污点";
+"Delete Unused Keywords" = "删除未使用的关键字";
 "Delete Version" = "删除版本";
 "Delete all" = "删除全部";
 "Delete all spots" = "删除所有污点";
@@ -690,6 +704,8 @@
 "Erase" = "擦除";
 "Evaluate Face Recognition" = "评估人脸识别";
 "Every EXIF, GPS and XMP field in the file" = "文件中的每个 EXIF、GPS 和 XMP 字段";
+"Every chosen photo gets this time." = "所选的每张照片都将设为此时间。";
+"Every chosen photo moves by this many hours." = "所选的每张照片都将偏移这么多小时。";
 "Every face named %@ gets the new name; a name someone already has puts them together." = "所有名为 %@ 的人脸都会改为新名称；如果该名称已有人使用，则会把他们合并在一起。";
 "Existing previews" = "现有预览";
 "Exit" = "退出";
@@ -703,6 +719,7 @@
 "Export Album…" = "导出相册…";
 "Export As…" = "导出为…";
 "Export Containing Keywords" = "导出上级关键字";
+"Export Curve Presets…" = "导出曲线预设…";
 "Export Group…" = "导出分组…";
 "Export Keywords" = "导出关键字";
 "Export Keywords…" = "导出关键字…";
@@ -756,6 +773,7 @@
 "File Extension" = "文件扩展名";
 "File Format" = "文件格式";
 "File Name" = "文件名";
+"File Names" = "文件名";
 "File Path" = "文件路径";
 "File Size" = "文件大小";
 "File Type" = "文件类型";
@@ -956,6 +974,7 @@
 "Image on Black" = "黑底图像";
 "Image on White" = "白底图像";
 "Import" = "导入";
+"Import Curve Presets…" = "导入曲线预设…";
 "Import Date" = "导入日期";
 "Import Folder from Files…" = "从“文件”导入文件夹…";
 "Import Keywords" = "导入关键字";
@@ -981,6 +1000,7 @@
 "Import new photos" = "导入新照片";
 "Import photos with File → Import Photos… (Cmd+Shift+I), or drop them here" = "使用“文件 → 导入照片…”（Cmd+Shift+I）导入照片，或将照片拖放到此处";
 "Imported" = "已导入";
+"Imported %lld curve presets" = "已导入 %lld 个曲线预设";
 "Imported %lld photos" = "已导入 %lld 张照片";
 "Imported %lld presets" = "已导入 %lld 个预设";
 "Imported %lld profiles (Profile browser ▸ their groups)" = "已导入 %lld 个配置文件（配置文件浏览器 ▸ 它们的分组）";
@@ -1051,6 +1071,7 @@
 "It keeps going in the background; search the ones that are ready now." = "它会在后台继续处理；已准备好的照片现在就可以搜索。";
 "It runs on this computer, only when you ask, and you can forget everything it found at any time." = "仅在你需要时于本机运行，并且你可以随时清除它找到的全部内容。";
 "It tests this album, so testing it back would loop" = "它引用了此相册，反过来引用会形成循环";
+"Its copyright, creator and place." = "此照片的版权、创建者和位置。";
 "Its denoised picture is not made yet, and pictures are not made on their own (Settings, AI Denoise)." = "该照片的降噪结果尚未生成，而且不会自动生成（设置、AI 降噪）。";
 "JPEG (Large)" = "JPEG（大）";
 "JPEG (Small)" = "JPEG（小）";
@@ -1063,6 +1084,7 @@
 "Keyboard Shortcuts" = "键盘快捷键";
 "Keyboard shortcuts" = "键盘快捷键";
 "Keyword" = "关键字";
+"Keyword %lld" = "关键字 %lld";
 "Keyword Count" = "关键字数量";
 "Keyword List" = "关键字列表";
 "Keyword Lists" = "关键字列表";
@@ -1070,6 +1092,7 @@
 "Keyword Painter" = "关键字画笔";
 "Keyword Set" = "关键字集";
 "Keyword Sets" = "关键字集";
+"Keyword Sets…" = "关键字集…";
 "Keyword Suggestions" = "关键字建议";
 "Keyword Tag Options" = "关键字标记选项";
 "Keyword to paint" = "要涂抹的关键字";
@@ -1078,9 +1101,11 @@
 "Keywords (K)" = "关键字 (K)";
 "Keywords (comma separated)" = "关键字（以逗号分隔）";
 "Keywords (⌥1–⌥9)" = "关键字 (⌥1–⌥9)";
+"Keywords in This Set" = "此集中的关键字";
 "Keywords you add appear here; ⌥1–⌥9 apply them." = "您添加的关键字会显示在此处；按 ⌥1–⌥9 即可应用。";
 "Label" = "标签";
 "Label Set" = "标签集";
+"Label Sets" = "标签集";
 "Landscape" = "横向";
 "Landscape (wide)" = "横向";
 "Landscape 1.91 × 1" = "横向 1.91 × 1";
@@ -1101,6 +1126,7 @@
 "Lens Blur" = "镜头模糊";
 "Lens Corrections" = "镜头校正";
 "Let the Server Build Previews" = "让服务器生成预览";
+"Letter" = "信纸";
 "Level" = "水平";
 "Library" = "图库";
 "Library Folders" = "图库文件夹";
@@ -1184,6 +1210,7 @@
 "Magenta Saturation" = "品红色饱和度";
 "Make Available Offline" = "设为离线可用";
 "Make Candidate the Select" = "将候选设为选择";
+"Make PDF" = "生成 PDF";
 "Make it now" = "立即生成";
 "Make the denoised picture of the photos I am looking at" = "为我正在查看的照片生成降噪结果";
 "Making the link: it's copied when it's ready" = "正在生成链接：完成后会自动复制到剪贴板";
@@ -1201,6 +1228,7 @@
 "Matte Paper" = "哑光纸";
 "Matte Soft" = "柔和哑光";
 "Med" = "中";
+"Medium" = "中";
 "Medium (2048 px)" = "中（2048 px）";
 "Medium Contrast" = "中等对比度";
 "Megapixels" = "百万像素";
@@ -1210,8 +1238,10 @@
 "Memory for caches" = "缓存内存";
 "Menu" = "菜单";
 "Merge" = "合并";
+"Merge Into…" = "合并到…";
 "Merge Keywords" = "合并关键字";
 "Merge into…" = "合并到…";
+"Merge “%@” Into" = "将“%@”合并到";
 "Merged" = "已合并";
 "Merged PRs" = "已合并的 PR";
 "Merging" = "正在合并";
@@ -1220,6 +1250,7 @@
 "Metadata" = "元数据";
 "Metadata Preset" = "元数据预设";
 "Metadata Presets" = "元数据预设";
+"Metadata Presets…" = "元数据预设…";
 "Metadata preset" = "元数据预设";
 "Metadata read" = "已读取元数据";
 "Midnight" = "午夜";
@@ -1262,6 +1293,7 @@
 "Move Preset to New Group" = "将预设移动到新分组";
 "Move Selected Photos Here" = "将所选照片移到此处";
 "Move Sidebar Section" = "移动边栏分区";
+"Move To…" = "移动到…";
 "Move Up" = "上移";
 "Move Up in Stack" = "在堆叠中上移";
 "Move in Stack" = "在堆叠中移动";
@@ -1274,6 +1306,7 @@
 "Move to Folder…" = "移动到文件夹…";
 "Move to Group" = "移动到组";
 "Move to group" = "移到组中";
+"Move “%@” To" = "将“%@”移到";
 "Move: the files are moved to the folder below; each original (and its XMP sidecar) is removed from the source only after its copy is verified. Duplicates and files that fail stay where they are." = "移动：文件将移动到下面的文件夹；每个原始文件 (及其 XMP 附属文件) 仅在副本校验通过后才会从源位置移除。重复的文件和失败的文件保留在原处。";
 "Moves every photo imported from this disk to Recently Deleted; no file is touched" = "将从此磁盘导入的所有照片移到“最近删除”；不会改动任何文件";
 "Moves the files and their XMP sidecars into this folder; never overwrites" = "将文件及其 XMP 附属文件移到此文件夹；绝不覆盖";
@@ -1309,9 +1342,11 @@
 "New Folder on Disk…" = "在磁盘上新建文件夹…";
 "New Folder…" = "新建文件夹…";
 "New Group…" = "新建组…";
+"New Keyword Set" = "新建关键字集";
 "New Library" = "新建图库";
 "New Library: Choose Where to Put It" = "新建图库：选择存放位置";
 "New Library…" = "新建图库…";
+"New Set…" = "新建集…";
 "New Smart Album" = "新建智能相册";
 "New Smart Album from Filter…" = "从筛选器新建智能相册…";
 "New Smart Album…" = "新建智能相册…";
@@ -1365,6 +1400,7 @@
 "No matching commands" = "没有匹配的命令";
 "No matching photos" = "没有匹配的照片";
 "No metadata found" = "未找到元数据";
+"No metadata presets yet" = "还没有元数据预设";
 "No model credits were built into this copy." = "此版本未内置模型致谢信息。";
 "No named people in these photos" = "这些照片中没有已命名的人物";
 "No named people yet" = "还没有已命名的人物";
@@ -1529,6 +1565,7 @@
 "Photo Merge" = "照片合并";
 "Photo ▸ Edit in External Editor (⇧⌘E) renders a 16-bit TIFF copy, stacks it with the original and opens it here (an app name on macOS, a program path elsewhere)." = "“照片 » 在外部编辑器中编辑”（⇧⌘E）会渲染一份 16 位 TIFF 副本，与原图堆叠并在此打开（macOS 上填应用名称，其他平台填程序路径）。";
 "Photos" = "照片";
+"Photos per Bracket" = "每组包围曝光的照片数";
 "Photos per bracket (0 = auto)" = "每组包围曝光的照片数（0 = 自动）";
 "Photos seen in Local but never added or changed leave the catalog when their folder hasn't been browsed for this long (checked when the library opens). Files stay on disk; browsing the folder shows them again." = "仅在“本地”中查看过、从未添加或更改的照片，若其文件夹在此时长内未被浏览，将移出目录（打开图库时检查）。文件保留在磁盘上；浏览该文件夹即可再次显示。";
 "Photos stay in All Photos. Deleting a folder also deletes its albums." = "照片会保留在“所有照片”中。删除文件夹也会删除其中的相册。";
@@ -1808,6 +1845,7 @@
 "Rotate Right" = "向右旋转";
 "Roughness" = "粗糙度";
 "Roundness" = "圆度";
+"Rows" = "行数";
 "Rule" = "条件";
 "Rules" = "规则";
 "Rules in this group" = "此组中的规则";
@@ -1826,14 +1864,19 @@
 "Save Color Label Set" = "保存颜色标签集";
 "Save Current Filter as Preset…" = "将当前筛选器保存为预设…";
 "Save Current Keywords as Set…" = "将当前关键字保存为集…";
+"Save Curve Preset" = "保存曲线预设";
 "Save Export Preset" = "保存导出预设";
 "Save Filter Preset" = "保存筛选器预设";
 "Save Keyword Set" = "保存关键字集";
+"Save Label Set" = "保存标签集";
 "Save Metadata Preset" = "保存元数据预设";
 "Save Metadata Preset…" = "保存元数据预设…";
 "Save Metadata to File" = "将元数据保存到文件";
 "Save Point Curve Preset" = "保存点曲线预设";
+"Save Point Curve as Preset…" = "将点曲线存为预设…";
 "Save Point Curve…" = "保存点曲线…";
+"Save Set" = "保存集";
+"Save This Photo's as a Preset…" = "将此照片的元数据存为预设…";
 "Save as Preset" = "保存为预设";
 "Save as Preset…" = "保存为预设…";
 "Save as Set…" = "存储为标签集…";
@@ -1907,10 +1950,12 @@
 "Set Color Label" = "设置颜色标签";
 "Set Crop" = "设置裁切";
 "Set Develop Values" = "设置编辑参数";
+"Set Each Photo" = "逐张设置";
 "Set Flag" = "设置旗标";
 "Set Image Zoom and Pan" = "设置图像缩放和平移";
 "Set Keyboard Shortcut" = "设置键盘快捷键";
 "Set Mask Adjustments" = "设置蒙版调整";
+"Set Name" = "关键字集名称";
 "Set Point Curve" = "设置点曲线";
 "Set Profile" = "设置配置文件";
 "Set Rating" = "设置星级";
@@ -1927,6 +1972,7 @@
 "Set the mix from the photo's colours" = "根据照片颜色设置混合";
 "Set up AI Denoise…" = "设置 AI 降噪…";
 "Set up sync to see it on your other devices." = "设置同步后，即可在你的其他设备上查看此图库。";
+"Sets" = "集";
 "Settings" = "设置";
 "Settings file problem" = "设置文件有问题";
 "Settings new raw photos start from. Changing them doesn't touch photos already in the library." = "新 RAW 照片的初始设置。更改这些设置不会影响图库中已有的照片。";
@@ -1950,6 +1996,7 @@
 "Sharpness" = "锐度";
 "Shift" = "偏移量";
 "Shift by" = "偏移";
+"Shift by Time Zone" = "按时区偏移";
 "Short Edge" = "短边";
 "Show" = "显示";
 "Show All" = "显示全部";
@@ -2066,6 +2113,7 @@
 "Standard" = "标准";
 "Star rating (0–5)" = "星级（0–5）";
 "Stars" = "星级";
+"Start Number" = "起始编号";
 "Start at" = "起始编号";
 "Start number" = "起始编号";
 "Starting" = "正在开始";
@@ -2194,6 +2242,7 @@
 "The original files, unchanged, each with an XMP sidecar holding its edits." = "保留原始文件不变，每个文件附带一个保存其编辑内容的 XMP 附属文件。";
 "The photo has these settings" = "此照片具有这些设置";
 "The photo is enlarged to twice its width and height with an AI model, with your edits applied, and added next to the original (a 16-bit sRGB TIFF), stacked with it. The original isn't changed. This takes a while on large photos." = "使用 AI 模型将照片的宽度和高度放大到两倍，应用您的编辑，并将结果（16 位 sRGB TIFF）添加到原照片旁，与其堆叠。原照片不会被更改。较大的照片需要一些时间。";
+"The photo shown gets this time; the others move by as much, keeping their spacing." = "当前显示的照片将设为此时间；其他照片按相同幅度偏移，保持原有间隔。";
 "The photos are copied into the library; the originals in Photos and Files are left as they are." = "照片会被拷贝到图库中；“照片”和“文件”中的原始文件保持不变。";
 "The photos are copied into the library; the originals in Photos or Files are left as they are." = "照片会复制到图库中；“照片”或“文件”中的原件保持不变。";
 "The processor does the work." = "由处理器完成运算。";
@@ -2238,6 +2287,7 @@
 "Thursday" = "星期四";
 "Tick the box to accept the model's terms first" = "请先勾选以接受该模型的条款";
 "Tile server" = "图块服务器";
+"Time Between Stacks" = "堆叠间隔时间";
 "Time zone" = "时区";
 "Tint" = "色调";
 "Title" = "标题";
@@ -2410,6 +2460,7 @@
 "a removed photo" = "一张已移除的照片";
 "all" = "全部";
 "and" = "和";
+"and %lld more" = "另有 %lld 项";
 "any" = "任一";
 "are empty" = "为空";
 "aren't empty" = "不为空";
