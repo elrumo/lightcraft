@@ -73,6 +73,8 @@ public struct HostState: Codable, Sendable, Equatable {
     public var visibleGen: UInt64 = 0
     public var visibleCount: Int = 0
     public var libraryGeneration: UInt64 = 0
+    /// Changes with the preset list (created, imported, renamed, or brought by the sync).
+    public var presetsGeneration: UInt64 = 0
     public var active: UInt64?
     public var selectionCount: Int = 0
     public var undo: String?

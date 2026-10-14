@@ -27,6 +27,7 @@ fn fixtures() -> Value {
         visible_gen: 40,
         visible_count: 30,
         library_generation: 2,
+        presets_generation: 5,
         active: Some(PhotoId(7)),
         selection_count: 1,
         undo: Some("Exposure".into()),
