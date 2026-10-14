@@ -163,8 +163,8 @@ impl ExpandModel {
             ExpandModel::MiGan => "Fast, on every device",
             ExpandModel::Lama => "Best for wide areas of sky, water or texture",
             ExpandModel::Sd15 => "Draws new detail; slower",
-            ExpandModel::Kandinsky => "Draws new detail, guided by the photo; slow, a large download",
-            ExpandModel::Sdxl => "The most detail; slow, a large download",
+            ExpandModel::Kandinsky => "Draws new detail, guided by the photo; slow",
+            ExpandModel::Sdxl => "The most detail; slow",
             ExpandModel::Classic => "No download: texture from the photo",
         }
     }
