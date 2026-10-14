@@ -151,7 +151,16 @@ mod system {
             let files = c
                 .items
                 .into_iter()
-                .map(|i| CameraFile { id: i.id, name: i.name, size: i.size, captured: i.captured, raw: i.raw, width: i.width, height: i.height })
+                .map(|i| CameraFile {
+                    id: i.id,
+                    name: i.name,
+                    size: i.size,
+                    captured: i.captured,
+                    exif_dated: i.exif_dated,
+                    raw: i.raw,
+                    width: i.width,
+                    height: i.height,
+                })
                 .collect();
             Some((rev, HostContents { files, complete: c.complete, error: c.error }))
         }

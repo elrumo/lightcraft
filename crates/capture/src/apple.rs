@@ -243,6 +243,7 @@ fn item_of(file: &ICCameraFile, id: String) -> Item {
     Item {
         id,
         size: u64::try_from(size).unwrap_or(0),
+        exif_dated: exif.is_some(),
         captured: exif.or(created).and_then(|d| local(&d)),
         raw: raw || crate::raw_name(&name),
         width: u32::try_from(width).unwrap_or(0),

@@ -79,6 +79,8 @@ impl Camera {
             name: name.into(),
             size: bytes.len() as u64,
             captured: Some(captured.into()),
+            // (these JPEGs have no EXIF date: the camera gives the file's, the library the copy's)
+            exif_dated: false,
             ..Default::default()
         };
         self.files.push((f, bytes));
