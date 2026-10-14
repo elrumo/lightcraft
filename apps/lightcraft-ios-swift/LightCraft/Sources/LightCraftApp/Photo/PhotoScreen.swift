@@ -9,18 +9,20 @@ import SwiftUI
 struct PhotoScreen: View {
     @Environment(AppModel.self) private var model
     @Environment(\.verticalSizeClass) private var verticalSize
+    @Environment(\.horizontalSizeClass) private var horizontalSize
     let start: UInt64
     @State private var review = false
 
     var body: some View {
         let editor = model.editor
-        // a phone held sideways: the photo beside a side panel (egui's landscape layout)
-        let sideways = verticalSize == .compact
+        // a phone held sideways, or an iPad: the photo beside a side panel (egui's wide layout,
+        // from 600 pt: 316 pt sideways, 340 pt on a tablet)
+        let sideways = verticalSize == .compact || horizontalSize == .regular
         Group {
             if sideways, editor.tool != nil {
                 HStack(spacing: 0) {
                     pager
-                    if !review { SidePanel().transition(.move(edge: .trailing)) }
+                    if !review { SidePanel(width: verticalSize == .compact ? 316 : 340).transition(.move(edge: .trailing)) }
                 }
             } else {
                 VStack(spacing: 0) {
@@ -80,16 +82,18 @@ struct PhotoScreen: View {
 /// Red Eye), or the Edit groups, the open tool's controls and the tool bar.
 private struct SidePanel: View {
     @Environment(AppModel.self) private var model
+    let width: CGFloat
 
     var body: some View {
         let editor = model.editor
         VStack(spacing: 0) {
             if let tool = editor.tool, tool.hasScreen {
+                // (at the bottom, where the thumb is, as on a phone held upright)
+                Spacer(minLength: 0)
                 ViewThatFits(in: .vertical) {
                     ToolScreenBar(tool: tool)
                     ScrollView { ToolScreenBar(tool: tool) }
                 }
-                Spacer(minLength: 0)
             } else {
                 if editor.tool == .edit { GroupBar() }
                 if let tool = editor.tool {
@@ -100,7 +104,7 @@ private struct SidePanel: View {
                 ToolBar()
             }
         }
-        .frame(width: 316)
+        .frame(width: width)
         .background(Color(uiColor: .secondarySystemBackground))
     }
 }

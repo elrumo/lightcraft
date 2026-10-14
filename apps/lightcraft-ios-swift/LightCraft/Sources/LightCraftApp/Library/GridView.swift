@@ -7,7 +7,8 @@ import SwiftUI
 /// starts choosing.
 struct GridView: View {
     @Environment(AppModel.self) private var model
-    @Environment(\.verticalSizeClass) private var verticalSize
+    /// The grid's width: wider screens get more columns, so the tiles keep their size.
+    @State private var gridWidth: CGFloat = 0
     let namespace: Namespace.ID
     /// Scroll to this grid index (Months, Years, a photo put away).
     @Binding var jump: Int?
@@ -23,8 +24,8 @@ struct GridView: View {
 
     var body: some View {
         let library = model.library
-        // held sideways, twice the columns: the tiles stay the size they were
-        let across = max(1, model.prefs.gridColumns) * (verticalSize == .compact ? 2 : 1)
+        // a phone's columns for each phone's width (sideways, an iPad: two or three times as many)
+        let across = max(1, model.prefs.gridColumns) * max(1, Int((gridWidth / 400).rounded()))
         let columns = Array(repeating: GridItem(.flexible(), spacing: 2), count: across)
         ScrollViewReader { proxy in
             ScrollView {
@@ -46,6 +47,7 @@ struct GridView: View {
                     }
                 }
                 .coordinateSpace(name: "grid")
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { gridWidth = $0 }
                 .simultaneousGesture(chooseDrag, including: model.selectMode ? .all : .none)
                 // room under the last row for the Years / Months / All capsule
                 Color.clear.frame(height: 96)
