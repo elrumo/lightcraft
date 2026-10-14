@@ -18,9 +18,9 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | Phase | ✅ | 🟡 | ⬜ | 🚫 | Done or out of scope |
 |---|---:|---:|---:|---:|---:|
 | S0 | 15 | 0 | 0 | 0 | 15/15 |
-| S1 | 165 | 0 | 1 | 3 | 168/169 |
-| S2 | 77 | 0 | 2 | 25 | 102/104 |
-| **Total** | 257 | 0 | 3 | 28 | 285/288 |
+| S1 | 166 | 0 | 0 | 3 | 169/169 |
+| S2 | 79 | 0 | 0 | 25 | 104/104 |
+| **Total** | 260 | 0 | 0 | 28 | 288/288 |
 <!-- /ios-parity:summary -->
 
 ## Screens
