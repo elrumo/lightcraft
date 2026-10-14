@@ -120,6 +120,14 @@ nonisolated struct Toast: Equatable {
     var id = UUID()
 }
 
+/// Tells the App that what the menu bar shows has changed. A Mac's menu bar does not follow what an
+/// @Observable model changes (not from a Commands body, nor from the App's), but it does follow an
+/// ObservableObject the App observes: the model bumps this when the menus' data moves.
+final class MenuChanges: ObservableObject {
+    @Published private(set) var revision = 0
+    func bump() { revision &+= 1 }
+}
+
 /// The app's state: the engine, what it last reported, and the pictures it sent. Everything the
 /// views show comes from here; everything they do goes to the engine as a request.
 @Observable
@@ -132,6 +140,10 @@ final class AppModel {
     var toast: Toast?
     var path: [Route] = []
     var sheet: Sheet?
+    /// The App's word that the menus changed (`MenuChanges`).
+    let menuChanges = MenuChanges()
+    /// The page of the Mac's Settings window that is showing (`general`, `import`, `sync`…).
+    var settingsTab = "general"
     /// The menu bar's commands: egui's UI commands (`host.uiCommands`) and the engine's with a menu.
     var uiCommands: [UICommand] = []
     var menuEngine: [CommandInfo] = []
@@ -149,6 +161,8 @@ final class AppModel {
     var selectMode = false
     /// The engine is being opened.
     private var starting = false
+    /// Open the demo library (the way out of a library that won't open).
+    private var wantsDemo = false
     /// Window ▸ Second Window was asked for (RootView opens it).
     var secondWindowAsked = false
     /// Main windows on screen (none when iPadOS brings back only the second window).
@@ -205,7 +219,7 @@ final class AppModel {
         // the device's name on the sync server (read by the engine when signing in)
         setenv("LIGHTCRAFT_DEVICE", Platform.deviceName, 0)
         do {
-            let (engine, opened) = try await Engine.open(Self.config())
+            let (engine, opened) = try await Engine.open(config())
             self.engine = engine
             self.opened = opened
             if let warning = opened.warnings.first {
@@ -231,14 +245,24 @@ final class AppModel {
         }
     }
 
-    private static func config() -> OpenConfig {
+    /// Start again after the library wouldn't open: as it was (the other LightCraft may be closed
+    /// now), on another library, or on the demo library (nothing is saved there).
+    func retryStart(library: String? = nil, demo: Bool = false) {
+        if let library { prefs.libraryPath = library }
+        wantsDemo = demo
+        startError = nil
+        Task { await start() }
+    }
+
+    private func config() -> OpenConfig {
         let env = ProcessInfo.processInfo.environment
         let nonEmpty = { (key: String) in env[key].flatMap { $0.isEmpty ? nil : $0 } }
         return OpenConfig(
             home: NSHomeDirectory(),
             tmp: Platform.tmpFolder,
-            library: nonEmpty("LIGHTCRAFT_LIBRARY"),
-            demo: nonEmpty("LIGHTCRAFT_DEMO") != nil,
+            // (the environment first, then the library chosen when the default one wouldn't open)
+            library: nonEmpty("LIGHTCRAFT_LIBRARY") ?? prefs.libraryPath,
+            demo: nonEmpty("LIGHTCRAFT_DEMO") != nil || wantsDemo,
             deviceName: Platform.deviceName,
             script: nonEmpty("LIGHTCRAFT_SCRIPT"),
             profile: Platform.profile
@@ -292,6 +316,8 @@ final class AppModel {
 
     private func stateChanged(from old: HostState, to new: HostState) {
         state = new
+        // (Undo and Redo name the step)
+        if old.undo != new.undo || old.redo != new.redo { menuChanges.bump() }
         // what isn't drawn live during a drag (menus, the grid under the photo, lists, previews)
         // catches up when it ends: at every step it would keep the engine from the drafts
         if new.interaction == nil, settledRevision != new.catalogRevision {

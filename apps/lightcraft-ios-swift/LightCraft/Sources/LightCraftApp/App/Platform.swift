@@ -75,15 +75,6 @@ extension View {
         self
         #endif
     }
-
-    /// Covers everything (iOS full-screen cover); a Mac shows a sheet.
-    @ViewBuilder func lcCover<Item: Identifiable, Content: View>(item: Binding<Item?>, @ViewBuilder content: @escaping (Item) -> Content) -> some View {
-        #if os(iOS)
-        fullScreenCover(item: item, content: content)
-        #else
-        sheet(item: item, content: content)
-        #endif
-    }
 }
 
 enum LCKeyboard {
@@ -173,6 +164,16 @@ enum Platform {
         return nil
         #else
         return .desktop
+        #endif
+    }
+
+    /// Whether plugging in a camera or a card opens its import by default. A phone's user means it; a
+    /// Mac's has an iPhone on a cable now and then.
+    static var importsOnConnect: Bool {
+        #if os(iOS)
+        return true
+        #else
+        return false
         #endif
     }
 

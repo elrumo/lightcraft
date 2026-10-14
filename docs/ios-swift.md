@@ -169,7 +169,8 @@ go to stderr like the egui app's (`LIGHTCRAFT_LOG=info`).
 `LIGHTCRAFT_SCRIPT=<file>` (a file in the app's tmp folder) runs the control-protocol requests in it, one per line
 (`{"sleep": ms}` waits), and appends each reply to `<file>.out`; a relative `path` is next to the script. The engine
 answers `engine.*`, `render.*` and `host.*` itself; the app answers `ui.screenshot {path}` (the window as a PNG),
-`ui.inspect` (screen, photo, state, `perf`: the last render's ms and the slider-to-draft round trip) and `ui.set {screen:
+`ui.inspect` (screen, photo, state, `perf`: the last render's ms and the slider-to-draft round trip; `activity`; on a Mac `windows`, `active`,
+and with `menus: true` the main menu) and `ui.set {screen:
 grid | photo | edit | crop | masking | remove | redEye | presets | info | commands | people | map, photo?, person? (with people: their page), span?, group?, editStyle? (automatic | dials | sliders), sheet?,
 section?, select?, faceBoxes?, tagFace?, beforeAfter?, visualizeSpots?, removeAI?, histogram?, cropGuide?, cropDraw? (straighten | guides | none), orientation? (landscape | portrait), softProof?, proofSpace?, proofWarning?,
 sidebarCommand? + sidebarParams? (a `view.sidebar*` command), searching?, search? (the grid's search field), painting? (the Keyword Painter's keyword; "" stops), secondWindow? (opens Window ▸ Second Window)}` (`ScriptHost.swift` lists
@@ -184,6 +185,15 @@ xcrun devicectl device copy to --device <udid> --domain-type appDataContainer \
 xcrun devicectl device process launch --device <udid> --terminate-existing \
   --environment-variables '{"LIGHTCRAFT_SCRIPT": "tour.jsonl"}' ai.storyteller.lightcraft.swift
 ```
+
+**On a Mac** the script is any file (`LIGHTCRAFT_SCRIPT=/absolute/path/tour.jsonl`; replies in `tour.out` beside it) and
+`ci/mac-tour.sh <LightCraft.app> <out-dir>` does the rest on the demo library. Mac-only requests: `ui.screenshot {path,
+window?: main | settings | second | cover | part of a title, views?: true}` is the window as the window server draws it
+(an app may capture its own windows without Screen Recording permission; `views: true`, or when that gives nothing, draws
+it from its views, which comes out flat: glass light, lists and thumbnails sometimes empty); `ui.set {windowSize: [w, h]}`
+(points); `ui.activate` (comes to the front: macOS often refuses it for a process started from a script, and the menu bar
+is the active app's); `ui.quit` (Quit as the menu does it, a moment after its answer: from a run-loop timer, because a
+quit that waits for the main actor cannot be called from inside a main-actor task); `ui.inspect {menus: true}`.
 
 ## Look and feel
 
@@ -234,10 +244,21 @@ iPad"): one multiplatform Xcode target, arm64 only. Decisions (2026-10-14):
 - **Mac-native layout**, not the iPad's push structure with Mac chrome: a persistent sidebar, content and inspector, a
   toolbar, a filmstrip, sliders only. *Not built yet (SM2).*
 
-Where it stands: it builds and launches with the iPad's regular-width layout in a window (SM0); `ScriptHost` captures
-the window for `ui.screenshot` (`cacheDisplay` of the frame view) and takes `ui.set {windowSize: [w, h]}`. Not yet: the
-Mac menu bar's standard items, a Settings window, quit that closes the engine, drag in from Finder, pointer and keyboard
-input (SM1–SM3).
+Where it stands: it builds and launches with the iPad's regular-width layout in a window (SM0), and has a Mac's shell
+(SM1): a Settings window (⌘,: a tab per page of the iPhone's list, `Mac/MacSettings.swift`), a menu bar with the app
+menu (About, Settings…), a File menu that starts with Import Photos… (⇧⌘I, an open panel for files and folders, copied
+in and reviewed as the iPhone's picks are), the engine's Edit, View and Photo menus, a Tools menu for what egui
+lists under Window (the Window menu is the system's), Undo and Redo that give ⌘Z to a text field being edited, and F-keys
+in shortcuts; quit that asks when a task is running, then saves, closes the library (so the egui app can open it) and
+stops the engine (`Mac/MacAppDelegate.swift`); a library that won't open (the egui app has it) shows the reason with Try
+Again, Choose Another Library… and Continue Without Saving (`App/StartErrorView.swift`); the slideshow and Lights Out in
+a full-screen window of their own. Not yet: the Mac layout and input (SM2), import in place, an export destination and
+libraries (SM3).
+
+Two things a Mac's SwiftUI menu bar does that cost a day: it does not follow what an `@Observable` model changes, neither
+in a `Commands` body nor in the App's, only an `ObservableObject` the App observes (`MenuChanges`, bumped by the model);
+and a top-level menu that is empty when the app starts is never made (File starts with Import Photos…). Menus are also
+filled in for the focused scene only: an automation that starts in the background sees only their static items.
 
 ## Plan
 
@@ -292,7 +313,8 @@ SW3, a native iOS 26 redesign (not the S3 gate; see *Look and feel*):
 SM, the Mac app (see [macOS](#macos); not part of the S gates, which are about replacing the egui iOS app):
 - SM0, it builds and launches: the engine host's `desktop` profile (SM0.1, done), the app compiling for macOS (SM0.2,
   done), the Xcode project, Rust build, `run.sh --mac` and `ci/mac-tour.sh` (SM0.3);
-- SM1, the Mac shell: quit that closes the engine, the standard menus, a Settings window, windows;
+- SM1, the Mac shell (done on this Mac): quit that closes the engine and the start-up error (SM1.1), the Settings window,
+  the menus and the slideshow window (SM1.2);
 - SM2, the Mac window: sidebar, content and inspector, a toolbar and filmstrip, pointer and keyboard;
 - SM3, desktop workflows: import in place from the open panel and Finder, an export destination, libraries;
 - SM4, tracking and CI: the Mac rows in `PARITY.md`, `ios-swift.yml`, the other docs.

@@ -29,7 +29,8 @@ final class Prefs {
         faceBoxes = store.bool(forKey: "faceBoxes")
         removeAI = store.bool(forKey: "removeAI")
         expandModel = store.string(forKey: "expandModel") ?? "auto"
-        importOnConnect = store.object(forKey: "importOnConnect") as? Bool ?? true
+        importOnConnect = store.object(forKey: "importOnConnect") as? Bool ?? Platform.importsOnConnect
+        libraryPath = store.string(forKey: "libraryPath")
         cropGuide = store.string(forKey: "cropGuide") ?? "thirds"
         cropGuideOrientation = store.integer(forKey: "cropGuideOrientation")
         showHistogram = store.bool(forKey: "showHistogram")
@@ -161,6 +162,9 @@ final class Prefs {
     var expandModel: String { didSet { store.set(expandModel, forKey: "expandModel") } }
     /// Show the import when a camera or memory card is plugged in.
     var importOnConnect: Bool { didSet { store.set(importOnConnect, forKey: "importOnConnect") } }
+    /// The library a Mac opens instead of the default one (chosen when the default won't open), or
+    /// nil. `LIGHTCRAFT_LIBRARY` in the environment wins.
+    var libraryPath: String? { didSet { store.set(libraryPath, forKey: "libraryPath") } }
     /// The crop tool's composition guide (`crop.guides` kinds) and how the asymmetric ones turn (0–3).
     var cropGuide: String { didSet { store.set(cropGuide, forKey: "cropGuide") } }
     var cropGuideOrientation: Int { didSet { store.set(cropGuideOrientation, forKey: "cropGuideOrientation") } }

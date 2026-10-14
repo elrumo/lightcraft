@@ -466,6 +466,7 @@ extension AppModel {
         guard let r = await request("host.sidebar", p), let sections = try? r["layout"].decode([SidebarSectionState].self) else { return }
         prefs.sidebarLayout = r["layout"]
         withAnimation(.snappy) { sidebarSections = sections }
+        menuChanges.bump()
     }
 
     func arrange(_ command: String, _ params: JSONValue = [:]) {
@@ -538,15 +539,17 @@ struct EditSidebarSheet: View {
 /// View ▸ Sidebar Sections on the iPad's menu bar: each section shown or hidden, and Reset.
 struct SidebarSectionsMenu: View {
     let model: AppModel
+    /// `model.sidebarHere`, read by the menu bar's body (see LightCraftMenus).
+    let sections: [SidebarSectionState]
 
     var body: some View {
         Menu("Sidebar Sections") {
-            ForEach(model.sidebarHere) { s in
+            ForEach(sections) { s in
                 Toggle(LocalizedStringKey(s.title), isOn: Binding(get: { !s.hidden }, set: { model.arrange("view.sidebarSection", ["section": .string(s.id), "show": .bool($0)]) }))
             }
             Divider()
             Button("Reset Sidebar Sections") { model.arrange("view.sidebarReset") }
-                .disabled(model.sidebarHere == SidebarSectionState.usual)
+                .disabled(sections == SidebarSectionState.usual)
         }
     }
 }

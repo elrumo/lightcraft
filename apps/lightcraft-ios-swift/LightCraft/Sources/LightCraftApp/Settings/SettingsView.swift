@@ -35,20 +35,7 @@ struct SettingsView: View {
             }
             .navigationTitle("Settings")
             .inlineTitle()
-            .navigationDestination(for: String.self) { page in
-                switch page {
-                case "general": GeneralSettings()
-                case "import": ImportSettings()
-                case "performance": PerformanceSettings()
-                case "interface": InterfaceSettings()
-                case "sync": SyncSettings()
-                case "faces": FacesSettings()
-                case "storage": SyncStorageView()
-                case "systemInfo": SystemInfoView()
-                case "models": ModelsSettings()
-                default: EmptyView()
-                }
-            }
+            .navigationDestination(for: String.self) { Self.page($0) }
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done", systemImage: "checkmark") { dismiss() }
@@ -56,6 +43,22 @@ struct SettingsView: View {
             }
             .onAppear { if let section, path.isEmpty { path = [section] } }
             .onChange(of: section) { _, s in path = s.map { [$0] } ?? [] }
+        }
+    }
+
+    /// A page by its name (the list's rows, `model.sheet = .settings(name)`, a Mac's tabs).
+    @ViewBuilder static func page(_ name: String) -> some View {
+        switch name {
+        case "general": GeneralSettings()
+        case "import": ImportSettings()
+        case "performance": PerformanceSettings()
+        case "interface": InterfaceSettings()
+        case "sync": SyncSettings()
+        case "faces": FacesSettings()
+        case "storage": SyncStorageView()
+        case "systemInfo": SystemInfoView()
+        case "models": ModelsSettings()
+        default: EmptyView()
         }
     }
 
@@ -88,7 +91,7 @@ struct SettingsView: View {
     }
 }
 
-private struct GeneralSettings: View {
+struct GeneralSettings: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
@@ -101,9 +104,11 @@ private struct GeneralSettings: View {
             } footer: {
                 Text("After rating or flagging a photo, go on to the next.")
             }
+            #if os(iOS)
             Section {
                 Toggle("Haptics", isOn: $prefs.haptics)
             }
+            #endif
         }
         .navigationTitle("General")
         .inlineTitle()
@@ -111,7 +116,7 @@ private struct GeneralSettings: View {
 }
 
 /// Import defaults: presets for raws and other files, copyright and creator (`library.preferences`).
-private struct ImportSettings: View {
+struct ImportSettings: View {
     @Environment(AppModel.self) private var model
     @State private var prefs: JSONValue = .null
     @State private var presets: [PresetInfo] = []
@@ -161,7 +166,7 @@ private struct ImportSettings: View {
 }
 
 /// The GPU, memory for caches, the thumbnail cache.
-private struct PerformanceSettings: View {
+struct PerformanceSettings: View {
     @Environment(AppModel.self) private var model
     @State private var gpu: JSONValue = .null
     @State private var prefs: JSONValue = .null
@@ -196,7 +201,7 @@ private struct PerformanceSettings: View {
     }
 }
 
-private struct InterfaceSettings: View {
+struct InterfaceSettings: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
@@ -219,7 +224,11 @@ private struct InterfaceSettings: View {
                 }
                 .foregroundStyle(.primary)
             } footer: {
+                #if os(iOS)
                 Text("Opens LightCraft in the Settings app, where its language is chosen.")
+                #else
+                Text("Opens System Settings, where each app's language is chosen.")
+                #endif
             }
             Section("Grid") {
                 Picker("Ratings & Flags", selection: $prefs.badges) {
@@ -227,6 +236,8 @@ private struct InterfaceSettings: View {
                 }
                 Toggle("Show Counts in Albums", isOn: $prefs.showCounts)
             }
+            // (a Mac always has sliders: dials are for a finger)
+            #if os(iOS)
             Section {
                 Picker("Adjustments", selection: $prefs.editStyle) {
                     ForEach(Prefs.EditStyle.allCases) { Text($0.label).tag($0) }
@@ -236,6 +247,7 @@ private struct InterfaceSettings: View {
             } footer: {
                 Text("Dials set one control at a time with a ruler, as in Photos; sliders show a group's controls together. Automatic uses dials under the photo and sliders beside it.")
             }
+            #endif
             Section("Photo") {
                 Picker("Info Overlay", selection: $prefs.infoOverlay) {
                     ForEach(Prefs.InfoOverlay.allCases) { Text($0.label).tag($0) }
@@ -391,7 +403,7 @@ struct SyncSettings: View {
 }
 
 /// The AI models: what each is for, its size and licence; download, turn on or off, delete.
-private struct ModelsSettings: View {
+struct ModelsSettings: View {
     @Environment(AppModel.self) private var model
     @State private var models: [JSONValue] = []
     @State private var confirming: JSONValue?

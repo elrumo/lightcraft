@@ -11,11 +11,13 @@ import AppKit
 /// The UI's half of automation (`LIGHTCRAFT_SCRIPT`, docs/ios-swift.md → Driving the app): the
 /// engine answers `engine.*`, `render.*` and `host.*` itself and asks the app for the rest.
 /// - `ui.screenshot {path}`: the window as a PNG.
+/// - `ui.quit` (a Mac): quit the way the menu does, a moment after answering.
 /// - `ui.inspect`: the screen, the photo, the state and timings (`perf`).
 /// - `ui.set {screen?: grid | photo | edit | crop | masking | remove | redEye | presets | info | commands |
 ///   people | map, photo?, span?: all | months | years, group?: light | color…, sheet?: albums |
 ///   filter | settings | export | sync | history | versions | keywords | about | superRes | createPreset | smartAlbum (id?) | allMetadata | none, select?,
-///   faceBoxes?, tagFace?, beforeAfter?, visualizeSpots?, removeAI?, histogram?, cropGuide?}`: go there.
+///   faceBoxes?, tagFace?, beforeAfter?, visualizeSpots?, removeAI?, histogram?, cropGuide?, windowSize? (a Mac:
+///   [w, h] points)}`: go there.
 @Observable
 final class ScriptHost {
     func answer(id: UInt64, method: String, params: JSONValue, model: AppModel) {
@@ -36,8 +38,24 @@ final class ScriptHost {
             let path = params["path"].string ?? (NSTemporaryDirectory() as NSString).appendingPathComponent("screenshot.png")
             // let the last change reach the screen first
             try? await Task.sleep(for: .milliseconds(100))
-            let (w, h) = try screenshot(to: path)
+            let (w, h) = try screenshot(to: path, params)
             return ["path": .string(path), "width": .int(Int64(clamping: w)), "height": .int(Int64(clamping: h))]
+        #if os(macOS)
+        case "ui.activate":
+            // Comes to the front (the menu bar is the active app's: a script starts in the background)
+            NSApp.activate()
+            WindowCapture.window(named: params["window"].string)?.makeKeyAndOrderFront(nil)
+            return [:]
+        case "ui.quit":
+            // Quit as the menu does it (the delegate saves and closes the library), a moment after the
+            // answer, so the script's replies are written first. From a run-loop timer, as the menu's
+            // Quit comes from the event loop: called from inside a main-actor task, the delegate's
+            // answer (which needs the main actor) would wait for this task, which waits for the answer.
+            Timer.scheduledTimer(withTimeInterval: 0.8, repeats: false) { _ in
+                MainActor.assumeIsolated { NSApp.terminate(nil) }
+            }
+            return [:]
+        #endif
         case "ui.inspect":
             var photo: JSONValue = .null
             if case .photo(let id) = model.path.last {
@@ -50,12 +68,13 @@ final class ScriptHost {
             if let trip = model.lastDraftRoundTripMs {
                 perf["draftRoundTripMs"] = .double(trip)
             }
-            return [
+            var inspected: JSONValue = [
                 "screen": .string(model.screenName),
                 "photo": photo,
                 "photos": .int(Int64(clamping: model.library.count)),
                 "state": (try? JSONValue.encode(model.state)) ?? .null,
                 "perf": perf,
+                "activity": .array(model.activity.map { .string($0.label) }),
                 "images": [
                     "thumbs": .int(Int64(model.images.pictures.keys.filter { $0.hasPrefix("thumb") }.count)),
                     "requested": .int(Int64(model.thumbRequests)),
@@ -64,6 +83,20 @@ final class ScriptHost {
                     "failed": .object(model.images.failed.mapValues { .string($0) }),
                 ],
             ]
+            #if os(macOS)
+            inspected["windows"] = WindowCapture.list()
+            inspected["active"] = .bool(NSApp.isActive)
+            if params["menus"].bool == true {
+                inspected["menus"] = WindowCapture.menus()
+                // (what the menu bar has to show: commands loaded, and the items planned for each menu)
+                inspected["menuData"] = [
+                    "engine": .int(Int64(model.menuEngine.count)),
+                    "ui": .int(Int64(model.uiCommands.count)),
+                    "plan": .object(Dictionary(grouping: model.menuPlan(), by: { $0.path.first ?? "" }).mapValues { .int(Int64($0.count)) }),
+                ]
+            }
+            #endif
+            return inspected
         case "ui.set":
             if let span = params["span"].string, let s = Prefs.GridSpan(rawValue: span) {
                 model.prefs.gridSpan = s
@@ -108,7 +141,7 @@ final class ScriptHost {
             }
             #else
             // (a Mac window is sized from inside, too: a tour's screenshots are the same size every run)
-            if let size = params["windowSize"].array, size.count == 2, let w = size[0].int, let h = size[1].int, let window = Self.frontWindow() {
+            if let size = params["windowSize"].array, size.count == 2, let w = size[0].int, let h = size[1].int, let window = WindowCapture.window(named: params["window"].string) {
                 window.setContentSize(NSSize(width: Double(w), height: Double(h)))
             }
             #endif
@@ -186,7 +219,7 @@ final class ScriptHost {
 
     #if os(iOS)
     /// The key window as a PNG at `path`; its size in pixels.
-    private func screenshot(to path: String) throws -> (Int, Int) {
+    private func screenshot(to path: String, _ params: JSONValue) throws -> (Int, Int) {
         // the window in front (with a second window open, the main one may be behind it)
         let all = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
         let front = all.filter { $0.activationState == .foregroundActive }
@@ -205,29 +238,14 @@ final class ScriptHost {
         return (Int(image.size.width * image.scale), Int(image.size.height * image.scale))
     }
     #else
-    /// The window in front: the key window, else the biggest one on screen (an unattended run has
-    /// no key window, and with a second window open the main one may be behind it).
-    static func frontWindow() -> NSWindow? {
-        NSApp.keyWindow ?? NSApp.windows.filter { $0.isVisible && !($0 is NSPanel) }.max { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }
-    }
-
-    /// The front window, title bar and toolbar included, as a PNG at `path`; its size in pixels.
-    /// (The view hierarchy draws itself, so an occluded or background window captures too and the
-    /// app needs no Screen Recording permission. Materials may come out flatter than on screen.)
-    private func screenshot(to path: String) throws -> (Int, Int) {
-        guard let window = Self.frontWindow(), let content = window.contentView else {
-            throw ErrorBody(code: "noWindow", message: "no window to capture")
+    /// The window the script names (`window`: `main`, `settings`, `second`, `cover`… or part of a
+    /// title; the key window, else the biggest, without one) as a PNG at `path`; its size in pixels
+    /// (`views: true` draws it from its views: `WindowCapture`).
+    private func screenshot(to path: String, _ params: JSONValue) throws -> (Int, Int) {
+        guard let window = WindowCapture.window(named: params["window"].string) else {
+            throw ErrorBody(code: "noWindow", message: "no window to capture (\(params["window"].string ?? "front"))")
         }
-        let view = content.superview ?? content
-        guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
-            throw ErrorBody(code: "encode", message: "the window couldn't be drawn")
-        }
-        view.cacheDisplay(in: view.bounds, to: rep)
-        guard let png = rep.representation(using: .png, properties: [:]) else {
-            throw ErrorBody(code: "encode", message: "the screenshot couldn't be encoded")
-        }
-        try png.write(to: URL(fileURLWithPath: path))
-        return (rep.pixelsWide, rep.pixelsHigh)
+        return try WindowCapture.capture(window, to: path, views: params["views"].bool == true)
     }
     #endif
 }

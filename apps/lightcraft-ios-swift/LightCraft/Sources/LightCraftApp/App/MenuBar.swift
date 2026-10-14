@@ -25,41 +25,118 @@ nonisolated struct MenuItemSpec: Hashable {
 /// default shortcuts, so both apps answer the same keys.
 struct LightCraftMenus: Commands {
     let model: AppModel
+    /// What the menus show, as the app's body read it (`init(reading:)`).
+    let plan: [MenuItemSpec]
+    /// There is no window to act on (a Mac's, closed).
+    let off: Bool
+    let sidebarSections: [SidebarSectionState]
+    let undo: String?
+    let redo: String?
+    /// `MenuChanges.revision` as it was read: what makes the App's body run again.
+    let revision: Int
+
+    /// The menus as the model is now. Made by the App's body, which SwiftUI re-runs when the model
+    /// moves: a Mac's menu bar does not follow what a Commands body or the views inside a CommandMenu
+    /// read from an @Observable model, so the menus get their data as plain values.
+    init(reading model: AppModel, revision: Int) {
+        self.model = model
+        self.revision = revision
+        plan = model.menuPlan()
+        #if os(macOS)
+        off = model.mainWindows == 0
+        #else
+        off = false
+        #endif
+        sidebarSections = model.sidebarHere
+        undo = model.state.undo
+        redo = model.state.redo
+    }
 
     var body: some Commands {
         CommandGroup(replacing: .undoRedo) {
-            Button(model.state.undo.map { String(localized: "Undo \(Bundle.main.localizedString(forKey: $0, value: $0, table: nil))") } ?? String(localized: "Undo")) { model.undo() }
+            Button(undo.map { String(localized: "Undo \(Bundle.main.localizedString(forKey: $0, value: $0, table: nil))") } ?? String(localized: "Undo")) {
+                #if os(macOS)
+                // (typing in a text field: ⌘Z is the field's)
+                if let field = Self.editedText { field.undoManager?.undo(); return }
+                #endif
+                model.undo()
+            }
                 .keyboardShortcut("z", modifiers: .command)
-                .disabled(model.state.undo == nil)
-            Button(model.state.redo.map { String(localized: "Redo \(Bundle.main.localizedString(forKey: $0, value: $0, table: nil))") } ?? String(localized: "Redo")) { model.redo() }
+                .disabled(undoDisabled(undo))
+            Button(redo.map { String(localized: "Redo \(Bundle.main.localizedString(forKey: $0, value: $0, table: nil))") } ?? String(localized: "Redo")) {
+                #if os(macOS)
+                if let field = Self.editedText { field.undoManager?.redo(); return }
+                #endif
+                model.redo()
+            }
                 .keyboardShortcut("z", modifiers: [.command, .shift])
-                .disabled(model.state.redo == nil)
+                .disabled(undoDisabled(redo))
         }
-        CommandGroup(after: .newItem) { MenuSection(model: model, top: "File") }
-        CommandGroup(after: .pasteboard) { MenuSection(model: model, top: "Edit") }
-        CommandMenu("Photo") { MenuSection(model: model, top: "Photo") }
+        #if os(macOS)
+        // About in the app menu (Settings… is the Settings scene's, ⌘,)
+        CommandGroup(replacing: .appInfo) {
+            Button("About LightCraft") { model.sheet = .about }
+        }
+        SidebarCommands()
+        #endif
+        #if os(macOS)
+        // (no New Window: there is one main window. The first item is always there: a top-level menu
+        // that is empty when the app starts is never created, however full it gets later)
+        CommandGroup(replacing: .newItem) {
+            Button("Import Photos…") { model.importPhotosPanel() }
+                .keyboardShortcut("i", modifiers: [.command, .shift])
+                .disabled(off)
+            Divider()
+            section(plan, "File", off)
+        }
+        #else
+        CommandGroup(after: .newItem) { section(plan, "File", off) }
+        #endif
+        CommandGroup(after: .pasteboard) { section(plan, "Edit", off) }
+        CommandMenu("Photo") { section(plan, "Photo", off) }
+        #if os(macOS)
+        // the tools and panels egui lists under Window: a Mac's Window menu is the system's
+        CommandMenu("Tools") { section(plan, "Tools", off) }
+        #endif
         CommandGroup(after: .sidebar) {
-            MenuSection(model: model, top: "View")
-            SidebarSectionsMenu(model: model)
+            section(plan, "View", off)
+            SidebarSectionsMenu(model: model, sections: sidebarSections)
         }
-        CommandGroup(after: .windowArrangement) { MenuSection(model: model, top: "Window") }
-        CommandGroup(replacing: .help) { MenuSection(model: model, top: "Help") }
+        CommandGroup(after: .windowArrangement) { section(plan, "Window", off) }
+        CommandGroup(replacing: .help) { section(plan, "Help", off) }
     }
+
+    private func section(_ plan: [MenuItemSpec], _ top: String, _ off: Bool) -> MenuSection {
+        MenuSection(model: model, items: plan.filter { $0.path.first == top }, off: off)
+    }
+
+    /// Undo or Redo has nothing to do (a Mac's text field has its own, so they stay on while one is edited).
+    private func undoDisabled(_ step: String?) -> Bool {
+        #if os(macOS)
+        if Self.editedText != nil { return false }
+        #endif
+        return step == nil
+    }
+
+    #if os(macOS)
+    /// The text being edited in the key window (a field's editor), if any.
+    private static var editedText: NSText? { NSApp.keyWindow?.firstResponder as? NSText }
+    #endif
 }
 
 /// A menu's items, its submenus as menus of their own.
 private struct MenuSection: View {
     let model: AppModel
-    let top: String
+    let items: [MenuItemSpec]
+    let off: Bool
 
     var body: some View {
-        let items = model.menuItems(top)
         let direct = items.filter { $0.path.count == 1 }
         let subs = items.compactMap { $0.path.count > 1 ? $0.path[1] : nil }.reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
-        ForEach(direct, id: \.self) { item in MenuButton(model: model, item: item) }
+        ForEach(direct, id: \.self) { item in MenuButton(model: model, item: item, off: off) }
         ForEach(subs, id: \.self) { sub in
             Menu(LocalizedStringKey(sub)) {
-                ForEach(items.filter { $0.path.count > 1 && $0.path[1] == sub }, id: \.self) { item in MenuButton(model: model, item: item) }
+                ForEach(items.filter { $0.path.count > 1 && $0.path[1] == sub }, id: \.self) { item in MenuButton(model: model, item: item, off: off) }
             }
         }
     }
@@ -68,12 +145,14 @@ private struct MenuSection: View {
 private struct MenuButton: View {
     let model: AppModel
     let item: MenuItemSpec
+    /// There is no window to act on (a Mac's, closed).
+    let off: Bool
 
     var body: some View {
         let button = Button(LocalizedStringKey(item.label)) {
             if item.engine { model.perform(item.id) } else { model.runUI(item.id) }
         }
-        .disabled(!item.enabled)
+        .disabled(!item.enabled || off)
         if let key = item.shortcut.flatMap(KeyShortcut.parse) {
             button.keyboardShortcut(key)
         } else {
@@ -111,7 +190,14 @@ enum KeyShortcut {
         case "Space": equivalent = .space
         case "Tab": equivalent = .tab
         default:
-            // one character (F-keys and the like aren't keys SwiftUI menus can take)
+            #if os(macOS)
+            if key.count >= 2, key.first == "F", let n = Int(key.dropFirst()), (1...12).contains(n),
+               let function = UnicodeScalar(0xF704 + UInt32(n - 1)) {
+                // F1…F12: AppKit's function-key characters (NSF1FunctionKey…)
+                return KeyboardShortcut(KeyEquivalent(Character(function)), modifiers: modifiers)
+            }
+            #endif
+            // one character (an iPad's menus can't take F-keys)
             guard key.count == 1, let c = key.lowercased().first else { return nil }
             equivalent = KeyEquivalent(c)
         }
@@ -138,6 +224,7 @@ extension AppModel {
             uiCommands = (try? await engine.request("host.uiCommands").decode([UICommand].self)) ?? []
         }
         menuEngine = ((try? await engine.commands()) ?? []).filter { !$0.menu.isEmpty }
+        menuChanges.bump()
     }
 
     /// The items under `top` ("File", "Photo"…): the engine's, then the UI commands this app has.
@@ -155,10 +242,22 @@ extension AppModel {
         let ui = uiCommands.compactMap { c -> MenuItemSpec? in
             let path = c.menu.split(separator: ">").map(String.init)
             guard !path.isEmpty, Self.uiActions.contains(c.id) else { return nil }
+            #if os(macOS)
+            // (the app menu has Settings… and About; the Window menu is the system's: the tools get one of their own)
+            if Self.macOwned.contains(c.id) { return nil }
+            if path.first == "Window", c.id != "view.secondWindow" {
+                let rest = path.dropFirst().first == "Tools" ? Array(path.dropFirst(2)) : Array(path.dropFirst())
+                return MenuItemSpec(id: c.id, label: c.label, shortcut: c.shortcut, engine: false, enabled: uiEnabled(c.id), path: ["Tools"] + rest)
+            }
+            #endif
             return MenuItemSpec(id: c.id, label: c.label, shortcut: c.shortcut, engine: false, enabled: uiEnabled(c.id), path: path)
         }
+        // An engine command and a UI command of the same name ("New Album", "New Album…"): the UI one
+        // is the dialog, the engine's takes no input and would only be a second item for it
+        let uiNames = Set(ui.map { Self.plainLabel($0.label) + "/" + ($0.path.first ?? "") })
+        let engineOnly = engine.filter { !uiNames.contains(Self.plainLabel($0.label) + "/" + ($0.path.first ?? "")) }
         var taken = Self.systemKeys
-        return (engine + ui).map { item in
+        return (engineOnly + ui).map { item in
             guard let sc = item.shortcut, let key = KeyShortcut.parse(sc) else { return item }
             let name = KeyShortcut.name(key)
             if taken.contains(name) {
@@ -167,6 +266,11 @@ extension AppModel {
             taken.insert(name)
             return item
         }
+    }
+
+    /// A label without its trailing ellipsis, for telling two commands of one name apart.
+    private static func plainLabel(_ label: String) -> String {
+        label.replacingOccurrences(of: "…", with: "").replacingOccurrences(of: "...", with: "").trimmingCharacters(in: .whitespaces).lowercased()
     }
 
     /// A command that can't run without being told something (`{paths: …}`, not `{ids?}`): a menu
@@ -194,10 +298,19 @@ extension AppModel {
     /// The engine's commands the menu bar has its own items for (Undo, Redo).
     static let replaced: Set<String> = ["edit.undo", "edit.redo"]
 
+    /// What the Mac's own menus already have (Settings… is the Settings scene's, About is in the app menu).
+    static let macOwned: Set<String> = ["app.settings", "app.about"]
+
     /// Keys the system's menus use: never given to one of ours.
-    static var systemKeys: Set<String> { Set(["Cmd+A", "Cmd+C", "Cmd+V", "Cmd+X", "Cmd+Z", "Cmd+Shift+Z", "Cmd+Q", "Cmd+W", "Cmd+H", "Cmd+M",
-                                              "Cmd+N", "Cmd+Shift+N", "Cmd+P", "Cmd+,", "Cmd+Tab", "Cmd+Space", "Cmd+Ctrl+F", "Cmd+Ctrl+S"]
-        .compactMap { KeyShortcut.parse($0).map(KeyShortcut.name) }) }
+    static var systemKeys: Set<String> {
+        var keys = ["Cmd+A", "Cmd+C", "Cmd+V", "Cmd+X", "Cmd+Z", "Cmd+Shift+Z", "Cmd+Q", "Cmd+W", "Cmd+H", "Cmd+M",
+                    "Cmd+P", "Cmd+,", "Cmd+Tab", "Cmd+Space", "Cmd+Ctrl+F", "Cmd+Ctrl+S"]
+        #if os(iOS)
+        // (an iPad's New Window; a Mac has one main window: ⌘N is New Album, as in the egui app)
+        keys += ["Cmd+N", "Cmd+Shift+N"]
+        #endif
+        return Set(keys.compactMap { KeyShortcut.parse($0).map(KeyShortcut.name) })
+    }
 
     /// The UI commands this app does (`runUI`).
     static let uiActions: Set<String> = [
@@ -359,7 +472,7 @@ struct ShortcutsSheet: View {
     var body: some View {
         NavigationStack {
             List {
-                ForEach(["File", "Edit", "Photo", "View", "Window", "Help"], id: \.self) { top in
+                ForEach(["File", "Edit", "Photo", "View", "Window", "Tools", "Help"], id: \.self) { top in
                     let items = model.menuItems(top).filter { $0.shortcut.flatMap(KeyShortcut.parse) != nil }
                     if !items.isEmpty {
                         Section(LocalizedStringKey(top)) {
