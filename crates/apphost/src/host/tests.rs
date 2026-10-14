@@ -336,6 +336,11 @@ fn a_face_renders_on_its_own() {
     assert!(image["width"].as_u64().unwrap() <= 96 && image["height"].as_u64().unwrap() <= 96, "{image}");
     let bad = h.call(&req(3, "render.face", json!({"photo": photo, "rect": {"x0": "a"}})), Duration::from_secs(30));
     assert_eq!(bad["error"]["code"], "badParams", "{bad}");
+    // the photo as it is, at a size of its own (Compare, Survey)
+    let r = h.call(&req(4, "render.variant", json!({"photo": photo, "edited": true, "edge": 200})), Duration::from_secs(30));
+    let slot = r["result"]["slot"].as_str().unwrap().to_string();
+    let image = h.wait_for(|e| e["kind"] == "image" && e["slot"] == slot.as_str());
+    assert!(image["width"].as_u64().unwrap() <= 200 && image["height"].as_u64().unwrap() <= 200, "{image}");
 }
 
 // Photo Merge as the phone does it: previews that a newer one replaces, then the full merge in the
