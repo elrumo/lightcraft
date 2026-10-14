@@ -615,8 +615,11 @@ impl Engine {
                     let photo = self.session.catalog.photo(id).ok_or_else(|| bad("no such photo"))?;
                     let version = usize::try_from(v).ok().and_then(|v| photo.versions.get(v)).ok_or_else(|| bad("no such version"))?;
                     (*version.settings).clone()
+                } else if p.get("edited").and_then(Value::as_bool) == Some(true) {
+                    // the photo as it is (Compare, Survey, the filmstrip: several photos large at once)
+                    (*d).clone()
                 } else {
-                    return Err(bad("give `preset`, `profile` or `version`"));
+                    return Err(bad("give `preset`, `profile`, `version` or `edited: true`"));
                 };
                 let job = self.session.variant_job(id, &settings, edge).ok_or_else(|| bad("no such photo"))?;
                 let key = job.key;

@@ -308,6 +308,7 @@ struct GridMoreMenu: View {
             }
             Section {
                 Toggle(isOn: $prefs.squareGrid) { Label("Square Thumbnails", systemImage: "square.grid.3x3") }
+                Toggle(isOn: $prefs.gridInfo) { Label("Grid Info", systemImage: "textformat") }
                 Menu {
                     Picker("Ratings & Flags", selection: $prefs.badges) {
                         ForEach(Prefs.Badges.allCases) { Text($0.label).tag($0) }
@@ -317,6 +318,7 @@ struct GridMoreMenu: View {
                 }
             }
             Section {
+                Button("Slideshow", systemImage: "play.rectangle") { model.cover = .slideshow }
                 Button("Map", systemImage: "map") { model.path.append(.map) }
                 Button("People", systemImage: "person.2") { model.path.append(.people) }
             }

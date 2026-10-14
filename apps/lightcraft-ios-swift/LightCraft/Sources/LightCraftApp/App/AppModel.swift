@@ -14,6 +14,14 @@ nonisolated enum Route: Hashable {
     case people
     case person(String)
     case map
+    case compare([UInt64])
+    case survey([UInt64])
+}
+
+/// What covers the whole screen.
+nonisolated enum Cover: String, Identifiable {
+    case slideshow, lightsOut
+    var id: String { rawValue }
 }
 
 /// A page that slides up over everything (`.sheet`).
@@ -102,6 +110,10 @@ final class AppModel {
     var toast: Toast?
     var path: [Route] = []
     var sheet: Sheet?
+    /// The photo Reference View shows beside the one being edited.
+    var reference: UInt64?
+    /// The slideshow or Lights Out, over everything.
+    var cover: Cover?
     /// On an iPad, whether the albums column shows beside the grid.
     var sidebar: NavigationSplitViewVisibility = .all
     /// Photos are being chosen in the grid (Select).
@@ -435,6 +447,8 @@ final class AppModel {
         case .commands: "commands"
         case .people, .person: "people"
         case .map: "map"
+        case .compare: "compare"
+        case .survey: "survey"
         case nil: sheet.map { "sheet:\($0.id)" } ?? "grid"
         }
     }

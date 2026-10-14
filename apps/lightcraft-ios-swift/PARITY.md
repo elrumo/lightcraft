@@ -19,8 +19,8 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 |---|---:|---:|---:|---:|---:|
 | S0 | 15 | 0 | 0 | 0 | 15/15 |
 | S1 | 164 | 0 | 0 | 3 | 167/167 |
-| S2 | 29 | 0 | 51 | 22 | 51/102 |
-| **Total** | 208 | 0 | 51 | 25 | 233/284 |
+| S2 | 49 | 0 | 31 | 22 | 71/102 |
+| **Total** | 228 | 0 | 31 | 25 | 253/284 |
 <!-- /ios-parity:summary -->
 
 ## Screens
@@ -78,8 +78,8 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | screen:ipad.menuBar | S2 | ⬜ |  |  |
 | screen:ipad.keyboard | S2 | ⬜ |  |  |
 | screen:ipad.pointer | S2 | ⬜ |  |  |
-| screen:ipad.compare | S2 | ⬜ |  |  |
-| screen:ipad.survey | S2 | ⬜ |  |  |
+| screen:ipad.compare | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/ViewModes.swift` | Compare: the Select beside a Candidate, Swap, Make Select, the candidates one by one; a tap makes a side active (`render.variant {edited}`); checked on the iPad simulator |
+| screen:ipad.survey | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/ViewModes.swift` | Survey: the chosen photos as large as the screen allows; a tap makes one active, ✕ takes it out, a double tap opens it; checked on the iPad simulator |
 | screen:ipad.multiwindow | S2 | ⬜ |  |  |
 | screen:ipad.dragDrop | S2 | ⬜ |  |  |
 | screen:ipad.pencil | S2 | ⬜ |  |  |
@@ -95,29 +95,29 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | ui:ui.dock | S2 | 🚫 |  | no dockable panels on iOS: tools are sheets (phone) and an inspector (iPad) |
 | ui:ui.dock.reset | S2 | 🚫 |  | no dockable panels on iOS |
 | ui:modelSetup.cancel | S1 | 🚫 |  | it cancels a photo action waiting for the AI Denoise model; iOS builds have no AI Denoise or SAM 3: the engine's `denoise` and `sam` features are off for iOS (the egui iOS app has only `enhance` too) |
-| ui:view.photoGrid | S2 | ⬜ |  |  |
+| ui:view.photoGrid | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/App/RootView.swift` | the grid is the app's first screen: Back (or a pull down) returns to it from a photo |
 | ui:view.squareGrid | S0 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/GridView.swift` | the grid is square tiles |
 | ui:view.gridToggle | S2 | ⬜ |  |  |
-| ui:tool.guidedUpright | S2 | ⬜ |  |  |
+| ui:tool.guidedUpright | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/CropOverlay.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/ToolScreens.swift` | Crop ▸ Geometry ▸ Upright ▸ Guided: guides drawn on the photo (SW1.15) |
 | ui:view.detail | S0 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | tap a photo in the grid |
-| ui:view.compare | S2 | ⬜ |  |  |
-| ui:view.survey | S2 | ⬜ |  |  |
+| ui:view.compare | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/ViewModes.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/SelectionBar.swift` | select bar "…" ▸ Compare (two or more photos) |
+| ui:view.survey | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/ViewModes.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/SelectionBar.swift` | select bar "…" ▸ Survey |
 | ui:view.people | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/PeopleView.swift` | albums ▸ People, grid "…" ▸ People |
 | ui:view.map | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/PeopleView.swift` | grid "…" ▸ Map, Info ▸ the place |
 | ui:view.person | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/PeopleView.swift` | a named person opens their page |
 | ui:view.faceBoxes | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/FacesOverlay.swift` | the photo's "…" ▸ Faces: boxes from `photo.faces`, names or `faces.suggest` guesses under them, a tap names one |
-| ui:view.reference | S2 | ⬜ |  |  |
-| ui:photo.setReference | S2 | ⬜ |  |  |
-| ui:compare.swap | S2 | ⬜ |  |  |
-| ui:compare.set | S2 | ⬜ |  |  |
-| ui:compare.makeSelect | S2 | ⬜ |  |  |
+| ui:view.reference | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/ViewModes.swift` | the photo's "…" ▸ Reference View: the reference photo beside the one being edited; checked on the iPad simulator |
+| ui:photo.setReference | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | the photo's "…" ▸ Set as Reference |
+| ui:compare.swap | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/ViewModes.swift` | Compare ▸ Swap |
+| ui:compare.set | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/ViewModes.swift` | Compare: a tap on a side makes it the active photo; the arrows choose the Candidate |
+| ui:compare.makeSelect | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/ViewModes.swift` | Compare ▸ Make Select (the next Candidate comes up) |
 | ui:view.autoAdvance | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | Settings ▸ General ▸ Auto Advance |
-| ui:view.filmstrip | S2 | ⬜ |  |  |
+| ui:view.filmstrip | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/ViewModes.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | the photo's "…" ▸ Filmstrip: the grid's photos in a row under the photo; a tap shows one |
 | ui:view.leftPanel | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/App/RootView.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LibraryScreen.swift` | the sidebar button, or a tap on the collection's name, shows or hides the albums column |
 | ui:view.beforeAfter | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | the photo's "…" ▸ Before / After: side by side on a wide screen, stacked on a tall one |
-| ui:view.beforeAfterSplit | S2 | ⬜ |  |  |
-| ui:view.beforeAfterTopBottom | S2 | ⬜ |  |  |
-| ui:view.beforeAfterSplitTopBottom | S2 | ⬜ |  |  |
+| ui:view.beforeAfterSplit | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | the photo's "…" ▸ Before / After Layout ▸ Split Left / Right (a line to drag); checked on the iPad simulator |
+| ui:view.beforeAfterTopBottom | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | Before / After Layout ▸ Top / Bottom (also Left / Right, Automatic) |
+| ui:view.beforeAfterSplitTopBottom | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | Before / After Layout ▸ Split Top / Bottom |
 | ui:view.showOriginal | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | hold the photo |
 | ui:view.zoomFit | S0 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | double tap back, or pinch out, to fit |
 | ui:view.zoom100 | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | pinch to any zoom up to 8×, sharp at 1:1 and beyond (the window is the photo's own pixels) |
@@ -144,10 +144,10 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | ui:local.hide | S2 | 🚫 |  | no Local folders in the iOS sandbox |
 | ui:local.restoreHidden | S2 | 🚫 |  | no Local folders in the iOS sandbox |
 | ui:view.fullScreenPreview | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | a tap on the photo hides everything but it (review mode) |
-| ui:view.lightsOut | S2 | ⬜ |  |  |
+| ui:view.lightsOut | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/ViewModes.swift` | the photo's "…" ▸ Lights Out: the photo alone on black; a tap ends it |
 | ui:view.enterFullScreen | S2 | 🚫 |  | iOS apps are always full screen |
 | ui:view.infoOverlay | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | Settings ▸ Interface ▸ Info Overlay |
-| ui:view.navigator | S2 | ⬜ |  |  |
+| ui:view.navigator | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/ViewModes.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | zoomed in: the whole photo small in a corner with the part on screen marked (the photo's "…" ▸ Navigator turns it off) |
 | ui:panel.edit | S0 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | the tool bar |
 | ui:panel.profiles | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/EditGroupPanel.swift` | Edit ▸ Profile |
 | ui:panel.crop | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | the tool bar |
@@ -179,14 +179,14 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | ui:dialog.newAlbum | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/AlbumsSheet.swift` | albums ▸ +, grid "…", Add to Album |
 | ui:dialog.newFolder | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/AlbumsSheet.swift` | albums ▸ + ▸ Folder |
 | ui:dialog.smartAlbum | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/SmartAlbumSheet.swift` | an album's ⋯ ▸ Edit Smart Album…: name, match, rules and groups from `album.ruleFields` (with each operator's starting value), checked with `album.checkRules` |
-| ui:view.photoCounts | S2 | ⬜ |  |  |
+| ui:view.photoCounts | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | Settings ▸ Interface ▸ Show Counts in Albums |
 | ui:view.sidebarSection | S2 | ⬜ |  |  |
 | ui:view.sidebarMoveSection | S2 | ⬜ |  |  |
 | ui:view.sidebarReset | S2 | ⬜ |  |  |
-| ui:view.slideshow | S2 | ⬜ |  |  |
+| ui:view.slideshow | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/ViewModes.swift` | grid or photo "…" ▸ Slideshow: the grid's photos over black, crossfading every few seconds; a tap pauses |
 | ui:view.secondWindow | S2 | ⬜ |  |  |
 | ui:tool.keywordPainter | S2 | ⬜ |  |  |
-| ui:view.gridInfo | S2 | ⬜ |  |  |
+| ui:view.gridInfo | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/GridView.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LibraryScreen.swift` | grid "…" ▸ Grid Info: the file name over each photo |
 | ui:view.appearance | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | Settings ▸ Interface ▸ Appearance |
 | ui:view.theme | S2 | 🚫 |  | the system appearance (`app.appearance.*`) is the theme on iOS |
 | ui:dialog.allMetadata | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/Panels.swift` | Info ▸ All Metadata…: EXIF groups and XMP (`photo.allMetadata`), searchable |

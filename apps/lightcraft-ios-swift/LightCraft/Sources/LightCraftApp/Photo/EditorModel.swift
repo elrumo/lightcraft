@@ -130,6 +130,8 @@ final class EditorModel {
     /// Crop & Rotate's line tools: `straighten` (one line, then back to the frame) or `guides`
     /// (Guided Upright, until Done).
     var cropDraw: String?
+    /// Reference View: the reference photo beside the one being edited.
+    var referenceView = false
     /// Light ▸ HDR ▸ Visualize: what the HDR rendition puts above SDR white, painted by how far.
     var visualizeHdr = false
     /// Red Eye: a pet's eyes, and the correction chosen (its sliders).

@@ -257,6 +257,19 @@ struct PhotoCell: View {
                 }
             }
             .overlay(alignment: .bottom) { CellBadges(photo: photo) }
+            .overlay(alignment: .topLeading) {
+                // Grid Info: the file name over the photo
+                if model.prefs.gridInfo {
+                    Text(photo.fileName)
+                        .font(.caption2)
+                        .lineLimit(1)
+                        .padding(.horizontal, 4).padding(.vertical, 1)
+                        .background(.black.opacity(0.45), in: .rect(cornerRadius: 3))
+                        .foregroundStyle(.white)
+                        .padding(3)
+                        .accessibilityHidden(true)
+                }
+            }
             .overlay {
                 if photo.isReject { Color.black.opacity(0.45) }
             }

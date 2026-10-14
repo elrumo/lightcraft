@@ -69,6 +69,28 @@ struct PhotoScreen: View {
     }
 
     private var pager: some View {
+        VStack(spacing: 0) {
+            // Reference View: the reference photo beside the one being edited
+            if model.editor.referenceView, let ref = model.reference, ref != model.state.active, !review {
+                let layout = verticalSize == .compact || horizontalSize == .regular ? AnyLayout(HStackLayout(spacing: 4)) : AnyLayout(VStackLayout(spacing: 4))
+                layout {
+                    PhotoPicture(photo: ref)
+                        .padding(12)
+                        .overlay(alignment: .bottom) {
+                            Text("Reference").font(.caption.weight(.semibold)).padding(4).glassEffect(.regular, in: .capsule).padding(6)
+                        }
+                    photoPager
+                }
+            } else {
+                photoPager
+            }
+            if model.prefs.filmstrip, !review {
+                FilmstripView()
+            }
+        }
+    }
+
+    private var photoPager: some View {
         PhotoPager(start: start, review: $review)
             .overlay(alignment: .topTrailing) {
                 if model.editor.tool == .masking, !review {
@@ -301,6 +323,14 @@ struct ZoomablePhoto: View {
                     if c[0] > 0.003 { Rectangle().stroke(.blue, lineWidth: 2).frame(width: rect.width + 6, height: rect.height + 6).position(x: rect.midX, y: rect.midY) }
                 }
                 .allowsHitTesting(false)
+            }
+        }
+        .overlay(alignment: .topLeading) {
+            // zoomed in: the whole photo small, with the part on screen marked
+            if zoom > 1.01, model.prefs.navigator, let v = zoomRequest?.visible, v.count == 4 {
+                NavigatorView(photo: photo, visible: CGRect(x: CGFloat(v[0]) / 1000, y: CGFloat(v[1]) / 1000,
+                                                             width: CGFloat(v[2] - v[0]) / 1000, height: CGFloat(v[3] - v[1]) / 1000))
+                    .padding(12)
             }
         }
         .overlay(alignment: .bottom) {
@@ -755,11 +785,35 @@ struct PhotoMoreMenu: View {
                     if model.editor.tool?.hasScreen == true { model.editor.tool = .edit }
                 }
                 Toggle("Before / After", systemImage: "rectangle.split.2x1", isOn: Binding(get: { model.editor.beforeAfter }, set: { model.editor.beforeAfter = $0 }))
+                Picker("Before / After Layout", systemImage: "rectangle.split.2x1", selection: Binding(get: { model.prefs.beforeAfterMode }, set: {
+                    model.prefs.beforeAfterMode = $0
+                    model.editor.beforeAfter = true
+                })) {
+                    Text("Automatic").tag("auto")
+                    Text("Left / Right").tag("sideBySide")
+                    Text("Top / Bottom").tag("topBottom")
+                    Text("Split Left / Right").tag("split")
+                    Text("Split Top / Bottom").tag("splitTopBottom")
+                }
+                .pickerStyle(.menu)
                 Toggle("Histogram", systemImage: "chart.bar.xaxis", isOn: Binding(get: { model.prefs.showHistogram }, set: { model.prefs.showHistogram = $0 }))
                 Button("Red Eye", systemImage: "eye") {
                     model.perform("develop.cancelInteraction")
                     model.editor.tool = .redEye
                 }
+            }
+            Section {
+                Button("Set as Reference", systemImage: "pin") {
+                    model.reference = model.state.active
+                    model.editor.referenceView = true
+                }
+                .disabled(model.state.active == nil)
+                Toggle("Reference View", systemImage: "rectangle.lefthalf.inset.filled", isOn: Binding(get: { model.editor.referenceView }, set: { model.editor.referenceView = $0 }))
+                    .disabled(model.reference == nil)
+                Toggle("Filmstrip", systemImage: "film", isOn: Binding(get: { model.prefs.filmstrip }, set: { model.prefs.filmstrip = $0 }))
+                Toggle("Navigator", systemImage: "scope", isOn: Binding(get: { model.prefs.navigator }, set: { model.prefs.navigator = $0 }))
+                Button("Lights Out", systemImage: "lightbulb.slash") { model.cover = .lightsOut }
+                Button("Slideshow", systemImage: "play.rectangle") { model.cover = .slideshow }
             }
             Section {
                 Button("Versions", systemImage: "square.stack") { model.sheet = .history(versions: true) }
@@ -841,20 +895,31 @@ struct ReviewHUD: View {
 #endif
 
 #if os(iOS)
-/// Before / After: the photo as it was and as it is, side by side on a wide screen, one above the
-/// other on a tall one.
+/// Before / After: the photo as it was and as it is, side by side or one above the other (on its
+/// own: side by side on a wide screen), or split by a line to drag across (left / right or top /
+/// bottom), as egui's Before/After modes.
 struct BeforeAfterView: View {
     @Environment(AppModel.self) private var model
     let photo: UInt64
     let wide: Bool
 
     var body: some View {
-        let layout = wide ? AnyLayout(HStackLayout(spacing: 12)) : AnyLayout(VStackLayout(spacing: 12))
-        layout {
-            half(model.images.before(for: photo), "Before")
-            half(model.images.view(for: photo), "After")
+        let before = model.images.before(for: photo)
+        let after = model.images.view(for: photo)
+        switch mode {
+        case "sideBySide":
+            HStack(spacing: 12) { half(before, "Before"); half(after, "After") }
+        case "topBottom":
+            VStack(spacing: 12) { half(before, "Before"); half(after, "After") }
+        case "split", "splitTopBottom":
+            SplitBeforeAfter(before: before, after: after, across: mode == "split")
+        default:
+            let layout = wide ? AnyLayout(HStackLayout(spacing: 12)) : AnyLayout(VStackLayout(spacing: 12))
+            layout { half(before, "Before"); half(after, "After") }
         }
     }
+
+    private var mode: String { model.prefs.beforeAfterMode }
 
     private func half(_ picture: ImageStore.Picture?, _ label: LocalizedStringKey) -> some View {
         Color.clear
@@ -865,14 +930,99 @@ struct BeforeAfterView: View {
                     ProgressView()
                 }
             }
-            .overlay(alignment: .bottomLeading) {
-                Text(label)
-                    .font(.caption.weight(.semibold))
-                    .padding(.horizontal, 10).padding(.vertical, 4)
-                    .glassEffect(.regular, in: .capsule)
-                    .padding(8)
-            }
+            .overlay(alignment: .bottomLeading) { tag(label) }
             .accessibilityElement(children: .combine)
+    }
+
+    private func tag(_ label: LocalizedStringKey) -> some View {
+        Text(label)
+            .font(.caption.weight(.semibold))
+            .padding(.horizontal, 10).padding(.vertical, 4)
+            .glassEffect(.regular, in: .capsule)
+            .padding(8)
+    }
+}
+
+/// Before / After split: After, with Before over the part on one side of a line to drag (Shapes
+/// over the photo's own frame, no GeometryReader; a view of its own keeps its type small).
+private struct SplitBeforeAfter: View {
+    let before: ImageStore.Picture?
+    let after: ImageStore.Picture?
+    let across: Bool
+    @State private var split: CGFloat = 0.5
+    @State private var size: CGSize = .zero
+
+    var body: some View {
+        if let after {
+            photo(after)
+                .overlay { if let before { photo(before).mask(SplitPart(fraction: split, across: across)) } }
+                .overlay { line }
+                .onGeometryChange(for: CGSize.self) { $0.size } action: { size = $0 }
+                .contentShape(Rectangle())
+                .gesture(drag)
+                .overlay(alignment: across ? .bottomLeading : .topLeading) { tag("Before") }
+                .overlay(alignment: .bottomTrailing) { tag("After") }
+                .accessibilityElement()
+                .accessibilityLabel("Before and After")
+                .accessibilityValue("\(Int(split * 100)) %")
+                .accessibilityAdjustableAction { d in split = min(max(split + (d == .increment ? 0.1 : -0.1), 0), 1) }
+        } else {
+            ProgressView()
+        }
+    }
+
+    private func photo(_ p: ImageStore.Picture) -> some View {
+        Image(decorative: p.image, scale: 1).resizable().scaledToFit()
+    }
+
+    private var line: some View {
+        SplitLine(fraction: split, across: across).stroke(.white, lineWidth: 2).shadow(color: .black.opacity(0.5), radius: 2)
+    }
+
+    private func tag(_ label: LocalizedStringKey) -> some View {
+        Text(label)
+            .font(.caption.weight(.semibold))
+            .padding(.horizontal, 10).padding(.vertical, 4)
+            .glassEffect(.regular, in: .capsule)
+            .padding(8)
+    }
+
+    private var drag: some Gesture {
+        DragGesture(minimumDistance: 0).onChanged { v in
+            let f = across ? v.location.x / max(size.width, 1) : v.location.y / max(size.height, 1)
+            split = min(max(f, 0), 1)
+        }
+    }
+}
+
+/// The part of the photo before the split line (Before's mask).
+private nonisolated struct SplitPart: Shape {
+    var fraction: CGFloat
+    let across: Bool
+
+    func path(in rect: CGRect) -> Path {
+        Path(across ? CGRect(x: rect.minX, y: rect.minY, width: rect.width * fraction, height: rect.height)
+                    : CGRect(x: rect.minX, y: rect.minY, width: rect.width, height: rect.height * fraction))
+    }
+}
+
+/// The split line, across the photo.
+private nonisolated struct SplitLine: Shape {
+    var fraction: CGFloat
+    let across: Bool
+
+    func path(in rect: CGRect) -> Path {
+        var p = Path()
+        if across {
+            let x = rect.minX + rect.width * fraction
+            p.move(to: CGPoint(x: x, y: rect.minY))
+            p.addLine(to: CGPoint(x: x, y: rect.maxY))
+        } else {
+            let y = rect.minY + rect.height * fraction
+            p.move(to: CGPoint(x: rect.minX, y: y))
+            p.addLine(to: CGPoint(x: rect.maxX, y: y))
+        }
+        return p
     }
 }
 

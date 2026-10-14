@@ -33,6 +33,15 @@ struct RootView: View {
             SheetContent(sheet: sheet)
                 .environment(model)
         }
+        .fullScreenCover(item: $model.cover) { cover in
+            Group {
+                switch cover {
+                case .slideshow: SlideshowView()
+                case .lightsOut: LightsOutView()
+                }
+            }
+            .environment(model)
+        }
         .alert(deleteTitle, isPresented: Binding(get: { model.confirmDelete != nil }, set: { if !$0 { model.confirmDelete = nil } })) {
             Button("Delete", role: .destructive) {
                 if let ids = model.confirmDelete {
@@ -77,6 +86,8 @@ struct RootView: View {
                 case .people: PeopleView()
                 case .person(let name): PersonView(name: name)
                 case .map: MapScreen()
+                case .compare(let ids): CompareView(ids: ids)
+                case .survey(let ids): SurveyView(ids: ids)
                 }
             }
         }

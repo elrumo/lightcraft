@@ -78,6 +78,13 @@ final class ScriptHost {
             if let on = params["histogram"].bool { model.prefs.showHistogram = on }
             if let guide = params["cropGuide"].string { model.prefs.cropGuide = guide }
             if let draw = params["cropDraw"].string { model.editor.cropDraw = draw == "none" ? nil : draw }
+            if let on = params["filmstrip"].bool { model.prefs.filmstrip = on }
+            if let on = params["navigator"].bool { model.prefs.navigator = on }
+            if let on = params["gridInfo"].bool { model.prefs.gridInfo = on }
+            if let mode = params["beforeAfterMode"].string { model.prefs.beforeAfterMode = mode }
+            if let ref = params["reference"].int { model.reference = UInt64(clamping: ref) }
+            if let on = params["referenceView"].bool { model.editor.referenceView = on }
+            if let cover = params["cover"].string { model.cover = Cover(rawValue: cover) }
             if let o = params["orientation"].string, let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first {
                 // (the app turns itself: no rotating the simulator from outside)
                 scene.requestGeometryUpdate(.iOS(interfaceOrientations: o == "landscape" ? .landscapeRight : .portrait)) { _ in }
@@ -106,6 +113,9 @@ final class ScriptHost {
                 model.path = [.people] + (params["person"].string.map { [.person($0)] } ?? [])
             case "map":
                 model.path = [.map]
+            case "compare", "survey":
+                let ids = params["ids"].array?.compactMap { $0.int.map { UInt64(clamping: $0) } } ?? Array(model.library.selected)
+                model.path = [params["screen"].string == "compare" ? .compare(ids) : .survey(ids)]
             default:
                 throw ErrorBody(code: "badParams", message: "`screen`: grid, photo, edit, crop, masking, remove, redEye, presets, info, commands, people or map")
             }

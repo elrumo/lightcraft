@@ -31,6 +31,10 @@ final class Prefs {
         cropGuideOrientation = store.integer(forKey: "cropGuideOrientation")
         showHistogram = store.bool(forKey: "showHistogram")
         showClipping = store.bool(forKey: "showClipping")
+        filmstrip = store.bool(forKey: "filmstrip")
+        navigator = store.object(forKey: "navigator") as? Bool ?? true
+        gridInfo = store.bool(forKey: "gridInfo")
+        beforeAfterMode = store.string(forKey: "beforeAfterMode") ?? "auto"
         maskOverlayMode = store.string(forKey: "maskOverlayMode") ?? "color"
         maskOverlayColor = store.array(forKey: "maskOverlayColor") as? [Int] ?? [230, 30, 40]
         maskOverlayOpacity = store.object(forKey: "maskOverlayOpacity") as? Double ?? 50
@@ -128,6 +132,14 @@ final class Prefs {
     /// The histogram over the photo while editing, and the clipping warning around the photo.
     var showHistogram: Bool { didSet { store.set(showHistogram, forKey: "showHistogram") } }
     var showClipping: Bool { didSet { store.set(showClipping, forKey: "showClipping") } }
+    /// The grid's photos in a row under the photo.
+    var filmstrip: Bool { didSet { store.set(filmstrip, forKey: "filmstrip") } }
+    /// The whole photo small in a corner while zoomed in.
+    var navigator: Bool { didSet { store.set(navigator, forKey: "navigator") } }
+    /// File names over the grid's photos.
+    var gridInfo: Bool { didSet { store.set(gridInfo, forKey: "gridInfo") } }
+    /// Before/After: auto (side by side when wide), sideBySide, topBottom, split, splitTopBottom.
+    var beforeAfterMode: String { didSet { store.set(beforeAfterMode, forKey: "beforeAfterMode") } }
 
     /// The steps a pinch moves the grid through.
     static let columnSteps = [1, 2, 3, 4, 5, 7, 10, 14]

@@ -204,6 +204,16 @@ struct PhotoManageItems: View {
         }
         .disabled(ids.isEmpty)
         if ids.count > 1 {
+            Section {
+                Button("Compare", systemImage: "rectangle.split.2x1") {
+                    model.selectMode = false
+                    model.path.append(.compare(ids))
+                }
+                Button("Survey", systemImage: "square.grid.2x2") {
+                    model.selectMode = false
+                    model.path.append(.survey(ids))
+                }
+            }
             Menu("Photo Merge", systemImage: "square.on.square") {
                 ForEach([("merge.hdr", "HDR…"), ("merge.panorama", "Panorama…"), ("merge.hdrPanorama", "HDR Panorama…")], id: \.0) { command, label in
                     Button(LocalizedStringKey(label)) { model.sheet = .merge(command, ids) }
