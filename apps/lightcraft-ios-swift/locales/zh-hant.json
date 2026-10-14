@@ -276,7 +276,6 @@
   "The server can't say how much it stores: %@": "伺服器無法告知儲存量：%@",
   "The server has a library already": "伺服器已有照片庫",
   "The server's": "伺服器的",
-  "They stay in Recently Deleted for 30 days.": "它們會在「最近刪除」中保留 30 天。",
   "This App": "此 App",
   "This Device": "這台裝置",
   "This build cannot run recognition models: they can be added and chosen, not used.": "此版本無法執行辨識模型：可以新增與選擇，但無法使用。",

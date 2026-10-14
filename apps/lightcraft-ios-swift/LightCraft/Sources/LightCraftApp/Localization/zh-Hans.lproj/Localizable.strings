@@ -2206,7 +2206,6 @@
 "These models were trained on collections of public photos of people; their makers publish them for general use. What they find in your photos stays on this computer unless you choose to share it with your own server. You can forget it all at any time. Naming a person writes their name on the photos they are in." = "这些模型是用公开的人物照片集训练的，其作者将它们公开发布供一般使用。除非你选择与自己的服务器共享，否则在你的照片中找到的内容只会保留在本机。你可以随时将其全部清除。为人物命名会把名字写入他们所在的照片。";
 "They can be restored from Recently Deleted until it is emptied." = "在“最近删除”被清空之前，都可以从那里恢复。";
 "They move to Recently Deleted and can be restored; no file on disk is touched." = "它们会移到“最近删除”，可以恢复；磁盘上的文件不会被改动。";
-"They stay in Recently Deleted for 30 days." = "它们会在“最近删除”中保留 30 天。";
 "Thirds" = "三分法";
 "This App" = "此 App";
 "This Computer" = "此电脑";

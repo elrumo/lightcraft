@@ -2090,7 +2090,6 @@
 "There is no model file to install" = "There is no model file to install";
 "They can be restored from Recently Deleted until it is emptied." = "Elas podem ser restauradas em Excluídos recentemente até que ele seja esvaziado.";
 "They move to Recently Deleted and can be restored; no file on disk is touched." = "Elas vão para Excluídos recentemente e podem ser restauradas; nenhum arquivo no disco é alterado.";
-"They stay in Recently Deleted for 30 days." = "Elas ficam em Excluídos recentemente por 30 dias.";
 "Thirds" = "Terços";
 "This App" = "Este app";
 "This Computer" = "Este computador";

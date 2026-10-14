@@ -46,7 +46,7 @@ struct RootView: View {
             }
             Button("Cancel", role: .cancel) { model.confirmDelete = nil }
         } message: {
-            Text("They stay in Recently Deleted for 30 days.")
+            Text("They can be restored from Recently Deleted until it is emptied.")
         }
         .overlay(alignment: .top) {
             ToastView()

@@ -637,7 +637,7 @@
   "The server can't say how much it stores: %@",
   "The server has a library already",
   "The server's",
-  "They stay in Recently Deleted for 30 days.",
+  "They can be restored from Recently Deleted until it is emptied.",
   "This App",
   "This Device",
   "This build cannot run recognition models: they can be added and chosen, not used.",

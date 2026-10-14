@@ -276,7 +276,6 @@
   "The server can't say how much it stores: %@": "サーバーが保存量を返せません: %@",
   "The server has a library already": "サーバーにはすでにライブラリがあります",
   "The server's": "サーバー側",
-  "They stay in Recently Deleted for 30 days.": "30日間は「最近削除した写真」に残ります。",
   "This App": "このアプリ",
   "This Device": "このデバイス",
   "This build cannot run recognition models: they can be added and chosen, not used.": "このビルドでは認識モデルを実行できません。追加や選択はできますが、使用はできません。",

@@ -270,7 +270,6 @@
   "The server can't say how much it stores: %@": "服务器无法告知存储量：%@",
   "The server has a library already": "服务器上已有图库",
   "The server's": "服务器的",
-  "They stay in Recently Deleted for 30 days.": "它们会在“最近删除”中保留 30 天。",
   "This App": "此 App",
   "This Device": "此设备",
   "This build cannot run recognition models: they can be added and chosen, not used.": "此版本无法运行识别模型：可以添加和选择，但无法使用。",

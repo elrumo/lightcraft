@@ -309,7 +309,6 @@
   "The server can't say how much it stores: %@": "El servidor no puede indicar cuánto almacena: %@",
   "The server has a library already": "El servidor ya tiene una biblioteca",
   "The server's": "La del servidor",
-  "They stay in Recently Deleted for 30 days.": "Se quedan en Eliminadas recientemente durante 30 días.",
   "This App": "Esta app",
   "This Device": "Este dispositivo",
   "This build cannot run recognition models: they can be added and chosen, not used.": "Esta compilación no puede ejecutar modelos de reconocimiento: se pueden añadir y elegir, pero no usar.",

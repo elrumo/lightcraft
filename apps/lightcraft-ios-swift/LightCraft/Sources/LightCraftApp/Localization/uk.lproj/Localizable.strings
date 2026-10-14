@@ -2191,7 +2191,6 @@
 "There is no model file to install" = "Немає файлу моделі для встановлення";
 "They can be restored from Recently Deleted until it is emptied." = "Їх можна відновити з нещодавно видалених до очищення цього розділу.";
 "They move to Recently Deleted and can be restored; no file on disk is touched." = "Вони переміщуються до нещодавно видалених і можуть бути відновлені; файли на диску не змінюються.";
-"They stay in Recently Deleted for 30 days." = "Вони залишаються в нещодавно видалених 30 днів.";
 "Thirds" = "Третини";
 "This App" = "Цей застосунок";
 "This Computer" = "Цей комп’ютер";

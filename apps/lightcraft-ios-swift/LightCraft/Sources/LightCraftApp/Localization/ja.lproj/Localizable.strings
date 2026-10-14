@@ -2176,7 +2176,6 @@
 "These models were trained on collections of public photos of people; their makers publish them for general use. What they find in your photos stays on this computer unless you choose to share it with your own server. You can forget it all at any time. Naming a person writes their name on the photos they are in." = "これらのモデルは、人物の公開写真のコレクションで学習されており、作者が一般向けに公開しています。写真から見つかった内容は、ご自身のサーバーと共有することを選ばない限り、このコンピューターの外へ出ません。いつでもすべて消去できます。人物に名前を付けると、その人が写っている写真に名前が書き込まれます。";
 "They can be restored from Recently Deleted until it is emptied." = "「最近削除した写真」を空にするまでは復元できます";
 "They move to Recently Deleted and can be restored; no file on disk is touched." = "「最近削除した写真」に移動し、復元できます。ディスク上のファイルには手を加えません";
-"They stay in Recently Deleted for 30 days." = "30日間は「最近削除した写真」に残ります。";
 "Thirds" = "三分割";
 "This App" = "このアプリ";
 "This Computer" = "このコンピュータ";
