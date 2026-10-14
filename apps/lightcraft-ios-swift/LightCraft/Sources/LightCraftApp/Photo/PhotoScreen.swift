@@ -8,25 +8,32 @@ import SwiftUI
 /// on the photo hides the bars (review mode).
 struct PhotoScreen: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.verticalSizeClass) private var verticalSize
     let start: UInt64
     @State private var review = false
 
     var body: some View {
         let editor = model.editor
-        VStack(spacing: 0) {
-            PhotoPager(start: start, review: $review)
-                .overlay(alignment: .topTrailing) {
-                    if editor.tool == .masking, !review {
-                        MaskColumn().padding(10).transition(.move(edge: .trailing).combined(with: .opacity))
-                    }
+        // a phone held sideways: the photo beside a side panel (egui's landscape layout)
+        let sideways = verticalSize == .compact
+        Group {
+            if sideways, editor.tool != nil {
+                HStack(spacing: 0) {
+                    pager
+                    if !review { SidePanel().transition(.move(edge: .trailing)) }
                 }
-            if !review {
-                if let tool = editor.tool, tool.hasScreen {
-                    ToolScreenBar(tool: tool)
-                } else {
-                    if editor.tool == .edit { GroupBar() }
-                    if let tool = editor.tool { ToolPanel(tool: tool) }
-                    ToolBar()
+            } else {
+                VStack(spacing: 0) {
+                    pager
+                    if !review {
+                        if let tool = editor.tool, tool.hasScreen {
+                            ToolScreenBar(tool: tool)
+                        } else {
+                            if editor.tool == .edit { GroupBar() }
+                            if let tool = editor.tool { ToolPanel(tool: tool) }
+                            ToolBar()
+                        }
+                    }
                 }
             }
         }
@@ -57,6 +64,44 @@ struct PhotoScreen: View {
         .onDisappear {
             if model.path.isEmpty { editor.tool = nil }
         }
+    }
+
+    private var pager: some View {
+        PhotoPager(start: start, review: $review)
+            .overlay(alignment: .topTrailing) {
+                if model.editor.tool == .masking, !review {
+                    MaskColumn().padding(10).transition(.move(edge: .trailing).combined(with: .opacity))
+                }
+            }
+    }
+}
+
+/// Held sideways, the tools in a column at the right: a tool's own screen (Crop, Masking, Remove,
+/// Red Eye), or the Edit groups, the open tool's controls and the tool bar.
+private struct SidePanel: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        let editor = model.editor
+        VStack(spacing: 0) {
+            if let tool = editor.tool, tool.hasScreen {
+                ViewThatFits(in: .vertical) {
+                    ToolScreenBar(tool: tool)
+                    ScrollView { ToolScreenBar(tool: tool) }
+                }
+                Spacer(minLength: 0)
+            } else {
+                if editor.tool == .edit { GroupBar() }
+                if let tool = editor.tool {
+                    ScrollView { ToolPanelContent(tool: tool) }
+                } else {
+                    Spacer()
+                }
+                ToolBar()
+            }
+        }
+        .frame(width: 316)
+        .background(Color(uiColor: .secondarySystemBackground))
     }
 }
 
@@ -586,19 +631,8 @@ struct ToolPanel: View {
                 .gesture(grabberDrag)
                 .accessibilityLabel("Resize panel")
                 .accessibilityAction { editor.detent = (editor.detent + 1) % Self.stops.count }
-            ScrollView {
-                Group {
-                    switch tool {
-                    case .edit: EditGroupPanel()
-                    case .presets: PresetsPanel()
-                    case .info: InfoPanel()
-                    case .crop, .masking, .remove, .redEye: EmptyView()
-                    }
-                }
-                .padding(.horizontal, 16)
-                .padding(.bottom, 12)
-            }
-            .scrollIndicators(.automatic)
+            ScrollView { ToolPanelContent(tool: tool) }
+                .scrollIndicators(.automatic)
         }
         .frame(height: dragHeight ?? Self.stops[min(editor.detent, Self.stops.count - 1)])
         .background(Color(uiColor: .secondarySystemBackground), in: .rect(topLeadingRadius: 22, topTrailingRadius: 22))
@@ -627,6 +661,24 @@ struct ToolPanel: View {
                     }
                 }
             }
+    }
+}
+
+/// A tool's controls, in the panel under the photo or the side panel.
+struct ToolPanelContent: View {
+    let tool: Tool
+
+    var body: some View {
+        Group {
+            switch tool {
+            case .edit: EditGroupPanel()
+            case .presets: PresetsPanel()
+            case .info: InfoPanel()
+            case .crop, .masking, .remove, .redEye: EmptyView()
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.bottom, 12)
     }
 }
 

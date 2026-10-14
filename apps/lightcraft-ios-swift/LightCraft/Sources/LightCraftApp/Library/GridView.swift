@@ -7,6 +7,7 @@ import SwiftUI
 /// starts choosing.
 struct GridView: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.verticalSizeClass) private var verticalSize
     let namespace: Namespace.ID
     /// Scroll to this grid index (Months, Years, a photo put away).
     @Binding var jump: Int?
@@ -22,7 +23,9 @@ struct GridView: View {
 
     var body: some View {
         let library = model.library
-        let columns = Array(repeating: GridItem(.flexible(), spacing: 2), count: max(1, model.prefs.gridColumns))
+        // held sideways, twice the columns: the tiles stay the size they were
+        let across = max(1, model.prefs.gridColumns) * (verticalSize == .compact ? 2 : 1)
+        let columns = Array(repeating: GridItem(.flexible(), spacing: 2), count: across)
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVGrid(columns: columns, spacing: 2, pinnedViews: [.sectionHeaders]) {

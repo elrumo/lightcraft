@@ -78,6 +78,10 @@ final class ScriptHost {
             if let on = params["histogram"].bool { model.prefs.showHistogram = on }
             if let guide = params["cropGuide"].string { model.prefs.cropGuide = guide }
             if let draw = params["cropDraw"].string { model.editor.cropDraw = draw == "none" ? nil : draw }
+            if let o = params["orientation"].string, let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first {
+                // (the app turns itself: no rotating the simulator from outside)
+                scene.requestGeometryUpdate(.iOS(interfaceOrientations: o == "landscape" ? .landscapeRight : .portrait)) { _ in }
+            }
             switch params["screen"].string {
             case nil:
                 break

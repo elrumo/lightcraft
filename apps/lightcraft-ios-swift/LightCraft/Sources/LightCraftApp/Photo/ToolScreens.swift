@@ -50,6 +50,7 @@ func undoDepth(_ model: AppModel) async -> Int? {
 /// rotate, flips; the Geometry tab for Upright and the perspective sliders.
 struct CropTools: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.verticalSizeClass) private var verticalSize
     @State private var base: Int?
     @State private var tab = "aspect"
     @State private var dialStart: Double?
@@ -80,7 +81,8 @@ struct CropTools: View {
                     model.engine?.send("engine.execute", ["command": "crop.straighten", "params": ["angle": .double(new)]])
                     if phase == .changed { model.requestDraft() }
                 }
-                HStack(spacing: 18) {
+                // (closer together in the side panel of a phone held sideways)
+                HStack(spacing: verticalSize == .compact ? 4 : 18) {
                     toolButton("wand.and.stars", "Auto") {
                         Task {
                             let r = await model.run("crop.autoStraighten")
@@ -108,7 +110,7 @@ struct CropTools: View {
                             }
                         }
                     } label: {
-                        Image(systemName: "ellipsis").frame(width: 44, height: 44)
+                        Image(systemName: "ellipsis").frame(width: buttonSide, height: buttonSide)
                     }
                     .buttonStyle(.glass)
                     .buttonBorderShape(.circle)
@@ -200,9 +202,12 @@ struct CropTools: View {
         .task { base = await undoDepth(model) }
     }
 
+    /// The round buttons' size: smaller in the side panel of a phone held sideways.
+    private var buttonSide: CGFloat { verticalSize == .compact ? 34 : 44 }
+
     private func toolButton(_ symbol: String, _ label: LocalizedStringKey, _ action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Image(systemName: symbol).frame(width: 44, height: 44)
+            Image(systemName: symbol).frame(width: buttonSide, height: buttonSide)
         }
         .buttonStyle(.glass)
         .buttonBorderShape(.circle)
