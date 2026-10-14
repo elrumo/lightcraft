@@ -374,7 +374,7 @@ struct ShortcutsSheet: View {
             }
             .navigationTitle("Keyboard Shortcuts")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button(role: .confirm) { dismiss() } } }
             .task { await model.loadMenus() }
         }
     }
