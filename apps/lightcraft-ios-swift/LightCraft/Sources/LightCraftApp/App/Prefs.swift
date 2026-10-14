@@ -21,6 +21,7 @@ final class Prefs {
         autoAdvance = store.bool(forKey: "autoAdvance")
         showCounts = store.object(forKey: "showCounts") as? Bool ?? true
         editGroup = store.string(forKey: "editGroup") ?? "light"
+        editStyle = EditStyle(rawValue: store.string(forKey: "editStyle") ?? "") ?? .automatic
         clickZoom = store.object(forKey: "clickZoom") as? Double ?? 2
         haptics = store.object(forKey: "haptics") as? Bool ?? true
         mapTiles = store.object(forKey: "mapTiles") as? Bool ?? true
@@ -87,6 +88,20 @@ final class Prefs {
         }
     }
 
+    /// How the Edit tool's controls are set: Photos' dials (a round button per control and a ruler),
+    /// Lightroom's sliders, or dials under the photo and sliders in a column beside it.
+    nonisolated enum EditStyle: String, CaseIterable, Identifiable {
+        case automatic, dials, sliders
+        var id: String { rawValue }
+        var label: LocalizedStringKey {
+            switch self {
+            case .automatic: "Automatic"
+            case .dials: "Dials"
+            case .sliders: "Sliders"
+            }
+        }
+    }
+
     /// What the loupe writes over a photo.
     nonisolated enum InfoOverlay: String, CaseIterable, Identifiable {
         case off, file, exposure
@@ -112,6 +127,16 @@ final class Prefs {
     var showCounts: Bool { didSet { store.set(showCounts, forKey: "showCounts") } }
     /// The Edit tool's open group (`light`, `color`…).
     var editGroup: String { didSet { store.set(editGroup, forKey: "editGroup") } }
+    var editStyle: EditStyle { didSet { store.set(editStyle.rawValue, forKey: "editStyle") } }
+
+    /// Dials rather than sliders here (`column`: beside the photo, not under it).
+    func dials(column: Bool) -> Bool {
+        switch editStyle {
+        case .automatic: !column
+        case .dials: true
+        case .sliders: false
+        }
+    }
     /// Double tap zooms to this (× the fitted size).
     var clickZoom: Double { didSet { store.set(clickZoom, forKey: "clickZoom") } }
     var haptics: Bool { didSet { store.set(haptics, forKey: "haptics") } }

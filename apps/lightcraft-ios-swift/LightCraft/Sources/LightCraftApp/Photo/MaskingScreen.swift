@@ -244,41 +244,55 @@ private struct ShapeSlider: View {
     }
 }
 
-/// The selected mask's adjustments in `ids` (`mask.controls` specs; `mask.adjust` values).
+/// The selected mask's adjustments in `ids` (`mask.controls` specs; `mask.adjust` values), as
+/// sliders or dials (the Edit tool's style).
 struct MaskAdjustments: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.toolColumn) private var column
     let mask: JSONValue
     let ids: [String]
     @State private var specs: [ControlSpec] = []
     @State private var local: [String: Double] = [:]
 
     var body: some View {
-        VStack(alignment: .leading) {
-            ForEach(specs.filter { ids.contains($0.id) }) { spec in
-                ControlSlider(
-                    spec: spec,
-                    value: local[spec.id] ?? spec.value ?? spec.default,
-                    set: { v in
-                        local[spec.id] = v
-                        model.engine?.send("engine.execute", ["command": "mask.adjust", "params": ["id": mask, "values": .object([spec.id: .double(v)])]])
-                        model.requestDraft()
-                    },
-                    editing: { began in
-                        model.engine?.send("engine.execute", ["command": began ? "develop.beginInteraction" : "develop.endInteraction", "params": ["label": .string(spec.label)]])
-                    },
-                    reset: {
-                        local[spec.id] = spec.default
-                        model.perform("mask.adjust", ["id": mask, "values": .object([spec.id: .double(spec.default)])])
+        let shown = specs.filter { ids.contains($0.id) }
+        Group {
+            if model.prefs.dials(column: column) {
+                DialAdjuster(dials: shown.map(Dial.control), value: value, set: set, editing: editing, reset: reset)
+                    .id(ids)
+            } else {
+                VStack(alignment: .leading) {
+                    ForEach(shown) { spec in
+                        ControlSlider(spec: spec, value: value(spec), set: { set(spec, $0) }, editing: { editing(spec, $0) }, reset: { reset(spec) })
                     }
-                )
+                }
+                .padding(.horizontal, 16)
             }
         }
-        .padding(.horizontal, 16)
         .task(id: Key(mask: mask, revision: model.state.catalogRevision)) {
             guard let engine = model.engine, let r = try? await engine.execute("mask.controls", ["id": mask], as: [ControlSpec].self) else { return }
             specs = r
             local = [:]
         }
+    }
+
+    private func value(_ spec: ControlSpec) -> Double {
+        local[spec.id] ?? spec.value ?? spec.default
+    }
+
+    private func set(_ spec: ControlSpec, _ v: Double) {
+        local[spec.id] = v
+        model.engine?.send("engine.execute", ["command": "mask.adjust", "params": ["id": mask, "values": .object([spec.id: .double(v)])]])
+        model.requestDraft()
+    }
+
+    private func editing(_ spec: ControlSpec, _ began: Bool) {
+        model.engine?.send("engine.execute", ["command": began ? "develop.beginInteraction" : "develop.endInteraction", "params": ["label": .string(spec.label)]])
+    }
+
+    private func reset(_ spec: ControlSpec) {
+        local[spec.id] = spec.default
+        model.perform("mask.adjust", ["id": mask, "values": .object([spec.id: .double(spec.default)])])
     }
 
     private nonisolated struct Key: Hashable {

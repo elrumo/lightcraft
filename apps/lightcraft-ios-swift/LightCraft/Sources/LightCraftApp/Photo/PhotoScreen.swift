@@ -728,26 +728,39 @@ struct ToolPanel: View {
 
     var body: some View {
         let editor = model.editor
-        VStack(spacing: 0) {
-            Capsule()
-                .fill(Color.secondary.opacity(0.5))
-                .frame(width: 36, height: 5)
-                .frame(maxWidth: .infinity, minHeight: 20)
-                .contentShape(Rectangle())
-                .onTapGesture { withAnimation(.snappy) { editor.detent = (editor.detent + 1) % Self.stops.count } }
-                .gesture(grabberDrag)
-                .accessibilityLabel("Resize panel")
-                .accessibilityAction { editor.detent = (editor.detent + 1) % Self.stops.count }
-            ScrollView { ToolPanelContent(tool: tool) }
-                .scrollIndicators(.automatic)
+        Group {
+            if dials {
+                // dials take the height they need: nothing to resize or scroll
+                ToolPanelContent(tool: tool)
+            } else {
+                VStack(spacing: 0) {
+                    Capsule()
+                        .fill(Color.secondary.opacity(0.5))
+                        .frame(width: 36, height: 5)
+                        .frame(maxWidth: .infinity, minHeight: 20)
+                        .contentShape(Rectangle())
+                        .onTapGesture { withAnimation(.snappy) { editor.detent = (editor.detent + 1) % Self.stops.count } }
+                        .gesture(grabberDrag)
+                        .accessibilityLabel("Resize panel")
+                        .accessibilityAction { editor.detent = (editor.detent + 1) % Self.stops.count }
+                    ScrollView { ToolPanelContent(tool: tool) }
+                        .scrollIndicators(.automatic)
+                }
+                .frame(height: dragHeight ?? Self.stops[min(editor.detent, Self.stops.count - 1)])
+            }
         }
-        .frame(height: dragHeight ?? Self.stops[min(editor.detent, Self.stops.count - 1)])
-        // a card floating over the canvas, as a sheet is in iOS 26
+        // a card floating over the canvas, as a sheet is in iOS 26 (opaque: glass would mirror the
+        // group chips above it)
         .clipShape(.rect(cornerRadius: 28))
-        .glassEffect(.regular, in: .rect(cornerRadius: 28))
+        .background(Color(uiColor: .secondarySystemBackground), in: .rect(cornerRadius: 28))
         .padding(.horizontal, 8)
         .padding(.bottom, 4)
         .transition(.move(edge: .bottom).combined(with: .opacity))
+    }
+
+    /// The Edit tool's group as dials (the profiles keep their grid).
+    private var dials: Bool {
+        tool == .edit && model.prefs.editGroup != EditGroup.profile.rawValue && model.prefs.dials(column: false)
     }
 
     /// The panel's heights: a few rows, more, most of the screen.

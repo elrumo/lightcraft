@@ -220,6 +220,15 @@ private struct InterfaceSettings: View {
                 }
                 Toggle("Show Counts in Albums", isOn: $prefs.showCounts)
             }
+            Section {
+                Picker("Adjustments", selection: $prefs.editStyle) {
+                    ForEach(Prefs.EditStyle.allCases) { Text($0.label).tag($0) }
+                }
+            } header: {
+                Text("Editing")
+            } footer: {
+                Text("Dials set one control at a time with a ruler, as in Photos; sliders show a group's controls together. Automatic uses dials under the photo and sliders beside it.")
+            }
             Section("Photo") {
                 Picker("Info Overlay", selection: $prefs.infoOverlay) {
                     ForEach(Prefs.InfoOverlay.allCases) { Text($0.label).tag($0) }
