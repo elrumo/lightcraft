@@ -60,9 +60,11 @@ impl DeviceProfile {
         })
     }
 
-    /// Whether the memory is known to be at least `bytes`; `unknown` when it isn't known.
+    /// Whether the memory is known to be at least `bytes`, as sizes are sold: a system reports a
+    /// little less than its RAM (firmware and the kernel keep some; a 16 GB Linux PC says 15.7 GB),
+    /// so up to a sixteenth less counts. `unknown` when it isn't known.
     pub fn has_memory(&self, bytes: u64, unknown: bool) -> bool {
-        self.memory_bytes.map_or(unknown, |m| m >= bytes)
+        self.memory_bytes.map_or(unknown, |m| m.saturating_add(bytes / 16) >= bytes)
     }
 
     /// A short description for messages ("a computer with 16 GB, GPU").
@@ -103,5 +105,9 @@ mod tests {
         assert_eq!(q.describe(), "a phone or tablet with 6 GB, GPU");
         let r = DeviceProfile { memory_bytes: None, ..q };
         assert!(r.has_memory(GB, true) && !r.has_memory(GB, false));
+        // a 16 GB PC as Linux reports it counts as 16 GB, 14 GB doesn't
+        let pc = |kb: u64| DeviceProfile { class: DeviceClass::Computer, memory_bytes: Some(kb * 1024), gpu: false, cores: 4 };
+        assert!(pc(16_479_424).has_memory(16 * GB, false));
+        assert!(!pc(14 << 20).has_memory(16 * GB, true));
     }
 }
