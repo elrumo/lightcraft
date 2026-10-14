@@ -1051,6 +1051,8 @@ mod tests_album_order;
 #[cfg(test)]
 mod tests_albums_local;
 #[cfg(test)]
+mod tests_bitmap_mask;
+#[cfg(test)]
 mod tests_cloud_sync;
 #[cfg(test)]
 mod tests_color;

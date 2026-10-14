@@ -195,6 +195,10 @@
 "Appearance" = "Оформление";
 "Appearance Mode" = "Режим оформления";
 "Appearance Settings…" = "Настройки оформления…";
+"Apple" = "Apple";
+"Apple Vision" = "Apple Vision";
+"Apple tap-to-segment model" = "Модель Apple для выбора касанием";
+"Apple's selection model couldn't start on this device." = "Модель выбора от Apple не удалось запустить на этом устройстве.";
 "Application" = "Приложение";
 "Apply" = "Применить";
 "Apply Color Label Set" = "Применить набор цветовых меток";
@@ -247,6 +251,7 @@
 "Auto-Tag from Tracklog…" = "Автопривязка по треку…";
 "Automatic" = "Автоматически";
 "Automatic renders the Detail view at the size it is shown, up to the photo's own pixels. Choose a size to cap it: smaller is faster." = "Автоматический режим рендерит «Детализацию» в отображаемом размере, вплоть до собственных пикселей фото. Выберите размер, чтобы ограничить: меньше — быстрее.";
+"Automatic uses Apple's models where this device has them. Classic is LightCraft's own guess and needs no model." = "«Автоматически» использует модели Apple, если они есть на этом устройстве. «Классический» — собственная оценка LightCraft, модель не нужна.";
 "Automatic uses the graphics card where it is faster than the processor: both are timed on this computer the first time a photo is made." = "Автоматический режим использует видеокарту, когда она быстрее процессора: время обоих измеряется на этом компьютере при первой обработке фото.";
 "Automatically Write Changes into XMP" = "Автоматически записывать изменения в XMP";
 "Automatically write changes into XMP sidecars" = "Автоматически записывать изменения в XMP-файлы";
@@ -667,6 +672,7 @@
 "Download %@?" = "Загрузить %@?";
 "Download AI Mask Model" = "Загрузить модель ИИ-масок";
 "Download All Small Previews" = "Загрузить все мини-просмотры";
+"Download Apple's selection model?" = "Загрузить модель выбора от Apple?";
 "Download Denoise Model" = "Загрузить модель шумоподавления";
 "Download Face Model" = "Загрузить модель лиц";
 "Download Place Names (GeoNames)" = "Загрузить названия мест (GeoNames)";
@@ -861,6 +867,7 @@
 "Find…" = "Найти…";
 "First" = "Первый";
 "First commit" = "Первый коммит";
+"First tap the object you want to select." = "Сначала коснитесь объекта, который хотите выбрать.";
 "Fit" = "Вписать";
 "Fit (F)" = "Вписать (F)";
 "Fit on Screen" = "Вписать в экран";
@@ -1195,6 +1202,7 @@
 "Library saved" = "Библиотека сохранена";
 "Licence" = "Лицензия";
 "Licence:" = "Лицензия:";
+"Lifts the subject and selects objects from your taps, on this device. Built into iOS." = "Выделяет главный объект и выбирает объекты по вашим касаниям — на этом устройстве. Встроено в iOS.";
 "Light" = "Светлый";
 "Light Mode" = "Светлый режим";
 "Light Theme" = "Светлая тема";
@@ -1508,6 +1516,7 @@
 "Nothing new to import" = "Нечего импортировать";
 "Nothing new: everything in these files is already in your library." = "Нового нет: всё из этих файлов уже есть в библиотеке.";
 "Nothing to compare" = "Нечего сравнивать";
+"Nothing to select there. Tap the object itself." = "Здесь нечего выбирать. Коснитесь самого объекта.";
 "Nothing to survey" = "Нечего просматривать в обзоре";
 "Nothing was imported" = "Ничего не импортировано";
 "Nudge Develop Value" = "Подправить значение коррекции";
@@ -1516,6 +1525,7 @@
 "Object" = "Объект";
 "Object Mask" = "Маска объекта";
 "Object and Describe masks use SAM 3, Meta's segmentation model. It isn't part of LightCraft, and everything else works without it." = "Маски «Объект» и «Описать» используют SAM 3 — модель сегментации от Meta. Она не входит в LightCraft, а остальные функции работают без неё.";
+"Object selection is off while Selection is set to Classic. Change it in Settings ▸ AI Models." = "Выбор объектов отключён, пока для параметра «Выбор» задано «Классический». Измените это в разделе Настройки ▸ Модели ИИ.";
 "October 2026" = "Октябрь 2026";
 "Off" = "Выкл.";
 "Offset X" = "Смещение по X";
@@ -1526,6 +1536,7 @@
 "On This Photo" = "На этом фото";
 "On every photo, the keywords inside it included; renaming it onto another keyword merges the two." = "Для всех фото, включая вложенные ключевые слова; если переименовать в другое существующее ключевое слово, они объединятся.";
 "On the Server" = "На сервере";
+"On this device. Managed by iOS." = "На этом устройстве. Управляется iOS.";
 "Only" = "Только";
 "Only Previews Here" = "Здесь только просмотры";
 "Only photos whose AI Denoise amount is above 0 are made. Exports always make theirs if it is missing." = "Создаются только изображения для фото, у которых значение ИИ-шумоподавления больше 0. Экспорт всегда создаёт нужное изображение, если его нет.";
@@ -1650,6 +1661,7 @@
 "Pick a date" = "Выберите дату";
 "Pick the sharpest photo of each burst" = "Выбирать самое чёткое фото в каждой серии";
 "Picked" = "Выбрано";
+"Picking any object by tapping needs iOS 27. On this version Apple Vision selects the subject and whatever stands out in front." = "Выбор любого объекта касанием требует iOS 27. В этой версии Apple Vision выбирает главный объект и то, что выделяется на переднем плане.";
 "Picks" = "Выбранные";
 "Pictures" = "Изображения";
 "Pixels" = "Пиксели";
@@ -1994,8 +2006,10 @@
 "Select All" = "Выбрать все";
 "Select Luminance Range" = "Выбрать диапазон яркости";
 "Select Mask" = "Выбрать маску";
+"Select Object" = "Выбрать объект";
 "Select Photos" = "Выбрать фото";
 "Select Spot" = "Выбрать пятно";
+"Select Subject" = "Выбрать главный объект";
 "Select a photo to edit" = "Выберите фото для правки";
 "Select a photo to enlarge" = "Выберите фото, чтобы увеличить его";
 "Select by" = "Выбрать по";
@@ -2005,6 +2019,8 @@
 "Select two photos, then choose View → Compare (Shift+C)" = "Выберите два фото, затем Вид → Сравнение (Shift+C)";
 "Selected" = "Выделено";
 "Selecting…" = "Выделение…";
+"Selection" = "Выбор";
+"Selects any object from taps, including parts you add or leave out." = "Выбирает любой объект по касаниям, включая части, которые вы добавляете или исключаете.";
 "Selenium Tone" = "Селеновое тонирование";
 "Send Feedback…" = "Отправить отзыв…";
 "Separated by commas" = "Через запятую";
@@ -2276,6 +2292,7 @@
 "Tap + to make a mask: the subject, the sky, a gradient, a brush…" = "Нажмите +, чтобы создать маску: главный объект, небо, градиент, кисть…";
 "Tap a colour in the photo" = "Коснитесь цвета на фото";
 "Tap a face to mark it" = "Коснитесь лица, чтобы отметить его";
+"Tap an object to select it" = "Коснитесь объекта, чтобы выбрать его";
 "Tap photos to give them the keyword; tap again to take it away." = "Коснитесь фото, чтобы добавить ключевое слово; коснитесь ещё раз, чтобы убрать его.";
 "Tap something white or grey in the photo" = "Коснитесь белого или серого участка на фото";
 "Tap the photo to pick a colour" = "Коснитесь фото, чтобы выбрать цвет";
@@ -2595,6 +2612,7 @@
 "hour 00–23" = "час 00–23";
 "hours" = "часов";
 "how to restore it or delete it permanently and import it afresh. (For a fresh start on a photo, Reset Edits," = "как восстановить его или удалить навсегда и импортировать заново. (Чтобы начать с чистого листа для фото, «Сбросить правки»,";
+"iOS downloads it from Apple the first time and manages it. It is Apple's model, under Apple's terms." = "iOS загрузит её с серверов Apple при первом использовании и будет управлять ею. Это модель Apple на условиях Apple.";
 "ignored before) chooses the graphics backend; `off` renders on the CPU. The GPU now starts after the window" = "раньше игнорировался) выбирает графический бэкенд; `off` рендерит на CPU. GPU теперь запускается после появления окна";
 "image" = "изображение";
 "immutable, and HOSTING.md describes the actual build." = "неизменяемыми, а HOSTING.md описывает реальную сборку.";

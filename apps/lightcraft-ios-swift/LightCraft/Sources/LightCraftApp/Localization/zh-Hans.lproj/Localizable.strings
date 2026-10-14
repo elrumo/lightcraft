@@ -185,6 +185,10 @@
 "Appearance" = "外观";
 "Appearance Mode" = "外观模式";
 "Appearance Settings…" = "外观设置…";
+"Apple" = "Apple";
+"Apple Vision" = "Apple Vision";
+"Apple tap-to-segment model" = "Apple 点按选择模型";
+"Apple's selection model couldn't start on this device." = "Apple 的选择模型无法在此设备上启动。";
 "Application" = "应用程序";
 "Apply" = "应用";
 "Apply Color Label Set" = "应用颜色标签集";
@@ -235,6 +239,7 @@
 "Auto-Tag from Tracklog…" = "从轨迹日志自动标记…";
 "Automatic" = "自动";
 "Automatic renders the Detail view at the size it is shown, up to the photo's own pixels. Choose a size to cap it: smaller is faster." = "“自动”按详细视图的显示大小渲染（最高为照片自身像素）。选择一个大小可设上限：越小越快。";
+"Automatic uses Apple's models where this device has them. Classic is LightCraft's own guess and needs no model." = "“自动”会在此设备具备 Apple 模型时使用它们。“经典”是 LightCraft 自己的估算，无需模型。";
 "Automatic uses the graphics card where it is faster than the processor: both are timed on this computer the first time a photo is made." = "自动模式会在显卡快于处理器时使用显卡：两者都会在首次生成照片时于本机计时比较。";
 "Automatically Write Changes into XMP" = "自动将更改写入 XMP";
 "Automatically write changes into XMP sidecars" = "自动将更改写入 XMP 附属文件";
@@ -651,6 +656,7 @@
 "Download %@?" = "下载%@？";
 "Download AI Mask Model" = "下载 AI 蒙版模型";
 "Download All Small Previews" = "下载所有小预览";
+"Download Apple's selection model?" = "下载 Apple 的选择模型？";
 "Download Denoise Model" = "下载降噪模型";
 "Download Face Model" = "下载人脸模型";
 "Download Place Names (GeoNames)" = "下载地名数据 (GeoNames)";
@@ -846,6 +852,7 @@
 "Find…" = "查找…";
 "First" = "最早";
 "First commit" = "首次提交";
+"First tap the object you want to select." = "请先点按要选择的对象。";
 "Fit" = "适合";
 "Fit (F)" = "适合 (F)";
 "Fit on Screen" = "适合屏幕";
@@ -1187,6 +1194,7 @@
 "Library saved" = "图库已保存";
 "Licence" = "许可证：";
 "Licence:" = "许可证：";
+"Lifts the subject and selects objects from your taps, on this device. Built into iOS." = "在此设备上提取主体，并根据你的点按选择对象。已内置于 iOS。";
 "Light" = "亮度";
 "Light Mode" = "浅色模式";
 "Light Theme" = "浅色主题";
@@ -1503,6 +1511,7 @@
 "Nothing new to import" = "没有可导入的新内容";
 "Nothing new: everything in these files is already in your library." = "没有新内容：这些文件中的所有内容都已在图库中。";
 "Nothing to compare" = "没有可比较的照片";
+"Nothing to select there. Tap the object itself." = "此处没有可选择的内容。请点按对象本身。";
 "Nothing to survey" = "没有可筛选的照片";
 "Nothing was imported" = "未导入任何内容";
 "Nudge Develop Value" = "微调编辑数值";
@@ -1511,6 +1520,7 @@
 "Object" = "对象";
 "Object Mask" = "对象蒙版";
 "Object and Describe masks use SAM 3, Meta's segmentation model. It isn't part of LightCraft, and everything else works without it." = "对象蒙版和描述蒙版使用 Meta 的分割模型 SAM 3。它不属于 LightCraft，其他所有功能无需它也能使用。";
+"Object selection is off while Selection is set to Classic. Change it in Settings ▸ AI Models." = "“选择”设为“经典”时，无法选择对象。请在“设置 ▸ AI 模型”中更改。";
 "October 2026" = "2026年10月";
 "Off" = "关闭";
 "Off: the Map shows the built-in world map and tiles saved earlier. Place names and the photos' positions never leave your computer; a tile request tells the tile server which area you look at." = "关闭：地图显示内置世界地图和之前保存的图块。地名和照片位置不会离开您的电脑；请求图块时，图块服务器会得知您查看的区域。";
@@ -1525,6 +1535,7 @@
 "On the Server" = "服务器上";
 "On the map" = "地图上";
 "On the server:" = "服务器上：";
+"On this device. Managed by iOS." = "已在此设备上。由 iOS 管理。";
 "Only" = "仅限";
 "Only Previews Here" = "此处仅有预览";
 "Only photos whose AI Denoise amount is above 0 are made. Exports always make theirs if it is missing." = "只对 AI 降噪数量大于 0 的照片生成结果。导出时若缺少结果则会先生成。";
@@ -1650,6 +1661,7 @@
 "Pick a date" = "选择日期";
 "Pick the sharpest photo of each burst" = "为每组连拍选取最清晰的照片";
 "Picked" = "已留用";
+"Picking any object by tapping needs iOS 27. On this version Apple Vision selects the subject and whatever stands out in front." = "通过点按选择任意对象需要 iOS 27。在此版本上，Apple Vision 会选择主体和前景中突出的内容。";
 "Picks" = "留用";
 "Pictures" = "图片";
 "Pixels" = "像素";
@@ -2014,6 +2026,8 @@
 "Select two photos, then choose View → Compare (Shift+C)" = "选择两张照片，然后选择 视图 → 比较 (Shift+C)";
 "Selected" = "已选择";
 "Selecting…" = "正在选择…";
+"Selection" = "选择";
+"Selects any object from taps, including parts you add or leave out." = "根据点按选择任意对象，包括你添加或排除的部分。";
 "Selenium Tone" = "硒调色";
 "Send Feedback…" = "发送反馈…";
 "Send the search data to my server, so my other devices can search too" = "将搜索数据发送到我的服务器，让我的其他设备也能搜索";
@@ -2286,6 +2300,7 @@
 "Tap + to make a mask: the subject, the sky, a gradient, a brush…" = "轻点 + 创建蒙版：主题、天空、渐变、画笔…";
 "Tap a colour in the photo" = "轻点照片中的颜色";
 "Tap a face to mark it" = "轻点人脸以标记";
+"Tap an object to select it" = "点按对象以选择它";
 "Tap photos to give them the keyword; tap again to take it away." = "轻点照片即可为其添加关键字；再次轻点可将其去除。";
 "Tap something white or grey in the photo" = "轻点照片中的白色或灰色区域";
 "Tap the photo to pick a colour" = "轻点照片选择颜色";
@@ -2589,6 +2604,7 @@
 "has the first date after the second" = "第一个日期晚于第二个";
 "hour 00–23" = "时 00–23";
 "hours" = "小时";
+"iOS downloads it from Apple the first time and manages it. It is Apple's model, under Apple's terms." = "iOS 会在首次使用时从 Apple 下载并管理它。这是 Apple 的模型，受 Apple 条款约束。";
 "image" = "图像";
 "in use" = "正在使用";
 "includes the folders inside it" = "包含其中的文件夹";

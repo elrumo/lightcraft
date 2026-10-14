@@ -175,6 +175,10 @@
 "Appearance" = "Apparence";
 "Appearance Mode" = "Mode d’apparence";
 "Appearance Settings…" = "Réglages d’apparence…";
+"Apple" = "Apple";
+"Apple Vision" = "Apple Vision";
+"Apple tap-to-segment model" = "Modèle Apple de sélection par touche";
+"Apple's selection model couldn't start on this device." = "Le modèle de sélection d’Apple n’a pas pu démarrer sur cet appareil.";
 "Application" = "Application";
 "Apply" = "Appliquer";
 "Apply Color Label Set" = "Appliquer un jeu d'étiquettes de couleur";
@@ -225,6 +229,7 @@
 "Auto-Tag from Tracklog…" = "Géolocaliser automatiquement à partir d'une trace GPS…";
 "Automatic" = "Automatique";
 "Automatic renders the Detail view at the size it is shown, up to the photo's own pixels. Choose a size to cap it: smaller is faster." = "Automatique calcule la vue Détail à la taille affichée, jusqu'aux pixels de la photo elle-même. Choisissez une taille pour la plafonner : plus petit, c'est plus rapide.";
+"Automatic uses Apple's models where this device has them. Classic is LightCraft's own guess and needs no model." = "« Automatique » utilise les modèles d’Apple lorsque cet appareil les possède. « Classique » est l’estimation propre à LightCraft et ne nécessite aucun modèle.";
 "Automatic uses the graphics card where it is faster than the processor: both are timed on this computer the first time a photo is made." = "Automatique utilise la carte graphique lorsqu'elle est plus rapide que le processeur : les deux sont chronométrés sur cet ordinateur la première fois qu'une photo est générée.";
 "Automatically Write Changes into XMP" = "Écrire automatiquement les modifications dans XMP";
 "Automatically write changes into XMP sidecars" = "Écrire automatiquement les modifications dans les fichiers annexes XMP";
@@ -630,6 +635,7 @@
 "Download %@?" = "Télécharger %@ ?";
 "Download AI Mask Model" = "Télécharger le modèle de masques IA";
 "Download All Small Previews" = "Télécharger tous les petits aperçus";
+"Download Apple's selection model?" = "Télécharger le modèle de sélection d’Apple ?";
 "Download Denoise Model" = "Télécharger le modèle de débruitage";
 "Download Place Names (GeoNames)" = "Télécharger les noms de lieux (GeoNames)";
 "Download the SAM 3 Model?" = "Télécharger le modèle SAM 3 ?";
@@ -807,6 +813,7 @@
 "Find…" = "Rechercher…";
 "First" = "Première";
 "First commit" = "Premier commit";
+"First tap the object you want to select." = "Touchez d’abord l’objet à sélectionner.";
 "Fit" = "Ajuster";
 "Fit (F)" = "Ajuster (F)";
 "Fit on Screen" = "Ajuster à l'écran";
@@ -1129,6 +1136,7 @@
 "Library saved" = "Bibliothèque enregistrée";
 "Licence" = "Licence";
 "Licence:" = "Licence :";
+"Lifts the subject and selects objects from your taps, on this device. Built into iOS." = "Détoure le sujet et sélectionne des objets d’après vos touches, sur cet appareil. Intégré à iOS.";
 "Light" = "Lumière";
 "Light Mode" = "Mode clair";
 "Light Theme" = "Thème clair";
@@ -1433,6 +1441,7 @@
 "Nothing new to import" = "Rien de nouveau à importer";
 "Nothing new: everything in these files is already in your library." = "Rien de nouveau : tout le contenu de ces fichiers est déjà dans la bibliothèque.";
 "Nothing to compare" = "Rien à comparer";
+"Nothing to select there. Tap the object itself." = "Rien à sélectionner ici. Touchez l’objet lui-même.";
 "Nothing to survey" = "Rien à afficher dans la vue multiple";
 "Nothing was imported" = "Rien n’a été importé";
 "Nudge Develop Value" = "Ajuster légèrement la valeur de développement";
@@ -1441,6 +1450,7 @@
 "Object" = "Objet";
 "Object Mask" = "Masque d'objet";
 "Object and Describe masks use SAM 3, Meta's segmentation model. It isn't part of LightCraft, and everything else works without it." = "Les masques Objet et Décrire utilisent SAM 3, le modèle de segmentation de Meta. Il ne fait pas partie de LightCraft, et tout le reste fonctionne sans lui.";
+"Object selection is off while Selection is set to Classic. Change it in Settings ▸ AI Models." = "La sélection d’objets est désactivée tant que Sélection est sur « Classique ». Modifiez-le dans Réglages ▸ Modèles IA.";
 "October 2026" = "octobre 2026";
 "Off" = "Désactivé";
 "Offset X" = "Décalage X";
@@ -1451,6 +1461,7 @@
 "On This Photo" = "Sur cette photo";
 "On every photo, the keywords inside it included; renaming it onto another keyword merges the two." = "Sur chaque photo, y compris les mots-clés qu'il contient ; le renommer avec le nom d'un autre mot-clé fusionne les deux.";
 "On the Server" = "Sur le serveur";
+"On this device. Managed by iOS." = "Sur cet appareil. Géré par iOS.";
 "Only" = "Uniquement";
 "Only Previews Here" = "Aperçus seuls ici";
 "Only photos whose AI Denoise amount is above 0 are made. Exports always make theirs if it is missing." = "Seules les photos dont la quantité de débruitage IA est supérieure à 0 sont générées. Les exportations génèrent toujours la leur si elle manque.";
@@ -1570,6 +1581,7 @@
 "Pick a date" = "Choisir une date";
 "Pick the sharpest photo of each burst" = "Choisir la photo la plus nette de chaque rafale";
 "Picked" = "Sélectionnée";
+"Picking any object by tapping needs iOS 27. On this version Apple Vision selects the subject and whatever stands out in front." = "Choisir n’importe quel objet d’une touche nécessite iOS 27. Sur cette version, Apple Vision sélectionne le sujet et ce qui se détache au premier plan.";
 "Picks" = "Sélectionnées";
 "Pictures" = "Images";
 "Pixels" = "Pixels";
@@ -1903,8 +1915,10 @@
 "Select All" = "Tout sélectionner";
 "Select Luminance Range" = "Sélectionner une plage de luminance";
 "Select Mask" = "Sélectionner le masque";
+"Select Object" = "Sélectionner l’objet";
 "Select Photos" = "Sélectionner des photos";
 "Select Spot" = "Sélectionner la tache";
+"Select Subject" = "Sélectionner le sujet";
 "Select a photo to edit" = "Sélectionnez une photo à modifier";
 "Select a photo to enlarge" = "Sélectionnez une photo à agrandir";
 "Select by" = "Sélectionner par";
@@ -1914,6 +1928,8 @@
 "Select two photos, then choose View → Compare (Shift+C)" = "Sélectionnez deux photos, puis choisissez Affichage → Comparer (Maj+C)";
 "Selected" = "Sélectionnée";
 "Selecting…" = "Sélection en cours…";
+"Selection" = "Sélection";
+"Selects any object from taps, including parts you add or leave out." = "Sélectionne n’importe quel objet d’après vos touches, y compris les parties que vous ajoutez ou excluez.";
 "Selenium Tone" = "Virage au sélénium";
 "Send Feedback…" = "Envoyer des commentaires…";
 "Separated by commas" = "Séparés par des virgules";
@@ -2174,6 +2190,7 @@
 "Tap + to make a mask: the subject, the sky, a gradient, a brush…" = "Touchez + pour créer un masque : le sujet, le ciel, un dégradé, un pinceau…";
 "Tap a colour in the photo" = "Touchez une couleur dans la photo";
 "Tap a face to mark it" = "Touchez un visage pour le marquer";
+"Tap an object to select it" = "Touchez un objet pour le sélectionner";
 "Tap photos to give them the keyword; tap again to take it away." = "Touchez des photos pour leur appliquer le mot-clé ; touchez-les de nouveau pour le retirer.";
 "Tap something white or grey in the photo" = "Touchez un élément blanc ou gris dans la photo";
 "Tap the photo to pick a colour" = "Touchez la photo pour choisir une couleur";
@@ -2453,6 +2470,7 @@
 "has the first date after the second" = "a la première date après la seconde";
 "hour 00–23" = "heure 00–23";
 "hours" = "heures";
+"iOS downloads it from Apple the first time and manages it. It is Apple's model, under Apple's terms." = "iOS le télécharge depuis Apple la première fois et le gère. C’est un modèle d’Apple, soumis aux conditions d’Apple.";
 "image" = "image";
 "in use" = "utilisé";
 "includes the folders inside it" = "inclut les dossiers qu'il contient";

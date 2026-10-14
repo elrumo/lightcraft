@@ -184,6 +184,10 @@
 "Appearance" = "外觀";
 "Appearance Mode" = "外觀模式";
 "Appearance Settings…" = "外觀設定…";
+"Apple" = "Apple";
+"Apple Vision" = "Apple Vision";
+"Apple tap-to-segment model" = "Apple 點按選取模型";
+"Apple's selection model couldn't start on this device." = "Apple 的選取模型無法在此裝置上啟動。";
 "Application" = "應用程式";
 "Apply" = "套用";
 "Apply Color Label Set" = "套用色彩標籤集";
@@ -234,6 +238,7 @@
 "Auto-Tag from Tracklog…" = "依軌跡記錄自動加入位置標記…";
 "Automatic" = "自動";
 "Automatic renders the Detail view at the size it is shown, up to the photo's own pixels. Choose a size to cap it: smaller is faster." = "「自動」會依詳細檢視的顯示大小來渲染（最高為相片本身的像素）。選擇尺寸可設定上限：越小越快。";
+"Automatic uses Apple's models where this device has them. Classic is LightCraft's own guess and needs no model." = "「自動」會在此裝置具備 Apple 模型時使用它們。「經典」是 LightCraft 自己的估算，不需要模型。";
 "Automatic uses the graphics card where it is faster than the processor: both are timed on this computer the first time a photo is made." = "Automatic uses the graphics card where it is faster than the processor: both are timed on this computer the first time a photo is made.";
 "Automatically Write Changes into XMP" = "自動將變更寫入 XMP";
 "Automatically write changes into XMP sidecars" = "自動將變更寫入 XMP 附屬檔案";
@@ -646,6 +651,7 @@
 "Download %@?" = "要下載%@嗎？";
 "Download AI Mask Model" = "下載 AI 遮色片模型";
 "Download All Small Previews" = "下載所有小型預覽";
+"Download Apple's selection model?" = "下載 Apple 的選取模型？";
 "Download Denoise Model" = "Download Denoise Model";
 "Download Place Names (GeoNames)" = "下載地名資料 (GeoNames)";
 "Download and Turn On" = "下載並啟用";
@@ -832,6 +838,7 @@
 "Find…" = "尋找…";
 "First" = "最早";
 "First commit" = "首次提交";
+"First tap the object you want to select." = "請先點一下要選取的物件。";
 "Fit" = "符合視窗";
 "Fit (F)" = "符合視窗（F）";
 "Fit on Screen" = "符合螢幕";
@@ -1166,6 +1173,7 @@
 "Library saved" = "照片庫已儲存";
 "Licence" = "授權：";
 "Licence:" = "授權：";
+"Lifts the subject and selects objects from your taps, on this device. Built into iOS." = "在此裝置上擷取主體，並根據你的點按選取物件。已內建於 iOS。";
 "Light" = "光線";
 "Light Mode" = "淺色模式";
 "Light Theme" = "淺色主題";
@@ -1480,6 +1488,7 @@
 "Nothing new to import" = "沒有可匯入的新內容";
 "Nothing new: everything in these files is already in your library." = "沒有新內容：這些檔案中的所有內容都已在照片庫中。";
 "Nothing to compare" = "沒有可比較的照片";
+"Nothing to select there. Tap the object itself." = "此處沒有可選取的內容。請點一下物件本身。";
 "Nothing to survey" = "沒有可總覽的照片";
 "Nothing was imported" = "未匯入任何內容";
 "Nudge Develop Value" = "微調顯像數值";
@@ -1488,6 +1497,7 @@
 "Object" = "物件";
 "Object Mask" = "物件遮色片";
 "Object and Describe masks use SAM 3, Meta's segmentation model. It isn't part of LightCraft, and everything else works without it." = "物件遮色片與描述遮色片使用 Meta 的分割模型 SAM 3。它不屬於 LightCraft，其他所有功能不需要它也能使用。";
+"Object selection is off while Selection is set to Classic. Change it in Settings ▸ AI Models." = "「選取」設為「經典」時，無法選取物件。請在「設定 ▸ AI 模型」中更改。";
 "October 2026" = "2026年10月";
 "Off" = "關閉";
 "Off: the Map shows the built-in world map and tiles saved earlier. Place names and the photos' positions never leave your computer; a tile request tells the tile server which area you look at." = "關閉：地圖顯示內建世界地圖與先前儲存的圖磚。地名與照片位置不會離開您的電腦；請求圖磚時，圖磚伺服器會得知您查看的區域。";
@@ -1502,6 +1512,7 @@
 "On the Server" = "伺服器上";
 "On the map" = "地圖上";
 "On the server:" = "伺服器上：";
+"On this device. Managed by iOS." = "已在此裝置上。由 iOS 管理。";
 "Only" = "僅限";
 "Only Previews Here" = "此處僅有預覽";
 "Only photos whose AI Denoise amount is above 0 are made. Exports always make theirs if it is missing." = "Only photos whose AI Denoise amount is above 0 are made. Exports always make theirs if it is missing.";
@@ -1627,6 +1638,7 @@
 "Pick a date" = "選擇日期";
 "Pick the sharpest photo of each burst" = "選取每組連拍中最清晰的照片";
 "Picked" = "已標記精選";
+"Picking any object by tapping needs iOS 27. On this version Apple Vision selects the subject and whatever stands out in front." = "透過點按選取任意物件需要 iOS 27。在此版本上，Apple Vision 會選取主體和前景中突出的內容。";
 "Picks" = "精選照片";
 "Pictures" = "圖片";
 "Pixels" = "像素";
@@ -1987,6 +1999,8 @@
 "Select two photos, then choose View → Compare (Shift+C)" = "選取兩張照片後，選擇「檢視 → 比較」（Shift+C）";
 "Selected" = "已選取";
 "Selecting…" = "正在選取…";
+"Selection" = "選取";
+"Selects any object from taps, including parts you add or leave out." = "根據點按選取任意物件，包括你新增或排除的部分。";
 "Selenium Tone" = "硒調色";
 "Send Feedback…" = "傳送意見回饋…";
 "Send the search data to my server, so my other devices can search too" = "將搜尋資料傳送到我的伺服器，讓我的其他裝置也能搜尋";
@@ -2256,6 +2270,7 @@
 "Tap + to make a mask: the subject, the sky, a gradient, a brush…" = "點一下 + 可建立遮色片：主體、天空、漸層、筆刷…";
 "Tap a colour in the photo" = "點一下照片中的色彩";
 "Tap a face to mark it" = "點一下人臉以標記";
+"Tap an object to select it" = "點一下物件以選取它";
 "Tap photos to give them the keyword; tap again to take it away." = "輕點照片即可加入關鍵字；再次輕點即可移除。";
 "Tap something white or grey in the photo" = "點一下照片中白色或灰色的部分";
 "Tap the photo to pick a colour" = "點一下照片以選取色彩";
@@ -2558,6 +2573,7 @@
 "has the first date after the second" = "第一個日期晚於第二個";
 "hour 00–23" = "時 00–23";
 "hours" = "小時";
+"iOS downloads it from Apple the first time and manages it. It is Apple's model, under Apple's terms." = "iOS 會在首次使用時從 Apple 下載並管理它。這是 Apple 的模型，受 Apple 條款約束。";
 "image" = "影像";
 "in use" = "in use";
 "includes the folders inside it" = "包含其中的資料夾";

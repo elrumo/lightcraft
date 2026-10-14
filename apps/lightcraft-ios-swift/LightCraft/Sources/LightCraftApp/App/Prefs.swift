@@ -30,6 +30,7 @@ final class Prefs {
         faceBoxes = store.bool(forKey: "faceBoxes")
         removeAI = store.bool(forKey: "removeAI")
         expandModel = store.string(forKey: "expandModel") ?? "auto"
+        selectionEngine = store.string(forKey: "selectionEngine") ?? "auto"
         importOnConnect = store.object(forKey: "importOnConnect") as? Bool ?? true
         cropGuide = store.string(forKey: "cropGuide") ?? "thirds"
         cropGuideOrientation = store.integer(forKey: "cropGuideOrientation")
@@ -160,6 +161,9 @@ final class Prefs {
     /// Crop ▸ Expand's Fill With: the model Generate paints with (`crop.expandModels` ids; `auto`:
     /// the default).
     var expandModel: String { didSet { store.set(expandModel, forKey: "expandModel") } }
+    /// What selects an object or the subject (Masking): `auto` (Apple's models where this device has
+    /// them), `apple`, or `classic` (LightCraft's own guess, no model).
+    var selectionEngine: String { didSet { store.set(selectionEngine, forKey: "selectionEngine") } }
     /// Show the import when a camera or memory card is plugged in.
     var importOnConnect: Bool { didSet { store.set(importOnConnect, forKey: "importOnConnect") } }
     /// The crop tool's composition guide (`crop.guides` kinds) and how the asymmetric ones turn (0–3).

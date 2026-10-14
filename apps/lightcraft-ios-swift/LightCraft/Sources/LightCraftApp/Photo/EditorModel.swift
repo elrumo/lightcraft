@@ -133,6 +133,12 @@ final class EditorModel {
     var eraseReady = false
     /// The Masking tool's tool in hand on the photo (`brush`, `colorRange`) and the brush.
     var maskTool: String?
+    /// The Object tool: the next tap takes the object out of the selection instead of adding it, a
+    /// selection is being computed, and the combine mode (`add`, `subtract`, `intersect`) of the part
+    /// the next tap makes (`nil`: it makes a mask of its own).
+    var objectSubtract = false
+    var selecting = false
+    var objectOp: String?
     var brushSize = 0.03
     var brushFeather = 50.0
     var brushFlow = 100.0

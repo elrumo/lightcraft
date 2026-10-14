@@ -394,6 +394,7 @@ private struct ModelsSettings: View {
 
     var body: some View {
         Form {
+            AppleModelsSection()
             ForEach(Array(models.enumerated()), id: \.offset) { _, m in
                 Section {
                     VStack(alignment: .leading, spacing: 4) {
