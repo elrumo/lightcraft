@@ -98,7 +98,7 @@ final class ScriptHost {
             case "commands":
                 model.path = [.commands]
             case "people":
-                model.path = [.people]
+                model.path = [.people] + (params["person"].string.map { [.person($0)] } ?? [])
             case "map":
                 model.path = [.map]
             default:

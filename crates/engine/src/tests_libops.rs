@@ -899,3 +899,25 @@ fn a_run_of_photos_is_chosen_or_unchosen() {
     assert_eq!(chosen(&s), [visible[10], visible[2]].into_iter().collect());
     assert!(s.execute("library.chooseRun", &json!({"from": 1})).is_err());
 }
+
+/// People's named section: who is named on the photos, most photos first, with their face.
+#[test]
+fn named_people_are_listed_with_their_faces() {
+    let mut s = Session::with_demo();
+    let ids: Vec<u64> = s.visible_shared().1.iter().take(3).map(|i| i.0).collect();
+    for (id, name) in [(ids[0], "Ana"), (ids[1], "Ana"), (ids[2], "Bo")] {
+        s.execute("photo.addRegion", &json!({"id": id, "rect": {"x0": 0.2, "y0": 0.2, "x1": 0.4, "y1": 0.5}, "name": name})).unwrap();
+    }
+    let people = s.execute("people.named", &json!({})).unwrap();
+    let list = people.as_array().unwrap();
+    assert_eq!(list.len(), 2, "{people}");
+    assert_eq!((list[0]["name"].as_str(), list[0]["photos"].as_u64()), (Some("Ana"), Some(2)));
+    assert!(list[0]["cover"]["rect"]["x0"].is_number(), "{people}");
+    // renaming a person renames every face of theirs, any case, in one undo step
+    s.execute("people.rename", &json!({"from": "ana", "to": "Anna"})).unwrap();
+    let people = s.execute("people.named", &json!({})).unwrap();
+    assert_eq!((people[0]["name"].as_str(), people[0]["photos"].as_u64()), (Some("Anna"), Some(2)), "{people}");
+    assert!(s.execute("people.rename", &json!({"from": "Cy", "to": "Dee"})).is_err());
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(s.execute("people.named", &json!({})).unwrap()[0]["name"].as_str(), Some("Ana"));
+}

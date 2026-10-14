@@ -152,7 +152,7 @@ only (`#if os(iOS)`), so `swift test` on a Mac builds the rest. The Rust library
 (`{"sleep": ms}` waits), and appends each reply to `<file>.out`; a relative `path` is next to the script. The engine
 answers `engine.*`, `render.*` and `host.*` itself; the app answers `ui.screenshot {path}` (the window as a PNG),
 `ui.inspect` (screen, photo, state, `perf`: the last render's ms and the slider-to-draft round trip) and `ui.set {screen:
-grid | photo | edit | crop | masking | remove | redEye | presets | info | commands | people | map, photo?, span?, group?, sheet?,
+grid | photo | edit | crop | masking | remove | redEye | presets | info | commands | people | map, photo?, person? (with people: their page), span?, group?, sheet?,
 section?, select?, faceBoxes?, tagFace?, beforeAfter?, visualizeSpots?, removeAI?, histogram?, cropGuide?}` (`ScriptHost.swift` lists
 the values).
 

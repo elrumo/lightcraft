@@ -18,9 +18,9 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | Phase | ✅ | 🟡 | ⬜ | 🚫 | Done or out of scope |
 |---|---:|---:|---:|---:|---:|
 | S0 | 15 | 0 | 0 | 0 | 15/15 |
-| S1 | 142 | 8 | 14 | 3 | 145/167 |
+| S1 | 143 | 7 | 14 | 3 | 146/167 |
 | S2 | 1 | 0 | 79 | 22 | 23/102 |
-| **Total** | 158 | 8 | 93 | 25 | 183/284 |
+| **Total** | 159 | 7 | 93 | 25 | 184/284 |
 <!-- /ios-parity:summary -->
 
 ## Screens
@@ -64,7 +64,7 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | screen:compact.importReview | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Share/ImportReview.swift`, `crates/apphost/src/host/tests.rs` | Photos / Files / folder picks scanned (`import.scan`), three across with checks and thumbnails, duplicates, in library and Recently Deleted marked; album (or a new one), keywords, preset, what to do with deleted ones; imported in the background (`import.start`, one undo step) |
 | screen:compact.settings | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/FacesSettings.swift` | the library, General, Import, Performance, Interface, Sync, Faces, AI Models |
 | screen:compact.sync | S1 | 🟡 | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift`, `crates/apphost/src/sync.rs` | sign in, account, Sync Now, pause, On This Device options, shared links, sign out, the cloud button and status page, the conflict choice; the host drives the sync (shared with egui); no storage section yet |
-| screen:compact.people | S1 | 🟡 | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/PeopleView.swift`, `crates/apphost/src/faces.rs` | people and unnamed groups, name a group, a person's photos; the host paces the face scan; face crops aren't rendered yet (the photo is shown) |
+| screen:compact.people | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/PeopleView.swift`, `crates/engine/src/tests_libops.rs` | the library's named people (`people.named`), groups found on this device (`people.list`), unnamed faces (`faces.unnamed`) to name; a person's page: their faces (a tap opens the photo), rename everyone (`people.rename`), look-alikes with ✓ / ✕ and Confirm All; the scan's progress; empty state points to Settings ▸ Faces |
 | screen:compact.map | S1 | 🟡 | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/PeopleView.swift` | MapKit with clustered photo markers (`map.points`), place search (`map.place`), a tap shows them in the grid |
 | screen:compact.alerts | S1 | 🟡 | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/App/RootView.swift` | Move to Recently Deleted asks first; messages as glass capsules |
 | screen:compact.haptics | S1 | 🟡 | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/GridView.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/ControlSlider.swift` | selection on pinch steps, groups, tools, sliders at the default and the ends; medium on Before; not yet every place egui has |

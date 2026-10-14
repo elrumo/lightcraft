@@ -3,53 +3,82 @@ import LightCraftCore
 import MapKit
 import SwiftUI
 
-/// People: the faces found in the library, grouped by person; a named person opens their photos,
-/// an unnamed group asks who it is. Finding faces runs on this device (Settings ▸ AI Models).
+/// People: the people named in the library (`people.named`), the groups found on this device
+/// (`people.list`, desktops), and the faces nobody has named yet (`faces.unnamed`). A named person
+/// opens their page; a group or a face asks who it is.
 struct PeopleView: View {
     @Environment(AppModel.self) private var model
-    @State private var answer: JSONValue = .null
-    @State private var naming: JSONValue?
+    @State private var named: [JSONValue] = []
+    @State private var found: [JSONValue] = []
+    @State private var unnamed: [JSONValue] = []
+    @State private var loaded = false
+    @State private var naming: FaceNaming?
+    @State private var cluster: JSONValue?
     @State private var name = ""
 
     var body: some View {
-        let people = answer["people"].array ?? []
         ScrollView {
-            if people.isEmpty {
+            if let f = model.state.faces, f.pendingPhotos > 0 {
+                Label("Looking for faces in \(f.pendingPhotos) photos", systemImage: "person.crop.rectangle.stack")
+                    .font(.footnote).foregroundStyle(.secondary)
+                    .padding(.top, 8)
+            }
+            if loaded && named.isEmpty && found.isEmpty && unnamed.isEmpty {
                 ContentUnavailableView {
                     Label("No People Yet", systemImage: "person.2")
                 } description: {
-                    Text("LightCraft finds faces in your photos on this device. Turn it on to group them by person.")
+                    Text("Faces named by other apps show up here. Turn on finding people in Settings ▸ Faces, or open a photo and tap Tag a Face in its … menu.")
                 } actions: {
-                    Button("Find People") {
-                        Task {
-                            await model.run("vision.setFaces", ["on": true])
-                            await load()
-                        }
-                    }
-                    .buttonStyle(.borderedProminent)
+                    Button("Faces Settings") { model.sheet = .settings("faces") }
+                        .buttonStyle(.borderedProminent)
                 }
                 .padding(.top, 60)
             } else {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: 16)], spacing: 20) {
-                    ForEach(Array(people.enumerated()), id: \.offset) { _, person in
-                        Button {
-                            if let n = person["name"].string {
-                                model.path.append(.person(n))
-                            } else {
-                                name = ""
-                                naming = person
-                            }
-                        } label: {
-                            VStack(spacing: 6) {
-                                FaceDisc(photo: person["cover"]["photo"].int.map { UInt64($0) }, rect: person["cover"]["rect"])
-                                    .frame(width: 96, height: 96)
-                                Text(person["name"].string ?? String(localized: "Add Name"))
-                                    .font(.subheadline.weight(.semibold))
-                                    .foregroundStyle(person["name"].string == nil ? Color.accentColor : .primary)
-                                Text("\(person["photos"].int ?? 0) photos").font(.caption).foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 8) {
+                    if !named.isEmpty {
+                        heading("People")
+                        LazyVGrid(columns: Self.columns(100), spacing: 20) {
+                            ForEach(Array(named.enumerated()), id: \.offset) { _, p in
+                                let n = p["name"].string ?? ""
+                                Button { model.path.append(.person(n)) } label: {
+                                    tile(p["cover"], title: Text(n), sub: Text("\(p["photos"].int ?? 0) photos"))
+                                }
+                                .buttonStyle(.plain)
                             }
                         }
-                        .buttonStyle(.plain)
+                    }
+                    if !found.isEmpty {
+                        heading("Found in Your Photos")
+                        LazyVGrid(columns: Self.columns(100), spacing: 20) {
+                            ForEach(Array(found.enumerated()), id: \.offset) { _, p in
+                                Button { tapped(p) } label: {
+                                    let n = p["name"].string
+                                    let pending = p["pending"].int ?? 0
+                                    tile(p["cover"], title: Text(n ?? String(localized: "Add Name")).foregroundStyle(n == nil ? Color.accentColor : .primary),
+                                         sub: n != nil && pending > 0 ? Text("Confirm \(pending) more") : Text("\(p["photos"].int ?? 0) photos"))
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                    if !unnamed.isEmpty {
+                        heading("Unnamed Faces")
+                        LazyVGrid(columns: Self.columns(72), spacing: 14) {
+                            ForEach(Array(unnamed.enumerated()), id: \.offset) { _, f in
+                                let guess = f["suggestion"]["name"].string
+                                Button {
+                                    guard let photo = f["photo"].int, let index = f["index"].int else { return }
+                                    naming = FaceNaming(photo: UInt64(clamping: photo), index: Int(index), rect: nil, start: guess ?? "",
+                                                        candidates: guess.map { [$0] } ?? [], crop: nil)
+                                } label: {
+                                    VStack(spacing: 4) {
+                                        FaceDisc(photo: f["photo"].int.map { UInt64(clamping: $0) }, rect: f["rect"]).aspectRatio(1, contentMode: .fit)
+                                        Text(guess.map { "\($0)?" } ?? " ").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                    }
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
                     }
                 }
                 .padding(16)
@@ -57,57 +86,180 @@ struct PeopleView: View {
         }
         .navigationTitle("People")
         .task(id: model.state.catalogRevision) { await load() }
-        .alert("Who Is This?", isPresented: Binding(get: { naming != nil }, set: { if !$0 { naming = nil } })) {
+        .sheet(item: $naming) { FaceNameSheet(target: $0) }
+        .alert("Who Is This?", isPresented: Binding(get: { cluster != nil }, set: { if !$0 { cluster = nil } })) {
             TextField("Name", text: $name)
             Button("Done") {
-                if let p = naming, !name.isEmpty {
-                    Task {
-                        await model.run("people.name", ["cluster": p["id"], "name": .string(name)])
-                        await load()
-                    }
-                }
-                naming = nil
+                if let p = cluster, !name.isEmpty { model.perform("people.name", ["cluster": p["id"], "name": .string(name)]) }
+                cluster = nil
             }
-            Button("Cancel", role: .cancel) { naming = nil }
+            Button("Cancel", role: .cancel) { cluster = nil }
+        }
+    }
+
+    static func columns(_ minimum: CGFloat) -> [GridItem] { [GridItem(.adaptive(minimum: minimum), spacing: 16)] }
+
+    private func heading(_ title: LocalizedStringKey) -> some View {
+        Text(title).font(.title3.bold()).padding(.top, 12)
+    }
+
+    /// A person or group: their face, the name, a count.
+    private func tile(_ cover: JSONValue, title: Text, sub: Text) -> some View {
+        VStack(spacing: 4) {
+            FaceDisc(photo: cover["photo"].int.map { UInt64(clamping: $0) }, rect: cover["rect"]).aspectRatio(1, contentMode: .fit)
+            title.font(.subheadline.weight(.semibold)).lineLimit(1)
+            sub.font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    /// A named group with faces waiting confirms them; an unnamed one asks who it is.
+    private func tapped(_ p: JSONValue) {
+        if let n = p["name"].string {
+            model.perform("people.name", ["cluster": p["id"], "name": .string(n)])
+        } else {
+            name = ""
+            cluster = p
         }
     }
 
     private func load() async {
         guard let engine = model.engine else { return }
-        answer = (try? await engine.execute("people.list", ["all": true])) ?? .null
+        named = (try? await engine.execute("people.named"))?.array ?? []
+        found = (try? await engine.execute("people.list", ["all": true]))?["people"].array?.filter { $0["id"].string != nil } ?? []
+        unnamed = (try? await engine.execute("faces.unnamed"))?["faces"].array ?? []
+        loaded = true
     }
 }
 
-/// A person's photos and naming.
+/// A person's page: their face and name (tap to rename everyone with it), Show Photos, their
+/// faces (a tap opens the photo), and the faces that look like them, ✓ it is them / ✕ it isn't.
 struct PersonView: View {
     @Environment(AppModel.self) private var model
     let name: String
+    @State private var current: String?
     @State private var info: JSONValue = .null
+    @State private var cover: JSONValue = .null
+    @State private var dismissed: Set<String> = []
+    @State private var renaming = false
+    @State private var newName = ""
+
+    private var shown: String { current ?? name }
 
     var body: some View {
-        List {
-            Section {
-                VStack(spacing: 8) {
-                    Text(name).font(.title.bold())
-                    Text("\(info["total"].int ?? 0) photos").foregroundStyle(.secondary)
-                    Button("Show Photos") {
-                        Task {
-                            await model.run("library.filter", ["person": .string(name)])
-                            model.prefs.gridSpan = .all
-                            model.path = []
+        let confirmed = info["confirmed"].array ?? []
+        let more = (info["more"].array ?? []).filter { !dismissed.contains(Self.key($0)) }
+        ScrollView {
+            VStack(spacing: 8) {
+                FaceDisc(photo: (cover["photo"].int ?? confirmed.first?["photo"].int).map { UInt64(clamping: $0) },
+                         rect: cover.isNull ? confirmed.first?["rect"] ?? .null : cover["rect"])
+                    .frame(width: 116, height: 116)
+                Button {
+                    newName = shown
+                    renaming = true
+                } label: {
+                    Text(shown).font(.title.bold())
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("Rename")
+                Text("\(cover["photos"].int ?? info["total"].int ?? 0) photos").foregroundStyle(.secondary)
+                Button("Show Photos") {
+                    Task {
+                        await model.run("library.filter", ["person": .string(shown)])
+                        model.prefs.gridSpan = .all
+                        model.path = []
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.top, 12)
+            VStack(alignment: .leading, spacing: 8) {
+                if !confirmed.isEmpty {
+                    Text("Photos").font(.title3.bold()).padding(.top, 16)
+                    LazyVGrid(columns: Self.columns, spacing: 6) {
+                        ForEach(Array(confirmed.enumerated()), id: \.offset) { _, f in
+                            Button {
+                                if let p = f["photo"].int { model.open(UInt64(clamping: p)) }
+                            } label: {
+                                FaceDisc(photo: f["photo"].int.map { UInt64(clamping: $0) }, rect: f["rect"], square: true).aspectRatio(1, contentMode: .fit)
+                            }
+                            .buttonStyle(.plain)
                         }
                     }
-                    .buttonStyle(.borderedProminent)
                 }
-                .frame(maxWidth: .infinity)
+                HStack {
+                    Text("Is this \(shown)?").font(.title3.bold())
+                    Spacer()
+                    if more.count > 1 {
+                        Button("Confirm All") {
+                            model.perform("faces.nameFaces", ["faces": .array(more.map { ["photo": $0["photo"], "index": $0["index"]] }), "name": .string(shown)])
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                }
+                .padding(.top, 16)
+                let note: LocalizedStringKey = more.isEmpty
+                    ? (info["ready"].bool == true ? "No other faces look like them yet: more appear as your photos are looked at."
+                                                  : "Turn on finding people in Settings ▸ Faces to find more of their photos.")
+                    : "Tap ✓ when it is them, ✕ when it isn't."
+                Text(note).font(.footnote).foregroundStyle(.secondary)
+                LazyVGrid(columns: Self.columns, spacing: 6) {
+                    ForEach(Array(more.enumerated()), id: \.offset) { _, f in
+                        FaceDisc(photo: f["photo"].int.map { UInt64(clamping: $0) }, rect: f["rect"], square: true)
+                            .aspectRatio(1, contentMode: .fit)
+                            .overlay(alignment: .bottom) {
+                                HStack(spacing: 0) {
+                                    Button("It Isn't", systemImage: "xmark") { dismissed.insert(Self.key(f)) }
+                                    Button("It Is", systemImage: "checkmark") {
+                                        model.perform("faces.setName", ["id": f["photo"], "index": f["index"], "name": .string(shown)])
+                                    }
+                                }
+                                .labelStyle(.iconOnly)
+                                .buttonStyle(.plain)
+                                .foregroundStyle(.white)
+                                .frame(maxWidth: .infinity, minHeight: 30)
+                                .background(.black.opacity(0.55))
+                            }
+                            .clipShape(.rect(cornerRadius: 10))
+                    }
+                }
             }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 24)
         }
-        .navigationTitle(name)
+        .sensoryFeedback(.selection, trigger: confirmed.count)
+        .navigationTitle(shown)
         .navigationBarTitleDisplayMode(.inline)
-        .task {
+        .task(id: Load(name: shown, revision: model.state.catalogRevision)) {
             guard let engine = model.engine else { return }
-            info = (try? await engine.execute("faces.person", ["name": .string(name)])) ?? .null
+            info = (try? await engine.execute("faces.person", ["name": .string(shown)])) ?? .null
+            let people = (try? await engine.execute("people.named"))?.array ?? []
+            cover = people.first { $0["name"].string?.caseInsensitiveCompare(shown) == .orderedSame } ?? .null
         }
+        .alert("Rename", isPresented: $renaming) {
+            TextField("Name", text: $newName)
+            Button("Rename") { rename() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Every face named \(shown) gets the new name; a name someone already has puts them together.")
+        }
+    }
+
+    private static let columns = Array(repeating: GridItem(.flexible(), spacing: 6), count: 4)
+
+    private static func key(_ f: JSONValue) -> String { "\(f["photo"].int ?? 0):\(f["index"].int ?? 0)" }
+
+    private func rename() {
+        let to = newName.trimmingCharacters(in: .whitespaces)
+        guard !to.isEmpty, to != shown else { return }
+        Task {
+            if await model.run("people.rename", ["from": .string(shown), "to": .string(to)]) != nil { current = to }
+        }
+    }
+
+    private nonisolated struct Load: Hashable {
+        let name: String
+        let revision: UInt64
     }
 }
 
@@ -117,10 +269,13 @@ struct FaceDisc: View {
     let photo: UInt64?
     /// The face's box, as `people.list` gives it.
     var rect: JSONValue = .null
+    /// A rounded square instead of a disc.
+    var square = false
     @State private var slot: String?
 
     var body: some View {
-        Circle()
+        let shape = square ? AnyShape(.rect(cornerRadius: 10)) : AnyShape(.circle)
+        shape
             .fill(Color(uiColor: .tertiarySystemFill))
             .overlay {
                 if let slot, let p = model.images.pictures[slot] {
@@ -131,7 +286,7 @@ struct FaceDisc: View {
                     Image(systemName: "person.fill").font(.largeTitle).foregroundStyle(.secondary)
                 }
             }
-            .clipShape(Circle())
+            .clipShape(shape)
             .task(id: Key(photo: photo, rect: rect, revision: model.state.catalogRevision)) {
                 guard let photo, let engine = model.engine else { return }
                 if rect.isNull {
