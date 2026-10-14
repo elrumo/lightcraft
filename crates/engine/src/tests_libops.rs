@@ -796,3 +796,15 @@ fn faces_are_tagged_and_listed_as_shown() {
     let stored = s.catalog.photo(id).unwrap().meta.regions.last().unwrap().rect;
     assert!((stored.x0 - 0.1).abs() > 1e-6 || (stored.y0 - 0.2).abs() > 1e-6, "{stored:?}");
 }
+
+/// The settings groups every UI's Copy Settings and Create Preset list, with the default ticks.
+#[test]
+fn settings_groups_list_the_copy_defaults() {
+    let mut s = Session::with_demo();
+    let g = s.execute("develop.settingsGroups", &json!({})).unwrap();
+    let all = g.as_array().unwrap();
+    assert_eq!(all[0]["id"], "profile");
+    let crop = all.iter().find(|x| x["id"] == "crop").unwrap();
+    assert_eq!((crop["label"].as_str(), crop["copiedByDefault"].as_bool()), (Some("Crop"), Some(false)));
+    assert!(all.iter().any(|x| x["id"] == "light" && x["copiedByDefault"] == true));
+}

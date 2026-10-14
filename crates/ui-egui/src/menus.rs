@@ -1404,44 +1404,27 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             Ok(json!({"text": crate::panels::dialogs::WHATS_NEW}))
         }
         "app.systemInfo" => {
-            let info = app.session.execute("library.info", &json!({})).unwrap_or_default();
-            let gpu = (lightcraft_engine::gpu::ready() && lightcraft_engine::gpu::available()).then(lightcraft_engine::gpu::adapter_name).flatten();
-            let mb = |b: u64| format!("{:.0} MB", b as f64 / (1u64 << 20) as f64);
-            let mut rows = vec![
-                ("Version".to_string(), env!("CARGO_PKG_VERSION").to_string()),
-                ("System".to_string(), format!("{} ({})", std::env::consts::OS, std::env::consts::ARCH)),
-                ("CPU threads".to_string(), std::thread::available_parallelism().map(|n| n.get().to_string()).unwrap_or_else(|_| "?".into())),
+            // the engine's facts, with this app's own rows among them
+            let mut rows = lightcraft_engine::about::system_rows(&app.session);
+            let after = |rows: &Vec<(String, String)>, label: &str| rows.iter().position(|(k, _)| k == label).map_or(rows.len(), |i| i + 1);
+            let i = after(&rows, "GPU");
+            rows.insert(i, ("GPU rendering".to_string(), if app.ui.settings.gpu { "on".into() } else { "off".into() }));
+            let i = after(&rows, "Memory budget");
+            let preview = match app.ui.settings.preview_limit {
+                0 => "automatic".to_string(),
+                n => format!("{n} px"),
+            };
+            rows.insert(i, ("Preview size".to_string(), preview));
+            let i = rows.iter().position(|(k, _)| k == "Last GPU fallback").unwrap_or(rows.len());
+            let frame = [
+                ("Frame time".to_string(), format!("{:.1} ms ({:.0} fps)", app.perf.frame_ms, app.perf.fps)),
                 (
-                    "GPU".to_string(),
-                    gpu.unwrap_or_else(|| match lightcraft_engine::gpu::unavailable_reason() {
-                        Some(why) => crate::i18n::tr_format!("none (CPU rendering): {why}", why = why),
-                        None => "none (CPU rendering)".into(),
-                    }),
+                    "Frame update".to_string(),
+                    format!("{:.1} ms (logic {:.1} ms; slowest {:.0} ms)", app.perf.update_ms, app.perf.logic_ms, app.perf.max_update_ms),
                 ),
-                ("GPU rendering".to_string(), if app.ui.settings.gpu { "on".into() } else { "off".into() }),
-                ("Memory budget".to_string(), mb(lightcraft_engine::memory::default_budget() as u64)),
-                (
-                    "Preview size".to_string(),
-                    match app.ui.settings.preview_limit {
-                        0 => "automatic".to_string(),
-                        n => format!("{n} px"),
-                    },
-                ),
-                ("Photos".to_string(), info["photos"].to_string()),
-                ("Albums".to_string(), info["albums"].to_string()),
+                ("Last loupe render".to_string(), format!("{:.0} ms", app.renderer.last_main_ms)),
             ];
-            if let Some(dir) = info["dir"].as_str().or(info["path"].as_str()) {
-                rows.push(("Library".into(), dir.to_string()));
-            }
-            rows.push(("Frame time".into(), format!("{:.1} ms ({:.0} fps)", app.perf.frame_ms, app.perf.fps)));
-            rows.push((
-                "Frame update".into(),
-                format!("{:.1} ms (logic {:.1} ms; slowest {:.0} ms)", app.perf.update_ms, app.perf.logic_ms, app.perf.max_update_ms),
-            ));
-            rows.push(("Last loupe render".into(), format!("{:.0} ms", app.renderer.last_main_ms)));
-            if let Some(f) = lightcraft_engine::gpu::last_fallback() {
-                rows.push(("Last GPU fallback".into(), f));
-            }
+            rows.splice(i..i, frame);
             let r = json!(rows.iter().map(|(k, v)| json!({"label": k, "value": v})).collect::<Vec<_>>());
             if p.get("open").and_then(Value::as_bool).unwrap_or(true) {
                 app.ui.dialog = Some(Dialog::SystemInfo { rows });

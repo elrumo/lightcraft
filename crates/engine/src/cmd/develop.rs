@@ -989,6 +989,23 @@ pub fn specs() -> Vec<CommandSpec> {
             s.commit(&format!("Preset: {}", preset.name), Op::Batch { ops })?;
             ok()
         }),
+        cmd!(
+            query "develop.settingsGroups",
+            "Settings Groups",
+            [],
+            None,
+            "{} → [{id, label, copiedByDefault}] the groups Copy Settings, Paste Settings and Create Preset tick (ids as `develop.copy`, `develop.paste` and `preset.create` take them; crop, masks, Remove and red eye are not copied unless ticked)",
+            always,
+            |_, _| {
+                let default = SettingsGroup::default_copy();
+                Ok(Value::Array(
+                    SettingsGroup::ALL
+                        .iter()
+                        .map(|g| json!({"id": g, "label": g.label(), "copiedByDefault": default.contains(g)}))
+                        .collect(),
+                ))
+            }
+        ),
         cmd!("preset.create", "Create Preset", ["Photo"], None, "{name, group?, groups?: [settingsGroup]}", has_active, |s, p| {
             let id = active(s, "preset.create")?;
             let name = str_param(p, "name").ok_or_else(|| bad("preset.create", "missing name"))?;
