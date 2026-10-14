@@ -31,7 +31,6 @@ struct SecondWindowView: View {
         .preferredColorScheme(.dark)
         // iPadOS may bring back this window alone after a relaunch: the library comes up too
         .task {
-            AppModel.current = model
             await model.start()
             if model.mainWindows == 0 { openWindow(id: RootView.id) }
         }
@@ -61,7 +60,10 @@ final class ExternalDisplayDelegate: UIResponder, UIWindowSceneDelegate {
     var window: UIWindow?
 
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options: UIScene.ConnectionOptions) {
-        guard let scene = scene as? UIWindowScene, let model = AppModel.current else { return }
+        guard let scene = scene as? UIWindowScene else { return }
+        let model = AppModel.shared
+        // (a display attached at launch may come before any window has started the engine)
+        Task { await model.start() }
         let window = UIWindow(windowScene: scene)
         window.rootViewController = UIHostingController(rootView: SecondWindowView().environment(model))
         window.isHidden = false

@@ -153,8 +153,8 @@ final class AppModel {
     var secondWindowAsked = false
     /// Main windows on screen (none when iPadOS brings back only the second window).
     var mainWindows = 0
-    /// The app's model, for a scene SwiftUI doesn't make (the external display's).
-    static weak var current: AppModel?
+    /// The app's one model: every window's, and a scene's SwiftUI doesn't make (the external display's).
+    static let shared = AppModel()
     /// The grid's search field is open (⌘F, Edit ▸ Find…), and what is typed in it.
     var searching = false
     var searchText = ""
