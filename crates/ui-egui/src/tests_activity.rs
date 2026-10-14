@@ -333,7 +333,7 @@ fn final_merge_shows_a_row_and_cancels() {
     assert!(rows[0].cancellable);
     assert_eq!(rows[0].total, 1000);
     h.app.session.activity.cancel(rows[0].id).unwrap();
-    assert!(h.step_until(T, |h| h.app.merge.final_task.is_none()));
+    assert!(h.step_until(T, |h| h.app.merge.runner.merging.is_none()));
     assert!(h.app.merge.last_result.is_none(), "nothing merged");
     assert_eq!(h.app.session.catalog.len(), before, "no photo added");
     assert!(h.app.session.activity.list().is_empty());

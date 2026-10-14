@@ -337,3 +337,44 @@ fn a_face_renders_on_its_own() {
     let bad = h.call(&req(3, "render.face", json!({"photo": photo, "rect": {"x0": "a"}})), Duration::from_secs(30));
     assert_eq!(bad["error"]["code"], "badParams", "{bad}");
 }
+
+// Photo Merge as the phone does it: previews that a newer one replaces, then the full merge in the
+// background, which says how it went (the demo's photos may not merge: either way it answers)
+#[test]
+fn merges_preview_and_run_in_the_background() {
+    let h = demo();
+    // two photo files (a merge needs files, not the demo's drawn photos): the demo's, exported
+    let dir = std::env::temp_dir().join(format!("lc-host-merge-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let first = h.call(&req(1, "engine.execute", json!({"command": "catalog.query", "params": {"limit": 2}})), Duration::from_secs(30));
+    let demo_ids: Vec<u64> = first["result"]["photos"].as_array().unwrap().iter().map(|p| p["id"].as_u64().unwrap()).collect();
+    let exported = h.call(
+        &req(
+            10,
+            "engine.execute",
+            json!({"command": "app.export", "params": {"dir": dir.to_string_lossy(), "ids": demo_ids, "longEdge": 96, "format": "png"}}),
+        ),
+        Duration::from_secs(60),
+    );
+    let files: Vec<String> = exported["result"]["files"].as_array().unwrap().iter().map(|f| f["path"].as_str().unwrap().to_string()).collect();
+    let imported = h.call(&req(11, "engine.execute", json!({"command": "library.import", "params": {"paths": files}})), Duration::from_secs(60));
+    let ids: Vec<u64> = imported["result"]["imported"].as_array().map(|a| a.iter().filter_map(|v| v.as_u64()).collect()).unwrap_or_default();
+    assert_eq!(ids.len(), 2, "{imported}");
+    h.submit(&req(2, "host.merge.preview", json!({"command": "merge.hdr", "ids": ids}))).unwrap();
+    h.submit(&req(3, "host.merge.preview", json!({"command": "merge.hdr", "ids": ids, "options": {"deghost": "low"}}))).unwrap();
+    // the first is answered too: dropped for the second, or drawn before it came
+    let older = h.reply_to(2);
+    assert!(older["error"]["code"] == "cancelled" || older["result"].is_object(), "{older}");
+    let newer = h.reply_to(3);
+    assert!(newer["result"]["slot"] == "merge" || newer["error"]["message"].is_string(), "{newer}");
+    if newer["result"].is_object() {
+        h.wait_for(|e| e["kind"] == "image" && e["slot"] == "merge");
+    }
+    let one = h.call(&req(4, "host.merge.start", json!({"command": "merge.hdr", "ids": [ids[0]]})), Duration::from_secs(30));
+    assert!(one["error"]["message"].as_str().unwrap().contains("at least 2"), "{one}");
+    let started = h.call(&req(5, "host.merge.start", json!({"command": "merge.hdr", "ids": ids})), Duration::from_secs(30));
+    assert_eq!(started["result"]["started"], true, "{started}");
+    let said = h.wait_for(|e| e["kind"] == "message" && e["text"].as_str().is_some_and(|t| t.starts_with("HDR merge")));
+    assert!(said["text"].as_str().unwrap().contains("merge"), "{said}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

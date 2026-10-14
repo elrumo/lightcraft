@@ -233,7 +233,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
         Dialog::PasteSettings { .. } => "Paste Selected Settings",
         Dialog::Export { .. } => "Export",
         Dialog::ContactSheet { .. } => "Contact Sheet PDF",
-        Dialog::Merge { opts } => opts.title(),
+        Dialog::Merge { opts } => crate::merge::title(opts),
         Dialog::Settings { .. } => "Settings",
         Dialog::ConfirmDelete { .. } => "Delete Photos",
         Dialog::LightroomCatalog { .. } => "Lightroom Classic Catalog",
