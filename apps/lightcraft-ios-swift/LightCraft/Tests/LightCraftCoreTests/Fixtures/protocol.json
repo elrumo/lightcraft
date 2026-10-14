@@ -164,6 +164,7 @@
     "deviceName": "iPhone",
     "home": "/home",
     "library": null,
+    "profile": "desktop",
     "renderThreads": null,
     "script": null,
     "tmp": "/tmp"

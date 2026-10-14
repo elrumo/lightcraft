@@ -3,6 +3,7 @@
 //! decoded by `LightCraftCoreTests`, so a change on one side that the other doesn't follow fails.
 
 use lightcraft_apphost::host::{ErrorBody, Event, HostState, OpenConfig, Request};
+use lightcraft_apphost::startup::Profile;
 use lightcraft_engine::activity::{TaskInfo, Unit};
 use lightcraft_engine::catalog::PhotoId;
 use serde_json::{Value, json};
@@ -95,8 +96,14 @@ fn fixtures() -> Value {
         },
     ];
     let request = Request { id: 5, method: "render.view".into(), params: json!({"photo": 7, "width": 1600, "height": 1067, "draft": true}) };
-    let config =
-        OpenConfig { home: Some("/home".into()), tmp: Some("/tmp".into()), demo: true, device_name: Some("iPhone".into()), ..Default::default() };
+    let config = OpenConfig {
+        home: Some("/home".into()),
+        tmp: Some("/tmp".into()),
+        demo: true,
+        device_name: Some("iPhone".into()),
+        profile: Profile::Desktop,
+        ..Default::default()
+    };
     json!({
         "events": events.iter().map(Event::to_value).collect::<Vec<_>>(),
         "request": request,

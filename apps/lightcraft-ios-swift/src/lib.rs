@@ -73,7 +73,9 @@ fn no_engine(handle: u64) -> Answer {
 }
 
 /// What the process needs once, before the first engine: logs, the panic log, the system's
-/// HEIC / AVIF decoder (iOS).
+/// HEIC / AVIF decoder (iOS). A Mac logs to stderr like the egui app (`LIGHTCRAFT_LOG`) and decodes
+/// HEIC in Rust: `ios-host`'s ImageIO decoder is iOS-only, and installing it without porting its
+/// `decode_image` would fail every HEIC instead of falling back to the Rust decoder.
 fn setup(config: &OpenConfig) {
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
@@ -82,6 +84,8 @@ fn setup(config: &OpenConfig) {
             lightcraft_ios_host::install_logger();
             lightcraft_ios_host::install_imageio_decoder();
         }
+        #[cfg(target_os = "macos")]
+        lightcraft_engine::logging::install("lightcraft");
         let tmp = config.tmp.as_deref().map_or_else(std::env::temp_dir, std::path::PathBuf::from);
         lightcraft_engine::guard::install_hook(tmp.join("lightcraft-panics.log"));
     });

@@ -48,6 +48,7 @@ pub use leases::{BytesRef, ImageRef, Leases};
 pub use protocol::{ErrorBody, Event, HostState, OpenConfig, Request};
 
 use crate::render::{Present, Scheduler, Slot};
+use crate::startup::Profile;
 
 /// Most events one [`Host::poll`] returns (the rest wait for the next).
 pub const MAX_EVENTS: usize = 512;
@@ -344,23 +345,33 @@ struct PendingSuperRes {
 
 impl Engine {
     fn start(config: &OpenConfig, events: Arc<Events>, leases: Arc<Leases>, wake: Sender<Msg>) -> Result<Engine, String> {
+        let desktop = config.profile == Profile::Desktop;
         let available = config.available_memory.and_then(|m| usize::try_from(m).ok()).or_else(lightcraft_sysmem::available_memory);
-        crate::startup::set_memory_budget(available);
+        crate::startup::set_memory_budget_for(config.profile, available);
         let tmp = config.tmp.as_deref().map_or_else(std::env::temp_dir, PathBuf::from);
         crate::startup::clean_staging(&tmp);
         let mut warnings = Vec::new();
         let (mut session, demo) = if config.demo {
             (Session::with_demo().with_fs().with_system_clock(), true)
         } else {
-            let dir = crate::startup::library_dir(config.library.clone().map(Into::into), config.home.clone().map(Into::into));
-            let (session, fallback) = crate::startup::open_session(dir.as_deref());
-            let demo = fallback.is_some();
-            warnings.extend(fallback);
-            (session, demo)
+            let dir = crate::startup::library_dir_for(config.profile, config.library.clone().map(Into::into), config.home.clone().map(Into::into));
+            if desktop {
+                // never a demo in the library's place: the user closes the other LightCraft or chooses another library
+                (crate::startup::open_session_or_err(dir.as_deref())?, false)
+            } else {
+                let (session, fallback) = crate::startup::open_session(dir.as_deref());
+                let demo = fallback.is_some();
+                warnings.extend(fallback);
+                (session, demo)
+            }
         };
-        let home = config.home.as_deref().map(std::ffi::OsStr::new);
-        crate::startup::configure_enhancer(&mut session.enhancer, home, available);
-        session.face_models_dir = crate::startup::face_models_dir(home);
+        if desktop {
+            crate::startup::configure_desktop(&mut session);
+        } else {
+            let home = config.home.as_deref().map(std::ffi::OsStr::new);
+            crate::startup::configure_enhancer(&mut session.enhancer, home, available);
+            session.face_models_dir = crate::startup::face_models_dir(home);
+        }
         // searches by description and indexing run off the engine thread (as in egui); the tick applies them
         session.vision.background = true;
         let sched = match config.render_threads {

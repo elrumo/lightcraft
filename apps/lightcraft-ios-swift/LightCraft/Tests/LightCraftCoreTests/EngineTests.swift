@@ -38,6 +38,25 @@ struct EngineTests {
         #expect(Bridge.abiVersion == Bridge.expectedAbiVersion)
     }
 
+    /// A Mac host refuses a library another LightCraft has open (the egui app locks it) instead of
+    /// swapping in the demo library, which would let the user import into one that isn't theirs.
+    @Test func aDesktopHostRefusesALibraryOpenElsewhere() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("lc-swift-\(UUID().uuidString)")
+        let tmp = dir.appendingPathComponent("tmp")
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let config = OpenConfig(tmp: tmp.path, library: dir.appendingPathComponent("lib").path, renderThreads: 1, profile: .desktop)
+        let (first, opened) = try await Engine.open(config)
+        #expect(!opened.demo)
+        do {
+            _ = try await Engine.open(config)
+            Issue.record("a second host opened a library the first one has open")
+        } catch let error as ErrorBody {
+            #expect(error.code == "openFailed" && error.message.contains("already open"), "\(error)")
+        }
+        await first.close()
+    }
+
     @Test func commandsAnswerAndFailAsErrors() async throws {
         let engine = try await demo()
         let page = try await engine.execute("catalog.query", ["limit": 5], as: PhotoPage.self)
