@@ -38,6 +38,11 @@ struct Entry<S, R> {
 
 struct Shared<S, R> {
     queue: Mutex<Vec<Entry<S, R>>>,
+    /// Slots with a job running: their next job waits until it ends, so a slot never has two at
+    /// once (a slider drag submits faster than renders finish; overlapping renders of one view
+    /// were mostly thrown away, and took the GPU from the one that is shown). Locked inside
+    /// `queue`.
+    busy: Mutex<Vec<S>>,
     cv: Condvar,
     shutdown: AtomicBool,
     /// Told after every finished job ([`JobPool::set_notify`]).
@@ -66,6 +71,8 @@ pub struct JobPool<S, R> {
     shared: Arc<Shared<S, R>>,
     tx: Sender<Done<S, R>>,
     rx: Receiver<Done<S, R>>,
+    /// A finished job [`Self::wait`] took off the channel, handed out first by [`Self::try_recv`].
+    early: Option<Done<S, R>>,
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     threads: usize,
     started: bool,
@@ -83,6 +90,7 @@ impl<S: Copy + Eq + Hash + Send + 'static, R: Send + 'static> JobPool<S, R> {
         JobPool {
             shared: Arc::new(Shared {
                 queue: Mutex::new(Vec::new()),
+                busy: Mutex::new(Vec::new()),
                 cv: Condvar::new(),
                 shutdown: AtomicBool::new(false),
                 notify: Mutex::new(None),
@@ -93,6 +101,7 @@ impl<S: Copy + Eq + Hash + Send + 'static, R: Send + 'static> JobPool<S, R> {
             }),
             tx,
             rx,
+            early: None,
             threads,
             started: false,
             seq: 0,
@@ -131,6 +140,8 @@ impl<S: Copy + Eq + Hash + Send + 'static, R: Send + 'static> JobPool<S, R> {
                     while let Some(e) = take(&shared, true) {
                         let t0 = std::time::Instant::now();
                         let (slot, key, job) = (e.slot, e.key, e.job);
+                        // the slot is free again when the job ends, also if it panics
+                        let _free = Free(&shared, slot);
                         // a panicking job is lost, not the worker (the pool would shrink with every one)
                         let Ok(result) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(job)) else {
                             log::error!("job pool: a job panicked; its result is lost");
@@ -234,8 +245,16 @@ impl<S: Copy + Eq + Hash + Send + 'static, R: Send + 'static> JobPool<S, R> {
     }
 
     /// A finished job, if any.
-    pub fn try_recv(&self) -> Option<Done<S, R>> {
-        self.rx.try_recv().ok()
+    pub fn try_recv(&mut self) -> Option<Done<S, R>> {
+        self.early.take().or_else(|| self.rx.try_recv().ok())
+    }
+
+    /// Wait up to `timeout` for a job to finish; whether one has (it is the next [`Self::try_recv`]).
+    pub fn wait(&mut self, timeout: Duration) -> bool {
+        if self.early.is_none() {
+            self.early = self.rx.recv_timeout(timeout).ok();
+        }
+        self.early.is_some()
     }
 
     /// Run up to `n` jobs on the calling thread (wasm, tests). Returns how many ran.
@@ -243,6 +262,7 @@ impl<S: Copy + Eq + Hash + Send + 'static, R: Send + 'static> JobPool<S, R> {
         let mut ran = 0;
         while ran < n {
             let Some(e) = take(&self.shared, false) else { break };
+            let _free = Free(&self.shared, e.slot);
             let result = (e.job)();
             let _ = self.tx.send(Done { slot: e.slot, key: e.key, result, ms: 0.0 });
             notify(&self.shared);
@@ -262,19 +282,48 @@ fn notify<S, R>(shared: &Shared<S, R>) {
 
 /// Pop the best job (highest priority, newest first). Blocks when `wait` until one is queued or
 /// the pool shuts down.
-fn take<S, R>(shared: &Shared<S, R>, wait: bool) -> Option<Entry<S, R>> {
+fn take<S: PartialEq + Copy, R>(shared: &Shared<S, R>, wait: bool) -> Option<Entry<S, R>> {
     let mut q = shared.queue.lock().unwrap_or_else(|e| e.into_inner());
     loop {
         if shared.shutdown.load(Ordering::Relaxed) {
             return None;
         }
-        if let Some(i) = q.iter().enumerate().max_by_key(|(_, e)| (e.priority, e.seq)).map(|(i, _)| i) {
-            return Some(q.swap_remove(i));
+        // (a slot with a job running waits for it: see `Shared::busy`)
+        let best = {
+            let busy = shared.busy.lock().unwrap_or_else(|e| e.into_inner());
+            q.iter().enumerate().filter(|(_, e)| !busy.contains(&e.slot)).max_by_key(|(_, e)| (e.priority, e.seq)).map(|(i, _)| i)
+        };
+        if let Some(i) = best {
+            let e = q.swap_remove(i);
+            shared.busy.lock().unwrap_or_else(|e| e.into_inner()).push(e.slot);
+            return Some(e);
         }
         if !wait {
             return None;
         }
         q = shared.cv.wait(q).unwrap_or_else(|e| e.into_inner());
+    }
+}
+
+/// The job for `slot` ended: a job queued for it may start.
+fn finished<S: PartialEq, R>(shared: &Shared<S, R>, slot: &S) {
+    {
+        // under the queue lock: a worker is either before its look at `busy` or waiting
+        let _q = shared.queue.lock().unwrap_or_else(|e| e.into_inner());
+        let mut busy = shared.busy.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(i) = busy.iter().position(|s| s == slot) {
+            busy.swap_remove(i);
+        }
+    }
+    shared.cv.notify_all();
+}
+
+/// Frees a job's slot when the job ends (see [`finished`]).
+struct Free<'a, S: PartialEq, R>(&'a Shared<S, R>, S);
+
+impl<S: PartialEq, R> Drop for Free<'_, S, R> {
+    fn drop(&mut self) {
+        finished(self.0, &self.1);
     }
 }
 
