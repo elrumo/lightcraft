@@ -808,3 +808,26 @@ fn settings_groups_list_the_copy_defaults() {
     assert_eq!((crop["label"].as_str(), crop["copiedByDefault"].as_bool()), (Some("Crop"), Some(false)));
     assert!(all.iter().any(|x| x["id"] == "light" && x["copiedByDefault"] == true));
 }
+
+/// The smart album editor's data: each operator's starting value, an album's rules, and what keeps
+/// rules from being saved.
+#[test]
+fn smart_album_rules_read_check_and_start_sensibly() {
+    let mut s = Session::with_demo();
+    let fields = s.execute("album.ruleFields", &json!({})).unwrap();
+    let rating = fields.as_array().unwrap().iter().find(|f| f["field"] == "rating").unwrap().clone();
+    assert!(rating["ops"].as_array().unwrap().iter().any(|o| o["op"] == "gte" && o["default"] == 3), "{rating}");
+    let fresh = s.execute("album.rules", &json!({})).unwrap();
+    assert_eq!(fresh["rules"]["rules"][0], json!({"field": "rating", "op": "gte", "value": 3}), "{fresh}");
+    let rules = json!({"match": "all", "rules": [{"field": "rating", "op": "gte", "value": 4}]});
+    let made = s.execute("album.createSmart", &json!({"name": "Best", "rules": {"ruleSet": rules}})).unwrap();
+    let id = made["id"].as_u64().unwrap();
+    let read = s.execute("album.rules", &json!({"id": id})).unwrap();
+    assert_eq!((read["name"].as_str(), read["rules"]["rules"][0]["value"].as_i64()), (Some("Best"), Some(4)), "{read}");
+    assert!(s.execute("album.checkRules", &json!({"rules": rules})).unwrap().as_array().unwrap().is_empty());
+    // an album rule that names the album itself can't be saved
+    let own = json!({"match": "all", "rules": [{"field": "album", "op": "is", "value": id}]});
+    let problems = s.execute("album.checkRules", &json!({"rules": own, "id": id})).unwrap();
+    assert!(!problems.as_array().unwrap().is_empty(), "{problems}");
+    assert!(s.execute("album.rules", &json!({"id": 999_999})).is_err());
+}

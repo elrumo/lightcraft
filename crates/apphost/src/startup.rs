@@ -46,6 +46,13 @@ pub fn configure_enhancer(enhancer: &mut lightcraft_engine::enhance::Enhancer, h
     enhancer.limit_memory(available.map_or(512 << 20, |a| a / 2));
 }
 
+/// Face models on a phone (chosen and downloaded by the user, kept with the app's data so iOS
+/// backs them up and never empties them): `Library/Application Support/LightCraft/face-models`.
+/// Without a home folder there is nowhere to keep them (Settings ▸ Faces says so).
+pub fn face_models_dir(home: Option<&OsStr>) -> Option<PathBuf> {
+    home.map(|h| PathBuf::from(h).join("Library/Application Support/LightCraft/face-models"))
+}
+
 /// Size the engine's caches to what the system lets this app use (`available`, from
 /// `lightcraft_sysmem::available_memory`; `None` keeps the default), before anything is cached, and
 /// hand freed allocator pages back to the system after big decodes. Returns the budget in bytes.
@@ -149,5 +156,11 @@ mod tests {
         // no home folder: nowhere to put it (the dialog says so), never a guess
         configure_enhancer(&mut e, None, Some(3 << 30));
         assert_eq!(e.dir, None);
+        // face models stay with the app's data, never in the caches
+        assert_eq!(
+            face_models_dir(Some(&home)).as_deref(),
+            Some(Path::new("/var/mobile/Containers/Data/Application/ABC/Library/Application Support/LightCraft/face-models"))
+        );
+        assert_eq!(face_models_dir(None), None);
     }
 }

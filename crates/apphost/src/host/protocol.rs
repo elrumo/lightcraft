@@ -113,6 +113,9 @@ pub struct HostState {
     /// reading: [read, total]|null, error}` (`sync.status` has the rest).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sync: Option<Value>,
+    /// Face recognition's background scan while it is on: `{pendingPhotos, indexedFaces}`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub faces: Option<Value>,
 }
 
 /// An event, `{"kind": "...", ...}`.

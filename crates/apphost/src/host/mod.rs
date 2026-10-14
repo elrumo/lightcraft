@@ -256,6 +256,8 @@ struct Engine {
     last_request: Instant,
     /// When face recognition's scan is pumped next ([`crate::faces`]).
     faces_next: Instant,
+    /// How far that scan is (`HostState::faces`).
+    faces_scan: Option<Value>,
     /// `app.export` running on its worker: answered when it ends.
     export: Option<PendingExport>,
     /// `enhance.superRes` running on its worker: answered when it ends.
@@ -347,6 +349,7 @@ impl Engine {
         };
         let home = config.home.as_deref().map(std::ffi::OsStr::new);
         crate::startup::configure_enhancer(&mut session.enhancer, home, available);
+        session.face_models_dir = crate::startup::face_models_dir(home);
         let sched = match config.render_threads {
             Some(n) => Scheduler::with_worker_threads(n),
             None => Scheduler::default(),
@@ -379,6 +382,7 @@ impl Engine {
             in_front: true,
             last_request: Instant::now(),
             faces_next: Instant::now(),
+            faces_scan: None,
             export: None,
             super_res: None,
             region: None,
@@ -967,6 +971,10 @@ impl Engine {
         let worked = now.duration_since(self.last_request).as_secs_f64();
         let pace = crate::faces::pace_for(self.in_front, !self.in_front, worked, worked, false);
         let answer = self.session.execute("faces.pump", &json!({"pace": pace})).unwrap_or(Value::Null);
+        // what Settings ▸ Faces shows of it (the state event carries it)
+        self.faces_scan = (answer["active"] == true).then(
+            || json!({"pendingPhotos": answer["pendingPhotos"].as_u64().unwrap_or(0), "indexedFaces": answer["indexedFaces"].as_u64().unwrap_or(0)}),
+        );
         let wait = crate::faces::next_pump(&answer);
         if wait > 0.0 && wait < IDLE_TICK.as_secs_f64() {
             // photos waiting for the workers: look again soon (the loop ticks fast meanwhile)
@@ -994,6 +1002,7 @@ impl Engine {
             active_spot: self.session.active_spot,
             unsaved: self.session.unsaved().map_or(0, |(n, _)| n),
             sync: crate::sync::summary(&self.session),
+            faces: self.faces_scan.clone(),
         }
     }
 

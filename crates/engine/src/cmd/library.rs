@@ -1068,8 +1068,8 @@ pub fn specs() -> Vec<CommandSpec> {
                 Ok(json!({"id": id.0, "count": s.catalog.album_count(id)}))
             }
         ),
-        cmd!(query "album.ruleFields", "Smart Album Rule Fields", [], None, "{} → [{field, label, kind (text|keywords|number|date|choice|bool|album: an album id), group (field-menu submenu, null at the top level), ops: [{op, label}], choices? (ids), choiceLabels? ({id: label})}] for ruleSet rules, in menu order", always, |_, _| {
-            use lightcraft_catalog::rules::{FIELDS, Kind, field_group, ops_for};
+        cmd!(query "album.ruleFields", "Smart Album Rule Fields", [], None, "{} → [{field, label, kind (text|keywords|number|date|choice|bool|album: an album id), group (field-menu submenu, null at the top level), ops: [{op, label, default: a sensible starting value}], choices? (ids), choiceLabels? ({id: label})}] for ruleSet rules, in menu order", always, |_, _| {
+            use lightcraft_catalog::rules::{FIELDS, Kind, default_value, field_group, ops_for};
             Ok(json!(FIELDS
                 .iter()
                 .map(|(id, label, kind)| {
@@ -1082,7 +1082,8 @@ pub fn specs() -> Vec<CommandSpec> {
                         Kind::Choice(_) => "choice",
                         Kind::Bool => "bool",
                     };
-                    let mut v = json!({"field": id, "label": label, "kind": k, "group": field_group(id), "ops": ops_for(*kind).iter().map(|(o, l)| json!({"op": o, "label": l})).collect::<Vec<_>>()});
+                    let ops: Vec<Value> = ops_for(*kind).iter().map(|(o, l)| json!({"op": o, "label": l, "default": default_value(id, o)})).collect();
+                    let mut v = json!({"field": id, "label": label, "kind": k, "group": field_group(id), "ops": ops});
                     if let Kind::Choice(c) = kind {
                         v["choices"] = json!(c.iter().map(|c| c.0).collect::<Vec<_>>());
                         v["choiceLabels"] = c.iter().map(|(id, label)| (id.to_string(), json!(label))).collect::<serde_json::Map<_, _>>().into();
@@ -1091,6 +1092,42 @@ pub fn specs() -> Vec<CommandSpec> {
                 })
                 .collect::<Vec<_>>()))
         }),
+        cmd!(
+            query "album.rules",
+            "Smart Album Rules",
+            [],
+            None,
+            "{id?} → {name, rules: {match, rules: [{field, op, value} | {group}]}} a smart album's rules as its editor shows them (older rules read as they always matched); without `id`, a new smart album's (Rating ≥ 3)",
+            always,
+            |s, p| {
+                const C: &str = "album.rules";
+                let Some(id) = p.get("id").and_then(Value::as_u64).map(AlbumId) else {
+                    let rules = lightcraft_catalog::RuleSet { rules: vec![lightcraft_catalog::rules::new_rule()], ..Default::default() };
+                    return Ok(json!({"name": "", "rules": rules}));
+                };
+                let album = s.catalog.album(id).filter(|a| a.is_smart()).ok_or_else(|| bad(C, format!("no smart album {}", id.0)))?;
+                let mut rules = album.smart.as_ref().and_then(|f| f.rule_set.clone()).unwrap_or_default();
+                rules.upgrade();
+                Ok(json!({"name": album.name, "rules": rules}))
+            }
+        ),
+        cmd!(
+            query "album.checkRules",
+            "Check Smart Album Rules",
+            [],
+            None,
+            "{rules: {match, rules}, id?: the album they are for} → [{path, field, message}] what keeps them from being saved (an empty value, an album that would contain itself…); empty: they are fine",
+            always,
+            |s, p| {
+                const C: &str = "album.checkRules";
+                let rules: lightcraft_catalog::RuleSet =
+                    serde_json::from_value(p.get("rules").cloned().unwrap_or_default()).map_err(|e| bad(C, e.to_string()))?;
+                let owner = p.get("id").and_then(Value::as_u64).map(AlbumId);
+                Ok(Value::Array(
+                    rules.check_for(&s.catalog, owner).into_iter().map(|pr| json!({"path": pr.path, "field": pr.field, "message": pr.message})).collect(),
+                ))
+            }
+        ),
         cmd!(
             "album.setRules",
             "Edit Smart Album",

@@ -3,6 +3,7 @@
 
 use egui::RichText;
 use lightcraft_catalog::rules::{FIELD_GROUPS, Kind, Problem, TOP_LEVEL_FIELDS, bool_value, field_kind, field_label, ops_for};
+pub use lightcraft_catalog::rules::{default_value, new_rule};
 use lightcraft_catalog::{Match, Rule, RuleSet};
 use serde_json::{Value, json};
 
@@ -10,40 +11,6 @@ use crate::album_picker::{AlbumEntry, AlbumPicker};
 use crate::date_picker::{DatePicker, PickedDate};
 use crate::theme::Tokens;
 use crate::widgets::register;
-
-/// A sensible starting value for `field` / `op`.
-pub fn default_value(field: &str, op: &str) -> Value {
-    match (field_kind(field), op) {
-        (_, "isEmpty" | "isNotEmpty") => Value::Null,
-        (Some(Kind::Date), "inLast" | "notInLast") => json!({"n": 30, "unit": "days"}),
-        // this year (the catalog's clock): a date that means something, not an empty one that
-        // matches nothing ("is") or every date ("between")
-        (Some(Kind::Date), "between") => {
-            let year = this_year();
-            json!([format!("{year}-01"), format!("{year}-12")])
-        }
-        (Some(Kind::Date), _) => json!(this_year()),
-        (Some(Kind::Number), "between") if field == "shutterSpeed" => json!(["1/1000", "1/125"]),
-        (Some(Kind::Number), _) if field == "shutterSpeed" => json!("1/250"),
-        (Some(Kind::Number), "between") => json!([0, 0]),
-        (Some(Kind::Number), _) => json!(if field == "rating" { 3 } else { 0 }),
-        (Some(Kind::Choice(c)), _) => json!(c.first().map_or("", |c| c.0)),
-        (Some(Kind::Bool), _) => json!(true),
-        // picked from the list
-        (Some(Kind::Album), _) => Value::Null,
-        _ => json!(""),
-    }
-}
-
-/// The current year, `2026`.
-fn this_year() -> String {
-    lightcraft_catalog::rules::now().get(..4).unwrap_or("2026").to_string()
-}
-
-/// A new rule (Rating ≥ 3).
-pub fn new_rule() -> Rule {
-    Rule::Field { field: "rating".into(), op: "gte".into(), value: json!(3) }
-}
 
 fn match_combo(ui: &mut egui::Ui, salt: &str, m: &mut Match) {
     let label = |m: Match| match m {
