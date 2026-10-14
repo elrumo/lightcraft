@@ -250,6 +250,15 @@ struct Enabled {
     enabled: bool,
 }
 
+/// `PUT /api/admin/search/schedule/<search|text|faces>`: pause making that index, and/or limit it to a
+/// daily window (minutes of the day in UTC).
+#[derive(Deserialize)]
+struct Schedule {
+    paused: bool,
+    from: Option<u32>,
+    to: Option<u32>,
+}
+
 /// `PUT /api/admin/users/<name>/quota`: `{quota: bytes}`, or `{quota: null}` for no limit.
 #[derive(Deserialize)]
 struct Quota {
@@ -386,6 +395,15 @@ pub fn api(st: &State, req: &mut Request, method: &Method, rest: &str) -> Resp {
             log::info!("admin {me}: reading the text in photos turned {}", if b.enabled { "on" } else { "off" });
             Ok(search(st))
         }),
+        (Method::Put, ["search", "schedule", kind]) => match Part::from_key(kind) {
+            None => Err(Ok((404, "no such part".to_string()))),
+            Some(part) => read_json::<Schedule>(req).map_err(Err).and_then(|b| {
+                st.vision.switch.set_schedule(part, b.paused, b.from.zip(b.to)).map_err(|e| Ok((400, e)))?;
+                log::info!("admin {me}: {kind} index {}{}", if b.paused { "paused" } else { "not paused" }, b.from.zip(b.to).map_or(String::new(), |w| format!(", only {}-{} UTC", w.0, w.1)));
+                st.vision.wake();
+                Ok(search(st))
+            }),
+        },
         (Method::Post, ["search", "download"]) => read_json::<Licence>(req).map_err(Err).and_then(|l| fetch_models(st, &me, Part::Search, l)),
         (Method::Post, ["search", "text", "download"]) => read_json::<Licence>(req).map_err(Err).and_then(|l| fetch_models(st, &me, Part::Text, l)),
         (Method::Post, ["search", "faces", "download"]) => read_json::<Licence>(req).map_err(Err).and_then(|l| fetch_models(st, &me, Part::Faces, l)),
@@ -591,7 +609,20 @@ fn search(st: &State) -> Value {
             json!({"name": name, "faces": faces, "total": total, "indexed": a.map(|p| p.done), "read": b.map(|p| p.done), "found": c.map(|p| p.done)})
         })
         .collect();
+    // paused / window / time left for one part; the left is photos still to do times the lately measured time each took
+    let schedule = |part: Part, done: fn(&Value) -> Option<u64>| {
+        let left: u64 = users.iter().filter_map(|u| Some(u["total"].as_u64()?.saturating_sub(done(u)?))).sum();
+        let w = v.switch.window(part);
+        json!({
+            "paused": v.switch.paused(part),
+            "from": w.map(|w| w.0), "to": w.map(|w| w.1),
+            "runsNow": v.switch.may_run(part),
+            "left": left,
+            "perPhoto": v.switch.per_photo(part),
+        })
+    };
     json!({
+        "schedule": schedule(Part::Search, |u| u["indexed"].as_u64()),
         "enabled": v.switch.enabled(),
         "installed": v.files_installed(),
         "active": v.installed(),
@@ -611,12 +642,14 @@ fn search(st: &State) -> Value {
             "license": TEXT_LICENSE_NAME,
             "licenseUrl": TEXT_LICENSE_URL,
             "download": v.switch.status(Part::Text),
+            "schedule": schedule(Part::Text, |u| u["read"].as_u64()),
         },
         "faces": {
             "installed": v.faces_installed(),
             "sizeBytes": FACE_BYTES,
             "licenses": FACE_LICENSES.iter().map(|(name, url)| json!({"name": name, "url": url})).collect::<Vec<_>>(),
             "download": v.switch.status(Part::Faces),
+            "schedule": schedule(Part::Faces, |u| u["found"].as_u64()),
         },
         "users": users,
     })
