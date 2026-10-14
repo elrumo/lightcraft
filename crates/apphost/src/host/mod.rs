@@ -357,6 +357,8 @@ impl Engine {
         let home = config.home.as_deref().map(std::ffi::OsStr::new);
         crate::startup::configure_enhancer(&mut session.enhancer, home, available);
         session.face_models_dir = crate::startup::face_models_dir(home);
+        // searches by description and indexing run off the engine thread (as in egui); the tick applies them
+        session.vision.background = true;
         let sched = match config.render_threads {
             Some(n) => Scheduler::with_worker_threads(n),
             None => Scheduler::default(),
@@ -800,6 +802,7 @@ impl Engine {
         self.poll_export();
         self.poll_super_res();
         self.poll_merge();
+        self.poll_vision();
         self.poll_scan();
         self.poll_import();
         self.session.persist_if_dirty();
@@ -1130,6 +1133,18 @@ impl Engine {
                     self.events.push(Event::Message { text, level: level.into() }.to_value());
                 }
             }
+        }
+    }
+
+    /// A search by description that finished becomes the view's filter (the state event shows it);
+    /// what background vision work has to say is said.
+    fn poll_vision(&mut self) {
+        let polled = self.session.vision_poll();
+        for text in polled.messages {
+            self.events.push(Event::Message { text, level: "info".into() }.to_value());
+        }
+        if self.session.vision.busy() || self.session.vision.searching() {
+            self.busy = true;
         }
     }
 
