@@ -1,4 +1,3 @@
-#if os(iOS)
 import LightCraftCore
 import SwiftUI
 
@@ -133,4 +132,3 @@ struct RedEyeTools: View {
         .onAppear { editor.want(["redEye"], model) }
     }
 }
-#endif

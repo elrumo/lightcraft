@@ -1,4 +1,3 @@
-#if os(iOS)
 import LightCraftCore
 import SwiftUI
 
@@ -30,7 +29,7 @@ struct PhotoScreen: View {
                     if !review {
                         ToolColumn()
                             .frame(width: 316)
-                            .background(Color(uiColor: .secondarySystemBackground))
+                            .background(Color.lcSecondaryBackground)
                             .transition(.move(edge: .trailing))
                     }
                 }
@@ -53,17 +52,19 @@ struct PhotoScreen: View {
             ToolColumn()
                 .inspectorColumnWidth(min: 300, ideal: 340, max: 420)
         }
+        #if os(iOS)
         .toolbar(review ? .hidden : .visible, for: .navigationBar)
         .toolbar(review || editor.tool?.hasScreen == true ? .hidden : .visible, for: .bottomBar)
-        .statusBarHidden(review)
+        #endif
+        .lcStatusBarHidden(review)
         .navigationBarBackButtonHidden(editor.tool?.hasScreen == true)
         .navigationTitle(title)
         .navigationSubtitle(Text(subtitle))
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineTitle()
         .toolbar {
             if let tool = editor.tool, tool.hasScreen {
                 ScreenToolbar(model: model)
-                ToolbarItemGroup(placement: .topBarTrailing) {
+                ToolbarItemGroup(placement: .lcTrailing) {
                     UndoMenu()
                     if tool == .masking {
                         MaskOverlayButton()
@@ -71,11 +72,11 @@ struct PhotoScreen: View {
                     }
                 }
             } else {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .lcTrailing) {
                     UndoMenu()
                 }
-                ToolbarSpacer(.fixed, placement: .topBarTrailing)
-                ToolbarItemGroup(placement: .topBarTrailing) {
+                ToolbarSpacer(.fixed, placement: .lcTrailing)
+                ToolbarItemGroup(placement: .lcTrailing) {
                     Button("Share", systemImage: "square.and.arrow.up") {
                         if let id = model.state.active { model.sheet = .export([id]) }
                     }
@@ -86,7 +87,9 @@ struct PhotoScreen: View {
         }
         // editing's canvas is dark, whatever the app's look (as Photos' editor and Lightroom)
         .environment(\.colorScheme, .dark)
+        #if os(iOS)
         .toolbarColorScheme(.dark, for: .navigationBar, .bottomBar)
+        #endif
         .animation(.snappy, value: review)
         .animation(.snappy, value: editor.tool)
         .haptic(.selection, trigger: editor.tool)
@@ -660,8 +663,8 @@ struct ToolBar: ToolbarContent {
 
     var body: some ToolbarContent {
         let editor = model.editor
-        ToolbarSpacer(.flexible, placement: .bottomBar)
-        ToolbarItemGroup(placement: .bottomBar) {
+        ToolbarSpacer(.flexible, placement: .lcBottom)
+        ToolbarItemGroup(placement: .lcBottom) {
             ForEach(Tool.bar) { tool in
                 Toggle(isOn: Binding(get: { editor.tool == tool }, set: { on in
                     withAnimation(.snappy) { editor.tool = on ? tool : nil }
@@ -674,7 +677,7 @@ struct ToolBar: ToolbarContent {
                 .disabled(model.state.active == nil)
             }
         }
-        ToolbarSpacer(.flexible, placement: .bottomBar)
+        ToolbarSpacer(.flexible, placement: .lcBottom)
     }
 }
 
@@ -785,7 +788,7 @@ struct ToolPanel: View {
         // a card floating over the canvas, as a sheet is in iOS 26 (opaque: glass would mirror the
         // group chips above it)
         .clipShape(.rect(cornerRadius: 28))
-        .background(Color(uiColor: .secondarySystemBackground), in: .rect(cornerRadius: 28))
+        .background(Color.lcSecondaryBackground, in: .rect(cornerRadius: 28))
         .padding(.horizontal, 8)
         .padding(.bottom, 4)
         .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -849,10 +852,10 @@ struct UndoMenu: View {
             ControlGroup {
                 Button("Undo", systemImage: "arrow.uturn.backward") { model.undo() }
                     .disabled(model.state.undo == nil)
-                    .menuActionDismissBehavior(.disabled)
+                    .keepsMenuOpen()
                 Button("Redo", systemImage: "arrow.uturn.forward") { model.redo() }
                     .disabled(model.state.redo == nil)
-                    .menuActionDismissBehavior(.disabled)
+                    .keepsMenuOpen()
             }
             Section {
                 Button("Reset", systemImage: "arrow.counterclockwise") { model.perform("develop.reset"); model.buzz(.light) }
@@ -925,7 +928,7 @@ struct PhotoMoreMenu: View {
                 }
             }
             Section {
-                if UIApplication.shared.supportsMultipleScenes {
+                if Platform.supportsMultipleWindows {
                     Button("Second Window", systemImage: "macwindow.on.rectangle") { model.secondWindowAsked = true }
                 }
                 Button("Set as Reference", systemImage: "pin") {
@@ -972,9 +975,7 @@ struct ToolScreenBar: View {
         }
     }
 }
-#endif
 
-#if os(iOS)
 /// A review swipe: which side, where it started, where it is.
 nonisolated struct ReviewSwipe: Equatable {
     let stars: Bool
@@ -1017,9 +1018,7 @@ struct ReviewHUD: View {
         .animation(.snappy, value: flag)
     }
 }
-#endif
 
-#if os(iOS)
 /// Before / After: the photo as it was and as it is, side by side or one above the other (on its
 /// own: side by side on a wide screen), or split by a line to drag across (left / right or top /
 /// bottom), as egui's Before/After modes.
@@ -1216,4 +1215,3 @@ enum SoftProof {
         spaces.first { $0.0 == space }?.1 ?? space
     }
 }
-#endif

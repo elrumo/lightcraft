@@ -1,4 +1,3 @@
-#if os(iOS)
 import LightCraftCore
 import SwiftUI
 
@@ -35,7 +34,7 @@ struct SettingsView: View {
                 }
             }
             .navigationTitle("Settings")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineTitle()
             .navigationDestination(for: String.self) { page in
                 switch page {
                 case "general": GeneralSettings()
@@ -107,7 +106,7 @@ private struct GeneralSettings: View {
             }
         }
         .navigationTitle("General")
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineTitle()
     }
 }
 
@@ -135,7 +134,7 @@ private struct ImportSettings: View {
             }
         }
         .navigationTitle("Import")
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineTitle()
         .task { await load() }
     }
 
@@ -188,7 +187,7 @@ private struct PerformanceSettings: View {
             }
         }
         .navigationTitle("Performance")
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineTitle()
         .task {
             guard let engine = model.engine else { return }
             gpu = (try? await engine.execute("app.gpu", [:])) ?? .null
@@ -209,7 +208,12 @@ private struct InterfaceSettings: View {
                 }
                 // iOS keeps each app's language: Settings ▸ LightCraft ▸ Language
                 Button {
-                    if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+                    #if os(iOS)
+                    if let url = URL(string: UIApplication.openSettingsURLString) { Platform.open(url) }
+                    #else
+                    // (System Settings ▸ General ▸ Language & Region ▸ Applications)
+                    if let url = URL(string: "x-apple.systempreferences:com.apple.Localization-Settings.extension") { Platform.open(url) }
+                    #endif
                 } label: {
                     LabeledContent("Language", value: Locale.current.localizedString(forIdentifier: Bundle.main.preferredLocalizations.first ?? "en") ?? "")
                 }
@@ -247,7 +251,7 @@ private struct InterfaceSettings: View {
             }
         }
         .navigationTitle("Interface")
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineTitle()
     }
 }
 
@@ -308,7 +312,7 @@ struct SyncSettings: View {
                             }
                             .swipeActions {
                                 Button("Revoke", role: .destructive) { run("album.unshare", ["id": share["album"]]) }
-                                Button("Copy") { UIPasteboard.general.string = share["url"].string }.tint(.blue)
+                                Button("Copy") { if let url = share["url"].string { Platform.copy(url) } }.tint(.blue)
                             }
                         }
                     }
@@ -322,12 +326,12 @@ struct SyncSettings: View {
                 Section {
                     if let e = status?.error { Text(e).foregroundStyle(.red) }
                     TextField("Server", text: $server, prompt: Text(verbatim: "https://photos.example.com"))
-                        .keyboardType(.URL)
-                        .textInputAutocapitalization(.never)
+                        .lcKeyboard(.url)
+                        .noAutocap()
                         .autocorrectionDisabled()
                     TextField("User", text: $user)
                         .textContentType(.username)
-                        .textInputAutocapitalization(.never)
+                        .noAutocap()
                         .autocorrectionDisabled()
                     SecureField("Password", text: $password)
                         .textContentType(.password)
@@ -351,7 +355,7 @@ struct SyncSettings: View {
             }
         }
         .navigationTitle("Sync")
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineTitle()
         .task(id: model.state.sync) { await load() }
     }
 
@@ -419,7 +423,7 @@ private struct ModelsSettings: View {
             }
         }
         .navigationTitle("AI Models")
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineTitle()
         .task { await load() }
         .task(id: model.activity.count) { await load() }
         .alert("Download \(confirming?["label"].string ?? "")?", isPresented: Binding(get: { confirming != nil }, set: { if !$0 { confirming = nil } })) {
@@ -496,7 +500,7 @@ struct SyncStatusSheet: View {
                 }
             }
             .navigationTitle("Sync")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Close", systemImage: "xmark") { dismiss() } }
                 ToolbarItem(placement: .primaryAction) {
@@ -564,7 +568,7 @@ struct SyncChoiceSheet: View {
                 }
             }
             .navigationTitle("Sync")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Decide Later") { dismiss() } }
             }
@@ -616,7 +620,7 @@ struct ShareLinkSheet: View {
                 SecureField("Password (optional)", text: $password)
             }
             .navigationTitle(name)
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel", systemImage: "xmark") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
@@ -689,7 +693,7 @@ struct AboutView: View {
                 links = (try? await engine.execute("about.links"))?.array ?? []
             }
             .navigationTitle("About")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineTitle()
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done", systemImage: "checkmark") { dismiss() } } }
         }
     }
@@ -711,7 +715,7 @@ struct WhatsNewView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .navigationTitle("What's New")
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineTitle()
         .task {
             guard let engine = model.engine else { return }
             text = (try? await engine.execute("about.whatsNew"))?["text"].string ?? ""
@@ -755,18 +759,17 @@ struct SystemInfoView: View {
             }
             Section("This App") {
                 LabeledContent("App Version", value: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "")
-                LabeledContent("Device", value: "\(UIDevice.current.model), \(UIDevice.current.systemName) \(UIDevice.current.systemVersion)")
+                LabeledContent("Device", value: Platform.deviceDescription)
                 if let ms = model.lastDraftRoundTripMs {
                     LabeledContent("Slider to draft", value: String(format: "%.0f ms", ms))
                 }
             }
         }
         .navigationTitle("System Info")
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineTitle()
         .task {
             guard let engine = model.engine else { return }
             rows = (try? await engine.execute("about.systemInfo"))?.array ?? []
         }
     }
 }
-#endif

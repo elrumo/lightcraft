@@ -1,4 +1,3 @@
-#if os(iOS)
 import Foundation
 import LightCraftCore
 import Observation
@@ -282,4 +281,3 @@ final class EditorModel {
     var isBW: Bool { setting("treatment").string == "bw" }
     var hdr: Bool { setting("hdr", "enabled").bool == true }
 }
-#endif

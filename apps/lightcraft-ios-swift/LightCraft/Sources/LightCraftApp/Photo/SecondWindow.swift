@@ -1,12 +1,14 @@
-#if os(iOS)
 import LightCraftCore
 import SwiftUI
+
+#if os(iOS)
 import UIKit
+#endif
 
 /// Window ▸ Second Window (Lightroom Classic's, as a Loupe): the photo chosen in the main window,
 /// large, in a window of its own that follows the choice and the edits. An iPad shows it beside the
 /// app or, under Stage Manager, on an external display; a display that only mirrors gets it from
-/// `ExternalDisplayDelegate`.
+/// `ExternalDisplayDelegate`. A Mac shows it as a window the user drags to the other display.
 struct SecondWindowView: View {
     static let id = "second"
     /// What it shows (the one value its windows present, so there is one window).
@@ -52,9 +54,10 @@ struct SecondWindowView: View {
     }
 }
 
+#if os(iOS)
 /// A screen that only shows what the app gives it (a mirroring external display, AirPlay): the
 /// second window's photo, full screen. Named in Info.plist for that role; SwiftUI makes the app's
-/// own windows.
+/// own windows. (A Mac has real displays: the Second Window goes there.)
 @objc(LCExternalDisplayDelegate)
 final class ExternalDisplayDelegate: UIResponder, UIWindowSceneDelegate {
     var window: UIWindow?

@@ -1,4 +1,3 @@
-#if os(iOS)
 import LightCraftCore
 import SwiftUI
 
@@ -340,4 +339,3 @@ extension ControlSpec {
         "blueHue": "b.circle", "blueSat": "b.circle.fill",
     ]
 }
-#endif

@@ -1,4 +1,3 @@
-#if os(iOS)
 import CoreGraphics
 import ImageIO
 import LightCraftCore
@@ -49,6 +48,7 @@ final class Cameras: NSObject {
         close()
         open = device
         device.delegate = self
+        #if os(iOS)
         if browser.contentsAuthorizationStatus == .authorized {
             device.requestOpenSession()
         } else {
@@ -63,6 +63,10 @@ final class Cameras: NSObject {
                 }
             }
         }
+        #else
+        // (a Mac has no such permission: its user's cameras and cards are theirs to read)
+        device.requestOpenSession()
+        #endif
     }
 
     /// Done with the device being reviewed.
@@ -121,9 +125,11 @@ final class Cameras: NSObject {
 
     // MARK: the device's own calls (any thread: they hop back here)
 
+    #if os(iOS)
     nonisolated private static func authorize(_ browser: ICDeviceBrowser, _ done: @escaping @Sendable (Bool) -> Void) {
         browser.requestContentsAuthorization { status in done(status == .authorized) }
     }
+    #endif
 
     nonisolated private static func thumbnail(of file: ICCameraFile, _ done: @escaping @Sendable (CGImage?) -> Void) {
         file.requestThumbnailData(options: [.imageSourceThumbnailMaxPixelSize: 256]) { data, _ in
@@ -242,7 +248,7 @@ struct CameraImportSheet: View {
         NavigationStack {
             content(cameras)
                 .navigationTitle(cameras.open?.name ?? String(localized: "Connected Camera/Card"))
-                .navigationBarTitleDisplayMode(.inline)
+                .inlineTitle()
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
                         Button(role: .close) {
@@ -250,7 +256,7 @@ struct CameraImportSheet: View {
                         }
                     }
                     if cameras.devices.count > 1 {
-                        ToolbarItem(placement: .topBarTrailing) {
+                        ToolbarItem(placement: .lcTrailing) {
                             Menu("Device", systemImage: "sdcard") {
                                 ForEach(cameras.devices, id: \.self) { d in
                                     Button(d.name ?? "") { cameras.read(d) }
@@ -363,7 +369,7 @@ struct CameraImportSheet: View {
         let id = f["id"].string ?? ""
         let existing = !f["existing"].isNull
         let on = chosen.contains(id)
-        return Color(uiColor: .secondarySystemBackground)
+        return Color.lcSecondaryBackground
             .aspectRatio(1, contentMode: .fit)
             .overlay {
                 if let image = cameras.thumbnails[id] {
@@ -447,4 +453,3 @@ struct CameraImportSheet: View {
         await model.importChosen(["paths": .array(paths.map { .string($0) }), "mode": "move"])
     }
 }
-#endif

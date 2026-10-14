@@ -1,4 +1,3 @@
-#if os(iOS)
 import Foundation
 import ImageIO
 import LightCraftCore
@@ -183,4 +182,3 @@ nonisolated struct StagedFile: Transferable {
         return (name as NSString).deletingPathExtension + "." + ext
     }
 }
-#endif

@@ -1,4 +1,3 @@
-#if os(iOS)
 import LightCraftCore
 import SwiftUI
 
@@ -31,7 +30,7 @@ struct AlbumsSheet: View {
             .modifier(AlbumsListStyle(sidebar: sidebar))
             .foregroundStyle(.primary)
             .navigationTitle("Albums")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineTitle()
             .toolbar {
                 if !sidebar {
                     ToolbarItem(placement: .cancellationAction) {
@@ -211,7 +210,11 @@ private struct AlbumsListStyle: ViewModifier {
         if sidebar {
             content.listStyle(.sidebar)
         } else {
+            #if os(iOS)
             content.listStyle(.insetGrouped)
+            #else
+            content.listStyle(.inset)
+            #endif
         }
     }
 }
@@ -366,7 +369,7 @@ struct AlbumRowLabel: View {
     var body: some View {
         HStack(spacing: 12) {
             RoundedRectangle(cornerRadius: 8)
-                .fill(Color(uiColor: .tertiarySystemFill))
+                .fill(Color.lcTertiaryFill)
                 .frame(width: 44, height: 44)
                 .overlay {
                     if let cover, let picture = model.images.thumb(cover) {
@@ -413,7 +416,7 @@ struct AlbumNameSheet: View {
                     .onSubmit(confirm)
             }
             .navigationTitle(title)
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel", systemImage: "xmark") { dismiss() }
@@ -519,9 +522,11 @@ struct EditSidebarSheet: View {
                         .disabled(sections == SidebarSectionState.usual)
                 }
             }
+            #if os(iOS)
             .environment(\.editMode, .constant(.active))
+            #endif
             .navigationTitle("Edit Sidebar")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineTitle()
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) { Button(role: .confirm) { dismiss() } }
             }
@@ -545,4 +550,3 @@ struct SidebarSectionsMenu: View {
         }
     }
 }
-#endif

@@ -1,4 +1,3 @@
-#if os(iOS)
 import LightCraftCore
 import SwiftUI
 
@@ -140,7 +139,7 @@ private struct BlockTile: View {
     let caption: String?
 
     var body: some View {
-        Color(uiColor: .secondarySystemBackground)
+        Color.lcSecondaryBackground
             .overlay {
                 if let picture = model.images.thumb(photo) {
                     Image(decorative: picture.image, scale: 1).resizable().scaledToFill()
@@ -162,4 +161,3 @@ private struct BlockTile: View {
             .onDisappear { model.thumbDisappeared(photo) }
     }
 }
-#endif

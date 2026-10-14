@@ -1,4 +1,3 @@
-#if os(iOS)
 import LightCraftCore
 import SwiftUI
 
@@ -50,7 +49,7 @@ struct KeywordListView: View {
             }
         }
         .navigationTitle("Keywords")
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineTitle()
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button("Create Keyword Tag", systemImage: "plus") { tag = KeywordTagTarget(editing: nil, parent: nil) }
@@ -165,9 +164,9 @@ struct KeywordTagSheet: View {
             Form {
                 Section {
                     TextField("Keyword Name", text: $name)
-                        .textInputAutocapitalization(.never)
+                        .noAutocap()
                     TextField("Synonyms (separated by commas)", text: $synonyms)
-                        .textInputAutocapitalization(.never)
+                        .noAutocap()
                 } footer: {
                     if let parent = target.parent { Text("Inside “\(parent)”") }
                 }
@@ -184,7 +183,7 @@ struct KeywordTagSheet: View {
                 }
             }
             .navigationTitle(target.editing == nil ? "Create Keyword Tag" : "Edit Keyword Tag")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel", systemImage: "xmark") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
@@ -224,4 +223,3 @@ struct KeywordTagSheet: View {
         }
     }
 }
-#endif

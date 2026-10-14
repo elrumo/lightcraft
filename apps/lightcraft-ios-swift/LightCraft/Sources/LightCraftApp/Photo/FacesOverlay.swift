@@ -1,4 +1,3 @@
-#if os(iOS)
 import LightCraftCore
 import SwiftUI
 
@@ -187,7 +186,7 @@ struct FaceNameSheet: View {
                 }
             }
             .navigationTitle("Who Is This?")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel", systemImage: "xmark") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
@@ -230,4 +229,3 @@ struct FaceNameSheet: View {
         dismiss()
     }
 }
-#endif

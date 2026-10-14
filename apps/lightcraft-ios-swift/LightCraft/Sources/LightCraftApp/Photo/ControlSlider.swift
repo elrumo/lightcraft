@@ -1,4 +1,3 @@
-#if os(iOS)
 import LightCraftCore
 import SwiftUI
 
@@ -85,7 +84,7 @@ struct ControlSlider: View {
         if let colors = Self.trackColors(spec) {
             LinearGradient(colors: colors, startPoint: .leading, endPoint: .trailing)
         } else {
-            Color(uiColor: .systemFill)
+            Color.lcFill
         }
     }
 
@@ -177,4 +176,3 @@ extension Color {
         self.init(red: Double((n >> 16) & 0xFF) / 255, green: Double((n >> 8) & 0xFF) / 255, blue: Double(n & 0xFF) / 255)
     }
 }
-#endif

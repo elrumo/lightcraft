@@ -1,4 +1,3 @@
-#if os(iOS)
 import LightCraftCore
 import SwiftUI
 
@@ -108,7 +107,7 @@ private struct CommandForm: View {
                     TextEditor(text: $text)
                         .font(.body.monospaced())
                         .autocorrectionDisabled()
-                        .textInputAutocapitalization(.never)
+                        .noAutocap()
                         .frame(minHeight: 120)
                 }
                 if let error {
@@ -116,7 +115,7 @@ private struct CommandForm: View {
                 }
             }
             .navigationTitle(LocalizedStringKey(command.label))
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel", systemImage: "xmark") { dismiss() }
@@ -141,4 +140,3 @@ func prettyJSON(_ value: JSONValue) -> String {
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
     return (try? encoder.encode(value)).flatMap { String(data: $0, encoding: .utf8) } ?? ""
 }
-#endif

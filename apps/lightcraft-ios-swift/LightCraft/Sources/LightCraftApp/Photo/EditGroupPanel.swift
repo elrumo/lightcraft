@@ -1,4 +1,3 @@
-#if os(iOS)
 import LightCraftCore
 import SwiftUI
 
@@ -120,7 +119,7 @@ private struct DialPageSheet: View {
                 .padding(.bottom, 12)
             }
             .navigationTitle(title)
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineTitle()
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button(role: .confirm) { dismiss() }
@@ -538,4 +537,3 @@ struct GradingWheel: View {
         .accessibilityValue("Hue \(Int(hue)), saturation \(Int(sat))")
     }
 }
-#endif

@@ -1,4 +1,3 @@
-#if os(iOS)
 import LightCraftCore
 import SwiftUI
 import UniformTypeIdentifiers
@@ -19,7 +18,7 @@ struct RenamePhotosSheet: View {
             Form {
                 Section {
                     TextField("Template", text: $template)
-                        .textInputAutocapitalization(.never)
+                        .noAutocap()
                         .autocorrectionDisabled()
                         .font(.body.monospaced())
                     Stepper(value: $start, in: 1...1_000_000) {
@@ -56,7 +55,7 @@ struct RenamePhotosSheet: View {
                 }
             }
             .navigationTitle("Rename Photos")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel", systemImage: "xmark") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
@@ -126,7 +125,7 @@ struct CaptureTimeSheet: View {
                 }
             }
             .navigationTitle("Edit Capture Time")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel", systemImage: "xmark") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
@@ -219,7 +218,7 @@ struct LabelNamesSheet: View {
                 }
             }
             .navigationTitle("Color Label Names")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel", systemImage: "xmark") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
@@ -290,7 +289,7 @@ struct AutoStackSheet: View {
                 }
             }
             .navigationTitle("Auto-Stack by Capture Time")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel", systemImage: "xmark") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
@@ -345,7 +344,7 @@ struct KeywordSetsSheet: View {
                 Section("Keywords in This Set") {
                     ForEach(0..<9, id: \.self) { i in
                         TextField("Keyword \(i + 1)", text: Binding(get: { nine[safe: i] ?? "" }, set: { if nine.indices.contains(i) { nine[i] = $0 } }))
-                            .textInputAutocapitalization(.never)
+                            .noAutocap()
                     }
                     Button("Save Set") {
                         Task {
@@ -384,7 +383,7 @@ struct KeywordSetsSheet: View {
                 }
             }
             .navigationTitle("Keyword Sets")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineTitle()
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) { Button(role: .confirm) { dismiss() } }
             }
@@ -463,7 +462,7 @@ struct MetadataPresetsSheet: View {
                 }
             }
             .navigationTitle("Metadata Presets")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel", systemImage: "xmark") { dismiss() } }
             }
@@ -532,7 +531,7 @@ struct ContactSheetSheet: View {
                 }
             }
             .navigationTitle("Contact Sheet")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel", systemImage: "xmark") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
@@ -584,7 +583,7 @@ struct CullSheet: View {
                 }
             }
             .navigationTitle("Assisted Culling")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel", systemImage: "xmark") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
@@ -681,7 +680,7 @@ struct KeywordPickerSheet: View {
             }
             .searchable(text: $search)
             .navigationTitle(title)
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel", systemImage: "xmark") { dismiss() } }
             }
@@ -702,4 +701,3 @@ struct KeywordPickerSheet: View {
         }
     }
 }
-#endif

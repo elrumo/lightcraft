@@ -1,4 +1,3 @@
-#if os(iOS)
 import LightCraftCore
 import SwiftUI
 
@@ -137,4 +136,3 @@ struct RemoveCanvas: View {
             }
     }
 }
-#endif

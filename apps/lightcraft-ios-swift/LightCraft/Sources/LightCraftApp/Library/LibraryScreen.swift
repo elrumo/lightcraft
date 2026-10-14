@@ -1,4 +1,3 @@
-#if os(iOS)
 import LightCraftCore
 import PhotosUI
 import SwiftUI
@@ -59,14 +58,16 @@ struct LibraryScreen: View {
         .navigationTitle(model.selectMode ? selectTitle : model.painting.map { String(localized: "Painting “\($0)”") } ?? title)
         .navigationSubtitle(model.selectMode || model.painting != nil ? Text(verbatim: "") : Text(countText))
         // (inline: the title's chevron shows its menu, and the date headers pin under it)
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineTitle()
         // (on a view of its own: switching it on and off mustn't rebuild the grid)
         .background { Color.clear.modifier(TitleMenu(on: !model.selectMode && model.painting == nil)) }
         .toolbar { toolbar }
         .animation(.snappy, value: model.selectMode)
         .animation(.snappy, value: model.painting)
         .searchable(text: $model.searchText, isPresented: $model.searching, prompt: Text(scope == .describe ? "Describe a photo…" : "Search Photos"))
+        #if os(iOS)
         .searchToolbarBehavior(.minimize)
+        #endif
         .modifier(DescribeScopes(describes: describes, scope: $scope))
         .onSubmit(of: .search) {
             let q = model.searchText.trimmingCharacters(in: .whitespaces)
@@ -156,7 +157,7 @@ struct LibraryScreen: View {
             ToolbarItem(placement: .cancellationAction) {
                 Button("Cancel") { endSelecting() }
             }
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItem(placement: .lcTrailing) {
                 if model.library.selected.count < model.library.count {
                     Button("Select All") { model.perform("library.selectAll") }
                 } else {
@@ -179,26 +180,26 @@ struct LibraryScreen: View {
         } else {
             // a phone's albums are a page over the grid (an iPad's are in the sidebar)
             if horizontalSize != .regular {
-                ToolbarItem(placement: .topBarLeading) {
+                ToolbarItem(placement: .lcLeading) {
                     Button("Albums", systemImage: "rectangle.stack") { model.sheet = .albums }
                 }
             }
             if model.albums.sync.map({ $0.state != "off" }) == true {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .lcTrailing) {
                     CloudButton()
                 }
-                ToolbarSpacer(.fixed, placement: .topBarTrailing)
+                ToolbarSpacer(.fixed, placement: .lcTrailing)
             }
             if model.library.count > 0 {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .lcTrailing) {
                     Button("Select") {
                         model.selectMode = true
                         model.perform("library.select", ["ids": []])
                     }
                 }
-                ToolbarSpacer(.fixed, placement: .topBarTrailing)
+                ToolbarSpacer(.fixed, placement: .lcTrailing)
             }
-            ToolbarItemGroup(placement: .topBarTrailing) {
+            ToolbarItemGroup(placement: .lcTrailing) {
                 Button("Filter", systemImage: model.library.state?.isFiltered == true ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease") {
                     model.sheet = .filter
                 }
@@ -206,11 +207,11 @@ struct LibraryScreen: View {
             }
             // a phone's search waits in the bottom bar as a button; an iPad's is in the top bar
             if horizontalSize != .regular {
-                DefaultToolbarItem(kind: .search, placement: .bottomBar)
+                DefaultToolbarItem(kind: .search, placement: .lcBottom)
             }
-            ToolbarSpacer(.flexible, placement: .bottomBar)
+            ToolbarSpacer(.flexible, placement: .lcBottom)
             if model.library.count > 0 || model.plainAlbum != nil {
-                ToolbarItem(placement: .bottomBar) {
+                ToolbarItem(placement: .lcBottom) {
                     Picker("Show", selection: Bindable(model.prefs).gridSpan) {
                         ForEach(Prefs.GridSpan.allCases) { span in
                             Text(span.label).tag(span)
@@ -220,9 +221,9 @@ struct LibraryScreen: View {
                     .fixedSize()
                     .haptic(.selection, trigger: model.prefs.gridSpan)
                 }
-                ToolbarSpacer(.flexible, placement: .bottomBar)
+                ToolbarSpacer(.flexible, placement: .lcBottom)
             }
-            ToolbarItem(placement: .bottomBar) {
+            ToolbarItem(placement: .lcBottom) {
                 addButton
             }
         }
@@ -443,7 +444,7 @@ struct GridMoreMenu: View {
             Section {
                 Button("Settings", systemImage: "gear") { model.sheet = .settings(nil) }
                 Button("Help", systemImage: "questionmark.circle") {
-                    if let url = URL(string: "https://github.com/storytold/lightcraft") { UIApplication.shared.open(url) }
+                    if let url = URL(string: "https://github.com/storytold/lightcraft") { Platform.open(url) }
                 }
                 Button("About LightCraft", systemImage: "info.circle") { model.sheet = .about }
             }
@@ -470,4 +471,3 @@ nonisolated enum GridDrop: Transferable {
         ProxyRepresentation(importing: { (f: StagedFile) in GridDrop.file(f) })
     }
 }
-#endif

@@ -1,4 +1,3 @@
-#if os(iOS)
 import LightCraftCore
 import SwiftUI
 
@@ -281,4 +280,3 @@ private struct MaskDrag {
     let shape: JSONValue
     let from: JSONValue
 }
-#endif

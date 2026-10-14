@@ -1,4 +1,3 @@
-#if os(iOS)
 import LightCraftCore
 import SwiftUI
 
@@ -450,7 +449,7 @@ private struct MaskTile: View {
             Image(systemName: symbol)
                 .font(.system(size: side * 0.4))
                 .frame(width: side, height: side)
-                .background(RoundedRectangle(cornerRadius: side / 4).fill(Color(uiColor: .tertiarySystemFill)))
+                .background(RoundedRectangle(cornerRadius: side / 4).fill(Color.lcTertiaryFill))
                 .overlay {
                     RoundedRectangle(cornerRadius: side / 4).strokeBorder(chosen ? Color.accentColor : .clear, lineWidth: 2)
                 }
@@ -458,7 +457,7 @@ private struct MaskTile: View {
                     if let badge {
                         Text(badge).font(.caption.bold())
                             .frame(width: 16, height: 16)
-                            .background(Circle().fill(Color(uiColor: .systemBackground)))
+                            .background(Circle().fill(Color.lcBackground))
                             .offset(x: 4, y: -4)
                     }
                 }
@@ -530,7 +529,7 @@ private struct CombineMenu: View {
         } label: {
             Image(systemName: "plus.forwardslash.minus").font(.title3)
                 .frame(width: 40, height: 40)
-                .background(Circle().fill(Color(uiColor: .tertiarySystemFill)))
+                .background(Circle().fill(Color.lcTertiaryFill))
         }
         .accessibilityLabel("Add or Subtract")
     }
@@ -613,7 +612,7 @@ struct MaskOverlayOptions: View {
                 Toggle("Show Overlay", isOn: $prefs.maskOverlay)
             }
             .navigationTitle("Overlay Options")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineTitle()
         }
     }
 
@@ -655,4 +654,3 @@ struct BrushControls: View {
         .padding(.horizontal, 16)
     }
 }
-#endif

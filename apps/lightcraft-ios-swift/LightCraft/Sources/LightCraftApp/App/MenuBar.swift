@@ -1,4 +1,3 @@
-#if os(iOS)
 import LightCraftCore
 import SwiftUI
 
@@ -324,7 +323,7 @@ extension AppModel {
             Task {
                 guard let engine, let links = try? await engine.execute("about.links"), let url = links.array?.first(where: { $0["id"].string == id })?["url"].string,
                       let u = URL(string: url) else { return }
-                await UIApplication.shared.open(u)
+                Platform.open(u)
             }
         case "app.shortcuts": sheet = .shortcuts
         case "dialog.rename": sheet = .renamePhotos(targets)
@@ -374,7 +373,7 @@ struct ShortcutsSheet: View {
                 }
             }
             .navigationTitle("Keyboard Shortcuts")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineTitle()
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button(role: .confirm) { dismiss() } } }
             .task { await model.loadMenus() }
         }
@@ -407,4 +406,3 @@ struct ShortcutsSheet: View {
         return String(sorted) + key
     }
 }
-#endif

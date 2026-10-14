@@ -1,4 +1,3 @@
-#if os(iOS)
 import LightCraftCore
 import SwiftUI
 
@@ -191,4 +190,3 @@ struct Checkerboard: View {
         .accessibilityHidden(true)
     }
 }
-#endif

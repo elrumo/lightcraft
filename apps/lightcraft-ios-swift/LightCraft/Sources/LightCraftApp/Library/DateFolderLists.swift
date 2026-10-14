@@ -1,4 +1,3 @@
-#if os(iOS)
 import LightCraftCore
 import SwiftUI
 
@@ -31,7 +30,7 @@ struct ByDateView: View {
             }
         }
         .navigationTitle("By Date")
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineTitle()
         .task(id: model.settledRevision) {
             guard let engine = model.engine else { return }
             years = (try? await engine.execute("catalog.stats"))?["byDate"].array ?? []
@@ -118,7 +117,7 @@ struct LibraryFoldersView: View {
             }
         }
         .navigationTitle("Folders")
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineTitle()
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button("Find Missing Photos…", systemImage: "magnifyingglass") { model.picker = .findMissing }
@@ -162,4 +161,3 @@ nonisolated struct FolderNode: Decodable, Identifiable, Hashable {
         children = (try? c.decode([FolderNode].self, forKey: .children)) ?? []
     }
 }
-#endif

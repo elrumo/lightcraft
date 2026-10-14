@@ -1,4 +1,3 @@
-#if os(iOS)
 import LightCraftCore
 import SwiftUI
 import UniformTypeIdentifiers
@@ -106,7 +105,7 @@ private struct PointCurve: View {
             let size = geo.size
             let toView = { (p: CGPoint) in CGPoint(x: p.x * size.width, y: (1 - p.y) * size.height) }
             ZStack {
-                Rectangle().fill(Color(uiColor: .tertiarySystemFill))
+                Rectangle().fill(Color.lcTertiaryFill)
                 Path { path in
                     for i in 1..<4 {
                         let t = CGFloat(i) / 4
@@ -294,4 +293,3 @@ struct PointColorView: View {
         }
     }
 }
-#endif

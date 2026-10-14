@@ -1,4 +1,3 @@
-#if os(iOS)
 import LightCraftCore
 import SwiftUI
 
@@ -227,7 +226,7 @@ struct CropTools: View {
         }
         .foregroundStyle(on ? Color.white : Color.primary)
         .frame(width: 72, height: 66)
-        .background(on ? Color.accentColor : Color(uiColor: .tertiarySystemFill), in: .rect(cornerRadius: 12))
+        .background(on ? Color.accentColor : Color.lcTertiaryFill, in: .rect(cornerRadius: 12))
     }
 }
 
@@ -423,4 +422,3 @@ struct GenerativeAISwitch: View {
         }
     }
 }
-#endif

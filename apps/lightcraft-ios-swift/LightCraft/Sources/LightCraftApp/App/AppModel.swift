@@ -1,11 +1,9 @@
-#if os(iOS)
 import CoreGraphics
 import Foundation
 import LightCraftCore
 import LightCraftImaging
 import Observation
 import SwiftUI
-import UIKit
 
 /// A screen pushed over the grid.
 nonisolated enum Route: Hashable {
@@ -205,7 +203,7 @@ final class AppModel {
         starting = true
         defer { starting = false }
         // the device's name on the sync server (read by the engine when signing in)
-        setenv("LIGHTCRAFT_DEVICE", UIDevice.current.name, 0)
+        setenv("LIGHTCRAFT_DEVICE", Platform.deviceName, 0)
         do {
             let (engine, opened) = try await Engine.open(Self.config())
             self.engine = engine
@@ -238,11 +236,12 @@ final class AppModel {
         let nonEmpty = { (key: String) in env[key].flatMap { $0.isEmpty ? nil : $0 } }
         return OpenConfig(
             home: NSHomeDirectory(),
-            tmp: NSTemporaryDirectory(),
+            tmp: Platform.tmpFolder,
             library: nonEmpty("LIGHTCRAFT_LIBRARY"),
             demo: nonEmpty("LIGHTCRAFT_DEMO") != nil,
-            deviceName: UIDevice.current.name,
-            script: nonEmpty("LIGHTCRAFT_SCRIPT")
+            deviceName: Platform.deviceName,
+            script: nonEmpty("LIGHTCRAFT_SCRIPT"),
+            profile: Platform.profile
         )
     }
 
@@ -280,7 +279,7 @@ final class AppModel {
         case .uiRequest(let id, let method, let params):
             script.answer(id: id, method: method, params: params, model: self)
         case .copy(let text):
-            UIPasteboard.general.string = text
+            Platform.copy(text)
         case .ask(let dialog, _):
             asking = dialog
             if dialog == "syncChoice" { sheet = .syncChoice }
@@ -605,4 +604,3 @@ nonisolated struct Haptic: Equatable {
         }
     }
 }
-#endif

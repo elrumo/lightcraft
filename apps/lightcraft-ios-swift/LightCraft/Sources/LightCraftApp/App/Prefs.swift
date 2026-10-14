@@ -1,4 +1,3 @@
-#if os(iOS)
 import Foundation
 import LightCraftCore
 import Observation
@@ -180,4 +179,3 @@ final class Prefs {
     /// The steps a pinch moves the grid through.
     static let columnSteps = [1, 2, 3, 4, 5, 7, 10, 14]
 }
-#endif

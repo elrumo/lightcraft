@@ -1,8 +1,12 @@
-#if os(iOS)
 import Foundation
 import LightCraftCore
 import SwiftUI
+
+#if os(iOS)
 import UIKit
+#else
+import AppKit
+#endif
 
 /// The UI's half of automation (`LIGHTCRAFT_SCRIPT`, docs/ios-swift.md → Driving the app): the
 /// engine answers `engine.*`, `render.*` and `host.*` itself and asks the app for the rest.
@@ -97,10 +101,17 @@ final class ScriptHost {
             if let space = params["proofSpace"].string { model.editor.proofSpace = space }
             if let on = params["proofWarning"].bool { model.editor.proofWarning = on }
             if let cover = params["cover"].string { model.cover = Cover(rawValue: cover) }
+            #if os(iOS)
             if let o = params["orientation"].string, let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first {
                 // (the app turns itself: no rotating the simulator from outside)
                 scene.requestGeometryUpdate(.iOS(interfaceOrientations: o == "landscape" ? .landscapeRight : .portrait)) { _ in }
             }
+            #else
+            // (a Mac window is sized from inside, too: a tour's screenshots are the same size every run)
+            if let size = params["windowSize"].array, size.count == 2, let w = size[0].int, let h = size[1].int, let window = Self.frontWindow() {
+                window.setContentSize(NSSize(width: Double(w), height: Double(h)))
+            }
+            #endif
             switch params["screen"].string {
             case nil:
                 break
@@ -173,6 +184,7 @@ final class ScriptHost {
         }
     }
 
+    #if os(iOS)
     /// The key window as a PNG at `path`; its size in pixels.
     private func screenshot(to path: String) throws -> (Int, Int) {
         // the window in front (with a second window open, the main one may be behind it)
@@ -192,5 +204,30 @@ final class ScriptHost {
         try png.write(to: URL(fileURLWithPath: path))
         return (Int(image.size.width * image.scale), Int(image.size.height * image.scale))
     }
+    #else
+    /// The window in front: the key window, else the biggest one on screen (an unattended run has
+    /// no key window, and with a second window open the main one may be behind it).
+    static func frontWindow() -> NSWindow? {
+        NSApp.keyWindow ?? NSApp.windows.filter { $0.isVisible && !($0 is NSPanel) }.max { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }
+    }
+
+    /// The front window, title bar and toolbar included, as a PNG at `path`; its size in pixels.
+    /// (The view hierarchy draws itself, so an occluded or background window captures too and the
+    /// app needs no Screen Recording permission. Materials may come out flatter than on screen.)
+    private func screenshot(to path: String) throws -> (Int, Int) {
+        guard let window = Self.frontWindow(), let content = window.contentView else {
+            throw ErrorBody(code: "noWindow", message: "no window to capture")
+        }
+        let view = content.superview ?? content
+        guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
+            throw ErrorBody(code: "encode", message: "the window couldn't be drawn")
+        }
+        view.cacheDisplay(in: view.bounds, to: rep)
+        guard let png = rep.representation(using: .png, properties: [:]) else {
+            throw ErrorBody(code: "encode", message: "the screenshot couldn't be encoded")
+        }
+        try png.write(to: URL(fileURLWithPath: path))
+        return (rep.pixelsWide, rep.pixelsHigh)
+    }
+    #endif
 }
-#endif

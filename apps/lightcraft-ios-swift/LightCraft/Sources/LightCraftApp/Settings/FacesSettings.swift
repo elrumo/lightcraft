@@ -1,4 +1,3 @@
-#if os(iOS)
 import LightCraftCore
 import SwiftUI
 import UniformTypeIdentifiers
@@ -75,7 +74,7 @@ struct FacesSettings: View {
             }
         }
         .navigationTitle("Faces")
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineTitle()
         .onChange(of: model.state.faces?.pendingPhotos) { _, left in peak = max(peak, left ?? 0) }
         .task(id: tick) {
             // the list, and again while a download runs
@@ -279,7 +278,7 @@ struct FaceModelSheet: View {
                 }
             }
             .navigationTitle("Add Face Model")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel", systemImage: "xmark") { dismiss() } }
                 if kind != "unsupported" {
@@ -306,4 +305,3 @@ struct FaceModelSheet: View {
         }
     }
 }
-#endif

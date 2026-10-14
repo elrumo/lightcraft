@@ -1,4 +1,3 @@
-#if os(iOS)
 import Foundation
 import LightCraftCore
 import Observation
@@ -139,4 +138,3 @@ final class LibraryModel {
         groups.last { $0.start <= index }
     }
 }
-#endif

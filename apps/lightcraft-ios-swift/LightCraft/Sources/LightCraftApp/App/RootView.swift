@@ -1,4 +1,3 @@
-#if os(iOS)
 import LightCraftCore
 import SwiftUI
 import UniformTypeIdentifiers
@@ -42,7 +41,7 @@ struct RootView: View {
             model.picker = nil
             Task { await model.picked(url, for: pick) }
         }
-        .fullScreenCover(item: $model.cover) { cover in
+        .lcCover(item: $model.cover) { cover in
             Group {
                 switch cover {
                 case .slideshow: SlideshowView()
@@ -110,7 +109,7 @@ struct RootView: View {
                 switch route {
                 case .photo(let id):
                     PhotoScreen(start: id)
-                        .navigationTransition(.zoom(sourceID: id, in: photos))
+                        .lcZoomTransition(sourceID: id, in: photos)
                 case .commands: AllCommandsView()
                 case .people: PeopleView()
                 case .person(let name): PersonView(name: name)
@@ -304,7 +303,7 @@ struct ActivityPage: View {
                 }
             }
             .navigationTitle("Activity")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineTitle()
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done", systemImage: "checkmark") { dismiss() } } }
         }
         .presentationDetents([.medium, .large])
@@ -361,4 +360,3 @@ private nonisolated struct MenuKey: Hashable {
     let selected: Int
     let engine: Bool
 }
-#endif

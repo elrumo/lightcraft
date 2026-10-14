@@ -1,4 +1,3 @@
-#if os(iOS)
 import LightCraftCore
 import SwiftUI
 
@@ -238,7 +237,7 @@ struct GridCell: View {
         if let photo = model.library.photo(at: index, model.engine) {
             PhotoCell(photo: photo, namespace: namespace)
         } else {
-            Color(uiColor: .secondarySystemBackground)
+            Color.lcSecondaryBackground
                 .aspectRatio(1, contentMode: .fit)
         }
     }
@@ -254,7 +253,7 @@ struct PhotoCell: View {
 
     var body: some View {
         let chosen = model.library.selected.contains(photo.id)
-        Color(uiColor: .secondarySystemBackground)
+        Color.lcSecondaryBackground
             .aspectRatio(1, contentMode: .fit)
             .overlay {
                 if let picture = model.images.thumb(photo.id) {
@@ -313,7 +312,7 @@ struct PhotoCell: View {
             .accessibilityLabel(photo.title ?? photo.fileName)
             .accessibilityValue(Self.spoken(photo))
             // an iPad's pointer lifts the photo under it
-            .hoverEffect(.lift)
+            .lcHoverLift()
             .accessibilityAddTraits(.isButton)
             .accessibilityAddTraits(model.selectMode && chosen ? .isSelected : [])
     }
@@ -424,9 +423,7 @@ enum LabelColor {
         }
     }
 }
-#endif
 
-#if os(iOS)
 /// The grid's scrubber: a handle down the right edge to drag through a long library, the month of
 /// the photos it is over in a bubble beside it.
 struct Scrubber: View {
@@ -557,4 +554,3 @@ nonisolated struct PhotoDrag: Transferable {
         return URL(fileURLWithPath: path)
     }
 }
-#endif

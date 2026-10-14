@@ -1,4 +1,3 @@
-#if os(iOS)
 import LightCraftCore
 import SwiftUI
 
@@ -60,7 +59,7 @@ struct SuperResSheet: View {
                 }
             }
             .navigationTitle("Super Resolution")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button(installed || downloading ? "Close" : "Not Now") { dismiss() }
@@ -154,4 +153,3 @@ struct SuperResSheet: View {
         }
     }
 }
-#endif
