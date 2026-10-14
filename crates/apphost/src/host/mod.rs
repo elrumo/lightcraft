@@ -15,8 +15,9 @@
 //!   `host.lifecycle {event}` — `resignActive`, `background`, `foreground`, `memoryWarning`,
 //!   `terminate`.
 //! - `render.thumb {photo, edge, priority?}`, `render.view {photo?, width, height, draft?, before?,
-//!   applyCrop?}`, `render.prefetch {photos, width, height}`, `render.cancel {slots}`,
-//!   `render.retain {thumbs, max?}` — pictures arrive as `image` events.
+//!   applyCrop?}` (a `draft` comes smaller, as fast as this host renders: a slider drag),
+//!   `render.prefetch {photos, width, height}`, `render.cancel {slots}`, `render.retain {thumbs, max?}`
+//!   — pictures arrive as `image` events.
 //! - `import.scan {paths}` — the files and folders for the import review (answered when the scan
 //!   ends: `{candidates}`, each with `inTrash`); `render.candidate {index, edge?}` — a candidate's
 //!   thumbnail (slot `import:<index>`); `import.start {paths | indexes, …library.import params,
@@ -630,7 +631,10 @@ impl Engine {
                     self.sched.request(Slot::Before, job, 90);
                     Slot::Before
                 } else {
-                    let job = self.session.loupe_job(id, w, h, apply_crop).ok_or_else(|| bad("no such photo"))?;
+                    // a drag renders a draft: smaller the slower this host renders (as egui's loupe)
+                    let scale = f64::from(self.sched.draft_scale(draft, w as f64 * h as f64));
+                    let (dw, dh) = ((w as f64 * scale).round().max(8.0) as usize, (h as f64 * scale).round().max(8.0) as usize);
+                    let job = self.session.loupe_job(id, dw, dh, apply_crop).ok_or_else(|| bad("no such photo"))?;
                     let shown = overlay(p.get("overlay"));
                     // soft proofing: the photo as `space` (or a device profile) holds it, out-of-gamut colours marked
                     let proof = match p.get("proof").filter(|v| !v.is_null()) {
