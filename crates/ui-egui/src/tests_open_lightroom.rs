@@ -77,7 +77,7 @@ fn open_library_on_a_lightroom_catalog_offers_its_import() {
     assert_eq!(h.request("ui.clickWidget", json!({"id": "button:dialogCancel"}), T)["ok"], true);
     h.step();
     assert!(h.app.ui.dialog.is_none());
-    assert!(h.app.lightroom.is_none() && h.app.lightroom_last.is_none());
+    assert!(!h.app.lightroom.running() && h.app.lightroom.last.is_none());
 
     // a previews folder given by path (control channel, agents): the same offer
     let r = h.app.run("app.openLibrary", json!({"path": lr.join("Lightroom Catalog Previews.lrdata").to_string_lossy()})).unwrap();
@@ -89,8 +89,8 @@ fn open_library_on_a_lightroom_catalog_offers_its_import() {
     assert_eq!(h.request("ui.clickWidget", json!({"id": "button:dialogOk"}), T)["ok"], true);
     h.step();
     assert!(h.app.ui.dialog.is_none());
-    h.step_until(T, |h| h.app.lightroom.is_none());
-    let last = h.app.lightroom_last.clone().unwrap_or_default();
+    h.step_until(T, |h| !h.app.lightroom.running());
+    let last = h.app.lightroom.last.clone().unwrap_or_default();
     assert_eq!(last["path"], json!(lrcat), "{last}");
     assert_eq!(h.app.session.library.as_ref().map(|l| l.dir.clone()), Some(lib.clone()));
     assert_eq!(names(&lr), before, "the catalog is only read");

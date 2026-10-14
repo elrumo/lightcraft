@@ -269,6 +269,9 @@ struct Engine {
     merge_shown: u64,
     /// Export with Previous runs so far (each writes into a staging folder of its own).
     export_runs: u64,
+    /// Lightroom catalog inspection or import on its workers, and the request answered when it ends.
+    lightroom: crate::lightroom::Runner,
+    lightroom_reply: Option<(u64, Option<Sender<Event>>)>,
     /// The zoom window last asked for (`render.view {zoom}`): its image event says where it goes.
     region: Option<RegionShown>,
     /// `import.scan` running on its worker, and the candidates of the last one (`render.candidate`).
@@ -393,6 +396,8 @@ impl Engine {
             faces_next: Instant::now(),
             faces_scan: None,
             export: None,
+            lightroom: Default::default(),
+            lightroom_reply: None,
             super_res: None,
             merge: crate::merge::Runner::default(),
             merge_preview: None,
@@ -486,6 +491,17 @@ impl Engine {
         {
             let params = req.params.get("params").cloned().filter(|v| !v.is_null()).unwrap_or_else(|| json!({}));
             return lightcraft_engine::guard::catch("`app.export`", || self.start_export(id, call, &params))
+                .unwrap_or_else(|e| Some(Event::err(id, ErrorBody::new("panic", e))));
+        }
+        // a Lightroom catalog is read and imported on workers (its row in the activity stack): answered
+        // when it ends; `{status: true, cancel?}` answers at once
+        if matches!(req.method.as_str(), "engine.execute" | "ui.menu.invoke" | "command")
+            && let Some(command @ ("library.inspectLightroom" | "library.importLightroom")) =
+                req.params.get("command").or(req.params.get("id")).and_then(Value::as_str)
+        {
+            let command = command.to_string();
+            let params = req.params.get("params").cloned().filter(|v| !v.is_null()).unwrap_or_else(|| json!({}));
+            return lightcraft_engine::guard::catch(&format!("`{command}`"), || self.start_lightroom(id, call, &command, &params))
                 .unwrap_or_else(|e| Some(Event::err(id, ErrorBody::new("panic", e))));
         }
         // Super Resolution likewise (Enlarging, with its ✕): answered with the new photo when it ends
@@ -803,6 +819,7 @@ impl Engine {
         self.poll_super_res();
         self.poll_merge();
         self.poll_vision();
+        self.poll_lightroom();
         self.poll_scan();
         self.poll_import();
         self.session.persist_if_dirty();
@@ -845,6 +862,55 @@ impl Engine {
             }
             Err(e) => Some(Event::err(id, ErrorBody::new("other", e))),
         }
+    }
+
+    /// Inspect or import a Lightroom catalog (`library.inspectLightroom` / `library.importLightroom`
+    /// `{path, updateExisting?}`, `path` the `.lrcat` or a folder holding it): `None` (answered when
+    /// it ends) or the error now. `{status: true, cancel?}`: what runs or last ran, at once.
+    fn start_lightroom(&mut self, id: u64, call: Option<&Sender<Event>>, command: &str, p: &Value) -> Option<Event> {
+        let path = p.get("path").and_then(Value::as_str);
+        if p.get("status").and_then(Value::as_bool) == Some(true) || path.is_none() {
+            if p.get("cancel").and_then(Value::as_bool) == Some(true) {
+                self.lightroom.cancel();
+            }
+            return Some(Event::ok(id, self.lightroom.status()));
+        }
+        if self.scan.is_some() || self.import.is_some() {
+            return Some(Event::err(id, ErrorBody::new("other", "an import is running")));
+        }
+        let path = std::path::PathBuf::from(path.unwrap_or_default());
+        let wake: crate::lightroom::Wake = Arc::new(|| {});
+        let words = |w: &'static str| w.to_string();
+        let started = if command == "library.inspectLightroom" {
+            self.lightroom.start_inspect(&self.session, &path, wake, &words)
+        } else {
+            let update = p.get("updateExisting").and_then(Value::as_bool).unwrap_or(false);
+            self.lightroom.start_import(&mut self.session, &path, update, wake, &words)
+        };
+        match started {
+            Ok(_) => {
+                self.lightroom_reply = Some((id, call.cloned()));
+                None
+            }
+            Err(e) => Some(Event::err(id, ErrorBody::new("other", e))),
+        }
+    }
+
+    /// A Lightroom task that ended answers its request (an error or a cancel as an error).
+    fn poll_lightroom(&mut self) {
+        if !self.lightroom.running() {
+            return;
+        }
+        self.busy = true;
+        let words = |w: &'static str| w.to_string();
+        let Some(done) = self.lightroom.poll(&mut self.session, Arc::new(|| {}), &words) else { return };
+        let Some((id, reply)) = self.lightroom_reply.take() else { return };
+        let event = match (done.value.get("error").and_then(Value::as_str), done.value.get("cancelled").and_then(Value::as_bool)) {
+            (Some(e), _) => Event::err(id, ErrorBody::new("other", e)),
+            (None, Some(true)) => Event::err(id, ErrorBody::new("cancelled", "cancelled")),
+            _ => Event::ok(id, done.value),
+        };
+        Self::reply(&self.events, reply, event);
     }
 
     /// Start scanning `paths` for the import review; `None` (answered when it ends) or the error now.

@@ -452,3 +452,26 @@ fn the_sidebar_is_arranged_by_the_shared_commands() {
     let wrong = h.call(&req(5, "host.sidebar", json!({"command": "view.sidebarSection", "params": {"section": "nope"}})), Duration::from_secs(30));
     assert_eq!(wrong["error"]["code"], "badParams", "{wrong}");
 }
+
+// A Lightroom catalog is read on a worker and answered when that ends (found from the folder
+// holding it): a broken one is an error, the status keeps what last ran, and a folder without a
+// catalog is refused at once
+#[test]
+fn a_lightroom_catalog_is_read_in_the_background() {
+    let h = demo();
+    let dir = std::env::temp_dir().join(format!("lc-host-lightroom-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("Lightroom")).unwrap();
+    std::fs::write(dir.join("Lightroom").join("Lightroom Catalog.lrcat"), b"bad catalog").unwrap();
+    let inspect =
+        |n: u64, p: Value| h.call(&req(n, "engine.execute", json!({"command": "library.inspectLightroom", "params": p})), Duration::from_secs(60));
+    let r = inspect(1, json!({"path": dir.to_string_lossy()}));
+    assert!(r["error"]["message"].is_string(), "{r}");
+    let status = inspect(2, json!({"status": true}));
+    assert!(status["result"]["error"].is_string(), "{status}");
+    assert!(status["result"]["path"].as_str().unwrap().ends_with("Lightroom Catalog.lrcat"), "{status}");
+    std::fs::create_dir_all(dir.join("Empty")).unwrap();
+    let none = inspect(3, json!({"path": dir.join("Empty").to_string_lossy()}));
+    assert!(none["error"]["message"].as_str().unwrap().contains("no Lightroom Classic catalog"), "{none}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
