@@ -532,12 +532,8 @@ fn drag_choose(app: &mut LightcraftApp, ui: &egui::Ui, ids: &[PhotoId], lay: &Gr
     {
         s.last = Some(cur);
         haptics::tap(ui.ctx(), Haptic::Selection);
-        let run: HashSet<u64> = ids.get(s.start.min(cur)..=s.start.max(cur)).unwrap_or(&[]).iter().map(|i| i.0).collect();
-        let mut chosen: Vec<u64> = s.base.iter().copied().filter(|i| s.adding || !run.contains(i)).collect();
-        if s.adding {
-            chosen.extend(ids.iter().map(|i| i.0).filter(|i| run.contains(i) && !s.base.contains(i)));
-        }
-        let _ = app.run("library.select", json!({"ids": chosen}));
+        // (the run on top of what was chosen before is the engine's, shared with the SwiftUI app)
+        let _ = app.run("library.chooseRun", json!({"base": s.base, "from": s.start, "to": cur, "adding": s.adding}));
     }
     ui.data_mut(|d| d.insert_temp(key, s));
 }

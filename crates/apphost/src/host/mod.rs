@@ -594,6 +594,24 @@ impl Engine {
                 }
                 Ok(json!({"slot": Slot::Variant(key).name()}))
             }
+            "render.face" => {
+                // a face as People shows it: `rect` as people.list and faces.person give it (on the upright photo)
+                let id = photo(p, &self.session).ok_or_else(|| bad("no photo"))?;
+                let edge = size(p.get("edge")).unwrap_or(160);
+                let r = p.get("rect").ok_or_else(|| bad("missing `rect`"))?;
+                let num = |k: &str, i: usize| r.get(k).or_else(|| r.get(i)).and_then(Value::as_f64).filter(|v| v.is_finite());
+                let (Some(x0), Some(y0), Some(x1), Some(y1)) = (num("x0", 0), num("y0", 1), num("x1", 2), num("y1", 3)) else {
+                    return Err(bad("`rect` must be {x0, y0, x1, y1} or [x0, y0, x1, y1]"));
+                };
+                let view = self.session.face_view(id, lightcraft_geom::Rect { x0, y0, x1, y1 });
+                let job = self.session.face_job(id, view, edge).ok_or_else(|| bad("no such photo"))?;
+                let key = job.key;
+                if self.sched.variant(job.clone()).is_none() {
+                    self.variants.insert(key, (job, Instant::now()));
+                    self.busy = true;
+                }
+                Ok(json!({"slot": Slot::Variant(key).name()}))
+            }
             "render.prefetch" => {
                 let (w, h) = (size(p.get("width")).unwrap_or(1024), size(p.get("height")).unwrap_or(1024));
                 let photos = p.get("photos").and_then(Value::as_array).ok_or_else(|| bad("missing `photos`"))?;
