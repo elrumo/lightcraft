@@ -1,5 +1,13 @@
 # What's new in LightCraft
 
+## 2026-10-14
+
+### iPhone ProRAW photos open as bright as on the iPhone
+- iPhone ProRAW photos no longer open much darker than in Photos. Recent iPhones expose a bright scene (a window, a
+  sunny sky) for its highlights and store how to brighten the rest in the file, as its local tone mapping. LightCraft
+  now applies it by default, to photos already in your library too. To render a ProRAW the way Lightroom Classic
+  does, without it, turn off Profile ▸ Camera local tone mapping.
+
 ## 2026-10-13
 
 ### Import from a camera or memory card, on the iPhone and iPad too
