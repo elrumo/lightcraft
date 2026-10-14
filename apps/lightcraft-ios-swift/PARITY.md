@@ -18,9 +18,9 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | Phase | ✅ | 🟡 | ⬜ | 🚫 | Done or out of scope |
 |---|---:|---:|---:|---:|---:|
 | S0 | 8 | 7 | 0 | 0 | 8/15 |
-| S1 | 0 | 0 | 165 | 0 | 0/165 |
-| S2 | 0 | 0 | 80 | 21 | 21/101 |
-| **Total** | 8 | 7 | 245 | 21 | 29/281 |
+| S1 | 0 | 0 | 168 | 0 | 0/168 |
+| S2 | 0 | 0 | 80 | 23 | 23/103 |
+| **Total** | 8 | 7 | 248 | 23 | 31/286 |
 <!-- /ios-parity:summary -->
 
 ## Screens
@@ -133,6 +133,7 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | ui:view.maskOverlay | S1 | ⬜ |  |  |
 | ui:view.maskOverlayMode | S1 | ⬜ |  |  |
 | ui:view.maskOverlayColor | S1 | ⬜ |  |  |
+| ui:view.maskOverlayAll | S1 | ⬜ |  |  |
 | ui:view.maskPins | S1 | ⬜ |  |  |
 | ui:view.visualizeSpots | S1 | ⬜ |  |  |
 | ui:view.cropOverlay | S1 | ⬜ |  |  |
@@ -202,6 +203,7 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | ui:app.contactSheet | S2 | ⬜ |  |  |
 | ui:photo.editInPhotoCraft | S2 | 🚫 |  | no external editors on iOS (the egui iOS app does not offer it either) |
 | ui:photo.editInExternal | S2 | 🚫 |  | no external editors on iOS |
+| ui:photo.openOriginalInExternal | S2 | 🚫 |  | no external editors on iOS |
 | ui:dialog.mergeHdr | S2 | ⬜ |  |  |
 | ui:dialog.mergePanorama | S2 | ⬜ |  |  |
 | ui:dialog.mergeHdrPanorama | S2 | ⬜ |  |  |
@@ -261,6 +263,7 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | ui:dialog.rename | S2 | ⬜ |  |  |
 | ui:dialog.labelNames | S2 | ⬜ |  |  |
 | ui:dialog.captureTime | S2 | ⬜ |  |  |
+| ui:dialog.shareLink | S1 | ⬜ |  | album links on the sync server |
 | ui:photo.tagFromTracklog | S2 | ⬜ |  |  |
 | ui:app.exportPrevious | S2 | ⬜ |  |  |
 | ui:app.saveToPhotos | S1 | ⬜ |  |  |
@@ -282,6 +285,7 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | dialog:ContactSheet | S2 | ⬜ |  |  |
 | dialog:NewAlbum | S1 | ⬜ |  |  |
 | dialog:RenameAlbum | S1 | ⬜ |  |  |
+| dialog:ShareLink | S1 | ⬜ |  | album links on the sync server |
 | dialog:TextPrompt | S1 | ⬜ |  |  |
 | dialog:CaptureTime | S2 | ⬜ |  |  |
 | dialog:Import | S1 | ⬜ |  |  |
@@ -318,3 +322,4 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | dialog:SynchronizeFolder | S2 | 🚫 |  | no watched folders in the iOS sandbox |
 | dialog:About | S1 | ⬜ |  |  |
 | dialog:Shortcuts | S2 | ⬜ |  |  |
+| dialog:EditIn | S2 | 🚫 |  | no external editors on iOS |
