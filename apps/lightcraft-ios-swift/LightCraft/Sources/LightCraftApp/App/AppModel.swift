@@ -32,7 +32,7 @@ nonisolated enum FilePick: Hashable {
 
 /// What covers the whole screen.
 nonisolated enum Cover: String, Identifiable {
-    case slideshow, lightsOut
+    case slideshow, lightsOut, onboarding
     var id: String { rawValue }
 }
 
@@ -146,6 +146,8 @@ final class AppModel {
     var picker: FilePick?
     /// The slideshow or Lights Out, over everything.
     var cover: Cover?
+    /// Settings ▸ Show Welcome was tapped: the settings sheet closes first, then `RootView` shows the welcome.
+    var welcomeAsked = false
     /// On an iPad, whether the albums column shows beside the grid.
     var sidebar: NavigationSplitViewVisibility = .all
     /// The albums page's sections below My Photos, in order (`host.sidebar`).
@@ -209,23 +211,28 @@ final class AppModel {
         defer { starting = false }
         // the device's name on the sync server (read by the engine when signing in)
         setenv("LIGHTCRAFT_DEVICE", UIDevice.current.name, 0)
+        let config = Self.config()
+        // the first launch's welcome, over the opening library (not under a script or the demo: the tour's screenshots)
+        if !prefs.onboarded, config.script == nil, !config.demo {
+            cover = .onboarding
+        }
         do {
-            let (engine, opened) = try await Engine.open(Self.config())
+            let (engine, opened) = try await Engine.open(config)
             self.engine = engine
             self.opened = opened
             if let warning = opened.warnings.first {
                 show(warning)
             }
             Task { await listen(engine) }
+            updateHdrDisplay()
             state = (try? await engine.request("host.state").decode(HostState.self)) ?? state
             await library.reload(engine, count: state.visibleCount)
             await albums.reload(engine)
             superResAvailable = (try? await engine.execute("enhance.model.status"))?["available"].bool == true
             // a camera or card plugged in: its import (Settings ▸ Import ▸ Cameras and cards), or a word
-            updateHdrDisplay()
             cameras.connected = { [weak self] device in
                 guard let self else { return }
-                if self.prefs.importOnConnect, self.sheet == nil, self.path.isEmpty {
+                if self.prefs.importOnConnect, self.sheet == nil, self.cover == nil, self.path.isEmpty {
                     self.sheet = .cameraImport
                 } else {
                     self.show(String(localized: "\(device.name ?? "") connected"))
@@ -253,11 +260,6 @@ final class AppModel {
     /// The app became active, went to the background… (`host.lifecycle`: save, pause the GPU, free memory).
     func lifecycle(_ event: String) {
         engine?.send("host.lifecycle", ["event": .string(event)])
-    }
-
-    // MARK: events
-
-    private func listen(_ engine: Engine) async {
         // (another screen, or a setting that changed meanwhile)
         if event == "active" { updateHdrDisplay() }
     }
@@ -273,6 +275,11 @@ final class AppModel {
         guard let engine, on != hdrDisplay else { return }
         hdrDisplay = on
         engine.send("render.hdrDisplay", ["on": .bool(on)])
+    }
+
+    // MARK: events
+
+    private func listen(_ engine: Engine) async {
         for await event in engine.events {
             handle(event)
         }
@@ -436,7 +443,8 @@ final class AppModel {
                 "color": .array(prefs.maskOverlayColor.map { .int(Int64($0)) }), "opacity": .double(prefs.maskOverlayOpacity),
             ]
         }
-        guard prefs.maskOverlay, let mask = state.activeMask else { return nil }
+        let shown = prefs.maskOverlayVisibility == "always" || (prefs.maskOverlayVisibility == "auto" && !editor.maskAdjusted)
+        guard shown, let mask = state.activeMask else { return nil }
         return [
             "kind": "mask", "id": .int(Int64(mask)), "view": .string(prefs.maskOverlayMode),
             "color": .array(prefs.maskOverlayColor.map { .int(Int64($0)) }), "opacity": .double(prefs.maskOverlayOpacity),

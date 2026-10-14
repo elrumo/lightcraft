@@ -16,4 +16,8 @@
 {"method": "ui.set", "params": {"screen": "commands"}}
 {"sleep": 1500}
 {"method": "ui.screenshot", "params": {"path": "tour-commands.png"}}
+{"method": "ui.set", "params": {"screen": "grid", "cover": "onboarding"}}
+{"sleep": 1500}
+{"method": "ui.screenshot", "params": {"path": "tour-onboarding.png"}}
+{"method": "ui.set", "params": {"cover": ""}}
 {"method": "ui.inspect"}

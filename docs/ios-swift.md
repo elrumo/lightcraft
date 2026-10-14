@@ -102,10 +102,11 @@ host's: `badRequest`, `unknownMethod`, `panic`, `closed`, `timeout`).
 | `host.merge.start` / `host.merge.last` | `{command, ids?, options?}` | the full merge in the background (activity row, ✕ stops it); answered `{started}` at once, a message when it ends; `last` uses the options last merged with |
 | `host.merge.cancel` | | drops the preview being drawn (the dialog closed) |
 | `host.exportPrevious` | | Export with Previous: the last export's options for the photos chosen now, on a worker like `app.export` |
-| `render.thumb` | `{photo, edge, priority?}` | a grid thumbnail (embedded raw previews first; cheap to repeat) |
+| `host.admin.signIn` / `.call` / `.signOut` / `.session` | `{server, user, password}` / `{method, path: [segment…], body?, server?}` / / | the sync server's admin API (`/api/admin/*`, what its web console does) for Settings ▸ Server Administration (`apphost::host::admin`): the admin session (not the Sync device's: the server keeps them apart) lives in the host, in memory; requests run on a worker thread and are answered when the server has; path segments are percent-encoded there; without a session only `state` and `setup` work (against `server`); a `401` on a signed-in call ends the session (error `unauthorized`) |
+| `render.thumb` | `{photo, edge, priority?}` | a grid thumbnail (embedded raw previews first; cheap to repeat). Ask once, when the cell appears: while `render.retain` lists the photo and it has no picture, the host asks again every tick (a synced photo's small preview downloads only while asked for, and its thumbnail renders once it has landed) |
 | `render.view` | `{photo?, width, height, draft?, before?, applyCrop?, overlay?: {kind: mask, id, view?, color?, opacity?} \| {kind: allMasks, view?, color?, opacity?} \| {kind: spots, threshold?} \| {kind: pointColor, index} \| {kind: hdr}, proof?: {space, destWarning?, displayWarning?}, zoom?: {drawn, visible: [x0, y0, x1, y1]}}` | the loupe's picture (`main`; a stand-in in `preview` until it is there), with a diagnostic overlay (the selected mask, Visualize Spots…); zoomed in (`drawn`: the photo's long edge as drawn, px; `visible`: the part on screen, as fractions) also the window on screen at the zoom scale (`region`, its image event's `window: {full: [w, h], x, y, w, h}` says where it goes; planned by `apphost::region`) |
-| `render.prefetch` | `{photos, width, height}` | prepares the neighbours |
 | `render.hdrDisplay` | `{on}` | the screen can (or can no longer) show the range above SDR white (`UIScreen.potentialEDRHeadroom > 1`; the app tells at start and when it becomes active; `LIGHTCRAFT_HDR_DISPLAY=1\|0` forces it for the simulator): an HDR edit's `main` and `region` pictures then render in HDR (CPU) and their `image` event carries `hdr: {token, width, height, peak}`, a lease of RGBA16F pixels (Display P3 encoded with the sRGB curve past 1, [hdr-display](hdr-display.md)); the 8-bit picture is then Display P3 too. Without it, or off, the SDR rendition as before |
+| `render.prefetch` | `{photos, width, height}` | prepares the neighbours |
 | `render.variant` | `{photo?, preset \| profile \| version \| edited: true, amount?, edge?}` | a preview of the photo with a preset, profile or version, or as it is (Compare, Survey, the filmstrip) (slot `variant:<key>`) |
 | `render.face` | `{photo?, rect, edge?}` | a face, as People shows it (`rect` as `people.list` and `faces.person` give it; slot `variant:<key>`) |
 | `render.candidate` | `{index, edge?}` | an import candidate's thumbnail (slot `import:<index>`) |
@@ -199,6 +200,19 @@ under the photo, it has no separate view and edit modes, and the library is one 
   from the editor is dark too.
 - **Wide screens**: on regular width (an iPad) the tools are in the system `.inspector`. Its content is compact width,
   so the `toolColumn` environment value says a view is in a column.
+- **First launch**: a four-page welcome (`Onboarding/OnboardingView.swift`, its pictures in `OnboardingHeroes.swift`)
+  covers the screen once per device (`Prefs.onboarded`; not under `LIGHTCRAFT_SCRIPT` or `LIGHTCRAFT_DEMO`, so the
+  tour's screenshots are clear). It asks for no permission: those are asked where they are needed. Settings ▸ Show
+  Welcome opens it again: the sheet closes first and `RootView` presents the cover from the sheet's `onDismiss`,
+  because a cover can't come up while a sheet is going down (`AppModel.welcomeAsked`).
+  - It is drawn in the app icon's three colours (ink, paper, amber: `assets/app-icon/README.md`) on an ink canvas
+    whatever the appearance, like the photo's. The type is the system's sans, in Dynamic Type text styles.
+  - The first page shows the lynx from `Resources/Lynx.xcassets` (a copy of the 512 px app icon, an Xcode-target
+    resource like the string tables; an xtool build has no catalog and shows a drawn mark). The other pictures are
+    painted in code. A mesh gradient follows the swipe, the pictures play when their page arrives, and Reduce Motion
+    stops them.
+  - A helper in a `View` must not be named like a `View` modifier: `tag("Before")` once resolved to `View.tag`, which
+    embedded the whole view in itself and ran the app out of memory.
 - **Adjusting** (Settings ▸ Interface ▸ Adjustments):
   - *Dials* is Photos' way: a row of dials, the one in the middle set with a ruler (`Photo/AdjustDials.swift`).
   - *Sliders* is Lightroom's.

@@ -124,6 +124,9 @@ final class EditorModel {
     /// A tool is taking touches on the photo (a picker, Tag a Face, a tool's own screen): the photo's
     /// tap (the bars), long press (Before) and swipe down (back to the grid) leave them alone.
     var touching: Bool { picking != nil || tagFace || tool?.hasScreen == true }
+    /// Fingers on the photo (`TwoFingerGesture`): from the second, a tool's one-finger stroke is
+    /// dropped and the fingers move or zoom the photo instead.
+    var fingers = 0
     /// The Remove tool: its mode and brush (size as a fraction of the photo's long edge).
     var removeMode = "remove"
     var removeSize = 0.02
@@ -143,6 +146,8 @@ final class EditorModel {
     var brushAutoMask = false
     /// Masking: every visible mask's region over the photo at once, not just the selected one's.
     var maskOverlayAll = false
+    /// The selected mask was adjusted since it was selected or painted: Auto hides its overlay.
+    var maskAdjusted = false
     /// Before / After: the photo as it was beside it as it is.
     var beforeAfter = false
     /// Tag a Face: the next tap on the photo marks a face there.

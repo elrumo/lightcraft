@@ -169,9 +169,9 @@ private struct MaskSettings: View {
                     }
                     if part.kind == "luminanceRange" {
                         // the photo in black & white with the range tinted
-                        Toggle("Show Luminance Map", isOn: Binding(get: { prefs.maskOverlay && prefs.maskOverlayMode == "colorOnBw" }, set: { on in
+                        Toggle("Show Luminance Map", isOn: Binding(get: { prefs.maskOverlayMode == "colorOnBw" }, set: { on in
                             prefs.maskOverlayMode = on ? "colorOnBw" : "color"
-                            if on { prefs.maskOverlay = true }
+                            if on, prefs.maskOverlayVisibility == "never" { prefs.maskOverlayVisibility = "auto" }
                         }))
                         .padding(.horizontal, 16)
                     }
@@ -282,6 +282,7 @@ struct MaskAdjustments: View {
 
     private func set(_ spec: ControlSpec, _ v: Double) {
         local[spec.id] = v
+        model.editor.maskAdjusted = true
         model.engine?.send("engine.execute", ["command": "mask.adjust", "params": ["id": mask, "values": .object([spec.id: .double(v)])]])
         model.requestDraft()
     }
@@ -292,6 +293,7 @@ struct MaskAdjustments: View {
 
     private func reset(_ spec: ControlSpec) {
         local[spec.id] = spec.default
+        model.editor.maskAdjusted = true
         model.perform("mask.adjust", ["id": mask, "values": .object([spec.id: .double(spec.default)])])
     }
 
@@ -327,6 +329,7 @@ struct MaskColumn: View {
             Button("Cancel", role: .cancel) {}
         }
         .haptic(.selection, trigger: model.state.activeMask)
+        .onChange(of: model.state.activeMask) { model.editor.maskAdjusted = false }
     }
 
     private var column: some View {
@@ -553,10 +556,17 @@ struct MaskOverlayButton: View {
 
     var body: some View {
         @Bindable var prefs = model.prefs
-        Button(prefs.maskOverlay ? "Hide Overlay" : "Show Overlay", systemImage: prefs.maskOverlay ? "eye" : "eye.slash") {
-            prefs.maskOverlay.toggle()
+        let icons = ["auto": "wand.and.sparkles", "always": "eye", "never": "eye.slash"]
+        Menu {
+            Picker("Overlay", selection: $prefs.maskOverlayVisibility) {
+                Label("Auto", systemImage: "wand.and.sparkles").tag("auto")
+                Label("Show Overlay", systemImage: "eye").tag("always")
+                Label("Hide Overlay", systemImage: "eye.slash").tag("never")
+            }
+        } label: {
+            Label("Overlay", systemImage: icons[prefs.maskOverlayVisibility] ?? "eye")
         }
-        .haptic(.selection, trigger: prefs.maskOverlay)
+        .haptic(.selection, trigger: prefs.maskOverlayVisibility)
     }
 }
 
@@ -610,7 +620,11 @@ struct MaskOverlayOptions: View {
                     Slider(value: $prefs.maskOverlayOpacity, in: 0...100, step: 1)
                     Text("\(Int(prefs.maskOverlayOpacity))").monospacedDigit().frame(width: 32, alignment: .trailing)
                 }
-                Toggle("Show Overlay", isOn: $prefs.maskOverlay)
+                Picker("Overlay", selection: $prefs.maskOverlayVisibility) {
+                    Text("Auto").tag("auto")
+                    Text("Show Overlay").tag("always")
+                    Text("Hide Overlay").tag("never")
+                }
             }
             .navigationTitle("Overlay Options")
             .navigationBarTitleDisplayMode(.inline)

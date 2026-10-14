@@ -20,14 +20,20 @@ struct MaskCanvas: View {
     @State private var menu: JSONValue?
     /// Where a hovering Apple Pencil or pointer is: the brush's size drawn there.
     @State private var hover: CGPoint?
+    /// Auto-mask strokes the engine is still working on (image coordinates): they stay drawn, glowing.
+    @State private var pending: [Pending] = []
+    /// A second finger landed during this stroke: it is dropped, the fingers move the photo.
+    @State private var multi = false
 
     /// How far (points) from a handle or pin a finger still takes it.
     private static let reach: CGFloat = 28
 
     var body: some View {
         let tool = model.editor.maskTool
+        TimelineView(.animation(minimumInterval: nil, paused: pending.isEmpty)) { timeline in
         Canvas { ctx, _ in
             drawHandles(ctx)
+            drawPending(ctx, at: timeline.date)
             if tool == "brush", let hover, trail.isEmpty {
                 let r = brushRadius
                 let ring = Path(ellipseIn: CGRect(x: hover.x - r, y: hover.y - r, width: r * 2, height: r * 2))
@@ -37,8 +43,10 @@ struct MaskCanvas: View {
             guard trail.count > 0 else { return }
             var p = Path()
             p.addLines(trail)
-            let color: Color = model.editor.brushErase ? .red : .accentColor
-            ctx.stroke(p, with: .color(color.opacity(0.4)), style: StrokeStyle(lineWidth: brushRadius * 2, lineCap: .round, lineJoin: .round))
+            // (the colour the mask will have, so the stroke turns into it)
+            let color: Color = model.editor.brushErase ? .white : overlayColor
+            ctx.stroke(p, with: .color(color.opacity(0.45)), style: StrokeStyle(lineWidth: brushRadius * 2, lineCap: .round, lineJoin: .round))
+        }
         }
         .allowsHitTesting(false)
         .overlay {
@@ -70,6 +78,41 @@ struct MaskCanvas: View {
         // Pencil setting asks to switch tools
         .onPencilDoubleTap(perform: pencilTapped)
         .task(id: Key(revision: model.state.catalogRevision, mask: model.state.activeMask)) { await load() }
+        .onChange(of: model.editor.fingers) { _, n in
+            if n >= 2 {
+                multi = true
+                trail = []
+            } else if n == 0 {
+                multi = false
+            }
+        }
+    }
+
+    /// A stroke waiting for its mask: the overlay's colour, glowing and pulsing, fading out once the
+    /// mask is in.
+    private struct Pending: Identifiable {
+        let id = UUID()
+        let points: [[Double]]
+        let size: Double
+        let erase: Bool
+        var done: Date?
+    }
+
+    private var overlayColor: Color {
+        let c = model.prefs.maskOverlayColor + [0, 0, 0]
+        return Color(.sRGB, red: Double(c[0]) / 255, green: Double(c[1]) / 255, blue: Double(c[2]) / 255)
+    }
+
+    private func drawPending(_ ctx: GraphicsContext, at date: Date) {
+        let t = date.timeIntervalSinceReferenceDate
+        for stroke in pending {
+            let path = StrokeGlow.path(stroke.points.compactMap(screen))
+            let radius = CGFloat(stroke.size) * max(rect.width, rect.height)
+            let alpha = stroke.done.map { max(0, 1 - date.timeIntervalSince($0) / 0.35) } ?? 1
+            let base = stroke.erase ? Color.white : overlayColor
+            ctx.stroke(path, with: .color(base.opacity(0.4 * alpha)), style: StrokeGlow.style(radius))
+            StrokeGlow.glow(ctx, path, radius: radius, colors: [base, base.mix(with: .white, by: 0.55), base], time: t, alpha: alpha, body: base)
+        }
     }
 
     private func hovered(_ phase: HoverPhase) {
@@ -238,21 +281,36 @@ struct MaskCanvas: View {
     private var paint: some Gesture {
         DragGesture(minimumDistance: 0)
             .onChanged { g in
+                if model.editor.fingers >= 2 { multi = true }
+                if multi {
+                    trail = []
+                    return
+                }
                 if trail.last.map({ hypot($0.x - g.location.x, $0.y - g.location.y) > 2 }) ?? true {
                     trail.append(g.location)
                 }
             }
             .onEnded { _ in
-                let pts: [JSONValue] = trail.compactMap { p in norm(p).map { [.double($0.x), .double($0.y)] } }
+                let image = trail.compactMap { p in norm(p).map { [$0.x, $0.y] } }
+                let pts: [JSONValue] = image.map { [.double($0[0]), .double($0[1])] }
                 trail = []
-                guard !pts.isEmpty else { return }
+                guard !pts.isEmpty, !multi, model.editor.fingers < 2 else { return }
                 let e = model.editor
                 var p: [String: JSONValue] = [
                     "points": .array(pts), "size": .double(e.brushSize), "feather": .double(e.brushFeather), "flow": .double(e.brushFlow),
                     "erase": .bool(e.brushErase), "autoMask": .bool(e.brushAutoMask),
                 ]
                 if let active = model.state.activeMask { p["id"] = .int(Int64(active)) }
-                model.perform("mask.brushStroke", .object(p))
+                model.editor.maskAdjusted = false
+                let waiting = e.brushAutoMask ? Pending(points: image, size: e.brushSize, erase: e.brushErase) : nil
+                if let waiting { pending.append(waiting) }
+                Task {
+                    await model.run("mask.brushStroke", .object(p))
+                    guard let id = waiting?.id else { return }
+                    if let i = pending.firstIndex(where: { $0.id == id }) { pending[i].done = .now }
+                    try? await Task.sleep(for: .milliseconds(450))
+                    pending.removeAll { $0.id == id }
+                }
             }
     }
 }
