@@ -19,8 +19,8 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 |---|---:|---:|---:|---:|---:|
 | S0 | 15 | 0 | 0 | 0 | 15/15 |
 | S1 | 164 | 0 | 0 | 3 | 167/167 |
-| S2 | 49 | 0 | 31 | 22 | 71/102 |
-| **Total** | 228 | 0 | 31 | 25 | 253/284 |
+| S2 | 55 | 0 | 25 | 22 | 77/102 |
+| **Total** | 234 | 0 | 25 | 25 | 259/284 |
 <!-- /ios-parity:summary -->
 
 ## Screens
@@ -75,9 +75,9 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | screen:compact.localization | S1 | ✅ | `xtask/src/swift_strings.rs`, `apps/lightcraft-ios-swift/locales/keys.json`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Localization/es.lproj/Localizable.strings` | the egui languages through iOS localisation: `cargo xtask swift-strings` makes each `Localizable.strings` from the egui catalogs and the app's own; engine labels looked up at run time; dates formatted by iOS |
 | screen:ipad.splitView | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/App/RootView.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/AlbumsSheet.swift` | an iPad: the albums list as a sidebar column beside the grid (NavigationSplitView); it steps aside while a photo is open; checked on an iPad Pro 11" simulator |
 | screen:ipad.inspector | S2 | ⬜ |  |  |
-| screen:ipad.menuBar | S2 | ⬜ |  |  |
-| screen:ipad.keyboard | S2 | ⬜ |  |  |
-| screen:ipad.pointer | S2 | ⬜ |  |  |
+| screen:ipad.menuBar | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/App/MenuBar.swift`, `crates/apphost/src/ui_commands.rs` | the iPadOS menu bar: File, Edit, Photo, View, Window, Help with the engine's menu commands and egui's UI commands this app has (`host.uiCommands`, the table moved from egui into `apphost`), enabled for what is selected; built without a crash on the iPad simulator |
+| screen:ipad.keyboard | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/App/MenuBar.swift` | egui's default keys on the menu items (a hardware keyboard; ⌘ held lists them); the system's own keys stay the system's and a shared key goes to the first item (UIKit refuses duplicates) |
+| screen:ipad.pointer | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/GridView.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | the pointer lifts a grid photo and highlights a tool under it; system controls follow the pointer themselves |
 | screen:ipad.compare | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/ViewModes.swift` | Compare: the Select beside a Candidate, Swap, Make Select, the candidates one by one; a tap makes a side active (`render.variant {edited}`); checked on the iPad simulator |
 | screen:ipad.survey | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/ViewModes.swift` | Survey: the chosen photos as large as the screen allows; a tap makes one active, ✕ takes it out, a double tap opens it; checked on the iPad simulator |
 | screen:ipad.multiwindow | S2 | ⬜ |  |  |
@@ -97,7 +97,7 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | ui:modelSetup.cancel | S1 | 🚫 |  | it cancels a photo action waiting for the AI Denoise model; iOS builds have no AI Denoise or SAM 3: the engine's `denoise` and `sam` features are off for iOS (the egui iOS app has only `enhance` too) |
 | ui:view.photoGrid | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/App/RootView.swift` | the grid is the app's first screen: Back (or a pull down) returns to it from a photo |
 | ui:view.squareGrid | S0 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/GridView.swift` | the grid is square tiles |
-| ui:view.gridToggle | S2 | ⬜ |  |  |
+| ui:view.gridToggle | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/App/MenuBar.swift` | View ▸ Grid (G): between the grid and the photo |
 | ui:tool.guidedUpright | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/CropOverlay.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/ToolScreens.swift` | Crop ▸ Geometry ▸ Upright ▸ Guided: guides drawn on the photo (SW1.15) |
 | ui:view.detail | S0 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | tap a photo in the grid |
 | ui:view.compare | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/ViewModes.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/SelectionBar.swift` | select bar "…" ▸ Compare (two or more photos) |
@@ -254,7 +254,7 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | ui:app.website | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | About ▸ LightCraft Website |
 | ui:app.github | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | About ▸ LightCraft on GitHub |
 | ui:app.artcraft | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | About ▸ ArtCraft Website |
-| ui:app.shortcuts | S2 | ⬜ |  |  |
+| ui:app.shortcuts | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/App/MenuBar.swift` | Help ▸ Keyboard Shortcuts: every key the menus answer, by menu (choosing other keys is egui's only) |
 | ui:app.setShortcut | S2 | 🚫 |  | iPadOS has no per-app shortcut editor; shortcuts come from the command specs |
 | ui:app.resetShortcuts | S2 | 🚫 |  | no shortcut editor on iPadOS |
 | ui:app.export | S0 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Share/ExportSheet.swift`, `crates/apphost/src/export.rs` | Share ▸ Share / Save to Photos (`app.export` in the background); All Commands runs it too |
@@ -318,6 +318,6 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | dialog:RemoveFolder | S2 | ⬜ |  |  |
 | dialog:SynchronizeFolder | S2 | 🚫 |  | no watched folders in the iOS sandbox |
 | dialog:About | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` |  |
-| dialog:Shortcuts | S2 | ⬜ |  |  |
+| dialog:Shortcuts | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/App/MenuBar.swift` | the Keyboard Shortcuts sheet; checked on the iPad simulator |
 | dialog:ShareLink | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | how long, originals, uploads, password |
 | dialog:EditIn | S2 | 🚫 |  | opens another desktop app on the file; iOS apps are sandboxed (the share sheet covers it) |

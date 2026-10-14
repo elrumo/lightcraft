@@ -61,6 +61,10 @@ struct RootView: View {
             ActivityHUD()
         }
         .preferredColorScheme(model.prefs.appearance.scheme)
+        // the menu bar's commands, enabled for what is selected now
+        .task(id: MenuKey(revision: model.state.catalogRevision, active: model.state.active, selected: model.state.selectionCount, engine: model.engine != nil)) {
+            await model.loadMenus()
+        }
         .haptic(trigger: model.haptic) { _, h in h.seq == 0 ? nil : h.feedback }
     }
 
@@ -142,6 +146,7 @@ struct SheetContent: View {
         case .metadataPresets(let ids): MetadataPresetsSheet(ids: ids)
         case .contactSheet(let ids): ContactSheetSheet(ids: ids)
         case .merge(let command, let ids): MergeSheet(command: command, ids: ids)
+        case .shortcuts: ShortcutsSheet()
         case .newSmartAlbumFromView:
             // the grid as it is shown (source and filter) becomes a smart album
             AlbumNameSheet(title: "New Smart Album", action: "Create", name: "") { name in
@@ -315,5 +320,12 @@ struct CloudButton: View {
         default: model.state.unsaved > 0 ? .orange : .primary
         }
     }
+}
+/// What the menu bar's commands depend on.
+private nonisolated struct MenuKey: Hashable {
+    let revision: UInt64
+    let active: UInt64?
+    let selected: Int
+    let engine: Bool
 }
 #endif

@@ -18,6 +18,7 @@ struct LightCraftApp: App {
                     model.lifecycle("memoryWarning")
                 }
         }
+        .commands { LightCraftMenus(model: model) }
         .onChange(of: phase) { _, phase in
             switch phase {
             case .active: model.lifecycle("active")

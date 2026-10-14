@@ -289,6 +289,8 @@ struct PhotoCell: View {
             .accessibilityElement()
             .accessibilityLabel(photo.title ?? photo.fileName)
             .accessibilityValue(Self.spoken(photo))
+            // an iPad's pointer lifts the photo under it
+            .hoverEffect(.lift)
             .accessibilityAddTraits(.isButton)
             .accessibilityAddTraits(model.selectMode && chosen ? .isSelected : [])
     }

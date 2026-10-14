@@ -55,6 +55,7 @@ nonisolated enum Sheet: Identifiable, Hashable {
     case metadataPresets([UInt64])
     case contactSheet([UInt64])
     case merge(String, [UInt64])
+    case shortcuts
 
     var id: String {
         switch self {
@@ -87,6 +88,7 @@ nonisolated enum Sheet: Identifiable, Hashable {
         case .metadataPresets: "metadataPresets"
         case .contactSheet: "contactSheet"
         case .merge(let command, _): command
+        case .shortcuts: "shortcuts"
         }
     }
 }
@@ -110,6 +112,9 @@ final class AppModel {
     var toast: Toast?
     var path: [Route] = []
     var sheet: Sheet?
+    /// The menu bar's commands: egui's UI commands (`host.uiCommands`) and the engine's with a menu.
+    var uiCommands: [UICommand] = []
+    var menuEngine: [CommandInfo] = []
     /// The photo Reference View shows beside the one being edited.
     var reference: UInt64?
     /// The slideshow or Lights Out, over everything.

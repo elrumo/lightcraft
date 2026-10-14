@@ -197,7 +197,12 @@ pub fn run(root: &Path, write: bool, gate_phase: Option<&str>) -> Result<(), Str
     let path = root.join(DOC);
     let md = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
     let doc = parse(&md);
-    let menus = std::fs::read_to_string(root.join("crates/ui-egui/src/menus.rs")).map_err(|e| format!("menus.rs: {e}"))?;
+    // (the UI commands' table lives in apphost, shared with the SwiftUI app; the language ones in egui)
+    let menus = ["crates/ui-egui/src/menus.rs", "crates/apphost/src/ui_commands.rs"]
+        .iter()
+        .map(|f| std::fs::read_to_string(root.join(f)).map_err(|e| format!("{f}: {e}")))
+        .collect::<Result<Vec<_>, _>>()?
+        .join("\n");
     let state = std::fs::read_to_string(root.join("crates/ui-egui/src/state.rs")).map_err(|e| format!("state.rs: {e}"))?;
     let ui = crate::parity::ui_command_ids(&menus);
     let dialogs = dialog_variants(&state);

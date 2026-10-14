@@ -141,6 +141,7 @@ final class ScriptHost {
                 case "keywordSets": model.sheet = .keywordSets
                 case "metadataPresets": model.sheet = .metadataPresets(model.targets)
                 case "contactSheet": model.sheet = .contactSheet(model.targets)
+                case "shortcuts": model.sheet = .shortcuts
                 case "merge.hdr", "merge.panorama", "merge.hdrPanorama":
                     let ids = params["ids"].array?.compactMap { $0.int.map { UInt64(clamping: $0) } } ?? model.targets
                     model.sheet = .merge(sheet, ids)

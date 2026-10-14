@@ -45,6 +45,7 @@ struct SettingsView: View {
                 case "sync": SyncSettings()
                 case "faces": FacesSettings()
                 case "storage": SyncStorageView()
+                case "systemInfo": SystemInfoView()
                 case "models": ModelsSettings()
                 default: EmptyView()
                 }

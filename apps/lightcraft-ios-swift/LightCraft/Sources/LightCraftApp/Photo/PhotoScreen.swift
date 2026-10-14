@@ -585,6 +585,7 @@ struct ToolBar: View {
                             }
                         }
                         .contentShape(Rectangle())
+                        .hoverEffect(.highlight)
                     }
                     .buttonStyle(.plain)
                     .accessibilityAddTraits(editor.tool == tool ? .isSelected : [])
