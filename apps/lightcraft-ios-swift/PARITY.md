@@ -18,9 +18,9 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | Phase | ✅ | 🟡 | ⬜ | 🚫 | Done or out of scope |
 |---|---:|---:|---:|---:|---:|
 | S0 | 15 | 0 | 0 | 0 | 15/15 |
-| S1 | 162 | 1 | 1 | 3 | 165/167 |
+| S1 | 163 | 1 | 0 | 3 | 166/167 |
 | S2 | 1 | 0 | 79 | 22 | 23/102 |
-| **Total** | 178 | 1 | 80 | 25 | 203/284 |
+| **Total** | 179 | 1 | 79 | 25 | 204/284 |
 <!-- /ios-parity:summary -->
 
 ## Screens
@@ -71,7 +71,7 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | screen:compact.appearance | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | System / Light / Dark |
 | screen:compact.landscape | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/GridView.swift` | a phone held sideways (compact height): with a tool open, the photo beside a 316 pt side panel (the tool's own screen, or the Edit groups, its controls and the tool bar), as egui's; the loupe full width over the tool bar; the grid twice the columns. Checked in Edit, Crop, Masking and Remove on the simulator (`ui.set {orientation}`) |
 | screen:compact.ipadPortrait | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/GridView.swift` | egui's wide compact layout (from 600 pt): an open tool in a 340 pt side panel beside the photo, the grid's columns scaled to the width; checked on an iPad Pro 11" simulator. The albums list stays a sheet (egui's albums column comes with the full iPad layout, S2) |
-| screen:compact.accessibility | S1 | ⬜ |  |  |
+| screen:compact.accessibility | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/GridView.swift` | every icon-only control has a VoiceOver label; grid photos are buttons named by title or file with their stars, pick or reject and edited as the value; text follows Dynamic Type (the tool, group and mask bars and the grid badges through `@ScaledMetric`, capped at xxxLarge so the bars keep their shape); checked at accessibility-extra-large on the simulator |
 | screen:compact.localization | S1 | ✅ | `xtask/src/swift_strings.rs`, `apps/lightcraft-ios-swift/locales/keys.json`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Localization/es.lproj/Localizable.strings` | the egui languages through iOS localisation: `cargo xtask swift-strings` makes each `Localizable.strings` from the egui catalogs and the app's own; engine labels looked up at run time; dates formatted by iOS |
 | screen:ipad.splitView | S2 | ⬜ |  |  |
 | screen:ipad.inspector | S2 | ⬜ |  |  |

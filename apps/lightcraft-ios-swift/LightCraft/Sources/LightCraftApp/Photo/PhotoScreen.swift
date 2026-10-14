@@ -526,6 +526,9 @@ private struct InfoOverlay: View {
 /// The tools under a photo, in a glass capsule; the open one tinted.
 struct ToolBar: View {
     @Environment(AppModel.self) private var model
+    // the bar's sizes, following the reader's text size
+    @ScaledMetric(relativeTo: .title3) private var iconSize: CGFloat = 20
+    @ScaledMetric(relativeTo: .caption2) private var labelSize: CGFloat = 10
 
     var body: some View {
         let editor = model.editor
@@ -539,9 +542,9 @@ struct ToolBar: View {
                         }
                     } label: {
                         VStack(spacing: 3) {
-                            Image(systemName: tool.symbol).font(.system(size: 20))
+                            Image(systemName: tool.symbol).font(.system(size: iconSize))
                             // a long translation shrinks to one line rather than pushing the bar up
-                            Text(LocalizedStringKey(tool.label)).font(.system(size: 10, weight: .semibold))
+                            Text(LocalizedStringKey(tool.label)).font(.system(size: labelSize, weight: .semibold))
                                 .lineLimit(1).minimumScaleFactor(0.6)
                         }
                         .foregroundStyle(editor.tool == tool ? Color.accentColor : Color.primary)
@@ -564,6 +567,7 @@ struct ToolBar: View {
         .frame(maxWidth: 480)
         .padding(.horizontal, 14)
         .padding(.vertical, 4)
+        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
         .haptic(.selection, trigger: editor.tool)
     }
 }
@@ -571,6 +575,8 @@ struct ToolBar: View {
 /// The Edit tool's groups: Auto, then Profile, Light, Color… (one open at a time).
 struct GroupBar: View {
     @Environment(AppModel.self) private var model
+    @ScaledMetric(relativeTo: .body) private var iconSize: CGFloat = 18
+    @ScaledMetric(relativeTo: .caption2) private var labelSize: CGFloat = 11
 
     var body: some View {
         let current = EditGroup(rawValue: model.prefs.editGroup) ?? .light
@@ -596,18 +602,21 @@ struct GroupBar: View {
             .padding(.horizontal, 10)
         }
         .scrollIndicators(.hidden)
-        .frame(height: 60)
+        .frame(minHeight: 60)
+        .fixedSize(horizontal: false, vertical: true)
         .buttonStyle(.plain)
+        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
         .haptic(.selection, trigger: model.prefs.editGroup)
     }
 
     private func groupLabel(_ symbol: String, _ label: String, on: Bool) -> some View {
         VStack(spacing: 3) {
-            Image(systemName: symbol).font(.system(size: 18))
-            Text(LocalizedStringKey(label)).font(.system(size: 11))
+            Image(systemName: symbol).font(.system(size: iconSize))
+            Text(LocalizedStringKey(label)).font(.system(size: labelSize)).lineLimit(1).minimumScaleFactor(0.7)
         }
         .foregroundStyle(on ? Color.accentColor : Color.primary)
-        .frame(width: 64, height: 52)
+        .frame(width: 64)
+        .frame(minHeight: 52)
         .background {
             if on { Capsule().fill(.thinMaterial) }
         }
@@ -805,7 +814,7 @@ struct ReviewHUD: View {
             HStack(spacing: 6) {
                 ForEach(1...5, id: \.self) { i in
                     Image(systemName: i <= rating ? "star.fill" : "star")
-                        .font(.system(size: 20))
+                        .font(.title3)
                         .foregroundStyle(i <= rating ? Color.yellow : .white.opacity(0.7))
                 }
             }
@@ -816,7 +825,7 @@ struct ReviewHUD: View {
             .accessibilityLabel("\(rating) stars")
             Spacer()
             Image(systemName: flag == 1 ? "flag.fill" : flag == -1 ? "flag.slash.fill" : "flag")
-                .font(.system(size: 20))
+                .font(.title3)
                 .foregroundStyle(flag == -1 ? Color.red : .white)
                 .frame(width: 44, height: 44)
                 .glassEffect(.regular, in: .circle)

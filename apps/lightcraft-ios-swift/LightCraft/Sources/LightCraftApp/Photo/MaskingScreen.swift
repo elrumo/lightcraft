@@ -105,6 +105,8 @@ struct MaskingTools: View {
 private struct MaskGroupRow: View {
     @Binding var selection: String?
     let enabled: Bool
+    @ScaledMetric(relativeTo: .body) private var iconSize: CGFloat = 18
+    @ScaledMetric(relativeTo: .caption2) private var labelSize: CGFloat = 11
 
     static let groups: [(id: String, label: String, symbol: String)] = [
         ("mask", "Mask", "circle.dashed.inset.filled"), ("light", "Light", "sun.max"), ("color", "Color", "drop"),
@@ -127,11 +129,12 @@ private struct MaskGroupRow: View {
                     selection = on ? nil : g.id
                 } label: {
                     VStack(spacing: 3) {
-                        Image(systemName: g.symbol).font(.system(size: 18))
-                        Text(LocalizedStringKey(g.label)).font(.system(size: 11))
+                        Image(systemName: g.symbol).font(.system(size: iconSize))
+                        Text(LocalizedStringKey(g.label)).font(.system(size: labelSize)).lineLimit(1).minimumScaleFactor(0.7)
                     }
                     .foregroundStyle(on ? Color.accentColor : Color.primary)
-                    .frame(width: 58, height: 52)
+                    .frame(width: 58)
+                    .frame(minHeight: 52)
                     .background {
                         if on { Capsule().fill(.thinMaterial) }
                     }

@@ -275,6 +275,7 @@ struct PhotoCell: View {
             .onLongPressGesture(minimumDuration: 0.5) { longPressed() }
             .accessibilityElement()
             .accessibilityLabel(photo.title ?? photo.fileName)
+            .accessibilityValue(Self.spoken(photo))
             .accessibilityAddTraits(.isButton)
             .accessibilityAddTraits(model.selectMode && chosen ? .isSelected : [])
     }
@@ -296,6 +297,16 @@ struct PhotoCell: View {
             model.perform("library.select", ["ids": [.int(Int64(clamping: photo.id))], "mode": "toggle"])
             model.buzz(.selection)
         }
+    }
+
+    /// What VoiceOver says after the photo's name: its stars, pick or reject, whether it is edited.
+    static func spoken(_ photo: PhotoSummary) -> String {
+        var parts: [String] = []
+        if let r = photo.rating, r > 0 { parts.append(String(localized: "\(r) stars")) }
+        if photo.isPick { parts.append(String(localized: "Picked")) }
+        if photo.isReject { parts.append(String(localized: "Rejected")) }
+        if photo.edited == true { parts.append(String(localized: "Edited")) }
+        return parts.joined(separator: ", ")
     }
 }
 
@@ -322,6 +333,7 @@ struct SelectionMark: View {
 struct CellBadges: View {
     @Environment(AppModel.self) private var model
     let photo: PhotoSummary
+    @ScaledMetric(relativeTo: .caption2) private var size: CGFloat = 9
 
     var body: some View {
         let rated = (photo.rating ?? 0) > 0 || photo.flag != "none" && photo.flag != nil || photo.label != nil
@@ -333,16 +345,16 @@ struct CellBadges: View {
         if show, model.prefs.gridColumns <= 5 {
             HStack(spacing: 3) {
                 if let r = photo.rating, r > 0 {
-                    Text(String(repeating: "★", count: r)).font(.system(size: 9))
+                    Text(String(repeating: "★", count: r)).font(.system(size: min(size, 14)))
                 }
                 if photo.isPick {
-                    Image(systemName: "flag.fill").font(.system(size: 9))
+                    Image(systemName: "flag.fill").font(.system(size: min(size, 14)))
                 } else if photo.isReject {
-                    Image(systemName: "flag.slash.fill").font(.system(size: 9))
+                    Image(systemName: "flag.slash.fill").font(.system(size: min(size, 14)))
                 }
                 Spacer(minLength: 0)
                 if photo.edited == true {
-                    Image(systemName: "slider.horizontal.3").font(.system(size: 9))
+                    Image(systemName: "slider.horizontal.3").font(.system(size: min(size, 14)))
                 }
                 if let label = photo.label {
                     Circle().fill(LabelColor.color(label)).frame(width: 8, height: 8)
