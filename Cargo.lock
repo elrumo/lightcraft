@@ -3341,8 +3341,10 @@ name = "lightcraft-apphost"
 version = "0.7.0"
 dependencies = [
  "lightcraft-catalog",
+ "lightcraft-codecs",
  "lightcraft-develop",
  "lightcraft-engine",
+ "lightcraft-enhance",
  "lightcraft-pipeline",
  "lightcraft-preview",
  "lightcraft-raster",

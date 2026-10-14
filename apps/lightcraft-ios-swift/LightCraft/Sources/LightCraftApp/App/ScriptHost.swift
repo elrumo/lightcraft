@@ -10,7 +10,7 @@ import UIKit
 /// - `ui.inspect`: the screen, the photo, the state and timings (`perf`).
 /// - `ui.set {screen?: grid | photo | edit | crop | masking | remove | presets | info | commands |
 ///   people | map, photo?, span?: all | months | years, group?: light | color…, sheet?: albums |
-///   filter | settings | export | sync | history | versions | keywords | about | none, select?,
+///   filter | settings | export | sync | history | versions | keywords | about | superRes | none, select?,
 ///   faceBoxes?, tagFace?, beforeAfter?}`: go there.
 @Observable
 final class ScriptHost {
@@ -111,6 +111,7 @@ final class ScriptHost {
                 case "versions": model.sheet = .history(versions: true)
                 case "keywords": model.sheet = .keywords
                 case "about": model.sheet = .about
+                case "superRes": model.sheet = .superRes
                 default: model.sheet = nil
                 }
             }

@@ -33,6 +33,7 @@ nonisolated enum Sheet: Identifiable, Hashable {
     case history(versions: Bool)
     case copySettings
     case pasteSettings([UInt64])
+    case superRes
 
     var id: String {
         switch self {
@@ -51,6 +52,7 @@ nonisolated enum Sheet: Identifiable, Hashable {
         case .history: "history"
         case .copySettings: "copySettings"
         case .pasteSettings: "pasteSettings"
+        case .superRes: "superRes"
         }
     }
 }
@@ -84,6 +86,8 @@ final class AppModel {
     var confirmDelete: [UInt64]?
     /// The import review's files (`import.scan`), while it is open.
     var importReview: ImportReviewData?
+    /// This build has AI Super Resolution (`enhance.model.status`).
+    private(set) var superResAvailable = false
     let prefs = Prefs()
     let images = ImageStore()
     let library = LibraryModel()
@@ -118,6 +122,7 @@ final class AppModel {
             state = (try? await engine.request("host.state").decode(HostState.self)) ?? state
             await library.reload(engine, count: state.visibleCount)
             await albums.reload(engine)
+            superResAvailable = (try? await engine.execute("enhance.model.status"))?["available"].bool == true
         } catch {
             startError = error.localizedDescription
         }

@@ -619,6 +619,9 @@ struct PhotoMoreMenu: View {
                 Button("Paste Edit Settings", systemImage: "doc.on.clipboard") { model.perform("develop.paste") }
                     .disabled(model.library.state?.clipboard != true)
                 Button("Reset All Edits", systemImage: "arrow.counterclockwise") { model.perform("develop.reset") }
+                if model.superResAvailable {
+                    Button("Super Resolution…", systemImage: "arrow.up.left.and.arrow.down.right") { model.sheet = .superRes }
+                }
             }
             Section {
                 Toggle("Faces", systemImage: "person.crop.square", isOn: Binding(get: { model.prefs.faceBoxes }, set: { model.prefs.faceBoxes = $0 }))

@@ -18,9 +18,9 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | Phase | ✅ | 🟡 | ⬜ | 🚫 | Done or out of scope |
 |---|---:|---:|---:|---:|---:|
 | S0 | 9 | 6 | 0 | 0 | 9/15 |
-| S1 | 92 | 15 | 60 | 0 | 92/167 |
+| S1 | 95 | 15 | 57 | 0 | 95/167 |
 | S2 | 1 | 0 | 79 | 22 | 23/102 |
-| **Total** | 102 | 21 | 139 | 22 | 124/284 |
+| **Total** | 105 | 21 | 136 | 22 | 127/284 |
 <!-- /ios-parity:summary -->
 
 ## Screens
@@ -209,8 +209,8 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | ui:merge.hdrLast | S2 | ⬜ |  |  |
 | ui:merge.panoramaLast | S2 | ⬜ |  |  |
 | ui:merge.hdrPanoramaLast | S2 | ⬜ |  |  |
-| ui:dialog.superRes | S1 | ⬜ |  |  |
-| ui:superRes.cancel | S1 | ⬜ |  |  |
+| ui:dialog.superRes | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/SuperResSheet.swift`, `crates/apphost/src/superres.rs` | the photo's "…" ▸ Super Resolution…: the model's size, credit and licence, Download (only when pressed), progress; then the size before and after and Enlarge, in the background (`apphost::superres`, shared with egui) |
+| ui:superRes.cancel | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/SuperResSheet.swift` | the Enlarging row's ✕ in the activity stack; Cancel Download while the model downloads |
 | ui:view.selectMode | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LibraryScreen.swift` | Select, or a long press |
 | ui:view.reviewMode | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | a tap on the photo |
 | ui:view.filterSheet | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/FilterSheet.swift` | the grid header's filter button |
@@ -311,7 +311,7 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | dialog:Merge | S2 | ⬜ |  |  |
 | dialog:Settings | S1 | 🟡 | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | no Faces section yet |
 | dialog:SamModel | S1 | ⬜ |  |  |
-| dialog:SuperRes | S1 | ⬜ |  |  |
+| dialog:SuperRes | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/SuperResSheet.swift` | as `ui:dialog.superRes` |
 | dialog:LightroomCatalog | S2 | ⬜ |  |  |
 | dialog:ConfirmDelete | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/App/RootView.swift` | an alert before Recently Deleted |
 | dialog:SyncChoice | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | add to the server's library, use it, or don't sync |

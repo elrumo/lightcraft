@@ -93,6 +93,7 @@ struct SheetContent: View {
         case .history(let versions): HistorySheet(versions: versions)
         case .copySettings: CopySettingsSheet(pasteOnto: nil)
         case .pasteSettings(let ids): CopySettingsSheet(pasteOnto: ids)
+        case .superRes: SuperResSheet()
         }
     }
 }

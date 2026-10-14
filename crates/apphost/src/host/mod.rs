@@ -258,6 +258,8 @@ struct Engine {
     faces_next: Instant,
     /// `app.export` running on its worker: answered when it ends.
     export: Option<PendingExport>,
+    /// `enhance.superRes` running on its worker: answered when it ends.
+    super_res: Option<PendingSuperRes>,
     /// `import.scan` running on its worker, and the candidates of the last one (`render.candidate`).
     scan: Option<PendingScan>,
     candidates: Vec<lightcraft_engine::import::ImportCandidate>,
@@ -305,6 +307,13 @@ struct PendingExport {
     id: u64,
     reply: Option<Sender<Event>>,
     batch: crate::export::Batch,
+}
+
+/// Super Resolution under way, answered when it ends.
+struct PendingSuperRes {
+    id: u64,
+    reply: Option<Sender<Event>>,
+    running: crate::superres::Running,
 }
 
 impl Engine {
@@ -358,6 +367,7 @@ impl Engine {
             last_request: Instant::now(),
             faces_next: Instant::now(),
             export: None,
+            super_res: None,
             scan: None,
             candidates: Vec::new(),
             import: None,
@@ -445,6 +455,14 @@ impl Engine {
         {
             let params = req.params.get("params").cloned().filter(|v| !v.is_null()).unwrap_or_else(|| json!({}));
             return lightcraft_engine::guard::catch("`app.export`", || self.start_export(id, call, &params))
+                .unwrap_or_else(|e| Some(Event::err(id, ErrorBody::new("panic", e))));
+        }
+        // Super Resolution likewise (Enlarging, with its ✕): answered with the new photo when it ends
+        if matches!(req.method.as_str(), "engine.execute" | "ui.menu.invoke" | "command")
+            && req.params.get("command").or(req.params.get("id")).and_then(Value::as_str) == Some("enhance.superRes")
+        {
+            let params = req.params.get("params").cloned().filter(|v| !v.is_null()).unwrap_or_else(|| json!({}));
+            return lightcraft_engine::guard::catch("`enhance.superRes`", || self.start_super_res(id, call, &params))
                 .unwrap_or_else(|e| Some(Event::err(id, ErrorBody::new("panic", e))));
         }
         let method = req.method.clone();
@@ -638,6 +656,7 @@ impl Engine {
         }
         self.pump_faces();
         self.poll_export();
+        self.poll_super_res();
         self.poll_scan();
         self.poll_import();
         self.session.persist_if_dirty();
@@ -816,6 +835,34 @@ impl Engine {
     }
 
     /// An export that has ended: its answer (the files; `cancelled` when ✕ stopped it).
+    /// Start enlarging `{id?}` (the active photo); `None` (answered when it ends) or the error now.
+    fn start_super_res(&mut self, id: u64, call: Option<&Sender<Event>>, p: &Value) -> Option<Event> {
+        if self.super_res.is_some() {
+            return Some(Event::err(id, ErrorBody::new("other", "Super Resolution is already running")));
+        }
+        let Some(photo) = p.get("id").and_then(Value::as_u64).map(PhotoId).or(self.session.active()) else {
+            return Some(Event::err(id, ErrorBody::new("badParams", "`enhance.superRes`: no photo")));
+        };
+        match crate::superres::Running::start(&mut self.session, photo, None) {
+            Ok(running) => {
+                self.super_res = Some(PendingSuperRes { id, reply: call.cloned(), running });
+                self.busy = true;
+                None
+            }
+            Err(e) => Some(Event::err(id, ErrorBody::new("other", e))),
+        }
+    }
+
+    fn poll_super_res(&mut self) {
+        let Some(outcome) = self.super_res.as_ref().and_then(|p| p.running.poll(&mut self.session)) else { return };
+        let Some(p) = self.super_res.take() else { return };
+        let event = match outcome {
+            Ok(v) => Event::ok(p.id, v),
+            Err(e) => Event::err(p.id, ErrorBody::new(if e.contains("cancelled") { "cancelled" } else { "other" }, e)),
+        };
+        Self::reply(&self.events, p.reply, event);
+    }
+
     fn poll_export(&mut self) {
         let Some(outcome) = self.export.as_ref().and_then(|p| p.batch.poll()) else { return };
         let Some(p) = self.export.take() else { return };

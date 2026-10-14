@@ -90,7 +90,7 @@ host's: `badRequest`, `unknownMethod`, `panic`, `closed`, `timeout`).
 
 | Method | Params | Does |
 |---|---|---|
-| `engine.execute` | `{command, params}` | any engine command, and `app.export` (Export Now: on a worker with an activity row, ✕ stops it; answered when it ends, `cancelled` when stopped) |
+| `engine.execute` | `{command, params}` | any engine command, and `app.export` (Export Now: on a worker with an activity row, ✕ stops it; answered when it ends, `cancelled` when stopped); `enhance.superRes` runs the same way (Enlarging; answered with the new photo, or error `cancelled`) |
 | `import.scan` | `{paths}` | the files and folders for the import review, scanned on a worker (answered when done: `{candidates}`, each with `inTrash`) |
 | `import.start` | `{paths \| indexes, …library.import params, albumName?}` | imports in the background in batches (one undo step; answered when done with what it added) |
 | `engine.commands` | | every command with whether it can run now and why not |
