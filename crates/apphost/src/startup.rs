@@ -77,7 +77,11 @@ pub fn open_session_or_err(dir: Option<&Path>) -> Result<Session, String> {
 pub fn configure_desktop(session: &mut Session) {
     session.enhancer.dir = lightcraft_engine::config::config_dir().map(|d| d.join("models"));
     session.face_models_dir = lightcraft_engine::config::default_face_models_dir();
-    session.apple_photos_background = true;
+    // (the web build has no Apple Photos)
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        session.apple_photos_background = true;
+    }
 }
 
 /// AI Super Resolution on a phone: the model (a few MB, downloaded when the user agrees) goes in
