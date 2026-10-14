@@ -111,11 +111,12 @@ pub struct Library {
     /// The library had moved since it was last opened: where from, and how many of its photos
     /// were pointed at their new place (see the module docs).
     pub relocated: Option<Relocated>,
-    presets_written: String,
     /// Bumped whenever presets.json is written (the sync compares the presets then).
     presets_gen: u64,
     /// The same for prefs.json (the sync compares the shared documents then).
     prefs_gen: u64,
+    /// What presets.json holds (see [`PresetsSaved`]).
+    presets_saved: PresetsSaved,
     view_written: Vec<u8>,
     /// Settings files that were unreadable or damaged when the library opened (`library.info` →
     /// `settingsWarnings`; shown by the UI once, see [`Session::take_library_warnings`]).
@@ -167,6 +168,53 @@ struct PresetsFile {
     /// Favourite profiles, and the recently applied ones (newest first).
     profile_favorites: Vec<String>,
     profile_recent: Vec<String>,
+}
+
+/// The state presets.json was last written (or read) from. Saving checks the preset list's
+/// generation and the small profile lists before serializing anything: with a 10 000-preset
+/// collection presets.json is ~40 MB, and serializing it after every command made each slider
+/// tick take seconds.
+#[derive(Default)]
+struct PresetsSaved {
+    generation: u64,
+    profile_favorites: Vec<String>,
+    profile_recent: Vec<String>,
+    /// Hash of the bytes written: a list borrowed mutably but left as it was isn't rewritten.
+    hash: u64,
+}
+
+impl PresetsSaved {
+    fn state_of(s: &Session) -> PresetsSaved {
+        PresetsSaved {
+            generation: s.presets.generation(),
+            profile_favorites: s.profile_favorites.clone(),
+            profile_recent: s.profile_recent.clone(),
+            hash: 0,
+        }
+    }
+
+    /// `s` changed its presets or profile lists since this state.
+    fn differs(&self, s: &Session) -> bool {
+        self.generation != s.presets.generation() || self.profile_favorites != s.profile_favorites || self.profile_recent != s.profile_recent
+    }
+}
+
+fn bytes_hash(b: &[u8]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    b.hash(&mut h);
+    h.finish()
+}
+
+#[cfg(test)]
+thread_local! {
+    static PRESETS_SERIALIZED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// How many times this thread serialized the preset list (tests).
+#[cfg(test)]
+pub(crate) fn presets_serialized() -> usize {
+    PRESETS_SERIALIZED.with(|c| c.get())
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -258,6 +306,8 @@ struct PrefsFile {
 }
 
 fn presets_json(s: &Session) -> String {
+    #[cfg(test)]
+    PRESETS_SERIALIZED.with(|c| c.set(c.get() + 1));
     let presets = &s.presets;
     let f = PresetsFile {
         user: presets.iter().filter(|p| !p.builtin).cloned().collect(),
@@ -498,8 +548,9 @@ impl Session {
             for p in &mut self.presets {
                 p.favorite = p.builtin && f.favorites.contains(&p.id) || (!p.builtin && p.favorite);
             }
+            let mut ids: std::collections::HashSet<String> = self.presets.iter().map(|p| p.id.clone()).collect();
             for u in f.user {
-                if !self.presets.iter().any(|p| p.id == u.id) {
+                if ids.insert(u.id.clone()) {
                     self.presets.push(u);
                 }
             }
@@ -531,7 +582,8 @@ impl Session {
         {
             self.selection = Selection::single(*first);
         }
-        let presets_written = presets_json(self);
+        // presets.json is as read: saved again only after the list changes (hash 0 = unknown bytes)
+        let presets_saved = PresetsSaved::state_of(self);
         // photo ids are per library: drop decoded sources of the previous one
         self.media.clear_sources();
         if on_disk {
@@ -549,9 +601,9 @@ impl Session {
             retry_at: None,
             forgot_local: None,
             relocated: None,
-            presets_written,
             presets_gen: 0,
             prefs_gen: 0,
+            presets_saved,
             view_written,
             settings_warnings: unlocked_warning(lock.as_ref()).into_iter().chain(settings.warnings).collect(),
             warnings_reported: 0,
@@ -710,15 +762,22 @@ impl Session {
                 log::error!("library: {}: {e}", crate::cloud_sync::CONFIG);
             }
         }
+        let due = self.library.as_ref().is_some_and(|l| l.presets_saved.differs(self) && !l.blocked.contains(&"presets.json"));
+        if !due {
+            return Ok(());
+        }
         let presets = presets_json(self);
+        let mut state = PresetsSaved::state_of(self);
+        state.hash = bytes_hash(presets.as_bytes());
         let Some(lib) = self.library.as_mut() else { return Ok(()) };
-        if presets != lib.presets_written && !lib.blocked.contains(&"presets.json") {
-            if let Err(e) = lib.files.write_atomic("presets.json", presets.as_bytes()) {
-                log::error!("library: presets: {e}");
-            } else {
-                lib.presets_written = presets;
-                lib.presets_gen += 1;
-            }
+        if state.hash == lib.presets_saved.hash {
+            lib.presets_saved = state;
+        } else if let Err(e) = lib.files.write_atomic("presets.json", presets.as_bytes()) {
+            // the state stays stale: the next save tries again
+            log::error!("library: presets: {e}");
+        } else {
+            lib.presets_saved = state;
+            lib.presets_gen += 1;
         }
         Ok(())
     }

@@ -67,6 +67,9 @@ pub enum Slot {
     Camera(u64),
     /// The second window's view of the active photo.
     Second,
+    /// A slider drag's live HDR histogram: a small full-quality render of an HDR edit, beside the
+    /// drafts (which have no HDR histogram), with no picture ([`Scheduler::live_hdr_histogram`]).
+    HdrHistogram,
 }
 
 /// What a slot shows: the render's facts, and `view`, the frontend's form of its pixels (an egui
@@ -325,6 +328,8 @@ pub struct Scheduler<V> {
     pending: HashMap<Slot, (u64, u32)>,
     /// What each slot shows.
     pub textures: HashMap<Slot, Shown<V>>,
+    /// The last [`Slot::HdrHistogram`] result: (photo, job key, histogram).
+    pub live_hdr_histogram: Option<(PhotoId, u64, Histogram)>,
     pub last_main_ms: f64,
     /// How big the loupe's drafts may be on this host (see [`DraftBudget`]).
     draft: DraftBudget,
@@ -341,9 +346,10 @@ pub struct Scheduler<V> {
     stages: HashMap<Slot, Arc<StageCache>>,
     /// Slot → key of the last quick job requested for it (each is tried once).
     quick_tried: HashMap<Slot, u64>,
-    /// Jobs that failed (unreadable or missing file…), by slot and job key, with the error: not
-    /// requested again until the key changes (an edit, another size) — the grid asks every frame.
-    failed: HashMap<Slot, (u64, String, u64)>,
+    /// Jobs that failed (unreadable or missing file…), by slot and job key, with the error and
+    /// the photo: not requested again until the key changes (an edit, another size) — the grid
+    /// asks every frame.
+    failed: HashMap<Slot, (u64, String, u64, PhotoId)>,
     /// The catalog revision seen at the last poll: a failure is retried once the catalog changes
     /// (a relinked or re-imported file).
     catalog_rev: u64,
@@ -389,6 +395,7 @@ impl Slot {
             Slot::Import(i) => format!("import:{i}"),
             Slot::Camera(k) => format!("camera:{k}"),
             Slot::Second => "second".into(),
+            Slot::HdrHistogram => "hdrHistogram".into(),
         }
     }
 
@@ -413,6 +420,7 @@ impl Slot {
             "import" => Slot::Import(n.parse().ok()?),
             "camera" => Slot::Camera(num()?),
             "second" => Slot::Second,
+            "hdrHistogram" => Slot::HdrHistogram,
             _ => return None,
         })
     }
@@ -420,7 +428,7 @@ impl Slot {
     /// An interactive view of the open photo: slider drags redo only the stages they feed, and a
     /// draft that finishes late still replaces older pixels.
     pub fn is_view(self) -> bool {
-        matches!(self, Slot::Main | Slot::Region | Slot::RegionBefore | Slot::Before | Slot::Hover)
+        matches!(self, Slot::Main | Slot::Region | Slot::RegionBefore | Slot::Before | Slot::Hover | Slot::HdrHistogram)
     }
 }
 
@@ -449,6 +457,7 @@ impl<V> Scheduler<V> {
             seq: 0,
             pending: HashMap::new(),
             textures: HashMap::new(),
+            live_hdr_histogram: None,
             last_main_ms: 0.0,
             draft: DraftBudget::default(),
             draft_ids: Vec::new(),
@@ -826,6 +835,18 @@ impl<V> Scheduler<V> {
         self.failed.get(&slot).map(|f| f.1.as_str())
     }
 
+    /// Why the last render of `photo` for `slot` failed: a view slot shows one photo after
+    /// another, and another photo's error isn't this one's.
+    pub fn failure_of(&self, slot: Slot, photo: PhotoId) -> Option<&str> {
+        self.failed.get(&slot).filter(|f| f.3 == photo).map(|f| f.1.as_str())
+    }
+
+    /// Whether `slot`'s pending render asks again for the key that last failed (a library change
+    /// retries failures): what is on screen stays what the failure left until it answers.
+    pub fn retrying(&self, slot: Slot) -> bool {
+        self.pending.get(&slot).zip(self.failed.get(&slot)).is_some_and(|(p, f)| p.0 == f.0)
+    }
+
     /// The slots with a render pending (diagnostics: `ui.inspect`).
     pub fn pending_slots(&self) -> Vec<String> {
         self.pending.keys().map(|s| format!("{s:?}")).collect()
@@ -954,6 +975,39 @@ impl<V> Scheduler<V> {
         };
         #[cfg(not(target_arch = "wasm32"))]
         let inline_ms = 0.0;
+        let mut polled = self.collect(session, present, inline_ms);
+        self.evict_variants();
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            polled.wake_after = self.trim_when_idle();
+        }
+        if !self.pending.is_empty() {
+            polled.wake_after = Some(Duration::from_millis(16));
+        }
+        polled
+    }
+
+    /// In a slider drag, give the loupe's draft (just requested) until `budget` to finish, so that it
+    /// is drawn in this frame rather than picked up at the start of the next one. Only when the last
+    /// loupe render took well under the budget (a GPU draft takes a few milliseconds; a CPU render
+    /// that would only make the frame late is not waited for).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn wait_for_draft(&mut self, session: &mut Session, present: &mut dyn Present<V>, budget: Duration) {
+        if self.offload.is_some() || self.last_main_ms * 1.5 >= budget.as_secs_f64() * 1e3 {
+            return;
+        }
+        let Some(deadline) = std::time::Instant::now().checked_add(budget) else { return };
+        while self.is_pending(Slot::Main) {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            if left.is_zero() || !self.pool.wait(left) {
+                break;
+            }
+            self.collect(session, present, 0.0);
+        }
+    }
+
+    /// Turn finished jobs into what the slots show.
+    fn collect(&mut self, session: &mut Session, present: &mut dyn Present<V>, inline_ms: f64) -> Polled {
         let mut finished = Vec::new();
         while let Some(done) = self.pool.try_recv() {
             finished.push((done.slot, done.result, if done.ms > 0.0 { done.ms } else { inline_ms }));
@@ -1006,12 +1060,19 @@ impl<V> Scheduler<V> {
                     if !matches!(slot, Slot::Prefetch(_)) {
                         log::warn!("render {slot:?}: {e}");
                         polled.failed.push((slot, r.photo, r.key, e.clone()));
-                        self.failed.insert(slot, (r.key, e, self.catalog_rev));
+                        self.failed.insert(slot, (r.key, e, self.catalog_rev, r.photo));
                     }
                     continue;
                 }
             };
             if matches!(slot, Slot::Prefetch(_)) && !self.keep_neighbours {
+                continue;
+            }
+            if slot == Slot::HdrHistogram {
+                if rendered.histogram.hdr.is_some() {
+                    self.live_hdr_histogram = Some((r.photo, r.key, rendered.histogram));
+                    polled.shown.push(slot);
+                }
                 continue;
             }
             if let Slot::ThumbQuick(id) = slot {
@@ -1065,23 +1126,17 @@ impl<V> Scheduler<V> {
             }
             polled.shown.push(slot);
         }
-        self.evict_variants();
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            polled.wake_after = self.trim_when_idle();
-        }
-        if !self.pending.is_empty() {
-            polled.wake_after = Some(Duration::from_millis(16));
-        }
         polled
     }
 
     /// Free the GPU renderer's recycled buffers once nothing has rendered for [`IDLE_TRIM`] (they
-    /// are reallocated by the next render; while working, renders reuse them). Returns how long
-    /// until the trim is due, while it is still to come.
+    /// are reallocated by the next render; while working, renders reuse them). A zoomed view
+    /// showing its windows is not idle: the device copy of the original they are cut from stays for
+    /// the next pan (a 64 MP raw is 800 MB to upload again, over a second). Returns how long until
+    /// the trim is due, while it is still to come.
     #[cfg(not(target_arch = "wasm32"))]
     fn trim_when_idle(&mut self) -> Option<Duration> {
-        if !self.pending.is_empty() {
+        if !self.pending.is_empty() || self.textures.contains_key(&Slot::Region) || self.textures.contains_key(&Slot::RegionBefore) {
             self.idle = None;
             return None;
         }
@@ -1298,8 +1353,10 @@ mod thumbnail_tests {
         r.remember_thumb(&p, 384, 77, false);
         r.pending.insert(Slot::ThumbQuick(p.id), (77, 11));
         assert!(!r.thumb_current(&p, 384, 10));
-        r.failed.insert(slot, (77, "no decoder".into(), 0));
+        r.failed.insert(slot, (77, "no decoder".into(), 0, p.id));
         assert!(r.thumb_current(&p, 384, 10));
+        assert_eq!(r.failure_of(slot, p.id), Some("no decoder"));
+        assert_eq!(r.failure_of(slot, PhotoId(p.id.0 + 1)), None, "another photo's error");
         r.catalog_rev = 1;
         assert!(!r.thumb_current(&p, 384, 10));
     }
@@ -1310,6 +1367,24 @@ mod stage_budget_tests {
     use super::*;
 
     const MB: usize = 1 << 20;
+
+    // Given a zoomed view showing a window, the app idling does not free the GPU copy of the
+    // original the next window is cut from; once the windows are gone the idle trim runs again
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn a_zoomed_view_is_not_trimmed_while_idle() {
+        let mut r = Scheduler::<()>::default();
+        let shown = Shown { key: 1, photo: PhotoId(1), size: [1, 1], histogram: None, ms: 0.0, quick: None, request_id: 0, draft: false, view: () };
+        r.textures.insert(Slot::Region, shown);
+        let long_ago = std::time::Instant::now().checked_sub(IDLE_TRIM * 2).unwrap();
+        r.idle = Some((long_ago, false));
+        r.trim_when_idle();
+        assert_eq!(r.idle, None, "a zoomed view is not idle");
+        r.release(Slot::Region);
+        r.idle = Some((long_ago, false));
+        r.trim_when_idle();
+        assert_eq!(r.idle, Some((long_ago, true)), "trimmed once the window is gone");
+    }
 
     // Given stage caches within the budget, nothing is cleared
     #[test]

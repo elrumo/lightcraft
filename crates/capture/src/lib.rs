@@ -57,6 +57,8 @@ pub struct Item {
     /// When it was taken: local time, ISO 8601 (`2026-10-03T14:22:05`), from its EXIF date or,
     /// without one, the file's.
     pub captured: Option<String>,
+    /// `captured` is the EXIF date (not the file's).
+    pub exif_dated: bool,
     pub raw: bool,
     /// Pixels, 0 when the device doesn't say.
     pub width: u32,

@@ -273,6 +273,8 @@ pub struct CameraFile {
     /// When it was taken, as the library keeps capture times: local time, ISO 8601
     /// (`2026-10-03T14:22:05`).
     pub captured: Option<String>,
+    /// `captured` is the date in the file's metadata (EXIF), not the device's date for the file.
+    pub exif_dated: bool,
     /// A raw file (the device says so, or its extension does).
     pub raw: bool,
     /// Pixels, when the device knows (0 otherwise).
@@ -326,7 +328,8 @@ fn name_keys(name: &str) -> Vec<String> {
 /// The library's photos keyed to spot a camera file it already has without reading the file
 /// (which may be on a camera at USB 2 speed): the same size and the same name (a copy renamed
 /// `IMG_0042-1.CR3` because the name was taken counts as `IMG_0042.CR3`), and the same capture time
-/// to the second when both sides know it. Photos in Recently Deleted don't count: importing the
+/// to the second when both sides know it (the camera's from the file's EXIF date). Photos in
+/// Recently Deleted don't count: importing the
 /// file again brings them back (the import's `onDeleted`). A miss costs little: the import still
 /// recognises a file whose bytes the library has, and skips it.
 #[derive(Debug, Default)]
@@ -350,7 +353,9 @@ impl LibraryIndex {
 
     /// The library photo `file` is, if it has it.
     pub fn find(&self, file: &CameraFile) -> Option<PhotoId> {
-        let when = capture_second(file.captured.as_deref());
+        // Only a date from the file's metadata is the one the library keeps: without one, import
+        // dates the photo by its copy's file date, which is when it was copied.
+        let when = capture_second(file.captured.as_deref().filter(|_| file.exif_dated));
         let key = (file.name.trim().to_lowercase(), file.size);
         self.by_key.get(&key)?.iter().find(|(_, t)| t.is_none() || when.is_none() || *t == when).map(|(id, _)| *id)
     }
@@ -424,7 +429,14 @@ mod tests {
     }
 
     fn file(name: &str, size: u64, captured: Option<&str>) -> CameraFile {
-        CameraFile { id: name.into(), name: name.into(), size, captured: captured.map(str::to_string), ..Default::default() }
+        CameraFile {
+            id: name.into(),
+            name: name.into(),
+            size,
+            captured: captured.map(str::to_string),
+            exif_dated: captured.is_some(),
+            ..Default::default()
+        }
     }
 
     /// Camera files the library has are found by name and size (a copy renamed `-1` counts), the
@@ -449,6 +461,9 @@ mod tests {
         assert_eq!(ix.find(&file("img_0001.cr3", 30_000_000, None)), Some(PhotoId(1)), "case and an unknown time");
         assert_eq!(ix.find(&file("IMG_0001.CR3", 30_000_001, None)), None, "another size");
         assert_eq!(ix.find(&file("IMG_0001.CR3", 30_000_000, Some("2026-10-03T14:22:06"))), None, "another second");
+        // a file without an EXIF date: the camera gives its file date, the library the copy's
+        let undated = CameraFile { exif_dated: false, ..file("IMG_0001.CR3", 30_000_000, Some("2026-10-01T08:00:00")) };
+        assert_eq!(ix.find(&undated), Some(PhotoId(1)), "a file date is not compared");
         assert_eq!(ix.find(&file("IMG_0002.CR3", 31_000_000, Some("2026-10-03T14:22:07"))), Some(PhotoId(2)), "imported as -1");
         assert_eq!(ix.find(&file("DSC-7.JPG", 4_000_000, Some("2025-01-01T00:00:00"))), Some(PhotoId(3)), "a name with a dash");
         assert_eq!(ix.find(&file("IMG_0004.CR3", 32_000_000, None)), None, "in Recently Deleted");

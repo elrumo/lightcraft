@@ -8,7 +8,7 @@
 //! catalog between frames, with a row and ✕ in the activity stack (issue #345); the whole import is
 //! one undo step.
 
-use egui::{Align2, Color32, Rect, Sense, Stroke, StrokeKind, pos2, vec2};
+use egui::{Align2, Color32, Rect, Sense, Stroke, StrokeKind, Vec2, pos2, vec2};
 use lightcraft_engine::import::{
     ImportCandidate, ImportUprightMode, ImportWarning, ImportWarningCode, ScanInput, ScanOutput, ScanProgress, scan_with,
 };
@@ -169,14 +169,21 @@ impl ImportDialog {
             if !self.is_trashed(i) {
                 continue;
             }
-            let on = self.importable(i);
+            let on = self.checked_by_default(i);
             if let Some(c) = self.checked.get_mut(i) {
                 *c = on;
             }
         }
     }
+    /// Candidate `i` can be checked: a readable file the library doesn't have, or one whose photo
+    /// is in Recently Deleted — even with "Leave them", a click picks it (issue #1285).
     pub fn importable(&self, i: usize) -> bool {
-        self.candidates.get(i).is_some_and(|c| c.error.is_none() && (c.duplicate.is_none() || self.is_trashed(i) && !self.on_deleted.is_empty()))
+        self.candidates.get(i).is_some_and(|c| c.error.is_none() && (c.duplicate.is_none() || self.is_trashed(i)))
+    }
+    /// Candidate `i` is checked by Check All and the file type toggles: with "Leave them", a file in
+    /// Recently Deleted is only checked by hand.
+    pub fn checked_by_default(&self, i: usize) -> bool {
+        self.importable(i) && !(self.is_trashed(i) && self.on_deleted.is_empty())
     }
     /// The file types among the candidates (`ARW`, `JPG`…, upper case, sorted) and how many of each.
     pub fn file_types(&self) -> Vec<(String, usize)> {
@@ -195,7 +202,7 @@ impl ImportDialog {
     pub fn check_type(&mut self, ty: &str, on: bool) {
         for i in 0..self.candidates.len() {
             let same = self.candidates.get(i).is_some_and(|c| file_type(c) == ty);
-            let importable = self.importable(i);
+            let importable = self.checked_by_default(i);
             if same && let Some(c) = self.checked.get_mut(i) {
                 *c = on && importable;
             }
@@ -213,11 +220,20 @@ impl ImportDialog {
         }
         out
     }
-    /// Whether the importable candidates in `range` are checked: all (`Some(true)`), none
-    /// (`Some(false)`) or some (`None`). None importable: `Some(false)`.
+    /// Candidate `i` counts for a day's (or the device's) box: one Check All would check, or one
+    /// checked by hand (a file in Recently Deleted with "Leave them").
+    fn in_box(&self, i: usize) -> bool {
+        self.checked_by_default(i) || self.importable(i) && self.checked.get(i).copied().unwrap_or(false)
+    }
+    /// Whether a box over `range` can be clicked: it has a candidate to check or uncheck.
+    pub fn range_enabled(&self, range: std::ops::Range<usize>) -> bool {
+        range.into_iter().any(|i| self.in_box(i))
+    }
+    /// Whether the candidates in `range` that count for its box are checked: all (`Some(true)`),
+    /// none (`Some(false)`) or some (`None`). None count: `Some(false)`.
     pub fn range_checked(&self, range: std::ops::Range<usize>) -> Option<bool> {
         let (mut on, mut off) = (false, false);
-        for i in range.filter(|i| self.importable(*i)) {
+        for i in range.filter(|i| self.in_box(*i)) {
             if self.checked.get(i).copied().unwrap_or(false) {
                 on = true;
             } else {
@@ -230,12 +246,12 @@ impl ImportDialog {
             _ => Some(false),
         }
     }
-    /// A day's (or the whole device's) box: checks every importable candidate in `range`, or
-    /// unchecks them when all are checked.
+    /// A day's (or the whole device's) box: checks the candidates in `range` as Check All does, or
+    /// unchecks them all when they are all checked.
     pub fn toggle_range(&mut self, range: std::ops::Range<usize>) {
         let on = self.range_checked(range.clone()) != Some(true);
         for i in range {
-            let importable = self.importable(i);
+            let importable = self.checked_by_default(i);
             if let Some(c) = self.checked.get_mut(i) {
                 *c = on && importable;
             }
@@ -551,6 +567,8 @@ pub struct ScanTask {
     pub device: String,
     /// The host's temporary copies ([`ImportDialog::staged`]).
     staged: bool,
+    /// Open the review with this album chosen (an album's context menu ▸ Import…).
+    pub album: Option<u64>,
     /// Browsing a folder (Local): the photos are read in place instead of opening the review.
     browse: bool,
     /// What is being scanned (the review's source).
@@ -602,7 +620,7 @@ fn scan(app: &mut LightcraftApp, paths: Vec<String>, staged: bool) -> Result<Val
     #[cfg(target_arch = "wasm32")]
     job();
     let guard = scan_guard(app, &progress, false);
-    app.scan = Some(ScanTask { progress, rx, copy: staged, device: String::new(), staged, browse: false, sources, guard });
+    app.scan = Some(ScanTask { progress, rx, copy: staged, device: String::new(), staged, album: None, browse: false, sources, guard });
     Ok(json!({"scanning": true}))
 }
 
@@ -665,7 +683,8 @@ pub fn browse(app: &mut LightcraftApp, path: &str, subfolders: Option<bool>) -> 
     #[cfg(target_arch = "wasm32")]
     job();
     let guard = scan_guard(app, &progress, true);
-    app.scan = Some(ScanTask { progress, rx, copy: false, device: String::new(), staged: false, browse: true, sources: Vec::new(), guard });
+    app.scan =
+        Some(ScanTask { progress, rx, copy: false, device: String::new(), staged: false, album: None, browse: true, sources: Vec::new(), guard });
     app.renderer.forget_imports();
     Ok(json!({"path": dir_s, "subfolders": subfolders, "scanning": true}))
 }
@@ -731,6 +750,8 @@ pub fn poll_scan(app: &mut LightcraftApp, ctx: &egui::Context) {
     d.copy = task.copy;
     d.staged = task.staged;
     d.move_files = task.staged;
+    // only an album the review offers (it may have been deleted while the scan ran)
+    d.album = task.album.filter(|id| app.session.catalog.album(lightcraft_catalog::AlbumId(*id)).is_some_and(|a| !a.folder && !a.is_smart()));
     d.sources = task.sources;
     d.device = task.device;
     app.ui.dialog = Some(crate::state::Dialog::Import { opts: Box::new(d) });
@@ -1244,7 +1265,7 @@ fn day_row(ui: &mut egui::Ui, d: &mut ImportDialog, g: &DayGroup, rect: Rect, ph
     let resp = ui.interact(rect, egui::Id::new(("import-day", &key)), Sense::click());
     register(ui.ctx(), format!("importDay:{}", if key.is_empty() { "none" } else { key.as_str() }), rect);
     let state = d.range_checked(g.range.clone());
-    let enabled = g.range.clone().any(|i| d.importable(i));
+    let enabled = d.range_enabled(g.range.clone());
     let size = if phone { 24.0 } else { 16.0 };
     // (in line with the device's box and name above)
     let b = Rect::from_center_size(pos2(rect.left() + 2.0 + size / 2.0, rect.center().y), vec2(size, size));
@@ -1285,7 +1306,7 @@ fn device_row(ui: &mut egui::Ui, d: &mut ImportDialog, phone: bool) {
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), h), Sense::click());
     register(ui.ctx(), "importDevice", rect);
     let state = d.range_checked(0..n);
-    let enabled = (0..n).any(|i| d.importable(i));
+    let enabled = d.range_enabled(0..n);
     let bs = if phone { 24.0 } else { 16.0 };
     let b = Rect::from_center_size(pos2(rect.left() + 2.0 + bs / 2.0, rect.center().y), vec2(bs, bs));
     let p = ui.painter();
@@ -1346,8 +1367,10 @@ fn cell_texture(
 /// The tag a candidate carries: in the library already, a duplicate, unreadable.
 fn candidate_tag(app: &LightcraftApp, d: &ImportDialog, i: usize, c: &ImportCandidate) -> Option<&'static str> {
     let in_trash = c.existing.is_some_and(|id| app.session.catalog.photo(lightcraft_catalog::PhotoId(id)).is_some_and(|p| p.deleted));
+    let on = d.checked.get(i).copied().unwrap_or(false) && d.importable(i);
     match (&c.duplicate, &c.error) {
-        (Some(_), _) if in_trash && d.importable(i) => Some(if d.on_deleted == "restore" { "Will be restored" } else { "Will be replaced" }),
+        // checked with "Leave them", the file goes without `onDeleted`: the engine restores it
+        (Some(_), _) if in_trash && on => Some(if d.on_deleted == "fresh" { "Will be replaced" } else { "Will be restored" }),
         (Some(_), _) if in_trash => Some("In Recently Deleted"),
         (Some(r), _) if r == "path" || r == "library" => Some("In library"),
         (Some(_), _) => Some("Duplicate"),
@@ -1364,19 +1387,31 @@ fn raw_tag(p: &egui::Painter, corner: egui::Pos2, t: &Tokens) {
     p.galley(r.min + vec2(4.0, 2.0), g, Color32::BLACK);
 }
 
+/// Skipped candidates: (already in the library, identical copies within the source, in Recently
+/// Deleted). Files of photos in Recently Deleted are not "already in the library", and a file with
+/// the same bytes as one earlier in the list (no library photo) is a copy in the source.
+fn dup_counts(d: &ImportDialog) -> (usize, usize, usize) {
+    let trashed = d.trashed.iter().filter(|t| **t).count();
+    let in_source = d.candidates.iter().filter(|c| c.duplicate.as_deref() == Some("content") && c.existing.is_none()).count();
+    let dups = d.candidates.iter().filter(|c| c.duplicate.is_some()).count().saturating_sub(trashed).saturating_sub(in_source);
+    (dups, in_source, trashed)
+}
+
 /// The dialog body: options, then the candidate grid.
 pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDialog) {
     crate::camera_import::refresh(app, d);
     let t = Tokens::get(ui.ctx());
     let n = d.candidates.len();
-    let trashed = d.trashed.iter().filter(|t| **t).count();
-    // files of photos in Recently Deleted are not "already in the library": they are counted apart
-    let dups = d.candidates.iter().filter(|c| c.duplicate.is_some()).count().saturating_sub(trashed);
+    let (dups, in_source, trashed) = dup_counts(d);
     let sel = d.selected_paths().len();
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new(crate::i18n::tr_format!("{n} found · {sel} selected", n = n, sel = sel)).color(t.text));
         if dups > 0 {
             ui.label(egui::RichText::new(crate::i18n::tr_format!("· {dups} already in the library", dups = dups)).color(t.text_dim));
+        }
+        if in_source > 0 {
+            ui.label(egui::RichText::new(crate::i18n::tr_format!("· {in_source} identical copies", in_source = in_source)).color(t.text_dim))
+                .on_hover_text(crate::i18n::tr("Files with the same content as another file in this import: only the first is imported."));
         }
         if trashed > 0 {
             ui.label(egui::RichText::new(crate::i18n::tr_format!("· {trashed} in Recently Deleted", trashed = trashed)).color(t.text_dim));
@@ -1387,7 +1422,7 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDialog) {
             }
             if crate::widgets::text_button(ui, "importAll", crate::i18n::tr("Check All"), false).clicked() {
                 for i in 0..n {
-                    d.checked[i] = d.importable(i);
+                    d.checked[i] = d.checked_by_default(i);
                 }
             }
         });
@@ -1790,16 +1825,9 @@ fn options(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDialog) {
             if ui.selectable_label(d.preset.is_empty(), crate::i18n::tr("None")).clicked() {
                 d.preset.clear();
             }
-            for p in &app.session.presets {
-                if ui
-                    .selectable_label(
-                        d.preset == p.id,
-                        format!("{} — {}", crate::i18n::builtin_label(&p.group, p.builtin), crate::i18n::builtin_label(&p.name, p.builtin)),
-                    )
-                    .clicked()
-                {
-                    d.preset = p.id.clone();
-                }
+            let selected = (!d.preset.is_empty()).then_some(d.preset.as_str());
+            if let Some(pid) = crate::panels::presets::picker_rows(ui, "import-preset", &app.session.presets, selected) {
+                d.preset = pid;
             }
         });
     });
@@ -1903,7 +1931,7 @@ fn candidate_cell(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDial
     }
     if let Some(b) = candidate_tag(app, d, i, &c) {
         let g = p.layout_no_wrap(crate::i18n::tr(b).to_string(), t.semibold(10.0), Color32::WHITE);
-        let br = Rect::from_min_size(pos2(img.right() - g.size().x - 12.0, img.top() + 6.0), g.size() + vec2(8.0, 4.0));
+        let br = badge_rect(img, cb, g.size());
         p.rect_filled(br, 3.0, Color32::from_rgba_unmultiplied(170, 60, 50, 220));
         p.galley(br.min + vec2(4.0, 2.0), g, Color32::WHITE);
     }
@@ -1923,6 +1951,15 @@ fn candidate_cell(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDial
         let shift = ui.input(|input| input.modifiers.shift);
         d.click(i, shift);
     }
+}
+
+/// Where a cell's badge goes: top right, or under the checkbox when the text is too wide to sit
+/// beside it — drawn over the checkbox it hid it (issue #1285).
+fn badge_rect(img: Rect, cb: Rect, text: Vec2) -> Rect {
+    let size = text + vec2(8.0, 4.0);
+    let left = img.right() - size.x - 4.0;
+    let top = if left < cb.right() + 4.0 { cb.bottom() + 4.0 } else { img.top() + 6.0 };
+    Rect::from_min_size(pos2(left, top), size)
 }
 
 /// Reserve the actual translated tag button width beside a template field.
@@ -2182,6 +2219,29 @@ mod tests {
         assert!(is_raw(&ImportCandidate { path: "/card/x.CR3".into(), ..Default::default() }) && !is_raw(&d.candidates[0]));
     }
 
+    /// A day's box checks as Check All does: with "Leave them", a file in Recently Deleted stays out
+    /// unless it was clicked, and the box still reads as all checked (issue #1285).
+    #[test]
+    fn a_days_box_leaves_out_recently_deleted_files_as_check_all_does() {
+        let mut d = ImportDialog::new(vec![dated("a.jpg", Some("2026-08-03T09:00:00")), dated("b.jpg", Some("2026-08-03T09:05:00"))]);
+        d.candidates[1].duplicate = Some("content".into());
+        d.set_trashed(vec![false, true]);
+        d.set_on_deleted("");
+        assert_eq!(d.checked, [true, false]);
+        assert_eq!(d.range_checked(0..2), Some(true), "the left-out file doesn't count");
+        d.toggle_range(0..2);
+        assert_eq!(d.checked, [false, false]);
+        d.toggle_range(0..2);
+        assert_eq!(d.checked, [true, false], "the box doesn't pick it");
+        d.click(1, false);
+        assert_eq!(d.range_checked(0..2), Some(true), "picked by hand, it counts");
+        d.toggle_range(0..2);
+        assert_eq!(d.checked, [false, false], "and the box unchecks it");
+        assert!(!d.range_enabled(1..2), "a box over it alone has nothing to check");
+        d.click(1, false);
+        assert!(d.range_enabled(1..2), "once it is clicked, the box can uncheck it");
+    }
+
     /// A camera's files as they arrive: supported formats only, by day; the user's checks stay as
     /// more arrive; files the library has are not importable.
     #[test]
@@ -2211,6 +2271,19 @@ mod tests {
         let mut candidates: Vec<ImportCandidate> = (0..6).map(|i| ImportCandidate { path: format!("img{i}.jpg"), ..Default::default() }).collect();
         candidates[3].duplicate = Some("content".into());
         ImportDialog::new(candidates)
+    }
+
+    /// Identical copies inside the source folder are not "already in the library" (a fresh library
+    /// said "8 already in the library").
+    #[test]
+    fn copies_within_the_source_are_not_counted_as_in_the_library() {
+        let mut d = dialog();
+        assert_eq!(dup_counts(&d), (0, 1, 0), "same bytes as an earlier file, no library photo");
+        d.candidates[4].duplicate = Some("content".into());
+        d.candidates[4].existing = Some(7);
+        d.candidates[5].duplicate = Some("path".into());
+        d.candidates[5].existing = Some(8);
+        assert_eq!(dup_counts(&d), (2, 1, 0));
     }
 
     /// A toggle per file type: the raws only, without the JPEGs beside them (issue #344).
@@ -2267,6 +2340,44 @@ mod tests {
         let mut d = dialog();
         d.click(2, true);
         assert_eq!(d.checked, [true, true, false, false, true, true]);
+    }
+
+    /// With "Leave them", a file in Recently Deleted stays out of Check All and the type toggles,
+    /// but a click still checks it: it is imported (restored) on its own (issue #1285).
+    #[test]
+    fn leave_them_keeps_a_trashed_file_out_until_it_is_clicked() {
+        let mut d = dialog();
+        d.set_trashed(vec![false, false, false, true, false, false]);
+        assert!(d.checked[3], "restored by default");
+        d.set_on_deleted("");
+        assert!(!d.checked[3]);
+        d.check_type("JPG", true);
+        assert!(!d.checked[3], "the type toggle leaves it out");
+        d.click(3, false);
+        assert!(d.checked[3], "a click checks it");
+        assert!(d.selected_paths().contains(&"img3.jpg".to_string()));
+        d.click(3, false);
+        assert!(!d.checked[3]);
+        // a plain duplicate (not in Recently Deleted) still can't be checked
+        d.set_trashed(vec![false; 6]);
+        d.click(3, false);
+        assert!(!d.checked[3]);
+    }
+
+    /// A badge too wide to fit beside the checkbox goes under it instead of covering it (issue #1285).
+    #[test]
+    fn a_badge_never_covers_the_checkbox() {
+        let img = Rect::from_min_size(pos2(100.0, 50.0), vec2(116.0, 116.0));
+        let cb = Rect::from_min_size(img.min + vec2(6.0, 6.0), vec2(16.0, 16.0));
+        // "Will be restored" fits beside it, top right
+        let short = badge_rect(img, cb, vec2(76.0, 12.0));
+        assert_eq!(short.right(), img.right() - 4.0);
+        assert_eq!(short.top(), img.top() + 6.0);
+        // "In Recently Deleted" doesn't
+        let long = badge_rect(img, cb, vec2(96.0, 12.0));
+        assert!(!long.intersects(cb), "{long:?} covers {cb:?}");
+        assert_eq!(long.right(), img.right() - 4.0);
+        assert!(img.contains_rect(long));
     }
 
     #[test]
