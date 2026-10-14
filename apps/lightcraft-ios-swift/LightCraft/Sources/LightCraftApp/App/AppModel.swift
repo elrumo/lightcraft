@@ -34,6 +34,7 @@ nonisolated enum Sheet: Identifiable, Hashable {
     case copySettings
     case pasteSettings([UInt64])
     case superRes
+    case createPreset
 
     var id: String {
         switch self {
@@ -53,6 +54,7 @@ nonisolated enum Sheet: Identifiable, Hashable {
         case .copySettings: "copySettings"
         case .pasteSettings: "pasteSettings"
         case .superRes: "superRes"
+        case .createPreset: "createPreset"
         }
     }
 }

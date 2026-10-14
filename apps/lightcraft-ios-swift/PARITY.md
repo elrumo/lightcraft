@@ -18,9 +18,9 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | Phase | ✅ | 🟡 | ⬜ | 🚫 | Done or out of scope |
 |---|---:|---:|---:|---:|---:|
 | S0 | 9 | 6 | 0 | 0 | 9/15 |
-| S1 | 95 | 15 | 57 | 0 | 95/167 |
+| S1 | 106 | 15 | 46 | 0 | 106/167 |
 | S2 | 1 | 0 | 79 | 22 | 23/102 |
-| **Total** | 105 | 21 | 136 | 22 | 127/284 |
+| **Total** | 116 | 21 | 125 | 22 | 138/284 |
 <!-- /ios-parity:summary -->
 
 ## Screens
@@ -192,7 +192,7 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | ui:dialog.allMetadata | S1 | ⬜ |  |  |
 | ui:dialog.faceModel | S1 | ⬜ |  |  |
 | ui:dialog.newSmartAlbum | S1 | ⬜ |  |  |
-| ui:dialog.createPreset | S1 | ⬜ |  |  |
+| ui:dialog.createPreset | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/CopySettingsSheet.swift` | Presets ▸ +: name, group (yours or a new one), the settings groups from `develop.settingsGroups` |
 | ui:dialog.autoStack | S2 | ⬜ |  |  |
 | ui:dialog.copySettings | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/CopySettingsSheet.swift` | photo "…" ▸ Copy Settings… |
 | ui:dialog.pasteSettings | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/CopySettingsSheet.swift` | select ▸ More ▸ Paste Selected Settings… |
@@ -244,16 +244,16 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | ui:app.clearRecentLibraries | S2 | 🚫 |  | one library in the app sandbox |
 | ui:app.displayProfile | S2 | 🚫 |  | iOS colour-manages the display itself |
 | ui:app.about | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | grid "…" ▸ About LightCraft |
-| ui:app.systemInfo | S1 | ⬜ |  |  |
+| ui:app.systemInfo | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | About ▸ System Info (`about.systemInfo`, plus the app's own rows) |
 | ui:app.openLogFolder | S2 | 🚫 |  | no folders to open on iOS; sharing the log is `docs/ios-gaps.md` B5.3 |
-| ui:app.whatsNew | S1 | ⬜ |  |  |
+| ui:app.whatsNew | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | About ▸ What's New (`about.whatsNew`) |
 | ui:dialog.cull | S2 | ⬜ |  |  |
 | ui:app.help | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LibraryScreen.swift` | grid "…" ▸ Help |
-| ui:app.discord | S1 | ⬜ |  |  |
-| ui:app.feedback | S1 | ⬜ |  |  |
-| ui:app.website | S1 | ⬜ |  |  |
-| ui:app.github | S1 | ⬜ |  |  |
-| ui:app.artcraft | S1 | ⬜ |  |  |
+| ui:app.discord | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | About ▸ the links (`about.links`) |
+| ui:app.feedback | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | About ▸ Send Feedback… |
+| ui:app.website | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | About ▸ LightCraft Website |
+| ui:app.github | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | About ▸ LightCraft on GitHub |
+| ui:app.artcraft | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | About ▸ ArtCraft Website |
 | ui:app.shortcuts | S2 | ⬜ |  |  |
 | ui:app.setShortcut | S2 | 🚫 |  | iPadOS has no per-app shortcut editor; shortcuts come from the command specs |
 | ui:app.resetShortcuts | S2 | 🚫 |  | no shortcut editor on iPadOS |
@@ -297,14 +297,14 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | dialog:MergeKeywords | S2 | ⬜ |  |  |
 | dialog:AutoStack | S2 | ⬜ |  |  |
 | dialog:NewSmartAlbum | S1 | ⬜ |  |  |
-| dialog:WhatsNew | S1 | ⬜ |  |  |
+| dialog:WhatsNew | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | as `ui:app.whatsNew` |
 | dialog:Cull | S2 | ⬜ |  |  |
 | dialog:DenoiseModel | S1 | ⬜ |  |  |
 | dialog:FaceModel | S1 | ⬜ |  |  |
-| dialog:SystemInfo | S1 | ⬜ |  |  |
+| dialog:SystemInfo | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | as `ui:app.systemInfo` |
 | dialog:AllMetadata | S1 | ⬜ |  |  |
 | dialog:SmartRules | S1 | ⬜ |  |  |
-| dialog:CreatePreset | S1 | ⬜ |  |  |
+| dialog:CreatePreset | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/CopySettingsSheet.swift` | as `ui:dialog.createPreset` |
 | dialog:CopySettings | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/CopySettingsSheet.swift` | the settings groups |
 | dialog:PasteSettings | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/CopySettingsSheet.swift` | the settings groups |
 | dialog:Export | S1 | 🟡 | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Share/ExportSheet.swift` | Share page with options |

@@ -14,6 +14,7 @@
 #[cfg(not(feature = "denoise"))]
 extern crate lightcraft_denoise_core as lightcraft_denoise;
 
+pub mod about;
 pub mod activity;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod apple_photos;

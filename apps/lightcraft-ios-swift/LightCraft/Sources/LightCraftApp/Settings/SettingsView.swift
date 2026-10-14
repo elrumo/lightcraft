@@ -599,7 +599,19 @@ struct ShareLinkSheet: View {
 
 /// About LightCraft.
 struct AboutView: View {
+    @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
+    @State private var links: [JSONValue] = []
+
+    private static func symbol(_ id: String?) -> String {
+        switch id {
+        case "app.help": "questionmark.circle"
+        case "app.discord": "bubble.left.and.bubble.right"
+        case "app.github": "chevron.left.forwardslash.chevron.right"
+        case "app.feedback": "envelope"
+        default: "safari"
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -617,14 +629,102 @@ struct AboutView: View {
                     .padding(.vertical, 12)
                 }
                 Section {
-                    if let url = URL(string: "https://github.com/storytold/lightcraft") {
-                        Link("Source Code", destination: url)
+                    NavigationLink("What's New") { WhatsNewView() }
+                    NavigationLink("System Info") { SystemInfoView() }
+                }
+                Section {
+                    // the project's links, as the Help menu has them (`about.links`)
+                    ForEach(links, id: \.self) { link in
+                        if let url = link["url"].string.flatMap(URL.init(string:)) {
+                            Link(destination: url) {
+                                Label(LocalizedStringKey(link["label"].string ?? ""), systemImage: Self.symbol(link["id"].string))
+                            }
+                        }
                     }
                 }
+            }
+            .task {
+                guard let engine = model.engine else { return }
+                links = (try? await engine.execute("about.links"))?.array ?? []
             }
             .navigationTitle("About")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done", systemImage: "checkmark") { dismiss() } } }
+        }
+    }
+}
+
+/// What's New in this version (`about.whatsNew`): its headings and items.
+struct WhatsNewView: View {
+    @Environment(AppModel.self) private var model
+    @State private var text = ""
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(Array(text.split(separator: "\n", omittingEmptySubsequences: false).enumerated()), id: \.offset) { _, line in
+                    row(String(line))
+                }
+            }
+            .padding()
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .navigationTitle("What's New")
+        .navigationBarTitleDisplayMode(.inline)
+        .task {
+            guard let engine = model.engine else { return }
+            text = (try? await engine.execute("about.whatsNew"))?["text"].string ?? ""
+        }
+    }
+
+    @ViewBuilder private func row(_ line: String) -> some View {
+        let t = line.trimmingCharacters(in: .whitespaces)
+        if t.hasPrefix("#") {
+            Text(markdown(t.drop { $0 == "#" }.trimmingCharacters(in: .whitespaces)))
+                .font(t.hasPrefix("##") ? .headline : .title2.bold())
+                .padding(.top, 8)
+        } else if t.hasPrefix("- ") || t.hasPrefix("* ") {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(verbatim: "•")
+                Text(markdown(String(t.dropFirst(2))))
+            }
+            .font(.subheadline)
+        } else if !t.isEmpty {
+            Text(markdown(t)).font(.subheadline)
+        }
+    }
+
+    private func markdown(_ s: String) -> AttributedString {
+        (try? AttributedString(markdown: s, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(s)
+    }
+}
+
+/// System Info: the engine's facts (`about.systemInfo`), then this app's own.
+struct SystemInfoView: View {
+    @Environment(AppModel.self) private var model
+    @State private var rows: [JSONValue] = []
+
+    var body: some View {
+        List {
+            Section {
+                ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                    LabeledContent(LocalizedStringKey(row["label"].string ?? ""), value: row["value"].string ?? "")
+                        .textSelection(.enabled)
+                }
+            }
+            Section("This App") {
+                LabeledContent("App Version", value: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "")
+                LabeledContent("Device", value: "\(UIDevice.current.model), \(UIDevice.current.systemName) \(UIDevice.current.systemVersion)")
+                if let ms = model.lastDraftRoundTripMs {
+                    LabeledContent("Slider to draft", value: String(format: "%.0f ms", ms))
+                }
+            }
+        }
+        .navigationTitle("System Info")
+        .navigationBarTitleDisplayMode(.inline)
+        .task {
+            guard let engine = model.engine else { return }
+            rows = (try? await engine.execute("about.systemInfo"))?.array ?? []
         }
     }
 }

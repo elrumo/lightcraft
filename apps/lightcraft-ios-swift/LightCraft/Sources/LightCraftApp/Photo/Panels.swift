@@ -11,7 +11,6 @@ struct PresetsPanel: View {
     @State private var applied: String?
     @State private var amount: Double = 100
     @State private var group: String = ""
-    @State private var creating = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -23,7 +22,7 @@ struct PresetsPanel: View {
                 }
                 .pickerStyle(.menu)
                 Spacer()
-                Button("Create Preset", systemImage: "plus") { creating = true }
+                Button("Create Preset", systemImage: "plus") { model.sheet = .createPreset }
                     .labelStyle(.iconOnly)
             }
             if let applied, presets.contains(where: { $0.id == applied }) {
@@ -79,13 +78,9 @@ struct PresetsPanel: View {
             }
         }
         .task { await load() }
-        .alert("Create Preset", isPresented: $creating) {
-            PresetNameField { name in
-                Task {
-                    await model.run("preset.create", ["name": .string(name), "group": "User Presets"])
-                    await load()
-                }
-            }
+        .onChange(of: model.sheet == nil) { _, closed in
+            // a preset made in Create Preset
+            if closed { Task { await load() } }
         }
     }
 
@@ -137,17 +132,6 @@ struct VariantPreview: View {
         let which: JSONValue
         let photo: UInt64?
         let revision: UInt64
-    }
-}
-
-private struct PresetNameField: View {
-    @State private var name = ""
-    let done: (String) -> Void
-
-    var body: some View {
-        TextField("Name", text: $name)
-        Button("Create") { if !name.isEmpty { done(name) } }
-        Button("Cancel", role: .cancel) {}
     }
 }
 

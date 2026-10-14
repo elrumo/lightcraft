@@ -94,6 +94,7 @@ struct SheetContent: View {
         case .copySettings: CopySettingsSheet(pasteOnto: nil)
         case .pasteSettings(let ids): CopySettingsSheet(pasteOnto: ids)
         case .superRes: SuperResSheet()
+        case .createPreset: CreatePresetSheet()
         }
     }
 }

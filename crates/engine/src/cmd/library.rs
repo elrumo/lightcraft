@@ -1546,6 +1546,21 @@ pub fn specs() -> Vec<CommandSpec> {
             }
         ),
         // ---- persistence
+        cmd!(query "about.links", "Help Links", [], None, "{} → [{id, label, url}] the project's links in Help-menu order (help, Discord, website, GitHub, ArtCraft, feedback)", always, |_, _| {
+            Ok(Value::Array(crate::about::LINKS.iter().map(|(id, label, url)| json!({"id": id, "label": label, "url": url})).collect()))
+        }),
+        cmd!(query "about.whatsNew", "What's New", [], None, "{} → {text} what's new in this version (Markdown)", always, |_, _| {
+            Ok(json!({"text": crate::about::WHATS_NEW}))
+        }),
+        cmd!(
+            query "about.systemInfo",
+            "System Info",
+            [],
+            None,
+            "{} → [{label, value}] the version, system, CPU threads, GPU, memory budget, the library's photos, albums and folder, the last GPU fallback (a UI adds its own rows)",
+            always,
+            |s, _| Ok(Value::Array(crate::about::system_rows(s).into_iter().map(|(label, value)| json!({"label": label, "value": value})).collect()))
+        ),
         cmd!(query "library.info", "Library Info", [], None, "{}", always, |s, _| {
             let photos = s.catalog.len();
             let albums = s.catalog.albums().count();
