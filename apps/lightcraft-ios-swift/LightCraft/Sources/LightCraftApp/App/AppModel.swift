@@ -132,6 +132,9 @@ final class AppModel {
     private(set) var state = HostState()
     private(set) var activity: [ActivityTask] = []
     var toast: Toast?
+    /// The screen can show the range above SDR white, as the engine was last told (`render.hdrDisplay`):
+    /// an HDR edit's loupe then comes as an HDR picture (`ImageStore.Picture.hdr`).
+    private(set) var hdrDisplay = false
     var path: [Route] = []
     var sheet: Sheet?
     /// The menu bar's commands: egui's UI commands (`host.uiCommands`) and the engine's with a menu.
@@ -219,6 +222,7 @@ final class AppModel {
             await albums.reload(engine)
             superResAvailable = (try? await engine.execute("enhance.model.status"))?["available"].bool == true
             // a camera or card plugged in: its import (Settings ▸ Import ▸ Cameras and cards), or a word
+            updateHdrDisplay()
             cameras.connected = { [weak self] device in
                 guard let self else { return }
                 if self.prefs.importOnConnect, self.sheet == nil, self.path.isEmpty {
@@ -254,6 +258,21 @@ final class AppModel {
     // MARK: events
 
     private func listen(_ engine: Engine) async {
+        // (another screen, or a setting that changed meanwhile)
+        if event == "active" { updateHdrDisplay() }
+    }
+
+    /// Tell the engine whether the screen has HDR headroom (EDR: iPhone 12 and later, recent iPads), so that
+    /// an HDR edit's loupe comes as an HDR picture; asked again when the app becomes active. The
+    /// environment variable `LIGHTCRAFT_HDR_DISPLAY` (`1` or `0`) decides for the simulator and scripts.
+    func updateHdrDisplay() {
+        let forced = ProcessInfo.processInfo.environment["LIGHTCRAFT_HDR_DISPLAY"]
+        let screen = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first?.screen
+        let on = forced.map { $0 == "1" } ?? ((screen?.potentialEDRHeadroom ?? 1) > 1)
+        // (not before the engine is there: `start()` asks again once it is, and what is not sent is not recorded)
+        guard let engine, on != hdrDisplay else { return }
+        hdrDisplay = on
+        engine.send("render.hdrDisplay", ["on": .bool(on)])
         for await event in engine.events {
             handle(event)
         }
@@ -263,7 +282,7 @@ final class AppModel {
         switch event {
         case .image(let info, let pixels):
             guard let pixels, let image = pixels.cgImage() else { return }
-            images.put(info, image)
+            images.put(info, image, hdr: pixels.hdr?.cgImage())
             if info.slot == "main", info.draft, let asked = draftAskedAt {
                 let elapsed = ContinuousClock.now - asked
                 lastDraftRoundTripMs = Double(elapsed.components.seconds) * 1000 + Double(elapsed.components.attoseconds) / 1e15

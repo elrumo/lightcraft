@@ -127,11 +127,22 @@ public struct ImageEvent: Codable, Sendable, Equatable {
     public var histogram: Histogram?
     /// For `region` (a zoom window): the zoomed frame it is cut from and where it goes in it.
     public var window: ZoomWindow?
+    /// The same picture as float pixels (`render.hdrDisplay`, an HDR edit): its own lease.
+    public var hdr: HdrRef?
 
     enum CodingKeys: String, CodingKey {
-        case slot, photo, key, token, width, height, draft, quick, ms, histogram, window
+        case slot, photo, key, token, width, height, draft, quick, ms, histogram, window, hdr
         case isFinal = "final"
     }
+}
+
+/// Where an image event's HDR rendition is: a lease of RGBA16F pixels (`PixelImage.hdr`).
+public struct HdrRef: Codable, Sendable, Equatable {
+    public var token: UInt64
+    public var width: Int
+    public var height: Int
+    /// The edit's headroom limit: stops above SDR white are `log2(peak)`.
+    public var peak: Double
 }
 
 /// Where a zoom window goes: `full` is the zoomed frame's size in pixels, `x, y, w, h` the window

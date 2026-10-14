@@ -92,3 +92,10 @@ downloads cities15000.zip, admin1CodesASCII.txt and countryInfo.txt from GeoName
 (https://download.geonames.org/export/dump/) into the settings folder. GeoNames data is licensed
 under Creative Commons Attribution 4.0 (https://creativecommons.org/licenses/by/4.0/);
 attribution: "GeoNames, geonames.org". The lookup code (crates/geocode) is our own.
+
+third_party/egui-wgpu is egui-wgpu 0.36.2 (https://github.com/emilk/egui, Copyright Emil Ernerfeldt and the egui
+contributors) and third_party/wgpu-hal is wgpu-hal 30.0.1 (https://github.com/gfx-rs/wgpu, Copyright the gfx-rs
+developers), each licensed under the MIT License or the Apache License 2.0, at your option, and each modified by
+the LightCraft contributors (2026) for HDR output on macOS; the changes are marked `LightCraft patch` in the
+source and listed in each directory's LIGHTCRAFT.md (docs/hdr-display.md). They replace the crates.io releases
+through `[patch.crates-io]`.

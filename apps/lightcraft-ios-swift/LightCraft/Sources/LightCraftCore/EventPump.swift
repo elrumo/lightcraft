@@ -85,7 +85,7 @@ final class EventPump: Sendable {
             }
         case .image(let info, _):
             // a newer picture of the slot may already have replaced this one: then nil
-            sink.yield(.image(info, Bridge.image(token: info.token)))
+            sink.yield(.image(info, Bridge.image(token: info.token, hdr: info.hdr)))
         case .closed:
             replies.failAll(ErrorBody(code: "closed", message: "the engine has stopped"))
             sink.yield(.closed)

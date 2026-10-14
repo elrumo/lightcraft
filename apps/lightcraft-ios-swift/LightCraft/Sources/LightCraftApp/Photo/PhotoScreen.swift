@@ -53,6 +53,7 @@ struct PhotoScreen: View {
             ToolColumn()
                 .inspectorColumnWidth(min: 300, ideal: 340, max: 420)
         }
+        .background(DismissGuard(disabled: editor.touching))
         .toolbar(review ? .hidden : .visible, for: .navigationBar)
         .toolbar(review || editor.tool?.hasScreen == true ? .hidden : .visible, for: .bottomBar)
         .statusBarHidden(review)
@@ -89,6 +90,7 @@ struct PhotoScreen: View {
         .toolbarColorScheme(.dark, for: .navigationBar, .bottomBar)
         .animation(.snappy, value: review)
         .animation(.snappy, value: editor.tool)
+        .onChange(of: editor.tool) { editor.picking = nil }
         .haptic(.selection, trigger: editor.tool)
         .task(id: editor.tool) {
             // a tool screen's Cancel goes back to how the photo was when it opened
@@ -302,6 +304,8 @@ nonisolated struct ViewRequest: Hashable {
     let proof: JSONValue?
     let zoom: ZoomRequest?
 }
+    /// The screen shows HDR: the same look is asked for again, as an HDR picture.
+    let hdr: Bool
 
 /// A zoomed loupe's view: the photo's long edge as drawn (pixels) and the part of it on screen, in
 /// thousandths of its width and height (x0, y0, x1, y1).
@@ -345,7 +349,8 @@ struct ZoomablePhoto: View {
                 BeforeAfterView(photo: photo, wide: canvas.width > canvas.height)
                     .padding(review ? 0 : margin)
             } else if let picture {
-                Image(decorative: picture.image, scale: 1)
+                // (an HDR edit on a screen with headroom: its float picture, drawn brighter than white)
+                Image(decorative: picture.hdr ?? picture.image, scale: 1)
                     .resizable()
                     .scaledToFit()
                     // the crop's Expand: what the photo doesn't cover yet comes transparent
@@ -360,7 +365,7 @@ struct ZoomablePhoto: View {
                    abs(Double(w.full[0]) / Double(w.full[1]) / (rect.width / rect.height) - 1) < 0.02
                 {
                     let (fw, fh) = (CGFloat(w.full[0]), CGFloat(w.full[1]))
-                    Image(decorative: region.image, scale: 1)
+                    Image(decorative: region.hdr ?? region.image, scale: 1)
                         .resizable()
                         .frame(width: rect.width * CGFloat(w.w) / fw, height: rect.height * CGFloat(w.h) / fh)
                         .position(x: rect.minX + rect.width * (CGFloat(w.x) + CGFloat(w.w) / 2) / fw, y: rect.minY + rect.height * (CGFloat(w.y) + CGFloat(w.h) / 2) / fh)
@@ -462,7 +467,7 @@ struct ZoomablePhoto: View {
         .onTapGesture(count: 1) { location in tapped(at: location, picture: picture) }
         .onLongPressGesture(minimumDuration: 0.4, maximumDistance: 10) {
         } onPressingChanged: { pressing in
-            showBefore = pressing && model.editor.tool?.hasScreen != true
+            showBefore = pressing && !model.editor.touching
             if showBefore { model.requestBefore(photo) }
         }
         .haptic(trigger: showBefore) { _, new in new ? .impact(weight: .medium) : nil }
@@ -547,7 +552,7 @@ struct ZoomablePhoto: View {
     /// A tap: a picker takes the colour there; otherwise the bars come and go.
     private func tapped(at location: CGPoint, picture: ImageStore.Picture?) {
         guard let pick = model.editor.picking else {
-            review.toggle()
+            if !model.editor.touching { review.toggle() }
             return
         }
         guard let rect = shownRect(picture), rect.contains(location), let frame else { return }
@@ -572,7 +577,7 @@ struct ZoomablePhoto: View {
             h *= maxEdge / long
         }
         return ViewRequest(photo: photo, width: Int(max(w, 1)), height: Int(max(h, 1)), revision: model.state.catalogRevision, dragging: model.state.interaction != nil,
-                           crop: model.editor.tool != .crop, overlay: model.viewOverlay, proof: model.viewProof, zoom: zoomRequest)
+                           crop: model.editor.tool != .crop, overlay: model.viewOverlay, proof: model.viewProof, zoom: zoomRequest, hdr: model.hdrDisplay)
     }
 
     /// The settled zoom's view (`nil` at fit): the photo's long edge as drawn and what is on screen.
@@ -800,7 +805,9 @@ struct ToolPanel: View {
     static let stops: [CGFloat] = [140, 250, 420]
 
     private var grabberDrag: some Gesture {
-        DragGesture()
+        // (on screen, not in the grabber: it moves with the panel's height, and a translation
+        // measured from a moving view makes the height jump back and forth)
+        DragGesture(coordinateSpace: .global)
             .onChanged { g in
                 let from = dragFrom ?? Self.stops[min(model.editor.detent, Self.stops.count - 1)]
                 dragFrom = from

@@ -1193,3 +1193,39 @@ fn hdr_edits_render_with_their_hdr_histogram() {
     assert!(r.histogram.above_sdr() > 0.0);
     assert!(r.deep.is_none(), "the preview itself stays the 8-bit SDR rendition");
 }
+
+// The loupe on an HDR display: an HDR edit renders its float HDR picture beside the 8-bit one; every
+// other kind of job is left alone (LR-VIEW-HDR-DISPLAY).
+#[test]
+fn hdr_display_jobs_render_the_hdr_picture_of_an_hdr_edit_only() {
+    let mut s = demo();
+    let id = s.active().unwrap();
+    // an SDR edit: the job is untouched, even when asked
+    let sdr = s.loupe_job(id, 200, 200, true).unwrap();
+    let asked = sdr.clone().with_hdr_display();
+    assert_eq!((asked.key, asked.hdr_view), (sdr.key, false));
+    assert!(sdr.run().hdr.is_none());
+    s.execute("develop.hdr", &json!({"enabled": true, "maxEv": 3})).unwrap();
+    s.execute("develop.set", &json!({"control": "light.exposure", "value": 1.0})).unwrap();
+    let job = s.loupe_job(id, 200, 200, true).unwrap();
+    let plain_key = job.key;
+    let job = job.with_hdr_display();
+    assert_ne!(job.key, plain_key, "the HDR picture is its own result");
+    assert!(job.hdr_view && job.display.is_none() && job.request.display.is_none());
+    assert!(job.view_cache.is_none(), "an HDR render never becomes the photo's cached SDR preview");
+    // asking again changes nothing (the renderer applies it in `job_for` and again in `request`)
+    assert_eq!(job.clone().with_hdr_display().key, job.key);
+    let r = job.run();
+    let hdr = r.hdr.expect("the HDR picture");
+    let rendered = r.rendered.unwrap();
+    assert_eq!((hdr.width, hdr.height), (rendered.image.width, rendered.image.height), "same pixels as the 8-bit picture");
+    assert_eq!(hdr.rgba16f.len(), hdr.width * hdr.height * 4);
+    assert_eq!(hdr.peak, 8.0, "3 stops of headroom");
+    let above_white = hdr.rgba16f.chunks(4).filter(|p| p[..3].iter().any(|b| half::f16::from_bits(*b).to_f32() > 1.0)).count();
+    assert!(above_white > 0, "an exposure-lifted sunset has highlights above SDR white");
+    assert!(rendered.deep.is_none(), "the float samples moved into the picture");
+    assert!(rendered.histogram.hdr.is_some(), "the HDR histogram, as for the SDR previews");
+    // a diagnostic overlay is a picture of its own: no HDR
+    let over = s.loupe_job(id, 200, 200, true).unwrap().with_overlay(lightcraft_pipeline::Overlay::HdrRange).with_hdr_display();
+    assert!(!over.hdr_view);
+}

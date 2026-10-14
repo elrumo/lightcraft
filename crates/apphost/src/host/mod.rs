@@ -47,7 +47,7 @@ use serde_json::{Value, json};
 pub use leases::{BytesRef, ImageRef, Leases};
 pub use protocol::{ErrorBody, Event, HostState, OpenConfig, Request};
 
-use crate::render::{Present, Scheduler, Slot};
+use crate::render::{HdrPicture, Present, Scheduler, Slot};
 
 /// Most events one [`Host::poll`] returns (the rest wait for the next).
 pub const MAX_EVENTS: usize = 512;
@@ -222,14 +222,20 @@ impl Drop for Host {
 /// Collects finished renders' pixels (the scheduler keeps only their facts: a frontend that isn't
 /// Rust keeps its own copy, so holding them here too would count every picture twice).
 #[derive(Default)]
-struct Collect(Vec<(Slot, Rgba8)>);
+struct Collect(Vec<(Slot, Rgba8, Option<Arc<HdrPicture>>)>);
 
 impl Present<()> for Collect {
     fn make(&mut self, slot: Slot, image: Rgba8) {
         self.0.push((slot, image));
     }
     fn update(&mut self, slot: Slot, image: Rgba8, _: &mut ()) {
-        self.0.push((slot, image));
+        self.0.push((slot, image, None));
+    }
+    /// (called right after the `make` or `update` of the same render: its picture's HDR rendition, or none)
+    fn set_hdr(&mut self, slot: Slot, hdr: Option<Arc<HdrPicture>>, _: &mut ()) {
+        if let Some(last) = self.0.iter_mut().rev().find(|(s, ..)| *s == slot) {
+            last.2 = hdr;
+        }
     }
 }
 
@@ -619,6 +625,14 @@ impl Engine {
                 self.sched.request_thumb(&mut self.session, id, edge, priority);
                 self.busy = true;
                 Ok(json!({"slot": Slot::Thumb(id).name()}))
+            // the display can (or no longer can) show the range above SDR white: an HDR edit's `main`
+            // and `region` pictures then come with an `hdr` rendition, as soon as they render again
+            "render.hdrDisplay" => {
+                let on = p.get("on").and_then(Value::as_bool).ok_or_else(|| bad("missing `on`"))?;
+                self.sched.set_hdr_display(on);
+                self.busy = true;
+                Ok(json!({}))
+            }
             }
             "render.view" => {
                 let id = photo(p, &self.session).ok_or_else(|| bad("no photo"))?;
@@ -768,7 +782,7 @@ impl Engine {
         }
         let mut collect = Collect::default();
         let polled = self.sched.poll(&mut self.session, &mut collect);
-        for (slot, image) in collect.0 {
+        for (slot, image, hdr) in collect.0 {
             let Some(shown) = self.sched.textures.get(&slot) else { continue };
             let (width, height) = (u32::try_from(image.width).unwrap_or(u32::MAX), u32::try_from(image.height).unwrap_or(u32::MAX));
             let name = slot.name();
@@ -796,6 +810,8 @@ impl Engine {
                 key: shown.key,
                 token,
                 width,
+            // (the HDR rendition of the same render, a lease of its own)
+            let hdr = hdr.map(|h| json!({"token": self.leases.put_hdr(&name, h.clone()), "width": h.width, "height": h.height, "peak": h.peak}));
                 height,
                 is_final: !shown.draft && shown.quick.is_none(),
                 draft: shown.draft,
@@ -826,6 +842,7 @@ impl Engine {
         self.poll_vision();
         self.poll_lightroom();
         self.poll_scan();
+                hdr,
         self.poll_import();
         self.session.persist_if_dirty();
         let state = self.snapshot();
@@ -1236,6 +1253,7 @@ impl Engine {
             self.busy = true;
         }
     }
+                                        hdr: None,
 
     fn poll_export(&mut self) {
         let Some(outcome) = self.export.as_ref().and_then(|p| p.batch.poll()) else { return };

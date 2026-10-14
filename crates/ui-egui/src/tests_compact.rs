@@ -582,7 +582,17 @@ fn a_zoomed_photo_is_not_covered_by_its_neighbour() {
     let size = [4, 4];
     h.app.renderer.textures.insert(
         Slot::Prefetch(0),
-        Tex { key: 0, photo: next, size, histogram: None, ms: 0.0, quick: None, request_id: 0, draft: false, view: TexView { tex, pixels: None } },
+        Tex {
+            key: 0,
+            photo: next,
+            size,
+            histogram: None,
+            ms: 0.0,
+            quick: None,
+            request_id: 0,
+            draft: false,
+            view: TexView { tex, pixels: None, hdr: None },
+        },
     );
     h.step();
     assert!(!h.paint().pixels.contains(&magenta), "the neighbour is drawn over the zoomed photo");

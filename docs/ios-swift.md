@@ -72,7 +72,7 @@ CI on macOS also checks that the built library exports exactly those symbols.
 | `lc_call(engine, request, timeout)` | runs a request and waits for its reply (start-up, tests) |
 | `lc_poll(engine, timeout)` | the events since the last poll, as a JSON array (blocks up to the timeout) |
 | `lc_wake(engine)` | a waiting `lc_poll` returns now |
-| `lc_image(token)` | an `image` event's pixels (RGBA8, sRGB, straight alpha) |
+| `lc_image(token)` | an `image` event's pixels (RGBA8, sRGB, straight alpha); for an `hdr` token, RGBA16F (half floats, `stride` = 8 × width) |
 | `lc_release(token)` | frees any buffer the library handed out |
 | `lc_close(engine)` | saves, stops the threads, forgets the handle |
 | `lc_abi_version()` | the ABI the library speaks |
@@ -105,6 +105,7 @@ host's: `badRequest`, `unknownMethod`, `panic`, `closed`, `timeout`).
 | `render.thumb` | `{photo, edge, priority?}` | a grid thumbnail (embedded raw previews first; cheap to repeat) |
 | `render.view` | `{photo?, width, height, draft?, before?, applyCrop?, overlay?: {kind: mask, id, view?, color?, opacity?} \| {kind: allMasks, view?, color?, opacity?} \| {kind: spots, threshold?} \| {kind: pointColor, index} \| {kind: hdr}, proof?: {space, destWarning?, displayWarning?}, zoom?: {drawn, visible: [x0, y0, x1, y1]}}` | the loupe's picture (`main`; a stand-in in `preview` until it is there), with a diagnostic overlay (the selected mask, Visualize Spots…); zoomed in (`drawn`: the photo's long edge as drawn, px; `visible`: the part on screen, as fractions) also the window on screen at the zoom scale (`region`, its image event's `window: {full: [w, h], x, y, w, h}` says where it goes; planned by `apphost::region`) |
 | `render.prefetch` | `{photos, width, height}` | prepares the neighbours |
+| `render.hdrDisplay` | `{on}` | the screen can (or can no longer) show the range above SDR white (`UIScreen.potentialEDRHeadroom > 1`; the app tells at start and when it becomes active; `LIGHTCRAFT_HDR_DISPLAY=1\|0` forces it for the simulator): an HDR edit's `main` and `region` pictures then render in HDR (CPU) and their `image` event carries `hdr: {token, width, height, peak}`, a lease of RGBA16F pixels (Display P3 encoded with the sRGB curve past 1, [hdr-display](hdr-display.md)); the 8-bit picture is then Display P3 too. Without it, or off, the SDR rendition as before |
 | `render.variant` | `{photo?, preset \| profile \| version \| edited: true, amount?, edge?}` | a preview of the photo with a preset, profile or version, or as it is (Compare, Survey, the filmstrip) (slot `variant:<key>`) |
 | `render.face` | `{photo?, rect, edge?}` | a face, as People shows it (`rect` as `people.list` and `faces.person` give it; slot `variant:<key>`) |
 | `render.candidate` | `{index, edge?}` | an import candidate's thumbnail (slot `import:<index>`) |

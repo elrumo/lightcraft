@@ -122,7 +122,7 @@ fn micro(points: usize, pending: bool) {
                     quick: None,
                     request_id: 0,
                     draft: false,
-                    view: TexView { tex: texture.clone(), pixels: None },
+                    view: TexView { tex: texture.clone(), pixels: None, hdr: None },
                 },
             );
         }

@@ -13,7 +13,7 @@
 //!   a finger on a touch screen (its touch events with the pointer's), not a mouse
 //! - `ui.key {key, shift?, alt?, cmd?}` / `ui.text {text}` / `ui.scroll {dx, dy}`
 //! - `ui.set {view?, panel?, filmstrip?, leftPanel?, zoom?, …}` / `ui.dialog.confirm|cancel`
-//! - `ui.screenshot {path?, headless?}` (headless: CPU-rendered, no compositor needed), `ui.resize {width, height}`, `ui.render {id?, size?, path?}`, `app.quit`
+//! - `ui.screenshot {path?, headless?}` (headless: CPU-rendered, no compositor needed), `ui.resize {width, height}`, `ui.position {x, y}` (the window's top left, in screen points: which display it is on), `ui.render {id?, size?, path?}`, `app.quit`
 
 use std::sync::mpsc::Sender;
 
@@ -130,6 +130,9 @@ pub fn inspect(app: &LightcraftApp, ctx: &egui::Context) -> Value {
             "regionBefore": app.region_before_view.map(|r| json!({"full": [r.full.0, r.full.1], "window": [r.window.x, r.window.y, r.window.w, r.window.h], "pending": app.renderer.is_pending(crate::render::Slot::RegionBefore)})),
         })),
         "hoverPreview": app.hover_preview.as_ref().map(|h| h.label.clone()),
+        // HDR display (docs/hdr-display.md): the window can draw HDR pictures, the screen it is on has headroom
+        // (HDR edits render as HDR pictures), the loupe holds one, and the last frame drew it
+        "hdr": {"canDraw": app.renderer.can_draw_hdr(), "display": app.renderer.hdr_display(), "picture": app.renderer.shows_hdr(), "onScreen": app.hdr_on_screen},
         "status": app.ui.status,
         "copied": app.copied,
         "notices": app.notices,
@@ -438,6 +441,13 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context, req: &ControlRequest
             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(w, h)));
             ok(Value::Null)
         }
+        "ui.position" => match (f("x"), f("y")) {
+            (Some(x), Some(y)) if x.is_finite() && y.is_finite() => {
+                ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(x as f32, y as f32)));
+                ok(Value::Null)
+            }
+            _ => err("ui.position: x and y must be numbers".to_string()),
+        },
         "ui.zoomFactor" => match f("factor") {
             // egui's interface scale (its keyboard shortcuts are off: Cmd+= / Cmd+- zoom the photo)
             Some(factor) if factor.is_finite() && (0.5..=3.0).contains(&factor) => {
