@@ -229,6 +229,10 @@ final class AppModel {
             await library.reload(engine, count: state.visibleCount)
             await albums.reload(engine)
             superResAvailable = (try? await engine.execute("enhance.model.status"))?["available"].bool == true
+            // the models switched off last time stay off
+            for id in prefs.modelsDisabled {
+                _ = try? await engine.execute("models.setEnabled", ["id": .string(id), "enabled": false])
+            }
             // a camera or card plugged in: its import (Settings ▸ Import ▸ Cameras and cards), or a word
             cameras.connected = { [weak self] device in
                 guard let self else { return }

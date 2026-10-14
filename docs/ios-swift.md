@@ -162,7 +162,7 @@ only (`#if os(iOS)`), so `swift test` on a Mac builds the rest. The Rust library
 answers `engine.*`, `render.*` and `host.*` itself; the app answers `ui.screenshot {path}` (the window as a PNG),
 `ui.inspect` (screen, photo, state, `perf`: the last render's ms and the slider-to-draft round trip) and `ui.set {screen:
 grid | photo | edit | crop | masking | remove | redEye | presets | info | commands | people | map, photo?, person? (with people: their page), span?, group?, editStyle? (automatic | dials | sliders), sheet?,
-section?, select?, faceBoxes?, tagFace?, beforeAfter?, visualizeSpots?, removeAI?, histogram?, cropGuide?, cropDraw? (straighten | guides | none), orientation? (landscape | portrait), softProof?, proofSpace?, proofWarning?,
+section?, select?, faceBoxes?, tagFace?, beforeAfter?, visualizeSpots?, removeAI?, maskTool? (object | brush | colorRange | none), objectTap? ([x, y]: Select Object's tap), objectSubtract?, selectSubject?, selectionEngine? (auto | apple | classic), histogram?, cropGuide?, cropDraw? (straighten | guides | none), orientation? (landscape | portrait), softProof?, proofSpace?, proofWarning?,
 sidebarCommand? + sidebarParams? (a `view.sidebar*` command), searching?, search? (the grid's search field), painting? (the Keyword Painter's keyword; "" stops), secondWindow? (opens Window ▸ Second Window)}` (`ScriptHost.swift` lists
 the values).
 
@@ -270,7 +270,7 @@ SW3, a native iOS 26 redesign (not the S3 gate; see *Look and feel*):
 - the sheets' ✓ (SW3.7);
 - this page, the parity notes, the words and the CI tour (SW3.8).
 
-Open questions (not blocking S0): MapKit or the built-in offline map; which AI engine features ship on iOS (binary size);
+Open questions (not blocking S0): MapKit or the built-in offline map; which more AI engine features ship on iOS (binary size; selection uses Apple Vision, docs/ai-masks.md → On iPhone);
 whether the gate also compares screenshots of the two apps.
 
 ## Languages

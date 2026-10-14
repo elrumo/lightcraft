@@ -130,6 +130,7 @@
 "AI Models" = "KI-Modelle";
 "AI Remove is turned off in Settings → AI Models." = "KI-Entfernung ist unter Einstellungen → KI-Modelle ausgeschaltet.";
 "AI Remove isn't available in this build." = "KI-Entfernung ist in dieser Version nicht verfügbar.";
+"AI Remove needs its model: download it in the Remove panel. This object was filled from around it." = "KI-Entfernen braucht sein Modell: Lade es im Entfernen-Bereich herunter. Dieses Objekt wurde aus seiner Umgebung gefüllt.";
 "AI Remove needs its model: download it in the Remove panel. This stroke was filled from around it." = "KI-Entfernung braucht ihr Modell: Lade es im Bereich „Entfernen“ herunter. Dieser Strich wurde aus der Umgebung aufgefüllt.";
 "AI masks with SAM 3 (Object and Describe in the Masking panel): click an object to select it (⌥-click leaves a" = "KI-Masken mit SAM 3 über Objekt und Beschreiben im Maskenbereich: Ein Objekt zum Auswählen anklicken; ⌥-Klick lässt einen Teil";
 "About" = "Über";
@@ -239,6 +240,10 @@
 "Appearance" = "Erscheinungsbild";
 "Appearance Mode" = "Erscheinungsmodus";
 "Appearance Settings…" = "Erscheinungsbild-Einstellungen…";
+"Apple" = "Apple";
+"Apple Vision" = "Apple Vision";
+"Apple tap-to-segment model" = "Apple-Modell zum Auswählen per Tippen";
+"Apple's selection model couldn't start on this device." = "Das Auswahlmodell von Apple konnte auf diesem Gerät nicht gestartet werden.";
 "Application" = "Anwendung";
 "Apply" = "Anwenden";
 "Apply Color Label Set" = "Farbmarkierungssatz anwenden";
@@ -291,6 +296,7 @@
 "Auto-Tag from Tracklog…" = "Anhand eines GPS-Tracks automatisch verorten…";
 "Automatic" = "Automatisch";
 "Automatic renders the Detail view at the size it is shown, up to the photo's own pixels. Choose a size to cap it: smaller is faster." = "Automatisch rendert die Detailansicht in der angezeigten Größe, bis zu den eigenen Pixeln des Fotos. Eine Größe wählen, um sie zu begrenzen: kleiner ist schneller.";
+"Automatic uses Apple's models where this device has them. Classic is LightCraft's own guess and needs no model." = "„Automatisch“ nutzt die Modelle von Apple, wo dieses Gerät sie hat. „Klassisch“ ist die eigene Schätzung von LightCraft und braucht kein Modell.";
 "Automatic uses the graphics card where it is faster than the processor: both are timed on this computer the first time a photo is made." = "Automatic uses the graphics card where it is faster than the processor: both are timed on this computer the first time a photo is made.";
 "Automatically Write Changes into XMP" = "Änderungen automatisch in XMP schreiben";
 "Automatically write changes into XMP sidecars" = "Änderungen automatisch in XMP-Begleitdateien schreiben";
@@ -729,6 +735,7 @@
 "Download %@?" = "%@ laden?";
 "Download AI Mask Model" = "KI-Maskenmodell herunterladen";
 "Download All Small Previews" = "Alle kleinen Vorschauen herunterladen";
+"Download Apple's selection model?" = "Auswahlmodell von Apple laden?";
 "Download Denoise Model" = "Download Denoise Model";
 "Download Place Names (GeoNames)" = "Ortsnamen herunterladen (GeoNames)";
 "Download and Turn On" = "Herunterladen und einschalten";
@@ -740,6 +747,7 @@
 "Download, turn on and remove the optional AI models." = "Die optionalen KI-Modelle herunterladen, einschalten und entfernen.";
 "Downloaded and checked. Installing…" = "Downloaded and checked. Installing…";
 "Downloading" = "Wird geladen";
+"Downloading Apple's selection model" = "Auswahlmodell von Apple wird geladen";
 "Downloading MI-GAN…" = "MI-GAN wird heruntergeladen…";
 "Downloading model" = "Modell wird heruntergeladen";
 "Downloading place names" = "Ortsnamen werden heruntergeladen";
@@ -935,6 +943,7 @@
 "Finishing up." = "Wird abgeschlossen.";
 "First" = "Erster";
 "First commit" = "Erster Commit";
+"First tap the object you want to select." = "Tippe zuerst auf das Objekt, das du auswählen möchtest.";
 "Fit" = "Einpassen";
 "Fit (F)" = "Einpassen (F)";
 "Fit on Screen" = "An Bildschirm anpassen";
@@ -1276,6 +1285,7 @@
 "Library saved" = "Bibliothek gespeichert";
 "Licence" = "Lizenz";
 "Licence:" = "Lizenz:";
+"Lifts the subject and selects objects from your taps, on this device. Built into iOS." = "Hebt das Motiv heraus und wählt Objekte anhand deiner Tipps aus, direkt auf diesem Gerät. In iOS integriert.";
 "Light" = "Licht";
 "Light Mode" = "Heller Modus";
 "Light Theme" = "Helles Design";
@@ -1614,6 +1624,7 @@
 "Nothing new: everything in these files is already in your library." = "Nichts Neues: Alles in diesen Dateien ist bereits in der Bibliothek.";
 "Nothing to clean up" = "Nichts aufzuräumen";
 "Nothing to compare" = "Nichts zum Vergleichen";
+"Nothing to select there. Tap the object itself." = "Dort gibt es nichts auszuwählen. Tippe auf das Objekt selbst.";
 "Nothing to survey" = "Nichts für die Übersicht";
 "Nothing was imported" = "Es wurde nichts importiert";
 "Nudge Develop Value" = "Entwicklungswert schrittweise ändern";
@@ -1622,6 +1633,7 @@
 "Object" = "Objekt";
 "Object Mask" = "Objektmaske";
 "Object and Describe masks use SAM 3, Meta's segmentation model. It isn't part of LightCraft, and everything else works without it." = "Objekt- und Beschreibungsmasken verwenden SAM 3, das Segmentierungsmodell von Meta. Es ist kein Bestandteil von LightCraft; alle anderen Funktionen arbeiten auch ohne dieses Modell.";
+"Object selection is off while Selection is set to Classic. Change it in Settings ▸ AI Models." = "Die Objektauswahl ist aus, solange Auswahl auf „Klassisch“ steht. Ändere das unter Einstellungen ▸ KI-Modelle.";
 "October 2026" = "Oktober 2026";
 "Off" = "Aus";
 "Off. The model stays on this server, so turning this on again needs no download." = "Aus. Das Modell bleibt auf diesem Server, sodass beim erneuten Einschalten kein Download nötig ist.";
@@ -1635,6 +1647,7 @@
 "On This Photo" = "Auf diesem Foto";
 "On every photo, the keywords inside it included; renaming it onto another keyword merges the two." = "Auf jedem Foto, einschließlich der darin enthaltenen Stichwörter; wird es in ein anderes Stichwort umbenannt, werden beide zusammengeführt.";
 "On the Server" = "Auf dem Server";
+"On this device. Managed by iOS." = "Auf diesem Gerät. Wird von iOS verwaltet.";
 "On: every device signed in to this server searches here." = "Ein: Jedes an diesem Server angemeldete Gerät sucht hier.";
 "On: the server reads the words in every user's photos in the background, and searches find photos by them." = "Ein: Der Server liest im Hintergrund die Wörter in den Fotos aller Benutzer, und die Suche findet Fotos anhand davon.";
 "One Name per Line" = "Ein Name pro Zeile";
@@ -1770,6 +1783,7 @@
 "Pick a date" = "Datum wählen";
 "Pick the sharpest photo of each burst" = "Schärfstes Foto jeder Serie auswählen";
 "Picked" = "Ausgewählt";
+"Picking any object by tapping needs iOS 27. On this version Apple Vision selects the subject and whatever stands out in front." = "Beliebige Objekte per Tippen auszuwählen erfordert iOS 27. Bis dahin wählt Apple Vision das Motiv und das aus, was im Vordergrund hervorsticht.";
 "Picks" = "Ausgewählte Fotos";
 "Pictures" = "Bilder";
 "Pictures only" = "Nur Bilder";
@@ -2137,8 +2151,10 @@
 "Select All" = "Alles auswählen";
 "Select Luminance Range" = "Luminanzbereich auswählen";
 "Select Mask" = "Maske auswählen";
+"Select Object" = "Objekt auswählen";
 "Select Photos" = "Fotos auswählen";
 "Select Spot" = "Retuschierstelle auswählen";
+"Select Subject" = "Motiv auswählen";
 "Select a photo to edit" = "Wähle ein Foto zum Bearbeiten";
 "Select a photo to enlarge" = "Wähle ein Foto zum Vergrößern";
 "Select by" = "Auswählen nach";
@@ -2148,6 +2164,8 @@
 "Select two photos, then choose View → Compare (Shift+C)" = "Wähle zwei Fotos aus, dann Ansicht → Vergleichen (Umschalt+C)";
 "Selected" = "Ausgewählt";
 "Selecting…" = "Wird ausgewählt…";
+"Selection" = "Auswahl";
+"Selects any object from taps, including parts you add or leave out." = "Wählt jedes Objekt anhand von Tipps aus, auch Teile, die du hinzufügst oder auslässt.";
 "Selenium Tone" = "Selentonung";
 "Send Feedback…" = "Feedback senden…";
 "Separated by commas" = "Durch Kommas getrennt";
@@ -2429,10 +2447,13 @@
 "Take a snapshot" = "Schnappschuss erstellen";
 "Takes this filter off" = "Entfernt diesen Filter";
 "Takes uploads" = "Nimmt Uploads an";
+"Tap" = "Tippen";
 "Tap + to add photos from Photos or Files." = "Tippe auf +, um Fotos aus Fotos oder Dateien hinzuzufügen.";
 "Tap + to make a mask: the subject, the sky, a gradient, a brush…" = "Tippe auf +, um eine Maske zu erstellen: das Motiv, den Himmel, einen Verlauf, einen Pinsel…";
 "Tap a colour in the photo" = "Tippe im Foto auf eine Farbe";
 "Tap a face to mark it" = "Tippe auf ein Gesicht, um es zu markieren";
+"Tap an object to select it" = "Tippe auf ein Objekt, um es auszuwählen";
+"Tap an object to take it away." = "Tippe auf ein Objekt, um es zu entfernen.";
 "Tap photos to give them the keyword; tap again to take it away." = "Tippe auf Fotos, um ihnen das Stichwort zu geben; tippe erneut, um es zu entfernen.";
 "Tap something white or grey in the photo" = "Tippe im Foto auf etwas Weißes oder Graues";
 "Tap the photo to pick a colour" = "Tippe auf das Foto, um eine Farbe zu wählen";
@@ -2781,6 +2802,8 @@
 "hour 00–23" = "Stunde 00–23";
 "hours" = "Stunden";
 "how to restore it or delete it permanently and import it afresh. (For a fresh start on a photo, Reset Edits," = "wie es wiederhergestellt oder endgültig gelöscht und neu importiert werden kann. Für einen Neubeginn am Foto setzt „Bearbeitungen zurücksetzen“";
+"iOS did not finish downloading the model. Try again later." = "iOS hat das Laden des Modells nicht abgeschlossen. Versuche es später erneut.";
+"iOS downloads it from Apple the first time and manages it. It is Apple's model, under Apple's terms." = "iOS lädt es beim ersten Mal von Apple und verwaltet es. Es ist ein Modell von Apple und unterliegt Apples Bedingungen.";
 "ignored before) chooses the graphics backend; `off` renders on the CPU. The GPU now starts after the window" = "Die GPU berücksichtigt nun auch diese zuvor ignorierte wgpu-Einstellung; `off` rendert auf der CPU. Die GPU startet erst, wenn das Fenster geöffnet ist.";
 "image" = "Bild";
 "immutable, and HOSTING.md describes the actual build." = "nicht mehr als unveränderlich; HOSTING.md beschreibt den tatsächlichen Build.";
