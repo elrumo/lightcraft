@@ -41,3 +41,4 @@ pub mod render;
 pub mod startup;
 pub mod superres;
 pub mod sync;
+pub mod ui_commands;

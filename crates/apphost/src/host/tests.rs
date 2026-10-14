@@ -383,3 +383,14 @@ fn merges_preview_and_run_in_the_background() {
     assert!(said["text"].as_str().unwrap().contains("merge"), "{said}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// The UI commands' table, for the SwiftUI app's menu bar and keys: egui's own, shortcuts included
+#[test]
+fn the_ui_commands_are_listed_with_their_keys() {
+    let h = demo();
+    let r = h.call(&req(1, "host.uiCommands", json!({})), Duration::from_secs(30));
+    let list = r["result"].as_array().unwrap();
+    assert_eq!(list.len(), crate::ui_commands::UI_COMMANDS.len());
+    let grid = list.iter().find(|c| c["id"] == "view.gridToggle").unwrap();
+    assert_eq!((grid["shortcut"].as_str(), grid["label"].as_str()), (Some("G"), Some("Grid")), "{grid}");
+}

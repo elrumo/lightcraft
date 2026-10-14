@@ -521,6 +521,12 @@ impl Engine {
                 Ok(Value::Array(v))
             }
             "host.state" => Ok(serde_json::to_value(self.snapshot()).unwrap_or_default()),
+            "host.uiCommands" => Ok(Value::Array(
+                crate::ui_commands::UI_COMMANDS
+                    .iter()
+                    .map(|(id, label, shortcut, menu)| json!({"id": id, "label": label, "shortcut": shortcut, "menu": menu}))
+                    .collect(),
+            )),
             "host.merge.start" | "host.merge.last" => {
                 let ids = merge_ids(&self.session, p);
                 let r = if method == "host.merge.last" {
