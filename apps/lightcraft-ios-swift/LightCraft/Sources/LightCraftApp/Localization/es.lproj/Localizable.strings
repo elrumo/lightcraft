@@ -79,6 +79,7 @@
 "AI Models" = "Modelos de IA";
 "AI Remove is turned off in Settings → AI Models." = "La eliminación con IA está desactivada en Ajustes → Modelos de IA.";
 "AI Remove isn't available in this build." = "La eliminación con IA no está disponible en esta compilación.";
+"AI Remove needs its model: download it in the Remove panel. This object was filled from around it." = "Quitar con IA necesita su modelo: descárgalo en el panel Quitar. Este objeto se rellenó con lo que lo rodea.";
 "AI Remove needs its model: download it in the Remove panel. This stroke was filled from around it." = "La eliminación con IA necesita su modelo: descárgalo en el panel Quitar. Este trazo se rellenó con lo que lo rodea.";
 "About" = "Acerca de";
 "About LightCraft" = "Acerca de LightCraft";
@@ -2223,11 +2224,13 @@
 "Tags: see Tags beside the template. Files are renamed on disk (with their XMP sidecars); existing names get -1, -2…" = "Etiquetas: ver Etiquetas junto a la plantilla. Los archivos cambian de nombre en el disco (con sus archivos XMP complementarios); los nombres existentes reciben -1, -2…";
 "Take a snapshot" = "Crear una instantánea";
 "Takes this filter off" = "Quita este filtro";
+"Tap" = "Tocar";
 "Tap + to add photos from Photos or Files." = "Toca + para añadir fotos desde Fotos o Archivos.";
 "Tap + to make a mask: the subject, the sky, a gradient, a brush…" = "Toca + para crear una máscara: el sujeto, el cielo, un degradado, un pincel…";
 "Tap a colour in the photo" = "Toca un color de la foto";
 "Tap a face to mark it" = "Toca una cara para marcarla";
 "Tap an object to select it" = "Toca un objeto para seleccionarlo";
+"Tap an object to take it away." = "Toca un objeto para quitarlo.";
 "Tap photos to give them the keyword; tap again to take it away." = "Toca las fotos para ponerles la palabra clave; toca de nuevo para quitarla.";
 "Tap something white or grey in the photo" = "Toca algo blanco o gris en la foto";
 "Tap the photo to pick a colour" = "Toca la foto para elegir un color";

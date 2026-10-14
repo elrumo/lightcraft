@@ -65,8 +65,10 @@ struct MaskCanvas: View {
         .overlay(alignment: .top) {
             if model.editor.selecting {
                 ProgressView().padding(12).background(.regularMaterial, in: Capsule()).padding(.top, 12)
+                    .transition(.scale.combined(with: .opacity))
             }
         }
+        .animation(.snappy, value: model.editor.selecting)
         .confirmationDialog(menuTitle, isPresented: Binding(get: { menu != nil }, set: { if !$0 { menu = nil } }), titleVisibility: .visible) {
             if let id = menu {
                 let mask = masks.first { $0["id"] == id }

@@ -77,9 +77,9 @@ fn seg_param(p: &Value, c: &str) -> Result<Option<lightcraft_develop::SegMask>> 
 }
 
 /// `bitmap: {width, height, data}`: coverage (base64 of `width × height` bytes, 0 = out … 255 =
-/// in) over the whole uncropped photo as `mask.inputImage` shows it, as a stored segmentation. It
-/// is what a system segmenter (Apple Vision in the SwiftUI app) answers with.
-fn bitmap_seg(p: &Value, c: &str) -> Result<Option<lightcraft_develop::SegMask>> {
+/// in) over the whole uncropped photo as `mask.inputImage` shows it. It is what a system segmenter
+/// (Apple Vision in the SwiftUI app) answers with.
+fn bitmap_param(p: &Value, c: &str) -> Result<Option<(usize, usize, Vec<u8>)>> {
     let Some(b) = p.get("bitmap") else { return Ok(None) };
     let dim = |k: &str| {
         b.get(k).and_then(Value::as_u64).and_then(|v| usize::try_from(v).ok()).ok_or_else(|| bad(c, format!("bitmap needs a whole number `{k}`")))
@@ -87,9 +87,23 @@ fn bitmap_seg(p: &Value, c: &str) -> Result<Option<lightcraft_develop::SegMask>>
     let (w, h) = (dim("width")?, dim("height")?);
     let data = b.get("data").and_then(Value::as_str).ok_or_else(|| bad(c, "bitmap needs base64 `data`"))?;
     let cov = STANDARD.decode(data.as_bytes()).map_err(|e| bad(c, format!("bitmap `data` isn't base64: {e}")))?;
+    Ok(Some((w, h, cov)))
+}
+
+/// A `bitmap` as a stored segmentation of the whole photo (an Object mask's `seg`).
+fn bitmap_seg(p: &Value, c: &str) -> Result<Option<lightcraft_develop::SegMask>> {
+    let Some((w, h, cov)) = bitmap_param(p, c)? else { return Ok(None) };
     lightcraft_develop::SegMask::from_coverage(BITMAP_SIDE, w, h, &cov)
         .map(Some)
         .ok_or_else(|| bad(c, "bitmap `data` doesn't match its width × height"))
+}
+
+/// A `bitmap` as what Tap to Remove stores: the selection cropped to its own box.
+fn bitmap_selection(p: &Value, c: &str) -> Result<Option<lightcraft_develop::segmask::CroppedSelection>> {
+    let Some((w, h, cov)) = bitmap_param(p, c)? else { return Ok(None) };
+    lightcraft_develop::SegMask::from_coverage_cropped(BITMAP_SIDE, w, h, &cov)
+        .map(Some)
+        .ok_or_else(|| bad(c, "bitmap selects nothing, or its `data` doesn't match its width × height"))
 }
 
 /// What a new AI shape still needs once it is added.
@@ -947,6 +961,7 @@ pub fn specs() -> Vec<CommandSpec> {
                         opacity: 100.0,
                         source_offset: None,
                         fill: None,
+                        shape: None,
                     };
                     spot.source_offset = pick_source(s, id, &dd, &spot, None);
                     dd.spots.push(spot);
@@ -1005,6 +1020,7 @@ pub fn specs() -> Vec<CommandSpec> {
                         opacity: 100.0,
                         source_offset: None,
                         fill: None,
+                        shape: None,
                     };
                     spot.source_offset = pick_source(s, id, &dd, &spot, None);
                     dd.spots.push(spot);
@@ -1018,28 +1034,36 @@ pub fn specs() -> Vec<CommandSpec> {
             "Add Remove Spot",
             [],
             None,
-            "{mode?: remove|heal|clone|fill (content-aware), points: [[x,y],…], size?: fraction of long edge, feather?, opacity?, source?: [dx,dy] (default: the best match nearby), ai?: bool (Remove only: the AI Remove model paints the fill)} — selects the new spot; returns {index}",
+            "{mode?: remove|heal|clone|fill (content-aware), points: [[x,y],…] | bitmap: {width, height, data} (Tap to Remove: a selection of the photo as `mask.inputImage` shows it; the object is the area), size?: fraction of long edge, feather?, opacity?, source?: [dx,dy] (default: the best match nearby), ai?: bool (Remove only: the AI Remove model paints the fill)} — selects the new spot; returns {index}",
             has_active,
             |s, p| {
                 let mode: SpotMode =
                     serde_json::from_value(p.get("mode").cloned().unwrap_or(json!("remove"))).map_err(|e| bad("spot.add", e.to_string()))?;
-                let pts: Vec<Point> = p
+                let mut pts: Vec<Point> = p
                     .get("points")
                     .and_then(Value::as_array)
                     .map(|a| a.iter().filter_map(|q| Some(Point::new(q.get(0)?.as_f64()?, q.get(1)?.as_f64()?))).collect())
                     .unwrap_or_default();
+                // Tap to Remove: the tapped object's shape is the area; the points are its centre and its box
+                let selection = bitmap_selection(p, "spot.add")?;
+                if let Some(sel) = &selection {
+                    pts = vec![Point::new(sel.center.0, sel.center.1), Point::new(sel.bbox[0], sel.bbox[1]), Point::new(sel.bbox[2], sel.bbox[3])];
+                }
                 if pts.is_empty() {
-                    return Err(bad("spot.add", "missing points"));
+                    return Err(bad("spot.add", "missing points (or a bitmap)"));
                 }
                 let d = Spot::default();
+                // (a shape's size is how far past the object's edge it reaches: a hair, not a brush)
+                let size = f64_or(p, "size", if selection.is_some() { 0.004 } else { d.size });
                 let mut spot = Spot {
                     mode,
                     points: pts,
-                    size: f64_or(p, "size", d.size).clamp(SPOT_SIZE.0, SPOT_SIZE.1),
+                    size: size.clamp(SPOT_SIZE.0, SPOT_SIZE.1),
                     feather: f64_or(p, "feather", d.feather).clamp(0.0, 100.0),
                     opacity: f64_or(p, "opacity", d.opacity).clamp(0.0, 100.0),
                     source_offset: point(p, "source"),
                     fill: None,
+                    shape: selection.map(|s| s.mask),
                 };
                 let ai = p.get("ai").and_then(Value::as_bool).unwrap_or(false);
                 if ai && mode != SpotMode::Remove {
@@ -1112,6 +1136,9 @@ pub fn specs() -> Vec<CommandSpec> {
                         // AI fill, until `spot.erase` paints the new place
                         if let Some(f) = sp.fill.as_mut() {
                             f.rect = [f.rect[0] + d.x, f.rect[1] + d.y, f.rect[2] + d.x, f.rect[3] + d.y];
+                        }
+                        if let Some(r) = sp.shape.as_mut().and_then(|sh| sh.rect.as_mut()) {
+                            *r = [r[0] + d.x, r[1] + d.y, r[2] + d.x, r[3] + d.y];
                         }
                     }
                     if let Some(o) = point(p, "source") {

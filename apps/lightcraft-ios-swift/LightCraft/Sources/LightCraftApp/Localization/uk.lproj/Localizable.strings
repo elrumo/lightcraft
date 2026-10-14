@@ -95,6 +95,7 @@
 "AI Models" = "Моделі ШІ";
 "AI Remove is turned off in Settings → AI Models." = "Видалення за допомогою ШІ вимкнено в розділі «Налаштування → Моделі ШІ».";
 "AI Remove isn't available in this build." = "Видалення за допомогою ШІ недоступне в цій збірці.";
+"AI Remove needs its model: download it in the Remove panel. This object was filled from around it." = "Для видалення з ШІ потрібна модель: завантажте її на панелі «Видалення». Цей об’єкт заповнено з оточення.";
 "AI Remove needs its model: download it in the Remove panel. This stroke was filled from around it." = "Для видалення за допомогою ШІ потрібна модель: завантажте її на панелі «Видалити». Цей мазок заповнено з навколишніх ділянок.";
 "AI masks with SAM 3 (Object and Describe in the Masking panel): click an object to select it (⌥-click leaves a" = "Маски ШІ із SAM 3 («Об’єкт» і «Описати» на панелі маскування): клацніть об’єкт, щоб виділити його (⌥-клацання виключає";
 "About" = "Про програму";
@@ -2287,11 +2288,13 @@
 "Tags: see Tags beside the template. Files are renamed on disk (with their XMP sidecars); existing names get -1, -2…" = "Теги: див. «Теги» біля шаблону. Файли перейменовуються на диску (разом із супровідними XMP); до наявних назв додається -1, -2…";
 "Take a snapshot" = "Зробити знімок";
 "Takes this filter off" = "Знімає цей фільтр";
+"Tap" = "Дотик";
 "Tap + to add photos from Photos or Files." = "Торкніться +, щоб додати фото із «Фото» або «Файлів».";
 "Tap + to make a mask: the subject, the sky, a gradient, a brush…" = "Торкніться +, щоб створити маску: об’єкт, небо, градієнт, пензель…";
 "Tap a colour in the photo" = "Торкніться кольору на фото";
 "Tap a face to mark it" = "Торкніться обличчя, щоб позначити його";
 "Tap an object to select it" = "Торкніться об’єкта, щоб вибрати його";
+"Tap an object to take it away." = "Торкніться об’єкта, щоб прибрати його.";
 "Tap photos to give them the keyword; tap again to take it away." = "Торкайтеся фото, щоб призначити їм ключове слово; торкніться ще раз, щоб прибрати його.";
 "Tap something white or grey in the photo" = "Торкніться чогось білого або сірого на фото";
 "Tap the photo to pick a colour" = "Торкніться фото, щоб вибрати колір";

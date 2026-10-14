@@ -95,6 +95,7 @@
 "AI Models" = "KI-Modelle";
 "AI Remove is turned off in Settings → AI Models." = "KI-Entfernung ist unter Einstellungen → KI-Modelle ausgeschaltet.";
 "AI Remove isn't available in this build." = "KI-Entfernung ist in dieser Version nicht verfügbar.";
+"AI Remove needs its model: download it in the Remove panel. This object was filled from around it." = "KI-Entfernen braucht sein Modell: Lade es im Entfernen-Bereich herunter. Dieses Objekt wurde aus seiner Umgebung gefüllt.";
 "AI Remove needs its model: download it in the Remove panel. This stroke was filled from around it." = "KI-Entfernung braucht ihr Modell: Lade es im Bereich „Entfernen“ herunter. Dieser Strich wurde aus der Umgebung aufgefüllt.";
 "AI masks with SAM 3 (Object and Describe in the Masking panel): click an object to select it (⌥-click leaves a" = "KI-Masken mit SAM 3 über Objekt und Beschreiben im Maskenbereich: Ein Objekt zum Auswählen anklicken; ⌥-Klick lässt einen Teil";
 "About" = "Über";
@@ -2255,11 +2256,13 @@
 "Tags: see Tags beside the template. Files are renamed on disk (with their XMP sidecars); existing names get -1, -2…" = "Platzhalter: Siehe „Platzhalter“ neben der Vorlage. Dateien werden auf dem Datenträger umbenannt (mit ihren XMP-Begleitdateien); vorhandene Namen erhalten -1, -2…";
 "Take a snapshot" = "Schnappschuss erstellen";
 "Takes this filter off" = "Entfernt diesen Filter";
+"Tap" = "Tippen";
 "Tap + to add photos from Photos or Files." = "Tippe auf +, um Fotos aus Fotos oder Dateien hinzuzufügen.";
 "Tap + to make a mask: the subject, the sky, a gradient, a brush…" = "Tippe auf +, um eine Maske zu erstellen: das Motiv, den Himmel, einen Verlauf, einen Pinsel…";
 "Tap a colour in the photo" = "Tippe im Foto auf eine Farbe";
 "Tap a face to mark it" = "Tippe auf ein Gesicht, um es zu markieren";
 "Tap an object to select it" = "Tippe auf ein Objekt, um es auszuwählen";
+"Tap an object to take it away." = "Tippe auf ein Objekt, um es zu entfernen.";
 "Tap photos to give them the keyword; tap again to take it away." = "Tippe auf Fotos, um ihnen das Stichwort zu geben; tippe erneut, um es zu entfernen.";
 "Tap something white or grey in the photo" = "Tippe im Foto auf etwas Weißes oder Graues";
 "Tap the photo to pick a colour" = "Tippe auf das Foto, um eine Farbe zu wählen";

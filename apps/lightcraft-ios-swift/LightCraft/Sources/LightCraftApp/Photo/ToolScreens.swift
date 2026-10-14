@@ -340,27 +340,53 @@ struct RemoveTools: View {
                 .accessibilityLabel("More")
             }
             .padding(.horizontal, 16)
+            if editor.removeMode == "remove" {
+                Picker("Select with", selection: $editor.removeTap) {
+                    Label("Brush", systemImage: "paintbrush.pointed").tag(false)
+                    Label("Tap", systemImage: "hand.tap").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 16)
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
             VStack(spacing: 0) {
-                ControlSlider(spec: ControlSpec(id: "remove.size", label: "Size", section: "remove", min: 1, max: 250, default: 20, step: 1, decimals: 0),
-                              value: editor.removeSize * 1000, set: { editor.removeSize = $0 / 1000 }, editing: { _ in }, reset: { editor.removeSize = 0.02 })
+                if editor.removeMode == "remove" && editor.removeTap {
+                    // how far past the tapped object's edge the spot reaches (the selected tapped spot's own, as it is)
+                    ControlSlider(spec: ControlSpec(id: "remove.reach", label: "Size", section: "remove", min: 1, max: 30, default: 4, step: 1, decimals: 0),
+                                  value: (model.tappedSpot?.spot["size"].double ?? editor.removeTapSize) * 1000, set: { model.tapSizeChanged($0 / 1000) },
+                                  editing: { model.tapSizeEditing($0) }, reset: { model.tapSizeChanged(0.004) })
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
+                } else {
+                    ControlSlider(spec: ControlSpec(id: "remove.size", label: "Size", section: "remove", min: 1, max: 250, default: 20, step: 1, decimals: 0),
+                                  value: editor.removeSize * 1000, set: { editor.removeSize = $0 / 1000 }, editing: { _ in }, reset: { editor.removeSize = 0.02 })
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
+                }
                 if editor.removeMode != "remove" {
                     ControlSlider(spec: ControlSpec(id: "remove.feather", label: "Feather", section: "remove", min: 0, max: 100, default: 50, step: 1, decimals: 0),
                                   value: editor.removeFeather, set: { editor.removeFeather = $0 }, editing: { _ in }, reset: { editor.removeFeather = 50 })
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
                     ControlSlider(spec: ControlSpec(id: "remove.opacity", label: "Opacity", section: "remove", min: 0, max: 100, default: 100, step: 1, decimals: 0),
                                   value: editor.removeOpacity, set: { editor.removeOpacity = $0 }, editing: { _ in }, reset: { editor.removeOpacity = 100 })
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
                 if editor.removeMode == "remove" {
                     GenerativeAISwitch()
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
                 if editor.visualizeSpots {
                     ControlSlider(spec: ControlSpec(id: "remove.spotsThreshold", label: "Threshold", section: "remove", min: 0, max: 100, default: 50, step: 1, decimals: 0),
                                   value: editor.spotsThreshold, set: { editor.spotsThreshold = $0 }, editing: { _ in }, reset: { editor.spotsThreshold = 50 })
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
             }
             .padding(.horizontal, 16)
             Group {
                 if spots.isEmpty {
-                    Text("Paint over what to take away.")
+                    if editor.removeMode == "remove" && editor.removeTap {
+                        Text("Tap an object to take it away.").transition(.opacity)
+                    } else {
+                        Text("Paint over what to take away.").transition(.opacity)
+                    }
                 } else {
                     Text("^[\(spots.count) spot](inflect: true) · tap a pin for more")
                 }
@@ -368,6 +394,11 @@ struct RemoveTools: View {
             .font(.footnote).foregroundStyle(.secondary)
         }
         .padding(.vertical, 8)
+        // what appears makes room smoothly, and settles in, instead of popping in and pushing the rest at once
+        .animation(.snappy, value: editor.removeMode)
+        .animation(.snappy, value: editor.removeTap)
+        .animation(.snappy, value: editor.visualizeSpots)
+        .animation(.snappy, value: spots.isEmpty)
     }
 }
 

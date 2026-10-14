@@ -81,6 +81,7 @@
 "AI Models" = "AIモデル";
 "AI Remove is turned off in Settings → AI Models." = "AI削除は「設定 → AIモデル」でオフになっています。";
 "AI Remove isn't available in this build." = "このビルドではAI削除を使用できません。";
+"AI Remove needs its model: download it in the Remove panel. This object was filled from around it." = "AI除去にはモデルが必要です。「除去」パネルでダウンロードしてください。このオブジェクトは周囲から埋めました。";
 "AI Remove needs its model: download it in the Remove panel. This stroke was filled from around it." = "AI削除にはモデルが必要です。削除パネルでダウンロードしてください。このストロークは周囲から補完しました。";
 "AI Super Resolution is not available in this build" = "このビルドではAI超解像を利用できません";
 "About" = "LightCraftについて";
@@ -2268,11 +2269,13 @@
 "Tags: see Tags beside the template. Files are renamed on disk (with their XMP sidecars); existing names get -1, -2…" = "テンプレート横の「タグ」を参照してください。ファイルとXMPの名前を変更し、同名の場合は-1、-2…を付けます";
 "Take a snapshot" = "スナップショットを作成";
 "Takes this filter off" = "このフィルターを解除します";
+"Tap" = "タップ";
 "Tap + to add photos from Photos or Files." = "+をタップして「写真」または「ファイル」から写真を追加します。";
 "Tap + to make a mask: the subject, the sky, a gradient, a brush…" = "+をタップしてマスクを作成：被写体、空、グラデーション、ブラシ…";
 "Tap a colour in the photo" = "写真の色をタップ";
 "Tap a face to mark it" = "顔をタップして選択";
 "Tap an object to select it" = "オブジェクトをタップして選択";
+"Tap an object to take it away." = "オブジェクトをタップして取り除きます。";
 "Tap photos to give them the keyword; tap again to take it away." = "写真をタップしてキーワードを付けます。もう一度タップすると外れます。";
 "Tap something white or grey in the photo" = "写真の白またはグレーの部分をタップ";
 "Tap the photo to pick a colour" = "写真をタップして色を選択";

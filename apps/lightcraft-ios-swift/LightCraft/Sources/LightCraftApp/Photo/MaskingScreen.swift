@@ -77,10 +77,10 @@ struct MaskingTools: View {
         let mask = MaskList.selected(model)
         VStack(spacing: 8) {
             if model.editor.maskTool == "brush" {
-                BrushControls()
+                BrushControls().transition(.opacity.combined(with: .move(edge: .bottom)))
             }
             if model.editor.maskTool == "object" {
-                ObjectControls()
+                ObjectControls().transition(.opacity.combined(with: .move(edge: .bottom)))
             }
             if let mask, let group {
                 MaskGroupSheet(mask: mask, group: group)
@@ -95,6 +95,7 @@ struct MaskingTools: View {
         }
         .padding(.vertical, 8)
         .animation(.snappy, value: group)
+        .animation(.snappy, value: model.editor.maskTool)
         .onChange(of: mask == nil) { _, none in
             if none { group = nil }
         }
@@ -659,10 +660,11 @@ struct ObjectControls: View {
                 Label("Subtract", systemImage: "minus").tag(true)
             }
             .pickerStyle(.segmented)
-            if e.selecting { ProgressView() }
+            if e.selecting { ProgressView().transition(.scale.combined(with: .opacity)) }
             Button("Done") { e.maskTool = nil }
         }
         .padding(.horizontal, 16)
+        .animation(.snappy, value: e.selecting)
     }
 }
 

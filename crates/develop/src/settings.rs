@@ -1069,11 +1069,17 @@ pub struct Spot {
     /// Remove spot is filled with texture from around it when it renders.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fill: Option<crate::segmask::SpotFill>,
+    /// Tap to Remove: the object that was tapped (a stored segmentation over its box) is the spot's area, in place of a
+    /// stroke along `points`, which then hold the object's centre and the corners of its box (for its pin and the render
+    /// window). `size` is how far past the object's edge the spot reaches. Spots with a shape belong to this photo and are
+    /// left behind by Copy Settings.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shape: Option<crate::segmask::SegMask>,
 }
 
 impl Default for Spot {
     fn default() -> Self {
-        Self { mode: SpotMode::Remove, points: Vec::new(), size: 0.02, feather: 50.0, opacity: 100.0, source_offset: None, fill: None }
+        Self { mode: SpotMode::Remove, points: Vec::new(), size: 0.02, feather: 50.0, opacity: 100.0, source_offset: None, fill: None, shape: None }
     }
 }
 

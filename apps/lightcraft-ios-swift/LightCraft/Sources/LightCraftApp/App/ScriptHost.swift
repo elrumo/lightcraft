@@ -12,7 +12,7 @@ import UIKit
 ///   people | map, photo?, span?: all | months | years, group?: light | color…, sheet?: albums |
 ///   filter | settings | export | sync | history | versions | keywords | about | superRes | createPreset | smartAlbum (id?) | allMetadata | none, select?,
 ///   faceBoxes?, tagFace?, beforeAfter?, visualizeSpots?, removeAI?, histogram?, cropGuide?, maskTool?: object | brush | colorRange | none, objectTap?: [x, y]
-///   (Select Object's tap, normalized), objectSubtract?, selectSubject?, selectionEngine?: auto | apple | classic}`: go there.
+///   (Select Object's tap, normalized), objectSubtract?, selectSubject?, selectionEngine?: auto | apple | classic, removeTap? (Remove selects by tapping), removeTapSize? (the reach past a tapped object, of the long edge), removeObjectTap?: [x, y]}`: go there.
 @Observable
 final class ScriptHost {
     func answer(id: UInt64, method: String, params: JSONValue, model: AppModel) {
@@ -79,6 +79,9 @@ final class ScriptHost {
             if let on = params["beforeAfter"].bool { model.editor.beforeAfter = on }
             if let on = params["visualizeSpots"].bool { model.editor.visualizeSpots = on }
             if let on = params["removeAI"].bool { model.prefs.removeAI = on }
+            if let on = params["removeTap"].bool { model.editor.removeTap = on }
+            if let size = params["removeTapSize"].double { model.tapSizeChanged(size) }
+            if let x = params["removeObjectTap"][0].double, let y = params["removeObjectTap"][1].double { await model.removeObject(at: (x, y)) }
             if let tool = params["maskTool"].string { model.editor.maskTool = tool == "none" ? nil : tool }
             if let on = params["objectSubtract"].bool { model.editor.objectSubtract = on }
             if let engine = params["selectionEngine"].string { model.prefs.selectionEngine = engine }

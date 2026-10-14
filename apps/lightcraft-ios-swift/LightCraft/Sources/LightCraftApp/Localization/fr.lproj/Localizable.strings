@@ -78,6 +78,7 @@
 "AI Models" = "Modèles IA";
 "AI Remove is turned off in Settings → AI Models." = "La suppression IA est désactivée dans Réglages → Modèles IA.";
 "AI Remove isn't available in this build." = "La suppression IA n'est pas disponible dans cette version.";
+"AI Remove needs its model: download it in the Remove panel. This object was filled from around it." = "Retrait par IA a besoin de son modèle : téléchargez-le dans le panneau Retirer. Cet objet a été comblé à partir de ses alentours.";
 "AI Remove needs its model: download it in the Remove panel. This stroke was filled from around it." = "La suppression IA a besoin de son modèle : téléchargez-le dans le panneau Supprimer. Ce coup de pinceau a été comblé à partir de ses alentours.";
 "About" = "À propos";
 "About LightCraft" = "À propos de LightCraft";
@@ -2187,11 +2188,13 @@
 "Tags: see Tags beside the template. Files are renamed on disk (with their XMP sidecars); existing names get -1, -2…" = "Balises : voir Balises à côté du modèle. Les fichiers sont renommés sur le disque (avec leurs fichiers annexes XMP) ; les noms existants reçoivent -1, -2…";
 "Take a snapshot" = "Créer un instantané";
 "Takes this filter off" = "Retire ce filtre";
+"Tap" = "Toucher";
 "Tap + to add photos from Photos or Files." = "Touchez + pour ajouter des photos depuis Photos ou Fichiers.";
 "Tap + to make a mask: the subject, the sky, a gradient, a brush…" = "Touchez + pour créer un masque : le sujet, le ciel, un dégradé, un pinceau…";
 "Tap a colour in the photo" = "Touchez une couleur dans la photo";
 "Tap a face to mark it" = "Touchez un visage pour le marquer";
 "Tap an object to select it" = "Touchez un objet pour le sélectionner";
+"Tap an object to take it away." = "Touchez un objet pour le retirer.";
 "Tap photos to give them the keyword; tap again to take it away." = "Touchez des photos pour leur appliquer le mot-clé ; touchez-les de nouveau pour le retirer.";
 "Tap something white or grey in the photo" = "Touchez un élément blanc ou gris dans la photo";
 "Tap the photo to pick a colour" = "Touchez la photo pour choisir une couleur";

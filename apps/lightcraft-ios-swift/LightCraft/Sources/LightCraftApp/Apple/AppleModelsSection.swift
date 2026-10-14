@@ -50,14 +50,17 @@ private struct TapToSegmentRow: View {
             Text("Apple tap-to-segment model").font(.headline)
             Text("Selects any object from taps, including parts you add or leave out.").font(.subheadline).foregroundStyle(.secondary)
             if let progress {
-                ProgressView(value: progress)
+                ProgressView(value: progress).transition(.opacity)
             } else if ready == true {
-                Label("On this device. Managed by iOS.", systemImage: "checkmark.circle").font(.caption).foregroundStyle(.secondary)
+                Label("On this device. Managed by iOS.", systemImage: "checkmark.circle").font(.caption).foregroundStyle(.secondary).transition(.opacity)
             } else if ready == false {
-                Button("Download…") { asking = true }
+                Button("Download…") { asking = true }.transition(.opacity)
             }
-            if let failure { Text(failure).font(.caption).foregroundStyle(.red) }
+            if let failure { Text(failure).font(.caption).foregroundStyle(.red).transition(.opacity.combined(with: .move(edge: .top))) }
         }
+        .animation(.snappy, value: progress == nil)
+        .animation(.snappy, value: ready)
+        .animation(.snappy, value: failure)
         .task { ready = await VisionIterativeProvider.isReady() }
         .alert("Download Apple's selection model?", isPresented: $asking) {
             Button("Download") { start() }

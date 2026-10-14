@@ -81,6 +81,7 @@
 "AI Models" = "AI 模型";
 "AI Remove is turned off in Settings → AI Models." = "AI 移除已在“设置 → AI 模型”中关闭。";
 "AI Remove isn't available in this build." = "此版本不提供 AI 移除。";
+"AI Remove needs its model: download it in the Remove panel. This object was filled from around it." = "AI 移除需要其模型：请在“移除”面板中下载。此对象已根据周围内容填补。";
 "AI Remove needs its model: download it in the Remove panel. This stroke was filled from around it." = "AI 移除需要模型：请在移除面板中下载。此笔触已用周围内容填充。";
 "AI Super Resolution is not available in this build" = "此版本不提供 AI 超分辨率";
 "About" = "关于";
@@ -2297,11 +2298,13 @@
 "Tags: see Tags beside the template. Files are renamed on disk (with their XMP sidecars); existing names get -1, -2…" = "标签：请参阅模板旁的“标签”。文件将在磁盘上重命名（连同其 XMP 附属文件）；已有同名文件会得到 -1、-2…";
 "Take a snapshot" = "创建快照";
 "Takes this filter off" = "移除此筛选器";
+"Tap" = "点按";
 "Tap + to add photos from Photos or Files." = "轻点 + 以从“照片”或“文件”添加照片。";
 "Tap + to make a mask: the subject, the sky, a gradient, a brush…" = "轻点 + 创建蒙版：主题、天空、渐变、画笔…";
 "Tap a colour in the photo" = "轻点照片中的颜色";
 "Tap a face to mark it" = "轻点人脸以标记";
 "Tap an object to select it" = "点按对象以选择它";
+"Tap an object to take it away." = "点按对象即可将其移除。";
 "Tap photos to give them the keyword; tap again to take it away." = "轻点照片即可为其添加关键字；再次轻点可将其去除。";
 "Tap something white or grey in the photo" = "轻点照片中的白色或灰色区域";
 "Tap the photo to pick a colour" = "轻点照片选择颜色";

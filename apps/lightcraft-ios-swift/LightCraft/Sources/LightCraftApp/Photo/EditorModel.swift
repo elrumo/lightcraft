@@ -123,6 +123,10 @@ final class EditorModel {
     var picking: Pick?
     /// The Remove tool: its mode and brush (size as a fraction of the photo's long edge).
     var removeMode = "remove"
+    /// Remove selects by tapping an object (Apple Vision) instead of painting a stroke.
+    var removeTap = false
+    /// Tap mode's Size: how far past a tapped object's edge its spot reaches (a fraction of the photo's long edge).
+    var removeTapSize = 0.004
     var removeSize = 0.02
     var removeFeather = 50.0
     var removeOpacity = 100.0
