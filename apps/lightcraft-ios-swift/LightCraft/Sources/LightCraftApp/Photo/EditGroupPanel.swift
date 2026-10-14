@@ -52,28 +52,17 @@ struct Flyout<Content: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Button {
-                withAnimation(.snappy) { open.toggle() }
-            } label: {
-                HStack {
-                    if let symbol { Image(systemName: symbol).foregroundStyle(.secondary) }
-                    Text(title).font(.subheadline.weight(.semibold))
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .rotationEffect(.degrees(open ? 90 : 0))
-                }
-                .padding(.vertical, 10)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityAddTraits(.isHeader)
-            .accessibilityValue(open ? "Expanded" : "Collapsed")
-            if open {
+            DisclosureGroup(isExpanded: Binding(get: { open }, set: { v in withAnimation(.snappy) { open = v } })) {
                 content()
-                    .transition(.opacity.combined(with: .move(edge: .top)))
+            } label: {
+                Label {
+                    Text(title).font(.subheadline.weight(.semibold))
+                } icon: {
+                    if let symbol { Image(systemName: symbol).foregroundStyle(.secondary) }
+                }
+                .padding(.vertical, 6)
             }
+            .tint(.primary)
             Divider()
         }
     }
@@ -287,7 +276,7 @@ private struct EffectsGroup: View {
 
     var body: some View {
         Sliders(section: "effects")
-        Text("Vignette").font(.subheadline.weight(.semibold)).padding(.top, 8)
+        Text("Vignette").font(.headline).padding(.top, 8).accessibilityAddTraits(.isHeader)
         Picker("Style", selection: Binding(get: { model.editor.setting("vignette", "style").string ?? "highlight" }, set: { style in
             model.perform("develop.merge", ["settings": ["vignette": ["style": .string(style)]], "label": "Vignette Style"])
         })) {
@@ -297,7 +286,7 @@ private struct EffectsGroup: View {
         }
         .pickerStyle(.segmented)
         Sliders(section: "vignette")
-        Text("Grain").font(.subheadline.weight(.semibold)).padding(.top, 8)
+        Text("Grain").font(.headline).padding(.top, 8).accessibilityAddTraits(.isHeader)
         Sliders(section: "grain")
     }
 }

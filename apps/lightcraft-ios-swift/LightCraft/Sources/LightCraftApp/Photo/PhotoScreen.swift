@@ -648,52 +648,73 @@ struct ToolBar: ToolbarContent {
 /// The Edit tool's groups: Auto, then Profile, Light, Color… (one open at a time).
 struct GroupBar: View {
     @Environment(AppModel.self) private var model
-    @ScaledMetric(relativeTo: .body) private var iconSize: CGFloat = 18
-    @ScaledMetric(relativeTo: .caption2) private var labelSize: CGFloat = 11
 
     var body: some View {
         let current = EditGroup(rawValue: model.prefs.editGroup) ?? .light
-        ScrollView(.horizontal) {
-            HStack(spacing: 4) {
-                Button {
-                    Task {
-                        if await model.run("develop.auto") != nil { model.show(String(localized: "Auto settings applied")) }
-                    }
-                } label: {
-                    groupLabel("wand.and.stars", "Auto", on: false)
+        GroupChips(
+            items: EditGroup.allCases.map { .init(id: $0.rawValue, label: $0.label, symbol: $0.symbol) },
+            selected: current.rawValue,
+            auto: {
+                Task {
+                    if await model.run("develop.auto") != nil { model.show(String(localized: "Auto settings applied")) }
                 }
-                Divider().frame(height: 32)
-                ForEach(EditGroup.allCases) { group in
-                    Button {
-                        model.prefs.editGroup = group.rawValue
-                    } label: {
-                        groupLabel(group.symbol, group.label, on: group == current)
-                    }
-                    .accessibilityAddTraits(group == current ? .isSelected : [])
-                }
-            }
-            .padding(.horizontal, 10)
-        }
-        .scrollIndicators(.hidden)
-        .frame(minHeight: 60)
-        .fixedSize(horizontal: false, vertical: true)
-        .buttonStyle(.plain)
-        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+            },
+            choose: { model.prefs.editGroup = $0 }
+        )
         .haptic(.selection, trigger: model.prefs.editGroup)
     }
+}
 
-    private func groupLabel(_ symbol: String, _ label: String, on: Bool) -> some View {
-        VStack(spacing: 3) {
-            Image(systemName: symbol).font(.system(size: iconSize))
-            Text(LocalizedStringKey(label)).font(.system(size: labelSize)).lineLimit(1).minimumScaleFactor(0.7)
+/// A row of groups as glass chips (a symbol and the name), the open one prominent, scrolling
+/// sideways when they don't fit; Auto first when given.
+struct GroupChips: View {
+    struct Item: Identifiable {
+        let id: String
+        let label: String
+        let symbol: String
+    }
+
+    let items: [Item]
+    let selected: String?
+    var enabled = true
+    var auto: (() -> Void)? = nil
+    let choose: (String) -> Void
+
+    var body: some View {
+        ScrollView(.horizontal) {
+            GlassEffectContainer {
+                HStack(spacing: 6) {
+                    if let auto {
+                        Button(action: auto) {
+                            Label("Auto", systemImage: "wand.and.stars")
+                        }
+                        .buttonStyle(.glass)
+                    }
+                    ForEach(items) { item in
+                        chip(item, on: enabled && item.id == selected)
+                    }
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
         }
-        .foregroundStyle(on ? Color.accentColor : Color.primary)
-        .frame(width: 64)
-        .frame(minHeight: 52)
-        .background {
-            if on { Capsule().fill(.thinMaterial) }
+        .scrollIndicators(.hidden)
+        .scrollClipDisabled()
+        .font(.subheadline.weight(.medium))
+        .disabled(!enabled)
+        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+    }
+
+    @ViewBuilder private func chip(_ item: Item, on: Bool) -> some View {
+        let button = Button { choose(item.id) } label: {
+            Label(LocalizedStringKey(item.label), systemImage: item.symbol)
         }
-        .contentShape(Rectangle())
+        .accessibilityAddTraits(on ? .isSelected : [])
+        if on {
+            button.buttonStyle(.glassProminent)
+        } else {
+            button.buttonStyle(.glass)
+        }
     }
 }
 
@@ -721,7 +742,11 @@ struct ToolPanel: View {
                 .scrollIndicators(.automatic)
         }
         .frame(height: dragHeight ?? Self.stops[min(editor.detent, Self.stops.count - 1)])
-        .background(Color(uiColor: .secondarySystemBackground), in: .rect(topLeadingRadius: 22, topTrailingRadius: 22))
+        // a card floating over the canvas, as a sheet is in iOS 26
+        .clipShape(.rect(cornerRadius: 28))
+        .glassEffect(.regular, in: .rect(cornerRadius: 28))
+        .padding(.horizontal, 8)
+        .padding(.bottom, 4)
         .transition(.move(edge: .bottom).combined(with: .opacity))
     }
 
