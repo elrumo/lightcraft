@@ -223,6 +223,11 @@ fn exports_run_in_the_background_and_answer_when_done() {
     assert_eq!(files.len(), 4, "{done}");
     assert_eq!(done["result"]["cancelled"], false);
     assert!(Path::new(files[0]["path"].as_str().unwrap()).is_file());
+    // Export with Previous: the same options again, for the photo chosen now
+    let one = ids[0];
+    h.call(&req(5, "engine.execute", json!({"command": "library.select", "params": {"ids": [one], "active": one}})), Duration::from_secs(30));
+    let again = h.call(&req(6, "host.exportPrevious", json!({})), Duration::from_secs(60));
+    assert_eq!(again["result"]["files"].as_array().map(Vec::len), Some(1), "{again}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -393,4 +398,11 @@ fn the_ui_commands_are_listed_with_their_keys() {
     assert_eq!(list.len(), crate::ui_commands::UI_COMMANDS.len());
     let grid = list.iter().find(|c| c["id"] == "view.gridToggle").unwrap();
     assert_eq!((grid["shortcut"].as_str(), grid["label"].as_str()), (Some("G"), Some("Grid")), "{grid}");
+}
+
+#[test]
+fn export_with_previous_needs_an_export_first() {
+    let h = demo();
+    let r = h.call(&req(1, "host.exportPrevious", json!({})), Duration::from_secs(30));
+    assert!(r["error"]["message"].as_str().unwrap().contains("nothing exported yet"), "{r}");
 }

@@ -29,6 +29,28 @@ pub struct Prepared {
     pub after: AfterExport,
 }
 
+/// Remember an export's options for Export with Previous (and to prefill the dialog): not the
+/// photos or a file name, and the folder only when the user chose it (`dir`), not a staging one.
+pub fn remember(session: &mut Session, p: &Value, dir: Option<&str>) {
+    let mut last = p.clone();
+    if let Some(o) = last.as_object_mut() {
+        o.remove("ids");
+        o.remove("id");
+        o.remove("path");
+        o.remove("sendTo");
+        match dir {
+            Some(d) => {
+                o.insert("dir".into(), serde_json::json!(d));
+            }
+            None => {
+                o.remove("dir");
+            }
+        }
+    }
+    session.last_export = Some(last);
+    let _ = session.save_prefs();
+}
+
 /// Get the photos `p` names ready to export (`ids`; else the selection, in grid order, when more than
 /// one photo is selected; else `id` or the active photo) with the options in `p` (Export Now's
 /// parameters). Cheap: the rendering is [`run_batch`]'s.
