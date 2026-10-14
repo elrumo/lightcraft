@@ -604,11 +604,17 @@ impl Engine {
                 } else {
                     let job = self.session.loupe_job(id, w, h, apply_crop).ok_or_else(|| bad("no such photo"))?;
                     let shown = overlay(p.get("overlay"));
-                    let job = if draft { job.draft() } else { job }.with_overlay(shown);
+                    // soft proofing: the photo as `space` (or a device profile) holds it, out-of-gamut colours marked
+                    let proof = match p.get("proof").filter(|v| !v.is_null()) {
+                        Some(v) => Some(serde_json::from_value::<lightcraft_pipeline::Proof>(v.clone()).map_err(|e| bad(&format!("`proof`: {e}")))?),
+                        None => None,
+                    };
+                    let job = if draft { job.draft() } else { job }.with_overlay(shown).with_proof(proof);
                     self.sched.request(Slot::Main, job, 100);
-                    // zoomed in: the window on screen at the zoom scale too (a drag keeps the one there is)
+                    // zoomed in: the window on screen at the zoom scale too (a drag keeps the one there is;
+                    // a proof is of the whole frame, as egui's)
                     match p.get("zoom") {
-                        Some(zoom) if !draft => self.request_region(id, (w, h), apply_crop, zoom, shown),
+                        Some(zoom) if !draft && proof.is_none() => self.request_region(id, (w, h), apply_crop, zoom, shown),
                         Some(_) => {}
                         None => self.region = None,
                     }

@@ -406,3 +406,21 @@ fn export_with_previous_needs_an_export_first() {
     let r = h.call(&req(1, "host.exportPrevious", json!({})), Duration::from_secs(30));
     assert!(r["error"]["message"].as_str().unwrap().contains("nothing exported yet"), "{r}");
 }
+
+// Soft proofing the loupe: a proof in another space gives another picture; a bad one is refused
+#[test]
+fn the_loupe_can_be_soft_proofed() {
+    let h = demo();
+    let first = h.call(&req(1, "engine.execute", json!({"command": "catalog.query", "params": {"limit": 1}})), Duration::from_secs(30));
+    let photo = first["result"]["photos"][0]["id"].as_u64().unwrap();
+    h.call(&req(2, "render.view", json!({"photo": photo, "width": 160, "height": 120})), Duration::from_secs(30));
+    let plain = h.wait_for(|e| e["kind"] == "image" && e["slot"] == "main" && e["final"] == true);
+    h.call(
+        &req(3, "render.view", json!({"photo": photo, "width": 160, "height": 120, "proof": {"space": "srgb", "destWarning": true}})),
+        Duration::from_secs(30),
+    );
+    let proofed = h.wait_for(|e| e["kind"] == "image" && e["slot"] == "main" && e["final"] == true && e["key"] != plain["key"]);
+    assert_ne!(proofed["key"], plain["key"], "{proofed}");
+    let bad = h.call(&req(4, "render.view", json!({"photo": photo, "width": 160, "height": 120, "proof": {"space": 7}})), Duration::from_secs(30));
+    assert_eq!(bad["error"]["code"], "badParams", "{bad}");
+}
