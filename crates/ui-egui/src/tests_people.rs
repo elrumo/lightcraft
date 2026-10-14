@@ -124,3 +124,36 @@ fn the_face_models_are_offered_with_their_licences_and_nothing_downloads() {
     assert!(!h.app.ui.faces_offer && !has(&h, "button:peopleDownload"));
     assert!(has(&h, "button:peopleFind"));
 }
+
+#[test]
+fn a_persons_unnamed_faces_are_one_picture_and_one_click_selects_them_all() {
+    let mut h = window(true);
+    click(&mut h, "button:peopleFind");
+    until(&mut h, "the faces", |h| h.app.session.vision.job().is_some_and(|j| j.finished.load(Ordering::Relaxed)));
+    // face boxes where the stand-in finds faces (the two halves of a photo), as Detect Faces would add them
+    let ids: Vec<u64> = h.app.session.catalog.photos().map(|p| p.id.0).collect();
+    for id in ids {
+        for (x0, x1) in [(0.1, 0.45), (0.55, 0.9)] {
+            h.app.run("photo.addRegion", json!({"id": id, "rect": {"x0": x0, "y0": 0.2, "x1": x1, "y1": 0.8}})).unwrap();
+        }
+    }
+    h.settle(Duration::from_secs(5));
+    let r = h.app.session.execute("faces.unnamed", &json!({})).unwrap();
+    let faces = r["faces"].as_array().unwrap();
+    let first: Vec<(u64, usize)> =
+        faces.iter().filter(|f| f["group"] == 0).map(|f| (f["photo"].as_u64().unwrap(), f["index"].as_u64().unwrap() as usize)).collect();
+    assert!(first.len() > 1, "the finder's biggest person has several faces: {r}");
+    // one picture for them: the first face has a tile, the others don't
+    let tile = |(photo, index): (u64, usize)| format!("unnamed-face:{photo}:{index}");
+    assert!(has(&h, &tile(first[0])), "the person's picture is there");
+    assert!(first[1..].iter().all(|f| !has(&h, &tile(*f))), "their other faces are behind it");
+    crate::tests_grid_touch::snap(&h, "people-grouped");
+    // one click selects every face of theirs, a second deselects them
+    click(&mut h, &tile(first[0]));
+    h.step();
+    let selected: std::collections::HashSet<(u64, usize)> = first.iter().copied().collect();
+    assert_eq!(h.app.ui.unnamed_selected, selected);
+    click(&mut h, &tile(first[0]));
+    h.step();
+    assert!(h.app.ui.unnamed_selected.is_empty());
+}
