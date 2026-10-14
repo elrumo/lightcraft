@@ -110,11 +110,16 @@ impl Enhancer {
         })
     }
 
-    /// Whether the model's files are in place (a hand-placed file is checked when it is loaded).
+    /// Whether the model's files are in place, in every folder it has (a pinned file at its exact
+    /// size; a hand-placed file is checked against its hash when it is loaded).
     pub fn installed(&self, id: &str) -> bool {
         #[cfg(feature = "enhance")]
         if let (Some(dir), Ok(spec)) = (self.model_dir(id), Self::spec(id)) {
-            return spec.files.iter().all(|f| std::fs::metadata(dir.join(f.name)).is_ok_and(|m| m.is_file() && m.len() > 0 && m.len() <= f.max));
+            let ok = |d: &std::path::Path, f: &lightcraft_fetch::FileSpec<'_>| {
+                std::fs::metadata(d.join(f.name)).is_ok_and(|m| m.is_file() && m.len() > 0 && m.len() <= f.max && f.size.is_none_or(|s| m.len() == s))
+            };
+            let parts = spec.parts();
+            return !parts.is_empty() && parts.iter().all(|p| p.files.iter().all(|f| ok(&dir.join(p.dir), f)));
         }
         let _ = id;
         false
@@ -131,17 +136,45 @@ impl Enhancer {
         }
     }
 
-    /// Where model `id` is downloaded from, in order: the user's, then the built-in ones.
+    /// The user's own download locations for model `id` (its environment variable, then
+    /// `<dir>/<id>-mirrors.txt`).
+    #[cfg(feature = "enhance")]
+    fn user_mirrors(&self, spec: &lightcraft_enhance::models::ModelSpec) -> Vec<String> {
+        let env = std::env::var(spec.mirrors_env).ok();
+        let file = self.dir.as_ref().map(|d| d.join(format!("{}-mirrors.txt", spec.id)));
+        lightcraft_fetch::mirrors(env.as_deref(), file.as_deref(), &[])
+    }
+
+    /// Where model `id` is downloaded from, in order: the user's, then the built-in ones (for a
+    /// model of several folders, each folder's).
     pub fn mirrors(&self, id: &str) -> Vec<String> {
         #[cfg(feature = "enhance")]
         if let Ok(spec) = Self::spec(id) {
-            let env = std::env::var(spec.mirrors_env).ok();
-            let file = self.dir.as_ref().map(|d| d.join(format!("{id}-mirrors.txt")));
-            let builtin = if self.no_builtin_mirrors { &[] } else { spec.default_mirrors };
-            return lightcraft_fetch::mirrors(env.as_deref(), file.as_deref(), builtin);
+            let user = self.user_mirrors(spec);
+            let mut out = user.clone();
+            for p in spec.parts() {
+                for m in spec.part_mirrors(&p, &user, !self.no_builtin_mirrors) {
+                    if !out.contains(&m) {
+                        out.push(m);
+                    }
+                }
+            }
+            return out;
         }
         let _ = id;
         Vec::new()
+    }
+
+    /// Every folder of model `id`, with its files and where it downloads from.
+    #[cfg(feature = "enhance")]
+    fn download_parts(&self, spec: &lightcraft_enhance::models::ModelSpec, dir: &std::path::Path) -> Vec<crate::download::Part> {
+        let user = self.user_mirrors(spec);
+        spec.parts()
+            .into_iter()
+            .map(|p| {
+                (p.files, spec.part_mirrors(&p, &user, !self.no_builtin_mirrors), if p.dir.is_empty() { dir.to_path_buf() } else { dir.join(p.dir) })
+            })
+            .collect()
     }
 
     /// The models and their state.
@@ -191,11 +224,11 @@ impl Enhancer {
             if self.installed(id) {
                 return Ok(false);
             }
-            let mirrors = self.mirrors(id);
-            if mirrors.is_empty() {
+            let parts = self.download_parts(spec, &dir);
+            if parts.iter().any(|(_, m, _)| m.is_empty()) {
                 return Err(spec.no_mirrors_message());
             }
-            let started = self.download.start(spec.id, spec.files, mirrors, dir, lightcraft_fetch::Options::default(), activity, spec.label)?;
+            let started = self.download.start_parts(spec.id, parts, lightcraft_fetch::Options::default(), activity, spec.label)?;
             if started {
                 *self.fetching.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(spec.id);
             }

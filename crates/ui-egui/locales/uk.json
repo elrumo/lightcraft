@@ -2195,7 +2195,6 @@
   "Downloading": "Завантаження",
   "on this device": "на цьому пристрої",
   "Fast, on every device": "Швидко, на будь-якому пристрої",
-  "Best for wide areas; slower, computers only": "Найкраще для широких ділянок; повільніше, лише на комп’ютерах",
   "No download: texture from the photo": "Без завантаження: текстура з фото",
   "Let the crop reach past the photo's edges and paint the new area on this computer": "Дає кадру вийти за краї фото й домальовує нову ділянку на цьому комп’ютері",
   "Drag the crop past the photo's edges, or choose an aspect ratio, first.": "Спершу витягніть кадр за краї фото або виберіть співвідношення сторін.",
@@ -2204,5 +2203,19 @@
   "This model isn't downloaded yet: download it, or choose Classic.": "Цю модель ще не завантажено: завантажте її або виберіть «Класичний».",
   "Turned off in Settings → AI Models": "Вимкнено в Налаштування → Моделі ШІ",
   "Models can't be downloaded in this build: put the file in the models folder (Settings → AI Models).": "У цій збірці моделі не завантажуються: покладіть файл у теку моделей (Налаштування → Моделі ШІ).",
-  "Generating the new area…": "Створення нової ділянки…"
+  "Generating the new area…": "Створення нової ділянки…",
+  "Its licence lists uses that aren't allowed: read it before downloading (Settings → AI Models ▸ Licence).": "Ліцензія забороняє деякі способи використання: прочитайте її перед завантаженням (Налаштування → Моделі ШІ ▸ Ліцензія).",
+  "Without a GPU it takes minutes per Generate.": "Без GPU кожне створення триває кілька хвилин.",
+  "Best for wide areas of sky, water or texture": "Найкраще для великих ділянок неба, води чи текстури",
+  "Draws new detail; slower": "Малює нові деталі; повільніше",
+  "Draws new detail, guided by the photo; slow, a large download": "Малює нові деталі за фото; повільно, велике завантаження",
+  "The most detail; slow, a large download": "Найбільше деталей; повільно, велике завантаження",
+  "A computer": "Комп’ютер",
+  "A phone or tablet": "Телефон або планшет",
+  "The browser": "Браузер",
+  "GPU": "GPU",
+  "no GPU": "без GPU",
+  "This device:": "Цей пристрій:",
+  "What paints the new area when the crop reaches past the photo (Crop ▸ Expand). The larger models draw new detail and take longer.": "Чим малюється нова область, коли кадр виходить за краї фото (Кадрування ▸ Розширити). Більші моделі малюють нові деталі й працюють довше.",
+  "Not an open-source licence: it lists uses that aren't allowed. Read it before downloading.": "Це не ліцензія з відкритим кодом: вона забороняє деякі способи використання. Прочитайте її перед завантаженням."
 }

@@ -278,8 +278,10 @@
   "Added {n} files saved in the external editor to their stacks": "外部エディターで保存した{n}個のファイルをそれぞれのスタックに追加しました",
   "{name} opened for editing": "{name}を編集用に開きました",
   "{n} photos opened for editing": "{n}枚の写真を編集用に開きました",
-  "Uses the {} model, a {:.0} MB download ({} licence). {}.": "{}モデルを使用します（{:.0} MBのダウンロード、{}ライセンス）。{}。",
+  "Uses the {} model, a {} download ({} licence). {}.": "{}モデルを使用します（{}のダウンロード、{}ライセンス）。{}。",
   "New area painted with {}": "{}で新しい領域を生成しました",
-  "{note} · {:.0} MB download": "{note} · {:.0} MBのダウンロード",
-  "The new area was painted by {by} on this device.": "新しい領域はこのデバイス上で生成されました（{by}）。"
+  "{note} · {size} download": "{note} · {size}のダウンロード",
+  "The new area was painted by {by} on this device.": "新しい領域はこのデバイス上で生成されました（{by}）。",
+  "Automatic: {} suits this device": "自動：この端末には {} が適しています",
+  "{} isn't downloaded yet: download it below.": "{} はまだダウンロードされていません。下でダウンロードしてください。"
 }

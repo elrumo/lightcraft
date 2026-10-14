@@ -278,8 +278,10 @@
   "Added {n} files saved in the external editor to their stacks": "{n} im externen Editor gespeicherte Dateien zu ihren Stapeln hinzugefügt",
   "{name} opened for editing": "{name} zum Bearbeiten geöffnet",
   "{n} photos opened for editing": "{n} Fotos zur Bearbeitung geöffnet",
-  "Uses the {} model, a {:.0} MB download ({} licence). {}.": "Verwendet das {}-Modell, ein Download von {:.0} MB (Lizenz {}). {}.",
+  "Uses the {} model, a {} download ({} licence). {}.": "Verwendet das {}-Modell, ein Download von {} (Lizenz {}). {}.",
   "New area painted with {}": "Neue Fläche mit {} erzeugt",
-  "{note} · {:.0} MB download": "{note} · Download von {:.0} MB",
-  "The new area was painted by {by} on this device.": "Die neue Fläche wurde auf diesem Gerät erzeugt ({by})."
+  "{note} · {size} download": "{note} · Download von {size}",
+  "The new area was painted by {by} on this device.": "Die neue Fläche wurde auf diesem Gerät erzeugt ({by}).",
+  "Automatic: {} suits this device": "Automatisch: {} passt zu diesem Gerät",
+  "{} isn't downloaded yet: download it below.": "{} ist noch nicht heruntergeladen: Lade es unten herunter."
 }

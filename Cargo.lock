@@ -3473,6 +3473,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "lightcraft-diffuse"
+version = "0.7.1"
+dependencies = [
+ "candle-core",
+ "candle-nn",
+ "candle-transformers",
+ "lightcraft-erase",
+ "lightcraft-fetch",
+ "lightcraft-inpaint",
+ "lightcraft-raster",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "lightcraft-engine"
 version = "0.7.1"
 dependencies = [
@@ -3487,6 +3503,7 @@ dependencies = [
  "lightcraft-denoise",
  "lightcraft-denoise-core",
  "lightcraft-develop",
+ "lightcraft-diffuse",
  "lightcraft-enhance",
  "lightcraft-erase",
  "lightcraft-faces",
@@ -3527,6 +3544,7 @@ dependencies = [
  "candle-nn",
  "lightcraft-codecs",
  "lightcraft-color",
+ "lightcraft-diffuse",
  "lightcraft-erase",
  "lightcraft-fetch",
  "lightcraft-raster",
