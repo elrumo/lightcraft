@@ -720,8 +720,7 @@ mod hdr_tests {
     fn headless_screenshots_draw_the_8_bit_pixels_of_an_hdr_picture() {
         let ctx = egui::Context::default();
         let sink: Arc<dyn HdrSink> = Arc::new(Recorder::default());
-        let mut r = Renderer::default();
-        r.keep_pixels = true;
+        let mut r = Renderer { keep_pixels: true, ..Default::default() };
         r.set_hdr_sink(Some(sink.clone()));
         assert!(r.can_draw_hdr() && !r.shows_hdr());
         let mut t = Textures { ctx: &ctx, keep_pixels: true, hdr: Some(&sink) };
