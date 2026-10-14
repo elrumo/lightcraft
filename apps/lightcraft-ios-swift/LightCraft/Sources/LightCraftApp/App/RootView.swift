@@ -223,7 +223,10 @@ struct ActivityHUD: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        let rows = model.activity.filter { ["import", "scan", "previews", "download", "superRes"].contains($0.kind) || ($0.kind == "export" && model.sheet?.id != "export") }
+        let rows = model.activity.filter {
+            ["import", "scan", "previews", "download", "superRes"].contains($0.kind) || ($0.kind == "export" && model.sheet?.id != "export")
+                || ($0.kind == "expand" && model.editor.tool != .crop)
+        }
         VStack(spacing: 6) {
             ForEach(rows) { row in
                 HStack(spacing: 10) {

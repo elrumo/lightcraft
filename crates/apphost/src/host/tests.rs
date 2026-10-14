@@ -482,3 +482,23 @@ fn a_lightroom_catalog_is_read_in_the_background() {
     assert!(none["error"]["message"].as_str().unwrap().contains("no Lightroom Classic catalog"), "{none}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// Generative Expand started without waiting (as the phone's Generate does): the host stores the fill
+// when the job ends and says so, and the engine answers meanwhile
+#[test]
+fn a_background_generate_is_stored_when_it_ends() {
+    let h = demo();
+    let ask = |id: u64, command: &str, params: Value| {
+        h.call(&req(id, "engine.execute", json!({"command": command, "params": params})), Duration::from_secs(30))
+    };
+    ask(1, "crop.expand", json!({"on": true}));
+    ask(2, "crop.set", json!({"rect": [0.0, -0.2, 1.0, 1.0]}));
+    let started = ask(3, "crop.generate", json!({"model": "classic", "wait": false}));
+    assert_eq!(started["result"]["started"], true, "{started}");
+    let said = h.wait_for(|e| e["kind"] == "message");
+    assert!(said["text"].as_str().unwrap_or_default().starts_with("New area painted with"), "{said}");
+    let got = ask(4, "develop.get", json!({}));
+    assert_eq!(got["result"]["expand_fill"]["model"], "classic", "{got}");
+    let models = ask(5, "crop.expandModels", json!({}));
+    assert!(models["result"]["running"].is_null(), "nothing left running: {models}");
+}

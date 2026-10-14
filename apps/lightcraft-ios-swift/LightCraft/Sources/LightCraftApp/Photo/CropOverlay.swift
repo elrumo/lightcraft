@@ -189,9 +189,10 @@ struct CropOverlay: View {
         }
     }
 
-    /// A screen point in the straightened frame.
-    private func straight(_ p: CGPoint) -> (x: Double, y: Double)? {
-        guard let frame, let crop = frame.crop, rect.width > 0, rect.height > 0 else { return nil }
+    /// A screen point in the straightened frame (during a drag, as mapped when it started: with
+    /// Expand on, the view grows as the crop passes its margin, and the new mapping isn't drawn yet).
+    private func straight(_ p: CGPoint, frame: PhotoFrame, rect: CGRect) -> (x: Double, y: Double)? {
+        guard let crop = frame.crop, rect.width > 0, rect.height > 0 else { return nil }
         let n = frame.norm(u: (p.x - rect.minX) / rect.width, v: (p.y - rect.minY) / rect.height)
         return crop.straight(x: n.x, y: n.y)
     }
@@ -203,6 +204,9 @@ struct CropOverlay: View {
         let angle: Double
         let centre: CGPoint
         let from: CGPoint
+        /// The mapping when it started.
+        let frame: PhotoFrame
+        let rect: CGRect
     }
 
     private static let names = ["topLeft", "topRight", "bottomRight", "bottomLeft", "top", "right", "bottom", "left"]
@@ -221,11 +225,11 @@ struct CropOverlay: View {
     private var dragGesture: some Gesture {
         DragGesture(minimumDistance: 2)
             .onChanged { g in
-                guard let c = screenCorners, let crop = frame?.crop else { return }
+                guard let c = screenCorners, let frame, let crop = frame.crop else { return }
                 if drag == nil {
                     let h = handle(at: g.startLocation, c)
                     let centre = CGPoint(x: c.map(\.x).reduce(0, +) / 4, y: c.map(\.y).reduce(0, +) / 4)
-                    drag = CropDrag(handle: h, start: crop.rect, angle: crop.angle, centre: centre, from: g.startLocation)
+                    drag = CropDrag(handle: h, start: crop.rect, angle: crop.angle, centre: centre, from: g.startLocation, frame: frame, rect: rect)
                     model.engine?.send("engine.execute", ["command": "develop.beginInteraction", "params": ["label": .string(h == "rotate" ? "Straighten" : "Crop")]])
                 }
                 guard let d = drag else { return }
@@ -234,7 +238,7 @@ struct CropOverlay: View {
                     let a1 = atan2(g.location.y - d.centre.y, g.location.x - d.centre.x)
                     let angle = min(max(d.angle + Double(a1 - a0) * 180 / .pi, -45), 45)
                     model.engine?.send("engine.execute", ["command": "crop.straighten", "params": ["angle": .double(angle)]])
-                } else if let from = straight(d.from), let to = straight(g.location) {
+                } else if let from = straight(d.from, frame: d.frame, rect: d.rect), let to = straight(g.location, frame: d.frame, rect: d.rect) {
                     model.engine?.send("engine.execute", ["command": "crop.drag", "params": [
                         "handle": .string(d.handle), "from": [.double(from.x), .double(from.y)], "to": [.double(to.x), .double(to.y)],
                         "start": .array(d.start.map { .double($0) }),

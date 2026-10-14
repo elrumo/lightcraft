@@ -326,6 +326,8 @@ struct ZoomablePhoto: View {
                 Image(decorative: picture.image, scale: 1)
                     .resizable()
                     .scaledToFit()
+                    // the crop's Expand: what the photo doesn't cover yet comes transparent
+                    .background { if model.editor.setting("crop", "expand").bool == true { Checkerboard() } }
                     .padding(review ? 0 : margin)
                     .scaleEffect(zoom)
                     .offset(pan)

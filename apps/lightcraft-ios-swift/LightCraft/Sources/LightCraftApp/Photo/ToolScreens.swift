@@ -102,6 +102,10 @@ struct CropTools: View {
                     .accessibilityLabel("More")
                 }
             }
+            if tab == "aspect", expand {
+                ExpandControls()
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
             Picker("Tab", selection: $tab) {
                 Text("Aspect").tag("aspect")
                 Text("Geometry").tag("geometry")
@@ -116,6 +120,16 @@ struct CropTools: View {
             if tab == "aspect" {
                 ScrollView(.horizontal) {
                     HStack(spacing: 10) {
+                        // Expand: the crop may reach past the photo, and Generate paints the new area
+                        Button {
+                            model.perform("crop.expand", ["on": .bool(!expand)])
+                            model.buzz(.selection)
+                        } label: {
+                            tileLabel("Expand", "arrow.up.left.and.arrow.down.right", on: expand)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityAddTraits(expand ? .isSelected : [])
+                        .accessibilityHint("Lets the crop reach past the photo's edges, to paint the new area")
                         aspectTile("Original", "rectangle") { model.perform("crop.aspect", ["aspect": "original"]) }
                         aspectTile("Free", "crop") { model.perform("crop.aspect", ["aspect": "free"]) }
                         Menu {
@@ -182,8 +196,12 @@ struct CropTools: View {
             }
         }
         .padding(.vertical, 8)
+        .animation(.snappy, value: expand)
         .onDisappear { editor.cropDraw = nil }
     }
+
+    /// Expand is on: the crop may reach past the photo.
+    private var expand: Bool { model.editor.setting("crop", "expand").bool == true }
 
     /// The round buttons' size: smaller in a column.
     private var buttonSide: CGFloat { inColumn ? 34 : 44 }
@@ -202,13 +220,14 @@ struct CropTools: View {
             .buttonStyle(.plain)
     }
 
-    private func tileLabel(_ label: LocalizedStringKey, _ symbol: String) -> some View {
+    private func tileLabel(_ label: LocalizedStringKey, _ symbol: String, on: Bool = false) -> some View {
         VStack(spacing: 6) {
             Image(systemName: symbol).font(.title3)
             Text(label).font(.caption)
         }
+        .foregroundStyle(on ? Color.white : Color.primary)
         .frame(width: 72, height: 66)
-        .background(Color(uiColor: .tertiarySystemFill), in: .rect(cornerRadius: 12))
+        .background(on ? Color.accentColor : Color(uiColor: .tertiarySystemFill), in: .rect(cornerRadius: 12))
     }
 }
 
