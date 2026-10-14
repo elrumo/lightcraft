@@ -446,8 +446,10 @@ impl Photo {
         let (w, h) = (self.width as f64, self.height as f64);
         let (w, h) = if self.develop.orientation.swaps_axes() { (h, w) } else { (w, h) };
         let r = self.develop.crop.geometry.rect;
-        // a crop read from a file or an agent is hostile: no NaN, nothing outside the frame
-        let part = |len: f64| if len.is_finite() { len.clamp(0.0, 1.0) } else { 1.0 };
+        // a crop read from a file or an agent is hostile: no NaN, nothing outside the frame (with
+        // Generative Expand, nothing beyond the grown photo)
+        let most = if self.develop.crop.expand { 1.0 + 2.0 * lightcraft_geom::EXPAND_MAX } else { 1.0 };
+        let part = |len: f64| if len.is_finite() { len.clamp(0.0, most) } else { 1.0 };
         (w * part(r.width()), h * part(r.height()))
     }
     /// Cropped or straightened.

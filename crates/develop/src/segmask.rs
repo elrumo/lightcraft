@@ -1,5 +1,6 @@
 //! Model results stored with the settings, so rendering never needs the model: segmentations
-//! with a mask ([`SegMask`]) and AI Remove fills with a spot ([`SpotFill`]).
+//! with a mask ([`SegMask`]), AI Remove fills with a spot ([`SpotFill`]) and Generative Expand's
+//! fill past the photo's edges ([`ExpandFill`]).
 
 use serde::{Deserialize, Serialize};
 
@@ -161,6 +162,22 @@ impl SpotFill {
         }
         Some(out)
     }
+}
+
+/// What Generative Expand painted past the photo's edges (the crop's Expand), stored with the
+/// settings so rendering never needs the model. `fill` covers the canvas the model saw:
+/// `fill.rect` is in the normalized coordinates of the transformed image (the coordinates of
+/// masks and spots), reaching past 0..1 on the sides it extends. Its pixels are the light of the
+/// resampled photo before white balance (the stage where a render puts them, so every edit after
+/// it applies to the new area as to the photo), and black over the photo's inside, which a
+/// render never reads from the fill (only a few pixels along its edges are kept, for the
+/// blend). See `lightcraft_pipeline::expand`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ExpandFill {
+    pub fill: SpotFill,
+    /// The model that painted it: `migan`, `lama` or `classic` (texture synthesized from the
+    /// photo, no model).
+    pub model: String,
 }
 
 const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";

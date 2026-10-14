@@ -2,7 +2,7 @@
 
 use lightcraft_catalog::{Op, PhotoId, Version};
 use lightcraft_develop::{DevelopSettings, Preset, ProcessVersion, Section, SettingsGroup, Treatment, Upright, WbMode, controls};
-use lightcraft_geom::{CropGeometry, CropHandle, Point, Rect, crop_fit_angle, drag_crop};
+use lightcraft_geom::{CropGeometry, CropHandle, Point, Rect, crop_cover_angle, crop_fit_angle, drag_crop_in};
 use serde_json::{Value, json};
 
 use super::{CommandSpec, always, bad, bool_or, cmd, f64_or, f64_req, has_active, has_clipboard, has_selection, ok, str_param};
@@ -42,7 +42,7 @@ fn crop_dims(s: &Session, id: PhotoId) -> (f64, f64) {
 /// canvas outside the photo (issue #742).
 fn refit_crop_angle(touched: bool, before: CropGeometry, d: &mut DevelopSettings, (w, h): (f64, f64)) {
     if touched {
-        d.crop.geometry = before.with_angle(d.crop.geometry.angle, w, h);
+        d.crop.geometry = before.with_angle_in(d.crop.geometry.angle, w, h, d.crop.expand);
     }
 }
 
@@ -82,7 +82,8 @@ fn set_aspect(d: &mut DevelopSettings, w: f64, h: f64, aspect: Option<(u32, u32)
         if (w >= h) == (aw >= ah) { aw / ah } else { ah / aw }
     });
     let angle = d.crop.geometry.angle;
-    d.crop.geometry = crop_fit_angle(w, h, angle, a);
+    // with Expand, the aspect is reached by adding canvas around the whole photo
+    d.crop.geometry = if d.crop.expand { crop_cover_angle(w, h, angle, a) } else { crop_fit_angle(w, h, angle, a) };
 }
 
 /// Photo `id` is on an older rendering process than [`ProcessVersion::LATEST`].
@@ -527,26 +528,35 @@ pub fn specs() -> Vec<CommandSpec> {
             })
         }),
         // ---- crop & rotate
-        cmd!("crop.set", "Set Crop", [], None, "{rect?: [x0,y0,x1,y1] normalized in the straightened frame, angle?: degrees}", has_active, |s, p| {
-            let id = active(s, "crop.set")?;
-            let (w, h) = crop_dims(s, id);
-            edit(s, "crop.set", "Crop", |d| {
-                if let Some(a) = p.get("rect").and_then(Value::as_array) {
-                    let v: Vec<f64> = a.iter().filter_map(Value::as_f64).collect();
-                    if v.len() != 4 {
-                        return Err(bad("crop.set", "rect needs 4 numbers"));
+        cmd!(
+            "crop.set",
+            "Set Crop",
+            [],
+            None,
+            "{rect?: [x0,y0,x1,y1] normalized in the straightened frame, angle?: degrees} — kept inside the photo, or with Expand on within the photo grown by its own size on each side",
+            has_active,
+            |s, p| {
+                let id = active(s, "crop.set")?;
+                let (w, h) = crop_dims(s, id);
+                edit(s, "crop.set", "Crop", |d| {
+                    if let Some(a) = p.get("rect").and_then(Value::as_array) {
+                        let v: Vec<f64> = a.iter().filter_map(Value::as_f64).collect();
+                        if v.len() != 4 {
+                            return Err(bad("crop.set", "rect needs 4 numbers"));
+                        }
+                        d.crop.geometry.rect = Rect::new(v[0].min(v[2]), v[1].min(v[3]), v[0].max(v[2]), v[1].max(v[3]));
                     }
-                    d.crop.geometry.rect = Rect::new(v[0].min(v[2]), v[1].min(v[3]), v[0].max(v[2]), v[1].max(v[3]));
-                }
-                let angle = p.get("angle").and_then(Value::as_f64).map(|a| a.clamp(-45.0, 45.0));
-                d.crop.geometry = match (p.get("rect"), angle) {
-                    // a new angle alone turns the crop as Straighten does (issue #742)
-                    (None, Some(a)) => d.crop.geometry.with_angle(a, w, h),
-                    (_, a) => CropGeometry { angle: a.unwrap_or(d.crop.geometry.angle), ..d.crop.geometry }.constrained(w, h),
-                };
-                Ok(())
-            })
-        }),
+                    let angle = p.get("angle").and_then(Value::as_f64).map(|a| a.clamp(-45.0, 45.0));
+                    let expand = d.crop.expand;
+                    d.crop.geometry = match (p.get("rect"), angle) {
+                        // a new angle alone turns the crop as Straighten does (issue #742)
+                        (None, Some(a)) => d.crop.geometry.with_angle_in(a, w, h, expand),
+                        (_, a) => CropGeometry { angle: a.unwrap_or(d.crop.geometry.angle), ..d.crop.geometry }.constrained_in(w, h, expand),
+                    };
+                    Ok(())
+                })
+            }
+        ),
         cmd!(
             query "crop.guides",
             "Crop Guides",
@@ -568,7 +578,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Drag Crop Handle",
             [],
             None,
-            "{handle: topLeft|topRight|bottomRight|bottomLeft|top|right|bottom|left|move | 0..8, from: [x,y], to: [x,y] (normalized, straightened frame), start?: [x0,y0,x1,y1] (default: the current crop), keepRatio?: bool (default false)} — drags a crop handle; stops at the image edge, keeps the opposite edges, honours the aspect lock; keepRatio holds the frame's current proportions for this drag even with the lock off (the UI sends it while Shift is held)",
+            "{handle: topLeft|topRight|bottomRight|bottomLeft|top|right|bottom|left|move | 0..8, from: [x,y], to: [x,y] (normalized, straightened frame), start?: [x0,y0,x1,y1] (default: the current crop), keepRatio?: bool (default false)} — drags a crop handle; stops at the image edge (with Expand on: up to the photo's own size past it), keeps the opposite edges, honours the aspect lock; keepRatio holds the frame's current proportions for this drag even with the lock off (the UI sends it while Shift is held)",
             has_active,
             |s, p| {
                 let id = active(s, "crop.drag")?;
@@ -600,7 +610,7 @@ pub fn specs() -> Vec<CommandSpec> {
                     // orientation is reinterpreted per image, so the frame itself is the truth.
                     // `keepRatio` (Shift held) asks for the same thing for one drag without touching the lock.
                     let ratio = (d.crop.aspect.is_some() || keep_ratio).then(|| start.rect_px(w, h).aspect()).filter(|a| a.is_finite() && *a > 0.0);
-                    d.crop.geometry = drag_crop(start, handle, from, to, w, h, ratio);
+                    d.crop.geometry = drag_crop_in(start, handle, from, to, w, h, ratio, d.crop.expand);
                     Ok(())
                 })
             }
@@ -628,7 +638,8 @@ pub fn specs() -> Vec<CommandSpec> {
                 .clamp(-45.0, 45.0);
                 edit(s, "crop.straighten", "Straighten", |d| {
                     // keep the current crop if it still fits, else the largest of its aspect that does
-                    d.crop.geometry = d.crop.geometry.with_angle(angle, w, h);
+                    // (with Expand: as it is; the corners it uncovers are for the fill)
+                    d.crop.geometry = d.crop.geometry.with_angle_in(angle, w, h, d.crop.expand);
                     Ok(())
                 })
             }
@@ -713,16 +724,80 @@ pub fn specs() -> Vec<CommandSpec> {
                 let a = r.height() / r.width();
                 d.crop.aspect = d.crop.aspect.map(|(x, y)| (y, x));
                 let angle = d.crop.geometry.angle;
-                d.crop.geometry = crop_fit_angle(w, h, angle, Some(a));
+                d.crop.geometry = if d.crop.expand { crop_cover_angle(w, h, angle, Some(a)) } else { crop_fit_angle(w, h, angle, Some(a)) };
                 Ok(())
             })
         }),
         cmd!("crop.reset", "Reset Crop", [], Some("Cmd+Alt+R"), "{}", has_active, |s, _| {
             edit(s, "crop.reset", "Reset Crop", |d| {
                 d.crop = Default::default();
+                d.expand_fill = None;
                 Ok(())
             })
         }),
+        // ---- Generative Expand
+        cmd!(
+            "crop.expand",
+            "Expand",
+            [],
+            None,
+            "{on?: bool (default: toggle)} — Generative Expand: on, the crop may reach past the photo's edges (up to the photo's own size on each side) and choosing an aspect adds canvas around the whole photo; the new area stays empty until crop.generate. Off, the crop goes back inside the photo and the generated fill is dropped",
+            has_active,
+            |s, p| {
+                let id = active(s, "crop.expand")?;
+                let (w, h) = crop_dims(s, id);
+                let cur = s.develop_of(id).is_some_and(|d| d.crop.expand);
+                let on = bool_or(p, "on", !cur);
+                if on == cur {
+                    return Ok(json!({"on": on, "changed": false}));
+                }
+                edit(s, "crop.expand", if on { "Expand" } else { "Expand Off" }, |d| {
+                    d.crop.expand = on;
+                    if !on {
+                        d.crop.geometry = d.crop.geometry.constrained(w, h);
+                        d.expand_fill = None;
+                    }
+                    Ok(())
+                })?;
+                Ok(json!({"on": on, "changed": true}))
+            }
+        ),
+        cmd!(
+            "crop.generate",
+            "Generate",
+            [],
+            None,
+            "{model?: \"migan\"|\"lama\"|\"classic\" (default: the best one on this device, see crop.expandModels), wait?: bool (default true)} — Generative Expand: paints the area of the crop past the photo's edges on this device and stores it with the photo (one undo step, \"Generative Expand\"). Needs Expand on. migan and lama are optional downloads (models.download, after the user agreed); classic needs none. With wait: false it runs in the background (a row in the activity stack; activity.cancel stops it)",
+            has_active,
+            |s, p| {
+                let id = active(s, "crop.generate")?;
+                let model = match p.get("model").and_then(Value::as_str) {
+                    None | Some("auto") => None,
+                    Some(m) => Some(
+                        crate::expand::ExpandModel::from_id(m)
+                            .ok_or_else(|| bad("crop.generate", format!("unknown model `{m}` (migan, lama, classic)")))?,
+                    ),
+                };
+                if bool_or(p, "wait", true) {
+                    let done = s.expand_now(id, model).map_err(|e| bad("crop.generate", e))?;
+                    return serde_json::to_value(done).map_err(|e| bad("crop.generate", e.to_string()));
+                }
+                s.start_expand(id, model).map_err(|e| bad("crop.generate", e))?;
+                Ok(json!({"started": true, "photo": id.0}))
+            }
+        ),
+        cmd!(
+            "crop.expandModels",
+            "Generative Expand Models",
+            [],
+            None,
+            "{} — the ways Generative Expand can paint on this device: id, label, note, available (this device can run it), ready (downloaded and on), downloadBytes, licence, credit, default; and running ({photo, model}) while a Generate runs",
+            always,
+            |s, _| {
+                let running = s.expand_running().map(|(photo, m)| json!({"photo": photo.0, "model": m.id()}));
+                Ok(json!({"models": s.expand_choices(), "running": running}))
+            }
+        ),
         // ---- HDR editing
         cmd!(
             "develop.hdr",

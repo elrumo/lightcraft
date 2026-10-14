@@ -277,5 +277,9 @@
   "Added {name}, saved in the external editor, to its stack": "{name}, enregistré dans l’éditeur externe, a été ajouté à sa pile",
   "Added {n} files saved in the external editor to their stacks": "{n} fichiers enregistrés dans l’éditeur externe ont été ajoutés à leurs piles",
   "{name} opened for editing": "{name} ouvert pour modification",
-  "{n} photos opened for editing": "{n} photos ouvertes pour modification"
+  "{n} photos opened for editing": "{n} photos ouvertes pour modification",
+  "Uses the {} model, a {:.0} MB download ({} licence). {}.": "Utilise le modèle {}, un téléchargement de {:.0} Mo (licence {}). {}.",
+  "New area painted with {}": "Nouvelle zone peinte avec {}",
+  "{note} · {:.0} MB download": "{note} · téléchargement de {:.0} Mo",
+  "The new area was painted by {by} on this device.": "La nouvelle zone a été peinte sur cet appareil ({by})."
 }

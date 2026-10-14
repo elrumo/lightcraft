@@ -35,6 +35,7 @@ pub mod display;
 mod download;
 pub mod enhance;
 pub mod erase;
+pub mod expand;
 pub mod export;
 pub mod face_download;
 #[cfg(not(target_arch = "wasm32"))]
@@ -262,6 +263,8 @@ pub struct Session {
     pub enhancer: enhance::Enhancer,
     /// AI Remove's model, once loaded.
     pub eraser: erase::EraseModel,
+    /// Generative Expand: LaMa once loaded, and the running Generate.
+    pub expand: expand::ExpandState,
     /// Search by description: the model, the library's index of photo vectors and the work in flight.
     pub vision: vision::Vision,
     /// Selected spot (Remove panel), by index into the active photo's spots.
@@ -401,6 +404,7 @@ impl Session {
             segmenter: segment::Segmenter::default(),
             enhancer: enhance::Enhancer::default(),
             eraser: erase::EraseModel::default(),
+            expand: expand::ExpandState::default(),
             vision: vision::Vision::default(),
             active_spot: None,
             library: None,
@@ -1056,6 +1060,8 @@ mod tests_crop_angle;
 mod tests_denoise;
 #[cfg(test)]
 mod tests_enhance;
+#[cfg(test)]
+mod tests_expand;
 #[cfg(test)]
 mod tests_export;
 #[cfg(test)]
