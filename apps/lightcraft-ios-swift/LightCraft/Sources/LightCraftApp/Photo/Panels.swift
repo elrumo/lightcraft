@@ -11,6 +11,9 @@ struct PresetsPanel: View {
     @State private var applied: String?
     @State private var amount: Double = 100
     @State private var group: String = ""
+    @State private var importing = false
+    @State private var review: JSONValue?
+    @State private var exported: [URL]?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -22,8 +25,15 @@ struct PresetsPanel: View {
                 }
                 .pickerStyle(.menu)
                 Spacer()
-                Button("Create Preset", systemImage: "plus") { model.sheet = .createPreset }
-                    .labelStyle(.iconOnly)
+                Menu {
+                    Button("Create Preset", systemImage: "plus") { model.sheet = .createPreset }
+                    Button("Import Presets…", systemImage: "square.and.arrow.down") { importing = true }
+                    Button("Export Presets…", systemImage: "square.and.arrow.up") { exportPresets() }
+                        .disabled(!presets.contains { !$0.builtin })
+                } label: {
+                    Label("More", systemImage: "plus.circle")
+                }
+                .labelStyle(.iconOnly)
             }
             if let applied, presets.contains(where: { $0.id == applied }) {
                 ControlSlider(
@@ -81,6 +91,49 @@ struct PresetsPanel: View {
         .onChange(of: model.sheet == nil) { _, closed in
             // a preset made in Create Preset
             if closed { Task { await load() } }
+        }
+        .fileImporter(isPresented: $importing, allowedContentTypes: PresetFiles.types, allowsMultipleSelection: true) { result in
+            guard case .success(let urls) = result, let engine = model.engine else { return }
+            let paths = PresetFiles.stage(urls)
+            Task {
+                do {
+                    review = try await engine.execute("preset.importReview", ["paths": .array(paths.map { .string($0) })])
+                } catch {
+                    model.show(error.localizedDescription, error: true)
+                }
+            }
+        }
+        .sheet(item: Binding(get: { review.map(ReviewItem.init) }, set: { if $0 == nil { review = nil } }), onDismiss: { Task { await load() } }) {
+            PresetImportSheet(review: $0.review)
+        }
+        .sheet(item: Binding(get: { exported.map { ExportedFiles(urls: $0) } }, set: { if $0 == nil { exported = nil } })) {
+            ActivityView(urls: $0.urls) { exported = nil }
+                .ignoresSafeArea()
+        }
+    }
+
+    private struct ReviewItem: Identifiable {
+        let review: JSONValue
+        let id = UUID()
+    }
+
+    private struct ExportedFiles: Identifiable {
+        let urls: [URL]
+        var id: String { urls.map(\.path).joined() }
+    }
+
+    /// Your presets (the group shown, if it is one of yours) as a `.lcpreset` file, to share or save.
+    private func exportPresets() {
+        let mine = presets.filter { !$0.builtin }
+        let one = group != "★" && group != "user" && mine.contains { $0.group == group }
+        let name = one ? group : String(localized: "LightCraft Presets")
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("Exports", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let file = dir.appendingPathComponent(name.replacingOccurrences(of: "/", with: "-")).appendingPathExtension("lcpreset")
+        Task {
+            var p: [String: JSONValue] = ["path": .string(file.path)]
+            if one { p["group"] = .string(group) }
+            if await model.run("preset.export", .object(p)) != nil { exported = [file] }
         }
     }
 

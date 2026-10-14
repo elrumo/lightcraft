@@ -17,10 +17,10 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 <!-- ios-parity:summary -->
 | Phase | ✅ | 🟡 | ⬜ | 🚫 | Done or out of scope |
 |---|---:|---:|---:|---:|---:|
-| S0 | 12 | 3 | 0 | 0 | 12/15 |
-| S1 | 135 | 12 | 17 | 3 | 138/167 |
+| S0 | 13 | 2 | 0 | 0 | 13/15 |
+| S1 | 141 | 9 | 14 | 3 | 144/167 |
 | S2 | 1 | 0 | 79 | 22 | 23/102 |
-| **Total** | 148 | 15 | 96 | 25 | 173/284 |
+| **Total** | 155 | 11 | 93 | 25 | 180/284 |
 <!-- /ios-parity:summary -->
 
 ## Screens
@@ -60,7 +60,7 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | screen:compact.edit.grading | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/EditGroupPanel.swift` | Shadows / Midtones / Highlights / Global wheel (one undo step a drag, double tap resets), luminance, Blending, Balance |
 | screen:compact.edit.pointColor | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/CurveEditor.swift`, `crates/engine/src/tests_color.rs` | eyedropper (tap the photo), swatches from `pointColor.list`, shifts and ranges, delete |
 | screen:compact.undoMenu | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/HistorySheet.swift` | Undo and Redo side by side (the menu stays open), Reset, Versions, History |
-| screen:compact.export | S1 | 🟡 | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Share/ExportSheet.swift` | the photos, Share (system share sheet), Save to Photos (add-only), export presets (choose, save), file type, size, quality, watermark, metadata, location; exports run in the background with progress and Cancel; no More Options page (colour space, sharpening, naming) yet |
+| screen:compact.export | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Share/ExportSheet.swift` | the photos, Share (system share sheet), Save to Photos (add-only), export presets (choose, save), file type, size, quality, watermark, metadata, location, More Options (colour space, bit depth, HDR, JPEG XL, output sharpening, compression, file names); exports run in the background with progress and Cancel |
 | screen:compact.importReview | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Share/ImportReview.swift`, `crates/apphost/src/host/tests.rs` | Photos / Files / folder picks scanned (`import.scan`), three across with checks and thumbnails, duplicates, in library and Recently Deleted marked; album (or a new one), keywords, preset, what to do with deleted ones; imported in the background (`import.start`, one undo step) |
 | screen:compact.settings | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/FacesSettings.swift` | the library, General, Import, Performance, Interface, Sync, Faces, AI Models |
 | screen:compact.sync | S1 | 🟡 | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift`, `crates/apphost/src/sync.rs` | sign in, account, Sync Now, pause, On This Device options, shared links, sign out, the cloud button and status page, the conflict choice; the host drives the sync (shared with egui); no storage section yet |
@@ -198,7 +198,7 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | ui:dialog.pasteSettings | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/CopySettingsSheet.swift` | select ▸ More ▸ Paste Selected Settings… |
 | ui:dialog.shareLink | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | an album's menu ▸ Share Link… (signed in) |
 | ui:view.focusSearch | S2 | ⬜ |  |  |
-| ui:dialog.export | S1 | 🟡 | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Share/ExportSheet.swift` | the Share page with presets, options and progress; no More Options page yet |
+| ui:dialog.export | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Share/ExportSheet.swift` | the Share page with presets, options, More Options and progress |
 | ui:dialog.contactSheet | S2 | ⬜ |  |  |
 | ui:app.contactSheet | S2 | ⬜ |  |  |
 | ui:photo.editInPhotoCraft | S2 | 🚫 |  | no external editors on iOS (the egui iOS app does not offer it either) |
@@ -231,8 +231,8 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | ui:photo.locate | S2 | ⬜ |  |  |
 | ui:dialog.saveMetadataPreset | S2 | ⬜ |  |  |
 | ui:app.quit | S2 | 🚫 |  | iOS apps are not quit by the app |
-| ui:file.importPresets | S1 | ⬜ |  |  |
-| ui:file.exportPresets | S1 | ⬜ |  |  |
+| ui:file.importPresets | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PresetImportSheet.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/Panels.swift` | Presets ▸ ⊕ ▸ Import Presets… (Files): the review, then Import (`preset.importReview`, `preset.importRun`, shared with egui) |
+| ui:file.exportPresets | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/Panels.swift` | Presets ▸ ⊕ ▸ Export Presets…: yours (the group shown, if it is yours) as a `.lcpreset` file to share or save |
 | ui:file.importKeywords | S2 | ⬜ |  |  |
 | ui:file.exportKeywords | S2 | ⬜ |  |  |
 | ui:file.importCurvePresets | S2 | ⬜ |  |  |
@@ -257,7 +257,7 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | ui:app.shortcuts | S2 | ⬜ |  |  |
 | ui:app.setShortcut | S2 | 🚫 |  | iPadOS has no per-app shortcut editor; shortcuts come from the command specs |
 | ui:app.resetShortcuts | S2 | 🚫 |  | no shortcut editor on iPadOS |
-| ui:app.export | S0 | 🟡 | `crates/apphost/src/export.rs`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/App/AllCommandsView.swift` | runs from All Commands; the export page is SW1.4 |
+| ui:app.export | S0 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Share/ExportSheet.swift`, `crates/apphost/src/export.rs` | Share ▸ Share / Save to Photos (`app.export` in the background); All Commands runs it too |
 | ui:app.showInFinder | S2 | 🚫 |  | no Finder on iOS |
 | ui:dialog.rename | S2 | ⬜ |  |  |
 | ui:dialog.labelNames | S2 | ⬜ |  |  |
@@ -286,7 +286,7 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | dialog:TextPrompt | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/KeywordListView.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/AlbumsSheet.swift` | each one-field prompt is a native alert or sheet where it is used (album and keyword names, mask and part names, export preset names) |
 | dialog:CaptureTime | S2 | ⬜ |  |  |
 | dialog:Import | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Share/ImportReview.swift` | the phone review |
-| dialog:PresetImport | S1 | ⬜ |  |  |
+| dialog:PresetImport | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PresetImportSheet.swift`, `crates/engine/src/preset_review.rs` | the presets by group with what they set and what isn't carried over, LUT profiles, unreadable files; then how it went |
 | dialog:LabelNames | S2 | ⬜ |  |  |
 | dialog:Rename | S2 | ⬜ |  |  |
 | dialog:RenameKeyword | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/KeywordListView.swift` | Albums ▸ Keywords ▸ a keyword's menu ▸ Rename… (`keyword.rename`) |
@@ -307,7 +307,7 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | dialog:CreatePreset | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/CopySettingsSheet.swift` | as `ui:dialog.createPreset` |
 | dialog:CopySettings | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/CopySettingsSheet.swift` | the settings groups |
 | dialog:PasteSettings | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/CopySettingsSheet.swift` | the settings groups |
-| dialog:Export | S1 | 🟡 | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Share/ExportSheet.swift` | Share page with options |
+| dialog:Export | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Share/ExportSheet.swift` | as `ui:dialog.export` |
 | dialog:Merge | S2 | ⬜ |  |  |
 | dialog:Settings | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/FacesSettings.swift` | General, Import, Performance, Interface, Sync, Faces (recognition, models, scan progress), AI Models |
 | dialog:SamModel | S1 | 🚫 |  | iOS builds have no AI Denoise or SAM 3: the engine's `denoise` and `sam` features are off for iOS (the egui iOS app has only `enhance` too) |

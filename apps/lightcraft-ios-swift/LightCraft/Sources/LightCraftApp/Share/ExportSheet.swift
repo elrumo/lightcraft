@@ -87,6 +87,7 @@ struct ExportSheet: View {
                         Text("None").tag("none")
                     }
                     Toggle("Remove Location", isOn: $options.removeLocation)
+                    NavigationLink("More Options") { ExportMoreOptions(options: $options) }
                 }
                 if working {
                     Section {
@@ -223,6 +224,18 @@ struct ExportOptions {
     var removeLocation = false
     /// The export preset the options came from (`app.export {preset}`: what it holds beyond them goes too).
     var preset: String?
+    // More Options (app.export's own names and values)
+    var colorSpace = "srgb"
+    var bitDepth = 0
+    var hdr = false
+    var sharpen = "none"
+    var sharpenAmount = "standard"
+    var tiffCompression = "Deflate"
+    var dngCompression = "lossless"
+    var jxlLossless = false
+    var jxlEffort = "normal"
+    var jxlProgressive = false
+    var naming = ""
 
     /// Fill the options in from an export preset (`export.presets`): what this form shows of it.
     mutating func load(_ p: JSONValue) {
@@ -236,10 +249,22 @@ struct ExportOptions {
         let wm = params["watermark"].string ?? params["watermark"]["text"].string
         watermark = wm?.isEmpty == false
         watermarkText = wm ?? ""
+        colorSpace = params["colorSpace"].string ?? "srgb"
+        bitDepth = Int(params["bitDepth"].int ?? 0)
+        hdr = params["hdr"].bool ?? false
+        sharpen = params["sharpen"].string ?? "none"
+        sharpenAmount = params["sharpenAmount"].string ?? "standard"
+        tiffCompression = params["tiffCompression"].string ?? "Deflate"
+        dngCompression = params["dngCompression"].string ?? "lossless"
+        jxlLossless = params["jxlLossless"].bool ?? false
+        jxlEffort = params["jxlEffort"].string ?? "normal"
+        jxlProgressive = params["jxlProgressive"].bool ?? false
+        naming = params["naming"].string ?? ""
     }
 
     static let formats: [(String, String)] = [
-        ("jpeg", "JPEG"), ("png", "PNG"), ("tiff", "TIFF"), ("webp", "WebP"), ("avif", "AVIF"), ("jxl", "JPEG XL"), ("dng", "DNG"), ("original", "Original"),
+        ("jpeg", "JPEG"), ("png", "PNG"), ("tiff", "TIFF"), ("psd", "PSD"), ("webp", "WebP"), ("avif", "AVIF"), ("jxl", "JPEG XL"), ("dng", "DNG"),
+        ("original", "Original"),
     ]
 
     /// Photos takes JPEG, PNG, TIFF and DNG.
@@ -251,7 +276,111 @@ struct ExportOptions {
         if format != "original" && format != "dng" { p["longEdge"] = .int(Int64(longEdge)) }
         if ["jpeg", "avif", "webp"].contains(format) { p["quality"] = .int(Int64(quality)) }
         if watermark && !watermarkText.isEmpty { p["watermark"] = .string(watermarkText) }
+        // More Options, where they apply
+        if format != "original" && format != "dng" {
+            p["colorSpace"] = .string(colorSpace)
+            p["sharpen"] = .string(sharpen)
+            p["sharpenAmount"] = .string(sharpenAmount)
+        }
+        if bitDepth > 0 && ["png", "tiff", "psd"].contains(format) { p["bitDepth"] = .int(Int64(bitDepth)) }
+        if hdr && ["png", "tiff", "avif", "jxl"].contains(format) { p["hdr"] = true }
+        if format == "tiff" { p["tiffCompression"] = .string(tiffCompression) }
+        if format == "dng" { p["dngCompression"] = .string(dngCompression) }
+        if format == "jxl" {
+            p["jxlLossless"] = .bool(jxlLossless)
+            p["jxlEffort"] = .string(jxlEffort)
+            p["jxlProgressive"] = .bool(jxlProgressive)
+        }
+        if !naming.trimmingCharacters(in: .whitespaces).isEmpty { p["naming"] = .string(naming) }
         return p
+    }
+}
+
+/// More Options: the colour space and bit depth, HDR, JPEG XL's options, output sharpening,
+/// compression and the files' names.
+private struct ExportMoreOptions: View {
+    @Binding var options: ExportOptions
+
+    var body: some View {
+        let f = options.format
+        Form {
+            if f != "original" && f != "dng" {
+                Section("Color") {
+                    Picker("Color Space", selection: $options.colorSpace) {
+                        Text("sRGB").tag("srgb")
+                        Text("Display P3").tag("displayP3")
+                        Text("Adobe RGB").tag("adobeRgb")
+                        Text("ProPhoto RGB").tag("proPhoto")
+                        Text("Rec. 2020").tag("rec2020")
+                    }
+                    if ["png", "tiff", "psd"].contains(f) {
+                        Picker("Bit Depth", selection: $options.bitDepth) {
+                            Text("Automatic").tag(0)
+                            Text("8 bits").tag(8)
+                            Text("16 bits").tag(16)
+                            if f == "tiff" { Text("32 bits (float)").tag(32) }
+                        }
+                    }
+                    if ["png", "tiff", "avif", "jxl"].contains(f) {
+                        Toggle("HDR Output", isOn: $options.hdr)
+                    }
+                }
+                Section("Output Sharpening") {
+                    Picker("Sharpen For", selection: $options.sharpen) {
+                        Text("None").tag("none")
+                        Text("Screen").tag("screen")
+                        Text("Matte Paper").tag("matte")
+                        Text("Glossy Paper").tag("glossy")
+                    }
+                    if options.sharpen != "none" {
+                        Picker("Amount", selection: $options.sharpenAmount) {
+                            Text("Low").tag("low")
+                            Text("Standard").tag("standard")
+                            Text("High").tag("high")
+                        }
+                    }
+                }
+            }
+            if f == "jxl" {
+                Section("JPEG XL") {
+                    Toggle("Lossless", isOn: $options.jxlLossless)
+                    Picker("Effort", selection: $options.jxlEffort) {
+                        Text("Fast").tag("fast")
+                        Text("Normal").tag("normal")
+                    }
+                    Toggle("Progressive", isOn: $options.jxlProgressive)
+                }
+            }
+            if f == "tiff" {
+                Section("Compression") {
+                    Picker("Compression", selection: $options.tiffCompression) {
+                        Text("None").tag("None")
+                        Text("LZW").tag("Lzw")
+                        Text("ZIP").tag("Deflate")
+                    }
+                }
+            }
+            if f == "dng" {
+                Section("Compression") {
+                    Picker("Compression", selection: $options.dngCompression) {
+                        Text("Lossless").tag("lossless")
+                        Text("ZIP").tag("deflate")
+                        Text("None").tag("uncompressed")
+                    }
+                }
+            }
+            Section {
+                TextField("{name}", text: $options.naming)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+            } header: {
+                Text("File Name")
+            } footer: {
+                Text("Empty keeps the photo's name. {name}, {seq}, {date}, {camera}, {lens}, {iso}, {rating}, {title} are filled in.")
+            }
+        }
+        .navigationTitle("More Options")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 
