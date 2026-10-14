@@ -66,6 +66,7 @@
 "30 Days" = "30 днів";
 "32 bits (float)" = "32 біти (float)";
 "4 MiB and connections at 16." = "4 МіБ, а кількість з’єднань — 16.";
+"5-Blade" = "5 пелюсток";
 "630 drivers): on Windows the window and GPU rendering use DirectX 12 only and never load the Vulkan driver unless" = "630): у Windows вікно й рендеринг на ГП використовують лише DirectX 12 і не завантажують драйвер Vulkan, доки ви";
 "8 bits" = "8 біт";
 "=  exactly" = "=  точно";
@@ -196,6 +197,7 @@
 "Apply" = "Застосувати";
 "Apply Color Label Set" = "Застосувати набір кольорових міток";
 "Apply Filter Preset" = "Застосувати набір налаштувань фільтра";
+"Apply Lens Blur" = "Застосувати розмиття об’єктива";
 "Apply Metadata Preset" = "Застосувати набір налаштувань метаданих";
 "Apply Point Curve Preset" = "Застосувати набір налаштувань точкової кривої";
 "Apply Preset" = "Застосувати набір налаштувань";
@@ -290,7 +292,13 @@
 "Blue channel" = "Синій канал";
 "Blue label" = "Синя мітка";
 "Blue/Yellow Fringe" = "Синя/жовта облямівка";
+"Blur" = "Розмиття";
+"Blur Amount" = "Величина розмиття";
+"Blur Brush" = "Пензель «Розмиття»";
+"Blur what is nearer or farther than the subject, as a wide aperture would, using the photo's depth." = "Розмийте те, що ближче або далі за об’єкт, як це робить широка діафрагма, використовуючи глибину фото.";
 "Blurry photos below the score are flagged as rejects." = "Розмиті фото з оцінкою нижче порога позначаються як відхилені.";
+"Bokeh" = "Боке";
+"Boost" = "Підсилення";
 "Boundary Warp" = "Деформація меж";
 "Bright & Airy" = "Світле й легке";
 "Bring All to Front" = "Усі вікна на передній план";
@@ -303,6 +311,7 @@
 "Brush" = "Пензель";
 "Brush Settings" = "Налаштування пензля";
 "Brush Stroke" = "Мазок пензля";
+"Bubble" = "Бульбашка";
 "Build Previews" = "Створити попередні перегляди";
 "Build Smart Previews" = "Створити смарт-перегляди";
 "Building previews" = "Створення попередніх переглядів";
@@ -343,6 +352,7 @@
 "Captured" = "Знято";
 "Captured from" = "Знято від";
 "Captured until" = "Знято до";
+"Cat Eye" = "Котяче око";
 "Catalog" = "Каталог";
 "Catalog Statistics" = "Статистика каталогу";
 "Catalog and edits" = "Каталог і редагування";
@@ -373,6 +383,7 @@
 "Choose what to do with this library's photos." = "Виберіть, що зробити з фото цієї бібліотеки.";
 "Choose…" = "Вибрати…";
 "Cinematic" = "Кінематографічне";
+"Circle" = "Коло";
 "City" = "Місто";
 "Clarity" = "Чіткість";
 "Classic" = "Класичний";
@@ -380,12 +391,15 @@
 "Clean the noise out of raw photos with an AI model that runs on this computer." = "Прибирає шум із RAW-фото за допомогою моделі ШІ, що працює на цьому комп'ютері.";
 "Clear" = "Очистити";
 "Clear All" = "Очистити все";
+"Clear Brush" = "Очистити пензель";
+"Clear Brushing" = "Очистити мазки";
 "Clear Cache" = "Очистити кеш";
 "Clear Denoise Cache" = "Очистити кеш усунення шуму";
 "Clear Filter" = "Скинути фільтр";
 "Clear Filters" = "Скинути фільтри";
 "Clear Guides" = "Очистити напрямні";
 "Clear History" = "Очистити історію";
+"Clear Lens Blur Brush" = "Очистити пензель розмиття об’єктива";
 "Clear Preview Cache" = "Очистити кеш переглядів";
 "Clear Quick Collection" = "Очистити швидку колекцію";
 "Clear Recent Libraries" = "Очистити список нещодавніх бібліотек";
@@ -621,7 +635,11 @@
 "Denoise Status" = "Стан усунення шуму";
 "Denoise all photos with an Amount" = "Обробити всі фото зі значенням усунення шуму";
 "Density" = "Щільність";
+"Depth" = "Глибина";
 "Depth Range" = "Діапазон глибини";
+"Depth estimated by AI (Depth Anything V2 Small)." = "Глибину оцінено за допомогою ШІ (Depth Anything V2 Small).";
+"Depth estimation is turned off in Settings → AI Models." = "Оцінювання глибини вимкнено в Налаштування → Моделі ШІ.";
+"Depth from the photo." = "Глибина з фото.";
 "Descending" = "За спаданням";
 "Describe" = "Описати";
 "Describe a photo…" = "Опишіть фото…";
@@ -673,6 +691,7 @@
 "Downloading MI-GAN…" = "Завантаження MI-GAN…";
 "Downloading model" = "Завантаження моделі";
 "Downloading place names" = "Завантаження назв місць";
+"Downloading the depth model…" = "Завантаження моделі глибини…";
 "Downloads" = "Завантаження";
 "Downloads from %@. Once it has arrived and checked out, LightCraft installs it, starts using it and turns face recognition on." = "Завантажується з %@. Коли файл надійде й пройде перевірку, LightCraft установить модель, почне її використовувати й увімкне розпізнавання облич.";
 "Downloads from %@. Once it has arrived and checked out, LightCraft installs it." = "Завантажується з %@. Коли файл надійде й пройде перевірку, LightCraft установить модель.";
@@ -744,6 +763,9 @@
 "Enter Full Screen" = "Увійти в повноекранний режим";
 "Enter a date as YYYY-MM-DD HH:MM:SS" = "Введіть дату як YYYY-MM-DD HH:MM:SS";
 "Erase" = "Стирання";
+"Erase Brush" = "Пензель «Стирання»";
+"Estimate Depth" = "Оцінити глибину";
+"Estimating depth…" = "Оцінювання глибини…";
 "Evaluate Face Recognition" = "Оцінити розпізнавання облич";
 "Every EXIF, GPS and XMP field in the file" = "Усі поля EXIF, GPS і XMP у файлі";
 "Every chosen photo gets this time." = "Усі вибрані фото отримають цей час.";
@@ -879,9 +901,17 @@
 "Float panel" = "Float panel";
 "Flow" = "Потік";
 "Fluorescent" = "Люмінесцентне";
+"Focal Distance" = "Відстань фокусування";
 "Focal Length" = "Фокусна відстань";
+"Focal Range" = "Фокусний діапазон";
 "Focal length" = "Фокусна відстань";
+"Focus" = "Фокус";
 "Focus (assisted culling)" = "Фокус (допоміжний відбір)";
+"Focus Brush" = "Пензель «Фокус»";
+"Focus Lens Blur" = "Фокус розмиття об’єктива";
+"Focus on a Point" = "Фокус на точці";
+"Focus on a point: click the photo" = "Фокус на точці: клацніть фото";
+"Focus on the photo's subject" = "Фокус на об’єкті фото";
 "Folder" = "Тека";
 "Folder from Files…" = "Тека з «Файлів»…";
 "Folder name (renamed on disk; its photos follow)" = "Назва теки (перейменовується на диску разом із посиланнями на фото)";
@@ -919,6 +949,7 @@
 "Generative Expand" = "Генеративне розширення";
 "Geometry" = "Геометрія";
 "Get Develop Settings" = "Отримати налаштування обробки";
+"Getting the depth model…" = "Отримання моделі глибини…";
 "Global" = "Загальне";
 "Global Hue" = "Загальний тон";
 "Global Luminance" = "Загальна яскравість";
@@ -1172,6 +1203,10 @@
 "Left / Right" = "Ліворуч / праворуч";
 "Lens" = "Об’єктив";
 "Lens Blur" = "Розмиття об’єктива";
+"Lens Blur Brush" = "Пензель розмиття об’єктива";
+"Lens Blur Focus" = "Фокус розмиття об’єктива";
+"Lens Blur Info" = "Інформація про розмиття об’єктива";
+"Lens Blur and Depth Range masks on photos without depth data of their own" = "Розмиття об’єктива та маски «Діапазон глибини» для фото без власних даних про глибину";
 "Lens Corrections" = "Корекція об’єктива";
 "Let the Server Build Previews" = "Дозволити серверу створювати перегляди";
 "Let the crop reach past the photo's edges and paint the new area on this computer" = "Дає кадру вийти за краї фото й домальовує нову ділянку на цьому комп’ютері";
@@ -1441,6 +1476,7 @@
 "No contributor data was built into this copy." = "У цю копію не вбудовано дані про учасників.";
 "No date" = "Без дати";
 "No dated photos" = "Немає фото з датою";
+"No depth yet: turn Lens Blur off and on to estimate it." = "Глибини ще немає: вимкніть і знову ввімкніть розмиття об’єктива, щоб її оцінити.";
 "No download: texture from the photo" = "Без завантаження: текстура з фото";
 "No dust spots found" = "Пилових плям не знайдено";
 "No edits yet." = "Змін поки немає.";
@@ -1568,6 +1604,7 @@
 "Overwrite" = "Перезаписати";
 "Pages" = "Сторінки";
 "Paint" = "Малювати";
+"Paint on the photo: Focus keeps what you paint sharp, Blur blurs it, Erase takes either back." = "Малюйте на фото: «Фокус» залишає зафарбоване різким, «Розмиття» розмиває його, «Стирання» скасовує будь-що з цього.";
 "Paint only areas like the one under the brush" = "Малювати лише ділянки, подібні до ділянки під пензлем";
 "Paint onto Photos" = "Призначати на фото";
 "Paint over a distraction on the photo to remove it." = "Замалюйте зайвий об’єкт на фото, щоб видалити його.";
@@ -1723,6 +1760,8 @@
 "Radius" = "Радіус";
 "Random" = "Випадковий";
 "Range" = "Діапазон";
+"Range Far" = "Діапазон: дальня межа";
+"Range Near" = "Діапазон: ближня межа";
 "Rate ★" = "Оцінити ★";
 "Rate ★ and advance" = "Оцінити ★ і перейти далі";
 "Rate ★★" = "Оцінити ★★";
@@ -1905,6 +1944,7 @@
 "Right-click a photo ▸ Set as Reference Photo, then View → Reference View (Shift+R)" = "Клацніть фото правою кнопкою → Задати як еталонне фото, потім Вигляд → Еталонне подання (Shift+R)";
 "Right-click a preset to delete it" = "Клацніть набір налаштувань правою кнопкою, щоб видалити його";
 "Rights Usage Terms" = "Умови використання прав";
+"Ring" = "Кільце";
 "Rotate" = "Повернути";
 "Rotate Crop" = "Обертати кадрування";
 "Rotate Crop Aspect" = "Повернути пропорції кадрування";
@@ -2265,6 +2305,7 @@
 "Tap photos to give them the keyword; tap again to take it away." = "Торкайтеся фото, щоб призначити їм ключове слово; торкніться ще раз, щоб прибрати його.";
 "Tap something white or grey in the photo" = "Торкніться чогось білого або сірого на фото";
 "Tap the photo to pick a colour" = "Торкніться фото, щоб вибрати колір";
+"Tap what should be in focus" = "Торкніться того, що має бути у фокусі";
 "Tap ✓ when it is them, ✕ when it isn't." = "Торкніться ✓, якщо це ця особа, і ✕, якщо ні.";
 "Targeted Adjustment" = "Цільова корекція";
 "Targeted adjustment: drag up/down on the photo to adjust the colours there" = "Цільова корекція: тягніть угору/вниз на фото, щоб змінити кольори в цьому місці";
@@ -2294,6 +2335,7 @@
 "The download didn't work:" = "Завантаження не вдалося:";
 "The download didn't work: %@" = "Завантаження не вдалося: %@";
 "The download failed" = "Не вдалося завантажити";
+"The download stopped." = "Завантаження зупинилося.";
 "The file itself. Your edits stay in LightCraft, on top of what the editor saves." = "Сам файл. Ваші зміни лишаються в LightCraft і застосовуються поверх того, що збереже редактор.";
 "The first time, macOS asks whether LightCraft may control Photos." = "Першого разу macOS запитає, чи може LightCraft керувати програмою «Фото».";
 "The graphics card is set up when the next photo is made." = "Відеокарта налаштовується під час обробки наступного фото.";
@@ -2345,6 +2387,8 @@
 "This library is only on this device" = "Ця бібліотека є лише на цьому пристрої";
 "This model isn't downloaded yet: download it, or choose Classic." = "Цю модель ще не завантажено: завантажте її або виберіть «Класичний».";
 "This photo can't be opened" = "Не вдалося відкрити це фото";
+"This photo has no depth of its own, and depth estimation isn't available in this build." = "У цього фото немає власної глибини, а оцінювання глибини недоступне в цій збірці.";
+"This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a %lld MB download (%@ licence). %@." = "У цього фото немає власної глибини: розмиття об’єктива оцінює її за допомогою Depth Anything V2 Small, завантаження %lld МБ (ліцензія %@). %@.";
 "Threshold" = "Поріг";
 "Thumbnail Cache" = "Кеш мініатюр";
 "Thumbnail cache" = "Кеш мініатюр";
@@ -2450,6 +2494,7 @@
 "Vintage" = "Вінтажне";
 "Virtual Copy" = "Віртуальна копія";
 "Visible" = "Видимий";
+"Visualize Depth" = "Показати глибину";
 "Visualize HDR" = "Показати HDR";
 "Visualize Spots" = "Показати плями";
 "Visualize Spots (A)" = "Показати плями (A)";

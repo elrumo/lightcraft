@@ -12,7 +12,7 @@ fn scene(w: usize, h: usize) -> (Rgb32f, SourceInfo) {
             return [8.0; 3];
         }
         let cell = (w / 40).max(1);
-        if ((x / cell) + (y / cell)) % 2 == 0 { [0.6, 0.5, 0.4] } else { [0.05, 0.06, 0.08] }
+        if ((x / cell) + (y / cell)).is_multiple_of(2) { [0.6, 0.5, 0.4] } else { [0.05, 0.06, 0.08] }
     });
     let mut m = Mattes::default();
     m.set_depth(Plane::from_fn(64, 48, |x, _| if x < 32 { 1.0 } else { 0.0 }));

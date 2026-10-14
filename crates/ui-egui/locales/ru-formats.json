@@ -286,7 +286,7 @@
   "New area painted with {}": "Новая область дорисована ({})",
   "{note} · {:.0} MB download": "{note} · загрузка {:.0} МБ",
   "The new area was painted by {by} on this device.": "Новая область дорисована на этом устройстве ({by}).",
-  "Downloading the depth model… {:.0} %": "Downloading the depth model… {:.0} %",
-  "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.": "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.",
-  "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)": "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)"
+  "Downloading the depth model… {:.0} %": "Загрузка модели глубины… {:.0} %",
+  "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.": "У этого фото нет собственной карты глубины: «Размытие объектива» оценивает её с помощью Depth Anything V2 Small, загрузка {:.0} МБ (лицензия {}). {}.",
+  "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)": "В фокусе: {:.0}–{:.0} (0 — ближе всего, 100 — дальше всего)"
 }

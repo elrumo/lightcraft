@@ -57,6 +57,7 @@
 "2026-04 or 2026-04-12" = "2026-04 或 2026-04-12";
 "30 Days" = "30 天";
 "32 bits (float)" = "32 位元（浮點數）";
+"5-Blade" = "五葉片";
 "8 bits" = "8 位元";
 "=  exactly" = "=  等於";
 "A blank template keeps the original names." = "範本留空時保留原始名稱。";
@@ -186,6 +187,7 @@
 "Apply" = "套用";
 "Apply Color Label Set" = "套用色彩標籤集";
 "Apply Filter Preset" = "套用篩選預設集";
+"Apply Lens Blur" = "套用鏡頭模糊";
 "Apply Metadata Preset" = "套用中繼資料預設集";
 "Apply Point Curve Preset" = "套用點曲線預設集";
 "Apply Preset" = "套用預設集";
@@ -280,7 +282,13 @@
 "Blue channel" = "藍色通道";
 "Blue label" = "藍色標籤";
 "Blue/Yellow Fringe" = "藍／黃色邊緣";
+"Blur" = "模糊";
+"Blur Amount" = "模糊量";
+"Blur Brush" = "模糊筆刷";
+"Blur what is nearer or farther than the subject, as a wide aperture would, using the photo's depth." = "運用照片的深度資訊，模糊比主體更近或更遠的部分，呈現如大光圈般的效果。";
 "Blurry photos below the score are flagged as rejects." = "焦點分數低於門檻的模糊照片會標記為排除。";
+"Bokeh" = "散景";
+"Boost" = "增強";
 "Boundary Warp" = "邊界變形";
 "Bright & Airy" = "明亮輕盈";
 "Bring All to Front" = "將所有視窗移至最前方";
@@ -292,6 +300,7 @@
 "Brush" = "筆刷";
 "Brush Settings" = "筆刷設定";
 "Brush Stroke" = "筆刷筆觸";
+"Bubble" = "泡泡";
 "Build Previews" = "建立預覽";
 "Build Smart Previews" = "建立智慧型預覽";
 "Building previews" = "正在建立預覽";
@@ -330,6 +339,7 @@
 "Captured" = "拍攝時間";
 "Captured from" = "拍攝時間起於";
 "Captured until" = "拍攝時間止於";
+"Cat Eye" = "貓眼";
 "Catalog" = "目錄";
 "Catalog Statistics" = "目錄統計";
 "Catalog and edits" = "目錄與編輯";
@@ -359,6 +369,7 @@
 "Choose what to do with this library's photos." = "選擇如何處理此照片庫的照片。";
 "Choose…" = "選擇…";
 "Cinematic" = "電影風格";
+"Circle" = "圓形";
 "City" = "城市";
 "Clarity" = "清晰度";
 "Classic" = "經典";
@@ -366,12 +377,15 @@
 "Clean the noise out of raw photos with an AI model that runs on this computer." = "用在這台電腦上執行的 AI 模型去除 Raw 照片中的雜訊。";
 "Clear" = "清除";
 "Clear All" = "全部清除";
+"Clear Brush" = "清除筆刷";
+"Clear Brushing" = "清除筆刷塗繪";
 "Clear Cache" = "清除快取";
 "Clear Denoise Cache" = "Clear Denoise Cache";
 "Clear Filter" = "清除篩選條件";
 "Clear Filters" = "清除篩選條件";
 "Clear Guides" = "清除參考線";
 "Clear History" = "清除歷史紀錄";
+"Clear Lens Blur Brush" = "清除鏡頭模糊筆刷";
 "Clear Preview Cache" = "清除預覽快取";
 "Clear Quick Collection" = "清除快速集合";
 "Clear Recent Libraries" = "清除最近的圖庫";
@@ -602,7 +616,11 @@
 "Denoise Status" = "Denoise Status";
 "Denoise all photos with an Amount" = "Denoise all photos with an Amount";
 "Density" = "濃度";
+"Depth" = "深度";
 "Depth Range" = "深度範圍";
+"Depth estimated by AI (Depth Anything V2 Small)." = "深度由 AI 估算（Depth Anything V2 Small）。";
+"Depth estimation is turned off in Settings → AI Models." = "深度估算已在「設定 → AI 模型」中關閉。";
+"Depth from the photo." = "深度來自照片本身。";
 "Descending" = "遞減";
 "Describe" = "描述";
 "Describe a photo…" = "描述照片…";
@@ -653,6 +671,7 @@
 "Downloading MI-GAN…" = "正在下載 MI-GAN…";
 "Downloading model" = "正在下載模型";
 "Downloading place names" = "正在下載地名資料";
+"Downloading the depth model…" = "正在下載深度模型…";
 "Downloads" = "下載項目";
 "Downloads from %@. Once it has arrived and checked out, LightCraft installs it, starts using it and turns face recognition on." = "從 %@ 下載。下載完成並通過檢查後，LightCraft 會安裝並開始使用，同時開啟人臉辨識。";
 "Downloads from %@. Once it has arrived and checked out, LightCraft installs it." = "從 %@ 下載。下載完成並通過檢查後，LightCraft 會自動安裝。";
@@ -723,6 +742,9 @@
 "Enter Full Screen" = "進入全螢幕";
 "Enter a date as YYYY-MM-DD HH:MM:SS" = "請以 YYYY-MM-DD HH:MM:SS 格式輸入日期";
 "Erase" = "擦除";
+"Erase Brush" = "擦除筆刷";
+"Estimate Depth" = "估算深度";
+"Estimating depth…" = "正在估算深度…";
 "Every EXIF, GPS and XMP field in the file" = "檔案中的所有 EXIF、GPS 與 XMP 欄位";
 "Every chosen photo gets this time." = "所選的每張照片都會設為此時間。";
 "Every chosen photo moves by this many hours." = "所選的每張照片都會位移這麼多小時。";
@@ -851,9 +873,17 @@
 "Float panel" = "浮動面板";
 "Flow" = "流量";
 "Fluorescent" = "螢光燈";
+"Focal Distance" = "對焦距離";
 "Focal Length" = "焦距";
+"Focal Range" = "對焦範圍";
 "Focal length" = "焦距";
+"Focus" = "對焦";
 "Focus (assisted culling)" = "焦點（輔助挑選）";
+"Focus Brush" = "對焦筆刷";
+"Focus Lens Blur" = "鏡頭模糊對焦";
+"Focus on a Point" = "對焦於某一點";
+"Focus on a point: click the photo" = "對焦於某一點：按一下照片";
+"Focus on the photo's subject" = "對焦於照片的主體";
 "Folder" = "資料夾";
 "Folder from Files…" = "「檔案」中的資料夾…";
 "Folder name (renamed on disk; its photos follow)" = "資料夾名稱（會在磁碟上重新命名，照片也會隨之移動）";
@@ -895,6 +925,7 @@
 "Geometry" = "幾何";
 "Get Develop Settings" = "取得顯像設定";
 "Getting the MI-GAN model…" = "正在取得 MI-GAN 模型…";
+"Getting the depth model…" = "正在取得深度模型…";
 "Global" = "整體";
 "Global Hue" = "整體色相";
 "Global Luminance" = "整體明度";
@@ -1145,6 +1176,10 @@
 "Left / Right" = "左／右";
 "Lens" = "鏡頭";
 "Lens Blur" = "鏡頭模糊";
+"Lens Blur Brush" = "鏡頭模糊筆刷";
+"Lens Blur Focus" = "鏡頭模糊對焦";
+"Lens Blur Info" = "鏡頭模糊資訊";
+"Lens Blur and Depth Range masks on photos without depth data of their own" = "用於本身沒有深度資料之照片的鏡頭模糊與深度範圍遮色片";
 "Lens Corrections" = "鏡頭校正";
 "Let the Server Build Previews" = "讓伺服器建立預覽";
 "Let the crop reach past the photo's edges and paint the new area on this computer" = "讓裁切框超出相片邊緣，並在此電腦上繪製新區域";
@@ -1409,6 +1444,7 @@
 "No contributor data was built into this copy." = "此版本未內建貢獻者資料。";
 "No date" = "無日期";
 "No dated photos" = "沒有帶日期的照片";
+"No depth yet: turn Lens Blur off and on to estimate it." = "尚無深度資料：請將鏡頭模糊關閉再開啟以進行估算。";
 "No download: texture from the photo" = "無需下載：使用相片中的紋理";
 "No dust spots found" = "找不到灰塵斑點";
 "No edits yet." = "尚未編輯。";
@@ -1546,6 +1582,7 @@
 "Overwrite" = "覆寫";
 "Pages" = "頁面";
 "Paint" = "繪製";
+"Paint on the photo: Focus keeps what you paint sharp, Blur blurs it, Erase takes either back." = "在照片上塗繪：「對焦」會讓塗到的部分保持清晰，「模糊」會使其變模糊，「擦除」則可還原兩者。";
 "Paint only areas like the one under the brush" = "只塗繪與筆刷下方相似的區域";
 "Paint onto Photos" = "塗繪到照片上";
 "Paint over a blemish: it is healed from a nearby area, which you can drag. Tap a pin for its options." = "在瑕疵上塗繪：會以附近的區域修復，該區域可拖移。點一下控制點可開啟其選項。";
@@ -1701,6 +1738,8 @@
 "Radius" = "半徑";
 "Random" = "隨機";
 "Range" = "範圍";
+"Range Far" = "遠端範圍";
+"Range Near" = "近端範圍";
 "Rate ★" = "評為 ★";
 "Rate ★ and advance" = "評為 ★ 並前進";
 "Rate ★★" = "評為 ★★";
@@ -1881,6 +1920,7 @@
 "Right-click a photo ▸ Set as Reference Photo, then View → Reference View (Shift+R)" = "在照片上按右鍵 → 設為參考照片，再選擇「檢視 → 參考檢視」（Shift+R）";
 "Right-click a preset to delete it" = "在預設集上按右鍵即可刪除";
 "Rights Usage Terms" = "使用權利條款";
+"Ring" = "環形";
 "Rotate" = "旋轉";
 "Rotate Crop" = "旋轉裁切";
 "Rotate Crop Aspect" = "旋轉裁切長寬比";
@@ -2247,6 +2287,7 @@
 "Tap photos to give them the keyword; tap again to take it away." = "輕點照片即可加入關鍵字；再次輕點即可移除。";
 "Tap something white or grey in the photo" = "點一下照片中白色或灰色的部分";
 "Tap the photo to pick a colour" = "點一下照片以選取色彩";
+"Tap what should be in focus" = "點一下要對焦的位置";
 "Tap ✓ when it is them, ✕ when it isn't." = "是他們時點 ✓，不是時點 ✕。";
 "Targeted Adjustment" = "目標調整";
 "Targeted adjustment: drag up/down on the photo to adjust the colours there" = "目標調整：在照片上向上／下拖曳，調整該位置的色彩";
@@ -2275,7 +2316,7 @@
 "The download didn't work:" = "下載失敗：";
 "The download didn't work: %@" = "下載失敗：%@";
 "The download failed" = "下載失敗";
-"The download stopped." = "下載已停止。";
+"The download stopped." = "下載已中止。";
 "The face models are installed: looking for faces in your photos." = "人臉模型已安裝：正在尋找照片中的人臉。";
 "The file itself. Your edits stay in LightCraft, on top of what the editor saves." = "檔案本身。你的編輯保留在 LightCraft 中，疊加在編輯器儲存的內容之上。";
 "The first time, macOS asks whether LightCraft may control Photos." = "第一次使用時，macOS 會詢問是否允許 LightCraft 控制「照片」。";
@@ -2331,6 +2372,8 @@
 "This library is only on this device" = "此照片庫只在這台裝置上";
 "This model isn't downloaded yet: download it, or choose Classic." = "此模型尚未下載：請下載，或選擇「經典」。";
 "This photo can't be opened" = "無法開啟此照片";
+"This photo has no depth of its own, and depth estimation isn't available in this build." = "此照片本身沒有深度資料，且此版本無法估算深度。";
+"This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a %lld MB download (%@ licence). %@." = "此照片本身沒有深度資料：鏡頭模糊會以 Depth Anything V2 Small 估算深度（需下載 %lld MB，%@ 授權）。%@。";
 "Threshold" = "臨界值";
 "Thumbnail Cache" = "縮圖快取";
 "Thumbnail cache" = "縮圖快取";
@@ -2437,6 +2480,7 @@
 "Vintage" = "復古";
 "Virtual Copy" = "虛擬副本";
 "Visible" = "可見照片";
+"Visualize Depth" = "視覺化深度";
 "Visualize HDR" = "顯示 HDR";
 "Visualize Spots" = "顯示斑點";
 "Visualize Spots (A)" = "顯示斑點（A）";

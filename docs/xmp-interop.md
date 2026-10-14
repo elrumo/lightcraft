@@ -174,7 +174,8 @@ Values pass through our control specs, so anything outside our slider ranges get
 
 `crs:CameraProfile` is kept as the selected name in the photo's import warning and the active profile is left as it is: the name carries no rendering data and never selects an Adobe profile. Import reports such a profile as not applied (colours may differ from Lightroom), except Lightroom's default profiles (`Adobe Standard`, `Adobe Color`), which every sidecar names and which LightCraft's own starting look stands in for. Preset import follows the same rule: a `CameraProfile`, or the stubbed `Look` block that preset packs write into every preset (`crs:Look` named `Adobe Color`), that only names a default profile is not listed in `unmapped`; a look or profile with any other name still is.
 
-**Not mapped:** camera profiles and looks (`CameraProfile`, `Look`; we have our own profile set), red eye, lens blur,
+**Not mapped:** camera profiles and looks (`CameraProfile`, `Look`; we have our own profile set), red eye, lens blur
+(LightCraft keeps its Lens Blur, refine strokes and estimated depth in its own settings block),
 process-version 2010 field names, and AI features. Local adjustments and spot removal are read as described below.
 
 ## Spot removal

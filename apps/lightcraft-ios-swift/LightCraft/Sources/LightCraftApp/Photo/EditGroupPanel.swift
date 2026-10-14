@@ -12,7 +12,8 @@ struct EditGroupPanel: View {
     var body: some View {
         let group = EditGroup(rawValue: model.prefs.editGroup) ?? .light
         VStack(alignment: .leading, spacing: 4) {
-            if group != .profile, model.prefs.dials(column: column) {
+            // (Lens Blur's switches, bar and brushes need its own panel in either style)
+            if group != .profile, group != .lensBlur, model.prefs.dials(column: column) {
                 DialGroupPanel(group: group)
             } else {
                 switch group {
@@ -20,6 +21,7 @@ struct EditGroupPanel: View {
                 case .light: LightGroup()
                 case .color: ColorGroup()
                 case .effects: EffectsGroup()
+                case .lensBlur: LensBlurGroup()
                 default: Sliders(section: group.sections.first ?? "")
                 }
             }

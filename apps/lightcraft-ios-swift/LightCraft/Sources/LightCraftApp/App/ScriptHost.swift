@@ -11,7 +11,8 @@ import UIKit
 /// - `ui.set {screen?: grid | photo | edit | crop | masking | remove | redEye | presets | info | commands |
 ///   people | map, photo?, span?: all | months | years, group?: light | color…, sheet?: albums |
 ///   filter | settings | export | sync | history | versions | keywords | about | superRes | createPreset | smartAlbum (id?) | allMetadata | none, select?,
-///   faceBoxes?, tagFace?, beforeAfter?, visualizeSpots?, removeAI?, histogram?, cropGuide?}`: go there.
+///   faceBoxes?, tagFace?, beforeAfter?, visualizeSpots?, visualizeDepth?, lensBrush?, removeAI?, histogram?, cropGuide?}`:
+///   go there.
 @Observable
 final class ScriptHost {
     func answer(id: UInt64, method: String, params: JSONValue, model: AppModel) {
@@ -77,6 +78,9 @@ final class ScriptHost {
             if let on = params["tagFace"].bool { model.editor.tagFace = on }
             if let on = params["beforeAfter"].bool { model.editor.beforeAfter = on }
             if let on = params["visualizeSpots"].bool { model.editor.visualizeSpots = on }
+            if let on = params["visualizeDepth"].bool { model.editor.visualizeDepth = on }
+            // Lens Blur's Refine brush in hand: focus, blur, erase ("" puts it down)
+            if let brush = params["lensBrush"].string { model.editor.lensBrush = brush.isEmpty ? nil : brush }
             if let on = params["removeAI"].bool { model.prefs.removeAI = on }
             if let on = params["histogram"].bool { model.prefs.showHistogram = on }
             if let guide = params["cropGuide"].string { model.prefs.cropGuide = guide }

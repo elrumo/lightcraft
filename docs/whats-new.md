@@ -1,5 +1,20 @@
 # What's new in LightCraft
 
+## 2026-10-14
+
+### Lens Blur, from the photo's depth
+- Edit ▸ **Lens Blur** blurs what is nearer or farther than your subject, as a wide aperture would. Press **Apply**:
+  an iPhone Portrait photo (HEIC or JPEG) uses the depth it was taken with; any other photo, iPhone ProRAW included,
+  gets its depth estimated by an AI model, Depth Anything V2 Small, a one-time 27 MB download (Apache-2.0) offered the
+  first time. The estimate is kept with the photo, so exports never wait for it.
+- Set **Blur Amount**, drag the **Focal Range** on its near-to-far bar, tap the photo to focus on a point or press
+  **Subject**, and pick the shape of out-of-focus highlights: Circle, Bubble, 5-Blade, Ring or Cat Eye, with **Boost**
+  to make them glow. **Visualize Depth** shows the depth in colour, warm near and cool far.
+- **Refine** brushes fix the depth where it's wrong: paint with **Focus** what should stay sharp, with **Blur** what
+  should be blurred, and **Erase** to take either back.
+- **Depth Range** masks (Masking ▸ Depth) select by distance with the same depth.
+- On computers, phones, in the browser and in the new iPhone and iPad app. See [lens-blur.md](lens-blur.md).
+
 ## 2026-10-13
 
 ### Import from a camera or memory card, on the iPhone and iPad too

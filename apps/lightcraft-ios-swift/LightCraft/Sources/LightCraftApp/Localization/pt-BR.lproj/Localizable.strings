@@ -56,6 +56,7 @@
 "2026-04 or 2026-04-12" = "2026-04 ou 2026-04-12";
 "30 Days" = "30 dias";
 "32 bits (float)" = "32 bits (ponto flutuante)";
+"5-Blade" = "5 lâminas";
 "=  exactly" = "=  exatamente";
 "A blank template keeps the original names." = "Um modelo em branco mantém os nomes originais.";
 "A copy of the file with your edits applied, stacked with the original." = "Uma cópia do arquivo com suas edições aplicadas, empilhada com a original.";
@@ -180,6 +181,7 @@
 "Apply" = "Aplicar";
 "Apply Color Label Set" = "Aplicar conjunto de rótulos de cor";
 "Apply Filter Preset" = "Aplicar predefinição de filtro";
+"Apply Lens Blur" = "Aplicar desfoque de lente";
 "Apply Metadata Preset" = "Aplicar predefinição de metadados";
 "Apply Point Curve Preset" = "Aplicar predefinição de curva de pontos";
 "Apply Preset" = "Aplicar predefinição";
@@ -272,7 +274,13 @@
 "Blue channel" = "Canal azul";
 "Blue label" = "Rótulo azul";
 "Blue/Yellow Fringe" = "Franja azul/amarela";
+"Blur" = "Desfoque";
+"Blur Amount" = "Quantidade de desfoque";
+"Blur Brush" = "Pincel de desfoque";
+"Blur what is nearer or farther than the subject, as a wide aperture would, using the photo's depth." = "Desfoca o que está mais perto ou mais longe que o assunto, como faria uma abertura ampla, usando a profundidade da foto.";
 "Blurry photos below the score are flagged as rejects." = "Fotos desfocadas abaixo da pontuação são marcadas como rejeitadas.";
+"Bokeh" = "Bokeh";
+"Boost" = "Reforço";
 "Boundary Warp" = "Deformação de borda";
 "Bright & Airy" = "Luminoso e arejado";
 "Bring All to Front" = "Trazer tudo para a frente";
@@ -284,6 +292,7 @@
 "Brush" = "Pincel";
 "Brush Settings" = "Configurações do pincel";
 "Brush Stroke" = "Traço do pincel";
+"Bubble" = "Bolha";
 "Build Previews" = "Gerar prévias";
 "Build Smart Previews" = "Gerar prévias inteligentes";
 "Building previews" = "Gerando prévias";
@@ -322,6 +331,7 @@
 "Captured" = "Capturada";
 "Captured from" = "Capturadas a partir de";
 "Captured until" = "Capturadas até";
+"Cat Eye" = "Olho de gato";
 "Catalog" = "Catálogo";
 "Catalog Statistics" = "Estatísticas do catálogo";
 "Catalog and edits" = "Catálogo e edições";
@@ -352,6 +362,7 @@
 "Choose what to do with this library's photos." = "Escolha o que fazer com as fotos desta biblioteca.";
 "Choose…" = "Escolher…";
 "Cinematic" = "Cinematográfico";
+"Circle" = "Círculo";
 "City" = "Cidade";
 "Clarity" = "Clareza";
 "Classic" = "Clássico";
@@ -359,12 +370,15 @@
 "Clean the noise out of raw photos with an AI model that runs on this computer." = "Remova o ruído das fotos RAW com um modelo de IA que roda neste computador.";
 "Clear" = "Limpar";
 "Clear All" = "Limpar tudo";
+"Clear Brush" = "Limpar pincel";
+"Clear Brushing" = "Limpar pinceladas";
 "Clear Cache" = "Limpar cache";
 "Clear Denoise Cache" = "Clear Denoise Cache";
 "Clear Filter" = "Limpar filtro";
 "Clear Filters" = "Limpar filtros";
 "Clear Guides" = "Limpar guias";
 "Clear History" = "Limpar histórico";
+"Clear Lens Blur Brush" = "Limpar pincel do desfoque de lente";
 "Clear Preview Cache" = "Limpar cache de prévias";
 "Clear Quick Collection" = "Limpar coleção rápida";
 "Clear Recent Libraries" = "Limpar bibliotecas recentes";
@@ -594,7 +608,11 @@
 "Denoise Status" = "Denoise Status";
 "Denoise all photos with an Amount" = "Denoise all photos with an Amount";
 "Density" = "Densidade";
+"Depth" = "Profundidade";
 "Depth Range" = "Intervalo de profundidade";
+"Depth estimated by AI (Depth Anything V2 Small)." = "Profundidade estimada por IA (Depth Anything V2 Small).";
+"Depth estimation is turned off in Settings → AI Models." = "A estimativa de profundidade está desativada em Configurações → Modelos de IA.";
+"Depth from the photo." = "Profundidade da própria foto.";
 "Descending" = "Decrescente";
 "Describe" = "Descrever";
 "Describe a photo…" = "Descreva uma foto…";
@@ -646,6 +664,7 @@
 "Downloading MI-GAN…" = "Baixando MI-GAN…";
 "Downloading model" = "Baixando modelo";
 "Downloading place names" = "Baixando nomes de lugares";
+"Downloading the depth model…" = "Baixando o modelo de profundidade…";
 "Downloads" = "Downloads";
 "Downloads from %@. Once it has arrived and checked out, LightCraft installs it, starts using it and turns face recognition on." = "Baixado de %@. Quando chegar e passar na verificação, o LightCraft o instala, começa a usá-lo e ativa o reconhecimento facial.";
 "Downloads from %@. Once it has arrived and checked out, LightCraft installs it." = "Baixado de %@. Quando chegar e passar na verificação, o LightCraft o instala.";
@@ -715,6 +734,9 @@
 "Enter Full Screen" = "Entrar em tela cheia";
 "Enter a date as YYYY-MM-DD HH:MM:SS" = "Digite uma data no formato AAAA-MM-DD HH:MM:SS";
 "Erase" = "Apagar";
+"Erase Brush" = "Pincel de apagar";
+"Estimate Depth" = "Estimar profundidade";
+"Estimating depth…" = "Estimando a profundidade…";
 "Evaluate Face Recognition" = "Avaliar reconhecimento facial";
 "Every EXIF, GPS and XMP field in the file" = "Todos os campos EXIF, GPS e XMP do arquivo";
 "Every chosen photo gets this time." = "Todas as fotos escolhidas recebem este horário.";
@@ -845,9 +867,17 @@
 "Float panel" = "Tornar painel flutuante";
 "Flow" = "Fluxo";
 "Fluorescent" = "Fluorescente";
+"Focal Distance" = "Distância focal";
 "Focal Length" = "Distância focal";
+"Focal Range" = "Intervalo focal";
 "Focal length" = "Distância focal";
+"Focus" = "Foco";
 "Focus (assisted culling)" = "Foco (seleção assistida)";
+"Focus Brush" = "Pincel de foco";
+"Focus Lens Blur" = "Focar desfoque de lente";
+"Focus on a Point" = "Focar em um ponto";
+"Focus on a point: click the photo" = "Focar em um ponto: clique na foto";
+"Focus on the photo's subject" = "Focar no assunto da foto";
 "Folder" = "Pasta";
 "Folder from Files…" = "Pasta de Arquivos…";
 "Folder name (renamed on disk; its photos follow)" = "Nome da pasta (renomeada no disco; as fotos acompanham)";
@@ -885,6 +915,7 @@
 "Generative Expand" = "Expansão generativa";
 "Geometry" = "Geometria";
 "Get Develop Settings" = "Obter ajustes de revelação";
+"Getting the depth model…" = "Obtendo o modelo de profundidade…";
 "Global Hue" = "Matiz global";
 "Global Luminance" = "Luminância global";
 "Global Saturation" = "Saturação global";
@@ -1131,6 +1162,10 @@
 "Left / Right" = "Esquerda / Direita";
 "Lens" = "Lente";
 "Lens Blur" = "Desfoque de lente";
+"Lens Blur Brush" = "Pincel do desfoque de lente";
+"Lens Blur Focus" = "Foco do desfoque de lente";
+"Lens Blur Info" = "Informações do desfoque de lente";
+"Lens Blur and Depth Range masks on photos without depth data of their own" = "Desfoque de lente e máscaras de intervalo de profundidade em fotos sem dados de profundidade próprios";
 "Lens Corrections" = "Correções de lente";
 "Let the Server Build Previews" = "Deixar o servidor gerar as prévias";
 "Let the crop reach past the photo's edges and paint the new area on this computer" = "Deixa o corte passar das bordas da foto e pinta a nova área neste computador";
@@ -1395,6 +1430,7 @@
 "No contributor data was built into this copy." = "Esta cópia não inclui dados de colaboradores.";
 "No date" = "Sem data";
 "No dated photos" = "Nenhuma foto com data";
+"No depth yet: turn Lens Blur off and on to estimate it." = "Ainda sem profundidade: desative e ative o Desfoque de lente para estimá-la.";
 "No download: texture from the photo" = "Sem download: textura da foto";
 "No dust spots found" = "Nenhuma mancha de poeira encontrada";
 "No edits yet." = "Ainda sem edições.";
@@ -1521,6 +1557,7 @@
 "Overwrite" = "Substituir";
 "Pages" = "Páginas";
 "Paint" = "Pintar";
+"Paint on the photo: Focus keeps what you paint sharp, Blur blurs it, Erase takes either back." = "Pinte na foto: Foco mantém nítido o que você pintar, Desfoque o desfoca e Apagar desfaz qualquer um dos dois.";
 "Paint only areas like the one under the brush" = "Pinta apenas áreas como a que está sob o pincel";
 "Paint onto Photos" = "Pintar nas fotos";
 "Paint over a distraction on the photo to remove it." = "Pinte sobre uma distração na foto para removê-la.";
@@ -1671,6 +1708,8 @@
 "Radius" = "Raio";
 "Random" = "Aleatória";
 "Range" = "Faixa";
+"Range Far" = "Intervalo distante";
+"Range Near" = "Intervalo próximo";
 "Rate ★" = "Avaliar ★";
 "Rate ★ and advance" = "Avaliar ★ e avançar";
 "Rate ★★" = "Avaliar ★★";
@@ -1851,6 +1890,7 @@
 "Right-click a photo ▸ Set as Reference Photo, then View → Reference View (Shift+R)" = "Clique com o botão direito em uma foto → Definir como foto de referência, depois Exibir → Exibição de referência (Shift+R)";
 "Right-click a preset to delete it" = "Clique com o botão direito em uma predefinição para excluí-la";
 "Rights Usage Terms" = "Termos de uso dos direitos";
+"Ring" = "Anel";
 "Rotate" = "Girar";
 "Rotate Crop" = "Girar recorte";
 "Rotate Crop Aspect" = "Girar proporção do recorte";
@@ -2202,6 +2242,7 @@
 "Tap photos to give them the keyword; tap again to take it away." = "Toque nas fotos para dar a elas a palavra-chave; toque de novo para tirá-la.";
 "Tap something white or grey in the photo" = "Toque em algo branco ou cinza na foto";
 "Tap the photo to pick a colour" = "Toque na foto para escolher uma cor";
+"Tap what should be in focus" = "Toque no que deve ficar em foco";
 "Tap ✓ when it is them, ✕ when it isn't." = "Toque em ✓ se for a pessoa e em ✕ se não for.";
 "Targeted Adjustment" = "Ajuste direcionado";
 "Targeted adjustment: drag up/down on the photo to adjust the colours there" = "Ajuste direcionado: arraste para cima/baixo na foto para ajustar as cores ali";
@@ -2229,6 +2270,7 @@
 "The download didn't work:" = "O download não funcionou:";
 "The download didn't work: %@" = "O download não funcionou: %@";
 "The download failed" = "O download falhou";
+"The download stopped." = "O download foi interrompido.";
 "The file itself. Your edits stay in LightCraft, on top of what the editor saves." = "O próprio arquivo. Suas edições ficam no LightCraft, por cima do que o editor salvar.";
 "The first time, macOS asks whether LightCraft may control Photos." = "Na primeira vez, o macOS pergunta se o LightCraft pode controlar o Fotos.";
 "The graphics card is set up when the next photo is made." = "The graphics card is set up when the next photo is made.";
@@ -2279,6 +2321,8 @@
 "This library is only on this device" = "Esta biblioteca está apenas neste dispositivo";
 "This model isn't downloaded yet: download it, or choose Classic." = "Este modelo ainda não foi baixado: baixe-o ou escolha Clássico.";
 "This photo can't be opened" = "Não foi possível abrir esta foto";
+"This photo has no depth of its own, and depth estimation isn't available in this build." = "Esta foto não tem profundidade própria, e a estimativa de profundidade não está disponível nesta versão.";
+"This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a %lld MB download (%@ licence). %@." = "Esta foto não tem profundidade própria: o Desfoque de lente a estima com o Depth Anything V2 Small, um download de %lld MB (licença %@). %@.";
 "Threshold" = "Limite";
 "Thumbnail Cache" = "Cache de miniaturas";
 "Thumbnail cache" = "Cache de miniaturas";
@@ -2383,6 +2427,7 @@
 "Vintage" = "Vintage";
 "Virtual Copy" = "Cópia virtual";
 "Visible" = "Visível";
+"Visualize Depth" = "Visualizar profundidade";
 "Visualize HDR" = "Visualizar HDR";
 "Visualize Spots" = "Visualizar manchas";
 "Visualize Spots (A)" = "Visualizar manchas (A)";

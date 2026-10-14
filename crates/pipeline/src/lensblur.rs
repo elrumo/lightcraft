@@ -218,7 +218,8 @@ impl Setup {
             1.0 - focus[1]
         };
         let max_coc = radius * (hi - focus[1]).max(focus[0] - lo).max(brushed).max(0.0);
-        if !(max_coc >= 0.5) {
+        // (NaN settings blur nothing)
+        if max_coc.is_nan() || max_coc < 0.5 {
             return None;
         }
         let boost = (lb.boost.clamp(0.0, 100.0) / 100.0) as f32;

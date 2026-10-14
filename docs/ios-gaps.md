@@ -131,7 +131,7 @@ mark: not started.
 |---|---|---|---|
 | B4.1 | AI subject, sky, background and object selection for masks; people masks with face / body parts | P1 | models; `parity-checklist.md` K rows ⬜ |
 | B4.2 | Generative remove / object removal beyond clone-heal | P2 | model |
-| B4.3 | Lens blur from a depth map (the phone's depth data or estimated) | P2 | partly present (`lens_blur`), depth model missing |
+| B4.3 | Lens blur from a depth map (the phone's depth data or estimated) | P2 | done 2026-10-14: Portrait HEIC / JPEG depth, Depth Anything V2 Small estimate (optional download), Refine brushes, Depth Range masks, in the egui and SwiftUI apps ([lens-blur.md](lens-blur.md)); not yet run on a device |
 | B4.4 | Denoise and super resolution (Enhance) | P1 | `parity-checklist.md` P rows ⬜ |
 | B4.5 | Versions and history on the phone: pick a version, tap a history step | P1 | exists on desktop (`RightPanel::Versions`); no compact entry (A2.11) |
 | B4.6 | Edit a pre-selected set: copy / paste settings across selected photos, sync, apply the last edit, with checkboxes for what to paste | P1 | engine has it; no compact UI (A2.9) |

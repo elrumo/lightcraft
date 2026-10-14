@@ -169,6 +169,7 @@ fn services(originals: Originals, backend: Option<Backend>, files: Files, frozen
     let restore_backend = backend.clone();
     let sync_backend = backend.clone();
     let erase_backend = backend.clone();
+    let depth_backend = backend.clone();
     let chooser_ctx = ctx.clone();
     Services {
         picker: None,
@@ -243,6 +244,7 @@ fn services(originals: Originals, backend: Option<Backend>, files: Files, frozen
         pick_folder: None,
         sync_exec: Some(crate::sync::exec(sync_backend)),
         erase_model: Some(crate::erase::exec(erase_backend)),
+        depth_model: Some(crate::erase::exec_depth(depth_backend)),
         tile_exec: Some(crate::tiles::exec()),
         share_exports: None,
         save_to_photos: None,

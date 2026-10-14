@@ -66,6 +66,7 @@
 "30 Days" = "30 дней";
 "32 bits (float)" = "32 бита (float)";
 "4 MiB and connections at 16." = "4 МиБ, а число соединений — 16.";
+"5-Blade" = "5 лепестков";
 "630 drivers): on Windows the window and GPU rendering use DirectX 12 only and never load the Vulkan driver unless" = "630): в Windows окно и рендеринг на GPU используют только DirectX 12 и не загружают драйвер Vulkan, пока вы";
 "8 bits" = "8 бит";
 "=  exactly" = "=  точно";
@@ -197,6 +198,7 @@
 "Apply" = "Применить";
 "Apply Color Label Set" = "Применить набор цветовых меток";
 "Apply Filter Preset" = "Применить пресет фильтра";
+"Apply Lens Blur" = "Применить размытие объектива";
 "Apply Metadata Preset" = "Применить пресет метаданных";
 "Apply Point Curve Preset" = "Применить пресет точечной кривой";
 "Apply Preset" = "Применить пресет";
@@ -291,7 +293,13 @@
 "Blue channel" = "Синий канал";
 "Blue label" = "Синяя метка";
 "Blue/Yellow Fringe" = "Сине-жёлтая кайма";
+"Blur" = "Размытие";
+"Blur Amount" = "Степень размытия";
+"Blur Brush" = "Кисть «Размытие»";
+"Blur what is nearer or farther than the subject, as a wide aperture would, using the photo's depth." = "Размывает всё, что находится ближе или дальше главного объекта, как при широкой диафрагме, опираясь на глубину фото.";
 "Blurry photos below the score are flagged as rejects." = "Размытые фото с оценкой ниже порога помечаются как отклонённые.";
+"Bokeh" = "Боке";
+"Boost" = "Усиление";
 "Boundary Warp" = "Деформация границ";
 "Bright & Airy" = "Светлый и воздушный";
 "Bring All to Front" = "Показать все окна";
@@ -304,6 +312,7 @@
 "Brush" = "Кисть";
 "Brush Settings" = "Настройки кисти";
 "Brush Stroke" = "Мазок кисти";
+"Bubble" = "Пузырь";
 "Build Previews" = "Создать просмотры";
 "Build Smart Previews" = "Создать смарт-просмотры";
 "Building previews" = "Создание просмотров";
@@ -344,6 +353,7 @@
 "Captured" = "Снято";
 "Captured from" = "Снято с";
 "Captured until" = "Снято по";
+"Cat Eye" = "Кошачий глаз";
 "Catalog" = "Каталог";
 "Catalog Statistics" = "Статистика каталога";
 "Catalog and edits" = "Каталог и правки";
@@ -374,6 +384,7 @@
 "Choose what to do with this library's photos." = "Выберите, что сделать с фото этой библиотеки.";
 "Choose…" = "Выбрать…";
 "Cinematic" = "Кинематографичный";
+"Circle" = "Круг";
 "City" = "Город";
 "Clarity" = "Чёткость";
 "Classic" = "Классический";
@@ -381,12 +392,15 @@
 "Clean the noise out of raw photos with an AI model that runs on this computer." = "Убирает шум с RAW-фото с помощью модели ИИ, работающей на этом компьютере.";
 "Clear" = "Очистить";
 "Clear All" = "Очистить всё";
+"Clear Brush" = "Очистить кисть";
+"Clear Brushing" = "Очистить мазки";
 "Clear Cache" = "Очистить кэш";
 "Clear Denoise Cache" = "Очистить кэш шумоподавления";
 "Clear Filter" = "Сбросить фильтр";
 "Clear Filters" = "Сбросить фильтры";
 "Clear Guides" = "Убрать направляющие";
 "Clear History" = "Очистить историю";
+"Clear Lens Blur Brush" = "Очистить кисть размытия объектива";
 "Clear Preview Cache" = "Очистить кэш просмотров";
 "Clear Quick Collection" = "Очистить быструю коллекцию";
 "Clear Recent Libraries" = "Очистить список недавних библиотек";
@@ -622,7 +636,11 @@
 "Denoise Status" = "Состояние шумоподавления";
 "Denoise all photos with an Amount" = "Подавить шум на всех фото с заданным количеством";
 "Density" = "Плотность";
+"Depth" = "Глубина";
 "Depth Range" = "Диапазон глубины";
+"Depth estimated by AI (Depth Anything V2 Small)." = "Глубина оценена ИИ (Depth Anything V2 Small).";
+"Depth estimation is turned off in Settings → AI Models." = "Оценка глубины отключена в Настройки → Модели ИИ.";
+"Depth from the photo." = "Глубина берётся из самого фото.";
 "Descending" = "По убыванию";
 "Describe" = "Описать";
 "Describe a photo…" = "Опишите фото…";
@@ -674,6 +692,7 @@
 "Downloading MI-GAN…" = "Загрузка MI-GAN…";
 "Downloading model" = "Загрузка модели";
 "Downloading place names" = "Загрузка названий мест";
+"Downloading the depth model…" = "Загрузка модели глубины…";
 "Downloads" = "Загрузки";
 "Downloads from %@. Once it has arrived and checked out, LightCraft installs it, starts using it and turns face recognition on." = "Загружается с %@. Когда файл получен и проверен, LightCraft устанавливает модель, начинает её использовать и включает распознавание лиц.";
 "Downloads from %@. Once it has arrived and checked out, LightCraft installs it." = "Загружается с %@. Когда файл получен и проверен, LightCraft устанавливает модель.";
@@ -745,6 +764,9 @@
 "Enter Full Screen" = "Полноэкранный режим";
 "Enter a date as YYYY-MM-DD HH:MM:SS" = "Введите дату в формате YYYY-MM-DD HH:MM:SS";
 "Erase" = "Стереть";
+"Erase Brush" = "Кисть «Стереть»";
+"Estimate Depth" = "Оценить глубину";
+"Estimating depth…" = "Оценка глубины…";
 "Evaluate Face Recognition" = "Оценить распознавание лиц";
 "Every EXIF, GPS and XMP field in the file" = "Все поля EXIF, GPS и XMP в файле";
 "Every chosen photo gets this time." = "Все выбранные фото получат это время.";
@@ -880,9 +902,17 @@
 "Float panel" = "Сделать панель плавающей";
 "Flow" = "Поток";
 "Fluorescent" = "Флуоресцентная лампа";
+"Focal Distance" = "Фокусное расстояние";
 "Focal Length" = "Фокусное расстояние";
+"Focal Range" = "Диапазон фокуса";
 "Focal length" = "Фокусное расстояние";
+"Focus" = "Фокус";
 "Focus (assisted culling)" = "Фокус (помощь при отборе)";
+"Focus Brush" = "Кисть «Фокус»";
+"Focus Lens Blur" = "Сфокусировать размытие объектива";
+"Focus on a Point" = "Сфокусироваться на точке";
+"Focus on a point: click the photo" = "Сфокусироваться на точке: щёлкните по фото";
+"Focus on the photo's subject" = "Сфокусироваться на главном объекте фото";
 "Folder" = "Папка";
 "Folder from Files…" = "Папка из «Файлов»…";
 "Folder name (renamed on disk; its photos follow)" = "Имя папки (переименовывается на диске; фото следуют за ней)";
@@ -920,6 +950,7 @@
 "Generative Expand" = "Генеративное расширение";
 "Geometry" = "Геометрия";
 "Get Develop Settings" = "Получить настройки коррекции";
+"Getting the depth model…" = "Получение модели глубины…";
 "Global" = "Общий";
 "Global Hue" = "Общий тон";
 "Global Luminance" = "Общая яркость";
@@ -1173,6 +1204,10 @@
 "Left / Right" = "Слева / справа";
 "Lens" = "Объектив";
 "Lens Blur" = "Размытие объектива";
+"Lens Blur Brush" = "Кисть размытия объектива";
+"Lens Blur Focus" = "Фокус размытия объектива";
+"Lens Blur Info" = "Сведения о размытии объектива";
+"Lens Blur and Depth Range masks on photos without depth data of their own" = "Размытие объектива и маски «Диапазон глубины» для фото без собственных данных о глубине";
 "Lens Corrections" = "Коррекция объектива";
 "Let the Server Build Previews" = "Создавать просмотры на сервере";
 "Let the crop reach past the photo's edges and paint the new area on this computer" = "Позволяет кадру выйти за края фото и дорисовывает новую область на этом компьютере";
@@ -1442,6 +1477,7 @@
 "No contributor data was built into this copy." = "В эту копию не встроены данные об участниках.";
 "No date" = "Нет даты";
 "No dated photos" = "Нет фото с датой";
+"No depth yet: turn Lens Blur off and on to estimate it." = "Глубины пока нет: выключите и снова включите «Размытие объектива», чтобы её оценить.";
 "No download: texture from the photo" = "Без загрузки: текстура из фото";
 "No dust spots found" = "Пылинки не найдены";
 "No edits yet." = "Правок пока нет.";
@@ -1569,6 +1605,7 @@
 "Overwrite" = "Перезаписать";
 "Pages" = "Страницы";
 "Paint" = "Закрасить";
+"Paint on the photo: Focus keeps what you paint sharp, Blur blurs it, Erase takes either back." = "Рисуйте по фото: «Фокус» делает закрашенное резким, «Размытие» размывает его, «Стереть» отменяет любое из них.";
 "Paint only areas like the one under the brush" = "Закрашивать только области, похожие на ту, что под кистью";
 "Paint onto Photos" = "Нанести на фото";
 "Paint over a distraction on the photo to remove it." = "Закрасьте лишнее на фото, чтобы убрать это.";
@@ -1724,6 +1761,8 @@
 "Radius" = "Радиус";
 "Random" = "Случайно";
 "Range" = "Диапазон";
+"Range Far" = "Дальняя граница";
+"Range Near" = "Ближняя граница";
 "Rate ★" = "Оценить ★";
 "Rate ★ and advance" = "Оценить ★ и перейти дальше";
 "Rate ★★" = "Оценить ★★";
@@ -1907,6 +1946,7 @@
 "Right-click a photo ▸ Set as Reference Photo, then View → Reference View (Shift+R)" = "Щёлкните фото правой кнопкой → Назначить эталонным фото, затем Вид → Режим эталона (Shift+R)";
 "Right-click a preset to delete it" = "Щёлкните пресет правой кнопкой, чтобы удалить его";
 "Rights Usage Terms" = "Условия использования прав";
+"Ring" = "Кольцо";
 "Rotate" = "Повернуть";
 "Rotate Crop" = "Поворачивать кадрирование";
 "Rotate Crop Aspect" = "Повернуть пропорции кадра";
@@ -2267,6 +2307,7 @@
 "Tap photos to give them the keyword; tap again to take it away." = "Коснитесь фото, чтобы добавить ключевое слово; коснитесь ещё раз, чтобы убрать его.";
 "Tap something white or grey in the photo" = "Коснитесь белого или серого участка на фото";
 "Tap the photo to pick a colour" = "Коснитесь фото, чтобы выбрать цвет";
+"Tap what should be in focus" = "Коснитесь того, что должно быть в фокусе";
 "Tap ✓ when it is them, ✕ when it isn't." = "Нажмите ✓, если это тот же человек, и ✕, если нет.";
 "Targeted Adjustment" = "Целевая коррекция";
 "Targeted adjustment: drag up/down on the photo to adjust the colours there" = "Целевая коррекция: перетаскивайте вверх/вниз по фото, чтобы менять цвета в этом месте";
@@ -2296,6 +2337,7 @@
 "The download didn't work:" = "Загрузка не удалась:";
 "The download didn't work: %@" = "Загрузка не удалась: %@";
 "The download failed" = "Загрузка не удалась";
+"The download stopped." = "Загрузка остановлена.";
 "The file itself. Your edits stay in LightCraft, on top of what the editor saves." = "Сам файл. Ваши правки остаются в LightCraft и применяются поверх того, что сохранит редактор.";
 "The first time, macOS asks whether LightCraft may control Photos." = "В первый раз macOS спросит, может ли LightCraft управлять приложением «Фото».";
 "The graphics card is set up when the next photo is made." = "Видеокарта настраивается при создании следующего фото.";
@@ -2347,6 +2389,8 @@
 "This library is only on this device" = "Эта библиотека есть только на этом устройстве";
 "This model isn't downloaded yet: download it, or choose Classic." = "Эта модель ещё не загружена: загрузите её или выберите «Классический».";
 "This photo can't be opened" = "Это фото не удаётся открыть";
+"This photo has no depth of its own, and depth estimation isn't available in this build." = "У этого фото нет собственной карты глубины, а оценка глубины в этой сборке недоступна.";
+"This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a %lld MB download (%@ licence). %@." = "У этого фото нет собственной карты глубины: «Размытие объектива» оценивает её с помощью Depth Anything V2 Small, загрузка %lld МБ (лицензия %@). %@.";
 "Threshold" = "Порог";
 "Thumbnail Cache" = "Кэш миниатюр";
 "Thumbnail cache" = "Кэш миниатюр";
@@ -2452,6 +2496,7 @@
 "Vintage" = "Винтаж";
 "Virtual Copy" = "Виртуальная копия";
 "Visible" = "Видимость";
+"Visualize Depth" = "Визуализировать глубину";
 "Visualize HDR" = "Визуализировать HDR";
 "Visualize Spots" = "Визуализировать пятна";
 "Visualize Spots (A)" = "Визуализировать пятна (A)";

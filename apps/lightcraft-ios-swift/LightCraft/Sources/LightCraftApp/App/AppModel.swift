@@ -388,6 +388,10 @@ final class AppModel {
         if editor.tool == .edit, editor.visualizeHdr, editor.hdr {
             return ["kind": "hdr"]
         }
+        // (painting Lens Blur's Refine brush shows the depth it changes)
+        if editor.tool == .edit, editor.visualizeDepth || editor.lensBrush != nil, editor.setting("lens_blur", "enabled").bool == true {
+            return ["kind": "depth"]
+        }
         guard editor.tool == .masking, prefs.maskOverlay, let mask = state.activeMask else { return nil }
         return [
             "kind": "mask", "id": .int(Int64(mask)), "view": .string(prefs.maskOverlayMode),
