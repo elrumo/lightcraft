@@ -169,6 +169,14 @@ pub fn tr(source: &str) -> &str {
 /// [`tr`] for a message whose translation depends on where it appears: a catalog entry keyed
 /// `"<context>|<source>"` wins, else the plain message. A language adds the contextual entry only
 /// where its shared translation reads wrongly there (Japanese はい / いいえ as a rule's value).
+/// [`tr`] for a word whose shared translation reads wrongly in one place: the catalog's
+/// `"<context>|<source>"` entry when it has one, else the plain message. Contexts in use:
+/// `smart album value` (a yes/no rule's value) and `crop` (Generative Expand's Expand, which
+/// widens the canvas, where the shared "Expand" unfolds a list).
+pub fn tr_ctx<'a>(context: &str, source: &'a str) -> &'a str {
+    tr_ctx_in(language(), context, source)
+}
+
 fn tr_ctx_in<'a>(language: Locale, context: &str, source: &'a str) -> &'a str {
     match language.catalog().get(&format!("{context}|{source}")) {
         Some(translation) => translation.as_str(),

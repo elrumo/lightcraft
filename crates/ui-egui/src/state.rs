@@ -931,6 +931,13 @@ pub struct UiState {
     /// Remove tool ▸ Generative AI: new Remove strokes are filled by the AI Remove model (saved in
     /// `ui.json`, so it stays as the user left it).
     pub remove_ai: bool,
+    /// Crop ▸ Expand ▸ Fill With: the Generative Expand model the user picked (`migan`, `lama`,
+    /// `classic`; empty: the best one on this device). Saved in `ui.json`.
+    pub expand_model: String,
+    /// The browser build: a Generate waiting for its notice to be drawn (it runs on the page's
+    /// thread), and whether a frame has passed.
+    #[serde(skip)]
+    pub expand_pending: Option<(String, bool)>,
     /// Selected Point Color sample.
     pub point_color: usize,
     /// Point Color "Visualize range": the selected sample's range in colour, the rest grey.
@@ -1482,6 +1489,8 @@ impl Default for UiState {
             remove_feather: 50.0,
             remove_opacity: 100.0,
             remove_ai: false,
+            expand_model: String::new(),
+            expand_pending: None,
             point_color: 0,
             point_color_visualize: false,
             hdr_visualize: false,

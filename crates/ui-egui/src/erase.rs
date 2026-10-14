@@ -96,6 +96,19 @@ fn fetch(app: &mut LightcraftApp, ctx: &egui::Context, download: bool) {
     f(download, tx, ctx.clone());
 }
 
+/// The browser build: download MI-GAN into the site's storage (Generative Expand's offer).
+pub(crate) fn fetch_model(app: &mut LightcraftApp, ctx: &egui::Context) {
+    fetch(app, ctx, true);
+}
+
+/// The browser build: look for MI-GAN in the site's storage once, unless that was done already or
+/// a fetch runs.
+pub(crate) fn look_in_storage(app: &mut LightcraftApp, ctx: &egui::Context) {
+    if app.services.erase_model.is_some() && app.erase.rx.is_none() && !app.erase.not_stored && app.erase.error.is_none() {
+        fetch(app, ctx, false);
+    }
+}
+
 /// Whether a stroke should be filled by AI: the Generative AI switch is on and the model is ready. With the
 /// switch on and no model, a toast says what to do and the stroke is filled from around it.
 pub fn wanted(app: &mut LightcraftApp, ctx: &egui::Context) -> bool {

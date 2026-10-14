@@ -33,6 +33,10 @@ pub enum Gesture {
         handle: u8,
         start: lightcraft_geom::Rect,
         angle: f64,
+        /// The screen ↔ photo mapping when the drag started: with Generative Expand the view can
+        /// widen as the crop grows, and the pointer must keep meaning what it meant (else the crop
+        /// would chase the widening view).
+        map: CanvasMap,
     },
     /// Straighten tool: a line drawn along something that should be level (or plumb).
     StraightenLine {
@@ -70,7 +74,7 @@ pub enum Gesture {
 }
 
 /// Screen ↔ normalized-image mapping for the displayed frame.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct CanvasMap {
     rect: Rect,
     to_norm: Affine,
@@ -730,6 +734,11 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         p.rect_filled(canvas, 0.0, Color32::from_gray(238));
         let label = crate::i18n::tr_format!("Proof Preview · {}", app.ui.proof.space.label());
         p.text(pos2(canvas.right() - 16.0, canvas.top() + 14.0), Align2::RIGHT_CENTER, label, t.font(12.5), Color32::from_gray(60));
+    }
+    // Generative Expand: the part of the frame past the photo that nothing fills yet is
+    // transparent in the render; a checkerboard shows through it, as in Lightroom
+    if frame.expands() && !fullscreen {
+        crate::expand::checkerboard(&p.with_clip_rect(canvas), img_rect.intersect(canvas));
     }
     let shown;
     if split {
@@ -2218,8 +2227,8 @@ fn crop_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respons
         // a finger has moved a few points by the time the drag starts: pick the handle where it went down
         let q0 = if app.compact { ui.input(|i| i.pointer.press_origin()).unwrap_or(q) } else { q };
         app.gesture = Some(match grab(q0) {
-            Some(h) => Gesture::CropHandle { handle: h as u8, start: d.crop.geometry.rect, angle: d.crop.geometry.angle },
-            None if inside(q) => Gesture::CropHandle { handle: 8, start: d.crop.geometry.rect, angle: d.crop.geometry.angle },
+            Some(h) => Gesture::CropHandle { handle: h as u8, start: d.crop.geometry.rect, angle: d.crop.geometry.angle, map: *map },
+            None if inside(q) => Gesture::CropHandle { handle: 8, start: d.crop.geometry.rect, angle: d.crop.geometry.angle, map: *map },
             None => {
                 let c = map.screen(Point::new(0.5, 0.5));
                 Gesture::CropRotate { start_angle: d.crop.geometry.angle, a0: (q - c).angle() }
@@ -2230,11 +2239,12 @@ fn crop_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respons
         && let Some(q) = resp.interact_pointer_pos()
     {
         match app.gesture.clone() {
-            Some(Gesture::CropHandle { handle, start, angle }) => {
+            Some(Gesture::CropHandle { handle, start, angle, map: at_start }) => {
                 // The crop model decides what the drag does (anchor, aspect lock, image bounds): see
-                // `lightcraft_geom::drag_crop`; the UI only reports where the pointer started and is.
-                let n = to_straight(map.norm(q), angle, frame);
-                let orig = ui.input(|i| i.pointer.press_origin()).map(|q0| to_straight(map.norm(q0), angle, frame)).unwrap_or(n);
+                // `lightcraft_geom::drag_crop`; the UI only reports where the pointer started and is
+                // (both through the mapping the drag started with).
+                let n = to_straight(at_start.norm(q), angle, frame);
+                let orig = ui.input(|i| i.pointer.press_origin()).map(|q0| to_straight(at_start.norm(q0), angle, frame)).unwrap_or(n);
                 // Shift keeps the current proportions for this drag only; the Lock toggle is untouched.
                 let keep_ratio = ui.input(|i| i.modifiers.shift);
                 let _ = app.run(
