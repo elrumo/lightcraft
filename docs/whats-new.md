@@ -2,6 +2,20 @@
 
 ## 2026-10-13
 
+### Import from a camera or memory card, on the iPhone and iPad too
+- Plug a camera or an SD card reader into your iPhone or iPad and tap + ▸ **Connected Camera/Card**: its photos appear
+  as the camera reads them out, grouped by the day they were taken (newest first), with a box beside each day to choose
+  the whole day and one beside the camera to choose everything. Raw files carry a Raw tag. The first time, iOS asks
+  whether LightCraft may read cameras and cards.
+- Photos already in your library are greyed out and can't be chosen, so you import only what is new. **Import** copies
+  the chosen photos off the camera (the copy shows in the activity list, with ✕ to stop it) and adds them to your
+  library; the photos on the card are left as they are.
+- On a Mac, File ▸ Import from Device now lists cameras that don't show up as a disk (in PTP mode) and iPhones, as well
+  as memory cards. On Linux, cameras and phones your desktop mounts (GNOME's PTP and MTP mounts) are listed too.
+- Connecting a camera or card while LightCraft is open opens the import for it. Turn this off in Settings ▸ Import ▸
+  Cameras and cards.
+- Every import now lists its photos by the day they were taken, with a box per day.
+
 ### Shared albums, like a photo service's
 - Right-click an album ▸ **Share Link…** now asks how the link works: when it ends, whether people can download the
   originals, whether they can **add their own photos** to the album, and an optional **password**.

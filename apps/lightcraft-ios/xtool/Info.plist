@@ -12,6 +12,9 @@
     <!-- Save to Photos and Save Image in the share sheet (exports); importing uses the Photos picker, which needs no access -->
     <key>NSPhotoLibraryAddUsageDescription</key>
     <string>LightCraft saves the photos you export to your photo library.</string>
+    <!-- a camera or card reader plugged in (ImageCaptureCore, lightcraft-capture); iOS asks the first time one is opened -->
+    <key>NSCameraUsageDescription</key>
+    <string>LightCraft reads the photos on a camera or memory card you connect, so you can import them.</string>
     <!-- iOS 27 traps apps without the scene lifecycle; winit has none, see Sources/LightCraftHost/SceneDelegate.m -->
     <key>UIApplicationSceneManifest</key>
     <dict>
