@@ -1980,6 +1980,7 @@
 "Show in Explorer" = "在文件资源管理器中显示";
 "Show in File Manager" = "在文件管理器中显示";
 "Show in Finder" = "在 Finder 中显示";
+"Show in Grid" = "在网格中显示";
 "Show less" = "收起";
 "Show on Map" = "在地图上显示";
 "Show overlay (O)" = "显示叠加 (O)";
@@ -2397,6 +2398,7 @@
 "Zoom in" = "放大";
 "Zoom out" = "缩小";
 "Zoom to Fit" = "适合窗口";
+"Zoom to These Photos" = "缩放到这些照片";
 "Zoom to page level" = "缩放至页面级别";
 "Zoom to these photos" = "缩放到这些照片";
 "^[%lld file](inflect: true)" = "%lld 个文件";

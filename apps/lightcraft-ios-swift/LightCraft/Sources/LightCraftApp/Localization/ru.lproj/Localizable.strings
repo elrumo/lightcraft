@@ -1968,6 +1968,7 @@
 "Show in Explorer" = "Показать в «Проводнике»";
 "Show in File Manager" = "Показать в файловом менеджере";
 "Show in Finder" = "Показать в Finder";
+"Show in Grid" = "Показать в сетке";
 "Show less" = "Показать меньше";
 "Show on Map" = "Показать на карте";
 "Show overlay (O)" = "Показать наложение (O)";
@@ -2372,6 +2373,7 @@
 "Zoom In" = "Увеличить";
 "Zoom Out" = "Уменьшить";
 "Zoom to Fit" = "Масштаб по размеру окна";
+"Zoom to These Photos" = "Приблизить к этим фото";
 "Zoom to page level" = "Масштаб до уровня страницы";
 "^[%lld file](inflect: true)" = "Файлов: %lld";
 "^[%lld item](inflect: true)" = "Элементов: %lld";

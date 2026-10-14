@@ -321,8 +321,14 @@ struct MapScreen: View {
             ForEach(Array(markers.enumerated()), id: \.offset) { _, m in
                 if let lat = m["lat"].double, let lon = m["lon"].double {
                     Annotation("", coordinate: CLLocationCoordinate2D(latitude: lat, longitude: lon)) {
-                        MapMarker(front: m["front"].int.map { UInt64($0) }, count: Int(m["count"].int ?? 0))
+                        // (the model passed in: MapKit hosts annotations apart, where the environment can be missing)
+                        MapMarker(model: model, photos: (m["pictured"].array ?? []).compactMap { $0.int.map { UInt64(clamping: $0) } }, count: Int(m["count"].int ?? 0))
                             .onTapGesture { show(m) }
+                            .contextMenu {
+                                Button("Show in Grid", systemImage: "square.grid.3x3") { show(m) }
+                                Button("Select", systemImage: "checkmark.circle") { select(m) }
+                                Button("Zoom to These Photos", systemImage: "plus.magnifyingglass") { go(m["bounds"]) }
+                            }
                     }
                 }
             }
@@ -334,7 +340,7 @@ struct MapScreen: View {
             Task { await load(region: ctx.region) }
         }
         .overlay(alignment: .top) {
-            if located == 0 && !markers.isEmpty == false {
+            if located == 0 {
                 Text("No photos with a location")
                     .font(.footnote)
                     .padding(.horizontal, 12).padding(.vertical, 6)
@@ -384,6 +390,12 @@ struct MapScreen: View {
         }
     }
 
+    /// A marker's photos selected (in the grid they are in).
+    private func select(_ m: JSONValue) {
+        guard let ids = m["ids"].array, !ids.isEmpty else { return }
+        model.perform("library.select", ["ids": .array(ids)])
+    }
+
     private func go(_ p: JSONValue) {
         guard let s = p["south"].double, let w = p["west"].double, let n = p["north"].double, let e = p["east"].double else { return }
         withAnimation {
@@ -396,21 +408,18 @@ struct MapScreen: View {
     }
 }
 
-/// A cluster on the map: its front photo framed in white, the count in a badge.
+/// A cluster on the map: up to four of its photos framed in white (`map.points` → `pictured`: one
+/// fills it, two side by side, three a tall one and two small, four a square), the count in a badge.
 private struct MapMarker: View {
-    @Environment(AppModel.self) private var model
-    let front: UInt64?
+    let model: AppModel
+    let photos: [UInt64]
     let count: Int
 
     var body: some View {
         RoundedRectangle(cornerRadius: 8)
             .fill(.white)
             .frame(width: 52, height: 52)
-            .overlay {
-                if let front, let p = model.images.thumb(front) {
-                    Image(decorative: p.image, scale: 1).resizable().scaledToFill().frame(width: 46, height: 46).clipShape(.rect(cornerRadius: 6))
-                }
-            }
+            .overlay { mosaic.frame(width: 46, height: 46).clipShape(.rect(cornerRadius: 6)) }
             .overlay(alignment: .topTrailing) {
                 if count > 1 {
                     Text("\(count)")
@@ -422,9 +431,34 @@ private struct MapMarker: View {
                 }
             }
             .shadow(radius: 3)
-            .task(id: front) { if let front { model.wantThumb(front, edge: 128) } }
-            .onDisappear { if let front { model.thumbDisappeared(front) } }
+            .task(id: photos) { for p in photos { model.wantThumb(p, edge: 128) } }
+            .onDisappear { for p in photos { model.thumbDisappeared(p) } }
             .accessibilityLabel("\(count) photos")
+    }
+
+    @ViewBuilder private var mosaic: some View {
+        let gap: CGFloat = 2
+        switch photos.count {
+        case 0: Color(uiColor: .tertiarySystemFill)
+        case 1: thumb(0)
+        case 2: HStack(spacing: gap) { thumb(0); thumb(1) }
+        case 3: HStack(spacing: gap) { thumb(0); VStack(spacing: gap) { thumb(1); thumb(2) } }
+        default:
+            VStack(spacing: gap) {
+                HStack(spacing: gap) { thumb(0); thumb(1) }
+                HStack(spacing: gap) { thumb(2); thumb(3) }
+            }
+        }
+    }
+
+    private func thumb(_ i: Int) -> some View {
+        Color(uiColor: .tertiarySystemFill)
+            .overlay {
+                if let id = photos[safe: i], let p = model.images.thumb(id) {
+                    Image(decorative: p.image, scale: 1).resizable().scaledToFill()
+                }
+            }
+            .clipped()
     }
 }
 #endif

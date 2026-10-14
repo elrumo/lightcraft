@@ -18,9 +18,9 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | Phase | ✅ | 🟡 | ⬜ | 🚫 | Done or out of scope |
 |---|---:|---:|---:|---:|---:|
 | S0 | 15 | 0 | 0 | 0 | 15/15 |
-| S1 | 156 | 5 | 3 | 3 | 159/167 |
+| S1 | 157 | 4 | 3 | 3 | 160/167 |
 | S2 | 1 | 0 | 79 | 22 | 23/102 |
-| **Total** | 172 | 5 | 82 | 25 | 197/284 |
+| **Total** | 173 | 4 | 82 | 25 | 198/284 |
 <!-- /ios-parity:summary -->
 
 ## Screens
@@ -65,7 +65,7 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | screen:compact.settings | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/FacesSettings.swift` | the library, General, Import, Performance, Interface, Sync, Faces, AI Models |
 | screen:compact.sync | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SyncStorageView.swift`, `crates/apphost/src/sync.rs` | sign in, account, Sync Now, pause, On This Device options, shared links, sign out, the cloud button and status page, the conflict choice, Storage (`sync.usage`: the server's files, limit and disk, this device's); the host drives the sync (shared with egui); checked against a local lightcraft-server on the simulator |
 | screen:compact.people | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/PeopleView.swift`, `crates/engine/src/tests_libops.rs` | the library's named people (`people.named`), groups found on this device (`people.list`), unnamed faces (`faces.unnamed`) to name; a person's page: their faces (a tap opens the photo), rename everyone (`people.rename`), look-alikes with ✓ / ✕ and Confirm All; the scan's progress; empty state points to Settings ▸ Faces |
-| screen:compact.map | S1 | 🟡 | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/PeopleView.swift` | MapKit with clustered photo markers (`map.points`), place search (`map.place`), a tap shows them in the grid |
+| screen:compact.map | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/PeopleView.swift`, `crates/geo/src/cluster.rs` | MapKit with clustered markers that picture up to four of their photos (`map.points` → `pictured`, chosen in `lightcraft_geo` for both apps), place search (`map.place`), a tap shows them in the grid, a long press: Show in Grid, Select, Zoom to These Photos |
 | screen:compact.alerts | S1 | 🟡 | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/App/RootView.swift` | Move to Recently Deleted asks first; messages as glass capsules |
 | screen:compact.haptics | S1 | 🟡 | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/GridView.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/ControlSlider.swift` | selection on pinch steps, groups, tools, sliders at the default and the ends; medium on Before; not yet every place egui has |
 | screen:compact.appearance | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | System / Light / Dark |

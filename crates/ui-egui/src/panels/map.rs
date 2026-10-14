@@ -708,24 +708,6 @@ fn fit_glyph(p: &egui::Painter, c: Pos2, color: Color32) {
 
 // ---- markers ------------------------------------------------------------------------------
 
-/// The photos a marker is a picture of: the one that stands for the group first, then others
-/// spread through it, so a big group shows a few different pictures (at most [`PICTURED`]).
-fn preview_ids(c: &Cluster, points: &[Point]) -> Vec<PhotoId> {
-    let n = c.members.len();
-    let id_at = |i: usize| c.members.get(i % n.max(1)).and_then(|m| points.get(*m as usize)).map(|p| PhotoId(p.id));
-    let others = n.min(PICTURED).saturating_sub(1);
-    let mut out: Vec<PhotoId> = points.get(c.front as usize).map(|p| PhotoId(p.id)).into_iter().collect();
-    for j in 0..others {
-        // the middle of the j-th of `others` equal parts of the group, or the next photo on from
-        // there that isn't pictured yet
-        let start = (2 * j + 1).saturating_mul(n) / (2 * others);
-        if let Some(id) = (0..n).filter_map(|k| id_at(start + k)).find(|id| !out.contains(id)) {
-            out.push(id);
-        }
-    }
-    out
-}
-
 /// Where the `k` pictures of a marker go inside `r`: one fills it, two stand side by side, three
 /// are a tall one beside two small ones, four make a square.
 fn preview_tiles(r: Rect, k: usize) -> Vec<Rect> {
@@ -787,7 +769,7 @@ fn draw_markers(app: &mut LightcraftApp, ui: &mut egui::Ui, rect: Rect, v: &View
         // white shows between the photos
         p.rect_filled(r, 5.0, Color32::WHITE);
         // the marker is a picture of what it holds: up to four of its photos, the front one first
-        let pictured = preview_ids(c, &points);
+        let pictured: Vec<PhotoId> = c.pictured(&points, PICTURED).into_iter().map(PhotoId).collect();
         for (id, tile) in pictured.iter().zip(preview_tiles(r.shrink(1.5), pictured.len())) {
             super::grid::request_thumb(app, *id, super::grid::thumb_px(MARKER, ppp), if *id == front { 8 } else { 7 });
             let p = ui.painter();
@@ -931,34 +913,6 @@ mod tests {
         // the parent of the zoom-0 tile never asked for: z - levels can't go below 0
         let (anc, _) = ancestor_uv(TileId { z: 1, x: 1, y: 1 }, 1);
         assert_eq!(anc, TileId { z: 0, x: 0, y: 0 });
-    }
-
-    fn group(members: &[u32], front: u32) -> Cluster {
-        let w = project(0.0, 0.0);
-        Cluster { at: w, members: members.to_vec(), front, bounds: (w, w) }
-    }
-
-    fn points(n: u32) -> Vec<Point> {
-        (0..n).map(|i| Point { id: 1000 + u64::from(i), lat: 0.0, lon: 0.0, weight: 0 }).collect()
-    }
-
-    #[test]
-    fn a_marker_pictures_its_front_photo_and_others_spread_through_its_group() {
-        let pts = points(100);
-        assert_eq!(preview_ids(&group(&[7], 7), &pts), vec![PhotoId(1007)]);
-        assert_eq!(preview_ids(&group(&[3, 9], 9), &pts), vec![PhotoId(1009), PhotoId(1003)]);
-        // a small group shows every one of its photos
-        let all = preview_ids(&group(&[1, 2, 3, 4], 3), &pts);
-        assert_eq!(all[0], PhotoId(1003));
-        let mut sorted = all.clone();
-        sorted.sort();
-        assert_eq!(sorted, vec![PhotoId(1001), PhotoId(1002), PhotoId(1003), PhotoId(1004)]);
-        // a big one shows four different photos, the front one first, from all over it
-        let members: Vec<u32> = (0..100).collect();
-        assert_eq!(preview_ids(&group(&members, 42), &pts), vec![PhotoId(1042), PhotoId(1016), PhotoId(1050), PhotoId(1083)]);
-        // members or a front pointing nowhere don't panic
-        assert_eq!(preview_ids(&group(&[500, 1], 500), &pts), vec![PhotoId(1001)]);
-        assert!(preview_ids(&group(&[], 0), &[]).is_empty());
     }
 
     #[test]

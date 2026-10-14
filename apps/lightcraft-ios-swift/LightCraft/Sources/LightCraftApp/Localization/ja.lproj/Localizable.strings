@@ -1953,6 +1953,7 @@
 "Show in Explorer" = "エクスプローラーで表示";
 "Show in File Manager" = "ファイルマネージャーで表示";
 "Show in Finder" = "Finderで表示";
+"Show in Grid" = "グリッドに表示";
 "Show less" = "表示を減らす";
 "Show on Map" = "地図で表示";
 "Show overlay (O)" = "重ね表示（O）";
@@ -2367,6 +2368,7 @@
 "Zoom in" = "拡大";
 "Zoom out" = "縮小";
 "Zoom to Fit" = "全体を表示";
+"Zoom to These Photos" = "これらの写真にズーム";
 "Zoom to page level" = "ページ全体を表示";
 "Zoom to these photos" = "これらの写真にズーム";
 "^[%lld file](inflect: true)" = "%lld 個のファイル";

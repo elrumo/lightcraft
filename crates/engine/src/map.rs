@@ -84,7 +84,8 @@ fn from_name(n: &PlaceName<'_>) -> PlaceInfo {
 pub fn cluster_json(c: &Cluster, pts: &[Point], with_ids: usize) -> Value {
     let (lat, lon) = unproject(c.at);
     let front = pts.get(c.front as usize).map(|p| p.id);
-    let mut v = json!({"lat": lat, "lon": lon, "count": c.count(), "front": front});
+    // up to four of its photos, for a marker that pictures them
+    let mut v = json!({"lat": lat, "lon": lon, "count": c.count(), "front": front, "pictured": c.pictured(pts, 4)});
     if c.count() <= with_ids {
         v["ids"] = json!(c.members.iter().filter_map(|i| pts.get(*i as usize).map(|p| p.id)).collect::<Vec<_>>());
     }

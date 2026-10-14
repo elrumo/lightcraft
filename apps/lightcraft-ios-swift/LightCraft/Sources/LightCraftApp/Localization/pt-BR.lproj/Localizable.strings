@@ -1881,6 +1881,7 @@
 "Show in Explorer" = "Mostrar no Explorador de Arquivos";
 "Show in File Manager" = "Mostrar no gerenciador de arquivos";
 "Show in Finder" = "Mostrar no Finder";
+"Show in Grid" = "Mostrar na grade";
 "Show less" = "Mostrar menos";
 "Show on Map" = "Mostrar no mapa";
 "Show overlay (O)" = "Mostrar sobreposição (O)";
@@ -2267,6 +2268,7 @@
 "Zoom In" = "Ampliar";
 "Zoom Out" = "Reduzir";
 "Zoom to Fit" = "Ajustar à tela";
+"Zoom to These Photos" = "Aproximar destas fotos";
 "Zoom to page level" = "Zoom no nível da página";
 "^[%lld file](inflect: true)" = "^[%lld arquivo](inflect: true)";
 "^[%lld item](inflect: true)" = "^[%lld item](inflect: true)";
