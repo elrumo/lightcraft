@@ -97,6 +97,22 @@ impl Downloader {
         running
     }
 
+    /// Start downloading `files` from `mirrors` into `dir` on a background thread, shown in the activity stack as
+    /// `name` (its ✕ cancels like [`Downloader::cancel`]). False when one is already running.
+    #[allow(clippy::too_many_arguments)]
+    pub fn start(
+        &self,
+        label: &'static str,
+        files: &'static [fetch::FileSpec<'static>],
+        mirrors: Vec<String>,
+        dir: PathBuf,
+        opts: Options,
+        activity: &Activity,
+        name: &str,
+    ) -> Result<bool, String> {
+        self.start_parts(label, vec![(files, mirrors, dir)], opts, activity, name)
+    }
+
     /// Start downloading several sets of files, one after the other (each with its own mirrors and
     /// folder), as one download: one progress, one cancel, one row in the activity stack. False when
     /// one is already running.
