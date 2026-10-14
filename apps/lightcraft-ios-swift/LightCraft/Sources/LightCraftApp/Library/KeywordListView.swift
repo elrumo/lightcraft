@@ -28,6 +28,11 @@ struct KeywordListView: View {
                 }
                 .foregroundStyle(.primary)
                 .contextMenu {
+                    Button("Paint onto Photos", systemImage: "paintbrush.pointed") {
+                        model.painting = node.path
+                        model.sheet = nil
+                        model.path = []
+                    }
                     Button("Rename…", systemImage: "pencil") {
                         newName = node.name
                         renaming = node

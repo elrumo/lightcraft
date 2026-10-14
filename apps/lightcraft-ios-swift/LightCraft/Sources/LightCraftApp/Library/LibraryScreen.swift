@@ -14,6 +14,7 @@ struct LibraryScreen: View {
     @State private var scope = SearchScope.text
     /// This device or the sync server can search by description (`vision.model.status`).
     @State private var describes = false
+    @State private var painterText = ""
 
     var body: some View {
         @Bindable var prefs = model.prefs
@@ -33,8 +34,12 @@ struct LibraryScreen: View {
             if model.selectMode {
                 SelectionBar()
                     .transition(.move(edge: .bottom).combined(with: .opacity))
+            } else if let k = model.painting {
+                PainterBar(keyword: k)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
             } else if model.searching {
-                // (the search field has the bottom)
+                SearchBar(scope: $scope, describes: describes)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
             } else if model.library.count > 0 || model.plainAlbum != nil {
                 bottomControls
                     .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -43,17 +48,21 @@ struct LibraryScreen: View {
             }
         }
         .animation(.snappy, value: model.selectMode)
+        .animation(.snappy, value: model.painting)
+        .animation(.snappy, value: model.searching)
+        .alert("Keyword Painter", isPresented: Bindable(model).askPainter) {
+            TextField("Keyword", text: $painterText)
+            Button("Paint") {
+                let k = painterText.trimmingCharacters(in: .whitespaces)
+                if !k.isEmpty { model.painting = k }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Tap photos to give them the keyword; tap again to take it away.")
+        }
         .navigationTitle(model.selectMode ? selectTitle : "")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbar }
-        .searchable(text: Bindable(model).searchText, isPresented: Bindable(model).searching,
-                    prompt: scope == .describe ? Text("Describe a photo…") : Text("Search Photos"))
-        .searchScopes($scope, activation: .onSearchPresentation) {
-            if describes {
-                Text("Text").tag(SearchScope.text)
-                Text("Describe").tag(SearchScope.describe)
-            }
-        }
         // text: the grid narrows as it is typed; a description is searched on Return
         .task(id: model.searchText) {
             let search = model.searchText
@@ -65,17 +74,17 @@ struct LibraryScreen: View {
             guard !Task.isCancelled else { return }
             model.perform("library.filter", ["text": .string(search)])
         }
-        .onSubmit(of: .search) {
-            let q = model.searchText.trimmingCharacters(in: .whitespaces)
-            if scope == .describe, !q.isEmpty { model.perform("library.search", ["q": .string(q)]) }
-        }
         // the other kind of search starts afresh: its words meant something else
         .onChange(of: scope) {
             model.searchText = ""
             model.perform("library.filter", ["text": "", "semantic": .null, "only": []])
         }
+        // closed: the grid as it was
         .onChange(of: model.searching) { _, open in
-            if !open, scope == .describe { leaveDescribed() }
+            if !open {
+                model.searchText = ""
+                leaveDescribed()
+            }
         }
         .task(id: model.state.catalogRevision) {
             guard let engine = model.engine else { return }
@@ -152,6 +161,11 @@ struct LibraryScreen: View {
     private var bottomControls: some View {
         @Bindable var prefs = model.prefs
         return HStack(spacing: 12) {
+            Button("Search", systemImage: "magnifyingglass") { model.searching = true }
+                .labelStyle(.iconOnly)
+                .font(.title3.weight(.semibold))
+                .frame(width: 48, height: 48)
+                .glassEffect(.regular.interactive(), in: .circle)
             Spacer(minLength: 0)
             Picker("Show", selection: $prefs.gridSpan) {
                 ForEach(Prefs.GridSpan.allCases) { span in
@@ -372,6 +386,7 @@ struct GridMoreMenu: View {
             Section {
                 Button("Auto-Stack by Capture Time…", systemImage: "square.stack.3d.down.right") { model.sheet = .autoStack }
                 Button("Keyword Sets…", systemImage: "tag.square") { model.sheet = .keywordSets }
+                Button("Keyword Painter…", systemImage: "paintbrush.pointed") { model.askPainter = true }
                 Button("Color Label Names…", systemImage: "circle.lefthalf.filled") { model.sheet = .labelNames }
             }
             Section {
@@ -392,5 +407,81 @@ struct GridMoreMenu: View {
 /// What the grid's search field looks for: words in the photos' metadata, or a description.
 enum SearchScope: Hashable {
     case text, describe
+}
+/// Under the grid while painting: the keyword, and Done.
+private struct PainterBar: View {
+    @Environment(AppModel.self) private var model
+    let keyword: String
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Label {
+                Text("Painting “\(keyword)”")
+            } icon: {
+                Image(systemName: "paintbrush.pointed")
+            }
+            .lineLimit(1)
+            Spacer(minLength: 0)
+            Button("Done") { model.painting = nil }
+                .buttonStyle(.glassProminent)
+                .keyboardShortcut(.cancelAction)
+        }
+        .padding(.leading, 18).padding(.trailing, 8).padding(.vertical, 8)
+        .glassEffect(.regular, in: .capsule)
+        .padding(.horizontal, 20)
+        .padding(.bottom, 8)
+    }
+}
+/// The grid's search field, at its foot while searching: words narrow the grid as they are typed;
+/// with Describe (when this device or the sync server can), a description is searched on Return.
+private struct SearchBar: View {
+    @Environment(AppModel.self) private var model
+    @Binding var scope: SearchScope
+    let describes: Bool
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        HStack(spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                TextField(LocalizedStringKey(scope == .describe ? "Describe a photo…" : "Search Photos"), text: Bindable(model).searchText)
+                    .focused($focused)
+                    .submitLabel(.search)
+                    .onSubmit(submit)
+                if !model.searchText.isEmpty {
+                    Button("Clear", systemImage: "xmark.circle.fill") { model.searchText = "" }
+                        .labelStyle(.iconOnly)
+                        .foregroundStyle(.secondary)
+                }
+                if describes {
+                    Button("Describe") { scope = scope == .describe ? .text : .describe }
+                        .font(.caption.weight(.semibold))
+                        .buttonStyle(.bordered)
+                        .buttonBorderShape(.capsule)
+                        .tint(scope == .describe ? .accentColor : .secondary)
+                        .controlSize(.small)
+                        .accessibilityAddTraits(scope == .describe ? .isSelected : [])
+                        .accessibilityHint("Search by describing the photo, in your own words")
+                }
+            }
+            .padding(.horizontal, 14)
+            .frame(height: 48)
+            .glassEffect(.regular.interactive(), in: .capsule)
+            Button("Close", systemImage: "xmark") { model.searching = false }
+                .labelStyle(.iconOnly)
+                .font(.title3.weight(.semibold))
+                .frame(width: 48, height: 48)
+                .glassEffect(.regular.interactive(), in: .circle)
+                .keyboardShortcut(.cancelAction)
+        }
+        .padding(.horizontal, 20)
+        .padding(.bottom, 8)
+        .onAppear { focused = true }
+    }
+
+    private func submit() {
+        let q = model.searchText.trimmingCharacters(in: .whitespaces)
+        if scope == .describe, !q.isEmpty { model.perform("library.search", ["q": .string(q)]) }
+    }
 }
 #endif

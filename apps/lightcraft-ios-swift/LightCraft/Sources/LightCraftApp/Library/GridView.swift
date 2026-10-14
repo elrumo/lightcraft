@@ -276,6 +276,18 @@ struct PhotoCell: View {
             .overlay {
                 if model.selectMode { SelectionMark(chosen: chosen) }
             }
+            .overlay(alignment: .topTrailing) {
+                // painting: the photos that have the keyword
+                if let k = model.painting, photo.keywords?.contains(where: { $0.caseInsensitiveCompare(k) == .orderedSame }) == true {
+                    Image(systemName: "tag.fill")
+                        .font(.caption)
+                        .foregroundStyle(.white)
+                        .padding(5)
+                        .background(Color.accentColor, in: .circle)
+                        .padding(4)
+                        .accessibilityHidden(true)
+                }
+            }
             .clipped()
             .contentShape(Rectangle())
             .matchedTransitionSource(id: photo.id, in: namespace)
@@ -296,7 +308,10 @@ struct PhotoCell: View {
     }
 
     private func tapped() {
-        if model.selectMode {
+        if let k = model.painting {
+            model.perform("keyword.toggle", ["ids": [.int(Int64(clamping: photo.id))], "keyword": .string(k)])
+            model.buzz(.selection)
+        } else if model.selectMode {
             model.perform("library.select", ["ids": [.int(Int64(clamping: photo.id))], "mode": "toggle"])
             model.buzz(.selection)
         } else {

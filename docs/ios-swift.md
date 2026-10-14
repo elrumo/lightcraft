@@ -160,7 +160,7 @@ answers `engine.*`, `render.*` and `host.*` itself; the app answers `ui.screensh
 `ui.inspect` (screen, photo, state, `perf`: the last render's ms and the slider-to-draft round trip) and `ui.set {screen:
 grid | photo | edit | crop | masking | remove | redEye | presets | info | commands | people | map, photo?, person? (with people: their page), span?, group?, sheet?,
 section?, select?, faceBoxes?, tagFace?, beforeAfter?, visualizeSpots?, removeAI?, histogram?, cropGuide?, cropDraw? (straighten | guides | none), orientation? (landscape | portrait), softProof?, proofSpace?, proofWarning?,
-sidebarCommand? + sidebarParams? (a `view.sidebar*` command), searching?, search? (the grid's search field)}` (`ScriptHost.swift` lists
+sidebarCommand? + sidebarParams? (a `view.sidebar*` command), searching?, search? (the grid's search field), painting? (the Keyword Painter's keyword; "" stops)}` (`ScriptHost.swift` lists
 the values).
 
 ```sh

@@ -19,8 +19,8 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 |---|---:|---:|---:|---:|---:|
 | S0 | 15 | 0 | 0 | 0 | 15/15 |
 | S1 | 164 | 0 | 0 | 3 | 167/167 |
-| S2 | 69 | 0 | 9 | 24 | 93/102 |
-| **Total** | 248 | 0 | 9 | 27 | 275/284 |
+| S2 | 70 | 0 | 8 | 24 | 94/102 |
+| **Total** | 249 | 0 | 8 | 27 | 276/284 |
 <!-- /ios-parity:summary -->
 
 ## Screens
@@ -185,7 +185,7 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | ui:view.sidebarReset | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/AlbumsSheet.swift` | Edit Sidebar ▸ Reset Sidebar Sections; View ▸ Sidebar Sections ▸ Reset |
 | ui:view.slideshow | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/ViewModes.swift` | grid or photo "…" ▸ Slideshow: the grid's photos over black, crossfading every few seconds; a tap pauses |
 | ui:view.secondWindow | S2 | ⬜ |  |  |
-| ui:tool.keywordPainter | S2 | ⬜ |  |  |
+| ui:tool.keywordPainter | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/GridView.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LibraryScreen.swift`, `crates/engine/src/tests_libops.rs` | grid "…" ▸ Keyword Painter…, or a keyword's menu ▸ Paint onto Photos: a tap on a photo gives it the keyword or takes it away (`keyword.toggle`, shared with egui), a tag marks the photos that have it, Done (Esc) stops |
 | ui:view.gridInfo | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/GridView.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LibraryScreen.swift` | grid "…" ▸ Grid Info: the file name over each photo |
 | ui:view.appearance | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | Settings ▸ Interface ▸ Appearance |
 | ui:view.theme | S2 | 🚫 |  | the system appearance (`app.appearance.*`) is the theme on iOS |
@@ -197,7 +197,7 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | ui:dialog.copySettings | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/CopySettingsSheet.swift` | photo "…" ▸ Copy Settings… |
 | ui:dialog.pasteSettings | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/CopySettingsSheet.swift` | select ▸ More ▸ Paste Selected Settings… |
 | ui:dialog.shareLink | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | an album's menu ▸ Share Link… (signed in) |
-| ui:view.focusSearch | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LibraryScreen.swift` | the grid's search field (⌘F, Edit ▸ Find…): words narrow the grid as they are typed (`library.filter {text}`); a Describe scope, when this device or the sync server can search by description, searches on Return (`library.search`, applied by the host's tick) |
+| ui:view.focusSearch | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LibraryScreen.swift` | the grid's search field (🔍 beside the span, ⌘F, Edit ▸ Find…): words narrow the grid as they are typed (`library.filter {text}`); a Describe scope, when this device or the sync server can search by description, searches on Return (`library.search`, applied by the host's tick) |
 | ui:dialog.export | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Share/ExportSheet.swift` | the Share page with presets, options, More Options and progress |
 | ui:dialog.contactSheet | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LibraryDialogs.swift` | select bar "…" ▸ Contact Sheet…: paper, orientation, columns, rows, names → PDF (`export.contactSheet`), the share sheet |
 | ui:app.contactSheet | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LibraryDialogs.swift` | as Contact Sheet… |

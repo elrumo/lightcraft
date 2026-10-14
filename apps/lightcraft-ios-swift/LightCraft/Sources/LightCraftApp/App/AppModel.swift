@@ -146,6 +146,10 @@ final class AppModel {
     /// The grid's search field is open (⌘F, Edit ▸ Find…), and what is typed in it.
     var searching = false
     var searchText = ""
+    /// The Keyword Painter's keyword: a tap on a photo in the grid gives it the keyword or takes it
+    /// away (`keyword.toggle`); and whether it is being asked for.
+    var painting: String?
+    var askPainter = false
     /// Choosing photos to add to this album (its + ▸ LightCraft).
     var addingTo: UInt64?
     /// A dialog the engine asked for (`syncChoice`).

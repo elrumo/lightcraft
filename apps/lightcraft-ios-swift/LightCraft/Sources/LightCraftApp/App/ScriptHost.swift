@@ -86,6 +86,7 @@ final class ScriptHost {
             if let on = params["referenceView"].bool { model.editor.referenceView = on }
             if let on = params["softProof"].bool { model.editor.softProof = on }
             if let on = params["searching"].bool { model.searching = on }
+            if let k = params["painting"].string { model.painting = k.isEmpty ? nil : k }
             if let text = params["search"].string { model.searchText = text }
             if let command = params["sidebarCommand"].string { await model.arrangeSidebar(command, params["sidebarParams"]) }
             if let space = params["proofSpace"].string { model.editor.proofSpace = space }
