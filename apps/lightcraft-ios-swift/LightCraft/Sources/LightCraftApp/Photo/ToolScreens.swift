@@ -36,7 +36,7 @@ func undoDepth(_ model: AppModel) async -> Int? {
 /// rotate, flips; the Geometry tab for Upright and the perspective sliders.
 struct CropTools: View {
     @Environment(AppModel.self) private var model
-    @Environment(\.verticalSizeClass) private var verticalSize
+    @Environment(\.toolColumn) private var inColumn
     @State private var tab = "aspect"
     @State private var dialStart: Double?
 
@@ -66,8 +66,8 @@ struct CropTools: View {
                     model.engine?.send("engine.execute", ["command": "crop.straighten", "params": ["angle": .double(new)]])
                     if phase == .changed { model.requestDraft() }
                 }
-                // (closer together in the side panel of a phone held sideways)
-                HStack(spacing: verticalSize == .compact ? 4 : 18) {
+                // (closer together in a column: a phone held sideways, an iPad's inspector)
+                HStack(spacing: inColumn ? 4 : 18) {
                     toolButton("wand.and.stars", "Auto") {
                         Task {
                             let r = await model.run("crop.autoStraighten")
@@ -185,8 +185,8 @@ struct CropTools: View {
         .onDisappear { editor.cropDraw = nil }
     }
 
-    /// The round buttons' size: smaller in the side panel of a phone held sideways.
-    private var buttonSide: CGFloat { verticalSize == .compact ? 34 : 44 }
+    /// The round buttons' size: smaller in a column.
+    private var buttonSide: CGFloat { inColumn ? 34 : 44 }
 
     private func toolButton(_ symbol: String, _ label: LocalizedStringKey, _ action: @escaping () -> Void) -> some View {
         Button(action: action) {

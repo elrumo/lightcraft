@@ -16,14 +16,23 @@ struct PhotoScreen: View {
 
     var body: some View {
         let editor = model.editor
-        // a phone held sideways, or an iPad: the photo beside a side panel (egui's wide layout,
-        // from 600 pt: 316 pt sideways, 340 pt on a tablet)
-        let sideways = verticalSize == .compact || horizontalSize == .regular
+        // an iPad: the tools in the inspector beside the photo; a phone held sideways: in a column
+        // at the right (egui's wide layout, 316 pt); held upright: under the photo
+        let inspector = horizontalSize == .regular && verticalSize != .compact
+        let sideways = verticalSize == .compact
         Group {
-            if sideways, editor.tool != nil {
+            if inspector {
+                // (clipped: the next photos mustn't show through the inspector's glass)
+                pager.clipped()
+            } else if sideways, editor.tool != nil {
                 HStack(spacing: 0) {
                     pager
-                    if !review { SidePanel(width: verticalSize == .compact ? 316 : 340).transition(.move(edge: .trailing)) }
+                    if !review {
+                        ToolColumn()
+                            .frame(width: 316)
+                            .background(Color(uiColor: .secondarySystemBackground))
+                            .transition(.move(edge: .trailing))
+                    }
                 }
             } else {
                 VStack(spacing: 0) {
@@ -40,6 +49,10 @@ struct PhotoScreen: View {
             }
         }
         .background(Color.black.ignoresSafeArea())
+        .inspector(isPresented: Binding(get: { inspector && editor.tool != nil && !review }, set: { if !$0 { editor.tool = nil } })) {
+            ToolColumn()
+                .inspectorColumnWidth(min: 300, ideal: 340, max: 420)
+        }
         .toolbar(review ? .hidden : .visible, for: .navigationBar)
         .toolbar(review || editor.tool?.hasScreen == true ? .hidden : .visible, for: .bottomBar)
         .statusBarHidden(review)
@@ -139,11 +152,16 @@ struct PhotoScreen: View {
     }
 }
 
-/// Held sideways, the tools in a column at the right: a tool's own screen (Crop, Masking, Remove,
-/// Red Eye), or the Edit groups, the open tool's controls and the tool bar.
-private struct SidePanel: View {
+extension EnvironmentValues {
+    /// The tools are in a column beside the photo (an iPad's inspector, a phone held sideways), not
+    /// under it. (An inspector's content is compact width, so the size classes can't tell.)
+    @Entry var toolColumn = false
+}
+
+/// The tools in a column (an iPad's inspector, a phone held sideways): a tool's own screen (Crop,
+/// Masking, Remove, Red Eye), or the Edit groups and the open tool's controls.
+private struct ToolColumn: View {
     @Environment(AppModel.self) private var model
-    let width: CGFloat
 
     var body: some View {
         let editor = model.editor
@@ -164,8 +182,7 @@ private struct SidePanel: View {
                 }
             }
         }
-        .frame(width: width)
-        .background(Color(uiColor: .secondarySystemBackground))
+        .environment(\.toolColumn, true)
     }
 }
 
