@@ -40,6 +40,20 @@ settings (`models_disabled` in `ui.json`).
 Agents get the same through commands: `models.list`, `models.download {id, acknowledged: true}`, `models.cancel {id}`,
 `models.delete {id, confirm: true}`, `models.setEnabled {id, enabled}`.
 
+## Apple's models (SwiftUI iOS app)
+
+Apple ships models the app can use without downloading anything of its own: Vision's foreground
+instance mask and, on iOS 27, tap-to-segment (include / exclude taps, a model iOS downloads on
+request). They back Select Subject and Select Object in the SwiftUI app ([ai-masks.md](ai-masks.md)),
+and Settings ▸ AI Models ▸ Selection chooses Automatic, Apple or Classic. They are Apple's models
+under Apple's terms and are never mirrored or bundled by LightCraft.
+
+What Apple does **not** offer (checked in the iOS 27.1 SDK, 2026-10-14): any erase or inpainting
+API (Photos' Clean Up is private), any out-painting API, a sky model. Image Playground's sheet
+(`imagePlaygroundSheet`, `CreationStrategy.editExisting`) runs in Apple's cloud (Private Cloud
+Compute), takes no mask and returns a flat picture; the programmatic `ImageCreator` is removed in
+iOS 27. AI Remove and Generative Expand therefore keep MI-GAN, LaMa and Classic.
+
 ## Runtime
 
 Pure Rust only. The route is **candle 0.9.2 + `candle-transformers` 0.9.2** (already pinned for SAM 3; Metal on

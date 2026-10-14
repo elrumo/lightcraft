@@ -39,6 +39,37 @@ impl SegMask {
         SegMask { rect: Some(rect), ..SegMask::from_logits(side, logits) }
     }
 
+    /// From a picture of coverage (0 = out … 255 = in), `w × h` bytes over the whole image: what a
+    /// system segmenter (Apple Vision on iPhone) answers. It is averaged down to `side × side`
+    /// (stretched to a square like every grid here) and each value becomes the logit that samples
+    /// back to that coverage. `None` when the data doesn't match `w × h`, or a size is absurd.
+    pub fn from_coverage(side: usize, w: usize, h: usize, cov: &[u8]) -> Option<SegMask> {
+        /// Largest picture accepted (hostile input caps the work).
+        const MAX_PICTURE: usize = 8192;
+        if side == 0 || side > MAX_SIDE || w == 0 || h == 0 || w > MAX_PICTURE || h > MAX_PICTURE || cov.len() != w * h {
+            return None;
+        }
+        // the source pixels [a, b) that grid cell `t` of `side` covers on an axis of `n`
+        let span = |t: usize, n: usize| {
+            let a = t * n / side;
+            (a, ((t + 1) * n).div_ceil(side).max(a + 1).min(n))
+        };
+        let logits: Vec<f32> = (0..side * side)
+            .map(|i| {
+                let ((x0, x1), (y0, y1)) = (span(i % side, w), span(i / side, h));
+                let mut sum = 0u64;
+                for y in y0..y1 {
+                    sum += (x0..x1).map(|x| u64::from(cov.get(y * w + x).copied().unwrap_or(0))).sum::<u64>();
+                }
+                let n = ((x1 - x0) * (y1 - y0)) as f32;
+                // (kept off 0 and 1 so the logit stays finite; ±8.5 is fully in or out)
+                let c = (sum as f32 / (n * 255.0)).clamp(2e-4, 1.0 - 2e-4);
+                (c / (1.0 - c)).ln()
+            })
+            .collect();
+        Some(SegMask::from_logits(side, &logits))
+    }
+
     /// The covered part, normalized (the whole image without a `rect`); `None` when damaged.
     pub fn bounds(&self) -> Option<[f64; 4]> {
         let r = self.rect.unwrap_or([0.0, 0.0, 1.0, 1.0]);
@@ -304,5 +335,32 @@ mod tests {
         assert!(m.logits().is_none(), "absurd size");
         assert!(SegMask { side: 8, data: "not base64 !".into(), rect: None }.logits().is_none());
         assert!(SegMask { rect: Some([0.5, 0.0, 0.2, 1.0]), ..SegMask::from_logits(2, &[0.0; 4]) }.bounds().is_none());
+    }
+
+    #[test]
+    fn a_coverage_picture_becomes_a_mask_with_the_same_edge() {
+        // 100 × 50 with the left 40 columns in; 50 cells across, so cell 19 (columns 38–39) is
+        // the last one in and cell 20 (40–41) the first one out
+        let (w, h) = (100, 50);
+        let cov: Vec<u8> = (0..w * h).map(|i| if i % w < 40 { 255 } else { 0 }).collect();
+        let l = SegMask::from_coverage(50, w, h, &cov).unwrap().logits().unwrap();
+        let at = |x: usize, y: usize| l[y * 50 + x];
+        assert!(at(0, 0) > 5.0 && at(19, 25) > 5.0, "{} {}", at(0, 0), at(19, 25));
+        assert!(at(20, 25) < -5.0 && at(49, 49) < -5.0, "{} {}", at(20, 25), at(49, 49));
+    }
+
+    #[test]
+    fn a_half_covered_cell_is_undecided() {
+        let m = SegMask::from_coverage(1, 2, 1, &[255, 0]).unwrap();
+        assert!(m.logits().unwrap()[0].abs() < 0.2);
+    }
+
+    #[test]
+    fn a_bad_coverage_picture_is_none() {
+        assert!(SegMask::from_coverage(8, 4, 4, &[0; 15]).is_none(), "size mismatch");
+        assert!(SegMask::from_coverage(0, 4, 4, &[0; 16]).is_none());
+        assert!(SegMask::from_coverage(MAX_SIDE + 1, 4, 4, &[0; 16]).is_none());
+        assert!(SegMask::from_coverage(8, 0, 4, &[]).is_none());
+        assert!(SegMask::from_coverage(8, 100_000, 1, &[]).is_none(), "absurd size");
     }
 }

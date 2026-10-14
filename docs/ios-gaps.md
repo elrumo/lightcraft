@@ -129,7 +129,7 @@ mark: not started.
 
 | # | Feature | Pri | Needs |
 |---|---|---|---|
-| B4.1 | AI subject, sky, background and object selection for masks; people masks with face / body parts | P1 | models; `parity-checklist.md` K rows ⬜ |
+| B4.1 | AI subject, sky, background and object selection for masks; people masks with face / body parts. SwiftUI app: Subject and Object (taps) by Apple Vision on the device (docs/ai-masks.md → On iPhone); sky, background and people stay | P1 | models; `parity-checklist.md` K rows ⬜ |
 | B4.2 | Generative remove / object removal beyond clone-heal | P2 | model |
 | B4.3 | Lens blur from a depth map (the phone's depth data or estimated) | P2 | partly present (`lens_blur`), depth model missing |
 | B4.4 | Denoise and super resolution (Enhance) | P1 | `parity-checklist.md` P rows ⬜ |
