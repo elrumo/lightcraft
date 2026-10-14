@@ -17,8 +17,9 @@ licence text and attribution next to them; gated or custom-licence models (SAM 3
 mirror or a manual install ([ai-masks.md](ai-masks.md)).
 
 Today: **SAM 3** (Object and Describe masks, [ai-masks.md](ai-masks.md)), **Nomos Uni SPAN 2×** (Super
-Resolution, [super-resolution.md](super-resolution.md)) and **MI-GAN** (AI Remove, [ai-remove.md](ai-remove.md): the
-one model that also runs in the browser, on rten, from `crates/erase`). The rest of this page is the research behind what to add next
+Resolution, [super-resolution.md](super-resolution.md)), **MI-GAN** (AI Remove, [ai-remove.md](ai-remove.md), and
+Generative Expand: the one model that also runs in the browser, on rten, from `crates/erase`) and **LaMa** (Generative
+Expand on computers, [generative-expand.md](generative-expand.md), also on rten). The rest of this page is the research behind what to add next
 (2026-10-08; read from each repo's LICENSE and each Hugging Face model card — **re-check the licence of a model when
 you add it**, and write the verdict and the URL you read in its `ModelSpec`).
 
@@ -72,7 +73,7 @@ settled before LightCraft hosts a mirror.
 | Objects without SAM 3's 3.4 GB | SAM 2.1 tiny/small | Apache-2.0 / Apache-2.0 | 39–46 M params | `hiera` in `candle-transformers` |
 | Sky | Sky U²-Net small | MIT / MIT | ~2 MB | training data not stated |
 | Remove (large areas) | MI-GAN | MIT / MIT | 29.5 MB | **in use** (AI Remove, rten; `migan.onnx` from the authors' Hugging Face repo, MIT); separable convs, no FFT; Places2/FFHQ terms unverified |
-| Generative expand, large holes | LaMa (big-lama; fp32 ONNX export `Carve/LaMa-ONNX`) | Apache-2.0 / Apache-2.0 | 208 MB | runs on rten as is (its FFTs are MatMul / Einsum / Cos / Sin), checked 2026-10-12: right on a synthetic hole, 7–11 s per 512 × 512 pass on a busy Apple-silicon CPU (MI-GAN: ~1 s), so desktop only; on a square crop widened back to 3:2 it continued sky, sea, bushes and a film border plausibly but softly, a little cleaner than MI-GAN; Places2 terms unverified |
+| Generative expand, large holes | LaMa (big-lama; fp32 ONNX export `Carve/LaMa-ONNX`) | Apache-2.0 / Apache-2.0 | 208 MB | **in use** (Generative Expand on computers, `crates/erase/src/lama.rs`; `lama_fp32.onnx` at a pinned revision, size and SHA-256; its answers on rten match onnxruntime's to 2e-6, checked 2026-10-13); runs on rten as is (its FFTs are MatMul / Einsum / Cos / Sin), checked 2026-10-12: right on a synthetic hole, 7–11 s per 512 × 512 pass on a busy Apple-silicon CPU (MI-GAN: ~1 s), so desktop only; on a square crop widened back to 3:2 it continued sky, sea, bushes and a film border plausibly but softly, a little cleaner than MI-GAN; Places2 terms unverified |
 
 Subject, Sky, People and Landscape masks can use SAM 3's Describe path with fixed prompts for users who have it.
 
@@ -82,6 +83,10 @@ foliage, texture) at 512 × 512 over the whole canvas, so the new strip is soft 
 inpainting: Kandinsky 2.2 inpaint is Apache-2.0 but a 15 GB repository with no pure-Rust implementation;
 Stable Diffusion inpainting (CreativeML OpenRAIL-M) and SDXL inpainting (OpenRAIL++) carry use-based restrictions;
 FLUX.1 Fill is non-commercial. Classical fallback already in the code: the panorama's content-aware Fill Edges.
+**Built 2026-10-13** ([generative-expand.md](generative-expand.md)): MI-GAN on every device, LaMa on computers,
+and Classic (diffused edge colours with synthesized texture) without a download; one whole-canvas pass for the
+structure, the photo's grain added by patch synthesis. Windows repainted at full scale were tried and dropped (streaks
+far from the photo).
 
 ## Do not use
 

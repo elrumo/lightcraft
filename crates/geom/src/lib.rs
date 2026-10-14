@@ -10,8 +10,8 @@ mod crop_drag;
 mod homography;
 mod real;
 
-pub use crop::{CropGeometry, crop_fit_angle, max_inscribed_scale};
-pub use crop_drag::{CropHandle, MAX_RATIO, MIN_CROP_FRACTION, drag_crop};
+pub use crop::{CropGeometry, EXPAND_MAX, crop_cover_angle, crop_fit_angle, max_inscribed_scale};
+pub use crop_drag::{CropHandle, MAX_RATIO, MIN_CROP_FRACTION, drag_crop, drag_crop_in};
 pub use homography::Homography;
 pub use real::{Interval, Real};
 

@@ -12,6 +12,10 @@
 //! The network works on 512 × 512 pixels. The caller crops the area around the hole (the hole and
 //! about as much again around it), and [`Eraser::fill`] scales the crop to the network's size and
 //! back. The fill therefore has at most 512 × 512 pixels of detail over the crop.
+//!
+//! **Generative Expand** (the crop tool's Expand, [`expand`]) continues a photo past its edges with
+//! the same network or with LaMa ([`lama`], Apache-2.0, larger and slower, desktop only): both are a
+//! [`Painter`], one 512 × 512 pass, and [`expand::outpaint`] runs as many as the new area needs.
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
@@ -20,6 +24,9 @@ use lightcraft_raster::{Plane, Rgb32f};
 use rten::{Model, ModelOptions, NodeId, ValueView};
 use rten_tensor::AsView;
 use sha2::{Digest, Sha256};
+
+pub mod expand;
+pub mod lama;
 
 /// The network's input and output size (square).
 pub const SIDE: usize = 512;
@@ -56,6 +63,55 @@ pub enum Error {
     /// The image or hole is empty, too large, or doesn't match.
     #[error("AI Remove: {0}")]
     Image(String),
+    /// The user stopped the work.
+    #[error("cancelled")]
+    Cancelled,
+}
+
+/// One pass of an inpainting network on [`SIDE`] × [`SIDE`] pixels.
+pub trait Painter: Send + Sync {
+    /// `img` (exactly [`SIDE`] × [`SIDE`], display-encoded 0..=1) with the pixels where `hole` is set
+    /// painted; every pixel of the answer is the network's (the caller keeps what it wants).
+    fn paint(&self, img: &Rgb32f, hole: &[bool]) -> Result<Rgb32f>;
+    /// The model's name in messages.
+    fn label(&self) -> &'static str;
+}
+
+/// Checks a [`Painter::paint`] call's arguments.
+fn check_side(img: &Rgb32f, hole: &[bool]) -> Result<()> {
+    if img.width != SIDE || img.height != SIDE || img.data.len() != SIDE * SIDE || hole.len() != SIDE * SIDE {
+        return Err(Error::Image(format!("a pass takes {SIDE} × {SIDE} pixels, not {} × {}", img.width, img.height)));
+    }
+    Ok(())
+}
+
+/// `img` (any size up to [`MAX_SIDE`]) with its `hole` painted by `painter`, scaled to the network's
+/// size and back; the pixels outside the hole are returned unchanged.
+pub fn fill_with(painter: &dyn Painter, img: &Rgb32f, hole: &[bool]) -> Result<Rgb32f> {
+    let (w, h) = (img.width, img.height);
+    if w == 0 || h == 0 || w > MAX_SIDE || h > MAX_SIDE || img.data.len() != w * h {
+        return Err(Error::Image(format!("can't fill a {w} × {h} image")));
+    }
+    if hole.len() != w * h {
+        return Err(Error::Image("the area to fill doesn't match the image".into()));
+    }
+    if !hole.iter().any(|&b| b) {
+        return Ok(img.clone());
+    }
+    let small = resize(img, SIDE, SIDE, Filter::Mitchell);
+    // a network pixel is in the hole if any of the hole reaches it (scaled down, a thin
+    // stroke must not vanish; scaled up, the edge must not shrink)
+    let cover = resize(&Plane { width: w, height: h, data: hole.iter().map(|&b| if b { 1.0 } else { 0.0 }).collect() }, SIDE, SIDE, Filter::Bilinear);
+    let small_hole: Vec<bool> = cover.data.iter().map(|&c| c > 0.01).collect();
+    let filled = painter.paint(&small, &small_hole)?;
+    let back = resize(&filled, w, h, Filter::Mitchell);
+    let mut res = img.clone();
+    for ((o, b), &k) in res.data.iter_mut().zip(&back.data).zip(hole) {
+        if k {
+            *o = b.map(|c| c.clamp(0.0, 1.0));
+        }
+    }
+    Ok(res)
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -93,24 +149,16 @@ impl Eraser {
     /// display-encoded (sRGB-like, 0..=1) and at most [`MAX_SIDE`] per side; the pixels outside
     /// the hole are returned unchanged.
     pub fn fill(&self, img: &Rgb32f, hole: &[bool]) -> Result<Rgb32f> {
-        let (w, h) = (img.width, img.height);
-        if w == 0 || h == 0 || w > MAX_SIDE || h > MAX_SIDE || img.data.len() != w * h {
-            return Err(Error::Image(format!("can't fill a {w} × {h} image")));
-        }
-        if hole.len() != w * h {
-            return Err(Error::Image("the area to fill doesn't match the image".into()));
-        }
-        if !hole.iter().any(|&b| b) {
-            return Ok(img.clone());
-        }
-        let small = resize(img, SIDE, SIDE, Filter::Mitchell);
-        // a network pixel is in the hole if any of the hole reaches it (scaled down, a thin
-        // stroke must not vanish; scaled up, the edge must not shrink)
-        let cover =
-            resize(&Plane { width: w, height: h, data: hole.iter().map(|&b| if b { 1.0 } else { 0.0 }).collect() }, SIDE, SIDE, Filter::Bilinear);
+        fill_with(self, img, hole)
+    }
+}
+
+impl Painter for Eraser {
+    fn paint(&self, img: &Rgb32f, hole: &[bool]) -> Result<Rgb32f> {
+        check_side(img, hole)?;
         let n = SIDE * SIDE;
         let mut pixels = vec![0f32; 3 * n];
-        for (i, p) in small.data.iter().enumerate() {
+        for (i, p) in img.data.iter().enumerate() {
             for (c, v) in p.iter().enumerate() {
                 if let Some(o) = pixels.get_mut(c * n + i) {
                     *o = (v.clamp(0.0, 1.0) * 255.0).round();
@@ -118,7 +166,7 @@ impl Eraser {
             }
         }
         // 255 = keep, 0 = fill
-        let mask: Vec<f32> = cover.data.iter().map(|&c| if c > 0.01 { 0.0 } else { 255.0 }).collect();
+        let mask: Vec<f32> = hole.iter().map(|&b| if b { 0.0 } else { 255.0 }).collect();
         let bad = |e: &dyn std::fmt::Display| Error::Model(e.to_string());
         let image = ValueView::from_shape([1, 3, SIDE, SIDE], &pixels[..]).map_err(|e| bad(&e))?;
         let mask = ValueView::from_shape([1, 1, SIDE, SIDE], &mask[..]).map_err(|e| bad(&e))?;
@@ -128,18 +176,14 @@ impl Eraser {
         if v.len() != 3 * n {
             return Err(bad(&format!("its answer has {} numbers, not {}", v.len(), 3 * n)));
         }
-        let filled = Rgb32f::from_fn(SIDE, SIDE, |x, y| {
+        Ok(Rgb32f::from_fn(SIDE, SIDE, |x, y| {
             let i = y * SIDE + x;
-            [0, 1, 2].map(|c| v.get(c * n + i).map_or(0.0, |u| u / 255.0))
-        });
-        let back = resize(&filled, w, h, Filter::Mitchell);
-        let mut res = img.clone();
-        for ((o, b), &k) in res.data.iter_mut().zip(&back.data).zip(hole) {
-            if k {
-                *o = b.map(|c| c.clamp(0.0, 1.0));
-            }
-        }
-        Ok(res)
+            [0, 1, 2].map(|c| v.get(c * n + i).map_or(0.0, |u| (u / 255.0).clamp(0.0, 1.0)))
+        }))
+    }
+
+    fn label(&self) -> &'static str {
+        LABEL
     }
 }
 
