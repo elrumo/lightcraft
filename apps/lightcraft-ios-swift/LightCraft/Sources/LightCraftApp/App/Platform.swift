@@ -67,6 +67,16 @@ extension View {
         #endif
     }
 
+    /// A scroll view without scrollers (a pager, a filmstrip). On a Mac `.hidden` still shows them when
+    /// the system's "Show scroll bars" is "Always" (a mouse is plugged in); `.never` doesn't.
+    @ViewBuilder func lcNoScrollers() -> some View {
+        #if os(iOS)
+        scrollIndicators(.hidden)
+        #else
+        scrollIndicators(.never)
+        #endif
+    }
+
     /// The pointer lifting a tile on an iPad. (A Mac's hover states are drawn by the views.)
     @ViewBuilder func lcHoverLift() -> some View {
         #if os(iOS)
@@ -174,6 +184,15 @@ enum Platform {
         return true
         #else
         return false
+        #endif
+    }
+
+    /// Whether the filmstrip under the loupe shows by default: a Mac has room for it, as Lightroom's does.
+    static var showsFilmstrip: Bool {
+        #if os(iOS)
+        return false
+        #else
+        return true
         #endif
     }
 

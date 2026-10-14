@@ -17,7 +17,11 @@ struct PhotoScreen: View {
         let editor = model.editor
         // an iPad: the tools in the inspector beside the photo; a phone held sideways: in a column
         // at the right (egui's wide layout, 316 pt); held upright: under the photo
+        #if os(macOS)
+        let inspector = true
+        #else
         let inspector = horizontalSize == .regular && verticalSize != .compact
+        #endif
         let sideways = verticalSize == .compact
         Group {
             if inspector {
@@ -48,10 +52,18 @@ struct PhotoScreen: View {
             }
         }
         .background(Color.black.ignoresSafeArea())
+        #if os(macOS)
+        // (a Mac keeps the panel open with a tool always chosen: Lightroom's right-hand side)
+        .inspector(isPresented: Binding(get: { model.prefs.inspectorShown && !review }, set: { model.prefs.inspectorShown = $0 })) {
+            MacInspector()
+                .inspectorColumnWidth(min: 350, ideal: 380, max: 520)
+        }
+        #else
         .inspector(isPresented: Binding(get: { inspector && editor.tool != nil && !review }, set: { if !$0 { editor.tool = nil } })) {
             ToolColumn()
                 .inspectorColumnWidth(min: 300, ideal: 340, max: 420)
         }
+        #endif
         #if os(iOS)
         .toolbar(review ? .hidden : .visible, for: .navigationBar)
         .toolbar(review || editor.tool?.hasScreen == true ? .hidden : .visible, for: .bottomBar)
@@ -82,7 +94,15 @@ struct PhotoScreen: View {
                     }
                     PhotoMoreMenu()
                 }
+                #if os(iOS)
                 ToolBar(model: model)
+                #else
+                ToolbarSpacer(.fixed, placement: .lcTrailing)
+                ToolbarItem(placement: .lcTrailing) {
+                    Button("Inspector", systemImage: "sidebar.trailing") { model.prefs.inspectorShown.toggle() }
+                        .help(Text("Show or hide the edit panel"))
+                }
+                #endif
             }
         }
         // editing's canvas is dark, whatever the app's look (as Photos' editor and Lightroom)
@@ -227,7 +247,7 @@ struct PhotoPager: View {
                     .scrollTargetLayout()
                 }
                 .scrollTargetBehavior(.paging)
-                .scrollIndicators(.hidden)
+                .lcNoScrollers()
                 .scrollPosition(id: $position)
                 .scrollDisabled(zoomed || model.editor.dragging != nil || model.editor.tool?.hasScreen == true)
                 .onAppear {

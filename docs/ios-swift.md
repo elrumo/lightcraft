@@ -3,7 +3,7 @@
 **Status (2026-10-14): S1 and S2 done on iOS 26.5 simulators (the phone and iPad layouts, every Edit group and tool,
 export, sync, People, Map, the menu bar, multiwindow); SW3 (a native iOS 26 look: system bars, an inspector, Photos-style
 dials) done on simulators; not yet tried on a device. The same code now builds for macOS (SM0, see [macOS](#macos)): a
-native AppKit-backed app, not Catalyst, still with the iPad layout until SM1–SM2 give it a Mac window.** Row by row: `apps/lightcraft-ios-swift/PARITY.md`. A native SwiftUI app for iPhone and iPad
+native AppKit-backed app, not Catalyst, with the iPad layout until SM2 gives it a Mac window (its editor's panel already has).** Row by row: `apps/lightcraft-ios-swift/PARITY.md`. A native SwiftUI app for iPhone and iPad
 (iOS 26 and later, macOS 26 and later) that runs the whole Rust core: the engine, the develop pipeline, the catalog, sync, export. It is to
 replace the egui iOS app ([ios.md](ios.md)) once it passes its parity gate. The decision and its reasons are in
 [ios.md](ios.md) → *Plan*, Phase 0. What iOS still lacks overall: [ios-gaps.md](ios-gaps.md).
@@ -242,7 +242,14 @@ iPad"): one multiplatform Xcode target, arm64 only. Decisions (2026-10-14):
 - **One main window** (and the Second Window): the model is the app's one (navigation, and the engine's one selection
   and active photo), so a second main window could only mirror the first.
 - **Mac-native layout**, not the iPad's push structure with Mac chrome: a persistent sidebar, content and inspector, a
-  toolbar, a filmstrip, sliders only. *Not built yet (SM2).*
+  toolbar, a filmstrip, sliders only. The editor's right-hand side is built (SM2.1) and follows Lightroom's *layout*
+  (not its look): the open tool's panel and, along the window's edge, a column of tool icons (`Mac/MacInspector.swift`).
+  The Edit tool is a header (Auto, B&W, HDR), the profile, then the groups stacked and collapsible (Light, Color,
+  Effects, Detail, Optics, Calibration), with Curve, Color Mixer, Point Color and Color Grading as boxes inside them
+  (`Mac/MacEditPanel.swift`); every control is one row, name | track | value you can type over (double-click resets,
+  arrow keys nudge; `Mac/MacSliderRow.swift`) — no group chips, no dials. The panel is given the column's width and
+  never widens it (`Mac/MacSegmented.swift` is the segmented control that shrinks to fit); the inspector is shown or
+  hidden from the toolbar. The rest of SM2 is not built yet.
 
 Where it stands: it builds and launches with the iPad's regular-width layout in a window (SM0), and has a Mac's shell
 (SM1): a Settings window (⌘,: a tab per page of the iPhone's list, `Mac/MacSettings.swift`), a menu bar with the app
@@ -315,7 +322,7 @@ SM, the Mac app (see [macOS](#macos); not part of the S gates, which are about r
   done), the Xcode project, Rust build, `run.sh --mac` and `ci/mac-tour.sh` (SM0.3);
 - SM1, the Mac shell (done on this Mac): quit that closes the engine and the start-up error (SM1.1), the Settings window,
   the menus and the slideshow window (SM1.2);
-- SM2, the Mac window: sidebar, content and inspector, a toolbar and filmstrip, pointer and keyboard;
+- SM2, the Mac window: sidebar, content and inspector, a toolbar and filmstrip, pointer and keyboard (SM2.1, the editor's inspector and the Edit panel, done; the other tools' panels, the bottom bar and toolbar, the grid and the loupe's input to come);
 - SM3, desktop workflows: import in place from the open panel and Finder, an export destination, libraries;
 - SM4, tracking and CI: the Mac rows in `PARITY.md`, `ios-swift.yml`, the other docs.
 

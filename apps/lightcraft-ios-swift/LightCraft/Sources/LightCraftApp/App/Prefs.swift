@@ -35,7 +35,9 @@ final class Prefs {
         cropGuideOrientation = store.integer(forKey: "cropGuideOrientation")
         showHistogram = store.bool(forKey: "showHistogram")
         showClipping = store.bool(forKey: "showClipping")
-        filmstrip = store.bool(forKey: "filmstrip")
+        filmstrip = store.object(forKey: "filmstrip") as? Bool ?? Platform.showsFilmstrip
+        openSections = store.stringArray(forKey: "openSections") ?? ["light", "color"]
+        inspectorShown = store.object(forKey: "inspectorShown") as? Bool ?? true
         navigator = store.object(forKey: "navigator") as? Bool ?? true
         gridInfo = store.bool(forKey: "gridInfo")
         beforeAfterMode = store.string(forKey: "beforeAfterMode") ?? "auto"
@@ -133,11 +135,27 @@ final class Prefs {
 
     /// Dials rather than sliders here (`column`: beside the photo, not under it).
     func dials(column: Bool) -> Bool {
+        #if os(macOS)
+        // (dials are for a finger: a Mac's panel is Lightroom's stack of sliders)
+        return false
+        #else
         switch editStyle {
         case .automatic: !column
         case .dials: true
         case .sliders: false
         }
+        #endif
+    }
+
+    /// The Mac's edit panel: which sections are open (`light`, `color`… and the boxes in them: `curve`,
+    /// `mixer`…), and whether the inspector is showing.
+    var openSections: [String] { didSet { store.set(openSections, forKey: "openSections") } }
+    var inspectorShown: Bool { didSet { store.set(inspectorShown, forKey: "inspectorShown") } }
+
+    func isOpen(_ id: String) -> Bool { openSections.contains(id) }
+
+    func toggleOpen(_ id: String) {
+        if let i = openSections.firstIndex(of: id) { openSections.remove(at: i) } else { openSections.append(id) }
     }
     /// Double tap zooms to this (× the fitted size).
     var clickZoom: Double { didSet { store.set(clickZoom, forKey: "clickZoom") } }

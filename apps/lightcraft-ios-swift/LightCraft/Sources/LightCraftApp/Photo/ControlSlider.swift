@@ -19,6 +19,16 @@ struct ControlSlider: View {
     @State private var trackWidth: CGFloat = 300
 
     var body: some View {
+        #if os(macOS)
+        // a Mac's edit panel is Lightroom's: the name, the track and the value on one row
+        MacSliderRow(spec: spec, value: value, label: label, set: set, editing: editing, reset: reset)
+        #else
+        phoneSlider
+        #endif
+    }
+
+    /// The phone's slider: the name and the value over the track.
+    private var phoneSlider: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text(LocalizedStringKey(label ?? spec.label))

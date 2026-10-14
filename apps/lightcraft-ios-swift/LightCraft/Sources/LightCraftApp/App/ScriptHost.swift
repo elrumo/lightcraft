@@ -119,6 +119,8 @@ final class ScriptHost {
             if let guide = params["cropGuide"].string { model.prefs.cropGuide = guide }
             if let draw = params["cropDraw"].string { model.editor.cropDraw = draw == "none" ? nil : draw }
             if let on = params["filmstrip"].bool { model.prefs.filmstrip = on }
+            if let open = params["openSections"].array { model.prefs.openSections = open.compactMap(\.string) }
+            if let on = params["inspector"].bool { model.prefs.inspectorShown = on }
             if let on = params["navigator"].bool { model.prefs.navigator = on }
             if let on = params["gridInfo"].bool { model.prefs.gridInfo = on }
             if let mode = params["beforeAfterMode"].string { model.prefs.beforeAfterMode = mode }

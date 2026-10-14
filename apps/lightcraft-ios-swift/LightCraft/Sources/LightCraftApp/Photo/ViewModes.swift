@@ -301,7 +301,7 @@ struct FilmstripView: View {
                 }
                 .padding(.horizontal, 8)
             }
-            .scrollIndicators(.hidden)
+            .lcNoScrollers()
             .frame(height: 64)
             .onChange(of: model.state.active) { _, active in
                 guard let active, let i = library.index(of: active) else { return }

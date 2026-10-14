@@ -199,7 +199,7 @@ struct Flyout<Content: View>: View {
 
 /// Profile: the profiles of a group as live thumbnails of the photo (favourites and recent first),
 /// a tap applies one; and how strongly the applied one works.
-private struct ProfileGroup: View {
+struct ProfileGroup: View {
     @Environment(AppModel.self) private var model
     @State private var menu: ProfilesMenu?
     @State private var group = ""
@@ -307,7 +307,7 @@ nonisolated struct ProfilesMenu: Decodable {
 }
 
 /// Light: HDR, exposure to blacks, and the Tone Curve.
-private struct LightGroup: View {
+struct LightGroup: View {
     @Environment(AppModel.self) private var model
     @State private var curve = false
     @State private var sdr = false
@@ -338,7 +338,7 @@ private struct LightGroup: View {
 
 /// Color: white balance (preset, picker), B&W, Temp and Tint, Vibrance and Saturation, then the Color
 /// Mixer, Point Color and Color Grading.
-private struct ColorGroup: View {
+struct ColorGroup: View {
     @Environment(AppModel.self) private var model
     @State private var mixer = false
     @State private var grading = false
@@ -400,7 +400,7 @@ private struct ColorGroup: View {
 }
 
 /// Effects: Texture, Clarity, Dehaze, then the vignette (its style) and grain.
-private struct EffectsGroup: View {
+struct EffectsGroup: View {
     @Environment(AppModel.self) private var model
 
     /// The vignette's styles (`vignette.style`).
@@ -466,6 +466,9 @@ struct GradingView: View {
     @State private var region = "midtones"
 
     var body: some View {
+        #if os(macOS)
+        MacSegmented(selection: $region, options: [("shadows", "Shadows"), ("midtones", "Midtones"), ("highlights", "Highlights"), ("global", "Global")])
+        #else
         Picker("Region", selection: $region) {
             Text("Shadows").tag("shadows")
             Text("Midtones").tag("midtones")
@@ -473,6 +476,7 @@ struct GradingView: View {
             Text("Global").tag("global")
         }
         .pickerStyle(.segmented)
+        #endif
         GradingWheel(region: region)
             .frame(maxWidth: 210)
             .frame(maxWidth: .infinity)
