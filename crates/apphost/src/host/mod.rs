@@ -821,6 +821,7 @@ impl Engine {
         self.pump_faces();
         self.poll_export();
         self.poll_super_res();
+        self.poll_expand();
         self.poll_merge();
         self.poll_vision();
         self.poll_lightroom();
@@ -1128,6 +1129,18 @@ impl Engine {
             }
             Err(e) => Some(Event::err(id, ErrorBody::new("other", e))),
         }
+    }
+
+    /// A Generative Expand started with `crop.generate {wait: false}`: store its fill when it ends
+    /// (one undo step) and say how it went, as egui's `expand::poll`.
+    fn poll_expand(&mut self) {
+        let Some(r) = self.session.poll_expand() else { return };
+        let (text, level) = match r {
+            Ok(m) => (format!("New area painted with {}", m.label()), "info"),
+            Err(e) if e.starts_with("cancelled") => ("Generate cancelled".to_string(), "info"),
+            Err(e) => (format!("Generate failed: {e}"), "error"),
+        };
+        self.events.push(Event::Message { text, level: level.into() }.to_value());
     }
 
     fn poll_super_res(&mut self) {
