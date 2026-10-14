@@ -39,7 +39,10 @@ struct LightCraftMenus: Commands {
         CommandGroup(after: .newItem) { MenuSection(model: model, top: "File") }
         CommandGroup(after: .pasteboard) { MenuSection(model: model, top: "Edit") }
         CommandMenu("Photo") { MenuSection(model: model, top: "Photo") }
-        CommandGroup(after: .sidebar) { MenuSection(model: model, top: "View") }
+        CommandGroup(after: .sidebar) {
+            MenuSection(model: model, top: "View")
+            SidebarSectionsMenu(model: model)
+        }
         CommandGroup(after: .windowArrangement) { MenuSection(model: model, top: "Window") }
         CommandGroup(replacing: .help) { MenuSection(model: model, top: "Help") }
     }

@@ -1,5 +1,6 @@
 #if os(iOS)
 import Foundation
+import LightCraftCore
 import Observation
 import SwiftUI
 
@@ -38,6 +39,7 @@ final class Prefs {
         maskOverlayMode = store.string(forKey: "maskOverlayMode") ?? "color"
         maskOverlayColor = store.array(forKey: "maskOverlayColor") as? [Int] ?? [230, 30, 40]
         maskOverlayOpacity = store.object(forKey: "maskOverlayOpacity") as? Double ?? 50
+        sidebarLayout = store.data(forKey: "sidebarLayout").flatMap { try? JSONDecoder().decode(JSONValue.self, from: $0) } ?? .null
     }
 
     nonisolated enum Appearance: String, CaseIterable, Identifiable {
@@ -122,6 +124,8 @@ final class Prefs {
     var maskOverlayOpacity: Double { didSet { store.set(maskOverlayOpacity, forKey: "maskOverlayOpacity") } }
     /// Masking: every mask's pin on the photo.
     var maskPins: Bool { didSet { store.set(maskPins, forKey: "maskPins") } }
+    /// The sidebar's sections below My Photos: order, shown, folded (`host.sidebar`'s `layout`).
+    var sidebarLayout: JSONValue { didSet { store.set(try? JSONEncoder().encode(sidebarLayout), forKey: "sidebarLayout") } }
     /// The faces on a photo framed, their names under them.
     var faceBoxes: Bool { didSet { store.set(faceBoxes, forKey: "faceBoxes") } }
     /// Remove's Generative AI: strokes are filled by the MI-GAN model (when it's here).

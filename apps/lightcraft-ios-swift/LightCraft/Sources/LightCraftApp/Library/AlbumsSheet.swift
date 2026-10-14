@@ -32,36 +32,9 @@ struct AlbumsSheet: View {
                         Text((library as NSString).lastPathComponent)
                     }
                 }
-                Section {
-                    ForEach(model.albums.roots) { node in
-                        AlbumTreeRow(node: node, depth: 0, expanded: $expanded) { choose($0) }
-                    }
-                    if model.albums.roots.isEmpty {
-                        Text("No albums yet").foregroundStyle(.secondary)
-                    }
-                } header: {
-                    // an album carried here goes to the top level
-                    Text("Albums")
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(Rectangle())
-                        .dropDestination(for: String.self) { items, _ in AlbumDrag.move(items, into: nil, model) }
-                }
-                Section {
-                    NavigationLink {
-                        ByDateView()
-                    } label: {
-                        Label("By Date", systemImage: "calendar")
-                    }
-                    NavigationLink {
-                        LibraryFoldersView()
-                    } label: {
-                        Label("Folders", systemImage: "folder")
-                    }
-                    NavigationLink {
-                        KeywordListView()
-                    } label: {
-                        Label("Keywords", systemImage: "tag")
-                    }
+                // the sections below, as arranged (Edit Sidebar, View ▸ Sidebar Sections)
+                ForEach(model.sidebarSections.filter { !$0.hidden && SidebarSectionState.here.contains($0.id) }) { section in
+                    sidebarSection(section)
                 }
             }
             .listStyle(.insetGrouped)
@@ -83,12 +56,16 @@ struct AlbumsSheet: View {
                             Button("Folder", systemImage: "folder") { model.sheet = .newAlbum(parent: nil, folder: true, addSelected: false) }
                         }
                         Button("Sort Albums A–Z", systemImage: "arrow.up.arrow.down") { model.perform("album.sort") }
+                        Button("Edit Sidebar…", systemImage: "sidebar.left") { model.sheet = .editSidebar }
                     } label: {
                         Label("Create New", systemImage: "plus")
                     }
                 }
             }
-            .task { if let engine = model.engine { await model.albums.reload(engine) } }
+            .task {
+                await model.arrangeSidebar()
+                if let engine = model.engine { await model.albums.reload(engine) }
+            }
             .alert(model.albumToDelete.map { String(localized: "Delete “\($0.name)”?") } ?? "",
                    isPresented: Binding(get: { model.albumToDelete != nil }, set: { if !$0 { model.albumToDelete = nil } })) {
                 Button("Delete", role: .destructive) {
@@ -98,6 +75,52 @@ struct AlbumsSheet: View {
                 Button("Cancel", role: .cancel) { model.albumToDelete = nil }
             } message: {
                 Text("Photos stay in All Photos. Deleting a folder also deletes its albums.")
+            }
+        }
+    }
+
+    @ViewBuilder private func sidebarSection(_ section: SidebarSectionState) -> some View {
+        switch section.id {
+        case "albums":
+            Section(isExpanded: Binding(get: { !section.collapsed }, set: { open in
+                model.arrange("view.sidebarSection", ["section": "albums", "collapsed": .bool(!open)])
+            })) {
+                ForEach(model.albums.roots) { node in
+                    AlbumTreeRow(node: node, depth: 0, expanded: $expanded) { choose($0) }
+                }
+                if model.albums.roots.isEmpty {
+                    Text("No albums yet").foregroundStyle(.secondary)
+                }
+            } header: {
+                // a tap folds the section; an album carried here goes to the top level
+                Button {
+                    withAnimation(.snappy) { model.arrange("view.sidebarSection", ["section": "albums", "collapsed": .bool(!section.collapsed)]) }
+                } label: {
+                    HStack {
+                        Text("Albums")
+                        Spacer()
+                        Image(systemName: "chevron.down").rotationEffect(.degrees(section.collapsed ? -90 : 0))
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityValue(section.collapsed ? Text("Collapsed") : Text("Expanded"))
+                .dropDestination(for: String.self) { items, _ in AlbumDrag.move(items, into: nil, model) }
+                .contextMenu { SidebarSectionActions(id: section.id) }
+            }
+        default:
+            Section {
+                NavigationLink {
+                    switch section.id {
+                    case "byDate": ByDateView()
+                    case "folders": LibraryFoldersView()
+                    default: KeywordListView()
+                    }
+                } label: {
+                    Label(LocalizedStringKey(section.title), systemImage: section.symbol)
+                }
+                .contextMenu { SidebarSectionActions(id: section.id) }
             }
         }
     }
@@ -324,6 +347,115 @@ struct AlbumNameSheet: View {
         Task {
             await done(n)
             dismiss()
+        }
+    }
+}
+/// A section of the albums page below My Photos, as `host.sidebar` lists it.
+nonisolated struct SidebarSectionState: Decodable, Hashable, Identifiable {
+    let id: String
+    let hidden: Bool
+    let collapsed: Bool
+
+    // ponytail: egui's Local section browses a computer's folders; this app has none (Files imports them)
+    /// The sections this app has, in their usual order.
+    static let here = ["albums", "byDate", "folders", "keywords"]
+    static let usual = here.map { SidebarSectionState(id: $0, hidden: false, collapsed: false) }
+
+    var title: String { ["albums": "Albums", "byDate": "By Date", "folders": "Folders", "keywords": "Keywords"][id] ?? id }
+    var symbol: String { ["albums": "rectangle.stack", "byDate": "calendar", "folders": "folder", "keywords": "tag"][id] ?? "square" }
+}
+
+extension AppModel {
+    /// Show, fold, move or reset the sidebar's sections with one of the shared `view.sidebar*`
+    /// commands (`host.sidebar`; none: just read the arrangement); the arrangement is kept in Prefs.
+    func arrangeSidebar(_ command: String? = nil, _ params: JSONValue = [:]) async {
+        var p: JSONValue = ["layout": prefs.sidebarLayout]
+        if let command {
+            p["command"] = .string(command)
+            p["params"] = params
+        }
+        guard let r = await request("host.sidebar", p), let sections = try? r["layout"].decode([SidebarSectionState].self) else { return }
+        prefs.sidebarLayout = r["layout"]
+        withAnimation(.snappy) { sidebarSections = sections }
+    }
+
+    func arrange(_ command: String, _ params: JSONValue = [:]) {
+        Task { await arrangeSidebar(command, params) }
+    }
+
+    /// The sections this app has, hidden ones too, in their order.
+    var sidebarHere: [SidebarSectionState] { sidebarSections.filter { SidebarSectionState.here.contains($0.id) } }
+}
+
+/// A section's menu: hide it, move it up or down among the shown ones.
+private struct SidebarSectionActions: View {
+    @Environment(AppModel.self) private var model
+    let id: String
+
+    var body: some View {
+        let shown = model.sidebarHere.filter { !$0.hidden }.map(\.id)
+        let at = shown.firstIndex(of: id)
+        Button("Move Up", systemImage: "arrow.up") { model.arrange("view.sidebarMoveSection", ["section": .string(id), "direction": "up"]) }
+            .disabled(at == nil || at == 0)
+        Button("Move Down", systemImage: "arrow.down") { model.arrange("view.sidebarMoveSection", ["section": .string(id), "direction": "down"]) }
+            .disabled(at.map { $0 + 1 >= shown.count } ?? true)
+        Button("Hide Section", systemImage: "eye.slash") { model.arrange("view.sidebarSection", ["section": .string(id), "show": false]) }
+        Button("Edit Sidebar…", systemImage: "sidebar.left") { model.sheet = .editSidebar }
+    }
+}
+
+/// Edit Sidebar: which sections show, in what order (drag), and back to the usual arrangement.
+struct EditSidebarSheet: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        let sections = model.sidebarHere
+        NavigationStack {
+            List {
+                Section {
+                    ForEach(sections) { s in
+                        Toggle(isOn: Binding(get: { !s.hidden }, set: { model.arrange("view.sidebarSection", ["section": .string(s.id), "show": .bool($0)]) })) {
+                            Label(LocalizedStringKey(s.title), systemImage: s.symbol)
+                        }
+                    }
+                    .onMove { from, to in
+                        guard let i = from.first, let moved = sections[safe: i] else { return }
+                        // just above the one now at `to`, or last
+                        let before: JSONValue = sections[safe: to].map { .string($0.id) } ?? .null
+                        model.arrange("view.sidebarMoveSection", ["section": .string(moved.id), "before": before])
+                    }
+                } footer: {
+                    Text("Drag a section to move it; hidden ones stay where they are.")
+                }
+                Section {
+                    Button("Reset Sidebar Sections", systemImage: "arrow.counterclockwise") { model.arrange("view.sidebarReset") }
+                        .disabled(sections == SidebarSectionState.usual)
+                }
+            }
+            .environment(\.editMode, .constant(.active))
+            .navigationTitle("Edit Sidebar")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+            }
+        }
+        .task { await model.arrangeSidebar() }
+    }
+}
+
+/// View ▸ Sidebar Sections on the iPad's menu bar: each section shown or hidden, and Reset.
+struct SidebarSectionsMenu: View {
+    let model: AppModel
+
+    var body: some View {
+        Menu("Sidebar Sections") {
+            ForEach(model.sidebarHere) { s in
+                Toggle(LocalizedStringKey(s.title), isOn: Binding(get: { !s.hidden }, set: { model.arrange("view.sidebarSection", ["section": .string(s.id), "show": .bool($0)]) }))
+            }
+            Divider()
+            Button("Reset Sidebar Sections") { model.arrange("view.sidebarReset") }
+                .disabled(model.sidebarHere == SidebarSectionState.usual)
         }
     }
 }

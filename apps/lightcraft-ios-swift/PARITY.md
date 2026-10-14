@@ -19,8 +19,8 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 |---|---:|---:|---:|---:|---:|
 | S0 | 15 | 0 | 0 | 0 | 15/15 |
 | S1 | 164 | 0 | 0 | 3 | 167/167 |
-| S2 | 65 | 0 | 13 | 24 | 89/102 |
-| **Total** | 244 | 0 | 13 | 27 | 271/284 |
+| S2 | 68 | 0 | 10 | 24 | 92/102 |
+| **Total** | 247 | 0 | 10 | 27 | 274/284 |
 <!-- /ios-parity:summary -->
 
 ## Screens
@@ -180,9 +180,9 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | ui:dialog.newFolder | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/AlbumsSheet.swift` | albums ▸ + ▸ Folder |
 | ui:dialog.smartAlbum | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/SmartAlbumSheet.swift` | an album's ⋯ ▸ Edit Smart Album…: name, match, rules and groups from `album.ruleFields` (with each operator's starting value), checked with `album.checkRules` |
 | ui:view.photoCounts | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | Settings ▸ Interface ▸ Show Counts in Albums |
-| ui:view.sidebarSection | S2 | ⬜ |  |  |
-| ui:view.sidebarMoveSection | S2 | ⬜ |  |  |
-| ui:view.sidebarReset | S2 | ⬜ |  |  |
+| ui:view.sidebarSection | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/AlbumsSheet.swift` | Albums ▸ + ▸ Edit Sidebar… (show / hide), a section's menu ▸ Hide Section, the Albums header folds; View ▸ Sidebar Sections on the iPad (`host.sidebar`) |
+| ui:view.sidebarMoveSection | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/AlbumsSheet.swift` | Edit Sidebar: drag; a section's menu ▸ Move Up / Move Down |
+| ui:view.sidebarReset | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/AlbumsSheet.swift` | Edit Sidebar ▸ Reset Sidebar Sections; View ▸ Sidebar Sections ▸ Reset |
 | ui:view.slideshow | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/ViewModes.swift` | grid or photo "…" ▸ Slideshow: the grid's photos over black, crossfading every few seconds; a tap pauses |
 | ui:view.secondWindow | S2 | ⬜ |  |  |
 | ui:tool.keywordPainter | S2 | ⬜ |  |  |

@@ -553,6 +553,16 @@ impl Engine {
                     .map(|(id, label, shortcut, menu)| json!({"id": id, "label": label, "shortcut": shortcut, "menu": menu}))
                     .collect(),
             )),
+            // the sidebar's arrangement, which the app keeps: `{layout?, command?, params?}` → the
+            // arrangement after one of the `view.sidebar*` commands, and the sections shown
+            "host.sidebar" => {
+                let mut layout = p.get("layout").cloned().map(crate::sidebar::SidebarLayout::from).unwrap_or_default();
+                if let Some(command) = p.get("command").and_then(Value::as_str) {
+                    crate::sidebar::command(&mut layout, command, p.get("params").unwrap_or(&Value::Null)).map_err(|e| bad(&e))?;
+                }
+                let shown: Vec<&str> = layout.shown().map(|s| s.id()).collect();
+                Ok(json!({"layout": layout, "shown": shown}))
+            }
             "host.merge.start" | "host.merge.last" => {
                 let ids = merge_ids(&self.session, p);
                 let r = if method == "host.merge.last" {

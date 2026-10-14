@@ -36,7 +36,7 @@ pub mod preset_import;
 pub mod region;
 pub mod render;
 pub mod shortcuts;
-pub mod sidebar;
+pub use lightcraft_apphost::sidebar;
 pub mod softpaint;
 pub mod state;
 pub mod superres;

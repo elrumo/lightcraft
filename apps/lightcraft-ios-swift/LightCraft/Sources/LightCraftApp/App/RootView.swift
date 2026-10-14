@@ -163,6 +163,7 @@ struct SheetContent: View {
         case .contactSheet(let ids): ContactSheetSheet(ids: ids)
         case .merge(let command, let ids): MergeSheet(command: command, ids: ids)
         case .shortcuts: ShortcutsSheet()
+        case .editSidebar: EditSidebarSheet()
         case .cull(let ids): CullSheet(ids: ids)
         case .shareFiles(let paths): ActivityView(urls: paths.map { URL(fileURLWithPath: $0) }) { model.sheet = nil }
         case .newSmartAlbumFromView:

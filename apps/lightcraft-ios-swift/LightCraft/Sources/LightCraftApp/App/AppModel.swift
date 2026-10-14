@@ -66,6 +66,7 @@ nonisolated enum Sheet: Identifiable, Hashable {
     case contactSheet([UInt64])
     case merge(String, [UInt64])
     case shortcuts
+    case editSidebar
     case cull([UInt64])
     case shareFiles([String])
 
@@ -101,6 +102,7 @@ nonisolated enum Sheet: Identifiable, Hashable {
         case .contactSheet: "contactSheet"
         case .merge(let command, _): command
         case .shortcuts: "shortcuts"
+        case .editSidebar: "editSidebar"
         case .cull: "cull"
         case .shareFiles: "shareFiles"
         }
@@ -137,6 +139,8 @@ final class AppModel {
     var cover: Cover?
     /// On an iPad, whether the albums column shows beside the grid.
     var sidebar: NavigationSplitViewVisibility = .all
+    /// The albums page's sections below My Photos, in order (`host.sidebar`).
+    var sidebarSections: [SidebarSectionState] = SidebarSectionState.usual
     /// Photos are being chosen in the grid (Select).
     var selectMode = false
     /// Choosing photos to add to this album (its + ▸ LightCraft).
