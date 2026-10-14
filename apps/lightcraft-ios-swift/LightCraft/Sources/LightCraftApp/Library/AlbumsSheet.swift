@@ -30,13 +30,19 @@ struct AlbumsSheet: View {
                         Text((library as NSString).lastPathComponent)
                     }
                 }
-                Section("Albums") {
+                Section {
                     ForEach(model.albums.roots) { node in
                         AlbumTreeRow(node: node, depth: 0, expanded: $expanded) { choose($0) }
                     }
                     if model.albums.roots.isEmpty {
                         Text("No albums yet").foregroundStyle(.secondary)
                     }
+                } header: {
+                    // an album carried here goes to the top level
+                    Text("Albums")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                        .dropDestination(for: String.self) { items, _ in AlbumDrag.move(items, into: nil, model) }
                 }
                 Section {
                     NavigationLink {
@@ -79,6 +85,16 @@ struct AlbumsSheet: View {
                 }
             }
             .task { if let engine = model.engine { await model.albums.reload(engine) } }
+            .alert(model.albumToDelete.map { String(localized: "Delete “\($0.name)”?") } ?? "",
+                   isPresented: Binding(get: { model.albumToDelete != nil }, set: { if !$0 { model.albumToDelete = nil } })) {
+                Button("Delete", role: .destructive) {
+                    if let a = model.albumToDelete { model.perform("album.delete", ["id": .int(Int64(clamping: a.id))]) }
+                    model.albumToDelete = nil
+                }
+                Button("Cancel", role: .cancel) { model.albumToDelete = nil }
+            } message: {
+                Text("Photos stay in All Photos. Deleting a folder also deletes its albums.")
+            }
         }
     }
 
@@ -130,11 +146,38 @@ private struct AlbumTreeRow: View {
             .padding(.leading, CGFloat(depth) * 20)
         }
         .contextMenu { AlbumMenu(node: node) }
+        // lift an album and carry it into a folder (or onto the Albums heading: the top level)
+        .draggable(AlbumDrag.payload(node.id)) {
+            // (a drag's preview is drawn apart from the screen, without its environment)
+            AlbumRowLabel(title: node.name, symbol: node.folder ? "folder" : "rectangle.stack", cover: node.folder ? nil : node.cover, count: nil, chosen: false)
+                .padding(8)
+                .environment(model)
+        }
+        .dropDestination(for: String.self) { items, _ in
+            node.folder && AlbumDrag.move(items, into: node.id, model)
+        }
         if node.folder && open {
             ForEach(node.children) { child in
                 AlbumTreeRow(node: child, depth: depth + 1, expanded: $expanded, choose: choose)
             }
         }
+    }
+}
+
+/// An album being carried, as the text a drag holds (`lightcraft-album:<id>`).
+enum AlbumDrag {
+    static func payload(_ id: UInt64) -> String { "lightcraft-album:\(id)" }
+
+    /// Move the albums dropped into `folder` (`nil`: the top level); the engine refuses a folder
+    /// into itself or what is inside it.
+    static func move(_ items: [String], into folder: UInt64?, _ model: AppModel) -> Bool {
+        let ids = items.compactMap { $0.hasPrefix("lightcraft-album:") ? UInt64($0.dropFirst("lightcraft-album:".count)) : nil }
+            .filter { $0 != folder }
+        for id in ids {
+            model.perform("album.move", ["id": .int(Int64(clamping: id)), "parent": folder.map { .int(Int64(clamping: $0)) } ?? .null])
+        }
+        if !ids.isEmpty { model.buzz(.medium) }
+        return !ids.isEmpty
     }
 }
 
@@ -186,7 +229,8 @@ struct AlbumMenu: View {
             }
         }
         Button("Rename…", systemImage: "pencil") { model.sheet = .renameAlbum(node.id, node.name) }
-        Button("Delete", systemImage: "trash", role: .destructive) { model.perform("album.delete", ["id": id]) }
+        // (asked first: a finger sliding over a long press's menu can choose it)
+        Button("Delete", systemImage: "trash", role: .destructive) { model.albumToDelete = node }
     }
 }
 

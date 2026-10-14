@@ -18,9 +18,9 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | Phase | ✅ | 🟡 | ⬜ | 🚫 | Done or out of scope |
 |---|---:|---:|---:|---:|---:|
 | S0 | 15 | 0 | 0 | 0 | 15/15 |
-| S1 | 159 | 2 | 3 | 3 | 162/167 |
+| S1 | 160 | 1 | 3 | 3 | 163/167 |
 | S2 | 1 | 0 | 79 | 22 | 23/102 |
-| **Total** | 175 | 2 | 82 | 25 | 200/284 |
+| **Total** | 176 | 1 | 82 | 25 | 201/284 |
 <!-- /ios-parity:summary -->
 
 ## Screens
@@ -34,7 +34,7 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | screen:activity | S0 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/App/RootView.swift` | the running tasks over the screen with Cancel; a tap opens the Activity page: every task with what it is on, its progress (counts or bytes) and Cancel |
 | screen:automation | S0 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/App/ScriptHost.swift`, `crates/apphost/src/host/script.rs` | `LIGHTCRAFT_SCRIPT`: engine requests, `ui.screenshot`, `ui.inspect`, `ui.set` |
 | screen:undoRedo | S0 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | Undo and Redo in the top bar's menu (it stays open), Reset, Versions, History |
-| screen:compact.albums | S1 | 🟡 | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/AlbumsSheet.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/DateFolderLists.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/KeywordListView.swift` | All Photos, Recently Added, People, Picks, Recently Deleted, the album tree with covers and counts, album menus (offline, share link, export, move, rename, delete, edit smart album), Create New (album, smart album, from filter, folder); By Date, Folders and Keywords pages; no lift-and-carry yet (Move to… instead) |
+| screen:compact.albums | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/AlbumsSheet.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/DateFolderLists.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/KeywordListView.swift` | All Photos, Recently Added, People, Picks, Recently Deleted, the album tree with covers and counts, album menus (offline, share link, export, move, rename, delete after asking, edit smart album), Create New (album, smart album, from filter, folder); By Date, Folders and Keywords pages; lift an album and carry it into a folder or onto the Albums heading (drag and drop: not checked on the simulator, whose synthetic touches open the menu instead) |
 | screen:compact.filterSheet | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/FilterSheet.swift`, `crates/engine/src/tests_libops.rs` | stars with ≥ = ≤, flags, labels; Type, Edited, Camera, People, Location, Keyword lists with counts (`library.facets`) |
 | screen:compact.select | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/SelectionBar.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/GridView.swift` | long press or Select; a sideways drag chooses (or unchooses) a run; action bar: rating, flag, label, add to album, export, more (copy, paste, paste selected), delete (album choice + confirm); the album + ▸ LightCraft flow |
 | screen:compact.reviewMode | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | a tap hides the bars; up/down on the left half sets stars (44 pt a star), on the right the flag (56 pt a step); HUD; Auto Advance |

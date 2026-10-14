@@ -578,6 +578,7 @@
 "Delete mask" = "Удалить маску";
 "Delete them" = "Удалить их";
 "Delete “%@” from %lld photos?" = "Удалить «%@» с %lld фото?";
+"Delete “%@”?" = "Удалить «%@»?";
 "Delete…" = "Удалить…";
 "Demo Library" = "Демо-библиотека";
 "Denoise Model Downloads" = "Загрузки моделей шумоподавления";
@@ -1529,6 +1530,7 @@
 "Photos in Recently Deleted can be restored from the app: right-click ▸ Restore (or Delete Permanently), also in the" = "Фото из «Недавно удалённых» можно восстановить в приложении: щёлкните правой кнопкой → Восстановить (или Удалить навсегда), также в";
 "Photos per bracket (0 = auto)" = "Фото в брекетинге (0 = авто)";
 "Photos seen in Local but never added or changed leave the catalog when their folder hasn't been browsed for this long (checked when the library opens). Files stay on disk; browsing the folder shows them again." = "Фото, которые видели в «Локальном», но ни разу не добавляли и не меняли, исключаются из каталога, если папку не открывали так долго (проверяется при открытии библиотеки). Файлы остаются на диске; при просмотре папки они появятся снова.";
+"Photos stay in All Photos. Deleting a folder also deletes its albums." = "Фото остаются во «Все фото». При удалении папки удаляются и её альбомы.";
 "Photos that arrive in this folder (tethering, a scanner, a sync app) are added as soon as they're complete." = "Фото, поступающие в эту папку (тетеринг, сканер, приложение синхронизации), добавляются, как только будут готовы.";
 "Photos); importing (also by drag and drop), Find Missing Photos, Build / Discard Smart Previews, the Rename preview," = "фото); импорт (в том числе перетаскиванием), поиск отсутствующих фото, создание / удаление смарт-просмотров, предпросмотр переименования,";
 "Photos…" = "Фото…";

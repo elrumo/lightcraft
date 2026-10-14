@@ -94,6 +94,8 @@ final class AppModel {
     var asking: String?
     /// Ask before moving these photos to Recently Deleted.
     var confirmDelete: [UInt64]?
+    /// The album or folder whose Delete was chosen, waiting for a yes (the albums sheet asks).
+    var albumToDelete: AlbumNode?
     /// The import review's files (`import.scan`), while it is open.
     var importReview: ImportReviewData?
     /// This build has AI Super Resolution (`enhance.model.status`).

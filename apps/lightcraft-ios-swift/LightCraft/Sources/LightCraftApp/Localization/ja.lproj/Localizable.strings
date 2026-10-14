@@ -558,6 +558,7 @@
 "Delete mask" = "マスクを削除";
 "Delete them" = "削除する";
 "Delete “%@” from %lld photos?" = "%2$lld枚の写真から「%1$@」を削除しますか？";
+"Delete “%@”?" = "「%@」を削除しますか?";
 "Delete…" = "削除…";
 "Demo Library" = "デモライブラリ";
 "Denoise Model Downloads" = "Denoise Model Downloads";
@@ -1508,6 +1509,7 @@
 "Photos" = "写真";
 "Photos per bracket (0 = auto)" = "ブラケットあたりの枚数（0 = 自動）";
 "Photos seen in Local but never added or changed leave the catalog when their folder hasn't been browsed for this long (checked when the library opens). Files stay on disk; browsing the folder shows them again." = "ローカルで参照しただけの写真は、この期間フォルダを開いていなければカタログから外します。ファイルはディスクに残り、再びフォルダを開くと表示されます";
+"Photos stay in All Photos. Deleting a folder also deletes its albums." = "写真は「すべての写真」に残ります。フォルダを削除すると、その中のアルバムも削除されます。";
 "Photos taken with GPS on show here. Photo ▸ Auto-Tag from Tracklog… adds locations from a GPX file." = "GPSをオンにして撮影した写真がここに表示されます。GPXファイルから位置情報を付けることもできます（写真 → GPS軌跡から位置情報を付ける…）。";
 "Photos that arrive in this folder (tethering, a scanner, a sync app) are added as soon as they're complete." = "このフォルダに転送された写真は、転送が完了すると自動で追加されます";
 "Photos…" = "写真…";

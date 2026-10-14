@@ -578,6 +578,7 @@
 "Delete mask" = "Видалити маску";
 "Delete them" = "Видалити їх";
 "Delete “%@” from %lld photos?" = "Видалити «%@» з %lld фото?";
+"Delete “%@”?" = "Видалити «%@»?";
 "Delete…" = "Видалити…";
 "Demo Library" = "Демонстраційна бібліотека";
 "Denoise Model Downloads" = "Завантаження моделей усунення шуму";
@@ -1529,6 +1530,7 @@
 "Photos in Recently Deleted can be restored from the app: right-click ▸ Restore (or Delete Permanently), also in the" = "Фото в нещодавно видалених можна відновити із застосунку: права кнопка → Відновити (або Видалити назавжди), також у";
 "Photos per bracket (0 = auto)" = "Фото в серії експозицій (0 = автоматично)";
 "Photos seen in Local but never added or changed leave the catalog when their folder hasn't been browsed for this long (checked when the library opens). Files stay on disk; browsing the folder shows them again." = "Фото, переглянуті в локальних, але ніколи не додані й не змінені, вилучаються з каталогу, якщо їхню теку не оглядали протягом цього часу (перевіряється під час відкриття бібліотеки). Файли залишаються на диску; огляд теки знову їх показує.";
+"Photos stay in All Photos. Deleting a folder also deletes its albums." = "Фото лишаються в «Усі фото». Видалення теки видаляє і її альбоми.";
 "Photos that arrive in this folder (tethering, a scanner, a sync app) are added as soon as they're complete." = "Фото, що надходять до цієї теки (камерне підключення, сканер, застосунок синхронізації), додаються одразу після завершення запису.";
 "Photos); importing (also by drag and drop), Find Missing Photos, Build / Discard Smart Previews, the Rename preview," = "Фото); імпорт (зокрема перетягування), пошук відсутніх фото, створення / видалення смарт-переглядів, перегляд перейменування,";
 "Photos…" = "Фото…";

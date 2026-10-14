@@ -546,6 +546,7 @@
 "Delete mask" = "Excluir máscara";
 "Delete them" = "Excluí-las";
 "Delete “%@” from %lld photos?" = "Excluir “%@” de %lld fotos?";
+"Delete “%@”?" = "Excluir “%@”?";
 "Delete…" = "Excluir…";
 "Demo Library" = "Biblioteca de demonstração";
 "Denoise Model Downloads" = "Denoise Model Downloads";
@@ -1454,6 +1455,7 @@
 "Photos" = "Fotos";
 "Photos per bracket (0 = auto)" = "Fotos por bracketing (0 = automático)";
 "Photos seen in Local but never added or changed leave the catalog when their folder hasn't been browsed for this long (checked when the library opens). Files stay on disk; browsing the folder shows them again." = "Fotos vistas em Local mas nunca adicionadas nem alteradas saem do catálogo quando sua pasta não é navegada por esse período (verificado ao abrir a biblioteca). Os arquivos permanecem no disco; navegar pela pasta as mostra novamente.";
+"Photos stay in All Photos. Deleting a folder also deletes its albums." = "As fotos continuam em Todas as fotos. Excluir uma pasta também exclui os álbuns dela.";
 "Photos that arrive in this folder (tethering, a scanner, a sync app) are added as soon as they're complete." = "Fotos que chegam a esta pasta (captura conectada, um scanner, um app de sincronização) são adicionadas assim que ficam completas.";
 "Photos…" = "Fotos…";
 "Pick" = "Escolher";
