@@ -284,7 +284,7 @@ final class AppModel {
             images.forgetAll()
             path = []
             Task {
-                await library.reload(engine, count: new.visibleCount)
+                await library.reload(engine, count: new.visibleCount, forget: true)
                 await albums.reload(engine)
             }
             return

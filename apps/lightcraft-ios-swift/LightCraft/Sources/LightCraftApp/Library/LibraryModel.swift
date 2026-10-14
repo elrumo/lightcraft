@@ -77,12 +77,15 @@ final class LibraryModel {
     /// cells are small (as the egui phone grid does).
     var autoGroup = "month"
 
-    /// Another photo list (source, filter or sort changed; another library): start over.
-    func reload(_ engine: Engine, count: Int) async {
+    /// Another photo list (source, filter or sort changed; any catalog change, which renumbers the
+    /// list too): start over. The pages here stay on show, stale, until they are read again, so the
+    /// loupe's photo doesn't blink out at every edit; `forget` drops them (another library: photo
+    /// ids mean something else).
+    func reload(_ engine: Engine, count: Int, forget: Bool = false) async {
         generation += 1
-        pages.removeAll()
+        if forget { pages.removeAll() }
         loading.removeAll()
-        stale.removeAll()
+        stale = Set(pages.keys)
         self.count = count
         await refreshState(engine)
         await reloadGroups(engine)
