@@ -12,17 +12,13 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		8B5671700D95E2FE3B2CD2F9 /* LightCraft.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = LightCraft.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		8B5671700D95E2FE3B2CD2F9 /* LightCraft.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LightCraft.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		E08554F68A4E1E622DB8EA27 /* LightCraft */ = {isa = PBXFileReference; lastKnownFileType = folder; name = LightCraft; path = ../LightCraft; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		EDDB23F7E93882243625A83E /* LightCraftApp */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			explicitFileTypes = {
-			};
-			explicitFolders = (
-			);
 			name = LightCraftApp;
 			path = ../LightCraft/Sources/LightCraftApp;
 			sourceTree = "<group>";
@@ -105,7 +101,6 @@
 				LastUpgradeCheck = 2600;
 				TargetAttributes = {
 					CB6E609C23A20E868F735942 = {
-						DevelopmentTeam = "";
 						ProvisioningStyle = Automatic;
 					};
 				};
@@ -189,17 +184,21 @@
 			buildSettings = {
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = UC3T83K9FR;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = ../LightCraft/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = LightCraft;
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "LightCraft syncs your library with your own LightCraft server, which can be on this network.";
+				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "LightCraft saves the photos you export to your photo library.";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				LIBRARY_SEARCH_PATHS = (
-					"$(BUILT_PRODUCTS_DIR)",
-				);
+				LIBRARY_SEARCH_PATHS = "$(BUILT_PRODUCTS_DIR)";
 				MARKETING_VERSION = 0.7.0;
 				PRODUCT_BUNDLE_IDENTIFIER = ai.storyteller.lightcraft.swift;
 				PRODUCT_NAME = LightCraft;
@@ -218,17 +217,21 @@
 			buildSettings = {
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = UC3T83K9FR;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = ../LightCraft/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = LightCraft;
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "LightCraft syncs your library with your own LightCraft server, which can be on this network.";
+				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "LightCraft saves the photos you export to your photo library.";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				LIBRARY_SEARCH_PATHS = (
-					"$(BUILT_PRODUCTS_DIR)",
-				);
+				LIBRARY_SEARCH_PATHS = "$(BUILT_PRODUCTS_DIR)";
 				MARKETING_VERSION = 0.7.0;
 				PRODUCT_BUNDLE_IDENTIFIER = ai.storyteller.lightcraft.swift;
 				PRODUCT_NAME = LightCraft;

@@ -21,6 +21,8 @@ struct GridView: View {
     @State private var frames = CellFrames()
     /// A sideways drag choosing photos (select mode).
     @State private var choosing: Choosing?
+    /// Where the grid is scrolled to.
+    @State private var position = ScrollPosition(edge: .top)
 
     var body: some View {
         let library = model.library
@@ -29,7 +31,7 @@ struct GridView: View {
         let columns = Array(repeating: GridItem(.flexible(), spacing: 2), count: across)
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVGrid(columns: columns, spacing: 2, pinnedViews: [.sectionHeaders]) {
+                LazyVGrid(columns: columns, spacing: 2) {
                     if library.groups.isEmpty {
                         ForEach(0..<library.count, id: \.self) { i in
                             cell(i)
@@ -49,10 +51,13 @@ struct GridView: View {
                 .coordinateSpace(name: "grid")
                 .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { gridWidth = $0 }
                 .simultaneousGesture(chooseDrag, including: model.selectMode ? .all : .none)
-                // room under the last row for the Years / Months / All capsule
-                Color.clear.frame(height: 96)
             }
             .scrollIndicators(library.count > 200 ? .hidden : .visible)
+            .scrollPosition($position)
+            // the photos, then their date headers, arriving after the first layout leave the grid
+            // scrolled under the bar: back to the top while nobody has scrolled it
+            .onChange(of: library.count) { toTop() }
+            .onChange(of: library.groups.count) { toTop() }
             .onScrollPhaseChange { _, phase in
                 if phase.isScrolling {
                     scrolling = true
@@ -102,6 +107,10 @@ struct GridView: View {
                 empty
             }
         }
+    }
+
+    private func toTop() {
+        if !position.isPositionedByUser { position.scrollTo(edge: .top) }
     }
 
     private func cell(_ i: Int) -> some View {
@@ -208,7 +217,6 @@ struct DateHeader: View {
         .padding(.horizontal, 16)
         .frame(height: 40)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.bar)
     }
 
     /// Choose the photos under this header.

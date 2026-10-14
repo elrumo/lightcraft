@@ -33,7 +33,6 @@ struct DateBlocksView: View {
                 }
                 .padding(.horizontal, 12)
                 .padding(.top, 8)
-                Color.clear.frame(height: 96)
             }
             .onChange(of: jumpTo) { _, key in
                 if let key { proxy.scrollTo(key, anchor: .top) }
@@ -120,7 +119,7 @@ private struct YearCard: View {
             .overlay(alignment: .topLeading) {
                 VStack(alignment: .leading, spacing: 0) {
                     Text(block.key.isEmpty ? String(localized: "No Date") : block.key)
-                        .font(.system(size: 30, weight: .bold))
+                        .font(.largeTitle.bold())
                     Text("\(block.count) photos").font(.footnote)
                 }
                 .foregroundStyle(.white)
@@ -150,7 +149,7 @@ private struct BlockTile: View {
             .overlay(alignment: .topLeading) {
                 if let caption {
                     Text(caption)
-                        .font(.system(size: 20, weight: .semibold))
+                        .font(.title3.weight(.semibold))
                         .foregroundStyle(.white)
                         .shadow(radius: 3)
                         .padding(8)

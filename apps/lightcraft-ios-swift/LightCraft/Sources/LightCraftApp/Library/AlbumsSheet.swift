@@ -3,7 +3,8 @@ import LightCraftCore
 import SwiftUI
 
 /// My Photos: All Photos, Recently Added, People, Picks, Recently Deleted, then the albums (folders
-/// fold), each with its cover and count. Choosing one shows it in the grid and closes the page.
+/// fold), each with its cover and count. Choosing one shows it in the grid and closes the page. On
+/// an iPad it is the sidebar: the collection shown is highlighted, and sections fold.
 struct AlbumsSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -13,31 +14,21 @@ struct AlbumsSheet: View {
 
     var body: some View {
         NavigationStack {
-            List {
-                Section {
-                    sourceRow("All Photos", "photo.on.rectangle", kind: "all", count: model.library.stats?.photos)
-                    sourceRow("Recently Added", "clock", kind: "recentlyAdded", count: nil)
-                    Button {
-                        leave()
-                        model.path.append(.people)
-                    } label: {
-                        AlbumRowLabel(title: String(localized: "People"), symbol: "person.2", cover: nil, count: nil, chosen: false)
+            List(selection: sidebar ? chosen : nil) {
+                myPhotos
+                // the sections below, as arranged (Edit Sidebar, View ▸ Sidebar Sections); By Date,
+                // Folders and Keywords next to each other share a section
+                ForEach(runs, id: \.self) { run in
+                    if let first = run.first, first.id == "albums" {
+                        albumsSection(first)
+                    } else {
+                        Section {
+                            ForEach(run) { linkRow($0) }
+                        }
                     }
-                    sourceRow("Picks", "flag", kind: "picks", count: model.library.stats?.picks)
-                    if (model.library.stats?.deleted ?? 0) > 0 {
-                        sourceRow("Recently Deleted", "trash", kind: "recentlyDeleted", count: model.library.stats?.deleted)
-                    }
-                } footer: {
-                    if let library = model.opened?.library {
-                        Text((library as NSString).lastPathComponent)
-                    }
-                }
-                // the sections below, as arranged (Edit Sidebar, View ▸ Sidebar Sections)
-                ForEach(model.sidebarSections.filter { !$0.hidden && SidebarSectionState.here.contains($0.id) }) { section in
-                    sidebarSection(section)
                 }
             }
-            .listStyle(.insetGrouped)
+            .modifier(AlbumsListStyle(sidebar: sidebar))
             .foregroundStyle(.primary)
             .navigationTitle("Albums")
             .navigationBarTitleDisplayMode(.inline)
@@ -79,59 +70,126 @@ struct AlbumsSheet: View {
         }
     }
 
-    @ViewBuilder private func sidebarSection(_ section: SidebarSectionState) -> some View {
-        switch section.id {
-        case "albums":
-            Section(isExpanded: Binding(get: { !section.collapsed }, set: { open in
-                model.arrange("view.sidebarSection", ["section": "albums", "collapsed": .bool(!open)])
-            })) {
-                ForEach(model.albums.roots) { node in
-                    AlbumTreeRow(node: node, depth: 0, expanded: $expanded) { choose($0) }
-                }
-                if model.albums.roots.isEmpty {
-                    Text("No albums yet").foregroundStyle(.secondary)
-                }
-            } header: {
-                // a tap folds the section; an album carried here goes to the top level
-                Button {
-                    withAnimation(.snappy) { model.arrange("view.sidebarSection", ["section": "albums", "collapsed": .bool(!section.collapsed)]) }
-                } label: {
-                    HStack {
-                        Text("Albums")
-                        Spacer()
-                        Image(systemName: "chevron.down").rotationEffect(.degrees(section.collapsed ? -90 : 0))
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityValue(section.collapsed ? Text("Collapsed") : Text("Expanded"))
-                .dropDestination(for: String.self) { items, _ in AlbumDrag.move(items, into: nil, model) }
-                .contextMenu { SidebarSectionActions(id: section.id) }
+    /// All Photos, Recently Added, People, Picks, Recently Deleted.
+    private var myPhotos: some View {
+        Section {
+            sourceRow("All Photos", "photo.on.rectangle", kind: "all", count: model.library.stats?.photos)
+            sourceRow("Recently Added", "clock", kind: "recentlyAdded", count: nil)
+            row("people") {
+                AlbumRowLabel(title: String(localized: "People"), symbol: "person.2", cover: nil, count: nil, chosen: false)
             }
-        default:
-            Section {
-                NavigationLink {
-                    switch section.id {
-                    case "byDate": ByDateView()
-                    case "folders": LibraryFoldersView()
-                    default: KeywordListView()
-                    }
-                } label: {
-                    Label(LocalizedStringKey(section.title), systemImage: section.symbol)
-                }
-                .contextMenu { SidebarSectionActions(id: section.id) }
+            sourceRow("Picks", "flag", kind: "picks", count: model.library.stats?.picks)
+            if (model.library.stats?.deleted ?? 0) > 0 {
+                sourceRow("Recently Deleted", "trash", kind: "recentlyDeleted", count: model.library.stats?.deleted)
+            }
+        } footer: {
+            if let library = model.opened?.library {
+                Text((library as NSString).lastPathComponent)
             }
         }
     }
 
-    private func sourceRow(_ title: String.LocalizationValue, _ symbol: String, kind: String, count: Int?) -> some View {
-        let chosen = model.library.state?.source.kind == kind
-        return Button {
-            model.perform("library.source", ["kind": .string(kind)])
-            leave()
+    /// The shown sections in order, the albums alone and the link sections next to each other together.
+    private var runs: [[SidebarSectionState]] {
+        var runs: [[SidebarSectionState]] = []
+        for section in model.sidebarSections where !section.hidden && SidebarSectionState.here.contains(section.id) {
+            if section.id != "albums", let last = runs.last, last.first?.id != "albums" {
+                runs[runs.count - 1].append(section)
+            } else {
+                runs.append([section])
+            }
+        }
+        return runs
+    }
+
+    private func albumsSection(_ section: SidebarSectionState) -> some View {
+        Section(isExpanded: Binding(get: { !section.collapsed }, set: { open in
+            withAnimation(.snappy) { model.arrange("view.sidebarSection", ["section": "albums", "collapsed": .bool(!open)]) }
+        })) {
+            ForEach(model.albums.roots) { node in
+                AlbumTreeRow(node: node, sidebar: sidebar, expanded: $expanded) { choose($0) }
+            }
+            if model.albums.roots.isEmpty {
+                Text("No albums yet").foregroundStyle(.secondary)
+            }
+        } header: {
+            // an album carried here goes to the top level
+            Group {
+                if sidebar {
+                    // (the sidebar's own chevron folds it)
+                    Text("Albums")
+                } else {
+                    // a tap folds the section
+                    Button {
+                        withAnimation(.snappy) { model.arrange("view.sidebarSection", ["section": "albums", "collapsed": .bool(!section.collapsed)]) }
+                    } label: {
+                        HStack {
+                            Text("Albums")
+                            Spacer()
+                            Image(systemName: "chevron.down").rotationEffect(.degrees(section.collapsed ? -90 : 0))
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityValue(section.collapsed ? Text("Collapsed") : Text("Expanded"))
+                }
+            }
+            .dropDestination(for: String.self) { items, _ in AlbumDrag.move(items, into: nil, model) }
+            .contextMenu { SidebarSectionActions(id: section.id) }
+        }
+    }
+
+    private func linkRow(_ section: SidebarSectionState) -> some View {
+        NavigationLink {
+            switch section.id {
+            case "byDate": ByDateView()
+            case "folders": LibraryFoldersView()
+            default: KeywordListView()
+            }
         } label: {
-            AlbumRowLabel(title: String(localized: title), symbol: symbol, cover: nil, count: model.prefs.showCounts ? count : nil, chosen: chosen)
+            Label(LocalizedStringKey(section.title), systemImage: section.symbol)
+        }
+        .contextMenu { SidebarSectionActions(id: section.id) }
+    }
+
+    private func sourceRow(_ title: String.LocalizationValue, _ symbol: String, kind: String, count: Int?) -> some View {
+        row("source:\(kind)") {
+            AlbumRowLabel(title: String(localized: title), symbol: symbol, cover: nil, count: model.prefs.showCounts ? count : nil, chosen: !sidebar && model.library.state?.source.kind == kind)
+        }
+    }
+
+    /// A row that is chosen by its key: a button in the sheet, a selectable row in the sidebar.
+    @ViewBuilder private func row(_ key: String, @ViewBuilder label: () -> some View) -> some View {
+        if sidebar {
+            label().tag(key)
+        } else {
+            Button { pick(key) } label: { label() }
+        }
+    }
+
+    /// The sidebar's highlighted row: the collection the grid shows.
+    private var chosen: Binding<String?> {
+        Binding {
+            guard let source = model.library.state?.source else { return nil }
+            if source.kind == "album", let id = source.id { return "album:\(id)" }
+            return "source:\(source.kind)"
+        } set: { key in
+            if let key { pick(key) }
+        }
+    }
+
+    /// Show what a row stands for (`source:<kind>`, `album:<id>`, `people`).
+    private func pick(_ key: String) {
+        if key == "people" {
+            leave()
+            model.path.append(.people)
+        } else if key.hasPrefix("source:") {
+            model.perform("library.source", ["kind": .string(String(key.dropFirst("source:".count)))])
+            leave()
+        } else if key.hasPrefix("album:"), let id = Int64(key.dropFirst("album:".count)) {
+            model.perform("library.source", ["kind": "album", "id": .int(id)])
+            leave()
         }
     }
 
@@ -141,42 +199,68 @@ struct AlbumsSheet: View {
     }
 
     private func choose(_ node: AlbumNode) {
-        model.perform("library.source", ["kind": "album", "id": .int(Int64(clamping: node.id))])
-        leave()
+        pick("album:\(node.id)")
     }
 }
 
-/// An album in the tree: a folder folds open, an album is chosen; its menu has what can be done to it.
+/// The sidebar's look on an iPad, grouped rows on a phone's page.
+private struct AlbumsListStyle: ViewModifier {
+    let sidebar: Bool
+
+    func body(content: Content) -> some View {
+        if sidebar {
+            content.listStyle(.sidebar)
+        } else {
+            content.listStyle(.insetGrouped)
+        }
+    }
+}
+
+/// An album in the tree: a folder folds open (its albums under it), an album is chosen; its menu has
+/// what can be done to it.
 private struct AlbumTreeRow: View {
     @Environment(AppModel.self) private var model
     let node: AlbumNode
-    let depth: Int
+    let sidebar: Bool
     @Binding var expanded: Set<UInt64>
     let choose: (AlbumNode) -> Void
 
     var body: some View {
-        let open = expanded.contains(node.id)
-        let chosen = model.library.state?.source.kind == "album" && model.library.state?.source.id == node.id
-        Button {
-            if node.folder {
+        if node.folder {
+            DisclosureGroup(isExpanded: Binding(get: { expanded.contains(node.id) }, set: { open in
                 withAnimation(.snappy) {
-                    if open { expanded.remove(node.id) } else { expanded.insert(node.id) }
+                    if open { expanded.insert(node.id) } else { expanded.remove(node.id) }
                 }
-            } else {
-                choose(node)
+            })) {
+                ForEach(node.children) { child in
+                    AlbumTreeRow(node: child, sidebar: sidebar, expanded: $expanded, choose: choose)
+                }
+            } label: {
+                handled(label)
             }
-        } label: {
-            AlbumRowLabel(
-                title: node.name,
-                symbol: node.folder ? (open ? "folder.fill" : "folder") : (node.smart == true ? "gearshape.2" : "rectangle.stack"),
-                cover: node.folder ? nil : node.cover,
-                count: model.prefs.showCounts ? (node.folder ? node.children.count : node.count) : nil,
-                countLabel: node.folder ? "items" : nil,
-                chosen: chosen,
-                badge: node.problems?.isEmpty == false ? "exclamationmark.triangle.fill" : (model.albums.isOffline(node.id) ? "checkmark.icloud" : nil)
-            )
-            .padding(.leading, CGFloat(depth) * 20)
+        } else if sidebar {
+            handled(label).tag("album:\(node.id)")
+        } else {
+            handled(Button { choose(node) } label: { label })
         }
+    }
+
+    private var label: some View {
+        let chosen = !sidebar && model.library.state?.source.kind == "album" && model.library.state?.source.id == node.id
+        return AlbumRowLabel(
+            title: node.name,
+            symbol: node.folder ? (expanded.contains(node.id) ? "folder.fill" : "folder") : (node.smart == true ? "gearshape.2" : "rectangle.stack"),
+            cover: node.folder ? nil : node.cover,
+            count: model.prefs.showCounts ? (node.folder ? node.children.count : node.count) : nil,
+            countLabel: node.folder ? "items" : nil,
+            chosen: chosen,
+            badge: node.problems?.isEmpty == false ? "exclamationmark.triangle.fill" : (model.albums.isOffline(node.id) ? "checkmark.icloud" : nil)
+        )
+    }
+
+    /// The row's menu, its drag and what it takes when something is dropped on it.
+    private func handled(_ row: some View) -> some View {
+        row
         .contextMenu { AlbumMenu(node: node) }
         // lift an album and carry it into a folder (or onto the Albums heading: the top level)
         .draggable(AlbumDrag.payload(node.id)) {
@@ -194,11 +278,6 @@ private struct AlbumTreeRow: View {
                 return true
             }
             return node.folder && AlbumDrag.move(items, into: node.id, model)
-        }
-        if node.folder && open {
-            ForEach(node.children) { child in
-                AlbumTreeRow(node: child, depth: depth + 1, expanded: $expanded, choose: choose)
-            }
         }
     }
 }

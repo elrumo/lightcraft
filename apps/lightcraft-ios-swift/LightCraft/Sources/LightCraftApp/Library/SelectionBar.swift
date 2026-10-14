@@ -2,66 +2,40 @@
 import LightCraftCore
 import SwiftUI
 
-/// The bar under the grid while photos are chosen: rate, flag, label, add to an album, export, more,
-/// delete. Adding to an album from its + shows Add instead.
-struct SelectionBar: View {
-    @Environment(AppModel.self) private var model
+/// The grid's bottom bar while photos are chosen: rate, flag, label, add to an album, export, more,
+/// delete. Adding to an album from its + puts Add in the top bar instead (`LibraryScreen`).
+struct SelectionBar: ToolbarContent {
+    let model: AppModel
 
-    var body: some View {
+    var body: some ToolbarContent {
         let ids = Array(model.library.selected)
         let none = ids.isEmpty
-        Group {
-            if let album = model.addingTo {
-                HStack {
-                    Text("\(ids.count) Selected").font(.headline)
-                    Spacer()
-                    Button("Add") { Task { await add(ids, to: album) } }
-                        .buttonStyle(.glassProminent)
-                        .disabled(none)
-                }
-                .padding(.horizontal, 20)
-                .frame(height: 56)
-            } else {
-                HStack(spacing: 0) {
-                    Menu {
-                        RatingItems(ids: ids)
-                    } label: { barIcon("star", "Rating") }
-                    Menu {
-                        FlagItems(ids: ids)
-                    } label: { barIcon("flag", "Flag") }
-                    Menu {
-                        LabelItems(ids: ids)
-                    } label: { barIcon("circle.lefthalf.filled", "Color Label") }
-                    Menu {
-                        AlbumItems(ids: ids)
-                    } label: { barIcon("rectangle.stack.badge.plus", "Add to Album") }
-                    Button {
-                        model.sheet = .export(ids)
-                    } label: { barIcon("square.and.arrow.up", "Export") }
-                    Menu {
-                        SelectionMoreItems(ids: ids)
-                    } label: { barIcon("ellipsis.circle", "More") }
-                    DeleteButton(ids: ids) { barIcon("trash", "Delete") }
-                }
+        ToolbarItemGroup(placement: .bottomBar) {
+            Menu("Rating", systemImage: "star") { RatingItems(ids: ids) }
                 .disabled(none)
-                .frame(height: 56)
-            }
+            Menu("Flag", systemImage: "flag") { FlagItems(ids: ids) }
+                .disabled(none)
+            Menu("Color Label", systemImage: "circle.lefthalf.filled") { LabelItems(ids: ids) }
+                .disabled(none)
+            Menu("Add to Album", systemImage: "rectangle.stack.badge.plus") { AlbumItems(ids: ids) }
+                .disabled(none)
         }
-        .glassEffect(.regular, in: .capsule)
-        .frame(maxWidth: 480)
-        .padding(.horizontal, 14)
-        .padding(.bottom, 4)
+        ToolbarSpacer(.flexible, placement: .bottomBar)
+        ToolbarItemGroup(placement: .bottomBar) {
+            Button("Export", systemImage: "square.and.arrow.up") { model.sheet = .export(ids) }
+                .disabled(none)
+            Menu("More", systemImage: "ellipsis") { SelectionMoreItems(ids: ids) }
+                .disabled(none)
+        }
+        ToolbarSpacer(.flexible, placement: .bottomBar)
+        ToolbarItem(placement: .bottomBar) {
+            DeleteButton(ids: ids) { Label("Delete", systemImage: "trash") }
+                .disabled(none)
+        }
     }
 
-    private func barIcon(_ symbol: String, _ label: LocalizedStringKey) -> some View {
-        Image(systemName: symbol)
-            .font(.title3)
-            .frame(maxWidth: .infinity, minHeight: 44)
-            .contentShape(Rectangle())
-            .accessibilityLabel(label)
-    }
-
-    private func add(_ ids: [UInt64], to album: UInt64) async {
+    /// Add the chosen photos to the album its + was tapped in, and show the album again.
+    static func add(_ ids: [UInt64], to album: UInt64, _ model: AppModel) async {
         if let r = await model.run("album.addPhotos", ["id": .int(Int64(clamping: album)), "ids": AppModel.ids(ids)]) {
             let added = r["added"].int ?? Int64(ids.count)
             model.show(String(localized: "Added \(added) photos"))

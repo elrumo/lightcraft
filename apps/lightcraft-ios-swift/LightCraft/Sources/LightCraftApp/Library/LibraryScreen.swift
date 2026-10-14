@@ -3,11 +3,13 @@ import LightCraftCore
 import PhotosUI
 import SwiftUI
 
-/// The library: the collection's name as the title (a tap opens the albums), Select and "…" above,
-/// the grid (All, Months or Years) and, under it, the span capsule and the + button. Choosing
-/// photos turns the bars into Cancel / Select All and an action bar.
+/// The library: the collection's name as the title (its menu switches collection or opens the
+/// albums), Select, Filter and "…" above, the filters as chips under the title, the grid (All,
+/// Months or Years) and, in the bottom bar, Search, the span and the + button. Choosing photos
+/// turns the bars into Cancel / Select All and the selection's actions.
 struct LibraryScreen: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.horizontalSizeClass) private var horizontalSize
     let namespace: Namespace.ID
     @State private var jump: Int?
     @State private var importer = ImportModel()
@@ -16,9 +18,11 @@ struct LibraryScreen: View {
     @State private var describes = false
     @State private var painterText = ""
     @State private var dropping = false
+    /// What narrows the grid (`library.filterChips`), and the counts.
+    @State private var chips: JSONValue = .null
 
     var body: some View {
-        @Bindable var prefs = model.prefs
+        @Bindable var model = model
         Group {
             switch model.prefs.gridSpan {
             case .all: GridView(namespace: namespace, jump: $jump)
@@ -28,8 +32,8 @@ struct LibraryScreen: View {
             }
             }
         }
-        .safeAreaInset(edge: .top, spacing: 0) {
-            if !model.selectMode { LibraryHeader() }
+        .safeAreaBar(edge: .top) {
+            if !model.selectMode { FilterChips(chips: chips["chips"].array ?? []) }
         }
         // pictures dropped from another app (Files, Photos, Safari…) are imported
         .dropDestination(for: GridDrop.self) { items, _ in
@@ -42,27 +46,7 @@ struct LibraryScreen: View {
                 RoundedRectangle(cornerRadius: 16).stroke(.tint, lineWidth: 3).padding(4).allowsHitTesting(false)
             }
         }
-        .overlay(alignment: .bottom) {
-            if model.selectMode {
-                SelectionBar()
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-            } else if let k = model.painting {
-                PainterBar(keyword: k)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-            } else if model.searching {
-                SearchBar(scope: $scope, describes: describes)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-            } else if model.library.count > 0 || model.plainAlbum != nil {
-                bottomControls
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-            } else {
-                HStack { Spacer(); addButton }.padding(20)
-            }
-        }
-        .animation(.snappy, value: model.selectMode)
-        .animation(.snappy, value: model.painting)
-        .animation(.snappy, value: model.searching)
-        .alert("Keyword Painter", isPresented: Bindable(model).askPainter) {
+        .alert("Keyword Painter", isPresented: $model.askPainter) {
             TextField("Keyword", text: $painterText)
             Button("Paint") {
                 let k = painterText.trimmingCharacters(in: .whitespaces)
@@ -72,9 +56,22 @@ struct LibraryScreen: View {
         } message: {
             Text("Tap photos to give them the keyword; tap again to take it away.")
         }
-        .navigationTitle(model.selectMode ? selectTitle : "")
+        .navigationTitle(model.selectMode ? selectTitle : model.painting.map { String(localized: "Painting “\($0)”") } ?? title)
+        .navigationSubtitle(model.selectMode || model.painting != nil ? Text(verbatim: "") : Text(countText))
+        // (inline: the title's chevron shows its menu, and the date headers pin under it)
         .navigationBarTitleDisplayMode(.inline)
+        // (on a view of its own: switching it on and off mustn't rebuild the grid)
+        .background { Color.clear.modifier(TitleMenu(on: !model.selectMode && model.painting == nil)) }
         .toolbar { toolbar }
+        .animation(.snappy, value: model.selectMode)
+        .animation(.snappy, value: model.painting)
+        .searchable(text: $model.searchText, isPresented: $model.searching, prompt: Text(scope == .describe ? "Describe a photo…" : "Search Photos"))
+        .searchToolbarBehavior(.minimize)
+        .modifier(DescribeScopes(describes: describes, scope: $scope))
+        .onSubmit(of: .search) {
+            let q = model.searchText.trimmingCharacters(in: .whitespaces)
+            if scope == .describe, !q.isEmpty { model.perform("library.search", ["q": .string(q)]) }
+        }
         // text: the grid narrows as it is typed; a description is searched on Return
         .task(id: model.searchText) {
             let search = model.searchText
@@ -102,6 +99,10 @@ struct LibraryScreen: View {
             guard let engine = model.engine else { return }
             describes = (try? await engine.execute("vision.model.status"))?["available"].bool ?? false
         }
+        .task(id: ChipsKey(gen: model.state.visibleGen, count: model.state.visibleCount)) {
+            guard let engine = model.engine else { return }
+            chips = (try? await engine.execute("library.filterChips")) ?? .null
+        }
         .photosPicker(isPresented: $importer.pickingPhotos, selection: $importer.picked, matching: .any(of: [.images, .not(.livePhotos)]), preferredItemEncoding: .current, photoLibrary: .shared())
         .fileImporter(isPresented: $importer.pickingFiles, allowedContentTypes: ImportModel.fileTypes, allowsMultipleSelection: true) { result in
             importer.files(result, model)
@@ -121,6 +122,11 @@ struct LibraryScreen: View {
         }
     }
 
+    private nonisolated struct ChipsKey: Hashable {
+        let gen: UInt64
+        let count: Int
+    }
+
     private var selectTitle: String {
         if let album = model.addingTo, let node = model.albums.node(album) {
             return String(localized: "Add to \(node.name)")
@@ -129,9 +135,25 @@ struct LibraryScreen: View {
         return n == 0 ? String(localized: "Select Photos") : String(localized: "\(n) Selected")
     }
 
+    /// The collection's name: a built-in one in the reader's language, an album or folder as named.
+    private var title: String {
+        guard let state = model.library.state else { return String(localized: "All Photos") }
+        if ["album", "folder", "libraryFolder"].contains(state.source.kind) { return state.sourceLabel }
+        return Bundle.main.localizedString(forKey: state.sourceLabel, value: state.sourceLabel, table: nil)
+    }
+
+    /// "14 of 120 photos" when a filter narrows the source, else "14 photos".
+    private var countText: String {
+        let n = model.library.count
+        if let total = chips["total"].int, !(chips["chips"].array ?? []).isEmpty, Int(total) != n {
+            return String(localized: "\(n) of \(Int(total)) photos")
+        }
+        return String(localized: "\(n) photos")
+    }
+
     @ToolbarContentBuilder private var toolbar: some ToolbarContent {
         if model.selectMode {
-            ToolbarItem(placement: .topBarLeading) {
+            ToolbarItem(placement: .cancellationAction) {
                 Button("Cancel") { endSelecting() }
             }
             ToolbarItem(placement: .topBarTrailing) {
@@ -141,22 +163,67 @@ struct LibraryScreen: View {
                     Button("Deselect All") { model.perform("library.select", ["ids": []]) }
                 }
             }
+            if let album = model.addingTo {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Add") { Task { await SelectionBar.add(Array(model.library.selected), to: album, model) } }
+                        .disabled(model.library.selected.isEmpty)
+                }
+            } else {
+                SelectionBar(model: model)
+            }
+        } else if model.painting != nil {
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Done") { model.painting = nil }
+                    .keyboardShortcut(.cancelAction)
+            }
         } else {
+            // a phone's albums are a page over the grid (an iPad's are in the sidebar)
+            if horizontalSize != .regular {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Albums", systemImage: "rectangle.stack") { model.sheet = .albums }
+                }
+            }
             if model.albums.sync.map({ $0.state != "off" }) == true {
                 ToolbarItem(placement: .topBarTrailing) {
                     CloudButton()
                 }
+                ToolbarSpacer(.fixed, placement: .topBarTrailing)
             }
-            ToolbarItem(placement: .topBarTrailing) {
-                if model.library.count > 0 {
+            if model.library.count > 0 {
+                ToolbarItem(placement: .topBarTrailing) {
                     Button("Select") {
                         model.selectMode = true
                         model.perform("library.select", ["ids": []])
                     }
                 }
+                ToolbarSpacer(.fixed, placement: .topBarTrailing)
             }
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Button("Filter", systemImage: model.library.state?.isFiltered == true ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease") {
+                    model.sheet = .filter
+                }
                 GridMoreMenu()
+            }
+            // a phone's search waits in the bottom bar as a button; an iPad's is in the top bar
+            if horizontalSize != .regular {
+                DefaultToolbarItem(kind: .search, placement: .bottomBar)
+            }
+            ToolbarSpacer(.flexible, placement: .bottomBar)
+            if model.library.count > 0 || model.plainAlbum != nil {
+                ToolbarItem(placement: .bottomBar) {
+                    Picker("Show", selection: Bindable(model.prefs).gridSpan) {
+                        ForEach(Prefs.GridSpan.allCases) { span in
+                            Text(span.label).tag(span)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .fixedSize()
+                    .haptic(.selection, trigger: model.prefs.gridSpan)
+                }
+                ToolbarSpacer(.flexible, placement: .bottomBar)
+            }
+            ToolbarItem(placement: .bottomBar) {
+                addButton
             }
         }
     }
@@ -167,33 +234,6 @@ struct LibraryScreen: View {
             model.addingTo = nil
             model.perform("library.source", ["kind": "album", "id": .int(Int64(clamping: album))])
         }
-    }
-
-    /// Years / Months / All, and + (add photos), floating over the grid's bottom.
-    private var bottomControls: some View {
-        @Bindable var prefs = model.prefs
-        return HStack(spacing: 12) {
-            Button("Search", systemImage: "magnifyingglass") { model.searching = true }
-                .labelStyle(.iconOnly)
-                .font(.title3.weight(.semibold))
-                .frame(width: 48, height: 48)
-                .glassEffect(.regular.interactive(), in: .circle)
-            Spacer(minLength: 0)
-            Picker("Show", selection: $prefs.gridSpan) {
-                ForEach(Prefs.GridSpan.allCases) { span in
-                    Text(span.label).tag(span)
-                }
-            }
-            .pickerStyle(.segmented)
-            .frame(width: 220)
-            .padding(4)
-            .glassEffect(.regular.interactive(), in: .capsule)
-            .haptic(.selection, trigger: model.prefs.gridSpan)
-            Spacer(minLength: 0)
-            addButton
-        }
-        .padding(.horizontal, 20)
-        .padding(.bottom, 8)
     }
 
     private var addButton: some View {
@@ -208,16 +248,12 @@ struct LibraryScreen: View {
                 Button("Lightroom Classic Catalog…", systemImage: "square.stack.3d.up") { model.picker = .lightroom }
             }
         } label: {
-            Image(systemName: "plus")
-                .font(.title2.weight(.semibold))
-                .frame(width: 56, height: 56)
+            Label("Add Photos", systemImage: "plus")
         }
         .buttonStyle(.glassProminent)
-        .buttonBorderShape(.circle)
-        .accessibilityLabel("Add Photos")
     }
 
-    /// The album's + ▸ LightCraft: All Photos to choose from, Add in the action bar.
+    /// The album's + ▸ LightCraft: All Photos to choose from, Add in the top bar.
     private func startAdding(_ album: UInt64) {
         model.addingTo = album
         model.selectMode = true
@@ -226,121 +262,117 @@ struct LibraryScreen: View {
     }
 }
 
-/// The collection's name (a tap opens the albums), the count, and Sort and Filter.
-struct LibraryHeader: View {
-    @Environment(AppModel.self) private var model
-    @Environment(\.horizontalSizeClass) private var horizontalSize
-    /// What narrows the grid (`library.filterChips`), and the counts.
-    @State private var chips: JSONValue = .null
+/// The title's menu (`SourceMenu`), while neither choosing nor painting.
+private struct TitleMenu: ViewModifier {
+    let on: Bool
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            header
-            let list = chips["chips"].array ?? []
-            if !list.isEmpty {
-                // each filter as a chip with its ×, then Clear All
-                ScrollView(.horizontal) {
-                    HStack(spacing: 6) {
-                        ForEach(Array(list.enumerated()), id: \.offset) { _, chip in
-                            Button {
-                                model.perform("library.filter", chip["clear"])
-                            } label: {
-                                HStack(spacing: 4) {
-                                    Text(chip["label"].string ?? "").lineLimit(1)
-                                    Image(systemName: "xmark").font(.caption2.weight(.bold))
-                                }
-                                .font(.footnote)
-                                .padding(.horizontal, 10).padding(.vertical, 5)
-                                .background(Color.accentColor.opacity(0.15), in: .capsule)
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityHint("Takes this filter off")
-                        }
-                        if list.count > 1 {
-                            Button("Clear All") { model.perform("library.clearFilter") }
-                                .font(.footnote)
-                        }
-                    }
-                    .padding(.horizontal, 16)
-                }
-                .scrollIndicators(.hidden)
-            }
+    func body(content: Content) -> some View {
+        if on {
+            content.toolbarTitleMenu { SourceMenu() }
+        } else {
+            content
         }
-        .padding(.vertical, 6)
-        .background(.bar)
-        .task(id: Key(gen: model.state.visibleGen, count: model.state.visibleCount)) {
-            guard let engine = model.engine else { return }
-            chips = (try? await engine.execute("library.filterChips")) ?? .null
-        }
-        .animation(.snappy, value: chips["chips"].array?.count ?? 0)
-    }
-
-    private nonisolated struct Key: Hashable {
-        let gen: UInt64
-        let count: Int
-    }
-
-    /// The collection's name: a built-in one in the reader's language, an album or folder as named.
-    private var title: String {
-        guard let state = model.library.state else { return String(localized: "All Photos") }
-        if ["album", "folder", "libraryFolder"].contains(state.source.kind) { return state.sourceLabel }
-        return Bundle.main.localizedString(forKey: state.sourceLabel, value: state.sourceLabel, table: nil)
-    }
-
-    private var header: some View {
-        HStack(alignment: .center, spacing: 8) {
-            Button {
-                // an iPad has the albums in a column: the title shows or hides it
-                if horizontalSize == .regular {
-                    withAnimation { model.sidebar = model.sidebar == .detailOnly ? .all : .detailOnly }
-                } else {
-                    model.sheet = .albums
-                }
-            } label: {
-                VStack(alignment: .leading, spacing: 0) {
-                    HStack(spacing: 6) {
-                        Text(title)
-                            .font(.title.weight(.bold))
-                            .lineLimit(1)
-                        Image(systemName: "chevron.down")
-                            .font(.headline.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                    }
-                    Text(countText)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .buttonStyle(.plain)
-            .accessibilityHint("Shows your albums")
-            Spacer()
-            HStack(spacing: 0) {
-                SortMenu()
-                Button {
-                    model.sheet = .filter
-                } label: {
-                    Image(systemName: model.library.state?.isFiltered == true ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease")
-                        .frame(width: 40, height: 40)
-                }
-                .accessibilityLabel("Filter")
-            }
-            .glassEffect(.regular.interactive(), in: .capsule)
-        }
-        .padding(.horizontal, 16)
-    }
-
-    /// "14 of 120 photos" when a filter narrows the source, else "14 photos".
-    private var countText: String {
-        let n = model.library.count
-        if let total = chips["total"].int, !(chips["chips"].array ?? []).isEmpty, Int(total) != n {
-            return String(localized: "\(n) of \(Int(total)) photos")
-        }
-        return String(localized: "\(n) photos")
     }
 }
 
-/// The grid's order.
-struct SortMenu: View {
+/// Words, or a description (when this device or the sync server can search by one), as the
+/// search's scopes.
+private struct DescribeScopes: ViewModifier {
+    let describes: Bool
+    @Binding var scope: SearchScope
+
+    func body(content: Content) -> some View {
+        if describes {
+            content.searchScopes($scope, activation: .onSearchPresentation) {
+                Text("Words").tag(SearchScope.text)
+                Text("Describe").tag(SearchScope.describe)
+            }
+        } else {
+            content
+        }
+    }
+}
+
+/// The title's menu: the built-in collections (the one shown ticked), People, and all the albums.
+private struct SourceMenu: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.horizontalSizeClass) private var horizontalSize
+
+    private static let sources: [(String, LocalizedStringKey, String)] = [
+        ("all", "All Photos", "photo.on.rectangle"), ("recentlyAdded", "Recently Added", "clock"),
+        ("picks", "Picks", "flag"), ("recentlyDeleted", "Recently Deleted", "trash"),
+    ]
+
+    var body: some View {
+        let kind = model.library.state?.source.kind ?? "all"
+        let deleted = (model.library.stats?.deleted ?? 0) > 0
+        Picker("Show", selection: Binding(get: { kind }, set: { model.perform("library.source", ["kind": .string($0)]) })) {
+            ForEach(Self.sources.filter { $0.0 != "recentlyDeleted" || deleted || kind == $0.0 }, id: \.0) { id, label, symbol in
+                Label(label, systemImage: symbol).tag(id)
+            }
+        }
+        .pickerStyle(.inline)
+        Section {
+            Button("People", systemImage: "person.2") { model.path.append(.people) }
+            Button("Albums", systemImage: "rectangle.stack") {
+                // an iPad has the albums in a column: show it
+                if horizontalSize == .regular {
+                    withAnimation { model.sidebar = .all }
+                } else {
+                    model.sheet = .albums
+                }
+            }
+        }
+    }
+}
+
+/// What narrows the grid, each filter as a chip with its × (a tap takes it off), then Clear All.
+private struct FilterChips: View {
+    @Environment(AppModel.self) private var model
+    let chips: [JSONValue]
+
+    var body: some View {
+        if !chips.isEmpty {
+            ScrollView(.horizontal) {
+                HStack(spacing: 6) {
+                    ForEach(Array(chips.enumerated()), id: \.offset) { _, chip in
+                        Button {
+                            model.perform("library.filter", chip["clear"])
+                        } label: {
+                            Label(chip["label"].string ?? "", systemImage: "xmark")
+                                .labelStyle(TrailingIcon())
+                                .lineLimit(1)
+                        }
+                        .accessibilityHint("Takes this filter off")
+                    }
+                    if chips.count > 1 {
+                        Button("Clear All") { model.perform("library.clearFilter") }
+                    }
+                }
+                .buttonStyle(.bordered)
+                .buttonBorderShape(.capsule)
+                .controlSize(.small)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 6)
+            }
+            .scrollIndicators(.hidden)
+            .animation(.snappy, value: chips.count)
+        }
+    }
+
+    /// The title, then the icon (a chip's ×).
+    private struct TrailingIcon: LabelStyle {
+        func makeBody(configuration: Configuration) -> some View {
+            HStack(spacing: 4) {
+                configuration.title
+                configuration.icon.font(.caption2.weight(.bold))
+            }
+        }
+    }
+}
+
+/// The grid's order (in the grid's "…").
+struct SortItems: View {
     @Environment(AppModel.self) private var model
 
     private static let keys: [(String, LocalizedStringKey)] = [
@@ -350,23 +382,17 @@ struct SortMenu: View {
 
     var body: some View {
         let sort = model.library.state?.sort
-        Menu {
-            Section("Sort By") {
-                ForEach(Self.keys, id: \.0) { key, label in
-                    Toggle(isOn: Binding(get: { sort?.key == key }, set: { _ in model.perform("library.sort", ["key": .string(key)]) })) {
-                        Text(label)
-                    }
+        Section {
+            ForEach(Self.keys, id: \.0) { key, label in
+                Toggle(isOn: Binding(get: { sort?.key == key }, set: { _ in model.perform("library.sort", ["key": .string(key)]) })) {
+                    Text(label)
                 }
             }
-            Section {
-                Toggle("Ascending", isOn: Binding(get: { sort?.ascending == true }, set: { _ in model.perform("library.sort", ["ascending": true]) }))
-                Toggle("Descending", isOn: Binding(get: { sort?.ascending == false }, set: { _ in model.perform("library.sort", ["ascending": false]) }))
-            }
-        } label: {
-            Image(systemName: "arrow.up.arrow.down")
-                .frame(width: 40, height: 40)
         }
-        .accessibilityLabel("Sort")
+        Section {
+            Toggle("Ascending", isOn: Binding(get: { sort?.ascending == true }, set: { _ in model.perform("library.sort", ["ascending": true]) }))
+            Toggle("Descending", isOn: Binding(get: { sort?.ascending == false }, set: { _ in model.perform("library.sort", ["ascending": false]) }))
+        }
     }
 }
 
@@ -381,6 +407,11 @@ struct GridMoreMenu: View {
                 model.sheet = .newAlbum(parent: nil, folder: false, addSelected: false)
             }
             Section {
+                Menu {
+                    SortItems()
+                } label: {
+                    Label("Sort By", systemImage: "arrow.up.arrow.down")
+                }
                 Toggle(isOn: $prefs.squareGrid) { Label("Square Thumbnails", systemImage: "square.grid.3x3") }
                 Toggle(isOn: $prefs.gridInfo) { Label("Grid Info", systemImage: "textformat") }
                 Menu {
@@ -420,82 +451,6 @@ struct GridMoreMenu: View {
 /// What the grid's search field looks for: words in the photos' metadata, or a description.
 enum SearchScope: Hashable {
     case text, describe
-}
-/// Under the grid while painting: the keyword, and Done.
-private struct PainterBar: View {
-    @Environment(AppModel.self) private var model
-    let keyword: String
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Label {
-                Text("Painting “\(keyword)”")
-            } icon: {
-                Image(systemName: "paintbrush.pointed")
-            }
-            .lineLimit(1)
-            Spacer(minLength: 0)
-            Button("Done") { model.painting = nil }
-                .buttonStyle(.glassProminent)
-                .keyboardShortcut(.cancelAction)
-        }
-        .padding(.leading, 18).padding(.trailing, 8).padding(.vertical, 8)
-        .glassEffect(.regular, in: .capsule)
-        .padding(.horizontal, 20)
-        .padding(.bottom, 8)
-    }
-}
-/// The grid's search field, at its foot while searching: words narrow the grid as they are typed;
-/// with Describe (when this device or the sync server can), a description is searched on Return.
-private struct SearchBar: View {
-    @Environment(AppModel.self) private var model
-    @Binding var scope: SearchScope
-    let describes: Bool
-    @FocusState private var focused: Bool
-
-    var body: some View {
-        HStack(spacing: 10) {
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                TextField(LocalizedStringKey(scope == .describe ? "Describe a photo…" : "Search Photos"), text: Bindable(model).searchText)
-                    .focused($focused)
-                    .submitLabel(.search)
-                    .onSubmit(submit)
-                if !model.searchText.isEmpty {
-                    Button("Clear", systemImage: "xmark.circle.fill") { model.searchText = "" }
-                        .labelStyle(.iconOnly)
-                        .foregroundStyle(.secondary)
-                }
-                if describes {
-                    Button("Describe") { scope = scope == .describe ? .text : .describe }
-                        .font(.caption.weight(.semibold))
-                        .buttonStyle(.bordered)
-                        .buttonBorderShape(.capsule)
-                        .tint(scope == .describe ? .accentColor : .secondary)
-                        .controlSize(.small)
-                        .accessibilityAddTraits(scope == .describe ? .isSelected : [])
-                        .accessibilityHint("Search by describing the photo, in your own words")
-                }
-            }
-            .padding(.horizontal, 14)
-            .frame(height: 48)
-            .glassEffect(.regular.interactive(), in: .capsule)
-            Button("Close", systemImage: "xmark") { model.searching = false }
-                .labelStyle(.iconOnly)
-                .font(.title3.weight(.semibold))
-                .frame(width: 48, height: 48)
-                .glassEffect(.regular.interactive(), in: .circle)
-                .keyboardShortcut(.cancelAction)
-        }
-        .padding(.horizontal, 20)
-        .padding(.bottom, 8)
-        .onAppear { focused = true }
-    }
-
-    private func submit() {
-        let q = model.searchText.trimmingCharacters(in: .whitespaces)
-        if scope == .describe, !q.isEmpty { model.perform("library.search", ["q": .string(q)]) }
-    }
 }
 /// What is dropped on the grid: a picture from another app (imported), or text — the grid's own
 /// photos carried back (`PhotoDrag` offers its ids as text too, taken first here), which are left alone.
