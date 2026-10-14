@@ -19,8 +19,8 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 |---|---:|---:|---:|---:|---:|
 | S0 | 15 | 0 | 0 | 0 | 15/15 |
 | S1 | 164 | 0 | 0 | 3 | 167/167 |
-| S2 | 68 | 0 | 10 | 24 | 92/102 |
-| **Total** | 247 | 0 | 10 | 27 | 274/284 |
+| S2 | 69 | 0 | 9 | 24 | 93/102 |
+| **Total** | 248 | 0 | 9 | 27 | 275/284 |
 <!-- /ios-parity:summary -->
 
 ## Screens
@@ -197,7 +197,7 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | ui:dialog.copySettings | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/CopySettingsSheet.swift` | photo "…" ▸ Copy Settings… |
 | ui:dialog.pasteSettings | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/CopySettingsSheet.swift` | select ▸ More ▸ Paste Selected Settings… |
 | ui:dialog.shareLink | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | an album's menu ▸ Share Link… (signed in) |
-| ui:view.focusSearch | S2 | ⬜ |  |  |
+| ui:view.focusSearch | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LibraryScreen.swift` | the grid's search field (⌘F, Edit ▸ Find…): words narrow the grid as they are typed (`library.filter {text}`); a Describe scope, when this device or the sync server can search by description, searches on Return (`library.search`, applied by the host's tick) |
 | ui:dialog.export | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Share/ExportSheet.swift` | the Share page with presets, options, More Options and progress |
 | ui:dialog.contactSheet | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LibraryDialogs.swift` | select bar "…" ▸ Contact Sheet…: paper, orientation, columns, rows, names → PDF (`export.contactSheet`), the share sheet |
 | ui:app.contactSheet | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LibraryDialogs.swift` | as Contact Sheet… |

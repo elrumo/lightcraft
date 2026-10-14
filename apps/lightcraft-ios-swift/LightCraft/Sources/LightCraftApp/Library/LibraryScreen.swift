@@ -11,6 +11,9 @@ struct LibraryScreen: View {
     let namespace: Namespace.ID
     @State private var jump: Int?
     @State private var importer = ImportModel()
+    @State private var scope = SearchScope.text
+    /// This device or the sync server can search by description (`vision.model.status`).
+    @State private var describes = false
 
     var body: some View {
         @Bindable var prefs = model.prefs
@@ -30,6 +33,8 @@ struct LibraryScreen: View {
             if model.selectMode {
                 SelectionBar()
                     .transition(.move(edge: .bottom).combined(with: .opacity))
+            } else if model.searching {
+                // (the search field has the bottom)
             } else if model.library.count > 0 || model.plainAlbum != nil {
                 bottomControls
                     .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -41,6 +46,41 @@ struct LibraryScreen: View {
         .navigationTitle(model.selectMode ? selectTitle : "")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbar }
+        .searchable(text: Bindable(model).searchText, isPresented: Bindable(model).searching,
+                    prompt: scope == .describe ? Text("Describe a photo…") : Text("Search Photos"))
+        .searchScopes($scope, activation: .onSearchPresentation) {
+            if describes {
+                Text("Text").tag(SearchScope.text)
+                Text("Describe").tag(SearchScope.describe)
+            }
+        }
+        // text: the grid narrows as it is typed; a description is searched on Return
+        .task(id: model.searchText) {
+            let search = model.searchText
+            guard scope == .text, search != (model.library.state?.filter["text"].string ?? "") else {
+                if scope == .describe, search.isEmpty { leaveDescribed() }
+                return
+            }
+            try? await Task.sleep(for: .milliseconds(250))
+            guard !Task.isCancelled else { return }
+            model.perform("library.filter", ["text": .string(search)])
+        }
+        .onSubmit(of: .search) {
+            let q = model.searchText.trimmingCharacters(in: .whitespaces)
+            if scope == .describe, !q.isEmpty { model.perform("library.search", ["q": .string(q)]) }
+        }
+        // the other kind of search starts afresh: its words meant something else
+        .onChange(of: scope) {
+            model.searchText = ""
+            model.perform("library.filter", ["text": "", "semantic": .null, "only": []])
+        }
+        .onChange(of: model.searching) { _, open in
+            if !open, scope == .describe { leaveDescribed() }
+        }
+        .task(id: model.state.catalogRevision) {
+            guard let engine = model.engine else { return }
+            describes = (try? await engine.execute("vision.model.status"))?["available"].bool ?? false
+        }
         .photosPicker(isPresented: $importer.pickingPhotos, selection: $importer.picked, matching: .any(of: [.images, .not(.livePhotos)]), preferredItemEncoding: .current, photoLibrary: .shared())
         .fileImporter(isPresented: $importer.pickingFiles, allowedContentTypes: ImportModel.fileTypes, allowsMultipleSelection: true) { result in
             importer.files(result, model)
@@ -50,6 +90,13 @@ struct LibraryScreen: View {
         }
         .onChange(of: importer.picked) { _, items in
             importer.photos(items, model)
+        }
+    }
+
+    /// Out of a search by description: the grid as it was.
+    private func leaveDescribed() {
+        if model.library.state?.filter["semantic"].isNull == false {
+            model.perform("library.filter", ["semantic": .null, "only": []])
         }
     }
 
@@ -341,5 +388,9 @@ struct GridMoreMenu: View {
             Label("More", systemImage: "ellipsis")
         }
     }
+}
+/// What the grid's search field looks for: words in the photos' metadata, or a description.
+enum SearchScope: Hashable {
+    case text, describe
 }
 #endif

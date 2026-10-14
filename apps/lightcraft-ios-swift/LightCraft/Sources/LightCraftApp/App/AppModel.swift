@@ -143,6 +143,9 @@ final class AppModel {
     var sidebarSections: [SidebarSectionState] = SidebarSectionState.usual
     /// Photos are being chosen in the grid (Select).
     var selectMode = false
+    /// The grid's search field is open (⌘F, Edit ▸ Find…), and what is typed in it.
+    var searching = false
+    var searchText = ""
     /// Choosing photos to add to this album (its + ▸ LightCraft).
     var addingTo: UInt64?
     /// A dialog the engine asked for (`syncChoice`).

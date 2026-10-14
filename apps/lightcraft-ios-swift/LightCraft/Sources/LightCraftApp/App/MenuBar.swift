@@ -216,6 +216,7 @@ extension AppModel {
         "view.filterSheet", "view.tagFace", "app.settings", "app.about", "app.help", "app.discord", "app.website", "app.github",
         "app.artcraft", "app.feedback", "app.shortcuts", "dialog.rename", "dialog.labelNames", "dialog.captureTime", "app.systemInfo",
         "dialog.cull", "photo.tagFromTracklog", "file.findMissing", "photo.locate", "app.exportPrevious", "view.softProof",
+        "view.focusSearch",
     ]
 
     private func uiEnabled(_ id: String) -> Bool {
@@ -330,6 +331,9 @@ extension AppModel {
         case "dialog.captureTime": sheet = .captureTime(targets)
         case "dialog.cull": sheet = .cull(chosen)
         case "view.softProof": editor.softProof.toggle()
+        case "view.focusSearch":
+            path = []
+            searching = true
         case "photo.tagFromTracklog": picker = .tracklog(targets)
         case "file.findMissing": picker = .findMissing
         case "photo.locate": if let a = state.active { picker = .locate(a) }
