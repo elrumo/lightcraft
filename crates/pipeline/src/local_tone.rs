@@ -1,6 +1,6 @@
 //! The camera's local tone mapping: a raw's DNG `ProfileGainTableMap` (Apple ProRAW), rendered
-//! when the photo's Profile option "Camera local tone mapping" is on. Off by default: Lightroom
-//! Classic renders ProRAW without it (see `lightcraft_raw::gaintable`).
+//! when the photo's Profile option "Camera local tone mapping" is on (the default; off renders
+//! ProRAW as Lightroom Classic does, without it: see `lightcraft_raw::profile`).
 //!
 //! The map is a per-pixel gain that depends on the pixel's position in the raw's active area and
 //! on its colour after the baseline exposure (linear ProPhoto). The source the pipeline gets is
