@@ -33,6 +33,9 @@ pub struct Frame {
     pub warp: Option<Warp>,
     /// Set when this frame draws only a window of a larger output (see [`Frame::window`]).
     pub view: Option<ViewWindow>,
+    /// Generative Expand: the frame may show area past the photo, filled from the stored fill
+    /// (see [`crate::expand`]). `None` with Expand off.
+    pub expand: Option<crate::expand::Expansion>,
 }
 
 /// Where a windowed [`Frame`]'s pixels sit in the full output: its offset and the full output's
@@ -54,7 +57,15 @@ impl Frame {
     pub fn with_lens(src_w: usize, src_h: usize, s: &DevelopSettings, apply_crop: bool, lens: Option<&EmbeddedLens>) -> Frame {
         let orient = s.orientation;
         let (ow, oh) = if orient.swaps_axes() { (src_h as f64, src_w as f64) } else { (src_w as f64, src_h as f64) };
-        let crop = if apply_crop { s.crop.geometry } else { CropGeometry::default() };
+        let expand = s.crop.expand.then(|| crate::expand::Expansion::new(s.expand_fill.as_ref()));
+        let crop = if apply_crop {
+            s.crop.geometry
+        } else if expand.is_some() {
+            // the crop tool with Expand on shows room around the photo, and the crop and fill
+            CropGeometry { rect: crate::expand::view_rect(s, ow, oh), angle: 0.0 }
+        } else {
+            CropGeometry::default()
+        };
         let lens = lens.map(|l| reorient_lens(l, orient, src_w as f64, src_h as f64));
         let mut warp = Warp::from_settings(ow, oh, s, lens.as_ref());
         let persp = perspective(s, ow, oh);
@@ -76,8 +87,10 @@ impl Frame {
             flip_v: s.crop.flip_v,
             warp: (!warp.is_identity()).then_some(warp),
             view: None,
+            expand,
         };
-        if apply_crop && s.geometry.constrain_crop {
+        // (with Expand, area past the warped photo is what the fill is for)
+        if apply_crop && s.geometry.constrain_crop && !s.crop.expand {
             f.constrain_to_image();
         }
         f
@@ -264,13 +277,23 @@ impl Frame {
             });
             out
         };
-        match (plan.mode, self.warp.as_ref()) {
-            (SampleMode::Copy, _) => base.into_owned(),
+        let mut out = match (plan.mode, self.warp.as_ref()) {
+            // (a copy is the whole photo: nothing past it)
+            (SampleMode::Copy, _) => return base.into_owned(),
             (SampleMode::Warp(o2t), Some(warp)) => sample_warped(&base, plan.sx, plan.sy, warp, o2t, w, h),
             // `sample_plan` plans a warp only when there is one; without it the same mapping is affine
             (SampleMode::Warp(o2t), None) => affine(Affine::scale(plan.sx, plan.sy) * o2t),
             (SampleMode::Affine(xf), _) => affine(xf),
+        };
+        if let Some(ex) = &self.expand {
+            crate::expand::composite(self, ex, &mut out);
         }
+        out
+    }
+
+    /// Whether this frame may show area past the photo (Generative Expand on).
+    pub fn expands(&self) -> bool {
+        self.expand.is_some()
     }
 
     /// The crop rectangle as a quad in normalized oriented coordinates (for overlays).

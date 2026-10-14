@@ -202,6 +202,28 @@ pub fn drag_crop(start: CropGeometry, handle: CropHandle, grab: Point, pointer: 
     if [rect.x0, rect.y0, rect.x1, rect.y1].iter().all(|v| v.is_finite()) { CropGeometry { rect, angle: base.angle } } else { start }
 }
 
+/// [`drag_crop`], or with `expand` (Generative Expand) the same drag within the photo grown by
+/// [`crate::EXPAND_MAX`] on every side: the frame may reach past the photo's edges up to there.
+#[allow(clippy::too_many_arguments)]
+pub fn drag_crop_in(
+    start: CropGeometry,
+    handle: CropHandle,
+    grab: Point,
+    pointer: Point,
+    w: f64,
+    h: f64,
+    aspect: Option<f64>,
+    expand: bool,
+) -> CropGeometry {
+    if !expand {
+        return drag_crop(start, handle, grab, pointer, w, h, aspect);
+    }
+    let e = crate::EXPAND_MAX;
+    let k = 1.0 + 2.0 * e;
+    let g = |p: Point| Point::new((p.x + e) / k, (p.y + e) / k);
+    drag_crop(start.grown(e), handle, g(grab), g(pointer), w * k, h * k, aspect).shrunk(e)
+}
+
 /// Which sides a handle moves: (left, right, top, bottom).
 fn sides(h: CropHandle) -> (bool, bool, bool, bool) {
     use CropHandle::*;
@@ -261,6 +283,25 @@ fn bisect(lo: f64, hi: f64, ok: impl Fn(f64) -> bool) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn with_expand_a_corner_drags_past_the_photo_and_stops_at_the_limit() {
+        let start = CropGeometry::default();
+        let (w, h) = (600.0, 400.0);
+        let out = drag_crop_in(start, CropHandle::TopLeft, Point::new(0.0, 0.0), Point::new(-0.3, -0.2), w, h, None, true);
+        assert!((out.rect.x0 + 0.3).abs() < 1e-6 && (out.rect.y0 + 0.2).abs() < 1e-6, "{out:?}");
+        assert!((out.rect.x1 - 1.0).abs() < 1e-9 && (out.rect.y1 - 1.0).abs() < 1e-9);
+        // without expand it stops at the photo's edge
+        let plain = drag_crop_in(start, CropHandle::TopLeft, Point::new(0.0, 0.0), Point::new(-0.3, -0.2), w, h, None, false);
+        assert_eq!(plain.rect, start.rect);
+        // far past the limit: at the limit
+        let far = drag_crop_in(start, CropHandle::Right, Point::new(1.0, 0.5), Point::new(9.0, 0.5), w, h, None, true);
+        assert!((far.rect.x1 - (1.0 + crate::EXPAND_MAX)).abs() < 1e-6, "{far:?}");
+        // a locked aspect holds past the edge too
+        let locked = drag_crop_in(start, CropHandle::BottomRight, Point::new(1.0, 1.0), Point::new(1.2, 1.2), w, h, Some(1.5), true);
+        let r = locked.rect_px(w, h);
+        assert!((r.width() / r.height() - 1.5).abs() < 1e-6 && locked.reaches_past(w, h), "{locked:?}");
+    }
     use CropHandle::*;
 
     const W: f64 = 600.0;
