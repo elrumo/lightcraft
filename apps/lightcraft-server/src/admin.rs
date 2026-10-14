@@ -399,7 +399,11 @@ pub fn api(st: &State, req: &mut Request, method: &Method, rest: &str) -> Resp {
             None => Err(Ok((404, "no such part".to_string()))),
             Some(part) => read_json::<Schedule>(req).map_err(Err).and_then(|b| {
                 st.vision.switch.set_schedule(part, b.paused, b.from.zip(b.to)).map_err(|e| Ok((400, e)))?;
-                log::info!("admin {me}: {kind} index {}{}", if b.paused { "paused" } else { "not paused" }, b.from.zip(b.to).map_or(String::new(), |w| format!(", only {}-{} UTC", w.0, w.1)));
+                log::info!(
+                    "admin {me}: {kind} index {}{}",
+                    if b.paused { "paused" } else { "not paused" },
+                    b.from.zip(b.to).map_or(String::new(), |w| format!(", only {}-{} UTC", w.0, w.1))
+                );
                 st.vision.wake();
                 Ok(search(st))
             }),
