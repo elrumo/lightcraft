@@ -1,0 +1,22 @@
+[package]
+name = "lightcraft-depth"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "LightCraft depth estimation: Depth Anything V2 Small on rten, pure Rust, native and web (L3)"
+
+[lints]
+workspace = true
+
+[dependencies]
+lightcraft-raster = { workspace = true }
+# `onnxfix` only: it checks the protobuf's structure before rten reads it (builds for the web)
+lightcraft-vision = { workspace = true }
+thiserror = { workspace = true }
+sha2 = { workspace = true }
+# pure Rust ONNX runtime, as in lightcraft-erase; it builds for wasm32 too
+rten = { version = "0.24", default-features = false, features = ["onnx_format"] }
+rten-tensor = "0.24"
+
+[dev-dependencies]
+lightcraft-codecs = { workspace = true }
