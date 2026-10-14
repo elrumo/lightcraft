@@ -87,7 +87,8 @@ fn ok_label(app: &LightcraftApp, dlg: &Dialog, informational: bool) -> String {
         Dialog::Import { opts } if compact => return crate::i18n::tr_format!("Add {n}", n = opts.selected_paths().len()),
         Dialog::Import { opts } => {
             let n = opts.selected_paths().len();
-            let verb = if opts.copy && opts.move_files { "Move" } else { "Import" };
+            // (the host's temporary copies, a camera's included, are moved: the originals stay)
+            let verb = if opts.copy && opts.move_files && !opts.staged { "Move" } else { "Import" };
             return crate::i18n::tr_format!("{verb} {n} Photo{}", if n == 1 { "" } else { "s" }, verb = crate::i18n::tr(verb), n = n);
         }
         Dialog::ContactSheet { .. } => "Choose PDF…",

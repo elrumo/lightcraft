@@ -112,9 +112,10 @@ The desktop layout (iPad held landscape) is dark whatever is chosen.
 The file stays in the app's sandbox, so nothing listens on the network. On the simulator, `SIMCTL_CHILD_LIGHTCRAFT_SCRIPT=…
 xcrun simctl launch …` does the same.
 
-Both link PhotosUI, Photos, ImageIO and UniformTypeIdentifiers for the native host and set
-`NSPhotoLibraryAddUsageDescription` (Save to Photos, and Save Image in the share sheet); importing needs no photo-library permission (the
-Photos picker runs out of process).
+Both link PhotosUI, Photos, ImageIO and UniformTypeIdentifiers for the native host and ImageCaptureCore for cameras and
+card readers (`crates/capture`), and set `NSPhotoLibraryAddUsageDescription` (Save to Photos, and Save Image in the share
+sheet) and `NSCameraUsageDescription` (reading a camera or card plugged in; iOS asks the first time one is opened);
+importing from Photos needs no photo-library permission (the Photos picker runs out of process).
 
 **The library** is `LightCraft Library` in the app's Documents folder (kept across launches and updates, backed up
 with the device); a new one starts with the demo photos. `$LIGHTCRAFT_LIBRARY` puts it elsewhere
@@ -146,6 +147,17 @@ whose portable helpers (safe file names, unique paths, the folder walk) are test
   ProRAW DNG when there is one, else the HEIC or JPEG); the Files picker hands over copies; a folder is read in place
   under its security scope (at most 5000 photos, 12 levels deep). Everything is copied into `tmp/Import/` and opens the
   import review, which *moves* it into the library's `Originals/` (`file.addPhotos {staged: true}`: no "add in place").
+- **Cameras and card readers.** `crates/capture` (`lightcraft-capture`, ImageCaptureCore through `objc2`, allowed
+  `unsafe` like this crate; the same code serves the macOS desktop app's PTP cameras and iPhones) watches for cameras
+  and card readers plugged into the iPhone or iPad. The grid's + ▸ Connected Camera/Card (or File ▸ Import from
+  Device in the iPad's desktop layout, or connecting one: Settings ▸ Import ▸ Cameras and cards) opens the import
+  review on it (`ui-egui`'s `camera_import`, `Services::cameras`): the files as the device catalogues them, by day,
+  newest first, a box per day and one for the device (its size and count), the camera's own thumbnails, a Raw tag,
+  and what the library already has (same name and size, and capture time) greyed out and not selectable. Import
+  copies the chosen files into `tmp/Import/` (a row in the activity stack; ✕ stops it) and moves them into the
+  library. The first time a device is opened iOS asks for permission (`NSCameraUsageDescription`). *Written and
+  type-checked; the review and the import are tested headless with a stand-in camera; not yet run on the simulator
+  (which has no USB) or a device.*
 - **Presets.** File ▸ Import Profiles & Presets… and the Presets panel's ⋯ ▸ Import Presets… open the Files picker for
   preset files (`.lcpreset`, `.xmp`, `.lrtemplate`, `.zip`, `.dng`, Luminar `.lmp` / `.mplumpack`, `.cube` LUTs;
   `PickKind::Documents`, a type per extension). Its copies land in `tmp/Import/` and `file.importPresets` reads them
@@ -200,7 +212,7 @@ This run found one bug: opening Settings ▸ Sync while the sign-in was still on
 links with no token yet, and the server's 401 signed the device out (fixed, with a test: the engine tests' fake server
 now refuses a request with no token, like the real one).
 
-Not yet checked anywhere: a ProRAW DNG and a Live Photo from a real library, an iCloud file not yet downloaded, a
+Not yet checked anywhere: a camera or SD card reader plugged in (ImageCaptureCore), a ProRAW DNG and a Live Photo from a real library, an iCloud file not yet downloaded, a
 folder on a USB drive, the share sheet as an iPad popover, backgrounding during an export, a memory warning, and
 sync on a device (TLS, the local-network prompt, backgrounding).
 The device column needs someone at the phone (pickers and sheets are system UI); `LIGHTCRAFT_SCRIPT` covers the rest.

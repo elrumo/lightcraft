@@ -124,6 +124,26 @@ impl Renderer {
         m
     }
 
+    /// Show `img` in `slot` (an image the app already has, such as a thumbnail a camera made:
+    /// [`Slot::Camera`]).
+    pub fn put_image(&mut self, ctx: &egui::Context, slot: Slot, img: &lightcraft_raster::Rgba8) {
+        let color = Arc::new(color_image(img));
+        let pixels = self.keep_pixels.then(|| color.clone());
+        let view = TexView { tex: ctx.load_texture(format!("{slot:?}"), color, egui::TextureOptions::LINEAR), pixels };
+        let shown = Shown {
+            key: 0,
+            photo: lightcraft_catalog::PhotoId(0),
+            size: [img.width, img.height],
+            histogram: None,
+            ms: 0.0,
+            quick: None,
+            request_id: 0,
+            draft: false,
+            view,
+        };
+        self.textures.insert(slot, shown);
+    }
+
     /// CPU copies of the current textures by id (see [`Self::keep_pixels`]).
     pub fn cpu_textures(&self) -> HashMap<egui::TextureId, crate::softpaint::CpuTexture> {
         self.textures.values().filter_map(|t| Some((t.tex.id(), crate::softpaint::CpuTexture::linear(t.pixels.clone()?)))).collect()

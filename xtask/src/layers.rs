@@ -42,6 +42,8 @@ pub const TABLE: &[(&str, Class)] = &[
     ("raster", Class::Layer(0)),
     ("tiff", Class::Layer(0)),
     ("sysmem", Class::Layer(0)),
+    // cameras and cards through ImageCaptureCore (iOS, macOS; objc2): `ui-egui`'s camera host there
+    ("capture", Class::Layer(0)),
     ("fetch", Class::Layer(0)),
     ("denoise-core", Class::Layer(1)),
     ("denoise", Class::Layer(1)),
