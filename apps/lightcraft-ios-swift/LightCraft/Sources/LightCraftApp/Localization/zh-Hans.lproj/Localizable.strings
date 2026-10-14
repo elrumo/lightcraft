@@ -131,6 +131,7 @@
 "Added to photos you import that don't already have it." = "导入照片时，仅为尚未包含该信息的照片添加。";
 "Adding" = "正在添加";
 "Adding Lightroom photos…" = "正在添加 Lightroom 照片…";
+"Adding photos…" = "正在添加照片…";
 "Adding to Apple Photos" = "正在添加到 Apple 照片";
 "Adding to Apple Photos…" = "正在添加到 Apple 照片…";
 "Adjust" = "调整";
@@ -793,6 +794,7 @@
 "File name" = "文件名";
 "File types:" = "文件类型：";
 "Filename" = "文件名";
+"Files with the same content as another file in this import: only the first is imported." = "与本次导入中另一个文件内容相同的文件：只导入第一个。";
 "Files…" = "文件…";
 "Fill" = "填满";
 "Fill Edges" = "填充边缘";
@@ -1206,6 +1208,7 @@
 "Local" = "本地";
 "Local folders" = "本地文件夹";
 "Local library — no cloud account needed" = "本地图库 — 无需云账户";
+"Locate Missing Files…" = "定位缺失的文件…";
 "Locate Missing File…" = "定位缺失的文件…";
 "Locate Photo" = "定位照片";
 "Location" = "位置";
@@ -1411,6 +1414,7 @@
 "No filter presets yet" = "暂无筛选器预设";
 "No folders to browse" = "没有可浏览的文件夹";
 "No folders yet: photos imported from Files show their folders here." = "还没有文件夹：从“文件”导入的照片会在这里显示其文件夹。";
+"No graphics processor found: LightCraft renders on the CPU, which is much slower. Details in Help → System Info." = "未找到图形处理器：LightCraft 改用 CPU 渲染，速度会慢很多。详情见“帮助 → 系统信息”。";
 "No horizon or vertical lines found" = "未找到地平线或垂直线";
 "No imported folders yet" = "还没有导入的文件夹";
 "No keywords" = "无关键字";
@@ -1480,6 +1484,7 @@
 "Offset X" = "水平偏移";
 "Offset Y" = "垂直偏移";
 "On" = "开启";
+"On NixOS, start it from `nix develop`." = "在 NixOS 上，请从 `nix develop` 启动。";
 "On This Device" = "在此设备上";
 "On This Photo" = "此照片上";
 "On every photo, the keywords inside it included; renaming it onto another keyword merges the two." = "对每张照片生效，包括其下嵌套的关键字；重命名为另一个关键字时，两者会合并。";
@@ -1728,6 +1733,7 @@
 "Reading a sidecar replaces the photo's rating, labels, metadata and edits with what it says." = "读取附属文件会用其内容替换照片的评级、标签、元数据和编辑。";
 "Reading folder" = "正在读取文件夹";
 "Reading folder…" = "正在读取文件夹…";
+"Reading photos…" = "正在读取照片…";
 "Reading the catalog…" = "正在读取目录…";
 "Real name" = "真实姓名";
 "Recent" = "最近使用";
@@ -2039,6 +2045,7 @@
 "Short Edge" = "短边";
 "Show" = "显示";
 "Show All" = "显示全部";
+"Show All Mask Overlays" = "显示所有蒙版叠加";
 "Show As" = "显示方式";
 "Show Clipping" = "显示溢出警告";
 "Show Counts in Albums" = "在相册中显示数量";
@@ -2059,6 +2066,7 @@
 "Show Sidebar Section" = "显示边栏分区";
 "Show Source" = "显示来源";
 "Show Thumbnails" = "显示缩略图";
+"Show all overlays" = "显示所有叠加";
 "Show all photos" = "显示所有照片";
 "Show colours accurately on your monitor." = "在显示器上准确显示颜色。";
 "Show commands without a shortcut" = "显示没有快捷键的命令";

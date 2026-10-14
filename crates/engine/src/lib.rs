@@ -143,7 +143,8 @@ fn single_photo(op: &Op, depth: usize) -> Option<PhotoId> {
         | Op::SetMeta { id, .. }
         | Op::SetVersions { id, .. }
         | Op::SetHistory { id, .. }
-        | Op::PushHistory { id, .. } => Some(*id),
+        | Op::PushHistory { id, .. }
+        | Op::SetHistoryCursor { id, .. } => Some(*id),
         Op::Batch { ops } if depth < 8 => {
             let mut ids = ops.iter().map(|o| single_photo(o, depth + 1));
             let first = ids.next()??;
@@ -236,7 +237,8 @@ pub struct Session {
     pub previous_active: Option<PhotoId>,
     /// Groups last used for Copy (Lightroom remembers them).
     pub copy_groups: Vec<lightcraft_develop::SettingsGroup>,
-    pub presets: Vec<lightcraft_develop::Preset>,
+    /// Built-in then user presets; its generation tells savers and caches when it changed.
+    pub presets: presets::PresetList,
     /// The order the user dragged the preset groups into (`preset.moveGroup`; groups not listed follow
     /// by name, see [`Session::preset_groups`]). Persisted in prefs.json and synced.
     pub preset_group_order: Vec<String>,
@@ -386,7 +388,7 @@ impl Session {
             library_folder: None,
             previous_active: None,
             copy_groups: lightcraft_develop::SettingsGroup::default_copy(),
-            presets: presets::builtin(),
+            presets: presets::PresetList::new(presets::builtin()),
             preset_group_order: Vec::new(),
             profile_favorites: Vec::new(),
             profile_recent: Vec::new(),
@@ -939,11 +941,17 @@ impl Session {
                 visible.sort_by_key(|id| rank.get(id).copied().unwrap_or(usize::MAX));
             }
             if self.source == LibrarySource::RecentlyAdded {
-                // newest import first, whatever the sort (the grid groups by import day)
+                // newest import first, whatever the sort direction (the grid groups by import day);
+                // a batch stays in file order (name, then id)
                 let cat = &self.catalog;
                 visible.sort_by(|a, b| {
                     let key = |id: &PhotoId| cat.photo(*id).map(|p| p.imported.clone()).unwrap_or_default();
-                    key(b).cmp(&key(a)).then(a.cmp(b))
+                    let name = |id: &PhotoId| cat.photo(*id).map(|p| p.file_name.as_str());
+                    let by_name = match (name(a), name(b)) {
+                        (Some(x), Some(y)) => lightcraft_catalog::query::cmp_name(x, y),
+                        _ => std::cmp::Ordering::Equal,
+                    };
+                    key(b).cmp(&key(a)).then(by_name).then(a.cmp(b))
                 });
             }
             if self.source == LibrarySource::Missing {
@@ -1064,6 +1072,8 @@ mod tests_folders;
 #[cfg(test)]
 mod tests_forget_local;
 #[cfg(test)]
+mod tests_history_cursor;
+#[cfg(test)]
 mod tests_import;
 #[cfg(test)]
 mod tests_import_move;
@@ -1087,6 +1097,8 @@ mod tests_organize;
 mod tests_persist;
 #[cfg(test)]
 mod tests_prefs;
+#[cfg(test)]
+mod tests_presets_scale;
 #[cfg(test)]
 mod tests_process;
 #[cfg(test)]

@@ -18,9 +18,9 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | Phase | ✅ | 🟡 | ⬜ | 🚫 | Done or out of scope |
 |---|---:|---:|---:|---:|---:|
 | S0 | 15 | 0 | 0 | 0 | 15/15 |
-| S1 | 164 | 0 | 0 | 3 | 167/167 |
-| S2 | 77 | 0 | 0 | 25 | 102/102 |
-| **Total** | 256 | 0 | 0 | 28 | 284/284 |
+| S1 | 164 | 0 | 1 | 3 | 167/168 |
+| S2 | 77 | 0 | 0 | 26 | 103/103 |
+| **Total** | 256 | 0 | 1 | 29 | 285/286 |
 <!-- /ios-parity:summary -->
 
 ## Screens
@@ -131,6 +131,7 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | ui:view.softProof | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | the photo's "…" ▸ Soft Proofing, Proof As, Destination Gamut Warning (`render.view {proof}`): paper-white surround, "Proof Preview · <space>" |
 | ui:view.histogram | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | the photo's "…" ▸ Histogram: luminance and R, G, B over the photo, with the clipping triangles |
 | ui:view.maskOverlay | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/ToolScreens.swift` | Masking ▸ eye button (`render.view {overlay}`) |
+| ui:view.maskOverlayAll | S1 | ⬜ |  |  |
 | ui:view.maskOverlayMode | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/ToolScreens.swift` | Masking ▸ ⋯ ▸ Overlay Options ▸ Show As |
 | ui:view.maskOverlayColor | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/ToolScreens.swift` | Masking ▸ ⋯ ▸ Overlay Options ▸ Color, Opacity |
 | ui:view.maskPins | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/MaskCanvas.swift` | Masking ▸ ⋯ ▸ Show Pins |
@@ -203,6 +204,7 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | ui:app.contactSheet | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LibraryDialogs.swift` | as Contact Sheet… |
 | ui:photo.editInPhotoCraft | S2 | 🚫 |  | no external editors on iOS (the egui iOS app does not offer it either) |
 | ui:photo.editInExternal | S2 | 🚫 |  | no external editors on iOS |
+| ui:photo.openOriginalInExternal | S2 | 🚫 |  | no external editors on iOS |
 | ui:dialog.mergeHdr | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/MergeSheet.swift`, `crates/apphost/src/merge.rs` | select bar "…" ▸ Photo Merge ▸ HDR…: options and a live preview (`host.merge.preview`, the runner shared with egui), Merge in the background |
 | ui:dialog.mergePanorama | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/MergeSheet.swift`, `crates/apphost/src/merge.rs` | Photo Merge ▸ Panorama… |
 | ui:dialog.mergeHdrPanorama | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/MergeSheet.swift`, `crates/apphost/src/merge.rs` | Photo Merge ▸ HDR Panorama… |

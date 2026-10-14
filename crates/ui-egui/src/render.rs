@@ -109,6 +109,13 @@ impl Renderer {
         polled.changed()
     }
 
+    /// In a slider drag, give the loupe's draft until `budget` to finish, so it is drawn in this
+    /// frame ([`Scheduler::wait_for_draft`]).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn wait_for_draft(&mut self, ctx: &egui::Context, session: &mut Session, budget: std::time::Duration) {
+        self.sched.wait_for_draft(session, &mut Textures { ctx, keep_pixels: self.keep_pixels }, budget);
+    }
+
     /// What the renderer holds: per-view stage caches (CPU images and GPU buffers) and textures.
     pub fn memory(&self) -> serde_json::Value {
         let mut m = self.sched.memory();
@@ -149,6 +156,28 @@ mod thumbnail_tests {
         let m = r.memory();
         assert!(m["stageCaches"]["budgetBytes"].as_u64().unwrap() > 0, "{m}");
         assert_eq!(m["textures"]["cpuCopyBytes"], 0);
+    }
+
+    #[test]
+    fn a_fast_draft_is_drawn_in_the_frame_that_asked_for_it() {
+        let mut s = Session::new();
+        s.media.file_loader = Some(Arc::new(|_, _| Ok((lightcraft_raster::Rgb32f::new(8, 8), Default::default()))));
+        s.catalog.apply(Op::AddPhoto { photo: Box::new((*photo()).clone()) }).unwrap();
+        let mut r = Renderer::with_worker_threads(1);
+        let ctx = egui::Context::default();
+        let budget = std::time::Duration::from_secs(10);
+        // the last loupe render took longer than the budget (a CPU render): not waited for
+        r.last_main_ms = 1e6;
+        r.request(Slot::Main, s.render_job(PhotoId(1), 64, 64, false, true).unwrap(), 100);
+        r.wait_for_draft(&ctx, &mut s, budget);
+        assert!(r.is_pending(Slot::Main) && !r.textures.contains_key(&Slot::Main));
+        // a fast one (GPU drafts): the texture is the new render when the wait returns
+        r.last_main_ms = 1.0;
+        r.request(Slot::Main, s.render_job(PhotoId(1), 32, 32, false, true).unwrap(), 100);
+        let want = r.wanted(Slot::Main);
+        r.wait_for_draft(&ctx, &mut s, budget);
+        assert!(!r.is_pending(Slot::Main));
+        assert_eq!(r.textures.get(&Slot::Main).map(|t| t.key), want);
     }
 
     #[derive(Default)]
@@ -211,6 +240,26 @@ mod thumbnail_tests {
         }
         assert_eq!(app.renderer.thumb_jobs_built, 1);
         assert!(work.borrow().jobs.is_empty());
+    }
+
+    #[test]
+    fn a_slider_drag_leaves_the_edited_photos_thumbnail_until_it_ends() {
+        let (mut app, work, ctx) = fixture();
+        request(&mut app);
+        let (slot, job) = take_job(&work);
+        finish(&mut app, &work, &ctx, slot, job.run());
+        app.session.execute("library.select", &serde_json::json!({"ids": [1], "active": 1})).unwrap();
+        app.session.execute("develop.beginInteraction", &serde_json::json!({"label": "Exposure"})).unwrap();
+        for v in [0.1, 0.2, 0.3] {
+            app.session.execute("develop.set", &serde_json::json!({"control": "light.exposure", "value": v})).unwrap();
+            app.renderer.poll(&ctx, &mut app.session);
+            request(&mut app);
+        }
+        assert_eq!(app.renderer.thumb_jobs_built, 1, "the drag's frames render no thumbnail of the photo");
+        assert!(work.borrow().jobs.is_empty());
+        app.session.execute("develop.endInteraction", &serde_json::json!({})).unwrap();
+        request(&mut app);
+        assert_eq!(app.renderer.thumb_jobs_built, 2, "the thumbnail follows once the drag ends");
     }
 
     #[test]
@@ -379,6 +428,33 @@ mod thumbnail_tests {
         finish(&mut app, &work, &ctx, Slot::Main, second.run());
         assert_eq!(app.renderer.textures.get(&Slot::Main).map(|t| t.key), Some(keys[2]));
         assert!(!app.renderer.is_pending(Slot::Main));
+    }
+
+    #[test]
+    fn a_drag_gets_its_live_hdr_histogram_beside_the_drafts() {
+        let (mut app, work, ctx) = fixture();
+        let mut jobs = Vec::new();
+        for exposure in [1.0, 2.0] {
+            let mut edit = lightcraft_develop::DevelopSettings::default();
+            edit.hdr.enabled = true;
+            edit.light.exposure = exposure;
+            app.session.catalog.apply(Op::SetDevelop { id: PhotoId(1), settings: Arc::new(edit), label: "drag".into(), edited: None }).unwrap();
+            let job = app.session.render_job(PhotoId(1), 32, 32, false, true).unwrap();
+            app.renderer.request(Slot::HdrHistogram, job, 95);
+            jobs.push(take_job(&work).1);
+        }
+        let keys: Vec<u64> = jobs.iter().map(|j| j.key).collect();
+        let mut jobs = jobs.into_iter();
+        let (first, last) = (jobs.next().unwrap(), jobs.next().unwrap());
+        // superseded while the drag goes on, it still lands: the histogram keeps moving
+        finish(&mut app, &work, &ctx, Slot::HdrHistogram, first.run());
+        let live = app.renderer.live_hdr_histogram.clone().expect("a live HDR histogram");
+        assert_eq!((live.0, live.1), (PhotoId(1), keys[0]));
+        assert!(live.2.hdr.is_some(), "HDR bins");
+        finish(&mut app, &work, &ctx, Slot::HdrHistogram, last.run());
+        assert_eq!(app.renderer.live_hdr_histogram.as_ref().map(|l| l.1), Some(keys[1]));
+        // only the histogram is kept: no texture
+        assert!(!app.renderer.textures.contains_key(&Slot::HdrHistogram));
     }
 
     #[test]

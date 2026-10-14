@@ -759,6 +759,7 @@
 "File name" = "Nom de fichier";
 "File types:" = "Types de fichiers :";
 "Filename" = "Nom de fichier";
+"Files with the same content as another file in this import: only the first is imported." = "Fichiers au contenu identique à un autre fichier de cette importation : seul le premier est importé.";
 "Files…" = "Fichiers…";
 "Fill" = "Remplir";
 "Fill Edges" = "Remplir les bords";
@@ -1147,6 +1148,7 @@
 "Local" = "Local";
 "Local folders" = "Dossiers locaux";
 "Local library — no cloud account needed" = "Bibliothèque locale : aucun compte cloud nécessaire";
+"Locate Missing Files…" = "Localiser les fichiers manquants…";
 "Locate Missing File…" = "Localiser le fichier manquant…";
 "Locate Photo" = "Localiser la photo";
 "Location" = "Lieu";
@@ -1347,6 +1349,7 @@
 "No filter presets yet" = "Aucun préréglage de filtre pour l'instant";
 "No folders to browse" = "Aucun dossier à parcourir";
 "No folders yet: photos imported from Files show their folders here." = "Aucun dossier pour l'instant : les photos importées depuis Fichiers affichent leurs dossiers ici.";
+"No graphics processor found: LightCraft renders on the CPU, which is much slower. Details in Help → System Info." = "Aucun processeur graphique trouvé : LightCraft effectue le rendu sur le processeur, ce qui est beaucoup plus lent. Détails dans Aide → Informations système.";
 "No horizon or vertical lines found" = "Aucun horizon ni ligne verticale trouvé";
 "No imported folders yet" = "Aucun dossier importé pour l’instant";
 "No keywords" = "Aucun mot-clé";
@@ -1407,6 +1410,7 @@
 "Off" = "Désactivé";
 "Offset X" = "Décalage X";
 "Offset Y" = "Décalage Y";
+"On NixOS, start it from `nix develop`." = "Sous NixOS, lancez-le depuis `nix develop`.";
 "On This Device" = "Sur cet appareil";
 "On This Photo" = "Sur cette photo";
 "On every photo, the keywords inside it included; renaming it onto another keyword merges the two." = "Sur chaque photo, y compris les mots-clés qu'il contient ; le renommer avec le nom d'un autre mot-clé fusionne les deux.";
@@ -1938,6 +1942,7 @@
 "Short Edge" = "Petit côté";
 "Show" = "Afficher";
 "Show All" = "Tout afficher";
+"Show All Mask Overlays" = "Afficher toutes les superpositions de masque";
 "Show As" = "Afficher en tant que";
 "Show Clipping" = "Afficher l'écrêtage";
 "Show Counts in Albums" = "Afficher les nombres dans les albums";
@@ -1957,6 +1962,7 @@
 "Show Sidebar Section" = "Afficher la section de la barre latérale";
 "Show Source" = "Afficher la source";
 "Show Thumbnails" = "Afficher les miniatures";
+"Show all overlays" = "Afficher toutes les superpositions";
 "Show colours accurately on your monitor." = "Affichez des couleurs fidèles sur votre écran.";
 "Show commands without a shortcut" = "Afficher les commandes sans raccourci";
 "Show destination gamut warning" = "Afficher l'avertissement de gamut de destination";

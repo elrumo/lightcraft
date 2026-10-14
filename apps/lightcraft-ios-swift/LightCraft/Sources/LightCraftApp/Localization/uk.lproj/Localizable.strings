@@ -812,6 +812,7 @@
 "File name" = "Назва файлу";
 "File types:" = "Типи файлів:";
 "Filename" = "Назва файлу";
+"Files with the same content as another file in this import: only the first is imported." = "Файли з тим самим вмістом, що й інший файл цього імпорту: імпортується лише перший.";
 "Files…" = "Файли…";
 "Fill" = "Заливка";
 "Fill Edges" = "Заповнити краї";
@@ -1214,6 +1215,7 @@
 "Local" = "Локальні";
 "Local folders" = "Локальні теки";
 "Local library — no cloud account needed" = "Локальна бібліотека — хмарний обліковий запис не потрібен";
+"Locate Missing Files…" = "Знайти відсутні файли…";
 "Locate Missing File…" = "Знайти відсутній файл…";
 "Locate Photo" = "Знайти фото";
 "Location" = "Розташування";
@@ -1420,6 +1422,7 @@
 "No filter presets yet" = "Наборів налаштувань фільтрів поки немає";
 "No folders to browse" = "Немає тек для перегляду";
 "No folders yet: photos imported from Files show their folders here." = "Тек поки немає: тут з’являться теки фото, імпортованих із «Файлів».";
+"No graphics processor found: LightCraft renders on the CPU, which is much slower. Details in Help → System Info." = "Графічний процесор не знайдено: LightCraft виконує рендеринг на ЦП, а це набагато повільніше. Докладніше: Довідка → Інформація про систему.";
 "No horizon or vertical lines found" = "Горизонт або вертикальні лінії не знайдено";
 "No imported folders yet" = "Імпортованих тек ще немає";
 "No keywords" = "Немає ключових слів";
@@ -1481,6 +1484,7 @@
 "Off" = "Вимкнено";
 "Offset X" = "Зміщення X";
 "Offset Y" = "Зсув Y";
+"On NixOS, start it from `nix develop`." = "У NixOS запускайте його з `nix develop`.";
 "On This Device" = "На цьому пристрої";
 "On This Photo" = "На цьому фото";
 "On every photo, the keywords inside it included; renaming it onto another keyword merges the two." = "На кожному фото, разом із вкладеними ключовими словами; перейменування на наявне ключове слово об’єднує їх.";
@@ -2028,6 +2032,7 @@
 "Short Edge" = "Короткий край";
 "Show" = "Показати";
 "Show All" = "Показати всі";
+"Show All Mask Overlays" = "Показати всі накладення масок";
 "Show As" = "Показувати як";
 "Show Clipping" = "Показати відсікання";
 "Show Counts in Albums" = "Показувати кількість в альбомах";
@@ -2048,6 +2053,7 @@
 "Show Sidebar Section" = "Показати розділ бічної панелі";
 "Show Source" = "Показати джерело";
 "Show Thumbnails" = "Показати мініатюри";
+"Show all overlays" = "Показати всі накладення";
 "Show colours accurately on your monitor." = "Точні кольори на вашому моніторі.";
 "Show commands without a shortcut" = "Показати команди без скорочення";
 "Show destination gamut warning" = "Показати попередження про гаму призначення";

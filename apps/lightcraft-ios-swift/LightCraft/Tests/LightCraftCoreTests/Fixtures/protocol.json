@@ -555,6 +555,7 @@
       }
     ],
     "history.list": {
+      "cursor": 0,
       "history": [
         "Exposure"
       ],

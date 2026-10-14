@@ -88,6 +88,7 @@
 "Add %lld" = "Adicionar %1$lld";
 "Add Catchlight" = "Adicionar brilho no olho";
 "Add Face Model" = "Adicionar modelo de rostos";
+"Add Face Model…" = "Adicionar modelo de rostos…";
 "Add Folder to Local" = "Adicionar pasta ao Local";
 "Add Keyword" = "Adicionar palavra-chave";
 "Add Mask" = "Adicionar máscara";
@@ -126,6 +127,7 @@
 "Added to photos you import that don't already have it." = "Adicionado às fotos importadas que ainda não têm isso.";
 "Adding" = "Adicionando";
 "Adding Lightroom photos…" = "Adicionando fotos do Lightroom…";
+"Adding photos…" = "Adicionando fotos…";
 "Adding to Apple Photos" = "Adicionando ao Fotos da Apple";
 "Adding to Apple Photos…" = "Adicionando ao Fotos da Apple…";
 "Adjust to a Time" = "Ajustar para um horário";
@@ -301,7 +303,9 @@
 "Cancel Denoise" = "Cancel Denoise";
 "Cancel Denoise Model Download" = "Cancel Denoise Model Download";
 "Cancel Download" = "Cancelar download";
+"Cancel Face Model Download" = "Cancelar download do modelo de rostos";
 "Cancel Interaction" = "Cancelar interação";
+"Cancel Pending Photo Action" = "Cancelar ação pendente da foto";
 "Cancel Preview Build" = "Cancelar geração de prévia";
 "Cancel pending action" = "Cancel pending action";
 "Candidate" = "Candidato";
@@ -333,6 +337,7 @@
 "Choose Denoise Model" = "Choose Denoise Model";
 "Choose Edit Settings to Copy" = "Escolher ajustes de edição a copiar";
 "Choose Edit Settings to Copy…" = "Escolher ajustes de edição a copiar…";
+"Choose Face Recognition Model" = "Escolher modelo de reconhecimento facial";
 "Choose Folder…" = "Escolher pasta…";
 "Choose What to Do…" = "Escolher o que fazer…";
 "Choose a model below (Use) to start." = "Escolha um modelo abaixo (Usar) para começar.";
@@ -597,6 +602,8 @@
 "Detail" = "Detalhe";
 "Detail (D)" = "Detalhe (D)";
 "Details" = "Detalhes";
+"Detect Faces" = "Detectar rostos";
+"Detect Faces (Photo menu) needs it: a small one-time download." = "Detectar rostos (menu Foto) precisa dele: um pequeno download único.";
 "Detect Faces needs it: a small one-time download." = "Detectar rostos precisa dele: um pequeno download único.";
 "Develop" = "Edição";
 "Develop Defaults" = "Padrões de revelação";
@@ -618,6 +625,7 @@
 "Download AI Mask Model" = "Baixar modelo de máscaras de IA";
 "Download All Small Previews" = "Baixar todas as prévias pequenas";
 "Download Denoise Model" = "Download Denoise Model";
+"Download Face Model" = "Baixar modelo de rostos";
 "Download Place Names (GeoNames)" = "Baixar nomes de lugares (GeoNames)";
 "Download the SAM 3 Model?" = "Baixar o modelo SAM 3?";
 "Download, turn on and remove the optional AI models." = "Baixe, ative e remova os modelos de IA opcionais.";
@@ -629,6 +637,7 @@
 "Downloads from %@. Once it has arrived and checked out, LightCraft installs it, starts using it and turns face recognition on." = "Baixado de %@. Quando chegar e passar na verificação, o LightCraft o instala, começa a usá-lo e ativa o reconhecimento facial.";
 "Downloads from %@. Once it has arrived and checked out, LightCraft installs it." = "Baixado de %@. Quando chegar e passar na verificação, o LightCraft o instala.";
 "Download…" = "Baixar…";
+"Drag Crop Handle" = "Arrastar alça de recorte";
 "Drag a box around an eye to correct it" = "Arraste uma caixa ao redor de um olho para corrigi-lo";
 "Drag a box around an eye." = "Arraste uma caixa ao redor de um olho.";
 "Drag a corner or an edge to crop, outside the frame to rotate" = "Arraste um canto ou uma borda para recortar, ou fora do quadro para girar";
@@ -691,6 +700,7 @@
 "Enter Full Screen" = "Entrar em tela cheia";
 "Enter a date as YYYY-MM-DD HH:MM:SS" = "Digite uma data no formato AAAA-MM-DD HH:MM:SS";
 "Erase" = "Apagar";
+"Evaluate Face Recognition" = "Avaliar reconhecimento facial";
 "Every EXIF, GPS and XMP field in the file" = "Todos os campos EXIF, GPS e XMP do arquivo";
 "Every chosen photo gets this time." = "Todas as fotos escolhidas recebem este horário.";
 "Every chosen photo moves by this many hours." = "Cada foto escolhida é deslocada por esta quantidade de horas.";
@@ -734,11 +744,17 @@
 "Eyes" = "Olhos";
 "Face Boxes" = "Caixas de rosto";
 "Face Detector" = "Detector de rostos";
+"Face Model Downloads" = "Downloads de modelos de rostos";
+"Face Models" = "Modelos de rostos";
+"Face Recognition On/Off" = "Ativar/desativar reconhecimento facial";
 "Face boxes" = "Caixas de rosto";
+"Face detector" = "Detector de rostos";
 "Face names written to XMP by Lightroom and other apps show up here." = "Nomes de rostos gravados no XMP pelo Lightroom e por outros aplicativos aparecem aqui.";
+"Face recognition" = "Reconhecimento facial";
 "Faces" = "Rostos";
 "Faces Settings" = "Configurações de rostos";
 "Faces named by other apps show up here. Turn on finding people in Settings ▸ Faces, or open a photo and tap Tag a Face in its … menu." = "Rostos nomeados por outros apps aparecem aqui. Ative a busca de pessoas em Configurações ▸ Rostos ou abra uma foto e toque em Marcar um rosto no menu …";
+"Faces of a Person" = "Rostos de uma pessoa";
 "Faded Matte" = "Fosco desbotado";
 "Faded Slide" = "Slide desbotado";
 "Faded Urban" = "Urbano desbotado";
@@ -762,6 +778,7 @@
 "File name" = "Nome do arquivo";
 "File types:" = "Tipos de arquivo:";
 "Filename" = "Nome do arquivo";
+"Files with the same content as another file in this import: only the first is imported." = "Arquivos com o mesmo conteúdo de outro arquivo desta importação: apenas o primeiro é importado.";
 "Files…" = "Arquivos…";
 "Fill" = "Preencher";
 "Fill Edges" = "Preencher bordas";
@@ -851,6 +868,7 @@
 "Global Saturation" = "Saturação global";
 "Glossy" = "Brilhante";
 "Glossy Paper" = "Papel brilhante";
+"Go back to listing them by name" = "Voltar a listá-los por nome";
 "Go to History Step" = "Ir para etapa do histórico";
 "Go to a place" = "Ir para um lugar";
 "Golden" = "Dourado";
@@ -996,6 +1014,8 @@
 "Increase Brush Feather" = "Aumentar suavização do pincel";
 "Increase Brush Size" = "Aumentar tamanho do pincel";
 "Increase Rating" = "Aumentar avaliação";
+"Index Faces" = "Indexar rostos";
+"Index Faces in the Background" = "Indexar rostos em segundo plano";
 "Info" = "Informações";
 "Info (I)" = "Informações (I)";
 "Info Overlay" = "Sobreposição de informações";
@@ -1006,11 +1026,13 @@
 "Insert at the cursor" = "Inserir no cursor";
 "Inside “%@”" = "Dentro de “%@”";
 "Inspect Denoise Model" = "Inspect Denoise Model";
+"Inspect Face Model File" = "Inspecionar arquivo do modelo de rostos";
 "Inspect Lightroom Catalog" = "Inspecionar catálogo do Lightroom";
 "Inspect Photo" = "Inspecionar foto";
 "Inspecting Lightroom Catalog" = "Inspecionando catálogo do Lightroom";
 "Install" = "Instalar";
 "Install Denoise Model" = "Install Denoise Model";
+"Install Face Model" = "Instalar modelo de rostos";
 "Install a denoise model to enable AI Denoise on this photo" = "Install a denoise model to enable AI Denoise on this photo";
 "Install from file…" = "Install from file…";
 "Install the SAM 3 Model" = "Instalar o modelo SAM 3";
@@ -1092,6 +1114,7 @@
 "Letter" = "Carta";
 "Level" = "Nível";
 "Library" = "Biblioteca";
+"Library Folders" = "Pastas da biblioteca";
 "Library Info" = "Informações da biblioteca";
 "Library Originals" = "Originais da biblioteca";
 "Library Preferences" = "Preferências da biblioteca";
@@ -1150,6 +1173,7 @@
 "Local" = "Local";
 "Local folders" = "Pastas locais";
 "Local library — no cloud account needed" = "Biblioteca local — não precisa de conta na nuvem";
+"Locate Missing Files…" = "Localizar arquivos ausentes…";
 "Locate Missing File…" = "Localizar arquivo ausente…";
 "Locate Photo" = "Localizar foto";
 "Location" = "Local";
@@ -1281,6 +1305,8 @@
 "My Photos Panel" = "Painel Minhas fotos";
 "Name" = "Nome";
 "Name (A–Z)" = "Nome (A–Z)";
+"Name Face" = "Nomear rosto";
+"Name Faces" = "Nomear rostos";
 "Name of the folder the original is in" = "Nome da pasta em que o original está";
 "Name this face" = "Dê um nome a este rosto";
 "Name?" = "Nome?";
@@ -1350,6 +1376,7 @@
 "No filter presets yet" = "Ainda não há predefinições de filtro";
 "No folders to browse" = "Nenhuma pasta para navegar";
 "No folders yet: photos imported from Files show their folders here." = "Ainda não há pastas: as fotos importadas de Arquivos mostram suas pastas aqui.";
+"No graphics processor found: LightCraft renders on the CPU, which is much slower. Details in Help → System Info." = "Nenhum processador gráfico encontrado: o LightCraft renderiza na CPU, o que é muito mais lento. Detalhes em Ajuda → Informações do sistema.";
 "No horizon or vertical lines found" = "Nenhum horizonte ou linha vertical encontrado";
 "No imported folders yet" = "Ainda não há pastas importadas";
 "No keywords" = "Sem palavras-chave";
@@ -1410,6 +1437,7 @@
 "Off" = "Desativado";
 "Offset X" = "Deslocamento X";
 "Offset Y" = "Deslocamento Y";
+"On NixOS, start it from `nix develop`." = "No NixOS, inicie-o a partir de `nix develop`.";
 "On This Device" = "Neste dispositivo";
 "On This Photo" = "Nesta foto";
 "On every photo, the keywords inside it included; renaming it onto another keyword merges the two." = "Em todas as fotos, incluindo as palavras-chave dentro dela; renomeá-la com o nome de outra palavra-chave une as duas.";
@@ -1648,6 +1676,7 @@
 "Reading a sidecar replaces the photo's rating, labels, metadata and edits with what it says." = "Ler um arquivo auxiliar substitui a classificação, os rótulos, os metadados e as edições da foto pelo que ele contém.";
 "Reading folder" = "Lendo pasta";
 "Reading folder…" = "Lendo pasta…";
+"Reading photos…" = "Lendo fotos…";
 "Reading the catalog…" = "Lendo o catálogo…";
 "Real name" = "Nome real";
 "Recent" = "Recentes";
@@ -1657,7 +1686,9 @@
 "Recently Added" = "Adicionados recentemente";
 "Recently Deleted" = "Excluídos recentemente";
 "Recognise Faces (Experimental)" = "Reconhecer rostos (experimental)";
+"Recognise faces (experimental)" = "Reconhecer rostos (experimental)";
 "Recognition Models" = "Modelos de reconhecimento";
+"Recognition models" = "Modelos de reconhecimento";
 "Red" = "Vermelho";
 "Red Eye" = "Olhos vermelhos";
 "Red Hue" = "Matiz do vermelho";
@@ -1701,6 +1732,7 @@
 "Remove Disk from Library…" = "Remover disco da biblioteca…";
 "Remove Face" = "Remover rosto";
 "Remove Face Box" = "Remover caixa de rosto";
+"Remove Face Model" = "Remover modelo de rostos";
 "Remove Folder from Library" = "Remover pasta da biblioteca";
 "Remove Folder from Library…" = "Remover pasta da biblioteca…";
 "Remove Location" = "Remover localização";
@@ -1745,6 +1777,7 @@
 "Rendering" = "Renderizando";
 "Rendering, previews and the caches that keep browsing quick." = "Renderização, prévias e os caches que deixam a navegação rápida.";
 "Rendering…" = "Renderizando…";
+"Reorder Album" = "Reordenar álbum";
 "Reorder Masks" = "Reordenar máscaras";
 "Reorder Preset Group" = "Reordenar grupo de predefinições";
 "Replace this library with the server's. Photos only here are kept in Recently Deleted." = "Substitui esta biblioteca pela do servidor. As fotos que existem só aqui ficam em Excluídos recentemente.";
@@ -1943,6 +1976,7 @@
 "Short Edge" = "Aresta curta";
 "Show" = "Mostrar";
 "Show All" = "Mostrar tudo";
+"Show All Mask Overlays" = "Mostrar todas as sobreposições de máscara";
 "Show As" = "Mostrar como";
 "Show Clipping" = "Mostrar recorte de tons";
 "Show Counts in Albums" = "Mostrar contagens nos álbuns";
@@ -1954,6 +1988,7 @@
 "Show Mask Pins" = "Mostrar pinos da máscara";
 "Show Original" = "Mostrar original";
 "Show Overlay" = "Mostrar sobreposição";
+"Show Person" = "Mostrar pessoa";
 "Show Photo Counts" = "Mostrar contagem de fotos";
 "Show Photos" = "Mostrar fotos";
 "Show Photos with Keyword" = "Mostrar fotos com a palavra-chave";
@@ -1962,6 +1997,7 @@
 "Show Sidebar Section" = "Mostrar seção da barra lateral";
 "Show Source" = "Mostrar origem";
 "Show Thumbnails" = "Mostrar miniaturas";
+"Show all overlays" = "Mostrar todas as sobreposições";
 "Show colours accurately on your monitor." = "Mostre as cores com precisão no seu monitor.";
 "Show commands without a shortcut" = "Mostrar comandos sem atalho";
 "Show destination gamut warning" = "Mostrar aviso de gamut de destino";
@@ -2027,6 +2063,7 @@
 "Some rules need fixing (Edit Smart Album…):" = "Algumas regras precisam ser corrigidas (Editar álbum inteligente…):";
 "Sort" = "Classificar";
 "Sort Albums A–Z" = "Classificar álbuns A–Z";
+"Sort Albums by Name" = "Ordenar álbuns por nome";
 "Sort By" = "Classificar por";
 "Sort Contents A–Z" = "Classificar conteúdo A–Z";
 "Sort by" = "Classificar por";
@@ -2080,8 +2117,10 @@
 "Subject" = "Assunto";
 "Subtract" = "Subtrair";
 "Subtract from this mask" = "Subtrair desta máscara";
+"Suggest Names for Faces" = "Sugerir nomes para rostos";
 "Suggestions" = "Sugestões";
 "Suggests who is in a photo from the faces you have named. Everything stays on this device." = "Sugere quem está em uma foto a partir dos rostos que você nomeou. Tudo fica neste dispositivo.";
+"Suggests who is in a photo from the faces you have named. Everything stays on your computer." = "Sugere quem aparece em uma foto com base nos rostos que você nomeou. Tudo permanece no seu computador.";
 "Summer Haze" = "Névoa de verão";
 "Sunday" = "Domingo";
 "Super Resolution" = "Super Resolução";
@@ -2147,6 +2186,7 @@
 "Temporary session — your library isn't open, and nothing you do here is saved." = "Sessão temporária — sua biblioteca não está aberta e nada do que você fizer aqui é salvo.";
 "Terms" = "Termos";
 "Test Denoise Model" = "Test Denoise Model";
+"Test Face Model" = "Testar modelo de rostos";
 "Tested and works on this computer" = "Tested and works on this computer";
 "Text" = "Texto";
 "Text direction" = "Direção do texto";
@@ -2194,6 +2234,7 @@
 "This build cannot run denoise models." = "This build cannot run denoise models.";
 "This build cannot run recognition models: they can be added and chosen, not used." = "Esta versão não consegue executar modelos de reconhecimento: eles podem ser adicionados e escolhidos, mas não usados.";
 "This build has nowhere to keep denoise models, so AI Denoise is not available. (The desktop app has.)" = "This build has nowhere to keep denoise models, so AI Denoise is not available. (The desktop app has.)";
+"This build has nowhere to keep face models, so the model list is not available. (The desktop app has.)" = "Esta versão não tem onde guardar modelos de rostos, então a lista de modelos não está disponível. (O aplicativo para desktop tem.)";
 "This build has nowhere to keep face models." = "Esta versão não tem onde guardar modelos de rostos.";
 "This disk" = "Este disco";
 "This file cannot be used yet" = "This file cannot be used yet";
