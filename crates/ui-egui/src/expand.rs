@@ -234,7 +234,7 @@ pub fn panel(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, d: &Develo
     items.extend(models.iter().map(|m| (short_label(*m), m.id())));
     ui.label(tr("Fill With"));
     let at = if automatic { Some(0) } else { models.iter().position(|m| *m == chosen(app)).map(|i| i + 1) };
-    if let Some(i) = crate::widgets::segmented(ui, "expandModel", &items, at, 4) {
+    if let Some(i) = crate::widgets::segmented(ui, "expandModel", &items, at, 3) {
         choose(app, if i == 0 { None } else { models.get(i - 1).copied() });
     }
     let current = chosen(app);

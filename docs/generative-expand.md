@@ -63,9 +63,9 @@ x86-64 Linux VM without a GPU, on a 2560 × 1707 demo photo cropped to 1 × 1:
 |---|---|
 | MI-GAN | 6 s |
 | LaMa | 20 s |
-| Stable Diffusion 1.5 (512) | MEASURE_SD15 |
-| Kandinsky 2.2 (768) | MEASURE_KAND |
-| SDXL (1024) | not run (too slow on 4 cores) |
+| Stable Diffusion 1.5 (512, 15 steps) | 8 min |
+| Kandinsky 2.2 (768, 15 steps) | 17 min |
+| SDXL (1024) | not run: its 32-bit UNet alone is 10 GB, too much for this 16 GB VM (it is offered on a CPU from 32 GB) |
 | Classic | 4 s |
 
 On an Apple-silicon Mac LaMa's pass took 7–11 s on the CPU. The diffusion models' GPU (Metal)
@@ -199,7 +199,10 @@ given):
 
 - Stable Diffusion 1.5: the tokenizer's ids are identical; the text encoder, one UNet step and the
   VAE agree within 2 × 10⁻³ (`sd::tests::matches_diffusers`).
-- SDXL: MEASURE_SDXL (`sd::tests::sdxl_matches_diffusers`).
+- SDXL: both tokenizers' ids are identical; the two text encoders agree within 5 × 10⁻⁴, the
+  pooled text embedding within 2 × 10⁻⁵ and one UNet step, with the added text and time
+  conditioning, within 3 × 10⁻⁴ (`sd::tests::sdxl_matches_diffusers`). Its VAE is Stable Diffusion
+  1.5's network with other weights, checked there.
 - Kandinsky 2.2: the image encoder within 2 × 10⁻⁵, one UNet step within 5 × 10⁻⁶, MoVQ within
   5 × 10⁻⁵ (`kandinsky::tests::matches_diffusers`). (This found that candle 0.9.2's `Linear` answers
   wrongly for a transposed three-dimensional input; the code makes such inputs contiguous.)
