@@ -281,5 +281,9 @@
   "Reading {name}… {n} photos so far": "{name} wird gelesen … bisher {n} Fotos",
   "Photos not copied from {name}: {n}": "Nicht von {name} kopierte Fotos: {n}",
   "No photos could be copied from {name}": "Von {name} konnten keine Fotos kopiert werden",
-  "{name} connected": "{name} verbunden"
+  "{name} connected": "{name} verbunden",
+  "Uses the {} model, a {:.0} MB download ({} licence). {}.": "Verwendet das {}-Modell, ein Download von {:.0} MB (Lizenz {}). {}.",
+  "New area painted with {}": "Neue Fläche mit {} erzeugt",
+  "{note} · {:.0} MB download": "{note} · Download von {:.0} MB",
+  "The new area was painted by {by} on this device.": "Die neue Fläche wurde auf diesem Gerät erzeugt ({by})."
 }

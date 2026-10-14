@@ -27,24 +27,9 @@ fn scan_pace(app: &LightcraftApp, ctx: &egui::Context, now: f64) -> (&'static st
     (pace_for(focused, minimized, now - app.caches.last_input, now - app.caches.last_move, watching), focused && !minimized)
 }
 
-/// The pace for a window that has the keyboard (or not) and is minimized (or not), `worked` seconds after the user last
-/// dragged, typed or scrolled and `moved` seconds after they last moved the pointer, while they are (or are not) looking
-/// at the scan's progress.
+/// The pace for a window ([`lightcraft_apphost::faces::pace_for`], shared with the SwiftUI app's host).
 fn pace_for(focused: bool, minimized: bool, worked: f64, moved: f64, watching: bool) -> &'static str {
-    if minimized {
-        "light"
-    } else if !focused {
-        // still on screen, but the user is working in another app: no input here to get in the way of
-        "normal"
-    } else if worked < 0.4 {
-        "pause"
-    } else if moved < 3.0 {
-        "light"
-    } else if watching {
-        "full"
-    } else {
-        "normal"
-    }
+    lightcraft_apphost::faces::pace_for(focused, minimized, worked, moved, watching)
 }
 
 /// How long a read of the model list is reused (it is a few small files, but not for every frame).

@@ -50,7 +50,8 @@ agreed), `models.list`, `models.cancel`, `models.delete`. Without the model both
 
 ## Managing the model
 
-Settings → AI Models shows it (where it is stored, its size), and lets you turn it off or delete it. In the browser
+Settings → AI Models shows it (where it is stored, its size), and lets you turn it off or delete it. The same file
+paints the crop tool's Generative Expand ([generative-expand.md](generative-expand.md)): one download serves both. In the browser
 it is kept in the site's storage (`models/migan/migan.onnx`): Back Up Library leaves it out, and `?reset` removes it.
 On iPhone it is stored in the app's caches, which iOS may empty when storage runs low (the switch then offers it again).
 

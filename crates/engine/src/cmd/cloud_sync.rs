@@ -55,13 +55,21 @@ fn usage(s: &mut Session, p: &Value) -> Result<Value> {
     let (photos, remote) = s.photo_counts();
     let left = s.sync_previews_left();
     let st = s.sync_state();
+    let u = st.and_then(|st| st.usage());
+    let local = s.local_dirs().map(|d| crate::usage::measure(&d));
     Ok(json!({
-        "server": st.and_then(|st| st.usage()),
+        "server": u,
         // all of it: what the server keeps and the photos it reads in place from library folders
-        "serverTotal": st.and_then(|st| st.usage()).map(|u| u.total()),
+        "serverTotal": u.map(|u| u.total()),
+        // what counts against the admin's limit, what the library takes of the server's disk, and
+        // whether it is within a tenth of the limit
+        "serverStored": u.map(|u| u.stored()),
+        "serverOnDisk": u.map(|u| u.on_disk()),
+        "nearLimit": u.is_some_and(|u| u.quota.is_some_and(|q| u.stored() >= q.saturating_mul(9) / 10)),
+        "localTotal": local.as_ref().map(crate::usage::LocalUsage::total),
         "serverError": st.and_then(|st| st.usage_error()),
         "serverAgeSecs": st.and_then(|st| st.usage_age()).map(|a| a.as_secs()),
-        "local": s.local_dirs().map(|d| crate::usage::measure(&d)),
+        "local": local,
         "photos": {"total": photos, "onlyPreviewsHere": remote},
         "previewsLeft": left.map(|(n, bytes)| json!({"photos": n, "bytes": bytes})),
     }))
@@ -308,7 +316,7 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!("sync.pause", "Pause Syncing", ["File"], None, "{on?: bool}: stop talking to the server for now (toggle without `on`)", synced, pause),
         cmd!(query "sync.status", "Sync Status", [], None, "{}: state (off / signedOut / idle / syncing / error), pending changes, transfers, error", always, status),
         cmd!(query "sync.usage", "Sync Storage", [], None,
-            "{refresh?: bool}: what this library takes on the sync server (originals, smart and small previews, library folders, `serverTotal`: all of those, the server's free disk) and on this computer (catalog, thumbnails, previews, downloaded originals, free disk), in bytes; photos with only previews here; the small previews not downloaded yet (previewsLeft: photos, about how many bytes). The server's numbers are the last it gave (asked for again every 20 s while someone looks) unless `refresh` asks it now",
+            "{refresh?: bool}: what this library takes on the sync server (originals, smart and small previews, library folders, `serverTotal`: all of those, the server's free disk) and on this computer (catalog, thumbnails, previews, downloaded originals, free disk), in bytes (serverStored: what counts against the server's limit, serverOnDisk: what it takes of the server's disk, nearLimit: within a tenth of the limit, localTotal); photos with only previews here; the small previews not downloaded yet (previewsLeft: photos, about how many bytes). The server's numbers are the last it gave (asked for again every 20 s while someone looks) unless `refresh` asks it now",
             synced, usage),
         cmd!(
             "sync.storeOriginalsLocally",

@@ -134,12 +134,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
 
 /// `d` with profile `profile_id` (at 100 % unless it is the applied one).
 fn with_profile_id(d: &DevelopSettings, profile_id: &str) -> DevelopSettings {
-    let mut s = d.clone();
-    if s.profile.id != profile_id {
-        s.profile.id = profile_id.to_string();
-        s.profile.amount = 100.0;
-    }
-    s
+    d.with_profile(profile_id)
 }
 
 #[allow(clippy::too_many_arguments)]

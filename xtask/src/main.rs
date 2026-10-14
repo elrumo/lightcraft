@@ -11,6 +11,7 @@ mod layers;
 mod parity;
 mod parity_ios;
 mod stats;
+mod swift_strings;
 mod version;
 mod web;
 
@@ -41,6 +42,10 @@ commands:
   swift-test      the SwiftUI app's LightCraftCore tests on this machine: builds the Rust bridge library
                   (lightcraft-ios-swift) for the host into its Swift package and runs `swift test` there
                   (needs a Swift 6.2 toolchain: `swift` on PATH or $SWIFT; not part of ci, see docs/ios-swift.md)
+  swift-strings [<derived-data>] [--missing]
+                  the SwiftUI app's Localizable.strings from the egui catalogs and apps/lightcraft-ios-swift/locales;
+                  <derived-data> (an Xcode build with SWIFT_EMIT_LOC_STRINGS=YES) first refreshes the app's key list;
+                  --missing lists what nothing translates yet
   web [--serve [port]] [--dev]
                   build the browser app (apps/lightcraft-web) into <target>/web-site/;
                   --serve serves it on http://127.0.0.1:<port> (default 8080)
@@ -67,6 +72,7 @@ fn main() -> ExitCode {
         Some("wasm") => cmd_wasm(),
         Some("ios") => cmd_ios(),
         Some("swift-test") => cmd_swift_test(),
+        Some("swift-strings") => swift_strings::run(&root(), &rest),
         Some("web") => web::run(&rest),
         Some("ci") => cmd_ci(),
         Some("corpus") => cmd_corpus(rest.contains(&"--download")),

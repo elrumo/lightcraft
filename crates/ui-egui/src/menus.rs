@@ -8,8 +8,7 @@ use crate::LightcraftApp;
 use crate::pick::{PickRequest, Picked};
 use crate::state::{BeforeAfter, Dialog, RightPanel, ViewMode, Zoom};
 
-/// (id, label, shortcut, menu path)
-pub type UiCommand = (&'static str, &'static str, Option<&'static str>, &'static str);
+pub use lightcraft_apphost::ui_commands::{UI_COMMANDS, UiCommand};
 
 /// The "Edit → Language" entries, one per language in [`crate::i18n::Locale::ALL`], so a language
 /// has a matching menu command (also listed through the control channel). Tests check coverage.
@@ -49,210 +48,6 @@ pub fn language_from_command(id: &str) -> Option<crate::i18n::Locale> {
         _ => None,
     }
 }
-
-pub const UI_COMMANDS: &[UiCommand] = &[
-    ("app.appearance.system", "System", None, "Edit>Appearance"),
-    ("app.appearance.light", "Light", None, "Edit>Appearance"),
-    ("app.appearance.dark", "Dark", None, "Edit>Appearance"),
-    ("ui.dock", "Arrange Panel", None, ""),
-    ("ui.dock.reset", "Reset Panel Layout", None, "Window"),
-    ("modelSetup.cancel", "Cancel Pending Photo Action", None, ""),
-    ("view.photoGrid", "Photo Grid", None, "View"),
-    ("view.squareGrid", "Square Grid", None, "View"),
-    // G: Photo Grid ↔ Square Grid (from other views: the photo grid)
-    ("view.gridToggle", "Grid", Some("G"), ""),
-    ("tool.guidedUpright", "Guided Upright", Some("Shift+G"), "Window>Tools"),
-    ("view.detail", "Detail", Some("D"), "View"),
-    ("view.compare", "Compare", Some("Shift+C"), "View"),
-    ("view.survey", "Survey", Some("N"), "View"),
-    ("view.people", "People", None, "View"),
-    ("view.map", "Map", None, "View"),
-    ("view.person", "Show Person", None, ""),
-    ("view.faceBoxes", "Face Boxes", None, "View"),
-    ("view.reference", "Reference View", Some("Shift+R"), "View"),
-    ("photo.setReference", "Set as Reference Photo", None, ""),
-    ("compare.swap", "Swap Compare Photos", None, "View"),
-    ("compare.set", "Show in Compare", None, ""),
-    ("compare.makeSelect", "Make Candidate the Select", None, "View"),
-    ("view.autoAdvance", "Auto Advance", None, "Photo"),
-    ("view.filmstrip", "Filmstrip", Some("/"), "View"),
-    ("view.leftPanel", "My Photos Panel", Some("Cmd+Shift+L"), "View"),
-    ("view.beforeAfter", "Compare Before and After", Some("Y"), "View"),
-    ("view.beforeAfterSplit", "Before/After Split", Some("Shift+Y"), "View"),
-    ("view.beforeAfterTopBottom", "Before/After Top/Bottom", Some("Alt+Y"), "View"),
-    ("view.beforeAfterSplitTopBottom", "Before/After Split Top/Bottom", Some("Alt+Shift+Y"), "View"),
-    ("view.showOriginal", "Show Original", Some("\\"), "View"),
-    ("view.zoomFit", "Zoom to Fit", Some("Cmd+0"), "View"),
-    ("view.zoom100", "Zoom 100%", Some("Cmd+Alt+0"), "View"),
-    ("view.zoomToggle", "Toggle Zoom", Some("Z"), "View"),
-    // the ratio a click (and Z / Space) zooms to
-    ("view.clickZoom", "Click Zoom Ratio", None, ""),
-    ("view.navigate", "Set Image Zoom and Pan", None, ""),
-    ("view.zoomIn", "Zoom In", Some("Cmd+="), "View"),
-    ("view.zoomOut", "Zoom Out", Some("Cmd+-"), "View"),
-    ("view.clipping", "Show Clipping", Some("J"), "View"),
-    ("view.visualizeHdr", "Visualize HDR", None, "View"),
-    // in grids S expands/collapses stacks (the engine command it shadows)
-    ("view.softProof", "Soft Proofing", Some("S"), "View"),
-    ("view.histogram", "Histogram", Some("Cmd+Shift+H"), "View"),
-    ("view.maskOverlay", "Show Mask Overlay", Some("O"), "View"),
-    // Ctrl+Shift+O / Cmd+Shift+O: every mask's region at once, not just the selected one
-    ("view.maskOverlayAll", "Show All Mask Overlays", Some("Cmd+Shift+O"), "View"),
-    // Shift+O in the Masking panel (elsewhere it cycles the crop overlay)
-    ("view.maskOverlayMode", "Cycle Mask Overlay Mode", None, "View"),
-    ("view.maskOverlayColor", "Cycle Mask Overlay Color", None, "View"),
-    ("view.maskPins", "Show Mask Pins", None, "View"),
-    ("view.visualizeSpots", "Visualize Spots", Some("A"), "View"),
-    ("view.cropOverlay", "Cycle Crop Overlay", Some("Shift+O"), "View"),
-    ("view.cropOverlayOrientation", "Cycle Crop Overlay Orientation", None, "View"),
-    ("view.back", "Back to Grid", Some("Escape"), ""),
-    ("tool.done", "Done", Some("Enter"), ""),
-    ("view.filterBar", "Filter Bar", Some("Shift+F"), "View"),
-    ("local.addRoot", "Add Folder to Local", None, ""),
-    ("local.hide", "Remove from Local", None, ""),
-    ("local.restoreHidden", "Show Hidden Local Locations", None, ""),
-    ("view.fullScreenPreview", "Full Screen Preview", Some("F"), "View"),
-    ("view.lightsOut", "Lights Out", Some("Shift+L"), "View"),
-    ("view.enterFullScreen", "Enter Full Screen", Some("Cmd+Shift+F"), "View"),
-    ("view.infoOverlay", "Cycle Info Overlay", Some("Cmd+I"), "View"),
-    ("view.navigator", "Navigator", None, "View"),
-    ("panel.edit", "Edit", Some("E"), "Window"),
-    ("panel.profiles", "Profile Browser", None, "Window"),
-    ("panel.crop", "Crop & Rotate", Some("C"), "Window"),
-    ("panel.remove", "Remove", Some("H"), "Window"),
-    ("panel.masking", "Masking", Some("M"), "Window"),
-    ("panel.redeye", "Red Eye", None, "Window"),
-    ("panel.presets", "Presets", Some("Shift+P"), "Window"),
-    ("panel.info", "Info", Some("I"), "Window"),
-    ("panel.keywords", "Keywords", Some("K"), "Window"),
-    ("panel.versions", "Versions", Some("Shift+V"), "Window"),
-    ("panel.activity", "History", None, "Window"),
-    // the cloud button's popover: what syncing is doing, here and on the server
-    ("view.syncStatus", "Sync Status", None, "File"),
-    ("dialog.syncChoice", "Choose What to Do with This Library…", None, ""),
-    ("panel.close", "Close Panel", None, ""),
-    ("section.light", "Light", Some("Cmd+1"), "Window>Edit Sections"),
-    ("section.color", "Color", Some("Cmd+2"), "Window>Edit Sections"),
-    ("section.effects", "Effects", Some("Cmd+3"), "Window>Edit Sections"),
-    ("section.detail", "Detail", Some("Cmd+4"), "Window>Edit Sections"),
-    ("section.optics", "Optics", Some("Cmd+5"), "Window>Edit Sections"),
-    ("tool.brush", "Brush", Some("B"), "Window>Tools"),
-    ("tool.linear", "Linear Gradient", Some("L"), "Window>Tools"),
-    ("tool.radial", "Radial Gradient", Some("R"), "Window>Tools"),
-    ("tool.wbPicker", "White Balance Selector", Some("W"), "Window>Tools"),
-    ("tool.none", "No Tool", None, ""),
-    // brush size / feather of the active brush (Masking brush, Remove tool and its selected spot)
-    ("brush.smaller", "Decrease Brush Size", Some("["), "Window>Tools"),
-    ("brush.larger", "Increase Brush Size", Some("]"), "Window>Tools"),
-    ("brush.featherLess", "Decrease Brush Feather", Some("Shift+["), "Window>Tools"),
-    ("brush.featherMore", "Increase Brush Feather", Some("Shift+]"), "Window>Tools"),
-    ("dialog.newAlbum", "New Album…", Some("Cmd+N"), "File"),
-    // {id?}: how a link to an album (default: the one shown) works, then `album.share`
-    ("dialog.shareLink", "Share Link…", None, ""),
-    ("dialog.newFolder", "New Folder…", Some("Cmd+Shift+N"), "File"),
-    ("dialog.smartAlbum", "New Smart Album…", None, "File"),
-    ("view.photoCounts", "Show Photo Counts", None, "View"),
-    ("view.sidebarSection", "Show Sidebar Section", None, ""),
-    ("view.sidebarMoveSection", "Move Sidebar Section", None, ""),
-    ("view.sidebarReset", "Reset Sidebar Sections", None, ""),
-    ("view.slideshow", "Slideshow", Some("Cmd+Alt+Enter"), "View"),
-    ("view.secondWindow", "Second Window", Some("Cmd+F11"), "Window"),
-    ("tool.keywordPainter", "Keyword Painter", None, ""),
-    ("view.gridInfo", "Grid Info", None, ""),
-    // {mode?: auto | light | dark}: Appearance Mode (cycles Auto, Light, Dark when omitted; the
-    // top bar's appearance button). View ▸ Appearance lists the modes.
-    ("view.appearance", "Next Appearance Mode", None, ""),
-    // {theme: charcoal | midnight | silver | paper}: pick a theme and fix the mode to its family.
-    ("view.theme", "Theme", None, ""),
-    ("dialog.allMetadata", "All Metadata…", None, "Photo"),
-    ("dialog.faceModel", "Add Face Model…", None, ""),
-    ("dialog.newSmartAlbum", "New Smart Album from Filter…", Some("Cmd+Alt+N"), "File"),
-    ("dialog.createPreset", "Create Preset…", Some("Cmd+Shift+P"), "Photo"),
-    ("dialog.autoStack", "Auto-Stack by Capture Time…", None, "Photo>Stack"),
-    ("dialog.copySettings", "Choose Edit Settings to Copy…", Some("Cmd+Shift+C"), "Edit"),
-    ("dialog.pasteSettings", "Paste Selected Settings…", Some("Cmd+Shift+V"), "Edit"),
-    ("view.focusSearch", "Find…", Some("Cmd+F"), "Edit"),
-    ("dialog.export", "Export…", None, "File"),
-    ("dialog.contactSheet", "Contact Sheet PDF…", None, "File"),
-    ("app.contactSheet", "Export Contact Sheet PDF", None, ""),
-    ("photo.editInPhotoCraft", "Edit in PhotoCraft", Some("Cmd+Shift+E"), "Photo>Edit In"),
-    ("photo.editInExternal", "Edit in Other Editor", Some("Cmd+Alt+E"), "Photo>Edit In"),
-    // {ids?, app?}: the original files themselves (a raw stays a raw: no render, no copy), opened
-    // in the other editor, e.g. a raw developer
-    ("photo.openOriginalInExternal", "Open Original in Other Editor (RAW, no copy)", None, "Photo>Edit In"),
-    ("dialog.mergeHdr", "HDR…", Some("Ctrl+H"), "Photo>Photo Merge"),
-    ("dialog.mergePanorama", "Panorama…", Some("Ctrl+M"), "Photo>Photo Merge"),
-    ("dialog.mergeHdrPanorama", "HDR Panorama…", None, "Photo>Photo Merge"),
-    ("merge.hdrLast", "HDR with Last Settings", Some("Ctrl+Shift+H"), "Photo>Photo Merge"),
-    ("merge.panoramaLast", "Panorama with Last Settings", Some("Ctrl+Shift+M"), "Photo>Photo Merge"),
-    ("merge.hdrPanoramaLast", "HDR Panorama with Last Settings", None, "Photo>Photo Merge"),
-    ("dialog.superRes", "Super Resolution…", None, "Photo>Enhance"),
-    ("superRes.cancel", "Cancel Super Resolution", None, "Photo>Enhance"),
-    // compact layout: choose photos by touch (Select, or a long press in the grid)
-    ("view.selectMode", "Select Photos", None, ""),
-    // compact layout: a photo with the bars away, where swipes rate and flag it
-    ("view.reviewMode", "Rate & Review", None, ""),
-    // compact layout: the Filter page (the filter button over the grid)
-    ("view.filterSheet", "Filter…", None, ""),
-    // compact layout: back to the top of the grid (iOS: a tap on the status bar or the top bar)
-    ("view.scrollToTop", "Scroll to Top", None, ""),
-    // compact layout: the next tap on the photo marks a face there and asks who it is
-    ("view.tagFace", "Tag a Face", None, ""),
-    // compact layout: photos across the grid (a pinch), and every photo / months / years
-    ("view.gridColumns", "Grid Columns", None, ""),
-    ("view.gridSpan", "Years, Months or All Photos", None, ""),
-    ("file.addPhotos", "Import Photos…", Some("Cmd+Shift+I"), "File"),
-    // the host's own pickers (iOS); only in hosts that have them
-    ("file.importFromPhotos", "Import from Photos…", None, "File"),
-    ("file.importFromFiles", "Import from Files…", None, "File"),
-    ("file.importFolderFromFiles", "Import Folder from Files…", None, "File"),
-    ("file.addFolder", "Import from Folder…", None, "File"),
-    ("file.importLightroom", "Import Lightroom Catalog…", None, "File"),
-    ("file.addFromDevice", "Import from Device", None, ""),
-    ("file.cameras", "Connected Cameras and Cards", None, ""),
-    ("file.findMissing", "Find Missing Photos…", None, "File"),
-    ("file.backupLibrary", "Back Up Library…", None, "File"),
-    ("file.restoreLibrary", "Restore Library from Backup…", None, "File"),
-    ("photo.locate", "Locate Missing File…", None, ""),
-    ("dialog.saveMetadataPreset", "Save Metadata Preset…", None, ""),
-    ("app.quit", "Quit LightCraft", Some("Cmd+Q"), "File"),
-    ("file.importPresets", "Import Profiles & Presets…", None, "File"),
-    ("file.exportPresets", "Export Presets…", None, "File"),
-    ("file.importKeywords", "Import Keywords…", None, "File"),
-    ("file.exportKeywords", "Export Keywords…", None, "File"),
-    // Edit panel ▸ Curve ▸ Point Curve dropdown
-    ("file.importCurvePresets", "Import Point Curve Presets…", None, ""),
-    ("file.exportCurvePresets", "Export Point Curve Presets…", None, ""),
-    ("app.settings", "Settings…", Some("Cmd+,"), "Edit"),
-    ("app.newLibrary", "New Library…", None, "File"),
-    ("app.openLibrary", "Open Library…", None, "File"),
-    ("app.recentLibraries", "Recent Libraries", None, ""),
-    ("app.clearRecentLibraries", "Clear Recent Libraries", None, ""),
-    // Settings ▸ Display
-    ("app.displayProfile", "Display Profile", None, ""),
-    ("app.about", "About LightCraft", None, "Help"),
-    ("app.systemInfo", "System Info…", None, "Help"),
-    ("app.openLogFolder", "Open Log Folder", None, "Help"),
-    ("app.whatsNew", "What's New", None, "Help"),
-    ("dialog.cull", "Assisted Culling…", None, "Photo"),
-    ("app.help", "LightCraft Help", Some("F1"), "Help"),
-    ("app.discord", "Join the ArtCraft Discord…", None, "Help"),
-    ("app.feedback", "Send Feedback…", None, "Help"),
-    ("app.website", "LightCraft Website", None, "Help"),
-    ("app.github", "LightCraft on GitHub", None, "Help"),
-    ("app.artcraft", "ArtCraft Website", None, "Help"),
-    ("app.shortcuts", "Keyboard Shortcuts", Some("Cmd+/"), "Help"),
-    ("app.setShortcut", "Set Keyboard Shortcut", None, ""),
-    ("app.resetShortcuts", "Reset All Keyboard Shortcuts", None, ""),
-    ("app.export", "Export Now", None, ""),
-    ("app.showInFinder", "Show in Finder", Some("Cmd+R"), "Photo"),
-    ("dialog.rename", "Rename Photos…", Some("F2"), "Photo"),
-    ("dialog.labelNames", "Edit Color Label Names…", None, ""),
-    ("dialog.captureTime", "Edit Capture Time…", None, "Photo"),
-    ("photo.tagFromTracklog", "Auto-Tag from Tracklog…", None, "Photo"),
-    ("app.exportPrevious", "Export with Previous", Some("Cmd+Alt+Shift+E"), "File"),
-    ("app.saveToPhotos", "Save to Photos", None, "File"),
-];
 
 fn panel(app: &mut LightcraftApp, ctx: &egui::Context, p: RightPanel, name: &str) {
     if app.ui.right == p && crate::docking::exposed(app, crate::docking::Panel::Tools) {
@@ -333,27 +128,6 @@ pub fn appearance_from_command(id: &str) -> Option<crate::state::Appearance> {
 }
 
 /// The left-sidebar section a `view.sidebar*` command names (`section`), which this build must have.
-fn sidebar_section_param(command: &str, p: &Value) -> Result<crate::sidebar::SidebarSection, String> {
-    use crate::sidebar::SidebarSection;
-    let Some(name) = p.get("section").and_then(Value::as_str) else {
-        return Err(format!("{command}: `section` is needed ({})", SidebarSection::ids()));
-    };
-    let section = SidebarSection::from_id(name).ok_or_else(|| format!("{command}: unknown section `{name}` ({})", SidebarSection::ids()))?;
-    if !section.available() {
-        return Err(format!("{command}: there is no `{name}` section here"));
-    }
-    Ok(section)
-}
-
-/// An optional true / false parameter: absent or null is `None`, anything else is refused.
-fn bool_param(command: &str, p: &Value, key: &str) -> Result<Option<bool>, String> {
-    match p.get(key) {
-        None | Some(Value::Null) => Ok(None),
-        Some(Value::Bool(b)) => Ok(Some(*b)),
-        Some(other) => Err(format!("{command}: `{key}` must be true or false, not {other}")),
-    }
-}
-
 fn appearance_json(app: &LightcraftApp) -> Value {
     let s = &app.ui.settings;
     json!({"mode": s.appearance_mode, "darkTheme": s.dark_theme, "lightTheme": s.light_theme})
@@ -460,60 +234,7 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             app.ui.show_counts = p.get("show").and_then(Value::as_bool).unwrap_or(!app.ui.show_counts);
             Ok(json!({"show": app.ui.show_counts}))
         }
-        "view.sidebarSection" => {
-            // {section, show?, collapsed?}: show or hide a section of the left sidebar, fold or
-            // unfold it; with neither, a shown section is hidden and a hidden one shown
-            let args = sidebar_section_param(id, p).and_then(|s| Ok((s, bool_param(id, p, "show")?, bool_param(id, p, "collapsed")?)));
-            let (section, show, collapsed) = match args {
-                Ok(args) => args,
-                Err(e) => return Some(Err(e)),
-            };
-            let layout = &mut app.ui.sidebar;
-            match (show, collapsed) {
-                (None, None) => layout.set_hidden(section, !layout.is_hidden(section)),
-                _ => {
-                    if let Some(show) = show {
-                        layout.set_hidden(section, !show);
-                    }
-                    if let Some(collapsed) = collapsed {
-                        layout.set_collapsed(section, collapsed);
-                    }
-                }
-            }
-            Ok(json!({"section": section.id(), "show": !layout.is_hidden(section), "collapsed": layout.is_collapsed(section)}))
-        }
-        "view.sidebarMoveSection" => {
-            // {section, direction: up | down} one place among the shown sections, or
-            // {section, before: <section> | null} just above another section (null: last)
-            let section = match sidebar_section_param(id, p) {
-                Ok(s) => s,
-                Err(e) => return Some(Err(e)),
-            };
-            let layout = &mut app.ui.sidebar;
-            let moved = match (p.get("direction"), p.get("before")) {
-                (Some(d), None) => match d.as_str() {
-                    Some("up") => layout.move_by(section, true),
-                    Some("down") => layout.move_by(section, false),
-                    _ => return Some(Err(format!("{id}: `direction` must be \"up\" or \"down\", not {d}"))),
-                },
-                (None, Some(Value::Null)) => layout.move_before(section, None),
-                (None, Some(b)) => {
-                    let before = b.as_str().and_then(crate::sidebar::SidebarSection::from_id);
-                    let Some(before) = before else {
-                        return Some(Err(format!("{id}: `before` must be a section ({}) or null, not {b}", crate::sidebar::SidebarSection::ids())));
-                    };
-                    layout.move_before(section, Some(before))
-                }
-                _ => return Some(Err(format!("{id}: give either `direction` (up|down) or `before` (a section, or null for last)"))),
-            };
-            let order: Vec<&str> = layout.sections().iter().map(|s| s.id.id()).collect();
-            Ok(json!({"section": section.id(), "moved": moved, "order": order}))
-        }
-        "view.sidebarReset" => {
-            // every section shown and open, in the usual order
-            app.ui.sidebar = Default::default();
-            Ok(json!({"sidebar": app.ui.sidebar}))
-        }
+        "view.sidebarSection" | "view.sidebarMoveSection" | "view.sidebarReset" => lightcraft_apphost::sidebar::command(&mut app.ui.sidebar, id, p),
         "view.appearance" => appearance_command(app, p),
         "view.theme" => theme_command(app, p),
         "view.gridToggle" => {
@@ -1440,44 +1161,27 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             Ok(json!({"text": crate::panels::dialogs::WHATS_NEW}))
         }
         "app.systemInfo" => {
-            let info = app.session.execute("library.info", &json!({})).unwrap_or_default();
-            let gpu = (lightcraft_engine::gpu::ready() && lightcraft_engine::gpu::available()).then(lightcraft_engine::gpu::adapter_name).flatten();
-            let mb = |b: u64| format!("{:.0} MB", b as f64 / (1u64 << 20) as f64);
-            let mut rows = vec![
-                ("Version".to_string(), env!("CARGO_PKG_VERSION").to_string()),
-                ("System".to_string(), format!("{} ({})", std::env::consts::OS, std::env::consts::ARCH)),
-                ("CPU threads".to_string(), std::thread::available_parallelism().map(|n| n.get().to_string()).unwrap_or_else(|_| "?".into())),
+            // the engine's facts, with this app's own rows among them
+            let mut rows = lightcraft_engine::about::system_rows(&app.session);
+            let after = |rows: &Vec<(String, String)>, label: &str| rows.iter().position(|(k, _)| k == label).map_or(rows.len(), |i| i + 1);
+            let i = after(&rows, "GPU");
+            rows.insert(i, ("GPU rendering".to_string(), if app.ui.settings.gpu { "on".into() } else { "off".into() }));
+            let i = after(&rows, "Memory budget");
+            let preview = match app.ui.settings.preview_limit {
+                0 => "automatic".to_string(),
+                n => format!("{n} px"),
+            };
+            rows.insert(i, ("Preview size".to_string(), preview));
+            let i = rows.iter().position(|(k, _)| k == "Last GPU fallback").unwrap_or(rows.len());
+            let frame = [
+                ("Frame time".to_string(), format!("{:.1} ms ({:.0} fps)", app.perf.frame_ms, app.perf.fps)),
                 (
-                    "GPU".to_string(),
-                    gpu.unwrap_or_else(|| match lightcraft_engine::gpu::unavailable_reason() {
-                        Some(why) => crate::i18n::tr_format!("none (CPU rendering): {why}", why = why),
-                        None => "none (CPU rendering)".into(),
-                    }),
+                    "Frame update".to_string(),
+                    format!("{:.1} ms (logic {:.1} ms; slowest {:.0} ms)", app.perf.update_ms, app.perf.logic_ms, app.perf.max_update_ms),
                 ),
-                ("GPU rendering".to_string(), if app.ui.settings.gpu { "on".into() } else { "off".into() }),
-                ("Memory budget".to_string(), mb(lightcraft_engine::memory::default_budget() as u64)),
-                (
-                    "Preview size".to_string(),
-                    match app.ui.settings.preview_limit {
-                        0 => "automatic".to_string(),
-                        n => format!("{n} px"),
-                    },
-                ),
-                ("Photos".to_string(), info["photos"].to_string()),
-                ("Albums".to_string(), info["albums"].to_string()),
+                ("Last loupe render".to_string(), format!("{:.0} ms", app.renderer.last_main_ms)),
             ];
-            if let Some(dir) = info["dir"].as_str().or(info["path"].as_str()) {
-                rows.push(("Library".into(), dir.to_string()));
-            }
-            rows.push(("Frame time".into(), format!("{:.1} ms ({:.0} fps)", app.perf.frame_ms, app.perf.fps)));
-            rows.push((
-                "Frame update".into(),
-                format!("{:.1} ms (logic {:.1} ms; slowest {:.0} ms)", app.perf.update_ms, app.perf.logic_ms, app.perf.max_update_ms),
-            ));
-            rows.push(("Last loupe render".into(), format!("{:.0} ms", app.renderer.last_main_ms)));
-            if let Some(f) = lightcraft_engine::gpu::last_fallback() {
-                rows.push(("Last GPU fallback".into(), f));
-            }
+            rows.splice(i..i, frame);
             let r = json!(rows.iter().map(|(k, v)| json!({"label": k, "value": v})).collect::<Vec<_>>());
             if p.get("open").and_then(Value::as_bool).unwrap_or(true) {
                 app.ui.dialog = Some(Dialog::SystemInfo { rows });
@@ -2139,7 +1843,7 @@ pub fn ui_enabled(app: &LightcraftApp, id: &str) -> bool {
         "dialog.superRes" => lightcraft_engine::enhance::Enhancer::AVAILABLE && app.session.active().is_some() && !app.superres.busy(),
         "superRes.cancel" => app.superres.busy(),
         s if s.starts_with("dialog.merge") || (s.starts_with("merge.") && s.ends_with("Last")) => {
-            app.session.targets(&serde_json::json!({})).len() >= 2 && app.merge.final_task.is_none()
+            app.session.targets(&serde_json::json!({})).len() >= 2 && app.merge.runner.merging.is_none()
         }
         _ => true,
     }

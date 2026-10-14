@@ -68,6 +68,14 @@ pub fn oklab_to_2020(lab: [f32; 3]) -> [f32; 3] {
     mul(&m.from_lms, lms)
 }
 
+/// OkLCh (lightness, chroma, hue in degrees) as an 8-bit sRGB colour, clipped to the gamut: the
+/// swatch of a picked colour (Point Color).
+pub fn oklch_to_srgb8(l: f32, c: f32, h_deg: f32) -> [u8; 3] {
+    let lin = oklab_to_2020(lch_to_lab([l, c, h_deg.to_radians()]));
+    let s = crate::REC2020.to_space(&crate::SRGB).apply_f32(lin);
+    s.map(|v| (crate::transfer::linear_to_srgb(v.clamp(0.0, 1.0)) * 255.0).round() as u8)
+}
+
 /// OkLab → OkLCh (hue in radians, −π..π).
 #[inline]
 pub fn lab_to_lch(lab: [f32; 3]) -> [f32; 3] {

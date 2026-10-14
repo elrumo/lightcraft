@@ -281,5 +281,9 @@
   "Reading {name}… {n} photos so far": "Чтение {name}… пока фото: {n}",
   "Photos not copied from {name}: {n}": "Не скопировано фото с {name}: {n}",
   "No photos could be copied from {name}": "Не удалось скопировать фото с {name}",
-  "{name} connected": "{name} подключено"
+  "{name} connected": "{name} подключено",
+  "Uses the {} model, a {:.0} MB download ({} licence). {}.": "Используется модель {}, загрузка {:.0} МБ (лицензия {}). {}.",
+  "New area painted with {}": "Новая область дорисована ({})",
+  "{note} · {:.0} MB download": "{note} · загрузка {:.0} МБ",
+  "The new area was painted by {by} on this device.": "Новая область дорисована на этом устройстве ({by})."
 }

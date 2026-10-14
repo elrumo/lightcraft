@@ -480,6 +480,42 @@ pub fn specs() -> Vec<CommandSpec> {
                 Ok(json!({"path": path, "label": label}))
             }
         ),
+        cmd!(
+            "library.chooseRun",
+            "Choose a Run of Photos",
+            [],
+            None,
+            "{base: [ids] chosen before the drag, from, to: grid indexes, adding: bool} chooses (or, with adding false, unchooses) the run of grid photos from `from` to `to` on top of `base`, as a sideways drag over the phone's grid does (iOS Photos) → {chosen}",
+            always,
+            |s, p| {
+                let c = "library.chooseRun";
+                let index = |k: &str| p.get(k).and_then(Value::as_u64).map(|v| v as usize).ok_or_else(|| bad(c, format!("missing `{k}`")));
+                let (from, to) = (index("from")?, index("to")?);
+                let adding = p.get("adding").and_then(Value::as_bool).unwrap_or(true);
+                let base: Vec<u64> = p.get("base").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_u64).collect();
+                let visible = s.visible_shared().1;
+                let run: std::collections::HashSet<u64> = visible.get(from.min(to)..=from.max(to)).unwrap_or(&[]).iter().map(|i| i.0).collect();
+                let mut chosen: Vec<u64> = base.iter().copied().filter(|i| adding || !run.contains(i)).collect();
+                if adding {
+                    chosen.extend(visible.iter().map(|i| i.0).filter(|i| run.contains(i) && !base.contains(i)));
+                }
+                s.execute("library.select", &json!({"ids": chosen}))?;
+                Ok(json!({"chosen": chosen.len()}))
+            }
+        ),
+        cmd!(
+            query "library.filterChips",
+            "Filter Chips",
+            [],
+            None,
+            "{} → {chips: [{label, clear: the library.filter patch that takes just that filter off}], matching: photos shown, total: photos in the source without the filter | null} what narrows the grid, as the chips over it say",
+            always,
+            |s, _| {
+                let chips: Vec<Value> = crate::filter_chips(&s.filter, &s.catalog).into_iter().map(|c| json!({"label": c.label, "clear": c.clear})).collect();
+                let matching = s.visible_shared().1.len();
+                Ok(json!({"chips": chips, "matching": matching, "total": s.source_total()}))
+            }
+        ),
         cmd!("library.clearFilter", "Clear Filters", ["View"], None, "{}", always, |s, _| {
             s.filter = Default::default();
             Ok(json!({"count": s.visible().len()}))
@@ -542,6 +578,56 @@ pub fn specs() -> Vec<CommandSpec> {
                 };
                 let vis = s.visible_cloned();
                 Ok(serde_json::to_value(s.catalog.date_runs(&vis, s.sort.key, by)).unwrap_or_default())
+            }
+        ),
+        cmd!(
+            query "library.blocks",
+            "Months and Years",
+            [],
+            None,
+            "{span: months|years} → [{key, label, count, photos: [{index, id, captured}]}] the grid's photos by capture month (up to 6 shown: the best first, the rest spread through the month) or year (its best one): the phone grid's Months and Years",
+            always,
+            |s, p| {
+                let (key_len, show) = match str_param(p, "span") {
+                    Some("years") => (4, 1),
+                    Some("months") | None => (7, 6),
+                    Some(_) => return Err(bad("library.blocks", "span must be months|years")),
+                };
+                let vis = s.visible_cloned();
+                let blocks = s.catalog.date_blocks(&vis, key_len, show);
+                let out: Vec<Value> = blocks
+                    .into_iter()
+                    .map(|b| {
+                        let photos: Vec<Value> = b
+                            .shown
+                            .iter()
+                            .filter_map(|&i| {
+                                let id = *vis.get(i)?;
+                                Some(json!({"index": i, "id": id.0, "captured": s.catalog.photo(id).and_then(|p| p.captured.clone())}))
+                            })
+                            .collect();
+                        json!({"label": lightcraft_catalog::dates::group_label(&b.key), "key": b.key, "count": b.count, "photos": photos})
+                    })
+                    .collect();
+                Ok(Value::Array(out))
+            }
+        ),
+        cmd!(
+            query "library.facets",
+            "Filter Choices",
+            [],
+            None,
+            "{field: camera|person|place|keyword} → [{value, count}] the values the filter can pick for `field`, each with how many of the library's photos have it (most first; keywords by name)",
+            always,
+            |s, p| {
+                let values = match str_param(p, "field") {
+                    Some("camera") => s.catalog.cameras(),
+                    Some("person") => s.catalog.people().into_iter().map(|p| (p.name, p.count)).collect(),
+                    Some("place") => s.catalog.places(),
+                    Some("keyword") => s.catalog.keywords(),
+                    _ => return Err(bad("library.facets", "field must be camera|person|place|keyword")),
+                };
+                Ok(Value::Array(values.into_iter().map(|(value, count)| json!({"value": value, "count": count})).collect()))
             }
         ),
         // ---- selection
@@ -768,6 +854,13 @@ pub fn specs() -> Vec<CommandSpec> {
                 if x1 - x0 < 0.005 || y1 - y0 < 0.005 {
                     return Err(bad(C, "the box would be too small"));
                 }
+                // as shown: back through the edit's rotation and flips to the upright frame
+                let lightcraft_geom::Rect { x0, y0, x1, y1 } = if p.get("shown").and_then(Value::as_bool) == Some(true) {
+                    let orient = s.develop_of(id).map(|d| d.orientation).unwrap_or_default();
+                    orient.inverse().map_norm_rect(lightcraft_geom::Rect { x0, y0, x1, y1 })
+                } else {
+                    lightcraft_geom::Rect { x0, y0, x1, y1 }
+                };
                 let mut meta = s.catalog.photo(id).ok_or_else(|| bad(C, "no such photo"))?.meta.clone();
                 let region = meta.regions.get_mut(index).ok_or_else(|| bad(C, "no such region"))?;
                 region.rect = lightcraft_geom::Rect { x0, y0, x1, y1 };
@@ -777,11 +870,38 @@ pub fn specs() -> Vec<CommandSpec> {
             }
         ),
         cmd!(
+            query "photo.faces",
+            "Faces on the Photo",
+            [],
+            None,
+            "{id?} → [{index, rect: [x0, y0, x1, y1], name}] the photo's face boxes as the edit shows it (rotated and flipped: the normalized coordinates view.frame maps); `index` is the one photo.setRegion, photo.removeRegion and faces.setName take",
+            always,
+            |s, p| {
+                const C: &str = "photo.faces";
+                let id = p.get("id").and_then(Value::as_u64).map(PhotoId).or_else(|| s.active()).ok_or_else(|| bad(C, "no photo"))?;
+                let photo = s.catalog.photo(id).ok_or_else(|| bad(C, "no such photo"))?;
+                let orient = s.develop_of(id).map(|d| d.orientation).unwrap_or_default();
+                Ok(Value::Array(
+                    photo
+                        .meta
+                        .regions
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, r)| r.kind == lightcraft_meta::RegionKind::Face)
+                        .map(|(index, r)| {
+                            let q = orient.map_norm_rect(r.rect);
+                            json!({"index": index, "rect": [q.x0, q.y0, q.x1, q.y1], "name": r.name})
+                        })
+                        .collect(),
+                ))
+            }
+        ),
+        cmd!(
             "photo.addRegion",
             "Add Face Box",
             [],
             None,
-            "{id?, rect: {x0, y0, x1, y1}, name?} → {index} — mark a face the detector missed (normalized, in the photo's upright frame; clamped to the photo, at least 0.5 % each way), named or not, in the catalog; undoable. Like photo.setRegion it never rewrites the XMP sidecar",
+            "{id?, rect: {x0, y0, x1, y1}, shown?: bool, name?} → {index} — mark a face the detector missed (normalized, in the photo's upright frame, or with `shown` as the edit shows it: rotated and flipped, the coordinates of photo.faces and view.frame; clamped to the photo, at least 0.5 % each way), named or not, in the catalog; undoable. Like photo.setRegion it never rewrites the XMP sidecar",
             always,
             |s, p| {
                 const C: &str = "photo.addRegion";
@@ -796,6 +916,13 @@ pub fn specs() -> Vec<CommandSpec> {
                 if x1 - x0 < 0.005 || y1 - y0 < 0.005 {
                     return Err(bad(C, "the box would be too small"));
                 }
+                // as shown: back through the edit's rotation and flips to the upright frame
+                let lightcraft_geom::Rect { x0, y0, x1, y1 } = if p.get("shown").and_then(Value::as_bool) == Some(true) {
+                    let orient = s.develop_of(id).map(|d| d.orientation).unwrap_or_default();
+                    orient.inverse().map_norm_rect(lightcraft_geom::Rect { x0, y0, x1, y1 })
+                } else {
+                    lightcraft_geom::Rect { x0, y0, x1, y1 }
+                };
                 let name = match p.get("name") {
                     None | Some(Value::Null) => None,
                     Some(Value::String(n)) => Some(n.trim().to_string()).filter(|n| !n.is_empty()),
@@ -1001,8 +1128,8 @@ pub fn specs() -> Vec<CommandSpec> {
                 Ok(json!({"id": id.0, "count": s.catalog.album_count(id)}))
             }
         ),
-        cmd!(query "album.ruleFields", "Smart Album Rule Fields", [], None, "{} → [{field, label, kind (text|keywords|number|date|choice|bool|album: an album id), group (field-menu submenu, null at the top level), ops: [{op, label}], choices? (ids), choiceLabels? ({id: label})}] for ruleSet rules, in menu order", always, |_, _| {
-            use lightcraft_catalog::rules::{FIELDS, Kind, field_group, ops_for};
+        cmd!(query "album.ruleFields", "Smart Album Rule Fields", [], None, "{} → [{field, label, kind (text|keywords|number|date|choice|bool|album: an album id), group (field-menu submenu, null at the top level), ops: [{op, label, default: a sensible starting value}], choices? (ids), choiceLabels? ({id: label})}] for ruleSet rules, in menu order", always, |_, _| {
+            use lightcraft_catalog::rules::{FIELDS, Kind, default_value, field_group, ops_for};
             Ok(json!(FIELDS
                 .iter()
                 .map(|(id, label, kind)| {
@@ -1015,7 +1142,8 @@ pub fn specs() -> Vec<CommandSpec> {
                         Kind::Choice(_) => "choice",
                         Kind::Bool => "bool",
                     };
-                    let mut v = json!({"field": id, "label": label, "kind": k, "group": field_group(id), "ops": ops_for(*kind).iter().map(|(o, l)| json!({"op": o, "label": l})).collect::<Vec<_>>()});
+                    let ops: Vec<Value> = ops_for(*kind).iter().map(|(o, l)| json!({"op": o, "label": l, "default": default_value(id, o)})).collect();
+                    let mut v = json!({"field": id, "label": label, "kind": k, "group": field_group(id), "ops": ops});
                     if let Kind::Choice(c) = kind {
                         v["choices"] = json!(c.iter().map(|c| c.0).collect::<Vec<_>>());
                         v["choiceLabels"] = c.iter().map(|(id, label)| (id.to_string(), json!(label))).collect::<serde_json::Map<_, _>>().into();
@@ -1024,6 +1152,42 @@ pub fn specs() -> Vec<CommandSpec> {
                 })
                 .collect::<Vec<_>>()))
         }),
+        cmd!(
+            query "album.rules",
+            "Smart Album Rules",
+            [],
+            None,
+            "{id?} → {name, rules: {match, rules: [{field, op, value} | {group}]}} a smart album's rules as its editor shows them (older rules read as they always matched); without `id`, a new smart album's (Rating ≥ 3)",
+            always,
+            |s, p| {
+                const C: &str = "album.rules";
+                let Some(id) = p.get("id").and_then(Value::as_u64).map(AlbumId) else {
+                    let rules = lightcraft_catalog::RuleSet { rules: vec![lightcraft_catalog::rules::new_rule()], ..Default::default() };
+                    return Ok(json!({"name": "", "rules": rules}));
+                };
+                let album = s.catalog.album(id).filter(|a| a.is_smart()).ok_or_else(|| bad(C, format!("no smart album {}", id.0)))?;
+                let mut rules = album.smart.as_ref().and_then(|f| f.rule_set.clone()).unwrap_or_default();
+                rules.upgrade();
+                Ok(json!({"name": album.name, "rules": rules}))
+            }
+        ),
+        cmd!(
+            query "album.checkRules",
+            "Check Smart Album Rules",
+            [],
+            None,
+            "{rules: {match, rules}, id?: the album they are for} → [{path, field, message}] what keeps them from being saved (an empty value, an album that would contain itself…); empty: they are fine",
+            always,
+            |s, p| {
+                const C: &str = "album.checkRules";
+                let rules: lightcraft_catalog::RuleSet =
+                    serde_json::from_value(p.get("rules").cloned().unwrap_or_default()).map_err(|e| bad(C, e.to_string()))?;
+                let owner = p.get("id").and_then(Value::as_u64).map(AlbumId);
+                Ok(Value::Array(
+                    rules.check_for(&s.catalog, owner).into_iter().map(|pr| json!({"path": pr.path, "field": pr.field, "message": pr.message})).collect(),
+                ))
+            }
+        ),
         cmd!(
             "album.setRules",
             "Edit Smart Album",
@@ -1479,6 +1643,21 @@ pub fn specs() -> Vec<CommandSpec> {
             }
         ),
         // ---- persistence
+        cmd!(query "about.links", "Help Links", [], None, "{} → [{id, label, url}] the project's links in Help-menu order (help, Discord, website, GitHub, ArtCraft, feedback)", always, |_, _| {
+            Ok(Value::Array(crate::about::LINKS.iter().map(|(id, label, url)| json!({"id": id, "label": label, "url": url})).collect()))
+        }),
+        cmd!(query "about.whatsNew", "What's New", [], None, "{} → {text} what's new in this version (Markdown)", always, |_, _| {
+            Ok(json!({"text": crate::about::WHATS_NEW}))
+        }),
+        cmd!(
+            query "about.systemInfo",
+            "System Info",
+            [],
+            None,
+            "{} → [{label, value}] the version, system, CPU threads, GPU, memory budget, the library's photos, albums and folder, the last GPU fallback (a UI adds its own rows)",
+            always,
+            |s, _| Ok(Value::Array(crate::about::system_rows(s).into_iter().map(|(label, value)| json!({"label": label, "value": value})).collect()))
+        ),
         cmd!(query "library.info", "Library Info", [], None, "{}", always, |s, _| {
             let photos = s.catalog.len();
             let albums = s.catalog.albums().count();

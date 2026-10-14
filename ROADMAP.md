@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~14 points and ~340–600 h away
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** minor (upstream merged again: Leica Q3 verified, 236 models; sync server: shared album links with passwords and guest uploads, per-user storage limits) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** minor (Generative Expand on the device: MI-GAN, LaMa or Classic; upstream merged again: Leica Q3 verified, 236 models; sync server: shared album links with passwords and guest uploads, per-user storage limits) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6
 
 One-page summary of how close LightCraft is to Adobe Lightroom. Agents: read this, then pick work
 from [docs/gaps.md](docs/gaps.md). The full assessment, method and evidence are in
@@ -126,12 +126,19 @@ This fork adds features upstream doesn't have; they are outside the numbers abov
 | **Super Resolution** (`crates/enhance`, [super-resolution.md](docs/super-resolution.md)) | Nomos Uni SPAN 2× (optional download) on desktop and iPhone; every optional model listed, downloaded and deleted in Settings → AI Models ([ai-models.md](docs/ai-models.md)) | Enlarges the rendered photo, not the raw data; no preview in the dialog |
 | **Content-aware Remove by patch synthesis** (M8.4) and **panorama Fill Edges** (M13) | Remove fills from synthesized texture seeded by the spot's source; a stitched panorama's empty corners are filled with continued texture | Rows or tiles in strong perspective can come out at the wrong angle |
 | **AI Remove** (`crates/erase`, [ai-remove.md](docs/ai-remove.md)) | Remove ▸ Generative AI: MI-GAN (MIT, optional download, pinned SHA-256) on rten fills a stroke on desktop, iPhone and the web; the fill is stored with the spot, so renders and exports never run the model | Not run on an iPhone yet |
+| **Generative Expand on the device** (`crates/erase`, [generative-expand.md](docs/generative-expand.md)) | Crop ▸ Expand: the frame reaches past the photo and Generate paints the new area with MI-GAN (every device), LaMa (Apache-2.0, 208 MB, computers) or Classic (no download), in the background; stored with the settings | Small models: no diffusion quality, variations or prompt; not run on a phone or in a browser yet |
 
 Next for the fork: sync and the iOS app verified on real hardware; then depth (Depth Range, Lens Blur) and sharing
 between people with accounts (comments, likes, shared libraries).
 
 ## Progress log
 
+- 2026-10-13: **Generative Expand on the device** ([generative-expand.md](docs/generative-expand.md)): Crop ▸ Expand
+  lets the frame reach past the photo (an aspect ratio adds canvas around the whole photo), and Generate paints the
+  new area with MI-GAN (MIT, every device), LaMa (Apache-2.0, 208 MB, computers only) or Classic (no download), in
+  the background with a row in the activity stack; the fill is stored with the settings so renders and exports never
+  run a model. One whole-canvas network pass gives the structure and patch synthesis the photo's grain; the phone's
+  crop screen has Lightroom mobile's Expand switch, Generate button and model line. LR-CROP-GENEXPAND OOS → P2 🟡.
 - 2026-10-13: The sync server's album links grow into shared albums, as photo services have them: Share Link… asks
   when the link ends, whether people may download the originals or **add their own photos** (they become the owner's,
   in the album, on every device), and for an optional **password**; the page goes by day, opens each photo large
@@ -186,6 +193,7 @@ between people with accounts (comments, likes, shared libraries).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | Generative Expand on the device (MI-GAN / LaMa / Classic) added to *Fork additions*; LR-CROP-GENEXPAND OOS → P2 🟡; numbers unchanged |
 | 2026-10-13 | minor | Upstream merged into this fork again (up to b3d392b4: Leica Q3 verified, 236 models; accessibility audit); numbers as upstream's |
 | 2026-10-13 | minor | Sync server: album links with passwords, guest uploads, Download All, photo pages and a slideshow; per-user storage limits; *Fork additions* row and *Next* updated; numbers unchanged |
 | 2026-10-12 | minor | Upstream merged into this fork; *Fork additions* lists the fork-only features (sync, iOS app, map, search / People, Super Resolution, patch-synthesis Remove); numbers unchanged |

@@ -269,7 +269,7 @@ fn import_cancelled_by_command_reports_cancelled() {
     let (mut h, dir) = slow_import("cancel", n);
     let undo0 = h.app.session.undo.len();
     crate::import::start_paths(&mut h.app, vec![dir.to_string_lossy().to_string()]).unwrap();
-    assert!(h.step_until(Duration::from_secs(60), |h| h.app.import.as_ref().is_some_and(|t| t.imported >= 2)));
+    assert!(h.step_until(Duration::from_secs(60), |h| h.app.import.as_ref().is_some_and(|t| t.tally.imported >= 2)));
     let tasks = h.app.session.activity.list();
     assert_eq!(tasks.first().map(|t| t.kind), Some("import"), "{tasks:?}");
     h.app.session.activity.cancel(tasks[0].id).unwrap();
@@ -333,7 +333,7 @@ fn final_merge_shows_a_row_and_cancels() {
     assert!(rows[0].cancellable);
     assert_eq!(rows[0].total, 1000);
     h.app.session.activity.cancel(rows[0].id).unwrap();
-    assert!(h.step_until(T, |h| h.app.merge.final_task.is_none()));
+    assert!(h.step_until(T, |h| h.app.merge.runner.merging.is_none()));
     assert!(h.app.merge.last_result.is_none(), "nothing merged");
     assert_eq!(h.app.session.catalog.len(), before, "no photo added");
     assert!(h.app.session.activity.list().is_empty());

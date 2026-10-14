@@ -28,6 +28,7 @@ pub mod blemish;
 pub mod colorops;
 pub mod cull;
 pub mod dust;
+pub mod expand;
 pub mod finish;
 pub mod geometry;
 pub mod inpaint;
@@ -587,7 +588,9 @@ fn render_impl(src: Src<'_>, info: &SourceInfo, s: &DevelopSettings, req: &Rende
         lap("finish (deep)", &mut t);
         return Rendered { image, histogram, deep: Some(deep) };
     }
-    let image = finish::finish(&prep, s, frame, info, req.space, req.display.as_ref(), req.proof);
+    let mut image = finish::finish(&prep, s, frame, info, req.space, req.display.as_ref(), req.proof);
+    // Generative Expand: area past the photo with nothing generated yet is transparent
+    expand::mark_missing(&mut image, frame);
     lap("finish", &mut t);
     let cut = |i: &Rgba8| match plan.keep {
         Some(k) => i.crop(k.x, k.y, k.w, k.h),
@@ -598,7 +601,6 @@ fn render_impl(src: Src<'_>, info: &SourceInfo, s: &DevelopSettings, req: &Rende
         None => Histogram::of_srgb8(&image),
     };
     lap("histogram", &mut t);
-    let mut image = image;
     let mask = overlay_alpha(req.overlay, &plan, &prep);
     let masks = overlay_alphas_all(req.overlay, &plan, &prep);
     visualize::apply(&mut image, req.overlay, &plan, mask.as_ref(), masks.as_deref());

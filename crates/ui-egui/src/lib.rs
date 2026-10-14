@@ -14,6 +14,7 @@ pub mod credits;
 pub mod date_picker;
 pub mod docking;
 pub mod erase;
+pub mod expand;
 pub mod export_task;
 pub mod file_drop;
 pub mod glass;
@@ -37,7 +38,7 @@ pub mod preset_import;
 pub mod region;
 pub mod render;
 pub mod shortcuts;
-pub mod sidebar;
+pub use lightcraft_apphost::sidebar;
 pub mod softpaint;
 pub mod state;
 pub mod superres;
@@ -88,6 +89,8 @@ mod tests_dialog_fit;
 mod tests_dialogs;
 #[cfg(test)]
 mod tests_erase;
+#[cfg(test)]
+mod tests_expand;
 #[cfg(test)]
 mod tests_export_flow;
 #[cfg(test)]
@@ -520,10 +523,9 @@ pub struct LightcraftApp {
     pub sync_owns_changes: bool,
     /// A Synchronize Folder at work in the background.
     pub sync_run: Option<sync::SyncRun>,
-    /// A Lightroom catalog inspect/import in progress.
-    pub lightroom: Option<lightroom_import::LightroomTask>,
-    /// Last terminal Lightroom result, exposed by the command's status/wait response.
-    pub lightroom_last: Option<Value>,
+    /// A Lightroom catalog inspect/import in progress, and the last one's result (exposed by the
+    /// command's status/wait response).
+    pub lightroom: lightcraft_apphost::lightroom::Runner,
     /// The library generation the window title and the recent list were last updated for.
     pub shown_library: Option<u64>,
     /// A background export in progress.
@@ -635,8 +637,7 @@ impl LightcraftApp {
             sync: None,
             sync_owns_changes: false,
             sync_run: None,
-            lightroom: None,
-            lightroom_last: None,
+            lightroom: Default::default(),
             shown_library: None,
             export: None,
             tasks: Default::default(),
@@ -1247,6 +1248,7 @@ impl LightcraftApp {
         merge::poll(self, ctx);
         superres::poll(self, ctx);
         erase::poll(self, ctx);
+        expand::poll(self, ctx);
         self.sync_models();
         import::poll_scan(self, ctx);
         camera_import::poll(self, ctx);
@@ -1275,7 +1277,7 @@ impl LightcraftApp {
             if now - self.ui.auto_import_at >= 3.0
                 && self.import.is_none()
                 && self.sync_run.is_none()
-                && self.lightroom.is_none()
+                && !self.lightroom.running()
                 && !self.tasks.is_running(LABEL)
             {
                 self.ui.auto_import_at = now;
@@ -1334,7 +1336,7 @@ impl LightcraftApp {
             // read and added on a worker thread (dropped folders can be large, or on a slow drive), into
             // the album they were dropped on or the one shown; the grid holds a tile for each meanwhile
             if !photos.is_empty() {
-                if self.lightroom.is_some() {
+                if self.lightroom.running() {
                     self.toast(ctx, "Finish Lightroom catalog import before adding photos");
                 } else if let Err(e) = import::start_dropped(self, photos, file_drop::destination(self, ctx)) {
                     self.toast(ctx, e);

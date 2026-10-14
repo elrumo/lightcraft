@@ -226,6 +226,43 @@ pub fn specs() -> Vec<CommandSpec> {
             }
         ),
         cmd!(
+            query "people.named",
+            "Named People",
+            [],
+            None,
+            "{} → [{name, photos, cover: {photo, rect}}] the people named on the library's photos (in any app), most photos first, each with their largest face (`rect` on the photo's upright frame: render it with the host's render.face); the grid's filter applies, except a person filter",
+            always,
+            |s, _| {
+                let filter = lightcraft_catalog::Filter { person: None, ..s.filter.clone() };
+                Ok(Value::Array(
+                    s.catalog
+                        .people_in(&filter)
+                        .into_iter()
+                        .map(|p| json!({"name": p.name, "photos": p.count, "cover": {"photo": p.photo.0, "rect": p.face}}))
+                        .collect(),
+                ))
+            }
+        ),
+        cmd!(
+            "people.rename",
+            "Rename a Person",
+            [],
+            None,
+            "{from, to} — every face named `from` (any case) across the library gets the name `to`, in one undoable step → {named, photos}",
+            always,
+            |s, p| {
+                let c = "people.rename";
+                let from = str_param(p, "from").map(str::trim).filter(|n| !n.is_empty()).ok_or_else(|| bad(c, "missing `from`"))?;
+                let to = str_param(p, "to").map(str::trim).filter(|n| !n.is_empty()).ok_or_else(|| bad(c, "missing `to`"))?;
+                let faces: Vec<Value> =
+                    faces_named(&s.catalog, from).into_iter().map(|(photo, index)| json!({"photo": photo, "index": index})).collect();
+                if faces.is_empty() {
+                    return Err(bad(c, "Nobody has that name any more"));
+                }
+                s.execute("faces.nameFaces", &json!({"faces": faces, "name": to}))
+            }
+        ),
+        cmd!(
             "people.name",
             "Name a Person",
             [],
@@ -285,4 +322,18 @@ pub fn specs() -> Vec<CommandSpec> {
             }
         ),
     ]
+}
+
+/// The faces (photo, region index) named `from`, any case, on the library's photos.
+pub fn faces_named(cat: &lightcraft_catalog::Catalog, from: &str) -> Vec<(u64, usize)> {
+    let from = from.trim();
+    let mut out = Vec::new();
+    for p in cat.photos().filter(|p| p.in_library()) {
+        for (i, r) in p.meta.regions.iter().enumerate() {
+            if r.kind == lightcraft_meta::RegionKind::Face && r.name.as_deref().is_some_and(|n| n.trim().eq_ignore_ascii_case(from)) {
+                out.push((p.id.0, i));
+            }
+        }
+    }
+    out
 }

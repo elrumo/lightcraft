@@ -7,36 +7,26 @@
 //! Needs [`crate::Services::write_shared`] (a thread-safe writer); without it (web) the batch runs
 //! synchronously as before.
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, channel};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::Ordering;
 
-use lightcraft_engine::activity::{Cancel, TaskGuard};
-use lightcraft_engine::export::{AfterExport, Destination, ExportOptions, PreparedExport, run_batch};
+use lightcraft_apphost::export::{Batch, Prepared};
+use lightcraft_engine::export::{AfterExport, Destination, ExportOptions, PreparedExport};
 use serde_json::{Value, json};
 
 use crate::LightcraftApp;
 use crate::control::SendTo;
 
+/// A background export ([`Batch`], shared with the SwiftUI app's engine host) and where its files
+/// go once they are written.
 pub struct ExportTask {
-    pub total: usize,
-    /// Photos started so far and the file in progress.
-    pub progress: Arc<Mutex<(usize, String)>>,
-    pub cancel: Arc<AtomicBool>,
-    /// Where the files go once they are written.
+    pub batch: Batch,
     pub send: SendTo,
-    /// The files (per-photo results), what [`AfterExport`] did with them (`applePhotos`) and
-    /// whether the export was cancelled (as the worker saw it when the batch ended).
-    rx: Receiver<Result<(Vec<Value>, Option<Value>, bool), String>>,
-    /// The export's row in the activity stack (`activity.cancel` sets `cancel`).
-    guard: TaskGuard,
 }
 
 impl ExportTask {
     /// `{total, done, current}` for `ui.inspect`.
     pub fn status(&self) -> Value {
-        let (done, current) = self.progress.lock().map(|g| g.clone()).unwrap_or_default();
-        json!({"total": self.total, "done": done, "current": current})
+        self.batch.status()
     }
 }
 
@@ -55,43 +45,10 @@ pub fn start(
     }
     let write = app.services.write_shared.clone().ok_or("no background writer")?;
     let total = items.len();
-    let progress = Arc::new(Mutex::new((0, String::new())));
-    let cancel = Arc::new(AtomicBool::new(false));
-    let (tx, rx) = channel();
-    let (p, c) = (progress.clone(), cancel.clone());
-    let guard = app.session.activity.start("export", "Exporting", Cancel::Flag(cancel.clone()));
-    guard.progress(0, total as u64);
-    let row = guard.handle();
     // translated here: the language is the UI thread's, and the worker would show English
     let adding = crate::i18n::tr("Adding to Apple Photos…").to_string();
-    let work = move || {
-        let mut w = |path: &str, bytes: &[u8]| write(path, bytes);
-        let r = run_batch(items, &opts, &to, &mut w, &|path| std::path::Path::new(path).exists(), false, &mut |done, name| {
-            if let Ok(mut g) = p.lock() {
-                *g = (done, name.to_string());
-            }
-            !c.load(Ordering::Relaxed)
-        });
-        let r = r.map(|files| {
-            if !after.is_none() {
-                // Photos can't be stopped once asked: no ✕ from here, before the last look at
-                // the cancel flag, so a cancel either stops the export before Photos or is refused
-                row.set_cancellable(false);
-                if let Ok(mut g) = p.lock() {
-                    g.1 = adding;
-                }
-            }
-            let cancelled = c.load(Ordering::Relaxed);
-            let photos = after.run(&files, cancelled);
-            (files, photos, cancelled)
-        });
-        let _ = tx.send(r);
-    };
-    #[cfg(not(target_arch = "wasm32"))]
-    std::thread::Builder::new().name("export".into()).spawn(work).map_err(|e| e.to_string())?;
-    #[cfg(target_arch = "wasm32")]
-    work();
-    app.export = Some(ExportTask { total, progress, cancel, send, rx, guard });
+    let batch = Batch::start(&app.session, Prepared { items, opts, to, after }, write, adding)?;
+    app.export = Some(ExportTask { batch, send });
     Ok(json!({"background": true, "total": total}))
 }
 
@@ -106,11 +63,7 @@ pub fn start_contact_sheet(app: &mut LightcraftApp, params: &Value) -> Result<Va
     let prepared = lightcraft_engine::contact_sheet::prepare(&mut app.session, params)?;
     let total = prepared.len();
     let write = app.services.write_shared.clone();
-    let progress = Arc::new(Mutex::new((0, String::new())));
-    let cancel = Arc::new(AtomicBool::new(false));
-    let (p, c) = (progress.clone(), cancel.clone());
-    let (tx, rx) = channel();
-    let work = move || {
+    let batch = Batch::spawn(&app.session, "Exporting contact sheet", total, move |p, c, _row| {
         let result = prepared
             .run(&mut |done, name| {
                 if let Ok(mut g) = p.lock() {
@@ -130,15 +83,9 @@ pub fn start_contact_sheet(app: &mut LightcraftApp, params: &Value) -> Result<Va
                 Ok(vec![json!({"path": path, "pages": doc.pages, "photos": doc.photos, "bytes": doc.bytes.len(), "contactSheet": true})])
             });
         // a PDF isn't something Photos imports: contact sheets never add to Apple Photos
-        let _ = tx.send(result.map(|files| (files, None, c.load(Ordering::Relaxed))));
-    };
-    #[cfg(not(target_arch = "wasm32"))]
-    std::thread::Builder::new().name("contact-sheet".into()).spawn(work).map_err(|e| e.to_string())?;
-    #[cfg(target_arch = "wasm32")]
-    work();
-    let row = app.session.activity.start("export", "Exporting contact sheet", Cancel::Flag(cancel.clone()));
-    row.progress(0, total as u64);
-    app.export = Some(ExportTask { total, progress, cancel, send: SendTo::default(), rx, guard: row });
+        result.map(|files| (files, None, c.load(Ordering::Relaxed)))
+    })?;
+    app.export = Some(ExportTask { batch, send: SendTo::default() });
     Ok(json!({"background": true, "total": total}))
 }
 
@@ -200,10 +147,10 @@ pub fn poll(app: &mut LightcraftApp, ctx: &egui::Context) {
         }
     }
     let Some(task) = &app.export else { return };
-    match task.rx.try_recv() {
-        Ok(r) => {
+    match task.batch.poll() {
+        Some(r) => {
             let cancelled = matches!(&r, Ok((_, _, true)));
-            let (total, send) = (task.total, task.send);
+            let (total, send) = (task.batch.total, task.send);
             app.export = None;
             // Photos refused (permission, not installed…): leave the way out on screen longer
             let photos_failed = matches!(&r, Ok((_, Some(p), _)) if p.get("error").is_some());
@@ -239,7 +186,7 @@ pub fn poll(app: &mut LightcraftApp, ctx: &egui::Context) {
                     }
                     m
                 }
-                Err(e) => e,
+                Err(e) => crate::i18n::tr(&e).to_string(),
             };
             if photos_failed {
                 app.toast_for(ctx, msg, 15.0);
@@ -247,22 +194,16 @@ pub fn poll(app: &mut LightcraftApp, ctx: &egui::Context) {
                 app.toast(ctx, msg);
             }
         }
-        Err(std::sync::mpsc::TryRecvError::Empty) => {
-            let (done, current) = task.progress.lock().map(|g| g.clone()).unwrap_or_default();
-            task.guard.progress(done as u64, task.total as u64);
-            task.guard.detail(&current);
+        None => {
             // the phone layout shows no activity stack: its export screen has the progress and Cancel
             if app.compact {
-                let cancel = task.cancel.clone();
-                if crate::panels::export::progress(ctx, done, task.total, &current, cancel.load(Ordering::Relaxed)) {
+                let (done, current) = task.batch.progress.lock().map(|g| g.clone()).unwrap_or_default();
+                let cancel = task.batch.cancel.clone();
+                if crate::panels::export::progress(ctx, done, task.batch.total, &current, cancel.load(Ordering::Relaxed)) {
                     cancel.store(true, Ordering::Relaxed);
                 }
                 ctx.request_repaint_after(std::time::Duration::from_millis(100));
             }
-        }
-        Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-            app.export = None;
-            app.toast(ctx, crate::i18n::tr("Export stopped unexpectedly"));
         }
     }
 }
@@ -272,6 +213,8 @@ mod contact_sheet_tests {
     use super::*;
     use crate::pick::{PickKind, PickRequest};
     use crate::state::Dialog;
+    use std::sync::mpsc::channel;
+    use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
 
     #[test]
@@ -336,9 +279,9 @@ mod contact_sheet_tests {
         assert_eq!((rows[0].kind, rows[0].label.as_str(), rows[0].total), ("export", "Exporting contact sheet", 24));
         assert!(rows[0].cancellable);
         app.session.activity.cancel(rows[0].id).unwrap();
-        assert!(app.export.as_ref().unwrap().cancel.load(Ordering::Relaxed), "the stack's ✕ stops the sheet");
+        assert!(app.export.as_ref().unwrap().batch.cancel.load(Ordering::Relaxed), "the stack's ✕ stops the sheet");
         let task = app.export.take().unwrap();
-        assert!(task.rx.recv_timeout(Duration::from_secs(20)).unwrap().is_err(), "a stopped sheet is not written");
+        assert!(task.batch.rx.recv_timeout(Duration::from_secs(20)).unwrap().is_err(), "a stopped sheet is not written");
         drop(task);
         assert!(app.session.activity.list().is_empty(), "the row goes with the export");
     }
@@ -351,9 +294,9 @@ mod contact_sheet_tests {
         );
         let ids: Vec<_> = app.session.catalog.photos().take(24).map(|p| p.id.0).collect();
         start_contact_sheet(&mut app, &json!({"path": "Cancelled.pdf", "ids": ids})).unwrap();
-        app.export.as_ref().unwrap().cancel.store(true, Ordering::Relaxed);
+        app.export.as_ref().unwrap().batch.cancel.store(true, Ordering::Relaxed);
         let task = app.export.take().unwrap();
-        assert!(task.rx.recv_timeout(Duration::from_secs(20)).unwrap().is_err());
+        assert!(task.batch.rx.recv_timeout(Duration::from_secs(20)).unwrap().is_err());
     }
 }
 

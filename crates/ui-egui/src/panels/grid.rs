@@ -532,12 +532,8 @@ fn drag_choose(app: &mut LightcraftApp, ui: &egui::Ui, ids: &[PhotoId], lay: &Gr
     {
         s.last = Some(cur);
         haptics::tap(ui.ctx(), Haptic::Selection);
-        let run: HashSet<u64> = ids.get(s.start.min(cur)..=s.start.max(cur)).unwrap_or(&[]).iter().map(|i| i.0).collect();
-        let mut chosen: Vec<u64> = s.base.iter().copied().filter(|i| s.adding || !run.contains(i)).collect();
-        if s.adding {
-            chosen.extend(ids.iter().map(|i| i.0).filter(|i| run.contains(i) && !s.base.contains(i)));
-        }
-        let _ = app.run("library.select", json!({"ids": chosen}));
+        // (the run on top of what was chosen before is the engine's, shared with the SwiftUI app)
+        let _ = app.run("library.chooseRun", json!({"base": s.base, "from": s.start, "to": cur, "adding": s.adding}));
     }
     ui.data_mut(|d| d.insert_temp(key, s));
 }
@@ -1149,9 +1145,7 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
             ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
         }
         if resp.clicked() {
-            let has = photo.meta.keywords.iter().any(|x| x.eq_ignore_ascii_case(&k));
-            let key = if has { "removeKeywords" } else { "addKeywords" };
-            let _ = app.run("photo.setMeta", json!({"ids": [id.0], key: [k]}));
+            let _ = app.run("keyword.toggle", json!({"ids": [id.0], "keyword": k}));
         }
         return;
     }

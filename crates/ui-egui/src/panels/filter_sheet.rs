@@ -45,17 +45,12 @@ pub struct Choices {
 
 impl Choices {
     pub fn of(cat: &Catalog) -> Choices {
-        // cameras the way the filter matches them: names that differ only in case are one
-        let mut cams: std::collections::HashMap<String, (String, usize)> = Default::default();
-        for p in cat.photos().filter(|p| p.in_library()) {
-            let name = p.meta.camera.trim();
-            if !name.is_empty() {
-                cams.entry(name.to_lowercase()).or_insert_with(|| (name.to_string(), 0)).1 += 1;
-            }
+        Choices {
+            cameras: cat.cameras(),
+            people: cat.people().into_iter().map(|p| (p.name, p.count)).collect(),
+            places: cat.places(),
+            keywords: cat.keywords(),
         }
-        let mut cameras: Vec<(String, usize)> = cams.into_values().collect();
-        cameras.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.to_lowercase().cmp(&b.0.to_lowercase())));
-        Choices { cameras, people: cat.people().into_iter().map(|p| (p.name, p.count)).collect(), places: cat.places(), keywords: cat.keywords() }
     }
 }
 

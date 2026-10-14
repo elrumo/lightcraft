@@ -2,35 +2,22 @@
 //!
 //! The dialog has three states: the model isn't installed (what it is, its size, licence and
 //! credit; nothing downloads without the user pressing Download), it is downloading (progress),
-//! and it is ready (the photo's size before and after, and Enlarge). Enlarge runs
-//! [`lightcraft_engine::enhance::SuperResJob`] on a worker thread with progress (in a toast) and
-//! cancellation; when it finishes the result is written, imported and selected
-//! ([`lightcraft_engine::Session::finish_super_res`]).
+//! and it is ready (the photo's size before and after, and Enlarge). Enlarge runs it in the
+//! background ([`lightcraft_apphost::superres`]: progress and cancel on its activity row); when it
+//! finishes the result is written, imported and selected.
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, TryRecvError, channel};
-use std::sync::{Arc, Mutex};
-
-use lightcraft_catalog::PhotoId;
-use lightcraft_engine::enhance::{DEFAULT_MAX_OUTPUT_PIXELS, SUPER_RES_MODEL, SUPER_RES_SCALE, SuperResDone};
+use lightcraft_engine::enhance::{DEFAULT_MAX_OUTPUT_PIXELS, SUPER_RES_MODEL, SUPER_RES_SCALE};
 use serde_json::{Value, json};
 
 use crate::LightcraftApp;
 use crate::state::Dialog;
 use crate::theme::Tokens;
 
-/// A job on its worker thread.
-pub struct SuperResTask {
-    pub photo: PhotoId,
-    progress: Arc<Mutex<f32>>,
-    cancel: Arc<AtomicBool>,
-    rx: Receiver<Result<SuperResDone, String>>,
-}
-
 /// Super Resolution state of the app.
 #[derive(Default)]
 pub struct SuperResState {
-    pub task: Option<SuperResTask>,
+    /// The enlargement under way (its progress is its activity row).
+    pub task: Option<lightcraft_apphost::superres::Running>,
     /// The last finished enlargement (`{id, path, original, width, height}`).
     pub last_result: Option<Value>,
 }
@@ -102,29 +89,7 @@ pub fn start(app: &mut LightcraftApp) -> Result<Value, String> {
         return Err(crate::i18n::tr("Super Resolution is already running").to_string());
     }
     let id = app.session.active().ok_or_else(|| crate::i18n::tr("Select a photo to enlarge").to_string())?;
-    let job = app.session.super_res_job(id, None)?;
-    let progress = Arc::new(Mutex::new(0.0f32));
-    let cancel = Arc::new(AtomicBool::new(false));
-    let (tx, rx) = channel();
-    let (p, c) = (progress.clone(), cancel.clone());
-    let work = move || {
-        let run = || {
-            job.run(&|f, _| {
-                if let Ok(mut g) = p.lock() {
-                    *g = f;
-                }
-                !c.load(Ordering::Relaxed)
-            })
-        };
-        // a panicking job reports an error instead of leaving "Enlarging…" up forever
-        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(run)).unwrap_or_else(|_| Err("Super Resolution failed unexpectedly".into()));
-        let _ = tx.send(r);
-    };
-    #[cfg(not(target_arch = "wasm32"))]
-    std::thread::Builder::new().name("super-resolution".into()).spawn(work).map_err(|e| e.to_string())?;
-    #[cfg(target_arch = "wasm32")]
-    work();
-    app.superres.task = Some(SuperResTask { photo: id, progress, cancel, rx });
+    app.superres.task = Some(lightcraft_apphost::superres::Running::start(&mut app.session, id, None)?);
     Ok(json!({"started": true, "photo": id.0}))
 }
 
@@ -132,43 +97,34 @@ pub fn start(app: &mut LightcraftApp) -> Result<Value, String> {
 pub fn cancel(app: &mut LightcraftApp) -> bool {
     match &app.superres.task {
         Some(t) => {
-            t.cancel.store(true, Ordering::Relaxed);
+            t.cancel();
             true
         }
         None => false,
     }
 }
 
-/// Per frame: show the progress, and add a finished enlargement to the library.
+/// Per frame: add a finished enlargement to the library.
 pub fn poll(app: &mut LightcraftApp, ctx: &egui::Context) {
     let Some(t) = &app.superres.task else { return };
-    match t.rx.try_recv() {
-        Ok(r) => {
+    match t.poll(&mut app.session) {
+        Some(r) => {
             app.superres.task = None;
             finish(app, ctx, r);
         }
-        Err(TryRecvError::Disconnected) => {
-            app.superres.task = None;
-            finish(app, ctx, Err("Super Resolution stopped unexpectedly".into()));
-        }
-        Err(TryRecvError::Empty) => {
-            let f = t.progress.lock().map(|g| *g).unwrap_or(0.0);
-            let now = ctx.input(|i| i.time);
-            app.ui.toast = Some((crate::i18n::tr_format!("Enlarging… {:.0}%", f * 100.0), now + 0.5, None));
-            ctx.request_repaint_after(std::time::Duration::from_millis(100));
-        }
+        None => ctx.request_repaint_after(std::time::Duration::from_millis(100)),
     }
 }
 
-fn finish(app: &mut LightcraftApp, ctx: &egui::Context, r: Result<SuperResDone, String>) {
-    match r.map_err(lightcraft_engine::EngineError::Other).and_then(|done| app.session.execute_fn("enhance.superRes", |s| s.finish_super_res(done))) {
+fn finish(app: &mut LightcraftApp, ctx: &egui::Context, r: Result<Value, String>) {
+    match r {
         Ok(v) => {
             app.superres.last_result = Some(v);
             app.toast(ctx, crate::i18n::tr("Super Resolution added"));
         }
-        Err(e) if e.to_string().contains("cancelled") => app.toast(ctx, crate::i18n::tr("Super Resolution cancelled")),
+        Err(e) if e.contains("cancelled") => app.toast(ctx, crate::i18n::tr("Super Resolution cancelled")),
         Err(e) => {
-            app.ui.status = e.to_string();
+            app.ui.status = e.clone();
             app.toast_error(ctx, crate::i18n::tr_format!("Super Resolution failed: {e}", e = e));
         }
     }
