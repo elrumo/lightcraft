@@ -223,11 +223,17 @@ fn exports_run_in_the_background_and_answer_when_done() {
     assert_eq!(files.len(), 4, "{done}");
     assert_eq!(done["result"]["cancelled"], false);
     assert!(Path::new(files[0]["path"].as_str().unwrap()).is_file());
+    // a photo dragged out is exported without becoming what Export with Previous repeats
+    let drag = json!({"dir": dir.to_string_lossy(), "ids": [ids[1]], "longEdge": 32, "format": "jpeg", "remember": false});
+    let dragged = h.call(&req(7, "engine.execute", json!({"command": "app.export", "params": drag})), Duration::from_secs(60));
+    assert_eq!(dragged["result"]["files"].as_array().map(Vec::len), Some(1), "{dragged}");
     // Export with Previous: the same options again, for the photo chosen now
     let one = ids[0];
     h.call(&req(5, "engine.execute", json!({"command": "library.select", "params": {"ids": [one], "active": one}})), Duration::from_secs(30));
     let again = h.call(&req(6, "host.exportPrevious", json!({})), Duration::from_secs(60));
     assert_eq!(again["result"]["files"].as_array().map(Vec::len), Some(1), "{again}");
+    let png = again["result"]["files"][0]["path"].as_str().unwrap_or_default().to_lowercase();
+    assert!(png.ends_with(".png"), "the PNG export is the one repeated, not the dragged JPEG: {again}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
