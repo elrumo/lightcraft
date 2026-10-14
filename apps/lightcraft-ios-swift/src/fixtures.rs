@@ -101,6 +101,35 @@ fn fixtures() -> Value {
         "events": events.iter().map(Event::to_value).collect::<Vec<_>>(),
         "request": request,
         "openConfig": config,
+        "replies": replies(),
+    })
+}
+
+/// What the engine answers to the commands the app reads into its own types, on the demo library
+/// with a photo open (the first three of a long list): a field that changes type or name fails the
+/// Swift side's decoding test.
+fn replies() -> Value {
+    let mut s = lightcraft_engine::Session::with_demo();
+    let mut run = |c: &str, p: Value| s.execute(c, &p).unwrap_or(Value::Null);
+    let first = run("catalog.query", json!({"limit": 1}))["photos"][0]["id"].clone();
+    run("library.select", json!({"ids": [first], "active": first}));
+    run("develop.set", json!({"control": "light.exposure", "value": 0.5}));
+    let three = |v: Value| match v {
+        Value::Array(a) => Value::Array(a.into_iter().take(3).collect()),
+        v => v,
+    };
+    json!({
+        "library.state": run("library.state", json!({})),
+        "library.groups": three(run("library.groups", json!({}))),
+        "catalog.query": run("catalog.query", json!({"limit": 2})),
+        "catalog.stats": run("catalog.stats", json!({})),
+        "albums.list": three(run("albums.list", json!({}))),
+        "label.names": three(run("label.names", json!({}))),
+        "develop.controls": three(run("develop.controls", json!({}))),
+        "history.list": run("history.list", json!({})),
+        "presets.list": three(run("presets.list", json!({}))),
+        "view.frame": run("view.frame", json!({"applyCrop": false})),
+        "sync.status": run("sync.status", json!({})),
     })
 }
 

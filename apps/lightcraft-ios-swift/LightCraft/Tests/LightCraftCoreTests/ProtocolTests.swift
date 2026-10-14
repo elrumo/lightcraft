@@ -32,6 +32,38 @@ struct ProtocolTests {
         }
     }
 
+    /// The engine's own replies to the commands the app reads into its types (fixtures.rs →
+    /// `replies`, on the demo library): read straight from the file's bytes, as the app reads them.
+    @Test func commandRepliesDecodeIntoTheAppsTypes() throws {
+        struct Replies: Decodable {
+            let state: LibraryState
+            let groups: [DateGroup]
+            let page: PhotoPage
+            let stats: CatalogStats
+            let albums: [AlbumNode]
+            let labels: [LabelName]
+            let controls: [ControlSpec]
+            let history: HistoryList
+            let presets: [PresetInfo]
+            let frame: PhotoFrame
+            let sync: SyncStatus
+
+            enum CodingKeys: String, CodingKey {
+                case state = "library.state", groups = "library.groups", page = "catalog.query", stats = "catalog.stats"
+                case albums = "albums.list", labels = "label.names", controls = "develop.controls", history = "history.list"
+                case presets = "presets.list", frame = "view.frame", sync = "sync.status"
+            }
+        }
+        struct File: Decodable { let replies: Replies }
+        let r = try JSONDecoder().decode(File.self, from: fixtureData()).replies
+        #expect(r.groups.count == 3)
+        #expect(r.page.photos.count == 2)
+        #expect(r.controls.count == 3)
+        #expect(r.history.history == ["Exposure"])
+        #expect(!r.sync.signedIn)
+        #expect(r.frame.crop?.quad.count == 4)
+    }
+
     @Test func repliesCarryResultsOrErrors() throws {
         let all = try events()
         guard case .reply(let id, .success(let result)) = all[0] else { Issue.record("\(all[0])"); return }
