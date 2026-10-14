@@ -348,7 +348,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         let found_top = named_h + 6.0;
         let found_h = if others.is_empty() { 0.0 } else { FOUND_H + found_rows as f32 * found_row };
         let (tile_cols, tile_row) = (columns(width, tile), tile + GAP);
-        let tile_rows = unnamed.faces.len().div_ceil(tile_cols);
+        let tile_rows = unnamed.people.len().div_ceil(tile_cols);
         let section_top = found_top + found_h;
         let (area, _) = ui.allocate_exact_size(vec2(width, section_top + SECTION_H + tile_rows as f32 * tile_row + PAD), Sense::hover());
         let visible = |top: f32, rows: usize, row_h: f32| {
@@ -396,7 +396,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 }
             }
         }
-        // the faces nobody has named
+        // the faces nobody has named, a picture per person
         let top = area.top() + section_top;
         ui.painter().line_segment([pos2(area.left() + PAD, top), pos2(area.right() - PAD, top)], Stroke::new(1.0, t.button_border));
         super::unnamed::section_header(app, ui, &unnamed, pos2(area.left() + PAD, top + 14.0), area.right() - PAD);
@@ -404,10 +404,12 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         for row in visible(grid_top, tile_rows, tile_row) {
             for col in 0..tile_cols {
                 let i = row * tile_cols + col;
-                let Some(face) = unnamed.faces.get(i) else { break };
+                if i >= unnamed.people.len() {
+                    break;
+                }
                 shown += 1;
                 let min = area.min + vec2(PAD + col as f32 * (tile + GAP), grid_top + row as f32 * tile_row);
-                super::unnamed::tile(app, ui, &unnamed, i, Rect::from_min_size(min, vec2(tile, tile)), face, ppp);
+                super::unnamed::tile(app, ui, &unnamed, i, Rect::from_min_size(min, vec2(tile, tile)), ppp);
             }
         }
         // the picture cache keeps all of them (a fixed budget would evict and re-request the same few every frame)

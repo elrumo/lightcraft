@@ -142,6 +142,48 @@ impl Session {
         Ok(self.vision.people.clusters.clone())
     }
 
+    /// Which of `faces` (a position, its photo, its box) the face finder found to be one person, here or on the sync
+    /// server: the positions of each person's faces, their best face first. Nothing while finding people is off.
+    pub(crate) fn people_groups(&mut self, faces: &[(usize, PhotoId, lightcraft_geom::Rect)]) -> Vec<Vec<usize>> {
+        let local = self.vision.faces_available() && (self.vision.faces || self.vision.faces_found() > 0);
+        if faces.is_empty() || !(local || self.people_from_server()) {
+            return Vec::new();
+        }
+        let Ok(clusters) = self.people_clusters(false) else { return Vec::new() };
+        // every found face by its photo: (person, rank in that person, box)
+        let mut found: HashMap<Key, Vec<(usize, usize, [f32; 4])>> = HashMap::new();
+        for (c, cluster) in clusters.iter().enumerate() {
+            for (rank, m) in cluster.members.iter().enumerate() {
+                found.entry(m.key).or_default().push((c, rank, m.rect));
+            }
+        }
+        let mut groups: Vec<Vec<(usize, usize)>> = vec![Vec::new(); clusters.len()];
+        for &(pos, photo, rect) in faces {
+            let Some(p) = self.catalog.photo(photo) else { continue };
+            let r = [rect.x0 as f32, rect.y0 as f32, rect.x1 as f32, rect.y1 as f32];
+            let best = found
+                .get(&Key::of(&crate::media::content_key(p)))
+                .into_iter()
+                .flatten()
+                .map(|&(c, rank, m)| (c, rank, iou(&m, &r)))
+                .filter(|f| f.2 >= SAME_FACE)
+                .max_by(|a, b| a.2.total_cmp(&b.2));
+            if let Some((c, rank, _)) = best
+                && let Some(g) = groups.get_mut(c)
+            {
+                g.push((rank, pos));
+            }
+        }
+        groups
+            .into_iter()
+            .filter(|g| g.len() > 1)
+            .map(|mut g| {
+                g.sort_unstable();
+                g.into_iter().map(|(_, pos)| pos).collect()
+            })
+            .collect()
+    }
+
     /// The name each of `cluster`'s faces already has on its photos' face regions, most common
     /// first, and how many faces have none yet.
     fn people_names(&self, cluster: &Cluster, photos: &HashMap<Key, Vec<PhotoId>>) -> (Vec<(String, usize)>, usize) {

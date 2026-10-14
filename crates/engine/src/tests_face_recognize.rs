@@ -424,10 +424,15 @@ fn unnamed_faces_come_with_look_alikes_together_and_the_name_the_named_ones_sugg
     let faces = r["faces"].as_array().unwrap();
     let at = |f: &Value| (f["photo"].as_u64().unwrap(), f["index"].as_u64().unwrap());
     let order: Vec<(u64, u64)> = faces.iter().map(at).collect();
-    // look-alikes are neighbours: the two like Bob are adjacent, and the three like Ann are adjacent; the unembedded one is last
-    let pos = |x: (u64, u64)| order.iter().position(|o| *o == x).unwrap();
-    assert_eq!(pos((a.0, 1)).abs_diff(pos((b.0, 1))), 1, "{order:?}");
+    // look-alikes are one person: the two like Bob share a group, the two unnamed ones like Ann another; the unembedded
+    // one is a group of its own, last; a group's faces are listed together
+    let group = |x: (u64, u64)| faces.iter().find(|f| at(f) == x).unwrap()["group"].as_u64().unwrap();
+    assert_eq!(group((a.0, 1)), group((b.0, 1)), "{order:?}");
+    assert_eq!(group((b.0, 0)), group((c.0, 0)), "{order:?}");
+    assert_ne!(group((a.0, 1)), group((b.0, 0)), "{order:?}");
     assert_eq!(order.last(), Some(&(a.0, 2)), "{order:?}");
+    let groups: Vec<u64> = faces.iter().map(|f| f["group"].as_u64().unwrap()).collect();
+    assert_eq!(groups, [0, 0, 1, 1, 2], "numbered in order, each person's faces together");
     // a face the named ones recognise carries the name they suggest
     let like_ann = faces.iter().find(|f| at(f) == (b.0, 0)).unwrap();
     assert_eq!(like_ann["suggestion"]["name"], "Ann", "{like_ann}");
@@ -444,6 +449,8 @@ fn unnamed_faces_come_with_look_alikes_together_and_the_name_the_named_ones_sugg
     let r = s.execute("faces.unnamed", &json!({})).unwrap();
     assert_eq!((r["total"].clone(), r["ordered"].clone(), r["ready"].clone()), (json!(5), json!(false), json!(false)));
     assert!(r["faces"].as_array().unwrap().iter().all(|f| f["suggestion"].is_null()));
+    let groups: Vec<u64> = r["faces"].as_array().unwrap().iter().map(|f| f["group"].as_u64().unwrap()).collect();
+    assert_eq!(groups, [0, 1, 2, 3, 4], "ungrouped, every face is a person of its own");
     for odd in [json!({"limit": 0}), json!({"limit": "x"}), json!({"limit": u64::MAX})] {
         assert!(s.execute("faces.unnamed", &odd).is_ok(), "{odd}");
     }

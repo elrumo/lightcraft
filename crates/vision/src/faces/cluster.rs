@@ -45,50 +45,55 @@ fn quality(f: &Face) -> f32 {
 
 /// `faces` as people, biggest first (ties: the better face first).
 pub fn group(faces: &[Face], join: f32) -> Vec<Group> {
-    let mut order: Vec<usize> = (0..faces.len()).filter(|&i| faces.get(i).is_some_and(|f| f.embedding.len() == DIM)).collect();
-    order.sort_by(|&a, &b| {
-        let (qa, qb) = (faces.get(a).map_or(0.0, quality), faces.get(b).map_or(0.0, quality));
-        qb.total_cmp(&qa).then(a.cmp(&b))
-    });
+    let items: Vec<(&[f32], f32)> = faces.iter().map(|f| (if f.embedding.len() == DIM { &f.embedding[..] } else { &[][..] }, quality(f))).collect();
+    group_vectors(&items, join)
+}
+
+/// Unit vectors as people, each `(vector, quality)`: the best faces start a person, a face joins the person whose
+/// average it is at least `join` like, and two people whose averages are at least `join + (MERGE - JOIN)` alike are one.
+/// Members are indices into `items`, the best first; the biggest group first. A vector that is empty or not as long as
+/// the first one is left out (it belongs to no group).
+pub fn group_vectors(items: &[(&[f32], f32)], join: f32) -> Vec<Group> {
+    let dim = items.iter().map(|(v, _)| v.len()).find(|&n| n > 0).unwrap_or(0);
+    let q = |i: usize| items.get(i).map_or(0.0, |it| it.1);
+    let mut order: Vec<usize> = (0..items.len()).filter(|&i| items.get(i).is_some_and(|(v, _)| dim > 0 && v.len() == dim)).collect();
+    order.sort_by(|&a, &b| q(b).total_cmp(&q(a)).then(a.cmp(&b)));
     let mut sums: Vec<Vec<f32>> = Vec::new();
     let mut groups: Vec<Group> = Vec::new();
     for i in order {
-        let Some(f) = faces.get(i) else { continue };
-        let best = groups.iter().enumerate().map(|(g, grp)| (g, dot(&f.embedding, &grp.centroid))).max_by(|a, b| a.1.total_cmp(&b.1));
+        let Some((v, _)) = items.get(i) else { continue };
+        let best = groups.iter().enumerate().map(|(g, grp)| (g, dot(v, &grp.centroid))).max_by(|a, b| a.1.total_cmp(&b.1));
         match best {
             Some((g, sim)) if sim >= join => {
                 if let (Some(sum), Some(grp)) = (sums.get_mut(g), groups.get_mut(g)) {
-                    sum.iter_mut().zip(&f.embedding).for_each(|(s, e)| *s += e);
+                    sum.iter_mut().zip(v.iter()).for_each(|(s, e)| *s += e);
                     grp.centroid = unit(sum);
                     grp.members.push(i);
                 }
             }
             _ => {
-                sums.push(f.embedding.clone());
-                groups.push(Group { members: vec![i], centroid: f.embedding.clone() });
+                sums.push(v.to_vec());
+                groups.push(Group { members: vec![i], centroid: v.to_vec() });
             }
         }
     }
     if groups.len() <= MERGE_MAX {
-        merge_close(&mut groups, &mut sums);
+        merge_close(&mut groups, &mut sums, join + (MERGE - JOIN));
     }
     for g in &mut groups {
-        g.members.sort_by(|&a, &b| {
-            let (qa, qb) = (faces.get(a).map_or(0.0, quality), faces.get(b).map_or(0.0, quality));
-            qb.total_cmp(&qa).then(a.cmp(&b))
-        });
+        g.members.sort_by(|&a, &b| q(b).total_cmp(&q(a)).then(a.cmp(&b)));
     }
     groups.sort_by(|a, b| b.members.len().cmp(&a.members.len()).then_with(|| a.members.first().cmp(&b.members.first())));
     groups
 }
 
-/// Joins people whose averages are [`MERGE`] close: one look at every pair.
-fn merge_close(groups: &mut Vec<Group>, sums: &mut Vec<Vec<f32>>) {
+/// Joins people whose averages are `merge` close: one look at every pair.
+fn merge_close(groups: &mut Vec<Group>, sums: &mut Vec<Vec<f32>>, merge: f32) {
     let mut a = 0;
     while a < groups.len() {
         let mut b = a + 1;
         while b < groups.len() {
-            let close = matches!((groups.get(a), groups.get(b)), (Some(x), Some(y)) if dot(&x.centroid, &y.centroid) >= MERGE);
+            let close = matches!((groups.get(a), groups.get(b)), (Some(x), Some(y)) if dot(&x.centroid, &y.centroid) >= merge);
             if !close {
                 b += 1;
                 continue;
