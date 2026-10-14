@@ -17,6 +17,16 @@ grass, sand and water but can't continue an edge or a shape it can't find nearby
 4. Drag the spot's pin to move it and it is painted again at its new place. Copied spots (Copy / Paste settings,
    presets) leave their fill behind, so on another photo they fill from around them.
 
+**Tap to Remove (SwiftUI iPhone / iPad app).** With Remove selected, **Tap** beside Brush selects by
+tapping: tap an object and Apple Vision's model selects it ([ai-masks.md](ai-masks.md) → On iPhone), and the object's own
+outline, not a stroke, is the spot's area (Generative AI when it is on and downloaded, else filled from around it). One
+undo step; Undo takes it back. The spot stores the object's shape (`Spot.shape`: a segmentation over the object's box, a
+few kilobytes) and its `points` are the object's centre and the corners of its box (the pin sits at the centre); `size`
+is how far past the object's edge the spot reaches: 0.4 % of the long edge, and Tap mode's **Size** slider (1–30 ‰) changes
+it, for the selected tapped spot as you drag (a spot the AI filled is painted again when you let go) and for the next tap. Dragging the pin moves the shape with it. A
+spot with a shape belongs to its photo: Copy Settings and presets leave it behind. Agents: `spot.add {bitmap: {width,
+height, data}, ai?}` with a selection from outside the engine (`mask.inputImage` shows what the bitmap must line up with).
+
 Agents and scripts: `spot.add {points, size?, feather?, opacity?, "ai": true}`, `spot.erase {index?}` (paint an
 existing Remove spot again). The model: `models.download {"id": "migan", "acknowledged": true}` (only after the user
 agreed), `models.list`, `models.cancel`, `models.delete`. Without the model both commands fail with "The AI Remove model
