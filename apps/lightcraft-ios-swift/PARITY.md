@@ -18,9 +18,9 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | Phase | ✅ | 🟡 | ⬜ | 🚫 | Done or out of scope |
 |---|---:|---:|---:|---:|---:|
 | S0 | 12 | 3 | 0 | 0 | 12/15 |
-| S1 | 127 | 12 | 25 | 3 | 130/167 |
+| S1 | 135 | 12 | 17 | 3 | 138/167 |
 | S2 | 1 | 0 | 79 | 22 | 23/102 |
-| **Total** | 140 | 15 | 104 | 25 | 165/284 |
+| **Total** | 148 | 15 | 96 | 25 | 173/284 |
 <!-- /ios-parity:summary -->
 
 ## Screens
@@ -126,24 +126,24 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | ui:view.navigate | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | drag pans the zoomed photo |
 | ui:view.zoomIn | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | pinch out |
 | ui:view.zoomOut | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | pinch in |
-| ui:view.clipping | S1 | ⬜ |  |  |
-| ui:view.visualizeHdr | S1 | ⬜ |  |  |
+| ui:view.clipping | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | a tap on the histogram: red around a photo with whites clipped, blue with blacks (the host sends the clipped shares) |
+| ui:view.visualizeHdr | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/EditGroupPanel.swift` | Edit ▸ Light ▸ HDR ▸ Visualize HDR (`render.view {overlay: hdr}`) |
 | ui:view.softProof | S2 | ⬜ |  |  |
-| ui:view.histogram | S1 | ⬜ |  |  |
+| ui:view.histogram | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | the photo's "…" ▸ Histogram: luminance and R, G, B over the photo, with the clipping triangles |
 | ui:view.maskOverlay | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/ToolScreens.swift` | Masking ▸ eye button (`render.view {overlay}`) |
 | ui:view.maskOverlayMode | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/ToolScreens.swift` | Masking ▸ ⋯ ▸ Overlay Options ▸ Show As |
 | ui:view.maskOverlayColor | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/ToolScreens.swift` | Masking ▸ ⋯ ▸ Overlay Options ▸ Color, Opacity |
 | ui:view.maskPins | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/MaskCanvas.swift` | Masking ▸ ⋯ ▸ Show Pins |
 | ui:view.visualizeSpots | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/ToolScreens.swift` | Remove ▸ ⋯ ▸ Visualize Spots, and its Threshold |
-| ui:view.cropOverlay | S1 | ⬜ |  |  |
-| ui:view.cropOverlayOrientation | S1 | ⬜ |  |  |
+| ui:view.cropOverlay | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/ToolScreens.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/CropOverlay.swift`, `crates/geom/src/guides.rs` | Crop ▸ ⋯ ▸ Overlay: thirds, grid, golden ratio, diagonal, golden triangle, golden spiral, none (`crop.guides`, geometry shared with egui) |
+| ui:view.cropOverlayOrientation | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/ToolScreens.swift` | Crop ▸ ⋯ ▸ Cycle Overlay Orientation (triangle and spiral) |
 | ui:view.back | S0 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/App/RootView.swift` | the navigation stack |
 | ui:tool.done | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/ToolScreens.swift` | a tool screen's ✓ |
 | ui:view.filterBar | S2 | ⬜ |  |  |
 | ui:local.addRoot | S2 | 🚫 |  | no Local folders in the iOS sandbox (photos are copied into the library) |
 | ui:local.hide | S2 | 🚫 |  | no Local folders in the iOS sandbox |
 | ui:local.restoreHidden | S2 | 🚫 |  | no Local folders in the iOS sandbox |
-| ui:view.fullScreenPreview | S1 | ⬜ |  |  |
+| ui:view.fullScreenPreview | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | a tap on the photo hides everything but it (review mode) |
 | ui:view.lightsOut | S2 | ⬜ |  |  |
 | ui:view.enterFullScreen | S2 | 🚫 |  | iOS apps are always full screen |
 | ui:view.infoOverlay | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | Settings ▸ Interface ▸ Info Overlay |
@@ -153,7 +153,7 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | ui:panel.crop | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | the tool bar |
 | ui:panel.remove | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | the tool bar |
 | ui:panel.masking | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | the tool bar |
-| ui:panel.redeye | S1 | ⬜ |  |  |
+| ui:panel.redeye | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/RedEyeCanvas.swift` | the photo's "…" ▸ Red Eye: drag a box around an eye (`redeye.add`), red or pet eyes, the chosen one's pupil size and darkening, catchlight, delete |
 | ui:panel.presets | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | the tool bar |
 | ui:panel.info | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | the tool bar |
 | ui:panel.keywords | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/HistorySheet.swift` | photo "…" ▸ Keywords |
@@ -161,7 +161,7 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | ui:panel.activity | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/HistorySheet.swift` | undo menu or "…" ▸ History |
 | ui:view.syncStatus | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/App/RootView.swift` | the grid's cloud button |
 | ui:dialog.syncChoice | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | the host asks (`ask {dialog: syncChoice}`); Settings ▸ Sync |
-| ui:panel.close | S1 | ⬜ |  |  |
+| ui:panel.close | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | a tap on the open tool closes its panel; ✕ / ✓ close a tool screen |
 | ui:section.light | S0 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/EditGroupPanel.swift` | sliders from `develop.controls` |
 | ui:section.color | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/EditGroupPanel.swift` | Edit ▸ Color |
 | ui:section.effects | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/EditGroupPanel.swift` | Edit ▸ Effects |

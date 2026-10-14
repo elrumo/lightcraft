@@ -228,6 +228,8 @@ struct ZoomablePhoto: View {
                 RemoveCanvas(photo: photo, rect: rect)
             } else if model.editor.tool == .masking, !showBefore, let rect = shownRect(picture) {
                 MaskCanvas(photo: photo, rect: rect)
+            } else if model.editor.tool == .redEye, !showBefore, let rect = shownRect(picture) {
+                RedEyeCanvas(photo: photo, rect: rect)
             } else if model.prefs.faceBoxes || model.editor.tagFace, model.editor.tool?.hasScreen != true, !compare, !showBefore, !review,
                       let rect = shownRect(picture)
             {
@@ -235,6 +237,23 @@ struct ZoomablePhoto: View {
             }
         }
         .overlay(alignment: .topLeading) { InfoOverlay(photo: photo).opacity(review ? 0 : 1) }
+        .overlay(alignment: .topTrailing) {
+            if model.prefs.showHistogram, !review, let h = model.images.view(for: photo)?.histogram {
+                HistogramView(histogram: h).padding(10)
+            }
+        }
+        .overlay {
+            // the clipping warning: red around a photo with whites clipped, blue with blacks
+            if model.prefs.showClipping, !review, let h = model.images.view(for: photo)?.histogram, let c = h.clipping, c.count == 2,
+               let rect = shownRect(picture)
+            {
+                ZStack {
+                    if c[1] > 0.003 { Rectangle().stroke(.red, lineWidth: 2).frame(width: rect.width, height: rect.height).position(x: rect.midX, y: rect.midY) }
+                    if c[0] > 0.003 { Rectangle().stroke(.blue, lineWidth: 2).frame(width: rect.width + 6, height: rect.height + 6).position(x: rect.midX, y: rect.midY) }
+                }
+                .allowsHitTesting(false)
+            }
+        }
         .overlay(alignment: .bottom) {
             if showBefore {
                 Text("Before")
@@ -462,7 +481,7 @@ struct ToolBar: View {
         let editor = model.editor
         GlassEffectContainer {
             HStack(spacing: 0) {
-                ForEach(Tool.allCases) { tool in
+                ForEach(Tool.bar) { tool in
                     Button {
                         withAnimation(.snappy) { editor.tool = editor.tool == tool ? nil : tool }
                         if tool == .crop || tool == .masking || tool == .remove {
@@ -570,7 +589,7 @@ struct ToolPanel: View {
                     case .edit: EditGroupPanel()
                     case .presets: PresetsPanel()
                     case .info: InfoPanel()
-                    case .crop, .masking, .remove: EmptyView()
+                    case .crop, .masking, .remove, .redEye: EmptyView()
                     }
                 }
                 .padding(.horizontal, 16)
@@ -668,6 +687,11 @@ struct PhotoMoreMenu: View {
                     if model.editor.tool?.hasScreen == true { model.editor.tool = .edit }
                 }
                 Toggle("Before / After", systemImage: "rectangle.split.2x1", isOn: Binding(get: { model.editor.beforeAfter }, set: { model.editor.beforeAfter = $0 }))
+                Toggle("Histogram", systemImage: "chart.bar.xaxis", isOn: Binding(get: { model.prefs.showHistogram }, set: { model.prefs.showHistogram = $0 }))
+                Button("Red Eye", systemImage: "eye") {
+                    model.perform("develop.cancelInteraction")
+                    model.editor.tool = .redEye
+                }
             }
             Section {
                 Button("Versions", systemImage: "square.stack") { model.sheet = .history(versions: true) }
@@ -695,6 +719,7 @@ struct ToolScreenBar: View {
         case .crop: CropTools()
         case .masking: MaskingTools()
         case .remove: RemoveTools()
+        case .redEye: RedEyeTools()
         default: EmptyView()
         }
     }
@@ -779,6 +804,62 @@ struct BeforeAfterView: View {
                     .padding(8)
             }
             .accessibilityElement(children: .combine)
+    }
+}
+
+/// The loupe render's histogram: luminance in grey, red, green and blue over it, the clipping
+/// triangles at its ends (lit when pixels are clipped; a tap shows the clipping warning).
+struct HistogramView: View {
+    @Environment(AppModel.self) private var model
+    let histogram: Histogram
+
+    var body: some View {
+        let clip = histogram.clipping ?? [0, 0]
+        VStack(spacing: 2) {
+            HStack {
+                triangle(lit: (clip.first ?? 0) > 0.003, color: .blue, pointsLeft: true)
+                Spacer()
+                triangle(lit: (clip.last ?? 0) > 0.003, color: .red, pointsLeft: false)
+            }
+            Canvas { ctx, size in
+                // scaled to the tallest bin away from the ends (a clipped end would flatten the rest)
+                let peak = Double([histogram.r, histogram.g, histogram.b, histogram.luma].flatMap { $0.dropFirst().dropLast() }.max() ?? 1)
+                func plot(_ bins: [UInt32]) -> Path {
+                    var p = Path()
+                    guard bins.count > 1, peak > 0 else { return p }
+                    p.move(to: CGPoint(x: 0, y: size.height))
+                    for (i, v) in bins.enumerated() {
+                        let x = size.width * CGFloat(i) / CGFloat(bins.count - 1)
+                        p.addLine(to: CGPoint(x: x, y: size.height * (1 - min(CGFloat(Double(v) / peak), 1))))
+                    }
+                    p.addLine(to: CGPoint(x: size.width, y: size.height))
+                    p.closeSubpath()
+                    return p
+                }
+                ctx.fill(plot(histogram.luma), with: .color(.gray.opacity(0.5)))
+                ctx.blendMode = .plusLighter
+                ctx.fill(plot(histogram.r), with: .color(.red.opacity(0.45)))
+                ctx.fill(plot(histogram.g), with: .color(.green.opacity(0.45)))
+                ctx.fill(plot(histogram.b), with: .color(.blue.opacity(0.45)))
+            }
+        }
+        .frame(width: 140, height: 72)
+        .padding(8)
+        .glassEffect(.regular, in: .rect(cornerRadius: 12))
+        .onTapGesture { model.prefs.showClipping.toggle() }
+        .accessibilityElement()
+        .accessibilityLabel("Histogram")
+        .accessibilityValue(model.prefs.showClipping ? "Clipping shown" : "")
+        .accessibilityHint("Shows or hides the clipping warning")
+    }
+
+    private func triangle(lit: Bool, color: Color, pointsLeft: Bool) -> some View {
+        Image(systemName: pointsLeft ? "arrowtriangle.left.fill" : "arrowtriangle.right.fill")
+            .font(.system(size: 9))
+            .foregroundStyle(lit ? color : Color.secondary.opacity(0.4))
+            .overlay {
+                if model.prefs.showClipping { Circle().stroke(color.opacity(0.6), lineWidth: 1).frame(width: 14, height: 14) }
+            }
     }
 }
 #endif

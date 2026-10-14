@@ -13,6 +13,8 @@ struct CropOverlay: View {
     let rect: CGRect
     @State private var frame: PhotoFrame?
     @State private var drag: CropDrag?
+    /// The composition guide's lines across the crop (`crop.guides`).
+    @State private var guides: [[[Double]]] = []
 
     /// How far from a handle a finger still takes it (points).
     private let reach: CGFloat = 28
@@ -27,13 +29,14 @@ struct CropOverlay: View {
             frameLine.addLines(corners)
             frameLine.closeSubpath()
             ctx.stroke(frameLine, with: .color(.white), lineWidth: 1.5)
-            // thirds
-            for t in [1.0 / 3, 2.0 / 3] {
+            // the composition guide, across the crop (u along its top edge, v down its side)
+            let (o, du, dv) = (corners[0], CGPoint(x: corners[1].x - corners[0].x, y: corners[1].y - corners[0].y),
+                               CGPoint(x: corners[3].x - corners[0].x, y: corners[3].y - corners[0].y))
+            for line in guides {
+                let pts = line.compactMap { q in q.count == 2 ? CGPoint(x: o.x + du.x * q[0] + dv.x * q[1], y: o.y + du.y * q[0] + dv.y * q[1]) : nil }
+                guard pts.count > 1 else { continue }
                 var p = Path()
-                p.move(to: lerp(corners[0], corners[3], t))
-                p.addLine(to: lerp(corners[1], corners[2], t))
-                p.move(to: lerp(corners[0], corners[1], t))
-                p.addLine(to: lerp(corners[3], corners[2], t))
+                p.addLines(pts)
                 ctx.stroke(p, with: .color(.white.opacity(drag == nil ? 0.35 : 0.7)), lineWidth: 0.75)
             }
             // brackets at the corners
@@ -60,6 +63,7 @@ struct CropOverlay: View {
                 })
         }
         .task(id: model.state.catalogRevision) { await load() }
+        .task(id: GuideKey(kind: model.prefs.cropGuide, orientation: model.prefs.cropGuideOrientation, crop: frame?.crop?.rect ?? [])) { await loadGuides() }
         .accessibilityElement()
         .accessibilityLabel("Crop frame")
         .accessibilityHint("Drag a corner or an edge to crop, outside the frame to rotate")
@@ -68,6 +72,21 @@ struct CropOverlay: View {
     private func load() async {
         guard let engine = model.engine else { return }
         frame = try? await engine.execute("view.frame", ["id": .int(Int64(clamping: photo)), "applyCrop": false], as: PhotoFrame.self)
+    }
+
+    private nonisolated struct GuideKey: Hashable {
+        let kind: String
+        let orientation: Int
+        let crop: [Double]
+    }
+
+    /// The guide for the crop as it is (its shape decides where the diagonals and the spiral go).
+    private func loadGuides() async {
+        guard let engine = model.engine, let frame, let r = frame.crop?.rect, r.count == 4 else { return }
+        let (w, h) = ((r[2] - r[0]) * frame.width, (r[3] - r[1]) * frame.height)
+        let answer = try? await engine.execute("crop.guides", ["kind": .string(model.prefs.cropGuide), "orientation": .int(Int64(model.prefs.cropGuideOrientation)),
+                                                               "width": .double(w), "height": .double(h)])
+        guides = (answer?["paths"].array ?? []).map { ($0.array ?? []).map { ($0.array ?? []).compactMap(\.double) } }
     }
 
     /// The crop's corners on screen (top-left, top-right, bottom-right, bottom-left of the crop).

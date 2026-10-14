@@ -5,8 +5,11 @@ import Observation
 
 /// The tools under a photo, as Lightroom's mobile app has them.
 nonisolated enum Tool: String, CaseIterable, Identifiable {
-    case presets, crop, edit, masking, remove, info
+    case presets, crop, edit, masking, remove, info, redEye
     var id: String { rawValue }
+
+    /// The tool bar's tools (Red Eye opens from the photo's "…" menu).
+    static let bar: [Tool] = [.presets, .crop, .edit, .masking, .remove, .info]
 
     var label: String {
         switch self {
@@ -16,6 +19,7 @@ nonisolated enum Tool: String, CaseIterable, Identifiable {
         case .masking: "Masking"
         case .remove: "Remove"
         case .info: "Info"
+        case .redEye: "Red Eye"
         }
     }
 
@@ -27,11 +31,12 @@ nonisolated enum Tool: String, CaseIterable, Identifiable {
         case .masking: "circle.dashed.inset.filled"
         case .remove: "eraser"
         case .info: "info.circle"
+        case .redEye: "eye"
         }
     }
 
-    /// Crop, Masking and Remove take the whole screen (their own bars).
-    var hasScreen: Bool { self == .crop || self == .masking || self == .remove }
+    /// Crop, Masking, Remove and Red Eye take the whole screen (their own bars).
+    var hasScreen: Bool { self == .crop || self == .masking || self == .remove || self == .redEye }
 }
 
 /// The Edit tool's groups, one shown at a time (the desktop's sections).
@@ -122,6 +127,11 @@ final class EditorModel {
     var beforeAfter = false
     /// Tag a Face: the next tap on the photo marks a face there.
     var tagFace = false
+    /// Light ▸ HDR ▸ Visualize: what the HDR rendition puts above SDR white, painted by how far.
+    var visualizeHdr = false
+    /// Red Eye: a pet's eyes, and the correction chosen (its sliders).
+    var eyePet = false
+    var eye = 0
 
     enum Pick {
         case whiteBalance, pointColor

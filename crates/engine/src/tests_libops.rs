@@ -831,3 +831,17 @@ fn smart_album_rules_read_check_and_start_sensibly() {
     assert!(!problems.as_array().unwrap().is_empty(), "{problems}");
     assert!(s.execute("album.rules", &json!({"id": 999_999})).is_err());
 }
+
+/// The crop tool's guides: thirds are four lines, the spiral is mirrored by the orientation.
+#[test]
+fn crop_guides_are_lines_across_the_crop() {
+    let mut s = Session::with_demo();
+    let thirds = s.execute("crop.guides", &json!({"width": 3, "height": 2})).unwrap();
+    assert_eq!(thirds["paths"].as_array().unwrap().len(), 4, "{thirds}");
+    assert_eq!(thirds["kinds"][0], "thirds");
+    let tri = s.execute("crop.guides", &json!({"kind": "triangle", "orientation": 1, "width": 3, "height": 2})).unwrap();
+    assert_eq!(tri["asymmetric"], true);
+    assert_eq!(tri["paths"][0], json!([[1.0, 0.0], [0.0, 1.0]]));
+    let none = s.execute("crop.guides", &json!({"kind": "none", "width": -1, "height": f64::NAN.to_string()})).unwrap();
+    assert!(none["paths"].as_array().unwrap().is_empty());
+}

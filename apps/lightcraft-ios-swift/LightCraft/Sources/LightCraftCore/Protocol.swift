@@ -151,6 +151,8 @@ public struct Histogram: Codable, Sendable, Equatable {
     public var b: [UInt32]
     public var luma: [UInt32]
     public var total: UInt32
+    /// The share of pixels clipped to black and to white (the clipping warnings).
+    public var clipping: [Double]?
 }
 
 /// A background task (import, export, sync…), as `activity.list` gives it.

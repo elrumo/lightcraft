@@ -202,6 +202,8 @@ private struct LightGroup: View {
         .font(.subheadline)
         if hdr {
             Sliders(section: "light") { $0.id == "hdr.maxEv" }
+            Toggle("Visualize HDR", isOn: Binding(get: { model.editor.visualizeHdr }, set: { model.editor.visualizeHdr = $0 }))
+                .font(.subheadline)
         }
         Sliders(section: "light") { !$0.id.hasPrefix("hdr.") }
         if hdr {

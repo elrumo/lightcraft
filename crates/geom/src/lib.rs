@@ -7,6 +7,7 @@
 
 mod crop;
 mod crop_drag;
+pub mod guides;
 mod homography;
 mod real;
 

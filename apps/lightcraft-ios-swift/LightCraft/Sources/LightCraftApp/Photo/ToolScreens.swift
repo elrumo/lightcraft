@@ -54,6 +54,12 @@ struct CropTools: View {
     @State private var tab = "aspect"
     @State private var dialStart: Double?
 
+    /// The crop's composition guides (`crop.guides` kinds).
+    private static let guides: [(String, String)] = [
+        ("thirds", "Rule of Thirds"), ("grid", "Grid"), ("golden", "Golden Ratio"), ("diagonal", "Diagonal"),
+        ("triangle", "Golden Triangle"), ("spiral", "Golden Spiral"), ("none", "None"),
+    ]
+
     private static let ratios: [(String, String)] = [
         ("1x1", "1 × 1"), ("4x5", "4 × 5"), ("3x4", "3 × 4"), ("2x3", "2 × 3"), ("5x7", "5 × 7"),
         ("9x16", "9 × 16"), ("10x16", "10 × 16"), ("8.5x11", "8.5 × 11"), ("1x2", "1 × 2"),
@@ -89,6 +95,16 @@ struct CropTools: View {
                         Button("Flip Horizontal", systemImage: "arrow.left.and.right.righttriangle.left.righttriangle.right") { model.perform("photo.flipHorizontal") }
                         Button("Flip Vertical", systemImage: "arrow.up.and.down.righttriangle.up.righttriangle.down") { model.perform("photo.flipVertical") }
                         Button("Reset Crop", systemImage: "arrow.counterclockwise") { model.perform("crop.reset") }
+                        Divider()
+                        Picker("Overlay", selection: Binding(get: { model.prefs.cropGuide }, set: { model.prefs.cropGuide = $0 })) {
+                            ForEach(Self.guides, id: \.0) { Text(LocalizedStringKey($0.1)).tag($0.0) }
+                        }
+                        .pickerStyle(.menu)
+                        if model.prefs.cropGuide == "triangle" || model.prefs.cropGuide == "spiral" {
+                            Button("Cycle Overlay Orientation", systemImage: "arrow.triangle.2.circlepath") {
+                                model.prefs.cropGuideOrientation = (model.prefs.cropGuideOrientation + 1) % 4
+                            }
+                        }
                     } label: {
                         Image(systemName: "ellipsis").frame(width: 44, height: 44)
                     }

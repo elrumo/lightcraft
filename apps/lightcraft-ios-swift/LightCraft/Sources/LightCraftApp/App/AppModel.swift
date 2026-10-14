@@ -298,6 +298,9 @@ final class AppModel {
         if editor.tool == .remove, editor.visualizeSpots {
             return ["kind": "spots", "threshold": .double(editor.spotsThreshold)]
         }
+        if editor.tool == .edit, editor.visualizeHdr, editor.hdr {
+            return ["kind": "hdr"]
+        }
         guard editor.tool == .masking, prefs.maskOverlay, let mask = state.activeMask else { return nil }
         return [
             "kind": "mask", "id": .int(Int64(mask)), "view": .string(prefs.maskOverlayMode),

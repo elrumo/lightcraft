@@ -8,10 +8,10 @@ import UIKit
 /// engine answers `engine.*`, `render.*` and `host.*` itself and asks the app for the rest.
 /// - `ui.screenshot {path}`: the window as a PNG.
 /// - `ui.inspect`: the screen, the photo, the state and timings (`perf`).
-/// - `ui.set {screen?: grid | photo | edit | crop | masking | remove | presets | info | commands |
+/// - `ui.set {screen?: grid | photo | edit | crop | masking | remove | redEye | presets | info | commands |
 ///   people | map, photo?, span?: all | months | years, group?: light | color…, sheet?: albums |
 ///   filter | settings | export | sync | history | versions | keywords | about | superRes | createPreset | smartAlbum (id?) | allMetadata | none, select?,
-///   faceBoxes?, tagFace?, beforeAfter?, visualizeSpots?, removeAI?}`: go there.
+///   faceBoxes?, tagFace?, beforeAfter?, visualizeSpots?, removeAI?, histogram?, cropGuide?}`: go there.
 @Observable
 final class ScriptHost {
     func answer(id: UInt64, method: String, params: JSONValue, model: AppModel) {
@@ -75,6 +75,8 @@ final class ScriptHost {
             if let on = params["beforeAfter"].bool { model.editor.beforeAfter = on }
             if let on = params["visualizeSpots"].bool { model.editor.visualizeSpots = on }
             if let on = params["removeAI"].bool { model.prefs.removeAI = on }
+            if let on = params["histogram"].bool { model.prefs.showHistogram = on }
+            if let guide = params["cropGuide"].string { model.prefs.cropGuide = guide }
             switch params["screen"].string {
             case nil:
                 break
@@ -82,7 +84,7 @@ final class ScriptHost {
                 model.sheet = nil
                 model.editor.tool = nil
                 model.path = []
-            case "photo", "edit", "crop", "masking", "remove", "presets", "info":
+            case "photo", "edit", "crop", "masking", "remove", "presets", "info", "redEye":
                 let id = params["photo"].int.flatMap { UInt64(exactly: $0) } ?? model.library.loaded(at: 0)?.id
                 guard let id else { throw ErrorBody(code: "badParams", message: "no photo") }
                 model.sheet = nil
@@ -100,7 +102,7 @@ final class ScriptHost {
             case "map":
                 model.path = [.map]
             default:
-                throw ErrorBody(code: "badParams", message: "`screen`: grid, photo, edit, crop, masking, remove, presets, info, commands, people or map")
+                throw ErrorBody(code: "badParams", message: "`screen`: grid, photo, edit, crop, masking, remove, redEye, presets, info, commands, people or map")
             }
             if let sheet = params["sheet"].string {
                 switch sheet {
