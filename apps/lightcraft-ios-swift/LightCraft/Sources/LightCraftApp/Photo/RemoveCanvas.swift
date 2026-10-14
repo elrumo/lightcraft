@@ -107,7 +107,15 @@ struct RemoveCanvas: View {
                 trail = []
                 guard !pts.isEmpty else { return }
                 let e = model.editor
-                model.perform("spot.add", ["mode": .string(e.removeMode), "points": .array(pts), "size": .double(e.removeSize), "feather": .double(e.removeFeather), "opacity": .double(e.removeOpacity)])
+                // Generative AI: the MI-GAN model fills it, when it's here (else texture from around it, and a word why)
+                let ai = e.removeMode == "remove" && model.prefs.removeAI
+                if ai && !e.eraseReady {
+                    model.show(String(localized: "AI Remove needs its model: download it in the Remove panel. This stroke was filled from around it."))
+                } else if ai {
+                    model.show(String(localized: "Removing with AI…"))
+                }
+                model.perform("spot.add", ["mode": .string(e.removeMode), "points": .array(pts), "size": .double(e.removeSize), "feather": .double(e.removeFeather),
+                                           "opacity": .double(e.removeOpacity), "ai": .bool(ai && e.eraseReady)])
             }
     }
 

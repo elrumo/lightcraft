@@ -277,6 +277,8 @@ struct RemoveTools: View {
                             }
                         }
                     }
+                    Toggle("Visualize Spots", systemImage: "eye", isOn: $editor.visualizeSpots)
+                    Divider()
                     Button("Delete All Spots", systemImage: "trash", role: .destructive) {
                         Task {
                             for i in stride(from: spots.count - 1, through: 0, by: -1) {
@@ -300,6 +302,13 @@ struct RemoveTools: View {
                     ControlSlider(spec: ControlSpec(id: "remove.opacity", label: "Opacity", section: "remove", min: 0, max: 100, default: 100, step: 1, decimals: 0),
                                   value: editor.removeOpacity, set: { editor.removeOpacity = $0 }, editing: { _ in }, reset: { editor.removeOpacity = 100 })
                 }
+                if editor.removeMode == "remove" {
+                    GenerativeAISwitch()
+                }
+                if editor.visualizeSpots {
+                    ControlSlider(spec: ControlSpec(id: "remove.spotsThreshold", label: "Threshold", section: "remove", min: 0, max: 100, default: 50, step: 1, decimals: 0),
+                                  value: editor.spotsThreshold, set: { editor.spotsThreshold = $0 }, editing: { _ in }, reset: { editor.spotsThreshold = 50 })
+                }
             }
             .padding(.horizontal, 16)
             Group {
@@ -314,6 +323,59 @@ struct RemoveTools: View {
         }
         .padding(.top, 8)
         .task { base = await undoDepth(model) }
+    }
+}
+
+/// Remove's Generative AI switch (saved with the app's settings) and, when it's on, the MI-GAN
+/// model's state: the offer to download it (size, licence, credit first), its download, or nothing
+/// once it's here (`models.list`, `models.download`, `models.cancel`).
+struct GenerativeAISwitch: View {
+    @Environment(AppModel.self) private var model
+    @State private var info: JSONValue = .null
+
+    private static let id = "migan"
+
+    var body: some View {
+        @Bindable var prefs = model.prefs
+        VStack(alignment: .leading, spacing: 6) {
+            Toggle("Generative AI", isOn: $prefs.removeAI)
+            if prefs.removeAI, !model.editor.eraseReady, !info.isNull {
+                Group {
+                    if info["available"].bool == false {
+                        Text("AI Remove isn't available in this build.")
+                    } else if info["enabled"].bool == false {
+                        Text("AI Remove is turned off in Settings → AI Models.")
+                    } else if info["download"]["running"].bool == true {
+                        let d = info["download"], total = max(d["total"].double ?? 0, 1)
+                        HStack {
+                            ProgressView(value: (d["done"].double ?? 0) / total) { Text("Downloading MI-GAN…") }
+                            Button("Cancel Download") { model.perform("models.cancel", ["id": .string(Self.id)]) }
+                        }
+                    } else {
+                        Text("Uses the MI-GAN model, a \(Int((info["downloadBytes"].double ?? 0) / 1e6)) MB download (\(info["licence"].string ?? "")). \(info["credit"].string ?? "").")
+                        if let e = info["download"]["error"].string { Text(e).foregroundStyle(.red) }
+                        Button("Download") { model.perform("models.download", ["id": .string(Self.id), "acknowledged": true]) }
+                            .buttonStyle(.bordered)
+                    }
+                }
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .task(id: prefs.removeAI) {
+            // the model's state, until it's here (often while it downloads)
+            while !Task.isCancelled {
+                if let engine = model.engine, let list = (try? await engine.execute("models.list"))?["models"].array,
+                   let m = list.first(where: { $0["id"].string == Self.id })
+                {
+                    info = m
+                    model.editor.eraseReady = m["installed"].bool == true && m["enabled"].bool != false && m["available"].bool != false
+                }
+                guard prefs.removeAI, !model.editor.eraseReady else { return }
+                try? await Task.sleep(for: .milliseconds(info["download"]["running"].bool == true ? 400 : 1500))
+            }
+        }
     }
 }
 #endif

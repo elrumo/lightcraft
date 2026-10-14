@@ -17,10 +17,10 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 <!-- ios-parity:summary -->
 | Phase | ✅ | 🟡 | ⬜ | 🚫 | Done or out of scope |
 |---|---:|---:|---:|---:|---:|
-| S0 | 9 | 6 | 0 | 0 | 9/15 |
-| S1 | 106 | 15 | 46 | 0 | 106/167 |
+| S0 | 10 | 5 | 0 | 0 | 10/15 |
+| S1 | 108 | 14 | 45 | 0 | 108/167 |
 | S2 | 1 | 0 | 79 | 22 | 23/102 |
-| **Total** | 116 | 21 | 125 | 22 | 138/284 |
+| **Total** | 119 | 19 | 124 | 22 | 141/284 |
 <!-- /ios-parity:summary -->
 
 ## Screens
@@ -33,7 +33,7 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | screen:allCommands | S0 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/App/AllCommandsView.swift`, `apps/lightcraft-ios-swift/LightCraft/Tests/LightCraftCoreTests/EngineTests.swift` | every engine command, grouped, searchable, runnable; why a disabled one is |
 | screen:activity | S0 | 🟡 | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/App/RootView.swift` | running tasks with Cancel; no activity stack page yet |
 | screen:automation | S0 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/App/ScriptHost.swift`, `crates/apphost/src/host/script.rs` | `LIGHTCRAFT_SCRIPT`: engine requests, `ui.screenshot`, `ui.inspect`, `ui.set` |
-| screen:undoRedo | S0 | 🟡 | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | toolbar buttons; the undo menu (A2.11) is SW1.17 |
+| screen:undoRedo | S0 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | Undo and Redo in the top bar's menu (it stays open), Reset, Versions, History |
 | screen:compact.albums | S1 | 🟡 | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/AlbumsSheet.swift` | All Photos, Recently Added, People, Picks, Recently Deleted, the album tree with covers and counts, album menus (offline, share link, export, move, rename, delete), Create New; no lift-and-carry, By Date, Folders or Keywords sections yet |
 | screen:compact.filterSheet | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/FilterSheet.swift`, `crates/engine/src/tests_libops.rs` | stars with ≥ = ≤, flags, labels; Type, Edited, Camera, People, Location, Keyword lists with counts (`library.facets`) |
 | screen:compact.select | S1 | 🟡 | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/SelectionBar.swift` | long press or Select; action bar: rating, flag, label, add to album, export, more (copy, paste, paste selected), delete (album choice + confirm); the album + ▸ LightCraft flow; no drag-choose yet |
@@ -47,7 +47,7 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | screen:compact.tool.presets | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/Panels.swift`, `crates/apphost/src/host/tests.rs` | groups, favourites, user presets with live previews of the photo (`render.variant`), Amount 0–200 %, create, update, delete |
 | screen:compact.tool.crop | S1 | 🟡 | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/ToolScreens.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/CropOverlay.swift` | frame with handles over the whole photo (`crop.drag`, rotate outside, double tap resets), dial, auto, lock, rotate, flips, aspect tiles and ratios, Geometry tab (Upright, sliders, Constrain Crop), ✕ undoes to where it opened (`edit.undoTo`); no guided upright or straighten line yet |
 | screen:compact.tool.masking | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/MaskingScreen.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/MaskCanvas.swift` | the masks' column over the photo (create, select, a mask's menu, its parts with their menus: invert, duplicate, add / subtract / intersect, rename, delete; ± to combine), the groups (Mask: amount, invert, a part's own controls via `mask.shapeControls`, refine edges, overlay options; Light, Color, Effects, Detail, Optics), the overlay, pins, radial and linear handles, the brush, colour range sampling; Select Object and Describe need SAM, which iOS builds don't have |
-| screen:compact.tool.remove | S1 | 🟡 | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/ToolScreens.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/RemoveCanvas.swift` | Remove / Heal / Clone, size, feather, opacity, paint on the photo, pins (mode, new source, delete, move), Find Dust, Delete All; no Visualize Spots yet |
+| screen:compact.tool.remove | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/ToolScreens.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/RemoveCanvas.swift` | Remove / Heal / Clone, size, feather, opacity, paint on the photo, pins (mode, new source, delete, move), Find Dust, Visualize Spots with its threshold (`render.view {overlay: spots}`), Generative AI (MI-GAN: offer, download, AI-filled strokes), Delete All |
 | screen:compact.tool.info | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/Panels.swift` | file, date, size, camera, lens, exposure, place (→ Map), rating, flag, label, title, caption, keywords |
 | screen:compact.edit.profile | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/EditGroupPanel.swift` | profile browser: groups, favourites, recent, live thumbnails (`render.variant`), Amount |
 | screen:compact.edit.color | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/EditGroupPanel.swift`, `crates/engine/src/tests_libops.rs` | white balance presets, picker (tap → `develop.wbPick`), B&W, Temp/Tint on the photo's own scale (`develop.controls`: Kelvin for raws, relative for rendered files), Vibrance, Saturation, flyouts |
@@ -134,7 +134,7 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | ui:view.maskOverlayMode | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/ToolScreens.swift` | Masking ▸ ⋯ ▸ Overlay Options ▸ Show As |
 | ui:view.maskOverlayColor | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/ToolScreens.swift` | Masking ▸ ⋯ ▸ Overlay Options ▸ Color, Opacity |
 | ui:view.maskPins | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/MaskCanvas.swift` | Masking ▸ ⋯ ▸ Show Pins |
-| ui:view.visualizeSpots | S1 | ⬜ |  |  |
+| ui:view.visualizeSpots | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/ToolScreens.swift` | Remove ▸ ⋯ ▸ Visualize Spots, and its Threshold |
 | ui:view.cropOverlay | S1 | ⬜ |  |  |
 | ui:view.cropOverlayOrientation | S1 | ⬜ |  |  |
 | ui:view.back | S0 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/App/RootView.swift` | the navigation stack |

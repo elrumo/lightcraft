@@ -274,8 +274,12 @@ final class AppModel {
         engine.send("render.view", .object(p))
     }
 
-    /// What the loupe draws over the photo: in Masking, the selected mask (Show Overlay).
+    /// What the loupe draws over the photo: in Masking, the selected mask (Show Overlay); in Remove,
+    /// Visualize Spots.
     var viewOverlay: JSONValue? {
+        if editor.tool == .remove, editor.visualizeSpots {
+            return ["kind": "spots", "threshold": .double(editor.spotsThreshold)]
+        }
         guard editor.tool == .masking, prefs.maskOverlay, let mask = state.activeMask else { return nil }
         return [
             "kind": "mask", "id": .int(Int64(mask)), "view": .string(prefs.maskOverlayMode),

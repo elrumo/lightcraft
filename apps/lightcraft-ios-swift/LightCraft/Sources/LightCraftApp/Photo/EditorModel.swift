@@ -106,6 +106,11 @@ final class EditorModel {
     var removeSize = 0.02
     var removeFeather = 50.0
     var removeOpacity = 100.0
+    /// Remove's Visualize Spots: the photo as an edge map where dust stands out, at this threshold.
+    var visualizeSpots = false
+    var spotsThreshold = 50.0
+    /// The AI Remove model is here and turned on (`models.list`, id `migan`).
+    var eraseReady = false
     /// The Masking tool's tool in hand on the photo (`brush`, `colorRange`) and the brush.
     var maskTool: String?
     var brushSize = 0.03

@@ -11,7 +11,7 @@ import UIKit
 /// - `ui.set {screen?: grid | photo | edit | crop | masking | remove | presets | info | commands |
 ///   people | map, photo?, span?: all | months | years, group?: light | color…, sheet?: albums |
 ///   filter | settings | export | sync | history | versions | keywords | about | superRes | createPreset | none, select?,
-///   faceBoxes?, tagFace?, beforeAfter?}`: go there.
+///   faceBoxes?, tagFace?, beforeAfter?, visualizeSpots?, removeAI?}`: go there.
 @Observable
 final class ScriptHost {
     func answer(id: UInt64, method: String, params: JSONValue, model: AppModel) {
@@ -73,6 +73,8 @@ final class ScriptHost {
             if let on = params["faceBoxes"].bool { model.prefs.faceBoxes = on }
             if let on = params["tagFace"].bool { model.editor.tagFace = on }
             if let on = params["beforeAfter"].bool { model.editor.beforeAfter = on }
+            if let on = params["visualizeSpots"].bool { model.editor.visualizeSpots = on }
+            if let on = params["removeAI"].bool { model.prefs.removeAI = on }
             switch params["screen"].string {
             case nil:
                 break
