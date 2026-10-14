@@ -845,3 +845,27 @@ fn crop_guides_are_lines_across_the_crop() {
     let none = s.execute("crop.guides", &json!({"kind": "none", "width": -1, "height": f64::NAN.to_string()})).unwrap();
     assert!(none["paths"].as_array().unwrap().is_empty());
 }
+
+/// Import Presets: the review reads a preset file without adding it, then the run adds it.
+#[test]
+fn presets_are_reviewed_then_imported() {
+    let mut s = Session::with_demo();
+    let dir = temp_dir("preset-review");
+    let file = dir.join("Warm.xmp");
+    let xmp = r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/" crs:PresetType="Normal" crs:Exposure2012="+0.50" crs:Temperature="+10"><crs:Name><rdf:Alt><rdf:li xml:lang="x-default">Warm Glow</rdf:li></rdf:Alt></crs:Name></rdf:Description></rdf:RDF></x:xmpmeta>"#;
+    std::fs::write(&file, xmp).unwrap();
+    let before = s.execute("presets.list", &json!({})).unwrap().as_array().unwrap().len();
+    let review = s.execute("preset.importReview", &json!({"paths": [file]})).unwrap();
+    assert_eq!(review["items"].as_array().map(Vec::len), Some(1), "{review}");
+    assert_eq!(review["items"][0]["preset"]["name"], "Warm Glow");
+    assert_eq!(s.execute("presets.list", &json!({})).unwrap().as_array().unwrap().len(), before, "a review adds nothing");
+    let done = s.execute("preset.importRun", &json!({"review": review})).unwrap();
+    assert_eq!(done["presets"], 1, "{done}");
+    assert_eq!(s.execute("presets.list", &json!({})).unwrap().as_array().unwrap().len(), before + 1);
+    // a file that isn't a preset is a problem, not an error
+    let junk = dir.join("notes.xmp");
+    std::fs::write(&junk, "hello").unwrap();
+    let r = s.execute("preset.importReview", &json!({"paths": [junk]})).unwrap();
+    assert!(r["items"].as_array().unwrap().is_empty() && !r["problems"].as_array().unwrap().is_empty(), "{r}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

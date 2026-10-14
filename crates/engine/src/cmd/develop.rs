@@ -1022,6 +1022,33 @@ pub fn specs() -> Vec<CommandSpec> {
                 ))
             }
         ),
+        cmd!(
+            query "preset.importReview",
+            "Review Presets to Import",
+            [],
+            None,
+            "{paths?: files, folders or zips, files?: [{name, data}] given by content, pickFailed?: [\"name: why\"]} → {source, paths, files, items: [{preset: {id, name, group, settings}, unmapped}], already, profiles: [[name, group]], problems: [[file, why]]} what the files would add (presets, and .cube LUTs as profiles), read without adding anything; give it to preset.importRun",
+            always,
+            |s, p| {
+                let list = |k: &str| -> Vec<String> { p.get(k).and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).map(str::to_string).collect() };
+                let files = p.get("files").and_then(Value::as_array).cloned().unwrap_or_default();
+                let review = crate::preset_review::review(s, list("paths"), files, list("pickFailed")).map_err(|e| bad("preset.importReview", e))?;
+                Ok(serde_json::to_value(review).unwrap_or_default())
+            }
+        ),
+        cmd!(
+            "preset.importRun",
+            "Import Presets",
+            [],
+            None,
+            "{review: preset.importReview's answer} → {presets, groups: [[group, n]], skipped, profiles, notCarried, problems: [[file, why]], error} adds what the review showed (the files are read again)",
+            always,
+            |s, p| {
+                let review: crate::preset_review::Review =
+                    serde_json::from_value(p.get("review").cloned().unwrap_or_default()).map_err(|e| bad("preset.importRun", e.to_string()))?;
+                Ok(serde_json::to_value(crate::preset_review::run(s, &review)).unwrap_or_default())
+            }
+        ),
         cmd!("preset.create", "Create Preset", ["Photo"], None, "{name, group?, groups?: [settingsGroup]}", has_active, |s, p| {
             let id = active(s, "preset.create")?;
             let name = str_param(p, "name").ok_or_else(|| bad("preset.create", "missing name"))?;
