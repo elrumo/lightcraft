@@ -502,3 +502,39 @@ fn a_background_generate_is_stored_when_it_ends() {
     let models = ask(5, "crop.expandModels", json!({}));
     assert!(models["result"]["running"].is_null(), "nothing left running: {models}");
 }
+
+// An HDR edit on a display that can show it comes with its HDR picture, a second lease (RGBA16F); an SDR
+// display, or an SDR edit, gets the 8-bit picture alone (LR-VIEW-HDR-DISPLAY)
+#[test]
+fn an_hdr_edit_on_an_hdr_display_comes_with_its_hdr_picture() {
+    let h = demo();
+    let t = Duration::from_secs(30);
+    let first = h.call(&req(1, "engine.execute", json!({"command": "catalog.query", "params": {"limit": 1}})), t);
+    let photo = first["result"]["photos"][0]["id"].as_u64().unwrap();
+    h.call(&req(2, "engine.execute", json!({"command": "library.select", "params": {"ids": [photo]}})), t);
+    h.call(&req(3, "engine.execute", json!({"command": "develop.hdr", "params": {"enabled": true, "maxEv": 3}})), t);
+    h.call(&req(4, "engine.execute", json!({"command": "develop.set", "params": {"control": "light.exposure", "value": 1.0}})), t);
+    // a display without headroom: the SDR rendition
+    h.submit(&req(5, "render.view", json!({"width": 160, "height": 120}))).unwrap();
+    let sdr = h.wait_for(|e| e["kind"] == "image" && e["slot"] == "main" && e["draft"] == false);
+    assert!(sdr.get("hdr").is_none(), "{sdr}");
+    // a display with: the same edit, rendered again, with its float picture
+    assert_eq!(h.call(&req(6, "render.hdrDisplay", json!({"on": true})), t)["result"], json!({}));
+    h.submit(&req(7, "render.view", json!({"width": 160, "height": 120}))).unwrap();
+    let hdr = h.wait_for(|e| e["kind"] == "image" && e["slot"] == "main" && e["draft"] == false && e.get("hdr").is_some());
+    assert_ne!(hdr["key"], sdr["key"], "the HDR picture is its own render");
+    let info = &hdr["hdr"];
+    assert_eq!((info["width"].as_u64(), info["height"].as_u64()), (hdr["width"].as_u64(), hdr["height"].as_u64()), "{hdr}");
+    assert_eq!(info["peak"].as_f64(), Some(8.0), "3 stops of headroom: {hdr}");
+    let leased = h.leases().take_image(info["token"].as_u64().unwrap()).expect("the HDR lease");
+    let (w, h_px) = (hdr["width"].as_u64().unwrap() as u32, hdr["height"].as_u64().unwrap() as usize);
+    assert_eq!((leased.width, leased.stride, leased.len), (w, w * 8, leased.stride as usize * h_px));
+    let sdr_lease = h.leases().take_image(hdr["token"].as_u64().unwrap()).expect("the 8-bit picture too");
+    assert_eq!(sdr_lease.stride, sdr_lease.width * 4);
+    // the display went away (the window moved to another): the SDR rendition again, no hdr
+    h.call(&req(8, "render.hdrDisplay", json!({"on": false})), t);
+    h.submit(&req(9, "render.view", json!({"width": 160, "height": 120}))).unwrap();
+    let back = h.wait_for(|e| e["kind"] == "image" && e["slot"] == "main" && e["draft"] == false && e["key"] == sdr["key"]);
+    assert!(back.get("hdr").is_none(), "{back}");
+    assert_eq!(h.call(&req(10, "render.hdrDisplay", json!({})), t)["error"]["code"], "badParams");
+}
