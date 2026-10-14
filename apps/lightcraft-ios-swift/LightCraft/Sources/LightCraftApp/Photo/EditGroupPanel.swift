@@ -125,8 +125,6 @@ private struct DialPageSheet: View {
         }
         .presentationDetents([.medium, .large])
         .presentationBackgroundInteraction(.enabled(upThrough: .medium))
-        // as dark as the editor it opens over
-        .preferredColorScheme(.dark)
         .onDisappear { model.editor.picking = nil }
         .task {
             switch page {
