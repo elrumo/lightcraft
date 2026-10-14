@@ -823,6 +823,9 @@ struct PhotoMoreMenu: View {
                 }
             }
             Section {
+                if UIApplication.shared.supportsMultipleScenes {
+                    Button("Second Window", systemImage: "macwindow.on.rectangle") { model.secondWindowAsked = true }
+                }
                 Button("Set as Reference", systemImage: "pin") {
                     model.reference = model.state.active
                     model.editor.referenceView = true

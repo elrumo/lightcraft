@@ -13,10 +13,24 @@
     <!-- Save to Photos (exports); importing uses the Photos picker, which needs no access -->
     <key>NSPhotoLibraryAddUsageDescription</key>
     <string>LightCraft saves the photos you export to your photo library.</string>
+    <!-- more than one window on an iPad (Window ▸ Second Window); a mirroring external display
+         shows the second window's photo (ExternalDisplayDelegate, SecondWindow.swift) -->
     <key>UIApplicationSceneManifest</key>
     <dict>
         <key>UIApplicationSupportsMultipleScenes</key>
-        <false/>
+        <true/>
+        <key>UISceneConfigurations</key>
+        <dict>
+            <key>UIWindowSceneSessionRoleExternalDisplayNonInteractive</key>
+            <array>
+                <dict>
+                    <key>UISceneConfigurationName</key>
+                    <string>External Display</string>
+                    <key>UISceneDelegateClassName</key>
+                    <string>LCExternalDisplayDelegate</string>
+                </dict>
+            </array>
+        </dict>
     </dict>
     <key>UISupportedInterfaceOrientations</key>
     <array>

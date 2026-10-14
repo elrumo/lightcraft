@@ -143,6 +143,14 @@ final class AppModel {
     var sidebarSections: [SidebarSectionState] = SidebarSectionState.usual
     /// Photos are being chosen in the grid (Select).
     var selectMode = false
+    /// The engine is being opened.
+    private var starting = false
+    /// Window ▸ Second Window was asked for (RootView opens it).
+    var secondWindowAsked = false
+    /// Main windows on screen (none when iPadOS brings back only the second window).
+    var mainWindows = 0
+    /// The app's model, for a scene SwiftUI doesn't make (the external display's).
+    static weak var current: AppModel?
     /// The grid's search field is open (⌘F, Edit ▸ Find…), and what is typed in it.
     var searching = false
     var searchText = ""
@@ -184,7 +192,10 @@ final class AppModel {
     // MARK: start, lifecycle
 
     func start() async {
-        guard engine == nil, startError == nil else { return }
+        // (a second window of the app starts it too)
+        guard engine == nil, startError == nil, !starting else { return }
+        starting = true
+        defer { starting = false }
         // the device's name on the sync server (read by the engine when signing in)
         setenv("LIGHTCRAFT_DEVICE", UIDevice.current.name, 0)
         do {

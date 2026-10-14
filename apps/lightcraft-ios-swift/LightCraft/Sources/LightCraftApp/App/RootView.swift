@@ -6,8 +6,10 @@ import UniformTypeIdentifiers
 /// The navigation root: the library, the photo and other screens pushed over it, the pages that
 /// slide up (`model.sheet`), and the messages over everything.
 struct RootView: View {
+    static let id = "main"
     @Environment(AppModel.self) private var model
     @Environment(\.horizontalSizeClass) private var horizontalSize
+    @Environment(\.openWindow) private var openWindow
     @Namespace private var photos
 
     var body: some View {
@@ -73,6 +75,13 @@ struct RootView: View {
             await model.loadMenus()
         }
         .haptic(trigger: model.haptic) { _, h in h.seq == 0 ? nil : h.feedback }
+        .onAppear { model.mainWindows += 1 }
+        .onDisappear { model.mainWindows -= 1 }
+        .onChange(of: model.secondWindowAsked) { _, asked in
+            guard asked else { return }
+            model.secondWindowAsked = false
+            openWindow(id: SecondWindowView.id, value: SecondWindowView.loupe)
+        }
     }
 
     /// What the picker offers for each kind of pick.

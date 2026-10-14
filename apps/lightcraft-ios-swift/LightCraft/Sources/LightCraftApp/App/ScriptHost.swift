@@ -86,6 +86,7 @@ final class ScriptHost {
             if let on = params["referenceView"].bool { model.editor.referenceView = on }
             if let on = params["softProof"].bool { model.editor.softProof = on }
             if let on = params["searching"].bool { model.searching = on }
+            if params["secondWindow"].bool == true { model.secondWindowAsked = true }
             if let k = params["painting"].string { model.painting = k.isEmpty ? nil : k }
             if let text = params["search"].string { model.searchText = text }
             if let command = params["sidebarCommand"].string { await model.arrangeSidebar(command, params["sidebarParams"]) }
@@ -165,7 +166,10 @@ final class ScriptHost {
 
     /// The key window as a PNG at `path`; its size in pixels.
     private func screenshot(to path: String) throws -> (Int, Int) {
-        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        // the window in front (with a second window open, the main one may be behind it)
+        let all = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let front = all.filter { $0.activationState == .foregroundActive }
+        let scenes = front.isEmpty ? all : front
         guard let window = scenes.flatMap(\.windows).first(where: \.isKeyWindow) ?? scenes.first?.windows.first else {
             throw ErrorBody(code: "noWindow", message: "no window to capture")
         }

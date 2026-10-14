@@ -19,8 +19,8 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 |---|---:|---:|---:|---:|---:|
 | S0 | 15 | 0 | 0 | 0 | 15/15 |
 | S1 | 164 | 0 | 0 | 3 | 167/167 |
-| S2 | 72 | 0 | 5 | 25 | 97/102 |
-| **Total** | 251 | 0 | 5 | 28 | 279/284 |
+| S2 | 75 | 0 | 2 | 25 | 100/102 |
+| **Total** | 254 | 0 | 2 | 28 | 282/284 |
 <!-- /ios-parity:summary -->
 
 ## Screens
@@ -80,10 +80,10 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | screen:ipad.pointer | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/GridView.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | the pointer lifts a grid photo and highlights a tool under it; system controls follow the pointer themselves |
 | screen:ipad.compare | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/ViewModes.swift` | Compare: the Select beside a Candidate, Swap, Make Select, the candidates one by one; a tap makes a side active (`render.variant {edited}`); checked on the iPad simulator |
 | screen:ipad.survey | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/ViewModes.swift` | Survey: the chosen photos as large as the screen allows; a tap makes one active, ✕ takes it out, a double tap opens it; checked on the iPad simulator |
-| screen:ipad.multiwindow | S2 | ⬜ |  |  |
+| screen:ipad.multiwindow | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/SecondWindow.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/App/LightCraftApp.swift`, `apps/lightcraft-ios-swift/LightCraft/Info.plist` | more than one window (UIApplicationSupportsMultipleScenes): the library and the Second Window; asked again, the open one comes forward; a relaunch that brings back only the Second Window opens the library too; checked on the iPad simulator |
 | screen:ipad.dragDrop | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/GridView.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LibraryScreen.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/AlbumsSheet.swift`, `crates/apphost/src/host/tests.rs` | pictures dropped on the grid from another app are imported (the import review); while choosing, the chosen photos are carried onto an album (added) or into another app (a JPEG as edited, `app.export {remember: false}`); a long press still starts choosing. Not tried with a real drag: the simulator's synthetic touches don't lift one |
 | screen:ipad.pencil | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/MaskCanvas.swift` | Masking ▸ Brush: an Apple Pencil double tap swaps paint and erase (when the system's Pencil setting switches tools); a hovering Pencil or pointer shows the brush's size. Not tried with a Pencil (the simulator has none) |
-| screen:ipad.externalDisplay | S2 | ⬜ |  |  |
+| screen:ipad.externalDisplay | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/SecondWindow.swift`, `apps/lightcraft-ios-swift/LightCraft/Info.plist` | under Stage Manager the Second Window goes to the external display; a display that only mirrors shows its photo full screen (`ExternalDisplayDelegate`, the non-interactive external display role). Not tried with a display (the simulator's needs its menu) |
 
 ## UI commands
 
@@ -184,7 +184,7 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | ui:view.sidebarMoveSection | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/AlbumsSheet.swift` | Edit Sidebar: drag; a section's menu ▸ Move Up / Move Down |
 | ui:view.sidebarReset | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/AlbumsSheet.swift` | Edit Sidebar ▸ Reset Sidebar Sections; View ▸ Sidebar Sections ▸ Reset |
 | ui:view.slideshow | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/ViewModes.swift` | grid or photo "…" ▸ Slideshow: the grid's photos over black, crossfading every few seconds; a tap pauses |
-| ui:view.secondWindow | S2 | ⬜ |  |  |
+| ui:view.secondWindow | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/SecondWindow.swift` | Window ▸ Second Window, the photo's "…" ▸ Second Window: the chosen photo large in a window of its own, with its name and stars, following the main window's choice and edits (`render.variant {edited}`); checked on the iPad simulator |
 | ui:tool.keywordPainter | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/GridView.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LibraryScreen.swift`, `crates/engine/src/tests_libops.rs` | grid "…" ▸ Keyword Painter…, or a keyword's menu ▸ Paint onto Photos: a tap on a photo gives it the keyword or takes it away (`keyword.toggle`, shared with egui), a tag marks the photos that have it, Done (Esc) stops |
 | ui:view.gridInfo | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/GridView.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LibraryScreen.swift` | grid "…" ▸ Grid Info: the file name over each photo |
 | ui:view.appearance | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | Settings ▸ Interface ▸ Appearance |
