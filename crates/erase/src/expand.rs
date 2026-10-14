@@ -247,4 +247,36 @@ mod tests {
             }
         }
     }
+
+    /// A diffusion model's canvas: the picture's proportions near the native size, multiples of
+    /// 64; squeezed by at most MAX_SQUEEZE onto a 2 : 1 canvas, letterboxed beyond.
+    #[test]
+    fn frames_follow_the_picture_near_the_native_size() {
+        let check = |f: Frame| {
+            assert!(f.is_valid(), "{f:?}");
+            assert!(f.width % 64 == 0 && f.height % 64 == 0, "{f:?}");
+        };
+        // square: the whole canvas
+        let f = frame_for(768, 768, 512, 64, 2.0);
+        check(f);
+        assert_eq!(f, Frame { width: 512, height: 512, x: 0, y: 0, w: 512, h: 512 });
+        // 2 : 3 portrait: its own proportions, filling the canvas (squeezed a little by the rounding)
+        let f = frame_for(400, 600, 512, 64, 2.0);
+        check(f);
+        assert!(f.width < f.height && (f.width * f.height) as f64 / (512.0 * 512.0) > 0.85, "{f:?}");
+        assert_eq!((f.x, f.y, f.w, f.h), (0, 0, f.width, f.height));
+        // 3 : 1: a 2 : 1 canvas, the picture across its width, letterboxed above and below
+        let f = frame_for(900, 300, 1024, 64, 2.0);
+        check(f);
+        assert!(f.width > f.height && f.w == f.width && f.h < f.height && f.y > 0, "{f:?}");
+        let shown = f.w as f32 / f.h as f32;
+        assert!((shown - 3.0 / MAX_SQUEEZE).abs() < 0.05, "squeezed by MAX_SQUEEZE: {shown}");
+        // degenerate and huge inputs stay sane
+        for (w, h) in [(0, 0), (1, 100_000), (100_000, 1), (5000, 5000)] {
+            check(frame_for(w, h, 1024, 64, 2.0));
+        }
+        check(frame_for(500, 500, 99_999, 0, 0.0));
+        // MI-GAN's and LaMa's square is the default
+        assert_eq!(square_frame(900, 300).width, SIDE);
+    }
 }
