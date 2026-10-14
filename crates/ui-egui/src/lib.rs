@@ -19,6 +19,7 @@ pub mod export_task;
 pub mod file_drop;
 pub mod glass;
 pub mod haptics;
+pub mod hdr;
 pub mod headless;
 pub mod i18n;
 pub mod icons;
@@ -475,6 +476,9 @@ pub struct LightcraftApp {
     /// What the loupe drew last frame: photo and source ("render", "cached", "embedded", "small",
     /// "thumb", "none").
     pub loupe_shown: Option<(lightcraft_catalog::PhotoId, &'static str)>,
+    /// This frame drew an HDR picture (the loupe of an HDR edit on a display that can show it): the
+    /// window turns its surface's HDR output on for it ([`hdr`]) and off again when nothing is.
+    pub hdr_on_screen: bool,
     /// The loupe showed the Before alone last frame: the Before view, `\` held or a finger held
     /// on the photo.
     pub loupe_before: bool,
@@ -615,6 +619,7 @@ impl LightcraftApp {
             gesture: None,
             brush_live: None,
             loupe_shown: None,
+            hdr_on_screen: false,
             loupe_before: false,
             region_view: None,
             region_before_view: None,
@@ -1039,7 +1044,9 @@ impl LightcraftApp {
                         token: self.screenshot_token,
                         path,
                         reply,
-                        headless: headless && !self.headless_host,
+                        // (a float surface, which HDR output needs, can't be read back by the window's own
+                        // capture: that shows the 8-bit pictures, as every headless screenshot does)
+                        headless: (headless || self.renderer.can_draw_hdr()) && !self.headless_host,
                         not_before: now + 120.0,
                         deadline: now + SCREENSHOT_SETTLE_MS,
                         frames: 0,
@@ -1546,6 +1553,8 @@ impl LightcraftApp {
         self.library_changed(&ctx);
         // panels set it again this frame while the pointer rests on a preset or profile
         self.hover_preview = None;
+        // (the loupe sets it again when it draws an HDR picture)
+        self.hdr_on_screen = false;
         self.ai_mask_detail(&ctx);
         panels::ai_search::frame(self, &ctx);
         panels::people::frame(self, &ctx);
@@ -1800,8 +1809,9 @@ pub struct Caches {
     pub face_hints: Option<(u64, u64, u64, std::sync::Arc<panels::faces::Hints>)>,
     /// The open person page: (name, catalog revision, faces indexed, when it was asked for, the page).
     pub person_page: Option<(String, u64, u64, f64, std::sync::Arc<panels::person::PersonPage>)>,
-    /// The unnamed faces: (catalog revision, faces indexed, when it was asked for, the list).
-    pub unnamed: Option<(u64, u64, f64, std::sync::Arc<panels::unnamed::Unnamed>)>,
+    /// The unnamed faces: (catalog revision, (faces indexed, the server's people, faces found), when it was asked for,
+    /// the list).
+    pub unnamed: Option<(u64, (u64, u64, usize), f64, std::sync::Arc<panels::unnamed::Unnamed>)>,
     /// The most photos the face scan has had left at once since it last finished (the progress bar's whole).
     pub faces_peak: u64,
     person_names: Option<(u64, std::sync::Arc<Vec<String>>)>,

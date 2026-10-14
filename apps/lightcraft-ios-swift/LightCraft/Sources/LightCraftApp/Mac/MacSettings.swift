@@ -15,6 +15,7 @@ struct MacSettings: View {
             Tab("Sync", systemImage: "arrow.triangle.2.circlepath.icloud", value: "sync") { page("sync") }
             Tab("Faces", systemImage: "person.crop.square", value: "faces") { page("faces") }
             Tab("AI Models", systemImage: "cpu", value: "models") { page("models") }
+            Tab("Server", systemImage: "server.rack", value: "admin") { page("admin") }
         }
         .scenePadding()
         .frame(width: 640, height: 520)

@@ -65,6 +65,8 @@ final class ScriptHost {
             if let main = model.images.pictures["main"] {
                 perf["lastRenderMs"] = .double(main.ms)
             }
+            // HDR display: the screen has headroom (told to the engine), and the loupe holds a float picture
+            let hdr: JSONValue = ["display": .bool(model.hdrDisplay), "picture": .bool(model.images.pictures["main"]?.hdr != nil)]
             if let trip = model.lastDraftRoundTripMs {
                 perf["draftRoundTripMs"] = .double(trip)
             }
@@ -74,6 +76,7 @@ final class ScriptHost {
                 "photos": .int(Int64(clamping: model.library.count)),
                 "state": (try? JSONValue.encode(model.state)) ?? .null,
                 "perf": perf,
+                "hdr": hdr,
                 "zoom": ["percent": model.editor.zoomPercent.map { .int(Int64($0)) } ?? .null, "zoomedIn": .bool(model.editor.zoomedIn)],
                 "activity": .array(model.activity.map { .string($0.label) }),
                 "images": [

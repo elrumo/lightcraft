@@ -73,7 +73,7 @@ CI on macOS also checks that the built library exports exactly those symbols.
 | `lc_call(engine, request, timeout)` | runs a request and waits for its reply (start-up, tests) |
 | `lc_poll(engine, timeout)` | the events since the last poll, as a JSON array (blocks up to the timeout) |
 | `lc_wake(engine)` | a waiting `lc_poll` returns now |
-| `lc_image(token)` | an `image` event's pixels (RGBA8, sRGB, straight alpha) |
+| `lc_image(token)` | an `image` event's pixels (RGBA8, sRGB, straight alpha); for an `hdr` token, RGBA16F (half floats, `stride` = 8 × width) |
 | `lc_release(token)` | frees any buffer the library handed out |
 | `lc_close(engine)` | saves, stops the threads, forgets the handle |
 | `lc_abi_version()` | the ABI the library speaks |
@@ -103,8 +103,10 @@ host's: `badRequest`, `unknownMethod`, `panic`, `closed`, `timeout`).
 | `host.merge.start` / `host.merge.last` | `{command, ids?, options?}` | the full merge in the background (activity row, ✕ stops it); answered `{started}` at once, a message when it ends; `last` uses the options last merged with |
 | `host.merge.cancel` | | drops the preview being drawn (the dialog closed) |
 | `host.exportPrevious` | | Export with Previous: the last export's options for the photos chosen now, on a worker like `app.export` |
-| `render.thumb` | `{photo, edge, priority?}` | a grid thumbnail (embedded raw previews first; cheap to repeat) |
+| `host.admin.signIn` / `.call` / `.signOut` / `.session` | `{server, user, password}` / `{method, path: [segment…], body?, server?}` / / | the sync server's admin API (`/api/admin/*`, what its web console does) for Settings ▸ Server Administration (`apphost::host::admin`): the admin session (not the Sync device's: the server keeps them apart) lives in the host, in memory; requests run on a worker thread and are answered when the server has; path segments are percent-encoded there; without a session only `state` and `setup` work (against `server`); a `401` on a signed-in call ends the session (error `unauthorized`) |
+| `render.thumb` | `{photo, edge, priority?}` | a grid thumbnail (embedded raw previews first; cheap to repeat). Ask once, when the cell appears: while `render.retain` lists the photo and it has no picture, the host asks again every tick (a synced photo's small preview downloads only while asked for, and its thumbnail renders once it has landed) |
 | `render.view` | `{photo?, width, height, draft?, before?, applyCrop?, overlay?: {kind: mask, id, view?, color?, opacity?} \| {kind: allMasks, view?, color?, opacity?} \| {kind: spots, threshold?} \| {kind: pointColor, index} \| {kind: hdr}, proof?: {space, destWarning?, displayWarning?}, zoom?: {drawn, visible: [x0, y0, x1, y1]}}` | the loupe's picture (`main`; a stand-in in `preview` until it is there), with a diagnostic overlay (the selected mask, Visualize Spots…); zoomed in (`drawn`: the photo's long edge as drawn, px; `visible`: the part on screen, as fractions) also the window on screen at the zoom scale (`region`, its image event's `window: {full: [w, h], x, y, w, h}` says where it goes; planned by `apphost::region`) |
+| `render.hdrDisplay` | `{on}` | the screen can (or can no longer) show the range above SDR white (`UIScreen.potentialEDRHeadroom > 1`; the app tells at start and when it becomes active; `LIGHTCRAFT_HDR_DISPLAY=1\|0` forces it for the simulator): an HDR edit's `main` and `region` pictures then render in HDR (CPU) and their `image` event carries `hdr: {token, width, height, peak}`, a lease of RGBA16F pixels (Display P3 encoded with the sRGB curve past 1, [hdr-display](hdr-display.md)); the 8-bit picture is then Display P3 too. Without it, or off, the SDR rendition as before |
 | `render.prefetch` | `{photos, width, height}` | prepares the neighbours |
 | `render.variant` | `{photo?, preset \| profile \| version \| edited: true, amount?, edge?}` | a preview of the photo with a preset, profile or version, or as it is (Compare, Survey, the filmstrip) (slot `variant:<key>`) |
 | `render.face` | `{photo?, rect, edge?}` | a face, as People shows it (`rect` as `people.list` and `faces.person` give it; slot `variant:<key>`) |
@@ -115,9 +117,10 @@ host's: `badRequest`, `unknownMethod`, `panic`, `closed`, `timeout`).
 
 Events: `reply`; `image {slot, photo, key, token, width, height, final, draft, quick?, ms, histogram?}` (slots
 `thumb:<id>`, `thumbQuick:<id>`, `main`, `preview`, `before`…); `renderFailed {slot, photo, key, error}`; `state {state:
-{catalogRevision, visibleGen, visibleCount, libraryGeneration, active, selectionCount, undo, redo, interaction,
-activeMask, activeSpot, unsaved, sync?, faces?}}` when any of it changes (`faces`: the face scan's `{pendingPhotos,
-indexedFaces}` while recognition is on) (`activeMask` / `activeSpot`: the Masking tool's
+{catalogRevision, visibleGen, visibleCount, libraryGeneration, presetsGeneration, active, selectionCount, undo, redo,
+interaction, activeMask, activeSpot, unsaved, sync?, faces?}}` when any of it changes (`presetsGeneration`: changes
+with the preset list, including presets the sync brings from another device: the Presets panel reads `presets.list`
+again) (`faces`: the face scan's `{pendingPhotos, indexedFaces}` while recognition is on) (`activeMask` / `activeSpot`: the Masking tool's
 selected mask and the Remove tool's selected spot, wherever they were chosen) (`sync`: the server sync for the cloud icon, `{state, server, pending, uploads,
 downloads, reading, error}`; absent for a local library); `activity {tasks}` (the activity stack); `message {text,
 level}`; `copy {text}` (put it on the clipboard: a share link just made); `ask {dialog, params}` (show a dialog the
@@ -220,6 +223,19 @@ under the photo, it has no separate view and edit modes, and the library is one 
   from the editor is dark too.
 - **Wide screens**: on regular width (an iPad) the tools are in the system `.inspector`. Its content is compact width,
   so the `toolColumn` environment value says a view is in a column.
+- **First launch**: a four-page welcome (`Onboarding/OnboardingView.swift`, its pictures in `OnboardingHeroes.swift`)
+  covers the screen once per device (`Prefs.onboarded`; not under `LIGHTCRAFT_SCRIPT` or `LIGHTCRAFT_DEMO`, so the
+  tour's screenshots are clear). It asks for no permission: those are asked where they are needed. Settings ▸ Show
+  Welcome opens it again: the sheet closes first and `RootView` presents the cover from the sheet's `onDismiss`,
+  because a cover can't come up while a sheet is going down (`AppModel.welcomeAsked`).
+  - It is drawn in the app icon's three colours (ink, paper, amber: `assets/app-icon/README.md`) on an ink canvas
+    whatever the appearance, like the photo's. The type is the system's sans, in Dynamic Type text styles.
+  - The first page shows the lynx from `Resources/Lynx.xcassets` (a copy of the 512 px app icon, an Xcode-target
+    resource like the string tables; an xtool build has no catalog and shows a drawn mark). The other pictures are
+    painted in code. A mesh gradient follows the swipe, the pictures play when their page arrives, and Reduce Motion
+    stops them.
+  - A helper in a `View` must not be named like a `View` modifier: `tag("Before")` once resolved to `View.tag`, which
+    embedded the whole view in itself and ran the app out of memory.
 - **Adjusting** (Settings ▸ Interface ▸ Adjustments):
   - *Dials* is Photos' way: a row of dials, the one in the middle set with a ruler (`Photo/AdjustDials.swift`).
   - *Sliders* is Lightroom's.
@@ -245,7 +261,7 @@ iPad"): one multiplatform Xcode target, arm64 only. Decisions (2026-10-14):
   toolbar, a filmstrip, sliders only. The editor's right-hand side is built (SM2.1) and follows Lightroom's *layout*
   (not its look): the open tool's panel and, along the window's edge, a column of tool icons (`Mac/MacInspector.swift`).
   The Edit tool is a header (Auto, B&W, HDR), the profile, then the groups stacked and collapsible (Light, Color,
-  Effects, Detail, Optics, Calibration), with Curve, Color Mixer, Point Color and Color Grading as boxes inside them
+  Effects, Detail, Optics, Calibration), with Curve, Color Mixer (it holds the point colours) and Color Grading as boxes inside them
   (`Mac/MacEditPanel.swift`); every control is one row, name | track | value you can type over (double-click resets,
   arrow keys nudge; `Mac/MacSliderRow.swift`); there are no group chips and no dials. The panel is given the column's width and
   never widens it (`Mac/MacSegmented.swift` is the segmented control that shrinks to fit); the inspector is shown or
@@ -274,8 +290,10 @@ lists under Window (the Window menu is the system's), Undo and Redo that give �
 in shortcuts; quit that asks when a task is running, then saves, closes the library (so the egui app can open it) and
 stops the engine (`Mac/MacAppDelegate.swift`); a library that won't open (the egui app has it) shows the reason with Try
 Again, Choose Another Library… and Continue Without Saving (`App/StartErrorView.swift`); the slideshow and Lights Out in
-a full-screen window of their own. Not yet: the Mac layout and input (SM2), import in place, an export destination and
-libraries (SM3).
+a full-screen window of their own. Since the merge with the iPhone's later work (2026-10-15) the Settings window also has a
+Server tab (Server Administration, `Admin/`, written once for both platforms through the `Platform.swift` shims), while the
+first-launch welcome and the phone's two-finger gesture on the photo (`TwoFingerGesture`) stay iOS only. Not yet: the Mac
+input of SM2 (keys, the loupe's scroll and pinch), import in place, an export destination and libraries (SM3).
 
 Two things a Mac's SwiftUI menu bar does that cost a day: it does not follow what an `@Observable` model changes, neither
 in a `Commands` body nor in the App's, only an `ObservableObject` the App observes (`MenuChanges`, bumped by the model);

@@ -1,7 +1,8 @@
-//! The unnamed faces in the People view: every face nobody has named, as cropped pictures, with look-alikes next to each
-//! other (once recognition has looked at them). Click faces to select them (Shift-click selects a range), type a name in
-//! the bar above, press Enter: they are all named at once, in one undo step. A face the named ones recognise carries the
-//! name they suggest; clicking that name accepts it for that face alone.
+//! The unnamed faces in the People view: each person nobody has named as one cropped picture of their best face, with
+//! how many faces they have on it (once recognition, or the face finder here or on the sync server, has grouped them).
+//! Click people to select them (Shift-click selects a range), type a name in the bar above, press Enter: all their faces
+//! are named at once, in one undo step. A person the named ones recognise carries the name they suggest; clicking that
+//! name accepts it for all their faces.
 //!
 //! The engine does the looking (`faces.unnamed`) and the naming (`faces.nameFaces`); this draws and selects.
 
@@ -21,6 +22,8 @@ pub struct UnnamedFace {
     pub index: usize,
     pub view: lightcraft_geom::Rect,
     pub suggestion: Option<String>,
+    /// The faces of one person share it (`None`: a person of their own).
+    pub group: Option<u64>,
 }
 
 /// What `faces.unnamed` said.
@@ -29,7 +32,9 @@ pub struct Unnamed {
     /// Unnamed faces in the library (more than are listed when the list was cut).
     pub total: usize,
     pub faces: Vec<UnnamedFace>,
-    /// Look-alikes are next to each other.
+    /// Each person's faces in `faces`, best first: what one picture stands for.
+    pub people: Vec<std::ops::Range<usize>>,
+    /// Some faces are grouped into people.
     pub ordered: bool,
     /// Recognition is running.
     pub ready: bool,
@@ -45,23 +50,39 @@ fn face_of(v: &Value) -> Option<UnnamedFace> {
         index: usize::try_from(v["index"].as_u64()?).ok()?,
         view: rect_of(&v["view"]).or_else(|| rect_of(&v["rect"]))?,
         suggestion: v["suggestion"]["name"].as_str().map(str::to_string),
+        group: v["group"].as_u64(),
     })
+}
+
+/// The runs of `faces` that are one person (listed together, as the engine lists them).
+fn people_of(faces: &[UnnamedFace]) -> Vec<std::ops::Range<usize>> {
+    let mut out: Vec<std::ops::Range<usize>> = Vec::new();
+    for (i, f) in faces.iter().enumerate() {
+        match out.last_mut() {
+            Some(run) if f.group.is_some() && faces.get(run.start).and_then(|g| g.group) == f.group => run.end = i + 1,
+            _ => out.push(i..i + 1),
+        }
+    }
+    out
 }
 
 /// The engine's answer as a list (anything that does not make sense is left out).
 pub fn parse(v: &Value) -> Unnamed {
+    let faces: Vec<UnnamedFace> = v["faces"].as_array().map(|a| a.iter().filter_map(face_of).collect()).unwrap_or_default();
     Unnamed {
         total: v["total"].as_u64().map_or(0, |n| usize::try_from(n).unwrap_or(0)),
-        faces: v["faces"].as_array().map(|a| a.iter().filter_map(face_of).collect()).unwrap_or_default(),
+        people: people_of(&faces),
+        faces,
         ordered: v["ordered"] == true,
         ready: v["ready"] == true,
     }
 }
 
-/// The unnamed faces, asked for again only when the catalog changed, or (while the scan runs and learns more faces) at
-/// most every few seconds, since putting look-alikes together looks at every pair.
+/// The unnamed faces, asked for again only when the catalog changed, or (while the scan runs and learns more faces, or
+/// the face finder or the server finds people) at most every few seconds, since grouping compares many faces.
 pub fn faces(app: &mut LightcraftApp, now: f64) -> Arc<Unnamed> {
-    let (rev, indexed) = (app.session.catalog.revision, app.caches.faces_indexed);
+    let v = &app.session.vision;
+    let (rev, indexed) = (app.session.catalog.revision, (app.caches.faces_indexed, v.people_rev(), v.faces_found()));
     if let Some((r, i, at, list)) = &app.caches.unnamed
         && *r == rev
         && (*i == indexed || now - *at < 3.0)
@@ -77,19 +98,28 @@ pub fn faces(app: &mut LightcraftApp, now: f64) -> Arc<Unnamed> {
     list
 }
 
-/// A click on face number `i` of `list`: select it (or deselect it), or with Shift every face from the last one clicked.
+/// The faces of person number `i` of `list`, as (photo, region).
+fn faces_of(list: &Unnamed, i: usize) -> Vec<(u64, usize)> {
+    list.people.get(i).and_then(|run| list.faces.get(run.clone())).unwrap_or_default().iter().map(|f| (f.photo, f.index)).collect()
+}
+
+/// A click on person number `i` of `list`: select their faces (or deselect them), or with Shift every person from the
+/// last one clicked.
 fn click(app: &mut LightcraftApp, list: &Unnamed, i: usize, shift: bool) {
-    let Some(f) = list.faces.get(i) else { return };
     match app.ui.unnamed_anchor.filter(|_| shift) {
         Some(a) => {
-            for f in list.faces.get(a.min(i)..=a.max(i)).unwrap_or_default() {
-                app.ui.unnamed_selected.insert((f.photo, f.index));
+            for k in a.min(i)..=a.max(i) {
+                app.ui.unnamed_selected.extend(faces_of(list, k));
             }
         }
         None => {
-            let key = (f.photo, f.index);
-            if !app.ui.unnamed_selected.remove(&key) {
-                app.ui.unnamed_selected.insert(key);
+            let faces = faces_of(list, i);
+            if faces.iter().all(|k| app.ui.unnamed_selected.contains(k)) {
+                for k in &faces {
+                    app.ui.unnamed_selected.remove(k);
+                }
+            } else {
+                app.ui.unnamed_selected.extend(faces);
             }
             app.ui.unnamed_anchor = Some(i);
         }
@@ -196,7 +226,7 @@ pub fn section_header(app: &mut LightcraftApp, ui: &mut egui::Ui, list: &Unnamed
     } else if list.faces.is_empty() {
         "No unnamed faces. Faces found in your photos appear here until you name them.".to_string()
     } else if list.ordered {
-        "Faces that look alike are next to each other. Click to select, Shift-click for a range, then type a name.".to_string()
+        "Each person's faces are shown as one picture. Click to select, Shift-click for a range, then type a name.".to_string()
     } else {
         "Click faces to select them, Shift-click for a range, then type a name.".to_string()
     };
@@ -223,16 +253,20 @@ pub fn section_header(app: &mut LightcraftApp, ui: &mut egui::Ui, list: &Unnamed
     }
 }
 
-/// One face tile, number `i` of `list`.
-pub fn tile(app: &mut LightcraftApp, ui: &mut egui::Ui, list: &Unnamed, i: usize, r: Rect, f: &UnnamedFace, ppp: f32) {
+/// One person's tile, number `i` of `list`: their best face, and how many faces they have.
+pub fn tile(app: &mut LightcraftApp, ui: &mut egui::Ui, list: &Unnamed, i: usize, r: Rect, ppp: f32) {
     let t = Tokens::get(ui.ctx());
-    let key = (f.photo, f.index);
-    let selected = app.ui.unnamed_selected.contains(&key);
+    let run = list.people.get(i).and_then(|run| list.faces.get(run.clone())).unwrap_or_default();
+    let Some(f) = run.first() else { return };
+    let faces = faces_of(list, i);
+    let selected = faces.iter().all(|k| app.ui.unnamed_selected.contains(k));
+    // the name the person's faces suggest (the best one that has one)
+    let suggestion = run.iter().find_map(|f| f.suggestion.clone());
     let resp = ui.interact(r, egui::Id::new(("unnamed-face", f.photo, f.index)), Sense::click());
     register(ui.ctx(), format!("unnamed-face:{}:{}", f.photo, f.index), r);
     // a suggested name along the bottom: a click accepts it for this face (added after the tile, so it wins there)
     let strip = Rect::from_min_max(pos2(r.left(), r.bottom() - 20.0), r.right_bottom());
-    let accept = f.suggestion.as_ref().map(|_| ui.interact(strip, egui::Id::new(("unnamed-accept", f.photo, f.index)), Sense::click()));
+    let accept = suggestion.as_ref().map(|_| ui.interact(strip, egui::Id::new(("unnamed-accept", f.photo, f.index)), Sense::click()));
     if let Some(a) = &accept {
         register(ui.ctx(), format!("unnamed-accept:{}:{}", f.photo, f.index), a.rect);
     }
@@ -255,15 +289,24 @@ pub fn tile(app: &mut LightcraftApp, ui: &mut egui::Ui, list: &Unnamed, i: usize
     } else if hovered {
         p.rect_stroke(r, 3.0, Stroke::new(1.0, Color32::WHITE), StrokeKind::Inside);
     }
-    if let Some(name) = &f.suggestion {
+    // how many faces stand behind the picture, at the top right
+    if run.len() > 1 {
+        let g = p.layout_no_wrap(run.len().to_string(), t.font(11.5), Color32::WHITE);
+        let pill = Rect::from_min_size(pos2(r.right() - g.size().x - 14.0, r.top() + 5.0), g.size() + vec2(10.0, 6.0));
+        p.rect_filled(pill, 4.0, Color32::from_black_alpha(175));
+        p.galley(pill.min + vec2(5.0, 3.0), g, Color32::WHITE);
+    }
+    if let Some(name) = &suggestion {
         p.rect_filled(strip, 0.0, Color32::from_black_alpha(165));
         let label = super::people::fit(p, name, t.font(11.5), r.width() - 18.0);
         p.text(pos2(r.left() + 5.0, strip.center().y), Align2::LEFT_CENTER, format!("{label}?"), t.font(11.5), Color32::from_gray(225));
     }
-    if let (Some(a), Some(who)) = (&accept, &f.suggestion)
-        && a.clone().on_hover_text(format!("Name this face {who}")).clicked()
+    if let (Some(a), Some(who)) = (&accept, &suggestion)
+        && a.clone()
+            .on_hover_text(if faces.len() == 1 { format!("Name this face {who}") } else { format!("Name these {} faces {who}", faces.len()) })
+            .clicked()
     {
-        name(app, &[key], who);
+        name(app, &faces, who);
         return;
     }
     if resp.clicked() {
@@ -292,6 +335,12 @@ mod tests {
         assert_eq!(list.faces[0].suggestion.as_deref(), Some("Jane Doe"));
         assert_eq!(list.faces[0].view.x0, 0.12, "the view box is used when there is one");
         assert_eq!((list.faces[1].view.x0, list.faces[1].suggestion.clone()), (0.1, None), "else the face's own box");
+        assert_eq!(list.people, [0..1, 1..2], "without groups, a face is a person");
+        // a person's faces are one picture; a face with no group is a person of its own
+        let face =
+            |photo: u64, group: Value| json!({"photo": photo, "index": 0, "rect": {"x0": 0.1, "y0": 0.1, "x1": 0.3, "y1": 0.4}, "group": group});
+        let v = json!({"faces": [face(1, json!(0)), face(2, json!(0)), face(3, json!(0)), face(4, json!(1)), face(5, Value::Null), face(6, Value::Null), face(7, json!(4)), face(8, json!(4))]});
+        assert_eq!(parse(&v).people, [0..3, 3..4, 4..5, 5..6, 6..8]);
         for bad in [Value::Null, json!([]), json!({"faces": 5, "total": -1})] {
             assert_eq!(parse(&bad), Unnamed::default(), "{bad}");
         }

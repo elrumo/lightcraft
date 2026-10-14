@@ -62,13 +62,14 @@ let package = Package(
         .target(
             name: "LightCraftApp",
             dependencies: ["LightCraftCore", "LightCraftImaging"],
-            // the string tables (`cargo xtask swift-strings`) are the Xcode app target's resources
-            exclude: ["Localization"],
+            // the string tables (`cargo xtask swift-strings`) and the asset catalog (the welcome's lynx) are the
+            // Xcode app target's resources
+            exclude: ["Localization", "Resources"],
             swiftSettings: [.defaultIsolation(MainActor.self)]
         ),
         .testTarget(
             name: "LightCraftCoreTests",
-            dependencies: ["LightCraftCore"],
+            dependencies: ["LightCraftCore", "LightCraftImaging"],
             resources: [.copy("Fixtures")]
         ),
     ],

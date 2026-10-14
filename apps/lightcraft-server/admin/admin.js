@@ -937,6 +937,57 @@ function fact(list, k, v, code) {
   list.append(el('dt', {}, k), el('dd', { class: code ? 'code' : null }, v));
 }
 
+const PART_KEY = { sr: 'search', tx: 'text', fc: 'faces' };
+const hhmm = (m) => String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
+// (the server keeps the window in UTC; the admin sees and sets their own time)
+const toLocalMin = (utc) => (((utc - new Date().getTimezoneOffset()) % 1440) + 1440) % 1440;
+const toUtcMin = (local) => (((local + new Date().getTimezoneOffset()) % 1440) + 1440) % 1440;
+const parseMin = (v) => (/^\d\d:\d\d$/.test(v) ? +v.slice(0, 2) * 60 + +v.slice(3) : null);
+
+/** Time left, pause and the daily window of one kind of index, in the box `<p>Sched`. */
+function showSched(p, c) {
+  const box = $(p + 'Sched');
+  if (!box.firstChild) {
+    const eta = el('p', { class: 'eta' });
+    const pause = el('button', { type: 'button', class: 'btn secondary' });
+    const mode = el('select', { 'aria-label': 'When to make the index' }, el('option', { value: 'any' }, 'Any time'), el('option', { value: 'window' }, 'Only between'));
+    const from = el('input', { type: 'time', 'aria-label': 'From' });
+    const to = el('input', { type: 'time', 'aria-label': 'Until' });
+    const send = async (paused) => {
+      const win = mode.value === 'window' ? [parseMin(from.value), parseMin(to.value)] : null;
+      if (win && (win[0] === null || win[1] === null)) return;
+      try {
+        await api('PUT', 'search/schedule/' + PART_KEY[p], { paused, from: win && toUtcMin(win[0]), to: win && toUtcMin(win[1]) });
+      } catch (x) {
+        fail(x);
+      }
+      await route();
+    };
+    pause.addEventListener('click', () => send(pause.dataset.paused !== '1'));
+    for (const i of [mode, from, to]) i.addEventListener('change', () => { from.hidden = to.hidden = mode.value !== 'window'; send(pause.dataset.paused === '1'); });
+    box.append(eta, el('div', { class: 'row' }, pause, mode, from, to));
+  }
+  const [eta, row] = box.children;
+  const [pause, mode, from, to] = row.children;
+  pause.dataset.paused = c.paused ? '1' : '0';
+  pause.textContent = c.paused ? 'Resume' : 'Pause';
+  if (!row.contains(document.activeElement) || document.activeElement === pause) {
+    mode.value = c.from === null ? 'any' : 'window';
+    from.hidden = to.hidden = c.from === null;
+    if (c.from !== null) { from.value = hhmm(toLocalMin(c.from)); to.value = hhmm(toLocalMin(c.to)); }
+  }
+  const left = c.left === 1 ? '1 photo' : n(c.left) + ' photos';
+  eta.textContent = !c.left
+    ? 'Up to date.'
+    : c.paused
+      ? 'Paused. ' + left + ' waiting.'
+      : !c.runsNow
+        ? left + ' waiting for ' + hhmm(toLocalMin(c.from)) + '–' + hhmm(toLocalMin(c.to)) + ' (your time).'
+        : c.perPhoto
+          ? 'About ' + dur(Math.round(c.left * c.perPhoto)) + ' left (' + left + ').'
+          : left + ' to go.';
+}
+
 function showFeature(p, s) {
   const F = FEATURES[p];
   const f = F.pick(s);
@@ -946,6 +997,7 @@ function showFeature(p, s) {
   $(p + 'Help').textContent = d.running ? F.getting : f.active ? F.on : f.installed ? F.off : F.needs(f);
   showFetch(p, d);
   showFetchError(p, d, f.installed);
+  showSched(p, f.schedule);
   const facts = $(p + 'Facts');
   facts.replaceChildren();
   if (p === 'sr') {
@@ -979,6 +1031,7 @@ function showPeople(s) {
   const d = f.download;
   showFetch('fc', d);
   showFetchError('fc', d, f.installed);
+  showSched('fc', f.schedule);
   $('fcGet').hidden = f.installed || d.running;
   const needs = $('fcNeeds');
   needs.hidden = f.installed;

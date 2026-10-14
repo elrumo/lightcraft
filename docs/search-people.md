@@ -124,7 +124,10 @@ lightcraft-server user faces ann on        # and `off`; `user list` shows who ha
 ```
 
 The server then looks at that user's smart previews (25 photos at a time) and lists the people for devices that find
-none themselves (the web build, iOS): `people.list` shows them, naming one is a catalog edit on the device. A desktop that
+none themselves (the web build, iOS): `people.list` shows them, naming one is a catalog edit on the device. The same people
+group the **Unnamed faces** (face boxes from Detect Faces, another app or a hand-drawn one) into one picture per person
+(`faces.unnamed` `group`): a box is matched to a found face on the same photo by their overlap, on this computer or with
+the server's people on a device that finds none. A desktop that
 finds faces can send them instead (same opt-in as the vectors, `vision.share`). The user can always delete what the server
 found (`people.deleteData` asks it to, or `DELETE /api/index/faces`).
 

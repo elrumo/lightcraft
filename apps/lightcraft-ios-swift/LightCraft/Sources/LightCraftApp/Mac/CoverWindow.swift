@@ -13,7 +13,8 @@ struct CoverWindow: View {
             switch model.cover {
             case .slideshow: SlideshowView()
             case .lightsOut: LightsOutView()
-            case nil: Color.black
+            // (the first launch's welcome is the phone's: a Mac has none yet)
+            case .onboarding, nil: Color.black
             }
         }
         .background(Color.black)

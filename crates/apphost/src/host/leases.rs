@@ -9,6 +9,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
+use lightcraft_engine::hdr_view::HdrPicture;
 use lightcraft_raster::Rgba8;
 
 /// Bytes of pictures offered but not taken that are kept (the frontend has fallen behind).
@@ -21,9 +22,46 @@ enum Lease {
     },
     Image {
         slot: String,
-        image: Arc<Rgba8>,
+        image: Pixels,
         taken: bool,
     },
+}
+
+/// What a picture lease holds: the 8-bit picture of a slot, or its HDR rendition.
+enum Pixels {
+    Sdr(Arc<Rgba8>),
+    Hdr(Arc<HdrPicture>),
+}
+
+impl Pixels {
+    fn bytes(&self) -> usize {
+        match self {
+            Pixels::Sdr(image) => image.data.len().saturating_mul(4),
+            Pixels::Hdr(hdr) => hdr.bytes(),
+        }
+    }
+
+    /// Where the pixels are, for the C side: the bytes of a half-float picture as they are (little
+    /// endian on every target the SwiftUI app runs on).
+    fn image_ref(&self) -> ImageRef {
+        let to32 = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+        match self {
+            Pixels::Sdr(image) => ImageRef {
+                ptr: image.data.as_ptr().cast::<u8>(),
+                len: self.bytes(),
+                width: to32(image.width),
+                height: to32(image.height),
+                stride: to32(image.width.saturating_mul(4)),
+            },
+            Pixels::Hdr(hdr) => ImageRef {
+                ptr: hdr.rgba16f.as_ptr().cast::<u8>(),
+                len: self.bytes(),
+                width: to32(hdr.width),
+                height: to32(hdr.height),
+                stride: to32(hdr.width.saturating_mul(8)),
+            },
+        }
+    }
 }
 
 #[derive(Default)]
@@ -47,7 +85,8 @@ pub struct BytesRef {
     pub len: usize,
 }
 
-/// A picture handed out: RGBA8 rows of `stride` bytes; valid until [`Leases::release`].
+/// A picture handed out: rows of `stride` bytes (RGBA8, or for an HDR picture RGBA16F: half floats,
+/// extended Display P3: the sRGB curve past 1); valid until [`Leases::release`].
 #[derive(Clone, Copy, Debug)]
 pub struct ImageRef {
     pub ptr: *const u8,
@@ -55,10 +94,6 @@ pub struct ImageRef {
     pub width: u32,
     pub height: u32,
     pub stride: u32,
-}
-
-fn image_bytes(image: &Rgba8) -> usize {
-    image.data.len().saturating_mul(4)
 }
 
 impl Leases {
@@ -81,6 +116,16 @@ impl Leases {
     /// Offer `image` for `slot`; returns its token. An untaken older picture of the same slot is
     /// dropped, and the oldest untaken ones beyond [`MAX_UNTAKEN`].
     pub fn put_image(&self, slot: &str, image: Arc<Rgba8>) -> u64 {
+        self.put(slot, Pixels::Sdr(image))
+    }
+
+    /// Offer the HDR picture of `slot` (the lease of the `hdr` of its image event), as
+    /// [`Self::put_image`] does a picture; the two are replaced separately.
+    pub fn put_hdr(&self, slot: &str, hdr: Arc<HdrPicture>) -> u64 {
+        self.put(&format!("{slot}#hdr"), Pixels::Hdr(hdr))
+    }
+
+    fn put(&self, slot: &str, image: Pixels) -> u64 {
         let mut inner = self.lock();
         let stale: Vec<u64> =
             inner.map.iter().filter(|(_, l)| matches!(l, Lease::Image { slot: s, taken: false, .. } if s == slot)).map(|(t, _)| *t).collect();
@@ -89,7 +134,7 @@ impl Leases {
         }
         inner.next += 1;
         let token = inner.next;
-        inner.untaken_bytes = inner.untaken_bytes.saturating_add(image_bytes(&image));
+        inner.untaken_bytes = inner.untaken_bytes.saturating_add(image.bytes());
         inner.map.insert(token, Lease::Image { slot: slot.to_string(), image, taken: false });
         while inner.untaken_bytes > MAX_UNTAKEN {
             let oldest =
@@ -107,13 +152,7 @@ impl Leases {
         let Some(Lease::Image { image, taken, .. }) = inner.map.get_mut(&token) else { return None };
         let first = !*taken;
         *taken = true;
-        let r = ImageRef {
-            ptr: image.data.as_ptr().cast::<u8>(),
-            len: image_bytes(image),
-            width: u32::try_from(image.width).unwrap_or(u32::MAX),
-            height: u32::try_from(image.height).unwrap_or(u32::MAX),
-            stride: u32::try_from(image.width.saturating_mul(4)).unwrap_or(u32::MAX),
-        };
+        let r = image.image_ref();
         if first {
             let bytes = r.len;
             inner.untaken_bytes = inner.untaken_bytes.saturating_sub(bytes);
@@ -121,10 +160,10 @@ impl Leases {
         Some(r)
     }
 
-    /// The picture of `token`, shared (for Rust callers: tests, the script runner).
+    /// The 8-bit picture of `token`, shared (for Rust callers: tests, the script runner).
     pub fn image(&self, token: u64) -> Option<Arc<Rgba8>> {
         match self.lock().map.get(&token) {
-            Some(Lease::Image { image, .. }) => Some(image.clone()),
+            Some(Lease::Image { image: Pixels::Sdr(image), .. }) => Some(image.clone()),
             _ => None,
         }
     }
@@ -144,7 +183,7 @@ impl Leases {
 
 fn remove(inner: &mut Inner, token: u64) {
     if let Some(Lease::Image { image, taken: false, .. }) = inner.map.remove(&token) {
-        inner.untaken_bytes = inner.untaken_bytes.saturating_sub(image_bytes(&image));
+        inner.untaken_bytes = inner.untaken_bytes.saturating_sub(image.bytes());
     }
 }
 

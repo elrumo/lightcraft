@@ -32,6 +32,7 @@ mod dialog_filter;
 mod drag_pointer;
 mod editors;
 mod hdr_display;
+mod hdr_sink;
 mod logging;
 #[cfg(target_os = "macos")]
 mod native_menu;
@@ -58,12 +59,12 @@ fn app_icon() -> egui::IconData {
     eframe::icon_data::from_png_bytes(png).unwrap_or_default()
 }
 
-struct App(LightcraftApp, PrefsWriter, #[cfg(target_os = "macos")] Option<native_menu::NativeMenu>);
+struct App(LightcraftApp, PrefsWriter, hdr_display::HdrOutput, #[cfg(target_os = "macos")] Option<native_menu::NativeMenu>);
 
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         #[cfg(target_os = "macos")]
-        if let Some(m) = self.2.as_mut()
+        if let Some(m) = self.3.as_mut()
             && m.update(&mut self.0, ctx)
             && lightcraft_ui_egui::panels::notices::may_close(&mut self.0)
         {
@@ -81,6 +82,8 @@ impl eframe::App for App {
     }
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.0.ui(ui);
+        // (after the frame's drawing: whether an HDR picture was on screen decides the surface's output)
+        self.2.frame(&mut self.0, ui.ctx());
     }
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         if let Err(e) = self.1.save(&self.0) {
@@ -663,7 +666,9 @@ fn main() -> eframe::Result {
     // the window's renderer: probed (Windows) and with a fallback chain, so a driver that can't
     // build egui's pipeline never kills the start-up
     let win_files = std::sync::Arc::new(window_files(in_memory));
-    let window_gpu::Chosen { renderer, wgpu_options, which: window_renderer, notice: window_notice } = window_gpu::choose(&win_files);
+    let window_gpu::Chosen { renderer, mut wgpu_options, which: window_renderer, notice: window_notice } = window_gpu::choose(&win_files);
+    // a surface that can show HDR where some screen has headroom (the window draws as before until a photo does)
+    wgpu_options.surface.hdr_surface = hdr_display::surface_wanted();
     win_files.arm(window_renderer);
     let win_files_app = win_files.clone();
     let options = eframe::NativeOptions {
@@ -716,9 +721,9 @@ fn main() -> eframe::Result {
                 session.vision.mirrors_file = config_dir().map(|d| d.join("models").join("siglip2-mirrors.txt"));
                 // AI Super Resolution: models live in <config>/models/<id>/ (downloaded only when the user agrees)
                 session.enhancer.dir = config_dir().map(|d| d.join("models"));
-                // HDR display: SDR unless the surface, platform and display all allow HDR
-                hdr_display::report(cc.wgpu_render_state.as_ref().map(|r| r.target_format));
                 let mut app = LightcraftApp::new(session, services(cc, app_log_file.as_deref()));
+                // HDR display: SDR unless the surface, platform and display all allow HDR
+                let hdr = hdr_display::HdrOutput::install(&mut app, cc.wgpu_render_state.as_ref());
                 if let Some(ui) = prefs {
                     app.ui = ui;
                 }
@@ -766,6 +771,7 @@ fn main() -> eframe::Result {
                 Ok(Box::new(App(
                     app,
                     writer,
+                    hdr,
                     #[cfg(target_os = "macos")]
                     menu,
                 )))
@@ -1105,6 +1111,7 @@ mod tests {
             let mut app = App(
                 app,
                 PrefsWriter::default(),
+                hdr_display::HdrOutput::default(),
                 #[cfg(target_os = "macos")]
                 None,
             );

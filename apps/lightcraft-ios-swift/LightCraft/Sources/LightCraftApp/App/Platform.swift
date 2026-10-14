@@ -30,6 +30,15 @@ extension View {
         #endif
     }
 
+    /// Capital letters as typed (a code): a phone's keyboard; a Mac's has no such mode.
+    @ViewBuilder func lcAutocapCharacters() -> some View {
+        #if os(iOS)
+        textInputAutocapitalization(.characters)
+        #else
+        self
+        #endif
+    }
+
     /// The keyboard a field wants on a phone; a Mac has one keyboard.
     @ViewBuilder func lcKeyboard(_ kind: LCKeyboard) -> some View {
         #if os(iOS)

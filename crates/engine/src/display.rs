@@ -75,9 +75,11 @@ fn round4(v: f64) -> f64 {
 
 /// Make `r` ready for `display`: an sRGB image (thumbnail, cached preview, camera JPEG) is
 /// converted to the display's values. A render made for the display (see
-/// [`RenderJob::with_display`](crate::media::RenderJob::with_display)) is already.
+/// [`RenderJob::with_display`](crate::media::RenderJob::with_display)) is already, and so is an HDR
+/// one (Display P3, which is what the screens that show HDR are; its picture goes to the system's
+/// colour management as it is).
 pub fn present(r: &mut RenderResult, display: &Display) {
-    if r.display.is_some() {
+    if r.display.is_some() || r.hdr.is_some() {
         return;
     }
     if let Ok(rendered) = &mut r.rendered {

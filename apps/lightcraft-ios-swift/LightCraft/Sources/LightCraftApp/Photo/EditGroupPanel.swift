@@ -23,13 +23,16 @@ struct EditGroupPanel: View {
                 }
             }
         }
-        .task(id: group) { model.editor.want(group.sections, model) }
+        .task(id: group) {
+            model.editor.picking = nil
+            model.editor.want(group.sections, model)
+        }
     }
 }
 
 /// The Edit tool's open group as dials (the Dials style): its sliders, and its switches (HDR,
-/// B&W), choices (white balance, vignette style) and pages (Curve, Color Mixer, Point Color, Color
-/// Grading, the SDR rendition) as dials of their own.
+/// B&W), choices (white balance, vignette style) and pages (Curve, Color Mixer, Color Grading, the
+/// SDR rendition) as dials of their own.
 private struct DialGroupPanel: View {
     @Environment(AppModel.self) private var model
     let group: EditGroup
@@ -68,17 +71,11 @@ private struct DialGroupPanel: View {
             let mode = editor.setting("wb", "mode").string ?? "asShot"
             var d = [
                 Dial(id: "wbMode", label: "White Balance", symbol: "thermometer.sun", kind: .choice(ColorGroup.modes, mode) { model.perform("develop.wb", ["mode": .string($0)]) }),
-                Dial(id: "wbPick", label: "White Balance Selector", symbol: "eyedropper", kind: .action {
-                    editor.picking = .whiteBalance
-                    model.show(String(localized: "Tap something white or grey in the photo"))
-                }),
+                Dial(id: "wbPick", label: "White Balance Selector", symbol: "eyedropper", kind: .action { editor.arm(.whiteBalance, model) }),
                 Dial(id: "bw", label: "B&W", symbol: "circle.lefthalf.striped.horizontal", kind: .toggle(editor.isBW) { _ in model.perform("develop.treatment") }),
             ]
             d += editor.specs("color").map(Dial.control)
             d.append(Dial(id: "mixer", label: editor.isBW ? "B&W Mixer" : "Color Mixer", symbol: "paintpalette", kind: .page(.mixer)))
-            if !editor.isBW {
-                d.append(Dial(id: "pointColor", label: "Point Color", symbol: "eyedropper.halffull", kind: .page(.pointColor)))
-            }
             d.append(Dial(id: "grading", label: "Color Grading", symbol: "circle.hexagongrid", kind: .page(.grading)))
             return d
         case .effects:
@@ -110,7 +107,6 @@ private struct DialPageSheet: View {
                     switch page {
                     case .curve: CurveEditor()
                     case .mixer: MixerView()
-                    case .pointColor: PointColorView()
                     case .grading: GradingView()
                     case .sdr: Sliders(section: "light") { $0.id.hasPrefix("hdr.sdr") }
                     }
@@ -128,13 +124,11 @@ private struct DialPageSheet: View {
         }
         .presentationDetents([.medium, .large])
         .presentationBackgroundInteraction(.enabled(upThrough: .medium))
-        // as dark as the editor it opens over
-        .preferredColorScheme(.dark)
+        .onDisappear { model.editor.picking = nil }
         .task {
             switch page {
             case .curve: model.editor.want(["curve"], model)
-            case .mixer: model.editor.want(["mixer", "bwMix"], model)
-            case .pointColor: model.editor.want(["pointColor"], model)
+            case .mixer: model.editor.want(["mixer", "bwMix", "pointColor"], model)
             case .grading: model.editor.want(["grading"], model)
             case .sdr: break
             }
@@ -145,7 +139,6 @@ private struct DialPageSheet: View {
         switch page {
         case .curve: "Curve"
         case .mixer: model.editor.isBW ? "B&W Mixer" : "Color Mixer"
-        case .pointColor: "Point Color"
         case .grading: "Color Grading"
         case .sdr: "SDR Rendition"
         }
@@ -337,12 +330,11 @@ struct LightGroup: View {
 }
 
 /// Color: white balance (preset, picker), B&W, Temp and Tint, Vibrance and Saturation, then the Color
-/// Mixer, Point Color and Color Grading.
+/// Mixer (with the point colours) and Color Grading.
 struct ColorGroup: View {
     @Environment(AppModel.self) private var model
     @State private var mixer = false
     @State private var grading = false
-    @State private var point = false
 
     static let modes: [(String, LocalizedStringKey)] = [
         ("asShot", "As Shot"), ("auto", "Auto"), ("daylight", "Daylight"), ("cloudy", "Cloudy"), ("shade", "Shade"),
@@ -370,8 +362,7 @@ struct ColorGroup: View {
                 }
             }
             Button {
-                model.editor.picking = .whiteBalance
-                model.show(String(localized: "Tap something white or grey in the photo"))
+                model.editor.arm(.whiteBalance, model)
             } label: {
                 Image(systemName: "eyedropper")
             }
@@ -385,13 +376,7 @@ struct ColorGroup: View {
         Flyout(title: editor.isBW ? "B&W Mixer" : "Color Mixer", symbol: "paintpalette", open: $mixer) {
             MixerView()
         }
-        .onChange(of: mixer) { _, open in if open { editor.want(["mixer", "bwMix"], model) } }
-        if !editor.isBW {
-            Flyout(title: "Point Color", symbol: "eyedropper.halffull", open: $point) {
-                PointColorView()
-            }
-            .onChange(of: point) { _, open in if open { editor.want(["pointColor"], model) } }
-        }
+        .onChange(of: mixer) { _, open in if open { editor.want(["mixer", "bwMix", "pointColor"], model) } }
         Flyout(title: "Color Grading", symbol: "circle.hexagongrid", open: $grading) {
             GradingView()
         }
@@ -422,40 +407,101 @@ struct EffectsGroup: View {
 }
 
 /// The eight colour bands' Hue, Saturation and Luminance (or, in black and white, how light each
-/// band turns out), one band at a time.
+/// band turns out), one band at a time. Beside the bands, the eyedropper picks a point colour from
+/// the photo (a tap on it): each one gets a swatch under the row, with its own shifts and range.
 struct MixerView: View {
     @Environment(AppModel.self) private var model
     @State private var band = 0
-    @State private var all = false
+    /// The point colour whose sliders show (`nil`: the band's).
+    @State private var point: Int?
+    @State private var swatches: [String] = []
+    /// How many point colours there were when they were last read (a new one gets chosen).
+    @State private var known: Int?
 
     static let names = ["red", "orange", "yellow", "green", "aqua", "blue", "purple", "magenta"]
 
     var body: some View {
         let editor = model.editor
-        if editor.isBW {
-            Button("Auto") { model.perform("develop.autoBwMix") }
-                .buttonStyle(.bordered)
-            Sliders(section: "bwMix")
-        } else {
-            HStack(spacing: 0) {
-                ForEach(0..<8, id: \.self) { i in
-                    Button {
-                        band = i
-                    } label: {
-                        Circle()
-                            .fill(ControlSlider.bands[i])
-                            .frame(width: 28, height: 28)
-                            .overlay { if band == i { Circle().strokeBorder(.primary, lineWidth: 2).padding(-4) } }
-                            .frame(maxWidth: .infinity, minHeight: 44)
+        VStack(alignment: .leading, spacing: 4) {
+            if editor.isBW {
+                Button("Auto") { model.perform("develop.autoBwMix") }
+                    .buttonStyle(.bordered)
+                Sliders(section: "bwMix")
+            } else {
+                HStack(spacing: 0) {
+                    ForEach(0..<8, id: \.self) { i in
+                        dot(ControlSlider.bands[i], chosen: point == nil && band == i, wide: true) {
+                            band = i
+                            point = nil
+                        }
+                        .accessibilityLabel(LocalizedStringKey(Self.names[i].capitalized))
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(LocalizedStringKey(Self.names[i].capitalized))
-                    .accessibilityAddTraits(band == i ? .isSelected : [])
+                    Button {
+                        editor.arm(.pointColor, model)
+                    } label: {
+                        Image(systemName: "eyedropper").frame(width: 24, height: 24)
+                    }
+                    .buttonStyle(.bordered)
+                    .buttonBorderShape(.circle)
+                    .tint(editor.picking == .pointColor ? Color.accentColor : nil)
+                    .disabled(swatches.count >= 8)
+                    .accessibilityLabel("Point Color")
+                }
+                .haptic(.selection, trigger: band)
+                if !swatches.isEmpty {
+                    HStack(spacing: 0) {
+                        ForEach(Array(swatches.enumerated()), id: \.offset) { i, hex in
+                            dot(Color(hex: hex) ?? .gray, chosen: point == i, wide: false) { point = i }
+                                .accessibilityLabel("Color \(i + 1)")
+                        }
+                        Spacer()
+                        if let chosen = point {
+                            Button(role: .destructive) {
+                                model.perform("pointColor.delete", ["index": .int(Int64(chosen))])
+                                point = nil
+                            } label: {
+                                Image(systemName: "trash").frame(width: 44, height: 44)
+                            }
+                            .accessibilityLabel("Delete Color")
+                        }
+                    }
+                }
+                if let chosen = point, chosen < swatches.count {
+                    Sliders(section: "pointColor") { $0.id.hasPrefix("pointColor.\(chosen).") }
+                } else {
+                    Sliders(section: "mixer") { $0.id.hasPrefix("mixer.\(Self.names[band]).") }
                 }
             }
-            .haptic(.selection, trigger: band)
-            Sliders(section: "mixer") { $0.id.hasPrefix("mixer.\(Self.names[band]).") }
         }
+        .task(id: model.state.catalogRevision) {
+            guard !editor.isBW, let engine = model.engine, let list = try? await engine.execute("pointColor.list") else { return }
+            let now = list.array?.compactMap { $0["swatch"].string } ?? []
+            if let known, now.count > known {
+                point = now.count - 1
+            } else if let chosen = point, chosen >= now.count {
+                point = nil
+            }
+            known = now.count
+            swatches = now
+        }
+        .onChange(of: model.state.active) {
+            known = nil
+            point = nil
+        }
+    }
+
+    /// A colour to choose: a band (`wide`: one of the eight sharing the row), or a point colour.
+    private func dot(_ color: Color, chosen: Bool, wide: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Circle()
+                .fill(color)
+                .frame(width: 28, height: 28)
+                .overlay { if chosen { Circle().strokeBorder(.primary, lineWidth: 2).padding(-4) } }
+                .frame(maxWidth: wide ? .infinity : 44, minHeight: 44)
+                .frame(width: wide ? nil : 44)
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(chosen ? .isSelected : [])
     }
 }
 
@@ -492,6 +538,7 @@ struct GradingWheel: View {
     @Environment(AppModel.self) private var model
     let region: String
     @State private var dragging = false
+    @State private var taps = DoubleTap()
 
     var body: some View {
         let editor = model.editor
@@ -526,18 +573,38 @@ struct GradingWheel: View {
                         editor.setMany(["grading.\(region).hue": h.rounded(), "grading.\(region).sat": s.rounded()], label: "Color Grading", began: !dragging, ended: false, model)
                         dragging = true
                     }
-                    .onEnded { _ in
-                        editor.setMany(["grading.\(region).hue": editor.spec("grading.\(region).hue").map { editor.value($0) } ?? 0, "grading.\(region).sat": editor.spec("grading.\(region).sat").map { editor.value($0) } ?? 0], label: "Color Grading", began: false, ended: true, model)
+                    .onEnded { g in
+                        // (the drag takes the touch at touch-down, so a tap gesture beside it never fires)
+                        let double = taps.ended(g)
+                        let hue = double ? 0 : editor.spec("grading.\(region).hue").map { editor.value($0) } ?? 0
+                        let sat = double ? 0 : editor.spec("grading.\(region).sat").map { editor.value($0) } ?? 0
+                        editor.setMany(["grading.\(region).hue": hue, "grading.\(region).sat": sat], label: "Color Grading", began: false, ended: true, model)
                         dragging = false
                     }
             )
-            .onTapGesture(count: 2) {
-                editor.setMany(["grading.\(region).hue": 0, "grading.\(region).sat": 0], label: "Color Grading", began: true, ended: true, model)
-            }
         }
         .aspectRatio(1, contentMode: .fit)
         .accessibilityElement()
         .accessibilityLabel("\(region.capitalized) wheel")
         .accessibilityValue("Hue \(Int(hue)), saturation \(Int(sat))")
+    }
+}
+
+/// A double tap on a control whose drag starts at touch-down (a tap gesture beside such a drag never
+/// fires): call `ended` as each drag ends.
+struct DoubleTap {
+    private var last: Date?
+
+    mutating func ended(_ g: DragGesture.Value) -> Bool {
+        guard hypot(g.translation.width, g.translation.height) < 8 else {
+            last = nil
+            return false
+        }
+        if let last, g.time.timeIntervalSince(last) < 0.35 {
+            self.last = nil
+            return true
+        }
+        last = g.time
+        return false
     }
 }

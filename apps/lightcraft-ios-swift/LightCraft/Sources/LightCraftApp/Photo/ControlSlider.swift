@@ -1,6 +1,10 @@
 import LightCraftCore
 import SwiftUI
 
+#if os(iOS)
+import UIKit
+#endif
+
 /// A develop slider as the phone has it: the label and the value over a track filled from the
 /// default to the value (or a colour track for white balance, hue, saturation…), with a capsule
 /// thumb. The whole row is the grab zone and the value follows the finger's movement (not where it
@@ -14,7 +18,6 @@ struct ControlSlider: View {
     let editing: (Bool) -> Void
     let reset: () -> Void
     @State private var dragStart: Double?
-    @State private var horizontal: Bool?
     @State private var detents = 0
     @State private var trackWidth: CGFloat = 300
 
@@ -27,6 +30,7 @@ struct ControlSlider: View {
         #endif
     }
 
+    #if os(iOS)
     /// The phone's slider: the name and the value over the track.
     private var phoneSlider: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -46,7 +50,7 @@ struct ControlSlider: View {
         }
         .padding(.vertical, 6)
         .contentShape(Rectangle())
-        .gesture(drag, including: spec.min < spec.max ? .all : .none)
+        .gesture(drag)
         .onTapGesture(count: 2) {
             reset()
             detents += 1
@@ -60,6 +64,7 @@ struct ControlSlider: View {
         }
         .accessibilityAction(named: "Reset") { reset() }
     }
+    #endif
 
     private func fraction(_ v: Double) -> Double { (v - spec.min) / spec.span }
 
@@ -133,29 +138,69 @@ struct ControlSlider: View {
         return [prev, bands[band], next]
     }
 
-    private var drag: some Gesture {
-        DragGesture(minimumDistance: 8, coordinateSpace: .local)
-            .onChanged { g in
-                if horizontal == nil {
-                    horizontal = abs(g.translation.width) >= abs(g.translation.height)
-                    if horizontal == true {
-                        dragStart = value
-                        editing(true)
-                    }
-                }
-                guard horizontal == true, let start = dragStart else { return }
+    #if os(iOS)
+    /// A horizontal pan only: a pan that starts vertical fails at once, so the panel's scroll view
+    /// (which a SwiftUI `DragGesture` would starve) gets it.
+    private var drag: some UIGestureRecognizerRepresentable {
+        HorizontalPan { phase, dx in
+            switch phase {
+            case .began:
+                guard spec.min < spec.max else { return }
+                dragStart = value
+                editing(true)
+            case .changed:
+                guard let start = dragStart else { return }
                 // the value follows the finger's movement across the track's width
-                let v = spec.clamp(start + Double(g.translation.width) / Double(max(trackWidth - 38, 1)) * spec.span)
+                let v = spec.clamp(start + Double(dx) / Double(max(trackWidth - 38, 1)) * spec.span)
                 if spec.detent(from: value, to: v) { detents += 1 }
                 if v != value { set(v) }
-            }
-            .onEnded { _ in
-                if horizontal == true { editing(false) }
-                horizontal = nil
+            case .ended:
+                if dragStart != nil { editing(false) }
                 dragStart = nil
             }
+        }
+    }
+    #endif
+}
+
+#if os(iOS)
+private struct HorizontalPan: UIGestureRecognizerRepresentable {
+    enum Phase { case began, changed, ended }
+    let onPhase: (Phase, CGFloat) -> Void
+
+    func makeUIGestureRecognizer(context: Context) -> HorizontalPanRecognizer { HorizontalPanRecognizer() }
+
+    func handleUIGestureRecognizerAction(_ r: HorizontalPanRecognizer, context: Context) {
+        let dx = r.translation(in: r.view).x
+        switch r.state {
+        case .began: onPhase(.began, dx)
+        case .changed: onPhase(.changed, dx)
+        case .ended, .cancelled, .failed: onPhase(.ended, dx)
+        default: break
+        }
     }
 }
+
+final class HorizontalPanRecognizer: UIPanGestureRecognizer {
+    private var origin = CGPoint.zero
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        origin = touches.first?.location(in: view) ?? .zero
+        super.touchesBegan(touches, with: event)
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
+        if state == .possible, let p = touches.first?.location(in: view) {
+            let dx = abs(p.x - origin.x), dy = abs(p.y - origin.y)
+            if dy > 8, dy > dx {
+                state = .failed
+                return
+            }
+        }
+        super.touchesMoved(touches, with: event)
+    }
+}
+#endif
 
 extension ControlSpec {
     /// Its range (never zero).

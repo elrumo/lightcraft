@@ -16,7 +16,9 @@
 //!
 //! - **Presets** are one document on the server (`/api/presets`, versioned). A device sends its
 //!   user presets when they change, and merges the server's by preset id against the copy both
-//!   last agreed on ([`merge_presets`]), so a preset deleted on one device stays deleted.
+//!   last agreed on ([`merge_presets`]), so a preset deleted on one device stays deleted. What a
+//!   device leaves out of the server's document (past the most it holds, or not readable as a preset)
+//!   goes back with what it sends, so leaving something out never deletes it on the other devices.
 //!
 //! Files in the library: `sync.json` ([`SyncConfig`]), `sync.outbox` (changes the server hasn't
 //! acknowledged; written before the op log), `sync.uploaded` (content hashes the server has) and
@@ -48,8 +50,12 @@ pub const UPLOADED: &str = "sync.uploaded";
 pub const PRESETS: &str = "sync.presets";
 /// The other shared documents as last synced (the base of their merges), by name.
 pub const DOCS: &str = "sync.docs";
-/// User presets taken from the server at most (untrusted input).
-const PRESETS_MAX: usize = 10_000;
+/// User presets a device holds at most (the server's document is untrusted input): about ten
+/// Lightroom collections imported whole (one is ~11 000 presets). The device's own presets always
+/// stay; what is left out of the server's is sent back as it came ([`Session::presets_to_send`]).
+const PRESETS_MAX: usize = 100_000;
+/// A synced preset's id is this long at most.
+const PRESET_ID_MAX: usize = 200;
 
 /// Signing in to a server whose library this one isn't a copy of (the server was set up again,
 /// or the user's library there was replaced).
@@ -1337,7 +1343,7 @@ impl Session {
                     st.control = Some((t.id(), Control::GetPresets));
                     tasks.push(t);
                 } else if !st.config.library.is_empty() && self.presets_changed(&mut st) {
-                    let presets = self.user_presets();
+                    let presets = self.presets_to_send(&st);
                     let body = serde_json::to_string(&proto::Presets { version: st.config.presets_version, presets: Value::Array(presets.clone()) })
                         .unwrap_or_default();
                     let t = st.http("PUT", "/api/presets", Body::Json(body), None);
@@ -1828,13 +1834,29 @@ impl Session {
         self.presets.iter().filter(|p| !p.builtin).filter_map(|p| serde_json::to_value(p).ok()).collect()
     }
 
+    /// The ids of the built-in presets, and of this device's user presets.
+    fn preset_ids(&self) -> (HashSet<String>, HashSet<String>) {
+        let (builtin, user): (Vec<_>, Vec<_>) = self.presets.iter().partition(|p| p.builtin);
+        (builtin.into_iter().map(|p| p.id.clone()).collect(), user.into_iter().map(|p| p.id.clone()).collect())
+    }
+
+    /// The presets document this device sends: its user presets, then what it left out of the
+    /// server's as last synced ([`presets_left_out`]), as it came. Leaving a preset out (past
+    /// [`PRESETS_MAX`], not readable here) then never deletes it for the user's other devices.
+    fn presets_to_send(&self, st: &SyncState) -> Vec<Value> {
+        let mut out = self.user_presets();
+        let (builtin, own) = self.preset_ids();
+        out.extend(presets_left_out(&st.presets_base, &builtin, &own, PRESETS_MAX));
+        out
+    }
+
     /// Did the user presets change since they were last synced? (Compared only after presets.json
     /// was written, which happens when they change.)
     fn presets_changed(&self, st: &mut SyncState) -> bool {
         let generation = self.library.as_ref().map(|l| l.presets_gen());
         if st.presets_seen != generation {
             st.presets_seen = generation;
-            st.presets_changed = self.user_presets() != st.presets_base;
+            st.presets_changed = self.presets_to_send(st) != st.presets_base;
         }
         st.presets_changed
     }
@@ -1843,20 +1865,11 @@ impl Session {
     fn take_presets(&mut self, st: &mut SyncState, theirs: proto::Presets) {
         let remote: Vec<Value> = theirs.presets.as_array().cloned().unwrap_or_default();
         let merged = merge_presets(&st.presets_base, &self.user_presets(), &remote);
-        let builtin: HashSet<String> = self.presets.iter().filter(|p| p.builtin).map(|p| p.id.clone()).collect();
-        let mut users = Vec::new();
-        let mut seen = HashSet::new();
-        for v in merged.into_iter().take(PRESETS_MAX) {
-            // untrusted: a preset that doesn't read as one, a built-in's id or a repeated id is left out
-            let Ok(mut p) = serde_json::from_value::<lightcraft_develop::Preset>(v) else { continue };
-            if p.id.trim().is_empty() || p.id.len() > 200 || builtin.contains(&p.id) || !seen.insert(p.id.clone()) {
-                continue;
-            }
-            p.builtin = false;
-            users.push(p);
-        }
+        let (builtin, own) = self.preset_ids();
+        let users = hold_presets(&merged, &builtin, &own, PRESETS_MAX);
         self.presets.retain(|p| p.builtin);
         self.presets.extend(users);
+        // (the whole document: what wasn't held is sent back from it, `presets_to_send`)
         st.presets_base = remote;
         st.presets_base_dirty = true;
         st.config.presets_version = theirs.version;
@@ -2483,6 +2496,70 @@ impl Session {
 /// their order; presets added here come after.
 pub fn merge_presets(base: &[Value], ours: &[Value], theirs: &[Value]) -> Vec<Value> {
     merge_by(base, ours, theirs, &|v| v.get("id").and_then(Value::as_str).map(str::to_string))
+}
+
+/// One item of a synced presets document, as this device takes it (the document is untrusted).
+enum SyncedPreset {
+    /// A user preset this device can hold.
+    Usable(lightcraft_develop::Preset),
+    /// Not one it can hold: not readable as a preset, an unusable id or a built-in's id.
+    Unusable,
+    /// An id an earlier item has (the first one counts).
+    Repeated,
+}
+
+fn classify_preset(v: &Value, builtin: &HashSet<String>, seen: &mut HashSet<String>) -> SyncedPreset {
+    let Ok(mut p) = <lightcraft_develop::Preset as Deserialize>::deserialize(v) else { return SyncedPreset::Unusable };
+    if p.id.trim().is_empty() || p.id.len() > PRESET_ID_MAX || builtin.contains(&p.id) {
+        return SyncedPreset::Unusable;
+    }
+    if !seen.insert(p.id.clone()) {
+        return SyncedPreset::Repeated;
+    }
+    p.builtin = false;
+    SyncedPreset::Usable(p)
+}
+
+/// The user presets this device holds of a synced list (`items`, the server's document merged with
+/// its own): the usable ones, its `own` (the ids it holds already) always and the others while it
+/// holds fewer than `max`.
+pub(crate) fn hold_presets(items: &[Value], builtin: &HashSet<String>, own: &HashSet<String>, max: usize) -> Vec<lightcraft_develop::Preset> {
+    let mut seen = HashSet::new();
+    let mut held = Vec::new();
+    let mut count = own.len();
+    for v in items {
+        let SyncedPreset::Usable(p) = classify_preset(v, builtin, &mut seen) else { continue };
+        if !own.contains(&p.id) {
+            if count >= max {
+                continue;
+            }
+            count += 1;
+        }
+        held.push(p);
+    }
+    held
+}
+
+/// The items of the server's presets document as last synced (`base`) that this device left out
+/// ([`hold_presets`]: unusable here, or past `max`), as they came: they go back with what it sends,
+/// so they stay for the user's other devices. One of its `own` ids is its own copy; a usable one
+/// within `max` that it doesn't hold was deleted here, and isn't sent back.
+pub(crate) fn presets_left_out(base: &[Value], builtin: &HashSet<String>, own: &HashSet<String>, max: usize) -> Vec<Value> {
+    let mut seen = HashSet::new();
+    let mut count = own.len();
+    let mut out = Vec::new();
+    for v in base {
+        if v.get("id").and_then(Value::as_str).is_some_and(|id| own.contains(id)) {
+            continue;
+        }
+        match classify_preset(v, builtin, &mut seen) {
+            SyncedPreset::Unusable => out.push(v.clone()),
+            SyncedPreset::Repeated => {}
+            SyncedPreset::Usable(_) if count < max => count += 1,
+            SyncedPreset::Usable(_) => out.push(v.clone()),
+        }
+    }
+    out
 }
 
 /// [`merge_presets`] for lists whose items are told apart by `id(item)` (a name, an id).

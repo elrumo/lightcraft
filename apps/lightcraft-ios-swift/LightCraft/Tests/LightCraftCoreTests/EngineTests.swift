@@ -1,7 +1,9 @@
 import Foundation
 import Testing
 
+import CoreGraphics
 @testable import LightCraftCore
+@testable import LightCraftImaging
 
 /// The real engine (the Rust library built for this Mac by `../run.sh --test`), driven as the app
 /// drives it.
@@ -81,6 +83,42 @@ struct EngineTests {
         }
         #expect(pixels.width > 0 && pixels.width <= 128 && pixels.stride == pixels.width * 4)
         #expect(pixels.rgba.count == pixels.stride * pixels.height)
+        await engine.close()
+    }
+
+    /// An HDR edit on a screen that can show it comes with its float picture, as a lease beside the 8-bit one.
+    @Test func anHdrEditOnAnHdrScreenComesWithItsFloatPicture() async throws {
+        let engine = try await demo()
+        let page = try await engine.execute("catalog.query", ["limit": 1], as: PhotoPage.self)
+        let photo = try #require(page.photos.first).id
+        try await engine.execute("library.select", ["ids": [.int(Int64(clamping: photo))]])
+        try await engine.execute("develop.hdr", ["enabled": true, "maxEv": 3])
+        try await engine.execute("develop.set", ["control": "light.exposure", "value": 1.0])
+        let view: JSONValue = ["width": 160, "height": 120]
+        // a screen without headroom: the SDR rendition, 8 bits
+        engine.send("render.view", view)
+        let sdr = try await next(engine) { event -> PixelImage? in
+            if case .image(let info, let pixels) = event, info.slot == "main", !info.draft { return pixels }
+            return nil
+        }
+        #expect(sdr.hdr == nil)
+        // a screen with: the same edit again, with float pixels
+        _ = try await engine.request("render.hdrDisplay", ["on": true])
+        engine.send("render.view", view)
+        let pixels = try await next(engine) { event -> PixelImage? in
+            if case .image(let info, let pixels) = event, info.slot == "main", !info.draft, info.hdr != nil { return pixels }
+            return nil
+        }
+        let hdr = try #require(pixels.hdr)
+        #expect(hdr.width == pixels.width && hdr.height == pixels.height && hdr.stride == hdr.width * 8)
+        #expect(hdr.rgba16f.count == hdr.stride * hdr.height && hdr.peak == 8)
+        // half floats: some component of an exposure-lifted demo scene is above SDR white (1.0 is 0x3C00)
+        let above = hdr.rgba16f.withUnsafeBytes { raw in
+            raw.bindMemory(to: UInt16.self).enumerated().contains { $0.offset % 4 < 3 && $0.element > 0x3C00 && $0.element < 0x7C00 }
+        }
+        #expect(above)
+        // the 8-bit picture of an HDR render is Display P3: the converted image says so
+        #expect((pixels.cgImage()?.colorSpace?.name as String?) == (CGColorSpace.displayP3 as String))
         await engine.close()
     }
 

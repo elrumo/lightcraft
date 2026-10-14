@@ -1199,6 +1199,7 @@ pub fn neutral_from_preview(photo: &lightcraft_catalog::Photo, preview: &std::pa
         stages: None,
         view_cache: None,
         display: None,
+        hdr_view: false,
     };
     guard::catch("rendering a photo for search", || job.run().rendered.map(|r| r.image))?
 }

@@ -7,6 +7,9 @@ import Observation
 final class ImageStore {
     struct Picture {
         let image: CGImage
+        /// The same render as float pixels, for an HDR edit on a screen with headroom: drawn instead of
+        /// `image` with `allowedDynamicRange(.high)` (`AppModel.hdrDisplay`).
+        let hdr: CGImage?
         let photo: UInt64
         let key: UInt64
         let isFinal: Bool
@@ -22,8 +25,8 @@ final class ImageStore {
     /// Thumbnails kept in memory beyond those on screen.
     private let maxThumbs = 600
 
-    func put(_ info: ImageEvent, _ image: CGImage) {
-        pictures[info.slot] = Picture(image: image, photo: info.photo, key: info.key, isFinal: info.isFinal, draft: info.draft, ms: info.ms, histogram: info.histogram,
+    func put(_ info: ImageEvent, _ image: CGImage, hdr: CGImage? = nil) {
+        pictures[info.slot] = Picture(image: image, hdr: hdr, photo: info.photo, key: info.key, isFinal: info.isFinal, draft: info.draft, ms: info.ms, histogram: info.histogram,
                                       window: info.window)
         failed[info.slot] = nil
         // the real thumbnail replaces its stand-in

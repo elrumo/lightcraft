@@ -1,6 +1,10 @@
 import LightCraftCore
 import SwiftUI
 
+#if os(iOS)
+import UIKit
+#endif
+
 /// A photo on a dark canvas, as Lightroom's mobile app shows it: back, its date, undo, share and
 /// "…" above it; swipe sideways for the next; the tools in the bottom bar (Presets, Crop, Edit,
 /// Masking, Remove, Info), the Edit tool's groups in a row of their own and the open tool's panel
@@ -51,7 +55,7 @@ struct PhotoScreen: View {
                 }
             }
         }
-        .background(Color.black.ignoresSafeArea())
+        .background(Color.lcBackground.ignoresSafeArea())
         #if os(macOS)
         // (a Mac keeps the panel open with a tool always chosen: Lightroom's right-hand side)
         .inspector(isPresented: Binding(get: { model.prefs.inspectorShown && !review }, set: { model.prefs.inspectorShown = $0 })) {
@@ -63,8 +67,7 @@ struct PhotoScreen: View {
             ToolColumn()
                 .inspectorColumnWidth(min: 300, ideal: 340, max: 420)
         }
-        #endif
-        #if os(iOS)
+        .background(DismissGuard(disabled: editor.touching))
         .toolbar(review ? .hidden : .visible, for: .navigationBar)
         .toolbar(review || editor.tool?.hasScreen == true ? .hidden : .visible, for: .bottomBar)
         #endif
@@ -105,13 +108,9 @@ struct PhotoScreen: View {
                 #endif
             }
         }
-        // editing's canvas is dark, whatever the app's look (as Photos' editor and Lightroom)
-        .environment(\.colorScheme, .dark)
-        #if os(iOS)
-        .toolbarColorScheme(.dark, for: .navigationBar, .bottomBar)
-        #endif
         .animation(.snappy, value: review)
         .animation(.snappy, value: editor.tool)
+        .onChange(of: editor.tool) { editor.picking = nil }
         .haptic(.selection, trigger: editor.tool)
         .task(id: editor.tool) {
             // a tool screen's Cancel goes back to how the photo was when it opened
@@ -329,6 +328,8 @@ nonisolated struct ViewRequest: Hashable {
     let overlay: JSONValue?
     let proof: JSONValue?
     let zoom: ZoomRequest?
+    /// The screen shows HDR: the same look is asked for again, as an HDR picture.
+    let hdr: Bool
 }
 
 /// A zoomed loupe's view: the photo's long edge as drawn (pixels) and the part of it on screen, in
@@ -354,6 +355,10 @@ struct ZoomablePhoto: View {
     /// The render asked for last.
     @State private var lastRequest: ViewRequest?
     @State private var showBefore = false
+    /// Fingers are moving or zooming the photo: Before stays away.
+    @State private var gesturing = false
+    /// The press that just ended was a hold (Before shown), so its release is not a tap.
+    @State private var held = false
     /// How the shown photo maps to image coordinates (taps on it for the pickers and tools).
     @State private var frame: PhotoFrame?
     /// A review swipe under way: the rating or flag it started from and where it is now.
@@ -379,8 +384,10 @@ struct ZoomablePhoto: View {
                 BeforeAfterView(photo: photo, wide: canvas.width > canvas.height)
                     .padding(review ? 0 : margin)
             } else if let picture {
-                Image(decorative: picture.image, scale: 1)
+                // (an HDR edit on a screen with headroom: its float picture, drawn brighter than white)
+                Image(decorative: picture.hdr ?? picture.image, scale: 1)
                     .resizable()
+                    .allowedDynamicRange(.high)
                     .scaledToFit()
                     // the crop's Expand: what the photo doesn't cover yet comes transparent
                     .background { if model.editor.setting("crop", "expand").bool == true { Checkerboard() } }
@@ -394,8 +401,9 @@ struct ZoomablePhoto: View {
                    abs(Double(w.full[0]) / Double(w.full[1]) / (rect.width / rect.height) - 1) < 0.02
                 {
                     let (fw, fh) = (CGFloat(w.full[0]), CGFloat(w.full[1]))
-                    Image(decorative: region.image, scale: 1)
+                    Image(decorative: region.hdr ?? region.image, scale: 1)
                         .resizable()
+                        .allowedDynamicRange(.high)
                         .frame(width: rect.width * CGFloat(w.w) / fw, height: rect.height * CGFloat(w.h) / fh)
                         .position(x: rect.minX + rect.width * (CGFloat(w.x) + CGFloat(w.w) / 2) / fw, y: rect.minY + rect.height * (CGFloat(w.y) + CGFloat(w.h) / 2) / fh)
                         .allowsHitTesting(false)
@@ -475,7 +483,12 @@ struct ZoomablePhoto: View {
             }
         }
         .contentShape(Rectangle())
-        .gesture(magnify.simultaneously(with: drag))
+        .gesture(magnify.simultaneously(with: drag), including: fingersMoveIt ? .none : .all)
+        #if os(iOS)
+        .background {
+            TwoFingerGesture(moves: fingersMoveIt, fingers: fingersChanged, pan: twoFingerPan, pinch: twoFingerPinch, ended: twoFingerEnded)
+        }
+        #endif
         .simultaneousGesture(reviewSwipe, including: review && !zoomed ? .all : .none)
         .haptic(.selection, trigger: swipe?.rating)
         .haptic(.selection, trigger: swipe?.flag)
@@ -495,9 +508,16 @@ struct ZoomablePhoto: View {
         }
         .onTapGesture(count: 1) { location in tapped(at: location, picture: picture) }
         .onLongPressGesture(minimumDuration: 0.4, maximumDistance: 10) {
+            // (held still for the whole time: a drag or a second finger never gets here)
+            guard !model.editor.touching, !gesturing, model.editor.fingers < 2 else { return }
+            held = true
+            showBefore = true
+            model.requestBefore(photo)
         } onPressingChanged: { pressing in
-            showBefore = pressing && model.editor.tool?.hasScreen != true
-            if showBefore { model.requestBefore(photo) }
+            if pressing { held = false } else { showBefore = false }
+        }
+        .onChange(of: gesturing) { _, on in
+            if on { showBefore = false }
         }
         .haptic(trigger: showBefore) { _, new in new ? .impact(weight: .medium) : nil }
         .onGeometryChange(for: CGSize.self) { $0.size } action: { canvas = $0 }
@@ -616,8 +636,12 @@ struct ZoomablePhoto: View {
 
     /// A tap: a picker takes the colour there; otherwise the bars come and go.
     private func tapped(at location: CGPoint, picture: ImageStore.Picture?) {
+        if held {
+            held = false
+            return
+        }
         guard let pick = model.editor.picking else {
-            review.toggle()
+            if !model.editor.touching { review.toggle() }
             return
         }
         guard let rect = shownRect(picture), rect.contains(location), let frame else { return }
@@ -642,7 +666,7 @@ struct ZoomablePhoto: View {
             h *= maxEdge / long
         }
         return ViewRequest(photo: photo, width: Int(max(w, 1)), height: Int(max(h, 1)), revision: model.state.catalogRevision, dragging: model.state.interaction != nil,
-                           crop: model.editor.tool != .crop, overlay: model.viewOverlay, proof: model.viewProof, zoom: zoomRequest)
+                           crop: model.editor.tool != .crop, overlay: model.viewOverlay, proof: model.viewProof, zoom: zoomRequest, hdr: model.hdrDisplay)
     }
 
     /// The settled zoom's view (`nil` at fit): the photo's long edge as drawn and what is on screen.
@@ -679,9 +703,56 @@ struct ZoomablePhoto: View {
         DragGesture(minimumDistance: zoomed ? 4 : 10_000)
             .onChanged { value in
                 guard zoom > 1 else { return }
+                gesturing = true
                 pan = clamped(CGSize(width: panAtStart.width + value.translation.width, height: panAtStart.height + value.translation.height))
             }
-            .onEnded { _ in panAtStart = pan }
+            .onEnded { _ in
+                gesturing = false
+                panAtStart = pan
+            }
+    }
+
+    /// A tool takes the one-finger drag (a brush paints with it): two fingers move and zoom the
+    /// photo instead (`TwoFingerGesture`).
+    private var fingersMoveIt: Bool {
+        let tool = model.editor.tool
+        return tool == .remove || tool == .masking || tool == .redEye
+    }
+
+    private func fingersChanged(_ n: Int) {
+        model.editor.fingers = n
+        if n >= 2 { showBefore = false }
+    }
+
+    private func twoFingerPan(_ d: CGSize) {
+        gesturing = true
+        pan = clamped(CGSize(width: pan.width + d.width, height: pan.height + d.height))
+    }
+
+    /// Zoom around the fingers, so what is under them stays under them.
+    private func twoFingerPinch(_ scale: CGFloat, at q: CGPoint) {
+        gesturing = true
+        let next = min(max(zoom * scale, 1), 8)
+        guard next != zoom else { return }
+        let k = 1 - next / zoom
+        let c = CGPoint(x: canvas.width / 2, y: canvas.height / 2)
+        zoom = next
+        pan = clamped(CGSize(width: pan.width + (q.x - c.x - pan.width) * k, height: pan.height + (q.y - c.y - pan.height) * k))
+        zoomed = zoom > 1.01
+    }
+
+    private func twoFingerEnded() {
+        guard gesturing else { return }
+        gesturing = false
+        zoomAtStart = zoom
+        if zoom <= 1.01 {
+            withAnimation(.snappy) {
+                zoom = 1
+                pan = .zero
+            }
+        }
+        panAtStart = pan
+        zoomed = zoom > 1.01
     }
 
     /// Keep the zoomed photo over the screen (view math only: the photo is fitted, then scaled).
@@ -723,6 +794,7 @@ private struct InfoOverlay: View {
     }
 }
 
+#if os(iOS)
 /// The tools under a photo, in the bottom bar: icons, the open one switched on (a tap on it closes
 /// it).
 struct ToolBar: ToolbarContent {
@@ -739,18 +811,35 @@ struct ToolBar: ToolbarContent {
                         model.perform("develop.cancelInteraction")
                     }
                 })) {
-                    Label(LocalizedStringKey(tool.label), systemImage: tool.symbol)
+                    Label {
+                        Text(LocalizedStringKey(tool.label))
+                    } icon: {
+                        // the bar templates its glyphs in the accent: a pre-coloured one stays white
+                        if editor.tool == tool, let white = Self.whiteSymbol(tool.symbol) {
+                            Image(uiImage: white)
+                        } else {
+                            Image(systemName: tool.symbol)
+                        }
+                    }
                 }
                 .disabled(model.state.active == nil)
             }
         }
         ToolbarSpacer(.flexible, placement: .lcBottom)
     }
+
+    private static func whiteSymbol(_ name: String) -> UIImage? {
+        UIImage(systemName: name, withConfiguration: UIImage.SymbolConfiguration(weight: .medium))?
+            .withTintColor(.white, renderingMode: .alwaysOriginal)
+    }
 }
+#endif
 
 /// The Edit tool's groups: Auto, then Profile, Light, Color… (one open at a time).
 struct GroupBar: View {
     @Environment(AppModel.self) private var model
+    /// The photo and undo depth just after Auto was applied (`nil` once anything else is done).
+    @State private var autoArmed: (photo: UInt64?, depth: Int)?
 
     var body: some View {
         let current = EditGroup(rawValue: model.prefs.editGroup) ?? .light
@@ -759,7 +848,18 @@ struct GroupBar: View {
             selected: current.rawValue,
             auto: {
                 Task {
-                    if await model.run("develop.auto") != nil { model.show(String(localized: "Auto settings applied")) }
+                    // Auto again with nothing done since: take Auto back
+                    if let armed = autoArmed, armed.photo == model.state.active, await undoDepth(model) == armed.depth {
+                        autoArmed = nil
+                        model.undo()
+                        model.show(String(localized: "Auto settings removed"))
+                        return
+                    }
+                    let before = await undoDepth(model)
+                    guard await model.run("develop.auto") != nil else { return }
+                    model.show(String(localized: "Auto settings applied"))
+                    let after = await undoDepth(model)
+                    autoArmed = if let before, let after, after > before { (model.state.active, after) } else { nil }
                 }
             },
             choose: { model.prefs.editGroup = $0 }
@@ -852,13 +952,7 @@ struct ToolPanel: View {
                 .frame(height: dragHeight ?? Self.stops[min(editor.detent, Self.stops.count - 1)])
             }
         }
-        // a card floating over the canvas, as a sheet is in iOS 26 (opaque: glass would mirror the
-        // group chips above it)
-        .clipShape(.rect(cornerRadius: 28))
-        .background(Color.lcSecondaryBackground, in: .rect(cornerRadius: 28))
-        .padding(.horizontal, 8)
-        .padding(.bottom, 4)
-        .transition(.move(edge: .bottom).combined(with: .opacity))
+        .toolCard()
     }
 
     /// The Edit tool's group as dials (the profiles keep their grid).
@@ -870,7 +964,9 @@ struct ToolPanel: View {
     static let stops: [CGFloat] = [140, 250, 420]
 
     private var grabberDrag: some Gesture {
-        DragGesture()
+        // (on screen, not in the grabber: it moves with the panel's height, and a translation
+        // measured from a moving view makes the height jump back and forth)
+        DragGesture(coordinateSpace: .global)
             .onChanged { g in
                 let from = dragFrom ?? Self.stops[min(model.editor.detent, Self.stops.count - 1)]
                 dragFrom = from
@@ -888,6 +984,25 @@ struct ToolPanel: View {
                     }
                 }
             }
+    }
+}
+
+extension View {
+    /// A card floating over the canvas, as a sheet is in iOS 26 (opaque: glass would mirror the
+    /// group chips above it): the tool panels' look. `false`: the tool is in a column that has its
+    /// own background.
+    @ViewBuilder
+    func toolCard(_ on: Bool = true) -> some View {
+        if on {
+            self
+                .clipShape(.rect(cornerRadius: 28))
+                .background(Color.lcSecondaryBackground, in: .rect(cornerRadius: 28))
+                .padding(.horizontal, 8)
+                .padding(.bottom, 4)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+        } else {
+            self
+        }
     }
 }
 
@@ -1063,7 +1178,7 @@ struct ReviewHUD: View {
                 ForEach(1...5, id: \.self) { i in
                     Image(systemName: i <= rating ? "star.fill" : "star")
                         .font(.title3)
-                        .foregroundStyle(i <= rating ? Color.yellow : .white.opacity(0.7))
+                        .foregroundStyle(i <= rating ? Color.yellow : Color.secondary)
                 }
             }
             .padding(.horizontal, 14)
@@ -1074,7 +1189,7 @@ struct ReviewHUD: View {
             Spacer()
             Image(systemName: flag == 1 ? "flag.fill" : flag == -1 ? "flag.slash.fill" : "flag")
                 .font(.title3)
-                .foregroundStyle(flag == -1 ? Color.red : .white)
+                .foregroundStyle(flag == -1 ? Color.red : Color.primary)
                 .frame(width: 44, height: 44)
                 .glassEffect(.regular, in: .circle)
                 .accessibilityLabel(flag == 1 ? "Picked" : flag == -1 ? "Rejected" : "Unflagged")

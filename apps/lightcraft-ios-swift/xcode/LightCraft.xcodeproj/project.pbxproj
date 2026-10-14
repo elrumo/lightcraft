@@ -186,6 +186,7 @@
 		6EA4537B2F7DF56E5238E065 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				"ASSETCATALOG_COMPILER_APPICON_NAME[sdk=iphone*]" = AppIcon;
 					"ARCHS[sdk=macosx*]" = arm64;
 					"CODE_SIGN_ENTITLEMENTS[sdk=macosx*]" = "../../../packaging/macos/entitlements.plist";
 				CODE_SIGN_IDENTITY = "iPhone Developer";
@@ -231,6 +232,7 @@
 		95256F4F03E98E2DDF4308C5 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				"ASSETCATALOG_COMPILER_APPICON_NAME[sdk=iphone*]" = AppIcon;
 					"ARCHS[sdk=macosx*]" = arm64;
 					"CODE_SIGN_ENTITLEMENTS[sdk=macosx*]" = "../../../packaging/macos/entitlements.plist";
 				CODE_SIGN_IDENTITY = "iPhone Developer";

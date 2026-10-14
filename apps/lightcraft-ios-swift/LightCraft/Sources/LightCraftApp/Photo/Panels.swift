@@ -86,7 +86,8 @@ struct PresetsPanel: View {
                 }
             }
         }
-        .task { await load() }
+        // first shown, and whenever the preset list changes (an import, or presets the sync brings)
+        .task(id: model.state.presetsGeneration) { await load() }
         .onChange(of: model.sheet == nil) { _, closed in
             // a preset made in Create Preset
             if closed { Task { await load() } }

@@ -35,7 +35,13 @@ struct RootView: View {
                 stack
             }
         }
-        .sheet(item: sheetBinding) { sheet in
+        .sheet(item: sheetBinding, onDismiss: {
+            // (a cover can't come up while a sheet is still going down)
+            if model.welcomeAsked {
+                model.welcomeAsked = false
+                model.cover = .onboarding
+            }
+        }) { sheet in
             SheetContent(sheet: sheet)
                 .environment(model)
         }
@@ -60,6 +66,7 @@ struct RootView: View {
                 switch cover {
                 case .slideshow: SlideshowView()
                 case .lightsOut: LightsOutView()
+                case .onboarding: OnboardingView()
                 }
             }
             .environment(model)
@@ -110,7 +117,7 @@ struct RootView: View {
     }
 
     #if os(macOS)
-    private static let settingsTabs = ["general", "import", "performance", "interface", "sync", "faces", "models"]
+    private static let settingsTabs = ["general", "import", "performance", "interface", "sync", "faces", "models", "admin"]
     #endif
 
     /// The page that slides up. (A Mac shows Settings in its own window instead: never as a sheet.)

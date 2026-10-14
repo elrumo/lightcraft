@@ -4,7 +4,7 @@ import SwiftUI
 
 /// The Edit tool as Lightroom lays it out: a header (Edit, Auto, B&W, HDR), the profile, then the
 /// groups one under another (Light, Color, Effects, Detail, Optics, Calibration), each open or
-/// closed, with Curve, Color Mixer, Color Grading and Point Color as boxes inside them. The sliders
+/// closed, with Curve, Color Mixer (and its point colours) and Color Grading as boxes inside them. The sliders
 /// are the engine's control specs, as everywhere (`Sliders`): a new control appears without a change
 /// here.
 struct MacEditPanel: View {
@@ -216,7 +216,7 @@ private struct MacLight: View {
 }
 
 /// Color: the white balance preset and its picker, Temp, Tint, Vibrance, Saturation, then the
-/// Color Mixer, Point Color and Color Grading boxes.
+/// Color Mixer (with the point colours) and Color Grading boxes.
 private struct MacColor: View {
     @Environment(AppModel.self) private var model
 
@@ -239,23 +239,19 @@ private struct MacColor: View {
             .fixedSize()
             Spacer()
             Button {
-                editor.picking = .whiteBalance
-                model.show(String(localized: "Click something white or grey in the photo"))
+                editor.arm(.whiteBalance, model)
             } label: {
                 Image(systemName: "eyedropper")
+                    .foregroundStyle(editor.picking == .whiteBalance ? Color.accentColor : .primary)
             }
             .buttonStyle(.borderless)
             .help(Text("White Balance Selector"))
         }
         .padding(.bottom, 4)
         Sliders(section: "color")
-        MacBox(id: "mixer", title: editor.isBW ? "B&W Mixer" : "Color Mixer", symbol: "paintpalette", sections: ["mixer", "bwMix"]) {
+        // (the Mixer has the point colours too: its eyedropper)
+        MacBox(id: "mixer", title: editor.isBW ? "B&W Mixer" : "Color Mixer", symbol: "paintpalette", sections: ["mixer", "bwMix", "pointColor"]) {
             MixerView()
-        }
-        if !editor.isBW {
-            MacBox(id: "pointColor", title: "Point Color", symbol: "eyedropper.halffull", sections: ["pointColor"]) {
-                PointColorView()
-            }
         }
         MacBox(id: "grading", title: "Color Grading", symbol: "circle.hexagongrid", sections: ["grading"]) {
             GradingView()
