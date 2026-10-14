@@ -461,6 +461,8 @@ pub fn run() -> eframe::Result {
             let inbox = Inbox::default();
             let (mut session, _) = lightcraft_apphost::startup::open_session(dir.as_deref());
             lightcraft_apphost::startup::configure_enhancer(&mut session.enhancer, std::env::var_os("HOME").as_deref(), available);
+            // (what the app may use decides which Generative Expand models the phone is offered)
+            session.set_app_memory(available);
             session.face_models_dir = lightcraft_apphost::startup::face_models_dir(std::env::var_os("HOME").as_deref());
             let mut app = LightcraftApp::new(session, services(cc.egui_ctx.clone(), inbox.clone(), &tmp));
             match prefs {

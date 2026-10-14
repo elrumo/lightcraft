@@ -56,6 +56,22 @@ downloads them only when they choose to. The first supported model is Nomos Uni 
 CC-BY-4.0 (https://creativecommons.org/licenses/by/4.0/): LightCraft credits the author where it
 offers the download and in the files it makes with it. See docs/ai-models.md.
 
+crates/diffuse (lightcraft-diffuse), Generative Expand's diffusion models, puts Stable Diffusion's UNet
+together from candle-transformers' blocks following its unet_2d.rs (https://github.com/huggingface/candle,
+MIT OR Apache-2.0), with SDXL's added conditioning, and re-implements Kandinsky 2.2's decoder UNet, its MoVQ
+autoencoder and the inpainting pipeline following diffusers (https://github.com/huggingface/diffusers,
+Apache License 2.0, Copyright The HuggingFace Team), in Rust on candle. crates/diffuse is therefore licensed
+under the Apache License 2.0 only (LICENSE-APACHE).
+
+The diffusion weights are not part of LightCraft and are never distributed with it. A user downloads them
+only when they choose to, from their authors' Hugging Face repositories, pinned by size and SHA-256:
+Stable Diffusion 1.5 Inpainting (stable-diffusion-v1-5/stable-diffusion-inpainting, Robin Rombach and
+Patrick Esser, Runway / CompVis / Stability AI) under the CreativeML OpenRAIL-M licence and SDXL 1.0
+Inpainting 0.1 (diffusers/stable-diffusion-xl-1.0-inpainting-0.1) under the CreativeML Open RAIL++-M
+licence, both non-OSI licences whose use-based restrictions the user accepts with the download; and
+Kandinsky 2.2 (kandinsky-community/kandinsky-2-2-decoder-inpaint and -prior, Sber AI / AIRI) under the
+Apache License 2.0. See docs/generative-expand.md.
+
 Search by description runs the SigLIP 2 B/16 model (google/siglip2-base-patch16-224, Google, Apache License 2.0)
 through candle (MIT OR Apache-2.0) and the tokenizers crate (Apache-2.0). The weights are not part of
 LightCraft and are never distributed with it: a user downloads them only when they choose to, from Hugging Face or a

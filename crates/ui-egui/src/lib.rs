@@ -496,6 +496,8 @@ pub struct LightcraftApp {
     pub erase: erase::EraseState,
     /// The saved choice of AI models turned off has been applied to the session.
     models_synced: bool,
+    /// The saved choice of Generative Expand model has been applied to the session.
+    pub(crate) expand_synced: bool,
     /// An import in progress (the import review dialog's batches).
     pub import: Option<import::ImportTask>,
     /// A folder scan in progress (feeds the import review).
@@ -611,6 +613,7 @@ impl LightcraftApp {
             superres: superres::SuperResState::default(),
             erase: erase::EraseState::default(),
             models_synced: false,
+            expand_synced: false,
             import: None,
             scan: None,
             sync: None,
@@ -1229,6 +1232,7 @@ impl LightcraftApp {
         erase::poll(self, ctx);
         expand::poll(self, ctx);
         self.sync_models();
+        expand::sync_choice(self);
         import::poll_scan(self, ctx);
         sync::poll(self, ctx);
         sync::poll_run(self, ctx);

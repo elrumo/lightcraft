@@ -278,8 +278,10 @@
   "Added {n} files saved in the external editor to their stacks": "已将在外部编辑器中保存的 {n} 个文件添加到各自的堆叠",
   "{name} opened for editing": "已打开 {name} 进行编辑",
   "{n} photos opened for editing": "已打开 {n} 张照片进行编辑",
-  "Uses the {} model, a {:.0} MB download ({} licence). {}.": "使用 {} 模型（需下载 {:.0} MB，{} 许可证）。{}。",
+  "Uses the {} model, a {} download ({} licence). {}.": "使用 {} 模型（需下载 {}，{} 许可证）。{}。",
   "New area painted with {}": "已用 {} 生成新区域",
-  "{note} · {:.0} MB download": "{note} · 需下载 {:.0} MB",
-  "The new area was painted by {by} on this device.": "新区域已在此设备上生成（{by}）。"
+  "{note} · {size} download": "{note} · 需下载 {size}",
+  "The new area was painted by {by} on this device.": "新区域已在此设备上生成（{by}）。",
+  "Automatic: {} suits this device": "自动：{} 适合这台设备",
+  "{} isn't downloaded yet: download it below.": "{} 尚未下载：请在下方下载。"
 }

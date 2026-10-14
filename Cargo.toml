@@ -41,6 +41,7 @@ lightcraft-mcp = { path = "crates/mcp" }
 lightcraft-fetch = { path = "crates/fetch" }
 lightcraft-heif = { path = "crates/heif" }
 lightcraft-segment = { path = "crates/segment" }
+lightcraft-diffuse = { path = "crates/diffuse" }
 lightcraft-enhance = { path = "crates/enhance" }
 lightcraft-erase = { path = "crates/erase" }
 # no model by default: crates that want SigLIP 2 ask for `features = ["siglip"]`
