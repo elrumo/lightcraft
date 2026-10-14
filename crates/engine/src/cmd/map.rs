@@ -7,7 +7,7 @@ use super::{CommandSpec, always, bad, cmd, f64_or};
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         cmd!(query "map.points", "Photos on the Map", [], None,
-            "{zoom?: 0..19 (default 3), cell?: marker size in px (default 56), bbox?: [south, west, north, east], ids?: list the photo ids of markers up to this size (default 25)} → {located, unlocated, markers: [{lat, lon, count, front, ids?, bounds}]} — the visible photos with a GPS position, grouped as the map groups them at that zoom",
+            "{zoom?: 0..19 (default 3), cell?: marker size in px (default 56), bbox?: [south, west, north, east], ids?: list the photo ids of markers up to this size (default 25)} → {located, unlocated, markers: [{lat, lon, count, front, pictured: up to 4 photo ids (front first, the others spread through the group), ids?, bounds}]} — the visible photos with a GPS position, grouped as the map groups them at that zoom",
             always, |s, p| {
             let zoom = f64_or(p, "zoom", 3.0);
             let cell = f64_or(p, "cell", 56.0);

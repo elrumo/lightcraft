@@ -33,6 +33,25 @@ impl Cluster {
     pub fn count(&self) -> usize {
         self.members.len()
     }
+
+    /// The photos (`Point::id`) a marker is a picture of: the one that stands for the group first,
+    /// then others spread through it, so a big group shows a few different pictures (at most
+    /// `at_most`).
+    pub fn pictured(&self, points: &[Point], at_most: usize) -> Vec<u64> {
+        let n = self.members.len();
+        let id_at = |i: usize| self.members.get(i % n.max(1)).and_then(|m| points.get(*m as usize)).map(|p| p.id);
+        let others = n.min(at_most).saturating_sub(1);
+        let mut out: Vec<u64> = points.get(self.front as usize).map(|p| p.id).into_iter().collect();
+        for j in 0..others {
+            // the middle of the j-th of `others` equal parts of the group, or the next photo on from
+            // there that isn't pictured yet
+            let start = (2 * j + 1).saturating_mul(n) / (2 * others);
+            if let Some(id) = (0..n).filter_map(|k| id_at(start + k)).find(|id| !out.contains(id)) {
+                out.push(id);
+            }
+        }
+        out
+    }
 }
 
 /// Group `points` for a view at `zoom`: photos within about `cell_px` pixels of each other join.
@@ -73,6 +92,30 @@ pub fn cluster(points: &[Point], zoom: f64, cell_px: f64) -> Vec<Cluster> {
 
 #[cfg(test)]
 mod tests {
+    fn group(members: &[u32], front: u32) -> Cluster {
+        let w = project(0.0, 0.0);
+        Cluster { at: w, members: members.to_vec(), front, bounds: (w, w) }
+    }
+
+    #[test]
+    fn a_marker_pictures_its_front_photo_and_others_spread_through_its_group() {
+        let pts: Vec<Point> = (0..100u64).map(|i| Point { id: 1000 + i, lat: 0.0, lon: 0.0, weight: 0 }).collect();
+        assert_eq!(group(&[7], 7).pictured(&pts, 4), vec![1007]);
+        assert_eq!(group(&[3, 9], 9).pictured(&pts, 4), vec![1009, 1003]);
+        // a small group shows every one of its photos
+        let all = group(&[1, 2, 3, 4], 3).pictured(&pts, 4);
+        assert_eq!(all[0], 1003);
+        let mut sorted = all.clone();
+        sorted.sort();
+        assert_eq!(sorted, vec![1001, 1002, 1003, 1004]);
+        // a big one shows four different photos, the front one first, from all over it
+        let members: Vec<u32> = (0..100).collect();
+        assert_eq!(group(&members, 42).pictured(&pts, 4), vec![1042, 1016, 1050, 1083]);
+        // members or a front pointing nowhere don't panic
+        assert_eq!(group(&[500, 1], 500).pictured(&pts, 4), vec![1001]);
+        assert!(group(&[], 0).pictured(&[], 4).is_empty());
+    }
+
     use super::*;
 
     fn pt(id: u64, lat: f64, lon: f64, weight: i32) -> Point {
