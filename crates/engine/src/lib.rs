@@ -313,6 +313,9 @@ pub struct Session {
     /// Background tasks in flight (imports, exports, preview builds…), for the activity stack and
     /// `activity.list` / `activity.cancel`.
     pub activity: activity::Activity,
+    /// Work the app does by itself and reports (`activity.external`: the SwiftUI app's Apple model
+    /// download), by the id of its row; dropping a guard removes the row.
+    pub(crate) external_tasks: std::collections::BTreeMap<u64, activity::TaskGuard>,
     /// The last (or running) Build Previews.
     pub preview_build: Option<std::sync::Arc<cmd::previews::PreviewBuild>>,
     /// Develop defaults applied on import (persisted in prefs.json).
@@ -427,6 +430,7 @@ impl Session {
             import_probes: Default::default(),
             folder_changes: None,
             activity: Default::default(),
+            external_tasks: Default::default(),
             preview_build: None,
             import_defaults: import::ImportDefaults::default(),
             cache_mb: 0,
