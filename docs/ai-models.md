@@ -35,7 +35,7 @@ stay), **Download…** (asks first, naming the size, the host and the licence), 
 (asks first; removes only the model's own files, never anything else in the folder; it can be downloaded again). A
 model this build can't run (SAM 3 on an iPhone) is listed as not available. The first time a feature needs its model
 it offers the download itself (Object / Describe masks, Super Resolution). The on / off choice is saved with the app
-settings (`models_disabled` in `ui.json`).
+settings (`models_disabled` in `ui.json`; the SwiftUI app keeps it as `modelsDisabled` in its own settings and gives it back to the engine at launch).
 
 Agents get the same through commands: `models.list`, `models.download {id, acknowledged: true}`, `models.cancel {id}`,
 `models.delete {id, confirm: true}`, `models.setEnabled {id, enabled}`.
