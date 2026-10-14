@@ -175,6 +175,7 @@ struct SheetContent: View {
         case .editSidebar: EditSidebarSheet()
         case .cull(let ids): CullSheet(ids: ids)
         case .lightroom(let folder): LightroomSheet(folder: folder)
+        case .cameraImport: CameraImportSheet()
         case .shareFiles(let paths): ActivityView(urls: paths.map { URL(fileURLWithPath: $0) }) { model.sheet = nil }
         case .newSmartAlbumFromView:
             // the grid as it is shown (source and filter) becomes a smart album

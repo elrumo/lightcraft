@@ -138,6 +138,8 @@ final class EditorModel {
     var brushFlow = 100.0
     var brushErase = false
     var brushAutoMask = false
+    /// Masking: every visible mask's region over the photo at once, not just the selected one's.
+    var maskOverlayAll = false
     /// Before / After: the photo as it was beside it as it is.
     var beforeAfter = false
     /// Tag a Face: the next tap on the photo marks a face there.

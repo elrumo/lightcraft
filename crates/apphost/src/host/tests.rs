@@ -307,6 +307,11 @@ fn view_overlays_parse() {
         overlay(Some(&json!({"kind": "mask", "id": 3, "color": [1, 2, 3], "opacity": 80}))),
         Overlay::Mask { id: 3, view: MaskView::default(), color: [1, 2, 3], opacity: 80 }
     );
+    assert_eq!(
+        overlay(Some(&json!({"kind": "allMasks", "opacity": 30}))),
+        Overlay::AllMasks { view: MaskView::default(), color: [230, 30, 40], opacity: 30 },
+        "every mask at once (Show All Mask Overlays)"
+    );
     assert_eq!(overlay(Some(&json!({"kind": "spots", "threshold": 900}))), Overlay::Spots(100));
     assert_eq!(overlay(Some(&json!({"kind": "mask"}))), Overlay::None, "a mask overlay needs its id");
     assert_eq!(overlay(Some(&json!("hdr"))), Overlay::None);

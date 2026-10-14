@@ -569,6 +569,7 @@ struct MaskMoreMenu: View {
     var body: some View {
         @Bindable var prefs = model.prefs
         Menu {
+            Toggle("Show All Mask Overlays", systemImage: "square.stack.3d.up", isOn: Bindable(model.editor).maskOverlayAll)
             Toggle("Show Pins", systemImage: "mappin", isOn: $prefs.maskPins)
             Button("Overlay Options", systemImage: "eye.circle") { overlayOptions = true }
             Divider()

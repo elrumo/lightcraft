@@ -683,6 +683,11 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(query "library.devices", "Cameras and Cards", [], None, "{} → [{name, path (its DCIM folder), root}] — mounted volumes with a DCIM folder", always, |_, _| {
             Ok(serde_json::to_value(crate::devices::devices_now()).unwrap_or_default())
         }),
+        cmd!(query "library.cameraFiles", "Camera Files", [], None, "{files: [{id, name, size, captured?, exifDated?, raw?, width?, height?}]} → {files: [the same, with day and existing (the library photo it already is, or null)]} — a camera's or card's files that a host reads itself (ImageCaptureCore), for its import review: the formats the library takes, newest day first", always, |s, p| {
+            let files: Vec<crate::devices::CameraFile> =
+                serde_json::from_value(p.get("files").cloned().unwrap_or_else(|| json!([]))).map_err(|e| bad("library.cameraFiles", format!("files: {e}")))?;
+            Ok(json!({"files": crate::devices::review(&s.catalog, files)}))
+        }),
         cmd!(query "photo.copyMetadata", "Copy Metadata", ["Photo"], None, "{} — title, caption, copyright (notice, status, usage terms, info URL), creator, location and keywords of the active photo", has_active, |s, _| {
             let id = s.active().ok_or_else(|| bad("photo.copyMetadata", "no active photo"))?;
             let m = &s.catalog.photo(id).ok_or_else(|| bad("photo.copyMetadata", "no photo"))?.meta;

@@ -88,6 +88,7 @@ final class ScriptHost {
             if let ref = params["reference"].int { model.reference = UInt64(clamping: ref) }
             if let on = params["referenceView"].bool { model.editor.referenceView = on }
             if let on = params["softProof"].bool { model.editor.softProof = on }
+            if let on = params["maskOverlayAll"].bool { model.editor.maskOverlayAll = on }
             if let on = params["searching"].bool { model.searching = on }
             if params["secondWindow"].bool == true { model.secondWindowAsked = true }
             if let k = params["painting"].string { model.painting = k.isEmpty ? nil : k }
@@ -153,6 +154,7 @@ final class ScriptHost {
                 case "metadataPresets": model.sheet = .metadataPresets(model.targets)
                 case "contactSheet": model.sheet = .contactSheet(model.targets)
                 case "shortcuts": model.sheet = .shortcuts
+                case "cameraImport": model.sheet = .cameraImport
                 case "editSidebar": model.sheet = .editSidebar
                 case "lightroom":
                     // (a relative path is in the app's tmp folder, beside the script)

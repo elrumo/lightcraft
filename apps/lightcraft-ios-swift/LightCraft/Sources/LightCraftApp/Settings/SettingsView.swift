@@ -126,6 +126,9 @@ private struct ImportSettings: View {
                 presetPicker("Other Photos", key: "otherPreset")
                 Toggle("Camera-Specific Defaults", isOn: Binding(get: { prefs["import"]["perCamera"].bool == true }, set: { set(["perCamera": .bool($0)]) }))
             }
+            Section("Cameras and cards") {
+                Toggle("Show the import when a camera or memory card is connected", isOn: Bindable(model.prefs).importOnConnect)
+            }
             Section("Metadata") {
                 TextField("Copyright", text: $copyright).onSubmit { set(["copyright": .string(copyright)]) }
                 TextField("Creator", text: $creator).onSubmit { set(["creator": .string(creator)]) }
