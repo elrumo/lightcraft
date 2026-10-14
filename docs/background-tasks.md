@@ -59,6 +59,7 @@ guard.detail(&file_name);
 | Lightroom catalog import | `crates/ui-egui/src/lightroom_import.rs` | stop being cancellable for a phase that must finish |
 | Face scan, AI Denoise | `crates/engine/src/cmd/face_recognize.rs`, `crates/engine/src/denoise.rs` | a continuous job with no ✕, kept in session state |
 | Find Missing Photos | `crates/ui-egui/src/tasks.rs` | a generic background task with a row (`kind: Some(..)`) |
+| Work the app does itself (the SwiftUI app's Apple model download) | `crates/engine/src/cmd/activity.rs` (`activity.external`) | the app starts a `download` row, reports `done` of 100, watches `cancelling` for its id and ends the row |
 
 ## Testing
 
