@@ -548,6 +548,22 @@ pub fn specs() -> Vec<CommandSpec> {
             })
         }),
         cmd!(
+            query "crop.guides",
+            "Crop Guides",
+            [],
+            None,
+            "{kind?: thirds|grid|golden|diagonal|triangle|spiral|none (thirds), orientation?: 0..3 (mirrors the triangle and spiral: bit 0 across, bit 1 down), width, height: the crop's size (any unit)} → {paths: [[[u, v]…]…] (polylines across the crop, 0..1), asymmetric, kinds: [every kind in cycle order]} the composition guide the crop tool draws",
+            always,
+            |_, p| {
+                use lightcraft_geom::guides::{Guide, paths};
+                let kind: Guide = p.get("kind").cloned().and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default();
+                let orient = p.get("orientation").and_then(Value::as_u64).unwrap_or(0).min(3) as u8;
+                let side = |k: &str| p.get(k).and_then(Value::as_f64).filter(|v| v.is_finite() && *v > 0.0).unwrap_or(1.0) as f32;
+                let lines: Vec<Vec<[f32; 2]>> = paths(kind, orient, side("width"), side("height")).into_iter().map(|l| l.into_iter().map(|(u, v)| [u, v]).collect()).collect();
+                Ok(json!({"paths": lines, "asymmetric": kind.asymmetric(), "kinds": Guide::ALL}))
+            }
+        ),
+        cmd!(
             "crop.drag",
             "Drag Crop Handle",
             [],

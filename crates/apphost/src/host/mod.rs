@@ -650,7 +650,17 @@ impl Engine {
             let (width, height) = (u32::try_from(image.width).unwrap_or(u32::MAX), u32::try_from(image.height).unwrap_or(u32::MAX));
             let name = slot.name();
             let token = self.leases.put_image(&name, Arc::new(image));
-            let histogram = (slot == Slot::Main).then(|| shown.histogram.as_ref().map(|h| serde_json::to_value(h).unwrap_or_default())).flatten();
+            // (with the share of pixels clipped to black and to white: the clipping warnings)
+            let histogram = (slot == Slot::Main)
+                .then(|| {
+                    shown.histogram.as_ref().map(|h| {
+                        let mut v = serde_json::to_value(h).unwrap_or_default();
+                        let (lo, hi) = h.clipping();
+                        v["clipping"] = json!([lo, hi]);
+                        v
+                    })
+                })
+                .flatten();
             let quick = shown.quick.map(|q| serde_json::to_value(q).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default());
             // a zoom window: where it goes in the zoomed frame
             let window = (slot == Slot::Region)
