@@ -9,6 +9,8 @@
 //! - **Mask overlay** (Masking): the evaluated alpha of one mask, drawn as a colour tint, a colour
 //!   tint on a black-and-white image, the image on black / white, or the alpha as white on black
 //!   ([`MaskView`]). Both renderers hand the same alpha plane (the one the render used) to [`apply`].
+//! - **Visualize Depth** (Lens Blur): the depth the render uses, warm near and cool far
+//!   ([`DEPTH_NEAR`], [`DEPTH_FAR`]), shaded by the photo's brightness.
 
 use std::borrow::Cow;
 
@@ -39,7 +41,15 @@ pub enum Overlay {
     /// Visualize HDR (photos edited in HDR): the SDR image dimmed to grey, with every pixel the HDR
     /// rendition puts above SDR white painted by how far above it is ([`HDR_BANDS`]).
     HdrRange,
+    /// Visualize Depth: the depth the render uses (the photo's own or Lens Blur's estimate), from
+    /// [`DEPTH_NEAR`] to [`DEPTH_FAR`]; the photo unchanged when it has none.
+    Depth,
 }
+
+/// [`Overlay::Depth`]'s colours (sRGB) for the nearest and the farthest part of the photo (Lens
+/// Blur's Focal Distance track uses the same).
+pub const DEPTH_NEAR: [u8; 3] = [240, 160, 48];
+pub const DEPTH_FAR: [u8; 3] = [48, 80, 192];
 
 /// [`Overlay::HdrRange`] colours (sRGB) for 0–1, 1–2, 2–3 and ≥ 3 stops above SDR white.
 pub const HDR_BANDS: [[u8; 3]; 4] = [[255, 214, 92], [255, 150, 40], [235, 64, 52], [214, 60, 210]];
@@ -125,6 +135,7 @@ impl Overlay {
             Overlay::Mask { id, view, color, opacity } => (3, pack_mask(id, view, color, opacity) as f64),
             Overlay::AllMasks { view, color, opacity } => (5, pack_mask(0, view, color, opacity) as f64),
             Overlay::HdrRange => (4, 0.0),
+            Overlay::Depth => (6, 0.0),
         }
     }
 
@@ -135,6 +146,7 @@ impl Overlay {
             2 => Overlay::Spots(v.clamp(0.0, 100.0) as u8),
             3 if v.is_finite() && v >= 0.0 => unpack_mask(v as u64),
             4 => Overlay::HdrRange,
+            6 => Overlay::Depth,
             5 if v.is_finite() && v >= 0.0 => {
                 let rgb = (v as u64 >> 20) & 0xff_ffff;
                 Overlay::AllMasks {
@@ -156,6 +168,7 @@ impl Overlay {
             Overlay::Mask { id, view, color, opacity } => 3 << 60 | pack_mask(id, view, color, opacity),
             Overlay::AllMasks { view, color, opacity } => 5 << 60 | pack_mask(0, view, color, opacity),
             Overlay::HdrRange => 0x4000,
+            Overlay::Depth => 0x6000,
         }
     }
 
@@ -193,6 +206,7 @@ pub fn apply(img: &mut Rgba8, o: Overlay, plan: &Plan<'_>, mask: Option<&Plane>,
             }
         }
         Overlay::Spots(t) => spots(img, t, plan.px_per_long),
+        Overlay::Depth => depth_view(img, plan),
         Overlay::Mask { view, color, opacity, .. } => {
             if let Some(a) = mask.filter(|a| (a.width, a.height) == (img.width, img.height)) {
                 mask_view(img, a, view, color, opacity);
@@ -234,6 +248,29 @@ pub fn mask_view(img: &mut Rgba8, a: &Plane, view: MaskView, color: [u8; 3], opa
             };
             let o = out.map(|v| v.round().clamp(0.0, 255.0) as u8);
             *px = [o[0], o[1], o[2], 255];
+        }
+    });
+}
+
+/// Draw [`Overlay::Depth`] over `img`: the depth `plan` renders with, snapped to the photo's edges
+/// as Lens Blur snaps it, shaded by the photo's brightness.
+fn depth_view(img: &mut Rgba8, plan: &Plan<'_>) {
+    let Some(depth) = plan.mattes.as_deref().and_then(crate::masks::Mattes::depth) else { return };
+    let (w, h) = (img.width, img.height);
+    let lut: Vec<f32> = (0..256).map(|v| srgb_to_linear(v as f32 / 255.0)).collect();
+    let guide = Plane::from_fn(w, h, |x, y| {
+        let p = img.data[y * w + x];
+        (0.2126 * lut[p[0] as usize] + 0.7152 * lut[p[1] as usize] + 0.0722 * lut[p[2] as usize]).max(1e-6).log2()
+    });
+    let near = crate::lensblur::nearness_out(depth, &plan.frame, w, h, &guide);
+    let (n, f) = (DEPTH_NEAR.map(f32::from), DEPTH_FAR.map(f32::from));
+    for_rows(&mut img.data, w, |y, row| {
+        for (x, px) in row.iter_mut().enumerate() {
+            let t = near.data[y * w + x].clamp(0.0, 1.0);
+            let grey = (0.2126 * px[0] as f32 + 0.7152 * px[1] as f32 + 0.0722 * px[2] as f32) / 255.0;
+            let shade = 0.55 + 0.45 * grey;
+            let c: [f32; 3] = std::array::from_fn(|k| (f[k] + (n[k] - f[k]) * t) * shade);
+            *px = [c[0].round().clamp(0.0, 255.0) as u8, c[1].round().clamp(0.0, 255.0) as u8, c[2].round().clamp(0.0, 255.0) as u8, 255];
         }
     });
 }

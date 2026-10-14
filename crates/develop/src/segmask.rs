@@ -180,6 +180,65 @@ pub struct ExpandFill {
     pub model: String,
 }
 
+/// Largest side of a stored [`DepthMap`] (hostile input caps the allocation; the app stores at
+/// most the depth model's ~1000 pixels).
+pub const MAX_DEPTH_SIDE: usize = 2048;
+
+/// How far each part of the photo is, as estimated by a model (Lens Blur's depth,
+/// `lightcraft-depth`) for a photo without depth data of its own, stored with the settings so
+/// rendering never needs the model. `w × h` *nearness* values over the uncropped, EXIF-oriented
+/// photo (row `y`, column `x` covers normalized `((x + 0.5) / w, (y + 0.5) / h)`): 1 is the
+/// nearest part of the photo, 0 the farthest, linear in inverse depth (which is what lens blur
+/// grows with). 8-bit, each byte stored as its difference from the one to its left, deflated and
+/// base64 encoded.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DepthMap {
+    pub w: u32,
+    pub h: u32,
+    pub data: String,
+}
+
+impl DepthMap {
+    /// From `w × h` nearness values (clamped to 0..1); `None` for an empty or oversized map.
+    pub fn from_nearness(w: usize, h: usize, v: &[f32]) -> Option<DepthMap> {
+        if w == 0 || h == 0 || w > MAX_DEPTH_SIDE || h > MAX_DEPTH_SIDE || v.len() != w * h {
+            return None;
+        }
+        let mut q = Vec::with_capacity(v.len());
+        for row in v.chunks(w) {
+            let mut prev = 0u8;
+            for n in row {
+                let code = if n.is_finite() { (n.clamp(0.0, 1.0) * 255.0).round() as u8 } else { 0 };
+                q.push(code.wrapping_sub(prev));
+                prev = code;
+            }
+        }
+        Some(DepthMap { w: w as u32, h: h as u32, data: base64_encode(&miniz_oxide::deflate::compress_to_vec(&q, 8)) })
+    }
+
+    /// The nearness values (0..1, row-major), or `None` when the data is damaged or claims an
+    /// absurd size.
+    pub fn nearness(&self) -> Option<Vec<f32>> {
+        let (w, h) = (self.w as usize, self.h as usize);
+        if w == 0 || h == 0 || w > MAX_DEPTH_SIDE || h > MAX_DEPTH_SIDE {
+            return None;
+        }
+        let q = miniz_oxide::inflate::decompress_to_vec_with_limit(&base64_decode(&self.data)?, w * h).ok()?;
+        if q.len() != w * h {
+            return None;
+        }
+        let mut out = Vec::with_capacity(w * h);
+        for row in q.chunks(w) {
+            let mut prev = 0u8;
+            for d in row {
+                prev = prev.wrapping_add(*d);
+                out.push(f32::from(prev) / 255.0);
+            }
+        }
+        Some(out)
+    }
+}
+
 const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 fn base64_encode(bytes: &[u8]) -> String {
@@ -293,6 +352,23 @@ mod tests {
         assert!(SpotFill { rect: [0.5, 0.0, 0.2, 1.0], ..f.clone() }.bounds().is_none());
         assert!(SpotFill::from_linear(0, 4, [0.0; 4], &[]).is_none());
         assert!(SpotFill::from_linear(2, 2, [0.0; 4], &[[0.0; 3]; 3]).is_none());
+    }
+
+    #[test]
+    fn a_depth_map_round_trips_and_refuses_damage() {
+        let (w, h) = (31, 7);
+        let v: Vec<f32> = (0..w * h).map(|i| ((i % w) as f32 / w as f32 + (i / w) as f32 * 0.03).min(1.0)).collect();
+        let d = DepthMap::from_nearness(w, h, &v).unwrap();
+        let back = d.nearness().unwrap();
+        assert!(v.iter().zip(&back).all(|(a, b)| (a - b).abs() <= 0.5 / 255.0 + 1e-6));
+        // out-of-range and NaN values are kept inside 0..1
+        let odd = DepthMap::from_nearness(3, 1, &[-1.0, f32::NAN, 7.0]).unwrap().nearness().unwrap();
+        assert_eq!(odd, vec![0.0, 0.0, 1.0]);
+        assert!(DepthMap { w: 30, ..d.clone() }.nearness().is_none(), "size mismatch");
+        assert!(DepthMap { w: 1 << 20, ..d.clone() }.nearness().is_none(), "absurd size");
+        assert!(DepthMap { data: "!!".into(), ..d.clone() }.nearness().is_none());
+        assert!(DepthMap::from_nearness(0, 3, &[]).is_none());
+        assert!(DepthMap::from_nearness(2, 2, &[0.0; 3]).is_none());
     }
 
     #[test]

@@ -646,7 +646,7 @@ pub fn render(
     // 2. white balance, defringe, spots, noise reduction
     let lin = match cached.as_ref().and_then(|e| e.lin.clone()).filter(|(k, _)| *k == plan.lin_key) {
         Some((_, b)) => b,
-        None => Arc::new(linear(&mut cx, &sampled, info, &plan, &mut host)),
+        None => Arc::new(linear(&mut cx, &sampled, info, &plan, &mut host, req.quality == lightcraft_pipeline::Quality::Draft)),
     };
     lap("wb/nr", &mut t, &mut cx);
 
@@ -791,8 +791,9 @@ fn unwritten(data: &[[u8; 4]]) -> usize {
     data.chunks(4096).filter(|c| c.iter().fold(255u8, |a, p| a & p[3]) != 255).map(|c| c.iter().filter(|p| p[3] != 255).count()).sum()
 }
 
-/// The white-balanced, retouched, denoised image.
-fn linear(cx: &mut Cx<'_>, sampled: &Buf, info: &SourceInfo, plan: &Plan<'_>, host: &mut Host) -> Buf {
+/// The white-balanced, retouched, denoised image, with Lens Blur (on the CPU; `draft`: its
+/// interactive quality).
+fn linear(cx: &mut Cx<'_>, sampled: &Buf, info: &SourceInfo, plan: &Plan<'_>, host: &mut Host, draft: bool) -> Buf {
     let (w, h) = (plan.w, plan.h);
     let n = w * h;
     let s = &*plan.settings;
@@ -820,7 +821,15 @@ fn linear(cx: &mut Cx<'_>, sampled: &Buf, info: &SourceInfo, plan: &Plan<'_>, ho
             eyed
         }
     };
-    denoise(cx, img, plan)
+    let img = denoise(cx, img, plan);
+    match &plan.blur {
+        Some(b) => {
+            let mut cpu = cx.read_rgb(&img, w, h);
+            lightcraft_pipeline::lensblur::apply(&mut cpu, b, &plan.frame, draft);
+            cx.gpu.upload(rgb_words(&cpu))
+        }
+        None => img,
+    }
 }
 
 /// Noise reduction (`local::denoise`).
