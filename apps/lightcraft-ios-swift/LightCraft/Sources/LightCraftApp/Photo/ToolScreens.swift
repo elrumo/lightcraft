@@ -87,6 +87,7 @@ struct CropTools: View {
                             if r?["changed"].bool == false { model.show(String(localized: "No horizon or vertical lines found")) }
                         }
                     }
+                    toolButton("line.diagonal", "Straighten") { editor.cropDraw = editor.cropDraw == "straighten" ? nil : "straighten" }
                     toolButton(locked ? "lock" : "lock.open", locked ? "Unlock Aspect" : "Lock Aspect") {
                         model.perform("crop.aspect", ["aspect": "toggle"])
                     }
@@ -119,7 +120,10 @@ struct CropTools: View {
             }
             .pickerStyle(.segmented)
             .padding(.horizontal, 16)
-            .onChange(of: tab) { _, t in if t == "geometry" { editor.want(["geometry", "optics"], model) } }
+            .onChange(of: tab) { _, t in
+                editor.cropDraw = nil
+                if t == "geometry" { editor.want(["geometry", "optics"], model) }
+            }
             if tab == "aspect" {
                 ScrollView(.horizontal) {
                     HStack(spacing: 10) {
@@ -150,14 +154,32 @@ struct CropTools: View {
                     VStack(alignment: .leading) {
                         Text("Upright").font(.subheadline.weight(.semibold))
                         HStack {
-                            ForEach([("auto", "Auto"), ("level", "Level"), ("vertical", "Vertical"), ("full", "Full")], id: \.0) { mode, label in
+                            ForEach([("auto", "Auto"), ("level", "Level"), ("vertical", "Vertical"), ("full", "Full"), ("guided", "Guided")], id: \.0) { mode, label in
                                 let on = editor.setting("geometry", "upright").string == mode
                                 Button(LocalizedStringKey(label)) {
                                     model.perform("geometry.upright", ["mode": .string(on ? "off" : mode)])
+                                    // Guided: draw its guides on the photo
+                                    editor.cropDraw = mode == "guided" && !on ? "guides" : nil
                                 }
                                 .buttonStyle(.bordered)
                                 .tint(on ? .accentColor : .secondary)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.7)
                             }
+                        }
+                        if editor.setting("geometry", "upright").string == "guided" {
+                            let n = editor.setting("geometry", "guides").array?.count ?? 0
+                            Text("\(n) of 4 guides — drag along lines that should be vertical or horizontal.")
+                                .font(.caption).foregroundStyle(.secondary)
+                            HStack {
+                                Button(editor.cropDraw == "guides" ? "Done" : "Draw Guides") {
+                                    editor.cropDraw = editor.cropDraw == "guides" ? nil : "guides"
+                                }
+                                if n > 0 {
+                                    Button("Clear Guides", role: .destructive) { model.perform("geometry.guides", ["guides": []]) }
+                                }
+                            }
+                            .buttonStyle(.bordered)
                         }
                         Sliders(section: "optics") { $0.id == "optics.distortion" }
                         Sliders(section: "geometry") { $0.id != "crop.angle" }
@@ -172,6 +194,7 @@ struct CropTools: View {
             ScreenBar(title: "Crop & Rotate", base: base)
         }
         .padding(.top, 8)
+        .onDisappear { editor.cropDraw = nil }
         .task { base = await undoDepth(model) }
     }
 

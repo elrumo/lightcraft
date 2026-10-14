@@ -20,6 +20,96 @@ struct CropOverlay: View {
     private let reach: CGFloat = 28
 
     var body: some View {
+        if let tool = model.editor.cropDraw {
+            lines(tool)
+        } else {
+            cropFrame
+        }
+    }
+
+    /// The line tools: Straighten (one line along the horizon or an edge, then back to the frame)
+    /// and Guided Upright's guides (up to 4, drawn where the photo shows them, until Done).
+    private func lines(_ tool: String) -> some View {
+        Canvas { ctx, _ in
+            var shown: [(CGPoint, CGPoint)] = []
+            if tool == "guides", let frame {
+                for g in frame.guides ?? [] where g.count == 4 {
+                    shown.append((screen(frame, g[0], g[1]), screen(frame, g[2], g[3])))
+                }
+            }
+            if let line { shown.append((line.a, line.b)) }
+            let ink: Color = tool == "guides" ? Color(red: 1, green: 0.77, blue: 0.16) : .white
+            for (a, b) in shown {
+                var p = Path()
+                p.move(to: a)
+                p.addLine(to: b)
+                ctx.stroke(p, with: .color(.black.opacity(0.5)), lineWidth: 3)
+                ctx.stroke(p, with: .color(ink), lineWidth: 1.5)
+                for q in [a, b] where tool == "guides" {
+                    ctx.fill(Path(ellipseIn: CGRect(x: q.x - 4, y: q.y - 4, width: 8, height: 8)), with: .color(ink))
+                }
+            }
+        }
+        .allowsHitTesting(false)
+        .overlay {
+            Color.clear
+                .contentShape(Rectangle())
+                .highPriorityGesture(lineGesture(tool))
+        }
+        .overlay(alignment: .top) {
+            HStack(spacing: 10) {
+                Group {
+                    if tool == "guides" {
+                        Text("\(frame?.guides?.count ?? 0) of 4 guides — drag along lines that should be vertical or horizontal.")
+                    } else {
+                        Text("Drag along the horizon")
+                    }
+                }
+                .font(.footnote)
+                .lineLimit(3)
+                Button(tool == "guides" ? "Done" : "Cancel") { model.editor.cropDraw = nil }
+                    .font(.footnote.weight(.semibold))
+            }
+            .padding(.horizontal, 14).padding(.vertical, 8)
+            .glassEffect(.regular, in: .rect(cornerRadius: 18))
+            .padding(.horizontal, 16)
+            .padding(.top, max(rect.minY, 0) + 8)
+        }
+        .task(id: model.state.catalogRevision) { await load() }
+    }
+
+    private nonisolated struct Line: Equatable {
+        let a: CGPoint
+        let b: CGPoint
+    }
+
+    @State private var line: Line?
+
+    private func screen(_ frame: PhotoFrame, _ x: Double, _ y: Double) -> CGPoint {
+        let s = frame.shown(x: x, y: y)
+        return CGPoint(x: rect.minX + s.u * rect.width, y: rect.minY + s.v * rect.height)
+    }
+
+    private func lineGesture(_ tool: String) -> some Gesture {
+        DragGesture(minimumDistance: 2)
+            .onChanged { g in line = Line(a: g.startLocation, b: g.location) }
+            .onEnded { g in
+                line = nil
+                let (a, b) = (g.startLocation, g.location)
+                guard hypot(b.x - a.x, b.y - a.y) > 8, let frame, rect.width > 0, rect.height > 0 else { return }
+                if tool == "straighten" {
+                    // the photo is drawn at one scale both ways: the line's slope on screen is its slope on the photo
+                    model.perform("crop.straighten", ["line": [.double(b.x - a.x), .double(b.y - a.y)]])
+                    model.editor.cropDraw = nil
+                } else {
+                    let norm = { (q: CGPoint) in frame.norm(u: (q.x - rect.minX) / rect.width, v: (q.y - rect.minY) / rect.height) }
+                    let (na, nb) = (norm(a), norm(b))
+                    model.perform("geometry.guides", ["guides": [[.double(na.x), .double(na.y), .double(nb.x), .double(nb.y)]], "add": true, "shown": true])
+                }
+            }
+    }
+
+    private var cropFrame: some View {
         Canvas { ctx, size in
             guard let corners = screenCorners else { return }
             var outside = Path(CGRect(origin: .zero, size: size))

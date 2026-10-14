@@ -18,9 +18,9 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | Phase | ✅ | 🟡 | ⬜ | 🚫 | Done or out of scope |
 |---|---:|---:|---:|---:|---:|
 | S0 | 15 | 0 | 0 | 0 | 15/15 |
-| S1 | 154 | 7 | 3 | 3 | 157/167 |
+| S1 | 155 | 6 | 3 | 3 | 158/167 |
 | S2 | 1 | 0 | 79 | 22 | 23/102 |
-| **Total** | 170 | 7 | 82 | 25 | 195/284 |
+| **Total** | 171 | 6 | 82 | 25 | 196/284 |
 <!-- /ios-parity:summary -->
 
 ## Screens
@@ -45,7 +45,7 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | screen:compact.gridDates | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/DateBlocksView.swift`, `crates/engine/src/tests_libops.rs` | Years / Months / All capsule; Months and Years from `library.blocks` (moved from egui) |
 | screen:compact.scrubber | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/GridView.swift` | over 200 photos: a handle down the right edge with the month in a bubble |
 | screen:compact.tool.presets | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/Panels.swift`, `crates/apphost/src/host/tests.rs` | groups, favourites, user presets with live previews of the photo (`render.variant`), Amount 0–200 %, create, update, delete |
-| screen:compact.tool.crop | S1 | 🟡 | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/ToolScreens.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/CropOverlay.swift` | frame with handles over the whole photo (`crop.drag`, rotate outside, double tap resets), dial, auto, lock, rotate, flips, aspect tiles and ratios, Geometry tab (Upright, sliders, Constrain Crop), ✕ undoes to where it opened (`edit.undoTo`); no guided upright or straighten line yet |
+| screen:compact.tool.crop | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/ToolScreens.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/CropOverlay.swift`, `crates/engine/src/tests_libops.rs` | frame with handles over the whole photo (`crop.drag`, rotate outside, double tap resets), dial, auto, Straighten (draw along the horizon: `crop.straighten {line}`), lock, rotate, flips, aspect tiles and ratios, Geometry tab (Upright incl. Guided: guides drawn on the photo, `geometry.guides {shown}`, Clear Guides; sliders, Constrain Crop), ✕ undoes to where it opened (`edit.undoTo`) |
 | screen:compact.tool.masking | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/MaskingScreen.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/MaskCanvas.swift` | the masks' column over the photo (create, select, a mask's menu, its parts with their menus: invert, duplicate, add / subtract / intersect, rename, delete; ± to combine), the groups (Mask: amount, invert, a part's own controls via `mask.shapeControls`, refine edges, overlay options; Light, Color, Effects, Detail, Optics), the overlay, pins, radial and linear handles, the brush, colour range sampling; Select Object and Describe need SAM, which iOS builds don't have |
 | screen:compact.tool.remove | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/ToolScreens.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/RemoveCanvas.swift` | Remove / Heal / Clone, size, feather, opacity, paint on the photo, pins (mode, new source, delete, move), Find Dust, Visualize Spots with its threshold (`render.view {overlay: spots}`), Generative AI (MI-GAN: offer, download, AI-filled strokes), Delete All |
 | screen:compact.tool.info | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/Panels.swift` | file, date, size, camera, lens, exposure, place (→ Map), rating, flag, label, title, caption, keywords |

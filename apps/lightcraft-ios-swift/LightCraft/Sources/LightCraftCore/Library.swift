@@ -297,6 +297,8 @@ public struct PhotoFrame: Codable, Sendable, Equatable {
     public var fromNorm: [Double]
     /// The crop on the whole photo (the crop tool's frame).
     public var crop: Crop?
+    /// Guided Upright's guides, `[x0, y0, x1, y1]` in image coordinates.
+    public var guides: [[Double]]?
 
     public struct Crop: Codable, Sendable, Equatable {
         /// `[x0, y0, x1, y1]` in the straightened frame.

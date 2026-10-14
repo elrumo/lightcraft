@@ -127,6 +127,9 @@ final class EditorModel {
     var beforeAfter = false
     /// Tag a Face: the next tap on the photo marks a face there.
     var tagFace = false
+    /// Crop & Rotate's line tools: `straighten` (one line, then back to the frame) or `guides`
+    /// (Guided Upright, until Done).
+    var cropDraw: String?
     /// Light ▸ HDR ▸ Visualize: what the HDR rendition puts above SDR white, painted by how far.
     var visualizeHdr = false
     /// Red Eye: a pet's eyes, and the correction chosen (its sliders).

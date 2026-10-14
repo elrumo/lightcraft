@@ -119,8 +119,34 @@ pub fn crop_fit_angle(w: f64, h: f64, angle_deg: f64, aspect: Option<f64>) -> Cr
     CropGeometry { rect: r.scale(1.0 / w, 1.0 / h), angle: angle_deg }
 }
 
+/// The straighten angle (degrees, as `CropGeometry::angle` takes it) that makes a line drawn on the
+/// photo, from one end to the other `(dx, dy)` apart (y down), level, or plumb when it is closer to
+/// vertical. `None` for a line of no length.
+pub fn straighten_for_line(dx: f64, dy: f64) -> Option<f64> {
+    if !(dx.is_finite() && dy.is_finite()) || dx.hypot(dy) < 1e-9 {
+        return None;
+    }
+    // fold to the nearest axis: within ±45° of level or of plumb
+    let deg = dy.atan2(dx).to_degrees();
+    let folded = deg - 90.0 * (deg / 90.0).round();
+    Some((-folded * 100.0).round() / 100.0)
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_drawn_line_straightens_to_the_nearest_axis() {
+        let a = super::straighten_for_line(100.0, 10.0).unwrap();
+        assert!((a + 5.71).abs() < 0.01, "{a}");
+        // closer to vertical: made plumb
+        let b = super::straighten_for_line(10.0, 100.0).unwrap();
+        assert!((b - 5.71).abs() < 0.01, "{b}");
+        // drawn right to left is the same line
+        assert_eq!(super::straighten_for_line(-100.0, -10.0), Some(a));
+        assert_eq!(super::straighten_for_line(0.0, 0.0), None);
+        assert_eq!(super::straighten_for_line(f64::NAN, 1.0), None);
+    }
+
     use super::*;
 
     #[test]

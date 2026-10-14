@@ -94,6 +94,7 @@
   "Drag a box around an eye to correct it": "Ziehe einen Rahmen um ein Auge, um es zu korrigieren",
   "Drag a box around an eye.": "Ziehe einen Rahmen um ein Auge.",
   "Drag a corner or an edge to crop, outside the frame to rotate": "Ziehe an einer Ecke oder Kante zum Zuschneiden, außerhalb des Rahmens zum Drehen",
+  "Drag along the horizon": "Entlang des Horizonts ziehen",
   "Edit Time": "Bearbeitungszeit",
   "Effort": "Aufwand",
   "Empty keeps the photo's name. {name}, {seq}, {date}, {camera}, {lens}, {iso}, {rating}, {title} are filled in.": "Leer behält den Namen des Fotos. {name}, {seq}, {date}, {camera}, {lens}, {iso}, {rating}, {title} werden eingesetzt.",

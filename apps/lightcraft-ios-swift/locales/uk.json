@@ -92,6 +92,7 @@
   "Drag a box around an eye to correct it": "Намалюйте рамку навколо ока, щоб виправити його",
   "Drag a box around an eye.": "Намалюйте рамку навколо ока.",
   "Drag a corner or an edge to crop, outside the frame to rotate": "Потягніть за кут або край, щоб кадрувати; потягніть поза рамкою, щоб повернути",
+  "Drag along the horizon": "Проведіть уздовж горизонту",
   "Edit Time": "Час редагування",
   "Effort": "Ретельність",
   "Empty keeps the photo's name. {name}, {seq}, {date}, {camera}, {lens}, {iso}, {rating}, {title} are filled in.": "Якщо порожньо, назва фото не змінюється. {name}, {seq}, {date}, {camera}, {lens}, {iso}, {rating}, {title} підставляються автоматично.",

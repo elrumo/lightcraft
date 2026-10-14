@@ -80,6 +80,7 @@
   "Drag a box around an eye to correct it": "補正したい目を囲むようにドラッグしてください",
   "Drag a box around an eye.": "目の周りをドラッグして枠を描きます。",
   "Drag a corner or an edge to crop, outside the frame to rotate": "角や辺をドラッグして切り抜き、枠の外側をドラッグして回転します",
+  "Drag along the horizon": "水平線に沿ってドラッグ",
   "Effort": "エフォート",
   "Empty keeps the photo's name. {name}, {seq}, {date}, {camera}, {lens}, {iso}, {rating}, {title} are filled in.": "空欄の場合は写真の名前のままです。{name}、{seq}、{date}、{camera}、{lens}、{iso}、{rating}、{title} は自動で入力されます。",
   "Every face named %@ gets the new name; a name someone already has puts them together.": "「%@」と名付けたすべての顔に新しい名前が付きます。すでに使われている名前を付けると、同じ人物としてまとめられます。",

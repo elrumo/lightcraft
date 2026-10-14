@@ -23,6 +23,7 @@
 "%lld found · %lld selected" = "%1$lld trouvé(s) · %2$lld sélectionné(s)";
 "%lld not readable" = "%lld illisible(s)";
 "%lld of %lld photos" = "%1$lld sur %2$lld photos";
+"%lld of 4 guides — drag along lines that should be vertical or horizontal." = "%1$lld guides sur 4 — faites-les glisser le long des lignes qui doivent être verticales ou horizontales.";
 "%lld photos" = "%1$lld photos";
 "%lld photos couldn't be read" = "%lld photo(s) n'ont pas pu être lues";
 "%lld photos on this device" = "%1$lld photos sur cet appareil";
@@ -601,6 +602,7 @@
 "Drag a box around an eye to correct it" = "Tracez un cadre autour d'un œil pour le corriger";
 "Drag a box around an eye." = "Tracez un cadre autour d'un œil.";
 "Drag a corner or an edge to crop, outside the frame to rotate" = "Faites glisser un coin ou un bord pour recadrer, hors du cadre pour pivoter";
+"Drag along the horizon" = "Faites glisser le long de l’horizon";
 "Drag along the horizon; double-click for Auto" = "Faites glisser le long de l'horizon ; double-cliquez pour Auto";
 "Drag over an eye on the photo; the pupil inside is found automatically." = "Faites glisser sur un œil de la photo ; la pupille est détectée automatiquement.";
 "Draw Guides" = "Tracer des repères";

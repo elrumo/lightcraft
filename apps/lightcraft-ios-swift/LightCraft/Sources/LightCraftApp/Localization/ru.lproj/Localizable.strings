@@ -24,6 +24,7 @@
 "%lld found · %lld selected" = "Найдено: %1$lld · выбрано: %2$lld";
 "%lld not readable" = "Не читаются: %lld";
 "%lld of %lld photos" = "Фото: %1$lld из %2$lld";
+"%lld of 4 guides — drag along lines that should be vertical or horizontal." = "Направляющих: %1$lld из 4 — проведите вдоль линий, которые должны быть вертикальными или горизонтальными.";
 "%lld photos" = "Фото: %1$lld";
 "%lld photos couldn't be read" = "Не удалось прочитать фото: %lld";
 "%lld photos on this device" = "Фото на этом устройстве: %1$lld";
@@ -638,6 +639,7 @@
 "Drag a box around an eye to correct it" = "Выделите глаз рамкой, чтобы исправить его";
 "Drag a box around an eye." = "Выделите глаз рамкой.";
 "Drag a corner or an edge to crop, outside the frame to rotate" = "Тяните за угол или край, чтобы кадрировать; за пределами рамки — чтобы повернуть";
+"Drag along the horizon" = "Проведите вдоль горизонта";
 "Drag along the horizon; double-click for Auto" = "Ведите вдоль горизонта; двойной щелчок — авто";
 "Drag over an eye on the photo; the pupil inside is found automatically." = "Наведите на глаз на фото; зрачок внутри будет найден автоматически.";
 "Draw Guides" = "Нарисовать направляющие";

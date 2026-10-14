@@ -79,6 +79,7 @@
   "Drag a box around an eye to correct it": "在眼睛周围拖出一个框以进行校正",
   "Drag a box around an eye.": "在眼睛周围拖出一个框。",
   "Drag a corner or an edge to crop, outside the frame to rotate": "拖动角或边缘以裁剪，在框外拖动以旋转",
+  "Drag along the horizon": "沿地平线拖动",
   "Effort": "编码力度",
   "Empty keeps the photo's name. {name}, {seq}, {date}, {camera}, {lens}, {iso}, {rating}, {title} are filled in.": "留空则保留照片原名。{name}、{seq}、{date}、{camera}、{lens}、{iso}、{rating}、{title} 会自动填入。",
   "Every face named %@ gets the new name; a name someone already has puts them together.": "所有名为 %@ 的人脸都会改为新名称；如果该名称已有人使用，则会把他们合并在一起。",

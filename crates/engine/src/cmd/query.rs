@@ -175,7 +175,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Photo Frame",
             [],
             None,
-            "{id?, applyCrop?: true} → {aspect, width, height, toNorm: [a,b,c,d,e,f], fromNorm, crop: {rect, angle, quad: [[x,y] ×4: top-left, top-right, bottom-right, bottom-left of the unflipped crop], toStraight: [6] (image → the straightened frame crop.drag takes), flipH, flipV}} how the photo as shown (cropped, straightened, flipped) maps to the normalized image coordinates masks, spots, the crop and the pickers take: toNorm maps (u, v) in 0..1 across the shown image (top-left first) as (a·u + c·v + e, b·u + d·v + f); fromNorm is its inverse; width × height is the shown image at the photo's own resolution",
+            "{id?, applyCrop?: true} → {aspect, width, height, toNorm: [a,b,c,d,e,f], fromNorm, crop: {rect, angle, quad: [[x,y] ×4: top-left, top-right, bottom-right, bottom-left of the unflipped crop], toStraight: [6] (image → the straightened frame crop.drag takes), flipH, flipV}, guides: [[x0,y0,x1,y1]] (Guided Upright's, in image coordinates)} how the photo as shown (cropped, straightened, flipped) maps to the normalized image coordinates masks, spots, the crop and the pickers take: toNorm maps (u, v) in 0..1 across the shown image (top-left first) as (a·u + c·v + e, b·u + d·v + f); fromNorm is its inverse; width × height is the shown image at the photo's own resolution",
             always,
             |s, p| {
                 let c = "view.frame";
@@ -198,8 +198,20 @@ pub fn specs() -> Vec<CommandSpec> {
                 let straight = lightcraft_geom::Affine::scale(1.0 / ow, 1.0 / oh)
                     * lightcraft_geom::Affine::rotate_about(g.angle.to_radians(), centre)
                     * lightcraft_geom::Affine::scale(ow, oh);
+                // Guided Upright's guides in the same image coordinates
+                let gf = super::develop::guide_frame(s, id);
+                let guides: Vec<[f64; 4]> = d
+                    .geometry
+                    .guides
+                    .iter()
+                    .map(|(a, b)| {
+                        let (a, b) = (gf.corrected_to_transformed(*a), gf.corrected_to_transformed(*b));
+                        [a.x, a.y, b.x, b.y]
+                    })
+                    .collect();
                 Ok(json!({
                     "aspect": w / h, "width": w, "height": h, "toNorm": to.0, "fromNorm": from.0,
+                    "guides": guides,
                     "crop": {
                         "rect": [g.rect.x0, g.rect.y0, g.rect.x1, g.rect.y1],
                         "angle": g.angle,

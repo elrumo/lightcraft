@@ -285,7 +285,12 @@ fn convert(source: &str, t: &str, specs: &[String]) -> Option<String> {
             '{' => {
                 let inner: String = chars.by_ref().take_while(|&n| n != '}').collect();
                 let n = name(&inner);
-                let i = if n.is_empty() { unnamed.next()? } else { names.iter().position(|m| *m == n)? };
+                // `{}` in order, `{0}` by position, `{count}` by name
+                let i = match n.parse::<usize>() {
+                    _ if n.is_empty() => unnamed.next()?,
+                    Ok(k) => k,
+                    Err(_) => names.iter().position(|m| *m == n)?,
+                };
                 let _ = write!(out, "%{}${}", i + 1, specs.get(i)?);
             }
             '%' => out.push_str("%%"),
@@ -339,6 +344,7 @@ mod tests {
         assert_eq!(t.as_deref(), Some("%2$lld fotos sin «%1$@» (100%%)"));
         assert_eq!(convert("{} of {}", "{} de {}", &["lld".into(), "lld".into()]).as_deref(), Some("%1$lld de %2$lld"));
         assert_eq!(convert("{} of {}", "{}", &["lld".into()]), None);
+        assert_eq!(convert("{} of 4", "已画 {0} 条", &["lld".into()]).as_deref(), Some("已画 %1$lld 条"));
         assert!(same_conversions(&swift_specs("%@ of %lld"), "%2$lld de %1$@"));
         assert!(!same_conversions(&swift_specs("%@ of %lld"), "%@ de %@"));
     }

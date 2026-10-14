@@ -24,6 +24,7 @@
 "%lld found · %lld selected" = "Знайдено: %1$lld · вибрано: %2$lld";
 "%lld not readable" = "Не вдалося прочитати: %lld";
 "%lld of %lld photos" = "Фото: %1$lld із %2$lld";
+"%lld of 4 guides — drag along lines that should be vertical or horizontal." = "Напрямних: %1$lld із 4 — проведіть уздовж ліній, які мають бути вертикальними або горизонтальними.";
 "%lld photos" = "Фото: %1$lld";
 "%lld photos couldn't be read" = "Не вдалося прочитати фото: %lld";
 "%lld photos on this device" = "Фото на цьому пристрої: %1$lld";
@@ -638,6 +639,7 @@
 "Drag a box around an eye to correct it" = "Намалюйте рамку навколо ока, щоб виправити його";
 "Drag a box around an eye." = "Намалюйте рамку навколо ока.";
 "Drag a corner or an edge to crop, outside the frame to rotate" = "Потягніть за кут або край, щоб кадрувати; потягніть поза рамкою, щоб повернути";
+"Drag along the horizon" = "Проведіть уздовж горизонту";
 "Drag along the horizon; double-click for Auto" = "Проведіть уздовж горизонту; подвійне клацання — автоматично";
 "Drag over an eye on the photo; the pupil inside is found automatically." = "Проведіть по оку на фото; зіниця всередині знаходиться автоматично.";
 "Draw Guides" = "Намалювати напрямні";

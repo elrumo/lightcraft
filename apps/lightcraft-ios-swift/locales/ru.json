@@ -92,6 +92,7 @@
   "Drag a box around an eye to correct it": "Выделите глаз рамкой, чтобы исправить его",
   "Drag a box around an eye.": "Выделите глаз рамкой.",
   "Drag a corner or an edge to crop, outside the frame to rotate": "Тяните за угол или край, чтобы кадрировать; за пределами рамки — чтобы повернуть",
+  "Drag along the horizon": "Проведите вдоль горизонта",
   "Edit Time": "Время правки",
   "Effort": "Усилие",
   "Empty keeps the photo's name. {name}, {seq}, {date}, {camera}, {lens}, {iso}, {rating}, {title} are filled in.": "Пусто — имя фото сохраняется. {name}, {seq}, {date}, {camera}, {lens}, {iso}, {rating}, {title} подставляются автоматически.",

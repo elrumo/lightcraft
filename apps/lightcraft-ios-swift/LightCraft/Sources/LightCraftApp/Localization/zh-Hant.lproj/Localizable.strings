@@ -22,6 +22,7 @@
 "%lld found · %lld selected" = "找到 %1$lld 張 · 已選取 %2$lld 張";
 "%lld not readable" = "%lld 個無法讀取";
 "%lld of %lld photos" = "%1$lld／%2$lld 張照片";
+"%lld of 4 guides — drag along lines that should be vertical or horizontal." = "已繪製 %1$lld／4 條參考線 — 沿應為垂直或水平的線條拖曳。";
 "%lld photos" = "%1$lld 張照片";
 "%lld photos couldn't be read" = "%lld 張照片無法讀取";
 "%lld photos on this device" = "此裝置上有 %1$lld 張照片";
@@ -617,6 +618,7 @@
 "Drag a box around an eye to correct it" = "在眼睛周圍拖曳出方框以進行校正";
 "Drag a box around an eye." = "在眼睛周圍拖曳出方框。";
 "Drag a corner or an edge to crop, outside the frame to rotate" = "拖移角落或邊緣以裁切，在框外拖移可旋轉";
+"Drag along the horizon" = "沿地平線拖曳";
 "Drag along the horizon; double-click for Auto" = "沿水平線拖曳；按兩下可自動校正";
 "Drag over an eye on the photo; the pupil inside is found automatically." = "在照片的眼睛上拖曳，會自動尋找範圍內的瞳孔。";
 "Draw Guides" = "繪製參考線";

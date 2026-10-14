@@ -77,6 +77,7 @@ final class ScriptHost {
             if let on = params["removeAI"].bool { model.prefs.removeAI = on }
             if let on = params["histogram"].bool { model.prefs.showHistogram = on }
             if let guide = params["cropGuide"].string { model.prefs.cropGuide = guide }
+            if let draw = params["cropDraw"].string { model.editor.cropDraw = draw == "none" ? nil : draw }
             switch params["screen"].string {
             case nil:
                 break

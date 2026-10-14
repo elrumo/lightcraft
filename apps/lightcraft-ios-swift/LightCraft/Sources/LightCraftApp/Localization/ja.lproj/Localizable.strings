@@ -22,6 +22,7 @@
 "%lld found · %lld selected" = "%1$lld枚検出・%2$lld枚選択";
 "%lld not readable" = "%lld件は読み込めません";
 "%lld of %lld photos" = "%2$lld枚中%1$lld枚";
+"%lld of 4 guides — drag along lines that should be vertical or horizontal." = "ガイド4本中%1$lld本：垂直または水平にする線に沿ってドラッグ";
 "%lld photos" = "%1$lld枚";
 "%lld photos couldn't be read" = "%lld枚の写真を読み込めませんでした";
 "%lld photos on this device" = "このデバイスに%1$lld枚";
@@ -617,6 +618,7 @@
 "Drag a box around an eye to correct it" = "補正したい目を囲むようにドラッグしてください";
 "Drag a box around an eye." = "目の周りをドラッグして枠を描きます。";
 "Drag a corner or an edge to crop, outside the frame to rotate" = "角や辺をドラッグして切り抜き、枠の外側をドラッグして回転します";
+"Drag along the horizon" = "水平線に沿ってドラッグ";
 "Drag along the horizon; double-click for Auto" = "水平線に沿ってドラッグ（ダブルクリックで自動補正）";
 "Drag over an eye on the photo; the pupil inside is found automatically." = "写真の目をドラッグすると、瞳孔を自動検出します";
 "Draw Guides" = "ガイドを描く";

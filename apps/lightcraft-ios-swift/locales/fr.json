@@ -91,6 +91,7 @@
   "Drag a box around an eye to correct it": "Tracez un cadre autour d'un œil pour le corriger",
   "Drag a box around an eye.": "Tracez un cadre autour d'un œil.",
   "Drag a corner or an edge to crop, outside the frame to rotate": "Faites glisser un coin ou un bord pour recadrer, hors du cadre pour pivoter",
+  "Drag along the horizon": "Faites glisser le long de l’horizon",
   "Edit Time": "Heure de retouche",
   "Empty keeps the photo's name. {name}, {seq}, {date}, {camera}, {lens}, {iso}, {rating}, {title} are filled in.": "Vide : le nom de la photo est conservé. {name}, {seq}, {date}, {camera}, {lens}, {iso}, {rating}, {title} sont remplacés.",
   "Enlarge": "Agrandir",
