@@ -303,9 +303,9 @@ nonisolated struct ViewRequest: Hashable {
     let overlay: JSONValue?
     let proof: JSONValue?
     let zoom: ZoomRequest?
-}
     /// The screen shows HDR: the same look is asked for again, as an HDR picture.
     let hdr: Bool
+}
 
 /// A zoomed loupe's view: the photo's long edge as drawn (pixels) and the part of it on screen, in
 /// thousandths of its width and height (x0, y0, x1, y1).

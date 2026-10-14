@@ -98,6 +98,7 @@ private struct PointCurve: View {
     let channel: String
     @State private var points: [CGPoint] = []
     @State private var dragging: Int?
+    @State private var taps = DoubleTap()
     /// The curve's values at even steps (`curve.sample`): what the pipeline applies.
     @State private var samples: [Double] = []
 
@@ -140,14 +141,6 @@ private struct PointCurve: View {
             }
             .contentShape(Rectangle())
             .gesture(drag(size))
-            .onTapGesture(count: 2) { location in
-                let p = CGPoint(x: location.x / size.width, y: 1 - location.y / size.height)
-                if let i = nearest(p, size), shown.count > 2 {
-                    var pts = shown
-                    pts.remove(at: i)
-                    commit(pts)
-                }
-            }
         }
         .clipShape(.rect(cornerRadius: 8))
         .onAppear(perform: read)
@@ -221,9 +214,18 @@ private struct PointCurve: View {
                 send(pts)
                 model.requestDraft()
             }
-            .onEnded { _ in
+            .onEnded { g in
                 model.engine?.send("engine.execute", ["command": "develop.endInteraction"])
                 dragging = nil
+                // a double tap on a point takes it away (the drag takes the touch at touch-down, so a
+                // tap gesture beside it never fires)
+                guard taps.ended(g) else { return }
+                let p = CGPoint(x: g.location.x / size.width, y: 1 - g.location.y / size.height)
+                if let i = nearest(p, size), shown.count > 2 {
+                    var pts = shown
+                    pts.remove(at: i)
+                    commit(pts)
+                }
             }
     }
 
@@ -236,62 +238,6 @@ private struct PointCurve: View {
         points = pts
         let arr: JSONValue = .array(pts.map { .array([.double(Double($0.x)), .double(Double($0.y))]) })
         model.perform("develop.curve", ["channel": .string(channel), "points": arr])
-    }
-}
-
-/// Point Color: the colours picked from the photo (the eyedropper, then a tap on the photo), and for
-/// the chosen one its hue, saturation and luminance shifts and how wide a range it takes.
-struct PointColorView: View {
-    @Environment(AppModel.self) private var model
-    @State private var chosen = 0
-    @State private var swatches: [String] = []
-
-    var body: some View {
-        let editor = model.editor
-        HStack(spacing: 10) {
-            Button {
-                editor.picking = .pointColor
-                model.show(String(localized: "Tap a colour in the photo"))
-            } label: {
-                Image(systemName: "eyedropper").frame(width: 38, height: 38)
-            }
-            .buttonStyle(.bordered)
-            .disabled(swatches.count >= 8)
-            .accessibilityLabel("Pick a Color")
-            ForEach(Array(swatches.enumerated()), id: \.offset) { i, hex in
-                Button {
-                    chosen = i
-                } label: {
-                    Circle()
-                        .fill(Color(hex: hex) ?? .gray)
-                        .frame(width: 32, height: 32)
-                        .overlay { if chosen == i { Circle().strokeBorder(.primary, lineWidth: 2).padding(-4) } }
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Color \(i + 1)")
-            }
-            Spacer()
-            if chosen < swatches.count {
-                Button(role: .destructive) {
-                    model.perform("pointColor.delete", ["index": .int(Int64(chosen))])
-                    chosen = 0
-                } label: {
-                    Image(systemName: "trash")
-                }
-                .accessibilityLabel("Delete Color")
-            }
-        }
-        .task(id: model.state.catalogRevision) {
-            guard let engine = model.engine, let list = try? await engine.execute("pointColor.list") else { return }
-            swatches = list.array?.compactMap { $0["swatch"].string } ?? []
-        }
-        if chosen < swatches.count {
-            Sliders(section: "pointColor") { $0.id.hasPrefix("pointColor.\(chosen).") }
-        } else {
-            Text("Pick a colour in the photo to adjust it everywhere it appears.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-        }
     }
 }
 #endif

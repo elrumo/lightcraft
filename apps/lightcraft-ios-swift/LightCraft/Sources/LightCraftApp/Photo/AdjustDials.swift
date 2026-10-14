@@ -29,7 +29,7 @@ struct Dial: Identifiable {
 
 /// The pages a dial opens: controls that need more room than a ruler.
 nonisolated enum DialPage: String, Identifiable {
-    case curve, mixer, pointColor, grading, sdr
+    case curve, mixer, grading, sdr
     var id: String { rawValue }
 }
 

@@ -121,6 +121,9 @@ final class EditorModel {
     private var inFlight = false
     /// A tap on the photo picks something for a tool (white balance, a point colour).
     var picking: Pick?
+    /// A tool is taking touches on the photo (a picker, Tag a Face, a tool's own screen): the photo's
+    /// tap (the bars), long press (Before) and swipe down (back to the grid) leave them alone.
+    var touching: Bool { picking != nil || tagFace || tool?.hasScreen == true }
     /// The Remove tool: its mode and brush (size as a fraction of the photo's long edge).
     var removeMode = "remove"
     var removeSize = 0.02
@@ -203,6 +206,16 @@ final class EditorModel {
 
     func value(_ spec: ControlSpec) -> Double {
         local[spec.id] ?? spec.value ?? spec.default
+    }
+
+    /// A picker's button: the next tap on the photo takes `pick`; pressed again, it lets go.
+    func arm(_ pick: Pick, _ app: AppModel) {
+        picking = picking == pick ? nil : pick
+        switch picking {
+        case .whiteBalance: app.show(String(localized: "Tap something white or grey in the photo"))
+        case .pointColor: app.show(String(localized: "Tap a colour in the photo"))
+        case nil: break
+        }
     }
 
     /// A slider was grabbed (`true`) or let go.
