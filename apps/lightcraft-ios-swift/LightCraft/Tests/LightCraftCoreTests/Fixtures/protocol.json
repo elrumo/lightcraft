@@ -70,6 +70,10 @@
         "activeMask": 2,
         "activeSpot": null,
         "catalogRevision": 12,
+        "faces": {
+          "indexedFaces": 12,
+          "pendingPhotos": 40
+        },
         "interaction": null,
         "libraryGeneration": 2,
         "redo": null,

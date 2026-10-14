@@ -35,6 +35,9 @@ nonisolated enum Sheet: Identifiable, Hashable {
     case pasteSettings([UInt64])
     case superRes
     case createPreset
+    case smartAlbum(UInt64?, parent: UInt64?)
+    case newSmartAlbumFromView
+    case allMetadata
 
     var id: String {
         switch self {
@@ -55,6 +58,9 @@ nonisolated enum Sheet: Identifiable, Hashable {
         case .pasteSettings: "pasteSettings"
         case .superRes: "superRes"
         case .createPreset: "createPreset"
+        case .smartAlbum: "smartAlbum"
+        case .newSmartAlbumFromView: "newSmartAlbumFromView"
+        case .allMetadata: "allMetadata"
         }
     }
 }

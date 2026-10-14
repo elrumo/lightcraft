@@ -35,6 +35,11 @@ final class AlbumsModel {
         roots.flatMap { $0.flattened() }.filter(\.isPlain).sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 
+    /// Albums and smart albums (what an Album rule can name), A–Z.
+    var albumsAndSmart: [AlbumNode] {
+        roots.flatMap { $0.flattened() }.filter { !$0.folder }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
     /// Folders (an album can go in one), A–Z.
     var folders: [AlbumNode] {
         roots.flatMap { $0.flattened() }.filter(\.folder).sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }

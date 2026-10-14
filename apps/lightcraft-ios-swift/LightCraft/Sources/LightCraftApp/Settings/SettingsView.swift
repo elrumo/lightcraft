@@ -3,7 +3,7 @@ import LightCraftCore
 import SwiftUI
 
 /// Settings, as an iOS settings list: the library (and where it syncs), then General, Import,
-/// Performance, Interface, Sync and AI Models.
+/// Performance, Interface, Sync, Faces and AI Models.
 struct SettingsView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -30,6 +30,7 @@ struct SettingsView: View {
                 }
                 Section {
                     row("sync", "Sync", "arrow.triangle.2.circlepath.icloud", .blue)
+                    row("faces", "Faces", "person.crop.square", .teal)
                     row("models", "AI Models", "cpu", .purple)
                 }
             }
@@ -42,6 +43,7 @@ struct SettingsView: View {
                 case "performance": PerformanceSettings()
                 case "interface": InterfaceSettings()
                 case "sync": SyncSettings()
+                case "faces": FacesSettings()
                 case "models": ModelsSettings()
                 default: EmptyView()
                 }

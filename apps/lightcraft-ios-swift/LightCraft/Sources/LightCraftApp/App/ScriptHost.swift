@@ -10,7 +10,7 @@ import UIKit
 /// - `ui.inspect`: the screen, the photo, the state and timings (`perf`).
 /// - `ui.set {screen?: grid | photo | edit | crop | masking | remove | presets | info | commands |
 ///   people | map, photo?, span?: all | months | years, group?: light | color…, sheet?: albums |
-///   filter | settings | export | sync | history | versions | keywords | about | superRes | createPreset | none, select?,
+///   filter | settings | export | sync | history | versions | keywords | about | superRes | createPreset | smartAlbum (id?) | allMetadata | none, select?,
 ///   faceBoxes?, tagFace?, beforeAfter?, visualizeSpots?, removeAI?}`: go there.
 @Observable
 final class ScriptHost {
@@ -115,6 +115,8 @@ final class ScriptHost {
                 case "about": model.sheet = .about
                 case "superRes": model.sheet = .superRes
                 case "createPreset": model.sheet = .createPreset
+                case "smartAlbum": model.sheet = .smartAlbum(params["id"].int.map { UInt64(clamping: $0) }, parent: nil)
+                case "allMetadata": model.sheet = .allMetadata
                 default: model.sheet = nil
                 }
             }

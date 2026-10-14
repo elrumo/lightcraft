@@ -38,6 +38,7 @@ fn fixtures() -> Value {
         sync: Some(
             json!({"state": "syncing", "server": "https://photos.example", "pending": 2, "uploads": 1, "downloads": 0, "reading": null, "error": null}),
         ),
+        faces: Some(json!({"pendingPhotos": 40, "indexedFaces": 12})),
     };
     let events = vec![
         Event::ok(1, json!({"photos": [], "total": 0})),

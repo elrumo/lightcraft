@@ -18,9 +18,9 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | Phase | ✅ | 🟡 | ⬜ | 🚫 | Done or out of scope |
 |---|---:|---:|---:|---:|---:|
 | S0 | 12 | 3 | 0 | 0 | 12/15 |
-| S1 | 113 | 14 | 40 | 0 | 113/167 |
+| S1 | 127 | 12 | 25 | 3 | 130/167 |
 | S2 | 1 | 0 | 79 | 22 | 23/102 |
-| **Total** | 126 | 17 | 119 | 22 | 148/284 |
+| **Total** | 140 | 15 | 104 | 25 | 165/284 |
 <!-- /ios-parity:summary -->
 
 ## Screens
@@ -60,9 +60,9 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | screen:compact.edit.grading | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/EditGroupPanel.swift` | Shadows / Midtones / Highlights / Global wheel (one undo step a drag, double tap resets), luminance, Blending, Balance |
 | screen:compact.edit.pointColor | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/CurveEditor.swift`, `crates/engine/src/tests_color.rs` | eyedropper (tap the photo), swatches from `pointColor.list`, shifts and ranges, delete |
 | screen:compact.undoMenu | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/HistorySheet.swift` | Undo and Redo side by side (the menu stays open), Reset, Versions, History |
-| screen:compact.export | S1 | 🟡 | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Share/ExportSheet.swift` | the photos, Share (system share sheet), Save to Photos (add-only), file type, size, quality, watermark, metadata, location; exports run in the background with progress and Cancel; no export presets or More Options page yet |
+| screen:compact.export | S1 | 🟡 | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Share/ExportSheet.swift` | the photos, Share (system share sheet), Save to Photos (add-only), export presets (choose, save), file type, size, quality, watermark, metadata, location; exports run in the background with progress and Cancel; no More Options page (colour space, sharpening, naming) yet |
 | screen:compact.importReview | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Share/ImportReview.swift`, `crates/apphost/src/host/tests.rs` | Photos / Files / folder picks scanned (`import.scan`), three across with checks and thumbnails, duplicates, in library and Recently Deleted marked; album (or a new one), keywords, preset, what to do with deleted ones; imported in the background (`import.start`, one undo step) |
-| screen:compact.settings | S1 | 🟡 | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | the library, General, Import, Performance, Interface, Sync, AI Models; no Faces section yet |
+| screen:compact.settings | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/FacesSettings.swift` | the library, General, Import, Performance, Interface, Sync, Faces, AI Models |
 | screen:compact.sync | S1 | 🟡 | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift`, `crates/apphost/src/sync.rs` | sign in, account, Sync Now, pause, On This Device options, shared links, sign out, the cloud button and status page, the conflict choice; the host drives the sync (shared with egui); no storage section yet |
 | screen:compact.people | S1 | 🟡 | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/PeopleView.swift`, `crates/apphost/src/faces.rs` | people and unnamed groups, name a group, a person's photos; the host paces the face scan; face crops aren't rendered yet (the photo is shown) |
 | screen:compact.map | S1 | 🟡 | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/PeopleView.swift` | MapKit with clustered photo markers (`map.points`), place search (`map.place`), a tap shows them in the grid |
@@ -94,7 +94,7 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | ui:app.appearance.dark | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | Settings ▸ Interface ▸ Appearance |
 | ui:ui.dock | S2 | 🚫 |  | no dockable panels on iOS: tools are sheets (phone) and an inspector (iPad) |
 | ui:ui.dock.reset | S2 | 🚫 |  | no dockable panels on iOS |
-| ui:modelSetup.cancel | S1 | ⬜ |  |  |
+| ui:modelSetup.cancel | S1 | 🚫 |  | it cancels a photo action waiting for the AI Denoise model; iOS builds have no AI Denoise or SAM 3: the engine's `denoise` and `sam` features are off for iOS (the egui iOS app has only `enhance` too) |
 | ui:view.photoGrid | S2 | ⬜ |  |  |
 | ui:view.squareGrid | S0 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/GridView.swift` | the grid is square tiles |
 | ui:view.gridToggle | S2 | ⬜ |  |  |
@@ -178,7 +178,7 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | ui:brush.featherMore | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/MaskingScreen.swift` | the brush's Feather slider |
 | ui:dialog.newAlbum | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/AlbumsSheet.swift` | albums ▸ +, grid "…", Add to Album |
 | ui:dialog.newFolder | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/AlbumsSheet.swift` | albums ▸ + ▸ Folder |
-| ui:dialog.smartAlbum | S1 | ⬜ |  |  |
+| ui:dialog.smartAlbum | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/SmartAlbumSheet.swift` | an album's ⋯ ▸ Edit Smart Album…: name, match, rules and groups from `album.ruleFields` (with each operator's starting value), checked with `album.checkRules` |
 | ui:view.photoCounts | S2 | ⬜ |  |  |
 | ui:view.sidebarSection | S2 | ⬜ |  |  |
 | ui:view.sidebarMoveSection | S2 | ⬜ |  |  |
@@ -189,16 +189,16 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | ui:view.gridInfo | S2 | ⬜ |  |  |
 | ui:view.appearance | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | Settings ▸ Interface ▸ Appearance |
 | ui:view.theme | S2 | 🚫 |  | the system appearance (`app.appearance.*`) is the theme on iOS |
-| ui:dialog.allMetadata | S1 | ⬜ |  |  |
-| ui:dialog.faceModel | S1 | ⬜ |  |  |
-| ui:dialog.newSmartAlbum | S1 | ⬜ |  |  |
+| ui:dialog.allMetadata | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/Panels.swift` | Info ▸ All Metadata…: EXIF groups and XMP (`photo.allMetadata`), searchable |
+| ui:dialog.faceModel | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/FacesSettings.swift` | Settings ▸ Faces ▸ Add a Model File… (Files), then its terms to accept (`faces.models.inspect`, `faces.models.install`) |
+| ui:dialog.newSmartAlbum | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/AlbumsSheet.swift` | Albums ▸ + ▸ Smart Album from Filter: a name, then the grid's view becomes the album (`album.createSmart`) |
 | ui:dialog.createPreset | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/CopySettingsSheet.swift` | Presets ▸ +: name, group (yours or a new one), the settings groups from `develop.settingsGroups` |
 | ui:dialog.autoStack | S2 | ⬜ |  |  |
 | ui:dialog.copySettings | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/CopySettingsSheet.swift` | photo "…" ▸ Copy Settings… |
 | ui:dialog.pasteSettings | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/CopySettingsSheet.swift` | select ▸ More ▸ Paste Selected Settings… |
 | ui:dialog.shareLink | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | an album's menu ▸ Share Link… (signed in) |
 | ui:view.focusSearch | S2 | ⬜ |  |  |
-| ui:dialog.export | S1 | 🟡 | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Share/ExportSheet.swift` | Share page; no presets or progress card yet |
+| ui:dialog.export | S1 | 🟡 | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Share/ExportSheet.swift` | the Share page with presets, options and progress; no More Options page yet |
 | ui:dialog.contactSheet | S2 | ⬜ |  |  |
 | ui:app.contactSheet | S2 | ⬜ |  |  |
 | ui:photo.editInPhotoCraft | S2 | 🚫 |  | no external editors on iOS (the egui iOS app does not offer it either) |
@@ -283,34 +283,34 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | dialog:ContactSheet | S2 | ⬜ |  |  |
 | dialog:NewAlbum | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/AlbumsSheet.swift` | name, Create |
 | dialog:RenameAlbum | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/AlbumsSheet.swift` | an album's menu ▸ Rename… |
-| dialog:TextPrompt | S1 | ⬜ |  |  |
+| dialog:TextPrompt | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/KeywordListView.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/AlbumsSheet.swift` | each one-field prompt is a native alert or sheet where it is used (album and keyword names, mask and part names, export preset names) |
 | dialog:CaptureTime | S2 | ⬜ |  |  |
 | dialog:Import | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Share/ImportReview.swift` | the phone review |
 | dialog:PresetImport | S1 | ⬜ |  |  |
 | dialog:LabelNames | S2 | ⬜ |  |  |
 | dialog:Rename | S2 | ⬜ |  |  |
-| dialog:RenameKeyword | S1 | ⬜ |  |  |
-| dialog:KeywordTag | S1 | ⬜ |  |  |
+| dialog:RenameKeyword | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/KeywordListView.swift` | Albums ▸ Keywords ▸ a keyword's menu ▸ Rename… (`keyword.rename`) |
+| dialog:KeywordTag | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/KeywordListView.swift` | Albums ▸ Keywords ▸ + or a keyword's menu: Create / Edit Keyword Tag (synonyms, export options, person, add to the selected photos) |
 | dialog:KeywordSet | S2 | ⬜ |  |  |
 | dialog:MoveKeyword | S2 | ⬜ |  |  |
-| dialog:DeleteKeyword | S1 | ⬜ |  |  |
+| dialog:DeleteKeyword | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/KeywordListView.swift` | Albums ▸ Keywords ▸ a keyword's menu ▸ Delete… (asks, with its photo count) |
 | dialog:MergeKeywords | S2 | ⬜ |  |  |
 | dialog:AutoStack | S2 | ⬜ |  |  |
-| dialog:NewSmartAlbum | S1 | ⬜ |  |  |
+| dialog:NewSmartAlbum | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/AlbumsSheet.swift` | as `ui:dialog.newSmartAlbum` |
 | dialog:WhatsNew | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | as `ui:app.whatsNew` |
 | dialog:Cull | S2 | ⬜ |  |  |
-| dialog:DenoiseModel | S1 | ⬜ |  |  |
-| dialog:FaceModel | S1 | ⬜ |  |  |
+| dialog:DenoiseModel | S1 | 🚫 |  | iOS builds have no AI Denoise or SAM 3: the engine's `denoise` and `sam` features are off for iOS (the egui iOS app has only `enhance` too) |
+| dialog:FaceModel | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/FacesSettings.swift` | the terms sheet for a model file or a download (nothing fetched or installed before they are accepted) |
 | dialog:SystemInfo | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | as `ui:app.systemInfo` |
-| dialog:AllMetadata | S1 | ⬜ |  |  |
-| dialog:SmartRules | S1 | ⬜ |  |  |
+| dialog:AllMetadata | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/Panels.swift` | as `ui:dialog.allMetadata` |
+| dialog:SmartRules | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/SmartAlbumSheet.swift` | as `ui:dialog.smartAlbum`; Albums ▸ + ▸ Smart Album… for a new one |
 | dialog:CreatePreset | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/CopySettingsSheet.swift` | as `ui:dialog.createPreset` |
 | dialog:CopySettings | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/CopySettingsSheet.swift` | the settings groups |
 | dialog:PasteSettings | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/CopySettingsSheet.swift` | the settings groups |
 | dialog:Export | S1 | 🟡 | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Share/ExportSheet.swift` | Share page with options |
 | dialog:Merge | S2 | ⬜ |  |  |
-| dialog:Settings | S1 | 🟡 | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | no Faces section yet |
-| dialog:SamModel | S1 | ⬜ |  |  |
+| dialog:Settings | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/FacesSettings.swift` | General, Import, Performance, Interface, Sync, Faces (recognition, models, scan progress), AI Models |
+| dialog:SamModel | S1 | 🚫 |  | iOS builds have no AI Denoise or SAM 3: the engine's `denoise` and `sam` features are off for iOS (the egui iOS app has only `enhance` too) |
 | dialog:SuperRes | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/SuperResSheet.swift` | as `ui:dialog.superRes` |
 | dialog:LightroomCatalog | S2 | ⬜ |  |  |
 | dialog:ConfirmDelete | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/App/RootView.swift` | an alert before Recently Deleted |

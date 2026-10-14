@@ -574,6 +574,40 @@ pub fn field_kind(field: &str) -> Option<Kind> {
     FIELDS.iter().find(|f| f.0 == field).map(|f| f.2)
 }
 
+/// A sensible starting value for a rule on `field` with `op` (every UI's rule editor starts there).
+pub fn default_value(field: &str, op: &str) -> Value {
+    match (field_kind(field), op) {
+        (_, "isEmpty" | "isNotEmpty") => Value::Null,
+        (Some(Kind::Date), "inLast" | "notInLast") => serde_json::json!({"n": 30, "unit": "days"}),
+        // this year (the catalog's clock): a date that means something, not an empty one that
+        // matches nothing ("is") or every date ("between")
+        (Some(Kind::Date), "between") => {
+            let year = this_year();
+            serde_json::json!([format!("{year}-01"), format!("{year}-12")])
+        }
+        (Some(Kind::Date), _) => serde_json::json!(this_year()),
+        (Some(Kind::Number), "between") if field == "shutterSpeed" => serde_json::json!(["1/1000", "1/125"]),
+        (Some(Kind::Number), _) if field == "shutterSpeed" => serde_json::json!("1/250"),
+        (Some(Kind::Number), "between") => serde_json::json!([0, 0]),
+        (Some(Kind::Number), _) => serde_json::json!(if field == "rating" { 3 } else { 0 }),
+        (Some(Kind::Choice(c)), _) => serde_json::json!(c.first().map_or("", |c| c.0)),
+        (Some(Kind::Bool), _) => serde_json::json!(true),
+        // picked from the list
+        (Some(Kind::Album), _) => Value::Null,
+        _ => serde_json::json!(""),
+    }
+}
+
+/// The current year, `2026`.
+fn this_year() -> String {
+    now().get(..4).unwrap_or("2026").to_string()
+}
+
+/// A new rule (Rating ≥ 3).
+pub fn new_rule() -> Rule {
+    Rule::Field { field: "rating".into(), op: "gte".into(), value: serde_json::json!(3) }
+}
+
 thread_local! {
     static NOW: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
 }

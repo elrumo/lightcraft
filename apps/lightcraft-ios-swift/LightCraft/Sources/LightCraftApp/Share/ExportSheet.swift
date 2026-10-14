@@ -15,6 +15,9 @@ struct ExportSheet: View {
     @State private var showOptions = false
     @State private var working = false
     @State private var sharing: [URL]?
+    @State private var presets: [JSONValue] = []
+    @State private var savingPreset = false
+    @State private var presetName = ""
 
     var body: some View {
         NavigationStack {
@@ -47,6 +50,17 @@ struct ExportSheet: View {
                 }
                 .disabled(ids.isEmpty || working)
                 Section("Options") {
+                    // a preset fills the options in; what it holds beyond them (colour space,
+                    // sharpening…) goes with the export
+                    Menu {
+                        ForEach(presets, id: \.self) { p in
+                            Button(p["name"].string ?? "") { options.load(p) }
+                        }
+                        Divider()
+                        Button("Save as Preset…", systemImage: "plus") { savingPreset = true }
+                    } label: {
+                        LabeledContent("Preset", value: options.preset ?? String(localized: "Choose…"))
+                    }
                     Picker("File Type", selection: $options.format) {
                         ForEach(ExportOptions.formats, id: \.0) { Text($0.1).tag($0.0) }
                     }
@@ -87,6 +101,12 @@ struct ExportSheet: View {
                     Button("Close", systemImage: "xmark") { dismiss() }
                 }
             }
+            .alert("Save Export Preset", isPresented: $savingPreset) {
+                TextField("Preset Name", text: $presetName)
+                Button("Save") { savePreset() }
+                Button("Cancel", role: .cancel) {}
+            }
+            .task { await loadPresets() }
             .sheet(item: Binding(get: { sharing.map(ShareItems.init) }, set: { if $0 == nil { sharing = nil } })) { items in
                 ActivityView(urls: items.urls) { dismiss() }
                     .ignoresSafeArea()
@@ -96,6 +116,24 @@ struct ExportSheet: View {
     }
 
     private enum Destination { case share, photos }
+
+    private func loadPresets() async {
+        guard let engine = model.engine else { return }
+        presets = (try? await engine.execute("export.presets"))?.array ?? []
+    }
+
+    private func savePreset() {
+        let name = presetName.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else { return }
+        Task {
+            if await model.run("export.savePreset", ["name": .string(name), "params": .object(options.params)]) != nil {
+                options.preset = name
+                presetName = ""
+                model.show(String(localized: "Saved export preset “\(name)”"))
+                await loadPresets()
+            }
+        }
+    }
 
     private func run(_ to: Destination) async {
         working = true
@@ -183,6 +221,22 @@ struct ExportOptions {
     var watermarkText = ""
     var metadata = "all"
     var removeLocation = false
+    /// The export preset the options came from (`app.export {preset}`: what it holds beyond them goes too).
+    var preset: String?
+
+    /// Fill the options in from an export preset (`export.presets`): what this form shows of it.
+    mutating func load(_ p: JSONValue) {
+        let params = p["params"]
+        preset = p["name"].string
+        if let f = params["format"].string { format = f }
+        if let q = params["quality"].int { quality = Int(q) }
+        if let e = params["longEdge"].int { longEdge = Int(e) } else if !params["resize"].isNull { longEdge = Int(params["resize"]["value"].int ?? Int64(longEdge)) }
+        if let m = params["metadata"].string { metadata = m }
+        if let r = params["removeLocation"].bool { removeLocation = r }
+        let wm = params["watermark"].string ?? params["watermark"]["text"].string
+        watermark = wm?.isEmpty == false
+        watermarkText = wm ?? ""
+    }
 
     static let formats: [(String, String)] = [
         ("jpeg", "JPEG"), ("png", "PNG"), ("tiff", "TIFF"), ("webp", "WebP"), ("avif", "AVIF"), ("jxl", "JPEG XL"), ("dng", "DNG"), ("original", "Original"),
@@ -193,6 +247,7 @@ struct ExportOptions {
 
     var params: [String: JSONValue] {
         var p: [String: JSONValue] = ["format": .string(format), "metadata": .string(metadata), "removeLocation": .bool(removeLocation)]
+        if let preset { p["preset"] = .string(preset) }
         if format != "original" && format != "dng" { p["longEdge"] = .int(Int64(longEdge)) }
         if ["jpeg", "avif", "webp"].contains(format) { p["quality"] = .int(Int64(quality)) }
         if watermark && !watermarkText.isEmpty { p["watermark"] = .string(watermarkText) }

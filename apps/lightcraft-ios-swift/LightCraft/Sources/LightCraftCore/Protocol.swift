@@ -85,8 +85,16 @@ public struct HostState: Codable, Sendable, Equatable {
     public var unsaved: Int = 0
     /// The server sync (`nil`: a local library with no server).
     public var sync: SyncSummary?
+    /// Face recognition's background scan while it is on.
+    public var faces: FaceScan?
 
     public init() {}
+}
+
+/// How far face recognition's background scan is.
+public struct FaceScan: Codable, Sendable, Equatable {
+    public var pendingPhotos: Int
+    public var indexedFaces: Int
 }
 
 /// The server sync as the cloud icon shows it (`sync.status` has the rest).

@@ -38,6 +38,13 @@ struct AlbumsSheet: View {
                         Text("No albums yet").foregroundStyle(.secondary)
                     }
                 }
+                Section {
+                    NavigationLink {
+                        KeywordListView()
+                    } label: {
+                        Label("Keywords", systemImage: "tag")
+                    }
+                }
             }
             .listStyle(.insetGrouped)
             .foregroundStyle(.primary)
@@ -51,7 +58,8 @@ struct AlbumsSheet: View {
                     Menu {
                         Section("Create New") {
                             Button("Album", systemImage: "rectangle.stack") { model.sheet = .newAlbum(parent: nil, folder: false, addSelected: false) }
-                            Button("Smart Album from Filter", systemImage: "gearshape.2") { model.sheet = .newAlbum(parent: nil, folder: false, addSelected: false) }
+                            Button("Smart Album…", systemImage: "gearshape.2") { model.sheet = .smartAlbum(nil, parent: nil) }
+                            Button("Smart Album from Filter", systemImage: "line.3.horizontal.decrease.circle") { model.sheet = .newSmartAlbumFromView }
                             Button("Folder", systemImage: "folder") { model.sheet = .newAlbum(parent: nil, folder: true, addSelected: false) }
                         }
                         Button("Sort Albums A–Z", systemImage: "arrow.up.arrow.down") { model.perform("album.sort") }
@@ -130,6 +138,7 @@ struct AlbumMenu: View {
         if node.folder {
             Section("New") {
                 Button("Album", systemImage: "rectangle.stack") { model.sheet = .newAlbum(parent: node.id, folder: false, addSelected: false) }
+                Button("Smart Album…", systemImage: "gearshape.2") { model.sheet = .smartAlbum(nil, parent: node.id) }
                 Button("Folder", systemImage: "folder") { model.sheet = .newAlbum(parent: node.id, folder: true, addSelected: false) }
             }
             Button("Sort Contents A–Z", systemImage: "arrow.up.arrow.down") { model.perform("album.sort", ["parent": id]) }
@@ -137,6 +146,9 @@ struct AlbumMenu: View {
             if node.isPlain {
                 Button("Add Selected Photos", systemImage: "plus") { model.perform("album.addPhotos", ["id": id]) }
                     .disabled(model.library.selected.isEmpty)
+            }
+            if node.smart == true {
+                Button("Edit Smart Album…", systemImage: "slider.horizontal.3") { model.sheet = .smartAlbum(node.id, parent: nil) }
             }
             if model.albums.sync?.signedIn == true {
                 let offline = model.albums.isOffline(node.id)

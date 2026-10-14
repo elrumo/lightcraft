@@ -95,6 +95,13 @@ struct SheetContent: View {
         case .pasteSettings(let ids): CopySettingsSheet(pasteOnto: ids)
         case .superRes: SuperResSheet()
         case .createPreset: CreatePresetSheet()
+        case .smartAlbum(let id, let parent): SmartAlbumSheet(album: id, parent: parent)
+        case .allMetadata: AllMetadataSheet()
+        case .newSmartAlbumFromView:
+            // the grid as it is shown (source and filter) becomes a smart album
+            AlbumNameSheet(title: "New Smart Album", action: "Create", name: "") { name in
+                await model.run("album.createSmart", ["name": .string(name)])
+            }
         }
     }
 }

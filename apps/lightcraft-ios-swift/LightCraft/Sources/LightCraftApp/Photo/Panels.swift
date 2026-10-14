@@ -195,6 +195,8 @@ struct InfoPanel: View {
                     }
                 }
                 .buttonStyle(.plain)
+                Button("All Metadata…", systemImage: "list.bullet.rectangle") { model.sheet = .allMetadata }
+                    .font(.subheadline)
             } else {
                 ProgressView()
             }
@@ -261,6 +263,58 @@ struct InfoPanel: View {
         f.dateFormat = iso.count > 10 ? "yyyy-MM-dd'T'HH:mm:ss" : "yyyy-MM-dd"
         guard let d = f.date(from: String(iso.prefix(19))) else { return iso }
         return d.formatted(date: .complete, time: iso.count > 10 ? .shortened : .omitted)
+    }
+}
+
+/// All Metadata: every EXIF, TIFF and GPS tag of the photo's file by group, then its XMP
+/// properties (`photo.allMetadata`), searchable.
+struct AllMetadataSheet: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    @State private var rows: JSONValue = .null
+    @State private var search = ""
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if let note = rows["note"].string {
+                    Text(note).foregroundStyle(.secondary)
+                }
+                ForEach(groups, id: \.0) { group, items in
+                    Section(group) {
+                        ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+                            LabeledContent(item.0) {
+                                Text(item.1).multilineTextAlignment(.trailing).textSelection(.enabled)
+                            }
+                        }
+                    }
+                }
+            }
+            .searchable(text: $search, prompt: "Filter fields")
+            .navigationTitle("All Metadata")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done", systemImage: "checkmark") { dismiss() } } }
+            .overlay { if rows.isNull { ProgressView() } }
+        }
+        .task {
+            guard let engine = model.engine else { return }
+            rows = (try? await engine.execute("photo.allMetadata")) ?? ["exif": [], "xmp": []]
+        }
+    }
+
+    /// The fields that match the search, by group (EXIF groups in order, XMP last).
+    private var groups: [(String, [(String, String)])] {
+        let q = search.trimmingCharacters(in: .whitespaces).lowercased()
+        let keep = { (n: String, v: String) in q.isEmpty || n.lowercased().contains(q) || v.lowercased().contains(q) }
+        var out: [(String, [(String, String)])] = []
+        for row in rows["exif"].array ?? [] {
+            let (g, n, v) = (row["group"].string ?? "", row["name"].string ?? "", row["value"].string ?? "")
+            guard keep(n, v) else { continue }
+            if let i = out.firstIndex(where: { $0.0 == g }) { out[i].1.append((n, v)) } else { out.append((g, [(n, v)])) }
+        }
+        let xmp = (rows["xmp"].array ?? []).map { ($0["name"].string ?? "", $0["value"].string ?? "") }.filter { keep($0.0, $0.1) }
+        if !xmp.isEmpty { out.append(("XMP", xmp)) }
+        return out
     }
 }
 #endif

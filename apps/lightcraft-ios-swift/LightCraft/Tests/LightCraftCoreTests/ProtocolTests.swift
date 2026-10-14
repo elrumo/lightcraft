@@ -61,6 +61,7 @@ struct ProtocolTests {
         guard case .state(let state) = all[5] else { Issue.record("\(all[5])"); return }
         #expect(state.active == 7 && state.undo == "Exposure" && state.redo == nil)
         #expect(state.activeMask == 2 && state.activeSpot == nil)
+        #expect(state.faces == FaceScan(pendingPhotos: 40, indexedFaces: 12))
         guard case .activity(let tasks) = all[6] else { Issue.record("\(all[6])"); return }
         #expect(tasks.first?.unit == "count" && tasks.first?.ageMs == 1200)
         guard case .uiRequest(4, "ui.screenshot", let params) = all[8] else { Issue.record("\(all[8])"); return }
