@@ -14,6 +14,7 @@
 //! - [`import`]: importing in the background: the scan the review shows, files readied on a
 //!   worker in batches, each added to the catalog between frames or ticks.
 //! - [`faces`]: how fast face recognition's background scan may work, from what the user is doing.
+//! - [`superres`]: AI Super Resolution on a worker thread, with its activity row.
 //! - [`sync`]: self-hosted sync driven from the frontend's loop (requests on worker threads, answers
 //!   applied between frames or ticks).
 //! - `host` (native only): the engine on a thread of its own, driven by JSON requests and
@@ -34,4 +35,5 @@ pub mod host;
 pub mod import;
 pub mod render;
 pub mod startup;
+pub mod superres;
 pub mod sync;
