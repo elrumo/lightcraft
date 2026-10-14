@@ -392,7 +392,7 @@ struct ZoomablePhoto: View {
             w *= maxEdge / long
             h *= maxEdge / long
         }
-        return ViewRequest(photo: photo, width: Int(w), height: Int(h), revision: model.state.catalogRevision, dragging: model.state.interaction != nil,
+        return ViewRequest(photo: photo, width: Int(max(w, 1)), height: Int(max(h, 1)), revision: model.state.catalogRevision, dragging: model.state.interaction != nil,
                            crop: model.editor.tool != .crop, overlay: model.viewOverlay, zoom: zoomRequest)
     }
 

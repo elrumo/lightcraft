@@ -398,6 +398,8 @@ struct Scrubber: View {
                             DragGesture(minimumDistance: 0, coordinateSpace: .named("scrubber"))
                                 .onChanged { g in
                                     grabbed = true
+                                    // (before layout the track has no height: nothing to scrub)
+                                    guard usable > 0, count > 0 else { return }
                                     let f = min(max((g.location.y - 24) / usable, 0), 1)
                                     moved(Int(f * CGFloat(count - 1)))
                                 }
