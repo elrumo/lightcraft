@@ -145,3 +145,52 @@ fn the_face_frames_follow_the_photo() {
     run(&mut h, "view.reviewMode", json!({"on": true}));
     assert!(!has(&h, "face:0"));
 }
+
+/// The unnamed faces of one person are one round face (the face finder grouped them, here or on the
+/// server): a tap and a name names every one of them.
+#[test]
+fn a_persons_unnamed_faces_are_one_face_and_named_together() {
+    let mut h = phone();
+    h.app.session.vision.set_face_finder(std::sync::Arc::new(lightcraft_vision::fake::FakeFaces));
+    h.app.session.vision.text_edge = 192;
+    run(&mut h, "vision.setFaces", json!({"on": true}));
+    run(&mut h, "vision.index", json!({"wait": true}));
+    // face boxes where the stand-in finds faces (the two halves of a photo), as Detect Faces would add them
+    let ids: Vec<u64> = h.app.session.catalog.photos().map(|p| p.id.0).collect();
+    for id in ids {
+        for (x0, x1) in [(0.1, 0.45), (0.55, 0.9)] {
+            h.app.run("photo.addRegion", json!({"id": id, "rect": {"x0": x0, "y0": 0.2, "x1": x1, "y1": 0.8}})).unwrap();
+        }
+    }
+    run(&mut h, "view.people", json!({}));
+    let r = h.app.session.execute("faces.unnamed", &json!({})).unwrap();
+    let first: Vec<(u64, u64)> = r["faces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|f| f["group"] == 0)
+        .map(|f| (f["photo"].as_u64().unwrap(), f["index"].as_u64().unwrap()))
+        .collect();
+    assert!(first.len() > 1, "{r}");
+    let face = |(photo, index): (u64, u64)| format!("unnamed-face:{photo}:{index}");
+    assert!(first[1..].iter().all(|f| !has(&h, &face(*f))), "one face for the person");
+    // (below the found people: scroll down to it)
+    for _ in 0..20 {
+        if has(&h, &face(first[0])) {
+            break;
+        }
+        h.request("ui.move", json!({"x": 195.0, "y": 500.0}), T);
+        h.request("ui.scroll", json!({"dy": -250.0}), T);
+        h.settle(SETTLE);
+    }
+    snap(&h, "people-phone-grouped");
+    click(&mut h, &face(first[0]));
+    assert!(has(&h, "sheet:faceName"));
+    assert!(!has(&h, "button:removeFace"), "removing is for one face, not a person");
+    type_text(&mut h, "Dee");
+    click(&mut h, "button:sheetOk");
+    for (photo, index) in &first {
+        assert_eq!(regions(&h, *photo)[*index as usize].name.as_deref(), Some("Dee"), "every face of theirs is named");
+    }
+    assert!(has(&h, "person:Dee"));
+}

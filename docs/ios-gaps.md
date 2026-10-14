@@ -106,7 +106,7 @@ mark: not started.
 | B2.7 | Share a before / after image or a time-lapse of the edit history | P2 | |
 | B2.8 | 🟡 Save to Photos and send to other apps in the formats / sizes / watermark of the export options: Share opens the system's share sheet (A1.3; checked on the simulator), Save to Photos adds the files to the photo library through PhotoKit with add-only access (`lightcraft-ios-host` `save_to_photos`; JPEG, PNG, TIFF and DNG; refused with a reason for the other file types) | P0 | run the PhotoKit save on the simulator and a device (permission prompt, denied, a full library) |
 | B2.9 | Backup and restore of the catalog from the app | P1 | catalog is a log; a zip export is easy |
-| B2.10 | Account, subscription and storage UI | OOS | no LightCraft service or subscription: accounts live on the user's own sync server (its admin page) |
+| B2.10 | Account, subscription and storage UI | OOS | no LightCraft service or subscription: accounts live on the user's own sync server, administered from Settings ▸ Server Administration (or its `/admin` page) |
 
 ### B3. Library and organisation
 
@@ -135,7 +135,7 @@ mark: not started.
 | B4.4 | Denoise and super resolution (Enhance) | P1 | `parity-checklist.md` P rows ⬜ |
 | B4.5 | Versions and history on the phone: pick a version, tap a history step | P1 | exists on desktop (`RightPanel::Versions`); no compact entry (A2.11) |
 | B4.6 | Edit a pre-selected set: copy / paste settings across selected photos, sync, apply the last edit, with checkboxes for what to paste | P1 | engine has it; no compact UI (A2.9) |
-| B4.7 | HDR editing and display: edit and export HDR photos (gain map HEIC / AVIF), show them on an HDR display | P1 | `parity-checklist.md` Q rows ⬜; EDR output on Metal |
+| B4.7 | HDR editing and display: edit and export HDR photos (gain map HEIC / AVIF), show them on an HDR display | P1 | the SwiftUI app shows an HDR edit in HDR on a screen with EDR headroom ([hdr-display](hdr-display.md); simulator-checked for plumbing, not yet on a device); the egui iOS app does not |
 | B4.8 | Geometry on touch: guided Upright by drawing lines with a finger, straighten by dragging the dial, rotate / flip buttons | P1 | tools exist; no touch pass |
 | B4.9 | Selective-adjustment gestures: a local adjustment pin you slide to change the amount, with a ring showing the radial / linear region while dragging | P1 | mask overlay exists |
 | B4.10 | Colour grading wheels sized for a finger, with a "Reset" per wheel | P1 | A2.3 |

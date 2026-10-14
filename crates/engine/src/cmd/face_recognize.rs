@@ -95,18 +95,32 @@ fn set_name(s: &mut Session, p: &Value) -> Result<Value> {
 /// Most faces `faces.unnamed` lists.
 const MAX_UNNAMED: usize = 3000;
 
-/// How the unnamed faces were laid out.
-struct Arranged {
-    /// Faces that look alike are next to each other (only the ones already embedded can be).
-    ordered: bool,
-    /// Recognition is on and a model is loaded.
-    ready: bool,
-    /// A name for some faces, when the faces already named say so with confidence: `(photo, index)` to `(name, score)`.
-    suggestions: std::collections::HashMap<(u64, usize), (String, f32)>,
+/// Positions `0..n` in the order the People view shows them, each with its group number: the groups biggest first (a
+/// face in two groups only in the first), each in its own order, then every face in no group as a group of its own.
+fn by_person(n: usize, mut groups: Vec<Vec<usize>>) -> Vec<(usize, usize)> {
+    groups.sort_by_key(|g| std::cmp::Reverse(g.len()));
+    let (mut placed, mut out, mut next) = (vec![false; n], Vec::with_capacity(n), 0);
+    for g in groups {
+        let before = out.len();
+        for i in g {
+            if let Some(p) = placed.get_mut(i).filter(|p| !**p) {
+                *p = true;
+                out.push((i, next));
+            }
+        }
+        next += usize::from(out.len() > before);
+    }
+    for (i, _) in placed.iter().enumerate().filter(|(_, p)| !**p) {
+        out.push((i, next));
+        next += 1;
+    }
+    out
 }
 
-/// `faces.unnamed {limit?: 600}`: the faces nobody has named, to be named a group at a time. With recognition running,
-/// faces that look alike are next to each other, and a face the named faces recognise carries the name they suggest.
+/// `faces.unnamed {limit?: 600}`: the faces nobody has named, to be named a person at a time. Each face has a `group`:
+/// the faces of one person share it and are listed together, biggest group first. They are grouped by this device's
+/// recognition, and the faces it hasn't grouped by the people the face finder found (here, or on the sync server for a
+/// device that finds none itself). A face the named faces recognise carries the name they suggest.
 fn unnamed(s: &mut Session, p: &Value) -> Result<Value> {
     let limit = p.get("limit").and_then(Value::as_u64).map_or(600, |n| usize::try_from(n).unwrap_or(600)).clamp(1, MAX_UNNAMED);
     let mut all: Vec<(u64, usize, lightcraft_geom::Rect)> = Vec::new();
@@ -119,17 +133,32 @@ fn unnamed(s: &mut Session, p: &Value) -> Result<Value> {
     }
     all.sort_by_key(|(photo, index, _)| (*photo, *index));
     let total = all.len();
-    let arranged = imp::arrange_unnamed(s, &mut all, limit);
-    all.truncate(limit);
-    let faces: Vec<Value> = all
+    let local = imp::groups(s, &all);
+    let ready = local.is_some();
+    let mut groups: Vec<Vec<usize>> = local.unwrap_or_default().into_iter().filter(|g| g.len() > 1).collect();
+    let grouped: std::collections::HashSet<usize> = groups.iter().flatten().copied().collect();
+    let rest: Vec<(usize, lightcraft_catalog::PhotoId, lightcraft_geom::Rect)> = all
         .iter()
-        .map(|(photo, index, rect)| {
+        .enumerate()
+        .filter(|(i, _)| !grouped.contains(i))
+        .map(|(i, (photo, _, rect))| (i, lightcraft_catalog::PhotoId(*photo), *rect))
+        .collect();
+    groups.extend(s.people_groups(&rest));
+    let ordered = groups.iter().any(|g| g.len() > 1);
+    let mut order = by_person(all.len(), groups);
+    order.truncate(limit);
+    let listed: Vec<(u64, usize, lightcraft_geom::Rect, usize)> =
+        order.iter().filter_map(|&(i, g)| all.get(i).map(|&(photo, index, rect)| (photo, index, rect, g))).collect();
+    let suggestions = imp::suggestions(s, &listed.iter().map(|&(photo, index, rect, _)| (photo, index, rect)).collect::<Vec<_>>());
+    let faces: Vec<Value> = listed
+        .iter()
+        .map(|(photo, index, rect, group)| {
             let view = s.face_view(lightcraft_catalog::PhotoId(*photo), *rect);
-            let suggestion = arranged.suggestions.get(&(*photo, *index)).map(|(name, score)| json!({"name": name, "score": score}));
-            json!({"photo": photo, "index": index, "rect": rect_json(rect), "view": rect_json(&view), "suggestion": suggestion})
+            let suggestion = suggestions.get(&(*photo, *index)).map(|(name, score)| json!({"name": name, "score": score}));
+            json!({"photo": photo, "index": index, "group": group, "rect": rect_json(rect), "view": rect_json(&view), "suggestion": suggestion})
         })
         .collect();
-    Ok(json!({"total": total, "faces": faces, "ordered": arranged.ordered, "ready": arranged.ready}))
+    Ok(json!({"total": total, "faces": faces, "ordered": ordered, "ready": ready}))
 }
 
 /// What looking for faces that resemble a person found.
@@ -653,58 +682,41 @@ mod imp {
         Similar { items, ..ready }
     }
 
-    /// Most faces put in order of likeness (the order is a pass over every pair of them).
+    /// Most faces grouped into people (grouping compares each face with every person found so far).
     const MAX_ARRANGED: usize = 1500;
 
-    /// Faces in an order that puts look-alikes together: start anywhere, then always go to the closest face not yet placed.
-    fn nearest_chain(embeddings: &[&[f32]]) -> Vec<usize> {
-        let n = embeddings.len();
-        let (mut placed, mut order) = (vec![false; n], Vec::with_capacity(n));
-        let mut current = 0;
-        if n == 0 {
-            return order;
+    /// The unnamed faces `all` grouped into people by their embeddings (the first [`MAX_ARRANGED`] already embedded):
+    /// positions in `all`, the biggest face first, a face alone a group of one. `None` when recognition is not running.
+    pub fn groups(s: &mut Session, all: &[(u64, usize, Rect)]) -> Option<Vec<Vec<usize>>> {
+        let dir = s.face_models_dir.clone()?;
+        if !enabled_cached(s, &dir) {
+            return None;
         }
-        placed[0] = true;
-        order.push(0);
-        for _ in 1..n {
-            let mut best: Option<(usize, f32)> = None;
-            for (j, e) in embeddings.iter().enumerate() {
-                if placed[j] {
-                    continue;
-                }
-                let c = matching::cosine(embeddings[current], e).unwrap_or(-1.0);
-                if best.is_none_or(|(_, b)| c > b) {
-                    best = Some((j, c));
-                }
-            }
-            let Some((j, _)) = best else { break };
-            placed[j] = true;
-            order.push(j);
-            current = j;
-        }
-        order
+        let embedder = current_with(s, "faces.unnamed", false).ok()?;
+        let embedded: Vec<(usize, Arc<[f32]>, f32)> = all
+            .iter()
+            .enumerate()
+            .filter_map(|(i, (photo, _, rect))| {
+                let area = ((rect.x1 - rect.x0) * (rect.y1 - rect.y0)).max(0.0).sqrt() as f32;
+                s.faces.index.get(*photo, rect).map(|e| (i, e.clone(), area))
+            })
+            .take(MAX_ARRANGED)
+            .collect();
+        let items: Vec<(&[f32], f32)> = embedded.iter().map(|(_, e, q)| (&e[..], *q)).collect();
+        let join = embedder.manifest().thresholds.match_cosine.unwrap_or(DEFAULT_THRESHOLD);
+        let groups = lightcraft_vision::faces::cluster::group_vectors(&items, join);
+        Some(groups.into_iter().map(|g| g.members.into_iter().filter_map(|m| embedded.get(m).map(|(i, _, _)| *i)).collect()).collect())
     }
 
-    /// Put the unnamed faces `all` in order of likeness (the ones already embedded; the rest follow in photo order) and
-    /// find a name for those the named faces recognise, for the first `limit` of them.
-    pub fn arrange_unnamed(s: &mut Session, all: &mut Vec<(u64, usize, Rect)>, limit: usize) -> super::Arranged {
-        let none = super::Arranged { ordered: false, ready: false, suggestions: Default::default() };
-        let Some(dir) = s.face_models_dir.clone() else { return none };
+    /// A name for each of `faces` the named faces recognise with confidence, as `faces.suggest` would: `(photo, index)`
+    /// to `(name, score)`.
+    pub fn suggestions(s: &mut Session, faces: &[(u64, usize, Rect)]) -> std::collections::HashMap<(u64, usize), (String, f32)> {
+        let mut out = std::collections::HashMap::new();
+        let Some(dir) = s.face_models_dir.clone() else { return out };
         if !enabled_cached(s, &dir) {
-            return none;
+            return out;
         }
-        let Ok(embedder) = current_with(s, "faces.unnamed", false) else { return none };
-        let (mut embedded, mut plain) = (Vec::new(), Vec::new());
-        for f in all.drain(..) {
-            match s.faces.index.get(f.0, &f.2) {
-                Some(e) => embedded.push((f, e.clone())),
-                None => plain.push(f),
-            }
-        }
-        let beyond = embedded.split_off(embedded.len().min(MAX_ARRANGED));
-        let order = nearest_chain(&embedded.iter().map(|(_, e)| &e[..]).collect::<Vec<_>>());
-        let ordered: Vec<((u64, usize, Rect), Arc<[f32]>)> = order.into_iter().filter_map(|i| embedded.get(i).cloned()).collect();
-        // names the faces already named suggest, as `faces.suggest` would
+        let Ok(embedder) = current_with(s, "faces.unnamed", false) else { return out };
         let gallery: Vec<(String, Arc<[f32]>)> = s
             .catalog
             .photos()
@@ -719,20 +731,17 @@ mod imp {
             })
             .collect();
         let refs: Vec<(&str, &[f32])> = gallery.iter().map(|(n, e)| (n.as_str(), &e[..])).collect();
+        if refs.is_empty() {
+            return out;
+        }
         let threshold = embedder.manifest().thresholds.match_cosine.unwrap_or(DEFAULT_THRESHOLD);
-        let mut suggestions = std::collections::HashMap::new();
-        if !refs.is_empty() {
-            for ((photo, index, _), e) in ordered.iter().take(limit) {
-                if let Some(x) = matching::suggest(&matching::rank(e, &refs), threshold, DEFAULT_MARGIN) {
-                    suggestions.insert((*photo, *index), (x.name, x.score));
-                }
+        for (photo, index, rect) in faces {
+            let Some(e) = s.faces.index.get(*photo, rect) else { continue };
+            if let Some(x) = matching::suggest(&matching::rank(e, &refs), threshold, DEFAULT_MARGIN) {
+                out.insert((*photo, *index), (x.name, x.score));
             }
         }
-        let grouped = !ordered.is_empty();
-        all.extend(ordered.into_iter().map(|(f, _)| f));
-        all.extend(beyond.into_iter().map(|(f, _)| f));
-        all.extend(plain);
-        super::Arranged { ordered: grouped, ready: true, suggestions }
+        out
     }
 
     /// Whether face recognition is switched on, looked up at most once a second.
@@ -968,8 +977,12 @@ mod imp {
         super::Similar { items: Vec::new(), ready: false, pending: 0 }
     }
 
-    pub fn arrange_unnamed(_: &mut Session, _: &mut Vec<(u64, usize, lightcraft_geom::Rect)>, _: usize) -> super::Arranged {
-        super::Arranged { ordered: false, ready: false, suggestions: Default::default() }
+    pub fn groups(_: &mut Session, _: &[(u64, usize, lightcraft_geom::Rect)]) -> Option<Vec<Vec<usize>>> {
+        None
+    }
+
+    pub fn suggestions(_: &mut Session, _: &[(u64, usize, lightcraft_geom::Rect)]) -> std::collections::HashMap<(u64, usize), (String, f32)> {
+        Default::default()
     }
 }
 
@@ -1016,7 +1029,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Unnamed Faces",
             [],
             None,
-            "{limit?: 600} → {total, faces: [{photo, index, rect, view, suggestion: {name, score} | null}], ordered, ready} — the faces nobody has named; with recognition running, look-alikes are next to each other and a face the named ones recognise carries the name they suggest. `view` is the box to show the face by. Name them with `faces.nameFaces`",
+            "{limit?: 600} → {total, faces: [{photo, index, group, rect, view, suggestion: {name, score} | null}], ordered, ready} — the faces nobody has named, each person's faces together (same `group`, biggest first, best face first), grouped by recognition or else by the people the face finder found here or on the sync server; `ordered`: some faces are grouped. A face the named ones recognise carries the name they suggest. `view` is the box to show the face by. Name them with `faces.nameFaces`",
             super::always,
             unnamed
         ),

@@ -325,7 +325,7 @@ LightCraft is young and moving fast: **alpha**. **Where we honestly stand** (det
   - **compressed Olympus raws and unsupported CR3 variants:** these use embedded JPEG previews when present. Fujifilm lossless/lossy compressed RAF now decodes sensor data; [verification and existing-library reload instructions](docs/raf-compression.md);
   - **AI masks and denoise:** subject and sky selection are classical heuristics;
   - **network libraries:** a preview reads the raw's header — or, for a CR3 or a TIFF raw whose preview tag sits past it, exactly the ranges the sparse planner names — and its embedded JPEG only (56.5 MB → 5.9 MB, 10 s → 1 s on the test share), but the *developed* picture still needs the sensor data over the wire; see [docs/raw-preview-reads.md](docs/raw-preview-reads.md);
-  - **on-screen HDR display, video and the Classic Print / Book / Map modules.**
+  - **HDR display on Windows and Linux, video and the Classic Print / Book / Map modules.**
 - **What's next:** see [the ranked gaps](docs/gaps.md) and [the roadmap](docs/roadmap.md).
 
 | Area | Status |
@@ -342,7 +342,7 @@ LightCraft is young and moving fast: **alpha**. **Where we honestly stand** (det
 | Detail: sharpening, luminance + colour noise reduction | ✅ · AI Denoise 🚧 (Bayer, user-installed weights), Super Resolution 🚧 (2×, optional model download; [docs/super-resolution.md](docs/super-resolution.md)) |
 | Remove (content-aware fill) / Heal / Clone spots (auto source, editable pins), Visualize Spots, Red Eye and Pet Eye (auto pupil detection, catchlight) | ✅ |
 | Export: JPEG / PNG / TIFF / WebP / AVIF / DNG / original, sizing, file-size limit, output sharpening, naming templates, batch, metadata policy, text or image watermark | ✅ |
-| HDR: HDR editing with a headroom limit, SDR rendition, Visualize HDR; export as ISO 21496-1 gain map JPEG, PQ AVIF or 32-bit float TIFF | ✅ · HDR display ⬜ |
+| HDR: HDR editing with a headroom limit, SDR rendition, Visualize HDR; export as ISO 21496-1 gain map JPEG, PQ AVIF or 32-bit float TIFF | ✅ · HDR display ✅ on macOS and in the SwiftUI app, ⬜ on Windows and Linux |
 | Library persistence (crash-safe op log + snapshots, background compaction, failed saves reported), disk thumbnail cache | ✅ |
 | Import: Add in place / Copy / Move, rename and folder templates, devices, duplicate detection, watched folders; Local folder browsing | ✅ |
 | MCP server (headless or live app, persistent libraries), CLI, control channel | ✅ |

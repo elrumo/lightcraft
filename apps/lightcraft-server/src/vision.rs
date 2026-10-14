@@ -526,10 +526,11 @@ pub(crate) fn run(st: &Arc<State>) {
             }
         };
         for user in accounts::read_users(&st.data).map(|f| f.users.into_keys().collect::<Vec<_>>()).unwrap_or_default() {
-            if v.installed() {
+            if v.installed() && v.switch.may_run(Part::Search) {
                 report(user.clone(), "search index", index_user(st, &user));
             }
             if v.faces_installed()
+                && v.switch.may_run(Part::Faces)
                 && !v.stop.load(Ordering::SeqCst)
                 && accounts::read_users(&st.data).is_ok_and(|f| f.users.get(&user).is_some_and(|u| u.faces))
             {
@@ -543,7 +544,7 @@ pub(crate) fn run(st: &Arc<State>) {
                     Err(e) => report(format!("{user}:faces"), "face index", Err(e)),
                 }
             }
-            if v.text_installed() && !v.stop.load(Ordering::SeqCst) {
+            if v.text_installed() && v.switch.may_run(Part::Text) && !v.stop.load(Ordering::SeqCst) {
                 match read_user(st, &user) {
                     // (more to read: come back after looking at new photos)
                     Ok(more) => {
@@ -620,6 +621,7 @@ fn scan_user(st: &Arc<State>, user: &str) -> Result<bool, String> {
         }
         v.touch();
     }
+    v.switch.record(Part::Faces, done, started.elapsed().as_secs_f64());
     log::info!("{user}: faces found in {done} of {} photo(s) in {:.1} s", work.len(), started.elapsed().as_secs_f64());
     lightcraft_engine::memory::release();
     Ok(more)
@@ -684,6 +686,7 @@ fn read_user(st: &Arc<State>, user: &str) -> Result<bool, String> {
         }
         v.touch();
     }
+    v.switch.record(Part::Text, done, started.elapsed().as_secs_f64());
     log::info!("{user}: text read from {done} of {} photo(s) in {:.1} s", work.len(), started.elapsed().as_secs_f64());
     lightcraft_engine::memory::release();
     Ok(more)
@@ -751,6 +754,7 @@ fn index_user(st: &Arc<State>, user: &str) -> Result<(), String> {
         done += keys.len();
         v.touch();
     }
+    v.switch.record(Part::Search, done, started.elapsed().as_secs_f64());
     log::info!("{user}: {done} of {total} photo(s) indexed for search in {:.1} s", started.elapsed().as_secs_f64());
     lightcraft_engine::memory::release();
     Ok(())

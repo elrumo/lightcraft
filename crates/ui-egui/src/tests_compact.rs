@@ -582,7 +582,17 @@ fn a_zoomed_photo_is_not_covered_by_its_neighbour() {
     let size = [4, 4];
     h.app.renderer.textures.insert(
         Slot::Prefetch(0),
-        Tex { key: 0, photo: next, size, histogram: None, ms: 0.0, quick: None, request_id: 0, draft: false, view: TexView { tex, pixels: None } },
+        Tex {
+            key: 0,
+            photo: next,
+            size,
+            histogram: None,
+            ms: 0.0,
+            quick: None,
+            request_id: 0,
+            draft: false,
+            view: TexView { tex, pixels: None, hdr: None },
+        },
     );
     h.step();
     assert!(!h.paint().pixels.contains(&magenta), "the neighbour is drawn over the zoomed photo");
@@ -1224,4 +1234,35 @@ fn a_tap_on_a_focused_field_opens_its_edit_menu() {
     assert_eq!(query.as_deref(), Some("crop"), "the pasted text replaced the selection");
     assert!(h.view.ctx.memory(|m| m.focused()).is_some(), "the field kept the keyboard");
     assert!(!has(&h, "button:edit-paste"), "a choice closes the menu");
+}
+
+/// A dialog opened from All Commands is drawn while that page is still sliding out; both have a
+/// "sheetCancel" button, and egui (debug builds) asserts when one widget id turns up in two layers
+/// in a frame. Each page's bar buttons have ids of their own.
+#[test]
+fn a_dialog_opened_from_all_commands_does_not_share_widget_ids_with_it() {
+    use crate::state::Dialog;
+    let mut h = phone(Services::default());
+    h.app.ui.all_commands = true;
+    h.settle(SETTLE);
+    let field = rect_of(&h, "field:allCommandsSearch");
+    for phase in [egui::TouchPhase::Start, egui::TouchPhase::End] {
+        h.app.synthetic.push(egui::Event::Touch { device_id: egui::TouchDeviceId(0), id: egui::TouchId(0), phase, pos: field.center(), force: None });
+    }
+    h.settle(SETTLE);
+    tap(&mut h, "field:allCommandsSearch");
+    let r = h.request("ui.text", json!({"text": "new album"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    h.settle(SETTLE);
+    h.view.ctx.memory_mut(|m| {
+        if let Some(f) = m.focused() {
+            m.surrender_focus(f);
+        }
+    });
+    h.settle(SETTLE);
+    tap(&mut h, "button:cmd:dialog.newAlbum");
+    frames(&mut h, 30);
+    assert!(matches!(h.app.ui.dialog, Some(Dialog::NewAlbum { .. })), "{:?}", h.app.ui.dialog);
+    assert!(!h.app.ui.all_commands);
+    assert!(has(&h, "button:sheetCancel") && has(&h, "button:sheetOk"));
 }

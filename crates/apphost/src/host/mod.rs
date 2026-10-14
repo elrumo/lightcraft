@@ -17,17 +17,21 @@
 //! - `render.thumb {photo, edge, priority?}`, `render.view {photo?, width, height, draft?, before?,
 //!   applyCrop?}` (a `draft` comes smaller, as fast as this host renders: a slider drag),
 //!   `render.prefetch {photos, width, height}`, `render.cancel {slots}`, `render.retain {thumbs, max?}`
-//!   — pictures arrive as `image` events.
+//!   — pictures arrive as `image` events. A thumbnail asked for once stays asked for, every tick, while
+//!   `render.retain` lists its photo and it has no picture (`thumbs_wanted`).
 //! - `import.scan {paths}` — the files and folders for the import review (answered when the scan
 //!   ends: `{candidates}`, each with `inTrash`); `render.candidate {index, edge?}` — a candidate's
 //!   thumbnail (slot `import:<index>`); `import.start {paths | indexes, …library.import params,
 //!   albumName?}` — import in the background (answered when it ends: what it added).
+//! - `host.admin.signIn | call | signOut | session` — the sync server's admin API, on worker threads
+//!   ([`admin`]: the SwiftUI app's Server Administration screens).
 //! - `ui.reply {id, result | error}` — the frontend's answer to a `uiRequest` (automation).
 //!
 //! Between requests the thread drives what the egui app's frame loop drives: renders, saving, the
 //! activity stack and the self-hosted sync ([`crate::sync`]; a share link comes as a `copy` event,
 //! the choice after signing in to a server that has a library as `ask {dialog: "syncChoice"}`).
 
+mod admin;
 pub mod leases;
 pub mod protocol;
 mod script;
@@ -47,7 +51,7 @@ use serde_json::{Value, json};
 pub use leases::{BytesRef, ImageRef, Leases};
 pub use protocol::{ErrorBody, Event, HostState, OpenConfig, Request};
 
-use crate::render::{Present, Scheduler, Slot};
+use crate::render::{HdrPicture, Present, Scheduler, Slot};
 
 /// Most events one [`Host::poll`] returns (the rest wait for the next).
 pub const MAX_EVENTS: usize = 512;
@@ -222,14 +226,20 @@ impl Drop for Host {
 /// Collects finished renders' pixels (the scheduler keeps only their facts: a frontend that isn't
 /// Rust keeps its own copy, so holding them here too would count every picture twice).
 #[derive(Default)]
-struct Collect(Vec<(Slot, Rgba8)>);
+struct Collect(Vec<(Slot, Rgba8, Option<Arc<HdrPicture>>)>);
 
 impl Present<()> for Collect {
     fn make(&mut self, slot: Slot, image: Rgba8) {
-        self.0.push((slot, image));
+        self.0.push((slot, image, None));
     }
     fn update(&mut self, slot: Slot, image: Rgba8, _: &mut ()) {
-        self.0.push((slot, image));
+        self.0.push((slot, image, None));
+    }
+    /// (called right after the `make` or `update` of the same render: its picture's HDR rendition, or none)
+    fn set_hdr(&mut self, slot: Slot, hdr: Option<Arc<HdrPicture>>, _: &mut ()) {
+        if let Some(last) = self.0.iter_mut().rev().find(|(s, ..)| *s == slot) {
+            last.2 = hdr;
+        }
     }
 }
 
@@ -273,6 +283,8 @@ struct Engine {
     /// Lightroom catalog inspection or import on its workers, and the request answered when it ends.
     lightroom: crate::lightroom::Runner,
     lightroom_reply: Option<(u64, Option<Sender<Event>>)>,
+    /// The server administration session and its requests in flight (`host.admin.*`).
+    admin: admin::Admin,
     /// The zoom window last asked for (`render.view {zoom}`): its image event says where it goes.
     region: Option<RegionShown>,
     /// `import.scan` running on its worker, and the candidates of the last one (`render.candidate`).
@@ -285,6 +297,11 @@ struct Engine {
     /// Previews asked for (`render.variant`) and not rendered yet: asked again every tick (the
     /// scheduler drops variants nobody has asked for lately), for a while.
     variants: HashMap<u64, (lightcraft_engine::media::RenderJob, Instant)>,
+    /// Grid thumbnails asked for (`render.thumb`: size and priority) that have no picture yet, while the
+    /// frontend lists them as on screen (`render.retain`): asked again every tick, because the engine
+    /// downloads a synced photo's mini preview only while its cell keeps asking, and renders again once
+    /// it has landed. (A frontend asks once, when the cell appears.)
+    thumbs_wanted: HashMap<PhotoId, (usize, u32)>,
 }
 
 /// A scan for the import review the frontend asked for.
@@ -399,6 +416,7 @@ impl Engine {
             export: None,
             lightroom: Default::default(),
             lightroom_reply: None,
+            admin: Default::default(),
             super_res: None,
             merge: crate::merge::Runner::default(),
             merge_preview: None,
@@ -410,6 +428,7 @@ impl Engine {
             import: None,
             wake: host_wake,
             variants: HashMap::new(),
+            thumbs_wanted: HashMap::new(),
         })
     }
 
@@ -536,6 +555,11 @@ impl Engine {
             return lightcraft_engine::guard::catch("`host.exportPrevious`", || self.start_export(id, call, &params))
                 .unwrap_or_else(|e| Some(Event::err(id, ErrorBody::new("panic", e))));
         }
+        // the server's admin API (`host.admin.*`): on a worker, answered when the server has
+        if req.method.starts_with("host.admin.") {
+            return lightcraft_engine::guard::catch(&format!("`{}`", req.method), || self.start_admin(id, call, &req.method, &req.params))
+                .unwrap_or_else(|e| Some(Event::err(id, ErrorBody::new("panic", e))));
+        }
         // a merge preview: answered when its picture is drawn (a newer one answers the older "cancelled")
         if req.method == "host.merge.preview" {
             return lightcraft_engine::guard::catch("`host.merge.preview`", || self.start_merge_preview(id, call, &req.params))
@@ -601,6 +625,14 @@ impl Engine {
                 }
                 Ok(json!({}))
             }
+            // the display can (or no longer can) show the range above SDR white: an HDR edit's `main`
+            // and `region` pictures then come with an `hdr` rendition, as soon as they render again
+            "render.hdrDisplay" => {
+                let on = p.get("on").and_then(Value::as_bool).ok_or_else(|| bad("missing `on`"))?;
+                self.sched.set_hdr_display(on);
+                self.busy = true;
+                Ok(json!({}))
+            }
             "host.lifecycle" => {
                 let event = p.get("event").and_then(Value::as_str).ok_or_else(|| bad("missing `event`"))?;
                 self.lifecycle(event).map_err(|e| bad(&e))?;
@@ -617,6 +649,10 @@ impl Engine {
                 let edge = size(p.get("edge")).unwrap_or(256);
                 let priority = p.get("priority").and_then(Value::as_u64).map_or(10, |n| n.min(99) as u32);
                 self.sched.request_thumb(&mut self.session, id, edge, priority);
+                if self.thumbs_wanted.len() >= MAX_THUMBS {
+                    self.thumbs_wanted.clear(); // (the frontend lists what is on screen: it asks again)
+                }
+                self.thumbs_wanted.insert(id, (edge, priority));
                 self.busy = true;
                 Ok(json!({"slot": Slot::Thumb(id).name()}))
             }
@@ -741,6 +777,7 @@ impl Engine {
                     p.get("thumbs").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_u64).map(PhotoId).collect();
                 let max = p.get("max").and_then(Value::as_u64).map_or(MAX_THUMBS, |n| n.clamp(1, 100_000) as usize);
                 self.sched.evict_thumbs(&keep, max);
+                self.thumbs_wanted.retain(|id, _| keep.contains(id));
                 Ok(json!({}))
             }
             "ui.reply" => {
@@ -768,11 +805,13 @@ impl Engine {
         }
         let mut collect = Collect::default();
         let polled = self.sched.poll(&mut self.session, &mut collect);
-        for (slot, image) in collect.0 {
+        for (slot, image, hdr) in collect.0 {
             let Some(shown) = self.sched.textures.get(&slot) else { continue };
             let (width, height) = (u32::try_from(image.width).unwrap_or(u32::MAX), u32::try_from(image.height).unwrap_or(u32::MAX));
             let name = slot.name();
             let token = self.leases.put_image(&name, Arc::new(image));
+            // (the HDR rendition of the same render, a lease of its own)
+            let hdr = hdr.map(|h| json!({"token": self.leases.put_hdr(&name, h.clone()), "width": h.width, "height": h.height, "peak": h.peak}));
             // (with the share of pixels clipped to black and to white: the clipping warnings)
             let histogram = (slot == Slot::Main)
                 .then(|| {
@@ -803,6 +842,7 @@ impl Engine {
                 ms: shown.ms,
                 histogram,
                 window,
+                hdr,
             };
             self.events.push(event.to_value());
         }
@@ -811,6 +851,16 @@ impl Engine {
         }
         self.busy = polled.wake_after.is_some_and(|d| d <= BUSY_TICK);
         let synced = self.sync.poll(&mut self.session, self.in_front, Some(&*self.sync_exec));
+        let (sched, session) = (&mut self.sched, &mut self.session);
+        let mut built = false;
+        self.thumbs_wanted.retain(|id, (edge, priority)| {
+            if sched.thumb(*id).is_some() {
+                return false;
+            }
+            built |= sched.request_thumb(session, *id, *edge, *priority);
+            true
+        });
+        self.busy |= built;
         if let Some(url) = synced.link {
             self.events.push(Event::Copy { text: url.clone() }.to_value());
             self.events.push(Event::Message { text: format!("Link copied: {url}"), level: "info".into() }.to_value());
@@ -825,6 +875,7 @@ impl Engine {
         self.poll_merge();
         self.poll_vision();
         self.poll_lightroom();
+        self.poll_admin();
         self.poll_scan();
         self.poll_import();
         self.session.persist_if_dirty();
@@ -1202,6 +1253,7 @@ impl Engine {
                                         ms: 0.0,
                                         histogram: None,
                                         window: None,
+                                        hdr: None,
                                     }
                                     .to_value(),
                                 );
@@ -1283,6 +1335,7 @@ impl Engine {
             visible_gen,
             visible_count: visible.len(),
             library_generation: self.session.library_generation(),
+            presets_generation: self.session.presets.generation(),
             active: self.session.active(),
             selection_count: self.session.selection.ids.len(),
             undo: self.session.undo.last().map(|u| u.label.clone()),

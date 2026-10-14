@@ -416,7 +416,7 @@ fn draw_window(p: &egui::Painter, app: &LightcraftApp, c: &WindowCtx, v: &Window
     let (fw, fh) = (tile.full.0 as f32, tile.full.1 as f32);
     let at = v.img.min + vec2(tile.window.x as f32 / fw * v.img.width(), tile.window.y as f32 / fh * v.img.height());
     let dst = Rect::from_min_size(at, vec2(tile.window.w as f32 / fw * v.img.width(), tile.window.h as f32 / fh * v.img.height()));
-    p.image(tex.tex.id(), dst, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+    p.image(tex.paint_id(), dst, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
 }
 
 pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
@@ -705,6 +705,8 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         }
     }
     let p = ui.painter_at(canvas);
+    // an HDR picture was drawn this frame (the window's surface goes to HDR output for it)
+    let hdr_drawn = std::cell::Cell::new(false);
     // what a view slot shows: its own render of this photo, else the stand-ins (no blank frame
     // between photos, and the full render replaces them in place)
     let draw = |slot: Slot, r: Rect, clip: Rect| -> &'static str {
@@ -721,7 +723,8 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             return "none";
         };
         let image_rect = fit_texture_rect(r, tex.size);
-        p.with_clip_rect(clip).image(tex.tex.id(), image_rect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+        p.with_clip_rect(clip).image(tex.paint_id(), image_rect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+        hdr_drawn.set(hdr_drawn.get() || tex.hdr.is_some());
         what
     };
     // soft proofing: a paper-white surround and the proof's name, as Lightroom shows it
@@ -784,6 +787,9 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         }
     }
     app.loupe_shown = Some((id, shown));
+    // an HDR picture on screen: the window's surface shows highlights above SDR white while it is (the
+    // Before alone, a hover preview or a stand-in is not one)
+    app.hdr_on_screen = hdr_drawn.get();
     // (neighbours wait beside a fitted photo only: zoomed, their rects, at this zoom, are far wider
     // than the canvas and would be drawn over the photo)
     for (nid, r) in near.iter().filter(|(_, r)| !zoomed && r.intersects(canvas)) {
