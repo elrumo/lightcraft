@@ -151,6 +151,14 @@ nonisolated struct ViewRequest: Hashable {
     let dragging: Bool
     let crop: Bool
     let overlay: JSONValue?
+    let zoom: ZoomRequest?
+}
+
+/// A zoomed loupe's view: the photo's long edge as drawn (pixels) and the part of it on screen, in
+/// thousandths of its width and height (x0, y0, x1, y1).
+nonisolated struct ZoomRequest: Hashable {
+    let drawn: Int
+    let visible: [Int]
 }
 
 /// The active photo, fitted: pinch to zoom, drag to pan, double tap to zoom in and back, a tap to
@@ -193,6 +201,19 @@ struct ZoomablePhoto: View {
                     .scaleEffect(zoom)
                     .offset(pan)
                     .accessibilityLabel("Photo")
+                // zoomed in: the sharp window over it, where it belongs in the photo
+                if zoom > 1.01, let region = model.images.region(for: photo), let w = region.window, w.full.count == 2,
+                   let rect = shownRect(picture), w.full[0] > 0, w.full[1] > 0, rect.height > 0,
+                   abs(Double(w.full[0]) / Double(w.full[1]) / (rect.width / rect.height) - 1) < 0.02
+                {
+                    let (fw, fh) = (CGFloat(w.full[0]), CGFloat(w.full[1]))
+                    Image(decorative: region.image, scale: 1)
+                        .resizable()
+                        .frame(width: rect.width * CGFloat(w.w) / fw, height: rect.height * CGFloat(w.h) / fh)
+                        .position(x: rect.minX + rect.width * (CGFloat(w.x) + CGFloat(w.w) / 2) / fw, y: rect.minY + rect.height * (CGFloat(w.y) + CGFloat(w.h) / 2) / fh)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
             } else if let error = model.images.failed["main"] {
                 ContentUnavailableView("This photo can't be opened", systemImage: "exclamationmark.triangle", description: Text(error))
             } else {
@@ -257,7 +278,7 @@ struct ZoomablePhoto: View {
         .onGeometryChange(for: CGSize.self) { $0.size } action: { canvas = $0 }
         .task(id: request) {
             guard let r = request, !r.dragging else { return }
-            model.requestView(r.photo, width: r.width, height: r.height, applyCrop: r.crop)
+            model.requestView(r.photo, width: r.width, height: r.height, applyCrop: r.crop, zoom: r.zoom)
             if compare { model.requestBefore(photo) }
         }
         .onChange(of: compare) { _, on in
@@ -310,6 +331,11 @@ struct ZoomablePhoto: View {
 
     /// Where the photo is drawn on the canvas: fitted inside the margin, then zoomed and panned.
     func shownRect(_ picture: ImageStore.Picture?) -> CGRect? {
+        zoomedRect(picture, zoom: zoom, pan: pan)
+    }
+
+    /// Where the photo is drawn at `zoom` and `pan` (view math only: fitted, then scaled).
+    private func zoomedRect(_ picture: ImageStore.Picture?, zoom: CGFloat, pan: CGSize) -> CGRect? {
         guard let picture, canvas.width > 0, canvas.height > 0 else { return nil }
         let m = review ? 0 : margin
         let area = CGRect(x: m, y: m, width: canvas.width - 2 * m, height: canvas.height - 2 * m)
@@ -336,18 +362,29 @@ struct ZoomablePhoto: View {
         }
     }
 
-    /// The render this screen wants: the canvas in pixels, sharper when zoomed in.
+    /// The render this screen wants: the canvas in pixels, and once zoomed in (when the gesture
+    /// has settled), the part of the photo on screen, which comes as a sharp window.
     private var request: ViewRequest? {
         guard canvas.width > margin * 2, canvas.height > margin * 2 else { return nil }
-        let zoomBucket: CGFloat = zoom >= 1.5 ? 2 : 1
-        var w = (canvas.width - 2 * margin) * displayScale * zoomBucket
-        var h = (canvas.height - 2 * margin) * displayScale * zoomBucket
+        var w = (canvas.width - 2 * margin) * displayScale
+        var h = (canvas.height - 2 * margin) * displayScale
         let long = max(w, h)
         if long > maxEdge {
             w *= maxEdge / long
             h *= maxEdge / long
         }
-        return ViewRequest(photo: photo, width: Int(w), height: Int(h), revision: model.state.catalogRevision, dragging: model.state.interaction != nil, crop: model.editor.tool != .crop, overlay: model.viewOverlay)
+        return ViewRequest(photo: photo, width: Int(w), height: Int(h), revision: model.state.catalogRevision, dragging: model.state.interaction != nil,
+                           crop: model.editor.tool != .crop, overlay: model.viewOverlay, zoom: zoomRequest)
+    }
+
+    /// The settled zoom's view (`nil` at fit): the photo's long edge as drawn and what is on screen.
+    private var zoomRequest: ZoomRequest? {
+        guard zoomAtStart > 1.01, let rect = zoomedRect(model.images.view(for: photo), zoom: zoomAtStart, pan: panAtStart), rect.width > 0, rect.height > 0 else { return nil }
+        let vis = rect.intersection(CGRect(origin: .zero, size: canvas))
+        guard !vis.isNull else { return nil }
+        let f = { (v: CGFloat, lo: CGFloat, size: CGFloat) in Int(((v - lo) / size * 1000).rounded()) }
+        return ZoomRequest(drawn: Int(max(rect.width, rect.height) * displayScale),
+                           visible: [f(vis.minX, rect.minX, rect.width), f(vis.minY, rect.minY, rect.height), f(vis.maxX, rect.minX, rect.width), f(vis.maxY, rect.minY, rect.height)])
     }
 
     private var magnify: some Gesture {

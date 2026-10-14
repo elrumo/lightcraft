@@ -99,6 +99,8 @@ final class AppModel {
 
     /// The loupe's last render request: drafts during a slider drag go at the same size.
     private(set) var lastView: (photo: UInt64, width: Int, height: Int)?
+    /// Its zoom: drafts keep the window there is.
+    private var lastZoom: ZoomRequest?
     /// When the last draft was asked for (slider → pixels on screen: `ui.inspect` → `perf`).
     private var draftAskedAt: ContinuousClock.Instant?
     private(set) var lastDraftRoundTripMs: Double?
@@ -202,6 +204,9 @@ final class AppModel {
         }
         // a drag (slider, crop, brush) changes the catalog at every step: the grid follows once it ends
         let changed = new.catalogRevision != old.catalogRevision || (old.interaction != nil && new.interaction == nil)
+        if new.catalogRevision != old.catalogRevision, new.interaction == nil {
+            images.dropRegion()
+        }
         if new.visibleGen != old.visibleGen {
             Task { await library.reload(engine, count: new.visibleCount) }
         } else if changed && new.interaction == nil {
@@ -263,14 +268,21 @@ final class AppModel {
     }
 
     /// Ask for the loupe's picture of `photo` at `width` × `height` pixels (the photo fits inside).
-    func requestView(_ photo: UInt64, width: Int, height: Int, draft: Bool = false, applyCrop: Bool = true) {
+    func requestView(_ photo: UInt64, width: Int, height: Int, draft: Bool = false, applyCrop: Bool = true, zoom: ZoomRequest? = nil) {
         guard let engine, width >= 8, height >= 8 else { return }
-        lastView = (photo, width, height)
+        if !draft {
+            lastView = (photo, width, height)
+            lastZoom = zoom
+        }
         if draft {
             draftAskedAt = .now
         }
         var p: [String: JSONValue] = ["photo": .int(Int64(clamping: photo)), "width": .int(Int64(clamping: width)), "height": .int(Int64(clamping: height)), "draft": .bool(draft), "applyCrop": .bool(applyCrop)]
         if let viewOverlay { p["overlay"] = viewOverlay }
+        // zoomed in: the window on screen comes sharp, at the zoom scale (`region`)
+        if let zoom = draft ? lastZoom : zoom {
+            p["zoom"] = ["drawn": .int(Int64(zoom.drawn)), "visible": .array(zoom.visible.map { .double(Double($0) / 1000) })]
+        }
         engine.send("render.view", .object(p))
     }
 

@@ -54,6 +54,7 @@ fn fixtures() -> Value {
             quick: None,
             ms: 12.5,
             histogram: Some(json!({"r": [0], "g": [0], "b": [0], "luma": [0], "total": 1})),
+            window: None,
         },
         Event::Image {
             slot: "thumb:7".into(),
@@ -67,6 +68,7 @@ fn fixtures() -> Value {
             quick: Some("embedded".into()),
             ms: 3.0,
             histogram: None,
+            window: None,
         },
         Event::RenderFailed { slot: "thumb:8".into(), photo: PhotoId(8), key: 6, error: "the file is missing".into() },
         Event::State { state },
@@ -76,6 +78,20 @@ fn fixtures() -> Value {
         Event::Closed,
         Event::Copy { text: "https://photos.example/s/abc".into() },
         Event::Ask { dialog: "syncChoice".into(), params: json!({}) },
+        Event::Image {
+            slot: "region".into(),
+            photo: PhotoId(7),
+            key: 8,
+            token: 101,
+            width: 1536,
+            height: 1280,
+            is_final: true,
+            draft: false,
+            quick: None,
+            ms: 40.0,
+            histogram: None,
+            window: Some(json!({"full": [6000, 4000], "x": 2048, "y": 1024, "w": 1536, "h": 1280})),
+        },
     ];
     let request = Request { id: 5, method: "render.view".into(), params: json!({"photo": 7, "width": 1600, "height": 1067, "draft": true}) };
     let config =

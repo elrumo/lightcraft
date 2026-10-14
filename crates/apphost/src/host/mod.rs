@@ -260,6 +260,8 @@ struct Engine {
     export: Option<PendingExport>,
     /// `enhance.superRes` running on its worker: answered when it ends.
     super_res: Option<PendingSuperRes>,
+    /// The zoom window last asked for (`render.view {zoom}`): its image event says where it goes.
+    region: Option<RegionShown>,
     /// `import.scan` running on its worker, and the candidates of the last one (`render.candidate`).
     scan: Option<PendingScan>,
     candidates: Vec<lightcraft_engine::import::ImportCandidate>,
@@ -308,6 +310,17 @@ struct PendingExport {
     reply: Option<Sender<Event>>,
     batch: crate::export::Batch,
 }
+
+/// A zoom window asked for: its render's key, the zoomed frame it is cut from and where.
+#[derive(Clone, Copy)]
+struct RegionShown {
+    key: u64,
+    full: (usize, usize),
+    window: lightcraft_engine::pipeline::PixelWindow,
+}
+
+/// The largest picture the SwiftUI app draws in one piece (a window is at most this wide).
+const TEXTURE_SIDE: usize = 8192;
 
 /// Super Resolution under way, answered when it ends.
 struct PendingSuperRes {
@@ -368,6 +381,7 @@ impl Engine {
             faces_next: Instant::now(),
             export: None,
             super_res: None,
+            region: None,
             scan: None,
             candidates: Vec::new(),
             import: None,
@@ -521,8 +535,15 @@ impl Engine {
                     Slot::Before
                 } else {
                     let job = self.session.loupe_job(id, w, h, apply_crop).ok_or_else(|| bad("no such photo"))?;
-                    let job = if draft { job.draft() } else { job }.with_overlay(overlay(p.get("overlay")));
+                    let shown = overlay(p.get("overlay"));
+                    let job = if draft { job.draft() } else { job }.with_overlay(shown);
                     self.sched.request(Slot::Main, job, 100);
+                    // zoomed in: the window on screen at the zoom scale too (a drag keeps the one there is)
+                    match p.get("zoom") {
+                        Some(zoom) if !draft => self.request_region(id, (w, h), apply_crop, zoom, shown),
+                        Some(_) => {}
+                        None => self.region = None,
+                    }
                     // until the loupe has this photo: its cached render, embedded preview or thumbnail
                     if self.sched.textures.get(&Slot::Main).is_none_or(|t| t.photo != id)
                         && let Some(q) = self.session.quick_view_job(id, w.max(h), apply_crop)
@@ -627,6 +648,11 @@ impl Engine {
             let token = self.leases.put_image(&name, Arc::new(image));
             let histogram = (slot == Slot::Main).then(|| shown.histogram.as_ref().map(|h| serde_json::to_value(h).unwrap_or_default())).flatten();
             let quick = shown.quick.map(|q| serde_json::to_value(q).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default());
+            // a zoom window: where it goes in the zoomed frame
+            let window = (slot == Slot::Region)
+                .then(|| self.region.filter(|r| r.key == shown.key))
+                .flatten()
+                .map(|r| json!({"full": [r.full.0, r.full.1], "x": r.window.x, "y": r.window.y, "w": r.window.w, "h": r.window.h}));
             let event = Event::Image {
                 slot: name,
                 photo: shown.photo,
@@ -639,6 +665,7 @@ impl Engine {
                 quick,
                 ms: shown.ms,
                 histogram,
+                window,
             };
             self.events.push(event.to_value());
         }
@@ -835,6 +862,59 @@ impl Engine {
     }
 
     /// An export that has ended: its answer (the files; `cancelled` when ✕ stopped it).
+    /// The window of the zoomed loupe that is on screen (`render.view {zoom: {drawn, visible}}`:
+    /// the photo's long edge as drawn, in pixels, and the part of it on screen, as fractions),
+    /// planned with [`crate::region`] and rendered at the zoom scale to be drawn over `main`.
+    fn request_region(&mut self, id: PhotoId, canvas: (usize, usize), apply_crop: bool, zoom: &Value, overlay: lightcraft_pipeline::Overlay) {
+        use crate::region;
+        let drawn = zoom.get("drawn").and_then(Value::as_f64).filter(|v| v.is_finite());
+        let visible: Vec<f64> = zoom
+            .get("visible")
+            .and_then(Value::as_array)
+            .map(|a| a.iter().filter_map(Value::as_f64).filter(|v| v.is_finite()).collect())
+            .unwrap_or_default();
+        let (Some(drawn), [x0, y0, x1, y1]) = (drawn, visible.as_slice()) else {
+            self.region = None;
+            return;
+        };
+        let Some(photo) = self.session.catalog.photo(id) else { return };
+        let d = self.session.develop_of(id).unwrap_or_default();
+        let lens = self.session.embedded_lens(id);
+        let frame =
+            lightcraft_pipeline::geometry::Frame::with_lens(photo.width.max(1) as usize, photo.height.max(1) as usize, &d, apply_crop, lens.as_ref());
+        let (nw, nh) = frame.native_size();
+        if !(nw.is_finite() && nh.is_finite() && nw >= 1.0 && nh >= 1.0) {
+            return;
+        }
+        let sizes = region::ViewSizes {
+            drawn_long: drawn as f32,
+            canvas_long: canvas.0.max(canvas.1) as f32,
+            native_long: nw.max(nh).round() as usize,
+            texture_side: TEXTURE_SIDE,
+            draft_scale: 1.0,
+            windows: region::overlay_supports_window(overlay),
+        };
+        let Some(edge) = region::plan(0, sizes).window_edge else {
+            self.region = None;
+            return;
+        };
+        let aspect = nw / nh;
+        let (fw, fh) = if aspect >= 1.0 { (edge as f64, edge as f64 / aspect) } else { (edge as f64 * aspect, edge as f64) };
+        let (fw, fh) = (fw.round().max(1.0) as usize, fh.round().max(1.0) as usize);
+        let visible = ((x0 * fw as f64) as f32, (y0 * fh as f64) as f32, (x1 * fw as f64) as f32, (y1 * fh as f64) as f32);
+        // refused: what the window reads (a spot's source, an Auto Mask stroke) is too far for one render
+        let job = region::window_for(fw, fh, visible, region::max_span(TEXTURE_SIDE))
+            .and_then(|win| Some((win, self.session.region_job(id, fw, fh, win, apply_crop)?)));
+        let Some((window, job)) = job else {
+            self.region = None;
+            return;
+        };
+        let job = job.with_overlay(overlay);
+        self.region = Some(RegionShown { key: job.key, full: (fw, fh), window });
+        self.sched.request(Slot::Region, job, 95);
+        self.busy = true;
+    }
+
     /// Start enlarging `{id?}` (the active photo); `None` (answered when it ends) or the error now.
     fn start_super_res(&mut self, id: u64, call: Option<&Sender<Event>>, p: &Value) -> Option<Event> {
         if self.super_res.is_some() {

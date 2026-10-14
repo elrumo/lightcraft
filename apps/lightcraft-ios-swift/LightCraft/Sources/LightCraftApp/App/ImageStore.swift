@@ -14,6 +14,8 @@ final class ImageStore {
         let draft: Bool
         let ms: Double
         let histogram: Histogram?
+        /// A zoom window's place in the zoomed frame (`region`).
+        let window: ZoomWindow?
     }
 
     private(set) var pictures: [String: Picture] = [:]
@@ -22,7 +24,8 @@ final class ImageStore {
     private let maxThumbs = 600
 
     func put(_ info: ImageEvent, _ image: CGImage) {
-        pictures[info.slot] = Picture(image: image, photo: info.photo, key: info.key, isFinal: info.isFinal, draft: info.draft, ms: info.ms, histogram: info.histogram)
+        pictures[info.slot] = Picture(image: image, photo: info.photo, key: info.key, isFinal: info.isFinal, draft: info.draft, ms: info.ms, histogram: info.histogram,
+                                      window: info.window)
         failed[info.slot] = nil
         // the real thumbnail replaces its stand-in
         if info.slot.hasPrefix("thumb:") {
@@ -40,6 +43,17 @@ final class ImageStore {
         if let main = pictures["main"], main.photo == photo { return main }
         if let preview = pictures["preview"], preview.photo == photo { return preview }
         return thumb(photo)
+    }
+
+    /// The zoomed loupe's window of `photo`, drawn over its render.
+    func region(for photo: UInt64) -> Picture? {
+        if let r = pictures["region"], r.photo == photo, r.window != nil { return r }
+        return nil
+    }
+
+    /// An edit landed: the window shows the photo as it was, until the next one comes.
+    func dropRegion() {
+        pictures["region"] = nil
     }
 
     /// The Before of `photo` (held, or the Before / After view).

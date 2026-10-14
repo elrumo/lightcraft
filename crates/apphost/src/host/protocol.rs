@@ -147,6 +147,10 @@ pub enum Event {
         /// For `main`: the 256-bin histogram (`r`, `g`, `b`, `luma`, `total`).
         #[serde(skip_serializing_if = "Option::is_none")]
         histogram: Option<Value>,
+        /// For `region` (a zoom window): `{full: [w, h], x, y, w, h}`, the zoomed frame it is cut
+        /// from and where it goes in it.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        window: Option<Value>,
     },
     /// A render failed (an unreadable file, a missing original…).
     RenderFailed { slot: String, photo: PhotoId, key: u64, error: String },

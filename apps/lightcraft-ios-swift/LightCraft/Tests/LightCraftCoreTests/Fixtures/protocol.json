@@ -130,6 +130,28 @@
       "dialog": "syncChoice",
       "kind": "ask",
       "params": {}
+    },
+    {
+      "draft": false,
+      "final": true,
+      "height": 1280,
+      "key": 8,
+      "kind": "image",
+      "ms": 40.0,
+      "photo": 7,
+      "slot": "region",
+      "token": 101,
+      "width": 1536,
+      "window": {
+        "full": [
+          6000,
+          4000
+        ],
+        "h": 1280,
+        "w": 1536,
+        "x": 2048,
+        "y": 1024
+      }
     }
   ],
   "openConfig": {

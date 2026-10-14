@@ -24,7 +24,7 @@ struct ProtocolTests {
 
     @Test func everyEventKindDecodes() throws {
         let all = try events()
-        #expect(all.count == 12)
+        #expect(all.count == 13)
         for event in all {
             if case .unknown(let kind) = event {
                 Issue.record("an event of kind \(kind) didn't decode")
@@ -51,6 +51,9 @@ struct ProtocolTests {
         guard case .image(let thumb, nil) = all[3] else { Issue.record("\(all[3])"); return }
         #expect(thumb.quick == "embedded")
         #expect(thumb.histogram == nil)
+        #expect(main.window == nil)
+        guard case .image(let region, nil) = all[12] else { Issue.record("\(all[12])"); return }
+        #expect(region.slot == "region" && region.window == ZoomWindow(full: [6000, 4000], x: 2048, y: 1024, w: 1536, h: 1280))
     }
 
     @Test func stateActivityAndAutomationDecode() throws {

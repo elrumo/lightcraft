@@ -17,10 +17,10 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 <!-- ios-parity:summary -->
 | Phase | ✅ | 🟡 | ⬜ | 🚫 | Done or out of scope |
 |---|---:|---:|---:|---:|---:|
-| S0 | 10 | 5 | 0 | 0 | 10/15 |
-| S1 | 108 | 14 | 45 | 0 | 108/167 |
+| S0 | 12 | 3 | 0 | 0 | 12/15 |
+| S1 | 113 | 14 | 40 | 0 | 113/167 |
 | S2 | 1 | 0 | 79 | 22 | 23/102 |
-| **Total** | 119 | 19 | 124 | 22 | 141/284 |
+| **Total** | 126 | 17 | 119 | 22 | 148/284 |
 <!-- /ios-parity:summary -->
 
 ## Screens
@@ -28,7 +28,7 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | Id | Phase | Status | Evidence | Notes |
 |---|---|---|---|---|
 | screen:compact.grid | S0 | 🟡 | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/GridView.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LibraryScreen.swift` | square tiles paged from the engine, month/year headers, pinch 1–14 columns, scrubber, badges, title → albums, sort, filter, + menu; no drag-choose or filter chips yet |
-| screen:compact.loupe | S0 | 🟡 | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | fit, pinch, pan, double tap; region tiles, carousel, review mode are SW1.8 |
+| screen:compact.loupe | S0 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift`, `crates/apphost/src/region.rs`, `crates/apphost/src/host/tests.rs` | fit, pinch (1–8×), pan, double tap; zoomed in, the part on screen comes as a sharp window at the zoom scale (`render.view {zoom}`, planned by `apphost::region`, shared with egui) drawn over the fitted render; swipe between photos; review mode |
 | screen:compact.edit.light | S0 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/EditGroupPanel.swift` | drafts while dragging, one undo step per drag |
 | screen:allCommands | S0 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/App/AllCommandsView.swift`, `apps/lightcraft-ios-swift/LightCraft/Tests/LightCraftCoreTests/EngineTests.swift` | every engine command, grouped, searchable, runnable; why a disabled one is |
 | screen:activity | S0 | 🟡 | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/App/RootView.swift` | running tasks with Cancel; no activity stack page yet |
@@ -119,13 +119,13 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | ui:view.beforeAfterTopBottom | S2 | ⬜ |  |  |
 | ui:view.beforeAfterSplitTopBottom | S2 | ⬜ |  |  |
 | ui:view.showOriginal | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | hold the photo |
-| ui:view.zoomFit | S0 | 🟡 | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | double tap / pinch out to fit; no command yet |
-| ui:view.zoom100 | S1 | ⬜ |  |  |
+| ui:view.zoomFit | S0 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | double tap back, or pinch out, to fit |
+| ui:view.zoom100 | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | pinch to any zoom up to 8×, sharp at 1:1 and beyond (the window is the photo's own pixels) |
 | ui:view.zoomToggle | S0 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | double tap: 2× and back |
-| ui:view.clickZoom | S1 | ⬜ |  |  |
-| ui:view.navigate | S1 | ⬜ |  |  |
-| ui:view.zoomIn | S1 | ⬜ |  |  |
-| ui:view.zoomOut | S1 | ⬜ |  |  |
+| ui:view.clickZoom | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | double tap zooms to the ratio in Settings ▸ Interface ▸ Double Tap Zooms To |
+| ui:view.navigate | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | drag pans the zoomed photo |
+| ui:view.zoomIn | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | pinch out |
+| ui:view.zoomOut | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | pinch in |
 | ui:view.clipping | S1 | ⬜ |  |  |
 | ui:view.visualizeHdr | S1 | ⬜ |  |  |
 | ui:view.softProof | S2 | ⬜ |  |  |

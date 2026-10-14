@@ -117,11 +117,23 @@ public struct ImageEvent: Codable, Sendable, Equatable {
     public var quick: String?
     public var ms: Double
     public var histogram: Histogram?
+    /// For `region` (a zoom window): the zoomed frame it is cut from and where it goes in it.
+    public var window: ZoomWindow?
 
     enum CodingKeys: String, CodingKey {
-        case slot, photo, key, token, width, height, draft, quick, ms, histogram
+        case slot, photo, key, token, width, height, draft, quick, ms, histogram, window
         case isFinal = "final"
     }
+}
+
+/// Where a zoom window goes: `full` is the zoomed frame's size in pixels, `x, y, w, h` the window
+/// in it.
+public struct ZoomWindow: Codable, Sendable, Equatable {
+    public var full: [Int]
+    public var x: Int
+    public var y: Int
+    public var w: Int
+    public var h: Int
 }
 
 /// 256 bins per channel.

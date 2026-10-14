@@ -299,3 +299,26 @@ fn view_overlays_parse() {
     assert_eq!(overlay(Some(&json!("hdr"))), Overlay::None);
     assert_eq!(overlay(None), Overlay::None);
 }
+
+// Zoomed in: what is on screen comes sharp, as a window of the zoomed frame that says where it goes;
+// back at fit no window is asked for
+#[test]
+fn a_zoomed_view_gets_a_window_of_what_is_on_screen() {
+    let h = demo();
+    let first = h.call(&req(1, "engine.execute", json!({"command": "catalog.query", "params": {"limit": 1}})), Duration::from_secs(30));
+    let photo = first["result"]["photos"][0]["id"].as_u64().unwrap();
+    h.call(&req(2, "engine.execute", json!({"command": "library.select", "params": {"ids": [photo]}})), Duration::from_secs(30));
+    // a 400 px canvas showing the photo 1200 px long: the middle third on screen
+    let zoom = json!({"drawn": 1200, "visible": [0.333, 0.333, 0.667, 0.667]});
+    h.submit(&req(3, "render.view", json!({"width": 400, "height": 300, "zoom": zoom}))).unwrap();
+    let region = h.wait_for(|e| e["kind"] == "image" && e["slot"] == "region");
+    let w = &region["window"];
+    let n = |v: &Value| v.as_u64().unwrap();
+    let (fw, fh, x, y, ww, wh) = (n(&w["full"][0]), n(&w["full"][1]), n(&w["x"]), n(&w["y"]), n(&w["w"]), n(&w["h"]));
+    assert!(fw.max(fh) <= 1200 && fw.max(fh) > 400, "a frame larger than the canvas: {region}");
+    assert!(x <= fw / 3 && x + ww >= fw * 2 / 3 && y <= fh / 3 && y + wh >= fh * 2 / 3, "it covers what is on screen: {region}");
+    assert_eq!((n(&region["width"]), n(&region["height"])), (ww, wh), "the picture is the window");
+    // the whole-frame render stays canvas-sized and has no window
+    let main = h.wait_for(|e| e["kind"] == "image" && e["slot"] == "main");
+    assert!(n(&main["width"]).max(n(&main["height"])) <= 512 && main["window"].is_null(), "{main}");
+}
