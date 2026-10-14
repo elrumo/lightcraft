@@ -247,6 +247,8 @@ fn services(originals: Originals, backend: Option<Backend>, files: Files, frozen
         share_exports: None,
         save_to_photos: None,
         host_pick: None,
+        // (a browser reaches no camera)
+        cameras: None,
         // (a keyboard's ⌘V reaches text fields directly) no haptics
         haptic: None,
         clipboard_text: Some(Box::new(read_clipboard)),

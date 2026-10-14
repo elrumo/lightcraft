@@ -19,8 +19,8 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 |---|---:|---:|---:|---:|---:|
 | S0 | 15 | 0 | 0 | 0 | 15/15 |
 | S1 | 164 | 0 | 1 | 3 | 167/168 |
-| S2 | 77 | 0 | 0 | 26 | 103/103 |
-| **Total** | 256 | 0 | 1 | 29 | 285/286 |
+| S2 | 77 | 0 | 2 | 25 | 102/104 |
+| **Total** | 256 | 0 | 3 | 28 | 284/287 |
 <!-- /ios-parity:summary -->
 
 ## Screens
@@ -227,7 +227,8 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | ui:file.importFolderFromFiles | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Share/ImportModel.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Share/ImportReview.swift` | a folder (≤ 5000 photos, 12 levels), then the review |
 | ui:file.addFolder | S2 | 🚫 |  | the desktop folder dialog; iOS uses `file.importFolderFromFiles` |
 | ui:file.importLightroom | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LightroomImport.swift`, `crates/apphost/src/lightroom.rs` | File ▸ Import Lightroom Catalog…, Add Photos ▸ Lightroom Classic Catalog…: a folder from Files holding the catalog (or the catalog's folder beside its photos), read and imported on workers by the runner egui uses too (moved into `apphost::lightroom`); checked on the iPhone simulator with a synthetic catalog whose photos had moved |
-| ui:file.addFromDevice | S2 | 🚫 |  | iOS shows an app no camera or card reader except through Files: Add Photos ▸ Folder from Files… reads a card's DCIM folder; egui's ImageCaptureCore import (`origin/claude/import-from-camera`) isn't in main yet |
+| ui:file.addFromDevice | S2 | ⬜ |  | a camera or card reader plugged in (`{camera}`): egui imports through ImageCaptureCore (`crates/capture`, `ui-egui`'s `camera_import`: the review by day, what the library has greyed out, the import opening when one is connected); the SwiftUI app doesn't use it yet, and Add Photos ▸ Folder from Files… reads a card's DCIM folder |
+| ui:file.cameras | S2 | ⬜ |  | the cameras and card readers plugged in (`crates/capture`), for Add Photos ▸ Connected Camera/Card |
 | ui:file.findMissing | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LibraryDialogs.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/DateFolderLists.swift` | Albums ▸ Folders ▸ Find Missing Photos…: a folder from Files (`library.findMissing`; it searches on the engine thread, where egui uses a worker) |
 | ui:file.backupLibrary | S2 | 🚫 |  | the web app's only (its library lives in the browser): on iOS the library is a folder in the app's Documents, kept by the device's and iCloud backups; the egui iOS app has none either |
 | ui:file.restoreLibrary | S2 | 🚫 |  | as Back Up Library: web only |

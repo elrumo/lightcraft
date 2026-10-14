@@ -24,16 +24,21 @@ lightcraft-engine = { workspace = true }
 lightcraft-apphost = { workspace = true }
 lightcraft-preview = { workspace = true }
 egui = { workspace = true }
+# decoding the thumbnails a camera makes (the import review of a camera, `camera_import`)
+lightcraft-codecs = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }
+
+# cameras, phones and cards through ImageCaptureCore (`camera_import::system_cameras`)
+[target.'cfg(any(target_os = "ios", target_os = "macos"))'.dependencies]
+lightcraft-capture = { workspace = true }
 
 [dev-dependencies]
 egui_kittest = { workspace = true, features = ["wgpu", "snapshot"] }
 lightcraft-denoise = { workspace = true, features = ["runtime"] }
 # the model setup tests install and run a synthetic denoise model (`cargo test -p lightcraft-ui-egui` alone too)
 lightcraft-engine = { workspace = true, features = ["denoise"] }
-lightcraft-codecs = { workspace = true }
 lightcraft-enhance = { workspace = true }
 lightcraft-vision = { workspace = true, features = ["testing"] }
 lightcraft-faces = { workspace = true }
