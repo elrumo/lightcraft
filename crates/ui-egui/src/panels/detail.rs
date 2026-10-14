@@ -309,13 +309,6 @@ fn jumped(was: Rect, now: Rect) -> bool {
     d.x > size.x * 0.2 || d.y > size.y * 0.2
 }
 
-/// Whether an overlay can be rendered on a region tile without changing what the tile means.
-/// Mask overlays are evaluated from the same mask alpha as the full render; the other diagnostic
-/// overlays either need whole-frame context or deliberately replace the loupe.
-pub(crate) fn overlay_supports_window(overlay: lightcraft_pipeline::Overlay) -> bool {
-    matches!(overlay, lightcraft_pipeline::Overlay::None | lightcraft_pipeline::Overlay::Mask { .. })
-}
-
 /// What a window render of the loupe needs to know about the view it belongs to.
 struct WindowCtx {
     id: PhotoId,
@@ -546,7 +539,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         native_long,
         texture_side,
         draft_scale: scale,
-        windows: !app.ui.soft_proof && overlay_supports_window(overlay),
+        windows: !app.ui.soft_proof && lightcraft_apphost::region::overlay_supports_window(overlay),
     };
     let mut plan = crate::region::plan(&app.ui.settings, sizes);
     if plan.window_edge.is_some_and(|edge| app.window_refused == Some((id, look, edge))) {
@@ -641,8 +634,10 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     // zoomed past what the whole-frame render holds: also render the part on screen, at no more
     // than 100 % (the GPU magnifies beyond that), for each side that is shown. Mask overlays use
     // the same window; diagnostic overlays that need whole-frame context do not.
-    let windowable_view =
-        hover_key.is_none() && !app.ui.soft_proof && overlay_supports_window(overlay) && crate::region::same_aspect(display_aspect, aspect);
+    let windowable_view = hover_key.is_none()
+        && !app.ui.soft_proof
+        && lightcraft_apphost::region::overlay_supports_window(overlay)
+        && crate::region::same_aspect(display_aspect, aspect);
     let window_ctx = WindowCtx {
         id,
         overlay,

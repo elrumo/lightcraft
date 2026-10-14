@@ -512,18 +512,7 @@ impl EditFile {
 /// Preview size limits offered in Settings → Performance (0 = Automatic).
 pub const PREVIEW_LIMITS: [u32; 5] = [0, 1600, 2560, 3840, 5120];
 
-/// The most the loupe ever renders in one go (memory and GPU texture size), whatever the setting.
-pub const LOUPE_EDGE_CEILING: u32 = 8192;
-
-/// The most a zoomed frame (the one a window is cut from) may be along its long edge: far more
-/// than the photos there are (a window holds only what is on screen, so the frame costs nothing).
-pub const WINDOW_FRAME_CEILING: usize = 65536;
-
-/// The smallest GPU texture side the loupe plans for, whatever the host reports.
-pub const MIN_TEXTURE_SIDE: usize = 512;
-
-/// Loupe render sizes move in steps of this many pixels.
-pub const LOUPE_EDGE_STEP: usize = 64;
+pub use lightcraft_apphost::region::{LOUPE_EDGE_CEILING, LOUPE_EDGE_STEP, MIN_TEXTURE_SIDE, WINDOW_FRAME_CEILING};
 
 /// Long edge of Build Standard-Sized Previews when the limit is Automatic.
 pub const STANDARD_PREVIEW_EDGE: u32 = 2560;
@@ -560,11 +549,7 @@ impl AppSettings {
     /// or `texture_side`, the largest texture the GPU allows (egui_glow, i.e. the browser build,
     /// panics on a bigger one, and many WebGL devices allow only 2048 or 4096).
     pub fn loupe_edge(&self, wanted_px: f32, native_long_edge: usize, texture_side: usize) -> usize {
-        let limit = if self.preview_limit == 0 { LOUPE_EDGE_CEILING } else { self.preview_limit.clamp(512, LOUPE_EDGE_CEILING) } as usize;
-        let ceiling = limit.min(texture_side.max(MIN_TEXTURE_SIDE));
-        let wanted = if wanted_px.is_nan() { 8.0 } else { wanted_px.clamp(8.0, ceiling as f32) } as usize;
-        let stepped = wanted.div_ceil(LOUPE_EDGE_STEP) * LOUPE_EDGE_STEP;
-        stepped.min(native_long_edge.max(8)).min(ceiling)
+        lightcraft_apphost::region::loupe_edge(self.preview_limit, wanted_px, native_long_edge, texture_side)
     }
 
     /// Long edge for warming a neighbouring photo: its loupe size but never above the preview
@@ -585,8 +570,7 @@ impl AppSettings {
     /// GPU magnifies the window) or the ceiling. The preview size limit is not applied: it is about
     /// the whole-frame render (see [`crate::region::plan`]).
     pub fn window_frame_edge(&self, drawn_long: f32, native_long_edge: usize) -> usize {
-        let wanted = if drawn_long.is_nan() { 8.0 } else { drawn_long.clamp(8.0, WINDOW_FRAME_CEILING as f32) } as usize;
-        wanted.min(native_long_edge.max(8)).min(WINDOW_FRAME_CEILING)
+        lightcraft_apphost::region::window_frame_edge(drawn_long, native_long_edge)
     }
 
     /// The edge Build Standard-Sized Previews uses.

@@ -4,6 +4,8 @@
 //! that two UIs (egui on desktop, web and today's iOS app; SwiftUI in the native iOS app) behave the
 //! same without writing anything twice:
 //!
+//! - [`region`]: sharp zoomed views: the whole-frame render's size, and the window of the frame on
+//!   screen rendered at the zoom scale.
 //! - [`render`]: the render queue: per-slot requests, de-duplication and priorities, stand-ins,
 //!   stage caches for slider drags, draft sizing, and what each slot shows (in the frontend's own
 //!   form, through [`render::Present`]).
@@ -33,6 +35,7 @@ pub mod faces;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod host;
 pub mod import;
+pub mod region;
 pub mod render;
 pub mod startup;
 pub mod superres;
