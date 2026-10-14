@@ -19,8 +19,8 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 |---|---:|---:|---:|---:|---:|
 | S0 | 15 | 0 | 0 | 0 | 15/15 |
 | S1 | 164 | 0 | 0 | 3 | 167/167 |
-| S2 | 75 | 0 | 2 | 25 | 100/102 |
-| **Total** | 254 | 0 | 2 | 28 | 282/284 |
+| S2 | 77 | 0 | 0 | 25 | 102/102 |
+| **Total** | 256 | 0 | 0 | 28 | 284/284 |
 <!-- /ios-parity:summary -->
 
 ## Screens
@@ -223,7 +223,7 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | ui:file.importFromFiles | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Share/ImportModel.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Share/ImportReview.swift` | the Files picker, then the review |
 | ui:file.importFolderFromFiles | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Share/ImportModel.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Share/ImportReview.swift` | a folder (≤ 5000 photos, 12 levels), then the review |
 | ui:file.addFolder | S2 | 🚫 |  | the desktop folder dialog; iOS uses `file.importFolderFromFiles` |
-| ui:file.importLightroom | S2 | ⬜ |  |  |
+| ui:file.importLightroom | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LightroomImport.swift`, `crates/apphost/src/lightroom.rs` | File ▸ Import Lightroom Catalog…, Add Photos ▸ Lightroom Classic Catalog…: a folder from Files holding the catalog (or the catalog's folder beside its photos), read and imported on workers by the runner egui uses too (moved into `apphost::lightroom`); checked on the iPhone simulator with a synthetic catalog whose photos had moved |
 | ui:file.addFromDevice | S2 | 🚫 |  | iOS shows an app no camera or card reader except through Files: Add Photos ▸ Folder from Files… reads a card's DCIM folder; egui's ImageCaptureCore import (`origin/claude/import-from-camera`) isn't in main yet |
 | ui:file.findMissing | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LibraryDialogs.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/DateFolderLists.swift` | Albums ▸ Folders ▸ Find Missing Photos…: a folder from Files (`library.findMissing`; it searches on the engine thread, where egui uses a worker) |
 | ui:file.backupLibrary | S2 | 🚫 |  | the web app's only (its library lives in the browser): on iOS the library is a folder in the app's Documents, kept by the device's and iCloud backups; the egui iOS app has none either |
@@ -312,7 +312,7 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | dialog:Settings | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/FacesSettings.swift` | General, Import, Performance, Interface, Sync, Faces (recognition, models, scan progress), AI Models |
 | dialog:SamModel | S1 | 🚫 |  | iOS builds have no AI Denoise or SAM 3: the engine's `denoise` and `sam` features are off for iOS (the egui iOS app has only `enhance` too) |
 | dialog:SuperRes | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/SuperResSheet.swift` | as `ui:dialog.superRes` |
-| dialog:LightroomCatalog | S2 | ⬜ |  |  |
+| dialog:LightroomCatalog | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LightroomImport.swift`, `crates/apphost/src/lightroom.rs` | the catalog's sheet: its folder and file, photos, collections, originals not found (and what to pick instead), Update Photos Already in the Library, the reader's notes; Import runs on in the activity stack and says how it went |
 | dialog:ConfirmDelete | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/App/RootView.swift` | an alert before Recently Deleted |
 | dialog:SyncChoice | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | add to the server's library, use it, or don't sync |
 | dialog:RemoveFolder | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/DateFolderLists.swift` | Albums ▸ Folders ▸ a folder's menu ▸ Remove Folder from Library… (asks; `library.removeFolder`) |

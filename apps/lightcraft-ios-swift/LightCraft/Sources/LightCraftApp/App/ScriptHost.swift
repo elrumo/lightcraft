@@ -151,6 +151,10 @@ final class ScriptHost {
                 case "contactSheet": model.sheet = .contactSheet(model.targets)
                 case "shortcuts": model.sheet = .shortcuts
                 case "editSidebar": model.sheet = .editSidebar
+                case "lightroom":
+                    // (a relative path is in the app's tmp folder, beside the script)
+                    let p = params["path"].string ?? ""
+                    model.sheet = .lightroom(p.hasPrefix("/") ? URL(fileURLWithPath: p) : URL(fileURLWithPath: NSTemporaryDirectory()).appending(path: p))
                 case "cull": model.sheet = .cull(params["ids"].array?.compactMap { $0.int.map { UInt64(clamping: $0) } } ?? model.targets)
                 case "merge.hdr", "merge.panorama", "merge.hdrPanorama":
                     let ids = params["ids"].array?.compactMap { $0.int.map { UInt64(clamping: $0) } } ?? model.targets

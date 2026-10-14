@@ -215,7 +215,7 @@ extension AppModel {
         "dialog.mergeHdrPanorama", "merge.hdrLast", "merge.panoramaLast", "merge.hdrPanoramaLast", "dialog.superRes", "view.selectMode",
         "view.filterSheet", "view.tagFace", "app.settings", "app.about", "app.help", "app.discord", "app.website", "app.github",
         "app.artcraft", "app.feedback", "app.shortcuts", "dialog.rename", "dialog.labelNames", "dialog.captureTime", "app.systemInfo",
-        "dialog.cull", "photo.tagFromTracklog", "file.findMissing", "photo.locate", "app.exportPrevious", "view.softProof",
+        "dialog.cull", "photo.tagFromTracklog", "file.findMissing", "photo.locate", "app.exportPrevious", "view.softProof", "file.importLightroom",
         "view.focusSearch", "view.secondWindow",
     ]
 
@@ -337,6 +337,7 @@ extension AppModel {
             searching = true
         case "photo.tagFromTracklog": picker = .tracklog(targets)
         case "file.findMissing": picker = .findMissing
+        case "file.importLightroom": picker = .lightroom
         case "photo.locate": if let a = state.active { picker = .locate(a) }
         case "app.exportPrevious": Task { await exportPrevious() }
         default: break

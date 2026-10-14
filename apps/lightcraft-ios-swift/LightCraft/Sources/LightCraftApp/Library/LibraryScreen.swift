@@ -205,6 +205,7 @@ struct LibraryScreen: View {
                 Button("Photos…", systemImage: "photo.on.rectangle") { importer.pickingPhotos = true }
                 Button("Files…", systemImage: "folder") { importer.pickingFiles = true }
                 Button("Folder from Files…", systemImage: "folder.badge.plus") { importer.pickingFolder = true }
+                Button("Lightroom Classic Catalog…", systemImage: "square.stack.3d.up") { model.picker = .lightroom }
             }
         } label: {
             Image(systemName: "plus")

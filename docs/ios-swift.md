@@ -90,7 +90,7 @@ host's: `badRequest`, `unknownMethod`, `panic`, `closed`, `timeout`).
 
 | Method | Params | Does |
 |---|---|---|
-| `engine.execute` | `{command, params}` | any engine command, and `app.export` (Export Now: on a worker with an activity row, ✕ stops it; answered when it ends, `cancelled` when stopped; `remember: false` keeps it from being what Export with Previous repeats: a photo dragged into another app); `enhance.superRes` runs the same way (Enlarging; answered with the new photo, or error `cancelled`) |
+| `engine.execute` | `{command, params}` | any engine command, and `app.export` (Export Now: on a worker with an activity row, ✕ stops it; answered when it ends, `cancelled` when stopped; `remember: false` keeps it from being what Export with Previous repeats: a photo dragged into another app); `library.inspectLightroom` / `library.importLightroom {path, updateExisting?}` likewise (`apphost::lightroom`, `path` the `.lrcat` or a folder holding it; `{status: true, cancel?}` answers at once); `enhance.superRes` runs the same way (Enlarging; answered with the new photo, or error `cancelled`) |
 | `import.scan` | `{paths}` | the files and folders for the import review, scanned on a worker (answered when done: `{candidates}`, each with `inTrash`) |
 | `import.start` | `{paths \| indexes, …library.import params, albumName?}` | imports in the background in batches (one undo step; answered when done with what it added) |
 | `engine.commands` | | every command with whether it can run now and why not |
@@ -204,6 +204,14 @@ mode (SW1.8, region geometry → `apphost`), every Edit group, curves, mixer and
 paste, undo gestures, presets (SW1.15–18), sync, albums, filters, map, people, AI tools, HDR, settings and localisation
 (SW1.19–25), landscape and iPad portrait
 (SW1.26) and the phone audit (`cargo xtask parity --ios-gate S1`, SW1.27).
+
+S2 (`cargo xtask parity --ios-gate S2` passes since 2026-10-14): the iPad split view and library dialogs (SW2.1) and
+their words (SW2.2); Compare, Survey, Reference and the other view modes (SW2.3); the menu bar and keys (SW2.4); culling,
+track logs, missing files, Export with Previous (SW2.5); soft proofing (SW2.6); sidebar sections (SW2.7, the arrangement →
+`apphost::sidebar`); the grid's search (SW2.8); the Keyword Painter (SW2.9, `keyword.toggle`); drag and drop and Apple
+Pencil (SW2.10); the Second Window, more windows and the external display (SW2.11); Lightroom catalog import (SW2.12,
+the runner → `apphost::lightroom`). Not tried on hardware yet: a real drag, a Pencil, an external display. S3, removing
+the egui iOS app, is the maintainer's call.
 
 Open questions (not blocking S0): MapKit or the built-in offline map; which AI engine features ship on iOS (binary size);
 whether the gate also compares screenshots of the two apps.

@@ -26,6 +26,8 @@ nonisolated enum FilePick: Hashable {
     case findMissing
     /// The file of a photo whose original has moved.
     case locate(UInt64)
+    /// A Lightroom Classic catalog's folder (with its photos, or above them).
+    case lightroom
 }
 
 /// What covers the whole screen.
@@ -68,6 +70,7 @@ nonisolated enum Sheet: Identifiable, Hashable {
     case shortcuts
     case editSidebar
     case cull([UInt64])
+    case lightroom(URL)
     case shareFiles([String])
 
     var id: String {
@@ -104,6 +107,7 @@ nonisolated enum Sheet: Identifiable, Hashable {
         case .shortcuts: "shortcuts"
         case .editSidebar: "editSidebar"
         case .cull: "cull"
+        case .lightroom: "lightroom"
         case .shareFiles: "shareFiles"
         }
     }

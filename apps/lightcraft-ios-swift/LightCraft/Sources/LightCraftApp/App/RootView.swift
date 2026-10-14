@@ -88,7 +88,7 @@ struct RootView: View {
     private static func types(_ pick: FilePick) -> [UTType] {
         switch pick {
         case .tracklog: [UTType(filenameExtension: "gpx") ?? .xml, .xml]
-        case .findMissing: [.folder]
+        case .findMissing, .lightroom: [.folder]
         case .locate: [.image, .rawImage, .item]
         }
     }
@@ -174,6 +174,7 @@ struct SheetContent: View {
         case .shortcuts: ShortcutsSheet()
         case .editSidebar: EditSidebarSheet()
         case .cull(let ids): CullSheet(ids: ids)
+        case .lightroom(let folder): LightroomSheet(folder: folder)
         case .shareFiles(let paths): ActivityView(urls: paths.map { URL(fileURLWithPath: $0) }) { model.sheet = nil }
         case .newSmartAlbumFromView:
             // the grid as it is shown (source and filter) becomes a smart album

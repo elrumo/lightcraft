@@ -610,6 +610,11 @@ struct CullSheet: View {
 extension AppModel {
     /// A file or folder picked for `pick`: read while the system lets the app (it's another app's).
     func picked(_ url: URL, for pick: FilePick) async {
+        // (the catalog's sheet keeps the folder open for as long as its import runs)
+        if case .lightroom = pick {
+            sheet = .lightroom(url)
+            return
+        }
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
         switch pick {
@@ -627,6 +632,7 @@ extension AppModel {
             if await run("photo.relink", ["id": .int(Int64(clamping: id)), "path": .string(url.path)]) != nil {
                 show(String(localized: "Photo found"))
             }
+        case .lightroom: break
         }
     }
 
