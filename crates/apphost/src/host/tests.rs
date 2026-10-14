@@ -278,6 +278,24 @@ fn photos_are_scanned_reviewed_and_imported_in_the_background() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
+// The state's `presetsGeneration` moves when the preset list changes (the Swift app's Presets panel
+// reads the list again then: presets the sync brings show without reopening it), and not otherwise
+#[test]
+fn the_state_says_when_the_presets_change() {
+    let h = demo();
+    let generation = |h: &Host, id: u64| h.call(&req(id, "host.state", json!({})), Duration::from_secs(30))["result"]["presetsGeneration"].clone();
+    let before = generation(&h, 1);
+    assert!(before.as_u64().is_some(), "{before}");
+    h.call(&req(2, "engine.execute", json!({"command": "photo.rate", "params": {"rating": 3}})), Duration::from_secs(30));
+    assert_eq!(generation(&h, 3), before, "a rating leaves the presets alone");
+    let r = h.call(&req(4, "engine.execute", json!({"command": "preset.create", "params": {"name": "Mine"}})), Duration::from_secs(30));
+    assert!(r["result"].is_object(), "{r}");
+    let after = generation(&h, 5);
+    assert_ne!(after, before);
+    let state = h.wait_for(|e| e["kind"] == "state" && e["state"]["presetsGeneration"] == after);
+    assert_eq!(state["state"]["presetsGeneration"], after);
+}
+
 // Previews of a preset, a profile and a version on the active photo come as `variant:` pictures
 #[test]
 fn presets_profiles_and_versions_preview() {

@@ -49,7 +49,7 @@ pub(crate) fn json(status: u16, v: &Value) -> Resp {
     bytes(status, "application/json", v.to_string().into_bytes())
 }
 
-/// A JSON answer that can be big (the library, pulled changes): gzipped when it is and the device
+/// A JSON answer that can be big (the library, pulled changes, the presets): gzipped when it is and the device
 /// takes gzip, a tenth of the bytes.
 fn big_json(req: &Request, body: Vec<u8>) -> Resp {
     let takes_gzip = header_value(req, "Accept-Encoding").is_some_and(|v| v.split(',').any(|e| e.trim().starts_with("gzip")));
@@ -253,8 +253,12 @@ fn api(st: &State, req: &mut Request, method: &Method, path: &str, q: &str) -> R
         (Method::Get, ["ops"]) => ops(req, &l, q),
         (Method::Post, ["ops"]) => push(st, req, &l, &who),
         (Method::Get, ["presets"]) => {
-            let l = l.lock().unwrap_or_else(PoisonError::into_inner);
-            json(200, &serde_json::to_value(&l.presets).unwrap_or(Value::Null))
+            // (a preset collection imported whole is tens of MB: gzipped, a tenth of that)
+            let body = serde_json::to_vec(&l.lock().unwrap_or_else(PoisonError::into_inner).presets);
+            match body {
+                Ok(body) => big_json(req, body),
+                Err(e) => error(500, e),
+            }
         }
         (Method::Put, ["presets"]) => put_presets(req, &l),
         (Method::Get, ["shares"]) => crate::shares::list(st, &who.user),
