@@ -12,6 +12,8 @@ struct GridView: View {
     /// Scroll to this grid index (Months, Years, a photo put away).
     @Binding var jump: Int?
     @State private var pinchFrom: Int?
+    /// The thumbnail size a pinch started from (a Mac).
+    @State private var pinchSize: Double?
     @State private var tracker = VisibleTracker()
     /// The scrubber shows while the grid scrolls and a moment after.
     @State private var scrolling = false
@@ -25,8 +27,13 @@ struct GridView: View {
 
     var body: some View {
         let library = model.library
+        #if os(macOS)
+        // a Mac's tiles are about as wide as its thumbnail-size slider says: as many as fit
+        let across = max(1, Int((gridWidth + 2) / (model.prefs.thumbSize + 2)))
+        #else
         // a phone's columns for each phone's width (sideways, an iPad: two or three times as many)
         let across = max(1, model.prefs.gridColumns) * max(1, Int((gridWidth / 400).rounded()))
+        #endif
         let columns = Array(repeating: GridItem(.flexible(), spacing: 2), count: across)
         ScrollViewReader { proxy in
             ScrollView {
@@ -94,7 +101,11 @@ struct GridView: View {
         .haptic(.selection, trigger: choosing?.last)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width in
             // cells under 110 pt: a header a year, else a month
+            #if os(macOS)
+            let cell = CGFloat(model.prefs.thumbSize)
+            #else
             let cell = width / CGFloat(max(model.prefs.gridColumns, 1))
+            #endif
             let by = cell < 110 ? "year" : "month"
             if by != model.library.autoGroup {
                 model.library.autoGroup = by
@@ -147,10 +158,16 @@ struct GridView: View {
             .onEnded { _ in choosing = nil }
     }
 
-    /// Pinch in for more photos across, out for fewer (1, 2, 3, 4, 5, 7, 10 or 14).
+    /// Pinch in for more photos across, out for fewer (1, 2, 3, 4, 5, 7, 10 or 14); on a Mac, out for
+    /// bigger thumbnails.
     private var pinch: some Gesture {
         MagnifyGesture()
             .onChanged { value in
+                #if os(macOS)
+                let size = pinchSize ?? model.prefs.thumbSize
+                pinchSize = size
+                model.prefs.thumbSize = min(max(size * value.magnification, Prefs.thumbSizes.lowerBound), Prefs.thumbSizes.upperBound)
+                #else
                 let from = pinchFrom ?? model.prefs.gridColumns
                 pinchFrom = from
                 let target = Double(from) / max(value.magnification, 0.05)
@@ -160,8 +177,12 @@ struct GridView: View {
                 if best != model.prefs.gridColumns {
                     withAnimation(.snappy(duration: 0.3)) { model.prefs.gridColumns = best }
                 }
+                #endif
             }
-            .onEnded { _ in pinchFrom = nil }
+            .onEnded { _ in
+                pinchFrom = nil
+                pinchSize = nil
+            }
     }
 
     @ViewBuilder private var empty: some View {
@@ -303,11 +324,16 @@ struct PhotoCell: View {
             .onAppear { model.thumbAppeared(photo.id) }
             .onDisappear { model.thumbDisappeared(photo.id) }
             .task(id: model.settledRevision) { model.requestThumb(photo.id, edge: edge) }
+            #if os(macOS)
+            // a click chooses, a double click opens, a right click has the menu (Mac/MacGridCell.swift)
+            .modifier(MacCellInteraction(photo: photo))
+            #else
             .onTapGesture { tapped() }
             .onLongPressGesture(minimumDuration: 0.5) { longPressed() }
             // choosing photos: the chosen ones are lifted and carried onto an album (added to it) or
             // into another app (a JPEG); not otherwise, where a long press starts choosing
             .modifier(DragChosen(on: model.selectMode && model.library.selected.contains(photo.id), photo: photo.id))
+            #endif
             .accessibilityElement()
             .accessibilityLabel(photo.title ?? photo.fileName)
             .accessibilityValue(Self.spoken(photo))
@@ -317,6 +343,7 @@ struct PhotoCell: View {
             .accessibilityAddTraits(model.selectMode && chosen ? .isSelected : [])
     }
 
+    #if os(iOS)
     private func tapped() {
         if let k = model.painting {
             model.perform("keyword.toggle", ["ids": [.int(Int64(clamping: photo.id))], "keyword": .string(k)])
@@ -338,6 +365,8 @@ struct PhotoCell: View {
             model.buzz(.selection)
         }
     }
+
+    #endif
 
     /// What VoiceOver says after the photo's name: its stars, pick or reject, whether it is edited.
     static func spoken(_ photo: PhotoSummary) -> String {
@@ -495,14 +524,15 @@ struct Choosing {
     var last: Int?
 }
 /// The chosen photos carried from a chosen one (with how many on the picture).
-private struct DragChosen: ViewModifier {
+struct DragChosen: ViewModifier {
     @Environment(AppModel.self) private var model
     let on: Bool
     let photo: UInt64
 
     func body(content: Content) -> some View {
         if on {
-            let ids = Array(model.library.selected)
+            // (a Mac drags any photo: the chosen ones if it is one of them, else itself)
+            let ids = model.library.selected.contains(photo) ? Array(model.library.selected) : [photo]
             content.draggable(PhotoDrag(ids: ids, engine: model.engine)) {
                 if let picture = model.images.thumb(photo) {
                     Image(decorative: picture.image, scale: 1).resizable().scaledToFill()

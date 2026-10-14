@@ -247,7 +247,7 @@ iPad"): one multiplatform Xcode target, arm64 only. Decisions (2026-10-14):
   The Edit tool is a header (Auto, B&W, HDR), the profile, then the groups stacked and collapsible (Light, Color,
   Effects, Detail, Optics, Calibration), with Curve, Color Mixer, Point Color and Color Grading as boxes inside them
   (`Mac/MacEditPanel.swift`); every control is one row, name | track | value you can type over (double-click resets,
-  arrow keys nudge; `Mac/MacSliderRow.swift`) — no group chips, no dials. The panel is given the column's width and
+  arrow keys nudge; `Mac/MacSliderRow.swift`); there are no group chips and no dials. The panel is given the column's width and
   never widens it (`Mac/MacSegmented.swift` is the segmented control that shrinks to fit); the inspector is shown or
   hidden from the toolbar. Under the loupe a bar (SM2.2, `Mac/MacPhotoBar.swift`) has the view modes (Grid, Loupe, Compare,
   Survey), the rating and flag, Copy Edit Settings with a gear for the rest, the zoom (Fit, Fill, 100 %, 200 %, 400 %: an
@@ -259,6 +259,12 @@ iPad"): one multiplatform Xcode target, arm64 only. Decisions (2026-10-14):
   the masks and their parts as wrapping tiles at the top, the brush, then Mask, Light, Color, Effects, Detail and Optics stacked
   for the selected mask) are laid out the same way (SM2.3); Remove and Red Eye were already one column of controls. A Mac's
   sections remember whether they are open (`Prefs.sectionStates`), each panel saying how a new one starts.
+  The grid (SM2.4, `Mac/MacGridCell.swift`) has no select mode: a click chooses a photo (⌘ adds or takes it out, ⇧ chooses
+  the run from the last one: `library.select` modes), a double click opens it, a right click has its menu, and it can be
+  dragged out with the others chosen; chosen cells have a ring. Its bar has Years, Months and All, the chosen photos'
+  rating and flag, how many are chosen and a thumbnail-size slider (`Prefs.thumbSize`; a pinch changes it too, and the
+  window gives as many columns as fit). Still to do: the keyboard layer (rating digits, flags, arrows in the grid), the
+  loupe's scroll and pinch, and the keys of SM2.5 and SM2.6.
 
 Where it stands: it builds and launches with the iPad's regular-width layout in a window (SM0), and has a Mac's shell
 (SM1): a Settings window (⌘,: a tab per page of the iPhone's list, `Mac/MacSettings.swift`), a menu bar with the app
@@ -331,7 +337,7 @@ SM, the Mac app (see [macOS](#macos); not part of the S gates, which are about r
   done), the Xcode project, Rust build, `run.sh --mac` and `ci/mac-tour.sh` (SM0.3);
 - SM1, the Mac shell (done on this Mac): quit that closes the engine and the start-up error (SM1.1), the Settings window,
   the menus and the slideshow window (SM1.2);
-- SM2, the Mac window: sidebar, content and inspector, a toolbar and filmstrip, pointer and keyboard (SM2.1, the editor's inspector and the Edit panel, SM2.2, the bar under the loupe, and SM2.3, the Crop and Masking panels, done; the grid and the loupe's input to come);
+- SM2, the Mac window: sidebar, content and inspector, a toolbar and filmstrip, pointer and keyboard (SM2.1, the editor's inspector and the Edit panel, SM2.2, the bar under the loupe, and SM2.3, the Crop and Masking panels, and SM2.4, the grid, done; the keyboard layer and the loupe's input to come);
 - SM3, desktop workflows: import in place from the open panel and Finder, an export destination, libraries;
 - SM4, tracking and CI: the Mac rows in `PARITY.md`, `ios-swift.yml`, the other docs.
 

@@ -34,6 +34,10 @@ struct LibraryScreen: View {
         .safeAreaBar(edge: .top) {
             if !model.selectMode { FilterChips(chips: chips["chips"].array ?? []) }
         }
+        #if os(macOS)
+        // (Years / Months / All, the chosen photos' rating, the thumbnails' size: Mac/MacGridCell.swift)
+        .safeAreaInset(edge: .bottom, spacing: 0) { MacGridBar() }
+        #endif
         // pictures dropped from another app (Files, Photos, Safari…) are imported
         .dropDestination(for: GridDrop.self) { items, _ in
             let files = items.compactMap { if case .file(let f) = $0 { f } else { nil } }
@@ -190,6 +194,7 @@ struct LibraryScreen: View {
                 }
                 ToolbarSpacer(.fixed, placement: .lcTrailing)
             }
+            #if os(iOS)
             if model.library.count > 0 {
                 ToolbarItem(placement: .lcTrailing) {
                     Button("Select") {
@@ -199,12 +204,19 @@ struct LibraryScreen: View {
                 }
                 ToolbarSpacer(.fixed, placement: .lcTrailing)
             }
+            #endif
             ToolbarItemGroup(placement: .lcTrailing) {
                 Button("Filter", systemImage: model.library.state?.isFiltered == true ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease") {
                     model.sheet = .filter
                 }
                 GridMoreMenu()
             }
+            #if os(macOS)
+            // (the span is in the bar under the grid)
+            ToolbarItem(placement: .lcTrailing) {
+                addButton
+            }
+            #else
             // a phone's search waits in the bottom bar as a button; an iPad's is in the top bar
             if horizontalSize != .regular {
                 DefaultToolbarItem(kind: .search, placement: .lcBottom)
@@ -226,6 +238,7 @@ struct LibraryScreen: View {
             ToolbarItem(placement: .lcBottom) {
                 addButton
             }
+            #endif
         }
     }
 

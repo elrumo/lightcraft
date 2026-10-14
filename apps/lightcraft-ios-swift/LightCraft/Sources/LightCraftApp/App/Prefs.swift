@@ -14,6 +14,7 @@ final class Prefs {
         appearance = Appearance(rawValue: store.string(forKey: "appearance") ?? "") ?? .system
         gridColumns = store.object(forKey: "gridColumns") as? Int ?? 3
         gridSpan = GridSpan(rawValue: store.string(forKey: "gridSpan") ?? "") ?? .all
+        thumbSize = store.object(forKey: "thumbSize") as? Double ?? 160
         squareGrid = store.object(forKey: "squareGrid") as? Bool ?? true
         badges = Badges(rawValue: store.string(forKey: "badges") ?? "") ?? .auto
         infoOverlay = InfoOverlay(rawValue: store.string(forKey: "infoOverlay") ?? "") ?? .off
@@ -123,6 +124,9 @@ final class Prefs {
     /// Grid columns on a phone held upright (pinch changes it).
     var gridColumns: Int { didSet { store.set(gridColumns, forKey: "gridColumns") } }
     var gridSpan: GridSpan { didSet { store.set(gridSpan.rawValue, forKey: "gridSpan") } }
+    /// A Mac's thumbnails: how wide a tile is asked to be, in points (a window gives as many columns as fit).
+    var thumbSize: Double { didSet { store.set(thumbSize, forKey: "thumbSize") } }
+    static let thumbSizes: ClosedRange<Double> = 72...360
     var squareGrid: Bool { didSet { store.set(squareGrid, forKey: "squareGrid") } }
     var badges: Badges { didSet { store.set(badges.rawValue, forKey: "badges") } }
     var infoOverlay: InfoOverlay { didSet { store.set(infoOverlay.rawValue, forKey: "infoOverlay") } }

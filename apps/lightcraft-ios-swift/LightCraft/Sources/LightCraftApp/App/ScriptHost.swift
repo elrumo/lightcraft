@@ -123,6 +123,7 @@ final class ScriptHost {
             // (the Mac panels' sections: {"light": true, "curve": false}; the ones not named stay as they are)
             if case .object(let sections) = params["sections"] { for (id, open) in sections { if let open = open.bool { model.prefs.sectionStates[id] = open } } }
             if let on = params["inspector"].bool { model.prefs.inspectorShown = on }
+            if let size = params["thumbSize"].double { model.prefs.thumbSize = min(max(size, Prefs.thumbSizes.lowerBound), Prefs.thumbSizes.upperBound) }
             // (the loupe's zoom: fit, fill, or a number of screen pixels per photo pixel, 1 being 100 %)
             if let ask = params["zoomAsk"].string { model.editor.zoomAsk = ask == "fit" ? .fit : ask == "fill" ? .fill : .actual(Double(ask) ?? 1) }
             if let on = params["navigator"].bool { model.prefs.navigator = on }

@@ -29,8 +29,8 @@ struct MacPhotoBar: View {
         HStack(spacing: 16) {
             if views { viewModes }
             Spacer(minLength: 8)
-            stars(summary?.rating ?? 0, ids)
-            flags(summary, ids)
+            MacStars(rating: summary?.rating ?? 0, ids: ids)
+            MacFlags(flag: summary?.flag, ids: ids)
             copy(ids, words: words)
             Spacer(minLength: 8)
             zoom
@@ -44,47 +44,12 @@ struct MacPhotoBar: View {
     private var viewModes: some View {
         let chosen = Array(model.library.selected)
         return HStack(spacing: 2) {
-            barButton("square.grid.3x3", "Grid") { model.path = [] }
-            barButton("rectangle.center.inset.filled", "Loupe", on: true) {}
-            barButton("rectangle.split.2x1", "Compare") { model.path.append(.compare(chosen)) }
+            MacBarButton(symbol: "square.grid.3x3", title: "Grid") { model.path = [] }
+            MacBarButton(symbol: "rectangle.center.inset.filled", title: "Loupe", on: true) {}
+            MacBarButton(symbol: "rectangle.split.2x1", title: "Compare") { model.path.append(.compare(chosen)) }
                 .disabled(chosen.count < 2)
-            barButton("square.grid.2x2", "Survey") { model.path.append(.survey(chosen)) }
+            MacBarButton(symbol: "square.grid.2x2", title: "Survey") { model.path.append(.survey(chosen)) }
                 .disabled(chosen.count < 2)
-        }
-    }
-
-    // MARK: rating and flag
-
-    /// A click on a star rates the photo by it; on the star it has, takes the rating away.
-    private func stars(_ rating: Int, _ ids: [UInt64]) -> some View {
-        HStack(spacing: 1) {
-            ForEach(1...5, id: \.self) { n in
-                Button {
-                    model.perform("photo.rate", ["ids": AppModel.ids(ids), "rating": .int(Int64(n == rating ? 0 : n))])
-                } label: {
-                    Image(systemName: n <= rating ? "star.fill" : "star")
-                        .font(.system(size: 13))
-                        .foregroundStyle(n <= rating ? Color.yellow : .secondary)
-                        .frame(width: 20, height: 24)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("\(n) stars")
-                .accessibilityAddTraits(n == rating ? .isSelected : [])
-            }
-        }
-    }
-
-    /// Pick and Reject; a click on the one it has unflags it.
-    private func flags(_ summary: PhotoSummary?, _ ids: [UInt64]) -> some View {
-        let set = { (flag: String) in
-            model.perform("photo.flag", ["ids": AppModel.ids(ids), "flag": .string(flag)])
-        }
-        return HStack(spacing: 2) {
-            barButton("flag.fill", "Pick", on: summary?.isPick == true) { set(summary?.isPick == true ? "none" : "pick") }
-            barButton("flag.slash.fill", "Reject", on: summary?.isReject == true, tint: summary?.isReject == true ? .red : nil) {
-                set(summary?.isReject == true ? "none" : "reject")
-            }
         }
     }
 
@@ -150,23 +115,6 @@ struct MacPhotoBar: View {
         .toggleStyle(.button)
         .controlSize(.small)
         .help(Text("Before / After"))
-    }
-
-    // MARK: pieces
-
-    private func barButton(_ symbol: String, _ title: LocalizedStringKey, on: Bool = false, tint: Color? = nil, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 13))
-                .frame(width: 26, height: 24)
-                .background(on ? Color.primary.opacity(0.18) : .clear, in: .rect(cornerRadius: 6))
-                .foregroundStyle(tint ?? (on ? Color.primary : Color.secondary))
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(Text(title))
-        .accessibilityLabel(Text(title))
-        .accessibilityAddTraits(on ? .isSelected : [])
     }
 }
 #endif
