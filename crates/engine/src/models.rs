@@ -48,6 +48,9 @@ pub struct ModelInfo {
     pub licence_url: String,
     pub credit: String,
     pub home_url: String,
+    /// The licence restricts how the model may be used (an OpenRAIL licence's list of uses that
+    /// aren't allowed): the download's consent says so.
+    pub restricted: bool,
     /// This model's download while it runs, or why the last one failed.
     pub download: Option<DownloadStatus>,
 }
@@ -124,6 +127,7 @@ struct Facts {
     home_url: &'static str,
     licence: &'static str,
     licence_url: &'static str,
+    restricted: bool,
     download_bytes: u64,
     available: bool,
     installed: bool,
@@ -155,6 +159,7 @@ impl Facts {
                 licence_url: self.licence_url.into(),
                 credit: self.credit.into(),
                 home_url: self.home_url.into(),
+                restricted: self.restricted,
                 download: self.download,
             },
             files: self.files,
@@ -188,6 +193,7 @@ impl Session {
             home_url: "https://github.com/facebookresearch/sam3",
             licence: crate::segment::LICENSE_NAME,
             licence_url: crate::segment::LICENSE_URL,
+            restricted: false,
             download_bytes: crate::segment::MODEL_BYTES,
             available: Segmenter::AVAILABLE,
             installed: g.installed(),
@@ -215,6 +221,7 @@ impl Session {
             home_url: crate::vision::LICENSE_URL,
             licence: crate::vision::LICENSE_NAME,
             licence_url: crate::vision::LICENSE_URL,
+            restricted: false,
             download_bytes: crate::vision::MODEL_BYTES,
             available: v.local_available(),
             installed: v.installed(),
@@ -248,6 +255,7 @@ impl Session {
             home_url: crate::vision::TEXT_LICENSE_URL,
             licence: crate::vision::TEXT_LICENSE_NAME,
             licence_url: crate::vision::TEXT_LICENSE_URL,
+            restricted: false,
             download_bytes: crate::vision::TEXT_BYTES,
             available: v.text_available(),
             installed: v.text_installed(),
@@ -283,6 +291,7 @@ impl Session {
             home_url: yunet_url,
             licence: yunet,
             licence_url: yunet_url,
+            restricted: false,
             download_bytes: crate::vision::FACE_BYTES,
             available: v.faces_available(),
             installed: v.faces_installed(),
@@ -313,13 +322,22 @@ impl Session {
                     home_url: m.home_url,
                     licence: m.licence,
                     licence_url: m.licence_url,
+                    restricted: m.restricted,
                     download_bytes: m.bytes(),
-                    // (LaMa is too large and slow for a phone)
-                    available: Enhancer::AVAILABLE && !(m.desktop_only && cfg!(any(target_os = "ios", target_os = "android"))),
+                    // (Generative Expand's models are offered by the device's profile)
+                    available: Enhancer::AVAILABLE && crate::expand::ExpandModel::from_id(m.id).is_none_or(|x| self.expand_available(x)),
                     installed: e.installed(m.id),
                     enabled: !e.disabled.contains(m.id),
                     can_disable: true,
-                    files: files_in(dir.as_deref(), m.files.iter().map(|f| f.name).collect()),
+                    files: dir
+                        .as_deref()
+                        .map(|d| {
+                            m.parts()
+                                .iter()
+                                .map(|p| (if p.dir.is_empty() { d.to_path_buf() } else { d.join(p.dir) }, p.files.iter().map(|f| f.name).collect()))
+                                .collect()
+                        })
+                        .unwrap_or_default(),
                     dir,
                     mirrors: e.mirrors(m.id),
                     download: Some(d.clone()).filter(|d| mine && (d.running || d.error.is_some())),

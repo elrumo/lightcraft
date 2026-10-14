@@ -2173,7 +2173,6 @@
   "Downloading": "Wird geladen",
   "on this device": "auf diesem Gerät",
   "Fast, on every device": "Schnell, auf jedem Gerät",
-  "Best for wide areas; slower, computers only": "Am besten für große Flächen; langsamer, nur auf Computern",
   "No download: texture from the photo": "Kein Download: Textur aus dem Foto",
   "Let the crop reach past the photo's edges and paint the new area on this computer": "Den Zuschnitt über die Ränder des Fotos hinausziehen und die neue Fläche auf diesem Computer malen",
   "Drag the crop past the photo's edges, or choose an aspect ratio, first.": "Zieh den Zuschnitt zuerst über die Ränder des Fotos hinaus oder wähle ein Seitenverhältnis.",
@@ -2182,5 +2181,19 @@
   "This model isn't downloaded yet: download it, or choose Classic.": "Dieses Modell ist noch nicht geladen: Lade es herunter oder wähle Klassisch.",
   "Turned off in Settings → AI Models": "In Einstellungen → KI-Modelle ausgeschaltet",
   "Models can't be downloaded in this build: put the file in the models folder (Settings → AI Models).": "In dieser Version können keine Modelle geladen werden: Leg die Datei in den Modellordner (Einstellungen → KI-Modelle).",
-  "Generating the new area…": "Die neue Fläche wird erzeugt…"
+  "Generating the new area…": "Die neue Fläche wird erzeugt…",
+  "Its licence lists uses that aren't allowed: read it before downloading (Settings → AI Models → Licence).": "Seine Lizenz verbietet bestimmte Verwendungen: Lies sie vor dem Download (Einstellungen → KI-Modelle → Lizenz).",
+  "Without a GPU it takes minutes per Generate.": "Ohne GPU dauert jedes Erzeugen einige Minuten.",
+  "Best for wide areas of sky, water or texture": "Am besten für weite Flächen aus Himmel, Wasser oder Textur",
+  "Draws new detail; slower": "Zeichnet neue Details; langsamer",
+  "Draws new detail, guided by the photo; slow": "Zeichnet neue Details, geleitet vom Foto; langsam",
+  "The most detail; slow": "Die meisten Details; langsam",
+  "A computer": "Ein Computer",
+  "A phone or tablet": "Ein Smartphone oder Tablet",
+  "The browser": "Der Browser",
+  "GPU": "GPU",
+  "no GPU": "keine GPU",
+  "This device:": "Dieses Gerät:",
+  "What paints the new area when the crop reaches past the photo (Crop → Expand). The larger models draw new detail and take longer.": "Was den neuen Bereich füllt, wenn der Zuschnitt über das Foto hinausreicht (Zuschneiden → Erweitern). Die größeren Modelle zeichnen neue Details und brauchen länger.",
+  "Not an open-source licence: it lists uses that aren't allowed. Read it before downloading.": "Keine Open-Source-Lizenz: Sie verbietet bestimmte Verwendungen. Lies sie vor dem Download."
 }

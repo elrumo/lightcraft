@@ -2206,7 +2206,6 @@
   "Downloading": "Загрузка",
   "on this device": "на этом устройстве",
   "Fast, on every device": "Быстро, на любом устройстве",
-  "Best for wide areas; slower, computers only": "Лучше для широких областей; медленнее, только на компьютерах",
   "No download: texture from the photo": "Без загрузки: текстура из фото",
   "Let the crop reach past the photo's edges and paint the new area on this computer": "Позволяет кадру выйти за края фото и дорисовывает новую область на этом компьютере",
   "Drag the crop past the photo's edges, or choose an aspect ratio, first.": "Сначала вытяните кадр за края фото или выберите соотношение сторон.",
@@ -2215,5 +2214,19 @@
   "This model isn't downloaded yet: download it, or choose Classic.": "Эта модель ещё не загружена: загрузите её или выберите «Классический».",
   "Turned off in Settings → AI Models": "Отключено в Настройки → Модели ИИ",
   "Models can't be downloaded in this build: put the file in the models folder (Settings → AI Models).": "В этой сборке модели не загружаются: положите файл в папку моделей (Настройки → Модели ИИ).",
-  "Generating the new area…": "Создание новой области…"
+  "Generating the new area…": "Создание новой области…",
+  "Its licence lists uses that aren't allowed: read it before downloading (Settings → AI Models → Licence).": "Лицензия запрещает некоторые виды использования: прочитайте её перед загрузкой (Настройки → Модели ИИ → Лицензия).",
+  "Without a GPU it takes minutes per Generate.": "Без GPU каждое создание занимает несколько минут.",
+  "Best for wide areas of sky, water or texture": "Лучше всего для больших участков неба, воды или текстуры",
+  "Draws new detail; slower": "Рисует новые детали; медленнее",
+  "Draws new detail, guided by the photo; slow": "Рисует новые детали по фото; медленно",
+  "The most detail; slow": "Больше всего деталей; медленно",
+  "A computer": "Компьютер",
+  "A phone or tablet": "Телефон или планшет",
+  "The browser": "Браузер",
+  "GPU": "GPU",
+  "no GPU": "без GPU",
+  "This device:": "Это устройство:",
+  "What paints the new area when the crop reaches past the photo (Crop → Expand). The larger models draw new detail and take longer.": "Чем рисуется новая область, когда кадр выходит за края фото (Кадрирование → Расширить). Большие модели рисуют новые детали и работают дольше.",
+  "Not an open-source licence: it lists uses that aren't allowed. Read it before downloading.": "Это не лицензия с открытым исходным кодом: она запрещает некоторые виды использования. Прочитайте её перед загрузкой."
 }
