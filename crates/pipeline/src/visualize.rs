@@ -262,7 +262,18 @@ fn depth_view(img: &mut Rgba8, plan: &Plan<'_>) {
         let p = img.data[y * w + x];
         (0.2126 * lut[p[0] as usize] + 0.7152 * lut[p[1] as usize] + 0.0722 * lut[p[2] as usize]).max(1e-6).log2()
     });
-    let near = crate::lensblur::nearness_out(depth, &plan.frame, w, h, &guide);
+    let mut near = crate::lensblur::nearness_out(depth, &plan.frame, w, h, &guide);
+    // (with the refine brushes painted in, as the blur uses it)
+    let lb = &plan.settings.lens_blur;
+    if !lb.focus.is_empty() || !lb.blur.is_empty() {
+        let [n, f] = lb.focus_bounds();
+        let focus = [1.0 - f as f32 / 100.0, 1.0 - n as f32 / 100.0];
+        let lin = lightcraft_raster::Rgb32f::from_fn(w, h, |x, y| {
+            let p = img.data[y * w + x];
+            [lut[p[0] as usize], lut[p[1] as usize], lut[p[2] as usize]]
+        });
+        crate::lensblur::refine(&mut near, focus, &lb.focus, &lb.blur, &plan.frame, &lin, &guide);
+    }
     let (n, f) = (DEPTH_NEAR.map(f32::from), DEPTH_FAR.map(f32::from));
     for_rows(&mut img.data, w, |y, row| {
         for (x, px) in row.iter_mut().enumerate() {

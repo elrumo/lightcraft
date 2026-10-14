@@ -228,3 +228,28 @@ fn a_depth_range_mask_selects_by_depth() {
     assert!(sum(&out, 110, 190) < sum(&plain, 110, 190) * 3 / 4);
     assert!(sum(&out, 10, 90) * 100 >= sum(&plain, 10, 90) * 97);
 }
+
+#[test]
+fn refine_strokes_sharpen_and_blur_where_painted() {
+    let (src, info) = scene(400, 300);
+    let req = RenderRequest::fit(400, 400);
+    let plain = render(&src, &info, &DevelopSettings::default(), &req).image;
+    let stroke = |x: f64| lightcraft_develop::BrushStroke {
+        points: vec![lightcraft_geom::Point::new(x, 0.3), lightcraft_geom::Point::new(x, 0.7)],
+        size: 0.12,
+        feather: 0.0,
+        ..Default::default()
+    };
+    // focus on the near half; paint the far half sharp and the near half blurred
+    let mut s = blurred(0.0);
+    s.lens_blur.focus = vec![stroke(0.75)];
+    s.lens_blur.blur = vec![stroke(0.25)];
+    let out = render(&src, &info, &s, &req).image;
+    let (far_plain, far_out) = (detail(&plain, [0.7, 0.8], [0.4, 0.6]), detail(&out, [0.7, 0.8], [0.4, 0.6]));
+    let (near_plain, near_out) = (detail(&plain, [0.2, 0.3], [0.4, 0.6]), detail(&out, [0.2, 0.3], [0.4, 0.6]));
+    assert!(far_out > far_plain * 0.9, "the Focus stroke kept the far half sharp: {far_out} vs {far_plain}");
+    assert!(near_out < near_plain * 0.4, "the Blur stroke blurred the near half: {near_out} vs {near_plain}");
+    // and outside the strokes nothing changed from the unpainted blur
+    let unpainted = render(&src, &info, &blurred(0.0), &req).image;
+    assert!((detail(&out, [0.02, 0.08], [0.05, 0.15]) - detail(&unpainted, [0.02, 0.08], [0.05, 0.15])).abs() < 1.0);
+}

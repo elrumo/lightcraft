@@ -285,5 +285,8 @@
   "Uses the {} model, a {:.0} MB download ({} licence). {}.": "Usa el modelo {}, una descarga de {:.0} MB (licencia {}). {}.",
   "New area painted with {}": "Área nueva pintada con {}",
   "{note} · {:.0} MB download": "{note} · descarga de {:.0} MB",
-  "The new area was painted by {by} on this device.": "El área nueva se pintó en este dispositivo ({by})."
+  "The new area was painted by {by} on this device.": "El área nueva se pintó en este dispositivo ({by}).",
+  "Downloading the depth model… {:.0} %": "Downloading the depth model… {:.0} %",
+  "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.": "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.",
+  "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)": "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)"
 }

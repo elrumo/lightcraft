@@ -187,6 +187,9 @@ pub struct Setup {
     bokeh: Bokeh,
     /// The exposure gain (highlights bloom by their exposed brightness).
     gain: f32,
+    /// The refine brushes: where the depth is pulled into focus, and pushed out of it.
+    focus_strokes: Vec<lightcraft_develop::BrushStroke>,
+    blur_strokes: Vec<lightcraft_develop::BrushStroke>,
     /// Stage-cache key of all of the above.
     pub key: u64,
 }
@@ -197,7 +200,8 @@ impl Setup {
     /// outside the focal range).
     pub fn new(s: &DevelopSettings, mattes: Option<&Mattes>, px_per_long: f64) -> Option<Setup> {
         let lb = &s.lens_blur;
-        if !lb.active() {
+        // (the section's eye switches it off as its Apply does)
+        if !lb.active() || !s.section_enabled("lensBlur") {
             return None;
         }
         let depth = mattes?.depth()?.clone();
@@ -205,7 +209,15 @@ impl Setup {
         let focus = [1.0 - far as f32 / 100.0, 1.0 - near as f32 / 100.0];
         let radius = (lb.amount.clamp(0.0, 100.0) / 100.0 * MAX_RADIUS * px_per_long) as f32;
         let (lo, hi) = depth.data.iter().fold((1.0f32, 0.0f32), |(a, b), &v| (a.min(v), b.max(v)));
-        let max_coc = radius * (hi - focus[1]).max(focus[0] - lo).max(0.0);
+        // (a Blur stroke can take any part of the photo to the end of the range away from the focus)
+        let brushed = if lb.blur.is_empty() {
+            0.0
+        } else if blur_target(focus) == 0.0 {
+            focus[0]
+        } else {
+            1.0 - focus[1]
+        };
+        let max_coc = radius * (hi - focus[1]).max(focus[0] - lo).max(brushed).max(0.0);
         if !(max_coc >= 0.5) {
             return None;
         }
@@ -225,10 +237,23 @@ impl Setup {
             boost.to_bits(),
             lb.bokeh.name(),
             gain.to_bits(),
+            crate::hash_of(format!("{:?}{:?}", lb.focus, lb.blur)),
         ));
         // (a Gaussian reads about three of its radii)
         let snap_reach = snap_sigma(px_per_long, depth.width.max(depth.height)).map_or(0.0, |s| 3.0 * s as f32);
-        Some(Setup { depth, focus, radius, max_coc, snap_reach, boost, bokeh: lb.bokeh, gain, key })
+        Some(Setup {
+            depth,
+            focus,
+            radius,
+            max_coc,
+            snap_reach,
+            boost,
+            bokeh: lb.bokeh,
+            gain,
+            focus_strokes: lb.focus.clone(),
+            blur_strokes: lb.blur.clone(),
+            key,
+        })
     }
 
     /// Pixels the blur reads beyond a pixel (for windowed renders): its largest circle, and the
@@ -247,6 +272,41 @@ impl Setup {
             (n - lo) * self.radius
         } else {
             0.0
+        }
+    }
+}
+
+/// Where a Blur stroke takes the depth: the end of the range farthest from the focal range
+/// `[lo, hi]` (nearness).
+fn blur_target([lo, hi]: [f32; 2]) -> f32 {
+    if (lo + hi) / 2.0 > 0.5 { 0.0 } else { 1.0 }
+}
+
+/// `near` (nearness at output resolution) with the refine brushes painted in: Focus strokes pull it
+/// into the sharp range `focus`, Blur strokes push it to [`blur_target`]. `img` and `log_l` (the
+/// image and its log luminance at output resolution) steer Auto Mask strokes.
+pub fn refine(
+    near: &mut Plane,
+    focus: [f32; 2],
+    focus_strokes: &[lightcraft_develop::BrushStroke],
+    blur_strokes: &[lightcraft_develop::BrushStroke],
+    frame: &Frame,
+    img: &Rgb32f,
+    log_l: &Plane,
+) {
+    let (w, h) = (near.width, near.height);
+    let [lo, hi] = focus;
+    if !focus_strokes.is_empty() {
+        let a = crate::masks::brush_alpha(focus_strokes, frame, w, h, img, log_l);
+        for (n, a) in near.data.iter_mut().zip(&a.data) {
+            *n += (n.clamp(lo.min(hi), hi.max(lo)) - *n) * a.clamp(0.0, 1.0);
+        }
+    }
+    if !blur_strokes.is_empty() {
+        let target = blur_target(focus);
+        let a = crate::masks::brush_alpha(blur_strokes, frame, w, h, img, log_l);
+        for (n, a) in near.data.iter_mut().zip(&a.data) {
+            *n += (target - *n) * a.clamp(0.0, 1.0);
         }
     }
 }
@@ -284,7 +344,11 @@ pub fn apply(img: &mut Rgb32f, setup: &Setup, frame: &Frame, origin: [usize; 2],
         return;
     }
     crate::timed("lens blur", || {
-        let coc: Vec<f32> = nearness_out(&setup.depth, frame, w, h, &log_luma(img)).data.into_iter().map(|n| setup.coc(n)).collect();
+        let guide = log_luma(img);
+        let mut near = nearness_out(&setup.depth, frame, w, h, &guide);
+        refine(&mut near, setup.focus, &setup.focus_strokes, &setup.blur_strokes, frame, img, &guide);
+        drop(guide);
+        let coc: Vec<f32> = near.data.into_iter().map(|n| setup.coc(n)).collect();
         let shape = Shape::new(setup.bokeh, frame, w, h);
         let r_work = if draft { R_WORK_DRAFT } else { R_WORK_FULL };
         let taps_max = if draft { TAPS_DRAFT } else { TAPS_FULL };

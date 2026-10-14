@@ -23,6 +23,7 @@ pub mod headless;
 pub mod i18n;
 pub mod icons;
 pub mod import;
+pub mod lensblur;
 pub mod lightroom_import;
 pub mod links;
 pub mod menu_level;
@@ -125,6 +126,8 @@ mod tests_keyword_sidebar;
 mod tests_keywording;
 #[cfg(test)]
 mod tests_labels;
+#[cfg(test)]
+mod tests_lensblur;
 #[cfg(test)]
 mod tests_library_problem;
 #[cfg(test)]

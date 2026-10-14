@@ -285,5 +285,8 @@
   "Uses the {} model, a {:.0} MB download ({} licence). {}.": "使用 {} 模型（需下載 {:.0} MB，{} 授權）。{}。",
   "New area painted with {}": "已用 {} 生成新區域",
   "{note} · {:.0} MB download": "{note} · 需下載 {:.0} MB",
-  "The new area was painted by {by} on this device.": "新區域已在此裝置上生成（{by}）。"
+  "The new area was painted by {by} on this device.": "新區域已在此裝置上生成（{by}）。",
+  "Downloading the depth model… {:.0} %": "Downloading the depth model… {:.0} %",
+  "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.": "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.",
+  "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)": "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)"
 }
