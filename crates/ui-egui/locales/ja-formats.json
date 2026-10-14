@@ -286,7 +286,7 @@
   "New area painted with {}": "{}で新しい領域を生成しました",
   "{note} · {:.0} MB download": "{note} · {:.0} MBのダウンロード",
   "The new area was painted by {by} on this device.": "新しい領域はこのデバイス上で生成されました（{by}）。",
-  "Downloading the depth model… {:.0} %": "Downloading the depth model… {:.0} %",
-  "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.": "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.",
-  "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)": "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)"
+  "Downloading the depth model… {:.0} %": "深度モデルをダウンロード中… {:.0} %",
+  "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.": "この写真には深度情報がないため、レンズぼかしは Depth Anything V2 Small で深度を推定します（{:.0} MBのダウンロード、{}ライセンス）。{}。",
+  "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)": "ピントが合う範囲：{:.0}–{:.0}（0が最も手前、100が最も奥）"
 }

@@ -47,7 +47,7 @@ const GROUPS: [(&str, Icon, &str, &[&str]); 6] = [
 ];
 
 /// Create New Mask, as Lightroom's mobile app lists it: (kind, icon, name); `None` = a gap.
-const NEW_KINDS: [Option<(&str, Icon, &str)>; 12] = [
+const NEW_KINDS: [Option<(&str, Icon, &str)>; 13] = [
     Some(("subject", Icon::Subject, "Select Subject")),
     Some(("sky", Icon::Sky, "Select Sky")),
     Some(("background", Icon::Subject, "Select Background")),
@@ -60,6 +60,7 @@ const NEW_KINDS: [Option<(&str, Icon, &str)>; 12] = [
     None,
     Some(("colorRange", Icon::Picker, "Color Range")),
     Some(("luminanceRange", Icon::Sliders, "Luminance Range")),
+    Some(("depthRange", Icon::Aperture, "Depth Range")),
 ];
 
 /// Whether the compact layout shows the Masking screen: a photo with the Masking tool open.

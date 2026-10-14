@@ -15,6 +15,45 @@ use crate::icons::Icon;
 use crate::theme::Tokens;
 use crate::widgets::register;
 
+/// The browser build's fetch of the depth model (`Services::depth_model`): from the site's storage,
+/// or downloaded when the user asks.
+#[derive(Default)]
+pub struct DepthFetch {
+    rx: Option<std::sync::mpsc::Receiver<Result<Vec<u8>, String>>>,
+    /// The site's storage was looked in and the model isn't there.
+    not_stored: bool,
+    error: Option<String>,
+}
+
+/// Every frame: take the browser build's fetch answer and hand the model to the session.
+pub fn poll(app: &mut LightcraftApp, ctx: &egui::Context) {
+    let Some(rx) = &app.depth_fetch.rx else { return };
+    let got = match rx.try_recv() {
+        Ok(r) => r,
+        Err(std::sync::mpsc::TryRecvError::Empty) => return,
+        Err(std::sync::mpsc::TryRecvError::Disconnected) => Err(tr("The download stopped.").to_string()),
+    };
+    app.depth_fetch.rx = None;
+    match got.and_then(|bytes| app.session.install_depth_model(&bytes)) {
+        Ok(()) => (app.depth_fetch.not_stored, app.depth_fetch.error) = (false, None),
+        Err(e) if e == crate::erase::NOT_STORED => app.depth_fetch.not_stored = true,
+        Err(e) => app.depth_fetch.error = Some(e),
+    }
+    ctx.request_repaint();
+}
+
+/// The browser build: look in the site's storage (or download), unless a fetch runs.
+fn fetch(app: &mut LightcraftApp, ctx: &egui::Context, download: bool) {
+    let Some(f) = app.services.depth_model.as_ref() else { return };
+    if app.depth_fetch.rx.is_some() {
+        return;
+    }
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.depth_fetch.rx = Some(rx);
+    app.depth_fetch.error = None;
+    f(download, tx, ctx.clone());
+}
+
 /// The loupe tool that focuses on the point clicked.
 pub const FOCUS_TOOL: &str = "lensFocus";
 /// The loupe tool that paints the Refine brush (`app.ui.lens_brush`: focus, blur or erase).
@@ -66,6 +105,31 @@ fn model_offer(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         note(ui, tr("Depth estimation is turned off in Settings → AI Models."));
         return;
     }
+    let offer = tr_format!(
+        "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.",
+        depth::FILE_SIZE as f64 / 1e6,
+        depth::LICENCE,
+        depth::CREDIT
+    );
+    if app.services.depth_model.is_some() {
+        // the browser build: is it in the site's storage? (looked for once the offer shows)
+        if app.depth_fetch.rx.is_none() && !app.depth_fetch.not_stored && app.depth_fetch.error.is_none() {
+            fetch(app, &ctx, false);
+        }
+        if app.depth_fetch.rx.is_some() {
+            note(ui, tr("Getting the depth model…"));
+            ctx.request_repaint_after(std::time::Duration::from_millis(200));
+            return;
+        }
+        note(ui, offer);
+        if let Some(e) = &app.depth_fetch.error {
+            note(ui, e.clone());
+        }
+        if crate::widgets::text_button(ui, "lensBlurDownload", tr("Download"), false).clicked() {
+            fetch(app, &ctx, true);
+        }
+        return;
+    }
     if !lightcraft_engine::enhance::Enhancer::AVAILABLE {
         note(ui, tr("This photo has no depth of its own, and depth estimation isn't available in this build."));
         return;
@@ -81,15 +145,7 @@ fn model_offer(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         ctx.request_repaint_after(std::time::Duration::from_millis(200));
         return;
     }
-    note(
-        ui,
-        tr_format!(
-            "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.",
-            depth::FILE_SIZE as f64 / 1e6,
-            depth::LICENCE,
-            depth::CREDIT
-        ),
-    );
+    note(ui, offer);
     if mine && let Some(e) = &st.error {
         note(ui, e.clone());
     }

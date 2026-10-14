@@ -286,7 +286,7 @@
   "New area painted with {}": "Neue Fläche mit {} erzeugt",
   "{note} · {:.0} MB download": "{note} · Download von {:.0} MB",
   "The new area was painted by {by} on this device.": "Die neue Fläche wurde auf diesem Gerät erzeugt ({by}).",
-  "Downloading the depth model… {:.0} %": "Downloading the depth model… {:.0} %",
-  "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.": "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.",
-  "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)": "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)"
+  "Downloading the depth model… {:.0} %": "Tiefenmodell wird heruntergeladen… {:.0} %",
+  "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.": "Dieses Foto enthält keine eigene Tiefe: Objektivunschärfe schätzt sie mit Depth Anything V2 Small, einem Download von {:.0} MB (Lizenz {}). {}.",
+  "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)": "Scharf: {:.0}–{:.0} (0 = am nächsten, 100 = am weitesten)"
 }
