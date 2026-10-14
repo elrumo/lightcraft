@@ -53,6 +53,44 @@ API (Photos' Clean Up is private), any out-painting API, a sky model. Image Play
 (`imagePlaygroundSheet`, `CreationStrategy.editExisting`) runs in Apple's cloud (Private Cloud
 Compute), takes no mask and returns a flat picture; the programmatic `ImageCreator` is removed in
 iOS 27. AI Remove and Generative Expand therefore keep MI-GAN, LaMa and Classic.
+Using the Image Playground sheet as an extra, opt-in Generative Expand engine was considered and not built: it needs an Apple
+Intelligence device and Apple's sheet (not scriptable, absent from simulators), sends the photo to Apple's cloud, and
+may re-render the whole picture rather than extend it.
+
+## Core ML spike (2026-10-15)
+
+Question: can the models LightCraft already uses (MI-GAN, LaMa) run on Apple's GPU or Neural Engine, so that AI Remove
+and Generative Expand are fast on an iPhone, where LaMa is too slow on the CPU today? `tools/coreml_convert.py`
+converts the pinned ONNX files (the ones `crates/erase` downloads) to Core ML (ML Program, fp16, iOS 17), checks them
+against onnxruntime and times them on an Apple silicon Mac, on a 512 x 512 crop with an ellipse hole (best of three
+runs after the first). The Mac was busy (load average in the hundreds) and **no iPhone was used**: read the ratios, not
+the seconds.
+
+| Model | Core ML size (ONNX) | CPU | CPU + GPU | CPU + Neural Engine | rten on the CPU |
+|---|---|---|---|---|---|
+| MI-GAN | 13.5 MB (29.5 MB) | 0.78 s | **0.022 s** | 0.039 s, **wrong answers** | about 0.35 s |
+| LaMa | 98.7 MB (208 MB) | 7.8 s | **0.146 s** | 9.1 s | 7 to 11 s |
+
+Against onnxruntime on the GPU path the answers differ by at most 1.7 (MI-GAN) and 4.0 (LaMa) levels of 255, 0.012 and
+0.027 on average. Findings:
+- **The GPU is the target** (`MLModelConfiguration.computeUnits = .cpuAndGPU`): 16x faster than the CPU for MI-GAN and
+  50x for LaMa. Never let MI-GAN reach the Neural Engine (`.all`, `.cpuAndNeuralEngine`): its answer is wrong (errors up
+  to 255, most likely fp16 range). LaMa's Neural Engine path ran at CPU speed, and `.all` specialized for 253 s on first
+  load (the GPU path took 11 s); Core ML caches the result.
+- **LaMa becomes possible on a phone**: 99 MB instead of 208 MB, about 0.15 s on a Mac GPU. An iPhone's GPU is slower
+  and its memory tighter: measure there before promising it.
+- **Conversion needs two fixes**, both in the script: fixed 512 x 512 shapes folded by onnx-simplifier (LaMa's graph
+  is 17,480 nodes of FFT arithmetic, 3,028 after), and LaMa's reverse slices (`x[1:-1][::-1]`, the inverse FFT) rewritten
+  as constant `Gather`s because Core ML mis-infers a negative-step slice's shape. MI-GAN's published file takes and
+  answers uint8, so its uint8 casts become identities, as `vision::onnxfix` does for rten. The conversion goes through
+  onnx2torch (MI-GAN's PyTorch weights are only on Google Drive; the ONNX files are the pinned, verified source).
+- **Not done**: an iPhone measurement; the Rust side (an `objc2-core-ml` crate behind the `Painter` trait, `unsafe` only
+  in it, `EraseModel` holding an `Arc<dyn Painter>`); where the converted packages are hosted (an `.mlpackage` is a
+  folder, so a zip; the code and weights are MIT and Apache-2.0, which allow a mirror with their licence text; the
+  Places2 terms are still unverified; LightCraft hosts nothing today).
+
+Verdict: **go** for Core ML on the GPU as a faster backend for both models (and LaMa on iPhone), after an iPhone
+timing. Not scheduled.
 
 ## Runtime
 

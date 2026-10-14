@@ -522,7 +522,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Selection Input Image",
             [],
             None,
-            "{maxEdge?: 1008} → {photo, width, height, png: base64} — the active photo as a selection model sees it (uncropped, oriented, without masks), for a system segmenter (Apple Vision in the SwiftUI app); its answer goes back as `bitmap` to `mask.add` / `mask.setObject`",
+            "{maxEdge?: 1008} → {photo, width, height, png: base64}. The active photo as a selection model sees it (uncropped, oriented, without masks), for a system segmenter (Apple Vision in the SwiftUI app); its answer goes back as `bitmap` to `mask.add` / `mask.setObject`",
             has_active,
             |s, p| {
                 let c = "mask.inputImage";
@@ -542,7 +542,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Set Object Selection",
             [],
             None,
-            "{id?: maskId, component?: index (default: the mask's last Object component), bitmap: {width, height, data}, points?, exclude?: [[x,y],…]} — replace an Object selection with a bitmap computed outside the engine (see `mask.inputImage`); the taps are kept so their dots show → {activeMask}",
+            "{id?: maskId, component?: index (default: the mask's last Object component), bitmap: {width, height, data}, points?, exclude?: [[x,y],…]}. Replaces an Object selection with a bitmap computed outside the engine (see `mask.inputImage`); the taps are kept so their dots show → {activeMask}",
             has_active,
             |s, p| {
                 let c = "mask.setObject";

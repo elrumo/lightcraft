@@ -1,0 +1,9 @@
+# tools/coreml_convert.py (Python 3.12: coremltools has no native bindings for 3.14 yet; torch 2.7.0 is the newest it was tested with)
+torch==2.7.0
+coremltools
+onnx
+onnx2torch
+onnxsim
+onnxruntime
+numpy
+pillow
