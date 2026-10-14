@@ -122,6 +122,8 @@ fn a_drag_renders_drafts_then_a_final_view() {
     h.submit(&req(7, "render.view", json!({"width": 160, "height": 120}))).unwrap();
     let full = h.wait_for(|e| e["kind"] == "image" && e["slot"] == "main" && e["draft"] == false);
     assert_eq!(full["final"], true, "{full}");
+    // drafts are smaller, as egui's loupe draws them (`DraftBudget`): a full-size one per tick lags on a phone
+    assert!(draft["width"].as_u64() < full["width"].as_u64(), "draft {draft} vs full {full}");
 }
 
 // Closing saves and stops; the host refuses what comes after, and dropping it again is fine
