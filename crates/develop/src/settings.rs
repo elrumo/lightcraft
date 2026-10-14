@@ -1128,7 +1128,14 @@ impl LensBlur {
     /// The settings Lens Blur starts with when it is first applied to a photo: focus on what the
     /// caller chose, a moderate blur with round bokeh.
     pub fn applied(focal_distance: f64) -> LensBlur {
-        LensBlur { enabled: true, amount: 50.0, focal_distance: focal_distance.clamp(0.0, 100.0), focal_range: 15.0, boost: 50.0, ..LensBlur::default() }
+        LensBlur {
+            enabled: true,
+            amount: 50.0,
+            focal_distance: focal_distance.clamp(0.0, 100.0),
+            focal_range: 15.0,
+            boost: 50.0,
+            ..LensBlur::default()
+        }
     }
 
     /// Whether a render blurs anything (with depth to blur by).

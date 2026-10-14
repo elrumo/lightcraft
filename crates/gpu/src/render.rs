@@ -825,7 +825,7 @@ fn linear(cx: &mut Cx<'_>, sampled: &Buf, info: &SourceInfo, plan: &Plan<'_>, ho
     match &plan.blur {
         Some(b) => {
             let mut cpu = cx.read_rgb(&img, w, h);
-            lightcraft_pipeline::lensblur::apply(&mut cpu, b, &plan.frame, draft);
+            lightcraft_pipeline::lensblur::apply(&mut cpu, b, &plan.frame, plan.origin, draft);
             cx.gpu.upload(rgb_words(&cpu))
         }
         None => img,

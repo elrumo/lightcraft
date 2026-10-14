@@ -39,7 +39,10 @@ pub struct Mattes {
 impl std::fmt::Debug for Mattes {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let depth = self.depth.as_ref().map(|d| (d.width, d.height));
-        f.debug_struct("Mattes").field("mattes", &self.mattes.iter().map(|(k, m)| (k, m.width, m.height)).collect::<Vec<_>>()).field("depth", &depth).finish()
+        f.debug_struct("Mattes")
+            .field("mattes", &self.mattes.iter().map(|(k, m)| (k, m.width, m.height)).collect::<Vec<_>>())
+            .field("depth", &depth)
+            .finish()
     }
 }
 
@@ -84,7 +87,7 @@ impl Mattes {
     }
 
     /// The mattes a shape uses instead of its heuristic (empty: none fits).
-    fn for_shape(&self, shape: &MaskShape) -> Vec<&Image<u8>> {
+    pub(crate) fn for_shape(&self, shape: &MaskShape) -> Vec<&Image<u8>> {
         use MatteKind::*;
         // the whole person: a person matte, else the union of the parts
         let person = || {
@@ -399,7 +402,8 @@ pub(crate) fn source_to_out(p: &Plane, frame: &Frame, w: usize, h: usize) -> Pla
     let mut out = Plane::new(w, h);
     let o2t = frame.out_to_oriented(w, h);
     let ppl = frame.px_per_long(w).max(1e-9);
-    let oriented = if frame.orient == Orientation::Normal { std::borrow::Cow::Borrowed(p) } else { std::borrow::Cow::Owned(p.oriented(frame.orient)) };
+    let oriented =
+        if frame.orient == Orientation::Normal { std::borrow::Cow::Borrowed(p) } else { std::borrow::Cow::Owned(p.oriented(frame.orient)) };
     // plane px per output px
     let k = oriented.width as f64 / frame.ow * frame.ow.max(frame.oh) / ppl;
     let base = box_down(&oriented, if k >= 2.0 { (k.floor() as usize).min(64) } else { 1 });
