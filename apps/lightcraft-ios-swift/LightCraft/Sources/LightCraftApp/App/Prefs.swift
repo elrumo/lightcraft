@@ -160,7 +160,8 @@ final class Prefs {
     /// Remove's Generative AI: strokes are filled by the MI-GAN model (when it's here).
     var removeAI: Bool { didSet { store.set(removeAI, forKey: "removeAI") } }
     /// Crop ▸ Expand's Fill With: the model Generate paints with (`crop.expandModels` ids; `auto`:
-    /// the default).
+    /// the best model for this device's profile, the engine's `recommended`). Settings → AI Models
+    /// sets it too.
     var expandModel: String { didSet { store.set(expandModel, forKey: "expandModel") } }
     /// Show the import when a camera or memory card is plugged in.
     var importOnConnect: Bool { didSet { store.set(importOnConnect, forKey: "importOnConnect") } }

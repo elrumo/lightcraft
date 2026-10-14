@@ -2150,7 +2150,6 @@
   "Downloading": "ダウンロード中",
   "on this device": "このデバイス上",
   "Fast, on every device": "高速、すべてのデバイスで",
-  "Best for wide areas; slower, computers only": "広い領域に最適。低速で、コンピュータ専用",
   "No download: texture from the photo": "ダウンロード不要：写真のテクスチャを使用",
   "Let the crop reach past the photo's edges and paint the new area on this computer": "切り抜きを写真の端の外まで広げ、新しい領域をこのコンピュータ上で描きます",
   "Drag the crop past the photo's edges, or choose an aspect ratio, first.": "先に切り抜きを写真の端の外までドラッグするか、縦横比を選んでください。",
@@ -2159,5 +2158,19 @@
   "This model isn't downloaded yet: download it, or choose Classic.": "このモデルはまだダウンロードされていません。ダウンロードするか、［クラシック］を選んでください。",
   "Turned off in Settings → AI Models": "設定 → AIモデルでオフになっています",
   "Models can't be downloaded in this build: put the file in the models folder (Settings → AI Models).": "このビルドではモデルをダウンロードできません。ファイルをモデルフォルダに置いてください（設定 → AIモデル）。",
-  "Generating the new area…": "新しい領域を生成中…"
+  "Generating the new area…": "新しい領域を生成中…",
+  "Its licence lists uses that aren't allowed: read it before downloading (Settings → AI Models → Licence).": "ライセンスで禁止されている用途があります。ダウンロード前に確認してください（設定 → AIモデル → ライセンス）。",
+  "Without a GPU it takes minutes per Generate.": "GPU がない場合、生成ごとに数分かかります。",
+  "Best for wide areas of sky, water or texture": "空・水・テクスチャの広い領域に最適",
+  "Draws new detail; slower": "新しいディテールを描画。より低速",
+  "Draws new detail, guided by the photo; slow": "写真に沿って新しいディテールを描画。低速",
+  "The most detail; slow": "最も高精細。低速",
+  "A computer": "コンピュータ",
+  "A phone or tablet": "スマートフォンまたはタブレット",
+  "The browser": "ブラウザ",
+  "GPU": "GPU",
+  "no GPU": "GPUなし",
+  "This device:": "このデバイス：",
+  "What paints the new area when the crop reaches past the photo (Crop → Expand). The larger models draw new detail and take longer.": "切り抜きが写真の外まで広がったときに新しい領域を描くもの（切り抜き → 拡張）。大きなモデルほど新しいディテールを描き、時間がかかります。",
+  "Not an open-source licence: it lists uses that aren't allowed. Read it before downloading.": "オープンソースのライセンスではありません。禁止されている用途があります。ダウンロード前にお読みください。"
 }
