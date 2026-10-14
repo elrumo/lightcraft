@@ -28,9 +28,12 @@
 "%lld of %lld photos" = "%1$lld sur %2$lld photos";
 "%lld of 4 guides — drag along lines that should be vertical or horizontal." = "%1$lld guides sur 4 — faites-les glisser le long des lignes qui doivent être verticales ou horizontales.";
 "%lld photos" = "%1$lld photos";
+"%lld photos are scored." = "Un score est calculé pour %lld photo(s).";
 "%lld photos couldn't be read" = "%lld photo(s) n'ont pas pu être lues";
+"%lld photos found" = "%lld photo(s) trouvée(s)";
 "%lld photos on %lld pages" = "%1$lld photo(s) sur %2$lld page(s)";
 "%lld photos on this device" = "%1$lld photos sur cet appareil";
+"%lld photos tagged with a location" = "%lld photo(s) géolocalisée(s)";
 "%lld photos · synced with %@" = "%1$lld photos · synchronisées avec %2$@";
 "%lld photos, not saved" = "%1$lld photos, non enregistrées";
 "%lld presets to add" = "%lld préréglage(s) à ajouter";
@@ -235,6 +238,8 @@
 "Basic" = "Base";
 "Before" = "Avant";
 "Before / After" = "Avant / Après";
+"Before / After Layout" = "Disposition Avant / Après";
+"Before and After" = "Avant et après";
 "Before/After (Y)" = "Avant/Après (Y)";
 "Before/After Settings" = "Réglages Avant/Après";
 "Before/After Split" = "Avant/Après divisé";
@@ -307,6 +312,7 @@
 "Captured" = "Prise de vue";
 "Captured from" = "Prises à partir du";
 "Captured until" = "Prises jusqu'au";
+"Catalog" = "Catalogue";
 "Catalog Statistics" = "Statistiques du catalogue";
 "Catalog and edits" = "Catalogue et retouches";
 "Catchlight" = "Reflet dans les yeux";
@@ -330,6 +336,7 @@
 "Choose What to Do…" = "Choisir quoi faire…";
 "Choose a model below (Use) to start." = "Choisissez un modèle ci-dessous (Utiliser) pour commencer.";
 "Choose a photo in the grid or filmstrip" = "Choisissez une photo dans la grille ou la pellicule";
+"Choose a photo in the main window." = "Choisissez une photo dans la fenêtre principale.";
 "Choose an album…" = "Choisir un album…";
 "Choose what to do with this library's photos." = "Choisissez quoi faire des photos de cette bibliothèque.";
 "Choose…" = "Choisir…";
@@ -487,6 +494,7 @@
 "Crop, Rotate, Geometry" = "Recadrage, rotation, géométrie";
 "Cropped" = "Recadrée";
 "Cross Process" = "Traitement croisé";
+"Cull" = "Trier";
 "Culling" = "Tri";
 "Curve" = "Courbe";
 "Curve Presets" = "Préréglages de courbe";
@@ -583,6 +591,7 @@
 "Desert Heat" = "Chaleur du désert";
 "Desert Warmth" = "Douceur du désert";
 "Desktop" = "Bureau";
+"Destination Gamut Warning" = "Avertissement de gamut de destination";
 "Detail" = "Détail";
 "Detail (D)" = "Détail (D)";
 "Details" = "Détails";
@@ -621,6 +630,7 @@
 "Drag a box around an eye to correct it" = "Tracez un cadre autour d'un œil pour le corriger";
 "Drag a box around an eye." = "Tracez un cadre autour d'un œil.";
 "Drag a corner or an edge to crop, outside the frame to rotate" = "Faites glisser un coin ou un bord pour recadrer, hors du cadre pour pivoter";
+"Drag a section to move it; hidden ones stay where they are." = "Faites glisser une section pour la déplacer ; les sections masquées restent à leur place.";
 "Drag along the horizon" = "Faites glisser le long de l’horizon";
 "Drag along the horizon; double-click for Auto" = "Faites glisser le long de l'horizon ; double-cliquez pour Auto";
 "Drag over an eye on the photo; the pupil inside is found automatically." = "Faites glisser sur un œil de la photo ; la pupille est détectée automatiquement.";
@@ -653,6 +663,8 @@
 "Edit Photo with PhotoCraft" = "Modifier la photo avec PhotoCraft";
 "Edit Sections" = "Modifier les sections";
 "Edit Set…" = "Modifier le jeu…";
+"Edit Sidebar" = "Modifier la barre latérale";
+"Edit Sidebar…" = "Modifier la barre latérale…";
 "Edit Smart Album" = "Modifier l'album intelligent";
 "Edit Smart Album…" = "Modifier l'album intelligent…";
 "Edit Spot" = "Modifier la tache";
@@ -897,6 +909,7 @@
 "Hide Mask" = "Masquer le masque";
 "Hide Others" = "Masquer les autres";
 "Hide Overlay" = "Masquer l'incrustation";
+"Hide Section" = "Masquer la section";
 "Hide This Section" = "Masquer cette section";
 "Hides this shortcut only; the folder and its photos stay as they are" = "Masque uniquement ce raccourci ; le dossier et ses photos restent intacts";
 "High" = "Élevé";
@@ -1017,6 +1030,7 @@
 "It tests this album, so testing it back would loop" = "Il teste cet album : le tester en retour créerait une boucle";
 "Its copyright, creator and place." = "Son copyright, son créateur et son lieu.";
 "Its denoised picture is not made yet, and pictures are not made on their own (Settings, AI Denoise)." = "Son image débruitée n'est pas encore générée, et les images ne sont pas générées automatiquement (Réglages, Débruitage IA).";
+"Its photos go to Recently Deleted; no file is touched." = "Ses photos vont dans Supprimées récemment ; aucun fichier n'est touché.";
 "JPEG (Large)" = "JPEG (grand)";
 "JPEG (Small)" = "JPEG (petit)";
 "Join the ArtCraft Discord" = "Rejoindre le Discord d'ArtCraft";
@@ -1034,6 +1048,7 @@
 "Keyword Lists" = "Listes de mots-clés";
 "Keyword Name" = "Nom du mot-clé";
 "Keyword Painter" = "Pinceau de mots-clés";
+"Keyword Painter…" = "Pinceau de mots-clés…";
 "Keyword Set" = "Jeu de mots-clés";
 "Keyword Sets" = "Jeux de mots-clés";
 "Keyword Sets…" = "Jeux de mots-clés…";
@@ -1066,6 +1081,7 @@
 "Layers" = "Calques";
 "Leave There" = "Laisser sur place";
 "Leave them" = "Les laisser";
+"Left / Right" = "Gauche / Droite";
 "Lens" = "Objectif";
 "Lens Blur" = "Flou de l'objectif";
 "Lens Corrections" = "Corrections de l'objectif";
@@ -1102,7 +1118,10 @@
 "LightCraft website" = "Site web de LightCraft";
 "LightCraft — Second Window" = "LightCraft : deuxième fenêtre";
 "Lightroom Classic Catalog" = "Catalogue Lightroom Classic";
+"Lightroom Classic Catalog…" = "Catalogue Lightroom Classic…";
 "Lightroom import cancelled" = "Importation Lightroom annulée";
+"Lightroom import complete: %lld photos added" = "Importation Lightroom terminée : %1$lld photos ajoutées";
+"Lightroom import complete: %lld photos added, %lld failed" = "Importation Lightroom terminée : %1$lld photos ajoutées, %2$lld échec(s)";
 "Lightroom inspection cancelled" = "Inspection Lightroom annulée";
 "Lights" = "Tons clairs";
 "Lights Out" = "Lumières éteintes";
@@ -1152,6 +1171,7 @@
 "Make Available Offline" = "Rendre disponible hors ligne";
 "Make Candidate the Select" = "Faire de la candidate la sélection";
 "Make PDF" = "Créer le PDF";
+"Make Select" = "Faire la sélection";
 "Make it now" = "La générer maintenant";
 "Make the denoised picture of the photos I am looking at" = "Générer l'image débruitée des photos que je regarde";
 "Making the link: it's copied when it's ready" = "Création du lien : il est copié dès qu'il est prêt";
@@ -1296,6 +1316,7 @@
 "New time" = "Nouvelle heure";
 "New…" = "Nouveau…";
 "Next Appearance Mode" = "Mode d’apparence suivant";
+"Next Candidate" = "Candidate suivante";
 "Next Photo" = "Photo suivante";
 "Next up for AI Denoise…" = "Prochaines photos pour le débruitage IA…";
 "Night Blue" = "Bleu nuit";
@@ -1306,6 +1327,7 @@
 "No Label" = "Sans étiquette";
 "No Limit" = "Aucune limite";
 "No People Yet" = "Aucune personne pour l'instant";
+"No Photo" = "Aucune photo";
 "No Photos" = "Aucune photo";
 "No Photos Match" = "Aucune photo correspondante";
 "No Rating" = "Aucune note";
@@ -1365,6 +1387,7 @@
 "Not Now" = "Pas maintenant";
 "Not carried over: %@" = "Non transféré : %1$@";
 "Not saved" = "Non enregistré";
+"Notes" = "Remarques";
 "Nothing Running" = "Rien en cours";
 "Nothing is fetched until you accept. The model is kept on this computer only; LightCraft never uploads or shares it." = "Rien n'est récupéré tant que vous n'avez pas accepté. Le modèle est conservé uniquement sur cet ordinateur ; LightCraft ne le téléverse ni ne le partage jamais.";
 "Nothing is fetched until you accept. The model is kept on this device only; LightCraft never uploads or shares it." = "Rien n'est téléchargé tant que vous n'avez pas accepté. Le modèle est conservé uniquement sur cet appareil ; LightCraft ne le téléverse ni ne le partage jamais.";
@@ -1427,6 +1450,7 @@
 "Original offline · no smart preview" = "Original hors ligne · aucun aperçu dynamique";
 "Originals" = "Originaux";
 "Originals Limit" = "Limite des originaux";
+"Originals Not Found" = "Originaux introuvables";
 "Originals Too" = "Originaux aussi";
 "Originals are the full-size files downloaded from the server. Thumbnails can be deleted at any time; they are drawn again." = "Les originaux sont les fichiers en taille réelle téléchargés depuis le serveur. Les miniatures peuvent être supprimées à tout moment : elles sont recréées.";
 "Other Photos" = "Autres photos";
@@ -1439,10 +1463,12 @@
 "Pages" = "Pages";
 "Paint" = "Peindre";
 "Paint only areas like the one under the brush" = "Peindre uniquement les zones similaires à celle sous le pinceau";
+"Paint onto Photos" = "Peindre sur des photos";
 "Paint over a distraction on the photo to remove it." = "Peignez sur un élément gênant de la photo pour le supprimer.";
 "Paint over what to take away." = "Peignez ce qu'il faut retirer.";
 "Paint overlay" = "Incrustation de peinture";
 "Paint the area to adjust" = "Peignez la zone à ajuster";
+"Painting “%@”" = "Peinture de « %@ »";
 "Panels" = "Panels";
 "Panorama" = "Panorama";
 "Panorama Merge" = "Fusion de panorama";
@@ -1467,6 +1493,7 @@
 "Paste pages" = "Coller les pages";
 "Pastel Haze" = "Brume pastel";
 "Pause Syncing" = "Suspendre la synchronisation";
+"Paused" = "En pause";
 "Pending photo action cancelled" = "Action de photo en attente annulée";
 "Pending photo action cancelled because its library or photo changed" = "Action de photo en attente annulée car sa bibliothèque ou sa photo a changé";
 "People" = "Personnes";
@@ -1484,6 +1511,7 @@
 "Photo Grid" = "Grille de photos";
 "Photo Grid (G)" = "Grille de photos (G)";
 "Photo Merge" = "Fusion de photos";
+"Photo found" = "Photo trouvée";
 "Photo ▸ Edit in External Editor (⇧⌘E) renders a 16-bit TIFF copy, stacks it with the original and opens it here (an app name on macOS, a program path elsewhere)." = "Photo → Modifier dans l'éditeur externe (⇧⌘E) génère une copie TIFF 16 bits, l'empile avec l'original et l'ouvre ici (un nom d'application sur macOS, un chemin de programme ailleurs).";
 "Photos" = "Photos";
 "Photos per Bracket" = "Photos par bracketing";
@@ -1491,6 +1519,7 @@
 "Photos seen in Local but never added or changed leave the catalog when their folder hasn't been browsed for this long (checked when the library opens). Files stay on disk; browsing the folder shows them again." = "Les photos vues dans Local mais jamais ajoutées ni modifiées quittent le catalogue lorsque leur dossier n'a pas été parcouru depuis cette durée (vérifié à l'ouverture de la bibliothèque). Les fichiers restent sur le disque ; parcourir le dossier les fait réapparaître.";
 "Photos stay in All Photos. Deleting a folder also deletes its albums." = "Les photos restent dans Toutes les photos. Supprimer un dossier supprime aussi ses albums.";
 "Photos that arrive in this folder (tethering, a scanner, a sync app) are added as soon as they're complete." = "Les photos qui arrivent dans ce dossier (capture connectée, scanner, application de synchronisation) sont ajoutées dès qu'elles sont complètes.";
+"Photos whose originals aren't in this folder are skipped. Pick the folder that holds both the catalog and its photos." = "Les photos dont les originaux ne sont pas dans ce dossier sont ignorées. Choisissez le dossier qui contient à la fois le catalogue et ses photos.";
 "Photos…" = "Photos…";
 "Pick" = "Sélectionnée";
 "Pick Flag" = "Drapeau de sélection";
@@ -1534,6 +1563,7 @@
 "Preview size" = "Taille de l'aperçu";
 "Preview unavailable" = "Aperçu indisponible";
 "Previews" = "Aperçus";
+"Previous Candidate" = "Candidate précédente";
 "Previous Photo" = "Photo précédente";
 "Print" = "Imprimer";
 "Print…" = "Imprimer…";
@@ -1547,6 +1577,8 @@
 "Profiles" = "Profils";
 "Progressive" = "Progressif";
 "Projection" = "Projection";
+"Proof As" = "Épreuvage en";
+"Proof Preview · %@" = "Aperçu d’épreuve · %1$@";
 "Proof copy created" = "Copie d'épreuve créée";
 "Properties" = "Propriétés";
 "Public Domain" = "Domaine public";
@@ -1611,6 +1643,7 @@
 "Reading a sidecar replaces the photo's rating, labels, metadata and edits with what it says." = "Lire un fichier annexe remplace la note, les étiquettes, les métadonnées et les retouches de la photo par son contenu.";
 "Reading folder" = "Lecture du dossier";
 "Reading folder…" = "Lecture du dossier…";
+"Reading the catalog…" = "Lecture du catalogue…";
 "Real name" = "Nom réel";
 "Recent" = "Récents";
 "Recent Keywords" = "Mots-clés récents";
@@ -1630,6 +1663,7 @@
 "Red label" = "Étiquette rouge";
 "Red/Cyan Fringe" = "Frange rouge/cyan";
 "Redo" = "Rétablir";
+"Redo %@" = "Rétablir %1$@";
 "Reference" = "Référence";
 "Reference View" = "Vue de référence";
 "Reference the files where they are" = "Référencer les fichiers sur place";
@@ -1663,6 +1697,7 @@
 "Remove Face" = "Retirer le visage";
 "Remove Face Box" = "Retirer le cadre de visage";
 "Remove Folder from Library" = "Retirer le dossier de la bibliothèque";
+"Remove Folder from Library…" = "Retirer le dossier de la bibliothèque…";
 "Remove Location" = "Supprimer le lieu";
 "Remove Offline Copy" = "Supprimer la copie hors ligne";
 "Remove a filter above, or choose Clear all" = "Retirez un filtre ci-dessus ou choisissez Tout effacer";
@@ -1673,6 +1708,7 @@
 "Remove from Photo" = "Retirer de la photo";
 "Remove from Selected Photos" = "Retirer des photos sélectionnées";
 "Remove from Stack" = "Retirer de la pile";
+"Remove from Survey" = "Retirer de la vue multiple";
 "Remove from Target Album" = "Retirer de l'album cible";
 "Remove from favorites" = "Retirer des favoris";
 "Remove from survey" = "Retirer de la vue multiple";
@@ -1683,6 +1719,7 @@
 "Remove this filter" = "Retirer ce filtre";
 "Remove this group" = "Retirer ce groupe";
 "Remove this rule" = "Retirer cette règle";
+"Remove “%@” from the library?" = "Retirer « %@ » de la bibliothèque ?";
 "Removed" = "Retirées";
 "Removing with AI…" = "Suppression par IA…";
 "Rename" = "Renommer";
@@ -1814,6 +1851,7 @@
 "Search" = "Rechercher";
 "Search Photos" = "Rechercher des photos";
 "Search albums" = "Rechercher des albums";
+"Search by describing the photo, in your own words" = "Recherchez en décrivant la photo avec vos propres mots";
 "Search commands" = "Rechercher des commandes";
 "Search commands or keys" = "Rechercher des commandes ou des touches";
 "Search…" = "Rechercher…";
@@ -1862,6 +1900,7 @@
 "Set Up Sync…" = "Configurer la synchronisation…";
 "Set as Album Cover" = "Définir comme couverture de l'album";
 "Set as Before" = "Définir comme Avant";
+"Set as Reference" = "Définir comme référence";
 "Set as Reference Photo" = "Définir comme photo de référence";
 "Set as Target Album" = "Définir comme album cible";
 "Set as Target Album (B adds to it)" = "Définir comme album cible (B y ajoute)";
@@ -1991,7 +2030,9 @@
 "Speed" = "Vitesse";
 "Spherical" = "Sphérique";
 "Spiral" = "Spirale";
+"Split Left / Right" = "Divisé gauche / droite";
 "Split Stack" = "Scinder la pile";
+"Split Top / Bottom" = "Divisé haut / bas";
 "Spot %lld" = "Tache %lld";
 "Spring Fresh" = "Fraîcheur printanière";
 "Square" = "Carré";
@@ -2087,6 +2128,7 @@
 "Tap + to make a mask: the subject, the sky, a gradient, a brush…" = "Touchez + pour créer un masque : le sujet, le ciel, un dégradé, un pinceau…";
 "Tap a colour in the photo" = "Touchez une couleur dans la photo";
 "Tap a face to mark it" = "Touchez un visage pour le marquer";
+"Tap photos to give them the keyword; tap again to take it away." = "Touchez des photos pour leur appliquer le mot-clé ; touchez-les de nouveau pour le retirer.";
 "Tap something white or grey in the photo" = "Touchez un élément blanc ou gris dans la photo";
 "Tap the photo to pick a colour" = "Touchez la photo pour choisir une couleur";
 "Tap ✓ when it is them, ✕ when it isn't." = "Touchez ✓ si c'est bien la personne, ✕ sinon.";
@@ -2128,10 +2170,12 @@
 "The photo is enlarged to twice its width and height with an AI model, with your edits applied, and added next to the original (a 16-bit sRGB TIFF), stacked with it. The original isn't changed. This takes a while on large photos." = "La photo est agrandie au double de sa largeur et de sa hauteur avec un modèle IA, vos retouches appliquées, puis ajoutée à côté de l'original (un TIFF sRGB 16 bits), empilée avec lui. L'original n'est pas modifié. Cela prend du temps sur les grandes photos.";
 "The photo shown gets this time; the others move by as much, keeping their spacing." = "La photo affichée reçoit cette heure ; les autres sont décalées d'autant, en conservant leur écart.";
 "The photos are copied into the library; the originals in Photos and Files are left as they are." = "Les photos sont copiées dans la bibliothèque ; les originaux dans Photos et Fichiers restent intacts.";
+"The photos in view are scored." = "Un score est calculé pour les photos affichées.";
 "The processor does the work." = "Le processeur effectue le travail.";
 "The server can't say how much it stores: %@" = "Le serveur ne peut pas indiquer ce qu’il stocke : %@";
 "The server has a library already" = "Le serveur a déjà une bibliothèque";
 "The server's" = "Celle du serveur";
+"Their edits, ratings and keywords are replaced with the catalog's." = "Leurs retouches, notes et mots-clés sont remplacés par ceux du catalogue.";
 "Their photos and the keywords below them come together under one keyword." = "Leurs photos et les mots-clés qu'ils contiennent sont réunis sous un seul mot-clé.";
 "Theme" = "Thème";
 "There are no presets in these files." = "Ces fichiers ne contiennent aucun préréglage.";
@@ -2177,6 +2221,7 @@
 "Tone Curve" = "Courbe des tonalités";
 "Tool" = "Outil";
 "Tools" = "Outils";
+"Top / Bottom" = "Haut / Bas";
 "Top Level" = "Niveau supérieur";
 "Total" = "Total";
 "Trained on: %@" = "Entraîné sur : %1$@";
@@ -2198,6 +2243,7 @@
 "Uncheck All" = "Tout décocher";
 "Uncheck the files of this type" = "Décocher les fichiers de ce type";
 "Undo" = "Annuler";
+"Undo %@" = "Annuler %1$@";
 "Unedited" = "Non retouchées";
 "Unedited raws" = "RAW non retouchés";
 "Unflag" = "Retirer le drapeau";
@@ -2217,6 +2263,7 @@
 "Up to date" = "À jour";
 "Update" = "Mettre à jour";
 "Update Mask Shape" = "Mettre à jour la forme du masque";
+"Update Photos Already in the Library" = "Mettre à jour les photos déjà dans la bibliothèque";
 "Update Preset with Current Settings" = "Mettre à jour le préréglage avec les réglages actuels";
 "Update Rules from Current Filter" = "Mettre à jour les règles à partir du filtre actuel";
 "Update Version" = "Mettre à jour la version";

@@ -27,9 +27,12 @@
 "%lld of %lld photos" = "%1$lld／%2$lld 張照片";
 "%lld of 4 guides — drag along lines that should be vertical or horizontal." = "已繪製 %1$lld／4 條參考線 — 沿應為垂直或水平的線條拖曳。";
 "%lld photos" = "%1$lld 張照片";
+"%lld photos are scored." = "會為 %lld 張照片評估分數。";
 "%lld photos couldn't be read" = "%lld 張照片無法讀取";
+"%lld photos found" = "已找到 %lld 張照片";
 "%lld photos on %lld pages" = "%lld 張照片，共 %lld 頁";
 "%lld photos on this device" = "此裝置上有 %1$lld 張照片";
+"%lld photos tagged with a location" = "已為 %lld 張照片加上位置標記";
 "%lld photos · synced with %@" = "%1$lld 張照片 · 已與 %2$@ 同步";
 "%lld photos, not saved" = "%1$lld 張照片（不會儲存）";
 "%lld points" = "%lld 點";
@@ -245,6 +248,8 @@
 "Because you send your search data to your server, the faces found here go there too." = "由於你已將搜尋資料傳送到自己的伺服器，在這裡找到的人臉資料也會一併傳送過去。";
 "Before" = "編輯前";
 "Before / After" = "之前 / 之後";
+"Before / After Layout" = "編輯前／編輯後版面";
+"Before and After" = "編輯前後";
 "Before/After (Y)" = "編輯前／後（Y）";
 "Before/After Settings" = "編輯前／後設定";
 "Before/After Split" = "編輯前／後分割檢視";
@@ -319,6 +324,7 @@
 "Captured" = "拍攝時間";
 "Captured from" = "拍攝時間起於";
 "Captured until" = "拍攝時間止於";
+"Catalog" = "目錄";
 "Catalog Statistics" = "目錄統計";
 "Catalog and edits" = "目錄與編輯";
 "Catchlight" = "眼神光";
@@ -342,6 +348,7 @@
 "Choose What to Do…" = "選擇處理方式…";
 "Choose a model below (Use) to start." = "請在下方選擇一個模型（使用）以開始。";
 "Choose a photo in the grid or filmstrip" = "請在格狀檢視或底片顯示窗格中選擇照片";
+"Choose a photo in the main window." = "請在主視窗中選擇照片。";
 "Choose an album…" = "選擇相簿…";
 "Choose what to do with this library's photos." = "選擇如何處理此照片庫的照片。";
 "Choose…" = "選擇…";
@@ -391,6 +398,7 @@
 "Collapse All Stacks" = "收合所有堆疊";
 "Collapse Stack" = "收合堆疊";
 "Collapsed" = "已收合";
+"Collections" = "收藏集";
 "Color" = "色彩";
 "Color %lld" = "色彩 %lld";
 "Color Grading" = "色彩分級";
@@ -500,6 +508,7 @@
 "Crop, Rotate, Geometry" = "裁切、旋轉、幾何";
 "Cropped" = "已裁切";
 "Cross Process" = "交叉沖洗";
+"Cull" = "挑選";
 "Culling" = "挑片";
 "Curve" = "曲線";
 "Curve Presets" = "曲線預設集";
@@ -598,6 +607,7 @@
 "Desert Heat" = "沙漠熱浪";
 "Desert Warmth" = "沙漠暖色";
 "Desktop" = "桌面";
+"Destination Gamut Warning" = "目標色域警告";
 "Detail" = "詳細檢視";
 "Detail (D)" = "詳細檢視（D）";
 "Details" = "詳細資訊";
@@ -637,6 +647,7 @@
 "Drag a box around an eye to correct it" = "在眼睛周圍拖曳出方框以進行校正";
 "Drag a box around an eye." = "在眼睛周圍拖曳出方框。";
 "Drag a corner or an edge to crop, outside the frame to rotate" = "拖移角落或邊緣以裁切，在框外拖移可旋轉";
+"Drag a section to move it; hidden ones stay where they are." = "拖移區段即可移動；已隱藏的區段維持原處。";
 "Drag along the horizon" = "沿地平線拖曳";
 "Drag along the horizon; double-click for Auto" = "沿水平線拖曳；按兩下可自動校正";
 "Drag over an eye on the photo; the pupil inside is found automatically." = "在照片的眼睛上拖曳，會自動尋找範圍內的瞳孔。";
@@ -669,6 +680,8 @@
 "Edit Photo with PhotoCraft" = "使用 PhotoCraft 編輯照片";
 "Edit Sections" = "編輯區段";
 "Edit Set…" = "編輯關鍵字集…";
+"Edit Sidebar" = "編輯側邊欄";
+"Edit Sidebar…" = "編輯側邊欄…";
 "Edit Smart Album" = "編輯智慧型相簿";
 "Edit Smart Album…" = "編輯智慧型相簿…";
 "Edit Spot" = "編輯斑點";
@@ -927,6 +940,7 @@
 "Hide Mask" = "隱藏遮色片";
 "Hide Others" = "隱藏其他應用程式";
 "Hide Overlay" = "隱藏疊加";
+"Hide Section" = "隱藏區段";
 "Hide This Section" = "隱藏此區段";
 "Hides this shortcut only; the folder and its photos stay as they are" = "只隱藏此捷徑，資料夾及照片維持原狀";
 "High" = "高";
@@ -1054,6 +1068,7 @@
 "It tests this album, so testing it back would loop" = "它引用了此相簿，反過來引用會形成循環";
 "Its copyright, creator and place." = "此照片的著作權、創作者和位置。";
 "Its denoised picture is not made yet, and pictures are not made on their own (Settings, AI Denoise)." = "Its denoised picture is not made yet, and pictures are not made on their own (Settings, AI Denoise).";
+"Its photos go to Recently Deleted; no file is touched." = "其中的照片會移至「最近刪除」；不會更動任何檔案。";
 "JPEG (Large)" = "JPEG（大尺寸）";
 "JPEG (Small)" = "JPEG（小尺寸）";
 "Join the ArtCraft Discord" = "加入 ArtCraft Discord";
@@ -1071,6 +1086,7 @@
 "Keyword Lists" = "關鍵字清單";
 "Keyword Name" = "關鍵字名稱";
 "Keyword Painter" = "關鍵字筆刷";
+"Keyword Painter…" = "關鍵字筆刷…";
 "Keyword Set" = "關鍵字集";
 "Keyword Sets" = "關鍵字集";
 "Keyword Sets…" = "關鍵字集…";
@@ -1103,6 +1119,7 @@
 "Layers" = "圖層";
 "Leave There" = "保留在原處";
 "Leave them" = "保留這些照片";
+"Left / Right" = "左／右";
 "Lens" = "鏡頭";
 "Lens Blur" = "鏡頭模糊";
 "Lens Corrections" = "鏡頭校正";
@@ -1138,7 +1155,10 @@
 "LightCraft website" = "LightCraft 網站";
 "LightCraft — Second Window" = "LightCraft — 第二視窗";
 "Lightroom Classic Catalog" = "Lightroom Classic 目錄";
+"Lightroom Classic Catalog…" = "Lightroom Classic 目錄…";
 "Lightroom import cancelled" = "已取消 Lightroom 匯入";
+"Lightroom import complete: %lld photos added" = "Lightroom 匯入完成：已加入 %1$lld 張相片";
+"Lightroom import complete: %lld photos added, %lld failed" = "Lightroom 匯入完成：已加入 %1$lld 張相片，%2$lld 張失敗";
 "Lightroom inspection cancelled" = "已取消 Lightroom 檢查";
 "Lights" = "亮調";
 "Lights Out" = "關燈模式";
@@ -1190,6 +1210,7 @@
 "Make Available Offline" = "設為可離線使用";
 "Make Candidate the Select" = "將候選照片設為選定照片";
 "Make PDF" = "製作 PDF";
+"Make Select" = "設為選取";
 "Make it now" = "Make it now";
 "Make the denoised picture of the photos I am looking at" = "Make the denoised picture of the photos I am looking at";
 "Making the link: it's copied when it's ready" = "正在建立連結：完成後會自動複製";
@@ -1335,6 +1356,7 @@
 "New time" = "新時間";
 "New…" = "新增…";
 "Next Appearance Mode" = "下一個外觀模式";
+"Next Candidate" = "下一個候選";
 "Next Photo" = "下一張照片";
 "Next up for AI Denoise…" = "Next up for AI Denoise…";
 "Night Blue" = "夜色藍調";
@@ -1345,6 +1367,7 @@
 "No Label" = "無標籤";
 "No Limit" = "不限";
 "No People Yet" = "還沒有人物";
+"No Photo" = "沒有照片";
 "No Photos" = "沒有照片";
 "No Photos Match" = "沒有符合的照片";
 "No Rating" = "無評分";
@@ -1411,6 +1434,7 @@
 "Not a tile address (it needs https://, {z}, {x} and {y}): the standard tiles are used." = "不是圖磚位址（需要 https://、{z}、{x} 與 {y}）：將使用標準圖磚。";
 "Not carried over: %@" = "未沿用：%1$@";
 "Not saved" = "未儲存";
+"Notes" = "備註";
 "Nothing Running" = "沒有執行中的作業";
 "Nothing is fetched until you accept. The model is kept on this computer only; LightCraft never uploads or shares it." = "Nothing is fetched until you accept. The model is kept on this computer only; LightCraft never uploads or shares it.";
 "Nothing is fetched until you accept. The model is kept on this device only; LightCraft never uploads or shares it." = "在你接受之前不會下載任何內容。模型只會保留在這台裝置上；LightCraft 絕不會上傳或分享。";
@@ -1479,6 +1503,7 @@
 "Original offline · no smart preview" = "原始檔案離線，無智慧型預覽";
 "Originals" = "原始檔案";
 "Originals Limit" = "原始檔案上限";
+"Originals Not Found" = "找不到原始檔案";
 "Originals Too" = "也包含原始檔案";
 "Originals are the full-size files downloaded from the server. Thumbnails can be deleted at any time; they are drawn again." = "原始檔案是從伺服器下載的完整尺寸檔案。縮圖可隨時刪除，會重新產生。";
 "Other Photos" = "其他照片";
@@ -1491,6 +1516,7 @@
 "Pages" = "頁面";
 "Paint" = "繪製";
 "Paint only areas like the one under the brush" = "只塗繪與筆刷下方相似的區域";
+"Paint onto Photos" = "塗繪到照片上";
 "Paint over a blemish: it is healed from a nearby area, which you can drag. Tap a pin for its options." = "在瑕疵上塗繪：會以附近的區域修復，該區域可拖移。點一下控制點可開啟其選項。";
 "Paint over a distraction on the photo to remove it." = "在照片中不需要的物件上塗繪以將其移除。";
 "Paint over a distraction to remove it. Tap a pin for its options." = "在不需要的物件上塗繪以將其移除。點一下控制點可開啟其選項。";
@@ -1498,6 +1524,7 @@
 "Paint over what to take away." = "在要移除的部分塗繪。";
 "Paint overlay" = "塗繪疊加";
 "Paint the area to adjust" = "在要調整的區域塗繪";
+"Painting “%@”" = "正在塗繪「%@」";
 "Panels" = "面板";
 "Panorama" = "全景";
 "Panorama Merge" = "全景合併";
@@ -1523,6 +1550,7 @@
 "Pastel Haze" = "粉彩薄霧";
 "Pause" = "暫停";
 "Pause Syncing" = "暫停同步";
+"Paused" = "已暫停";
 "Pending photo action cancelled" = "Pending photo action cancelled";
 "Pending photo action cancelled because its library or photo changed" = "Pending photo action cancelled because its library or photo changed";
 "People" = "人物";
@@ -1540,6 +1568,7 @@
 "Photo Grid" = "照片格狀檢視";
 "Photo Grid (G)" = "照片格狀檢視（G）";
 "Photo Merge" = "照片合併";
+"Photo found" = "已找到照片";
 "Photo ▸ Edit in External Editor (⇧⌘E) renders a 16-bit TIFF copy, stacks it with the original and opens it here (an app name on macOS, a program path elsewhere)." = "「照片 → 在外部編輯器中編輯」（⇧⌘E）會算繪 16 位元 TIFF 副本，與原始照片堆疊後在此開啟（macOS 填應用程式名稱，其他平台填程式路徑）。";
 "Photos" = "照片";
 "Photos per Bracket" = "每組包圍曝光的照片數";
@@ -1548,6 +1577,7 @@
 "Photos stay in All Photos. Deleting a folder also deletes its albums." = "照片會保留在「所有照片」中。刪除資料夾也會刪除其中的相簿。";
 "Photos taken with GPS on show here. Photo ▸ Auto-Tag from Tracklog… adds locations from a GPX file." = "開啟 GPS 拍攝的照片會顯示在這裡。也可以從 GPX 檔案加入位置（照片 → 依軌跡記錄自動加入位置標記…）。";
 "Photos that arrive in this folder (tethering, a scanner, a sync app) are added as soon as they're complete." = "此資料夾中新出現的照片（連線拍攝、掃描器或同步程式）會在檔案完整後立即加入。";
+"Photos whose originals aren't in this folder are skipped. Pick the folder that holds both the catalog and its photos." = "原始檔案不在此資料夾中的照片會被略過。請選擇同時包含目錄及其照片的資料夾。";
 "Photos…" = "照片…";
 "Pick" = "精選";
 "Pick Flag" = "精選旗標";
@@ -1593,6 +1623,7 @@
 "Preview size" = "預覽尺寸";
 "Preview unavailable" = "無法使用預覽";
 "Previews" = "預覽";
+"Previous Candidate" = "上一個候選";
 "Previous Photo" = "上一張照片";
 "Print" = "列印";
 "Print…" = "列印…";
@@ -1606,6 +1637,8 @@
 "Profiles" = "描述檔";
 "Progressive" = "漸進式";
 "Projection" = "投影";
+"Proof As" = "校樣為";
+"Proof Preview · %@" = "校樣預覽 · %1$@";
 "Proof copy created" = "已建立校樣副本";
 "Properties" = "屬性";
 "Public Domain" = "公有領域";
@@ -1672,6 +1705,7 @@
 "Reading a sidecar replaces the photo's rating, labels, metadata and edits with what it says." = "讀取附屬檔案會以其內容取代照片的評等、標籤、中繼資料和編輯。";
 "Reading folder" = "正在讀取檔案夾";
 "Reading folder…" = "正在讀取資料夾…";
+"Reading the catalog…" = "正在讀取目錄…";
 "Real name" = "真實姓名";
 "Recent" = "最近使用";
 "Recent Keywords" = "最近使用的關鍵字";
@@ -1691,6 +1725,7 @@
 "Red label" = "紅色標籤";
 "Red/Cyan Fringe" = "紅／青色邊緣";
 "Redo" = "重做";
+"Redo %@" = "重做 %1$@";
 "Reference" = "參考";
 "Reference View" = "參考檢視";
 "Reference the files where they are" = "參照檔案目前的位置";
@@ -1725,6 +1760,7 @@
 "Remove Face" = "移除人臉";
 "Remove Face Box" = "移除臉部框";
 "Remove Folder from Library" = "從照片庫移除資料夾";
+"Remove Folder from Library…" = "從照片庫移除資料夾…";
 "Remove Location" = "移除位置";
 "Remove Offline Copy" = "移除離線複本";
 "Remove a filter above, or choose Clear all" = "請移除上方的某個篩選條件，或選擇「全部清除」";
@@ -1735,6 +1771,7 @@
 "Remove from Photo" = "從照片移除";
 "Remove from Selected Photos" = "從選取的照片移除";
 "Remove from Stack" = "從堆疊移除";
+"Remove from Survey" = "從總覽移除";
 "Remove from Target Album" = "從目標相簿移除";
 "Remove from favorites" = "從最愛移除";
 "Remove from survey" = "從總覽移除";
@@ -1745,6 +1782,7 @@
 "Remove this filter" = "移除此篩選條件";
 "Remove this group" = "移除此群組";
 "Remove this rule" = "移除此規則";
+"Remove “%@” from the library?" = "要從照片庫中移除「%@」嗎？";
 "Removed" = "已移除";
 "Removing with AI…" = "正在用 AI 移除…";
 "Rename" = "重新命名";
@@ -1936,6 +1974,7 @@
 "Set Up Sync…" = "設定同步…";
 "Set as Album Cover" = "設為相簿封面";
 "Set as Before" = "設為編輯前";
+"Set as Reference" = "設為參考";
 "Set as Reference Photo" = "設為參考照片";
 "Set as Target Album" = "設為目標相簿";
 "Set as Target Album (B adds to it)" = "設為目標相簿（按 B 加入）";
@@ -2069,7 +2108,9 @@
 "Speed" = "Speed";
 "Spherical" = "球面";
 "Spiral" = "螺旋";
+"Split Left / Right" = "左右分割";
 "Split Stack" = "分割堆疊";
+"Split Top / Bottom" = "上下分割";
 "Spot %lld" = "斑點 %lld";
 "Spring Fresh" = "清新春日";
 "Square" = "正方形";
@@ -2168,6 +2209,7 @@
 "Tap + to make a mask: the subject, the sky, a gradient, a brush…" = "點一下 + 可建立遮色片：主體、天空、漸層、筆刷…";
 "Tap a colour in the photo" = "點一下照片中的色彩";
 "Tap a face to mark it" = "點一下人臉以標記";
+"Tap photos to give them the keyword; tap again to take it away." = "輕點照片即可加入關鍵字；再次輕點即可移除。";
 "Tap something white or grey in the photo" = "點一下照片中白色或灰色的部分";
 "Tap the photo to pick a colour" = "點一下照片以選取色彩";
 "Tap ✓ when it is them, ✕ when it isn't." = "是他們時點 ✓，不是時點 ✕。";
@@ -2214,11 +2256,13 @@
 "The photo shown gets this time; the others move by as much, keeping their spacing." = "目前顯示的照片會設為此時間；其他照片位移相同幅度，保持原有間隔。";
 "The photos are copied into the library; the originals in Photos and Files are left as they are." = "照片會複製到照片庫；「照片」與「檔案」中的原始檔案維持原狀。";
 "The photos are copied into the library; the originals in Photos or Files are left as they are." = "照片會拷貝到圖庫；「照片」或「檔案」中的原始照片保持不變。";
+"The photos in view are scored." = "會為檢視中的照片評估分數。";
 "The processor does the work." = "The processor does the work.";
 "The search model is installed: describe a photo to find it." = "搜尋模型已安裝：描述一張照片即可尋找。";
 "The server can't say how much it stores: %@" = "伺服器無法告知儲存量：%@";
 "The server has a library already" = "伺服器已有照片庫";
 "The server's" = "伺服器的";
+"Their edits, ratings and keywords are replaced with the catalog's." = "它們的編輯、評分與關鍵字會被目錄中的內容取代。";
 "Their photos and the keywords below them come together under one keyword." = "它們的照片與下層關鍵字將合併到同一個關鍵字下。";
 "Theme" = "主題";
 "There are no presets in these files." = "這些檔案中沒有預設集。";
@@ -2268,6 +2312,7 @@
 "Tone Curve" = "色調曲線";
 "Tool" = "工具";
 "Tools" = "工具";
+"Top / Bottom" = "上／下";
 "Top Level" = "最上層";
 "Total" = "總計";
 "Trained on: %@" = "Trained on: %1$@";
@@ -2289,6 +2334,7 @@
 "Uncheck All" = "全部取消勾選";
 "Uncheck the files of this type" = "取消勾選此類型的所有檔案";
 "Undo" = "復原";
+"Undo %@" = "復原 %1$@";
 "Unedited" = "未編輯";
 "Unedited raws" = "未編輯的 RAW";
 "Unflag" = "移除旗標";
@@ -2308,6 +2354,7 @@
 "Up to date" = "已是最新";
 "Update" = "更新";
 "Update Mask Shape" = "更新遮色片形狀";
+"Update Photos Already in the Library" = "更新已在照片庫中的照片";
 "Update Preset with Current Settings" = "以目前設定更新預設集";
 "Update Rules from Current Filter" = "依目前篩選條件更新規則";
 "Update Version" = "更新版本";

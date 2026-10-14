@@ -46,10 +46,12 @@ struct LightroomSheet: View {
                     }
                     if let warnings = report["warnings"].array, !warnings.isEmpty {
                         Section {
-                            DisclosureGroup("\(warnings.count) Notes") {
+                            DisclosureGroup {
                                 ForEach(Array(warnings.enumerated()), id: \.offset) { _, w in
                                     Text(w.string ?? "").font(.footnote).foregroundStyle(.secondary)
                                 }
+                            } label: {
+                                LabeledContent("Notes", value: warnings.count.formatted())
                             }
                         }
                     }

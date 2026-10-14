@@ -27,9 +27,12 @@
 "%lld of %lld photos" = "%2$lld枚中%1$lld枚";
 "%lld of 4 guides — drag along lines that should be vertical or horizontal." = "ガイド4本中%1$lld本：垂直または水平にする線に沿ってドラッグ";
 "%lld photos" = "%1$lld枚";
+"%lld photos are scored." = "%lld枚の写真にスコアを付けます。";
 "%lld photos couldn't be read" = "%lld枚の写真を読み込めませんでした";
+"%lld photos found" = "%lld枚の写真が見つかりました";
 "%lld photos on %lld pages" = "%lld枚の写真（%lldページ）";
 "%lld photos on this device" = "このデバイスに%1$lld枚";
+"%lld photos tagged with a location" = "%lld枚の写真に位置情報を付けました";
 "%lld photos · synced with %@" = "%1$lld枚・%2$@と同期";
 "%lld photos, not saved" = "%1$lld枚（保存されません）";
 "%lld points" = "%lldポイント";
@@ -245,6 +248,8 @@
 "Because you send your search data to your server, the faces found here go there too." = "検索データをご自身のサーバーへ送る設定のため、ここで見つかった顔のデータもサーバーへ送られます。";
 "Before" = "編集前";
 "Before / After" = "補正前 / 補正後";
+"Before / After Layout" = "編集前／編集後のレイアウト";
+"Before and After" = "編集前と編集後";
 "Before/After (Y)" = "編集前／編集後（Y）";
 "Before/After Settings" = "編集前／編集後の設定";
 "Before/After Split" = "編集前／編集後の分割表示";
@@ -319,6 +324,7 @@
 "Captured" = "撮影日時";
 "Captured from" = "撮影日（以降）";
 "Captured until" = "撮影日（以前）";
+"Catalog" = "カタログ";
 "Catalog Statistics" = "カタログの統計";
 "Catalog and edits" = "カタログと編集内容";
 "Catchlight" = "キャッチライト";
@@ -342,6 +348,7 @@
 "Choose What to Do…" = "操作を選択…";
 "Choose a model below (Use) to start." = "開始するには、下のモデルを選んで「使用」をタップしてください。";
 "Choose a photo in the grid or filmstrip" = "グリッドまたはフィルムストリップから写真を選択してください";
+"Choose a photo in the main window." = "メインウインドウで写真を選択してください。";
 "Choose an album…" = "アルバムを選択…";
 "Choose what to do with this library's photos." = "このライブラリの写真をどうするか選択してください。";
 "Choose…" = "選択…";
@@ -391,6 +398,7 @@
 "Collapse All Stacks" = "すべてのスタックを閉じる";
 "Collapse Stack" = "スタックを折りたたむ";
 "Collapsed" = "折りたたみ済み";
+"Collections" = "コレクション";
 "Color" = "カラー";
 "Color %lld" = "カラー%lld";
 "Color Grading" = "カラーグレーディング";
@@ -500,6 +508,7 @@
 "Crop, Rotate, Geometry" = "切り抜き・回転・ジオメトリ";
 "Cropped" = "切り抜き";
 "Cross Process" = "クロスプロセス";
+"Cull" = "選別";
 "Culling" = "写真の選別";
 "Curve" = "カーブ";
 "Curve Presets" = "カーブのプリセット";
@@ -598,6 +607,7 @@
 "Desert Heat" = "デザートヒート";
 "Desert Warmth" = "デザートウォーム";
 "Desktop" = "デスクトップ";
+"Destination Gamut Warning" = "出力先の色域警告";
 "Detail" = "詳細";
 "Detail (D)" = "詳細（D）";
 "Details" = "詳細";
@@ -637,6 +647,7 @@
 "Drag a box around an eye to correct it" = "補正したい目を囲むようにドラッグしてください";
 "Drag a box around an eye." = "目の周りをドラッグして枠を描きます。";
 "Drag a corner or an edge to crop, outside the frame to rotate" = "角や辺をドラッグして切り抜き、枠の外側をドラッグして回転します";
+"Drag a section to move it; hidden ones stay where they are." = "セクションをドラッグして移動します。非表示のセクションは現在の位置のままです。";
 "Drag along the horizon" = "水平線に沿ってドラッグ";
 "Drag along the horizon; double-click for Auto" = "水平線に沿ってドラッグ（ダブルクリックで自動補正）";
 "Drag over an eye on the photo; the pupil inside is found automatically." = "写真の目をドラッグすると、瞳孔を自動検出します";
@@ -669,6 +680,8 @@
 "Edit Photo with PhotoCraft" = "PhotoCraftで写真を編集";
 "Edit Sections" = "編集項目";
 "Edit Set…" = "セットを編集…";
+"Edit Sidebar" = "サイドバーを編集";
+"Edit Sidebar…" = "サイドバーを編集…";
 "Edit Smart Album" = "スマートアルバムを編集";
 "Edit Smart Album…" = "スマートアルバムを編集…";
 "Edit Spot" = "スポットを編集";
@@ -927,6 +940,7 @@
 "Hide Mask" = "マスクを隠す";
 "Hide Others" = "ほかを隠す";
 "Hide Overlay" = "重ね表示を隠す";
+"Hide Section" = "セクションを隠す";
 "Hide This Section" = "このセクションを隠す";
 "Hides this shortcut only; the folder and its photos stay as they are" = "この表示だけを隠します。フォルダと写真はそのまま残ります";
 "High" = "強";
@@ -1054,6 +1068,7 @@
 "It tests this album, so testing it back would loop" = "このアルバムを条件にしているため、逆に指定すると循環します";
 "Its copyright, creator and place." = "この写真の著作権、作成者、場所。";
 "Its denoised picture is not made yet, and pictures are not made on their own (Settings, AI Denoise)." = "Its denoised picture is not made yet, and pictures are not made on their own (Settings, AI Denoise).";
+"Its photos go to Recently Deleted; no file is touched." = "写真は「最近削除した写真」に移動します。ファイル自体は変更されません。";
 "JPEG (Large)" = "JPEG（大）";
 "JPEG (Small)" = "JPEG（小）";
 "Join the ArtCraft Discord" = "ArtCraftのDiscordに参加";
@@ -1071,6 +1086,7 @@
 "Keyword Lists" = "キーワードリスト";
 "Keyword Name" = "キーワード名";
 "Keyword Painter" = "キーワード付けツール";
+"Keyword Painter…" = "キーワード付けツール…";
 "Keyword Set" = "キーワードセット";
 "Keyword Sets" = "キーワードセット";
 "Keyword Sets…" = "キーワードセット…";
@@ -1103,6 +1119,7 @@
 "Layers" = "レイヤー";
 "Leave There" = "そのままにする";
 "Leave them" = "そのまま残す";
+"Left / Right" = "左右に並べる";
 "Lens" = "レンズ";
 "Lens Blur" = "レンズぼかし";
 "Lens Corrections" = "レンズ補正";
@@ -1139,7 +1156,10 @@
 "LightCraft website" = "LightCraftの公式サイト";
 "LightCraft — Second Window" = "LightCraft — 第2ウィンドウ";
 "Lightroom Classic Catalog" = "Lightroom Classic カタログ";
+"Lightroom Classic Catalog…" = "Lightroom Classic カタログ…";
 "Lightroom import cancelled" = "Lightroom の読み込みをキャンセルしました";
+"Lightroom import complete: %lld photos added" = "Lightroom の読み込みが完了しました：%1$lld 枚の写真を追加";
+"Lightroom import complete: %lld photos added, %lld failed" = "Lightroom の読み込みが完了しました：%1$lld 枚を追加、%2$lld 枚が失敗";
 "Lightroom inspection cancelled" = "Lightroom の確認をキャンセルしました";
 "Lights" = "明部";
 "Lights Out" = "消灯モード";
@@ -1191,6 +1211,7 @@
 "Make Available Offline" = "オフラインで使用可能にする";
 "Make Candidate the Select" = "候補の写真を選択側にする";
 "Make PDF" = "PDFを作成";
+"Make Select" = "選択側にする";
 "Make it now" = "Make it now";
 "Make the denoised picture of the photos I am looking at" = "Make the denoised picture of the photos I am looking at";
 "Making the link: it's copied when it's ready" = "リンクを作成中：準備ができるとコピーされます";
@@ -1336,6 +1357,7 @@
 "New time" = "新しい日時";
 "New…" = "新規…";
 "Next Appearance Mode" = "次の外観モード";
+"Next Candidate" = "次の候補";
 "Next Photo" = "次の写真";
 "Next up for AI Denoise…" = "Next up for AI Denoise…";
 "Night Blue" = "ナイトブルー";
@@ -1346,6 +1368,7 @@
 "No Label" = "ラベルなし";
 "No Limit" = "制限なし";
 "No People Yet" = "まだ人物がいません";
+"No Photo" = "写真がありません";
 "No Photos" = "写真がありません";
 "No Photos Match" = "一致する写真がありません";
 "No Rating" = "評価なし";
@@ -1412,6 +1435,7 @@
 "Not a tile address (it needs https://, {z}, {x} and {y}): the standard tiles are used." = "タイルのアドレスではありません（https://、{z}、{x}、{y} が必要です）。標準のタイルを使用します。";
 "Not carried over: %@" = "引き継がなかった設定：%1$@";
 "Not saved" = "保存されていません";
+"Notes" = "注記";
 "Nothing Running" = "実行中の処理はありません";
 "Nothing is fetched until you accept. The model is kept on this computer only; LightCraft never uploads or shares it." = "Nothing is fetched until you accept. The model is kept on this computer only; LightCraft never uploads or shares it.";
 "Nothing is fetched until you accept. The model is kept on this device only; LightCraft never uploads or shares it." = "同意するまで何も取得されません。モデルはこのデバイス内にのみ保存され、LightCraftがアップロードしたり共有したりすることはありません。";
@@ -1480,6 +1504,7 @@
 "Original offline · no smart preview" = "元画像がオフライン：スマートプレビューなし";
 "Originals" = "元画像";
 "Originals Limit" = "元画像の上限";
+"Originals Not Found" = "見つからない元画像";
 "Originals Too" = "元画像も含める";
 "Originals are the full-size files downloaded from the server. Thumbnails can be deleted at any time; they are drawn again." = "元画像はサーバーからダウンロードしたフルサイズのファイルです。サムネイルはいつでも削除できます。再び作成されます。";
 "Other Photos" = "その他の写真";
@@ -1492,6 +1517,7 @@
 "Pages" = "ページ";
 "Paint" = "描画";
 "Paint only areas like the one under the brush" = "ブラシ下と似た領域だけに適用";
+"Paint onto Photos" = "写真にキーワードを付ける";
 "Paint over a blemish: it is healed from a nearby area, which you can drag. Tap a pin for its options." = "修復する部分をなぞると、近くの領域から修復されます（コピー元はドラッグで移動できます）。ピンをタップすると設定が開きます。";
 "Paint over a distraction on the photo to remove it." = "除去する部分をブラシでなぞってください";
 "Paint over a distraction to remove it. Tap a pin for its options." = "除去する部分をなぞってください。ピンをタップすると設定が開きます。";
@@ -1499,6 +1525,7 @@
 "Paint over what to take away." = "取り除きたい部分をなぞってください。";
 "Paint overlay" = "マスクの重ね表示";
 "Paint the area to adjust" = "調整したい範囲をなぞってください";
+"Painting “%@”" = "「%@」を付けています";
 "Panels" = "パネル";
 "Panorama" = "パノラマ";
 "Panorama Merge" = "パノラマ合成";
@@ -1524,6 +1551,7 @@
 "Pastel Haze" = "パステルヘイズ";
 "Pause" = "一時停止";
 "Pause Syncing" = "同期を一時停止";
+"Paused" = "一時停止中";
 "Pending photo action cancelled" = "Pending photo action cancelled";
 "Pending photo action cancelled because its library or photo changed" = "Pending photo action cancelled because its library or photo changed";
 "People" = "人物";
@@ -1541,6 +1569,7 @@
 "Photo Grid" = "写真グリッド";
 "Photo Grid (G)" = "写真グリッド（G）";
 "Photo Merge" = "写真を合成";
+"Photo found" = "写真が見つかりました";
 "Photo ▸ Edit in External Editor (⇧⌘E) renders a 16-bit TIFF copy, stacks it with the original and opens it here (an app name on macOS, a program path elsewhere)." = "「写真 → 外部エディターで編集」（⇧⌘E）で16ビットTIFFコピーを作成し、元画像とスタックにまとめて開きます。Macではアプリ名を指定してください";
 "Photos" = "写真";
 "Photos per Bracket" = "ブラケットあたりの枚数";
@@ -1549,6 +1578,7 @@
 "Photos stay in All Photos. Deleting a folder also deletes its albums." = "写真は「すべての写真」に残ります。フォルダを削除すると、その中のアルバムも削除されます。";
 "Photos taken with GPS on show here. Photo ▸ Auto-Tag from Tracklog… adds locations from a GPX file." = "GPSをオンにして撮影した写真がここに表示されます。GPXファイルから位置情報を付けることもできます（写真 → GPS軌跡から位置情報を付ける…）。";
 "Photos that arrive in this folder (tethering, a scanner, a sync app) are added as soon as they're complete." = "このフォルダに転送された写真は、転送が完了すると自動で追加されます";
+"Photos whose originals aren't in this folder are skipped. Pick the folder that holds both the catalog and its photos." = "元画像がこのフォルダにない写真はスキップされます。カタログと写真の両方があるフォルダを選択してください。";
 "Photos…" = "写真…";
 "Pick" = "採用";
 "Pick Flag" = "採用フラグ";
@@ -1594,6 +1624,7 @@
 "Preview size" = "プレビューサイズ";
 "Preview unavailable" = "プレビューを表示できません";
 "Previews" = "プレビュー";
+"Previous Candidate" = "前の候補";
 "Previous Photo" = "前の写真";
 "Print" = "印刷用";
 "Print…" = "印刷…";
@@ -1607,6 +1638,8 @@
 "Profiles" = "プロファイル";
 "Progressive" = "プログレッシブ";
 "Projection" = "投影法";
+"Proof As" = "校正の色空間";
+"Proof Preview · %@" = "校正プレビュー・%1$@";
 "Proof copy created" = "校正用コピーを作成しました";
 "Properties" = "プロパティ";
 "Public Domain" = "パブリックドメイン";
@@ -1673,6 +1706,7 @@
 "Reading a sidecar replaces the photo's rating, labels, metadata and edits with what it says." = "サイドカーを読み込むと、写真のレーティング、ラベル、メタデータ、編集内容がその内容に置き換わります。";
 "Reading folder" = "フォルダーを読み込み中";
 "Reading folder…" = "フォルダを読み込み中…";
+"Reading the catalog…" = "カタログを読み取り中…";
 "Real name" = "本名";
 "Recent" = "最近使用";
 "Recent Keywords" = "最近使用したキーワード";
@@ -1692,6 +1726,7 @@
 "Red label" = "レッドラベル";
 "Red/Cyan Fringe" = "赤／シアンのフリンジ";
 "Redo" = "やり直す";
+"Redo %@" = "やり直す：%1$@";
 "Reference" = "参照";
 "Reference View" = "参照表示";
 "Reference the files where they are" = "現在の場所にあるファイルを参照";
@@ -1726,6 +1761,7 @@
 "Remove Face" = "顔を除去";
 "Remove Face Box" = "顔の枠を除去";
 "Remove Folder from Library" = "フォルダをライブラリから除去";
+"Remove Folder from Library…" = "フォルダをライブラリから除去…";
 "Remove Location" = "位置情報を除去";
 "Remove Offline Copy" = "オフラインコピーを削除";
 "Remove a filter above, or choose Clear all" = "上のフィルターを解除するか、「すべて解除」を選択してください";
@@ -1736,6 +1772,7 @@
 "Remove from Photo" = "写真から削除";
 "Remove from Selected Photos" = "選択した写真から削除";
 "Remove from Stack" = "スタックから外す";
+"Remove from Survey" = "一覧比較から除く";
 "Remove from Target Album" = "追加先アルバムから除去";
 "Remove from favorites" = "お気に入りから削除";
 "Remove from survey" = "一覧比較から除く";
@@ -1746,6 +1783,7 @@
 "Remove this filter" = "このフィルターを解除";
 "Remove this group" = "このグループを削除";
 "Remove this rule" = "この条件を削除";
+"Remove “%@” from the library?" = "「%@」をライブラリから除去しますか？";
 "Removed" = "除去";
 "Removing with AI…" = "AIで削除中…";
 "Rename" = "名前を変更";
@@ -1937,6 +1975,7 @@
 "Set Up Sync…" = "同期を設定…";
 "Set as Album Cover" = "アルバムのカバーに設定";
 "Set as Before" = "編集前に設定";
+"Set as Reference" = "参照写真に設定";
 "Set as Reference Photo" = "参照写真に設定";
 "Set as Target Album" = "追加先アルバムに設定";
 "Set as Target Album (B adds to it)" = "追加先アルバムに設定（Bで追加）";
@@ -2070,7 +2109,9 @@
 "Speed" = "Speed";
 "Spherical" = "球面";
 "Spiral" = "螺旋";
+"Split Left / Right" = "左右に分割";
 "Split Stack" = "スタックを分割";
+"Split Top / Bottom" = "上下に分割";
 "Spot %lld" = "スポット%lld";
 "Spring Fresh" = "スプリングフレッシュ";
 "Square" = "正方形";
@@ -2169,6 +2210,7 @@
 "Tap + to make a mask: the subject, the sky, a gradient, a brush…" = "+をタップしてマスクを作成：被写体、空、グラデーション、ブラシ…";
 "Tap a colour in the photo" = "写真の色をタップ";
 "Tap a face to mark it" = "顔をタップして選択";
+"Tap photos to give them the keyword; tap again to take it away." = "写真をタップしてキーワードを付けます。もう一度タップすると外れます。";
 "Tap something white or grey in the photo" = "写真の白またはグレーの部分をタップ";
 "Tap the photo to pick a colour" = "写真をタップして色を選択";
 "Tap ✓ when it is them, ✕ when it isn't." = "本人なら✓、違うなら✕をタップしてください。";
@@ -2215,11 +2257,13 @@
 "The photo shown gets this time; the others move by as much, keeping their spacing." = "表示中の写真にこの時刻を設定し、ほかの写真も同じだけずらして間隔を保ちます。";
 "The photos are copied into the library; the originals in Photos and Files are left as they are." = "写真はライブラリにコピーされます。「写真」や「ファイル」にある元の写真はそのまま残ります。";
 "The photos are copied into the library; the originals in Photos or Files are left as they are." = "写真はライブラリにコピーされます。「写真」や「ファイル」にある元の写真はそのまま残ります。";
+"The photos in view are scored." = "表示中の写真にスコアを付けます。";
 "The processor does the work." = "The processor does the work.";
 "The search model is installed: describe a photo to find it." = "検索モデルをインストールしました。写真を説明して探せます。";
 "The server can't say how much it stores: %@" = "サーバーが保存量を返せません: %@";
 "The server has a library already" = "サーバーにはすでにライブラリがあります";
 "The server's" = "サーバー側";
+"Their edits, ratings and keywords are replaced with the catalog's." = "これらの写真の編集内容、評価、キーワードはカタログの内容に置き換えられます。";
 "Their photos and the keywords below them come together under one keyword." = "写真と下位のキーワードが1つのキーワードにまとめられます。";
 "Theme" = "テーマ";
 "There are no presets in these files." = "これらのファイルにプリセットはありません。";
@@ -2269,6 +2313,7 @@
 "Tone Curve" = "トーンカーブ";
 "Tool" = "ツール";
 "Tools" = "ツール";
+"Top / Bottom" = "上下に並べる";
 "Top Level" = "最上位";
 "Total" = "合計";
 "Trained on: %@" = "Trained on: %1$@";
@@ -2290,6 +2335,7 @@
 "Uncheck All" = "すべて選択解除";
 "Uncheck the files of this type" = "この種類のファイルのチェックをすべて外す";
 "Undo" = "取り消す";
+"Undo %@" = "取り消す：%1$@";
 "Unedited" = "未編集";
 "Unedited raws" = "未編集のRAW";
 "Unflag" = "フラグを解除";
@@ -2309,6 +2355,7 @@
 "Up to date" = "最新の状態";
 "Update" = "更新";
 "Update Mask Shape" = "マスクの形状を更新";
+"Update Photos Already in the Library" = "ライブラリにある写真を更新";
 "Update Preset with Current Settings" = "現在の設定でプリセットを更新";
 "Update Rules from Current Filter" = "現在のフィルターから条件を更新";
 "Update Version" = "バージョンを更新";

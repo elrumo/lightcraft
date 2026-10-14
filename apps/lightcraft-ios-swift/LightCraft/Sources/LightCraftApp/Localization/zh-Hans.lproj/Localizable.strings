@@ -27,9 +27,12 @@
 "%lld of %lld photos" = "%2$lld 张照片中的 %1$lld 张";
 "%lld of 4 guides — drag along lines that should be vertical or horizontal." = "已画 %1$lld 条参考线（共 4 条）— 沿应为垂直或水平的线拖动。";
 "%lld photos" = "%lld 张照片";
+"%lld photos are scored." = "将为 %lld 张照片计算分值。";
 "%lld photos couldn't be read" = "%lld 张照片无法读取";
+"%lld photos found" = "已找到 %lld 张照片";
 "%lld photos on %lld pages" = "%lld 张照片，共 %lld 页";
 "%lld photos on this device" = "此设备上有 %1$lld 张照片";
+"%lld photos tagged with a location" = "已为 %lld 张照片添加位置";
 "%lld photos · synced with %@" = "%1$lld 张照片 · 已与 %2$@ 同步";
 "%lld photos, not saved" = "%1$lld 张照片（不会保存）";
 "%lld points" = "%lld 个点";
@@ -246,6 +249,8 @@
 "Because you send your search data to your server, the faces found here go there too." = "由于你已将搜索数据发送到自己的服务器，在这里找到的人脸数据也会一并发送过去。";
 "Before" = "修改前";
 "Before / After" = "之前 / 之后";
+"Before / After Layout" = "修改前/修改后布局";
+"Before and After" = "修改前和修改后";
 "Before/After (Y)" = "修改前/修改后 (Y)";
 "Before/After Settings" = "修改前/修改后设置";
 "Before/After Split" = "修改前/修改后分屏";
@@ -322,6 +327,7 @@
 "Captured" = "拍摄时间";
 "Captured from" = "拍摄时间起于";
 "Captured until" = "拍摄时间止于";
+"Catalog" = "目录";
 "Catalog Statistics" = "目录统计";
 "Catalog and edits" = "目录和编辑";
 "Catchlight" = "眼神光";
@@ -346,6 +352,7 @@
 "Choose What to Do…" = "选择处理方式…";
 "Choose a model below (Use) to start." = "请在下方选择模型（点击“使用”）以开始。";
 "Choose a photo in the grid or filmstrip" = "请在网格视图或胶片窗格中选择一张照片";
+"Choose a photo in the main window." = "请在主窗口中选择一张照片。";
 "Choose an album…" = "选择相册…";
 "Choose what to do with this library's photos." = "选择如何处理此图库中的照片。";
 "Choose…" = "选择…";
@@ -395,6 +402,7 @@
 "Collapse All Stacks" = "折叠所有堆叠";
 "Collapse Stack" = "折叠堆叠";
 "Collapsed" = "已折叠";
+"Collections" = "集合";
 "Color" = "颜色";
 "Color %lld" = "颜色 %lld";
 "Color Grading" = "颜色分级";
@@ -504,6 +512,7 @@
 "Crop, Rotate, Geometry" = "裁剪、旋转、几何";
 "Cropped" = "已裁剪";
 "Cross Process" = "交叉冲洗";
+"Cull" = "挑片";
 "Culling" = "挑片";
 "Curve" = "曲线";
 "Curve Presets" = "曲线预设";
@@ -602,6 +611,7 @@
 "Desert Heat" = "沙漠热浪";
 "Desert Warmth" = "沙漠暖意";
 "Desktop" = "桌面";
+"Destination Gamut Warning" = "目标色域警告";
 "Detail" = "细节";
 "Detail (D)" = "细节 (D)";
 "Details" = "详细信息";
@@ -644,6 +654,7 @@
 "Drag a box around an eye to correct it" = "在眼睛周围拖出一个框以进行校正";
 "Drag a box around an eye." = "在眼睛周围拖出一个框。";
 "Drag a corner or an edge to crop, outside the frame to rotate" = "拖动角或边缘以裁剪，在框外拖动以旋转";
+"Drag a section to move it; hidden ones stay where they are." = "拖动分区即可移动；已隐藏的分区位置保持不变。";
 "Drag along the horizon" = "沿地平线拖动";
 "Drag along the horizon; double-click for Auto" = "沿地平线拖动；双击以自动校正";
 "Drag over an eye on the photo; the pupil inside is found automatically." = "在照片中的眼睛上拖动；会自动找到其中的瞳孔。";
@@ -676,6 +687,8 @@
 "Edit Photo with PhotoCraft" = "使用 PhotoCraft 编辑照片";
 "Edit Sections" = "编辑板块";
 "Edit Set…" = "编辑关键字集…";
+"Edit Sidebar" = "编辑边栏";
+"Edit Sidebar…" = "编辑边栏…";
 "Edit Smart Album" = "编辑智能相册";
 "Edit Smart Album…" = "编辑智能相册…";
 "Edit Spot" = "编辑污点";
@@ -942,6 +955,7 @@
 "Hide Mask" = "隐藏蒙版";
 "Hide Others" = "隐藏其他";
 "Hide Overlay" = "隐藏叠加";
+"Hide Section" = "隐藏分区";
 "Hide This Section" = "隐藏此分区";
 "Hides this shortcut only; the folder and its photos stay as they are" = "仅隐藏此快捷方式；文件夹及其中的照片保持不变";
 "High" = "高";
@@ -1073,6 +1087,7 @@
 "It tests this album, so testing it back would loop" = "它引用了此相册，反过来引用会形成循环";
 "Its copyright, creator and place." = "此照片的版权、创建者和位置。";
 "Its denoised picture is not made yet, and pictures are not made on their own (Settings, AI Denoise)." = "该照片的降噪结果尚未生成，而且不会自动生成（设置、AI 降噪）。";
+"Its photos go to Recently Deleted; no file is touched." = "其中的照片将移到“最近删除”；不会改动任何文件。";
 "JPEG (Large)" = "JPEG（大）";
 "JPEG (Small)" = "JPEG（小）";
 "Join the ArtCraft Discord" = "加入 ArtCraft Discord";
@@ -1090,6 +1105,7 @@
 "Keyword Lists" = "关键字列表";
 "Keyword Name" = "关键字名称";
 "Keyword Painter" = "关键字画笔";
+"Keyword Painter…" = "关键字画笔…";
 "Keyword Set" = "关键字集";
 "Keyword Sets" = "关键字集";
 "Keyword Sets…" = "关键字集…";
@@ -1122,6 +1138,7 @@
 "Layers" = "图层";
 "Leave There" = "保留在原处";
 "Leave them" = "保留";
+"Left / Right" = "左 / 右";
 "Lens" = "镜头";
 "Lens Blur" = "镜头模糊";
 "Lens Corrections" = "镜头校正";
@@ -1159,7 +1176,10 @@
 "LightCraft website" = "LightCraft 网站";
 "LightCraft — Second Window" = "LightCraft — 第二窗口";
 "Lightroom Classic Catalog" = "Lightroom Classic 目录";
+"Lightroom Classic Catalog…" = "Lightroom Classic 目录…";
 "Lightroom import cancelled" = "已取消 Lightroom 导入";
+"Lightroom import complete: %lld photos added" = "Lightroom 导入完成：已添加 %1$lld 张照片";
+"Lightroom import complete: %lld photos added, %lld failed" = "Lightroom 导入完成：已添加 %1$lld 张照片，%2$lld 张失败";
 "Lightroom inspection cancelled" = "已取消 Lightroom 检查";
 "Lights" = "高光";
 "Lights Out" = "关灯模式";
@@ -1211,6 +1231,7 @@
 "Make Available Offline" = "设为离线可用";
 "Make Candidate the Select" = "将候选设为选择";
 "Make PDF" = "生成 PDF";
+"Make Select" = "设为选择";
 "Make it now" = "立即生成";
 "Make the denoised picture of the photos I am looking at" = "为我正在查看的照片生成降噪结果";
 "Making the link: it's copied when it's ready" = "正在生成链接：完成后会自动复制到剪贴板";
@@ -1358,6 +1379,7 @@
 "New time" = "新时间";
 "New…" = "新建…";
 "Next Appearance Mode" = "下一个外观模式";
+"Next Candidate" = "下一个候选";
 "Next Photo" = "下一张照片";
 "Next up for AI Denoise…" = "接下来的 AI 降噪任务…";
 "Night Blue" = "夜色蓝调";
@@ -1368,6 +1390,7 @@
 "No Label" = "无标签";
 "No Limit" = "无限制";
 "No People Yet" = "还没有人物";
+"No Photo" = "无照片";
 "No Photos" = "没有照片";
 "No Photos Match" = "没有符合条件的照片";
 "No Rating" = "无星级";
@@ -1434,6 +1457,7 @@
 "Not a tile address (it needs https://, {z}, {x} and {y}): the standard tiles are used." = "不是图块地址（需要 https://、{z}、{x} 和 {y}）：将使用标准图块。";
 "Not carried over: %@" = "未沿用：%1$@";
 "Not saved" = "未保存";
+"Notes" = "提示";
 "Nothing Running" = "没有正在运行的任务";
 "Nothing is fetched until you accept. The model is kept on this computer only; LightCraft never uploads or shares it." = "在你接受之前不会下载任何内容。模型仅保存在本机；LightCraft 绝不会上传或分享它。";
 "Nothing is fetched until you accept. The model is kept on this device only; LightCraft never uploads or shares it." = "在你接受之前不会获取任何内容。模型仅保存在此设备上；LightCraft 绝不会上传或分享它。";
@@ -1502,6 +1526,7 @@
 "Original offline · no smart preview" = "原图离线 · 无智能预览";
 "Originals" = "原图";
 "Originals Limit" = "原始文件上限";
+"Originals Not Found" = "未找到原始文件";
 "Originals Too" = "同时包含原始文件";
 "Originals are the full-size files downloaded from the server. Thumbnails can be deleted at any time; they are drawn again." = "原图是从服务器下载的全尺寸文件。缩略图可随时删除，会重新生成。";
 "Other Photos" = "其他照片";
@@ -1514,6 +1539,7 @@
 "Pages" = "页面";
 "Paint" = "绘制";
 "Paint only areas like the one under the brush" = "仅绘制与画笔下相似的区域";
+"Paint onto Photos" = "涂抹到照片";
 "Paint over a blemish: it is healed from a nearby area, which you can drag. Tap a pin for its options." = "在瑕疵上涂抹：它会用附近的区域修复，该区域可以拖动。轻点图钉可打开其选项。";
 "Paint over a distraction on the photo to remove it." = "在照片上要移除的干扰物上涂抹。";
 "Paint over a distraction to remove it. Tap a pin for its options." = "在要移除的干扰物上涂抹。轻点图钉可打开其选项。";
@@ -1521,6 +1547,7 @@
 "Paint over what to take away." = "涂抹要去除的内容。";
 "Paint overlay" = "蒙版叠加显示";
 "Paint the area to adjust" = "涂抹要调整的区域";
+"Painting “%@”" = "正在涂抹“%@”";
 "Panels" = "面板";
 "Panorama" = "全景";
 "Panorama Merge" = "全景合并";
@@ -1546,6 +1573,7 @@
 "Pastel Haze" = "粉彩薄雾";
 "Pause" = "暂停";
 "Pause Syncing" = "暂停同步";
+"Paused" = "已暂停";
 "Pending photo action cancelled" = "已取消待处理的照片操作";
 "Pending photo action cancelled because its library or photo changed" = "待处理的照片操作已取消，因为其所属图库或照片发生了变化";
 "People" = "人物";
@@ -1563,6 +1591,7 @@
 "Photo Grid" = "照片网格";
 "Photo Grid (G)" = "照片网格（G）";
 "Photo Merge" = "照片合并";
+"Photo found" = "已找到照片";
 "Photo ▸ Edit in External Editor (⇧⌘E) renders a 16-bit TIFF copy, stacks it with the original and opens it here (an app name on macOS, a program path elsewhere)." = "“照片 » 在外部编辑器中编辑”（⇧⌘E）会渲染一份 16 位 TIFF 副本，与原图堆叠并在此打开（macOS 上填应用名称，其他平台填程序路径）。";
 "Photos" = "照片";
 "Photos per Bracket" = "每组包围曝光的照片数";
@@ -1571,6 +1600,7 @@
 "Photos stay in All Photos. Deleting a folder also deletes its albums." = "照片会保留在“所有照片”中。删除文件夹也会删除其中的相册。";
 "Photos taken with GPS on show here. Photo ▸ Auto-Tag from Tracklog… adds locations from a GPX file." = "开启 GPS 拍摄的照片会显示在这里。也可以从 GPX 文件添加位置（照片 → 从轨迹日志自动标记…）。";
 "Photos that arrive in this folder (tethering, a scanner, a sync app) are added as soon as they're complete." = "进入此文件夹的照片（联机拍摄、扫描仪、同步应用）在传输完成后即被添加。";
+"Photos whose originals aren't in this folder are skipped. Pick the folder that holds both the catalog and its photos." = "原始文件不在此文件夹中的照片将被跳过。请选择同时包含目录及其照片的文件夹。";
 "Photos…" = "照片…";
 "Pick" = "留用";
 "Pick Flag" = "留用旗标";
@@ -1616,6 +1646,7 @@
 "Preview size" = "预览大小";
 "Preview unavailable" = "预览不可用";
 "Previews" = "预览";
+"Previous Candidate" = "上一个候选";
 "Previous Photo" = "上一张照片";
 "Print" = "打印";
 "Print…" = "打印…";
@@ -1629,6 +1660,8 @@
 "Profiles" = "配置文件";
 "Progressive" = "渐进式";
 "Projection" = "投影";
+"Proof As" = "打样为";
+"Proof Preview · %@" = "校样预览 · %1$@";
 "Proof copy created" = "已创建校样副本";
 "Properties" = "属性";
 "Public Domain" = "公共领域";
@@ -1695,6 +1728,7 @@
 "Reading a sidecar replaces the photo's rating, labels, metadata and edits with what it says." = "读取附属文件会用其内容替换照片的评级、标签、元数据和编辑。";
 "Reading folder" = "正在读取文件夹";
 "Reading folder…" = "正在读取文件夹…";
+"Reading the catalog…" = "正在读取目录…";
 "Real name" = "真实姓名";
 "Recent" = "最近使用";
 "Recent Keywords" = "最近使用的关键字";
@@ -1716,6 +1750,7 @@
 "Red label" = "红色标签";
 "Red/Cyan Fringe" = "红/青边缘";
 "Redo" = "重做";
+"Redo %@" = "重做：%1$@";
 "Reference" = "参考";
 "Reference View" = "参考视图";
 "Reference the files where they are" = "在原地引用文件";
@@ -1751,6 +1786,7 @@
 "Remove Face Box" = "移除人脸框";
 "Remove Face Model" = "移除人脸模型";
 "Remove Folder from Library" = "从图库中移除文件夹";
+"Remove Folder from Library…" = "从图库中移除文件夹…";
 "Remove Location" = "移除位置信息";
 "Remove Offline Copy" = "移除离线副本";
 "Remove a filter above, or choose Clear all" = "请移除上方的某个筛选条件，或选择“全部清除”";
@@ -1761,6 +1797,7 @@
 "Remove from Photo" = "从照片中移除";
 "Remove from Selected Photos" = "从所选照片中移除";
 "Remove from Stack" = "从堆叠中移出";
+"Remove from Survey" = "从筛选视图中移除";
 "Remove from Target Album" = "从目标相册中移除";
 "Remove from favorites" = "从收藏中移除";
 "Remove from survey" = "从筛选视图中移除";
@@ -1771,6 +1808,7 @@
 "Remove this filter" = "移除此筛选器";
 "Remove this group" = "删除此组";
 "Remove this rule" = "删除此规则";
+"Remove “%@” from the library?" = "要从图库中移除“%@”吗？";
 "Removed" = "已移除";
 "Removing with AI…" = "正在用 AI 移除…";
 "Rename" = "重命名";
@@ -1963,6 +2001,7 @@
 "Set Up Sync…" = "设置同步…";
 "Set as Album Cover" = "设为相册封面";
 "Set as Before" = "设为修改前";
+"Set as Reference" = "设为参考照片";
 "Set as Reference Photo" = "设为参考照片";
 "Set as Target Album" = "设为目标相册";
 "Set as Target Album (B adds to it)" = "设为目标相册 (按 B 添加)";
@@ -2098,7 +2137,9 @@
 "Speed" = "速度";
 "Spherical" = "球面";
 "Spiral" = "螺旋";
+"Split Left / Right" = "左右分屏";
 "Split Stack" = "拆分堆叠";
+"Split Top / Bottom" = "上下分屏";
 "Spot %lld" = "污点 %lld";
 "Spring Fresh" = "春日清新";
 "Square" = "正方形";
@@ -2198,6 +2239,7 @@
 "Tap + to make a mask: the subject, the sky, a gradient, a brush…" = "轻点 + 创建蒙版：主题、天空、渐变、画笔…";
 "Tap a colour in the photo" = "轻点照片中的颜色";
 "Tap a face to mark it" = "轻点人脸以标记";
+"Tap photos to give them the keyword; tap again to take it away." = "轻点照片即可为其添加关键字；再次轻点可将其去除。";
 "Tap something white or grey in the photo" = "轻点照片中的白色或灰色区域";
 "Tap the photo to pick a colour" = "轻点照片选择颜色";
 "Tap ✓ when it is them, ✕ when it isn't." = "是他们时轻点 ✓，不是时轻点 ✕。";
@@ -2245,11 +2287,13 @@
 "The photo shown gets this time; the others move by as much, keeping their spacing." = "当前显示的照片将设为此时间；其他照片按相同幅度偏移，保持原有间隔。";
 "The photos are copied into the library; the originals in Photos and Files are left as they are." = "照片会被拷贝到图库中；“照片”和“文件”中的原始文件保持不变。";
 "The photos are copied into the library; the originals in Photos or Files are left as they are." = "照片会复制到图库中；“照片”或“文件”中的原件保持不变。";
+"The photos in view are scored." = "将为当前显示的照片计算分值。";
 "The processor does the work." = "由处理器完成运算。";
 "The search model is installed: describe a photo to find it." = "搜索模型已安装：描述一张照片即可查找。";
 "The server can't say how much it stores: %@" = "服务器无法告知存储量：%@";
 "The server has a library already" = "服务器上已有图库";
 "The server's" = "服务器的";
+"Their edits, ratings and keywords are replaced with the catalog's." = "它们的编辑、星级和关键字将被目录中的内容替换。";
 "Their photos and the keywords below them come together under one keyword." = "它们的照片和下级关键字将合并到同一个关键字下。";
 "Theme" = "主题";
 "There are no presets in these files." = "这些文件中没有预设。";
@@ -2299,6 +2343,7 @@
 "Tone Curve" = "色调曲线";
 "Tool" = "工具";
 "Tools" = "工具";
+"Top / Bottom" = "上 / 下";
 "Top Level" = "顶层";
 "Total" = "总计";
 "Trained on: %@" = "Trained on: %1$@";
@@ -2320,6 +2365,7 @@
 "Uncheck All" = "全部取消选中";
 "Uncheck the files of this type" = "取消勾选此类型的所有文件";
 "Undo" = "撤销";
+"Undo %@" = "撤销 %1$@";
 "Unedited" = "未编辑";
 "Unedited raws" = "未编辑的 RAW";
 "Unflag" = "取消旗标";
@@ -2339,6 +2385,7 @@
 "Up to date" = "已是最新";
 "Update" = "更新";
 "Update Mask Shape" = "更新蒙版形状";
+"Update Photos Already in the Library" = "更新图库中已有的照片";
 "Update Preset with Current Settings" = "使用当前设置更新预设";
 "Update Rules from Current Filter" = "从当前筛选器更新规则";
 "Update Version" = "更新版本";

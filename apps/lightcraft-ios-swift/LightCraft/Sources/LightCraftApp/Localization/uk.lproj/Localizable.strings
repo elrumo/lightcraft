@@ -29,9 +29,12 @@
 "%lld of %lld photos" = "Фото: %1$lld із %2$lld";
 "%lld of 4 guides — drag along lines that should be vertical or horizontal." = "Напрямних: %1$lld із 4 — проведіть уздовж ліній, які мають бути вертикальними або горизонтальними.";
 "%lld photos" = "Фото: %1$lld";
+"%lld photos are scored." = "Буде оцінено фото: %lld.";
 "%lld photos couldn't be read" = "Не вдалося прочитати фото: %lld";
+"%lld photos found" = "Знайдено фото: %lld";
 "%lld photos on %lld pages" = "Фото: %lld, сторінок: %lld";
 "%lld photos on this device" = "Фото на цьому пристрої: %1$lld";
+"%lld photos tagged with a location" = "Розташування призначено фото: %lld";
 "%lld photos · synced with %@" = "Фото: %1$lld · синхронізовано з %2$@";
 "%lld photos, not saved" = "Фото: %1$lld, не збережено";
 "%lld points" = "Точок: %lld";
@@ -256,6 +259,8 @@
 "Basic" = "Основні";
 "Before" = "До";
 "Before / After" = "До / після";
+"Before / After Layout" = "Розташування «До / після»";
+"Before and After" = "До й після";
 "Before/After (Y)" = "До/після (Y)";
 "Before/After Settings" = "Налаштування до/після";
 "Before/After Split" = "Розділення до/після";
@@ -333,6 +338,7 @@
 "Captured" = "Знято";
 "Captured from" = "Знято від";
 "Captured until" = "Знято до";
+"Catalog" = "Каталог";
 "Catalog Statistics" = "Статистика каталогу";
 "Catalog and edits" = "Каталог і редагування";
 "Catchlight" = "Відблиск в оці";
@@ -357,6 +363,7 @@
 "Choose What to Do…" = "Вибрати дію…";
 "Choose a model below (Use) to start." = "Виберіть модель нижче («Використовувати»), щоб почати.";
 "Choose a photo in the grid or filmstrip" = "Виберіть фото в сітці або на стрічці";
+"Choose a photo in the main window." = "Виберіть фото в головному вікні.";
 "Choose an album…" = "Виберіть альбом…";
 "Choose what to do with this library's photos." = "Виберіть, що зробити з фото цієї бібліотеки.";
 "Choose…" = "Вибрати…";
@@ -407,6 +414,7 @@
 "Collapse All Stacks" = "Згорнути всі стоси";
 "Collapse Stack" = "Згорнути стос";
 "Collapsed" = "Згорнуто";
+"Collections" = "Колекції";
 "Color" = "Колір";
 "Color %lld" = "Колір %lld";
 "Color Grading" = "Колірне тонування";
@@ -520,6 +528,7 @@
 "Crop, Rotate, Geometry" = "Кадрування, обертання, геометрія";
 "Cropped" = "Кадровано";
 "Cross Process" = "Перехресна обробка";
+"Cull" = "Відібрати";
 "Culling" = "Відбір";
 "Curve" = "Крива";
 "Curve Presets" = "Набори налаштувань кривої";
@@ -616,6 +625,7 @@
 "Desert Heat" = "Спека пустелі";
 "Desert Warmth" = "Тепло пустелі";
 "Desktop" = "Стільниця";
+"Destination Gamut Warning" = "Попередження про гаму призначення";
 "Detail" = "Деталі";
 "Detail (D)" = "Деталі (D)";
 "Details" = "Подробиці";
@@ -658,6 +668,7 @@
 "Drag a box around an eye to correct it" = "Намалюйте рамку навколо ока, щоб виправити його";
 "Drag a box around an eye." = "Намалюйте рамку навколо ока.";
 "Drag a corner or an edge to crop, outside the frame to rotate" = "Потягніть за кут або край, щоб кадрувати; потягніть поза рамкою, щоб повернути";
+"Drag a section to move it; hidden ones stay where they are." = "Перетягніть розділ, щоб перемістити його; приховані залишаються на своїх місцях.";
 "Drag along the horizon" = "Проведіть уздовж горизонту";
 "Drag along the horizon; double-click for Auto" = "Проведіть уздовж горизонту; подвійне клацання — автоматично";
 "Drag over an eye on the photo; the pupil inside is found automatically." = "Проведіть по оку на фото; зіниця всередині знаходиться автоматично.";
@@ -691,6 +702,8 @@
 "Edit Photo with PhotoCraft" = "Редагувати фото в PhotoCraft";
 "Edit Sections" = "Розділи редагування";
 "Edit Set…" = "Редагувати набір…";
+"Edit Sidebar" = "Змінити бічну панель";
+"Edit Sidebar…" = "Змінити бічну панель…";
 "Edit Smart Album" = "Редагувати смарт-альбом";
 "Edit Smart Album…" = "Редагувати смарт-альбом…";
 "Edit Spot" = "Редагувати ділянку";
@@ -951,6 +964,7 @@
 "Hide Mask" = "Приховати маску";
 "Hide Others" = "Приховати інші";
 "Hide Overlay" = "Приховати накладання";
+"Hide Section" = "Приховати розділ";
 "Hide This Section" = "Сховати цей розділ";
 "Hides this shortcut only; the folder and its photos stay as they are" = "Приховує лише це скорочення; тека та її фото залишаються незмінними";
 "High" = "Висока";
@@ -1080,6 +1094,7 @@
 "It tests this album, so testing it back would loop" = "Він перевіряє цей альбом, тож зворотна перевірка зациклилася б";
 "Its copyright, creator and place." = "Авторське право, автор і розташування.";
 "Its denoised picture is not made yet, and pictures are not made on their own (Settings, AI Denoise)." = "Зображення з усуненим шумом ще не створено, а автоматичне створення вимкнено (Налаштування, ШІ: усунення шуму).";
+"Its photos go to Recently Deleted; no file is touched." = "Його фото переміщуються до нещодавно видалених; файли не змінюються.";
 "JPEG (Large)" = "JPEG (великий)";
 "JPEG (Small)" = "JPEG (малий)";
 "JPEG with the same name (`IMG_0001.CR3` + `IMG_0001.JPG`) no longer share one sidecar: the raw keeps `IMG_0001.xmp`," = "JPEG із тією самою назвою (`IMG_0001.CR3` + `IMG_0001.JPG`) більше не мають спільного супровідного файлу: RAW зберігає `IMG_0001.xmp`,";
@@ -1098,6 +1113,7 @@
 "Keyword Lists" = "Списки ключових слів";
 "Keyword Name" = "Назва ключового слова";
 "Keyword Painter" = "Призначення ключових слів";
+"Keyword Painter…" = "Призначення ключових слів…";
 "Keyword Set" = "Набір ключових слів";
 "Keyword Sets" = "Набори ключових слів";
 "Keyword Sets…" = "Набори ключових слів…";
@@ -1130,6 +1146,7 @@
 "Layers" = "Шари";
 "Leave There" = "Залишити там";
 "Leave them" = "Залишити їх";
+"Left / Right" = "Ліворуч / праворуч";
 "Lens" = "Об’єктив";
 "Lens Blur" = "Розмиття об’єктива";
 "Lens Corrections" = "Корекція об’єктива";
@@ -1168,7 +1185,10 @@
 "LightCraft website" = "Сайт LightCraft";
 "LightCraft — Second Window" = "LightCraft — друге вікно";
 "Lightroom Classic Catalog" = "Каталог Lightroom Classic";
+"Lightroom Classic Catalog…" = "Каталог Lightroom Classic…";
 "Lightroom import cancelled" = "Імпорт Lightroom скасовано";
+"Lightroom import complete: %lld photos added" = "Імпорт Lightroom завершено: додано фото — %1$lld";
+"Lightroom import complete: %lld photos added, %lld failed" = "Імпорт Lightroom завершено: додано фото — %1$lld, помилок — %2$lld";
 "Lightroom inspection cancelled" = "Перевірку Lightroom скасовано";
 "Lights" = "Світлі тони";
 "Lights Out" = "Вимкнути світло";
@@ -1220,6 +1240,7 @@
 "Make Available Offline" = "Зробити доступним офлайн";
 "Make Candidate the Select" = "Зробити кандидата вибраним";
 "Make PDF" = "Створити PDF";
+"Make Select" = "Зробити вибраним";
 "Make it now" = "Створити зараз";
 "Make the denoised picture of the photos I am looking at" = "Створити зображення з усуненим шумом для фото, які я переглядаю";
 "Making the link: it's copied when it's ready" = "Створення посилання: його буде скопійовано, щойно воно буде готове";
@@ -1366,6 +1387,7 @@
 "New time" = "Новий час";
 "New…" = "Створити…";
 "Next Appearance Mode" = "Наступний режим вигляду";
+"Next Candidate" = "Наступний кандидат";
 "Next Photo" = "Наступне фото";
 "Next up for AI Denoise…" = "Наступне на усунення шуму ШІ…";
 "Night Blue" = "Нічна синява";
@@ -1378,6 +1400,7 @@
 "No Label" = "Без мітки";
 "No Limit" = "Без обмежень";
 "No People Yet" = "Людей поки немає";
+"No Photo" = "Немає фото";
 "No Photos" = "Немає фото";
 "No Photos Match" = "Немає відповідних фото";
 "No Rating" = "Без оцінки";
@@ -1438,6 +1461,7 @@
 "Not Now" = "Не зараз";
 "Not carried over: %@" = "Не перенесено: %1$@";
 "Not saved" = "Не збережено";
+"Notes" = "Примітки";
 "Nothing Running" = "Нічого не виконується";
 "Nothing is fetched until you accept. The model is kept on this computer only; LightCraft never uploads or shares it." = "Нічого не завантажується до вашої згоди. Модель зберігається лише на цьому комп’ютері; LightCraft ніколи не вивантажує й не поширює її.";
 "Nothing is fetched until you accept. The model is kept on this device only; LightCraft never uploads or shares it." = "Нічого не завантажується, доки ви не погодитеся. Модель зберігається лише на цьому пристрої; LightCraft ніколи її не вивантажує й не передає.";
@@ -1500,6 +1524,7 @@
 "Original offline · no smart preview" = "Оригінал недоступний · немає смарт-перегляду";
 "Originals" = "Оригінали";
 "Originals Limit" = "Обмеження оригіналів";
+"Originals Not Found" = "Оригінали не знайдено";
 "Originals Too" = "Також оригінали";
 "Originals are the full-size files downloaded from the server. Thumbnails can be deleted at any time; they are drawn again." = "Оригінали — це повнорозмірні файли, завантажені із сервера. Мініатюри можна видалити будь-коли: вони створюються знову.";
 "Other Photos" = "Інші фото";
@@ -1512,10 +1537,12 @@
 "Pages" = "Сторінки";
 "Paint" = "Малювати";
 "Paint only areas like the one under the brush" = "Малювати лише ділянки, подібні до ділянки під пензлем";
+"Paint onto Photos" = "Призначати на фото";
 "Paint over a distraction on the photo to remove it." = "Замалюйте зайвий об’єкт на фото, щоб видалити його.";
 "Paint over what to take away." = "Замалюйте те, що потрібно прибрати.";
 "Paint overlay" = "Накладання малювання";
 "Paint the area to adjust" = "Замалюйте ділянку для коригування";
+"Painting “%@”" = "Призначення «%@»";
 "Panasonic and Leica raws (RW2, RWL and the older RAW files, DMC-LX1 to DC-S1R II) develop from the raw data in" = "Panasonic і Leica RAW (RW2, RWL і старі RAW, від DMC-LX1 до DC-S1R II) обробляються з даних RAW у";
 "Panels" = "Panels";
 "Panorama" = "Панорама";
@@ -1542,6 +1569,7 @@
 "Pastel Haze" = "Пастельний серпанок";
 "Pause" = "Призупинити";
 "Pause Syncing" = "Призупинити синхронізацію";
+"Paused" = "Призупинено";
 "Pending photo action cancelled" = "Відкладену дію фото скасовано";
 "Pending photo action cancelled because its library or photo changed" = "Відкладену дію фото скасовано, оскільки змінилася бібліотека або фото";
 "People" = "Люди";
@@ -1559,6 +1587,7 @@
 "Photo Grid" = "Сітка фото";
 "Photo Grid (G)" = "Сітка фото (G)";
 "Photo Merge" = "Об’єднання фото";
+"Photo found" = "Фото знайдено";
 "Photo menu. The filmstrip has the photo context menu too. Adding a file again that is in Recently Deleted no" = "меню «Фото». Стрічка також має контекстне меню фото. Повторне додавання файлу з нещодавно видалених більше не";
 "Photo ▸ Edit in External Editor (⇧⌘E) renders a 16-bit TIFF copy, stacks it with the original and opens it here (an app name on macOS, a program path elsewhere)." = "Фото → Редагувати в зовнішньому редакторі (⇧⌘E) створює 16-бітну копію TIFF, додає її до стосу з оригіналом і відкриває тут (назва застосунку в macOS, шлях до програми в інших системах).";
 "Photos" = "Фото";
@@ -1568,6 +1597,7 @@
 "Photos seen in Local but never added or changed leave the catalog when their folder hasn't been browsed for this long (checked when the library opens). Files stay on disk; browsing the folder shows them again." = "Фото, переглянуті в локальних, але ніколи не додані й не змінені, вилучаються з каталогу, якщо їхню теку не оглядали протягом цього часу (перевіряється під час відкриття бібліотеки). Файли залишаються на диску; огляд теки знову їх показує.";
 "Photos stay in All Photos. Deleting a folder also deletes its albums." = "Фото лишаються в «Усі фото». Видалення теки видаляє і її альбоми.";
 "Photos that arrive in this folder (tethering, a scanner, a sync app) are added as soon as they're complete." = "Фото, що надходять до цієї теки (камерне підключення, сканер, застосунок синхронізації), додаються одразу після завершення запису.";
+"Photos whose originals aren't in this folder are skipped. Pick the folder that holds both the catalog and its photos." = "Фото, оригіналів яких немає в цій теці, пропускаються. Виберіть теку, у якій лежать і каталог, і його фото.";
 "Photos); importing (also by drag and drop), Find Missing Photos, Build / Discard Smart Previews, the Rename preview," = "Фото); імпорт (зокрема перетягування), пошук відсутніх фото, створення / видалення смарт-переглядів, перегляд перейменування,";
 "Photos…" = "Фото…";
 "Pick" = "Відібрати";
@@ -1613,6 +1643,7 @@
 "Preview size" = "Розмір перегляду";
 "Preview unavailable" = "Перегляд недоступний";
 "Previews" = "Перегляди";
+"Previous Candidate" = "Попередній кандидат";
 "Previous Photo" = "Попереднє фото";
 "Print" = "Друк";
 "Print…" = "Друк…";
@@ -1626,6 +1657,8 @@
 "Profiles" = "Профілі";
 "Progressive" = "Прогресивний";
 "Projection" = "Проєкція";
+"Proof As" = "Кольоропроба для";
+"Proof Preview · %@" = "Пробний перегляд · %1$@";
 "Proof copy created" = "Пробну копію створено";
 "Properties" = "Властивості";
 "Public Domain" = "Суспільне надбання";
@@ -1691,6 +1724,7 @@
 "Reading a sidecar replaces the photo's rating, labels, metadata and edits with what it says." = "Читання файлу XMP замінює оцінку, мітки, метадані та обробку фото його вмістом.";
 "Reading folder" = "Читання папки";
 "Reading folder…" = "Читання теки…";
+"Reading the catalog…" = "Читання каталогу…";
 "Real name" = "Справжнє ім’я";
 "Recent" = "Нещодавні";
 "Recent Keywords" = "Останні ключові слова";
@@ -1712,6 +1746,7 @@
 "Red label" = "Червона мітка";
 "Red/Cyan Fringe" = "Червона/блакитна облямівка";
 "Redo" = "Повторити";
+"Redo %@" = "Повторити %1$@";
 "Reference" = "Еталон";
 "Reference View" = "Еталонне подання";
 "Reference the files where they are" = "Посилатися на файли в їхньому розташуванні";
@@ -1746,6 +1781,7 @@
 "Remove Face Box" = "Видалити рамку обличчя";
 "Remove Face Model" = "Видалити модель облич";
 "Remove Folder from Library" = "Вилучити теку з бібліотеки";
+"Remove Folder from Library…" = "Вилучити теку з бібліотеки…";
 "Remove Location" = "Видалити розташування";
 "Remove Offline Copy" = "Видалити офлайн-копію";
 "Remove a filter above, or choose Clear all" = "Видаліть фільтр вище або виберіть «Очистити все»";
@@ -1756,6 +1792,7 @@
 "Remove from Photo" = "Вилучити з фото";
 "Remove from Selected Photos" = "Вилучити з вибраних фото";
 "Remove from Stack" = "Вилучити зі стосу";
+"Remove from Survey" = "Вилучити з огляду";
 "Remove from Target Album" = "Вилучити з цільового альбому";
 "Remove from favorites" = "Видалити з вибраного";
 "Remove from survey" = "Вилучити з огляду";
@@ -1766,6 +1803,7 @@
 "Remove this filter" = "Видалити цей фільтр";
 "Remove this group" = "Видалити цю групу";
 "Remove this rule" = "Видалити це правило";
+"Remove “%@” from the library?" = "Вилучити «%@» з бібліотеки?";
 "Removed" = "Прибрано";
 "Removing with AI…" = "Видалення за допомогою ШІ…";
 "Rename" = "Перейменувати";
@@ -1902,6 +1940,7 @@
 "Search" = "Пошук";
 "Search Photos" = "Пошук фото";
 "Search albums" = "Пошук альбомів";
+"Search by describing the photo, in your own words" = "Шукайте, описуючи фото своїми словами";
 "Search commands" = "Пошук команд";
 "Search commands or keys" = "Пошук команд або клавіш";
 "Search…" = "Пошук…";
@@ -1950,6 +1989,7 @@
 "Set Up Sync…" = "Налаштувати синхронізацію…";
 "Set as Album Cover" = "Задати як обкладинку альбому";
 "Set as Before" = "Задати як «до»";
+"Set as Reference" = "Задати як еталон";
 "Set as Reference Photo" = "Задати як еталонне фото";
 "Set as Target Album" = "Задати як цільовий альбом";
 "Set as Target Album (B adds to it)" = "Задати як цільовий альбом (B додає до нього)";
@@ -2087,7 +2127,9 @@
 "Speed" = "Швидкість";
 "Spherical" = "Сферична";
 "Spiral" = "Спіраль";
+"Split Left / Right" = "Розділення ліворуч / праворуч";
 "Split Stack" = "Розділити стос";
+"Split Top / Bottom" = "Розділення зверху / знизу";
 "Spot %lld" = "Ділянка %lld";
 "Spring Fresh" = "Весняна свіжість";
 "Square" = "Квадрат";
@@ -2186,6 +2228,7 @@
 "Tap + to make a mask: the subject, the sky, a gradient, a brush…" = "Торкніться +, щоб створити маску: об’єкт, небо, градієнт, пензель…";
 "Tap a colour in the photo" = "Торкніться кольору на фото";
 "Tap a face to mark it" = "Торкніться обличчя, щоб позначити його";
+"Tap photos to give them the keyword; tap again to take it away." = "Торкайтеся фото, щоб призначити їм ключове слово; торкніться ще раз, щоб прибрати його.";
 "Tap something white or grey in the photo" = "Торкніться чогось білого або сірого на фото";
 "Tap the photo to pick a colour" = "Торкніться фото, щоб вибрати колір";
 "Tap ✓ when it is them, ✕ when it isn't." = "Торкніться ✓, якщо це ця особа, і ✕, якщо ні.";
@@ -2230,11 +2273,13 @@
 "The photo is enlarged to twice its width and height with an AI model, with your edits applied, and added next to the original (a 16-bit sRGB TIFF), stacked with it. The original isn't changed. This takes a while on large photos." = "Фото збільшується вдвічі за шириною й висотою за допомогою моделі ШІ з урахуванням ваших змін і додається поруч з оригіналом (16-бітний TIFF у sRGB) в одному стосі з ним. Оригінал не змінюється. На великих фото це займає певний час.";
 "The photo shown gets this time; the others move by as much, keeping their spacing." = "Показане фото отримує цей час; решта зсуваються на стільки ж, зберігаючи інтервали між собою.";
 "The photos are copied into the library; the originals in Photos and Files are left as they are." = "Фото копіюються до бібліотеки; оригінали у «Фото» та «Файлах» залишаються без змін.";
+"The photos in view are scored." = "Буде оцінено фото в поточному поданні.";
 "The processor does the work." = "Роботу виконує процесор.";
 "The server can't say how much it stores: %@" = "Сервер не може повідомити, скільки зберігає: %@";
 "The server has a library already" = "На сервері вже є бібліотека";
 "The server's" = "Бібліотека сервера";
 "The thumbnail cache only ever counts and deletes its own files (issue #98): a library opened on a folder that" = "Кеш мініатюр завжди рахує й видаляє лише власні файли (проблема #98): бібліотека, відкрита в теці, яка";
+"Their edits, ratings and keywords are replaced with the catalog's." = "Їхнє редагування, оцінки та ключові слова замінюються даними з каталогу.";
 "Their photos and the keywords below them come together under one keyword." = "Їхні фото та вкладені ключові слова об’єднуються під одним ключовим словом.";
 "Theme" = "Тема";
 "There are no presets in these files." = "У цих файлах немає наборів налаштувань.";
@@ -2281,6 +2326,7 @@
 "Tone Curve" = "Тональна крива";
 "Tool" = "Інструмент";
 "Tools" = "Інструменти";
+"Top / Bottom" = "Зверху / знизу";
 "Top Level" = "Верхній рівень";
 "Total" = "Усього";
 "Trained on: %@" = "Навчено на: %1$@";
@@ -2302,6 +2348,7 @@
 "Uncheck All" = "Зняти всі позначки";
 "Uncheck the files of this type" = "Зняти позначки з файлів цього типу";
 "Undo" = "Скасувати";
+"Undo %@" = "Скасувати %1$@";
 "Unedited" = "Без змін";
 "Unedited raws" = "Незмінені RAW";
 "Unflag" = "Зняти прапорець";
@@ -2321,6 +2368,7 @@
 "Up to date" = "Актуально";
 "Update" = "Оновити";
 "Update Mask Shape" = "Оновити форму маски";
+"Update Photos Already in the Library" = "Оновити фото, що вже є в бібліотеці";
 "Update Preset with Current Settings" = "Оновити набір налаштувань поточними значеннями";
 "Update Rules from Current Filter" = "Оновити правила з поточного фільтра";
 "Update Version" = "Оновити версію";
