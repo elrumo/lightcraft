@@ -334,7 +334,13 @@ fn big_answers_are_gzipped() {
         let at = got.windows(4).position(|w| w == b"\r\n\r\n").unwrap();
         (String::from_utf8_lossy(&got[..at]).to_ascii_lowercase(), got[at + 4..].to_vec())
     };
-    for path in ["/api/snapshot?limit=100", "/api/snapshot", "/api/ops?since=0&limit=100"] {
+    // the presets: a collection imported whole is tens of MB
+    let presets: Vec<Value> = (0..300)
+        .map(|i| json!({"id": format!("user.p{i}"), "name": format!("Look {i}"), "group": "Pack", "settings": {"light": {"exposure": 0.5}}}))
+        .collect();
+    let body = json!({"version": 0, "presets": presets}).to_string();
+    assert_eq!(call("PUT", &format!("{url}/api/presets"), &token, Some(body.as_bytes()), &[]).0, 200);
+    for path in ["/api/snapshot?limit=100", "/api/snapshot", "/api/ops?since=0&limit=100", "/api/presets"] {
         let (head, plain) = raw(path, false);
         assert!(!head.contains("content-encoding"), "{head}");
         let (head, zipped) = raw(path, true);
@@ -349,6 +355,7 @@ fn big_answers_are_gzipped() {
     sign_in(&mut b, &url);
     b.execute("sync.now", &json!({"wait": true})).unwrap();
     assert_eq!(b.catalog.photos().filter(|p| p.file_name.starts_with('p')).count(), 60);
+    assert_eq!(b.presets.iter().filter(|p| p.group == "Pack").count(), 300);
     drop(server);
     let _ = std::fs::remove_dir_all(&root);
 }

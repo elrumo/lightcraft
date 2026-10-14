@@ -1335,6 +1335,7 @@ impl Engine {
             visible_gen,
             visible_count: visible.len(),
             library_generation: self.session.library_generation(),
+            presets_generation: self.session.presets.generation(),
             active: self.session.active(),
             selection_count: self.session.selection.ids.len(),
             undo: self.session.undo.last().map(|u| u.label.clone()),
