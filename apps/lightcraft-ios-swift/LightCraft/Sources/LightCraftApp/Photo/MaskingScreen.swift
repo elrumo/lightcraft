@@ -71,7 +71,6 @@ enum MaskList {
 /// over the photo ([`MaskColumn`]).
 struct MaskingTools: View {
     @Environment(AppModel.self) private var model
-    @State private var base: Int?
     @State private var group: String?
 
     var body: some View {
@@ -90,11 +89,9 @@ struct MaskingTools: View {
                     .padding(.horizontal, 16)
             }
             MaskGroupRow(selection: $group, enabled: mask != nil)
-            ScreenBar(title: "Masking", base: base)
         }
-        .padding(.top, 8)
+        .padding(.vertical, 8)
         .animation(.snappy, value: group)
-        .task { base = await undoDepth(model) }
         .onChange(of: mask == nil) { _, none in
             if none { group = nil }
         }
@@ -494,10 +491,11 @@ private struct CreateMaskMenu: View {
                 }
             }
         } label: {
-            Image(systemName: "plus").font(.title3.weight(.semibold)).foregroundStyle(.white)
-                .frame(width: 48, height: 48)
-                .background(Circle().fill(Color.accentColor))
+            Image(systemName: "plus").font(.title3.weight(.semibold))
+                .frame(width: 36, height: 36)
         }
+        .buttonStyle(.glassProminent)
+        .buttonBorderShape(.circle)
         .accessibilityLabel("Create New Mask")
     }
 

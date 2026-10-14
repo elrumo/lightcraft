@@ -2,10 +2,11 @@
 import LightCraftCore
 import SwiftUI
 
-/// A photo, as Lightroom's mobile app shows it: back, undo, share and "…" above it; swipe sideways
-/// for the next; the tools under it (Presets, Crop, Edit, Masking, Remove, Info), the Edit tool's
-/// groups in a row of their own and the open tool's panel between the photo and the tools. A tap
-/// on the photo hides the bars (review mode).
+/// A photo on a dark canvas, as Lightroom's mobile app shows it: back, its date, undo, share and
+/// "…" above it; swipe sideways for the next; the tools in the bottom bar (Presets, Crop, Edit,
+/// Masking, Remove, Info), the Edit tool's groups in a row of their own and the open tool's panel
+/// between the photo and the tools. Crop, Masking, Remove and Red Eye take the screen with Cancel
+/// and Done above. A tap on the photo hides the bars (review mode).
 struct PhotoScreen: View {
     @Environment(AppModel.self) private var model
     @Environment(\.verticalSizeClass) private var verticalSize
@@ -33,32 +34,53 @@ struct PhotoScreen: View {
                         } else {
                             if editor.tool == .edit { GroupBar() }
                             if let tool = editor.tool { ToolPanel(tool: tool) }
-                            ToolBar()
                         }
                     }
                 }
             }
         }
-        .background(Color(uiColor: .systemBackground))
+        .background(Color.black.ignoresSafeArea())
         .toolbar(review ? .hidden : .visible, for: .navigationBar)
+        .toolbar(review || editor.tool?.hasScreen == true ? .hidden : .visible, for: .bottomBar)
         .statusBarHidden(review)
+        .navigationBarBackButtonHidden(editor.tool?.hasScreen == true)
+        .navigationTitle(title)
+        .navigationSubtitle(Text(subtitle))
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItemGroup(placement: .topBarTrailing) {
-                UndoMenu()
-                if editor.tool == .masking {
-                    MaskOverlayButton()
-                    MaskMoreMenu()
-                } else {
+            if let tool = editor.tool, tool.hasScreen {
+                ScreenToolbar(model: model)
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    UndoMenu()
+                    if tool == .masking {
+                        MaskOverlayButton()
+                        MaskMoreMenu()
+                    }
+                }
+            } else {
+                ToolbarItem(placement: .topBarTrailing) {
+                    UndoMenu()
+                }
+                ToolbarSpacer(.fixed, placement: .topBarTrailing)
+                ToolbarItemGroup(placement: .topBarTrailing) {
                     Button("Share", systemImage: "square.and.arrow.up") {
                         if let id = model.state.active { model.sheet = .export([id]) }
                     }
                     PhotoMoreMenu()
                 }
+                ToolBar(model: model)
             }
         }
-        .navigationBarTitleDisplayMode(.inline)
+        // editing's canvas is dark, whatever the app's look (as Photos' editor and Lightroom)
+        .environment(\.colorScheme, .dark)
+        .toolbarColorScheme(.dark, for: .navigationBar, .bottomBar)
         .animation(.snappy, value: review)
         .animation(.snappy, value: editor.tool)
+        .haptic(.selection, trigger: editor.tool)
+        .task(id: editor.tool) {
+            // a tool screen's Cancel goes back to how the photo was when it opened
+            if editor.tool?.hasScreen == true { editor.screenBase = await undoDepth(model) }
+        }
         .onAppear {
             if editor.tool == nil { editor.tool = .edit }
             Task { await editor.reload(model) }
@@ -66,6 +88,23 @@ struct PhotoScreen: View {
         .onDisappear {
             if model.path.isEmpty { editor.tool = nil }
         }
+    }
+
+    /// The photo's capture date (an open tool screen's name instead), then its time.
+    private var title: String {
+        if let tool = model.editor.tool, tool.hasScreen { return String(localized: tool.screenTitle) }
+        guard let summary = active else { return "" }
+        return summary.captured.flatMap(InfoPanel.captureDate)?.formatted(date: .abbreviated, time: .omitted) ?? summary.fileName
+    }
+
+    private var subtitle: String {
+        if model.editor.tool?.hasScreen == true { return "" }
+        guard let iso = active?.captured, iso.count > 10, let date = InfoPanel.captureDate(iso) else { return "" }
+        return date.formatted(date: .omitted, time: .shortened)
+    }
+
+    private var active: PhotoSummary? {
+        model.state.active.flatMap { model.library.index(of: $0) }.flatMap { model.library.loaded(at: $0) }
     }
 
     private var pager: some View {
@@ -123,7 +162,6 @@ private struct SidePanel: View {
                 } else {
                     Spacer()
                 }
-                ToolBar()
             }
         }
         .frame(width: width)
@@ -549,8 +587,9 @@ private struct InfoOverlay: View {
                     Text(summary.camera ?? "").font(.caption)
                 }
             }
-            .foregroundStyle(.white)
-            .shadow(color: .black.opacity(0.6), radius: 2)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .glassEffect(.regular, in: .rect(cornerRadius: 14))
             .padding(.horizontal, 30)
             .padding(.top, 30)
         }
@@ -564,53 +603,28 @@ private struct InfoOverlay: View {
     }
 }
 
-/// The tools under a photo, in a glass capsule; the open one tinted.
-struct ToolBar: View {
-    @Environment(AppModel.self) private var model
-    // the bar's sizes, following the reader's text size
-    @ScaledMetric(relativeTo: .title3) private var iconSize: CGFloat = 20
-    @ScaledMetric(relativeTo: .caption2) private var labelSize: CGFloat = 10
+/// The tools under a photo, in the bottom bar: icons, the open one switched on (a tap on it closes
+/// it).
+struct ToolBar: ToolbarContent {
+    let model: AppModel
 
-    var body: some View {
+    var body: some ToolbarContent {
         let editor = model.editor
-        GlassEffectContainer {
-            HStack(spacing: 0) {
-                ForEach(Tool.bar) { tool in
-                    Button {
-                        withAnimation(.snappy) { editor.tool = editor.tool == tool ? nil : tool }
-                        if tool == .crop || tool == .masking || tool == .remove {
-                            model.perform("develop.cancelInteraction")
-                        }
-                    } label: {
-                        VStack(spacing: 3) {
-                            Image(systemName: tool.symbol).font(.system(size: iconSize))
-                            // a long translation shrinks to one line rather than pushing the bar up
-                            Text(LocalizedStringKey(tool.label)).font(.system(size: labelSize, weight: .semibold))
-                                .lineLimit(1).minimumScaleFactor(0.6)
-                        }
-                        .foregroundStyle(editor.tool == tool ? Color.accentColor : Color.primary)
-                        .frame(maxWidth: .infinity, minHeight: 52)
-                        .background {
-                            if editor.tool == tool {
-                                Capsule().fill(Color.accentColor.opacity(0.15)).padding(.horizontal, 2).padding(.vertical, 4)
-                            }
-                        }
-                        .contentShape(Rectangle())
-                        .hoverEffect(.highlight)
+        ToolbarSpacer(.flexible, placement: .bottomBar)
+        ToolbarItemGroup(placement: .bottomBar) {
+            ForEach(Tool.bar) { tool in
+                Toggle(isOn: Binding(get: { editor.tool == tool }, set: { on in
+                    withAnimation(.snappy) { editor.tool = on ? tool : nil }
+                    if on, tool == .crop || tool == .masking || tool == .remove {
+                        model.perform("develop.cancelInteraction")
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityAddTraits(editor.tool == tool ? .isSelected : [])
-                    .disabled(model.state.active == nil)
+                })) {
+                    Label(LocalizedStringKey(tool.label), systemImage: tool.symbol)
                 }
+                .disabled(model.state.active == nil)
             }
-            .padding(.horizontal, 4)
-            .glassEffect(.regular, in: .capsule)
         }
-        .frame(maxWidth: 480)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 4)
-        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
-        .haptic(.selection, trigger: editor.tool)
+        ToolbarSpacer(.flexible, placement: .bottomBar)
     }
 }
 

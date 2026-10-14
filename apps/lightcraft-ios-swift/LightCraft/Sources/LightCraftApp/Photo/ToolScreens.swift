@@ -2,41 +2,27 @@
 import LightCraftCore
 import SwiftUI
 
-/// The bar of a tool screen: ✕ (take back everything done since it opened), the tool's name, ✓.
-struct ScreenBar: View {
-    @Environment(AppModel.self) private var model
-    let title: LocalizedStringKey
-    /// The undo stack's depth when the screen opened.
-    let base: Int?
+/// A tool screen's Cancel (take back everything done since it opened) and Done, in the navigation bar.
+struct ScreenToolbar: ToolbarContent {
+    let model: AppModel
 
-    var body: some View {
-        HStack {
-            Button {
+    var body: some ToolbarContent {
+        ToolbarItem(placement: .cancellationAction) {
+            Button(role: .close) {
                 Task {
-                    if let base { await model.run("edit.undoTo", ["depth": .int(Int64(base))]) }
+                    if let base = model.editor.screenBase { await model.run("edit.undoTo", ["depth": .int(Int64(base))]) }
                     model.editor.tool = .edit
                 }
-            } label: {
-                Image(systemName: "xmark").frame(width: 44, height: 44)
             }
-            .buttonStyle(.glass)
-            .buttonBorderShape(.circle)
             .accessibilityLabel("Cancel")
-            Spacer()
-            Text(title).font(.headline)
-            Spacer()
-            Button {
+        }
+        ToolbarItem(placement: .confirmationAction) {
+            Button(role: .confirm) {
                 model.perform("develop.endInteraction")
                 model.editor.tool = .edit
-            } label: {
-                Image(systemName: "checkmark").frame(width: 44, height: 44)
             }
-            .buttonStyle(.glassProminent)
-            .buttonBorderShape(.circle)
             .accessibilityLabel("Done")
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 6)
     }
 }
 
@@ -51,7 +37,6 @@ func undoDepth(_ model: AppModel) async -> Int? {
 struct CropTools: View {
     @Environment(AppModel.self) private var model
     @Environment(\.verticalSizeClass) private var verticalSize
-    @State private var base: Int?
     @State private var tab = "aspect"
     @State private var dialStart: Double?
 
@@ -195,11 +180,9 @@ struct CropTools: View {
                 }
                 .frame(maxHeight: 236)
             }
-            ScreenBar(title: "Crop & Rotate", base: base)
         }
-        .padding(.top, 8)
+        .padding(.vertical, 8)
         .onDisappear { editor.cropDraw = nil }
-        .task { base = await undoDepth(model) }
     }
 
     /// The round buttons' size: smaller in the side panel of a phone held sideways.
@@ -302,7 +285,6 @@ struct AngleDial: View {
 /// Remove: Remove, Heal or Clone, the brush's size, and the photo's spots (Find Dust, delete all).
 struct RemoveTools: View {
     @Environment(AppModel.self) private var model
-    @State private var base: Int?
 
     var body: some View {
         @Bindable var editor = model.editor
@@ -365,10 +347,8 @@ struct RemoveTools: View {
                 }
             }
             .font(.footnote).foregroundStyle(.secondary)
-            ScreenBar(title: "Remove", base: base)
         }
-        .padding(.top, 8)
-        .task { base = await undoDepth(model) }
+        .padding(.vertical, 8)
     }
 }
 
