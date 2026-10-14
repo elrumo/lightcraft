@@ -143,7 +143,7 @@ struct PhotoScreen: View {
     }
 
     private var photoPager: some View {
-        PhotoPager(start: start, review: $review)
+        PhotoPager(start: start, startIndex: model.library.index(of: start), review: $review)
             .overlay(alignment: .topTrailing) {
                 if model.editor.tool == .masking, !review {
                     MaskColumn().padding(10).transition(.move(edge: .trailing).combined(with: .opacity))
@@ -196,6 +196,19 @@ struct PhotoPager: View {
     @State private var zoomed = false
     /// Where the photo opened is in the grid (found once: pages being read again mustn't lose it).
     @State private var startIndex: Int?
+    /// The photo a swipe selected, until the engine says it's the active one (states from earlier
+    /// swipes mustn't pull the pager back).
+    @State private var asked: UInt64?
+
+    /// `startIndex`: where `start` is in the grid, when its page is loaded. The scroll view opens on
+    /// it from its first layout: set later (on appear), the first page could take its place and
+    /// become the photo selected.
+    init(start: UInt64, startIndex: Int?, review: Binding<Bool>) {
+        self.start = start
+        _review = review
+        _position = State(initialValue: startIndex)
+        _startIndex = State(initialValue: startIndex)
+    }
 
     var body: some View {
         let library = model.library
@@ -220,16 +233,25 @@ struct PhotoPager: View {
                 }
                 .onChange(of: position) { _, i in
                     guard let i, let photo = library.photo(at: i, model.engine) else { return }
-                    Task { await model.select(photo.id) }
+                    if photo.id != model.state.active {
+                        asked = photo.id
+                        Task { await model.select(photo.id) }
+                    }
                     var near: [UInt64] = []
                     if let next = library.photo(at: i + 1, model.engine) { near.append(next.id) }
                     if let prev = library.photo(at: i - 1, model.engine) { near.append(prev.id) }
                     model.prefetch(near)
                 }
                 .haptic(.impact(weight: .light), trigger: position)
-                .onChange(of: model.state.active) { _, active in
-                    // the engine moved on (Auto Advance, next / previous): follow it
-                    guard let active, let i = library.index(of: active), i != position else { return }
+                // the active photo's place: the engine moved on (Auto Advance, next / previous), or the
+                // grid's order changed under it (an import, a sync, sorting by edit time) — the page
+                // shown stays the photo being edited
+                .onChange(of: model.state.active.flatMap { library.index(of: $0) }) { _, i in
+                    if let a = asked {
+                        guard model.state.active == a else { return }
+                        asked = nil
+                    }
+                    guard let i, i != position else { return }
                     withAnimation(.snappy) { position = i }
                 }
             } else {
