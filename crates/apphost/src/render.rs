@@ -521,6 +521,9 @@ impl<V> Scheduler<V> {
     /// preview each. Cheap to call every frame for every cell on screen. Returns whether a render
     /// job was built.
     pub fn request_thumb(&mut self, session: &mut Session, id: PhotoId, size: usize, priority: u32) -> bool {
+        // (a preview that landed in this frame's sync step: its cell may draw it now, not a frame from now,
+        // when an idle app may not run one)
+        self.preview_arrived(session);
         // a slider drag changes the photo every frame: its thumbnail keeps what it shows (a render per
         // tick would take a worker from the loupe) and catches up once the drag ends
         if session.interaction.as_ref().is_some_and(|i| i.photo == id) && self.textures.contains_key(&Slot::Thumb(id)) {
@@ -618,10 +621,6 @@ impl<V> Scheduler<V> {
         )
     }
 
-    /// `job` as [`Self::request`] would run it for `slot` (its key included): views render for
-    /// the display profile in use, and the loupe's HDR edits for an HDR display. Applying it again
-    /// changes nothing.
-    pub fn job_for(&self, slot: Slot, job: RenderJob) -> RenderJob {
     /// The slots of the photo being edited, which show an HDR edit in HDR when the display can
     /// ([`Self::set_hdr_display`]): the loupe and its zoom window. The Before views show the
     /// unedited photo, and everything else is small SDR previews.
@@ -629,6 +628,10 @@ impl<V> Scheduler<V> {
         matches!(slot, Slot::Main | Slot::Region)
     }
 
+    /// `job` as [`Self::request`] would run it for `slot` (its key included): views render for
+    /// the display profile in use, and the loupe's HDR edits for an HDR display. Applying it again
+    /// changes nothing.
+    pub fn job_for(&self, slot: Slot, job: RenderJob) -> RenderJob {
         let job = if Self::renders_for_display(slot) { job.with_display(self.display.clone()) } else { job };
         if self.hdr_display && Self::renders_hdr(slot) { job.with_hdr_display() } else { job }
     }
@@ -1081,10 +1084,10 @@ impl<V> Scheduler<V> {
             if self.pending.get(&slot).is_some_and(|p| p.0 == r.key) {
                 self.pending.remove(&slot);
             }
+            let hdr = r.hdr.take();
             let rendered = match r.rendered {
                 Ok(x) => {
                     self.failed.remove(&slot);
-            let hdr = r.hdr.take();
                     x
                 }
                 Err(e) => {
@@ -1123,12 +1126,12 @@ impl<V> Scheduler<V> {
             match self.textures.get_mut(&slot) {
                 Some(t) => {
                     present.update(slot, rendered.image, &mut t.view);
-                    t.key = r.key;
-                    t.photo = r.photo;
-                    t.size = size;
                     if Self::renders_hdr(slot) {
                         present.set_hdr(slot, hdr, &mut t.view);
                     }
+                    t.key = r.key;
+                    t.photo = r.photo;
+                    t.size = size;
                     t.histogram = Some(rendered.histogram);
                     t.ms = ms;
                     t.quick = r.quick;
@@ -1295,10 +1298,10 @@ impl Failed {
             loaded: None,
             quick: None,
             display: None,
+            hdr: None,
         }
     }
 }
-            hdr: None,
 
 /// Run `job` (on the worker thread) and make its image ready for `display`; a panic in it is that
 /// render's error.
@@ -1658,9 +1661,6 @@ mod scheduler_tests {
         assert!(!r.is_pending(Slot::Main));
     }
 
-    // A render that panics is that slot's failure: it is reported, the slot is no longer pending,
-    // and the worker renders the next one
-    #[test]
     /// Keeps the HDR picture of each slot it was given (what the egui window does with it).
     struct KeepHdr;
     impl Present<Option<Arc<HdrPicture>>> for KeepHdr {
@@ -1717,6 +1717,37 @@ mod scheduler_tests {
         assert!(r.job_for(Slot::Region, s.loupe_job(PhotoId(1), 8, 8, true).unwrap()).hdr_view);
     }
 
+    // A synced photo's thumbnail failed for want of its preview: once the preview lands, the next ask
+    // renders it, without a poll in between (the grid draws after the sync step, in the same frame)
+    #[test]
+    fn a_preview_that_lands_lets_the_failed_thumbnail_render_in_the_same_frame() {
+        let landed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let l = landed.clone();
+        let mut s = session(Arc::new(move |_, _| {
+            if !l.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err("still downloading".into());
+            }
+            let mut image = lightcraft_raster::Rgb32f::new(8, 8);
+            image.data.fill([0.3, 0.2, 0.1]);
+            Ok((image, Default::default()))
+        }));
+        let mut r = Scheduler::<Arc<Rgba8>>::with_worker_threads(1);
+        let id = PhotoId(1);
+        assert!(r.request_thumb(&mut s, id, 64, 10));
+        poll_until(&mut r, &mut s, |p| !p.failed.is_empty());
+        assert!(!r.request_thumb(&mut s, id, 64, 10), "the failure is remembered");
+        // the sync step puts the file there and says so; the grid draws before the next poll
+        landed.store(true, std::sync::atomic::Ordering::SeqCst);
+        s.media.note_arrived(id);
+        assert!(r.request_thumb(&mut s, id, 64, 10), "asked again at once");
+        let p = poll_until(&mut r, &mut s, Polled::changed);
+        assert_eq!(p.shown, vec![Slot::Thumb(id)]);
+        assert!(r.thumb(id).is_some());
+    }
+
+    // A render that panics is that slot's failure: it is reported, the slot is no longer pending,
+    // and the worker renders the next one
+    #[test]
     fn a_panicking_render_fails_its_slot_and_spares_the_worker() {
         let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let c = calls.clone();
