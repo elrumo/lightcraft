@@ -296,7 +296,7 @@
 "Auto-Tag from Tracklog…" = "Автоматично позначити за журналом маршруту…";
 "Automatic" = "Автоматично";
 "Automatic renders the Detail view at the size it is shown, up to the photo's own pixels. Choose a size to cap it: smaller is faster." = "Автоматичний режим відтворює подання «Деталі» у відображуваному розмірі, до власних пікселів фото. Виберіть розмір для обмеження: менший працює швидше.";
-"Automatic uses Apple's models where this device has them. Classic is LightCraft's own guess and needs no model." = "«Автоматично» використовує моделі Apple, якщо вони є на цьому пристрої. «Класичний» — власна оцінка LightCraft, модель не потрібна.";
+"Automatic uses Apple's models where this device has them. Classic is LightCraft's own guess and needs no model." = "«Автоматично» використовує моделі Apple, якщо вони є на цьому пристрої. «Класичний»: власна оцінка LightCraft, модель не потрібна.";
 "Automatic uses the graphics card where it is faster than the processor: both are timed on this computer the first time a photo is made." = "Автоматичний режим використовує відеокарту, коли вона швидша за процесор: час обох вимірюється на цьому комп’ютері під час першої обробки фото.";
 "Automatically Write Changes into XMP" = "Автоматично записувати зміни в XMP";
 "Automatically write changes into XMP sidecars" = "Автоматично записувати зміни в супровідні файли XMP";
@@ -1303,7 +1303,7 @@
 "Library saved" = "Бібліотеку збережено";
 "Licence" = "Ліцензія";
 "Licence:" = "Ліцензія:";
-"Lifts the subject and selects objects from your taps, on this device. Built into iOS." = "Виділяє головний об’єкт і вибирає об’єкти за вашими дотиками — на цьому пристрої. Вбудовано в iOS.";
+"Lifts the subject and selects objects from your taps, on this device. Built into iOS." = "Виділяє головний об’єкт і вибирає об’єкти за вашими дотиками просто на цьому пристрої. Вбудовано в iOS.";
 "Light" = "Світло";
 "Light Mode" = "Світлий режим";
 "Light Theme" = "Світла тема";

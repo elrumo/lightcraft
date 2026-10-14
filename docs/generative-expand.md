@@ -38,6 +38,9 @@ The choice follows the device: each offers what it can run, and what is chosen i
 | **LaMa** | 208 MB | Apache-2.0 | computers only | 20 s | long structures across a wide strip (horizons, shorelines, rows of trees) |
 | **Classic** | none | (LightCraft's own) | everywhere | 4 s | plain areas: the photo's edge colours carried outward with its texture; it can't invent shapes |
 
+LaMa could run on a phone through Core ML on the GPU (spike 2026-10-15, [ai-models.md](ai-models.md) → Core ML spike): about
+0.15 s on a Mac GPU in a 99 MB package; not built, not measured on an iPhone.
+
 (Measured 2026-10-13 on a 4-core x86-64 Linux VM, CPU only, a 2560 × 1707 demo photo cropped to
 1 × 1: the whole command, with loading the model and the texture synthesis, which is most of
 MI-GAN's time. Phones and the browser are not measured yet.)

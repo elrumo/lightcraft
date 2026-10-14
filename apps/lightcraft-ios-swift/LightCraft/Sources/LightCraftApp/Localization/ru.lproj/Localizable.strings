@@ -297,7 +297,7 @@
 "Auto-Tag from Tracklog…" = "Автопривязка по треку…";
 "Automatic" = "Автоматически";
 "Automatic renders the Detail view at the size it is shown, up to the photo's own pixels. Choose a size to cap it: smaller is faster." = "Автоматический режим рендерит «Детализацию» в отображаемом размере, вплоть до собственных пикселей фото. Выберите размер, чтобы ограничить: меньше — быстрее.";
-"Automatic uses Apple's models where this device has them. Classic is LightCraft's own guess and needs no model." = "«Автоматически» использует модели Apple, если они есть на этом устройстве. «Классический» — собственная оценка LightCraft, модель не нужна.";
+"Automatic uses Apple's models where this device has them. Classic is LightCraft's own guess and needs no model." = "«Автоматически» использует модели Apple, если они есть на этом устройстве. «Классический»: собственная оценка LightCraft, модель не нужна.";
 "Automatic uses the graphics card where it is faster than the processor: both are timed on this computer the first time a photo is made." = "Автоматический режим использует видеокарту, когда она быстрее процессора: время обоих измеряется на этом компьютере при первой обработке фото.";
 "Automatically Write Changes into XMP" = "Автоматически записывать изменения в XMP";
 "Automatically write changes into XMP sidecars" = "Автоматически записывать изменения в XMP-файлы";
@@ -1304,7 +1304,7 @@
 "Library saved" = "Библиотека сохранена";
 "Licence" = "Лицензия";
 "Licence:" = "Лицензия:";
-"Lifts the subject and selects objects from your taps, on this device. Built into iOS." = "Выделяет главный объект и выбирает объекты по вашим касаниям — на этом устройстве. Встроено в iOS.";
+"Lifts the subject and selects objects from your taps, on this device. Built into iOS." = "Выделяет главный объект и выбирает объекты по вашим касаниям прямо на этом устройстве. Встроено в iOS.";
 "Light" = "Светлый";
 "Light Mode" = "Светлый режим";
 "Light Theme" = "Светлая тема";
