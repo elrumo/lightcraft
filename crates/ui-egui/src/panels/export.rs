@@ -121,6 +121,8 @@ pub fn form(app: &mut LightcraftApp, ui: &mut egui::Ui, f: Form<'_>, part: Part)
     }
     ui.add_space(4.0);
     let before = opts.format;
+    // "Rendered DNG" is a DNG option (below), not a format of its own in this list
+    let mut shown = if opts.format == F::RenderedDng { F::Dng } else { opts.format };
     if part == Part::All {
         choices(
             ui,
@@ -137,8 +139,14 @@ pub fn form(app: &mut LightcraftApp, ui: &mut egui::Ui, f: Form<'_>, part: Part)
                 (F::Dng, "DNG"),
                 (F::Original, "Original files"),
             ],
-            &mut opts.format,
+            &mut shown,
         );
+        if shown != opts.format && !(shown == F::Dng && opts.format == F::RenderedDng) {
+            opts.format = shown;
+        }
+        if matches!(opts.format, F::Dng | F::RenderedDng) {
+            choices(ui, "DNG of", "exportDngKind", &[(F::Dng, "Raw data"), (F::RenderedDng, "Rendered photo")], &mut opts.format);
+        }
     }
     if !opts.format.is_rendered() {
         let note = if opts.format == F::Dng {
@@ -165,10 +173,15 @@ pub fn form(app: &mut LightcraftApp, ui: &mut egui::Ui, f: Form<'_>, part: Part)
         if opts.hdr && !opts.hdr_output() {
             ui.label(RichText::new("HDR TIFF needs 32-bit float.").color(t.text_dim));
         }
+        if opts.hdr && opts.format == F::Avif {
+            use lightcraft_engine::export::HdrCurve as H;
+            choices(ui, "HDR curve", "exportHdrCurve", &[(H::Pq, "PQ"), (H::Hlg, "HLG")], &mut opts.hdr_transfer);
+        }
     }
     if !rendered {
     } else if opts.format == F::Avif && opts.hdr {
-        ui.label(RichText::new("Color space: Rec. 2020 PQ (HDR AVIF)").color(t.text_dim));
+        let curve = if opts.hdr_transfer == lightcraft_engine::export::HdrCurve::Hlg { "HLG" } else { "PQ" };
+        ui.label(RichText::new(format!("Color space: Rec. 2020 {curve} (HDR AVIF)")).color(t.text_dim));
     } else if opts.format == F::Png && opts.hdr {
         ui.label(RichText::new("Color space: Rec. 2020 PQ, 16-bit (HDR PNG)").color(t.text_dim)).on_hover_text(
             "Viewers that don't read the PNG cICP chunk show PQ values as sRGB: flat and washed out. For a picture that looks right everywhere, use JPEG (gain map).",
@@ -270,10 +283,16 @@ pub fn form(app: &mut LightcraftApp, ui: &mut egui::Ui, f: Form<'_>, part: Part)
     let tags_open = field(ui, "File name", |ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         let w = crate::import::tag_field_width(ui);
-        ui.add(crate::widgets::text_box(
-            ui,
-            egui::TextEdit::singleline(&mut opts.naming).id(naming_id).hint_text("{name}-{seq}  ·  {date}  ·  {title}  ·  {folder}").desired_width(w),
-        ));
+        crate::widgets::named(
+            ui.add(crate::widgets::text_box(
+                ui,
+                egui::TextEdit::singleline(&mut opts.naming)
+                    .id(naming_id)
+                    .hint_text("{name}-{seq}  ·  {date}  ·  {title}  ·  {folder}")
+                    .desired_width(w),
+            )),
+            crate::i18n::tr("File name"),
+        );
         crate::import::tag_toggle(ui, "exportNaming")
     });
     if tags_open {
@@ -306,14 +325,20 @@ pub fn form(app: &mut LightcraftApp, ui: &mut egui::Ui, f: Form<'_>, part: Part)
                 {
                     *dir = d;
                 }
-                ui.add(crate::widgets::text_box(ui, egui::TextEdit::singleline(dir).desired_width(ui.available_width())));
+                crate::widgets::named(
+                    ui.add(crate::widgets::text_box(ui, egui::TextEdit::singleline(dir).desired_width(ui.available_width()))),
+                    crate::i18n::tr("Folder"),
+                );
             });
         });
         field(ui, "Subfolder", |ui| {
-            ui.add(crate::widgets::text_box(
-                ui,
-                egui::TextEdit::singleline(&mut opts.subfolder).hint_text(crate::i18n::tr("none")).desired_width(f32::INFINITY),
-            ))
+            crate::widgets::named(
+                ui.add(crate::widgets::text_box(
+                    ui,
+                    egui::TextEdit::singleline(&mut opts.subfolder).hint_text(crate::i18n::tr("none")).desired_width(f32::INFINITY),
+                )),
+                crate::i18n::tr("Subfolder"),
+            )
         });
     }
     use lightcraft_engine::export::Conflict as K;
@@ -325,10 +350,13 @@ pub fn form(app: &mut LightcraftApp, ui: &mut egui::Ui, f: Form<'_>, part: Part)
         register(ui.ctx(), "exportAddToPhotos", r.rect);
         if opts.add_to_photos {
             field(ui, "Album", |ui| {
-                ui.add(crate::widgets::text_box(
-                    ui,
-                    egui::TextEdit::singleline(&mut opts.photos_album).hint_text(crate::i18n::tr("none")).desired_width(f32::INFINITY),
-                ))
+                crate::widgets::named(
+                    ui.add(crate::widgets::text_box(
+                        ui,
+                        egui::TextEdit::singleline(&mut opts.photos_album).hint_text(crate::i18n::tr("none")).desired_width(f32::INFINITY),
+                    )),
+                    crate::i18n::tr("Album"),
+                )
             });
             ui.label(
                 RichText::new(crate::i18n::tr("The first time, macOS asks whether LightCraft may control Photos.")).size(11.0).color(t.text_dim),
@@ -354,10 +382,13 @@ pub fn form(app: &mut LightcraftApp, ui: &mut egui::Ui, f: Form<'_>, part: Part)
                     Err(e) => app.toast(ui.ctx(), e),
                 }
             }
-            ui.add(crate::widgets::text_box(
-                ui,
-                egui::TextEdit::singleline(preset_name).hint_text(crate::i18n::tr("Preset name")).desired_width(ui.available_width()),
-            ));
+            crate::widgets::named(
+                ui.add(crate::widgets::text_box(
+                    ui,
+                    egui::TextEdit::singleline(preset_name).hint_text(crate::i18n::tr("Preset name")).desired_width(ui.available_width()),
+                )),
+                crate::i18n::tr("Preset name"),
+            );
         });
     });
 }
@@ -406,8 +437,8 @@ fn watermark_preview(
                 let (out, repaint) = (base.clone(), ctx.clone());
                 let work = move || {
                     for job in jobs {
-                        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job.run().rendered.map(|r| r.image)))
-                            .unwrap_or_else(|_| Err("the preview failed unexpectedly".into()));
+                        // (a panic in the render is its failure: `RenderJob::run`)
+                        let r = job.run().rendered.map(|r| r.image);
                         let mut got = out.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                         // a failed sharp render keeps the thumbnail
                         if r.is_ok() || !matches!(got.1, Some(Ok(_))) {
@@ -494,10 +525,13 @@ fn watermark_form(app: &mut LightcraftApp, ui: &mut egui::Ui, wm: &mut Watermark
                 {
                     wm.image = f;
                 }
-                ui.add(crate::widgets::text_box(
-                    ui,
-                    egui::TextEdit::singleline(&mut wm.image).hint_text("logo.png").desired_width(ui.available_width()),
-                ));
+                crate::widgets::named(
+                    ui.add(crate::widgets::text_box(
+                        ui,
+                        egui::TextEdit::singleline(&mut wm.image).hint_text("logo.png").desired_width(ui.available_width()),
+                    )),
+                    crate::i18n::tr("Image"),
+                );
             });
         });
         let mut width = wm.image_width as f64 * 100.0;
@@ -513,10 +547,13 @@ fn watermark_form(app: &mut LightcraftApp, ui: &mut egui::Ui, wm: &mut Watermark
             &mut wm.vertical,
         );
         field(ui, "Text", |ui| {
-            ui.add(crate::widgets::text_box(
-                ui,
-                egui::TextEdit::multiline(&mut wm.text).desired_rows(2).hint_text(crate::i18n::tr("© Your Name")).desired_width(f32::INFINITY),
-            ))
+            crate::widgets::named(
+                ui.add(crate::widgets::text_box(
+                    ui,
+                    egui::TextEdit::multiline(&mut wm.text).desired_rows(2).hint_text(crate::i18n::tr("© Your Name")).desired_width(f32::INFINITY),
+                )),
+                crate::i18n::tr("Text"),
+            )
         });
     }
     choices(ui, "Position", "exportWmAnchor", &WM_POSITIONS, &mut wm.anchor);
