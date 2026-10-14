@@ -2195,7 +2195,7 @@
   "Turned off in Settings → AI Models": "已在“设置 → AI 模型”中关闭",
   "Models can't be downloaded in this build: put the file in the models folder (Settings → AI Models).": "此版本无法下载模型：请将文件放入模型文件夹（设置 → AI 模型）。",
   "Generating the new area…": "正在生成新区域…",
-  "Its licence lists uses that aren't allowed: read it before downloading (Settings → AI Models ▸ Licence).": "其许可证禁止部分用途：下载前请先阅读（“设置 → AI 模型 ▸ 许可证”）。",
+  "Its licence lists uses that aren't allowed: read it before downloading (Settings → AI Models → Licence).": "其许可证禁止部分用途：下载前请先阅读（“设置 → AI 模型 → 许可证”）。",
   "Without a GPU it takes minutes per Generate.": "没有 GPU 时，每次生成需要几分钟。",
   "Best for wide areas of sky, water or texture": "最适合大面积的天空、水面或纹理",
   "Draws new detail; slower": "绘制新的细节；较慢",
@@ -2207,6 +2207,6 @@
   "GPU": "GPU",
   "no GPU": "无 GPU",
   "This device:": "此设备：",
-  "What paints the new area when the crop reaches past the photo (Crop ▸ Expand). The larger models draw new detail and take longer.": "裁剪范围超出照片时用来绘制新区域的模型（裁剪 ▸ 扩展）。较大的模型会绘制新的细节，耗时更长。",
+  "What paints the new area when the crop reaches past the photo (Crop → Expand). The larger models draw new detail and take longer.": "裁剪范围超出照片时用来绘制新区域的模型（裁剪 → 扩展）。较大的模型会绘制新的细节，耗时更长。",
   "Not an open-source licence: it lists uses that aren't allowed. Read it before downloading.": "这不是开源许可证：它禁止部分用途。下载前请先阅读。"
 }

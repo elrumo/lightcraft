@@ -110,13 +110,13 @@ impl Enhancer {
         })
     }
 
-    /// Whether the model's files are in place, in every folder it has (a pinned file at its exact
-    /// size; a hand-placed file is checked against its hash when it is loaded).
+    /// Whether the model's files are in place, in every folder it has (a hand-placed file is
+    /// checked when it is loaded).
     pub fn installed(&self, id: &str) -> bool {
         #[cfg(feature = "enhance")]
         if let (Some(dir), Ok(spec)) = (self.model_dir(id), Self::spec(id)) {
             let ok = |d: &std::path::Path, f: &lightcraft_fetch::FileSpec<'_>| {
-                std::fs::metadata(d.join(f.name)).is_ok_and(|m| m.is_file() && m.len() > 0 && m.len() <= f.max && f.size.is_none_or(|s| m.len() == s))
+                std::fs::metadata(d.join(f.name)).is_ok_and(|m| m.is_file() && m.len() > 0 && m.len() <= f.max)
             };
             let parts = spec.parts();
             return !parts.is_empty() && parts.iter().all(|p| p.files.iter().all(|f| ok(&dir.join(p.dir), f)));

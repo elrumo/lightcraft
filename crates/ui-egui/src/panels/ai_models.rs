@@ -91,7 +91,7 @@ fn expand_section(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
             ui,
             t,
             crate::i18n::tr(
-                "What paints the new area when the crop reaches past the photo (Crop ▸ Expand). The larger models draw new detail and take longer.",
+                "What paints the new area when the crop reaches past the photo (Crop → Expand). The larger models draw new detail and take longer.",
             ),
         );
         let automatic = app.session.expand.preferred.is_none();
