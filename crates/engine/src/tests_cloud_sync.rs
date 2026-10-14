@@ -1134,6 +1134,100 @@ fn imported_presets_sync_without_replacing_each_other() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// A preset collection imported whole (a Lightroom one is ~11 000 presets): `n` small presets in
+/// groups of 100.
+fn collection(n: usize) -> Vec<lightcraft_develop::Preset> {
+    (0..n)
+        .map(|i| lightcraft_develop::Preset {
+            id: String::new(),
+            name: format!("Look {i}"),
+            group: format!("Collection {}", i / 100),
+            settings: json!({"light": {"exposure": (i % 40) as f64 / 10.0 - 2.0, "contrast": (i % 50) as f64}}),
+            favorite: false,
+            builtin: false,
+        })
+        .collect()
+}
+
+fn user_preset_count(s: &Session) -> usize {
+    s.presets.iter().filter(|p| !p.builtin).count()
+}
+
+/// A library that holds a whole preset collection (more than the 10 000 presets a device used to
+/// take from the server) imports more: they reach the other device, and nothing is deleted anywhere.
+/// Before, the other device kept the first 10 000, sent that back, and the server and the first
+/// device deleted the rest: the newest imports first.
+#[test]
+fn presets_beyond_ten_thousand_reach_the_other_devices_and_none_are_lost() {
+    let mut f = Fake::new();
+    let (mut a, mut b, root) = two_devices("presets-collection", &mut f);
+    assert_eq!(a.add_presets(collection(10_000)).len(), 10_000);
+    a.persist().unwrap();
+    sync(&mut a, &mut f);
+    sync(&mut b, &mut f);
+    assert_eq!(user_preset_count(&b), 10_000);
+    // more presets imported on the desktop, after the collection
+    let portra = import_look(&mut a, "Portra", "+0.30");
+    sync(&mut a, &mut f);
+    sync(&mut b, &mut f);
+    sync(&mut a, &mut f);
+    assert!(b.presets.iter().any(|p| p.id == portra), "the new import reached B");
+    assert_eq!(f.presets.presets.as_array().map(Vec::len), Some(10_001), "the server lost none");
+    assert_eq!((user_preset_count(&a), user_preset_count(&b)), (10_001, 10_001));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// A preset a device can't hold (past its limit, not readable as a preset, a built-in's id) is left
+/// out there but sent back as it came: it stays on the server for the other devices. One it held and
+/// deleted is deleted; its own presets always stay.
+#[test]
+fn presets_a_device_leaves_out_are_sent_back_not_deleted() {
+    use std::collections::HashSet;
+
+    use crate::cloud_sync::{hold_presets, presets_left_out};
+    let p = |id: &str| json!({"id": id, "name": id.to_uppercase(), "group": "G", "settings": {}});
+    let builtin: HashSet<String> = ["lc.warm".to_string()].into();
+    let unreadable = json!({"id": "x", "name": 3});
+    let doc = vec![p("a"), p("b"), unreadable.clone(), p("lc.warm"), p("c"), p("d"), p("a")];
+    // holding at most 3 with `a` already its own: a, b, c (d is past the limit; the second `a` repeats)
+    let own: HashSet<String> = ["a".to_string()].into();
+    let held: Vec<String> = hold_presets(&doc, &builtin, &own, 3).into_iter().map(|p| p.id).collect();
+    assert_eq!(held, ["a", "b", "c"]);
+    let own: HashSet<String> = held.iter().cloned().collect();
+    let left = presets_left_out(&doc, &builtin, &own, 3);
+    assert_eq!(left, vec![unreadable.clone(), p("lc.warm"), p("d")], "sent back as they came");
+    // b deleted here: not sent back (it's within the limit), the others still are
+    let own: HashSet<String> = ["a".to_string(), "c".to_string()].into();
+    assert_eq!(presets_left_out(&doc, &builtin, &own, 3), vec![unreadable, p("lc.warm"), p("d")]);
+    // own presets stay even past the limit
+    let own: HashSet<String> = ["c".to_string(), "d".to_string()].into();
+    let held: Vec<String> = hold_presets(&doc, &builtin, &own, 2).into_iter().map(|p| p.id).collect();
+    assert_eq!(held, ["c", "d"]);
+}
+
+/// The same through a device: what it can't read stays on the server when it sends its own changes.
+#[test]
+fn a_device_keeps_on_the_server_what_it_cannot_read() {
+    let mut f = Fake::new();
+    let (mut a, root, ids) = first_device("presets-unreadable", &mut f);
+    // (from a newer app, say: not a preset this version can read)
+    let odd = json!({"id": "user.future", "name": "Future", "group": "Later", "settings": {}, "kind": 7, "favorite": "yes"});
+    f.presets = proto::Presets { version: 1, presets: json!([odd.clone()]) };
+    sync(&mut a, &mut f);
+    assert_eq!(user_preset_count(&a), 0, "nothing this device can hold");
+    a.selection = crate::Selection::single(ids[0]);
+    a.execute("preset.create", &json!({"name": "Warm"})).unwrap();
+    sync(&mut a, &mut f);
+    let on_server = f.presets.presets.as_array().cloned().unwrap_or_default();
+    assert!(on_server.contains(&odd), "{on_server:?}");
+    assert!(on_server.iter().any(|v| v["name"] == "Warm"), "{on_server:?}");
+    // and nothing more to send after that
+    let before = f.requests.len();
+    sync(&mut a, &mut f);
+    assert!(!f.requests[before..].iter().any(|r| r.starts_with("PUT /api/presets")), "{:?}", &f.requests[before..]);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 #[test]
 fn merging_preset_lists() {
     use crate::cloud_sync::merge_presets;

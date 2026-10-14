@@ -17,10 +17,12 @@ never run a model.
    3 × 2 landscape asked for 1 × 1 gains a strip above and below; Instagram's 4 × 5 or TikTok's
    9 × 16 work the same way). The crop can reach up to the photo's own size past each edge. Area
    with nothing in it yet shows a checkerboard.
-3. Choose what paints the new area (**Fill With**; on a phone, tap the line in the bottom bar), or
-   leave it on **Auto**, the best model for this device; then press **Generate**. It runs in the
-   background with a row in the activity stack; ✕ there (or Cancel in the panel, or a tap on the
-   phone's Generate button) stops it. The result lands as one undo step, "Generative Expand".
+3. Choose what paints the new area (**Fill With**; on a phone, tap the line in the bottom bar; in the
+   SwiftUI iPhone and iPad app, the Fill With button beside Generate), or leave it on **Auto**, the
+   best model for this device; then press **Generate**. It runs in the background with a row in the
+   activity stack; ✕ there (or Cancel in the panel, or a tap on the phone's Generate button) stops
+   it. The result lands as one undo step, "Generative Expand" (in the SwiftUI app the engine host
+   stores it, `apphost` polling the job, and says so).
 4. Every edit after that applies to the new area as to the photo: white balance, tone, colour,
    masks, Remove spots, grain. Moving the crop past what was painted shows the checkerboard again;
    Generate paints the whole crop afresh.

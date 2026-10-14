@@ -823,6 +823,7 @@ impl Engine {
         self.pump_faces();
         self.poll_export();
         self.poll_super_res();
+        self.poll_expand();
         self.poll_merge();
         self.poll_vision();
         self.poll_lightroom();
@@ -1132,6 +1133,18 @@ impl Engine {
         }
     }
 
+    /// A Generative Expand started with `crop.generate {wait: false}`: store its fill when it ends
+    /// (one undo step) and say how it went, as egui's `expand::poll`.
+    fn poll_expand(&mut self) {
+        let Some(r) = self.session.poll_expand() else { return };
+        let (text, level) = match r {
+            Ok(m) => (format!("New area painted with {}", m.label()), "info"),
+            Err(e) if e.starts_with("cancelled") => ("Generate cancelled".to_string(), "info"),
+            Err(e) => (format!("Generate failed: {e}"), "error"),
+        };
+        self.events.push(Event::Message { text, level: level.into() }.to_value());
+    }
+
     fn poll_super_res(&mut self) {
         let Some(outcome) = self.super_res.as_ref().and_then(|p| p.running.poll(&mut self.session)) else { return };
         let Some(p) = self.super_res.take() else { return };
@@ -1272,6 +1285,7 @@ impl Engine {
             visible_gen,
             visible_count: visible.len(),
             library_generation: self.session.library_generation(),
+            presets_generation: self.session.presets.generation(),
             active: self.session.active(),
             selection_count: self.session.selection.ids.len(),
             undo: self.session.undo.last().map(|u| u.label.clone()),
@@ -1356,24 +1370,27 @@ pub(crate) fn beside(script: &Path, path: &str) -> String {
     path.to_string()
 }
 
-/// `render.view`'s `overlay`: `{kind: "mask", id, view?, color?: [r,g,b], opacity?}`, `{kind: "spots",
-/// threshold?}`, `{kind: "pointColor", index}` or `{kind: "hdr"}`; anything else draws none.
+/// `render.view`'s `overlay`: `{kind: "mask", id, view?, color?: [r,g,b], opacity?}`, every visible
+/// mask at once `{kind: "allMasks", view?, color?, opacity?}`, `{kind: "spots", threshold?}`,
+/// `{kind: "pointColor", index}` or `{kind: "hdr"}`; anything else draws none.
 fn overlay(v: Option<&Value>) -> lightcraft_pipeline::Overlay {
     use lightcraft_pipeline::{MaskView, Overlay};
     let Some(v) = v else { return Overlay::None };
     let num = |k: &str, max: f64, d: f64| v.get(k).and_then(Value::as_f64).filter(|n| n.is_finite()).unwrap_or(d).round().clamp(0.0, max);
+    let c = v.get("color").and_then(Value::as_array);
+    let ch = |i: usize, d: u8| c.and_then(|c| c.get(i)).and_then(Value::as_u64).map_or(d, |n| n.min(255) as u8);
+    let view = v.get("view").and_then(Value::as_str).and_then(MaskView::parse).unwrap_or_default();
     match v.get("kind").and_then(Value::as_str) {
         Some("mask") => {
             let Some(id) = v.get("id").and_then(Value::as_u64) else { return Overlay::None };
-            let c = v.get("color").and_then(Value::as_array);
-            let ch = |i: usize, d: u8| c.and_then(|c| c.get(i)).and_then(Value::as_u64).map_or(d, |n| n.min(255) as u8);
             Overlay::Mask {
                 id: id.min(u64::from(u16::MAX)) as u16,
-                view: v.get("view").and_then(Value::as_str).and_then(MaskView::parse).unwrap_or_default(),
+                view,
                 color: [ch(0, 230), ch(1, 30), ch(2, 40)],
                 opacity: num("opacity", 100.0, 50.0) as u8,
             }
         }
+        Some("allMasks") => Overlay::AllMasks { view, color: [ch(0, 230), ch(1, 30), ch(2, 40)], opacity: num("opacity", 100.0, 50.0) as u8 },
         Some("spots") => Overlay::Spots(num("threshold", 100.0, 50.0) as u8),
         Some("pointColor") => v.get("index").and_then(Value::as_u64).map_or(Overlay::None, |i| Overlay::PointColorRange(i.min(255) as u8)),
         Some("hdr") => Overlay::HdrRange,

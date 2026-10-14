@@ -13,7 +13,8 @@
 //! Cameras that don't mount as a disk (PTP cameras and phones on macOS, every camera and card on
 //! iOS) are read by the host itself (ImageCaptureCore); their files are [`CameraFile`]s, not paths,
 //! until they are copied off. [`LibraryIndex`] tells which of them the library already has without
-//! reading them.
+//! reading them; [`review`] (`library.cameraFiles`) lays them out for an import review that a host
+//! draws itself (the SwiftUI app).
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -361,10 +362,67 @@ impl LibraryIndex {
     }
 }
 
+/// A camera file as the import review shows it: its day, and the library photo it already is.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewFile {
+    #[serde(flatten)]
+    pub file: CameraFile,
+    /// The day it was taken (`2026-10-03`), if known.
+    pub day: Option<String>,
+    /// The library photo it is (not imported again), if any.
+    pub existing: Option<u64>,
+}
+
+/// A camera's files for its import review: the formats the library takes, newest day first
+/// (undated last; within a day the camera's own order, as it numbers files as it takes them), each
+/// with the library photo it already is.
+pub fn review(catalog: &Catalog, files: Vec<CameraFile>) -> Vec<ReviewFile> {
+    let index = LibraryIndex::new(catalog);
+    let mut out: Vec<ReviewFile> = files
+        .into_iter()
+        .filter(|f| crate::import::is_supported(std::path::Path::new(&f.name)))
+        .map(|f| ReviewFile { day: f.day().map(str::to_string), existing: index.find(&f).map(|p| p.0), file: f })
+        .collect();
+    out.sort_by(|a, b| match (&a.day, &b.day) {
+        (Some(x), Some(y)) => y.cmp(x),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
+    });
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    // A camera's files reviewed through the engine command: unsupported formats left out, newest day
+    // first (undated last, the camera's order kept within a day), and the one the library has marked
+    #[test]
+    fn camera_files_are_reviewed_by_day_with_the_library_ones_marked() {
+        let mut s = crate::Session::with_demo();
+        let id = s.active().unwrap();
+        let p = s.catalog.photo(id).unwrap();
+        let (name, size) = (p.file_name.clone(), p.file_size);
+        let files = serde_json::json!([
+            {"id": "a", "name": "IMG_0001.JPG", "size": 10, "captured": "2026-09-01T10:00:00", "exifDated": true},
+            {"id": "b", "name": "notes.txt", "size": 3},
+            {"id": "c", "name": "IMG_0002.CR3", "size": 20, "raw": true},
+            {"id": "d", "name": "IMG_0003.JPG", "size": 30, "captured": "2026-10-03T09:00:00", "exifDated": true},
+            {"id": "e", "name": "IMG_0004.JPG", "size": 40, "captured": "2026-10-03T08:00:00", "exifDated": true},
+            {"id": "f", "name": name.to_uppercase(), "size": size},
+        ]);
+        let r = s.execute("library.cameraFiles", &serde_json::json!({"files": files})).unwrap();
+        let ids: Vec<&str> = r["files"].as_array().unwrap().iter().map(|f| f["id"].as_str().unwrap()).collect();
+        assert_eq!(ids, ["d", "e", "a", "c", "f"], "{r}");
+        assert_eq!(r["files"][0]["day"], "2026-10-03");
+        assert!(r["files"][3]["day"].is_null() && r["files"][3]["raw"] == true);
+        assert_eq!(r["files"][4]["existing"], id.0, "the library's own photo, found by name and size");
+        assert!(r["files"][0]["existing"].is_null());
+        assert!(s.execute("library.cameraFiles", &serde_json::json!({"files": "nope"})).is_err());
+    }
 
     #[test]
     fn volumes_with_a_dcim_folder_are_devices() {

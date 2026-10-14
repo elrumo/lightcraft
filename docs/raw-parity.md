@@ -1,6 +1,6 @@
 # RAW parity: cameras, formats, demosaic, colour and lens profiles
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (Leica Q3 verified by a recorded check of 38 private DNGs; EOS R5 Mark II decoded and verified: CRX QP-map escape, odd-height planes) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6 (Camera Raw 18.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-14 · **Change:** minor (Apple ProRAW: gain table map on by default) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6 (Camera Raw 18.7)
 
 Raw processing is the deepest single dimension of Lightroom parity: a photographer whose camera
 does not decode, or decodes with the wrong colour, cannot switch. This document measures it model by
@@ -143,7 +143,7 @@ checked, and Canon, the largest bucket, is the weakest of the big four.
 | SRW | compressed 32770 / 32772 / 32773 | ⬜ | refused |
 | DNG | uncompressed, LJ92, lossy JPEG / Smart Preview, Deflate incl. float, LinearRaw, tiles / strips, row / column interleave | ✅ | 6 corpus DNGs; 4 ILCE-6400 JXL DNGs; 38 Leica Q3 DNGs (lossless JPEG, 14-bit, private check) |
 | DNG | JPEG XL (DNG 1.7, lossless and lossy) | ✅ | synthetic bit-exact; real lossless and lossy files |
-| DNG | Apple ProRAW (incl. semantic mattes) | ✅ | iPhone 12 Pro corpus; ProfileGainTableMap read but off (ΔE00 19 against Lightroom with it on) |
+| DNG | Apple ProRAW (incl. semantic mattes) | ✅ | iPhone 12 Pro and 17 Pro files; ProfileGainTableMap rendered by default, as the iPhone does (off: Lightroom Classic's render, ΔE00 19 from it on) |
 | DNG | phone DNGs (Pixel, Galaxy, Xiaomi…) | 🟡 | Pixel 2 XL only; white-level pile-up fix #548 |
 | DNG | GoPro GPR (VC-5) | ⬜ | refused |
 | 3FR / FFF | DNG-like layouts | 🟡 | decoded when uncompressed or LJ92 |
@@ -203,7 +203,7 @@ sample files. A pointer for contributors, not legal advice.
   ΔL\* −11, chroma ×0.39. RW2 140 of 174 files accepted, median 5.0. NEF 13 of 13, 2.9–7.8. RAF 23 of
   24, pooled X-H2S 1.62 / X-T4 2.34. SRW 2.2–7.6.
 - Against Lightroom itself (few): Sony DRO median ΔE76 7.5 → 3.3; Olympus E-1 vs Lightroom Classic
-  ΔE00 11.25 → 8.30; ProRAW with its gain map ΔE00 19 (why the map is off). No measurement against
+  ΔE00 11.25 → 8.30; ProRAW with its gain map ΔE00 19 (the map is on by default anyway: without it, backlit iPhone 17 Pro ProRAWs render far darker than the iPhone shows them). No measurement against
   Adobe Standard across models exists.
 - User evidence: 33 open issues about raw colour or rendering (wrong colours, dark, flat, green,
   desaturated), the largest group of open core-path issues.
@@ -276,6 +276,7 @@ Beyond decoding:
 | 2026-10-12 | patch | CR2 white level from the active area, not the saturated masked rows above it (#1272: EOS 50D, 60D, 450D (Rebel XSi), 500D (Rebel T1i), 550D (Rebel T2i), 1200D (Rebel T5) and 100D (Rebel SL1)); scores unchanged |
 | 2026-10-12 | minor | Canon PowerShot G9: as-shot white balance from WBInfo (`0x0029`, the row of the preset in ShotInfo), issue #1273; render unchanged (the camera-look fit already absorbed it), As Shot now the camera's; counts unchanged |
 | 2026-10-12 | minor | Olympus E-10: as-shot white balance (`0x1017`/`0x1018`) and black level (`0x1012` in `0x102c` ValidBits units) from the main maker note, issue #1273; ΔE76 against its thumbnail 18.5 → 11.5, camera-look fit now accepted; counts unchanged |
+| 2026-10-14 | minor | Apple ProRAW: gain table map (local tone mapping) on by default; backlit iPhone 17 Pro ProRAWs no longer render 1–1.6 stops darker than the iPhone; counts unchanged |
 | 2026-10-13 | minor | Nikon D90 image area (4288 × 2848 at 10, 10) and white level (3830) measured on 10 of 550 NEFs from one body: its 42 filler columns no longer develop as a pink band |
 | 2026-10-12 | minor | Hasselblad Lunar verified (a Sony NEX-7 ARW under Make HASSELBLAD, now decoded): 236 verified, 232 preview; an uncompressed Leaf MOS is recognised as a raw (preview only) instead of opening as a greyscale image of its mosaic (#1275) |
 | 2026-10-10 | minor | Compressed ORF: pointer to the two Olympus patents that describe the method, as a clean-room starting point |
