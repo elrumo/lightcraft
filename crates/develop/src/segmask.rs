@@ -39,6 +39,70 @@ impl SegMask {
         SegMask { rect: Some(rect), ..SegMask::from_logits(side, logits) }
     }
 
+    /// From a picture of coverage (0 = out … 255 = in), `w × h` bytes over the whole image: what a
+    /// system segmenter (Apple Vision on iPhone) answers. It is averaged down to `side × side`
+    /// (stretched to a square like every grid here) and each value becomes the logit that samples
+    /// back to that coverage. `None` when the data doesn't match `w × h`, or a size is absurd.
+    pub fn from_coverage(side: usize, w: usize, h: usize, cov: &[u8]) -> Option<SegMask> {
+        /// Largest picture accepted (hostile input caps the work).
+        const MAX_PICTURE: usize = 8192;
+        if side == 0 || side > MAX_SIDE || w == 0 || h == 0 || w > MAX_PICTURE || h > MAX_PICTURE || cov.len() != w * h {
+            return None;
+        }
+        // the source pixels [a, b) that grid cell `t` of `side` covers on an axis of `n`
+        let span = |t: usize, n: usize| {
+            let a = t * n / side;
+            (a, ((t + 1) * n).div_ceil(side).max(a + 1).min(n))
+        };
+        let logits: Vec<f32> = (0..side * side)
+            .map(|i| {
+                let ((x0, x1), (y0, y1)) = (span(i % side, w), span(i / side, h));
+                let mut sum = 0u64;
+                for y in y0..y1 {
+                    sum += (x0..x1).map(|x| u64::from(cov.get(y * w + x).copied().unwrap_or(0))).sum::<u64>();
+                }
+                let n = ((x1 - x0) * (y1 - y0)) as f32;
+                // (kept off 0 and 1 so the logit stays finite; ±8.5 is fully in or out)
+                let c = (sum as f32 / (n * 255.0)).clamp(2e-4, 1.0 - 2e-4);
+                (c / (1.0 - c)).ln()
+            })
+            .collect();
+        Some(SegMask::from_logits(side, &logits))
+    }
+
+    /// [`SegMask::from_coverage`] of just what is selected: the part of the picture holding coverage above
+    /// half, and a margin of 4 % of its size, becomes the grid (its `rect`), so a small object gets a fine
+    /// one. Also the selection's own box `[x0, y0, x1, y1]` and its centre, normalized over the picture.
+    /// `None` when nothing is selected, or the picture is bad.
+    pub fn from_coverage_cropped(side: usize, w: usize, h: usize, cov: &[u8]) -> Option<CroppedSelection> {
+        if w == 0 || h == 0 || cov.len() != w.checked_mul(h)? {
+            return None;
+        }
+        let (mut x0, mut y0, mut x1, mut y1) = (usize::MAX, usize::MAX, 0usize, 0usize);
+        let (mut sx, mut sy, mut n) = (0.0f64, 0.0f64, 0.0f64);
+        for (i, c) in cov.iter().enumerate() {
+            if *c > 127 {
+                let (x, y) = (i % w, i / w);
+                (x0, y0, x1, y1) = (x0.min(x), y0.min(y), x1.max(x + 1), y1.max(y + 1));
+                (sx, sy, n) = (sx + x as f64 + 0.5, sy + y as f64 + 0.5, n + 1.0);
+            }
+        }
+        if n == 0.0 {
+            return None;
+        }
+        let m = (((x1 - x0).max(y1 - y0) as f64) * 0.04).ceil().max(2.0) as usize;
+        let (cx0, cy0, cx1, cy1) = (x0.saturating_sub(m), y0.saturating_sub(m), (x1 + m).min(w), (y1 + m).min(h));
+        let (cw, ch) = (cx1 - cx0, cy1 - cy0);
+        let mut sub = Vec::with_capacity(cw * ch);
+        for y in cy0..cy1 {
+            sub.extend_from_slice(cov.get(y * w + cx0..y * w + cx1)?);
+        }
+        let mut mask = SegMask::from_coverage(side, cw, ch, &sub)?;
+        let (fw, fh) = (w as f64, h as f64);
+        mask.rect = Some([cx0 as f64 / fw, cy0 as f64 / fh, cx1 as f64 / fw, cy1 as f64 / fh]);
+        Some(CroppedSelection { mask, bbox: [x0 as f64 / fw, y0 as f64 / fh, x1 as f64 / fw, y1 as f64 / fh], center: (sx / n / fw, sy / n / fh) })
+    }
+
     /// The covered part, normalized (the whole image without a `rect`); `None` when damaged.
     pub fn bounds(&self) -> Option<[f64; 4]> {
         let r = self.rect.unwrap_or([0.0, 0.0, 1.0, 1.0]);
@@ -55,6 +119,16 @@ impl SegMask {
         let q = miniz_oxide::inflate::decompress_to_vec_with_limit(&z, side * side).ok()?;
         (q.len() == side * side).then(|| q.iter().map(|b| f32::from(*b as i8) / SCALE).collect())
     }
+}
+
+/// A selection cropped to its own box ([`SegMask::from_coverage_cropped`]).
+#[derive(Clone, Debug, PartialEq)]
+pub struct CroppedSelection {
+    pub mask: SegMask,
+    /// The selection's box, normalized `[x0, y0, x1, y1]`.
+    pub bbox: [f64; 4],
+    /// Its centre of mass, normalized.
+    pub center: (f64, f64),
 }
 
 /// Most zoomed-in detail patches one AI mask component keeps (the app makes one; each costs a
@@ -304,5 +378,52 @@ mod tests {
         assert!(m.logits().is_none(), "absurd size");
         assert!(SegMask { side: 8, data: "not base64 !".into(), rect: None }.logits().is_none());
         assert!(SegMask { rect: Some([0.5, 0.0, 0.2, 1.0]), ..SegMask::from_logits(2, &[0.0; 4]) }.bounds().is_none());
+    }
+
+    #[test]
+    fn a_coverage_picture_becomes_a_mask_with_the_same_edge() {
+        // 100 × 50 with the left 40 columns in; 50 cells across, so cell 19 (columns 38–39) is
+        // the last one in and cell 20 (40–41) the first one out
+        let (w, h) = (100, 50);
+        let cov: Vec<u8> = (0..w * h).map(|i| if i % w < 40 { 255 } else { 0 }).collect();
+        let l = SegMask::from_coverage(50, w, h, &cov).unwrap().logits().unwrap();
+        let at = |x: usize, y: usize| l[y * 50 + x];
+        assert!(at(0, 0) > 5.0 && at(19, 25) > 5.0, "{} {}", at(0, 0), at(19, 25));
+        assert!(at(20, 25) < -5.0 && at(49, 49) < -5.0, "{} {}", at(20, 25), at(49, 49));
+    }
+
+    #[test]
+    fn a_half_covered_cell_is_undecided() {
+        let m = SegMask::from_coverage(1, 2, 1, &[255, 0]).unwrap();
+        assert!(m.logits().unwrap()[0].abs() < 0.2);
+    }
+
+    #[test]
+    fn a_selection_is_cropped_to_its_own_box() {
+        // 200 × 100 with a 20 × 10 block in at columns 120–139, rows 60–69
+        let (w, h) = (200, 100);
+        let cov: Vec<u8> = (0..w * h).map(|i| if (120..140).contains(&(i % w)) && (60..70).contains(&(i / w)) { 255 } else { 0 }).collect();
+        let c = SegMask::from_coverage_cropped(64, w, h, &cov).unwrap();
+        assert_eq!(c.bbox, [0.6, 0.6, 0.7, 0.7]);
+        assert!((c.center.0 - 0.65).abs() < 1e-9 && (c.center.1 - 0.65).abs() < 1e-9, "{:?}", c.center);
+        // the grid covers the box and a 4 % margin (0.8 columns of 20: rounded up to 2 px)
+        let r = c.mask.rect.unwrap();
+        assert_eq!(r, [118.0 / 200.0, 58.0 / 100.0, 142.0 / 200.0, 72.0 / 100.0]);
+        let l = c.mask.logits().unwrap();
+        assert!(l[32 * 64 + 32] > 5.0, "the middle is in");
+        assert!(l[0] < -5.0 && l[63 * 64 + 63] < -5.0, "the margin is out");
+        // nothing selected, a bad picture
+        assert!(SegMask::from_coverage_cropped(64, w, h, &vec![0; w * h]).is_none());
+        assert!(SegMask::from_coverage_cropped(64, w, h, &[255; 5]).is_none());
+        assert!(SegMask::from_coverage_cropped(64, 0, 0, &[]).is_none());
+    }
+
+    #[test]
+    fn a_bad_coverage_picture_is_none() {
+        assert!(SegMask::from_coverage(8, 4, 4, &[0; 15]).is_none(), "size mismatch");
+        assert!(SegMask::from_coverage(0, 4, 4, &[0; 16]).is_none());
+        assert!(SegMask::from_coverage(MAX_SIDE + 1, 4, 4, &[0; 16]).is_none());
+        assert!(SegMask::from_coverage(8, 0, 4, &[]).is_none());
+        assert!(SegMask::from_coverage(8, 100_000, 1, &[]).is_none(), "absurd size");
     }
 }
