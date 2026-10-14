@@ -18,9 +18,9 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | Phase | ✅ | 🟡 | ⬜ | 🚫 | Done or out of scope |
 |---|---:|---:|---:|---:|---:|
 | S0 | 15 | 0 | 0 | 0 | 15/15 |
-| S1 | 163 | 1 | 0 | 3 | 166/167 |
+| S1 | 164 | 0 | 0 | 3 | 167/167 |
 | S2 | 1 | 0 | 79 | 22 | 23/102 |
-| **Total** | 179 | 1 | 79 | 25 | 204/284 |
+| **Total** | 180 | 0 | 79 | 25 | 205/284 |
 <!-- /ios-parity:summary -->
 
 ## Screens
@@ -40,7 +40,7 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | screen:compact.reviewMode | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | a tap hides the bars; up/down on the left half sets stars (44 pt a star), on the right the flag (56 pt a step); HUD; Auto Advance |
 | screen:compact.carousel | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | a paging scroll view over the grid; follows Auto Advance |
 | screen:compact.beforeHold | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | hold 0.4 s: the Before (`render.view {before}`), medium haptic |
-| screen:compact.pullToDismiss | S1 | 🟡 | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/App/RootView.swift` | the zoom navigation transition (the photo grows from and flies back into its tile, pull down to close); not yet checked on a device |
+| screen:compact.pullToDismiss | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/App/RootView.swift` | the zoom navigation transition: the photo grows from its tile and a pull down flies it back into it; checked with a swipe on the simulator after opening a photo from the grid (a photo opened with no tile to return to closes with Back or the edge swipe) |
 | screen:compact.gridPinch | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/GridView.swift` | pinch through 1, 2, 3, 4, 5, 7, 10, 14 columns, selection haptic per step |
 | screen:compact.gridDates | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/DateBlocksView.swift`, `crates/engine/src/tests_libops.rs` | Years / Months / All capsule; Months and Years from `library.blocks` (moved from egui) |
 | screen:compact.scrubber | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/GridView.swift` | over 200 photos: a handle down the right edge with the month in a bubble |
