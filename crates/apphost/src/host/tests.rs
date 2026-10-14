@@ -424,3 +424,25 @@ fn the_loupe_can_be_soft_proofed() {
     let bad = h.call(&req(4, "render.view", json!({"photo": photo, "width": 160, "height": 120, "proof": {"space": 7}})), Duration::from_secs(30));
     assert_eq!(bad["error"]["code"], "badParams", "{bad}");
 }
+
+// The sidebar's sections: hidden, folded and moved by the shared commands, on the arrangement the app keeps
+#[test]
+fn the_sidebar_is_arranged_by_the_shared_commands() {
+    let h = demo();
+    let r = h.call(&req(1, "host.sidebar", json!({})), Duration::from_secs(30));
+    assert_eq!(r["result"]["shown"][0], "albums", "{r}");
+    let hide = json!({"command": "view.sidebarSection", "params": {"section": "albums", "show": false}});
+    let r = h.call(&req(2, "host.sidebar", hide), Duration::from_secs(30));
+    assert!(!r["result"]["shown"].as_array().unwrap().contains(&json!("albums")), "{r}");
+    let layout = r["result"]["layout"].clone();
+    let up = json!({"layout": layout, "command": "view.sidebarMoveSection", "params": {"section": "keywords", "before": "byDate"}});
+    let r = h.call(&req(3, "host.sidebar", up), Duration::from_secs(30));
+    let shown: Vec<&str> = r["result"]["shown"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
+    assert!(shown.iter().position(|s| *s == "keywords") < shown.iter().position(|s| *s == "byDate"), "{r}");
+    assert_eq!(r["result"]["layout"][0]["hidden"], true, "albums stays hidden: {r}");
+    let reset = json!({"layout": r["result"]["layout"], "command": "view.sidebarReset"});
+    let r = h.call(&req(4, "host.sidebar", reset), Duration::from_secs(30));
+    assert_eq!(r["result"]["shown"][0], "albums", "{r}");
+    let wrong = h.call(&req(5, "host.sidebar", json!({"command": "view.sidebarSection", "params": {"section": "nope"}})), Duration::from_secs(30));
+    assert_eq!(wrong["error"]["code"], "badParams", "{wrong}");
+}

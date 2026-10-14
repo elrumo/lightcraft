@@ -38,6 +38,7 @@ pub mod import;
 pub mod merge;
 pub mod region;
 pub mod render;
+pub mod sidebar;
 pub mod startup;
 pub mod superres;
 pub mod sync;
