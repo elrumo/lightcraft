@@ -71,7 +71,12 @@ fn the_model_puts_a_near_object_in_front() {
         let (lo, hi) = f.data.iter().fold((f32::MAX, f32::MIN), |(a, b), &v| (a.min(v), b.max(v)));
         let mut diffs: Vec<f32> = f.data.iter().zip(&d.data).map(|(a, b)| (a - b).abs() / (hi - lo).max(1e-6)).collect();
         diffs.sort_by(f32::total_cmp);
-        eprintln!("int8 vs fp32, share of the range: median {:.4}, p99 {:.4}, max {:.4}", diffs[diffs.len() / 2], diffs[diffs.len() * 99 / 100], diffs[diffs.len() - 1]);
+        eprintln!(
+            "int8 vs fp32, share of the range: median {:.4}, p99 {:.4}, max {:.4}",
+            diffs[diffs.len() / 2],
+            diffs[diffs.len() * 99 / 100],
+            diffs[diffs.len() - 1]
+        );
         if let Ok(dir) = std::env::var("LIGHTCRAFT_DEPTH_OUT") {
             write_pgm(&f, &format!("{dir}/depth_fp32.pgm"));
         }

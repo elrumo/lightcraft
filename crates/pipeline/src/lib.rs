@@ -383,6 +383,8 @@ pub struct Plan<'a> {
     pub mattes: Option<Arc<masks::Mattes>>,
     /// Lens Blur, when it blurs anything.
     pub blur: Option<lensblur::Setup>,
+    /// Where the rendered pixels sit in the whole output frame (a window's top-left corner).
+    pub origin: [usize; 2],
 }
 
 /// `win` grown by `m` pixels on every side, inside a `full_w × full_h` frame.
@@ -420,6 +422,7 @@ pub fn plan<'a>(src: &Rgb32f, info: &SourceInfo, s: &'a DevelopSettings, req: &R
     let blur = lensblur::Setup::new(s, mattes.as_deref(), px_per_long);
     let mut fixed_air = None;
     let mut keep = None;
+    let mut origin = [0, 0];
     let (frame, w, h) = match req.window {
         Some(win) => {
             let win = win.clamped(full_w, full_h);
@@ -438,6 +441,7 @@ pub fn plan<'a>(src: &Rgb32f, info: &SourceInfo, s: &'a DevelopSettings, req: &R
             if work != win {
                 keep = Some(PixelWindow { x: win.x - work.x, y: win.y - work.y, ..win });
             }
+            origin = [work.x, work.y];
             (frame.window(full_w, full_h, work), work.w, work.h)
         }
         None => (frame, full_w, full_h),
@@ -461,7 +465,7 @@ pub fn plan<'a>(src: &Rgb32f, info: &SourceInfo, s: &'a DevelopSettings, req: &R
         blur.as_ref().map(|b| (b.key, req.quality == Quality::Draft)),
     ));
     let lin_key = hash_of((pre_nr_key, [d.nr_luminance, d.nr_detail, d.nr_color, d.nr_color_detail, d.nr_color_smoothness].map(f64::to_bits)));
-    Plan { settings, frame, w, h, px_per_long, src_long, geo, lin_key, pre_nr_key, eyes, fixed_air, keep, mattes, blur }
+    Plan { settings, frame, w, h, px_per_long, src_long, geo, lin_key, pre_nr_key, eyes, fixed_air, keep, mattes, blur, origin }
 }
 
 /// Whether the scene-linear stage needs work only the CPU does (defringe, spot removal).
@@ -581,7 +585,7 @@ fn render_impl(src: Src<'_>, info: &SourceInfo, s: &DevelopSettings, req: &Rende
             lin_cpu(&mut img, info, &plan);
             local::denoise(&mut img, s, src_long, frame.output_long(w, h));
             if let Some(b) = &plan.blur {
-                lensblur::apply(&mut img, b, frame, req.quality == Quality::Draft);
+                lensblur::apply(&mut img, b, frame, plan.origin, req.quality == Quality::Draft);
             }
             Arc::new(img)
         }

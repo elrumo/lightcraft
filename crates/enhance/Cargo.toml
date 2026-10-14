@@ -19,6 +19,8 @@ candle-nn = { workspace = true }
 lightcraft-fetch = { workspace = true }
 # AI Remove's model is downloaded and managed with these (its pin lives with the eraser)
 lightcraft-erase = { workspace = true }
+# so is Lens Blur's depth model (its pin lives with the estimator)
+lightcraft-depth = { workspace = true }
 
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
 candle-core = { workspace = true, features = ["metal"] }

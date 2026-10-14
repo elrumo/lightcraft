@@ -210,13 +210,20 @@ fn a_depth_range_mask_selects_by_depth() {
     let mut s = DevelopSettings::default();
     s.masks.push(Mask {
         id: 1,
-        components: vec![MaskComponent { name: None, op: MaskOp::Add, invert: false, shape: MaskShape::DepthRange { lo: 0.5, hi: 1.0, feather: 0.05 } }],
+        components: vec![MaskComponent {
+            name: None,
+            op: MaskOp::Add,
+            invert: false,
+            shape: MaskShape::DepthRange { lo: 0.5, hi: 1.0, feather: 0.05 },
+        }],
         ..Default::default()
     });
     s.masks[0].adjust.exposure = -2.0;
     let plain = render(&src, &info, &DevelopSettings::default(), &RenderRequest::fit(200, 200)).image;
     let out = render(&src, &info, &s, &RenderRequest::fit(200, 200)).image;
-    let sum = |i: &lightcraft_raster::Rgba8, x0: usize, x1: usize| -> u64 { (0..i.height).flat_map(|y| (x0..x1).map(move |x| (y, x))).map(|(y, x)| i.data[y * i.width + x][1] as u64).sum() };
+    let sum = |i: &lightcraft_raster::Rgba8, x0: usize, x1: usize| -> u64 {
+        (0..i.height).flat_map(|y| (x0..x1).map(move |x| (y, x))).map(|(y, x)| i.data[y * i.width + x][1] as u64).sum()
+    };
     // the far (right) half darkened, the near (left) half left alone
     assert!(sum(&out, 110, 190) < sum(&plain, 110, 190) * 3 / 4);
     assert!(sum(&out, 10, 90) * 100 >= sum(&plain, 10, 90) * 97);

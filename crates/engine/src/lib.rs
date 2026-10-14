@@ -29,6 +29,7 @@ pub mod crs;
 pub mod crs_masks;
 pub mod demo;
 pub mod denoise;
+pub mod depth;
 pub mod devices;
 pub mod display;
 #[cfg(any(feature = "sam", feature = "vision", feature = "enhance"))]
@@ -263,6 +264,8 @@ pub struct Session {
     pub enhancer: enhance::Enhancer,
     /// AI Remove's model, once loaded.
     pub eraser: erase::EraseModel,
+    /// Lens Blur's depth model, once loaded.
+    pub depth_model: depth::DepthModel,
     /// Generative Expand: LaMa once loaded, and the running Generate.
     pub expand: expand::ExpandState,
     /// Search by description: the model, the library's index of photo vectors and the work in flight.
@@ -404,6 +407,7 @@ impl Session {
             segmenter: segment::Segmenter::default(),
             enhancer: enhance::Enhancer::default(),
             eraser: erase::EraseModel::default(),
+            depth_model: depth::DepthModel::default(),
             expand: expand::ExpandState::default(),
             vision: vision::Vision::default(),
             active_spot: None,
@@ -1085,6 +1089,8 @@ mod tests_import;
 mod tests_import_move;
 #[cfg(test)]
 mod tests_keyword_list;
+#[cfg(test)]
+mod tests_lensblur;
 #[cfg(test)]
 mod tests_libops;
 #[cfg(test)]
