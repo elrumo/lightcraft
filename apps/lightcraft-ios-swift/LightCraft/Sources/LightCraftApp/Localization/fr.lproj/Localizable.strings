@@ -642,6 +642,7 @@
 "Download, turn on and remove the optional AI models." = "Téléchargez, activez et supprimez les modèles d'IA facultatifs.";
 "Downloaded and checked. Installing…" = "Téléchargé et vérifié. Installation en cours…";
 "Downloading" = "Téléchargement";
+"Downloading Apple's selection model" = "Téléchargement du modèle de sélection d’Apple";
 "Downloading MI-GAN…" = "Téléchargement de MI-GAN…";
 "Downloading model" = "Téléchargement du modèle";
 "Downloading place names" = "Téléchargement des noms de lieux";
@@ -2470,6 +2471,7 @@
 "has the first date after the second" = "a la première date après la seconde";
 "hour 00–23" = "heure 00–23";
 "hours" = "heures";
+"iOS did not finish downloading the model. Try again later." = "iOS n’a pas terminé le téléchargement du modèle. Réessayez plus tard.";
 "iOS downloads it from Apple the first time and manages it. It is Apple's model, under Apple's terms." = "iOS le télécharge depuis Apple la première fois et le gère. C’est un modèle d’Apple, soumis aux conditions d’Apple.";
 "image" = "image";
 "in use" = "utilisé";

@@ -674,6 +674,7 @@
 "Download, turn on and remove the optional AI models." = "Die optionalen KI-Modelle herunterladen, einschalten und entfernen.";
 "Downloaded and checked. Installing…" = "Downloaded and checked. Installing…";
 "Downloading" = "Wird geladen";
+"Downloading Apple's selection model" = "Auswahlmodell von Apple wird geladen";
 "Downloading MI-GAN…" = "MI-GAN wird heruntergeladen…";
 "Downloading model" = "Modell wird heruntergeladen";
 "Downloading place names" = "Ortsnamen werden heruntergeladen";
@@ -2574,6 +2575,7 @@
 "hour 00–23" = "Stunde 00–23";
 "hours" = "Stunden";
 "how to restore it or delete it permanently and import it afresh. (For a fresh start on a photo, Reset Edits," = "wie es wiederhergestellt oder endgültig gelöscht und neu importiert werden kann. Für einen Neubeginn am Foto setzt „Bearbeitungen zurücksetzen“";
+"iOS did not finish downloading the model. Try again later." = "iOS hat das Laden des Modells nicht abgeschlossen. Versuche es später erneut.";
 "iOS downloads it from Apple the first time and manages it. It is Apple's model, under Apple's terms." = "iOS lädt es beim ersten Mal von Apple und verwaltet es. Es ist ein Modell von Apple und unterliegt Apples Bedingungen.";
 "ignored before) chooses the graphics backend; `off` renders on the CPU. The GPU now starts after the window" = "Die GPU berücksichtigt nun auch diese zuvor ignorierte wgpu-Einstellung; `off` rendert auf der CPU. Die GPU startet erst, wenn das Fenster geöffnet ist.";
 "image" = "Bild";

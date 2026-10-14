@@ -124,6 +124,7 @@
   "Download %@?": "¿Descargar %@?",
   "Download All Small Previews": "Descargar todas las vistas previas pequeñas",
   "Download Apple's selection model?": "¿Descargar el modelo de selección de Apple?",
+  "Downloading Apple's selection model": "Descargando el modelo de selección de Apple",
   "Downloading MI-GAN…": "Descargando MI-GAN…",
   "Downloads from %@. Once it has arrived and checked out, LightCraft installs it, starts using it and turns face recognition on.": "Se descarga de %@. Cuando llegue y se verifique, LightCraft lo instala, empieza a usarlo y activa el reconocimiento facial.",
   "Downloads from %@. Once it has arrived and checked out, LightCraft installs it.": "Se descarga de %@. Cuando llegue y se verifique, LightCraft lo instala.",
@@ -467,6 +468,7 @@
   "^[%lld photo](inflect: true)": "^[%lld foto](inflect: true)",
   "^[%lld spot](inflect: true) · tap a pin for more": "^[%lld mancha](inflect: true) · toca un pin para ver más",
   "and %lld more": "y %lld más",
+  "iOS did not finish downloading the model. Try again later.": "iOS no terminó de descargar el modelo. Inténtalo de nuevo más tarde.",
   "iOS downloads it from Apple the first time and manages it. It is Apple's model, under Apple's terms.": "iOS lo descarga de Apple la primera vez y lo gestiona. Es un modelo de Apple, sujeto a las condiciones de Apple.",
   "· ^[%lld photo](inflect: true)": "· ^[%lld foto](inflect: true)",
   "✓ Cache cleared": "✓ Caché vaciada"

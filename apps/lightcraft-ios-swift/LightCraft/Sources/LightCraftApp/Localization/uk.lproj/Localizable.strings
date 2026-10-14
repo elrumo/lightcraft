@@ -679,6 +679,7 @@
 "Download, turn on and remove the optional AI models." = "Завантаження, увімкнення та видалення додаткових моделей ШІ.";
 "Downloaded and checked. Installing…" = "Завантажено й перевірено. Установлення…";
 "Downloading" = "Завантаження";
+"Downloading Apple's selection model" = "Завантаження моделі вибору від Apple";
 "Downloading MI-GAN…" = "Завантаження MI-GAN…";
 "Downloading model" = "Завантаження моделі";
 "Downloading place names" = "Завантаження назв місць";
@@ -2610,6 +2611,7 @@
 "hour 00–23" = "година 00–23";
 "hours" = "годин";
 "how to restore it or delete it permanently and import it afresh. (For a fresh start on a photo, Reset Edits," = "як відновити його або видалити назавжди й імпортувати заново. (Для нового початку на фото «Скинути зміни»,";
+"iOS did not finish downloading the model. Try again later." = "iOS не завершила завантаження моделі. Спробуйте пізніше.";
 "iOS downloads it from Apple the first time and manages it. It is Apple's model, under Apple's terms." = "iOS завантажить її від Apple під час першого використання й керуватиме нею. Це модель Apple на умовах Apple.";
 "ignored before) chooses the graphics backend; `off` renders on the CPU. The GPU now starts after the window" = "раніше ігнорувався) вибирає графічний механізм; `off` відтворює на ЦП. ГП тепер запускається після появи вікна";
 "image" = "зображення";

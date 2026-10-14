@@ -680,6 +680,7 @@
 "Download, turn on and remove the optional AI models." = "Загрузка, включение и удаление дополнительных моделей ИИ.";
 "Downloaded and checked. Installing…" = "Загружено и проверено. Установка…";
 "Downloading" = "Загрузка";
+"Downloading Apple's selection model" = "Загрузка модели выбора от Apple";
 "Downloading MI-GAN…" = "Загрузка MI-GAN…";
 "Downloading model" = "Загрузка модели";
 "Downloading place names" = "Загрузка названий мест";
@@ -2612,6 +2613,7 @@
 "hour 00–23" = "час 00–23";
 "hours" = "часов";
 "how to restore it or delete it permanently and import it afresh. (For a fresh start on a photo, Reset Edits," = "как восстановить его или удалить навсегда и импортировать заново. (Чтобы начать с чистого листа для фото, «Сбросить правки»,";
+"iOS did not finish downloading the model. Try again later." = "iOS не завершила загрузку модели. Повторите попытку позже.";
 "iOS downloads it from Apple the first time and manages it. It is Apple's model, under Apple's terms." = "iOS загрузит её с серверов Apple при первом использовании и будет управлять ею. Это модель Apple на условиях Apple.";
 "ignored before) chooses the graphics backend; `off` renders on the CPU. The GPU now starts after the window" = "раньше игнорировался) выбирает графический бэкенд; `off` рендерит на CPU. GPU теперь запускается после появления окна";
 "image" = "изображение";

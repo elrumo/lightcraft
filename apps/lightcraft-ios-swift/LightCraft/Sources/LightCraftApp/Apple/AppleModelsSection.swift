@@ -38,6 +38,8 @@ struct AppleModelsSection: View {
 /// Apple's tap-to-segment model: iOS downloads it on request and keeps it.
 @available(iOS 27.0, *)
 private struct TapToSegmentRow: View {
+    @Environment(AppModel.self) private var model
+    @State private var task: Task<Void, Never>?
     @State private var ready: Bool?
     @State private var progress: Double?
     @State private var asking = false
@@ -65,19 +67,32 @@ private struct TapToSegmentRow: View {
         }
     }
 
+    /// The download runs in the activity stack like every other (`activity.external`): its ✕ stops it.
     private func start() {
         progress = 0
         failure = nil
-        Task {
+        task = Task {
+            let row = await model.run("activity.external", ["action": "start", "label": "Downloading Apple's selection model", "cancellable": true])?["id"].int
             do {
                 try await VisionIterativeProvider.download { value in
-                    Task { @MainActor in progress = value }
+                    Task { @MainActor in
+                        progress = value
+                        guard let row else { return }
+                        model.perform("activity.external", ["action": "progress", "id": .int(row), "done": .int(Int64(value * 100))])
+                        if model.activity.first(where: { $0.id == UInt64(row) })?.cancelling == true { task?.cancel() }
+                    }
                 }
                 ready = await VisionIterativeProvider.isReady()
+                if ready != true {
+                    failure = await VisionIterativeProvider.problem() ?? String(localized: "iOS did not finish downloading the model. Try again later.")
+                }
+            } catch is CancellationError {
             } catch {
                 failure = error.localizedDescription
             }
+            if let row { await model.run("activity.external", ["action": "end", "id": .int(row)]) }
             progress = nil
+            task = nil
         }
     }
 }

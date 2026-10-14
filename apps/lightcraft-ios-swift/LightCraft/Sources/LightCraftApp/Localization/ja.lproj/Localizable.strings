@@ -659,6 +659,7 @@
 "Download, turn on and remove the optional AI models." = "オプションの AI モデルのダウンロード、有効化、削除。";
 "Downloaded and checked. Installing…" = "Downloaded and checked. Installing…";
 "Downloading" = "ダウンロード中";
+"Downloading Apple's selection model" = "Appleの選択モデルをダウンロード中";
 "Downloading MI-GAN…" = "MI-GANをダウンロード中…";
 "Downloading model" = "モデルをダウンロード中";
 "Downloading place names" = "地名データをダウンロード中";
@@ -2574,6 +2575,7 @@
 "has the first date after the second" = "最初の日付が2番目の日付より後です";
 "hour 00–23" = "時 00–23";
 "hours" = "時間";
+"iOS did not finish downloading the model. Try again later." = "iOSがモデルのダウンロードを完了できませんでした。後でもう一度お試しください。";
 "iOS downloads it from Apple the first time and manages it. It is Apple's model, under Apple's terms." = "iOSが初回にAppleからダウンロードして管理します。Appleのモデルであり、Appleの利用条件が適用されます。";
 "image" = "画像";
 "in use" = "in use";

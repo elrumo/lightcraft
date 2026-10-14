@@ -119,6 +119,13 @@ nonisolated struct VisionIterativeProvider: SelectionProvider {
         return false
     }
 
+    /// Why the model isn't ready, in the system's words (`nil`: it is ready, or just not downloaded).
+    static func problem() async -> String? {
+        let request = GenerateIterativeSegmentationRequest(seedPoint: NormalizedPoint(x: 0.5, y: 0.5))
+        if case .error(let e) = await request.assetStatus { return e.localizedDescription }
+        return nil
+    }
+
     /// Ask the system to download the model; `progress` is told how far it is (0…1).
     static func download(progress: @escaping @Sendable (Double) -> Void) async throws {
         let request = GenerateIterativeSegmentationRequest(seedPoint: NormalizedPoint(x: 0.5, y: 0.5))

@@ -665,6 +665,7 @@
 "Download, turn on and remove the optional AI models." = "下载、启用和移除可选的 AI 模型。";
 "Downloaded and checked. Installing…" = "已下载并校验完成。正在安装…";
 "Downloading" = "正在下载";
+"Downloading Apple's selection model" = "正在下载 Apple 的选择模型";
 "Downloading MI-GAN…" = "正在下载 MI-GAN…";
 "Downloading model" = "正在下载模型";
 "Downloading place names" = "正在下载地名数据";
@@ -2604,6 +2605,7 @@
 "has the first date after the second" = "第一个日期晚于第二个";
 "hour 00–23" = "时 00–23";
 "hours" = "小时";
+"iOS did not finish downloading the model. Try again later." = "iOS 未能完成模型的下载。请稍后重试。";
 "iOS downloads it from Apple the first time and manages it. It is Apple's model, under Apple's terms." = "iOS 会在首次使用时从 Apple 下载并管理它。这是 Apple 的模型，受 Apple 条款约束。";
 "image" = "图像";
 "in use" = "正在使用";

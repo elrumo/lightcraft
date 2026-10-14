@@ -125,6 +125,7 @@
   "Download %@?": "Завантажити %@?",
   "Download All Small Previews": "Завантажити всі малі перегляди",
   "Download Apple's selection model?": "Завантажити модель вибору від Apple?",
+  "Downloading Apple's selection model": "Завантаження моделі вибору від Apple",
   "Downloading MI-GAN…": "Завантаження MI-GAN…",
   "Downloads from %@. Once it has arrived and checked out, LightCraft installs it, starts using it and turns face recognition on.": "Завантажується з %@. Коли файл надійде й пройде перевірку, LightCraft установить модель, почне її використовувати й увімкне розпізнавання облич.",
   "Downloads from %@. Once it has arrived and checked out, LightCraft installs it.": "Завантажується з %@. Коли файл надійде й пройде перевірку, LightCraft установить модель.",
@@ -460,6 +461,7 @@
   "^[%lld photo](inflect: true)": "%lld фото",
   "^[%lld spot](inflect: true) · tap a pin for more": "Ділянок: %lld · торкніться позначки, щоб дізнатися більше",
   "and %lld more": "і ще %lld",
+  "iOS did not finish downloading the model. Try again later.": "iOS не завершила завантаження моделі. Спробуйте пізніше.",
   "iOS downloads it from Apple the first time and manages it. It is Apple's model, under Apple's terms.": "iOS завантажить її від Apple під час першого використання й керуватиме нею. Це модель Apple на умовах Apple.",
   "· ^[%lld photo](inflect: true)": "· %lld фото",
   "✓ Cache cleared": "✓ Кеш очищено"

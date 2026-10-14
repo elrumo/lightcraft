@@ -112,6 +112,7 @@
   "Download %@?": "下载%@？",
   "Download All Small Previews": "下载所有小预览",
   "Download Apple's selection model?": "下载 Apple 的选择模型？",
+  "Downloading Apple's selection model": "正在下载 Apple 的选择模型",
   "Downloading MI-GAN…": "正在下载 MI-GAN…",
   "Downloads from %@. Once it has arrived and checked out, LightCraft installs it, starts using it and turns face recognition on.": "从 %@ 下载。下载完成并校验通过后，LightCraft 会安装并开始使用它，同时开启人脸识别。",
   "Downloads from %@. Once it has arrived and checked out, LightCraft installs it.": "从 %@ 下载。下载完成并校验通过后，LightCraft 会自动安装。",
@@ -424,6 +425,7 @@
   "^[%lld photo](inflect: true)": "%lld 张照片",
   "^[%lld spot](inflect: true) · tap a pin for more": "%lld 处污点 · 轻点图钉查看更多",
   "and %lld more": "另有 %lld 项",
+  "iOS did not finish downloading the model. Try again later.": "iOS 未能完成模型的下载。请稍后重试。",
   "iOS downloads it from Apple the first time and manages it. It is Apple's model, under Apple's terms.": "iOS 会在首次使用时从 Apple 下载并管理它。这是 Apple 的模型，受 Apple 条款约束。",
   "· ^[%lld photo](inflect: true)": "· %lld 张照片",
   "✓ Cache cleared": "✓ 已清除缓存"

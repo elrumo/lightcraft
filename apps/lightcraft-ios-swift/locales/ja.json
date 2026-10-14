@@ -113,6 +113,7 @@
   "Download %@?": "%@をダウンロードしますか？",
   "Download All Small Previews": "小さいプレビューをすべてダウンロード",
   "Download Apple's selection model?": "Appleの選択モデルをダウンロードしますか？",
+  "Downloading Apple's selection model": "Appleの選択モデルをダウンロード中",
   "Downloading MI-GAN…": "MI-GANをダウンロード中…",
   "Downloads from %@. Once it has arrived and checked out, LightCraft installs it, starts using it and turns face recognition on.": "%@からダウンロードします。ダウンロードと検証が完了すると、LightCraftがインストールして使用を開始し、顔認識をオンにします。",
   "Downloads from %@. Once it has arrived and checked out, LightCraft installs it.": "%@からダウンロードします。ダウンロードと検証が完了すると、LightCraftがインストールします。",
@@ -431,6 +432,7 @@
   "^[%lld photo](inflect: true)": "%lld枚の写真",
   "^[%lld spot](inflect: true) · tap a pin for more": "スポット%lld件 · ピンをタップすると詳細を表示",
   "and %lld more": "ほか%lld件",
+  "iOS did not finish downloading the model. Try again later.": "iOSがモデルのダウンロードを完了できませんでした。後でもう一度お試しください。",
   "iOS downloads it from Apple the first time and manages it. It is Apple's model, under Apple's terms.": "iOSが初回にAppleからダウンロードして管理します。Appleのモデルであり、Appleの利用条件が適用されます。",
   "· ^[%lld photo](inflect: true)": "· %lld枚の写真",
   "✓ Cache cleared": "✓ キャッシュを消去しました"
