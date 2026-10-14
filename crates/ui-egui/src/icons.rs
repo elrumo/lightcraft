@@ -169,6 +169,8 @@ pub enum Icon {
     Sun,
     /// Appearance Mode ▸ Dark: a crescent moon.
     Moon,
+    /// Lens Blur: an aperture (a circle and the six blades of an iris around a hexagonal opening).
+    Aperture,
 }
 
 struct Pen<'a> {
@@ -758,6 +760,16 @@ fn paint_with(p: &Painter, rect: Rect, icon: Icon, color: Color32, turn: Option<
         Edited => {
             pen.circle(10.0, 10.0, 7.0);
             pen.line(&[(7.0, 13.0), (13.0, 7.0)]);
+        }
+        Aperture => {
+            pen.circle(10.0, 10.0, 7.5);
+            // each blade's edge runs from a corner of the opening out to the rim, a sixth further round
+            for k in 0..6 {
+                let a = k as f32 * std::f32::consts::FRAC_PI_3;
+                let (ci, si) = (a.cos(), a.sin());
+                let (co, so) = ((a + 1.2).cos(), (a + 1.2).sin());
+                pen.line(&[(10.0 + 3.2 * ci, 10.0 + 3.2 * si), (10.0 + 7.5 * co, 10.0 + 7.5 * so)]);
+            }
         }
         Target => {
             pen.circle(8.0, 10.0, 5.0);

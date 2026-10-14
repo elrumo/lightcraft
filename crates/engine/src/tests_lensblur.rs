@@ -138,3 +138,27 @@ fn real_photos_render_with_lens_blur() {
         }
     }
 }
+
+#[test]
+fn refine_strokes_are_painted_and_cleared_as_undo_steps() {
+    let dir = temp_dir("brush");
+    let path = dir.join("portrait.jpg");
+    write_portrait(&path);
+    let mut s = Session::new().with_fs();
+    open(&mut s, &path);
+    s.execute("lensBlur.apply", &json!({})).unwrap();
+    let i = s.execute("lensBlur.brushStroke", &json!({"mode": "focus", "points": [[0.8, 0.5], [0.9, 0.5]], "size": 0.05})).unwrap();
+    assert_eq!((i["focusStrokes"].as_u64(), i["blurStrokes"].as_u64()), (Some(1), Some(0)));
+    let i = s.execute("lensBlur.brushStroke", &json!({"mode": "blur", "points": [[0.2, 0.5]]})).unwrap();
+    assert_eq!(i["blurStrokes"], 1);
+    // erasing goes on both painted lists
+    let i = s.execute("lensBlur.brushStroke", &json!({"mode": "erase", "points": [[0.2, 0.5]]})).unwrap();
+    assert_eq!((i["focusStrokes"].as_u64(), i["blurStrokes"].as_u64()), (Some(2), Some(2)));
+    assert!(s.execute("lensBlur.brushStroke", &json!({"mode": "paint", "points": [[0.2, 0.5]]})).is_err());
+    assert!(s.execute("lensBlur.brushStroke", &json!({"mode": "focus", "points": []})).is_err());
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(info(&mut s)["blurStrokes"], 1, "one undo step per stroke");
+    let i = s.execute("lensBlur.clearBrush", &json!({"mode": "blur"})).unwrap();
+    assert_eq!((i["focusStrokes"].as_u64(), i["blurStrokes"].as_u64()), (Some(1), Some(0)));
+    let _ = std::fs::remove_dir_all(dir);
+}

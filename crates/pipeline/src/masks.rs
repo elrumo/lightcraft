@@ -640,6 +640,13 @@ pub fn guided_cross(guide: &Plane, p: &Plane, sigma: f32, eps: f32) -> Plane {
     q
 }
 
+/// The coverage (0..1) of brush `strokes` at output resolution (Lens Blur's refine brushes).
+pub(crate) fn brush_alpha(strokes: &[BrushStroke], frame: &Frame, w: usize, h: usize, img: &Rgb32f, log_l: &Plane) -> Plane {
+    let mut out = Plane::new(w, h);
+    rasterize_brush(strokes, frame, w, h, img, log_l, &mut out);
+    out
+}
+
 /// Stamp brush strokes into `out` (max-combine; erase strokes subtract). Auto Mask strokes weight
 /// each dab by [`auto_similarity`] to the pixel under its centre and are refined with
 /// [`guided_cross`] on log luminance.

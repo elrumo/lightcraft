@@ -1122,6 +1122,14 @@ pub struct LensBlur {
     /// photo, so copied and synced settings leave it behind ([`crate::extract_groups`]).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub depth: Option<crate::DepthMap>,
+    /// Refine: strokes painted where the photo should be sharp: its depth there is pulled into the
+    /// focal range. An erase stroke takes painting back.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub focus: Vec<BrushStroke>,
+    /// Refine: strokes painted where the photo should be blurred: its depth there is pushed to the
+    /// end of the range farthest from the focal range.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub blur: Vec<BrushStroke>,
 }
 
 impl LensBlur {

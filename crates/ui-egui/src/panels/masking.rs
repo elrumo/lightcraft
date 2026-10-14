@@ -801,6 +801,11 @@ fn brush_settings(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             app.ui.brush_auto_mask = auto;
         }
     });
+    brush_sliders(app, ui);
+}
+
+/// The brush's Size, Feather and Flow (masks and Lens Blur's Refine share them).
+pub(crate) fn brush_sliders(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     for (id, label, min, max, get) in [
         ("ui.brushSize", "Size", 1.0, 100.0, (app.ui.brush_size * 400.0) as f64),
         ("ui.brushFeather", "Feather", 0.0, 100.0, app.ui.brush_feather as f64),
