@@ -105,6 +105,7 @@ private struct GeneralSettings: View {
             }
         }
         .navigationTitle("General")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 
@@ -129,6 +130,7 @@ private struct ImportSettings: View {
             }
         }
         .navigationTitle("Import")
+        .navigationBarTitleDisplayMode(.inline)
         .task { await load() }
     }
 
@@ -181,6 +183,7 @@ private struct PerformanceSettings: View {
             }
         }
         .navigationTitle("Performance")
+        .navigationBarTitleDisplayMode(.inline)
         .task {
             guard let engine = model.engine else { return }
             gpu = (try? await engine.execute("app.gpu", [:])) ?? .null
@@ -199,6 +202,15 @@ private struct InterfaceSettings: View {
                 Picker("Appearance", selection: $prefs.appearance) {
                     ForEach(Prefs.Appearance.allCases) { Text($0.label).tag($0) }
                 }
+                // iOS keeps each app's language: Settings ▸ LightCraft ▸ Language
+                Button {
+                    if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+                } label: {
+                    LabeledContent("Language", value: Locale.current.localizedString(forIdentifier: Bundle.main.preferredLocalizations.first ?? "en") ?? "")
+                }
+                .foregroundStyle(.primary)
+            } footer: {
+                Text("Opens LightCraft in the Settings app, where its language is chosen.")
             }
             Section("Grid") {
                 Picker("Ratings & Flags", selection: $prefs.badges) {
@@ -221,6 +233,7 @@ private struct InterfaceSettings: View {
             }
         }
         .navigationTitle("Interface")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 
@@ -319,6 +332,7 @@ struct SyncSettings: View {
             }
         }
         .navigationTitle("Sync")
+        .navigationBarTitleDisplayMode(.inline)
         .task(id: model.state.sync) { await load() }
     }
 
@@ -381,6 +395,7 @@ private struct ModelsSettings: View {
             }
         }
         .navigationTitle("AI Models")
+        .navigationBarTitleDisplayMode(.inline)
         .task { await load() }
         .task(id: model.activity.count) { await load() }
         .alert("Download \(confirming?["label"].string ?? "")?", isPresented: Binding(get: { confirming != nil }, set: { if !$0 { confirming = nil } })) {

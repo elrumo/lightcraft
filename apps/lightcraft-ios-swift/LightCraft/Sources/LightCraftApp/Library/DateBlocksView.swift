@@ -65,7 +65,7 @@ private struct MonthBlock: View {
                 openAt(block.photos.map(\.index).min() ?? 0)
             } label: {
                 VStack(alignment: .leading, spacing: 0) {
-                    Text(block.label).font(.title2.weight(.semibold))
+                    Text(dateTitle(key: block.key, label: block.label)).font(.title2.weight(.semibold))
                     Text("\(block.count) photos").font(.footnote).foregroundStyle(.secondary)
                 }
             }

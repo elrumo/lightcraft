@@ -490,7 +490,9 @@ struct ToolBar: View {
                     } label: {
                         VStack(spacing: 3) {
                             Image(systemName: tool.symbol).font(.system(size: 20))
+                            // a long translation shrinks to one line rather than pushing the bar up
                             Text(LocalizedStringKey(tool.label)).font(.system(size: 10, weight: .semibold))
+                                .lineLimit(1).minimumScaleFactor(0.6)
                         }
                         .foregroundStyle(editor.tool == tool ? Color.accentColor : Color.primary)
                         .frame(maxWidth: .infinity, minHeight: 52)

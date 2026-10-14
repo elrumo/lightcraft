@@ -18,9 +18,9 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | Phase | ✅ | 🟡 | ⬜ | 🚫 | Done or out of scope |
 |---|---:|---:|---:|---:|---:|
 | S0 | 15 | 0 | 0 | 0 | 15/15 |
-| S1 | 143 | 7 | 14 | 3 | 146/167 |
+| S1 | 154 | 7 | 3 | 3 | 157/167 |
 | S2 | 1 | 0 | 79 | 22 | 23/102 |
-| **Total** | 159 | 7 | 93 | 25 | 184/284 |
+| **Total** | 170 | 7 | 82 | 25 | 195/284 |
 <!-- /ios-parity:summary -->
 
 ## Screens
@@ -72,7 +72,7 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | screen:compact.landscape | S1 | ⬜ |  |  |
 | screen:compact.ipadPortrait | S1 | ⬜ |  |  |
 | screen:compact.accessibility | S1 | ⬜ |  |  |
-| screen:compact.localization | S1 | ⬜ |  |  |
+| screen:compact.localization | S1 | ✅ | `xtask/src/swift_strings.rs`, `apps/lightcraft-ios-swift/locales/keys.json`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Localization/es.lproj/Localizable.strings` | the egui languages through iOS localisation: `cargo xtask swift-strings` makes each `Localizable.strings` from the egui catalogs and the app's own; engine labels looked up at run time; dates formatted by iOS |
 | screen:ipad.splitView | S2 | ⬜ |  |  |
 | screen:ipad.inspector | S2 | ⬜ |  |  |
 | screen:ipad.menuBar | S2 | ⬜ |  |  |
@@ -265,16 +265,16 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | ui:photo.tagFromTracklog | S2 | ⬜ |  |  |
 | ui:app.exportPrevious | S2 | ⬜ |  |  |
 | ui:app.saveToPhotos | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Share/ExportSheet.swift` | Share ▸ Save to Photos |
-| ui:app.language.english | S1 | ⬜ |  | iOS per-app language (Settings ▸ LightCraft ▸ Language) or an in-app override: open question (`docs/ios-swift.md`) |
-| ui:app.language.simplifiedChinese | S1 | ⬜ |  | iOS per-app language (Settings ▸ LightCraft ▸ Language) or an in-app override: open question (`docs/ios-swift.md`) |
-| ui:app.language.traditionalChinese | S1 | ⬜ |  | iOS per-app language (Settings ▸ LightCraft ▸ Language) or an in-app override: open question (`docs/ios-swift.md`) |
-| ui:app.language.japanese | S1 | ⬜ |  | iOS per-app language (Settings ▸ LightCraft ▸ Language) or an in-app override: open question (`docs/ios-swift.md`) |
-| ui:app.language.portuguese | S1 | ⬜ |  | iOS per-app language (Settings ▸ LightCraft ▸ Language) or an in-app override: open question (`docs/ios-swift.md`) |
-| ui:app.language.french | S1 | ⬜ |  | iOS per-app language (Settings ▸ LightCraft ▸ Language) or an in-app override: open question (`docs/ios-swift.md`) |
-| ui:app.language.spanish | S1 | ⬜ |  | iOS per-app language (Settings ▸ LightCraft ▸ Language) or an in-app override: open question (`docs/ios-swift.md`) |
-| ui:app.language.german | S1 | ⬜ |  | iOS per-app language (Settings ▸ LightCraft ▸ Language) or an in-app override: open question (`docs/ios-swift.md`) |
-| ui:app.language.russian | S1 | ⬜ |  | iOS per-app language (Settings ▸ LightCraft ▸ Language) or an in-app override: open question (`docs/ios-swift.md`) |
-| ui:app.language.ukrainian | S1 | ⬜ |  | iOS per-app language (Settings ▸ LightCraft ▸ Language) or an in-app override: open question (`docs/ios-swift.md`) |
+| ui:app.language.english | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | iOS per-app language (Settings ▸ LightCraft ▸ Language ▸ English), opened from Settings ▸ Interface ▸ Language |
+| ui:app.language.simplifiedChinese | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | iOS per-app language (Settings ▸ LightCraft ▸ Language ▸ 简体中文), opened from Settings ▸ Interface ▸ Language |
+| ui:app.language.traditionalChinese | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | iOS per-app language (Settings ▸ LightCraft ▸ Language ▸ 繁體中文), opened from Settings ▸ Interface ▸ Language |
+| ui:app.language.japanese | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | iOS per-app language (Settings ▸ LightCraft ▸ Language ▸ 日本語), opened from Settings ▸ Interface ▸ Language |
+| ui:app.language.portuguese | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | iOS per-app language (Settings ▸ LightCraft ▸ Language ▸ Português (Brasil)), opened from Settings ▸ Interface ▸ Language |
+| ui:app.language.french | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | iOS per-app language (Settings ▸ LightCraft ▸ Language ▸ Français), opened from Settings ▸ Interface ▸ Language |
+| ui:app.language.spanish | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | iOS per-app language (Settings ▸ LightCraft ▸ Language ▸ Español), opened from Settings ▸ Interface ▸ Language |
+| ui:app.language.german | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | iOS per-app language (Settings ▸ LightCraft ▸ Language ▸ Deutsch), opened from Settings ▸ Interface ▸ Language |
+| ui:app.language.russian | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | iOS per-app language (Settings ▸ LightCraft ▸ Language ▸ Русский), opened from Settings ▸ Interface ▸ Language |
+| ui:app.language.ukrainian | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | iOS per-app language (Settings ▸ LightCraft ▸ Language ▸ Українська), opened from Settings ▸ Interface ▸ Language |
 
 ## Dialogs
 

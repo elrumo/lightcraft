@@ -60,7 +60,7 @@ struct GridView: View {
             }
             .overlay(alignment: .trailing) {
                 if library.count > 200 {
-                    Scrubber(count: library.count, at: scrubbing ?? model.visibleRange?.lowerBound ?? 0, label: scrubbing.flatMap { library.group(at: $0)?.label }) { i in
+                    Scrubber(count: library.count, at: scrubbing ?? model.visibleRange?.lowerBound ?? 0, label: scrubbing.flatMap { library.group(at: $0).map { dateTitle(key: $0.key, label: $0.label) } }) { i in
                         scrubbing = i
                         if let i { proxy.scrollTo(i, anchor: .top) }
                     }
@@ -190,7 +190,7 @@ struct DateHeader: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            Text(group.label).font(.subheadline.weight(.semibold))
+            Text(dateTitle(key: group.key, label: group.label)).font(.subheadline.weight(.semibold))
             Text("· ^[\(group.count) photo](inflect: true)").font(.subheadline).foregroundStyle(.secondary)
             Spacer()
             if model.selectMode {

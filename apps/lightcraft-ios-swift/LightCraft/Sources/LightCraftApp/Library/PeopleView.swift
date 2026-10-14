@@ -41,7 +41,7 @@ struct PeopleView: View {
                             ForEach(Array(named.enumerated()), id: \.offset) { _, p in
                                 let n = p["name"].string ?? ""
                                 Button { model.path.append(.person(n)) } label: {
-                                    tile(p["cover"], title: Text(n), sub: Text("\(p["photos"].int ?? 0) photos"))
+                                    tile(p["cover"], title: Text(n), sub: Text("^[\(p["photos"].int ?? 0) photo](inflect: true)"))
                                 }
                                 .buttonStyle(.plain)
                             }
@@ -55,7 +55,7 @@ struct PeopleView: View {
                                     let n = p["name"].string
                                     let pending = p["pending"].int ?? 0
                                     tile(p["cover"], title: Text(n ?? String(localized: "Add Name")).foregroundStyle(n == nil ? Color.accentColor : .primary),
-                                         sub: n != nil && pending > 0 ? Text("Confirm \(pending) more") : Text("\(p["photos"].int ?? 0) photos"))
+                                         sub: n != nil && pending > 0 ? Text("Confirm \(pending) more") : Text("^[\(p["photos"].int ?? 0) photo](inflect: true)"))
                                 }
                                 .buttonStyle(.plain)
                             }
@@ -161,7 +161,7 @@ struct PersonView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityHint("Rename")
-                Text("\(cover["photos"].int ?? info["total"].int ?? 0) photos").foregroundStyle(.secondary)
+                Text("^[\(cover["photos"].int ?? info["total"].int ?? 0) photo](inflect: true)").foregroundStyle(.secondary)
                 Button("Show Photos") {
                     Task {
                         await model.run("library.filter", ["person": .string(shown)])

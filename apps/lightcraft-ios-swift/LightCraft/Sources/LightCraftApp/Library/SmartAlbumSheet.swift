@@ -179,22 +179,22 @@ private struct RuleRow: View {
             HStack {
                 Menu {
                     ForEach(fields.filter { $0.group == nil }, id: \.field) { f in
-                        Button(f.label) { choose(f) }
+                        Button(LocalizedStringKey(f.label)) { choose(f) }
                     }
                     ForEach(groups, id: \.self) { g in
-                        Menu(g) {
+                        Menu(LocalizedStringKey(g)) {
                             ForEach(fields.filter { $0.group == g }, id: \.field) { f in
-                                Button(f.label) { choose(f) }
+                                Button(LocalizedStringKey(f.label)) { choose(f) }
                             }
                         }
                     }
                 } label: {
-                    Text(field?.label ?? rule["field"].string ?? "").fontWeight(.medium)
+                    Text(LocalizedStringKey(field?.label ?? rule["field"].string ?? "")).fontWeight(.medium)
                 }
                 Spacer()
                 if let field {
                     Picker("Operator", selection: Binding(get: { op }, set: { setOp($0, field) })) {
-                        ForEach(field.ops, id: \.op) { Text($0.label).tag($0.op) }
+                        ForEach(field.ops, id: \.op) { Text(LocalizedStringKey($0.label)).tag($0.op) }
                     }
                     .labelsHidden()
                 }

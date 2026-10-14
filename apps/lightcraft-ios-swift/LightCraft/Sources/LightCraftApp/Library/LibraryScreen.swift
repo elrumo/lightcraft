@@ -205,6 +205,13 @@ struct LibraryHeader: View {
         let count: Int
     }
 
+    /// The collection's name: a built-in one in the reader's language, an album or folder as named.
+    private var title: String {
+        guard let state = model.library.state else { return String(localized: "All Photos") }
+        if ["album", "folder", "libraryFolder"].contains(state.source.kind) { return state.sourceLabel }
+        return Bundle.main.localizedString(forKey: state.sourceLabel, value: state.sourceLabel, table: nil)
+    }
+
     private var header: some View {
         HStack(alignment: .center, spacing: 8) {
             Button {
@@ -212,7 +219,7 @@ struct LibraryHeader: View {
             } label: {
                 VStack(alignment: .leading, spacing: 0) {
                     HStack(spacing: 6) {
-                        Text(model.library.state?.sourceLabel ?? String(localized: "All Photos"))
+                        Text(title)
                             .font(.title.weight(.bold))
                             .lineLimit(1)
                         Image(systemName: "chevron.down")
