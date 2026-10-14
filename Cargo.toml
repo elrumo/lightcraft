@@ -37,6 +37,7 @@ lightcraft-engine = { path = "crates/engine" }
 lightcraft-apphost = { path = "crates/apphost" }
 lightcraft-ui-egui = { path = "crates/ui-egui" }
 lightcraft-ios-host = { path = "crates/ios-host" }
+lightcraft-capture = { path = "crates/capture" }
 lightcraft-mcp = { path = "crates/mcp" }
 lightcraft-fetch = { path = "crates/fetch" }
 lightcraft-heif = { path = "crates/heif" }

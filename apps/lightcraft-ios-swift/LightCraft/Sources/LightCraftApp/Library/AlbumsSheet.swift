@@ -523,7 +523,7 @@ struct EditSidebarSheet: View {
             .navigationTitle("Edit Sidebar")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) { Button(role: .confirm) { dismiss() } }
             }
         }
         .task { await model.arrangeSidebar() }

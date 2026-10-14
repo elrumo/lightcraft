@@ -37,6 +37,19 @@ nonisolated enum Tool: String, CaseIterable, Identifiable {
 
     /// Crop, Masking, Remove and Red Eye take the whole screen (their own bars).
     var hasScreen: Bool { self == .crop || self == .masking || self == .remove || self == .redEye }
+
+    /// The navigation bar's title while its screen is open.
+    var screenTitle: LocalizedStringResource {
+        switch self {
+        case .crop: "Crop & Rotate"
+        case .masking: "Masking"
+        case .remove: "Remove"
+        case .redEye: "Red Eye"
+        case .presets: "Presets"
+        case .edit: "Edit"
+        case .info: "Info"
+        }
+    }
 }
 
 /// The Edit tool's groups, one shown at a time (the desktop's sections).
@@ -90,6 +103,8 @@ nonisolated enum EditGroup: String, CaseIterable, Identifiable {
 final class EditorModel {
     /// The open tool (`nil`: the photo alone).
     var tool: Tool?
+    /// The undo stack's depth when a tool screen opened (its Cancel goes back there).
+    var screenBase: Int?
     /// The bottom panel's height step (0: short … 2: tall).
     var detent = 1
     /// Sliders by engine section (`light`, `color`, `vignette`…).

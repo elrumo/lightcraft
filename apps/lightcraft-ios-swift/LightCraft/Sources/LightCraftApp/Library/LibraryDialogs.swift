@@ -386,7 +386,7 @@ struct KeywordSetsSheet: View {
             .navigationTitle("Keyword Sets")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) { Button(role: .confirm) { dismiss() } }
             }
             .alert("New Keyword Set", isPresented: $newSet) {
                 TextField("Set Name", text: $newName)

@@ -36,9 +36,9 @@ struct FacesOverlay: View {
                     } label: {
                         Text(label(face))
                             .font(.footnote.weight(.semibold))
-                            .foregroundStyle(face.name == nil ? Color.white.opacity(0.8) : .white)
+                            .foregroundStyle(face.name == nil ? .secondary : .primary)
                             .padding(.horizontal, 9).padding(.vertical, 4)
-                            .background(.black.opacity(0.62), in: .capsule)
+                            .glassEffect(.regular, in: .capsule)
                     }
                     .buttonStyle(.plain)
                     .position(x: box.midX, y: box.maxY + 18)
@@ -48,9 +48,9 @@ struct FacesOverlay: View {
             }
             if model.editor.tagFace {
                 Text("Tap a face to mark it")
-                    .font(.subheadline.weight(.semibold)).foregroundStyle(.white)
+                    .font(.subheadline.weight(.semibold))
                     .padding(.horizontal, 14).padding(.vertical, 7)
-                    .background(.black.opacity(0.66), in: .capsule)
+                    .glassEffect(.regular, in: .capsule)
                     .position(x: rect.midX, y: max(rect.minY, 0) + 26)
                     .allowsHitTesting(false)
             }

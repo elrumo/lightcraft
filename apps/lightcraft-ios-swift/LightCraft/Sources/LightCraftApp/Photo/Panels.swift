@@ -311,11 +311,16 @@ struct InfoPanel: View {
     }
 
     static func date(_ iso: String) -> String {
+        guard let d = captureDate(iso) else { return iso }
+        return d.formatted(date: .complete, time: iso.count > 10 ? .shortened : .omitted)
+    }
+
+    /// A capture time as the camera's clock showed it (no time zone: read as local).
+    static func captureDate(_ iso: String) -> Date? {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
         f.dateFormat = iso.count > 10 ? "yyyy-MM-dd'T'HH:mm:ss" : "yyyy-MM-dd"
-        guard let d = f.date(from: String(iso.prefix(19))) else { return iso }
-        return d.formatted(date: .complete, time: iso.count > 10 ? .shortened : .omitted)
+        return f.date(from: String(iso.prefix(19)))
     }
 }
 

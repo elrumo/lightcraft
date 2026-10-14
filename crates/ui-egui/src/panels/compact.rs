@@ -354,6 +354,19 @@ fn menus(app: &mut LightcraftApp, ctx: &egui::Context) {
                 app.toast(ui.ctx(), e);
             }
         }
+        // a camera or card reader plugged into the iPhone or iPad (ImageCaptureCore)
+        if app.services.cameras.is_some() && mobile::row(ui, "connectedCamera", Some(Icon::Camera), crate::i18n::tr("Connected Camera/Card"), true) {
+            connected_camera(app, ui.ctx());
+        }
+    });
+    mobile::actions(ctx, "cameras", Some("Connected Camera/Card"), |ui| {
+        for c in crate::camera_import::cameras(app) {
+            if mobile::row(ui, &format!("camera:{}", c.id), Some(Icon::Camera), &c.name, true)
+                && let Err(e) = app.run("file.addFromDevice", json!({"camera": c.id}))
+            {
+                app.toast(ui.ctx(), e);
+            }
+        }
     });
     mobile::actions(ctx, "newAlbum", Some("Create New"), |ui| super::left::new_album_rows(app, ui));
     mobile::actions(ctx, "deleteChoice", None, |ui| delete_rows(app, ui));
@@ -370,6 +383,21 @@ fn menus(app: &mut LightcraftApp, ctx: &egui::Context) {
     mobile::actions(ctx, "selLabel", Some("Color Label"), |ui| label_items(app, ui, &ids));
     mobile::actions(ctx, "selAlbum", Some("Add to Album"), |ui| album_items(app, ui, &ids));
     mobile::actions(ctx, "selMore", None, |ui| more_items(app, ui, &ids));
+}
+
+/// The add button's Connected Camera/Card: the import of the one connected, a choice between
+/// several, or how to connect one.
+fn connected_camera(app: &mut LightcraftApp, ctx: &egui::Context) {
+    let cameras = crate::camera_import::cameras(app);
+    match cameras.as_slice() {
+        [] => app.toast(ctx, crate::i18n::tr("No camera or card connected: plug in a camera or a card reader (USB-C or Lightning), then try again")),
+        [one] => {
+            if let Err(e) = app.run("file.addFromDevice", json!({"camera": one.id})) {
+                app.toast(ctx, e);
+            }
+        }
+        _ => mobile::open_actions(ctx, "cameras"),
+    }
 }
 
 /// Runs a command from a menu row, saying why it failed.

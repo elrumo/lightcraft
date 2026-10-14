@@ -1,8 +1,8 @@
 # The SwiftUI iOS app
 
-**Status: S1 under way (2026-10-14): the phone layout (grid with Months / Years, albums, filter, select mode, the photo
-with its tools and every Edit group, Crop, Masking, Remove, export and share, Settings, sync, People, Map) runs on an
-iOS 26.5 simulator; not yet on a device.** Row by row: `apps/lightcraft-ios-swift/PARITY.md`. A native SwiftUI app for iPhone and iPad
+**Status (2026-10-14): S1 and S2 done on iOS 26.5 simulators (the phone and iPad layouts, every Edit group and tool,
+export, sync, People, Map, the menu bar, multiwindow); SW3 (a native iOS 26 look: system bars, an inspector, Photos-style
+dials) done on simulators; not yet tried on a device.** Row by row: `apps/lightcraft-ios-swift/PARITY.md`. A native SwiftUI app for iPhone and iPad
 (iOS 26 and later) that runs the whole Rust core: the engine, the develop pipeline, the catalog, sync, export. It is to
 replace the egui iOS app ([ios.md](ios.md)) once it passes its parity gate. The decision and its reasons are in
 [ios.md](ios.md) → *Plan*, Phase 0. What iOS still lacks overall: [ios-gaps.md](ios-gaps.md).
@@ -158,7 +158,7 @@ only (`#if os(iOS)`), so `swift test` on a Mac builds the rest. The Rust library
 (`{"sleep": ms}` waits), and appends each reply to `<file>.out`; a relative `path` is next to the script. The engine
 answers `engine.*`, `render.*` and `host.*` itself; the app answers `ui.screenshot {path}` (the window as a PNG),
 `ui.inspect` (screen, photo, state, `perf`: the last render's ms and the slider-to-draft round trip) and `ui.set {screen:
-grid | photo | edit | crop | masking | remove | redEye | presets | info | commands | people | map, photo?, person? (with people: their page), span?, group?, sheet?,
+grid | photo | edit | crop | masking | remove | redEye | presets | info | commands | people | map, photo?, person? (with people: their page), span?, group?, editStyle? (automatic | dials | sliders), sheet?,
 section?, select?, faceBoxes?, tagFace?, beforeAfter?, visualizeSpots?, removeAI?, histogram?, cropGuide?, cropDraw? (straighten | guides | none), orientation? (landscape | portrait), softProof?, proofSpace?, proofWarning?,
 sidebarCommand? + sidebarParams? (a `view.sidebar*` command), searching?, search? (the grid's search field), painting? (the Keyword Painter's keyword; "" stops), secondWindow? (opens Window ▸ Second Window)}` (`ScriptHost.swift` lists
 the values).
@@ -172,6 +172,37 @@ xcrun devicectl device copy to --device <udid> --domain-type appDataContainer \
 xcrun devicectl device process launch --device <udid> --terminate-existing \
   --environment-variables '{"LIGHTCRAFT_SCRIPT": "tour.jsonl"}' ai.storyteller.lightcraft.swift
 ```
+
+## Look and feel
+
+The app should look and work like an app Apple made for iOS 26, while keeping the Lightroom layout: the tools stay
+under the photo, it has no separate view and edit modes, and the library is one grid with an album picker (SW3,
+2026-10-14).
+
+- **System bars before overlays.**
+  - Titles, menus and buttons go in `.toolbar`: the navigation bar, the bottom bar, `ToolbarSpacer` groups and
+    `.toolbarTitleMenu`.
+  - Search is `.searchable` with `DefaultToolbarItem(kind: .search)` in a phone's bottom bar.
+  - A row that belongs under the title (the filter chips) is a `.safeAreaBar`.
+  - Draw a bar of your own only where the system has none, such as the mask column over the photo.
+- **Glass only where the system floats things over content**: toasts, HUDs, labels over the photo, chips. Panels with
+  text are opaque cards. Glass over a busy edge mirrors it.
+- **Text styles, not point sizes.**
+  - Fixed sizes only for marks proportional to a tile (badges, mask tiles).
+  - Colours are semantic, except data colours (slider tracks, mixer bands, guides).
+- **Modes**:
+  - A tool screen (Crop, Masking, Remove, Red Eye) has Cancel (`ButtonRole.close`) and Done (`.confirm`) in the
+    navigation bar, and no back button.
+  - Sheets close with the system ✕ or ✓.
+- **The photo is on a dark canvas** whatever the app's appearance, as in Photos' editor and Lightroom. A sheet opened
+  from the editor is dark too.
+- **Wide screens**: on regular width (an iPad) the tools are in the system `.inspector`. Its content is compact width,
+  so the `toolColumn` environment value says a view is in a column.
+- **Adjusting** (Settings ▸ Interface ▸ Adjustments):
+  - *Dials* is Photos' way: a row of dials, the one in the middle set with a ruler (`Photo/AdjustDials.swift`).
+  - *Sliders* is Lightroom's.
+  - *Automatic* means dials under the photo and sliders beside it. Both styles are drawn from the same engine control
+    specs and edit through the same calls.
 
 ## Plan
 
@@ -212,6 +243,16 @@ track logs, missing files, Export with Previous (SW2.5); soft proofing (SW2.6); 
 Pencil (SW2.10); the Second Window, more windows and the external display (SW2.11); Lightroom catalog import (SW2.12,
 the runner → `apphost::lightroom`). Not tried on hardware yet: a real drag, a Pencil, an external display. S3, removing
 the egui iOS app, is the maintainer's call.
+
+SW3, a native iOS 26 redesign (not the S3 gate; see *Look and feel*):
+- the library's system bars, title menu, bottom bar with search, and select bar (SW3.1);
+- the albums as a native sidebar with disclosure groups (SW3.2);
+- the photo screen's dark canvas, date title, bottom tool bar, and Cancel/Done in the navigation bar (SW3.3);
+- an iPad's tools in the inspector (SW3.4);
+- glass group chips, the panel as a card, and disclosure groups (SW3.5);
+- the Dials style (SW3.6);
+- the sheets' ✓ (SW3.7);
+- this page, the parity notes, the words and the CI tour (SW3.8).
 
 Open questions (not blocking S0): MapKit or the built-in offline map; which AI engine features ship on iOS (binary size);
 whether the gate also compares screenshots of the two apps.

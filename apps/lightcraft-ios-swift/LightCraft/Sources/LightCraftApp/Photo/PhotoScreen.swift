@@ -2,10 +2,11 @@
 import LightCraftCore
 import SwiftUI
 
-/// A photo, as Lightroom's mobile app shows it: back, undo, share and "…" above it; swipe sideways
-/// for the next; the tools under it (Presets, Crop, Edit, Masking, Remove, Info), the Edit tool's
-/// groups in a row of their own and the open tool's panel between the photo and the tools. A tap
-/// on the photo hides the bars (review mode).
+/// A photo on a dark canvas, as Lightroom's mobile app shows it: back, its date, undo, share and
+/// "…" above it; swipe sideways for the next; the tools in the bottom bar (Presets, Crop, Edit,
+/// Masking, Remove, Info), the Edit tool's groups in a row of their own and the open tool's panel
+/// between the photo and the tools. Crop, Masking, Remove and Red Eye take the screen with Cancel
+/// and Done above. A tap on the photo hides the bars (review mode).
 struct PhotoScreen: View {
     @Environment(AppModel.self) private var model
     @Environment(\.verticalSizeClass) private var verticalSize
@@ -15,14 +16,23 @@ struct PhotoScreen: View {
 
     var body: some View {
         let editor = model.editor
-        // a phone held sideways, or an iPad: the photo beside a side panel (egui's wide layout,
-        // from 600 pt: 316 pt sideways, 340 pt on a tablet)
-        let sideways = verticalSize == .compact || horizontalSize == .regular
+        // an iPad: the tools in the inspector beside the photo; a phone held sideways: in a column
+        // at the right (egui's wide layout, 316 pt); held upright: under the photo
+        let inspector = horizontalSize == .regular && verticalSize != .compact
+        let sideways = verticalSize == .compact
         Group {
-            if sideways, editor.tool != nil {
+            if inspector {
+                // (clipped: the next photos mustn't show through the inspector's glass)
+                pager.clipped()
+            } else if sideways, editor.tool != nil {
                 HStack(spacing: 0) {
                     pager
-                    if !review { SidePanel(width: verticalSize == .compact ? 316 : 340).transition(.move(edge: .trailing)) }
+                    if !review {
+                        ToolColumn()
+                            .frame(width: 316)
+                            .background(Color(uiColor: .secondarySystemBackground))
+                            .transition(.move(edge: .trailing))
+                    }
                 }
             } else {
                 VStack(spacing: 0) {
@@ -33,32 +43,57 @@ struct PhotoScreen: View {
                         } else {
                             if editor.tool == .edit { GroupBar() }
                             if let tool = editor.tool { ToolPanel(tool: tool) }
-                            ToolBar()
                         }
                     }
                 }
             }
         }
-        .background(Color(uiColor: .systemBackground))
+        .background(Color.black.ignoresSafeArea())
+        .inspector(isPresented: Binding(get: { inspector && editor.tool != nil && !review }, set: { if !$0 { editor.tool = nil } })) {
+            ToolColumn()
+                .inspectorColumnWidth(min: 300, ideal: 340, max: 420)
+        }
         .toolbar(review ? .hidden : .visible, for: .navigationBar)
+        .toolbar(review || editor.tool?.hasScreen == true ? .hidden : .visible, for: .bottomBar)
         .statusBarHidden(review)
+        .navigationBarBackButtonHidden(editor.tool?.hasScreen == true)
+        .navigationTitle(title)
+        .navigationSubtitle(Text(subtitle))
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItemGroup(placement: .topBarTrailing) {
-                UndoMenu()
-                if editor.tool == .masking {
-                    MaskOverlayButton()
-                    MaskMoreMenu()
-                } else {
+            if let tool = editor.tool, tool.hasScreen {
+                ScreenToolbar(model: model)
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    UndoMenu()
+                    if tool == .masking {
+                        MaskOverlayButton()
+                        MaskMoreMenu()
+                    }
+                }
+            } else {
+                ToolbarItem(placement: .topBarTrailing) {
+                    UndoMenu()
+                }
+                ToolbarSpacer(.fixed, placement: .topBarTrailing)
+                ToolbarItemGroup(placement: .topBarTrailing) {
                     Button("Share", systemImage: "square.and.arrow.up") {
                         if let id = model.state.active { model.sheet = .export([id]) }
                     }
                     PhotoMoreMenu()
                 }
+                ToolBar(model: model)
             }
         }
-        .navigationBarTitleDisplayMode(.inline)
+        // editing's canvas is dark, whatever the app's look (as Photos' editor and Lightroom)
+        .environment(\.colorScheme, .dark)
+        .toolbarColorScheme(.dark, for: .navigationBar, .bottomBar)
         .animation(.snappy, value: review)
         .animation(.snappy, value: editor.tool)
+        .haptic(.selection, trigger: editor.tool)
+        .task(id: editor.tool) {
+            // a tool screen's Cancel goes back to how the photo was when it opened
+            if editor.tool?.hasScreen == true { editor.screenBase = await undoDepth(model) }
+        }
         .onAppear {
             if editor.tool == nil { editor.tool = .edit }
             Task { await editor.reload(model) }
@@ -66,6 +101,23 @@ struct PhotoScreen: View {
         .onDisappear {
             if model.path.isEmpty { editor.tool = nil }
         }
+    }
+
+    /// The photo's capture date (an open tool screen's name instead), then its time.
+    private var title: String {
+        if let tool = model.editor.tool, tool.hasScreen { return String(localized: tool.screenTitle) }
+        guard let summary = active else { return "" }
+        return summary.captured.flatMap(InfoPanel.captureDate)?.formatted(date: .abbreviated, time: .omitted) ?? summary.fileName
+    }
+
+    private var subtitle: String {
+        if model.editor.tool?.hasScreen == true { return "" }
+        guard let iso = active?.captured, iso.count > 10, let date = InfoPanel.captureDate(iso) else { return "" }
+        return date.formatted(date: .omitted, time: .shortened)
+    }
+
+    private var active: PhotoSummary? {
+        model.state.active.flatMap { model.library.index(of: $0) }.flatMap { model.library.loaded(at: $0) }
     }
 
     private var pager: some View {
@@ -100,11 +152,16 @@ struct PhotoScreen: View {
     }
 }
 
-/// Held sideways, the tools in a column at the right: a tool's own screen (Crop, Masking, Remove,
-/// Red Eye), or the Edit groups, the open tool's controls and the tool bar.
-private struct SidePanel: View {
+extension EnvironmentValues {
+    /// The tools are in a column beside the photo (an iPad's inspector, a phone held sideways), not
+    /// under it. (An inspector's content is compact width, so the size classes can't tell.)
+    @Entry var toolColumn = false
+}
+
+/// The tools in a column (an iPad's inspector, a phone held sideways): a tool's own screen (Crop,
+/// Masking, Remove, Red Eye), or the Edit groups and the open tool's controls.
+private struct ToolColumn: View {
     @Environment(AppModel.self) private var model
-    let width: CGFloat
 
     var body: some View {
         let editor = model.editor
@@ -123,11 +180,9 @@ private struct SidePanel: View {
                 } else {
                     Spacer()
                 }
-                ToolBar()
             }
         }
-        .frame(width: width)
-        .background(Color(uiColor: .secondarySystemBackground))
+        .environment(\.toolColumn, true)
     }
 }
 
@@ -549,8 +604,9 @@ private struct InfoOverlay: View {
                     Text(summary.camera ?? "").font(.caption)
                 }
             }
-            .foregroundStyle(.white)
-            .shadow(color: .black.opacity(0.6), radius: 2)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .glassEffect(.regular, in: .rect(cornerRadius: 14))
             .padding(.horizontal, 30)
             .padding(.top, 30)
         }
@@ -564,105 +620,101 @@ private struct InfoOverlay: View {
     }
 }
 
-/// The tools under a photo, in a glass capsule; the open one tinted.
-struct ToolBar: View {
-    @Environment(AppModel.self) private var model
-    // the bar's sizes, following the reader's text size
-    @ScaledMetric(relativeTo: .title3) private var iconSize: CGFloat = 20
-    @ScaledMetric(relativeTo: .caption2) private var labelSize: CGFloat = 10
+/// The tools under a photo, in the bottom bar: icons, the open one switched on (a tap on it closes
+/// it).
+struct ToolBar: ToolbarContent {
+    let model: AppModel
 
-    var body: some View {
+    var body: some ToolbarContent {
         let editor = model.editor
-        GlassEffectContainer {
-            HStack(spacing: 0) {
-                ForEach(Tool.bar) { tool in
-                    Button {
-                        withAnimation(.snappy) { editor.tool = editor.tool == tool ? nil : tool }
-                        if tool == .crop || tool == .masking || tool == .remove {
-                            model.perform("develop.cancelInteraction")
-                        }
-                    } label: {
-                        VStack(spacing: 3) {
-                            Image(systemName: tool.symbol).font(.system(size: iconSize))
-                            // a long translation shrinks to one line rather than pushing the bar up
-                            Text(LocalizedStringKey(tool.label)).font(.system(size: labelSize, weight: .semibold))
-                                .lineLimit(1).minimumScaleFactor(0.6)
-                        }
-                        .foregroundStyle(editor.tool == tool ? Color.accentColor : Color.primary)
-                        .frame(maxWidth: .infinity, minHeight: 52)
-                        .background {
-                            if editor.tool == tool {
-                                Capsule().fill(Color.accentColor.opacity(0.15)).padding(.horizontal, 2).padding(.vertical, 4)
-                            }
-                        }
-                        .contentShape(Rectangle())
-                        .hoverEffect(.highlight)
+        ToolbarSpacer(.flexible, placement: .bottomBar)
+        ToolbarItemGroup(placement: .bottomBar) {
+            ForEach(Tool.bar) { tool in
+                Toggle(isOn: Binding(get: { editor.tool == tool }, set: { on in
+                    withAnimation(.snappy) { editor.tool = on ? tool : nil }
+                    if on, tool == .crop || tool == .masking || tool == .remove {
+                        model.perform("develop.cancelInteraction")
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityAddTraits(editor.tool == tool ? .isSelected : [])
-                    .disabled(model.state.active == nil)
+                })) {
+                    Label(LocalizedStringKey(tool.label), systemImage: tool.symbol)
                 }
+                .disabled(model.state.active == nil)
             }
-            .padding(.horizontal, 4)
-            .glassEffect(.regular, in: .capsule)
         }
-        .frame(maxWidth: 480)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 4)
-        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
-        .haptic(.selection, trigger: editor.tool)
+        ToolbarSpacer(.flexible, placement: .bottomBar)
     }
 }
 
 /// The Edit tool's groups: Auto, then Profile, Light, Color… (one open at a time).
 struct GroupBar: View {
     @Environment(AppModel.self) private var model
-    @ScaledMetric(relativeTo: .body) private var iconSize: CGFloat = 18
-    @ScaledMetric(relativeTo: .caption2) private var labelSize: CGFloat = 11
 
     var body: some View {
         let current = EditGroup(rawValue: model.prefs.editGroup) ?? .light
-        ScrollView(.horizontal) {
-            HStack(spacing: 4) {
-                Button {
-                    Task {
-                        if await model.run("develop.auto") != nil { model.show(String(localized: "Auto settings applied")) }
-                    }
-                } label: {
-                    groupLabel("wand.and.stars", "Auto", on: false)
+        GroupChips(
+            items: EditGroup.allCases.map { .init(id: $0.rawValue, label: $0.label, symbol: $0.symbol) },
+            selected: current.rawValue,
+            auto: {
+                Task {
+                    if await model.run("develop.auto") != nil { model.show(String(localized: "Auto settings applied")) }
                 }
-                Divider().frame(height: 32)
-                ForEach(EditGroup.allCases) { group in
-                    Button {
-                        model.prefs.editGroup = group.rawValue
-                    } label: {
-                        groupLabel(group.symbol, group.label, on: group == current)
-                    }
-                    .accessibilityAddTraits(group == current ? .isSelected : [])
-                }
-            }
-            .padding(.horizontal, 10)
-        }
-        .scrollIndicators(.hidden)
-        .frame(minHeight: 60)
-        .fixedSize(horizontal: false, vertical: true)
-        .buttonStyle(.plain)
-        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+            },
+            choose: { model.prefs.editGroup = $0 }
+        )
         .haptic(.selection, trigger: model.prefs.editGroup)
     }
+}
 
-    private func groupLabel(_ symbol: String, _ label: String, on: Bool) -> some View {
-        VStack(spacing: 3) {
-            Image(systemName: symbol).font(.system(size: iconSize))
-            Text(LocalizedStringKey(label)).font(.system(size: labelSize)).lineLimit(1).minimumScaleFactor(0.7)
+/// A row of groups as glass chips (a symbol and the name), the open one prominent, scrolling
+/// sideways when they don't fit; Auto first when given.
+struct GroupChips: View {
+    struct Item: Identifiable {
+        let id: String
+        let label: String
+        let symbol: String
+    }
+
+    let items: [Item]
+    let selected: String?
+    var enabled = true
+    var auto: (() -> Void)? = nil
+    let choose: (String) -> Void
+
+    var body: some View {
+        ScrollView(.horizontal) {
+            GlassEffectContainer {
+                HStack(spacing: 6) {
+                    if let auto {
+                        Button(action: auto) {
+                            Label("Auto", systemImage: "wand.and.stars")
+                        }
+                        .buttonStyle(.glass)
+                    }
+                    ForEach(items) { item in
+                        chip(item, on: enabled && item.id == selected)
+                    }
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
         }
-        .foregroundStyle(on ? Color.accentColor : Color.primary)
-        .frame(width: 64)
-        .frame(minHeight: 52)
-        .background {
-            if on { Capsule().fill(.thinMaterial) }
+        .scrollIndicators(.hidden)
+        .scrollClipDisabled()
+        .font(.subheadline.weight(.medium))
+        .disabled(!enabled)
+        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+    }
+
+    @ViewBuilder private func chip(_ item: Item, on: Bool) -> some View {
+        let button = Button { choose(item.id) } label: {
+            Label(LocalizedStringKey(item.label), systemImage: item.symbol)
         }
-        .contentShape(Rectangle())
+        .accessibilityAddTraits(on ? .isSelected : [])
+        if on {
+            button.buttonStyle(.glassProminent)
+        } else {
+            button.buttonStyle(.glass)
+        }
     }
 }
 
@@ -676,22 +728,39 @@ struct ToolPanel: View {
 
     var body: some View {
         let editor = model.editor
-        VStack(spacing: 0) {
-            Capsule()
-                .fill(Color.secondary.opacity(0.5))
-                .frame(width: 36, height: 5)
-                .frame(maxWidth: .infinity, minHeight: 20)
-                .contentShape(Rectangle())
-                .onTapGesture { withAnimation(.snappy) { editor.detent = (editor.detent + 1) % Self.stops.count } }
-                .gesture(grabberDrag)
-                .accessibilityLabel("Resize panel")
-                .accessibilityAction { editor.detent = (editor.detent + 1) % Self.stops.count }
-            ScrollView { ToolPanelContent(tool: tool) }
-                .scrollIndicators(.automatic)
+        Group {
+            if dials {
+                // dials take the height they need: nothing to resize or scroll
+                ToolPanelContent(tool: tool)
+            } else {
+                VStack(spacing: 0) {
+                    Capsule()
+                        .fill(Color.secondary.opacity(0.5))
+                        .frame(width: 36, height: 5)
+                        .frame(maxWidth: .infinity, minHeight: 20)
+                        .contentShape(Rectangle())
+                        .onTapGesture { withAnimation(.snappy) { editor.detent = (editor.detent + 1) % Self.stops.count } }
+                        .gesture(grabberDrag)
+                        .accessibilityLabel("Resize panel")
+                        .accessibilityAction { editor.detent = (editor.detent + 1) % Self.stops.count }
+                    ScrollView { ToolPanelContent(tool: tool) }
+                        .scrollIndicators(.automatic)
+                }
+                .frame(height: dragHeight ?? Self.stops[min(editor.detent, Self.stops.count - 1)])
+            }
         }
-        .frame(height: dragHeight ?? Self.stops[min(editor.detent, Self.stops.count - 1)])
-        .background(Color(uiColor: .secondarySystemBackground), in: .rect(topLeadingRadius: 22, topTrailingRadius: 22))
+        // a card floating over the canvas, as a sheet is in iOS 26 (opaque: glass would mirror the
+        // group chips above it)
+        .clipShape(.rect(cornerRadius: 28))
+        .background(Color(uiColor: .secondarySystemBackground), in: .rect(cornerRadius: 28))
+        .padding(.horizontal, 8)
+        .padding(.bottom, 4)
         .transition(.move(edge: .bottom).combined(with: .opacity))
+    }
+
+    /// The Edit tool's group as dials (the profiles keep their grid).
+    private var dials: Bool {
+        tool == .edit && model.prefs.editGroup != EditGroup.profile.rawValue && model.prefs.dials(column: false)
     }
 
     /// The panel's heights: a few rows, more, most of the screen.

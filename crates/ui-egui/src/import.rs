@@ -90,6 +90,48 @@ pub struct ImportDialog {
     /// The candidate clicked last: where a Shift-click range starts ([`ImportDialog::click`]).
     #[serde(skip)]
     pub last_clicked: Option<usize>,
+    /// The photos are on a camera, phone or card the host reads itself (`Services::cameras`): the
+    /// candidates' paths are its files' ids, and Import copies the checked ones off it first
+    /// ([`crate::camera_import`]).
+    pub camera: Option<crate::camera_import::CameraSource>,
+    /// The camera or card the photos are on, by name ("" = not a device): the review shows it
+    /// above the photos, with a box that checks all of them.
+    pub device: String,
+}
+
+/// A run of candidates taken on the same day (the review lists them by day, newest first).
+#[derive(Clone, Debug, PartialEq)]
+pub struct DayGroup {
+    /// `2026-10-03`; `None`: no capture date.
+    pub day: Option<String>,
+    pub range: std::ops::Range<usize>,
+}
+
+/// The day a candidate was taken, if it says.
+fn candidate_day(c: &ImportCandidate) -> Option<&str> {
+    lightcraft_engine::devices::capture_day(c.captured.as_deref())
+}
+
+/// Raw formats, as a candidate's format or extension names them (its "Raw" tag).
+const RAW_FORMATS: &[&str] = &[
+    "3FR", "ARW", "CR2", "CR3", "CRW", "DCR", "DNG", "ERF", "FFF", "IIQ", "KDC", "MEF", "MOS", "MRW", "NEF", "NRW", "ORF", "PEF", "RAF", "RAW",
+    "RW2", "RWL", "SR2", "SRF", "SRW", "X3F",
+];
+
+/// The candidate is a raw file.
+pub fn is_raw(c: &ImportCandidate) -> bool {
+    RAW_FORMATS.contains(&file_type(c).as_str())
+}
+
+/// Order candidates by the day they were taken, newest day first (undated last), keeping their
+/// order within a day (a camera numbers its files as it takes them).
+pub fn sort_by_day(candidates: &mut [ImportCandidate]) {
+    candidates.sort_by(|a, b| match (candidate_day(a), candidate_day(b)) {
+        (Some(x), Some(y)) => y.cmp(x),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
+    });
 }
 
 /// A candidate's file type, as the review groups them: its format, or its extension when the
@@ -160,6 +202,78 @@ impl ImportDialog {
                 *c = on && importable;
             }
         }
+    }
+    /// The candidates in runs of the same day ([`sort_by_day`] makes one run per day).
+    pub fn groups(&self) -> Vec<DayGroup> {
+        let mut out: Vec<DayGroup> = Vec::new();
+        for (i, c) in self.candidates.iter().enumerate() {
+            let day = candidate_day(c);
+            match out.last_mut() {
+                Some(g) if g.day.as_deref() == day => g.range.end = i + 1,
+                _ => out.push(DayGroup { day: day.map(str::to_string), range: i..i + 1 }),
+            }
+        }
+        out
+    }
+    /// Candidate `i` counts for a day's (or the device's) box: one Check All would check, or one
+    /// checked by hand (a file in Recently Deleted with "Leave them").
+    fn in_box(&self, i: usize) -> bool {
+        self.checked_by_default(i) || self.importable(i) && self.checked.get(i).copied().unwrap_or(false)
+    }
+    /// Whether a box over `range` can be clicked: it has a candidate to check or uncheck.
+    pub fn range_enabled(&self, range: std::ops::Range<usize>) -> bool {
+        range.into_iter().any(|i| self.in_box(i))
+    }
+    /// Whether the candidates in `range` that count for its box are checked: all (`Some(true)`),
+    /// none (`Some(false)`) or some (`None`). None count: `Some(false)`.
+    pub fn range_checked(&self, range: std::ops::Range<usize>) -> Option<bool> {
+        let (mut on, mut off) = (false, false);
+        for i in range.filter(|i| self.in_box(*i)) {
+            if self.checked.get(i).copied().unwrap_or(false) {
+                on = true;
+            } else {
+                off = true;
+            }
+        }
+        match (on, off) {
+            (true, true) => None,
+            (true, false) => Some(true),
+            _ => Some(false),
+        }
+    }
+    /// A day's (or the whole device's) box: checks the candidates in `range` as Check All does, or
+    /// unchecks them all when they are all checked.
+    pub fn toggle_range(&mut self, range: std::ops::Range<usize>) {
+        let on = self.range_checked(range.clone()) != Some(true);
+        for i in range {
+            let importable = self.checked_by_default(i);
+            if let Some(c) = self.checked.get_mut(i) {
+                *c = on && importable;
+            }
+        }
+    }
+    /// A camera's files as the candidates (as it catalogues them, again and again): supported
+    /// formats only, by day, those `existing` finds in the library not importable. Checks made
+    /// earlier stay; new files arrive checked when they can be imported.
+    pub fn set_camera_files(
+        &mut self,
+        files: Vec<lightcraft_engine::devices::CameraFile>,
+        existing: impl Fn(&lightcraft_engine::devices::CameraFile) -> Option<u64>,
+    ) {
+        let was = crate::camera_import::checked_by_id(self);
+        let mut candidates: Vec<ImportCandidate> = files
+            .into_iter()
+            .filter(|f| lightcraft_engine::import::is_supported(std::path::Path::new(&f.name)))
+            .map(|f| {
+                let found = existing(&f);
+                crate::camera_import::candidate(f, found)
+            })
+            .collect();
+        sort_by_day(&mut candidates);
+        self.checked = candidates.iter().map(|c| c.duplicate.is_none() && was.get(&c.path).copied().unwrap_or(true)).collect();
+        self.trashed = vec![false; candidates.len()];
+        self.candidates = candidates;
+        self.last_clicked = None;
     }
     /// Candidate `i` is a file whose photo is in Recently Deleted.
     pub fn is_trashed(&self, i: usize) -> bool {
@@ -256,6 +370,9 @@ pub struct ImportTask {
     /// Photos dropped on the window: the grid holds a tile for each until it is in the catalog
     /// ([`crate::file_drop`]).
     pending: Option<crate::file_drop::Pendings>,
+    /// A staging folder of the app's own the files were copied into (off a camera): removed
+    /// when the import ends (what is left there are duplicates and failures, still on the camera).
+    pub cleanup: Option<std::path::PathBuf>,
 }
 
 impl ImportTask {
@@ -321,6 +438,8 @@ pub struct ScanTask {
     rx: std::sync::mpsc::Receiver<ScanOutput>,
     /// Open the review with "copy into the library" checked (a camera / card).
     pub copy: bool,
+    /// The camera or card being scanned, by name ([`ImportDialog::device`]).
+    pub device: String,
     /// The host's temporary copies ([`ImportDialog::staged`]).
     staged: bool,
     /// Open the review with this album chosen (an album's context menu ▸ Import…).
@@ -376,7 +495,7 @@ fn scan(app: &mut LightcraftApp, paths: Vec<String>, staged: bool) -> Result<Val
     #[cfg(target_arch = "wasm32")]
     job();
     let guard = scan_guard(app, &progress, false);
-    app.scan = Some(ScanTask { progress, rx, copy: staged, staged, album: None, browse: false, sources, guard });
+    app.scan = Some(ScanTask { progress, rx, copy: staged, device: String::new(), staged, album: None, browse: false, sources, guard });
     Ok(json!({"scanning": true}))
 }
 
@@ -439,7 +558,8 @@ pub fn browse(app: &mut LightcraftApp, path: &str, subfolders: Option<bool>) -> 
     #[cfg(target_arch = "wasm32")]
     job();
     let guard = scan_guard(app, &progress, true);
-    app.scan = Some(ScanTask { progress, rx, copy: false, staged: false, album: None, browse: true, sources: Vec::new(), guard });
+    app.scan =
+        Some(ScanTask { progress, rx, copy: false, device: String::new(), staged: false, album: None, browse: true, sources: Vec::new(), guard });
     app.renderer.forget_imports();
     Ok(json!({"path": dir_s, "subfolders": subfolders, "scanning": true}))
 }
@@ -490,7 +610,9 @@ pub fn poll_scan(app: &mut LightcraftApp, ctx: &egui::Context) {
         return;
     }
     app.renderer.forget_imports();
-    let mut d = ImportDialog::new(out.candidates);
+    let mut candidates = out.candidates;
+    sort_by_day(&mut candidates);
+    let mut d = ImportDialog::new(candidates);
     let trashed = d
         .candidates
         .iter()
@@ -506,6 +628,7 @@ pub fn poll_scan(app: &mut LightcraftApp, ctx: &egui::Context) {
     // only an album the review offers (it may have been deleted while the scan ran)
     d.album = task.album.filter(|id| app.session.catalog.album(lightcraft_catalog::AlbumId(*id)).is_some_and(|a| !a.folder && !a.is_smart()));
     d.sources = task.sources;
+    d.device = task.device;
     app.ui.dialog = Some(crate::state::Dialog::Import { opts: Box::new(d) });
 }
 
@@ -548,14 +671,28 @@ impl ScanTask {
     }
 }
 
-/// Start importing the dialog's checked files (the dialog's OK / `ui.dialog.confirm`).
+/// Start importing the dialog's checked files (the dialog's OK / `ui.dialog.confirm`); on a camera,
+/// copying them off it first ([`crate::camera_import::start`]).
 pub fn start(app: &mut LightcraftApp, d: &ImportDialog) -> Result<Value, String> {
+    if d.camera.is_some() {
+        return crate::camera_import::start(app, d);
+    }
     busy_synchronizing(app)?;
     let queue = d.selected_paths();
     if queue.is_empty() {
         return Err("no photos selected".into());
     }
     let undo0 = app.session.undo.len();
+    let params = import_params(app, d)?;
+    let total = queue.len();
+    app.import = Some(ImportTask::new(queue, params, undo0, false));
+    app.renderer.forget_imports();
+    Ok(json!({"importing": total}))
+}
+
+/// The `library.import` params (without `paths`) the review's choices make, creating the new
+/// album it names.
+pub(crate) fn import_params(app: &mut LightcraftApp, d: &ImportDialog) -> Result<Value, String> {
     let mut album = d.album;
     if album.is_none() && !d.new_album.trim().is_empty() {
         let r = app.session.execute("album.create", &json!({"name": d.new_album.trim()})).map_err(|e| e.to_string())?;
@@ -581,7 +718,7 @@ pub fn start(app: &mut LightcraftApp, d: &ImportDialog) -> Result<Value, String>
         params["metadataPreset"] = json!(d.metadata_preset);
     }
     if d.copy || d.staged {
-        if !d.destination.trim().is_empty() && !d.staged {
+        if !d.destination.trim().is_empty() {
             params["destination"] = json!(d.destination.trim());
         }
         if let Some(o) = d.organize_param()? {
@@ -595,10 +732,7 @@ pub fn start(app: &mut LightcraftApp, d: &ImportDialog) -> Result<Value, String>
             params["dng"] = json!(true);
         }
     }
-    let total = queue.len();
-    app.import = Some(ImportTask::new(queue, params, undo0, false));
-    app.renderer.forget_imports();
-    Ok(json!({"importing": total}))
+    Ok(params)
 }
 
 /// Start importing `paths` (files or folders) in the background.
@@ -762,6 +896,11 @@ fn xmp_warnings_text(warnings: &[ImportWarning]) -> String {
 
 /// The import is done (or cancelled): one undo step, select the first photo, say what happened.
 fn finish(app: &mut LightcraftApp, ctx: &egui::Context, task: ImportTask) {
+    if let Some(dir) = &task.cleanup
+        && let Err(e) = std::fs::remove_dir_all(dir)
+    {
+        log::warn!("{}: {e}", dir.display());
+    }
     let steps = app.session.undo.len().saturating_sub(task.undo0);
     let plural = |n: usize| if n == 1 { "" } else { "s" };
     let label = if task.tally.imported == 0 && task.tally.restored > 0 {
@@ -916,6 +1055,189 @@ pub fn progress(app: &mut LightcraftApp, ctx: &egui::Context) {
     }
 }
 
+/// Height of a day's heading in the desktop review, and on a phone.
+const DAY_HEAD: f32 = 30.0;
+const MOBILE_DAY_HEAD: f32 = 52.0;
+
+/// A piece of the review's grid: a day's heading, or the cells of a run of candidates.
+enum Block {
+    Day { group: DayGroup, top: f32 },
+    Cells { range: std::ops::Range<usize>, top: f32 },
+}
+
+/// The review's grid as headings and runs of cells (`cols` across, rows `row` apart), with the
+/// height it all takes. Without capture dates there are no headings: one run, as before dates.
+fn grid_blocks(d: &ImportDialog, cols: usize, head: f32, row: f32) -> (Vec<Block>, f32) {
+    let groups = d.groups();
+    let headings = groups.iter().any(|g| g.day.is_some());
+    let mut out = Vec::with_capacity(groups.len() * 2);
+    let mut y = 0.0;
+    for g in groups {
+        let rows = g.range.len().div_ceil(cols.max(1));
+        let range = g.range.clone();
+        if headings {
+            out.push(Block::Day { group: g, top: y });
+            y += head;
+        }
+        out.push(Block::Cells { range, top: y });
+        y += rows as f32 * row;
+    }
+    (out, y)
+}
+
+/// A checkbox that can be partly checked (some of a day's photos): painted at `r`.
+fn paint_box(p: &egui::Painter, r: Rect, state: Option<bool>, enabled: bool, t: &Tokens) {
+    let filled = state != Some(false);
+    let fill = if filled && enabled { t.accent } else { Color32::TRANSPARENT };
+    let edge = if enabled { if filled { t.accent } else { t.text_dim } } else { t.text_dim.gamma_multiply(0.5) };
+    p.rect(r, 3.0, fill, Stroke::new(1.5, edge), StrokeKind::Inside);
+    let ink = Stroke::new(2.0, Color32::WHITE);
+    match state {
+        Some(true) if enabled => {
+            let (a, b, c) = (
+                r.left_center() + vec2(r.width() * 0.22, 0.0),
+                r.center_bottom() + vec2(-r.width() * 0.08, -r.height() * 0.25),
+                r.right_top() + vec2(-r.width() * 0.22, r.height() * 0.28),
+            );
+            p.line_segment([a, b], ink);
+            p.line_segment([b, c], ink);
+        }
+        None if enabled => {
+            p.line_segment([r.left_center() + vec2(r.width() * 0.25, 0.0), r.right_center() - vec2(r.width() * 0.25, 0.0)], ink);
+        }
+        _ => {}
+    }
+}
+
+/// A day's heading: a box that checks (or unchecks) its photos, its date, and how many there are.
+fn day_row(ui: &mut egui::Ui, d: &mut ImportDialog, g: &DayGroup, rect: Rect, phone: bool) {
+    let t = Tokens::get(ui.ctx());
+    let key = g.day.clone().unwrap_or_default();
+    let resp = ui.interact(rect, egui::Id::new(("import-day", &key)), Sense::click());
+    register(ui.ctx(), format!("importDay:{}", if key.is_empty() { "none" } else { key.as_str() }), rect);
+    let state = d.range_checked(g.range.clone());
+    let enabled = d.range_enabled(g.range.clone());
+    let size = if phone { 24.0 } else { 16.0 };
+    // (in line with the device's box and name above)
+    let b = Rect::from_center_size(pos2(rect.left() + 2.0 + size / 2.0, rect.center().y), vec2(size, size));
+    let p = ui.painter();
+    paint_box(p, b, state, enabled, &t);
+    let label = match &g.day {
+        Some(day) => crate::i18n::date_group_label(day, false),
+        None => crate::i18n::tr("No Date").to_string(),
+    };
+    let font = if phone { t.font(19.0) } else { t.semibold(13.0) };
+    p.text(pos2(b.right() + 10.0, rect.center().y), Align2::LEFT_CENTER, label, font.clone(), t.text);
+    p.text(
+        rect.right_center() - vec2(if phone { 0.0 } else { 6.0 }, 0.0),
+        Align2::RIGHT_CENTER,
+        crate::i18n::grouped(g.range.len()),
+        font,
+        t.text_dim,
+    );
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, enabled, state == Some(true), "day"));
+    if resp.clicked() && enabled {
+        d.toggle_range(g.range.clone());
+    }
+}
+
+/// The camera or card the photos are on: a box that checks all of them, its name, how much it
+/// holds ("17,966.3 MB – 1,719"), and while a camera is still cataloguing, that it is.
+fn device_row(ui: &mut egui::Ui, d: &mut ImportDialog, phone: bool) {
+    if d.device.is_empty() {
+        return;
+    }
+    let t = Tokens::get(ui.ctx());
+    let n = d.candidates.len();
+    let bytes: u64 = d.candidates.iter().map(|c| c.file_size).sum();
+    let mb = bytes as f64 / 1e6;
+    let size =
+        format!("{}.{} MB – {}", crate::i18n::grouped(mb.trunc() as usize), ((mb.fract() * 10.0).floor() as u32).min(9), crate::i18n::grouped(n));
+    let h = if phone { 52.0 } else { 30.0 };
+    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), h), Sense::click());
+    register(ui.ctx(), "importDevice", rect);
+    let state = d.range_checked(0..n);
+    let enabled = d.range_enabled(0..n);
+    let bs = if phone { 24.0 } else { 16.0 };
+    let b = Rect::from_center_size(pos2(rect.left() + 2.0 + bs / 2.0, rect.center().y), vec2(bs, bs));
+    let p = ui.painter();
+    paint_box(p, b, state, enabled, &t);
+    let font = if phone { t.font(19.0) } else { t.semibold(14.0) };
+    let size_w = p.layout_no_wrap(size.clone(), font.clone(), t.text_dim).size().x;
+    let name_w = (rect.right() - size_w - 16.0 - (b.right() + 12.0)).max(40.0);
+    let name = p.layout(d.device.clone(), font.clone(), t.text, name_w);
+    // (one line: a long name is cut, the size keeps its room)
+    let clip = Rect::from_min_max(pos2(b.right() + 10.0, rect.top()), pos2(b.right() + 10.0 + name_w, rect.bottom()));
+    ui.painter().with_clip_rect(clip).galley(pos2(clip.left(), rect.center().y - name.rows.first().map_or(8.0, |r| r.height()) / 2.0), name, t.text);
+    ui.painter().text(rect.right_center(), Align2::RIGHT_CENTER, size, font, t.text_dim);
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, enabled, state == Some(true), d.device.clone()));
+    if resp.clicked() && enabled {
+        d.toggle_range(0..n);
+    }
+    if let Some(cam) = &d.camera {
+        let status = match (&cam.error, cam.complete) {
+            (Some(e), _) => Some((e.clone(), t.caution)),
+            (None, false) => {
+                Some((crate::i18n::tr_format!("Reading {name}… {n} photos so far", name = cam.name, n = crate::i18n::grouped(n)), t.text_dim))
+            }
+            (None, true) if n == 0 => Some((crate::i18n::tr("No photos on it").to_string(), t.text_dim)),
+            _ => None,
+        };
+        if let Some((text, color)) = status {
+            let r = ui.label(egui::RichText::new(text).color(color).size(if phone { 15.0 } else { 12.0 }));
+            register(ui.ctx(), "label:importCameraStatus", r.rect);
+            if !cam.complete {
+                ui.ctx().request_repaint_after(std::time::Duration::from_millis(200));
+            }
+        }
+    }
+}
+
+/// The texture of candidate `i`'s thumbnail: a camera's own, or one rendered from the file (a
+/// background job; the grid only asks for the cells in view).
+fn cell_texture(
+    app: &mut LightcraftApp,
+    ctx: &egui::Context,
+    d: &ImportDialog,
+    i: usize,
+    c: &ImportCandidate,
+    edge: usize,
+) -> Option<(egui::TextureId, [usize; 2])> {
+    if let Some(cam) = &d.camera {
+        return crate::camera_import::thumbnail(app, ctx, &cam.id, &c.path);
+    }
+    let slot = Slot::Import(i as u32);
+    if !app.renderer.textures.contains_key(&slot)
+        && let Some(job) = app.session.candidate_thumb_job(c, edge, i as u64)
+    {
+        app.renderer.request_quick(slot, job, 4);
+    }
+    app.renderer.textures.get(&slot).map(|t| (t.tex.id(), t.size))
+}
+
+/// The tag a candidate carries: in the library already, a duplicate, unreadable.
+fn candidate_tag(app: &LightcraftApp, d: &ImportDialog, i: usize, c: &ImportCandidate) -> Option<&'static str> {
+    let in_trash = c.existing.is_some_and(|id| app.session.catalog.photo(lightcraft_catalog::PhotoId(id)).is_some_and(|p| p.deleted));
+    let on = d.checked.get(i).copied().unwrap_or(false) && d.importable(i);
+    match (&c.duplicate, &c.error) {
+        // checked with "Leave them", the file goes without `onDeleted`: the engine restores it
+        (Some(_), _) if in_trash && on => Some(if d.on_deleted == "fresh" { "Will be replaced" } else { "Will be restored" }),
+        (Some(_), _) if in_trash => Some("In Recently Deleted"),
+        (Some(r), _) if r == "path" || r == "library" => Some("In library"),
+        (Some(_), _) => Some("Duplicate"),
+        (None, Some(_)) => Some("Unreadable"),
+        _ => None,
+    }
+}
+
+/// The "Raw" tag a raw file's thumbnail carries, its top right corner at `corner`.
+fn raw_tag(p: &egui::Painter, corner: egui::Pos2, t: &Tokens) {
+    let g = p.layout_no_wrap(crate::i18n::tr("Raw").to_string(), t.semibold(10.5), Color32::BLACK);
+    let r = Rect::from_min_size(corner - vec2(g.size().x + 8.0, 0.0), g.size() + vec2(8.0, 4.0));
+    p.rect(r, 2.0, Color32::from_white_alpha(235), Stroke::new(1.0, Color32::from_black_alpha(120)), StrokeKind::Inside);
+    p.galley(r.min + vec2(4.0, 2.0), g, Color32::BLACK);
+}
+
 /// Skipped candidates: (already in the library, identical copies within the source, in Recently
 /// Deleted). Files of photos in Recently Deleted are not "already in the library", and a file with
 /// the same bytes as one earlier in the list (no library photo) is a copy in the source.
@@ -928,6 +1250,7 @@ fn dup_counts(d: &ImportDialog) -> (usize, usize, usize) {
 
 /// The dialog body: options, then the candidate grid.
 pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDialog) {
+    crate::camera_import::refresh(app, d);
     let t = Tokens::get(ui.ctx());
     let n = d.candidates.len();
     let (dups, in_source, trashed) = dup_counts(d);
@@ -970,11 +1293,12 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDialog) {
             }
         });
     }
-    // candidate grid
+    device_row(ui, d, false);
+    // candidate grid, under a heading per day (with a box that checks the day's photos)
     let cell = 116.0;
     let avail = ui.available_width();
     let cols = ((avail + 6.0) / (cell + 6.0)).floor().max(1.0) as usize;
-    let rows = n.div_ceil(cols);
+    let (blocks, total_h) = grid_blocks(d, cols, DAY_HEAD, cell + 26.0);
     // as tall as the window leaves after the options and buttons below it (measured last frame),
     // so resizing the dialog resizes the grid
     let below = ui.ctx().data(|m| {
@@ -984,15 +1308,28 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDialog) {
     let grid_h = grid_height(ui.available_height(), below.unwrap_or(DEFAULT_BELOW_GRID), cell + 26.0);
     let grid =
         egui::ScrollArea::vertical().id_salt("import-grid").max_height(grid_h).auto_shrink([false, false]).show_viewport(ui, |ui, viewport| {
-            let (area, _) = ui.allocate_exact_size(vec2(avail, rows as f32 * (cell + 26.0)), Sense::hover());
-            for i in 0..n {
-                let (c, r) = (i % cols, i / cols);
-                let local = Rect::from_min_size(pos2(c as f32 * (cell + 6.0), r as f32 * (cell + 26.0)), vec2(cell, cell + 20.0));
-                if !local.intersects(viewport.expand(cell)) {
-                    continue;
+            let (area, _) = ui.allocate_exact_size(vec2(avail, total_h), Sense::hover());
+            for b in &blocks {
+                match b {
+                    Block::Day { group, top } => {
+                        let local = Rect::from_min_size(pos2(0.0, *top), vec2(avail, DAY_HEAD));
+                        if local.intersects(viewport) {
+                            day_row(ui, d, group, local.translate(area.min.to_vec2()), false);
+                        }
+                    }
+                    Block::Cells { range, top } => {
+                        for i in range.clone() {
+                            let k = i - range.start;
+                            let (c, r) = (k % cols, k / cols);
+                            let local = Rect::from_min_size(pos2(c as f32 * (cell + 6.0), top + r as f32 * (cell + 26.0)), vec2(cell, cell + 20.0));
+                            if !local.intersects(viewport.expand(cell)) {
+                                continue;
+                            }
+                            let rect = local.translate(area.min.to_vec2());
+                            candidate_cell(app, ui, d, i, rect);
+                        }
+                    }
                 }
-                let rect = local.translate(area.min.to_vec2());
-                candidate_cell(app, ui, d, i, rect);
             }
         });
     if !ui.is_sizing_pass() {
@@ -1006,6 +1343,7 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDialog) {
 /// as the screen, three across, each with a check badge a tap toggles; the options under a
 /// disclosure below. The page's bar has Cancel and Add (`dialogs::ok_label`).
 pub fn mobile_body(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDialog) {
+    crate::camera_import::refresh(app, d);
     let t = Tokens::get(ui.ctx());
     let n = d.candidates.len();
     let dups = d.candidates.iter().filter(|c| c.duplicate.is_some()).count();
@@ -1037,20 +1375,35 @@ pub fn mobile_body(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDia
     if dups > 0 {
         ui.label(egui::RichText::new(crate::i18n::tr_format!("· {dups} already in the library", dups = dups)).color(t.text_dim).size(13.0));
     }
-    // the grid runs to the page's edges
+    device_row(ui, d, true);
+    // the grid runs to the page's edges, under a heading per day (as Lightroom's mobile app has it)
     let gap = 2.0;
     let margin = 16.0;
     let w = ui.available_width() + 2.0 * margin;
     let cell = ((w - 2.0 * gap) / 3.0).floor();
-    let rows = n.div_ceil(3);
-    let (area, _) = ui.allocate_exact_size(vec2(ui.available_width(), rows as f32 * (cell + gap)), Sense::hover());
+    let (blocks, total_h) = grid_blocks(d, 3, MOBILE_DAY_HEAD, cell + gap);
+    let (area, _) = ui.allocate_exact_size(vec2(ui.available_width(), total_h), Sense::hover());
     let left = area.left() - margin;
     let clip = ui.clip_rect();
-    for i in 0..n {
-        let (c, r) = (i % 3, i / 3);
-        let rect = Rect::from_min_size(pos2(left + c as f32 * (cell + gap), area.top() + r as f32 * (cell + gap)), vec2(cell, cell));
-        if rect.intersects(clip) {
-            mobile_cell(app, ui, d, i, rect);
+    for b in &blocks {
+        match b {
+            Block::Day { group, top } => {
+                let rect = Rect::from_min_size(pos2(area.left(), area.top() + top), vec2(area.width(), MOBILE_DAY_HEAD));
+                if rect.intersects(clip) {
+                    day_row(ui, d, group, rect, true);
+                }
+            }
+            Block::Cells { range, top } => {
+                for i in range.clone() {
+                    let k = i - range.start;
+                    let (c, r) = (k % 3, k / 3);
+                    let rect =
+                        Rect::from_min_size(pos2(left + c as f32 * (cell + gap), area.top() + top + r as f32 * (cell + gap)), vec2(cell, cell));
+                    if rect.intersects(clip) {
+                        mobile_cell(app, ui, d, i, rect);
+                    }
+                }
+            }
         }
     }
     ui.add_space(8.0);
@@ -1070,15 +1423,8 @@ fn mobile_cell(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDialog,
     register(ui.ctx(), format!("import:{i}"), rect);
     let p = ui.painter_at(rect.intersect(ui.clip_rect()));
     p.rect_filled(rect, 0.0, t.cell);
-    let slot = Slot::Import(i as u32);
-    if !app.renderer.textures.contains_key(&slot)
-        && let Some(job) = app.session.candidate_thumb_job(&c, 256, i as u64)
-    {
-        app.renderer.request_quick(slot, job, 4);
-    }
-    if let Some(tex) = app.renderer.textures.get(&slot) {
+    if let Some((tex, [tw, th])) = cell_texture(app, ui.ctx(), d, i, &c, 256) {
         // fill the square, cropping the long side (as the grid's square thumbnails do)
-        let [tw, th] = tex.size;
         let (tw, th) = (tw.max(1) as f32, th.max(1) as f32);
         let uv = if tw > th {
             let k = th / tw;
@@ -1087,7 +1433,7 @@ fn mobile_cell(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDialog,
             let k = tw / th;
             Rect::from_min_max(pos2(0.0, (1.0 - k) / 2.0), pos2(1.0, (1.0 + k) / 2.0))
         };
-        p.image(tex.tex.id(), rect, uv, if ok { Color32::WHITE } else { Color32::from_gray(90) });
+        p.image(tex, rect, uv, if ok { Color32::WHITE } else { Color32::from_gray(90) });
     }
     let on = d.checked.get(i).copied().unwrap_or(false) && ok;
     if !on {
@@ -1102,19 +1448,14 @@ fn mobile_cell(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDialog,
             p.circle(c0, 11.0, Color32::from_black_alpha(60), Stroke::new(1.5, Color32::WHITE));
         }
     }
-    let in_trash = c.existing.is_some_and(|id| app.session.catalog.photo(lightcraft_catalog::PhotoId(id)).is_some_and(|p| p.deleted));
-    let tag = match (&c.duplicate, &c.error) {
-        (Some(_), _) if in_trash => Some("In Recently Deleted"),
-        (Some(r), _) if r == "path" => Some("In library"),
-        (Some(_), _) => Some("Duplicate"),
-        (None, Some(_)) => Some("Unreadable"),
-        _ => None,
-    };
-    if let Some(b) = tag {
+    if let Some(b) = candidate_tag(app, d, i, &c) {
         let g = p.layout_no_wrap(crate::i18n::tr(b).to_string(), t.semibold(11.0), Color32::WHITE);
         let br = Rect::from_min_size(rect.min + vec2(6.0, 6.0), g.size() + vec2(10.0, 6.0));
         p.rect_filled(br, 5.0, Color32::from_black_alpha(170));
         p.galley(br.min + vec2(5.0, 3.0), g, Color32::WHITE);
+    }
+    if is_raw(&c) {
+        raw_tag(&p, rect.right_top() + vec2(-6.0, 6.0), &t);
     }
     if resp.clicked()
         && ok
@@ -1148,17 +1489,19 @@ fn options(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDialog) {
     }
     if d.staged {
         // the host's temporary copies: into the library, nothing to choose
-        let r = ui.label(
-            egui::RichText::new(crate::i18n::tr("The photos are copied into the library; the originals in Photos or Files are left as they are."))
-                .color(t.text_dim)
-                .small(),
-        );
+        let help = if d.camera.is_some() {
+            "The photos are copied into the library; the originals on the camera or card are left as they are."
+        } else {
+            "The photos are copied into the library; the originals in Photos or Files are left as they are."
+        };
+        let r = ui.label(egui::RichText::new(crate::i18n::tr(help)).color(t.text_dim).small());
         register(ui.ctx(), "label:importModeHelp", r.rect);
     } else {
         transfer_choice(app, ui, d);
     }
     if d.copy {
-        field(ui, if d.move_files { "Move to" } else { "Copy to" }, |ui| {
+        // (the host's own copies are moved, but to the user the photos are copied: the originals stay)
+        field(ui, if d.move_files && !d.staged { "Move to" } else { "Copy to" }, |ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
             let shown = if d.destination.trim().is_empty() { crate::i18n::tr("Library Originals").to_string() } else { d.destination.clone() };
             ui.label(egui::RichText::new(shown).color(Tokens::get(ui.ctx()).text_label));
@@ -1416,20 +1759,13 @@ fn candidate_cell(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDial
     register(ui.ctx(), format!("import:{i}"), img);
     let p = ui.painter();
     p.rect_filled(img, 3.0, Color32::from_gray(30));
-    // thumbnail (background job; the grid only asks for the cells in view)
-    let slot = Slot::Import(i as u32);
-    if !app.renderer.textures.contains_key(&slot)
-        && let Some(job) = app.session.candidate_thumb_job(&c, 192, i as u64)
-    {
-        app.renderer.request_quick(slot, job, 4);
-    }
-    if let Some(tex) = app.renderer.textures.get(&slot) {
-        let [tw, th] = tex.size;
-        let s = ((img.width() - 8.0) / tw as f32).min((img.height() - 8.0) / th as f32);
+    if let Some((tex, [tw, th])) = cell_texture(app, ui.ctx(), d, i, &c, 192) {
+        let s = ((img.width() - 8.0) / tw.max(1) as f32).min((img.height() - 8.0) / th.max(1) as f32);
         let fit = Rect::from_center_size(img.center(), vec2(tw as f32 * s, th as f32 * s));
         let tint = if ok { Color32::WHITE } else { Color32::from_gray(110) };
-        p.image(tex.tex.id(), fit, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), tint);
+        ui.painter().image(tex, fit, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), tint);
     }
+    let p = ui.painter();
     let on = d.checked[i] && ok;
     if on {
         p.rect_stroke(img, 3.0, Stroke::new(2.0, t.accent), StrokeKind::Inside);
@@ -1441,17 +1777,10 @@ fn candidate_cell(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDial
         p.line_segment([cb.left_center() + vec2(3.5, 0.5), cb.center_bottom() + vec2(-1.0, -4.0)], Stroke::new(2.0, Color32::WHITE));
         p.line_segment([cb.center_bottom() + vec2(-1.0, -4.0), cb.right_top() + vec2(-3.5, 4.0)], Stroke::new(2.0, Color32::WHITE));
     }
-    let in_trash = c.existing.is_some_and(|id| app.session.catalog.photo(lightcraft_catalog::PhotoId(id)).is_some_and(|p| p.deleted));
-    let badge = match (&c.duplicate, &c.error) {
-        // checked with "Leave them", the file goes without `onDeleted`: the engine restores it
-        (Some(_), _) if in_trash && on => Some(if d.on_deleted == "fresh" { "Will be replaced" } else { "Will be restored" }),
-        (Some(_), _) if in_trash => Some("In Recently Deleted"),
-        (Some(r), _) if r == "path" => Some("In library"),
-        (Some(_), _) => Some("Duplicate"),
-        (None, Some(_)) => Some("Unreadable"),
-        _ => None,
-    };
-    if let Some(b) = badge {
+    if is_raw(&c) {
+        raw_tag(p, img.right_bottom() + vec2(-6.0, -6.0 - 15.0), &t);
+    }
+    if let Some(b) = candidate_tag(app, d, i, &c) {
         let g = p.layout_no_wrap(crate::i18n::tr(b).to_string(), t.semibold(10.0), Color32::WHITE);
         let br = badge_rect(img, cb, g.size());
         p.rect_filled(br, 3.0, Color32::from_rgba_unmultiplied(170, 60, 50, 220));
@@ -1461,7 +1790,7 @@ fn candidate_cell(app: &mut LightcraftApp, ui: &mut egui::Ui, d: &mut ImportDial
     p.text(pos2(rect.left() + 2.0, img.bottom() + 9.0), Align2::LEFT_CENTER, name, t.font(10.5), if ok { t.text_label } else { t.text_dim });
     let tip = format!(
         "{}\n{} × {} · {} · {:.1} MB{}",
-        c.path,
+        if d.camera.is_some() { &c.name } else { &c.path },
         c.width,
         c.height,
         c.format,
@@ -1696,6 +2025,96 @@ mod tests {
         assert_eq!(grid_height(700.0, -50.0, 142.0), 700.0);
         assert_eq!(grid_height(700.0, f32::NAN, 142.0), 700.0);
         assert_eq!(grid_height(f32::INFINITY, 300.0, 142.0), DIALOG_SIZE[1] - DEFAULT_BELOW_GRID);
+    }
+
+    fn dated(name: &str, captured: Option<&str>) -> ImportCandidate {
+        ImportCandidate {
+            path: format!("/card/{name}"),
+            name: name.into(),
+            format: "JPG".into(),
+            captured: captured.map(str::to_string),
+            ..Default::default()
+        }
+    }
+
+    /// Candidates are listed by day, newest first, undated last; each day's box checks or unchecks
+    /// the day's importable photos, and says when only some are checked.
+    #[test]
+    fn candidates_are_grouped_by_day() {
+        let mut c = vec![
+            dated("a.jpg", Some("2026-08-03T09:00:00")),
+            dated("x.jpg", None),
+            dated("b.jpg", Some("2026-10-03T10:00:00")),
+            dated("c.jpg", Some("2026-08-03T09:05:00")),
+            dated("d.jpg", Some("2026-10-03 11:00:00")),
+        ];
+        sort_by_day(&mut c);
+        let names: Vec<&str> = c.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, ["b.jpg", "d.jpg", "a.jpg", "c.jpg", "x.jpg"], "newest day first, order kept within a day");
+        c[3].duplicate = Some("library".into());
+        let mut d = ImportDialog::new(c);
+        let g = d.groups();
+        assert_eq!(
+            g.iter().map(|g| (g.day.clone(), g.range.clone())).collect::<Vec<_>>(),
+            [(Some("2026-10-03".to_string()), 0..2), (Some("2026-08-03".to_string()), 2..4), (None, 4..5)]
+        );
+        assert_eq!(d.range_checked(2..4), Some(true), "the duplicate doesn't count");
+        d.toggle_range(2..4);
+        assert_eq!(d.checked, [true, true, false, false, true]);
+        d.click(0, false);
+        assert_eq!(d.range_checked(0..2), None, "some");
+        d.toggle_range(0..2);
+        assert_eq!(d.range_checked(0..2), Some(true), "some: the box checks them all");
+        d.toggle_range(3..4);
+        assert!(!d.checked[3], "a duplicate is never checked");
+        assert!(is_raw(&ImportCandidate { path: "/card/x.CR3".into(), ..Default::default() }) && !is_raw(&d.candidates[0]));
+    }
+
+    /// A day's box checks as Check All does: with "Leave them", a file in Recently Deleted stays out
+    /// unless it was clicked, and the box still reads as all checked (issue #1285).
+    #[test]
+    fn a_days_box_leaves_out_recently_deleted_files_as_check_all_does() {
+        let mut d = ImportDialog::new(vec![dated("a.jpg", Some("2026-08-03T09:00:00")), dated("b.jpg", Some("2026-08-03T09:05:00"))]);
+        d.candidates[1].duplicate = Some("content".into());
+        d.set_trashed(vec![false, true]);
+        d.set_on_deleted("");
+        assert_eq!(d.checked, [true, false]);
+        assert_eq!(d.range_checked(0..2), Some(true), "the left-out file doesn't count");
+        d.toggle_range(0..2);
+        assert_eq!(d.checked, [false, false]);
+        d.toggle_range(0..2);
+        assert_eq!(d.checked, [true, false], "the box doesn't pick it");
+        d.click(1, false);
+        assert_eq!(d.range_checked(0..2), Some(true), "picked by hand, it counts");
+        d.toggle_range(0..2);
+        assert_eq!(d.checked, [false, false], "and the box unchecks it");
+        assert!(!d.range_enabled(1..2), "a box over it alone has nothing to check");
+        d.click(1, false);
+        assert!(d.range_enabled(1..2), "once it is clicked, the box can uncheck it");
+    }
+
+    /// A camera's files as they arrive: supported formats only, by day; the user's checks stay as
+    /// more arrive; files the library has are not importable.
+    #[test]
+    fn camera_files_keep_their_checks_as_more_arrive() {
+        let file = |name: &str, day: &str| lightcraft_engine::devices::CameraFile {
+            id: format!("id-{name}"),
+            name: name.into(),
+            size: 10,
+            captured: Some(format!("{day}T10:00:00")),
+            ..Default::default()
+        };
+        let mut d = ImportDialog::new(Vec::new());
+        d.set_camera_files(vec![file("A.JPG", "2026-08-03"), file("B.JPG", "2026-08-03")], |_| None);
+        d.click(0, false);
+        assert_eq!(d.selected_paths(), ["id-B.JPG"]);
+        let all = vec![file("A.JPG", "2026-08-03"), file("B.JPG", "2026-08-03"), file("C.CR3", "2026-10-03"), file("clip.MOV", "2026-10-03")];
+        d.set_camera_files(all, |f| (f.name == "B.JPG").then_some(7));
+        let names: Vec<&str> = d.candidates.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, ["C.CR3", "A.JPG", "B.JPG"]);
+        assert_eq!(d.selected_paths(), ["id-C.CR3"], "A stays unchecked, B is in the library, C arrives checked");
+        assert_eq!(d.candidates[2].existing, Some(7));
+        assert!(!d.importable(2));
     }
 
     /// Six candidates, all checked; candidate 3 is a duplicate (unchecked, not importable).

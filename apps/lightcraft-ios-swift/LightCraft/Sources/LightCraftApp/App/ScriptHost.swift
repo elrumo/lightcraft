@@ -67,6 +67,9 @@ final class ScriptHost {
             if let group = params["group"].string {
                 model.prefs.editGroup = group
             }
+            if let style = params["editStyle"].string, let s = Prefs.EditStyle(rawValue: style) {
+                model.prefs.editStyle = s
+            }
             if let select = params["select"].bool {
                 model.selectMode = select
             }

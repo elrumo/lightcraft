@@ -71,7 +71,6 @@ enum MaskList {
 /// over the photo ([`MaskColumn`]).
 struct MaskingTools: View {
     @Environment(AppModel.self) private var model
-    @State private var base: Int?
     @State private var group: String?
 
     var body: some View {
@@ -90,11 +89,9 @@ struct MaskingTools: View {
                     .padding(.horizontal, 16)
             }
             MaskGroupRow(selection: $group, enabled: mask != nil)
-            ScreenBar(title: "Masking", base: base)
         }
-        .padding(.top, 8)
+        .padding(.vertical, 8)
         .animation(.snappy, value: group)
-        .task { base = await undoDepth(model) }
         .onChange(of: mask == nil) { _, none in
             if none { group = nil }
         }
@@ -105,8 +102,6 @@ struct MaskingTools: View {
 private struct MaskGroupRow: View {
     @Binding var selection: String?
     let enabled: Bool
-    @ScaledMetric(relativeTo: .body) private var iconSize: CGFloat = 18
-    @ScaledMetric(relativeTo: .caption2) private var labelSize: CGFloat = 11
 
     static let groups: [(id: String, label: String, symbol: String)] = [
         ("mask", "Mask", "circle.dashed.inset.filled"), ("light", "Light", "sun.max"), ("color", "Color", "drop"),
@@ -122,32 +117,13 @@ private struct MaskGroupRow: View {
     ]
 
     var body: some View {
-        HStack(spacing: 0) {
-            ForEach(Self.groups, id: \.id) { g in
-                let on = enabled && selection == g.id
-                Button {
-                    selection = on ? nil : g.id
-                } label: {
-                    VStack(spacing: 3) {
-                        Image(systemName: g.symbol).font(.system(size: iconSize))
-                        Text(LocalizedStringKey(g.label)).font(.system(size: labelSize)).lineLimit(1).minimumScaleFactor(0.7)
-                    }
-                    .foregroundStyle(on ? Color.accentColor : Color.primary)
-                    .frame(width: 58)
-                    .frame(minHeight: 52)
-                    .background {
-                        if on { Capsule().fill(.thinMaterial) }
-                    }
-                    .contentShape(Rectangle())
-                }
-                .accessibilityAddTraits(on ? .isSelected : [])
-                .frame(maxWidth: .infinity)
-            }
-        }
-        .buttonStyle(.plain)
-        .disabled(!enabled)
+        GroupChips(
+            items: Self.groups.map { .init(id: $0.id, label: $0.label, symbol: $0.symbol) },
+            selected: selection,
+            enabled: enabled,
+            choose: { selection = selection == $0 ? nil : $0 }
+        )
         .opacity(enabled ? 1 : 0.4)
-        .padding(.horizontal, 8)
         .haptic(.selection, trigger: selection)
     }
 }
@@ -268,41 +244,55 @@ private struct ShapeSlider: View {
     }
 }
 
-/// The selected mask's adjustments in `ids` (`mask.controls` specs; `mask.adjust` values).
+/// The selected mask's adjustments in `ids` (`mask.controls` specs; `mask.adjust` values), as
+/// sliders or dials (the Edit tool's style).
 struct MaskAdjustments: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.toolColumn) private var column
     let mask: JSONValue
     let ids: [String]
     @State private var specs: [ControlSpec] = []
     @State private var local: [String: Double] = [:]
 
     var body: some View {
-        VStack(alignment: .leading) {
-            ForEach(specs.filter { ids.contains($0.id) }) { spec in
-                ControlSlider(
-                    spec: spec,
-                    value: local[spec.id] ?? spec.value ?? spec.default,
-                    set: { v in
-                        local[spec.id] = v
-                        model.engine?.send("engine.execute", ["command": "mask.adjust", "params": ["id": mask, "values": .object([spec.id: .double(v)])]])
-                        model.requestDraft()
-                    },
-                    editing: { began in
-                        model.engine?.send("engine.execute", ["command": began ? "develop.beginInteraction" : "develop.endInteraction", "params": ["label": .string(spec.label)]])
-                    },
-                    reset: {
-                        local[spec.id] = spec.default
-                        model.perform("mask.adjust", ["id": mask, "values": .object([spec.id: .double(spec.default)])])
+        let shown = specs.filter { ids.contains($0.id) }
+        Group {
+            if model.prefs.dials(column: column) {
+                DialAdjuster(dials: shown.map(Dial.control), value: value, set: set, editing: editing, reset: reset)
+                    .id(ids)
+            } else {
+                VStack(alignment: .leading) {
+                    ForEach(shown) { spec in
+                        ControlSlider(spec: spec, value: value(spec), set: { set(spec, $0) }, editing: { editing(spec, $0) }, reset: { reset(spec) })
                     }
-                )
+                }
+                .padding(.horizontal, 16)
             }
         }
-        .padding(.horizontal, 16)
         .task(id: Key(mask: mask, revision: model.state.catalogRevision)) {
             guard let engine = model.engine, let r = try? await engine.execute("mask.controls", ["id": mask], as: [ControlSpec].self) else { return }
             specs = r
             local = [:]
         }
+    }
+
+    private func value(_ spec: ControlSpec) -> Double {
+        local[spec.id] ?? spec.value ?? spec.default
+    }
+
+    private func set(_ spec: ControlSpec, _ v: Double) {
+        local[spec.id] = v
+        model.engine?.send("engine.execute", ["command": "mask.adjust", "params": ["id": mask, "values": .object([spec.id: .double(v)])]])
+        model.requestDraft()
+    }
+
+    private func editing(_ spec: ControlSpec, _ began: Bool) {
+        model.engine?.send("engine.execute", ["command": began ? "develop.beginInteraction" : "develop.endInteraction", "params": ["label": .string(spec.label)]])
+    }
+
+    private func reset(_ spec: ControlSpec) {
+        local[spec.id] = spec.default
+        model.perform("mask.adjust", ["id": mask, "values": .object([spec.id: .double(spec.default)])])
     }
 
     private nonisolated struct Key: Hashable {
@@ -494,10 +484,11 @@ private struct CreateMaskMenu: View {
                 }
             }
         } label: {
-            Image(systemName: "plus").font(.title3.weight(.semibold)).foregroundStyle(.white)
-                .frame(width: 48, height: 48)
-                .background(Circle().fill(Color.accentColor))
+            Image(systemName: "plus").font(.title3.weight(.semibold))
+                .frame(width: 36, height: 36)
         }
+        .buttonStyle(.glassProminent)
+        .buttonBorderShape(.circle)
         .accessibilityLabel("Create New Mask")
     }
 

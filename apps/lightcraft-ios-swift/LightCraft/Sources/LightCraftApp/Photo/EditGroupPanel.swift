@@ -7,19 +7,149 @@ import SwiftUI
 /// flyouts (Tone Curve, Color Mixer, Color Grading).
 struct EditGroupPanel: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.toolColumn) private var column
 
     var body: some View {
         let group = EditGroup(rawValue: model.prefs.editGroup) ?? .light
         VStack(alignment: .leading, spacing: 4) {
-            switch group {
-            case .profile: ProfileGroup()
-            case .light: LightGroup()
-            case .color: ColorGroup()
-            case .effects: EffectsGroup()
-            default: Sliders(section: group.sections.first ?? "")
+            if group != .profile, model.prefs.dials(column: column) {
+                DialGroupPanel(group: group)
+            } else {
+                switch group {
+                case .profile: ProfileGroup()
+                case .light: LightGroup()
+                case .color: ColorGroup()
+                case .effects: EffectsGroup()
+                default: Sliders(section: group.sections.first ?? "")
+                }
             }
         }
         .task(id: group) { model.editor.want(group.sections, model) }
+    }
+}
+
+/// The Edit tool's open group as dials (the Dials style): its sliders, and its switches (HDR,
+/// B&W), choices (white balance, vignette style) and pages (Curve, Color Mixer, Point Color, Color
+/// Grading, the SDR rendition) as dials of their own.
+private struct DialGroupPanel: View {
+    @Environment(AppModel.self) private var model
+    let group: EditGroup
+    @State private var page: DialPage?
+
+    var body: some View {
+        let editor = model.editor
+        DialAdjuster(
+            dials: dials,
+            value: { editor.value($0) },
+            set: { editor.set($0, $1, model) },
+            editing: { editor.editing($0, $1, model) },
+            reset: { editor.reset($0, model) },
+            open: { page = $0 }
+        )
+        // each group starts at its first control
+        .id(group)
+        .sheet(item: $page) { DialPageSheet(page: $0).environment(model) }
+    }
+
+    private var dials: [Dial] {
+        let editor = model.editor
+        switch group {
+        case .light:
+            let hdr = editor.hdr
+            var d = [Dial(id: "hdr", label: "HDR", symbol: "sun.max.trianglebadge.exclamationmark", kind: .toggle(hdr) { model.perform("develop.hdr", ["enabled": .bool($0)]) })]
+            if hdr {
+                d += editor.specs("light").filter { $0.id == "hdr.maxEv" }.map(Dial.control)
+                d.append(Dial(id: "visualizeHdr", label: "Visualize HDR", symbol: "eye", kind: .toggle(editor.visualizeHdr) { editor.visualizeHdr = $0 }))
+            }
+            d += editor.specs("light").filter { !$0.id.hasPrefix("hdr.") }.map(Dial.control)
+            if hdr { d.append(Dial(id: "sdr", label: "SDR Rendition", symbol: "sun.min", kind: .page(.sdr))) }
+            d.append(Dial(id: "curve", label: "Curve", symbol: "point.topleft.down.to.point.bottomright.curvepath", kind: .page(.curve)))
+            return d
+        case .color:
+            let mode = editor.setting("wb", "mode").string ?? "asShot"
+            var d = [
+                Dial(id: "wbMode", label: "White Balance", symbol: "thermometer.sun", kind: .choice(ColorGroup.modes, mode) { model.perform("develop.wb", ["mode": .string($0)]) }),
+                Dial(id: "wbPick", label: "White Balance Selector", symbol: "eyedropper", kind: .action {
+                    editor.picking = .whiteBalance
+                    model.show(String(localized: "Tap something white or grey in the photo"))
+                }),
+                Dial(id: "bw", label: "B&W", symbol: "circle.lefthalf.striped.horizontal", kind: .toggle(editor.isBW) { _ in model.perform("develop.treatment") }),
+            ]
+            d += editor.specs("color").map(Dial.control)
+            d.append(Dial(id: "mixer", label: editor.isBW ? "B&W Mixer" : "Color Mixer", symbol: "paintpalette", kind: .page(.mixer)))
+            if !editor.isBW {
+                d.append(Dial(id: "pointColor", label: "Point Color", symbol: "eyedropper.halffull", kind: .page(.pointColor)))
+            }
+            d.append(Dial(id: "grading", label: "Color Grading", symbol: "circle.hexagongrid", kind: .page(.grading)))
+            return d
+        case .effects:
+            let style = editor.setting("vignette", "style").string ?? "highlight"
+            var d = editor.specs("effects").map(Dial.control)
+            d.append(Dial(id: "vignetteStyle", label: "Vignette Style", symbol: "circle.dashed", kind: .choice(EffectsGroup.styles, style) {
+                model.perform("develop.merge", ["settings": ["vignette": ["style": .string($0)]], "label": "Vignette Style"])
+            }))
+            d += editor.specs("vignette").map(Dial.control)
+            d += editor.specs("grain").map(Dial.control)
+            return d
+        default:
+            return group.sections.flatMap { editor.specs($0) }.map(Dial.control)
+        }
+    }
+}
+
+/// A dial's page: the controls that need more room than a ruler, over the photo's lower half (the
+/// photo above stays live, to tap a colour in it).
+private struct DialPageSheet: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    let page: DialPage
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 4) {
+                    switch page {
+                    case .curve: CurveEditor()
+                    case .mixer: MixerView()
+                    case .pointColor: PointColorView()
+                    case .grading: GradingView()
+                    case .sdr: Sliders(section: "light") { $0.id.hasPrefix("hdr.sdr") }
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 12)
+            }
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(role: .confirm) { dismiss() }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .presentationBackgroundInteraction(.enabled(upThrough: .medium))
+        // as dark as the editor it opens over
+        .preferredColorScheme(.dark)
+        .task {
+            switch page {
+            case .curve: model.editor.want(["curve"], model)
+            case .mixer: model.editor.want(["mixer", "bwMix"], model)
+            case .pointColor: model.editor.want(["pointColor"], model)
+            case .grading: model.editor.want(["grading"], model)
+            case .sdr: break
+            }
+        }
+    }
+
+    private var title: LocalizedStringKey {
+        switch page {
+        case .curve: "Curve"
+        case .mixer: model.editor.isBW ? "B&W Mixer" : "Color Mixer"
+        case .pointColor: "Point Color"
+        case .grading: "Color Grading"
+        case .sdr: "SDR Rendition"
+        }
     }
 }
 
@@ -52,28 +182,17 @@ struct Flyout<Content: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Button {
-                withAnimation(.snappy) { open.toggle() }
-            } label: {
-                HStack {
-                    if let symbol { Image(systemName: symbol).foregroundStyle(.secondary) }
-                    Text(title).font(.subheadline.weight(.semibold))
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .rotationEffect(.degrees(open ? 90 : 0))
-                }
-                .padding(.vertical, 10)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityAddTraits(.isHeader)
-            .accessibilityValue(open ? "Expanded" : "Collapsed")
-            if open {
+            DisclosureGroup(isExpanded: Binding(get: { open }, set: { v in withAnimation(.snappy) { open = v } })) {
                 content()
-                    .transition(.opacity.combined(with: .move(edge: .top)))
+            } label: {
+                Label {
+                    Text(title).font(.subheadline.weight(.semibold))
+                } icon: {
+                    if let symbol { Image(systemName: symbol).foregroundStyle(.secondary) }
+                }
+                .padding(.vertical, 6)
             }
+            .tint(.primary)
             Divider()
         }
     }
@@ -226,7 +345,7 @@ private struct ColorGroup: View {
     @State private var grading = false
     @State private var point = false
 
-    private static let modes: [(String, LocalizedStringKey)] = [
+    static let modes: [(String, LocalizedStringKey)] = [
         ("asShot", "As Shot"), ("auto", "Auto"), ("daylight", "Daylight"), ("cloudy", "Cloudy"), ("shade", "Shade"),
         ("tungsten", "Tungsten"), ("fluorescent", "Fluorescent"), ("flash", "Flash"),
     ]
@@ -285,19 +404,20 @@ private struct ColorGroup: View {
 private struct EffectsGroup: View {
     @Environment(AppModel.self) private var model
 
+    /// The vignette's styles (`vignette.style`).
+    static let styles: [(String, LocalizedStringKey)] = [("highlight", "Highlight"), ("color", "Color"), ("paint", "Paint")]
+
     var body: some View {
         Sliders(section: "effects")
-        Text("Vignette").font(.subheadline.weight(.semibold)).padding(.top, 8)
+        Text("Vignette").font(.headline).padding(.top, 8).accessibilityAddTraits(.isHeader)
         Picker("Style", selection: Binding(get: { model.editor.setting("vignette", "style").string ?? "highlight" }, set: { style in
             model.perform("develop.merge", ["settings": ["vignette": ["style": .string(style)]], "label": "Vignette Style"])
         })) {
-            Text("Highlight").tag("highlight")
-            Text("Color").tag("color")
-            Text("Paint").tag("paint")
+            ForEach(Self.styles, id: \.0) { Text($0.1).tag($0.0) }
         }
         .pickerStyle(.segmented)
         Sliders(section: "vignette")
-        Text("Grain").font(.subheadline.weight(.semibold)).padding(.top, 8)
+        Text("Grain").font(.headline).padding(.top, 8).accessibilityAddTraits(.isHeader)
         Sliders(section: "grain")
     }
 }

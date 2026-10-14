@@ -329,6 +329,9 @@ pub struct AppSettings {
     /// `confirmDelete: false` by default (#1239).
     #[serde(rename = "askBeforeDelete")]
     pub confirm_delete: bool,
+    /// Open the import when a camera, phone or memory card is connected (Lightroom Classic's "Show
+    /// import dialog when a memory card is detected").
+    pub import_on_connect: bool,
     /// GPU rendering allowed (`app.gpu`).
     pub gpu: bool,
     /// Largest long edge (pixels) the user lets the loupe render at; 0 = Automatic (the size it is
@@ -384,6 +387,7 @@ impl Default for AppSettings {
             recent_libraries: Vec::new(),
             startup_view: StartupView::Last,
             confirm_delete: true,
+            import_on_connect: true,
             gpu: true,
             preview_limit: 0,
             external_editor: String::new(),

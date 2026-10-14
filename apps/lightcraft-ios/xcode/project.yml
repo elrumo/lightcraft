@@ -23,6 +23,8 @@ targets:
         NSLocalNetworkUsageDescription: LightCraft syncs your library with your own LightCraft server, which can be on this network.
         # Save to Photos and Save Image in the share sheet (exports); importing uses the Photos picker, which needs no access
         NSPhotoLibraryAddUsageDescription: LightCraft saves the photos you export to your photo library.
+        # a camera or card reader plugged in (ImageCaptureCore, lightcraft-capture); iOS asks the first time one is opened
+        NSCameraUsageDescription: LightCraft reads the photos on a camera or memory card you connect, so you can import them.
         UILaunchScreen: {}
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
@@ -41,7 +43,7 @@ targets:
         LIBRARY_SEARCH_PATHS: ["$(BUILT_PRODUCTS_DIR)"]
         HEADER_SEARCH_PATHS: ["$(SRCROOT)/../xtool/Sources/LightCraftHost/include"]
         CLANG_ENABLE_OBJC_ARC: YES
-        OTHER_LDFLAGS: [-llightcraft_ios, -lc++, -framework, Metal, -framework, QuartzCore, -framework, UIKit, -framework, Foundation, -framework, CoreGraphics, -framework, CoreFoundation, -framework, Security, -framework, CoreText, -framework, AVFoundation, -framework, CoreMedia, -framework, CoreVideo, -framework, MetalKit, -framework, IOSurface, -framework, PhotosUI, -framework, Photos, -framework, ImageIO, -framework, UniformTypeIdentifiers]
+        OTHER_LDFLAGS: [-llightcraft_ios, -lc++, -framework, Metal, -framework, QuartzCore, -framework, UIKit, -framework, Foundation, -framework, CoreGraphics, -framework, CoreFoundation, -framework, Security, -framework, CoreText, -framework, AVFoundation, -framework, CoreMedia, -framework, CoreVideo, -framework, MetalKit, -framework, IOSurface, -framework, PhotosUI, -framework, Photos, -framework, ImageIO, -framework, UniformTypeIdentifiers, -framework, ImageCaptureCore]
     preBuildScripts:
       - name: Build Rust (cargo)
         script: '"$SRCROOT/build-rust.sh"'

@@ -47,22 +47,12 @@ struct ControlSlider: View {
         .accessibilityLabel(Text(LocalizedStringKey(label ?? spec.label)))
         .accessibilityValue(spec.format(value))
         .accessibilityAdjustableAction { direction in
-            let step = spec.step > 0 ? spec.step : (spec.max - spec.min) / 100
-            let v = direction == .increment ? value + step * 5 : value - step * 5
-            set(clamp(v))
+            set(spec.clamp(direction == .increment ? value + spec.nudge : value - spec.nudge))
         }
         .accessibilityAction(named: "Reset") { reset() }
     }
 
-    private var span: Double { max(spec.max - spec.min, .ulpOfOne) }
-
-    private func fraction(_ v: Double) -> Double { (v - spec.min) / span }
-
-    private func clamp(_ v: Double) -> Double {
-        var x = min(max(v, spec.min), spec.max)
-        if spec.step > 0 { x = (x / spec.step).rounded() * spec.step }
-        return x
-    }
+    private func fraction(_ v: Double) -> Double { (v - spec.min) / spec.span }
 
     private func track(width: CGFloat) -> some View {
         let thumbW: CGFloat = 38
@@ -92,21 +82,23 @@ struct ControlSlider: View {
 
     /// The track: grey, or the control's colours.
     @ViewBuilder private var trackFill: some View {
-        switch spec.track.kind {
-        case "temp":
-            LinearGradient(colors: [Color(red: 0.29, green: 0.52, blue: 0.95), Color(red: 0.95, green: 0.84, blue: 0.29)], startPoint: .leading, endPoint: .trailing)
-        case "tint":
-            LinearGradient(colors: [Color(red: 0.27, green: 0.78, blue: 0.33), Color(red: 0.86, green: 0.31, blue: 0.86)], startPoint: .leading, endPoint: .trailing)
-        case "gradient":
-            LinearGradient(colors: [Color(hex: spec.track.from) ?? .gray, Color(hex: spec.track.to) ?? .accentColor], startPoint: .leading, endPoint: .trailing)
-        case "hue", "rainbow":
-            LinearGradient(colors: Self.hueStops(band: spec.track.band), startPoint: .leading, endPoint: .trailing)
-        case "sat":
-            LinearGradient(colors: [.gray, Self.bandColor(spec.track.band)], startPoint: .leading, endPoint: .trailing)
-        case "lum":
-            LinearGradient(colors: [.black, Self.bandColor(spec.track.band), .white], startPoint: .leading, endPoint: .trailing)
-        default:
+        if let colors = Self.trackColors(spec) {
+            LinearGradient(colors: colors, startPoint: .leading, endPoint: .trailing)
+        } else {
             Color(uiColor: .systemFill)
+        }
+    }
+
+    /// A colour track's colours, low to high (`nil`: a plain grey track).
+    static func trackColors(_ spec: ControlSpec) -> [Color]? {
+        switch spec.track.kind {
+        case "temp": [Color(red: 0.29, green: 0.52, blue: 0.95), Color(red: 0.95, green: 0.84, blue: 0.29)]
+        case "tint": [Color(red: 0.27, green: 0.78, blue: 0.33), Color(red: 0.86, green: 0.31, blue: 0.86)]
+        case "gradient": [Color(hex: spec.track.from) ?? .gray, Color(hex: spec.track.to) ?? .accentColor]
+        case "hue", "rainbow": hueStops(band: spec.track.band)
+        case "sat": [.gray, bandColor(spec.track.band)]
+        case "lum": [.black, bandColor(spec.track.band), .white]
+        default: nil
         }
     }
 
@@ -144,10 +136,8 @@ struct ControlSlider: View {
                 }
                 guard horizontal == true, let start = dragStart else { return }
                 // the value follows the finger's movement across the track's width
-                let v = clamp(start + Double(g.translation.width) / Double(max(trackWidth - 38, 1)) * span)
-                if (value - spec.default) * (v - spec.default) < 0 || ((v == spec.min || v == spec.max) && v != value) {
-                    detents += 1
-                }
+                let v = spec.clamp(start + Double(g.translation.width) / Double(max(trackWidth - 38, 1)) * spec.span)
+                if spec.detent(from: value, to: v) { detents += 1 }
                 if v != value { set(v) }
             }
             .onEnded { _ in
@@ -156,6 +146,26 @@ struct ControlSlider: View {
                 dragStart = nil
             }
     }
+}
+
+extension ControlSpec {
+    /// Its range (never zero).
+    var span: Double { Swift.max(self.max - self.min, .ulpOfOne) }
+
+    /// `v` within the range, on a step.
+    func clamp(_ v: Double) -> Double {
+        var x = Swift.min(Swift.max(v, self.min), self.max)
+        if step > 0 { x = (x / step).rounded() * step }
+        return x
+    }
+
+    /// Moving from `old` to `new` crosses the default or arrives at an end (felt as a tick).
+    func detent(from old: Double, to new: Double) -> Bool {
+        (old - self.default) * (new - self.default) < 0 || ((new == self.min || new == self.max) && new != old)
+    }
+
+    /// One VoiceOver swipe's change.
+    var nudge: Double { (step > 0 ? step : span / 100) * 5 }
 }
 
 extension Color {

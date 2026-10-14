@@ -96,7 +96,6 @@ struct RedEyeCanvas: View {
 /// catchlight), Delete, and ✕ Red Eye ✓.
 struct RedEyeTools: View {
     @Environment(AppModel.self) private var model
-    @State private var base: Int?
 
     var body: some View {
         @Bindable var editor = model.editor
@@ -129,10 +128,8 @@ struct RedEyeTools: View {
             } else {
                 Text("Drag a box around an eye.").font(.footnote).foregroundStyle(.secondary)
             }
-            ScreenBar(title: "Red Eye", base: base)
         }
-        .padding(.top, 8)
-        .task { base = await undoDepth(model) }
+        .padding(.vertical, 8)
         .onAppear { editor.want(["redEye"], model) }
     }
 }
