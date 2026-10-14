@@ -42,12 +42,22 @@ enum Bridge {
         lc_wake(engine)
     }
 
-    /// The pixels of an image event's token, copied; the token is released either way.
-    static func image(token: UInt64) -> PixelImage? {
+    /// The pixels of an image event's token, copied; the token is released either way. With `hdr`, its
+    /// float rendition too (a lease of its own, released either way).
+    static func image(token: UInt64, hdr: HdrRef? = nil) -> PixelImage? {
+        let float = hdr.flatMap { hdrImage(token: $0.token, peak: $0.peak) }
         let image = lc_image(token)
         defer { lc_release(token) }
         guard image.status == LC_OK, let pixels = image.pixels, image.len > 0 else { return nil }
-        return PixelImage(width: Int(image.width), height: Int(image.height), stride: Int(image.stride), rgba: Data(bytes: pixels, count: image.len))
+        return PixelImage(width: Int(image.width), height: Int(image.height), stride: Int(image.stride), rgba: Data(bytes: pixels, count: image.len), hdr: float)
+    }
+
+    /// The RGBA16F pixels of an image event's `hdr` token, copied; released either way.
+    private static func hdrImage(token: UInt64, peak: Double) -> HdrImage? {
+        let image = lc_image(token)
+        defer { lc_release(token) }
+        guard image.status == LC_OK, let pixels = image.pixels, image.len > 0, Int(image.stride) >= Int(image.width) * 8 else { return nil }
+        return HdrImage(width: Int(image.width), height: Int(image.height), stride: Int(image.stride), rgba16f: Data(bytes: pixels, count: image.len), peak: peak)
     }
 
     /// Copy a buffer's bytes and release it: its JSON, or the error it holds.

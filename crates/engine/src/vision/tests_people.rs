@@ -230,6 +230,59 @@ fn faces_survive_a_restart_and_can_be_forgotten() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Gives every face the finder found in `person` an unnamed face region on its photos (as Detect Faces would).
+fn regions_for(s: &mut Session, person: &super::Cluster) {
+    let photos = s.vision_keys();
+    for m in &person.members {
+        for id in photos.get(&m.key).into_iter().flatten() {
+            let [x0, y0, x1, y1] = m.rect;
+            s.execute("photo.addRegion", &json!({"id": id.0, "rect": {"x0": x0, "y0": y0, "x1": x1, "y1": y1}})).unwrap();
+        }
+    }
+}
+
+/// The groups `faces.unnamed` gives, as sets of (photo, region index).
+fn unnamed_groups(s: &mut Session) -> Vec<std::collections::BTreeSet<(u64, u64)>> {
+    let r = s.execute("faces.unnamed", &json!({})).unwrap();
+    let mut out: Vec<std::collections::BTreeSet<(u64, u64)>> = Vec::new();
+    let mut last = None;
+    for f in r["faces"].as_array().unwrap() {
+        let g = f["group"].as_u64().unwrap();
+        if last != Some(g) {
+            assert!(last.is_none_or(|l| g == l + 1), "groups are numbered in order and listed together: {r}");
+            out.push(Default::default());
+            last = Some(g);
+        }
+        out.last_mut().unwrap().insert((f["photo"].as_u64().unwrap(), f["index"].as_u64().unwrap()));
+    }
+    out
+}
+
+#[test]
+fn unnamed_faces_of_one_found_person_are_one_group_here_and_from_the_server() {
+    let mut s = demo();
+    scanned(&mut s);
+    let clusters = s.people_clusters(false).unwrap();
+    let mut big = clusters.iter().filter(|c| c.members.len() > 1);
+    let (a, b) = (big.next().expect("a person with two faces").clone(), big.next().expect("and another").clone());
+    regions_for(&mut s, &a);
+    regions_for(&mut s, &b);
+    // no recognition model here: the finder's people group the faces
+    let groups = unnamed_groups(&mut s);
+    assert_eq!(groups.iter().map(|g| g.len()).collect::<Vec<_>>(), [a.members.len(), b.members.len()], "{groups:?}");
+    assert!(s.execute("faces.unnamed", &json!({})).unwrap()["ordered"] == true);
+
+    // a device that finds no faces itself (web, iOS) groups them by the people the sync server found
+    let mut thin = Session::with_demo();
+    thin.vision.text_edge = 192;
+    regions_for(&mut thin, &a);
+    regions_for(&mut thin, &b);
+    assert_eq!(unnamed_groups(&mut thin).len(), a.members.len() + b.members.len(), "nothing to group them by yet");
+    thin.vision.remote.set_status(Some(json!({"available": true, "faces": {"enabled": true}})));
+    thin.vision.remote.people = Some((web_time::Instant::now(), clusters.clone()));
+    assert_eq!(unnamed_groups(&mut thin), groups, "the same people as the device that found them");
+}
+
 /// A finder that fails, or panics, on every photo.
 struct Broken {
     panic: bool,

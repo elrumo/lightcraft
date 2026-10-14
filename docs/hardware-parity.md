@@ -1,6 +1,6 @@
 # Hardware parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** minor (cameras and card readers: ImageCaptureCore on macOS and iOS, GVfs PTP / MTP on Linux); previously minor (monitor profile from colord on Linux) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-14 · **Change:** minor (HDR display on macOS; cameras and card readers: ImageCaptureCore on macOS and iOS, GVfs PTP / MTP on Linux); previously minor (monitor profile from colord on Linux) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6
 
 What Lightroom does with the machine's hardware, per platform, and what LightCraft does. Sources:
 [gpu-pipeline.md](gpu-pipeline.md), [display-profiles.md](display-profiles.md), [denoise.md](denoise.md),
@@ -11,7 +11,7 @@ What Lightroom does with the machine's hardware, per platform, and what LightCra
 | GPU for display and editing | Metal / DX12, "Use GPU for display / image processing / export" | wgpu Metal: geometry, resize, blur, WB, NR, guided filter, dehaze, masks, finish; CPU fallback per render | DX12 only (Vulkan opt-in, #136) | Vulkan (CPU ↔ GPU equivalence verified on an AMD Radeon 8060S, RADV) | CPU only (no WebGPU yet) | 🟡 defringe, spot removal, heuristic masks, long brushes and high-bit exports stay on CPU |
 | GPU export | ✅ | ✅ (6000 × 4000 in ~0.3 s vs ~1.2 s CPU) | ✅ | ✅ | — | ✅ (black-export fix on an Intel iGPU, #78) |
 | AI on GPU / neural engine | Metal / DirectML / Core ML, model per feature | AI denoise on GPU or CPU (setting); SAM 3 on Metal via candle; faces on CPU | CPU / GPU denoise | CPU / GPU denoise | — | 🟡 no Core ML / Neural Engine / DirectML |
-| HDR (EDR) display | ✅ (macOS EDR, Windows HDR) | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ (LR-VIEW-HDR-DISPLAY) |
+| HDR (EDR) display | ✅ (macOS EDR, Windows HDR) | ✅ the loupe of an HDR edit, while the window's screen has headroom ([hdr-display](hdr-display.md)) | ⬜ | ⬜ | ⬜ | 🟡 macOS and the SwiftUI app only (LR-VIEW-HDR-DISPLAY) |
 | Monitor profile | automatic per display, follows the window | ✅ the screen's profile, followed across screens | 🟡 picked by hand (WCS needs FFI) | 🟡 colord's profile (one display, or all sharing one); no follow across monitors | — | 🟡 Windows OS profile not read; Linux per-monitor follow missing |
 | Second window / second monitor | ✅ (Classic) | ✅ (⌘F11) | ✅ | ✅ | — | ✅ (Classic secondary-window keys missing) |
 | Pen pressure / tilt (brush masks) | ✅ pressure for size / flow | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
@@ -26,7 +26,7 @@ What Lightroom does with the machine's hardware, per platform, and what LightCra
 ## Score
 
 **~40% ready** (estimated): the GPU editing path is real and fast (measured: 24 MP exposure drag
-3.9 ms on GPU vs 22–42 ms CPU; NR drag 18 ms vs 301–471 ms), but HDR display, pen pressure,
+3.9 ms on GPU vs 22–42 ms CPU; NR drag 18 ms vs 301–471 ms), but HDR display on Windows and Linux, pen pressure,
 tethering, printing, automatic monitor profiles and neural-engine inference are missing. GPU
 correctness is proven on Apple GPUs and on one AMD GPU on Linux (Radeon 8060S, Vulkan / RADV: the
 equivalence suite passes with the same max 1–2 LSB as on Metal, [gpu-pipeline.md](gpu-pipeline.md#correctness-cpu-oracle-and-equivalence-tests)).
@@ -36,7 +36,7 @@ NVIDIA, Intel and Windows DX12 still rely on user reports.
 
 | Work | Hours | Needs |
 |---|---:|---|
-| HDR display (EDR on macOS, Windows HDR, Linux where possible) | 10–20 | an HDR display to verify (human) |
+| HDR display on Windows (scRGB / HDR10) and Linux (Wayland colour management); macOS EDR done | 5–10 | an HDR display on each (human) |
 | OS monitor profile: Windows WCS (an FFI helper crate, like `crates/sysmem`), follow the window across displays on Linux | 4–8 | multi-monitor setup |
 | Pen pressure for brush masks (winit tablet events or a pure-Rust tablet layer) | 6–12 | a tablet |
 | Remaining stages on GPU (defringe, spot removal, masks) | 10–20 | |
@@ -49,6 +49,7 @@ NVIDIA, Intel and Windows DX12 still rely on user reports.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-14 | minor | HDR (EDR) display on macOS: the loupe of an HDR edit through a float surface; Windows and Linux remain |
 | 2026-10-13 | minor | Cameras and card readers: PTP cameras and iPhones through ImageCaptureCore on macOS, every camera and card reader on iOS, GVfs PTP / MTP mounts on Linux |
 | 2026-10-12 | minor | Monitor profile: Linux reads the display profile from colord; macOS row reflects #787 |
 | 2026-10-12 | minor | CPU ↔ GPU equivalence suite run on an AMD Radeon 8060S (Vulkan, RADV, Linux): 16 tests / 135 cases pass, max 2 LSB, mean ≤ 0.0003; first GPU verified outside Apple |

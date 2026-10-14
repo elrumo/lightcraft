@@ -27,6 +27,7 @@ fn fixtures() -> Value {
         visible_gen: 40,
         visible_count: 30,
         library_generation: 2,
+        presets_generation: 5,
         active: Some(PhotoId(7)),
         selection_count: 1,
         undo: Some("Exposure".into()),
@@ -56,6 +57,7 @@ fn fixtures() -> Value {
             ms: 12.5,
             histogram: Some(json!({"r": [0], "g": [0], "b": [0], "luma": [0], "total": 1})),
             window: None,
+            hdr: None,
         },
         Event::Image {
             slot: "thumb:7".into(),
@@ -70,6 +72,7 @@ fn fixtures() -> Value {
             ms: 3.0,
             histogram: None,
             window: None,
+            hdr: None,
         },
         Event::RenderFailed { slot: "thumb:8".into(), photo: PhotoId(8), key: 6, error: "the file is missing".into() },
         Event::State { state },
@@ -92,6 +95,7 @@ fn fixtures() -> Value {
             ms: 40.0,
             histogram: None,
             window: Some(json!({"full": [6000, 4000], "x": 2048, "y": 1024, "w": 1536, "h": 1280})),
+            hdr: None,
         },
     ];
     let request = Request { id: 5, method: "render.view".into(), params: json!({"photo": 7, "width": 1600, "height": 1067, "draft": true}) };

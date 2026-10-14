@@ -220,6 +220,8 @@ struct LibraryScreen: View {
                     .fixedSize()
                     .haptic(.selection, trigger: model.prefs.gridSpan)
                 }
+                // the segmented control draws its own glass capsule; the bar's would be a second one around it
+                .sharedBackgroundVisibility(.hidden)
                 ToolbarSpacer(.flexible, placement: .bottomBar)
             }
             ToolbarItem(placement: .bottomBar) {

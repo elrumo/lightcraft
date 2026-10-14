@@ -1,7 +1,7 @@
 //! People on a phone (`ViewMode::People` in the compact layout), drawn the way iOS's Photos shows its
 //! People album: round faces three across with each person's name and photo count, then the people
 //! the face finder grouped and nobody has named (tap one to name them all at once), then the faces
-//! nobody has named one by one (tap one to name it). A person's page shows their face large, their
+//! nobody has named, a face per person (tap one to name all their faces). A person's page shows their face large, their
 //! name (tap it to rename them everywhere), their photos' faces (tap one to open the photo) and the
 //! faces that look like them, each with ✓ (it is them) and ✕ (it isn't). Every name is typed on one
 //! page, [`naming_page`], which the photo editor opens too when a face on the photo is tapped, or a
@@ -31,6 +31,8 @@ const HEAD_H: f32 = 44.0;
 pub enum NameTarget {
     /// A face region on a photo (unnamed, or named: renaming that one face).
     Face { photo: u64, index: usize },
+    /// Face regions of one person nobody has named, (photo, region), shown by the first.
+    Faces(Vec<(u64, usize)>),
     /// A person the face finder grouped (`people.name`), shown by one of their faces.
     Cluster { id: String, photo: u64, rect: lightcraft_geom::Rect },
     /// Everyone named `from`: renaming a person on every photo.
@@ -140,7 +142,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         let found_top = y;
         y += if found.is_empty() { 0.0 } else { HEAD_H + rows(found.len(), 3) as f32 * row };
         let unnamed_top = y;
-        y += if unnamed.faces.is_empty() { 0.0 } else { HEAD_H + rows(unnamed.faces.len(), 4) as f32 * srow };
+        y += if unnamed.people.is_empty() { 0.0 } else { HEAD_H + rows(unnamed.people.len(), 4) as f32 * srow };
         let (area, _) = ui.allocate_exact_size(vec2(w, y + 24.0), Sense::hover());
         let o = area.min;
         let visible = |top: f32, n: usize, h: f32| {
@@ -213,23 +215,34 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 }
             }
         }
-        if !unnamed.faces.is_empty() {
+        if !unnamed.people.is_empty() {
             heading(ui, o + vec2(PAD, unnamed_top + HEAD_H / 2.0 + 6.0), "Unnamed Faces");
-            for r in visible(unnamed_top + HEAD_H, rows(unnamed.faces.len(), 4), srow) {
-                for k in r * 4..((r + 1) * 4).min(unnamed.faces.len()) {
-                    let Some(f) = unnamed.faces.get(k) else { continue };
+            for r in visible(unnamed_top + HEAD_H, rows(unnamed.people.len(), 4), srow) {
+                for k in r * 4..((r + 1) * 4).min(unnamed.people.len()) {
+                    // a person: their best face, and under it the name they look like or how many photos they are in
+                    let run = unnamed.people.get(k).and_then(|run| unnamed.faces.get(run.clone())).unwrap_or_default();
+                    let Some(f) = run.first() else { continue };
                     shown += 1;
                     let face = cell(k, 4, small, unnamed_top, srow);
                     disc(app, ui, PhotoId(f.photo), f.view, face);
-                    if let Some(s) = &f.suggestion {
-                        let s = fit(ui, &format!("{s}?"), t.font(13.0), small + GAP);
+                    let suggestion = run.iter().find_map(|f| f.suggestion.clone());
+                    let photos = run.iter().map(|f| f.photo).collect::<std::collections::HashSet<_>>().len();
+                    let label = match &suggestion {
+                        Some(s) => Some(format!("{s}?")),
+                        None => (photos > 1).then(|| photo_count(photos as u64)),
+                    };
+                    if let Some(s) = label {
+                        let s = fit(ui, &s, t.font(13.0), small + GAP);
                         ui.painter().text(pos2(face.center().x, face.bottom() + 12.0), Align2::CENTER_CENTER, s, t.font(13.0), t.text_dim);
                     }
                     let resp = ui.interact(face, egui::Id::new(("phone-unnamed", f.photo, f.index)), Sense::click());
                     register(ui.ctx(), format!("unnamed-face:{}:{}", f.photo, f.index), face);
                     if resp.clicked() {
-                        let start = f.suggestion.clone().unwrap_or_default();
-                        tap = Some(Tap::Name(Naming::new(NameTarget::Face { photo: f.photo, index: f.index }, start)));
+                        let target = match run {
+                            [one] => NameTarget::Face { photo: one.photo, index: one.index },
+                            _ => NameTarget::Faces(run.iter().map(|f| (f.photo, f.index)).collect()),
+                        };
+                        tap = Some(Tap::Name(Naming::new(target, suggestion.unwrap_or_default())));
                     }
                 }
             }
@@ -463,6 +476,10 @@ fn square_face(app: &mut LightcraftApp, ui: &egui::Ui, f: &super::person::Face, 
 pub fn apply(app: &mut LightcraftApp, target: &NameTarget, name: &str) -> Result<Value, String> {
     match target {
         NameTarget::Face { photo, index } => app.run("faces.setName", json!({"id": photo, "index": index, "name": name})),
+        NameTarget::Faces(faces) => {
+            let faces: Vec<Value> = faces.iter().map(|(photo, index)| json!({"photo": photo, "index": index})).collect();
+            app.run("faces.nameFaces", json!({"faces": faces, "name": name}))
+        }
         NameTarget::Cluster { id, .. } => app.run("people.name", json!({"cluster": id, "name": name})),
         NameTarget::Person { from } => {
             let r = app.run("people.rename", json!({"from": from, "to": name}))?;
@@ -497,10 +514,14 @@ pub fn naming_page(app: &mut LightcraftApp, ctx: &egui::Context) {
         _ => "Who Is This?",
     };
     // the face to show: (photo, box)
+    let first = match &n.target {
+        NameTarget::Face { photo, index } => Some((*photo, *index)),
+        NameTarget::Faces(faces) => faces.first().copied(),
+        _ => None,
+    };
     let face: Option<(u64, lightcraft_geom::Rect)> = match &n.target {
-        NameTarget::Face { photo, index } => {
-            app.session.catalog.photo(PhotoId(*photo)).and_then(|p| p.meta.regions.get(*index).map(|r| (*photo, r.rect)))
-        }
+        NameTarget::Face { .. } | NameTarget::Faces(_) => first
+            .and_then(|(photo, index)| app.session.catalog.photo(PhotoId(photo)).and_then(|p| p.meta.regions.get(index).map(|r| (photo, r.rect)))),
         NameTarget::Cluster { photo, rect, .. } | NameTarget::New { photo, rect } => Some((*photo, *rect)),
         NameTarget::Person { from } => app
             .caches
@@ -511,9 +532,9 @@ pub fn naming_page(app: &mut LightcraftApp, ctx: &egui::Context) {
     };
     // what it could be: the people it looks like (a face on a photo), then names starting with the text
     let mut offered: Vec<String> = Vec::new();
-    if let NameTarget::Face { photo, index } = &n.target
-        && let Some(h) = super::faces::hints_for(app, *photo)
-        && let Some(hint) = h.by_index.get(index)
+    if let Some((photo, index)) = first
+        && let Some(h) = super::faces::hints_for(app, photo)
+        && let Some(hint) = h.by_index.get(&index)
     {
         offered.extend(hint.candidates.iter().take(3).map(|(name, _)| name.clone()));
     }

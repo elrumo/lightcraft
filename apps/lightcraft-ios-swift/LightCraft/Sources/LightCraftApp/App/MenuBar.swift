@@ -266,7 +266,7 @@ extension AppModel {
         case "view.clipping": prefs.showClipping.toggle()
         case "view.histogram": prefs.showHistogram.toggle()
         case "view.visualizeHdr": editor.visualizeHdr.toggle()
-        case "view.maskOverlay": prefs.maskOverlay.toggle()
+        case "view.maskOverlay": prefs.maskOverlayVisibility = ["auto": "always", "always": "never"][prefs.maskOverlayVisibility] ?? "auto"
         case "view.maskOverlayAll": editor.maskOverlayAll.toggle()
         case "view.maskPins": prefs.maskPins.toggle()
         case "view.visualizeSpots": editor.visualizeSpots.toggle()

@@ -32,7 +32,13 @@ struct RootView: View {
                 stack
             }
         }
-        .sheet(item: $model.sheet) { sheet in
+        .sheet(item: $model.sheet, onDismiss: {
+            // (a cover can't come up while a sheet is still going down)
+            if model.welcomeAsked {
+                model.welcomeAsked = false
+                model.cover = .onboarding
+            }
+        }) { sheet in
             SheetContent(sheet: sheet)
                 .environment(model)
         }
@@ -47,6 +53,7 @@ struct RootView: View {
                 switch cover {
                 case .slideshow: SlideshowView()
                 case .lightsOut: LightsOutView()
+                case .onboarding: OnboardingView()
                 }
             }
             .environment(model)

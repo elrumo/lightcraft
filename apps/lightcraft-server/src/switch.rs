@@ -40,6 +40,19 @@ impl Part {
         self as usize
     }
 
+    /// The name its pause and time window go by in `search.json` and in the admin API.
+    pub fn key(self) -> &'static str {
+        match self {
+            Part::Search => "search",
+            Part::Text => "text",
+            Part::Faces => "faces",
+        }
+    }
+
+    pub fn from_key(k: &str) -> Option<Part> {
+        [Part::Search, Part::Text, Part::Faces].into_iter().find(|p| p.key() == k)
+    }
+
     fn what(self) -> &'static str {
         match self {
             Part::Search => "the search model",
@@ -63,6 +76,12 @@ pub struct Fetch {
     pub finished: bool,
 }
 
+/// The minute of the day now, in UTC.
+fn utc_minute() -> u32 {
+    let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    (secs / 60 % 1440) as u32
+}
+
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(PoisonError::into_inner)
 }
@@ -79,6 +98,8 @@ pub struct Switch {
     /// `<data>/search.json` (`None`: no data folder, always on).
     file: Option<PathBuf>,
     slots: [Slot; 3],
+    /// Seconds a photo took lately, per part (smoothed), for the admin page's time left.
+    rate: Mutex<[Option<f64>; 3]>,
 }
 
 impl Switch {
@@ -99,11 +120,69 @@ impl Switch {
         self.read().get(key).and_then(Value::as_bool) != Some(false)
     }
 
-    fn set(&self, key: &str, on: bool) -> Result<(), String> {
+    fn put(&self, key: &str, v: Value) -> Result<(), String> {
         let Some(file) = &self.file else { return Err("this server has no data folder to keep the setting in".into()) };
         let mut o = self.read();
-        o.insert(key.to_string(), json!(on));
+        o.insert(key.to_string(), v);
         crate::accounts::write_private_json(file, &Value::Object(o))
+    }
+
+    fn set(&self, key: &str, on: bool) -> Result<(), String> {
+        self.put(key, json!(on))
+    }
+
+    /// Whether an admin paused making `part`'s index of the photos (search itself keeps working).
+    pub fn paused(&self, part: Part) -> bool {
+        self.read().get(&format!("paused_{}", part.key())).and_then(Value::as_bool) == Some(true)
+    }
+
+    /// The daily window making the index is limited to, as minutes of the day in UTC (the admin page
+    /// converts to and from its browser's time zone). `None`: any time.
+    pub fn window(&self, part: Part) -> Option<(u32, u32)> {
+        let o = self.read();
+        let m = |k: &str| o.get(&format!("{k}_{}", part.key())).and_then(Value::as_u64).filter(|m| *m < 1440);
+        Some((m("from")? as u32, m("to")? as u32))
+    }
+
+    pub fn set_schedule(&self, part: Part, paused: bool, window: Option<(u32, u32)>) -> Result<(), String> {
+        if window.is_some_and(|(a, b)| a >= 1440 || b >= 1440) {
+            return Err("a time of day is 0 to 1439 minutes".into());
+        }
+        let k = part.key();
+        self.put(&format!("paused_{k}"), json!(paused))?;
+        self.put(&format!("from_{k}"), window.map_or(Value::Null, |w| json!(w.0)))?;
+        self.put(&format!("to_{k}"), window.map_or(Value::Null, |w| json!(w.1)))
+    }
+
+    /// Whether the worker may make `part`'s index now: not paused, and inside its window if it has one.
+    pub fn may_run(&self, part: Part) -> bool {
+        !self.paused(part) && self.in_window(part, utc_minute())
+    }
+
+    fn in_window(&self, part: Part, now: u32) -> bool {
+        match self.window(part) {
+            None => true,
+            Some((a, b)) if a == b => true,
+            Some((a, b)) if a < b => (a..b).contains(&now),
+            // (past midnight: 22:00 to 06:00)
+            Some((a, b)) => now >= a || now < b,
+        }
+    }
+
+    /// Records that `photos` took `secs` in all.
+    pub fn record(&self, part: Part, photos: usize, secs: f64) {
+        if photos == 0 {
+            return;
+        }
+        let per = secs / photos as f64;
+        let mut r = lock(&self.rate);
+        let slot = &mut r[part.slot()];
+        *slot = Some(slot.map_or(per, |old| 0.7 * old + 0.3 * per));
+    }
+
+    /// Seconds a photo has taken lately, once any was done.
+    pub fn per_photo(&self, part: Part) -> Option<f64> {
+        lock(&self.rate)[part.slot()]
     }
 
     /// Search by description: on unless an admin turned it off.
@@ -234,6 +313,24 @@ mod tests {
         s.set_text_enabled(false).unwrap();
         assert!(!s.text_enabled(), "and it can be written over");
         assert!(Switch::default().enabled());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn schedule_window_wraps_midnight_and_pause_is_kept() {
+        let d = dir("sched");
+        let s = Switch::new(&d);
+        assert!(!s.paused(Part::Text) && s.window(Part::Text).is_none() && s.in_window(Part::Text, 700));
+        s.set_schedule(Part::Text, true, Some((22 * 60, 6 * 60))).unwrap();
+        assert!(s.paused(Part::Text) && !s.paused(Part::Search), "per part");
+        assert!(s.in_window(Part::Text, 23 * 60) && s.in_window(Part::Text, 60) && !s.in_window(Part::Text, 12 * 60));
+        s.set_schedule(Part::Text, false, Some((60, 120))).unwrap();
+        assert!(s.in_window(Part::Text, 90) && !s.in_window(Part::Text, 120));
+        s.set_schedule(Part::Text, false, None).unwrap();
+        assert!(s.window(Part::Text).is_none());
+        assert!(s.set_schedule(Part::Text, false, Some((1440, 0))).is_err());
+        s.record(Part::Faces, 10, 5.0);
+        assert_eq!(s.per_photo(Part::Faces), Some(0.5));
         let _ = std::fs::remove_dir_all(&d);
     }
 

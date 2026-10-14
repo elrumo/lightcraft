@@ -45,6 +45,7 @@ mod faces_worker;
 pub mod files;
 pub mod fonts;
 pub mod guard;
+pub mod hdr_view;
 pub mod import;
 mod import_move;
 pub mod inline_files;
