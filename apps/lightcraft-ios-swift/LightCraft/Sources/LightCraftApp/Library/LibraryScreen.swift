@@ -95,7 +95,7 @@ struct LibraryScreen: View {
                 leaveDescribed()
             }
         }
-        .task(id: model.state.catalogRevision) {
+        .task(id: model.settledRevision) {
             guard let engine = model.engine else { return }
             describes = (try? await engine.execute("vision.model.status"))?["available"].bool ?? false
         }

@@ -301,6 +301,8 @@ struct ZoomablePhoto: View {
     @State private var pan: CGSize = .zero
     @State private var panAtStart: CGSize = .zero
     @State private var canvas: CGSize = .zero
+    /// The render asked for last.
+    @State private var lastRequest: ViewRequest?
     @State private var showBefore = false
     /// How the shown photo maps to image coordinates (taps on it for the pickers and tools).
     @State private var frame: PhotoFrame?
@@ -443,6 +445,13 @@ struct ZoomablePhoto: View {
         .onGeometryChange(for: CGSize.self) { $0.size } action: { canvas = $0 }
         .task(id: request) {
             guard let r = request, !r.dragging else { return }
+            // only the size moved (a panel sliding in or out, a rotation): one render once it has
+            // settled, not one a frame (the next frame's change cancels this wait)
+            if let last = lastRequest, last.photo == r.photo, last.revision == r.revision, last.width != r.width || last.height != r.height {
+                try? await Task.sleep(for: .milliseconds(120))
+                guard !Task.isCancelled else { return }
+            }
+            lastRequest = r
             model.requestView(r.photo, width: r.width, height: r.height, applyCrop: r.crop, zoom: r.zoom)
             if compare { model.requestBefore(photo) }
         }

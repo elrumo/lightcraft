@@ -293,6 +293,11 @@ final class AppModel {
 
     private func stateChanged(from old: HostState, to new: HostState) {
         state = new
+        // what isn't drawn live during a drag (menus, the grid under the photo, lists, previews)
+        // catches up when it ends: at every step it would keep the engine from the drafts
+        if new.interaction == nil, settledRevision != new.catalogRevision {
+            settledRevision = new.catalogRevision
+        }
         guard let engine else { return }
         if new.libraryGeneration != old.libraryGeneration {
             images.forgetAll()
@@ -322,9 +327,12 @@ final class AppModel {
             if new.interaction == nil {
                 Task { await editor.reload(self) }
             }
-            albums.scheduleReload(engine)
+            if new.interaction == nil { albums.scheduleReload(engine) }
         }
     }
+
+    /// The catalog's revision, held while a drag (a slider, the crop, a brush) is under way.
+    private(set) var settledRevision: UInt64 = 0
 
     // MARK: pictures
 

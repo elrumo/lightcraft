@@ -32,7 +32,7 @@ struct ByDateView: View {
         }
         .navigationTitle("By Date")
         .navigationBarTitleDisplayMode(.inline)
-        .task(id: model.state.catalogRevision) {
+        .task(id: model.settledRevision) {
             guard let engine = model.engine else { return }
             years = (try? await engine.execute("catalog.stats"))?["byDate"].array ?? []
         }
@@ -132,7 +132,7 @@ struct LibraryFoldersView: View {
         } message: {
             Text("Its photos go to Recently Deleted; no file is touched.")
         }
-        .task(id: model.state.catalogRevision) {
+        .task(id: model.settledRevision) {
             guard let engine = model.engine else { return }
             tree = (try? await engine.execute("library.folders", [:], as: [FolderNode].self)) ?? []
         }

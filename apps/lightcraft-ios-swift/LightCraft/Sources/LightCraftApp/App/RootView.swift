@@ -71,7 +71,7 @@ struct RootView: View {
         }
         .preferredColorScheme(model.prefs.appearance.scheme)
         // the menu bar's commands, enabled for what is selected now
-        .task(id: MenuKey(revision: model.state.catalogRevision, active: model.state.active, selected: model.state.selectionCount, engine: model.engine != nil)) {
+        .task(id: MenuKey(revision: model.settledRevision, active: model.state.active, selected: model.state.selectionCount, engine: model.engine != nil)) {
             await model.loadMenus()
         }
         .haptic(trigger: model.haptic) { _, h in h.seq == 0 ? nil : h.feedback }

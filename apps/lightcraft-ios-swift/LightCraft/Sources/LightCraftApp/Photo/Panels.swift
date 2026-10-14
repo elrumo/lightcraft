@@ -176,7 +176,7 @@ struct VariantPreview: View {
                 }
             }
             .clipped()
-            .task(id: Key(which: which, photo: model.state.active, revision: model.state.catalogRevision)) {
+            .task(id: Key(which: which, photo: model.state.active, revision: model.settledRevision)) {
                 if model.state.interaction == nil, let s = await model.requestVariant(which) { slot = s }
             }
     }
@@ -258,7 +258,7 @@ struct InfoPanel: View {
             if old == .title { save("title", title) }
             if old == .caption { save("caption", caption) }
         }
-        .task(id: Key(photo: model.state.active, revision: model.state.catalogRevision)) { await load() }
+        .task(id: Key(photo: model.state.active, revision: model.settledRevision)) { await load() }
     }
 
     private nonisolated struct Key: Hashable {

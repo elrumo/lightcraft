@@ -184,7 +184,7 @@ private struct MaskSettings: View {
                 .padding(.horizontal, 16).padding(.vertical, 6)
         }
         .sheet(isPresented: $overlayOptions) { MaskOverlayOptions().presentationDetents([.medium]) }
-        .task(id: Key(mask: mask["id"], revision: model.state.catalogRevision)) {
+        .task(id: Key(mask: mask["id"], revision: model.settledRevision)) {
             guard let engine = model.engine else { return }
             shape = try? await engine.execute("mask.shapeControls", ["id": mask["id"]], as: ShapeControls.self)
         }
@@ -269,7 +269,7 @@ struct MaskAdjustments: View {
                 .padding(.horizontal, 16)
             }
         }
-        .task(id: Key(mask: mask, revision: model.state.catalogRevision)) {
+        .task(id: Key(mask: mask, revision: model.settledRevision)) {
             guard let engine = model.engine, let r = try? await engine.execute("mask.controls", ["id": mask], as: [ControlSpec].self) else { return }
             specs = r
             local = [:]

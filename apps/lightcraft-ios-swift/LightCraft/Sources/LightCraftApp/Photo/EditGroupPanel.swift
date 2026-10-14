@@ -252,7 +252,7 @@ private struct ProfileGroup: View {
                 }
             }
         }
-        .task(id: model.state.catalogRevision) { await load() }
+        .task(id: model.settledRevision) { await load() }
     }
 
     private var shown: [ProfilesMenu.Item] {
