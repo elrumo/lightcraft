@@ -1,9 +1,10 @@
-# The SwiftUI iOS app
+# The SwiftUI app (iPhone, iPad and Mac)
 
 **Status (2026-10-14): S1 and S2 done on iOS 26.5 simulators (the phone and iPad layouts, every Edit group and tool,
 export, sync, People, Map, the menu bar, multiwindow); SW3 (a native iOS 26 look: system bars, an inspector, Photos-style
-dials) done on simulators; not yet tried on a device.** Row by row: `apps/lightcraft-ios-swift/PARITY.md`. A native SwiftUI app for iPhone and iPad
-(iOS 26 and later) that runs the whole Rust core: the engine, the develop pipeline, the catalog, sync, export. It is to
+dials) done on simulators; not yet tried on a device. The same code now builds for macOS (SM0, see [macOS](#macos)): a
+native AppKit-backed app, not Catalyst, still with the iPad layout until SM1–SM2 give it a Mac window.** Row by row: `apps/lightcraft-ios-swift/PARITY.md`. A native SwiftUI app for iPhone and iPad
+(iOS 26 and later, macOS 26 and later) that runs the whole Rust core: the engine, the develop pipeline, the catalog, sync, export. It is to
 replace the egui iOS app ([ios.md](ios.md)) once it passes its parity gate. The decision and its reasons are in
 [ios.md](ios.md) → *Plan*, Phase 0. What iOS still lacks overall: [ios-gaps.md](ios-gaps.md).
 
@@ -134,23 +135,34 @@ xtool*): `apps/lightcraft-ios-swift/run.sh` builds the Rust library (`cargo buil
 aarch64-apple-ios --release`, `IPHONEOS_DEPLOYMENT_TARGET=26.0`) into `LightCraft/.rust/` and runs `xtool dev run`;
 `--simulator`, `--build-only`, `--ipa`, `--debug` as for the egui app. The bundle id is
 `ai.storyteller.lightcraft.swift` while both apps exist (the SwiftUI app takes `ai.storyteller.lightcraft.ios` at the
-cut-over, so installed libraries carry over). *Not yet tried.*
+cut-over, so installed libraries carry over). *Not yet tried.* xtool builds iOS apps only; the Mac app is built by Xcode.
 
-**With Xcode, on a Mac:** `open apps/lightcraft-ios-swift/xcode/LightCraft.xcodeproj`, pick a simulator or your
-device and Run. A pre-build phase (`xcode/build-rust.sh`) builds the Rust library for the SDK being built (debug for
-Debug, `--release` for Release). The app target compiles `LightCraft/Sources/LightCraftApp` as a synchronized folder
+**With Xcode, on a Mac:** `open apps/lightcraft-ios-swift/xcode/LightCraft.xcodeproj`, pick a simulator, your
+device or My Mac and Run. A pre-build phase (`xcode/build-rust.sh`) builds the Rust library for the SDK being built (debug for
+Debug, `--release` for Release). The app target is one multiplatform target (iOS, iPadOS and macOS): it compiles
+`LightCraft/Sources/LightCraftApp` as a synchronized folder
 (new Swift files there need no project edit) over the package's `LightCraftCore` and `LightCraftImaging`, and takes
 its Info.plist keys from `LightCraft/Info.plist`, the file xtool uses. For a device, choose your team under Signing &
 Capabilities (or pass `DEVELOPMENT_TEAM=<team>` to `xcodebuild`).
+
+**The Mac app:** `apps/lightcraft-ios-swift/run.sh --mac` builds it with `xcodebuild` and opens it (`--debug` for a
+Debug build, `--build-only` to stop after the build); `LIGHTCRAFT_LIBRARY=<folder>` or `LIGHTCRAFT_DEMO=1` in the
+environment runs the binary directly on that library (or on the in-memory demo library). Without either it opens
+the default library, `~/Pictures/LightCraft Library`, which the egui desktop app also uses and locks: whichever opens it
+first has it, and the other says so. The Rust library for each platform goes to its own folder, `LightCraft/.rust/ios/`
+or `LightCraft/.rust/macos/`, so a Mac build never links an iOS library (a Linux `cargo xtask swift-test` still uses
+`.rust/`). `ci/mac-tour.sh <LightCraft.app> <out-dir>` is the Mac's `ci/sim-tour.sh`.
 
 **Tests:** `apps/lightcraft-ios-swift/run.sh --test` (macOS) builds the library for the Mac and runs `swift test`:
 `ProtocolTests` (every event and request shape) and `EngineTests` (the real engine: commands, a thumbnail's pixels, a
 drag as one undo step, 200 concurrent requests, a closed engine). The Rust side's tests (`cargo test -p lightcraft-apphost
 -p lightcraft-ios-swift`) run everywhere.
 
-The Swift package needs Swift 6.2 (Xcode 26) and links the system frameworks only; `LightCraftApp` is compiled for iOS
-only (`#if os(iOS)`), so `swift test` on a Mac builds the rest. The Rust library's log lines reach the system log through
-`lightcraft_host_log` (an `@_cdecl` function in `HostLog.swift`), as the egui app's Objective-C host does it.
+The Swift package needs Swift 6.2 (Xcode 26) and links the system frameworks only; `LightCraftApp` compiles for iOS and
+macOS (the few places where the two differ are in `App/Platform.swift` or small `#if os(iOS)` islands), so `swift test`
+on a Mac builds the whole app too. On iOS the Rust library's log lines reach the system log through
+`lightcraft_host_log` (an `@_cdecl` function in `HostLog.swift`), as the egui app's Objective-C host does it; on a Mac they
+go to stderr like the egui app's (`LIGHTCRAFT_LOG=info`).
 
 ## Driving the app
 
@@ -204,6 +216,29 @@ under the photo, it has no separate view and edit modes, and the library is one 
   - *Automatic* means dials under the photo and sliders beside it. Both styles are drawn from the same engine control
     specs and edit through the same calls.
 
+## macOS
+
+The same app builds for macOS 26 and later as a native, AppKit-backed SwiftUI app (not Mac Catalyst, not "Designed for
+iPad"): one multiplatform Xcode target, arm64 only. Decisions (2026-10-14):
+- **Not sandboxed, hardened runtime**, like the egui Mac app (`packaging/macos/entitlements.plist`: only the Apple
+  Events entitlement for Export ▸ Add to Apple Photos). Originals are referenced in place (`ImportMode::Add`), so there
+  are no security-scoped bookmarks; the Mac App Store would need them (the engine stores absolute paths).
+- **A Mac starts the engine by the `desktop` profile** (`OpenConfig.profile`, `apphost::startup::Profile`; the Swift app
+  sends it on macOS only): the library in `~/Pictures/LightCraft Library`, the cache budget from the machine's RAM, AI
+  models in the settings folder shared with egui and the CLI, and a library that won't open (the egui app has it open:
+  it holds an OS lock) is an `openFailed` error with the reason, never the in-memory demo library a phone falls back to.
+  The app's tmp folder is its own, `~/Library/Caches/<bundle id>/tmp`: the engine empties `Import` and `Exports` in it at
+  every launch, which in a Mac's shared temp folder would not be its own.
+- **One main window** (and the Second Window): the model is the app's one (navigation, and the engine's one selection
+  and active photo), so a second main window could only mirror the first.
+- **Mac-native layout**, not the iPad's push structure with Mac chrome: a persistent sidebar, content and inspector, a
+  toolbar, a filmstrip, sliders only. *Not built yet (SM2).*
+
+Where it stands: it builds and launches with the iPad's regular-width layout in a window (SM0); `ScriptHost` captures
+the window for `ui.screenshot` (`cacheDisplay` of the frame view) and takes `ui.set {windowSize: [w, h]}`. Not yet: the
+Mac menu bar's standard items, a Settings window, quit that closes the engine, drag in from Finder, pointer and keyboard
+input (SM1–SM3).
+
 ## Plan
 
 One task id per commit. **S0** builds the foundation and a vertical slice; **S1** reaches parity with the egui app's
@@ -253,6 +288,14 @@ SW3, a native iOS 26 redesign (not the S3 gate; see *Look and feel*):
 - the Dials style (SW3.6);
 - the sheets' ✓ (SW3.7);
 - this page, the parity notes, the words and the CI tour (SW3.8).
+
+SM, the Mac app (see [macOS](#macos); not part of the S gates, which are about replacing the egui iOS app):
+- SM0, it builds and launches: the engine host's `desktop` profile (SM0.1, done), the app compiling for macOS (SM0.2,
+  done), the Xcode project, Rust build, `run.sh --mac` and `ci/mac-tour.sh` (SM0.3);
+- SM1, the Mac shell: quit that closes the engine, the standard menus, a Settings window, windows;
+- SM2, the Mac window: sidebar, content and inspector, a toolbar and filmstrip, pointer and keyboard;
+- SM3, desktop workflows: import in place from the open panel and Finder, an export destination, libraries;
+- SM4, tracking and CI: the Mac rows in `PARITY.md`, `ios-swift.yml`, the other docs.
 
 Open questions (not blocking S0): MapKit or the built-in offline map; which AI engine features ship on iOS (binary size);
 whether the gate also compares screenshots of the two apps.

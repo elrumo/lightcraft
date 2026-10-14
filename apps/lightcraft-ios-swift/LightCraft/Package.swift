@@ -1,20 +1,28 @@
 // swift-tools-version: 6.2
-// LightCraft's native iPhone and iPad app (iOS 26 and later): SwiftUI over the Rust engine, through
-// the C ABI of liblightcraft_bridge.a (apps/lightcraft-ios-swift, docs/ios-swift.md).
+// LightCraft's native iPhone, iPad and Mac app (iOS 26 and macOS 26 and later): SwiftUI over the Rust
+// engine, through the C ABI of liblightcraft_bridge.a (apps/lightcraft-ios-swift, docs/ios-swift.md).
 //
-// Built with xtool (https://github.com/xtool-org/xtool; Linux, Windows (WSL) or macOS) or Xcode
-// (../xcode/LightCraft.xcodeproj). `../run.sh` builds the Rust library into `.rust/` first.
-// `swift test` (macOS) runs LightCraftCoreTests against a macOS build of the same library
-// (`../run.sh --test`). LightCraftCore and its tests also build on Linux (`cargo xtask swift-test`);
-// the app target is iOS only.
+// Built with xtool (https://github.com/xtool-org/xtool; iOS only; Linux, Windows (WSL) or macOS) or
+// Xcode (../xcode/LightCraft.xcodeproj; iOS and macOS). `../run.sh` and the Xcode project's build
+// phase build the Rust library into `.rust/<platform>/` first. `swift test` (macOS) runs
+// LightCraftCoreTests against a macOS build of the same library (`../run.sh --test`).
+// LightCraftCore and its tests also build on Linux (`cargo xtask swift-test`); the app target needs
+// an Apple platform.
 //
 // Presentation only (CLAUDE.md, Non-negotiables): no document logic and no image or edit-geometry
 // math here, no C/C++/Objective-C sources, no third-party packages.
 import Foundation
 import PackageDescription
 
-/// Where `run.sh` puts liblightcraft_bridge.a for the platform being built (git-ignored).
+/// Where liblightcraft_bridge.a is put for the platform being built (git-ignored): `run.sh`,
+/// `xcode/build-rust.sh` and `cargo xtask swift-test` write it, one folder per platform so that a
+/// Mac build never links an iOS library (or the other way round). Linux keeps `.rust/` itself.
 let rustLib = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent(".rust").path
+let rustSearch: [LinkerSetting] = [
+    .unsafeFlags(["-L", rustLib + "/macos"], .when(platforms: [.macOS])),
+    .unsafeFlags(["-L", rustLib + "/ios"], .when(platforms: [.iOS])),
+    .unsafeFlags(["-L", rustLib], .when(platforms: [.linux])),
+]
 
 /// What the Rust library calls into: wgpu (Metal, QuartzCore, IOSurface), rustls (Security),
 /// lightcraft-ios-host on iOS (UIKit, Photos, ImageIO, UniformTypeIdentifiers). On Linux (where
@@ -46,7 +54,7 @@ let package = Package(
         .target(
             name: "LightCraftCore",
             dependencies: ["CLightCraftBridge"],
-            linkerSettings: apple + iosOnly + linux + [.unsafeFlags(["-L", rustLib])]
+            linkerSettings: apple + iosOnly + linux + rustSearch
         ),
         // pictures as CoreGraphics images
         .target(name: "LightCraftImaging", dependencies: ["LightCraftCore"]),

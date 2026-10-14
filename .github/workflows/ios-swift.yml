@@ -1,12 +1,14 @@
-# The SwiftUI iOS app (apps/lightcraft-ios-swift, docs/ios-swift.md): what Linux can't check. The
-# Rust side (the engine host, the C ABI and its header check, the protocol fixtures) is in
-# `cargo xtask ci` everywhere; this builds and tests the Swift side on macOS with Xcode 26:
+# The SwiftUI app, iOS and macOS (apps/lightcraft-ios-swift, docs/ios-swift.md): what Linux can't
+# check. The Rust side (the engine host, the C ABI and its header check, the protocol fixtures) is
+# in `cargo xtask ci` everywhere; this builds and tests the Swift side on macOS with Xcode 26:
 #
-# - the Swift package's tests (LightCraftCoreTests) against the Rust library built for macOS;
+# - the Swift package's tests (LightCraftCoreTests) against the Rust library built for macOS (which
+#   also compiles the whole app for macOS);
 # - the package and the app for the iOS simulator and, unsigned, for a device;
+# - the app for the Mac (ad-hoc signed);
 # - the library exports exactly the header's functions;
-# - the app on a simulator, driven by ci/tour.jsonl: its screenshots are uploaded.
-name: iOS (SwiftUI)
+# - the app on a simulator and on the runner itself, driven by ci/tour.jsonl: screenshots uploaded.
+name: iOS and Mac (SwiftUI)
 
 on:
   push:
@@ -18,6 +20,9 @@ on:
       - crates/engine/src/cmd/**
       - crates/preview/**
       - crates/ios-host/**
+      - crates/sysmem/**
+      - packaging/macos/entitlements.plist
+      - assets/app-icon/lightcraft.icns
       - Cargo.lock
       - .github/workflows/ios-swift.yml
   schedule:
@@ -63,14 +68,15 @@ jobs:
       - name: The library exports exactly the header's functions
         run: |
           header=apps/lightcraft-ios-swift/LightCraft/Sources/CLightCraftBridge/include/lightcraft_bridge.h
-          lib=apps/lightcraft-ios-swift/LightCraft/.rust/liblightcraft_bridge.a
+          lib=apps/lightcraft-ios-swift/LightCraft/.rust/macos/liblightcraft_bridge.a
           grep -oE '\blc_[a-z_]+\(' "$header" | tr -d '(' | sed 's/^/_/' | sort -u > want.txt
           nm -gU "$lib" 2>/dev/null | awk '$2 == "T" && $3 ~ /^_lc_/ {print $3}' | sort -u > have.txt
           diff want.txt have.txt
       - name: Rust library for the simulator
         run: |
           cargo build -p lightcraft-ios-swift --target aarch64-apple-ios-sim
-          cp -f target/aarch64-apple-ios-sim/debug/liblightcraft_bridge.a apps/lightcraft-ios-swift/LightCraft/.rust/
+          mkdir -p apps/lightcraft-ios-swift/LightCraft/.rust/ios
+          cp -f target/aarch64-apple-ios-sim/debug/liblightcraft_bridge.a apps/lightcraft-ios-swift/LightCraft/.rust/ios/
       - name: Swift package for the simulator
         working-directory: apps/lightcraft-ios-swift/LightCraft
         run: xcodebuild -scheme LightCraft-Package -destination 'generic/platform=iOS Simulator' -derivedDataPath "$RUNNER_TEMP/pkg" build
@@ -86,6 +92,12 @@ jobs:
           xcodebuild -project LightCraft.xcodeproj -scheme LightCraft -configuration Debug \
             -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/device" \
             CODE_SIGNING_ALLOWED=NO build
+      - name: App for the Mac (Xcode project, ad-hoc signed)
+        working-directory: apps/lightcraft-ios-swift/xcode
+        run: |
+          xcodebuild -project LightCraft.xcodeproj -scheme LightCraft -configuration Debug \
+            -destination 'platform=macOS' -derivedDataPath "$RUNNER_TEMP/mac" \
+            ARCHS=arm64 CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= build
       - name: Run on a simulator (tour)
         run: apps/lightcraft-ios-swift/ci/sim-tour.sh "$RUNNER_TEMP/app/Build/Products/Debug-iphonesimulator/LightCraft.app" "$RUNNER_TEMP/tour"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -93,5 +105,14 @@ jobs:
         with:
           name: ios-swift-tour
           path: ${{ runner.temp }}/tour
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Run on the Mac (tour)
+        run: apps/lightcraft-ios-swift/ci/mac-tour.sh "$RUNNER_TEMP/mac/Build/Products/Debug/LightCraft.app" "$RUNNER_TEMP/mac-tour"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: mac-swift-tour
+          path: ${{ runner.temp }}/mac-tour
           if-no-files-found: warn
           retention-days: 14

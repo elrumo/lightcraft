@@ -2,6 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- the Mac app's icon: assets/app-icon/lightcraft.icns, copied in by the Xcode project for macOS
+	     only (iOS ignores the key) -->
+	<key>CFBundleIconFile</key>
+	<string>lightcraft</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
