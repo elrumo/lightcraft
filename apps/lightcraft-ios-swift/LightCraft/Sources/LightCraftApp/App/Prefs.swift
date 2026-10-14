@@ -25,7 +25,7 @@ final class Prefs {
         clickZoom = store.object(forKey: "clickZoom") as? Double ?? 2
         haptics = store.object(forKey: "haptics") as? Bool ?? true
         mapTiles = store.object(forKey: "mapTiles") as? Bool ?? true
-        maskOverlay = store.object(forKey: "maskOverlay") as? Bool ?? true
+        maskOverlayVisibility = store.string(forKey: "maskOverlayVisibility") ?? "auto"
         maskPins = store.object(forKey: "maskPins") as? Bool ?? true
         faceBoxes = store.bool(forKey: "faceBoxes")
         removeAI = store.bool(forKey: "removeAI")
@@ -43,6 +43,7 @@ final class Prefs {
         maskOverlayColor = store.array(forKey: "maskOverlayColor") as? [Int] ?? [230, 30, 40]
         maskOverlayOpacity = store.object(forKey: "maskOverlayOpacity") as? Double ?? 50
         sidebarLayout = store.data(forKey: "sidebarLayout").flatMap { try? JSONDecoder().decode(JSONValue.self, from: $0) } ?? .null
+        onboarded = store.bool(forKey: "onboarded")
     }
 
     nonisolated enum Appearance: String, CaseIterable, Identifiable {
@@ -145,7 +146,8 @@ final class Prefs {
     var mapTiles: Bool { didSet { store.set(mapTiles, forKey: "mapTiles") } }
     /// Masking: the selected mask drawn over the photo, how (`color`, `colorOnBw`, `imageOnBlack`,
     /// `imageOnWhite`, `whiteOnBlack`), in what colour (sRGB) and how strongly (0–100).
-    var maskOverlay: Bool { didSet { store.set(maskOverlay, forKey: "maskOverlay") } }
+    /// "auto" (shown until the selected mask is adjusted), "always" or "never".
+    var maskOverlayVisibility: String { didSet { store.set(maskOverlayVisibility, forKey: "maskOverlayVisibility") } }
     var maskOverlayMode: String { didSet { store.set(maskOverlayMode, forKey: "maskOverlayMode") } }
     var maskOverlayColor: [Int] { didSet { store.set(maskOverlayColor, forKey: "maskOverlayColor") } }
     var maskOverlayOpacity: Double { didSet { store.set(maskOverlayOpacity, forKey: "maskOverlayOpacity") } }
@@ -177,6 +179,9 @@ final class Prefs {
     var gridInfo: Bool { didSet { store.set(gridInfo, forKey: "gridInfo") } }
     /// Before/After: auto (side by side when wide), sideBySide, topBottom, split, splitTopBottom.
     var beforeAfterMode: String { didSet { store.set(beforeAfterMode, forKey: "beforeAfterMode") } }
+
+    /// The first launch's welcome was seen (on this device: the library's own preferences sync, this must not).
+    var onboarded: Bool { didSet { store.set(onboarded, forKey: "onboarded") } }
 
     /// The steps a pinch moves the grid through.
     static let columnSteps = [1, 2, 3, 4, 5, 7, 10, 14]

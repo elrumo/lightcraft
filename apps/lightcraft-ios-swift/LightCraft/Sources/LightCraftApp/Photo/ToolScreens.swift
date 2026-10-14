@@ -304,6 +304,7 @@ struct AngleDial: View {
 /// Remove: Remove, Heal or Clone, the brush's size, and the photo's spots (Find Dust, delete all).
 struct RemoveTools: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.toolColumn) private var column
 
     var body: some View {
         @Bindable var editor = model.editor
@@ -367,7 +368,9 @@ struct RemoveTools: View {
             }
             .font(.footnote).foregroundStyle(.secondary)
         }
-        .padding(.vertical, 8)
+        .padding(.vertical, 12)
+        // under the photo it's a sheet like the other tools' panels
+        .toolCard(!column)
     }
 }
 

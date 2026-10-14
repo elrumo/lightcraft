@@ -346,6 +346,26 @@ pub struct DeepImage {
 }
 
 impl DeepImage {
+    /// The `w × h` part of the image at `(x, y)` (clamped into it: what a windowed render keeps of the
+    /// larger area it worked on).
+    pub fn cropped(&self, x: usize, y: usize, w: usize, h: usize) -> DeepImage {
+        let (x, y) = (x.min(self.width), y.min(self.height));
+        let (w, h) = (w.min(self.width - x), h.min(self.height - y));
+        fn cut<T: Copy>(v: &[T], full_w: usize, x: usize, y: usize, w: usize, h: usize) -> Vec<T> {
+            let mut out = Vec::with_capacity(w.saturating_mul(h).saturating_mul(3));
+            for row in y..y + h {
+                let start = (row * full_w + x) * 3;
+                out.extend_from_slice(v.get(start..start + w * 3).unwrap_or(&[]));
+            }
+            out
+        }
+        let samples = match &self.samples {
+            DeepSamples::U16(v) => DeepSamples::U16(cut(v, self.width, x, y, w, h)),
+            DeepSamples::F32(v) => DeepSamples::F32(cut(v, self.width, x, y, w, h)),
+        };
+        DeepImage { width: w, height: h, space: self.space, samples }
+    }
+
     /// The same image reduced to 8 bits, display-encoded with the space's curve.
     pub fn to_rgba8(&self) -> lightcraft_raster::Rgba8 {
         let mut out = lightcraft_raster::Rgba8::new(self.width, self.height);
@@ -379,6 +399,21 @@ impl IntoRgba for [u8; 3] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_deep_image_is_cut_to_a_window_and_never_past_its_edge() {
+        let samples: Vec<f32> = (0..4 * 3 * 3).map(|i| i as f32).collect();
+        let d = DeepImage { width: 4, height: 3, space: OutputSpace::Srgb, samples: DeepSamples::F32(samples) };
+        let c = d.cropped(1, 1, 2, 2);
+        let DeepSamples::F32(v) = &c.samples else { panic!("float") };
+        assert_eq!((c.width, c.height), (2, 2));
+        // the pixels at (1,1) (2,1) (1,2) (2,2) of a 4-wide image: first channels 15, 18, 27, 30
+        assert_eq!(v.iter().step_by(3).copied().collect::<Vec<_>>(), vec![15.0, 18.0, 27.0, 30.0]);
+        // asked for more than is there: what is there
+        let e = d.cropped(3, 2, 9, 9);
+        assert_eq!((e.width, e.height), (1, 1));
+        assert_eq!(d.cropped(9, 9, 1, 1).width, 0);
+    }
 
     #[test]
     fn trcs_invert() {

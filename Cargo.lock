@@ -1598,8 +1598,6 @@ dependencies = [
 [[package]]
 name = "egui-wgpu"
 version = "0.36.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5cef1f6d1bba40b09a4d0d62cb822b81030922cfbf65c5373398c3a3caafc5bd"
 dependencies = [
  "ahash",
  "bytemuck",
@@ -3316,6 +3314,7 @@ dependencies = [
 name = "lightcraft"
 version = "0.7.1"
 dependencies = [
+ "bytemuck",
  "eframe",
  "egui",
  "lightcraft-codecs",
@@ -3507,6 +3506,7 @@ version = "0.7.1"
 dependencies = [
  "ab_glyph",
  "base64 0.23.1",
+ "half",
  "harfrust",
  "jxl-oxide",
  "libc",
@@ -7375,8 +7375,6 @@ dependencies = [
 [[package]]
 name = "wgpu-hal"
 version = "30.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6b7fb58561a792bc237628ba0792e332de418fefe145f13b5ed8201e6d52f58"
 dependencies = [
  "android_system_properties",
  "arrayvec",

@@ -32,6 +32,17 @@ struct SettingsView: View {
                     row("sync", "Sync", "arrow.triangle.2.circlepath.icloud", .blue)
                     row("faces", "Faces", "person.crop.square", .teal)
                     row("models", "AI Models", "cpu", .purple)
+                    row("admin", "Server Administration", "server.rack", .red)
+                }
+                Section {
+                    // the first launch's welcome again (the sheet closes first: see `AppModel.welcomeAsked`)
+                    Button {
+                        model.welcomeAsked = true
+                        dismiss()
+                    } label: {
+                        rowLabel("Show Welcome", "sparkles", Brand.amber)
+                    }
+                    .foregroundStyle(.primary)
                 }
             }
             .navigationTitle("Settings")
@@ -47,6 +58,7 @@ struct SettingsView: View {
                 case "storage": SyncStorageView()
                 case "systemInfo": SystemInfoView()
                 case "models": ModelsSettings()
+                case "admin": AdminView()
                 default: EmptyView()
                 }
             }
@@ -75,16 +87,18 @@ struct SettingsView: View {
     }
 
     private func row(_ id: String, _ title: LocalizedStringKey, _ symbol: String, _ color: Color) -> some View {
-        NavigationLink(value: id) {
-            Label {
-                Text(title)
-            } icon: {
-                Image(systemName: symbol)
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 28, height: 28)
-                    .background(color, in: .rect(cornerRadius: 7))
-            }
+        NavigationLink(value: id) { rowLabel(title, symbol, color) }
+    }
+
+    private func rowLabel(_ title: LocalizedStringKey, _ symbol: String, _ color: Color) -> some View {
+        Label {
+            Text(title)
+        } icon: {
+            Image(systemName: symbol)
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.white)
+                .frame(width: 28, height: 28)
+                .background(color, in: .rect(cornerRadius: 7))
         }
     }
 }

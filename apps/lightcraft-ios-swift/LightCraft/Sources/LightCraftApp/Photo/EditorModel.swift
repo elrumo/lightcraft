@@ -121,6 +121,12 @@ final class EditorModel {
     private var inFlight = false
     /// A tap on the photo picks something for a tool (white balance, a point colour).
     var picking: Pick?
+    /// A tool is taking touches on the photo (a picker, Tag a Face, a tool's own screen): the photo's
+    /// tap (the bars), long press (Before) and swipe down (back to the grid) leave them alone.
+    var touching: Bool { picking != nil || tagFace || tool?.hasScreen == true }
+    /// Fingers on the photo (`TwoFingerGesture`): from the second, a tool's one-finger stroke is
+    /// dropped and the fingers move or zoom the photo instead.
+    var fingers = 0
     /// The Remove tool: its mode and brush (size as a fraction of the photo's long edge).
     var removeMode = "remove"
     var removeSize = 0.02
@@ -140,6 +146,8 @@ final class EditorModel {
     var brushAutoMask = false
     /// Masking: every visible mask's region over the photo at once, not just the selected one's.
     var maskOverlayAll = false
+    /// The selected mask was adjusted since it was selected or painted: Auto hides its overlay.
+    var maskAdjusted = false
     /// Before / After: the photo as it was beside it as it is.
     var beforeAfter = false
     /// Tag a Face: the next tap on the photo marks a face there.
@@ -203,6 +211,16 @@ final class EditorModel {
 
     func value(_ spec: ControlSpec) -> Double {
         local[spec.id] ?? spec.value ?? spec.default
+    }
+
+    /// A picker's button: the next tap on the photo takes `pick`; pressed again, it lets go.
+    func arm(_ pick: Pick, _ app: AppModel) {
+        picking = picking == pick ? nil : pick
+        switch picking {
+        case .whiteBalance: app.show(String(localized: "Tap something white or grey in the photo"))
+        case .pointColor: app.show(String(localized: "Tap a colour in the photo"))
+        case nil: break
+        }
     }
 
     /// A slider was grabbed (`true`) or let go.

@@ -32,7 +32,7 @@ nonisolated enum FilePick: Hashable {
 
 /// What covers the whole screen.
 nonisolated enum Cover: String, Identifiable {
-    case slideshow, lightsOut
+    case slideshow, lightsOut, onboarding
     var id: String { rawValue }
 }
 
@@ -132,6 +132,9 @@ final class AppModel {
     private(set) var state = HostState()
     private(set) var activity: [ActivityTask] = []
     var toast: Toast?
+    /// The screen can show the range above SDR white, as the engine was last told (`render.hdrDisplay`):
+    /// an HDR edit's loupe then comes as an HDR picture (`ImageStore.Picture.hdr`).
+    private(set) var hdrDisplay = false
     var path: [Route] = []
     var sheet: Sheet?
     /// The menu bar's commands: egui's UI commands (`host.uiCommands`) and the engine's with a menu.
@@ -143,6 +146,8 @@ final class AppModel {
     var picker: FilePick?
     /// The slideshow or Lights Out, over everything.
     var cover: Cover?
+    /// Settings ▸ Show Welcome was tapped: the settings sheet closes first, then `RootView` shows the welcome.
+    var welcomeAsked = false
     /// On an iPad, whether the albums column shows beside the grid.
     var sidebar: NavigationSplitViewVisibility = .all
     /// The albums page's sections below My Photos, in order (`host.sidebar`).
@@ -206,14 +211,20 @@ final class AppModel {
         defer { starting = false }
         // the device's name on the sync server (read by the engine when signing in)
         setenv("LIGHTCRAFT_DEVICE", UIDevice.current.name, 0)
+        let config = Self.config()
+        // the first launch's welcome, over the opening library (not under a script or the demo: the tour's screenshots)
+        if !prefs.onboarded, config.script == nil, !config.demo {
+            cover = .onboarding
+        }
         do {
-            let (engine, opened) = try await Engine.open(Self.config())
+            let (engine, opened) = try await Engine.open(config)
             self.engine = engine
             self.opened = opened
             if let warning = opened.warnings.first {
                 show(warning)
             }
             Task { await listen(engine) }
+            updateHdrDisplay()
             state = (try? await engine.request("host.state").decode(HostState.self)) ?? state
             await library.reload(engine, count: state.visibleCount)
             await albums.reload(engine)
@@ -221,7 +232,7 @@ final class AppModel {
             // a camera or card plugged in: its import (Settings ▸ Import ▸ Cameras and cards), or a word
             cameras.connected = { [weak self] device in
                 guard let self else { return }
-                if self.prefs.importOnConnect, self.sheet == nil, self.path.isEmpty {
+                if self.prefs.importOnConnect, self.sheet == nil, self.cover == nil, self.path.isEmpty {
                     self.sheet = .cameraImport
                 } else {
                     self.show(String(localized: "\(device.name ?? "") connected"))
@@ -249,6 +260,21 @@ final class AppModel {
     /// The app became active, went to the background… (`host.lifecycle`: save, pause the GPU, free memory).
     func lifecycle(_ event: String) {
         engine?.send("host.lifecycle", ["event": .string(event)])
+        // (another screen, or a setting that changed meanwhile)
+        if event == "active" { updateHdrDisplay() }
+    }
+
+    /// Tell the engine whether the screen has HDR headroom (EDR: iPhone 12 and later, recent iPads), so that
+    /// an HDR edit's loupe comes as an HDR picture; asked again when the app becomes active. The
+    /// environment variable `LIGHTCRAFT_HDR_DISPLAY` (`1` or `0`) decides for the simulator and scripts.
+    func updateHdrDisplay() {
+        let forced = ProcessInfo.processInfo.environment["LIGHTCRAFT_HDR_DISPLAY"]
+        let screen = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first?.screen
+        let on = forced.map { $0 == "1" } ?? ((screen?.potentialEDRHeadroom ?? 1) > 1)
+        // (not before the engine is there: `start()` asks again once it is, and what is not sent is not recorded)
+        guard let engine, on != hdrDisplay else { return }
+        hdrDisplay = on
+        engine.send("render.hdrDisplay", ["on": .bool(on)])
     }
 
     // MARK: events
@@ -263,7 +289,7 @@ final class AppModel {
         switch event {
         case .image(let info, let pixels):
             guard let pixels, let image = pixels.cgImage() else { return }
-            images.put(info, image)
+            images.put(info, image, hdr: pixels.hdr?.cgImage())
             if info.slot == "main", info.draft, let asked = draftAskedAt {
                 let elapsed = ContinuousClock.now - asked
                 lastDraftRoundTripMs = Double(elapsed.components.seconds) * 1000 + Double(elapsed.components.attoseconds) / 1e15
@@ -417,7 +443,8 @@ final class AppModel {
                 "color": .array(prefs.maskOverlayColor.map { .int(Int64($0)) }), "opacity": .double(prefs.maskOverlayOpacity),
             ]
         }
-        guard prefs.maskOverlay, let mask = state.activeMask else { return nil }
+        let shown = prefs.maskOverlayVisibility == "always" || (prefs.maskOverlayVisibility == "auto" && !editor.maskAdjusted)
+        guard shown, let mask = state.activeMask else { return nil }
         return [
             "kind": "mask", "id": .int(Int64(mask)), "view": .string(prefs.maskOverlayMode),
             "color": .array(prefs.maskOverlayColor.map { .int(Int64($0)) }), "opacity": .double(prefs.maskOverlayOpacity),

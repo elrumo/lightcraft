@@ -167,6 +167,11 @@ The data folder, the listen address and the domain are deployment settings, so t
 them: `--data` / `LIGHTCRAFT_DATA`, `--listen` / `LIGHTCRAFT_LISTEN`, and the domain in the reverse proxy
 (`LIGHTCRAFT_DOMAIN` with the compose file). Its JSON API is under `/api/admin/` (`apps/lightcraft-server/src/admin.rs`).
 
+The SwiftUI iPhone / iPad app has the same console as screens: **Settings ▸ Server Administration** (sign-in or first-run
+setup, Overview, Users with their devices, shared links and library folders, Search & People, Storage & Clean Up). It
+calls the same API through the app's engine (`host.admin.*`, [ios-swift.md](ios-swift.md)) and asks for the admin
+password itself, since the Sync sign-in is a device's.
+
 ### Storage limits
 
 An admin can limit what the server keeps for a user, as a family plan's share of a cloud service: admin page ›
