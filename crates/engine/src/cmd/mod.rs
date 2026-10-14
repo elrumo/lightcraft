@@ -44,6 +44,7 @@ mod xmp;
 pub use convert::{MAX_TRACKED, TrackedEdit, can_edit_original};
 use serde::Serialize;
 use serde_json::Value;
+pub use vision::faces_named;
 
 use crate::{EngineError, Result, Session};
 
