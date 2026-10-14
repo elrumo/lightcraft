@@ -13,7 +13,9 @@ use lightcraft_engine::pipeline::PixelWindow;
 /// Windows start and end on multiples of this many pixels of the zoomed frame.
 pub const SNAP: usize = 256;
 /// The most context rendered beyond the visible pixels (a multiple of [`SNAP`]).
-pub const MAX_MARGIN: usize = 768;
+/// 4.5 % of an 11:1 view of a 24 MP frame, snapped to [`SNAP`]. The old 768 px cap left Dehaze
+/// tens of codes off the full-frame render from 4:1 up (#1146).
+pub const MAX_MARGIN: usize = 3072;
 /// The most a window may span on either axis: a bound on its texture whatever the window size.
 pub const MAX_SPAN: usize = if cfg!(target_arch = "wasm32") { 3072 } else { 6144 };
 

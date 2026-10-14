@@ -7,11 +7,12 @@
 //! engine host) drive the same runner; each app words the outcome itself.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, mpsc};
 
 use lightcraft_engine::Session;
 use lightcraft_engine::activity::{Cancel, TaskGuard};
+use lightcraft_engine::lightroom_job::{LightroomProgress, LightroomStep};
 use serde_json::{Value, json};
 
 /// Called from a worker when it has something for [`Runner::poll`] (egui: a repaint).
@@ -43,8 +44,7 @@ pub struct Task {
     pub kind: Kind,
     pub path: PathBuf,
     cancel: Arc<AtomicBool>,
-    total: Arc<AtomicUsize>,
-    done: Arc<AtomicUsize>,
+    progress: LightroomProgress,
     rx: mpsc::Receiver<Message>,
     phase: Phase,
     cancelled: bool,
@@ -58,8 +58,7 @@ impl Task {
         kind: Kind,
         path: PathBuf,
         cancel: Arc<AtomicBool>,
-        total: Arc<AtomicUsize>,
-        done: Arc<AtomicUsize>,
+        progress: LightroomProgress,
         rx: mpsc::Receiver<Message>,
         words: &dyn Fn(&'static str) -> String,
     ) -> Self {
@@ -68,7 +67,7 @@ impl Task {
             Kind::Import => "Importing Lightroom catalog",
         };
         let guard = s.activity.start("lightroom", label, Cancel::Flag(cancel.clone()));
-        let task = Self { kind, path, cancel, total, done, rx, phase: Phase::Reading, cancelled: false, guard };
+        let task = Self { kind, path, cancel, progress, rx, phase: Phase::Reading, cancelled: false, guard };
         task.refresh(words);
         task
     }
@@ -80,16 +79,21 @@ impl Task {
         self.refresh(words);
     }
 
-    /// Bring the activity row up to date: the count while reading, then what is being done.
+    /// Bring the activity row up to date: while reading, the step under way and its own count
+    /// (reading the photos takes nearly all of an import, so it is counted, not waited out);
+    /// then what is being done.
     fn refresh(&self, words: &dyn Fn(&'static str) -> String) {
-        let detail = match (self.phase, self.kind) {
-            (Phase::Reading, Kind::Inspect) => String::new(),
-            (Phase::Reading, Kind::Import) => words("Reading Lightroom catalog…"),
-            (Phase::Committing, _) => words("Adding Lightroom photos…"),
-            (Phase::Finalizing, _) => words("Saving Lightroom import index…"),
+        let (step, done, total) = self.progress.step();
+        let detail = match (self.phase, self.kind, step) {
+            (Phase::Reading, Kind::Inspect, _) => String::new(),
+            (Phase::Reading, Kind::Import, LightroomStep::Catalog) => words("Reading Lightroom catalog…"),
+            (Phase::Reading, Kind::Import, LightroomStep::ReadPhotos) => words("Reading photos…"),
+            (Phase::Reading, Kind::Import, LightroomStep::AddPhotos) => words("Adding photos…"),
+            (Phase::Committing, ..) => words("Adding Lightroom photos…"),
+            (Phase::Finalizing, ..) => words("Saving Lightroom import index…"),
         };
         if self.phase == Phase::Reading {
-            self.guard.progress(self.done.load(Ordering::Relaxed) as u64, self.total.load(Ordering::Relaxed) as u64);
+            self.guard.progress(done as u64, total as u64);
         } else {
             self.guard.progress(0, 0);
         }
@@ -106,13 +110,21 @@ impl Task {
             Phase::Committing => "committing",
             Phase::Finalizing => "finalizing",
         };
+        let (step, done, total) = self.progress.step();
+        let step = match step {
+            LightroomStep::Catalog => "catalog",
+            LightroomStep::ReadPhotos => "readPhotos",
+            LightroomStep::AddPhotos => "addPhotos",
+        };
         json!({
             "running": true,
             "kind": kind,
             "path": self.path,
             "phase": phase,
-            "done": self.done.load(Ordering::Relaxed),
-            "total": self.total.load(Ordering::Relaxed),
+            "step": step,
+            "done": done,
+            "total": total,
+            "fraction": self.progress.fraction(),
             "cancelled": self.cancelled || self.cancel.load(Ordering::Relaxed),
         })
     }
@@ -173,19 +185,12 @@ pub fn find_catalog(path: &Path) -> Result<PathBuf, String> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn spawn_inspect(
-    path: PathBuf,
-    cancel: Arc<AtomicBool>,
-    total: Arc<AtomicUsize>,
-    done: Arc<AtomicUsize>,
-    tx: mpsc::Sender<Message>,
-    wake: Wake,
-) -> Result<(), String> {
+fn spawn_inspect(path: PathBuf, cancel: Arc<AtomicBool>, progress: LightroomProgress, tx: mpsc::Sender<Message>, wake: Wake) -> Result<(), String> {
     std::thread::Builder::new()
         .name("lc-lightroom-inspect".into())
         .spawn(move || {
             let result = lightcraft_engine::guard::catch("Lightroom inspect", || {
-                lightcraft_engine::lightroom_catalog::read_with_progress(&path, &cancel, &total, &done)
+                lightcraft_engine::lightroom_catalog::read_with_progress(&path, &cancel, &progress.catalog_total, &progress.catalog_done)
             })
             .and_then(|r| r.map(inspect_report));
             let _ = tx.send(Message::Inspected(result));
@@ -261,7 +266,7 @@ impl Runner {
         self.task.is_some()
     }
 
-    /// The task running (`{running, kind, path, phase, done, total, cancelled}`), else the last
+    /// The task running (`{running, kind, path, phase, step, done, total, fraction, cancelled}`), else the last
     /// one's result, else null.
     pub fn status(&self) -> Value {
         self.task.as_ref().map(Task::status).or_else(|| self.last.clone()).unwrap_or(Value::Null)
@@ -281,12 +286,11 @@ impl Runner {
         }
         let path = find_catalog(path)?;
         let cancel = Arc::new(AtomicBool::new(false));
-        let total = Arc::new(AtomicUsize::new(0));
-        let done = Arc::new(AtomicUsize::new(0));
+        let progress = LightroomProgress::default();
         let (tx, rx) = mpsc::channel();
-        spawn_inspect(path.clone(), cancel.clone(), total.clone(), done.clone(), tx, wake)?;
+        spawn_inspect(path.clone(), cancel.clone(), progress.clone(), tx, wake)?;
         self.last = None;
-        self.task = Some(Task::new(s, Kind::Inspect, path.clone(), cancel, total, done, rx, words));
+        self.task = Some(Task::new(s, Kind::Inspect, path.clone(), cancel, progress, rx, words));
         Ok(json!({"running": true, "kind": "inspect", "path": path}))
     }
 
@@ -306,12 +310,11 @@ impl Runner {
         let path = find_catalog(path)?;
         let job = lightcraft_engine::lightroom_job::LightroomJob::new(s, path.clone(), update_existing).map_err(|e| e.to_string())?;
         let cancel = Arc::new(AtomicBool::new(false));
-        let total = job.total_atomic();
-        let done = job.done_atomic();
+        let progress = job.progress();
         let (tx, rx) = mpsc::channel();
         spawn_prepare(job, cancel.clone(), tx, wake)?;
         self.last = None;
-        self.task = Some(Task::new(s, Kind::Import, path.clone(), cancel, total, done, rx, words));
+        self.task = Some(Task::new(s, Kind::Import, path.clone(), cancel, progress, rx, words));
         Ok(json!({"running": true, "kind": "import", "path": path}))
     }
 
@@ -441,21 +444,21 @@ mod tests {
     }
 
     /// A task as `start_import` makes it, fed by a channel the test holds instead of a worker.
-    fn fake_import(s: &Session) -> (Task, mpsc::Sender<Message>, Arc<AtomicBool>, Arc<AtomicUsize>, Arc<AtomicUsize>) {
+    fn fake_import(s: &Session) -> (Task, mpsc::Sender<Message>, Arc<AtomicBool>, LightroomProgress) {
         let (tx, rx) = mpsc::channel();
-        let (cancel, total, done) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
-        let task = Task::new(s, Kind::Import, "fixture.lrcat".into(), cancel.clone(), total.clone(), done.clone(), rx, &words);
-        (task, tx, cancel, total, done)
+        let (cancel, progress) = (Arc::new(AtomicBool::new(false)), LightroomProgress::default());
+        let task = Task::new(s, Kind::Import, "fixture.lrcat".into(), cancel.clone(), progress.clone(), rx, &words);
+        (task, tx, cancel, progress)
     }
 
     #[test]
     fn lightroom_row_is_not_cancellable_while_committing() {
         let mut s = Session::with_demo();
         let mut runner = Runner::default();
-        let (task, tx, cancel, total, done) = fake_import(&s);
+        let (task, tx, cancel, progress) = fake_import(&s);
         runner.task = Some(task);
-        total.store(10, Ordering::Relaxed);
-        done.store(3, Ordering::Relaxed);
+        progress.catalog_total.store(10, Ordering::Relaxed);
+        progress.catalog_done.store(3, Ordering::Relaxed);
         assert!(runner.poll(&mut s, wake(), &words).is_none());
         let rows = s.activity.list();
         assert_eq!(rows.len(), 1);
@@ -478,7 +481,7 @@ mod tests {
     fn lightroom_cancel_from_the_stack_stops_the_read() {
         let mut s = Session::with_demo();
         let mut runner = Runner::default();
-        let (task, tx, cancel, _, _) = fake_import(&s);
+        let (task, tx, cancel, _) = fake_import(&s);
         runner.task = Some(task);
         let id = s.activity.list()[0].id;
         s.activity.cancel(id).unwrap();

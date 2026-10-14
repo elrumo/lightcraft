@@ -74,7 +74,7 @@ fn v3_library_loads_and_is_upgraded() {
     assert_eq!(snapshot_version(&m), u64::from(VERSION));
 }
 
-/// Before it merged upstream's formats 3..7, this fork wrote `SetServerPath` (now format 8) as
+/// Before it merged upstream's formats 3..7, this fork wrote `SetServerPath` (now format 9) as
 /// format 3: such a library opens with its server paths and is rewritten in the current format.
 #[test]
 fn fork_v3_library_with_server_paths_loads_and_is_upgraded() {
@@ -229,7 +229,8 @@ fn op_variants_are_versioned() {
             Op::SetKeyword { .. } => 5,
             Op::SetFolderRecord { .. } => 6,
             Op::SetAsShotWb { .. } => 7,
-            Op::SetServerPath { .. } => 8,
+            Op::SetHistoryCursor { .. } => 8,
+            Op::SetServerPath { .. } => 9,
         }
     }
     let newest = since(&Op::SetServerPath { id: PhotoId(1), path: None });
