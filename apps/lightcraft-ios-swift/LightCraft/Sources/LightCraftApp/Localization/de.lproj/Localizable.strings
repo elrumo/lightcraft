@@ -14,7 +14,7 @@
 "%@ free of %@" = "%1$@ frei von %2$@";
 "%@ of %@ used" = "%1$@ von %2$@ belegt";
 "%@ wheel" = "Farbrad: %@";
-"%@ · %lld MB download" = "%1$@ · Download von %2$lld MB";
+"%@ · %@ download" = "%1$@ · Download von %2$@";
 "%lld" = "%1$lld";
 "%lld %%" = "%1$lld %%";
 "%lld GB" = "%1$lld GB";
@@ -73,6 +73,7 @@
 "=  exactly" = "=  genau";
 "A blank template keeps the original names." = "Eine leere Vorlage behält die Originalnamen bei.";
 "A change that can't be saved to disk (full or unplugged drive) is no longer silent: the command reports" = "Kann eine Änderung wegen eines vollen oder getrennten Laufwerks nicht gespeichert werden, bleibt das nicht mehr unbemerkt: Der Befehl meldet";
+"A computer" = "Ein Computer";
 "A copy of the file with your edits applied, stacked with the original." = "Eine Kopie der Datei mit Ihren Bearbeitungen, mit dem Original gestapelt.";
 "A copy of the original file, without your edits, stacked with it." = "Eine Kopie der Originaldatei ohne Ihre Bearbeitungen, mit ihr gestapelt.";
 "A filter is hiding this view's photos: change it, or clear it (View → Clear Filters)" = "Ein Filter blendet die Fotos dieser Ansicht aus: Ändere ihn oder lösche ihn (Ansicht → Filter löschen)";
@@ -81,6 +82,7 @@
 "A keyword set needs a name" = "Ein Stichwortsatz braucht einen Namen";
 "A library is open in one program at a time (issue #99): opening a library that LightCraft or `lightcraft-cli` already" = "Eine Bibliothek ist nur in einem Programm gleichzeitig geöffnet (Issue #99). Wenn LightCraft oder `lightcraft-cli` sie bereits geöffnet hat,";
 "A one-time download of about" = "Ein einmaliger Download von etwa";
+"A phone or tablet" = "Ein Smartphone oder Tablet";
 "A photo library and raw developer in pure Rust, open source (MIT OR Apache-2.0)." = "Eine Fotobibliothek und ein RAW-Entwickler in reinem Rust, Open Source (MIT OR Apache-2.0).";
 "A save that fails part-way (a full disk, a network share that drops) no longer looks like a damaged catalog" = "Ein teilweise fehlgeschlagener Speichervorgang durch einen vollen Datenträger oder eine getrennte Netzwerkfreigabe hinterlässt keinen scheinbar beschädigten Katalog";
 "A sleeping NAS, a dropped network share or a USB drive spinning up no longer freezes the window (issue #104):" = "Ein schlafendes NAS, eine getrennte Netzwerkfreigabe oder ein anlaufendes USB-Laufwerk blockieren das Fenster nicht mehr (Issue #104).";
@@ -247,6 +249,7 @@
 "Automatic" = "Automatisch";
 "Automatic renders the Detail view at the size it is shown, up to the photo's own pixels. Choose a size to cap it: smaller is faster." = "Automatisch rendert die Detailansicht in der angezeigten Größe, bis zu den eigenen Pixeln des Fotos. Eine Größe wählen, um sie zu begrenzen: kleiner ist schneller.";
 "Automatic uses the graphics card where it is faster than the processor: both are timed on this computer the first time a photo is made." = "Automatic uses the graphics card where it is faster than the processor: both are timed on this computer the first time a photo is made.";
+"Automatic: %@ suits this device" = "Automatisch: %1$@ passt zu diesem Gerät";
 "Automatically Write Changes into XMP" = "Änderungen automatisch in XMP schreiben";
 "Automatically write changes into XMP sidecars" = "Änderungen automatisch in XMP-Begleitdateien schreiben";
 "Autumn Gold" = "Herbstgold";
@@ -272,7 +275,7 @@
 "Before/After Split Top/Bottom" = "Vorher/Nachher geteilt – oben/unten";
 "Before/After Top/Bottom" = "Vorher/Nachher – oben/unten";
 "Begin Interaction" = "Interaktion beginnen";
-"Best for wide areas; slower, computers only" = "Am besten für große Flächen; langsamer, nur auf Computern";
+"Best for wide areas of sky, water or texture" = "Am besten für weite Flächen aus Himmel, Wasser oder Textur";
 "Best of Similar Shots" = "Beste ähnlicher Aufnahmen";
 "Binary assets added" = "Hinzugefügte Binärdateien";
 "Binary assets removed" = "Entfernte Binärdateien";
@@ -685,6 +688,8 @@
 "Drag the crop past the photo's edges, or choose an aspect ratio, first." = "Zieh den Zuschnitt zuerst über die Ränder des Fotos hinaus oder wähle ein Seitenverhältnis.";
 "Drag the crop past the photo's edges, or choose an aspect ratio, then Generate." = "Zieh den Zuschnitt über die Ränder des Fotos hinaus oder wähle ein Seitenverhältnis, dann Erzeugen.";
 "Draw Guides" = "Hilfslinien zeichnen";
+"Draws new detail, guided by the photo; slow" = "Zeichnet neue Details, geleitet vom Foto; langsam";
+"Draws new detail; slower" = "Zeichnet neue Details; langsamer";
 "Drop here for the top level" = "Hier ablegen für die oberste Ebene";
 "Duplicate" = "Duplizieren";
 "Duplicate Component" = "Komponente duplizieren";
@@ -897,6 +902,7 @@
 "Full screen mode" = "Vollbildmodus";
 "Full size" = "Volle Größe";
 "GPS Track Log" = "GPS-Track";
+"GPU" = "GPU";
 "GPU Rendering" = "GPU-Rendering";
 "GPU rendering" = "GPU-Rendering";
 "General" = "Allgemein";
@@ -1104,6 +1110,7 @@
 "It tests this album, so testing it back would loop" = "Es prüft dieses Album; es zurückzuprüfen wäre ein Kreis";
 "Its copyright, creator and place." = "Urheberrecht, Urheber und Ort.";
 "Its denoised picture is not made yet, and pictures are not made on their own (Settings, AI Denoise)." = "Its denoised picture is not made yet, and pictures are not made on their own (Settings, AI Denoise).";
+"Its licence lists uses that aren't allowed: read it before downloading (Settings → AI Models → Licence)." = "Seine Lizenz verbietet bestimmte Verwendungen: Lies sie vor dem Download (Einstellungen → KI-Modelle → Lizenz).";
 "Its photos go to Recently Deleted; no file is touched." = "Die zugehörigen Fotos werden nach „Zuletzt gelöscht“ verschoben; keine Datei wird verändert.";
 "JPEG (Large)" = "JPEG (groß)";
 "JPEG (Small)" = "JPEG (klein)";
@@ -1474,6 +1481,7 @@
 "None" = "Keine";
 "None of these" = "Keine davon";
 "Not Now" = "Nicht jetzt";
+"Not an open-source licence: it lists uses that aren't allowed. Read it before downloading." = "Keine Open-Source-Lizenz: Sie verbietet bestimmte Verwendungen. Lies sie vor dem Download.";
 "Not carried over: %@" = "Nicht übernommen: %1$@";
 "Not saved" = "Nicht gespeichert";
 "Notes" = "Hinweise";
@@ -2266,6 +2274,7 @@
 "That isn't JSON: %@" = "Das ist kein JSON: %@";
 "That key can't be used as a shortcut" = "Diese Taste kann nicht als Tastenkürzel verwendet werden";
 "The SAM 3 model is installed: Object and Describe masks are ready." = "Das SAM-3-Modell ist installiert: Objekt- und Beschreibungsmaske sind verfügbar.";
+"The browser" = "Der Browser";
 "The camera is locked: unlock it to read its photos" = "Die Kamera ist gesperrt: entsperre sie, um ihre Fotos zu lesen";
 "The catalog has a format version (issue #102). Opening a library from an older LightCraft upgrades it; a library" = "Der Katalog hat eine Formatversion (Issue #102). Bibliotheken älterer LightCraft-Versionen werden beim Öffnen aktualisiert; eine Bibliothek";
 "The checkerboard shows area with nothing in it yet: Generate fills it." = "Das Schachbrett zeigt die noch leere Fläche: Erzeugen füllt sie.";
@@ -2281,6 +2290,7 @@
 "The library is up to date with this folder." = "Die Bibliothek ist mit diesem Ordner auf dem neuesten Stand.";
 "The model is kept on this computer only. LightCraft never uploads or shares it." = "The model is kept on this computer only. LightCraft never uploads or shares it.";
 "The model is kept on this device only. LightCraft never uploads or shares it." = "Das Modell bleibt nur auf diesem Gerät. LightCraft lädt es nie hoch und gibt es nicht weiter.";
+"The most detail; slow" = "Die meisten Details; langsam";
 "The new area was painted by %@ on this device." = "Die neue Fläche wurde auf diesem Gerät erzeugt (%1$@).";
 "The number at the end of the original name (IMG_0042 → 0042)" = "Nummer am Ende des Originalnamens (IMG_0042 → 0042)";
 "The original extension is always added; {ext} only puts it inside the name as well." = "Die Originalerweiterung wird immer angehängt; {ext} fügt sie zusätzlich innerhalb des Namens ein.";
@@ -2312,6 +2322,7 @@
 "This build cannot run recognition models: they can be added and chosen, not used." = "Diese Version kann keine Erkennungsmodelle ausführen: Sie lassen sich hinzufügen und auswählen, aber nicht verwenden.";
 "This build has nowhere to keep denoise models, so AI Denoise is not available. (The desktop app has.)" = "This build has nowhere to keep denoise models, so AI Denoise is not available. (The desktop app has.)";
 "This build has nowhere to keep face models." = "Diese Version hat keinen Speicherort für Gesichtsmodelle.";
+"This device:" = "Dieses Gerät:";
 "This disk" = "Dieses Laufwerk";
 "This file cannot be used yet" = "This file cannot be used yet";
 "This folder is not available (drive disconnected?). Smart previews are not built or used until it is back or you choose another folder." = "Dieser Ordner ist nicht verfügbar (Laufwerk getrennt?). Smart-Vorschauen werden erst wieder erstellt oder verwendet, wenn er verfügbar ist oder du einen anderen Ordner auswählst.";
@@ -2406,7 +2417,7 @@
 "User" = "Benutzer";
 "User Presets" = "Benutzervorgaben";
 "Username" = "Benutzername";
-"Uses the %@ model, a %lld MB download (%@ licence). %@." = "Verwendet das %1$@-Modell, ein Download von %2$lld MB (Lizenz %3$@). %4$@.";
+"Uses the %@ model, a %@ download (%@ licence). %@." = "Verwendet das %1$@-Modell, ein Download von %2$@ (Lizenz %3$@). %4$@.";
 "Uses the MI-GAN model, a %lld MB download (%@). %@." = "Verwendet das Modell MI-GAN, ein Download von %lld MB (%@). %@.";
 "Value" = "Wert";
 "Variance" = "Varianz";
@@ -2447,6 +2458,7 @@
 "We" = "Mi";
 "Wednesday" = "Mittwoch";
 "Weeks" = "Wochen";
+"What paints the new area when the crop reaches past the photo (Crop → Expand). The larger models draw new detail and take longer." = "Was den neuen Bereich füllt, wenn der Zuschnitt über das Foto hinausreicht (Zuschneiden → Erweitern). Die größeren Modelle zeichnen neue Details und brauchen länger.";
 "What's New" = "Neuigkeiten";
 "When Rated" = "Wenn bewertet";
 "When rated or hovered" = "Bei Bewertung oder Mauszeigerkontakt";
@@ -2466,6 +2478,7 @@
 "Window" = "Fenster";
 "Winter Blue" = "Winterblau";
 "Without Saving and Quit (issue #100). It no longer quietly starts a demo session that looked like a reset library and" = "Ohne Speichern fortfahren und Beenden (Issue #100). Sie startet keine unbemerkte Demo-Sitzung mehr, die wie eine zurückgesetzte Bibliothek wirkte und";
+"Without a GPU it takes minutes per Generate." = "Ohne GPU dauert jedes Erzeugen einige Minuten.";
 "Words" = "Wörter";
 "Works" = "Funktioniert";
 "Works on raw files from cameras with a standard (Bayer) sensor. Other files keep their normal noise reduction." = "Works on raw files from cameras with a standard (Bayer) sensor. Other files keep their normal noise reduction.";
@@ -2623,6 +2636,7 @@
 "needs text" = "braucht Text";
 "needs two values" = "braucht zwei Werte";
 "never leaves a truncated file; the XMP sidecar of an \"Original\" export follows the \"If file exists\" choice too." = "hinterlässt keine abgeschnittene Datei; auch XMP-Begleitdateien beim Originalexport berücksichtigen „Bei vorhandener Datei“.";
+"no GPU" = "keine GPU";
 "non-commercial use only" = "non-commercial use only";
 "none" = "keine";
 "none (CPU rendering)" = "keine (CPU-Rendering)";
