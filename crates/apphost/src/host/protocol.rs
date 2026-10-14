@@ -154,6 +154,13 @@ pub enum Event {
         /// from and where it goes in it.
         #[serde(skip_serializing_if = "Option::is_none")]
         window: Option<Value>,
+        /// For `main` and `region` of an HDR edit on a display that can show it
+        /// (`render.hdrDisplay`): `{token, width, height, peak}`, the same picture as float pixels:
+        /// `token`'s lease is RGBA16F (half floats, 8 bytes a pixel, Display P3 encoded with the sRGB
+        /// curve extended past 1: SDR white = 1, highlights up to the encoding of `peak`, which is
+        /// linear light); the 8-bit picture is then in Display P3 too.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        hdr: Option<Value>,
     },
     /// A render failed (an unreadable file, a missing original…).
     RenderFailed { slot: String, photo: PhotoId, key: u64, error: String },

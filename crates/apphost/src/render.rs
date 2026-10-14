@@ -25,6 +25,7 @@ use std::time::Duration;
 
 use lightcraft_catalog::PhotoId;
 use lightcraft_engine::Session;
+pub use lightcraft_engine::hdr_view::HdrPicture;
 use lightcraft_engine::media::{QuickJob, QuickSource, RenderJob, RenderResult};
 use lightcraft_engine::pipeline::StageCache;
 use lightcraft_preview::JobPool;
@@ -108,6 +109,10 @@ pub trait Present<V> {
     fn make(&mut self, slot: Slot, image: Rgba8) -> V;
     /// A newer picture for `slot`, which already shows `view`.
     fn update(&mut self, slot: Slot, image: Rgba8, view: &mut V);
+    /// `slot`'s picture, just made or updated, has an HDR rendition (`Some`) or none (`None`: an SDR
+    /// render took its place). Only the loupe's slots ([`Scheduler::set_hdr_display`]) get one. A
+    /// frontend that can't show HDR leaves this as it is.
+    fn set_hdr(&mut self, _slot: Slot, _hdr: Option<Arc<HdrPicture>>, _view: &mut V) {}
 }
 
 /// What one [`Scheduler::poll`] did.
@@ -367,6 +372,9 @@ pub struct Scheduler<V> {
     pub stage_budget_override: Option<usize>,
     /// The monitor profile textures are made for (`app.displayProfile`; `None`: sRGB).
     display: Option<Arc<lightcraft_engine::display::Display>>,
+    /// The display can show the range above SDR white: the loupe renders HDR edits in HDR
+    /// ([`Self::set_hdr_display`]).
+    hdr_display: bool,
     /// Since when nothing has been pending, and whether the GPU pool was trimmed since.
     #[cfg(not(target_arch = "wasm32"))]
     idle: Option<(std::time::Instant, bool)>,
@@ -475,6 +483,7 @@ impl<V> Scheduler<V> {
             stages_trimmed: 0,
             stage_budget_override: None,
             display: None,
+            hdr_display: false,
             #[cfg(not(target_arch = "wasm32"))]
             idle: None,
         }
@@ -610,9 +619,30 @@ impl<V> Scheduler<V> {
     }
 
     /// `job` as [`Self::request`] would run it for `slot` (its key included): views render for
-    /// the display profile in use.
+    /// the display profile in use, and the loupe's HDR edits for an HDR display. Applying it again
+    /// changes nothing.
     pub fn job_for(&self, slot: Slot, job: RenderJob) -> RenderJob {
-        if Self::renders_for_display(slot) { job.with_display(self.display.clone()) } else { job }
+    /// The slots of the photo being edited, which show an HDR edit in HDR when the display can
+    /// ([`Self::set_hdr_display`]): the loupe and its zoom window. The Before views show the
+    /// unedited photo, and everything else is small SDR previews.
+    fn renders_hdr(slot: Slot) -> bool {
+        matches!(slot, Slot::Main | Slot::Region)
+    }
+
+        let job = if Self::renders_for_display(slot) { job.with_display(self.display.clone()) } else { job };
+        if self.hdr_display && Self::renders_hdr(slot) { job.with_hdr_display() } else { job }
+    }
+
+    /// The display can (or no longer can) show the range above SDR white: the loupe of an HDR edit
+    /// renders its HDR picture ([`Present::set_hdr`]), or goes back to the SDR rendition. Asked
+    /// again when the window moves to another display.
+    pub fn set_hdr_display(&mut self, on: bool) {
+        self.hdr_display = on;
+    }
+
+    /// Whether the loupe renders HDR edits in HDR ([`Self::set_hdr_display`]).
+    pub fn hdr_display(&self) -> bool {
+        self.hdr_display
     }
 
     /// The display profile in use (id).
@@ -1054,6 +1084,7 @@ impl<V> Scheduler<V> {
             let rendered = match r.rendered {
                 Ok(x) => {
                     self.failed.remove(&slot);
+            let hdr = r.hdr.take();
                     x
                 }
                 Err(e) => {
@@ -1095,6 +1126,9 @@ impl<V> Scheduler<V> {
                     t.key = r.key;
                     t.photo = r.photo;
                     t.size = size;
+                    if Self::renders_hdr(slot) {
+                        present.set_hdr(slot, hdr, &mut t.view);
+                    }
                     t.histogram = Some(rendered.histogram);
                     t.ms = ms;
                     t.quick = r.quick;
@@ -1102,7 +1136,10 @@ impl<V> Scheduler<V> {
                     t.draft = draft;
                 }
                 None => {
-                    let view = present.make(slot, rendered.image);
+                    let mut view = present.make(slot, rendered.image);
+                    if Self::renders_hdr(slot) {
+                        present.set_hdr(slot, hdr, &mut view);
+                    }
                     let shown = Shown {
                         key: r.key,
                         photo: r.photo,
@@ -1261,6 +1298,7 @@ impl Failed {
         }
     }
 }
+            hdr: None,
 
 /// Run `job` (on the worker thread) and make its image ready for `display`; a panic in it is that
 /// render's error.
@@ -1623,6 +1661,62 @@ mod scheduler_tests {
     // A render that panics is that slot's failure: it is reported, the slot is no longer pending,
     // and the worker renders the next one
     #[test]
+    /// Keeps the HDR picture of each slot it was given (what the egui window does with it).
+    struct KeepHdr;
+    impl Present<Option<Arc<HdrPicture>>> for KeepHdr {
+        fn make(&mut self, _: Slot, _: Rgba8) -> Option<Arc<HdrPicture>> {
+            None
+        }
+        fn update(&mut self, _: Slot, _: Rgba8, _: &mut Option<Arc<HdrPicture>>) {}
+        fn set_hdr(&mut self, _: Slot, hdr: Option<Arc<HdrPicture>>, view: &mut Option<Arc<HdrPicture>>) {
+            *view = hdr;
+        }
+    }
+
+    // The loupe of an HDR edit gets its HDR picture when the display can show it, and only then; an
+    // SDR render that takes its place takes the picture away (LR-VIEW-HDR-DISPLAY)
+    #[test]
+    fn the_loupe_of_an_hdr_edit_shows_hdr_only_on_an_hdr_display() {
+        let mut s = session(Arc::new(|_, _| {
+            let mut image = lightcraft_raster::Rgb32f::new(8, 8);
+            image.data.fill([3.0, 2.0, 1.0]);
+            Ok((image, Default::default()))
+        }));
+        let mut hdr_on = lightcraft_develop::DevelopSettings::default();
+        hdr_on.hdr.enabled = true;
+        s.catalog.apply(Op::SetDevelop { id: PhotoId(1), settings: Arc::new(hdr_on), label: "HDR".into(), edited: None }).unwrap();
+        let mut r = Scheduler::<Option<Arc<HdrPicture>>>::with_worker_threads(1);
+        let show = |r: &mut Scheduler<Option<Arc<HdrPicture>>>, s: &mut Session| {
+            let job = s.loupe_job(PhotoId(1), 8, 8, true).unwrap();
+            r.request(Slot::Main, job, 100);
+            let t0 = std::time::Instant::now();
+            while r.is_pending(Slot::Main) {
+                r.poll(s, &mut KeepHdr);
+                assert!(t0.elapsed() < Duration::from_secs(30), "no result");
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            r.poll(s, &mut KeepHdr);
+            r.textures[&Slot::Main].view.clone()
+        };
+        // a display without headroom: the SDR rendition, no HDR picture
+        assert!(!r.hdr_display());
+        assert!(show(&mut r, &mut s).is_none());
+        // a display with: the same edit renders its HDR picture, which has what is above SDR white
+        r.set_hdr_display(true);
+        let hdr = show(&mut r, &mut s).expect("the HDR picture");
+        assert_eq!((hdr.width, hdr.height), (r.textures[&Slot::Main].size[0], r.textures[&Slot::Main].size[1]));
+        // (a positive half float is above 1.0 exactly when its bits are above 1.0's, 0x3C00)
+        assert!(hdr.rgba16f.chunks(4).any(|p| p[0] > 0x3C00));
+        // the window moved to a display without: back to the SDR rendition, the picture gone
+        r.set_hdr_display(false);
+        assert!(show(&mut r, &mut s).is_none());
+        // the small views (a grid thumbnail) never carry one
+        r.set_hdr_display(true);
+        assert!(!r.job_for(Slot::Thumb(PhotoId(1)), s.thumb_job(PhotoId(1), 64).unwrap()).hdr_view);
+        assert!(!r.job_for(Slot::Before, s.loupe_job(PhotoId(1), 8, 8, true).unwrap()).hdr_view);
+        assert!(r.job_for(Slot::Region, s.loupe_job(PhotoId(1), 8, 8, true).unwrap()).hdr_view);
+    }
+
     fn a_panicking_render_fails_its_slot_and_spares_the_worker() {
         let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let c = calls.clone();
