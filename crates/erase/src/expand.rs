@@ -254,7 +254,7 @@ mod tests {
     fn frames_follow_the_picture_near_the_native_size() {
         let check = |f: Frame| {
             assert!(f.is_valid(), "{f:?}");
-            assert!(f.width % 64 == 0 && f.height % 64 == 0, "{f:?}");
+            assert!(f.width.is_multiple_of(64) && f.height.is_multiple_of(64), "{f:?}");
         };
         // square: the whole canvas
         let f = frame_for(768, 768, 512, 64, 2.0);
