@@ -6,6 +6,10 @@
 //! sliders); and a bar with ✕ and ✓. Edits apply live, so the photo already shows the result: ✓
 //! keeps it, ✕ undoes every step taken since the screen opened. The drawing and the words are our
 //! own. Held sideways, the title, the panel and the bar are one column on the right.
+//!
+//! **Expand** (the first tile of the Aspect tab) lets the frame reach past the photo; then a
+//! **Generate** button sits between the round buttons, and the bar names what paints the new area
+//! on this phone (a tap there chooses it, or offers its download): see `crate::expand`.
 
 use egui::{Align2, Color32, Id, Rect, Sense, Stroke, StrokeKind, Ui, UiBuilder, pos2, vec2};
 use lightcraft_develop::{DevelopSettings, Upright};
@@ -202,7 +206,35 @@ fn title_bar(app: &mut LightcraftApp, ui: &mut Ui, t: &Tokens) {
 /// ✕ and ✓ with the tool's name between them.
 fn bottom_bar(app: &mut LightcraftApp, ui: &mut Ui, t: &Tokens) {
     let r = ui.max_rect();
-    ui.painter().text(r.center(), Align2::CENTER_CENTER, crate::i18n::tr("Crop & Rotate"), t.font(17.0), t.text);
+    let expand = app.session.active().and_then(|id| app.session.develop_of(id)).is_some_and(|d| d.crop.expand);
+    if expand {
+        // what paints the new area, as Lightroom names the credit it uses: a tap chooses
+        let m = crate::expand::chosen(app);
+        if m == lightcraft_engine::expand::ExpandModel::MiGan {
+            // the browser build: MI-GAN may be in the site's storage already
+            crate::erase::look_in_storage(app, ui.ctx());
+        }
+        let here = app.session.expand_ready(m);
+        let text = match crate::expand::downloading(app, m) {
+            Some(pct) => crate::i18n::tr_format!("{stage}… {:.0}%", pct, stage = crate::i18n::tr("Downloading")),
+            None if here => format!("{} · {}", m.label(), crate::i18n::tr("on this device")),
+            None => format!("{} · {}", m.label(), crate::expand::describe(app, m)),
+        };
+        let galley = ui.painter().layout_no_wrap(text, t.font(15.0), t.text);
+        let at = Rect::from_center_size(r.center(), galley.size() + vec2(12.0, 14.0));
+        let resp = ui.interact(at, Id::new("crop-fill-with"), Sense::click());
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, crate::i18n::tr("Fill With")));
+        register(ui.ctx(), "button:cropFillWith", at);
+        let x = at.center().x - galley.size().x / 2.0;
+        let y = at.center().y - galley.size().y / 2.0;
+        ui.painter().hline(x..=(x + galley.size().x), y + galley.size().y + 1.0, Stroke::new(1.0, t.text));
+        ui.painter().galley(pos2(x, y), galley, t.text);
+        if resp.clicked() {
+            mobile::open_menu(ui.ctx(), "cropFillWith", at);
+        }
+    } else {
+        ui.painter().text(r.center(), Align2::CENTER_CENTER, crate::i18n::tr("Crop & Rotate"), t.font(17.0), t.text);
+    }
     let mut left = ui.new_child(UiBuilder::new().max_rect(r.shrink2(vec2(6.0, 0.0))).layout(egui::Layout::left_to_right(egui::Align::Center)));
     if compact::bar_icon(&mut left, "cropCancel", Icon::Close, "Cancel", true).clicked() {
         compact::cancel_screen(app);
@@ -248,13 +280,87 @@ fn tools(app: &mut LightcraftApp, ui: &mut Ui, t: &Tokens, inline: bool) {
     if more.clicked() {
         mobile::open_menu(ui.ctx(), "cropMore", more.rect);
     }
-    // (the dial takes what is between the buttons)
-    let between = if inline {
+    // (the dial takes what is between the buttons; with Expand, Generate sits there in the row
+    // of buttons, or held sideways shares it with the dial)
+    let mut between = if inline {
         Rect::from_min_max(pos2(x0 + step + ROUND_D / 2.0 + gap, r.top()), pos2(x1 - step - ROUND_D / 2.0 - gap, r.bottom()))
     } else {
         dial_r
     };
+    let expand = app.session.active().and_then(|id| app.session.develop_of(id)).is_some_and(|d| d.crop.expand);
+    if expand {
+        let space = Rect::from_min_max(pos2(x0 + step + ROUND_D / 2.0 + gap, row.top()), pos2(x1 - step - ROUND_D / 2.0 - gap, row.bottom()));
+        let w = space.width().min(if inline { 150.0 } else { 190.0 });
+        let pill = if inline {
+            let pill = Rect::from_min_size(pos2(space.left(), y - ROUND_D / 2.0), vec2(w, ROUND_D));
+            between = Rect::from_min_max(pos2(pill.right() + gap, between.top()), between.max);
+            pill
+        } else {
+            Rect::from_center_size(pos2(space.center().x, y), vec2(w, ROUND_D))
+        };
+        generate_pill(app, ui, t, pill);
+    }
     dial(app, ui, t, between);
+}
+
+/// Generate (`button:cropGenerate`): paints the area of the crop past the photo with the chosen
+/// model. While it runs it reads the progress, and a tap stops it.
+fn generate_pill(app: &mut LightcraftApp, ui: &mut Ui, t: &Tokens, at: Rect) {
+    let resp = ui.interact(at, Id::new("crop-generate"), Sense::click());
+    let progress = crate::expand::progress(app);
+    let label = match progress {
+        Some(f) => crate::i18n::tr_format!("{stage}… {:.0}%", f * 100.0, stage = crate::i18n::tr("Generating")),
+        None => crate::i18n::tr("Generate").to_string(),
+    };
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label.clone()));
+    register(ui.ctx(), "button:cropGenerate", at);
+    let k = ui.ctx().animate_bool_with_time(resp.id.with("press"), resp.is_pointer_button_down_on(), 0.1);
+    let p = ui.painter();
+    p.rect_filled(at.shrink(2.0 * k), at.height() / 2.0, crate::widgets::lerp(t.accent, t.pressed, 0.25 * k));
+    if let Some(f) = progress {
+        // the part done, lighter
+        let done = Rect::from_min_size(at.min, vec2(at.width() * f.clamp(0.0, 1.0), at.height()));
+        p.with_clip_rect(done).rect_filled(at, at.height() / 2.0, Color32::from_white_alpha(40));
+    }
+    let galley = p.layout_no_wrap(label, t.semibold(16.0), Color32::WHITE);
+    let icon_w = if progress.is_none() { 26.0 } else { 0.0 };
+    let x = at.center().x - (galley.size().x + icon_w) / 2.0;
+    if progress.is_none() {
+        icons::paint(p, Rect::from_center_size(pos2(x + 10.0, at.center().y), vec2(20.0, 20.0)), Icon::Wand, Color32::WHITE);
+    }
+    p.galley(pos2(x + icon_w, at.center().y - galley.size().y / 2.0), galley, Color32::WHITE);
+    if resp.clicked() {
+        if progress.is_some() {
+            app.session.cancel_expand();
+            return;
+        }
+        let Some(id) = app.session.active() else { return };
+        let d = app.session.develop_of(id).unwrap_or_default();
+        if !crate::expand::reaches_past(app, id, &d) && !crate::expand::empty_area(app, id, &d) {
+            app.toast(ui.ctx(), crate::i18n::tr("Drag the crop past the photo's edges, or choose an aspect ratio, first."));
+        } else if !app.session.expand_ready(crate::expand::chosen(app)) {
+            mobile::open_menu(ui.ctx(), "cropFillWith", at);
+        } else {
+            crate::expand::generate(app, ui.ctx());
+        }
+    }
+}
+
+/// The Aspect tab's Expand tile (`button:cropExpand`): a switch over its name, as Lightroom's
+/// mobile app has it.
+fn expand_tile(ui: &mut Ui, t: &Tokens, on: bool) -> egui::Response {
+    let label = crate::i18n::tr_ctx("crop", "Expand");
+    let (r, resp) = ui.allocate_exact_size(vec2(TILE_W, 72.0), Sense::click());
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, on, label));
+    register(ui.ctx(), "button:cropExpand", r);
+    let k = ui.ctx().animate_bool_with_time(resp.id.with("on"), on, 0.15);
+    let track = Rect::from_center_size(r.center() - vec2(0.0, 11.0), vec2(46.0, 26.0));
+    ui.painter().rect_filled(track, 13.0, crate::widgets::lerp(t.button, t.accent, k));
+    let knob = pos2(track.left() + 13.0 + (track.width() - 26.0) * k, track.center().y);
+    ui.painter().circle_filled(knob, 10.5, Color32::WHITE);
+    let color = if on || resp.is_pointer_button_down_on() { t.text } else { t.text_label };
+    ui.painter().text(r.center() + vec2(0.0, 20.0), Align2::CENTER_CENTER, label, t.font(12.0), color);
+    resp
 }
 
 /// A round button of the tools row (`icon:<id>`): dark, with its glyph white when `lit`.
@@ -402,6 +508,10 @@ fn aspect_tab(app: &mut LightcraftApp, ui: &mut Ui, t: &Tokens) {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
                 ui.add_space(10.0);
+                if expand_tile(ui, t, d.crop.expand).clicked() {
+                    crate::expand::set_expand(app, !d.crop.expand);
+                    haptics::tap(ui.ctx(), Haptic::Selection);
+                }
                 if tile(ui, t, "cropOriginal", Icon::Photos, "Original", original).clicked() {
                     let _ = app.run("crop.aspect", json!({"aspect": "original"}));
                 }
@@ -448,6 +558,24 @@ pub fn menus(app: &mut LightcraftApp, ctx: &egui::Context) {
         rows(app, ui, &POSTS.iter().map(|(n, r)| (Some(*n), r)).collect::<Vec<(Option<&str>, &Ratio)>>())
     });
     mobile::actions(ctx, "cropTikTok", None, |ui| rows(app, ui, &VIDEOS.iter().map(|(n, r)| (Some(*n), r)).collect::<Vec<(Option<&str>, &Ratio)>>()));
+    mobile::actions(ctx, "cropFillWith", Some(crate::i18n::tr("Fill With")), |ui| {
+        let current = crate::expand::chosen(app);
+        for m in lightcraft_engine::expand::ExpandModel::ALL.into_iter().filter(|m| m.available()) {
+            let label = format!("{} · {}", m.label(), crate::expand::describe(app, m));
+            if mobile::row_checked(ui, &format!("cropFillWith-{}", m.id()), None, &label, true, Some(m == current)) {
+                app.ui.expand_model = m.id().to_string();
+            }
+        }
+        // the chosen model isn't here: its offer, and Download
+        if let Some(offer) = crate::expand::offer(app, current) {
+            mobile::row_gap(ui);
+            let note = egui::RichText::new(offer).size(13.0).color(Tokens::get(ui.ctx()).text_dim);
+            ui.add(egui::Label::new(note).wrap());
+            if mobile::row(ui, "cropFillWithDownload", Some(Icon::Download), crate::i18n::tr("Download"), true) {
+                crate::expand::download(app, ctx, current);
+            }
+        }
+    });
     mobile::actions(ctx, "cropMore", None, |ui| {
         if mobile::row(ui, "cropStraighten", Some(Icon::Straighten), crate::i18n::tr("Straighten"), true) {
             app.ui.tool = "straighten".into();

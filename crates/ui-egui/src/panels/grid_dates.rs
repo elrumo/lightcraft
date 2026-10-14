@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use egui::{Align2, Color32, Rect, Sense, pos2, vec2};
-use lightcraft_catalog::{Flag, PhotoId};
+use lightcraft_catalog::PhotoId;
 use serde_json::json;
 
 use crate::LightcraftApp;
@@ -36,58 +36,10 @@ pub struct Block {
     pub shown: Vec<usize>,
 }
 
-/// The photos in `ids` grouped by month (`key_len` 7) or year (4), in the order they come, each
-/// group showing up to `show` of them: the best (picked, then most stars) and the rest spread
-/// evenly through it.
+/// The photos in `ids` grouped by month (`key_len` 7) or year (4) ([`lightcraft_catalog::Catalog::date_blocks`],
+/// shared with the SwiftUI app's `library.blocks`).
 pub fn blocks(app: &LightcraftApp, ids: &[PhotoId], key_len: usize, show: usize) -> Vec<Block> {
-    let mut out: Vec<(String, Vec<usize>)> = Vec::new();
-    let mut at: std::collections::HashMap<String, usize> = Default::default();
-    for (i, id) in ids.iter().enumerate() {
-        let key =
-            app.session.catalog.photo(*id).and_then(|p| p.captured.as_deref().and_then(|c| c.get(..key_len)).map(str::to_string)).unwrap_or_default();
-        match at.get(&key) {
-            Some(b) => {
-                if let Some((_, members)) = out.get_mut(*b) {
-                    members.push(i);
-                }
-            }
-            None => {
-                at.insert(key.clone(), out.len());
-                out.push((key, vec![i]));
-            }
-        }
-    }
-    let score = |i: usize| ids.get(i).and_then(|id| app.session.catalog.photo(*id)).map_or((false, 0), |p| (p.flag == Flag::Pick, p.rating));
-    out.into_iter()
-        .map(|(key, members)| {
-            let best = members.iter().copied().max_by_key(|i| (score(*i), std::cmp::Reverse(*i))).unwrap_or(0);
-            let mut shown = vec![best];
-            let want = show.min(members.len());
-            let n = members.len();
-            let mut k = 0;
-            while shown.len() < want && k < n {
-                // spread through the month: the photos at even steps from its start
-                let pick = members.get(k * n / want.max(1)).copied().unwrap_or(best);
-                if !shown.contains(&pick) {
-                    shown.push(pick);
-                }
-                k += 1;
-            }
-            for m in &members {
-                if shown.len() >= want {
-                    break;
-                }
-                if !shown.contains(m) {
-                    shown.push(*m);
-                }
-            }
-            // the rest in the month's own order
-            if let Some(rest) = shown.get_mut(1..) {
-                rest.sort_unstable();
-            }
-            Block { key, count: n, shown }
-        })
-        .collect()
+    app.session.catalog.date_blocks(ids, key_len, show).into_iter().map(|b| Block { key: b.key, count: b.count, shown: b.shown }).collect()
 }
 
 /// The blocks for this view and span, kept while neither changes.

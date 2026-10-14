@@ -148,6 +148,22 @@ pub fn keyword_sets_json(s: &Session) -> Value {
     json!({"sets": sets, "current": s.keyword_set.clone().unwrap_or_else(|| RECENT.into()), "keywords": current_keywords(s)})
 }
 
+/// Give `k` to the photos `p` names (the selection by default), or take it from them when they
+/// all have it already.
+fn toggle(s: &mut Session, p: &Value, k: &str) -> Result<Value> {
+    let ids = s.targets(p);
+    let all = !ids.is_empty()
+        && ids.iter().all(|id| {
+            s.catalog.photo(*id).is_some_and(|ph| ph.meta.keywords.iter().any(|x| lightcraft_catalog::keywords::same(&clean(x), &clean(k))))
+        });
+    let ids: Vec<u64> = ids.iter().map(|i| i.0).collect();
+    let key = if all { "removeKeywords" } else { "addKeywords" };
+    let mut r = s.execute("photo.setMeta", &json!({"ids": ids, key: [k]}))?;
+    r["keyword"] = json!(k);
+    r["added"] = json!(!all);
+    Ok(r)
+}
+
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         cmd!(query "keyword.sets", "Keyword Sets", [], None, "{} → {sets: [{name, keywords}], current, keywords: the nine ⌥1–⌥9 apply}", always, |s, _| Ok(keyword_sets_json(s))),
@@ -256,24 +272,25 @@ pub fn specs() -> Vec<CommandSpec> {
                 let Some(k) = current_keywords(s).get(i as usize - 1).cloned().filter(|k| !k.is_empty()) else {
                     return Ok(json!({"changed": 0}));
                 };
-                let ids = s.targets(p);
-                let all = !ids.is_empty()
-                    && ids.iter().all(|id| {
-                        s.catalog
-                            .photo(*id)
-                            .is_some_and(|ph| ph.meta.keywords.iter().any(|x| lightcraft_catalog::keywords::same(&clean(x), &clean(&k))))
-                    });
-                let ids: Vec<u64> = ids.iter().map(|i| i.0).collect();
-                let key = if all { "removeKeywords" } else { "addKeywords" };
                 // applying from Recent Keywords mustn't reshuffle the numbers under the keys
                 let recent = s.recent_keywords.clone();
-                let mut r = s.execute("photo.setMeta", &json!({"ids": ids, key: [k.clone()]}))?;
+                let r = toggle(s, p, &k)?;
                 if s.keyword_set.is_none() {
                     s.recent_keywords = recent;
                 }
-                r["keyword"] = json!(k);
-                r["added"] = json!(!all);
                 Ok(r)
+            }
+        ),
+        cmd!(
+            "keyword.toggle",
+            "Toggle Keyword",
+            [],
+            None,
+            "{keyword, ids?} — the keyword added to the target photos, or removed when they all have it (the Keyword Painter's click) → {changed, keyword, added}",
+            super::has_selection,
+            |s, p| {
+                let k = str_param(p, "keyword").map(str::trim).filter(|k| !k.is_empty()).ok_or_else(|| bad("keyword.toggle", "missing `keyword`"))?;
+                toggle(s, p, k)
             }
         ),
         cmd!(query "keyword.list", "Keywords", [], None, "{} → [{name, path, count, children}] keyword tree (`a|b|c` keywords are hierarchical)", always, |s, _| {

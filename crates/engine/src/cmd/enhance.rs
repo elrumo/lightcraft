@@ -4,7 +4,7 @@ use lightcraft_catalog::PhotoId;
 use serde_json::{Value, json};
 
 use super::{CommandSpec, bad, cmd, has_active};
-use crate::enhance::{Enhancer, SUPER_RES_MODEL};
+use crate::enhance::{DEFAULT_MAX_OUTPUT_PIXELS, Enhancer, SUPER_RES_MODEL, SUPER_RES_SCALE};
 use crate::{EngineError, Result, Session};
 
 /// Enlarge the photo 2× and add the result next to it (synchronously: the apps run the job on a
@@ -33,14 +33,25 @@ fn super_res(s: &mut Session, p: &Value) -> Result<Value> {
     s.finish_super_res(done)
 }
 
-fn status(s: &mut Session, _: &Value) -> Result<Value> {
+fn status(s: &mut Session, p: &Value) -> Result<Value> {
     let (fetching, download) = s.enhancer.download_status();
+    // the photo Super Resolution would enlarge: its size now and after, against the limit
+    let id = p.get("id").and_then(Value::as_u64).map(PhotoId).or(s.active());
+    let limit = s.enhancer.max_output_pixels.unwrap_or(DEFAULT_MAX_OUTPUT_PIXELS);
+    let photo = id.and_then(|id| s.catalog.photo(id)).map(|ph| {
+        let (w, h) = crate::export::output_size(ph, &Default::default());
+        let (ow, oh) = (w.saturating_mul(SUPER_RES_SCALE), h.saturating_mul(SUPER_RES_SCALE));
+        json!({"id": ph.id.0, "name": ph.file_name, "width": w, "height": h, "outWidth": ow, "outHeight": oh,
+               "tooLarge": ow.saturating_mul(oh) > limit, "limitPixels": limit})
+    });
     Ok(json!({
         "available": Enhancer::AVAILABLE,
         "dir": s.enhancer.dir.as_ref().map(|d| d.display().to_string()),
         "ready": s.enhancer.super_res_ready().is_ok(),
+        "disabled": s.enhancer.disabled.contains(SUPER_RES_MODEL),
         "models": s.enhancer.status(),
         "download": {"id": fetching, "status": download},
+        "photo": photo,
     }))
 }
 
@@ -87,7 +98,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Enhancement Model Status",
             [],
             None,
-            "{} — whether this build has AI Super Resolution, the models (installed, size, licence, credit, folder) and the download's progress → {available, dir, ready, models: [{id, label, installed, sizeBytes, licence, licenceUrl, credit, homeUrl, dir, mirrors, downloading}], download: {id, status: {running, done, total, file, error, finished}}}",
+            "{id?} — whether this build has AI Super Resolution, the models (installed, size, licence, credit, folder), the download's progress and the photo it would enlarge (default: the active one) → {available, dir, ready, disabled, models: [{id, label, installed, sizeBytes, licence, licenceUrl, credit, homeUrl, dir, mirrors, downloading}], download: {id, status: {running, done, total, file, error, finished}}, photo: {id, name, width, height, outWidth, outHeight, tooLarge, limitPixels} | null}",
             super::always,
             status
         ),

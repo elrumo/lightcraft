@@ -281,5 +281,9 @@
   "Reading {name}… {n} photos so far": "Читання {name}… поки що фото: {n}",
   "Photos not copied from {name}: {n}": "Не скопійовано фото з {name}: {n}",
   "No photos could be copied from {name}": "Не вдалося скопіювати фото з {name}",
-  "{name} connected": "{name} підключено"
+  "{name} connected": "{name} підключено",
+  "Uses the {} model, a {:.0} MB download ({} licence). {}.": "Використовується модель {}, завантаження {:.0} МБ (ліцензія {}). {}.",
+  "New area painted with {}": "Нову ділянку домальовано ({})",
+  "{note} · {:.0} MB download": "{note} · завантаження {:.0} МБ",
+  "The new area was painted by {by} on this device.": "Нову ділянку домальовано на цьому пристрої ({by})."
 }

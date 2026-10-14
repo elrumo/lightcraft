@@ -315,6 +315,61 @@ fn output_names(first: &str, suffix: &str) -> impl Iterator<Item = std::path::Pa
     (1u64..).map(move |k| dir.join(if k == 1 { format!("{stem}-{suffix}.dng") } else { format!("{stem}-{suffix}-{k}.dng") }))
 }
 
+/// A merge dialog's options: the parameters of the `merge.*` commands (`command` says which).
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct MergeOptions {
+    /// "merge.hdr" | "merge.panorama" | "merge.hdrPanorama".
+    pub command: String,
+    pub align: bool,
+    /// none | low | medium | high
+    pub deghost: String,
+    pub show_overlay: bool,
+    pub auto_settings: bool,
+    pub stack: bool,
+    /// auto | spherical | cylindrical | perspective
+    pub projection: String,
+    pub boundary_warp: f64,
+    pub auto_crop: bool,
+    pub fill_edges: bool,
+    /// HDR panorama: photos per bracket (0 = from EXIF).
+    pub bracket: u32,
+}
+
+impl Default for MergeOptions {
+    fn default() -> Self {
+        MergeOptions {
+            command: "merge.hdr".into(),
+            align: true,
+            deghost: "none".into(),
+            show_overlay: false,
+            auto_settings: true,
+            stack: false,
+            projection: "auto".into(),
+            boundary_warp: 0.0,
+            auto_crop: true,
+            fill_edges: false,
+            bracket: 0,
+        }
+    }
+}
+
+impl MergeOptions {
+    pub fn for_command(command: &str) -> MergeOptions {
+        MergeOptions { command: command.into(), ..Default::default() }
+    }
+    pub fn is_hdr(&self) -> bool {
+        self.command != "merge.panorama"
+    }
+    pub fn is_pano(&self) -> bool {
+        self.command != "merge.hdr"
+    }
+    /// As the command's parameters.
+    pub fn params(&self) -> Value {
+        serde_json::to_value(self).unwrap_or_default()
+    }
+}
+
 /// Parse `merge.*` command parameters into a kind and finishing options.
 pub fn parse(id: &str, p: &Value) -> Result<(MergeKind, MergeFinish)> {
     let bad = |m: String| EngineError::BadParams { cmd: id.into(), msg: m };

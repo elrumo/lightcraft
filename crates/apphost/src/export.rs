@@ -2,10 +2,14 @@
 //! have no export dialog of their own yet (the MCP server's headless backend, the SwiftUI iOS app).
 
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{Receiver, TryRecvError, channel};
+use std::sync::{Arc, Mutex};
 
 use lightcraft_catalog::PhotoId;
 use lightcraft_engine::Session;
-use lightcraft_engine::export::{Destination, ExportFormat, ExportOptions, Resize, prepare_batch, run_batch};
+use lightcraft_engine::activity::{Cancel, TaskGuard, TaskHandle};
+use lightcraft_engine::export::{AfterExport, Destination, ExportFormat, ExportOptions, PreparedExport, Resize, prepare_batch, run_batch};
 use serde_json::{Value, json};
 
 /// The parameters `app.export` takes (as `engine.commands` lists them).
@@ -16,11 +20,41 @@ pub fn command_info(session: &Session) -> Value {
     json!({"id": "app.export", "label": "Export Now", "menu": [], "shortcut": null, "params": PARAMS, "enabled": session.active().is_some()})
 }
 
-/// Export the photos `p` names (`ids`; else the selection, in grid order, when more than one photo
-/// is selected; else `id` or the active photo) with the options in `p`, as the desktop app's
-/// Export Now does. `progress(done, total, next name)` returning false stops before the next photo
-/// (the answer is then the error `cancelled`). Without a size, the long edge is 3000 px.
-pub fn export_now(session: &mut Session, p: &Value, progress: &mut dyn FnMut(usize, usize, &str) -> bool) -> Result<Value, String> {
+/// What [`Prepared::start`] and [`export_now`] write: the photos ready to render, the options, where
+/// the files go, and what happens to them after (Add to Apple Photos).
+pub struct Prepared {
+    pub items: Vec<PreparedExport>,
+    pub opts: ExportOptions,
+    pub to: Destination,
+    pub after: AfterExport,
+}
+
+/// Remember an export's options for Export with Previous (and to prefill the dialog): not the
+/// photos or a file name, and the folder only when the user chose it (`dir`), not a staging one.
+pub fn remember(session: &mut Session, p: &Value, dir: Option<&str>) {
+    let mut last = p.clone();
+    if let Some(o) = last.as_object_mut() {
+        o.remove("ids");
+        o.remove("id");
+        o.remove("path");
+        o.remove("sendTo");
+        match dir {
+            Some(d) => {
+                o.insert("dir".into(), serde_json::json!(d));
+            }
+            None => {
+                o.remove("dir");
+            }
+        }
+    }
+    session.last_export = Some(last);
+    let _ = session.save_prefs();
+}
+
+/// Get the photos `p` names ready to export (`ids`; else the selection, in grid order, when more than
+/// one photo is selected; else `id` or the active photo) with the options in `p` (Export Now's
+/// parameters). Cheap: the rendering is [`run_batch`]'s.
+pub fn prepare(session: &mut Session, p: &Value) -> Result<Prepared, String> {
     let p = &session.export_params(p)?;
     let mut opts = ExportOptions::from_params(p).map_err(|e| e.to_string())?;
     if !ExportOptions::has_size_param(p) {
@@ -44,42 +78,179 @@ pub fn export_now(session: &mut Session, p: &Value, progress: &mut dyn FnMut(usi
         }
     };
     let dir = p.get("dir").and_then(Value::as_str).unwrap_or("");
-    let write = &mut lightcraft_engine::export::write_file;
     // Add to Apple Photos: refused before anything is written when it can't be done
     let after = session.after_export(&opts)?;
     let items = prepare_batch(session, &ids, &opts)?;
+    Ok(Prepared { items, opts, to: Destination { dir: dir.to_string(), exact: exact.map(str::to_string) }, after })
+}
+
+/// Export the photos `p` names with the options in `p`, as the desktop app's Export Now does, on
+/// this thread ([`prepare`]). `progress(done, total, next name)` returning false stops before the
+/// next photo (the answer is then the error `cancelled`). Without a size, the long edge is 3000 px.
+pub fn export_now(session: &mut Session, p: &Value, progress: &mut dyn FnMut(usize, usize, &str) -> bool) -> Result<Value, String> {
+    let Prepared { items, opts, to, after } = prepare(session, p)?;
+    let write = &mut lightcraft_engine::export::write_file;
     let total = items.len();
     let mut cancelled = false;
-    let files = run_batch(
-        items,
-        &opts,
-        &Destination { dir: dir.to_string(), exact: exact.map(str::to_string) },
-        write,
-        &|path| Path::new(path).exists(),
-        true,
-        &mut |done, name| {
-            cancelled = !progress(done, total, name);
-            !cancelled
-        },
-    )?;
+    let files = run_batch(items, &opts, &to, write, &|path| Path::new(path).exists(), true, &mut |done, name| {
+        cancelled = !progress(done, total, name);
+        !cancelled
+    })?;
     if !cancelled {
         cancelled = !progress(total, total, "");
     }
     if cancelled {
         return Err("cancelled".into());
     }
-    // Single-photo exports also report path/width/height at the top level (back-compat).
+    let photos = after.run(&files, false);
+    Ok(answer(files, photos))
+}
+
+/// `app.export`'s answer: the files (single-photo exports also report path, width and height at the
+/// top level) and what Apple Photos did with them.
+pub fn answer(files: Vec<Value>, apple_photos: Option<Value>) -> Value {
     let mut out = files.first().cloned().unwrap_or_else(|| json!({}));
-    if let Some(photos) = after.run(&files, false) {
+    if let Some(photos) = apple_photos {
         out["applePhotos"] = photos;
     }
     out["files"] = json!(files);
-    Ok(out)
+    out
+}
+
+/// A finished batch: the files written (per photo: path… or error / skipped), what Apple Photos did
+/// with them, and whether it was cancelled.
+pub type Outcome = Result<(Vec<Value>, Option<Value>, bool), String>;
+
+/// Something that writes a file (the platform's writer: sandbox access, a staging folder…), from any thread.
+pub type SharedWrite = Arc<dyn Fn(&str, &[u8]) -> Result<(), String> + Send + Sync>;
+
+/// An export running on a thread of its own, so the frontend (and the engine thread) keeps
+/// answering: its row in the activity stack (✕ stops it before the next photo), its progress, and
+/// its outcome. Shared by the egui app's background exports and the engine host's `app.export`.
+pub struct Batch {
+    pub total: usize,
+    /// Photos started so far and the file in progress.
+    pub progress: Arc<Mutex<(usize, String)>>,
+    pub cancel: Arc<AtomicBool>,
+    pub rx: Receiver<Outcome>,
+    /// Its activity row (`activity.cancel` sets `cancel`); goes with the batch.
+    pub guard: TaskGuard,
+}
+
+impl Batch {
+    /// Run `work(progress, cancel, row)` on a worker thread (inline in a browser, which has no
+    /// threads) with an activity row `label` of `total` steps.
+    pub fn spawn(
+        session: &Session,
+        label: &str,
+        total: usize,
+        work: impl FnOnce(&Mutex<(usize, String)>, &AtomicBool, TaskHandle) -> Outcome + Send + 'static,
+    ) -> Result<Batch, String> {
+        let progress = Arc::new(Mutex::new((0, String::new())));
+        let cancel = Arc::new(AtomicBool::new(false));
+        let guard = session.activity.start("export", label, Cancel::Flag(cancel.clone()));
+        guard.progress(0, total as u64);
+        let (tx, rx) = channel();
+        let (p, c, row) = (progress.clone(), cancel.clone(), guard.handle());
+        let job = move || {
+            let _ = tx.send(work(&p, &c, row));
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        std::thread::Builder::new().name("export".into()).spawn(job).map_err(|e| e.to_string())?;
+        #[cfg(target_arch = "wasm32")]
+        job();
+        Ok(Batch { total, progress, cancel, rx, guard })
+    }
+
+    /// Export `prepared` in the background through `write`, then do its `after` (Add to Apple
+    /// Photos: `adding` is what the row says meanwhile, in the frontend's language).
+    pub fn start(session: &Session, prepared: Prepared, write: SharedWrite, adding: String) -> Result<Batch, String> {
+        let Prepared { items, opts, to, after } = prepared;
+        Self::spawn(session, "Exporting", items.len(), move |p, c, row| {
+            let mut w = |path: &str, bytes: &[u8]| write(path, bytes);
+            let r = run_batch(items, &opts, &to, &mut w, &|path| Path::new(path).exists(), false, &mut |done, name| {
+                if let Ok(mut g) = p.lock() {
+                    *g = (done, name.to_string());
+                }
+                !c.load(Ordering::Relaxed)
+            });
+            r.map(|files| {
+                if !after.is_none() {
+                    // Photos can't be stopped once asked: no ✕ from here, before the last look at
+                    // the cancel flag, so a cancel either stops the export before Photos or is refused
+                    row.set_cancellable(false);
+                    if let Ok(mut g) = p.lock() {
+                        g.1 = adding;
+                    }
+                }
+                let cancelled = c.load(Ordering::Relaxed);
+                let photos = after.run(&files, cancelled);
+                (files, photos, cancelled)
+            })
+        })
+    }
+
+    /// Keep the activity row current; the outcome once the batch has ended (`None` while it runs).
+    pub fn poll(&self) -> Option<Outcome> {
+        match self.rx.try_recv() {
+            Ok(r) => Some(r),
+            Err(TryRecvError::Empty) => {
+                let (done, current) = self.progress.lock().map(|g| g.clone()).unwrap_or_default();
+                self.guard.progress(done as u64, self.total as u64);
+                self.guard.detail(&current);
+                None
+            }
+            Err(TryRecvError::Disconnected) => Some(Err("Export stopped unexpectedly".into())),
+        }
+    }
+
+    /// `{total, done, current}`, for automation.
+    pub fn status(&self) -> Value {
+        let (done, current) = self.progress.lock().map(|g| g.clone()).unwrap_or_default();
+        json!({"total": self.total, "done": done, "current": current})
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // In the background: an activity row while it runs, the files when it's done; ✕ stops it
+    #[test]
+    fn a_batch_runs_off_the_thread_and_can_be_stopped() {
+        let dir = std::env::temp_dir().join(format!("lc-apphost-batch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut s = Session::with_demo();
+        let ids: Vec<u64> = s.visible_cloned().iter().take(3).map(|id| id.0).collect();
+        let p = json!({"dir": dir.to_string_lossy(), "ids": ids, "longEdge": 64, "format": "png"});
+        let write: SharedWrite = Arc::new(lightcraft_engine::export::write_file);
+        let prepared = prepare(&mut s, &p).unwrap();
+        let batch = Batch::start(&s, prepared, write.clone(), "Adding…".into()).unwrap();
+        assert_eq!(s.activity.list().len(), 1, "a row while it runs");
+        let t0 = std::time::Instant::now();
+        let outcome = loop {
+            if let Some(o) = batch.poll() {
+                break o;
+            }
+            assert!(t0.elapsed().as_secs() < 60, "the batch never ended");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        };
+        let (files, _, cancelled) = outcome.unwrap();
+        assert_eq!(files.len(), 3);
+        assert!(!cancelled);
+        assert!(Path::new(files[0]["path"].as_str().unwrap()).is_file());
+        drop(batch);
+        assert!(s.activity.list().is_empty(), "the row goes with the batch");
+        // ✕ before it starts: nothing more is written
+        let p = json!({"dir": dir.join("stopped").to_string_lossy(), "ids": ids, "longEdge": 64, "format": "png"});
+        let prepared = prepare(&mut s, &p).unwrap();
+        let batch = Batch::start(&s, prepared, write, String::new()).unwrap();
+        s.activity.cancel(batch.guard.id()).unwrap();
+        let (files, _, cancelled) = batch.rx.recv_timeout(std::time::Duration::from_secs(60)).unwrap().unwrap();
+        assert!(cancelled);
+        assert!(files.len() < 3, "{files:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     // Export Now writes the active photo at the default size, reports it, and can be stopped
     #[test]

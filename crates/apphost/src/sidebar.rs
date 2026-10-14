@@ -6,6 +6,7 @@
 //! section: it stays at the top and can't be hidden, moved or folded.
 
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 
 /// A section of the left sidebar below My Photos.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -266,6 +267,79 @@ impl SidebarLayout {
         for section in ids.iter().filter_map(|id| SidebarSection::from_id(id)) {
             self.set_collapsed(section, true);
         }
+    }
+}
+
+/// The sidebar commands of both apps (`view.sidebarSection`, `view.sidebarMoveSection`,
+/// `view.sidebarReset`) on `layout`; what they answer.
+pub fn command(layout: &mut SidebarLayout, id: &str, p: &Value) -> Result<Value, String> {
+    match id {
+        "view.sidebarSection" => {
+            // {section, show?, collapsed?}: show or hide a section of the left sidebar, fold or
+            // unfold it; with neither, a shown section is hidden and a hidden one shown
+            let (section, show, collapsed) = (sidebar_section_param(id, p)?, bool_param(id, p, "show")?, bool_param(id, p, "collapsed")?);
+            match (show, collapsed) {
+                (None, None) => layout.set_hidden(section, !layout.is_hidden(section)),
+                _ => {
+                    if let Some(show) = show {
+                        layout.set_hidden(section, !show);
+                    }
+                    if let Some(collapsed) = collapsed {
+                        layout.set_collapsed(section, collapsed);
+                    }
+                }
+            }
+            Ok(json!({"section": section.id(), "show": !layout.is_hidden(section), "collapsed": layout.is_collapsed(section)}))
+        }
+        "view.sidebarMoveSection" => {
+            // {section, direction: up | down} one place among the shown sections, or
+            // {section, before: <section> | null} just above another section (null: last)
+            let section = sidebar_section_param(id, p)?;
+            let moved = match (p.get("direction"), p.get("before")) {
+                (Some(d), None) => match d.as_str() {
+                    Some("up") => layout.move_by(section, true),
+                    Some("down") => layout.move_by(section, false),
+                    _ => return Err(format!("{id}: `direction` must be \"up\" or \"down\", not {d}")),
+                },
+                (None, Some(Value::Null)) => layout.move_before(section, None),
+                (None, Some(b)) => {
+                    let before = b.as_str().and_then(SidebarSection::from_id);
+                    let Some(before) = before else {
+                        return Err(format!("{id}: `before` must be a section ({}) or null, not {b}", SidebarSection::ids()));
+                    };
+                    layout.move_before(section, Some(before))
+                }
+                _ => return Err(format!("{id}: give either `direction` (up|down) or `before` (a section, or null for last)")),
+            };
+            let order: Vec<&str> = layout.sections().iter().map(|s| s.id.id()).collect();
+            Ok(json!({"section": section.id(), "moved": moved, "order": order}))
+        }
+        "view.sidebarReset" => {
+            // every section shown and open, in the usual order
+            *layout = Default::default();
+            Ok(json!({"sidebar": *layout}))
+        }
+        _ => Err(format!("{id}: not a sidebar command")),
+    }
+}
+
+fn sidebar_section_param(command: &str, p: &Value) -> Result<SidebarSection, String> {
+    let Some(name) = p.get("section").and_then(Value::as_str) else {
+        return Err(format!("{command}: `section` is needed ({})", SidebarSection::ids()));
+    };
+    let section = SidebarSection::from_id(name).ok_or_else(|| format!("{command}: unknown section `{name}` ({})", SidebarSection::ids()))?;
+    if !section.available() {
+        return Err(format!("{command}: there is no `{name}` section here"));
+    }
+    Ok(section)
+}
+
+/// An optional true / false parameter: absent or null is `None`, anything else is refused.
+fn bool_param(command: &str, p: &Value, key: &str) -> Result<Option<bool>, String> {
+    match p.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Bool(b)) => Ok(Some(*b)),
+        Some(other) => Err(format!("{command}: `{key}` must be true or false, not {other}")),
     }
 }
 

@@ -32,7 +32,13 @@ fn fixtures() -> Value {
         undo: Some("Exposure".into()),
         redo: None,
         interaction: None,
+        active_mask: Some(2),
+        active_spot: None,
         unsaved: 0,
+        sync: Some(
+            json!({"state": "syncing", "server": "https://photos.example", "pending": 2, "uploads": 1, "downloads": 0, "reading": null, "error": null}),
+        ),
+        faces: Some(json!({"pendingPhotos": 40, "indexedFaces": 12})),
     };
     let events = vec![
         Event::ok(1, json!({"photos": [], "total": 0})),
@@ -49,6 +55,7 @@ fn fixtures() -> Value {
             quick: None,
             ms: 12.5,
             histogram: Some(json!({"r": [0], "g": [0], "b": [0], "luma": [0], "total": 1})),
+            window: None,
         },
         Event::Image {
             slot: "thumb:7".into(),
@@ -62,6 +69,7 @@ fn fixtures() -> Value {
             quick: Some("embedded".into()),
             ms: 3.0,
             histogram: None,
+            window: None,
         },
         Event::RenderFailed { slot: "thumb:8".into(), photo: PhotoId(8), key: 6, error: "the file is missing".into() },
         Event::State { state },
@@ -69,6 +77,22 @@ fn fixtures() -> Value {
         Event::Message { text: "Saved".into(), level: "info".into() },
         Event::UiRequest { id: 4, method: "ui.screenshot".into(), params: json!({"path": "/tmp/shot.png"}) },
         Event::Closed,
+        Event::Copy { text: "https://photos.example/s/abc".into() },
+        Event::Ask { dialog: "syncChoice".into(), params: json!({}) },
+        Event::Image {
+            slot: "region".into(),
+            photo: PhotoId(7),
+            key: 8,
+            token: 101,
+            width: 1536,
+            height: 1280,
+            is_final: true,
+            draft: false,
+            quick: None,
+            ms: 40.0,
+            histogram: None,
+            window: Some(json!({"full": [6000, 4000], "x": 2048, "y": 1024, "w": 1536, "h": 1280})),
+        },
     ];
     let request = Request { id: 5, method: "render.view".into(), params: json!({"photo": 7, "width": 1600, "height": 1067, "draft": true}) };
     let config =
@@ -77,6 +101,35 @@ fn fixtures() -> Value {
         "events": events.iter().map(Event::to_value).collect::<Vec<_>>(),
         "request": request,
         "openConfig": config,
+        "replies": replies(),
+    })
+}
+
+/// What the engine answers to the commands the app reads into its own types, on the demo library
+/// with a photo open (the first three of a long list): a field that changes type or name fails the
+/// Swift side's decoding test.
+fn replies() -> Value {
+    let mut s = lightcraft_engine::Session::with_demo();
+    let mut run = |c: &str, p: Value| s.execute(c, &p).unwrap_or(Value::Null);
+    let first = run("catalog.query", json!({"limit": 1}))["photos"][0]["id"].clone();
+    run("library.select", json!({"ids": [first], "active": first}));
+    run("develop.set", json!({"control": "light.exposure", "value": 0.5}));
+    let three = |v: Value| match v {
+        Value::Array(a) => Value::Array(a.into_iter().take(3).collect()),
+        v => v,
+    };
+    json!({
+        "library.state": run("library.state", json!({})),
+        "library.groups": three(run("library.groups", json!({}))),
+        "catalog.query": run("catalog.query", json!({"limit": 2})),
+        "catalog.stats": run("catalog.stats", json!({})),
+        "albums.list": three(run("albums.list", json!({}))),
+        "label.names": three(run("label.names", json!({}))),
+        "develop.controls": three(run("develop.controls", json!({}))),
+        "history.list": run("history.list", json!({})),
+        "presets.list": three(run("presets.list", json!({}))),
+        "view.frame": run("view.frame", json!({"applyCrop": false})),
+        "sync.status": run("sync.status", json!({})),
     })
 }
 

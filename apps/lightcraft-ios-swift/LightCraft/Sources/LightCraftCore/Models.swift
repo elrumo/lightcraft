@@ -9,21 +9,33 @@ public struct PhotoSummary: Codable, Sendable, Identifiable, Hashable {
     public var id: UInt64
     public var fileName: String
     public var format: String?
+    /// `image`, `raw` or `video`.
+    public var kind: String?
     public var width: Int
     public var height: Int
     public var captured: String?
     public var rating: Int?
-    public var flag: JSONValue?
-    public var label: JSONValue?
+    /// `none`, `pick` or `reject`.
+    public var flag: String?
+    /// `red`, `yellow`, `green`, `blue`, `purple` or nil.
+    public var label: String?
     public var edited: Bool?
     public var title: String?
     public var camera: String?
-    public var previewOnly: JSONValue?
+    public var keywords: [String]?
+    public var deleted: Bool?
+    /// A virtual copy's name.
+    public var copyName: String?
+    /// Why only a preview of it is here (a synced photo whose original is on the server).
+    public var previewOnly: String?
 
     /// Width over height (1 when unknown).
     public var aspect: Double {
         width > 0 && height > 0 ? Double(width) / Double(height) : 1
     }
+
+    public var isPick: Bool { flag == "pick" }
+    public var isReject: Bool { flag == "reject" }
 }
 
 /// A page of `catalog.query`.
@@ -85,6 +97,26 @@ public struct ControlSpec: Codable, Sendable, Identifiable, Hashable {
         public var from: String?
         public var to: String?
         public var band: Int?
+
+        public init(kind: String, from: String? = nil, to: String? = nil, band: Int? = nil) {
+            self.kind = kind
+            self.from = from
+            self.to = to
+            self.band = band
+        }
+    }
+
+    public init(id: String, label: String, section: String, min: Double, max: Double, default: Double, step: Double, decimals: Int, track: Track = Track(kind: "plain"), value: Double? = nil) {
+        self.id = id
+        self.label = label
+        self.section = section
+        self.min = min
+        self.max = max
+        self.default = `default`
+        self.step = step
+        self.decimals = decimals
+        self.track = track
+        self.value = value
     }
 
     /// `v` as the engine shows it: its decimals, and a sign on centred sliders.

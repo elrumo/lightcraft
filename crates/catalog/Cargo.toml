@@ -19,7 +19,8 @@ thiserror = { workspace = true }
 crc32fast = { workspace = true }
 log = { workspace = true }
 web-time = { workspace = true }
+# Generative Expand's limit (`shown_size`)
+lightcraft-geom = { workspace = true }
 
 [dev-dependencies]
-lightcraft-geom = { workspace = true }
 proptest = { workspace = true }

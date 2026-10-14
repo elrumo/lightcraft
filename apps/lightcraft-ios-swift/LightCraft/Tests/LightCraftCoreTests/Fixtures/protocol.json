@@ -67,11 +67,26 @@
       "kind": "state",
       "state": {
         "active": 7,
+        "activeMask": 2,
+        "activeSpot": null,
         "catalogRevision": 12,
+        "faces": {
+          "indexedFaces": 12,
+          "pendingPhotos": 40
+        },
         "interaction": null,
         "libraryGeneration": 2,
         "redo": null,
         "selectionCount": 1,
+        "sync": {
+          "downloads": 0,
+          "error": null,
+          "pending": 2,
+          "reading": null,
+          "server": "https://photos.example",
+          "state": "syncing",
+          "uploads": 1
+        },
         "undo": "Exposure",
         "unsaved": 0,
         "visibleCount": 30,
@@ -110,6 +125,37 @@
     },
     {
       "kind": "closed"
+    },
+    {
+      "kind": "copy",
+      "text": "https://photos.example/s/abc"
+    },
+    {
+      "dialog": "syncChoice",
+      "kind": "ask",
+      "params": {}
+    },
+    {
+      "draft": false,
+      "final": true,
+      "height": 1280,
+      "key": 8,
+      "kind": "image",
+      "ms": 40.0,
+      "photo": 7,
+      "slot": "region",
+      "token": 101,
+      "width": 1536,
+      "window": {
+        "full": [
+          6000,
+          4000
+        ],
+        "h": 1280,
+        "w": 1536,
+        "x": 2048,
+        "y": 1024
+      }
     }
   ],
   "openConfig": {
@@ -121,6 +167,572 @@
     "renderThreads": null,
     "script": null,
     "tmp": "/tmp"
+  },
+  "replies": {
+    "albums.list": [
+      {
+        "children": [
+          {
+            "children": [],
+            "count": 5,
+            "cover": 1,
+            "folder": false,
+            "id": 2,
+            "name": "Mountains"
+          },
+          {
+            "children": [],
+            "count": 5,
+            "cover": 3,
+            "folder": false,
+            "id": 3,
+            "name": "Coastlines"
+          },
+          {
+            "children": [],
+            "count": 3,
+            "cover": 2,
+            "folder": false,
+            "id": 4,
+            "name": "Deserts"
+          }
+        ],
+        "count": 0,
+        "cover": null,
+        "folder": true,
+        "id": 1,
+        "name": "Travel 2026"
+      },
+      {
+        "children": [],
+        "count": 2,
+        "cover": 4,
+        "folder": false,
+        "id": 5,
+        "name": "Night Sky"
+      },
+      {
+        "children": [],
+        "count": 3,
+        "cover": 7,
+        "folder": false,
+        "id": 6,
+        "name": "Garden"
+      }
+    ],
+    "catalog.query": {
+      "photos": [
+        {
+          "camera": "Synthetic X2",
+          "captured": "2026-09-20T05:40:00",
+          "copyName": null,
+          "copyOf": null,
+          "deleted": false,
+          "edited": true,
+          "fileName": "LC01347.JPG",
+          "flag": "none",
+          "format": "JPEG",
+          "height": 6000,
+          "id": 21,
+          "keywords": [
+            "mountains"
+          ],
+          "kind": "image",
+          "label": null,
+          "previewOnly": null,
+          "rating": 0,
+          "title": "Alpenglow",
+          "width": 4000
+        },
+        {
+          "camera": "Synthetic S1",
+          "captured": "2026-09-12T14:41:00",
+          "copyName": null,
+          "copyOf": null,
+          "deleted": false,
+          "edited": false,
+          "fileName": "LC01298.JPG",
+          "flag": "none",
+          "format": "JPEG",
+          "height": 4000,
+          "id": 14,
+          "keywords": [
+            "night",
+            "aurora"
+          ],
+          "kind": "image",
+          "label": null,
+          "previewOnly": null,
+          "rating": 4,
+          "title": "Green curtains",
+          "width": 6000
+        }
+      ],
+      "total": 24
+    },
+    "catalog.stats": {
+      "albums": 6,
+      "byDate": [
+        {
+          "count": 24,
+          "days": [
+            [
+              "2026-09-20",
+              1
+            ],
+            [
+              "2026-09-12",
+              1
+            ],
+            [
+              "2026-09-04",
+              1
+            ],
+            [
+              "2026-08-26",
+              1
+            ],
+            [
+              "2026-08-15",
+              1
+            ],
+            [
+              "2026-08-07",
+              1
+            ],
+            [
+              "2026-07-21",
+              1
+            ],
+            [
+              "2026-07-10",
+              1
+            ],
+            [
+              "2026-07-02",
+              1
+            ],
+            [
+              "2026-06-24",
+              1
+            ],
+            [
+              "2026-06-16",
+              1
+            ],
+            [
+              "2026-06-05",
+              1
+            ],
+            [
+              "2026-05-27",
+              1
+            ],
+            [
+              "2026-05-19",
+              1
+            ],
+            [
+              "2026-05-11",
+              1
+            ],
+            [
+              "2026-05-08",
+              1
+            ],
+            [
+              "2026-04-22",
+              1
+            ],
+            [
+              "2026-04-14",
+              1
+            ],
+            [
+              "2026-04-06",
+              1
+            ],
+            [
+              "2026-04-03",
+              1
+            ],
+            [
+              "2026-03-25",
+              1
+            ],
+            [
+              "2026-03-17",
+              1
+            ],
+            [
+              "2026-03-09",
+              1
+            ],
+            [
+              "2026-03-01",
+              1
+            ]
+          ],
+          "months": [
+            [
+              "2026-09",
+              3
+            ],
+            [
+              "2026-08",
+              3
+            ],
+            [
+              "2026-07",
+              3
+            ],
+            [
+              "2026-06",
+              3
+            ],
+            [
+              "2026-05",
+              4
+            ],
+            [
+              "2026-04",
+              4
+            ],
+            [
+              "2026-03",
+              4
+            ]
+          ],
+          "year": "2026"
+        }
+      ],
+      "deleted": 0,
+      "edited": 4,
+      "keywords": [
+        [
+          "aurora",
+          2
+        ],
+        [
+          "beach",
+          2
+        ],
+        [
+          "blue hour",
+          1
+        ],
+        [
+          "bokeh",
+          1
+        ],
+        [
+          "canyon",
+          2
+        ],
+        [
+          "desert",
+          3
+        ],
+        [
+          "dunes",
+          1
+        ],
+        [
+          "fields",
+          2
+        ],
+        [
+          "flower",
+          3
+        ],
+        [
+          "fog",
+          2
+        ],
+        [
+          "forest",
+          2
+        ],
+        [
+          "lake",
+          2
+        ],
+        [
+          "lavender",
+          1
+        ],
+        [
+          "macro",
+          2
+        ],
+        [
+          "mountains",
+          5
+        ],
+        [
+          "night",
+          2
+        ],
+        [
+          "ocean",
+          3
+        ],
+        [
+          "rock",
+          1
+        ],
+        [
+          "snow",
+          1
+        ],
+        [
+          "stars",
+          1
+        ],
+        [
+          "summer",
+          1
+        ],
+        [
+          "sunrise",
+          1
+        ],
+        [
+          "sunset",
+          2
+        ],
+        [
+          "tropical",
+          1
+        ]
+      ],
+      "photos": 24,
+      "picks": 4,
+      "rejects": 4
+    },
+    "develop.controls": [
+      {
+        "decimals": 0,
+        "default": 100.0,
+        "id": "profile.amount",
+        "label": "Amount",
+        "max": 200.0,
+        "min": 0.0,
+        "section": "profile",
+        "step": 1.0,
+        "track": {
+          "kind": "plain"
+        },
+        "value": 100.0
+      },
+      {
+        "decimals": 0,
+        "default": 0.0,
+        "id": "wb.tempRel",
+        "label": "Temp",
+        "max": 100.0,
+        "min": -100.0,
+        "section": "color",
+        "step": 1.0,
+        "track": {
+          "kind": "temp"
+        },
+        "value": 0.0
+      },
+      {
+        "decimals": 0,
+        "default": 0.0,
+        "id": "wb.tintRel",
+        "label": "Tint",
+        "max": 100.0,
+        "min": -100.0,
+        "section": "color",
+        "step": 1.0,
+        "track": {
+          "kind": "tint"
+        },
+        "value": 0.0
+      }
+    ],
+    "history.list": {
+      "cursor": 0,
+      "history": [
+        "Exposure"
+      ],
+      "versions": []
+    },
+    "label.names": [
+      {
+        "custom": null,
+        "label": "red",
+        "name": "Red"
+      },
+      {
+        "custom": null,
+        "label": "yellow",
+        "name": "Yellow"
+      },
+      {
+        "custom": null,
+        "label": "green",
+        "name": "Green"
+      }
+    ],
+    "library.groups": [
+      {
+        "count": 1,
+        "key": "2026-09-20",
+        "label": "Sunday, 20 September 2026",
+        "start": 0
+      },
+      {
+        "count": 1,
+        "key": "2026-09-12",
+        "label": "Saturday, 12 September 2026",
+        "start": 1
+      },
+      {
+        "count": 1,
+        "key": "2026-09-04",
+        "label": "Friday, 4 September 2026",
+        "start": 2
+      }
+    ],
+    "library.state": {
+      "activeMask": null,
+      "activeSpot": null,
+      "clipboard": false,
+      "filter": {
+        "album": null,
+        "camera": null,
+        "date": null,
+        "dateFrom": null,
+        "dateTo": null,
+        "deleted": false,
+        "edited": null,
+        "flag": null,
+        "folder": null,
+        "imported": null,
+        "importedFrom": null,
+        "keyword": null,
+        "kind": null,
+        "label": null,
+        "lens": null,
+        "libraryFolder": null,
+        "merged": null,
+        "person": null,
+        "rating": 0,
+        "ratingOp": "atLeast",
+        "subfolders": false,
+        "text": ""
+      },
+      "libraryFolder": null,
+      "redo": null,
+      "selection": {
+        "active": 21,
+        "ids": [
+          21
+        ]
+      },
+      "sort": {
+        "ascending": false,
+        "group": "auto",
+        "key": "captureDate",
+        "seed": 0
+      },
+      "source": {
+        "kind": "all"
+      },
+      "sourceLabel": "All Photos",
+      "undo": "Exposure",
+      "visibleCount": 24
+    },
+    "presets.list": [
+      {
+        "builtin": true,
+        "favorite": false,
+        "group": "Color",
+        "id": "lc.warm-glow",
+        "name": "Warm Glow"
+      },
+      {
+        "builtin": true,
+        "favorite": false,
+        "group": "Color",
+        "id": "lc.cool-morning",
+        "name": "Cool Morning"
+      },
+      {
+        "builtin": true,
+        "favorite": false,
+        "group": "Color",
+        "id": "lc.teal-orange",
+        "name": "Teal & Orange"
+      }
+    ],
+    "sync.status": {
+      "signedIn": false,
+      "state": "off"
+    },
+    "view.frame": {
+      "aspect": 0.6666666666666666,
+      "crop": {
+        "angle": 0.0,
+        "flipH": false,
+        "flipV": false,
+        "quad": [
+          [
+            0.0,
+            0.0
+          ],
+          [
+            1.0,
+            0.0
+          ],
+          [
+            1.0,
+            1.0
+          ],
+          [
+            0.0,
+            1.0
+          ]
+        ],
+        "rect": [
+          0.0,
+          0.0,
+          1.0,
+          1.0
+        ],
+        "toStraight": [
+          1.0,
+          0.0,
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ]
+      },
+      "fromNorm": [
+        1.0,
+        -0.0,
+        -0.0,
+        1.0,
+        0.0,
+        0.0
+      ],
+      "guides": [],
+      "height": 6000.0,
+      "toNorm": [
+        1.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0
+      ],
+      "width": 4000.0
+    }
   },
   "request": {
     "id": 5,

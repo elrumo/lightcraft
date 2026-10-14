@@ -33,6 +33,68 @@ fn date_groups_follow_sort_and_grouping() {
     assert!(s.execute("library.sort", &json!({"group": "week"})).is_err());
 }
 
+/// Months and Years: every photo counted once, the best photo first, a pick wins.
+#[test]
+fn months_and_years_show_the_best_photos() {
+    let mut s = Session::with_demo();
+    let vis = s.visible_cloned();
+    let months = s.execute("library.blocks", &json!({"span": "months"})).unwrap();
+    let months = months.as_array().unwrap();
+    let total: u64 = months.iter().map(|b| b["count"].as_u64().unwrap()).sum();
+    assert_eq!(total as usize, vis.len());
+    for b in months {
+        let shown = b["photos"].as_array().unwrap();
+        assert!(!shown.is_empty() && shown.len() <= 6, "{b}");
+        assert_eq!(b["key"].as_str().unwrap().len(), 7);
+        assert!(b["label"].as_str().unwrap().contains("20"), "{b}");
+    }
+    // with no picks or stars anywhere, picking a photo makes it its month's first
+    let all: Vec<u64> = vis.iter().map(|id| id.0).collect();
+    s.execute("photo.flag", &json!({"ids": all, "flag": "none"})).unwrap();
+    s.execute("photo.rate", &json!({"ids": all, "rating": 0})).unwrap();
+    let last = months.last().unwrap()["photos"].as_array().unwrap().last().unwrap()["id"].as_u64().unwrap();
+    s.execute("photo.flag", &json!({"ids": [last], "flag": "pick"})).unwrap();
+    let again = s.execute("library.blocks", &json!({"span": "months"})).unwrap();
+    assert_eq!(again.as_array().unwrap().last().unwrap()["photos"][0]["id"].as_u64(), Some(last));
+    let years = s.execute("library.blocks", &json!({"span": "years"})).unwrap();
+    assert_eq!(years.as_array().unwrap()[0]["photos"].as_array().unwrap().len(), 1);
+    assert!(s.execute("library.blocks", &json!({"span": "weeks"})).is_err());
+}
+
+/// The filter's lists: each value with its count, cameras most used first.
+#[test]
+fn facets_list_the_filter_choices() {
+    let mut s = Session::with_demo();
+    let cams = s.execute("library.facets", &json!({"field": "camera"})).unwrap();
+    let cams = cams.as_array().unwrap();
+    assert!(!cams.is_empty());
+    let counts: Vec<u64> = cams.iter().map(|c| c["count"].as_u64().unwrap()).collect();
+    assert!(counts.windows(2).all(|w| w[0] >= w[1]), "{counts:?}");
+    let kw = s.execute("library.facets", &json!({"field": "keyword"})).unwrap();
+    assert!(kw.as_array().unwrap().iter().any(|k| k["value"] == "desert"), "{kw}");
+    assert!(s.execute("library.facets", &json!({"field": "colour"})).is_err());
+}
+
+/// A tool screen's Cancel: the stack's depth when it opened, then undo back to it in one call.
+#[test]
+fn undo_stack_lists_and_undoes_to_a_depth() {
+    let mut s = Session::with_demo();
+    let base = s.execute("edit.stack", &json!({})).unwrap()["depth"].as_u64().unwrap();
+    s.execute("develop.set", &json!({"control": "light.exposure", "value": 1.0})).unwrap();
+    s.execute("develop.set", &json!({"control": "light.contrast", "value": 20})).unwrap();
+    let st = s.execute("edit.stack", &json!({})).unwrap();
+    assert_eq!(st["depth"].as_u64(), Some(base + 2));
+    assert_eq!(st["undo"].as_array().unwrap().len() as u64, base + 2);
+    let r = s.execute("edit.undoTo", &json!({"depth": base})).unwrap();
+    assert_eq!(r["undone"], 2);
+    let st = s.execute("edit.stack", &json!({})).unwrap();
+    assert_eq!(st["depth"].as_u64(), Some(base));
+    assert_eq!(st["redo"].as_array().unwrap().len(), 2, "{st}");
+    let d = s.develop_of(s.active().unwrap()).unwrap();
+    assert_eq!(d.light.exposure, 0.0);
+    assert!(s.execute("edit.undoTo", &json!({})).is_err());
+}
+
 fn temp_dir(tag: &str) -> std::path::PathBuf {
     let d = std::env::temp_dir().join(format!("lc-libops-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);
@@ -588,4 +650,311 @@ fn capture_time_invalid_calendar_anchor_keeps_other_targets_and_redo() {
         assert_eq!(s.redo.iter().map(|e| (e.label.clone(), e.op.clone())).collect::<Vec<_>>(), redo);
         assert_eq!(s.pending_log, log);
     }
+}
+
+/// A mask's sliders, as every Masking panel draws them: Amount first, values from the mask.
+#[test]
+fn mask_controls_list_the_local_sliders_with_values() {
+    let mut s = Session::with_demo();
+    let r = s.execute("mask.add", &json!({"kind": "radial"})).unwrap();
+    let id = r["activeMask"].as_u64().unwrap();
+    s.execute("mask.adjust", &json!({"id": id, "values": {"exposure": 1.5, "amount": 80}})).unwrap();
+    let c = s.execute("mask.controls", &json!({})).unwrap();
+    let c = c.as_array().unwrap();
+    assert_eq!(c[0]["id"], "amount");
+    assert_eq!(c[0]["value"], 80.0);
+    let exp = c.iter().find(|x| x["id"] == "exposure").unwrap();
+    assert_eq!(exp["value"], 1.5);
+    assert_eq!(exp["min"], -4.0);
+    assert_eq!(c.len(), lightcraft_develop::controls::LOCAL.len() + 1);
+    assert!(s.execute("mask.controls", &json!({"id": 999})).is_err());
+}
+
+/// The shown photo's frame: an uncropped photo maps straight through; a crop maps the shown
+/// corners onto the crop's corners, and fromNorm takes them back.
+#[test]
+fn view_frame_maps_the_shown_photo_to_image_coordinates() {
+    let mut s = Session::with_demo();
+    let f = s.execute("view.frame", &json!({})).unwrap();
+    let t: Vec<f64> = f["toNorm"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
+    let apply = |m: &[f64], u: f64, v: f64| (m[0] * u + m[2] * v + m[4], m[1] * u + m[3] * v + m[5]);
+    let (x, y) = apply(&t, 1.0, 1.0);
+    assert!((x - 1.0).abs() < 1e-9 && (y - 1.0).abs() < 1e-9, "{f}");
+    s.execute("crop.set", &json!({"rect": [0.25, 0.25, 0.75, 0.5]})).unwrap();
+    let f = s.execute("view.frame", &json!({})).unwrap();
+    let t: Vec<f64> = f["toNorm"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
+    let back: Vec<f64> = f["fromNorm"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
+    let (x0, y0) = apply(&t, 0.0, 0.0);
+    let (x1, y1) = apply(&t, 1.0, 1.0);
+    assert!((x0 - 0.25).abs() < 1e-6 && (y0 - 0.25).abs() < 1e-6 && (x1 - 0.75).abs() < 1e-6 && (y1 - 0.5).abs() < 1e-6, "{f}");
+    let (u, v) = apply(&back, 0.5, 0.375);
+    assert!((u - 0.5).abs() < 1e-6 && (v - 0.5).abs() < 1e-6);
+    // the crop tool shows the whole photo, with the crop's corners on it
+    let whole = s.execute("view.frame", &json!({"applyCrop": false})).unwrap();
+    assert!(whole["width"].as_f64().unwrap() > f["width"].as_f64().unwrap());
+    let quad = &whole["crop"]["quad"];
+    assert_eq!(quad[0], json!([0.25, 0.25]), "{whole}");
+    assert_eq!(quad[2], json!([0.75, 0.5]));
+    assert_eq!(whole["crop"]["rect"], json!([0.25, 0.25, 0.75, 0.5]));
+    // unstraightened, the straightened frame is the photo's own
+    let st: Vec<f64> = whole["crop"]["toStraight"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
+    let (sx, sy) = apply(&st, 0.3, 0.6);
+    assert!((sx - 0.3).abs() < 1e-9 && (sy - 0.6).abs() < 1e-9);
+}
+
+/// A rendered photo's white balance is on the relative scale in `develop.controls`, and setting it
+/// there sets the Kelvin value it stands for.
+#[test]
+fn rendered_photos_show_white_balance_relative() {
+    let mut s = Session::with_demo();
+    let c = s.execute("develop.controls", &json!({"section": "color"})).unwrap();
+    let temp = c.as_array().unwrap().iter().find(|x| x["id"] == "wb.tempRel").cloned().unwrap();
+    assert_eq!(temp["min"], -100.0);
+    assert_eq!(temp["value"], 0.0, "as shot: the photo's own colour");
+    assert!(!c.as_array().unwrap().iter().any(|x| x["id"] == "wb.temp"), "{c}");
+    s.execute("develop.set", &json!({"control": "wb.tempRel", "value": 25})).unwrap();
+    let d = s.develop_of(s.active().unwrap()).unwrap();
+    assert!((lightcraft_develop::controls::kelvin_to_relative(d.wb.temp) - 25.0).abs() < 1e-6, "{}", d.wb.temp);
+    assert_eq!(d.wb.mode, lightcraft_develop::WbMode::Custom);
+    let c = s.execute("develop.controls", &json!({"section": "color"})).unwrap();
+    let temp = c.as_array().unwrap().iter().find(|x| x["id"] == "wb.tempRel").cloned().unwrap();
+    assert!((temp["value"].as_f64().unwrap() - 25.0).abs() < 1e-6);
+    s.execute("develop.set", &json!({"control": "wb.tintRel", "value": -10})).unwrap();
+    assert_eq!(s.develop_of(s.active().unwrap()).unwrap().wb.tint, -10.0);
+}
+
+/// Masks on the photo: the selected radial's handles and outline, a press on a handle or inside the
+/// ellipse grabs it, and a drag resizes or moves it (one undo step inside an interaction).
+#[test]
+fn mask_handles_grab_and_drag() {
+    let mut s = Session::with_demo();
+    s.execute("mask.add", &json!({"kind": "radial", "center": [0.5, 0.5], "rx": 0.2, "ry": 0.1})).unwrap();
+    let h = s.execute("mask.handles", &json!({})).unwrap();
+    let grips = h["grips"].as_array().unwrap();
+    assert_eq!(grips.len(), 6, "pin + 4 edges + rotation: {h}");
+    assert_eq!(h["outlines"][0].as_array().unwrap().len(), 64);
+    let edge = grips.iter().find(|g| g["handle"] == 1).unwrap();
+    assert_eq!(edge["kind"], "radial");
+    let at = edge["at"].clone();
+    let g = s.execute("mask.grab", &json!({"at": at, "reach": 0.02})).unwrap();
+    assert_eq!(g["handle"], 1, "{g}");
+    let (x, y) = (at[0].as_f64().unwrap(), at[1].as_f64().unwrap());
+    s.execute("develop.beginInteraction", &json!({"label": "Edit Mask"})).unwrap();
+    let p = json!({"id": g["mask"], "component": 0, "handle": 1, "shape": g["shape"], "from": [x, y], "to": [x + 0.05, y]});
+    s.execute("mask.drag", &p).unwrap();
+    s.execute("mask.drag", &json!({"id": g["mask"], "component": 0, "handle": 1, "shape": g["shape"], "from": [x, y], "to": [x + 0.1, y]})).unwrap();
+    s.execute("develop.endInteraction", &json!({})).unwrap();
+    let after = s.execute("mask.grab", &json!({"at": [0.5, 0.5], "reach": 0.0})).unwrap();
+    assert_eq!(after["handle"], 0, "inside the ellipse takes the whole mask");
+    let rx = after["shape"]["rx"].as_f64().unwrap();
+    assert!(rx > 0.25, "{after}");
+    s.execute("edit.undo", &json!({})).unwrap();
+    let undone = s.execute("mask.grab", &json!({"at": [0.5, 0.5], "reach": 0.0})).unwrap();
+    assert!((undone["shape"]["rx"].as_f64().unwrap() - 0.2).abs() < 1e-9, "one undo step: {undone}");
+    assert_eq!(s.execute("mask.grab", &json!({"at": [0.02, 0.02], "reach": 0.01})).unwrap(), json!(null));
+}
+
+/// A mask's own controls: Refine Edges, and a luminance range's bounds kept in order.
+#[test]
+fn mask_shape_controls_list_and_set() {
+    let mut s = Session::with_demo();
+    s.execute("mask.add", &json!({"kind": "luminanceRange"})).unwrap();
+    let c = s.execute("mask.shapeControls", &json!({})).unwrap();
+    assert_eq!(c["refine"]["id"], "refine", "{c}");
+    let ids: Vec<&str> = c["components"][0]["controls"].as_array().unwrap().iter().map(|v| v["id"].as_str().unwrap()).collect();
+    assert_eq!(ids, ["lo", "hi", "smoothness"]);
+    assert_eq!(c["components"][0]["kind"], "luminanceRange");
+    s.execute("mask.setShapeControl", &json!({"component": 0, "control": "lo", "value": 10})).unwrap();
+    s.execute("mask.setShapeControl", &json!({"component": 0, "control": "hi", "value": 40})).unwrap();
+    s.execute("mask.setShapeControl", &json!({"component": 0, "control": "lo", "value": 90})).unwrap();
+    s.execute("mask.setShapeControl", &json!({"control": "refine", "value": 30})).unwrap();
+    let c = s.execute("mask.shapeControls", &json!({})).unwrap();
+    let lo = c["components"][0]["controls"][0]["value"].as_f64().unwrap();
+    assert!((lo - 39.0).abs() < 1e-6, "the low bound stays under the high one: {c}");
+    assert_eq!(c["refine"]["value"], 30.0);
+    assert!(s.execute("mask.setShapeControl", &json!({"component": 0, "control": "edge", "value": 1})).is_err());
+    assert!(s.execute("mask.setShapeControl", &json!({"control": "lo", "value": 1})).is_err(), "a mask itself has no range");
+}
+
+/// Faces as the edit shows them: a box tagged on a rotated photo lands in the upright frame and
+/// comes back where it was tapped.
+#[test]
+fn faces_are_tagged_and_listed_as_shown() {
+    let mut s = Session::with_demo();
+    s.execute("photo.rotateRight", &json!({})).unwrap();
+    let shown = json!({"x0": 0.1, "y0": 0.2, "x1": 0.3, "y1": 0.5});
+    let r = s.execute("photo.addRegion", &json!({"rect": shown, "shown": true, "name": "Ana"})).unwrap();
+    let faces = s.execute("photo.faces", &json!({})).unwrap();
+    let face = faces.as_array().unwrap().iter().find(|f| f["index"] == r["index"]).unwrap().clone();
+    let got: Vec<f64> = face["rect"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
+    for (a, b) in got.iter().zip([0.1, 0.2, 0.3, 0.5]) {
+        assert!((a - b).abs() < 1e-9, "{face}");
+    }
+    assert_eq!(face["name"], "Ana");
+    // stored upright: not where it was tapped on the rotated photo
+    let id = s.active().unwrap();
+    let stored = s.catalog.photo(id).unwrap().meta.regions.last().unwrap().rect;
+    assert!((stored.x0 - 0.1).abs() > 1e-6 || (stored.y0 - 0.2).abs() > 1e-6, "{stored:?}");
+}
+
+/// The settings groups every UI's Copy Settings and Create Preset list, with the default ticks.
+#[test]
+fn settings_groups_list_the_copy_defaults() {
+    let mut s = Session::with_demo();
+    let g = s.execute("develop.settingsGroups", &json!({})).unwrap();
+    let all = g.as_array().unwrap();
+    assert_eq!(all[0]["id"], "profile");
+    let crop = all.iter().find(|x| x["id"] == "crop").unwrap();
+    assert_eq!((crop["label"].as_str(), crop["copiedByDefault"].as_bool()), (Some("Crop"), Some(false)));
+    assert!(all.iter().any(|x| x["id"] == "light" && x["copiedByDefault"] == true));
+}
+
+/// The smart album editor's data: each operator's starting value, an album's rules, and what keeps
+/// rules from being saved.
+#[test]
+fn smart_album_rules_read_check_and_start_sensibly() {
+    let mut s = Session::with_demo();
+    let fields = s.execute("album.ruleFields", &json!({})).unwrap();
+    let rating = fields.as_array().unwrap().iter().find(|f| f["field"] == "rating").unwrap().clone();
+    assert!(rating["ops"].as_array().unwrap().iter().any(|o| o["op"] == "gte" && o["default"] == 3), "{rating}");
+    let fresh = s.execute("album.rules", &json!({})).unwrap();
+    assert_eq!(fresh["rules"]["rules"][0], json!({"field": "rating", "op": "gte", "value": 3}), "{fresh}");
+    let rules = json!({"match": "all", "rules": [{"field": "rating", "op": "gte", "value": 4}]});
+    let made = s.execute("album.createSmart", &json!({"name": "Best", "rules": {"ruleSet": rules}})).unwrap();
+    let id = made["id"].as_u64().unwrap();
+    let read = s.execute("album.rules", &json!({"id": id})).unwrap();
+    assert_eq!((read["name"].as_str(), read["rules"]["rules"][0]["value"].as_i64()), (Some("Best"), Some(4)), "{read}");
+    assert!(s.execute("album.checkRules", &json!({"rules": rules})).unwrap().as_array().unwrap().is_empty());
+    // an album rule that names the album itself can't be saved
+    let own = json!({"match": "all", "rules": [{"field": "album", "op": "is", "value": id}]});
+    let problems = s.execute("album.checkRules", &json!({"rules": own, "id": id})).unwrap();
+    assert!(!problems.as_array().unwrap().is_empty(), "{problems}");
+    assert!(s.execute("album.rules", &json!({"id": 999_999})).is_err());
+}
+
+/// The crop tool's guides: thirds are four lines, the spiral is mirrored by the orientation.
+#[test]
+fn crop_guides_are_lines_across_the_crop() {
+    let mut s = Session::with_demo();
+    let thirds = s.execute("crop.guides", &json!({"width": 3, "height": 2})).unwrap();
+    assert_eq!(thirds["paths"].as_array().unwrap().len(), 4, "{thirds}");
+    assert_eq!(thirds["kinds"][0], "thirds");
+    let tri = s.execute("crop.guides", &json!({"kind": "triangle", "orientation": 1, "width": 3, "height": 2})).unwrap();
+    assert_eq!(tri["asymmetric"], true);
+    assert_eq!(tri["paths"][0], json!([[1.0, 0.0], [0.0, 1.0]]));
+    let none = s.execute("crop.guides", &json!({"kind": "none", "width": -1, "height": f64::NAN.to_string()})).unwrap();
+    assert!(none["paths"].as_array().unwrap().is_empty());
+}
+
+/// Import Presets: the review reads a preset file without adding it, then the run adds it.
+#[test]
+fn presets_are_reviewed_then_imported() {
+    let mut s = Session::with_demo();
+    let dir = temp_dir("preset-review");
+    let file = dir.join("Warm.xmp");
+    let xmp = r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/" crs:PresetType="Normal" crs:Exposure2012="+0.50" crs:Temperature="+10"><crs:Name><rdf:Alt><rdf:li xml:lang="x-default">Warm Glow</rdf:li></rdf:Alt></crs:Name></rdf:Description></rdf:RDF></x:xmpmeta>"#;
+    std::fs::write(&file, xmp).unwrap();
+    let before = s.execute("presets.list", &json!({})).unwrap().as_array().unwrap().len();
+    let review = s.execute("preset.importReview", &json!({"paths": [file]})).unwrap();
+    assert_eq!(review["items"].as_array().map(Vec::len), Some(1), "{review}");
+    assert_eq!(review["items"][0]["preset"]["name"], "Warm Glow");
+    assert_eq!(s.execute("presets.list", &json!({})).unwrap().as_array().unwrap().len(), before, "a review adds nothing");
+    let done = s.execute("preset.importRun", &json!({"review": review})).unwrap();
+    assert_eq!(done["presets"], 1, "{done}");
+    assert_eq!(s.execute("presets.list", &json!({})).unwrap().as_array().unwrap().len(), before + 1);
+    // a file that isn't a preset is a problem, not an error
+    let junk = dir.join("notes.xmp");
+    std::fs::write(&junk, "hello").unwrap();
+    let r = s.execute("preset.importReview", &json!({"paths": [junk]})).unwrap();
+    assert!(r["items"].as_array().unwrap().is_empty() && !r["problems"].as_array().unwrap().is_empty(), "{r}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The chips over the grid: each filter with the patch that takes it off, and the counts.
+#[test]
+fn filter_chips_say_what_narrows_the_grid() {
+    let mut s = Session::with_demo();
+    let none = s.execute("library.filterChips", &json!({})).unwrap();
+    assert!(none["chips"].as_array().unwrap().is_empty(), "{none}");
+    s.execute("library.filter", &json!({"rating": 3})).unwrap();
+    let c = s.execute("library.filterChips", &json!({})).unwrap();
+    let chips = c["chips"].as_array().unwrap();
+    assert_eq!(chips.len(), 1, "{c}");
+    assert!(c["matching"].as_u64().unwrap() <= c["total"].as_u64().unwrap(), "{c}");
+    s.execute("library.filter", &chips[0]["clear"]).unwrap();
+    assert!(s.execute("library.filterChips", &json!({})).unwrap()["chips"].as_array().unwrap().is_empty());
+}
+
+/// A sideways drag over the grid chooses the run from where it began to the finger, on top of what
+/// was chosen; one that began on a chosen photo takes the run away.
+#[test]
+fn a_run_of_photos_is_chosen_or_unchosen() {
+    let mut s = Session::with_demo();
+    let visible: Vec<u64> = s.visible_shared().1.iter().map(|i| i.0).collect();
+    let chosen = |s: &Session| s.selection.ids.iter().map(|i| i.0).collect::<std::collections::HashSet<u64>>();
+    s.execute("library.chooseRun", &json!({"base": [visible[10]], "from": 4, "to": 2, "adding": true})).unwrap();
+    assert_eq!(chosen(&s), [visible[10], visible[2], visible[3], visible[4]].into_iter().collect());
+    let base: Vec<u64> = chosen(&s).into_iter().collect();
+    s.execute("library.chooseRun", &json!({"base": base, "from": 3, "to": 4, "adding": false})).unwrap();
+    assert_eq!(chosen(&s), [visible[10], visible[2]].into_iter().collect());
+    assert!(s.execute("library.chooseRun", &json!({"from": 1})).is_err());
+}
+
+/// People's named section: who is named on the photos, most photos first, with their face.
+#[test]
+fn named_people_are_listed_with_their_faces() {
+    let mut s = Session::with_demo();
+    let ids: Vec<u64> = s.visible_shared().1.iter().take(3).map(|i| i.0).collect();
+    for (id, name) in [(ids[0], "Ana"), (ids[1], "Ana"), (ids[2], "Bo")] {
+        s.execute("photo.addRegion", &json!({"id": id, "rect": {"x0": 0.2, "y0": 0.2, "x1": 0.4, "y1": 0.5}, "name": name})).unwrap();
+    }
+    let people = s.execute("people.named", &json!({})).unwrap();
+    let list = people.as_array().unwrap();
+    assert_eq!(list.len(), 2, "{people}");
+    assert_eq!((list[0]["name"].as_str(), list[0]["photos"].as_u64()), (Some("Ana"), Some(2)));
+    assert!(list[0]["cover"]["rect"]["x0"].is_number(), "{people}");
+    // renaming a person renames every face of theirs, any case, in one undo step
+    s.execute("people.rename", &json!({"from": "ana", "to": "Anna"})).unwrap();
+    let people = s.execute("people.named", &json!({})).unwrap();
+    assert_eq!((people[0]["name"].as_str(), people[0]["photos"].as_u64()), (Some("Anna"), Some(2)), "{people}");
+    assert!(s.execute("people.rename", &json!({"from": "Cy", "to": "Dee"})).is_err());
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(s.execute("people.named", &json!({})).unwrap()[0]["name"].as_str(), Some("Ana"));
+}
+
+#[test]
+fn a_drawn_line_straightens_and_guides_go_on_as_shown() {
+    let mut s = Session::with_demo();
+    let id = s.visible_shared().1[0];
+    s.execute("library.select", &json!({"ids": [id.0], "active": id.0})).unwrap();
+    s.execute("crop.straighten", &json!({"line": [100.0, 10.0]})).unwrap();
+    let angle = s.develop_of(id).unwrap().crop.geometry.angle;
+    assert!((angle + 5.71).abs() < 0.01, "{angle}");
+    assert!(s.execute("crop.straighten", &json!({"line": [0.0, 0.0]})).is_err());
+    // a guide drawn on the photo as shown comes back where it was drawn
+    s.execute("geometry.guides", &json!({"guides": [[0.2, 0.1, 0.22, 0.9]], "shown": true})).unwrap();
+    let f = s.execute("view.frame", &json!({"applyCrop": false})).unwrap();
+    let g: Vec<f64> = f["guides"][0].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
+    for (got, want) in g.iter().zip([0.2, 0.1, 0.22, 0.9]) {
+        assert!((got - want).abs() < 0.02, "{g:?}");
+    }
+    assert_eq!(s.develop_of(id).unwrap().geometry.upright, lightcraft_develop::Upright::Guided);
+}
+
+// The Keyword Painter's click: a keyword some of the photos lack is given to all; one they all
+// have is taken from all (any case)
+#[test]
+fn a_painted_keyword_toggles_on_the_photos() {
+    let mut s = Session::with_demo();
+    let ids: Vec<u64> = s.visible_shared().1.iter().take(2).map(|i| i.0).collect();
+    let has = |s: &Session, id: u64| s.catalog.photo(crate::catalog::PhotoId(id)).unwrap().meta.keywords.iter().any(|k| k == "Painted");
+    s.execute("keyword.toggle", &json!({"ids": [ids[0]], "keyword": "Painted"})).unwrap();
+    assert!(has(&s, ids[0]) && !has(&s, ids[1]));
+    let r = s.execute("keyword.toggle", &json!({"ids": ids, "keyword": "Painted"})).unwrap();
+    assert_eq!(r["added"], true, "{r}");
+    assert!(has(&s, ids[0]) && has(&s, ids[1]));
+    let r = s.execute("keyword.toggle", &json!({"ids": ids, "keyword": "painted"})).unwrap();
+    assert_eq!(r["added"], false, "{r}");
+    assert!(!has(&s, ids[0]) && !has(&s, ids[1]));
+    assert!(s.execute("keyword.toggle", &json!({"ids": ids, "keyword": "  "})).is_err());
 }

@@ -584,21 +584,10 @@ pub fn export_active(app: &mut LightcraftApp, p: &Value) -> Result<Value, String
         }
         out
     };
-    // remember for Export with Previous (and to prefill the dialog)
-    let mut last = p.clone();
-    if let Some(o) = last.as_object_mut() {
-        o.remove("ids");
-        o.remove("path");
-        o.remove("sendTo");
-        if app.services.share_exports.is_some() {
-            // the staging folder isn't the user's choice (and moves with an iOS app update)
-            o.remove("dir");
-        } else {
-            o.insert("dir".into(), json!(dir));
-        }
-    }
-    app.session.last_export = Some(last);
-    let _ = app.session.save_prefs();
+    // remember for Export with Previous (and to prefill the dialog); a staging folder isn't the
+    // user's choice (and moves with an iOS app update)
+    let chosen = app.services.share_exports.is_none().then_some(dir.as_str());
+    lightcraft_apphost::export::remember(&mut app.session, p, chosen);
     Ok(out)
 }
 

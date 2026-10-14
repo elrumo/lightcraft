@@ -54,6 +54,8 @@ let package = Package(
         .target(
             name: "LightCraftApp",
             dependencies: ["LightCraftCore", "LightCraftImaging"],
+            // the string tables (`cargo xtask swift-strings`) are the Xcode app target's resources
+            exclude: ["Localization"],
             swiftSettings: [.defaultIsolation(MainActor.self)]
         ),
         .testTarget(

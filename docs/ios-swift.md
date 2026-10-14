@@ -1,6 +1,8 @@
 # The SwiftUI iOS app
 
-**Status: foundation in place (Phase S0); runs on an iOS 26.5 simulator (2026-10-13), not yet on a device.** A native SwiftUI app for iPhone and iPad
+**Status: S1 under way (2026-10-14): the phone layout (grid with Months / Years, albums, filter, select mode, the photo
+with its tools and every Edit group, Crop, Masking, Remove, export and share, Settings, sync, People, Map) runs on an
+iOS 26.5 simulator; not yet on a device.** Row by row: `apps/lightcraft-ios-swift/PARITY.md`. A native SwiftUI app for iPhone and iPad
 (iOS 26 and later) that runs the whole Rust core: the engine, the develop pipeline, the catalog, sync, export. It is to
 replace the egui iOS app ([ios.md](ios.md)) once it passes its parity gate. The decision and its reasons are in
 [ios.md](ios.md) → *Plan*, Phase 0. What iOS still lacks overall: [ios-gaps.md](ios-gaps.md).
@@ -27,6 +29,10 @@ engine, pipeline, catalog, … (shared with the desktop, web and egui iOS apps)
 - **One engine thread.** `Session` is `Send` but not `Sync`, so one thread (`lc-engine`, `crates/apphost/src/host`)
   owns it and runs every command, render request and background pump, as the egui app's UI thread does. Swift never
   waits on a lock held by background work.
+- **The host drives the background work.** Between requests the engine thread does what the egui app's frame loop does:
+  renders, saving, the activity stack, the self-hosted sync (`apphost::sync`: requests on worker threads, answers
+  applied on the engine thread, a pull when the app comes back to the front), the face scan's pace (`apphost::faces`),
+  exports (`apphost::export::Batch`) and imports (`apphost::import`), all shared with egui.
 - **Messages, not calls.** Swift sends JSON requests and reads JSON events from a queue it polls on a thread of its
   own (`EventPump`). Commands go through `Session::execute`, the entry point every frontend uses, so the Swift app gets
   every engine command (363) without binding code per command.
@@ -84,13 +90,24 @@ host's: `badRequest`, `unknownMethod`, `panic`, `closed`, `timeout`).
 
 | Method | Params | Does |
 |---|---|---|
-| `engine.execute` | `{command, params}` | any engine command, and `app.export` (Export Now) |
+| `engine.execute` | `{command, params}` | any engine command, and `app.export` (Export Now: on a worker with an activity row, ✕ stops it; answered when it ends, `cancelled` when stopped; `remember: false` keeps it from being what Export with Previous repeats: a photo dragged into another app); `library.inspectLightroom` / `library.importLightroom {path, updateExisting?}` likewise (`apphost::lightroom`, `path` the `.lrcat` or a folder holding it; `{status: true, cancel?}` answers at once); `enhance.superRes` runs the same way (Enlarging; answered with the new photo, or error `cancelled`) |
+| `import.scan` | `{paths}` | the files and folders for the import review, scanned on a worker (answered when done: `{candidates}`, each with `inTrash`) |
+| `import.start` | `{paths \| indexes, …library.import params, albumName?}` | imports in the background in batches (one undo step; answered when done with what it added) |
 | `engine.commands` | | every command with whether it can run now and why not |
 | `host.state` | | the state below |
+| `host.uiCommands` | | egui's UI-only commands (`apphost::ui_commands`): `[{id, label, shortcut, menu}]`, for the iPad menu bar and keys |
+| `host.sidebar` | `{layout?, command?, params?}` | the albums sidebar's sections after one of egui's `view.sidebarSection` / `view.sidebarMoveSection` / `view.sidebarReset` (`apphost::sidebar`) on `layout` (the app keeps it): `{layout: [{id, hidden, collapsed}], shown}` |
 | `host.lifecycle` | `{event}` | `resignActive`, `background` (save, pause the GPU, free memory), `active`, `memoryWarning`, `terminate` |
+| `host.merge.preview` | `{command: merge.hdr \| merge.panorama \| merge.hdrPanorama, ids?, options?}` | Photo Merge's preview on a worker (`apphost::merge`, shared with egui's dialog): the picture in slot `merge`, then the answer `{info, slot}`; a newer preview answers the older `cancelled` |
+| `host.merge.start` / `host.merge.last` | `{command, ids?, options?}` | the full merge in the background (activity row, ✕ stops it); answered `{started}` at once, a message when it ends; `last` uses the options last merged with |
+| `host.merge.cancel` | | drops the preview being drawn (the dialog closed) |
+| `host.exportPrevious` | | Export with Previous: the last export's options for the photos chosen now, on a worker like `app.export` |
 | `render.thumb` | `{photo, edge, priority?}` | a grid thumbnail (embedded raw previews first; cheap to repeat) |
-| `render.view` | `{photo?, width, height, draft?, before?, applyCrop?}` | the loupe's picture (`main`; a stand-in in `preview` until it is there) |
+| `render.view` | `{photo?, width, height, draft?, before?, applyCrop?, overlay?: {kind: mask, id, view?, color?, opacity?} \| {kind: spots, threshold?} \| {kind: pointColor, index} \| {kind: hdr}, proof?: {space, destWarning?, displayWarning?}, zoom?: {drawn, visible: [x0, y0, x1, y1]}}` | the loupe's picture (`main`; a stand-in in `preview` until it is there), with a diagnostic overlay (the selected mask, Visualize Spots…); zoomed in (`drawn`: the photo's long edge as drawn, px; `visible`: the part on screen, as fractions) also the window on screen at the zoom scale (`region`, its image event's `window: {full: [w, h], x, y, w, h}` says where it goes; planned by `apphost::region`) |
 | `render.prefetch` | `{photos, width, height}` | prepares the neighbours |
+| `render.variant` | `{photo?, preset \| profile \| version \| edited: true, amount?, edge?}` | a preview of the photo with a preset, profile or version, or as it is (Compare, Survey, the filmstrip) (slot `variant:<key>`) |
+| `render.face` | `{photo?, rect, edge?}` | a face, as People shows it (`rect` as `people.list` and `faces.person` give it; slot `variant:<key>`) |
+| `render.candidate` | `{index, edge?}` | an import candidate's thumbnail (slot `import:<index>`) |
 | `render.cancel` | `{slots}` | stops rendering for slots |
 | `render.retain` | `{thumbs, max?}` | the thumbnails on screen (queued renders of others are dropped) |
 | `ui.reply` | `{id, result \| error}` | the app's answer to a `uiRequest` |
@@ -98,8 +115,12 @@ host's: `badRequest`, `unknownMethod`, `panic`, `closed`, `timeout`).
 Events: `reply`; `image {slot, photo, key, token, width, height, final, draft, quick?, ms, histogram?}` (slots
 `thumb:<id>`, `thumbQuick:<id>`, `main`, `preview`, `before`…); `renderFailed {slot, photo, key, error}`; `state {state:
 {catalogRevision, visibleGen, visibleCount, libraryGeneration, active, selectionCount, undo, redo, interaction,
-unsaved}}` when any of it changes; `activity {tasks}` (the activity stack); `message {text, level}`; `uiRequest {id,
-method, params}`; `closed`. One of each is in `LightCraft/Tests/LightCraftCoreTests/Fixtures/protocol.json`, written by
+activeMask, activeSpot, unsaved, sync?, faces?}}` when any of it changes (`faces`: the face scan's `{pendingPhotos,
+indexedFaces}` while recognition is on) (`activeMask` / `activeSpot`: the Masking tool's
+selected mask and the Remove tool's selected spot, wherever they were chosen) (`sync`: the server sync for the cloud icon, `{state, server, pending, uploads,
+downloads, reading, error}`; absent for a local library); `activity {tasks}` (the activity stack); `message {text,
+level}`; `copy {text}` (put it on the clipboard: a share link just made); `ask {dialog, params}` (show a dialog the
+engine needs an answer from: `syncChoice`); `uiRequest {id, method, params}`; `closed`. One of each is in `LightCraft/Tests/LightCraftCoreTests/Fixtures/protocol.json`, written by
 the Rust test `fixtures_match_the_protocol` (`LIGHTCRAFT_BLESS=1` rewrites it) and decoded by the Swift tests.
 
 A slider drag: `develop.beginInteraction {label}`, then `develop.set {control, value}` with at most one in flight (the
@@ -137,7 +158,10 @@ only (`#if os(iOS)`), so `swift test` on a Mac builds the rest. The Rust library
 (`{"sleep": ms}` waits), and appends each reply to `<file>.out`; a relative `path` is next to the script. The engine
 answers `engine.*`, `render.*` and `host.*` itself; the app answers `ui.screenshot {path}` (the window as a PNG),
 `ui.inspect` (screen, photo, state, `perf`: the last render's ms and the slider-to-draft round trip) and `ui.set {screen:
-grid | photo | edit | commands, photo?}`.
+grid | photo | edit | crop | masking | remove | redEye | presets | info | commands | people | map, photo?, person? (with people: their page), span?, group?, sheet?,
+section?, select?, faceBoxes?, tagFace?, beforeAfter?, visualizeSpots?, removeAI?, histogram?, cropGuide?, cropDraw? (straighten | guides | none), orientation? (landscape | portrait), softProof?, proofSpace?, proofWarning?,
+sidebarCommand? + sidebarParams? (a `view.sidebar*` command), searching?, search? (the grid's search field), painting? (the Keyword Painter's keyword; "" stops), secondWindow? (opens Window ▸ Second Window)}` (`ScriptHost.swift` lists
+the values).
 
 ```sh
 # simulator: ci/sim-tour.sh does all of this (CI uploads its screenshots)
@@ -178,11 +202,31 @@ post-command policy → `apphost`); text input (SW1.6); signed builds (SW1.7); t
 mode (SW1.8, region geometry → `apphost`), every Edit group, curves, mixer and grading (SW1.9–10), the canvas mapping
 (SW1.11), Crop, Masking and Remove (SW1.12–14, their handle geometry → `geom` / `develop`), versions, history, copy and
 paste, undo gestures, presets (SW1.15–18), sync, albums, filters, map, people, AI tools, HDR, settings and localisation
-(SW1.19–25: `cargo xtask ios-strings` turns the egui catalogs into a String Catalog), landscape and iPad portrait
+(SW1.19–25), landscape and iPad portrait
 (SW1.26) and the phone audit (`cargo xtask parity --ios-gate S1`, SW1.27).
 
-Open questions (not blocking S0): MapKit or the built-in offline map; iOS per-app language or an in-app override; which
-AI engine features ship on iOS (binary size); whether the gate also compares screenshots of the two apps.
+S2 (`cargo xtask parity --ios-gate S2` passes since 2026-10-14): the iPad split view and library dialogs (SW2.1) and
+their words (SW2.2); Compare, Survey, Reference and the other view modes (SW2.3); the menu bar and keys (SW2.4); culling,
+track logs, missing files, Export with Previous (SW2.5); soft proofing (SW2.6); sidebar sections (SW2.7, the arrangement →
+`apphost::sidebar`); the grid's search (SW2.8); the Keyword Painter (SW2.9, `keyword.toggle`); drag and drop and Apple
+Pencil (SW2.10); the Second Window, more windows and the external display (SW2.11); Lightroom catalog import (SW2.12,
+the runner → `apphost::lightroom`). Not tried on hardware yet: a real drag, a Pencil, an external display. S3, removing
+the egui iOS app, is the maintainer's call.
+
+Open questions (not blocking S0): MapKit or the built-in offline map; which AI engine features ship on iOS (binary size);
+whether the gate also compares screenshots of the two apps.
+
+## Languages
+
+The app speaks the egui app's languages through iOS's own localisation: each language's
+`Sources/LightCraftApp/Localization/<lang>.lproj/Localizable.strings`, generated by `cargo xtask swift-strings` from the
+egui catalogs (`crates/ui-egui/locales`) and the app's own (`apps/lightcraft-ios-swift/locales/<code>.json`, for its
+wording that egui doesn't have), so a translation is written once. `locales/keys.json` lists the keys the app uses; after
+adding text to the app, build it in Xcode with `SWIFT_EMIT_LOC_STRINGS=YES` and run `cargo xtask swift-strings
+<derived-data> --missing` to refresh it and list what needs translating. Labels from the engine (controls, commands,
+rules) are looked up at run time (`LocalizedStringKey(label)`), and every egui message is in the tables for that.
+Dates are formatted by iOS. The language is iOS's per-app setting (Settings ▸ LightCraft ▸ Language), which Settings ▸
+Interface ▸ Language opens. The tables are the Xcode target's resources; an xtool build is English only.
 
 ## Parity gate
 

@@ -29,6 +29,8 @@ pub struct ModelSpec {
     pub credit: &'static str,
     /// Where the model is described (its page), shown next to the licence.
     pub home_url: &'static str,
+    /// Offered on computers only (too large or slow for a phone or tablet).
+    pub desktop_only: bool,
 }
 
 impl ModelSpec {
@@ -72,13 +74,14 @@ pub const NOMOS_SPAN_2X: ModelSpec = ModelSpec {
     licence_url: "https://creativecommons.org/licenses/by/4.0/",
     credit: "Nomos Uni SPAN by Philip Hofmann (Phips)",
     home_url: "https://huggingface.co/Phips/2xNomosUni_span_multijpg",
+    desktop_only: false,
 };
 
 /// MI-GAN: AI Remove (see `lightcraft_erase`, which pins the file and says where it comes from).
 pub const MIGAN: ModelSpec = ModelSpec {
     id: lightcraft_erase::ID,
     label: lightcraft_erase::LABEL,
-    purpose: "AI Remove (Remove tool ▸ Generative AI)",
+    purpose: "AI Remove (Remove tool ▸ Generative AI) and Generative Expand (Crop ▸ Expand)",
     files: &[FileSpec {
         name: lightcraft_erase::FILE,
         size: Some(lightcraft_erase::FILE_SIZE),
@@ -91,10 +94,32 @@ pub const MIGAN: ModelSpec = ModelSpec {
     licence_url: lightcraft_erase::LICENCE_URL,
     credit: lightcraft_erase::CREDIT,
     home_url: lightcraft_erase::HOME_URL,
+    desktop_only: false,
+};
+
+/// LaMa: Generative Expand's larger model (see `lightcraft_erase::lama`, which pins the file and
+/// says where it comes from). 208 MB and about ten times MI-GAN's time per pass: computers only.
+pub const LAMA: ModelSpec = ModelSpec {
+    id: lightcraft_erase::lama::ID,
+    label: lightcraft_erase::lama::LABEL,
+    purpose: "Generative Expand (Crop ▸ Expand), best for wide areas",
+    files: &[FileSpec {
+        name: lightcraft_erase::lama::FILE,
+        size: Some(lightcraft_erase::lama::FILE_SIZE),
+        sha256: Some(lightcraft_erase::lama::FILE_SHA256),
+        max: lightcraft_erase::lama::FILE_SIZE,
+    }],
+    mirrors_env: "LIGHTCRAFT_LAMA_MIRRORS",
+    default_mirrors: &[lightcraft_erase::lama::BASE_URL],
+    licence: lightcraft_erase::lama::LICENCE,
+    licence_url: lightcraft_erase::lama::LICENCE_URL,
+    credit: lightcraft_erase::lama::CREDIT,
+    home_url: lightcraft_erase::lama::HOME_URL,
+    desktop_only: true,
 };
 
 /// Every enhancement model, for listings.
-pub const ALL: &[&ModelSpec] = &[&NOMOS_SPAN_2X, &MIGAN];
+pub const ALL: &[&ModelSpec] = &[&NOMOS_SPAN_2X, &MIGAN, &LAMA];
 
 /// The enhancement model with this id.
 pub fn find(id: &str) -> Option<&'static ModelSpec> {
@@ -138,6 +163,14 @@ mod tests {
             assert_eq!(find(m.id).map(|f| f.id), Some(m.id));
         }
         assert!(find("nope").is_none());
+    }
+
+    #[test]
+    fn lama_is_pinned_desktop_only_and_downloads_from_its_exporters_repository() {
+        assert_eq!(LAMA.bytes(), 208_044_816);
+        const { assert!(LAMA.desktop_only && !MIGAN.desktop_only) };
+        assert!(LAMA.default_mirrors.iter().all(|u| u.starts_with("https://huggingface.co/Carve/LaMa-ONNX/resolve/")));
+        assert_eq!(find("lama").map(|m| m.files[0].name), Some("lama_fp32.onnx"));
     }
 
     #[test]

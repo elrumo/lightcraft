@@ -1,6 +1,6 @@
 //! Masking and Remove (spot) commands on the active photo.
 
-use lightcraft_develop::{BrushStroke, LocalAdjustments, Mask, MaskComponent, MaskOp, MaskShape, RedEye, Spot, SpotMode};
+use lightcraft_develop::{BrushStroke, LocalAdjustments, Mask, MaskComponent, MaskOp, MaskShape, RedEye, Spot, SpotMode, controls, mask_handles};
 use lightcraft_geom::Point;
 use serde_json::{Value, json};
 
@@ -151,6 +151,19 @@ fn find(masks: &mut [Mask], id: u32, c: &str) -> Result<usize> {
     masks.iter().position(|m| m.id == id).ok_or_else(|| bad(c, format!("no mask {id}")))
 }
 
+/// Normalized units per long-edge unit of the active photo, as oriented (`mask_handles::long_units`).
+fn long_of(s: &Session, c: &str) -> Result<(f64, f64)> {
+    let id = s.active().ok_or_else(|| bad(c, "no active photo"))?;
+    let photo = s.catalog.photo(id).ok_or_else(|| bad(c, format!("no photo {}", id.0)))?;
+    let d = s.develop_of(id).unwrap_or_default();
+    let frame = lightcraft_pipeline::geometry::Frame::with_lens(photo.width.max(1) as usize, photo.height.max(1) as usize, &d, true, None);
+    Ok(mask_handles::long_units(frame.ow, frame.oh))
+}
+
+fn pt(p: Point) -> Value {
+    json!([p.x, p.y])
+}
+
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         cmd!(
@@ -267,6 +280,89 @@ pub fn specs() -> Vec<CommandSpec> {
                             shape: MaskShape::Brush { strokes: vec![stroke] },
                         });
                     }
+                    Ok(())
+                })
+            }
+        ),
+        cmd!(
+            query "mask.handles",
+            "Mask Handles",
+            [],
+            None,
+            "{} → {long: [x, y] (normalized units per long-edge unit), grips: [{mask, component, handle, kind: radial|linear|brush|…, at: [x,y]}], outlines: [[[x,y]…]]} what the photo shows of the masks: every component's pin (handle 0), the selected mask's handles (a radial's edges 1–4 and rotation grip 5, a linear gradient's start 1 and end 2) and its radials' outlines",
+            has_active,
+            |s, _| {
+                let c = "mask.handles";
+                let long = long_of(s, c)?;
+                let id = s.active().ok_or_else(|| bad(c, "no active photo"))?;
+                let d = s.develop_of(id).unwrap_or_default();
+                let kind = |shape: &MaskShape| serde_json::to_value(shape).ok().and_then(|v| v.get("kind").cloned()).unwrap_or(Value::Null);
+                let grips: Vec<Value> = mask_handles::all_grips(&d.masks, s.active_mask, long, true)
+                    .into_iter()
+                    .map(|g| {
+                        let shape = d.masks.iter().find(|m| m.id == g.mask).and_then(|m| m.components.get(g.component)).map(|c| kind(&c.shape));
+                        json!({"mask": g.mask, "component": g.component, "handle": g.handle, "kind": shape, "at": pt(g.at)})
+                    })
+                    .collect();
+                let outlines: Vec<Value> = d
+                    .masks
+                    .iter()
+                    .filter(|m| Some(m.id) == s.active_mask)
+                    .flat_map(|m| m.components.iter())
+                    .map(|c| mask_handles::outline(&c.shape, long, 64))
+                    .filter(|o| !o.is_empty())
+                    .map(|o| Value::Array(o.into_iter().map(pt).collect()))
+                    .collect();
+                Ok(json!({"long": [long.0, long.1], "grips": grips, "outlines": outlines}))
+            }
+        ),
+        cmd!(
+            query "mask.grab",
+            "Grab Mask",
+            [],
+            None,
+            "{at: [x,y], reach: long-edge units, pins?: true, body?: true} → {mask, component, handle, shape} | null what a drag starting at `at` takes: a grip within `reach` (the selected mask's first), else (with `body`) the selected mask's radial under it, else its linear gradient",
+            has_active,
+            |s, p| {
+                let c = "mask.grab";
+                let at = point(p, "at").ok_or_else(|| bad(c, "missing `at`"))?;
+                let long = long_of(s, c)?;
+                let id = s.active().ok_or_else(|| bad(c, "no active photo"))?;
+                let d = s.develop_of(id).unwrap_or_default();
+                let reach = f64_or(p, "reach", 0.03);
+                let pins = bool_or(p, "pins", true);
+                let g = if bool_or(p, "body", true) {
+                    mask_handles::grab(&d.masks, s.active_mask, at, reach, long, pins)
+                } else {
+                    mask_handles::grip_at(&mask_handles::all_grips(&d.masks, s.active_mask, long, pins), s.active_mask, at, reach, long)
+                };
+                Ok(g.and_then(|g| {
+                    let shape = d.masks.iter().find(|m| m.id == g.mask)?.components.get(g.component)?.shape.clone();
+                    Some(json!({"mask": g.mask, "component": g.component, "handle": g.handle, "shape": shape}))
+                })
+                .unwrap_or(Value::Null))
+            }
+        ),
+        cmd!(
+            "mask.drag",
+            "Drag Mask",
+            [],
+            None,
+            "{id, component, handle, from: [x,y], to: [x,y], shape: the component's shape when the drag began (`mask.grab`), alt?: keep a radial's proportions} moves a mask component, or a handle of it, as a drag from `from` to `to` (wrap in develop.beginInteraction / endInteraction for one undo step)",
+            has_active,
+            |s, p| {
+                let c = "mask.drag";
+                let start: MaskShape = serde_json::from_value(p.get("shape").cloned().unwrap_or_default()).map_err(|e| bad(c, e.to_string()))?;
+                let (from, to) = (point(p, "from").ok_or_else(|| bad(c, "missing `from`"))?, point(p, "to").ok_or_else(|| bad(c, "missing `to`"))?);
+                let handle = p.get("handle").and_then(Value::as_u64).unwrap_or(0).min(u64::from(u8::MAX)) as u8;
+                let comp = p.get("component").and_then(Value::as_u64).unwrap_or(0) as usize;
+                let mid = mask_id(p, s.active_mask, c)?;
+                let shape = mask_handles::moved(&start, handle, from, to, long_of(s, c)?, bool_or(p, "alt", false));
+                masks_edit(s, c, "Edit Mask", |masks, active| {
+                    let i = find(masks, mid, c)?;
+                    let comp = masks[i].components.get_mut(comp).ok_or_else(|| bad(c, "no such component"))?;
+                    comp.shape = shape;
+                    *active = Some(mid);
                     Ok(())
                 })
             }
@@ -478,6 +574,67 @@ pub fn specs() -> Vec<CommandSpec> {
             |s, _| Ok(json!({"cancelled": s.segmenter.cancel_download()}))
         ),
         cmd!(
+            query "mask.shapeControls",
+            "Mask Shape Controls",
+            [],
+            None,
+            "{id?} → {refine: Refine Edges, components: [{component, kind, controls}]} the mask's own controls besides its adjustments (each a control spec with its `value`): Refine Edges, a luminance range's bounds and smoothness, a colour range's refine, an AI selection's edge; `mask.setShapeControl` sets them",
+            has_active,
+            |s, p| {
+                let c = "mask.shapeControls";
+                let mid = mask_id(p, s.active_mask, c)?;
+                let id = s.active().ok_or_else(|| bad(c, "no active photo"))?;
+                let d = s.develop_of(id).unwrap_or_default();
+                let m = d.masks.iter().find(|m| m.id == mid).ok_or_else(|| bad(c, format!("no mask {mid}")))?;
+                let spec = |spec: &lightcraft_develop::ControlSpec, value: f64| {
+                    let mut v = serde_json::to_value(spec).unwrap_or_default();
+                    v["section"] = json!("mask");
+                    v["value"] = json!(value);
+                    v
+                };
+                let components: Vec<Value> = m
+                    .components
+                    .iter()
+                    .enumerate()
+                    .map(|(k, part)| {
+                        let kind = serde_json::to_value(&part.shape).ok().and_then(|v| v.get("kind").cloned()).unwrap_or(Value::Null);
+                        let controls: Vec<Value> = controls::shape_controls(&part.shape).iter().map(|(sp, v)| spec(sp, *v)).collect();
+                        json!({"component": k, "kind": kind, "controls": controls})
+                    })
+                    .collect();
+                Ok(json!({"refine": spec(&controls::MASK_REFINE, m.refine), "components": components}))
+            }
+        ),
+        cmd!(
+            "mask.setShapeControl",
+            "Set Mask Shape Control",
+            [],
+            None,
+            "{id?, component?: index (none: the mask's own `refine`), control, value} sets one of `mask.shapeControls`",
+            has_active,
+            |s, p| {
+                let c = "mask.setShapeControl";
+                let mid = mask_id(p, s.active_mask, c)?;
+                let control = str_param(p, "control").ok_or_else(|| bad(c, "missing `control`"))?.to_string();
+                let v = p.get("value").and_then(Value::as_f64).filter(|v| v.is_finite()).ok_or_else(|| bad(c, "missing number `value`"))?;
+                let comp = p.get("component").and_then(Value::as_u64).map(|k| k as usize);
+                masks_edit(s, c, "Edit Mask", |masks, _| {
+                    let i = find(masks, mid, c)?;
+                    let m = &mut masks[i];
+                    match comp {
+                        None if control == "refine" => m.refine = v.clamp(0.0, 100.0),
+                        None => return Err(bad(c, format!("a mask has no control `{control}`"))),
+                        Some(k) => {
+                            let part = m.components.get_mut(k).ok_or_else(|| bad(c, "no such component"))?;
+                            part.shape = controls::set_shape_control(&part.shape, &control, v)
+                                .ok_or_else(|| bad(c, format!("this part has no control `{control}`")))?;
+                        }
+                    }
+                    Ok(())
+                })
+            }
+        ),
+        cmd!(
             "mask.refine",
             "Refine Mask Edges",
             [],
@@ -512,6 +669,33 @@ pub fn specs() -> Vec<CommandSpec> {
                     masks[i].adjust = clamp_local(a);
                     Ok(())
                 })
+            }
+        ),
+        cmd!(
+            query "mask.controls",
+            "List Mask Adjustments",
+            [],
+            None,
+            "{id?} → [{id, label, min, max, default, step, decimals, track, value}] the mask's Amount and local adjustment sliders with its values (ids as `mask.adjust` takes them)",
+            has_active,
+            |s, p| {
+                let c = "mask.controls";
+                let mid = mask_id(p, s.active_mask, c)?;
+                let id = s.active().ok_or_else(|| bad(c, "no active photo"))?;
+                let d = s.develop_of(id).unwrap_or_default();
+                let m = d.masks.iter().find(|m| m.id == mid).ok_or_else(|| bad(c, format!("no mask {mid}")))?;
+                let values = serde_json::to_value(m.adjust).unwrap_or_default();
+                let specs = std::iter::once(&lightcraft_develop::controls::LOCAL_AMOUNT).chain(lightcraft_develop::controls::LOCAL.iter());
+                Ok(Value::Array(
+                    specs
+                        .map(|spec| {
+                            let mut v = serde_json::to_value(spec).unwrap_or_default();
+                            v["section"] = json!("mask");
+                            v["value"] = values.get(spec.id).cloned().unwrap_or(json!(spec.default));
+                            v
+                        })
+                        .collect(),
+                ))
             }
         ),
         cmd!("mask.select", "Select Mask", [], None, "{id|null}", has_active, |s, p| {

@@ -459,32 +459,13 @@ fn square_face(app: &mut LightcraftApp, ui: &egui::Ui, f: &super::person::Face, 
     }
 }
 
-/// The faces named `from` across the library (case-insensitive): what renaming a person renames.
-pub fn faces_named(cat: &lightcraft_catalog::Catalog, from: &str) -> Vec<(u64, usize)> {
-    let from = from.trim();
-    let mut out = Vec::new();
-    for p in cat.photos().filter(|p| p.in_library()) {
-        for (i, r) in p.meta.regions.iter().enumerate() {
-            if r.kind == lightcraft_meta::RegionKind::Face && r.name.as_deref().is_some_and(|n| n.trim().eq_ignore_ascii_case(from)) {
-                out.push((p.id.0, i));
-            }
-        }
-    }
-    out
-}
-
 /// Give `target` the name `name` (one undo step).
 pub fn apply(app: &mut LightcraftApp, target: &NameTarget, name: &str) -> Result<Value, String> {
     match target {
         NameTarget::Face { photo, index } => app.run("faces.setName", json!({"id": photo, "index": index, "name": name})),
         NameTarget::Cluster { id, .. } => app.run("people.name", json!({"cluster": id, "name": name})),
         NameTarget::Person { from } => {
-            let faces: Vec<Value> =
-                faces_named(&app.session.catalog, from).into_iter().map(|(photo, index)| json!({"photo": photo, "index": index})).collect();
-            if faces.is_empty() {
-                return Err(crate::i18n::tr("Nobody has that name any more").to_string());
-            }
-            let r = app.run("faces.nameFaces", json!({"faces": faces, "name": name}))?;
+            let r = app.run("people.rename", json!({"from": from, "to": name}))?;
             // the page follows the person to their new name
             if app.ui.person_page.as_deref().is_some_and(|p| p.eq_ignore_ascii_case(from)) {
                 app.ui.person_page = Some(name.to_string());
@@ -688,8 +669,8 @@ mod tests {
         for name in ["Ana", "ana ", "Bo"] {
             s.execute("photo.addRegion", &json!({"id": id.0, "rect": {"x0": 0.1, "y0": 0.1, "x1": 0.3, "y1": 0.3}, "name": name})).unwrap();
         }
-        let found = faces_named(&s.catalog, "ANA");
+        let found = lightcraft_engine::cmd::faces_named(&s.catalog, "ANA");
         assert_eq!(found.len(), 2);
-        assert!(faces_named(&s.catalog, "Cy").is_empty());
+        assert!(lightcraft_engine::cmd::faces_named(&s.catalog, "Cy").is_empty());
     }
 }

@@ -12,30 +12,9 @@ use crate::icons::{Icon, paint};
 use crate::theme::Tokens;
 use crate::widgets::{divider, icon_button, one_line, register, slider, text_button};
 
-const fn spec(id: &'static str, label: &'static str, min: f64, max: f64, step: f64, decimals: u8, track: Track) -> ControlSpec {
-    ControlSpec { id, label, section: Section::Light, min, max, default: 0.0, step, decimals, track }
-}
-
-/// Local adjustment sliders (key = `LocalAdjustments` field name).
-pub const LOCAL: &[ControlSpec] = &[
-    spec("temp", "Temp", -100.0, 100.0, 1.0, 0, Track::Temp),
-    spec("tint", "Tint", -100.0, 100.0, 1.0, 0, Track::Tint),
-    spec("exposure", "Exposure", -4.0, 4.0, 0.01, 2, Track::Centered),
-    spec("contrast", "Contrast", -100.0, 100.0, 1.0, 0, Track::Centered),
-    spec("highlights", "Highlights", -100.0, 100.0, 1.0, 0, Track::Centered),
-    spec("shadows", "Shadows", -100.0, 100.0, 1.0, 0, Track::Centered),
-    spec("whites", "Whites", -100.0, 100.0, 1.0, 0, Track::Centered),
-    spec("blacks", "Blacks", -100.0, 100.0, 1.0, 0, Track::Centered),
-    spec("texture", "Texture", -100.0, 100.0, 1.0, 0, Track::Centered),
-    spec("clarity", "Clarity", -100.0, 100.0, 1.0, 0, Track::Centered),
-    spec("dehaze", "Dehaze", -100.0, 100.0, 1.0, 0, Track::Centered),
-    spec("hue", "Hue", -100.0, 100.0, 1.0, 0, Track::Rainbow),
-    spec("saturation", "Saturation", -100.0, 100.0, 1.0, 0, Track::Gradient { from: "#7a7a7a", to: "#e04a3a" }),
-    spec("sharpness", "Sharpness", -100.0, 100.0, 1.0, 0, Track::Centered),
-    spec("noise", "Noise", -100.0, 100.0, 1.0, 0, Track::Centered),
-    spec("moire", "Moiré", -100.0, 100.0, 1.0, 0, Track::Centered),
-    spec("defringe", "Defringe", -100.0, 100.0, 1.0, 0, Track::Centered),
-];
+/// Local adjustment sliders (key = `LocalAdjustments` field name), shared with the SwiftUI app's
+/// `mask.controls`.
+pub use lightcraft_develop::controls::LOCAL;
 
 pub fn local_get(a: &LocalAdjustments, key: &str) -> f64 {
     serde_json::to_value(a).ok().and_then(|v| v.get(key).and_then(|x| x.as_f64())).unwrap_or(0.0)
@@ -434,34 +413,14 @@ pub(crate) const COMPONENT_KINDS: [(&str, &str); 8] = [
 
 /// The selected mask's Amount: how strongly its adjustments apply (0–200 %).
 pub(super) fn amount_slider(app: &mut LightcraftApp, ui: &mut egui::Ui, m: &lightcraft_develop::Mask) {
-    let amt = ControlSpec {
-        id: "amount",
-        label: "Amount",
-        section: Section::Light,
-        min: 0.0,
-        max: 200.0,
-        default: 100.0,
-        step: 1.0,
-        decimals: 0,
-        track: Track::Plain,
-    };
+    let amt = lightcraft_develop::controls::LOCAL_AMOUNT;
     let out = slider(ui, &amt, m.adjust.amount, true, None);
     apply_slider_out(app, &amt, out, |app, v| app.run("mask.adjust", json!({"values": {"amount": v}})));
 }
 
 /// The selected mask's Refine Edges: its border follows the photo's edges.
 pub(super) fn refine_slider(app: &mut LightcraftApp, ui: &mut egui::Ui, m: &lightcraft_develop::Mask) {
-    let refine = ControlSpec {
-        id: "refine",
-        label: "Refine Edges",
-        section: Section::Light,
-        min: 0.0,
-        max: 100.0,
-        default: 0.0,
-        step: 1.0,
-        decimals: 0,
-        track: Track::Plain,
-    };
+    let refine = lightcraft_develop::controls::MASK_REFINE;
     let out = slider(ui, &refine, m.refine, true, None);
     apply_slider_out(app, &refine, out, |app, v| app.run("mask.refine", json!({"value": v})));
 }
@@ -557,11 +516,13 @@ pub(super) fn overlay_options(app: &mut LightcraftApp, ui: &mut egui::Ui) {
 /// Smoothness, and Show Luminance Map; colour ranges get Refine.
 pub(super) fn range_controls(app: &mut LightcraftApp, ui: &mut egui::Ui, comp: usize, shape: &MaskShape) {
     let t = Tokens::get(ui.ctx());
-    let update = |app: &mut LightcraftApp, shape: MaskShape| {
-        let _ = app.run("mask.update", json!({"component": comp, "shape": shape}));
-    };
+    // a part's own control (`mask.setShapeControl`: the clamping and the mapping are the engine's)
+    let set =
+        |app: &mut LightcraftApp, control: &str, v: f64| app.run("mask.setShapeControl", json!({"component": comp, "control": control, "value": v}));
+    let specs = lightcraft_develop::controls::shape_controls(shape);
+    let spec = |id: &str| specs.iter().find(|(s, _)| s.id == id).copied();
     match shape {
-        MaskShape::LuminanceRange { lo, hi, lo_feather, hi_feather } => {
+        MaskShape::LuminanceRange { lo, hi, .. } => {
             ui.label(egui::RichText::new(crate::i18n::tr("Select Luminance Range")).color(t.text_dim).size(11.5));
             let (lo, hi) = (*lo, *hi);
             let touch = crate::is_compact(ui.ctx());
@@ -599,31 +560,18 @@ pub(super) fn range_controls(app: &mut LightcraftApp, ui: &mut egui::Ui, comp: u
             if (resp.dragged() || resp.clicked())
                 && let Some(pos) = resp.interact_pointer_pos()
             {
+                // the nearer bound follows the finger
                 let v = (((pos.x - rect.left()) / w) as f64).clamp(0.0, 1.0);
-                let (nlo, nhi) = if (v - lo).abs() <= (v - hi).abs() { (v.min(hi - 0.01), hi) } else { (lo, v.max(lo + 0.01)) };
-                update(app, MaskShape::LuminanceRange { lo: nlo, hi: nhi, lo_feather: *lo_feather, hi_feather: *hi_feather });
+                let _ = set(app, if (v - lo).abs() <= (v - hi).abs() { "lo" } else { "hi" }, v * 100.0);
             }
             if resp.drag_stopped() {
                 let _ = app.run("develop.endInteraction", json!({}));
             }
             // Smoothness: both falloffs at once
-            let smooth = ControlSpec {
-                id: "smoothness",
-                label: "Smoothness",
-                section: Section::Light,
-                min: 0.0,
-                max: 100.0,
-                default: 20.0,
-                step: 1.0,
-                decimals: 0,
-                track: Track::Plain,
-            };
-            let cur = ((lo_feather + hi_feather) / 2.0 / 0.5 * 100.0).clamp(0.0, 100.0);
-            let out = slider(ui, &smooth, cur, true, None);
-            apply_slider_out(app, &smooth, out, |app, v| {
-                let f = v / 100.0 * 0.5;
-                app.run("mask.update", json!({"component": comp, "shape": MaskShape::LuminanceRange { lo, hi, lo_feather: f, hi_feather: f }}))
-            });
+            if let Some((smooth, cur)) = spec("smoothness") {
+                let out = slider(ui, &smooth, cur, true, None);
+                apply_slider_out(app, &smooth, out, |app, v| set(app, "smoothness", v));
+            }
             let mut map = app.ui.mask_overlay && app.ui.mask_overlay_mode == "colorOnBw";
             let r = crate::widgets::check(ui, &mut map, crate::i18n::tr("Show Luminance Map"));
             register(ui.ctx(), format!("check:lumMap{comp}"), r.rect);
@@ -640,31 +588,15 @@ pub(super) fn range_controls(app: &mut LightcraftApp, ui: &mut egui::Ui, comp: u
                 }
             }
         }
-        MaskShape::Object { edge, .. } | MaskShape::Prompt { edge, .. } => {
+        MaskShape::Object { .. } | MaskShape::Prompt { .. } => {
             // Edge: how crisp the selection's border is (−100 hard … 0 as computed … 100 soft)
-            let spec = ControlSpec {
-                id: "edge",
-                label: "Edge",
-                section: Section::Light,
-                min: -100.0,
-                max: 100.0,
-                default: 0.0,
-                step: 1.0,
-                decimals: 0,
-                track: Track::Centered,
-            };
-            let out = slider(ui, &spec, *edge, true, None);
-            let base = shape.clone();
-            apply_slider_out(app, &spec, out, |app, v| {
-                let mut s = base.clone();
-                if let MaskShape::Object { edge, .. } | MaskShape::Prompt { edge, .. } = &mut s {
-                    *edge = v.clamp(-100.0, 100.0);
-                }
-                app.run("mask.update", json!({"component": comp, "shape": s}))
-            });
+            if let Some((spec, v)) = spec("edge") {
+                let out = slider(ui, &spec, v, true, None);
+                apply_slider_out(app, &spec, out, |app, v| set(app, "edge", v));
+            }
             ui.label(egui::RichText::new(crate::i18n::tr("− harder border · + softer border")).color(t.text_dim).size(11.0));
         }
-        MaskShape::ColorRange { samples, refine } => {
+        MaskShape::ColorRange { samples, .. } => {
             ui.horizontal(|ui| {
                 ui.label(
                     egui::RichText::new(crate::i18n::tr_format!("{} sample{}", samples.len(), if samples.len() == 1 { "" } else { "s" }))
@@ -679,22 +611,10 @@ pub(super) fn range_controls(app: &mut LightcraftApp, ui: &mut egui::Ui, comp: u
                     app.ui.tool = if picking { String::new() } else { "colorRange".into() };
                 }
             });
-            let spec = ControlSpec {
-                id: "refine",
-                label: "Refine",
-                section: Section::Color,
-                min: 0.0,
-                max: 100.0,
-                default: 50.0,
-                step: 1.0,
-                decimals: 0,
-                track: Track::Plain,
-            };
-            let out = slider(ui, &spec, *refine, true, None);
-            let samples = samples.clone();
-            apply_slider_out(app, &spec, out, |app, v| {
-                app.run("mask.update", json!({"component": comp, "shape": MaskShape::ColorRange { samples: samples.clone(), refine: v }}))
-            });
+            if let Some((spec, v)) = spec("refine") {
+                let out = slider(ui, &spec, v, true, None);
+                apply_slider_out(app, &spec, out, |app, v| set(app, "refine", v));
+            }
         }
         _ => {}
     }

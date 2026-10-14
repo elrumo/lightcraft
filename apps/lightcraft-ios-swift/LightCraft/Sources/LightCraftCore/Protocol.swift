@@ -79,9 +79,35 @@ public struct HostState: Codable, Sendable, Equatable {
     public var redo: String?
     /// A slider drag in progress (its label).
     public var interaction: String?
+    /// The Masking tool's selected mask and the Remove tool's selected spot.
+    public var activeMask: UInt32?
+    public var activeSpot: Int?
     public var unsaved: Int = 0
+    /// The server sync (`nil`: a local library with no server).
+    public var sync: SyncSummary?
+    /// Face recognition's background scan while it is on.
+    public var faces: FaceScan?
 
     public init() {}
+}
+
+/// How far face recognition's background scan is.
+public struct FaceScan: Codable, Sendable, Equatable {
+    public var pendingPhotos: Int
+    public var indexedFaces: Int
+}
+
+/// The server sync as the cloud icon shows it (`sync.status` has the rest).
+public struct SyncSummary: Codable, Sendable, Equatable {
+    /// `signedOut`, `conflict`, `paused`, `error`, `syncing` or `idle`.
+    public var state: String
+    public var server: String
+    public var pending: Int = 0
+    public var uploads: Int = 0
+    public var downloads: Int = 0
+    /// While the server's library is read: (photos read, photos it has).
+    public var reading: [Int]?
+    public var error: String?
 }
 
 /// A new picture for a slot (`thumb:42`, `thumbQuick:42`, `main`, `preview`, `before`…).
@@ -99,11 +125,23 @@ public struct ImageEvent: Codable, Sendable, Equatable {
     public var quick: String?
     public var ms: Double
     public var histogram: Histogram?
+    /// For `region` (a zoom window): the zoomed frame it is cut from and where it goes in it.
+    public var window: ZoomWindow?
 
     enum CodingKeys: String, CodingKey {
-        case slot, photo, key, token, width, height, draft, quick, ms, histogram
+        case slot, photo, key, token, width, height, draft, quick, ms, histogram, window
         case isFinal = "final"
     }
+}
+
+/// Where a zoom window goes: `full` is the zoomed frame's size in pixels, `x, y, w, h` the window
+/// in it.
+public struct ZoomWindow: Codable, Sendable, Equatable {
+    public var full: [Int]
+    public var x: Int
+    public var y: Int
+    public var w: Int
+    public var h: Int
 }
 
 /// 256 bins per channel.
@@ -113,6 +151,8 @@ public struct Histogram: Codable, Sendable, Equatable {
     public var b: [UInt32]
     public var luma: [UInt32]
     public var total: UInt32
+    /// The share of pixels clipped to black and to white (the clipping warnings).
+    public var clipping: [Double]?
 }
 
 /// A background task (import, export, sync…), as `activity.list` gives it.
@@ -142,6 +182,10 @@ public enum EngineEvent: Sendable {
     /// An automation script asks the UI: answer with `ui.reply {id, result | error}`.
     case uiRequest(id: UInt64, method: String, params: JSONValue)
     case closed
+    /// Put `text` on the clipboard (a share link just made).
+    case copy(String)
+    /// Show a dialog the engine needs an answer from (`syncChoice`).
+    case ask(dialog: String, params: JSONValue)
     /// A kind this build doesn't know (a newer engine).
     case unknown(kind: String)
 }
@@ -152,7 +196,7 @@ struct WireEvent: Decodable {
     let event: EngineEvent
 
     enum Keys: String, CodingKey {
-        case kind, id, result, error, slot, photo, state, tasks, text, level, method, params
+        case kind, id, result, error, slot, photo, state, tasks, text, level, method, params, dialog
     }
 
     init(from decoder: any Decoder) throws {
@@ -183,6 +227,10 @@ struct WireEvent: Decodable {
             return .uiRequest(id: try c.decode(UInt64.self, forKey: .id), method: try c.decode(String.self, forKey: .method), params: try c.decodeIfPresent(JSONValue.self, forKey: .params) ?? .null)
         case "closed":
             return .closed
+        case "copy":
+            return .copy(try c.decode(String.self, forKey: .text))
+        case "ask":
+            return .ask(dialog: try c.decode(String.self, forKey: .dialog), params: try c.decodeIfPresent(JSONValue.self, forKey: .params) ?? .null)
         default:
             return .unknown(kind: kind)
         }

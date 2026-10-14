@@ -220,3 +220,23 @@ fn white_balance_commands_write_kelvin_on_raws_whose_camera_has_matrices() {
 fn lightcraft_engine_effective(info: &lightcraft_pipeline::SourceInfo, d: &lightcraft_develop::DevelopSettings) -> (f64, f64) {
     lightcraft_pipeline::local::effective_wb(info, d)
 }
+
+/// What a phone's Point Color row and curve editor draw: a swatch per picked colour, and the point
+/// curve sampled the way the pipeline evaluates it.
+#[test]
+fn point_color_swatches_and_curve_samples() {
+    let mut s = demo();
+    assert_eq!(s.execute("pointColor.list", &json!({})).unwrap(), json!([]));
+    s.execute("pointColor.pick", &json!({"x": 0.5, "y": 0.08})).unwrap();
+    let list = s.execute("pointColor.list", &json!({})).unwrap();
+    let swatch = list[0]["swatch"].as_str().unwrap();
+    assert!(swatch.starts_with('#') && swatch.len() == 7, "{list}");
+    // a straight curve samples as itself; a lifted midpoint is above the diagonal
+    let flat = s.execute("curve.sample", &json!({"n": 5})).unwrap();
+    assert_eq!(flat["samples"], json!([0.0, 0.25, 0.5, 0.75, 1.0]));
+    s.execute("develop.curve", &json!({"channel": "red", "points": [[0, 0], [0.5, 0.7], [1, 1]]})).unwrap();
+    let red = s.execute("curve.sample", &json!({"channel": "red", "n": 3})).unwrap();
+    assert!((red["samples"][1].as_f64().unwrap() - 0.7).abs() < 1e-6, "{red}");
+    assert_eq!(red["points"].as_array().unwrap().len(), 3);
+    assert!(s.execute("curve.sample", &json!({"channel": "luma"})).is_err());
+}

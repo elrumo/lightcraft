@@ -24,12 +24,44 @@ struct ProtocolTests {
 
     @Test func everyEventKindDecodes() throws {
         let all = try events()
-        #expect(all.count == 10)
+        #expect(all.count == 13)
         for event in all {
             if case .unknown(let kind) = event {
                 Issue.record("an event of kind \(kind) didn't decode")
             }
         }
+    }
+
+    /// The engine's own replies to the commands the app reads into its types (fixtures.rs →
+    /// `replies`, on the demo library): read straight from the file's bytes, as the app reads them.
+    @Test func commandRepliesDecodeIntoTheAppsTypes() throws {
+        struct Replies: Decodable {
+            let state: LibraryState
+            let groups: [DateGroup]
+            let page: PhotoPage
+            let stats: CatalogStats
+            let albums: [AlbumNode]
+            let labels: [LabelName]
+            let controls: [ControlSpec]
+            let history: HistoryList
+            let presets: [PresetInfo]
+            let frame: PhotoFrame
+            let sync: SyncStatus
+
+            enum CodingKeys: String, CodingKey {
+                case state = "library.state", groups = "library.groups", page = "catalog.query", stats = "catalog.stats"
+                case albums = "albums.list", labels = "label.names", controls = "develop.controls", history = "history.list"
+                case presets = "presets.list", frame = "view.frame", sync = "sync.status"
+            }
+        }
+        struct File: Decodable { let replies: Replies }
+        let r = try JSONDecoder().decode(File.self, from: fixtureData()).replies
+        #expect(r.groups.count == 3)
+        #expect(r.page.photos.count == 2)
+        #expect(r.controls.count == 3)
+        #expect(r.history.history == ["Exposure"])
+        #expect(!r.sync.signedIn)
+        #expect(r.frame.crop?.quad.count == 4)
     }
 
     @Test func repliesCarryResultsOrErrors() throws {
@@ -51,17 +83,26 @@ struct ProtocolTests {
         guard case .image(let thumb, nil) = all[3] else { Issue.record("\(all[3])"); return }
         #expect(thumb.quick == "embedded")
         #expect(thumb.histogram == nil)
+        #expect(main.window == nil)
+        guard case .image(let region, nil) = all[12] else { Issue.record("\(all[12])"); return }
+        #expect(region.slot == "region" && region.window == ZoomWindow(full: [6000, 4000], x: 2048, y: 1024, w: 1536, h: 1280))
     }
 
     @Test func stateActivityAndAutomationDecode() throws {
         let all = try events()
         guard case .state(let state) = all[5] else { Issue.record("\(all[5])"); return }
         #expect(state.active == 7 && state.undo == "Exposure" && state.redo == nil)
+        #expect(state.activeMask == 2 && state.activeSpot == nil)
+        #expect(state.faces == FaceScan(pendingPhotos: 40, indexedFaces: 12))
         guard case .activity(let tasks) = all[6] else { Issue.record("\(all[6])"); return }
         #expect(tasks.first?.unit == "count" && tasks.first?.ageMs == 1200)
         guard case .uiRequest(4, "ui.screenshot", let params) = all[8] else { Issue.record("\(all[8])"); return }
         #expect(params["path"].string == "/tmp/shot.png")
         guard case .closed = all[9] else { Issue.record("\(all[9])"); return }
+        #expect(state.sync?.state == "syncing" && state.sync?.uploads == 1 && state.sync?.reading == nil)
+        guard case .copy(let text) = all[10] else { Issue.record("\(all[10])"); return }
+        #expect(text.hasPrefix("https://"))
+        guard case .ask("syncChoice", _) = all[11] else { Issue.record("\(all[11])"); return }
     }
 
     @Test func requestsAndConfigEncodeAsTheEngineReadsThem() throws {

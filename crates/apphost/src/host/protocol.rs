@@ -101,8 +101,21 @@ pub struct HostState {
     pub redo: Option<String>,
     /// A slider drag in progress (its label).
     pub interaction: Option<String>,
+    /// The Masking tool's selected mask and the Remove tool's selected spot.
+    #[serde(default)]
+    pub active_mask: Option<u32>,
+    #[serde(default)]
+    pub active_spot: Option<usize>,
     /// Changes the photo's catalog not on disk yet: the count (0 when everything is saved).
     pub unsaved: usize,
+    /// The server sync, for the cloud icon (`None`: a local library, no server):
+    /// `{state: signedOut|conflict|paused|error|syncing|idle, server, pending, uploads, downloads,
+    /// reading: [read, total]|null, error}` (`sync.status` has the rest).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sync: Option<Value>,
+    /// Face recognition's background scan while it is on: `{pendingPhotos, indexedFaces}`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub faces: Option<Value>,
 }
 
 /// An event, `{"kind": "...", ...}`.
@@ -137,6 +150,10 @@ pub enum Event {
         /// For `main`: the 256-bin histogram (`r`, `g`, `b`, `luma`, `total`).
         #[serde(skip_serializing_if = "Option::is_none")]
         histogram: Option<Value>,
+        /// For `region` (a zoom window): `{full: [w, h], x, y, w, h}`, the zoomed frame it is cut
+        /// from and where it goes in it.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        window: Option<Value>,
     },
     /// A render failed (an unreadable file, a missing original…).
     RenderFailed { slot: String, photo: PhotoId, key: u64, error: String },
@@ -146,6 +163,11 @@ pub enum Event {
     Activity { tasks: Vec<TaskInfo> },
     /// Something to tell the user (English: the key the frontend translates).
     Message { text: String, level: String },
+    /// Put `text` on the clipboard (a share link just made).
+    Copy { text: String },
+    /// Show a dialog the engine needs an answer from: `syncChoice` (signing in met a server that has
+    /// a library already: `sync.resolveConflict`).
+    Ask { dialog: String, params: Value },
     /// An automation script asks the UI (`ui.screenshot`, `ui.inspect`…): answer with
     /// `ui.reply {id, result | error}`.
     UiRequest { id: u64, method: String, params: Value },

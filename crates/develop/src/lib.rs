@@ -7,13 +7,14 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 pub mod controls;
+pub mod mask_handles;
 pub mod presets;
 pub mod segmask;
 pub mod settings;
 
 pub use controls::{CONTROLS, ControlSpec, Section, Track};
 pub use presets::{Preset, SettingsGroup, apply_partial, extract_groups};
-pub use segmask::{SegMask, SpotFill};
+pub use segmask::{ExpandFill, SegMask, SpotFill};
 pub use settings::*;
 
 use serde_json::Value;

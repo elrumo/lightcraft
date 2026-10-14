@@ -2138,7 +2138,7 @@ fn switch_library(app: &mut LightcraftApp, path: &str) -> Result<Value, String> 
     let previous = previous_dir.as_ref().map(|d| d.to_string_lossy().into_owned());
     app.session.close_library().map_err(|e| e.to_string())?;
     let opened = app.session.open_library(&dir, false).map(|_| ()).map_err(|e| format!("{path}: {e}"));
-    app.lightroom_last = None;
+    app.lightroom.last = None;
     app.renderer.forget_all();
     app.ui.compare = None;
     if let Err(err) = opened {
