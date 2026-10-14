@@ -8,6 +8,8 @@
 "% of all commits" = "% всех коммитов";
 "%@ Label" = "Метка: %1$@";
 "%@ curve" = "Кривая: %@";
+"%@ free of %@" = "Свободно %1$@ из %2$@";
+"%@ of %@ used" = "Занято %1$@ из %2$@";
 "%@ wheel" = "Колесо: %@";
 "%lld" = "%1$lld";
 "%lld %%" = "%1$lld %%";
@@ -197,6 +199,7 @@
 "As Shot" = "Как снято";
 "As shot" = "Как снято";
 "Ascending" = "По возрастанию";
+"Asking the server…" = "Запрос к серверу…";
 "Aspect" = "Пропорции";
 "Aspect Ratio" = "Соотношение сторон";
 "Assisted Culling" = "Автоматический отбор";
@@ -324,6 +327,7 @@
 "Captured from" = "Снято с";
 "Captured until" = "Снято по";
 "Catalog Statistics" = "Статистика каталога";
+"Catalog and edits" = "Каталог и правки";
 "Catchlight" = "Блик в глазах";
 "Change" = "Изменить";
 "Change Component Mode" = "Изменить режим компонента";
@@ -991,6 +995,7 @@
 "Imported %lld presets" = "Импортировано пресетов: %lld";
 "Imported %lld profiles (Profile browser ▸ their groups)" = "Импортировано профилей: %lld (Обозреватель профилей ▸ их группы)";
 "Imported Photos" = "Импортированные фото";
+"Imported copies" = "Импортированные копии";
 "Importing" = "Импорт";
 "Importing Lightroom Catalog" = "Импорт каталога Lightroom";
 "Importing Lightroom catalog" = "Импорт каталога Lightroom";
@@ -1110,6 +1115,8 @@
 "Library Originals" = "Оригиналы библиотеки";
 "Library Preferences" = "Настройки библиотеки";
 "Library State" = "Состояние библиотеки";
+"Library folders" = "Папки библиотеки";
+"Library folders are read where they are on the server and never copied, so LightCraft keeps only their previews. The total counts their photos too: they take that room on the server." = "Папки библиотеки читаются там, где лежат на сервере, и никогда не копируются, поэтому LightCraft хранит только их просмотры. Итог учитывает и их фото: они занимают это место на сервере.";
 "Library name" = "Название библиотеки";
 "Library saved" = "Библиотека сохранена";
 "Licence" = "Лицензия";
@@ -1295,6 +1302,7 @@
 "Named People" = "Люди с именами";
 "Names appear in the label menu, the filter bar and the Info panel, and are written to XMP. Empty = the colour's name." = "Названия показываются в меню меток, на панели фильтров и в панели «Информация» и записываются в XMP. Пусто = название цвета.";
 "Navigator" = "Навигатор";
+"Nearly at the storage limit the server's admin set for you. Over it, new photos wait to upload until there is room; nothing is deleted." = "Почти достигнут лимит хранилища, заданный администратором сервера. Сверх него новые фото ждут загрузки, пока не появится место; ничего не удаляется.";
 "Needs Work" = "Требует доработки";
 "Neon Dusk" = "Неоновые сумерки";
 "Neon Night" = "Неоновая ночь";
@@ -1416,7 +1424,9 @@
 "On This Device" = "На этом устройстве";
 "On This Photo" = "На этом фото";
 "On every photo, the keywords inside it included; renaming it onto another keyword merges the two." = "Для всех фото, включая вложенные ключевые слова; если переименовать в другое существующее ключевое слово, они объединятся.";
+"On the Server" = "На сервере";
 "Only" = "Только";
+"Only Previews Here" = "Здесь только просмотры";
 "Only photos whose AI Denoise amount is above 0 are made. Exports always make theirs if it is missing." = "Создаются только изображения для фото, у которых значение ИИ-шумоподавления больше 0. Экспорт всегда создаёт нужное изображение, если его нет.";
 "Opacity" = "Непрозрачность";
 "Opacity (%)" = "Непрозрачность (%)";
@@ -1455,6 +1465,7 @@
 "Originals" = "Оригиналы";
 "Originals Limit" = "Лимит оригиналов";
 "Originals Too" = "Оригиналы тоже";
+"Originals are the full-size files downloaded from the server. Thumbnails can be deleted at any time; they are drawn again." = "Оригиналы — это полноразмерные файлы, загруженные с сервера. Миниатюры можно удалить в любой момент: они создаются заново.";
 "Other Photos" = "Другие фото";
 "Other images (JPEG, PNG, TIFF, HEIC…)" = "Другие изображения (JPEG, PNG, TIFF, HEIC…)";
 "Other…" = "Другой…";
@@ -1874,6 +1885,7 @@
 "Sequence number zero-padded to N digits (1–9)" = "Порядковый номер, дополненный нулями до N цифр (1–9)";
 "Sequence number, counting from the start number" = "Порядковый номер, отсчитываемый от начального числа";
 "Server" = "Сервер";
+"Server disk" = "Диск сервера";
 "Services" = "Службы";
 "Set" = "Задать";
 "Set Album Cover" = "Задать обложку альбома";
@@ -1993,6 +2005,7 @@
 "Slideshow · Space pauses · Esc ends" = "Слайд-шоу · Space — пауза · Esc — завершить";
 "Slideshow, second window, All Metadata, System Info." = "Слайд-шоу, второе окно, все метаданные, сведения о системе.";
 "Small (1080 px)" = "Маленький (1080 px)";
+"Small previews" = "Малые просмотры";
 "Smaller, faster catalogs: photos you only looked at in Local (never added, rated or edited) are forgotten once" = "Меньшие и более быстрые каталоги: фото, которые вы только просматривали в «Локальном» (никогда не добавляли, не оценивали и не правили), забываются, если";
 "Smart Album" = "Смарт-альбом";
 "Smart Album Name" = "Название смарт-альбома";
@@ -2052,6 +2065,8 @@
 "Stopped" = "Остановлено";
 "Stopped by an error (see the log)" = "Остановлено из-за ошибки (см. журнал)";
 "Stopping…" = "Остановка…";
+"Storage" = "Хранилище";
+"Storage limit" = "Лимит хранилища";
 "Store All Originals on This Device" = "Хранить все оригиналы на этом устройстве";
 "Story or Reel 9 × 16" = "Stories или Reels 9 × 16";
 "Straighten" = "Выровнять";
@@ -2165,6 +2180,7 @@
 "The photo is enlarged to twice its width and height with an AI model, with your edits applied, and added next to the original (a 16-bit sRGB TIFF), stacked with it. The original isn't changed. This takes a while on large photos." = "Фото увеличивается вдвое по ширине и высоте с помощью модели ИИ, с применёнными правками, и добавляется рядом с оригиналом (16-битный TIFF в sRGB) в одной стопке с ним. Оригинал не меняется. На больших фото это занимает время.";
 "The photos are copied into the library; the originals in Photos and Files are left as they are." = "Фото копируются в библиотеку; оригиналы в «Фото» и «Файлах» остаются как есть.";
 "The processor does the work." = "Работу выполняет процессор.";
+"The server can't say how much it stores: %@" = "Сервер не может сообщить, сколько хранит: %@";
 "The server has a library already" = "На сервере уже есть библиотека";
 "The server's" = "Библиотека сервера";
 "The thumbnail cache only ever counts and deletes its own files (issue #98): a library opened on a folder that" = "Кэш миниатюр считает и удаляет только собственные файлы (проблема #98): библиотека, открытая в папке, где";
@@ -2185,6 +2201,7 @@
 "This build has nowhere to keep denoise models, so AI Denoise is not available. (The desktop app has.)" = "В этой сборке негде хранить модели шумоподавления, поэтому ИИ-шумоподавление недоступно. (В настольном приложении есть.)";
 "This build has nowhere to keep face models, so the model list is not available. (The desktop app has.)" = "В этой сборке негде хранить модели лиц, поэтому список моделей недоступен. (В настольном приложении есть.)";
 "This build has nowhere to keep face models." = "В этой сборке негде хранить модели лиц.";
+"This disk" = "Этот диск";
 "This file cannot be used yet" = "Этот файл пока нельзя использовать";
 "This folder is not available (drive disconnected?). Smart previews are not built or used until it is back or you choose another folder." = "Эта папка недоступна (диск отключён?). Смарт-просмотры не создаются и не используются, пока она не появится снова или вы не выберете другую папку.";
 "This folder isn't there: it was moved or renamed, or its disk isn't connected." = "Этой папки нет: её переместили или переименовали, либо её диск не подключён.";
@@ -2199,6 +2216,7 @@
 "Threshold" = "Порог";
 "Thumbnail Cache" = "Кэш миниатюр";
 "Thumbnail cache" = "Кэш миниатюр";
+"Thumbnails" = "Миниатюры";
 "Thursday" = "Четверг";
 "Tick the box to accept the model's terms first" = "Сначала отметьте согласие с условиями модели";
 "Time zone" = "Часовой пояс";
@@ -2213,6 +2231,7 @@
 "Tool" = "Инструмент";
 "Tools" = "Инструменты";
 "Top Level" = "Верхний уровень";
+"Total" = "Всего";
 "Trained on: %@" = "Trained on: %1$@";
 "Transfer" = "Перенос";
 "Treatment" = "Обработка";
@@ -2354,6 +2373,7 @@
 "Zoom Out" = "Уменьшить";
 "Zoom to Fit" = "Масштаб по размеру окна";
 "Zoom to page level" = "Масштаб до уровня страницы";
+"^[%lld file](inflect: true)" = "Файлов: %lld";
 "^[%lld item](inflect: true)" = "Элементов: %lld";
 "^[%lld photo](inflect: true)" = "Фото: %lld";
 "^[%lld spot](inflect: true) · tap a pin for more" = "Пятен: %lld · коснитесь метки, чтобы узнать больше";

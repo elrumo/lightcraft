@@ -6,6 +6,8 @@
 "% of all commits" = "佔所有提交的百分比";
 "%@ Label" = "%1$@標籤";
 "%@ curve" = "%@曲線";
+"%@ free of %@" = "%2$@ 中可用 %1$@";
+"%@ of %@ used" = "已使用 %1$@，共 %2$@";
 "%@ wheel" = "%@色輪";
 "%lld" = "%1$lld年";
 "%lld %%" = "%1$lld%%";
@@ -186,6 +188,7 @@
 "As Shot" = "拍攝時設定";
 "As shot" = "拍攝時設定";
 "Ascending" = "遞增";
+"Asking the server…" = "正在詢問伺服器…";
 "Aspect" = "長寬比";
 "Aspect Ratio" = "長寬比";
 "Assisted Culling" = "輔助挑片";
@@ -310,6 +313,7 @@
 "Captured from" = "拍攝時間起於";
 "Captured until" = "拍攝時間止於";
 "Catalog Statistics" = "目錄統計";
+"Catalog and edits" = "目錄與編輯";
 "Catchlight" = "眼神光";
 "Change" = "變更方式";
 "Change Component Mode" = "變更元件模式";
@@ -965,6 +969,7 @@
 "Imported %lld presets" = "已匯入 %lld 個預設集";
 "Imported %lld profiles (Profile browser ▸ their groups)" = "已匯入 %lld 個描述檔（描述檔瀏覽器 ▸ 其群組）";
 "Imported Photos" = "已匯入的照片";
+"Imported copies" = "匯入的副本";
 "Importing" = "正在匯入";
 "Importing Lightroom Catalog" = "正在匯入 Lightroom 目錄";
 "Importing Lightroom catalog" = "正在匯入 Lightroom 目錄";
@@ -1082,6 +1087,8 @@
 "Library Originals" = "照片庫原始檔案";
 "Library Preferences" = "照片庫偏好設定";
 "Library State" = "照片庫狀態";
+"Library folders" = "照片庫資料夾";
+"Library folders are read where they are on the server and never copied, so LightCraft keeps only their previews. The total counts their photos too: they take that room on the server." = "照片庫資料夾在伺服器上原地讀取，從不複製，因此 LightCraft 只保存它們的預覽。總計也包含這些照片：它們佔用伺服器上的空間。";
 "Library name" = "圖庫名稱";
 "Library saved" = "照片庫已儲存";
 "Licence" = "授權：";
@@ -1264,6 +1271,7 @@
 "Names appear in the label menu, the filter bar and the Info panel, and are written to XMP. Empty = the colour's name." = "名稱會顯示於標籤選單、篩選列與資訊面板，並寫入 XMP。留空則使用色彩名稱。";
 "Names written to XMP by Lightroom and other apps show up here, and so do the people found in your photos." = "Lightroom 等應用程式寫入 XMP 的姓名，以及從照片中找到的人物，都會顯示在這裡。";
 "Navigator" = "導覽器";
+"Nearly at the storage limit the server's admin set for you. Over it, new photos wait to upload until there is room; nothing is deleted." = "即將達到伺服器管理員為你設定的儲存空間上限。超過後，新照片會等到有空間時再上傳；不會刪除任何內容。";
 "Needs Work" = "需要調整";
 "Neon Dusk" = "霓虹暮色";
 "Neon Night" = "霓虹之夜";
@@ -1392,9 +1400,11 @@
 "On This Device" = "在這台裝置上";
 "On This Photo" = "在這張照片上";
 "On every photo, the keywords inside it included; renaming it onto another keyword merges the two." = "套用於每張照片，包含其內的關鍵字；將其重新命名為另一個關鍵字時，兩者會合併。";
+"On the Server" = "伺服器上";
 "On the map" = "地圖上";
 "On the server:" = "伺服器上：";
 "Only" = "僅限";
+"Only Previews Here" = "此處僅有預覽";
 "Only photos whose AI Denoise amount is above 0 are made. Exports always make theirs if it is missing." = "Only photos whose AI Denoise amount is above 0 are made. Exports always make theirs if it is missing.";
 "Opacity" = "不透明度";
 "Opacity (%)" = "不透明度（%）";
@@ -1434,6 +1444,7 @@
 "Originals" = "原始檔案";
 "Originals Limit" = "原始檔案上限";
 "Originals Too" = "也包含原始檔案";
+"Originals are the full-size files downloaded from the server. Thumbnails can be deleted at any time; they are drawn again." = "原始檔案是從伺服器下載的完整尺寸檔案。縮圖可隨時刪除，會重新產生。";
 "Other Photos" = "其他照片";
 "Other images (JPEG, PNG, TIFF, HEIC…)" = "其他影像（JPEG、PNG、TIFF、HEIC…）";
 "Other…" = "其他…";
@@ -1860,6 +1871,7 @@
 "Sequence number, counting from the start number" = "從起始編號開始計數的序號";
 "Server" = "伺服器";
 "Server Folders" = "伺服器資料夾";
+"Server disk" = "伺服器磁碟";
 "Services" = "服務";
 "Set" = "標籤集";
 "Set Album Cover" = "設定相簿封面";
@@ -1980,6 +1992,7 @@
 "Slideshow resumed" = "幻燈片播放已繼續";
 "Slideshow · Space pauses · Esc ends" = "幻燈片播放 · 空白鍵暫停 · Esc 結束";
 "Small (1080 px)" = "小（1080 px）";
+"Small previews" = "小預覽";
 "Smart Album" = "智慧型相簿";
 "Smart Album Name" = "智慧型相簿名稱";
 "Smart Album Rule Fields" = "智慧型相簿規則欄位";
@@ -2035,6 +2048,8 @@
 "Stopped" = "已停止";
 "Stopped by an error (see the log)" = "因錯誤而停止（請見記錄）";
 "Stopping…" = "正在停止…";
+"Storage" = "儲存空間";
+"Storage limit" = "儲存空間上限";
 "Store All Originals on This Device" = "將所有原始檔案儲存在這台裝置上";
 "Story or Reel 9 × 16" = "限時動態或 Reels 9 × 16";
 "Straighten" = "拉直";
@@ -2150,6 +2165,7 @@
 "The photos are copied into the library; the originals in Photos or Files are left as they are." = "照片會拷貝到圖庫；「照片」或「檔案」中的原始照片保持不變。";
 "The processor does the work." = "The processor does the work.";
 "The search model is installed: describe a photo to find it." = "搜尋模型已安裝：描述一張照片即可尋找。";
+"The server can't say how much it stores: %@" = "伺服器無法告知儲存量：%@";
 "The server has a library already" = "伺服器已有照片庫";
 "The server's" = "伺服器的";
 "Their photos and the keywords below them come together under one keyword." = "它們的照片與下層關鍵字將合併到同一個關鍵字下。";
@@ -2170,6 +2186,7 @@
 "This build has no download location for the model yet." = "此版本尚未設定模型的下載位置。";
 "This build has nowhere to keep denoise models, so AI Denoise is not available. (The desktop app has.)" = "This build has nowhere to keep denoise models, so AI Denoise is not available. (The desktop app has.)";
 "This build has nowhere to keep face models." = "此版本沒有可儲存人臉模型的位置。";
+"This disk" = "此磁碟";
 "This file cannot be used yet" = "This file cannot be used yet";
 "This folder is not available (drive disconnected?). Smart previews are not built or used until it is back or you choose another folder." = "此資料夾無法使用（磁碟可能已中斷連線）。恢復連線或選擇其他資料夾之前，不會建立或使用智慧型預覽。";
 "This folder isn't there: it was moved or renamed, or its disk isn't connected." = "此資料夾不存在：它已被移動或重新命名，或其磁碟未連接。";
@@ -2185,6 +2202,7 @@
 "Threshold" = "臨界值";
 "Thumbnail Cache" = "縮圖快取";
 "Thumbnail cache" = "縮圖快取";
+"Thumbnails" = "縮圖";
 "Thursday" = "星期四";
 "Tick the box to accept the model's terms first" = "Tick the box to accept the model's terms first";
 "Tile server" = "圖磚伺服器";
@@ -2200,6 +2218,7 @@
 "Tool" = "工具";
 "Tools" = "工具";
 "Top Level" = "最上層";
+"Total" = "總計";
 "Trained on: %@" = "Trained on: %1$@";
 "Transfer" = "傳輸";
 "Treatment" = "處理方式";
@@ -2350,6 +2369,7 @@
 "Zoom to Fit" = "縮放至符合視窗";
 "Zoom to page level" = "符合頁面大小";
 "Zoom to these photos" = "縮放到這些照片";
+"^[%lld file](inflect: true)" = "%lld 個檔案";
 "^[%lld item](inflect: true)" = "%lld 個項目";
 "^[%lld photo](inflect: true)" = "%lld 張照片";
 "^[%lld spot](inflect: true) · tap a pin for more" = "%lld 個斑點 · 點一下控制點可查看更多";

@@ -6,6 +6,8 @@
 "% of all commits" = "% de tous les commits";
 "%@ Label" = "Étiquette %1$@";
 "%@ curve" = "Courbe %@";
+"%@ free of %@" = "%1$@ libres sur %2$@";
+"%@ of %@ used" = "%1$@ utilisés sur %2$@";
 "%@ wheel" = "Roue %@";
 "%@?" = "%@ ?";
 "%lld" = "%1$lld";
@@ -178,6 +180,7 @@
 "As Shot" = "Tel quel";
 "As shot" = "Tel quel";
 "Ascending" = "Croissant";
+"Asking the server…" = "Interrogation du serveur…";
 "Aspect" = "Format";
 "Aspect Ratio" = "Rapport d'aspect";
 "Assisted Culling" = "Tri assisté";
@@ -298,6 +301,7 @@
 "Captured from" = "Prises à partir du";
 "Captured until" = "Prises jusqu'au";
 "Catalog Statistics" = "Statistiques du catalogue";
+"Catalog and edits" = "Catalogue et retouches";
 "Catchlight" = "Reflet dans les yeux";
 "Change" = "Modifier";
 "Change Component Mode" = "Changer le mode du composant";
@@ -932,6 +936,7 @@
 "Imported %lld presets" = "%lld préréglage(s) importé(s)";
 "Imported %lld profiles (Profile browser ▸ their groups)" = "%lld profil(s) importé(s) (Navigateur de profils ▸ leurs groupes)";
 "Imported Photos" = "Photos importées";
+"Imported copies" = "Copies importées";
 "Importing" = "Importation en cours";
 "Importing Lightroom Catalog" = "Importation du catalogue Lightroom";
 "Importing Lightroom catalog" = "Importation du catalogue Lightroom";
@@ -1045,6 +1050,8 @@
 "Library Originals" = "Originaux de la bibliothèque";
 "Library Preferences" = "Préférences de la bibliothèque";
 "Library State" = "État de la bibliothèque";
+"Library folders" = "Dossiers de la bibliothèque";
+"Library folders are read where they are on the server and never copied, so LightCraft keeps only their previews. The total counts their photos too: they take that room on the server." = "Les dossiers de la bibliothèque sont lus là où ils se trouvent sur le serveur et ne sont jamais copiés : LightCraft n’en garde que les aperçus. Le total compte aussi leurs photos : elles occupent cette place sur le serveur.";
 "Library name" = "Nom de la bibliothèque";
 "Library saved" = "Bibliothèque enregistrée";
 "Licence" = "Licence";
@@ -1224,6 +1231,7 @@
 "Named People" = "Personnes nommées";
 "Names appear in the label menu, the filter bar and the Info panel, and are written to XMP. Empty = the colour's name." = "Les noms apparaissent dans le menu des étiquettes, la barre de filtres et le panneau Infos, et sont écrits dans XMP. Vide = le nom de la couleur.";
 "Navigator" = "Navigateur";
+"Nearly at the storage limit the server's admin set for you. Over it, new photos wait to upload until there is room; nothing is deleted." = "Presque à la limite de stockage fixée par l’administrateur du serveur. Au-delà, les nouvelles photos attendent qu’il y ait de la place pour être envoyées ; rien n’est supprimé.";
 "Needs Work" = "À retravailler";
 "Neon Dusk" = "Crépuscule néon";
 "Neon Night" = "Nuit néon";
@@ -1342,7 +1350,9 @@
 "On This Device" = "Sur cet appareil";
 "On This Photo" = "Sur cette photo";
 "On every photo, the keywords inside it included; renaming it onto another keyword merges the two." = "Sur chaque photo, y compris les mots-clés qu'il contient ; le renommer avec le nom d'un autre mot-clé fusionne les deux.";
+"On the Server" = "Sur le serveur";
 "Only" = "Uniquement";
+"Only Previews Here" = "Aperçus seuls ici";
 "Only photos whose AI Denoise amount is above 0 are made. Exports always make theirs if it is missing." = "Seules les photos dont la quantité de débruitage IA est supérieure à 0 sont générées. Les exportations génèrent toujours la leur si elle manque.";
 "Opacity" = "Opacité";
 "Opacity (%)" = "Opacité (%)";
@@ -1381,6 +1391,7 @@
 "Originals" = "Originaux";
 "Originals Limit" = "Limite des originaux";
 "Originals Too" = "Originaux aussi";
+"Originals are the full-size files downloaded from the server. Thumbnails can be deleted at any time; they are drawn again." = "Les originaux sont les fichiers en taille réelle téléchargés depuis le serveur. Les miniatures peuvent être supprimées à tout moment : elles sont recréées.";
 "Other Photos" = "Autres photos";
 "Other images (JPEG, PNG, TIFF, HEIC…)" = "Autres images (JPEG, PNG, TIFF, HEIC…)";
 "Other…" = "Autre…";
@@ -1785,6 +1796,7 @@
 "Sequence number zero-padded to N digits (1–9)" = "Numéro de séquence complété par des zéros sur N chiffres (1–9)";
 "Sequence number, counting from the start number" = "Numéro de séquence, à partir du numéro de départ";
 "Server" = "Serveur";
+"Server disk" = "Disque du serveur";
 "Services" = "Services";
 "Set" = "Définir";
 "Set Album Cover" = "Définir la couverture de l'album";
@@ -1901,6 +1913,7 @@
 "Slideshow resumed" = "Diaporama repris";
 "Slideshow · Space pauses · Esc ends" = "Diaporama · Espace pour mettre en pause · Échap pour terminer";
 "Small (1080 px)" = "Petit (1080 px)";
+"Small previews" = "Petits aperçus";
 "Smart Album" = "Album intelligent";
 "Smart Album Name" = "Nom de l'album intelligent";
 "Smart Album Rule Fields" = "Champs de règles d'album intelligent";
@@ -1955,6 +1968,8 @@
 "Stopped" = "Arrêté";
 "Stopped by an error (see the log)" = "Arrêté par une erreur (voir le journal)";
 "Stopping…" = "Arrêt en cours…";
+"Storage" = "Stockage";
+"Storage limit" = "Limite de stockage";
 "Store All Originals on This Device" = "Stocker tous les originaux sur cet appareil";
 "Story or Reel 9 × 16" = "Story ou Reel 9 × 16";
 "Straighten" = "Redresser";
@@ -2062,6 +2077,7 @@
 "The photo is enlarged to twice its width and height with an AI model, with your edits applied, and added next to the original (a 16-bit sRGB TIFF), stacked with it. The original isn't changed. This takes a while on large photos." = "La photo est agrandie au double de sa largeur et de sa hauteur avec un modèle IA, vos retouches appliquées, puis ajoutée à côté de l'original (un TIFF sRGB 16 bits), empilée avec lui. L'original n'est pas modifié. Cela prend du temps sur les grandes photos.";
 "The photos are copied into the library; the originals in Photos and Files are left as they are." = "Les photos sont copiées dans la bibliothèque ; les originaux dans Photos et Fichiers restent intacts.";
 "The processor does the work." = "Le processeur effectue le travail.";
+"The server can't say how much it stores: %@" = "Le serveur ne peut pas indiquer ce qu’il stocke : %@";
 "The server has a library already" = "Le serveur a déjà une bibliothèque";
 "The server's" = "Celle du serveur";
 "Their photos and the keywords below them come together under one keyword." = "Leurs photos et les mots-clés qu'ils contiennent sont réunis sous un seul mot-clé.";
@@ -2080,6 +2096,7 @@
 "This build cannot run recognition models: they can be added and chosen, not used." = "Cette version ne peut pas exécuter de modèles de reconnaissance : ils peuvent être ajoutés et choisis, mais pas utilisés.";
 "This build has nowhere to keep denoise models, so AI Denoise is not available. (The desktop app has.)" = "Cette version n'a aucun endroit où conserver les modèles de débruitage ; le débruitage IA n'est donc pas disponible. (L'application de bureau en a un.)";
 "This build has nowhere to keep face models." = "Cette version n'a nulle part où conserver les modèles de visages.";
+"This disk" = "Ce disque";
 "This file cannot be used yet" = "Ce fichier ne peut pas encore être utilisé";
 "This folder is not available (drive disconnected?). Smart previews are not built or used until it is back or you choose another folder." = "Ce dossier n'est pas disponible (disque déconnecté ?). Les aperçus dynamiques ne sont ni générés ni utilisés tant qu'il n'est pas de retour ou que vous n'avez pas choisi un autre dossier.";
 "This folder isn't there: it was moved or renamed, or its disk isn't connected." = "Ce dossier est introuvable : il a été déplacé ou renommé, ou son disque n'est pas connecté.";
@@ -2094,6 +2111,7 @@
 "Threshold" = "Seuil";
 "Thumbnail Cache" = "Cache des miniatures";
 "Thumbnail cache" = "Cache des miniatures";
+"Thumbnails" = "Miniatures";
 "Thursday" = "Jeudi";
 "Tick the box to accept the model's terms first" = "Cochez d'abord la case pour accepter les conditions du modèle";
 "Time zone" = "Fuseau horaire";
@@ -2108,6 +2126,7 @@
 "Tool" = "Outil";
 "Tools" = "Outils";
 "Top Level" = "Niveau supérieur";
+"Total" = "Total";
 "Trained on: %@" = "Entraîné sur : %1$@";
 "Transfer" = "Transfert";
 "Treatment" = "Traitement";
@@ -2246,6 +2265,7 @@
 "Zoom Out" = "Zoom arrière";
 "Zoom to Fit" = "Zoom pour ajuster";
 "Zoom to page level" = "Zoom au niveau de la page";
+"^[%lld file](inflect: true)" = "^[%lld fichier](inflect: true)";
 "^[%lld item](inflect: true)" = "^[%lld élément](inflect: true)";
 "^[%lld spot](inflect: true) · tap a pin for more" = "^[%lld tache](inflect: true) · touchez une épingle pour en savoir plus";
 "a literal %" = "un % littéral";

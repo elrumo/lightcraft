@@ -6,6 +6,8 @@
 "% of all commits" = "全コミットに占める%";
 "%@ Label" = "%1$@のラベル";
 "%@ curve" = "%@カーブ";
+"%@ free of %@" = "%2$@ 中 %1$@ の空き";
+"%@ of %@ used" = "%2$@ 中 %1$@ を使用";
 "%@ wheel" = "%@ホイール";
 "%lld" = "%1$lld年";
 "%lld %%" = "%1$lld%%";
@@ -186,6 +188,7 @@
 "As Shot" = "撮影時の設定";
 "As shot" = "撮影時の設定";
 "Ascending" = "昇順";
+"Asking the server…" = "サーバーに問い合わせ中…";
 "Aspect" = "縦横比";
 "Aspect Ratio" = "縦横比";
 "Assisted Culling" = "写真の選別を補助";
@@ -310,6 +313,7 @@
 "Captured from" = "撮影日（以降）";
 "Captured until" = "撮影日（以前）";
 "Catalog Statistics" = "カタログの統計";
+"Catalog and edits" = "カタログと編集内容";
 "Catchlight" = "キャッチライト";
 "Change" = "変更方法";
 "Change Component Mode" = "構成要素のモードを変更";
@@ -965,6 +969,7 @@
 "Imported %lld presets" = "%lld件のプリセットを読み込みました";
 "Imported %lld profiles (Profile browser ▸ their groups)" = "%lld件のプロファイルを読み込みました（プロファイルブラウザ ▸ 各グループ）";
 "Imported Photos" = "写真を読み込み";
+"Imported copies" = "読み込んだコピー";
 "Importing" = "読み込み中";
 "Importing Lightroom Catalog" = "Lightroom カタログを読み込み中";
 "Importing Lightroom catalog" = "Lightroom カタログを読み込み中";
@@ -1082,6 +1087,8 @@
 "Library Originals" = "ライブラリの元画像フォルダ";
 "Library Preferences" = "ライブラリの環境設定";
 "Library State" = "ライブラリの状態";
+"Library folders" = "ライブラリフォルダ";
+"Library folders are read where they are on the server and never copied, so LightCraft keeps only their previews. The total counts their photos too: they take that room on the server." = "ライブラリフォルダはサーバー上のその場所で読み込まれ、コピーされないため、LightCraft はプレビューだけを保存します。合計にはそれらの写真も含まれます。サーバー上でその容量を使っているためです。";
 "Library name" = "ライブラリ名";
 "Library saved" = "ライブラリを保存しました";
 "Licence" = "ライセンス：";
@@ -1264,6 +1271,7 @@
 "Names appear in the label menu, the filter bar and the Info panel, and are written to XMP. Empty = the colour's name." = "ラベル名はメニュー・フィルターバー・情報パネルに表示され、XMPに保存されます。空欄の場合は色名を使います";
 "Names written to XMP by Lightroom and other apps show up here, and so do the people found in your photos." = "Lightroomなどのアプリが XMP に書き込んだ名前と、写真から見つかった人物がここに表示されます。";
 "Navigator" = "ナビゲーター";
+"Nearly at the storage limit the server's admin set for you. Over it, new photos wait to upload until there is room; nothing is deleted." = "サーバー管理者が設定したストレージ上限に近づいています。上限を超えると、空きができるまで新しい写真のアップロードは待機します。何も削除されません。";
 "Needs Work" = "要修整";
 "Neon Dusk" = "ネオンダスク";
 "Neon Night" = "ネオンナイト";
@@ -1392,9 +1400,11 @@
 "On This Device" = "このデバイス上";
 "On This Photo" = "この写真に付いているキーワード";
 "On every photo, the keywords inside it included; renaming it onto another keyword merges the two." = "キーワードの中にあるキーワードも含め、すべての写真に反映されます。ほかのキーワードと同じ名前に変更すると、2つが統合されます。";
+"On the Server" = "サーバー上";
 "On the map" = "マップ上";
 "On the server:" = "サーバー上：";
 "Only" = "次のみ：";
+"Only Previews Here" = "ここではプレビューのみ";
 "Only photos whose AI Denoise amount is above 0 are made. Exports always make theirs if it is missing." = "Only photos whose AI Denoise amount is above 0 are made. Exports always make theirs if it is missing.";
 "Opacity" = "不透明度";
 "Opacity (%)" = "不透明度（%）";
@@ -1434,6 +1444,7 @@
 "Originals" = "元画像";
 "Originals Limit" = "元画像の上限";
 "Originals Too" = "元画像も含める";
+"Originals are the full-size files downloaded from the server. Thumbnails can be deleted at any time; they are drawn again." = "元画像はサーバーからダウンロードしたフルサイズのファイルです。サムネイルはいつでも削除できます。再び作成されます。";
 "Other Photos" = "その他の写真";
 "Other images (JPEG, PNG, TIFF, HEIC…)" = "その他の画像（JPEG・PNG・TIFF・HEICなど）";
 "Other…" = "その他…";
@@ -1860,6 +1871,7 @@
 "Sequence number, counting from the start number" = "開始番号から数えた連番";
 "Server" = "サーバー";
 "Server Folders" = "サーバーのフォルダ";
+"Server disk" = "サーバーのディスク";
 "Services" = "サービス";
 "Set" = "セット";
 "Set Album Cover" = "アルバムのカバーを設定";
@@ -1980,6 +1992,7 @@
 "Slideshow resumed" = "スライドショーを再開しました";
 "Slideshow · Space pauses · Esc ends" = "スライドショー · スペースで一時停止 · Escで終了";
 "Small (1080 px)" = "小（1080 px）";
+"Small previews" = "小さいプレビュー";
 "Smart Album" = "スマートアルバム";
 "Smart Album Name" = "スマートアルバム名";
 "Smart Album Rule Fields" = "スマートアルバムの条件フィールド";
@@ -2035,6 +2048,8 @@
 "Stopped" = "停止しました";
 "Stopped by an error (see the log)" = "エラーで停止しました（ログを参照）";
 "Stopping…" = "停止中…";
+"Storage" = "ストレージ";
+"Storage limit" = "ストレージ上限";
 "Store All Originals on This Device" = "すべての元画像をこのデバイスに保存";
 "Story or Reel 9 × 16" = "ストーリーズ／リール 9 × 16";
 "Straighten" = "角度補正";
@@ -2150,6 +2165,7 @@
 "The photos are copied into the library; the originals in Photos or Files are left as they are." = "写真はライブラリにコピーされます。「写真」や「ファイル」にある元の写真はそのまま残ります。";
 "The processor does the work." = "The processor does the work.";
 "The search model is installed: describe a photo to find it." = "検索モデルをインストールしました。写真を説明して探せます。";
+"The server can't say how much it stores: %@" = "サーバーが保存量を返せません: %@";
 "The server has a library already" = "サーバーにはすでにライブラリがあります";
 "The server's" = "サーバー側";
 "Their photos and the keywords below them come together under one keyword." = "写真と下位のキーワードが1つのキーワードにまとめられます。";
@@ -2170,6 +2186,7 @@
 "This build has no download location for the model yet." = "このビルドには、モデルのダウンロード先がまだ設定されていません。";
 "This build has nowhere to keep denoise models, so AI Denoise is not available. (The desktop app has.)" = "This build has nowhere to keep denoise models, so AI Denoise is not available. (The desktop app has.)";
 "This build has nowhere to keep face models." = "このビルドには顔モデルの保存先がありません。";
+"This disk" = "このディスク";
 "This file cannot be used yet" = "This file cannot be used yet";
 "This folder is not available (drive disconnected?). Smart previews are not built or used until it is back or you choose another folder." = "このフォルダにアクセスできません。ドライブを接続するか別のフォルダを選ぶまで、スマートプレビューは作成・使用されません";
 "This folder isn't there: it was moved or renamed, or its disk isn't connected." = "このフォルダが見つかりません。移動または名前の変更がされたか、ディスクが接続されていません。";
@@ -2185,6 +2202,7 @@
 "Threshold" = "しきい値";
 "Thumbnail Cache" = "サムネイルキャッシュ";
 "Thumbnail cache" = "サムネイルキャッシュ";
+"Thumbnails" = "サムネイル";
 "Thursday" = "木曜日";
 "Tick the box to accept the model's terms first" = "Tick the box to accept the model's terms first";
 "Tile server" = "タイルサーバー";
@@ -2200,6 +2218,7 @@
 "Tool" = "ツール";
 "Tools" = "ツール";
 "Top Level" = "最上位";
+"Total" = "合計";
 "Trained on: %@" = "Trained on: %1$@";
 "Transfer" = "転送";
 "Treatment" = "処理";
@@ -2350,6 +2369,7 @@
 "Zoom to Fit" = "全体を表示";
 "Zoom to page level" = "ページ全体を表示";
 "Zoom to these photos" = "これらの写真にズーム";
+"^[%lld file](inflect: true)" = "%lld 個のファイル";
 "^[%lld item](inflect: true)" = "%lld項目";
 "^[%lld photo](inflect: true)" = "%lld枚の写真";
 "^[%lld spot](inflect: true) · tap a pin for more" = "スポット%lld件 · ピンをタップすると詳細を表示";

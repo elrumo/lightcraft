@@ -76,6 +76,16 @@ public struct DateGroup: Codable, Sendable, Hashable, Identifiable {
     public var id: String { key }
 }
 
+extension DateGroup {
+    /// Its photos' grid indexes in a grid of `count` photos: cut to the grid, and empty when the
+    /// grid has shrunk under a group list that hasn't caught up yet (a sync, a delete).
+    public func indices(in count: Int) -> Range<Int> {
+        let n = max(count, 0)
+        let lo = min(max(start, 0), n)
+        return lo..<(lo + min(max(self.count, 0), n - lo))
+    }
+}
+
 /// An album or a folder of albums (`albums.list`, a tree).
 public struct AlbumNode: Codable, Sendable, Hashable, Identifiable {
     public var id: UInt64
@@ -156,7 +166,8 @@ public struct SyncStatus: Codable, Sendable, Equatable {
     public var signedIn: Bool
     public var server: String?
     public var user: String?
-    public var device: String?
+    /// This device's number on the server.
+    public var device: UInt64?
     public var pending: Int?
     public var uploads: Int?
     public var downloads: Int?

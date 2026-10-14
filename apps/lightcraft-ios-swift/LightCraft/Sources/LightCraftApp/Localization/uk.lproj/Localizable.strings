@@ -8,6 +8,8 @@
 "% of all commits" = "% усіх комітів";
 "%@ Label" = "Мітка: %1$@";
 "%@ curve" = "Крива: %@";
+"%@ free of %@" = "Вільно %1$@ з %2$@";
+"%@ of %@ used" = "Зайнято %1$@ з %2$@";
 "%@ wheel" = "Колесо: %@";
 "%lld" = "%1$lld";
 "%lld %%" = "%1$lld %%";
@@ -197,6 +199,7 @@
 "As Shot" = "Як під час знімання";
 "As shot" = "Як під час знімання";
 "Ascending" = "За зростанням";
+"Asking the server…" = "Запит до сервера…";
 "Aspect" = "Пропорції";
 "Aspect Ratio" = "Співвідношення сторін";
 "Assisted Culling" = "Допоміжний відбір";
@@ -324,6 +327,7 @@
 "Captured from" = "Знято від";
 "Captured until" = "Знято до";
 "Catalog Statistics" = "Статистика каталогу";
+"Catalog and edits" = "Каталог і редагування";
 "Catchlight" = "Відблиск в оці";
 "Change" = "Змінити";
 "Change Component Mode" = "Змінити режим компонента";
@@ -991,6 +995,7 @@
 "Imported %lld presets" = "Імпортовано наборів налаштувань: %lld";
 "Imported %lld profiles (Profile browser ▸ their groups)" = "Імпортовано профілів: %lld (Оглядач профілів ▸ їхні групи)";
 "Imported Photos" = "Імпортовані фото";
+"Imported copies" = "Імпортовані копії";
 "Importing" = "Імпорт";
 "Importing Lightroom Catalog" = "Імпорт каталогу Lightroom";
 "Importing Lightroom catalog" = "Імпорт каталогу Lightroom";
@@ -1110,6 +1115,8 @@
 "Library Originals" = "Оригінали бібліотеки";
 "Library Preferences" = "Налаштування бібліотеки";
 "Library State" = "Стан бібліотеки";
+"Library folders" = "Теки бібліотеки";
+"Library folders are read where they are on the server and never copied, so LightCraft keeps only their previews. The total counts their photos too: they take that room on the server." = "Папки бібліотеки читаються там, де вони лежать на сервері, і ніколи не копіюються, тож LightCraft зберігає лише їхні перегляди. Підсумок враховує і їхні фото: вони займають це місце на сервері.";
 "Library name" = "Назва бібліотеки";
 "Library saved" = "Бібліотеку збережено";
 "Licence" = "Ліцензія";
@@ -1295,6 +1302,7 @@
 "Named People" = "Люди з іменами";
 "Names appear in the label menu, the filter bar and the Info panel, and are written to XMP. Empty = the colour's name." = "Назви з’являються в меню міток, панелі фільтрів і панелі інформації та записуються до XMP. Порожнє значення = назва кольору.";
 "Navigator" = "Навігатор";
+"Nearly at the storage limit the server's admin set for you. Over it, new photos wait to upload until there is room; nothing is deleted." = "Майже досягнуто ліміту сховища, встановленого адміністратором сервера. Понад нього нові фото чекають на вивантаження, доки не з’явиться місце; нічого не видаляється.";
 "Needs Work" = "Потребує роботи";
 "Neon Dusk" = "Неонові сутінки";
 "Neon Night" = "Неонова ніч";
@@ -1416,7 +1424,9 @@
 "On This Device" = "На цьому пристрої";
 "On This Photo" = "На цьому фото";
 "On every photo, the keywords inside it included; renaming it onto another keyword merges the two." = "На кожному фото, разом із вкладеними ключовими словами; перейменування на наявне ключове слово об’єднує їх.";
+"On the Server" = "На сервері";
 "Only" = "Лише";
+"Only Previews Here" = "Тут лише перегляди";
 "Only photos whose AI Denoise amount is above 0 are made. Exports always make theirs if it is missing." = "Обробляються лише фото зі значенням усунення шуму ШІ понад 0. Експорт завжди створює потрібне зображення, якщо його немає.";
 "Opacity" = "Непрозорість";
 "Opacity (%)" = "Непрозорість (%)";
@@ -1455,6 +1465,7 @@
 "Originals" = "Оригінали";
 "Originals Limit" = "Обмеження оригіналів";
 "Originals Too" = "Також оригінали";
+"Originals are the full-size files downloaded from the server. Thumbnails can be deleted at any time; they are drawn again." = "Оригінали — це повнорозмірні файли, завантажені із сервера. Мініатюри можна видалити будь-коли: вони створюються знову.";
 "Other Photos" = "Інші фото";
 "Other images (JPEG, PNG, TIFF, HEIC…)" = "Інші зображення (JPEG, PNG, TIFF, HEIC…)";
 "Other…" = "Інший…";
@@ -1874,6 +1885,7 @@
 "Sequence number zero-padded to N digits (1–9)" = "Порядковий номер із нулями до N цифр (1–9)";
 "Sequence number, counting from the start number" = "Порядковий номер, починаючи з початкового числа";
 "Server" = "Сервер";
+"Server disk" = "Диск сервера";
 "Services" = "Служби";
 "Set" = "Задати";
 "Set Album Cover" = "Задати обкладинку альбому";
@@ -1993,6 +2005,7 @@
 "Slideshow · Space pauses · Esc ends" = "Показ слайдів · Space призупиняє · Esc завершує";
 "Slideshow, second window, All Metadata, System Info." = "Показ слайдів, друге вікно, усі метадані, інформація про систему.";
 "Small (1080 px)" = "Малий (1080 px)";
+"Small previews" = "Малі перегляди";
 "Smaller, faster catalogs: photos you only looked at in Local (never added, rated or edited) are forgotten once" = "Менші й швидші каталоги: фото, які ви лише переглядали в локальних (ніколи не додавали, не оцінювали й не редагували), забуваються, коли";
 "Smart Album" = "Смарт-альбом";
 "Smart Album Name" = "Назва смарт-альбому";
@@ -2052,6 +2065,8 @@
 "Stopped" = "Зупинено";
 "Stopped by an error (see the log)" = "Зупинено через помилку (див. журнал)";
 "Stopping…" = "Зупинення…";
+"Storage" = "Сховище";
+"Storage limit" = "Ліміт сховища";
 "Store All Originals on This Device" = "Зберігати всі оригінали на цьому пристрої";
 "Story or Reel 9 × 16" = "Історія або Reel 9 × 16";
 "Straighten" = "Випрямити";
@@ -2165,6 +2180,7 @@
 "The photo is enlarged to twice its width and height with an AI model, with your edits applied, and added next to the original (a 16-bit sRGB TIFF), stacked with it. The original isn't changed. This takes a while on large photos." = "Фото збільшується вдвічі за шириною й висотою за допомогою моделі ШІ з урахуванням ваших змін і додається поруч з оригіналом (16-бітний TIFF у sRGB) в одному стосі з ним. Оригінал не змінюється. На великих фото це займає певний час.";
 "The photos are copied into the library; the originals in Photos and Files are left as they are." = "Фото копіюються до бібліотеки; оригінали у «Фото» та «Файлах» залишаються без змін.";
 "The processor does the work." = "Роботу виконує процесор.";
+"The server can't say how much it stores: %@" = "Сервер не може повідомити, скільки зберігає: %@";
 "The server has a library already" = "На сервері вже є бібліотека";
 "The server's" = "Бібліотека сервера";
 "The thumbnail cache only ever counts and deletes its own files (issue #98): a library opened on a folder that" = "Кеш мініатюр завжди рахує й видаляє лише власні файли (проблема #98): бібліотека, відкрита в теці, яка";
@@ -2185,6 +2201,7 @@
 "This build has nowhere to keep denoise models, so AI Denoise is not available. (The desktop app has.)" = "Ця збірка не має місця для моделей усунення шуму, тому ця функція ШІ недоступна. (Настільний застосунок має.)";
 "This build has nowhere to keep face models, so the model list is not available. (The desktop app has.)" = "Ця збірка не має місця для моделей облич, тому їхній список недоступний. (Настільний застосунок має.)";
 "This build has nowhere to keep face models." = "У цій збірці немає місця для зберігання моделей облич.";
+"This disk" = "Цей диск";
 "This file cannot be used yet" = "Цей файл поки не можна використовувати";
 "This folder is not available (drive disconnected?). Smart previews are not built or used until it is back or you choose another folder." = "Ця тека недоступна (диск від’єднано?). Смарт-перегляди не створюються й не використовуються, доки вона не стане доступною або ви не виберете іншу теку.";
 "This folder isn't there: it was moved or renamed, or its disk isn't connected." = "Цієї теки немає: її переміщено чи перейменовано, або її диск не під’єднано.";
@@ -2199,6 +2216,7 @@
 "Threshold" = "Поріг";
 "Thumbnail Cache" = "Кеш мініатюр";
 "Thumbnail cache" = "Кеш мініатюр";
+"Thumbnails" = "Мініатюри";
 "Thursday" = "Четвер";
 "Tick the box to accept the model's terms first" = "Спочатку позначте прийняття умов моделі";
 "Time zone" = "Часовий пояс";
@@ -2213,6 +2231,7 @@
 "Tool" = "Інструмент";
 "Tools" = "Інструменти";
 "Top Level" = "Верхній рівень";
+"Total" = "Усього";
 "Trained on: %@" = "Навчено на: %1$@";
 "Transfer" = "Передавання";
 "Treatment" = "Обробка";
@@ -2354,6 +2373,7 @@
 "Zoom Out" = "Зменшити";
 "Zoom to Fit" = "Масштабувати до вміщення";
 "Zoom to page level" = "Масштаб до рівня сторінки";
+"^[%lld file](inflect: true)" = "Файлів: %lld";
 "^[%lld item](inflect: true)" = "Елементів: %lld";
 "^[%lld photo](inflect: true)" = "%lld фото";
 "^[%lld spot](inflect: true) · tap a pin for more" = "Ділянок: %lld · торкніться позначки, щоб дізнатися більше";

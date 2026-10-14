@@ -44,6 +44,7 @@ struct SettingsView: View {
                 case "interface": InterfaceSettings()
                 case "sync": SyncSettings()
                 case "faces": FacesSettings()
+                case "storage": SyncStorageView()
                 case "models": ModelsSettings()
                 default: EmptyView()
                 }
@@ -282,6 +283,9 @@ struct SyncSettings: View {
                 } footer: {
                     Text("\(s.offlineAlbums?.count ?? 0) albums available offline.")
                 }
+                Section {
+                    NavigationLink("Storage") { SyncStorageView() }
+                }
                 if !shares.isEmpty {
                     Section("Shared Links") {
                         ForEach(Array(shares.enumerated()), id: \.offset) { _, share in
@@ -299,6 +303,8 @@ struct SyncSettings: View {
                 Section {
                     Button("Sign Out", role: .destructive) { run("sync.signOut") }
                 }
+            } else if status == nil {
+                Section { ProgressView().frame(maxWidth: .infinity) }
             } else {
                 Section {
                     if let e = status?.error { Text(e).foregroundStyle(.red) }
@@ -354,7 +360,12 @@ struct SyncSettings: View {
 
     private func load() async {
         guard let engine = model.engine else { return }
-        status = try? await engine.execute("sync.status", [:], as: SyncStatus.self)
+        do {
+            status = try await engine.execute("sync.status", [:], as: SyncStatus.self)
+        } catch {
+            // (a reply this app can't read: say so rather than offer to sign in again)
+            model.show(error.localizedDescription, error: true)
+        }
         if status?.signedIn == true, let r = try? await engine.execute("shares.list") {
             shares = r["shares"].array ?? []
         }

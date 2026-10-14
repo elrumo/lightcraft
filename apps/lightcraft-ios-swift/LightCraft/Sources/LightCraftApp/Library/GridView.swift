@@ -33,7 +33,7 @@ struct GridView: View {
                     } else {
                         ForEach(library.groups) { group in
                             Section {
-                                ForEach(group.start..<min(group.start + group.count, library.count), id: \.self) { i in
+                                ForEach(group.indices(in: library.count), id: \.self) { i in
                                     cell(i)
                                 }
                             } header: {
