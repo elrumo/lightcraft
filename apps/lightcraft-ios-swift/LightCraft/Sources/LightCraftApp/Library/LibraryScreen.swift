@@ -155,8 +155,57 @@ struct LibraryScreen: View {
 /// The collection's name (a tap opens the albums), the count, and Sort and Filter.
 struct LibraryHeader: View {
     @Environment(AppModel.self) private var model
+    /// What narrows the grid (`library.filterChips`), and the counts.
+    @State private var chips: JSONValue = .null
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            header
+            let list = chips["chips"].array ?? []
+            if !list.isEmpty {
+                // each filter as a chip with its ×, then Clear All
+                ScrollView(.horizontal) {
+                    HStack(spacing: 6) {
+                        ForEach(Array(list.enumerated()), id: \.offset) { _, chip in
+                            Button {
+                                model.perform("library.filter", chip["clear"])
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Text(chip["label"].string ?? "").lineLimit(1)
+                                    Image(systemName: "xmark").font(.caption2.weight(.bold))
+                                }
+                                .font(.footnote)
+                                .padding(.horizontal, 10).padding(.vertical, 5)
+                                .background(Color.accentColor.opacity(0.15), in: .capsule)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityHint("Takes this filter off")
+                        }
+                        if list.count > 1 {
+                            Button("Clear All") { model.perform("library.clearFilter") }
+                                .font(.footnote)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                }
+                .scrollIndicators(.hidden)
+            }
+        }
+        .padding(.vertical, 6)
+        .background(.bar)
+        .task(id: Key(gen: model.state.visibleGen, count: model.state.visibleCount)) {
+            guard let engine = model.engine else { return }
+            chips = (try? await engine.execute("library.filterChips")) ?? .null
+        }
+        .animation(.snappy, value: chips["chips"].array?.count ?? 0)
+    }
+
+    private nonisolated struct Key: Hashable {
+        let gen: UInt64
+        let count: Int
+    }
+
+    private var header: some View {
         HStack(alignment: .center, spacing: 8) {
             Button {
                 model.sheet = .albums
@@ -191,15 +240,13 @@ struct LibraryHeader: View {
             .glassEffect(.regular.interactive(), in: .capsule)
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 6)
-        .background(.bar)
     }
 
+    /// "14 of 120 photos" when a filter narrows the source, else "14 photos".
     private var countText: String {
         let n = model.library.count
-        let total = model.library.stats?.photos ?? n
-        if model.library.state?.isFiltered == true, model.library.state?.source.kind == "all", total != n {
-            return String(localized: "\(n) of \(total) photos")
+        if let total = chips["total"].int, !(chips["chips"].array ?? []).isEmpty, Int(total) != n {
+            return String(localized: "\(n) of \(Int(total)) photos")
         }
         return String(localized: "\(n) photos")
     }

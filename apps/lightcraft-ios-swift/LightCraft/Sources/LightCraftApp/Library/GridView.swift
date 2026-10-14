@@ -15,6 +15,10 @@ struct GridView: View {
     /// The scrubber shows while the grid scrolls and a moment after.
     @State private var scrolling = false
     @State private var scrubbing: Int?
+    /// Where each cell on screen is (in the grid's own space), for choosing by drag.
+    @State private var frames = CellFrames()
+    /// A sideways drag choosing photos (select mode).
+    @State private var choosing: Choosing?
 
     var body: some View {
         let library = model.library
@@ -38,6 +42,8 @@ struct GridView: View {
                         }
                     }
                 }
+                .coordinateSpace(name: "grid")
+                .simultaneousGesture(chooseDrag, including: model.selectMode ? .all : .none)
                 // room under the last row for the Years / Months / All capsule
                 Color.clear.frame(height: 96)
             }
@@ -76,6 +82,7 @@ struct GridView: View {
         }
         .simultaneousGesture(pinch)
         .sensoryFeedback(.selection, trigger: model.prefs.gridColumns)
+        .sensoryFeedback(.selection, trigger: choosing?.last)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width in
             // cells under 110 pt: a header a year, else a month
             let cell = width / CGFloat(max(model.prefs.gridColumns, 1))
@@ -95,14 +102,36 @@ struct GridView: View {
     private func cell(_ i: Int) -> some View {
         GridCell(index: i, namespace: namespace)
             .id(i)
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .named("grid")) } action: { frames.rects[i] = $0 }
             .onAppear {
                 tracker.appeared(i)
                 model.visibleRange = tracker.range
             }
             .onDisappear {
                 tracker.disappeared(i)
+                frames.rects[i] = nil
                 model.visibleRange = tracker.range
             }
+    }
+
+    /// Choosing photos by touch, as iOS Photos does: a drag that sets off sideways from a photo
+    /// chooses the run from it to the one under the finger (unchooses it, when the first was
+    /// chosen: `library.chooseRun`); an up or down drag scrolls instead.
+    private var chooseDrag: some Gesture {
+        DragGesture(minimumDistance: 12, coordinateSpace: .named("grid"))
+            .onChanged { g in
+                if choosing == nil {
+                    let d = g.translation
+                    guard abs(d.width) >= 12, abs(d.width) >= 2 * abs(d.height), let start = frames.index(at: g.startLocation),
+                          let first = model.library.photo(at: start, model.engine)?.id else { return }
+                    choosing = Choosing(start: start, adding: !model.library.selected.contains(first), base: Array(model.library.selected))
+                }
+                guard var c = choosing, let cur = frames.index(at: g.location), c.last != cur else { return }
+                c.last = cur
+                choosing = c
+                model.perform("library.chooseRun", ["base": AppModel.ids(c.base), "from": .int(Int64(c.start)), "to": .int(Int64(cur)), "adding": .bool(c.adding)])
+            }
+            .onEnded { _ in choosing = nil }
     }
 
     /// Pinch in for more photos across, out for fewer (1, 2, 3, 4, 5, 7, 10 or 14).
@@ -386,5 +415,24 @@ struct Scrubber: View {
         .padding(.vertical, 8)
         .sensoryFeedback(.selection, trigger: grabbed)
     }
+}
+
+/// Where the grid's cells on screen are (a reference: updating it redraws nothing).
+final class CellFrames {
+    var rects: [Int: CGRect] = [:]
+
+    /// The cell under `p`.
+    func index(at p: CGPoint) -> Int? {
+        rects.first { $0.value.contains(p) }?.key
+    }
+}
+
+/// A drag choosing photos: where it began, whether it chooses or unchooses, what was chosen
+/// before it, and the photo under the finger last.
+struct Choosing {
+    let start: Int
+    let adding: Bool
+    let base: [UInt64]
+    var last: Int?
 }
 #endif

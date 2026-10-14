@@ -17,26 +17,26 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 <!-- ios-parity:summary -->
 | Phase | ✅ | 🟡 | ⬜ | 🚫 | Done or out of scope |
 |---|---:|---:|---:|---:|---:|
-| S0 | 13 | 2 | 0 | 0 | 13/15 |
-| S1 | 141 | 9 | 14 | 3 | 144/167 |
+| S0 | 15 | 0 | 0 | 0 | 15/15 |
+| S1 | 142 | 8 | 14 | 3 | 145/167 |
 | S2 | 1 | 0 | 79 | 22 | 23/102 |
-| **Total** | 155 | 11 | 93 | 25 | 180/284 |
+| **Total** | 158 | 8 | 93 | 25 | 183/284 |
 <!-- /ios-parity:summary -->
 
 ## Screens
 
 | Id | Phase | Status | Evidence | Notes |
 |---|---|---|---|---|
-| screen:compact.grid | S0 | 🟡 | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/GridView.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LibraryScreen.swift` | square tiles paged from the engine, month/year headers, pinch 1–14 columns, scrubber, badges, title → albums, sort, filter, + menu; no drag-choose or filter chips yet |
+| screen:compact.grid | S0 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/GridView.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LibraryScreen.swift` | square tiles paged from the engine, month/year headers, pinch 1–14 columns, scrubber, badges, title → albums, sort, filter, + menu; the filter chips with ×, Clear All and "14 of 120 photos" (`library.filterChips`); a sideways drag chooses a run (`library.chooseRun`, shared with egui) |
 | screen:compact.loupe | S0 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift`, `crates/apphost/src/region.rs`, `crates/apphost/src/host/tests.rs` | fit, pinch (1–8×), pan, double tap; zoomed in, the part on screen comes as a sharp window at the zoom scale (`render.view {zoom}`, planned by `apphost::region`, shared with egui) drawn over the fitted render; swipe between photos; review mode |
 | screen:compact.edit.light | S0 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/EditGroupPanel.swift` | drafts while dragging, one undo step per drag |
 | screen:allCommands | S0 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/App/AllCommandsView.swift`, `apps/lightcraft-ios-swift/LightCraft/Tests/LightCraftCoreTests/EngineTests.swift` | every engine command, grouped, searchable, runnable; why a disabled one is |
-| screen:activity | S0 | 🟡 | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/App/RootView.swift` | running tasks with Cancel; no activity stack page yet |
+| screen:activity | S0 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/App/RootView.swift` | the running tasks over the screen with Cancel; a tap opens the Activity page: every task with what it is on, its progress (counts or bytes) and Cancel |
 | screen:automation | S0 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/App/ScriptHost.swift`, `crates/apphost/src/host/script.rs` | `LIGHTCRAFT_SCRIPT`: engine requests, `ui.screenshot`, `ui.inspect`, `ui.set` |
 | screen:undoRedo | S0 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | Undo and Redo in the top bar's menu (it stays open), Reset, Versions, History |
-| screen:compact.albums | S1 | 🟡 | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/AlbumsSheet.swift` | All Photos, Recently Added, People, Picks, Recently Deleted, the album tree with covers and counts, album menus (offline, share link, export, move, rename, delete), Create New; no lift-and-carry, By Date, Folders or Keywords sections yet |
+| screen:compact.albums | S1 | 🟡 | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/AlbumsSheet.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/DateFolderLists.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/KeywordListView.swift` | All Photos, Recently Added, People, Picks, Recently Deleted, the album tree with covers and counts, album menus (offline, share link, export, move, rename, delete, edit smart album), Create New (album, smart album, from filter, folder); By Date, Folders and Keywords pages; no lift-and-carry yet (Move to… instead) |
 | screen:compact.filterSheet | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/FilterSheet.swift`, `crates/engine/src/tests_libops.rs` | stars with ≥ = ≤, flags, labels; Type, Edited, Camera, People, Location, Keyword lists with counts (`library.facets`) |
-| screen:compact.select | S1 | 🟡 | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/SelectionBar.swift` | long press or Select; action bar: rating, flag, label, add to album, export, more (copy, paste, paste selected), delete (album choice + confirm); the album + ▸ LightCraft flow; no drag-choose yet |
+| screen:compact.select | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/SelectionBar.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/GridView.swift` | long press or Select; a sideways drag chooses (or unchooses) a run; action bar: rating, flag, label, add to album, export, more (copy, paste, paste selected), delete (album choice + confirm); the album + ▸ LightCraft flow |
 | screen:compact.reviewMode | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | a tap hides the bars; up/down on the left half sets stars (44 pt a star), on the right the flag (56 pt a step); HUD; Auto Advance |
 | screen:compact.carousel | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | a paging scroll view over the grid; follows Auto Advance |
 | screen:compact.beforeHold | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | hold 0.4 s: the Before (`render.view {before}`), medium haptic |

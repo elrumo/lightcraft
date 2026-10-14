@@ -474,6 +474,42 @@ pub fn specs() -> Vec<CommandSpec> {
                 Ok(json!({"path": path, "label": label}))
             }
         ),
+        cmd!(
+            "library.chooseRun",
+            "Choose a Run of Photos",
+            [],
+            None,
+            "{base: [ids] chosen before the drag, from, to: grid indexes, adding: bool} chooses (or, with adding false, unchooses) the run of grid photos from `from` to `to` on top of `base`, as a sideways drag over the phone's grid does (iOS Photos) → {chosen}",
+            always,
+            |s, p| {
+                let c = "library.chooseRun";
+                let index = |k: &str| p.get(k).and_then(Value::as_u64).map(|v| v as usize).ok_or_else(|| bad(c, format!("missing `{k}`")));
+                let (from, to) = (index("from")?, index("to")?);
+                let adding = p.get("adding").and_then(Value::as_bool).unwrap_or(true);
+                let base: Vec<u64> = p.get("base").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_u64).collect();
+                let visible = s.visible_shared().1;
+                let run: std::collections::HashSet<u64> = visible.get(from.min(to)..=from.max(to)).unwrap_or(&[]).iter().map(|i| i.0).collect();
+                let mut chosen: Vec<u64> = base.iter().copied().filter(|i| adding || !run.contains(i)).collect();
+                if adding {
+                    chosen.extend(visible.iter().map(|i| i.0).filter(|i| run.contains(i) && !base.contains(i)));
+                }
+                s.execute("library.select", &json!({"ids": chosen}))?;
+                Ok(json!({"chosen": chosen.len()}))
+            }
+        ),
+        cmd!(
+            query "library.filterChips",
+            "Filter Chips",
+            [],
+            None,
+            "{} → {chips: [{label, clear: the library.filter patch that takes just that filter off}], matching: photos shown, total: photos in the source without the filter | null} what narrows the grid, as the chips over it say",
+            always,
+            |s, _| {
+                let chips: Vec<Value> = crate::filter_chips(&s.filter, &s.catalog).into_iter().map(|c| json!({"label": c.label, "clear": c.clear})).collect();
+                let matching = s.visible_shared().1.len();
+                Ok(json!({"chips": chips, "matching": matching, "total": s.source_total()}))
+            }
+        ),
         cmd!("library.clearFilter", "Clear Filters", ["View"], None, "{}", always, |s, _| {
             s.filter = Default::default();
             Ok(json!({"count": s.visible().len()}))

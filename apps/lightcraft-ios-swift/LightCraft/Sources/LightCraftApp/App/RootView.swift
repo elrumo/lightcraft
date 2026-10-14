@@ -97,6 +97,7 @@ struct SheetContent: View {
         case .createPreset: CreatePresetSheet()
         case .smartAlbum(let id, let parent): SmartAlbumSheet(album: id, parent: parent)
         case .allMetadata: AllMetadataSheet()
+        case .activity: ActivityPage()
         case .newSmartAlbumFromView:
             // the grid as it is shown (source and filter) becomes a smart album
             AlbumNameSheet(title: "New Smart Album", action: "Create", name: "") { name in
@@ -143,7 +144,7 @@ struct ActivityHUD: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        let rows = model.activity.filter { ["import", "scan", "previews", "download"].contains($0.kind) || ($0.kind == "export" && model.sheet?.id != "export") }
+        let rows = model.activity.filter { ["import", "scan", "previews", "download", "superRes"].contains($0.kind) || ($0.kind == "export" && model.sheet?.id != "export") }
         VStack(spacing: 6) {
             ForEach(rows) { row in
                 HStack(spacing: 10) {
@@ -175,6 +176,64 @@ struct ActivityHUD: View {
         }
         .padding(.bottom, model.path.isEmpty ? 84 : 120)
         .animation(.snappy, value: rows.map(\.id))
+        // a tap shows everything that is running
+        .onTapGesture { model.sheet = .activity }
+        .accessibilityHint("Shows everything that is running")
+    }
+}
+
+/// Everything running in the background (the activity stack): each task with what it is on, its
+/// progress and Cancel.
+struct ActivityPage: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                ForEach(model.activity) { row in
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text(LocalizedStringKey(row.label)).font(.headline)
+                            Spacer()
+                            if row.cancellable {
+                                Button(row.cancelling ? "Stopping…" : "Cancel", role: .destructive) {
+                                    model.perform("activity.cancel", ["id": .int(Int64(clamping: row.id))])
+                                }
+                                .buttonStyle(.bordered)
+                                .disabled(row.cancelling)
+                            }
+                        }
+                        if row.total > 0 {
+                            ProgressView(value: Double(row.done), total: Double(row.total)) {
+                                Text(progress(row)).font(.caption).monospacedDigit()
+                            }
+                        } else {
+                            ProgressView().frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        if !row.detail.isEmpty {
+                            Text(row.detail).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+                if model.activity.isEmpty {
+                    ContentUnavailableView("Nothing Running", systemImage: "checkmark.circle", description: Text("Imports, exports, syncing and other long work show here while they run."))
+                }
+            }
+            .navigationTitle("Activity")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done", systemImage: "checkmark") { dismiss() } } }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    private func progress(_ row: ActivityTask) -> String {
+        if row.unit == "bytes" {
+            let f = ByteCountFormatter()
+            return "\(f.string(fromByteCount: Int64(clamping: row.done))) / \(f.string(fromByteCount: Int64(clamping: row.total)))"
+        }
+        return "\(row.done) / \(row.total)"
     }
 }
 

@@ -41,7 +41,7 @@ struct PeopleView: View {
                             }
                         } label: {
                             VStack(spacing: 6) {
-                                FaceDisc(photo: person["cover"]["photo"].int.map { UInt64($0) })
+                                FaceDisc(photo: person["cover"]["photo"].int.map { UInt64($0) }, rect: person["cover"]["rect"])
                                     .frame(width: 96, height: 96)
                                 Text(person["name"].string ?? String(localized: "Add Name"))
                                     .font(.subheadline.weight(.semibold))
@@ -111,24 +111,42 @@ struct PersonView: View {
     }
 }
 
-/// A round crop of a photo (a face's photo until face crops render).
-private struct FaceDisc: View {
+/// A person's face in a disc: the face itself (`render.face`), its photo until it comes.
+struct FaceDisc: View {
     @Environment(AppModel.self) private var model
     let photo: UInt64?
+    /// The face's box, as `people.list` gives it.
+    var rect: JSONValue = .null
+    @State private var slot: String?
 
     var body: some View {
         Circle()
             .fill(Color(uiColor: .tertiarySystemFill))
             .overlay {
-                if let photo, let p = model.images.thumb(photo) {
+                if let slot, let p = model.images.pictures[slot] {
+                    Image(decorative: p.image, scale: 1).resizable().scaledToFill()
+                } else if let photo, let p = model.images.thumb(photo) {
                     Image(decorative: p.image, scale: 1).resizable().scaledToFill()
                 } else {
                     Image(systemName: "person.fill").font(.largeTitle).foregroundStyle(.secondary)
                 }
             }
             .clipShape(Circle())
-            .task(id: photo) { if let photo { model.wantThumb(photo, edge: 256) } }
-            .onDisappear { if let photo { model.thumbDisappeared(photo) } }
+            .task(id: Key(photo: photo, rect: rect, revision: model.state.catalogRevision)) {
+                guard let photo, let engine = model.engine else { return }
+                if rect.isNull {
+                    model.wantThumb(photo, edge: 256)
+                } else {
+                    slot = (try? await engine.request("render.face", ["photo": .int(Int64(clamping: photo)), "rect": rect, "edge": 256]))?["slot"].string
+                }
+            }
+            .onDisappear { if let photo, rect.isNull { model.thumbDisappeared(photo) } }
+    }
+
+    private nonisolated struct Key: Hashable {
+        let photo: UInt64?
+        let rect: JSONValue
+        let revision: UInt64
     }
 }
 

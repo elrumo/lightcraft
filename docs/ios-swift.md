@@ -100,6 +100,7 @@ host's: `badRequest`, `unknownMethod`, `panic`, `closed`, `timeout`).
 | `render.view` | `{photo?, width, height, draft?, before?, applyCrop?, overlay?: {kind: mask, id, view?, color?, opacity?} \| {kind: spots, threshold?} \| {kind: pointColor, index} \| {kind: hdr}, zoom?: {drawn, visible: [x0, y0, x1, y1]}}` | the loupe's picture (`main`; a stand-in in `preview` until it is there), with a diagnostic overlay (the selected mask, Visualize Spots…); zoomed in (`drawn`: the photo's long edge as drawn, px; `visible`: the part on screen, as fractions) also the window on screen at the zoom scale (`region`, its image event's `window: {full: [w, h], x, y, w, h}` says where it goes; planned by `apphost::region`) |
 | `render.prefetch` | `{photos, width, height}` | prepares the neighbours |
 | `render.variant` | `{photo?, preset \| profile \| version, amount?, edge?}` | a preview of the photo with a preset, profile or version (slot `variant:<key>`) |
+| `render.face` | `{photo?, rect, edge?}` | a face, as People shows it (`rect` as `people.list` and `faces.person` give it; slot `variant:<key>`) |
 | `render.candidate` | `{index, edge?}` | an import candidate's thumbnail (slot `import:<index>`) |
 | `render.cancel` | `{slots}` | stops rendering for slots |
 | `render.retain` | `{thumbs, max?}` | the thumbnails on screen (queued renders of others are dropped) |

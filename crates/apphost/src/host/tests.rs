@@ -322,3 +322,18 @@ fn a_zoomed_view_gets_a_window_of_what_is_on_screen() {
     let main = h.wait_for(|e| e["kind"] == "image" && e["slot"] == "main");
     assert!(n(&main["width"]).max(n(&main["height"])) <= 512 && main["window"].is_null(), "{main}");
 }
+
+// People's faces: a face box renders as its own small picture
+#[test]
+fn a_face_renders_on_its_own() {
+    let h = demo();
+    let first = h.call(&req(1, "engine.execute", json!({"command": "catalog.query", "params": {"limit": 1}})), Duration::from_secs(30));
+    let photo = first["result"]["photos"][0]["id"].as_u64().unwrap();
+    let r = h.call(&req(2, "render.face", json!({"photo": photo, "rect": [0.3, 0.3, 0.5, 0.6], "edge": 96})), Duration::from_secs(30));
+    let slot = r["result"]["slot"].as_str().unwrap().to_string();
+    assert!(slot.starts_with("variant:"), "{r}");
+    let image = h.wait_for(|e| e["kind"] == "image" && e["slot"] == slot.as_str());
+    assert!(image["width"].as_u64().unwrap() <= 96 && image["height"].as_u64().unwrap() <= 96, "{image}");
+    let bad = h.call(&req(3, "render.face", json!({"photo": photo, "rect": {"x0": "a"}})), Duration::from_secs(30));
+    assert_eq!(bad["error"]["code"], "badParams", "{bad}");
+}

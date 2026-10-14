@@ -40,6 +40,16 @@ struct AlbumsSheet: View {
                 }
                 Section {
                     NavigationLink {
+                        ByDateView()
+                    } label: {
+                        Label("By Date", systemImage: "calendar")
+                    }
+                    NavigationLink {
+                        LibraryFoldersView()
+                    } label: {
+                        Label("Folders", systemImage: "folder")
+                    }
+                    NavigationLink {
                         KeywordListView()
                     } label: {
                         Label("Keywords", systemImage: "tag")

@@ -38,6 +38,7 @@ nonisolated enum Sheet: Identifiable, Hashable {
     case smartAlbum(UInt64?, parent: UInt64?)
     case newSmartAlbumFromView
     case allMetadata
+    case activity
 
     var id: String {
         switch self {
@@ -61,6 +62,7 @@ nonisolated enum Sheet: Identifiable, Hashable {
         case .smartAlbum: "smartAlbum"
         case .newSmartAlbumFromView: "newSmartAlbumFromView"
         case .allMetadata: "allMetadata"
+        case .activity: "activity"
         }
     }
 }

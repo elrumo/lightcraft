@@ -869,3 +869,33 @@ fn presets_are_reviewed_then_imported() {
     assert!(r["items"].as_array().unwrap().is_empty() && !r["problems"].as_array().unwrap().is_empty(), "{r}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The chips over the grid: each filter with the patch that takes it off, and the counts.
+#[test]
+fn filter_chips_say_what_narrows_the_grid() {
+    let mut s = Session::with_demo();
+    let none = s.execute("library.filterChips", &json!({})).unwrap();
+    assert!(none["chips"].as_array().unwrap().is_empty(), "{none}");
+    s.execute("library.filter", &json!({"rating": 3})).unwrap();
+    let c = s.execute("library.filterChips", &json!({})).unwrap();
+    let chips = c["chips"].as_array().unwrap();
+    assert_eq!(chips.len(), 1, "{c}");
+    assert!(c["matching"].as_u64().unwrap() <= c["total"].as_u64().unwrap(), "{c}");
+    s.execute("library.filter", &chips[0]["clear"]).unwrap();
+    assert!(s.execute("library.filterChips", &json!({})).unwrap()["chips"].as_array().unwrap().is_empty());
+}
+
+/// A sideways drag over the grid chooses the run from where it began to the finger, on top of what
+/// was chosen; one that began on a chosen photo takes the run away.
+#[test]
+fn a_run_of_photos_is_chosen_or_unchosen() {
+    let mut s = Session::with_demo();
+    let visible: Vec<u64> = s.visible_shared().1.iter().map(|i| i.0).collect();
+    let chosen = |s: &Session| s.selection.ids.iter().map(|i| i.0).collect::<std::collections::HashSet<u64>>();
+    s.execute("library.chooseRun", &json!({"base": [visible[10]], "from": 4, "to": 2, "adding": true})).unwrap();
+    assert_eq!(chosen(&s), [visible[10], visible[2], visible[3], visible[4]].into_iter().collect());
+    let base: Vec<u64> = chosen(&s).into_iter().collect();
+    s.execute("library.chooseRun", &json!({"base": base, "from": 3, "to": 4, "adding": false})).unwrap();
+    assert_eq!(chosen(&s), [visible[10], visible[2]].into_iter().collect());
+    assert!(s.execute("library.chooseRun", &json!({"from": 1})).is_err());
+}

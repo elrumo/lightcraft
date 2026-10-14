@@ -3345,6 +3345,7 @@ dependencies = [
  "lightcraft-develop",
  "lightcraft-engine",
  "lightcraft-enhance",
+ "lightcraft-geom",
  "lightcraft-pipeline",
  "lightcraft-preview",
  "lightcraft-raster",
