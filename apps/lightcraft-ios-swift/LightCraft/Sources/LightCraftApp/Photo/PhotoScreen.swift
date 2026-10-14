@@ -766,6 +766,7 @@ struct PhotoMoreMenu: View {
                 Button("History", systemImage: "clock.arrow.circlepath") { model.sheet = .history(versions: false) }
                 Button("Keywords", systemImage: "tag") { model.sheet = .keywords }
             }
+            PhotoManageItems(ids: ids)
             Section {
                 Button("Delete Photo", systemImage: "trash", role: .destructive) { model.confirmDelete = ids }
                 Button("All Commands…", systemImage: "command") { model.path.append(.commands) }

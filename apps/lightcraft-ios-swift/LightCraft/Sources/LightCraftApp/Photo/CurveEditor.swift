@@ -1,6 +1,7 @@
 #if os(iOS)
 import LightCraftCore
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// The Tone Curve: the parametric curve's sliders, or a point curve (master, red, green, blue) to
 /// drag — a tap adds a point, a double tap on one takes it away — and the curve presets.
@@ -8,6 +9,10 @@ struct CurveEditor: View {
     @Environment(AppModel.self) private var model
     @State private var channel = "parametric"
     @State private var presets: [String] = []
+    @State private var saving = false
+    @State private var presetName = ""
+    @State private var importing = false
+    @State private var exported: SharedFile?
 
     var body: some View {
         HStack {
@@ -24,11 +29,41 @@ struct CurveEditor: View {
                     Button(name) { model.perform("curve.applyPreset", ["name": .string(name)]) }
                 }
                 Divider()
+                Button("Save Point Curve as Preset…", systemImage: "plus") {
+                    presetName = ""
+                    saving = true
+                }
+                Button("Import Curve Presets…", systemImage: "square.and.arrow.down") { importing = true }
+                Button("Export Curve Presets…", systemImage: "square.and.arrow.up") { Task { await export() } }
+                Divider()
                 Button("Reset Curve", systemImage: "arrow.counterclockwise") { model.perform("curve.reset", ["channel": .string(channel == "parametric" ? "parametric" : channel)]) }
             } label: {
                 Image(systemName: "ellipsis.circle")
             }
             .accessibilityLabel("Curve Presets")
+            .alert("Save Curve Preset", isPresented: $saving) {
+                TextField("Preset Name", text: $presetName)
+                Button("Save") {
+                    Task {
+                        await model.run("curve.savePreset", ["name": .string(presetName.trimmingCharacters(in: .whitespaces))])
+                        await loadPresets()
+                    }
+                }
+                Button("Cancel", role: .cancel) {}
+            }
+            .fileImporter(isPresented: $importing, allowedContentTypes: [.json, UTType(filenameExtension: "lccurve") ?? .json], allowsMultipleSelection: true) { result in
+                guard case .success(let urls) = result else { return }
+                let paths = PresetFiles.stage(urls)
+                Task {
+                    if let r = await model.run("curve.importPresets", ["paths": .array(paths.map { .string($0) })]) {
+                        model.show(String(localized: "Imported \(r["imported"].array?.count ?? 0) curve presets"))
+                    }
+                    await loadPresets()
+                }
+            }
+            .sheet(item: $exported) { file in
+                ActivityView(urls: [file.url]) { exported = nil }
+            }
         }
         if channel == "parametric" {
             Sliders(section: "curve")
@@ -40,10 +75,20 @@ struct CurveEditor: View {
                 .padding(.vertical, 6)
         }
         EmptyView()
-            .task {
-                guard let engine = model.engine, let r = try? await engine.execute("curve.presets") else { return }
-                presets = r["presets"].array?.compactMap { $0["name"].string } ?? []
-            }
+            .task { await loadPresets() }
+    }
+
+    private func loadPresets() async {
+        guard let engine = model.engine, let r = try? await engine.execute("curve.presets") else { return }
+        presets = r["presets"].array?.compactMap { $0["name"].string } ?? []
+    }
+
+    /// The user's curve presets as a .lccurve file, to share or save.
+    private func export() async {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("LightCraft Curves.lccurve")
+        if await model.run("curve.exportPresets", ["path": .string(url.path)]) != nil {
+            exported = SharedFile(url: url)
+        }
     }
 }
 

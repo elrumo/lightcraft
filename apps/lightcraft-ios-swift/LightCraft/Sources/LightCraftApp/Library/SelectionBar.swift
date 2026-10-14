@@ -186,6 +186,34 @@ struct SelectionMoreItems: View {
             model.selectMode = false
             model.open(first)
         }
+        PhotoManageItems(ids: ids)
+    }
+}
+
+/// Rename, capture time and metadata presets for `ids` (the select bar's and a photo's "…").
+struct PhotoManageItems: View {
+    @Environment(AppModel.self) private var model
+    let ids: [UInt64]
+
+    var body: some View {
+        Section {
+            Button("Rename…", systemImage: "character.cursor.ibeam") { model.sheet = .renamePhotos(ids) }
+            Button("Edit Capture Time…", systemImage: "calendar.badge.clock") { model.sheet = .captureTime(ids) }
+            Button("Metadata Presets…", systemImage: "text.badge.checkmark") { model.sheet = .metadataPresets(ids) }
+            Button("Contact Sheet…", systemImage: "doc.richtext") { model.sheet = .contactSheet(ids) }
+        }
+        .disabled(ids.isEmpty)
+        if ids.count > 1 {
+            Menu("Photo Merge", systemImage: "square.on.square") {
+                ForEach([("merge.hdr", "HDR…"), ("merge.panorama", "Panorama…"), ("merge.hdrPanorama", "HDR Panorama…")], id: \.0) { command, label in
+                    Button(LocalizedStringKey(label)) { model.sheet = .merge(command, ids) }
+                }
+                Divider()
+                ForEach([("merge.hdr", "HDR with Last Settings"), ("merge.panorama", "Panorama with Last Settings"), ("merge.hdrPanorama", "HDR Panorama with Last Settings")], id: \.0) { command, label in
+                    Button(LocalizedStringKey(label)) { Task { await model.request("host.merge.last", ["command": .string(command), "ids": AppModel.ids(ids)]) } }
+                }
+            }
+        }
     }
 }
 

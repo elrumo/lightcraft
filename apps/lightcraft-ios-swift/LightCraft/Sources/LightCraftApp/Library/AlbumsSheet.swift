@@ -8,6 +8,8 @@ struct AlbumsSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @State private var expanded: Set<UInt64> = []
+    /// The iPad's sidebar column rather than a page over the grid (nothing to close).
+    var sidebar = false
 
     var body: some View {
         NavigationStack {
@@ -16,7 +18,7 @@ struct AlbumsSheet: View {
                     sourceRow("All Photos", "photo.on.rectangle", kind: "all", count: model.library.stats?.photos)
                     sourceRow("Recently Added", "clock", kind: "recentlyAdded", count: nil)
                     Button {
-                        dismiss()
+                        leave()
                         model.path.append(.people)
                     } label: {
                         AlbumRowLabel(title: String(localized: "People"), symbol: "person.2", cover: nil, count: nil, chosen: false)
@@ -67,8 +69,10 @@ struct AlbumsSheet: View {
             .navigationTitle("Albums")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Close", systemImage: "xmark") { dismiss() }
+                if !sidebar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Close", systemImage: "xmark") { dismiss() }
+                    }
                 }
                 ToolbarItem(placement: .primaryAction) {
                     Menu {
@@ -102,15 +106,20 @@ struct AlbumsSheet: View {
         let chosen = model.library.state?.source.kind == kind
         return Button {
             model.perform("library.source", ["kind": .string(kind)])
-            dismiss()
+            leave()
         } label: {
             AlbumRowLabel(title: String(localized: title), symbol: symbol, cover: nil, count: model.prefs.showCounts ? count : nil, chosen: chosen)
         }
     }
 
+    /// After a choice: close the page, or (the sidebar) bring the grid to the front.
+    private func leave() {
+        if sidebar { model.path = [] } else { dismiss() }
+    }
+
     private func choose(_ node: AlbumNode) {
         model.perform("library.source", ["kind": "album", "id": .int(Int64(clamping: node.id))])
-        dismiss()
+        leave()
     }
 }
 

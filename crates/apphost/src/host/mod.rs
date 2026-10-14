@@ -262,6 +262,11 @@ struct Engine {
     export: Option<PendingExport>,
     /// `enhance.superRes` running on its worker: answered when it ends.
     super_res: Option<PendingSuperRes>,
+    /// Photo Merge: its previews and full merges (`host.merge.*`), the preview request waiting for
+    /// its picture, and a counter for the pictures' keys.
+    merge: crate::merge::Runner,
+    merge_preview: Option<(u64, Option<Sender<Event>>)>,
+    merge_shown: u64,
     /// The zoom window last asked for (`render.view {zoom}`): its image event says where it goes.
     region: Option<RegionShown>,
     /// `import.scan` running on its worker, and the candidates of the last one (`render.candidate`).
@@ -385,6 +390,9 @@ impl Engine {
             faces_scan: None,
             export: None,
             super_res: None,
+            merge: crate::merge::Runner::default(),
+            merge_preview: None,
+            merge_shown: 0,
             region: None,
             scan: None,
             candidates: Vec::new(),
@@ -483,6 +491,11 @@ impl Engine {
             return lightcraft_engine::guard::catch("`enhance.superRes`", || self.start_super_res(id, call, &params))
                 .unwrap_or_else(|e| Some(Event::err(id, ErrorBody::new("panic", e))));
         }
+        // a merge preview: answered when its picture is drawn (a newer one answers the older "cancelled")
+        if req.method == "host.merge.preview" {
+            return lightcraft_engine::guard::catch("`host.merge.preview`", || self.start_merge_preview(id, call, &req.params))
+                .unwrap_or_else(|e| Some(Event::err(id, ErrorBody::new("panic", e))));
+        }
         let method = req.method.clone();
         let result = lightcraft_engine::guard::catch(&format!("`{method}`"), || self.dispatch(&req.method, &req.params))
             .unwrap_or_else(|e| Err(ErrorBody::new("panic", e)));
@@ -508,6 +521,25 @@ impl Engine {
                 Ok(Value::Array(v))
             }
             "host.state" => Ok(serde_json::to_value(self.snapshot()).unwrap_or_default()),
+            "host.merge.start" | "host.merge.last" => {
+                let ids = merge_ids(&self.session, p);
+                let r = if method == "host.merge.last" {
+                    let command = p.get("command").and_then(Value::as_str).ok_or_else(|| bad("missing `command`"))?;
+                    self.merge.start_last(&self.session, command, &ids)
+                } else {
+                    self.merge.start(&self.session, &merge_options(p), &ids)
+                };
+                r.map_err(|e| ErrorBody::new("other", e))?;
+                self.busy = true;
+                Ok(json!({"started": true, "photos": ids.len()}))
+            }
+            "host.merge.cancel" => {
+                self.merge.cancel_preview();
+                if let Some((id, reply)) = self.merge_preview.take() {
+                    Self::reply(&self.events, reply, Event::err(id, ErrorBody::new("cancelled", "the merge preview was closed")));
+                }
+                Ok(json!({}))
+            }
             "host.lifecycle" => {
                 let event = p.get("event").and_then(Value::as_str).ok_or_else(|| bad("missing `event`"))?;
                 self.lifecycle(event).map_err(|e| bad(&e))?;
@@ -716,6 +748,7 @@ impl Engine {
         self.pump_faces();
         self.poll_export();
         self.poll_super_res();
+        self.poll_merge();
         self.poll_scan();
         self.poll_import();
         self.session.persist_if_dirty();
@@ -975,6 +1008,78 @@ impl Engine {
         Self::reply(&self.events, p.reply, event);
     }
 
+    fn start_merge_preview(&mut self, id: u64, call: Option<&Sender<Event>>, p: &Value) -> Option<Event> {
+        let ids = merge_ids(&self.session, p);
+        if ids.len() < 2 {
+            return Some(Event::err(id, ErrorBody::new("badParams", "select at least 2 photos to merge")));
+        }
+        // the preview waiting is dropped for this one
+        if let Some((old, reply)) = self.merge_preview.take() {
+            Self::reply(&self.events, reply, Event::err(old, ErrorBody::new("cancelled", "a newer preview took its place")));
+        }
+        match self.merge.preview(&self.session, &merge_options(p), &ids) {
+            Ok(()) => {
+                self.merge_preview = Some((id, call.cloned()));
+                self.busy = true;
+                None
+            }
+            Err(e) => Some(Event::err(id, ErrorBody::new("other", e))),
+        }
+    }
+
+    /// A merge preview's picture (slot `merge`) and its answer; a full merge's message.
+    fn poll_merge(&mut self) {
+        if !self.merge.busy() {
+            return;
+        }
+        self.busy = true;
+        for done in self.merge.poll(&mut self.session, &|stage| stage.to_string()) {
+            match done {
+                crate::merge::Done::Preview { result, .. } => {
+                    let Some((id, reply)) = self.merge_preview.take() else { continue };
+                    let event = match result {
+                        Ok((img, info)) => {
+                            if let Some(img) = img {
+                                self.merge_shown += 1;
+                                let (width, height) = (u32::try_from(img.width).unwrap_or(u32::MAX), u32::try_from(img.height).unwrap_or(u32::MAX));
+                                let token = self.leases.put_image("merge", Arc::new(img));
+                                self.events.push(
+                                    Event::Image {
+                                        slot: "merge".into(),
+                                        photo: PhotoId(0),
+                                        key: self.merge_shown,
+                                        token,
+                                        width,
+                                        height,
+                                        is_final: true,
+                                        draft: false,
+                                        quick: None,
+                                        ms: 0.0,
+                                        histogram: None,
+                                        window: None,
+                                    }
+                                    .to_value(),
+                                );
+                            }
+                            Event::ok(id, json!({"info": info, "slot": "merge"}))
+                        }
+                        Err(e) => Event::err(id, ErrorBody::new("other", e)),
+                    };
+                    Self::reply(&self.events, reply, event);
+                }
+                crate::merge::Done::Merged { options, result, cancelled } => {
+                    let what = crate::merge::what(&options.command);
+                    let (text, level) = match result {
+                        Ok(_) => (format!("{what} merge added"), "info"),
+                        Err(_) if cancelled => (format!("{what} merge cancelled"), "info"),
+                        Err(e) => (format!("{what} merge failed: {e}"), "error"),
+                    };
+                    self.events.push(Event::Message { text, level: level.into() }.to_value());
+                }
+            }
+        }
+    }
+
     fn poll_export(&mut self) {
         let Some(outcome) = self.export.as_ref().and_then(|p| p.batch.poll()) else { return };
         let Some(p) = self.export.take() else { return };
@@ -1128,6 +1233,23 @@ fn overlay(v: Option<&Value>) -> lightcraft_pipeline::Overlay {
         Some("hdr") => Overlay::HdrRange,
         _ => Overlay::None,
     }
+}
+
+/// The photos a `host.merge.*` request names (`ids`), else the selection.
+fn merge_ids(s: &Session, p: &Value) -> Vec<PhotoId> {
+    match p.get("ids").and_then(Value::as_array) {
+        Some(a) => a.iter().filter_map(Value::as_u64).map(PhotoId).collect(),
+        None => s.targets(&json!({})),
+    }
+}
+
+/// A `host.merge.*` request's options: `options` (the dialog's), for `command`.
+fn merge_options(p: &Value) -> crate::merge::MergeOptions {
+    let mut o: crate::merge::MergeOptions = p.get("options").and_then(|v| serde_json::from_value(v.clone()).ok()).unwrap_or_default();
+    if let Some(c) = p.get("command").and_then(Value::as_str) {
+        o.command = c.to_string();
+    }
+    o
 }
 
 #[cfg(test)]

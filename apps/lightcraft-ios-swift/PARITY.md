@@ -19,8 +19,8 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 |---|---:|---:|---:|---:|---:|
 | S0 | 15 | 0 | 0 | 0 | 15/15 |
 | S1 | 164 | 0 | 0 | 3 | 167/167 |
-| S2 | 1 | 0 | 79 | 22 | 23/102 |
-| **Total** | 180 | 0 | 79 | 25 | 205/284 |
+| S2 | 29 | 0 | 51 | 22 | 51/102 |
+| **Total** | 208 | 0 | 51 | 25 | 233/284 |
 <!-- /ios-parity:summary -->
 
 ## Screens
@@ -73,7 +73,7 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | screen:compact.ipadPortrait | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/GridView.swift` | egui's wide compact layout (from 600 pt): an open tool in a 340 pt side panel beside the photo, the grid's columns scaled to the width; checked on an iPad Pro 11" simulator. The albums list stays a sheet (egui's albums column comes with the full iPad layout, S2) |
 | screen:compact.accessibility | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/GridView.swift` | every icon-only control has a VoiceOver label; grid photos are buttons named by title or file with their stars, pick or reject and edited as the value; text follows Dynamic Type (the tool, group and mask bars and the grid badges through `@ScaledMetric`, capped at xxxLarge so the bars keep their shape); checked at accessibility-extra-large on the simulator |
 | screen:compact.localization | S1 | ✅ | `xtask/src/swift_strings.rs`, `apps/lightcraft-ios-swift/locales/keys.json`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Localization/es.lproj/Localizable.strings` | the egui languages through iOS localisation: `cargo xtask swift-strings` makes each `Localizable.strings` from the egui catalogs and the app's own; engine labels looked up at run time; dates formatted by iOS |
-| screen:ipad.splitView | S2 | ⬜ |  |  |
+| screen:ipad.splitView | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/App/RootView.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/AlbumsSheet.swift` | an iPad: the albums list as a sidebar column beside the grid (NavigationSplitView); it steps aside while a photo is open; checked on an iPad Pro 11" simulator |
 | screen:ipad.inspector | S2 | ⬜ |  |  |
 | screen:ipad.menuBar | S2 | ⬜ |  |  |
 | screen:ipad.keyboard | S2 | ⬜ |  |  |
@@ -113,7 +113,7 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | ui:compare.makeSelect | S2 | ⬜ |  |  |
 | ui:view.autoAdvance | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | Settings ▸ General ▸ Auto Advance |
 | ui:view.filmstrip | S2 | ⬜ |  |  |
-| ui:view.leftPanel | S2 | ⬜ |  |  |
+| ui:view.leftPanel | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/App/RootView.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LibraryScreen.swift` | the sidebar button, or a tap on the collection's name, shows or hides the albums column |
 | ui:view.beforeAfter | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PhotoScreen.swift` | the photo's "…" ▸ Before / After: side by side on a wide screen, stacked on a tall one |
 | ui:view.beforeAfterSplit | S2 | ⬜ |  |  |
 | ui:view.beforeAfterTopBottom | S2 | ⬜ |  |  |
@@ -193,22 +193,22 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | ui:dialog.faceModel | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/FacesSettings.swift` | Settings ▸ Faces ▸ Add a Model File… (Files), then its terms to accept (`faces.models.inspect`, `faces.models.install`) |
 | ui:dialog.newSmartAlbum | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/AlbumsSheet.swift` | Albums ▸ + ▸ Smart Album from Filter: a name, then the grid's view becomes the album (`album.createSmart`) |
 | ui:dialog.createPreset | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/CopySettingsSheet.swift` | Presets ▸ +: name, group (yours or a new one), the settings groups from `develop.settingsGroups` |
-| ui:dialog.autoStack | S2 | ⬜ |  |  |
+| ui:dialog.autoStack | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LibraryDialogs.swift` | grid "…" ▸ Auto-Stack by Capture Time…: the gap, with how many stacks it makes as it changes (`stack.auto {preview}`) |
 | ui:dialog.copySettings | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/CopySettingsSheet.swift` | photo "…" ▸ Copy Settings… |
 | ui:dialog.pasteSettings | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/CopySettingsSheet.swift` | select ▸ More ▸ Paste Selected Settings… |
 | ui:dialog.shareLink | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | an album's menu ▸ Share Link… (signed in) |
 | ui:view.focusSearch | S2 | ⬜ |  |  |
 | ui:dialog.export | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Share/ExportSheet.swift` | the Share page with presets, options, More Options and progress |
-| ui:dialog.contactSheet | S2 | ⬜ |  |  |
-| ui:app.contactSheet | S2 | ⬜ |  |  |
+| ui:dialog.contactSheet | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LibraryDialogs.swift` | select bar "…" ▸ Contact Sheet…: paper, orientation, columns, rows, names → PDF (`export.contactSheet`), the share sheet |
+| ui:app.contactSheet | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LibraryDialogs.swift` | as Contact Sheet… |
 | ui:photo.editInPhotoCraft | S2 | 🚫 |  | no external editors on iOS (the egui iOS app does not offer it either) |
 | ui:photo.editInExternal | S2 | 🚫 |  | no external editors on iOS |
-| ui:dialog.mergeHdr | S2 | ⬜ |  |  |
-| ui:dialog.mergePanorama | S2 | ⬜ |  |  |
-| ui:dialog.mergeHdrPanorama | S2 | ⬜ |  |  |
-| ui:merge.hdrLast | S2 | ⬜ |  |  |
-| ui:merge.panoramaLast | S2 | ⬜ |  |  |
-| ui:merge.hdrPanoramaLast | S2 | ⬜ |  |  |
+| ui:dialog.mergeHdr | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/MergeSheet.swift`, `crates/apphost/src/merge.rs` | select bar "…" ▸ Photo Merge ▸ HDR…: options and a live preview (`host.merge.preview`, the runner shared with egui), Merge in the background |
+| ui:dialog.mergePanorama | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/MergeSheet.swift`, `crates/apphost/src/merge.rs` | Photo Merge ▸ Panorama… |
+| ui:dialog.mergeHdrPanorama | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/MergeSheet.swift`, `crates/apphost/src/merge.rs` | Photo Merge ▸ HDR Panorama… |
+| ui:merge.hdrLast | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/SelectionBar.swift`, `crates/apphost/src/merge.rs` | Photo Merge ▸ HDR with Last Settings (`host.merge.last`) |
+| ui:merge.panoramaLast | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/SelectionBar.swift`, `crates/apphost/src/merge.rs` | Photo Merge ▸ Panorama with Last Settings |
+| ui:merge.hdrPanoramaLast | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/SelectionBar.swift`, `crates/apphost/src/merge.rs` | Photo Merge ▸ HDR Panorama with Last Settings |
 | ui:dialog.superRes | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/SuperResSheet.swift`, `crates/apphost/src/superres.rs` | the photo's "…" ▸ Super Resolution…: the model's size, credit and licence, Download (only when pressed), progress; then the size before and after and Enlarge, in the background (`apphost::superres`, shared with egui) |
 | ui:superRes.cancel | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/SuperResSheet.swift` | the Enlarging row's ✕ in the activity stack; Cancel Download while the model downloads |
 | ui:view.selectMode | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LibraryScreen.swift` | Select, or a long press |
@@ -229,14 +229,14 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | ui:file.backupLibrary | S2 | ⬜ |  |  |
 | ui:file.restoreLibrary | S2 | ⬜ |  |  |
 | ui:photo.locate | S2 | ⬜ |  |  |
-| ui:dialog.saveMetadataPreset | S2 | ⬜ |  |  |
+| ui:dialog.saveMetadataPreset | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LibraryDialogs.swift` | select bar or a photo's "…" ▸ Metadata Presets…: apply, delete, save the photo's as a preset |
 | ui:app.quit | S2 | 🚫 |  | iOS apps are not quit by the app |
 | ui:file.importPresets | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PresetImportSheet.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/Panels.swift` | Presets ▸ ⊕ ▸ Import Presets… (Files): the review, then Import (`preset.importReview`, `preset.importRun`, shared with egui) |
 | ui:file.exportPresets | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/Panels.swift` | Presets ▸ ⊕ ▸ Export Presets…: yours (the group shown, if it is yours) as a `.lcpreset` file to share or save |
-| ui:file.importKeywords | S2 | ⬜ |  |  |
-| ui:file.exportKeywords | S2 | ⬜ |  |  |
-| ui:file.importCurvePresets | S2 | ⬜ |  |  |
-| ui:file.exportCurvePresets | S2 | ⬜ |  |  |
+| ui:file.importKeywords | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/KeywordListView.swift` | Keywords ▸ "…" ▸ Import Keywords… (a file from Files, `keyword.import`) |
+| ui:file.exportKeywords | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/KeywordListView.swift` | Keywords ▸ "…" ▸ Export Keywords… (`keyword.export`, the share sheet) |
+| ui:file.importCurvePresets | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/CurveEditor.swift` | the curve's presets menu ▸ Import Curve Presets… (.lccurve / JSON from Files) |
+| ui:file.exportCurvePresets | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/CurveEditor.swift` | the curve's presets menu ▸ Export Curve Presets… (the share sheet); also Save Point Curve as Preset… |
 | ui:app.settings | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | grid "…" ▸ Settings |
 | ui:app.newLibrary | S2 | 🚫 |  | one library in the app sandbox (`docs/ios-gaps.md` B5.2) |
 | ui:app.openLibrary | S2 | 🚫 |  | one library in the app sandbox |
@@ -259,9 +259,9 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | ui:app.resetShortcuts | S2 | 🚫 |  | no shortcut editor on iPadOS |
 | ui:app.export | S0 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Share/ExportSheet.swift`, `crates/apphost/src/export.rs` | Share ▸ Share / Save to Photos (`app.export` in the background); All Commands runs it too |
 | ui:app.showInFinder | S2 | 🚫 |  | no Finder on iOS |
-| ui:dialog.rename | S2 | ⬜ |  |  |
-| ui:dialog.labelNames | S2 | ⬜ |  |  |
-| ui:dialog.captureTime | S2 | ⬜ |  |  |
+| ui:dialog.rename | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LibraryDialogs.swift` | select bar or a photo's "…" ▸ Rename…: template with its tags (`photo.renameTokens`), live preview (`photo.renamePreview`), `photo.rename` |
+| ui:dialog.labelNames | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LibraryDialogs.swift` | grid "…" ▸ Color Label Names…: the five names and the label sets (apply, save, delete) |
+| ui:dialog.captureTime | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LibraryDialogs.swift` | Rename's menu ▸ Edit Capture Time…: adjust to a time (the others move by as much), set each, shift by time zone (`photo.setCaptureTime`) |
 | ui:photo.tagFromTracklog | S2 | ⬜ |  |  |
 | ui:app.exportPrevious | S2 | ⬜ |  |  |
 | ui:app.saveToPhotos | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Share/ExportSheet.swift` | Share ▸ Save to Photos |
@@ -280,22 +280,22 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 
 | Id | Phase | Status | Evidence | Notes |
 |---|---|---|---|---|
-| dialog:ContactSheet | S2 | ⬜ |  |  |
+| dialog:ContactSheet | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LibraryDialogs.swift` | Contact Sheet sheet |
 | dialog:NewAlbum | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/AlbumsSheet.swift` | name, Create |
 | dialog:RenameAlbum | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/AlbumsSheet.swift` | an album's menu ▸ Rename… |
 | dialog:TextPrompt | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/KeywordListView.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/AlbumsSheet.swift` | each one-field prompt is a native alert or sheet where it is used (album and keyword names, mask and part names, export preset names) |
-| dialog:CaptureTime | S2 | ⬜ |  |  |
+| dialog:CaptureTime | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LibraryDialogs.swift` | Edit Capture Time sheet |
 | dialog:Import | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Share/ImportReview.swift` | the phone review |
 | dialog:PresetImport | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/PresetImportSheet.swift`, `crates/engine/src/preset_review.rs` | the presets by group with what they set and what isn't carried over, LUT profiles, unreadable files; then how it went |
-| dialog:LabelNames | S2 | ⬜ |  |  |
-| dialog:Rename | S2 | ⬜ |  |  |
+| dialog:LabelNames | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LibraryDialogs.swift` | Color Label Names sheet |
+| dialog:Rename | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LibraryDialogs.swift` | Rename Photos sheet |
 | dialog:RenameKeyword | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/KeywordListView.swift` | Albums ▸ Keywords ▸ a keyword's menu ▸ Rename… (`keyword.rename`) |
 | dialog:KeywordTag | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/KeywordListView.swift` | Albums ▸ Keywords ▸ + or a keyword's menu: Create / Edit Keyword Tag (synonyms, export options, person, add to the selected photos) |
-| dialog:KeywordSet | S2 | ⬜ |  |  |
-| dialog:MoveKeyword | S2 | ⬜ |  |  |
+| dialog:KeywordSet | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LibraryDialogs.swift` | grid "…" ▸ Keyword Sets…: the nine keywords to toggle on the chosen photos, the sets, editing and new sets |
+| dialog:MoveKeyword | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LibraryDialogs.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/KeywordListView.swift` | Keywords ▸ a keyword's menu ▸ Move To… (a keyword or the top level) |
 | dialog:DeleteKeyword | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/KeywordListView.swift` | Albums ▸ Keywords ▸ a keyword's menu ▸ Delete… (asks, with its photo count) |
-| dialog:MergeKeywords | S2 | ⬜ |  |  |
-| dialog:AutoStack | S2 | ⬜ |  |  |
+| dialog:MergeKeywords | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LibraryDialogs.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/KeywordListView.swift` | Keywords ▸ a keyword's menu ▸ Merge Into… |
+| dialog:AutoStack | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/LibraryDialogs.swift` | Auto-Stack sheet |
 | dialog:NewSmartAlbum | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/AlbumsSheet.swift` | as `ui:dialog.newSmartAlbum` |
 | dialog:WhatsNew | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | as `ui:app.whatsNew` |
 | dialog:Cull | S2 | ⬜ |  |  |
@@ -308,7 +308,7 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | dialog:CopySettings | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/CopySettingsSheet.swift` | the settings groups |
 | dialog:PasteSettings | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/CopySettingsSheet.swift` | the settings groups |
 | dialog:Export | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Share/ExportSheet.swift` | as `ui:dialog.export` |
-| dialog:Merge | S2 | ⬜ |  |  |
+| dialog:Merge | S2 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/MergeSheet.swift`, `crates/apphost/src/host/tests.rs` | the merge sheet; checked on the simulator (an HDR preview of two imported photos) |
 | dialog:Settings | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/FacesSettings.swift` | General, Import, Performance, Interface, Sync, Faces (recognition, models, scan progress), AI Models |
 | dialog:SamModel | S1 | 🚫 |  | iOS builds have no AI Denoise or SAM 3: the engine's `denoise` and `sam` features are off for iOS (the egui iOS app has only `enhance` too) |
 | dialog:SuperRes | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/SuperResSheet.swift` | as `ui:dialog.superRes` |

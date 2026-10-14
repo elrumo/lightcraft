@@ -124,6 +124,16 @@ final class ScriptHost {
                 case "createPreset": model.sheet = .createPreset
                 case "smartAlbum": model.sheet = .smartAlbum(params["id"].int.map { UInt64(clamping: $0) }, parent: nil)
                 case "allMetadata": model.sheet = .allMetadata
+                case "renamePhotos": model.sheet = .renamePhotos(model.targets)
+                case "captureTime": model.sheet = .captureTime(model.targets)
+                case "labelNames": model.sheet = .labelNames
+                case "autoStack": model.sheet = .autoStack
+                case "keywordSets": model.sheet = .keywordSets
+                case "metadataPresets": model.sheet = .metadataPresets(model.targets)
+                case "contactSheet": model.sheet = .contactSheet(model.targets)
+                case "merge.hdr", "merge.panorama", "merge.hdrPanorama":
+                    let ids = params["ids"].array?.compactMap { $0.int.map { UInt64(clamping: $0) } } ?? model.targets
+                    model.sheet = .merge(sheet, ids)
                 default: model.sheet = nil
                 }
             }

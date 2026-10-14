@@ -2046,7 +2046,7 @@ pub fn ui_enabled(app: &LightcraftApp, id: &str) -> bool {
         "dialog.superRes" => lightcraft_engine::enhance::Enhancer::AVAILABLE && app.session.active().is_some() && !app.superres.busy(),
         "superRes.cancel" => app.superres.busy(),
         s if s.starts_with("dialog.merge") || (s.starts_with("merge.") && s.ends_with("Last")) => {
-            app.session.targets(&serde_json::json!({})).len() >= 2 && app.merge.final_task.is_none()
+            app.session.targets(&serde_json::json!({})).len() >= 2 && app.merge.runner.merging.is_none()
         }
         _ => true,
     }

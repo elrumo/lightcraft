@@ -6,30 +6,27 @@ import SwiftUI
 /// slide up (`model.sheet`), and the messages over everything.
 struct RootView: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.horizontalSizeClass) private var horizontalSize
     @Namespace private var photos
 
     var body: some View {
         @Bindable var model = model
-        NavigationStack(path: $model.path) {
-            Group {
-                if let error = model.startError {
-                    ContentUnavailableView("LightCraft couldn't start", systemImage: "exclamationmark.triangle", description: Text(error))
-                } else if model.engine == nil {
-                    ProgressView("Opening your library…")
-                } else {
-                    LibraryScreen(namespace: photos)
+        Group {
+            if horizontalSize == .regular {
+                // an iPad: the albums in a column beside the grid (egui's wide layout)
+                NavigationSplitView(columnVisibility: $model.sidebar) {
+                    AlbumsSheet(sidebar: true)
+                        .navigationSplitViewColumnWidth(min: 260, ideal: 300, max: 380)
+                } detail: {
+                    stack
                 }
-            }
-            .navigationDestination(for: Route.self) { route in
-                switch route {
-                case .photo(let id):
-                    PhotoScreen(start: id)
-                        .navigationTransition(.zoom(sourceID: id, in: photos))
-                case .commands: AllCommandsView()
-                case .people: PeopleView()
-                case .person(let name): PersonView(name: name)
-                case .map: MapScreen()
+                .navigationSplitViewStyle(.balanced)
+                // a photo takes the screen: the albums step aside while it is open
+                .onChange(of: model.path.isEmpty) { _, grid in
+                    withAnimation { model.sidebar = grid ? .all : .detailOnly }
                 }
+            } else {
+                stack
             }
         }
         .sheet(item: $model.sheet) { sheet in
@@ -56,6 +53,33 @@ struct RootView: View {
         }
         .preferredColorScheme(model.prefs.appearance.scheme)
         .haptic(trigger: model.haptic) { _, h in h.seq == 0 ? nil : h.feedback }
+    }
+
+    /// The library and the screens pushed over it.
+    private var stack: some View {
+        @Bindable var model = model
+        return NavigationStack(path: $model.path) {
+            Group {
+                if let error = model.startError {
+                    ContentUnavailableView("LightCraft couldn't start", systemImage: "exclamationmark.triangle", description: Text(error))
+                } else if model.engine == nil {
+                    ProgressView("Opening your library…")
+                } else {
+                    LibraryScreen(namespace: photos)
+                }
+            }
+            .navigationDestination(for: Route.self) { route in
+                switch route {
+                case .photo(let id):
+                    PhotoScreen(start: id)
+                        .navigationTransition(.zoom(sourceID: id, in: photos))
+                case .commands: AllCommandsView()
+                case .people: PeopleView()
+                case .person(let name): PersonView(name: name)
+                case .map: MapScreen()
+                }
+            }
+        }
     }
 
     private var deleteTitle: String {
@@ -99,6 +123,14 @@ struct SheetContent: View {
         case .smartAlbum(let id, let parent): SmartAlbumSheet(album: id, parent: parent)
         case .allMetadata: AllMetadataSheet()
         case .activity: ActivityPage()
+        case .renamePhotos(let ids): RenamePhotosSheet(ids: ids)
+        case .captureTime(let ids): CaptureTimeSheet(ids: ids)
+        case .labelNames: LabelNamesSheet()
+        case .autoStack: AutoStackSheet()
+        case .keywordSets: KeywordSetsSheet()
+        case .metadataPresets(let ids): MetadataPresetsSheet(ids: ids)
+        case .contactSheet(let ids): ContactSheetSheet(ids: ids)
+        case .merge(let command, let ids): MergeSheet(command: command, ids: ids)
         case .newSmartAlbumFromView:
             // the grid as it is shown (source and filter) becomes a smart album
             AlbumNameSheet(title: "New Smart Album", action: "Create", name: "") { name in

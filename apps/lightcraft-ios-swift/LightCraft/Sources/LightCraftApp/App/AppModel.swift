@@ -39,6 +39,14 @@ nonisolated enum Sheet: Identifiable, Hashable {
     case newSmartAlbumFromView
     case allMetadata
     case activity
+    case renamePhotos([UInt64])
+    case captureTime([UInt64])
+    case labelNames
+    case autoStack
+    case keywordSets
+    case metadataPresets([UInt64])
+    case contactSheet([UInt64])
+    case merge(String, [UInt64])
 
     var id: String {
         switch self {
@@ -63,6 +71,14 @@ nonisolated enum Sheet: Identifiable, Hashable {
         case .newSmartAlbumFromView: "newSmartAlbumFromView"
         case .allMetadata: "allMetadata"
         case .activity: "activity"
+        case .renamePhotos: "renamePhotos"
+        case .captureTime: "captureTime"
+        case .labelNames: "labelNames"
+        case .autoStack: "autoStack"
+        case .keywordSets: "keywordSets"
+        case .metadataPresets: "metadataPresets"
+        case .contactSheet: "contactSheet"
+        case .merge(let command, _): command
         }
     }
 }
@@ -86,6 +102,8 @@ final class AppModel {
     var toast: Toast?
     var path: [Route] = []
     var sheet: Sheet?
+    /// On an iPad, whether the albums column shows beside the grid.
+    var sidebar: NavigationSplitViewVisibility = .all
     /// Photos are being chosen in the grid (Select).
     var selectMode = false
     /// Choosing photos to add to this album (its + ▸ LightCraft).
@@ -369,6 +387,18 @@ final class AppModel {
         guard let engine else { return nil }
         do {
             return try await engine.execute(command, params)
+        } catch {
+            show(error.localizedDescription, error: true)
+            return nil
+        }
+    }
+
+    /// Ask the host (`render.*`, `host.*`); a refusal becomes the message shown.
+    @discardableResult
+    func request(_ method: String, _ params: JSONValue = [:]) async -> JSONValue? {
+        guard let engine else { return nil }
+        do {
+            return try await engine.request(method, params)
         } catch {
             show(error.localizedDescription, error: true)
             return nil

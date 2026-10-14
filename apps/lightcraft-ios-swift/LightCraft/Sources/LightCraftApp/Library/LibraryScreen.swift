@@ -155,6 +155,7 @@ struct LibraryScreen: View {
 /// The collection's name (a tap opens the albums), the count, and Sort and Filter.
 struct LibraryHeader: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.horizontalSizeClass) private var horizontalSize
     /// What narrows the grid (`library.filterChips`), and the counts.
     @State private var chips: JSONValue = .null
 
@@ -215,7 +216,12 @@ struct LibraryHeader: View {
     private var header: some View {
         HStack(alignment: .center, spacing: 8) {
             Button {
-                model.sheet = .albums
+                // an iPad has the albums in a column: the title shows or hides it
+                if horizontalSize == .regular {
+                    withAnimation { model.sidebar = model.sidebar == .detailOnly ? .all : .detailOnly }
+                } else {
+                    model.sheet = .albums
+                }
             } label: {
                 VStack(alignment: .leading, spacing: 0) {
                     HStack(spacing: 6) {
@@ -313,6 +319,11 @@ struct GridMoreMenu: View {
             Section {
                 Button("Map", systemImage: "map") { model.path.append(.map) }
                 Button("People", systemImage: "person.2") { model.path.append(.people) }
+            }
+            Section {
+                Button("Auto-Stack by Capture Time…", systemImage: "square.stack.3d.down.right") { model.sheet = .autoStack }
+                Button("Keyword Sets…", systemImage: "tag.square") { model.sheet = .keywordSets }
+                Button("Color Label Names…", systemImage: "circle.lefthalf.filled") { model.sheet = .labelNames }
             }
             Section {
                 Button("Settings", systemImage: "gear") { model.sheet = .settings(nil) }

@@ -12,6 +12,10 @@ struct KeywordListView: View {
     @State private var newName = ""
     @State private var deleting: KeywordNode?
     @State private var tag: KeywordTagTarget?
+    @State private var moving: KeywordNode?
+    @State private var merging: KeywordNode?
+    @State private var importing = false
+    @State private var exported: SharedFile?
 
     var body: some View {
         List {
@@ -30,6 +34,8 @@ struct KeywordListView: View {
                     }
                     Button("Edit Keyword Tag…", systemImage: "tag") { tag = KeywordTagTarget(editing: node.path, parent: nil) }
                     Button("Create Keyword Inside…", systemImage: "plus") { tag = KeywordTagTarget(editing: nil, parent: node.path) }
+                    Button("Move To…", systemImage: "folder") { moving = node }
+                    Button("Merge Into…", systemImage: "arrow.triangle.merge") { merging = node }
                     Divider()
                     Button("Delete…", systemImage: "trash", role: .destructive) { deleting = node }
                 }
@@ -43,6 +49,13 @@ struct KeywordListView: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button("Create Keyword Tag", systemImage: "plus") { tag = KeywordTagTarget(editing: nil, parent: nil) }
+            }
+            ToolbarItem(placement: .secondaryAction) {
+                Menu("More", systemImage: "ellipsis") {
+                    Button("Import Keywords…", systemImage: "square.and.arrow.down") { importing = true }
+                    Button("Export Keywords…", systemImage: "square.and.arrow.up") { Task { await export() } }
+                    Button("Delete Unused Keywords", systemImage: "trash") { model.perform("keyword.purgeUnused") }
+                }
             }
         }
         .alert("Rename Keyword", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
@@ -59,9 +72,43 @@ struct KeywordListView: View {
             }
         }
         .sheet(item: $tag) { KeywordTagSheet(target: $0) }
+        .sheet(item: $moving) { k in
+            KeywordPickerSheet(title: "Move “\(k.name)” To", keyword: k.path, allowTopLevel: true) { parent in
+                model.perform("keyword.move", ["keyword": .string(k.path), "parent": parent.map { .string($0) } ?? .null])
+            }
+        }
+        .sheet(item: $merging) { k in
+            KeywordPickerSheet(title: "Merge “\(k.name)” Into", keyword: k.path, allowTopLevel: false) { into in
+                guard let into else { return }
+                model.perform("keyword.merge", ["from": [.string(k.path)], "into": .string(into)])
+            }
+        }
+        .fileImporter(isPresented: $importing, allowedContentTypes: [.plainText, .text, .utf8PlainText]) { result in
+            guard case .success(let url) = result, let path = PresetFiles.stage([url]).first else { return }
+            Task {
+                if let r = await model.run("keyword.import", ["path": .string(path)]) {
+                    model.show(String(localized: "\(r["added"].int ?? 0) keywords added, \(r["updated"].int ?? 0) updated"))
+                }
+            }
+        }
+        .sheet(item: $exported) { file in
+            ActivityView(urls: [file.url]) { exported = nil }
+        }
         .task(id: model.state.catalogRevision) {
             guard let engine = model.engine else { return }
             tree = (try? await engine.execute("keyword.list", [:], as: [KeywordNode].self)) ?? []
+        }
+    }
+
+    /// The keyword list as a text file (Lightroom Classic's format), to share or save.
+    private func export() async {
+        guard let r = await model.run("keyword.export"), let text = r["text"].string else { return }
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("Keywords.txt")
+        do {
+            try text.write(to: url, atomically: true, encoding: .utf8)
+            exported = SharedFile(url: url)
+        } catch {
+            model.show(error.localizedDescription, error: true)
         }
     }
 
