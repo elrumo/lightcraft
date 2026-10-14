@@ -426,6 +426,7 @@ struct ModelsSettings: View {
 
     var body: some View {
         Form {
+            AppleModelsSection()
             ForEach(Array(models.enumerated()), id: \.offset) { _, m in
                 Section {
                     VStack(alignment: .leading, spacing: 4) {
@@ -437,7 +438,7 @@ struct ModelsSettings: View {
                         if let licence = m["licence"].string { Text(licence).font(.caption).foregroundStyle(.secondary) }
                     }
                     if m["installed"].bool == true {
-                        Toggle("Use", isOn: Binding(get: { m["enabled"].bool == true }, set: { on in run("models.setEnabled", ["id": m["id"], "enabled": .bool(on)]) }))
+                        Toggle("Use", isOn: Binding(get: { m["enabled"].bool == true }, set: { on in switchModel(m["id"], on) }))
                         Button("Delete", role: .destructive) { run("models.delete", ["id": m["id"], "confirm": true]) }
                     } else if m["download"]["running"].bool == true {
                         HStack {
@@ -468,6 +469,16 @@ struct ModelsSettings: View {
     private func run(_ command: String, _ params: JSONValue) {
         Task {
             await model.run(command, params)
+            await load()
+        }
+    }
+
+    /// "Use" on a model: the engine answers with every model that is off now, which the app keeps for the next launch.
+    private func switchModel(_ id: JSONValue, _ on: Bool) {
+        Task {
+            if let r = await model.run("models.setEnabled", ["id": id, "enabled": .bool(on)]) {
+                model.prefs.modelsDisabled = (r["disabled"].array ?? []).compactMap(\.string)
+            }
             await load()
         }
     }

@@ -5,11 +5,11 @@ import SwiftUI
 enum MaskKind {
     /// Create New Mask, as Lightroom's mobile app lists it.
     static let create: [(kind: String, label: String)] = [
-        ("subject", "Select Subject"), ("sky", "Select Sky"), ("background", "Select Background"), ("linear", "Linear Gradient"),
+        ("subject", "Select Subject"), ("object", "Select Object"), ("sky", "Select Sky"), ("background", "Select Background"), ("linear", "Linear Gradient"),
         ("radial", "Radial Gradient"), ("luminanceRange", "Luminance Range"), ("colorRange", "Color Range"), ("brush", "Brush"),
     ]
     /// What a mask can be added to, taken away from or intersected with.
-    static let parts = ["brush", "linear", "radial", "sky", "subject", "luminanceRange"]
+    static let parts = ["brush", "linear", "radial", "sky", "subject", "object", "luminanceRange"]
 
     static func name(_ kind: String) -> String {
         switch kind {
@@ -76,7 +76,10 @@ struct MaskingTools: View {
         let mask = MaskList.selected(model)
         VStack(spacing: 8) {
             if model.editor.maskTool == "brush" {
-                BrushControls()
+                BrushControls().transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
+            if model.editor.maskTool == "object" {
+                ObjectControls().transition(.opacity.combined(with: .move(edge: .bottom)))
             }
             if let mask, let group {
                 MaskGroupSheet(mask: mask, group: group)
@@ -91,6 +94,7 @@ struct MaskingTools: View {
         }
         .padding(.vertical, 8)
         .animation(.snappy, value: group)
+        .animation(.snappy, value: model.editor.maskTool)
         .onChange(of: mask == nil) { _, none in
             if none { group = nil }
         }
@@ -509,16 +513,21 @@ private struct CreateMaskMenu: View {
     private func create(_ kind: String) {
         let editor = model.editor
         Task {
-            if kind == "brush" {
-                // the first stroke makes the mask
+            if kind == "brush" || kind == "object" {
+                // the first stroke or tap makes the mask
                 await model.run("mask.select", ["id": .null])
+            } else if kind == "subject" {
+                await model.selectSubject()
             } else {
                 await model.run("mask.add", ["kind": .string(kind)])
             }
-            editor.maskTool = kind == "brush" || kind == "colorRange" ? kind : nil
+            editor.maskTool = kind == "brush" || kind == "colorRange" || kind == "object" ? kind : nil
             editor.brushErase = false
+            editor.objectOp = nil
+            editor.objectSubtract = false
             if kind == "colorRange" { model.show(String(localized: "Tap the photo to pick a colour")) }
             if kind == "brush" { model.show(String(localized: "Paint the area to adjust")) }
+            if kind == "object" { model.show(String(localized: "Tap an object to select it")) }
         }
     }
 }
@@ -551,6 +560,14 @@ private struct CombineMenu: View {
 
     private func add(_ kind: String, _ op: String) {
         let editor = model.editor
+        if kind == "object" {
+            // the first tap makes the part
+            editor.maskTool = "object"
+            editor.objectOp = op
+            editor.objectSubtract = false
+            model.show(String(localized: "Tap an object to select it"))
+            return
+        }
         Task {
             guard await model.run("mask.addComponent", ["kind": .string(kind), "op": .string(op)]) != nil else { return }
             if kind == "brush" {
@@ -655,6 +672,27 @@ struct MaskOverlayOptions: View {
 }
 
 /// The brush: paint or erase, size, feather, flow, and Auto Mask (follows the photo's edges).
+/// The Object tool under the photo: taps add the object under the finger to the selection, or, with
+/// Subtract, take it out; the selection is computed on this device (Apple's models).
+struct ObjectControls: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        @Bindable var e = model.editor
+        HStack {
+            Picker("Object", selection: $e.objectSubtract) {
+                Label("Add", systemImage: "plus").tag(false)
+                Label("Subtract", systemImage: "minus").tag(true)
+            }
+            .pickerStyle(.segmented)
+            if e.selecting { ProgressView().transition(.scale.combined(with: .opacity)) }
+            Button("Done") { e.maskTool = nil }
+        }
+        .padding(.horizontal, 16)
+        .animation(.snappy, value: e.selecting)
+    }
+}
+
 struct BrushControls: View {
     @Environment(AppModel.self) private var model
 

@@ -132,6 +132,55 @@ fn dist_to_path(pts: &[(f32, f32)], q: (f32, f32)) -> f32 {
     }
 }
 
+/// Distance, in pixels, from each pixel of a `w × h` box to the nearest pixel that is `inside` (0 in it): a
+/// two-pass chamfer, close enough to round for a spot's feathered edge.
+fn distance_to_inside(w: usize, h: usize, inside: &[bool]) -> Vec<f32> {
+    const DIAG: f32 = std::f32::consts::SQRT_2;
+    let mut d: Vec<f32> = inside.iter().map(|i| if *i { 0.0 } else { f32::MAX / 4.0 }).collect();
+    let at = |d: &[f32], x: usize, y: usize, add: f32| d.get(y * w + x).map_or(f32::MAX, |v| v + add);
+    for y in 0..h {
+        for x in 0..w {
+            let mut v = at(&d, x, y, 0.0);
+            if x > 0 {
+                v = v.min(at(&d, x - 1, y, 1.0));
+            }
+            if y > 0 {
+                v = v.min(at(&d, x, y - 1, 1.0));
+                if x > 0 {
+                    v = v.min(at(&d, x - 1, y - 1, DIAG));
+                }
+                if x + 1 < w {
+                    v = v.min(at(&d, x + 1, y - 1, DIAG));
+                }
+            }
+            if let Some(c) = d.get_mut(y * w + x) {
+                *c = v;
+            }
+        }
+    }
+    for y in (0..h).rev() {
+        for x in (0..w).rev() {
+            let mut v = at(&d, x, y, 0.0);
+            if x + 1 < w {
+                v = v.min(at(&d, x + 1, y, 1.0));
+            }
+            if y + 1 < h {
+                v = v.min(at(&d, x, y + 1, 1.0));
+                if x + 1 < w {
+                    v = v.min(at(&d, x + 1, y + 1, DIAG));
+                }
+                if x > 0 {
+                    v = v.min(at(&d, x - 1, y + 1, DIAG));
+                }
+            }
+            if let Some(c) = d.get_mut(y * w + x) {
+                *c = v;
+            }
+        }
+    }
+    d
+}
+
 /// The most a window grows to take in the spots that touch it.
 const MAX_SPOT_SPAN: usize = if cfg!(target_arch = "wasm32") { 4096 } else { 8192 };
 /// Strokes with more dabs than this are not examined dab by dab (the render would be too slow anyway).
@@ -329,10 +378,34 @@ pub fn apply(img: &mut Rgb32f, spots: &[Spot], frame: &Frame, ppl: f64) {
         let mut hole = vec![false; if remove { bw * bh } else { 0 }];
         let mut src = vec![[0.0f32; 3]; bw * bh];
         let mut tgt = vec![[0.0f32; 3]; bw * bh];
+        // Tap to Remove: the object's own shape is the area, so the distance is to it, not to a path
+        // (and the fill is synthesized at the scale of the hole it leaves: a big object is not a small spot)
+        let mut fill_r = r;
+        let shape_dist = match &spot.shape {
+            Some(seg) => match crate::masks::SegGrid::new(seg) {
+                Some(grid) => {
+                    let to_norm = frame.out_to_norm(w, h);
+                    let inside: Vec<bool> = (0..bw * bh)
+                        .map(|i| {
+                            let n = to_norm.apply(Point::new((bx0 + i % bw) as f64 + 0.5, (by0 + i / bw) as f64 + 0.5));
+                            grid.contains(n) && grid.logit(n) > 0.0
+                        })
+                        .collect();
+                    fill_r = fill_r.max((inside.iter().filter(|i| **i).count() as f32 / std::f32::consts::PI).sqrt());
+                    Some(distance_to_inside(bw, bh, &inside))
+                }
+                // (a damaged shape selects nothing)
+                None => continue,
+            },
+            None => None,
+        };
         for y in 0..bh {
             for x in 0..bw {
                 let (px, py) = ((bx0 + x) as f32 + 0.5, (by0 + y) as f32 + 0.5);
-                let d = dist_to_path(&pts, (px, py));
+                let d = match &shape_dist {
+                    Some(sd) => sd.get(y * bw + x).copied().unwrap_or(f32::MAX),
+                    None => dist_to_path(&pts, (px, py)),
+                };
                 let inner = r * (1.0 - feather * 0.8);
                 alpha[y * bw + x] = (1.0 - smooth(inner, r, d)) * opacity;
                 if let Some(m) = hole.get_mut(y * bw + x) {
@@ -352,11 +425,11 @@ pub fn apply(img: &mut Rgb32f, spots: &[Spot], frame: &Frame, ppl: f64) {
         let seed = spot.points.first().map_or(0, |p| p.x.to_bits() ^ p.y.to_bits().rotate_left(32));
         let filled = match baked {
             // the model's fill gives the structure, the synthesized one the photo's grain and fine texture
-            Some(ai) => Some(match crate::inpaint::fill(img, bx0, by0, bw, bh, &hole, r, offset, seed) {
+            Some(ai) => Some(match crate::inpaint::fill(img, bx0, by0, bw, bh, &hole, fill_r, offset, seed) {
                 Some(pm) => with_detail(ai, pm, bw, bh, (r * DETAIL).max(1.0)),
                 None => ai,
             }),
-            None if remove => crate::inpaint::fill(img, bx0, by0, bw, bh, &hole, r, offset, seed),
+            None if remove => crate::inpaint::fill(img, bx0, by0, bw, bh, &hole, fill_r, offset, seed),
             None => None,
         };
         let heal = match filled {
@@ -521,9 +594,23 @@ pub fn erase_input(src: &Rgb32f, info: &crate::SourceInfo, s: &DevelopSettings, 
     // the stroke, half a pixel wider so its edge is filled too
     let reach = (r + 0.5 * kx.max(ky)) as f32;
     let pts32: Vec<(f32, f32)> = pts.iter().map(|p| (p.0 as f32, p.1 as f32)).collect();
-    let hole: Vec<bool> = (0..w * h)
-        .map(|i| dist_to_path(&pts32, ((x0 + ((i % w) as f64 + 0.5) * kx) as f32, (y0 + ((i / w) as f64 + 0.5) * ky) as f32)) < reach)
-        .collect();
+    let hole: Vec<bool> = match &spot.shape {
+        // Tap to Remove: the object's shape, widened by the spot's reach
+        Some(seg) => {
+            let grid = crate::masks::SegGrid::new(seg)?;
+            let inside: Vec<bool> = (0..w * h)
+                .map(|i| {
+                    let n = Point::new((x0 + ((i % w) as f64 + 0.5) * kx) / ow, (y0 + ((i / w) as f64 + 0.5) * ky) / oh);
+                    grid.contains(n) && grid.logit(n) > 0.0
+                })
+                .collect();
+            let dist = distance_to_inside(w, h, &inside);
+            dist.iter().map(|d| (*d as f64) * kx.max(ky) < f64::from(reach)).collect()
+        }
+        None => (0..w * h)
+            .map(|i| dist_to_path(&pts32, ((x0 + ((i % w) as f64 + 0.5) * kx) as f32, (y0 + ((i / w) as f64 + 0.5) * ky) as f32)) < reach)
+            .collect(),
+    };
     // exposure for the model: the area's bright end (99th percentile) near white
     let mut bright: Vec<f32> = lin.data.iter().map(|p| p[0].max(p[1]).max(p[2])).filter(|v| v.is_finite()).collect();
     let at = (bright.len() * 99 / 100).min(bright.len().saturating_sub(1));
@@ -579,6 +666,66 @@ mod tests {
         apply(&mut img, &[spot], &frame, frame.px_per_long(120));
         let c = img.get(60, 40);
         assert!((c[0] - 0.26).abs() < 0.03, "{c:?}");
+    }
+
+    /// A spot with a shape (Tap to Remove) fills the object's own outline, not a stroke: an L-shaped
+    /// blot is gone, and so is nothing far from it.
+    #[test]
+    fn a_shape_spot_removes_the_shape_it_has() {
+        use lightcraft_develop::SegMask;
+        let (w, h) = (160usize, 120usize);
+        let blot = |x: usize, y: usize| ((60..70).contains(&x) && (40..80).contains(&y)) || ((60..100).contains(&x) && (70..80).contains(&y));
+        let mut img = Rgb32f::from_fn(w, h, |x, _| [0.3 + x as f32 * 0.001; 3]);
+        for y in 0..h {
+            for x in 0..w {
+                if blot(x, y) {
+                    img.set(x, y, [0.0; 3]);
+                }
+            }
+        }
+        let cov: Vec<u8> = (0..w * h).map(|i| if blot(i % w, i / w) { 255 } else { 0 }).collect();
+        let sel = SegMask::from_coverage_cropped(128, w, h, &cov).unwrap();
+        let spot = Spot {
+            points: vec![Point::new(sel.center.0, sel.center.1), Point::new(sel.bbox[0], sel.bbox[1]), Point::new(sel.bbox[2], sel.bbox[3])],
+            size: 0.01,
+            feather: 0.0,
+            shape: Some(sel.mask),
+            ..Default::default()
+        };
+        let frame = Frame::new(w, h, &DevelopSettings::default(), true);
+        apply(&mut img, &[spot], &frame, frame.px_per_long(w));
+        for (x, y) in [(64, 50), (64, 75), (90, 75)] {
+            assert!(img.get(x, y)[0] > 0.2, "({x}, {y}) is still the blot: {:?}", img.get(x, y));
+        }
+        // the corner the L doesn't cover was never touched (a path through its box would have been)
+        let c = img.get(90, 50);
+        assert!((c[0] - (0.3 + 90.0 * 0.001)).abs() < 1e-4, "{c:?}");
+    }
+
+    #[test]
+    fn a_shape_spot_with_a_damaged_shape_does_nothing() {
+        use lightcraft_develop::SegMask;
+        let mut img = Rgb32f::from_fn(40, 40, |_, _| [0.5; 3]);
+        let before = img.clone();
+        let mut shape = SegMask::from_logits(4, &[5.0; 16]);
+        shape.data = "not base64 !".into();
+        let spot = Spot { points: vec![Point::new(0.5, 0.5)], shape: Some(shape), ..Default::default() };
+        let frame = Frame::new(40, 40, &DevelopSettings::default(), true);
+        apply(&mut img, &[spot], &frame, frame.px_per_long(40));
+        assert_eq!(img.data, before.data);
+    }
+
+    #[test]
+    fn the_distance_to_a_shape_counts_pixels() {
+        // a single pixel in the middle of 7 × 7
+        let mut inside = vec![false; 49];
+        inside[3 * 7 + 3] = true;
+        let d = distance_to_inside(7, 7, &inside);
+        assert_eq!(d[3 * 7 + 3], 0.0);
+        assert!((d[3 * 7 + 6] - 3.0).abs() < 1e-5);
+        assert!((d[0] - 3.0 * std::f32::consts::SQRT_2).abs() < 1e-4, "{}", d[0]);
+        // nothing inside: far from everything
+        assert!(distance_to_inside(3, 3, &[false; 9]).iter().all(|v| *v > 1e30));
     }
 
     /// Four quadrants meet under the spot: healing from one offset can't continue all four edges,

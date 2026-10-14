@@ -135,6 +135,10 @@ final class EditorModel {
     var fingers = 0
     /// The Remove tool: its mode and brush (size as a fraction of the photo's long edge).
     var removeMode = "remove"
+    /// Remove selects by tapping an object (Apple Vision) instead of painting a stroke.
+    var removeTap = false
+    /// Tap mode's Size: how far past a tapped object's edge its spot reaches (a fraction of the photo's long edge).
+    var removeTapSize = 0.004
     var removeSize = 0.02
     var removeFeather = 50.0
     var removeOpacity = 100.0
@@ -145,6 +149,12 @@ final class EditorModel {
     var eraseReady = false
     /// The Masking tool's tool in hand on the photo (`brush`, `colorRange`) and the brush.
     var maskTool: String?
+    /// The Object tool: the next tap takes the object out of the selection instead of adding it, a
+    /// selection is being computed, and the combine mode (`add`, `subtract`, `intersect`) of the part
+    /// the next tap makes (`nil`: it makes a mask of its own).
+    var objectSubtract = false
+    var selecting = false
+    var objectOp: String?
     var brushSize = 0.03
     var brushFeather = 50.0
     var brushFlow = 100.0

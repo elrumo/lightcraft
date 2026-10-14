@@ -124,7 +124,8 @@ impl SettingsGroup {
 }
 
 /// The subset of `s` covering `groups`, as a partial JSON object. AI Remove fills are pictures of
-/// this photo, so copied spots leave them behind (on another photo they fill from around them).
+/// this photo, so copied spots leave them behind (on another photo they fill from around them), and
+/// spots that are the shape of an object here (Tap to Remove) are not copied at all.
 pub fn extract_groups(s: &DevelopSettings, groups: &[SettingsGroup]) -> Value {
     let full = s.to_json();
     let mut out = Map::new();
@@ -136,6 +137,8 @@ pub fn extract_groups(s: &DevelopSettings, groups: &[SettingsGroup]) -> Value {
         }
     }
     if let Some(Value::Array(spots)) = out.get_mut("spots") {
+        // (a Tap to Remove spot is the shape of an object in this photo: nowhere else it means anything)
+        spots.retain(|spot| spot.get("shape").is_none());
         for spot in spots.iter_mut().filter_map(Value::as_object_mut) {
             spot.remove("fill");
         }

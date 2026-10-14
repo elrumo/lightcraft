@@ -30,6 +30,8 @@ final class Prefs {
         faceBoxes = store.bool(forKey: "faceBoxes")
         removeAI = store.bool(forKey: "removeAI")
         expandModel = store.string(forKey: "expandModel") ?? "auto"
+        selectionEngine = store.string(forKey: "selectionEngine") ?? "auto"
+        modelsDisabled = store.stringArray(forKey: "modelsDisabled") ?? []
         importOnConnect = store.object(forKey: "importOnConnect") as? Bool ?? Platform.importsOnConnect
         libraryPath = store.string(forKey: "libraryPath")
         cropGuide = store.string(forKey: "cropGuide") ?? "thirds"
@@ -183,6 +185,12 @@ final class Prefs {
     /// Crop ▸ Expand's Fill With: the model Generate paints with (`crop.expandModels` ids; `auto`:
     /// the default).
     var expandModel: String { didSet { store.set(expandModel, forKey: "expandModel") } }
+    /// What selects an object or the subject (Masking): `auto` (Apple's models where this device has
+    /// them), `apple`, or `classic` (LightCraft's own guess, no model).
+    var selectionEngine: String { didSet { store.set(selectionEngine, forKey: "selectionEngine") } }
+    /// The AI models switched off in Settings ▸ AI Models ("Use"), by id: the engine keeps the choice only while it
+    /// runs (the egui app keeps it in `ui.json`'s `models_disabled`), so the app gives it back at launch.
+    var modelsDisabled: [String] { didSet { store.set(modelsDisabled, forKey: "modelsDisabled") } }
     /// Show the import when a camera or memory card is plugged in.
     var importOnConnect: Bool { didSet { store.set(importOnConnect, forKey: "importOnConnect") } }
     /// The library a Mac opens instead of the default one (chosen when the default won't open), or

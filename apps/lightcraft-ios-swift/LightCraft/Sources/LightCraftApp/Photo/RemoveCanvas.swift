@@ -87,7 +87,18 @@ struct RemoveCanvas: View {
             }
         }
         .contentShape(Rectangle())
-        .gesture(paint)
+        .gesture(paint, including: tapsToSelect ? .none : .all)
+        .simultaneousGesture(SpatialTapGesture().onEnded { tap in
+            guard let n = norm(tap.location) else { return }
+            Task { await model.removeObject(at: n) }
+        }, including: tapsToSelect ? .all : .none)
+        .overlay(alignment: .top) {
+            if model.editor.selecting {
+                ProgressView().padding(12).background(.regularMaterial, in: Capsule()).padding(.top, 12)
+                    .transition(.scale.combined(with: .opacity))
+            }
+        }
+        .animation(.snappy, value: model.editor.selecting)
         .confirmationDialog(menu.map { String(localized: "Spot \($0 + 1)") } ?? "", isPresented: Binding(get: { menu != nil }, set: { if !$0 { menu = nil } }), titleVisibility: .visible) {
             if let i = menu {
                 Button("Remove") { model.perform("spot.update", ["index": .int(Int64(i)), "mode": "remove"]) }
@@ -112,6 +123,9 @@ struct RemoveCanvas: View {
             frame = try? await engine.execute("view.frame", ["id": .int(Int64(clamping: photo))], as: PhotoFrame.self)
         }
     }
+
+    /// Remove selects what a tap lands on (Tap to Remove) instead of painting.
+    private var tapsToSelect: Bool { model.editor.removeMode == "remove" && model.editor.removeTap }
 
     /// The brush's radius on screen: its size is a fraction of the photo's long edge.
     private var brushRadius: CGFloat {
@@ -149,6 +163,8 @@ struct RemoveCanvas: View {
     private func pin(_ spot: JSONValue) -> CGPoint? {
         let pts = painted(spot)
         guard !pts.isEmpty else { return nil }
+        // (a tapped object's points are its centre, then the corners of its box)
+        if spot["shape"] != .null, let centre = pts.first { return screen(centre.0, centre.1) }
         let x = pts.map(\.0).reduce(0, +) / Double(pts.count)
         let y = pts.map(\.1).reduce(0, +) / Double(pts.count)
         return screen(x, y)
