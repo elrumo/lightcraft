@@ -9,10 +9,12 @@
 "#106): a DNG is checked against the raw data, written to a temp file, synced and read back before it gets its" = "(Issue #106). Ein DNG wird mit den RAW-Daten verglichen, temporär geschrieben, synchronisiert und zurückgelesen, bevor es seinen";
 "% of all commits" = "% aller Commits";
 "%@ Label" = "Farbmarkierung %1$@";
+"%@ connected" = "%1$@ verbunden";
 "%@ curve" = "Kurve: %@";
 "%@ free of %@" = "%1$@ frei von %2$@";
 "%@ of %@ used" = "%1$@ von %2$@ belegt";
 "%@ wheel" = "Farbrad: %@";
+"%@ · %lld MB download" = "%1$@ · Download von %2$lld MB";
 "%lld" = "%1$lld";
 "%lld %%" = "%1$lld %%";
 "%lld GB" = "%1$lld GB";
@@ -321,6 +323,7 @@
 "Camera-Specific Defaults" = "Kameraspezifische Standardeinstellungen";
 "Cameras and Cards" = "Kameras und Karten";
 "Cameras and cards" = "Kameras und Karten";
+"Can't Read It" = "Lesen nicht möglich";
 "Can't sync" = "Synchronisierung nicht möglich";
 "Cancel" = "Abbrechen";
 "Cancel AI Mask Model Download" = "Download des KI-Maskenmodells abbrechen";
@@ -656,7 +659,7 @@
 "Done" = "Fertig";
 "Double Tap Zooms To" = "Doppeltippen zoomt auf";
 "Download" = "Herunterladen";
-"Download %@?" = "%@ herunterladen?";
+"Download %@?" = "%@ laden?";
 "Download AI Mask Model" = "KI-Maskenmodell herunterladen";
 "Download All Small Previews" = "Alle kleinen Vorschauen herunterladen";
 "Download Denoise Model" = "Download Denoise Model";
@@ -744,7 +747,7 @@
 "Every face named %@ gets the new name; a name someone already has puts them together." = "Jedes Gesicht mit dem Namen %@ erhält den neuen Namen; ein Name, den schon jemand hat, führt beide zusammen.";
 "Existing previews" = "Vorhandene Vorschauen";
 "Exit" = "Beenden";
-"Expand" = "Ausklappen";
+"Expand" = "Erweitern";
 "Expand All Stacks" = "Alle Stapel ausklappen";
 "Expand Stack" = "Stapel ausklappen";
 "Expand/Collapse Stack" = "Stapel aus-/einklappen";
@@ -1006,6 +1009,7 @@
 "Image on Black" = "Bild auf Schwarz";
 "Image on White" = "Bild auf Weiß";
 "Import" = "Importieren";
+"Import %lld Photos" = "%lld Fotos importieren";
 "Import Curve Presets…" = "Kurvenvorgaben importieren…";
 "Import Date" = "Importdatum";
 "Import Keywords" = "Stichwörter importieren";
@@ -1022,6 +1026,7 @@
 "Import Profiles & Presets…" = "Profile und Vorgaben importieren…";
 "Import as New" = "Neu importieren";
 "Import as new" = "Neu importieren";
+"Import cancelled" = "Import abgebrochen";
 "Import cancelled · %lld added" = "Import abgebrochen · %lld hinzugefügt";
 "Import failed" = "Import fehlgeschlagen";
 "Import from Device" = "Von Gerät importieren";
@@ -1157,6 +1162,7 @@
 "Lens Corrections" = "Objektivkorrekturen";
 "Let the Server Build Previews" = "Server Vorschauen erstellen lassen";
 "Let the crop reach past the photo's edges and paint the new area on this computer" = "Den Zuschnitt über die Ränder des Fotos hinausziehen und die neue Fläche auf diesem Computer malen";
+"Lets the crop reach past the photo's edges, to paint the new area" = "Lässt den Ausschnitt über die Ränder des Fotos hinausreichen, um den neuen Bereich zu malen";
 "Level" = "Waagerecht";
 "Library" = "Bibliothek";
 "Library Info" = "Bibliotheksinformationen";
@@ -1183,6 +1189,7 @@
 "LightCraft couldn't open the library at" = "LightCraft konnte die Bibliothek nicht öffnen unter";
 "LightCraft couldn't start" = "LightCraft konnte nicht gestartet werden";
 "LightCraft does not know this model, so it assumed:" = "LightCraft does not know this model, so it assumed:";
+"LightCraft isn't allowed to read cameras and cards: allow it in Settings ▸ Privacy & Security" = "LightCraft darf Kameras und Karten nicht lesen: erlaube es unter Einstellungen ▸ Datenschutz & Sicherheit";
 "LightCraft keeps trying." = "LightCraft versucht es weiter.";
 "LightCraft may not add to your photo library: allow it in Settings ▸ Privacy ▸ Photos." = "LightCraft darf deiner Fotomediathek nichts hinzufügen: Erlaube es unter Einstellungen ▸ Datenschutz ▸ Fotos.";
 "LightCraft no longer crashes at launch on Windows PCs whose Vulkan driver is broken (issue #136, e.g. some Intel UHD" = "LightCraft stürzt beim Start auf Windows-PCs mit defektem Vulkan-Treiber nicht mehr ab (Issue #136, etwa bestimmte Intel-UHD-630-Treiber).";
@@ -1447,6 +1454,7 @@
 "No photo has it; the keywords below it go too." = "Kein Foto hat es; die Stichwörter darunter werden ebenfalls gelöscht.";
 "No photo selected" = "Kein Foto ausgewählt";
 "No photos" = "Keine Fotos";
+"No photos could be copied from %@" = "Von %1$@ konnten keine Fotos kopiert werden";
 "No photos found" = "Keine Fotos gefunden";
 "No photos in that folder" = "Keine Fotos in diesem Ordner";
 "No photos in this folder" = "Keine Fotos in diesem Ordner";
@@ -1601,6 +1609,7 @@
 "Photo ▸ Edit in External Editor (⇧⌘E) renders a 16-bit TIFF copy, stacks it with the original and opens it here (an app name on macOS, a program path elsewhere)." = "Foto → In externem Editor bearbeiten (⇧⌘E) rendert eine 16-Bit-TIFF-Kopie, stapelt sie mit dem Original und öffnet sie hier (App-Name unter macOS, sonst Programmpfad).";
 "Photos" = "Fotos";
 "Photos in Recently Deleted can be restored from the app: right-click ▸ Restore (or Delete Permanently), also in the" = "Fotos unter „Zuletzt gelöscht“ können in der App wiederhergestellt werden: Rechtsklick → Wiederherstellen oder Endgültig löschen, auch im";
+"Photos not copied from %@: %lld" = "Nicht von %1$@ kopierte Fotos: %2$lld";
 "Photos per Bracket" = "Fotos pro Belichtungsreihe";
 "Photos per bracket (0 = auto)" = "Fotos pro Belichtungsreihe (0 = automatisch)";
 "Photos seen in Local but never added or changed leave the catalog when their folder hasn't been browsed for this long (checked when the library opens). Files stay on disk; browsing the folder shows them again." = "Fotos, die unter „Lokal“ angezeigt, aber nie hinzugefügt oder geändert wurden, verlassen den Katalog, wenn ihr Ordner so lange nicht durchsucht wurde (Prüfung beim Öffnen der Bibliothek). Dateien bleiben auf dem Datenträger; beim Durchsuchen erscheinen sie wieder.";
@@ -1624,6 +1633,7 @@
 "Place Names Status" = "Status der Ortsnamen";
 "Place names download cancelled" = "Download der Ortsnamen abgebrochen";
 "Place names downloaded" = "Ortsnamen heruntergeladen";
+"Plug in a camera or a card reader (USB-C or Lightning), then try again." = "Schließe eine Kamera oder ein Kartenlesegerät an (USB-C oder Lightning) und versuche es erneut.";
 "Point Color" = "Punktfarbe";
 "Point Curve" = "Punktkurve";
 "Point Curve Presets" = "Punktkurvenvorgaben";
@@ -1728,6 +1738,7 @@
 "Read mode" = "Lesemodus";
 "Read the SAM License" = "SAM-Lizenz lesen";
 "Reading" = "Wird gelesen";
+"Reading %@… %lld photos so far" = "%1$@ wird gelesen … bisher %2$lld Fotos";
 "Reading Lightroom catalog" = "Lightroom-Katalog wird gelesen";
 "Reading Lightroom catalog…" = "Lightroom-Katalog wird gelesen …";
 "Reading a sidecar replaces the photo's rating, labels, metadata and edits with what it says." = "Beim Lesen einer Filialdatei werden Bewertung, Markierungen, Metadaten und Bearbeitungen des Fotos durch ihren Inhalt ersetzt.";
@@ -2161,6 +2172,7 @@
 "Stopped" = "Angehalten";
 "Stopped by an error (see the log)" = "Durch einen Fehler angehalten (siehe Protokoll)";
 "Stopping…" = "Wird angehalten…";
+"Stops painting the new area" = "Hört auf, den neuen Bereich zu malen";
 "Storage" = "Speicher";
 "Storage limit" = "Speicherlimit";
 "Store All Originals on This Device" = "Alle Originale auf diesem Gerät speichern";
@@ -2254,6 +2266,7 @@
 "That isn't JSON: %@" = "Das ist kein JSON: %@";
 "That key can't be used as a shortcut" = "Diese Taste kann nicht als Tastenkürzel verwendet werden";
 "The SAM 3 model is installed: Object and Describe masks are ready." = "Das SAM-3-Modell ist installiert: Objekt- und Beschreibungsmaske sind verfügbar.";
+"The camera is locked: unlock it to read its photos" = "Die Kamera ist gesperrt: entsperre sie, um ihre Fotos zu lesen";
 "The catalog has a format version (issue #102). Opening a library from an older LightCraft upgrades it; a library" = "Der Katalog hat eine Formatversion (Issue #102). Bibliotheken älterer LightCraft-Versionen werden beim Öffnen aktualisiert; eine Bibliothek";
 "The checkerboard shows area with nothing in it yet: Generate fills it." = "Das Schachbrett zeigt die noch leere Fläche: Erzeugen füllt sie.";
 "The control port (`--control`) closes a connection as soon as it receives anything that isn't a JSON request" = "Der Steuerport (`--control`) schließt eine Verbindung, sobald er etwas anderes als eine JSON-Anfrage erhält";
@@ -2268,6 +2281,7 @@
 "The library is up to date with this folder." = "Die Bibliothek ist mit diesem Ordner auf dem neuesten Stand.";
 "The model is kept on this computer only. LightCraft never uploads or shares it." = "The model is kept on this computer only. LightCraft never uploads or shares it.";
 "The model is kept on this device only. LightCraft never uploads or shares it." = "Das Modell bleibt nur auf diesem Gerät. LightCraft lädt es nie hoch und gibt es nicht weiter.";
+"The new area was painted by %@ on this device." = "Die neue Fläche wurde auf diesem Gerät erzeugt (%1$@).";
 "The number at the end of the original name (IMG_0042 → 0042)" = "Nummer am Ende des Originalnamens (IMG_0042 → 0042)";
 "The original extension is always added; {ext} only puts it inside the name as well." = "Die Originalerweiterung wird immer angehängt; {ext} fügt sie zusätzlich innerhalb des Namens ein.";
 "The original files, unchanged, each with an XMP sidecar holding its edits." = "Unveränderte Originaldateien, jeweils mit einer XMP-Begleitdatei für die Bearbeitungen.";
@@ -2392,6 +2406,7 @@
 "User" = "Benutzer";
 "User Presets" = "Benutzervorgaben";
 "Username" = "Benutzername";
+"Uses the %@ model, a %lld MB download (%@ licence). %@." = "Verwendet das %1$@-Modell, ein Download von %2$lld MB (Lizenz %3$@). %4$@.";
 "Uses the MI-GAN model, a %lld MB download (%@). %@." = "Verwendet das Modell MI-GAN, ein Download von %lld MB (%@). %@.";
 "Value" = "Wert";
 "Variance" = "Varianz";
@@ -2684,6 +2699,7 @@
 "{date} is the capture time; a photo without one uses the time it was imported." = "{date} ist die Aufnahmezeit; ohne diese wird die Importzeit verwendet.";
 "© 2026 Your Name" = "© 2026 Dein Name";
 "© Your Name" = "© Dein Name";
+"· %lld already in the library" = "· %1$lld bereits in der Bibliothek";
 "· ^[%lld photo](inflect: true)" = "· ^[%lld Foto](inflect: true)";
 "− harder border · + softer border" = "− härterer Rand · + weicherer Rand";
 "≤  at most" = "≤  höchstens";

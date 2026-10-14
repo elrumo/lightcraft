@@ -7,10 +7,12 @@
 " · in a burst" = " · 連写の一部";
 "% of all commits" = "全コミットに占める%";
 "%@ Label" = "%1$@のラベル";
+"%@ connected" = "%1$@が接続されました";
 "%@ curve" = "%@カーブ";
 "%@ free of %@" = "%2$@ 中 %1$@ の空き";
 "%@ of %@ used" = "%2$@ 中 %1$@ を使用";
 "%@ wheel" = "%@ホイール";
+"%@ · %lld MB download" = "%1$@ · %2$lld MBのダウンロード";
 "%lld" = "%1$lld年";
 "%lld %%" = "%1$lld%%";
 "%lld GB" = "%1$lld GB";
@@ -310,6 +312,7 @@
 "Camera-Specific Defaults" = "カメラごとの初期設定";
 "Cameras and Cards" = "カメラとメモリーカード";
 "Cameras and cards" = "カメラとカード";
+"Can't Read It" = "読み込めません";
 "Can't reach the map server — showing the built-in map and saved tiles" = "マップサーバーに接続できません — 内蔵マップと保存済みのタイルを表示しています";
 "Can't sync" = "同期できません";
 "Cancel" = "キャンセル";
@@ -729,7 +732,7 @@
 "Every face named %@ gets the new name; a name someone already has puts them together." = "「%@」と名付けたすべての顔に新しい名前が付きます。すでに使われている名前を付けると、同じ人物としてまとめられます。";
 "Existing previews" = "既存のプレビュー";
 "Exit" = "終了";
-"Expand" = "展開";
+"Expand" = "拡張";
 "Expand All Stacks" = "すべてのスタックを展開";
 "Expand Stack" = "スタックを展開";
 "Expand/Collapse Stack" = "スタックを展開／折りたたむ";
@@ -996,6 +999,7 @@
 "Image on Black" = "黒背景に画像";
 "Image on White" = "白背景に画像";
 "Import" = "読み込み";
+"Import %lld Photos" = "%lld枚の写真を読み込む";
 "Import Curve Presets…" = "カーブのプリセットを読み込む…";
 "Import Date" = "読み込み日時";
 "Import Folder from Files…" = "「ファイル」のフォルダを読み込む…";
@@ -1013,6 +1017,7 @@
 "Import Profiles & Presets…" = "プロファイルとプリセットを読み込む…";
 "Import as New" = "新規として読み込む";
 "Import as new" = "新規として読み込む";
+"Import cancelled" = "読み込みをキャンセルしました";
 "Import cancelled · %lld added" = "読み込みをキャンセルしました · %lld件追加";
 "Import failed" = "読み込みに失敗しました";
 "Import from Device" = "デバイスから読み込む";
@@ -1148,6 +1153,7 @@
 "Lens Corrections" = "レンズ補正";
 "Let the Server Build Previews" = "サーバーにプレビューを作成させる";
 "Let the crop reach past the photo's edges and paint the new area on this computer" = "切り抜きを写真の端の外まで広げ、新しい領域をこのコンピュータ上で描きます";
+"Lets the crop reach past the photo's edges, to paint the new area" = "切り抜きを写真の端の外まで広げ、新しい領域を描画します";
 "Letter" = "レター";
 "Level" = "水平";
 "Library" = "ライブラリ";
@@ -1174,6 +1180,7 @@
 "LightCraft couldn't open the library at" = "次の場所にあるライブラリを開けませんでした：";
 "LightCraft couldn't start" = "LightCraftを起動できませんでした";
 "LightCraft does not know this model, so it assumed:" = "LightCraft does not know this model, so it assumed:";
+"LightCraft isn't allowed to read cameras and cards: allow it in Settings ▸ Privacy & Security" = "LightCraftにはカメラとカードを読み込む許可がありません。「設定」▸「プライバシーとセキュリティ」で許可してください";
 "LightCraft keeps trying." = "LightCraftは再試行を続けます。";
 "LightCraft may not add to your photo library: allow it in Settings ▸ Privacy ▸ Photos." = "LightCraftには写真ライブラリへの追加が許可されていません。「設定 ▸ プライバシーとセキュリティ ▸ 写真」で許可してください。";
 "LightCraft on GitHub" = "LightCraftのソースコード";
@@ -1440,6 +1447,7 @@
 "No photo has it; the keywords below it go too." = "このキーワードを持つ写真はありません。下位のキーワードも削除されます。";
 "No photo selected" = "写真が選択されていません";
 "No photos" = "写真がありません";
+"No photos could be copied from %@" = "%1$@から写真をコピーできませんでした";
 "No photos found" = "写真が見つかりません";
 "No photos in that folder" = "そのフォルダに写真がありません";
 "No photos in this folder" = "このフォルダに写真はありません";
@@ -1603,6 +1611,7 @@
 "Photo found" = "写真が見つかりました";
 "Photo ▸ Edit in External Editor (⇧⌘E) renders a 16-bit TIFF copy, stacks it with the original and opens it here (an app name on macOS, a program path elsewhere)." = "「写真 → 外部エディターで編集」（⇧⌘E）で16ビットTIFFコピーを作成し、元画像とスタックにまとめて開きます。Macではアプリ名を指定してください";
 "Photos" = "写真";
+"Photos not copied from %@: %lld" = "%1$@からコピーできなかった写真：%2$lld枚";
 "Photos per Bracket" = "ブラケットあたりの枚数";
 "Photos per bracket (0 = auto)" = "ブラケットあたりの枚数（0 = 自動）";
 "Photos seen in Local but never added or changed leave the catalog when their folder hasn't been browsed for this long (checked when the library opens). Files stay on disk; browsing the folder shows them again." = "ローカルで参照しただけの写真は、この期間フォルダを開いていなければカタログから外します。ファイルはディスクに残り、再びフォルダを開くと表示されます";
@@ -1626,6 +1635,7 @@
 "Place Names Status" = "地名データの状態";
 "Place names download cancelled" = "地名データのダウンロードを中止しました";
 "Place names downloaded" = "地名データをダウンロードしました";
+"Plug in a camera or a card reader (USB-C or Lightning), then try again." = "カメラまたはカードリーダー（USB-CまたはLightning）を接続してから、もう一度お試しください。";
 "Point Color" = "ポイントカラー";
 "Point Curve" = "ポイントカーブ";
 "Point Curve Presets" = "ポイントカーブのプリセット";
@@ -1732,6 +1742,7 @@
 "Read the SAM License" = "SAMライセンスを読む";
 "Read the licence" = "ライセンスを読む";
 "Reading" = "読み込み中";
+"Reading %@… %lld photos so far" = "%1$@を読み取り中… これまでに%2$lld枚";
 "Reading Lightroom catalog" = "Lightroom カタログを読み取り中";
 "Reading Lightroom catalog…" = "Lightroom カタログを読み取り中…";
 "Reading a sidecar replaces the photo's rating, labels, metadata and edits with what it says." = "サイドカーを読み込むと、写真のレーティング、ラベル、メタデータ、編集内容がその内容に置き換わります。";
@@ -2175,6 +2186,7 @@
 "Stopped" = "停止しました";
 "Stopped by an error (see the log)" = "エラーで停止しました（ログを参照）";
 "Stopping…" = "停止中…";
+"Stops painting the new area" = "新しい領域の描画を停止します";
 "Storage" = "ストレージ";
 "Storage limit" = "ストレージ上限";
 "Store All Originals on This Device" = "すべての元画像をこのデバイスに保存";
@@ -2270,6 +2282,7 @@
 "That isn't JSON: %@" = "JSONではありません：%@";
 "That key can't be used as a shortcut" = "そのキーはショートカットに使えません";
 "The SAM 3 model is installed: Object and Describe masks are ready." = "SAM 3モデルはインストール済みです。オブジェクトマスクと説明マスクを使用できます";
+"The camera is locked: unlock it to read its photos" = "カメラがロックされています。写真を読み込むにはロックを解除してください";
 "The checkerboard shows area with nothing in it yet: Generate fills it." = "市松模様はまだ何もない領域です。［生成］で埋めます。";
 "The denoise model is installed and in use: the AI Denoise Amount slider under Detail now works" = "The denoise model is installed and in use: the AI Denoise Amount slider under Detail now works";
 "The download continues if you close this, and resumes if interrupted." = "閉じてもダウンロードは続き、中断しても再開します。";
@@ -2285,6 +2298,7 @@
 "The library is up to date with this folder." = "ライブラリはこのフォルダと一致しています。";
 "The model is kept on this computer only. LightCraft never uploads or shares it." = "The model is kept on this computer only. LightCraft never uploads or shares it.";
 "The model is kept on this device only. LightCraft never uploads or shares it." = "モデルはこのデバイス内にのみ保存されます。LightCraftがアップロードしたり共有したりすることはありません。";
+"The new area was painted by %@ on this device." = "新しい領域はこのデバイス上で生成されました（%1$@）。";
 "The number at the end of the original name (IMG_0042 → 0042)" = "元の名前の末尾の番号（IMG_0042 → 0042）";
 "The original extension is always added; {ext} only puts it inside the name as well." = "元の拡張子は常に付きます。{ext} は名前の中にも拡張子を入れる場合に使います";
 "The original files, unchanged, each with an XMP sidecar holding its edits." = "元のファイルを変更せず、編集内容を保存したXMPサイドカーファイルを添えて書き出します";
@@ -2415,6 +2429,7 @@
 "User" = "ユーザー";
 "User Presets" = "ユーザープリセット";
 "Username" = "ユーザー名";
+"Uses the %@ model, a %lld MB download (%@ licence). %@." = "%1$@モデルを使用します（%2$lld MBのダウンロード、%3$@ライセンス）。%4$@。";
 "Uses the MI-GAN model, a %lld MB download (%@). %@." = "MI-GANモデルを使用します。ダウンロードは%lld MB（%@）です。%@。";
 "Value" = "値";
 "Variance" = "ばらつき";
@@ -2629,6 +2644,7 @@
 "{date} is the capture time; a photo without one uses the time it was imported." = "{date} は撮影日時です。撮影日時がない写真には読み込んだ日時を使います";
 "© 2026 Your Name" = "© 2026 あなたの名前";
 "© Your Name" = "© あなたの名前";
+"· %lld already in the library" = "・%1$lld枚は読み込み済み";
 "· ^[%lld photo](inflect: true)" = "· %lld枚の写真";
 "— licence:" = "— ライセンス：";
 "− harder border · + softer border" = "− 境界を硬く · ＋ 境界を柔らかく";

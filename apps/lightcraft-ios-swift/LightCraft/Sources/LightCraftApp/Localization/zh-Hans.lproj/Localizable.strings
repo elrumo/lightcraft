@@ -7,10 +7,12 @@
 " · in a burst" = " · 属于一组连拍";
 "% of all commits" = "占全部提交的百分比";
 "%@ Label" = "%1$@ 标签";
+"%@ connected" = "%1$@已连接";
 "%@ curve" = "%@ 曲线";
 "%@ free of %@" = "%2$@ 中可用 %1$@";
 "%@ of %@ used" = "已用 %1$@，共 %2$@";
 "%@ wheel" = "%@ 色轮";
+"%@ · %lld MB download" = "%1$@ · 需下载 %2$lld MB";
 "%lld" = "%1$lld年";
 "%lld %%" = "%1$lld%%";
 "%lld GB" = "%1$lld GB";
@@ -311,6 +313,7 @@
 "Camera-Specific Defaults" = "相机专属默认值";
 "Cameras and Cards" = "相机和存储卡";
 "Cameras and cards" = "相机和存储卡";
+"Can't Read It" = "无法读取";
 "Can't reach the map server — showing the built-in map and saved tiles" = "无法连接地图服务器 — 显示内置地图和已保存的图块";
 "Can't sync" = "无法同步";
 "Cancel" = "取消";
@@ -645,7 +648,7 @@
 "Done" = "完成";
 "Double Tap Zooms To" = "双击缩放至";
 "Download" = "下载";
-"Download %@?" = "要下载 %@ 吗？";
+"Download %@?" = "下载%@？";
 "Download AI Mask Model" = "下载 AI 蒙版模型";
 "Download All Small Previews" = "下载所有小预览";
 "Download Denoise Model" = "下载降噪模型";
@@ -737,7 +740,7 @@
 "Every face named %@ gets the new name; a name someone already has puts them together." = "所有名为 %@ 的人脸都会改为新名称；如果该名称已有人使用，则会把他们合并在一起。";
 "Existing previews" = "现有预览";
 "Exit" = "退出";
-"Expand" = "展开";
+"Expand" = "扩展";
 "Expand All Stacks" = "展开所有堆叠";
 "Expand Stack" = "展开堆叠";
 "Expand/Collapse Stack" = "展开／折叠堆叠";
@@ -1011,6 +1014,7 @@
 "Image on Black" = "黑底图像";
 "Image on White" = "白底图像";
 "Import" = "导入";
+"Import %lld Photos" = "导入 %lld 张照片";
 "Import Curve Presets…" = "导入曲线预设…";
 "Import Date" = "导入日期";
 "Import Folder from Files…" = "从“文件”导入文件夹…";
@@ -1028,6 +1032,7 @@
 "Import Profiles & Presets…" = "导入配置文件与预设…";
 "Import as New" = "作为新照片导入";
 "Import as new" = "作为新照片导入";
+"Import cancelled" = "导入已取消";
 "Import cancelled · %lld added" = "已取消导入 · 已添加 %lld 张";
 "Import failed" = "导入失败";
 "Import from Device" = "从设备导入";
@@ -1167,6 +1172,7 @@
 "Lens Corrections" = "镜头校正";
 "Let the Server Build Previews" = "让服务器生成预览";
 "Let the crop reach past the photo's edges and paint the new area on this computer" = "让裁剪框超出照片边缘，并在此电脑上绘制新区域";
+"Lets the crop reach past the photo's edges, to paint the new area" = "让裁剪超出照片边缘，以绘制新区域";
 "Letter" = "信纸";
 "Level" = "水平";
 "Library" = "图库";
@@ -1194,6 +1200,7 @@
 "LightCraft couldn't open the library at" = "LightCraft 无法打开以下位置的图库：";
 "LightCraft couldn't start" = "LightCraft 无法启动";
 "LightCraft does not know this model, so it assumed:" = "LightCraft 不认识此模型，因此按以下假设处理：";
+"LightCraft isn't allowed to read cameras and cards: allow it in Settings ▸ Privacy & Security" = "LightCraft 无权读取相机和存储卡：请在“设置”▸“隐私与安全性”中允许";
 "LightCraft keeps trying." = "LightCraft 会持续重试。";
 "LightCraft may not add to your photo library: allow it in Settings ▸ Privacy ▸ Photos." = "LightCraft 可能无权向你的照片图库添加内容：请在“设置 ▸ 隐私 ▸ 照片”中允许。";
 "LightCraft on GitHub" = "GitHub 上的 LightCraft";
@@ -1462,6 +1469,7 @@
 "No photo has it; the keywords below it go too." = "没有照片使用它；其下的关键字也会一并删除。";
 "No photo selected" = "未选择照片";
 "No photos" = "没有照片";
+"No photos could be copied from %@" = "无法从%1$@拷贝照片";
 "No photos found" = "未找到照片";
 "No photos in that folder" = "该文件夹中没有照片";
 "No photos in this folder" = "此文件夹中没有照片";
@@ -1625,6 +1633,7 @@
 "Photo found" = "已找到照片";
 "Photo ▸ Edit in External Editor (⇧⌘E) renders a 16-bit TIFF copy, stacks it with the original and opens it here (an app name on macOS, a program path elsewhere)." = "“照片 » 在外部编辑器中编辑”（⇧⌘E）会渲染一份 16 位 TIFF 副本，与原图堆叠并在此打开（macOS 上填应用名称，其他平台填程序路径）。";
 "Photos" = "照片";
+"Photos not copied from %@: %lld" = "未能从%1$@拷贝的照片：%2$lld 张";
 "Photos per Bracket" = "每组包围曝光的照片数";
 "Photos per bracket (0 = auto)" = "每组包围曝光的照片数（0 = 自动）";
 "Photos seen in Local but never added or changed leave the catalog when their folder hasn't been browsed for this long (checked when the library opens). Files stay on disk; browsing the folder shows them again." = "仅在“本地”中查看过、从未添加或更改的照片，若其文件夹在此时长内未被浏览，将移出目录（打开图库时检查）。文件保留在磁盘上；浏览该文件夹即可再次显示。";
@@ -1648,6 +1657,7 @@
 "Place Names Status" = "地名数据状态";
 "Place names download cancelled" = "已取消下载地名数据";
 "Place names downloaded" = "地名数据已下载";
+"Plug in a camera or a card reader (USB-C or Lightning), then try again." = "请连接相机或读卡器（USB-C 或 Lightning），然后重试。";
 "Point Color" = "点颜色";
 "Point Curve" = "点曲线";
 "Point Curve Presets" = "点曲线预设";
@@ -1754,6 +1764,7 @@
 "Read the SAM License" = "阅读 SAM 许可证";
 "Read the licence" = "阅读许可证";
 "Reading" = "正在读取";
+"Reading %@… %lld photos so far" = "正在读取%1$@… 目前 %2$lld 张照片";
 "Reading Lightroom catalog" = "正在读取 Lightroom 目录";
 "Reading Lightroom catalog…" = "正在读取 Lightroom 目录…";
 "Reading a sidecar replaces the photo's rating, labels, metadata and edits with what it says." = "读取附属文件会用其内容替换照片的评级、标签、元数据和编辑。";
@@ -2203,6 +2214,7 @@
 "Stopped" = "已停止";
 "Stopped by an error (see the log)" = "因错误而停止（见日志）";
 "Stopping…" = "正在停止…";
+"Stops painting the new area" = "停止绘制新区域";
 "Storage" = "存储";
 "Storage limit" = "存储上限";
 "Store All Originals on This Device" = "在此设备上存储所有原始文件";
@@ -2300,6 +2312,7 @@
 "That isn't JSON: %@" = "这不是 JSON：%@";
 "That key can't be used as a shortcut" = "该按键不能用作快捷键";
 "The SAM 3 model is installed: Object and Describe masks are ready." = "SAM 3 模型已安装：对象蒙版和描述蒙版可以使用了。";
+"The camera is locked: unlock it to read its photos" = "相机已锁定：请解锁以读取其中的照片";
 "The checkerboard shows area with nothing in it yet: Generate fills it." = "棋盘格显示尚无内容的区域：点按“生成”即可填充。";
 "The denoise model is installed and in use: the AI Denoise Amount slider under Detail now works" = "降噪模型已安装并正在使用：细节面板中的 AI 降噪数量滑块现已可用";
 "The download continues if you close this, and resumes if interrupted." = "关闭此面板后下载仍会继续，中断后可恢复。";
@@ -2315,6 +2328,7 @@
 "The library is up to date with this folder." = "图库与此文件夹一致。";
 "The model is kept on this computer only. LightCraft never uploads or shares it." = "模型仅保存在本机。LightCraft 绝不会上传或分享它。";
 "The model is kept on this device only. LightCraft never uploads or shares it." = "模型仅保存在此设备上。LightCraft 绝不会上传或分享它。";
+"The new area was painted by %@ on this device." = "新区域已在此设备上生成（%1$@）。";
 "The number at the end of the original name (IMG_0042 → 0042)" = "原始名称末尾的数字（IMG_0042 → 0042）";
 "The original extension is always added; {ext} only puts it inside the name as well." = "始终会添加原始扩展名；{ext} 只是额外把它放进名称中。";
 "The original files, unchanged, each with an XMP sidecar holding its edits." = "保留原始文件不变，每个文件附带一个保存其编辑内容的 XMP 附属文件。";
@@ -2445,6 +2459,7 @@
 "User" = "用户";
 "User Presets" = "用户预设";
 "Username" = "用户名";
+"Uses the %@ model, a %lld MB download (%@ licence). %@." = "使用 %1$@ 模型（需下载 %2$lld MB，%3$@ 许可证）。%4$@。";
 "Uses the MI-GAN model, a %lld MB download (%@). %@." = "使用 MI-GAN 模型，需下载 %lld MB（%@）。%@。";
 "Value" = "值";
 "Variance" = "变化幅度";
@@ -2660,6 +2675,7 @@
 "{date} is the capture time; a photo without one uses the time it was imported." = "{date} 是拍摄时间；没有拍摄时间的照片使用其导入时间。";
 "© 2026 Your Name" = "© 2026 你的名字";
 "© Your Name" = "© 你的名字";
+"· %lld already in the library" = "· %1$lld 张已在图库中";
 "· ^[%lld photo](inflect: true)" = "· %lld 张照片";
 "— licence:" = "— 许可证：";
 "− harder border · + softer border" = "− 边缘更硬 · + 边缘更柔和";
