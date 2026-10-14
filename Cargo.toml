@@ -1,6 +1,8 @@
 [workspace]
 resolver = "3"
 members = ["crates/*", "apps/*", "xtask"]
+# the patched egui-wgpu is a path dependency, not one of ours to lint and test
+exclude = ["third_party"]
 
 [workspace.package]
 version = "0.7.1"
@@ -194,3 +196,9 @@ rten-gemm = { opt-level = 3 }
 rten-simd = { opt-level = 3 }
 rten-tensor = { opt-level = 3 }
 rten-vecmath = { opt-level = 3 }
+
+# egui-wgpu with a float (HDR) window surface: third_party/egui-wgpu/LIGHTCRAFT.md
+[patch.crates-io]
+egui-wgpu = { path = "third_party/egui-wgpu" }
+# wgpu-hal with the Metal colour-space lookup fixed: third_party/wgpu-hal/LIGHTCRAFT.md
+wgpu-hal = { path = "third_party/wgpu-hal" }

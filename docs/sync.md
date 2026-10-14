@@ -167,6 +167,11 @@ The data folder, the listen address and the domain are deployment settings, so t
 them: `--data` / `LIGHTCRAFT_DATA`, `--listen` / `LIGHTCRAFT_LISTEN`, and the domain in the reverse proxy
 (`LIGHTCRAFT_DOMAIN` with the compose file). Its JSON API is under `/api/admin/` (`apps/lightcraft-server/src/admin.rs`).
 
+The SwiftUI iPhone / iPad app has the same console as screens: **Settings ▸ Server Administration** (sign-in or first-run
+setup, Overview, Users with their devices, shared links and library folders, Search & People, Storage & Clean Up). It
+calls the same API through the app's engine (`host.admin.*`, [ios-swift.md](ios-swift.md)) and asks for the admin
+password itself, since the Sync sign-in is a device's.
+
 ### Storage limits
 
 An admin can limit what the server keeps for a user, as a family plan's share of a cloud service: admin page ›
@@ -509,7 +514,11 @@ another device got there first it pulls, merges, and sends again. What the merge
   deleted on one device stays deleted unless the other changed it meanwhile, presets added on both are all kept, and
   one edited on both merges field by field. A preset created on a synced device gets an id that includes its id space;
   an imported one gets an id named by its content (its name, group and settings), so a preset pack imported on two
-  devices is one set of presets, and two different presets that share a name both stay.
+  devices is one set of presets, and two different presets that share a name both stay. Whole collections sync: a
+  device holds up to 100 000 user presets (a Lightroom collection imported whole is about 11 000), and what it leaves
+  out of the server's document (past that, or not readable as a preset by this version) goes back with what it sends
+  as it came, so it is never deleted for the other devices. (Before, a device kept the first 10 000 and sent that back,
+  which deleted the rest everywhere, the newest imports first.)
 
 Ids never collide: the server gives each device an id space at sign-in, and ids a device hands out are
 `space · 2³² + n` (still exact in JavaScript). The library uploaded first keeps the ids it had.
@@ -522,7 +531,7 @@ server's state, replaying its other pending changes on top.
 ## Protocol
 
 JSON over HTTP; every route but `login` wants `Authorization: Bearer <token>`. Types: `lightcraft_catalog::sync::proto`.
-Big JSON answers (the library, pulled changes; 16 KiB and up) come gzipped to a device that sends
+Big JSON answers (the library, pulled changes, the presets; 16 KiB and up) come gzipped to a device that sends
 `Accept-Encoding: gzip`, about a tenth of the bytes.
 
 | Route | Body → answer |
@@ -536,7 +545,7 @@ Big JSON answers (the library, pulled changes; 16 KiB and up) come gzipped to a 
 | `GET /api/ops?since=N&limit=M` | `{head, ops: [[seq, op]…], presets}` (presets = the presets document's version) · `410`: reload the snapshot |
 | `POST /api/ops` | `{base, ops}` → `200 {head}` · `409 {head}` (behind: pull first) · `422 {index, error}` (op `index` doesn't apply; nothing was) |
 | `HEAD`/`GET`/`PUT /api/blobs/{original\|smart\|mini}/{hash}` | photo files by 128-bit content hash; `GET` takes `Range`; `GET` of a preview the server hasn't built yet (and has the original of) puts its build first in line and answers `404` `{"error": …, "previews": "queued" \| "failed"}` with `Retry-After: 3`; an original is only kept if its bytes hash to its name, previews must be LightCraft previews and arrive whole; a `PUT` over the user's [storage limit](#storage-limits) is `507`. **Resuming an upload:** an original that breaks off is kept (`tmp/original-<hash>.part`); `HEAD` of a file the server doesn't have yet answers `404` with `Upload-Offset: N` (the bytes kept, `0` if none), and `PUT` with `Content-Range: bytes N-<last>/<total>` carries on from there (`409` with `{"offset": N}` if the server has another number of bytes or another request is writing the file; a plain `PUT` starts over). Downloads of originals resume with `Range` |
-| `GET`/`PUT /api/presets` | `{version, presets}`; `PUT` with a stale `version` → `412` with the current document |
+| `GET`/`PUT /api/presets` | `{version, presets}` (`GET` gzipped, see above: a whole collection is tens of MB); `PUT` with a stale `version` → `412` with the current document |
 | `GET`/`POST /api/shares`, `DELETE /api/shares/{id}` | the user's album links ([`proto::Share`](../crates/catalog/src/sync.rs): `password` and `upload` say what each asks and allows): `{shares: [...]}`; `POST {album, expiresDays?, originals?, password?, upload?}` → the new link (`400` for a folder or smart album or a password under 4 characters, `404` no such album, `409` over 200 links); `DELETE` takes one back |
 | `GET /s/{token}`, `GET /s/{token}/{photo}[?play=1]`, `GET /s/{token}/{photo}/{thumb\|view\|original}`, `GET /s/{token}/download` | **no sign-in**: the album's page, a photo's page (`play`: the slideshow), the pictures, and Download All (a ZIP of the originals) ([above](#share-an-album)); `404` for anything else (unknown, ended or revoked token, a photo not in the album, `original` or `download` on a link that doesn't offer them), `401` until a link's password was typed, `429` when an address keeps guessing, `503` + `Retry-After` while the server is busy rendering |
 | `POST /s/{token}/unlock`, `POST /s/{token}/upload` | **no sign-in**: a link's password (`password=…`, a form; the answer sets the cookie that opens the link), and photos a visitor adds (`multipart/form-data`, field `photos`, optional `name`; `303` back to the album with `?added=N&skipped=M`; `403` on a link that doesn't take photos, `507` over the owner's [storage limit](#storage-limits)) |

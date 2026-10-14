@@ -100,6 +100,98 @@ fn a_thumbnail_arrives_as_a_leased_image() {
     assert!(h.leases().take_image(token).is_none());
 }
 
+// A SwiftUI cell asks for its thumbnail once, when it appears. The host keeps asking while the cell is
+// on screen (the engine downloads a synced photo's preview only while asked), and the render that
+// failed for want of the preview runs again by itself once the preview has landed
+#[test]
+fn a_thumbnail_asked_once_renders_when_its_preview_lands() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let tmp = std::env::temp_dir().join(format!("lc-host-{}-{}", std::process::id(), lightcraft_preview::next_tick()));
+    std::fs::create_dir_all(&tmp).unwrap();
+    let config = OpenConfig { demo: true, tmp: Some(tmp.to_string_lossy().to_string()), render_threads: Some(1), ..Default::default() };
+    let (events, (tx, _rx)) = (Arc::new(Events::default()), channel());
+    let mut e = Engine::start(&config, events.clone(), Arc::new(Leases::default()), tx).unwrap();
+    let landed = Arc::new(AtomicBool::new(false));
+    let l = landed.clone();
+    e.session.media.file_loader = Some(Arc::new(move |_, _| {
+        if !l.load(Ordering::SeqCst) {
+            return Err("still downloading".into());
+        }
+        let mut image = lightcraft_raster::Rgb32f::new(8, 8);
+        image.data.fill([0.3, 0.2, 0.1]);
+        Ok((image, Default::default()))
+    }));
+    let id = PhotoId(9_000_001);
+    let photo = lightcraft_catalog::Photo::new(id, lightcraft_catalog::Source::File { path: "a.jpg".into() }, "a.jpg", "JPEG", 8, 8, "2026-01-01");
+    e.session.catalog.apply(lightcraft_catalog::Op::AddPhoto { photo: Box::new(photo) }).unwrap();
+    let slot = format!("thumb:{}", id.0);
+    let seen = |e: &mut Engine, want: &dyn Fn(&Value) -> bool| {
+        let t0 = Instant::now();
+        loop {
+            e.tick();
+            if events.poll(Duration::from_millis(5)).iter().any(want) {
+                return;
+            }
+            assert!(t0.elapsed() < Duration::from_secs(30), "no matching event");
+        }
+    };
+    e.handle(Msg::Request(Request { id: 1, method: "render.thumb".into(), params: json!({"photo": id.0, "edge": 64}) }));
+    seen(&mut e, &|ev| ev["kind"] == "renderFailed" && ev["slot"] == slot.as_str());
+    assert!(e.thumbs_wanted.contains_key(&id), "a cell without a picture is asked for again");
+    landed.store(true, Ordering::SeqCst);
+    e.session.media.note_arrived(id);
+    seen(&mut e, &|ev| ev["kind"] == "image" && ev["slot"] == slot.as_str());
+    e.tick();
+    assert!(!e.thumbs_wanted.contains_key(&id), "not asked for again once it has its picture");
+    // a cell that scrolled away is let go
+    e.thumbs_wanted.insert(id, (64, 10));
+    e.handle(Msg::Request(Request { id: 2, method: "render.retain".into(), params: json!({"thumbs": []}) }));
+    assert!(e.thumbs_wanted.is_empty());
+}
+
+// Against a live sync server, as the SwiftUI grid asks: each thumbnail once, when its cell appears. Not run in
+// CI: `LC_LIVE_LIBRARY=<a library signed in to the server> [LC_LIVE_THUMBS=120] cargo test -p lightcraft-apphost
+// --release -- --ignored --nocapture live_thumbs` (the library's photos must not have their originals here)
+#[test]
+#[ignore = "needs a library signed in to a live sync server (LC_LIVE_LIBRARY)"]
+fn live_thumbs_asked_once_all_arrive() {
+    let Some(dir) = std::env::var("LC_LIVE_LIBRARY").ok() else { return };
+    let want = std::env::var("LC_LIVE_THUMBS").ok().and_then(|n| n.parse::<usize>().ok()).unwrap_or(120);
+    let tmp = std::env::temp_dir().join(format!("lc-live-{}", std::process::id()));
+    std::fs::create_dir_all(&tmp).unwrap();
+    let config = OpenConfig { library: Some(dir), tmp: Some(tmp.to_string_lossy().to_string()), render_threads: Some(2), ..Default::default() };
+    let h = Watch::new(Host::open(config).unwrap().0);
+    let t0 = Instant::now();
+    let ids: Vec<u64> = loop {
+        let r = h.call(&req(1, "engine.execute", json!({"command": "catalog.query", "params": {"limit": want}})), Duration::from_secs(30));
+        let ids: Vec<u64> = r["result"]["photos"].as_array().into_iter().flatten().filter_map(|p| p["id"].as_u64()).collect();
+        if ids.len() >= want || (t0.elapsed() > Duration::from_secs(60) && !ids.is_empty()) {
+            break ids;
+        }
+        assert!(t0.elapsed() < Duration::from_secs(300), "the library stayed empty: nothing on the server?");
+        std::thread::sleep(Duration::from_secs(1));
+    };
+    println!("{} photos listed after {:.1?}", ids.len(), t0.elapsed());
+    for id in &ids {
+        h.submit(&req(2, "render.thumb", json!({"photo": id, "edge": 256}))).unwrap();
+    }
+    h.submit(&req(3, "render.retain", json!({"thumbs": ids}))).unwrap();
+    let (t1, mut last, mut got) = (Instant::now(), Instant::now(), std::collections::HashSet::new());
+    while got.len() < ids.len() && t1.elapsed() < Duration::from_secs(90) {
+        for ev in h.host.poll(Duration::from_millis(100)) {
+            if ev["kind"] == "image" && ev["slot"].as_str().is_some_and(|s| s.starts_with("thumb:")) {
+                got.insert(ev["slot"].as_str().unwrap_or_default().to_string());
+            }
+        }
+        if last.elapsed() > Duration::from_secs(5) {
+            println!("{:>5.1?}: {} of {} thumbnails", t1.elapsed(), got.len(), ids.len());
+            last = Instant::now();
+        }
+    }
+    println!("{} of {} thumbnails after {:.1?}", got.len(), ids.len(), t1.elapsed());
+    assert_eq!(got.len(), ids.len(), "cells asked for once stay blank");
+}
+
 // A slider drag: drafts while it moves, one undo step and a final render when it ends
 #[test]
 fn a_drag_renders_drafts_then_a_final_view() {
@@ -276,6 +368,24 @@ fn photos_are_scanned_reviewed_and_imported_in_the_background() {
     assert_eq!(state["result"]["visibleCount"].as_u64(), Some(before + 3), "{state}");
     assert_eq!(state["result"]["undo"], "Add 3 Photos");
     let _ = std::fs::remove_dir_all(&base);
+}
+
+// The state's `presetsGeneration` moves when the preset list changes (the Swift app's Presets panel
+// reads the list again then: presets the sync brings show without reopening it), and not otherwise
+#[test]
+fn the_state_says_when_the_presets_change() {
+    let h = demo();
+    let generation = |h: &Host, id: u64| h.call(&req(id, "host.state", json!({})), Duration::from_secs(30))["result"]["presetsGeneration"].clone();
+    let before = generation(&h, 1);
+    assert!(before.as_u64().is_some(), "{before}");
+    h.call(&req(2, "engine.execute", json!({"command": "photo.rate", "params": {"rating": 3}})), Duration::from_secs(30));
+    assert_eq!(generation(&h, 3), before, "a rating leaves the presets alone");
+    let r = h.call(&req(4, "engine.execute", json!({"command": "preset.create", "params": {"name": "Mine"}})), Duration::from_secs(30));
+    assert!(r["result"].is_object(), "{r}");
+    let after = generation(&h, 5);
+    assert_ne!(after, before);
+    let state = h.wait_for(|e| e["kind"] == "state" && e["state"]["presetsGeneration"] == after);
+    assert_eq!(state["state"]["presetsGeneration"], after);
 }
 
 // Previews of a preset, a profile and a version on the active photo come as `variant:` pictures
@@ -501,4 +611,131 @@ fn a_background_generate_is_stored_when_it_ends() {
     assert_eq!(got["result"]["expand_fill"]["model"], "classic", "{got}");
     let models = ask(5, "crop.expandModels", json!({}));
     assert!(models["result"]["running"].is_null(), "nothing left running: {models}");
+}
+
+// An HDR edit on a display that can show it comes with its HDR picture, a second lease (RGBA16F); an SDR
+// display, or an SDR edit, gets the 8-bit picture alone (LR-VIEW-HDR-DISPLAY)
+#[test]
+fn an_hdr_edit_on_an_hdr_display_comes_with_its_hdr_picture() {
+    let h = demo();
+    let t = Duration::from_secs(30);
+    let first = h.call(&req(1, "engine.execute", json!({"command": "catalog.query", "params": {"limit": 1}})), t);
+    let photo = first["result"]["photos"][0]["id"].as_u64().unwrap();
+    h.call(&req(2, "engine.execute", json!({"command": "library.select", "params": {"ids": [photo]}})), t);
+    h.call(&req(3, "engine.execute", json!({"command": "develop.hdr", "params": {"enabled": true, "maxEv": 3}})), t);
+    h.call(&req(4, "engine.execute", json!({"command": "develop.set", "params": {"control": "light.exposure", "value": 1.0}})), t);
+    // a display without headroom: the SDR rendition
+    h.submit(&req(5, "render.view", json!({"width": 160, "height": 120}))).unwrap();
+    let sdr = h.wait_for(|e| e["kind"] == "image" && e["slot"] == "main" && e["draft"] == false);
+    assert!(sdr.get("hdr").is_none(), "{sdr}");
+    // a display with: the same edit, rendered again, with its float picture
+    assert_eq!(h.call(&req(6, "render.hdrDisplay", json!({"on": true})), t)["result"], json!({}));
+    h.submit(&req(7, "render.view", json!({"width": 160, "height": 120}))).unwrap();
+    let hdr = h.wait_for(|e| e["kind"] == "image" && e["slot"] == "main" && e["draft"] == false && e.get("hdr").is_some());
+    assert_ne!(hdr["key"], sdr["key"], "the HDR picture is its own render");
+    let info = &hdr["hdr"];
+    assert_eq!((info["width"].as_u64(), info["height"].as_u64()), (hdr["width"].as_u64(), hdr["height"].as_u64()), "{hdr}");
+    assert_eq!(info["peak"].as_f64(), Some(8.0), "3 stops of headroom: {hdr}");
+    let leased = h.leases().take_image(info["token"].as_u64().unwrap()).expect("the HDR lease");
+    let (w, h_px) = (hdr["width"].as_u64().unwrap() as u32, hdr["height"].as_u64().unwrap() as usize);
+    assert_eq!((leased.width, leased.stride, leased.len), (w, w * 8, leased.stride as usize * h_px));
+    let sdr_lease = h.leases().take_image(hdr["token"].as_u64().unwrap()).expect("the 8-bit picture too");
+    assert_eq!(sdr_lease.stride, sdr_lease.width * 4);
+    // the display went away (the window moved to another): the SDR rendition again, no hdr
+    h.call(&req(8, "render.hdrDisplay", json!({"on": false})), t);
+    h.submit(&req(9, "render.view", json!({"width": 160, "height": 120}))).unwrap();
+    let back = h.wait_for(|e| e["kind"] == "image" && e["slot"] == "main" && e["draft"] == false && e["key"] == sdr["key"]);
+    assert!(back.get("hdr").is_none(), "{back}");
+    assert_eq!(h.call(&req(10, "render.hdrDisplay", json!({})), t)["error"]["code"], "badParams");
+}
+
+/// A one-thread HTTP server for the admin API: logs each request (head and body) and answers by
+/// `reply(first line, whole request)` with `(status, body)`.
+fn fake_admin_server(reply: impl Fn(&str, &str) -> (u16, String) + Send + 'static) -> (u16, Arc<Mutex<Vec<String>>>) {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let log = seen.clone();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut s) = stream else { break };
+            let mut got = Vec::new();
+            let mut buf = [0u8; 4096];
+            loop {
+                let text = String::from_utf8_lossy(&got).to_string();
+                if let Some((head, body)) = text.split_once("\r\n\r\n") {
+                    let want =
+                        head.to_ascii_lowercase().split("content-length:").nth(1).and_then(|l| l.split_whitespace().next()?.parse::<usize>().ok());
+                    if body.len() >= want.unwrap_or(0) {
+                        break;
+                    }
+                }
+                match s.read(&mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => got.extend_from_slice(&buf[..n]),
+                }
+            }
+            let request = String::from_utf8_lossy(&got).to_string();
+            let line = request.lines().next().unwrap_or_default().to_string();
+            log.lock().unwrap().push(request.clone());
+            let (status, body) = reply(&line, &request);
+            let _ = write!(
+                s,
+                "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+        }
+    });
+    (port, seen)
+}
+
+// The server's admin API from the phone: sign in (a wrong password is the server's own words), calls carry
+// the admin token and nothing else does, a session the server forgot ends with `unauthorized`, and signing
+// out tells the server. All on a worker: the host answers when the server has.
+#[test]
+fn the_admin_api_is_called_on_a_worker() {
+    let (port, seen) = fake_admin_server(|line, request| {
+        let signed = request.to_ascii_lowercase().contains("authorization: bearer t1");
+        match line {
+            l if l.starts_with("POST /api/admin/login") && request.contains(r#""password":"right""#) => {
+                (200, r#"{"token":"T1","user":"ann"}"#.into())
+            }
+            l if l.starts_with("POST /api/admin/login") => (401, r#"{"error":"wrong user name or password, or not an admin"}"#.into()),
+            l if l.starts_with("GET /api/admin/users/ann/folders/My%20Photos") && signed => (200, r#"{"folders":[]}"#.into()),
+            l if l.starts_with("GET /api/admin/gone") => (401, r#"{"error":"sign in as an admin"}"#.into()),
+            l if l.starts_with("POST /api/admin/logout") && signed => (200, "{}".into()),
+            _ => (404, r#"{"error":"no admin route"}"#.into()),
+        }
+    });
+    let server = format!("127.0.0.1:{port}");
+    let h = demo();
+    let ask = |n: u64, method: &str, params: Value| h.call(&req(n, method, params), Duration::from_secs(30));
+    let call = |n: u64, verb: &str, path: Value| ask(n, "host.admin.call", json!({"method": verb, "path": path}));
+
+    assert_eq!(ask(1, "host.admin.session", json!({}))["result"]["signedIn"], false);
+    let early = call(2, "GET", json!(["users"]));
+    assert_eq!(early["error"]["code"], "unauthorized", "{early}");
+
+    let wrong = ask(3, "host.admin.signIn", json!({"server": server, "user": "ann", "password": "wrong"}));
+    assert_eq!(wrong["error"]["message"], "Wrong user name or password, or not an admin", "{wrong}");
+    assert_eq!(ask(4, "host.admin.session", json!({}))["result"]["signedIn"], false);
+
+    let right = ask(5, "host.admin.signIn", json!({"server": server, "user": "ann", "password": "right"}));
+    assert_eq!(right["result"]["user"], "ann", "{right}");
+    assert_eq!(right["result"]["server"], format!("http://{server}"), "{right}");
+    assert_eq!(ask(6, "host.admin.session", json!({}))["result"]["signedIn"], true);
+
+    let folders = call(7, "GET", json!(["users", "ann", "folders", "My Photos"]));
+    assert_eq!(folders["result"]["folders"], json!([]), "{folders}");
+    assert!(seen.lock().unwrap().iter().any(|r| r.starts_with("GET /api/admin/users/ann/folders/My%20Photos ")), "{:?}", seen.lock().unwrap());
+
+    let ended = call(8, "GET", json!(["gone"]));
+    assert_eq!(ended["error"]["code"], "unauthorized", "{ended}");
+    assert_eq!(ask(9, "host.admin.session", json!({}))["result"]["signedIn"], false);
+
+    ask(10, "host.admin.signIn", json!({"server": server, "user": "ann", "password": "right"}));
+    assert_eq!(ask(11, "host.admin.signOut", json!({}))["result"], json!({}));
+    assert_eq!(ask(12, "host.admin.session", json!({}))["result"]["signedIn"], false);
+    assert!(seen.lock().unwrap().iter().any(|r| r.starts_with("POST /api/admin/logout")), "the server was told");
 }
