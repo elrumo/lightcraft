@@ -18,9 +18,9 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | Phase | ✅ | 🟡 | ⬜ | 🚫 | Done or out of scope |
 |---|---:|---:|---:|---:|---:|
 | S0 | 15 | 0 | 0 | 0 | 15/15 |
-| S1 | 157 | 4 | 3 | 3 | 160/167 |
+| S1 | 158 | 3 | 3 | 3 | 161/167 |
 | S2 | 1 | 0 | 79 | 22 | 23/102 |
-| **Total** | 173 | 4 | 82 | 25 | 198/284 |
+| **Total** | 174 | 3 | 82 | 25 | 199/284 |
 <!-- /ios-parity:summary -->
 
 ## Screens
@@ -67,7 +67,7 @@ S0, S1 or S2, cited paths exist, a ✅ row cites its evidence, a 🚫 row says w
 | screen:compact.people | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/PeopleView.swift`, `crates/engine/src/tests_libops.rs` | the library's named people (`people.named`), groups found on this device (`people.list`), unnamed faces (`faces.unnamed`) to name; a person's page: their faces (a tap opens the photo), rename everyone (`people.rename`), look-alikes with ✓ / ✕ and Confirm All; the scan's progress; empty state points to Settings ▸ Faces |
 | screen:compact.map | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/PeopleView.swift`, `crates/geo/src/cluster.rs` | MapKit with clustered markers that picture up to four of their photos (`map.points` → `pictured`, chosen in `lightcraft_geo` for both apps), place search (`map.place`), a tap shows them in the grid, a long press: Show in Grid, Select, Zoom to These Photos |
 | screen:compact.alerts | S1 | 🟡 | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/App/RootView.swift` | Move to Recently Deleted asks first; messages as glass capsules |
-| screen:compact.haptics | S1 | 🟡 | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Library/GridView.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/ControlSlider.swift` | selection on pinch steps, groups, tools, sliders at the default and the ends; medium on Before; not yet every place egui has |
+| screen:compact.haptics | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/App/HapticFeedback.swift`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/App/AppModel.swift` | egui's haptic moments: selection on pinch steps, groups, tools, tabs, choosing, sliders at the default and the ends, the crop dial, masks, aspect lock; light on undo / redo, Reset, crop reset and Auto, double-tap zoom, the carousel, naming a face; medium on Before; warning on deletes. All through `haptic(…)`, which Settings ▸ General ▸ Haptics turns off. (The simulator plays none: not yet felt on a device.) |
 | screen:compact.appearance | S1 | ✅ | `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Settings/SettingsView.swift` | System / Light / Dark |
 | screen:compact.landscape | S1 | ⬜ |  |  |
 | screen:compact.ipadPortrait | S1 | ⬜ |  |  |

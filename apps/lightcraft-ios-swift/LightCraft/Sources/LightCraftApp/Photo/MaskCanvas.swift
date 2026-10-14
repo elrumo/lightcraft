@@ -53,10 +53,10 @@ struct MaskCanvas: View {
                 Button(mask?["visible"].bool == false ? "Show Mask" : "Hide Mask") { model.perform("mask.visible", ["id": id]) }
                 Button("Invert") { model.perform("mask.invert", ["id": id]) }
                 Button("Duplicate Mask") { model.perform("mask.duplicate", ["id": id]) }
-                Button("Delete Mask", role: .destructive) { model.perform("mask.delete", ["id": id]) }
+                Button("Delete Mask", role: .destructive) { model.perform("mask.delete", ["id": id]); model.buzz(.warning) }
             }
         }
-        .sensoryFeedback(.selection, trigger: drag?.mask)
+        .haptic(.selection, trigger: drag?.mask)
         .task(id: Key(revision: model.state.catalogRevision, mask: model.state.activeMask)) { await load() }
     }
 

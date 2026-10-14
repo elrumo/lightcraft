@@ -115,7 +115,7 @@ struct LibraryScreen: View {
             .frame(width: 220)
             .padding(4)
             .glassEffect(.regular.interactive(), in: .capsule)
-            .sensoryFeedback(.selection, trigger: model.prefs.gridSpan)
+            .haptic(.selection, trigger: model.prefs.gridSpan)
             Spacer(minLength: 0)
             addButton
         }

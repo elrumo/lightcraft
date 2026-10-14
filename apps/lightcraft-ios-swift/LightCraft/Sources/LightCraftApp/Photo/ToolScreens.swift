@@ -84,18 +84,19 @@ struct CropTools: View {
                     toolButton("wand.and.stars", "Auto") {
                         Task {
                             let r = await model.run("crop.autoStraighten")
-                            if r?["changed"].bool == false { model.show(String(localized: "No horizon or vertical lines found")) }
+                            if r?["changed"].bool == false { model.show(String(localized: "No horizon or vertical lines found")) } else if r != nil { model.buzz(.light) }
                         }
                     }
                     toolButton("line.diagonal", "Straighten") { editor.cropDraw = editor.cropDraw == "straighten" ? nil : "straighten" }
                     toolButton(locked ? "lock" : "lock.open", locked ? "Unlock Aspect" : "Lock Aspect") {
                         model.perform("crop.aspect", ["aspect": "toggle"])
+                        model.buzz(.selection)
                     }
                     toolButton("rotate.left", "Rotate") { model.perform("photo.rotateLeft") }
                     Menu {
                         Button("Flip Horizontal", systemImage: "arrow.left.and.right.righttriangle.left.righttriangle.right") { model.perform("photo.flipHorizontal") }
                         Button("Flip Vertical", systemImage: "arrow.up.and.down.righttriangle.up.righttriangle.down") { model.perform("photo.flipVertical") }
-                        Button("Reset Crop", systemImage: "arrow.counterclockwise") { model.perform("crop.reset") }
+                        Button("Reset Crop", systemImage: "arrow.counterclockwise") { model.perform("crop.reset"); model.buzz(.light) }
                         Divider()
                         Picker("Overlay", selection: Binding(get: { model.prefs.cropGuide }, set: { model.prefs.cropGuide = $0 })) {
                             ForEach(Self.guides, id: \.0) { Text(LocalizedStringKey($0.1)).tag($0.0) }
@@ -122,6 +123,7 @@ struct CropTools: View {
             .padding(.horizontal, 16)
             .onChange(of: tab) { _, t in
                 editor.cropDraw = nil
+                model.buzz(.selection)
                 if t == "geometry" { editor.want(["geometry", "optics"], model) }
             }
             if tab == "aspect" {
@@ -276,7 +278,7 @@ struct AngleDial: View {
                     }
             )
             .onTapGesture(count: 2) { changed(0, .began); changed(0, .ended) }
-            .sensoryFeedback(.selection, trigger: tick)
+            .haptic(.selection, trigger: tick)
         }
         .padding(.horizontal, 16)
         .accessibilityElement()

@@ -57,7 +57,7 @@ struct RemoveCanvas: View {
                 Button("Delete Spot", role: .destructive) { model.perform("spot.delete", ["index": .int(Int64(i))]) }
             }
         }
-        .sensoryFeedback(.warning, trigger: menu == nil)
+        .haptic(.warning, trigger: menu == nil)
         .task(id: model.state.catalogRevision) {
             guard let engine = model.engine else { return }
             frame = try? await engine.execute("view.frame", ["id": .int(Int64(clamping: photo))], as: PhotoFrame.self)

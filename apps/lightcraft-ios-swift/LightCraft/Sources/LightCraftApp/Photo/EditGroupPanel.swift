@@ -334,7 +334,7 @@ struct MixerView: View {
                     .accessibilityAddTraits(band == i ? .isSelected : [])
                 }
             }
-            .sensoryFeedback(.selection, trigger: band)
+            .haptic(.selection, trigger: band)
             Sliders(section: "mixer") { $0.id.hasPrefix("mixer.\(Self.names[band]).") }
         }
     }

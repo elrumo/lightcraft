@@ -346,10 +346,19 @@ final class AppModel {
 
     func undo() {
         perform("edit.undo")
+        buzz(.light)
     }
 
     func redo() {
         perform("edit.redo")
+        buzz(.light)
+    }
+
+    /// The haptic for what just happened, which RootView plays (egui's `haptics::tap` sites).
+    private(set) var haptic = Haptic()
+
+    func buzz(_ kind: Haptic.Kind) {
+        haptic = Haptic(kind: kind, seq: haptic.seq &+ 1)
     }
 
     /// Run an engine command; a refusal becomes the message shown.
@@ -451,6 +460,21 @@ final class AppModel {
     /// Ids as engine params.
     static func ids(_ ids: some Sequence<UInt64>) -> JSONValue {
         .array(ids.map { .int(Int64(clamping: $0)) })
+    }
+}
+/// A haptic to play: its kind, and a count so the same kind twice plays twice.
+nonisolated struct Haptic: Equatable {
+    enum Kind { case selection, light, medium, warning }
+    var kind = Kind.light
+    var seq = 0
+
+    var feedback: SensoryFeedback {
+        switch kind {
+        case .selection: .selection
+        case .light: .impact(weight: .light)
+        case .medium: .impact(weight: .medium)
+        case .warning: .warning
+        }
     }
 }
 #endif

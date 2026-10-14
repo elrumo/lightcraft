@@ -100,7 +100,7 @@ struct PhotoPager: View {
                     if let prev = library.photo(at: i - 1, model.engine) { near.append(prev.id) }
                     model.prefetch(near)
                 }
-                .sensoryFeedback(.impact(weight: .light), trigger: position)
+                .haptic(.impact(weight: .light), trigger: position)
                 .onChange(of: model.state.active) { _, active in
                     // the engine moved on (Auto Advance, next / previous): follow it
                     guard let active, let i = library.index(of: active), i != position else { return }
@@ -272,9 +272,10 @@ struct ZoomablePhoto: View {
         .contentShape(Rectangle())
         .gesture(magnify.simultaneously(with: drag))
         .simultaneousGesture(reviewSwipe, including: review && !zoomed ? .all : .none)
-        .sensoryFeedback(.selection, trigger: swipe?.rating)
-        .sensoryFeedback(.selection, trigger: swipe?.flag)
+        .haptic(.selection, trigger: swipe?.rating)
+        .haptic(.selection, trigger: swipe?.flag)
         .onTapGesture(count: 2) {
+            model.buzz(.light)
             withAnimation(.snappy) {
                 if zoom > 1 {
                     zoom = 1
@@ -293,7 +294,7 @@ struct ZoomablePhoto: View {
             showBefore = pressing && model.editor.tool?.hasScreen != true
             if showBefore { model.requestBefore(photo) }
         }
-        .sensoryFeedback(.impact(weight: .medium), trigger: showBefore) { _, new in new }
+        .haptic(trigger: showBefore) { _, new in new ? .impact(weight: .medium) : nil }
         .onGeometryChange(for: CGSize.self) { $0.size } action: { canvas = $0 }
         .task(id: request) {
             guard let r = request, !r.dragging else { return }
@@ -514,7 +515,7 @@ struct ToolBar: View {
         .frame(maxWidth: 480)
         .padding(.horizontal, 14)
         .padding(.vertical, 4)
-        .sensoryFeedback(.selection, trigger: editor.tool)
+        .haptic(.selection, trigger: editor.tool)
     }
 }
 
@@ -548,7 +549,7 @@ struct GroupBar: View {
         .scrollIndicators(.hidden)
         .frame(height: 60)
         .buttonStyle(.plain)
-        .sensoryFeedback(.selection, trigger: model.prefs.editGroup)
+        .haptic(.selection, trigger: model.prefs.editGroup)
     }
 
     private func groupLabel(_ symbol: String, _ label: String, on: Bool) -> some View {
@@ -645,7 +646,7 @@ struct UndoMenu: View {
                     .menuActionDismissBehavior(.disabled)
             }
             Section {
-                Button("Reset", systemImage: "arrow.counterclockwise") { model.perform("develop.reset") }
+                Button("Reset", systemImage: "arrow.counterclockwise") { model.perform("develop.reset"); model.buzz(.light) }
                 Button("Versions", systemImage: "square.stack") { model.sheet = .history(versions: true) }
                 Button("History", systemImage: "clock.arrow.circlepath") { model.sheet = .history(versions: false) }
             }
@@ -676,7 +677,7 @@ struct PhotoMoreMenu: View {
                 Button("Copy Settings…", systemImage: "checklist") { model.sheet = .copySettings }
                 Button("Paste Edit Settings", systemImage: "doc.on.clipboard") { model.perform("develop.paste") }
                     .disabled(model.library.state?.clipboard != true)
-                Button("Reset All Edits", systemImage: "arrow.counterclockwise") { model.perform("develop.reset") }
+                Button("Reset All Edits", systemImage: "arrow.counterclockwise") { model.perform("develop.reset"); model.buzz(.light) }
                 if model.superResAvailable {
                     Button("Super Resolution…", systemImage: "arrow.up.left.and.arrow.down.right") { model.sheet = .superRes }
                 }

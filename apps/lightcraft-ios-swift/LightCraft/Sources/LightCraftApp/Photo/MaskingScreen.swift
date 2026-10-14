@@ -145,7 +145,7 @@ private struct MaskGroupRow: View {
         .disabled(!enabled)
         .opacity(enabled ? 1 : 0.4)
         .padding(.horizontal, 8)
-        .sensoryFeedback(.selection, trigger: selection)
+        .haptic(.selection, trigger: selection)
     }
 }
 
@@ -333,7 +333,7 @@ struct MaskColumn: View {
             Button("Rename") { rename() }
             Button("Cancel", role: .cancel) {}
         }
-        .sensoryFeedback(.selection, trigger: model.state.activeMask)
+        .haptic(.selection, trigger: model.state.activeMask)
     }
 
     private var column: some View {
@@ -389,6 +389,7 @@ struct MaskColumn: View {
         Divider()
         Button("Delete Mask", systemImage: "trash", role: .destructive) {
             model.perform("mask.delete", ["id": id])
+            model.buzz(.warning)
             model.editor.maskTool = nil
         }
     }
@@ -416,6 +417,7 @@ struct MaskColumn: View {
         Divider()
         Button(count == 1 ? "Delete (and the Mask)" : "Delete", systemImage: "trash", role: .destructive) {
             run(["action": "delete"])
+            model.buzz(.warning)
             model.editor.maskTool = nil
         }
     }
@@ -560,7 +562,7 @@ struct MaskOverlayButton: View {
         Button(prefs.maskOverlay ? "Hide Overlay" : "Show Overlay", systemImage: prefs.maskOverlay ? "eye" : "eye.slash") {
             prefs.maskOverlay.toggle()
         }
-        .sensoryFeedback(.selection, trigger: prefs.maskOverlay)
+        .haptic(.selection, trigger: prefs.maskOverlay)
     }
 }
 
@@ -585,6 +587,7 @@ struct MaskMoreMenu: View {
         .confirmationDialog("Delete All Masks?", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Delete All Masks", role: .destructive) {
                 model.perform("mask.deleteAll")
+                model.buzz(.warning)
                 model.editor.maskTool = nil
             }
         }

@@ -55,6 +55,7 @@ struct RootView: View {
             ActivityHUD()
         }
         .preferredColorScheme(model.prefs.appearance.scheme)
+        .haptic(trigger: model.haptic) { _, h in h.seq == 0 ? nil : h.feedback }
     }
 
     private var deleteTitle: String {

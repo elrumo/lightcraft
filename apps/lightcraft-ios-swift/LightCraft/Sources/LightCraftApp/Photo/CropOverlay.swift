@@ -149,6 +149,7 @@ struct CropOverlay: View {
                 .simultaneousGesture(SpatialTapGesture(count: 2).onEnded { tap in
                     if let c = screenCorners, Path({ p in p.addLines(c); p.closeSubpath() }).contains(tap.location) {
                         model.perform("crop.reset")
+                        model.buzz(.light)
                     }
                 })
         }

@@ -44,7 +44,7 @@ struct DateBlocksView: View {
             let name = span == .years ? "years" : "months"
             blocks = (try? await engine.execute("library.blocks", ["span": .string(name)], as: [DateBlockInfo].self)) ?? []
         }
-        .sensoryFeedback(.impact(weight: .light), trigger: span)
+        .haptic(.impact(weight: .light), trigger: span)
     }
 
     private nonisolated struct Key: Hashable {

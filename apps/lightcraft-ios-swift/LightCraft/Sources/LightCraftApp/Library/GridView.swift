@@ -81,8 +81,8 @@ struct GridView: View {
             }
         }
         .simultaneousGesture(pinch)
-        .sensoryFeedback(.selection, trigger: model.prefs.gridColumns)
-        .sensoryFeedback(.selection, trigger: choosing?.last)
+        .haptic(.selection, trigger: model.prefs.gridColumns)
+        .haptic(.selection, trigger: choosing?.last)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width in
             // cells under 110 pt: a header a year, else a month
             let cell = width / CGFloat(max(model.prefs.gridColumns, 1))
@@ -277,6 +277,7 @@ struct PhotoCell: View {
     private func tapped() {
         if model.selectMode {
             model.perform("library.select", ["ids": [.int(Int64(clamping: photo.id))], "mode": "toggle"])
+            model.buzz(.selection)
         } else {
             model.open(photo.id)
         }
@@ -288,6 +289,7 @@ struct PhotoCell: View {
             model.perform("library.select", ["ids": [.int(Int64(clamping: photo.id))]])
         } else {
             model.perform("library.select", ["ids": [.int(Int64(clamping: photo.id))], "mode": "toggle"])
+            model.buzz(.selection)
         }
     }
 }
@@ -415,7 +417,7 @@ struct Scrubber: View {
             .coordinateSpace(name: "scrubber")
         }
         .padding(.vertical, 8)
-        .sensoryFeedback(.selection, trigger: grabbed)
+        .haptic(.selection, trigger: grabbed)
     }
 }
 

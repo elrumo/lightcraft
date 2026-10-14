@@ -227,7 +227,7 @@ struct PersonView: View {
             .padding(.horizontal, 16)
             .padding(.bottom, 24)
         }
-        .sensoryFeedback(.selection, trigger: confirmed.count)
+        .haptic(.selection, trigger: confirmed.count)
         .navigationTitle(shown)
         .navigationBarTitleDisplayMode(.inline)
         .task(id: Load(name: shown, revision: model.state.catalogRevision)) {

@@ -220,6 +220,7 @@ struct FaceNameSheet: View {
     private func done() {
         let name = text.trimmingCharacters(in: .whitespaces)
         guard !name.isEmpty else { return }
+        model.buzz(.light)
         let id: JSONValue = .int(Int64(clamping: target.photo))
         if let index = target.index {
             model.perform("faces.setName", ["id": id, "index": .int(Int64(index)), "name": .string(name)])

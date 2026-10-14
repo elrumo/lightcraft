@@ -209,7 +209,7 @@ struct DeleteButton<LabelView: View>: View {
             } label: { label() }
         } else {
             Button(role: .destructive) { model.confirmDelete = ids } label: { label() }
-                .sensoryFeedback(.warning, trigger: model.confirmDelete)
+                .haptic(.warning, trigger: model.confirmDelete)
         }
     }
 }

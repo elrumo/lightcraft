@@ -42,7 +42,7 @@ struct ControlSlider: View {
             reset()
             detents += 1
         }
-        .sensoryFeedback(.selection, trigger: detents)
+        .haptic(.selection, trigger: detents)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text(LocalizedStringKey(label ?? spec.label)))
         .accessibilityValue(spec.format(value))
