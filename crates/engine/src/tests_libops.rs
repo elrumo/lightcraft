@@ -940,3 +940,21 @@ fn a_drawn_line_straightens_and_guides_go_on_as_shown() {
     }
     assert_eq!(s.develop_of(id).unwrap().geometry.upright, lightcraft_develop::Upright::Guided);
 }
+
+// The Keyword Painter's click: a keyword some of the photos lack is given to all; one they all
+// have is taken from all (any case)
+#[test]
+fn a_painted_keyword_toggles_on_the_photos() {
+    let mut s = Session::with_demo();
+    let ids: Vec<u64> = s.visible_shared().1.iter().take(2).map(|i| i.0).collect();
+    let has = |s: &Session, id: u64| s.catalog.photo(crate::catalog::PhotoId(id)).unwrap().meta.keywords.iter().any(|k| k == "Painted");
+    s.execute("keyword.toggle", &json!({"ids": [ids[0]], "keyword": "Painted"})).unwrap();
+    assert!(has(&s, ids[0]) && !has(&s, ids[1]));
+    let r = s.execute("keyword.toggle", &json!({"ids": ids, "keyword": "Painted"})).unwrap();
+    assert_eq!(r["added"], true, "{r}");
+    assert!(has(&s, ids[0]) && has(&s, ids[1]));
+    let r = s.execute("keyword.toggle", &json!({"ids": ids, "keyword": "painted"})).unwrap();
+    assert_eq!(r["added"], false, "{r}");
+    assert!(!has(&s, ids[0]) && !has(&s, ids[1]));
+    assert!(s.execute("keyword.toggle", &json!({"ids": ids, "keyword": "  "})).is_err());
+}

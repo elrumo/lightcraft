@@ -1102,9 +1102,7 @@ fn cell(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, r: Rect, square
             ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
         }
         if resp.clicked() {
-            let has = photo.meta.keywords.iter().any(|x| x.eq_ignore_ascii_case(&k));
-            let key = if has { "removeKeywords" } else { "addKeywords" };
-            let _ = app.run("photo.setMeta", json!({"ids": [id.0], key: [k]}));
+            let _ = app.run("keyword.toggle", json!({"ids": [id.0], "keyword": k}));
         }
         return;
     }
