@@ -2215,7 +2215,7 @@
   "Turned off in Settings → AI Models": "Вимкнено в Налаштування → Моделі ШІ",
   "Models can't be downloaded in this build: put the file in the models folder (Settings → AI Models).": "У цій збірці моделі не завантажуються: покладіть файл у теку моделей (Налаштування → Моделі ШІ).",
   "Generating the new area…": "Створення нової ділянки…",
-  "Its licence lists uses that aren't allowed: read it before downloading (Settings → AI Models ▸ Licence).": "Ліцензія забороняє деякі способи використання: прочитайте її перед завантаженням (Налаштування → Моделі ШІ ▸ Ліцензія).",
+  "Its licence lists uses that aren't allowed: read it before downloading (Settings → AI Models → Licence).": "Ліцензія забороняє деякі способи використання: прочитайте її перед завантаженням (Налаштування → Моделі ШІ → Ліцензія).",
   "Without a GPU it takes minutes per Generate.": "Без GPU кожне створення триває кілька хвилин.",
   "Best for wide areas of sky, water or texture": "Найкраще для великих ділянок неба, води чи текстури",
   "Draws new detail; slower": "Малює нові деталі; повільніше",
@@ -2227,6 +2227,6 @@
   "GPU": "GPU",
   "no GPU": "без GPU",
   "This device:": "Цей пристрій:",
-  "What paints the new area when the crop reaches past the photo (Crop ▸ Expand). The larger models draw new detail and take longer.": "Чим малюється нова область, коли кадр виходить за краї фото (Кадрування ▸ Розширити). Більші моделі малюють нові деталі й працюють довше.",
+  "What paints the new area when the crop reaches past the photo (Crop → Expand). The larger models draw new detail and take longer.": "Чим малюється нова область, коли кадр виходить за краї фото (Кадрування → Розширити). Більші моделі малюють нові деталі й працюють довше.",
   "Not an open-source licence: it lists uses that aren't allowed. Read it before downloading.": "Це не ліцензія з відкритим кодом: вона забороняє деякі способи використання. Прочитайте її перед завантаженням."
 }

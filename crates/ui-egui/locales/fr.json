@@ -2021,7 +2021,7 @@
   "Turned off in Settings → AI Models": "Désactivé dans Réglages → Modèles d’IA",
   "Models can't be downloaded in this build: put the file in the models folder (Settings → AI Models).": "Cette version ne peut pas télécharger de modèles : place le fichier dans le dossier des modèles (Réglages → Modèles d’IA).",
   "Generating the new area…": "Génération de la nouvelle zone…",
-  "Its licence lists uses that aren't allowed: read it before downloading (Settings → AI Models ▸ Licence).": "Sa licence interdit certains usages : lisez-la avant de télécharger (Réglages → Modèles d’IA ▸ Licence).",
+  "Its licence lists uses that aren't allowed: read it before downloading (Settings → AI Models → Licence).": "Sa licence interdit certains usages : lisez-la avant de télécharger (Réglages → Modèles d’IA → Licence).",
   "Without a GPU it takes minutes per Generate.": "Sans GPU, chaque génération prend plusieurs minutes.",
   "Best for wide areas of sky, water or texture": "Idéal pour les grandes zones de ciel, d’eau ou de texture",
   "Draws new detail; slower": "Dessine de nouveaux détails ; plus lent",
@@ -2033,6 +2033,6 @@
   "GPU": "GPU",
   "no GPU": "sans GPU",
   "This device:": "Cet appareil :",
-  "What paints the new area when the crop reaches past the photo (Crop ▸ Expand). The larger models draw new detail and take longer.": "Ce qui peint la nouvelle zone quand le recadrage dépasse la photo (Recadrer ▸ Étendre). Les plus grands modèles dessinent de nouveaux détails et prennent plus de temps.",
+  "What paints the new area when the crop reaches past the photo (Crop → Expand). The larger models draw new detail and take longer.": "Ce qui peint la nouvelle zone quand le recadrage dépasse la photo (Recadrer → Étendre). Les plus grands modèles dessinent de nouveaux détails et prennent plus de temps.",
   "Not an open-source licence: it lists uses that aren't allowed. Read it before downloading.": "Pas une licence open source : elle interdit certains usages. Lisez-la avant de télécharger."
 }

@@ -161,7 +161,7 @@ pub fn offer(app: &LightcraftApp, m: ExpandModel) -> Option<String> {
     let size = crate::panels::ai_models::size(c.download_bytes);
     let mut text = tr_format!("Uses the {} model, a {} download ({} licence). {}.", c.label, size, c.licence, c.credit);
     if c.restricted {
-        text = format!("{text} {}", tr("Its licence lists uses that aren't allowed: read it before downloading (Settings → AI Models ▸ Licence)."));
+        text = format!("{text} {}", tr("Its licence lists uses that aren't allowed: read it before downloading (Settings → AI Models → Licence)."));
     }
     if c.diffusion && !app.session.device.gpu {
         text = format!("{text} {}", tr("Without a GPU it takes minutes per Generate."));
