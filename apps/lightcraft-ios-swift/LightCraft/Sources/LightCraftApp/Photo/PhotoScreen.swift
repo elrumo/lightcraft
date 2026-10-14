@@ -162,6 +162,9 @@ struct PhotoScreen: View {
             if model.prefs.filmstrip, !review {
                 FilmstripView()
             }
+            #if os(macOS)
+            if !review { MacPhotoBar() }
+            #endif
         }
     }
 
@@ -359,6 +362,12 @@ struct ZoomablePhoto: View {
     /// The largest render asked for (zoomed views get sharper up to this).
     private let maxEdge: CGFloat = 4096
     private let margin: CGFloat = 24
+    /// The most a pinch or a request zooms in (× the fitted photo): a Mac's 100 % and more of a big photo is further.
+    #if os(macOS)
+    private static let maxZoom: CGFloat = 16
+    #else
+    private static let maxZoom: CGFloat = 8
+    #endif
 
     var body: some View {
         let picture = showBefore ? (model.images.before(for: photo) ?? model.images.view(for: photo)) : model.images.view(for: photo)
@@ -508,6 +517,13 @@ struct ZoomablePhoto: View {
         .onChange(of: photo) {
             zoom = 1; zoomAtStart = 1; pan = .zero; panAtStart = .zero; zoomed = false
         }
+        .onChange(of: model.editor.zoomAsk) { _, ask in
+            guard let ask else { return }
+            model.editor.zoomAsk = nil
+            zoomTo(ask)
+        }
+        .onChange(of: shownPercent, initial: true) { _, percent in model.editor.zoomPercent = percent }
+        .onChange(of: zoom > 1.01, initial: true) { _, on in model.editor.zoomedIn = on }
         .task(id: request) {
             guard let engine = model.engine, let r = request else { return }
             frame = try? await engine.execute("view.frame", ["id": .int(Int64(clamping: photo)), "applyCrop": .bool(r.crop)], as: PhotoFrame.self)
@@ -567,6 +583,35 @@ struct ZoomablePhoto: View {
         return CGRect(x: center.x - size.width / 2, y: center.y - size.height / 2, width: size.width, height: size.height)
     }
 
+    /// Zoom where the bar or a key asked: the photo fitted, filling the window, or at some screen
+    /// pixels per photo pixel (centred).
+    private func zoomTo(_ ask: ZoomAsk) {
+        guard let fitted = zoomedRect(model.images.view(for: photo), zoom: 1, pan: .zero), fitted.width > 0, fitted.height > 0 else { return }
+        let target: CGFloat
+        switch ask {
+        case .fit:
+            target = 1
+        case .fill:
+            target = max(canvas.width / fitted.width, canvas.height / fitted.height)
+        case .actual(let x):
+            guard let s = summary, s.width > 0, s.height > 0 else { return }
+            target = CGFloat(Double(max(s.width, s.height)) * x) / (max(fitted.width, fitted.height) * displayScale)
+        }
+        withAnimation(.snappy) {
+            zoom = min(max(target, 1), Self.maxZoom)
+            pan = .zero
+            zoomAtStart = zoom
+            panAtStart = .zero
+            zoomed = zoom > 1.01
+        }
+    }
+
+    /// The zoom as the bar shows it: percent of the photo's own pixels.
+    private var shownPercent: Int? {
+        guard let rect = zoomedRect(model.images.view(for: photo), zoom: zoom, pan: pan), let s = summary, s.width > 0, s.height > 0 else { return nil }
+        return Int((max(rect.width, rect.height) * displayScale / CGFloat(max(s.width, s.height)) * 100).rounded())
+    }
+
     /// A tap: a picker takes the colour there; otherwise the bars come and go.
     private func tapped(at location: CGPoint, picture: ImageStore.Picture?) {
         guard let pick = model.editor.picking else {
@@ -611,7 +656,7 @@ struct ZoomablePhoto: View {
     private var magnify: some Gesture {
         MagnifyGesture()
             .onChanged { value in
-                zoom = min(max(zoomAtStart * value.magnification, 1), 8)
+                zoom = min(max(zoomAtStart * value.magnification, 1), Self.maxZoom)
                 pan = clamped(pan)
                 zoomed = zoom > 1.01
             }

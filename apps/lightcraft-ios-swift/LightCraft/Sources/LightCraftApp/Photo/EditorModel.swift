@@ -51,6 +51,13 @@ nonisolated enum Tool: String, CaseIterable, Identifiable {
     }
 }
 
+/// Where a zoom is asked to go: the photo fitted, filling the window, or at `actual` screen pixels per
+/// photo pixel (1: 100 %).
+nonisolated enum ZoomAsk: Equatable {
+    case fit, fill
+    case actual(Double)
+}
+
 /// The Edit tool's groups, one shown at a time (the desktop's sections).
 nonisolated enum EditGroup: String, CaseIterable, Identifiable {
     case profile, light, color, effects, detail, optics, calibration
@@ -158,6 +165,13 @@ final class EditorModel {
     /// Red Eye: a pet's eyes, and the correction chosen (its sliders).
     var eyePet = false
     var eye = 0
+    /// A zoom asked for from outside the loupe (a Mac's bottom bar and keys): the loupe applies it and
+    /// clears it.
+    var zoomAsk: ZoomAsk?
+    /// What the loupe says of its zoom, for the bar: percent of the photo's own pixels, and whether it is
+    /// past fit.
+    var zoomPercent: Int?
+    var zoomedIn = false
 
     enum Pick {
         case whiteBalance, pointColor

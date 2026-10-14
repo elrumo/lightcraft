@@ -249,7 +249,12 @@ iPad"): one multiplatform Xcode target, arm64 only. Decisions (2026-10-14):
   (`Mac/MacEditPanel.swift`); every control is one row, name | track | value you can type over (double-click resets,
   arrow keys nudge; `Mac/MacSliderRow.swift`) — no group chips, no dials. The panel is given the column's width and
   never widens it (`Mac/MacSegmented.swift` is the segmented control that shrinks to fit); the inspector is shown or
-  hidden from the toolbar. The rest of SM2 is not built yet.
+  hidden from the toolbar. Under the loupe a bar (SM2.2, `Mac/MacPhotoBar.swift`) has the view modes (Grid, Loupe, Compare,
+  Survey), the rating and flag, Copy Edit Settings with a gear for the rest, the zoom (Fit, Fill, 100 %, 200 %, 400 %: an
+  `editor.zoomAsk` the loupe answers, and `zoomPercent` it reports) and Before / After; a narrow window drops the view modes,
+  then the words. It is drawn for the width it has, not with `ViewThatFits`: a window whose AppKit menus and buttons are
+  built in several variants to measure them can fail to settle its constraints, and AppKit then aborts the app. The rest of
+  SM2 is not built yet.
 
 Where it stands: it builds and launches with the iPad's regular-width layout in a window (SM0), and has a Mac's shell
 (SM1): a Settings window (⌘,: a tab per page of the iPhone's list, `Mac/MacSettings.swift`), a menu bar with the app
@@ -322,7 +327,7 @@ SM, the Mac app (see [macOS](#macos); not part of the S gates, which are about r
   done), the Xcode project, Rust build, `run.sh --mac` and `ci/mac-tour.sh` (SM0.3);
 - SM1, the Mac shell (done on this Mac): quit that closes the engine and the start-up error (SM1.1), the Settings window,
   the menus and the slideshow window (SM1.2);
-- SM2, the Mac window: sidebar, content and inspector, a toolbar and filmstrip, pointer and keyboard (SM2.1, the editor's inspector and the Edit panel, done; the other tools' panels, the bottom bar and toolbar, the grid and the loupe's input to come);
+- SM2, the Mac window: sidebar, content and inspector, a toolbar and filmstrip, pointer and keyboard (SM2.1, the editor's inspector and the Edit panel, and SM2.2, the bar under the loupe, done; the other tools' panels, the grid and the loupe's input to come);
 - SM3, desktop workflows: import in place from the open panel and Finder, an export destination, libraries;
 - SM4, tracking and CI: the Mac rows in `PARITY.md`, `ios-swift.yml`, the other docs.
 

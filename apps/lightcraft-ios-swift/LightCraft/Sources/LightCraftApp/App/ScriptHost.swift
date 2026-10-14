@@ -74,6 +74,7 @@ final class ScriptHost {
                 "photos": .int(Int64(clamping: model.library.count)),
                 "state": (try? JSONValue.encode(model.state)) ?? .null,
                 "perf": perf,
+                "zoom": ["percent": model.editor.zoomPercent.map { .int(Int64($0)) } ?? .null, "zoomedIn": .bool(model.editor.zoomedIn)],
                 "activity": .array(model.activity.map { .string($0.label) }),
                 "images": [
                     "thumbs": .int(Int64(model.images.pictures.keys.filter { $0.hasPrefix("thumb") }.count)),
@@ -121,6 +122,8 @@ final class ScriptHost {
             if let on = params["filmstrip"].bool { model.prefs.filmstrip = on }
             if let open = params["openSections"].array { model.prefs.openSections = open.compactMap(\.string) }
             if let on = params["inspector"].bool { model.prefs.inspectorShown = on }
+            // (the loupe's zoom: fit, fill, or a number of screen pixels per photo pixel, 1 being 100 %)
+            if let ask = params["zoomAsk"].string { model.editor.zoomAsk = ask == "fit" ? .fit : ask == "fill" ? .fill : .actual(Double(ask) ?? 1) }
             if let on = params["navigator"].bool { model.prefs.navigator = on }
             if let on = params["gridInfo"].bool { model.prefs.gridInfo = on }
             if let mode = params["beforeAfterMode"].string { model.prefs.beforeAfterMode = mode }
