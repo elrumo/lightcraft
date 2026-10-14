@@ -187,6 +187,16 @@ enum Platform {
         #endif
     }
 
+    /// The side inset of the controls in a tool's panel: a phone's panel has none of its own; a Mac's
+    /// sections pad their controls themselves.
+    static var panelInset: CGFloat {
+        #if os(iOS)
+        return 16
+        #else
+        return 0
+        #endif
+    }
+
     /// Whether the filmstrip under the loupe shows by default: a Mac has room for it, as Lightroom's does.
     static var showsFilmstrip: Bool {
         #if os(iOS)

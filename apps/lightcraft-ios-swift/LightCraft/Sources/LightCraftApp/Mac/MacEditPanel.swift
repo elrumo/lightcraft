@@ -21,8 +21,8 @@ struct MacEditPanel: View {
                 VStack(spacing: 0) {
                     MacProfileRow()
                     Divider()
-                    MacSection(id: "light", title: "Light") { MacLight() }
-                    MacSection(id: "color", title: "Color") { MacColor() }
+                    MacSection(id: "light", title: "Light", open: true) { MacLight() }
+                    MacSection(id: "color", title: "Color", open: true) { MacColor() }
                     MacSection(id: "effects", title: "Effects") { MacEffects() }
                     MacSection(id: "detail", title: "Detail") { Sliders(section: "detail") }
                     MacSection(id: "optics", title: "Optics") { Sliders(section: "optics") }
@@ -111,18 +111,20 @@ private struct MacProfileRow: View {
     }
 }
 
-/// A group of the panel: its name with a chevron, open or closed (kept), its sliders under it.
-private struct MacSection<Content: View>: View {
+/// A group of a Mac panel: its name with a chevron, open or closed (kept; `open` is how it starts), its
+/// controls under it.
+struct MacSection<Content: View>: View {
     @Environment(AppModel.self) private var model
     let id: String
     let title: LocalizedStringKey
+    var open: Bool = false
     @ViewBuilder let content: () -> Content
 
     var body: some View {
-        let open = model.prefs.isOpen(id)
+        let open = model.prefs.isOpen(id, default: open)
         VStack(alignment: .leading, spacing: 0) {
             Button {
-                withAnimation(.snappy(duration: 0.2)) { model.prefs.toggleOpen(id) }
+                withAnimation(.snappy(duration: 0.2)) { model.prefs.toggleOpen(id, default: self.open) }
             } label: {
                 HStack(spacing: 8) {
                     Image(systemName: "chevron.down")
@@ -150,19 +152,20 @@ private struct MacSection<Content: View>: View {
 
 /// A box inside a group (Lightroom's Curve, Color Mixer…): an icon, the name and a chevron; the
 /// controls open under it, and the engine sections they need are read when it first opens.
-private struct MacBox<Content: View>: View {
+struct MacBox<Content: View>: View {
     @Environment(AppModel.self) private var model
     let id: String
     let title: LocalizedStringKey
     let symbol: String
     var sections: [String] = []
+    var open: Bool = false
     @ViewBuilder let content: () -> Content
 
     var body: some View {
-        let open = model.prefs.isOpen(id)
+        let open = model.prefs.isOpen(id, default: open)
         VStack(alignment: .leading, spacing: 8) {
             Button {
-                withAnimation(.snappy(duration: 0.2)) { model.prefs.toggleOpen(id) }
+                withAnimation(.snappy(duration: 0.2)) { model.prefs.toggleOpen(id, default: self.open) }
             } label: {
                 HStack(spacing: 8) {
                     Image(systemName: symbol)

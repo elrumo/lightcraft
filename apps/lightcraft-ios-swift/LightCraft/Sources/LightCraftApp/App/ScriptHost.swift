@@ -120,7 +120,8 @@ final class ScriptHost {
             if let guide = params["cropGuide"].string { model.prefs.cropGuide = guide }
             if let draw = params["cropDraw"].string { model.editor.cropDraw = draw == "none" ? nil : draw }
             if let on = params["filmstrip"].bool { model.prefs.filmstrip = on }
-            if let open = params["openSections"].array { model.prefs.openSections = open.compactMap(\.string) }
+            // (the Mac panels' sections: {"light": true, "curve": false}; the ones not named stay as they are)
+            if case .object(let sections) = params["sections"] { for (id, open) in sections { if let open = open.bool { model.prefs.sectionStates[id] = open } } }
             if let on = params["inspector"].bool { model.prefs.inspectorShown = on }
             // (the loupe's zoom: fit, fill, or a number of screen pixels per photo pixel, 1 being 100 %)
             if let ask = params["zoomAsk"].string { model.editor.zoomAsk = ask == "fit" ? .fit : ask == "fill" ? .fill : .actual(Double(ask) ?? 1) }

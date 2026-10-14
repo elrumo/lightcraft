@@ -40,12 +40,12 @@ struct CropTools: View {
     @State private var dialStart: Double?
 
     /// The crop's composition guides (`crop.guides` kinds).
-    private static let guides: [(String, String)] = [
+    static let guides: [(String, String)] = [
         ("thirds", "Rule of Thirds"), ("grid", "Grid"), ("golden", "Golden Ratio"), ("diagonal", "Diagonal"),
         ("triangle", "Golden Triangle"), ("spiral", "Golden Spiral"), ("none", "None"),
     ]
 
-    private static let ratios: [(String, String)] = [
+    static let ratios: [(String, String)] = [
         ("1x1", "1 × 1"), ("4x5", "4 × 5"), ("3x4", "3 × 4"), ("2x3", "2 × 3"), ("5x7", "5 × 7"),
         ("9x16", "9 × 16"), ("10x16", "10 × 16"), ("8.5x11", "8.5 × 11"), ("1x2", "1 × 2"),
     ]
@@ -153,43 +153,8 @@ struct CropTools: View {
                 .scrollIndicators(.hidden)
             } else {
                 ScrollView {
-                    VStack(alignment: .leading) {
-                        Text("Upright").font(.subheadline.weight(.semibold))
-                        HStack {
-                            ForEach([("auto", "Auto"), ("level", "Level"), ("vertical", "Vertical"), ("full", "Full"), ("guided", "Guided")], id: \.0) { mode, label in
-                                let on = editor.setting("geometry", "upright").string == mode
-                                Button(LocalizedStringKey(label)) {
-                                    model.perform("geometry.upright", ["mode": .string(on ? "off" : mode)])
-                                    // Guided: draw its guides on the photo
-                                    editor.cropDraw = mode == "guided" && !on ? "guides" : nil
-                                }
-                                .buttonStyle(.bordered)
-                                .tint(on ? .accentColor : .secondary)
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.7)
-                            }
-                        }
-                        if editor.setting("geometry", "upright").string == "guided" {
-                            let n = editor.setting("geometry", "guides").array?.count ?? 0
-                            Text("\(n) of 4 guides — drag along lines that should be vertical or horizontal.")
-                                .font(.caption).foregroundStyle(.secondary)
-                            HStack {
-                                Button(editor.cropDraw == "guides" ? "Done" : "Draw Guides") {
-                                    editor.cropDraw = editor.cropDraw == "guides" ? nil : "guides"
-                                }
-                                if n > 0 {
-                                    Button("Clear Guides", role: .destructive) { model.perform("geometry.guides", ["guides": []]) }
-                                }
-                            }
-                            .buttonStyle(.bordered)
-                        }
-                        Sliders(section: "optics") { $0.id == "optics.distortion" }
-                        Sliders(section: "geometry") { $0.id != "crop.angle" }
-                        Toggle("Constrain Crop", isOn: Binding(get: { editor.setting("geometry", "constrain_crop").bool == true }, set: {
-                            model.perform("develop.merge", ["settings": ["geometry": ["constrain_crop": .bool($0)]], "label": "Constrain Crop"])
-                        }))
-                    }
-                    .padding(.horizontal, 16)
+                    GeometryControls()
+                        .padding(.horizontal, 16)
                 }
                 .frame(maxHeight: 236)
             }
@@ -227,6 +192,52 @@ struct CropTools: View {
         .foregroundStyle(on ? Color.white : Color.primary)
         .frame(width: 72, height: 66)
         .background(on ? Color.accentColor : Color.lcTertiaryFill, in: .rect(cornerRadius: 12))
+    }
+}
+
+/// Crop's Geometry: Upright (Auto, Level, Vertical, Full, Guided and its guides), the distortion and
+/// perspective sliders, Constrain Crop.
+struct GeometryControls: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        let editor = model.editor
+        VStack(alignment: .leading) {
+            Text("Upright").font(.subheadline.weight(.semibold))
+            HStack {
+                ForEach([("auto", "Auto"), ("level", "Level"), ("vertical", "Vertical"), ("full", "Full"), ("guided", "Guided")], id: \.0) { mode, label in
+                    let on = editor.setting("geometry", "upright").string == mode
+                    Button(LocalizedStringKey(label)) {
+                        model.perform("geometry.upright", ["mode": .string(on ? "off" : mode)])
+                        // Guided: draw its guides on the photo
+                        editor.cropDraw = mode == "guided" && !on ? "guides" : nil
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(on ? .accentColor : .secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                }
+            }
+            if editor.setting("geometry", "upright").string == "guided" {
+                let n = editor.setting("geometry", "guides").array?.count ?? 0
+                Text("\(n) of 4 guides — drag along lines that should be vertical or horizontal.")
+                    .font(.caption).foregroundStyle(.secondary)
+                HStack {
+                    Button(editor.cropDraw == "guides" ? "Done" : "Draw Guides") {
+                        editor.cropDraw = editor.cropDraw == "guides" ? nil : "guides"
+                    }
+                    if n > 0 {
+                        Button("Clear Guides", role: .destructive) { model.perform("geometry.guides", ["guides": []]) }
+                    }
+                }
+                .buttonStyle(.bordered)
+            }
+            Sliders(section: "optics") { $0.id == "optics.distortion" }
+            Sliders(section: "geometry") { $0.id != "crop.angle" }
+            Toggle("Constrain Crop", isOn: Binding(get: { editor.setting("geometry", "constrain_crop").bool == true }, set: {
+                model.perform("develop.merge", ["settings": ["geometry": ["constrain_crop": .bool($0)]], "label": "Constrain Crop"])
+            }))
+        }
     }
 }
 

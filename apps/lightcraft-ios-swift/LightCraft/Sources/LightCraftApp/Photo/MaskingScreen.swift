@@ -98,7 +98,7 @@ struct MaskingTools: View {
 }
 
 /// Mask, Light, Color, Effects, Detail, Optics: a tap opens the group's sliders, again closes them.
-private struct MaskGroupRow: View {
+struct MaskGroupRow: View {
     @Binding var selection: String?
     let enabled: Bool
 
@@ -146,7 +146,7 @@ private struct MaskGroupSheet: View {
 
 /// The Mask group: Amount, Invert, each part's own controls (a luminance range, a colour range's
 /// refine, an AI selection's edge: `mask.shapeControls`), Refine Edges, the overlay's options.
-private struct MaskSettings: View {
+struct MaskSettings: View {
     @Environment(AppModel.self) private var model
     let mask: JSONValue
     @State private var shape: ShapeControls?
@@ -157,12 +157,12 @@ private struct MaskSettings: View {
         VStack(alignment: .leading, spacing: 6) {
             MaskAdjustments(mask: mask["id"], ids: ["amount"])
             Toggle("Invert", isOn: Binding(get: { mask["invert"].bool == true }, set: { _ in model.perform("mask.invert", ["id": mask["id"]]) }))
-                .padding(.horizontal, 16)
+                .padding(.horizontal, Platform.panelInset)
             ForEach(shape?.components ?? [], id: \.component) { part in
                 if !part.controls.isEmpty {
                     Text(LocalizedStringKey(MaskKind.name(part.kind)))
                         .font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
-                        .padding(.horizontal, 16).padding(.top, 6)
+                        .padding(.horizontal, Platform.panelInset).padding(.top, 6)
                     ForEach(part.controls) { spec in
                         ShapeSlider(mask: mask["id"], component: part.component, spec: spec)
                     }
@@ -172,7 +172,7 @@ private struct MaskSettings: View {
                             prefs.maskOverlayMode = on ? "colorOnBw" : "color"
                             if on { prefs.maskOverlay = true }
                         }))
-                        .padding(.horizontal, 16)
+                        .padding(.horizontal, Platform.panelInset)
                     }
                 }
             }
@@ -180,7 +180,7 @@ private struct MaskSettings: View {
                 ShapeSlider(mask: mask["id"], component: nil, spec: refine)
             }
             Button("Overlay Options", systemImage: "eye.circle") { overlayOptions = true }
-                .padding(.horizontal, 16).padding(.vertical, 6)
+                .padding(.horizontal, Platform.panelInset).padding(.vertical, 6)
         }
         .sheet(isPresented: $overlayOptions) { MaskOverlayOptions().presentationDetents([.medium]) }
         .task(id: Key(mask: mask["id"], revision: model.settledRevision)) {
@@ -232,7 +232,7 @@ private struct ShapeSlider: View {
                 model.perform("mask.setShapeControl", params(spec.default))
             }
         )
-        .padding(.horizontal, 16)
+        .padding(.horizontal, Platform.panelInset)
         .onChange(of: spec.value) { local = nil }
     }
 
@@ -265,7 +265,7 @@ struct MaskAdjustments: View {
                         ControlSlider(spec: spec, value: value(spec), set: { set(spec, $0) }, editing: { editing(spec, $0) }, reset: { reset(spec) })
                     }
                 }
-                .padding(.horizontal, 16)
+                .padding(.horizontal, Platform.panelInset)
             }
         }
         .task(id: Key(mask: mask, revision: model.settledRevision)) {
@@ -305,6 +305,8 @@ struct MaskAdjustments: View {
 /// theirs; a painted part puts the brush in hand) and ± to add to it, take from it or intersect it.
 struct MaskColumn: View {
     @Environment(AppModel.self) private var model
+    /// The tiles in rows that wrap (a Mac's panel), not a floating column over the photo.
+    var wrap = false
     @State private var renaming: Renaming?
     @State private var name = ""
 
@@ -314,12 +316,19 @@ struct MaskColumn: View {
     }
 
     var body: some View {
-        ViewThatFits(in: .vertical) {
-            column
-            ScrollView { column }.scrollIndicators(.hidden)
+        Group {
+            if wrap {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 64), spacing: 8, alignment: .top)], alignment: .leading, spacing: 10) { tiles }
+                    .buttonStyle(.plain)
+            } else {
+                ViewThatFits(in: .vertical) {
+                    column
+                    ScrollView { column }.scrollIndicators(.hidden)
+                }
+                .frame(width: 80)
+                .glassEffect(.regular, in: .rect(cornerRadius: 24))
+            }
         }
-        .frame(width: 80)
-        .glassEffect(.regular, in: .rect(cornerRadius: 24))
         .alert("Rename", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
             TextField("Name", text: $name)
             Button("Rename") { rename() }
@@ -329,23 +338,26 @@ struct MaskColumn: View {
     }
 
     private var column: some View {
+        VStack(spacing: 10) { tiles }
+            .buttonStyle(.plain)
+            .padding(.vertical, 12)
+    }
+
+    /// + (create), a tile per mask, and under the chosen one its parts and ±.
+    @ViewBuilder private var tiles: some View {
         let active = model.state.activeMask.map(Int64.init)
-        return VStack(spacing: 10) {
-            CreateMaskMenu()
-            ForEach(Array(MaskList.all(model).enumerated()), id: \.offset) { _, mask in
-                let chosen = mask["id"].int == active
-                let tile = MaskTile(symbol: MaskKind.symbol(MaskList.kind(mask)), name: mask["name"].string ?? String(localized: "Mask"),
-                                    chosen: chosen, visible: mask["visible"].bool != false, side: 52, badge: nil)
-                if chosen {
-                    Menu { maskMenu(mask) } label: { tile }
-                    parts(mask)
-                } else {
-                    Button { select(mask) } label: { tile }
-                }
+        CreateMaskMenu()
+        ForEach(Array(MaskList.all(model).enumerated()), id: \.offset) { _, mask in
+            let chosen = mask["id"].int == active
+            let tile = MaskTile(symbol: MaskKind.symbol(MaskList.kind(mask)), name: mask["name"].string ?? String(localized: "Mask"),
+                                chosen: chosen, visible: mask["visible"].bool != false, side: 52, badge: nil)
+            if chosen {
+                Menu { maskMenu(mask) } label: { tile }
+                parts(mask)
+            } else {
+                Button { select(mask) } label: { tile }
             }
         }
-        .buttonStyle(.plain)
-        .padding(.vertical, 12)
     }
 
     @ViewBuilder private func parts(_ mask: JSONValue) -> some View {

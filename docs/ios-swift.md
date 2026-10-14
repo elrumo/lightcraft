@@ -254,7 +254,11 @@ iPad"): one multiplatform Xcode target, arm64 only. Decisions (2026-10-14):
   `editor.zoomAsk` the loupe answers, and `zoomPercent` it reports) and Before / After; a narrow window drops the view modes,
   then the words. It is drawn for the width it has, not with `ViewThatFits`: a window whose AppKit menus and buttons are
   built in several variants to measure them can fail to settle its constraints, and AppKit then aborts the app. The rest of
-  SM2 is not built yet.
+  SM2 is not built yet. Crop & Rotate (`Mac/MacCropPanel.swift`: Aspect and its lock, an Angle slider, buttons for
+  straighten, turn, flip and reset, the overlay, Expand; Geometry as a group of its own) and Masking (`Mac/MacMaskingPanel.swift`:
+  the masks and their parts as wrapping tiles at the top, the brush, then Mask, Light, Color, Effects, Detail and Optics stacked
+  for the selected mask) are laid out the same way (SM2.3); Remove and Red Eye were already one column of controls. A Mac's
+  sections remember whether they are open (`Prefs.sectionStates`), each panel saying how a new one starts.
 
 Where it stands: it builds and launches with the iPad's regular-width layout in a window (SM0), and has a Mac's shell
 (SM1): a Settings window (⌘,: a tab per page of the iPhone's list, `Mac/MacSettings.swift`), a menu bar with the app
@@ -327,7 +331,7 @@ SM, the Mac app (see [macOS](#macos); not part of the S gates, which are about r
   done), the Xcode project, Rust build, `run.sh --mac` and `ci/mac-tour.sh` (SM0.3);
 - SM1, the Mac shell (done on this Mac): quit that closes the engine and the start-up error (SM1.1), the Settings window,
   the menus and the slideshow window (SM1.2);
-- SM2, the Mac window: sidebar, content and inspector, a toolbar and filmstrip, pointer and keyboard (SM2.1, the editor's inspector and the Edit panel, and SM2.2, the bar under the loupe, done; the other tools' panels, the grid and the loupe's input to come);
+- SM2, the Mac window: sidebar, content and inspector, a toolbar and filmstrip, pointer and keyboard (SM2.1, the editor's inspector and the Edit panel, SM2.2, the bar under the loupe, and SM2.3, the Crop and Masking panels, done; the grid and the loupe's input to come);
 - SM3, desktop workflows: import in place from the open panel and Finder, an export destination, libraries;
 - SM4, tracking and CI: the Mac rows in `PARITY.md`, `ios-swift.yml`, the other docs.
 

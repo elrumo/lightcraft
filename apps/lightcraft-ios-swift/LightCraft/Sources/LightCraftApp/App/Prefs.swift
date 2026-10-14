@@ -36,7 +36,7 @@ final class Prefs {
         showHistogram = store.bool(forKey: "showHistogram")
         showClipping = store.bool(forKey: "showClipping")
         filmstrip = store.object(forKey: "filmstrip") as? Bool ?? Platform.showsFilmstrip
-        openSections = store.stringArray(forKey: "openSections") ?? ["light", "color"]
+        sectionStates = store.dictionary(forKey: "sectionStates") as? [String: Bool] ?? [:]
         inspectorShown = store.object(forKey: "inspectorShown") as? Bool ?? true
         navigator = store.object(forKey: "navigator") as? Bool ?? true
         gridInfo = store.bool(forKey: "gridInfo")
@@ -147,16 +147,15 @@ final class Prefs {
         #endif
     }
 
-    /// The Mac's edit panel: which sections are open (`light`, `color`… and the boxes in them: `curve`,
-    /// `mixer`…), and whether the inspector is showing.
-    var openSections: [String] { didSet { store.set(openSections, forKey: "openSections") } }
+    /// The Mac's panels: the sections and boxes the user opened or closed (`light`, `color`, `curve`,
+    /// `mixer`…); one never touched is as its panel has it (`isOpen(_:default:)`). And whether the
+    /// inspector is showing.
+    var sectionStates: [String: Bool] { didSet { store.set(sectionStates, forKey: "sectionStates") } }
     var inspectorShown: Bool { didSet { store.set(inspectorShown, forKey: "inspectorShown") } }
 
-    func isOpen(_ id: String) -> Bool { openSections.contains(id) }
+    func isOpen(_ id: String, default open: Bool = false) -> Bool { sectionStates[id] ?? open }
 
-    func toggleOpen(_ id: String) {
-        if let i = openSections.firstIndex(of: id) { openSections.remove(at: i) } else { openSections.append(id) }
-    }
+    func toggleOpen(_ id: String, default open: Bool = false) { sectionStates[id] = !isOpen(id, default: open) }
     /// Double tap zooms to this (× the fitted size).
     var clickZoom: Double { didSet { store.set(clickZoom, forKey: "clickZoom") } }
     var haptics: Bool { didSet { store.set(haptics, forKey: "haptics") } }

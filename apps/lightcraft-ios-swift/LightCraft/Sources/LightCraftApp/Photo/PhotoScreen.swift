@@ -170,11 +170,13 @@ struct PhotoScreen: View {
 
     private var photoPager: some View {
         PhotoPager(start: start, startIndex: model.library.index(of: start), review: $review)
+            #if os(iOS)
             .overlay(alignment: .topTrailing) {
                 if model.editor.tool == .masking, !review {
                     MaskColumn().padding(10).transition(.move(edge: .trailing).combined(with: .opacity))
                 }
             }
+            #endif
     }
 }
 

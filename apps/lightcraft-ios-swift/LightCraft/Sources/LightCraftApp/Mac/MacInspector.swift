@@ -34,7 +34,11 @@ private struct MacToolPanel: View {
                 ScrollView { PresetsPanel().padding(16) }
             case .info:
                 ScrollView { InfoPanel().padding(16) }
-            case .crop, .masking, .remove, .redEye:
+            case .crop:
+                MacCropPanel()
+            case .masking:
+                MacMaskingPanel()
+            case .remove, .redEye:
                 ScrollView { ToolScreenBar(tool: tool) }
             }
         }
