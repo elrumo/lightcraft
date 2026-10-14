@@ -851,6 +851,8 @@ pub struct RenderJob {
     pub view_cache: Option<(Arc<PreviewCache>, Hash128)>,
     /// Render for this monitor profile ([`Self::with_display`]).
     pub display: Option<Arc<crate::display::Display>>,
+    /// Render the HDR picture beside the 8-bit one ([`Self::with_hdr_display`]).
+    pub hdr_view: bool,
 }
 
 pub struct RenderResult {
@@ -870,6 +872,9 @@ pub struct RenderResult {
     /// The display profile (id) the image is encoded for; `None`: sRGB (see
     /// [`crate::display::present`]).
     pub display: Option<u64>,
+    /// The HDR render, for a job asked with [`RenderJob::with_hdr_display`] (`image` is its 8-bit
+    /// reduction).
+    pub hdr: Option<Arc<crate::hdr_view::HdrPicture>>,
 }
 
 impl RenderJob {
@@ -894,6 +899,30 @@ impl RenderJob {
         if overlay != lightcraft_pipeline::Overlay::None {
             self.view_cache = None;
         }
+        self
+    }
+
+    /// Render the HDR picture of an HDR edit ([`RenderResult::hdr`]) for a display that can show
+    /// it: the float HDR render in Display P3 primaries (what an HDR-capable screen shows; the system
+    /// colour-manages an HDR picture, so no monitor profile), encoded with the extended sRGB curve
+    /// ([`crate::hdr_view::HdrPicture`]), whose 8-bit reduction is `image`. Other
+    /// jobs are left as they are (an SDR edit, a diagnostic overlay, a soft proof, a thumbnail). Gets
+    /// its own result key and never becomes the photo's cached preview.
+    pub fn with_hdr_display(mut self) -> Self {
+        let plain = self.request.depth == lightcraft_pipeline::OutputDepth::U8
+            && self.request.overlay == lightcraft_pipeline::Overlay::None
+            && self.request.proof.is_none()
+            && self.cache.is_none();
+        // (Generative Expand's missing area is transparent in the 8-bit picture, and an HDR one has no alpha)
+        if !plain || self.hdr_view || !self.settings.hdr.enabled || self.settings.crop.expand {
+            return self;
+        }
+        self.key ^= 0x4844_525f_5649_4557u64.wrapping_mul(0x9e37_79b9_7f4a_7c15);
+        self.hdr_view = true;
+        self.request.space = lightcraft_pipeline::OutputSpace::DisplayP3;
+        self.request.display = None;
+        self.display = None;
+        self.view_cache = None;
         self
     }
 
@@ -944,7 +973,7 @@ impl RenderJob {
     /// Gets its own result key. Thumbnail jobs (rendered-thumbnail cache) are left as they are:
     /// [`crate::display::present`] converts their sRGB results.
     pub fn with_display(mut self, display: Option<Arc<crate::display::Display>>) -> Self {
-        if self.cache.is_some() || self.request.depth != lightcraft_pipeline::OutputDepth::U8 {
+        if self.cache.is_some() || self.hdr_view || self.request.depth != lightcraft_pipeline::OutputDepth::U8 {
             return self;
         }
         let k = |d: &Option<Arc<crate::display::Display>>| d.as_ref().map_or(0, |d| d.id()).wrapping_mul(0xd6e8_feb8_6659_fd93);
@@ -975,6 +1004,7 @@ impl RenderJob {
             loaded: None,
             quick: None,
             display: None,
+            hdr: None,
         }
     }
 
@@ -995,6 +1025,7 @@ impl RenderJob {
                 loaded: None,
                 quick: None,
                 display: None,
+                hdr: None,
             };
         }
         let was_loaded = matches!(self.source, SourceRef::Loaded(_));
@@ -1013,7 +1044,11 @@ impl RenderJob {
                 // Thumbnails (many small jobs side by side) stay on the CPU; views and exports use
                 // the GPU when there is one.
                 let gpu = self.cache.is_none();
-                let (mut rendered, gpu_fallback) = develop_reporting(src, &info, &self.settings, &self.request, self.stages.as_deref(), gpu);
+                // (the HDR picture is the float HDR render: CPU only)
+                let request =
+                    if self.hdr_view { RenderRequest { depth: lightcraft_pipeline::OutputDepth::F32Hdr, ..self.request } } else { self.request };
+                let (mut rendered, gpu_fallback) = develop_reporting(src, &info, &self.settings, &request, self.stages.as_deref(), gpu);
+                let hdr = self.hdr_view.then(|| Self::hdr_picture(&self.settings, &mut rendered)).flatten();
                 // for a display profile: the image goes to the display's values, the histogram
                 // and the cached view preview stay sRGB
                 let mut srgb = None;
@@ -1050,10 +1085,22 @@ impl RenderJob {
                     loaded: (!was_loaded).then_some(source),
                     quick: None,
                     display,
+                    hdr,
                 }
             }
             Err(e) => self.failed(e),
         }
+    }
+
+    /// The HDR picture of a render made for [`Self::with_hdr_display`]; its float samples leave
+    /// `rendered` (the 8-bit picture and the HDR histogram stay).
+    fn hdr_picture(settings: &DevelopSettings, rendered: &mut Rendered) -> Option<Arc<crate::hdr_view::HdrPicture>> {
+        let deep = rendered.deep.take()?;
+        if let lightcraft_pipeline::DeepSamples::F32(v) = &deep.samples {
+            // (the histogram of an HDR edit shows its HDR range, as for its SDR previews)
+            rendered.histogram = Histogram::of_hdr(v.as_chunks::<3>().0, lightcraft_develop::Hdr::MAX_EV_LIMIT as f32);
+        }
+        crate::hdr_view::HdrPicture::from_deep(&deep, settings.hdr.peak()).map(Arc::new)
     }
 }
 
@@ -1155,6 +1202,7 @@ impl QuickJob {
             loaded: None,
             quick: None,
             display: None,
+            hdr: None,
         })
     }
 
@@ -1172,6 +1220,7 @@ impl QuickJob {
             loaded: None,
             quick,
             display: None,
+            hdr: None,
         };
         let rendered = |image: Rgba8| {
             let histogram = Histogram::of_srgb8(&image);
@@ -1327,6 +1376,7 @@ impl crate::Session {
             stages: None,
             view_cache: None,
             display: None,
+            hdr_view: false,
         })
     }
 
@@ -1382,6 +1432,7 @@ impl crate::Session {
             stages: None,
             view_cache: None,
             display: None,
+            hdr_view: false,
         })
     }
 
@@ -1428,6 +1479,7 @@ impl crate::Session {
             stages: None,
             view_cache: None,
             display: None,
+            hdr_view: false,
         })
     }
 
