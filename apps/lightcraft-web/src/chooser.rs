@@ -101,7 +101,7 @@ mod tests {
     #[test]
     fn the_chooser_offers_the_preset_files_the_browser_can_import() {
         assert_eq!(accept(&["lcpreset", "xmp", "zip", "cube", "CUBE"]), ".lcpreset,.xmp,.zip");
-        assert_eq!(accept(lightcraft_ui_egui::pick::PRESET_EXTENSIONS), ".lcpreset,.xmp,.lrtemplate,.zip,.dng,.lmp,.mplumpack");
+        assert_eq!(accept(lightcraft_ui_egui::pick::PRESET_EXTENSIONS), ".lcpreset,.xmp,.lrtemplate,.zip,.dng,.lmp,.mplumpack,.lceffect");
         assert_eq!(accept(&[]), "");
         assert!(too_large("a.xmp", 4096.0).is_none());
         assert!(too_large("big.dng", MAX_FILE_BYTES + 1.0).is_some_and(|w| w.starts_with("big.dng: too large")));

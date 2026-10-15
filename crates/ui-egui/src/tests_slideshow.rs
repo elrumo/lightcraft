@@ -309,14 +309,6 @@ fn show_preview(h: &mut Headless) {
     panic!("the slideshow preview never came into view");
 }
 
-fn dump(h: &Headless, name: &str) {
-    let img = h.paint();
-    let rgba = lightcraft_raster::Rgba8 { width: img.size[0], height: img.size[1], data: img.pixels.iter().map(|c| [c.r(), c.g(), c.b(), 255]).collect() };
-    if let Ok(png) = lightcraft_codecs::encode_png(&lightcraft_codecs::EncodeImage::rgba8(&rgba), &lightcraft_codecs::EncodeMeta::default()) {
-        let _ = std::fs::write(format!("/private/tmp/claude-501/-Users-eliasruizmonserrat-Documents-local-projects-personalProjects-lightcraft/61b8af9f-f442-4ebd-aaaf-54619ebb9c0f/scratchpad/{name}.png"), png);
-    }
-}
-
 fn painted(img: &egui::ColorImage, x: usize, y: usize) -> [u8; 3] {
     let c = img.pixels[y * img.size[0] + x];
     [c.r(), c.g(), c.b()]
@@ -410,7 +402,6 @@ fn settings_shows_the_slide_layout_and_a_live_preview() {
     show_preview(&mut h);
     let rect = h.app.widgets.iter().find(|(id, _)| id == "slideshow:preview").map(|(_, r)| *r).unwrap();
     let img = h.paint();
-    dump(&h, "ss-layout");
     let c = painted(&img, (rect.left() + 3.0) as usize, (rect.center().y) as usize);
     assert!(c[1] > 200 && c[0] < 60, "the green backdrop in the preview margin: {c:?}");
     h.settle(SETTLE);
@@ -629,7 +620,6 @@ fn settings_shows_the_titles_and_the_preview_shows_a_title_screen() {
     run(&mut h, "slideshow.titles", json!({"intro": {"color": "#ff8000", "content": "none"}}));
     assert!(h.step_until(SETTLE, |h| h.app.renderer.textures.get(&Slot::SlidePreview).is_some_and(|t| t.photo == PhotoId(0))));
     show_preview(&mut h);
-    dump(&h, "ss-titles");
     assert!(h.step_until(SETTLE, |h| {
         let rect = h.app.widgets.iter().find(|(id, _)| id == "slideshow:preview").map(|(_, r)| *r).unwrap();
         let img = h.paint();
@@ -644,6 +634,7 @@ fn settings_shows_the_titles_and_the_preview_shows_a_title_screen() {
     h.step();
     assert!(has(&h, "field:slideshowIntroText"));
     // back to the photo's slide
+    show_preview(&mut h);
     let r = h.request("ui.clickWidget", json!({"id": "button:settingsSlideshowPreviewShows-0"}), T);
     assert_eq!(r["ok"], true, "{r}");
     assert!(h.step_until(SETTLE, |h| h.app.renderer.textures.get(&Slot::SlidePreview).is_some_and(|t| t.photo == first)));
@@ -689,7 +680,6 @@ fn template_browser_previews_on_hover_applies_and_manages_user_templates() {
         let c = painted(&img, (r.left() + 3.0) as usize, r.center().y as usize);
         c.iter().all(|v| (200..=230).contains(v))
     };
-    dump(&h, "ss-template");
     assert!(h.step_until(SETTLE, grey), "the hovered template on the selected photo");
     assert_eq!(SlideLook::of(&h.app.session), before, "hovering changes nothing");
     assert!(h.app.session.slide_templates_previous.is_none());
@@ -700,10 +690,12 @@ fn template_browser_previews_on_hover_applies_and_manages_user_templates() {
     assert!(h.app.session.slide_overlays.rating_stars.enabled && h.app.session.slide_layout.stroke_border);
     assert!(has(&h, "template:previous"), "Previous settings appear");
     // save as a template of our own
+    reveal(&mut h, "field:slideshowTemplateName");
     let r = h.request("ui.clickWidget", json!({"id": "field:slideshowTemplateName"}), T);
     assert_eq!(r["ok"], true, "{r}");
     let r = h.request("ui.text", json!({"text": "Holiday / 2026"}), T);
     assert_eq!(r["ok"], true, "{r}");
+    reveal(&mut h, "button:slideshowTemplateSave");
     let r = h.request("ui.clickWidget", json!({"id": "button:slideshowTemplateSave"}), T);
     assert_eq!(r["ok"], true, "{r}");
     h.step();
@@ -712,6 +704,7 @@ fn template_browser_previews_on_hover_applies_and_manages_user_templates() {
     assert!(has(&h, "template:user:Holiday _ 2026"));
     // update it from its menu with changed settings
     run(&mut h, "slideshow.layout", json!({"backdropColor": "#123456"}));
+    reveal(&mut h, "template:user:Holiday _ 2026");
     let r = h.request("ui.clickWidget", json!({"id": "template:user:Holiday _ 2026", "button": "right"}), T);
     assert_eq!(r["ok"], true, "{r}");
     h.step();
@@ -724,6 +717,7 @@ fn template_browser_previews_on_hover_applies_and_manages_user_templates() {
     h.step();
     assert_eq!(h.app.session.slide_template("user:Holiday _ 2026").unwrap().look.layout.backdrop_color, [0x12, 0x34, 0x56]);
     // rename it in place
+    reveal(&mut h, "template:user:Holiday _ 2026");
     let r = h.request("ui.clickWidget", json!({"id": "template:user:Holiday _ 2026", "button": "right"}), T);
     assert_eq!(r["ok"], true, "{r}");
     h.step();
@@ -742,6 +736,7 @@ fn template_browser_previews_on_hover_applies_and_manages_user_templates() {
     h.step();
     assert!(has(&h, "template:user:Summer"), "{:?}", h.app.session.slide_templates().templates.iter().map(|t| t.id.clone()).collect::<Vec<_>>());
     // delete it (after confirming)
+    reveal(&mut h, "template:user:Summer");
     let r = h.request("ui.clickWidget", json!({"id": "template:user:Summer", "button": "right"}), T);
     assert_eq!(r["ok"], true, "{r}");
     h.step();
@@ -750,11 +745,13 @@ fn template_browser_previews_on_hover_applies_and_manages_user_templates() {
     h.step();
     h.step();
     assert!(dir.join("Summer.json").exists(), "not before it is confirmed");
+    reveal(&mut h, "button:slideshowTemplateDeleteConfirm");
     let r = h.request("ui.clickWidget", json!({"id": "button:slideshowTemplateDeleteConfirm"}), T);
     assert_eq!(r["ok"], true, "{r}");
     h.step();
     assert!(!dir.join("Summer.json").exists());
     // back to the settings before Gallery Wall
+    reveal(&mut h, "template:previous");
     let r = h.request("ui.clickWidget", json!({"id": "template:previous"}), T);
     assert_eq!(r["ok"], true, "{r}");
     h.step();

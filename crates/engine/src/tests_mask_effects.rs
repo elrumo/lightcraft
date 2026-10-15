@@ -247,6 +247,22 @@ fn lightroom_folder_import_groups_by_dividers_and_round_trips() {
     let _ = std::fs::remove_dir_all(&lib);
 }
 
+/// A browser's file chooser hands the files over by content (`files`): local adjustment presets among them become
+/// mask effects there too, not develop presets that fail.
+#[test]
+fn local_presets_given_by_content_become_effects() {
+    let brush = lr_local("Brush B", "\t\tshadows2012 = 0.5,");
+    let develop = "s = { title = \"Look\", type = \"Develop\", value = { settings = { Exposure2012 = 0.5 } } }";
+    let files = crate::inline_files::to_param([("Kit/Brush B.lrtemplate", brush.as_bytes()), ("Look.lrtemplate", develop.as_bytes())]);
+    let mut s = Session::with_demo();
+    let r = s.execute("preset.import", &json!({ "files": files })).unwrap();
+    assert_eq!(r["effects"].as_array().unwrap().len(), 1, "{r}");
+    assert_eq!(r["imported"].as_array().unwrap().len(), 1, "the develop template stays a develop preset: {r}");
+    assert_eq!(r["failed"].as_array().unwrap().len(), 0, "{r}");
+    let got: Vec<(String, String)> = s.mask_effects.iter().map(|e| (e.name.clone(), e.group.clone())).collect();
+    assert_eq!(got, [("Brush B".to_string(), "Kit".to_string())]);
+}
+
 #[test]
 fn zips_and_camera_raw_xmp_presets_import() {
     let lib = temp_dir("zip");

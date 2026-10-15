@@ -32,10 +32,7 @@ fn the_gaps_between_dock_panes_show_chrome_not_the_dark_clear_colour() {
     let chrome = crate::theme::Tokens::get(&h.view.ctx).divider;
     let right = rect(&h, "panel:right_panel");
     let left = rect(&h, "panel:left_panel");
-    for (panel, gap) in [
-        ("Tools", egui::pos2(right.left() - 2.0, right.center().y)),
-        ("Library", egui::pos2(left.right() + 2.0, left.center().y)),
-    ] {
+    for (panel, gap) in [("Tools", egui::pos2(right.left() - 2.0, right.center().y)), ("Library", egui::pos2(left.right() + 2.0, left.center().y))] {
         assert_eq!(pixel(gap), chrome, "the gap beside {panel} at {gap:?} is not chrome");
     }
 }

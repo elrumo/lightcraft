@@ -10,7 +10,7 @@
 
 use egui::{Align2, Color32, Rect, Sense, Stroke, pos2, vec2};
 use lightcraft_engine::slide::{Aspect, SlideSettings};
-use lightcraft_engine::slide_template::SlideLook;
+use lightcraft_engine::slide_template::{SlideLook, Template};
 use lightcraft_slideshow::{MARGIN_MAX, SHADOW_OFFSET_MAX, SHADOW_RADIUS_MAX, STROKE_MAX};
 use serde_json::{Value, json};
 
@@ -177,13 +177,7 @@ pub fn preview(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
     let p = ui.painter_at(rect.expand(1.0));
     p.rect_stroke(rect, 0.0, Stroke::new(1.0, t.text_dim.gamma_multiply(0.5)), egui::StrokeKind::Outside);
     super::slide_titles::preview_choice(ui);
-    if let Some(tpl) = &template {
-        let name = if tpl.builtin { crate::i18n::tr(&tpl.name).to_string() } else { tpl.name.clone() };
-        ui.label(egui::RichText::new(crate::i18n::tr_format!("Template preview: {name}", name = name)).size(11.0).color(t.accent));
-        if !tpl.description.is_empty() {
-            hint(ui, t, &tpl.description);
-        }
-    }
+    caption(ui, t, template.as_deref());
     if let Some(title) = super::slide_titles::preview_shows(ui.ctx()) {
         title_preview(app, ui, t, rect, title, &look);
         return;
@@ -245,7 +239,29 @@ pub fn preview(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
             p.line_segment([pos2(drawn.left(), gy), pos2(drawn.right(), gy)], stroke);
         }
     }
-    hint(ui, t, "The selected photo as a slide. Playback fills the screen; the aspect preview only changes this preview.");
+}
+
+/// What the preview's caption always takes: the Template Browser sits below the preview in this fork's
+/// one-column page, so a caption that grew when a template is hovered would push the rows away from the
+/// pointer and drop the hover again.
+const CAPTION_H: f32 = 48.0;
+
+/// The line under the preview: the template the pointer is over (its name and description), else what the
+/// preview is. Always [`CAPTION_H`] tall, whatever it says.
+fn caption(ui: &mut egui::Ui, t: &Tokens, template: Option<&Template>) {
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), CAPTION_H), Sense::hover());
+    let mut cui = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+    cui.set_clip_rect(rect.intersect(ui.clip_rect()));
+    match template {
+        Some(tpl) => {
+            let name = if tpl.builtin { crate::i18n::tr(&tpl.name).to_string() } else { tpl.name.clone() };
+            cui.label(egui::RichText::new(crate::i18n::tr_format!("Template preview: {name}", name = name)).size(11.0).color(t.accent));
+            if !tpl.description.is_empty() {
+                hint(&mut cui, t, &tpl.description);
+            }
+        }
+        None => hint(&mut cui, t, "The selected photo as a slide. Playback fills the screen; the aspect preview only changes this preview."),
+    }
 }
 
 /// The preview showing title screen `title` (composed off the UI thread like the photo's slide,

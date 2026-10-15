@@ -120,8 +120,18 @@ fn import(s: &mut Session, p: &Value) -> Result<Value> {
     for f in files {
         match f {
             Ok((name, bytes)) => {
-                let dir_group = name.rsplit_once(['/', '\\']).and_then(|(d, _)| group_from_dir(d));
+                let folder = name.rsplit_once(['/', '\\']).map(|(d, _)| d);
+                let dir_group = folder.and_then(group_from_dir);
                 let base = crate::inline_files::base_name(&name);
+                // local adjustment (brush) presets given by content (a browser's file chooser) become mask effects too
+                let lower = base.to_ascii_lowercase();
+                let maybe_local = [".lrtemplate", ".xmp", ".zip", ".lceffect"].iter().any(|x| lower.ends_with(x));
+                let (before_found, before_failed) = (out.effects.len(), out.effect_failed.len());
+                let local =
+                    maybe_local && mef::found_in(&name, &bytes, folder.and_then(mef::group_for_dir), &mut out.effects, &mut out.effect_failed);
+                if local && !lower.ends_with(".zip") {
+                    continue;
+                }
                 let mut read = read_presets_report(base, &bytes, dir_group);
                 // (failures name the file as it was given, folders and all)
                 for (file, _) in &mut read.failed {
@@ -129,6 +139,11 @@ fn import(s: &mut Session, p: &Value) -> Result<Value> {
                         *file = format!("{name}{rest}");
                     }
                 }
+                // the local presets of a bundle were read as effects above: not develop presets that failed
+                let handled: Vec<&str> = (out.effects.iter().skip(before_found).map(|e| e.file.as_str()))
+                    .chain(out.effect_failed.iter().skip(before_failed).map(|(file, _)| file.as_str()))
+                    .collect();
+                read.failed.retain(|(file, _)| !handled.contains(&file.as_str()));
                 out.take(s, &name, read, group.as_deref(), dry, settings);
             }
             Err((name, e)) => out.failed.push(json!([name, e])),
@@ -173,7 +188,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Import Presets",
             [],
             None,
-            "{paths?: [file or folder], files?: [{name, data: base64}] (files given by content, e.g. from a browser), group?, dryRun? (report what a real run would add and skip, adding nothing), includeSettings? (with each imported preset's settings, for a preview)} — .lcpreset, XMP presets, .lrtemplate, photos carrying edits (DNG/JPEG/TIFF \"DNG presets\"), Luminar looks (.lmp, .mplumpack collections) and .zip bundles of these; folders give their name as group; each preset gets an id named by its content (the same preset imported on two synced devices stays one); crs: fields mapped per docs/xmp-interop.md; local adjustment presets (Lightroom .lrtemplate, Camera Raw local .xmp, .lceffect) found in `paths` become mask effects (`mask.effects`; divider presets become their groups); a profile the preset names applies when it was imported with profile.import (before or after) → {imported: [{id,name,group,file,unmapped,profile: {name, id}|null}], skipped, failed, effects: [{name,group,file,unmapped}], effectDividers: [{name,group,file}]}",
+            "{paths?: [file or folder], files?: [{name, data: base64}] (files given by content, e.g. from a browser), group?, dryRun? (report what a real run would add and skip, adding nothing), includeSettings? (with each imported preset's settings, for a preview)} — .lcpreset, XMP presets, .lrtemplate, photos carrying edits (DNG/JPEG/TIFF \"DNG presets\"), Luminar looks (.lmp, .mplumpack collections) and .zip bundles of these; folders give their name as group; each preset gets an id named by its content (the same preset imported on two synced devices stays one); crs: fields mapped per docs/xmp-interop.md; local adjustment presets (Lightroom .lrtemplate, Camera Raw local .xmp, .lceffect) found in `paths` or in `files` become mask effects (`mask.effects`; divider presets become their groups); a profile the preset names applies when it was imported with profile.import (before or after) → {imported: [{id,name,group,file,unmapped,profile: {name, id}|null}], skipped, failed, effects: [{name,group,file,unmapped}], effectDividers: [{name,group,file}]}",
             always,
             import
         ),
