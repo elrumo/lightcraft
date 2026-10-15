@@ -140,6 +140,9 @@ between people with accounts (comments, likes, shared libraries).
   the Slideshow settings / playback / PDF, JPEG and AV1 export, the Print dialog, a user manual under `docs/user/`, Italian, Georgian, Czech and
   Polish interfaces. This fork keeps its sync server, Generative Expand and Sign Out ahead of it. The roadmap's
   current focus is re-ranked and a *Next actions* list is added ([docs/roadmap.md](docs/roadmap.md#next-actions)).
+  The SwiftUI app gets the first catch-up batch (Tool Overlay modes, Solo Mode, Select Only Active, thumbnail-size keys,
+  Calibration in the menus, cancel and missing-model handling, Rename or merge a person, and Polish, Czech, Italian and
+  Georgian); the rest of what upstream added is listed in [docs/ios-swift.md](docs/ios-swift.md#catch-up-after-the-080-upstream-merge).
 - 2026-10-13: **Generative Expand on the device** ([generative-expand.md](docs/generative-expand.md)): Crop ▸ Expand
   lets the frame reach past the photo (an aspect ratio adds canvas around the whole photo), and Generate paints the
   new area with MI-GAN (MIT, every device), LaMa (Apache-2.0, 208 MB, computers only) or Classic (no download), in
