@@ -37,14 +37,25 @@ pub fn url_of(cmd: &str) -> Option<&'static str> {
 /// What's new in this version (Markdown: `##` headings, `-` items).
 pub const WHATS_NEW: &str = include_str!("../../../docs/whats-new.md");
 
+static COMMIT: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
+
+/// The commit this app was built from, for System Info. The app sets it once (its build script
+/// stamps it: one in the engine would recompile the engine on every commit).
+pub fn set_commit(commit: &'static str) {
+    let _ = COMMIT.set(commit);
+}
+
 /// System Info's facts that don't depend on the UI, in order: the version, the system, the CPU
 /// threads, the GPU, the memory budget, the library's photos, albums and folder, and the last GPU
 /// fallback (a UI adds its own rows: its settings, frame times).
 pub fn system_rows(s: &Session) -> Vec<(String, String)> {
     let gpu = (lightcraft_gpu::ready() && lightcraft_gpu::available()).then(lightcraft_gpu::adapter_name).flatten();
     let mb = |b: u64| format!("{:.0} MB", b as f64 / (1u64 << 20) as f64);
-    let mut rows = vec![
-        ("Version".to_string(), env!("CARGO_PKG_VERSION").to_string()),
+    let mut rows = vec![("Version".to_string(), env!("CARGO_PKG_VERSION").to_string())];
+    if let Some(c) = COMMIT.get() {
+        rows.push(("Commit".into(), c.to_string()));
+    }
+    rows.extend([
         ("System".to_string(), format!("{} ({})", std::env::consts::OS, std::env::consts::ARCH)),
         ("CPU threads".to_string(), std::thread::available_parallelism().map(|n| n.get().to_string()).unwrap_or_else(|_| "?".into())),
         (
@@ -57,7 +68,7 @@ pub fn system_rows(s: &Session) -> Vec<(String, String)> {
         ("Memory budget".to_string(), mb(crate::memory::default_budget() as u64)),
         ("Photos".to_string(), s.catalog.len().to_string()),
         ("Albums".to_string(), s.catalog.albums().count().to_string()),
-    ];
+    ]);
     if let Some(dir) = s.library.as_ref().map(|l| l.dir.display().to_string()) {
         rows.push(("Library".into(), dir));
     }
@@ -89,5 +100,12 @@ mod tests {
         assert_eq!(rows[0], ("Version".to_string(), env!("CARGO_PKG_VERSION").to_string()));
         assert!(rows.iter().any(|(k, v)| k == "Photos" && v == &s.catalog.len().to_string()));
         assert!(!WHATS_NEW.trim().is_empty());
+    }
+
+    #[test]
+    fn system_info_shows_the_commit_an_app_set() {
+        set_commit("ffae40d8ab");
+        let rows = system_rows(&Session::with_demo());
+        assert_eq!(rows[1], ("Commit".to_string(), "ffae40d8ab".to_string()));
     }
 }

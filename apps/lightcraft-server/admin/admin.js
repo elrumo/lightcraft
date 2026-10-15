@@ -350,7 +350,8 @@ function showOverview([s, users]) {
   const facts = $('facts');
   facts.replaceChildren();
   const fact = (k, v, code) => facts.append(el('dt', {}, k), el('dd', { class: code ? 'code' : null }, v));
-  fact('Version', s.version);
+  const build = (b) => (b.version || '?') + ' (' + (b.commit || 'unknown') + ')';
+  fact('Server version', build(s), true);
   fact('Data folder', s.data, true);
   fact('Listening on', s.listen, true);
   fact('Web app', s.web ? 'Served from ' + s.web : 'Not served (start the server with --web)');
@@ -414,6 +415,7 @@ function addUser() {
       { name: 'admin', label: 'Administrator', type: 'switch', help: 'Can sign in here to manage users, devices and storage.' },
     ],
     ok: 'Add user',
+  if (s.web) fact('Web app version', s.webBuild ? build(s.webBuild) : 'Unknown (built without version.json)', !!s.webBuild);
     action: async (v) => {
       await api('POST', 'users', { name: v.name, password: v.password, admin: v.admin });
       toast('Added ' + v.name + '.');

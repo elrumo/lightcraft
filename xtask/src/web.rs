@@ -139,6 +139,7 @@ pub fn run(args: &[&str]) -> Result<(), String> {
         std::fs::copy(root().join("apps/lightcraft-web").join(f), out.join(f)).map_err(|e| format!("copy {f}: {e}"))?;
     }
     let chinese_font = copy_chinese_font(&out)?;
+    write_version(&out)?;
 
     // precompressed copies (skipped for --dev: they'd only slow the edit loop down)
     println!("\n{:<26} {:>12} {:>12} {:>12}", "file", "bytes", "gzip -9", "brotli -11");
@@ -170,6 +171,15 @@ pub fn run(args: &[&str]) -> Result<(), String> {
             Ok(())
         }
     }
+}
+
+/// `version.json` beside the bundle: the version and commit it was built from (with `-dirty` for
+/// uncommitted changes), which the sync server's admin page shows.
+fn write_version(out: &Path) -> Result<(), String> {
+    let manifest = std::fs::read_to_string(root().join("Cargo.toml")).map_err(|e| format!("Cargo.toml: {e}"))?;
+    let version = crate::build_info::version(&crate::version::read(&manifest)?);
+    let json = serde_json::json!({"version": version, "commit": crate::build_info::commit(&root(), true)}).to_string();
+    std::fs::write(out.join("version.json"), json).map_err(|e| format!("version.json: {e}"))
 }
 
 fn gzip(data: &[u8]) -> Result<Vec<u8>, String> {

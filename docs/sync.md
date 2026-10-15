@@ -131,7 +131,8 @@ screens, tabs on a phone), follows the system's light or dark mode, and confirms
 
 - **Overview:** users, photos, signed-in devices and free disk space at a glance; **Connect a device** (the address
   to type into Settings ▸ Sync on each device, the one you opened the page with, with a Copy button); and the
-  server's details: version, data folder, the address it listens on, whether it serves the web build.
+  server's details: version and the commit it was built from, data folder, the address it listens on, whether it
+  serves the web build and that build's version and commit (its `version.json`, written by `cargo xtask web`).
 - **Users:** every user with their photo, album and device counts and storage used (the files the server keeps for
   them *and* the photos in their library folders, which it only reads: a user page says how much of it is each);
   **Add user**. Open a user for their page: reset the password, make or remove an admin, remove the user (their
