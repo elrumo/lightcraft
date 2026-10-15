@@ -585,7 +585,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Months and Years",
             [],
             None,
-            "{span: months|years} → [{key, label, count, photos: [{index, id, captured}]}] the grid's photos by capture month (up to 6 shown: the best first, the rest spread through the month) or year (its best one): the phone grid's Months and Years",
+            "{span: months|years} → [{key, label, count, photos: [{index, id, captured}]}] the grid's photos by capture month (`count` includes the photos in collapsed stacks; up to 6 shown: the best first, the rest spread through the month) or year (its best one): the phone grid's Months and Years",
             always,
             |s, p| {
                 let (key_len, show) = match str_param(p, "span") {
@@ -594,7 +594,7 @@ pub fn specs() -> Vec<CommandSpec> {
                     Some(_) => return Err(bad("library.blocks", "span must be months|years")),
                 };
                 let vis = s.visible_cloned();
-                let blocks = s.catalog.date_blocks(&vis, key_len, show);
+                let blocks = s.catalog.date_blocks(&vis, s.visible_stacked(), key_len, show);
                 let out: Vec<Value> = blocks
                     .into_iter()
                     .map(|b| {

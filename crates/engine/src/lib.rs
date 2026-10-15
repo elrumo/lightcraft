@@ -200,6 +200,8 @@ pub struct Session {
     /// Identifies the current `visible` list: a new value (unique in the process) every time it
     /// is recomputed, so frontends can key their per-view caches on it instead of hashing the ids.
     visible_gen: u64,
+    /// How many photos each collapsed stack's shown photo in `visible` stands for (two or more).
+    visible_stacked: Arc<std::collections::HashMap<PhotoId, usize>>,
     /// Photos in the current source with no filter on (cached like `visible`).
     total: Option<((u64, String), usize)>,
     pub undo: Vec<UndoEntry>,
@@ -383,6 +385,7 @@ impl Session {
             visible: Vec::new().into(),
             visible_key: None,
             visible_gen: 0,
+            visible_stacked: Default::default(),
             total: None,
             undo: Vec::new(),
             commits: 0,
@@ -982,10 +985,12 @@ impl Session {
                 let (cat, avail) = (&self.catalog, &self.media.availability);
                 visible.retain(|id| cmd::missing::is_missing(cat, avail, *id));
             }
+            let mut stacked = Default::default();
             if self.source != LibrarySource::RecentlyDeleted {
-                visible = self.catalog.arrange_stacks(&visible);
+                (visible, stacked) = self.catalog.arrange_stacks_counted(&visible);
             }
             self.visible = visible.into();
+            self.visible_stacked = Arc::new(stacked);
             self.visible_gen = VISIBLE_GEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             self.visible_key = Some(key);
         }
@@ -1021,6 +1026,12 @@ impl Session {
             self.total = Some((key, n));
         }
         self.total.as_ref().map(|t| t.1)
+    }
+
+    /// How many photos each collapsed stack's shown photo in [`Session::visible`] stands for (only
+    /// those standing for two or more), as of the last time the list was computed.
+    pub fn visible_stacked(&self) -> &std::collections::HashMap<PhotoId, usize> {
+        &self.visible_stacked
     }
 
     pub fn visible_cloned(&mut self) -> Vec<PhotoId> {

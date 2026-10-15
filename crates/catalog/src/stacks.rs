@@ -172,8 +172,15 @@ impl Catalog {
     /// its first member appears; a collapsed stack shows only its highest-ranked member in `ids` (the top,
     /// unless the filter hides it).
     pub fn arrange_stacks(&self, ids: &[PhotoId]) -> Vec<PhotoId> {
+        self.arrange_stacks_counted(ids).0
+    }
+
+    /// [`Catalog::arrange_stacks`], and how many of `ids` each collapsed stack's shown photo stands
+    /// for (only stacks showing one photo for two or more).
+    pub fn arrange_stacks_counted(&self, ids: &[PhotoId]) -> (Vec<PhotoId>, HashMap<PhotoId, usize>) {
+        let mut counts = HashMap::new();
         if self.stacks.is_empty() {
-            return ids.to_vec();
+            return (ids.to_vec(), counts);
         }
         let index = self.stack_index();
         let present: HashSet<PhotoId> = ids.iter().copied().collect();
@@ -186,17 +193,23 @@ impl Catalog {
                     if !done.insert(*sid) {
                         continue;
                     }
-                    let s = &self.stacks[sid];
-                    let members = s.photos.iter().copied().filter(|p| present.contains(p));
+                    let Some(s) = self.stacks.get(sid) else { continue };
+                    let mut members = s.photos.iter().copied().filter(|p| present.contains(p));
                     if s.collapsed {
-                        out.extend(members.take(1));
+                        if let Some(shown) = members.next() {
+                            out.push(shown);
+                            let n = 1 + members.count();
+                            if n > 1 {
+                                counts.insert(shown, n);
+                            }
+                        }
                     } else {
                         out.extend(members);
                     }
                 }
             }
         }
-        out
+        (out, counts)
     }
 
     /// Auto-stack by capture time: runs of `ids` (not deleted, not already stacked, with a
