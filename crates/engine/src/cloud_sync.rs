@@ -26,7 +26,8 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 use lightcraft_catalog::join::{self, Counts};
@@ -2702,11 +2703,61 @@ pub fn content_path(p: &Photo) -> Option<String> {
     Some(original_path(&blob_key(p)?, &p.file_name))
 }
 
+/// How an export waits when the sync server is busy (`503`): the activity row it shows, the export's cancel flag, and
+/// how long it keeps trying.
+#[derive(Clone)]
+pub struct RenderWait {
+    pub activity: crate::activity::Activity,
+    /// Set by the export's cancel (the row's ✕ sets the same flag): the wait ends with the error `cancelled`.
+    pub cancel: Arc<AtomicBool>,
+    /// The longest single pause, whatever `Retry-After` says.
+    pub max_pause: Duration,
+    /// Give up (with a message) once the server has stayed busy this long.
+    pub give_up: Duration,
+}
+
+impl RenderWait {
+    pub fn new(activity: crate::activity::Activity) -> RenderWait {
+        RenderWait { activity, cancel: Arc::new(AtomicBool::new(false)), max_pause: Duration::from_secs(30), give_up: Duration::from_secs(15 * 60) }
+    }
+}
+
 /// Have the sync server render a photo (`POST /api/render`): the encoded image. Blocking, and for as long as the
-/// render takes (minutes for a big photo on a small server): run it off the UI thread.
+/// render takes (minutes for a big photo on a small server): run it off the UI thread. A busy server (`503`, or a
+/// connection it dropped) is waited for as `wait` says, with a row in the activity stack.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn render_on_server(target: &RenderTarget, request: &proto::Render) -> std::result::Result<Vec<u8>, String> {
-    net::render(&target.url, &target.token, &serde_json::to_string(request).map_err(|e| e.to_string())?)
+pub fn render_on_server(target: &RenderTarget, request: &proto::Render, wait: &RenderWait) -> std::result::Result<Vec<u8>, String> {
+    let json = serde_json::to_string(request).map_err(|e| e.to_string())?;
+    let started = Instant::now();
+    let mut row = None;
+    loop {
+        let hint = match net::render(&target.url, &target.token, &json) {
+            Ok(bytes) => return Ok(bytes),
+            Err(net::RenderError::Failed(why)) => return Err(why),
+            Err(net::RenderError::Busy(hint)) => hint,
+        };
+        // (the server's own advice, within reason; a dropped connection has none)
+        let pause =
+            hint.map_or(Duration::from_secs(5), Duration::from_secs).clamp(Duration::from_secs(1), wait.max_pause.max(Duration::from_secs(1)));
+        if started.elapsed().saturating_add(pause) > wait.give_up {
+            return Err(format!(
+                "the sync server stayed busy for {} minutes; try the export again later",
+                started.elapsed().as_secs().div_ceil(60).max(1)
+            ));
+        }
+        let guard = row.get_or_insert_with(|| {
+            let g = wait.activity.start("export", "Waiting for the server", crate::activity::Cancel::Flag(wait.cancel.clone()));
+            g.detail(&request.name);
+            g
+        });
+        let until = Instant::now() + pause;
+        while Instant::now() < until {
+            if guard.is_cancelled() {
+                return Err("cancelled".to_string());
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
 }
 
 /// Build a photo's smart and mini previews from its original (decodes it).
@@ -2779,29 +2830,55 @@ mod net {
         })
     }
 
+    /// Why a render request did not give a picture.
+    pub(super) enum RenderError {
+        /// The server is busy (`503`, or it dropped the connection), with the seconds `Retry-After` asked for.
+        Busy(Option<u64>),
+        Failed(String),
+    }
+
     /// `POST` JSON and read the answer's bytes, waiting for a render ([`super::render_on_server`]).
-    pub(super) fn render(url: &str, token: &str, json: &str) -> Result<Vec<u8>, String> {
+    pub(super) fn render(url: &str, token: &str, json: &str) -> Result<Vec<u8>, RenderError> {
         let auth = format!("Bearer {token}");
-        let mut resp = agent()
+        let sent = agent()
             .post(url)
             .header("Authorization", &auth)
             .header("Content-Type", "application/json")
             .config()
             .timeout_recv_response(Some(Duration::from_secs(900)))
             .build()
-            .send(json.as_bytes())
-            .map_err(|e| e.to_string())?;
+            .send(json.as_bytes());
+        let mut resp = match sent {
+            Ok(r) => r,
+            // a server over its request cap closes the connection, which can reach us as a reset
+            Err(ureq::Error::Io(e))
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::ConnectionReset
+                        | std::io::ErrorKind::ConnectionAborted
+                        | std::io::ErrorKind::BrokenPipe
+                        | std::io::ErrorKind::UnexpectedEof
+                ) =>
+            {
+                return Err(RenderError::Busy(None));
+            }
+            Err(e) => return Err(RenderError::Failed(e.to_string())),
+        };
         let status = resp.status().as_u16();
-        let body = resp.body_mut().with_config().limit(1 << 30).read_to_vec().map_err(|e| e.to_string())?;
+        if status == 503 {
+            let secs = resp.headers().get("Retry-After").and_then(|v| v.to_str().ok()).and_then(|v| v.trim().parse().ok());
+            return Err(RenderError::Busy(secs));
+        }
+        let body = resp.body_mut().with_config().limit(1 << 30).read_to_vec().map_err(|e| RenderError::Failed(e.to_string()))?;
         if (200..300).contains(&status) {
             return Ok(body);
         }
         let why = serde_json::from_slice::<serde_json::Value>(&body).ok().and_then(|v| v["error"].as_str().map(str::to_string));
-        Err(match (status, why) {
+        Err(RenderError::Failed(match (status, why) {
             (404, _) if body.is_empty() || why_is_route(&body) => "this server can't render (it is older than this app)".to_string(),
             (_, Some(why)) => why,
             (s, None) => format!("the server answered {s}"),
-        })
+        }))
     }
 
     /// A `404` for the route itself (an older server), not for a missing original.

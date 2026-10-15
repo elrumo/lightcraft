@@ -23,6 +23,8 @@ use serde_json::json;
 
 /// How many renders run at once.
 pub struct Slots {
+    /// How long a render waits for a place before the device is told to come back (`503`).
+    wait: Duration,
     max: AtomicUsize,
     running: Mutex<usize>,
     freed: Condvar,
@@ -32,14 +34,18 @@ pub struct Slots {
 pub struct Slot<'a>(&'a Slots);
 
 impl Slots {
-    pub fn new(max: usize) -> Slots {
-        Slots { max: AtomicUsize::new(max.max(1)), running: Mutex::new(0), freed: Condvar::new() }
+    pub fn new(max: usize, wait: Duration) -> Slots {
+        Slots { wait, max: AtomicUsize::new(max.max(1)), running: Mutex::new(0), freed: Condvar::new() }
     }
 
     /// Run this many at once from now on (the ones running finish).
     pub fn set_max(&self, max: usize) {
         self.max.store(max.max(1), Ordering::SeqCst);
         self.freed.notify_all();
+    }
+
+    pub fn wait(&self) -> Duration {
+        self.wait
     }
 
     /// Take a place, waiting up to `wait` for one; `None` when all stay taken.
@@ -135,7 +141,7 @@ mod tests {
 
     #[test]
     fn slots_limit_and_release() {
-        let s = Slots::new(2);
+        let s = Slots::new(2, Duration::ZERO);
         let (a, b) = (s.acquire(Duration::ZERO).unwrap(), s.acquire(Duration::ZERO).unwrap());
         assert_eq!(s.running(), 2);
         assert!(s.acquire(Duration::from_millis(20)).is_none(), "a third waits, then gives up");

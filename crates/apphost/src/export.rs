@@ -144,7 +144,7 @@ impl Batch {
         session: &Session,
         label: &str,
         total: usize,
-        work: impl FnOnce(&Mutex<(usize, String)>, &AtomicBool, TaskHandle) -> Outcome + Send + 'static,
+        work: impl FnOnce(&Mutex<(usize, String)>, &Arc<AtomicBool>, TaskHandle) -> Outcome + Send + 'static,
     ) -> Result<Batch, String> {
         let progress = Arc::new(Mutex::new((0, String::new())));
         let cancel = Arc::new(AtomicBool::new(false));
@@ -165,8 +165,9 @@ impl Batch {
     /// Export `prepared` in the background through `write`, then do its `after` (Add to Apple
     /// Photos: `adding` is what the row says meanwhile, in the frontend's language).
     pub fn start(session: &Session, prepared: Prepared, write: SharedWrite, adding: String) -> Result<Batch, String> {
-        let Prepared { items, opts, to, after } = prepared;
+        let Prepared { mut items, opts, to, after } = prepared;
         Self::spawn(session, "Exporting", items.len(), move |p, c, row| {
+            items.iter_mut().for_each(|i| i.set_cancel(c.clone()));
             let mut w = |path: &str, bytes: &[u8]| write(path, bytes);
             let r = run_batch(items, &opts, &to, &mut w, &|path| Path::new(path).exists(), false, &mut |done, name| {
                 if let Ok(mut g) = p.lock() {

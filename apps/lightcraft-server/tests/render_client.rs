@@ -143,3 +143,73 @@ fn the_server_builds_the_previews_of_an_upload_when_the_device_asks_it_to() {
     drop(server);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn an_export_waits_for_a_busy_server_and_then_succeeds() {
+    use lightcraft_engine::catalog::sync::proto::Render;
+    use lightcraft_engine::cloud_sync::{RenderWait, render_on_server};
+
+    let root = temp("busy");
+    let data = root.join("data");
+    accounts::set_user(&data, "ann", "correct horse", false).unwrap();
+    let mut cfg = Config::new(data, "127.0.0.1:0");
+    cfg.scan_interval = None;
+    cfg.preview_threads = Some(1);
+    cfg.render_threads = Some(1);
+    // answers 503 (Retry-After: 60) soon instead of after 45 s
+    cfg.render_wait = Some(Duration::from_millis(100));
+    let server = Server::start(cfg).unwrap();
+    write_png(&root.join("in/a.png"));
+    let mut s = Session::new().with_fs();
+    s.open_library(root.join("lib"), false).unwrap();
+    s.execute("library.import", &json!({"paths": [root.join("in").to_string_lossy()]})).unwrap();
+    let id = s.catalog.photos().next().unwrap().id;
+    let url = format!("http://{}", server.addr());
+    s.execute("sync.signIn", &json!({"server": url, "user": "ann", "password": "correct horse", "device": "t"})).unwrap();
+    assert_eq!(s.execute("sync.now", &json!({"wait": true})).unwrap()["state"], "idle");
+    let photo = s.catalog.photo(id).unwrap();
+    let target = s.sync_render_target(photo).unwrap();
+    let request = Render {
+        hash: target.hash.clone(),
+        name: photo.file_name.clone(),
+        settings: json!({}),
+        export: ExportOptions { format: ExportFormat::Jpeg, ..Default::default() }.to_json(),
+    };
+    let pacing = || RenderWait { max_pause: Duration::from_millis(200), give_up: Duration::from_secs(30), ..RenderWait::new(s.activity.clone()) };
+    let waiting = |s: &Session| s.activity.list().iter().any(|t| t.kind == "export" && t.label == "Waiting for the server");
+
+    // one render holds the only place: a second export waits (with a row), and renders once the place is free
+    let held = server.hold_render_slot().expect("the place is free");
+    let (t, r, w) = (target.clone(), request.clone(), pacing());
+    let export = std::thread::spawn(move || render_on_server(&t, &r, &w));
+    let start = std::time::Instant::now();
+    while !waiting(&s) {
+        assert!(start.elapsed() < Duration::from_secs(20), "the export shows its wait");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(!export.is_finished(), "still waiting while the place is taken");
+    drop(held);
+    let bytes = export.join().unwrap().expect("the export succeeds once the place is free");
+    assert!(bytes.starts_with(&[0xff, 0xd8]), "a JPEG");
+    assert!(!waiting(&s), "the row goes with the wait");
+
+    // the export's cancel ends the wait
+    let held = server.hold_render_slot().expect("free again");
+    let w = pacing();
+    let cancel = w.cancel.clone();
+    let (t, r) = (target.clone(), request.clone());
+    let export = std::thread::spawn(move || render_on_server(&t, &r, &w));
+    while !waiting(&s) {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+    assert_eq!(export.join().unwrap().err().as_deref(), Some("cancelled"));
+
+    // a server that stays busy is given up on, saying so
+    let w = RenderWait { give_up: Duration::from_millis(500), ..pacing() };
+    let err = render_on_server(&target, &request, &w).err().unwrap();
+    assert!(err.contains("busy") && err.contains("later"), "{err}");
+    drop(held);
+    drop(server);
+    let _ = std::fs::remove_dir_all(&root);
+}

@@ -704,9 +704,6 @@ fn preview_not_yet(state: PreviewState) -> Resp {
     resp
 }
 
-/// How long a render waits for a free place before the device is told to try again.
-const RENDER_WAIT: Duration = Duration::from_secs(45);
-
 /// `POST /api/render` ([`proto::Render`]): the photo with this original, rendered with these edits and options.
 fn render(st: &State, req: &mut Request, l: &Mutex<UserLib>, user: &str) -> Resp {
     let r: proto::Render = match read_json(req) {
@@ -723,7 +720,7 @@ fn render(st: &State, req: &mut Request, l: &Mutex<UserLib>, user: &str) -> Resp
     let Some(original) = Some(blob).filter(|b| b.is_file()).or_else(|| folder_original_path(st, l, user, &r.hash)) else {
         return error(404, "the server doesn't have this photo's original");
     };
-    let Some(_slot) = st.render.acquire(RENDER_WAIT) else {
+    let Some(_slot) = st.render.acquire(st.render.wait()) else {
         let mut resp = error(503, "the server is rendering other photos: try again in a minute");
         header("Retry-After", "60").into_iter().for_each(|h| resp.add_header(h));
         return resp;
