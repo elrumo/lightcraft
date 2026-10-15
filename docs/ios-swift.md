@@ -151,6 +151,13 @@ Debug, `--release` for Release). The app target is one multiplatform target (iOS
 its Info.plist keys from `LightCraft/Info.plist`, the file xtool uses. For a device, choose your team under Signing &
 Capabilities (or pass `DEVELOPMENT_TEAM=<team>` to `xcodebuild`).
 
+**Add to LightCraft (share sheet):** the Xcode project's second target, `LightCraftShare`
+(`apps/lightcraft-ios-swift/ShareExtension/`, iOS only, embedded in the app), shows "Add to LightCraft" for pictures
+shared from Photos, Files, Safari and the like. It runs no engine: it copies the files into `Inbox/<batch>` of the app
+group `group.ai.storyteller.lightcraft.swift` (entitlements in `ShareExtension/` and `LightCraft/LightCraft.entitlements`), and
+the app takes them into the import review the next time it is active (`Share/SharedInbox.swift`). It does not open the
+app itself. xtool builds leave the extension out (and the app group), so a share made then is not picked up.
+
 **The Mac app:** `apps/lightcraft-ios-swift/run.sh --mac` builds it with `xcodebuild` and opens it (`--debug` for a
 Debug build, `--build-only` to stop after the build); `LIGHTCRAFT_LIBRARY=<folder>` or `LIGHTCRAFT_DEMO=1` in the
 environment runs the binary directly on that library (or on the in-memory demo library). Without either it opens

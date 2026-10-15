@@ -297,7 +297,12 @@ final class AppModel {
     func lifecycle(_ event: String) {
         engine?.send("host.lifecycle", ["event": .string(event)])
         // (another screen, or a setting that changed meanwhile)
-        if event == "active" { updateHdrDisplay() }
+        if event == "active" {
+            updateHdrDisplay()
+            #if os(iOS)
+            Task { await importShared() }
+            #endif
+        }
     }
 
     /// Tell the engine whether the screen has HDR headroom (EDR: iPhone 12 and later, recent iPads), so that
