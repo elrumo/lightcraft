@@ -64,7 +64,7 @@ struct ByDateView: View {
 /// A date header in the reader's language: a date key (`2026`, `2026-05`, `2026-05-14`, with its
 /// weekday when `weekday`) formatted here; anything else (a file-name group, No Date) as the engine
 /// names it, translated.
-func dateTitle(key: String, label: String, weekday: Bool = true) -> String {
+func dateTitle(key: String, label: String, weekday: Bool = true, abbreviated: Bool = false) -> String {
     let parts = key.split(separator: "-", omittingEmptySubsequences: false).map { Int($0) }
     guard (1...3).contains(parts.count), parts.allSatisfy({ $0 != nil }), key.count == [4, 7, 10][parts.count - 1] else {
         return Bundle.main.localizedString(forKey: label, value: label, table: nil)
@@ -76,7 +76,7 @@ func dateTitle(key: String, label: String, weekday: Bool = true) -> String {
     guard let date = Calendar.current.date(from: c) else { return label }
     let style: Date.FormatStyle = switch parts.count {
     case 1: .dateTime.year()
-    case 2: .dateTime.year().month(.wide)
+    case 2: .dateTime.year().month(abbreviated ? .abbreviated : .wide)
     default: weekday ? .dateTime.weekday(.wide).year().month(.wide).day() : .dateTime.year().month(.wide).day()
     }
     return date.formatted(style)
