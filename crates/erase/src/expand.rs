@@ -1,17 +1,20 @@
 //! **Generative Expand**: continues a photo past its edges with an inpainting network
 //! ([`Painter`]: MI-GAN or LaMa), for the crop tool's Expand.
 //!
-//! The networks see 512 × 512 pixels and were trained to fill holes. [`outpaint`] gives them the
-//! whole canvas at once (the photo and the new area around it), so what goes on past one edge
-//! agrees with what goes on past the others: a horizon continues on both sides at the same height,
-//! a sky stays one sky. A canvas that isn't square is squeezed by at most [`MAX_SQUEEZE`] and the
-//! rest letterboxed (the bands are painted too and thrown away), so shapes keep their proportions.
+//! MI-GAN and LaMa see 512 × 512 pixels and were trained to fill holes. [`outpaint`] gives a
+//! network the whole canvas at once (the photo and the new area around it), so what goes on past
+//! one edge agrees with what goes on past the others: a horizon continues on both sides at the
+//! same height, a sky stays one sky. A canvas that isn't square is squeezed by at most
+//! [`MAX_SQUEEZE`] and the rest letterboxed (the bands are painted too and thrown away), so shapes
+//! keep their proportions. The diffusion models paint a canvas of the picture's own proportions at
+//! their native size ([`Painter::frame`], [`frame_for`]).
 //!
-//! The answer has the network's 512 pixels of detail over the canvas: the structure. The caller
-//! adds the photo's grain and fine texture on top (`lightcraft_pipeline::expand`, as AI Remove
-//! does). Repainting the canvas in 512-pixel windows at full scale was tried and dropped
-//! (2026-10-13): a window far from the photo sees too little of it, and the networks painted
-//! streaks there that the whole-canvas pass doesn't.
+//! A 512-pixel answer has the network's detail over the canvas: the structure. The caller adds
+//! the photo's grain and fine texture on top (`lightcraft_pipeline::expand`, as AI Remove does);
+//! a diffusion model's answer has its own ([`Painter::detailed`]). Repainting the canvas in
+//! 512-pixel windows at full scale was tried and dropped (2026-10-13): a window far from the photo
+//! sees too little of it, and the networks painted streaks there that the whole-canvas pass
+//! doesn't.
 //!
 //! The photo's own pixels are never changed. Everything is deterministic: the same canvas gives the
 //! same fill.
@@ -19,7 +22,7 @@
 use lightcraft_raster::resample::{Filter, resize};
 use lightcraft_raster::{Plane, Rgb32f};
 
-use crate::{Error, Painter, Result, SIDE};
+use crate::{Error, Frame, Painter, Result, SIDE};
 
 /// Largest canvas side [`outpaint`] takes: the stored fill's own limit is lower (1024), so this only
 /// bounds hostile calls.
@@ -56,6 +59,38 @@ fn placement(w: usize, h: usize) -> (usize, usize, usize, usize) {
     ((SIDE - cw) / 2, (SIDE - ch) / 2, cw, ch)
 }
 
+/// The [`SIDE`] square with a `w × h` picture on it (MI-GAN's and LaMa's canvas).
+pub fn square_frame(w: usize, h: usize) -> Frame {
+    let (x, y, cw, ch) = placement(w, h);
+    Frame { width: SIDE, height: SIDE, x, y, w: cw, h: ch }
+}
+
+/// A canvas of about `side × side` pixels in the proportions of a `w × h` picture, each side a
+/// multiple of `multiple`, for a network that paints any shape near its native size (a diffusion
+/// model). A picture longer than `max_aspect` is squeezed by at most [`MAX_SQUEEZE`] onto a canvas
+/// of that aspect, and letterboxed beyond.
+pub fn frame_for(w: usize, h: usize, side: usize, multiple: usize, max_aspect: f32) -> Frame {
+    let m = multiple.clamp(1, 512);
+    let side = side.clamp(m, MAX_CANVAS);
+    let pic = (w.max(1) as f32 / h.max(1) as f32).clamp(1e-3, 1e3);
+    let ca = pic.max(1.0 / pic).min(max_aspect.max(1.0));
+    let round = |v: f32| (((v / m as f32).round().max(1.0)) as usize).saturating_mul(m).min(MAX_CANVAS / m * m);
+    let (long, short) = (round(side as f32 * ca.sqrt()), round(side as f32 / ca.sqrt()));
+    let (width, height) = if pic >= 1.0 { (long, short) } else { (short, long) };
+    // the picture on it: the whole canvas when that squeezes it by at most MAX_SQUEEZE either way,
+    // else the whole of one side and letterbox across the other
+    let canvas = width as f32 / height as f32;
+    let q = canvas / pic;
+    let (pw, ph) = if q > MAX_SQUEEZE {
+        (((height as f32 * pic * MAX_SQUEEZE).round() as usize).clamp(1, width), height)
+    } else if q < 1.0 / MAX_SQUEEZE {
+        (width, ((width as f32 * MAX_SQUEEZE / pic).round() as usize).clamp(1, height))
+    } else {
+        (width, height)
+    };
+    Frame { width, height, x: (width - pw) / 2, y: (height - ph) / 2, w: pw, h: ph }
+}
+
 /// `img` (display-encoded, 0..=1) with every pixel where `known` is false painted by `painter`.
 /// `known` pixels come back unchanged.
 pub fn outpaint(painter: &dyn Painter, img: &Rgb32f, known: &[bool], mon: &Monitor<'_>) -> Result<Rgb32f> {
@@ -72,17 +107,25 @@ pub fn outpaint(painter: &dyn Painter, img: &Rgb32f, known: &[bool], mon: &Monit
     if (mon.cancelled)() {
         return Err(Error::Cancelled);
     }
-    // the canvas in the network's square: squeezed a little, letterboxed beyond that
-    let (x0, y0, cw, ch) = placement(w, h);
+    // the canvas on the network's: squeezed a little, letterboxed beyond that
+    let f = painter.frame(w, h);
+    if !f.is_valid() {
+        return Err(Error::Image(format!("{} can't paint a {w} × {h} canvas", painter.label())));
+    }
+    let Frame { width: nw, height: nh, x: x0, y: y0, w: cw, h: ch } = f;
     let small = resize(img, cw, ch, Filter::Mitchell);
     let cover = resize(&Plane { width: w, height: h, data: known.iter().map(|&k| if k { 0.0 } else { 1.0 }).collect() }, cw, ch, Filter::Bilinear);
     let inside = |x: usize, y: usize| x >= x0 && x < x0 + cw && y >= y0 && y < y0 + ch;
     let at = |x: usize, y: usize| (y - y0) * cw + (x - x0);
-    let square = Rgb32f::from_fn(SIDE, SIDE, |x, y| if inside(x, y) { small.data.get(at(x, y)).copied().unwrap_or([0.0; 3]) } else { [0.0; 3] });
+    let net = Rgb32f::from_fn(nw, nh, |x, y| if inside(x, y) { small.data.get(at(x, y)).copied().unwrap_or([0.0; 3]) } else { [0.0; 3] });
     // (a network pixel is new if any of the new area reaches it, so the edge isn't kept blurred)
     let hole: Vec<bool> =
-        (0..SIDE * SIDE).map(|i| (i % SIDE, i / SIDE)).map(|(x, y)| !inside(x, y) || cover.data.get(at(x, y)).is_some_and(|&c| c > 0.01)).collect();
-    let painted = painter.paint(&square, &hole)?;
+        (0..nw * nh).map(|i| (i % nw, i / nw)).map(|(x, y)| !inside(x, y) || cover.data.get(at(x, y)).is_some_and(|&c| c > 0.01)).collect();
+    let net_progress = |p: f32| (mon.progress)(0.9 * p.clamp(0.0, 1.0));
+    let painted = painter.paint_watched(&net, &hole, &Monitor { cancelled: mon.cancelled, progress: &net_progress })?;
+    if (painted.width, painted.height) != (nw, nh) {
+        return Err(Error::Image(format!("{} answered {} × {}, not {nw} × {nh}", painter.label(), painted.width, painted.height)));
+    }
     (mon.progress)(0.9);
     let content = painted.crop(x0, y0, cw, ch);
     let back = resize(&content, w, h, Filter::Mitchell);
@@ -203,5 +246,37 @@ mod tests {
                 assert!((0..3).all(|c| (got[c] - want[c]).abs() < tol), "{} ({x}, {y}): {got:?} vs {want:?}", p.label());
             }
         }
+    }
+
+    /// A diffusion model's canvas: the picture's proportions near the native size, multiples of
+    /// 64; squeezed by at most MAX_SQUEEZE onto a 2 : 1 canvas, letterboxed beyond.
+    #[test]
+    fn frames_follow_the_picture_near_the_native_size() {
+        let check = |f: Frame| {
+            assert!(f.is_valid(), "{f:?}");
+            assert!(f.width.is_multiple_of(64) && f.height.is_multiple_of(64), "{f:?}");
+        };
+        // square: the whole canvas
+        let f = frame_for(768, 768, 512, 64, 2.0);
+        check(f);
+        assert_eq!(f, Frame { width: 512, height: 512, x: 0, y: 0, w: 512, h: 512 });
+        // 2 : 3 portrait: its own proportions, filling the canvas (squeezed a little by the rounding)
+        let f = frame_for(400, 600, 512, 64, 2.0);
+        check(f);
+        assert!(f.width < f.height && (f.width * f.height) as f64 / (512.0 * 512.0) > 0.85, "{f:?}");
+        assert_eq!((f.x, f.y, f.w, f.h), (0, 0, f.width, f.height));
+        // 3 : 1: a 2 : 1 canvas, the picture across its width, letterboxed above and below
+        let f = frame_for(900, 300, 1024, 64, 2.0);
+        check(f);
+        assert!(f.width > f.height && f.w == f.width && f.h < f.height && f.y > 0, "{f:?}");
+        let shown = f.w as f32 / f.h as f32;
+        assert!((shown - 3.0 / MAX_SQUEEZE).abs() < 0.05, "squeezed by MAX_SQUEEZE: {shown}");
+        // degenerate and huge inputs stay sane
+        for (w, h) in [(0, 0), (1, 100_000), (100_000, 1), (5000, 5000)] {
+            check(frame_for(w, h, 1024, 64, 2.0));
+        }
+        check(frame_for(500, 500, 99_999, 0, 0.0));
+        // MI-GAN's and LaMa's square is the default
+        assert_eq!(square_frame(900, 300).width, SIDE);
     }
 }

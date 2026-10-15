@@ -16,6 +16,9 @@ final class LibraryModel {
     private(set) var selected: Set<UInt64> = []
     private(set) var stats: CatalogStats?
     private(set) var labels: [LabelName] = []
+    /// The photo in the middle of the grid where it was left (written when scrolling comes to rest), for a grid the
+    /// system makes again (a fold, an unfold, a rotation) to scroll back to. Another photo list clears it.
+    var anchor: Int?
 
     private var pages: [Int: [PhotoSummary]] = [:]
     private var loading: Set<Int> = []
@@ -82,7 +85,12 @@ final class LibraryModel {
     /// ids mean something else).
     func reload(_ engine: Engine, count: Int, forget: Bool = false) async {
         generation += 1
-        if forget { pages.removeAll() }
+        anchor = nil
+        if forget {
+            pages.removeAll()
+            // (the next library names its labels itself: `refreshCounts` reads them when there are none)
+            labels = []
+        }
         loading.removeAll()
         stale = Set(pages.keys)
         self.count = count

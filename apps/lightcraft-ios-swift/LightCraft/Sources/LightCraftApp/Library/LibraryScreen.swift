@@ -31,6 +31,12 @@ struct LibraryScreen: View {
             }
             }
         }
+        .onChange(of: model.gridJump) { _, index in
+            if let index {
+                jump = index
+                model.gridJump = nil
+            }
+        }
         .safeAreaBar(edge: .top) {
             if !model.selectMode { FilterChips(chips: chips["chips"].array ?? []) }
         }
@@ -187,11 +193,14 @@ struct LibraryScreen: View {
                 ToolbarItem(placement: .lcLeading) {
                     Button("Albums", systemImage: "rectangle.stack") { model.sheet = .albums }
                 }
+                .duoPriority(.high)
             }
             if model.albums.sync.map({ $0.state != "off" }) == true {
                 ToolbarItem(placement: .lcTrailing) {
                     CloudButton()
                 }
+                // (it says something while it works or when something is wrong; otherwise it can go first)
+                .duoPriority(["syncing", "signingOut", "error", "conflict"].contains(model.state.sync?.state ?? "") || model.state.unsaved > 0 ? .high : .low)
                 ToolbarSpacer(.fixed, placement: .lcTrailing)
             }
             #if os(iOS)
@@ -205,12 +214,14 @@ struct LibraryScreen: View {
                 ToolbarSpacer(.fixed, placement: .lcTrailing)
             }
             #endif
-            ToolbarItemGroup(placement: .lcTrailing) {
+            ToolbarItem(placement: .lcTrailing) {
                 Button("Filter", systemImage: model.library.state?.isFiltered == true ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease") {
                     model.sheet = .filter
                 }
-                GridMoreMenu()
             }
+            .duoPriority(.high)
+            // the grid's "…": the system's overflow menu on iOS 27, so these and what overflowed are in one place
+            DuoOverflow { GridMoreItems() }
             #if os(macOS)
             // (the span is in the bar under the grid)
             ToolbarItem(placement: .lcTrailing) {
@@ -240,6 +251,7 @@ struct LibraryScreen: View {
             ToolbarItem(placement: .lcBottom) {
                 addButton
             }
+            .duoPriority(.high)
             #endif
         }
     }
@@ -419,13 +431,14 @@ struct SortItems: View {
     }
 }
 
-/// The grid's "…": albums, the grid's look, Map, Settings, Help and All Commands.
-struct GridMoreMenu: View {
+/// The grid's "…" actions: albums, the grid's look, Map, Settings, Help and All Commands. The items only:
+/// `DuoOverflow` puts them in the overflow menu.
+struct GridMoreItems: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
         @Bindable var prefs = model.prefs
-        Menu {
+        Group {
             Button("New Album…", systemImage: "rectangle.stack.badge.plus") {
                 model.sheet = .newAlbum(parent: nil, folder: false, addSelected: false)
             }
@@ -466,8 +479,6 @@ struct GridMoreMenu: View {
             Section {
                 Button("All Commands…", systemImage: "command") { model.path.append(.commands) }
             }
-        } label: {
-            Label("More", systemImage: "ellipsis")
         }
     }
 }

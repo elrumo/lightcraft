@@ -1,0 +1,52 @@
+{"method": "host.state"}
+{"sleep": 3000}
+{"method": "ui.set", "params": {"screen": "crop", "cropTab": "geometry"}}
+{"sleep": 3500}
+{"method": "ui.inspect"}
+{"method": "ui.screenshot", "params": {"path": "ed-geometry.png"}}
+{"method": "ui.wait", "params": {"path": "ed-geometry.done", "seconds": 90}}
+{"method": "ui.set", "params": {"screen": "crop", "cropTab": "aspect"}}
+{"sleep": 2500}
+{"method": "ui.set", "params": {"screen": "masking"}}
+{"sleep": 3000}
+{"method": "engine.execute", "params": {"command": "mask.add", "params": {"kind": "linear"}}}
+{"sleep": 3500}
+{"method": "ui.inspect"}
+{"method": "ui.screenshot", "params": {"path": "ed-mask.png"}}
+{"method": "ui.wait", "params": {"path": "ed-mask.done", "seconds": 90}}
+{"method": "ui.set", "params": {"fold": {"vertical": true, "at": 0.5, "width": 40}}}
+{"sleep": 3500}
+{"method": "ui.inspect"}
+{"method": "ui.screenshot", "params": {"path": "ed-mask-book.png"}}
+{"method": "ui.wait", "params": {"path": "ed-mask-book.done", "seconds": 90}}
+{"method": "ui.set", "params": {"screen": "crop", "cropTab": "aspect"}}
+{"sleep": 3000}
+{"method": "ui.inspect"}
+{"method": "ui.screenshot", "params": {"path": "ed-crop-book.png"}}
+{"method": "ui.wait", "params": {"path": "ed-crop-book.done", "seconds": 90}}
+{"method": "ui.set", "params": {"screen": "edit", "group": "light"}}
+{"sleep": 3000}
+{"method": "ui.inspect"}
+{"method": "ui.screenshot", "params": {"path": "ed-edit-book.png"}}
+{"method": "ui.wait", "params": {"path": "ed-edit-book.done", "seconds": 90}}
+{"method": "ui.set", "params": {"screen": "masking"}}
+{"sleep": 2500}
+{"method": "ui.set", "params": {"fold": {"vertical": false, "at": 0.5, "width": 40}}}
+{"sleep": 3500}
+{"method": "ui.inspect"}
+{"method": "ui.screenshot", "params": {"path": "ed-mask-tabletop.png"}}
+{"method": "ui.wait", "params": {"path": "ed-mask-tabletop.done", "seconds": 90}}
+{"method": "ui.set", "params": {"screen": "crop", "cropTab": "aspect"}}
+{"sleep": 3000}
+{"method": "ui.inspect"}
+{"method": "ui.screenshot", "params": {"path": "ed-crop-tabletop.png"}}
+{"method": "ui.wait", "params": {"path": "ed-crop-tabletop.done", "seconds": 90}}
+{"method": "ui.set", "params": {"screen": "edit", "group": "light"}}
+{"sleep": 3000}
+{"method": "ui.inspect"}
+{"method": "ui.screenshot", "params": {"path": "ed-edit-tabletop.png"}}
+{"method": "ui.wait", "params": {"path": "ed-edit-tabletop.done", "seconds": 90}}
+{"method": "ui.set", "params": {"screen": "masking"}}
+{"sleep": 2500}
+{"method": "ui.set", "params": {"fold": null}}
+{"sleep": 1000}

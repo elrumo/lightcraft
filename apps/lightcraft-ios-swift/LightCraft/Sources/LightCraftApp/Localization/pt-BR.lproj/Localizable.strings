@@ -27,7 +27,7 @@
 "%@ of %lld done. Photos show on devices as their previews are ready." = "%@ de %lld concluídas. As fotos aparecem nos dispositivos conforme as prévias ficam prontas.";
 "%@ used" = "%@ usados";
 "%@ wheel" = "Roda de %@";
-"%@ · %lld MB download" = "%1$@ · download de %2$lld MB";
+"%@ · %@ download" = "%1$@ · download de %2$@";
 "%@'s password was changed." = "A senha de %@ foi alterada.";
 "%@, %@" = "%1$@, %2$@";
 "%lld" = "%1$lld";
@@ -93,6 +93,7 @@
 "32 bits (float)" = "32 bits (ponto flutuante)";
 "=  exactly" = "=  exatamente";
 "A blank template keeps the original names." = "Um modelo em branco mantém os nomes originais.";
+"A computer" = "Um computador";
 "A copy of the file with your edits applied, stacked with the original." = "Uma cópia do arquivo com suas edições aplicadas, empilhada com a original.";
 "A copy of the original file, without your edits, stacked with it." = "Uma cópia do arquivo original, sem suas edições, empilhada com ele.";
 "A filter is hiding this view's photos: change it, or clear it (View → Clear Filters)" = "Um filtro está ocultando as fotos desta exibição: altere-o ou limpe-o (Exibir → Limpar filtros)";
@@ -101,6 +102,7 @@
 "A keyword set needs a name" = "Um conjunto de palavras-chave precisa de um nome";
 "A one-time download of about" = "Um download único de cerca de";
 "A path the server can read. With Docker, mount the folder into the container read-only first (-v /srv/photos:/photos:ro) and enter /photos/…" = "Um caminho que o servidor consegue ler. Com Docker, primeiro monte a pasta no contêiner como somente leitura (-v /srv/photos:/photos:ro) e digite /photos/…";
+"A phone or tablet" = "Um celular ou tablet";
 "A photo library and raw developer in pure Rust, open source (MIT OR Apache-2.0)." = "Uma biblioteca de fotos e revelador de RAW em Rust puro, de código aberto (MIT OR Apache-2.0).";
 "A photo library and raw developer. Free and open source." = "Uma biblioteca de fotos e um revelador de raw. Gratuito e de código aberto.";
 "A tap puts the keyword on the chosen photos, or takes it off when they all have it." = "Um toque coloca a palavra-chave nas fotos escolhidas, ou a remove quando todas já a têm.";
@@ -225,6 +227,8 @@
 "Appearance Mode" = "Modo de aparência";
 "Appearance Settings…" = "Configurações de aparência…";
 "Apple" = "Apple";
+"Apple Image Playground" = "Apple Image Playground";
+"Apple Image Playground makes the new area in Apple's cloud (Private Cloud Compute). The part of the photo inside the crop is sent to Apple for that, and the result may look different from your photo. Nothing else leaves this device." = "O Apple Image Playground cria a nova área na nuvem da Apple (Private Cloud Compute). Para isso, a parte da foto dentro do recorte é enviada à Apple, e o resultado pode ficar diferente da sua foto. Nada mais sai deste dispositivo.";
 "Apple Vision" = "Apple Vision";
 "Apple tap-to-segment model" = "Modelo da Apple para selecionar com um toque";
 "Apple's selection model couldn't start on this device." = "O modelo de seleção da Apple não pôde ser iniciado neste dispositivo.";
@@ -280,6 +284,7 @@
 "Automatic renders the Detail view at the size it is shown, up to the photo's own pixels. Choose a size to cap it: smaller is faster." = "Automático renderiza a exibição Detalhe no tamanho em que é mostrada, até os pixels da própria foto. Escolha um tamanho para limitá-la: menor é mais rápido.";
 "Automatic uses Apple's models where this device has them. Classic is LightCraft's own guess and needs no model." = "“Automático” usa os modelos da Apple onde este dispositivo os tiver. “Clássico” é a estimativa própria do LightCraft e não precisa de modelo.";
 "Automatic uses the graphics card where it is faster than the processor: both are timed on this computer the first time a photo is made." = "Automatic uses the graphics card where it is faster than the processor: both are timed on this computer the first time a photo is made.";
+"Automatic: %@ suits this device" = "Automático: %1$@ é o adequado para este dispositivo";
 "Automatically Write Changes into XMP" = "Gravar alterações automaticamente no XMP";
 "Automatically write changes into XMP sidecars" = "Grava automaticamente as alterações nos arquivos XMP auxiliares";
 "Autumn Gold" = "Ouro de outono";
@@ -306,7 +311,7 @@
 "Before/After Split Top/Bottom" = "Divisão Antes/Depois topo/base";
 "Before/After Top/Bottom" = "Antes/Depois topo/base";
 "Begin Interaction" = "Iniciar interação";
-"Best for wide areas; slower, computers only" = "Melhor para áreas amplas; mais lento, só em computadores";
+"Best for wide areas of sky, water or texture" = "Ideal para áreas amplas de céu, água ou textura";
 "Best of Similar Shots" = "Melhor entre fotos semelhantes";
 "Binary assets added" = "Arquivos binários adicionados";
 "Binary assets removed" = "Arquivos binários removidos";
@@ -370,6 +375,7 @@
 "Cancel Interaction" = "Cancelar interação";
 "Cancel Pending Photo Action" = "Cancelar ação pendente da foto";
 "Cancel Preview Build" = "Cancelar geração de prévia";
+"Cancel Sign Out" = "Cancelar saída";
 "Cancel pending action" = "Cancel pending action";
 "Candidate" = "Candidato";
 "Caption" = "Legenda";
@@ -539,6 +545,7 @@
 "Copyrighted" = "Protegido por direitos autorais";
 "Couldn't Be Read" = "Não foi possível ler";
 "Couldn't be read" = "Não foi possível ler";
+"Couldn't prepare the picture for Apple Image Playground." = "Não foi possível preparar a imagem para o Apple Image Playground.";
 "Country" = "País";
 "Create" = "Criar";
 "Create Administrator" = "Criar administrador";
@@ -747,6 +754,8 @@
 "Drag the crop past the photo's edges, or choose an aspect ratio, first." = "Primeiro arraste o corte para além das bordas da foto ou escolha uma proporção.";
 "Drag the crop past the photo's edges, or choose an aspect ratio, then Generate." = "Arraste o corte para além das bordas da foto ou escolha uma proporção e depois Gerar.";
 "Draw Guides" = "Desenhar guias";
+"Draws new detail, guided by the photo; slow" = "Desenha novos detalhes guiado pela foto; lento";
+"Draws new detail; slower" = "Desenha novos detalhes; mais lento";
 "Drop here for the top level" = "Solte aqui para o nível superior";
 "Duplicate" = "Duplicar";
 "Duplicate Component" = "Duplicar componente";
@@ -919,6 +928,7 @@
 "Finding words in photos uses two small AI models that read text, in English, Chinese, Japanese and many other languages. They are not part of LightCraft: they are PP-OCRv6 from Baidu, a %@ download onto this server under the %@. Downloading them means accepting that licence: %@ Afterwards the server reads every user's photos in the background, about a second each." = "Encontrar palavras nas fotos usa dois pequenos modelos de IA que leem texto em inglês, chinês, japonês e muitos outros idiomas. Eles não fazem parte do LightCraft: são o PP-OCRv6, da Baidu, um download de %@ para este servidor sob a licença %@. Baixá-los significa aceitar essa licença: %@ Depois disso, o servidor lê as fotos de todos os usuários em segundo plano, cerca de um segundo por foto.";
 "Finds photo files that no library uses any more (photos deleted for good) and uploads that never finished, if they are older than a day. Checking changes nothing." = "Encontra arquivos de fotos que nenhuma biblioteca usa mais (fotos excluídas de vez) e envios que nunca terminaram, se tiverem mais de um dia. Verificar não altera nada.";
 "Find…" = "Localizar…";
+"Finishing sync before signing out" = "Concluindo a sincronização antes de sair";
 "Finishing up." = "Concluindo.";
 "First" = "Primeiro";
 "First commit" = "Primeiro commit";
@@ -976,6 +986,7 @@
 "Full screen mode" = "Modo tela cheia";
 "Full size" = "Tamanho completo";
 "GPS Track Log" = "Registro de trajeto GPS";
+"GPU" = "GPU";
 "GPU Rendering" = "Renderização por GPU";
 "GPU rendering" = "Renderização por GPU";
 "General" = "Geral";
@@ -1185,6 +1196,7 @@
 "It tests this album, so testing it back would loop" = "Ele testa este álbum, então testá-lo de volta criaria um ciclo";
 "Its copyright, creator and place." = "Seus direitos autorais, criador e local.";
 "Its denoised picture is not made yet, and pictures are not made on their own (Settings, AI Denoise)." = "Its denoised picture is not made yet, and pictures are not made on their own (Settings, AI Denoise).";
+"Its licence lists uses that aren't allowed: read it before downloading (Settings → AI Models → Licence)." = "A licença proíbe alguns usos: leia-a antes de baixar (Configurações → Modelos de IA → Licença).";
 "Its photos go to Recently Deleted; no file is touched." = "Suas fotos vão para Excluídos recentemente; nenhum arquivo é alterado.";
 "Its photos stay in %@'s library with their edits, but their originals can no longer be downloaded. Nothing in %@ is touched." = "As fotos desta pasta continuam na biblioteca de %@, com as edições, mas os originais não poderão mais ser baixados. Nada em %@ é tocado.";
 "JPEG (Large)" = "JPEG (grande)";
@@ -1580,6 +1592,7 @@
 "None" = "Nenhum";
 "None of these" = "Nenhuma destas";
 "Not Now" = "Agora não";
+"Not an open-source licence: it lists uses that aren't allowed. Read it before downloading." = "Não é uma licença de código aberto: ela proíbe alguns usos. Leia-a antes de baixar.";
 "Not carried over: %@" = "Não transferido: %1$@";
 "Not found" = "Não encontrada";
 "Not now (it loads on the first search)" = "Agora não (carrega na primeira pesquisa)";
@@ -1942,6 +1955,9 @@
 "Remove Folder" = "Remover pasta";
 "Remove Folder from Library" = "Remover pasta da biblioteca";
 "Remove Folder from Library…" = "Remover pasta da biblioteca…";
+"Remove Library" = "Remover biblioteca";
+"Remove Library from This Device?" = "Remover a biblioteca deste dispositivo?";
+"Remove Library from This Device…" = "Remover a biblioteca deste dispositivo…";
 "Remove Location" = "Remover localização";
 "Remove Offline Copy" = "Remover cópia offline";
 "Remove User" = "Remover usuário";
@@ -1970,6 +1986,7 @@
 "Removed" = "Removidas";
 "Removed %@" = "Removido: %@";
 "Removed %@. Their files stay in %@." = "Usuário %@ removido. Os arquivos continuam em %@.";
+"Removing the library from this device" = "Removendo a biblioteca deste dispositivo";
 "Removing them frees this space. It cannot be undone." = "Removê-los libera este espaço. Isso não pode ser desfeito.";
 "Removing with AI…" = "Removendo com IA…";
 "Rename" = "Renomear";
@@ -2138,6 +2155,8 @@
 "Selects any object from taps, including parts you add or leave out." = "Seleciona qualquer objeto a partir de toques, incluindo as partes que você adiciona ou deixa de fora.";
 "Selenium Tone" = "Tom de selênio";
 "Send Feedback…" = "Enviar comentários…";
+"Send this photo to Apple?" = "Enviar esta foto para a Apple?";
+"Sending what is left: %lld changes, %lld photos" = "Enviando o que falta: %lld alterações, %lld fotos";
 "Separated by commas" = "Separados por vírgulas";
 "Sepia Tone" = "Tom sépia";
 "Sequence number zero-padded to N digits (1–9)" = "Número sequencial com zeros à esquerda até N dígitos (1–9)";
@@ -2259,11 +2278,17 @@
 "Sidecar names" = "Nomes dos sidecars";
 "Sign In" = "Entrar";
 "Sign Out" = "Sair";
+"Sign Out Anyway" = "Sair mesmo assim";
+"Sign Out Anyway…" = "Sair mesmo assim…";
+"Sign Out Without Waiting?" = "Sair sem esperar?";
+"Sign Out?" = "Sair?";
 "Sign in again in Settings ▸ Sync." = "Entre de novo em Configurações ▸ Sincronização.";
 "Sign out %@?" = "Encerrar a sessão em %@?";
 "Sign out and keep this library on this device only." = "Sai da conta e mantém esta biblioteca apenas neste dispositivo.";
 "Signed in %@" = "Entrou %@";
 "Signed out" = "Sessão encerrada";
+"Signing out waits until everything this device has made has reached the server, then removes the library from this device. Cancel stays signed in. Sign Out Anyway doesn't wait: what hasn't been sent is lost." = "Sair espera até que tudo o que este dispositivo fez chegue ao servidor e depois remove a biblioteca deste dispositivo. “Cancelar saída” continua conectado. “Sair mesmo assim” não espera: o que não foi enviado é perdido.";
+"Signing out…" = "Saindo…";
 "Silver" = "Prata";
 "Simulate Paper & Ink" = "Simular papel e tinta";
 "Size" = "Tamanho";
@@ -2298,6 +2323,7 @@
 "Soft Pastel" = "Pastel suave";
 "Soft Proofing" = "Prova suave";
 "Soft Skin" = "Pele suave";
+"Some changes or photos haven't reached the server. Signing out now removes this library from this device, and what hasn't been sent is lost." = "Algumas alterações ou fotos não chegaram ao servidor. Sair agora remove esta biblioteca deste dispositivo, e o que não foi enviado é perdido.";
 "Some files couldn't be read" = "Não foi possível ler alguns arquivos";
 "Some rules need fixing (Edit Smart Album…):" = "Algumas regras precisam ser corrigidas (Editar álbum inteligente…):";
 "Something went wrong" = "Algo deu errado";
@@ -2448,6 +2474,7 @@
 "That key can't be used as a shortcut" = "Essa tecla não pode ser usada como atalho";
 "The SAM 3 model is installed: Object and Describe masks are ready." = "O modelo SAM 3 está instalado: as máscaras Objeto e Descrever estão prontas.";
 "The address of your LightCraft server, as in Settings ▸ Sync." = "O endereço do seu servidor LightCraft, como em Configurações ▸ Sincronização.";
+"The browser" = "O navegador";
 "The camera is locked: unlock it to read its photos" = "A câmera está bloqueada: desbloqueie-a para ler as fotos";
 "The checkerboard shows area with nothing in it yet: Generate fills it." = "O xadrez mostra a área ainda vazia: Gerar a preenche.";
 "The denoise model is installed and in use: the AI Denoise Amount slider under Detail now works" = "The denoise model is installed and in use: the AI Denoise Amount slider under Detail now works";
@@ -2464,8 +2491,10 @@
 "The library is up to date with this folder." = "A biblioteca está atualizada com esta pasta.";
 "The model is kept on this computer only. LightCraft never uploads or shares it." = "The model is kept on this computer only. LightCraft never uploads or shares it.";
 "The model is kept on this device only. LightCraft never uploads or shares it." = "O modelo fica apenas neste dispositivo. O LightCraft nunca o envia nem o compartilha.";
+"The most detail; slow" = "O máximo de detalhes; lento";
 "The most the server keeps for %@, in GB (at least 0.1): the originals their devices upload, previews, and photos added through their shared links. Photos in library folders don't count. Over the limit, uploads wait until there is room; nothing is deleted. Leave it empty for no limit." = "O máximo que o servidor guarda para %@, em GB (no mínimo 0,1): os originais que os dispositivos enviam, as prévias e as fotos adicionadas por links compartilhados. As fotos nas pastas da biblioteca não contam. Acima do limite, os envios esperam até haver espaço; nada é excluído. Deixe em branco para não ter limite.";
 "The new area was painted by %@ on this device." = "A nova área foi pintada neste dispositivo (%1$@).";
+"The new area was painted by Apple Image Playground, in Apple's cloud." = "A nova área foi pintada pelo Apple Image Playground, na nuvem da Apple.";
 "The number at the end of the original name (IMG_0042 → 0042)" = "O número no fim do nome original (IMG_0042 → 0042)";
 "The original extension is always added; {ext} only puts it inside the name as well." = "A extensão original é sempre adicionada; {ext} apenas a coloca também dentro do nome.";
 "The original files, unchanged, each with an XMP sidecar holding its edits." = "Os arquivos originais, inalterados, cada um com um sidecar XMP contendo suas edições.";
@@ -2482,6 +2511,7 @@
 "The server has a library already" = "O servidor já tem uma biblioteca";
 "The server never changes, moves or deletes the photos. With writing on, it adds and updates .xmp sidecar files beside them — but it cannot write there now: %@" = "O servidor nunca altera, move nem exclui as fotos. Com a gravação ativada, ele adiciona e atualiza arquivos .xmp auxiliares ao lado delas — mas não consegue gravar ali agora: %@";
 "The server never changes, moves or deletes the photos. With writing on, it adds and updates .xmp sidecar files beside them. Mount the folder read-write, with the server user allowed to write, before turning this on." = "O servidor nunca altera, move nem exclui as fotos. Com a gravação ativada, ele adiciona e atualiza arquivos .xmp auxiliares ao lado delas. Monte a pasta com leitura e gravação, com permissão de gravação para o usuário do servidor, antes de ativar isto.";
+"The server signed this device out, so nothing can be sent. Removing the library from this device loses what hasn't been sent. Signing in again brings the rest back from the server." = "O servidor desconectou este dispositivo, então nada pode ser enviado. Remover a biblioteca deste dispositivo perde o que não foi enviado. Entrar de novo traz o resto de volta do servidor.";
 "The server will look at the faces in %@'s photos and group them into people, which they name on their own devices. What it finds stays on this server, and %@ can delete all of it from their devices (Forget All Faces). Only do this if they agree." = "O servidor vai analisar os rostos nas fotos de %@ e agrupá-los em pessoas, que o próprio usuário nomeia nos dispositivos dele. O que for encontrado fica neste servidor, e %@ pode excluir tudo isso dos dispositivos (Esquecer todos os rostos). Faça isso só se a pessoa concordar.";
 "The server's" = "Do servidor";
 "Their devices are signed out and they can no longer sign in. Their library and photo files stay on the server, in its data folder, until you delete them by hand." = "Os dispositivos são desconectados e não será mais possível entrar. A biblioteca e os arquivos de fotos continuam no servidor, na pasta de dados, até você excluí-los manualmente.";
@@ -2504,6 +2534,7 @@
 "This build has nowhere to keep denoise models, so AI Denoise is not available. (The desktop app has.)" = "This build has nowhere to keep denoise models, so AI Denoise is not available. (The desktop app has.)";
 "This build has nowhere to keep face models, so the model list is not available. (The desktop app has.)" = "Esta versão não tem onde guardar modelos de rostos, então a lista de modelos não está disponível. (O aplicativo para desktop tem.)";
 "This build has nowhere to keep face models." = "Esta versão não tem onde guardar modelos de rostos.";
+"This device:" = "Este dispositivo:";
 "This disk" = "Este disco";
 "This file cannot be used yet" = "This file cannot be used yet";
 "This folder is not available (drive disconnected?). Smart previews are not built or used until it is back or you choose another folder." = "Esta pasta não está disponível (unidade desconectada?). As pré-visualizações inteligentes não são geradas nem usadas até ela voltar ou você escolher outra pasta.";
@@ -2514,9 +2545,11 @@
 "This is too large for Super Resolution here. Crop the photo first: the limit is %lld megapixels." = "Isto é grande demais para a Super Resolução aqui. Recorte a foto antes: o limite é de %lld megapixels.";
 "This library" = "Esta biblioteca";
 "This library and the server's both have photos. Choose what to do with this library's photos; nothing syncs until you do." = "Esta biblioteca e a do servidor têm fotos. Escolha o que fazer com as fotos desta biblioteca; nada é sincronizado até você escolher.";
+"This library belongs to the account it was signed in as, and the server signed this device out. Sign in as the same user to go on, or remove the library from this device to sign in as someone else: what hasn't been sent is lost." = "Esta biblioteca pertence à conta com a qual ela estava conectada, e o servidor desconectou este dispositivo. Entre como o mesmo usuário para continuar, ou remova a biblioteca deste dispositivo para entrar como outra pessoa: o que não foi enviado é perdido.";
 "This library is only on this device" = "Esta biblioteca está apenas neste dispositivo";
 "This model isn't downloaded yet: download it, or choose Classic." = "Este modelo ainda não foi baixado: baixe-o ou escolha Clássico.";
 "This photo can't be opened" = "Não foi possível abrir esta foto";
+"This removes this account's library from this device. It stays on the server, and signing in again brings it back. Anything that hasn't reached the server yet is sent first." = "Isso remove a biblioteca desta conta deste dispositivo. Ela continua no servidor, e entrar de novo a traz de volta. O que ainda não chegou ao servidor é enviado antes.";
 "This server has no administrator yet. Type the setup code it wrote in its log when it started. Administrators add the people who use the server and look after its devices and storage. Letters, digits, dots, dashes and underscores in the name; at least 8 characters in the password." = "Este servidor ainda não tem administrador. Digite o código de configuração que ele escreveu no log ao iniciar. Os administradores adicionam as pessoas que usam o servidor e cuidam dos dispositivos e do armazenamento dele. O nome pode ter letras, dígitos, pontos, hifens e sublinhados; a senha deve ter pelo menos 8 caracteres.";
 "Threshold" = "Limite";
 "Thumbnail Cache" = "Cache de miniaturas";
@@ -2603,7 +2636,8 @@
 "User name" = "Nome de usuário";
 "Username" = "Nome de usuário";
 "Users" = "Usuários";
-"Uses the %@ model, a %lld MB download (%@ licence). %@." = "Usa o modelo %1$@, um download de %2$lld MB (licença %3$@). %4$@.";
+"Uses Apple's cloud and asks every time" = "Usa a nuvem da Apple e pergunta sempre";
+"Uses the %@ model, a %@ download (%@ licence). %@." = "Usa o modelo %1$@, um download de %2$@ (licença %3$@). %4$@.";
 "Uses the MI-GAN model, a %lld MB download (%@). %@." = "Usa o modelo MI-GAN, um download de %lld MB (%@). %@.";
 "Value" = "Valor";
 "Variance" = "Variância";
@@ -2648,6 +2682,7 @@
 "Wednesday" = "Quarta-feira";
 "Weeks" = "Semanas";
 "Welcome to LightCraft" = "Bem-vindo ao LightCraft";
+"What paints the new area when the crop reaches past the photo (Crop → Expand). The larger models draw new detail and take longer." = "O que pinta a nova área quando o recorte vai além da foto (Recortar → Expandir). Os modelos maiores desenham novos detalhes e demoram mais.";
 "What the server does with your users' photos so their devices don't have to: find them by description, by the words printed in them, and by the people in them. Each needs a model, downloaded once onto this server." = "O que o servidor faz com as fotos dos seus usuários para que os dispositivos não precisem fazer: encontrá-las por descrição, pelas palavras impressas nelas e pelas pessoas que aparecem nelas. Cada recurso precisa de um modelo, baixado uma vez para este servidor.";
 "What's New" = "Novidades";
 "When Rated" = "Quando avaliada";
@@ -2667,6 +2702,7 @@
 "Will be restored" = "Será restaurada";
 "Window" = "Janela";
 "Winter Blue" = "Azul invernal";
+"Without a GPU it takes minutes per Generate." = "Sem GPU, cada geração leva minutos.";
 "Words" = "Palavras";
 "Words in Photos" = "Palavras nas fotos";
 "Works" = "Funciona";
@@ -2780,6 +2816,7 @@
 "needs something to look for (or use “isn't empty”)" = "precisa de algo para procurar (ou use “não está vazio”)";
 "needs text" = "precisa de texto";
 "needs two values" = "precisa de dois valores";
+"no GPU" = "sem GPU";
 "non-commercial use only" = "non-commercial use only";
 "none" = "nenhum";
 "none (CPU rendering)" = "nenhuma (renderização por CPU)";

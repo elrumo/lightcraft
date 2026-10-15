@@ -17,117 +17,130 @@ struct PhotoScreen: View {
     let start: UInt64
     /// The panels are away (`EditorModel.review`).
     private var review: Bool { model.editor.review }
+    /// The room the screen has, measured after the inspector (a view's own size is the whole room; only what is
+    /// inside the inspector's modifier is left with the rest), and the hinge across it when an iPhone Duo is partly
+    /// open (`PhotoLayout`).
+    @State private var room = CGSize(width: 1000, height: 1000)
+    @State private var fold: DuoFold?
 
-    var body: some View {
+    /// How the photo and the tools share the room: an iPad's inspector beside the photo; a column beside it (a phone
+    /// held sideways, a Duo, whose column keeps its look flat or folded and only moves with the hinge); the tools
+    /// under it otherwise (a phone upright, a window too narrow for two).
+    private var photoLayout: PhotoLayout {
+        let duo = model.duo
+        // (a device with a hinge has no inspector: its column looks the same flat and folded)
+        let hinged = duo.hinge != "none" || duo.fakeFold != nil
+        return PhotoLayout.choose(room: room, fold: fold, regular: horizontalSize == .regular,
+                                  compactHeight: verticalSize == .compact, inspector: !hinged)
+    }
+
+    /// The system's inspector is open: the arrangement has one and a tool is chosen.
+    private var inspecting: Bool {
+        photoLayout == .inspector && model.editor.tool != nil && !review
+    }
+
+    /// The photo, and the tools beside or under it.
+    @ViewBuilder private var canvas: some View {
         let editor = model.editor
-        // an iPad: the tools in the inspector beside the photo; a phone held sideways: in a column
-        // at the right (egui's wide layout, 316 pt); held upright: under the photo
-        #if os(macOS)
-        let inspector = true
-        #else
-        let inspector = horizontalSize == .regular && verticalSize != .compact
-        #endif
-        let sideways = verticalSize == .compact
-        Group {
-            if inspector {
-                // (clipped: the next photos mustn't show through the inspector's glass)
-                pager.clipped()
-            } else if sideways, editor.tool != nil {
-                HStack(spacing: 0) {
-                    pager
-                    if !review {
-                        ToolColumn()
-                            .frame(width: 316)
-                            .background(Color.lcSecondaryBackground)
-                            .transition(.move(edge: .trailing))
-                    }
-                }
-            } else {
-                VStack(spacing: 0) {
-                    pager
-                    if !review {
-                        if let tool = editor.tool, tool.hasScreen {
-                            ToolScreenBar(tool: tool)
-                        } else {
-                            if editor.tool == .edit { GroupBar() }
-                            if let tool = editor.tool { ToolPanel(tool: tool) }
-                        }
-                    }
-                }
-            }
-        }
-        .background(Color.lcBackground.ignoresSafeArea())
         #if os(macOS)
         // (a Mac keeps the panel open with a tool always chosen: Lightroom's right-hand side)
-        .inspector(isPresented: Binding(get: { model.prefs.inspectorShown && !review }, set: { model.prefs.inspectorShown = $0 })) {
-            MacInspector()
-                .inspectorColumnWidth(min: 350, ideal: 380, max: 520)
-        }
+        pager.clipped()
+            .background(Color.lcBackground.ignoresSafeArea())
+            .inspector(isPresented: Binding(get: { model.prefs.inspectorShown && !review }, set: { model.prefs.inspectorShown = $0 })) {
+                MacInspector()
+                    .inspectorColumnWidth(min: 350, ideal: 380, max: 520)
+            }
         #else
-        .inspector(isPresented: Binding(get: { inspector && editor.tool != nil && !review }, set: { if !$0 { editor.tool = nil } })) {
+        let arrangement = photoLayout
+        // One arrangement for every size and pose, whose first child is always the pager: a fold, a rotation or a
+        // tool opening moves the pager without rebuilding it, so its zoom and its place stay.
+        let arrange = arrangement.isColumn ? AnyLayout(HStackLayout(spacing: 0)) : AnyLayout(VStackLayout(spacing: 0))
+        arrange {
+            // (clipped at the sides: the next photos mustn't show through the inspector's glass, under a side column
+            // or beside a hinge)
+            pager.clippedSideways().duoFrame("pager", in: model.duo)
+            if !review { tools(arrangement) }
+        }
+        .background(Color.lcBackground.ignoresSafeArea())
+        .inspector(isPresented: Binding(get: { inspecting }, set: { if !$0 { editor.tool = nil } })) {
+            // (the width is asked of the content itself: it must be the last modifier, or the inspector ignores it)
             ToolColumn()
+                .duoFrame("inspector", in: model.duo, reporting: inspecting)
                 .inspectorColumnWidth(min: 300, ideal: 340, max: 420)
         }
+        .onGeometryChange(for: CGSize.self) { $0.size } action: { size in if room != size { room = size } }
+        .onFold($fold)
+        .animation(.snappy, value: arrangement)
+        .onChange(of: arrangement, initial: true) { _, new in model.duo.photoMode = new.name }
         .background(DismissGuard(disabled: editor.touching))
         .toolbar(review ? .hidden : .visible, for: .navigationBar)
         .toolbar(review || editor.tool?.hasScreen == true ? .hidden : .visible, for: .bottomBar)
         #endif
-        .lcStatusBarHidden(review)
-        .navigationBarBackButtonHidden(editor.tool?.hasScreen == true)
-        .navigationTitle(title)
-        .navigationSubtitle(Text(subtitle))
-        .inlineTitle()
-        .toolbar {
-            if let tool = editor.tool, tool.hasScreen {
-                ScreenToolbar(model: model)
-                ToolbarItemGroup(placement: .lcTrailing) {
-                    UndoMenu()
-                    if tool == .masking {
-                        MaskOverlayButton()
-                        MaskMoreMenu()
+    }
+
+    var body: some View {
+        let editor = model.editor
+        canvas
+            .lcStatusBarHidden(review)
+            .navigationBarBackButtonHidden(editor.tool?.hasScreen == true)
+            .navigationTitle(title)
+            .navigationSubtitle(Text(subtitle))
+            .inlineTitle()
+            .toolbar {
+                if let tool = editor.tool, tool.hasScreen {
+                    ScreenToolbar(model: model)
+                    ToolbarItemGroup(placement: .lcTrailing) {
+                        UndoMenu()
+                        if tool == .masking {
+                            MaskOverlayButton()
+                            MaskMoreMenu()
+                        }
                     }
-                }
-            } else {
-                ToolbarItem(placement: .lcTrailing) {
-                    UndoMenu()
-                }
-                ToolbarSpacer(.fixed, placement: .lcTrailing)
-                ToolbarItemGroup(placement: .lcTrailing) {
-                    Button("Share", systemImage: "square.and.arrow.up") {
-                        if let id = model.state.active { model.sheet = .export([id]) }
+                    .duoPriority(.high)
+                } else {
+                    ToolbarItem(placement: .lcTrailing) {
+                        UndoMenu()
                     }
-                    PhotoMoreMenu()
+                    .duoPriority(.high)
+                    ToolbarSpacer(.fixed, placement: .lcTrailing)
+                    ToolbarItem(placement: .lcTrailing) {
+                        Button("Share", systemImage: "square.and.arrow.up") {
+                            if let id = model.state.active { model.sheet = .export([id]) }
+                        }
+                    }
+                    // the actions that do not fit: the system's overflow menu on iOS 27, so they and what overflowed are in one place
+                    DuoOverflow { PhotoMoreItems() }
+                    #if os(iOS)
+                    ToolBar(model: model)
+                    #else
+                    ToolbarSpacer(.fixed, placement: .lcTrailing)
+                    ToolbarItem(placement: .lcTrailing) {
+                        Button("Inspector", systemImage: "sidebar.trailing") { model.prefs.inspectorShown.toggle() }
+                            .help(Text("Show or hide the edit panel"))
+                    }
+                    #endif
                 }
-                #if os(iOS)
-                ToolBar(model: model)
-                #else
-                ToolbarSpacer(.fixed, placement: .lcTrailing)
-                ToolbarItem(placement: .lcTrailing) {
-                    Button("Inspector", systemImage: "sidebar.trailing") { model.prefs.inspectorShown.toggle() }
-                        .help(Text("Show or hide the edit panel"))
-                }
-                #endif
             }
-        }
-        .animation(.snappy, value: review)
-        .animation(.snappy, value: editor.tool)
-        .onChange(of: editor.tool) { editor.picking = nil }
-        .haptic(.selection, trigger: editor.tool)
-        .task(id: editor.tool) {
-            // a tool screen's Cancel goes back to how the photo was when it opened
-            if editor.tool?.hasScreen == true { editor.screenBase = await undoDepth(model) }
-        }
-        .onAppear {
-            if editor.tool == nil { editor.tool = .edit }
-            Task { await editor.reload(model) }
-        }
-        .onDisappear {
-            if model.path.isEmpty { editor.tool = nil }
-            editor.review = false
-            // (the loupe's zoom is not the grid's)
-            editor.zoomedIn = false
-            editor.zoomPercent = nil
-        }
+            .animation(.snappy, value: review)
+            .animation(.snappy, value: editor.tool)
+            .onChange(of: editor.tool) { editor.picking = nil }
+            .haptic(.selection, trigger: editor.tool)
+            .task(id: editor.tool) {
+                // a tool screen's Cancel goes back to how the photo was when it opened
+                if editor.tool?.hasScreen == true { editor.screenBase = await undoDepth(model) }
+            }
+            .onAppear {
+                if editor.tool == nil { editor.tool = .edit }
+                Task { await editor.reload(model) }
+            }
+            .onDisappear {
+                if model.path.isEmpty { editor.tool = nil }
+                model.duo.photoMode = ""
+                editor.review = false
+                // (the loupe's zoom is not the grid's)
+                editor.zoomedIn = false
+                editor.zoomPercent = nil
+            }
     }
 
     /// The photo's capture date (an open tool screen's name instead), then its time.
@@ -182,6 +195,52 @@ struct PhotoScreen: View {
             }
             #endif
     }
+
+    /// The tools beside or under the photo: nothing for the inspector (it is the system's), a column for a phone held
+    /// sideways or a Duo, the open tool's panel under the photo otherwise.
+    @ViewBuilder private func tools(_ arrangement: PhotoLayout) -> some View {
+        let editor = model.editor
+        switch arrangement {
+        case .inspector:
+            EmptyView()
+        case .column(let width, let gap):
+            // (with a hinge in the way the column stays even with no tool open, so the photo stays on its page)
+            if editor.tool != nil || gap > 0 {
+                HStack(spacing: 0) {
+                    if gap > 0 { Color.clear.frame(width: gap) }
+                    ToolColumn()
+                        .frame(width: width)
+                        .duoFrame("column", in: model.duo)
+                        .background(Color.lcSecondaryBackground)
+                }
+                .transition(.move(edge: .trailing))
+            }
+        case .stack(let gap, let below):
+            VStack(spacing: 0) {
+                if gap > 0 { Color.clear.frame(height: gap) }
+                if let tool = editor.tool, tool.hasScreen {
+                    ToolScreenBar(tool: tool)
+                } else {
+                    if editor.tool == .edit { GroupBar() }
+                    if let tool = editor.tool { ToolPanel(tool: tool) }
+                }
+            }
+            // (a tabletop's tools are the gap, which is the hinge's own strip, and then exactly its lower page)
+            .frame(height: below.map { $0 + gap }, alignment: .top)
+            .clippedSideways()
+            .duoFrame("stack", in: model.duo)
+        }
+    }
+}
+
+extension View {
+    /// Clips what overflows at the left and right, and lets what overflows above and below stay: under a bar, where
+    /// its scroll edge effect needs it. (Rows that scroll sideways, the chips and a tool's options, may run past the
+    /// top and bottom but not past the sides: a Duo's side column is not the screen's edge, and rows running under it
+    /// look cut.)
+    fileprivate func clippedSideways() -> some View {
+        mask { Rectangle().padding(.vertical, -400) }
+    }
 }
 
 extension EnvironmentValues {
@@ -197,24 +256,44 @@ private struct ToolColumn: View {
 
     var body: some View {
         let editor = model.editor
-        VStack(spacing: 0) {
-            if let tool = editor.tool, tool.hasScreen {
-                // (at the bottom, where the thumb is, as on a phone held upright)
-                Spacer(minLength: 0)
-                ViewThatFits(in: .vertical) {
-                    ToolScreenBar(tool: tool)
-                    ScrollView { ToolScreenBar(tool: tool) }
-                }
-            } else {
-                if editor.tool == .edit { GroupBar() }
-                if let tool = editor.tool {
-                    ScrollView { ToolPanelContent(tool: tool) }
+        // An unfolded Duo has the room for the Edit groups as a rail of icons beside the controls, as the Mac's
+        // tool strip and Lightroom's, not a row of chips to scroll.
+        let rail = editor.tool == .edit && model.duo.unfolded
+        HStack(spacing: 0) {
+            if rail {
+                GroupBar(vertical: true)
+                Divider()
+            }
+            VStack(spacing: 0) {
+                if let tool = editor.tool, tool.hasScreen {
+                    if model.duo.unfolded {
+                        // the whole height of the panel, from the top, as the Edit panel (scrolling only when it must)
+                        ViewThatFits(in: .vertical) {
+                            ToolScreenBar(tool: tool).frame(maxHeight: .infinity, alignment: .top)
+                            ScrollView { ToolScreenBar(tool: tool) }
+                        }
+                    } else {
+                        // (at the bottom, where the thumb is, as on a phone held upright)
+                        Spacer(minLength: 0)
+                        ViewThatFits(in: .vertical) {
+                            ToolScreenBar(tool: tool)
+                            ScrollView { ToolScreenBar(tool: tool) }
+                        }
+                    }
                 } else {
-                    Spacer()
+                    if editor.tool == .edit, !rail { GroupBar() }
+                    if let tool = editor.tool {
+                        ScrollView { ToolPanelContent(tool: tool) }
+                    } else {
+                        Spacer()
+                    }
                 }
             }
         }
         .environment(\.toolColumn, true)
+        // (the chips and a tool's options scroll sideways with their clip off, for their glass: scrolled, they would
+        // draw over the photo beside the column, and across a Duo's hinge)
+        .clippedSideways()
     }
 }
 
@@ -262,9 +341,12 @@ struct PhotoPager: View {
                 .onAppear {
                     if position == nil { position = startIndex }
                     self.startIndex = startIndex
+                    if let photo = library.photo(at: position ?? startIndex, model.engine) { model.shown = photo.id }
                 }
                 .onChange(of: position) { _, i in
                     guard let i, let photo = library.photo(at: i, model.engine) else { return }
+                    // (a screen the system rebuilds opens on the photo shown, not on the one first pushed)
+                    model.shown = photo.id
                     if photo.id != model.state.active {
                         asked = photo.id
                         Task { await model.select(photo.id) }
@@ -893,6 +975,18 @@ private struct InfoOverlay: View {
     }
 }
 
+extension Tool {
+    /// How long a tool stays on a bar that has run out of room (a Duo's side column holds about eight items in all,
+    /// Back and Undo among them): the ones used most last.
+    var barPriority: DuoPriority {
+        switch self {
+        case .edit, .crop, .masking: .high
+        case .remove: .automatic
+        case .presets, .info, .redEye: .low
+        }
+    }
+}
+
 #if os(iOS)
 /// The tools under a photo, in the bottom bar: icons, the open one switched on (a tap on it closes
 /// it).
@@ -900,31 +994,43 @@ struct ToolBar: ToolbarContent {
     let model: AppModel
 
     var body: some ToolbarContent {
-        let editor = model.editor
         ToolbarSpacer(.flexible, placement: .lcBottom)
-        ToolbarItemGroup(placement: .lcBottom) {
+        if #available(iOS 27.0, *) {
+            // one item each, not a group: on a Duo the bar is a column, the system drops the last items that do not fit,
+            // and only an item can say it matters more
             ForEach(Tool.bar) { tool in
-                Toggle(isOn: Binding(get: { editor.tool == tool }, set: { on in
-                    withAnimation(.snappy) { editor.tool = on ? tool : nil }
-                    if on, tool == .crop || tool == .masking || tool == .remove {
-                        model.perform("develop.cancelInteraction")
-                    }
-                })) {
-                    Label {
-                        Text(LocalizedStringKey(tool.label))
-                    } icon: {
-                        // the bar templates its glyphs in the accent: a pre-coloured one stays white
-                        if editor.tool == tool, let white = Self.whiteSymbol(tool.symbol) {
-                            Image(uiImage: white)
-                        } else {
-                            Image(systemName: tool.symbol)
-                        }
-                    }
-                }
-                .disabled(model.state.active == nil)
+                ToolbarItem(placement: .lcBottom) { toggle(tool) }
+                    .duoPriority(tool.barPriority)
+            }
+        } else {
+            // (before iOS 27 the open tool is shown switched on in a group, not in items of their own)
+            ToolbarItemGroup(placement: .lcBottom) {
+                ForEach(Tool.bar) { toggle($0) }
             }
         }
         ToolbarSpacer(.flexible, placement: .lcBottom)
+    }
+
+    private func toggle(_ tool: Tool) -> some View {
+        let editor = model.editor
+        return Toggle(isOn: Binding(get: { editor.tool == tool }, set: { on in
+            withAnimation(.snappy) { editor.tool = on ? tool : nil }
+            if on, tool == .crop || tool == .masking || tool == .remove {
+                model.perform("develop.cancelInteraction")
+            }
+        })) {
+            Label {
+                Text(LocalizedStringKey(tool.label))
+            } icon: {
+                // the bar templates its glyphs in the accent: a pre-coloured one stays white
+                if editor.tool == tool, let white = Self.whiteSymbol(tool.symbol) {
+                    Image(uiImage: white)
+                } else {
+                    Image(systemName: tool.symbol)
+                }
+            }
+        }
+        .disabled(model.state.active == nil)
     }
 
     private static func whiteSymbol(_ name: String) -> UIImage? {
@@ -937,6 +1043,7 @@ struct ToolBar: ToolbarContent {
 /// The Edit tool's groups: Auto, then Profile, Light, Color… (one open at a time).
 struct GroupBar: View {
     @Environment(AppModel.self) private var model
+    var vertical = false
     /// The photo and undo depth just after Auto was applied (`nil` once anything else is done).
     @State private var autoArmed: (photo: UInt64?, depth: Int)?
 
@@ -961,6 +1068,7 @@ struct GroupBar: View {
                     autoArmed = if let before, let after, after > before { (model.state.active, after) } else { nil }
                 }
             },
+            vertical: vertical,
             choose: { model.prefs.editGroup = $0 }
         )
         .haptic(.selection, trigger: model.prefs.editGroup)
@@ -980,9 +1088,47 @@ struct GroupChips: View {
     let selected: String?
     var enabled = true
     var auto: (() -> Void)? = nil
+    /// A rail of icons down the side of a wide column (an unfolded Duo, as the Mac's tool strip), not a row to scroll.
+    var vertical = false
     let choose: (String) -> Void
 
     var body: some View {
+        if vertical { rail } else { row }
+    }
+
+    private var rail: some View {
+        ScrollView {
+            GlassEffectContainer {
+                VStack(spacing: 6) {
+                    if let auto {
+                        Button(action: auto) { railIcon("wand.and.stars") }
+                            .buttonStyle(.glass)
+                            .buttonBorderShape(.circle)
+                            .accessibilityLabel("Auto")
+                    }
+                    ForEach(items) { item in
+                        let on = enabled && item.id == selected
+                        let button = Button { choose(item.id) } label: { railIcon(item.symbol) }
+                            .buttonBorderShape(.circle)
+                            .accessibilityLabel(Text(LocalizedStringKey(item.label)))
+                            .accessibilityAddTraits(on ? .isSelected : [])
+                        if on { button.buttonStyle(.glassProminent) } else { button.buttonStyle(.glass) }
+                    }
+                }
+            }
+            .padding(.vertical, 8)
+            .padding(.horizontal, 6)
+        }
+        .scrollIndicators(.hidden)
+        .frame(width: 56)
+        .disabled(!enabled)
+    }
+
+    private func railIcon(_ symbol: String) -> some View {
+        Image(systemName: symbol).font(.body.weight(.medium)).frame(width: 32, height: 32)
+    }
+
+    private var row: some View {
         ScrollView(.horizontal) {
             GlassEffectContainer {
                 HStack(spacing: 6) {
@@ -1093,9 +1239,11 @@ extension View {
     @ViewBuilder
     func toolCard(_ on: Bool = true) -> some View {
         if on {
+            // (concentric: the corners at the bottom follow the display's, which are not the same on a phone and on each
+            // of a Duo's two; the ones at the top, far from any, keep their 28 pt)
             self
-                .clipShape(.rect(cornerRadius: 28))
-                .background(Color.lcSecondaryBackground, in: .rect(cornerRadius: 28))
+                .clipShape(ConcentricRectangle(corners: .concentric(minimum: 28)))
+                .background(Color.lcSecondaryBackground, in: ConcentricRectangle(corners: .concentric(minimum: 28)))
                 .padding(.horizontal, 8)
                 .padding(.bottom, 4)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -1152,14 +1300,14 @@ struct UndoMenu: View {
     }
 }
 
-/// A photo's "…": rating, flag and label, copying edits, versions, history, keywords, Before /
-/// After, deleting.
-struct PhotoMoreMenu: View {
+/// A photo's "…" actions: rating, flag and label, copying edits, versions, history, keywords, Before /
+/// After, deleting. The items only: `DuoOverflow` puts them in the overflow menu.
+struct PhotoMoreItems: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
         let ids = model.state.active.map { [$0] } ?? []
-        Menu {
+        Group {
             Menu("Rating", systemImage: "star") { RatingItems(ids: ids) }
             Menu("Flag", systemImage: "flag") { FlagItems(ids: ids) }
             Menu("Color Label", systemImage: "circle.lefthalf.filled") { LabelItems(ids: ids) }
@@ -1234,8 +1382,6 @@ struct PhotoMoreMenu: View {
                 Button("Delete Photo", systemImage: "trash", role: .destructive) { model.confirmDelete = ids }
                 Button("All Commands…", systemImage: "command") { model.path.append(.commands) }
             }
-        } label: {
-            Label("More", systemImage: "ellipsis")
         }
         .disabled(ids.isEmpty)
     }

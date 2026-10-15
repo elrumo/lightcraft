@@ -27,7 +27,9 @@ struct RootView: View {
                     stack
                 }
                 .navigationSplitViewStyle(.balanced)
-                // a photo takes the screen: the albums step aside while it is open
+                // a photo takes the screen: the albums step aside while it is open (also when this branch has just
+                // come up: an unfold with a photo open, or a grid whose column a shut screen's photo hid)
+                .onAppear { model.sidebar = model.path.isEmpty ? .all : .detailOnly }
                 .onChange(of: model.path.isEmpty) { _, grid in
                     withAnimation { model.sidebar = grid ? .all : .detailOnly }
                 }
@@ -104,6 +106,9 @@ struct RootView: View {
             ActivityHUD()
         }
         .preferredColorScheme(model.prefs.appearance.scheme)
+        .duoReporting(model.duo)
+        // a fold or an unfold moves the window to the other display, which may differ in HDR headroom
+        .onGeometryChange(for: CGSize.self) { $0.size } action: { _ in model.updateHdrDisplay() }
         // the menu bar's commands, enabled for what is selected now
         .task(id: MenuKey(revision: model.settledRevision, active: model.state.active, selected: model.state.selectionCount, engine: model.engine != nil)) {
             await model.loadMenus()
@@ -163,7 +168,8 @@ struct RootView: View {
             .navigationDestination(for: Route.self) { route in
                 switch route {
                 case .photo(let id):
-                    PhotoScreen(start: id)
+                    // (opens on the photo the loupe shows: a rebuild by a fold or a rotation must not go back to `id`)
+                    PhotoScreen(start: model.shown ?? id)
                         .lcZoomTransition(sourceID: id, in: photos)
                 case .commands: AllCommandsView()
                 case .people: PeopleView()
@@ -278,7 +284,7 @@ struct ActivityHUD: View {
 
     var body: some View {
         let rows = model.activity.filter {
-            ["import", "scan", "previews", "download", "superRes"].contains($0.kind) || ($0.kind == "export" && model.sheet?.id != "export")
+            ["import", "scan", "previews", "download", "superRes", "signOut"].contains($0.kind) || ($0.kind == "export" && model.sheet?.id != "export")
                 || ($0.kind == "expand" && model.editor.tool != .crop)
         }
         VStack(spacing: 6) {
@@ -382,17 +388,17 @@ struct CloudButton: View {
         Button {
             model.sheet = .syncStatus
         } label: {
-            Image(systemName: symbol(sync?.state))
-                .symbolEffect(.pulse, isActive: sync?.state == "syncing")
+            Label("Sync Status", systemImage: symbol(sync?.state))
+                .symbolEffect(.pulse, isActive: sync?.state == "syncing" || sync?.state == "signingOut")
                 .foregroundStyle(tint(sync?.state))
         }
-        .accessibilityLabel("Sync Status")
         .accessibilityValue(sync?.state ?? "")
     }
 
     private func symbol(_ state: String?) -> String {
         switch state {
         case "syncing": "arrow.triangle.2.circlepath.icloud"
+        case "signingOut": "icloud.and.arrow.up"
         case "error", "conflict": "exclamationmark.icloud"
         case "paused": "pause.circle"
         case "signedOut": "icloud.slash"
@@ -402,7 +408,7 @@ struct CloudButton: View {
 
     private func tint(_ state: String?) -> Color {
         switch state {
-        case "syncing": .accentColor
+        case "syncing", "signingOut": .accentColor
         case "error", "conflict": .orange
         default: model.state.unsaved > 0 ? .orange : .primary
         }

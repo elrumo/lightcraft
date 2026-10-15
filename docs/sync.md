@@ -268,7 +268,7 @@ Every client needs the same three things: the **server address** (`https://photo
 `http://machine-name:8080` on a tailnet), a **user name** and its **password**, as added on
 [the admin page](#the-admin-page) or with `lightcraft-server user add`. The password goes to the server once; the
 device gets its own token (kept in the library's `sync.json`), which revoking the device (admin page or
-`lightcraft-server device revoke`) or Sign Out ends. A bare `photos.example.com` means `https://photos.example.com`;
+`lightcraft-server device revoke`) or [Sign Out](#signing-out) ends. A bare `photos.example.com` means `https://photos.example.com`;
 a bare address at home or on a tailnet (`localhost`, a private or Tailscale IP address, a one-word name such as `nas`,
 `*.local`, `*.lan`) means `http://` (type `https://` to say otherwise).
 The device is listed on the server under the computer's name (`$LIGHTCRAFT_DEVICE` to choose another).
@@ -314,7 +314,9 @@ that site's browser storage, so each site is a separate device. The admin page i
   - the changes are made on top of the server's library like any edit, so they reach every device, and the photos'
     files upload as usual. What belongs to this device alone — where its files are, History, Local folders — is kept.
   Merging again changes nothing.
-- **Signing out** keeps the library and its unsent changes; signing in again (same server and user) resumes.
+- **Signing out** sends what is left, signs the device out on the server and removes the account's library from this
+  device ([below](#signing-out)); signing in again as the same user brings the library back from the server, and another
+  user starts from an empty library of their own.
 - **File ▸ Pause Syncing** stops talking to the server until resumed; **File ▸ Sync Now** pulls at once (it also pulls
   every 5 seconds and whenever the window comes back to the front).
 
@@ -339,7 +341,67 @@ If the copy can't be written (full disk) nothing changes and the choice stays op
 
 Joining adds photos, it never removes any: nothing of either library is deleted by it, and the server's wins only
 where both have a value for the same photo. It is one-way (a library joined to the server's can't be separated from it
-again); other devices see the new photos like any others.
+again, except by [signing out](#signing-out), which removes it from this device); other devices see the new photos like
+any others.
+
+### Signing out
+
+As in Lightroom, the library on a device belongs to the account it is signed in to: signing out waits until everything
+has reached the server, then removes the library from the device, and the next account signs in to an empty one. Two
+accounts' libraries never meet on a device. **Settings ▸ Sync ▸ Sign Out** (`sync.signOut {confirm: true}`) asks first
+("this removes the library from this device; it stays on the server"), then:
+
+1. **It waits for what is left.** The cloud button, its popover and Settings say *Signing out* with the changes and the
+   photos still to send (`sync.status` → `state: "signingOut"`, `leaving`, `unsent`, `refused`), and the activity stack
+   has a row, *Finishing sync before signing out*, with ✕. Edits made meanwhile are sent too; no photo files are downloaded. It
+   ends when the queue of changes is empty, every original the server lacks has been uploaded (one the server says is
+   not the file its hash names is reported, not waited for), the shared presets and settings and album links have
+   settled, and no import, scan or other work that adds photos is running. A server that is away or full, a storage
+   limit, or a photo whose file is missing keeps it waiting: the status says why, LightCraft keeps trying, and Sign Out
+   Anyway ends it.
+   **Cancel Sign Out** (`sync.cancelSignOut`, the popover's button, or the row's ✕) stays signed in and removes nothing.
+2. **The device signs out on the server** (`POST /api/logout`): its token stops working and it leaves the admin page's
+   device list. (It is best effort: with the server out of reach at that moment the library is emptied all the same, and
+   the device stays listed there until an admin signs it out.)
+3. **The library is emptied for the next account:** the catalog and its journal, the queue of unsent changes, the sync
+   state, user presets and the other synced documents (export, metadata, filter and curve presets, label and keyword
+   sets, LUT profiles that synced (a `.cube` over 4 MiB never does, and stays), the import defaults that don't name a
+   place), the files sync made (`sync/originals`, the default
+   `Smart Previews` folder, the face-scan files) and everything the screens were showing. Never touched: the copies
+   import made inside the library (`Originals/`), a previews folder you chose, the files you imported from, the folders
+   you browsed in place (Local folders: they were never on the server), `catalog-before-*` copies, and the account's
+   library on the server. Settings ▸ Sync's *On This Device* options go back
+   to their defaults.
+
+Signing in as the same user brings the library back from the server like on any new device; another user gets their own.
+
+**Sign Out Anyway** (while it waits, or `sync.signOut {force: true}`) doesn't wait: the library is emptied at once, so
+what hasn't been sent is lost, and asks first for that reason. When the library is a folder (not a browser's), a copy is
+kept first, whether or not anything was unsent (a server that was set up again, or signed this device out, can't say):
+`catalog-before-signout-<time>.snap` (a `catalog.snap`: open its folder as a library, as for the choice above) with
+`presets-before-signout-<time>.json` and `prefs-before-signout-<time>.json`; if the copy can't be written, nothing is
+removed. A command can't wait for the server's answer, so this way doesn't tell it: the device stays listed there until
+an admin signs it out.
+
+A server that signs the device out meanwhile (the device revoked on the admin page, the account removed: any request
+answered `401`) never turns the wait into a removal: the library stays as it is, signed out. Settings ▸ Sync then offers
+**Remove Library from This Device…** next to the sign-in form: sign in again as the same user to go on, or remove the
+library (the same as Sign Out Anyway) to sign in as someone else. A library that never joined the server's (a choice
+still waiting, a sign-in that failed) has nothing of it there to lose: it signs out at once and keeps its photos.
+
+If LightCraft quits while it waits, the wait goes on at the next launch; if it quits while the library is being
+emptied, the next launch finishes the job (`sync.json` carries a marker) before the library opens, and a sign-in
+before then finishes it first, so one account's photos are never sent to another.
+
+- **Desktop, the iOS app (egui) and the browser:** the question is inline in Settings ▸ Sync (on a phone, on its page);
+  the browser also deletes the account's preview files from its storage (the originals it holds stay, as imports do).
+- **SwiftUI app:** an alert first, the cloud button and status page say *Signing out…*, and a capsule over the grid shows
+  the progress with ✕. iOS suspends an app in the background, so the wait goes on while LightCraft is open.
+- **Command line, MCP, control channel:** `sync.signOut confirm=true` returns at once with `state: "signingOut"`;
+  in the command line `wait=true` keeps the process running until it is done, or until nothing more can be sent (the
+  server away or refusing: the reply says `signingOut` and the status says why; run it again to go on)
+  (`lightcraft-cli run --library DIR sync.signOut confirm=true wait=true`). Without `confirm` (or `force`) a library
+  that joined an account's refuses, and says why.
 
 ## The sync status popover
 
@@ -347,9 +409,10 @@ The **cloud button** — in the top bar on a computer, next to Select and "…" 
 stands (blue and turning while it works, amber with a red `!` on a problem, a choice waiting, signed out or saving
 trouble) and opens, as Lightroom's cloud does, a panel (`view.syncStatus`, File ▸ Sync Status):
 
-- **Where it stands**, at the top: up to date, syncing, paused, signed out, can't sync (with the last error, kept in
-  full and wrapped), or the choice above, with the server's address under it. A library that never synced says how
-  to start (**Set Up Sync…**); signed out offers **Sign In…**, a choice waiting **Choose What to Do…**.
+- **Where it stands**, at the top: up to date, syncing, paused, signed out, signing out (what is left to send), can't
+  sync (with the last error, kept in full and wrapped), or the choice above, with the server's address under it. A
+  library that never synced says how to start (**Set Up Sync…**); signed out offers **Sign In…**, a choice waiting
+  **Choose What to Do…**, signing out **Cancel Sign Out**.
 - **This device:** loading the server's library, changes waiting to go, **photos being uploaded** and **files being
   downloaded** with a bar and "12 of 56" (counted since the queue was last empty), and the names of the ones moving
   now; files that couldn't be sent or received.

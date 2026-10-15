@@ -753,3 +753,80 @@ fn the_admin_api_is_called_on_a_worker() {
     assert_eq!(ask(12, "host.admin.session", json!({}))["result"]["signedIn"], false);
     assert!(seen.lock().unwrap().iter().any(|r| r.starts_with("POST /api/admin/logout")), "the server was told");
 }
+
+// Signing out through the host, as the SwiftUI app does it: the sync loop sends what is left, the device logs out on the
+// server, and the state event after that says it is another library (a new generation) with no server
+#[test]
+fn signing_out_ends_in_an_empty_library_and_a_state_event_that_says_so() {
+    let root = std::env::temp_dir().join(format!("lc-host-signout-{}-{}", std::process::id(), lightcraft_preview::next_tick()));
+    std::fs::create_dir_all(root.join("tmp")).unwrap();
+    let config = OpenConfig {
+        library: Some(root.join("lib").to_string_lossy().to_string()),
+        tmp: Some(root.join("tmp").to_string_lossy().to_string()),
+        render_threads: Some(1),
+        ..Default::default()
+    };
+    let (events, (tx, _rx)) = (Arc::new(Events::default()), channel());
+    let mut e = Engine::start(&config, events.clone(), Arc::new(Leases::default()), tx).unwrap();
+    // a server whose library is empty, and what it is asked
+    let seen: Arc<Mutex<Vec<String>>> = Default::default();
+    let log = seen.clone();
+    e.sync_exec = Box::new(move |task, tx| {
+        let id = task.id();
+        let Task::Http { method, url, .. } = &task else {
+            let _ = tx.send(Done::failed(id, "no previews here"));
+            return;
+        };
+        let path = url.strip_prefix("http://fake").unwrap_or("");
+        log.lock().unwrap().push(format!("{method} {}", path.split('?').next().unwrap_or(path)));
+        let ok = |v: Value| Done { id, status: 200, body: v.to_string() };
+        let done = match (*method, path) {
+            ("POST", "/api/login") => ok(json!({"token": "t1", "device": 1, "space": 1, "library": "lib-1"})),
+            ("GET", p) if p.starts_with("/api/snapshot") => {
+                let catalog: Value = serde_json::from_str(&lightcraft_catalog::Catalog::new().to_snapshot()).unwrap();
+                ok(json!({"library": "lib-1", "seq": 0, "catalog": catalog}))
+            }
+            ("POST", "/api/ops") => ok(json!({"head": 1})),
+            ("GET", p) if p.starts_with("/api/ops") => ok(json!({"head": 1, "ops": [], "presets": 0})),
+            ("GET", "/api/presets") => ok(json!({"version": 0, "presets": []})),
+            ("POST", "/api/logout") => ok(json!({})),
+            _ => Done { id, status: 404, body: json!({"error": "not here"}).to_string() },
+        };
+        let _ = tx.send(done);
+    });
+    let mut states: Vec<Value> = Vec::new();
+    // ticks until `until`, keeping the state events
+    fn pump(e: &mut Engine, events: &Events, states: &mut Vec<Value>, until: &dyn Fn(&Engine) -> bool) {
+        let t0 = Instant::now();
+        while !until(e) {
+            e.tick();
+            states.extend(events.poll(Duration::from_millis(5)).into_iter().filter(|ev| ev["kind"] == "state"));
+            assert!(t0.elapsed() < Duration::from_secs(30), "stuck: {:?}", e.session.sync_state().map(|s| s.status()));
+        }
+        e.tick();
+        states.extend(events.poll(Duration::from_millis(5)).into_iter().filter(|ev| ev["kind"] == "state"));
+    }
+    let execute = |e: &mut Engine, id: u64, command: &str, params: Value| {
+        e.handle(Msg::Request(Request { id, method: "engine.execute".into(), params: json!({"command": command, "params": params}) }));
+    };
+    execute(&mut e, 1, "sync.signIn", json!({"server": "http://fake", "user": "ann", "password": "pw", "device": "test"}));
+    pump(&mut e, &events, &mut states, &|e| e.session.sync_state().is_some_and(|s| s.signed_in() && s.state() == "idle"));
+    // a change the server hasn't got, then sign out
+    execute(&mut e, 2, "album.create", json!({"name": "Trips"}));
+    execute(&mut e, 3, "sync.signOut", json!({"confirm": true}));
+    assert!(e.session.sync_state().is_some_and(|s| s.config.leaving), "waiting for the change to be sent");
+    let before = states.last().and_then(|s| s["state"]["libraryGeneration"].as_u64()).expect("a state event was sent");
+    assert!(states.last().is_some_and(|s| s["state"]["sync"].is_object()), "signed in: the cloud has its summary");
+    pump(&mut e, &events, &mut states, &|e| e.session.sync_state().is_none());
+    // the change went first, then the device logged out
+    let asked = seen.lock().unwrap().clone();
+    let at = |what: &str| asked.iter().rposition(|r| r == what).unwrap_or_else(|| panic!("{what} not asked: {asked:?}"));
+    assert!(at("POST /api/ops") < at("POST /api/logout"), "{asked:?}");
+    assert!(e.session.catalog.is_empty());
+    // the state event the frontends reset on
+    let after = states.last().expect("a state event after the wipe");
+    assert_ne!(after["state"]["libraryGeneration"].as_u64(), Some(before), "another library: {after}");
+    assert!(after["state"].get("sync").is_none(), "no server any more: {after}");
+    assert_eq!(after["state"]["visibleCount"], 0, "{after}");
+    let _ = std::fs::remove_dir_all(&root);
+}

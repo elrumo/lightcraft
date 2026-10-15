@@ -17,8 +17,10 @@ thiserror = { workspace = true }
 candle-core = { workspace = true }
 candle-nn = { workspace = true }
 lightcraft-fetch = { workspace = true }
-# AI Remove's model is downloaded and managed with these (its pin lives with the eraser)
+# AI Remove's model is downloaded and managed with these (its pin lives with the eraser), and
+# Generative Expand's diffusion models (their pins live with them)
 lightcraft-erase = { workspace = true }
+lightcraft-diffuse = { workspace = true }
 
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
 candle-core = { workspace = true, features = ["metal"] }

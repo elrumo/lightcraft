@@ -19,11 +19,13 @@ import AppKit
 /// - `ui.loupe {scroll?: [dx, dy], zoomScroll?: dy, pinch?: m, smart?: true, at?: [x, y]}` (a Mac): the
 ///   loupe's wheel, ⌘-wheel, pinch and two-finger double tap, at a point of the photo area (the middle).
 /// - `ui.inspect`: the screen, the photo, the state and timings (`perf`).
+/// - `ui.wait {path, seconds?}`: waits (110 s at most, under the runner's 120) until the file at `path` exists: something outside the app, a
+///   capture of the whole display, is done with the screen as it is.
 /// - `ui.set {screen?: grid | photo | edit | crop | masking | remove | redEye | presets | info | commands |
 ///   people | map, photo?, span?: all | months | years, group?: light | color…, sheet?: albums |
 ///   filter | settings | export | sync | history | versions | keywords | about | superRes | createPreset | smartAlbum (id?) | allMetadata | none, select?,
-///   faceBoxes?, tagFace?, beforeAfter?, visualizeSpots?, removeAI?, histogram?, cropGuide?, maskTool?: object | brush | colorRange | none, objectTap?: [x, y]
-///   (Select Object's tap, normalized), objectSubtract?, selectSubject?, selectionEngine?: auto | apple | classic, removeTap? (Remove selects by tapping), removeTapSize? (the reach past a tapped object, of the long edge), removeObjectTap?: [x, y],
+///   faceBoxes?, cropTab?: aspect | geometry, tagFace?, beforeAfter?, visualizeSpots?, removeAI?, histogram?, cropGuide?, maskTool?: object | brush | colorRange | none, objectTap?: [x, y]
+///   (Select Object's tap, normalized), objectSubtract?, selectSubject?, selectionEngine?: auto | apple | classic, playgroundExpand? (Generative Expand with the stand-in for Apple Image Playground: LIGHTCRAFT_FAKE_PLAYGROUND=1), removeTap? (Remove selects by tapping), removeTapSize? (the reach past a tapped object, of the long edge), removeObjectTap?: [x, y],
 ///   and on a Mac: windowSize? ([w, h] points), sections? ({"light": true}: the panels' open sections), inspector?, thumbSize?, zoomAsk?: fit | fill | n, appearance?: system | light | dark}`: go there.
 @Observable
 final class ScriptHost {
@@ -47,6 +49,15 @@ final class ScriptHost {
             try? await Task.sleep(for: .milliseconds(100))
             let (w, h) = try screenshot(to: path, params)
             return ["path": .string(path), "width": .int(Int64(clamping: w)), "height": .int(Int64(clamping: h))]
+        case "ui.wait":
+            guard let path = params["path"].string else { throw ErrorBody(code: "badParams", message: "no path") }
+            let limit = min(params["seconds"].double ?? 60, 110)
+            var waited = 0.0
+            while !FileManager.default.fileExists(atPath: path), waited < limit {
+                try? await Task.sleep(for: .milliseconds(200))
+                waited += 0.2
+            }
+            return ["found": .bool(FileManager.default.fileExists(atPath: path)), "seconds": .double(waited)]
         #if os(macOS)
         case "ui.rawKey":
             guard let spelling = params["key"].string, let chord = KeyChord(shortcut: spelling) else {
@@ -121,6 +132,11 @@ final class ScriptHost {
             var inspected: JSONValue = [
                 "screen": .string(model.screenName),
                 "photo": photo,
+                // what the loupe shows (the pager's page) and where the grid was left (`AppModel.shown`, `LibraryModel.anchor`)
+                "shown": model.shown.map { .int(Int64(clamping: $0)) } ?? .null,
+                "gridAnchor": model.library.anchor.map { .int(Int64($0)) } ?? .null,
+                // the window, size classes, safe area, hinge and what the photo screen chose (`Duo.swift`)
+                "layout": model.duo.json(),
                 "photos": .int(Int64(clamping: model.library.count)),
                 "state": (try? JSONValue.encode(model.state)) ?? .null,
                 "perf": perf,
@@ -167,11 +183,13 @@ final class ScriptHost {
             if let select = params["select"].bool {
                 model.selectMode = select
             }
+            if let index = params["scrollGrid"].int { model.gridJump = Int(clamping: index) }
             if let on = params["faceBoxes"].bool { model.prefs.faceBoxes = on }
             if let on = params["tagFace"].bool { model.editor.tagFace = on }
             if let on = params["beforeAfter"].bool { model.editor.beforeAfter = on }
             if let on = params["visualizeSpots"].bool { model.editor.visualizeSpots = on }
             if let on = params["removeAI"].bool { model.prefs.removeAI = on }
+            if params["playgroundExpand"].bool == true { await model.playgroundExpandWithStandIn() }
             if let on = params["removeTap"].bool { model.editor.removeTap = on }
             if let mode = params["removeMode"].string { model.editor.removeMode = mode }
             if let size = params["removeTapSize"].double { model.tapSizeChanged(size) }
@@ -183,6 +201,7 @@ final class ScriptHost {
             if params["selectSubject"].bool == true { await model.selectSubject() }
             if let on = params["histogram"].bool { model.prefs.showHistogram = on }
             if let guide = params["cropGuide"].string { model.prefs.cropGuide = guide }
+            if let tab = params["cropTab"].string { model.editor.cropTab = tab }
             if let draw = params["cropDraw"].string { model.editor.cropDraw = draw == "none" ? nil : draw }
             if let on = params["filmstrip"].bool { model.prefs.filmstrip = on }
             // (the Mac panels' sections: {"light": true, "curve": false}; the ones not named stay as they are)
@@ -207,6 +226,15 @@ final class ScriptHost {
             if let space = params["proofSpace"].string { model.editor.proofSpace = space }
             if let on = params["proofWarning"].bool { model.editor.proofWarning = on }
             if let cover = params["cover"].string { model.cover = Cover(rawValue: cover) }
+            // a hinge made up for testing (the real one needs a Duo in a Device Hub pose): `{fold: {vertical, at, width}}`
+            // (a vertical one in the middle, 40 pt wide, by default; `{fold: true}` is that), `{fold: null}` takes it away
+            if case .object(let all) = params, let fold = all["fold"] {
+                if fold.isNull || fold.bool == false {
+                    model.duo.fakeFold = nil
+                } else {
+                    model.duo.fakeFold = .init(vertical: fold["vertical"].bool ?? true, at: CGFloat(fold["at"].double ?? 0.5), width: CGFloat(fold["width"].double ?? 40))
+                }
+            }
             #if os(iOS)
             if let o = params["orientation"].string, let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first {
                 // (the app turns itself: no rotating the simulator from outside)
@@ -231,6 +259,7 @@ final class ScriptHost {
                 model.sheet = nil
                 if case .photo(let shown) = model.path.last, shown == id {
                 } else {
+                    model.shown = id
                     model.path = [.photo(id)]
                     await model.select(id)
                 }

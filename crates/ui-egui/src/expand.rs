@@ -1,7 +1,8 @@
 //! Generative Expand in the UI (`lightcraft_engine::expand`): the crop tool's **Expand** switch,
-//! the choice of what paints the new area (MI-GAN, LaMa or Classic, as this device offers them),
-//! each model's state and download offer, and **Generate**, which runs in the background with a
-//! row in the activity stack (✕ there, or Cancel here, stops it). The desktop Crop panel
+//! the choice of what paints the new area (Automatic, or one of the models this device runs: MI-GAN,
+//! LaMa, Stable Diffusion 1.5, Kandinsky 2.2, SDXL, Classic; the same choice as Settings → AI
+//! Models), each model's state and download offer, and **Generate**, which runs in the background
+//! with a row in the activity stack (✕ there, or Cancel here, stops it). The desktop Crop panel
 //! ([`panel`]) and the phone's crop screen (`panels::crop_mobile`) share it.
 //!
 //! The area of the crop past the photo that has nothing yet is transparent in the render, and the
@@ -17,15 +18,46 @@ use crate::LightcraftApp;
 use crate::i18n::{tr, tr_format};
 use crate::theme::Tokens;
 
-/// What Generate paints with: the user's pick if this device can run it, else the best model on
-/// the device, else MI-GAN (so its download is offered; Classic is there to pick without one).
+/// What Generate paints with: the user's pick if this device runs it, else Automatic's (the best
+/// model for this device, which may still need its download).
 pub fn chosen(app: &LightcraftApp) -> ExpandModel {
-    if let Some(m) = ExpandModel::from_id(&app.ui.expand_model).filter(|m| m.available()) {
-        return m;
+    app.session.chosen_expand_model()
+}
+
+/// Choose what paints (`None`: Automatic), for the session and the saved settings.
+pub fn choose(app: &mut LightcraftApp, m: Option<ExpandModel>) {
+    match app.run("crop.expandModel", json!({"model": m.map_or("auto", |m| m.id())})) {
+        Ok(_) => app.ui.expand_model = m.map(|m| m.id().to_string()).unwrap_or_default(),
+        Err(e) => app.ui.status = e,
     }
-    match app.session.default_expand_model() {
-        ExpandModel::Classic => ExpandModel::MiGan,
-        m => m,
+}
+
+/// The models this device runs, in the pickers' order.
+pub fn offered(app: &LightcraftApp) -> Vec<ExpandModel> {
+    ExpandModel::ALL.into_iter().filter(|m| app.session.expand_available(*m)).collect()
+}
+
+/// A model's name on a picker's button.
+pub fn short_label(m: ExpandModel) -> &'static str {
+    match m {
+        ExpandModel::Sd15 => "SD 1.5",
+        ExpandModel::Kandinsky => "Kandinsky",
+        m => m.label(),
+    }
+}
+
+/// The saved choice is applied to the session on the first frame (the settings load after the
+/// app is built); from then on the session's (changed here, in Settings or by an agent) is saved.
+pub fn sync_choice(app: &mut LightcraftApp) {
+    if !app.expand_synced {
+        app.expand_synced = true;
+        let saved = ExpandModel::from_id(&app.ui.expand_model).filter(|m| app.session.expand_available(*m));
+        let _ = app.session.set_expand_preference(saved);
+        return;
+    }
+    let now = app.session.expand.preferred.map(|m| m.id().to_string()).unwrap_or_default();
+    if now != app.ui.expand_model {
+        app.ui.expand_model = now;
     }
 }
 
@@ -119,13 +151,22 @@ pub fn progress(app: &LightcraftApp) -> Option<f32> {
     Some(if row.total > 0 { row.done as f32 / row.total as f32 } else { 0.0 })
 }
 
-/// The download offer for `m` (size, licence, credit), or `None` when there is nothing to offer.
+/// The download offer for `m` (size, licence, credit, and what to know first), or `None` when
+/// there is nothing to offer.
 pub fn offer(app: &LightcraftApp, m: ExpandModel) -> Option<String> {
     let c = choice(app, m)?;
     if c.ready || m == ExpandModel::Classic || !c.available {
         return None;
     }
-    Some(tr_format!("Uses the {} model, a {:.0} MB download ({} licence). {}.", c.label, c.download_bytes as f64 / 1e6, c.licence, c.credit))
+    let size = crate::panels::ai_models::size(c.download_bytes);
+    let mut text = tr_format!("Uses the {} model, a {} download ({} licence). {}.", c.label, size, c.licence, c.credit);
+    if c.restricted {
+        text = format!("{text} {}", tr("Its licence lists uses that aren't allowed: read it before downloading (Settings → AI Models → Licence)."));
+    }
+    if c.diffusion && !app.session.device.gpu {
+        text = format!("{text} {}", tr("Without a GPU it takes minutes per Generate."));
+    }
+    Some(text)
 }
 
 /// The state of model `m`'s download: `Some(percent)` while it runs.
@@ -159,8 +200,13 @@ pub fn describe(app: &LightcraftApp, m: ExpandModel) -> String {
     } else if c.disabled {
         format!("{note} · {}", tr("Turned off in Settings → AI Models"))
     } else {
-        tr_format!("{note} · {:.0} MB download", c.download_bytes as f64 / 1e6, note = note)
+        tr_format!("{note} · {size} download", size = crate::panels::ai_models::size(c.download_bytes), note = note)
     }
+}
+
+/// What Automatic picks here, for the pickers ("Automatic: SDXL suits this device").
+pub fn automatic_line(app: &LightcraftApp) -> String {
+    tr_format!("Automatic: {} suits this device", app.session.recommended_expand_model().label())
 }
 
 /// The desktop Crop panel's Expand section.
@@ -181,18 +227,21 @@ pub fn panel(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId, d: &Develo
         return;
     }
     let ctx = ui.ctx().clone();
-    // what paints
-    let models: Vec<ExpandModel> = ExpandModel::ALL.into_iter().filter(|m| m.available()).collect();
-    let current = chosen(app);
-    let items: Vec<(&str, &str)> = models.iter().map(|m| (m.label(), m.id())).collect();
+    // what paints: Automatic, or one of the models this device runs
+    let models = offered(app);
+    let automatic = app.session.expand.preferred.is_none();
+    let mut items: Vec<(&str, &str)> = vec![(tr("Auto"), "auto")];
+    items.extend(models.iter().map(|m| (short_label(*m), m.id())));
     ui.label(tr("Fill With"));
-    if let Some(i) = crate::widgets::segmented(ui, "expandModel", &items, models.iter().position(|m| *m == current), 3)
-        && let Some(m) = models.get(i)
-    {
-        app.ui.expand_model = m.id().to_string();
+    let at = if automatic { Some(0) } else { models.iter().position(|m| *m == chosen(app)).map(|i| i + 1) };
+    if let Some(i) = crate::widgets::segmented(ui, "expandModel", &items, at, 3) {
+        choose(app, if i == 0 { None } else { models.get(i - 1).copied() });
     }
     let current = chosen(app);
-    note(ui, describe(app, current));
+    if app.session.expand.preferred.is_none() {
+        note(ui, automatic_line(app));
+    }
+    note(ui, format!("{} · {}", current.label(), describe(app, current)));
     let running = app.session.expand_running();
     if current == ExpandModel::MiGan && !app.session.expand_ready(current) {
         // the browser build: is it in the site's storage already?

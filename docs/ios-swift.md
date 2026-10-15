@@ -2,7 +2,8 @@
 
 **Status (2026-10-15): S1 and S2 done on iOS 26.5 simulators (the phone and iPad layouts, every Edit group and tool,
 export, sync, People, Map, the menu bar, multiwindow); SW3 (a native iOS 26 look: system bars, an inspector, Photos-style
-dials) done on simulators; not yet tried on a device. The same code now builds for macOS (SM0, see [macOS](#macos)): a
+dials) done on simulators; SW5 (the iPhone Duo layouts) done on the Duo simulator's outer display and, with a made-up
+hinge, on an iPad simulator, but not on the Duo's inner display or a real hinge; none of it tried on a device. The same code now builds for macOS (SM0, see [macOS](#macos)): a
 native AppKit-backed app, not Catalyst, with the iPad layout until SM2 gives it a Mac window (its editor's panel already has).** Row by row: `apps/lightcraft-ios-swift/PARITY.md`. A native SwiftUI app for iPhone and iPad
 (iOS 26 and later, macOS 26 and later) that runs the whole Rust core: the engine, the develop pipeline, the catalog, sync, export. It is to
 replace the egui iOS app ([ios.md](ios.md)) once it passes its parity gate. The decision and its reasons are in
@@ -122,7 +123,9 @@ interaction, activeMask, activeSpot, unsaved, sync?, faces?}}` when any of it ch
 with the preset list, including presets the sync brings from another device: the Presets panel reads `presets.list`
 again) (`faces`: the face scan's `{pendingPhotos, indexedFaces}` while recognition is on) (`activeMask` / `activeSpot`: the Masking tool's
 selected mask and the Remove tool's selected spot, wherever they were chosen) (`sync`: the server sync for the cloud icon, `{state, server, pending, uploads,
-downloads, reading, error}`; absent for a local library); `activity {tasks}` (the activity stack); `message {text,
+downloads, reading, error}` with `state` one of `signedOut`, `signingOut`, `conflict`, `paused`, `error`, `syncing`, `idle`; absent for a local library, and
+after a sign-out has emptied it, together with a new `libraryGeneration`: `AppModel.stateChanged` then drops the pages, covers and questions that name the old
+library's photos, as it does for any other library; see [sync.md](sync.md#signing-out)); `activity {tasks}` (the activity stack); `message {text,
 level}`; `copy {text}` (put it on the clipboard: a share link just made); `ask {dialog, params}` (show a dialog the
 engine needs an answer from: `syncChoice`); `uiRequest {id, method, params}`; `closed`. One of each is in `LightCraft/Tests/LightCraftCoreTests/Fixtures/protocol.json`, written by
 the Rust test `fixtures_match_the_protocol` (`LIGHTCRAFT_BLESS=1` rewrites it) and decoded by the Swift tests.
@@ -147,6 +150,13 @@ Debug, `--release` for Release). The app target is one multiplatform target (iOS
 (new Swift files there need no project edit) over the package's `LightCraftCore` and `LightCraftImaging`, and takes
 its Info.plist keys from `LightCraft/Info.plist`, the file xtool uses. For a device, choose your team under Signing &
 Capabilities (or pass `DEVELOPMENT_TEAM=<team>` to `xcodebuild`).
+
+**Add to LightCraft (share sheet):** the Xcode project's second target, `LightCraftShare`
+(`apps/lightcraft-ios-swift/ShareExtension/`, iOS only, embedded in the app), shows "Add to LightCraft" for pictures
+shared from Photos, Files, Safari and the like. It runs no engine: it copies the files into `Inbox/<batch>` of the app
+group `group.ai.storyteller.lightcraft.swift` (entitlements in `ShareExtension/` and `LightCraft/LightCraft.entitlements`), and
+the app takes them into the import review the next time it is active (`Share/SharedInbox.swift`). It does not open the
+app itself. xtool builds leave the extension out (and the app group), so a share made then is not picked up.
 
 **The Mac app:** `apps/lightcraft-ios-swift/run.sh --mac` builds it with `xcodebuild` and opens it (`--debug` for a
 Debug build, `--build-only` to stop after the build); `LIGHTCRAFT_LIBRARY=<folder>` or `LIGHTCRAFT_DEMO=1` in the
@@ -176,8 +186,19 @@ answers `engine.*`, `render.*` and `host.*` itself; the app answers `ui.screensh
 and with `menus: true` the main menu) and `ui.set {screen:
 grid | photo | edit | crop | masking | remove | redEye | presets | info | commands | people | map, photo?, person? (with people: their page), span?, group?, editStyle? (automatic | dials | sliders), sheet?,
 section?, select?, faceBoxes?, tagFace?, beforeAfter?, visualizeSpots?, removeAI?, maskTool? (object | brush | colorRange | none), objectTap? ([x, y]: Select Object's tap), objectSubtract?, selectSubject?, selectionEngine? (auto | apple | classic), histogram?, cropGuide?, cropDraw? (straighten | guides | none), orientation? (landscape | portrait), softProof?, proofSpace?, proofWarning?,
-sidebarCommand? + sidebarParams? (a `view.sidebar*` command), searching?, search? (the grid's search field), painting? (the Keyword Painter's keyword; "" stops), secondWindow? (opens Window ▸ Second Window)}` (`ScriptHost.swift` lists
-the values).
+sidebarCommand? + sidebarParams? (a `view.sidebar*` command), searching?, search? (the grid's search field), painting? (the Keyword Painter's keyword; "" stops), secondWindow? (opens Window ▸ Second Window),
+fold? (`{vertical?, at?, width?}` makes up a hinge for the photo screen and Compare: a vertical one is a book, a horizontal
+one a tabletop; `true` is a vertical one in the middle, `null` or `false` takes it away), scrollGrid? (scrolls the grid to a
+photo's place in it)}` (`ScriptHost.swift` lists the values). `ui.wait {path, seconds?}` waits until a file exists (a
+capture made from outside the app is done).
+
+`ui.inspect` also answers `shown` (the photo the loupe is on), `gridAnchor` (the grid's middle photo when it last came
+to rest) and `layout` (`App/Duo.swift`): the window in points, the size classes, the safe area, the hinge as the system
+reports it, the reserved regions (`division` for a fold, `occlusion` for the camera and the status column), the fold the
+photo screen is keeping clear (`fold`, a real one or a made-up one), the `photoMode` (`stack`, `column` or `inspector`)
+and the frames of the pager and of the tools (under the same name as the mode), in window coordinates. A tour can check
+a pose from those, without anybody looking at it: a book is right when `pager` ends where `fold` begins and `column`
+begins where it ends.
 
 ```sh
 # simulator: ci/sim-tour.sh does all of this (CI uploads its screenshots)
@@ -188,6 +209,17 @@ xcrun devicectl device copy to --device <udid> --domain-type appDataContainer \
 xcrun devicectl device process launch --device <udid> --terminate-existing \
   --environment-variables '{"LIGHTCRAFT_SCRIPT": "tour.jsonl"}' ai.storyteller.lightcraft.swift
 ```
+
+On an iPhone Duo simulator (macOS with Xcode 27.1; the simulator is "iPhone Duo" in the iOS 27.1 runtime),
+`ci/duo-tour.sh <udid> <LightCraft.app> <out-dir>` runs `ci/duo.jsonl` and captures the live display after each
+`ui.screenshot` (`x.png` is the app's window, `x-display.png` what the display shows: the side column with the clock and
+the bars the system draws beside the window; the script waits for `x.done`, which the tour writes once the display is
+captured, so a slow machine cannot skew them). It cannot fold or open the simulator: Device Hub does that, there is no
+command line for it, and sending input to the simulator window from outside is not allowed here. The script turns the
+outer display on its side with `ui.set {orientation}`, scrolls the grid and rebuilds it (Months and back), and makes up
+a tabletop fold with `ui.set {fold}`. The outer display is too narrow for a book (two pages of 233 pt), so
+`ci/fold.jsonl` makes up a book, a tabletop and Compare folds on any wide simulator (`SIM_UDID=<iPad> ci/sim-tour.sh
+<app> <out> ci/fold.jsonl`). `ci/sim-tour.sh` skips the Duo by default (`SIM_UDID` or `SIM_NAME` choose a simulator).
 
 **On a Mac** the script is any file (`LIGHTCRAFT_SCRIPT=/absolute/path/tour.jsonl`; replies in `tour.out` beside it) and
 `ci/mac-tour.sh <LightCraft.app> <out-dir>` does the rest on the demo library. Mac-only requests: `ui.screenshot {path,
@@ -229,6 +261,37 @@ under the photo, it has no separate view and edit modes, and the library is one 
   from the editor is dark too.
 - **Wide screens**: on regular width (an iPad) the tools are in the system `.inspector`. Its content is compact width,
   so the `toolColumn` environment value says a view is in a column.
+- **iPhone Duo** (SW5; Apple's HIG page *Designing for iPhone Duo*): one structure for the outer display (466 x 678 pt,
+  compact by regular; on its side compact by compact, with the system column on the camera side), the inner one (951 x
+  669 pt, regular by regular) and the poses between them. The app asks no device what it is: it reads size classes and
+  the room it has.
+  - `PhotoLayout.choose` (`LightCraftCore`, unit-tested) picks the photo screen's arrangement from the room, the size
+    classes and the fold: the system inspector on a wide window with no hinge (an iPad), our own column beside the photo
+    on a short window or when a hinge is in the way (`column`: its width keeps a 280 pt photo), the card under the
+    photo otherwise (`stack`). They are one `AnyLayout` whose first child is always the pager, so a fold, a rotation or a
+    tool opening moves the photo without rebuilding it.
+  - A hinge comes from `GeometryProxy.reservedRegions(kind: .division)`. In a book pose the photo is the left page and
+    the tools are exactly the right one; in a tabletop pose the card is the lower page. Compare keeps its two photos off
+    the crease. The angle is never read.
+  - Nothing is lost when the system rebuilds a screen: `AppModel.shown` is the loupe's page (a rebuilt photo screen opens
+    on it, not on the photo that was first pushed), `LibraryModel.anchor` is the middle of the grid (a rebuilt grid scrolls
+    back to it; another photo list clears it), and the albums column is derived from the path, not synced by an
+    `onChange` that exists in one branch only.
+  - Toolbars: every action has a title and a symbol, and the system moves the bars into a column on the Duo (text-only
+    items such as Select and Cancel stay in a strip at the top). On iOS 27 each tool is an item of its own with a
+    `visibilityPriority`, so Undo, Share, Edit, Crop and Masking stay and Presets, Info and Red Eye overflow first, and
+    "…" is the system's overflow menu (`ToolbarOverflowMenu`), not a second one beside it. Before iOS 27 the tools are
+    a group (which shows the open one switched on) and the "…" a menu of our own, as they were.
+  - The photo is clipped at the sides (not above or below: the bars' scroll edge effects need that), so the next photos
+    do not show through the inspector's glass, under the Duo's column or beside the hinge.
+  - On the inner display (a hinge and a regular width, `DuoFacts.unfolded`) the Edit groups are a rail of icons down the
+    left of the tool column (Auto first), as the Mac's tool strip, not a row of chips to scroll.
+    Masking's groups are the same rail, Crop's aspect tiles a grid, and a tool screen's panel starts at the top and
+    uses the column's whole height (a phone or iPad has it at the bottom, by the thumb).
+  - `toolCard` is a `ConcentricRectangle`, so its corners follow each display's.
+  - Everything that needs an iOS 27 symbol is in `App/Duo.swift`, behind `#if compiler(>=6.4) && !DUO_OFF` and
+    `#available`. Xcode 26 (CI) compiles the fallbacks, which are what the app did before; build with
+    `SWIFT_ACTIVE_COMPILATION_CONDITIONS=DUO_OFF` to compile that path with a newer toolchain.
 - **First launch**: a four-page welcome (`Onboarding/OnboardingView.swift`, its pictures in `OnboardingHeroes.swift`)
   covers the screen once per device (`Prefs.onboarded`; not under `LIGHTCRAFT_SCRIPT` or `LIGHTCRAFT_DEMO`, so the
   tour's screenshots are clear). It asks for no permission: those are asked where they are needed. Settings ▸ Show
@@ -404,6 +467,31 @@ track logs, missing files, Export with Previous (SW2.5); soft proofing (SW2.6); 
 Pencil (SW2.10); the Second Window, more windows and the external display (SW2.11); Lightroom catalog import (SW2.12,
 the runner → `apphost::lightroom`). Not tried on hardware yet: a real drag, a Pencil, an external display. S3, removing
 the egui iOS app, is the maintainer's call.
+
+SW5, the iPhone Duo (not the S3 gate; see *Look and feel*, 2026-10-15):
+- the harness: `layout` in `ui.inspect`, the made-up fold, `ui.wait`, `ci/duo-tour.sh`, `ci/fold.jsonl`, a simulator
+  choice for `ci/sim-tour.sh` (SW5.1);
+- continuity across a rebuild: the loupe's page, the grid's place, the albums column, the HDR screen (SW5.2);
+- the photo and tool-screen toolbars, and the library's and select mode's (SW5.3, SW5.4);
+- the photo layout: `PhotoLayout`, one `AnyLayout`, the fold-aligned column and stack (SW5.5);
+- the concentric tool card and a fold-aware Compare (SW5.6);
+- this page (SW5.7).
+
+Checked: the Duo simulator's outer display, upright and on its side (the system column and its bars, the stack, the
+side column, every tool screen, Select mode), a made-up tabletop on it, the grid coming back to its place after being
+rebuilt, made-up book, tabletop and Compare folds on an iPad simulator (iOS 26.5), and the iPhone and iPad tours on iOS
+26.5 against the build before SW5 (the same pictures, but for hairlines at the edges of the photo and for the photo
+being clipped at the sides). Not checked: the inner display with these layouts (portrait, landscape), a real hinge
+(the `reservedRegions(kind: .division)` and `onHingeChange` paths have only run with no hinge), Split View, the
+horizontal bar on the inner display with iOS 27's priorities, a device. Device Hub, the only way to fold the simulator,
+kept crashing, and driving the simulator from outside is not allowed.
+
+The one look at the inner display so far is a screenshot of an unfolded Duo (landscape, flat, dark appearance) from a
+build that had no tool priorities yet. It shows three things: the system inspector sits on the right page by itself, a
+keep-out strip about 90 pt wide around the hinge, even with the device flat; the Edit chips, scrolled to their end, drew
+over the photo and across the hinge (their scroll view has its clip off, for their glass shadows; the tool column now
+clips its content at the sides); and the bar's "…" came twice (the app's own beside the system's, which the iOS 27
+overflow menu replaces). What a book or a tabletop looks like there is still unseen.
 
 SW3, a native iOS 26 redesign (not the S3 gate; see *Look and feel*):
 - the library's system bars, title menu, bottom bar with search, and select bar (SW3.1);

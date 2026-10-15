@@ -173,6 +173,13 @@ final class AppModel {
     var welcomeAsked = false
     /// On an iPad, whether the albums column shows beside the grid.
     var sidebar: NavigationSplitViewVisibility = .all
+    /// What the app knows about its window and its hinge (`ui.inspect` → `layout`; `Duo.swift`).
+    let duo = DuoFacts()
+    /// The photo the loupe is showing (its pager's page). A screen the system rebuilds, as a fold or a rotation
+    /// does, opens on this one, not on the photo it was first pushed for.
+    var shown: UInt64?
+    /// A scroll of the grid that automation asked for (`ui.set {scrollGrid}`): the library screen turns it into a jump.
+    var gridJump: Int?
     /// The albums page's sections below My Photos, in order (`host.sidebar`).
     var sidebarSections: [SidebarSectionState] = SidebarSectionState.usual
     /// Photos are being chosen in the grid (Select).
@@ -303,7 +310,12 @@ final class AppModel {
     func lifecycle(_ event: String) {
         engine?.send("host.lifecycle", ["event": .string(event)])
         // (another screen, or a setting that changed meanwhile)
-        if event == "active" { updateHdrDisplay() }
+        if event == "active" {
+            updateHdrDisplay()
+            #if os(iOS)
+            Task { await importShared() }
+            #endif
+        }
     }
 
     /// Tell the engine whether the screen has HDR headroom (EDR: iPhone 12 and later, recent iPads), so that
@@ -312,7 +324,10 @@ final class AppModel {
     func updateHdrDisplay() {
         let forced = ProcessInfo.processInfo.environment["LIGHTCRAFT_HDR_DISPLAY"]
         #if os(iOS)
-        let screen = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first?.screen
+        // (the scene on screen: an iPhone Duo's scene moves between its two displays as it folds and unfolds, and
+        // the display it is on is the one to ask)
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let screen = (scenes.first { $0.activationState == .foregroundActive } ?? scenes.first)?.screen
         let headroom = screen?.potentialEDRHeadroom ?? 1
         #else
         // (a Mac's built-in display and its XDR displays have it)
@@ -376,11 +391,14 @@ final class AppModel {
         }
         guard let engine else { return }
         if new.libraryGeneration != old.libraryGeneration {
+            // another library (signing out emptied this one): nothing on screen may name the old one's photos
             images.forgetAll()
             path = []
+            resetForNewLibrary()
             Task {
                 await library.reload(engine, count: new.visibleCount, forget: true)
                 await albums.reload(engine)
+                await editor.reload(self)
             }
             return
         }
@@ -405,6 +423,28 @@ final class AppModel {
             }
             if new.interaction == nil { albums.scheduleReload(engine) }
         }
+    }
+
+    /// What holds the old library's photo, album or person ids goes: pages and covers over the grid, the choice of photos,
+    /// a search being typed, the questions waiting for a yes. (Settings and the sync pages stay: they are where a sign-out
+    /// is made, and they show no photos.)
+    private func resetForNewLibrary() {
+        switch sheet {
+        case .none, .settings, .about, .shortcuts, .syncStatus, .syncChoice, .activity, .cameraImport: break
+        default: sheet = nil
+        }
+        if cover != .onboarding { cover = nil }
+        selectMode = false
+        addingTo = nil
+        painting = nil
+        askPainter = false
+        searching = false
+        searchText = ""
+        confirmDelete = nil
+        albumToDelete = nil
+        importReview = nil
+        reference = nil
+        picker = nil
     }
 
     /// The catalog's revision, held while a drag (a slider, the crop, a brush) is under way.
@@ -599,6 +639,7 @@ final class AppModel {
 
     /// Open a photo in the loupe.
     func open(_ photo: UInt64) {
+        shown = photo
         Task { await select(photo) }
         path.append(.photo(photo))
     }

@@ -175,6 +175,8 @@ final class EditorModel {
     /// Crop & Rotate's line tools: `straighten` (one line, then back to the frame) or `guides`
     /// (Guided Upright, until Done).
     var cropDraw: String?
+    /// Crop's open tab: `aspect` or `geometry`.
+    var cropTab = "aspect"
     /// Reference View: the reference photo beside the one being edited.
     var referenceView = false
     /// Soft proofing: the photo as `proofSpace` (srgb, displayP3, adobeRgb, proPhoto, rec2020) holds

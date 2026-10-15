@@ -282,8 +282,10 @@
   "Photos not copied from {name}: {n}": "Fotos não copiadas de {name}: {n}",
   "No photos could be copied from {name}": "Nenhuma foto pôde ser copiada de {name}",
   "{name} connected": "{name} conectado",
-  "Uses the {} model, a {:.0} MB download ({} licence). {}.": "Usa o modelo {}, um download de {:.0} MB (licença {}). {}.",
+  "Uses the {} model, a {} download ({} licence). {}.": "Usa o modelo {}, um download de {} (licença {}). {}.",
   "New area painted with {}": "Nova área pintada com {}",
-  "{note} · {:.0} MB download": "{note} · download de {:.0} MB",
-  "The new area was painted by {by} on this device.": "A nova área foi pintada neste dispositivo ({by})."
+  "{note} · {size} download": "{note} · download de {size}",
+  "The new area was painted by {by} on this device.": "A nova área foi pintada neste dispositivo ({by}).",
+  "Automatic: {} suits this device": "Automático: {} é o adequado para este dispositivo",
+  "{} isn't downloaded yet: download it below.": "{} ainda não foi baixado: baixe-o abaixo."
 }

@@ -851,3 +851,55 @@ fn shared_documents_are_versioned_and_only_known_names_are_kept() {
     drop(server);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// Signing out, against the real server: what is left goes up first, the device's token stops working there, the library
+/// on the device is empty, and another user signs in to it and gets their own library; the first user's is untouched.
+#[test]
+fn signing_out_logs_the_device_out_and_leaves_an_empty_library_for_another_user() {
+    let root = temp("sign-out");
+    accounts::set_user(&root.join("data"), "bob", "another horse", false).unwrap();
+    let server = start(&root);
+    let url = format!("http://{}", server.addr());
+    write_png(&root.join("in/a.png"), 1);
+    write_png(&root.join("in/b.png"), 2);
+    let mut a = open(&root.join("a"));
+    a.execute("library.import", &json!({"paths": [root.join("in").to_string_lossy()]})).unwrap();
+    sign_in(&mut a, &url);
+    a.execute("sync.now", &json!({"wait": true})).unwrap();
+    let ann = a.sync_state().map(|st| st.config.token.clone()).unwrap();
+    assert_eq!(call("GET", &format!("{url}/api/me"), &ann, None, &[]).0, 200);
+
+    // a photo the server hasn't got yet: signing out sends it first (and asks before it removes anything)
+    write_png(&root.join("in2/c.png"), 3);
+    a.execute("library.import", &json!({"paths": [root.join("in2").to_string_lossy()]})).unwrap();
+    assert_eq!(a.catalog.len(), 3);
+    assert!(a.execute("sync.signOut", &json!({})).is_err(), "it asks for confirmation");
+    assert_eq!(a.catalog.len(), 3);
+    a.execute("sync.signOut", &json!({"confirm": true, "wait": true})).unwrap();
+    assert!(a.catalog.is_empty() && a.sync_state().is_none(), "the library is gone from this device");
+    assert_eq!(call("GET", &format!("{url}/api/me"), &ann, None, &[]).0, 401, "and so is this device's token on the server");
+
+    // ann's library is whole on the server: a new device of hers gets all three photos, with their files
+    let mut c = open(&root.join("c"));
+    sign_in(&mut c, &url);
+    c.execute("sync.now", &json!({"wait": true})).unwrap();
+    assert_eq!(c.catalog.len(), 3);
+    let originals: usize =
+        std::fs::read_dir(root.join("data/users/ann/blobs/original")).unwrap().flatten().map(|d| std::fs::read_dir(d.path()).unwrap().count()).sum();
+    assert_eq!(originals, 3, "the photo added last was uploaded before the device signed out");
+
+    // bob signs in on the emptied library: it is his, with none of ann's photos, and what he adds is his alone
+    a.execute("sync.signIn", &json!({"server": url, "user": "bob", "password": "another horse", "device": "test"})).unwrap();
+    a.execute("sync.now", &json!({"wait": true})).unwrap();
+    assert!(a.catalog.is_empty(), "{:?}", a.catalog.photos().map(|p| p.file_name.clone()).collect::<Vec<_>>());
+    write_png(&root.join("in3/z.png"), 9);
+    a.execute("library.import", &json!({"paths": [root.join("in3").to_string_lossy()]})).unwrap();
+    a.execute("sync.now", &json!({"wait": true})).unwrap();
+    assert_eq!(a.catalog.len(), 1);
+    assert_eq!(a.sync_state().map(|st| st.config.user.clone()).as_deref(), Some("bob"));
+    c.execute("sync.now", &json!({"wait": true})).unwrap();
+    assert_eq!(c.catalog.len(), 3, "ann's library didn't change");
+    assert!(root.join("data/users/bob/blobs/original").exists());
+    drop(server);
+    let _ = std::fs::remove_dir_all(&root);
+}
