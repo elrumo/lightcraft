@@ -287,5 +287,8 @@
   "{note} · {size} download": "{note} · 需下載 {size}",
   "The new area was painted by {by} on this device.": "新區域已在此裝置上生成（{by}）。",
   "Automatic: {} suits this device": "自動：{} 適合這台裝置",
-  "{} isn't downloaded yet: download it below.": "{} 尚未下載：請在下方下載。"
+  "{} isn't downloaded yet: download it below.": "{} 尚未下載：請在下方下載。",
+  "Downloading the depth model… {:.0} %": "正在下載深度模型… {:.0} %",
+  "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.": "此照片本身沒有深度資料：鏡頭模糊會以 Depth Anything V2 Small 估算深度（需下載 {:.0} MB，{} 授權）。{}。",
+  "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)": "對焦範圍：{:.0}–{:.0}（0 最近，100 最遠）"
 }

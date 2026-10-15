@@ -39,7 +39,13 @@ pub struct EraseState {
 /// Run command `id` (`spot.add` with `ai`, `spot.erase`) once a "Removing with AI…" notice has
 /// been drawn.
 pub fn queue(app: &mut LightcraftApp, ctx: &egui::Context, id: &str, params: Value) {
-    app.toast_for(ctx, tr("Removing with AI…"), 60.0);
+    queue_with(app, ctx, tr("Removing with AI…"), id, params);
+}
+
+/// Run a slow model command `id` once `notice` (already translated) has been drawn (also Lens
+/// Blur's depth estimate).
+pub fn queue_with(app: &mut LightcraftApp, ctx: &egui::Context, notice: &str, id: &str, params: Value) {
+    app.toast_for(ctx, notice, 60.0);
     app.erase.pending = Some((id.into(), params, false));
     ctx.request_repaint();
 }

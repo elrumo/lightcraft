@@ -31,12 +31,12 @@ cited here still exists. Formerly docs/parity.md.
 | C. Views & navigation (VIEW) | 15 | 2 | 0 | 0 | 8/9 (89%) | 4/4 (100%) |
 | D. Search & filter (FILT) | 11 | 2 | 0 | 0 | 4/4 (100%) | 4/4 (100%) |
 | E. Metadata (META) | 5 | 1 | 0 | 0 | 2/2 (100%) | 2/2 (100%) |
-| F. Edit panel — global adjustments (EDIT) | 43 | 3 | 2 | 1 | 28/28 (100%) | 13/14 (93%) |
+| F. Edit panel — global adjustments (EDIT) | 43 | 4 | 1 | 1 | 28/28 (100%) | 13/14 (93%) |
 | G. Profiles (PROF) | 7 | 1 | 3 | 0 | 3/4 (75%) | 3/3 (100%) |
 | H. Crop & rotate (CROP) | 9 | 1 | 0 | 0 | 6/6 (100%) | 3/3 (100%) |
 | I. Remove / healing (REM) | 8 | 2 | 2 | 1 | 4/4 (100%) | 2/3 (67%) |
 | J. Red eye (EYE) | 2 | 0 | 0 | 0 | — | 1/1 (100%) |
-| K. Masking (MASK) | 14 | 5 | 5 | 0 | 7/8 (88%) | 6/6 (100%) |
+| K. Masking (MASK) | 15 | 5 | 4 | 0 | 7/8 (88%) | 6/6 (100%) |
 | L. Presets (PRE) | 6 | 0 | 1 | 1 | 2/2 (100%) | 2/2 (100%) |
 | M. Versions & history (VER) | 5 | 0 | 0 | 0 | 1/1 (100%) | 3/3 (100%) |
 | N. Copy / paste / sync (SYNC) | 5 | 0 | 0 | 0 | 3/3 (100%) | 1/1 (100%) |
@@ -220,7 +220,7 @@ differences and missing bindings are in [ui-parity.md](ui-parity.md#shortcuts).
 | LR-EDIT-GEOM-MANUAL | Manual transform | P1 | ✅ | `ctl:geometry.*` | |
 | LR-EDIT-GEOM-CONSTRAIN | Constrain crop | P1 | ✅ | `crates/ui-egui/src/panels/right.rs` (checkbox → `cmd:develop.merge`) | |
 | LR-EDIT-GEOM-GRID | Grid while transforming | P2 | ✅ | `crates/ui-egui/src/panels/detail.rs` | a fine grid over the photo while a geometry slider is dragged |
-| LR-EDIT-LENSBLUR | Lens blur | P2 | ⬜ | | settings field reserved, not rendered |
+| LR-EDIT-LENSBLUR | Lens blur | P2 | 🟡 | `cmd:lensBlur.apply`, `cmd:lensBlur.estimate`, `cmd:lensBlur.focus`, `cmd:lensBlur.bokeh`, `cmd:lensBlur.brushStroke`, `cmd:lensBlur.clearBrush`, `cmd:lensBlur.info`, `ctl:lensBlur.amount`, `ctl:lensBlur.focalDistance`, `ctl:lensBlur.focalRange`, `ctl:lensBlur.boost`, `cmd:view.visualizeDepth`, `crates/pipeline/src/lensblur.rs`, `crates/engine/src/depth.rs`, `crates/depth/src/lib.rs`, `crates/ui-egui/src/lensblur.rs`, `apps/lightcraft-ios-swift/LightCraft/Sources/LightCraftApp/Photo/LensBlurPanel.swift` | Edit ▸ Lens Blur (phone: its own group; SwiftUI app too): Apply uses the photo's own depth (iPhone Portrait HEIC / JPEG, DNG 1.5 depth maps; [lens-blur.md](lens-blur.md)) or estimates it with Depth Anything V2 Small (Apache-2.0, an optional 27 MB download, stored with the settings); Blur Amount, a focal range bar (drag, click, focus picker on the photo, Subject focus), Visualize Depth, bokeh Circle / Bubble / 5-Blade / Ring / Cat Eye, Boost; Refine brushes Focus / Blur / Erase that paint into the depth. Gathered blur with foreground over background, size relative to the photo (previews and exports match, zoomed windows match the whole frame). Missing: a choice between the photo's depth and an estimate in the panel; Lightroom's Lens Blur XMP; checked on Apple-written synthetic Portrait files, not on an iPhone's |
 | LR-EDIT-CALIB | Calibration [Classic] | P1 | ✅ | `ctl:calibration.*` | shadows tint, red/green/blue primary hue and saturation; read/written in XMP |
 | LR-EDIT-SECTION-TOGGLE | Section on/off | P1 | ✅ | `cmd:develop.sectionEnabled`, `crates/develop/src/lib.rs` (`effective`) | the eye on a section header hides its adjustments: Light (with the curve), Color (white balance, presence, mixers, grading, point colour), Effects, Detail, Optics, Geometry, Calibration; masks stay on (issue #316 fixed Light, Color and Detail, which had no effect) |
 | LR-EDIT-RESET | Reset all / section / slider | P0 | ✅ | `cmd:develop.reset`, `cmd:develop.resetSection`, `cmd:develop.resetControl`, `crates/ui-egui/src/widgets.rs` (double-click) | no "reset to open" |
@@ -298,7 +298,7 @@ differences and missing bindings are in [ui-parity.md](ui-parity.md#shortcuts).
 | LR-MASK-RADIAL | Radial gradient | P0 | ✅ | `cmd:tool.radial`, `cmd:mask.update`, `crates/ui-egui/src/panels/detail.rs` | drag the selected ellipse's body or centre pin to move; edge grips resize, outer grip rotates; rotated and compound radial components, hidden pins, outside hit rejection and one-step undo tested |
 | LR-MASK-COLORRANGE | Colour range | P1 | ✅ | `cmd:mask.add` (`colorRange`), `cmd:mask.sampleColor`, `cmd:mask.update`, `crates/pipeline/src/lib.rs` (`color_range_sample`) | Color tile → click the photo to sample (⇧-click adds, up to 5; samples taken in the space the mask compares in), Pick button, Refine slider |
 | LR-MASK-LUMRANGE | Luminance range | P1 | ✅ | `cmd:mask.add` (`luminanceRange`), `cmd:mask.update`, `crates/ui-egui/src/panels/masking.rs` (`range_controls`) | range bar with two handles (one undo step per drag), Smoothness, Show Luminance Map (B&W photo with the range tinted) |
-| LR-MASK-DEPTHRANGE | Depth range | P2 | ⬜ | | shape exists, needs depth data |
+| LR-MASK-DEPTHRANGE | Depth range | P2 | ✅ | `cmd:mask.add` (`kind: depthRange`), `crates/pipeline/src/masks.rs` (`DepthRange`), `crates/develop/src/controls.rs` (`shape_controls`) | Masking ▸ Range ▸ Depth (desktop, phone, SwiftUI app): Range Near / Range Far / Smoothness over the depth Lens Blur uses (the photo's own, or the estimate once Lens Blur has made one), edges snapped to the photo; selects nothing on a photo without depth |
 | LR-MASK-COMBINE | Add / subtract / intersect | P0 | ✅ | `cmd:mask.addComponent`, `cmd:tool.brush` | Add/Subtract > Brush creates a component with the chosen operation; Erase removes paint within that brush component |
 | LR-MASK-INVERT | Invert | P0 | ✅ | `cmd:mask.invert` | |
 | LR-MASK-AMOUNT | Mask amount | P1 | ✅ | `cmd:mask.adjust` (`amount`), `crates/ui-egui/src/panels/masking.rs` | |

@@ -287,5 +287,8 @@
   "{note} · {size} download": "{note} · завантаження {size}",
   "The new area was painted by {by} on this device.": "Нову ділянку домальовано на цьому пристрої ({by}).",
   "Automatic: {} suits this device": "Автоматично: для цього пристрою підходить {}",
-  "{} isn't downloaded yet: download it below.": "Модель {} ще не завантажено: завантажте її нижче."
+  "{} isn't downloaded yet: download it below.": "Модель {} ще не завантажено: завантажте її нижче.",
+  "Downloading the depth model… {:.0} %": "Завантаження моделі глибини… {:.0} %",
+  "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.": "У цього фото немає власної глибини: розмиття об’єктива оцінює її за допомогою Depth Anything V2 Small, завантаження {:.0} МБ (ліцензія {}). {}.",
+  "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)": "У фокусі: {:.0}–{:.0} (0 найближче, 100 найдалі)"
 }

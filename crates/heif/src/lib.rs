@@ -11,7 +11,8 @@
 //!
 //! HEIF records orientation in the container (`irot`/`imir`, plus a `clap` crop), not in EXIF.
 //! [`Options::apply_transforms`] applies them; with it off, the pixels come back as coded.
-//! Auxiliary images other than alpha (HDR gain maps, depth maps) are ignored.
+//! A depth auxiliary image (Portrait photos) is read on its own by [`depth`]; HDR gain maps and
+//! other auxiliary images are ignored.
 //!
 //! Never panics: heic-rs is young, so every call into it runs under `catch_unwind` and a panic
 //! inside it becomes [`Error::Malformed`].
@@ -355,6 +356,58 @@ fn colour(p: &ItemProps<'_>, coded: &ItemProps<'_>) -> Colour {
 
 /// The primary image's EXIF (TIFF structure) and XMP packet. Metadata is a courtesy: a broken
 /// metadata item never fails a decode whose pixels came out fine.
+/// The primary image's depth auxiliary image (an iPhone Portrait photo's depth or disparity map),
+/// as stored: one sample per pixel, 0..=`max`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DepthImage {
+    pub width: u32,
+    pub height: u32,
+    /// The largest sample value (`2^bits − 1`).
+    pub max: u16,
+    pub data: Vec<u16>,
+    /// The depth item's own XMP: Apple says there whether the samples are disparity or depth and
+    /// which range of values they span (`apdi:AuxiliaryImageType`, `apdi:FloatMinValue`…).
+    pub xmp: Option<String>,
+}
+
+/// The primary image's depth auxiliary image (`auxC` of type depth), rotated and mirrored like the
+/// primary image when `options.apply_transforms` (its crop, in the primary's pixels, isn't
+/// applied: the depth spans the whole coded picture). `None` when the file has none.
+pub fn depth(bytes: &[u8], options: &Options) -> Result<Option<DepthImage>, Error> {
+    guarded(|| {
+        let ctx = Context::open(bytes).map_err(err)?;
+        let primary = ctx.meta.primary;
+        let found = ctx.meta.refs.iter().filter(|r| r.kind == heic_rs::meta::iref::RefKind::Auxl && r.to.contains(&primary)).find_map(|r| {
+            let p = ctx.props(r.from).ok()?;
+            (p.auxc?.kind == heic_rs::props::simple::AuxKind::Depth).then_some((r.from, p))
+        });
+        let Some((id, p)) = found else { return Ok(None) };
+        let (cw, ch) = ctx.coded_size(id, &p).map_err(err)?;
+        heic_rs::image::check_pixels(cw, ch, options.max_pixels).map_err(err)?;
+        let coded = Coded::decode(&ctx, id, &p, options.max_pixels)?;
+        let planes = coded.planes()?;
+        let (w, h) = planes.size();
+        let mut data = vec![0u16; w * h];
+        for (y, row) in data.chunks_exact_mut(w.max(1)).enumerate().take(h) {
+            planes.luma_row(y, row).ok_or_else(|| Error::Malformed("the depth image is incomplete".into()))?;
+        }
+        let mut img = orient::Pixels { width: w, height: h, ch: 1, data };
+        if options.apply_transforms {
+            let pp = ctx.props(primary).map_err(err)?;
+            let turns: Vec<_> = pp.transforms.iter().copied().filter(|t| !matches!(t, heic_rs::props::Transform::Crop(_))).collect();
+            img = orient::apply(img, &turns)?;
+        }
+        let xmp = ctx.xmp_item(id).and_then(|x| ctx.item_data(x).ok()).and_then(|d| String::from_utf8(d.into_owned()).ok());
+        Ok(Some(DepthImage {
+            width: u32::try_from(img.width).map_err(|_| Error::Limit("depth image too wide".into()))?,
+            height: u32::try_from(img.height).map_err(|_| Error::Limit("depth image too tall".into()))?,
+            max: ((1u32 << u32::from(planes.bit_depth()).clamp(1, 16)) - 1) as u16,
+            data: img.data,
+            xmp: xmp.map(|x| x.trim_end_matches('\0').to_string()),
+        }))
+    })
+}
+
 fn metadata(ctx: &Context<'_>) -> (Option<Vec<u8>>, Option<String>) {
     let id = ctx.meta.primary;
     let exif = ctx.exif(id).ok().flatten().map(<[u8]>::to_vec);

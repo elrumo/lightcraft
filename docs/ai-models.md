@@ -3,8 +3,8 @@
 LightCraft never bundles model weights. Each model is **optional**: it is downloaded only when the user asks, after
 the app names its licence, and every file is verified (exact size and SHA-256 where pinned) before use. Without a
 model, the feature that needs it says so and everything else works. Results are baked (SAM 3 stores its mask
-logits; denoise, super resolution and depth will store an enhanced image or a depth map), so renders and exports never
-run a model.
+logits, Lens Blur its estimated depth map; denoise and super resolution store an enhanced image), so renders and
+exports never run a model.
 
 `crates/fetch` is the downloader (ordered mirrors, resume, `.part` files, size cap, cancel, pinned SHA-256, pure-Rust
 HTTPS) and the engine's `Downloader` runs it on a background thread. What to download belongs to the feature that
@@ -21,7 +21,9 @@ Resolution, [super-resolution.md](super-resolution.md)), **MI-GAN** (AI Remove, 
 Generative Expand: the one model that also runs in the browser, on rten, from `crates/erase`), **LaMa** (Generative
 Expand on computers and capable phones, [generative-expand.md](generative-expand.md), also on rten), and Generative
 Expand's diffusion models on candle (`crates/diffuse`): **Stable Diffusion 1.5 Inpainting**, **Kandinsky 2.2 Inpaint**
-and **SDXL Inpainting**. The rest of this page is the research behind what to add next
+and **SDXL Inpainting**, and **Depth Anything V2 Small** (Lens Blur and Depth Range masks,
+[lens-blur.md](lens-blur.md): the int8 ONNX export on rten, from `crates/depth`, on every device and in the browser).
+The rest of this page is the research behind what to add next
 (2026-10-08; read from each repo's LICENSE and each Hugging Face model card — **re-check the licence of a model when
 you add it**, and write the verdict and the URL you read in its `ModelSpec`).
 
@@ -119,7 +121,7 @@ settled before LightCraft hosts a mirror.
 |---|---|---|---|---|
 | Super resolution | Nomos Uni SPAN 2x/4x (compact 2x on CPU) | Apache-2.0 / CC-BY-4.0 | 4.5 MB (1.2 MB) | plain convs; CC-BY needs attribution; training-image provenance undocumented |
 | Denoise (sRGB) | SCUNet `real_psnr` | Apache-2.0 / *not stated* | 72 MB | synthetic training data; window attention, tile; works on sRGB, not raw |
-| Depth | Depth Anything V2 **Small** (DA3-BASE as upgrade) | Apache-2.0 / Apache-2.0 | 99 MB (541 MB) | in `candle-transformers`; Base/Large of V2 are CC-BY-NC |
+| Depth | Depth Anything V2 **Small** (DA3-BASE as upgrade) | Apache-2.0 / Apache-2.0 | 27 MB int8 (99 MB fp32; DA3 541 MB) | **in use** (Lens Blur, `crates/depth`): onnx-community's `model_int8.onnx` on rten, pinned by revision, size and SHA-256; its `model_quantized.onnx` (uint8 weights) doesn't run on rten; int8 vs fp32 differ by 2 % of the depth range at the median; ~0.5–1 s per photo on a busy Apple-silicon CPU; Base/Large of V2 are CC-BY-NC |
 | Face detection | YuNet | MIT / MIT | 0.2 MB | 5 landmarks |
 | Face grouping | SFace | Apache-2.0 / Apache-2.0 | 37 MB | trained on MS-Celeb-1M, VGGFace2, CASIA; opt-in |
 | Eyes closed, smile | MediaPipe Face Mesh V2 + eye aspect ratio | Apache-2.0 / Apache-2.0 | few MB | ships as TFLite; convert once |
