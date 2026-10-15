@@ -24,7 +24,11 @@ struct LightCraftApp: App {
         WindowGroup(id: RootView.id) {
             RootView()
                 .environment(model)
-                .task { await model.start() }
+                .task {
+                    await model.start()
+                    // (a share made while the app was closed: "active" came before the engine was up)
+                    await model.importShared()
+                }
                 .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
                     model.lifecycle("memoryWarning")
                 }
