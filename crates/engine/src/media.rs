@@ -859,6 +859,9 @@ pub struct RenderJob {
     pub key: u64,
     /// Rendered-thumbnail cache and this job's key in it.
     pub cache: Option<(Arc<PreviewCache>, Hash128)>,
+    /// The same thumbnail's keys at the larger [`THUMB_SIZES`], smallest first: a miss at this size scales one of
+    /// those down instead of rendering again (a grid zoomed out asks for smaller thumbnails than it had).
+    pub cache_larger: Vec<Hash128>,
     /// Intermediate results of this view's previous renders (set by the frontend for the loupe):
     /// slider drags then only redo the stages the changed setting feeds.
     pub stages: Option<Arc<StageCache>>,
@@ -1041,6 +1044,18 @@ impl RenderJob {
         self
     }
 
+    /// This thumbnail from the cache: at its own size, else scaled down from a larger one (and kept at its own size).
+    fn cached(&self) -> Option<Rgba8> {
+        let (cache, key) = self.cache.as_ref()?;
+        if let Some(img) = cache.get_at(self.cache_generation, *key) {
+            return Some(Arc::unwrap_or_clone(img));
+        }
+        let img = self.cache_larger.iter().find_map(|k| cache.get_at(self.cache_generation, *k))?;
+        let small = shrink(&img, self.request.max_w.max(self.request.max_h));
+        cache.put_at(self.cache_generation, *key, Arc::new(small.clone()));
+        Some(small)
+    }
+
     /// [`Self::run_photo`], composed into its slide when this is a slide job (inside [`Self::run`]'s guard).
     fn run_unguarded(self) -> RenderResult {
         let slide = self.slide.clone();
@@ -1054,10 +1069,7 @@ impl RenderJob {
 
     /// The photo's render (without slide composition).
     fn run_photo(self) -> RenderResult {
-        if let Some((cache, key)) = &self.cache
-            && let Some(img) = cache.get_at(self.cache_generation, *key)
-        {
-            let image = Arc::unwrap_or_clone(img);
+        if let Some(image) = self.cached() {
             let histogram = Histogram::of_srgb8(&image);
             return RenderResult {
                 request_id: self.request_id,
@@ -1310,6 +1322,20 @@ impl QuickJob {
     }
 }
 
+/// `img` scaled down to fit `edge` × `edge` (in linear light, its alpha kept: an expanded crop's empty corners stay
+/// empty); as it is when it already fits.
+fn shrink(img: &Rgba8, edge: usize) -> Rgba8 {
+    use lightcraft_color::transfer::{decode_srgb8, encode_srgb8};
+    use lightcraft_raster::resample::{Filter, fit};
+    let edge = edge.max(1);
+    if img.width.max(img.height) <= edge || img.width == 0 || img.height == 0 {
+        return img.clone();
+    }
+    let linear = img.map(|p| [decode_srgb8(p[0]), decode_srgb8(p[1]), decode_srgb8(p[2]), f32::from(p[3]) / 255.0]);
+    fit(&linear, edge, edge, Filter::Mitchell)
+        .map(|p| [encode_srgb8(p[0]), encode_srgb8(p[1]), encode_srgb8(p[2]), (p[3].clamp(0.0, 1.0) * 255.0).round() as u8])
+}
+
 /// What identifies a photo's pixels for caching: its content hash, else its source.
 pub fn content_key(p: &Photo) -> String {
     match (&p.content_hash, &p.source) {
@@ -1433,6 +1459,8 @@ impl crate::Session {
             ^ content.rotate_left(17)
             ^ salt;
         let cache = thumb_bucket.map(|b| (self.media.rendered.clone(), Self::thumb_key(&p, settings_hash, b, salt)));
+        let cache_larger = thumb_bucket
+            .map_or_else(Vec::new, |b| THUMB_SIZES.iter().filter(|&&s| s > b).map(|&s| Self::thumb_key(&p, settings_hash, s, salt)).collect());
         Some(RenderJob {
             request_id: 0,
             cache_generation: self.media.rendered.generation(),
@@ -1446,6 +1474,7 @@ impl crate::Session {
             request,
             key,
             cache,
+            cache_larger,
             stages: None,
             view_cache: None,
             display: None,
@@ -1504,6 +1533,7 @@ impl crate::Session {
             request: RenderRequest { apply_crop: true, ..RenderRequest::fit(edge, edge) },
             key: (ck.0 as u64) ^ ((ck.0 >> 64) as u64),
             cache: Some((self.media.rendered.clone(), ck)),
+            cache_larger: Vec::new(),
             stages: None,
             view_cache: None,
             display: None,
@@ -1559,6 +1589,7 @@ impl crate::Session {
             request: RenderRequest { apply_crop: true, ..RenderRequest::fit(edge, edge) },
             key: (ck.0 as u64) ^ ((ck.0 >> 64) as u64),
             cache: Some((self.media.rendered.clone(), ck)),
+            cache_larger: Vec::new(),
             stages: None,
             view_cache: None,
             display: None,
@@ -1994,6 +2025,34 @@ mod thumbnail_hash_tests {
         s.catalog.apply(undo).unwrap();
         s.thumb_job(PhotoId(1), 256).unwrap();
         assert_eq!(s.media.settings_hashes.computations, 3);
+    }
+    /// A grid zoomed out asks for a smaller thumbnail than it had: scaled down from the larger one cached, not
+    /// rendered again (the file is never read), and kept at its own size.
+    #[test]
+    fn a_smaller_thumbnail_is_scaled_from_a_larger_one_cached() {
+        let mut s = session();
+        s.media.file_loader = Some(Arc::new(|_, _| Err("the file must not be read".into())));
+        let big = s.thumb_job(PhotoId(1), 384).unwrap();
+        let (cache, key) = big.cache.clone().unwrap();
+        let mut img = Rgba8::filled(384, 256, [200, 100, 50, 255]);
+        // an expanded crop's empty corner stays empty
+        for y in 0..24 {
+            img.data[y * 384..y * 384 + 24].fill([0, 0, 0, 0]);
+        }
+        cache.put_at(big.cache_generation, key, Arc::new(img));
+        let small = s.thumb_job(PhotoId(1), 100).unwrap();
+        assert_eq!(small.cache_larger.len(), 3, "256, 384 and 512");
+        let (small_key, generation) = (small.cache.as_ref().unwrap().1, small.cache_generation);
+        let r = small.run().rendered.unwrap().image;
+        assert_eq!((r.width, r.height), (128, 85));
+        assert_eq!(r.data[0][3], 0);
+        let mid = r.data[40 * 128 + 64];
+        assert!(mid[3] == 255 && (198..=202).contains(&mid[0]) && (98..=102).contains(&mid[1]), "{mid:?}");
+        assert!(cache.get_at(generation, small_key).is_some());
+        // nothing larger cached: rendered (here: the file can't be read)
+        let mut s = session();
+        s.media.file_loader = Some(Arc::new(|_, _| Err("no file".into())));
+        assert!(s.thumb_job(PhotoId(1), 100).unwrap().run().rendered.is_err());
     }
     #[test]
     fn hash_cache_is_bounded_weak_and_shared_settings_remain_independent() {

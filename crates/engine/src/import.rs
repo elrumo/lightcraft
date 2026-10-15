@@ -1663,6 +1663,7 @@ impl Session {
             request: lightcraft_pipeline::RenderRequest::fit(edge, edge),
             key,
             cache: None,
+            cache_larger: Vec::new(),
             stages: None,
             view_cache: None,
             display: None,

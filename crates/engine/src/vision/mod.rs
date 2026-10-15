@@ -1225,6 +1225,7 @@ pub fn neutral_from_preview(photo: &lightcraft_catalog::Photo, preview: &std::pa
         request: lightcraft_pipeline::RenderRequest { apply_crop: true, ..lightcraft_pipeline::RenderRequest::fit(edge, edge) },
         key: 0,
         cache: None,
+        cache_larger: Vec::new(),
         stages: None,
         view_cache: None,
         display: None,
