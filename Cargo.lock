@@ -3875,6 +3875,7 @@ dependencies = [
  "lightcraft-raster",
  "lightcraft-vision",
  "log",
+ "rayon",
  "serde",
  "serde_json",
  "sha2",

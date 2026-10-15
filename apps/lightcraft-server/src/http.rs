@@ -39,7 +39,8 @@ pub struct Limits {
     /// Open connections from one address at most.
     pub per_address: usize,
     /// Requests being answered at once at most (more get `503`; `/api/health` and `OPTIONS` don't count).
-    pub active: usize,
+    /// Read for each request, so it can change while serving.
+    pub active: Arc<AtomicUsize>,
     /// The head of a request must arrive this soon after its first byte.
     pub head: Duration,
     /// A request body may pause this long.
@@ -53,7 +54,7 @@ impl Default for Limits {
         Limits {
             connections: 512,
             per_address: 128,
-            active: 64,
+            active: Arc::new(AtomicUsize::new(64)),
             head: Duration::from_secs(10),
             body: Duration::from_secs(60),
             idle: Duration::from_secs(30),
@@ -497,7 +498,7 @@ fn serve(stream: TcpStream, remote: SocketAddr, shared: &Shared) {
         let head_only = head.method == Method::Head;
         let keep = head.keep;
         let mut req = Request { method: head.method, url: head.url, headers: head.headers, remote, length: head.length, body };
-        let slot = if exempt { None } else { Slot::take(&shared.active, shared.limits.active) };
+        let slot = if exempt { None } else { Slot::take(&shared.active, shared.limits.active.load(Ordering::Relaxed)) };
         let resp = if slot.is_none() && !exempt {
             let mut r = error_response(503, "the server is busy: try again in a moment");
             r.add_header(Header { field: Field("Retry-After".into()), value: "5".into() });
@@ -799,7 +800,7 @@ mod tests {
     fn busy_servers_still_answer_health_and_turn_away_the_rest() {
         let gate = Arc::new(AtomicBool::new(false));
         let g = gate.clone();
-        let limits = Limits { active: 2, ..fast() };
+        let limits = Limits { active: Arc::new(AtomicUsize::new(2)), ..fast() };
         let s = serve_with(limits, move |r| {
             if r.url() == "/api/health" {
                 return text(200, "healthy");

@@ -65,7 +65,7 @@ fn an_apple_proraw_works_through_the_client_and_the_server() {
     accounts::set_user(&data, "ann", "correct horse", false).unwrap();
     let mut cfg = Config::new(data, "127.0.0.1:0");
     cfg.scan_interval = None;
-    cfg.preview_threads = 1;
+    cfg.preview_threads = Some(1);
     let server = Server::start(cfg).unwrap();
     let url = format!("http://{}", server.addr());
     std::fs::create_dir_all(root.join("in")).unwrap();

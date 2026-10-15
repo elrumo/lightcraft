@@ -320,6 +320,9 @@ main > section { animation: enter 0.18s ease-out; }
 .panel > h2 + .muted { margin-bottom: 20px; }
 .panel h3 { margin: 24px 0 12px; }
 .panel.flush { padding: 0; overflow-x: auto; }
+.limits { margin-top: 16px; }
+.limits-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px 20px; margin-bottom: 16px; }
+.limits-actions { display: flex; justify-content: flex-end; }
 .columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; align-items: start; }
 .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 16px; margin-bottom: 16px; }
 .stat {

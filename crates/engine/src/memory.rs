@@ -81,13 +81,17 @@ impl crate::Session {
     }
 }
 
-/// Physical memory (bytes), when the platform tells us without native calls.
-pub(crate) fn total_ram() -> Option<usize> {
+/// Physical memory (bytes), when the platform tells us without native calls. On Linux, a container's
+/// limit (cgroup v2 `memory.max`) when it is lower.
+pub fn total_ram() -> Option<usize> {
     #[cfg(target_os = "linux")]
     {
         let s = std::fs::read_to_string("/proc/meminfo").ok()?;
         let kb: usize = s.lines().find(|l| l.starts_with("MemTotal:"))?.split_whitespace().nth(1)?.parse().ok()?;
-        Some(kb * 1024)
+        let ram = kb.saturating_mul(1024);
+        // ("max" when there is no limit: it doesn't parse)
+        let limit = std::fs::read_to_string("/sys/fs/cgroup/memory.max").ok().and_then(|l| l.trim().parse::<usize>().ok());
+        Some(limit.map_or(ram, |l| l.min(ram)))
     }
     #[cfg(target_os = "macos")]
     {

@@ -25,7 +25,7 @@ fn a_render_over_the_limit_goes_to_the_server_or_is_refused_clearly() {
     accounts::set_user(&data, "ann", "correct horse", false).unwrap();
     let mut cfg = Config::new(data, "127.0.0.1:0");
     cfg.scan_interval = None;
-    cfg.preview_threads = 1;
+    cfg.preview_threads = Some(1);
     let server = Server::start(cfg).unwrap();
     let url = format!("http://{}", server.addr());
 

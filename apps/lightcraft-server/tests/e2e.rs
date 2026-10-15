@@ -34,7 +34,7 @@ fn start(root: &Path) -> Server {
     let mut cfg = Config::new(data, "127.0.0.1:0");
     cfg.web = Some(web);
     cfg.scan_interval = None;
-    cfg.preview_threads = 1;
+    cfg.preview_threads = Some(1);
     Server::start(cfg).unwrap()
 }
 
@@ -708,8 +708,8 @@ fn stalled_uploads_do_not_starve_the_server() {
     accounts::set_user(&data, "ann", "correct horse", false).unwrap();
     let mut cfg = Config::new(data, "127.0.0.1:0");
     cfg.scan_interval = None;
-    cfg.preview_threads = 1;
-    cfg.max_requests = 2;
+    cfg.preview_threads = Some(1);
+    cfg.max_requests = Some(2);
     let server = Server::start(cfg).unwrap();
     let base = format!("http://{}", server.addr());
     let token = sign_in_raw(&base);
@@ -735,6 +735,57 @@ fn stalled_uploads_do_not_starve_the_server() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// Limits an admin sets apply without a restart and are kept; the ones the deployment fixed can't be set.
+#[test]
+fn limits_set_on_the_admin_page_apply_at_once() {
+    let root = temp("limits");
+    let data = root.join("data");
+    accounts::set_user(&data, "ann", "correct horse", false).unwrap();
+    accounts::set_admin(&data, "ann", true).unwrap();
+    let mut cfg = Config::new(data.clone(), "127.0.0.1:0");
+    cfg.scan_interval = None;
+    cfg.preview_threads = Some(1);
+    let server = Server::start(cfg).unwrap();
+    let base = format!("http://{}", server.addr());
+    let req = |m: &str, path: &str, token: &str, body: Option<Value>| {
+        let (s, b, _) = call(m, &format!("{base}{path}"), token, body.map(|v| v.to_string()).as_deref().map(str::as_bytes), &[]);
+        (s, json_of(&b))
+    };
+    let admin =
+        req("POST", "/api/admin/login", "", Some(json!({"user": "ann", "password": "correct horse"}))).1["token"].as_str().unwrap().to_string();
+    let (s, l) = req("GET", "/api/admin/limits", &admin, None);
+    assert_eq!(s, 200);
+    assert!(l["cores"].as_u64().unwrap() >= 1);
+    assert_eq!(l["previews"]["fixed"], "LIGHTCRAFT_PREVIEW_THREADS", "{l}");
+    assert_eq!(l["requests"]["value"], l["requests"]["automatic"]);
+    let (s, e) = req("PUT", "/api/admin/limits", &admin, Some(json!({"previews": 2})));
+    assert!(s == 400 && e["error"].as_str().unwrap().contains("LIGHTCRAFT_PREVIEW_THREADS"), "{e}");
+    assert_eq!(req("PUT", "/api/admin/limits", &admin, Some(json!({"requests": 0}))).0, 400);
+    assert_eq!(req("PUT", "/api/admin/limits", &admin, Some(json!({"bogus": 1}))).0, 400);
+    let (s, l) = req("PUT", "/api/admin/limits", &admin, Some(json!({"requests": 1})));
+    assert_eq!((s, l["requests"]["value"].as_u64(), l["requests"]["saved"].as_u64()), (200, Some(1), Some(1)));
+    // one stalled upload now holds the only place
+    let token = sign_in_raw(&base);
+    let h = lightcraft_preview::hash_bytes(b"a").to_string();
+    let held = broken_put(server.addr(), &format!("/api/blobs/original/{h}"), &token, 1000, &[7; 10], true);
+    std::thread::sleep(Duration::from_millis(400));
+    assert_eq!(call("GET", &format!("{base}/api/me"), &token, None, &[]).0, 503, "the new limit holds without a restart");
+    drop(held);
+    drop(server);
+    // kept for the next start
+    let mut cfg = Config::new(data, "127.0.0.1:0");
+    cfg.scan_interval = None;
+    let server = Server::start(cfg).unwrap();
+    let base = format!("http://{}", server.addr());
+    let (s, b, _) = call("POST", &format!("{base}/api/admin/login"), "", Some(br#"{"user": "ann", "password": "correct horse"}"#), &[]);
+    assert_eq!(s, 200);
+    let admin = json_of(&b)["token"].as_str().unwrap().to_string();
+    let l = json_of(&call("GET", &format!("{base}/api/admin/limits"), &admin, None, &[]).1);
+    assert_eq!((l["requests"]["value"].as_u64(), l["previews"]["fixed"].is_null()), (Some(1), true), "{l}");
+    drop(server);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// A request as raw text, the answer as text (the server closes the connection after it).
 fn raw_request(addr: std::net::SocketAddr, request: &str) -> String {
     use std::io::{Read, Write};
@@ -756,7 +807,7 @@ fn only_sites_the_server_was_told_about_may_call_it_from_a_browser() {
     accounts::set_user(&data, "ann", "correct horse", false).unwrap();
     let mut cfg = Config::new(data, "127.0.0.1:0");
     cfg.scan_interval = None;
-    cfg.preview_threads = 1;
+    cfg.preview_threads = Some(1);
     cfg.cors_origins = vec!["https://photos.example.com/".into()];
     let server = Server::start(cfg).unwrap();
     let addr = server.addr();
@@ -843,7 +894,7 @@ fn shared_documents_are_versioned_and_only_known_names_are_kept() {
     drop(server);
     let mut cfg = Config::new(root.join("data"), "127.0.0.1:0");
     cfg.scan_interval = None;
-    cfg.preview_threads = 1;
+    cfg.preview_threads = Some(1);
     let server = Server::start(cfg).unwrap();
     let base = format!("http://{}", server.addr());
     let token = sign_in_raw(&base);
