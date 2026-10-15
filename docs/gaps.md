@@ -64,6 +64,13 @@ Beta-blocking gaps (B) total **~230–430 h**; with the stability and platform w
   Detail, Before/After, Compare, Reference and mask overlays; 1:1 tested equal to the full-size export.
 - 2026-10-11: Sony ILCA-99M2 profile.
 - 2026-10-11: Nikon edge bars on bodies without CropArea (#976, #914): 36 model / size / depth groups measured.
+- 2026-10-15: planar TIFFs (Photoshop "per channel"), TIFFs over 2 GiB on the sync server (read in part: only the
+  composite, never the layers), cut-short TIFF / CR2 messages and the intact CR2 thumbnail, a HEIC that won't decode
+  shows its thumbnail. Still open: 4:2:2 / 4:4:4 HEIC decoding itself (needs a sample file), Lightroom mobile
+  `_proxy.dng` and `th_` / `pv_` blobs (`lightcraft-cli inspect` says what they are), a streaming decode for a
+  single-strip 300 MP TIFF (still decoded whole).
+- 2026-10-14: Lens Blur and Depth Range masks (LR-EDIT-LENSBLUR 🟡, LR-MASK-DEPTHRANGE ✅;
+  [lens-blur.md](lens-blur.md)): Portrait / DNG depth or a Depth Anything V2 Small estimate, refine brushes.
 - 2026-10-10: Nikon lossy-after-split NEF (#633), ORF 12.8 bpp (#651), HDR gain map / PQ AVIF / float
   TIFF export (#646), activity stack (#345), JPEG XL export (#247).
 - 2026-10-09: EOS R7 C-RAW with an odd-height QP map (a45c2b66; part of gap 2), HEIC in release builds (#609), Samsung uncompressed SRW (#459), contact-sheet PDF (#563),
@@ -90,6 +97,7 @@ Beta-blocking gaps (B) total **~230–430 h**; with the stability and platform w
 | 2026-10-14 | patch | LRC-LIB-CATALOG-IMPORT: reconciled with upstream phased progress, cancellation kinds, WAL-only import, translations and current progress tracking. Status and summary counts unchanged. |
 | 2026-10-14 | minor | Gap 10 shrinks: 97 Canon CR2, Pentax and Ricoh models verified on one CC0 file each (334 models, ~50% on a verified body) |
 | 2026-10-14 | minor | Gap 10: 515 of 1,446 models verified (36%), ~84% of photographers on a verified body (integration batch 36) |
+| 2026-10-14 | minor | Lens Blur and Depth Range masks listed as closed (they had no gap row: P2 in the AI table of target-app-parity.md) |
 | 2026-10-13 | minor | Gap 12 notes Generative Expand on the device (MI-GAN / LaMa / Classic, LR-CROP-GENEXPAND 🟡); not closed |
 | 2026-10-13 | patch | Gaps 10, 22 and 23 each had two rows (two branches edited them; the merges kept both): the older copies are removed, and `cargo xtask parity` (in `ci`) now fails when a gap number is listed twice |
 | 2026-10-13 | minor | Closed recently: Sony ILCA-99M2 profile |

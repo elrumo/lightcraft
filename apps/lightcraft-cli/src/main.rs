@@ -4,6 +4,7 @@
 //! lightcraft-cli run [--demo | --library DIR | --connect [ADDR]] [--import PATH]… CMD [key=value…]…
 //! lightcraft-cli mcp [--connect [ADDR]] [--demo] [--compact] [FILES/FOLDERS…]
 //! lightcraft-cli render <in> -o <out> [--set control=value]… [--settings FILE.json|FILE.lcpreset] [--preset ID] [--size N] [--quality Q]
+//! lightcraft-cli inspect <file>
 //! lightcraft-cli snapshot [--library DIR | --demo] [--script FILE.jsonl] [-o OUT.png] [--size WxH] [--scale S] [--safe-area T,B] [FILES…]
 //! lightcraft-cli merge hdr|panorama|hdr-panorama|hdr-batch [OPTIONS] FILES…
 //! lightcraft-cli synth-merge hdr|panorama -o DIR
@@ -66,6 +67,9 @@ USAGE:
                              --opt format=original (copy + XMP sidecar) --opt metadata=none
                              --opt addToPhotos=true --opt photosAlbum=NAME (macOS: then add
                              the file to Apple Photos, into that album)
+  lightcraft-cli inspect <FILE>
+      Print a file's size, first bytes, format sniff and import result, and any later JPEG/TIFF
+      signature (for reports of \"unrecognized file format\").
   lightcraft-cli snapshot [OPTIONS] [FILES/FOLDERS…]
       Run the full app UI headlessly (no window, no GPU: CPU-rasterized egui) and write PNGs.
       Options:
@@ -162,6 +166,7 @@ fn main() -> ExitCode {
         Some("run") => run(&args[1..]),
         Some("mcp") => mcp(&args[1..]),
         Some("render") => render(&args[1..]),
+        Some("inspect") => inspect(&args[1..]),
         Some("snapshot") => snapshot(&args[1..]),
         Some("commands") => commands(&args[1..]),
         Some("merge") => merge(&args[1..]),
@@ -667,6 +672,30 @@ fn read_settings(p: &str) -> Result<SettingsFile, String> {
         v @ Value::Object(_) => Ok(SettingsFile::Partial(v)),
         _ => Err(format!("{p}: not a develop-settings object or a preset file")),
     }
+}
+
+/// `inspect FILE`: what a file is, for reports of "unrecognized file format": its size, first bytes,
+/// what the importer makes of it, and where a JPEG or TIFF signature turns up later (a wrapped file).
+fn inspect(args: &[String]) -> Result<(), String> {
+    let [path] = args else { return Err("inspect needs exactly one file".into()) };
+    let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
+    let hex = |b: &[u8]| b.iter().map(|x| format!("{x:02X}")).collect::<Vec<_>>().join(" ");
+    println!("size:    {} bytes", bytes.len());
+    println!("head:    {}", hex(&bytes[..bytes.len().min(32)]));
+    println!("ascii:   {}", String::from_utf8_lossy(&bytes[..bytes.len().min(32)]).escape_debug());
+    println!("sniff:   {:?}", lightcraft_codecs::sniff(&bytes));
+    println!("raw:     {:?}", lightcraft_raw::probe(&bytes));
+    match lightcraft_engine::files::probe_bytes(path, &bytes) {
+        Ok(p) => println!("import:  {:?} {}x{} {}", p.kind, p.width, p.height, p.format),
+        Err(e) => println!("import:  {e}"),
+    }
+    for (label, sig) in [("JPEG", &[0xFF, 0xD8, 0xFF][..]), ("TIFF", b"II*\0"), ("TIFF-BE", b"MM\0*"), ("PNG", b"\x89PNG"), ("ftyp", b"ftyp")] {
+        let at: Vec<usize> = bytes.windows(sig.len()).enumerate().filter(|(i, w)| *i > 0 && *w == sig).map(|(i, _)| i).take(4).collect();
+        if !at.is_empty() {
+            println!("{label} signature also at offsets {at:?}");
+        }
+    }
+    Ok(())
 }
 
 fn render(args: &[String]) -> Result<(), String> {

@@ -33,6 +33,7 @@ lightcraft-geocode = { workspace = true }
 # AI Remove (MI-GAN on rten): built everywhere, the web included; the model is downloaded on request
 lightcraft-erase = { workspace = true }
 lightcraft-slideshow = { workspace = true }
+lightcraft-depth = { workspace = true }
 rayon = { workspace = true }
 # the loupe's HDR picture (f16 pixels, `hdr_view`)
 half = { workspace = true }

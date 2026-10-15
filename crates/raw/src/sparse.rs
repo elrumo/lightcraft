@@ -29,6 +29,9 @@ use crate::RawFormat;
 const HEAD: u64 = 64 * 1024;
 /// An image whose chunks hold fewer bytes than this is read (thumbnails, small previews).
 const BULK: u64 = 256 * 1024;
+/// An out-of-line TIFF value longer than this is bulk (a Photoshop file's layer data), not metadata:
+/// [`image_plan`] leaves it unread.
+const BIG_VALUE: u64 = 16 << 20;
 /// The same bounds as `lightcraft_tiff`'s reader.
 const MAX_IFDS: usize = 1024;
 const MAX_ENTRIES: u64 = 8192;
@@ -181,11 +184,13 @@ struct Want<'a> {
     len: u64,
     loaded: &'a Ranges,
     need: Ranges,
+    /// Out-of-line values past [`BIG_VALUE`], as [`walk_tiff`] met them.
+    big: Ranges,
 }
 
 impl<'a> Want<'a> {
     fn new(bytes: &[u8], loaded: &'a Ranges) -> Self {
-        Self { len: bytes.len() as u64, loaded, need: Ranges::new() }
+        Self { len: bytes.len() as u64, loaded, need: Ranges::new(), big: Ranges::new() }
     }
 
     /// Whether `[start, end)` (clipped to the file) is loaded; asks for what isn't.
@@ -270,6 +275,39 @@ fn tiff_plan(bytes: &[u8], loaded: &Ranges, preview: bool) -> HeaderPlan {
     })
 }
 
+/// What decoding and describing a TIFF that is not a raw reads: its IFD tables, its metadata values
+/// (EXIF, XMP, ICC; not a value past [`BIG_VALUE`]) and the strips or tiles of its first image, which
+/// is the picture. A Photoshop file's layers sit in one huge tag value and further images (not the
+/// first IFD), so a file of several GB reads as a fraction of that. Same contract as [`header_plan`]:
+/// once it says [`HeaderPlan::Ready`], `lightcraft_codecs::read_header` and `decode` of the buffer
+/// give what they give for the whole file.
+pub fn image_plan(bytes: &[u8], loaded: &Ranges) -> HeaderPlan {
+    let len = bytes.len() as u64;
+    let mut w = Want::new(bytes, loaded);
+    if !w.want(0, 16) {
+        return w.into_plan().unwrap_or(HeaderPlan::Whole("file too short"));
+    }
+    if Tiff::sniff(bytes).is_none() {
+        return HeaderPlan::Whole("not a TIFF");
+    }
+    let meta = match walk_tiff(&mut w, 0, bytes, &[]) {
+        Ok(meta) => meta,
+        Err(why) => return HeaderPlan::Whole(why),
+    };
+    let big = std::mem::take(&mut w.big);
+    if let Some(plan) = w.into_plan() {
+        return plan;
+    }
+    let Ok(tiff) = Tiff::parse(bytes) else { return HeaderPlan::Whole("TIFF structure") };
+    let Some(Ok(info)) = tiff.ifds.first().map(|ifd| ifd.image()) else { return HeaderPlan::Whole("no image in the first IFD") };
+    let mut keep = meta.minus(&big);
+    for c in info.chunks(len) {
+        keep.insert(c.offset, c.offset.saturating_add(c.len).min(len));
+    }
+    let missing = keep.minus(loaded);
+    if missing.is_empty() { HeaderPlan::Ready } else { HeaderPlan::Need(missing) }
+}
+
 /// Walk the IFDs of the TIFF in `data` (which starts at `origin` in the file) as `lightcraft_tiff`'s
 /// reader does — the chain, `SubIFDs`, Exif, GPS and Interop, plus the `extra` pointer tags —
 /// asking for every IFD table and for the values that locate IFDs and image chunks. Returns the IFD
@@ -332,6 +370,9 @@ fn walk_tiff(w: &mut Want, origin: u64, data: &[u8], extra: &[u16]) -> Result<Ra
             let Some(value_end) = start.checked_add(total).filter(|&e| e <= len) else { continue };
             if total > inline {
                 meta.insert(at(start), at(value_end));
+                if total > BIG_VALUE {
+                    w.big.insert(at(start), at(value_end));
+                }
             }
             let child = matches!(tag, t::SUB_IFDS | t::EXIF_IFD | t::GPS_IFD | t::INTEROP_IFD) || extra.contains(&tag);
             let locates = child || matches!(tag, t::STRIP_OFFSETS | t::STRIP_BYTE_COUNTS | t::TILE_OFFSETS | t::TILE_BYTE_COUNTS);
@@ -494,6 +535,65 @@ mod tests {
             }
         }
         panic!("no answer after 32 rounds");
+    }
+
+    /// An 8 × 8 gray TIFF whose IFD0 carries `layers` bytes of private data (a Photoshop file's layer
+    /// blob) and an Artist; returns the file and its strip.
+    fn layered_tiff(layers: usize) -> (Vec<u8>, Vec<u8>) {
+        use lightcraft_tiff::{IfdBuilder, ImageData, TiffWriter, Value};
+        let strip: Vec<u8> = (0..64).collect();
+        let mut ifd = IfdBuilder::new();
+        ifd.set(t::IMAGE_WIDTH, Value::Long(vec![8]));
+        ifd.set(t::IMAGE_LENGTH, Value::Long(vec![8]));
+        ifd.set(t::BITS_PER_SAMPLE, Value::Short(vec![8]));
+        ifd.set(t::COMPRESSION, Value::Short(vec![1]));
+        ifd.set(t::PHOTOMETRIC, Value::Short(vec![1]));
+        ifd.set(t::SAMPLES_PER_PIXEL, Value::Short(vec![1]));
+        ifd.set(t::ARTIST, Value::Ascii("Someone with a long enough name".into()));
+        ifd.set(37724, Value::Undefined(vec![7; layers]));
+        ifd.set_image(ImageData::Strips { rows_per_strip: 8, strips: vec![strip.clone()] });
+        (TiffWriter::default().write(&[ifd]).unwrap(), strip)
+    }
+
+    /// A TIFF with a huge private tag value (layers) is described and decoded from its tables, its small
+    /// values and its first image's strips: the layer data is never asked for.
+    #[test]
+    fn image_plan_skips_layer_data() {
+        let (file, strip) = layered_tiff(BIG_VALUE as usize + 1);
+        let mut buf = vec![0u8; file.len()];
+        let mut loaded = Ranges::new();
+        loaded.insert(0, 16);
+        buf[..16].copy_from_slice(&file[..16]);
+        for _ in 0..8 {
+            match image_plan(&buf, &loaded) {
+                HeaderPlan::Need(r) => {
+                    for &(a, b) in r.spans() {
+                        assert!(!loaded.overlaps(a, b), "asked again for {a}..{b}");
+                        buf[a as usize..b as usize].copy_from_slice(&file[a as usize..b as usize]);
+                        loaded.insert(a, b);
+                    }
+                }
+                HeaderPlan::Ready => {
+                    assert!(loaded.total() < 4096, "read {} of {} bytes", loaded.total(), file.len());
+                    let tiff = Tiff::parse(&buf).unwrap();
+                    let ifd = &tiff.ifds[0];
+                    assert_eq!(ifd.value(t::ARTIST).and_then(|v| v.as_str()).as_deref(), Some("Someone with a long enough name"));
+                    let c = &ifd.image().unwrap().chunks(file.len() as u64)[0];
+                    assert_eq!(&buf[c.offset as usize..(c.offset + c.len) as usize], &strip[..]);
+                    return;
+                }
+                HeaderPlan::Whole(why) => panic!("whole file: {why}"),
+            }
+        }
+        panic!("no answer");
+    }
+
+    #[test]
+    fn image_plan_refuses_what_is_not_a_tiff() {
+        let mut loaded = Ranges::new();
+        loaded.insert(0, 32);
+        assert!(matches!(image_plan(&[0u8; 32], &loaded), HeaderPlan::Whole(_)));
+        assert!(matches!(image_plan(&[], &Ranges::new()), HeaderPlan::Whole(_)));
     }
 
     #[test]

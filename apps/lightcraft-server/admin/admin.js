@@ -335,10 +335,70 @@ function recount(users) {
 // --------------------------------------------------------------- overview
 
 function loadOverview() {
-  return swr(['status', 'users'], showOverview);
+  return swr(['status', 'users', 'limits'], showOverview);
 }
 
-function showOverview([s, users]) {
+const LIMITS = [
+  ['threads', 'CPU threads', 'Cores that decoding, developing and the search models share.'],
+  ['previews', 'Previews at once', 'Photos whose previews are built side by side. The rest wait their turn.'],
+  ['renders', 'Renders at once', 'Full-size exports for devices. Devices ask again when all are busy.'],
+  ['requests', 'Requests at once', 'Requests answered side by side. Devices retry the others.'],
+];
+
+/** The limits form: each box holds what an admin set, empty for automatic, locked when the deployment set it. */
+function showLimits(l) {
+  const box = $('limFields');
+  if (box.contains(document.activeElement)) return;
+  $('limMachine').textContent =
+    'How much of this machine the server may use (' + plural(l.cores, 'core', 'cores') + (l.memory ? ', ' + bytes(l.memory) + ' of memory' : '') + '). ' +
+    'Leave a box empty for the automatic number. Nothing is dropped: work over a limit waits.';
+  box.replaceChildren(
+    ...LIMITS.map(([key, label, help]) => {
+      const r = l[key];
+      const { input, wrap } = field({ name: 'lim-' + key, label, type: 'number', required: false, placeholder: 'Automatic (' + r.automatic + ')', help: r.fixed ? 'Set by ' + r.fixed + ' when the server starts.' : help });
+      input.min = 1;
+      input.max = r.max;
+      input.dataset.key = key;
+      input.inputMode = 'numeric';
+      if (r.fixed) {
+        input.value = r.value;
+        input.disabled = true;
+      } else if (r.saved !== null) input.value = r.saved;
+      return wrap;
+    }),
+  );
+  const pending = l.threads.value !== l.threadsNow;
+  $('limRestart').hidden = !pending;
+  if (pending) $('limRestart').querySelector('p').textContent = 'The server keeps using ' + n(l.threadsNow) + ' until it restarts, then ' + n(l.threads.value) + '.';
+}
+
+async function saveLimits(e) {
+  e.preventDefault();
+  const btn = e.target.querySelector('button[type=submit]');
+  const body = {};
+  for (const input of $('limFields').querySelectorAll('input:not(:disabled)')) {
+    const v = input.value.trim();
+    if (v && !(/^\d+$/.test(v) && +v >= 1 && +v <= +input.max)) {
+      fail(new Error(input.labels[0].textContent + ': a number from 1 to ' + input.max + ', or empty for automatic.'));
+      input.focus();
+      return;
+    }
+    body[input.dataset.key] = v ? +v : null;
+  }
+  busy(btn, true);
+  try {
+    const l = await api('PUT', 'limits', body);
+    document.activeElement.blur();
+    showLimits(l);
+    toast('Limits saved.');
+  } catch (x) {
+    fail(x);
+  } finally {
+    busy(btn, false);
+  }
+}
+
+function showOverview([s, users, limits]) {
   recount(users);
   setMe(s.me);
   $('stUsers').textContent = n(users.length);
@@ -350,11 +410,14 @@ function showOverview([s, users]) {
   const facts = $('facts');
   facts.replaceChildren();
   const fact = (k, v, code) => facts.append(el('dt', {}, k), el('dd', { class: code ? 'code' : null }, v));
-  fact('Version', s.version);
+  const build = (b) => (b.version || '?') + ' (' + (b.commit || 'unknown') + ')';
+  fact('Server version', build(s), true);
   fact('Data folder', s.data, true);
   fact('Listening on', s.listen, true);
   fact('Web app', s.web ? 'Served from ' + s.web : 'Not served (start the server with --web)');
+  if (s.web) fact('Web app version', s.webBuild ? build(s.webBuild) : 'Unknown (built without version.json)', !!s.webBuild);
   $('webHint').hidden = !s.web;
+  showLimits(limits);
 }
 
 async function copyOrigin() {
@@ -681,20 +744,38 @@ function scanInfo(s) {
 }
 
 /** The previews panel: built / left in this batch, and the photo files being built right now (also during a scan). */
-function showPreviews(s) {
-  const panel = $('previewsPanel');
-  panel.hidden = !s.previews;
-  if (!s.previews) return;
+function showPreviews(name, s) {
+  const paused = !!s.previewsPaused;
+  $('previewsTitle').textContent = paused ? 'Previews paused' : s.previews ? 'Building previews' : 'Previews';
+  const have = s.previewsHave, photos = s.previewsPhotos;
+  $('previewsCover').textContent = photos == null ? 'Counting previews…' : n(have) + ' of ' + plural(photos, 'photo has', 'photos have') + ' previews' + (photos ? ' (' + Math.floor((100 * have) / photos) + '%)' : '');
   const total = s.previewsTotal || s.previews;
-  $('previewsTitle').textContent = 'Building previews';
-  $('previewsText').textContent =
-    n(s.previewsDone) + ' built, ' + n(s.previews) + ' left' + (s.previewsEtaSecs ? ', about ' + dur(s.previewsEtaSecs) + ' to go' : '') + (s.previewsPerMin ? ' (' + n(s.previewsPerMin) + ' a minute)' : '') + '. Photos show on devices as their previews are ready.';
-  progress($('previewsBar'), total ? s.previewsDone / total : 0);
+  const batch = s.previews
+    ? n(s.previewsDone) + ' built, ' + n(s.previews) + ' left' + (s.previewsEtaSecs && !paused ? ', about ' + dur(s.previewsEtaSecs) + ' to go' : '') + (s.previewsPerMin && !paused ? ' (' + n(s.previewsPerMin) + ' a minute)' : '') + '.'
+    : 'Nothing waiting: 0 left.' + (s.previewsLastAt ? ' The last batch, ' + plural(s.previewsLastDone, 'preview', 'previews') + ', finished ' + ago(s.previewsLastAt) + '.' : '');
+  $('previewsText').textContent = batch + (paused ? ' Paused for every user: the ones being built finish, then it waits.' : '');
+  progress($('previewsBar'), photos ? have / photos : s.previews && total ? s.previewsDone / total : 0);
   const now = s.previewsBuilding || [];
   $('previewsNow').replaceChildren(
     ...now.map((p) => el('li', {}, el('b', {}, 'Now'), el('code', { title: p }, p.slice(p.lastIndexOf('/') + 1)))),
-    ...(now.length ? [] : [el('li', { class: 'muted' }, 'Waiting for a builder.')]),
+    ...(s.previews && !now.length && !paused ? [el('li', { class: 'muted' }, 'Waiting for a builder.')] : []),
   );
+  const pause = $('previewsPause');
+  pause.hidden = !paused && !s.previews;
+  pause.querySelector('span').textContent = paused ? 'Resume' : 'Pause';
+  pause.querySelector('use').setAttribute('href', paused ? '#i-play' : '#i-pause');
+  pause.onclick = () => previewsAction(name, paused ? 'resume' : 'pause');
+  $('previewsAll').onclick = () => previewsAction(name, 'generate');
+}
+
+async function previewsAction(name, action) {
+  try {
+    const r = await api('POST', 'users/' + enc(name) + '/previews/' + action);
+    if (action === 'generate') toast('Queued every missing preview.');
+    showFolders(name, r);
+  } catch (e) {
+    fail(e);
+  }
 }
 
 function showFolders(name, r) {
@@ -740,7 +821,8 @@ function showFolders(name, r) {
   $('editIgnore').onclick = () => editIgnore(name, ignore);
   $('editIgnore').closest('.scan').hidden = !r.folders.length;
   const s = r.scan;
-  showPreviews(s);
+  $('previewsPanel').hidden = !r.folders.length;
+  showPreviews(name, s);
   const info = scanInfo(s);
   $('scanNow').closest('.scan').hidden = !r.folders.length;
   $('scanTitle').textContent = info.title;
@@ -757,7 +839,7 @@ function showFolders(name, r) {
   errs.querySelector('ul').replaceChildren(...all.map((e) => el('li', {}, e)));
   errs.hidden = !all.length;
   clearTimeout(timer);
-  const working = !!(s.scanning || s.previews);
+  const working = !!(s.scanning || s.previews || s.previewsPaused || s.previewsPhotos == null);
   if (working) timer = setTimeout(() => foldersOf === name && pollFolders(name).catch(fail), 2000);
   else if (scanWorking) route(); // done: the photo counts changed
   scanWorking = working;
@@ -1310,6 +1392,7 @@ document.addEventListener('DOMContentLoaded', () => {
     showAuth('login');
   });
   $('copyOrigin').addEventListener('click', copyOrigin);
+  $('limForm').addEventListener('submit', saveLimits);
   $('addUser').addEventListener('click', addUser);
   $('gcCheck').addEventListener('click', gcCheck);
   $('gcRun').addEventListener('click', gcRun);

@@ -542,6 +542,7 @@ fn services(cc: &eframe::CreationContext<'_>, log_file: Option<&std::path::Path>
         system_theme: appearance::service(),
         // AI Remove's model comes with the engine's downloader
         erase_model: None,
+        depth_model: None,
     }
 }
 
@@ -675,6 +676,7 @@ fn main() -> eframe::Result {
     // First, so every start-up record is kept for the log file (`logging`).
     let logger = logging::install();
     lightcraft_engine::guard::install_hook(panic_log_path_with(|name| std::env::var_os(name), std::env::temp_dir()));
+    lightcraft_engine::about::set_commit(env!("LIGHTCRAFT_COMMIT"));
     if let Some(logger) = logger {
         logging::record_panics(logger);
     }

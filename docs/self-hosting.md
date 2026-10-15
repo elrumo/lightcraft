@@ -37,7 +37,8 @@ You need a machine that stays on — a home server, a NAS that runs Docker, a sm
 - **Disk** for what the server keeps: photos uploaded from devices (their originals), plus previews of every photo
   (~1 MB each) and the library itself. Library folders cost only their previews.
 - **Memory**: 2 GB at least; 4 GB or more for big raw files (the server decodes each photo once to build its
-  previews; `LIGHTCRAFT_PREVIEW_THREADS=1` lowers the peak).
+  previews). The server sizes its work to the machine (CPU threads, previews and renders at once, from the cores and
+  memory it sees, container limits included); change the numbers on the admin page under Overview → Limits.
 
 There is no prebuilt server image yet: the steps below build it from the source (the first build takes 10–20 minutes).
 

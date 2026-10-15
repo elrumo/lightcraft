@@ -523,6 +523,20 @@ fn the_ui_commands_are_listed_with_their_keys() {
     assert_eq!((grid["shortcut"].as_str(), grid["label"].as_str()), (Some("G"), Some("Grid")), "{grid}");
 }
 
+// The keys no command declares itself, for the SwiftUI app's key map: the rating digits among them
+#[test]
+fn the_fixed_keys_are_listed_for_a_hosts_key_map() {
+    let h = demo();
+    let r = h.call(&req(1, "host.keyBindings", json!({})), Duration::from_secs(30));
+    let fixed = r["result"]["fixed"].as_array().unwrap();
+    assert_eq!(fixed.len(), crate::keys::FIXED_KEYS.len());
+    let three = fixed.iter().find(|k| k["shortcut"] == "3").unwrap();
+    assert_eq!((three["command"].as_str(), &three["params"]), (Some("photo.rate"), &json!({"rating": 3})), "{three}");
+    let shifted = fixed.iter().find(|k| k["shortcut"] == "Shift+X").unwrap();
+    assert_eq!(shifted["params"], json!({"flag": "reject", "advance": true}), "{shifted}");
+    assert_eq!(r["result"]["contextual"], json!([["photo.reject", "crop.rotateAspect"]]));
+}
+
 #[test]
 fn export_with_previous_needs_an_export_first() {
     let h = demo();

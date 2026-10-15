@@ -27,7 +27,7 @@ pub(super) fn kind_label(s: &MaskShape) -> (&'static str, Icon) {
         MaskShape::Radial { .. } => ("Radial Gradient", Icon::Radial),
         MaskShape::ColorRange { .. } => ("Color Range", Icon::Picker),
         MaskShape::LuminanceRange { .. } => ("Luminance Range", Icon::Sliders),
-        MaskShape::DepthRange { .. } => ("Depth Range", Icon::Sliders),
+        MaskShape::DepthRange { .. } => ("Depth Range", Icon::Aperture),
         MaskShape::Subject => ("Subject", Icon::Subject),
         MaskShape::Sky => ("Sky", Icon::Sky),
         MaskShape::Background => ("Background", Icon::Subject),
@@ -73,7 +73,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         {
             ui.label(egui::RichText::new(crate::i18n::tr("Create New Mask")).color(t.text_dim).size(13.5));
             ui.add_space(6.0);
-            let tiles: [(&str, &str, Icon); 10] = [
+            let tiles: [(&str, &str, Icon); 11] = [
                 ("object", "Object", Icon::Subject),
                 ("prompt", "Describe", Icon::Subject),
                 ("subject", "Subject", Icon::Subject),
@@ -83,6 +83,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
                 ("linear", "Linear", Icon::Linear),
                 ("radial", "Radial", Icon::Radial),
                 ("luminanceRange", "Luminance", Icon::Sliders),
+                ("depthRange", "Depth", Icon::Aperture),
                 ("colorRange", "Color", Icon::Picker),
             ];
             // four 52 pt tiles a row when they and their labels fit, else fewer (wider for a long label)
@@ -404,7 +405,7 @@ pub(crate) fn add_component(app: &mut LightcraftApp, ctx: &egui::Context, op: &s
 }
 
 /// The kinds of part a mask can be added to (or taken away from, or intersected with) by: (kind, name).
-pub(crate) const COMPONENT_KINDS: [(&str, &str); 8] = [
+pub(crate) const COMPONENT_KINDS: [(&str, &str); 9] = [
     ("object", "Object"),
     ("prompt", "Describe…"),
     ("brush", "Brush"),
@@ -413,6 +414,7 @@ pub(crate) const COMPONENT_KINDS: [(&str, &str); 8] = [
     ("sky", "Sky"),
     ("subject", "Subject"),
     ("luminanceRange", "Luminance Range"),
+    ("depthRange", "Depth Range"),
 ];
 
 /// The selected mask's Amount: how strongly its adjustments apply (0–200 %).
@@ -830,6 +832,11 @@ fn brush_settings(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             app.ui.brush_pressure = pressure;
         }
     });
+    brush_sliders(app, ui);
+}
+
+/// The brush's Size, Feather and Flow (masks and Lens Blur's Refine share them).
+pub(crate) fn brush_sliders(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     for (id, label, min, max, get) in [
         ("ui.brushSize", "Size", 1.0, 100.0, (app.ui.brush_size * 400.0) as f64),
         ("ui.brushFeather", "Feather", 0.0, 100.0, app.ui.brush_feather as f64),

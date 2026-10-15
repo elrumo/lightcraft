@@ -23,6 +23,14 @@
 //! The user chooses one in the crop tool or in Settings → AI Models, or leaves it on Automatic: the
 //! best model for this device ([`Session::recommended_expand_model`]). The diffusion models run on
 //! the GPU (Metal) when there is one, else on the CPU, where they take minutes.
+//
+//! One more way lives outside the engine: **Apple Image Playground** (`appleCloud`), in the SwiftUI
+//! app on devices with Apple Intelligence. It is not on the lists above: it runs in Apple's cloud (the
+//! app asks every time), through a sheet the user works in, so it is never the default. The engine
+//! gives the app the canvas as a picture ([`Session::expand_canvas`], `crop.expandCanvas`) and takes
+//! the picture the sheet made ([`Session::apply_expand_picture`], `crop.applyExpandPicture`): the
+//! photo stays as it is, the new area comes from the picture in the photo's tones, joined to the
+//! photo's edge, with its grain, and is stored like any other fill.
 //!
 //! The models are optional and never part of LightCraft: the user downloads them (Settings → AI
 //! Models, or the crop tool's offer; agents `models.download {"id": "lama", "acknowledged":
@@ -51,6 +59,29 @@ use crate::media::SourceLevel;
 
 /// The start of the error when the chosen model isn't here: the apps offer the download on it.
 pub const NOT_INSTALLED: &str = "The Generative Expand model is not downloaded";
+
+/// Painters outside the engine that answer with a picture (`crop.applyExpandPicture`), by the id
+/// the fill is stored with.
+pub const EXTERNAL_MODELS: [&str; 1] = ["appleCloud"];
+
+/// What a painter outside the engine is given: the canvas as a picture.
+pub struct ExternalCanvas {
+    /// Names the crop the canvas was made for: [`Session::apply_expand_picture`] refuses an answer for another.
+    pub key: u64,
+    pub width: usize,
+    pub height: usize,
+    /// The canvas as a PNG: the photo where it is and a placeholder over the new area (the Classic fill).
+    pub png: Vec<u8>,
+}
+
+/// Names photo `id`'s crop (FNV-1a over its settings, in 53 bits: a number every JSON reader keeps whole).
+fn expand_key(id: PhotoId, d: &lightcraft_develop::DevelopSettings) -> u64 {
+    let text = format!("{}:{}", id.0, serde_json::to_string(&d.crop).unwrap_or_default());
+    text.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)) & ((1 << 53) - 1)
+}
+
+/// Largest picture file taken from a painter outside the engine (bytes).
+const MAX_PICTURE_BYTES: u64 = 64 << 20;
 
 /// Whether this build runs in a browser (one pass at 512, on the page's thread).
 const WEB: bool = cfg!(target_arch = "wasm32");
@@ -528,8 +559,18 @@ impl Session {
                 }
             }
         };
+        let input = self.expand_canvas_input(id, canvas_side(model))?;
+        Ok(ExpandJob { photo: id, model, input, brush })
+    }
+
+    /// The canvas photo `id` shows for Generative Expand at up to `side` pixels a side: what every
+    /// painter is given.
+    fn expand_canvas_input(&mut self, id: PhotoId, side: usize) -> Result<ExpandInput, String> {
+        let d = self.develop_of(id).ok_or("no such photo")?;
+        if !d.crop.expand {
+            return Err("Turn on Expand in the crop tool first, then drag the crop past the photo's edges".into());
+        }
         let info = self.source_info(id);
-        let side = canvas_side(model);
         let mut src = self.source_now(id, SourceLevel::Preview)?;
         let nothing = "The crop shows nothing past the photo: drag its edges outward (or pick a wider aspect) first";
         let mut input = lightcraft_pipeline::expand::expand_input(&src, &info, &d, side).ok_or(nothing)?;
@@ -539,7 +580,76 @@ impl Session {
             src = self.source_now(id, SourceLevel::Full)?;
             input = lightcraft_pipeline::expand::expand_input(&src, &info, &d, side).ok_or(nothing)?;
         }
-        Ok(ExpandJob { photo: id, model, input, brush })
+        Ok(input)
+    }
+
+    /// The canvas for a painter outside the engine (`crop.expandCanvas`), as a picture of at most
+    /// `max_side` pixels a side (the photo where it is, the Classic fill over the new area).
+    pub fn expand_canvas(&mut self, id: PhotoId, max_side: usize) -> Result<ExternalCanvas, String> {
+        let input = self.expand_canvas_input(id, max_side.clamp(64, lightcraft_pipeline::expand::MAX_CANVAS))?;
+        let d = self.develop_of(id).ok_or("no such photo")?;
+        let (width, height) = input.size();
+        let guard = self.activity.start("expand", "Generative Expand", Cancel::No);
+        let canvas = input.placeholder();
+        drop(guard);
+        let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+        let rgba = lightcraft_raster::Rgba8::from_fn(width, height, |x, y| {
+            let p = canvas.get(x, y);
+            [byte(p[0]), byte(p[1]), byte(p[2]), 255]
+        });
+        let png = lightcraft_codecs::encode_png(&lightcraft_codecs::EncodeImage::rgba8(&rgba), &lightcraft_codecs::EncodeMeta::default())
+            .map_err(|e| format!("couldn't make the picture: {e}"))?;
+        Ok(ExternalCanvas { key: expand_key(id, &d), width, height, png })
+    }
+
+    /// Store the picture a painter outside the engine made of the canvas (`bytes`: PNG, JPEG, HEIC…;
+    /// `key` from [`Session::expand_canvas`]; `model` one of [`EXTERNAL_MODELS`]) as photo `id`'s
+    /// fill: one undo step, "Generative Expand". Refused when the crop changed meanwhile or the
+    /// picture isn't the canvas's shape.
+    pub fn apply_expand_picture(&mut self, id: PhotoId, bytes: &[u8], key: u64, model: &str) -> Result<ExpandDone, String> {
+        if !EXTERNAL_MODELS.contains(&model) {
+            return Err(format!("unknown painter `{model}` (expected {})", EXTERNAL_MODELS.join(", ")));
+        }
+        let d = self.develop_of(id).ok_or("no such photo")?;
+        if expand_key(id, &d) != key {
+            return Err("The crop changed while the picture was being made: Generate again".into());
+        }
+        let options = lightcraft_codecs::DecodeOptions { max_size: Some((2048, 2048)), ..Default::default() };
+        let decoded = lightcraft_codecs::decode(bytes, options).map_err(|e| format!("The picture couldn't be read: {e}"))?.to_srgb8();
+        let (aw, ah) = (decoded.width, decoded.height);
+        let answer = lightcraft_raster::Rgb32f::from_fn(aw, ah, |x, y| {
+            let p = decoded.get(x, y);
+            [p[0], p[1], p[2]].map(|v| f32::from(v) / 255.0)
+        });
+        let input = self.expand_canvas_input(id, lightcraft_pipeline::expand::MAX_CANVAS)?;
+        let (width, height) = input.size();
+        let guard = self.activity.start("expand", "Generative Expand", Cancel::No);
+        guard.detail(model);
+        let filled = input
+            .from_picture(&answer)
+            .ok_or_else(|| format!("The picture ({aw} x {ah}) doesn't have the shape of the area ({width} x {height}); Generate again"))?;
+        let fill = input.finish(&filled, model).ok_or("Generative Expand made no fill")?;
+        drop(guard);
+        let stored_bytes = fill.fill.data.len();
+        self.finish_expand(id, fill)?;
+        Ok(ExpandDone {
+            photo: id.0,
+            model: EXTERNAL_MODELS.iter().copied().find(|m| *m == model).unwrap_or(EXTERNAL_MODELS[0]),
+            passes: 0,
+            width,
+            height,
+            stored_bytes,
+        })
+    }
+
+    /// [`Session::apply_expand_picture`] with the picture in file `path` (at most 64 MB).
+    pub fn apply_expand_picture_file(&mut self, id: PhotoId, path: &std::path::Path, key: u64, model: &str) -> Result<ExpandDone, String> {
+        let len = std::fs::metadata(path).map_err(|e| format!("The picture couldn't be read: {e}"))?.len();
+        if len > MAX_PICTURE_BYTES {
+            return Err("The picture is too large".into());
+        }
+        let bytes = std::fs::read(path).map_err(|e| format!("The picture couldn't be read: {e}"))?;
+        self.apply_expand_picture(id, &bytes, key, model)
     }
 
     /// Store a finished fill on photo `id`: one undo step. Refused when Expand was turned off

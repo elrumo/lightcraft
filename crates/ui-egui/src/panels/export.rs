@@ -1281,7 +1281,7 @@ pub fn progress(ctx: &egui::Context, done: usize, total: usize, current: &str, s
     let p = ctx.animate_bool_with_time_and_easing(id.with("in"), true, FADE_S, egui::emath::easing::cubic_out);
     let screen = ctx.viewport_rect();
     let content = ctx.content_rect();
-    egui::Area::new(id.with("dim")).order(egui::Order::Foreground).fixed_pos(screen.min).show(ctx, |ui| {
+    egui::Area::new(id.with("dim")).order(egui::Order::Foreground).constrain_to(screen).fixed_pos(screen.min).show(ctx, |ui| {
         ui.painter().rect_filled(screen, 0.0, Color32::from_black_alpha((t.scrim as f32 * 0.8 * p) as u8));
         let _ = ui.allocate_rect(screen, Sense::click_and_drag());
     });

@@ -26,8 +26,8 @@ fn start(root: &Path, render_threads: usize) -> Server {
     accounts::set_user(&data, "ann", "correct horse", false).unwrap();
     let mut cfg = Config::new(data, "127.0.0.1:0");
     cfg.scan_interval = None;
-    cfg.preview_threads = 1;
-    cfg.render_threads = render_threads;
+    cfg.preview_threads = Some(1);
+    cfg.render_threads = Some(render_threads);
     Server::start(cfg).unwrap()
 }
 

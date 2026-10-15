@@ -47,7 +47,7 @@ fn start(data: &Path, model: Option<Arc<dyn Embedder>>) -> Server {
 fn start_with(data: &Path, model: Option<Arc<dyn Embedder>>, reader: Option<Arc<dyn TextReader>>) -> Server {
     let mut cfg = Config::new(data, "127.0.0.1:0");
     cfg.scan_interval = None;
-    cfg.preview_threads = 1;
+    cfg.preview_threads = Some(1);
     cfg.embedder = model;
     cfg.text_reader = reader;
     // (never the machine's real model folder)
@@ -671,7 +671,7 @@ fn fixture_full(
     accounts::add_folder(&data, "ann", &nas.to_string_lossy(), Some("Photos")).unwrap();
     let mut cfg = Config::new(&data, "127.0.0.1:0");
     cfg.scan_interval = None;
-    cfg.preview_threads = 1;
+    cfg.preview_threads = Some(1);
     cfg.embedder = model;
     cfg.text_reader = reader;
     cfg.face_finder = finder;

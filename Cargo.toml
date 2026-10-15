@@ -47,6 +47,7 @@ lightcraft-segment = { path = "crates/segment" }
 lightcraft-diffuse = { path = "crates/diffuse" }
 lightcraft-enhance = { path = "crates/enhance" }
 lightcraft-erase = { path = "crates/erase" }
+lightcraft-depth = { path = "crates/depth" }
 # no model by default: crates that want SigLIP 2 ask for `features = ["siglip"]`
 lightcraft-vision = { path = "crates/vision", default-features = false }
 lightcraft-geocode = { path = "crates/geocode" }
@@ -193,6 +194,8 @@ png = { opt-level = 3 }
 miniz_oxide = { opt-level = 3 }
 # AI Remove's network (MI-GAN on rten): opt-level "s" would slow every fill
 lightcraft-erase = { opt-level = 3 }
+# Lens Blur's depth network (Depth Anything V2 on rten), likewise
+lightcraft-depth = { opt-level = 3 }
 rten = { opt-level = 3 }
 rten-base = { opt-level = 3 }
 rten-gemm = { opt-level = 3 }

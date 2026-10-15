@@ -31,6 +31,8 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 flate2 = { workspace = true }
 log = { workspace = true }
+# sizing the thread pool decodes and develops run on (`limits`)
+rayon = { workspace = true }
 
 [dev-dependencies]
 lightcraft-codecs = { workspace = true }

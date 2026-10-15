@@ -47,7 +47,7 @@ const GROUPS: [(&str, Icon, &str, &[&str]); 6] = [
 ];
 
 /// Create New Mask, as Lightroom's mobile app lists it: (kind, icon, name); `None` = a gap.
-const NEW_KINDS: [Option<(&str, Icon, &str)>; 12] = [
+const NEW_KINDS: [Option<(&str, Icon, &str)>; 13] = [
     Some(("subject", Icon::Subject, "Select Subject")),
     Some(("sky", Icon::Sky, "Select Sky")),
     Some(("background", Icon::Subject, "Select Background")),
@@ -60,6 +60,7 @@ const NEW_KINDS: [Option<(&str, Icon, &str)>; 12] = [
     None,
     Some(("colorRange", Icon::Picker, "Color Range")),
     Some(("luminanceRange", Icon::Sliders, "Luminance Range")),
+    Some(("depthRange", Icon::Aperture, "Depth Range")),
 ];
 
 /// Whether the compact layout shows the Masking screen: a photo with the Masking tool open.
@@ -103,7 +104,10 @@ pub fn show(app: &mut LightcraftApp, ui: &mut Ui, t: &Tokens, landscape: bool) {
         return;
     }
     egui::Panel::top("mask_top").show_separator_line(false).exact_size(TITLE_H).frame(frame(t.canvas)).show(ui, |ui| title_bar(app, ui, t));
-    egui::Panel::bottom("mask_bar").show_separator_line(false).exact_size(BAR_H).frame(frame(t.chrome)).show(ui, |ui| bottom_bar(app, ui, t));
+    egui::Panel::bottom("mask_bar").show_separator_line(false).exact_size(BAR_H).frame(frame(t.chrome)).show(ui, |ui| {
+        super::compact::fill_below(ui, ui.max_rect(), t.chrome);
+        bottom_bar(app, ui, t);
+    });
     egui::Panel::bottom("mask_groups").show_separator_line(false).exact_size(GROUP_H).frame(frame(t.chrome)).show(ui, |ui| {
         group_row(app, ui, t, mask.as_ref());
     });

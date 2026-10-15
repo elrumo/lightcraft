@@ -38,6 +38,25 @@ pub use reader::TextReader;
 pub use store::{Error, Key};
 pub use textindex::TextIndex;
 
+/// The thread pool the ONNX models (text, faces) run on: `None` is rten's own, sized for the whole
+/// machine; a host that shares the machine sets a size ([`set_model_threads`]).
+#[cfg(all(feature = "onnx", not(target_arch = "wasm32")))]
+static MODEL_POOL: std::sync::RwLock<Option<std::sync::Arc<rten::ThreadPool>>> = std::sync::RwLock::new(None);
+
+/// Run the ONNX models on at most `threads` threads from now on (runs in progress finish on the old pool).
+#[cfg(all(feature = "onnx", not(target_arch = "wasm32")))]
+pub fn set_model_threads(threads: usize) {
+    let pool = std::sync::Arc::new(rten::ThreadPool::with_num_threads(threads.max(1)));
+    *MODEL_POOL.write().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(pool);
+}
+
+/// The options a model run takes: the pool [`set_model_threads`] made, if any.
+#[cfg(all(feature = "onnx", not(target_arch = "wasm32")))]
+pub(crate) fn run_options() -> Option<rten::RunOptions> {
+    let pool = MODEL_POOL.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone()?;
+    Some(rten::RunOptions::default().with_thread_pool(Some(pool)))
+}
+
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

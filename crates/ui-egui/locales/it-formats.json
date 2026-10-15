@@ -335,5 +335,8 @@
   "{n} photos, not saved": "{n} photos, not saved",
   "{n} preset{} in {g} group{}": "{n} preset{} in {g} group{}",
   "{p} profile{}": "{p} profile{}",
-  "{} isn't downloaded yet: download it below.": "{} isn't downloaded yet: download it below."
+  "{} isn't downloaded yet: download it below.": "{} isn't downloaded yet: download it below.",
+  "Downloading the depth model… {:.0} %": "Downloading the depth model… {:.0} %",
+  "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)": "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)",
+  "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.": "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}."
 }

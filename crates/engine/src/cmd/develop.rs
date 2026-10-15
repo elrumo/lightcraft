@@ -784,6 +784,14 @@ pub fn specs() -> Vec<CommandSpec> {
                 let id = active(s, "crop.generate")?;
                 let model = match p.get("model").and_then(Value::as_str) {
                     None | Some("auto") => None,
+                    Some(m) if crate::expand::EXTERNAL_MODELS.contains(&m) => {
+                        return Err(bad(
+                            "crop.generate",
+                            format!(
+                                "`{m}` paints through the app's own sheet: get the canvas with crop.expandCanvas and give its picture to crop.applyExpandPicture"
+                            ),
+                        ));
+                    }
                     Some(m) => Some(
                         crate::expand::ExpandModel::from_id(m)
                             .ok_or_else(|| bad("crop.generate", format!("unknown model `{m}` ({})", expand_ids())))?,
@@ -828,6 +836,48 @@ pub fn specs() -> Vec<CommandSpec> {
                 s.set_expand_preference(pick).map_err(|e| bad(C, e))?;
                 let chosen = s.chosen_expand_model();
                 Ok(json!({"model": chosen.id(), "automatic": pick.is_none(), "ready": s.expand_ready(chosen)}))
+            }
+        ),
+        cmd!(
+            query "crop.expandCanvas",
+            "Generative Expand Canvas",
+            [],
+            None,
+            "{maxEdge?: 1024} → {photo, key, width, height, png: base64}. The area Generative Expand paints as a picture for a painter outside the engine (the SwiftUI app's Apple Image Playground): the photo where it is, a placeholder over the new area. Its answer goes to `crop.applyExpandPicture` with the same `key`. Needs Expand on",
+            has_active,
+            |s, p| {
+                let id = active(s, "crop.expandCanvas")?;
+                let edge = p.get("maxEdge").and_then(Value::as_u64).and_then(|v| usize::try_from(v).ok()).unwrap_or(1024);
+                let canvas = s.expand_canvas(id, edge).map_err(|e| bad("crop.expandCanvas", e))?;
+                use base64::Engine as _;
+                Ok(json!({"photo": id.0, "key": canvas.key, "width": canvas.width, "height": canvas.height, "png": base64::engine::general_purpose::STANDARD.encode(&canvas.png)}))
+            }
+        ),
+        cmd!(
+            "crop.applyExpandPicture",
+            "Apply Generative Expand Picture",
+            [],
+            None,
+            "{key, model?: \"appleCloud\", path | png: base64} → {photo, model, width, height, storedBytes}. Stores a picture of the canvas made outside the engine (see `crop.expandCanvas`) as the fill: the photo stays as it is, the new area comes from the picture in the photo's tones with the photo's grain (one undo step, \"Generative Expand\"). Refused when the crop changed since the canvas was made, or the picture isn't the canvas's shape",
+            has_active,
+            |s, p| {
+                const C: &str = "crop.applyExpandPicture";
+                let id = active(s, C)?;
+                let key = p.get("key").and_then(Value::as_u64).ok_or_else(|| bad(C, "missing `key` (from crop.expandCanvas)"))?;
+                let model = p.get("model").and_then(Value::as_str).unwrap_or("appleCloud");
+                let done = match (p.get("path").and_then(Value::as_str), p.get("png").and_then(Value::as_str)) {
+                    (Some(path), _) => s.apply_expand_picture_file(id, std::path::Path::new(path), key, model),
+                    (None, Some(data)) => {
+                        use base64::Engine as _;
+                        let bytes = base64::engine::general_purpose::STANDARD
+                            .decode(data.as_bytes())
+                            .map_err(|e| bad(C, format!("`png` isn't base64: {e}")))?;
+                        s.apply_expand_picture(id, &bytes, key, model)
+                    }
+                    (None, None) => return Err(bad(C, "give `path` or `png`")),
+                }
+                .map_err(|e| bad(C, e))?;
+                serde_json::to_value(done).map_err(|e| bad(C, e.to_string()))
             }
         ),
         // ---- HDR editing

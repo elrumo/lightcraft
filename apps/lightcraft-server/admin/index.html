@@ -24,6 +24,8 @@
   <symbol id="i-chevron" viewBox="0 0 20 20"><path d="M8 5l5 5-5 5"/></symbol>
   <symbol id="i-back" viewBox="0 0 20 20"><path d="M12 5l-5 5 5 5"/></symbol>
   <symbol id="i-device" viewBox="0 0 20 20"><rect x="3" y="4" width="14" height="9.5" rx="1.5"/><path d="M1.5 16.5h17"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 20 20"><path d="M6.5 4.5h2v11h-2zM11.5 4.5h2v11h-2z"/></symbol>
+  <symbol id="i-play" viewBox="0 0 20 20"><path d="M6 4.5v11l9-5.5z"/></symbol>
   <symbol id="i-folder" viewBox="0 0 20 20"><path d="M2.5 6A1.5 1.5 0 0 1 4 4.5h3.5l2 2H16A1.5 1.5 0 0 1 17.5 8v6.5A1.5 1.5 0 0 1 16 16H4a1.5 1.5 0 0 1-1.5-1.5z"/></symbol>
   <symbol id="i-refresh" viewBox="0 0 20 20"><path d="M16.2 8.5A6.5 6.5 0 1 0 16 13"/><path d="M16.5 3.5v5h-5"/></symbol>
   <symbol id="i-trash" viewBox="0 0 20 20"><path d="M3.5 6h13M8 6V4h4v2M5.5 6l.8 10.5h7.4l.8-10.5"/></symbol>
@@ -135,6 +137,15 @@
           <div class="alert info"><svg class="icon"><use href="#i-info"/></svg><div><b>Set when the server starts</b><p>The data folder, address and domain come from the deployment: <code>--data</code> / <code>LIGHTCRAFT_DATA</code>, <code>--listen</code> / <code>LIGHTCRAFT_LISTEN</code>, and your reverse proxy (<code>LIGHTCRAFT_DOMAIN</code>). Change them there and restart; moving a library under a running server can lose it.</p></div></div>
         </section>
       </div>
+      <section class="panel limits">
+        <h2>Limits</h2>
+        <p class="muted" id="limMachine">How much of this machine the server may use. Leave a box empty for the automatic number.</p>
+        <form id="limForm" novalidate>
+          <div class="limits-grid" id="limFields"></div>
+          <div class="alert info" id="limRestart" hidden><svg class="icon"><use href="#i-info"/></svg><div><b>Restart to use the new CPU threads</b><p></p></div></div>
+          <div class="limits-actions"><button type="submit" class="btn accent">Save</button></div>
+        </form>
+      </section>
     </section>
 
     <!-- Users -->
@@ -213,9 +224,13 @@
             <button type="button" class="btn secondary" id="editIgnore"><span>Edit</span></button>
           </div>
         </section>
-        <section class="panel scan" id="previewsPanel" hidden>
+        <section class="panel scan" id="previewsPanel">
           <div class="scan-head">
-            <div><h3 id="previewsTitle">Previews</h3><p class="muted" id="previewsText"></p></div>
+            <div><h3 id="previewsTitle">Previews</h3><p id="previewsCover"></p><p class="muted" id="previewsText"></p></div>
+            <div class="actions">
+              <button type="button" class="btn secondary" id="previewsPause"><svg class="icon"><use href="#i-pause"/></svg><span>Pause</span></button>
+              <button type="button" class="btn secondary" id="previewsAll"><svg class="icon"><use href="#i-refresh"/></svg><span>Generate all</span></button>
+            </div>
           </div>
           <div class="meter" id="previewsBar"><div></div></div>
           <ul class="building" id="previewsNow"></ul>

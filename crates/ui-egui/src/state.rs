@@ -792,7 +792,7 @@ pub struct UiState {
     #[serde(skip)]
     pub review: bool,
     /// Compact layout: the Edit tool's group (`profile`, `light`, `color`, `effects`, `detail`,
-    /// `optics`, `calibration`); a phone shows one group at a time, as Lightroom's mobile app does.
+    /// `optics`, `lensBlur`, `calibration`); a phone shows one group at a time, as Lightroom's mobile app does.
     pub edit_group: String,
     /// Compact layout: light, dark, or like the system (`app.appearance.*`; Settings ▸ Interface).
     pub appearance: Appearance,
@@ -1090,6 +1090,12 @@ pub struct UiState {
     pub point_color_visualize: bool,
     /// Light panel "Visualize HDR": grey below SDR white, colour bands above (HDR edits).
     pub hdr_visualize: bool,
+    /// Lens Blur "Visualize Depth": the depth the blur uses, warm near and cool far.
+    pub depth_visualize: bool,
+    /// Lens Blur asked for its depth model on a photo without depth: the panel offers the download.
+    pub lens_blur_offer: bool,
+    /// Lens Blur's Refine brush: `focus`, `blur` or `erase` (painted with the `lensBrush` tool).
+    pub lens_brush: String,
     /// Red Eye panel: selected correction, and whether new ones are pet eyes.
     pub eye: usize,
     pub eye_pet: bool,
@@ -1723,6 +1729,9 @@ impl Default for UiState {
             point_color: 0,
             point_color_visualize: false,
             hdr_visualize: false,
+            depth_visualize: false,
+            lens_blur_offer: false,
+            lens_brush: "focus".into(),
             eye: 0,
             eye_pet: false,
             visualize_spots: false,

@@ -335,5 +335,8 @@
   "Renames {n} face{} across the library. The files are not changed.": "Renomeia {n} rosto{} na biblioteca. Os arquivos não são alterados.",
   "“{to}” is already a person. Combining them makes one person; Undo separates them again.": "“{to}” já é uma pessoa. Combiná-las deixa uma só; Desfazer as separa de novo.",
   "{what} merge added at {mp}: its full size, {full}, needs more memory than this computer has": "{what} mesclagem adicionada em {mp}: o tamanho completo, {full}, precisa de mais memória do que este computador tem",
-  "{what} merge added at {mp}, the largest a panorama can be (its full size is {full})": "{what} mesclagem adicionada em {mp}, o maior tamanho possível para um panorama (tamanho completo: {full})"
+  "{what} merge added at {mp}, the largest a panorama can be (its full size is {full})": "{what} mesclagem adicionada em {mp}, o maior tamanho possível para um panorama (tamanho completo: {full})",
+  "Downloading the depth model… {:.0} %": "Baixando o modelo de profundidade… {:.0} %",
+  "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.": "Esta foto não tem profundidade própria: o Desfoque de lente a estima com o Depth Anything V2 Small, um download de {:.0} MB (licença {}). {}.",
+  "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)": "Em foco: {:.0}–{:.0} (0 mais perto, 100 mais longe)"
 }

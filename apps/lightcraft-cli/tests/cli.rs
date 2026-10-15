@@ -770,3 +770,17 @@ fn denoise_serve_runs_tiles_for_another_computer() {
     let _ = child.wait();
     let _ = std::fs::remove_dir_all(&models);
 }
+
+#[test]
+fn inspect_names_a_wrapped_jpeg() {
+    let path = tmp("inspect-wrapped.jpg");
+    let mut bytes = b"WRAPPER!".to_vec();
+    bytes.extend_from_slice(&[0xFF, 0xD8, 0xFF, 0xE0, 0, 0]);
+    std::fs::write(&path, bytes).unwrap();
+    let o = Command::new(BIN).arg("inspect").arg(&path).output().unwrap();
+    let text = String::from_utf8_lossy(&o.stdout);
+    assert!(o.status.success(), "{text}");
+    assert!(text.contains("size:    14 bytes"), "{text}");
+    assert!(text.contains("unrecognized file format (14 bytes, starts 57 52 41 50"), "{text}");
+    assert!(text.contains("JPEG signature also at offsets [8]"), "{text}");
+}

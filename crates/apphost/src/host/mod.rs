@@ -609,6 +609,15 @@ impl Engine {
                     .map(|(id, label, shortcut, menu)| json!({"id": id, "label": label, "shortcut": shortcut, "menu": menu}))
                     .collect(),
             )),
+            // the keys no command declares itself (secondary keys, the rating and label digits) and the
+            // commands that share a key by context (`crate::keys`)
+            "host.keyBindings" => Ok(json!({
+                "fixed": crate::keys::FIXED_KEYS
+                    .iter()
+                    .map(|(shortcut, command, params)| json!({"shortcut": shortcut, "command": command, "params": serde_json::from_str::<Value>(params).unwrap_or_else(|_| json!({}))}))
+                    .collect::<Vec<_>>(),
+                "contextual": crate::keys::CONTEXTUAL.iter().map(|(a, b)| json!([a, b])).collect::<Vec<_>>(),
+            })),
             // the sidebar's arrangement, which the app keeps: `{layout?, command?, params?}` → the
             // arrangement after one of the `view.sidebar*` commands, and the sections shown
             "host.sidebar" => {
@@ -1457,6 +1466,7 @@ fn overlay(v: Option<&Value>) -> lightcraft_pipeline::Overlay {
         Some("spots") => Overlay::Spots(num("threshold", 100.0, 50.0) as u8),
         Some("pointColor") => v.get("index").and_then(Value::as_u64).map_or(Overlay::None, |i| Overlay::PointColorRange(i.min(255) as u8)),
         Some("hdr") => Overlay::HdrRange,
+        Some("depth") => Overlay::Depth,
         _ => Overlay::None,
     }
 }

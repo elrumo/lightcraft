@@ -655,6 +655,11 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             app.ui.hdr_visualize = p.get("on").and_then(Value::as_bool).unwrap_or(!app.ui.hdr_visualize);
             Ok(json!({"on": app.ui.hdr_visualize}))
         }
+        "view.visualizeDepth" => {
+            // {on?}; no params toggles. Shown on photos with Lens Blur on.
+            app.ui.depth_visualize = p.get("on").and_then(Value::as_bool).unwrap_or(!app.ui.depth_visualize);
+            Ok(json!({"on": app.ui.depth_visualize}))
+        }
         "view.softProof" => {
             // {on?, space?, profile?: ICC path | null, intent?: perceptual|relative, paperInk?,
             // destWarning?, displayWarning?}; no params toggles

@@ -90,7 +90,7 @@ pub(crate) fn finish(format: Format, raw: Raw, meta: Meta, source_dims: (u32, u3
     let n = raw.width * raw.height;
     let ch = raw.model.channels() + raw.alpha as usize;
     if n == 0 || raw.buf.len() < n * ch {
-        return Err(Error::Malformed(format, "sample buffer too short".into()));
+        return Err(Error::Malformed(format, format!("sample buffer too short ({} samples, {} needed)", raw.buf.len(), n * ch)));
     }
     let float = matches!(raw.buf, Buf::F32(_));
 

@@ -69,6 +69,7 @@ pub const TABLE: &[(&str, Class)] = &[
     ("enhance", Class::Layer(3)),
     ("erase", Class::Layer(3)),
     ("diffuse", Class::Layer(3)),
+    ("depth", Class::Layer(3)),
     ("vision", Class::Layer(3)),
     ("engine", Class::Layer(4)),
     // the frontend runtime shared by every UI (render scheduling, background pumps, the engine
@@ -93,12 +94,13 @@ pub const TABLE: &[(&str, Class)] = &[
 /// Explicit orderings *within* a layer (earlier may be used by later).
 /// L0: `raster` builds on `color` and `geom`; `color` uses `geom` for matrices.
 /// L1: `raw` and `codecs` read metadata through `meta`; `develop` uses `meta` for XMP.
-/// L3: `erase` loads its ONNX model with `vision`'s fixes; `diffuse` paints through `erase`'s
-/// `Painter`; `enhance` downloads `erase`'s and `diffuse`'s models.
+/// L3: `erase` and `depth` load their ONNX models with `vision`'s fixes; `diffuse` paints through
+/// `erase`'s `Painter`; `enhance` downloads `erase`'s, `depth`'s and `diffuse`'s models.
 /// L4: `apphost` runs frontends on top of `engine`.
 pub const INTRA_LAYER_ORDER: &[&[&str]] = &[
     &["geom", "color", "raster"],
     &["vision", "erase", "diffuse", "enhance"],
+    &["vision", "depth", "enhance"],
     &["tiff", "raster"],
     &["denoise-core", "denoise"],
     &["meta", "raw"],

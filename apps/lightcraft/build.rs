@@ -1,12 +1,18 @@
 //! Windows only: embed the app icon and version info (VERSIONINFO) into `lightcraft.exe`, so
 //! Explorer, the taskbar, the Start menu and Alt-Tab show the lynx.
 //!
-//! On every other target this does nothing. A missing resource compiler is a warning, so a
+//! Everywhere: the commit System Info shows (`LIGHTCRAFT_COMMIT`, `xtask/src/build_info.rs`).
+//!
+//! On every other target the Windows part does nothing. A missing resource compiler is a warning, so a
 //! cross-compile from macOS or Linux still links, unless `LIGHTCRAFT_REQUIRE_WINRES=1` turns it
 //! into an error (for release builds).
 
+include!("../../xtask/src/build_info.rs");
+
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=../../xtask/src/build_info.rs");
+    emit_for_build_script(env!("CARGO_PKG_VERSION"));
     println!("cargo:rerun-if-changed=../../assets/app-icon/lightcraft.ico");
     println!("cargo:rerun-if-env-changed=LIGHTCRAFT_REQUIRE_WINRES");
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {

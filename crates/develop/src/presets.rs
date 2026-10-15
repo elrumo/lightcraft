@@ -124,9 +124,10 @@ impl SettingsGroup {
     }
 }
 
-/// The subset of `s` covering `groups`, as a partial JSON object. AI Remove fills are pictures of
-/// this photo, so copied spots leave them behind (on another photo they fill from around them), and
-/// spots that are the shape of an object here (Tap to Remove) are not copied at all.
+/// The subset of `s` covering `groups`, as a partial JSON object. AI Remove fills and Lens Blur's
+/// estimated depth are pictures of this photo, so copies leave them behind (on another photo a
+/// spot fills from around it, and Lens Blur uses that photo's depth), and spots that are the shape
+/// of an object here (Tap to Remove) are not copied at all.
 pub fn extract_groups(s: &DevelopSettings, groups: &[SettingsGroup]) -> Value {
     let full = s.to_json();
     let mut out = Map::new();
@@ -143,6 +144,10 @@ pub fn extract_groups(s: &DevelopSettings, groups: &[SettingsGroup]) -> Value {
         for spot in spots.iter_mut().filter_map(Value::as_object_mut) {
             spot.remove("fill");
         }
+    }
+    // (a pasted Lens Blur keeps the depth of the photo it lands on)
+    if let Some(blur) = out.get_mut("lens_blur").and_then(Value::as_object_mut) {
+        blur.remove("depth");
     }
     Value::Object(out)
 }
@@ -279,6 +284,19 @@ mod tests {
         let b = apply_partial(&DevelopSettings::default(), &v, 1.0);
         assert_eq!(b.spots.len(), 1);
         assert_eq!((b.spots[0].points.clone(), b.spots[0].fill.clone()), (a.spots[0].points.clone(), None));
+    }
+
+    #[test]
+    fn copied_lens_blur_leaves_its_depth_behind() {
+        let mut a = DevelopSettings { lens_blur: crate::LensBlur::applied(30.0), ..Default::default() };
+        a.lens_blur.depth = crate::DepthMap::from_nearness(2, 1, &[0.2, 0.8]);
+        let v = extract_groups(&a, &[SettingsGroup::LensBlur]);
+        assert!(v["lens_blur"].get("depth").is_none(), "{v}");
+        // the photo it lands on keeps its own depth
+        let mut b = DevelopSettings::default();
+        b.lens_blur.depth = crate::DepthMap::from_nearness(1, 1, &[0.5]);
+        let c = apply_partial(&b, &v, 1.0);
+        assert_eq!((c.lens_blur.amount, c.lens_blur.focal_distance, c.lens_blur.depth.clone()), (50.0, 30.0, b.lens_blur.depth.clone()));
     }
 
     #[test]

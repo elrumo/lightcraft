@@ -12,7 +12,7 @@ from [docs/gaps.md](docs/gaps.md). The full assessment, method and evidence are 
 
 | | Value | Kind |
 |---|---:|---|
-| **Feature breadth** (checklist) | **84.1%** of 549 rows (P0 98.3%, P1 94.8%, P2 59.2%) | measured: [parity-checklist.md](docs/parity-checklist.md) recount |
+| **Feature breadth** (checklist) | **84.3%** of 549 rows (P0 98.3%, P1 94.8%, P2 60.0%) | measured: [parity-checklist.md](docs/parity-checklist.md) recount |
 | **Feature breadth** (weighted by use) | **~77%** | estimated |
 | **Ready for real work** (full target) | **~61%** (56–66%) | estimated: weighted sum over the dimensions |
 | **Mainstream practitioner** | **~51%** (46–56%) | estimated |
@@ -44,7 +44,7 @@ Hours are calibrated on this repo's PR history; see
 
 | Dimension | Ready | Breadth | Remaining | Doc |
 |---|---:|---:|---:|---|
-| Features | ~61% | ~77% (checklist 84.1%) | 600–1,100 h | [target-app-parity](docs/target-app-parity.md#features) |
+| Features | ~61% | ~77% (checklist 84.3%) | 600–1,100 h | [target-app-parity](docs/target-app-parity.md#features) |
 | ↳ RAW cameras, colour, lens profiles | ~60% | 83% of 1,446 Adobe models decode, 38% verified | 255–480 h | [raw-parity](docs/raw-parity.md) |
 | UI/UX fidelity | ~70% | ~85% | 32–54 h | [ui-parity](docs/ui-parity.md) |
 | File formats (non-raw) | ~70% | ~85% | 30–55 h | [file-format-parity](docs/file-format-parity.md) |
@@ -128,10 +128,11 @@ This fork adds features upstream doesn't have; they are outside the numbers abov
 | **Super Resolution** (`crates/enhance`, [super-resolution.md](docs/super-resolution.md)) | Nomos Uni SPAN 2× (optional download) on desktop and iPhone; every optional model listed, downloaded and deleted in Settings → AI Models ([ai-models.md](docs/ai-models.md)) | Enlarges the rendered photo, not the raw data; no preview in the dialog |
 | **Content-aware Remove by patch synthesis** (M8.4) and **panorama Fill Edges** (M13) | Remove fills from synthesized texture seeded by the spot's source; a stitched panorama's empty corners are filled with continued texture | Rows or tiles in strong perspective can come out at the wrong angle |
 | **AI Remove** (`crates/erase`, [ai-remove.md](docs/ai-remove.md)) | Remove ▸ Generative AI: MI-GAN (MIT, optional download, pinned SHA-256) on rten fills a stroke on desktop, iPhone and the web; the fill is stored with the spot, so renders and exports never run the model | Not run on an iPhone yet |
+| **Lens Blur and depth** (`crates/depth`, `crates/pipeline/src/lensblur.rs`, [lens-blur.md](docs/lens-blur.md)) | Edit ▸ Lens Blur and Depth Range masks from the photo's own depth (iPhone Portrait HEIC / JPEG, DNG 1.5) or a Depth Anything V2 Small estimate (Apache-2.0, optional 27 MB download, stored with the settings); bokeh shapes, Boost, Focus / Blur / Erase refine brushes; desktop, phone, browser and the SwiftUI app | Portrait depth checked on Apple-written synthetic files only; not run on a device or in a browser yet |
 | **Generative Expand on the device** (`crates/erase`, `crates/diffuse`, [generative-expand.md](docs/generative-expand.md)) | Crop ▸ Expand: the frame reaches past the photo and Generate paints the new area with MI-GAN (every device), LaMa (Apache-2.0, 208 MB), Stable Diffusion 1.5 Inpainting (2.1 GB, also capable phones), Kandinsky 2.2 Inpaint (Apache-2.0, 9 GB) or SDXL Inpainting (6.9 GB), offered by the device's profile with an Automatic default (Settings → AI Models), or Classic (no download), in the background; stored with the settings | The diffusion models take minutes on a CPU, not timed on a GPU yet; no variations or prompt; not run on a phone yet |
 
-Next for the fork: sync and the iOS app verified on real hardware; then depth (Depth Range, Lens Blur) and sharing
-between people with accounts (comments, likes, shared libraries).
+Next for the fork: sync and the iOS app verified on real hardware (Lens Blur on an iPhone's Portrait photos among
+it); then sharing between people with accounts (comments, likes, shared libraries).
 
 ## Progress log
 
@@ -233,6 +234,7 @@ between people with accounts (comments, likes, shared libraries).
 | 2026-10-14 | minor | Camera-coverage sweep (#1327): 30 models verified on 40 CC0 files (coverage.py 515 → 545 verified); sensor verification does not establish colour parity (#1277); headline numbers unchanged |
 | 2026-10-14 | minor | 97 Canon CR2, Pentax and Ricoh models verified (334 models, 23%); headline numbers unchanged |
 | 2026-10-14 | minor | RAW: 82% of Adobe's models decode, 36% verified (integration batch 36's CC0 per-model checks) |
+| 2026-10-14 | minor | Lens Blur and depth added to *Fork additions* (LR-EDIT-LENSBLUR ⬜ → 🟡, LR-MASK-DEPTHRANGE ⬜ → ✅); *Next* no longer lists depth; numbers unchanged |
 | 2026-10-13 | minor | Generative Expand on the device (MI-GAN / LaMa / Classic) added to *Fork additions*; LR-CROP-GENEXPAND OOS → P2 🟡; numbers unchanged |
 | 2026-10-13 | minor | Upstream merged into this fork again (up to b3d392b4: Leica Q3 verified, 236 models; accessibility audit); numbers as upstream's |
 | 2026-10-13 | minor | Sync server: album links with passwords, guest uploads, Download All, photo pages and a slideshow; per-user storage limits; *Fork additions* row and *Next* updated; numbers unchanged |

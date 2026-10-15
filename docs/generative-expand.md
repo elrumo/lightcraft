@@ -91,6 +91,32 @@ Settings and the crop tool make), and `crop.expandModels` (each model with `avai
 only after the user agreed. `crop.drag`, `crop.set`, `crop.straighten` and `crop.aspect` all honour
 Expand.
 
+## Apple Image Playground (SwiftUI iPhone / iPad app)
+
+Where the device has Apple Intelligence on (iOS or macOS 27), **Fill With** also offers **Apple Image Playground**. It is
+the one exception to "nothing leaves the device": Apple's sheet makes the new area in Apple's cloud (Private Cloud
+Compute). So it is never picked by itself (Auto never chooses it), and every Generate asks "Send this photo to
+Apple?" first, naming what goes: the part of the photo inside the crop, as the canvas picture below.
+
+How it works: the engine gives the app the canvas as a picture (`crop.expandCanvas`: the crop's box with a little
+context at up to 1024 px a side, the photo where it is, the Classic fill as a placeholder over the new area, and a
+`key` naming the crop). The app opens Apple's `imagePlaygroundSheet` on it (`creationStrategy: .editExisting`,
+personalization off, the canvas's size, a prompt asking to continue the scene and keep the photo as it is); the user
+works in the sheet and taps Done; the picture's file goes back (`crop.applyExpandPicture {key, path | png, model:
+"appleCloud"}`). Apple's API takes no mask, so the sheet may re-render the whole picture: the engine uses only what it
+needs of it:
+- the picture is resized to the canvas (refused when its proportions are more than 8 % off the canvas's);
+- its tones are matched to the photo's (a mean and a spread per channel over the strip of photo along the new
+  area), and it is faded in from the photo's own edge colours over 4 % of the canvas, so the join does not show;
+- the photo's pixels never change, and the photo's grain is added over the new area, as for the other painters;
+- the result is stored like any other fill (`ExpandFill.model` is `appleCloud`), one undo step, so renders and exports
+  never contact Apple. Turning Expand off, or moving the crop while the sheet is open, refuses the answer.
+
+Limits: the sheet needs the user's taps and a device with Apple Intelligence (not the simulator; not scriptable;
+`LIGHTCRAFT_FAKE_PLAYGROUND=1` stands in with a tinted copy of the canvas, for tours and tests, and
+`ui.set {playgroundExpand: true}` runs it); Apple manages its usage limits; the web and desktop apps do not have it.
+**Not yet seen on a device**: how well the sheet's result continues a photo is unknown until it is tried.
+
 ## How it works
 
 - **What the model sees.** The crop's bounding box (and a little more past the photo where the crop

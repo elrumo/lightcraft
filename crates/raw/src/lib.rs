@@ -28,6 +28,7 @@
 mod binned;
 pub mod color;
 pub mod demosaic;
+pub mod depth;
 mod dng;
 pub mod dngwrite;
 pub mod gaintable;

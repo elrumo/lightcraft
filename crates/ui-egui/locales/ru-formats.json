@@ -335,5 +335,8 @@
   "Already in “{}”": "Уже в «{}»",
   "Move {n} photo{} to “{}”": "Переместить в «{1}» фото: {n}{0:.0}",
   "Move {n} photo{} to “{}”?": "Переместить в «{1}» фото: {n}{0:.0}?",
-  "Moved {n} photo{} to “{}”. Edit → Undo moves them back.": "В «{1}» перемещено фото: {n}{0:.0}. Правка → Отменить вернёт их."
+  "Moved {n} photo{} to “{}”. Edit → Undo moves them back.": "В «{1}» перемещено фото: {n}{0:.0}. Правка → Отменить вернёт их.",
+  "Downloading the depth model… {:.0} %": "Загрузка модели глубины… {:.0} %",
+  "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.": "У этого фото нет собственной карты глубины: «Размытие объектива» оценивает её с помощью Depth Anything V2 Small, загрузка {:.0} МБ (лицензия {}). {}.",
+  "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)": "В фокусе: {:.0}–{:.0} (0 — ближе всего, 100 — дальше всего)"
 }

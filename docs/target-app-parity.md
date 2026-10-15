@@ -1,6 +1,6 @@
 # Target-app parity: LightCraft vs Adobe Lightroom
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-15 · **Change:** minor (upstream merged up to 0da998f2: checklist 84.1% of 549 rows with the fork's rows counted; RAW: 83% of Adobe's models decode, 38% verified after the camera-coverage sweep #1327) · **Target:** Adobe Lightroom Classic 15.5 (August 2026) and Lightroom 9.6 (desktop)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-15 · **Change:** minor (Lens Blur and Depth Range masks: AI table row ⬜ → 🟡; upstream merged up to 0da998f2: checklist 84.3% of 549 rows with the fork's rows counted; RAW: 83% of Adobe's models decode, 38% verified after the camera-coverage sweep #1327) · **Target:** Adobe Lightroom Classic 15.5 (August 2026) and Lightroom 9.6 (desktop)
 
 The authoritative assessment of how close LightCraft is to Lightroom. The row-by-row checklist is
 [parity-checklist.md](parity-checklist.md); the ranked work list is [gaps.md](gaps.md); deep areas
@@ -12,7 +12,7 @@ have their own documents: [raw-parity.md](raw-parity.md), [file-format-parity.md
 
 | Number | Value | Kind |
 |---|---:|---|
-| **Feature breadth**, checklist | **84.1%** of 549 in-scope rows (P0 98.3%, P1 94.8%, P2 59.2%) | **measured**: recount of [parity-checklist.md](parity-checklist.md) rows (✅ 1, 🟡 ½, 🚫 left out), the same rule `cargo xtask parity` uses |
+| **Feature breadth**, checklist | **84.3%** of 549 in-scope rows (P0 98.3%, P1 94.8%, P2 60.0%) | **measured**: recount of [parity-checklist.md](parity-checklist.md) rows (✅ 1, 🟡 ½, 🚫 left out), the same rule `cargo xtask parity` uses |
 | **Feature breadth**, weighted by use | **~77%** | estimated: feature-area table below |
 | **Ready for real work** (full target) | **~61%** (range 56–66%) | estimated: weighted sum over the dimensions with written weights, see [below](#ready-for-real-work-mainstream-practitioner-and-essentials-user) |
 | **Mainstream practitioner** | **~51%** (range 46–56%) | estimated: weekly areas of a working photographer, depth 74.0% × 0.804 × colour 0.85 |
@@ -46,7 +46,7 @@ phase #85, duplicate Local entries #22, black GPU exports on an Intel iGPU #78).
 
 | Dimension | Breadth | Ready for real work | Remaining | Doc |
 |---|---:|---:|---:|---|
-| Features (weighted areas below) | ~77% (checklist 84.1%, measured) | ~61% | 600–1,100 h | [Features](#features) |
+| Features (weighted areas below) | ~77% (checklist 84.3%, measured) | ~61% | 600–1,100 h | [Features](#features) |
 | ↳ RAW cameras, colour and lens profiles (part of features) | 83% of Adobe's 1,446 models decode (38% verified), measured | ~56% | 255–480 h | [raw-parity.md](raw-parity.md) |
 | UI/UX fidelity | ~85% | ~70% | 32–54 h | [ui-parity.md](ui-parity.md) |
 | File formats (non-raw: images, sidecars, presets, catalogs) | ~85% | ~70% | 30–55 h | [file-format-parity.md](file-format-parity.md) |
@@ -72,7 +72,7 @@ from the checklist sections and the deep-dive documents.
 | Global develop adjustments (light, colour, curves, grading, effects, detail) | 15% | 93% | 70% | 30–60 h | checklist F 91.7%; character tuned by eye |
 | Optics, lens profiles, crop and geometry | 6% | 80% | 50% | 40–80 h | no lens database; crop / Upright complete |
 | Masking | 8% | 67% | 45% | 60–110 h | checklist K 67.4%; AI masks heuristic or SAM 3 without mirror |
-| Remove, heal, Enhance (denoise, Raw Details, Super Resolution, Lens Blur) | 7% | 45% | 30% | 70–130 h | checklist I 75%, P 0% |
+| Remove, heal, Enhance (denoise, Raw Details, Super Resolution, Lens Blur) | 7% | 45% | 30% | 70–130 h | checklist I 75%, P 0%; Lens Blur 🟡 (2026-10-14, not yet re-weighed) |
 | Presets, profiles, versions, history, sync | 5% | 95% | 85% | 8–15 h | |
 | Export | 6% | 89% | 75% | 15–30 h | checklist S 88.9% |
 | Merge and HDR | 3% | 85% | 60% | 20–35 h | merge 88% (HDR merge 🟡: AI Denoise on merged DNGs, JPEG response, memory; gap 29), HDR 80% (HDR display on macOS and iOS; not on Windows and Linux; the hours are those of the last review) |
@@ -95,7 +95,7 @@ search embeddings; generative remove runs in Adobe's cloud.
 | Subject / Sky / Background masks | classical heuristics; the file's own DNG semantic mattes | 🟡 |
 | People (faces, body, hair, skin…) and Landscape masks | — | ⬜ |
 | Object / Describe masks | SAM 3 in pure Rust (Metal / CPU); opt-in 3.4 GB download, no mirror configured | 🟡 |
-| Depth range mask, Lens Blur | — | ⬜ |
+| Depth range mask, Lens Blur | the photo's own depth (Portrait HEIC / JPEG, DNG 1.5) or Depth Anything V2 Small (Apache-2.0, opt-in 27 MB); refine brushes ([lens-blur.md](lens-blur.md)) | 🟡 |
 | AI Denoise | Bayer only, pure-Rust CPU / GPU, user-installed weights | 🟡 |
 | Raw Details, Super Resolution | — | ⬜ |
 | Generative remove, distractions, reflections | — (generative is out of scope: cloud) | ⬜ |
@@ -276,7 +276,7 @@ most of its list; what remains is the data-heavy part (colour, lenses, models) i
 
 | Date | Checklist (all / P0 / P1 / P2) | Ready for real work | Remaining to full parity | Source |
 |---|---|---|---|---|
-| 2026-10-15 | 84.1% / 98.3% / 94.8% / 59.2% (549 rows) | ~61% full · ~51% mainstream · ~65% essentials | unchanged | upstream merged up to 0da998f2 (Slideshow, Print, 545 verified models) with this fork's rows counted |
+| 2026-10-15 | 84.3% / 98.3% / 94.8% / 60.0% (549 rows) | ~61% full · ~51% mainstream · ~65% essentials | unchanged | upstream merged up to 0da998f2 (Slideshow, Print, 545 verified models) with this fork's rows counted |
 | 2026-10-12 | 81.1% (unchanged) | ~61% full · ~51% mainstream · ~65% essentials | unchanged | 22 more CR3 bodies verified (raw-parity.md) |
 | 2026-10-10 (RAW) | 81.1% (unchanged) | ~61% full · ~49% mainstream · ~64% essentials | unchanged | RAW measured model by model against Adobe's list; RAW decode and colour as explicit rows |
 | 2026-10-10 (final) | 81.1% (unchanged) | ~59% full (weighted sum) · ~51% mainstream · ~63% essentials | full 1,000–1,800 h · mainstream 450–840 h · essentials 160–300 h | method aligned with the standard |
@@ -306,6 +306,7 @@ P2 items 12–25 h; look tuning, performance, packaging, hardening 25–45 h.
 | 2026-10-14 | minor | Gap 4 (full-resolution zoom) closed: removed from the interaction-fidelity notes, the alpha-gate partial rows and the beta needs; headline numbers and the ×0.95 interaction factor unchanged |
 | 2026-10-14 | minor | Camera-coverage sweep (#1327): 30 models verified on 40 CC0 files (`coverage_sweep_corpus.rs`, `coverage-sweep.tsv`; `docs/raw/coverage.py` 515 → 545 verified rows); the counts above are not re-measured here. Sensor verification does not establish colour parity (#1277); headline numbers unchanged |
 | 2026-10-14 | minor | RAW: 82% of Adobe's models decode, 36% verified (integration batch 36) |
+| 2026-10-14 | minor | Lens Blur and Depth Range masks landed (AI table ⬜ → 🟡; LR-EDIT-LENSBLUR 🟡, LR-MASK-DEPTHRANGE ✅); the Remove / Enhance area is not re-weighed yet, percentages unchanged |
 | 2026-10-12 | minor | UI/UX remaining 34–58 h → 32–54 h (canvas tools by keyboard); headline numbers unchanged |
 | 2026-10-12 | minor | UI/UX remaining 40–70 h → 34–58 h (accessibility audit landed, ui-parity.md); percentages unchanged |
 | 2026-10-12 | minor | 22 more CR3 bodies verified on one CC0 file each (raw-parity.md): use-weighted share whose camera decodes 85% → 92%, RAW decoding 77% → 83%; full 60.7% → 61.2% (~61%), mainstream depth 72.1% → 74.0% (~49% → ~51%), essentials depth 77.5% → 78.0% (~64% → ~65%) |

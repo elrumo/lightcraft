@@ -158,7 +158,12 @@ pub(crate) fn decode(bytes: &[u8], mode: Mode) -> Result<RawImage> {
     let off = raw.u64(t::STRIP_OFFSETS).ok_or(RawError::Tiff(lightcraft_tiff::TiffError::MissingTag(t::STRIP_OFFSETS)))?;
     let len = raw.u64(t::STRIP_BYTE_COUNTS).unwrap_or(bytes.len() as u64 - off.min(bytes.len() as u64));
     let chunk = lightcraft_tiff::image::Chunk { index: 0, x: 0, y: 0, width: 0, height: 0, plane: 0, offset: off, len };
-    let src = chunk_bytes(bytes, &chunk).ok_or_else(|| RawError::Corrupt("raw strip outside file".into()))?;
+    let src = chunk_bytes(bytes, &chunk).ok_or_else(|| {
+        RawError::Corrupt(format!(
+            "the file is truncated ({} bytes, but the raw data starts at {off}; the copy or download was cut short)",
+            bytes.len()
+        ))
+    })?;
     let (fw, fh, nc, prec) = ljpeg::frame_info(src)?;
     // the raw strip is the end of the file: one running past it means the copy or download was cut short
     let cut_short = |e| match off.saturating_add(len) {
@@ -356,6 +361,16 @@ pub(crate) mod tests {
         assert_eq!(off + len, bytes.len(), "the strip ends the file");
         let e = crate::decode(&bytes[..off + len / 2]).unwrap_err().to_string();
         assert!(e.contains("truncated"), "{e}");
+    }
+
+    /// A file cut before its raw data starts (the raw strip is the file's last part) is also called truncated.
+    #[test]
+    fn cut_before_the_raw_data_says_so() {
+        let (bytes, _) = synthetic_cr2(64, 40, None);
+        let raw = Tiff::parse(&bytes).unwrap();
+        let off = raw_ifd(&raw).unwrap().u64(t::STRIP_OFFSETS).unwrap() as usize;
+        let e = crate::decode(&bytes[..off]).unwrap_err().to_string();
+        assert!(e.contains("truncated") && e.contains("starts at"), "{e}");
     }
 
     #[test]

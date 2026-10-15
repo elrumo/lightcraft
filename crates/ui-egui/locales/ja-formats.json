@@ -335,5 +335,8 @@
   "Renames {n} face{} across the library. The files are not changed.": "ライブラリ全体で{n}件の顔の名前を変更します。ファイルは変更されません。{:.0}",
   "“{to}” is already a person. Combining them makes one person; Undo separates them again.": "「{to}」はすでに別の人物です。まとめると1人になり、元に戻すと再び分かれます。",
   "{what} merge added at {mp}: its full size, {full}, needs more memory than this computer has": "{what}合成を{mp}で追加しました：フルサイズ（{full}）にはこのコンピューターのメモリが足りません",
-  "{what} merge added at {mp}, the largest a panorama can be (its full size is {full})": "{what}合成を{mp}で追加しました。パノラマの最大サイズです（フルサイズ：{full}）"
+  "{what} merge added at {mp}, the largest a panorama can be (its full size is {full})": "{what}合成を{mp}で追加しました。パノラマの最大サイズです（フルサイズ：{full}）",
+  "Downloading the depth model… {:.0} %": "深度モデルをダウンロード中… {:.0} %",
+  "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.": "この写真には深度情報がないため、レンズぼかしは Depth Anything V2 Small で深度を推定します（{:.0} MBのダウンロード、{}ライセンス）。{}。",
+  "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)": "ピントが合う範囲：{:.0}–{:.0}（0が最も手前、100が最も奥）"
 }

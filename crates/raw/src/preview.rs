@@ -104,6 +104,12 @@ fn jpeg_frame(b: &[u8]) -> Option<(u32, u32, u8)> {
     Some((be16(7)?, be16(5)?, at(9)?))
 }
 
+/// Whether the JPEG `b` ends with its EOI marker (allowing a little padding after it). Byte stuffing
+/// keeps `FF D9` out of entropy-coded data, so one in the last bytes is the end, not a stray pair.
+fn ends_with_eoi(b: &[u8]) -> bool {
+    b.get(b.len().saturating_sub(16)..).is_some_and(|tail| tail.windows(2).any(|w| w == [0xff, 0xd9]))
+}
+
 /// Whether `b` is a JPEG XL file: a bare codestream or the ISO-BMFF container's signature box.
 fn is_jxl(b: &[u8]) -> bool {
     b.starts_with(&[0xff, 0x0a]) || b.starts_with(&[0, 0, 0, 0x0c, b'J', b'X', b'L', b' ', 0x0d, 0x0a, 0x87, 0x0a])
@@ -212,7 +218,9 @@ fn preview_covering(bytes: &[u8], min_edge: Option<u32>) -> Option<Vec<u8>> {
     if let Some(p) = crate::vendor::orf::preview(bytes) {
         found.push(p);
     }
-    let largest = found.iter().copied().filter(|s| is_dct_jpeg(s) || is_jxl(s)).max_by_key(|s| s.len());
+    // a complete preview beats a longer one cut off by a truncated file (the full-size JPEG in IFD0
+    // of a half-copied CR2 over its intact thumbnail)
+    let largest = found.iter().copied().filter(|s| is_dct_jpeg(s) || is_jxl(s)).max_by_key(|s| (is_jxl(s) || ends_with_eoi(s), s.len()));
     let best = min_edge
         .zip(largest)
         .and_then(|(min, big)| smallest_covering(&found, big, min))
@@ -636,6 +644,38 @@ mod tests {
         for n in (0..file.len()).step_by(7) {
             let _ = embedded_preview_covering(&file[..n], 100);
         }
+    }
+
+    /// A file cut off inside its full-size preview (a half-copied raw) still yields its intact smaller
+    /// preview, instead of the longer truncated one that no decoder accepts.
+    #[test]
+    fn a_complete_preview_beats_a_longer_truncated_one() {
+        let (small, big) = (fake_jpeg(10), fake_jpeg(500));
+        let mut ifd0 = IfdBuilder::new();
+        ifd0.set(t::COMPRESSION, Value::Short(vec![6]));
+        ifd0.set(t::IMAGE_WIDTH, Value::Long(vec![1]));
+        ifd0.set(t::IMAGE_LENGTH, Value::Long(vec![1]));
+        ifd0.set_image(ImageData::Strips { rows_per_strip: 1, strips: vec![small.clone()] });
+        let mut sub = IfdBuilder::new();
+        sub.set(t::COMPRESSION, Value::Short(vec![7]));
+        sub.set(t::IMAGE_WIDTH, Value::Long(vec![2]));
+        sub.set(t::IMAGE_LENGTH, Value::Long(vec![2]));
+        sub.set(t::NEW_SUBFILE_TYPE, Value::Long(vec![1]));
+        sub.set_image(ImageData::Strips { rows_per_strip: 2, strips: vec![big.clone()] });
+        ifd0.add_sub_ifd(sub);
+        let bytes = TiffWriter::default().write(&[ifd0]).unwrap();
+        assert_eq!(embedded_preview(&bytes).unwrap(), big);
+        // The writer puts its IFDs after the pixel data, so a cut file would lose them too; a Canon file
+        // keeps them first. Overwrite the big preview's EOI instead: the same unterminated candidate.
+        let at = bytes.windows(big.len()).position(|w| w == big).unwrap();
+        let mut cut = bytes.clone();
+        cut[at + big.len() - 2..at + big.len()].fill(0x55);
+        assert_eq!(embedded_preview(&cut).unwrap(), small);
+        // nothing complete at all: the unterminated one is still returned, as before
+        let mut both = cut.clone();
+        let at_small = both.windows(small.len()).position(|w| w == small).unwrap();
+        both[at_small + small.len() - 2..at_small + small.len()].fill(0x55);
+        assert_eq!(embedded_preview(&both).map(|p| p.len()), Some(big.len()));
     }
 
     /// CR3 with a full-size JPEG track: that JPEG wins over the smaller `PRVW` box.

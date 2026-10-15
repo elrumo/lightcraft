@@ -114,8 +114,9 @@ Run `cargo test --release -p lightcraft-codecs --test bench -- --ignored --nocap
   installed a system decoder (`set_system_decoder`).
 - **HEIC** needs the `heif` feature (on by default in this fork; upstream leaves it off because HEVC
   patents are the distributor's call); without it and without a system decoder,
-  `Error::Unsupported` says the build has no HEIC support. 4:2:2 and 4:4:4 HEIF (Canon/Sony HIF) is
-  refused: heic-rs 0.1.1 loses sync on those bitstreams.
+  `Error::Unsupported` says the build has no HEIC support. A HEIC whose picture
+  fails to decode (4:2:2 and 4:4:4 Canon/Sony HIF are the known case) falls back to the file's own
+  thumbnail, small, when it has one; otherwise the error carries heic-rs's message.
 - JPEG: arithmetic coding unsupported (as in both decoders); extended XMP (> 64 KiB) neither read
   nor written; EXIF > 64 KiB not written. The encoder uses standard Huffman tables (interleaved
   baseline) for maximum compatibility.

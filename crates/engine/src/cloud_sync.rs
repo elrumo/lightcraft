@@ -1440,7 +1440,7 @@ impl Session {
             st.activity_task = Some(t.id());
             tasks.push(t);
         }
-        if !st.config.token.is_empty() && !st.config.library.is_empty() && (!st.needs_snapshot || st.config.filling.is_some()) && !waiting {
+        if !st.config.token.is_empty() && !st.config.library.is_empty() && !waiting {
             self.blob_tasks(&mut st, now, &mut tasks);
         }
         // nothing queued or running: the next batch of transfers counts from zero
@@ -1459,8 +1459,12 @@ impl Session {
     /// Plan photo file transfers (when the library or what to keep changed) and start some: the
     /// active photo's smart preview and the mini previews the grid asks for first.
     fn blob_tasks(&mut self, st: &mut SyncState, now: Instant, tasks: &mut Vec<Task>) {
+        // the server's library is being read before it replaces this one's: what is asked for (the photo on
+        // screen, the grid's cells) downloads meanwhile, but nothing is planned or sent from a library that is
+        // about to be replaced
+        let reading = st.needs_snapshot && st.config.filling.is_none();
         self.touch_active_original(st);
-        if st.config.originals_budget_mb.is_some() && st.evict_at.is_none_or(|t| now >= t) {
+        if !reading && st.config.originals_budget_mb.is_some() && st.evict_at.is_none_or(|t| now >= t) {
             self.evict_originals(st);
             st.evict_at = Some(now + EVICT_EVERY);
         }
@@ -1484,19 +1488,23 @@ impl Session {
         }
         // (a slider drag changes the catalog every frame, and nothing a plan is made of)
         let key = (self.catalog.revision, st.plan_gen);
-        if st.planned != Some(key) && (self.interaction.is_none() || st.planned.is_none()) {
+        if !reading && st.planned != Some(key) && (self.interaction.is_none() || st.planned.is_none()) {
             st.plan = self.plan_blobs(st, now).into();
             st.planned = Some(key);
         }
         let key = (self.catalog.len(), st.minis_gen);
-        if st.config.all_previews && st.minis_planned != Some(key) && self.interaction.is_none() {
+        if !reading && st.config.all_previews && st.minis_planned != Some(key) && self.interaction.is_none() {
             st.minis = self.plan_minis(st, now).into();
             st.minis_planned = Some(key);
         }
         let mut urgent = self.urgent_jobs(st, now).into_iter();
         while st.jobs.len() < BLOB_PARALLEL {
-            let Some(mut job) = st.ready.pop_front().or_else(|| urgent.next()).or_else(|| st.plan.pop_front()).or_else(|| st.minis.pop_front())
-            else {
+            let next = if reading {
+                urgent.next()
+            } else {
+                st.ready.pop_front().or_else(|| urgent.next()).or_else(|| st.plan.pop_front()).or_else(|| st.minis.pop_front())
+            };
+            let Some(mut job) = next else {
                 break;
             };
             // (signing out sends what is left and downloads nothing: the files would go with the library)
@@ -1625,6 +1633,12 @@ impl Session {
         let Some(have) = &st.have else { return Some(0) };
         let n = self.proxy_names(p, &key, have);
         Some(if n.has_smart { 2 } else { u8::from(n.has_mini) })
+    }
+
+    /// Whether `p` is a synced photo whose original and previews aren't here yet while this device is syncing:
+    /// a render that failed for want of them is a wait, not an error (see [`Session::synced_tier`]).
+    pub fn awaiting_preview(&self, p: &Photo) -> bool {
+        self.sync.as_ref().is_some_and(|st| st.has_token() && !st.config.paused) && self.synced_tier(p) == Some(0)
     }
 
     /// The download of `p`'s preview `blob` (a smart or mini one) when `p` is a synced photo whose
@@ -2698,7 +2712,8 @@ pub fn render_on_server(target: &RenderTarget, request: &proto::Render) -> std::
 /// Build a photo's smart and mini previews from its original (decodes it).
 #[cfg(not(target_arch = "wasm32"))]
 pub fn build_proxies(original: &str, smart: &str, mini: &str) -> std::result::Result<(), String> {
-    let bytes = std::fs::read(original).map_err(|e| format!("{original}: {e}"))?;
+    // (a TIFF of several GB, mostly layers, is read in part)
+    let bytes = crate::files::read_file(Path::new(original))?;
     let (s, m) = crate::smart::encode_pair(&bytes, MINI_EDGE)?;
     let write = |path: &str, b: Vec<u8>| lightcraft_catalog::safe_file::write_atomic(Path::new(path), &b).map_err(|e| format!("{path}: {e}"));
     if let Some(dir) = Path::new(smart).parent() {

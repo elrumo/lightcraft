@@ -185,7 +185,8 @@ is; import reports either per preset (`Profile “Name” (Lightroom's own)` / `
 References are resolved again whenever profiles are imported or deleted, so a pack's profiles and presets can come in
 either order. The look's embedded `Parameters` are not read.
 
-**Not mapped:** camera profiles (`CameraProfile`; we have our own profile set), red eye, lens blur,
+**Not mapped:** camera profiles (`CameraProfile`; we have our own profile set), red eye, lens blur
+(LightCraft keeps its Lens Blur, refine strokes and estimated depth in its own settings block),
 process-version 2010 field names, and AI features. Local adjustments and spot removal are read as described below.
 
 ## Spot removal

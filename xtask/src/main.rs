@@ -5,6 +5,7 @@
 
 mod assets;
 mod bench;
+mod build_info;
 mod ci_report;
 mod geodata;
 mod ico;

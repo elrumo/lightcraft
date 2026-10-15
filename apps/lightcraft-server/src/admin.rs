@@ -7,6 +7,8 @@
 //! - **Sessions:** an admin signs in with their user name and password and gets a session token
 //!   of its own (idle sessions end, see [`accounts::ADMIN_IDLE`]); it is not a device and can't
 //!   sync, and a device token never opens these routes.
+//! - **Limits** on how much of the machine the server takes (CPU threads, previews, renders and
+//!   requests at once) are set here unless the deployment fixed them ([`crate::limits`]).
 //! - **Settings stay deployment settings:** where the data lives, the address the server listens
 //!   on and its domain are shown, not edited: moving a library under a running server, or its
 //!   address under its clients, is how libraries get lost (see `docs/sync.md`).
@@ -380,10 +382,27 @@ pub fn api(st: &State, req: &mut Request, method: &Method, rest: &str) -> Resp {
             st.folders.request(name);
             folders(st, name)
         }),
+        (Method::Post, ["users", name, "previews", action @ ("pause" | "resume" | "generate")]) => {
+            match *action {
+                "pause" => st.folders.pause(true),
+                "resume" => st.folders.pause(false),
+                _ => st.folders.generate_all(name),
+            }
+            log::info!("admin {me}: {action} previews ({name})");
+            folders(st, name)
+        }
         (Method::Post, ["users", name, "scan"]) => {
             st.folders.request(name);
             folders(st, name)
         }
+        (Method::Get, ["limits"]) => Ok(st.limits.status()),
+        (Method::Put, ["limits"]) => read_json::<crate::limits::Values>(req).map_err(Err).and_then(|v| {
+            let e = st.limits.set(v).map_err(|e| Ok((400, e)))?;
+            st.render.set_max(e.renders);
+            st.folders.wake_builders();
+            log::info!("admin {me}: limits {v:?}");
+            Ok(st.limits.status())
+        }),
         (Method::Get, ["search"]) => Ok(search(st)),
         (Method::Put, ["search"]) => read_json::<Enabled>(req).map_err(Err).and_then(|b| {
             st.vision.set_enabled(b.enabled).map_err(|e| Ok((500, e)))?;
@@ -539,15 +558,25 @@ fn size_of(dir: &Path, depth: u32) -> u64 {
         .fold(0, u64::saturating_add)
 }
 
+/// The served web build's `version.json` (`{"version", "commit"}`, written by `cargo xtask web`), if it has one.
+fn web_build(web: &Path) -> Option<Value> {
+    let text = std::fs::read_to_string(web.join("version.json")).ok()?;
+    let v: Value = serde_json::from_str(&text).ok()?;
+    let field = |k: &str| v.get(k).and_then(Value::as_str).map(|s| s.chars().take(64).collect::<String>());
+    Some(json!({"version": field("version"), "commit": field("commit")}))
+}
+
 fn status(st: &State, me: &str) -> Value {
     let data = std::fs::canonicalize(&st.data).unwrap_or_else(|_| st.data.clone());
     let users = accounts::read_users(&st.data).map(|f| f.users.len()).unwrap_or(0);
     json!({
         "me": me,
-        "version": env!("CARGO_PKG_VERSION"),
+        "version": env!("LIGHTCRAFT_BUILD_VERSION"),
+        "commit": env!("LIGHTCRAFT_COMMIT"),
         "data": data.to_string_lossy(),
         "listen": st.listen,
         "web": st.web.as_ref().map(|w| w.to_string_lossy().to_string()),
+        "webBuild": st.web.as_deref().and_then(web_build),
         "disk": disk(&st.data).map(|(total, free)| json!({"total": total, "free": free})),
         "users": users,
     })
@@ -749,7 +778,9 @@ fn folders(st: &State, name: &str) -> AdminResult {
             })
         })
         .collect();
-    Ok(json!({"folders": list, "ignore": u.ignore, "scan": st.folders.status(name)}))
+    let mut scan = st.folders.status(name);
+    (scan.previews_have, scan.previews_photos) = st.folders.coverage(st, name).unzip();
+    Ok(json!({"folders": list, "ignore": u.ignore, "scan": scan}))
 }
 
 fn devices(st: &State, name: &str) -> AdminResult {
@@ -763,4 +794,23 @@ fn devices(st: &State, name: &str) -> AdminResult {
         .map(|d| json!({"id": d.id, "name": d.name, "space": d.space, "created": d.created, "lastSeen": a.last_seen(name, d.id)}))
         .collect();
     Ok(Value::Array(list))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn web_build_reads_version_json_and_tolerates_junk() {
+        let dir = std::env::temp_dir().join(format!("lc-web-build-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(web_build(&dir), None, "no version.json");
+        std::fs::write(dir.join("version.json"), "not json").unwrap();
+        assert_eq!(web_build(&dir), None);
+        std::fs::write(dir.join("version.json"), r#"{"version":"0.2.3","commit":"ffae40d8ab-dirty"}"#).unwrap();
+        assert_eq!(web_build(&dir), Some(json!({"version": "0.2.3", "commit": "ffae40d8ab-dirty"})));
+        std::fs::write(dir.join("version.json"), r#"{"version":7}"#).unwrap();
+        assert_eq!(web_build(&dir), Some(json!({"version": null, "commit": null})));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }

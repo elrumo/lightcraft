@@ -422,6 +422,8 @@ mod tests {
         assert_eq!(resolve(BackendChoice::Use(Backends::GL), def, compiled), Some(def));
     }
 
+    /// Uses its own marker and scope count, never the process-wide ones: a test creating a device
+    /// meanwhile would arm the shared count and write its own text over this file.
     #[test]
     fn init_marker_is_written_during_creation_and_removed_after() {
         let dir = std::env::temp_dir().join(format!("lc-gpu-marker-{}", std::process::id()));
@@ -528,6 +530,7 @@ mod tests {
         let r = std::panic::catch_unwind(|| with_marker_on(Some(m.clone()), &active, "kernel compilation", || panic!("compile")));
         assert!(r.is_err());
         assert!(!m.exists(), "the process survived, so nothing is left to report");
+        assert_eq!(*active.lock().unwrap(), 0, "the scope ended");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -69,7 +69,7 @@ pub fn shortcut_of<'a>(keymap: &'a Keymap, id: &str) -> Option<&'a str> {
 }
 
 /// Engine commands that intentionally share a key and are disambiguated by context in [`handle`].
-pub const CONTEXTUAL: &[(&str, &str)] = &[("photo.reject", "crop.rotateAspect")];
+pub use lightcraft_apphost::keys::CONTEXTUAL;
 
 /// Commands other than `id` whose shortcut is the key `sc` (contextual partners excepted).
 pub fn conflicts(keymap: &Keymap, id: &str, sc: &str) -> Vec<&'static str> {
@@ -191,43 +191,10 @@ pub fn format(m: Modifiers, k: Key) -> Option<String> {
     (back.1 == want).then_some(s)
 }
 
-/// Secondary key bindings for commands that already exist: `(shortcut, command id, params JSON)`.
-/// They complement the primary shortcut declared on the command (Lightroom-desktop keys that our
-/// primary keymap assigns elsewhere, see docs/ui-parity.md → Shortcuts). Shown in Help → Keyboard Shortcuts.
-pub const ALIASES: &[(&str, &str, &str)] = &[
-    ("Cmd+D", "library.selectNone", "{}"),
-    ("Shift+E", "dialog.export", "{}"),
-    ("Cmd+E", "app.exportPrevious", "{}"),
-    ("Space", "view.zoomToggle", "{}"),
-    // Lightroom Classic: F6 toggles the filmstrip, F7 the left library panel.
-    // Keep existing primary shortcuts and honour custom keymap assignments.
-    ("F6", "view.filmstrip", "{}"),
-    ("F7", "view.leftPanel", "{}"),
-    ("Shift+M", "version.create", "{}"),
-    // grid thumbnail size: Classic's key is `=`; `+` (keypad, or Shift+= reported as Plus) agrees
-    ("Plus", "view.thumbSizeUp", "{}"),
-    ("Shift+Plus", "view.thumbSizeUp", "{}"),
-    ("Shift+X", "photo.flag", r#"{"flag": "reject", "advance": true}"#),
-    ("Shift+Z", "photo.flag", r#"{"flag": "pick", "advance": true}"#),
-    ("Shift+U", "photo.flag", r#"{"flag": "none", "advance": true}"#),
-    ("Shift+6", "photo.label", r#"{"label": "red", "advance": true}"#),
-    ("Shift+7", "photo.label", r#"{"label": "yellow", "advance": true}"#),
-    ("Shift+8", "photo.label", r#"{"label": "green", "advance": true}"#),
-    ("Shift+9", "photo.label", r#"{"label": "blue", "advance": true}"#),
-    // Shift+[ / Shift+] arrive as { / } on most layouts
-    ("Shift+{", "brush.featherLess", "{}"),
-    ("Shift+}", "brush.featherMore", "{}"),
-    // keyword set: ⌥1–⌥9 toggle the current set's keywords on the selection
-    ("Alt+1", "keyword.toggleFromSet", r#"{"index": 1}"#),
-    ("Alt+2", "keyword.toggleFromSet", r#"{"index": 2}"#),
-    ("Alt+3", "keyword.toggleFromSet", r#"{"index": 3}"#),
-    ("Alt+4", "keyword.toggleFromSet", r#"{"index": 4}"#),
-    ("Alt+5", "keyword.toggleFromSet", r#"{"index": 5}"#),
-    ("Alt+6", "keyword.toggleFromSet", r#"{"index": 6}"#),
-    ("Alt+7", "keyword.toggleFromSet", r#"{"index": 7}"#),
-    ("Alt+8", "keyword.toggleFromSet", r#"{"index": 8}"#),
-    ("Alt+9", "keyword.toggleFromSet", r#"{"index": 9}"#),
-];
+/// Secondary key bindings for commands that already exist, and the rating and label digits:
+/// `(shortcut, command id, params JSON)`. The table is shared with the SwiftUI app
+/// (`lightcraft_apphost::keys`); shown in Help, Keyboard Shortcuts.
+pub use lightcraft_apphost::keys::FIXED_KEYS as ALIASES;
 
 pub fn parse(s: &str) -> Option<(Modifiers, Key)> {
     let mut m = Modifiers::NONE;
@@ -404,20 +371,6 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
                 aliased.push((id, serde_json::from_str(params).unwrap_or_default()));
             }
         }
-        // rating 0-5, colour labels 6-9 (with Shift: and advance)
-        for (n, key) in [Key::Num0, Key::Num1, Key::Num2, Key::Num3, Key::Num4, Key::Num5].iter().enumerate() {
-            if matches(i, Modifiers::NONE, *key) && !native(&n.to_string()) && !taken.contains(&(Modifiers::NONE, *key)) {
-                fire.push(format!("rate:{n}:0"));
-            }
-            if matches(i, Modifiers::SHIFT, *key) && !taken.contains(&(Modifiers::SHIFT, *key)) {
-                fire.push(format!("rate:{n}:1"));
-            }
-        }
-        for (label, key, sc) in [("red", Key::Num6, "6"), ("yellow", Key::Num7, "7"), ("green", Key::Num8, "8"), ("blue", Key::Num9, "9")] {
-            if matches(i, Modifiers::NONE, key) && !native(sc) && !taken.contains(&(Modifiers::NONE, key)) {
-                fire.push(format!("label:{label}"));
-            }
-        }
         if grid_navigation {
             // Home / End: the first / last photo of the view
             for (key, id) in [(Key::Home, "grid:first"), (Key::End, "grid:last")] {
@@ -459,7 +412,16 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
             if let Some(o) = params.as_object_mut() {
                 o.remove("advance");
             }
+            let rating = params.get("rating").and_then(serde_json::Value::as_u64).filter(|_| id == "photo.rate");
             cull(app, id, params, advance);
+            if let Some(n) = rating {
+                let label = if n == 0 {
+                    crate::i18n::tr("Rating cleared").to_string()
+                } else {
+                    crate::i18n::tr_format!("Rated {}", "★".repeat(n as usize))
+                };
+                app.toast(ctx, label);
+            }
         } else if let Err(e) = app.run(id, params)
             && matches!(id, "app.export" | "app.exportPrevious")
         {
@@ -481,19 +443,8 @@ pub fn handle(app: &mut LightcraftApp, ctx: &egui::Context) {
             let _ = app.run(if f == "library.next" { "slideshow.next" } else { "slideshow.previous" }, json!({}));
             continue;
         }
-        if let Some(rest) = f.strip_prefix("rate:") {
-            let (n, adv) = rest.split_once(':').unwrap_or(("0", "0"));
-            cull(app, "photo.rate", json!({"rating": n.parse::<u8>().unwrap_or(0)}), adv == "1");
-            let label = if n == "0" {
-                crate::i18n::tr("Rating cleared").to_string()
-            } else {
-                crate::i18n::tr_format!("Rated {}", "★".repeat(n.parse().unwrap_or(0)))
-            };
-            app.toast(ctx, label);
-        } else if matches!(f.as_str(), "photo.decreaseRating" | "photo.increaseRating") {
+        if matches!(f.as_str(), "photo.decreaseRating" | "photo.increaseRating") {
             cull(app, &f, json!({}), false);
-        } else if let Some(l) = f.strip_prefix("label:") {
-            cull(app, "photo.label", json!({"label": l}), false);
         } else if f == "panel.presets" && library_grid(app) {
             // Classic's Shift+P picks and advances in Library; keep the Presets binding elsewhere.
             cull(app, "photo.flag", json!({"flag": "pick"}), true);

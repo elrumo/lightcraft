@@ -70,7 +70,7 @@ target/release/lightcraft-server serve --data /srv/lightcraft --listen 127.0.0.1
 
 | Command | What it does |
 |---|---|
-| `serve [--listen HOST:PORT] [--web DIR] [--scan-interval MIN] [--max-requests N] [--cors-origin SITE]…` | Serve (default `127.0.0.1:8080`, only this computer; `$LIGHTCRAFT_LISTEN`). `--web` (`$LIGHTCRAFT_WEB`): the `cargo xtask web` bundle, served at `/` with the same cross-origin isolation headers as the dev server. `--scan-interval` (`$LIGHTCRAFT_SCAN_INTERVAL`, default 15): minutes between scans of the library folders, 0 = at start and on demand only. `--max-requests` (`$LIGHTCRAFT_MAX_REQUESTS`, default 64): requests answered at once, more are told to try again (the health check never waits). `--cors-origin` (once per site; `$LIGHTCRAFT_CORS`, comma-separated; `*` = any site): web builds hosted on another site may call the API ([below](#a-web-build-on-another-site)). `$LIGHTCRAFT_PREVIEW_THREADS`: threads building their previews (default half the cores, 1–4). `$LIGHTCRAFT_RENDER_THREADS`: photos rendered at once for devices that [export on the server](#exporting-on-the-server) (default 1; a render takes about as much memory as the same export on a desktop) |
+| `serve [--listen HOST:PORT] [--web DIR] [--scan-interval MIN] [--max-requests N] [--threads N] [--cors-origin SITE]…` | Serve (default `127.0.0.1:8080`, only this computer; `$LIGHTCRAFT_LISTEN`). `--web` (`$LIGHTCRAFT_WEB`): the `cargo xtask web` bundle, served at `/` with the same cross-origin isolation headers as the dev server. `--scan-interval` (`$LIGHTCRAFT_SCAN_INTERVAL`, default 15): minutes between scans of the library folders, 0 = at start and on demand only. `--max-requests` (`$LIGHTCRAFT_MAX_REQUESTS`, default 64): requests answered at once, more are told to try again (the health check never waits). `--threads` (`$LIGHTCRAFT_THREADS`): the CPU threads decodes, develops and the search models share (default three quarters of the cores). `--cors-origin` (once per site; `$LIGHTCRAFT_CORS`, comma-separated; `*` = any site): web builds hosted on another site may call the API ([below](#a-web-build-on-another-site)). `$LIGHTCRAFT_PREVIEW_THREADS`: previews built at once (default half the CPU threads, 1–4, fewer when memory is short: one per 1.5 GiB). `$LIGHTCRAFT_RENDER_THREADS`: photos rendered at once for devices that [export on the server](#exporting-on-the-server) (default 1, or 2 with 8 GiB of memory or more; a render takes about as much memory as the same export on a desktop). These four limits are worked out from the machine (a container's CPU and memory limits count); an admin changes them on the admin page (Overview → Limits, kept in `<data>/limits.json`) unless the deployment set them here. Previews, renders and requests follow a change at once, the CPU threads at the next start. Work over a limit waits: previews in their queue, renders and requests are told to try again and devices do |
 | `user add NAME [--admin]` / `user passwd NAME` | Add a user / change a password (first line of stdin, or `$LIGHTCRAFT_PASSWORD`; 8 characters at least). Works while the server runs |
 | `user admin NAME on\|off` | Let a user sign in to [the admin page](#the-admin-page), or stop them (the last admin stays) |
 | `user quota NAME SIZE\|off` | The most the server keeps for `NAME` ([storage limits](#storage-limits)): `500M`, `50G`, `1.5T` (powers of 1000, as the admin page shows sizes; `50GiB`: of 1024); `off` = no limit |
@@ -131,7 +131,8 @@ screens, tabs on a phone), follows the system's light or dark mode, and confirms
 
 - **Overview:** users, photos, signed-in devices and free disk space at a glance; **Connect a device** (the address
   to type into Settings ▸ Sync on each device, the one you opened the page with, with a Copy button); and the
-  server's details: version, data folder, the address it listens on, whether it serves the web build.
+  server's details: version and the commit it was built from, data folder, the address it listens on, whether it
+  serves the web build and that build's version and commit (its `version.json`, written by `cargo xtask web`).
 - **Users:** every user with their photo, album and device counts and storage used (the files the server keeps for
   them *and* the photos in their library folders, which it only reads: a user page says how much of it is each);
   **Add user**. Open a user for their page: reset the password, make or remove an admin, remove the user (their
@@ -259,7 +260,7 @@ can make such folders a user's **library folders** (admin page › Users › the
   uses it. Photos already read from a name that is skipped now stay in the library with their edits, their files
   showing as missing, as with any file that disappears; take the name off the list and they are found again.
 - Hidden folders and NAS bookkeeping (`@eaDir`, `#recycle`, `#snapshot`, `$RECYCLE.BIN`…) are skipped, symbolic
-  links aren't followed, files larger than 2 GiB aren't read, and every file is decoded under a guard: a damaged
+  links aren't followed, files larger than 2 GiB aren't read (a TIFF is, in part: its tables, small values and first image, so a Photoshop file whose size is mostly layers imports; the limit is 64 GiB), and every file is decoded under a guard: a damaged
   one is reported, never fatal.
 
 ## Connect your devices

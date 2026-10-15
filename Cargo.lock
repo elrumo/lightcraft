@@ -3398,6 +3398,7 @@ dependencies = [
  "lightcraft-mcp",
  "lightcraft-merge",
  "lightcraft-raster",
+ "lightcraft-raw",
  "lightcraft-sysmem",
  "lightcraft-ui-egui",
  "serde_json",
@@ -3475,6 +3476,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "lightcraft-depth"
+version = "0.8.0"
+dependencies = [
+ "lightcraft-codecs",
+ "lightcraft-raster",
+ "lightcraft-vision",
+ "rten",
+ "rten-tensor",
+ "sha2",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "lightcraft-develop"
 version = "0.8.0"
 dependencies = [
@@ -3517,6 +3531,7 @@ dependencies = [
  "lightcraft-color",
  "lightcraft-denoise",
  "lightcraft-denoise-core",
+ "lightcraft-depth",
  "lightcraft-develop",
  "lightcraft-diffuse",
  "lightcraft-enhance",
@@ -3561,6 +3576,7 @@ dependencies = [
  "candle-nn",
  "lightcraft-codecs",
  "lightcraft-color",
+ "lightcraft-depth",
  "lightcraft-diffuse",
  "lightcraft-erase",
  "lightcraft-fetch",
@@ -3869,6 +3885,7 @@ dependencies = [
  "lightcraft-raster",
  "lightcraft-vision",
  "log",
+ "rayon",
  "serde",
  "serde_json",
  "sha2",

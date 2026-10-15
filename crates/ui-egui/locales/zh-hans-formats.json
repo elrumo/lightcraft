@@ -335,5 +335,8 @@
   "Renames {n} face{} across the library. The files are not changed.": "在整个图库中重命名 {n} 张面孔。不会改动文件。{:.0}",
   "“{to}” is already a person. Combining them makes one person; Undo separates them again.": "“{to}”已经是另一个人。合并后成为一个人；撤销会再把他们分开。",
   "{what} merge added at {mp}: its full size, {full}, needs more memory than this computer has": "已添加 {what} 合并（{mp}）：完整尺寸（{full}）所需的内存超出了这台电脑的内存",
-  "{what} merge added at {mp}, the largest a panorama can be (its full size is {full})": "已添加 {what} 合并（{mp}），这是全景图的最大尺寸（完整尺寸：{full}）"
+  "{what} merge added at {mp}, the largest a panorama can be (its full size is {full})": "已添加 {what} 合并（{mp}），这是全景图的最大尺寸（完整尺寸：{full}）",
+  "Downloading the depth model… {:.0} %": "正在下载深度模型… {:.0} %",
+  "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.": "这张照片本身没有深度数据：镜头模糊会使用 Depth Anything V2 Small 来估算（需下载 {:.0} MB，{} 许可证）。{}。",
+  "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)": "对焦范围：{:.0}–{:.0}（0 最近，100 最远）"
 }

@@ -72,7 +72,8 @@ impl Net {
     /// Runs the model on `data` shaped `shape` and returns its first output as (shape, values).
     fn run<const N: usize, const M: usize>(&self, shape: [usize; N], data: &[f32]) -> Result<([usize; M], Vec<f32>), Error> {
         let input = ValueView::from_shape(shape, data).map_err(|e| Error::Model(format!("OCR input: {e}")))?;
-        let [out] = self.model.run_n(vec![(self.input, input.into())], [self.output], None).map_err(|e| Error::Model(format!("OCR: {e}")))?;
+        let [out] =
+            self.model.run_n(vec![(self.input, input.into())], [self.output], crate::run_options()).map_err(|e| Error::Model(format!("OCR: {e}")))?;
         out.into_shape_vec::<f32, M>().map_err(|e| Error::Model(format!("OCR output: {e}")))
     }
 }
