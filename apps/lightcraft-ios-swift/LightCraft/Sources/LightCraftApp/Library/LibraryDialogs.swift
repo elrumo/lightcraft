@@ -50,6 +50,7 @@ struct RenamePhotosSheet: View {
                                 }
                             }
                         }
+                        .lcRowButton()
                         .foregroundStyle(.primary)
                     }
                 }
@@ -199,15 +200,16 @@ struct LabelNamesSheet: View {
                                 if name == current { Image(systemName: "checkmark").foregroundStyle(Color.accentColor) }
                             }
                         }
+                        .lcRowButton()
                         .foregroundStyle(.primary)
                         .swipeActions {
                             if set["builtin"].bool != true {
-                                Button("Delete", role: .destructive) {
-                                    Task {
-                                        await model.run("label.deleteSet", ["name": .string(name)])
-                                        await load()
-                                    }
-                                }
+                                Button("Delete", role: .destructive) { deleteSet(name) }
+                            }
+                        }
+                        .contextMenu {
+                            if set["builtin"].bool != true {
+                                Button("Delete", systemImage: "trash", role: .destructive) { deleteSet(name) }
                             }
                         }
                     }
@@ -215,6 +217,7 @@ struct LabelNamesSheet: View {
                         setName = ""
                         savingSet = true
                     }
+                    .lcRowButton()
                 }
             }
             .navigationTitle("Color Label Names")
@@ -239,6 +242,13 @@ struct LabelNamesSheet: View {
                 Button("Cancel", role: .cancel) {}
             }
             .task { await load() }
+        }
+    }
+
+    private func deleteSet(_ name: String) {
+        Task {
+            await model.run("label.deleteSet", ["name": .string(name)])
+            await load()
         }
     }
 
@@ -366,20 +376,20 @@ struct KeywordSetsSheet: View {
                                 if name == current { Image(systemName: "checkmark").foregroundStyle(Color.accentColor) }
                             }
                         }
+                        .lcRowButton()
                         .foregroundStyle(.primary)
                         .swipeActions {
-                            Button("Delete", role: .destructive) {
-                                Task {
-                                    await model.run("keyword.deleteSet", ["name": .string(name)])
-                                    await load()
-                                }
-                            }
+                            Button("Delete", role: .destructive) { deleteSet(name) }
+                        }
+                        .contextMenu {
+                            Button("Delete", systemImage: "trash", role: .destructive) { deleteSet(name) }
                         }
                     }
                     Button("New Set…", systemImage: "plus") {
                         newName = ""
                         newSet = true
                     }
+                    .lcRowButton()
                 }
             }
             .navigationTitle("Keyword Sets")
@@ -398,6 +408,13 @@ struct KeywordSetsSheet: View {
                 Button("Cancel", role: .cancel) {}
             }
             .task { await load() }
+        }
+    }
+
+    private func deleteSet(_ name: String) {
+        Task {
+            await model.run("keyword.deleteSet", ["name": .string(name)])
+            await load()
         }
     }
 
@@ -423,7 +440,7 @@ struct MetadataPresetsSheet: View {
 
     var body: some View {
         NavigationStack {
-            List {
+            LCList {
                 Section {
                     ForEach(Array(presets.enumerated()), id: \.offset) { _, p in
                         let n = p["name"].string ?? ""
@@ -437,25 +454,27 @@ struct MetadataPresetsSheet: View {
                                 Text(Self.summary(p["fields"])).font(.caption).foregroundStyle(.secondary).lineLimit(2)
                             }
                         }
+                        .lcRowButton()
                         .foregroundStyle(.primary)
                         .swipeActions {
-                            Button("Delete", role: .destructive) {
-                                Task {
-                                    await model.run("metadata.deletePreset", ["name": .string(n)])
-                                    await load()
-                                }
-                            }
+                            Button("Delete", role: .destructive) { deletePreset(n) }
+                        }
+                        .contextMenu {
+                            Button("Delete", systemImage: "trash", role: .destructive) { deletePreset(n) }
                         }
                     }
-                    if presets.isEmpty { Text("No metadata presets yet").foregroundStyle(.secondary) }
+                    if presets.isEmpty {
+                        LCEmpty(title: "No Metadata Presets", symbol: "person.text.rectangle", message: "Save this photo's copyright, creator and place as one below.")
+                    }
                 } footer: {
-                    Text("A tap puts the preset on the chosen photos: its text replaces theirs, its keywords are added.")
+                    Text("A preset goes on the chosen photos when you pick it: its text replaces theirs, its keywords are added.")
                 }
                 Section {
                     Button("Save This Photo's as a Preset…", systemImage: "plus") {
                         name = ""
                         saving = true
                     }
+                    .lcRowButton()
                     .disabled(model.state.active == nil)
                 } footer: {
                     Text("Its copyright, creator and place.")
@@ -477,6 +496,13 @@ struct MetadataPresetsSheet: View {
                 Button("Cancel", role: .cancel) {}
             }
             .task { await load() }
+        }
+    }
+
+    private func deletePreset(_ name: String) {
+        Task {
+            await model.run("metadata.deletePreset", ["name": .string(name)])
+            await load()
         }
     }
 
@@ -663,18 +689,20 @@ struct KeywordPickerSheet: View {
 
     var body: some View {
         NavigationStack {
-            List {
+            LCList {
                 if allowTopLevel && search.isEmpty {
                     Button("Top Level") {
                         pick(nil)
                         dismiss()
                     }
+                    .lcRowButton()
                 }
                 ForEach(paths.filter { search.isEmpty || $0.localizedCaseInsensitiveContains(search) }, id: \.self) { p in
                     Button(p.replacingOccurrences(of: "|", with: " ▸ ")) {
                         pick(p)
                         dismiss()
                     }
+                    .lcRowButton()
                     .foregroundStyle(.primary)
                 }
             }

@@ -502,7 +502,7 @@ struct EditSidebarSheet: View {
     var body: some View {
         let sections = model.sidebarHere
         NavigationStack {
-            List {
+            LCList {
                 Section {
                     ForEach(sections) { s in
                         Toggle(isOn: Binding(get: { !s.hidden }, set: { model.arrange("view.sidebarSection", ["section": .string(s.id), "show": .bool($0)]) })) {

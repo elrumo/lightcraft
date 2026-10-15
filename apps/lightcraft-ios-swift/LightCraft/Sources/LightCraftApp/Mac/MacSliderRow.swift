@@ -33,11 +33,11 @@ struct MacSliderRow: View {
     var body: some View {
         HStack(spacing: 8) {
             Text(LocalizedStringKey(shown))
-                .font(.callout)
+                .font(.inspector)
                 .foregroundStyle(hovering || dragging ? .primary : .secondary)
                 .lineLimit(2)
                 .minimumScaleFactor(0.85)
-                .frame(width: 84, alignment: .leading)
+                .frame(width: MacUI.labelWidth, alignment: .leading)
                 .contentShape(Rectangle())
                 .onTapGesture(count: 2, perform: reset)
                 .help(Text("Double-click to reset"))
@@ -45,7 +45,7 @@ struct MacSliderRow: View {
                 .frame(height: 20)
             valueField
         }
-        .frame(minHeight: 26)
+        .frame(minHeight: MacUI.rowHeight)
         .onHover { hovering = $0 }
         // (the arrow keys nudge it while it has the focus, not move to the next photo: Mac/MacInput.swift)
         .onChange(of: focused) { _, on in
@@ -149,7 +149,7 @@ struct MacSliderRow: View {
     private var valueField: some View {
         TextField("", text: $text)
             .textFieldStyle(.plain)
-            .font(.callout.monospacedDigit())
+            .font(.system(size: 12).monospacedDigit())
             .multilineTextAlignment(.trailing)
             .foregroundStyle(dragging ? Color.accentColor : .secondary)
             .frame(width: 46)

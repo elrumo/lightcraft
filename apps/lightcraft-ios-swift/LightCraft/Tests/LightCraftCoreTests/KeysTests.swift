@@ -50,6 +50,19 @@ struct KeysTests {
         #expect(KeyChord(shortcut: "Shift+X")?.isMenuKey == false)
     }
 
+    @Test func aKeyIsDrawnAsCaps() {
+        #expect(KeyChord(shortcut: "Cmd+Shift+C")?.caps == ["⇧", "⌘", "C"], "the keyboard's order, ⇧ before ⌘")
+        #expect(KeyChord(shortcut: "Cmd+Alt+Shift+E")?.caps == ["⌥", "⇧", "⌘", "E"])
+        #expect(KeyChord(shortcut: "Ctrl+H")?.caps == ["⌃", "H"])
+        #expect(KeyChord(shortcut: "Right")?.caps == ["→"])
+        #expect(KeyChord(shortcut: "Delete")?.caps == ["⌫"])
+        #expect(KeyChord(shortcut: "Space")?.caps == ["Space"])
+        #expect(KeyChord(shortcut: "F6")?.caps == ["F6"])
+        #expect(KeyChord(shortcut: "Shift+{")?.caps == ["⇧", "["], "a brace is Shift with its plain key")
+        #expect(KeyChord(shortcut: "Home")?.caps == ["Home"])
+        #expect(KeyChord(shortcut: "Escape")?.caps == ["esc"], "the key's own word, as it is printed on it")
+    }
+
     @Test func keysAreSortedForTheInputMonitor() {
         #expect(KeyChord("left").isArrow && KeyChord("left").isNavigation && KeyChord("left").repeats)
         #expect(!KeyChord("left", command: true).repeats, "a held ⌘← does not run again")

@@ -44,6 +44,14 @@ struct RootView: View {
         }) { sheet in
             SheetContent(sheet: sheet)
                 .environment(model)
+                #if os(macOS)
+                // a Mac's forms are System Settings' (grouped: a label and its control on one row), and every sheet has
+                // the size it is meant to have: a list in a navigation stack has none of its own, and a sheet is a
+                // narrow form unless it is fitted to what it says (SheetKit.swift)
+                .formStyle(.grouped)
+                .macSheetFrame(sheet.macSize)
+                .presentationSizing(.fitted)
+                #endif
         }
         #if os(macOS)
         // Settings is a window of its own on a Mac (⌘,), however the app asked for it
@@ -318,7 +326,7 @@ struct ActivityPage: View {
 
     var body: some View {
         NavigationStack {
-            List {
+            LCList {
                 ForEach(model.activity) { row in
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {

@@ -12,7 +12,7 @@ struct CopySettingsSheet: View {
 
     var body: some View {
         NavigationStack {
-            List {
+            LCList {
                 SettingsGroupsSection(groups: $groups)
             }
             .navigationTitle(pasteOnto == nil ? "Copy Settings" : "Paste Settings")
@@ -69,7 +69,14 @@ struct SettingsGroupsSection: View {
             }
             .font(.subheadline)
             .textCase(nil)
+            #if os(macOS)
+            .buttonStyle(.link)
+            #endif
         }
+        #if os(macOS)
+        // (a list of what to take along is a list of checkboxes on a Mac, not of switches)
+        .toggleStyle(.checkbox)
+        #endif
         .task {
             guard groups.all.isEmpty, let engine = model.engine, let list = (try? await engine.execute("develop.settingsGroups"))?.array else { return }
             groups.all = list.compactMap { g in g["id"].string.map { ($0, g["label"].string ?? $0) } }
@@ -93,7 +100,7 @@ struct CreatePresetSheet: View {
 
     var body: some View {
         NavigationStack {
-            List {
+            LCList {
                 Section {
                     TextField("Preset Name", text: $name)
                     Picker("Group", selection: $group) {

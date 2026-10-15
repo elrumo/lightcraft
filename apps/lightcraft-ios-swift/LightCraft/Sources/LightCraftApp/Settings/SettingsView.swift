@@ -1,6 +1,10 @@
 import LightCraftCore
 import SwiftUI
 
+#if os(macOS)
+import AppKit
+#endif
+
 /// Settings, as an iOS settings list: the library (and where it syncs), then General, Import,
 /// Performance, Interface, Sync, Faces and AI Models.
 struct SettingsView: View {
@@ -497,14 +501,18 @@ struct SyncStatusSheet: View {
 
     var body: some View {
         NavigationStack {
-            List {
+            LCList {
                 if let s = status {
                     Section {
+                        #if os(macOS)
+                        LCHero(symbol: Self.symbol(s), title: Text(verbatim: Self.title(s)), subtitle: Text(verbatim: Self.describe(s)), tint: Self.tint(s))
+                        #else
                         VStack(alignment: .leading, spacing: 6) {
                             Text(Self.title(s)).font(.headline)
                             Text(Self.describe(s)).font(.subheadline).foregroundStyle(.secondary)
                         }
                         .padding(.vertical, 4)
+                        #endif
                     }
                     if s.signedIn {
                         Section("This Device") {
@@ -518,16 +526,20 @@ struct SyncStatusSheet: View {
                         Section {
                             if s.state == "conflict" {
                                 Button("Choose What to Do…") { model.sheet = .syncChoice }
+                                    .lcRowButton()
                             } else {
                                 Button("Sync Now", systemImage: "arrow.triangle.2.circlepath") { model.perform("sync.now") }
+                                    .lcRowButton()
                                 Button(s.paused == true ? "Resume" : "Pause", systemImage: s.paused == true ? "play" : "pause") {
                                     model.perform("sync.pause", ["on": .bool(s.paused != true)])
                                 }
+                                .lcRowButton()
                             }
                         }
                     } else {
                         Section {
-                            Button("Set Up Sync…") { model.sheet = .settings("sync") }
+                            Button("Set Up Sync…", systemImage: "icloud") { model.sheet = .settings("sync") }
+                                .lcRowButton()
                         }
                     }
                 }
@@ -552,6 +564,26 @@ struct SyncStatusSheet: View {
             }
         }
         .presentationDetents([.medium, .large])
+    }
+
+    /// The cloud that says how it stands.
+    static func symbol(_ s: SyncStatus) -> String {
+        switch s.state {
+        case "off": "icloud.slash"
+        case "signedOut": "person.crop.circle.badge.exclamationmark"
+        case "conflict", "error": "exclamationmark.icloud"
+        case "paused": "pause.circle"
+        case "syncing": "arrow.triangle.2.circlepath.icloud"
+        default: "checkmark.icloud"
+        }
+    }
+
+    static func tint(_ s: SyncStatus) -> Color {
+        switch s.state {
+        case "conflict", "error", "paused": .orange
+        case "off", "signedOut": .gray
+        default: .accentColor
+        }
     }
 
     static func title(_ s: SyncStatus) -> String {
@@ -589,7 +621,7 @@ struct SyncChoiceSheet: View {
 
     var body: some View {
         NavigationStack {
-            List {
+            LCList {
                 Section {
                     Text("This library and the server's both have photos. Choose what to do with this library's photos; nothing syncs until you do.")
                         .font(.subheadline)
@@ -699,10 +731,15 @@ struct AboutView: View {
 
     var body: some View {
         NavigationStack {
-            List {
+            LCList {
                 Section {
                     VStack(spacing: 8) {
+                        #if os(macOS)
+                        // (the app's own icon)
+                        Image(nsImage: NSApp.applicationIconImage).resizable().scaledToFit().frame(width: 96, height: 96)
+                        #else
                         Image(systemName: "camera.aperture").font(.system(size: 56)).foregroundStyle(Color.accentColor)
+                        #endif
                         Text("LightCraft").font(.title.bold())
                         Text("Version \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "")")
                             .foregroundStyle(.secondary)
@@ -711,6 +748,9 @@ struct AboutView: View {
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 12)
+                    #if os(macOS)
+                    .listRowBackground(Color.clear)
+                    #endif
                 }
                 Section {
                     NavigationLink("What's New") { WhatsNewView() }
@@ -789,7 +829,7 @@ struct SystemInfoView: View {
     @State private var rows: [JSONValue] = []
 
     var body: some View {
-        List {
+        LCList {
             Section {
                 ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
                     LabeledContent(LocalizedStringKey(row["label"].string ?? ""), value: row["value"].string ?? "")

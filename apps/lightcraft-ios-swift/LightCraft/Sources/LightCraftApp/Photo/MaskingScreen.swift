@@ -158,33 +158,51 @@ struct MaskSettings: View {
 
     var body: some View {
         @Bindable var prefs = model.prefs
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: Platform.rowSpacing ?? 6) {
             MaskAdjustments(mask: mask["id"], ids: ["amount"])
+            #if os(macOS)
+            MacCheck(title: "Invert", isOn: Binding(get: { mask["invert"].bool == true }, set: { _ in model.perform("mask.invert", ["id": mask["id"]]) }))
+            #else
             Toggle("Invert", isOn: Binding(get: { mask["invert"].bool == true }, set: { _ in model.perform("mask.invert", ["id": mask["id"]]) }))
                 .padding(.horizontal, Platform.panelInset)
+            #endif
             ForEach(shape?.components ?? [], id: \.component) { part in
                 if !part.controls.isEmpty {
+                    #if os(macOS)
+                    MacCaption(text: LocalizedStringKey(MaskKind.name(part.kind)))
+                    #else
                     Text(LocalizedStringKey(MaskKind.name(part.kind)))
                         .font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
                         .padding(.horizontal, Platform.panelInset).padding(.top, 6)
+                    #endif
                     ForEach(part.controls) { spec in
                         ShapeSlider(mask: mask["id"], component: part.component, spec: spec)
                     }
                     if part.kind == "luminanceRange" {
                         // the photo in black & white with the range tinted
-                        Toggle("Show Luminance Map", isOn: Binding(get: { prefs.maskOverlayMode == "colorOnBw" }, set: { on in
+                        let map = Binding(get: { prefs.maskOverlayMode == "colorOnBw" }, set: { (on: Bool) in
                             prefs.maskOverlayMode = on ? "colorOnBw" : "color"
                             if on, prefs.maskOverlayVisibility == "never" { prefs.maskOverlayVisibility = "auto" }
-                        }))
-                        .padding(.horizontal, Platform.panelInset)
+                        })
+                        #if os(macOS)
+                        MacCheck(title: "Show Luminance Map", isOn: map)
+                        #else
+                        Toggle("Show Luminance Map", isOn: map)
+                            .padding(.horizontal, Platform.panelInset)
+                        #endif
                     }
                 }
             }
             if let refine = shape?.refine {
                 ShapeSlider(mask: mask["id"], component: nil, spec: refine)
             }
+            #if os(macOS)
+            MacButton(title: "Overlay Options", symbol: "eye.circle", wide: false) { overlayOptions = true }
+                .padding(.top, 4)
+            #else
             Button("Overlay Options", systemImage: "eye.circle") { overlayOptions = true }
                 .padding(.horizontal, Platform.panelInset).padding(.vertical, 6)
+            #endif
         }
         .sheet(isPresented: $overlayOptions) { MaskOverlayOptions().presentationDetents([.medium]) }
         .task(id: Key(mask: mask["id"], revision: model.settledRevision)) {
@@ -264,7 +282,7 @@ struct MaskAdjustments: View {
                 DialAdjuster(dials: shown.map(Dial.control), value: value, set: set, editing: editing, reset: reset)
                     .id(ids)
             } else {
-                VStack(alignment: .leading) {
+                VStack(alignment: .leading, spacing: Platform.rowSpacing) {
                     ForEach(shown) { spec in
                         ControlSlider(spec: spec, value: value(spec), set: { set(spec, $0) }, editing: { editing(spec, $0) }, reset: { reset(spec) })
                     }
@@ -468,7 +486,7 @@ private struct MaskTile: View {
             Image(systemName: symbol)
                 .font(.system(size: side * 0.4))
                 .frame(width: side, height: side)
-                .background(RoundedRectangle(cornerRadius: side / 4).fill(Color.lcTertiaryFill))
+                .background(RoundedRectangle(cornerRadius: side / 4).fill(Platform.tileFill))
                 .overlay {
                     RoundedRectangle(cornerRadius: side / 4).strokeBorder(chosen ? Color.accentColor : .clear, lineWidth: 2)
                 }
@@ -480,7 +498,7 @@ private struct MaskTile: View {
                             .offset(x: 4, y: -4)
                     }
                 }
-            Text(name).font(.caption2).lineLimit(1).frame(maxWidth: 72)
+            Text(name).font(Platform.tileCaption).lineLimit(1).frame(maxWidth: 72)
         }
         .foregroundStyle(chosen ? Color.accentColor : .primary)
         .opacity(visible ? 1 : 0.5)
@@ -502,11 +520,26 @@ private struct CreateMaskMenu: View {
                 }
             }
         } label: {
+            #if os(macOS)
+            // (a tile like the masks', not a glass button over the photo)
+            Image(systemName: "plus").font(.system(size: 21, weight: .medium))
+                .frame(width: 52, height: 52)
+                .background(RoundedRectangle(cornerRadius: 13).fill(Platform.tileFill))
+                .contentShape(Rectangle())
+            #else
             Image(systemName: "plus").font(.title3.weight(.semibold))
                 .frame(width: 36, height: 36)
+            #endif
         }
+        #if os(macOS)
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        #else
         .buttonStyle(.glassProminent)
         .buttonBorderShape(.circle)
+        #endif
         .accessibilityLabel("Create New Mask")
     }
 

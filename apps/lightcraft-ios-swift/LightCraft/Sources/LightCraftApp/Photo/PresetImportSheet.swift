@@ -17,7 +17,7 @@ struct PresetImportSheet: View {
         let items = review["items"].array ?? []
         let profiles = review["profiles"].array ?? []
         NavigationStack {
-            List {
+            LCList {
                 if let o = outcome {
                     done(o)
                 } else {

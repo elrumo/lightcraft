@@ -156,18 +156,35 @@ extension AppModel {
 
     // MARK: Help ▸ Keyboard Shortcuts
 
+    /// The keys that move around, which no menu or table lists.
+    var movingKeyRows: [KeyRow] {
+        let section = String(localized: "Moving Around")
+        return [
+            KeyRow(section: section, label: String(localized: "Previous Photo"), shortcut: "Left"),
+            KeyRow(section: section, label: String(localized: "Next Photo"), shortcut: "Right"),
+            KeyRow(section: section, label: String(localized: "Photo Above"), shortcut: "Up"),
+            KeyRow(section: section, label: String(localized: "Photo Below"), shortcut: "Down"),
+            KeyRow(section: section, label: String(localized: "First Photo"), shortcut: "Home"),
+            KeyRow(section: section, label: String(localized: "Last Photo"), shortcut: "End"),
+            KeyRow(section: section, label: String(localized: "Open Photo"), shortcut: "Enter"),
+            KeyRow(section: section, label: String(localized: "Back"), shortcut: "Escape"),
+            KeyRow(section: section, label: String(localized: "Hide or Show Panels"), shortcut: "Tab"),
+        ]
+    }
+
     /// The keys that no menu item lists (rating, labels and flags, the second keys of commands that
     /// have one), as rows: the section, what they do, the shortcut.
     func fixedKeyRows() -> [KeyRow] {
         let culling = String(localized: "Rating, Flags and Labels")
         let other = String(localized: "More Keys")
-        return (keyTable?.fixed ?? []).map { key in
+        let rows = (keyTable?.fixed ?? []).map { key in
             // (Shift with a rating, a flag or a label goes on to the next photo)
             let goOn = { (what: String) in key.params["advance"].bool == true ? String(localized: "\(what) and Go On") : what }
             switch key.command {
             case "photo.rate":
                 let n = Int(key.params["rating"].int ?? 0)
-                return KeyRow(section: culling, label: goOn(n == 0 ? String(localized: "Clear Rating") : String(localized: "Rate \(n) Stars")), shortcut: key.shortcut)
+                let what = n == 0 ? String(localized: "Clear Rating") : n == 1 ? String(localized: "Rate 1 Star") : String(localized: "Rate \(n) Stars")
+                return KeyRow(section: culling, label: goOn(what), shortcut: key.shortcut)
             case "photo.label":
                 return KeyRow(section: culling, label: goOn(String(localized: "\(library.labelName(key.params["label"].string ?? "")) Label")), shortcut: key.shortcut)
             case "photo.flag":
@@ -175,9 +192,13 @@ extension AppModel {
                 return KeyRow(section: culling, label: goOn(flag == "pick" ? String(localized: "Pick") : flag == "reject" ? String(localized: "Reject") : String(localized: "Unflag")), shortcut: key.shortcut)
             default:
                 let label = uiCommands.first { $0.id == key.command }?.label ?? engineCommands.first { $0.id == key.command }?.label ?? key.command
-                return KeyRow(section: other, label: Bundle.main.localizedString(forKey: label, value: label, table: nil), shortcut: key.shortcut)
+                // (the keyword set's nine keys are one command: which of the set it is is the number)
+                let which = key.params["index"].int.map { " \($0)" } ?? ""
+                return KeyRow(section: other, label: Bundle.main.localizedString(forKey: label, value: label, table: nil) + which, shortcut: key.shortcut)
             }
         }
+        // rating, flags and labels first: they are what most people look for
+        return rows.filter { $0.section == culling } + rows.filter { $0.section != culling }
     }
 }
 

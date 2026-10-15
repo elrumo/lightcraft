@@ -13,83 +13,11 @@ struct HistorySheet: View {
 
     var body: some View {
         NavigationStack {
-            List {
+            LCList {
                 if versions {
-                    Section {
-                        Button("Create Version", systemImage: "plus") {
-                            Task {
-                                await model.run("version.create")
-                                await load()
-                            }
-                        }
-                    }
-                    Section {
-                        ForEach(Array((list?.versions ?? []).enumerated()), id: \.offset) { i, v in
-                            Button {
-                                model.perform("version.restore", ["index": .int(Int64(i))])
-                                dismiss()
-                            } label: {
-                                HStack(spacing: 12) {
-                                    VariantPreview(which: ["version": .int(Int64(i))])
-                                        .frame(width: 64, height: 44)
-                                        .clipShape(.rect(cornerRadius: 6))
-                                    VStack(alignment: .leading) {
-                                        Text(v.name)
-                                        if let created = v.created {
-                                            Text(InfoPanel.date(created)).font(.caption).foregroundStyle(.secondary)
-                                        }
-                                    }
-                                }
-                            }
-                            .contextMenu {
-                                Button("Update with Current Settings", systemImage: "arrow.triangle.2.circlepath") { run("version.update", i) }
-                                Button("Rename…", systemImage: "pencil") {
-                                    name = v.name
-                                    naming = i
-                                }
-                                Button("Set as Before", systemImage: "square.split.2x1") {
-                                    model.perform("beforeAfter.setBefore", ["source": "version", "name": .string(v.name)])
-                                }
-                                Button("Delete", systemImage: "trash", role: .destructive) { run("version.delete", i) }
-                            }
-                        }
-                    } footer: {
-                        if list?.versions.isEmpty == true { Text("Versions keep a look of this photo to come back to.") }
-                    }
+                    versionsList
                 } else {
-                    Section {
-                        let history = list?.history ?? []
-                        ForEach(Array(history.enumerated().reversed()), id: \.offset) { i, label in
-                            Button {
-                                model.perform("history.restore", ["index": .int(Int64(i))])
-                            } label: {
-                                Label(label, systemImage: "clock")
-                            }
-                            .contextMenu {
-                                Button("Copy to Before", systemImage: "square.split.2x1") {
-                                    model.perform("beforeAfter.setBefore", ["source": "history", "index": .int(Int64(i))])
-                                }
-                                Button("Create Version from Step", systemImage: "square.stack") {
-                                    Task {
-                                        await model.run("history.restore", ["index": .int(Int64(i))])
-                                        await model.run("version.create", ["name": .string(label)])
-                                    }
-                                }
-                            }
-                        }
-                    } footer: {
-                        if list?.history.isEmpty == true { Text("No edits yet.") }
-                    }
-                    if list?.history.isEmpty == false {
-                        Section {
-                            Button("Clear History", role: .destructive) {
-                                Task {
-                                    await model.run("history.clear")
-                                    await load()
-                                }
-                            }
-                        }
-                    }
+                    historyList
                 }
             }
             .foregroundStyle(.primary)
@@ -121,6 +49,108 @@ struct HistorySheet: View {
         .presentationDetents([.medium, .large])
     }
 
+    /// Every edit, newest first: one to go back to it.
+    @ViewBuilder private var historyList: some View {
+        let history = list?.history ?? []
+        if history.isEmpty {
+            Section {
+                LCEmpty(title: "No Edits Yet", symbol: "clock.arrow.circlepath", message: "Each change made to this photo is listed here, to go back to.")
+            }
+        } else {
+            Section {
+                ForEach(Array(history.enumerated().reversed()), id: \.offset) { i, label in
+                    Button {
+                        model.perform("history.restore", ["index": .int(Int64(i))])
+                    } label: {
+                        Label(label, systemImage: "clock")
+                    }
+                    .lcRowButton()
+                    .contextMenu {
+                        Button("Copy to Before", systemImage: "square.split.2x1") {
+                            model.perform("beforeAfter.setBefore", ["source": "history", "index": .int(Int64(i))])
+                        }
+                        Button("Create Version from Step", systemImage: "square.stack") {
+                            Task {
+                                await model.run("history.restore", ["index": .int(Int64(i))])
+                                await model.run("version.create", ["name": .string(label)])
+                            }
+                        }
+                    }
+                }
+            } header: {
+                Text("Newest First")
+            } footer: {
+                Text("Choose a step to go back to how the photo was then; right-click one for more.")
+            }
+            Section {
+                Button("Clear History", role: .destructive) {
+                    Task {
+                        await model.run("history.clear")
+                        await load()
+                    }
+                }
+            }
+        }
+    }
+
+    /// The looks kept for this photo: create, restore, rename, update, delete.
+    @ViewBuilder private var versionsList: some View {
+        let kept = list?.versions ?? []
+        Section {
+            Button {
+                Task {
+                    await model.run("version.create")
+                    await load()
+                }
+            } label: {
+                Label("Create Version", systemImage: "plus.circle.fill")
+            }
+            .lcRowButton()
+        }
+        if kept.isEmpty {
+            Section {
+                LCEmpty(title: "No Versions", symbol: "square.stack", message: "Versions keep a look of this photo to come back to.")
+            }
+        } else {
+            Section {
+                ForEach(Array(kept.enumerated()), id: \.offset) { i, v in
+                    Button {
+                        model.perform("version.restore", ["index": .int(Int64(i))])
+                        dismiss()
+                    } label: {
+                        HStack(spacing: 12) {
+                            VariantPreview(which: ["version": .int(Int64(i))])
+                                .frame(width: 64, height: 44)
+                                .clipShape(.rect(cornerRadius: 6))
+                            VStack(alignment: .leading) {
+                                Text(v.name)
+                                if let created = v.created {
+                                    Text(InfoPanel.date(created)).font(.caption).foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                    }
+                    .lcRowButton()
+                    .contextMenu {
+                        Button("Update with Current Settings", systemImage: "arrow.triangle.2.circlepath") { run("version.update", i) }
+                        Button("Rename…", systemImage: "pencil") {
+                            name = v.name
+                            naming = i
+                        }
+                        Button("Set as Before", systemImage: "square.split.2x1") {
+                            model.perform("beforeAfter.setBefore", ["source": "version", "name": .string(v.name)])
+                        }
+                        Button("Delete", systemImage: "trash", role: .destructive) { run("version.delete", i) }
+                    }
+                }
+            } header: {
+                Text("Versions")
+            } footer: {
+                Text("Choose a version to bring it back; right-click one to rename, update or delete it.")
+            }
+        }
+    }
+
     private func run(_ command: String, _ index: Int) {
         Task {
             await model.run(command, ["index": .int(Int64(index))])
@@ -144,7 +174,7 @@ struct KeywordsSheet: View {
 
     var body: some View {
         NavigationStack {
-            List {
+            LCList {
                 Section {
                     HStack {
                         TextField("Add Keyword", text: $typed)
@@ -153,17 +183,32 @@ struct KeywordsSheet: View {
                         Button("Add") { add(typed) }.disabled(typed.trimmingCharacters(in: .whitespaces).isEmpty)
                     }
                     ForEach(suggestions, id: \.self) { s in
-                        Button(s) { add(s) }
+                        Button { add(s) } label: { Label(s, systemImage: "plus.circle") }
+                            .lcRowButton()
                     }
+                } footer: {
+                    Text("Type a keyword and press Return; the library's keywords come up as you type.")
                 }
                 Section("On This Photo") {
-                    ForEach(keywords, id: \.self) { k in
-                        Text(k)
-                            .swipeActions {
-                                Button("Remove", role: .destructive) { remove(k) }
-                            }
+                    if keywords.isEmpty {
+                        LCEmpty(title: "No Keywords", symbol: "tag", message: "Add one above.")
                     }
-                    if keywords.isEmpty { Text("No keywords").foregroundStyle(.secondary) }
+                    ForEach(keywords, id: \.self) { k in
+                        HStack {
+                            Label(k, systemImage: "tag")
+                            #if os(macOS)
+                            Spacer()
+                            Button("Remove", systemImage: "minus.circle.fill") { remove(k) }
+                                .labelStyle(.iconOnly)
+                                .buttonStyle(.borderless)
+                                .foregroundStyle(.secondary)
+                                .help(Text("Remove from this photo"))
+                            #endif
+                        }
+                        .swipeActions {
+                            Button("Remove", role: .destructive) { remove(k) }
+                        }
+                    }
                 }
             }
             .navigationTitle("Keywords")

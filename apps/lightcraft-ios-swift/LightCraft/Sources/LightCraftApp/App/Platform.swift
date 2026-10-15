@@ -206,6 +206,41 @@ enum Platform {
         #endif
     }
 
+    /// The space between a panel's rows: a Mac's inspector keeps one rhythm (the system's own on a phone).
+    static var rowSpacing: CGFloat? {
+        #if os(macOS)
+        return 4
+        #else
+        return nil
+        #endif
+    }
+
+    /// What a tile (a mask, a preset) is filled with, and its caption's size.
+    static var tileFill: Color {
+        #if os(macOS)
+        return Color.primary.opacity(0.07)
+        #else
+        return .lcTertiaryFill
+        #endif
+    }
+
+    /// A note under a control.
+    static var noteFont: Font {
+        #if os(macOS)
+        return .system(size: 11)
+        #else
+        return .footnote
+        #endif
+    }
+
+    static var tileCaption: Font {
+        #if os(macOS)
+        return .system(size: 11)
+        #else
+        return .caption2
+        #endif
+    }
+
     /// Whether the filmstrip under the loupe shows by default: a Mac has room for it, as Lightroom's does.
     static var showsFilmstrip: Bool {
         #if os(iOS)

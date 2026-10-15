@@ -15,6 +15,143 @@ struct PresetsPanel: View {
     @State private var exported: [URL]?
 
     var body: some View {
+        content
+            // first shown, and whenever the preset list changes (an import, or presets the sync brings)
+            .task(id: model.state.presetsGeneration) { await load() }
+            .onChange(of: model.sheet == nil) { _, closed in
+                // a preset made in Create Preset
+                if closed { Task { await load() } }
+            }
+            .fileImporter(isPresented: $importing, allowedContentTypes: PresetFiles.types, allowsMultipleSelection: true) { result in
+                guard case .success(let urls) = result, let engine = model.engine else { return }
+                let paths = PresetFiles.stage(urls)
+                Task {
+                    do {
+                        review = try await engine.execute("preset.importReview", ["paths": .array(paths.map { .string($0) })])
+                    } catch {
+                        model.show(error.localizedDescription, error: true)
+                    }
+                }
+            }
+            .sheet(item: Binding(get: { review.map(ReviewItem.init) }, set: { if $0 == nil { review = nil } }), onDismiss: { Task { await load() } }) {
+                PresetImportSheet(review: $0.review)
+            }
+            .sheet(item: Binding(get: { exported.map { ExportedFiles(urls: $0) } }, set: { if $0 == nil { exported = nil } })) {
+                ActivityView(urls: $0.urls) { exported = nil }
+                    .ignoresSafeArea()
+            }
+    }
+
+    @ViewBuilder private var content: some View {
+        #if os(macOS)
+        macContent
+        #else
+        phoneContent
+        #endif
+    }
+
+    /// The preset one tap applies: its picture, its name, a ring when it is the last one applied.
+    private func tile(_ preset: PresetInfo) -> some View {
+        Button {
+            applied = preset.id
+            amount = 100
+            apply(preset.id, amount: 100, replacing: false)
+        } label: {
+            VStack(spacing: 4) {
+                VariantPreview(which: ["preset": .string(preset.id)])
+                    .aspectRatio(1, contentMode: .fit)
+                    .clipShape(.rect(cornerRadius: 10))
+                    .overlay {
+                        if applied == preset.id { RoundedRectangle(cornerRadius: 10).strokeBorder(Color.accentColor, lineWidth: 2) }
+                    }
+                    .overlay(alignment: .topTrailing) {
+                        if preset.favorite { Image(systemName: "star.fill").font(.caption2).padding(5).foregroundStyle(.yellow) }
+                    }
+                Text(preset.name)
+                    .font(Platform.tileCaption.weight(.medium))
+                    .lineLimit(1)
+            }
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button(preset.favorite ? "Remove from Favorites" : "Add to Favorites", systemImage: preset.favorite ? "star.slash" : "star") {
+                model.perform("preset.favorite", ["id": .string(preset.id), "favorite": .bool(!preset.favorite)])
+                Task { await load() }
+            }
+            if !preset.builtin {
+                Button("Update with Current Settings", systemImage: "arrow.triangle.2.circlepath") { model.perform("preset.update", ["id": .string(preset.id)]) }
+                Button("Delete", systemImage: "trash", role: .destructive) {
+                    model.perform("preset.delete", ["id": .string(preset.id)])
+                    Task { await load() }
+                }
+            }
+        }
+    }
+
+    /// The menu behind the + : make a preset, bring some in, send yours out.
+    @ViewBuilder private var moreItems: some View {
+        Button("Create Preset", systemImage: "plus") { model.sheet = .createPreset }
+        Button("Import Presets…", systemImage: "square.and.arrow.down") { importing = true }
+        Button("Export Presets…", systemImage: "square.and.arrow.up") { exportPresets() }
+            .disabled(!presets.contains { !$0.builtin })
+    }
+
+    #if os(macOS)
+    /// A Mac's: the group in a field with the + beside it, the Amount of the last one applied, then
+    /// the presets, three across.
+    private var macContent: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            MacGroup {
+                MacRow(label: "Group") {
+                    HStack(spacing: 4) {
+                        MacMenuField(text: Text(groupName)) {
+                            if presets.contains(where: \.favorite) { groupButton("★", String(localized: "Favorites")) }
+                            ForEach(groups, id: \.self) { groupButton($0, $0) }
+                            if presets.contains(where: { !$0.builtin }) { groupButton("user", String(localized: "User Presets")) }
+                        }
+                        MacIconMenu(symbol: "plus", title: "More") { moreItems }
+                    }
+                }
+                if let applied, presets.contains(where: { $0.id == applied }) {
+                    ControlSlider(
+                        spec: ControlSpec.amount,
+                        value: amount,
+                        label: String(localized: "Amount"),
+                        set: { amount = $0 },
+                        editing: { began in if !began { apply(applied, amount: amount, replacing: true) } },
+                        reset: {
+                            amount = 100
+                            apply(applied, amount: 100, replacing: true)
+                        }
+                    )
+                }
+            }
+            MacGroup {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8, alignment: .top), count: 3), spacing: 12) {
+                    ForEach(shown) { tile($0) }
+                }
+            }
+        }
+    }
+
+    private var groupName: String {
+        switch group {
+        case "★": String(localized: "Favorites")
+        case "user": String(localized: "User Presets")
+        default: group
+        }
+    }
+
+    private func groupButton(_ id: String, _ title: String) -> some View {
+        Button {
+            group = id
+        } label: {
+            if group == id { Label(title, systemImage: "checkmark") } else { Text(title) }
+        }
+    }
+    #endif
+
+    private var phoneContent: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Picker("Group", selection: $group) {
@@ -25,10 +162,7 @@ struct PresetsPanel: View {
                 .pickerStyle(.menu)
                 Spacer()
                 Menu {
-                    Button("Create Preset", systemImage: "plus") { model.sheet = .createPreset }
-                    Button("Import Presets…", systemImage: "square.and.arrow.down") { importing = true }
-                    Button("Export Presets…", systemImage: "square.and.arrow.up") { exportPresets() }
-                        .disabled(!presets.contains { !$0.builtin })
+                    moreItems
                 } label: {
                     Label("More", systemImage: "plus.circle")
                 }
@@ -48,67 +182,8 @@ struct PresetsPanel: View {
                 )
             }
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 84), spacing: 8)], spacing: 10) {
-                ForEach(shown) { preset in
-                    Button {
-                        applied = preset.id
-                        amount = 100
-                        apply(preset.id, amount: 100, replacing: false)
-                    } label: {
-                        VStack(spacing: 4) {
-                            VariantPreview(which: ["preset": .string(preset.id)])
-                                .aspectRatio(1, contentMode: .fit)
-                                .clipShape(.rect(cornerRadius: 10))
-                                .overlay {
-                                    if applied == preset.id { RoundedRectangle(cornerRadius: 10).strokeBorder(Color.accentColor, lineWidth: 2) }
-                                }
-                                .overlay(alignment: .topTrailing) {
-                                    if preset.favorite { Image(systemName: "star.fill").font(.caption2).padding(5).foregroundStyle(.yellow) }
-                                }
-                            Text(preset.name)
-                                .font(.caption2.weight(.medium))
-                                .lineLimit(1)
-                        }
-                    }
-                    .buttonStyle(.plain)
-                    .contextMenu {
-                        Button(preset.favorite ? "Remove from Favorites" : "Add to Favorites", systemImage: preset.favorite ? "star.slash" : "star") {
-                            model.perform("preset.favorite", ["id": .string(preset.id), "favorite": .bool(!preset.favorite)])
-                            Task { await load() }
-                        }
-                        if !preset.builtin {
-                            Button("Update with Current Settings", systemImage: "arrow.triangle.2.circlepath") { model.perform("preset.update", ["id": .string(preset.id)]) }
-                            Button("Delete", systemImage: "trash", role: .destructive) {
-                                model.perform("preset.delete", ["id": .string(preset.id)])
-                                Task { await load() }
-                            }
-                        }
-                    }
-                }
+                ForEach(shown) { tile($0) }
             }
-        }
-        // first shown, and whenever the preset list changes (an import, or presets the sync brings)
-        .task(id: model.state.presetsGeneration) { await load() }
-        .onChange(of: model.sheet == nil) { _, closed in
-            // a preset made in Create Preset
-            if closed { Task { await load() } }
-        }
-        .fileImporter(isPresented: $importing, allowedContentTypes: PresetFiles.types, allowsMultipleSelection: true) { result in
-            guard case .success(let urls) = result, let engine = model.engine else { return }
-            let paths = PresetFiles.stage(urls)
-            Task {
-                do {
-                    review = try await engine.execute("preset.importReview", ["paths": .array(paths.map { .string($0) })])
-                } catch {
-                    model.show(error.localizedDescription, error: true)
-                }
-            }
-        }
-        .sheet(item: Binding(get: { review.map(ReviewItem.init) }, set: { if $0 == nil { review = nil } }), onDismiss: { Task { await load() } }) {
-            PresetImportSheet(review: $0.review)
-        }
-        .sheet(item: Binding(get: { exported.map { ExportedFiles(urls: $0) } }, set: { if $0 == nil { exported = nil } })) {
-            ActivityView(urls: $0.urls) { exported = nil }
-                .ignoresSafeArea()
         }
     }
 
@@ -205,6 +280,102 @@ struct InfoPanel: View {
     private enum Field { case title, caption }
 
     var body: some View {
+        content
+            .onChange(of: focus) { old, _ in
+                if old == .title { save("title", title) }
+                if old == .caption { save("caption", caption) }
+            }
+            .task(id: Key(photo: model.state.active, revision: model.settledRevision)) { await load() }
+    }
+
+    @ViewBuilder private var content: some View {
+        #if os(macOS)
+        macContent
+        #else
+        phoneContent
+        #endif
+    }
+
+    #if os(macOS)
+    /// A Mac's: the file, then Camera, Rating and Metadata as groups of labelled rows.
+    private var macContent: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if let d = detail {
+                MacGroup {
+                    Text(d.fileName).font(.system(size: 13, weight: .semibold)).lineLimit(2).textSelection(.enabled)
+                    if let c = d.captured { Text(Self.date(c)).font(.inspector).foregroundStyle(.secondary) }
+                    Text("\(d.width) × \(d.height)\(d.fileSize.map { " · " + ByteCountFormatter.string(fromByteCount: Int64($0), countStyle: .file) } ?? "")\(d.format.map { " · " + $0 } ?? "")")
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                }
+                if let m = d.meta {
+                    let exposure = [m.shutter, m.aperture.map { String(format: "ƒ/%.1f", $0) }, m.iso.map { "ISO \(Int($0))" }, m.focalMm.map { "\(Int($0)) mm" }].compactMap { $0 }
+                    let place = [m.location, m.city, m.state, m.country].compactMap { $0 }.filter { !$0.isEmpty }
+                    if m.camera?.isEmpty == false || m.lens?.isEmpty == false || !exposure.isEmpty || !place.isEmpty || m.gps != nil {
+                        MacGroup(title: "Camera") {
+                            if let cam = m.camera, !cam.isEmpty { MacRow(label: "Camera") { value(cam) } }
+                            if let lens = m.lens, !lens.isEmpty { MacRow(label: "Lens") { value(lens) } }
+                            if !exposure.isEmpty { MacRow(label: "Exposure") { value(exposure.joined(separator: "  ·  ")) } }
+                            if !place.isEmpty || m.gps != nil {
+                                MacRow(label: "Location") {
+                                    Button {
+                                        model.path.append(.map)
+                                    } label: {
+                                        Label(place.isEmpty ? String(localized: "Show on Map") : place.joined(separator: ", "), systemImage: "mappin.and.ellipse")
+                                            .font(.inspector)
+                                            .lineLimit(2)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .foregroundStyle(Color.accentColor)
+                                }
+                            }
+                        }
+                    }
+                }
+                MacGroup(title: "Rating") { ratingRow(d) }
+                MacGroup(title: "Metadata") {
+                    MacRow(label: "Title") {
+                        TextField("Title", text: $title)
+                            .focused($focus, equals: .title)
+                            .onSubmit { save("title", title) }
+                            .macFieldLook()
+                    }
+                    MacRow(label: "Caption") {
+                        TextField("Caption", text: $caption, axis: .vertical)
+                            .focused($focus, equals: .caption)
+                            .lineLimit(1...4)
+                            .onSubmit { save("caption", caption) }
+                            .macFieldLook()
+                    }
+                    MacRow(label: "Keywords") {
+                        Button {
+                            model.sheet = .keywords
+                        } label: {
+                            Text(d.meta?.keywords?.joined(separator: ", ").nonEmpty ?? String(localized: "Add Keywords…"))
+                                .font(.inspector)
+                                .foregroundStyle(d.meta?.keywords?.isEmpty == false ? .primary : .secondary)
+                                .lineLimit(2)
+                                .multilineTextAlignment(.leading)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .buttonStyle(.plain)
+                        .macFieldLook()
+                    }
+                    MacButton(title: "All Metadata…", symbol: "list.bullet.rectangle", wide: false) { model.sheet = .allMetadata }
+                        .padding(.top, 4)
+                }
+            } else {
+                ProgressView().frame(maxWidth: .infinity).padding(40)
+            }
+        }
+    }
+
+    /// A fact in a row's control column.
+    private func value(_ text: String) -> some View {
+        Text(text).font(.inspector).lineLimit(2).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+    }
+    #endif
+
+    private var phoneContent: some View {
         VStack(alignment: .leading, spacing: 12) {
             if let d = detail {
                 VStack(alignment: .leading, spacing: 4) {
@@ -254,11 +425,6 @@ struct InfoPanel: View {
                 ProgressView()
             }
         }
-        .onChange(of: focus) { old, _ in
-            if old == .title { save("title", title) }
-            if old == .caption { save("caption", caption) }
-        }
-        .task(id: Key(photo: model.state.active, revision: model.settledRevision)) { await load() }
     }
 
     private nonisolated struct Key: Hashable {
@@ -266,7 +432,30 @@ struct InfoPanel: View {
         let revision: UInt64
     }
 
-    private func ratingRow(_ d: PhotoDetail) -> some View {
+    @ViewBuilder private func ratingRow(_ d: PhotoDetail) -> some View {
+        #if os(macOS)
+        HStack(spacing: 4) {
+            ForEach(1...5, id: \.self) { star in
+                Button {
+                    model.perform("photo.rate", ["ids": [.int(Int64(clamping: d.id))], "rating": .int(Int64(star == d.rating ? 0 : star))])
+                } label: {
+                    Image(systemName: star <= (d.rating ?? 0) ? "star.fill" : "star")
+                        .font(.system(size: 14))
+                        .foregroundStyle(star <= (d.rating ?? 0) ? Color.yellow : .secondary)
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("\(star) stars")
+            }
+            Spacer()
+            MacIconMenu(symbol: d.flag == "pick" ? "flag.fill" : d.flag == "reject" ? "flag.slash.fill" : "flag", title: "Flag") { FlagItems(ids: [d.id]) }
+            MacIconMenu(symbol: "circle.fill", title: "Color Label", tint: d.label.map(LabelColor.color)) { LabelItems(ids: [d.id]) }
+        }
+        #else
+        phoneRatingRow(d)
+        #endif
+    }
+
+    private func phoneRatingRow(_ d: PhotoDetail) -> some View {
         HStack(spacing: 4) {
             ForEach(1...5, id: \.self) { star in
                 Button {
@@ -334,7 +523,7 @@ struct AllMetadataSheet: View {
 
     var body: some View {
         NavigationStack {
-            List {
+            LCList {
                 if let note = rows["note"].string {
                     Text(note).foregroundStyle(.secondary)
                 }
@@ -374,4 +563,9 @@ struct AllMetadataSheet: View {
         if !xmp.isEmpty { out.append(("XMP", xmp)) }
         return out
     }
+}
+
+extension String {
+    /// This, unless it is empty.
+    var nonEmpty: String? { isEmpty ? nil : self }
 }

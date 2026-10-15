@@ -6,9 +6,11 @@ import LightCraftCore
 /// and the picture of it.
 enum WindowCapture {
     /// A window the script names: by part of its identifier or title (`main`, `settings`, `second`,
-    /// `cover`), or the key window (an unattended run has none) else the biggest one on screen.
+    /// `cover`, `sheet`: the one that is open over a window), or the key window (an unattended run has none) else the biggest one on screen.
     static func window(named name: String?) -> NSWindow? {
         let visible = NSApp.windows.filter { $0.isVisible && !($0 is NSPanel) }
+        // (a sheet is the page that slid down from a window: its own window, attached to that one)
+        if name?.lowercased() == "sheet" { return NSApp.windows.compactMap(\.attachedSheet).first }
         if let name = name?.lowercased(), !name.isEmpty, name != "front" {
             return visible.first { ($0.identifier?.rawValue.lowercased().contains(name) ?? false) || $0.title.lowercased().contains(name) }
         }
@@ -17,9 +19,11 @@ enum WindowCapture {
 
     /// Every window with what a script needs to name it (`ui.inspect`).
     static func list() -> JSONValue {
-        .array(NSApp.windows.filter { !($0 is NSPanel) }.map { w in
+        // (the sheets open over the windows too: `sheet` names them)
+        let windows = NSApp.windows.filter { !($0 is NSPanel) }
+        return .array((windows + windows.compactMap(\.attachedSheet)).map { w in
             [
-                "id": .string(w.identifier?.rawValue ?? ""),
+                "id": .string(w.identifier?.rawValue ?? (w.sheetParent != nil ? "sheet" : "")),
                 "title": .string(w.title),
                 "visible": .bool(w.isVisible),
                 "key": .bool(w.isKeyWindow),

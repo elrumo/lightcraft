@@ -31,15 +31,17 @@ private struct MacToolPanel: View {
             case .edit:
                 MacEditPanel()
             case .presets:
-                ScrollView { PresetsPanel().padding(16) }
+                MacPanel(title: "Presets") { PresetsPanel() }
             case .info:
-                ScrollView { InfoPanel().padding(16) }
+                MacPanel(title: "Info") { InfoPanel() }
             case .crop:
                 MacCropPanel()
             case .masking:
                 MacMaskingPanel()
-            case .remove, .redEye:
-                ScrollView { ToolScreenBar(tool: tool) }
+            case .remove:
+                MacRemovePanel()
+            case .redEye:
+                MacRedEyePanel()
             }
         }
         .environment(\.toolColumn, true)

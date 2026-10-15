@@ -525,35 +525,54 @@ extension AppModel {
 struct ShortcutsSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
+    @State private var query = ""
+
+    private struct Group: Identifiable {
+        let title: String
+        let rows: [KeyRow]
+        var id: String { title }
+    }
+
+    /// Every key by where it belongs: moving around, rating and flags, each menu's, then the rest;
+    /// only the ones the search matches.
+    private var groups: [Group] {
+        let fixed = model.fixedKeyRows()
+        let culling = String(localized: "Rating, Flags and Labels")
+        var all: [Group] = [Group(title: String(localized: "Moving Around"), rows: model.movingKeyRows)]
+        all.append(Group(title: culling, rows: fixed.filter { $0.section == culling }))
+        for top in ["File", "Edit", "Photo", "View", "Window", "Tools", "Help"] {
+            let rows = model.menuItems(top).compactMap { item -> KeyRow? in
+                guard let shortcut = item.shortcut, KeyShortcut.parse(shortcut) != nil else { return nil }
+                return KeyRow(section: top, label: Bundle.main.localizedString(forKey: item.label, value: item.label, table: nil), shortcut: shortcut)
+            }
+            all.append(Group(title: Bundle.main.localizedString(forKey: top, value: top, table: nil), rows: rows))
+        }
+        all.append(Group(title: String(localized: "More Keys"), rows: fixed.filter { $0.section != culling }))
+        let needle = query.trimmingCharacters(in: .whitespaces)
+        return all.compactMap { group in
+            let rows = needle.isEmpty ? group.rows : group.rows.filter {
+                $0.label.localizedCaseInsensitiveContains(needle) || Self.symbols($0.shortcut).localizedCaseInsensitiveContains(needle)
+            }
+            return rows.isEmpty ? nil : Group(title: group.title, rows: rows)
+        }
+    }
 
     var body: some View {
+        let groups = groups
         NavigationStack {
-            List {
-                let fixed = model.fixedKeyRows()
-                ForEach(fixed.map { $0.section }.reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }, id: \.self) { section in
-                    Section(section) {
-                        ForEach(fixed.filter { $0.section == section }) { row in
-                            LabeledContent(row.label) {
-                                Text(verbatim: Self.symbols(row.shortcut)).font(.body.monospaced()).foregroundStyle(.secondary)
-                            }
+            LCList {
+                ForEach(groups) { group in
+                    Section(group.title) {
+                        ForEach(group.rows) { row in
+                            LabeledContent(row.label) { KeyCaps(shortcut: row.shortcut) }
                         }
                     }
                 }
-                ForEach(["File", "Edit", "Photo", "View", "Window", "Tools", "Help"], id: \.self) { top in
-                    let items = model.menuItems(top).filter { $0.shortcut.flatMap(KeyShortcut.parse) != nil }
-                    if !items.isEmpty {
-                        Section(LocalizedStringKey(top)) {
-                            ForEach(items, id: \.self) { item in
-                                LabeledContent(LocalizedStringKey(item.label)) {
-                                    Text(verbatim: Self.symbols(item.shortcut ?? "")).font(.body.monospaced()).foregroundStyle(.secondary)
-                                }
-                            }
-                        }
-                    }
-                }
+                if groups.isEmpty { ContentUnavailableView.search(text: query) }
             }
             .navigationTitle("Keyboard Shortcuts")
             .inlineTitle()
+            .searchable(text: $query, prompt: Text("Search Shortcuts"))
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button(role: .confirm) { dismiss() } } }
             .task { await model.loadMenus() }
         }

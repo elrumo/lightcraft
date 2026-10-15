@@ -75,6 +75,17 @@ public struct KeyChord: Hashable, Sendable, CustomStringConvertible {
     /// A character key with nothing held but Shift: what typing is made of.
     public var isTyping: Bool { !command && !control && !option && key.count == 1 }
 
+    /// The key as the keyboard draws it, a cap for each: the modifiers in the keyboard's order (⌃ ⌥ ⇧ ⌘), then the key.
+    public var caps: [String] {
+        var caps: [String] = []
+        if control { caps.append("⌃") }
+        if option { caps.append("⌥") }
+        if shift { caps.append("⇧") }
+        if command { caps.append("⌘") }
+        caps.append(Self.drawn[key] ?? (key.count == 1 ? key.uppercased() : key.capitalized))
+        return caps
+    }
+
     /// The egui spelling, modifiers in its order (Cmd, Ctrl, Alt, Shift).
     public var description: String {
         var s = ""
@@ -85,6 +96,10 @@ public struct KeyChord: Hashable, Sendable, CustomStringConvertible {
         return s + (Self.spelled[key] ?? (key.count == 1 ? key.uppercased() : key.capitalized))
     }
 
+    private static let drawn = [
+        "left": "←", "right": "→", "up": "↑", "down": "↓", "escape": "esc", "return": "↩", "delete": "⌫", "tab": "⇥", "space": "Space",
+        "pageup": "⇞", "pagedown": "⇟",
+    ]
     private static let arrows: Set<String> = ["left", "right", "up", "down"]
     private static let moving: Set<String> = ["home", "end", "pageup", "pagedown", "space", "return", "tab", "escape"]
     private static let shifted = ["{": "[", "}": "]", "?": "/", "<": ",", ">": ".", ":": ";", "\"": "'", "|": "\\", "~": "`", "_": "-", "+": "="]

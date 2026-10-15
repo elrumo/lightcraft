@@ -26,13 +26,42 @@ struct ExportSheet: View {
     var body: some View {
         NavigationStack {
             Form {
+                #if os(macOS)
+                // the photos, a line saying how many, and the two things to do with them, as one group
+                Section {
+                    VStack(spacing: 14) {
+                        ViewThatFits(in: .horizontal) {
+                            thumbs
+                            ScrollView(.horizontal) { thumbs }.scrollIndicators(.never)
+                        }
+                        Text(ids.count == 1 ? String(localized: "1 photo") : String(localized: "\(ids.count) photos"))
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                        HStack(spacing: 10) {
+                            Button {
+                                Task { await run(.share) }
+                            } label: {
+                                Label("Share", systemImage: "square.and.arrow.up").frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            Button {
+                                Task { await run(.photos) }
+                            } label: {
+                                Label("Save to Photos", systemImage: "square.and.arrow.down").frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(!options.photosCanTake)
+                        }
+                        .controlSize(.large)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                    .disabled(ids.isEmpty || working)
+                }
+                #else
                 Section {
                     ScrollView(.horizontal) {
-                        HStack(spacing: 6) {
-                            ForEach(ids.prefix(30), id: \.self) { id in
-                                ExportThumb(photo: id)
-                            }
-                        }
+                        thumbs
                     }
                     .scrollIndicators(.hidden)
                     .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
@@ -53,6 +82,7 @@ struct ExportSheet: View {
                     .disabled(!options.photosCanTake)
                 }
                 .disabled(ids.isEmpty || working)
+                #endif
                 Section("Options") {
                     // a preset fills the options in; what it holds beyond them (colour space,
                     // sharpening…) goes with the export
@@ -121,6 +151,15 @@ struct ExportSheet: View {
     }
 
     private enum Destination { case share, photos }
+
+    /// The photos going out, as small pictures in a row.
+    private var thumbs: some View {
+        HStack(spacing: 8) {
+            ForEach(ids.prefix(30), id: \.self) { id in
+                ExportThumb(photo: id)
+            }
+        }
+    }
 
     private func loadPresets() async {
         guard let engine = model.engine else { return }
@@ -439,9 +478,16 @@ private struct ExportThumb: View {
     @Environment(AppModel.self) private var model
     let photo: UInt64
 
+    /// (a Mac's sheet has room for bigger pictures)
+    #if os(macOS)
+    private static let size: CGFloat = 96
+    #else
+    private static let size: CGFloat = 72
+    #endif
+
     var body: some View {
         Color.lcTertiaryFill
-            .frame(width: 72, height: 72)
+            .frame(width: Self.size, height: Self.size)
             .overlay {
                 if let p = model.images.thumb(photo) {
                     Image(decorative: p.image, scale: 1).resizable().scaledToFill()

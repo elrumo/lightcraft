@@ -33,7 +33,7 @@ struct ImportReviewSheet: View {
         @Bindable var model = model
         NavigationStack {
             if let review = model.importReview {
-                List {
+                LCList {
                     Section {
                         HStack {
                             Text(summary(review)).font(.subheadline).foregroundStyle(.secondary)

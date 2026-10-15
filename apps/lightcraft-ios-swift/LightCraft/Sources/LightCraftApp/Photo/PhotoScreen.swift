@@ -124,6 +124,9 @@ struct PhotoScreen: View {
         .onDisappear {
             if model.path.isEmpty { editor.tool = nil }
             editor.review = false
+            // (the loupe's zoom is not the grid's)
+            editor.zoomedIn = false
+            editor.zoomPercent = nil
         }
     }
 

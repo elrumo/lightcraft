@@ -422,7 +422,11 @@ struct GenerativeAISwitch: View {
     var body: some View {
         @Bindable var prefs = model.prefs
         VStack(alignment: .leading, spacing: 6) {
+            #if os(macOS)
+            MacCheck(title: "Generative AI", isOn: $prefs.removeAI)
+            #else
             Toggle("Generative AI", isOn: $prefs.removeAI)
+            #endif
             if prefs.removeAI, !model.editor.eraseReady, !info.isNull {
                 Group {
                     if info["available"].bool == false {
@@ -438,11 +442,15 @@ struct GenerativeAISwitch: View {
                     } else {
                         Text("Uses the MI-GAN model, a \(Int((info["downloadBytes"].double ?? 0) / 1e6)) MB download (\(info["licence"].string ?? "")). \(info["credit"].string ?? "").")
                         if let e = info["download"]["error"].string { Text(e).foregroundStyle(.red) }
+                        #if os(macOS)
+                        MacButton(title: "Download", wide: false) { model.perform("models.download", ["id": .string(Self.id), "acknowledged": true]) }
+                        #else
                         Button("Download") { model.perform("models.download", ["id": .string(Self.id), "acknowledged": true]) }
                             .buttonStyle(.bordered)
+                        #endif
                     }
                 }
-                .font(.footnote)
+                .font(Platform.noteFont)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             }

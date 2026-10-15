@@ -128,6 +128,8 @@ final class ScriptHost {
                 "zoom": ["percent": model.editor.zoomPercent.map { .int(Int64($0)) } ?? .null, "zoomedIn": .bool(model.editor.zoomedIn)],
                 "keys": ["bound": .int(Int64(model.keyMap.count)), "panelsAway": .bool(model.editor.review), "gridAcross": .int(Int64(model.gridAcross))],
                 "search": .string(model.searchText),
+                "tool": model.editor.tool.map { .string($0.rawValue) } ?? .null,
+                "beforeAfter": .bool(model.editor.beforeAfter),
                 "activity": .array(model.activity.map { .string($0.label) }),
                 "images": [
                     "thumbs": .int(Int64(model.images.pictures.keys.filter { $0.hasPrefix("thumb") }.count)),
@@ -171,6 +173,7 @@ final class ScriptHost {
             if let on = params["visualizeSpots"].bool { model.editor.visualizeSpots = on }
             if let on = params["removeAI"].bool { model.prefs.removeAI = on }
             if let on = params["removeTap"].bool { model.editor.removeTap = on }
+            if let mode = params["removeMode"].string { model.editor.removeMode = mode }
             if let size = params["removeTapSize"].double { model.tapSizeChanged(size) }
             if let x = params["removeObjectTap"][0].double, let y = params["removeObjectTap"][1].double { await model.removeObject(at: (x, y)) }
             if let tool = params["maskTool"].string { model.editor.maskTool = tool == "none" ? nil : tool }

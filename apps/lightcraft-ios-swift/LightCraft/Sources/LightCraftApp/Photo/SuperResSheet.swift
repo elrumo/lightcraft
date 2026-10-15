@@ -20,7 +20,13 @@ struct SuperResSheet: View {
         let download = status["download"]["status"]
         let downloading = status["download"]["id"].string == Self.modelID && download["running"].bool == true
         NavigationStack {
-            List {
+            LCList {
+                #if os(macOS)
+                Section {
+                    LCHero(symbol: "arrow.up.left.and.arrow.down.right", title: Text("Super Resolution"),
+                           subtitle: Text("Twice the width and height, from an AI model that adds the detail the photo lacks"))
+                }
+                #endif
                 if status["disabled"].bool == true {
                     Section {
                         Text("Super Resolution is turned off: turn its model on in Settings → AI Models.")

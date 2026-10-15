@@ -191,7 +191,7 @@ xcrun devicectl device process launch --device <udid> --terminate-existing \
 
 **On a Mac** the script is any file (`LIGHTCRAFT_SCRIPT=/absolute/path/tour.jsonl`; replies in `tour.out` beside it) and
 `ci/mac-tour.sh <LightCraft.app> <out-dir>` does the rest on the demo library. Mac-only requests: `ui.screenshot {path,
-window?: main | settings | second | cover | part of a title, views?: true}` is the window as the window server draws it
+window?: main | settings | second | cover | sheet (the one open over a window) | part of a title, views?: true}` is the window as the window server draws it
 (an app may capture its own windows without Screen Recording permission; `views: true`, or when that gives nothing, draws
 it from its views, which comes out flat: glass light, lists and thumbnails sometimes empty); `ui.set {windowSize: [w, h]}`
 (points); `ui.activate` (comes to the front: macOS often refuses it for a process started from a script, and the menu bar
@@ -321,6 +321,33 @@ is asked for when the moving has stopped (140 ms without an event, the trackpad'
 send is a real wheel, pinch or key from the hardware: the handlers are driven by `ui.loupe` and the keys by `ui.rawKey`,
 and the events' own numbers (scroll direction, pinch size) are the part to try by hand.
 
+**Panels** (SM2.7, `Mac/MacInspectorKit.swift`). Every panel of the inspector is made of the same parts, so they line up
+the way Figma's properties panel does: `MacPanel` (the tool's name at the top with what it can do at the right, a rule,
+then its groups), `MacGroup` (a titled group with a rule under it) and `MacSection` (the same, opening and closing, with
+its chevron at the right so that every title, label and checkbox starts at one left edge), `MacRow` (a label column of 88
+pt and a control column), and controls of one height (24 pt in 28 pt rows) and one look, a quiet fill and no borders:
+`MacMenuField`, `MacSegmented`, `MacIconBar` with `MacIconButton` and `MacIconMenu`, `MacCheck` (a checkbox at the left
+edge), `.macFieldLook()` for text fields, `MacButton`, `MacHint`. Sixteen points at both sides, one 4 pt rhythm between
+rows, 12 pt text (`MacUI`); the slider rows (`MacSliderRow`) use the same label column, so a menu and a slider under it
+start together. Edit, Crop & Rotate (`MacCropPanel`), Remove and Red Eye (`MacRemovePanel`), Masking
+(`MacMaskingPanel`), Presets and Info are built from it, each a call to the same few views; a phone keeps its own
+layout of the same panels (`Platform.rowSpacing`, `tileFill` and the other small switches say where they differ).
+A system menu drawn with `.borderlessButton` keeps only its label's text and icon, none of its layout: the fields use
+`.menuStyle(.button)` with a plain button style, which draws the label as it is.
+
+**Sheets** (SM2.7). A Mac's sheets were the phone's pages in a narrow window: a list in a navigation stack has no height
+of its own, a sheet is a narrow form whatever width its content asks for, and a form was a column of labels that touched
+the edge. Now every sheet has the size its kind needs (`Sheet.macSize`, with `.presentationSizing(.fitted)`, set once
+in `RootView`), forms are grouped (`.formStyle(.grouped)`, System Settings' look: rounded groups, a label and its control
+on a row, checkboxes where a list of what to take along is a list of checkboxes), and what a phone draws as a table is a
+grouped form on a Mac too (`LCList`). A button in a list takes the whole row and lights under the pointer
+(`LCRowButtonStyle`, `.lcRowButton()`), rows with a swipe action have a right-click menu and a visible remove button, an
+empty list says what is missing and what to do (`LCEmpty`), About, Sync and Super Resolution open with a header
+(`LCHero`; About with the app's own icon), Share starts with the photos and its two actions as one group, and Keyboard
+Shortcuts draws the keys as keys (`KeyCaps`, `KeyChord.caps`), lists the moving, rating and flag keys no menu has, and
+searches. `ui.screenshot {window: sheet}` captures the open sheet and `ui.inspect` lists it among the windows. Still to
+do: the Share sheet's destination folder and the other desktop export options (SM3), and popovers where a phone has sheets.
+
 Where it stands: it builds and launches with the iPad's regular-width layout in a window (SM0), and has a Mac's shell
 (SM1): a Settings window (⌘,: a tab per page of the iPhone's list, `Mac/MacSettings.swift`), a menu bar with the app
 menu (About, Settings…), a File menu that starts with Import Photos… (⇧⌘I, an open panel for files and folders, copied
@@ -393,7 +420,7 @@ SM, the Mac app (see [macOS](#macos); not part of the S gates, which are about r
   done), the Xcode project, Rust build, `run.sh --mac` and `ci/mac-tour.sh` (SM0.3);
 - SM1, the Mac shell (done on this Mac): quit that closes the engine and the start-up error (SM1.1), the Settings window,
   the menus and the slideshow window (SM1.2);
-- SM2, the Mac window: sidebar, content and inspector, a toolbar and filmstrip, pointer and keyboard (SM2.1, the editor's inspector and the Edit panel, SM2.2, the bar under the loupe, and SM2.3, the Crop and Masking panels, and SM2.4, the grid, SM2.5, the keyboard, and SM2.6, the loupe's wheel and trackpad, done);
+- SM2, the Mac window: sidebar, content and inspector, a toolbar and filmstrip, pointer and keyboard (SM2.1, the editor's inspector and the Edit panel, SM2.2, the bar under the loupe, and SM2.3, the Crop and Masking panels, and SM2.4, the grid, SM2.5, the keyboard, SM2.6, the loupe's wheel and trackpad, and SM2.7, the design of the inspector's panels and the sheets, done);
 - SM3, desktop workflows: import in place from the open panel and Finder, an export destination, libraries;
 - SM4, tracking and CI: the Mac rows in `PARITY.md`, `ios-swift.yml`, the other docs.
 
