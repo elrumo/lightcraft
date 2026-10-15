@@ -1635,6 +1635,12 @@ impl Session {
         Some(if n.has_smart { 2 } else { u8::from(n.has_mini) })
     }
 
+    /// Whether `p` is a synced photo whose original and previews aren't here yet while this device is syncing:
+    /// a render that failed for want of them is a wait, not an error (see [`Session::synced_tier`]).
+    pub fn awaiting_preview(&self, p: &Photo) -> bool {
+        self.sync.as_ref().is_some_and(|st| st.has_token() && !st.config.paused) && self.synced_tier(p) == Some(0)
+    }
+
     /// The download of `p`'s preview `blob` (a smart or mini one) when `p` is a synced photo whose
     /// original isn't here, that preview isn't here (for a mini: nor the smart one), no failure of
     /// its files is being waited out and the server isn't building it right now.

@@ -1021,6 +1021,7 @@ fn previews_download_while_the_library_is_read_again() {
     sync_until(&mut b, &mut f, &|s| s.sync_state().unwrap().reading().is_some());
     assert!(b.sync_state().unwrap().reading().is_some(), "half read");
     b.selection = crate::Selection::single(ids[0]);
+    assert!(b.awaiting_preview(b.catalog.photo(ids[0]).unwrap()), "a wait, not an error, until the preview is here");
     b.thumb_job(ids[0], 128);
     let urls: Vec<String> = b.sync_tasks().iter().filter_map(|t| if let Task::Http { url, .. } = t { Some(url.clone()) } else { None }).collect();
     assert!(urls.iter().any(|u| u.contains("/api/blobs/")), "the shown photo's preview is asked for: {urls:?}");
