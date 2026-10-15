@@ -36,6 +36,10 @@ final class DuoFacts {
     /// while the device is flat.
     var fold: CGRect?
 
+    /// A Duo with room for the iPad's arrangement: a hinge (or a made-up fold) and a regular width, which is the inner
+    /// display, flat or folded.
+    var unfolded: Bool { horizontal == "regular" && (hinge != "none" || fakeFold != nil) }
+
     nonisolated struct Region: Equatable {
         var kind: String
         var active: Bool

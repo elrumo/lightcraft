@@ -251,20 +251,29 @@ private struct ToolColumn: View {
 
     var body: some View {
         let editor = model.editor
-        VStack(spacing: 0) {
-            if let tool = editor.tool, tool.hasScreen {
-                // (at the bottom, where the thumb is, as on a phone held upright)
-                Spacer(minLength: 0)
-                ViewThatFits(in: .vertical) {
-                    ToolScreenBar(tool: tool)
-                    ScrollView { ToolScreenBar(tool: tool) }
-                }
-            } else {
-                if editor.tool == .edit { GroupBar() }
-                if let tool = editor.tool {
-                    ScrollView { ToolPanelContent(tool: tool) }
+        // An unfolded Duo has the room for the Edit groups as a rail of icons beside the controls, as the Mac's
+        // tool strip and Lightroom's, not a row of chips to scroll.
+        let rail = editor.tool == .edit && model.duo.unfolded
+        HStack(spacing: 0) {
+            if rail {
+                GroupBar(vertical: true)
+                Divider()
+            }
+            VStack(spacing: 0) {
+                if let tool = editor.tool, tool.hasScreen {
+                    // (at the bottom, where the thumb is, as on a phone held upright)
+                    Spacer(minLength: 0)
+                    ViewThatFits(in: .vertical) {
+                        ToolScreenBar(tool: tool)
+                        ScrollView { ToolScreenBar(tool: tool) }
+                    }
                 } else {
-                    Spacer()
+                    if editor.tool == .edit, !rail { GroupBar() }
+                    if let tool = editor.tool {
+                        ScrollView { ToolPanelContent(tool: tool) }
+                    } else {
+                        Spacer()
+                    }
                 }
             }
         }
@@ -927,6 +936,7 @@ struct ToolBar: ToolbarContent {
 /// The Edit tool's groups: Auto, then Profile, Light, Color… (one open at a time).
 struct GroupBar: View {
     @Environment(AppModel.self) private var model
+    var vertical = false
     /// The photo and undo depth just after Auto was applied (`nil` once anything else is done).
     @State private var autoArmed: (photo: UInt64?, depth: Int)?
 
@@ -951,6 +961,7 @@ struct GroupBar: View {
                     autoArmed = if let before, let after, after > before { (model.state.active, after) } else { nil }
                 }
             },
+            vertical: vertical,
             choose: { model.prefs.editGroup = $0 }
         )
         .haptic(.selection, trigger: model.prefs.editGroup)
@@ -970,9 +981,47 @@ struct GroupChips: View {
     let selected: String?
     var enabled = true
     var auto: (() -> Void)? = nil
+    /// A rail of icons down the side of a wide column (an unfolded Duo, as the Mac's tool strip), not a row to scroll.
+    var vertical = false
     let choose: (String) -> Void
 
     var body: some View {
+        if vertical { rail } else { row }
+    }
+
+    private var rail: some View {
+        ScrollView {
+            GlassEffectContainer {
+                VStack(spacing: 6) {
+                    if let auto {
+                        Button(action: auto) { railIcon("wand.and.stars") }
+                            .buttonStyle(.glass)
+                            .buttonBorderShape(.circle)
+                            .accessibilityLabel("Auto")
+                    }
+                    ForEach(items) { item in
+                        let on = enabled && item.id == selected
+                        let button = Button { choose(item.id) } label: { railIcon(item.symbol) }
+                            .buttonBorderShape(.circle)
+                            .accessibilityLabel(Text(LocalizedStringKey(item.label)))
+                            .accessibilityAddTraits(on ? .isSelected : [])
+                        if on { button.buttonStyle(.glassProminent) } else { button.buttonStyle(.glass) }
+                    }
+                }
+            }
+            .padding(.vertical, 8)
+            .padding(.horizontal, 6)
+        }
+        .scrollIndicators(.hidden)
+        .frame(width: 56)
+        .disabled(!enabled)
+    }
+
+    private func railIcon(_ symbol: String) -> some View {
+        Image(systemName: symbol).font(.body.weight(.medium)).frame(width: 32, height: 32)
+    }
+
+    private var row: some View {
         ScrollView(.horizontal) {
             GlassEffectContainer {
                 HStack(spacing: 6) {
