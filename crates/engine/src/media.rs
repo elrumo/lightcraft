@@ -1626,11 +1626,12 @@ impl crate::Session {
 
     /// The camera's embedded preview of a raw file, for the face scan. Faces are read from the unedited picture, so the
     /// photo's edits do not matter, and the camera's own JPEG (oriented, display-ready) costs a fraction of decoding the
-    /// raw. `None` for anything else, and where the host installed no loader.
+    /// raw. `None` for anything else, for a synced photo whose original is on the server only (the scan renders its
+    /// downloaded preview), and where the host installed no loader.
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn scan_preview_of(&self, p: &Photo) -> Option<(String, PreviewLoader)> {
         match (&p.source, &self.media.preview_loader) {
-            (Source::File { path }, Some(l)) if p.kind == MediaKind::Raw => Some((path.clone(), l.clone())),
+            (Source::File { path }, Some(l)) if p.kind == MediaKind::Raw && !crate::cloud_sync::is_remote(p) => Some((path.clone(), l.clone())),
             _ => None,
         }
     }
