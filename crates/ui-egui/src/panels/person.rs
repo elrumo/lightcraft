@@ -165,6 +165,8 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, name: &str) {
             let photos = ui.button(crate::i18n::tr("Show photos")).on_hover_text(crate::i18n::tr("Their photos in the grid"));
             register(ui.ctx(), "person:photos", photos.rect);
             if photos.clicked() {
+                // (the page counts the whole library: an album left open could hold none of their photos)
+                let _ = app.run("library.source", json!({"kind": "all"}));
                 let _ = app.run("library.filter", json!({"person": shown_name}));
                 let _ = app.run("view.photoGrid", json!({}));
             }

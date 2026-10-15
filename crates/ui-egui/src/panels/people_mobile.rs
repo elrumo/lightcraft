@@ -444,6 +444,8 @@ fn person(app: &mut LightcraftApp, ui: &mut egui::Ui, name: &str) {
         app.ui.face_naming = Some(Naming::new(NameTarget::Person { from: shown_name.clone() }, shown_name.clone()));
     }
     if photos {
+        // (the page counts the whole library: an album left open could hold none of their photos)
+        let _ = app.run("library.source", json!({"kind": "all"}));
         let _ = app.run("library.filter", json!({"person": shown_name}));
         let _ = app.run("view.gridSpan", json!({"span": "all"}));
     }
