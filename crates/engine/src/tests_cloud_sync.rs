@@ -1000,6 +1000,34 @@ fn a_device_further_behind_than_the_server_keeps_reloads_and_keeps_its_changes()
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// The server's library is read again (the log was compacted past this device): the photos the grid or the loupe
+/// show download their previews meanwhile, they don't wait for the last page.
+#[test]
+fn previews_download_while_the_library_is_read_again() {
+    let mut f = Fake::new();
+    f.page = 1;
+    f.core.set_compact_bytes(3000);
+    let (mut a, root, ids) = first_device("reread", &mut f);
+    let mut b = open(&root.join("b"));
+    sign_in(&mut b);
+    sync(&mut b, &mut f);
+    let behind = b.sync_state().unwrap().config.cursor;
+    a.selection = crate::Selection::single(ids[0]);
+    for i in 0..80 {
+        a.execute("photo.rate", &json!({"rating": i % 5 + 1})).unwrap();
+        sync(&mut a, &mut f);
+    }
+    assert_eq!(f.core.since(behind, 10).unwrap(), lightcraft_catalog::sync::Pull::Gone);
+    sync_until(&mut b, &mut f, &|s| s.sync_state().unwrap().reading().is_some());
+    assert!(b.sync_state().unwrap().reading().is_some(), "half read");
+    b.selection = crate::Selection::single(ids[0]);
+    assert!(b.awaiting_preview(b.catalog.photo(ids[0]).unwrap()), "a wait, not an error, until the preview is here");
+    b.thumb_job(ids[0], 128);
+    let urls: Vec<String> = b.sync_tasks().iter().filter_map(|t| if let Task::Http { url, .. } = t { Some(url.clone()) } else { None }).collect();
+    assert!(urls.iter().any(|u| u.contains("/api/blobs/")), "the shown photo's preview is asked for: {urls:?}");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// A compaction leaves the newest ops in the log: a device that is only a little behind it keeps
 /// pulling instead of reloading the whole library.
 #[test]
