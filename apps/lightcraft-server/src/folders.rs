@@ -23,8 +23,9 @@
 //!   can't be downloaded until it's back); a folder that is missing, or empty when it had photos
 //!   (an unmounted disk), is skipped, never read as everything deleted. A photo removed from the
 //!   library on a device isn't added back, unless its file changes.
-//! - **Untrusted files**: decoding runs under a panic guard, files larger than [`FILE_MAX`] are
-//!   skipped, symbolic links aren't followed, depth is bounded.
+//! - **Untrusted files**: decoding runs under a panic guard, files larger than [`SCAN_MAX`] are
+//!   skipped (so are those over [`FILE_MAX`] unless they are TIFFs that can be read in part: a
+//!   Photoshop file of several GB is mostly layers), symbolic links aren't followed, depth is bounded.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::io::Read;
@@ -49,11 +50,15 @@ pub const INDEX: &str = "folders.json";
 pub const REQUEST: &str = "scan.request";
 /// The id space of the photos the server adds (no device is given it).
 pub const SPACE: u32 = crate::MAX_SPACE;
-/// Larger files aren't read as photos.
+/// Larger files aren't read whole (nor accepted from guests); a scan reads a TIFF in part past this.
 pub const FILE_MAX: u64 = 2 << 30;
+/// Larger files aren't read as photos at all.
+const SCAN_MAX: u64 = 64 << 30;
 /// Files up to this size are read once for their hash and description; larger ones are hashed
 /// as they stream and read again only when they're new.
 const READ_WHOLE: u64 = 256 << 20;
+/// Holds the memory of a big file being read: one at a time (the scan's and the previews' alike).
+static BIG: Mutex<()> = Mutex::new(());
 /// Folder depth followed at most, and photo files listed per user at most.
 const DEPTH_MAX: usize = 64;
 const FILES_MAX: usize = 5_000_000;
@@ -403,8 +408,8 @@ impl Known {
 }
 
 fn read(file: Found, known: &Known, found: &HashSet<String>, now: &str) -> FileRead {
-    if file.size > FILE_MAX {
-        let why = format!("larger than {} GiB", FILE_MAX >> 30);
+    if file.size > SCAN_MAX {
+        let why = format!("larger than {} GiB", SCAN_MAX >> 30);
         return FileRead { file, hash: Err(why), probed: None };
     }
     let whole = if file.size <= READ_WHOLE { Some(std::fs::read(&file.path)) } else { None };
@@ -415,9 +420,11 @@ fn read(file: Found, known: &Known, found: &HashSet<String>, now: &str) -> FileR
     };
     let probed = match &hash {
         Ok(h) if known.needs_description(&file.key, h, found) => {
+            // a big file is read (whole, or a TIFF in part) one at a time: they take the memory
+            let _one = bytes.is_none().then(|| lock(&BIG));
             let bytes = match bytes {
                 Some(b) => Ok(b),
-                None => std::fs::read(&file.path).map_err(|e| e.to_string()),
+                None => lightcraft_engine::files::read_file(&file.path),
             };
             Some(bytes.and_then(|b| describe(&file, h, &b, now)))
         }
@@ -831,7 +838,6 @@ pub fn build_previews(blobs: &Path, hash: &str, file: &Path) -> Result<bool, Str
     }
     let (f, s, m) = (file.to_string_lossy().to_string(), smart.to_string_lossy().to_string(), mini.to_string_lossy().to_string());
     // a huge file (a scan, a PSB) is read whole and decoded: one at a time
-    static BIG: Mutex<()> = Mutex::new(());
     let _one = (std::fs::metadata(file).map_or(0, |m| m.len()) > READ_WHOLE).then(|| lock(&BIG));
     lightcraft_engine::guard::catch("building previews", || lightcraft_engine::cloud_sync::build_proxies(&f, &s, &m))??;
     Ok(true)

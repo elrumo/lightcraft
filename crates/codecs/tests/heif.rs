@@ -96,3 +96,20 @@ fn hostile_heic_is_an_error_never_a_panic() {
     let r = decode(&bytes, DecodeOptions { max_pixels: 64 * 96 - 1, ..Default::default() });
     assert!(matches!(r, Err(Error::TooLarge(64, 96))), "{r:?}");
 }
+
+/// A picture that won't decode (here its first coded tile's NAL length is wrong) still opens as the
+/// file's own thumbnail, small, instead of failing; with no thumbnail it is an error.
+#[test]
+fn a_picture_that_wont_decode_falls_back_to_the_thumbnail() {
+    let spoil = |mut bytes: Vec<u8>| {
+        let mdat = bytes.windows(4).position(|w| w == b"mdat").expect("mdat") + 4;
+        bytes[mdat..mdat + 4].copy_from_slice(&0x7FFF_FFF0u32.to_be_bytes());
+        bytes
+    };
+    let with = spoil(iphone_like());
+    let d = decode(&with, DecodeOptions::default()).unwrap();
+    assert!(d.width.max(d.height) <= 48, "the thumbnail, not the photo: {}x{}", d.width, d.height);
+    assert_eq!((d.source_width, d.source_height), (64, 96));
+    let without = spoil(build(&Spec::new(96, 64, &grey)));
+    assert!(decode(&without, DecodeOptions::default()).is_err());
+}
