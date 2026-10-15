@@ -32,7 +32,18 @@ pub(crate) fn decode(bytes: &[u8], opts: &DecodeOptions) -> Result<Decoded> {
     let has_alpha = n_samples > n_color && !matches!(ct, ColorType::Palette(_));
     let premultiplied = has_alpha && extra.first() == Some(&1);
 
-    let res = d.read_image().map_err(err)?;
+    // `read_image` reads only the first plane of a planar file (PlanarConfiguration 2); the buffer
+    // variant reads them all, one after another, when they fit the decoder's limits.
+    let read = if planar && n_samples > 1 {
+        let mut all = DecodingResult::U8(Vec::new());
+        d.read_image_to_buffer(&mut all).map(|_| all)
+    } else {
+        d.read_image()
+    };
+    let res = read.map_err(|e| match missing_bytes(&mut d, bytes.len() as u64) {
+        Some(n) => err(format!("file is incomplete: {n} bytes of image data are missing ({e})")),
+        None => err(e),
+    })?;
     let (wu, hu) = (w as usize, h as usize);
     let n = wu * hu;
     let mut buf = match res {
@@ -53,7 +64,7 @@ pub(crate) fn decode(bytes: &[u8], opts: &DecodeOptions) -> Result<Decoded> {
     let bit_depth = bits;
 
     if planar && n_samples > 1 {
-        buf = interleave(buf, n, n_samples);
+        buf = interleave(buf, n, n_samples)?;
     }
 
     // Palette → 16-bit RGB.
@@ -85,7 +96,7 @@ pub(crate) fn decode(bytes: &[u8], opts: &DecodeOptions) -> Result<Decoded> {
     // Drop extra samples beyond colour + one alpha.
     let keep = n_color + has_alpha as usize;
     if n_samples != keep {
-        buf = select_channels(buf, n, n_samples, keep);
+        buf = select_channels(buf, n, n_samples, keep)?;
     }
     let raw = Raw { width: wu, height: hu, model, alpha: has_alpha, premultiplied, buf, bit_depth };
     let meta = Meta { icc, xmp, orientation, ..Default::default() };
@@ -158,6 +169,15 @@ pub(crate) fn header(bytes: &[u8]) -> Result<(u32, u32, u16)> {
     Ok((w, h, orientation))
 }
 
+/// How far the last strip or tile reaches past the end of a `len`-byte file, if it does: the file was
+/// cut short (an interrupted copy or download), which the `tiff` crate reports as a bare I/O error.
+fn missing_bytes<R: std::io::Read + std::io::Seek>(d: &mut Decoder<R>, len: u64) -> Option<u64> {
+    let chunks = |offsets: Tag, counts: Tag, d: &mut Decoder<R>| Some((d.get_tag_u64_vec(offsets).ok()?, d.get_tag_u64_vec(counts).ok()?));
+    let (offsets, counts) = chunks(Tag::StripOffsets, Tag::StripByteCounts, d).or_else(|| chunks(Tag::TileOffsets, Tag::TileByteCounts, d))?;
+    let end = offsets.iter().zip(&counts).map(|(&o, &c)| o.saturating_add(c)).max()?;
+    end.checked_sub(len).filter(|&n| n > 0)
+}
+
 /// A BYTE/UNDEFINED tag as bytes (the decoder may surface unknown byte tags as unsigned values).
 fn tag_bytes<R: std::io::Read + std::io::Seek>(d: &mut Decoder<R>, tag: Tag) -> Option<Vec<u8>> {
     use tiff::decoder::ifd::Value;
@@ -208,40 +228,43 @@ fn unpack(packed: &[u8], width: usize, height: usize, samples: usize, bits: u8) 
     Ok(out)
 }
 
-fn interleave(buf: Buf, n: usize, s: usize) -> Buf {
-    fn go<T: Copy + Default>(v: Vec<T>, n: usize, s: usize) -> Vec<T> {
-        if v.len() < n * s {
-            return v;
+/// Planar samples (all of channel 0, then all of channel 1, …) to interleaved. A buffer that holds
+/// fewer than `n * s` samples is an error: silently passing it on showed a wrong picture or failed later.
+fn interleave(buf: Buf, n: usize, s: usize) -> Result<Buf> {
+    fn go<T: Copy + Default>(v: Vec<T>, n: usize, s: usize) -> Result<Vec<T>> {
+        let total = n.checked_mul(s).ok_or_else(|| err("image too large"))?;
+        if v.len() < total {
+            return Err(err(format!("planar TIFF: {} samples read, {total} needed", v.len())));
         }
-        let mut out = vec![T::default(); n * s];
+        let mut out = vec![T::default(); total];
         for c in 0..s {
             for i in 0..n {
                 out[i * s + c] = v[c * n + i];
             }
         }
-        out
+        Ok(out)
     }
-    match buf {
-        Buf::U8(v) => Buf::U8(go(v, n, s)),
-        Buf::U16(v) => Buf::U16(go(v, n, s)),
-        Buf::F32(v) => Buf::F32(go(v, n, s)),
-    }
+    Ok(match buf {
+        Buf::U8(v) => Buf::U8(go(v, n, s)?),
+        Buf::U16(v) => Buf::U16(go(v, n, s)?),
+        Buf::F32(v) => Buf::F32(go(v, n, s)?),
+    })
 }
 
-fn select_channels(buf: Buf, n: usize, s: usize, keep: usize) -> Buf {
-    fn go<T: Copy>(v: Vec<T>, n: usize, s: usize, keep: usize) -> Vec<T> {
-        if v.len() < n * s {
-            return v;
+fn select_channels(buf: Buf, n: usize, s: usize, keep: usize) -> Result<Buf> {
+    fn go<T: Copy>(v: Vec<T>, n: usize, s: usize, keep: usize) -> Result<Vec<T>> {
+        if v.len() < n.saturating_mul(s) {
+            return Err(err(format!("{} samples read, {} needed", v.len(), n.saturating_mul(s))));
         }
         let mut out = Vec::with_capacity(n * keep);
         for px in v.chunks_exact(s).take(n) {
             out.extend_from_slice(&px[..keep]);
         }
-        out
+        Ok(out)
     }
-    match buf {
-        Buf::U8(v) => Buf::U8(go(v, n, s, keep)),
-        Buf::U16(v) => Buf::U16(go(v, n, s, keep)),
-        Buf::F32(v) => Buf::F32(go(v, n, s, keep)),
-    }
+    Ok(match buf {
+        Buf::U8(v) => Buf::U8(go(v, n, s, keep)?),
+        Buf::U16(v) => Buf::U16(go(v, n, s, keep)?),
+        Buf::F32(v) => Buf::F32(go(v, n, s, keep)?),
+    })
 }
