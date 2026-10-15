@@ -128,7 +128,10 @@ nonisolated struct VisionIterativeProvider: SelectionProvider {
     /// Ask the system to download the model; `progress` is told how far it is (0…1).
     static func download(progress: @escaping @Sendable (Double) -> Void) async throws {
         let request = GenerateIterativeSegmentationRequest(seedPoint: NormalizedPoint(x: 0.5, y: 0.5))
-        let total = Progress(totalUnitCount: 1000)
+        // A ProgressManager of our own, not a Progress's `subprogress`: that one has the system make a bridge between
+        // the two kinds, and in it Foundation aborted the whole app ("Trying to recursively lock an os_unfair_lock",
+        // thread com.apple.ANSTKit.MobileAssetManager-Shared, macOS 27.2) when Vision reported the model's download.
+        let total = ProgressManager(totalCount: 1000)
         let watcher = Task {
             while !Task.isCancelled {
                 progress(total.fractionCompleted)
