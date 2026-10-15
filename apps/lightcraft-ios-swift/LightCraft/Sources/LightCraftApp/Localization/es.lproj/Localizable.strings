@@ -369,6 +369,7 @@
 "Cancel Interaction" = "Cancelar interacción";
 "Cancel Pending Photo Action" = "Cancelar la acción pendiente sobre la foto";
 "Cancel Preview Build" = "Cancelar generación de vistas previas";
+"Cancel Sign Out" = "Cancelar el cierre de sesión";
 "Cancel pending action" = "Cancelar acción pendiente";
 "Candidate" = "Candidata";
 "Caption" = "Pie de foto";
@@ -917,6 +918,7 @@
 "Finding words in photos uses two small AI models that read text, in English, Chinese, Japanese and many other languages. They are not part of LightCraft: they are PP-OCRv6 from Baidu, a %@ download onto this server under the %@. Downloading them means accepting that licence: %@ Afterwards the server reads every user's photos in the background, about a second each." = "La búsqueda de palabras en las fotos usa dos modelos de IA pequeños que leen texto, en inglés, chino, japonés y muchos otros idiomas. No forman parte de LightCraft: son PP-OCRv6 de Baidu, una descarga de %1$@ en este servidor bajo la %2$@. Descargarlos significa aceptar esa licencia: %3$@ Después, el servidor lee en segundo plano las fotos de todos los usuarios, aproximadamente un segundo por foto.";
 "Finds photo files that no library uses any more (photos deleted for good) and uploads that never finished, if they are older than a day. Checking changes nothing." = "Encuentra archivos de foto que ninguna biblioteca usa ya (fotos eliminadas definitivamente) y subidas que nunca terminaron, si tienen más de un día. Comprobar no cambia nada.";
 "Find…" = "Buscar…";
+"Finishing sync before signing out" = "Terminando la sincronización antes de cerrar sesión";
 "Finishing up." = "Terminando.";
 "First" = "Primero";
 "First commit" = "Primer commit";
@@ -1940,6 +1942,9 @@
 "Remove Folder" = "Quitar carpeta";
 "Remove Folder from Library" = "Quitar carpeta de la biblioteca";
 "Remove Folder from Library…" = "Quitar carpeta de la biblioteca…";
+"Remove Library" = "Quitar biblioteca";
+"Remove Library from This Device?" = "¿Quitar la biblioteca de este dispositivo?";
+"Remove Library from This Device…" = "Quitar la biblioteca de este dispositivo…";
 "Remove Location" = "Quitar ubicación";
 "Remove Offline Copy" = "Quitar copia sin conexión";
 "Remove User" = "Quitar usuario";
@@ -1968,6 +1973,7 @@
 "Removed" = "Quitadas";
 "Removed %@" = "Eliminado: %@";
 "Removed %@. Their files stay in %@." = "Se quitó a %1$@. Sus archivos permanecen en %2$@.";
+"Removing the library from this device" = "Quitando la biblioteca de este dispositivo";
 "Removing them frees this space. It cannot be undone." = "Al eliminarlos se libera este espacio. No se puede deshacer.";
 "Removing with AI…" = "Eliminando con IA…";
 "Rename" = "Cambiar nombre";
@@ -2136,6 +2142,7 @@
 "Selects any object from taps, including parts you add or leave out." = "Selecciona cualquier objeto a partir de toques, incluidas las partes que añades o dejas fuera.";
 "Selenium Tone" = "Virado al selenio";
 "Send Feedback…" = "Enviar comentarios…";
+"Sending what is left: %lld changes, %lld photos" = "Enviando lo que falta: %lld cambios, %lld fotos";
 "Separated by commas" = "Separados por comas";
 "Sepia Tone" = "Virado sepia";
 "Sequence number zero-padded to N digits (1–9)" = "Número de secuencia rellenado con ceros hasta N dígitos (1–9)";
@@ -2257,11 +2264,17 @@
 "Sidecar names" = "Nombres de archivos complementarios";
 "Sign In" = "Iniciar sesión";
 "Sign Out" = "Cerrar sesión";
+"Sign Out Anyway" = "Cerrar sesión de todos modos";
+"Sign Out Anyway…" = "Cerrar sesión de todos modos…";
+"Sign Out Without Waiting?" = "¿Cerrar sesión sin esperar?";
+"Sign Out?" = "¿Cerrar sesión?";
 "Sign in again in Settings ▸ Sync." = "Vuelve a iniciar sesión en Ajustes ▸ Sincronización.";
 "Sign out %@?" = "¿Cerrar la sesión de %@?";
 "Sign out and keep this library on this device only." = "Cierra la sesión y deja esta biblioteca solo en este dispositivo.";
 "Signed in %@" = "Sesión iniciada %@";
 "Signed out" = "Sesión cerrada";
+"Signing out waits until everything this device has made has reached the server, then removes the library from this device. Cancel stays signed in. Sign Out Anyway doesn't wait: what hasn't been sent is lost." = "Al cerrar sesión se espera a que todo lo que ha hecho este dispositivo llegue al servidor y después se quita la biblioteca de este dispositivo. «Cancelar el cierre de sesión» mantiene la sesión iniciada. «Cerrar sesión de todos modos» no espera: lo que no se haya enviado se pierde.";
+"Signing out…" = "Cerrando sesión…";
 "Silver" = "Plata";
 "Simulate Paper & Ink" = "Simular papel y tinta";
 "Size" = "Tamaño";
@@ -2296,6 +2309,7 @@
 "Soft Pastel" = "Pastel suave";
 "Soft Proofing" = "Prueba en pantalla";
 "Soft Skin" = "Piel suave";
+"Some changes or photos haven't reached the server. Signing out now removes this library from this device, and what hasn't been sent is lost." = "Algunos cambios o fotos no han llegado al servidor. Si cierras sesión ahora, esta biblioteca se quita de este dispositivo y lo que no se haya enviado se pierde.";
 "Some files couldn't be read" = "No se pudieron leer algunos archivos";
 "Some rules need fixing (Edit Smart Album…):" = "Hay reglas que corregir (Editar álbum inteligente…):";
 "Something went wrong" = "Algo salió mal";
@@ -2481,6 +2495,7 @@
 "The server has a library already" = "El servidor ya tiene una biblioteca";
 "The server never changes, moves or deletes the photos. With writing on, it adds and updates .xmp sidecar files beside them — but it cannot write there now: %@" = "El servidor nunca modifica, mueve ni elimina las fotos. Con la escritura activada, añade y actualiza archivos .xmp complementarios junto a ellas — pero ahora no puede escribir ahí: %@";
 "The server never changes, moves or deletes the photos. With writing on, it adds and updates .xmp sidecar files beside them. Mount the folder read-write, with the server user allowed to write, before turning this on." = "El servidor nunca modifica, mueve ni elimina las fotos. Con la escritura activada, añade y actualiza archivos .xmp complementarios junto a ellas. Monta la carpeta con lectura y escritura, y con permiso de escritura para el usuario del servidor, antes de activarlo.";
+"The server signed this device out, so nothing can be sent. Removing the library from this device loses what hasn't been sent. Signing in again brings the rest back from the server." = "El servidor cerró la sesión de este dispositivo, así que no se puede enviar nada. Al quitar la biblioteca de este dispositivo se pierde lo que no se haya enviado. Al volver a iniciar sesión se recupera el resto desde el servidor.";
 "The server will look at the faces in %@'s photos and group them into people, which they name on their own devices. What it finds stays on this server, and %@ can delete all of it from their devices (Forget All Faces). Only do this if they agree." = "El servidor examinará las caras de las fotos de %1$@ y las agrupará en personas, a las que el usuario pone nombre en sus propios dispositivos. Lo que encuentre se queda en este servidor, y %2$@ puede eliminarlo todo desde sus dispositivos (Olvidar todas las caras). Hazlo solo si está de acuerdo.";
 "The server's" = "La del servidor";
 "Their devices are signed out and they can no longer sign in. Their library and photo files stay on the server, in its data folder, until you delete them by hand." = "Se cierra la sesión de sus dispositivos y ya no podrá iniciar sesión. Su biblioteca y sus archivos de fotos permanecen en el servidor, en su carpeta de datos, hasta que los elimines a mano.";
@@ -2513,9 +2528,11 @@
 "This is too large for Super Resolution here. Crop the photo first: the limit is %lld megapixels." = "Es demasiado grande para la superresolución aquí. Recorta primero la foto: el límite es de %lld megapíxeles.";
 "This library" = "Esta biblioteca";
 "This library and the server's both have photos. Choose what to do with this library's photos; nothing syncs until you do." = "Esta biblioteca y la del servidor tienen fotos. Elige qué hacer con las fotos de esta biblioteca; no se sincroniza nada hasta que lo hagas.";
+"This library belongs to the account it was signed in as, and the server signed this device out. Sign in as the same user to go on, or remove the library from this device to sign in as someone else: what hasn't been sent is lost." = "Esta biblioteca pertenece a la cuenta con la que se inició sesión, y el servidor ha cerrado la sesión de este dispositivo. Inicia sesión con el mismo usuario para continuar, o quita la biblioteca de este dispositivo para iniciar sesión con otro usuario: lo que no se haya enviado se pierde.";
 "This library is only on this device" = "Esta biblioteca solo está en este dispositivo";
 "This model isn't downloaded yet: download it, or choose Classic." = "Este modelo aún no se ha descargado: descárgalo o elige Clásico.";
 "This photo can't be opened" = "No se puede abrir esta foto";
+"This removes this account's library from this device. It stays on the server, and signing in again brings it back. Anything that hasn't reached the server yet is sent first." = "Esto quita la biblioteca de esta cuenta de este dispositivo. Sigue en el servidor, y al volver a iniciar sesión se recupera. Lo que aún no haya llegado al servidor se envía antes.";
 "This server has no administrator yet. Type the setup code it wrote in its log when it started. Administrators add the people who use the server and look after its devices and storage. Letters, digits, dots, dashes and underscores in the name; at least 8 characters in the password." = "Este servidor aún no tiene administrador. Escribe el código de configuración que escribió en su registro al iniciarse. Los administradores añaden a las personas que usan el servidor y se ocupan de sus dispositivos y su almacenamiento. El nombre admite letras, dígitos, puntos, guiones y guiones bajos; la contraseña debe tener al menos 8 caracteres.";
 "Threshold" = "Umbral";
 "Thumbnail Cache" = "Caché de miniaturas";

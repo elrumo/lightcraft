@@ -7,15 +7,15 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		B3A1C5E7D9F20416283A4B5D /* lightcraft.icns in Resources */ = {isa = PBXBuildFile; fileRef = B3A1C5E7D9F20416283A4B5C /* lightcraft.icns */; platformFilters = (macos, ); };
 		D118BF806F2564BE89F70150 /* LightCraftCore in Frameworks */ = {isa = PBXBuildFile; productRef = FDE8164FBE0782877075D526 /* LightCraftCore */; };
 		FE4E36C8133762DFD1460CB0 /* LightCraftImaging in Frameworks */ = {isa = PBXBuildFile; productRef = 9C8F574B6C0C7FAD49AF4675 /* LightCraftImaging */; };
-		B3A1C5E7D9F20416283A4B5D /* lightcraft.icns in Resources */ = {isa = PBXBuildFile; fileRef = B3A1C5E7D9F20416283A4B5C /* lightcraft.icns */; platformFilters = (macos, ); };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		8B5671700D95E2FE3B2CD2F9 /* LightCraft.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LightCraft.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B3A1C5E7D9F20416283A4B5C /* lightcraft.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; name = lightcraft.icns; path = "../../../assets/app-icon/lightcraft.icns"; sourceTree = SOURCE_ROOT; };
 		E08554F68A4E1E622DB8EA27 /* LightCraft */ = {isa = PBXFileReference; lastKnownFileType = folder; name = LightCraft; path = ../LightCraft; sourceTree = SOURCE_ROOT; };
-		B3A1C5E7D9F20416283A4B5C /* lightcraft.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; name = lightcraft.icns; path = ../../../assets/app-icon/lightcraft.icns; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -186,23 +186,23 @@
 		6EA4537B2F7DF56E5238E065 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				"ARCHS[sdk=macosx*]" = arm64;
 				"ASSETCATALOG_COMPILER_APPICON_NAME[sdk=iphone*]" = AppIcon;
-					"ARCHS[sdk=macosx*]" = arm64;
-					"CODE_SIGN_ENTITLEMENTS[sdk=macosx*]" = "../../../packaging/macos/entitlements.plist";
+				"CODE_SIGN_ENTITLEMENTS[sdk=macosx*]" = ../../../packaging/macos/entitlements.plist;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-					"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = UC3T83K9FR;
-					"ENABLE_HARDENED_RUNTIME[sdk=macosx*]" = YES;
+				"ENABLE_HARDENED_RUNTIME[sdk=macosx*]" = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = ../LightCraft/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = LightCraft;
-					INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.photography";
-					INFOPLIST_KEY_NSAppleEventsUsageDescription = "LightCraft asks Photos to import the photos you export when you choose Add to Apple Photos in the Export dialog.";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.photography";
+				INFOPLIST_KEY_NSAppleEventsUsageDescription = "LightCraft asks Photos to import the photos you export when you choose Add to Apple Photos in the Export dialog.";
 				INFOPLIST_KEY_NSCameraUsageDescription = "LightCraft reads the photos on a camera or memory card you connect, so you can import them.";
-					INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © the LightCraft authors. MIT OR Apache-2.0.";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © the LightCraft authors. MIT OR Apache-2.0.";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "LightCraft syncs your library with your own LightCraft server, which can be on this network.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "LightCraft saves the photos you export to your photo library.";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
@@ -211,10 +211,10 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-					"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = (
-						"$(inherited)",
-						"@executable_path/../Frameworks",
-					);
+				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
 				LIBRARY_SEARCH_PATHS = "$(BUILT_PRODUCTS_DIR)";
 				MARKETING_VERSION = 0.7.0;
 				PRODUCT_BUNDLE_IDENTIFIER = ai.storyteller.lightcraft.swift;
@@ -232,23 +232,23 @@
 		95256F4F03E98E2DDF4308C5 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				"ARCHS[sdk=macosx*]" = arm64;
 				"ASSETCATALOG_COMPILER_APPICON_NAME[sdk=iphone*]" = AppIcon;
-					"ARCHS[sdk=macosx*]" = arm64;
-					"CODE_SIGN_ENTITLEMENTS[sdk=macosx*]" = "../../../packaging/macos/entitlements.plist";
+				"CODE_SIGN_ENTITLEMENTS[sdk=macosx*]" = ../../../packaging/macos/entitlements.plist;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-					"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = UC3T83K9FR;
-					"ENABLE_HARDENED_RUNTIME[sdk=macosx*]" = YES;
+				"ENABLE_HARDENED_RUNTIME[sdk=macosx*]" = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = ../LightCraft/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = LightCraft;
-					INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.photography";
-					INFOPLIST_KEY_NSAppleEventsUsageDescription = "LightCraft asks Photos to import the photos you export when you choose Add to Apple Photos in the Export dialog.";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.photography";
+				INFOPLIST_KEY_NSAppleEventsUsageDescription = "LightCraft asks Photos to import the photos you export when you choose Add to Apple Photos in the Export dialog.";
 				INFOPLIST_KEY_NSCameraUsageDescription = "LightCraft reads the photos on a camera or memory card you connect, so you can import them.";
-					INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © the LightCraft authors. MIT OR Apache-2.0.";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © the LightCraft authors. MIT OR Apache-2.0.";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "LightCraft syncs your library with your own LightCraft server, which can be on this network.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "LightCraft saves the photos you export to your photo library.";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
@@ -257,10 +257,10 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-					"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = (
-						"$(inherited)",
-						"@executable_path/../Frameworks",
-					);
+				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
 				LIBRARY_SEARCH_PATHS = "$(BUILT_PRODUCTS_DIR)";
 				MARKETING_VERSION = 0.7.0;
 				PRODUCT_BUNDLE_IDENTIFIER = ai.storyteller.lightcraft.swift;

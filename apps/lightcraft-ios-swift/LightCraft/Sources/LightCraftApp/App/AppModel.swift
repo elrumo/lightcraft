@@ -373,11 +373,14 @@ final class AppModel {
         }
         guard let engine else { return }
         if new.libraryGeneration != old.libraryGeneration {
+            // another library (signing out emptied this one): nothing on screen may name the old one's photos
             images.forgetAll()
             path = []
+            resetForNewLibrary()
             Task {
                 await library.reload(engine, count: new.visibleCount, forget: true)
                 await albums.reload(engine)
+                await editor.reload(self)
             }
             return
         }
@@ -402,6 +405,28 @@ final class AppModel {
             }
             if new.interaction == nil { albums.scheduleReload(engine) }
         }
+    }
+
+    /// What holds the old library's photo, album or person ids goes: pages and covers over the grid, the choice of photos,
+    /// a search being typed, the questions waiting for a yes. (Settings and the sync pages stay: they are where a sign-out
+    /// is made, and they show no photos.)
+    private func resetForNewLibrary() {
+        switch sheet {
+        case .none, .settings, .about, .shortcuts, .syncStatus, .syncChoice, .activity, .cameraImport: break
+        default: sheet = nil
+        }
+        if cover != .onboarding { cover = nil }
+        selectMode = false
+        addingTo = nil
+        painting = nil
+        askPainter = false
+        searching = false
+        searchText = ""
+        confirmDelete = nil
+        albumToDelete = nil
+        importReview = nil
+        reference = nil
+        picker = nil
     }
 
     /// The catalog's revision, held while a drag (a slider, the crop, a brush) is under way.

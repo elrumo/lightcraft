@@ -2215,5 +2215,7 @@
   "This model isn't downloaded yet: download it, or choose Classic.": "Цю модель ще не завантажено: завантажте її або виберіть «Класичний».",
   "Turned off in Settings → AI Models": "Вимкнено в Налаштування → Моделі ШІ",
   "Models can't be downloaded in this build: put the file in the models folder (Settings → AI Models).": "У цій збірці моделі не завантажуються: покладіть файл у теку моделей (Налаштування → Моделі ШІ).",
-  "Generating the new area…": "Створення нової ділянки…"
+  "Generating the new area…": "Створення нової ділянки…",
+  "Finishing sync before signing out": "Завершення синхронізації перед виходом",
+  "Removing the library from this device": "Видалення бібліотеки з цього пристрою"
 }

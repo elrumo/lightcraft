@@ -161,13 +161,15 @@ public struct PresetInfo: Codable, Sendable, Hashable, Identifiable {
 
 /// `sync.status`: the server sync in full (Settings ▸ Sync, the cloud popover).
 public struct SyncStatus: Codable, Sendable, Equatable {
-    /// `off` (no server), `signedOut`, `conflict`, `paused`, `error`, `syncing`, `idle`.
+    /// `off` (no server), `signedOut`, `signingOut`, `conflict`, `paused`, `error`, `syncing`, `idle`.
     public var state: String
     public var signedIn: Bool
     public var server: String?
     public var user: String?
     /// This device's number on the server.
     public var device: UInt64?
+    /// The account's library this one is joined to (empty or `nil`: it never joined one, so signing out removes nothing).
+    public var library: String?
     public var pending: Int?
     public var uploads: Int?
     public var downloads: Int?
@@ -182,6 +184,11 @@ public struct SyncStatus: Codable, Sendable, Equatable {
     public var serverPreviews: Bool?
     public var allPreviews: Bool?
     public var paused: Bool?
+    /// Signing out waits for what is left to be sent (`state` is `signingOut`): how many photos were still to send when
+    /// last counted (`nil` before the first count), and the originals the server refused (not waited for).
+    public var leaving: Bool?
+    public var unsent: Int?
+    public var refused: Int?
 }
 
 /// One photo in full (`photo.inspect`; snake_case, as the catalog stores it). Only what the Info

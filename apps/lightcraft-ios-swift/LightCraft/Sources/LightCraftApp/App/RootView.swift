@@ -276,7 +276,7 @@ struct ActivityHUD: View {
 
     var body: some View {
         let rows = model.activity.filter {
-            ["import", "scan", "previews", "download", "superRes"].contains($0.kind) || ($0.kind == "export" && model.sheet?.id != "export")
+            ["import", "scan", "previews", "download", "superRes", "signOut"].contains($0.kind) || ($0.kind == "export" && model.sheet?.id != "export")
                 || ($0.kind == "expand" && model.editor.tool != .crop)
         }
         VStack(spacing: 6) {
@@ -381,7 +381,7 @@ struct CloudButton: View {
             model.sheet = .syncStatus
         } label: {
             Label("Sync Status", systemImage: symbol(sync?.state))
-                .symbolEffect(.pulse, isActive: sync?.state == "syncing")
+                .symbolEffect(.pulse, isActive: sync?.state == "syncing" || sync?.state == "signingOut")
                 .foregroundStyle(tint(sync?.state))
         }
         .accessibilityValue(sync?.state ?? "")
@@ -390,6 +390,7 @@ struct CloudButton: View {
     private func symbol(_ state: String?) -> String {
         switch state {
         case "syncing": "arrow.triangle.2.circlepath.icloud"
+        case "signingOut": "icloud.and.arrow.up"
         case "error", "conflict": "exclamationmark.icloud"
         case "paused": "pause.circle"
         case "signedOut": "icloud.slash"
@@ -399,7 +400,7 @@ struct CloudButton: View {
 
     private func tint(_ state: String?) -> Color {
         switch state {
-        case "syncing": .accentColor
+        case "syncing", "signingOut": .accentColor
         case "error", "conflict": .orange
         default: model.state.unsaved > 0 ? .orange : .primary
         }

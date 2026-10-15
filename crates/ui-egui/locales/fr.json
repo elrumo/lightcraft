@@ -2021,5 +2021,7 @@
   "This model isn't downloaded yet: download it, or choose Classic.": "Ce modèle n’est pas encore téléchargé : télécharge-le ou choisis Classique.",
   "Turned off in Settings → AI Models": "Désactivé dans Réglages → Modèles d’IA",
   "Models can't be downloaded in this build: put the file in the models folder (Settings → AI Models).": "Cette version ne peut pas télécharger de modèles : place le fichier dans le dossier des modèles (Réglages → Modèles d’IA).",
-  "Generating the new area…": "Génération de la nouvelle zone…"
+  "Generating the new area…": "Génération de la nouvelle zone…",
+  "Finishing sync before signing out": "Fin de la synchronisation avant la déconnexion",
+  "Removing the library from this device": "Retrait de la bibliothèque de cet appareil"
 }

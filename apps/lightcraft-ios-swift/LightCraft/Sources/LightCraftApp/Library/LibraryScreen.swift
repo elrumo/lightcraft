@@ -200,7 +200,7 @@ struct LibraryScreen: View {
                     CloudButton()
                 }
                 // (it says something while it works or when something is wrong; otherwise it can go first)
-                .duoPriority(["syncing", "error", "conflict"].contains(model.state.sync?.state ?? "") || model.state.unsaved > 0 ? .high : .low)
+                .duoPriority(["syncing", "signingOut", "error", "conflict"].contains(model.state.sync?.state ?? "") || model.state.unsaved > 0 ? .high : .low)
                 ToolbarSpacer(.fixed, placement: .lcTrailing)
             }
             #if os(iOS)

@@ -430,6 +430,35 @@ impl Vision {
         self.job.as_ref()
     }
 
+    /// The library these indexes were made for is gone, or emptied for another account: what the
+    /// index, the text and the faces hold for its photos, the run indexing them, the people made of
+    /// its faces and what was sent to the server are forgotten. The loaded models stay, and so do the
+    /// files in the library's `search/` folder (keyed by content, they only save indexing again). The
+    /// slots are told apart by path, which an emptied library keeps, so this is what drops them.
+    pub fn forget_library(&mut self) {
+        if let Some(job) = self.job.take() {
+            job.cancel.store(true, Ordering::Relaxed);
+        }
+        self.job_reported = true;
+        // (a search still out for the old library is told apart by this number, and dropped)
+        self.search_seq += 1;
+        self.people = people::Cache::default();
+        let rev = self.remote.people_rev;
+        self.remote = server::Remote::default();
+        self.remote.people_rev = rev.wrapping_add(1);
+        let s = &self.shared;
+        *s.index.lock().unwrap_or_else(PoisonError::into_inner) = None;
+        s.indexed.store(0, Ordering::Relaxed);
+        s.opened.store(false, Ordering::Relaxed);
+        *s.text.lock().unwrap_or_else(PoisonError::into_inner) = None;
+        s.text_len.store(0, Ordering::Relaxed);
+        s.text_opened.store(false, Ordering::Relaxed);
+        *s.face_ix.lock().unwrap_or_else(PoisonError::into_inner) = None;
+        s.face_len.store(0, Ordering::Relaxed);
+        s.face_photos.store(0, Ordering::Relaxed);
+        s.faces_opened.store(false, Ordering::Relaxed);
+    }
+
     /// Notices from background work, for the user (taken: each is returned once).
     pub fn take_messages(&mut self) -> Vec<String> {
         std::mem::take(&mut self.messages)

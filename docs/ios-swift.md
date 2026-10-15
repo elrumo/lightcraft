@@ -123,7 +123,9 @@ interaction, activeMask, activeSpot, unsaved, sync?, faces?}}` when any of it ch
 with the preset list, including presets the sync brings from another device: the Presets panel reads `presets.list`
 again) (`faces`: the face scan's `{pendingPhotos, indexedFaces}` while recognition is on) (`activeMask` / `activeSpot`: the Masking tool's
 selected mask and the Remove tool's selected spot, wherever they were chosen) (`sync`: the server sync for the cloud icon, `{state, server, pending, uploads,
-downloads, reading, error}`; absent for a local library); `activity {tasks}` (the activity stack); `message {text,
+downloads, reading, error}` with `state` one of `signedOut`, `signingOut`, `conflict`, `paused`, `error`, `syncing`, `idle`; absent for a local library, and
+after a sign-out has emptied it, together with a new `libraryGeneration`: `AppModel.stateChanged` then drops the pages, covers and questions that name the old
+library's photos, as it does for any other library; see [sync.md](sync.md#signing-out)); `activity {tasks}` (the activity stack); `message {text,
 level}`; `copy {text}` (put it on the clipboard: a share link just made); `ask {dialog, params}` (show a dialog the
 engine needs an answer from: `syncChoice`); `uiRequest {id, method, params}`; `closed`. One of each is in `LightCraft/Tests/LightCraftCoreTests/Fixtures/protocol.json`, written by
 the Rust test `fixtures_match_the_protocol` (`LIGHTCRAFT_BLESS=1` rewrites it) and decoded by the Swift tests.
