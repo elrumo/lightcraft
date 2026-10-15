@@ -205,7 +205,7 @@ impl WorkerCore {
                         let (image, info) = lightcraft_engine::files::load_bytes(bytes, job.max_edge)?;
                         DecodedSource::new(Arc::new(image), Some(info))
                     }
-                    (Source::File { path }, None) => return Err(format!("{path}: original not found in browser storage")),
+                    (Source::File { path }, None) => return Err(format!("{path}: original not in browser storage and no preview of it has come down yet")),
                     (origin @ Source::Demo { .. }, _) => self.media.origin_ref(origin, job.max_edge).load_source()?,
                 };
                 let cost = src.image.width * src.image.height * 12 + 64;

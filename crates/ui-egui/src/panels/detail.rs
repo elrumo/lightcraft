@@ -771,10 +771,12 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         if shown == "none" {
             match app.renderer.failure_of(Slot::Main, id) {
                 Some(e) => {
+                    // a synced photo whose preview is still on its way isn't broken
+                    let waiting = app.session.awaiting_preview(&photo);
                     p.text(
                         canvas.center() - vec2(0.0, 10.0),
                         Align2::CENTER_CENTER,
-                        crate::i18n::tr("This photo can't be opened"),
+                        crate::i18n::tr(if waiting { "Downloading previews" } else { "This photo can't be opened" }),
                         t.semibold(14.0),
                         t.text,
                     );
@@ -1422,7 +1424,13 @@ pub(crate) fn failed_pill(
     error: &str,
 ) {
     let offline = matches!(&photo.source, lightcraft_catalog::Source::File { path } if app.session.media.availability.is_offline(path));
-    let text = crate::i18n::tr(if offline { "Original offline · no smart preview" } else { "This photo can't be opened" });
+    let text = crate::i18n::tr(if app.session.awaiting_preview(photo) {
+        "Downloading previews"
+    } else if offline {
+        "Original offline · no smart preview"
+    } else {
+        "This photo can't be opened"
+    });
     let r = loupe_pill(ui, canvas, over, navigator, id, text, true);
     let resp = ui.interact(r, egui::Id::new(("render-failed", id)), Sense::hover()).on_hover_text(error);
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, format!("{text}: {error}")));
