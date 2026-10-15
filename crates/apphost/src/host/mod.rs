@@ -1357,7 +1357,7 @@ impl Engine {
             visible_gen,
             visible_count: visible.len(),
             library_generation: self.session.library_generation(),
-            presets_generation: self.session.presets.generation(),
+            presets_generation: presets_generation(&self.session),
             active: self.session.active(),
             selection_count: self.session.selection.ids.len(),
             undo: self.session.undo.last().map(|u| u.label.clone()),
@@ -1486,6 +1486,19 @@ fn merge_options(p: &Value) -> crate::merge::MergeOptions {
         o.command = c.to_string();
     }
     o
+}
+
+/// The state's `presetsGeneration`: the preset list's generation, moved also by the imported (LUT)
+/// profiles, imported here or brought by the sync (the profile browser lists them, and a preset that
+/// uses one looks different once it is here).
+fn presets_generation(s: &Session) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    s.presets.generation().hash(&mut h);
+    for p in &s.lut_profiles {
+        (&p.id, &p.name, &p.group, &p.file).hash(&mut h);
+    }
+    h.finish()
 }
 
 #[cfg(test)]

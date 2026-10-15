@@ -386,6 +386,15 @@ fn the_state_says_when_the_presets_change() {
     assert_ne!(after, before);
     let state = h.wait_for(|e| e["kind"] == "state" && e["state"]["presetsGeneration"] == after);
     assert_eq!(state["state"]["presetsGeneration"], after);
+    // an imported profile moves it too (the profile browser reads its list again)
+    let dir = std::env::temp_dir().join(format!("lc-host-profile-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let cube = dir.join("Warm.cube");
+    std::fs::write(&cube, "LUT_3D_SIZE 2\n0 0 0\n1 0 0\n0 1 0\n1 1 0\n0 0 1\n1 0 1\n0 1 1\n1 1 1\n").unwrap();
+    let r = h.call(&req(6, "engine.execute", json!({"command": "profile.import", "params": {"paths": [cube]}})), Duration::from_secs(30));
+    assert_eq!(r["result"]["imported"].as_array().map(Vec::len), Some(1), "{r}");
+    assert_ne!(generation(&h, 7), after);
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 // Previews of a preset, a profile and a version on the active photo come as `variant:` pictures
