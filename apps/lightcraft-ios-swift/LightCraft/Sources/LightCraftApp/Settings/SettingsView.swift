@@ -671,6 +671,7 @@ struct SyncStatusSheet: View {
         case "conflict", "error": "exclamationmark.icloud"
         case "paused": "pause.circle"
         case "syncing": "arrow.triangle.2.circlepath.icloud"
+        case "signingOut": "icloud.and.arrow.up"
         default: "checkmark.icloud"
         }
     }
