@@ -15,8 +15,9 @@ result matches libheif to within one code value:
 
 Single pictures and grid-tiled photos, 4:2:0 and monochrome, 8- to 10-bit, alpha auxiliary images
 (other auxiliary images — HDR gain maps, depth — are ignored), the container's rotation/mirror/crop,
-ICC, EXIF and XMP, and the file's thumbnail item. 4:2:2 and 4:4:4 (Canon/Sony "HIF") are refused
-with `Error::Unsupported`: heic-rs 0.1.1 loses sync on them. Read-only.
+ICC, EXIF and XMP, and the file's thumbnail item. 4:2:2 and 4:4:4 (Canon/Sony "HIF") pictures that fail to
+decode report the decoder's own message (`Error::Malformed`); heic-rs 0.1.4 has little real-file
+testing on them. Read-only.
 
 ```rust
 let info = lightcraft_heif::probe(&bytes)?;           // size, depth, alpha: check limits first

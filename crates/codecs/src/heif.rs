@@ -73,7 +73,18 @@ pub(crate) fn decode(bytes: &[u8], opts: &DecodeOptions) -> Result<Decoded> {
     };
     let mut decoded = match thumb {
         Some(t) => t,
-        None => lightcraft_heif::decode(bytes, &options).map_err(err)?,
+        None => match lightcraft_heif::decode(bytes, &options) {
+            Ok(d) => d,
+            // The picture won't decode (4:2:2 / 4:4:4, or a stream the decoder trips on): the file's own
+            // thumbnail (iPhones write one of about 320 × 240) still shows it, small, instead of nothing.
+            Err(e @ (lightcraft_heif::Error::Unsupported(_) | lightcraft_heif::Error::Malformed(_))) => {
+                match lightcraft_heif::decode_thumbnail(bytes, 1, &options) {
+                    Ok(Some(t)) => t,
+                    _ => return Err(err(e)),
+                }
+            }
+            Err(e) => return Err(err(e)),
+        },
     };
     let raw = Raw {
         width: decoded.width as usize,

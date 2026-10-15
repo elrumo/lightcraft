@@ -120,9 +120,21 @@ impl std::error::Error for Error {}
 
 const SEQUENCE: &str = "this file holds an image sequence; only HEIF still images can be opened";
 
-/// heic-rs 0.1.1 reconstructs 4:2:0 and monochrome pictures exactly but fails on the 4:2:2 and
-/// 4:4:4 ones some cameras write (Canon and Sony "HIF"); those failures are reported as this.
-const CHROMA_422_444: &str = "4:2:2 and 4:4:4 HEIF images (as some Canon and Sony cameras write) can't be decoded yet";
+/// A decode failure of a 4:2:2 or 4:4:4 picture (hvcC `chroma_format` 2 or 3). heic-rs reconstructs
+/// 4:2:0 and monochrome pictures exactly, but its 4:2:2 and 4:4:4 paths are barely tested against
+/// real files (Canon and Sony "HIF"); the decoder's own message stays in the text, because that,
+/// not the chroma format, may be the real cause.
+fn explain_chroma(e: Error, chroma_format: u8) -> Error {
+    match e {
+        Error::Malformed(m) if chroma_format >= 2 => {
+            let kind = if chroma_format == 2 { "4:2:2" } else { "4:4:4" };
+            Error::Malformed(format!(
+                "the HEVC decoder failed on this {kind} picture ({m}); 4:2:2 and 4:4:4 HEIF images are not reliably decoded yet"
+            ))
+        }
+        e => e,
+    }
+}
 
 pub(crate) fn err(e: heic_rs::Error) -> Error {
     match e {
@@ -284,7 +296,7 @@ struct Coded<'a> {
     /// The properties of the first coded picture (the item itself, or the first tile): where the
     /// HEVC configuration and its VUI live.
     first_props: ItemProps<'a>,
-    /// A failed 4:2:2 / 4:4:4 picture, for the error message.
+    /// The hvcC chroma format (0 mono, 1 4:2:0, 2 4:2:2, 3 4:4:4), for error messages.
     chroma_format: u8,
 }
 
@@ -318,10 +330,7 @@ impl<'a> Coded<'a> {
         };
         #[cfg(target_arch = "wasm32")]
         let frames: Result<Vec<Frame>, Error> = ids.iter().map(decode_one).collect();
-        let frames = frames.map_err(|e| match e {
-            Error::Malformed(_) if chroma_format >= 2 => Error::Unsupported(CHROMA_422_444),
-            e => e,
-        })?;
+        let frames = frames.map_err(|e| explain_chroma(e, chroma_format))?;
         Ok(Coded { frames, grid, first_props, chroma_format })
     }
 
@@ -396,6 +405,16 @@ mod tests {
             assert!(decode(bytes, &Options::default()).is_err());
             assert!(decode_thumbnail(bytes, 1, &Options::default()).is_err());
         }
+    }
+
+    /// A failed 4:2:2 / 4:4:4 picture keeps the decoder's own message, so a report names the real cause.
+    #[test]
+    fn a_chroma_failure_keeps_the_decoders_message() {
+        let e = explain_chroma(Error::Malformed("bad slice".into()), 3).to_string();
+        assert!(e.contains("4:4:4") && e.contains("bad slice"), "{e}");
+        assert!(explain_chroma(Error::Malformed("x".into()), 2).to_string().contains("4:2:2"));
+        assert_eq!(explain_chroma(Error::Malformed("x".into()), 1).to_string(), Error::Malformed("x".into()).to_string());
+        assert!(matches!(explain_chroma(Error::Unsupported("rdpcm"), 3), Error::Unsupported("rdpcm")));
     }
 
     #[test]
