@@ -2038,6 +2038,7 @@
   "Show less": "表示を減らす",
   "Quit while tasks are running?": "タスクの実行中に終了しますか？",
   "Exporting contact sheet": "コンタクトシートを書き出し中",
+  "Waiting for the server": "サーバーを待っています",
   "Reading folder": "フォルダーを読み込み中",
   "Scanning folder": "フォルダーをスキャン中",
   "Building previews": "プレビューを作成中",

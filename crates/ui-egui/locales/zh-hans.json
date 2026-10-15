@@ -2036,6 +2036,7 @@
   "Show less": "收起",
   "Quit while tasks are running?": "要在任务运行时退出吗？",
   "Exporting contact sheet": "正在导出联系表",
+  "Waiting for the server": "正在等待服务器",
   "Reading folder": "正在读取文件夹",
   "Scanning folder": "正在扫描文件夹",
   "Building previews": "正在构建预览",

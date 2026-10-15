@@ -90,6 +90,8 @@ pub struct Config {
     pub face_finder: Option<Arc<dyn lightcraft_vision::FaceEngine>>,
     /// Renders at once for devices that export on the server ([`render`]; `None`: as for `max_requests`).
     pub render_threads: Option<usize>,
+    /// How long a render waits for a free place before the device is told to try again (`None`: 45 s).
+    pub render_wait: Option<std::time::Duration>,
     /// Sites whose pages may call the API from a browser (`https://photos.example.com`; `*`: any),
     /// for a web build served from somewhere else than this server ([`cors`]). Empty: none.
     pub cors_origins: Vec<String>,
@@ -112,6 +114,7 @@ impl Config {
             text_reader: None,
             face_finder: None,
             render_threads: None,
+            render_wait: None,
             cors_origins: Vec::new(),
         }
     }
@@ -194,7 +197,7 @@ impl Server {
             web: cfg.web,
             libs: Mutex::new(HashMap::new()),
             folders: folders::Scanner::new(cfg.scan_interval),
-            render: render::Slots::new(now.renders),
+            render: render::Slots::new(now.renders, cfg.render_wait.unwrap_or(std::time::Duration::from_secs(45))),
             limits: lim,
             throttle: Mutex::new(throttle::Throttle::default()),
             uploading: Mutex::new(std::collections::HashSet::new()),
@@ -229,6 +232,11 @@ impl Server {
 
     pub fn addr(&self) -> SocketAddr {
         self.addr
+    }
+
+    /// Take a render's place until the returned value is dropped (tests: a busy server).
+    pub fn hold_render_slot(&self) -> Option<impl Drop + '_> {
+        self.state.render.acquire(std::time::Duration::ZERO)
     }
 
     /// What the last (or current) scan of a user's library folders did (tests, the admin page).

@@ -1636,6 +1636,8 @@ struct ServerWork {
     request: lightcraft_catalog::sync::proto::Render,
     /// The size asked for (what the export reports).
     size: (usize, usize),
+    /// How it waits when the server is busy.
+    wait: crate::cloud_sync::RenderWait,
 }
 
 enum Work {
@@ -1717,7 +1719,12 @@ fn prepare_guarded(
             return Ok(PreparedExport {
                 photo: id,
                 file_name,
-                work: Work::Server(Box::new(ServerWork { target, request, size: (w, h) })),
+                work: Work::Server(Box::new(ServerWork {
+                    target,
+                    request,
+                    size: (w, h),
+                    wait: crate::cloud_sync::RenderWait::new(session.activity.clone()),
+                })),
                 guard,
                 weight,
             });
@@ -1773,6 +1780,13 @@ fn render_weight(full_px: usize, long: usize, level: crate::media::SourceLevel, 
 }
 
 impl PreparedExport {
+    /// Let `cancel` (the export's flag) end a wait for a busy sync server.
+    pub fn set_cancel(&mut self, cancel: std::sync::Arc<std::sync::atomic::AtomicBool>) {
+        if let Work::Server(w) = &mut self.work {
+            w.wait.cancel = cancel;
+        }
+    }
+
     pub fn run(self) -> Result<Exported, String> {
         let file_name = self.file_name;
         match self.work {
@@ -1793,7 +1807,7 @@ impl PreparedExport {
             }
             #[cfg(not(target_arch = "wasm32"))]
             Work::Server(w) => {
-                let bytes = crate::cloud_sync::render_on_server(&w.target, &w.request)?;
+                let bytes = crate::cloud_sync::render_on_server(&w.target, &w.request, &w.wait)?;
                 Ok(Exported { file_name, bytes, width: w.size.0, height: w.size.1, sidecars: Vec::new(), gpu_fallback: None })
             }
             #[cfg(target_arch = "wasm32")]

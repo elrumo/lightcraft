@@ -546,6 +546,10 @@ pipeline and encoder as the apps, and sends the image back, which the device sav
   EXIF and XMP; titles, keywords and location edits kept only in the device's library are not on the exported file.
   AI masks (subject, sky, people) travel with the settings, which store their segmentation, so they render the same.
 - The server renders one photo at a time by default and tells a device that waits more than 45 seconds to try again.
+- **A busy server is waited for.** The `503` (or a connection the server dropped) makes the export pause for the
+  `Retry-After` seconds (at most 30 at a time, 5 without one) and ask again, for up to 15 minutes. The wait shows as a
+  "Waiting for the server" row in the activity stack, and the export's ✕ ends it (`cancelled`). After the limit the
+  export fails with "the sync server stayed busy for N minutes". `RenderWait`, `crates/engine/src/cloud_sync.rs`.
 
 ## What syncs, what stays on the device
 

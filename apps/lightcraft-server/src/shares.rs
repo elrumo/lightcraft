@@ -51,8 +51,6 @@ pub const PASSWORD_MIN: usize = 4;
 pub const PASSWORD_MAX: usize = 256;
 const THUMB_EDGE: usize = 400;
 const VIEW_EDGE: usize = 1600;
-/// How long a picture waits for a free place to render before the visitor's browser is told to try again.
-const RENDER_WAIT: Duration = Duration::from_secs(45);
 /// How long a browser that typed a link's password keeps it open (or until the link ends).
 const UNLOCK_SECS: u64 = 30 * 86_400;
 /// The cookie that says a browser typed a link's password.
@@ -761,7 +759,7 @@ fn render(st: &State, original: &Path, name: &str, settings: &str, edge: usize, 
     .to_json();
     let settings: serde_json::Value = serde_json::from_str(settings).unwrap_or(serde_json::Value::Null);
     let request = proto::Render { hash: hash.to_string(), name: name.to_string(), settings, export };
-    let Some(_slot) = st.render.acquire(RENDER_WAIT) else {
+    let Some(_slot) = st.render.acquire(st.render.wait()) else {
         let mut r = error(503, "the server is rendering other pictures: try again in a moment");
         if let Some(h) = header("Retry-After", "30") {
             r.add_header(h);
