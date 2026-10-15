@@ -129,30 +129,43 @@ fn row(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, b: &Bindable, sc:
     ui.end_row();
 }
 
+/// What a fixed key does, in words: the ratings and the plain labels name themselves, the others
+/// take their command's label.
+fn fixed_label(id: &'static str, params: &str) -> &'static str {
+    let p: serde_json::Value = serde_json::from_str(params).unwrap_or_default();
+    let advance = p.get("advance").and_then(serde_json::Value::as_bool).unwrap_or(false);
+    match id {
+        "photo.rate" => {
+            let n = p.get("rating").and_then(serde_json::Value::as_u64).unwrap_or(0).min(5) as usize;
+            if advance {
+                [
+                    "Clear rating and advance",
+                    "Rate ★ and advance",
+                    "Rate ★★ and advance",
+                    "Rate ★★★ and advance",
+                    "Rate ★★★★ and advance",
+                    "Rate ★★★★★ and advance",
+                ][n]
+            } else {
+                ["Clear rating", "Rate ★", "Rate ★★", "Rate ★★★", "Rate ★★★★", "Rate ★★★★★"][n]
+            }
+        }
+        "photo.label" if !advance => match p.get("label").and_then(serde_json::Value::as_str) {
+            Some("red") => "Red label",
+            Some("yellow") => "Yellow label",
+            Some("green") => "Green label",
+            _ => "Blue label",
+        },
+        _ => shortcuts::find_bindable(id).map_or(id, |b| b.label),
+    }
+}
+
 /// Keys that aren't a command's own shortcut (ratings, labels, secondary keys): listed, not editable.
 /// One the user gave to a command shows struck through.
 fn fixed_keys(app: &LightcraftApp, ui: &mut egui::Ui, t: &Tokens, mac: bool, needle: &str) {
     let mut fixed: Vec<(String, &str)> = Vec::new();
-    for (sc, id, _) in shortcuts::ALIASES {
-        let label = shortcuts::find_bindable(id).map_or(*id, |b| b.label);
-        fixed.push((sc.to_string(), label));
-    }
-    for n in 0..=5 {
-        fixed.push((n.to_string(), ["Clear rating", "Rate ★", "Rate ★★", "Rate ★★★", "Rate ★★★★", "Rate ★★★★★"][n]));
-        fixed.push((
-            format!("Shift+{n}"),
-            [
-                "Clear rating and advance",
-                "Rate ★ and advance",
-                "Rate ★★ and advance",
-                "Rate ★★★ and advance",
-                "Rate ★★★★ and advance",
-                "Rate ★★★★★ and advance",
-            ][n],
-        ));
-    }
-    for (sc, label) in [("6", "Red label"), ("7", "Yellow label"), ("8", "Green label"), ("9", "Blue label")] {
-        fixed.push((sc.to_string(), label));
+    for (sc, id, params) in shortcuts::ALIASES {
+        fixed.push((sc.to_string(), fixed_label(id, params)));
     }
     let fixed: Vec<_> = fixed
         .into_iter()

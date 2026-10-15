@@ -1,6 +1,6 @@
 # UI parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** minor (Export dialog row dropped: ⇧E as Lightroom, ⌘⇧E is Edit in PhotoCraft; accessibility audit: test over the AccessKit tree; fields, sliders and dialogs named) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-15 · **Change:** minor (the secondary shortcut table and the rating and label digits moved to `apphost::keys`, shared with the SwiftUI Mac app; Export dialog row dropped: ⇧E as Lightroom, ⌘⇧E is Edit in PhotoCraft; accessibility audit: test over the AccessKit tree; fields, sliders and dialogs named) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6
 
 How LightCraft's interaction compares with Lightroom's: views, panels, tools and handles, modifier
 keys, shortcuts, zoom, context menus and feel. Rows for individual menu items and shortcuts live in
@@ -12,7 +12,7 @@ assessment and the notes that don't fit a row. Visual reference for agents: `pla
 
 - 226 engine commands (`crates/engine/src/cmd/`, 30 modules) and 143 UI commands (`UI_COMMANDS` in
   `crates/ui-egui/src/menus.rs`, 73 with a shortcut) plus 10 language commands; 23 secondary
-  shortcut bindings (`ALIASES`, `crates/ui-egui/src/shortcuts.rs`); a keymap editor.
+  shortcut bindings (`FIXED_KEYS` in `crates/apphost/src/keys.rs`, which `crates/ui-egui/src/shortcuts.rs` reads as `ALIASES`); a keymap editor.
 - 122 develop controls plus 10 indexed templates (`crates/develop/src/controls.rs`).
 - Checklist: menus 95.3% (86 in-scope rows), desktop shortcuts 94.4% (81 rows), Classic extras
   48.2% (82 rows), measured by recounting [parity-checklist.md](parity-checklist.md).
@@ -43,7 +43,7 @@ modules and AI tools are counted with their features in [target-app-parity.md](t
 ## Shortcuts
 
 Compared `plan/lightroom/06-shortcuts.md` (desktop part) with our bindings: command specs in `crates/engine/src/cmd/`,
-`UI_COMMANDS` in `crates/ui-egui/src/menus.rs` and secondary bindings (`ALIASES`) in `crates/ui-egui/src/shortcuts.rs`.
+`UI_COMMANDS` in `crates/ui-egui/src/menus.rs` and secondary bindings (`FIXED_KEYS`, read as `ALIASES`) in `crates/apphost/src/keys.rs`, which the SwiftUI Mac app asks for too (`host.keyBindings`).
 `no_conflicting_bindings` (same file) fails when one key fires two actions.
 
 **Fixed (M16.1):** added Lightroom-desktop keys as secondary bindings for existing commands — ⌘D Select None, ⇧E
@@ -104,6 +104,7 @@ left panel, canvas, right panel, which is sensible but not tuned).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-15 | minor | The secondary shortcut table (`ALIASES`) and the rating and label digits moved into `crates/apphost/src/keys.rs` as `FIXED_KEYS`; egui's shortcut handler and keymap panel read it and the SwiftUI Mac app asks for it (`host.keyBindings`), so the two apps' keys agree |
 | 2026-10-13 | minor | Export dialog row dropped from the deliberate differences: export is ⇧E as in Lightroom, and ⌘⇧E is Edit in PhotoCraft (Lightroom's Edit in Photoshop) |
 | 2026-10-12 | minor | Accessibility: an AccessKit tree audit test over every view, Develop tool and 13 dialogs; unnamed fields, slider ranges and the Auto Stack slider fixed; 30% → 55%; UI remaining 40–70 h → 34–58 h |
 | 2026-10-11 | minor | Zoom row: Compare and Reference get zoom windows; what remains of LR-VIEW-ZOOM is overlays and soft proofing |
