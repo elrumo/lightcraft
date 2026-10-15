@@ -479,6 +479,10 @@ main > section { animation: enter 0.18s ease-out; }
 .scan-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .scan-head h3 { margin: 0 0 4px; }
 .scan .meter { margin-top: 16px; }
+.building { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 4px; font-size: 13px; }
+.building li { display: flex; gap: 8px; align-items: baseline; min-width: 0; }
+.building b { flex: none; color: var(--text-3); font-weight: 600; }
+.building code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .scan .alert { margin-top: 16px; }
 
 /* ----------------------------------------------------------------- dialog */

@@ -206,7 +206,9 @@ Then:
   right-click to create an album from it, make it available offline or download its originals.
 - **Make Available Offline** (right-click an album, or Photo ▸ Make Available Offline) keeps photos editable without
   a network; **Photo ▸ Download Originals** fetches full-size files (Settings ▸ Sync can keep every original).
-- **File ▸ Pause Syncing / Sync Now**; Settings ▸ Sync ▸ **Sign Out** keeps the library and its unsent changes.
+- **File ▸ Pause Syncing / Sync Now**; Settings ▸ Sync ▸ **Sign Out** sends what is left, signs the device out on the
+  server and removes the library from this device: it stays on the server, and the next user to sign in starts from an
+  empty library of their own ([sync.md](sync.md#signing-out)).
 
 ### Web (any modern browser)
 
@@ -278,18 +280,18 @@ lightcraft-cli run --library ~/LightCraft-synced sync.signIn server=photos.examp
 | `wrong user name or password` | Check them on the admin page (Reset password). |
 | `too many wrong passwords: try again in N s` | Wait: after five wrong passwords each try waits longer (up to 15 minutes), per address and per user name. |
 | The app asks **Sync This Library** after you sign in | This library and the server's both have photos. **Add this library to the server's** uploads this one into it (photos both have are kept once), **Use the server's library instead** replaces this one (a copy is kept in its folder), **Sign Out** leaves things as they are. Details: [sync.md](sync.md#when-this-library-and-the-servers-both-have-photos). |
-| `this library is a copy of another library on that server` | The server was set up again (or the user's library replaced): sign in from a new library; in a browser, open the address with `?reset`. |
-| `the server signed this device out` | The device was signed out on the admin page, or its user removed: sign in again. |
+| `this library is a copy of another library on that server` | The server was set up again (or the user's library replaced): remove the library from this device (Settings ▸ Sync ▸ **Remove Library from This Device…**; what hasn't reached the server is lost) and sign in again, or sign in from a new library; in a browser, `?reset` on the address also clears everything. |
+| `the server signed this device out` | The device was signed out on the admin page, or its user removed: sign in again as the same user, or (Settings ▸ Sync ▸ **Remove Library from This Device…**) remove the library to sign in as someone else. A sign-out that was waiting for the server never removes anything on its own. |
 | The admin page asks for a setup code | No admin exists yet: the code is in the server's log. |
 | A library folder `isn't there (not mounted?)` / `is empty but had photos` | The path is the one inside the container (`/photos/…`); check the volume mount, and that uid 10001 can read it. |
-| Photos without thumbnails for a while | Their previews are still being built (admin page ▸ Users ▸ the user ▸ Library folders shows how many are left). |
+| Photos without thumbnails for a while | Their previews are still being built (admin page ▸ Users ▸ the user ▸ Library folders shows how many are built and left, and which photos are being built now). |
 | Uploads of big raws fail behind your own proxy | Allow large request bodies (nginx: `client_max_body_size 0;`). |
 | `over the storage limit` | The user's [storage limit](sync.md#storage-limits) is reached: raise it on the admin page, or free room (delete photos for good, then clean up storage). |
 
 ## Security checklist
 
 - Only Caddy (443), `tailscale serve`, or your home network reaches the server — never port 8080 from the internet.
-- Strong passwords (8 characters at least are required). Sign out devices you no longer use (admin page ▸ Users ▸ the user ▸ Devices).
+- Strong passwords (8 characters at least are required). Sign out devices you no longer use (admin page ▸ Users ▸ the user ▸ Devices); an app's own **Sign Out** also removes its token from the server.
 - Library folders mounted read-only (`:ro`), unless you want the server to write XMP sidecars or file uploads there
   (then mount that one `:rw`, make it writable for uid 10001, and switch it on in the admin page).
 - Album links are secret addresses: send them to people you'd send the photos to, give them an end date (and a

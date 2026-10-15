@@ -3,17 +3,29 @@
 //! ([`lightcraft_develop::ExpandFill`]), so renders and exports never run a model
 //! (`lightcraft_pipeline::expand`).
 //!
-//! Three ways to paint, chosen per device ([`Session::expand_choices`]):
+//! What paints, offered by the device's profile ([`ExpandModel::fits`],
+//! [`crate::hardware::DeviceProfile`]):
 //!
-//! - **MI-GAN** (`migan`, ~30 MB, MIT): the AI Remove model. Fast enough everywhere: the desktop
-//!   and phone apps and the browser. The default when it is on the device.
-//! - **LaMa** (`lama`, 208 MB, Apache-2.0): continues long structures across a wide strip best,
-//!   at about ten times MI-GAN's time per pass. Desktop apps only.
+//! - **MI-GAN** (`migan`, ~30 MB, MIT): the AI Remove model. Fast everywhere: the desktop and
+//!   phone apps and the browser.
+//! - **LaMa** (`lama`, 208 MB, Apache-2.0): continues long structures across a wide strip best.
+//!   Computers, and phones that may use 2 GB or more.
+//! - **Stable Diffusion 1.5 Inpainting** (`sd15-inpaint`, 2.1 GB, CreativeML OpenRAIL-M): a
+//!   diffusion model that draws new detail at 512 pixels. Computers with 8 GB or more, and phones
+//!   with a GPU that may use 4 GB.
+//! - **Kandinsky 2.2 Inpaint** (`kandinsky22-inpaint`, 9 GB, Apache-2.0): draws new detail at 768
+//!   pixels, conditioned on the photo itself. Computers with 16 GB or more.
+//! - **SDXL Inpainting** (`sdxl-inpaint`, 6.9 GB, CreativeML Open RAIL++-M): the most detail, at
+//!   1024 pixels. Computers with a GPU and 16 GB, or 32 GB without one.
 //! - **Classic** (`classic`): no model and no download; texture synthesized from the photo (the
 //!   panorama's Fill Edges). Good on sky, water, grass and walls; it can't invent shapes.
 //!
-//! A fourth way lives outside the engine: **Apple Image Playground** (`appleCloud`), in the SwiftUI
-//! app on devices with Apple Intelligence. It is not on the list above: it runs in Apple's cloud (the
+//! The user chooses one in the crop tool or in Settings → AI Models, or leaves it on Automatic: the
+//! best model for this device ([`Session::recommended_expand_model`]). The diffusion models run on
+//! the GPU (Metal) when there is one, else on the CPU, where they take minutes.
+//
+//! One more way lives outside the engine: **Apple Image Playground** (`appleCloud`), in the SwiftUI
+//! app on devices with Apple Intelligence. It is not on the lists above: it runs in Apple's cloud (the
 //! app asks every time), through a sheet the user works in, so it is never the default. The engine
 //! gives the app the canvas as a picture ([`Session::expand_canvas`], `crop.expandCanvas`) and takes
 //! the picture the sheet made ([`Session::apply_expand_picture`], `crop.applyExpandPicture`): the
@@ -42,6 +54,7 @@ use serde::Serialize;
 
 use crate::Session;
 use crate::activity::{Cancel, Unit};
+use crate::hardware::{DeviceClass, DeviceProfile, GB};
 use crate::media::SourceLevel;
 
 /// The start of the error when the chosen model isn't here: the apps offer the download on it.
@@ -70,8 +83,6 @@ fn expand_key(id: PhotoId, d: &lightcraft_develop::DevelopSettings) -> u64 {
 /// Largest picture file taken from a painter outside the engine (bytes).
 const MAX_PICTURE_BYTES: u64 = 64 << 20;
 
-/// Whether this build runs on a phone or tablet (no LaMa there: too large and slow).
-const MOBILE: bool = cfg!(any(target_os = "ios", target_os = "android"));
 /// Whether this build runs in a browser (one pass at 512, on the page's thread).
 const WEB: bool = cfg!(target_arch = "wasm32");
 
@@ -81,17 +92,25 @@ const WEB: bool = cfg!(target_arch = "wasm32");
 pub enum ExpandModel {
     MiGan,
     Lama,
+    Sd15,
+    Kandinsky,
+    Sdxl,
     Classic,
 }
 
 impl ExpandModel {
-    pub const ALL: [ExpandModel; 3] = [ExpandModel::MiGan, ExpandModel::Lama, ExpandModel::Classic];
+    /// Every model, in the order the pickers list them (the networks from the smallest).
+    pub const ALL: [ExpandModel; 6] =
+        [ExpandModel::MiGan, ExpandModel::Lama, ExpandModel::Sd15, ExpandModel::Kandinsky, ExpandModel::Sdxl, ExpandModel::Classic];
 
     /// The id in commands and in the stored fill (the model's id in Settings → AI Models).
     pub fn id(self) -> &'static str {
         match self {
             ExpandModel::MiGan => lightcraft_erase::ID,
             ExpandModel::Lama => lightcraft_erase::lama::ID,
+            ExpandModel::Sd15 => "sd15-inpaint",
+            ExpandModel::Kandinsky => "kandinsky22-inpaint",
+            ExpandModel::Sdxl => "sdxl-inpaint",
             ExpandModel::Classic => "classic",
         }
     }
@@ -105,17 +124,50 @@ impl ExpandModel {
         match self {
             ExpandModel::MiGan => "MI-GAN",
             ExpandModel::Lama => "LaMa",
+            ExpandModel::Sd15 => "Stable Diffusion 1.5",
+            ExpandModel::Kandinsky => "Kandinsky 2.2",
+            ExpandModel::Sdxl => "SDXL",
             ExpandModel::Classic => "Classic",
         }
     }
 
-    /// Whether this build and device can run it at all (downloading it is another matter: builds
-    /// without the model downloader take a file put in the models folder by hand, and the browser
+    /// A diffusion model (`lightcraft-diffuse`): draws new detail, takes much longer, and needs the
+    /// enhancement models of this build.
+    pub fn diffusion(self) -> bool {
+        matches!(self, ExpandModel::Sd15 | ExpandModel::Kandinsky | ExpandModel::Sdxl)
+    }
+
+    /// Whether a device with profile `p` can run it (downloading it is another matter: builds
+    /// without the model downloader take files put in the models folder by hand, and the browser
     /// fetches MI-GAN itself, `Session::install_eraser`).
-    pub fn available(self) -> bool {
+    pub fn fits(self, p: &DeviceProfile) -> bool {
+        let computer = p.class == DeviceClass::Computer;
+        let phone = p.class == DeviceClass::Phone;
+        // (unknown memory on a computer: offered, the user knows their machine)
+        let diffusion = cfg!(feature = "enhance") && !WEB;
         match self {
             ExpandModel::Classic | ExpandModel::MiGan => true,
-            ExpandModel::Lama => !MOBILE && !WEB,
+            ExpandModel::Lama => !WEB && (computer || (phone && p.has_memory(2 * GB, false))),
+            ExpandModel::Sd15 => diffusion && ((computer && p.has_memory(8 * GB, true)) || (phone && p.gpu && p.has_memory(4 * GB, false))),
+            ExpandModel::Kandinsky => diffusion && computer && p.has_memory(16 * GB, true),
+            ExpandModel::Sdxl => diffusion && computer && ((p.gpu && p.has_memory(16 * GB, true)) || p.has_memory(32 * GB, true)),
+        }
+    }
+
+    /// The model Automatic picks on a device with profile `p`: the most capable one that runs
+    /// there in reasonable time. A phone: Stable Diffusion 1.5 when it fits (a recent iPhone or
+    /// iPad), else LaMa, else MI-GAN. A computer with a GPU: SDXL with 32 GB or more, else Stable
+    /// Diffusion 1.5. A computer without one: Stable Diffusion 1.5 with 12 threads and 16 GB or
+    /// more (a few minutes a Generate), else LaMa. The browser: MI-GAN.
+    pub fn recommended(p: &DeviceProfile) -> ExpandModel {
+        let pick = |order: &[ExpandModel]| order.iter().copied().find(|m| m.fits(p)).unwrap_or(ExpandModel::MiGan);
+        match p.class {
+            DeviceClass::Browser => ExpandModel::MiGan,
+            DeviceClass::Phone => pick(&[ExpandModel::Sd15, ExpandModel::Lama]),
+            DeviceClass::Computer if p.gpu && p.has_memory(32 * GB, false) => pick(&[ExpandModel::Sdxl, ExpandModel::Sd15, ExpandModel::Lama]),
+            DeviceClass::Computer if p.gpu => pick(&[ExpandModel::Sd15, ExpandModel::Lama]),
+            DeviceClass::Computer if p.cores >= 12 && p.has_memory(16 * GB, false) => pick(&[ExpandModel::Sd15, ExpandModel::Lama]),
+            DeviceClass::Computer => pick(&[ExpandModel::Lama]),
         }
     }
 
@@ -124,8 +176,50 @@ impl ExpandModel {
         match self {
             ExpandModel::MiGan => lightcraft_erase::FILE_SIZE,
             ExpandModel::Lama => lightcraft_erase::lama::FILE_SIZE,
+            #[cfg(feature = "enhance")]
+            ExpandModel::Sd15 => lightcraft_diffuse::models::SD15.bytes(),
+            #[cfg(feature = "enhance")]
+            ExpandModel::Kandinsky => lightcraft_diffuse::models::KANDINSKY.bytes(),
+            #[cfg(feature = "enhance")]
+            ExpandModel::Sdxl => lightcraft_diffuse::models::SDXL.bytes(),
+            #[cfg(not(feature = "enhance"))]
+            ExpandModel::Sd15 | ExpandModel::Kandinsky | ExpandModel::Sdxl => 0,
             ExpandModel::Classic => 0,
         }
+    }
+
+    /// What it is good at, for the pickers.
+    pub fn note(self) -> &'static str {
+        match self {
+            ExpandModel::MiGan => "Fast, on every device",
+            ExpandModel::Lama => "Best for wide areas of sky, water or texture",
+            ExpandModel::Sd15 => "Draws new detail; slower",
+            ExpandModel::Kandinsky => "Draws new detail, guided by the photo; slow",
+            ExpandModel::Sdxl => "The most detail; slow",
+            ExpandModel::Classic => "No download: texture from the photo",
+        }
+    }
+
+    /// The licence and credit the pickers show (none for Classic).
+    pub fn licence(self) -> (&'static str, &'static str) {
+        match self {
+            ExpandModel::MiGan => (lightcraft_erase::LICENCE, lightcraft_erase::CREDIT),
+            ExpandModel::Lama => (lightcraft_erase::lama::LICENCE, lightcraft_erase::lama::CREDIT),
+            #[cfg(feature = "enhance")]
+            ExpandModel::Sd15 => (lightcraft_diffuse::models::SD15.licence, lightcraft_diffuse::models::SD15.credit),
+            #[cfg(feature = "enhance")]
+            ExpandModel::Kandinsky => (lightcraft_diffuse::models::KANDINSKY.licence, lightcraft_diffuse::models::KANDINSKY.credit),
+            #[cfg(feature = "enhance")]
+            ExpandModel::Sdxl => (lightcraft_diffuse::models::SDXL.licence, lightcraft_diffuse::models::SDXL.credit),
+            #[cfg(not(feature = "enhance"))]
+            ExpandModel::Sd15 | ExpandModel::Kandinsky | ExpandModel::Sdxl => ("", ""),
+            ExpandModel::Classic => ("", ""),
+        }
+    }
+
+    /// The licence restricts how the model may be used (an OpenRAIL licence).
+    pub fn restricted(self) -> bool {
+        matches!(self, ExpandModel::Sd15 | ExpandModel::Sdxl)
     }
 }
 
@@ -146,6 +240,14 @@ pub struct ExpandChoice {
     pub download_bytes: u64,
     pub licence: &'static str,
     pub credit: &'static str,
+    /// Its licence restricts how it may be used (OpenRAIL): the download says so.
+    pub restricted: bool,
+    /// A diffusion model: draws new detail, takes longer.
+    pub diffusion: bool,
+    /// What Automatic picks on this device.
+    pub recommended: bool,
+    /// What the pickers show as chosen (the user's choice, else Automatic's).
+    pub chosen: bool,
     /// What Generate uses when no model is named.
     pub default: bool,
 }
@@ -155,6 +257,8 @@ pub struct ExpandChoice {
 pub struct ExpandState {
     lama: Arc<Mutex<Option<Arc<Lama>>>>,
     task: Mutex<Option<ExpandTask>>,
+    /// The model the user chose (`None`: Automatic, the best for this device).
+    pub preferred: Option<ExpandModel>,
 }
 
 /// A job on its worker thread.
@@ -165,10 +269,17 @@ struct ExpandTask {
     rx: Receiver<Result<ExpandFill, String>>,
 }
 
-/// What paints, resolved before the work starts (LaMa may still need loading, on the worker).
+/// What paints, resolved before the work starts (LaMa and the diffusion models load on the
+/// worker).
 enum Brush {
     Net(Arc<dyn Painter>),
-    LamaFile { file: std::path::PathBuf, slot: Arc<Mutex<Option<Arc<Lama>>>> },
+    LamaFile {
+        file: std::path::PathBuf,
+        slot: Arc<Mutex<Option<Arc<Lama>>>>,
+    },
+    /// A diffusion model's folder: loaded for the job and dropped after it (gigabytes).
+    #[cfg_attr(not(feature = "enhance"), allow(dead_code))]
+    Diffusion(std::path::PathBuf),
     Classic,
 }
 
@@ -204,11 +315,15 @@ impl ExpandJob {
         }
     }
 
-    /// Paint the new area. `cancelled` is asked between passes; `progress` hears the fraction done.
+    /// Paint the new area. `cancelled` is asked between passes (and a diffusion model's steps);
+    /// `progress` hears the fraction done.
     pub fn run(&self, cancelled: &(dyn Fn() -> bool + Sync), progress: &(dyn Fn(f32) + Sync)) -> Result<ExpandFill, String> {
         // (the network's pass is most of a model's time on a phone, the texture after it on a computer)
         let net_progress = |f: f32| progress(0.6 * f);
         let mon = Monitor { cancelled, progress: &net_progress };
+        let outpaint = |p: &dyn Painter, mon: &Monitor<'_>| {
+            lightcraft_erase::expand::outpaint(p, &self.input.image, &self.input.known, mon).map_err(|e| e.to_string())
+        };
         let filled = match &self.brush {
             Brush::Classic => {
                 if cancelled() {
@@ -219,18 +334,44 @@ impl ExpandJob {
                 f
             }
             // the network's structure, the photo's grain on it
-            Brush::Net(p) => self
-                .input
-                .with_texture(&lightcraft_erase::expand::outpaint(&**p, &self.input.image, &self.input.known, &mon).map_err(|e| e.to_string())?),
+            Brush::Net(p) => self.input.with_texture(&outpaint(&**p, &mon)?),
             Brush::LamaFile { file, slot } => {
                 let lama = load_lama(file, slot)?;
-                self.input
-                    .with_texture(&lightcraft_erase::expand::outpaint(&*lama, &self.input.image, &self.input.known, &mon).map_err(|e| e.to_string())?)
+                self.input.with_texture(&outpaint(&*lama, &mon)?)
+            }
+            // a diffusion model's answer has its own detail; loading it is the first fifth
+            Brush::Diffusion(dir) => {
+                let load = |f: f32| progress(0.2 * f);
+                let painter = load_diffusion(self.model, dir, &Monitor { cancelled, progress: &load })?;
+                let paint = |f: f32| progress(0.2 + 0.8 * f);
+                outpaint(&*painter, &Monitor { cancelled, progress: &paint })?
             }
         };
         progress(1.0);
         self.input.finish(&filled, self.model.id()).ok_or_else(|| "Generative Expand made no fill".to_string())
     }
+}
+
+/// Diffusion model `model` from its folder `dir` (on the GPU when there is one).
+#[cfg(feature = "enhance")]
+fn load_diffusion(model: ExpandModel, dir: &std::path::Path, mon: &Monitor<'_>) -> Result<Box<dyn Painter>, String> {
+    use lightcraft_diffuse::{Target, kandinsky, sd};
+    let target = Target::best();
+    let gpu = target.gpu();
+    let r: Result<Box<dyn Painter>, lightcraft_diffuse::Error> = match model {
+        ExpandModel::Sd15 => sd::StableDiffusion::load(sd::Kind::Sd15, dir, target, sd::Recipe::for_kind(sd::Kind::Sd15, gpu), mon)
+            .map(|m| Box::new(m) as Box<dyn Painter>),
+        ExpandModel::Sdxl => sd::StableDiffusion::load(sd::Kind::Sdxl, dir, target, sd::Recipe::for_kind(sd::Kind::Sdxl, gpu), mon)
+            .map(|m| Box::new(m) as Box<dyn Painter>),
+        ExpandModel::Kandinsky => kandinsky::Kandinsky::load(dir, target, kandinsky::Recipe::new(gpu), mon).map(|m| Box::new(m) as Box<dyn Painter>),
+        _ => return Err(format!("{} isn't a diffusion model", model.label())),
+    };
+    r.map_err(|e| e.into_erase(model.label()).to_string())
+}
+
+#[cfg(not(feature = "enhance"))]
+fn load_diffusion(model: ExpandModel, _dir: &std::path::Path, _mon: &Monitor<'_>) -> Result<Box<dyn Painter>, String> {
+    Err(format!("{} isn't available in this build", model.label()))
 }
 
 /// LaMa from `file`, loaded once into `slot`.
@@ -266,9 +407,27 @@ fn canvas_side(model: ExpandModel) -> usize {
 }
 
 impl Session {
+    /// Set this device's profile (a host that knows better than detection, or a test).
+    pub fn set_device(&mut self, p: DeviceProfile) {
+        self.device = p;
+    }
+
+    /// On a phone: what the system lets the app allocate (`os_proc_available_memory` at launch),
+    /// the memory the profile counts.
+    pub fn set_app_memory(&mut self, bytes: Option<usize>) {
+        if self.device.class == DeviceClass::Phone {
+            self.device.memory_bytes = bytes.map(|b| b as u64);
+        }
+    }
+
+    /// Whether `model` runs on this device.
+    pub fn expand_available(&self, model: ExpandModel) -> bool {
+        model.fits(&self.device)
+    }
+
     /// Whether LaMa's file is in place and the user hasn't turned it off.
     fn lama_ready(&self) -> bool {
-        ExpandModel::Lama.available()
+        self.expand_available(ExpandModel::Lama)
             && !self.enhancer.disabled.contains(lightcraft_erase::lama::ID)
             && (self.expand.lama.lock().unwrap_or_else(PoisonError::into_inner).is_some()
                 || self.lama_file().is_some_and(|f| std::fs::metadata(f).is_ok_and(|m| m.len() == lightcraft_erase::lama::FILE_SIZE)))
@@ -282,52 +441,95 @@ impl Session {
     pub fn expand_ready(&self, model: ExpandModel) -> bool {
         match model {
             ExpandModel::Classic => true,
-            ExpandModel::MiGan => model.available() && self.eraser_ready(),
+            ExpandModel::MiGan => self.expand_available(model) && self.eraser_ready(),
             ExpandModel::Lama => self.lama_ready(),
+            m => self.expand_available(m) && !self.enhancer.disabled.contains(m.id()) && self.enhancer.installed(m.id()),
         }
     }
 
-    /// What Generate uses when no model is named: MI-GAN when it is here (fast on every device),
-    /// else LaMa (desktop), else Classic.
+    /// What Automatic picks on this device (it may still need its download).
+    pub fn recommended_expand_model(&self) -> ExpandModel {
+        ExpandModel::recommended(&self.device)
+    }
+
+    /// What the pickers show as chosen: the user's choice when this device runs it, else
+    /// Automatic's.
+    pub fn chosen_expand_model(&self) -> ExpandModel {
+        self.expand.preferred.filter(|m| self.expand_available(*m)).unwrap_or_else(|| self.recommended_expand_model())
+    }
+
+    /// Choose what Generate paints with (`None`: Automatic). Refused for a model this device
+    /// doesn't run.
+    pub fn set_expand_preference(&mut self, model: Option<ExpandModel>) -> Result<(), String> {
+        if let Some(m) = model.filter(|m| !self.expand_available(*m)) {
+            return Err(format!("{} doesn't run on this device ({})", m.label(), self.device.describe()));
+        }
+        self.expand.preferred = model;
+        Ok(())
+    }
+
+    /// What Generate uses when no model is named: the chosen model when it is here, else the most
+    /// capable one that is (as Automatic orders them), else Classic.
     pub fn default_expand_model(&self) -> ExpandModel {
-        [ExpandModel::MiGan, ExpandModel::Lama].into_iter().find(|m| self.expand_ready(*m)).unwrap_or(ExpandModel::Classic)
+        let chosen = self.chosen_expand_model();
+        if self.expand_ready(chosen) {
+            return chosen;
+        }
+        [ExpandModel::Sdxl, ExpandModel::Kandinsky, ExpandModel::Sd15, ExpandModel::Lama, ExpandModel::MiGan]
+            .into_iter()
+            .filter(|m| self.expand_available(*m))
+            .find(|m| self.expand_ready(*m))
+            .unwrap_or(ExpandModel::Classic)
     }
 
     /// The ways to paint on this device, for the picker and agents.
     pub fn expand_choices(&self) -> Vec<ExpandChoice> {
-        let default = self.default_expand_model();
+        let (default, recommended, chosen) = (self.default_expand_model(), self.recommended_expand_model(), self.chosen_expand_model());
         ExpandModel::ALL
             .into_iter()
             .map(|m| {
-                let (note, licence, credit) = match m {
-                    ExpandModel::MiGan => ("Fast, on every device", lightcraft_erase::LICENCE, lightcraft_erase::CREDIT),
-                    ExpandModel::Lama => {
-                        ("Best for wide areas; slower, computers only", lightcraft_erase::lama::LICENCE, lightcraft_erase::lama::CREDIT)
-                    }
-                    ExpandModel::Classic => ("No download: texture from the photo", "", ""),
-                };
+                let (licence, credit) = m.licence();
                 ExpandChoice {
                     id: m.id(),
                     label: m.label(),
-                    note,
-                    available: m.available(),
+                    note: m.note(),
+                    available: self.expand_available(m),
                     ready: self.expand_ready(m),
                     disabled: m != ExpandModel::Classic && self.enhancer.disabled.contains(m.id()),
                     download_bytes: m.download_bytes(),
                     licence,
                     credit,
+                    restricted: m.restricted(),
+                    diffusion: m.diffusion(),
+                    recommended: m == recommended,
+                    chosen: m == chosen,
                     default: m == default,
                 }
             })
             .collect()
     }
 
+    fn diffusion_missing(&self, model: ExpandModel) -> String {
+        format!(
+            "{NOT_INSTALLED} ({}). Download it (about {:.1} GB, {} licence) when LightCraft offers it, or with `models.download {{\"id\": \"{}\", \"acknowledged\": true}}`.",
+            model.label(),
+            model.download_bytes() as f64 / 1e9,
+            model.licence().0,
+            model.id()
+        )
+    }
+
     /// Plan Generate for photo `id` with `model` (the default if `None`): check the model, render
     /// the canvas the model will see.
     pub fn expand_job(&mut self, id: PhotoId, model: Option<ExpandModel>) -> Result<ExpandJob, String> {
         let model = model.unwrap_or_else(|| self.default_expand_model());
-        if !model.available() {
-            return Err(format!("{} isn't available on this device; use {} or Classic", model.label(), ExpandModel::MiGan.label()));
+        if !self.expand_available(model) {
+            return Err(format!(
+                "{} isn't available on this device ({}); use {} or Classic",
+                model.label(),
+                self.device.describe(),
+                ExpandModel::MiGan.label()
+            ));
         }
         let d = self.develop_of(id).ok_or("no such photo")?;
         if !d.crop.expand {
@@ -345,6 +547,15 @@ impl Session {
                     Some(l) => Brush::Net(l),
                     None if self.lama_ready() => Brush::LamaFile { file: self.lama_file().ok_or_else(lama_missing)?, slot: self.expand.lama.clone() },
                     None => return Err(lama_missing()),
+                }
+            }
+            m => {
+                if self.enhancer.disabled.contains(m.id()) {
+                    return Err(format!("{} is turned off: turn it on in Settings → AI Models.", m.label()));
+                }
+                match self.enhancer.model_dir(m.id()) {
+                    Some(dir) if self.enhancer.installed(m.id()) => Brush::Diffusion(dir),
+                    _ => return Err(self.diffusion_missing(m)),
                 }
             }
         };

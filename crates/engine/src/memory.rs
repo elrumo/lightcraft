@@ -82,7 +82,7 @@ impl crate::Session {
 }
 
 /// Physical memory (bytes), when the platform tells us without native calls.
-fn total_ram() -> Option<usize> {
+pub(crate) fn total_ram() -> Option<usize> {
     #[cfg(target_os = "linux")]
     {
         let s = std::fs::read_to_string("/proc/meminfo").ok()?;

@@ -836,3 +836,231 @@ fn every_cell_on_screen_gets_its_preview_however_slow_the_server() {
     drop(h);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// Signing out of a server from Settings ▸ Sync and the cloud: the question asked first, the wait for what is
+/// left, Cancel and Sign Out Anyway, and the empty library left for the next account.
+mod sign_out {
+    use std::collections::HashSet;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    use super::*;
+
+    /// A server that takes photo files (or refuses them, its disk full), counts the logouts it is sent, and signs
+    /// every device out (401) once `revoked`.
+    #[derive(Default)]
+    struct Server {
+        files_ok: AtomicBool,
+        revoked: AtomicBool,
+        logouts: AtomicUsize,
+        held: Mutex<HashSet<String>>,
+    }
+
+    fn exec_server(server: Arc<Server>) -> SyncExec {
+        let inner = exec(0, proto::Activity::default());
+        Box::new(move |task: Task, tx, ctx| {
+            if let Task::Http { method, url, .. } = &task {
+                let id = task.id();
+                let path = url.strip_prefix("http://fake").unwrap_or("");
+                let reply = |status: u16, body: String| {
+                    let _ = tx.send(Done { id, status, body });
+                    ctx.request_repaint();
+                };
+                if server.revoked.load(Ordering::SeqCst) && path != "/api/login" {
+                    return reply(401, json!({"error": "this device was signed out"}).to_string());
+                }
+                let key = path.split('?').next().unwrap_or(path).to_string();
+                match (*method, path) {
+                    ("POST", "/api/logout") => {
+                        server.logouts.fetch_add(1, Ordering::SeqCst);
+                        return reply(200, "{}".into());
+                    }
+                    ("HEAD", p) if p.starts_with("/api/blobs/") => {
+                        let held = server.held.lock().unwrap().contains(&key);
+                        return reply(if held { 200 } else { 404 }, String::new());
+                    }
+                    ("PUT", p) if p.starts_with("/api/blobs/") => {
+                        if !server.files_ok.load(Ordering::SeqCst) {
+                            return reply(500, json!({"error": "the server's disk is full"}).to_string());
+                        }
+                        server.held.lock().unwrap().insert(key);
+                        return reply(200, String::new());
+                    }
+                    _ => {}
+                }
+            }
+            inner(task, tx, ctx)
+        })
+    }
+
+    /// Two photos in a library signed in to `server`, Settings ▸ Sync open.
+    fn set_up(tag: &str, size: [f32; 2], files_ok: bool) -> (Headless, PathBuf, Arc<Server>) {
+        let server = Arc::new(Server::default());
+        server.files_ok.store(files_ok, Ordering::SeqCst);
+        let (mut h, root) = app(tag, &[("a.png", 1), ("b.png", 2)], exec_server(server.clone()), size);
+        sign_in(&mut h);
+        assert!(h.app.session.sync_state().is_some_and(|st| st.signed_in() && !st.config.library.is_empty()), "joined the server's library");
+        assert_eq!(h.app.session.catalog.len(), 2);
+        run(&mut h, "app.settings", json!({"tab": "sync"}));
+        (h, root, server)
+    }
+
+    fn fits(h: &Headless, ids: &[&str], width: f32) {
+        for id in ids {
+            let r = rect_of(h, id);
+            assert!(r.left() >= 0.0 && r.right() <= width, "{id} fits the screen: {r:?}");
+        }
+    }
+
+    /// Sign Out, then yes.
+    fn sign_out(h: &mut Headless) {
+        tap(h, "button:syncSignOut");
+        tap(h, "button:syncSignOutConfirm");
+    }
+
+    /// The question is asked first and does nothing; yes waits, because the photos can't be sent, with the library
+    /// still here; Cancel stays signed in; Sign Out Anyway asks too, and then empties the library, keeping a copy.
+    #[test]
+    fn signing_out_asks_first_waits_for_what_is_left_and_can_be_cancelled_or_done_anyway() {
+        let (mut h, root, server) = set_up("sign-out", [1280.0, 800.0], false);
+        tap(&mut h, "button:syncSignOut");
+        assert!(has(&h, "button:syncSignOutConfirm") && has(&h, "button:syncSignOutBack") && !has(&h, "button:syncNow"));
+        assert!(h.painted_text().iter().any(|t| t == "Sign Out?"), "{:?}", h.painted_text());
+        shot(&mut h, "sign-out-question-desktop");
+        assert!(!h.app.session.sync_state().unwrap().config.leaving, "asking starts nothing");
+        tap(&mut h, "button:syncSignOutBack");
+        assert!(has(&h, "button:syncSignOut") && has(&h, "button:syncNow") && !has(&h, "button:syncSignOutConfirm"));
+
+        tap(&mut h, "button:syncSignOut");
+        tap(&mut h, "button:syncSignOutConfirm");
+        frames(&mut h, 30);
+        assert_eq!(state(&h), "signingOut");
+        assert_eq!(h.app.session.catalog.len(), 2, "nothing is removed while it waits");
+        assert!(has(&h, "button:syncSignOutCancel") && has(&h, "button:syncSignOutAnyway"));
+        assert!(!has(&h, "button:syncNow") && !has(&h, "button:syncPause") && !has(&h, "button:syncSignOut"));
+        let (tip, _, working) = crate::sync_ui::cloud_status(&h.app);
+        assert!(tip.starts_with("Signing out of fake: sending what is left"), "{tip}");
+        assert!(working);
+        shot(&mut h, "sign-out-waiting-desktop");
+
+        // Cancel Sign Out: still signed in, the buttons are back
+        tap(&mut h, "button:syncSignOutCancel");
+        assert!(!h.app.session.sync_state().unwrap().config.leaving);
+        assert_ne!(state(&h), "signingOut");
+        assert!(has(&h, "button:syncSignOut") && has(&h, "button:syncNow"));
+
+        // again, and now without waiting: asked first as well
+        sign_out(&mut h);
+        frames(&mut h, 30);
+        tap(&mut h, "button:syncSignOutAnyway");
+        assert!(has(&h, "button:syncSignOutConfirm") && has(&h, "button:syncSignOutBack"));
+        assert!(h.painted_text().iter().any(|t| t == "Sign Out Without Waiting?"), "{:?}", h.painted_text());
+        shot(&mut h, "sign-out-anyway-desktop");
+        assert_eq!(h.app.session.catalog.len(), 2, "asking removes nothing");
+        tap(&mut h, "button:syncSignOutBack");
+        assert_eq!(state(&h), "signingOut", "back to waiting");
+        tap(&mut h, "button:syncSignOutAnyway");
+        let generation = h.app.session.library_generation();
+        // (the form somebody had filled in for the old account)
+        h.app.cloud_sync.form.user = "ann".into();
+        h.app.cloud_sync.form.password = "pw".into();
+        tap(&mut h, "button:syncSignOutConfirm");
+
+        // the library and the account are gone, and so is what was on screen: the page is the sign-in form again
+        assert!(h.app.session.catalog.is_empty());
+        assert!(h.app.session.sync_state().is_none());
+        assert_ne!(h.app.session.library_generation(), generation);
+        assert!(has(&h, "field:syncServer") && has(&h, "button:syncSignIn") && !has(&h, "button:syncSignOutConfirm"));
+        assert!(h.app.cloud_sync.form.user.is_empty() && h.app.cloud_sync.form.password.is_empty(), "the old account's name and password are gone");
+        let (cat, caches) = (&h.app.session.catalog, &mut h.app.caches);
+        assert_eq!(caches.counts(cat).total, 0, "All Photos count");
+        assert!(h.app.session.visible().is_empty(), "grid");
+        // what hadn't been sent was copied first, the files the user imported from are theirs, and the server wasn't asked
+        let kept = |prefix: &str| {
+            std::fs::read_dir(root.join("lib")).unwrap().flatten().filter(|e| e.file_name().to_string_lossy().starts_with(prefix)).count()
+        };
+        assert_eq!(kept("catalog-before-signout-"), 1, "a copy of the catalog");
+        assert!(root.join("in/a.png").exists() && root.join("in/b.png").exists());
+        assert_eq!(server.logouts.load(Ordering::SeqCst), 0, "Sign Out Anyway doesn't wait for the server");
+        drop(h);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Everything sent: signing out ends by itself, tells the server (so the device isn't listed any more) and leaves an
+    /// empty library, where another account signs in. On a phone the question fits the screen.
+    #[test]
+    fn signing_out_with_everything_sent_logs_the_device_out_and_leaves_an_empty_library_for_the_next_account() {
+        let (mut h, root, server) = set_up("sign-out-sent", PHONE, true);
+        tap(&mut h, "button:syncSignOut");
+        fits(&h, &["button:syncSignOutConfirm", "button:syncSignOutBack"], PHONE[0]);
+        shot(&mut h, "sign-out-question-phone");
+        tap(&mut h, "button:syncSignOutConfirm");
+        assert!(h.step_until(T, |h| h.app.session.sync_state().is_none()), "signed out as soon as everything was sent");
+        h.settle(SETTLE);
+        assert_eq!(server.logouts.load(Ordering::SeqCst), 1, "the server was told");
+        assert!(h.app.session.catalog.is_empty());
+        assert!(has(&h, "field:syncServer"), "the sign-in form");
+
+        // another account signs in to the emptied library: it has nothing of the first one's
+        run(&mut h, "sync.signIn", json!({"server": "http://fake", "user": "bob", "password": "pw", "device": "test"}));
+        assert!(h.step_until(T, |h| state(h) == "idle"), "{}", state(&h));
+        assert_eq!(h.app.session.sync_state().unwrap().config.user, "bob");
+        assert!(h.app.session.catalog.is_empty());
+        drop(h);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// While it waits, the phone's cloud says so and its popover offers Cancel Sign Out in place of Pause and Sync Now.
+    #[test]
+    fn the_cloud_says_the_library_is_signing_out_and_cancels_it() {
+        let (mut h, root, _server) = set_up("sign-out-cloud", PHONE, false);
+        sign_out(&mut h);
+        frames(&mut h, 30);
+        assert_eq!(state(&h), "signingOut");
+        fits(&h, &["button:syncSignOutCancel", "button:syncSignOutAnyway"], PHONE[0]);
+        shot(&mut h, "sign-out-waiting-phone");
+        tap(&mut h, "button:sheetOk");
+        tap_no_settle(&mut h, "icon:cloud");
+        frames(&mut h, 30);
+        assert!(has(&h, "actions:syncStatus"));
+        shot(&mut h, "sign-out-popover-phone");
+        assert!(has(&h, "button:syncStatusPrimary"), "Cancel Sign Out");
+        assert!(!has(&h, "button:syncPause") && !has(&h, "button:syncNow"), "nothing to pause or sync now while signing out");
+        tap_no_settle(&mut h, "button:syncStatusPrimary");
+        frames(&mut h, 30);
+        assert!(!h.app.session.sync_state().unwrap().config.leaving);
+        assert_ne!(state(&h), "signingOut");
+        assert_eq!(h.app.session.catalog.len(), 2);
+        drop(h);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The server signed this device out (a 401): the library is still the account's, so it can't sign in as someone else
+    /// until it is removed from this device, after asking.
+    #[test]
+    fn a_device_the_server_signed_out_can_remove_the_library_to_sign_in_as_someone_else() {
+        let (mut h, root, server) = set_up("sign-out-removed", [1280.0, 800.0], true);
+        assert_eq!(state(&h), "idle");
+        server.revoked.store(true, Ordering::SeqCst);
+        run(&mut h, "sync.now", json!({}));
+        assert!(h.step_until(T, |h| state(h) == "signedOut"), "{}", state(&h));
+        frames(&mut h, 10);
+        assert!(has(&h, "field:syncServer") && has(&h, "button:syncRemoveLibrary"));
+        assert_eq!(h.app.session.catalog.len(), 2);
+        tap(&mut h, "button:syncRemoveLibrary");
+        assert!(has(&h, "button:syncSignOutConfirm") && !has(&h, "button:syncRemoveLibrary"));
+        assert!(h.painted_text().iter().any(|t| t == "Remove Library from This Device?"), "{:?}", h.painted_text());
+        shot(&mut h, "sign-out-remove-desktop");
+        tap(&mut h, "button:syncSignOutBack");
+        assert!(has(&h, "button:syncRemoveLibrary"), "asking again later is one tap");
+        assert_eq!(h.app.session.catalog.len(), 2);
+        tap(&mut h, "button:syncRemoveLibrary");
+        tap(&mut h, "button:syncSignOutConfirm");
+        assert!(h.app.session.catalog.is_empty());
+        assert!(h.app.session.sync_state().is_none());
+        assert!(has(&h, "field:syncServer") && !has(&h, "button:syncRemoveLibrary") && !has(&h, "button:syncSignOutConfirm"));
+        assert_eq!(server.logouts.load(Ordering::SeqCst), 0, "the server had signed the device out already");
+        drop(h);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}

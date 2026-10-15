@@ -59,7 +59,11 @@ struct Fake {
     /// Photos (by hash) whose previews the server is still making: asked for, it says so (`404`, `previews: "queued"`).
     building: std::collections::HashSet<String>,
     requests: Vec<String>,
+    /// Every signed-in request answers `401`: the server signed this device out (an admin, or it was removed).
+    revoked: bool,
 }
+
+mod sign_out;
 
 impl Fake {
     fn new() -> Fake {
@@ -82,6 +86,7 @@ impl Fake {
             whole_snapshot: false,
             building: Default::default(),
             requests: vec![],
+            revoked: false,
         }
     }
 
@@ -101,6 +106,9 @@ impl Fake {
         // (like the real server: everything but signing in and the health check wants a token)
         if token.is_empty() && !matches!(path, "/api/login" | "/api/health") {
             return status(401, json!({"error": "sign in first"}));
+        }
+        if self.revoked && !matches!(path, "/api/login" | "/api/health") {
+            return status(401, json!({"error": "this device was signed out"}));
         }
         let json_body = || match body {
             Body::Json(j) => j.clone(),
@@ -249,6 +257,7 @@ impl Fake {
                 }
             }
             ("GET", "/api/shares") => ok(json!({"shares": []})),
+            ("POST", "/api/logout") => ok(json!({})),
             _ => status(404, json!({"error": "no such route"})),
         }
     }

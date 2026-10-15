@@ -31,6 +31,17 @@ fn signed_in(s: &Session) -> std::result::Result<(), String> {
     if s.sync_state().is_some_and(|st| st.signed_in()) { Ok(()) } else { Err("not signed in to the sync server".into()) }
 }
 
+/// Signing out waits for what is left to be sent: it can be cancelled.
+fn leaving(s: &Session) -> std::result::Result<(), String> {
+    if s.sync_leaving() { Ok(()) } else { Err("this library isn't signing out".into()) }
+}
+
+/// Synced, and not on its way out (a pause would stop the sending that signing out waits for).
+fn pausable(s: &Session) -> std::result::Result<(), String> {
+    synced(s)?;
+    if s.sync_leaving() { Err("this library is signing out: cancel that first".into()) } else { Ok(()) }
+}
+
 fn synced_selection(s: &Session) -> std::result::Result<(), String> {
     synced(s)?;
     super::has_selection(s)
@@ -148,7 +159,17 @@ fn computer_name() -> Option<String> {
 }
 
 fn sign_out(s: &mut Session, p: &Value) -> Result<Value> {
-    s.sync_sign_out()?;
+    s.sync_sign_out(bool_or(p, "confirm", false), bool_or(p, "force", false))?;
+    // (the browser can't wait here: its requests finish on later frames)
+    #[cfg(not(target_arch = "wasm32"))]
+    if bool_or(p, "wait", false) {
+        s.sync_sign_out_wait(p.get("limit").and_then(Value::as_u64).unwrap_or(100_000) as usize);
+    }
+    status(s, p)
+}
+
+fn cancel_sign_out(s: &mut Session, p: &Value) -> Result<Value> {
+    s.sync_cancel_sign_out()?;
     status(s, p)
 }
 
@@ -295,14 +316,18 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(query "sync.activity", "Sync Activity", [], None,
             "{refresh?: bool}: what this device is sending and receiving (changes waiting, photos and files queued and done, the ones moving now) and what the server is doing for this library (scanning library folders, building previews, indexing for search), as the server last said (asked for again every 2 s while someone looks) unless `refresh` asks it now",
             synced, activity),
+        // not journaled: it empties the library
+        cmd!(query "sync.signOut", "Sign Out of Sync", [], None,
+            "{confirm?: bool, force?: bool, wait?: bool}: sign out of the sync server. A library that has joined the server's removes itself from this device (it stays on the server, and signing in again brings it back), so this needs `confirm: true` once the user has agreed: it waits until everything this device has made (changes, photos with their previews, presets and shared settings) has reached the server, then signs the device out there and empties the library; sync.status says `signingOut` meanwhile (`wait`: run until it ends, CLI / MCP) and `sync.cancelSignOut` stays signed in. `force: true` doesn't wait: what was not sent is lost (a copy of the catalog is kept in the library folder first), and it is the only way after the server signed this device out. A library that never joined the server's (the sign-in choice is waiting) just signs out and stays as it is",
+            synced, sign_out),
         cmd!(
-            "sync.signOut",
-            "Sign Out of Sync",
+            "sync.cancelSignOut",
+            "Cancel Sign Out",
             [],
             None,
-            "{}: stop syncing; the library and its pending changes stay (signing in again resumes)",
-            signed_in,
-            sign_out
+            "{}: stay signed in after all (what was not sent yet goes on being sent)",
+            leaving,
+            cancel_sign_out
         ),
         cmd!(
             "sync.now",
@@ -313,7 +338,7 @@ pub fn specs() -> Vec<CommandSpec> {
             signed_in,
             now
         ),
-        cmd!("sync.pause", "Pause Syncing", ["File"], None, "{on?: bool}: stop talking to the server for now (toggle without `on`)", synced, pause),
+        cmd!("sync.pause", "Pause Syncing", ["File"], None, "{on?: bool}: stop talking to the server for now (toggle without `on`)", pausable, pause),
         cmd!(query "sync.status", "Sync Status", [], None, "{}: state (off / signedOut / idle / syncing / error), pending changes, transfers, error", always, status),
         cmd!(query "sync.usage", "Sync Storage", [], None,
             "{refresh?: bool}: what this library takes on the sync server (originals, smart and small previews, library folders, `serverTotal`: all of those, the server's free disk) and on this computer (catalog, thumbnails, previews, downloaded originals, free disk), in bytes (serverStored: what counts against the server's limit, serverOnDisk: what it takes of the server's disk, nearLimit: within a tenth of the limit, localTotal); photos with only previews here; the small previews not downloaded yet (previewsLeft: photos, about how many bytes). The server's numbers are the last it gave (asked for again every 20 s while someone looks) unless `refresh` asks it now",

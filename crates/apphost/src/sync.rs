@@ -72,7 +72,8 @@ impl Driver {
             self.in_flight += 1;
             exec(t, self.tx.clone());
         }
-        let busy = self.in_flight > 0 || session.sync_state().is_some_and(|st| st.state() == "syncing");
+        // (signing out waits for the sending to end: it is as busy as syncing)
+        let busy = self.in_flight > 0 || session.sync_state().is_some_and(|st| matches!(st.state(), "syncing" | "signingOut"));
         out.again = Some(if busy { Duration::from_millis(500) } else { POLL });
         out
     }
@@ -97,7 +98,7 @@ pub fn native_exec(notify: impl Fn() + Send + Sync + 'static) -> impl Fn(Task, S
     }
 }
 
-/// What the frontend's cloud icon shows: the state (`signedOut`, `conflict`, `paused`, `error`,
+/// What the frontend's cloud icon shows: the state (`signedOut`, `signingOut`, `conflict`, `paused`, `error`,
 /// `syncing`, `idle`; `None` for a local library with no server), the server, and how much is left.
 pub fn summary(session: &Session) -> Option<serde_json::Value> {
     let st = session.sync_state()?;
