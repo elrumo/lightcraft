@@ -405,10 +405,17 @@ Checked: the Duo simulator's outer display, upright and on its side (the system 
 side column, every tool screen, Select mode), a made-up tabletop on it, the grid coming back to its place after being
 rebuilt, made-up book, tabletop and Compare folds on an iPad simulator (iOS 26.5), and the iPhone and iPad tours on iOS
 26.5 against the build before SW5 (the same pictures, but for hairlines at the edges of the photo and for the photo
-being clipped at the sides). Not checked: the inner display (portrait, landscape), a real hinge (the
-`reservedRegions(kind: .division)` and `onHingeChange` paths have only run with no hinge), Split View, the horizontal
-bar on the inner display with iOS 27's priorities, a device. Device Hub, the only way to fold the simulator, kept
-crashing, and driving the simulator from outside is not allowed.
+being clipped at the sides). Not checked: the inner display with these layouts (portrait, landscape), a real hinge
+(the `reservedRegions(kind: .division)` and `onHingeChange` paths have only run with no hinge), Split View, the
+horizontal bar on the inner display with iOS 27's priorities, a device. Device Hub, the only way to fold the simulator,
+kept crashing, and driving the simulator from outside is not allowed.
+
+The one look at the inner display so far is a screenshot of an unfolded Duo (landscape, flat, dark appearance) from a
+build that had no tool priorities yet. It shows three things: the system inspector sits on the right page by itself, a
+keep-out strip about 90 pt wide around the hinge, even with the device flat; the Edit chips, scrolled to their end, drew
+over the photo and across the hinge (their scroll view has its clip off, for their glass shadows; the tool column now
+clips its content at the sides); and the bar's "…" came twice (the app's own beside the system's, which the iOS 27
+overflow menu replaces). What a book or a tabletop looks like there is still unseen.
 
 SW3, a native iOS 26 redesign (not the S3 gate; see *Look and feel*):
 - the library's system bars, title menu, bottom bar with search, and select bar (SW3.1);
