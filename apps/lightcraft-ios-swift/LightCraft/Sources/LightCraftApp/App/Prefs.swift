@@ -183,7 +183,8 @@ final class Prefs {
     /// Remove's Generative AI: strokes are filled by the MI-GAN model (when it's here).
     var removeAI: Bool { didSet { store.set(removeAI, forKey: "removeAI") } }
     /// Crop ▸ Expand's Fill With: the model Generate paints with (`crop.expandModels` ids; `auto`:
-    /// the default).
+    /// the best model for this device's profile, the engine's `recommended`). Settings → AI Models
+    /// sets it too.
     var expandModel: String { didSet { store.set(expandModel, forKey: "expandModel") } }
     /// What selects an object or the subject (Masking): `auto` (Apple's models where this device has
     /// them), `apple`, or `classic` (LightCraft's own guess, no model).

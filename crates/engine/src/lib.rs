@@ -45,6 +45,7 @@ mod faces_worker;
 pub mod files;
 pub mod fonts;
 pub mod guard;
+pub mod hardware;
 pub mod hdr_view;
 pub mod import;
 mod import_move;
@@ -264,8 +265,10 @@ pub struct Session {
     pub enhancer: enhance::Enhancer,
     /// AI Remove's model, once loaded.
     pub eraser: erase::EraseModel,
-    /// Generative Expand: LaMa once loaded, and the running Generate.
+    /// Generative Expand: LaMa once loaded, the model the user chose, and the running Generate.
     pub expand: expand::ExpandState,
+    /// What this device is (Generative Expand offers its models by it).
+    pub device: hardware::DeviceProfile,
     /// Search by description: the model, the library's index of photo vectors and the work in flight.
     pub vision: vision::Vision,
     /// Selected spot (Remove panel), by index into the active photo's spots.
@@ -412,6 +415,7 @@ impl Session {
             enhancer: enhance::Enhancer::default(),
             eraser: erase::EraseModel::default(),
             expand: expand::ExpandState::default(),
+            device: hardware::DeviceProfile::detect(),
             vision: vision::Vision::default(),
             active_spot: None,
             library: None,

@@ -2186,7 +2186,6 @@
   "Downloading": "正在下载",
   "on this device": "在此设备上",
   "Fast, on every device": "快速，适用于所有设备",
-  "Best for wide areas; slower, computers only": "最适合大面积区域；较慢，仅限电脑",
   "No download: texture from the photo": "无需下载：使用照片中的纹理",
   "Let the crop reach past the photo's edges and paint the new area on this computer": "让裁剪框超出照片边缘，并在此电脑上绘制新区域",
   "Drag the crop past the photo's edges, or choose an aspect ratio, first.": "请先将裁剪框拖出照片边缘，或选择一个长宽比。",
@@ -2197,5 +2196,19 @@
   "Models can't be downloaded in this build: put the file in the models folder (Settings → AI Models).": "此版本无法下载模型：请将文件放入模型文件夹（设置 → AI 模型）。",
   "Generating the new area…": "正在生成新区域…",
   "Finishing sync before signing out": "退出登录前正在完成同步",
-  "Removing the library from this device": "正在从此设备移除图库"
+  "Removing the library from this device": "正在从此设备移除图库",
+  "Its licence lists uses that aren't allowed: read it before downloading (Settings → AI Models → Licence).": "其许可证禁止部分用途：下载前请先阅读（“设置 → AI 模型 → 许可证”）。",
+  "Without a GPU it takes minutes per Generate.": "没有 GPU 时，每次生成需要几分钟。",
+  "Best for wide areas of sky, water or texture": "最适合大面积的天空、水面或纹理",
+  "Draws new detail; slower": "绘制新的细节；较慢",
+  "Draws new detail, guided by the photo; slow": "依照照片绘制新的细节；较慢",
+  "The most detail; slow": "细节最丰富；较慢",
+  "A computer": "电脑",
+  "A phone or tablet": "手机或平板",
+  "The browser": "浏览器",
+  "GPU": "GPU",
+  "no GPU": "无 GPU",
+  "This device:": "此设备：",
+  "What paints the new area when the crop reaches past the photo (Crop → Expand). The larger models draw new detail and take longer.": "裁剪范围超出照片时用来绘制新区域的模型（裁剪 → 扩展）。较大的模型会绘制新的细节，耗时更长。",
+  "Not an open-source licence: it lists uses that aren't allowed. Read it before downloading.": "这不是开源许可证：它禁止部分用途。下载前请先阅读。"
 }

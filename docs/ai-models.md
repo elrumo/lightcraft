@@ -18,8 +18,10 @@ mirror or a manual install ([ai-masks.md](ai-masks.md)).
 
 Today: **SAM 3** (Object and Describe masks, [ai-masks.md](ai-masks.md)), **Nomos Uni SPAN 2×** (Super
 Resolution, [super-resolution.md](super-resolution.md)), **MI-GAN** (AI Remove, [ai-remove.md](ai-remove.md), and
-Generative Expand: the one model that also runs in the browser, on rten, from `crates/erase`) and **LaMa** (Generative
-Expand on computers, [generative-expand.md](generative-expand.md), also on rten). The rest of this page is the research behind what to add next
+Generative Expand: the one model that also runs in the browser, on rten, from `crates/erase`), **LaMa** (Generative
+Expand on computers and capable phones, [generative-expand.md](generative-expand.md), also on rten), and Generative
+Expand's diffusion models on candle (`crates/diffuse`): **Stable Diffusion 1.5 Inpainting**, **Kandinsky 2.2 Inpaint**
+and **SDXL Inpainting**. The rest of this page is the research behind what to add next
 (2026-10-08; read from each repo's LICENSE and each Hugging Face model card — **re-check the licence of a model when
 you add it**, and write the verdict and the URL you read in its `ModelSpec`).
 
@@ -125,20 +127,25 @@ settled before LightCraft hosts a mirror.
 | Objects without SAM 3's 3.4 GB | SAM 2.1 tiny/small | Apache-2.0 / Apache-2.0 | 39–46 M params | `hiera` in `candle-transformers` |
 | Sky | Sky U²-Net small | MIT / MIT | ~2 MB | training data not stated |
 | Remove (large areas) | MI-GAN | MIT / MIT | 29.5 MB | **in use** (AI Remove, rten; `migan.onnx` from the authors' Hugging Face repo, MIT); separable convs, no FFT; Places2/FFHQ terms unverified |
-| Generative expand, large holes | LaMa (big-lama; fp32 ONNX export `Carve/LaMa-ONNX`) | Apache-2.0 / Apache-2.0 | 208 MB | **in use** (Generative Expand on computers, `crates/erase/src/lama.rs`; `lama_fp32.onnx` at a pinned revision, size and SHA-256; its answers on rten match onnxruntime's to 2e-6, checked 2026-10-13); runs on rten as is (its FFTs are MatMul / Einsum / Cos / Sin), checked 2026-10-12: right on a synthetic hole, 7–11 s per 512 × 512 pass on a busy Apple-silicon CPU (MI-GAN: ~1 s), so desktop only; on a square crop widened back to 3:2 it continued sky, sea, bushes and a film border plausibly but softly, a little cleaner than MI-GAN; Places2 terms unverified |
+| Generative expand, large holes | LaMa (big-lama; fp32 ONNX export `Carve/LaMa-ONNX`) | Apache-2.0 / Apache-2.0 | 208 MB | **in use** (Generative Expand on computers and on phones that may use 2 GB, `crates/erase/src/lama.rs`; `lama_fp32.onnx` at a pinned revision, size and SHA-256; its answers on rten match onnxruntime's to 2e-6, checked 2026-10-13); runs on rten as is (its FFTs are MatMul / Einsum / Cos / Sin), checked 2026-10-12: right on a synthetic hole, 7–11 s per 512 × 512 pass on a busy Apple-silicon CPU (MI-GAN: ~1 s), so desktop only; on a square crop widened back to 3:2 it continued sky, sea, bushes and a film border plausibly but softly, a little cleaner than MI-GAN; Places2 terms unverified |
+| Generative expand, new detail | Stable Diffusion 1.5 Inpainting (`stable-diffusion-v1-5/stable-diffusion-inpainting`, the 16-bit diffusers files) | CreativeML OpenRAIL-M (use-based restrictions; not OSI) | 2.1 GB | **in use** (`crates/diffuse/src/sd.rs`, candle; computers with 8 GB, phones with a GPU that may use 4 GB): its text encoder, one UNet step and its VAE match diffusers to 2 × 10⁻³ (checked 2026-10-14); see [generative-expand.md](generative-expand.md) |
+| Generative expand, new detail | Kandinsky 2.2 decoder-inpaint + the prior's image encoder (OpenCLIP ViT-bigG/14) | Apache-2.0 / Apache-2.0 | 9.0 GB | **in use** (`crates/diffuse/src/kandinsky.rs`, re-written from diffusers; computers with 16 GB): conditioned on the photo's own CLIP image embedding, no prompt; image encoder, UNet and MoVQ match diffusers to 5 × 10⁻⁵ (2026-10-14); the only permissively licensed diffusion inpainting model at a size a computer runs |
+| Generative expand, the most detail | SDXL 1.0 Inpainting 0.1 (`diffusers/stable-diffusion-xl-1.0-inpainting-0.1`, 16-bit) | CreativeML Open RAIL++-M (use-based restrictions; not OSI) | 6.9 GB | **in use** (`crates/diffuse/src/sd.rs`, with the added time / text conditioning candle's UNet lacks; computers with a GPU and 16 GB, or 32 GB): its two text encoders, pooled embedding and one UNet step match diffusers to 5 × 10⁻⁴ (checked 2026-10-14) |
 
 Subject, Sky, People and Landscape masks can use SAM 3's Describe path with fixed prompts for users who have it.
 
-**Generative expand (outpainting), checked 2026-10-12.** Nothing permissively licensed reaches Lightroom's (diffusion)
-quality at a size a laptop, phone or browser can run. MI-GAN and LaMa (above) extend simple surroundings (sky, sea,
-foliage, texture) at 512 × 512 over the whole canvas, so the new strip is soft and can't hold new objects. Diffusion
-inpainting: Kandinsky 2.2 inpaint is Apache-2.0 but a 15 GB repository with no pure-Rust implementation;
-Stable Diffusion inpainting (CreativeML OpenRAIL-M) and SDXL inpainting (OpenRAIL++) carry use-based restrictions;
-FLUX.1 Fill is non-commercial. Classical fallback already in the code: the panorama's content-aware Fill Edges.
+**Generative expand (outpainting), checked 2026-10-12, extended 2026-10-14.** Nothing permissively licensed reaches
+Lightroom's (diffusion) quality at a size a phone or browser can run. MI-GAN and LaMa (above) extend simple surroundings
+(sky, sea, foliage, texture) at 512 × 512 over the whole canvas, so the new strip is soft and can't hold new objects.
 **Built 2026-10-13** ([generative-expand.md](generative-expand.md)): MI-GAN on every device, LaMa on computers,
 and Classic (diffused edge colours with synthesized texture) without a download; one whole-canvas pass for the
 structure, the photo's grain added by patch synthesis. Windows repainted at full scale were tried and dropped (streaks
-far from the photo).
+far from the photo). **Diffusion added 2026-10-14**, at the user's request, as optional downloads offered by the
+device's profile (`crates/diffuse`, on candle; Metal on macOS / iOS, the CPU elsewhere): Stable Diffusion 1.5
+Inpainting and SDXL Inpainting (CreativeML OpenRAIL-M / Open RAIL++-M: use, also commercial, is allowed, the
+licence's Attachment A lists uses that are not; the app says so before the download, and these are the only
+non-OSI licences among the models here besides SAM 3's) and Kandinsky 2.2 Inpaint (Apache-2.0, 9 GB). FLUX.1 Fill
+stays out (non-commercial).
 
 ## Do not use
 

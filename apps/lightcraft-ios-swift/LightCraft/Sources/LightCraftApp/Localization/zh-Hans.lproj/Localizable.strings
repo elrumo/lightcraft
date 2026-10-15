@@ -27,7 +27,7 @@
 "%@ of %lld done. Photos show on devices as their previews are ready." = "已完成 %@ / %lld。照片的预览准备好后就会显示在设备上。";
 "%@ used" = "已用 %@";
 "%@ wheel" = "%@ 色轮";
-"%@ · %lld MB download" = "%1$@ · 需下载 %2$lld MB";
+"%@ · %@ download" = "%1$@ · 需下载 %2$@";
 "%@'s password was changed." = "%@ 的密码已更改。";
 "%@, %@" = "%2$@日 %1$@";
 "%lld" = "%1$lld年";
@@ -95,6 +95,7 @@
 "8 bits" = "8 位";
 "=  exactly" = "=  等于";
 "A blank template keeps the original names." = "模板留空则保留原始名称。";
+"A computer" = "电脑";
 "A copy of the file with your edits applied, stacked with the original." = "应用了你的编辑的文件副本，与原始照片堆叠在一起。";
 "A copy of the original file, without your edits, stacked with it." = "不含你的编辑的原始文件副本，与原始照片堆叠在一起。";
 "A filter is hiding this view's photos: change it, or clear it (View → Clear Filters)" = "筛选器正在隐藏此视图中的照片：请修改筛选条件，或清除筛选（视图 → 清除筛选）";
@@ -103,6 +104,7 @@
 "A keyword set needs a name" = "关键字集需要名称";
 "A one-time download of about" = "一次性下载，大小约";
 "A path the server can read. With Docker, mount the folder into the container read-only first (-v /srv/photos:/photos:ro) and enter /photos/…" = "服务器可以读取的路径。使用 Docker 时，请先将该文件夹以只读方式挂载到容器中（-v /srv/photos:/photos:ro），然后输入 /photos/…";
+"A phone or tablet" = "手机或平板";
 "A photo library and raw developer in pure Rust, open source (MIT OR Apache-2.0)." = "纯 Rust 编写的照片图库和 RAW 编辑器，开源（MIT OR Apache-2.0）。";
 "A photo library and raw developer. Free and open source." = "照片图库与 RAW 冲洗工具。免费且开源。";
 "A tap puts the keyword on the chosen photos, or takes it off when they all have it." = "轻点即可将关键字添加到所选照片；如果所选照片都已有该关键字，则将其移除。";
@@ -287,6 +289,7 @@
 "Automatic renders the Detail view at the size it is shown, up to the photo's own pixels. Choose a size to cap it: smaller is faster." = "“自动”按详细视图的显示大小渲染（最高为照片自身像素）。选择一个大小可设上限：越小越快。";
 "Automatic uses Apple's models where this device has them. Classic is LightCraft's own guess and needs no model." = "“自动”会在此设备具备 Apple 模型时使用它们。“经典”是 LightCraft 自己的估算，无需模型。";
 "Automatic uses the graphics card where it is faster than the processor: both are timed on this computer the first time a photo is made." = "自动模式会在显卡快于处理器时使用显卡：两者都会在首次生成照片时于本机计时比较。";
+"Automatic: %@ suits this device" = "自动：%1$@ 适合这台设备";
 "Automatically Write Changes into XMP" = "自动将更改写入 XMP";
 "Automatically write changes into XMP sidecars" = "自动将更改写入 XMP 附属文件";
 "Autumn Gold" = "秋日金黄";
@@ -315,7 +318,7 @@
 "Before/After Split Top/Bottom" = "修改前/修改后上下分屏";
 "Before/After Top/Bottom" = "修改前/修改后上下排列";
 "Begin Interaction" = "开始交互";
-"Best for wide areas; slower, computers only" = "最适合大面积区域；较慢，仅限电脑";
+"Best for wide areas of sky, water or texture" = "最适合大面积的天空、水面或纹理";
 "Best of Similar Shots" = "相似照片中的最佳";
 "Binary assets added" = "新增的二进制资源";
 "Binary assets removed" = "删除的二进制资源";
@@ -760,6 +763,8 @@
 "Drag the crop past the photo's edges, or choose an aspect ratio, first." = "请先将裁剪框拖出照片边缘，或选择一个长宽比。";
 "Drag the crop past the photo's edges, or choose an aspect ratio, then Generate." = "将裁剪框拖出照片边缘或选择一个长宽比，然后点按“生成”。";
 "Draw Guides" = "绘制参考线";
+"Draws new detail, guided by the photo; slow" = "依照照片绘制新的细节；较慢";
+"Draws new detail; slower" = "绘制新的细节；较慢";
 "Drop here for the top level" = "拖放到此处以移至顶层";
 "Duplicate" = "创建副本";
 "Duplicate Component" = "复制组件";
@@ -1000,6 +1005,7 @@
 "Full screen mode" = "全屏模式";
 "Full size" = "完整大小";
 "GPS Track Log" = "GPS 轨迹日志";
+"GPU" = "GPU";
 "GPU Rendering" = "GPU 渲染";
 "GPU rendering" = "GPU 渲染";
 "General" = "常规";
@@ -1219,6 +1225,7 @@
 "It tests this album, so testing it back would loop" = "它引用了此相册，反过来引用会形成循环";
 "Its copyright, creator and place." = "此照片的版权、创建者和位置。";
 "Its denoised picture is not made yet, and pictures are not made on their own (Settings, AI Denoise)." = "该照片的降噪结果尚未生成，而且不会自动生成（设置、AI 降噪）。";
+"Its licence lists uses that aren't allowed: read it before downloading (Settings → AI Models → Licence)." = "其许可证禁止部分用途：下载前请先阅读（“设置 → AI 模型 → 许可证”）。";
 "Its photos go to Recently Deleted; no file is touched." = "其中的照片将移到“最近删除”；不会改动任何文件。";
 "Its photos stay in %@'s library with their edits, but their originals can no longer be downloaded. Nothing in %@ is touched." = "其中的照片会连同编辑内容保留在 %@ 的图库中，但无法再下载其原始文件。%@ 中的任何内容都不会被改动。";
 "JPEG (Large)" = "JPEG（大）";
@@ -1624,6 +1631,7 @@
 "Normal" = "常规";
 "Not Now" = "以后再说";
 "Not a tile address (it needs https://, {z}, {x} and {y}): the standard tiles are used." = "不是图块地址（需要 https://、{z}、{x} 和 {y}）：将使用标准图块。";
+"Not an open-source licence: it lists uses that aren't allowed. Read it before downloading." = "这不是开源许可证：它禁止部分用途。下载前请先阅读。";
 "Not carried over: %@" = "未沿用：%1$@";
 "Not found" = "未找到";
 "Not now (it loads on the first search)" = "暂无（首次搜索时才会载入）";
@@ -2535,6 +2543,7 @@
 "That key can't be used as a shortcut" = "该按键不能用作快捷键";
 "The SAM 3 model is installed: Object and Describe masks are ready." = "SAM 3 模型已安装：对象蒙版和描述蒙版可以使用了。";
 "The address of your LightCraft server, as in Settings ▸ Sync." = "LightCraft 服务器的地址，与“设置 ▸ 同步”中的相同。";
+"The browser" = "浏览器";
 "The camera is locked: unlock it to read its photos" = "相机已锁定：请解锁以读取其中的照片";
 "The checkerboard shows area with nothing in it yet: Generate fills it." = "棋盘格显示尚无内容的区域：点按“生成”即可填充。";
 "The denoise model is installed and in use: the AI Denoise Amount slider under Detail now works" = "降噪模型已安装并正在使用：细节面板中的 AI 降噪数量滑块现已可用";
@@ -2554,6 +2563,7 @@
 "The library is up to date with this folder." = "图库与此文件夹一致。";
 "The model is kept on this computer only. LightCraft never uploads or shares it." = "模型仅保存在本机。LightCraft 绝不会上传或分享它。";
 "The model is kept on this device only. LightCraft never uploads or shares it." = "模型仅保存在此设备上。LightCraft 绝不会上传或分享它。";
+"The most detail; slow" = "细节最丰富；较慢";
 "The most the server keeps for %@, in GB (at least 0.1): the originals their devices upload, previews, and photos added through their shared links. Photos in library folders don't count. Over the limit, uploads wait until there is room; nothing is deleted. Leave it empty for no limit." = "服务器为 %@ 保存的内容上限，单位为 GB（至少 0.1）：包括其设备上传的原始文件、预览，以及通过其分享的链接添加的照片。图库文件夹中的照片不计入。超出上限后，上传会等到有空间后再继续；不会删除任何内容。留空表示不设上限。";
 "The new area was painted by %@ on this device." = "新区域已在此设备上生成（%1$@）。";
 "The number at the end of the original name (IMG_0042 → 0042)" = "原始名称末尾的数字（IMG_0042 → 0042）";
@@ -2598,6 +2608,7 @@
 "This build has no download location for the model yet." = "此版本尚未设置模型的下载位置。";
 "This build has nowhere to keep denoise models, so AI Denoise is not available. (The desktop app has.)" = "此版本没有存放降噪模型的位置，因此无法使用 AI 降噪。（桌面版可以。）";
 "This build has nowhere to keep face models." = "此版本没有可保存人脸模型的位置。";
+"This device:" = "此设备：";
 "This disk" = "此磁盘";
 "This file cannot be used yet" = "此文件暂时无法使用";
 "This folder is not available (drive disconnected?). Smart previews are not built or used until it is back or you choose another folder." = "此文件夹不可用（驱动器已断开连接？）。在它恢复或您选择其他文件夹之前，不会构建或使用智能预览。";
@@ -2702,7 +2713,7 @@
 "User name" = "用户名";
 "Username" = "用户名";
 "Users" = "用户";
-"Uses the %@ model, a %lld MB download (%@ licence). %@." = "使用 %1$@ 模型（需下载 %2$lld MB，%3$@ 许可证）。%4$@。";
+"Uses the %@ model, a %@ download (%@ licence). %@." = "使用 %1$@ 模型（需下载 %2$@，%3$@ 许可证）。%4$@。";
 "Uses the MI-GAN model, a %lld MB download (%@). %@." = "使用 MI-GAN 模型，需下载 %lld MB（%@）。%@。";
 "Value" = "值";
 "Variance" = "变化幅度";
@@ -2747,6 +2758,7 @@
 "Wednesday" = "星期三";
 "Weeks" = "周";
 "Welcome to LightCraft" = "欢迎使用 LightCraft";
+"What paints the new area when the crop reaches past the photo (Crop → Expand). The larger models draw new detail and take longer." = "裁剪范围超出照片时用来绘制新区域的模型（裁剪 → 扩展）。较大的模型会绘制新的细节，耗时更长。";
 "What the server does with your users' photos so their devices don't have to: find them by description, by the words printed in them, and by the people in them. Each needs a model, downloaded once onto this server." = "服务器代替设备对用户照片所做的处理：按描述查找、按照片中的文字查找，以及按照片中的人物查找。每项都需要一个模型，只需向此服务器下载一次。";
 "What's New" = "新功能";
 "When Rated" = "评分后";
@@ -2769,6 +2781,7 @@
 "Will be restored" = "将恢复";
 "Window" = "窗口";
 "Winter Blue" = "冬日蓝调";
+"Without a GPU it takes minutes per Generate." = "没有 GPU 时，每次生成需要几分钟。";
 "Words" = "文字";
 "Words in Photos" = "照片中的文字";
 "Worked out from the GPS position" = "根据 GPS 位置推算";
@@ -2891,6 +2904,7 @@
 "needs something to look for (or use “isn't empty”)" = "需要要查找的内容（或使用“不为空”）";
 "needs text" = "需要文本";
 "needs two values" = "需要两个值";
+"no GPU" = "无 GPU";
 "non-commercial use only" = "仅限非商用";
 "none" = "无";
 "none (CPU rendering)" = "无（CPU 渲染）";
