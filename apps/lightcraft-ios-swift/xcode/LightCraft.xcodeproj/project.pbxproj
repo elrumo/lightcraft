@@ -7,33 +7,11 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		5A0000000000000000000002 /* LightCraftShare.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 5A0000000000000000000001 /* LightCraftShare.appex */; platformFilters = (ios, ); settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		5A0000000000000000000002 /* LightCraftShare.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 5A0000000000000000000001 /* LightCraftShare.appex */; platformFilter = ios; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		B3A1C5E7D9F20416283A4B5D /* lightcraft.icns in Resources */ = {isa = PBXBuildFile; fileRef = B3A1C5E7D9F20416283A4B5C /* lightcraft.icns */; platformFilters = (macos, ); };
 		D118BF806F2564BE89F70150 /* LightCraftCore in Frameworks */ = {isa = PBXBuildFile; productRef = FDE8164FBE0782877075D526 /* LightCraftCore */; };
 		FE4E36C8133762DFD1460CB0 /* LightCraftImaging in Frameworks */ = {isa = PBXBuildFile; productRef = 9C8F574B6C0C7FAD49AF4675 /* LightCraftImaging */; };
 /* End PBXBuildFile section */
-
-/* Begin PBXFileReference section */
-		5A0000000000000000000001 /* LightCraftShare.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = LightCraftShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
-		8B5671700D95E2FE3B2CD2F9 /* LightCraft.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LightCraft.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		B3A1C5E7D9F20416283A4B5C /* lightcraft.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; name = lightcraft.icns; path = "../../../assets/app-icon/lightcraft.icns"; sourceTree = SOURCE_ROOT; };
-		E08554F68A4E1E622DB8EA27 /* LightCraft */ = {isa = PBXFileReference; lastKnownFileType = folder; name = LightCraft; path = ../LightCraft; sourceTree = SOURCE_ROOT; };
-/* End PBXFileReference section */
-
-/* Begin PBXFileSystemSynchronizedRootGroup section */
-		5A0000000000000000000004 /* ShareExtension */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			name = ShareExtension;
-			path = ../ShareExtension/Sources;
-			sourceTree = "<group>";
-		};
-		EDDB23F7E93882243625A83E /* LightCraftApp */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			name = LightCraftApp;
-			path = ../LightCraft/Sources/LightCraftApp;
-			sourceTree = "<group>";
-		};
-/* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXContainerItemProxy section */
 		5A000000000000000000000C /* PBXContainerItemProxy */ = {
@@ -58,6 +36,28 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		5A0000000000000000000001 /* LightCraftShare.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = LightCraftShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		8B5671700D95E2FE3B2CD2F9 /* LightCraft.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LightCraft.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B3A1C5E7D9F20416283A4B5C /* lightcraft.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; name = lightcraft.icns; path = "../../../assets/app-icon/lightcraft.icns"; sourceTree = SOURCE_ROOT; };
+		E08554F68A4E1E622DB8EA27 /* LightCraft */ = {isa = PBXFileReference; lastKnownFileType = folder; name = LightCraft; path = ../LightCraft; sourceTree = SOURCE_ROOT; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		5A0000000000000000000004 /* ShareExtension */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			name = ShareExtension;
+			path = ../ShareExtension/Sources;
+			sourceTree = "<group>";
+		};
+		EDDB23F7E93882243625A83E /* LightCraftApp */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			name = LightCraftApp;
+			path = ../LightCraft/Sources/LightCraftApp;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		5A0000000000000000000006 /* Frameworks */ = {
@@ -110,6 +110,26 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		5A0000000000000000000005 /* LightCraftShare */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 5A0000000000000000000008 /* Build configuration list for PBXNativeTarget "LightCraftShare" */;
+			buildPhases = (
+				5A0000000000000000000003 /* Sources */,
+				5A0000000000000000000007 /* Resources */,
+				5A0000000000000000000006 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				5A0000000000000000000004 /* ShareExtension */,
+			);
+			name = LightCraftShare;
+			productName = LightCraftShare;
+			productReference = 5A0000000000000000000001 /* LightCraftShare.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 		CB6E609C23A20E868F735942 /* LightCraft */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = A7B2CCDA60E9257681D707F0 /* Build configuration list for PBXNativeTarget "LightCraft" */;
@@ -137,36 +157,7 @@
 			productReference = 8B5671700D95E2FE3B2CD2F9 /* LightCraft.app */;
 			productType = "com.apple.product-type.application";
 		};
-		5A0000000000000000000005 /* LightCraftShare */ = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = 5A0000000000000000000008 /* Build configuration list for PBXNativeTarget "LightCraftShare" */;
-			buildPhases = (
-				5A0000000000000000000003 /* Sources */,
-				5A0000000000000000000007 /* Resources */,
-				5A0000000000000000000006 /* Frameworks */,
-			);
-			buildRules = (
-			);
-			dependencies = (
-			);
-			fileSystemSynchronizedGroups = (
-				5A0000000000000000000004 /* ShareExtension */,
-			);
-			name = LightCraftShare;
-			productName = LightCraftShare;
-			productReference = 5A0000000000000000000001 /* LightCraftShare.appex */;
-			productType = "com.apple.product-type.app-extension";
-		};
 /* End PBXNativeTarget section */
-
-/* Begin PBXTargetDependency section */
-		5A000000000000000000000D /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			platformFilters = (ios, );
-			target = 5A0000000000000000000005 /* LightCraftShare */;
-			targetProxy = 5A000000000000000000000C /* PBXContainerItemProxy */;
-		};
-/* End PBXTargetDependency section */
 
 /* Begin PBXProject section */
 		B8884A508A37E57D241CCC8B /* Project object */ = {
@@ -175,10 +166,10 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 2600;
 				TargetAttributes = {
-					CB6E609C23A20E868F735942 = {
+					5A0000000000000000000005 = {
 						ProvisioningStyle = Automatic;
 					};
-					5A0000000000000000000005 = {
+					CB6E609C23A20E868F735942 = {
 						ProvisioningStyle = Automatic;
 					};
 				};
@@ -216,18 +207,18 @@
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
-		5A0000000000000000000007 /* Resources */ = {
-			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 		135512E2955804868A1A5C15 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 				B3A1C5E7D9F20416283A4B5D /* lightcraft.icns in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5A0000000000000000000007 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -272,7 +263,70 @@
 		};
 /* End PBXSourcesBuildPhase section */
 
+/* Begin PBXTargetDependency section */
+		5A000000000000000000000D /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			platformFilter = ios;
+			target = 5A0000000000000000000005 /* LightCraftShare */;
+			targetProxy = 5A000000000000000000000C /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
 /* Begin XCBuildConfiguration section */
+		5A0000000000000000000009 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = ../ShareExtension/ShareExtension.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = UC3T83K9FR;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = ../ShareExtension/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Add to LightCraft";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.7.0;
+				PRODUCT_BUNDLE_IDENTIFIER = ai.storyteller.lightcraft.swift.share;
+				PRODUCT_NAME = LightCraftShare;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		5A000000000000000000000A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = ../ShareExtension/ShareExtension.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = UC3T83K9FR;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = ../ShareExtension/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Add to LightCraft";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.7.0;
+				PRODUCT_BUNDLE_IDENTIFIER = ai.storyteller.lightcraft.swift.share;
+				PRODUCT_NAME = LightCraftShare;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 		6EA4537B2F7DF56E5238E065 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -492,63 +546,18 @@
 			};
 			name = Debug;
 		};
-		5A0000000000000000000009 /* Debug */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_ENTITLEMENTS = ../ShareExtension/ShareExtension.entitlements;
-				CODE_SIGN_IDENTITY = "iPhone Developer";
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = UC3T83K9FR;
-				ENABLE_USER_SCRIPT_SANDBOXING = NO;
-				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = ../ShareExtension/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "Add to LightCraft";
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-					"@executable_path/../../Frameworks",
-				);
-				MARKETING_VERSION = 0.7.0;
-				PRODUCT_BUNDLE_IDENTIFIER = ai.storyteller.lightcraft.swift.share;
-				PRODUCT_NAME = LightCraftShare;
-				SDKROOT = iphoneos;
-				SKIP_INSTALL = YES;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
-				TARGETED_DEVICE_FAMILY = "1,2";
-			};
-			name = Debug;
-		};
-		5A000000000000000000000A /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_ENTITLEMENTS = ../ShareExtension/ShareExtension.entitlements;
-				CODE_SIGN_IDENTITY = "iPhone Developer";
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = UC3T83K9FR;
-				ENABLE_USER_SCRIPT_SANDBOXING = NO;
-				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = ../ShareExtension/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "Add to LightCraft";
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-					"@executable_path/../../Frameworks",
-				);
-				MARKETING_VERSION = 0.7.0;
-				PRODUCT_BUNDLE_IDENTIFIER = ai.storyteller.lightcraft.swift.share;
-				PRODUCT_NAME = LightCraftShare;
-				SDKROOT = iphoneos;
-				SKIP_INSTALL = YES;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
-				TARGETED_DEVICE_FAMILY = "1,2";
-			};
-			name = Release;
-		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		5A0000000000000000000008 /* Build configuration list for PBXNativeTarget "LightCraftShare" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				5A0000000000000000000009 /* Debug */,
+				5A000000000000000000000A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
 		A7B2CCDA60E9257681D707F0 /* Build configuration list for PBXNativeTarget "LightCraft" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -563,15 +572,6 @@
 			buildConfigurations = (
 				FE5AC5EF5DF48F5D446B441D /* Debug */,
 				EDF1D5659509A75B7E9AE951 /* Release */,
-			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Debug;
-		};
-		5A0000000000000000000008 /* Build configuration list for PBXNativeTarget "LightCraftShare" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				5A0000000000000000000009 /* Debug */,
-				5A000000000000000000000A /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;

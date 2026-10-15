@@ -380,6 +380,15 @@ pub fn api(st: &State, req: &mut Request, method: &Method, rest: &str) -> Resp {
             st.folders.request(name);
             folders(st, name)
         }),
+        (Method::Post, ["users", name, "previews", action @ ("pause" | "resume" | "generate")]) => {
+            match *action {
+                "pause" => st.folders.pause(true),
+                "resume" => st.folders.pause(false),
+                _ => st.folders.generate_all(name),
+            }
+            log::info!("admin {me}: {action} previews ({name})");
+            folders(st, name)
+        }
         (Method::Post, ["users", name, "scan"]) => {
             st.folders.request(name);
             folders(st, name)
@@ -749,7 +758,9 @@ fn folders(st: &State, name: &str) -> AdminResult {
             })
         })
         .collect();
-    Ok(json!({"folders": list, "ignore": u.ignore, "scan": st.folders.status(name)}))
+    let mut scan = st.folders.status(name);
+    (scan.previews_have, scan.previews_photos) = st.folders.coverage(st, name).unzip();
+    Ok(json!({"folders": list, "ignore": u.ignore, "scan": scan}))
 }
 
 fn devices(st: &State, name: &str) -> AdminResult {
