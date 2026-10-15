@@ -70,13 +70,14 @@ enum MaskList {
 /// over the photo ([`MaskColumn`]).
 struct MaskingTools: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.toolColumn) private var inColumn
     @State private var group: String?
 
     var body: some View {
         let mask = MaskList.selected(model)
         // An unfolded Duo has the room for the groups as a rail of icons and the open group's sliders at the panel's
         // full height, as the Edit panel.
-        let wide = model.duo.unfolded
+        let wide = inColumn && model.duo.unfolded
         let content = VStack(spacing: 8) {
             if model.editor.maskTool == "brush" {
                 BrushControls().transition(.opacity.combined(with: .move(edge: .bottom)))
@@ -109,8 +110,8 @@ struct MaskingTools: View {
         .padding(.vertical, 8)
         .animation(.snappy, value: group)
         .animation(.snappy, value: model.editor.maskTool)
-        .onChange(of: mask == nil) { _, none in
-            if none { group = nil }
+        .onChange(of: mask == nil, initial: true) { _, none in
+            if none { group = nil } else if wide, group == nil { group = "light" }
         }
     }
 }

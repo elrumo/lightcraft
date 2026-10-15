@@ -18,7 +18,7 @@ import AppKit
 /// - `ui.set {screen?: grid | photo | edit | crop | masking | remove | redEye | presets | info | commands |
 ///   people | map, photo?, span?: all | months | years, group?: light | color…, sheet?: albums |
 ///   filter | settings | export | sync | history | versions | keywords | about | superRes | createPreset | smartAlbum (id?) | allMetadata | none, select?,
-///   faceBoxes?, tagFace?, beforeAfter?, visualizeSpots?, removeAI?, histogram?, cropGuide?, maskTool?: object | brush | colorRange | none, objectTap?: [x, y]
+///   faceBoxes?, cropTab?: aspect | geometry, tagFace?, beforeAfter?, visualizeSpots?, removeAI?, histogram?, cropGuide?, maskTool?: object | brush | colorRange | none, objectTap?: [x, y]
 ///   (Select Object's tap, normalized), objectSubtract?, selectSubject?, selectionEngine?: auto | apple | classic, removeTap? (Remove selects by tapping), removeTapSize? (the reach past a tapped object, of the long edge), removeObjectTap?: [x, y],
 ///   and on a Mac: windowSize? ([w, h] points), sections? ({"light": true}: the panels' open sections), inspector?, thumbSize?, zoomAsk?: fit | fill | n, appearance?: system | light | dark}`: go there.
 @Observable
@@ -147,6 +147,7 @@ final class ScriptHost {
             if params["selectSubject"].bool == true { await model.selectSubject() }
             if let on = params["histogram"].bool { model.prefs.showHistogram = on }
             if let guide = params["cropGuide"].string { model.prefs.cropGuide = guide }
+            if let tab = params["cropTab"].string { model.editor.cropTab = tab }
             if let draw = params["cropDraw"].string { model.editor.cropDraw = draw == "none" ? nil : draw }
             if let on = params["filmstrip"].bool { model.prefs.filmstrip = on }
             // (the Mac panels' sections: {"light": true, "curve": false}; the ones not named stay as they are)

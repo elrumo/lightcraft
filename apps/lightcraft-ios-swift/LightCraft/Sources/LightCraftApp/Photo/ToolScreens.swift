@@ -36,7 +36,6 @@ func undoDepth(_ model: AppModel) async -> Int? {
 struct CropTools: View {
     @Environment(AppModel.self) private var model
     @Environment(\.toolColumn) private var inColumn
-    @State private var tab = "aspect"
     @State private var dialStart: Double?
 
     /// The crop's composition guides (`crop.guides` kinds).
@@ -52,6 +51,9 @@ struct CropTools: View {
 
     var body: some View {
         let editor = model.editor
+        @Bindable var editorBindings = editor
+        let tab = editor.cropTab
+        let wide = inColumn && model.duo.unfolded
         let angle = editor.setting("crop", "geometry", "angle").double ?? 0
         let locked = editor.setting("crop", "aspect") != .null
         VStack(spacing: 10) {
@@ -105,7 +107,7 @@ struct CropTools: View {
                 ExpandControls()
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
-            Picker("Tab", selection: $tab) {
+            Picker("Tab", selection: $editorBindings.cropTab) {
                 Text("Aspect").tag("aspect")
                 Text("Geometry").tag("geometry")
             }
@@ -117,7 +119,7 @@ struct CropTools: View {
                 if t == "geometry" { editor.want(["geometry", "optics"], model) }
             }
             if tab == "aspect" {
-                if model.duo.unfolded {
+                if wide {
                     // the room of an unfolded Duo: the tiles in a grid that fills the panel, not a row to scroll
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 72), spacing: 10)], spacing: 10) { aspectTiles }
                         .padding(.horizontal, 16)
@@ -130,10 +132,10 @@ struct CropTools: View {
                 }
             } else {
                 ScrollView {
-                    GeometryControls()
+                    GeometryControls(wide: wide)
                         .padding(.horizontal, 16)
                 }
-                .frame(maxHeight: 236)
+                .frame(maxHeight: wide ? .infinity : 236)
             }
         }
         .padding(.vertical, 8)
@@ -208,12 +210,22 @@ struct CropTools: View {
 /// perspective sliders, Constrain Crop.
 struct GeometryControls: View {
     @Environment(AppModel.self) private var model
+    /// The buttons in a grid that wraps (an unfolded Duo's column), not a row that shortens their names.
+    var wide = false
+
+    @ViewBuilder private func row<C: View>(@ViewBuilder _ content: () -> C) -> some View {
+        if wide {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 84), spacing: 8)], spacing: 8) { content() }
+        } else {
+            HStack { content() }
+        }
+    }
 
     var body: some View {
         let editor = model.editor
         VStack(alignment: .leading) {
             Text("Upright").font(.subheadline.weight(.semibold))
-            HStack {
+            row {
                 ForEach([("auto", "Auto"), ("level", "Level"), ("vertical", "Vertical"), ("full", "Full"), ("guided", "Guided")], id: \.0) { mode, label in
                     let on = editor.setting("geometry", "upright").string == mode
                     Button(LocalizedStringKey(label)) {
