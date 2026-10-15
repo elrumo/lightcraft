@@ -25,10 +25,12 @@ struct LibraryScreen: View {
         Group {
             switch model.prefs.gridSpan {
             case .all: GridView(namespace: namespace, jump: $jump)
-            case .months, .years: DateBlocksView(span: model.prefs.gridSpan) { index in
-                withAnimation(.snappy) { model.prefs.gridSpan = .all }
-                jump = index
-            }
+            case .months, .years:
+                #if os(macOS)
+                MacDateBlocksView(span: model.prefs.gridSpan, openAt: showAll)
+                #else
+                DateBlocksView(span: model.prefs.gridSpan, openAt: showAll)
+                #endif
             }
         }
         .onChange(of: model.gridJump) { _, index in
@@ -41,7 +43,7 @@ struct LibraryScreen: View {
             if !model.selectMode { FilterChips(chips: chips["chips"].array ?? []) }
         }
         #if os(macOS)
-        // (Years / Months / All, the chosen photos' rating, the thumbnails' size: Mac/MacGridCell.swift)
+        // (the chosen photos' rating and flag, how many, the thumbnails' size: Mac/MacGridCell.swift)
         .safeAreaInset(edge: .bottom, spacing: 0) { MacGridBar() }
         #endif
         // pictures dropped from another app (Files, Photos, Safari…) are imported
@@ -124,6 +126,12 @@ struct LibraryScreen: View {
         .onChange(of: importer.picked) { _, items in
             importer.photos(items, model)
         }
+    }
+
+    /// A photo in Months or Years was chosen: All, scrolled to it.
+    private func showAll(at index: Int) {
+        withAnimation(.snappy) { model.prefs.gridSpan = .all }
+        jump = index
     }
 
     /// Out of a search by description: the grid as it was.
@@ -214,6 +222,17 @@ struct LibraryScreen: View {
                 ToolbarSpacer(.fixed, placement: .lcTrailing)
             }
             #endif
+            #if os(macOS)
+            // (Years / Months / All in the middle of the title bar, where Photos has it: Mac/MacGridCell.swift)
+            ToolbarItem(placement: .principal) {
+                MacSpanPicker()
+            }
+            if model.prefs.gridSpan == .all {
+                ToolbarItem(placement: .lcTrailing) {
+                    MacSquareToggle()
+                }
+            }
+            #endif
             ToolbarItem(placement: .lcTrailing) {
                 Button("Filter", systemImage: model.library.state?.isFiltered == true ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease") {
                     model.sheet = .filter
@@ -223,7 +242,6 @@ struct LibraryScreen: View {
             // the grid's "…": the system's overflow menu on iOS 27, so these and what overflowed are in one place
             DuoOverflow { GridMoreItems() }
             #if os(macOS)
-            // (the span is in the bar under the grid)
             ToolbarItem(placement: .lcTrailing) {
                 addButton
             }

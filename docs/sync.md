@@ -259,7 +259,7 @@ can make such folders a user's **library folders** (admin page › Users › the
   uses it. Photos already read from a name that is skipped now stay in the library with their edits, their files
   showing as missing, as with any file that disappears; take the name off the list and they are found again.
 - Hidden folders and NAS bookkeeping (`@eaDir`, `#recycle`, `#snapshot`, `$RECYCLE.BIN`…) are skipped, symbolic
-  links aren't followed, files larger than 2 GiB aren't read, and every file is decoded under a guard: a damaged
+  links aren't followed, files larger than 2 GiB aren't read (a TIFF is, in part: its tables, small values and first image, so a Photoshop file whose size is mostly layers imports; the limit is 64 GiB), and every file is decoded under a guard: a damaged
   one is reported, never fatal.
 
 ## Connect your devices

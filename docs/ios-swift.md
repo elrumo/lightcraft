@@ -346,9 +346,20 @@ iPad"): one multiplatform Xcode target, arm64 only. Decisions (2026-10-14):
   sections remember whether they are open (`Prefs.sectionStates`), each panel saying how a new one starts.
   The grid (SM2.4, `Mac/MacGridCell.swift`) has no select mode: a click chooses a photo (⌘ adds or takes it out, ⇧ chooses
   the run from the last one: `library.select` modes), a double click opens it, a right click has its menu, and it can be
-  dragged out with the others chosen; chosen cells have a ring. Its bar has Years, Months and All, the chosen photos'
-  rating and flag, how many are chosen and a thumbnail-size slider (`Prefs.thumbSize`; a pinch changes it too, and the
-  window gives as many columns as fit).
+  dragged out with the others chosen; chosen cells have a ring. Years, Months and All are a segmented control in the
+  middle of the window toolbar, where Photos has it (`MacSpanPicker`). The grid leaves 24 pt at its sides. Its bar has the
+  chosen photos' rating and flag, how many are chosen and, in All, a thumbnail-size slider (`Prefs.thumbSize`; a pinch
+  changes it too, and the window gives as many columns as fit). Square Thumbnails off (a toolbar button, the View menu,
+  the "…" menu: `Prefs.squareGrid`) is Photos' aspect-ratio grid: the cells stay square and each photo sits in its own
+  shape, as large as its cell allows, with a soft shadow (`Prefs.aspectGrid`; a phone's grid is always square). A Mac's
+  tiles have rounded corners, 4 pt on the squares and 8 pt on photos in their own shape; the ring and the pointer's light
+  follow them.
+  Years and Months (`Mac/MacDateBlocks.swift`) are laid out as Photos has them: a centred column, each year a square
+  card with the year over it, each month a heading over a 12-column mosaic of up to six photos (`Mosaic`; the large one
+  changes sides from month to month) with the day on each, rounded and softly shadowed. A pinch about the pointer steps
+  Years to Months to All (out on a year or a month goes in) and in on a month goes out to its year, scrolled to the
+  year or month under the pointer (`ui.set {zoomBlocks: {in, at?}}` does the same for a script; `ui.set {squareGrid}`
+  turns the aspect grid on and off). The pinch itself was not tried on a trackpad, only through that request.
 
 **The keyboard** (SM2.5). A key means what one table says, the table egui reads: the commands' own shortcuts
 (`engine.commands`), the UI commands' (`host.uiCommands`) and the fixed keys no command declares for itself

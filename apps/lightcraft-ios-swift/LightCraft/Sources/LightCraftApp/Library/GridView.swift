@@ -26,6 +26,8 @@ struct GridView: View {
     @State private var position = ScrollPosition(edge: .top)
     /// This grid has appeared once (the first time it scrolls back to where the last one was left, `LibraryModel.anchor`).
     @State private var appeared = false
+    /// The room a Mac's grid leaves at its left and right.
+    static let sidePadding: CGFloat = 24
 
     var body: some View {
         let library = model.library
@@ -56,8 +58,12 @@ struct GridView: View {
                         }
                     }
                 }
-                .coordinateSpace(name: "grid")
                 .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { gridWidth = $0 }
+                #if os(macOS)
+                // (room at the sides, as Photos leaves; the width above is what is left for the tiles)
+                .padding(.horizontal, Self.sidePadding)
+                #endif
+                .coordinateSpace(name: "grid")
                 .simultaneousGesture(chooseDrag, including: model.selectMode ? .all : .none)
             }
             .scrollIndicators(library.count > 200 ? .hidden : .visible)
@@ -256,7 +262,12 @@ struct DateHeader: View {
                 .font(.subheadline)
             }
         }
+        #if os(macOS)
+        // (a Mac's grid is already inset: the text lines up with the first tile)
+        .padding(.horizontal, 2)
+        #else
         .padding(.horizontal, 16)
+        #endif
         .frame(height: 40)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -280,13 +291,14 @@ struct GridCell: View {
         if let photo = model.library.photo(at: index, model.engine) {
             PhotoCell(photo: photo, namespace: namespace)
         } else {
-            Color.lcSecondaryBackground
+            // (an aspect-ratio grid has no shape to show yet)
+            (model.prefs.aspectGrid ? Color.clear : Color.lcSecondaryBackground)
                 .aspectRatio(1, contentMode: .fit)
         }
     }
 }
 
-/// A photo in the grid: its picture filling the square, its marks, and whether it's chosen.
+/// A photo in the grid: its picture filling the square (or, in an aspect-ratio grid, as large as fits in it), its marks, and whether it's chosen.
 struct PhotoCell: View {
     @Environment(AppModel.self) private var model
     let photo: PhotoSummary
@@ -294,10 +306,37 @@ struct PhotoCell: View {
     /// Pixels asked for on the long edge (the engine rounds it to its own sizes).
     private var edge: Int { model.prefs.gridColumns <= 2 ? 768 : 384 }
 
+    /// The room round a photo in an aspect-ratio grid.
+    private static let fitInset: CGFloat = 6
+    /// How much a Mac rounds a tile's corners: a little for the squares, more for photos in their own shape (a phone's are square).
+    private var radius: CGFloat {
+        #if os(macOS)
+        model.prefs.aspectGrid ? 8 : 4
+        #else
+        0
+        #endif
+    }
+
     var body: some View {
+        if model.prefs.aspectGrid {
+            // the cell stays square, so the rows line up; the photo sits in it in its own shape, as large
+            // as fits (its longer side at most the cell's), with Photos' soft shadow
+            Color.clear
+                .aspectRatio(1, contentMode: .fit)
+                .overlay {
+                    tile
+                        .padding(Self.fitInset)
+                        .shadow(color: .black.opacity(0.25), radius: 4, y: 1)
+                }
+        } else {
+            tile
+        }
+    }
+
+    @ViewBuilder private var tile: some View {
         let chosen = model.library.selected.contains(photo.id)
         Color.lcSecondaryBackground
-            .aspectRatio(1, contentMode: .fit)
+            .aspectRatio(model.prefs.aspectGrid ? photo.aspect : 1, contentMode: .fit)
             .overlay {
                 if let picture = model.images.thumb(photo.id) {
                     Image(decorative: picture.image, scale: 1)
@@ -338,8 +377,8 @@ struct PhotoCell: View {
                         .accessibilityHidden(true)
                 }
             }
-            .clipped()
-            .contentShape(Rectangle())
+            .clipShape(.rect(cornerRadius: radius))
+            .contentShape(.rect(cornerRadius: radius))
             .matchedTransitionSource(id: photo.id, in: namespace)
             // on screen (render.retain keeps its render queued), and asked again when the library
             // changes (an edit): the engine answers only what changed
@@ -348,7 +387,7 @@ struct PhotoCell: View {
             .task(id: model.settledRevision) { model.requestThumb(photo.id, edge: edge) }
             #if os(macOS)
             // a click chooses, a double click opens, a right click has the menu (Mac/MacGridCell.swift)
-            .modifier(MacCellInteraction(photo: photo))
+            .modifier(MacCellInteraction(photo: photo, radius: radius))
             #else
             .onTapGesture { tapped() }
             .onLongPressGesture(minimumDuration: 0.5) { longPressed() }

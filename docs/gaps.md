@@ -62,6 +62,11 @@ Beta-blocking gaps (B) total **~230–430 h**; with the stability and platform w
 
 ## Closed recently (kept for calibration)
 
+- 2026-10-15: planar TIFFs (Photoshop "per channel"), TIFFs over 2 GiB on the sync server (read in part: only the
+  composite, never the layers), cut-short TIFF / CR2 messages and the intact CR2 thumbnail, a HEIC that won't decode
+  shows its thumbnail. Still open: 4:2:2 / 4:4:4 HEIC decoding itself (needs a sample file), Lightroom mobile
+  `_proxy.dng` and `th_` / `pv_` blobs (`lightcraft-cli inspect` says what they are), a streaming decode for a
+  single-strip 300 MP TIFF (still decoded whole).
 - 2026-10-10: Nikon lossy-after-split NEF (#633), ORF 12.8 bpp (#651), HDR gain map / PQ AVIF / float
   TIFF export (#646), activity stack (#345), JPEG XL export (#247).
 - 2026-10-09: EOS R7 C-RAW with an odd-height QP map (a45c2b66; part of gap 2), HEIC in release builds (#609), Samsung uncompressed SRW (#459), contact-sheet PDF (#563),

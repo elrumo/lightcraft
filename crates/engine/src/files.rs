@@ -971,6 +971,92 @@ fn planned_preview(file: &mut std::fs::File, path: &str, total: u64) -> Result<O
     Ok(None)
 }
 
+/// A file at least this long is read in part when it is a TIFF ([`read_file`]).
+const READ_IN_PART_FROM: u64 = 256 << 20;
+/// The longest file [`read_file`] reads whole.
+pub const READ_WHOLE_MAX: u64 = 2 << 30;
+/// A file read in part is read in at most this many rounds of ranges.
+const READ_IN_PART_ROUNDS: usize = 8;
+
+/// Physical memory, asked once (it can mean running a command).
+fn ram() -> Option<u64> {
+    static RAM: std::sync::OnceLock<Option<u64>> = std::sync::OnceLock::new();
+    *RAM.get_or_init(|| crate::memory::total_ram().map(|r| r as u64))
+}
+
+/// A file's bytes for describing and decoding it. Whole, up to [`READ_WHOLE_MAX`]; a longer file is
+/// read only when it is a TIFF that [`lightcraft_raw::sparse::image_plan`] can read in part (a Photoshop
+/// file of several GB is mostly layer data), else it is an error: reading it whole would take more
+/// memory than a server may have.
+///
+/// A TIFF from [`READ_IN_PART_FROM`] up comes back at the file's full length with only what the plan names
+/// loaded; the rest stays zero. Its pages are never touched, so they cost no memory until something
+/// copies the whole buffer (the metadata reader does, once).
+pub fn read_file(path: &std::path::Path) -> Result<Vec<u8>, String> {
+    read_file_from(path, READ_IN_PART_FROM)
+}
+
+fn read_file_from(path: &std::path::Path, in_part_from: u64) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+    let at = |e: std::io::Error| format!("{}: {e}", path.display());
+    let mut file = std::fs::File::open(path).map_err(at)?;
+    let total = file.metadata().map_err(at)?.len();
+    // (the buffer's length is address space, but a machine that can't back half of it with memory
+    // and swap may refuse it, and a refused allocation ends the process)
+    let fits = ram().is_none_or(|r| total <= r / 2);
+    if total >= in_part_from
+        && fits
+        && let Some(buf) = read_tiff_in_part(&mut file, path, total)?
+    {
+        return Ok(buf);
+    }
+    if total > READ_WHOLE_MAX {
+        return Err(format!("larger than {} GiB, and not a TIFF that can be read in part", READ_WHOLE_MAX >> 30));
+    }
+    let len = usize::try_from(total).map_err(|_| format!("{}: file too large", path.display()))?;
+    let mut buf = Vec::new();
+    buf.try_reserve_exact(len).map_err(|e| format!("{}: {e}", path.display()))?;
+    std::io::Seek::seek(&mut file, std::io::SeekFrom::Start(0)).map_err(at)?;
+    file.read_to_end(&mut buf).map_err(at)?;
+    Ok(buf)
+}
+
+/// [`read_file`]'s TIFF route. `None`: not a TIFF the plan can read in part, or one that is mostly
+/// picture anyway (the caller reads it whole).
+fn read_tiff_in_part(file: &mut std::fs::File, path: &std::path::Path, total: u64) -> Result<Option<Vec<u8>>, String> {
+    use lightcraft_raw::sparse::{HeaderPlan, Ranges, image_plan};
+    use std::io::{Read, Seek, SeekFrom};
+    let at = |e: std::io::Error| format!("{}: {e}", path.display());
+    let Ok(len) = usize::try_from(total) else { return Ok(None) };
+    let mut buf = vec![0u8; len];
+    let mut loaded = Ranges::new();
+    let head = buf.len().min(16);
+    let Some(dst) = buf.get_mut(..head) else { return Ok(None) };
+    file.seek(SeekFrom::Start(0)).map_err(at)?;
+    file.read_exact(dst).map_err(at)?;
+    loaded.insert(0, head as u64);
+    for _ in 0..READ_IN_PART_ROUNDS {
+        match image_plan(&buf, &loaded) {
+            HeaderPlan::Need(ranges) => {
+                // a file that is mostly picture gains nothing from the detour
+                if loaded.total().saturating_add(ranges.total()) > total / 2 {
+                    return Ok(None);
+                }
+                for &(start, end) in ranges.spans() {
+                    let (Ok(a), Ok(b)) = (usize::try_from(start), usize::try_from(end)) else { return Ok(None) };
+                    let Some(dst) = buf.get_mut(a..b) else { return Ok(None) };
+                    file.seek(SeekFrom::Start(start)).map_err(at)?;
+                    file.read_exact(dst).map_err(at)?;
+                    loaded.insert(start, end);
+                }
+            }
+            HeaderPlan::Ready => return Ok(Some(buf)),
+            HeaderPlan::Whole(_) => return Ok(None),
+        }
+    }
+    Ok(None)
+}
+
 /// The file's first [`lightcraft_raw::PREVIEW_PREFIX`] bytes (or the whole file when it is shorter),
 /// which is what every format [`lightcraft_raw::bounded_preview`] covers keeps its pointer in.
 fn read_prefix(file: &mut std::fs::File, path: &str, total: u64) -> Result<Vec<u8>, String> {
@@ -1439,6 +1525,43 @@ mod tests {
             }
         }
         assert!(probe_bytes("x.jpg", b"not an image").is_err());
+    }
+
+    /// A TIFF with a huge private tag (a Photoshop file's layers) is read in part: it describes and decodes as
+    /// the whole file does, from a fraction of its bytes (the buffer is the file's length; the layer data
+    /// stays zero). A file nothing can read in part is read whole.
+    #[test]
+    fn a_layered_tiff_is_read_in_part() {
+        use lightcraft_tiff::{IfdBuilder, ImageData, TiffWriter, Value, tags as t};
+        let strip: Vec<u8> = (0..64u8).map(|i| i * 3).collect();
+        let mut ifd = IfdBuilder::new();
+        ifd.set(t::IMAGE_WIDTH, Value::Long(vec![8]));
+        ifd.set(t::IMAGE_LENGTH, Value::Long(vec![8]));
+        ifd.set(t::BITS_PER_SAMPLE, Value::Short(vec![8]));
+        ifd.set(t::COMPRESSION, Value::Short(vec![1]));
+        ifd.set(t::PHOTOMETRIC, Value::Short(vec![1]));
+        ifd.set(t::SAMPLES_PER_PIXEL, Value::Short(vec![1]));
+        ifd.set(37724, Value::Undefined(vec![0xA7; 17 << 20]));
+        ifd.set_image(ImageData::Strips { rows_per_strip: 8, strips: vec![strip] });
+        let file = TiffWriter::default().write(&[ifd]).unwrap();
+        let dir = crate::tests_xmp::temp_dir("read-in-part");
+        let path = dir.join("layers.tif");
+        std::fs::write(&path, &file).unwrap();
+
+        let part = read_file_from(&path, 0).unwrap();
+        assert_eq!(part.len(), file.len());
+        assert!(part.iter().filter(|&&b| b == 0xA7).count() < 100, "the layer data was read");
+        let (a, b) = (probe_bytes("layers.tif", &part).unwrap(), probe_bytes("layers.tif", &file).unwrap());
+        assert_eq!((a.width, a.height, a.format, a.file_size), (b.width, b.height, b.format, b.file_size));
+        assert_eq!(a.width, 8);
+        let decode = |bytes: &[u8]| lightcraft_codecs::decode(bytes, Default::default()).unwrap().to_srgb8().data;
+        assert_eq!(decode(&part), decode(&file));
+        // a file the plan declines (not a TIFF) is read whole, as is a TIFF below the threshold
+        let jpeg_like = dir.join("x.bin");
+        std::fs::write(&jpeg_like, b"not a tiff at all, but whole").unwrap();
+        assert_eq!(read_file_from(&jpeg_like, 0).unwrap(), b"not a tiff at all, but whole");
+        assert_eq!(read_file_from(&path, u64::MAX).unwrap(), file);
+        assert!(read_file(&dir.join("missing.tif")).is_err());
     }
 
     /// The error for a file nothing recognises says how big it is and how it starts (an empty

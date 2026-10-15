@@ -180,6 +180,10 @@ final class AppModel {
     var shown: UInt64?
     /// A scroll of the grid that automation asked for (`ui.set {scrollGrid}`): the library screen turns it into a jump.
     var gridJump: Int?
+    #if os(macOS)
+    /// A zoom of Months or Years that automation asked for (`ui.set {zoomBlocks}`): `MacDateBlocksView` does what a pinch does.
+    var blockZoom: BlockZoom?
+    #endif
     /// The albums page's sections below My Photos, in order (`host.sidebar`).
     var sidebarSections: [SidebarSectionState] = SidebarSectionState.usual
     /// Photos are being chosen in the grid (Select).

@@ -26,7 +26,7 @@ import AppKit
 ///   filter | settings | export | sync | history | versions | keywords | about | superRes | createPreset | smartAlbum (id?) | allMetadata | none, select?,
 ///   faceBoxes?, cropTab?: aspect | geometry, tagFace?, beforeAfter?, visualizeSpots?, removeAI?, histogram?, cropGuide?, maskTool?: object | brush | colorRange | none, objectTap?: [x, y]
 ///   (Select Object's tap, normalized), objectSubtract?, selectSubject?, selectionEngine?: auto | apple | classic, playgroundExpand? (Generative Expand with the stand-in for Apple Image Playground: LIGHTCRAFT_FAKE_PLAYGROUND=1), removeTap? (Remove selects by tapping), removeTapSize? (the reach past a tapped object, of the long edge), removeObjectTap?: [x, y],
-///   and on a Mac: windowSize? ([w, h] points), sections? ({"light": true}: the panels' open sections), inspector?, thumbSize?, zoomAsk?: fit | fill | n, appearance?: system | light | dark}`: go there.
+///   and on a Mac: windowSize? ([w, h] points), squareGrid? (false: the aspect-ratio grid), zoomBlocks? ({in: true | false, at?: [x, y]}: a step of the pinch between Years, Months and All about a point of their content, the pointer's without one), sections? ({"light": true}: the panels' open sections), inspector?, thumbSize?, zoomAsk?: fit | fill | n, appearance?: system | light | dark}`: go there.
 @Observable
 final class ScriptHost {
     func answer(id: UInt64, method: String, params: JSONValue, model: AppModel) {
@@ -184,6 +184,15 @@ final class ScriptHost {
                 model.selectMode = select
             }
             if let index = params["scrollGrid"].int { model.gridJump = Int(clamping: index) }
+            #if os(macOS)
+            // {in: true | false, at?: [x, y]} (a point of the Years or Months view; the pointer's place without one)
+            if !params["zoomBlocks"].isNull {
+                let zoom = params["zoomBlocks"]
+                let at = zoom["at"].array.flatMap { $0.count == 2 ? CGPoint(x: $0[0].double ?? 0, y: $0[1].double ?? 0) : nil }
+                model.blockZoom = BlockZoom(zoomIn: zoom["in"].bool ?? true, at: at)
+            }
+            #endif
+            if let on = params["squareGrid"].bool { model.prefs.squareGrid = on }
             if let on = params["faceBoxes"].bool { model.prefs.faceBoxes = on }
             if let on = params["tagFace"].bool { model.editor.tagFace = on }
             if let on = params["beforeAfter"].bool { model.editor.beforeAfter = on }

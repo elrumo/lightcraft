@@ -10,13 +10,15 @@ import SwiftUI
 struct MacCellInteraction: ViewModifier {
     @Environment(AppModel.self) private var model
     let photo: PhotoSummary
+    /// The tile's corner radius: the pointer's light and the ring follow it.
+    let radius: CGFloat
     @State private var hovering = false
 
     func body(content: Content) -> some View {
         let chosen = model.library.selected.contains(photo.id)
         content
-            .overlay { if hovering, !chosen { Color.white.opacity(0.12) } }
-            .overlay { if chosen { Rectangle().strokeBorder(Color.accentColor, lineWidth: 3) } }
+            .overlay { if hovering, !chosen { RoundedRectangle(cornerRadius: radius).fill(Color.white.opacity(0.12)) } }
+            .overlay { if chosen { RoundedRectangle(cornerRadius: radius).strokeBorder(Color.accentColor, lineWidth: 3) } }
             .onHover { hovering = $0 }
             .onTapGesture { clicked() }
             .simultaneousGesture(TapGesture(count: 2).onEnded { model.open(photo.id) })
@@ -61,9 +63,40 @@ struct PhotoContextMenu: View {
     }
 }
 
-/// The bar under the grid, as Lightroom's has it: how much of the library the grid shows (Years,
-/// Months, All) at the left, the rating and flag of what is chosen in the middle, and at the right how many
-/// are chosen and the size of the thumbnails.
+/// Years, Months or All, in the middle of the window's toolbar, where Photos has it. The change is
+/// animated: the grid and the blocks cross-fade.
+struct MacSpanPicker: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        @Bindable var prefs = model.prefs
+        Picker("Show", selection: $prefs.gridSpan.animation(.snappy)) {
+            ForEach(Prefs.GridSpan.allCases) { Text($0.label).tag($0) }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .fixedSize()
+    }
+}
+
+/// Square tiles, or each photo in its own shape (the aspect-ratio grid): the toolbar's button for
+/// the Square Thumbnails switch, lit while the tiles are square. Only the grid of every photo has it.
+struct MacSquareToggle: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        @Bindable var prefs = model.prefs
+        Toggle(isOn: $prefs.squareGrid) {
+            Label("Square Thumbnails", systemImage: "square.grid.3x3")
+        }
+        .toggleStyle(.button)
+        .help("Square Thumbnails")
+    }
+}
+
+/// The bar under the grid, as Lightroom's has it: the rating and flag of what is chosen at the left,
+/// and at the right how many are chosen and (in the grid of every photo) the size of the thumbnails.
+/// (Years, Months and All are in the toolbar: `MacSpanPicker`.)
 struct MacGridBar: View {
     @Environment(AppModel.self) private var model
 
@@ -73,28 +106,23 @@ struct MacGridBar: View {
         let first = chosen.first.flatMap { model.library.index(of: $0) }.flatMap { model.library.loaded(at: $0) }
         GeometryReader { geo in
             HStack(spacing: 16) {
-                Picker("Show", selection: $prefs.gridSpan) {
-                    ForEach(Prefs.GridSpan.allCases) { Text($0.label).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .fixedSize()
-                Spacer(minLength: 8)
-                if geo.size.width >= 520 {
+                if geo.size.width >= 420 {
                     MacStars(rating: first?.rating ?? 0, ids: chosen)
                     MacFlags(flag: first?.flag, ids: chosen)
-                    Spacer(minLength: 8)
                 }
+                Spacer(minLength: 8)
                 Text(chosen.count > 1 ? "\(chosen.count) of \(model.library.count) selected" : "\(model.library.count) photos")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                Image(systemName: "square.grid.3x3").font(.caption).foregroundStyle(.secondary)
-                Slider(value: $prefs.thumbSize, in: Prefs.thumbSizes)
-                    .frame(width: 110)
-                    .controlSize(.small)
-                    .accessibilityLabel("Thumbnail Size")
-                Image(systemName: "square.grid.2x2").font(.caption).foregroundStyle(.secondary)
+                if prefs.gridSpan == .all {
+                    Image(systemName: "square.grid.3x3").font(.caption).foregroundStyle(.secondary)
+                    Slider(value: $prefs.thumbSize, in: Prefs.thumbSizes)
+                        .frame(width: 110)
+                        .controlSize(.small)
+                        .accessibilityLabel("Thumbnail Size")
+                    Image(systemName: "square.grid.2x2").font(.caption).foregroundStyle(.secondary)
+                }
             }
             .padding(.horizontal, 12)
             .frame(width: geo.size.width, height: geo.size.height)
