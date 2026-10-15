@@ -1596,6 +1596,11 @@ impl crate::Session {
 
     /// The embedded preview of an unedited raw (path, loader), when the app installed a loader.
     fn embedded_of(&self, p: &Photo) -> Option<(String, PreviewLoader)> {
+        // a synced photo's `web/<hash>/…` is no file here: its picture is the server's mini preview, which the grid
+        // must keep asking for (an embedded preview taken as final, and failing, left its cell empty until an edit)
+        if crate::cloud_sync::is_remote(p) {
+            return None;
+        }
         match (&p.source, &self.media.preview_loader) {
             (Source::File { path }, Some(l)) if p.kind == MediaKind::Raw && crate::import::has_import_look(p) => Some((path.clone(), l.clone())),
             _ => None,
