@@ -2660,4 +2660,29 @@ mod tests {
         assert_eq!(s.quick_view_job(id, 1600, true).unwrap().run().quick, Some(QuickSource::Small));
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    /// A synced raw whose original is on the server only (`web/<hash>/…`) has no embedded preview here: its
+    /// thumbnail is the server's mini, so it must not count as final on the embedded one (the Swift grid left
+    /// unedited iPhone DNGs empty until they were edited).
+    #[test]
+    fn synced_raws_have_no_embedded_preview() {
+        let dir = std::env::temp_dir().join(format!("lc-quick-synced-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("a.cr3");
+        std::fs::write(&path, cr3_with_preview(96, 64)).unwrap();
+        let mut s = crate::Session::new().with_fs();
+        let r = s.execute("library.import", &serde_json::json!({"paths": [path.to_string_lossy()]})).unwrap();
+        let local = s.catalog.photo(lightcraft_catalog::PhotoId(r["imported"][0].as_u64().unwrap())).unwrap();
+        let mut p = (**local).clone();
+        p.id = lightcraft_catalog::PhotoId(p.id.0 + 1000);
+        p.source = lightcraft_catalog::Source::File { path: format!("{}abc/a.cr3", lightcraft_catalog::sync::PATH_PREFIX) };
+        let id = p.id;
+        s.catalog.apply(lightcraft_catalog::Op::AddPhoto { photo: Box::new(p) }).unwrap();
+        let p = s.catalog.photo(id).unwrap().clone();
+        assert!(!s.embedded_thumb_is_final(&p));
+        let job = s.thumb_job(id, 128).unwrap();
+        assert!(s.quick_thumb_job(&job).is_none());
+        assert!(s.quick_view_job(id, 1600, true).unwrap().embedded.is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
