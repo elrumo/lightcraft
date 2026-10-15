@@ -292,6 +292,22 @@ mod tests {
         assert!(matches!(task, Task::Http { method: "PUT", body: Body::Json(ref b), .. } if b == r#"{"writable":true}"#));
     }
 
+    // The Limits page saves with `PUT limits`: `null` (automatic) stays in the body, so the server clears that limit
+    #[test]
+    fn limits_are_saved_with_nulls_kept() {
+        let p = json!({"method": "PUT", "path": ["limits"], "body": {"threads": null, "previews": 3}});
+        let (kind, task) = sent(plan(5, "host.admin.call", &p, Some(&login())));
+        assert_eq!(kind, Kind::Call { signed_in: true });
+        assert_eq!(url_and_token(&task), ("http://nas:8080/api/admin/limits", "tok"));
+        let Task::Http { method: "PUT", body: Body::Json(body), .. } = task else { panic!("not a PUT with a JSON body") };
+        assert_eq!(serde_json::from_str::<Value>(&body).ok(), Some(json!({"threads": null, "previews": 3})));
+        // the server's own refusal (a number over the machine's maximum) reaches the page as its words
+        let over = Done { id: 5, status: 400, body: r#"{"error":"previews must be from 1 to 64"}"#.into() };
+        let (r, change) = finish(Kind::Call { signed_in: true }, &over);
+        assert_eq!(r.err().map(|e| e.message), Some("Previews must be from 1 to 64".into()));
+        assert_eq!(change, Change::Keep);
+    }
+
     // Dotted, empty, missing and too many segments, and unknown verbs, are refused before anything is sent
     #[test]
     fn bad_calls_are_refused() {

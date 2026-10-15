@@ -3,7 +3,7 @@ import SwiftUI
 
 /// Settings ▸ Server Administration: the server's `/admin` console as screens. Signed out, the
 /// admin's sign-in (or, on a server that has no admin yet, its setup); signed in, the Overview with
-/// the Users, Search and Storage pages under it. The admin session is not the Sync sign-in: the server
+/// the Users, Search, Limits and Storage pages under it. The admin session is not the Sync sign-in: the server
 /// keeps them apart, so the password is asked here (and kept by the host in memory only).
 struct AdminView: View {
     @Environment(AppModel.self) private var model
@@ -203,6 +203,11 @@ struct AdminOverview: View {
                     AdminSearch(admin: admin)
                 } label: {
                     Label("Search & People", systemImage: "sparkle.magnifyingglass")
+                }
+                NavigationLink {
+                    AdminLimits(admin: admin)
+                } label: {
+                    Label("Limits", systemImage: "gauge.with.dots.needle.33percent")
                 }
                 NavigationLink {
                     AdminStorage(admin: admin)
