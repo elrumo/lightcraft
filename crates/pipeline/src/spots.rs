@@ -134,7 +134,7 @@ fn dist_to_path(pts: &[(f32, f32)], q: (f32, f32)) -> f32 {
 
 /// Distance, in pixels, from each pixel of a `w × h` box to the nearest pixel that is `inside` (0 in it): a
 /// two-pass chamfer, close enough to round for a spot's feathered edge.
-fn distance_to_inside(w: usize, h: usize, inside: &[bool]) -> Vec<f32> {
+pub(crate) fn distance_to_inside(w: usize, h: usize, inside: &[bool]) -> Vec<f32> {
     const DIAG: f32 = std::f32::consts::SQRT_2;
     let mut d: Vec<f32> = inside.iter().map(|i| if *i { 0.0 } else { f32::MAX / 4.0 }).collect();
     let at = |d: &[f32], x: usize, y: usize, add: f32| d.get(y * w + x).map_or(f32::MAX, |v| v + add);
