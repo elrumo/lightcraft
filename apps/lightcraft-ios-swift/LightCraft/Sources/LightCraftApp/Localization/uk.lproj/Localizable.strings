@@ -29,7 +29,7 @@
 "%@ of %lld done. Photos show on devices as their previews are ready." = "Готово: %@ із %lld. Фото з’являються на пристроях у міру готовності переглядів.";
 "%@ used" = "Використано: %@";
 "%@ wheel" = "Колесо: %@";
-"%@ · %lld MB download" = "%1$@ · завантаження %2$lld МБ";
+"%@ · %@ download" = "%1$@ · завантаження %2$@";
 "%@'s password was changed." = "Пароль користувача %@ змінено.";
 "%@, %@" = "%1$@, %2$@";
 "%lld" = "%1$lld";
@@ -106,6 +106,7 @@
 "=  exactly" = "=  точно";
 "A blank template keeps the original names." = "Порожній шаблон зберігає початкові назви.";
 "A change that can't be saved to disk (full or unplugged drive) is no longer silent: the command reports" = "Зміна, яку не можна зберегти на диск (заповнений або від’єднаний), більше не залишається непомітною: команда повідомляє";
+"A computer" = "Комп’ютер";
 "A copy of the file with your edits applied, stacked with the original." = "Копія файлу із застосованими змінами, у стосі з оригіналом.";
 "A copy of the original file, without your edits, stacked with it." = "Копія оригінального файлу без ваших змін, у стосі з ним.";
 "A filter is hiding this view's photos: change it, or clear it (View → Clear Filters)" = "Фільтр приховує фото в цьому поданні: змініть або скиньте його (Вигляд → Скинути фільтри)";
@@ -115,6 +116,7 @@
 "A library is open in one program at a time (issue #99): opening a library that LightCraft or `lightcraft-cli` already" = "Бібліотека відкрита лише в одній програмі одночасно (проблема #99): відкриття бібліотеки, яку LightCraft або `lightcraft-cli` уже";
 "A one-time download of about" = "Одноразове завантаження приблизно";
 "A path the server can read. With Docker, mount the folder into the container read-only first (-v /srv/photos:/photos:ro) and enter /photos/…" = "Шлях, який може прочитати сервер. У Docker спочатку змонтуйте теку в контейнер лише для читання (-v /srv/photos:/photos:ro) і введіть /photos/…";
+"A phone or tablet" = "Телефон або планшет";
 "A photo library and raw developer in pure Rust, open source (MIT OR Apache-2.0)." = "Фотобібліотека й програма для проявлення RAW, написана на чистому Rust, із відкритим кодом (MIT OR Apache-2.0).";
 "A photo library and raw developer. Free and open source." = "Бібліотека фото і проявка raw. Безкоштовно та з відкритим кодом.";
 "A save that fails part-way (a full disk, a network share that drops) no longer looks like a damaged catalog" = "Невдале часткове збереження (повний диск, розрив мережевого підключення) більше не виглядає як пошкоджений каталог";
@@ -300,6 +302,7 @@
 "Automatic renders the Detail view at the size it is shown, up to the photo's own pixels. Choose a size to cap it: smaller is faster." = "Автоматичний режим відтворює подання «Деталі» у відображуваному розмірі, до власних пікселів фото. Виберіть розмір для обмеження: менший працює швидше.";
 "Automatic uses Apple's models where this device has them. Classic is LightCraft's own guess and needs no model." = "«Автоматично» використовує моделі Apple, якщо вони є на цьому пристрої. «Класичний»: власна оцінка LightCraft, модель не потрібна.";
 "Automatic uses the graphics card where it is faster than the processor: both are timed on this computer the first time a photo is made." = "Автоматичний режим використовує відеокарту, коли вона швидша за процесор: час обох вимірюється на цьому комп’ютері під час першої обробки фото.";
+"Automatic: %@ suits this device" = "Автоматично: для цього пристрою підходить %1$@";
 "Automatically Write Changes into XMP" = "Автоматично записувати зміни в XMP";
 "Automatically write changes into XMP sidecars" = "Автоматично записувати зміни в супровідні файли XMP";
 "Autumn Gold" = "Осіннє золото";
@@ -326,7 +329,7 @@
 "Before/After Split Top/Bottom" = "Розділення до/після зверху/знизу";
 "Before/After Top/Bottom" = "До/після зверху/знизу";
 "Begin Interaction" = "Почати взаємодію";
-"Best for wide areas; slower, computers only" = "Найкраще для широких ділянок; повільніше, лише на комп’ютерах";
+"Best for wide areas of sky, water or texture" = "Найкраще для великих ділянок неба, води чи текстури";
 "Best of Similar Shots" = "Найкращі з подібних знімків";
 "Binary assets added" = "Додані двійкові ресурси";
 "Binary assets removed" = "Вилучені двійкові ресурси";
@@ -391,6 +394,7 @@
 "Cancel Interaction" = "Скасувати взаємодію";
 "Cancel Pending Photo Action" = "Скасувати відкладену дію фото";
 "Cancel Preview Build" = "Скасувати створення переглядів";
+"Cancel Sign Out" = "Скасувати вихід";
 "Cancel pending action" = "Скасувати відкладену дію";
 "Candidate" = "Кандидат";
 "Canon CR2 photos from the EOS 7D, 50D, 60D, 550D, 600D, 1200D, 1300D, 5D Mark II and 1D Mark IV (and other" = "Фото Canon CR2 з EOS 7D, 50D, 60D, 550D, 600D, 1200D, 1300D, 5D Mark II та 1D Mark IV (та інших";
@@ -777,6 +781,8 @@
 "Drag the crop past the photo's edges, or choose an aspect ratio, first." = "Спершу витягніть кадр за краї фото або виберіть співвідношення сторін.";
 "Drag the crop past the photo's edges, or choose an aspect ratio, then Generate." = "Витягніть кадр за краї фото або виберіть співвідношення сторін, потім «Створити».";
 "Draw Guides" = "Намалювати напрямні";
+"Draws new detail, guided by the photo; slow" = "Малює нові деталі за фото; повільно";
+"Draws new detail; slower" = "Малює нові деталі; повільніше";
 "Drop here for the top level" = "Перетягніть сюди для верхнього рівня";
 "Duplicate" = "Дублювати";
 "Duplicate Component" = "Дублювати компонент";
@@ -956,6 +962,7 @@
 "Finding words in photos uses two small AI models that read text, in English, Chinese, Japanese and many other languages. They are not part of LightCraft: they are PP-OCRv6 from Baidu, a %@ download onto this server under the %@. Downloading them means accepting that licence: %@ Afterwards the server reads every user's photos in the background, about a second each." = "Для пошуку слів на фото використовуються дві невеликі моделі ШІ, які читають текст англійською, китайською, японською та багатьма іншими мовами. Вони не входять до складу LightCraft: це PP-OCRv6 від Baidu, завантаження розміром %@ на цей сервер за ліцензією %@. Завантаження означає згоду з цією ліцензією: %@ Після цього сервер у фоновому режимі читає фото всіх користувачів, приблизно по секунді на кожне.";
 "Finds photo files that no library uses any more (photos deleted for good) and uploads that never finished, if they are older than a day. Checking changes nothing." = "Знаходить файли фото, які більше не використовує жодна бібліотека (фото, видалені остаточно), і вивантаження, що так і не завершилися, якщо їм понад добу. Перевірка нічого не змінює.";
 "Find…" = "Знайти…";
+"Finishing sync before signing out" = "Завершення синхронізації перед виходом";
 "Finishing up." = "Завершення.";
 "First" = "Перший";
 "First commit" = "Перший коміт";
@@ -1013,6 +1020,7 @@
 "Full screen mode" = "Повноекранний режим";
 "Full size" = "Повний розмір";
 "GPS Track Log" = "Журнал маршруту GPS";
+"GPU" = "GPU";
 "GPU Rendering" = "Рендеринг на ГП";
 "GPU rendering" = "Рендеринг на ГП";
 "General" = "Загальні";
@@ -1228,6 +1236,7 @@
 "It tests this album, so testing it back would loop" = "Він перевіряє цей альбом, тож зворотна перевірка зациклилася б";
 "Its copyright, creator and place." = "Авторське право, автор і розташування.";
 "Its denoised picture is not made yet, and pictures are not made on their own (Settings, AI Denoise)." = "Зображення з усуненим шумом ще не створено, а автоматичне створення вимкнено (Налаштування, ШІ: усунення шуму).";
+"Its licence lists uses that aren't allowed: read it before downloading (Settings → AI Models → Licence)." = "Ліцензія забороняє деякі способи використання: прочитайте її перед завантаженням (Налаштування → Моделі ШІ → Ліцензія).";
 "Its photos go to Recently Deleted; no file is touched." = "Його фото переміщуються до нещодавно видалених; файли не змінюються.";
 "Its photos stay in %@'s library with their edits, but their originals can no longer be downloaded. Nothing in %@ is touched." = "Фото з цієї теки залишаться в бібліотеці користувача %@ разом зі змінами, але завантажити їхні оригінали буде вже неможливо. Вміст %@ не змінюється.";
 "JPEG (Large)" = "JPEG (великий)";
@@ -1630,6 +1639,7 @@
 "None of these" = "Жодне з цих";
 "Normal" = "Звичайно";
 "Not Now" = "Не зараз";
+"Not an open-source licence: it lists uses that aren't allowed. Read it before downloading." = "Це не ліцензія з відкритим кодом: вона забороняє деякі способи використання. Прочитайте її перед завантаженням.";
 "Not carried over: %@" = "Не перенесено: %1$@";
 "Not found" = "Не знайдена";
 "Not now (it loads on the first search)" = "Зараз ні (завантажується під час першого пошуку)";
@@ -1996,6 +2006,9 @@
 "Remove Folder" = "Вилучити теку";
 "Remove Folder from Library" = "Вилучити теку з бібліотеки";
 "Remove Folder from Library…" = "Вилучити теку з бібліотеки…";
+"Remove Library" = "Видалити бібліотеку";
+"Remove Library from This Device?" = "Видалити бібліотеку з цього пристрою?";
+"Remove Library from This Device…" = "Видалити бібліотеку з цього пристрою…";
 "Remove Location" = "Видалити розташування";
 "Remove Offline Copy" = "Видалити офлайн-копію";
 "Remove User" = "Видалити користувача";
@@ -2024,6 +2037,7 @@
 "Removed" = "Прибрано";
 "Removed %@" = "Видалено. %@";
 "Removed %@. Their files stay in %@." = "Користувача %@ видалено. Файли залишаються в %@.";
+"Removing the library from this device" = "Видалення бібліотеки з цього пристрою";
 "Removing them frees this space. It cannot be undone." = "Їх видалення звільнить це місце. Цю дію не можна скасувати.";
 "Removing with AI…" = "Видалення за допомогою ШІ…";
 "Rename" = "Перейменувати";
@@ -2197,6 +2211,7 @@
 "Selenium Tone" = "Селенове тонування";
 "Send Feedback…" = "Надіслати відгук…";
 "Send this photo to Apple?" = "Надіслати це фото до Apple?";
+"Sending what is left: %lld changes, %lld photos" = "Надсилається решта (змін: %lld, фото: %lld)";
 "Separated by commas" = "Через кому";
 "Sepia Tone" = "Тон сепії";
 "Sequence number zero-padded to N digits (1–9)" = "Порядковий номер із нулями до N цифр (1–9)";
@@ -2319,11 +2334,17 @@
 "Sidecar names" = "Назви супровідних файлів";
 "Sign In" = "Увійти";
 "Sign Out" = "Вийти";
+"Sign Out Anyway" = "Усе одно вийти";
+"Sign Out Anyway…" = "Усе одно вийти…";
+"Sign Out Without Waiting?" = "Вийти, не чекаючи?";
+"Sign Out?" = "Вийти?";
 "Sign in again in Settings ▸ Sync." = "Увійдіть знову в розділі «Налаштування ▸ Синхронізація».";
 "Sign out %@?" = "Завершити сеанс на %@?";
 "Sign out and keep this library on this device only." = "Вийдіть і залиште цю бібліотеку лише на цьому пристрої.";
 "Signed in %@" = "Вхід виконано %@";
 "Signed out" = "Ви вийшли";
+"Signing out waits until everything this device has made has reached the server, then removes the library from this device. Cancel stays signed in. Sign Out Anyway doesn't wait: what hasn't been sent is lost." = "Під час виходу застосунок чекає, доки все, що зроблено на цьому пристрої, дійде до сервера, а потім видаляє бібліотеку з цього пристрою. «Скасувати вихід» залишає вас в обліковому записі. «Усе одно вийти» не чекає: усе, що не надіслано, буде втрачено.";
+"Signing out…" = "Вихід…";
 "Silver" = "Срібло";
 "Simulate Paper & Ink" = "Імітувати папір і фарбу";
 "Size" = "Розмір";
@@ -2361,6 +2382,7 @@
 "Soft Pastel" = "М’яка пастель";
 "Soft Proofing" = "Екранна кольоропроба";
 "Soft Skin" = "М’яка шкіра";
+"Some changes or photos haven't reached the server. Signing out now removes this library from this device, and what hasn't been sent is lost." = "Деякі зміни або фото не дійшли до сервера. Якщо вийти зараз, цю бібліотеку буде видалено з цього пристрою, а все ненадіслане буде втрачено.";
 "Some files couldn't be read" = "Не вдалося прочитати деякі файли";
 "Some rules need fixing (Edit Smart Album…):" = "Деякі правила треба виправити (Редагувати смарт-альбом…):";
 "Something went wrong" = "Щось пішло не так";
@@ -2515,6 +2537,7 @@
 "That key can't be used as a shortcut" = "Цю клавішу не можна використовувати як скорочення";
 "The SAM 3 model is installed: Object and Describe masks are ready." = "Модель SAM 3 встановлено: маски «Об’єкт» і «Описати» готові.";
 "The address of your LightCraft server, as in Settings ▸ Sync." = "Адреса вашого сервера LightCraft, як у розділі «Налаштування ▸ Синхронізація».";
+"The browser" = "Браузер";
 "The camera is locked: unlock it to read its photos" = "Камеру заблоковано: розблокуйте її, щоб прочитати фото";
 "The catalog has a format version (issue #102). Opening a library from an older LightCraft upgrades it; a library" = "Каталог має версію формату (проблема #102). Відкриття бібліотеки старішого LightCraft оновлює її; бібліотека,";
 "The checkerboard shows area with nothing in it yet: Generate fills it." = "Шаховий фон — ще порожня ділянка: «Створити» заповнить її.";
@@ -2533,6 +2556,7 @@
 "The library is up to date with this folder." = "Бібліотека відповідає цій теці.";
 "The model is kept on this computer only. LightCraft never uploads or shares it." = "Модель зберігається лише на цьому комп’ютері. LightCraft ніколи не вивантажує й не поширює її.";
 "The model is kept on this device only. LightCraft never uploads or shares it." = "Модель зберігається лише на цьому пристрої. LightCraft ніколи її не вивантажує й не передає.";
+"The most detail; slow" = "Найбільше деталей; повільно";
 "The most the server keeps for %@, in GB (at least 0.1): the originals their devices upload, previews, and photos added through their shared links. Photos in library folders don't count. Over the limit, uploads wait until there is room; nothing is deleted. Leave it empty for no limit." = "Максимум, який сервер зберігає для %@, у ГБ (не менше 0,1): оригінали, які вивантажують пристрої, перегляди та фото, додані через спільні посилання. Фото в теках бібліотеки не враховуються. Після перевищення ліміту вивантаження чекають, поки з’явиться місце; нічого не видаляється. Залиште поле порожнім, щоб не обмежувати.";
 "The new area was painted by %@ on this device." = "Нову ділянку домальовано на цьому пристрої (%1$@).";
 "The new area was painted by Apple Image Playground, in Apple's cloud." = "Нову ділянку намалював Apple Image Playground у хмарі Apple.";
@@ -2552,6 +2576,7 @@
 "The server has a library already" = "На сервері вже є бібліотека";
 "The server never changes, moves or deletes the photos. With writing on, it adds and updates .xmp sidecar files beside them — but it cannot write there now: %@" = "Сервер ніколи не змінює, не переміщує й не видаляє фото. Якщо запис увімкнено, він додає й оновлює поруч із ними файли .xmp — але зараз записати туди не може: %@";
 "The server never changes, moves or deletes the photos. With writing on, it adds and updates .xmp sidecar files beside them. Mount the folder read-write, with the server user allowed to write, before turning this on." = "Сервер ніколи не змінює, не переміщує й не видаляє фото. Якщо запис увімкнено, він додає й оновлює поруч із ними файли .xmp. Перед увімкненням змонтуйте теку для читання й запису та дозвольте запис користувачу сервера.";
+"The server signed this device out, so nothing can be sent. Removing the library from this device loses what hasn't been sent. Signing in again brings the rest back from the server." = "Сервер завершив сеанс на цьому пристрої, тому нічого надіслати не можна. Якщо видалити бібліотеку з цього пристрою, ненадіслане буде втрачено. Після повторного входу решта повернеться з сервера.";
 "The server will look at the faces in %@'s photos and group them into people, which they name on their own devices. What it finds stays on this server, and %@ can delete all of it from their devices (Forget All Faces). Only do this if they agree." = "Сервер аналізуватиме обличчя на фото користувача %@ і групуватиме їх за людьми, яким користувач дає імена на своїх пристроях. Усе знайдене зберігається на цьому сервері, і %@ може видалити це зі своїх пристроїв («Забути всі обличчя»). Вмикайте лише за згодою користувача.";
 "The server's" = "Бібліотека сервера";
 "The thumbnail cache only ever counts and deletes its own files (issue #98): a library opened on a folder that" = "Кеш мініатюр завжди рахує й видаляє лише власні файли (проблема #98): бібліотека, відкрита в теці, яка";
@@ -2575,6 +2600,7 @@
 "This build has nowhere to keep denoise models, so AI Denoise is not available. (The desktop app has.)" = "Ця збірка не має місця для моделей усунення шуму, тому ця функція ШІ недоступна. (Настільний застосунок має.)";
 "This build has nowhere to keep face models, so the model list is not available. (The desktop app has.)" = "Ця збірка не має місця для моделей облич, тому їхній список недоступний. (Настільний застосунок має.)";
 "This build has nowhere to keep face models." = "У цій збірці немає місця для зберігання моделей облич.";
+"This device:" = "Цей пристрій:";
 "This disk" = "Цей диск";
 "This file cannot be used yet" = "Цей файл поки не можна використовувати";
 "This folder is not available (drive disconnected?). Smart previews are not built or used until it is back or you choose another folder." = "Ця тека недоступна (диск від’єднано?). Смарт-перегляди не створюються й не використовуються, доки вона не стане доступною або ви не виберете іншу теку.";
@@ -2585,9 +2611,11 @@
 "This is too large for Super Resolution here. Crop the photo first: the limit is %lld megapixels." = "Це завелике для суперроздільності тут. Спершу кадруйте фото: обмеження — %lld Мп.";
 "This library" = "Ця бібліотека";
 "This library and the server's both have photos. Choose what to do with this library's photos; nothing syncs until you do." = "І в цій бібліотеці, і на сервері є фото. Виберіть, що зробити з фото цієї бібліотеки; доти нічого не синхронізується.";
+"This library belongs to the account it was signed in as, and the server signed this device out. Sign in as the same user to go on, or remove the library from this device to sign in as someone else: what hasn't been sent is lost." = "Ця бібліотека належить обліковому запису, під яким у неї входили, а сервер завершив сеанс на цьому пристрої. Увійдіть під тим самим користувачем, щоб продовжити, або видаліть бібліотеку з цього пристрою, щоб увійти під іншим: усе, що не надіслано, буде втрачено.";
 "This library is only on this device" = "Ця бібліотека є лише на цьому пристрої";
 "This model isn't downloaded yet: download it, or choose Classic." = "Цю модель ще не завантажено: завантажте її або виберіть «Класичний».";
 "This photo can't be opened" = "Не вдалося відкрити це фото";
+"This removes this account's library from this device. It stays on the server, and signing in again brings it back. Anything that hasn't reached the server yet is sent first." = "Бібліотеку цього облікового запису буде видалено з цього пристрою. Вона залишиться на сервері, а після повторного входу повернеться. Усе, що ще не дійшло до сервера, спершу буде надіслано.";
 "This server has no administrator yet. Type the setup code it wrote in its log when it started. Administrators add the people who use the server and look after its devices and storage. Letters, digits, dots, dashes and underscores in the name; at least 8 characters in the password." = "На цьому сервері ще немає адміністратора. Введіть код налаштування, який сервер записав у журнал під час запуску. Адміністратори додають людей, які користуються сервером, і дбають про його пристрої та сховище. В імені допускаються літери, цифри, крапки, дефіси й підкреслення; пароль — щонайменше 8 символів.";
 "Threshold" = "Поріг";
 "Thumbnail Cache" = "Кеш мініатюр";
@@ -2676,7 +2704,7 @@
 "Username" = "Ім’я користувача";
 "Users" = "Користувачі";
 "Uses Apple's cloud and asks every time" = "Використовує хмару Apple і щоразу питає";
-"Uses the %@ model, a %lld MB download (%@ licence). %@." = "Використовується модель %1$@, завантаження %2$lld МБ (ліцензія %3$@). %4$@.";
+"Uses the %@ model, a %@ download (%@ licence). %@." = "Використовується модель %1$@, завантаження %2$@ (ліцензія %3$@). %4$@.";
 "Uses the MI-GAN model, a %lld MB download (%@). %@." = "Використовує модель MI-GAN, завантаження — %lld МБ (%@). %@.";
 "Value" = "Значення";
 "Variance" = "Дисперсія";
@@ -2722,6 +2750,7 @@
 "Wednesday" = "Середа";
 "Weeks" = "Тижнів";
 "Welcome to LightCraft" = "Ласкаво просимо до LightCraft";
+"What paints the new area when the crop reaches past the photo (Crop → Expand). The larger models draw new detail and take longer." = "Чим малюється нова область, коли кадр виходить за краї фото (Кадрування → Розширити). Більші моделі малюють нові деталі й працюють довше.";
 "What the server does with your users' photos so their devices don't have to: find them by description, by the words printed in them, and by the people in them. Each needs a model, downloaded once onto this server." = "Що сервер робить із фото ваших користувачів, щоб цього не доводилося робити пристроям: шукати їх за описом, за надрукованими на них словами та за людьми на них. Для кожного потрібна модель, яку один раз завантажують на цей сервер.";
 "What's New" = "Що нового";
 "When Rated" = "Після оцінювання";
@@ -2742,6 +2771,7 @@
 "Window" = "Вікно";
 "Winter Blue" = "Зимова синява";
 "Without Saving and Quit (issue #100). It no longer quietly starts a demo session that looked like a reset library and" = "без збереження й вихід (проблема #100). Більше не запускається непомітний демонстраційний сеанс, схожий на скинуту бібліотеку, який";
+"Without a GPU it takes minutes per Generate." = "Без GPU кожне створення триває кілька хвилин.";
 "Words" = "Слова";
 "Words in Photos" = "Слова на фото";
 "Works" = "Працює";
@@ -2910,6 +2940,7 @@
 "needs text" = "потребує тексту";
 "needs two values" = "потребує двох значень";
 "never leaves a truncated file; the XMP sidecar of an \"Original\" export follows the \"If file exists\" choice too." = "ніколи не залишає обрізаний файл; супровідний XMP експорту «Оригінал» також дотримується вибору «Якщо файл існує».";
+"no GPU" = "без GPU";
 "non-commercial use only" = "лише некомерційне використання";
 "none" = "немає";
 "none (CPU rendering)" = "немає (рендеринг на ЦП)";

@@ -118,7 +118,7 @@ pub struct HostState {
     /// Changes the photo's catalog not on disk yet: the count (0 when everything is saved).
     pub unsaved: usize,
     /// The server sync, for the cloud icon (`None`: a local library, no server):
-    /// `{state: signedOut|conflict|paused|error|syncing|idle, server, pending, uploads, downloads,
+    /// `{state: signedOut|signingOut|conflict|paused|error|syncing|idle, server, pending, uploads, downloads,
     /// reading: [read, total]|null, error}` (`sync.status` has the rest).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sync: Option<Value>,

@@ -224,6 +224,16 @@ impl Originals {
         w
     }
 
+    /// Drop the preview files held in memory (signing out removed the account's library; storage deletes the files).
+    /// The originals stay: an import and a downloaded original are the same kind of file here.
+    pub fn forget_proxies(&self) {
+        let mut g = self.lock();
+        g.proxies.clear();
+        g.proxies_total = 0;
+        g.proxies_wanted.clear();
+        g.proxies_absent.clear();
+    }
+
     /// Paths added since the last call.
     pub fn take_pending(&self) -> Vec<String> {
         std::mem::take(&mut self.lock().pending)
@@ -355,6 +365,24 @@ mod tests {
         s.retry_absent(|_| false, |name| name == "def.lcsp");
         assert!(s.proxy("def", 2560).is_none());
         assert_eq!(s.take_wanted_proxies(), vec!["proxies/def.lcsp".to_string()]);
+    }
+
+    #[test]
+    fn signing_out_drops_the_previews_but_not_the_originals() {
+        let s = Originals::default();
+        s.insert("h1", Arc::from(vec![9u8; 4]));
+        s.insert_proxy("proxies/abc.lcsp", Arc::from(vec![1u8, 2, 3]));
+        s.proxy_missing("proxies/def.lcsp");
+        assert!(s.proxy("abc", 2560).is_some());
+        s.forget_proxies();
+        // asked for again from storage (the smart preview, then the mini one that stands in for it), a preview that was
+        // known to be missing too, and the byte count starts over
+        assert!(s.proxy("abc", 2560).is_none());
+        assert_eq!(s.take_wanted_proxies(), vec!["proxies/abc.lcsp".to_string(), "proxies/abc.lcsm".to_string()]);
+        assert!(s.proxy("def", 2560).is_none());
+        assert!(s.take_wanted_proxies().contains(&"proxies/def.lcsp".to_string()));
+        assert_eq!(s.lock().proxies_total, 0);
+        assert!(s.contains("web/h1/a.png"), "the originals stay");
     }
 
     #[test]

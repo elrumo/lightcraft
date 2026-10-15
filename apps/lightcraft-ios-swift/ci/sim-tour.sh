@@ -4,9 +4,13 @@
 #
 #   ci/sim-tour.sh <LightCraft.app> <out-dir> [script.jsonl]
 #
-# Boots the first available iPhone simulator, installs the app, launches it with
-# LIGHTCRAFT_SCRIPT (the script is copied into the app's tmp folder), waits for the replies and
-# copies tmp/*.png and the .out file to <out-dir>. macOS with Xcode only.
+# Boots a simulator, installs the app, launches it with LIGHTCRAFT_SCRIPT (the script is copied into the
+# app's tmp folder), waits for the replies and copies tmp/*.png and the .out file to <out-dir>. macOS with
+# Xcode only.
+#
+# Which simulator: SIM_UDID, else the first one whose name starts with SIM_NAME, else the first iPhone of the
+# newest runtime that is not an iPhone Duo (a Duo is checked by ci/duo-tour.sh, on a simulator of its own).
+# TOUR_SECONDS (default 180) is how long to wait for the script to finish.
 set -eu
 app=$1
 out=$2
@@ -14,12 +18,19 @@ script=${3:-$(dirname "$0")/tour.jsonl}
 bundle=ai.storyteller.lightcraft.swift
 mkdir -p "$out"
 
-udid=$(xcrun simctl list devices available -j | python3 -c '
-import json, sys
+if [ -n "${SIM_UDID:-}" ]; then
+    udid=$SIM_UDID
+else
+    udid=$(SIM_NAME="${SIM_NAME:-}" xcrun simctl list devices available -j | python3 -c '
+import json, os, sys
 d = json.load(sys.stdin)["devices"]
+want = os.environ.get("SIM_NAME", "")
 ios = sorted((k for k in d if "iOS" in k), reverse=True)
-print(next(x["udid"] for k in ios for x in d[k] if x["name"].startswith("iPhone")))
+def ok(name):
+    return name.startswith(want) if want else (name.startswith("iPhone") and "Duo" not in name)
+print(next(x["udid"] for k in ios for x in d[k] if ok(x["name"])))
 ')
+fi
 echo "simulator: $udid"
 xcrun simctl boot "$udid" 2>/dev/null || true
 xcrun simctl bootstatus "$udid" -b
@@ -34,8 +45,8 @@ want=$(grep -c . "$script")
 i=0
 while [ "$(grep -c . "$data/tmp/tour.out" 2>/dev/null || echo 0)" -lt "$want" ]; do
     i=$((i + 1))
-    if [ "$i" -gt 180 ]; then
-        echo "the script did not finish in 3 minutes" >&2
+    if [ "$i" -gt "${TOUR_SECONDS:-180}" ]; then
+        echo "the script did not finish in ${TOUR_SECONDS:-180} seconds" >&2
         break
     fi
     sleep 1

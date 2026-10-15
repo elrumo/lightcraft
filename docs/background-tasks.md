@@ -33,7 +33,7 @@ guard.detail(&file_name);
   dead job never leaves a stuck bar. A worker that only reports progress takes a `TaskHandle` (`guard.handle()`,
   `Clone + Send`).
 - **`kind`** is a stable camelCase id that agents filter by (`export`, `import`, `scan`, `sync`, `previews`,
-  `download`, `faces`…). **`label`** is a short English name in sentence case ("Building previews"). The stack shows it
+  `download`, `faces`, `signOut`…). **`label`** is a short English name in sentence case ("Building previews"). The stack shows it
   translated, so add it to every catalog in `crates/ui-egui/locales/`.
 - **Progress:** `progress(done, total)`. A `total` of 0 means the amount of work isn't known yet, and the bar sweeps.
   `set_unit(Unit::Bytes)` makes the count read "12 of 340 MB"; `Unit::Percent` reads "40 %". The default `Unit::Count`
@@ -59,6 +59,7 @@ guard.detail(&file_name);
 | Lightroom catalog import | `crates/ui-egui/src/lightroom_import.rs` | stop being cancellable for a phase that must finish |
 | Face scan, AI Denoise | `crates/engine/src/cmd/face_recognize.rs`, `crates/engine/src/denoise.rs` | a continuous job with no ✕, kept in session state |
 | Find Missing Photos | `crates/ui-egui/src/tasks.rs` | a generic background task with a row (`kind: Some(..)`) |
+| Sign out (the wait, the clean-up) | `crates/engine/src/cloud_sync/leave.rs` | a row made by a state machine that has no job of its own (held in `SyncState`, created when the wait is first seen, also after a relaunch); ✕ until the point of no return, then `set_cancellable(false)` and the flag read again; a second row, `Cancel::No`, for the thread that removes the files |
 | Work the app does itself (the SwiftUI app's Apple model download) | `crates/engine/src/cmd/activity.rs` (`activity.external`) | the app starts a `download` row, reports `done` of 100, watches `cancelling` for its id and ends the row |
 
 ## Testing

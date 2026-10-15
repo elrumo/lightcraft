@@ -387,6 +387,8 @@ impl Engine {
         } else {
             let home = config.home.as_deref().map(std::ffi::OsStr::new);
             crate::startup::configure_enhancer(&mut session.enhancer, home, available);
+            // (on a phone, what the app may use decides which Generative Expand models it is offered)
+            session.set_app_memory(available);
             session.face_models_dir = crate::startup::face_models_dir(home);
         }
         // searches by description and indexing run off the engine thread (as in egui); the tick applies them

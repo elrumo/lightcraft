@@ -294,6 +294,18 @@ struct SyncSettings: View {
     @State private var merge = false
     @State private var signingIn = false
     @State private var shares: [JSONValue] = []
+    /// The sign-out question being asked (what its answer does).
+    @State private var asking: SignOutAsk?
+
+    /// What a Sign Out button asked, asked back before anything is removed.
+    private enum SignOutAsk {
+        /// Send what is left, then sign out and remove the library from this device.
+        case wait
+        /// Stop waiting: remove the library now; what hasn't been sent is lost.
+        case anyway
+        /// The server signed this device out: remove the library from it.
+        case remove
+    }
 
     var body: some View {
         Form {
@@ -305,48 +317,61 @@ struct SyncSettings: View {
                     LabeledContent("User", value: s.user ?? "")
                     LabeledContent("Status", value: SyncStatusSheet.describe(s))
                 }
-                Section {
-                    if s.state == "conflict" {
-                        Button("Choose What to Do…") { model.sheet = .syncChoice }
-                    } else {
-                        Button("Sync Now", systemImage: "arrow.triangle.2.circlepath") { run("sync.now") }
-                        Button(s.paused == true ? "Resume Syncing" : "Pause Syncing", systemImage: s.paused == true ? "play" : "pause") {
-                            run("sync.pause", ["on": .bool(s.paused != true)])
-                        }
+                if s.leaving == true {
+                    // signing out waits for what is left to be sent: it can be cancelled, or done without waiting
+                    Section {
+                        Button("Cancel Sign Out") { run("sync.cancelSignOut") }
+                        Button("Sign Out Anyway…", role: .destructive) { asking = .anyway }
+                    } footer: {
+                        Text("Signing out waits until everything this device has made has reached the server, then removes the library from this device. Cancel stays signed in. Sign Out Anyway doesn't wait: what hasn't been sent is lost.")
                     }
-                }
-                Section {
-                    Toggle("Store All Originals on This Device", isOn: Binding(get: { s.storeOriginals == true }, set: { run("sync.storeOriginalsLocally", ["on": .bool($0)]) }))
-                    Toggle("Download All Small Previews", isOn: Binding(get: { s.allPreviews == true }, set: { run("sync.allPreviews", ["on": .bool($0)]) }))
-                    Picker("Originals Limit", selection: Binding(get: { Int(s.originalsBudgetMb ?? 0) }, set: { mb in run("sync.originalsBudget", ["mb": mb == 0 ? .null : .int(Int64(mb))]) })) {
-                        Text("No Limit").tag(0)
-                        ForEach([5, 10, 25, 50, 100, 250], id: \.self) { Text("\($0) GB").tag($0 * 1000) }
-                    }
-                    Toggle("Let the Server Build Previews", isOn: Binding(get: { s.serverPreviews == true }, set: { run("sync.serverPreviews", ["on": .bool($0)]) }))
-                } header: {
-                    Text("On This Device")
-                } footer: {
-                    Text("\(s.offlineAlbums?.count ?? 0) albums available offline.")
-                }
-                Section {
-                    NavigationLink("Storage") { SyncStorageView() }
-                }
-                if !shares.isEmpty {
-                    Section("Shared Links") {
-                        ForEach(Array(shares.enumerated()), id: \.offset) { _, share in
-                            VStack(alignment: .leading) {
-                                Text(share["name"].string ?? "").font(.headline)
-                                Text(share["url"].string ?? "").font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
-                            }
-                            .swipeActions {
-                                Button("Revoke", role: .destructive) { run("album.unshare", ["id": share["album"]]) }
-                                Button("Copy") { if let url = share["url"].string { Platform.copy(url) } }.tint(.blue)
+                } else {
+                    Section {
+                        if s.state == "conflict" {
+                            Button("Choose What to Do…") { model.sheet = .syncChoice }
+                        } else {
+                            Button("Sync Now", systemImage: "arrow.triangle.2.circlepath") { run("sync.now") }
+                            Button(s.paused == true ? "Resume Syncing" : "Pause Syncing", systemImage: s.paused == true ? "play" : "pause") {
+                                run("sync.pause", ["on": .bool(s.paused != true)])
                             }
                         }
                     }
-                }
-                Section {
-                    Button("Sign Out", role: .destructive) { run("sync.signOut") }
+                    Section {
+                        Toggle("Store All Originals on This Device", isOn: Binding(get: { s.storeOriginals == true }, set: { run("sync.storeOriginalsLocally", ["on": .bool($0)]) }))
+                        Toggle("Download All Small Previews", isOn: Binding(get: { s.allPreviews == true }, set: { run("sync.allPreviews", ["on": .bool($0)]) }))
+                        Picker("Originals Limit", selection: Binding(get: { Int(s.originalsBudgetMb ?? 0) }, set: { mb in run("sync.originalsBudget", ["mb": mb == 0 ? .null : .int(Int64(mb))]) })) {
+                            Text("No Limit").tag(0)
+                            ForEach([5, 10, 25, 50, 100, 250], id: \.self) { Text("\($0) GB").tag($0 * 1000) }
+                        }
+                        Toggle("Let the Server Build Previews", isOn: Binding(get: { s.serverPreviews == true }, set: { run("sync.serverPreviews", ["on": .bool($0)]) }))
+                    } header: {
+                        Text("On This Device")
+                    } footer: {
+                        Text("\(s.offlineAlbums?.count ?? 0) albums available offline.")
+                    }
+                    Section {
+                        NavigationLink("Storage") { SyncStorageView() }
+                    }
+                    if !shares.isEmpty {
+                        Section("Shared Links") {
+                            ForEach(Array(shares.enumerated()), id: \.offset) { _, share in
+                                VStack(alignment: .leading) {
+                                    Text(share["name"].string ?? "").font(.headline)
+                                    Text(share["url"].string ?? "").font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                                }
+                                .swipeActions {
+                                    Button("Revoke", role: .destructive) { run("album.unshare", ["id": share["album"]]) }
+                                    Button("Copy") { if let url = share["url"].string { Platform.copy(url) } }.tint(.blue)
+                                }
+                            }
+                        }
+                    }
+                    Section {
+                        // (a library that never joined the server's has nothing there to lose: it signs out and stays as it is)
+                        Button("Sign Out", role: .destructive) {
+                            if (s.library ?? "").isEmpty { run("sync.signOut") } else { asking = .wait }
+                        }
+                    }
                 }
             } else if status == nil {
                 Section { ProgressView().frame(maxWidth: .infinity) }
@@ -380,11 +405,57 @@ struct SyncSettings: View {
                     }
                     .disabled(server.isEmpty || user.isEmpty || password.isEmpty || signingIn)
                 }
+                // joined to an account's library, and signed out by the server: sign in again as that user, or remove it
+                if let s = status, !(s.library ?? "").isEmpty {
+                    Section {
+                        Button("Remove Library from This Device…", role: .destructive) { asking = .remove }
+                    } footer: {
+                        Text("This library belongs to the account it was signed in as, and the server signed this device out. Sign in as the same user to go on, or remove the library from this device to sign in as someone else: what hasn't been sent is lost.")
+                    }
+                }
             }
         }
         .navigationTitle("Sync")
         .inlineTitle()
         .task(id: model.state.sync) { await load() }
+        .alert(asking.map(Self.alertTitle) ?? "", isPresented: Binding(get: { asking != nil }, set: { if !$0 { asking = nil } })) {
+            Button(asking.map(Self.alertButton) ?? "", role: .destructive) {
+                // (`confirm` waits for what is left to be sent; `force` doesn't)
+                let params: JSONValue = asking == .wait ? ["confirm": true] : ["force": true]
+                asking = nil
+                run("sync.signOut", params)
+            }
+            Button("Cancel", role: .cancel) { asking = nil }
+        } message: {
+            Text(asking.map(Self.alertMessage) ?? "")
+        }
+    }
+
+    private static func alertTitle(_ how: SignOutAsk) -> String {
+        switch how {
+        case .wait: String(localized: "Sign Out?")
+        case .anyway: String(localized: "Sign Out Without Waiting?")
+        case .remove: String(localized: "Remove Library from This Device?")
+        }
+    }
+
+    private static func alertButton(_ how: SignOutAsk) -> String {
+        switch how {
+        case .wait: String(localized: "Sign Out")
+        case .anyway: String(localized: "Sign Out Anyway")
+        case .remove: String(localized: "Remove Library")
+        }
+    }
+
+    private static func alertMessage(_ how: SignOutAsk) -> String {
+        switch how {
+        case .wait:
+            String(localized: "This removes this account's library from this device. It stays on the server, and signing in again brings it back. Anything that hasn't reached the server yet is sent first.")
+        case .anyway:
+            String(localized: "Some changes or photos haven't reached the server. Signing out now removes this library from this device, and what hasn't been sent is lost.")
+        case .remove:
+            String(localized: "The server signed this device out, so nothing can be sent. Removing the library from this device loses what hasn't been sent. Signing in again brings the rest back from the server.")
+        }
     }
 
     private func run(_ command: String, _ params: JSONValue = [:]) {
@@ -418,15 +489,34 @@ struct SyncSettings: View {
     }
 }
 
-/// The AI models: what each is for, its size and licence; download, turn on or off, delete.
+/// The AI models: what selects objects (Apple's models or Classic), which one Generative Expand paints
+/// with (Auto, the best for this device, or any model it runs: the crop screen's Fill With), then each
+/// model, what it is for, its size and licence; download, turn on or off, delete.
 struct ModelsSettings: View {
     @Environment(AppModel.self) private var model
     @State private var models: [JSONValue] = []
+    @State private var expand: ExpandModels?
     @State private var confirming: JSONValue?
 
     var body: some View {
         Form {
             AppleModelsSection()
+            if let expand {
+                Section {
+                    Picker("Fill With", selection: Binding(get: { expand.isAutomatic(model.prefs.expandModel) ? "auto" : model.prefs.expandModel }, set: { model.prefs.expandModel = $0 })) {
+                        if let a = expand.automatic {
+                            Text("Automatic: \(a.label) suits this device").tag("auto")
+                        } else {
+                            Text("Auto").tag("auto")
+                        }
+                        ForEach(expand.offered) { m in Text(m.label).tag(m.id) }
+                    }
+                } header: {
+                    Text("Generative Expand")
+                } footer: {
+                    Text("What paints the new area when the crop reaches past the photo (Crop → Expand). The larger models draw new detail and take longer.")
+                }
+            }
             ForEach(Array(models.enumerated()), id: \.offset) { _, m in
                 Section {
                     VStack(alignment: .leading, spacing: 4) {
@@ -436,6 +526,9 @@ struct ModelsSettings: View {
                             Text(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)).font(.caption).foregroundStyle(.secondary)
                         }
                         if let licence = m["licence"].string { Text(licence).font(.caption).foregroundStyle(.secondary) }
+                        if m["restricted"].bool == true {
+                            Text("Not an open-source licence: it lists uses that aren't allowed. Read it before downloading.").font(.caption).foregroundStyle(.secondary)
+                        }
                     }
                     if m["installed"].bool == true {
                         Toggle("Use", isOn: Binding(get: { m["enabled"].bool == true }, set: { on in switchModel(m["id"], on) }))
@@ -486,6 +579,7 @@ struct ModelsSettings: View {
     private func load() async {
         guard let engine = model.engine, let r = try? await engine.execute("models.list") else { return }
         models = r["models"].array ?? []
+        expand = try? await engine.execute("crop.expandModels", [:], as: ExpandModels.self)
     }
 }
 
@@ -518,6 +612,8 @@ struct SyncStatusSheet: View {
                         Section {
                             if s.state == "conflict" {
                                 Button("Choose What to Do…") { model.sheet = .syncChoice }
+                            } else if s.state == "signingOut" {
+                                Button("Cancel Sign Out") { model.perform("sync.cancelSignOut") }
                             } else {
                                 Button("Sync Now", systemImage: "arrow.triangle.2.circlepath") { model.perform("sync.now") }
                                 Button(s.paused == true ? "Resume" : "Pause", systemImage: s.paused == true ? "play" : "pause") {
@@ -558,6 +654,7 @@ struct SyncStatusSheet: View {
         switch s.state {
         case "off": String(localized: "This library is only on this device")
         case "signedOut": String(localized: "Signed out")
+        case "signingOut": String(localized: "Signing out…")
         case "conflict": String(localized: "The server has a library already")
         case "paused": String(localized: "Syncing is paused")
         case "error": String(localized: "Can't sync")
@@ -571,6 +668,11 @@ struct SyncStatusSheet: View {
         switch s.state {
         case "off": return String(localized: "Set up sync to see it on your other devices.")
         case "signedOut": return String(localized: "Sign in again in Settings ▸ Sync.")
+        case "signingOut":
+            // (what is left to send: the changes, and the photos still to upload)
+            let photos = max(s.unsent ?? 0, s.uploads ?? 0)
+            let left = String(localized: "Sending what is left: \(s.pending ?? 0) changes, \(photos) photos")
+            return s.error.map { left + "\n" + $0 + "\n" + String(localized: "LightCraft keeps trying.") } ?? left
         case "conflict": return String(localized: "Choose what to do with this library's photos.")
         case "paused": return String(localized: "Changes wait on this device until you resume.")
         case "error": return (s.error ?? "") + "\n" + String(localized: "LightCraft keeps trying.")

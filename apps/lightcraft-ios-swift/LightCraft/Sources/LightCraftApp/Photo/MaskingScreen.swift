@@ -70,11 +70,15 @@ enum MaskList {
 /// over the photo ([`MaskColumn`]).
 struct MaskingTools: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.toolColumn) private var inColumn
     @State private var group: String?
 
     var body: some View {
         let mask = MaskList.selected(model)
-        VStack(spacing: 8) {
+        // An unfolded Duo has the room for the groups as a rail of icons and the open group's sliders at the panel's
+        // full height, as the Edit panel.
+        let wide = inColumn && model.duo.unfolded
+        let content = VStack(spacing: 8) {
             if model.editor.maskTool == "brush" {
                 BrushControls().transition(.opacity.combined(with: .move(edge: .bottom)))
             }
@@ -83,20 +87,31 @@ struct MaskingTools: View {
             }
             if let mask, let group {
                 MaskGroupSheet(mask: mask, group: group)
-                    .frame(maxHeight: 230)
+                    .frame(maxHeight: wide ? .infinity : 230)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             } else if MaskList.all(model).isEmpty {
                 Text("Tap + to make a mask: the subject, the sky, a gradient, a brush…")
                     .font(.footnote).foregroundStyle(.secondary)
                     .padding(.horizontal, 16)
             }
-            MaskGroupRow(selection: $group, enabled: mask != nil)
+            if wide { Spacer(minLength: 0) } else { MaskGroupRow(selection: $group, enabled: mask != nil) }
+        }
+        Group {
+            if wide {
+                HStack(spacing: 0) {
+                    MaskGroupRow(selection: $group, enabled: mask != nil, vertical: true)
+                    Divider()
+                    content
+                }
+            } else {
+                content
+            }
         }
         .padding(.vertical, 8)
         .animation(.snappy, value: group)
         .animation(.snappy, value: model.editor.maskTool)
-        .onChange(of: mask == nil) { _, none in
-            if none { group = nil }
+        .onChange(of: mask == nil, initial: true) { _, none in
+            if none { group = nil } else if wide, group == nil { group = "light" }
         }
     }
 }
@@ -105,6 +120,7 @@ struct MaskingTools: View {
 struct MaskGroupRow: View {
     @Binding var selection: String?
     let enabled: Bool
+    var vertical = false
 
     static let groups: [(id: String, label: String, symbol: String)] = [
         ("mask", "Mask", "circle.dashed.inset.filled"), ("light", "Light", "sun.max"), ("color", "Color", "drop"),
@@ -124,6 +140,7 @@ struct MaskGroupRow: View {
             items: Self.groups.map { .init(id: $0.id, label: $0.label, symbol: $0.symbol) },
             selected: selection,
             enabled: enabled,
+            vertical: vertical,
             choose: { selection = selection == $0 ? nil : $0 }
         )
         .opacity(enabled ? 1 : 0.4)

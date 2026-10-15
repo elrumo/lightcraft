@@ -40,6 +40,7 @@ use crate::{EngineError, Result, Session};
 
 mod docs;
 mod evict;
+mod leave;
 mod shares;
 
 pub use shares::{SHARE_PASSWORD_MAX, SHARE_PASSWORD_MIN, ShareOptions};
@@ -60,7 +61,8 @@ const PRESET_ID_MAX: usize = 200;
 /// Signing in to a server whose library this one isn't a copy of (the server was set up again,
 /// or the user's library there was replaced).
 const NOT_THIS_LIBRARY: &str = "this library is a copy of another library on that server (was the server set up again?): \
-     sign in from a new library (Settings › General › Open Library…; in a browser, open the server's address with ?reset)";
+     remove it from this device (Settings › Sync) and sign in again, or sign in from a new library (Settings › General › Open Library…; \
+     in a browser, open the server's address with ?reset)";
 
 /// How often the server is asked for other devices' changes.
 pub const POLL: Duration = Duration::from_secs(5);
@@ -137,6 +139,12 @@ pub struct SyncConfig {
     pub docs_versions: std::collections::BTreeMap<String, u64>,
     /// The server's library being read into this one page by page, shown as it arrives.
     pub filling: Option<Filling>,
+    /// Signing out: what this device still has to send is being sent, and the device keeps its token until it is
+    /// (`leave.rs`). Then it signs out on the server and the library is emptied.
+    pub leaving: bool,
+    /// The wipe's own marker: the library is being emptied after signing out. Written before anything is removed, so
+    /// opening the library finishes a wipe that was cut short. Nothing else sets it.
+    pub wiping: bool,
 }
 
 /// A device joining a server's library with no photos of its own takes the server's: each page
@@ -472,6 +480,13 @@ pub struct SyncState {
     conflict: Option<Conflict>,
     /// Why the last photo file transfer failed (a full disk on the server, a refused file); cleared by the next that works.
     transfer_error: Option<String>,
+    /// While signing out ([`SyncConfig::leaving`]): the activity stack's row (cancelling it stays signed in), how many
+    /// photos still had to be sent when last counted and when, and the most that was left at once (the row's whole).
+    signout: Option<crate::activity::TaskGuard>,
+    unsent: Option<(Instant, usize)>,
+    signout_peak: usize,
+    /// Syncing was paused when the wait began (it is paused again if the wait is cancelled).
+    signout_paused: bool,
 }
 
 impl SyncState {
@@ -538,7 +553,28 @@ impl SyncState {
             down_done: 0,
             conflict: None,
             transfer_error: None,
+            signout: None,
+            unsent: None,
+            signout_peak: 0,
+            signout_paused: false,
         }
+    }
+
+    /// The wait for signing out is over without a sign-out (cancelled): back to how syncing was. What was dropped while
+    /// it waited (downloads) is planned again.
+    fn stop_leaving(&mut self) {
+        self.config.leaving = false;
+        self.config.paused = std::mem::take(&mut self.signout_paused);
+        self.signout = None;
+        self.unsent = None;
+        self.planned = None;
+        self.minis_planned = None;
+    }
+
+    /// (tests) Are the photo file transfers to be planned afresh at the next step?
+    #[cfg(test)]
+    pub(crate) fn plan_is_stale(&self) -> bool {
+        self.planned.is_none()
     }
 
     /// Read a library's sync files (`None`: the library never synced). A damaged outbox reloads
@@ -552,13 +588,19 @@ impl SyncState {
                 return None;
             }
         };
-        let config: SyncConfig = match serde_json::from_slice(&bytes) {
+        let mut config: SyncConfig = match serde_json::from_slice(&bytes) {
             Ok(c) => c,
             Err(e) => {
                 log::error!("sync: {CONFIG} is damaged ({e}); sign in again");
                 return None;
             }
         };
+        // nothing in it: a library that was signed out and emptied (`leave.rs` leaves `{}`) reads as one that never synced
+        if config == SyncConfig::default() {
+            return None;
+        }
+        // (a wait for what is still to be sent needs the token it sends with)
+        config.leaving &= !config.token.is_empty();
         let mut st = SyncState::new(config);
         st.config.space = st.config.space.min(MAX_SPACE);
         st.written_config = serde_json::to_string_pretty(&st.config).unwrap_or_default();
@@ -625,6 +667,11 @@ impl SyncState {
     fn signed_out(&mut self, why: &str) {
         log::warn!("sync: {why}");
         self.config.token.clear();
+        // (a server that signs this device out while it waits to sign out leaves the library as it is: only
+        // signing out with `force` ever removes what wasn't sent)
+        self.config.leaving = false;
+        self.signout = None;
+        self.unsent = None;
         self.login = None;
         self.control = None;
         self.jobs.clear();
@@ -752,13 +799,21 @@ impl SyncState {
             "serverPreviews": self.config.server_builds_previews(),
             "allPreviews": self.config.all_previews,
             "paused": self.config.paused,
+            // signing out: how many photos still had to be sent when last counted (`null` before the first count),
+            // and the originals the server refused (they are not waited for: they can't be sent)
+            "leaving": self.config.leaving,
+            "unsent": self.config.leaving.then(|| self.unsent.map(|(_, n)| n)).flatten(),
+            "refused": self.refused.len(),
         })
     }
 
-    /// The state for the topbar's cloud icon: `signedOut`, `conflict`, `paused`, `error`, `syncing` or `idle`.
+    /// The state for the topbar's cloud icon: `signedOut`, `signingOut`, `conflict`, `paused`, `error`, `syncing` or
+    /// `idle`.
     pub fn state(&self) -> &'static str {
         if !self.signed_in() {
             "signedOut"
+        } else if self.config.leaving {
+            "signingOut"
         } else if self.conflict.is_some() {
             "conflict"
         } else if self.config.paused {
@@ -1067,10 +1122,21 @@ impl Session {
         if self.library.is_none() {
             return Err(EngineError::Other("sync needs a library that is saved (open or create one first)".into()));
         }
+        // (the library is still being emptied, or is waiting to be: another account's files would meet the old one's)
+        if self.sync.as_ref().is_some_and(|st| st.config.leaving) || self.signing_out_rows() {
+            return Err(EngineError::Other("this library is signing out: wait until it has, or cancel it in Settings › Sync".into()));
+        }
+        // (the last sign-out could not finish emptying the library: done now, or its photos would go up to this account)
+        if self.sync.is_none() && self.wipe_pending() {
+            self.reset_synced_library().map_err(|e| {
+                EngineError::Other(format!("the library of the account that signed out is not removed from this device yet, and can't be: {e}"))
+            })?;
+        }
         let st = self.sync.get_or_insert_with(|| SyncState::new(SyncConfig::default()));
         if !st.config.library.is_empty() && (!st.config.server.eq_ignore_ascii_case(server) || st.config.user != user) {
             return Err(EngineError::Other(format!(
-                "this library is a copy of {}'s library on {}: sign in there, or use a new library for another server or user",
+                "this library is a copy of {}'s library on {}: sign in there, or remove it from this device (Settings › Sync) to sign in \
+                 as someone else, or use a new library for another server or user",
                 st.config.user, st.config.server
             )));
         }
@@ -1091,15 +1157,6 @@ impl Session {
         if let Some(st) = self.sync.as_mut() {
             st.merge = on;
         }
-    }
-
-    /// Stop syncing (the library and its pending changes stay; signing in again resumes).
-    pub fn sync_sign_out(&mut self) -> Result<()> {
-        if let Some(st) = self.sync.as_mut() {
-            st.signed_out("signed out");
-            st.error = None;
-        }
-        self.persist()
     }
 
     /// Pull now (instead of at the next poll), and try again the photo files that failed (their
@@ -1151,6 +1208,9 @@ impl Session {
     /// Stop talking to the server for now (or resume).
     pub fn sync_pause(&mut self, on: bool) -> Result<()> {
         let st = self.sync.as_mut().ok_or_else(|| EngineError::Other("this library isn't synced".into()))?;
+        if on && st.config.leaving {
+            return Err(EngineError::Other("this library is signing out: it can't be paused (cancel the sign out first)".into()));
+        }
         st.config.paused = on;
         st.pull_at = None;
         st.retry_at = None;
@@ -1388,6 +1448,10 @@ impl Session {
             st.up_done = 0;
             st.down_done = 0;
         }
+        // signing out: once everything has been sent, the device signs out on the server and the library is emptied
+        if st.config.leaving && self.leave_step(&mut st, now) {
+            return self.finish_leaving(st, tasks);
+        }
         self.sync = Some(st);
         tasks
     }
@@ -1435,6 +1499,10 @@ impl Session {
             else {
                 break;
             };
+            // (signing out sends what is left and downloads nothing: the files would go with the library)
+            if st.config.leaving && matches!(job, Job::Get { .. }) {
+                continue;
+            }
             let target = job.target();
             if st.jobs.values().any(|j| j.target() == target) {
                 continue;
@@ -2163,7 +2231,7 @@ impl Session {
             st.error = None;
             return Ok(json!({"choice": how.id()}));
         }
-        let backup = match self.keep_library_copy() {
+        let backup = match self.keep_library_copy("catalog-before-sync") {
             Ok(name) => name,
             Err(e) => {
                 st.conflict = Some(conflict);
@@ -2196,17 +2264,18 @@ impl Session {
     }
 
     /// A copy of this library's catalog, kept beside it before the server's library joins or replaces
-    /// it. Its file name.
-    fn keep_library_copy(&mut self) -> Result<String> {
+    /// it (`prefix`: `catalog-before-sync`) or before it is removed on signing out (`catalog-before-signout`). Its
+    /// file name.
+    fn keep_library_copy(&mut self, prefix: &str) -> Result<String> {
         let stamp: String = (self.clock)().chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
         let lib = self.library.as_mut().ok_or_else(|| EngineError::Other("sync needs a library that is saved (open or create one first)".into()))?;
         // (an earlier copy is never overwritten: the same second, or a host whose clock stands still)
-        let mut name = format!("catalog-before-sync-{stamp}.snap");
+        let mut name = format!("{prefix}-{stamp}.snap");
         for n in 2..100 {
             if lib.files_mut().read(&name).ok().flatten().is_none() {
                 break;
             }
-            name = format!("catalog-before-sync-{stamp}-{n}.snap");
+            name = format!("{prefix}-{stamp}-{n}.snap");
         }
         lightcraft_catalog::journal::write_backup(lib.files_mut(), &name, &self.catalog)
             .map_err(|e| EngineError::Other(format!("can't keep a copy of this library first ({e}): nothing was changed")))?;
@@ -2259,7 +2328,15 @@ impl Session {
     }
 
     /// Switch to another state of the library wholesale (a snapshot replaces the op log).
-    fn replace_catalog(&mut self, mut c: Catalog) {
+    fn replace_catalog(&mut self, c: Catalog) {
+        if let Err(e) = self.replace_catalog_saved(c) {
+            log::error!("sync: {e}");
+        }
+    }
+
+    /// [`Session::replace_catalog`], saying when the new state could not be written (the old one is then still what
+    /// is on disk).
+    fn replace_catalog_saved(&mut self, mut c: Catalog) -> Result<()> {
         if let Err(e) = self.persist() {
             log::error!("sync: {e}");
         }
@@ -2275,9 +2352,10 @@ impl Session {
         if let Some(lib) = self.library.as_mut() {
             match lib.journal_mut().snapshot_with_unlogged(&self.catalog, unlogged) {
                 Ok(()) => self.pending_log.clear(),
-                Err(e) => log::error!("sync: saving the library: {e}"),
+                Err(e) => return Err(EngineError::Other(format!("saving the library: {e}"))),
             }
         }
+        Ok(())
     }
 
     fn job_done(&mut self, st: &mut SyncState, job: Job, d: &Done) {
@@ -2320,6 +2398,7 @@ impl Session {
             Job::Put { key, blob: Blob::Original, .. } if d.status == 422 => {
                 log::warn!("sync: the server refused the original {key}: {}", why(d));
                 st.refused.insert(key);
+                st.unsent = None;
             }
             // the server has another number of bytes than the device thought (or is taking this file
             // from another request): go on from where it says, unless that is where this tried
@@ -2447,6 +2526,8 @@ impl Session {
             log::error!("sync: {UPLOADED}: {e}");
         }
         st.uploaded.insert(key);
+        // (signing out counts the photos left again at its next step: one fewer)
+        st.unsent = None;
     }
 
     /// Run the sync to completion here (blocking: the CLI, tests): sign-in, reload, pull, push

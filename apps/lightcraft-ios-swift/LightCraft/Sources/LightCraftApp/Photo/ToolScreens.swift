@@ -36,7 +36,6 @@ func undoDepth(_ model: AppModel) async -> Int? {
 struct CropTools: View {
     @Environment(AppModel.self) private var model
     @Environment(\.toolColumn) private var inColumn
-    @State private var tab = "aspect"
     @State private var dialStart: Double?
 
     /// The crop's composition guides (`crop.guides` kinds).
@@ -52,6 +51,9 @@ struct CropTools: View {
 
     var body: some View {
         let editor = model.editor
+        @Bindable var editorBindings = editor
+        let tab = editor.cropTab
+        let wide = inColumn && model.duo.unfolded
         let angle = editor.setting("crop", "geometry", "angle").double ?? 0
         let locked = editor.setting("crop", "aspect") != .null
         VStack(spacing: 10) {
@@ -105,7 +107,7 @@ struct CropTools: View {
                 ExpandControls()
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
-            Picker("Tab", selection: $tab) {
+            Picker("Tab", selection: $editorBindings.cropTab) {
                 Text("Aspect").tag("aspect")
                 Text("Geometry").tag("geometry")
             }
@@ -117,51 +119,60 @@ struct CropTools: View {
                 if t == "geometry" { editor.want(["geometry", "optics"], model) }
             }
             if tab == "aspect" {
-                ScrollView(.horizontal) {
-                    HStack(spacing: 10) {
-                        // Expand: the crop may reach past the photo, and Generate paints the new area
-                        Button {
-                            model.perform("crop.expand", ["on": .bool(!expand)])
-                            model.buzz(.selection)
-                        } label: {
-                            tileLabel("Expand", "arrow.up.left.and.arrow.down.right", on: expand)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityAddTraits(expand ? .isSelected : [])
-                        .accessibilityHint("Lets the crop reach past the photo's edges, to paint the new area")
-                        aspectTile("Original", "rectangle") { model.perform("crop.aspect", ["aspect": "original"]) }
-                        aspectTile("Free", "crop") { model.perform("crop.aspect", ["aspect": "free"]) }
-                        Menu {
-                            ForEach(Self.ratios, id: \.0) { key, label in
-                                Button(label) { model.perform("crop.aspect", ["aspect": .string(key)]) }
-                            }
-                            Button("Swap Orientation", systemImage: "rectangle.portrait.rotate") { model.perform("crop.rotateAspect") }
-                        } label: {
-                            tileLabel("Ratios", "aspectratio")
-                        }
-                        Menu {
-                            Button("Square 1 × 1") { model.perform("crop.aspect", ["aspect": "1x1"]) }
-                            Button("Portrait 4 × 5") { model.perform("crop.aspect", ["aspect": "4x5"]) }
-                            Button("Story or Reel 9 × 16") { model.perform("crop.aspect", ["aspect": "9x16"]) }
-                            Button("Landscape 1.91 × 1") { model.perform("crop.aspect", ["aspect": "100x191"]) }
-                        } label: {
-                            tileLabel("Social", "person.crop.square")
-                        }
+                if wide {
+                    // the room of an unfolded Duo: the tiles in a grid that fills the panel, not a row to scroll
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 72), spacing: 10)], spacing: 10) { aspectTiles }
+                        .padding(.horizontal, 16)
+                } else {
+                    ScrollView(.horizontal) {
+                        HStack(spacing: 10) { aspectTiles }
+                            .padding(.horizontal, 16)
                     }
-                    .padding(.horizontal, 16)
+                    .scrollIndicators(.hidden)
                 }
-                .scrollIndicators(.hidden)
             } else {
                 ScrollView {
-                    GeometryControls()
+                    GeometryControls(wide: wide)
                         .padding(.horizontal, 16)
                 }
-                .frame(maxHeight: 236)
+                .frame(maxHeight: wide ? .infinity : 236)
             }
         }
         .padding(.vertical, 8)
         .animation(.snappy, value: expand)
         .onDisappear { editor.cropDraw = nil }
+    }
+
+    /// Expand, Original, Free and the ratio menus.
+    @ViewBuilder private var aspectTiles: some View {
+        // Expand: the crop may reach past the photo, and Generate paints the new area
+        Button {
+            model.perform("crop.expand", ["on": .bool(!expand)])
+            model.buzz(.selection)
+        } label: {
+            tileLabel("Expand", "arrow.up.left.and.arrow.down.right", on: expand)
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(expand ? .isSelected : [])
+        .accessibilityHint("Lets the crop reach past the photo's edges, to paint the new area")
+        aspectTile("Original", "rectangle") { model.perform("crop.aspect", ["aspect": "original"]) }
+        aspectTile("Free", "crop") { model.perform("crop.aspect", ["aspect": "free"]) }
+        Menu {
+            ForEach(Self.ratios, id: \.0) { key, label in
+                Button(label) { model.perform("crop.aspect", ["aspect": .string(key)]) }
+            }
+            Button("Swap Orientation", systemImage: "rectangle.portrait.rotate") { model.perform("crop.rotateAspect") }
+        } label: {
+            tileLabel("Ratios", "aspectratio")
+        }
+        Menu {
+            Button("Square 1 × 1") { model.perform("crop.aspect", ["aspect": "1x1"]) }
+            Button("Portrait 4 × 5") { model.perform("crop.aspect", ["aspect": "4x5"]) }
+            Button("Story or Reel 9 × 16") { model.perform("crop.aspect", ["aspect": "9x16"]) }
+            Button("Landscape 1.91 × 1") { model.perform("crop.aspect", ["aspect": "100x191"]) }
+        } label: {
+            tileLabel("Social", "person.crop.square")
+        }
     }
 
     /// Expand is on: the crop may reach past the photo.
@@ -199,12 +210,22 @@ struct CropTools: View {
 /// perspective sliders, Constrain Crop.
 struct GeometryControls: View {
     @Environment(AppModel.self) private var model
+    /// The buttons in a grid that wraps (an unfolded Duo's column), not a row that shortens their names.
+    var wide = false
+
+    @ViewBuilder private func row<C: View>(@ViewBuilder _ content: () -> C) -> some View {
+        if wide {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 84), spacing: 8)], spacing: 8) { content() }
+        } else {
+            HStack { content() }
+        }
+    }
 
     var body: some View {
         let editor = model.editor
         VStack(alignment: .leading) {
             Text("Upright").font(.subheadline.weight(.semibold))
-            HStack {
+            row {
                 ForEach([("auto", "Auto"), ("level", "Level"), ("vertical", "Vertical"), ("full", "Full"), ("guided", "Guided")], id: \.0) { mode, label in
                     let on = editor.setting("geometry", "upright").string == mode
                     Button(LocalizedStringKey(label)) {

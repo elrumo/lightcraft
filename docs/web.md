@@ -203,6 +203,12 @@ their previews (Settings ▸ Sync, *Let the server build the previews*). A build
 server that lists that site (`--cors-origin`, [sync.md](sync.md#a-web-build-on-another-site)); the library and
 sign-in then belong to that site's browser storage. See [sync.md](sync.md).
 
+**Signing out** ([sync.md](sync.md#signing-out)) waits for what is left to be sent, then empties the library in the page
+(catalog, sync state, presets and the other synced documents; the screens reset) and deletes the account's preview files
+(`proxies/…`) from browser storage, so the next account starts clean. The originals stay (`originals/<hash>`), as
+imports do: they are this browser's only copy of those photos, and a backup includes them. There is no safety copy before
+Sign Out Anyway here, since the library isn't a folder; File ▸ Back Up Library… first if in doubt.
+
 ## Not yet
 
 - **AI Remove runs on the main thread** (a few seconds a stroke; a "Removing with AI…" notice shows first). Its model
