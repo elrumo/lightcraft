@@ -1,7 +1,7 @@
 //! `lightcraft-server`: the self-hosted LightCraft sync server (see `docs/sync.md`).
 //!
 //! ```text
-//! lightcraft-server serve [--data DIR] [--listen HOST:PORT] [--web DIR] [--scan-interval MINUTES] [--max-requests N] [--cors-origin SITE]...
+//! lightcraft-server serve [--data DIR] [--listen HOST:PORT] [--web DIR] [--scan-interval MINUTES] [--max-requests N] [--threads N] [--cors-origin SITE]...
 //! lightcraft-server user add NAME [--admin]   (password: typed, stdin, or $LIGHTCRAFT_PASSWORD)
 //! lightcraft-server user passwd NAME
 //! lightcraft-server user admin NAME on|off
@@ -37,7 +37,7 @@ use std::time::Duration;
 use lightcraft_server::{Config, Server, accounts, folders, gc};
 
 const USAGE: &str = "usage:
-  lightcraft-server serve [--data DIR] [--listen HOST:PORT] [--web DIR] [--scan-interval MINUTES] [--max-requests N] [--cors-origin SITE]...
+  lightcraft-server serve [--data DIR] [--listen HOST:PORT] [--web DIR] [--scan-interval MINUTES] [--max-requests N] [--threads N] [--cors-origin SITE]...
   lightcraft-server user add NAME [--admin]   (password: typed, stdin or $LIGHTCRAFT_PASSWORD)
   lightcraft-server user passwd|remove NAME
   lightcraft-server user admin NAME on|off    (admins manage the server at /admin)
@@ -167,27 +167,32 @@ fn run(args: &[String]) -> Result<(), String> {
                 .map(|m| m.trim().parse::<u64>().map_err(|_| format!("--scan-interval takes minutes, not `{m}`")))
                 .transpose()?
                 .unwrap_or(15);
+            // limits a deployment fixes (the admin page can't change them); unset: the admin page's, else automatic (`limits`)
+            let count = |flag: Option<&str>, var: &str| -> Result<Option<usize>, String> {
+                let what = flag.unwrap_or(var);
+                flag.and_then(|f| option(args, f))
+                    .or_else(|| std::env::var(var).ok())
+                    .map(|m| m.trim().parse::<usize>().ok().filter(|n| *n > 0).ok_or(format!("{what} takes a number from 1 up, not `{m}`")))
+                    .transpose()
+            };
             // requests answered at once (more are told to try again; the health check always answers)
-            let max_requests = option(args, "--max-requests")
-                .or_else(|| std::env::var("LIGHTCRAFT_MAX_REQUESTS").ok())
-                .map(|m| m.trim().parse::<usize>().map_err(|_| format!("--max-requests takes a number, not `{m}`")))
-                .transpose()?;
-            let threads = std::env::var("LIGHTCRAFT_PREVIEW_THREADS").ok().and_then(|t| t.trim().parse::<usize>().ok());
+            let max_requests = count(Some("--max-requests"), "LIGHTCRAFT_MAX_REQUESTS")?;
+            // the threads decodes, develops and the search models share
+            let threads = count(Some("--threads"), "LIGHTCRAFT_THREADS")?;
+            let previews = count(None, "LIGHTCRAFT_PREVIEW_THREADS")?;
+            let renders = count(None, "LIGHTCRAFT_RENDER_THREADS")?;
             let mut cfg = Config::new(data.clone(), listen);
             cfg.vision_dir = Some(vision_dir(args, &data));
             cfg.web = web.clone();
-            if let Some(n) = max_requests {
-                cfg.max_requests = n.max(1);
-            }
+            cfg.max_requests = max_requests;
+            cfg.threads = threads;
+            cfg.preview_threads = previews;
+            cfg.render_threads = renders;
             // sites that may call the API from a browser (`--cors-origin` once per site, or `$LIGHTCRAFT_CORS`, comma-separated)
             cfg.cors_origins = options(args, "--cors-origin");
             cfg.cors_origins.extend(std::env::var("LIGHTCRAFT_CORS").unwrap_or_default().split(',').map(str::to_string));
             cfg.cors_origins.retain(|o| !o.trim().is_empty());
             cfg.scan_interval = (minutes > 0).then(|| Duration::from_secs(minutes.saturating_mul(60)));
-            cfg.preview_threads = threads.unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| (n.get() / 2).clamp(1, 4)));
-            if let Some(n) = std::env::var("LIGHTCRAFT_RENDER_THREADS").ok().and_then(|t| t.trim().parse::<usize>().ok()) {
-                cfg.render_threads = n;
-            }
             let s = Server::start(cfg)?;
             log::info!(
                 "serving {} on http://{}{}",

@@ -81,7 +81,7 @@ fn fixture(tag: &str) -> Fixture {
     accounts::set_user(&data, "bob", "battery staple", false).unwrap();
     let mut cfg = Config::new(data, "127.0.0.1:0");
     cfg.scan_interval = None;
-    cfg.preview_threads = 1;
+    cfg.preview_threads = Some(1);
     let server = Server::start(cfg).unwrap();
     let base = format!("http://{}", server.addr());
     for (name, seed) in [("a.png", 10), ("b.png", 90), ("c.png", 170)] {
@@ -107,7 +107,7 @@ impl Fixture {
         self.server.take();
         let mut cfg = Config::new(self.root.join("data"), "127.0.0.1:0");
         cfg.scan_interval = None;
-        cfg.preview_threads = 1;
+        cfg.preview_threads = Some(1);
         let server = Server::start(cfg).unwrap();
         self.base = format!("http://{}", server.addr());
         self.server = Some(server);

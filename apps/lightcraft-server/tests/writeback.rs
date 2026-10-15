@@ -100,7 +100,7 @@ fn fixture(tag: &str, writable: bool, imports: bool) -> Fx {
     }
     let mut cfg = Config::new(&data, "127.0.0.1:0");
     cfg.scan_interval = None;
-    cfg.preview_threads = 1;
+    cfg.preview_threads = Some(1);
     let server = Server::start(cfg).unwrap();
     let url = format!("http://{}", server.addr());
     scanned(&server, 0);
@@ -186,7 +186,7 @@ fn uploads_are_filed_into_the_imports_folder_and_the_servers_copy_goes() {
     accounts::set_folder_mode(&data, "ann", "Incoming", Some(true), Some(true)).unwrap();
     let mut cfg = Config::new(&data, "127.0.0.1:0");
     cfg.scan_interval = None;
-    cfg.preview_threads = 1;
+    cfg.preview_threads = Some(1);
     let server = Server::start(cfg).unwrap();
     let url = format!("http://{}", server.addr());
     scanned(&server, 0);

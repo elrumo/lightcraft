@@ -19,8 +19,8 @@ services:
     environment:
       LIGHTCRAFT_LOG: info
       LIGHTCRAFT_SCAN_INTERVAL: "15"
-      # a NAS often has little memory: build one preview at a time
-      LIGHTCRAFT_PREVIEW_THREADS: "1"
+      # previews built at once follow the NAS's memory (one per 1.5 GiB, at most 4); set
+      # LIGHTCRAFT_PREVIEW_THREADS here to fix the number, or change it on the admin page (Overview → Limits)
     volumes:
       # server data (users, libraries, previews): create it first and chown it to uid 10001
       - /volume3/docker/lightcraft/data:/data

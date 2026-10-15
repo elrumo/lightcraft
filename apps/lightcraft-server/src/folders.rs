@@ -1050,6 +1050,11 @@ impl Scanner {
         self.wake.notify_all();
     }
 
+    /// Builders waiting for a place look again (the limit changed).
+    pub(crate) fn wake_builders(&self) {
+        self.jobs_wake.notify_all();
+    }
+
     /// Stop (or go on) taking previews to build; the ones being built finish. Until the server restarts.
     pub fn pause(&self, paused: bool) {
         self.paused.store(paused, Ordering::SeqCst);
@@ -1274,7 +1279,9 @@ pub(crate) fn run_previews(st: &Arc<State>) {
                 if sc.stop.load(Ordering::SeqCst) {
                     return;
                 }
+                // (builders over the limit wait: it can change while the server runs)
                 if !sc.paused.load(Ordering::SeqCst)
+                    && j.building.len() < st.limits.effective().previews
                     && let Some(job) = j.next()
                 {
                     break job;
@@ -1286,6 +1293,8 @@ pub(crate) fn run_previews(st: &Arc<State>) {
         let blobs = accounts::user_dir(&st.data, &user).join("blobs");
         let r = build_previews(&blobs, &hash, &file);
         lock(&sc.jobs).done(&user, &hash);
+        // (a builder waiting for a place may take one now)
+        sc.jobs_wake.notify_one();
         if r.is_ok() {
             st.vision.wake();
         }

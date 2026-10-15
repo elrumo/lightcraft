@@ -137,6 +137,15 @@
           <div class="alert info"><svg class="icon"><use href="#i-info"/></svg><div><b>Set when the server starts</b><p>The data folder, address and domain come from the deployment: <code>--data</code> / <code>LIGHTCRAFT_DATA</code>, <code>--listen</code> / <code>LIGHTCRAFT_LISTEN</code>, and your reverse proxy (<code>LIGHTCRAFT_DOMAIN</code>). Change them there and restart; moving a library under a running server can lose it.</p></div></div>
         </section>
       </div>
+      <section class="panel limits">
+        <h2>Limits</h2>
+        <p class="muted" id="limMachine">How much of this machine the server may use. Leave a box empty for the automatic number.</p>
+        <form id="limForm" novalidate>
+          <div class="limits-grid" id="limFields"></div>
+          <div class="alert info" id="limRestart" hidden><svg class="icon"><use href="#i-info"/></svg><div><b>Restart to use the new CPU threads</b><p></p></div></div>
+          <div class="limits-actions"><button type="submit" class="btn accent">Save</button></div>
+        </form>
+      </section>
     </section>
 
     <!-- Users -->

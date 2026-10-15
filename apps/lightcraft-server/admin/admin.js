@@ -335,10 +335,70 @@ function recount(users) {
 // --------------------------------------------------------------- overview
 
 function loadOverview() {
-  return swr(['status', 'users'], showOverview);
+  return swr(['status', 'users', 'limits'], showOverview);
 }
 
-function showOverview([s, users]) {
+const LIMITS = [
+  ['threads', 'CPU threads', 'Cores that decoding, developing and the search models share.'],
+  ['previews', 'Previews at once', 'Photos whose previews are built side by side. The rest wait their turn.'],
+  ['renders', 'Renders at once', 'Full-size exports for devices. Devices ask again when all are busy.'],
+  ['requests', 'Requests at once', 'Requests answered side by side. Devices retry the others.'],
+];
+
+/** The limits form: each box holds what an admin set, empty for automatic, locked when the deployment set it. */
+function showLimits(l) {
+  const box = $('limFields');
+  if (box.contains(document.activeElement)) return;
+  $('limMachine').textContent =
+    'How much of this machine the server may use (' + plural(l.cores, 'core', 'cores') + (l.memory ? ', ' + bytes(l.memory) + ' of memory' : '') + '). ' +
+    'Leave a box empty for the automatic number. Nothing is dropped: work over a limit waits.';
+  box.replaceChildren(
+    ...LIMITS.map(([key, label, help]) => {
+      const r = l[key];
+      const { input, wrap } = field({ name: 'lim-' + key, label, type: 'number', required: false, placeholder: 'Automatic (' + r.automatic + ')', help: r.fixed ? 'Set by ' + r.fixed + ' when the server starts.' : help });
+      input.min = 1;
+      input.max = r.max;
+      input.dataset.key = key;
+      input.inputMode = 'numeric';
+      if (r.fixed) {
+        input.value = r.value;
+        input.disabled = true;
+      } else if (r.saved !== null) input.value = r.saved;
+      return wrap;
+    }),
+  );
+  const pending = l.threads.value !== l.threadsNow;
+  $('limRestart').hidden = !pending;
+  if (pending) $('limRestart').querySelector('p').textContent = 'The server keeps using ' + n(l.threadsNow) + ' until it restarts, then ' + n(l.threads.value) + '.';
+}
+
+async function saveLimits(e) {
+  e.preventDefault();
+  const btn = e.target.querySelector('button[type=submit]');
+  const body = {};
+  for (const input of $('limFields').querySelectorAll('input:not(:disabled)')) {
+    const v = input.value.trim();
+    if (v && !(/^\d+$/.test(v) && +v >= 1 && +v <= +input.max)) {
+      fail(new Error(input.labels[0].textContent + ': a number from 1 to ' + input.max + ', or empty for automatic.'));
+      input.focus();
+      return;
+    }
+    body[input.dataset.key] = v ? +v : null;
+  }
+  busy(btn, true);
+  try {
+    const l = await api('PUT', 'limits', body);
+    document.activeElement.blur();
+    showLimits(l);
+    toast('Limits saved.');
+  } catch (x) {
+    fail(x);
+  } finally {
+    busy(btn, false);
+  }
+}
+
+function showOverview([s, users, limits]) {
   recount(users);
   setMe(s.me);
   $('stUsers').textContent = n(users.length);
@@ -355,7 +415,9 @@ function showOverview([s, users]) {
   fact('Data folder', s.data, true);
   fact('Listening on', s.listen, true);
   fact('Web app', s.web ? 'Served from ' + s.web : 'Not served (start the server with --web)');
+  if (s.web) fact('Web app version', s.webBuild ? build(s.webBuild) : 'Unknown (built without version.json)', !!s.webBuild);
   $('webHint').hidden = !s.web;
+  showLimits(limits);
 }
 
 async function copyOrigin() {
@@ -415,7 +477,6 @@ function addUser() {
       { name: 'admin', label: 'Administrator', type: 'switch', help: 'Can sign in here to manage users, devices and storage.' },
     ],
     ok: 'Add user',
-  if (s.web) fact('Web app version', s.webBuild ? build(s.webBuild) : 'Unknown (built without version.json)', !!s.webBuild);
     action: async (v) => {
       await api('POST', 'users', { name: v.name, password: v.password, admin: v.admin });
       toast('Added ' + v.name + '.');
@@ -1331,6 +1392,7 @@ document.addEventListener('DOMContentLoaded', () => {
     showAuth('login');
   });
   $('copyOrigin').addEventListener('click', copyOrigin);
+  $('limForm').addEventListener('submit', saveLimits);
   $('addUser').addEventListener('click', addUser);
   $('gcCheck').addEventListener('click', gcCheck);
   $('gcRun').addEventListener('click', gcRun);

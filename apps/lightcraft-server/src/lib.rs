@@ -43,6 +43,7 @@ pub mod folders;
 pub mod gc;
 pub mod guest;
 pub mod http;
+pub mod limits;
 pub mod multipart;
 pub mod render;
 pub mod shares;
@@ -69,13 +70,16 @@ pub struct Config {
     pub listen: String,
     /// The web build to serve at `/` (`cargo xtask web` → `target/web-site/`).
     pub web: Option<PathBuf>,
-    /// Requests answered at once (more get `503`; the health check always answers). How long
-    /// connections may stall and how many there can be: [`http::Limits`].
-    pub max_requests: usize,
+    /// Requests answered at once (more get `503`; the health check always answers; `None`: what the
+    /// admin page set, else automatic, see [`limits`]). How long connections may stall and how many
+    /// there can be: [`http::Limits`].
+    pub max_requests: Option<usize>,
     /// Scan every user's library folders this often (`None`: at start and on demand only).
     pub scan_interval: Option<std::time::Duration>,
-    /// Threads building previews of photos found in library folders.
-    pub preview_threads: usize,
+    /// Threads building previews of photos found in library folders (`None`: as for `max_requests`).
+    pub preview_threads: Option<usize>,
+    /// Threads the decodes, develops and models share (`None`: as for `max_requests`).
+    pub threads: Option<usize>,
     /// Where the search model's files are (default `<data>/models/siglip2`).
     pub vision_dir: Option<PathBuf>,
     /// A model to search with instead of SigLIP 2 from `vision_dir` (tests).
@@ -84,29 +88,30 @@ pub struct Config {
     pub text_reader: Option<Arc<dyn lightcraft_vision::TextReader>>,
     /// A face finder instead of YuNet and SFace from `<vision_dir>/faces` (tests).
     pub face_finder: Option<Arc<dyn lightcraft_vision::FaceEngine>>,
-    /// Renders at once for devices that export on the server ([`render`]).
-    pub render_threads: usize,
+    /// Renders at once for devices that export on the server ([`render`]; `None`: as for `max_requests`).
+    pub render_threads: Option<usize>,
     /// Sites whose pages may call the API from a browser (`https://photos.example.com`; `*`: any),
     /// for a web build served from somewhere else than this server ([`cors`]). Empty: none.
     pub cors_origins: Vec<String>,
 }
 
 impl Config {
-    /// Serve `data` on `listen`: no web build, the default limits, library folders scanned every
-    /// 15 minutes.
+    /// Serve `data` on `listen`: no web build, the limits the admin page set or automatic ones,
+    /// library folders scanned every 15 minutes.
     pub fn new(data: impl Into<PathBuf>, listen: impl Into<String>) -> Config {
         Config {
             data: data.into(),
             listen: listen.into(),
             web: None,
-            max_requests: 64,
+            max_requests: None,
             scan_interval: Some(std::time::Duration::from_secs(15 * 60)),
-            preview_threads: 2,
+            preview_threads: None,
+            threads: None,
             vision_dir: None,
             embedder: None,
             text_reader: None,
             face_finder: None,
-            render_threads: 1,
+            render_threads: None,
             cors_origins: Vec::new(),
         }
     }
@@ -131,6 +136,8 @@ pub struct State {
     pub(crate) vision: vision::Search,
     /// Renders for devices ([`render`]).
     pub(crate) render: render::Slots,
+    /// How much of the machine the work above may take.
+    pub(crate) limits: limits::Limits,
     /// Failed sign-ins (password guessing).
     pub(crate) throttle: Mutex<throttle::Throttle>,
     /// Which sites' pages may call the API.
@@ -156,8 +163,18 @@ impl Server {
     /// Listen and serve on a background thread.
     pub fn start(cfg: Config) -> Result<Server, String> {
         std::fs::create_dir_all(&cfg.data).map_err(|e| format!("{}: {e}", cfg.data.display()))?;
-        let limits = http::Limits { active: cfg.max_requests.max(1), ..http::Limits::default() };
-        let bound = http::Server::bind(&cfg.listen, limits).map_err(|e| format!("can't listen on {}: {e}", cfg.listen))?;
+        let fixed = limits::Values { threads: cfg.threads, previews: cfg.preview_threads, renders: cfg.render_threads, requests: cfg.max_requests };
+        let lim = limits::Limits::new(Some(&cfg.data), limits::Machine::this(), fixed);
+        let now = lim.effective();
+        log::info!(
+            "limits: {} CPU threads, {} previews, {} renders and {} requests at once",
+            lim.threads_now(),
+            now.previews,
+            now.renders,
+            now.requests
+        );
+        let http_limits = http::Limits { active: lim.requests.clone(), ..http::Limits::default() };
+        let bound = http::Server::bind(&cfg.listen, http_limits).map_err(|e| format!("can't listen on {}: {e}", cfg.listen))?;
         let addr = bound.addr();
         let setup = if accounts::has_admin(&cfg.data) { None } else { admin::new_setup_code() };
         if let Some(code) = &setup {
@@ -177,7 +194,8 @@ impl Server {
             web: cfg.web,
             libs: Mutex::new(HashMap::new()),
             folders: folders::Scanner::new(cfg.scan_interval),
-            render: render::Slots::new(cfg.render_threads),
+            render: render::Slots::new(now.renders),
+            limits: lim,
             throttle: Mutex::new(throttle::Throttle::default()),
             uploading: Mutex::new(std::collections::HashSet::new()),
             cors: cors::Cors::new(&cfg.cors_origins),
@@ -195,7 +213,8 @@ impl Server {
         workers.push(std::thread::Builder::new().name("lc-vision".into()).spawn(move || vision::run(&s)).map_err(|e| e.to_string())?);
         let s = state.clone();
         workers.push(std::thread::Builder::new().name("lc-writeback".into()).spawn(move || writeback::run(&s)).map_err(|e| e.to_string())?);
-        for i in 0..cfg.preview_threads.max(1) {
+        // (as many as the limit may ever be: the ones over it wait, see `folders::run_previews`)
+        for i in 0..state.limits.machine.max().previews.max(now.previews) {
             let s = state.clone();
             let t = std::thread::Builder::new().name(format!("lc-previews-{i}")).spawn(move || folders::run_previews(&s));
             workers.push(t.map_err(|e| e.to_string())?);

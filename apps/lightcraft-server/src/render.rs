@@ -6,10 +6,12 @@
 //! nothing touches the user's library or originals: the original is linked into a temporary folder (never copied
 //! when the file system allows it) and the folder is removed when the render ends.
 //!
-//! Renders are heavy, so only [`Slots`] of them run at once (`LIGHTCRAFT_RENDER_THREADS`, default 1); the others wait
+//! Renders are heavy, so only [`Slots`] of them run at once (`LIGHTCRAFT_RENDER_THREADS` or the admin page, else 1 or 2
+//! by the machine's memory: [`crate::limits`]); the others wait
 //! a while and then get `503` — the device tries again later.
 
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Condvar, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -21,7 +23,7 @@ use serde_json::json;
 
 /// How many renders run at once.
 pub struct Slots {
-    max: usize,
+    max: AtomicUsize,
     running: Mutex<usize>,
     freed: Condvar,
 }
@@ -31,14 +33,20 @@ pub struct Slot<'a>(&'a Slots);
 
 impl Slots {
     pub fn new(max: usize) -> Slots {
-        Slots { max: max.max(1), running: Mutex::new(0), freed: Condvar::new() }
+        Slots { max: AtomicUsize::new(max.max(1)), running: Mutex::new(0), freed: Condvar::new() }
+    }
+
+    /// Run this many at once from now on (the ones running finish).
+    pub fn set_max(&self, max: usize) {
+        self.max.store(max.max(1), Ordering::SeqCst);
+        self.freed.notify_all();
     }
 
     /// Take a place, waiting up to `wait` for one; `None` when all stay taken.
     pub fn acquire(&self, wait: Duration) -> Option<Slot<'_>> {
         let end = Instant::now() + wait;
         let mut running = self.running.lock().unwrap_or_else(PoisonError::into_inner);
-        while *running >= self.max {
+        while *running >= self.max.load(Ordering::SeqCst) {
             let left = end.checked_duration_since(Instant::now())?;
             running = self.freed.wait_timeout(running, left).unwrap_or_else(PoisonError::into_inner).0;
         }

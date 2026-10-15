@@ -76,7 +76,7 @@ fn library_folders_are_read_in_place() {
 
     let mut cfg = Config::new(&data, "127.0.0.1:0");
     cfg.scan_interval = None;
-    cfg.preview_threads = 1;
+    cfg.preview_threads = Some(1);
     let server = Server::start(cfg).unwrap();
     let url = format!("http://{}", server.addr());
     let st = scanned(&server, 0);
@@ -197,7 +197,7 @@ fn scanned_photos_are_added_the_day_they_were_taken() {
     accounts::set_user(&data, "ann", "correct horse", false).unwrap();
     let mut cfg = Config::new(&data, "127.0.0.1:0");
     cfg.scan_interval = None;
-    cfg.preview_threads = 1;
+    cfg.preview_threads = Some(1);
     let server = Server::start(cfg).unwrap();
     accounts::add_folder(&data, "ann", &photos.to_string_lossy(), None).unwrap();
     server.scan("ann");
@@ -227,7 +227,7 @@ fn uploads_of_folder_files_are_not_duplicated() {
     accounts::set_user(&data, "ann", "correct horse", false).unwrap();
     let mut cfg = Config::new(&data, "127.0.0.1:0");
     cfg.scan_interval = None;
-    cfg.preview_threads = 1;
+    cfg.preview_threads = Some(1);
     let server = Server::start(cfg).unwrap();
     let url = format!("http://{}", server.addr());
     // a device with the same photo (and another) uploads its library first
@@ -266,7 +266,7 @@ fn files_that_failed_are_read_again_after_a_restart() {
     let start = || {
         let mut cfg = Config::new(&data, "127.0.0.1:0");
         cfg.scan_interval = None;
-        cfg.preview_threads = 1;
+        cfg.preview_threads = Some(1);
         Server::start(cfg).unwrap()
     };
     let server = start();
@@ -297,7 +297,7 @@ fn ignored_names_are_left_out_of_the_scan() {
     accounts::add_folder(&data, "ann", &photos.to_string_lossy(), Some("Photos")).unwrap();
     let mut cfg = Config::new(&data, "127.0.0.1:0");
     cfg.scan_interval = None;
-    cfg.preview_threads = 1;
+    cfg.preview_threads = Some(1);
     let server = Server::start(cfg).unwrap();
     let st = scanned(&server, 0);
     assert_eq!((st.files, st.added, st.missing), (2, 2, 0), "{st:?}");
@@ -351,7 +351,7 @@ fn sidecars_changed_by_lightroom_are_read_again() {
     let start = || {
         let mut cfg = Config::new(&data, "127.0.0.1:0");
         cfg.scan_interval = None;
-        cfg.preview_threads = 1;
+        cfg.preview_threads = Some(1);
         Server::start(cfg).unwrap()
     };
     let device = |server: &Server, name: &str| {
@@ -424,7 +424,7 @@ fn the_scan_of_library_folders_is_reported_to_devices() {
     accounts::add_folder(&data, "ann", &photos.to_string_lossy(), Some("Photos")).unwrap();
     let mut cfg = Config::new(&data, "127.0.0.1:0");
     cfg.scan_interval = None;
-    cfg.preview_threads = 1;
+    cfg.preview_threads = Some(1);
     let server = Server::start(cfg).unwrap();
     let url = format!("http://{}", server.addr());
     let st = scanned(&server, 0);
@@ -462,7 +462,7 @@ fn the_admin_page_counts_the_photos_in_library_folders_in_a_users_storage() {
     let start = || {
         let mut cfg = Config::new(&data, "127.0.0.1:0");
         cfg.scan_interval = None;
-        cfg.preview_threads = 1;
+        cfg.preview_threads = Some(1);
         Server::start(cfg).unwrap()
     };
     // (the files kept for a user are counted when the server starts and then every minute: let it
@@ -530,7 +530,7 @@ fn a_preview_a_device_asks_for_is_built_at_once() {
     accounts::add_folder(&data, "ann", &photos.to_string_lossy(), Some("Photos")).unwrap();
     let mut cfg = Config::new(&data, "127.0.0.1:0");
     cfg.scan_interval = None;
-    cfg.preview_threads = 1;
+    cfg.preview_threads = Some(1);
     let server = Server::start(cfg).unwrap();
     let url = format!("http://{}", server.addr());
     scanned(&server, 0);

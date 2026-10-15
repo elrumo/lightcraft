@@ -73,7 +73,8 @@ impl Net {
     /// Runs the model on `data` shaped `shape`; every output's values, flattened.
     fn run(&self, shape: [usize; 4], data: &[f32]) -> Result<Vec<Vec<f32>>, Error> {
         let input = ValueView::from_shape(shape, data).map_err(|e| Error::Model(format!("face input: {e}")))?;
-        let out = self.model.run(vec![(self.input, input.into())], &self.outputs, None).map_err(|e| Error::Model(format!("faces: {e}")))?;
+        let out =
+            self.model.run(vec![(self.input, input.into())], &self.outputs, crate::run_options()).map_err(|e| Error::Model(format!("faces: {e}")))?;
         out.iter()
             .map(|v| v.as_tensor_view::<f32>().map(|t| t.to_vec()).ok_or_else(|| Error::Model("a face model's answer isn't numbers".into())))
             .collect()

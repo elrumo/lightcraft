@@ -7,6 +7,8 @@
 //! - **Sessions:** an admin signs in with their user name and password and gets a session token
 //!   of its own (idle sessions end, see [`accounts::ADMIN_IDLE`]); it is not a device and can't
 //!   sync, and a device token never opens these routes.
+//! - **Limits** on how much of the machine the server takes (CPU threads, previews, renders and
+//!   requests at once) are set here unless the deployment fixed them ([`crate::limits`]).
 //! - **Settings stay deployment settings:** where the data lives, the address the server listens
 //!   on and its domain are shown, not edited: moving a library under a running server, or its
 //!   address under its clients, is how libraries get lost (see `docs/sync.md`).
@@ -393,6 +395,14 @@ pub fn api(st: &State, req: &mut Request, method: &Method, rest: &str) -> Resp {
             st.folders.request(name);
             folders(st, name)
         }
+        (Method::Get, ["limits"]) => Ok(st.limits.status()),
+        (Method::Put, ["limits"]) => read_json::<crate::limits::Values>(req).map_err(Err).and_then(|v| {
+            let e = st.limits.set(v).map_err(|e| Ok((400, e)))?;
+            st.render.set_max(e.renders);
+            st.folders.wake_builders();
+            log::info!("admin {me}: limits {v:?}");
+            Ok(st.limits.status())
+        }),
         (Method::Get, ["search"]) => Ok(search(st)),
         (Method::Put, ["search"]) => read_json::<Enabled>(req).map_err(Err).and_then(|b| {
             st.vision.set_enabled(b.enabled).map_err(|e| Ok((500, e)))?;
@@ -548,6 +558,14 @@ fn size_of(dir: &Path, depth: u32) -> u64 {
         .fold(0, u64::saturating_add)
 }
 
+/// The served web build's `version.json` (`{"version", "commit"}`, written by `cargo xtask web`), if it has one.
+fn web_build(web: &Path) -> Option<Value> {
+    let text = std::fs::read_to_string(web.join("version.json")).ok()?;
+    let v: Value = serde_json::from_str(&text).ok()?;
+    let field = |k: &str| v.get(k).and_then(Value::as_str).map(|s| s.chars().take(64).collect::<String>());
+    Some(json!({"version": field("version"), "commit": field("commit")}))
+}
+
 fn status(st: &State, me: &str) -> Value {
     let data = std::fs::canonicalize(&st.data).unwrap_or_else(|_| st.data.clone());
     let users = accounts::read_users(&st.data).map(|f| f.users.len()).unwrap_or(0);
@@ -558,15 +576,8 @@ fn status(st: &State, me: &str) -> Value {
         "data": data.to_string_lossy(),
         "listen": st.listen,
         "web": st.web.as_ref().map(|w| w.to_string_lossy().to_string()),
+        "webBuild": st.web.as_deref().and_then(web_build),
         "disk": disk(&st.data).map(|(total, free)| json!({"total": total, "free": free})),
-/// The served web build's `version.json` (`{"version", "commit"}`, written by `cargo xtask web`), if it has one.
-fn web_build(web: &Path) -> Option<Value> {
-    let text = std::fs::read_to_string(web.join("version.json")).ok()?;
-    let v: Value = serde_json::from_str(&text).ok()?;
-    let field = |k: &str| v.get(k).and_then(Value::as_str).map(|s| s.chars().take(64).collect::<String>());
-    Some(json!({"version": field("version"), "commit": field("commit")}))
-}
-
         "users": users,
     })
 }
@@ -576,7 +587,6 @@ fn terms(part: Part) -> (f64, String) {
     use lightcraft_engine::vision::{
         FACE_BYTES, FACE_LICENSES, LICENSE_NAME, LICENSE_URL, MODEL_BYTES, TEXT_BYTES, TEXT_LICENSE_NAME, TEXT_LICENSE_URL,
     };
-        "webBuild": st.web.as_deref().and_then(web_build),
     match part {
         Part::Search => (MODEL_BYTES as f64, format!("{LICENSE_NAME} ({LICENSE_URL})")),
         Part::Text => (TEXT_BYTES as f64, format!("{TEXT_LICENSE_NAME} ({TEXT_LICENSE_URL})")),
