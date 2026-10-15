@@ -116,6 +116,7 @@
 "AI Models" = "AIモデル";
 "AI Remove is turned off in Settings → AI Models." = "AI削除は「設定 → AIモデル」でオフになっています。";
 "AI Remove isn't available in this build." = "このビルドではAI削除を使用できません。";
+"AI Remove needs its model: download it in the Remove panel. This object was filled from around it." = "AI除去にはモデルが必要です。「除去」パネルでダウンロードしてください。このオブジェクトは周囲から埋めました。";
 "AI Remove needs its model: download it in the Remove panel. This stroke was filled from around it." = "AI削除にはモデルが必要です。削除パネルでダウンロードしてください。このストロークは周囲から補完しました。";
 "AI Super Resolution is not available in this build" = "このビルドではAI超解像を利用できません";
 "About" = "LightCraftについて";
@@ -229,6 +230,10 @@
 "Appearance" = "外観";
 "Appearance Mode" = "外観モード";
 "Appearance Settings…" = "外観設定…";
+"Apple" = "Apple";
+"Apple Vision" = "Apple Vision";
+"Apple tap-to-segment model" = "Appleのタップ選択モデル";
+"Apple's selection model couldn't start on this device." = "Appleの選択モデルをこのデバイスで起動できませんでした。";
 "Application" = "アプリケーション";
 "Apply" = "適用";
 "Apply Color Label Set" = "カラーラベルセットを適用";
@@ -279,6 +284,7 @@
 "Auto-Tag from Tracklog…" = "GPS軌跡から位置情報を付ける…";
 "Automatic" = "自動";
 "Automatic renders the Detail view at the size it is shown, up to the photo's own pixels. Choose a size to cap it: smaller is faster." = "自動では、詳細表示を表示サイズ(写真本来の画素数まで)で描画します。サイズを選ぶと上限になります。小さいほど高速です";
+"Automatic uses Apple's models where this device has them. Classic is LightCraft's own guess and needs no model." = "「自動」は、このデバイスにあればAppleのモデルを使います。「クラシック」はLightCraft独自の推定で、モデルは不要です。";
 "Automatic uses the graphics card where it is faster than the processor: both are timed on this computer the first time a photo is made." = "Automatic uses the graphics card where it is faster than the processor: both are timed on this computer the first time a photo is made.";
 "Automatically Write Changes into XMP" = "変更をXMPに自動保存";
 "Automatically write changes into XMP sidecars" = "変更をXMPサイドカーファイルに自動保存";
@@ -713,6 +719,7 @@
 "Download %@?" = "%@をダウンロードしますか？";
 "Download AI Mask Model" = "AIマスクモデルをダウンロード";
 "Download All Small Previews" = "小さいプレビューをすべてダウンロード";
+"Download Apple's selection model?" = "Appleの選択モデルをダウンロードしますか？";
 "Download Denoise Model" = "Download Denoise Model";
 "Download Place Names (GeoNames)" = "地名データをダウンロード (GeoNames)";
 "Download and Turn On" = "ダウンロードして有効にする";
@@ -724,6 +731,7 @@
 "Download, turn on and remove the optional AI models." = "オプションの AI モデルのダウンロード、有効化、削除。";
 "Downloaded and checked. Installing…" = "Downloaded and checked. Installing…";
 "Downloading" = "ダウンロード中";
+"Downloading Apple's selection model" = "Appleの選択モデルをダウンロード中";
 "Downloading MI-GAN…" = "MI-GANをダウンロード中…";
 "Downloading model" = "モデルをダウンロード中";
 "Downloading place names" = "地名データをダウンロード中";
@@ -919,6 +927,7 @@
 "Finishing up." = "仕上げています。";
 "First" = "最初";
 "First commit" = "最初のコミット";
+"First tap the object you want to select." = "まず、選択したいオブジェクトをタップしてください。";
 "Fit" = "全体を表示";
 "Fit (F)" = "全体表示（F）";
 "Fit on Screen" = "画面に合わせる";
@@ -1267,6 +1276,7 @@
 "Library saved" = "ライブラリを保存しました";
 "Licence" = "ライセンス：";
 "Licence:" = "ライセンス：";
+"Lifts the subject and selects objects from your taps, on this device. Built into iOS." = "被写体を切り抜き、タップした場所のオブジェクトを選択します。処理はこのデバイス上で行われます。iOSに組み込まれています。";
 "Light" = "明るさ";
 "Light Mode" = "ライトモード";
 "Light Theme" = "ライトテーマ";
@@ -1610,6 +1620,7 @@
 "Nothing new: everything in these files is already in your library." = "新しいものはありません。これらのファイルの内容はすべてライブラリにあります。";
 "Nothing to clean up" = "クリーンアップするものはありません";
 "Nothing to compare" = "比較する写真がありません";
+"Nothing to select there. Tap the object itself." = "そこには選択できるものがありません。オブジェクト自体をタップしてください。";
 "Nothing to survey" = "一覧比較する写真がありません";
 "Nothing was imported" = "何も読み込まれませんでした";
 "Nudge Develop Value" = "現像の値を微調整";
@@ -1618,6 +1629,7 @@
 "Object" = "オブジェクト";
 "Object Mask" = "オブジェクトマスク";
 "Object and Describe masks use SAM 3, Meta's segmentation model. It isn't part of LightCraft, and everything else works without it." = "オブジェクトマスクと説明マスクには、Metaのセグメンテーションモデル SAM 3 を使います。SAM 3 はLightCraftの一部ではなく、ほかの機能はすべてなしで動作します";
+"Object selection is off while Selection is set to Classic. Change it in Settings ▸ AI Models." = "「選択」が「クラシック」の間はオブジェクト選択は使えません。設定 ▸ AIモデルで変更できます。";
 "October 2026" = "2026年10月";
 "Off" = "オフ";
 "Off. The model stays on this server, so turning this on again needs no download." = "オフ。モデルはこのサーバーに残るため、再びオンにしてもダウンロードは不要です。";
@@ -1635,6 +1647,7 @@
 "On the Server" = "サーバー上";
 "On the map" = "マップ上";
 "On the server:" = "サーバー上：";
+"On this device. Managed by iOS." = "このデバイスに保存済み。iOSが管理します。";
 "On: every device signed in to this server searches here." = "オン：このサーバーにサインインしているすべてのデバイスが、ここで検索します。";
 "On: the server reads the words in every user's photos in the background, and searches find photos by them." = "オン：サーバーがバックグラウンドで全ユーザーの写真内の文字を読み取り、その文字で写真を検索できるようにします。";
 "One Name per Line" = "1行に1つずつ名前を入力";
@@ -1771,6 +1784,7 @@
 "Pick a date" = "日付を選択";
 "Pick the sharpest photo of each burst" = "連写ごとに最も鮮明な写真を採用";
 "Picked" = "採用";
+"Picking any object by tapping needs iOS 27. On this version Apple Vision selects the subject and whatever stands out in front." = "タップで任意のオブジェクトを選ぶにはiOS 27が必要です。このバージョンでは、Apple Visionが被写体と手前に目立つものを選択します。";
 "Picks" = "採用した写真";
 "Pictures" = "ピクチャ";
 "Pictures only" = "画像のみ";
@@ -2158,6 +2172,8 @@
 "Select two photos, then choose View → Compare (Shift+C)" = "2枚を選び、「表示 → 比較」（⇧C）を選択してください";
 "Selected" = "選択中";
 "Selecting…" = "選択中…";
+"Selection" = "選択";
+"Selects any object from taps, including parts you add or leave out." = "タップした任意のオブジェクトを選択します。追加する部分や除外する部分も指定できます。";
 "Selenium Tone" = "セレン調色";
 "Send Feedback…" = "フィードバックを送る…";
 "Send the search data to my server, so my other devices can search too" = "検索用データを自分のサーバーに送り、他のデバイスでも検索できるようにする";
@@ -2443,10 +2459,13 @@
 "Take a snapshot" = "スナップショットを作成";
 "Takes this filter off" = "このフィルターを解除します";
 "Takes uploads" = "アップロードを受け付ける";
+"Tap" = "タップ";
 "Tap + to add photos from Photos or Files." = "+をタップして「写真」または「ファイル」から写真を追加します。";
 "Tap + to make a mask: the subject, the sky, a gradient, a brush…" = "+をタップしてマスクを作成：被写体、空、グラデーション、ブラシ…";
 "Tap a colour in the photo" = "写真の色をタップ";
 "Tap a face to mark it" = "顔をタップして選択";
+"Tap an object to select it" = "オブジェクトをタップして選択";
+"Tap an object to take it away." = "オブジェクトをタップして取り除きます。";
 "Tap photos to give them the keyword; tap again to take it away." = "写真をタップしてキーワードを付けます。もう一度タップすると外れます。";
 "Tap something white or grey in the photo" = "写真の白またはグレーの部分をタップ";
 "Tap the photo to pick a colour" = "写真をタップして色を選択";
@@ -2782,6 +2801,8 @@
 "has the first date after the second" = "最初の日付が2番目の日付より後です";
 "hour 00–23" = "時 00–23";
 "hours" = "時間";
+"iOS did not finish downloading the model. Try again later." = "iOSがモデルのダウンロードを完了できませんでした。後でもう一度お試しください。";
+"iOS downloads it from Apple the first time and manages it. It is Apple's model, under Apple's terms." = "iOSが初回にAppleからダウンロードして管理します。Appleのモデルであり、Appleの利用条件が適用されます。";
 "image" = "画像";
 "in use" = "in use";
 "includes the folders inside it" = "内側のフォルダを含む";

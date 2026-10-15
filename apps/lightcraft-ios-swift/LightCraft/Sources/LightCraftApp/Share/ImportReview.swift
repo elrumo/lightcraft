@@ -1,4 +1,3 @@
-#if os(iOS)
 import LightCraftCore
 import SwiftUI
 
@@ -72,7 +71,7 @@ struct ImportReviewSheet: View {
                             TextField("Album Name", text: $newAlbum)
                         }
                         TextField("Keywords (comma separated)", text: $keywords)
-                            .textInputAutocapitalization(.never)
+                            .noAutocap()
                         Picker("Preset", selection: $preset) {
                             Text("None").tag("")
                             ForEach(presets) { Text($0.name).tag($0.id) }
@@ -91,7 +90,7 @@ struct ImportReviewSheet: View {
                     }
                 }
                 .navigationTitle("Import Photos")
-                .navigationBarTitleDisplayMode(.inline)
+                .inlineTitle()
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
                         Button("Cancel", systemImage: "xmark") {
@@ -152,7 +151,7 @@ private struct CandidateCell: View {
     let toggle: () -> Void
 
     var body: some View {
-        Color(uiColor: .secondarySystemBackground)
+        Color.lcSecondaryBackground
             .aspectRatio(1, contentMode: .fit)
             .overlay {
                 if let p = model.images.pictures["import:\(index)"] {
@@ -196,4 +195,3 @@ private struct CandidateCell: View {
         return nil
     }
 }
-#endif

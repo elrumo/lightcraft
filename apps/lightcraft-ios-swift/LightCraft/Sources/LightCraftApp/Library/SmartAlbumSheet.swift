@@ -1,4 +1,3 @@
-#if os(iOS)
 import LightCraftCore
 import SwiftUI
 
@@ -33,7 +32,7 @@ struct SmartAlbumSheet: View {
                 }
             }
             .navigationTitle(album == nil ? "New Smart Album" : "Edit Smart Album")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel", systemImage: "xmark") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
@@ -296,8 +295,8 @@ private struct RuleRow: View {
             }
         })
         return TextField(f.kind == "date" ? "YYYY-MM-DD" : String(localized: "Value"), text: text)
-            .keyboardType(f.kind == "number" ? .numbersAndPunctuation : .default)
-            .textInputAutocapitalization(.never)
+            .lcKeyboard(f.kind == "number" ? .number : .normal)
+            .noAutocap()
     }
 }
 
@@ -306,4 +305,3 @@ extension Array {
         indices.contains(i) ? self[i] : nil
     }
 }
-#endif

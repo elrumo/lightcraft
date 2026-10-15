@@ -1,4 +1,3 @@
-#if os(iOS)
 import LightCraftCore
 import SwiftUI
 
@@ -68,7 +67,7 @@ struct SyncStorageView: View {
             }
         }
         .navigationTitle("Storage")
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineTitle()
         .task {
             while !Task.isCancelled {
                 if let engine = model.engine, let u = try? await engine.execute("sync.usage") { usage = u }
@@ -110,4 +109,3 @@ struct SyncStorageView: View {
         (v.int ?? 0).formatted(.byteCount(style: .file))
     }
 }
-#endif

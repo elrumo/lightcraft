@@ -1,4 +1,3 @@
-#if os(iOS)
 import LightCraftCore
 import SwiftUI
 
@@ -95,7 +94,7 @@ struct HistorySheet: View {
             }
             .foregroundStyle(.primary)
             .navigationTitle(versions ? "Versions" : "History")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineTitle()
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     Picker("Show", selection: $versions) {
@@ -149,7 +148,7 @@ struct KeywordsSheet: View {
                 Section {
                     HStack {
                         TextField("Add Keyword", text: $typed)
-                            .textInputAutocapitalization(.never)
+                            .noAutocap()
                             .onSubmit { add(typed) }
                         Button("Add") { add(typed) }.disabled(typed.trimmingCharacters(in: .whitespaces).isEmpty)
                     }
@@ -168,7 +167,7 @@ struct KeywordsSheet: View {
                 }
             }
             .navigationTitle("Keywords")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineTitle()
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done", systemImage: "checkmark") { dismiss() }
@@ -202,4 +201,3 @@ struct KeywordsSheet: View {
         keywords = r["meta"]["keywords"].array?.compactMap(\.string) ?? []
     }
 }
-#endif

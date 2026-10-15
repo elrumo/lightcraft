@@ -1,4 +1,3 @@
-#if os(iOS)
 import LightCraftCore
 import SwiftUI
 
@@ -34,6 +33,7 @@ struct SettingsView: View {
                     row("models", "AI Models", "cpu", .purple)
                     row("admin", "Server Administration", "server.rack", .red)
                 }
+                #if os(iOS)
                 Section {
                     // the first launch's welcome again (the sheet closes first: see `AppModel.welcomeAsked`)
                     Button {
@@ -44,24 +44,11 @@ struct SettingsView: View {
                     }
                     .foregroundStyle(.primary)
                 }
+                #endif
             }
             .navigationTitle("Settings")
-            .navigationBarTitleDisplayMode(.inline)
-            .navigationDestination(for: String.self) { page in
-                switch page {
-                case "general": GeneralSettings()
-                case "import": ImportSettings()
-                case "performance": PerformanceSettings()
-                case "interface": InterfaceSettings()
-                case "sync": SyncSettings()
-                case "faces": FacesSettings()
-                case "storage": SyncStorageView()
-                case "systemInfo": SystemInfoView()
-                case "models": ModelsSettings()
-                case "admin": AdminView()
-                default: EmptyView()
-                }
-            }
+            .inlineTitle()
+            .navigationDestination(for: String.self) { Self.page($0) }
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done", systemImage: "checkmark") { dismiss() }
@@ -69,6 +56,23 @@ struct SettingsView: View {
             }
             .onAppear { if let section, path.isEmpty { path = [section] } }
             .onChange(of: section) { _, s in path = s.map { [$0] } ?? [] }
+        }
+    }
+
+    /// A page by its name (the list's rows, `model.sheet = .settings(name)`, a Mac's tabs).
+    @ViewBuilder static func page(_ name: String) -> some View {
+        switch name {
+        case "general": GeneralSettings()
+        case "import": ImportSettings()
+        case "performance": PerformanceSettings()
+        case "interface": InterfaceSettings()
+        case "sync": SyncSettings()
+        case "faces": FacesSettings()
+        case "storage": SyncStorageView()
+        case "systemInfo": SystemInfoView()
+        case "models": ModelsSettings()
+        case "admin": AdminView()
+        default: EmptyView()
         }
     }
 
@@ -103,7 +107,7 @@ struct SettingsView: View {
     }
 }
 
-private struct GeneralSettings: View {
+struct GeneralSettings: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
@@ -116,17 +120,19 @@ private struct GeneralSettings: View {
             } footer: {
                 Text("After rating or flagging a photo, go on to the next.")
             }
+            #if os(iOS)
             Section {
                 Toggle("Haptics", isOn: $prefs.haptics)
             }
+            #endif
         }
         .navigationTitle("General")
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineTitle()
     }
 }
 
 /// Import defaults: presets for raws and other files, copyright and creator (`library.preferences`).
-private struct ImportSettings: View {
+struct ImportSettings: View {
     @Environment(AppModel.self) private var model
     @State private var prefs: JSONValue = .null
     @State private var presets: [PresetInfo] = []
@@ -149,7 +155,7 @@ private struct ImportSettings: View {
             }
         }
         .navigationTitle("Import")
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineTitle()
         .task { await load() }
     }
 
@@ -176,7 +182,7 @@ private struct ImportSettings: View {
 }
 
 /// The GPU, memory for caches, the thumbnail cache.
-private struct PerformanceSettings: View {
+struct PerformanceSettings: View {
     @Environment(AppModel.self) private var model
     @State private var gpu: JSONValue = .null
     @State private var prefs: JSONValue = .null
@@ -202,7 +208,7 @@ private struct PerformanceSettings: View {
             }
         }
         .navigationTitle("Performance")
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineTitle()
         .task {
             guard let engine = model.engine else { return }
             gpu = (try? await engine.execute("app.gpu", [:])) ?? .null
@@ -211,7 +217,7 @@ private struct PerformanceSettings: View {
     }
 }
 
-private struct InterfaceSettings: View {
+struct InterfaceSettings: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
@@ -223,13 +229,22 @@ private struct InterfaceSettings: View {
                 }
                 // iOS keeps each app's language: Settings ▸ LightCraft ▸ Language
                 Button {
-                    if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+                    #if os(iOS)
+                    if let url = URL(string: UIApplication.openSettingsURLString) { Platform.open(url) }
+                    #else
+                    // (System Settings ▸ General ▸ Language & Region ▸ Applications)
+                    if let url = URL(string: "x-apple.systempreferences:com.apple.Localization-Settings.extension") { Platform.open(url) }
+                    #endif
                 } label: {
                     LabeledContent("Language", value: Locale.current.localizedString(forIdentifier: Bundle.main.preferredLocalizations.first ?? "en") ?? "")
                 }
                 .foregroundStyle(.primary)
             } footer: {
+                #if os(iOS)
                 Text("Opens LightCraft in the Settings app, where its language is chosen.")
+                #else
+                Text("Opens System Settings, where each app's language is chosen.")
+                #endif
             }
             Section("Grid") {
                 Picker("Ratings & Flags", selection: $prefs.badges) {
@@ -237,6 +252,8 @@ private struct InterfaceSettings: View {
                 }
                 Toggle("Show Counts in Albums", isOn: $prefs.showCounts)
             }
+            // (a Mac always has sliders: dials are for a finger)
+            #if os(iOS)
             Section {
                 Picker("Adjustments", selection: $prefs.editStyle) {
                     ForEach(Prefs.EditStyle.allCases) { Text($0.label).tag($0) }
@@ -246,6 +263,7 @@ private struct InterfaceSettings: View {
             } footer: {
                 Text("Dials set one control at a time with a ruler, as in Photos; sliders show a group's controls together. Automatic uses dials under the photo and sliders beside it.")
             }
+            #endif
             Section("Photo") {
                 Picker("Info Overlay", selection: $prefs.infoOverlay) {
                     ForEach(Prefs.InfoOverlay.allCases) { Text($0.label).tag($0) }
@@ -261,7 +279,7 @@ private struct InterfaceSettings: View {
             }
         }
         .navigationTitle("Interface")
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineTitle()
     }
 }
 
@@ -322,7 +340,7 @@ struct SyncSettings: View {
                             }
                             .swipeActions {
                                 Button("Revoke", role: .destructive) { run("album.unshare", ["id": share["album"]]) }
-                                Button("Copy") { UIPasteboard.general.string = share["url"].string }.tint(.blue)
+                                Button("Copy") { if let url = share["url"].string { Platform.copy(url) } }.tint(.blue)
                             }
                         }
                     }
@@ -336,12 +354,12 @@ struct SyncSettings: View {
                 Section {
                     if let e = status?.error { Text(e).foregroundStyle(.red) }
                     TextField("Server", text: $server, prompt: Text(verbatim: "https://photos.example.com"))
-                        .keyboardType(.URL)
-                        .textInputAutocapitalization(.never)
+                        .lcKeyboard(.url)
+                        .noAutocap()
                         .autocorrectionDisabled()
                     TextField("User", text: $user)
                         .textContentType(.username)
-                        .textInputAutocapitalization(.never)
+                        .noAutocap()
                         .autocorrectionDisabled()
                     SecureField("Password", text: $password)
                         .textContentType(.password)
@@ -365,7 +383,7 @@ struct SyncSettings: View {
             }
         }
         .navigationTitle("Sync")
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineTitle()
         .task(id: model.state.sync) { await load() }
     }
 
@@ -401,13 +419,14 @@ struct SyncSettings: View {
 }
 
 /// The AI models: what each is for, its size and licence; download, turn on or off, delete.
-private struct ModelsSettings: View {
+struct ModelsSettings: View {
     @Environment(AppModel.self) private var model
     @State private var models: [JSONValue] = []
     @State private var confirming: JSONValue?
 
     var body: some View {
         Form {
+            AppleModelsSection()
             ForEach(Array(models.enumerated()), id: \.offset) { _, m in
                 Section {
                     VStack(alignment: .leading, spacing: 4) {
@@ -419,7 +438,7 @@ private struct ModelsSettings: View {
                         if let licence = m["licence"].string { Text(licence).font(.caption).foregroundStyle(.secondary) }
                     }
                     if m["installed"].bool == true {
-                        Toggle("Use", isOn: Binding(get: { m["enabled"].bool == true }, set: { on in run("models.setEnabled", ["id": m["id"], "enabled": .bool(on)]) }))
+                        Toggle("Use", isOn: Binding(get: { m["enabled"].bool == true }, set: { on in switchModel(m["id"], on) }))
                         Button("Delete", role: .destructive) { run("models.delete", ["id": m["id"], "confirm": true]) }
                     } else if m["download"]["running"].bool == true {
                         HStack {
@@ -433,7 +452,7 @@ private struct ModelsSettings: View {
             }
         }
         .navigationTitle("AI Models")
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineTitle()
         .task { await load() }
         .task(id: model.activity.count) { await load() }
         .alert("Download \(confirming?["label"].string ?? "")?", isPresented: Binding(get: { confirming != nil }, set: { if !$0 { confirming = nil } })) {
@@ -450,6 +469,16 @@ private struct ModelsSettings: View {
     private func run(_ command: String, _ params: JSONValue) {
         Task {
             await model.run(command, params)
+            await load()
+        }
+    }
+
+    /// "Use" on a model: the engine answers with every model that is off now, which the app keeps for the next launch.
+    private func switchModel(_ id: JSONValue, _ on: Bool) {
+        Task {
+            if let r = await model.run("models.setEnabled", ["id": id, "enabled": .bool(on)]) {
+                model.prefs.modelsDisabled = (r["disabled"].array ?? []).compactMap(\.string)
+            }
             await load()
         }
     }
@@ -510,7 +539,7 @@ struct SyncStatusSheet: View {
                 }
             }
             .navigationTitle("Sync")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Close", systemImage: "xmark") { dismiss() } }
                 ToolbarItem(placement: .primaryAction) {
@@ -578,7 +607,7 @@ struct SyncChoiceSheet: View {
                 }
             }
             .navigationTitle("Sync")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Decide Later") { dismiss() } }
             }
@@ -630,7 +659,7 @@ struct ShareLinkSheet: View {
                 SecureField("Password (optional)", text: $password)
             }
             .navigationTitle(name)
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel", systemImage: "xmark") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
@@ -703,7 +732,7 @@ struct AboutView: View {
                 links = (try? await engine.execute("about.links"))?.array ?? []
             }
             .navigationTitle("About")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineTitle()
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done", systemImage: "checkmark") { dismiss() } } }
         }
     }
@@ -725,7 +754,7 @@ struct WhatsNewView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .navigationTitle("What's New")
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineTitle()
         .task {
             guard let engine = model.engine else { return }
             text = (try? await engine.execute("about.whatsNew"))?["text"].string ?? ""
@@ -769,18 +798,17 @@ struct SystemInfoView: View {
             }
             Section("This App") {
                 LabeledContent("App Version", value: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "")
-                LabeledContent("Device", value: "\(UIDevice.current.model), \(UIDevice.current.systemName) \(UIDevice.current.systemVersion)")
+                LabeledContent("Device", value: Platform.deviceDescription)
                 if let ms = model.lastDraftRoundTripMs {
                     LabeledContent("Slider to draft", value: String(format: "%.0f ms", ms))
                 }
             }
         }
         .navigationTitle("System Info")
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineTitle()
         .task {
             guard let engine = model.engine else { return }
             rows = (try? await engine.execute("about.systemInfo"))?.array ?? []
         }
     }
 }
-#endif

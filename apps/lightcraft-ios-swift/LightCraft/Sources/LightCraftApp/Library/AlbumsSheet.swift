@@ -1,4 +1,3 @@
-#if os(iOS)
 import LightCraftCore
 import SwiftUI
 
@@ -31,7 +30,7 @@ struct AlbumsSheet: View {
             .modifier(AlbumsListStyle(sidebar: sidebar))
             .foregroundStyle(.primary)
             .navigationTitle("Albums")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineTitle()
             .toolbar {
                 if !sidebar {
                     ToolbarItem(placement: .cancellationAction) {
@@ -211,7 +210,11 @@ private struct AlbumsListStyle: ViewModifier {
         if sidebar {
             content.listStyle(.sidebar)
         } else {
+            #if os(iOS)
             content.listStyle(.insetGrouped)
+            #else
+            content.listStyle(.inset)
+            #endif
         }
     }
 }
@@ -366,7 +369,7 @@ struct AlbumRowLabel: View {
     var body: some View {
         HStack(spacing: 12) {
             RoundedRectangle(cornerRadius: 8)
-                .fill(Color(uiColor: .tertiarySystemFill))
+                .fill(Color.lcTertiaryFill)
                 .frame(width: 44, height: 44)
                 .overlay {
                     if let cover, let picture = model.images.thumb(cover) {
@@ -413,7 +416,7 @@ struct AlbumNameSheet: View {
                     .onSubmit(confirm)
             }
             .navigationTitle(title)
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel", systemImage: "xmark") { dismiss() }
@@ -463,6 +466,7 @@ extension AppModel {
         guard let r = await request("host.sidebar", p), let sections = try? r["layout"].decode([SidebarSectionState].self) else { return }
         prefs.sidebarLayout = r["layout"]
         withAnimation(.snappy) { sidebarSections = sections }
+        menuChanges.bump()
     }
 
     func arrange(_ command: String, _ params: JSONValue = [:]) {
@@ -519,9 +523,11 @@ struct EditSidebarSheet: View {
                         .disabled(sections == SidebarSectionState.usual)
                 }
             }
+            #if os(iOS)
             .environment(\.editMode, .constant(.active))
+            #endif
             .navigationTitle("Edit Sidebar")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineTitle()
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) { Button(role: .confirm) { dismiss() } }
             }
@@ -533,16 +539,17 @@ struct EditSidebarSheet: View {
 /// View ▸ Sidebar Sections on the iPad's menu bar: each section shown or hidden, and Reset.
 struct SidebarSectionsMenu: View {
     let model: AppModel
+    /// `model.sidebarHere`, read by the menu bar's body (see LightCraftMenus).
+    let sections: [SidebarSectionState]
 
     var body: some View {
         Menu("Sidebar Sections") {
-            ForEach(model.sidebarHere) { s in
+            ForEach(sections) { s in
                 Toggle(LocalizedStringKey(s.title), isOn: Binding(get: { !s.hidden }, set: { model.arrange("view.sidebarSection", ["section": .string(s.id), "show": .bool($0)]) }))
             }
             Divider()
             Button("Reset Sidebar Sections") { model.arrange("view.sidebarReset") }
-                .disabled(model.sidebarHere == SidebarSectionState.usual)
+                .disabled(sections == SidebarSectionState.usual)
         }
     }
 }
-#endif

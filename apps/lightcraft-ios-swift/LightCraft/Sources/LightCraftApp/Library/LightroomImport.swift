@@ -1,4 +1,3 @@
-#if os(iOS)
 import LightCraftCore
 import SwiftUI
 
@@ -69,7 +68,7 @@ struct LightroomSheet: View {
                 }
             }
             .navigationTitle("Lightroom Classic Catalog")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel", systemImage: "xmark") { dismiss() }
@@ -120,4 +119,3 @@ extension AppModel {
                          : String(localized: "Lightroom import complete: \(added) photos added, \(failed) failed"))
     }
 }
-#endif

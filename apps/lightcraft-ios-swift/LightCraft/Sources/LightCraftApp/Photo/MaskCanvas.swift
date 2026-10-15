@@ -1,4 +1,3 @@
-#if os(iOS)
 import LightCraftCore
 import SwiftUI
 
@@ -33,6 +32,7 @@ struct MaskCanvas: View {
         TimelineView(.animation(minimumInterval: nil, paused: pending.isEmpty)) { timeline in
         Canvas { ctx, _ in
             drawHandles(ctx)
+            if tool == "object" { drawTaps(ctx) }
             drawPending(ctx, at: timeline.date)
             if tool == "brush", let hover, trail.isEmpty {
                 let r = brushRadius
@@ -52,6 +52,11 @@ struct MaskCanvas: View {
         .overlay {
             if tool == "brush" {
                 Color.clear.contentShape(Rectangle()).gesture(paint).onContinuousHover(perform: hovered)
+            } else if tool == "object" {
+                Color.clear.contentShape(Rectangle()).onTapGesture { location in
+                    guard let n = norm(location) else { return }
+                    Task { await model.selectObject(at: n) }
+                }
             } else if tool == "colorRange" {
                 Color.clear.contentShape(Rectangle()).onTapGesture { location in
                     guard let n = norm(location) else { return }
@@ -64,6 +69,13 @@ struct MaskCanvas: View {
                     .simultaneousGesture(SpatialTapGesture().onEnded { tap in Task { await tapped(tap.location) } })
             }
         }
+        .overlay(alignment: .top) {
+            if model.editor.selecting {
+                ProgressView().padding(12).background(.regularMaterial, in: Capsule()).padding(.top, 12)
+                    .transition(.scale.combined(with: .opacity))
+            }
+        }
+        .animation(.snappy, value: model.editor.selecting)
         .confirmationDialog(menuTitle, isPresented: Binding(get: { menu != nil }, set: { if !$0 { menu = nil } }), titleVisibility: .visible) {
             if let id = menu {
                 let mask = masks.first { $0["id"] == id }
@@ -220,6 +232,20 @@ struct MaskCanvas: View {
         }
     }
 
+    /// The selected mask's last Object part's taps: green where an object was added, red where one was left out.
+    private func drawTaps(_ ctx: GraphicsContext) {
+        let active = model.state.activeMask.map(Int64.init)
+        let shape = masks.first { $0["id"].int == active }?["components"].array?.last { $0["shape"]["kind"] == "object" }?["shape"]
+        for (key, color) in [("hint", Color.green), ("exclude", Color.red)] {
+            for t in SelectionTap.list(shape?[key] ?? .null) {
+                guard let q = screen([t.x, t.y]) else { continue }
+                let dot = Path(ellipseIn: CGRect(x: q.x - 6, y: q.y - 6, width: 12, height: 12))
+                ctx.fill(dot, with: .color(color))
+                ctx.stroke(dot, with: .color(.white), style: StrokeStyle(lineWidth: 2))
+            }
+        }
+    }
+
     // MARK: gestures
 
     /// A tap on a pin selects its mask and opens its menu.
@@ -339,4 +365,3 @@ private struct MaskDrag {
     let shape: JSONValue
     let from: JSONValue
 }
-#endif

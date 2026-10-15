@@ -1,4 +1,3 @@
-#if os(iOS)
 import LightCraftCore
 import SwiftUI
 
@@ -82,7 +81,7 @@ struct AdminSearch: View {
             }
         }
         .navigationTitle("Search & People")
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineTitle()
         .adminPage(admin)
         .adminTask(admin, tick) { await load() }
         .refreshable { await load() }
@@ -319,4 +318,3 @@ struct AdminSearch: View {
         return features || faces
     }
 }
-#endif

@@ -1,4 +1,3 @@
-#if os(iOS)
 import LightCraftCore
 import SwiftUI
 
@@ -81,7 +80,7 @@ struct AdminFolders: View {
             }
         }
         .navigationTitle("Library Folders")
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineTitle()
         .sheet(isPresented: $adding, onDismiss: { tick += 1 }) { AdminAddFolder(name: name, admin: admin) }
         .sheet(item: $editing, onDismiss: { tick += 1 }) { AdminFolderMode(name: name, folder: $0.folder, admin: admin) }
         .sheet(isPresented: $skipping, onDismiss: { tick += 1 }) { AdminSkipped(name: name, names: (folders["ignore"].array ?? []).compactMap(\.string), admin: admin) }
@@ -212,7 +211,7 @@ struct AdminAddFolder: View {
                 Section {
                     TextField("Folder on the server", text: $path, prompt: Text(verbatim: "/photos/\(name)"))
                         .font(.body.monospaced())
-                        .textInputAutocapitalization(.never)
+                        .noAutocap()
                         .autocorrectionDisabled()
                 } footer: {
                     Text("A path the server can read. With Docker, mount the folder into the container read-only first (-v /srv/photos:/photos:ro) and enter /photos/…")
@@ -234,7 +233,7 @@ struct AdminAddFolder: View {
                 }
             }
             .navigationTitle("Add a Library Folder")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel", systemImage: "xmark") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
@@ -291,7 +290,7 @@ struct AdminFolderMode: View {
                 }
             }
             .navigationTitle(label)
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel", systemImage: "xmark") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) { Button("Save") { save(label) }.disabled(working) }
@@ -329,7 +328,7 @@ struct AdminSkipped: View {
                 Section {
                     TextEditor(text: $text)
                         .font(.body.monospaced())
-                        .textInputAutocapitalization(.never)
+                        .noAutocap()
                         .autocorrectionDisabled()
                         .frame(minHeight: 160)
                 } header: {
@@ -339,7 +338,7 @@ struct AdminSkipped: View {
                 }
             }
             .navigationTitle("Names to Leave Out")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel", systemImage: "xmark") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) { Button("Save") { save() }.disabled(working) }
@@ -358,4 +357,3 @@ struct AdminSkipped: View {
         }
     }
 }
-#endif

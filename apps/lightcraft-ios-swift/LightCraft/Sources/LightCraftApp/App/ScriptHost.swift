@@ -1,19 +1,26 @@
-#if os(iOS)
 import Foundation
 import LightCraftCore
 import SwiftUI
+
+#if os(iOS)
 import UIKit
+#else
+import AppKit
+#endif
 
 /// The UI's half of automation (`LIGHTCRAFT_SCRIPT`, docs/ios-swift.md → Driving the app): the
 /// engine answers `engine.*`, `render.*` and `host.*` itself and asks the app for the rest.
 /// - `ui.screenshot {path}`: the window as a PNG.
+/// - `ui.quit` (a Mac): quit the way the menu does, a moment after answering.
 /// - `ui.inspect`: the screen, the photo, the state and timings (`perf`).
 /// - `ui.wait {path, seconds?}`: waits (110 s at most, under the runner's 120) until the file at `path` exists: something outside the app, a
 ///   capture of the whole display, is done with the screen as it is.
 /// - `ui.set {screen?: grid | photo | edit | crop | masking | remove | redEye | presets | info | commands |
 ///   people | map, photo?, span?: all | months | years, group?: light | color…, sheet?: albums |
 ///   filter | settings | export | sync | history | versions | keywords | about | superRes | createPreset | smartAlbum (id?) | allMetadata | none, select?,
-///   faceBoxes?, tagFace?, beforeAfter?, visualizeSpots?, removeAI?, histogram?, cropGuide?}`: go there.
+///   faceBoxes?, tagFace?, beforeAfter?, visualizeSpots?, removeAI?, histogram?, cropGuide?, maskTool?: object | brush | colorRange | none, objectTap?: [x, y]
+///   (Select Object's tap, normalized), objectSubtract?, selectSubject?, selectionEngine?: auto | apple | classic, removeTap? (Remove selects by tapping), removeTapSize? (the reach past a tapped object, of the long edge), removeObjectTap?: [x, y],
+///   and on a Mac: windowSize? ([w, h] points), sections? ({"light": true}: the panels' open sections), inspector?, thumbSize?, zoomAsk?: fit | fill | n, appearance?: system | light | dark}`: go there.
 @Observable
 final class ScriptHost {
     func answer(id: UInt64, method: String, params: JSONValue, model: AppModel) {
@@ -34,7 +41,7 @@ final class ScriptHost {
             let path = params["path"].string ?? (NSTemporaryDirectory() as NSString).appendingPathComponent("screenshot.png")
             // let the last change reach the screen first
             try? await Task.sleep(for: .milliseconds(100))
-            let (w, h) = try screenshot(to: path)
+            let (w, h) = try screenshot(to: path, params)
             return ["path": .string(path), "width": .int(Int64(clamping: w)), "height": .int(Int64(clamping: h))]
         case "ui.wait":
             guard let path = params["path"].string else { throw ErrorBody(code: "badParams", message: "no path") }
@@ -45,6 +52,22 @@ final class ScriptHost {
                 waited += 0.2
             }
             return ["found": .bool(FileManager.default.fileExists(atPath: path)), "seconds": .double(waited)]
+        #if os(macOS)
+        case "ui.activate":
+            // Comes to the front (the menu bar is the active app's: a script starts in the background)
+            NSApp.activate()
+            WindowCapture.window(named: params["window"].string)?.makeKeyAndOrderFront(nil)
+            return [:]
+        case "ui.quit":
+            // Quit as the menu does it (the delegate saves and closes the library), a moment after the
+            // answer, so the script's replies are written first. From a run-loop timer, as the menu's
+            // Quit comes from the event loop: called from inside a main-actor task, the delegate's
+            // answer (which needs the main actor) would wait for this task, which waits for the answer.
+            Timer.scheduledTimer(withTimeInterval: 0.8, repeats: false) { _ in
+                MainActor.assumeIsolated { NSApp.terminate(nil) }
+            }
+            return [:]
+        #endif
         case "ui.inspect":
             var photo: JSONValue = .null
             if case .photo(let id) = model.path.last {
@@ -59,7 +82,7 @@ final class ScriptHost {
             if let trip = model.lastDraftRoundTripMs {
                 perf["draftRoundTripMs"] = .double(trip)
             }
-            return [
+            var inspected: JSONValue = [
                 "screen": .string(model.screenName),
                 "photo": photo,
                 // what the loupe shows (the pager's page) and where the grid was left (`AppModel.shown`, `LibraryModel.anchor`)
@@ -71,6 +94,8 @@ final class ScriptHost {
                 "state": (try? JSONValue.encode(model.state)) ?? .null,
                 "perf": perf,
                 "hdr": hdr,
+                "zoom": ["percent": model.editor.zoomPercent.map { .int(Int64($0)) } ?? .null, "zoomedIn": .bool(model.editor.zoomedIn)],
+                "activity": .array(model.activity.map { .string($0.label) }),
                 "images": [
                     "thumbs": .int(Int64(model.images.pictures.keys.filter { $0.hasPrefix("thumb") }.count)),
                     "requested": .int(Int64(model.thumbRequests)),
@@ -79,6 +104,20 @@ final class ScriptHost {
                     "failed": .object(model.images.failed.mapValues { .string($0) }),
                 ],
             ]
+            #if os(macOS)
+            inspected["windows"] = WindowCapture.list()
+            inspected["active"] = .bool(NSApp.isActive)
+            if params["menus"].bool == true {
+                inspected["menus"] = WindowCapture.menus()
+                // (what the menu bar has to show: commands loaded, and the items planned for each menu)
+                inspected["menuData"] = [
+                    "engine": .int(Int64(model.menuEngine.count)),
+                    "ui": .int(Int64(model.uiCommands.count)),
+                    "plan": .object(Dictionary(grouping: model.menuPlan(), by: { $0.path.first ?? "" }).mapValues { .int(Int64($0.count)) }),
+                ]
+            }
+            #endif
+            return inspected
         case "ui.set":
             if let span = params["span"].string, let s = Prefs.GridSpan(rawValue: span) {
                 model.prefs.gridSpan = s
@@ -98,10 +137,25 @@ final class ScriptHost {
             if let on = params["beforeAfter"].bool { model.editor.beforeAfter = on }
             if let on = params["visualizeSpots"].bool { model.editor.visualizeSpots = on }
             if let on = params["removeAI"].bool { model.prefs.removeAI = on }
+            if let on = params["removeTap"].bool { model.editor.removeTap = on }
+            if let size = params["removeTapSize"].double { model.tapSizeChanged(size) }
+            if let x = params["removeObjectTap"][0].double, let y = params["removeObjectTap"][1].double { await model.removeObject(at: (x, y)) }
+            if let tool = params["maskTool"].string { model.editor.maskTool = tool == "none" ? nil : tool }
+            if let on = params["objectSubtract"].bool { model.editor.objectSubtract = on }
+            if let engine = params["selectionEngine"].string { model.prefs.selectionEngine = engine }
+            if let x = params["objectTap"][0].double, let y = params["objectTap"][1].double { await model.selectObject(at: (x, y)) }
+            if params["selectSubject"].bool == true { await model.selectSubject() }
             if let on = params["histogram"].bool { model.prefs.showHistogram = on }
             if let guide = params["cropGuide"].string { model.prefs.cropGuide = guide }
             if let draw = params["cropDraw"].string { model.editor.cropDraw = draw == "none" ? nil : draw }
             if let on = params["filmstrip"].bool { model.prefs.filmstrip = on }
+            // (the Mac panels' sections: {"light": true, "curve": false}; the ones not named stay as they are)
+            if case .object(let sections) = params["sections"] { for (id, open) in sections { if let open = open.bool { model.prefs.sectionStates[id] = open } } }
+            if let on = params["inspector"].bool { model.prefs.inspectorShown = on }
+            if let look = params["appearance"].string, let a = Prefs.Appearance(rawValue: look) { model.prefs.appearance = a }
+            if let size = params["thumbSize"].double { model.prefs.thumbSize = min(max(size, Prefs.thumbSizes.lowerBound), Prefs.thumbSizes.upperBound) }
+            // (the loupe's zoom: fit, fill, or a number of screen pixels per photo pixel, 1 being 100 %)
+            if let ask = params["zoomAsk"].string { model.editor.zoomAsk = ask == "fit" ? .fit : ask == "fill" ? .fill : .actual(Double(ask) ?? 1) }
             if let on = params["navigator"].bool { model.prefs.navigator = on }
             if let on = params["gridInfo"].bool { model.prefs.gridInfo = on }
             if let mode = params["beforeAfterMode"].string { model.prefs.beforeAfterMode = mode }
@@ -126,10 +180,17 @@ final class ScriptHost {
                     model.duo.fakeFold = .init(vertical: fold["vertical"].bool ?? true, at: CGFloat(fold["at"].double ?? 0.5), width: CGFloat(fold["width"].double ?? 40))
                 }
             }
+            #if os(iOS)
             if let o = params["orientation"].string, let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first {
                 // (the app turns itself: no rotating the simulator from outside)
                 scene.requestGeometryUpdate(.iOS(interfaceOrientations: o == "landscape" ? .landscapeRight : .portrait)) { _ in }
             }
+            #else
+            // (a Mac window is sized from inside, too: a tour's screenshots are the same size every run)
+            if let size = params["windowSize"].array, size.count == 2, let w = size[0].int, let h = size[1].int, let window = WindowCapture.window(named: params["window"].string) {
+                window.setContentSize(NSSize(width: Double(w), height: Double(h)))
+            }
+            #endif
             switch params["screen"].string {
             case nil:
                 break
@@ -203,8 +264,9 @@ final class ScriptHost {
         }
     }
 
+    #if os(iOS)
     /// The key window as a PNG at `path`; its size in pixels.
-    private func screenshot(to path: String) throws -> (Int, Int) {
+    private func screenshot(to path: String, _ params: JSONValue) throws -> (Int, Int) {
         // the window in front (with a second window open, the main one may be behind it)
         let all = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
         let front = all.filter { $0.activationState == .foregroundActive }
@@ -222,5 +284,15 @@ final class ScriptHost {
         try png.write(to: URL(fileURLWithPath: path))
         return (Int(image.size.width * image.scale), Int(image.size.height * image.scale))
     }
+    #else
+    /// The window the script names (`window`: `main`, `settings`, `second`, `cover`… or part of a
+    /// title; the key window, else the biggest, without one) as a PNG at `path`; its size in pixels
+    /// (`views: true` draws it from its views: `WindowCapture`).
+    private func screenshot(to path: String, _ params: JSONValue) throws -> (Int, Int) {
+        guard let window = WindowCapture.window(named: params["window"].string) else {
+            throw ErrorBody(code: "noWindow", message: "no window to capture (\(params["window"].string ?? "front"))")
+        }
+        return try WindowCapture.capture(window, to: path, views: params["views"].bool == true)
+    }
+    #endif
 }
-#endif

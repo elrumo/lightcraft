@@ -1,11 +1,9 @@
-#if os(iOS)
 import CoreGraphics
 import Foundation
 import LightCraftCore
 import LightCraftImaging
 import Observation
 import SwiftUI
-import UIKit
 
 /// A screen pushed over the grid.
 nonisolated enum Route: Hashable {
@@ -122,6 +120,14 @@ nonisolated struct Toast: Equatable {
     var id = UUID()
 }
 
+/// Tells the App that what the menu bar shows has changed. A Mac's menu bar does not follow what an
+/// @Observable model changes (not from a Commands body, nor from the App's), but it does follow an
+/// ObservableObject the App observes: the model bumps this when the menus' data moves.
+final class MenuChanges: ObservableObject {
+    @Published private(set) var revision = 0
+    func bump() { revision &+= 1 }
+}
+
 /// The app's state: the engine, what it last reported, and the pictures it sent. Everything the
 /// views show comes from here; everything they do goes to the engine as a request.
 @Observable
@@ -137,6 +143,10 @@ final class AppModel {
     private(set) var hdrDisplay = false
     var path: [Route] = []
     var sheet: Sheet?
+    /// The App's word that the menus changed (`MenuChanges`).
+    let menuChanges = MenuChanges()
+    /// The page of the Mac's Settings window that is showing (`general`, `import`, `sync`…).
+    var settingsTab = "general"
     /// The menu bar's commands: egui's UI commands (`host.uiCommands`) and the engine's with a menu.
     var uiCommands: [UICommand] = []
     var menuEngine: [CommandInfo] = []
@@ -163,6 +173,8 @@ final class AppModel {
     var selectMode = false
     /// The engine is being opened.
     private var starting = false
+    /// Open the demo library (the way out of a library that won't open).
+    private var wantsDemo = false
     /// Window ▸ Second Window was asked for (RootView opens it).
     var secondWindowAsked = false
     /// Main windows on screen (none when iPadOS brings back only the second window).
@@ -217,14 +229,16 @@ final class AppModel {
         starting = true
         defer { starting = false }
         // the device's name on the sync server (read by the engine when signing in)
-        setenv("LIGHTCRAFT_DEVICE", UIDevice.current.name, 0)
-        let config = Self.config()
+        setenv("LIGHTCRAFT_DEVICE", Platform.deviceName, 0)
+        let openConfig = config()
+        #if os(iOS)
         // the first launch's welcome, over the opening library (not under a script or the demo: the tour's screenshots)
-        if !prefs.onboarded, config.script == nil, !config.demo {
+        if !prefs.onboarded, openConfig.script == nil, !openConfig.demo {
             cover = .onboarding
         }
+        #endif
         do {
-            let (engine, opened) = try await Engine.open(config)
+            let (engine, opened) = try await Engine.open(openConfig)
             self.engine = engine
             self.opened = opened
             if let warning = opened.warnings.first {
@@ -236,6 +250,10 @@ final class AppModel {
             await library.reload(engine, count: state.visibleCount)
             await albums.reload(engine)
             superResAvailable = (try? await engine.execute("enhance.model.status"))?["available"].bool == true
+            // the models switched off last time stay off
+            for id in prefs.modelsDisabled {
+                _ = try? await engine.execute("models.setEnabled", ["id": .string(id), "enabled": false])
+            }
             // a camera or card plugged in: its import (Settings ▸ Import ▸ Cameras and cards), or a word
             cameras.connected = { [weak self] device in
                 guard let self else { return }
@@ -251,16 +269,27 @@ final class AppModel {
         }
     }
 
-    private static func config() -> OpenConfig {
+    /// Start again after the library wouldn't open: as it was (the other LightCraft may be closed
+    /// now), on another library, or on the demo library (nothing is saved there).
+    func retryStart(library: String? = nil, demo: Bool = false) {
+        if let library { prefs.libraryPath = library }
+        wantsDemo = demo
+        startError = nil
+        Task { await start() }
+    }
+
+    private func config() -> OpenConfig {
         let env = ProcessInfo.processInfo.environment
         let nonEmpty = { (key: String) in env[key].flatMap { $0.isEmpty ? nil : $0 } }
         return OpenConfig(
             home: NSHomeDirectory(),
-            tmp: NSTemporaryDirectory(),
-            library: nonEmpty("LIGHTCRAFT_LIBRARY"),
-            demo: nonEmpty("LIGHTCRAFT_DEMO") != nil,
-            deviceName: UIDevice.current.name,
-            script: nonEmpty("LIGHTCRAFT_SCRIPT")
+            tmp: Platform.tmpFolder,
+            // (the environment first, then the library chosen when the default one wouldn't open)
+            library: nonEmpty("LIGHTCRAFT_LIBRARY") ?? prefs.libraryPath,
+            demo: nonEmpty("LIGHTCRAFT_DEMO") != nil || wantsDemo,
+            deviceName: Platform.deviceName,
+            script: nonEmpty("LIGHTCRAFT_SCRIPT"),
+            profile: Platform.profile
         )
     }
 
@@ -276,11 +305,17 @@ final class AppModel {
     /// environment variable `LIGHTCRAFT_HDR_DISPLAY` (`1` or `0`) decides for the simulator and scripts.
     func updateHdrDisplay() {
         let forced = ProcessInfo.processInfo.environment["LIGHTCRAFT_HDR_DISPLAY"]
+        #if os(iOS)
         // (the scene on screen: an iPhone Duo's scene moves between its two displays as it folds and unfolds, and
         // the display it is on is the one to ask)
         let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
         let screen = (scenes.first { $0.activationState == .foregroundActive } ?? scenes.first)?.screen
-        let on = forced.map { $0 == "1" } ?? ((screen?.potentialEDRHeadroom ?? 1) > 1)
+        let headroom = screen?.potentialEDRHeadroom ?? 1
+        #else
+        // (a Mac's built-in display and its XDR displays have it)
+        let headroom = NSScreen.main?.maximumPotentialExtendedDynamicRangeColorComponentValue ?? 1
+        #endif
+        let on = forced.map { $0 == "1" } ?? (headroom > 1)
         // (not before the engine is there: `start()` asks again once it is, and what is not sent is not recorded)
         guard let engine, on != hdrDisplay else { return }
         hdrDisplay = on
@@ -316,7 +351,7 @@ final class AppModel {
         case .uiRequest(let id, let method, let params):
             script.answer(id: id, method: method, params: params, model: self)
         case .copy(let text):
-            UIPasteboard.general.string = text
+            Platform.copy(text)
         case .ask(let dialog, _):
             asking = dialog
             if dialog == "syncChoice" { sheet = .syncChoice }
@@ -329,6 +364,8 @@ final class AppModel {
 
     private func stateChanged(from old: HostState, to new: HostState) {
         state = new
+        // (Undo and Redo name the step)
+        if old.undo != new.undo || old.redo != new.redo { menuChanges.bump() }
         // what isn't drawn live during a drag (menus, the grid under the photo, lists, previews)
         // catches up when it ends: at every step it would keep the engine from the drafts
         if new.interaction == nil, settledRevision != new.catalogRevision {
@@ -643,4 +680,3 @@ nonisolated struct Haptic: Equatable {
         }
     }
 }
-#endif

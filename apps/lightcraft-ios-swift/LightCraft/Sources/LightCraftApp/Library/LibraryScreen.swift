@@ -1,4 +1,3 @@
-#if os(iOS)
 import LightCraftCore
 import PhotosUI
 import SwiftUI
@@ -41,6 +40,10 @@ struct LibraryScreen: View {
         .safeAreaBar(edge: .top) {
             if !model.selectMode { FilterChips(chips: chips["chips"].array ?? []) }
         }
+        #if os(macOS)
+        // (Years / Months / All, the chosen photos' rating, the thumbnails' size: Mac/MacGridCell.swift)
+        .safeAreaInset(edge: .bottom, spacing: 0) { MacGridBar() }
+        #endif
         // pictures dropped from another app (Files, Photos, Safari…) are imported
         .dropDestination(for: GridDrop.self) { items, _ in
             let files = items.compactMap { if case .file(let f) = $0 { f } else { nil } }
@@ -65,14 +68,16 @@ struct LibraryScreen: View {
         .navigationTitle(model.selectMode ? selectTitle : model.painting.map { String(localized: "Painting “\($0)”") } ?? title)
         .navigationSubtitle(model.selectMode || model.painting != nil ? Text(verbatim: "") : Text(countText))
         // (inline: the title's chevron shows its menu, and the date headers pin under it)
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineTitle()
         // (on a view of its own: switching it on and off mustn't rebuild the grid)
         .background { Color.clear.modifier(TitleMenu(on: !model.selectMode && model.painting == nil)) }
         .toolbar { toolbar }
         .animation(.snappy, value: model.selectMode)
         .animation(.snappy, value: model.painting)
         .searchable(text: $model.searchText, isPresented: $model.searching, prompt: Text(scope == .describe ? "Describe a photo…" : "Search Photos"))
+        #if os(iOS)
         .searchToolbarBehavior(.minimize)
+        #endif
         .modifier(DescribeScopes(describes: describes, scope: $scope))
         .onSubmit(of: .search) {
             let q = model.searchText.trimmingCharacters(in: .whitespaces)
@@ -162,7 +167,7 @@ struct LibraryScreen: View {
             ToolbarItem(placement: .cancellationAction) {
                 Button("Cancel") { endSelecting() }
             }
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItem(placement: .lcTrailing) {
                 if model.library.selected.count < model.library.count {
                     Button("Select All") { model.perform("library.selectAll") }
                 } else {
@@ -185,29 +190,31 @@ struct LibraryScreen: View {
         } else {
             // a phone's albums are a page over the grid (an iPad's are in the sidebar)
             if horizontalSize != .regular {
-                ToolbarItem(placement: .topBarLeading) {
+                ToolbarItem(placement: .lcLeading) {
                     Button("Albums", systemImage: "rectangle.stack") { model.sheet = .albums }
                 }
                 .duoPriority(.high)
             }
             if model.albums.sync.map({ $0.state != "off" }) == true {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .lcTrailing) {
                     CloudButton()
                 }
                 // (it says something while it works or when something is wrong; otherwise it can go first)
                 .duoPriority(["syncing", "error", "conflict"].contains(model.state.sync?.state ?? "") || model.state.unsaved > 0 ? .high : .low)
-                ToolbarSpacer(.fixed, placement: .topBarTrailing)
+                ToolbarSpacer(.fixed, placement: .lcTrailing)
             }
+            #if os(iOS)
             if model.library.count > 0 {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .lcTrailing) {
                     Button("Select") {
                         model.selectMode = true
                         model.perform("library.select", ["ids": []])
                     }
                 }
-                ToolbarSpacer(.fixed, placement: .topBarTrailing)
+                ToolbarSpacer(.fixed, placement: .lcTrailing)
             }
-            ToolbarItem(placement: .topBarTrailing) {
+            #endif
+            ToolbarItem(placement: .lcTrailing) {
                 Button("Filter", systemImage: model.library.state?.isFiltered == true ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease") {
                     model.sheet = .filter
                 }
@@ -215,13 +222,19 @@ struct LibraryScreen: View {
             .duoPriority(.high)
             // the grid's "…": the system's overflow menu on iOS 27, so these and what overflowed are in one place
             DuoOverflow { GridMoreItems() }
+            #if os(macOS)
+            // (the span is in the bar under the grid)
+            ToolbarItem(placement: .lcTrailing) {
+                addButton
+            }
+            #else
             // a phone's search waits in the bottom bar as a button; an iPad's is in the top bar
             if horizontalSize != .regular {
-                DefaultToolbarItem(kind: .search, placement: .bottomBar)
+                DefaultToolbarItem(kind: .search, placement: .lcBottom)
             }
-            ToolbarSpacer(.flexible, placement: .bottomBar)
+            ToolbarSpacer(.flexible, placement: .lcBottom)
             if model.library.count > 0 || model.plainAlbum != nil {
-                ToolbarItem(placement: .bottomBar) {
+                ToolbarItem(placement: .lcBottom) {
                     Picker("Show", selection: Bindable(model.prefs).gridSpan) {
                         ForEach(Prefs.GridSpan.allCases) { span in
                             Text(span.label).tag(span)
@@ -233,12 +246,13 @@ struct LibraryScreen: View {
                 }
                 // the segmented control draws its own glass capsule; the bar's would be a second one around it
                 .sharedBackgroundVisibility(.hidden)
-                ToolbarSpacer(.flexible, placement: .bottomBar)
+                ToolbarSpacer(.flexible, placement: .lcBottom)
             }
-            ToolbarItem(placement: .bottomBar) {
+            ToolbarItem(placement: .lcBottom) {
                 addButton
             }
             .duoPriority(.high)
+            #endif
         }
     }
 
@@ -458,7 +472,7 @@ struct GridMoreItems: View {
             Section {
                 Button("Settings", systemImage: "gear") { model.sheet = .settings(nil) }
                 Button("Help", systemImage: "questionmark.circle") {
-                    if let url = URL(string: "https://github.com/storytold/lightcraft") { UIApplication.shared.open(url) }
+                    if let url = URL(string: "https://github.com/storytold/lightcraft") { Platform.open(url) }
                 }
                 Button("About LightCraft", systemImage: "info.circle") { model.sheet = .about }
             }
@@ -483,4 +497,3 @@ nonisolated enum GridDrop: Transferable {
         ProxyRepresentation(importing: { (f: StagedFile) in GridDrop.file(f) })
     }
 }
-#endif

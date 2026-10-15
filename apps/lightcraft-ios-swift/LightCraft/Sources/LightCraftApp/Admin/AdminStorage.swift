@@ -1,4 +1,3 @@
-#if os(iOS)
 import LightCraftCore
 import SwiftUI
 
@@ -85,7 +84,7 @@ struct AdminStorage: View {
             }
         }
         .navigationTitle("Storage")
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineTitle()
         .adminPage(admin)
         .adminTask(admin, tick) { await load() }
         .refreshable { await load() }
@@ -162,4 +161,3 @@ struct AdminStorage: View {
         }
     }
 }
-#endif

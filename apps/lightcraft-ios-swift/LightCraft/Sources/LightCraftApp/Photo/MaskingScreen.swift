@@ -1,4 +1,3 @@
-#if os(iOS)
 import LightCraftCore
 import SwiftUI
 
@@ -6,11 +5,11 @@ import SwiftUI
 enum MaskKind {
     /// Create New Mask, as Lightroom's mobile app lists it.
     static let create: [(kind: String, label: String)] = [
-        ("subject", "Select Subject"), ("sky", "Select Sky"), ("background", "Select Background"), ("linear", "Linear Gradient"),
+        ("subject", "Select Subject"), ("object", "Select Object"), ("sky", "Select Sky"), ("background", "Select Background"), ("linear", "Linear Gradient"),
         ("radial", "Radial Gradient"), ("luminanceRange", "Luminance Range"), ("colorRange", "Color Range"), ("brush", "Brush"),
     ]
     /// What a mask can be added to, taken away from or intersected with.
-    static let parts = ["brush", "linear", "radial", "sky", "subject", "luminanceRange"]
+    static let parts = ["brush", "linear", "radial", "sky", "subject", "object", "luminanceRange"]
 
     static func name(_ kind: String) -> String {
         switch kind {
@@ -77,7 +76,10 @@ struct MaskingTools: View {
         let mask = MaskList.selected(model)
         VStack(spacing: 8) {
             if model.editor.maskTool == "brush" {
-                BrushControls()
+                BrushControls().transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
+            if model.editor.maskTool == "object" {
+                ObjectControls().transition(.opacity.combined(with: .move(edge: .bottom)))
             }
             if let mask, let group {
                 MaskGroupSheet(mask: mask, group: group)
@@ -92,6 +94,7 @@ struct MaskingTools: View {
         }
         .padding(.vertical, 8)
         .animation(.snappy, value: group)
+        .animation(.snappy, value: model.editor.maskTool)
         .onChange(of: mask == nil) { _, none in
             if none { group = nil }
         }
@@ -99,7 +102,7 @@ struct MaskingTools: View {
 }
 
 /// Mask, Light, Color, Effects, Detail, Optics: a tap opens the group's sliders, again closes them.
-private struct MaskGroupRow: View {
+struct MaskGroupRow: View {
     @Binding var selection: String?
     let enabled: Bool
 
@@ -147,7 +150,7 @@ private struct MaskGroupSheet: View {
 
 /// The Mask group: Amount, Invert, each part's own controls (a luminance range, a colour range's
 /// refine, an AI selection's edge: `mask.shapeControls`), Refine Edges, the overlay's options.
-private struct MaskSettings: View {
+struct MaskSettings: View {
     @Environment(AppModel.self) private var model
     let mask: JSONValue
     @State private var shape: ShapeControls?
@@ -158,12 +161,12 @@ private struct MaskSettings: View {
         VStack(alignment: .leading, spacing: 6) {
             MaskAdjustments(mask: mask["id"], ids: ["amount"])
             Toggle("Invert", isOn: Binding(get: { mask["invert"].bool == true }, set: { _ in model.perform("mask.invert", ["id": mask["id"]]) }))
-                .padding(.horizontal, 16)
+                .padding(.horizontal, Platform.panelInset)
             ForEach(shape?.components ?? [], id: \.component) { part in
                 if !part.controls.isEmpty {
                     Text(LocalizedStringKey(MaskKind.name(part.kind)))
                         .font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
-                        .padding(.horizontal, 16).padding(.top, 6)
+                        .padding(.horizontal, Platform.panelInset).padding(.top, 6)
                     ForEach(part.controls) { spec in
                         ShapeSlider(mask: mask["id"], component: part.component, spec: spec)
                     }
@@ -173,7 +176,7 @@ private struct MaskSettings: View {
                             prefs.maskOverlayMode = on ? "colorOnBw" : "color"
                             if on, prefs.maskOverlayVisibility == "never" { prefs.maskOverlayVisibility = "auto" }
                         }))
-                        .padding(.horizontal, 16)
+                        .padding(.horizontal, Platform.panelInset)
                     }
                 }
             }
@@ -181,7 +184,7 @@ private struct MaskSettings: View {
                 ShapeSlider(mask: mask["id"], component: nil, spec: refine)
             }
             Button("Overlay Options", systemImage: "eye.circle") { overlayOptions = true }
-                .padding(.horizontal, 16).padding(.vertical, 6)
+                .padding(.horizontal, Platform.panelInset).padding(.vertical, 6)
         }
         .sheet(isPresented: $overlayOptions) { MaskOverlayOptions().presentationDetents([.medium]) }
         .task(id: Key(mask: mask["id"], revision: model.settledRevision)) {
@@ -233,7 +236,7 @@ private struct ShapeSlider: View {
                 model.perform("mask.setShapeControl", params(spec.default))
             }
         )
-        .padding(.horizontal, 16)
+        .padding(.horizontal, Platform.panelInset)
         .onChange(of: spec.value) { local = nil }
     }
 
@@ -266,7 +269,7 @@ struct MaskAdjustments: View {
                         ControlSlider(spec: spec, value: value(spec), set: { set(spec, $0) }, editing: { editing(spec, $0) }, reset: { reset(spec) })
                     }
                 }
-                .padding(.horizontal, 16)
+                .padding(.horizontal, Platform.panelInset)
             }
         }
         .task(id: Key(mask: mask, revision: model.settledRevision)) {
@@ -308,6 +311,8 @@ struct MaskAdjustments: View {
 /// theirs; a painted part puts the brush in hand) and ± to add to it, take from it or intersect it.
 struct MaskColumn: View {
     @Environment(AppModel.self) private var model
+    /// The tiles in rows that wrap (a Mac's panel), not a floating column over the photo.
+    var wrap = false
     @State private var renaming: Renaming?
     @State private var name = ""
 
@@ -317,12 +322,19 @@ struct MaskColumn: View {
     }
 
     var body: some View {
-        ViewThatFits(in: .vertical) {
-            column
-            ScrollView { column }.scrollIndicators(.hidden)
+        Group {
+            if wrap {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 64), spacing: 8, alignment: .top)], alignment: .leading, spacing: 10) { tiles }
+                    .buttonStyle(.plain)
+            } else {
+                ViewThatFits(in: .vertical) {
+                    column
+                    ScrollView { column }.scrollIndicators(.hidden)
+                }
+                .frame(width: 80)
+                .glassEffect(.regular, in: .rect(cornerRadius: 24))
+            }
         }
-        .frame(width: 80)
-        .glassEffect(.regular, in: .rect(cornerRadius: 24))
         .alert("Rename", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
             TextField("Name", text: $name)
             Button("Rename") { rename() }
@@ -333,23 +345,26 @@ struct MaskColumn: View {
     }
 
     private var column: some View {
+        VStack(spacing: 10) { tiles }
+            .buttonStyle(.plain)
+            .padding(.vertical, 12)
+    }
+
+    /// + (create), a tile per mask, and under the chosen one its parts and ±.
+    @ViewBuilder private var tiles: some View {
         let active = model.state.activeMask.map(Int64.init)
-        return VStack(spacing: 10) {
-            CreateMaskMenu()
-            ForEach(Array(MaskList.all(model).enumerated()), id: \.offset) { _, mask in
-                let chosen = mask["id"].int == active
-                let tile = MaskTile(symbol: MaskKind.symbol(MaskList.kind(mask)), name: mask["name"].string ?? String(localized: "Mask"),
-                                    chosen: chosen, visible: mask["visible"].bool != false, side: 52, badge: nil)
-                if chosen {
-                    Menu { maskMenu(mask) } label: { tile }
-                    parts(mask)
-                } else {
-                    Button { select(mask) } label: { tile }
-                }
+        CreateMaskMenu()
+        ForEach(Array(MaskList.all(model).enumerated()), id: \.offset) { _, mask in
+            let chosen = mask["id"].int == active
+            let tile = MaskTile(symbol: MaskKind.symbol(MaskList.kind(mask)), name: mask["name"].string ?? String(localized: "Mask"),
+                                chosen: chosen, visible: mask["visible"].bool != false, side: 52, badge: nil)
+            if chosen {
+                Menu { maskMenu(mask) } label: { tile }
+                parts(mask)
+            } else {
+                Button { select(mask) } label: { tile }
             }
         }
-        .buttonStyle(.plain)
-        .padding(.vertical, 12)
     }
 
     @ViewBuilder private func parts(_ mask: JSONValue) -> some View {
@@ -453,7 +468,7 @@ private struct MaskTile: View {
             Image(systemName: symbol)
                 .font(.system(size: side * 0.4))
                 .frame(width: side, height: side)
-                .background(RoundedRectangle(cornerRadius: side / 4).fill(Color(uiColor: .tertiarySystemFill)))
+                .background(RoundedRectangle(cornerRadius: side / 4).fill(Color.lcTertiaryFill))
                 .overlay {
                     RoundedRectangle(cornerRadius: side / 4).strokeBorder(chosen ? Color.accentColor : .clear, lineWidth: 2)
                 }
@@ -461,7 +476,7 @@ private struct MaskTile: View {
                     if let badge {
                         Text(badge).font(.caption.bold())
                             .frame(width: 16, height: 16)
-                            .background(Circle().fill(Color(uiColor: .systemBackground)))
+                            .background(Circle().fill(Color.lcBackground))
                             .offset(x: 4, y: -4)
                     }
                 }
@@ -498,16 +513,21 @@ private struct CreateMaskMenu: View {
     private func create(_ kind: String) {
         let editor = model.editor
         Task {
-            if kind == "brush" {
-                // the first stroke makes the mask
+            if kind == "brush" || kind == "object" {
+                // the first stroke or tap makes the mask
                 await model.run("mask.select", ["id": .null])
+            } else if kind == "subject" {
+                await model.selectSubject()
             } else {
                 await model.run("mask.add", ["kind": .string(kind)])
             }
-            editor.maskTool = kind == "brush" || kind == "colorRange" ? kind : nil
+            editor.maskTool = kind == "brush" || kind == "colorRange" || kind == "object" ? kind : nil
             editor.brushErase = false
+            editor.objectOp = nil
+            editor.objectSubtract = false
             if kind == "colorRange" { model.show(String(localized: "Tap the photo to pick a colour")) }
             if kind == "brush" { model.show(String(localized: "Paint the area to adjust")) }
+            if kind == "object" { model.show(String(localized: "Tap an object to select it")) }
         }
     }
 }
@@ -533,13 +553,21 @@ private struct CombineMenu: View {
         } label: {
             Image(systemName: "plus.forwardslash.minus").font(.title3)
                 .frame(width: 40, height: 40)
-                .background(Circle().fill(Color(uiColor: .tertiarySystemFill)))
+                .background(Circle().fill(Color.lcTertiaryFill))
         }
         .accessibilityLabel("Add or Subtract")
     }
 
     private func add(_ kind: String, _ op: String) {
         let editor = model.editor
+        if kind == "object" {
+            // the first tap makes the part
+            editor.maskTool = "object"
+            editor.objectOp = op
+            editor.objectSubtract = false
+            model.show(String(localized: "Tap an object to select it"))
+            return
+        }
         Task {
             guard await model.run("mask.addComponent", ["kind": .string(kind), "op": .string(op)]) != nil else { return }
             if kind == "brush" {
@@ -627,7 +655,7 @@ struct MaskOverlayOptions: View {
                 }
             }
             .navigationTitle("Overlay Options")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineTitle()
         }
     }
 
@@ -644,6 +672,27 @@ struct MaskOverlayOptions: View {
 }
 
 /// The brush: paint or erase, size, feather, flow, and Auto Mask (follows the photo's edges).
+/// The Object tool under the photo: taps add the object under the finger to the selection, or, with
+/// Subtract, take it out; the selection is computed on this device (Apple's models).
+struct ObjectControls: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        @Bindable var e = model.editor
+        HStack {
+            Picker("Object", selection: $e.objectSubtract) {
+                Label("Add", systemImage: "plus").tag(false)
+                Label("Subtract", systemImage: "minus").tag(true)
+            }
+            .pickerStyle(.segmented)
+            if e.selecting { ProgressView().transition(.scale.combined(with: .opacity)) }
+            Button("Done") { e.maskTool = nil }
+        }
+        .padding(.horizontal, 16)
+        .animation(.snappy, value: e.selecting)
+    }
+}
+
 struct BrushControls: View {
     @Environment(AppModel.self) private var model
 
@@ -669,4 +718,3 @@ struct BrushControls: View {
         .padding(.horizontal, 16)
     }
 }
-#endif

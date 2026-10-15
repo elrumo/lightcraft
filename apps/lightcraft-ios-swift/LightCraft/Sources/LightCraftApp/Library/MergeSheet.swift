@@ -1,4 +1,3 @@
-#if os(iOS)
 import LightCraftCore
 import SwiftUI
 
@@ -23,7 +22,7 @@ struct MergeSheet: View {
             Form {
                 Section {
                     ZStack {
-                        Color(uiColor: .tertiarySystemFill)
+                        Color.lcTertiaryFill
                         if let p = model.images.pictures["merge"] {
                             Image(decorative: p.image, scale: 1).resizable().scaledToFit()
                         }
@@ -78,7 +77,7 @@ struct MergeSheet: View {
                 }
             }
             .navigationTitle(LocalizedStringKey(Self.title(command)))
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel", systemImage: "xmark") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
@@ -139,4 +138,3 @@ nonisolated struct MergeOptions: Hashable {
          "fillEdges": .bool(fillEdges), "bracket": .int(Int64(bracket))]
     }
 }
-#endif

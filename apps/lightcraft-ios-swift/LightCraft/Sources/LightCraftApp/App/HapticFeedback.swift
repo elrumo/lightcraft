@@ -1,4 +1,3 @@
-#if os(iOS)
 import SwiftUI
 
 extension View {
@@ -25,4 +24,3 @@ private struct HapticFeedback<T: Equatable>: ViewModifier {
         return content.sensoryFeedback(trigger: trigger) { old, new in on ? feedback(old, new) : nil }
     }
 }
-#endif

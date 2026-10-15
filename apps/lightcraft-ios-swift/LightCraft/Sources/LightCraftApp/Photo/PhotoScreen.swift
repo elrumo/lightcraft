@@ -1,7 +1,9 @@
-#if os(iOS)
 import LightCraftCore
 import SwiftUI
+
+#if os(iOS)
 import UIKit
+#endif
 
 /// A photo on a dark canvas, as Lightroom's mobile app shows it: back, its date, undo, share and
 /// "…" above it; swipe sideways for the next; the tools in the bottom bar (Presets, Crop, Edit,
@@ -31,10 +33,24 @@ struct PhotoScreen: View {
                                   compactHeight: verticalSize == .compact, inspector: !hinged)
     }
 
-    var body: some View {
+    /// The system's inspector is open: the arrangement has one and a tool is chosen.
+    private var inspecting: Bool {
+        photoLayout == .inspector && model.editor.tool != nil && !review
+    }
+
+    /// The photo, and the tools beside or under it.
+    @ViewBuilder private var canvas: some View {
         let editor = model.editor
+        #if os(macOS)
+        // (a Mac keeps the panel open with a tool always chosen: Lightroom's right-hand side)
+        pager.clipped()
+            .background(Color.lcBackground.ignoresSafeArea())
+            .inspector(isPresented: Binding(get: { model.prefs.inspectorShown && !review }, set: { model.prefs.inspectorShown = $0 })) {
+                MacInspector()
+                    .inspectorColumnWidth(min: 350, ideal: 380, max: 520)
+            }
+        #else
         let arrangement = photoLayout
-        let inspecting = arrangement == .inspector && editor.tool != nil && !review
         // One arrangement for every size and pose, whose first child is always the pager: a fold, a rotation or a
         // tool opening moves the pager without rebuilding it, so its zoom and its place stay.
         let arrange = arrangement.isColumn ? AnyLayout(HStackLayout(spacing: 0)) : AnyLayout(VStackLayout(spacing: 0))
@@ -44,7 +60,7 @@ struct PhotoScreen: View {
             pager.clippedSideways().duoFrame("pager", in: model.duo)
             if !review { tools(arrangement) }
         }
-        .background(Color(.systemBackground).ignoresSafeArea())
+        .background(Color.lcBackground.ignoresSafeArea())
         .inspector(isPresented: Binding(get: { inspecting }, set: { if !$0 { editor.tool = nil } })) {
             // (the width is asked of the content itself: it must be the last modifier, or the inspector ignores it)
             ToolColumn()
@@ -58,54 +74,68 @@ struct PhotoScreen: View {
         .background(DismissGuard(disabled: editor.touching))
         .toolbar(review ? .hidden : .visible, for: .navigationBar)
         .toolbar(review || editor.tool?.hasScreen == true ? .hidden : .visible, for: .bottomBar)
-        .statusBarHidden(review)
-        .navigationBarBackButtonHidden(editor.tool?.hasScreen == true)
-        .navigationTitle(title)
-        .navigationSubtitle(Text(subtitle))
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            if let tool = editor.tool, tool.hasScreen {
-                ScreenToolbar(model: model)
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    UndoMenu()
-                    if tool == .masking {
-                        MaskOverlayButton()
-                        MaskMoreMenu()
+        #endif
+    }
+
+    var body: some View {
+        let editor = model.editor
+        canvas
+            .lcStatusBarHidden(review)
+            .navigationBarBackButtonHidden(editor.tool?.hasScreen == true)
+            .navigationTitle(title)
+            .navigationSubtitle(Text(subtitle))
+            .inlineTitle()
+            .toolbar {
+                if let tool = editor.tool, tool.hasScreen {
+                    ScreenToolbar(model: model)
+                    ToolbarItemGroup(placement: .lcTrailing) {
+                        UndoMenu()
+                        if tool == .masking {
+                            MaskOverlayButton()
+                            MaskMoreMenu()
+                        }
                     }
-                }
-                .duoPriority(.high)
-            } else {
-                ToolbarItem(placement: .topBarTrailing) {
-                    UndoMenu()
-                }
-                .duoPriority(.high)
-                ToolbarSpacer(.fixed, placement: .topBarTrailing)
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Share", systemImage: "square.and.arrow.up") {
-                        if let id = model.state.active { model.sheet = .export([id]) }
+                    .duoPriority(.high)
+                } else {
+                    ToolbarItem(placement: .lcTrailing) {
+                        UndoMenu()
                     }
+                    .duoPriority(.high)
+                    ToolbarSpacer(.fixed, placement: .lcTrailing)
+                    ToolbarItem(placement: .lcTrailing) {
+                        Button("Share", systemImage: "square.and.arrow.up") {
+                            if let id = model.state.active { model.sheet = .export([id]) }
+                        }
+                    }
+                    // the actions that do not fit: the system's overflow menu on iOS 27, so they and what overflowed are in one place
+                    DuoOverflow { PhotoMoreItems() }
+                    #if os(iOS)
+                    ToolBar(model: model)
+                    #else
+                    ToolbarSpacer(.fixed, placement: .lcTrailing)
+                    ToolbarItem(placement: .lcTrailing) {
+                        Button("Inspector", systemImage: "sidebar.trailing") { model.prefs.inspectorShown.toggle() }
+                            .help(Text("Show or hide the edit panel"))
+                    }
+                    #endif
                 }
-                // the actions that do not fit: the system's overflow menu on iOS 27, so they and what overflowed are in one place
-                DuoOverflow { PhotoMoreItems() }
-                ToolBar(model: model)
             }
-        }
-        .animation(.snappy, value: review)
-        .animation(.snappy, value: editor.tool)
-        .onChange(of: editor.tool) { editor.picking = nil }
-        .haptic(.selection, trigger: editor.tool)
-        .task(id: editor.tool) {
-            // a tool screen's Cancel goes back to how the photo was when it opened
-            if editor.tool?.hasScreen == true { editor.screenBase = await undoDepth(model) }
-        }
-        .onAppear {
-            if editor.tool == nil { editor.tool = .edit }
-            Task { await editor.reload(model) }
-        }
-        .onDisappear {
-            if model.path.isEmpty { editor.tool = nil }
-            model.duo.photoMode = ""
-        }
+            .animation(.snappy, value: review)
+            .animation(.snappy, value: editor.tool)
+            .onChange(of: editor.tool) { editor.picking = nil }
+            .haptic(.selection, trigger: editor.tool)
+            .task(id: editor.tool) {
+                // a tool screen's Cancel goes back to how the photo was when it opened
+                if editor.tool?.hasScreen == true { editor.screenBase = await undoDepth(model) }
+            }
+            .onAppear {
+                if editor.tool == nil { editor.tool = .edit }
+                Task { await editor.reload(model) }
+            }
+            .onDisappear {
+                if model.path.isEmpty { editor.tool = nil }
+                model.duo.photoMode = ""
+            }
     }
 
     /// The photo's capture date (an open tool screen's name instead), then its time.
@@ -144,16 +174,21 @@ struct PhotoScreen: View {
             if model.prefs.filmstrip, !review {
                 FilmstripView()
             }
+            #if os(macOS)
+            if !review { MacPhotoBar() }
+            #endif
         }
     }
 
     private var photoPager: some View {
         PhotoPager(start: start, startIndex: model.library.index(of: start), review: $review)
+            #if os(iOS)
             .overlay(alignment: .topTrailing) {
                 if model.editor.tool == .masking, !review {
                     MaskColumn().padding(10).transition(.move(edge: .trailing).combined(with: .opacity))
                 }
             }
+            #endif
     }
 
     /// The tools beside or under the photo: nothing for the inspector (it is the system's), a column for a phone held
@@ -171,7 +206,7 @@ struct PhotoScreen: View {
                     ToolColumn()
                         .frame(width: width)
                         .duoFrame("column", in: model.duo)
-                        .background(Color(uiColor: .secondarySystemBackground))
+                        .background(Color.lcSecondaryBackground)
                 }
                 .transition(.move(edge: .trailing))
             }
@@ -234,6 +269,9 @@ private struct ToolColumn: View {
             }
         }
         .environment(\.toolColumn, true)
+        // (the chips and a tool's options scroll sideways with their clip off, for their glass: scrolled, they would
+        // draw over the photo beside the column, and across a Duo's hinge)
+        .clippedSideways()
     }
 }
 
@@ -275,7 +313,7 @@ struct PhotoPager: View {
                     .scrollTargetLayout()
                 }
                 .scrollTargetBehavior(.paging)
-                .scrollIndicators(.hidden)
+                .lcNoScrollers()
                 .scrollPosition(id: $position)
                 .scrollDisabled(zoomed || model.editor.dragging != nil || model.editor.tool?.hasScreen == true)
                 .onAppear {
@@ -396,6 +434,12 @@ struct ZoomablePhoto: View {
     /// The largest render asked for (zoomed views get sharper up to this).
     private let maxEdge: CGFloat = 4096
     private let margin: CGFloat = 24
+    /// The most a pinch or a request zooms in (× the fitted photo): a Mac's 100 % and more of a big photo is further.
+    #if os(macOS)
+    private static let maxZoom: CGFloat = 16
+    #else
+    private static let maxZoom: CGFloat = 8
+    #endif
 
     var body: some View {
         let picture = showBefore ? (model.images.before(for: photo) ?? model.images.view(for: photo)) : model.images.view(for: photo)
@@ -505,9 +549,11 @@ struct ZoomablePhoto: View {
         }
         .contentShape(Rectangle())
         .gesture(magnify.simultaneously(with: drag), including: fingersMoveIt ? .none : .all)
+        #if os(iOS)
         .background {
             TwoFingerGesture(moves: fingersMoveIt, fingers: fingersChanged, pan: twoFingerPan, pinch: twoFingerPinch, ended: twoFingerEnded)
         }
+        #endif
         .simultaneousGesture(reviewSwipe, including: review && !zoomed ? .all : .none)
         .haptic(.selection, trigger: swipe?.rating)
         .haptic(.selection, trigger: swipe?.flag)
@@ -558,6 +604,13 @@ struct ZoomablePhoto: View {
         .onChange(of: photo) {
             zoom = 1; zoomAtStart = 1; pan = .zero; panAtStart = .zero; zoomed = false
         }
+        .onChange(of: model.editor.zoomAsk) { _, ask in
+            guard let ask else { return }
+            model.editor.zoomAsk = nil
+            zoomTo(ask)
+        }
+        .onChange(of: shownPercent, initial: true) { _, percent in model.editor.zoomPercent = percent }
+        .onChange(of: zoom > 1.01, initial: true) { _, on in model.editor.zoomedIn = on }
         .task(id: request) {
             guard let engine = model.engine, let r = request else { return }
             frame = try? await engine.execute("view.frame", ["id": .int(Int64(clamping: photo)), "applyCrop": .bool(r.crop)], as: PhotoFrame.self)
@@ -617,6 +670,35 @@ struct ZoomablePhoto: View {
         return CGRect(x: center.x - size.width / 2, y: center.y - size.height / 2, width: size.width, height: size.height)
     }
 
+    /// Zoom where the bar or a key asked: the photo fitted, filling the window, or at some screen
+    /// pixels per photo pixel (centred).
+    private func zoomTo(_ ask: ZoomAsk) {
+        guard let fitted = zoomedRect(model.images.view(for: photo), zoom: 1, pan: .zero), fitted.width > 0, fitted.height > 0 else { return }
+        let target: CGFloat
+        switch ask {
+        case .fit:
+            target = 1
+        case .fill:
+            target = max(canvas.width / fitted.width, canvas.height / fitted.height)
+        case .actual(let x):
+            guard let s = summary, s.width > 0, s.height > 0 else { return }
+            target = CGFloat(Double(max(s.width, s.height)) * x) / (max(fitted.width, fitted.height) * displayScale)
+        }
+        withAnimation(.snappy) {
+            zoom = min(max(target, 1), Self.maxZoom)
+            pan = .zero
+            zoomAtStart = zoom
+            panAtStart = .zero
+            zoomed = zoom > 1.01
+        }
+    }
+
+    /// The zoom as the bar shows it: percent of the photo's own pixels.
+    private var shownPercent: Int? {
+        guard let rect = zoomedRect(model.images.view(for: photo), zoom: zoom, pan: pan), let s = summary, s.width > 0, s.height > 0 else { return nil }
+        return Int((max(rect.width, rect.height) * displayScale / CGFloat(max(s.width, s.height)) * 100).rounded())
+    }
+
     /// A tap: a picker takes the colour there; otherwise the bars come and go.
     private func tapped(at location: CGPoint, picture: ImageStore.Picture?) {
         if held {
@@ -665,7 +747,7 @@ struct ZoomablePhoto: View {
     private var magnify: some Gesture {
         MagnifyGesture()
             .onChanged { value in
-                zoom = min(max(zoomAtStart * value.magnification, 1), 8)
+                zoom = min(max(zoomAtStart * value.magnification, 1), Self.maxZoom)
                 pan = clamped(pan)
                 zoomed = zoom > 1.01
             }
@@ -789,27 +871,28 @@ extension Tool {
     }
 }
 
+#if os(iOS)
 /// The tools under a photo, in the bottom bar: icons, the open one switched on (a tap on it closes
 /// it).
 struct ToolBar: ToolbarContent {
     let model: AppModel
 
     var body: some ToolbarContent {
-        ToolbarSpacer(.flexible, placement: .bottomBar)
+        ToolbarSpacer(.flexible, placement: .lcBottom)
         if #available(iOS 27.0, *) {
             // one item each, not a group: on a Duo the bar is a column, the system drops the last items that do not fit,
             // and only an item can say it matters more
             ForEach(Tool.bar) { tool in
-                ToolbarItem(placement: .bottomBar) { toggle(tool) }
+                ToolbarItem(placement: .lcBottom) { toggle(tool) }
                     .duoPriority(tool.barPriority)
             }
         } else {
             // (before iOS 27 the open tool is shown switched on in a group, not in items of their own)
-            ToolbarItemGroup(placement: .bottomBar) {
+            ToolbarItemGroup(placement: .lcBottom) {
                 ForEach(Tool.bar) { toggle($0) }
             }
         }
-        ToolbarSpacer(.flexible, placement: .bottomBar)
+        ToolbarSpacer(.flexible, placement: .lcBottom)
     }
 
     private func toggle(_ tool: Tool) -> some View {
@@ -839,6 +922,7 @@ struct ToolBar: ToolbarContent {
             .withTintColor(.white, renderingMode: .alwaysOriginal)
     }
 }
+#endif
 
 /// The Edit tool's groups: Auto, then Profile, Light, Color… (one open at a time).
 struct GroupBar: View {
@@ -1003,7 +1087,7 @@ extension View {
             // of a Duo's two; the ones at the top, far from any, keep their 28 pt)
             self
                 .clipShape(ConcentricRectangle(corners: .concentric(minimum: 28)))
-                .background(Color(uiColor: .secondarySystemBackground), in: ConcentricRectangle(corners: .concentric(minimum: 28)))
+                .background(Color.lcSecondaryBackground, in: ConcentricRectangle(corners: .concentric(minimum: 28)))
                 .padding(.horizontal, 8)
                 .padding(.bottom, 4)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -1041,10 +1125,10 @@ struct UndoMenu: View {
             ControlGroup {
                 Button("Undo", systemImage: "arrow.uturn.backward") { model.undo() }
                     .disabled(model.state.undo == nil)
-                    .menuActionDismissBehavior(.disabled)
+                    .keepsMenuOpen()
                 Button("Redo", systemImage: "arrow.uturn.forward") { model.redo() }
                     .disabled(model.state.redo == nil)
-                    .menuActionDismissBehavior(.disabled)
+                    .keepsMenuOpen()
             }
             Section {
                 Button("Reset", systemImage: "arrow.counterclockwise") { model.perform("develop.reset"); model.buzz(.light) }
@@ -1117,7 +1201,7 @@ struct PhotoMoreItems: View {
                 }
             }
             Section {
-                if UIApplication.shared.supportsMultipleScenes {
+                if Platform.supportsMultipleWindows {
                     Button("Second Window", systemImage: "macwindow.on.rectangle") { model.secondWindowAsked = true }
                 }
                 Button("Set as Reference", systemImage: "pin") {
@@ -1162,9 +1246,7 @@ struct ToolScreenBar: View {
         }
     }
 }
-#endif
 
-#if os(iOS)
 /// A review swipe: which side, where it started, where it is.
 nonisolated struct ReviewSwipe: Equatable {
     let stars: Bool
@@ -1207,9 +1289,7 @@ struct ReviewHUD: View {
         .animation(.snappy, value: flag)
     }
 }
-#endif
 
-#if os(iOS)
 /// Before / After: the photo as it was and as it is, side by side or one above the other (on its
 /// own: side by side on a wide screen), or split by a line to drag across (left / right or top /
 /// bottom), as egui's Before/After modes.
@@ -1406,4 +1486,3 @@ enum SoftProof {
         spaces.first { $0.0 == space }?.1 ?? space
     }
 }
-#endif

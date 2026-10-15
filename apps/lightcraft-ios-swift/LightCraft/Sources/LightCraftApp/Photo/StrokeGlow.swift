@@ -1,4 +1,3 @@
-#if os(iOS)
 import SwiftUI
 
 /// Drawing a brushed stroke the tools share: its shape as a path, its outline, and the glow shown
@@ -61,4 +60,3 @@ enum StrokeGlow {
         }
     }
 }
-#endif

@@ -1,4 +1,3 @@
-#if os(iOS)
 import LightCraftCore
 import SwiftUI
 
@@ -53,7 +52,7 @@ struct FilterSheet: View {
                 }
             }
             .navigationTitle("Filter")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close", systemImage: "xmark") { dismiss() }
@@ -217,7 +216,7 @@ private struct FacetList: View {
             }
         }
         .navigationTitle(title)
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineTitle()
         .searchable(text: $search)
         .task { await load() }
     }
@@ -260,4 +259,3 @@ private struct FacetList: View {
         }
     }
 }
-#endif

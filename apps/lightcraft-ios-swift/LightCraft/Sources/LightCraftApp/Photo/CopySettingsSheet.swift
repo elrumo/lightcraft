@@ -1,4 +1,3 @@
-#if os(iOS)
 import LightCraftCore
 import SwiftUI
 
@@ -17,7 +16,7 @@ struct CopySettingsSheet: View {
                 SettingsGroupsSection(groups: $groups)
             }
             .navigationTitle(pasteOnto == nil ? "Copy Settings" : "Paste Settings")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel", systemImage: "xmark") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
@@ -108,7 +107,7 @@ struct CreatePresetSheet: View {
                 SettingsGroupsSection(groups: $groups)
             }
             .navigationTitle("Create Preset")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel", systemImage: "xmark") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
@@ -136,4 +135,3 @@ struct CreatePresetSheet: View {
         }
     }
 }
-#endif

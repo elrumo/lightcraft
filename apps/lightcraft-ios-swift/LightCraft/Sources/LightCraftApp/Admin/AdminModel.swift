@@ -1,4 +1,3 @@
-#if os(iOS)
 import LightCraftCore
 import SwiftUI
 
@@ -249,4 +248,3 @@ struct AdminMeter: View {
         ProgressView(value: f).tint(warns && f > 0.9 ? .red : warns && f > 0.75 ? .orange : .accentColor)
     }
 }
-#endif

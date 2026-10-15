@@ -1,4 +1,3 @@
-#if os(iOS)
 import LightCraftCore
 import SwiftUI
 
@@ -41,12 +40,12 @@ struct CropTools: View {
     @State private var dialStart: Double?
 
     /// The crop's composition guides (`crop.guides` kinds).
-    private static let guides: [(String, String)] = [
+    static let guides: [(String, String)] = [
         ("thirds", "Rule of Thirds"), ("grid", "Grid"), ("golden", "Golden Ratio"), ("diagonal", "Diagonal"),
         ("triangle", "Golden Triangle"), ("spiral", "Golden Spiral"), ("none", "None"),
     ]
 
-    private static let ratios: [(String, String)] = [
+    static let ratios: [(String, String)] = [
         ("1x1", "1 × 1"), ("4x5", "4 × 5"), ("3x4", "3 × 4"), ("2x3", "2 × 3"), ("5x7", "5 × 7"),
         ("9x16", "9 × 16"), ("10x16", "10 × 16"), ("8.5x11", "8.5 × 11"), ("1x2", "1 × 2"),
     ]
@@ -154,43 +153,8 @@ struct CropTools: View {
                 .scrollIndicators(.hidden)
             } else {
                 ScrollView {
-                    VStack(alignment: .leading) {
-                        Text("Upright").font(.subheadline.weight(.semibold))
-                        HStack {
-                            ForEach([("auto", "Auto"), ("level", "Level"), ("vertical", "Vertical"), ("full", "Full"), ("guided", "Guided")], id: \.0) { mode, label in
-                                let on = editor.setting("geometry", "upright").string == mode
-                                Button(LocalizedStringKey(label)) {
-                                    model.perform("geometry.upright", ["mode": .string(on ? "off" : mode)])
-                                    // Guided: draw its guides on the photo
-                                    editor.cropDraw = mode == "guided" && !on ? "guides" : nil
-                                }
-                                .buttonStyle(.bordered)
-                                .tint(on ? .accentColor : .secondary)
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.7)
-                            }
-                        }
-                        if editor.setting("geometry", "upright").string == "guided" {
-                            let n = editor.setting("geometry", "guides").array?.count ?? 0
-                            Text("\(n) of 4 guides — drag along lines that should be vertical or horizontal.")
-                                .font(.caption).foregroundStyle(.secondary)
-                            HStack {
-                                Button(editor.cropDraw == "guides" ? "Done" : "Draw Guides") {
-                                    editor.cropDraw = editor.cropDraw == "guides" ? nil : "guides"
-                                }
-                                if n > 0 {
-                                    Button("Clear Guides", role: .destructive) { model.perform("geometry.guides", ["guides": []]) }
-                                }
-                            }
-                            .buttonStyle(.bordered)
-                        }
-                        Sliders(section: "optics") { $0.id == "optics.distortion" }
-                        Sliders(section: "geometry") { $0.id != "crop.angle" }
-                        Toggle("Constrain Crop", isOn: Binding(get: { editor.setting("geometry", "constrain_crop").bool == true }, set: {
-                            model.perform("develop.merge", ["settings": ["geometry": ["constrain_crop": .bool($0)]], "label": "Constrain Crop"])
-                        }))
-                    }
-                    .padding(.horizontal, 16)
+                    GeometryControls()
+                        .padding(.horizontal, 16)
                 }
                 .frame(maxHeight: 236)
             }
@@ -227,7 +191,53 @@ struct CropTools: View {
         }
         .foregroundStyle(on ? Color.white : Color.primary)
         .frame(width: 72, height: 66)
-        .background(on ? Color.accentColor : Color(uiColor: .tertiarySystemFill), in: .rect(cornerRadius: 12))
+        .background(on ? Color.accentColor : Color.lcTertiaryFill, in: .rect(cornerRadius: 12))
+    }
+}
+
+/// Crop's Geometry: Upright (Auto, Level, Vertical, Full, Guided and its guides), the distortion and
+/// perspective sliders, Constrain Crop.
+struct GeometryControls: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        let editor = model.editor
+        VStack(alignment: .leading) {
+            Text("Upright").font(.subheadline.weight(.semibold))
+            HStack {
+                ForEach([("auto", "Auto"), ("level", "Level"), ("vertical", "Vertical"), ("full", "Full"), ("guided", "Guided")], id: \.0) { mode, label in
+                    let on = editor.setting("geometry", "upright").string == mode
+                    Button(LocalizedStringKey(label)) {
+                        model.perform("geometry.upright", ["mode": .string(on ? "off" : mode)])
+                        // Guided: draw its guides on the photo
+                        editor.cropDraw = mode == "guided" && !on ? "guides" : nil
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(on ? .accentColor : .secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                }
+            }
+            if editor.setting("geometry", "upright").string == "guided" {
+                let n = editor.setting("geometry", "guides").array?.count ?? 0
+                Text("\(n) of 4 guides — drag along lines that should be vertical or horizontal.")
+                    .font(.caption).foregroundStyle(.secondary)
+                HStack {
+                    Button(editor.cropDraw == "guides" ? "Done" : "Draw Guides") {
+                        editor.cropDraw = editor.cropDraw == "guides" ? nil : "guides"
+                    }
+                    if n > 0 {
+                        Button("Clear Guides", role: .destructive) { model.perform("geometry.guides", ["guides": []]) }
+                    }
+                }
+                .buttonStyle(.bordered)
+            }
+            Sliders(section: "optics") { $0.id == "optics.distortion" }
+            Sliders(section: "geometry") { $0.id != "crop.angle" }
+            Toggle("Constrain Crop", isOn: Binding(get: { editor.setting("geometry", "constrain_crop").bool == true }, set: {
+                model.perform("develop.merge", ["settings": ["geometry": ["constrain_crop": .bool($0)]], "label": "Constrain Crop"])
+            }))
+        }
     }
 }
 
@@ -341,27 +351,53 @@ struct RemoveTools: View {
                 .accessibilityLabel("More")
             }
             .padding(.horizontal, 16)
+            if editor.removeMode == "remove" {
+                Picker("Select with", selection: $editor.removeTap) {
+                    Label("Brush", systemImage: "paintbrush.pointed").tag(false)
+                    Label("Tap", systemImage: "hand.tap").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 16)
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
             VStack(spacing: 0) {
-                ControlSlider(spec: ControlSpec(id: "remove.size", label: "Size", section: "remove", min: 1, max: 250, default: 20, step: 1, decimals: 0),
-                              value: editor.removeSize * 1000, set: { editor.removeSize = $0 / 1000 }, editing: { _ in }, reset: { editor.removeSize = 0.02 })
+                if editor.removeMode == "remove" && editor.removeTap {
+                    // how far past the tapped object's edge the spot reaches (the selected tapped spot's own, as it is)
+                    ControlSlider(spec: ControlSpec(id: "remove.reach", label: "Size", section: "remove", min: 1, max: 30, default: 4, step: 1, decimals: 0),
+                                  value: (model.tappedSpot?.spot["size"].double ?? editor.removeTapSize) * 1000, set: { model.tapSizeChanged($0 / 1000) },
+                                  editing: { model.tapSizeEditing($0) }, reset: { model.tapSizeChanged(0.004) })
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
+                } else {
+                    ControlSlider(spec: ControlSpec(id: "remove.size", label: "Size", section: "remove", min: 1, max: 250, default: 20, step: 1, decimals: 0),
+                                  value: editor.removeSize * 1000, set: { editor.removeSize = $0 / 1000 }, editing: { _ in }, reset: { editor.removeSize = 0.02 })
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
+                }
                 if editor.removeMode != "remove" {
                     ControlSlider(spec: ControlSpec(id: "remove.feather", label: "Feather", section: "remove", min: 0, max: 100, default: 50, step: 1, decimals: 0),
                                   value: editor.removeFeather, set: { editor.removeFeather = $0 }, editing: { _ in }, reset: { editor.removeFeather = 50 })
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
                     ControlSlider(spec: ControlSpec(id: "remove.opacity", label: "Opacity", section: "remove", min: 0, max: 100, default: 100, step: 1, decimals: 0),
                                   value: editor.removeOpacity, set: { editor.removeOpacity = $0 }, editing: { _ in }, reset: { editor.removeOpacity = 100 })
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
                 if editor.removeMode == "remove" {
                     GenerativeAISwitch()
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
                 if editor.visualizeSpots {
                     ControlSlider(spec: ControlSpec(id: "remove.spotsThreshold", label: "Threshold", section: "remove", min: 0, max: 100, default: 50, step: 1, decimals: 0),
                                   value: editor.spotsThreshold, set: { editor.spotsThreshold = $0 }, editing: { _ in }, reset: { editor.spotsThreshold = 50 })
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
             }
             .padding(.horizontal, 16)
             Group {
                 if spots.isEmpty {
-                    Text("Paint over what to take away.")
+                    if editor.removeMode == "remove" && editor.removeTap {
+                        Text("Tap an object to take it away.").transition(.opacity)
+                    } else {
+                        Text("Paint over what to take away.").transition(.opacity)
+                    }
                 } else {
                     Text("^[\(spots.count) spot](inflect: true) · tap a pin for more")
                 }
@@ -369,6 +405,11 @@ struct RemoveTools: View {
             .font(.footnote).foregroundStyle(.secondary)
         }
         .padding(.vertical, 12)
+        // what appears makes room smoothly, and settles in, instead of popping in and pushing the rest at once
+        .animation(.snappy, value: editor.removeMode)
+        .animation(.snappy, value: editor.removeTap)
+        .animation(.snappy, value: editor.visualizeSpots)
+        .animation(.snappy, value: spots.isEmpty)
         // under the photo it's a sheet like the other tools' panels
         .toolCard(!column)
     }
@@ -426,4 +467,3 @@ struct GenerativeAISwitch: View {
         }
     }
 }
-#endif

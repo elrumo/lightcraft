@@ -1,4 +1,3 @@
-#if os(iOS)
 import Foundation
 import LightCraftCore
 import Observation
@@ -50,6 +49,13 @@ nonisolated enum Tool: String, CaseIterable, Identifiable {
         case .info: "Info"
         }
     }
+}
+
+/// Where a zoom is asked to go: the photo fitted, filling the window, or at `actual` screen pixels per
+/// photo pixel (1: 100 %).
+nonisolated enum ZoomAsk: Equatable {
+    case fit, fill
+    case actual(Double)
 }
 
 /// The Edit tool's groups, one shown at a time (the desktop's sections).
@@ -129,6 +135,10 @@ final class EditorModel {
     var fingers = 0
     /// The Remove tool: its mode and brush (size as a fraction of the photo's long edge).
     var removeMode = "remove"
+    /// Remove selects by tapping an object (Apple Vision) instead of painting a stroke.
+    var removeTap = false
+    /// Tap mode's Size: how far past a tapped object's edge its spot reaches (a fraction of the photo's long edge).
+    var removeTapSize = 0.004
     var removeSize = 0.02
     var removeFeather = 50.0
     var removeOpacity = 100.0
@@ -139,6 +149,12 @@ final class EditorModel {
     var eraseReady = false
     /// The Masking tool's tool in hand on the photo (`brush`, `colorRange`) and the brush.
     var maskTool: String?
+    /// The Object tool: the next tap takes the object out of the selection instead of adding it, a
+    /// selection is being computed, and the combine mode (`add`, `subtract`, `intersect`) of the part
+    /// the next tap makes (`nil`: it makes a mask of its own).
+    var objectSubtract = false
+    var selecting = false
+    var objectOp: String?
     var brushSize = 0.03
     var brushFeather = 50.0
     var brushFlow = 100.0
@@ -167,6 +183,13 @@ final class EditorModel {
     /// Red Eye: a pet's eyes, and the correction chosen (its sliders).
     var eyePet = false
     var eye = 0
+    /// A zoom asked for from outside the loupe (a Mac's bottom bar and keys): the loupe applies it and
+    /// clears it.
+    var zoomAsk: ZoomAsk?
+    /// What the loupe says of its zoom, for the bar: percent of the photo's own pixels, and whether it is
+    /// past fit.
+    var zoomPercent: Int?
+    var zoomedIn = false
 
     enum Pick {
         case whiteBalance, pointColor
@@ -300,4 +323,3 @@ final class EditorModel {
     var isBW: Bool { setting("treatment").string == "bw" }
     var hdr: Bool { setting("hdr", "enabled").bool == true }
 }
-#endif

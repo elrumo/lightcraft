@@ -7,6 +7,8 @@ use lightcraft_engine::activity::TaskInfo;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::startup::Profile;
+
 /// A request: `{"id": 7, "method": "engine.execute", "params": {...}}`. The reply event carries
 /// the same `id`.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -48,6 +50,9 @@ pub struct OpenConfig {
     /// Default: what `lightcraft-sysmem` reports.
     #[serde(default)]
     pub available_memory: Option<u64>,
+    /// Whose rules start the engine: a phone's (default) or a Mac's ([`Profile`]).
+    #[serde(default)]
+    pub profile: Profile,
 }
 
 /// An error answer: `code` is the kind (the engine's error variants in camelCase —

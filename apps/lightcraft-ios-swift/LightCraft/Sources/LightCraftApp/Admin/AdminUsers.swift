@@ -1,4 +1,3 @@
-#if os(iOS)
 import LightCraftCore
 import SwiftUI
 
@@ -26,7 +25,7 @@ struct AdminUsers: View {
         }
         .navigationTitle("Users")
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItem(placement: .lcTrailing) {
                 Button("Add User", systemImage: "plus") { adding = true }
             }
         }
@@ -85,7 +84,7 @@ struct AdminAddUser: View {
             Form {
                 Section {
                     TextField("User name", text: $name)
-                        .textInputAutocapitalization(.never)
+                        .noAutocap()
                         .autocorrectionDisabled()
                     SecureField("Password", text: $password)
                         .textContentType(.newPassword)
@@ -95,7 +94,7 @@ struct AdminAddUser: View {
                 }
             }
             .navigationTitle("Add User")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel", systemImage: "xmark") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
@@ -191,7 +190,7 @@ struct AdminUserDetail: View {
                         askLimit = true
                     }
                     .alert("Storage limit for \(name)", isPresented: $askLimit) {
-                        TextField("No limit", text: $limit).keyboardType(.decimalPad)
+                        TextField("No limit", text: $limit).lcKeyboard(.number)
                         Button("Set Limit") { setLimit() }.disabled(parsedLimit == nil)
                         Button("Cancel", role: .cancel) {}
                     } message: {
@@ -207,7 +206,7 @@ struct AdminUserDetail: View {
                     }
                     .disabled(onlyAdmin)
                     .alert("Remove \(name)?", isPresented: $askRemove) {
-                        TextField("Type \(name) to confirm", text: $typed).textInputAutocapitalization(.never).autocorrectionDisabled()
+                        TextField("Type \(name) to confirm", text: $typed).noAutocap().autocorrectionDisabled()
                         Button("Remove User", role: .destructive) { remove() }.disabled(typed != name)
                         Button("Cancel", role: .cancel) {}
                     } message: {
@@ -219,7 +218,7 @@ struct AdminUserDetail: View {
             }
         }
         .navigationTitle(name)
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineTitle()
         .adminPage(admin)
         .adminTask(admin, tick) { await load() }
         .refreshable { await load() }
@@ -344,7 +343,7 @@ struct AdminDevices: View {
             }
         }
         .navigationTitle("Devices")
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineTitle()
         .adminPage(admin)
         .adminTask(admin, tick) { await load() }
         .refreshable { await load() }
@@ -406,7 +405,7 @@ struct AdminShares: View {
             }
         }
         .navigationTitle("Shared Links")
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineTitle()
         .adminPage(admin)
         .adminTask(admin, tick) { await load() }
         .refreshable { await load() }
@@ -431,4 +430,3 @@ struct AdminShares: View {
         }
     }
 }
-#endif

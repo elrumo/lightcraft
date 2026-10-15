@@ -1,4 +1,3 @@
-#if os(iOS)
 import LightCraftCore
 import SwiftUI
 
@@ -21,7 +20,7 @@ struct AdminView: View {
             }
         }
         .navigationTitle("Server Administration")
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineTitle()
         .task {
             admin.engine = model.engine
             await admin.restore()
@@ -60,9 +59,9 @@ struct AdminSignIn: View {
             }
             Section {
                 TextField("Server", text: $server, prompt: Text(verbatim: "https://photos.example.com"))
-                    .keyboardType(.URL)
+                    .lcKeyboard(.url)
                     .textContentType(.URL)
-                    .textInputAutocapitalization(.never)
+                    .noAutocap()
                     .autocorrectionDisabled()
                     .focused($focus, equals: .server)
                     .submitLabel(.next)
@@ -73,12 +72,12 @@ struct AdminSignIn: View {
             if setup == true {
                 Section {
                     TextField("Setup code", text: $code, prompt: Text(verbatim: "ABCD-1234"))
-                        .textInputAutocapitalization(.characters)
+                        .lcAutocapCharacters()
                         .autocorrectionDisabled()
                         .focused($focus, equals: .code)
                     TextField("User name", text: $user)
                         .textContentType(.username)
-                        .textInputAutocapitalization(.never)
+                        .noAutocap()
                         .autocorrectionDisabled()
                         .focused($focus, equals: .user)
                     SecureField("Password", text: $password)
@@ -100,7 +99,7 @@ struct AdminSignIn: View {
                 Section {
                     TextField("User name", text: $user)
                         .textContentType(.username)
-                        .textInputAutocapitalization(.never)
+                        .noAutocap()
                         .autocorrectionDisabled()
                         .focused($focus, equals: .user)
                         .submitLabel(.next)
@@ -210,7 +209,7 @@ struct AdminOverview: View {
                 LabeledContent("Server Address") {
                     Text(admin.server).textSelection(.enabled).foregroundStyle(.secondary)
                 }
-                Button("Copy Address", systemImage: "doc.on.doc") { UIPasteboard.general.string = admin.server }
+                Button("Copy Address", systemImage: "doc.on.doc") { Platform.copy(admin.server) }
             } header: {
                 Text("Connect a Device")
             } footer: {
@@ -234,7 +233,7 @@ struct AdminOverview: View {
             }
         }
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItem(placement: .lcTrailing) {
                 Menu("Account", systemImage: "person.crop.circle") {
                     Text(admin.user)
                     Button("Sign Out", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive) { Task { await admin.signOut() } }
@@ -258,4 +257,3 @@ struct AdminOverview: View {
         }
     }
 }
-#endif

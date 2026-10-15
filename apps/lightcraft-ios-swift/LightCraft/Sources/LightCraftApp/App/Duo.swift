@@ -1,12 +1,10 @@
-#if os(iOS)
 import LightCraftCore
 import SwiftUI
-import UIKit
 
 // iPhone Duo (iOS 27.1) and the iOS 27 toolbar APIs, in one file (docs/ios-swift.md → iPhone Duo).
 //
 // The app's floor is iOS 26 and CI builds with Xcode 26 (Swift 6.2), so every iOS 27 symbol sits behind
-// `#if compiler(>=6.4) && !DUO_OFF` (an Xcode 26 toolchain never sees it; build with
+// `#if compiler(>=6.4) && !DUO_OFF && os(iOS)` (an Xcode 26 toolchain never sees it, nor does the Mac app; build with
 // SWIFT_ACTIVE_COMPILATION_CONDITIONS=DUO_OFF to compile that path with a newer one) and `#available` (an iOS 26
 // device never runs it). Each wrapper's fallback is what the app did before the Duo, so call sites carry no
 // version checks.
@@ -157,7 +155,7 @@ private struct DuoReporter: ViewModifier {
 
     /// The reserved regions that touch the window (the fold and the camera), active or not.
     private static func regions(_ proxy: GeometryProxy) -> [DuoFacts.Region] {
-        #if compiler(>=6.4) && !DUO_OFF
+        #if compiler(>=6.4) && !DUO_OFF && os(iOS)
         if #available(iOS 27.1, *) {
             func list(_ kind: ReservedRegion.Kind, _ name: String) -> [DuoFacts.Region] {
                 proxy.reservedRegions(kind: kind, options: .includeInactive).map { DuoFacts.Region(kind: name, active: $0.isActive, frame: $0.frame) }
@@ -171,7 +169,7 @@ private struct DuoReporter: ViewModifier {
 
 extension View {
     @ViewBuilder fileprivate func duoHinge(_ facts: DuoFacts) -> some View {
-        #if compiler(>=6.4) && !DUO_OFF
+        #if compiler(>=6.4) && !DUO_OFF && os(iOS)
         if #available(iOS 27.1, *) {
             onHingeChange { _, new in
                 facts.hinge = new.hinge.map { hinge in
@@ -216,7 +214,7 @@ private struct FoldReader: ViewModifier {
 
     private func measure(_ proxy: GeometryProxy) -> DuoFold? {
         if let fake = facts.fakeFold { return fake.resolve(in: proxy.size) }
-        #if compiler(>=6.4) && !DUO_OFF
+        #if compiler(>=6.4) && !DUO_OFF && os(iOS)
         if #available(iOS 27.1, *) {
             guard let region = proxy.reservedRegions(kind: .division).first(where: \.isActive) else { return nil }
             // (a division strip that runs most of the way across is a hinge; a short one is something else)
@@ -241,7 +239,7 @@ extension ToolbarContent {
     /// `priority` for this item (iOS 27.0 and later; before, a bar has no such choice).
     @ToolbarContentBuilder
     func duoPriority(_ priority: DuoPriority) -> some ToolbarContent {
-        #if compiler(>=6.4) && !DUO_OFF
+        #if compiler(>=6.4) && !DUO_OFF && os(iOS)
         if #available(iOS 27.0, *) {
             visibilityPriority(priority == .high ? .high : priority == .low ? .low : .automatic)
         } else {
@@ -261,13 +259,13 @@ struct DuoOverflow<Items: View>: ToolbarContent {
     private let items: Items
 
     /// `placement`: where the menu of our own goes before iOS 27 (the system's overflow menu has no say).
-    init(placement: ToolbarItemPlacement = .topBarTrailing, @ViewBuilder items: () -> Items) {
+    init(placement: ToolbarItemPlacement = .lcTrailing, @ViewBuilder items: () -> Items) {
         self.placement = placement
         self.items = items()
     }
 
     var body: some ToolbarContent {
-        #if compiler(>=6.4) && !DUO_OFF
+        #if compiler(>=6.4) && !DUO_OFF && os(iOS)
         if #available(iOS 27.0, *) {
             ToolbarOverflowMenu { items }
         } else {
@@ -278,4 +276,3 @@ struct DuoOverflow<Items: View>: ToolbarContent {
         #endif
     }
 }
-#endif

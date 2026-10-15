@@ -1,4 +1,3 @@
-#if os(iOS)
 import LightCraftCore
 import SwiftUI
 
@@ -264,4 +263,3 @@ struct CropOverlay: View {
         return CGPoint(x: a.x + (b.x - a.x) / d * min(len, d / 2), y: a.y + (b.y - a.y) / d * min(len, d / 2))
     }
 }
-#endif

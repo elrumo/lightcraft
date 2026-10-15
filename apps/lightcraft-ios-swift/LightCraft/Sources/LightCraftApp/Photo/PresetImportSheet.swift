@@ -1,4 +1,3 @@
-#if os(iOS)
 import LightCraftCore
 import SwiftUI
 import UniformTypeIdentifiers
@@ -52,7 +51,7 @@ struct PresetImportSheet: View {
                 }
             }
             .navigationTitle("Import Presets")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button(outcome == nil ? "Cancel" : "Done") { dismiss() }
@@ -151,4 +150,3 @@ enum PresetFiles {
         }
     }
 }
-#endif

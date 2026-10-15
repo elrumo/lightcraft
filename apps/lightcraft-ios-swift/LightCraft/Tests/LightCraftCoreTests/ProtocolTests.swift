@@ -111,7 +111,7 @@ struct ProtocolTests {
         let request = try f["request"].decode(Request.self)
         #expect(try JSONValue.encode(request) == f["request"])
         let config = try f["openConfig"].decode(OpenConfig.self)
-        #expect(config.demo && config.deviceName == "iPhone")
+        #expect(config.demo && config.deviceName == "iPhone" && config.profile == .desktop)
         // the engine refuses unknown fields: what Swift writes must be exactly what it knows
         // (Swift leaves out what is nil, Rust writes it as null: the same to the engine)
         #expect(withoutNulls(try JSONValue.encode(config)) == withoutNulls(f["openConfig"]))

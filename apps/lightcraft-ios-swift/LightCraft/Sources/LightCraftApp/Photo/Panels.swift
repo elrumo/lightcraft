@@ -1,4 +1,3 @@
-#if os(iOS)
 import LightCraftCore
 import SwiftUI
 
@@ -170,7 +169,7 @@ struct VariantPreview: View {
     @State private var slot: String?
 
     var body: some View {
-        Color(uiColor: .tertiarySystemFill)
+        Color.lcTertiaryFill
             .overlay {
                 if let slot, let p = model.images.pictures[slot] {
                     Image(decorative: p.image, scale: 1).resizable().scaledToFill()
@@ -351,7 +350,7 @@ struct AllMetadataSheet: View {
             }
             .searchable(text: $search, prompt: "Filter fields")
             .navigationTitle("All Metadata")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineTitle()
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done", systemImage: "checkmark") { dismiss() } } }
             .overlay { if rows.isNull { ProgressView() } }
         }
@@ -376,4 +375,3 @@ struct AllMetadataSheet: View {
         return out
     }
 }
-#endif

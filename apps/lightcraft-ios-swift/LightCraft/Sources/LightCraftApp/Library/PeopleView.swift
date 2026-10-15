@@ -1,4 +1,3 @@
-#if os(iOS)
 import LightCraftCore
 import MapKit
 import SwiftUI
@@ -229,7 +228,7 @@ struct PersonView: View {
         }
         .haptic(.selection, trigger: confirmed.count)
         .navigationTitle(shown)
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineTitle()
         .task(id: Load(name: shown, revision: model.settledRevision)) {
             guard let engine = model.engine else { return }
             info = (try? await engine.execute("faces.person", ["name": .string(shown)])) ?? .null
@@ -276,7 +275,7 @@ struct FaceDisc: View {
     var body: some View {
         let shape = square ? AnyShape(.rect(cornerRadius: 10)) : AnyShape(.circle)
         shape
-            .fill(Color(uiColor: .tertiarySystemFill))
+            .fill(Color.lcTertiaryFill)
             .overlay {
                 if let slot, let p = model.images.pictures[slot] {
                     Image(decorative: p.image, scale: 1).resizable().scaledToFill()
@@ -349,7 +348,7 @@ struct MapScreen: View {
             }
         }
         .navigationTitle("Map")
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineTitle()
         .searchable(text: $search, prompt: "Go to a place")
         .searchSuggestions {
             ForEach(Array(places.enumerated()), id: \.offset) { _, p in
@@ -439,7 +438,7 @@ private struct MapMarker: View {
     @ViewBuilder private var mosaic: some View {
         let gap: CGFloat = 2
         switch photos.count {
-        case 0: Color(uiColor: .tertiarySystemFill)
+        case 0: Color.lcTertiaryFill
         case 1: thumb(0)
         case 2: HStack(spacing: gap) { thumb(0); thumb(1) }
         case 3: HStack(spacing: gap) { thumb(0); VStack(spacing: gap) { thumb(1); thumb(2) } }
@@ -452,7 +451,7 @@ private struct MapMarker: View {
     }
 
     private func thumb(_ i: Int) -> some View {
-        Color(uiColor: .tertiarySystemFill)
+        Color.lcTertiaryFill
             .overlay {
                 if let id = photos[safe: i], let p = model.images.thumb(id) {
                     Image(decorative: p.image, scale: 1).resizable().scaledToFill()
@@ -461,4 +460,3 @@ private struct MapMarker: View {
             .clipped()
     }
 }
-#endif

@@ -16,9 +16,17 @@ public struct Request: Codable, Sendable {
     }
 }
 
+/// Whose rules start the engine (`Profile`, crates/apphost/src/startup.rs). A phone's: the app's
+/// container, the memory the system allows, the demo library when the real one won't open. A Mac's:
+/// the library in Pictures, the machine's RAM, and an error (not a demo) when the library won't open.
+public enum Profile: String, Codable, Sendable {
+    case mobile, desktop
+}
+
 /// How to start the engine (`lc_open`). Unknown fields are refused by the engine.
 public struct OpenConfig: Codable, Sendable {
-    /// The app's home folder: the library goes in `Documents/`, models in `Library/Caches/`.
+    /// The app's home folder: the library goes in `Documents/` (`Pictures/` on a Mac), models in
+    /// `Library/Caches/`.
     public var home: String?
     /// The app's tmp folder: staging, the automation script and its replies.
     public var tmp: String?
@@ -31,8 +39,10 @@ public struct OpenConfig: Codable, Sendable {
     public var script: String?
     public var renderThreads: Int?
     public var availableMemory: UInt64?
+    /// `nil`: the engine's default, a phone's.
+    public var profile: Profile?
 
-    public init(home: String? = nil, tmp: String? = nil, library: String? = nil, demo: Bool = false, deviceName: String? = nil, script: String? = nil, renderThreads: Int? = nil, availableMemory: UInt64? = nil) {
+    public init(home: String? = nil, tmp: String? = nil, library: String? = nil, demo: Bool = false, deviceName: String? = nil, script: String? = nil, renderThreads: Int? = nil, availableMemory: UInt64? = nil, profile: Profile? = nil) {
         self.home = home
         self.tmp = tmp
         self.library = library
@@ -41,6 +51,7 @@ public struct OpenConfig: Codable, Sendable {
         self.script = script
         self.renderThreads = renderThreads
         self.availableMemory = availableMemory
+        self.profile = profile
     }
 }
 

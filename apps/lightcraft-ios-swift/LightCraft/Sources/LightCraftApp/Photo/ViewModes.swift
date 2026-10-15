@@ -1,4 +1,3 @@
-#if os(iOS)
 import LightCraftCore
 import SwiftUI
 
@@ -75,10 +74,10 @@ struct CompareView: View {
             .padding(.leading, fold?.vertical == true ? fold?.frame.maxX ?? 0 : 0)
             .padding(.bottom, 8)
         }
-        .background(Color(uiColor: .systemBackground))
+        .background(Color.lcBackground)
         .onFold($fold)
         .navigationTitle("Compare")
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineTitle()
         .onAppear {
             if select == nil { select = model.state.active.flatMap { ids.contains($0) ? $0 : nil } ?? ids.first }
             if candidate == nil { candidate = ids.first { $0 != select } }
@@ -185,9 +184,9 @@ struct SurveyView: View {
             }
             .padding(8)
         }
-        .background(Color(uiColor: .systemBackground))
+        .background(Color.lcBackground)
         .navigationTitle("Survey")
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineTitle()
     }
 
     /// Columns that give `n` photos the largest tiles in `size` (photos about 3:2).
@@ -251,10 +250,10 @@ struct SlideshowView: View {
         }
         .onAppear {
             if let active = model.state.active, let i = library.index(of: active) { index = i }
-            UIApplication.shared.isIdleTimerDisabled = true
+            Platform.keepAwake(true)
         }
-        .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
-        .statusBarHidden()
+        .onDisappear { Platform.keepAwake(false) }
+        .lcStatusBarHidden()
     }
 }
 
@@ -272,7 +271,7 @@ struct LightsOutView: View {
         }
         .contentShape(Rectangle())
         .onTapGesture { dismiss() }
-        .statusBarHidden()
+        .lcStatusBarHidden()
         .accessibilityAction(named: "Close") { dismiss() }
     }
 }
@@ -324,7 +323,7 @@ struct FilmstripView: View {
                 }
                 .padding(.horizontal, 8)
             }
-            .scrollIndicators(.hidden)
+            .lcNoScrollers()
             .frame(height: 64)
             .onChange(of: model.state.active) { _, active in
                 guard let active, let i = library.index(of: active) else { return }
@@ -341,7 +340,7 @@ private struct FilmstripCell: View {
     var body: some View {
         let photo = model.library.photo(at: index, model.engine)
         let on = photo.map { $0.id == model.state.active } ?? false
-        Color(uiColor: .tertiarySystemFill)
+        Color.lcTertiaryFill
             .overlay {
                 if let photo, let p = model.images.thumb(photo.id) {
                     Image(decorative: p.image, scale: 1).resizable().scaledToFill()
@@ -358,4 +357,3 @@ private struct FilmstripCell: View {
             .accessibilityAddTraits(on ? [.isButton, .isSelected] : .isButton)
     }
 }
-#endif

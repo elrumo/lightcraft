@@ -1,4 +1,3 @@
-#if os(iOS)
 import Foundation
 import LightCraftCore
 import Observation
@@ -50,4 +49,3 @@ final class AlbumsModel {
         sync?.offlineAlbums?.contains(id) == true
     }
 }
-#endif

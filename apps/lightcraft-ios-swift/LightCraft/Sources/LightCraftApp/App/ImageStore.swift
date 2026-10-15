@@ -1,4 +1,3 @@
-#if os(iOS)
 import CoreGraphics
 import LightCraftCore
 import Observation
@@ -80,4 +79,3 @@ final class ImageStore {
         failed.removeAll()
     }
 }
-#endif

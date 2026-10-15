@@ -1,4 +1,3 @@
-#if os(iOS)
 import LightCraftCore
 import SwiftUI
 
@@ -10,7 +9,7 @@ struct SelectionBar: ToolbarContent {
     var body: some ToolbarContent {
         let ids = Array(model.library.selected)
         let none = ids.isEmpty
-        ToolbarItemGroup(placement: .bottomBar) {
+        ToolbarItemGroup(placement: .lcBottom) {
             Menu("Rating", systemImage: "star") { RatingItems(ids: ids) }
                 .disabled(none)
             Menu("Flag", systemImage: "flag") { FlagItems(ids: ids) }
@@ -20,14 +19,14 @@ struct SelectionBar: ToolbarContent {
             Menu("Add to Album", systemImage: "rectangle.stack.badge.plus") { AlbumItems(ids: ids) }
                 .disabled(none)
         }
-        ToolbarSpacer(.flexible, placement: .bottomBar)
-        ToolbarItem(placement: .bottomBar) {
+        ToolbarSpacer(.flexible, placement: .lcBottom)
+        ToolbarItem(placement: .lcBottom) {
             Button("Export", systemImage: "square.and.arrow.up") { model.sheet = .export(ids) }
                 .disabled(none)
         }
-        DuoOverflow(placement: .bottomBar) { SelectionMoreItems(ids: ids).disabled(none) }
-        ToolbarSpacer(.flexible, placement: .bottomBar)
-        ToolbarItem(placement: .bottomBar) {
+        DuoOverflow(placement: .lcBottom) { SelectionMoreItems(ids: ids).disabled(none) }
+        ToolbarSpacer(.flexible, placement: .lcBottom)
+        ToolbarItem(placement: .lcBottom) {
             DeleteButton(ids: ids) { Label("Delete", systemImage: "trash") }
                 .disabled(none)
         }
@@ -230,4 +229,3 @@ struct DeleteButton<LabelView: View>: View {
         }
     }
 }
-#endif

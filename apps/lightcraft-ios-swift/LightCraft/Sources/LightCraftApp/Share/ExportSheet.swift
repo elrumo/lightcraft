@@ -1,8 +1,12 @@
-#if os(iOS)
 import LightCraftCore
 import Photos
 import SwiftUI
+
+#if os(iOS)
 import UIKit
+#else
+import AppKit
+#endif
 
 /// Share: the photos chosen, then Share (the system's share sheet), Export As… (the options) and
 /// Save to Photos. Files are written into the app's staging folder (`tmp/Exports`, emptied at every
@@ -96,7 +100,7 @@ struct ExportSheet: View {
                 }
             }
             .navigationTitle("Share")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close", systemImage: "xmark") { dismiss() }
@@ -371,7 +375,7 @@ private struct ExportMoreOptions: View {
             }
             Section {
                 TextField("{name}", text: $options.naming)
-                    .textInputAutocapitalization(.never)
+                    .noAutocap()
                     .autocorrectionDisabled()
             } header: {
                 Text("File Name")
@@ -380,7 +384,7 @@ private struct ExportMoreOptions: View {
             }
         }
         .navigationTitle("More Options")
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineTitle()
     }
 }
 
@@ -389,6 +393,7 @@ private struct ShareItems: Identifiable {
     var id: String { urls.map(\.path).joined() }
 }
 
+#if os(iOS)
 /// The system's share sheet for files.
 struct ActivityView: UIViewControllerRepresentable {
     let urls: [URL]
@@ -404,13 +409,38 @@ struct ActivityView: UIViewControllerRepresentable {
 
     func updateUIViewController(_ vc: UIActivityViewController, context: Context) {}
 }
+#else
+/// A Mac's sheet for files that were written for sharing: the system's share menu (ShareLink),
+/// Show in Finder, or done. (The Mac export flow proper, with its own destination, is SM3.)
+struct ActivityView: View {
+    let urls: [URL]
+    let done: () -> Void
+
+    var body: some View {
+        VStack(spacing: 18) {
+            Image(systemName: "square.and.arrow.up").font(.largeTitle).foregroundStyle(.secondary)
+            Text(urls.count == 1 ? (urls.first?.lastPathComponent ?? "") : "\(urls.count) files")
+                .font(.headline)
+                .lineLimit(2)
+                .multilineTextAlignment(.center)
+            HStack {
+                ShareLink(items: urls) { Label("Share", systemImage: "square.and.arrow.up") }
+                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting(urls) }
+                Button("Done", action: done).keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(28)
+        .frame(minWidth: 380)
+    }
+}
+#endif
 
 private struct ExportThumb: View {
     @Environment(AppModel.self) private var model
     let photo: UInt64
 
     var body: some View {
-        Color(uiColor: .tertiarySystemFill)
+        Color.lcTertiaryFill
             .frame(width: 72, height: 72)
             .overlay {
                 if let p = model.images.thumb(photo) {
@@ -422,4 +452,3 @@ private struct ExportThumb: View {
             .onDisappear { model.thumbDisappeared(photo) }
     }
 }
-#endif

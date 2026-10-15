@@ -276,7 +276,8 @@ fn cmd_swift_test() -> Result<(), String> {
     run(c, "cargo build -p lightcraft-ios-swift")?;
     let target = std::env::var_os("CARGO_TARGET_DIR").map_or_else(|| root().join("target"), PathBuf::from);
     let package = root().join("apps/lightcraft-ios-swift/LightCraft");
-    let rust = package.join(".rust");
+    // (Package.swift looks for it in .rust/macos on a Mac, in .rust itself on Linux)
+    let rust = if cfg!(target_os = "macos") { package.join(".rust/macos") } else { package.join(".rust") };
     std::fs::create_dir_all(&rust).map_err(|e| format!("{}: {e}", rust.display()))?;
     let lib = target.join("debug/liblightcraft_bridge.a");
     std::fs::copy(&lib, rust.join("liblightcraft_bridge.a")).map_err(|e| format!("{}: {e}", lib.display()))?;

@@ -1,4 +1,3 @@
-#if os(iOS)
 import LightCraftCore
 import SwiftUI
 import UniformTypeIdentifiers
@@ -10,6 +9,10 @@ struct RootView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.horizontalSizeClass) private var horizontalSize
     @Environment(\.openWindow) private var openWindow
+    #if os(macOS)
+    @Environment(\.openSettings) private var openSettings
+    @Environment(\.dismissWindow) private var dismissWindow
+    #endif
     @Namespace private var photos
 
     var body: some View {
@@ -34,7 +37,7 @@ struct RootView: View {
                 stack
             }
         }
-        .sheet(item: $model.sheet, onDismiss: {
+        .sheet(item: sheetBinding, onDismiss: {
             // (a cover can't come up while a sheet is still going down)
             if model.welcomeAsked {
                 model.welcomeAsked = false
@@ -44,12 +47,22 @@ struct RootView: View {
             SheetContent(sheet: sheet)
                 .environment(model)
         }
+        #if os(macOS)
+        // Settings is a window of its own on a Mac (⌘,), however the app asked for it
+        .onChange(of: model.sheet) { _, sheet in
+            guard case .settings(let page) = sheet else { return }
+            model.sheet = nil
+            model.settingsTab = page.flatMap { Self.settingsTabs.contains($0) ? $0 : nil } ?? "general"
+            openSettings()
+        }
+        #endif
         .fileImporter(isPresented: Binding(get: { model.picker != nil }, set: { if !$0 { model.picker = nil } }),
                       allowedContentTypes: model.picker.map(Self.types) ?? [.item]) { result in
             guard let pick = model.picker, case .success(let url) = result else { return }
             model.picker = nil
             Task { await model.picked(url, for: pick) }
         }
+        #if os(iOS)
         .fullScreenCover(item: $model.cover) { cover in
             Group {
                 switch cover {
@@ -60,6 +73,12 @@ struct RootView: View {
             }
             .environment(model)
         }
+        #else
+        // (a window of its own, full screen: Mac/CoverWindow.swift)
+        .onChange(of: model.cover) { _, cover in
+            if cover != nil { openWindow(id: CoverWindow.id) } else { dismissWindow(id: CoverWindow.id) }
+        }
+        #endif
         .alert(deleteTitle, isPresented: Binding(get: { model.confirmDelete != nil }, set: { if !$0 { model.confirmDelete = nil } })) {
             Button("Delete", role: .destructive) {
                 if let ids = model.confirmDelete {
@@ -87,13 +106,33 @@ struct RootView: View {
             await model.loadMenus()
         }
         .haptic(trigger: model.haptic) { _, h in h.seq == 0 ? nil : h.feedback }
-        .onAppear { model.mainWindows += 1 }
-        .onDisappear { model.mainWindows -= 1 }
+        .onAppear {
+            model.mainWindows += 1
+            model.menuChanges.bump()
+        }
+        .onDisappear {
+            model.mainWindows -= 1
+            model.menuChanges.bump()
+        }
         .onChange(of: model.secondWindowAsked) { _, asked in
             guard asked else { return }
             model.secondWindowAsked = false
             openWindow(id: SecondWindowView.id, value: SecondWindowView.loupe)
         }
+    }
+
+    #if os(macOS)
+    private static let settingsTabs = ["general", "import", "performance", "interface", "sync", "faces", "models", "admin"]
+    #endif
+
+    /// The page that slides up. (A Mac shows Settings in its own window instead: never as a sheet.)
+    private var sheetBinding: Binding<Sheet?> {
+        @Bindable var model = model
+        #if os(macOS)
+        return Binding(get: { if case .settings = model.sheet { nil } else { model.sheet } }, set: { model.sheet = $0 })
+        #else
+        return $model.sheet
+        #endif
     }
 
     /// What the picker offers for each kind of pick.
@@ -111,7 +150,7 @@ struct RootView: View {
         return NavigationStack(path: $model.path) {
             Group {
                 if let error = model.startError {
-                    ContentUnavailableView("LightCraft couldn't start", systemImage: "exclamationmark.triangle", description: Text(error))
+                    StartErrorView(error: error)
                 } else if model.engine == nil {
                     ProgressView("Opening your library…")
                 } else {
@@ -123,7 +162,7 @@ struct RootView: View {
                 case .photo(let id):
                     // (opens on the photo the loupe shows: a rebuild by a fold or a rotation must not go back to `id`)
                     PhotoScreen(start: model.shown ?? id)
-                        .navigationTransition(.zoom(sourceID: id, in: photos))
+                        .lcZoomTransition(sourceID: id, in: photos)
                 case .commands: AllCommandsView()
                 case .people: PeopleView()
                 case .person(let name): PersonView(name: name)
@@ -317,7 +356,7 @@ struct ActivityPage: View {
                 }
             }
             .navigationTitle("Activity")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineTitle()
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done", systemImage: "checkmark") { dismiss() } } }
         }
         .presentationDetents([.medium, .large])
@@ -373,4 +412,3 @@ private nonisolated struct MenuKey: Hashable {
     let selected: Int
     let engine: Bool
 }
-#endif

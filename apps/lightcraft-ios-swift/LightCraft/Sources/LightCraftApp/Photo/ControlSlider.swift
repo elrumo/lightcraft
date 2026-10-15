@@ -1,7 +1,9 @@
-#if os(iOS)
 import LightCraftCore
 import SwiftUI
+
+#if os(iOS)
 import UIKit
+#endif
 
 /// A develop slider as the phone has it: the label and the value over a track filled from the
 /// default to the value (or a colour track for white balance, hue, saturation…), with a capsule
@@ -20,6 +22,17 @@ struct ControlSlider: View {
     @State private var trackWidth: CGFloat = 300
 
     var body: some View {
+        #if os(macOS)
+        // a Mac's edit panel is Lightroom's: the name, the track and the value on one row
+        MacSliderRow(spec: spec, value: value, label: label, set: set, editing: editing, reset: reset)
+        #else
+        phoneSlider
+        #endif
+    }
+
+    #if os(iOS)
+    /// The phone's slider: the name and the value over the track.
+    private var phoneSlider: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text(LocalizedStringKey(label ?? spec.label))
@@ -51,6 +64,7 @@ struct ControlSlider: View {
         }
         .accessibilityAction(named: "Reset") { reset() }
     }
+    #endif
 
     private func fraction(_ v: Double) -> Double { (v - spec.min) / spec.span }
 
@@ -85,7 +99,7 @@ struct ControlSlider: View {
         if let colors = Self.trackColors(spec) {
             LinearGradient(colors: colors, startPoint: .leading, endPoint: .trailing)
         } else {
-            Color(uiColor: .systemFill)
+            Color.lcFill
         }
     }
 
@@ -124,6 +138,7 @@ struct ControlSlider: View {
         return [prev, bands[band], next]
     }
 
+    #if os(iOS)
     /// A horizontal pan only: a pan that starts vertical fails at once, so the panel's scroll view
     /// (which a SwiftUI `DragGesture` would starve) gets it.
     private var drag: some UIGestureRecognizerRepresentable {
@@ -145,8 +160,10 @@ struct ControlSlider: View {
             }
         }
     }
+    #endif
 }
 
+#if os(iOS)
 private struct HorizontalPan: UIGestureRecognizerRepresentable {
     enum Phase { case began, changed, ended }
     let onPhase: (Phase, CGFloat) -> Void
@@ -183,6 +200,7 @@ final class HorizontalPanRecognizer: UIPanGestureRecognizer {
         super.touchesMoved(touches, with: event)
     }
 }
+#endif
 
 extension ControlSpec {
     /// Its range (never zero).
@@ -213,4 +231,3 @@ extension Color {
         self.init(red: Double((n >> 16) & 0xFF) / 255, green: Double((n >> 8) & 0xFF) / 255, blue: Double(n & 0xFF) / 255)
     }
 }
-#endif
