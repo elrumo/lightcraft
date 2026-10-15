@@ -230,10 +230,14 @@ pub fn specs() -> Vec<CommandSpec> {
             "Named People",
             [],
             None,
-            "{} → [{name, photos, cover: {photo, rect}}] the people named on the library's photos (in any app), most photos first, each with their largest face (`rect` on the photo's upright frame: render it with the host's render.face); the grid's filter applies, except a person filter",
+            "{all?: bool} → [{name, photos, cover: {photo, rect}}] the people named on the library's photos (in any app), most photos first, each with their largest face (`rect` on the photo's upright frame: render it with the host's render.face); the grid's filter applies, except a person filter (`all`: the whole library)",
             always,
-            |s, _| {
-                let filter = lightcraft_catalog::Filter { person: None, ..s.filter.clone() };
+            |s, p| {
+                let filter = if p.get("all").and_then(Value::as_bool).unwrap_or(false) {
+                    lightcraft_catalog::Filter::default()
+                } else {
+                    lightcraft_catalog::Filter { person: None, ..s.filter.clone() }
+                };
                 Ok(Value::Array(
                     s.catalog
                         .people_in(&filter)

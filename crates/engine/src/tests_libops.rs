@@ -957,6 +957,11 @@ fn named_people_are_listed_with_their_faces() {
     assert_eq!(list.len(), 2, "{people}");
     assert_eq!((list[0]["name"].as_str(), list[0]["photos"].as_u64()), (Some("Ana"), Some(2)));
     assert!(list[0]["cover"]["rect"]["x0"].is_number(), "{people}");
+    // the grid's filter narrows them; `all` doesn't (Who Is This? offers everyone)
+    s.execute("library.filter", &json!({"text": "nobody-matches-this"})).unwrap();
+    assert_eq!(s.execute("people.named", &json!({})).unwrap().as_array().map(Vec::len), Some(0));
+    assert_eq!(s.execute("people.named", &json!({"all": true})).unwrap().as_array().map(Vec::len), Some(2));
+    s.execute("library.filter", &json!({"text": ""})).unwrap();
     // renaming a person renames every face of theirs, any case, in one undo step
     s.execute("people.rename", &json!({"from": "ana", "to": "Anna"})).unwrap();
     let people = s.execute("people.named", &json!({})).unwrap();
