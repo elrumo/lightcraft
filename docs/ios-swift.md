@@ -422,6 +422,18 @@ Shortcuts draws the keys as keys (`KeyCaps`, `KeyChord.caps`), lists the moving,
 searches. `ui.screenshot {window: sheet}` captures the open sheet and `ui.inspect` lists it among the windows. Still to
 do: the Share sheet's destination folder and the other desktop export options (SM3), and popovers where a phone has sheets.
 
+**Lens Blur** (`Photo/LensBlurPanel.swift`, see [lens-blur.md](lens-blur.md)). The Edit panel has the group between Optics and
+Calibration, and `LensBlurGroup` lays itself out for a Mac from the inspector's parts: Apply as a checkbox, Blur Amount, the
+Focal Range bar on a row of the label column with a grip at each end (drag an end to widen or narrow the range, the middle to
+move it, click to put it there; the pointer says it can be dragged), the focus picker (the target) and Subject on a row of
+their own, Visualize Depth, Refine's Focus, Blur and Erase (the active one again puts the brush down) with Masking's brush
+sliders (`MacBrushSliders`) and Clear Brushing, the Bokeh menu and Boost; before Apply, the explanation, Apply and the depth
+model's download offer or progress. The Refine brush on the photo has a ring of its size under the pointer in its colour,
+⌥ held turns it into Erase for as long as it is held (a stroke keeps what it started as), and Esc puts the brush or the focus
+picker down before it leaves the photo. Checked by script on the demo library with Lens Blur switched on without depth
+(`develop.merge`), which shows the layout and the brush; estimating depth, the model's download and the blur itself were not
+run on a Mac (they need the model).
+
 Where it stands: it builds and launches with the iPad's regular-width layout in a window (SM0), and has a Mac's shell
 (SM1): a Settings window (⌘,: a tab per page of the iPhone's list, `Mac/MacSettings.swift`), a menu bar with the app
 menu (About, Settings…), a File menu that starts with Import Photos… (⇧⌘I, an open panel for files and folders, copied

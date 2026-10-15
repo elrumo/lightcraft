@@ -365,8 +365,20 @@ extension AppModel {
         case "app.appearance.dark": prefs.appearance = .dark
         case "view.photoGrid": path = []
         case "view.back":
-            // (Esc: the Keyword Painter is put down, a tool's own screen is cancelled, a person's page goes back to the people)
-            if painting != nil { painting = nil } else if inLoupe, editor.tool?.hasScreen == true { cancelToolScreen() } else if case .person = path.last { path.removeLast() } else { path = [] }
+            // (Esc: the Keyword Painter is put down, so are Lens Blur's brush and focus picker, a tool's own screen is cancelled,
+            // a person's page goes back to the people)
+            if painting != nil {
+                painting = nil
+            } else if inLoupe, editor.lensBrush != nil || editor.picking == .lensFocus {
+                editor.lensBrush = nil
+                if editor.picking == .lensFocus { editor.picking = nil }
+            } else if inLoupe, editor.tool?.hasScreen == true {
+                cancelToolScreen()
+            } else if case .person = path.last {
+                path.removeLast()
+            } else {
+                path = []
+            }
         case "view.squareGrid": prefs.squareGrid.toggle()
         case "view.gridToggle":
             // (G: the grid from any other screen, as in Lightroom; in the grid itself, egui's switch between its two grids)

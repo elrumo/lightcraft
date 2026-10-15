@@ -5,6 +5,7 @@ import SwiftUI
 /// photo's own depth, or the depth model's estimate, with the model's download offered first),
 /// then Blur Amount, the focal range, focus on a point (tap the photo) or the subject, Visualize
 /// Depth, the bokeh, Boost, and the Refine brushes painted on the photo (`LensBrushCanvas`).
+/// A phone lays it out as a column of controls; a Mac, as the inspector's parts (`macContent`).
 struct LensBlurGroup: View {
     @Environment(AppModel.self) private var model
     /// `lensBlur.info`.
@@ -16,55 +17,175 @@ struct LensBlurGroup: View {
     static let modelID = "depth-anything-v2-small"
 
     var body: some View {
+        #if os(macOS)
+        tracked(VStack(alignment: .leading, spacing: 4) { macContent })
+        #else
+        tracked(VStack(alignment: .leading, spacing: 8) { phoneContent }.padding(.vertical, 8))
+        #endif
+    }
+
+    /// What every layout does: read the group's state, follow the model's download, and put the brush and the focus picker
+    /// down when the group goes (they belong to it).
+    private func tracked(_ content: some View) -> some View {
+        content
+            .onDisappear {
+                model.editor.lensBrush = nil
+                if model.editor.picking == .lensFocus { model.editor.picking = nil }
+            }
+            .task(id: model.state.catalogRevision) { await load() }
+            .task(id: offer["download"]["running"].bool == true) { await watchDownload() }
+    }
+
+    @ViewBuilder private var phoneContent: some View {
         let editor = model.editor
-        VStack(alignment: .leading, spacing: 8) {
-            if info["enabled"].bool == true {
-                Toggle("Apply", isOn: Binding(get: { true }, set: { on in if !on { model.perform("lensBlur.apply", ["on": false]) } }))
-                Text(depthNote).font(.footnote).foregroundStyle(.secondary)
-                Sliders(section: "lensBlur") { $0.id == "lensBlur.amount" }
-                Text("Focal Range").font(.subheadline.weight(.semibold))
-                FocalRangeBar(near: info["near"].double ?? 0, far: info["far"].double ?? 0)
-                HStack {
-                    Button("Focus on a Point", systemImage: "scope") {
-                        editor.lensBrush = nil
-                        editor.picking = .lensFocus
-                        model.show(String(localized: "Tap what should be in focus"))
-                    }
-                    Button("Subject", systemImage: "person.crop.rectangle") { model.perform("lensBlur.focus", ["subject": true]) }
+        if info["enabled"].bool == true {
+            Toggle("Apply", isOn: Binding(get: { true }, set: { on in if !on { model.perform("lensBlur.apply", ["on": false]) } }))
+            Text(depthNote).font(.footnote).foregroundStyle(.secondary)
+            Sliders(section: "lensBlur") { $0.id == "lensBlur.amount" }
+            Text("Focal Range").font(.subheadline.weight(.semibold))
+            FocalRangeBar(near: info["near"].double ?? 0, far: info["far"].double ?? 0)
+            HStack {
+                Button("Focus on a Point", systemImage: "scope") {
+                    editor.lensBrush = nil
+                    editor.picking = .lensFocus
+                    model.show(String(localized: "Tap what should be in focus"))
                 }
-                .buttonStyle(.bordered)
-                Toggle("Visualize Depth", isOn: Binding(get: { editor.visualizeDepth }, set: { editor.visualizeDepth = $0 }))
-                Picker("Bokeh", selection: Binding(get: { info["bokeh"].string ?? "circle" }, set: { model.perform("lensBlur.bokeh", ["shape": .string($0)]) })) {
-                    ForEach(info["bokehs"].array ?? [], id: \.self) { b in
-                        Text(LocalizedStringKey(b["label"].string ?? "")).tag(b["id"].string ?? "")
-                    }
+                Button("Subject", systemImage: "person.crop.rectangle") { model.perform("lensBlur.focus", ["subject": true]) }
+            }
+            .buttonStyle(.bordered)
+            Toggle("Visualize Depth", isOn: Binding(get: { editor.visualizeDepth }, set: { editor.visualizeDepth = $0 }))
+            Picker("Bokeh", selection: Binding(get: { info["bokeh"].string ?? "circle" }, set: { model.perform("lensBlur.bokeh", ["shape": .string($0)]) })) {
+                ForEach(info["bokehs"].array ?? [], id: \.self) { b in
+                    Text(LocalizedStringKey(b["label"].string ?? "")).tag(b["id"].string ?? "")
                 }
-                Sliders(section: "lensBlur") { $0.id == "lensBlur.boost" }
-                refine
+            }
+            Sliders(section: "lensBlur") { $0.id == "lensBlur.boost" }
+            refine
+        } else {
+            Text("Blur what is nearer or farther than the subject, as a wide aperture would, using the photo's depth.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Button {
+                Task { await apply() }
+            } label: {
+                if estimating { ProgressView() } else { Text("Apply") }
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(estimating)
+            if !offer.isNull { modelOffer }
+        }
+    }
+
+    #if os(macOS)
+    /// A Mac's layout: the inspector's parts (`MacInspectorKit`), with the focal range and its two pickers on rows of the
+    /// label column, as the sliders above and under them are.
+    @ViewBuilder private var macContent: some View {
+        let editor = model.editor
+        if info["enabled"].bool == true {
+            MacCheck(title: "Apply", isOn: Binding(get: { true }, set: { on in if !on { model.perform("lensBlur.apply", ["on": false]) } }))
+            MacHint(text: Text(depthNote))
+            Sliders(section: "lensBlur") { $0.id == "lensBlur.amount" }
+            MacRow(label: "Focal Range") { FocalRangeBar(near: info["near"].double ?? 0, far: info["far"].double ?? 0) }
+            MacRow(label: "Focus") {
+                HStack(spacing: 4) {
+                    MacIconButton(symbol: "scope", title: "Focus on a Point", on: editor.picking == .lensFocus) {
+                        if editor.picking == .lensFocus {
+                            editor.picking = nil
+                        } else {
+                            editor.lensBrush = nil
+                            editor.picking = .lensFocus
+                            model.show(String(localized: "Tap what should be in focus"))
+                        }
+                    }
+                    MacButton(title: "Subject", symbol: "person.crop.rectangle", wide: false) { model.perform("lensBlur.focus", ["subject": true]) }
+                }
+            }
+            MacCheck(title: "Visualize Depth", isOn: Binding(get: { editor.visualizeDepth }, set: { editor.visualizeDepth = $0 }))
+            macRefine
+            macBokeh
+            Sliders(section: "lensBlur") { $0.id == "lensBlur.boost" }
+        } else {
+            MacHint(text: Text("Blur what is nearer or farther than the subject, as a wide aperture would, using the photo's depth."))
+            if estimating {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("Estimating depth…").font(.inspector).foregroundStyle(.secondary)
+                }
+                .frame(minHeight: MacUI.rowHeight)
             } else {
-                Text("Blur what is nearer or farther than the subject, as a wide aperture would, using the photo's depth.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Button {
-                    Task { await apply() }
-                } label: {
-                    if estimating { ProgressView() } else { Text("Apply") }
+                MacButton(title: "Apply", prominent: true) { Task { await apply() } }
+                    .padding(.top, 4)
+            }
+            if !offer.isNull { macModelOffer }
+        }
+    }
+
+    /// The bokeh's shape, from the engine's list.
+    @ViewBuilder private var macBokeh: some View {
+        let shapes = info["bokehs"].array ?? []
+        let current = info["bokeh"].string ?? "circle"
+        MacRow(label: "Bokeh") {
+            MacMenuField(text: Text(LocalizedStringKey(shapes.first { $0["id"].string == current }?["label"].string ?? ""))) {
+                ForEach(shapes, id: \.self) { shape in
+                    let id = shape["id"].string ?? ""
+                    Button {
+                        model.perform("lensBlur.bokeh", ["shape": .string(id)])
+                    } label: {
+                        if id == current {
+                            Label(LocalizedStringKey(shape["label"].string ?? ""), systemImage: "checkmark")
+                        } else {
+                            Text(LocalizedStringKey(shape["label"].string ?? ""))
+                        }
+                    }
                 }
-                .buttonStyle(.borderedProminent)
-                .disabled(estimating)
-                if !offer.isNull { modelOffer }
             }
         }
-        .padding(.vertical, 8)
-        // (the brush and the focus picker belong to this group: leaving it puts them down)
-        .onDisappear {
-            model.editor.lensBrush = nil
-            if model.editor.picking == .lensFocus { model.editor.picking = nil }
-        }
-        .task(id: model.state.catalogRevision) { await load() }
-        .task(id: offer["download"]["running"].bool == true) { await watchDownload() }
     }
+
+    /// Refine: Focus, Blur or Erase painted on the photo (the active one again puts the brush down), the brush's settings
+    /// (Masking's) and Clear.
+    @ViewBuilder private var macRefine: some View {
+        let editor = model.editor
+        MacCaption(text: "Refine")
+        MacSegmented(
+            options: [("focus", "Focus"), ("blur", "Blur"), ("erase", "Erase")],
+            isOn: { editor.lensBrush == $0 },
+            choose: { brush in
+                editor.lensBrush = editor.lensBrush == brush ? nil : brush
+                editor.picking = nil
+            }
+        )
+        if editor.lensBrush != nil {
+            MacHint(text: Text("Paint on the photo: Focus keeps what you paint sharp, Blur blurs it, Erase takes either back."))
+            MacHint(text: Text("Hold ⌥ to erase."))
+            MacBrushSliders()
+        }
+        if (info["focusStrokes"].int ?? 0) + (info["blurStrokes"].int ?? 0) > 0 {
+            MacButton(title: "Clear Brushing", wide: false) { model.perform("lensBlur.clearBrush") }
+                .padding(.top, 4)
+        }
+    }
+
+    /// The depth model's download offer (size, licence and credit first), or its progress.
+    @ViewBuilder private var macModelOffer: some View {
+        if offer["available"].bool == false {
+            MacHint(text: Text("This photo has no depth of its own, and depth estimation isn't available in this build."))
+        } else if offer["enabled"].bool == false {
+            MacHint(text: Text("Depth estimation is turned off in Settings → AI Models."))
+        } else if offer["download"]["running"].bool == true {
+            let d = offer["download"], total = max(d["total"].double ?? 0, 1)
+            ProgressView(value: (d["done"].double ?? 0) / total) { Text("Downloading the depth model…").font(.inspector) }
+                .padding(.top, 4)
+            MacButton(title: "Cancel Download", wide: false) { model.perform("models.cancel", ["id": .string(Self.modelID)]) }
+        } else {
+            MacHint(text: Text("This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a \(Int((offer["downloadBytes"].double ?? 0) / 1e6)) MB download (\(offer["licence"].string ?? "") licence). \(offer["credit"].string ?? "")."))
+            if let e = offer["download"]["error"].string { MacHint(text: Text(e).foregroundStyle(.red)) }
+            MacButton(title: "Download", wide: false) { model.perform("models.download", ["id": .string(Self.modelID), "acknowledged": true]) }
+                .padding(.top, 4)
+        }
+    }
+    #endif
 
     private var depthNote: LocalizedStringKey {
         switch info["depth"].string {
@@ -192,21 +313,48 @@ struct FocalRangeBar: View {
 
     var body: some View {
         let (n, f) = live ?? (near, far)
+        #if os(macOS)
+        // (the bar leaves room at both ends for the grips, so one at 0 or 100 is whole)
+        let inset: CGFloat = 4
+        #else
+        let inset: CGFloat = 0
+        #endif
         GeometryReader { geo in
-            let w = max(geo.size.width, 1)
+            let w = max(geo.size.width - 2 * inset, 1)
             let x = { (v: Double) in CGFloat(v / 100) * w }
             ZStack(alignment: .leading) {
-                LinearGradient(colors: [Self.nearColor, Self.farColor], startPoint: .leading, endPoint: .trailing)
-                Color.black.opacity(0.55).frame(width: x(n))
-                Color.black.opacity(0.55).frame(width: w - x(f)).offset(x: x(f))
-                RoundedRectangle(cornerRadius: 4)
-                    .strokeBorder(.white, lineWidth: 2)
-                    .frame(width: max(x(f) - x(n), 6))
-                    .offset(x: x(n))
+                ZStack(alignment: .leading) {
+                    LinearGradient(colors: [Self.nearColor, Self.farColor], startPoint: .leading, endPoint: .trailing)
+                    Color.black.opacity(0.55).frame(width: x(n))
+                    Color.black.opacity(0.55).frame(width: w - x(f)).offset(x: x(f))
+                    RoundedRectangle(cornerRadius: 4)
+                        .strokeBorder(.white, lineWidth: 2)
+                        .frame(width: max(x(f) - x(n), 6))
+                        .offset(x: x(n))
+                }
+                .frame(width: w, height: Self.barHeight)
+                .clipShape(RoundedRectangle(cornerRadius: 5))
+                .offset(x: inset)
+                #if os(macOS)
+                // the two ends to take hold of: a pointer wants something to aim at
+                ForEach(Array([n, f].enumerated()), id: \.offset) { _, v in
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(.white)
+                        .frame(width: 6, height: Self.barHeight + 4)
+                        .shadow(color: .black.opacity(0.35), radius: 1.5)
+                        .offset(x: inset + x(v) - 3)
+                        .allowsHitTesting(false)
+                }
+                #endif
             }
-            .clipShape(RoundedRectangle(cornerRadius: 5))
+            .frame(maxHeight: .infinity)
             .contentShape(Rectangle())
-            .gesture(drag(width: w))
+            .gesture(drag(width: w, inset: inset))
+            #if os(macOS)
+            // a click on the bar puts the range there; the pointer says it can be dragged
+            .simultaneousGesture(SpatialTapGesture().onEnded { tap in centre(at: tap.location.x - inset, width: w) })
+            .pointerStyle(.columnResize)
+            #endif
         }
         .frame(height: 28)
         .accessibilityElement()
@@ -214,10 +362,27 @@ struct FocalRangeBar: View {
         .accessibilityValue(Text("\(Int(n.rounded()))–\(Int(f.rounded()))"))
     }
 
-    private func drag(width: CGFloat) -> some Gesture {
+    #if os(macOS)
+    private static let barHeight: CGFloat = 20
+    #else
+    private static let barHeight: CGFloat = 28
+    #endif
+
+    #if os(macOS)
+    /// A click: the range, as wide as it is, centred where the click was (one undo step).
+    private func centre(at x: CGFloat, width: CGFloat) {
+        let at = min(max(Double(x / width) * 100, 0), 100)
+        let half = (far - near) / 2
+        let c = min(max(at, half), 100 - half)
+        model.editor.setMany(values(c - half, c + half), label: "Focal Range", began: true, ended: true, model)
+    }
+    #endif
+
+    /// `inset`: how far the bar starts from the left of the area the gesture is on.
+    private func drag(width: CGFloat, inset: CGFloat) -> some Gesture {
         DragGesture(minimumDistance: 2)
             .onChanged { g in
-                let v = { (x: CGFloat) in min(max(Double(x / width) * 100, 0), 100) }
+                let v = { (x: CGFloat) in min(max(Double((x - inset) / width) * 100, 0), 100) }
                 let (n, f) = live ?? (near, far)
                 if grip == nil {
                     let start = v(g.startLocation.x)
@@ -261,21 +426,42 @@ struct LensBrushCanvas: View {
     let rect: CGRect
     @State private var frame: PhotoFrame?
     @State private var trail: [CGPoint] = []
+    /// Where a hovering pointer or Apple Pencil is: the brush's size drawn there.
+    @State private var hover: CGPoint?
+    /// ⌥ is held (a Mac): the brush erases, as it does on a computer.
+    @State private var optionDown = false
+    /// The stroke under way started with ⌥ held.
+    @State private var erasing = false
 
     var body: some View {
-        let mode = model.editor.lensBrush ?? "focus"
+        let brush = model.editor.lensBrush ?? "focus"
+        // (⌥ turns the brush into Erase while it is held, and a stroke keeps what it started as)
+        let mode = trail.isEmpty ? (optionDown ? "erase" : brush) : (erasing ? "erase" : brush)
+        let color: Color = mode == "focus" ? .green : mode == "blur" ? .blue : .red
         Canvas { ctx, _ in
+            if let hover, trail.isEmpty {
+                let r = brushRadius
+                let ring = Path(ellipseIn: CGRect(x: hover.x - r, y: hover.y - r, width: r * 2, height: r * 2))
+                ctx.stroke(ring, with: .color(.black.opacity(0.5)), lineWidth: 3)
+                ctx.stroke(ring, with: .color(color), lineWidth: 1.5)
+            }
             guard trail.count > 0 else { return }
             var p = Path()
             p.addLines(trail)
-            let color: Color = mode == "focus" ? .green : mode == "blur" ? .blue : .red
             ctx.stroke(p, with: .color(color.opacity(0.4)), style: StrokeStyle(lineWidth: brushRadius * 2, lineCap: .round, lineJoin: .round))
         }
         .allowsHitTesting(false)
-        .overlay { Color.clear.contentShape(Rectangle()).gesture(paint(mode)) }
+        .overlay { Color.clear.contentShape(Rectangle()).gesture(paint(brush)).onContinuousHover(perform: hovered) }
+        #if os(macOS)
+        .onModifierKeysChanged(mask: .option, initial: true) { _, new in optionDown = new.contains(.option) }
+        #endif
         .task(id: photo) {
             frame = try? await model.engine?.execute("view.frame", ["id": .int(Int64(clamping: photo))], as: PhotoFrame.self)
         }
+    }
+
+    private func hovered(_ phase: HoverPhase) {
+        if case .active(let at) = phase { hover = at } else { hover = nil }
     }
 
     private var brushRadius: CGFloat {
@@ -287,9 +473,10 @@ struct LensBrushCanvas: View {
         return frame.norm(u: (p.x - rect.minX) / rect.width, v: (p.y - rect.minY) / rect.height)
     }
 
-    private func paint(_ mode: String) -> some Gesture {
+    private func paint(_ brush: String) -> some Gesture {
         DragGesture(minimumDistance: 0)
             .onChanged { g in
+                if trail.isEmpty { erasing = optionDown }
                 if trail.last.map({ hypot($0.x - g.location.x, $0.y - g.location.y) > 2 }) ?? true {
                     trail.append(g.location)
                 }
@@ -297,6 +484,8 @@ struct LensBrushCanvas: View {
             .onEnded { _ in
                 let pts: [JSONValue] = trail.compactMap { p in norm(p).map { [.double($0.x), .double($0.y)] } }
                 trail = []
+                let mode = erasing ? "erase" : brush
+                erasing = false
                 guard !pts.isEmpty else { return }
                 let e = model.editor
                 model.perform("lensBlur.brushStroke", [

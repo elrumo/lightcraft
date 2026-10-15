@@ -3,7 +3,7 @@ import LightCraftCore
 import SwiftUI
 
 /// The Edit tool as Lightroom lays it out: a header (Edit, Auto, B&W, HDR), the profile, then the
-/// groups one under another (Light, Color, Effects, Detail, Optics, Calibration), each open or
+/// groups one under another (Light, Color, Effects, Detail, Optics, Lens Blur, Calibration), each open or
 /// closed, with Curve, Color Mixer (and its point colours) and Color Grading as boxes inside them. The sliders
 /// are the engine's control specs, as everywhere (`Sliders`): a new control appears without a change
 /// here.
@@ -11,7 +11,7 @@ struct MacEditPanel: View {
     @Environment(AppModel.self) private var model
 
     /// Every engine section the panel's sliders come from.
-    private static let sections = ["profile", "light", "color", "effects", "vignette", "grain", "detail", "optics", "calibration"]
+    private static let sections = ["profile", "light", "color", "effects", "vignette", "grain", "detail", "optics", "lensBlur", "calibration"]
 
     var body: some View {
         MacPanel(title: "Edit") {
@@ -22,6 +22,7 @@ struct MacEditPanel: View {
             MacSection(id: "effects", title: "Effects") { MacEffects() }
             MacSection(id: "detail", title: "Detail") { Sliders(section: "detail") }
             MacSection(id: "optics", title: "Optics") { Sliders(section: "optics") }
+            MacSection(id: "lensBlur", title: "Lens Blur") { LensBlurGroup() }
             MacSection(id: "calibration", title: "Calibration") { Sliders(section: "calibration") }
         }
         .task { model.editor.want(Self.sections, model) }

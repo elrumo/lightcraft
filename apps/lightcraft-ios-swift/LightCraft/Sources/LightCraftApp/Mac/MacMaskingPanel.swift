@@ -31,6 +31,23 @@ struct MacMaskingPanel: View {
     }
 }
 
+/// The brush's size, feather and flow, and Auto Mask: the one set `EditorModel` keeps for the Masking brush and for
+/// Lens Blur's Refine brush.
+struct MacBrushSliders: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        @Bindable var e = model.editor
+        MacSliderRow(spec: ControlSpec(id: "brush.size", label: "Size", section: "brush", min: 1, max: 100, default: 12, step: 1, decimals: 0),
+                     value: e.brushSize * 400, set: { e.brushSize = $0 / 400 }, editing: { _ in }, reset: { e.brushSize = 0.03 })
+        MacSliderRow(spec: ControlSpec(id: "brush.feather", label: "Feather", section: "brush", min: 0, max: 100, default: 50, step: 1, decimals: 0),
+                     value: e.brushFeather, set: { e.brushFeather = $0 }, editing: { _ in }, reset: { e.brushFeather = 50 })
+        MacSliderRow(spec: ControlSpec(id: "brush.flow", label: "Flow", section: "brush", min: 1, max: 100, default: 100, step: 1, decimals: 0),
+                     value: e.brushFlow, set: { e.brushFlow = $0 }, editing: { _ in }, reset: { e.brushFlow = 100 })
+        MacCheck(title: "Auto Mask", isOn: $e.brushAutoMask)
+    }
+}
+
 /// The brush in hand: paint or erase, Auto Mask, its size, feather and flow.
 private struct MacBrushControls: View {
     @Environment(AppModel.self) private var model
@@ -39,13 +56,7 @@ private struct MacBrushControls: View {
         @Bindable var e = model.editor
         MacSegmented(selection: $e.brushErase, options: [(false, "Paint"), (true, "Erase")])
             .padding(.bottom, 4)
-        MacSliderRow(spec: ControlSpec(id: "brush.size", label: "Size", section: "brush", min: 1, max: 100, default: 12, step: 1, decimals: 0),
-                     value: e.brushSize * 400, set: { e.brushSize = $0 / 400 }, editing: { _ in }, reset: { e.brushSize = 0.03 })
-        MacSliderRow(spec: ControlSpec(id: "brush.feather", label: "Feather", section: "brush", min: 0, max: 100, default: 50, step: 1, decimals: 0),
-                     value: e.brushFeather, set: { e.brushFeather = $0 }, editing: { _ in }, reset: { e.brushFeather = 50 })
-        MacSliderRow(spec: ControlSpec(id: "brush.flow", label: "Flow", section: "brush", min: 1, max: 100, default: 100, step: 1, decimals: 0),
-                     value: e.brushFlow, set: { e.brushFlow = $0 }, editing: { _ in }, reset: { e.brushFlow = 100 })
-        MacCheck(title: "Auto Mask", isOn: $e.brushAutoMask)
+        MacBrushSliders()
         MacButton(title: "Done", wide: false) { e.maskTool = nil }
             .padding(.top, 4)
     }
