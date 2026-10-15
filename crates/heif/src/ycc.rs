@@ -50,7 +50,7 @@ impl Planes<'_> {
         self.chroma().chroma_size(w as u32, h as u32).0 as usize
     }
 
-    fn luma_row(&self, y: usize, dst: &mut [u16]) -> Option<()> {
+    pub(crate) fn luma_row(&self, y: usize, dst: &mut [u16]) -> Option<()> {
         match self {
             Planes::Picture(f) => copy_row(&f.y, f.y_stride as usize, y, dst),
             Planes::Grid(m) => m.luma_row(y, dst),

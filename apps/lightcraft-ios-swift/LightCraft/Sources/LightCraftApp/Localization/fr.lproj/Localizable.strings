@@ -90,6 +90,7 @@
 "2026-04 or 2026-04-12" = "2026-04 ou 2026-04-12";
 "30 Days" = "30 jours";
 "32 bits (float)" = "32 bits (flottant)";
+"5-Blade" = "5 lames";
 "=  exactly" = "=  exactement";
 "A blank template keeps the original names." = "Un modèle vide conserve les noms d'origine.";
 "A computer" = "Un ordinateur";
@@ -233,6 +234,7 @@
 "Apply" = "Appliquer";
 "Apply Color Label Set" = "Appliquer un jeu d'étiquettes de couleur";
 "Apply Filter Preset" = "Appliquer un préréglage de filtre";
+"Apply Lens Blur" = "Appliquer le flou de l’objectif";
 "Apply Metadata Preset" = "Appliquer un préréglage de métadonnées";
 "Apply Point Curve Preset" = "Appliquer un préréglage de courbe de points";
 "Apply Preset" = "Appliquer un préréglage";
@@ -328,7 +330,13 @@
 "Blue channel" = "Canal bleu";
 "Blue label" = "Étiquette bleue";
 "Blue/Yellow Fringe" = "Frange bleue/jaune";
+"Blur" = "Flou";
+"Blur Amount" = "Quantité de flou";
+"Blur Brush" = "Pinceau Flou";
+"Blur what is nearer or farther than the subject, as a wide aperture would, using the photo's depth." = "Floutez ce qui est plus proche ou plus éloigné que le sujet, comme le ferait une grande ouverture, à partir de la profondeur de la photo.";
 "Blurry photos below the score are flagged as rejects." = "Les photos floues en dessous du score sont marquées comme rejetées.";
+"Bokeh" = "Bokeh";
+"Boost" = "Boost";
 "Boundary Warp" = "Déformation des bords";
 "Bright & Airy" = "Lumineux et aérien";
 "Bring All to Front" = "Tout ramener au premier plan";
@@ -341,6 +349,7 @@
 "Brush" = "Pinceau";
 "Brush Settings" = "Réglages du pinceau";
 "Brush Stroke" = "Coup de pinceau";
+"Bubble" = "Bulle";
 "Build Previews" = "Générer les aperçus";
 "Build Smart Previews" = "Générer les aperçus dynamiques";
 "Building previews" = "Génération des aperçus";
@@ -381,6 +390,7 @@
 "Captured" = "Prise de vue";
 "Captured from" = "Prises à partir du";
 "Captured until" = "Prises jusqu'au";
+"Cat Eye" = "Œil de chat";
 "Catalog" = "Catalogue";
 "Catalog Statistics" = "Statistiques du catalogue";
 "Catalog and edits" = "Catalogue et retouches";
@@ -413,6 +423,7 @@
 "Choose what to do with this library's photos." = "Choisissez quoi faire des photos de cette bibliothèque.";
 "Choose…" = "Choisir…";
 "Cinematic" = "Cinématographique";
+"Circle" = "Cercle";
 "City" = "Ville";
 "Clarity" = "Clarté";
 "Classic" = "Classique";
@@ -421,12 +432,15 @@
 "Clean the noise out of raw photos with an AI model that runs on this computer." = "Supprimez le bruit des photos RAW avec un modèle d'IA qui tourne sur cet ordinateur.";
 "Clear" = "Effacer";
 "Clear All" = "Tout effacer";
+"Clear Brush" = "Effacer les coups de pinceau";
+"Clear Brushing" = "Effacer les coups de pinceau";
 "Clear Cache" = "Vider le cache";
 "Clear Denoise Cache" = "Vider le cache de débruitage";
 "Clear Filter" = "Effacer le filtre";
 "Clear Filters" = "Effacer les filtres";
 "Clear Guides" = "Effacer les repères";
 "Clear History" = "Effacer l'historique";
+"Clear Lens Blur Brush" = "Effacer le pinceau du flou de l’objectif";
 "Clear Preview Cache" = "Vider le cache des aperçus";
 "Clear Quick Collection" = "Vider la collection rapide";
 "Clear Recent Libraries" = "Effacer les bibliothèques récentes";
@@ -662,7 +676,11 @@
 "Denoise Status" = "État du débruitage";
 "Denoise all photos with an Amount" = "Débruiter toutes les photos ayant une Quantité";
 "Density" = "Densité";
+"Depth" = "Profondeur";
 "Depth Range" = "Plage de profondeur";
+"Depth estimated by AI (Depth Anything V2 Small)." = "Profondeur estimée par IA (Depth Anything V2 Small).";
+"Depth estimation is turned off in Settings → AI Models." = "L’estimation de la profondeur est désactivée dans Réglages → Modèles d’IA.";
+"Depth from the photo." = "Profondeur issue de la photo.";
 "Descending" = "Décroissant";
 "Describe" = "Décrire";
 "Describe a photo…" = "Décrivez une photo…";
@@ -726,6 +744,7 @@
 "Downloading MI-GAN…" = "Téléchargement de MI-GAN…";
 "Downloading model" = "Téléchargement du modèle";
 "Downloading place names" = "Téléchargement des noms de lieux";
+"Downloading the depth model…" = "Téléchargement du modèle de profondeur…";
 "Downloading the face models onto this server…" = "Téléchargement des modèles de visages sur ce serveur…";
 "Downloading the search model onto this server…" = "Téléchargement du modèle de recherche sur ce serveur…";
 "Downloading the text-reading models onto this server…" = "Téléchargement des modèles de lecture de texte sur ce serveur…";
@@ -802,6 +821,9 @@
 "Enter Full Screen" = "Passer en plein écran";
 "Enter a date as YYYY-MM-DD HH:MM:SS" = "Saisissez une date au format AAAA-MM-JJ HH:MM:SS";
 "Erase" = "Effacer";
+"Erase Brush" = "Pinceau Effacer";
+"Estimate Depth" = "Estimer la profondeur";
+"Estimating depth…" = "Estimation de la profondeur…";
 "Every EXIF, GPS and XMP field in the file" = "Tous les champs EXIF, GPS et XMP du fichier";
 "Every chosen photo gets this time." = "Toutes les photos choisies reçoivent cette heure.";
 "Every chosen photo moves by this many hours." = "Chaque photo choisie est décalée de ce nombre d'heures.";
@@ -936,9 +958,17 @@
 "Float panel" = "Float panel";
 "Flow" = "Flux";
 "Fluorescent" = "Fluorescent";
+"Focal Distance" = "Distance de mise au point";
 "Focal Length" = "Distance focale";
+"Focal Range" = "Plage focale";
 "Focal length" = "Distance focale";
+"Focus" = "Mise au point";
 "Focus (assisted culling)" = "Mise au point (tri assisté)";
+"Focus Brush" = "Pinceau Mise au point";
+"Focus Lens Blur" = "Définir la mise au point du flou de l’objectif";
+"Focus on a Point" = "Mettre au point sur un point";
+"Focus on a point: click the photo" = "Mettre au point sur un point : cliquez sur la photo";
+"Focus on the photo's subject" = "Mettre au point sur le sujet de la photo";
 "Folder" = "Dossier";
 "Folder from Files…" = "Dossier depuis Fichiers…";
 "Folder name (renamed on disk; its photos follow)" = "Nom du dossier (renommé sur le disque ; ses photos suivent)";
@@ -981,6 +1011,7 @@
 "Geometry" = "Géométrie";
 "Get Develop Settings" = "Obtenir les réglages de développement";
 "Get Started" = "Commencer";
+"Getting the depth model…" = "Récupération du modèle de profondeur…";
 "Global Hue" = "Teinte globale";
 "Global Luminance" = "Luminance globale";
 "Global Saturation" = "Saturation globale";
@@ -1232,6 +1263,10 @@
 "Left out of the scan, with everything inside." = "Exclu de l'analyse, avec tout ce qu'il contient.";
 "Lens" = "Objectif";
 "Lens Blur" = "Flou de l'objectif";
+"Lens Blur Brush" = "Pinceau du flou de l’objectif";
+"Lens Blur Focus" = "Mise au point du flou de l’objectif";
+"Lens Blur Info" = "Infos sur le flou de l’objectif";
+"Lens Blur and Depth Range masks on photos without depth data of their own" = "Flou de l’objectif et masques Plage de profondeur sur les photos sans données de profondeur propres";
 "Lens Corrections" = "Corrections de l'objectif";
 "Let the Server Build Previews" = "Laisser le serveur générer les aperçus";
 "Let the crop reach past the photo's edges and paint the new area on this computer" = "Laisse le recadrage dépasser les bords de la photo et peint la nouvelle zone sur cet ordinateur";
@@ -1512,6 +1547,7 @@
 "No contributor data was built into this copy." = "Aucune donnée de contributeurs n'est incluse dans cette copie.";
 "No date" = "Sans date";
 "No dated photos" = "Aucune photo datée";
+"No depth yet: turn Lens Blur off and on to estimate it." = "Pas encore de profondeur : désactivez puis réactivez Flou de l’objectif pour l’estimer.";
 "No devices are signed in as %@." = "Aucun appareil n'est connecté en tant que %@.";
 "No download: texture from the photo" = "Sans téléchargement : texture tirée de la photo";
 "No dust spots found" = "Aucune tache de poussière trouvée";
@@ -1668,6 +1704,7 @@
 "PP-OCRv6 (not downloaded)" = "PP-OCRv6 (non téléchargé)";
 "Pages" = "Pages";
 "Paint" = "Peindre";
+"Paint on the photo: Focus keeps what you paint sharp, Blur blurs it, Erase takes either back." = "Peignez sur la photo : Mise au point garde net ce que vous peignez, Flou le rend flou, Effacer annule l’un ou l’autre.";
 "Paint only areas like the one under the brush" = "Peindre uniquement les zones similaires à celle sous le pinceau";
 "Paint onto Photos" = "Peindre sur des photos";
 "Paint over a distraction on the photo to remove it." = "Peignez sur un élément gênant de la photo pour le supprimer.";
@@ -1825,6 +1862,8 @@
 "Radius" = "Rayon";
 "Random" = "Aléatoire";
 "Range" = "Plage";
+"Range Far" = "Plage éloignée";
+"Range Near" = "Plage proche";
 "Rate ★" = "Noter ★";
 "Rate ★ and advance" = "Noter ★ et avancer";
 "Rate ★★" = "Noter ★★";
@@ -2023,6 +2062,7 @@
 "Right-click a photo ▸ Set as Reference Photo, then View → Reference View (Shift+R)" = "Clic droit sur une photo → Définir comme photo de référence, puis Affichage → Vue de référence (Maj+R)";
 "Right-click a preset to delete it" = "Clic droit sur un préréglage pour le supprimer";
 "Rights Usage Terms" = "Conditions d'utilisation des droits";
+"Ring" = "Anneau";
 "Rotate" = "Pivoter";
 "Rotate Crop" = "Pivoter le recadrage";
 "Rotate Crop Aspect" = "Pivoter le format du recadrage";
@@ -2415,6 +2455,7 @@
 "Tap photos to give them the keyword; tap again to take it away." = "Touchez des photos pour leur appliquer le mot-clé ; touchez-les de nouveau pour le retirer.";
 "Tap something white or grey in the photo" = "Touchez un élément blanc ou gris dans la photo";
 "Tap the photo to pick a colour" = "Touchez la photo pour choisir une couleur";
+"Tap what should be in focus" = "Touchez ce qui doit être net";
 "Tap ✓ when it is them, ✕ when it isn't." = "Touchez ✓ si c'est bien la personne, ✕ sinon.";
 "Targeted Adjustment" = "Réglage ciblé";
 "Targeted adjustment: drag up/down on the photo to adjust the colours there" = "Réglage ciblé : faites glisser vers le haut/bas sur la photo pour ajuster les couleurs à cet endroit";
@@ -2445,6 +2486,7 @@
 "The download didn't work:" = "Le téléchargement a échoué :";
 "The download didn't work: %@" = "Le téléchargement a échoué : %@";
 "The download failed" = "Le téléchargement a échoué";
+"The download stopped." = "Le téléchargement s’est arrêté.";
 "The engine isn't running." = "Le moteur ne fonctionne pas.";
 "The file itself. Your edits stay in LightCraft, on top of what the editor saves." = "Le fichier lui-même. Vos retouches restent dans LightCraft, par-dessus ce que l’éditeur enregistre.";
 "The first time, macOS asks whether LightCraft may control Photos." = "La première fois, macOS demande si LightCraft peut contrôler Photos.";
@@ -2511,6 +2553,8 @@
 "This library is only on this device" = "Cette bibliothèque est uniquement sur cet appareil";
 "This model isn't downloaded yet: download it, or choose Classic." = "Ce modèle n’est pas encore téléchargé : télécharge-le ou choisis Classique.";
 "This photo can't be opened" = "Cette photo ne peut pas être ouverte";
+"This photo has no depth of its own, and depth estimation isn't available in this build." = "Cette photo n’a pas de profondeur propre, et l’estimation de la profondeur n’est pas disponible dans cette version.";
+"This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a %lld MB download (%@ licence). %@." = "Cette photo n’a pas de profondeur propre : le flou de l’objectif l’estime avec Depth Anything V2 Small, un téléchargement de %lld Mo (licence %@). %@.";
 "This removes this account's library from this device. It stays on the server, and signing in again brings it back. Anything that hasn't reached the server yet is sent first." = "Cela retire la bibliothèque de ce compte de cet appareil. Elle reste sur le serveur et se reconnecter la rapporte. Ce qui n'est pas encore arrivé sur le serveur est d'abord envoyé.";
 "This server has no administrator yet. Type the setup code it wrote in its log when it started. Administrators add the people who use the server and look after its devices and storage. Letters, digits, dots, dashes and underscores in the name; at least 8 characters in the password." = "Ce serveur n'a pas encore d'administrateur. Saisissez le code de configuration qu'il a écrit dans son journal au démarrage. Les administrateurs ajoutent les personnes qui utilisent le serveur et s'occupent de ses appareils et de son stockage. Le nom peut contenir des lettres, chiffres, points, tirets et tirets bas ; le mot de passe fait au moins 8 caractères.";
 "Threshold" = "Seuil";
@@ -2624,6 +2668,7 @@
 "Virtual Copy" = "Copie virtuelle";
 "Visible" = "Visible";
 "Visitors add photos" = "Les visiteurs ajoutent des photos";
+"Visualize Depth" = "Visualiser la profondeur";
 "Visualize HDR" = "Visualiser le HDR";
 "Visualize Spots" = "Visualiser les taches";
 "Visualize Spots (A)" = "Visualiser les taches (A)";

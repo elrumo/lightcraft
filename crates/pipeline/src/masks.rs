@@ -4,7 +4,8 @@
 //! Components combine with Add (max), Subtract (a·(1−c)) and Intersect (a·c).
 //!
 //! AI shapes (Sky, Subject, Background, People) use the segmentation [`Mattes`] the source carries
-//! (DNG semantic masks, e.g. iPhone ProRAW's) when it has a matching one, else a heuristic.
+//! (DNG semantic masks, e.g. iPhone ProRAW's) when it has a matching one, else a heuristic. Depth
+//! Range uses the depth [`Mattes`] carries (the photo's own, or Lens Blur's estimate).
 
 use lightcraft_develop::{BrushStroke, LocalAdjustments, Mask, MaskOp, MaskShape, SegMask};
 use lightcraft_geom::{Orientation, Point};
@@ -25,17 +26,23 @@ pub enum MatteKind {
     Glasses,
 }
 
-/// Segmentation mattes that came with the source: 0..255 alpha planes, each covering the whole
-/// (EXIF-oriented) source image at its own resolution. Several mattes of one kind (e.g. one per
-/// person) are combined with max.
+/// What the source knows about the scene's layout: segmentation mattes (0..255 alpha planes) and
+/// a depth map ([`Mattes::depth`]), each covering the whole (EXIF-oriented) source image at its own
+/// resolution. Several mattes of one kind (e.g. one per person) are combined with max. Cheap to
+/// clone (the planes are shared).
 #[derive(Clone, Default, PartialEq)]
 pub struct Mattes {
-    mattes: Vec<(MatteKind, Image<u8>)>,
+    mattes: Vec<(MatteKind, std::sync::Arc<Image<u8>>)>,
+    depth: Option<std::sync::Arc<Plane>>,
 }
 
 impl std::fmt::Debug for Mattes {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_list().entries(self.mattes.iter().map(|(k, m)| (k, m.width, m.height))).finish()
+        let depth = self.depth.as_ref().map(|d| (d.width, d.height));
+        f.debug_struct("Mattes")
+            .field("mattes", &self.mattes.iter().map(|(k, m)| (k, m.width, m.height)).collect::<Vec<_>>())
+            .field("depth", &depth)
+            .finish()
     }
 }
 
@@ -43,25 +50,44 @@ impl Mattes {
     /// Add a matte (empty ones are ignored).
     pub fn push(&mut self, kind: MatteKind, matte: Image<u8>) {
         if matte.width > 0 && matte.height > 0 && matte.data.len() == matte.width * matte.height {
-            self.mattes.push((kind, matte));
+            self.mattes.push((kind, std::sync::Arc::new(matte)));
         }
     }
 
+    /// Set the depth: *nearness* over the source, 1 at the nearest part of the photo and 0 at the
+    /// farthest, linear in inverse distance (see [`crate::lensblur::normalize`]). An empty plane, or
+    /// one with values that aren't numbers, is ignored.
+    pub fn set_depth(&mut self, depth: Plane) {
+        if depth.width > 0 && depth.height > 0 && depth.data.len() == depth.width * depth.height && depth.data.iter().all(|v| v.is_finite()) {
+            self.depth = Some(std::sync::Arc::new(depth));
+        }
+    }
+
+    /// The source's depth (see [`Mattes::set_depth`]).
+    pub fn depth(&self) -> Option<&std::sync::Arc<Plane>> {
+        self.depth.as_ref()
+    }
+
+    /// These mattes with `depth` in place of their own.
+    pub fn with_depth(&self, depth: std::sync::Arc<Plane>) -> Mattes {
+        Mattes { mattes: self.mattes.clone(), depth: Some(depth) }
+    }
+
     pub fn is_empty(&self) -> bool {
-        self.mattes.is_empty()
+        self.mattes.is_empty() && self.depth.is_none()
     }
 
     /// Memory held (bytes).
     pub fn bytes(&self) -> usize {
-        self.mattes.iter().map(|(_, m)| m.data.len()).sum()
+        self.mattes.iter().map(|(_, m)| m.data.len()).sum::<usize>() + self.depth.as_ref().map_or(0, |d| d.data.len() * 4)
     }
 
     fn of(&self, kinds: &[MatteKind]) -> Vec<&Image<u8>> {
-        self.mattes.iter().filter(|(k, _)| kinds.contains(k)).map(|(_, m)| m).collect()
+        self.mattes.iter().filter(|(k, _)| kinds.contains(k)).map(|(_, m)| &**m).collect()
     }
 
     /// The mattes a shape uses instead of its heuristic (empty: none fits).
-    fn for_shape(&self, shape: &MaskShape) -> Vec<&Image<u8>> {
+    pub(crate) fn for_shape(&self, shape: &MaskShape) -> Vec<&Image<u8>> {
         use MatteKind::*;
         // the whole person: a person matte, else the union of the parts
         let person = || {
@@ -274,7 +300,19 @@ pub fn shape_alpha(shape: &MaskShape, frame: &Frame, w: usize, h: usize, img: &R
             s.data.iter_mut().for_each(|v| *v = 1.0 - *v);
             out = s;
         }
-        MaskShape::DepthRange { .. } | MaskShape::Landscape { .. } => {}
+        MaskShape::DepthRange { lo, hi, feather } => {
+            if let Some(depth) = mattes.and_then(Mattes::depth) {
+                // depths 0 (near) .. 1 (far) are 1 − nearness
+                let near = crate::lensblur::nearness_out(depth, frame, w, h, log_l);
+                let (lo, hi) = (*lo as f32, *hi as f32);
+                let f = (*feather as f32).clamp(0.0, 0.5).max(1e-3);
+                for (v, n) in out.data.iter_mut().zip(&near.data) {
+                    let d = 1.0 - n;
+                    *v = smooth(lo - f, lo, d) * (1.0 - smooth(hi, hi + f, d));
+                }
+            }
+        }
+        MaskShape::Landscape { .. } => {}
     }
     out
 }
@@ -347,50 +385,66 @@ fn smooth_plane(p: &mut Plane, sigma: f32) {
 /// first when the output is much smaller than the matte, bilinear otherwise.
 fn matte_alpha(mattes: &[&Image<u8>], frame: &Frame, w: usize, h: usize) -> Plane {
     let mut out = Plane::new(w, h);
-    let o2t = frame.out_to_oriented(w, h);
-    let ppl = frame.px_per_long(w).max(1e-9);
     for m in mattes {
-        let oriented =
-            if frame.orient == Orientation::Normal { std::borrow::Cow::Borrowed(*m) } else { std::borrow::Cow::Owned(m.oriented(frame.orient)) };
-        // matte px per output px
-        let k = oriented.width as f64 / frame.ow * frame.ow.max(frame.oh) / ppl;
-        let base = box_down(&oriented, if k >= 2.0 { (k.floor() as usize).min(64) } else { 1 });
-        let (sx, sy) = ((base.width as f64 / frame.ow) as f32, (base.height as f64 / frame.oh) as f32);
-        for_rows(&mut out.data, w, |y, row| {
-            for (x, v) in row.iter_mut().enumerate() {
-                let s = match &frame.warp {
-                    Some(wp) => {
-                        let Some((_, s)) = wp.frame(&o2t, x, y) else {
-                            continue;
-                        };
-                        s
-                    }
-                    None => o2t.apply(Point::new(x as f64 + 0.5, y as f64 + 0.5)),
-                };
-                *v = v.max(bilinear(&base, s.x as f32 * sx, s.y as f32 * sy) / 255.0);
-            }
-        });
+        let a = source_to_out(&Plane { width: m.width, height: m.height, data: m.data.iter().map(|&v| f32::from(v) / 255.0).collect() }, frame, w, h);
+        for (o, v) in out.data.iter_mut().zip(&a.data) {
+            *o = o.max(*v);
+        }
     }
     out
 }
 
-/// `m` area-averaged by `f × f` (0..255 values kept); `f == 1` converts only.
-fn box_down(m: &Image<u8>, f: usize) -> Plane {
+/// A plane over the EXIF-oriented source (at any resolution) at output resolution, sampled like
+/// the image: user orientation, lens / perspective warp, crop and flips; area-averaged first when
+/// the output is much smaller than the plane, bilinear otherwise. Outside the source (a warp's
+/// empty corners) it is 0.
+pub(crate) fn source_to_out(p: &Plane, frame: &Frame, w: usize, h: usize) -> Plane {
+    let mut out = Plane::new(w, h);
+    let o2t = frame.out_to_oriented(w, h);
+    let ppl = frame.px_per_long(w).max(1e-9);
+    let oriented =
+        if frame.orient == Orientation::Normal { std::borrow::Cow::Borrowed(p) } else { std::borrow::Cow::Owned(p.oriented(frame.orient)) };
+    // plane px per output px
+    let k = oriented.width as f64 / frame.ow * frame.ow.max(frame.oh) / ppl;
+    let base = box_down(&oriented, if k >= 2.0 { (k.floor() as usize).min(64) } else { 1 });
+    let (sx, sy) = ((base.width as f64 / frame.ow) as f32, (base.height as f64 / frame.oh) as f32);
+    for_rows(&mut out.data, w, |y, row| {
+        for (x, v) in row.iter_mut().enumerate() {
+            let s = match &frame.warp {
+                Some(wp) => {
+                    let Some((_, s)) = wp.frame(&o2t, x, y) else {
+                        continue;
+                    };
+                    s
+                }
+                None => o2t.apply(Point::new(x as f64 + 0.5, y as f64 + 0.5)),
+            };
+            *v = bilinear(&base, s.x as f32 * sx, s.y as f32 * sy);
+        }
+    });
+    out
+}
+
+/// `m` area-averaged by `f × f`; `f == 1` copies.
+fn box_down(m: &Plane, f: usize) -> Plane {
     let f = f.max(1);
+    if f == 1 {
+        return m.clone();
+    }
     let (bw, bh) = (m.width.div_ceil(f).max(1), m.height.div_ceil(f).max(1));
     let mut out = Plane::new(bw, bh);
     for_rows(&mut out.data, bw, |by, row| {
         let rows = by * f..((by + 1) * f).min(m.height);
         for (bx, v) in row.iter_mut().enumerate() {
             let cols = bx * f..((bx + 1) * f).min(m.width);
-            let (mut sum, mut n) = (0u32, 0u32);
+            let (mut sum, mut n) = (0f32, 0u32);
             for y in rows.clone() {
                 for x in cols.clone() {
-                    sum += m.data.get(y * m.width + x).copied().unwrap_or(0) as u32;
+                    sum += m.data.get(y * m.width + x).copied().unwrap_or(0.0);
                     n += 1;
                 }
             }
-            *v = sum as f32 / n.max(1) as f32;
+            *v = sum / n.max(1) as f32;
         }
     });
     out
@@ -584,6 +638,13 @@ pub fn guided_cross(guide: &Plane, p: &Plane, sigma: f32, eps: f32) -> Plane {
         q.data[i] = (ma.data[i] * guide.data[i] + mb.data[i]).clamp(0.0, 1.0);
     }
     q
+}
+
+/// The coverage (0..1) of brush `strokes` at output resolution (Lens Blur's refine brushes).
+pub(crate) fn brush_alpha(strokes: &[BrushStroke], frame: &Frame, w: usize, h: usize, img: &Rgb32f, log_l: &Plane) -> Plane {
+    let mut out = Plane::new(w, h);
+    rasterize_brush(strokes, frame, w, h, img, log_l, &mut out);
+    out
 }
 
 /// Stamp brush strokes into `out` (max-combine; erase strokes subtract). Auto Mask strokes weight

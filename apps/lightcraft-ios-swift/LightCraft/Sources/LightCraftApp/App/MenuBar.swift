@@ -322,7 +322,7 @@ extension AppModel {
         "app.appearance.system", "app.appearance.light", "app.appearance.dark", "view.photoGrid", "view.squareGrid", "view.gridToggle",
         "view.detail", "view.compare", "view.survey", "view.people", "view.map", "view.faceBoxes", "view.reference", "photo.setReference",
         "view.filmstrip", "view.leftPanel", "view.beforeAfter", "view.beforeAfterSplit", "view.beforeAfterTopBottom",
-        "view.beforeAfterSplitTopBottom", "view.clipping", "view.visualizeHdr", "view.histogram", "view.maskOverlay", "view.maskOverlayAll", "view.maskPins",
+        "view.beforeAfterSplitTopBottom", "view.clipping", "view.visualizeHdr", "view.visualizeDepth", "view.histogram", "view.maskOverlay", "view.maskOverlayAll", "view.maskPins",
         "view.visualizeSpots", "view.cropOverlay", "view.cropOverlayOrientation", "view.back", "tool.done", "view.fullScreenPreview",
         "view.lightsOut", "view.infoOverlay", "view.navigator", "panel.edit", "panel.crop", "panel.remove", "panel.masking", "panel.redeye",
         "panel.presets", "panel.info", "panel.keywords", "panel.versions", "panel.activity", "view.syncStatus", "section.light",
@@ -392,6 +392,7 @@ extension AppModel {
         case "view.clipping": prefs.showClipping.toggle()
         case "view.histogram": prefs.showHistogram.toggle()
         case "view.visualizeHdr": editor.visualizeHdr.toggle()
+        case "view.visualizeDepth": editor.visualizeDepth.toggle()
         case "view.maskOverlay": prefs.maskOverlayVisibility = ["auto": "always", "always": "never"][prefs.maskOverlayVisibility] ?? "auto"
         case "view.maskOverlayAll": editor.maskOverlayAll.toggle()
         case "view.maskPins": prefs.maskPins.toggle()

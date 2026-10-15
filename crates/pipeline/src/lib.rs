@@ -8,7 +8,7 @@
 //! 1. geometry — user orientation, lens corrections (distortion, CA, vignetting), perspective, crop +
 //!    straighten, flips; one resample at output resolution; then defringe
 //! 2. scene-linear — white balance, exposure, dehaze, local tone (highlights/shadows), texture,
-//!    clarity, local adjustments (masks)
+//!    clarity, local adjustments (masks); Lens Blur ([`lensblur`]) after noise reduction
 //! 3. tone map — contrast / whites / blacks filmic curve on luminance, highlight desaturation
 //! 4. colour — vibrance, saturation, colour mixer, colour grading, B&W (OkLCh)
 //! 5. display — gamut map to the output space (sRGB unless [`RenderRequest::space`] says otherwise), encode, tone curves (parametric + point), vignette, grain
@@ -32,6 +32,7 @@ pub mod expand;
 pub mod finish;
 pub mod geometry;
 pub mod inpaint;
+pub mod lensblur;
 pub mod local;
 pub mod local_tone;
 pub mod lut;
@@ -377,8 +378,20 @@ pub struct Plan<'a> {
     /// [`spots::window_for_reads`]); this is the requested window inside the rendered one, which
     /// the result is cut to.
     pub keep: Option<PixelWindow>,
-    /// The source's segmentation mattes ([`SourceInfo::mattes`]).
+    /// The source's segmentation mattes and depth ([`SourceInfo::mattes`]), with Lens Blur's stored
+    /// depth estimate in place of the source's depth ([`lensblur::mattes_for`]).
     pub mattes: Option<Arc<masks::Mattes>>,
+    /// Lens Blur, when it blurs anything.
+    pub blur: Option<lensblur::Setup>,
+    /// Where the rendered pixels sit in the whole output frame (a window's top-left corner).
+    pub origin: [usize; 2],
+}
+
+/// `win` grown by `m` pixels on every side, inside a `full_w × full_h` frame.
+fn grown(win: PixelWindow, m: usize, full_w: usize, full_h: usize) -> PixelWindow {
+    let (x, y) = (win.x.saturating_sub(m), win.y.saturating_sub(m));
+    let (x1, y1) = ((win.x + win.w).saturating_add(m).min(full_w), (win.y + win.h).saturating_add(m).min(full_h));
+    PixelWindow { x, y, w: x1.saturating_sub(x).max(1), h: y1.saturating_sub(y).max(1) }
 }
 
 /// Long edge of the small render a windowed render estimates the whole frame's airlight from.
@@ -405,8 +418,11 @@ pub fn plan<'a>(src: &Rgb32f, info: &SourceInfo, s: &'a DevelopSettings, req: &R
     let (full_w, full_h) = frame.fit(req.max_w, req.max_h);
     // sizes and scale are those of the whole output; a window only narrows what is drawn
     let px_per_long = frame.px_per_long(full_w);
+    let mattes = lensblur::mattes_for(s, info.mattes.as_ref());
+    let blur = lensblur::Setup::new(s, mattes.as_deref(), px_per_long);
     let mut fixed_air = None;
     let mut keep = None;
+    let mut origin = [0, 0];
     let (frame, w, h) = match req.window {
         Some(win) => {
             let win = win.clamped(full_w, full_h);
@@ -417,9 +433,15 @@ pub fn plan<'a>(src: &Rgb32f, info: &SourceInfo, s: &'a DevelopSettings, req: &R
             }
             // (spots grow the rendered window; the result is cut back to the request)
             let work = spots::window_for_reads(s, &frame, full_w, full_h, px_per_long, win);
+            // (and so does Lens Blur, by the largest circle it draws)
+            let work = match &blur {
+                Some(b) => grown(work, b.reach(), full_w, full_h),
+                None => work,
+            };
             if work != win {
                 keep = Some(PixelWindow { x: win.x - work.x, y: win.y - work.y, ..win });
             }
+            origin = [work.x, work.y];
             (frame.window(full_w, full_h, work), work.w, work.h)
         }
         None => (frame, full_w, full_h),
@@ -439,9 +461,11 @@ pub fn plan<'a>(src: &Rgb32f, info: &SourceInfo, s: &'a DevelopSettings, req: &R
         // and the local tone mapping
         local_tone::enabled(info, s),
         src_long,
+        // Lens Blur follows noise reduction; a draft's coarser blur is never kept for a full render
+        blur.as_ref().map(|b| (b.key, req.quality == Quality::Draft)),
     ));
     let lin_key = hash_of((pre_nr_key, [d.nr_luminance, d.nr_detail, d.nr_color, d.nr_color_detail, d.nr_color_smoothness].map(f64::to_bits)));
-    Plan { settings, frame, w, h, px_per_long, src_long, geo, lin_key, pre_nr_key, eyes, fixed_air, keep, mattes: info.mattes.clone() }
+    Plan { settings, frame, w, h, px_per_long, src_long, geo, lin_key, pre_nr_key, eyes, fixed_air, keep, mattes, blur, origin }
 }
 
 /// Whether the scene-linear stage needs work only the CPU does (defringe, spot removal).
@@ -560,6 +584,9 @@ fn render_impl(src: Src<'_>, info: &SourceInfo, s: &DevelopSettings, req: &Rende
             let mut img = if shared.is_some() { (*sampled).clone() } else { Arc::unwrap_or_clone(sampled.clone()) };
             lin_cpu(&mut img, info, &plan);
             local::denoise(&mut img, s, src_long, frame.output_long(w, h));
+            if let Some(b) = &plan.blur {
+                lensblur::apply(&mut img, b, frame, plan.origin, req.quality == Quality::Draft);
+            }
             Arc::new(img)
         }
     };

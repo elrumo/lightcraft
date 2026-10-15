@@ -463,6 +463,7 @@ fn services(cc: &eframe::CreationContext<'_>, log_file: Option<&std::path::Path>
         system_theme: appearance::service(),
         // AI Remove's model comes with the engine's downloader
         erase_model: None,
+        depth_model: None,
     }
 }
 

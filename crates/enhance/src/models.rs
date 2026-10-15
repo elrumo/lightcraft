@@ -191,8 +191,30 @@ pub const KANDINSKY: ModelSpec = diffusion(
     false,
 );
 
+/// Depth Anything V2 Small: Lens Blur's depth for photos without depth data of their own (see
+/// `lightcraft_depth`, which pins the file and says where it comes from).
+pub const DEPTH: ModelSpec = ModelSpec {
+    id: lightcraft_depth::ID,
+    label: lightcraft_depth::LABEL,
+    purpose: "Lens Blur and Depth Range masks on photos without depth data of their own",
+    files: &[FileSpec {
+        name: lightcraft_depth::FILE,
+        size: Some(lightcraft_depth::FILE_SIZE),
+        sha256: Some(lightcraft_depth::FILE_SHA256),
+        max: lightcraft_depth::FILE_SIZE,
+    }],
+    mirrors_env: "LIGHTCRAFT_DEPTH_MIRRORS",
+    default_mirrors: &[lightcraft_depth::BASE_URL],
+    licence: lightcraft_depth::LICENCE,
+    licence_url: lightcraft_depth::LICENCE_URL,
+    credit: lightcraft_depth::CREDIT,
+    home_url: lightcraft_depth::HOME_URL,
+    diffusion: None,
+    restricted: false,
+};
+
 /// Every enhancement model, for listings.
-pub const ALL: &[&ModelSpec] = &[&NOMOS_SPAN_2X, &MIGAN, &LAMA, &SD15, &KANDINSKY, &SDXL];
+pub const ALL: &[&ModelSpec] = &[&NOMOS_SPAN_2X, &MIGAN, &LAMA, &DEPTH, &SD15, &KANDINSKY, &SDXL];
 
 /// The enhancement model with this id.
 pub fn find(id: &str) -> Option<&'static ModelSpec> {

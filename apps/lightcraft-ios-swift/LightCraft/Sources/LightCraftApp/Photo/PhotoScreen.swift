@@ -514,6 +514,8 @@ struct ZoomablePhoto: View {
                 MaskCanvas(photo: photo, rect: rect)
             } else if model.editor.tool == .redEye, !showBefore, let rect = shownRect(picture) {
                 RedEyeCanvas(photo: photo, rect: rect)
+            } else if model.editor.tool == .edit, model.editor.lensBrush != nil, !showBefore, let rect = shownRect(picture) {
+                LensBrushCanvas(photo: photo, rect: rect)
             } else if model.prefs.faceBoxes || model.editor.tagFace, model.editor.tool?.hasScreen != true, !compare, !showBefore, !review,
                       let rect = shownRect(picture)
             {
@@ -811,6 +813,7 @@ struct ZoomablePhoto: View {
         switch pick {
         case .whiteBalance: model.perform("develop.wbPick", at)
         case .pointColor: model.perform("pointColor.pick", at)
+        case .lensFocus: model.perform("lensBlur.focus", at)
         }
     }
 

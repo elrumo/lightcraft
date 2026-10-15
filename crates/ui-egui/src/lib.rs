@@ -24,6 +24,7 @@ pub mod headless;
 pub mod i18n;
 pub mod icons;
 pub mod import;
+pub mod lensblur;
 pub mod lightroom_import;
 pub mod links;
 pub mod menu_level;
@@ -126,6 +127,8 @@ mod tests_keyword_sidebar;
 mod tests_keywording;
 #[cfg(test)]
 mod tests_labels;
+#[cfg(test)]
+mod tests_lensblur;
 #[cfg(test)]
 mod tests_library_problem;
 #[cfg(test)]
@@ -356,6 +359,9 @@ pub struct Services {
     /// Fetches AI Remove's model in the browser build ([`erase::ModelFetch`]); `None`: the
     /// engine downloads it (desktop and phone apps).
     pub erase_model: Option<erase::ModelFetch>,
+    /// Fetches Lens Blur's depth model in the browser build, as [`Services::erase_model`] does
+    /// AI Remove's; `None`: the engine downloads it.
+    pub depth_model: Option<erase::ModelFetch>,
     /// The system clipboard's text, for Paste in a text field's touch edit menu
     /// (`panels::mobile::edit_menu`; iOS: the on-screen keyboard has no ⌘V). A host that can only
     /// read it asynchronously (the web) starts the read here, returns `None` and sends the text
@@ -505,6 +511,8 @@ pub struct LightcraftApp {
     pub superres: superres::SuperResState,
     /// AI Remove: a fill waiting for its notice, the browser build's model fetch.
     pub erase: erase::EraseState,
+    /// The browser build's fetch of Lens Blur's depth model.
+    pub depth_fetch: lensblur::DepthFetch,
     /// The saved choice of AI models turned off has been applied to the session.
     models_synced: bool,
     /// The saved choice of Generative Expand model has been applied to the session.
@@ -634,6 +642,7 @@ impl LightcraftApp {
             merge: merge::MergeState::default(),
             superres: superres::SuperResState::default(),
             erase: erase::EraseState::default(),
+            depth_fetch: lensblur::DepthFetch::default(),
             models_synced: false,
             expand_synced: false,
             import: None,
@@ -1258,6 +1267,7 @@ impl LightcraftApp {
         merge::poll(self, ctx);
         superres::poll(self, ctx);
         erase::poll(self, ctx);
+        lensblur::poll(self, ctx);
         expand::poll(self, ctx);
         self.sync_models();
         expand::sync_choice(self);

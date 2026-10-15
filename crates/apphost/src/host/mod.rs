@@ -1466,6 +1466,7 @@ fn overlay(v: Option<&Value>) -> lightcraft_pipeline::Overlay {
         Some("spots") => Overlay::Spots(num("threshold", 100.0, 50.0) as u8),
         Some("pointColor") => v.get("index").and_then(Value::as_u64).map_or(Overlay::None, |i| Overlay::PointColorRange(i.min(255) as u8)),
         Some("hdr") => Overlay::HdrRange,
+        Some("depth") => Overlay::Depth,
         _ => Overlay::None,
     }
 }

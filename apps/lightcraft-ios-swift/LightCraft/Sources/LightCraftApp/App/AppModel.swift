@@ -530,6 +530,10 @@ final class AppModel {
         if editor.tool == .edit, editor.visualizeHdr, editor.hdr {
             return ["kind": "hdr"]
         }
+        // (painting Lens Blur's Refine brush shows the depth it changes)
+        if editor.tool == .edit, editor.visualizeDepth || editor.lensBrush != nil, editor.setting("lens_blur", "enabled").bool == true {
+            return ["kind": "depth"]
+        }
         guard editor.tool == .masking else { return nil }
         if editor.maskOverlayAll {
             return [

@@ -64,7 +64,7 @@ nonisolated enum ZoomAsk: Equatable {
 
 /// The Edit tool's groups, one shown at a time (the desktop's sections).
 nonisolated enum EditGroup: String, CaseIterable, Identifiable {
-    case profile, light, color, effects, detail, optics, calibration
+    case profile, light, color, effects, detail, optics, lensBlur, calibration
     var id: String { rawValue }
 
     var label: String {
@@ -75,6 +75,7 @@ nonisolated enum EditGroup: String, CaseIterable, Identifiable {
         case .effects: "Effects"
         case .detail: "Detail"
         case .optics: "Optics"
+        case .lensBlur: "Lens Blur"
         case .calibration: "Calibration"
         }
     }
@@ -87,6 +88,7 @@ nonisolated enum EditGroup: String, CaseIterable, Identifiable {
         case .effects: "circle.circle"
         case .detail: "triangle"
         case .optics: "camera.aperture"
+        case .lensBlur: "camera.filters"
         case .calibration: "scope"
         }
     }
@@ -100,6 +102,7 @@ nonisolated enum EditGroup: String, CaseIterable, Identifiable {
         case .effects: ["effects", "vignette", "grain"]
         case .detail: ["detail"]
         case .optics: ["optics"]
+        case .lensBlur: ["lensBlur"]
         case .calibration: ["calibration"]
         }
     }
@@ -186,6 +189,10 @@ final class EditorModel {
     var proofWarning = false
     /// Light ▸ HDR ▸ Visualize: what the HDR rendition puts above SDR white, painted by how far.
     var visualizeHdr = false
+    /// Lens Blur ▸ Visualize Depth: the depth the blur uses, warm near and cool far.
+    var visualizeDepth = false
+    /// Lens Blur's Refine brush in hand on the photo (`focus`, `blur`, `erase`; `nil`: none).
+    var lensBrush: String?
     /// Red Eye: a pet's eyes, and the correction chosen (its sliders).
     var eyePet = false
     var eye = 0
@@ -200,7 +207,7 @@ final class EditorModel {
     var zoomedIn = false
 
     enum Pick {
-        case whiteBalance, pointColor
+        case whiteBalance, pointColor, lensFocus
     }
 
     /// Sections wanted (the open group's, plus flyouts).
