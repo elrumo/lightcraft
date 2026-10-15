@@ -13,6 +13,10 @@ nonisolated struct ExpandModels: Decodable, Equatable {
         var downloadBytes: Double?
         var licence: String?
         var credit: String?
+        /// Its licence lists uses that aren't allowed (OpenRAIL): the download says so.
+        var restricted: Bool?
+        /// What Automatic picks on this device, from its profile (it may still need its download).
+        var recommended: Bool?
         var `default`: Bool?
     }
 
@@ -27,15 +31,26 @@ nonisolated struct ExpandModels: Decodable, Equatable {
     /// The models this device can use (now, or once downloaded).
     var offered: [Model] { models.filter { $0.available != false } }
 
-    /// The one Generate uses: the one chosen if it's offered, else the default.
+    /// Automatic's pick: the best model for this device's profile (the engine's `recommended`).
+    var automatic: Model? {
+        offered.first { $0.recommended == true } ?? offered.first { $0.default == true } ?? offered.first
+    }
+
+    /// Whether `pick` leaves the choice to Automatic (`auto`, or a model this device doesn't offer).
+    func isAutomatic(_ pick: String) -> Bool {
+        !offered.contains { $0.id == pick }
+    }
+
+    /// The one Generate uses: the one chosen if it's offered, else Automatic's.
     func chosen(_ pick: String) -> Model? {
-        offered.first { $0.id == pick } ?? offered.first { $0.default == true } ?? offered.first
+        offered.first { $0.id == pick } ?? automatic
     }
 }
 
 /// Crop ▸ Expand, as Lightroom's Generative Expand: the crop may reach past the photo's edges (the
 /// Expand tile, in the aspect tiles), and Generate paints the new area on this device with the
-/// model in Fill With (MI-GAN, a download, or Classic, texture from the photo). Generate runs in the
+/// model in Fill With (Auto, the best one for this device; the models it runs, each a download; or
+/// Classic, texture from the photo; the same choice as Settings → AI Models). Generate runs in the
 /// background (`crop.generate {wait: false}`): its progress and Cancel are in its button, and the
 /// host stores the fill (one undo step) and says so when it ends.
 struct ExpandControls: View {
@@ -96,7 +111,7 @@ struct ExpandControls: View {
             Button("Cancel", role: .cancel) { offer = nil }
         } message: {
             if let m = offer {
-                Text("Uses the \(m.label) model, a \(Int((m.downloadBytes ?? 0) / 1e6)) MB download (\(m.licence ?? "") licence). \(m.credit ?? "").")
+                Text(verbatim: Self.offerText(m))
             }
         }
     }
@@ -112,10 +127,23 @@ struct ExpandControls: View {
         model.activity.contains { $0.kind == "download" }
     }
 
-    /// Fill With: the models this device can use; one still to download asks first.
+    /// Fill With: Auto, then the models this device can use; one still to download asks first.
     private func fillWith(_ chosen: ExpandModels.Model?) -> some View {
-        Menu {
+        let automatic = info?.isAutomatic(model.prefs.expandModel) ?? true
+        return Menu {
             Section("Fill With") {
+                Button {
+                    model.prefs.expandModel = "auto"
+                } label: {
+                    if automatic {
+                        Label("Auto", systemImage: "checkmark")
+                    } else {
+                        Text("Auto")
+                    }
+                    if let a = info?.automatic {
+                        Text("Automatic: \(a.label) suits this device")
+                    }
+                }
                 ForEach(info?.offered ?? []) { m in
                     Button {
                         if m.ready == true {
@@ -124,7 +152,7 @@ struct ExpandControls: View {
                             offer = m
                         }
                     } label: {
-                        if m.id == chosen?.id {
+                        if !automatic && m.id == chosen?.id {
                             Label(m.label, systemImage: "checkmark")
                         } else {
                             Text(m.label)
@@ -146,8 +174,21 @@ struct ExpandControls: View {
     private func describe(_ m: ExpandModels.Model) -> String {
         let note = m.note ?? ""
         if m.disabled == true { return "\(note) · \(String(localized: "Turned off in Settings → AI Models"))" }
-        if m.ready != true, let bytes = m.downloadBytes { return String(localized: "\(note) · \(Int(bytes / 1e6)) MB download") }
+        if m.ready != true, let bytes = m.downloadBytes { return String(localized: "\(note) · \(Self.size(bytes)) download") }
         return note
+    }
+
+    /// A download's size as the system writes it ("29.5 MB", "2.13 GB").
+    static func size(_ bytes: Double) -> String {
+        ByteCountFormatter.string(fromByteCount: Int64(exactly: bytes.rounded()) ?? 0, countStyle: .file)
+    }
+
+    /// The download offer: the size, the licence and the authors, and when the licence restricts
+    /// use (OpenRAIL), that it does.
+    static func offerText(_ m: ExpandModels.Model) -> String {
+        let text = String(localized: "Uses the \(m.label) model, a \(size(m.downloadBytes ?? 0)) download (\(m.licence ?? "") licence). \(m.credit ?? "").")
+        guard m.restricted == true else { return text }
+        return text + " " + String(localized: "Not an open-source licence: it lists uses that aren't allowed. Read it before downloading.")
     }
 
     /// What the new area holds, and what to do.

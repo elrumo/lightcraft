@@ -27,7 +27,7 @@
 "%@ of %lld done. Photos show on devices as their previews are ready." = "%1$@ sur %2$lld terminés. Les photos s'affichent sur les appareils dès que leurs aperçus sont prêts.";
 "%@ used" = "Utilisé : %@";
 "%@ wheel" = "Roue %@";
-"%@ · %lld MB download" = "%1$@ · téléchargement de %2$lld Mo";
+"%@ · %@ download" = "%1$@ · téléchargement de %2$@";
 "%@'s password was changed." = "Le mot de passe de %@ a été modifié.";
 "%@, %@" = "%1$@ %2$@";
 "%@?" = "%@ ?";
@@ -92,6 +92,7 @@
 "32 bits (float)" = "32 bits (flottant)";
 "=  exactly" = "=  exactement";
 "A blank template keeps the original names." = "Un modèle vide conserve les noms d'origine.";
+"A computer" = "Un ordinateur";
 "A copy of the file with your edits applied, stacked with the original." = "Une copie du fichier avec vos retouches appliquées, empilée avec l’original.";
 "A copy of the original file, without your edits, stacked with it." = "Une copie du fichier original, sans vos retouches, empilée avec lui.";
 "A filter is hiding this view's photos: change it, or clear it (View → Clear Filters)" = "Un filtre masque les photos de cette vue : modifiez-le ou effacez-le (Affichage → Effacer les filtres)";
@@ -100,6 +101,7 @@
 "A keyword set needs a name" = "Un jeu de mots-clés doit avoir un nom";
 "A one-time download of about" = "Un téléchargement unique d'environ";
 "A path the server can read. With Docker, mount the folder into the container read-only first (-v /srv/photos:/photos:ro) and enter /photos/…" = "Un chemin que le serveur peut lire. Avec Docker, montez d'abord le dossier dans le conteneur en lecture seule (-v /srv/photos:/photos:ro), puis saisissez /photos/…";
+"A phone or tablet" = "Un téléphone ou une tablette";
 "A photo library and raw developer in pure Rust, open source (MIT OR Apache-2.0)." = "Une photothèque et un logiciel de développement RAW en Rust pur, open source (MIT OR Apache-2.0).";
 "A photo library and raw developer. Free and open source." = "Une photothèque et un développeur de fichiers raw. Gratuit et open source.";
 "A tap puts the keyword on the chosen photos, or takes it off when they all have it." = "Un toucher applique le mot-clé aux photos choisies, ou le retire si toutes l'ont déjà.";
@@ -277,6 +279,7 @@
 "Automatic renders the Detail view at the size it is shown, up to the photo's own pixels. Choose a size to cap it: smaller is faster." = "Automatique calcule la vue Détail à la taille affichée, jusqu'aux pixels de la photo elle-même. Choisissez une taille pour la plafonner : plus petit, c'est plus rapide.";
 "Automatic uses Apple's models where this device has them. Classic is LightCraft's own guess and needs no model." = "« Automatique » utilise les modèles d’Apple lorsque cet appareil les possède. « Classique » est l’estimation propre à LightCraft et ne nécessite aucun modèle.";
 "Automatic uses the graphics card where it is faster than the processor: both are timed on this computer the first time a photo is made." = "Automatique utilise la carte graphique lorsqu'elle est plus rapide que le processeur : les deux sont chronométrés sur cet ordinateur la première fois qu'une photo est générée.";
+"Automatic: %@ suits this device" = "Automatique : %1$@ convient à cet appareil";
 "Automatically Write Changes into XMP" = "Écrire automatiquement les modifications dans XMP";
 "Automatically write changes into XMP sidecars" = "Écrire automatiquement les modifications dans les fichiers annexes XMP";
 "Autumn Gold" = "Or d'automne";
@@ -303,7 +306,7 @@
 "Before/After Split Top/Bottom" = "Avant/Après divisé haut/bas";
 "Before/After Top/Bottom" = "Avant/Après haut/bas";
 "Begin Interaction" = "Commencer l'interaction";
-"Best for wide areas; slower, computers only" = "Idéal pour les grandes zones ; plus lent, ordinateurs uniquement";
+"Best for wide areas of sky, water or texture" = "Idéal pour les grandes zones de ciel, d’eau ou de texture";
 "Best of Similar Shots" = "Meilleure des prises similaires";
 "Binary assets added" = "Ressources binaires ajoutées";
 "Binary assets removed" = "Ressources binaires supprimées";
@@ -737,6 +740,8 @@
 "Drag the crop past the photo's edges, or choose an aspect ratio, first." = "Fais d’abord dépasser le recadrage des bords de la photo, ou choisis un format.";
 "Drag the crop past the photo's edges, or choose an aspect ratio, then Generate." = "Fais dépasser le recadrage des bords de la photo ou choisis un format, puis Générer.";
 "Draw Guides" = "Tracer des repères";
+"Draws new detail, guided by the photo; slow" = "Dessine de nouveaux détails guidés par la photo ; lent";
+"Draws new detail; slower" = "Dessine de nouveaux détails ; plus lent";
 "Drop here for the top level" = "Déposez ici pour le niveau supérieur";
 "Duplicate" = "Dupliquer";
 "Duplicate Component" = "Dupliquer le composant";
@@ -959,6 +964,7 @@
 "Full screen mode" = "Mode plein écran";
 "Full size" = "Taille complète";
 "GPS Track Log" = "Trace GPS";
+"GPU" = "GPU";
 "GPU Rendering" = "Rendu GPU";
 "GPU rendering" = "Rendu GPU";
 "General" = "Général";
@@ -1163,6 +1169,7 @@
 "It tests this album, so testing it back would loop" = "Il teste cet album : le tester en retour créerait une boucle";
 "Its copyright, creator and place." = "Son copyright, son créateur et son lieu.";
 "Its denoised picture is not made yet, and pictures are not made on their own (Settings, AI Denoise)." = "Son image débruitée n'est pas encore générée, et les images ne sont pas générées automatiquement (Réglages, Débruitage IA).";
+"Its licence lists uses that aren't allowed: read it before downloading (Settings → AI Models → Licence)." = "Sa licence interdit certains usages : lisez-la avant de télécharger (Réglages → Modèles d’IA → Licence).";
 "Its photos go to Recently Deleted; no file is touched." = "Ses photos vont dans Supprimées récemment ; aucun fichier n'est touché.";
 "Its photos stay in %@'s library with their edits, but their originals can no longer be downloaded. Nothing in %@ is touched." = "Ses photos restent dans la bibliothèque de %1$@ avec leurs retouches, mais leurs originaux ne peuvent plus être téléchargés. Rien n'est modifié dans %2$@.";
 "JPEG (Large)" = "JPEG (grand)";
@@ -1556,6 +1563,7 @@
 "None" = "Aucun";
 "None of these" = "Aucune de ces règles";
 "Not Now" = "Pas maintenant";
+"Not an open-source licence: it lists uses that aren't allowed. Read it before downloading." = "Pas une licence open source : elle interdit certains usages. Lisez-la avant de télécharger.";
 "Not carried over: %@" = "Non transféré : %1$@";
 "Not found" = "Introuvable";
 "Not now (it loads on the first search)" = "Pas pour l'instant (il se charge à la première recherche)";
@@ -2425,6 +2433,7 @@
 "That key can't be used as a shortcut" = "Cette touche ne peut pas servir de raccourci";
 "The SAM 3 model is installed: Object and Describe masks are ready." = "Le modèle SAM 3 est installé : les masques Objet et Décrire sont prêts.";
 "The address of your LightCraft server, as in Settings ▸ Sync." = "L'adresse de votre serveur LightCraft, comme dans Réglages ▸ Synchronisation.";
+"The browser" = "Le navigateur";
 "The camera is locked: unlock it to read its photos" = "L’appareil photo est verrouillé : déverrouillez-le pour lire ses photos";
 "The checkerboard shows area with nothing in it yet: Generate fills it." = "Le damier montre la zone encore vide : Générer la remplit.";
 "The denoise model is installed and in use: the AI Denoise Amount slider under Detail now works" = "Le modèle de débruitage est installé et utilisé : le curseur Quantité de débruitage IA sous Détail fonctionne désormais";
@@ -2441,6 +2450,7 @@
 "The library is up to date with this folder." = "La bibliothèque est à jour avec ce dossier.";
 "The model is kept on this computer only. LightCraft never uploads or shares it." = "Le modèle est conservé uniquement sur cet ordinateur. LightCraft ne le téléverse ni ne le partage jamais.";
 "The model is kept on this device only. LightCraft never uploads or shares it." = "Le modèle est conservé uniquement sur cet appareil. LightCraft ne le téléverse ni ne le partage jamais.";
+"The most detail; slow" = "Le plus de détails ; lent";
 "The most the server keeps for %@, in GB (at least 0.1): the originals their devices upload, previews, and photos added through their shared links. Photos in library folders don't count. Over the limit, uploads wait until there is room; nothing is deleted. Leave it empty for no limit." = "Le maximum que le serveur conserve pour %@, en Go (au moins 0,1) : les originaux envoyés par ses appareils, les aperçus et les photos ajoutées via ses liens partagés. Les photos des dossiers de bibliothèque ne comptent pas. Au-delà de la limite, les envois attendent qu'il y ait de la place ; rien n'est supprimé. Laissez vide pour aucune limite.";
 "The new area was painted by %@ on this device." = "La nouvelle zone a été peinte sur cet appareil (%1$@).";
 "The number at the end of the original name (IMG_0042 → 0042)" = "Le numéro à la fin du nom d'origine (IMG_0042 → 0042)";
@@ -2481,6 +2491,7 @@
 "This build cannot run recognition models: they can be added and chosen, not used." = "Cette version ne peut pas exécuter de modèles de reconnaissance : ils peuvent être ajoutés et choisis, mais pas utilisés.";
 "This build has nowhere to keep denoise models, so AI Denoise is not available. (The desktop app has.)" = "Cette version n'a aucun endroit où conserver les modèles de débruitage ; le débruitage IA n'est donc pas disponible. (L'application de bureau en a un.)";
 "This build has nowhere to keep face models." = "Cette version n'a nulle part où conserver les modèles de visages.";
+"This device:" = "Cet appareil :";
 "This disk" = "Ce disque";
 "This file cannot be used yet" = "Ce fichier ne peut pas encore être utilisé";
 "This folder is not available (drive disconnected?). Smart previews are not built or used until it is back or you choose another folder." = "Ce dossier n'est pas disponible (disque déconnecté ?). Les aperçus dynamiques ne sont ni générés ni utilisés tant qu'il n'est pas de retour ou que vous n'avez pas choisi un autre dossier.";
@@ -2583,7 +2594,7 @@
 "User name" = "Nom d'utilisateur";
 "Username" = "Nom d'utilisateur";
 "Users" = "Utilisateurs";
-"Uses the %@ model, a %lld MB download (%@ licence). %@." = "Utilise le modèle %1$@, un téléchargement de %2$lld Mo (licence %3$@). %4$@.";
+"Uses the %@ model, a %@ download (%@ licence). %@." = "Utilise le modèle %1$@, un téléchargement de %2$@ (licence %3$@). %4$@.";
 "Uses the MI-GAN model, a %lld MB download (%@). %@." = "Utilise le modèle MI-GAN, un téléchargement de %1$lld Mo (%2$@). %3$@.";
 "Value" = "Valeur";
 "Variance" = "Variance";
@@ -2627,6 +2638,7 @@
 "Wednesday" = "Mercredi";
 "Weeks" = "Semaines";
 "Welcome to LightCraft" = "Bienvenue dans LightCraft";
+"What paints the new area when the crop reaches past the photo (Crop → Expand). The larger models draw new detail and take longer." = "Ce qui peint la nouvelle zone quand le recadrage dépasse la photo (Recadrer → Étendre). Les plus grands modèles dessinent de nouveaux détails et prennent plus de temps.";
 "What the server does with your users' photos so their devices don't have to: find them by description, by the words printed in them, and by the people in them. Each needs a model, downloaded once onto this server." = "Ce que le serveur fait des photos de vos utilisateurs pour que leurs appareils n'aient pas à le faire : les trouver par description, par les mots qui y figurent et par les personnes qu'elles montrent. Chaque fonction nécessite un modèle, téléchargé une seule fois sur ce serveur.";
 "What's New" = "Nouveautés";
 "When Rated" = "À la notation";
@@ -2646,6 +2658,7 @@
 "Will be restored" = "Sera restaurée";
 "Window" = "Fenêtre";
 "Winter Blue" = "Bleu hivernal";
+"Without a GPU it takes minutes per Generate." = "Sans GPU, chaque génération prend plusieurs minutes.";
 "Words" = "Mots";
 "Words in Photos" = "Mots dans les photos";
 "Works" = "Fonctionne";
@@ -2758,6 +2771,7 @@
 "needs something to look for (or use “isn't empty”)" = "demande quelque chose à chercher (ou utilisez « n'est pas vide »)";
 "needs text" = "demande du texte";
 "needs two values" = "demande deux valeurs";
+"no GPU" = "sans GPU";
 "non-commercial use only" = "usage non commercial uniquement";
 "none" = "aucune";
 "none (CPU rendering)" = "aucun (rendu par le processeur)";

@@ -489,15 +489,34 @@ struct SyncSettings: View {
     }
 }
 
-/// The AI models: what each is for, its size and licence; download, turn on or off, delete.
+/// The AI models: what selects objects (Apple's models or Classic), which one Generative Expand paints
+/// with (Auto, the best for this device, or any model it runs: the crop screen's Fill With), then each
+/// model, what it is for, its size and licence; download, turn on or off, delete.
 struct ModelsSettings: View {
     @Environment(AppModel.self) private var model
     @State private var models: [JSONValue] = []
+    @State private var expand: ExpandModels?
     @State private var confirming: JSONValue?
 
     var body: some View {
         Form {
             AppleModelsSection()
+            if let expand {
+                Section {
+                    Picker("Fill With", selection: Binding(get: { expand.isAutomatic(model.prefs.expandModel) ? "auto" : model.prefs.expandModel }, set: { model.prefs.expandModel = $0 })) {
+                        if let a = expand.automatic {
+                            Text("Automatic: \(a.label) suits this device").tag("auto")
+                        } else {
+                            Text("Auto").tag("auto")
+                        }
+                        ForEach(expand.offered) { m in Text(m.label).tag(m.id) }
+                    }
+                } header: {
+                    Text("Generative Expand")
+                } footer: {
+                    Text("What paints the new area when the crop reaches past the photo (Crop → Expand). The larger models draw new detail and take longer.")
+                }
+            }
             ForEach(Array(models.enumerated()), id: \.offset) { _, m in
                 Section {
                     VStack(alignment: .leading, spacing: 4) {
@@ -507,6 +526,9 @@ struct ModelsSettings: View {
                             Text(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)).font(.caption).foregroundStyle(.secondary)
                         }
                         if let licence = m["licence"].string { Text(licence).font(.caption).foregroundStyle(.secondary) }
+                        if m["restricted"].bool == true {
+                            Text("Not an open-source licence: it lists uses that aren't allowed. Read it before downloading.").font(.caption).foregroundStyle(.secondary)
+                        }
                     }
                     if m["installed"].bool == true {
                         Toggle("Use", isOn: Binding(get: { m["enabled"].bool == true }, set: { on in switchModel(m["id"], on) }))
@@ -557,6 +579,7 @@ struct ModelsSettings: View {
     private func load() async {
         guard let engine = model.engine, let r = try? await engine.execute("models.list") else { return }
         models = r["models"].array ?? []
+        expand = try? await engine.execute("crop.expandModels", [:], as: ExpandModels.self)
     }
 }
 

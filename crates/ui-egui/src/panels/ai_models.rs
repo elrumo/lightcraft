@@ -6,6 +6,10 @@
 //! Nothing here downloads or deletes by itself: each action is a click, and a download or a
 //! delete asks first in the card. The work is the engine's `models.*` commands
 //! (`lightcraft_engine::models`), so an agent can do all of it too.
+//!
+//! At the top, which model Generative Expand paints with: Automatic (the best one for this
+//! device's profile) or any model this device runs (`crop.expandModel`, the same choice as the crop
+//! tool's Fill With).
 
 use egui::RichText;
 use lightcraft_engine::models::ModelInfo;
@@ -50,6 +54,8 @@ pub fn tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
         hint(ui, t, crate::i18n::tr("This version of LightCraft has no AI models."));
         return;
     }
+    expand_section(app, ui, t);
+    ui.add_space(6.0);
     for m in &models {
         card(app, ui, t, m);
         ui.add_space(6.0);
@@ -57,6 +63,56 @@ pub fn tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
     let total: u64 = models.iter().map(|m| m.disk_bytes).fold(0, u64::saturating_add);
     let r = ui.label(RichText::new(format!("{} {}", crate::i18n::tr("Models on this device:"), size(total))).color(t.text));
     register(ui.ctx(), "label:modelStorage", r.rect);
+}
+
+/// This device, for the Generative Expand section ("A computer · 16 GB · GPU").
+fn device_line(app: &LightcraftApp) -> String {
+    use lightcraft_engine::hardware::DeviceClass;
+    let d = app.session.device;
+    let kind = match d.class {
+        DeviceClass::Computer => crate::i18n::tr("A computer"),
+        DeviceClass::Phone => crate::i18n::tr("A phone or tablet"),
+        DeviceClass::Browser => crate::i18n::tr("The browser"),
+    };
+    let mut parts = vec![kind.to_string()];
+    if let Some(m) = d.memory_bytes {
+        parts.push(format!("{:.0} GB", m as f64 / (1u64 << 30) as f64));
+    }
+    parts.push(if d.gpu { crate::i18n::tr("GPU") } else { crate::i18n::tr("no GPU") }.to_string());
+    format!("{} {}", crate::i18n::tr("This device:"), parts.join(" · "))
+}
+
+/// Which model Generative Expand paints with.
+fn expand_section(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
+    egui::Frame::group(ui.style()).inner_margin(egui::Margin::symmetric(10, 8)).show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        ui.label(RichText::new(crate::i18n::tr("Generative Expand")).font(t.semibold(13.0)).color(t.text));
+        hint(
+            ui,
+            t,
+            crate::i18n::tr(
+                "What paints the new area when the crop reaches past the photo (Crop → Expand). The larger models draw new detail and take longer.",
+            ),
+        );
+        let automatic = app.session.expand.preferred.is_none();
+        let current = crate::expand::chosen(app);
+        let r = ui.radio(automatic, crate::expand::automatic_line(app));
+        register(ui.ctx(), "radio:expandModel-auto", r.rect);
+        if r.clicked() {
+            crate::expand::choose(app, None);
+        }
+        for m in crate::expand::offered(app) {
+            let r = ui.radio(!automatic && m == current, format!("{} · {}", m.label(), crate::expand::describe(app, m)));
+            register(ui.ctx(), format!("radio:expandModel-{}", m.id()), r.rect);
+            if r.clicked() {
+                crate::expand::choose(app, Some(m));
+            }
+        }
+        hint(ui, t, device_line(app));
+        if !app.session.expand_ready(current) && current != lightcraft_engine::expand::ExpandModel::Classic {
+            hint(ui, t, crate::i18n::tr_format!("{} isn't downloaded yet: download it below.", current.label()));
+        }
+    });
 }
 
 fn card(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, m: &ModelInfo) {
@@ -130,6 +186,9 @@ fn card(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, m: &ModelInfo) {
                 let _ = crate::links::open(app, &m.home_url);
             }
         });
+        if m.restricted {
+            hint(ui, t, crate::i18n::tr("Not an open-source licence: it lists uses that aren't allowed. Read it before downloading."));
+        }
         ui.add_space(2.0);
 
         // on / off (the search, text and people models are switched on where they are used)

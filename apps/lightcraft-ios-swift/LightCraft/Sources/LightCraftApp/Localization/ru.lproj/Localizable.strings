@@ -29,7 +29,7 @@
 "%@ of %lld done. Photos show on devices as their previews are ready." = "Готово: %@ из %lld. Фото появляются на устройствах по мере готовности просмотров.";
 "%@ used" = "Использовано: %@";
 "%@ wheel" = "Колесо: %@";
-"%@ · %lld MB download" = "%1$@ · загрузка %2$lld МБ";
+"%@ · %@ download" = "%1$@ · загрузка %2$@";
 "%@'s password was changed." = "Пароль пользователя %@ изменён.";
 "%@, %@" = "%1$@, %2$@";
 "%lld" = "%1$lld";
@@ -106,6 +106,7 @@
 "=  exactly" = "=  точно";
 "A blank template keeps the original names." = "Пустой шаблон сохраняет исходные имена.";
 "A change that can't be saved to disk (full or unplugged drive) is no longer silent: the command reports" = "Изменение, которое не удаётся сохранить на диск (диск заполнен или отключён), больше не остаётся незамеченным: команда сообщает";
+"A computer" = "Компьютер";
 "A copy of the file with your edits applied, stacked with the original." = "Копия файла с применёнными правками, в стопке с оригиналом.";
 "A copy of the original file, without your edits, stacked with it." = "Копия исходного файла без ваших правок, в стопке с ним.";
 "A filter is hiding this view's photos: change it, or clear it (View → Clear Filters)" = "Фильтр скрывает фото в этом представлении: измените его или сбросьте (Вид → Сбросить фильтры)";
@@ -115,6 +116,7 @@
 "A library is open in one program at a time (issue #99): opening a library that LightCraft or `lightcraft-cli` already" = "Библиотека открыта только в одной программе одновременно (проблема #99): открытие библиотеки, которую LightCraft или `lightcraft-cli` уже";
 "A one-time download of about" = "Однократная загрузка около";
 "A path the server can read. With Docker, mount the folder into the container read-only first (-v /srv/photos:/photos:ro) and enter /photos/…" = "Путь, который может прочитать сервер. В Docker сначала подключите папку к контейнеру только для чтения (-v /srv/photos:/photos:ro) и введите /photos/…";
+"A phone or tablet" = "Телефон или планшет";
 "A photo library and raw developer in pure Rust, open source (MIT OR Apache-2.0)." = "Фотобиблиотека и RAW-проявка на чистом Rust с открытым исходным кодом (MIT OR Apache-2.0).";
 "A photo library and raw developer. Free and open source." = "Библиотека фото и проявка raw. Бесплатно и с открытым исходным кодом.";
 "A save that fails part-way (a full disk, a network share that drops) no longer looks like a damaged catalog" = "Неудачное частичное сохранение (диск заполнен, обрыв сетевого соединения) больше не выглядит как повреждённый каталог";
@@ -299,6 +301,7 @@
 "Automatic renders the Detail view at the size it is shown, up to the photo's own pixels. Choose a size to cap it: smaller is faster." = "Автоматический режим рендерит «Детализацию» в отображаемом размере, вплоть до собственных пикселей фото. Выберите размер, чтобы ограничить: меньше — быстрее.";
 "Automatic uses Apple's models where this device has them. Classic is LightCraft's own guess and needs no model." = "«Автоматически» использует модели Apple, если они есть на этом устройстве. «Классический»: собственная оценка LightCraft, модель не нужна.";
 "Automatic uses the graphics card where it is faster than the processor: both are timed on this computer the first time a photo is made." = "Автоматический режим использует видеокарту, когда она быстрее процессора: время обоих измеряется на этом компьютере при первой обработке фото.";
+"Automatic: %@ suits this device" = "Автоматически: для этого устройства подходит %1$@";
 "Automatically Write Changes into XMP" = "Автоматически записывать изменения в XMP";
 "Automatically write changes into XMP sidecars" = "Автоматически записывать изменения в XMP-файлы";
 "Autumn Gold" = "Осеннее золото";
@@ -325,7 +328,7 @@
 "Before/After Split Top/Bottom" = "Разделение «до/после» сверху/снизу";
 "Before/After Top/Bottom" = "До/после сверху/снизу";
 "Begin Interaction" = "Начать взаимодействие";
-"Best for wide areas; slower, computers only" = "Лучше для широких областей; медленнее, только на компьютерах";
+"Best for wide areas of sky, water or texture" = "Лучше всего для больших участков неба, воды или текстуры";
 "Best of Similar Shots" = "Лучшие из похожих кадров";
 "Binary assets added" = "Добавленные бинарные ресурсы";
 "Binary assets removed" = "Удалённые бинарные ресурсы";
@@ -776,6 +779,8 @@
 "Drag the crop past the photo's edges, or choose an aspect ratio, first." = "Сначала вытяните кадр за края фото или выберите соотношение сторон.";
 "Drag the crop past the photo's edges, or choose an aspect ratio, then Generate." = "Вытяните кадр за края фото или выберите соотношение сторон, затем «Создать».";
 "Draw Guides" = "Нарисовать направляющие";
+"Draws new detail, guided by the photo; slow" = "Рисует новые детали по фото; медленно";
+"Draws new detail; slower" = "Рисует новые детали; медленнее";
 "Drop here for the top level" = "Перетащите сюда для верхнего уровня";
 "Duplicate" = "Дублировать";
 "Duplicate Component" = "Дублировать компонент";
@@ -1013,6 +1018,7 @@
 "Full screen mode" = "Полноэкранный режим";
 "Full size" = "Полный размер";
 "GPS Track Log" = "GPS-трек";
+"GPU" = "GPU";
 "GPU Rendering" = "Рендеринг на GPU";
 "GPU rendering" = "Рендеринг на GPU";
 "General" = "Общие";
@@ -1228,6 +1234,7 @@
 "It tests this album, so testing it back would loop" = "Он проверяет этот альбом, поэтому обратная проверка зациклилась бы";
 "Its copyright, creator and place." = "Авторские права, автор и местоположение.";
 "Its denoised picture is not made yet, and pictures are not made on their own (Settings, AI Denoise)." = "Его изображение с подавленным шумом ещё не создано, а изображения сами не создаются (Настройки, ИИ-шумоподавление).";
+"Its licence lists uses that aren't allowed: read it before downloading (Settings → AI Models → Licence)." = "Лицензия запрещает некоторые виды использования: прочитайте её перед загрузкой (Настройки → Модели ИИ → Лицензия).";
 "Its photos go to Recently Deleted; no file is touched." = "Фото попадут в «Недавно удалённые»; файлы на диске не затрагиваются.";
 "Its photos stay in %@'s library with their edits, but their originals can no longer be downloaded. Nothing in %@ is touched." = "Фото из этой папки останутся в библиотеке пользователя %@ вместе с правками, но скачать их оригиналы больше нельзя. Содержимое %@ не затрагивается.";
 "JPEG (Large)" = "JPEG (большой)";
@@ -1630,6 +1637,7 @@
 "None of these" = "Ни одно из этих";
 "Normal" = "Обычно";
 "Not Now" = "Не сейчас";
+"Not an open-source licence: it lists uses that aren't allowed. Read it before downloading." = "Это не лицензия с открытым исходным кодом: она запрещает некоторые виды использования. Прочитайте её перед загрузкой.";
 "Not carried over: %@" = "Не перенесено: %1$@";
 "Not found" = "Не найдена";
 "Not now (it loads on the first search)" = "Сейчас нет (загружается при первом поиске)";
@@ -2527,6 +2535,7 @@
 "That key can't be used as a shortcut" = "Эту клавишу нельзя использовать как сочетание";
 "The SAM 3 model is installed: Object and Describe masks are ready." = "Модель SAM 3 установлена: маски «Объект» и «Описать» готовы.";
 "The address of your LightCraft server, as in Settings ▸ Sync." = "Адрес вашего сервера LightCraft, как в разделе Настройки ▸ Синхронизация.";
+"The browser" = "Браузер";
 "The camera is locked: unlock it to read its photos" = "Камера заблокирована: разблокируйте её, чтобы прочитать фото";
 "The catalog has a format version (issue #102). Opening a library from an older LightCraft upgrades it; a library" = "У каталога есть версия формата (проблема #102). Открытие библиотеки от более старого LightCraft обновляет её; библиотека,";
 "The checkerboard shows area with nothing in it yet: Generate fills it." = "Шахматный фон — ещё пустая область: «Создать» заполнит её.";
@@ -2545,6 +2554,7 @@
 "The library is up to date with this folder." = "Библиотека соответствует этой папке.";
 "The model is kept on this computer only. LightCraft never uploads or shares it." = "Модель хранится только на этом компьютере. LightCraft никогда не выгружает и не распространяет её.";
 "The model is kept on this device only. LightCraft never uploads or shares it." = "Модель хранится только на этом устройстве. LightCraft никогда не выгружает и не распространяет её.";
+"The most detail; slow" = "Больше всего деталей; медленно";
 "The most the server keeps for %@, in GB (at least 0.1): the originals their devices upload, previews, and photos added through their shared links. Photos in library folders don't count. Over the limit, uploads wait until there is room; nothing is deleted. Leave it empty for no limit." = "Максимум, который сервер хранит для %@, в ГБ (не менее 0,1): оригиналы, которые выгружают устройства, просмотры и фото, добавленные через общие ссылки. Фото в папках библиотеки не учитываются. При превышении лимита выгрузки ждут, пока освободится место; ничего не удаляется. Оставьте пустым, чтобы не ограничивать.";
 "The new area was painted by %@ on this device." = "Новая область дорисована на этом устройстве (%1$@).";
 "The number at the end of the original name (IMG_0042 → 0042)" = "Число в конце исходного имени (IMG_0042 → 0042)";
@@ -2587,6 +2597,7 @@
 "This build has nowhere to keep denoise models, so AI Denoise is not available. (The desktop app has.)" = "В этой сборке негде хранить модели шумоподавления, поэтому ИИ-шумоподавление недоступно. (В настольном приложении есть.)";
 "This build has nowhere to keep face models, so the model list is not available. (The desktop app has.)" = "В этой сборке негде хранить модели лиц, поэтому список моделей недоступен. (В настольном приложении есть.)";
 "This build has nowhere to keep face models." = "В этой сборке негде хранить модели лиц.";
+"This device:" = "Это устройство:";
 "This disk" = "Этот диск";
 "This file cannot be used yet" = "Этот файл пока нельзя использовать";
 "This folder is not available (drive disconnected?). Smart previews are not built or used until it is back or you choose another folder." = "Эта папка недоступна (диск отключён?). Смарт-просмотры не создаются и не используются, пока она не появится снова или вы не выберете другую папку.";
@@ -2689,7 +2700,7 @@
 "User name" = "Имя пользователя";
 "Username" = "Имя пользователя";
 "Users" = "Пользователи";
-"Uses the %@ model, a %lld MB download (%@ licence). %@." = "Используется модель %1$@, загрузка %2$lld МБ (лицензия %3$@). %4$@.";
+"Uses the %@ model, a %@ download (%@ licence). %@." = "Используется модель %1$@, загрузка %2$@ (лицензия %3$@). %4$@.";
 "Uses the MI-GAN model, a %lld MB download (%@). %@." = "Использует модель MI-GAN, загрузка %lld МБ (%@). %@.";
 "Value" = "Значение";
 "Variance" = "Разброс";
@@ -2735,6 +2746,7 @@
 "Wednesday" = "Среда";
 "Weeks" = "Недель";
 "Welcome to LightCraft" = "Добро пожаловать в LightCraft";
+"What paints the new area when the crop reaches past the photo (Crop → Expand). The larger models draw new detail and take longer." = "Чем рисуется новая область, когда кадр выходит за края фото (Кадрирование → Расширить). Большие модели рисуют новые детали и работают дольше.";
 "What the server does with your users' photos so their devices don't have to: find them by description, by the words printed in them, and by the people in them. Each needs a model, downloaded once onto this server." = "Что сервер делает с фото ваших пользователей, чтобы это не приходилось делать устройствам: искать их по описанию, по напечатанным на них словам и по людям на них. Для каждого нужна модель, которая один раз загружается на этот сервер.";
 "What's New" = "Что нового";
 "When Rated" = "При оценке";
@@ -2755,6 +2767,7 @@
 "Window" = "Окно";
 "Winter Blue" = "Зимняя синева";
 "Without Saving and Quit (issue #100). It no longer quietly starts a demo session that looked like a reset library and" = "Выйти без сохранения (проблема #100). Больше не запускается незаметно демо-сеанс, похожий на сброшенную библиотеку, и";
+"Without a GPU it takes minutes per Generate." = "Без GPU каждое создание занимает несколько минут.";
 "Words" = "Слова";
 "Words in Photos" = "Слова на фото";
 "Works" = "Работает";
@@ -2923,6 +2936,7 @@
 "needs text" = "требует текст";
 "needs two values" = "требует два значения";
 "never leaves a truncated file; the XMP sidecar of an \"Original\" export follows the \"If file exists\" choice too." = "никогда не оставляет обрезанный файл; XMP-файл экспорта «Оригинал» тоже подчиняется выбору «Если файл существует».";
+"no GPU" = "без GPU";
 "non-commercial use only" = "только некоммерческое использование";
 "none" = "нет";
 "none (CPU rendering)" = "нет (рендеринг на CPU)";

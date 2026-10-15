@@ -14,8 +14,10 @@
 //! back. The fill therefore has at most 512 × 512 pixels of detail over the crop.
 //!
 //! **Generative Expand** (the crop tool's Expand, [`expand`]) continues a photo past its edges with
-//! the same network or with LaMa ([`lama`], Apache-2.0, larger and slower, desktop only): both are a
-//! [`Painter`], one 512 × 512 pass, and [`expand::outpaint`] runs as many as the new area needs.
+//! the same network or with LaMa ([`lama`], Apache-2.0, larger and slower): both are a [`Painter`]
+//! with one 512 × 512 pass, and [`expand::outpaint`] gives it the whole canvas. The diffusion models
+//! (`lightcraft-diffuse`) are painters too, with a canvas of their own size ([`Painter::frame`]) and
+//! many steps ([`Painter::paint_watched`]).
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
@@ -66,15 +68,62 @@ pub enum Error {
     /// The user stopped the work.
     #[error("cancelled")]
     Cancelled,
+    /// A painter outside this crate failed (its message says which model and why).
+    #[error("{0}")]
+    Other(String),
 }
 
-/// One pass of an inpainting network on [`SIDE`] × [`SIDE`] pixels.
+/// Where a picture goes on a network's canvas: the canvas the network paints (`width × height`)
+/// and the picture's rectangle on it (`w × h` at `x, y`; the rest is letterbox, painted and thrown
+/// away).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Frame {
+    pub width: usize,
+    pub height: usize,
+    pub x: usize,
+    pub y: usize,
+    pub w: usize,
+    pub h: usize,
+}
+
+impl Frame {
+    /// Whether the picture lies on a canvas of a sensible size.
+    pub fn is_valid(&self) -> bool {
+        (1..=expand::MAX_CANVAS).contains(&self.width)
+            && (1..=expand::MAX_CANVAS).contains(&self.height)
+            && self.w > 0
+            && self.h > 0
+            && self.x.checked_add(self.w).is_some_and(|r| r <= self.width)
+            && self.y.checked_add(self.h).is_some_and(|b| b <= self.height)
+    }
+}
+
+/// An inpainting network: MI-GAN and LaMa (one pass on [`SIDE`] × [`SIDE`] pixels), and the
+/// diffusion models of `lightcraft-diffuse` (a canvas of their own size, many steps).
 pub trait Painter: Send + Sync {
-    /// `img` (exactly [`SIDE`] × [`SIDE`], display-encoded 0..=1) with the pixels where `hole` is set
-    /// painted; every pixel of the answer is the network's (the caller keeps what it wants).
+    /// `img` (the canvas of [`Painter::frame`], display-encoded 0..=1) with the pixels where `hole`
+    /// is set painted; every pixel of the answer is the network's (the caller keeps what it wants).
     fn paint(&self, img: &Rgb32f, hole: &[bool]) -> Result<Rgb32f>;
     /// The model's name in messages.
     fn label(&self) -> &'static str;
+    /// The canvas the network paints for a `w × h` picture. By default the [`SIDE`] square, the
+    /// picture squeezed a little and letterboxed ([`expand::square_frame`]).
+    fn frame(&self, w: usize, h: usize) -> Frame {
+        expand::square_frame(w, h)
+    }
+    /// [`Painter::paint`], asking `mon` whether to stop and telling it the fraction done. A
+    /// one-pass network asks once, before it starts.
+    fn paint_watched(&self, img: &Rgb32f, hole: &[bool], mon: &expand::Monitor<'_>) -> Result<Rgb32f> {
+        if (mon.cancelled)() {
+            return Err(Error::Cancelled);
+        }
+        self.paint(img, hole)
+    }
+    /// Whether the answer carries fine detail of its own (a diffusion model at its full size), so
+    /// the caller adds no synthesized texture on top.
+    fn detailed(&self) -> bool {
+        false
+    }
 }
 
 /// Checks a [`Painter::paint`] call's arguments.

@@ -27,7 +27,7 @@
 "%@ of %lld done. Photos show on devices as their previews are ready." = "%@ / %lld件完了。写真は、プレビューの準備ができ次第デバイスに表示されます。";
 "%@ used" = "%@使用中";
 "%@ wheel" = "%@ホイール";
-"%@ · %lld MB download" = "%1$@ · %2$lld MBのダウンロード";
+"%@ · %@ download" = "%1$@ · %2$@のダウンロード";
 "%@'s password was changed." = "%@のパスワードを変更しました。";
 "%@, %@" = "%2$@日（%1$@）";
 "%lld" = "%1$lld年";
@@ -95,6 +95,7 @@
 "8 bits" = "8ビット";
 "=  exactly" = "=  と等しい";
 "A blank template keeps the original names." = "テンプレートが空の場合は元の名前のままです";
+"A computer" = "コンピュータ";
 "A copy of the file with your edits applied, stacked with the original." = "編集内容を適用したファイルのコピー。元の写真とスタックにします。";
 "A copy of the original file, without your edits, stacked with it." = "編集内容を含まない元のファイルのコピー。元の写真とスタックにします。";
 "A filter is hiding this view's photos: change it, or clear it (View → Clear Filters)" = "フィルターで写真が非表示になっています。条件を変更するか、「表示 → フィルターを解除」を選んでください";
@@ -103,6 +104,7 @@
 "A keyword set needs a name" = "キーワードセットには名前が必要です";
 "A one-time download of about" = "1回限りのダウンロード：約";
 "A path the server can read. With Docker, mount the folder into the container read-only first (-v /srv/photos:/photos:ro) and enter /photos/…" = "サーバーが読み取れるパス。Dockerの場合は、先にフォルダを読み取り専用でコンテナにマウントし（-v /srv/photos:/photos:ro）、/photos/… の形式で入力します。";
+"A phone or tablet" = "スマートフォンまたはタブレット";
 "A photo library and raw developer in pure Rust, open source (MIT OR Apache-2.0)." = "純粋なRustで書かれた写真ライブラリ兼RAW現像アプリ。オープンソース（MIT OR Apache-2.0）。";
 "A photo library and raw developer. Free and open source." = "写真ライブラリとRAW現像ソフト。無料のオープンソースです。";
 "A tap puts the keyword on the chosen photos, or takes it off when they all have it." = "タップすると、選択した写真にキーワードを付けます。すべての写真に付いている場合は外します。";
@@ -286,6 +288,7 @@
 "Automatic renders the Detail view at the size it is shown, up to the photo's own pixels. Choose a size to cap it: smaller is faster." = "自動では、詳細表示を表示サイズ(写真本来の画素数まで)で描画します。サイズを選ぶと上限になります。小さいほど高速です";
 "Automatic uses Apple's models where this device has them. Classic is LightCraft's own guess and needs no model." = "「自動」は、このデバイスにあればAppleのモデルを使います。「クラシック」はLightCraft独自の推定で、モデルは不要です。";
 "Automatic uses the graphics card where it is faster than the processor: both are timed on this computer the first time a photo is made." = "Automatic uses the graphics card where it is faster than the processor: both are timed on this computer the first time a photo is made.";
+"Automatic: %@ suits this device" = "自動：この端末には %1$@ が適しています";
 "Automatically Write Changes into XMP" = "変更をXMPに自動保存";
 "Automatically write changes into XMP sidecars" = "変更をXMPサイドカーファイルに自動保存";
 "Autumn Gold" = "オータムゴールド";
@@ -314,7 +317,7 @@
 "Before/After Split Top/Bottom" = "編集前／編集後の上下分割表示";
 "Before/After Top/Bottom" = "編集前／編集後の上下表示";
 "Begin Interaction" = "操作を開始";
-"Best for wide areas; slower, computers only" = "広い領域に最適。低速で、コンピュータ専用";
+"Best for wide areas of sky, water or texture" = "空・水・テクスチャの広い領域に最適";
 "Best of Similar Shots" = "類似写真内のベストショット";
 "Binary assets added" = "追加したバイナリアセット";
 "Binary assets removed" = "削除したバイナリアセット";
@@ -753,6 +756,8 @@
 "Drag the crop past the photo's edges, or choose an aspect ratio, first." = "先に切り抜きを写真の端の外までドラッグするか、縦横比を選んでください。";
 "Drag the crop past the photo's edges, or choose an aspect ratio, then Generate." = "切り抜きを写真の端の外までドラッグするか縦横比を選び、［生成］を押します。";
 "Draw Guides" = "ガイドを描く";
+"Draws new detail, guided by the photo; slow" = "写真に沿って新しいディテールを描画。低速";
+"Draws new detail; slower" = "新しいディテールを描画。より低速";
 "Drop here for the top level" = "ここにドロップすると最上位に移動";
 "Duplicate" = "複製";
 "Duplicate Component" = "構成要素を複製";
@@ -986,6 +991,7 @@
 "Full screen mode" = "全画面表示";
 "Full size" = "元のサイズ";
 "GPS Track Log" = "GPS軌跡ファイル";
+"GPU" = "GPU";
 "GPU Rendering" = "GPU描画";
 "GPU rendering" = "GPU描画";
 "General" = "一般";
@@ -1200,6 +1206,7 @@
 "It tests this album, so testing it back would loop" = "このアルバムを条件にしているため、逆に指定すると循環します";
 "Its copyright, creator and place." = "この写真の著作権、作成者、場所。";
 "Its denoised picture is not made yet, and pictures are not made on their own (Settings, AI Denoise)." = "Its denoised picture is not made yet, and pictures are not made on their own (Settings, AI Denoise).";
+"Its licence lists uses that aren't allowed: read it before downloading (Settings → AI Models → Licence)." = "ライセンスで禁止されている用途があります。ダウンロード前に確認してください（設定 → AIモデル → ライセンス）。";
 "Its photos go to Recently Deleted; no file is touched." = "写真は「最近削除した写真」に移動します。ファイル自体は変更されません。";
 "Its photos stay in %@'s library with their edits, but their originals can no longer be downloaded. Nothing in %@ is touched." = "その写真は編集内容とともに%@のライブラリに残りますが、元画像はダウンロードできなくなります。%@内のファイルには一切手を加えません。";
 "JPEG (Large)" = "JPEG（大）";
@@ -1603,6 +1610,7 @@
 "Normal" = "標準";
 "Not Now" = "後で";
 "Not a tile address (it needs https://, {z}, {x} and {y}): the standard tiles are used." = "タイルのアドレスではありません（https://、{z}、{x}、{y} が必要です）。標準のタイルを使用します。";
+"Not an open-source licence: it lists uses that aren't allowed. Read it before downloading." = "オープンソースのライセンスではありません。禁止されている用途があります。ダウンロード前にお読みください。";
 "Not carried over: %@" = "引き継がなかった設定：%1$@";
 "Not found" = "見つかりません";
 "Not now (it loads on the first search)" = "いまはなし（最初の検索時に読み込まれます）";
@@ -2506,6 +2514,7 @@
 "That key can't be used as a shortcut" = "そのキーはショートカットに使えません";
 "The SAM 3 model is installed: Object and Describe masks are ready." = "SAM 3モデルはインストール済みです。オブジェクトマスクと説明マスクを使用できます";
 "The address of your LightCraft server, as in Settings ▸ Sync." = "LightCraftサーバーのアドレス（「設定 ▸ 同期」と同じものです）。";
+"The browser" = "ブラウザ";
 "The camera is locked: unlock it to read its photos" = "カメラがロックされています。写真を読み込むにはロックを解除してください";
 "The checkerboard shows area with nothing in it yet: Generate fills it." = "市松模様はまだ何もない領域です。［生成］で埋めます。";
 "The denoise model is installed and in use: the AI Denoise Amount slider under Detail now works" = "The denoise model is installed and in use: the AI Denoise Amount slider under Detail now works";
@@ -2525,6 +2534,7 @@
 "The library is up to date with this folder." = "ライブラリはこのフォルダと一致しています。";
 "The model is kept on this computer only. LightCraft never uploads or shares it." = "The model is kept on this computer only. LightCraft never uploads or shares it.";
 "The model is kept on this device only. LightCraft never uploads or shares it." = "モデルはこのデバイス内にのみ保存されます。LightCraftがアップロードしたり共有したりすることはありません。";
+"The most detail; slow" = "最も高精細。低速";
 "The most the server keeps for %@, in GB (at least 0.1): the originals their devices upload, previews, and photos added through their shared links. Photos in library folders don't count. Over the limit, uploads wait until there is room; nothing is deleted. Leave it empty for no limit." = "サーバーが%@のために保持する最大容量（GB単位、0.1以上）。デバイスからアップロードされた元画像、プレビュー、共有リンク経由で追加された写真が対象です。ライブラリのフォルダ内の写真は含まれません。上限を超えると、空きができるまでアップロードは待機し、何も削除されません。上限なしにするには空欄のままにします。";
 "The new area was painted by %@ on this device." = "新しい領域はこのデバイス上で生成されました（%1$@）。";
 "The number at the end of the original name (IMG_0042 → 0042)" = "元の名前の末尾の番号（IMG_0042 → 0042）";
@@ -2569,6 +2579,7 @@
 "This build has no download location for the model yet." = "このビルドには、モデルのダウンロード先がまだ設定されていません。";
 "This build has nowhere to keep denoise models, so AI Denoise is not available. (The desktop app has.)" = "This build has nowhere to keep denoise models, so AI Denoise is not available. (The desktop app has.)";
 "This build has nowhere to keep face models." = "このビルドには顔モデルの保存先がありません。";
+"This device:" = "このデバイス：";
 "This disk" = "このディスク";
 "This file cannot be used yet" = "This file cannot be used yet";
 "This folder is not available (drive disconnected?). Smart previews are not built or used until it is back or you choose another folder." = "このフォルダにアクセスできません。ドライブを接続するか別のフォルダを選ぶまで、スマートプレビューは作成・使用されません";
@@ -2673,7 +2684,7 @@
 "User name" = "ユーザー名";
 "Username" = "ユーザー名";
 "Users" = "ユーザー";
-"Uses the %@ model, a %lld MB download (%@ licence). %@." = "%1$@モデルを使用します（%2$lld MBのダウンロード、%3$@ライセンス）。%4$@。";
+"Uses the %@ model, a %@ download (%@ licence). %@." = "%1$@モデルを使用します（%2$@のダウンロード、%3$@ライセンス）。%4$@。";
 "Uses the MI-GAN model, a %lld MB download (%@). %@." = "MI-GANモデルを使用します。ダウンロードは%lld MB（%@）です。%@。";
 "Value" = "値";
 "Variance" = "ばらつき";
@@ -2718,6 +2729,7 @@
 "Wednesday" = "水曜日";
 "Weeks" = "週";
 "Welcome to LightCraft" = "LightCraftへようこそ";
+"What paints the new area when the crop reaches past the photo (Crop → Expand). The larger models draw new detail and take longer." = "切り抜きが写真の外まで広がったときに新しい領域を描くもの（切り抜き → 拡張）。大きなモデルほど新しいディテールを描き、時間がかかります。";
 "What the server does with your users' photos so their devices don't have to: find them by description, by the words printed in them, and by the people in them. Each needs a model, downloaded once onto this server." = "ユーザーの写真に対して、デバイスの代わりにサーバーが行う処理です。説明、写真内の文字、写っている人物で写真を探せるようにします。いずれもモデルが必要で、このサーバーに1回だけダウンロードします。";
 "What's New" = "新着情報";
 "When Rated" = "評価したとき";
@@ -2740,6 +2752,7 @@
 "Will be restored" = "復元されます";
 "Window" = "ウィンドウ";
 "Winter Blue" = "ウィンターブルー";
+"Without a GPU it takes minutes per Generate." = "GPU がない場合、生成ごとに数分かかります。";
 "Words" = "語句";
 "Words in Photos" = "写真内の文字";
 "Worked out from the GPS position" = "GPS位置から算出";
@@ -2862,6 +2875,7 @@
 "needs something to look for (or use “isn't empty”)" = "検索する語句が必要です（または「が空でない」を使用）";
 "needs text" = "文字列が必要です";
 "needs two values" = "2つの値が必要です";
+"no GPU" = "GPUなし";
 "non-commercial use only" = "non-commercial use only";
 "none" = "なし";
 "none (CPU rendering)" = "なし（CPU描画）";
