@@ -172,6 +172,11 @@ struct AdminSignIn: View {
 struct AdminOverview: View {
     let admin: AdminModel
     @State private var status: JSONValue = .null
+
+    /// "0.7.1 (ffae40d8ab)": a build's version and commit, from the server's status.
+    private static func build(_ b: JSONValue) -> String {
+        "\(b["version"].string ?? "?") (\(b["commit"].string ?? "unknown"))"
+    }
     @State private var users: [JSONValue] = []
 
     var body: some View {
@@ -216,7 +221,7 @@ struct AdminOverview: View {
                 Text("Sync a library with this server from LightCraft on a Mac, PC or iPhone: open Settings ▸ Sync, enter the server address, and sign in with a user name and password from Users.")
             }
             Section {
-                LabeledContent("Version", value: status["version"].string ?? "")
+                LabeledContent("Version") { Text(Self.build(status)).font(.footnote.monospaced()).textSelection(.enabled) }
                 LabeledContent("Data Folder") { Text(status["data"].string ?? "").font(.footnote.monospaced()).textSelection(.enabled) }
                 LabeledContent("Listening On") { Text(status["listen"].string ?? "").font(.footnote.monospaced()).textSelection(.enabled) }
                 LabeledContent("Web App") {
@@ -224,6 +229,15 @@ struct AdminOverview: View {
                         Text("Served from \(web)").foregroundStyle(.secondary)
                     } else {
                         Text("Not served").foregroundStyle(.secondary)
+                    }
+                }
+                if status["web"].string != nil {
+                    LabeledContent("Web App Version") {
+                        if status["webBuild"]["version"].string != nil || status["webBuild"]["commit"].string != nil {
+                            Text(Self.build(status["webBuild"])).font(.footnote.monospaced()).textSelection(.enabled)
+                        } else {
+                            Text("Unknown").foregroundStyle(.secondary)
+                        }
                     }
                 }
             } header: {

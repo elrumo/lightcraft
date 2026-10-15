@@ -30,6 +30,8 @@ RUN rustup target add wasm32-unknown-unknown
 COPY --from=wbg-version /wbg-version /wbg-version
 RUN cargo install wasm-bindgen-cli --locked --version "$(cat /wbg-version)"
 COPY . .
+# the version and commit the admin page shows (`make push-server` passes them; there is no .git here)
+ARG LIGHTCRAFT_VERSION LIGHTCRAFT_COMMIT
 # the bundle is target/web-site's files (`xtask`'s SITE_DIR; target/web is the `web` profile's cargo output, not ours).
 # Without index.html the server answers `/` with {"error":"not found"} while /admin still works, so fail the build.
 RUN --mount=type=cache,id=lightcraft-registry-web,target=/usr/local/cargo/registry \
@@ -48,7 +50,7 @@ RUN apt-get update \
  && printf '[target.x86_64-unknown-linux-gnu]\nlinker = "x86_64-linux-gnu-gcc"\n[target.aarch64-unknown-linux-gnu]\nlinker = "aarch64-linux-gnu-gcc"\n' >> "$CARGO_HOME/config.toml"
 WORKDIR /src
 COPY . .
-ARG TARGETARCH
+ARG TARGETARCH LIGHTCRAFT_VERSION LIGHTCRAFT_COMMIT
 RUN --mount=type=cache,id=lightcraft-registry-$TARGETARCH,target=/usr/local/cargo/registry \
     --mount=type=cache,id=lightcraft-target-$TARGETARCH,target=/src/target \
     case "$TARGETARCH" in amd64) t=x86_64-unknown-linux-gnu ;; arm64) t=aarch64-unknown-linux-gnu ;; *) echo "unsupported platform: $TARGETARCH" >&2; exit 1 ;; esac \

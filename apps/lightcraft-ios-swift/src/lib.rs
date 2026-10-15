@@ -98,6 +98,7 @@ pub fn open(config: &[u8]) -> Answer {
         Err(e) => return error(status::BAD_INPUT, "badInput", &format!("not an engine configuration: {e}")),
     };
     setup(&config);
+    lightcraft_engine::about::set_commit(env!("LIGHTCRAFT_COMMIT"));
     match Host::open_with(config, BRIDGE.leases.clone()) {
         Ok((host, mut opened)) => {
             let handle = BRIDGE.next.fetch_add(1, Ordering::Relaxed);

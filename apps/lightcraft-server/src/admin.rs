@@ -553,11 +553,20 @@ fn status(st: &State, me: &str) -> Value {
     let users = accounts::read_users(&st.data).map(|f| f.users.len()).unwrap_or(0);
     json!({
         "me": me,
-        "version": env!("CARGO_PKG_VERSION"),
+        "version": env!("LIGHTCRAFT_BUILD_VERSION"),
+        "commit": env!("LIGHTCRAFT_COMMIT"),
         "data": data.to_string_lossy(),
         "listen": st.listen,
         "web": st.web.as_ref().map(|w| w.to_string_lossy().to_string()),
         "disk": disk(&st.data).map(|(total, free)| json!({"total": total, "free": free})),
+/// The served web build's `version.json` (`{"version", "commit"}`, written by `cargo xtask web`), if it has one.
+fn web_build(web: &Path) -> Option<Value> {
+    let text = std::fs::read_to_string(web.join("version.json")).ok()?;
+    let v: Value = serde_json::from_str(&text).ok()?;
+    let field = |k: &str| v.get(k).and_then(Value::as_str).map(|s| s.chars().take(64).collect::<String>());
+    Some(json!({"version": field("version"), "commit": field("commit")}))
+}
+
         "users": users,
     })
 }
@@ -567,6 +576,7 @@ fn terms(part: Part) -> (f64, String) {
     use lightcraft_engine::vision::{
         FACE_BYTES, FACE_LICENSES, LICENSE_NAME, LICENSE_URL, MODEL_BYTES, TEXT_BYTES, TEXT_LICENSE_NAME, TEXT_LICENSE_URL,
     };
+        "webBuild": st.web.as_deref().and_then(web_build),
     match part {
         Part::Search => (MODEL_BYTES as f64, format!("{LICENSE_NAME} ({LICENSE_URL})")),
         Part::Text => (TEXT_BYTES as f64, format!("{TEXT_LICENSE_NAME} ({TEXT_LICENSE_URL})")),
@@ -774,4 +784,23 @@ fn devices(st: &State, name: &str) -> AdminResult {
         .map(|d| json!({"id": d.id, "name": d.name, "space": d.space, "created": d.created, "lastSeen": a.last_seen(name, d.id)}))
         .collect();
     Ok(Value::Array(list))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn web_build_reads_version_json_and_tolerates_junk() {
+        let dir = std::env::temp_dir().join(format!("lc-web-build-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(web_build(&dir), None, "no version.json");
+        std::fs::write(dir.join("version.json"), "not json").unwrap();
+        assert_eq!(web_build(&dir), None);
+        std::fs::write(dir.join("version.json"), r#"{"version":"0.2.3","commit":"ffae40d8ab-dirty"}"#).unwrap();
+        assert_eq!(web_build(&dir), Some(json!({"version": "0.2.3", "commit": "ffae40d8ab-dirty"})));
+        std::fs::write(dir.join("version.json"), r#"{"version":7}"#).unwrap();
+        assert_eq!(web_build(&dir), Some(json!({"version": null, "commit": null})));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }

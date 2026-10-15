@@ -47,7 +47,10 @@ push-server:
 	  git archive "$(REF)" | tar -x -C "$$ctx"; \
 	  cp .dockerignore "$$ctx"/ 2>/dev/null || true; \
 	fi; \
+	c=$$(git rev-parse --short=10 $(or $(REF),HEAD)); \
+	if [ -z "$(REF)" ] && [ -n "$$(git status --porcelain --untracked-files=no)" ]; then c="$$c-dirty"; fi; \
 	docker buildx build --platform $(PLATFORMS) -f apps/lightcraft-server/Dockerfile \
+	  --build-arg "LIGHTCRAFT_VERSION=$$v" --build-arg "LIGHTCRAFT_COMMIT=$$c" \
 	  --label "org.opencontainers.image.version=$$v" -t "$(IMAGE):$$v" -t "$(IMAGE):latest" --push "$$ctx"; \
 	echo "pushed $(IMAGE):$$v (also :latest)"
 	@docker buildx imagetools inspect $(IMAGE):latest | grep -E 'Name:|Digest:|Platform:' | head -4

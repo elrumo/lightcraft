@@ -822,6 +822,8 @@ struct AboutView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @State private var links: [JSONValue] = []
+    /// The commit the engine library was built from (System Info's "Commit" row).
+    @State private var commit: String?
 
     private static func symbol(_ id: String?) -> String {
         switch id {
@@ -847,6 +849,10 @@ struct AboutView: View {
                         Text("LightCraft").font(.title.bold())
                         Text("Version \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "")")
                             .foregroundStyle(.secondary)
+                        if let commit {
+                            Text(verbatim: commit).font(.footnote.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
+                                .transition(.opacity)
+                        }
                         Text("A photo library and raw developer in pure Rust, open source (MIT OR Apache-2.0).")
                             .font(.footnote).multilineTextAlignment(.center).foregroundStyle(.secondary)
                     }
@@ -874,6 +880,8 @@ struct AboutView: View {
             .task {
                 guard let engine = model.engine else { return }
                 links = (try? await engine.execute("about.links"))?.array ?? []
+                let rows = (try? await engine.execute("about.systemInfo"))?.array ?? []
+                withAnimation { commit = rows.first { $0["label"].string == "Commit" }?["value"].string }
             }
             .navigationTitle("About")
             .inlineTitle()

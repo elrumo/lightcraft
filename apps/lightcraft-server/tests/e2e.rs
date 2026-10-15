@@ -423,6 +423,7 @@ fn admin_page_sets_up_and_manages_users() {
     assert_eq!(req("GET", "/api/snapshot", &ann, None).0, 401);
     let (s, st, _) = req("GET", "/api/admin/status", &ann, None);
     assert_eq!((s, st["me"].as_str(), st["users"].as_u64()), (200, Some("ann"), Some(1)));
+    assert!(st["version"].as_str().is_some_and(|v| !v.is_empty()) && st["commit"].as_str().is_some_and(|c| !c.is_empty()), "{st}");
     // users: add, list, reset a password
     assert_eq!(req("POST", "/api/admin/users", &ann, Some(json!({"name": "../x", "password": "long enough"}))).0, 400);
     assert_eq!(req("POST", "/api/admin/users", &ann, Some(json!({"name": "bob", "password": "long enough"}))).0, 200);
