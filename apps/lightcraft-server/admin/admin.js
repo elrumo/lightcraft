@@ -673,19 +673,28 @@ function scanInfo(s) {
     if (s.phase === 'listing') return { title: 'Scanning…', text: 'Looking for photos: ' + n(s.files) + ' found so far.', progress: null };
     return { title: 'Scanning…', text: 'Finishing up.', progress: null };
   }
-  if (s.previews) {
-    const total = s.previewsTotal || s.previews;
-    return {
-      title: 'Building previews',
-      text: n(s.previewsDone) + ' of ' + n(total) + ' done' + (s.previewsEtaSecs ? ', about ' + dur(s.previewsEtaSecs) + ' left' : '') + '. Photos show on devices as their previews are ready.',
-      progress: total ? s.previewsDone / total : null,
-    };
-  }
   if (!s.lastScan) return { title: 'Not scanned yet', text: 'Scan to add the photos in these folders to the library.' };
   const changes = [[s.added, 'new'], [s.moved, 'moved'], [s.changed, 'changed'], [s.linked, 'uploaded before'], [s.missing, 'missing'], [s.failed, 'not read']]
     .filter(([v]) => v > 0)
     .map(([v, w]) => n(v) + ' ' + w);
   return { title: 'Last scanned ' + ago(s.lastScan), text: plural(s.files, 'photo file', 'photo files') + '. ' + (changes.length ? 'Changes: ' + changes.join(', ') + '.' : 'No changes.') };
+}
+
+/** The previews panel: built / left in this batch, and the photo files being built right now (also during a scan). */
+function showPreviews(s) {
+  const panel = $('previewsPanel');
+  panel.hidden = !s.previews;
+  if (!s.previews) return;
+  const total = s.previewsTotal || s.previews;
+  $('previewsTitle').textContent = 'Building previews';
+  $('previewsText').textContent =
+    n(s.previewsDone) + ' built, ' + n(s.previews) + ' left' + (s.previewsEtaSecs ? ', about ' + dur(s.previewsEtaSecs) + ' to go' : '') + (s.previewsPerMin ? ' (' + n(s.previewsPerMin) + ' a minute)' : '') + '. Photos show on devices as their previews are ready.';
+  progress($('previewsBar'), total ? s.previewsDone / total : 0);
+  const now = s.previewsBuilding || [];
+  $('previewsNow').replaceChildren(
+    ...now.map((p) => el('li', {}, el('b', {}, 'Now'), el('code', { title: p }, p.slice(p.lastIndexOf('/') + 1)))),
+    ...(now.length ? [] : [el('li', { class: 'muted' }, 'Waiting for a builder.')]),
+  );
 }
 
 function showFolders(name, r) {
@@ -731,6 +740,7 @@ function showFolders(name, r) {
   $('editIgnore').onclick = () => editIgnore(name, ignore);
   $('editIgnore').closest('.scan').hidden = !r.folders.length;
   const s = r.scan;
+  showPreviews(s);
   const info = scanInfo(s);
   $('scanNow').closest('.scan').hidden = !r.folders.length;
   $('scanTitle').textContent = info.title;
