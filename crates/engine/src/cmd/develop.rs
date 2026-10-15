@@ -30,6 +30,11 @@ fn groups_param(p: &Value) -> Option<Vec<SettingsGroup>> {
     p.get("groups").and_then(|g| serde_json::from_value(g.clone()).ok())
 }
 
+/// The Generative Expand model ids, for messages.
+fn expand_ids() -> String {
+    crate::expand::ExpandModel::ALL.iter().map(|m| m.id()).collect::<Vec<_>>().join(", ")
+}
+
 fn crop_dims(s: &Session, id: PhotoId) -> (f64, f64) {
     let p = s.catalog.photo(id);
     let (w, h) = p.map(|p| (p.width.max(1) as f64, p.height.max(1) as f64)).unwrap_or((3.0, 2.0));
@@ -767,7 +772,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Generate",
             [],
             None,
-            "{model?: \"migan\"|\"lama\"|\"classic\" (default: the best one on this device, see crop.expandModels), wait?: bool (default true)} — Generative Expand: paints the area of the crop past the photo's edges on this device and stores it with the photo (one undo step, \"Generative Expand\"). Needs Expand on. migan and lama are optional downloads (models.download, after the user agreed); classic needs none. With wait: false it runs in the background (a row in the activity stack; activity.cancel stops it)",
+            "{model?: \"migan\"|\"lama\"|\"sd15-inpaint\"|\"kandinsky22-inpaint\"|\"sdxl-inpaint\"|\"classic\" (default: the chosen model when it is downloaded, else the most capable one that is, see crop.expandModels), wait?: bool (default true)} — Generative Expand: paints the area of the crop past the photo's edges on this device and stores it with the photo (one undo step, \"Generative Expand\"). Needs Expand on. The models are optional downloads (models.download, after the user agreed) offered by what this device can run; classic needs none. The diffusion models (sd15-inpaint, kandinsky22-inpaint, sdxl-inpaint) draw new detail and take from tens of seconds on a GPU to minutes on a CPU. With wait: false it runs in the background (a row in the activity stack; activity.cancel stops it)",
             has_active,
             |s, p| {
                 let id = active(s, "crop.generate")?;
@@ -775,7 +780,7 @@ pub fn specs() -> Vec<CommandSpec> {
                     None | Some("auto") => None,
                     Some(m) => Some(
                         crate::expand::ExpandModel::from_id(m)
-                            .ok_or_else(|| bad("crop.generate", format!("unknown model `{m}` (migan, lama, classic)")))?,
+                            .ok_or_else(|| bad("crop.generate", format!("unknown model `{m}` ({})", expand_ids())))?,
                     ),
                 };
                 if bool_or(p, "wait", true) {
@@ -791,11 +796,32 @@ pub fn specs() -> Vec<CommandSpec> {
             "Generative Expand Models",
             [],
             None,
-            "{} — the ways Generative Expand can paint on this device: id, label, note, available (this device can run it), ready (downloaded and on), downloadBytes, licence, credit, default; and running ({photo, model}) while a Generate runs",
+            "{} — the ways Generative Expand can paint: models (id, label, note, available: this device runs it, ready: downloaded and on, downloadBytes, licence, credit, restricted: its licence restricts use, diffusion, recommended: Automatic's pick here, chosen: what the pickers show, default: what crop.generate uses without a model); automatic (no model chosen: Automatic); device (class computer|phone|browser, memoryBytes, gpu, cores); and running ({photo, model}) while a Generate runs",
             always,
             |s, _| {
                 let running = s.expand_running().map(|(photo, m)| json!({"photo": photo.0, "model": m.id()}));
-                Ok(json!({"models": s.expand_choices(), "running": running}))
+                Ok(json!({"models": s.expand_choices(), "automatic": s.expand.preferred.is_none(), "device": s.device, "running": running}))
+            }
+        ),
+        cmd!(
+            "crop.expandModel",
+            "Choose Generative Expand Model",
+            [],
+            None,
+            "{model: \"auto\"|\"migan\"|\"lama\"|\"sd15-inpaint\"|\"kandinsky22-inpaint\"|\"sdxl-inpaint\"|\"classic\"} — what Generate paints with (Settings → AI Models, the crop tool's Fill With). auto: the best model for this device (crop.expandModels → recommended). Refused for a model this device doesn't run. Answers {model: the chosen id, automatic, ready}",
+            always,
+            |s, p| {
+                const C: &str = "crop.expandModel";
+                let m = p.get("model").and_then(Value::as_str).ok_or_else(|| bad(C, format!("`model` is required: auto, {}", expand_ids())))?;
+                let pick = match m {
+                    "auto" => None,
+                    id => Some(
+                        crate::expand::ExpandModel::from_id(id).ok_or_else(|| bad(C, format!("unknown model `{id}` (auto, {})", expand_ids())))?,
+                    ),
+                };
+                s.set_expand_preference(pick).map_err(|e| bad(C, e))?;
+                let chosen = s.chosen_expand_model();
+                Ok(json!({"model": chosen.id(), "automatic": pick.is_none(), "ready": s.expand_ready(chosen)}))
             }
         ),
         // ---- HDR editing

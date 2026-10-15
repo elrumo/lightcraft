@@ -217,8 +217,13 @@ fn bottom_bar(app: &mut LightcraftApp, ui: &mut Ui, t: &Tokens) {
         let here = app.session.expand_ready(m);
         let text = match crate::expand::downloading(app, m) {
             Some(pct) => crate::i18n::tr_format!("{stage}… {:.0}%", pct, stage = crate::i18n::tr("Downloading")),
-            None if here => format!("{} · {}", m.label(), crate::i18n::tr("on this device")),
-            None => format!("{} · {}", m.label(), crate::expand::describe(app, m)),
+            // (short: it sits between ✕ and ✓ on a narrow screen)
+            None if here => format!("{} · {}", crate::expand::short_label(m), crate::i18n::tr("on this device")),
+            None => crate::i18n::tr_format!(
+                "{note} · {size} download",
+                size = crate::panels::ai_models::size(m.download_bytes()),
+                note = crate::expand::short_label(m)
+            ),
         };
         let galley = ui.painter().layout_no_wrap(text, t.font(15.0), t.text);
         let at = Rect::from_center_size(r.center(), galley.size() + vec2(12.0, 14.0));
@@ -560,10 +565,15 @@ pub fn menus(app: &mut LightcraftApp, ctx: &egui::Context) {
     mobile::actions(ctx, "cropTikTok", None, |ui| rows(app, ui, &VIDEOS.iter().map(|(n, r)| (Some(*n), r)).collect::<Vec<(Option<&str>, &Ratio)>>()));
     mobile::actions(ctx, "cropFillWith", Some(crate::i18n::tr("Fill With")), |ui| {
         let current = crate::expand::chosen(app);
-        for m in lightcraft_engine::expand::ExpandModel::ALL.into_iter().filter(|m| m.available()) {
+        let automatic = app.session.expand.preferred.is_none();
+        let auto = format!("{} · {}", crate::i18n::tr("Automatic"), app.session.recommended_expand_model().label());
+        if mobile::row_checked(ui, "cropFillWith-auto", None, &auto, true, Some(automatic)) {
+            crate::expand::choose(app, None);
+        }
+        for m in crate::expand::offered(app) {
             let label = format!("{} · {}", m.label(), crate::expand::describe(app, m));
-            if mobile::row_checked(ui, &format!("cropFillWith-{}", m.id()), None, &label, true, Some(m == current)) {
-                app.ui.expand_model = m.id().to_string();
+            if mobile::row_checked(ui, &format!("cropFillWith-{}", m.id()), None, &label, true, Some(!automatic && m == current)) {
+                crate::expand::choose(app, Some(m));
             }
         }
         // the chosen model isn't here: its offer, and Download
