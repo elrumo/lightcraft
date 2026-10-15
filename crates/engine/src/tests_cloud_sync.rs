@@ -749,7 +749,8 @@ fn pixel_commands_read_the_preview_when_the_original_is_not_here() {
     let mut b = open(&root.join("b"));
     sign_in(&mut b);
     sync(&mut b, &mut f);
-    b.selection = crate::Selection::single(ids[0]);
+    // (kept offline, not opened: an open photo's original comes down too)
+    b.sync_offline(&[], &[ids[0]], true).unwrap();
     sync(&mut b, &mut f);
     let smart = std::fs::read(root.join("b/Smart Previews").join(crate::smart::file_name(b.catalog.photo(ids[0]).unwrap()))).unwrap();
     // the browser: no previews folder, and no decoder for the original, which isn't in memory
@@ -772,6 +773,38 @@ fn pixel_commands_read_the_preview_when_the_original_is_not_here() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// The open photo is edited from its original, not the 8-bit smart preview: the smart preview comes first (it
+/// shows at once), then the original, and the photo points at it. A photo that isn't open downloads neither.
+#[test]
+fn the_open_photo_downloads_its_original_after_its_smart_preview() {
+    let mut f = Fake::new();
+    let (_a, root, ids) = first_device("open-original", &mut f);
+    let mut b = open(&root.join("b"));
+    sign_in(&mut b);
+    sync(&mut b, &mut f);
+    b.selection = crate::Selection::single(ids[0]);
+    let key = blob_key(b.catalog.photo(ids[0]).unwrap()).unwrap();
+    let tasks = b.sync_tasks();
+    let asked: Vec<String> = tasks
+        .iter()
+        .filter_map(|t| match t {
+            Task::Http { url, .. } => url.split_once("/api/blobs/").map(|(_, rest)| rest.to_string()),
+            Task::Proxies { .. } => None,
+        })
+        .collect();
+    assert_eq!(asked, [format!("smart/{key}")], "the smart preview alone first");
+    for t in tasks {
+        let d = f.handle(&t);
+        b.sync_done(d);
+    }
+    sync(&mut b, &mut f);
+    assert!(here(&b, ids[0]), "{:?}", b.catalog.photo(ids[0]).unwrap().source);
+    assert!(f.requests.iter().any(|r| r == &format!("GET /api/blobs/original/{key}")), "{:?}", f.requests);
+    assert!(is_remote(b.catalog.photo(ids[1]).unwrap()), "only the open photo's");
+    assert!(b.sync_state().unwrap().outbox.is_empty(), "the relink stays on this device");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// A browser exports a photo it holds only the preview of: up to the preview's size from the preview, and
 /// beyond it the message says what to do (instead of failing deep in the render).
 #[test]
@@ -782,7 +815,8 @@ fn a_browser_exports_from_the_preview_and_says_what_to_do_beyond_its_size() {
     let mut b = open(&root.join("b"));
     sign_in(&mut b);
     sync(&mut b, &mut f);
-    b.selection = crate::Selection::single(ids[0]);
+    // (kept offline, not opened: an open photo's original comes down too)
+    b.sync_offline(&[], &[ids[0]], true).unwrap();
     sync(&mut b, &mut f);
     let smart = std::fs::read(root.join("b/Smart Previews").join(crate::smart::file_name(b.catalog.photo(ids[0]).unwrap()))).unwrap();
     // the browser: no previews folder, no originals in its storage, the preview in memory

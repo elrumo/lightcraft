@@ -1670,13 +1670,30 @@ impl Session {
             self.media.thumb_asks.iter().map(|(id, a)| (!a.shown, std::cmp::Reverse(a.tick), a.seq, *id)).collect();
         asked.sort_unstable();
         let running: HashSet<String> = st.jobs.values().map(Job::target).collect();
-        let active = self.active().map(|id| (id, Blob::Smart));
+        let active = self.active().and_then(|id| self.catalog.photo(id));
+        let original = active.and_then(|p| self.open_original_get(st, p, now));
         active
+            .and_then(|p| self.preview_get(st, p, Blob::Smart, now))
             .into_iter()
-            .chain(asked.into_iter().map(|(_, _, _, id)| (id, Blob::Mini)))
-            .filter_map(|(id, blob)| self.preview_get(st, self.catalog.photo(id)?, blob, now))
+            .chain(original)
+            .chain(asked.into_iter().filter_map(|(_, _, _, id)| self.preview_get(st, self.catalog.photo(id)?, Blob::Mini, now)))
             .filter(|job| !running.contains(&job.target()))
             .collect()
+    }
+
+    /// The download of the open photo's original, once its smart preview is here: the smart preview is
+    /// an 8-bit proxy that bands when edited, so the photo is edited from the original as soon as it
+    /// arrives (it then stays like any downloaded original, under [`SyncConfig::originals_budget_mb`]).
+    /// Only into an originals folder on a disk, never the browser's storage.
+    fn open_original_get(&self, st: &SyncState, p: &Photo, now: Instant) -> Option<Job> {
+        let key = self.remote_key(p)?;
+        // (waiting for the smart preview also keeps a failed original from holding its download back: they share a key)
+        if st.blob_retry.get(&key).is_some_and(|t| now < *t) || !self.proxy_names(p, &key, st.have.as_ref()?).has_smart {
+            return None;
+        }
+        let Source::File { path } = &p.source else { return None };
+        let dest = self.originals_dir()?.join(&key).join(file_name_of(path, &p.file_name));
+        Some(Job::Get { key, blob: Blob::Original, dest: dest.to_string_lossy().to_string(), id: p.id })
     }
 
     /// Where downloaded originals are kept.

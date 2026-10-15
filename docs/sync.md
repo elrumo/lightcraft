@@ -443,8 +443,8 @@ Each device keeps the **whole catalog** (it's small) and **downloads pixels as n
 | What | When | Used for |
 |---|---|---|
 | mini preview (≤ 512 px) | a photo whose original isn't here, when the grid or filmstrip shows it (the cells on screen first, then a screen either side; a cell that stays drawn keeps its place in the line however long the ones before it take, one scrolled past before its turn isn't downloaded) — or every such photo with *Download all small previews* | grid and filmstrip thumbnails, rendered here with the current edits (never stale) |
-| smart preview (≤ 2560 px) | the photo you open, and everything **made available offline** | the loupe, editing, exporting at preview size |
-| original | **Photo ▸ Download Originals**, or every photo with *Store the originals of all photos on this device* | full-size export, 1:1 |
+| smart preview (≤ 2560 px) | the photo you open, and everything **made available offline** | the loupe and editing until the original is here (offline: always), exporting at preview size |
+| original | the photo you open (once its smart preview is here: the smart preview is an 8-bit proxy that bands when edited), **Photo ▸ Download Originals**, or every photo with *Store the originals of all photos on this device*; not in a browser | editing, full-size export, 1:1 |
 
 - **A preview the server hasn't built yet** (a library folder it is still scanning, an original a device uploaded without
   previews): the server builds it before the rest of its queue and answers `404` with `{"previews": "queued"}`, and the
@@ -458,7 +458,7 @@ Each device keeps the **whole catalog** (it's small) and **downloads pixels as n
   it the originals used longest ago are deleted, and their photos are the server's again (previews stay; Download
   Originals brings one back). Never an original the server doesn't have, one that is open or selected, or one kept
   available offline, and nothing at all while *Store the originals of all photos on this device* is on. The folder is
-  checked about once a minute and when a download lands. No limit is the default.
+  checked about once a minute and when a download lands. No limit is the default. Every photo you open adds its original, so set one on a device with little room.
 - **Make Available Offline:** right-click an album (✓ marks it in the sidebar), or **Photo ▸ Make Available Offline**
   for selected photos: their smart previews stay on the device, so they open and edit without a network.
 - A downloaded original (`<library>/sync/originals/<hash>/<name>`) becomes the photo's file on this device only. It is
