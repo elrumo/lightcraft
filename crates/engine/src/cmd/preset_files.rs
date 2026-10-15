@@ -2,8 +2,9 @@
 
 use serde_json::{Value, json};
 
+use super::mask_effect_files as mef;
 use super::{CommandSpec, always, bad, cmd, str_param};
-use crate::preset_import::{Read, group_from_dir, read_presets_report};
+use crate::preset_import::{group_from_dir, read_presets_report};
 use crate::presets::{LCPRESET_EXT, expand_preset_paths, imported_preset_id, to_lcpreset};
 use crate::{Result, Session};
 
@@ -20,6 +21,9 @@ struct Imports {
     /// A dry run adds nothing, so what it has counted is kept to tell repeats (the same preset as
     /// `.xmp` and as `.lrtemplate` in one pack) from new presets, as a real run would.
     counted: Vec<lightcraft_develop::Preset>,
+    /// Local adjustment (brush) presets found in the files: they become mask effects.
+    effects: Vec<mef::Found>,
+    effect_failed: Vec<(String, String)>,
 }
 
 impl Imports {
@@ -30,6 +34,14 @@ impl Imports {
         for mut it in read.presets {
             if let Some(g) = group {
                 it.preset.group = g.to_string();
+            }
+            // the profile it names (issue #1001): one the user imported, or ours for a basic one
+            let mut profile = Value::Null;
+            if let Some((r, _)) = crate::profile_refs::apply(&mut it.preset.settings, &s.lut_profiles) {
+                let look = it.preset.settings["profile"]["look"].clone();
+                it.unmapped.retain(|u| u != "Look");
+                it.unmapped.extend(crate::profile_refs::report(&look, &r));
+                profile = json!({"name": look["name"], "id": it.preset.settings["profile"].get("id")});
             }
             let (name, grp) = (it.preset.name.clone(), it.preset.group.clone());
             let shown = settings.then(|| it.preset.settings.clone());
@@ -46,7 +58,7 @@ impl Imports {
             };
             match id {
                 Some(id) => {
-                    let mut entry = json!({"id": id, "name": name, "group": grp, "file": file, "unmapped": it.unmapped});
+                    let mut entry = json!({"id": id, "name": name, "group": grp, "file": file, "unmapped": it.unmapped, "profile": profile});
                     if let (Some(settings), Some(o)) = (shown, entry.as_object_mut()) {
                         o.insert("settings".into(), settings);
                     }
@@ -75,11 +87,32 @@ fn import(s: &mut Session, p: &Value) -> Result<Value> {
             // the path from the imported folder (inclusive) to the file's folder
             let base = std::path::Path::new(top).parent().unwrap_or(std::path::Path::new(""));
             let rel = std::path::Path::new(&f).parent().and_then(|d| d.strip_prefix(base).ok()).map(|d| d.to_string_lossy().to_string());
-            let dir_group = rel.filter(|_| from_dir).and_then(|d| group_from_dir(&d));
-            let read = match std::fs::read(&f) {
-                Ok(b) => read_presets_report(&f, &b, dir_group),
-                Err(e) => Read { failed: vec![(f.clone(), e.to_string())], ..Default::default() },
+            let rel = rel.filter(|_| from_dir);
+            let bytes = match mef::read_capped(&f) {
+                Ok(b) => b,
+                Err(e) => {
+                    out.failed.push(json!([f, e]));
+                    continue;
+                }
             };
+            // local adjustment (brush) presets: Lightroom's .lrtemplate, Camera Raw's local .xmp, our .lceffect,
+            // also inside zips, become mask effects
+            let lower = f.to_ascii_lowercase();
+            let maybe_local = [".lrtemplate", ".xmp", ".zip", ".lceffect"].iter().any(|x| lower.ends_with(x));
+            let (before_found, before_failed) = (out.effects.len(), out.effect_failed.len());
+            let local =
+                maybe_local && mef::found_in(&f, &bytes, rel.as_deref().and_then(mef::group_for_dir), &mut out.effects, &mut out.effect_failed);
+            // a zip may hold develop presets as well
+            if local && !lower.ends_with(".zip") {
+                continue;
+            }
+            let dir_group = rel.and_then(|d| group_from_dir(&d));
+            let mut read = read_presets_report(&f, &bytes, dir_group);
+            // the local presets of a bundle were read as effects above: not develop presets that failed
+            let handled: Vec<&str> = (out.effects.iter().skip(before_found).map(|e| e.file.as_str()))
+                .chain(out.effect_failed.iter().skip(before_failed).map(|(file, _)| file.as_str()))
+                .collect();
+            read.failed.retain(|(file, _)| !handled.contains(&file.as_str()));
             out.take(s, &f, read, group.as_deref(), dry, settings);
         }
     }
@@ -87,8 +120,18 @@ fn import(s: &mut Session, p: &Value) -> Result<Value> {
     for f in files {
         match f {
             Ok((name, bytes)) => {
-                let dir_group = name.rsplit_once(['/', '\\']).and_then(|(d, _)| group_from_dir(d));
+                let folder = name.rsplit_once(['/', '\\']).map(|(d, _)| d);
+                let dir_group = folder.and_then(group_from_dir);
                 let base = crate::inline_files::base_name(&name);
+                // local adjustment (brush) presets given by content (a browser's file chooser) become mask effects too
+                let lower = base.to_ascii_lowercase();
+                let maybe_local = [".lrtemplate", ".xmp", ".zip", ".lceffect"].iter().any(|x| lower.ends_with(x));
+                let (before_found, before_failed) = (out.effects.len(), out.effect_failed.len());
+                let local =
+                    maybe_local && mef::found_in(&name, &bytes, folder.and_then(mef::group_for_dir), &mut out.effects, &mut out.effect_failed);
+                if local && !lower.ends_with(".zip") {
+                    continue;
+                }
                 let mut read = read_presets_report(base, &bytes, dir_group);
                 // (failures name the file as it was given, folders and all)
                 for (file, _) in &mut read.failed {
@@ -96,12 +139,19 @@ fn import(s: &mut Session, p: &Value) -> Result<Value> {
                         *file = format!("{name}{rest}");
                     }
                 }
+                // the local presets of a bundle were read as effects above: not develop presets that failed
+                let handled: Vec<&str> = (out.effects.iter().skip(before_found).map(|e| e.file.as_str()))
+                    .chain(out.effect_failed.iter().skip(before_failed).map(|(file, _)| file.as_str()))
+                    .collect();
+                read.failed.retain(|(file, _)| !handled.contains(&file.as_str()));
                 out.take(s, &name, read, group.as_deref(), dry, settings);
             }
             Err((name, e)) => out.failed.push(json!([name, e])),
         }
     }
-    Ok(json!({"imported": out.imported, "skipped": out.skipped, "failed": out.failed}))
+    out.failed.extend(std::mem::take(&mut out.effect_failed).into_iter().map(|(f, e)| json!([f, e])));
+    let (effects, dividers) = mef::add_found(s, std::mem::take(&mut out.effects), group.as_deref(), dry)?;
+    Ok(json!({"imported": out.imported, "skipped": out.skipped, "failed": out.failed, "effects": effects, "effectDividers": dividers}))
 }
 
 fn export(s: &mut Session, p: &Value) -> Result<Value> {
@@ -125,10 +175,9 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
     if chosen.is_empty() {
         return Err(bad("preset.export", "no presets to export (create one first, or pass ids/group)"));
     }
-    if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
-        std::fs::create_dir_all(dir).map_err(|e| crate::EngineError::Other(format!("{}: {e}", dir.display())))?;
-    }
-    std::fs::write(&path, to_lcpreset(&chosen)).map_err(|e| crate::EngineError::Other(format!("{}: {e}", path.display())))?;
+    let target = path.to_string_lossy();
+    s.check_write_target(&target).map_err(|e| bad("preset.export", e))?;
+    crate::export::write_file_durable(&target, to_lcpreset(&chosen).as_bytes()).map_err(crate::EngineError::Other)?;
     Ok(json!({"path": path.display().to_string(), "count": chosen.len()}))
 }
 
@@ -139,7 +188,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Import Presets",
             [],
             None,
-            "{paths?: [file or folder], files?: [{name, data: base64}] (files given by content, e.g. from a browser), group?, dryRun? (report what a real run would add and skip, adding nothing), includeSettings? (with each imported preset's settings, for a preview)} — .lcpreset, XMP presets, .lrtemplate, photos carrying edits (DNG/JPEG/TIFF \"DNG presets\"), Luminar looks (.lmp, .mplumpack collections) and .zip bundles of these; folders give their name as group; each preset gets an id named by its content (the same preset imported on two synced devices stays one); crs: fields mapped per docs/xmp-interop.md → {imported: [{id,name,group,file,unmapped}], skipped, failed}",
+            "{paths?: [file or folder], files?: [{name, data: base64}] (files given by content, e.g. from a browser), group?, dryRun? (report what a real run would add and skip, adding nothing), includeSettings? (with each imported preset's settings, for a preview)} — .lcpreset, XMP presets, .lrtemplate, photos carrying edits (DNG/JPEG/TIFF \"DNG presets\"), Luminar looks (.lmp, .mplumpack collections) and .zip bundles of these; folders give their name as group; each preset gets an id named by its content (the same preset imported on two synced devices stays one); crs: fields mapped per docs/xmp-interop.md; local adjustment presets (Lightroom .lrtemplate, Camera Raw local .xmp, .lceffect) found in `paths` or in `files` become mask effects (`mask.effects`; divider presets become their groups); a profile the preset names applies when it was imported with profile.import (before or after) → {imported: [{id,name,group,file,unmapped,profile: {name, id}|null}], skipped, failed, effects: [{name,group,file,unmapped}], effectDividers: [{name,group,file}]}",
             always,
             import
         ),

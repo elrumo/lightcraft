@@ -215,15 +215,17 @@ pub fn apply(img: &mut Rgba8, o: Overlay, plan: &Plan<'_>, mask: Option<&Plane>,
         // one pass over the per-pixel max of the masks: a pass per mask would let each one
         // repaint the others (White on Black blacks them out, the tints compound)
         Overlay::AllMasks { view, color, opacity } => {
-            let sized: Vec<&Plane> = masks.unwrap_or_default().iter().filter(|a| (a.width, a.height) == (img.width, img.height)).collect();
-            if let Some((first, rest)) = sized.split_first() {
-                let mut union = (*first).clone();
-                for a in rest {
-                    for (u, v) in union.data.iter_mut().zip(&a.data) {
-                        *u = u.max(*v);
-                    }
+            // one view of the union of the masks: painting the planes one after another
+            // overwrites (White on Black, Image on Black…) or compounds (Color) the earlier ones
+            let mut union: Option<Plane> = None;
+            for a in masks.unwrap_or_default().iter().filter(|a| (a.width, a.height) == (img.width, img.height)) {
+                match &mut union {
+                    None => union = Some(a.clone()),
+                    Some(u) => u.data.iter_mut().zip(&a.data).for_each(|(u, a)| *u = u.max(*a)),
                 }
-                mask_view(img, &union, view, color, opacity);
+            }
+            if let Some(u) = &union {
+                mask_view(img, u, view, color, opacity);
             }
         }
     }
@@ -487,7 +489,7 @@ mod tests {
         // a hidden mask is skipped
         s.masks[1].visible = false;
         let img2 = render(&src, &info, &s, &RenderRequest { overlay: o, ..RenderRequest::fit(80, 40) }).image;
-        assert_eq!(img2.data[in_r], [0, 0, 0, 255], "hidden right mask not painted");
+        assert_eq!(img2.data[in_r], [0, 0, 0, 255], "hidden right mask not painted: black like everything outside");
         assert_eq!(img2.data[in_l], [255; 4], "visible left mask still painted");
         // parts round trip and a stable, distinct cache key
         let (k, v) = o.to_parts();

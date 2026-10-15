@@ -93,10 +93,12 @@ fn export_dialog_is_unchanged_in_a_tall_window() {
     let h = export_dialog([1600.0, 1000.0]);
     assert_fits(&h, "Export at 1600×1000");
     let dialog = rect(&h, "dialog:window");
-    // (858 tall: the whole dialog, nothing scrolled away, as before #781 plus 12 since its two text
-    // boxes got roomier; 615 wide since the format row gained JPEG XL, #780; 30 more on macOS for
-    // its Add to Apple Photos row)
-    let tall = if cfg!(target_os = "macos") { 888.0 } else { 858.0 };
+    // (898 tall: the whole dialog, nothing scrolled away, as before #781 plus 12 since its two text
+    // boxes got roomier, plus the Export to row since #956 and 8 since its footer's buttons are the
+    // button component's medium size, 30 points, as the welcome's and every dialog's; 615 wide
+    // since the format row gained JPEG XL, #780; 30 more on macOS for its Add to Apple Photos row)
+    // (this fork's footer buttons are 4 points shorter than upstream's: 894 and 924)
+    let tall = if cfg!(target_os = "macos") { 924.0 } else { 894.0 };
     assert!((dialog.height() - tall).abs() <= 1.0, "{dialog:?}");
     assert!((dialog.width() - 615.2).abs() <= 1.0, "{dialog:?}");
 }
@@ -172,4 +174,27 @@ fn settings_sections_sit_in_a_sidebar_beside_the_open_one() {
     assert_eq!(h.request("ui.clickWidget", json!({"id": "button:settingsTab-performance"}), T)["ok"], true);
     h.step();
     assert_eq!(h.app.ui.dialog, Some(crate::state::Dialog::Settings { tab: "performance".into() }));
+}
+
+/// Settings ▸ Performance: the GPU status line above the controls stays one line whatever it says
+/// (without a driver it is a long wgpu message, e.g. on the FreeBSD CI), so the controls below it
+/// don't move when the process-wide GPU state changes between two frames (a click aimed at
+/// "Memory for caches" then landed on the gap above it).
+#[test]
+fn gpu_status_never_moves_the_performance_controls() {
+    let mut h = demo([1300.0, 820.0]);
+    let r = h.request("ui.key", json!({"key": ",", "cmd": true}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    let r = h.request("ui.clickWidget", json!({"id": "button:settingsTab-performance"}), T);
+    assert_eq!(r["ok"], true, "{r}");
+    let mut seen = vec![];
+    for gpu in [true, false, true] {
+        // the setting is applied process-wide at the next frame (`app.gpu`), as other tests do
+        h.app.ui.settings.gpu = gpu;
+        h.step();
+        h.step();
+        seen.push((gpu, rect(&h, "button:settingsMemory-2"), lightcraft_engine::gpu::unavailable_reason()));
+    }
+    let first = seen[0].1;
+    assert!(seen.iter().all(|(_, r, _)| *r == first), "the memory buttons moved: {seen:?}");
 }

@@ -265,7 +265,7 @@ fn shares_list(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn download_originals(s: &mut Session, p: &Value) -> Result<Value> {
-    let ids = s.targets(p);
+    let ids = s.targets(p)?;
     let n = s.sync_want_originals(&ids);
     Ok(json!({"queued": n}))
 }
@@ -291,7 +291,7 @@ fn album_offline(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn photo_offline(s: &mut Session, p: &Value) -> Result<Value> {
-    let ids: Vec<PhotoId> = s.targets(p).into_iter().filter(|id| s.catalog.photo(*id).is_some()).collect();
+    let ids: Vec<PhotoId> = s.targets(p)?.into_iter().filter(|id| s.catalog.photo(*id).is_some()).collect();
     if ids.is_empty() {
         return Err(bad("photo.makeAvailableOffline", "no photos"));
     }

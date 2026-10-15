@@ -31,7 +31,7 @@ impl RawImage {
             return k >= 2 && self.cpp == 3;
         }
         let Some(cfa) = &self.cfa else { return false };
-        if k < 2 || self.cpp != 1 || !cfa.valid() || (cfa.is_bayer() && !k.is_multiple_of(2)) {
+        if k < 2 || self.cpp != 1 || (self.pixel_aspect - 1.0).abs() >= 0.01 || !cfa.valid() || (cfa.is_bayer() && !k.is_multiple_of(2)) {
             return false;
         }
         // every window position relative to the pattern
@@ -234,8 +234,10 @@ mod tests {
             color: ColorData::default(),
             wb_multipliers: None,
             linearized: false,
+            pixel_aspect: 1.0,
             opcodes: OpcodeLists::default(),
             metadata: Metadata::default(),
+            lens_metadata: Default::default(),
         }
     }
 
@@ -329,6 +331,8 @@ mod tests {
             linearized: false,
             opcodes: OpcodeLists::default(),
             metadata: Metadata::default(),
+            pixel_aspect: 1.0,
+            lens_metadata: Default::default(),
         };
         assert!(raw.can_bin(2) && raw.can_bin(3) && raw.can_bin(8) && !raw.can_bin(1));
         let b = raw.develop_binned(3, 2.0).unwrap().unwrap();

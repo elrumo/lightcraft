@@ -95,6 +95,7 @@ fn shown(v: &Value) -> Option<DownloadStatus> {
         total: v["total"].as_u64().unwrap_or(0),
         file: v["file"].as_str().unwrap_or_default().to_string(),
         error: v["error"].as_str().map(str::to_string),
+        cancelled: v["cancelled"].as_bool().unwrap_or(false),
         finished: v["finished"].as_bool().unwrap_or(false),
     };
     (d.running || d.error.is_some()).then_some(d)

@@ -469,10 +469,10 @@ impl Vision {
         #[cfg(feature = "vision")]
         {
             let s = self.download.status();
-            json!({"running": s.running, "done": s.done, "total": s.total, "file": s.file, "error": s.error, "finished": s.finished})
+            json!({"running": s.running, "done": s.done, "total": s.total, "file": s.file, "error": s.error, "cancelled": s.cancelled, "finished": s.finished})
         }
         #[cfg(not(feature = "vision"))]
-        json!({"running": false, "done": 0, "total": 0, "file": "", "error": null, "finished": false})
+        json!({"running": false, "done": 0, "total": 0, "file": "", "error": null, "cancelled": false, "finished": false})
     }
 
     /// Where the model is downloaded from, in order (the user's mirrors first).
@@ -575,10 +575,10 @@ impl Vision {
         #[cfg(feature = "vision")]
         {
             let s = self.text_download.status();
-            json!({"running": s.running, "done": s.done, "total": s.total, "file": s.file, "error": s.error, "finished": s.finished})
+            json!({"running": s.running, "done": s.done, "total": s.total, "file": s.file, "error": s.error, "cancelled": s.cancelled, "finished": s.finished})
         }
         #[cfg(not(feature = "vision"))]
-        json!({"running": false, "done": 0, "total": 0, "file": "", "error": null, "finished": false})
+        json!({"running": false, "done": 0, "total": 0, "file": "", "error": null, "cancelled": false, "finished": false})
     }
 
     /// Start downloading the text-reading models on a background thread. `Ok(false)` when they
@@ -694,10 +694,10 @@ impl Vision {
         #[cfg(feature = "vision")]
         {
             let s = self.faces_download.status();
-            json!({"running": s.running, "done": s.done, "total": s.total, "file": s.file, "error": s.error, "finished": s.finished})
+            json!({"running": s.running, "done": s.done, "total": s.total, "file": s.file, "error": s.error, "cancelled": s.cancelled, "finished": s.finished})
         }
         #[cfg(not(feature = "vision"))]
-        json!({"running": false, "done": 0, "total": 0, "file": "", "error": null, "finished": false})
+        json!({"running": false, "done": 0, "total": 0, "file": "", "error": null, "cancelled": false, "finished": false})
     }
 
     /// Start downloading the face models on a background thread. `Ok(false)` when they are
@@ -1229,6 +1229,8 @@ pub fn neutral_from_preview(photo: &lightcraft_catalog::Photo, preview: &std::pa
         view_cache: None,
         display: None,
         hdr_view: false,
+        slide: None,
+        preview_cut: None,
     };
     guard::catch("rendering a photo for search", || job.run().rendered.map(|r| r.image))?
 }

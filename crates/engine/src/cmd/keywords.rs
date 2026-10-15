@@ -151,7 +151,7 @@ pub fn keyword_sets_json(s: &Session) -> Value {
 /// Give `k` to the photos `p` names (the selection by default), or take it from them when they
 /// all have it already.
 fn toggle(s: &mut Session, p: &Value, k: &str) -> Result<Value> {
-    let ids = s.targets(p);
+    let ids = s.targets(p)?;
     let all = !ids.is_empty()
         && ids.iter().all(|id| {
             s.catalog.photo(*id).is_some_and(|ph| ph.meta.keywords.iter().any(|x| lightcraft_catalog::keywords::same(&clean(x), &clean(k))))
@@ -305,7 +305,7 @@ pub fn specs() -> Vec<CommandSpec> {
             always,
             |s, p| {
                 let mut current: Vec<String> = Vec::new();
-                for id in s.targets(p) {
+                for id in s.targets(p)? {
                     if let Some(ph) = s.catalog.photo(id) {
                         current.extend(ph.meta.keywords.iter().cloned());
                     }
@@ -353,7 +353,7 @@ pub fn specs() -> Vec<CommandSpec> {
                     Some(parent) => format!("{parent}|{name}"),
                     None => name,
                 });
-                let photos = if bool_or(p, "addToSelected", false) { s.targets(p) } else { Vec::new() };
+                let photos = if bool_or(p, "addToSelected", false) { s.targets(p)? } else { Vec::new() };
                 let op = s
                     .catalog
                     .create_keyword_ops(&path, info_from(p, KeywordInfo::default()), &photos)

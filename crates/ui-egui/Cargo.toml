@@ -22,6 +22,7 @@ lightcraft-catalog = { workspace = true }
 web-time = { workspace = true }
 lightcraft-engine = { workspace = true }
 lightcraft-apphost = { workspace = true }
+lightcraft-slideshow = { workspace = true }
 lightcraft-preview = { workspace = true }
 egui = { workspace = true }
 # decoding the thumbnails a camera makes (the import review of a camera, `camera_import`)
@@ -35,6 +36,8 @@ log = { workspace = true }
 lightcraft-capture = { workspace = true }
 
 [dev-dependencies]
+# tests record why they skip (`cargo xtask ci` lists the skips)
+lightcraft-testkit = { workspace = true }
 egui_kittest = { workspace = true, features = ["wgpu", "snapshot"] }
 lightcraft-denoise = { workspace = true, features = ["runtime"] }
 # the model setup tests install and run a synthetic denoise model (`cargo test -p lightcraft-ui-egui` alone too)

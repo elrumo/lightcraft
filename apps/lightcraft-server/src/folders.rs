@@ -544,6 +544,7 @@ fn commit(lib: &Mutex<UserLib>, batch: &mut Vec<FileRead>, found: &HashSet<Strin
                         file_size: p.file_size,
                         content_hash: p.content_hash.clone(),
                         preview_only: p.preview_only.clone(),
+                        preview_checked: lightcraft_catalog::preview_stamp(&p.preview_only),
                     };
                     ops.push((op, i));
                     kinds.push((i, "changed"));

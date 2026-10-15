@@ -57,7 +57,7 @@ pub struct OpenConfig {
 
 /// An error answer: `code` is the kind (the engine's error variants in camelCase —
 /// `unknownCommand`, `disabled`, `badParams`, `catalog`, `notSaved`, `libraryInUse`,
-/// `lightroomCatalog`, `other` — or the host's own: `badRequest`, `unknownMethod`, `panic`,
+/// `lightroomCatalog`, `cancelled`, `modelMissing`, `other` — or the host's own: `badRequest`, `unknownMethod`, `panic`,
 /// `closed`, `timeout`), `message` what to tell the user.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct ErrorBody {
@@ -81,6 +81,8 @@ impl ErrorBody {
             E::NotSaved(_) => "notSaved",
             E::LibraryInUse(_) => "libraryInUse",
             E::LightroomCatalog { .. } => "lightroomCatalog",
+            E::Cancelled(_) => "cancelled",
+            E::ModelMissing { .. } => "modelMissing",
             E::Other(_) => "other",
         };
         ErrorBody::new(code, e.to_string())

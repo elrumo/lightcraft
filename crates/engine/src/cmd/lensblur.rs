@@ -167,6 +167,8 @@ pub fn specs() -> Vec<CommandSpec> {
                     density: f64_or(p, "density", d.density).clamp(0.0, 100.0),
                     erase: mode == "erase",
                     auto_mask: bool_or(p, "autoMask", false),
+                    // (Lens Blur's Refine brush records no pen pressure)
+                    pressure: Vec::new(),
                 };
                 let label = match mode.as_str() {
                     "focus" => "Focus Brush",

@@ -21,6 +21,21 @@ fn dock(h: &mut Headless, p: serde_json::Value) {
 fn rect(h: &Headless, id: &str) -> egui::Rect {
     h.app.widgets.iter().find(|(key, _)| key == id).unwrap().1
 }
+
+#[test]
+fn the_gaps_between_dock_panes_show_chrome_not_the_dark_clear_colour() {
+    let mut h = app();
+    let image = h.snapshot(std::time::Duration::from_secs(5));
+    let pixel = |p: egui::Pos2| image.pixels[p.y as usize * image.size[0] + p.x as usize];
+    // the dock's gap just outside each panel's edge shows the divider colour this fork fills the dock with,
+    // not eframe's near-black clear colour
+    let chrome = crate::theme::Tokens::get(&h.view.ctx).divider;
+    let right = rect(&h, "panel:right_panel");
+    let left = rect(&h, "panel:left_panel");
+    for (panel, gap) in [("Tools", egui::pos2(right.left() - 2.0, right.center().y)), ("Library", egui::pos2(left.right() + 2.0, left.center().y))] {
+        assert_eq!(pixel(gap), chrome, "the gap beside {panel} at {gap:?} is not chrome");
+    }
+}
 fn release(h: &mut Headless, pos: egui::Pos2) {
     h.app.synthetic.push(Event::PointerButton { pos, button: PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE });
     h.step();
