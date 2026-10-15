@@ -133,14 +133,8 @@ final class Prefs {
     var squareGrid: Bool { didSet { store.set(squareGrid, forKey: "squareGrid") } }
 
     /// The grid shows each photo in its own shape, as large as its square cell allows (a Mac's
-    /// "aspect ratio grid", Square Thumbnails off). A phone's grid is always square.
-    var aspectGrid: Bool {
-        #if os(macOS)
-        !squareGrid
-        #else
-        false
-        #endif
-    }
+    /// "aspect ratio grid", Square Thumbnails off), on the phone too.
+    var aspectGrid: Bool { !squareGrid }
     var badges: Badges { didSet { store.set(badges.rawValue, forKey: "badges") } }
     var infoOverlay: InfoOverlay { didSet { store.set(infoOverlay.rawValue, forKey: "infoOverlay") } }
     /// After rating or flagging a photo in the loupe, go on to the next.

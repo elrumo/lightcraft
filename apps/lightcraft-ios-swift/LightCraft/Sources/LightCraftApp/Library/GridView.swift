@@ -308,25 +308,24 @@ struct PhotoCell: View {
 
     /// The room round a photo in an aspect-ratio grid.
     private static let fitInset: CGFloat = 6
-    /// How much a Mac rounds a tile's corners: a little for the squares, more for photos in their own shape (a phone's are square).
+    /// How much a tile's corners are rounded: a little for the squares, more for photos in their own shape (a phone's squares are sharp).
     private var radius: CGFloat {
         #if os(macOS)
         model.prefs.aspectGrid ? 8 : 4
         #else
-        0
+        model.prefs.aspectGrid ? 6 : 0
         #endif
     }
 
     var body: some View {
         if model.prefs.aspectGrid {
             // the cell stays square, so the rows line up; the photo sits in it in its own shape, as large
-            // as fits (its longer side at most the cell's), with Photos' soft shadow
+            // as fits (its longer side at most the cell's)
             Color.clear
                 .aspectRatio(1, contentMode: .fit)
                 .overlay {
                     tile
                         .padding(Self.fitInset)
-                        .shadow(color: .black.opacity(0.25), radius: 4, y: 1)
                 }
         } else {
             tile
