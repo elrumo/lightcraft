@@ -82,7 +82,11 @@ final class LibraryModel {
     /// ids mean something else).
     func reload(_ engine: Engine, count: Int, forget: Bool = false) async {
         generation += 1
-        if forget { pages.removeAll() }
+        if forget {
+            pages.removeAll()
+            // (the next library names its labels itself: `refreshCounts` reads them when there are none)
+            labels = []
+        }
         loading.removeAll()
         stale = Set(pages.keys)
         self.count = count

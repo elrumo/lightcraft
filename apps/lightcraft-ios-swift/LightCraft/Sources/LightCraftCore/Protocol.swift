@@ -112,7 +112,7 @@ public struct FaceScan: Codable, Sendable, Equatable {
 
 /// The server sync as the cloud icon shows it (`sync.status` has the rest).
 public struct SyncSummary: Codable, Sendable, Equatable {
-    /// `signedOut`, `conflict`, `paused`, `error`, `syncing` or `idle`.
+    /// `signedOut`, `signingOut`, `conflict`, `paused`, `error`, `syncing` or `idle`.
     public var state: String
     public var server: String
     public var pending: Int = 0

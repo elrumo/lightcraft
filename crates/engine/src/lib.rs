@@ -335,6 +335,9 @@ pub struct Session {
     /// Set by a host that keeps synced photo files in its own storage instead of a previews folder
     /// (the browser).
     pub sync_store: Option<cloud_sync::BrowserStore>,
+    /// Storage keys of the host's synced files that signing out left to delete (the browser's previews), until the host
+    /// takes them ([`Session::take_sync_purge`]).
+    sync_purge: Vec<String>,
     /// Adds exported files to Apple Photos ([`apple_photos`]): `/usr/bin/osascript`, installed by
     /// [`Session::with_fs`] on macOS; `None` elsewhere and in sessions without a file system. Tests
     /// put a fake here.
@@ -440,6 +443,7 @@ impl Session {
             forget_local_days: lightcraft_catalog::DEFAULT_FORGET_DAYS,
             sync: None,
             sync_store: None,
+            sync_purge: Vec::new(),
             #[cfg(not(target_arch = "wasm32"))]
             apple_photos: None,
             #[cfg(not(target_arch = "wasm32"))]
@@ -477,14 +481,16 @@ impl Session {
 
     fn run_command(&mut self, id: &str, journal: Option<&Value>, f: impl FnOnce(&mut Session) -> Result<Value>) -> Result<Value> {
         let log_start = self.pending_log.len();
-        let was_active = self.active();
+        let (was_active, was_library) = (self.active(), self.library_generation);
         self.depth += 1;
         // last-resort guard: a panic in a command is that command's error, not a crash
         let r = guard::catch(&format!("`{id}`"), || f(self)).unwrap_or_else(|e| Err(EngineError::Other(e)));
         self.depth -= 1;
         if self.depth == 0 && was_active.is_some() && self.active() != was_active {
-            self.previous_active = was_active;
-            if let Some(left) = was_active {
+            // (a photo that is gone, or a library emptied for another account, has nothing to paste settings from: the
+            // number could name another photo now)
+            self.previous_active = was_active.filter(|id| self.library_generation == was_library && self.catalog.photo(*id).is_some());
+            if let Some(left) = self.previous_active {
                 self.auto_version(left);
             }
         }

@@ -2157,5 +2157,7 @@
   "This model isn't downloaded yet: download it, or choose Classic.": "此模型尚未下載：請下載，或選擇「經典」。",
   "Turned off in Settings → AI Models": "已在「設定 → AI 模型」中關閉",
   "Models can't be downloaded in this build: put the file in the models folder (Settings → AI Models).": "此版本無法下載模型：請將檔案放入模型資料夾（設定 → AI 模型）。",
-  "Generating the new area…": "正在生成新區域…"
+  "Generating the new area…": "正在生成新區域…",
+  "Finishing sync before signing out": "登出前正在完成同步",
+  "Removing the library from this device": "正在從此裝置移除照片庫"
 }

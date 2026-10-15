@@ -1,5 +1,19 @@
 # What's new in LightCraft
 
+## 2026-10-15
+
+### Signing out removes the library from the device, as Lightroom's does
+- **Sign Out** (Settings ▸ Sync, in the desktop, iPhone, iPad and web apps) now waits until everything this device has
+  made has reached your server, signs the device out there, and removes the account's library from the device. Sign in
+  as someone else and you start from an empty library of your own: two accounts' libraries never meet on a device.
+  Your library stays on the server, and signing in again as the same user brings it back.
+- While it waits, the cloud button and Settings say how many changes and photos are left, and **Cancel Sign Out**
+  stays signed in. If the server is away or can't take a photo, **Sign Out Anyway** removes the library now: what
+  hasn't been sent is lost, so it asks first, and a copy of the catalog is kept in the library folder.
+- Photos you imported with a copy (the library's Originals folder) and the files you imported from are never deleted.
+- A server that signed your device out (an admin removed it) no longer leaves the library stuck on the old account:
+  **Remove Library from This Device…** in Settings ▸ Sync lets you sign in as someone else.
+
 ## 2026-10-14
 
 ### iPhone ProRAW photos open as bright as on the iPhone

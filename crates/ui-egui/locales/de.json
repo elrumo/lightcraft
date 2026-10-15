@@ -2182,5 +2182,7 @@
   "This model isn't downloaded yet: download it, or choose Classic.": "Dieses Modell ist noch nicht geladen: Lade es herunter oder wähle Klassisch.",
   "Turned off in Settings → AI Models": "In Einstellungen → KI-Modelle ausgeschaltet",
   "Models can't be downloaded in this build: put the file in the models folder (Settings → AI Models).": "In dieser Version können keine Modelle geladen werden: Leg die Datei in den Modellordner (Einstellungen → KI-Modelle).",
-  "Generating the new area…": "Die neue Fläche wird erzeugt…"
+  "Generating the new area…": "Die neue Fläche wird erzeugt…",
+  "Finishing sync before signing out": "Synchronisierung wird vor dem Abmelden abgeschlossen",
+  "Removing the library from this device": "Bibliothek wird von diesem Gerät entfernt"
 }

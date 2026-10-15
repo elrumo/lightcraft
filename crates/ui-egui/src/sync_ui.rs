@@ -34,12 +34,35 @@ pub struct SyncForm {
     pub merge: bool,
 }
 
+/// The question open under Settings ▸ Sync's sign-out buttons: what its answer does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SignOutHow {
+    /// Send what is left, then sign out and remove the library from this device.
+    Wait,
+    /// Stop waiting: remove the library now; what hasn't been sent is lost.
+    Anyway,
+    /// The server signed this device out: remove the library from it.
+    Remove,
+}
+
 #[derive(Default)]
 pub struct SyncDriver {
     /// Requests in flight and their answers (shared with the engine host).
     pub driver: lightcraft_apphost::sync::Driver,
     pub form: SyncForm,
     pub storage: Storage,
+    /// The sign-out question being asked in Settings ▸ Sync (cleared when it no longer applies).
+    pub sign_out: Option<SignOutHow>,
+}
+
+impl SyncDriver {
+    /// Another library is on screen (one was opened, or this one was emptied for another account): the sign-in form,
+    /// a sign-out question and the storage numbers of the old one are not the new one's.
+    pub fn forget_library(&mut self) {
+        self.form = SyncForm::default();
+        self.sign_out = None;
+        self.storage = Storage::default();
+    }
 }
 
 /// How often this computer's folders are measured again while Settings ▸ Sync is open.
@@ -169,6 +192,15 @@ pub fn cloud_status(app: &LightcraftApp) -> (String, bool, bool) {
     match st.state() {
         "conflict" => (format!("{server} has a library already: choose what to do with this library's photos"), true, false),
         "signedOut" => (format!("Signed out of {server}: sign in again in Settings > Sync"), false, false),
+        "signingOut" => {
+            // (what is left to send: the changes, and the photos still to upload)
+            let photos = s["unsent"].as_u64().unwrap_or(0).max(s["uploads"].as_u64().unwrap_or(0));
+            let mut text = format!("Signing out of {server}: sending what is left ({} change(s), {photos} photo(s))", s["pending"]);
+            if let Some(e) = st.error() {
+                text.push_str(&format!("\n{e}\nLightCraft keeps trying; Sign Out Anyway doesn't wait."));
+            }
+            (text, st.error().is_some(), true)
+        }
         "paused" => (format!("Syncing with {server} is paused"), false, false),
         "error" => (format!("Can't sync with {server}: {}\nLightCraft keeps trying.", st.error().unwrap_or("")), true, false),
         "syncing" if st.reading().is_some() => {

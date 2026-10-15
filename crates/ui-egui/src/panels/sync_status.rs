@@ -60,7 +60,7 @@ pub fn is_open(ctx: &egui::Context) -> bool {
 
 /// What the popover says, read from the app first so that drawing it can change the app.
 struct View {
-    /// `off` (never synced), `signedOut`, `conflict`, `paused`, `error`, `syncing` or `idle`.
+    /// `off` (never synced), `signedOut`, `signingOut`, `conflict`, `paused`, `error`, `syncing` or `idle`.
     state: &'static str,
     host: String,
     error: Option<String>,
@@ -99,7 +99,7 @@ impl View {
 
     /// This library is the server's too: there are things to show about it.
     fn joined(&self) -> bool {
-        matches!(self.state, "paused" | "error" | "syncing" | "idle")
+        matches!(self.state, "paused" | "error" | "syncing" | "signingOut" | "idle")
     }
 }
 
@@ -111,6 +111,7 @@ enum Act {
     Settings,
     Choose,
     SignIn,
+    CancelSignOut,
 }
 
 /// Draw the popover when it is open (every frame: it slides out when closed). Call once a frame
@@ -140,6 +141,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
             report(app, ctx, "sync.pause", json!({"on": !paused}));
         }
         Some(Act::SyncNow) => report(app, ctx, "sync.now", json!({})),
+        Some(Act::CancelSignOut) => report(app, ctx, "sync.cancelSignOut", json!({})),
         Some(Act::Settings | Act::SignIn) => {
             mobile::close_actions(ctx);
             report(app, ctx, "app.settings", json!({"tab": "sync"}));
@@ -551,6 +553,18 @@ fn status(t: &Tokens, v: &View) -> Status {
             ..plain(Icon::Cloud, t.caution, tr("Can't sync"), host)
         },
         "syncing" => plain(Icon::Refresh, t.accent, tr("Syncing"), host),
+        "signingOut" => Status {
+            problem: v.error.is_some(),
+            note: Some((
+                v.error.clone().map_or_else(
+                    || tr("Sending what is left to the server. Then this library is removed from this device and the device is signed out."),
+                    |e| format!("{e} {}", tr("LightCraft keeps trying. Sign Out Anyway (Settings) doesn't wait.")),
+                ),
+                t.text_dim,
+            )),
+            primary: Some(("Cancel Sign Out", Act::CancelSignOut)),
+            ..plain(Icon::Refresh, t.accent, tr("Signing out"), host)
+        },
         _ => {
             let count = photos(v.photos as u64);
             let sub = if host.is_empty() { count } else { format!("{host} · {count}") };
@@ -807,11 +821,14 @@ fn footer(ui: &mut egui::Ui, t: &Tokens, v: &View, act: &mut Option<Act>) {
     let pause = Rect::from_min_size(r.min, vec2(half, BUTTON_H));
     let now = Rect::from_min_size(pos2(pause.right() + GAP, r.top()), vec2(half, BUTTON_H));
     let (label, icon) = if paused { ("Resume", Icon::Play) } else { ("Pause", Icon::Pause) };
-    if capsule(ui, t, pause, "syncPause", label, Face::Label(Some(icon)), false) {
-        *act = Some(Act::PauseToggle);
-    }
-    if capsule(ui, t, now, "syncNow", "Sync Now", Face::Label(Some(Icon::Refresh)), true) {
-        *act = Some(Act::SyncNow);
+    // (signing out sends what is left by itself: it can't be paused, and Cancel Sign Out is the button above)
+    if v.state != "signingOut" {
+        if capsule(ui, t, pause, "syncPause", label, Face::Label(Some(icon)), false) {
+            *act = Some(Act::PauseToggle);
+        }
+        if capsule(ui, t, now, "syncNow", "Sync Now", Face::Label(Some(Icon::Refresh)), true) {
+            *act = Some(Act::SyncNow);
+        }
     }
     if capsule(ui, t, gear, "syncSettings", "Sync Settings", Face::Icon(Icon::Gear), false) {
         *act = Some(Act::Settings);

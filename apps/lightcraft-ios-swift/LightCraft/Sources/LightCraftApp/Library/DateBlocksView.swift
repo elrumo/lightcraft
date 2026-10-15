@@ -37,6 +37,16 @@ struct DateBlocksView: View {
                 if let key { proxy.scrollTo(key, anchor: .top) }
             }
         }
+        .overlay {
+            // (an empty library: just emptied by a sign-out, or not filled yet)
+            if blocks.isEmpty && model.state.visibleCount == 0 {
+                ContentUnavailableView {
+                    Label("No Photos", systemImage: "photo.on.rectangle")
+                } description: {
+                    Text("Tap + to add photos from Photos or Files.")
+                }
+            }
+        }
         .task(id: Key(span: span, gen: model.state.visibleGen, rev: model.settledRevision)) {
             guard let engine = model.engine else { return }
             let name = span == .years ? "years" : "months"

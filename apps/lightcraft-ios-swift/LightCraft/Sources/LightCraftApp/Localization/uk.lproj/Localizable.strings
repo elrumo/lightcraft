@@ -389,6 +389,7 @@
 "Cancel Interaction" = "Скасувати взаємодію";
 "Cancel Pending Photo Action" = "Скасувати відкладену дію фото";
 "Cancel Preview Build" = "Скасувати створення переглядів";
+"Cancel Sign Out" = "Скасувати вихід";
 "Cancel pending action" = "Скасувати відкладену дію";
 "Candidate" = "Кандидат";
 "Canon CR2 photos from the EOS 7D, 50D, 60D, 550D, 600D, 1200D, 1300D, 5D Mark II and 1D Mark IV (and other" = "Фото Canon CR2 з EOS 7D, 50D, 60D, 550D, 600D, 1200D, 1300D, 5D Mark II та 1D Mark IV (та інших";
@@ -953,6 +954,7 @@
 "Finding words in photos uses two small AI models that read text, in English, Chinese, Japanese and many other languages. They are not part of LightCraft: they are PP-OCRv6 from Baidu, a %@ download onto this server under the %@. Downloading them means accepting that licence: %@ Afterwards the server reads every user's photos in the background, about a second each." = "Для пошуку слів на фото використовуються дві невеликі моделі ШІ, які читають текст англійською, китайською, японською та багатьма іншими мовами. Вони не входять до складу LightCraft: це PP-OCRv6 від Baidu, завантаження розміром %@ на цей сервер за ліцензією %@. Завантаження означає згоду з цією ліцензією: %@ Після цього сервер у фоновому режимі читає фото всіх користувачів, приблизно по секунді на кожне.";
 "Finds photo files that no library uses any more (photos deleted for good) and uploads that never finished, if they are older than a day. Checking changes nothing." = "Знаходить файли фото, які більше не використовує жодна бібліотека (фото, видалені остаточно), і вивантаження, що так і не завершилися, якщо їм понад добу. Перевірка нічого не змінює.";
 "Find…" = "Знайти…";
+"Finishing sync before signing out" = "Завершення синхронізації перед виходом";
 "Finishing up." = "Завершення.";
 "First" = "Перший";
 "First commit" = "Перший коміт";
@@ -1993,6 +1995,9 @@
 "Remove Folder" = "Вилучити теку";
 "Remove Folder from Library" = "Вилучити теку з бібліотеки";
 "Remove Folder from Library…" = "Вилучити теку з бібліотеки…";
+"Remove Library" = "Видалити бібліотеку";
+"Remove Library from This Device?" = "Видалити бібліотеку з цього пристрою?";
+"Remove Library from This Device…" = "Видалити бібліотеку з цього пристрою…";
 "Remove Location" = "Видалити розташування";
 "Remove Offline Copy" = "Видалити офлайн-копію";
 "Remove User" = "Видалити користувача";
@@ -2021,6 +2026,7 @@
 "Removed" = "Прибрано";
 "Removed %@" = "Видалено. %@";
 "Removed %@. Their files stay in %@." = "Користувача %@ видалено. Файли залишаються в %@.";
+"Removing the library from this device" = "Видалення бібліотеки з цього пристрою";
 "Removing them frees this space. It cannot be undone." = "Їх видалення звільнить це місце. Цю дію не можна скасувати.";
 "Removing with AI…" = "Видалення за допомогою ШІ…";
 "Rename" = "Перейменувати";
@@ -2193,6 +2199,7 @@
 "Selects any object from taps, including parts you add or leave out." = "Вибирає будь-який об’єкт за дотиками, зокрема частини, які ви додаєте або виключаєте.";
 "Selenium Tone" = "Селенове тонування";
 "Send Feedback…" = "Надіслати відгук…";
+"Sending what is left: %lld changes, %lld photos" = "Надсилається решта (змін: %lld, фото: %lld)";
 "Separated by commas" = "Через кому";
 "Sepia Tone" = "Тон сепії";
 "Sequence number zero-padded to N digits (1–9)" = "Порядковий номер із нулями до N цифр (1–9)";
@@ -2315,11 +2322,17 @@
 "Sidecar names" = "Назви супровідних файлів";
 "Sign In" = "Увійти";
 "Sign Out" = "Вийти";
+"Sign Out Anyway" = "Усе одно вийти";
+"Sign Out Anyway…" = "Усе одно вийти…";
+"Sign Out Without Waiting?" = "Вийти, не чекаючи?";
+"Sign Out?" = "Вийти?";
 "Sign in again in Settings ▸ Sync." = "Увійдіть знову в розділі «Налаштування ▸ Синхронізація».";
 "Sign out %@?" = "Завершити сеанс на %@?";
 "Sign out and keep this library on this device only." = "Вийдіть і залиште цю бібліотеку лише на цьому пристрої.";
 "Signed in %@" = "Вхід виконано %@";
 "Signed out" = "Ви вийшли";
+"Signing out waits until everything this device has made has reached the server, then removes the library from this device. Cancel stays signed in. Sign Out Anyway doesn't wait: what hasn't been sent is lost." = "Під час виходу застосунок чекає, доки все, що зроблено на цьому пристрої, дійде до сервера, а потім видаляє бібліотеку з цього пристрою. «Скасувати вихід» залишає вас в обліковому записі. «Усе одно вийти» не чекає: усе, що не надіслано, буде втрачено.";
+"Signing out…" = "Вихід…";
 "Silver" = "Срібло";
 "Simulate Paper & Ink" = "Імітувати папір і фарбу";
 "Size" = "Розмір";
@@ -2357,6 +2370,7 @@
 "Soft Pastel" = "М’яка пастель";
 "Soft Proofing" = "Екранна кольоропроба";
 "Soft Skin" = "М’яка шкіра";
+"Some changes or photos haven't reached the server. Signing out now removes this library from this device, and what hasn't been sent is lost." = "Деякі зміни або фото не дійшли до сервера. Якщо вийти зараз, цю бібліотеку буде видалено з цього пристрою, а все ненадіслане буде втрачено.";
 "Some files couldn't be read" = "Не вдалося прочитати деякі файли";
 "Some rules need fixing (Edit Smart Album…):" = "Деякі правила треба виправити (Редагувати смарт-альбом…):";
 "Something went wrong" = "Щось пішло не так";
@@ -2547,6 +2561,7 @@
 "The server has a library already" = "На сервері вже є бібліотека";
 "The server never changes, moves or deletes the photos. With writing on, it adds and updates .xmp sidecar files beside them — but it cannot write there now: %@" = "Сервер ніколи не змінює, не переміщує й не видаляє фото. Якщо запис увімкнено, він додає й оновлює поруч із ними файли .xmp — але зараз записати туди не може: %@";
 "The server never changes, moves or deletes the photos. With writing on, it adds and updates .xmp sidecar files beside them. Mount the folder read-write, with the server user allowed to write, before turning this on." = "Сервер ніколи не змінює, не переміщує й не видаляє фото. Якщо запис увімкнено, він додає й оновлює поруч із ними файли .xmp. Перед увімкненням змонтуйте теку для читання й запису та дозвольте запис користувачу сервера.";
+"The server signed this device out, so nothing can be sent. Removing the library from this device loses what hasn't been sent. Signing in again brings the rest back from the server." = "Сервер завершив сеанс на цьому пристрої, тому нічого надіслати не можна. Якщо видалити бібліотеку з цього пристрою, ненадіслане буде втрачено. Після повторного входу решта повернеться з сервера.";
 "The server will look at the faces in %@'s photos and group them into people, which they name on their own devices. What it finds stays on this server, and %@ can delete all of it from their devices (Forget All Faces). Only do this if they agree." = "Сервер аналізуватиме обличчя на фото користувача %@ і групуватиме їх за людьми, яким користувач дає імена на своїх пристроях. Усе знайдене зберігається на цьому сервері, і %@ може видалити це зі своїх пристроїв («Забути всі обличчя»). Вмикайте лише за згодою користувача.";
 "The server's" = "Бібліотека сервера";
 "The thumbnail cache only ever counts and deletes its own files (issue #98): a library opened on a folder that" = "Кеш мініатюр завжди рахує й видаляє лише власні файли (проблема #98): бібліотека, відкрита в теці, яка";
@@ -2580,9 +2595,11 @@
 "This is too large for Super Resolution here. Crop the photo first: the limit is %lld megapixels." = "Це завелике для суперроздільності тут. Спершу кадруйте фото: обмеження — %lld Мп.";
 "This library" = "Ця бібліотека";
 "This library and the server's both have photos. Choose what to do with this library's photos; nothing syncs until you do." = "І в цій бібліотеці, і на сервері є фото. Виберіть, що зробити з фото цієї бібліотеки; доти нічого не синхронізується.";
+"This library belongs to the account it was signed in as, and the server signed this device out. Sign in as the same user to go on, or remove the library from this device to sign in as someone else: what hasn't been sent is lost." = "Ця бібліотека належить обліковому запису, під яким у неї входили, а сервер завершив сеанс на цьому пристрої. Увійдіть під тим самим користувачем, щоб продовжити, або видаліть бібліотеку з цього пристрою, щоб увійти під іншим: усе, що не надіслано, буде втрачено.";
 "This library is only on this device" = "Ця бібліотека є лише на цьому пристрої";
 "This model isn't downloaded yet: download it, or choose Classic." = "Цю модель ще не завантажено: завантажте її або виберіть «Класичний».";
 "This photo can't be opened" = "Не вдалося відкрити це фото";
+"This removes this account's library from this device. It stays on the server, and signing in again brings it back. Anything that hasn't reached the server yet is sent first." = "Бібліотеку цього облікового запису буде видалено з цього пристрою. Вона залишиться на сервері, а після повторного входу повернеться. Усе, що ще не дійшло до сервера, спершу буде надіслано.";
 "This server has no administrator yet. Type the setup code it wrote in its log when it started. Administrators add the people who use the server and look after its devices and storage. Letters, digits, dots, dashes and underscores in the name; at least 8 characters in the password." = "На цьому сервері ще немає адміністратора. Введіть код налаштування, який сервер записав у журнал під час запуску. Адміністратори додають людей, які користуються сервером, і дбають про його пристрої та сховище. В імені допускаються літери, цифри, крапки, дефіси й підкреслення; пароль — щонайменше 8 символів.";
 "Threshold" = "Поріг";
 "Thumbnail Cache" = "Кеш мініатюр";

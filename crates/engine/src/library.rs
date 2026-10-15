@@ -469,6 +469,25 @@ impl Session {
         }
     }
 
+    /// What the library being left named (photo, album and mask ids, the photo worked on last, what
+    /// was made from its photos: denoise work, faces, search indexes) means nothing in another library, or
+    /// in this one emptied for another account: forget it. Photo ids are only unique within a library.
+    /// Every open does this, and so does signing out of a synced library.
+    pub(crate) fn forget_library_state(&mut self) {
+        self.denoise.library_changed();
+        self.media.denoise.clear();
+        // what was learned about the old library's faces is saved, and none of it carries over (photo ids are per library)
+        #[cfg(not(target_arch = "wasm32"))]
+        self.faces.library_changed();
+        self.vision.forget_library();
+        self.target_album = None;
+        self.active_mask = None;
+        self.active_spot = None;
+        self.previous_active = None;
+        self.before.clear();
+        self.signatures.clear();
+    }
+
     /// Open `stores`; the new library takes `lock` once nothing can fail any more.
     fn open_stores(&mut self, stores: LibraryStores, seed_demo: bool, lock: &mut Option<LibraryLock>) -> Result<()> {
         let LibraryStores { dir, catalog, mut files, on_disk } = stores;
@@ -479,12 +498,6 @@ impl Session {
         {
             log::error!("library: {e}");
         }
-        // Photo ids belong to one library; denoise work must not carry into the next.
-        self.denoise.library_changed();
-        self.media.denoise.clear();
-        // what was learned about the old library's faces is saved, and none of it carries over (photo ids are per library)
-        #[cfg(not(target_arch = "wasm32"))]
-        self.faces.library_changed();
         let (mut journal, mut catalog, report) = Journal::open(catalog)?;
         // A loaded catalog counts revisions from 0, like every other one. Caches (sidebar counts,
         // keyword tree, the grid's list…) are keyed on the revision, so give each library loaded
@@ -494,6 +507,7 @@ impl Session {
         catalog.revision = LOADS.fetch_add(1, std::sync::atomic::Ordering::Relaxed).wrapping_add(1) << 32;
         self.catalog = catalog;
         self.library_generation = crate::LIBRARY_GEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.forget_library_state();
         for entry in self.undo.iter_mut().chain(self.redo.iter_mut()) {
             self.pending_sidecar_repairs.append(&mut entry.retry_sidecars);
         }
@@ -610,6 +624,13 @@ impl Session {
             blocked: settings.blocked,
             lock: lock.take(),
         });
+        // signing out was cut short (the app quit or crashed while the library was being emptied): finish it, so the next
+        // account never meets what is left of this one's
+        if self.sync.as_ref().is_some_and(|st| st.config.wiping)
+            && let Err(e) = self.reset_synced_library()
+        {
+            log::error!("library: finishing signing out: {e}");
+        }
         if on_disk {
             self.follow_moved_library();
         }
