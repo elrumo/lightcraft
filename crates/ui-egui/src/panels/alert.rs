@@ -36,7 +36,7 @@ pub fn show(ctx: &egui::Context, a: &Alert) -> (bool, bool) {
     let screen = ctx.viewport_rect();
     let content = ctx.content_rect();
     // dim what is behind, and keep taps off it
-    egui::Area::new(id.with("dim")).order(egui::Order::Middle).fixed_pos(screen.min).show(ctx, |ui| {
+    egui::Area::new(id.with("dim")).order(egui::Order::Middle).constrain_to(screen).fixed_pos(screen.min).show(ctx, |ui| {
         ui.painter().rect_filled(screen, 0.0, Color32::from_black_alpha((t.scrim as f32 * 0.8 * p) as u8));
         let _ = ui.allocate_rect(screen, Sense::click());
     });

@@ -181,3 +181,27 @@ fn the_tool_bar_sits_on_the_sheets_colour() {
         assert_eq!(img.pixels[y * img.size[0] + x], chrome, "the sheet's colour under the bar at {x}, {y}");
     }
 }
+
+/// On a phone with a status bar and a home indicator, the grid's buttons sit whole in the top bar
+/// (they were pushed down and cut off at its bottom), the grid runs on under the home indicator,
+/// and a page's colour reaches the bottom of the screen (an area used to stop at the safe area).
+#[test]
+fn the_grid_and_pages_reach_the_screen_edges() {
+    let mut h = phone([402.0, 874.0]);
+    h.set_safe_area(62.0, 34.0);
+    run(&mut h, "app.appearance.light", json!({}));
+    h.app.ui.view = ViewMode::PhotoGrid;
+    h.settle(SETTLE);
+    let bar = widget(&h, "bar:top");
+    for id in ["icon:more", "button:select"] {
+        let r = widget(&h, id);
+        assert!(r.top() >= bar.top() && r.bottom() <= bar.bottom(), "{id} {r:?} whole in the bar {bar:?}");
+    }
+    assert_eq!(h.app.canvas_rect.map(|r| r.bottom()), Some(874.0), "the grid reaches the bottom of the screen");
+    h.app.ui.left_panel = true;
+    h.settle(SETTLE);
+    h.settle(SETTLE);
+    let img = h.paint();
+    let chrome = crate::theme::Tokens::ios_for(false).chrome;
+    assert_eq!(img.pixels[(img.size[1] - 4) * img.size[0] + 200], chrome, "the Albums page under the home indicator");
+}
