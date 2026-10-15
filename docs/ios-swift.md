@@ -273,6 +273,8 @@ under the photo, it has no separate view and edit modes, and the library is one 
     do not show through the inspector's glass, under the Duo's column or beside the hinge.
   - On the inner display (a hinge and a regular width, `DuoFacts.unfolded`) the Edit groups are a rail of icons down the
     left of the tool column (Auto first), as the Mac's tool strip, not a row of chips to scroll.
+    Masking's groups are the same rail, Crop's aspect tiles a grid, and a tool screen's panel starts at the top and
+    uses the column's whole height (a phone or iPad has it at the bottom, by the thumb).
   - `toolCard` is a `ConcentricRectangle`, so its corners follow each display's.
   - Everything that needs an iOS 27 symbol is in `App/Duo.swift`, behind `#if compiler(>=6.4) && !DUO_OFF` and
     `#available`. Xcode 26 (CI) compiles the fallbacks, which are what the app did before; build with

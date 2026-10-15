@@ -261,11 +261,19 @@ private struct ToolColumn: View {
             }
             VStack(spacing: 0) {
                 if let tool = editor.tool, tool.hasScreen {
-                    // (at the bottom, where the thumb is, as on a phone held upright)
-                    Spacer(minLength: 0)
-                    ViewThatFits(in: .vertical) {
-                        ToolScreenBar(tool: tool)
-                        ScrollView { ToolScreenBar(tool: tool) }
+                    if model.duo.unfolded {
+                        // the whole height of the panel, from the top, as the Edit panel (scrolling only when it must)
+                        ViewThatFits(in: .vertical) {
+                            ToolScreenBar(tool: tool).frame(maxHeight: .infinity, alignment: .top)
+                            ScrollView { ToolScreenBar(tool: tool) }
+                        }
+                    } else {
+                        // (at the bottom, where the thumb is, as on a phone held upright)
+                        Spacer(minLength: 0)
+                        ViewThatFits(in: .vertical) {
+                            ToolScreenBar(tool: tool)
+                            ScrollView { ToolScreenBar(tool: tool) }
+                        }
                     }
                 } else {
                     if editor.tool == .edit, !rail { GroupBar() }
