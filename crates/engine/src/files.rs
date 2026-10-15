@@ -156,6 +156,16 @@ fn raw_format_name(name: &str, found: lightcraft_raw::RawFormat) -> String {
     .to_string()
 }
 
+/// "unrecognized file format" plus what the file holds (its size and first bytes), so a report names
+/// an empty, placeholder or wrapped file instead of leaving a guess.
+fn unrecognized(bytes: &[u8]) -> String {
+    let head: Vec<String> = bytes.iter().take(16).map(|b| format!("{b:02X}")).collect();
+    if head.is_empty() {
+        return "unrecognized file format (empty file)".to_string();
+    }
+    format!("unrecognized file format ({} bytes, starts {})", bytes.len(), head.join(" "))
+}
+
 /// Probe a file's bytes: kind, dimensions (oriented), metadata. No pixel data is decompressed:
 /// raws are described from their headers ([`lightcraft_raw::probe_info`]), other images too
 /// ([`lightcraft_codecs::read_header`], which refuses truncated files but can't see damage inside
@@ -213,7 +223,7 @@ pub fn probe_bytes(name: &str, bytes: &[u8]) -> Result<ProbeInfo, String> {
             preview_only: None,
         });
     }
-    let fmt = lightcraft_codecs::sniff(bytes).ok_or("unrecognized file format")?;
+    let Some(fmt) = lightcraft_codecs::sniff(bytes) else { return Err(unrecognized(bytes)) };
     if let Some(why) = fmt.not_decodable() {
         // e.g. "Heif files can't be opened: HEIC/HEIF support isn't included in this build of LightCraft"
         return Err(format!("{fmt:?} files can't be opened: {why}"));
@@ -1429,6 +1439,18 @@ mod tests {
             }
         }
         assert!(probe_bytes("x.jpg", b"not an image").is_err());
+    }
+
+    /// The error for a file nothing recognises says how big it is and how it starts (an empty
+    /// placeholder, a wrapped file, a misnamed one), so a user's report is enough to tell which.
+    #[test]
+    fn unrecognized_file_reports_size_and_first_bytes() {
+        let e = probe_bytes("x.jpg", b"not an image").unwrap_err();
+        assert_eq!(e, "unrecognized file format (12 bytes, starts 6E 6F 74 20 61 6E 20 69 6D 61 67 65)");
+        assert_eq!(probe_bytes("x.jpg", &[]).unwrap_err(), "unrecognized file format (empty file)");
+        // only the first 16 bytes are listed
+        let long = probe_bytes("x.dng", &[0x20; 40]).unwrap_err();
+        assert_eq!(long, format!("unrecognized file format (40 bytes, starts {})", ["20"; 16].join(" ")));
     }
 
     /// A DNG the system handed over as `IMG_8918.jpeg` (the Photos picker does, for ProRAW) is a DNG in the

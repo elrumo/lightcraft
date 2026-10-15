@@ -3397,6 +3397,7 @@ dependencies = [
  "lightcraft-mcp",
  "lightcraft-merge",
  "lightcraft-raster",
+ "lightcraft-raw",
  "lightcraft-sysmem",
  "lightcraft-ui-egui",
  "serde_json",
