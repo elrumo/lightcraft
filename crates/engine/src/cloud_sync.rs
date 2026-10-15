@@ -1681,6 +1681,37 @@ impl Session {
             .collect()
     }
 
+    /// Where a synced photo's original stands on this device, for the photo screen: `"original"` (downloaded,
+    /// the photo is edited from it), `"loading"` (on its way, with `progress` 0..1 once bytes arrive) or
+    /// `"preview"` (not coming now: syncing is paused or signed out, or the download failed and waits). `None`
+    /// for a photo this device has its own file of, or a library that isn't synced.
+    pub fn original_status(&self, id: PhotoId) -> Option<Value> {
+        let st = self.sync.as_ref()?;
+        let p = self.catalog.photo(id)?;
+        let Source::File { path } = &p.source else { return None };
+        let Some(key) = self.remote_key(p) else {
+            let downloaded = is_remote(p) || self.originals_dir().is_some_and(|d| Path::new(path).starts_with(d));
+            return downloaded.then(|| json!({"state": "original"}));
+        };
+        let running = st.jobs.values().find_map(|j| match j {
+            Job::Get { key: k, blob: Blob::Original, dest, .. } if *k == key => Some(dest),
+            _ => None,
+        });
+        if let Some(dest) = running {
+            // (the download grows `<dest>.part`, see `http`)
+            let got = std::fs::metadata(format!("{dest}.part")).map_or(0, |m| m.len());
+            // (whole percents: each change is a state event for the frontends)
+            let progress = (p.file_size > 0 && got > 0).then(|| (got as f64 * 100.0 / p.file_size as f64).floor().min(100.0) / 100.0);
+            return Some(json!({"state": "loading", "progress": progress}));
+        }
+        let coming = st.has_token()
+            && !st.config.paused
+            && !st.config.leaving
+            && self.originals_dir().is_some()
+            && st.blob_retry.get(&key).is_none_or(|t| Instant::now() >= *t);
+        Some(json!({"state": if coming { "loading" } else { "preview" }}))
+    }
+
     /// The download of the open photo's original, once its smart preview is here: the smart preview is
     /// an 8-bit proxy that bands when edited, so the photo is edited from the original as soon as it
     /// arrives (it then stays like any downloaded original, under [`SyncConfig::originals_budget_mb`]).

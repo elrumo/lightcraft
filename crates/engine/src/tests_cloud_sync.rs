@@ -778,7 +778,7 @@ fn pixel_commands_read_the_preview_when_the_original_is_not_here() {
 #[test]
 fn the_open_photo_downloads_its_original_after_its_smart_preview() {
     let mut f = Fake::new();
-    let (_a, root, ids) = first_device("open-original", &mut f);
+    let (a, root, ids) = first_device("open-original", &mut f);
     let mut b = open(&root.join("b"));
     sign_in(&mut b);
     sync(&mut b, &mut f);
@@ -793,6 +793,7 @@ fn the_open_photo_downloads_its_original_after_its_smart_preview() {
         })
         .collect();
     assert_eq!(asked, [format!("smart/{key}")], "the smart preview alone first");
+    assert_eq!(b.original_status(ids[0]).unwrap()["state"], "loading", "the photo screen's pill");
     for t in tasks {
         let d = f.handle(&t);
         b.sync_done(d);
@@ -802,6 +803,12 @@ fn the_open_photo_downloads_its_original_after_its_smart_preview() {
     assert!(f.requests.iter().any(|r| r == &format!("GET /api/blobs/original/{key}")), "{:?}", f.requests);
     assert!(is_remote(b.catalog.photo(ids[1]).unwrap()), "only the open photo's");
     assert!(b.sync_state().unwrap().outbox.is_empty(), "the relink stays on this device");
+    assert_eq!(b.original_status(ids[0]), Some(json!({"state": "original"})));
+    // paused: the original isn't coming, the photo is edited from its smart preview
+    b.execute("sync.pause", &json!({"on": true})).unwrap();
+    assert_eq!(b.original_status(ids[1]), Some(json!({"state": "preview"})));
+    // a photo this device imported itself has no pill
+    assert_eq!(a.original_status(ids[0]), None);
     let _ = std::fs::remove_dir_all(&root);
 }
 

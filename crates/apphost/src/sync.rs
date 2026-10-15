@@ -99,7 +99,8 @@ pub fn native_exec(notify: impl Fn() + Send + Sync + 'static) -> impl Fn(Task, S
 }
 
 /// What the frontend's cloud icon shows: the state (`signedOut`, `signingOut`, `conflict`, `paused`, `error`,
-/// `syncing`, `idle`; `None` for a local library with no server), the server, and how much is left.
+/// `syncing`, `idle`; `None` for a local library with no server), the server, how much is left, and where the
+/// open photo's original stands.
 pub fn summary(session: &Session) -> Option<serde_json::Value> {
     let st = session.sync_state()?;
     let s = st.status();
@@ -111,6 +112,8 @@ pub fn summary(session: &Session) -> Option<serde_json::Value> {
         "downloads": s["downloads"],
         "reading": s["reading"],
         "error": s["error"],
+        // the open photo's original (the photo screen's pill): `{state: original|loading|preview, progress?}`
+        "original": session.active().and_then(|id| session.original_status(id)),
     }))
 }
 
