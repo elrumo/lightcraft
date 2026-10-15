@@ -226,6 +226,25 @@ fn cases() -> Vec<(&'static str, Edit)> {
             s.detail.sharpen_amount = 90.0;
             s.detail.sharpen_masking = 60.0;
         }),
+        // process V3's capture sharpening: its radius, Detail, and a mask's Sharpness with no global sharpening
+        ("capture sharpening radius / detail", |s| {
+            s.detail.sharpen_amount = 120.0;
+            s.detail.sharpen_radius = 2.6;
+            s.detail.sharpen_detail = 0.0;
+        }),
+        ("local sharpness alone", |s| {
+            s.detail.sharpen_amount = 0.0;
+            s.masks = vec![Mask {
+                components: vec![MaskComponent {
+                    name: None,
+                    op: MaskOp::Add,
+                    invert: false,
+                    shape: MaskShape::Linear { start: Point::new(0.5, 0.0), end: Point::new(0.5, 0.9) },
+                }],
+                adjust: lightcraft_develop::LocalAdjustments { sharpness: 80.0, ..Default::default() },
+                ..Default::default()
+            }];
+        }),
         ("white balance", |s| {
             s.wb.mode = WbMode::Custom;
             s.wb.temp = 8200.0;

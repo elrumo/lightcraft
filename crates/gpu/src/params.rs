@@ -28,6 +28,11 @@ const FIELDS: &[(&str, usize)] = &[
     ("DEHAZE", 1),
     ("SHARPEN", 1),
     ("SHARPEN_MASK", 1),
+    // sharpening reads the texture band (before process V3); capture sharpening's plane, weight and Detail
+    ("BAND_SHARPEN", 1),
+    ("HAS_SHARP", 1),
+    ("SHARP_W", 1),
+    ("SHARP_DETAIL", 1),
     ("HAS_CLAR", 1),
     ("HAS_TEX", 1),
     ("HAS_DARK", 1),
@@ -177,6 +182,13 @@ pub fn finish_block(fp: &FinishParams, masks: &[[f32; MASK_TERMS]], present: &Pr
     p.f("DEHAZE", fp.dehaze);
     p.f("SHARPEN", fp.sharpen);
     p.f("SHARPEN_MASK", fp.sharpen_mask);
+    p.b("BAND_SHARPEN", fp.band_sharpen);
+    // (its plane follows the texture plane in the `tex` binding)
+    p.b("HAS_SHARP", fp.capture.is_some());
+    if let Some(c) = fp.capture {
+        p.f("SHARP_W", c.w);
+        p.f("SHARP_DETAIL", c.detail);
+    }
     p.b("HAS_CLAR", present.clarity);
     p.b("HAS_TEX", present.texture);
     p.b("HAS_DARK", present.dark);

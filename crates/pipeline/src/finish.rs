@@ -15,6 +15,18 @@ use crate::output::{DeepImage, DeepSamples, OutputDepth, OutputSpace, OutputTrc}
 use crate::tone::ToneMap;
 use crate::{Prepared, SourceInfo, for_rows};
 
+/// Capture sharpening's change of log2 luminance (process V3) for `det`, log luminance less its
+/// blur ([`crate::local::Capture`], weighted): `sp` the amount (and a mask's Sharpness), `detail`
+/// the Detail slider (0..1: what strong edges get of it, where halos would show; fine texture gets
+/// all), `mask` the Masking slider (0..1: only edges stronger than it). The GPU kernel mirrors it.
+#[inline]
+pub(crate) fn capture_delta(sp: f32, det: f32, detail: f32, mask: f32) -> f32 {
+    let a = det.abs();
+    let m = if mask > 0.0 { smooth(mask * 0.25, mask * 0.25 + 0.15, a) } else { 1.0 };
+    let keep = detail + (1.0 - detail) * (1.0 - smooth(0.15, 1.0, a));
+    sp * 1.3 * det.clamp(-0.8, 0.8) * m * keep
+}
+
 #[inline]
 fn smooth(e0: f32, e1: f32, x: f32) -> f32 {
     let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
@@ -177,6 +189,10 @@ pub struct FinishParams {
     pub dehaze: f32,
     pub sharpen: f32,
     pub sharpen_mask: f32,
+    /// Sharpening reads the texture band (before process V3); from V3 it reads the capture plane.
+    pub band_sharpen: bool,
+    /// Capture sharpening's parameters (from V3, when the render has its plane: the GPU kernel's).
+    pub capture: Option<crate::local::Capture>,
     /// Airlight after and before exposure, exposure gain and EV (see [`crate::Prepared`]).
     pub air: f32,
     pub air_pre: f32,
@@ -246,6 +262,8 @@ impl FinishParams {
             dehaze,
             sharpen: (s.detail.sharpen_amount / 150.0) as f32,
             sharpen_mask: (s.detail.sharpen_masking / 100.0) as f32,
+            band_sharpen: !crate::local::capture_process(s),
+            capture: None,
             air: air_pre * gain,
             air_pre,
             gain,
@@ -281,8 +299,8 @@ impl FinishParams {
 pub fn base_tone(s: &DevelopSettings, info: &SourceInfo, peak: f32) -> ToneMap {
     let l = &s.light;
     match s.process.process() {
-        // V2 changes the Highlights/Shadows base (`local::tone_base`), not the tone map
-        Process::V1 | Process::V2 => match info.camera_tone.as_ref().filter(|_| info.raw) {
+        // V2 changes the Highlights/Shadows base (`local::tone_base`), V3 sharpening: not the tone map
+        Process::V1 | Process::V2 | Process::V3 => match info.camera_tone.as_ref().filter(|_| info.raw) {
             Some(curve) => ToneMap::camera_hdr(curve, l.contrast, l.whites, l.blacks, peak),
             None if info.raw => ToneMap::hdr(l.contrast, l.whites, l.blacks, peak),
             None => ToneMap::display_hdr(l.contrast, l.whites, l.blacks, peak),
@@ -380,6 +398,7 @@ pub(crate) fn finish_with<T: Copy + Default + Send>(
         dehaze,
         sharpen,
         sharpen_mask,
+        band_sharpen,
         air,
         air_pre,
         gain,
@@ -387,6 +406,7 @@ pub(crate) fn finish_with<T: Copy + Default + Send>(
         grain,
         ..
     } = fp;
+    let band_sharpen = *band_sharpen;
     let (hl, sh, clar, tex, dehaze, sharpen, sharpen_mask, air, air_pre, gain, ev) =
         (*hl, *sh, *clar, *tex, *dehaze, *sharpen, *sharpen_mask, *air, *air_pre, *gain, *ev);
     let terms: Vec<[f32; MASK_TERMS]> = p.masks.iter().map(|m| mask_terms(&m.adjust)).collect();
@@ -503,16 +523,23 @@ pub(crate) fn finish_with<T: Copy + Default + Send>(
             }
             let tx = tex + l_tex;
             let sp = l_sharp * 0.6 + sharpen;
-            if (tx != 0.0 || sp != 0.0)
+            // (before V3 sharpening reads the texture band; from V3 its own plane, `Capture`)
+            let sp_band = if band_sharpen { sp } else { 0.0 };
+            if (tx != 0.0 || sp_band != 0.0)
                 && let Some(b) = &p.texture_blur
             {
                 let det = l_pre - b.data[i];
                 let tame = 1.0 - 0.6 * smooth(0.4, 1.6, det.abs());
                 delta += tx * 1.1 * det.clamp(-1.0, 1.0) * tame;
-                if sp != 0.0 {
+                if sp_band != 0.0 {
                     let m = if sharpen_mask > 0.0 { smooth(sharpen_mask * 0.25, sharpen_mask * 0.25 + 0.15, det.abs()) } else { 1.0 };
-                    delta += sp * 1.3 * det.clamp(-0.8, 0.8) * m;
+                    delta += sp_band * 1.3 * det.clamp(-0.8, 0.8) * m;
                 }
+            }
+            if sp != 0.0
+                && let Some((cap, b)) = &p.sharpen
+            {
+                delta += capture_delta(sp, (l_pre - b.data[i]) * cap.w, cap.detail, sharpen_mask);
             }
             // local Noise: smooth (or, negative, boost) small-amplitude detail, keep edges
             if l_noise != 0.0

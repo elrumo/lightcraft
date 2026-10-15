@@ -379,18 +379,36 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     let tx = pf(F_TEX) + lt[8];
     let sp = lt[13] * 0.6 + pf(F_SHARPEN);
-    if ((tx != 0.0 || sp != 0.0) && pu(F_HAS_TEX) != 0u) {
+    // (before V3 sharpening reads the texture band; from V3 its own plane, after the texture plane)
+    var sp_band = 0.0;
+    if (pu(F_BAND_SHARPEN) != 0u) {
+        sp_band = sp;
+    }
+    if ((tx != 0.0 || sp_band != 0.0) && pu(F_HAS_TEX) != 0u) {
         let det = l_pre - tex[i];
         let tame = 1.0 - 0.6 * sstep(0.4, 1.6, abs(det));
         delta += tx * 1.1 * clamp(det, -1.0, 1.0) * tame;
-        if (sp != 0.0) {
+        if (sp_band != 0.0) {
             let sm = pf(F_SHARPEN_MASK);
             var mk = 1.0;
             if (sm > 0.0) {
                 mk = sstep(sm * 0.25, sm * 0.25 + 0.15, abs(det));
             }
-            delta += sp * 1.3 * clamp(det, -0.8, 0.8) * mk;
+            delta += sp_band * 1.3 * clamp(det, -0.8, 0.8) * mk;
         }
+    }
+    // capture sharpening (`finish::capture_delta`)
+    if (sp != 0.0 && pu(F_HAS_SHARP) != 0u) {
+        let det = (l_pre - tex[n + i]) * pf(F_SHARP_W);
+        let a = abs(det);
+        let sm = pf(F_SHARPEN_MASK);
+        var mk = 1.0;
+        if (sm > 0.0) {
+            mk = sstep(sm * 0.25, sm * 0.25 + 0.15, a);
+        }
+        let dl = pf(F_SHARP_DETAIL);
+        let keep = dl + (1.0 - dl) * (1.0 - sstep(0.15, 1.0, a));
+        delta += sp * 1.3 * clamp(det, -0.8, 0.8) * mk * keep;
     }
     // local Noise: smooth (or, negative, boost) small-amplitude detail, keep edges
     if (l_noise != 0.0 && pu(F_HAS_TEX) != 0u) {

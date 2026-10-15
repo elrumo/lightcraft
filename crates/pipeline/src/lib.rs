@@ -211,6 +211,8 @@ pub(crate) struct Prepared {
     pub base: Arc<Plane>,
     pub clarity_blur: Option<Arc<Plane>>,
     pub texture_blur: Option<Arc<Plane>>,
+    /// Capture sharpening (process V3) and its blur of log luminance.
+    pub sharpen: Option<(local::Capture, Arc<Plane>)>,
     pub dark: Option<Arc<Plane>>,
     /// Blurred chromaticity (`rgb / Y`) for local Moiré / Noise.
     pub chroma_blur: Option<Arc<Rgb32f>>,
@@ -616,7 +618,8 @@ fn render_impl(src: Src<'_>, info: &SourceInfo, s: &DevelopSettings, req: &Rende
         Some(p) if req.quality == Quality::Draft && p.pre_nr == plan.pre_nr_key => p.for_other_nr(),
         _ => local::Planes { key: lin_key, pre_nr: plan.pre_nr_key, ..Default::default() },
     };
-    let mut prep = local::prepare(lin.clone(), s, frame, px_per_long, req.quality, &mut planes, plan.mattes.as_deref());
+    let capture = local::capture_sharpen(s, detail_scale);
+    let mut prep = local::prepare(lin.clone(), s, frame, px_per_long, req.quality, capture, &mut planes, plan.mattes.as_deref());
     if let Some(a) = plan.fixed_air {
         prep.air = a;
     }
@@ -767,6 +770,8 @@ mod tests_hdr;
 mod tests_local;
 #[cfg(test)]
 mod tests_nr_scale;
+#[cfg(test)]
+mod tests_sharpen;
 #[cfg(test)]
 mod tests_tone;
 #[cfg(test)]

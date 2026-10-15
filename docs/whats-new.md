@@ -1,5 +1,18 @@
 # What's new in LightCraft
 
+## 2026-10-16
+
+### Sharpening without halos (process 3)
+- Raw photos looked crunchy, with bright and dark outlines along strong edges (hair against a light background, a
+  strap against skin), even in the fitted view. The default Sharpening (Amount 40, as Lightroom's) boosted detail
+  about 10 pixels wide on a 24 MP photo, and its Radius and Detail sliders did nothing.
+- Sharpening is now capture sharpening, as in Lightroom: **Radius** is in the photo's own pixels, so it sharpens the
+  finest detail, and **Detail** holds back what strong edges get, where halos would show. The fitted view shows about
+  what the full-size photo scaled down shows, as in Lightroom, and zoomed in or exported at full size the detail is
+  crisp without outlines.
+- This is rendering process 3. New photos get it; photos already in your library keep their look until you choose
+  **Photo ▸ Update to Current Process** (select all first to update them all; one undo step).
+
 ## 2026-10-15
 
 ### Signing out removes the library from the device, as Lightroom's does

@@ -44,6 +44,8 @@ struct Planes {
     base: Option<(local::BaseKey, Arc<Buf>)>,
     clarity: Option<(u32, Arc<Buf>)>,
     texture: Option<(u32, Arc<Buf>)>,
+    /// Capture sharpening's blur (process V3).
+    sharpen: Option<(u32, Arc<Buf>)>,
     dark: Option<(u32, Arc<Buf>, f32)>,
     chroma: Option<(u32, Arc<Buf>)>,
 }
@@ -105,6 +107,7 @@ impl GpuStages {
             p.base.iter().for_each(|(_, b)| add(b));
             p.clarity.iter().for_each(|(_, b)| add(b));
             p.texture.iter().for_each(|(_, b)| add(b));
+            p.sharpen.iter().for_each(|(_, b)| add(b));
             p.dark.iter().for_each(|(_, b, _)| add(b));
         }
         if let Some((_, b)) = &*self.source.lock().unwrap_or_else(|e| e.into_inner()) {
@@ -670,6 +673,7 @@ pub fn render(
 
     // 5. per-pixel stage
     let mut fp = FinishParams::new(s, &plan.frame, info, w, h, plan.px_per_long, prep.air, req.space);
+    fp.capture = prep.sharpen.as_ref().map(|(c, _)| *c);
     if let Some(d) = &req.display {
         fp.for_display(d, None);
     }
@@ -681,6 +685,18 @@ pub fn render(
     };
     let (p, aux) = finish_block(&fp, &terms, &present);
     let aux = gpu.upload(&aux);
+    // capture sharpening's plane follows the texture plane in its binding (the kernel has no binding to spare)
+    let tex = match &prep.sharpen {
+        Some((_, sharp)) => {
+            let both = cx.gpu.buffer(2 * n);
+            if let Some(t) = &prep.texture {
+                cx.copy_into(t, &both, 0);
+            }
+            cx.copy_into(sharp, &both, n);
+            Some(Arc::new(both))
+        }
+        None => prep.texture.clone(),
+    };
     // cleared, so that work which never ran cannot pass for an image (see the check below)
     let out = cx.zeroed(n);
     if fault == Some(crate::Fault::Validation) {
@@ -701,7 +717,7 @@ pub fn render(
                 Some(&prep.log_l),
                 Some(&prep.base),
                 prep.clarity.as_deref(),
-                prep.texture.as_deref(),
+                tex.as_deref(),
                 prep.dark.as_deref(),
                 masks.as_ref(),
                 Some(&aux),
@@ -862,6 +878,8 @@ struct Prep {
     base: Arc<Buf>,
     clarity: Option<Arc<Buf>>,
     texture: Option<Arc<Buf>>,
+    /// Capture sharpening (process V3) and its blur.
+    sharpen: Option<(local::Capture, Arc<Buf>)>,
     dark: Option<Arc<Buf>>,
     /// Blurred chromaticity (local Moiré / Noise).
     chroma: Option<Arc<Buf>>,
@@ -892,6 +910,8 @@ fn prepare(cx: &mut Cx<'_>, lin: &Buf, plan: &Plan<'_>, req: &RenderRequest, pla
     };
     let clarity = sig.clarity.map(|sg| plane_at(&mut planes.clarity, sg.to_bits(), || guided_fast(cx, &log_l, w, h, sg, local::CLARITY_EPS)));
     let texture = sig.texture.map(|sg| plane_at(&mut planes.texture, sg.to_bits(), || gaussian(cx, &log_l, w, h, 1, sg)));
+    let sharpen = local::capture_sharpen(&plan.settings, plan.detail_scale)
+        .map(|c| (c, plane_at(&mut planes.sharpen, c.sigma.to_bits(), || gaussian(cx, &log_l, w, h, 1, c.sigma))));
     let (dark, air) = match sig.dark {
         None => (None, 1.0),
         Some(sg) => match &planes.dark {
@@ -919,7 +939,7 @@ fn prepare(cx: &mut Cx<'_>, lin: &Buf, plan: &Plan<'_>, req: &RenderRequest, pla
             gaussian(cx, &ch, w, h, 3, sg)
         })
     });
-    Prep { log_l, base, clarity, texture, dark, chroma, air }
+    Prep { log_l, base, clarity, texture, sharpen, dark, chroma, air }
 }
 
 /// Most brush dabs the mask kernel evaluates per pixel (more: the CPU rasterizes the brush).

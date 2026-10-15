@@ -84,17 +84,22 @@ pub enum Process {
     /// Highlights and Shadows keep the local contrast of the tones they move: their edge-aware base
     /// is taken of a fine median of log luminance (issue #632).
     V2,
+    /// Sharpening is capture sharpening, as in Lightroom: its Radius is in the original's pixels and
+    /// Detail holds back halos on strong edges, instead of a band at 0.18 % of the long edge (about
+    /// 10 px on a 24 MP photo) that drew halos at every size, the fitted view included.
+    V3,
 }
 
 impl Process {
     /// Every process, oldest first.
-    pub const ALL: [Process; 2] = [Process::V1, Process::V2];
-    pub const LATEST: Process = Process::V2;
+    pub const ALL: [Process; 3] = [Process::V1, Process::V2, Process::V3];
+    pub const LATEST: Process = Process::V3;
 
     pub const fn version(self) -> ProcessVersion {
         match self {
             Process::V1 => ProcessVersion(1),
             Process::V2 => ProcessVersion(2),
+            Process::V3 => ProcessVersion(3),
         }
     }
 }

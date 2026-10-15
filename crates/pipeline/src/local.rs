@@ -273,7 +273,7 @@ pub fn base_detail_radius(px_per_long: f64) -> usize {
 pub fn tone_base_detail(s: &DevelopSettings, px_per_long: f64) -> usize {
     match s.process.process() {
         Process::V1 => 0,
-        Process::V2 => base_detail_radius(px_per_long),
+        Process::V2 | Process::V3 => base_detail_radius(px_per_long),
     }
 }
 
@@ -354,6 +354,44 @@ pub fn nr_params(s: &DevelopSettings, scale: f32) -> (Option<NrLum>, Option<NrCo
     (l, c)
 }
 
+/// Capture sharpening (process V3, Lightroom's Detail ▸ Sharpening): an unsharp mask of log
+/// luminance against its blur at the Radius slider's pixels of the original, so it sharpens the
+/// finest detail and, like the full-size render scaled down, fades in previews (a radius below
+/// [`NR_MIN_SIGMA`] takes that blur, weighted by the ratio of variances, as noise reduction does).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Capture {
+    /// Radius (px) of the blur the detail is taken against.
+    pub sigma: f32,
+    /// Weight of that detail (1 at full size; less in a preview whose radius is below [`NR_MIN_SIGMA`]).
+    pub w: f32,
+    /// The Detail slider as 0..1: how much of the sharpening strong edges get (low holds back halos).
+    pub detail: f32,
+}
+
+/// Whether `s`'s rendering process sharpens with [`Capture`] (from V3) rather than the texture band.
+pub fn capture_process(s: &DevelopSettings) -> bool {
+    match s.process.process() {
+        Process::V1 | Process::V2 => false,
+        Process::V3 => true,
+    }
+}
+
+/// [`Capture`] sharpening of `s` at `scale` output pixels per pixel of the original
+/// ([`crate::Plan::detail_scale`]): `None` before V3, with no sharpening (global or local) or when
+/// a preview is too small to show any.
+pub fn capture_sharpen(s: &DevelopSettings, scale: f32) -> Option<Capture> {
+    if !capture_process(s) || (s.detail.sharpen_amount == 0.0 && !s.masks.iter().any(|m| m.adjust.sharpness != 0.0)) {
+        return None;
+    }
+    let scale = if scale.is_finite() { scale.clamp(0.0, 1.0) } else { 1.0 };
+    // (`clamp` keeps a NaN: a damaged value takes the default)
+    let finite_or = |v: f64, d: f64| if v.is_finite() { v } else { d };
+    let radius = finite_or(s.detail.sharpen_radius, 1.0).clamp(0.5, 3.0) as f32;
+    let (sigma, w) = nr_radius(radius * scale);
+    let detail = (finite_or(s.detail.sharpen_detail, 25.0) / 100.0).clamp(0.0, 1.0) as f32;
+    (w >= NR_MIN_BLEND).then_some(Capture { sigma, w, detail })
+}
+
 /// Noise reduction at output resolution: luminance via an edge-aware self-guided filter on
 /// log-luminance, colour by blurring chromaticity (rgb / Y) and re-applying the original luminance.
 /// `scale`: output pixels per pixel of the original ([`nr_params`]).
@@ -419,6 +457,8 @@ pub(crate) struct Planes {
     pub base: Option<(BaseKey, Arc<Plane>)>,
     pub clarity: Option<(u32, Arc<Plane>)>,
     pub texture: Option<(u32, Arc<Plane>)>,
+    /// Capture sharpening's blur of log luminance ([`Capture`]).
+    pub sharpen: Option<(u32, Arc<Plane>)>,
     /// Dark channel and its airlight.
     pub dark: Option<(u32, Arc<Plane>, f32)>,
     /// Blurred chromaticity (local Moiré / Noise).
@@ -430,7 +470,7 @@ impl Planes {
     /// enough for a draft: the wide blurs (base, clarity, dehaze, chromaticity). Its `key` matches
     /// no image, so only another draft takes them.
     pub fn for_other_nr(self) -> Planes {
-        Planes { key: 0, pre_nr: self.pre_nr, log_l: None, texture: None, ..self }
+        Planes { key: 0, pre_nr: self.pre_nr, log_l: None, texture: None, sharpen: None, ..self }
     }
 }
 
@@ -502,10 +542,12 @@ pub fn plane_sigmas(s: &DevelopSettings, px_per_long: f64, q: Quality) -> PlaneS
     });
     let clarity = (s.effects.clarity != 0.0 || local_any(|a| a.clarity)).then(|| (0.012 * ppl).max(1.0));
     // local Noise and Defringe read the fine detail band too
+    // (from V3 sharpening has a plane of its own, `capture_sharpen`)
+    let band_sharpens = !capture_process(s);
     let texture = (s.effects.texture != 0.0
-        || s.detail.sharpen_amount != 0.0
+        || (band_sharpens && s.detail.sharpen_amount != 0.0)
         || local_any(|a| a.texture)
-        || local_any(|a| a.sharpness)
+        || (band_sharpens && local_any(|a| a.sharpness))
         || local_any(|a| a.noise)
         || s.masks.iter().any(|m| m.adjust.defringe > 0.0))
     .then(|| (0.0018 * ppl).max(0.6));
@@ -525,6 +567,7 @@ pub(crate) fn prepare(
     frame: &Frame,
     px_per_long: f64,
     q: Quality,
+    capture: Option<Capture>,
     planes: &mut Planes,
     mattes: Option<&masks::Mattes>,
 ) -> Prepared {
@@ -532,7 +575,7 @@ pub(crate) fn prepare(
     let PlaneSigmas { base: base_sigma, base_detail, clarity: clarity_sigma, texture: texture_sigma, dark: dark_sigma, chroma: chroma_sigma } =
         plane_sigmas(s, px_per_long, q);
 
-    let Planes { base: sb, clarity: sc, texture: st, dark: sd, chroma: sch, .. } = planes;
+    let Planes { base: sb, clarity: sc, texture: st, sharpen: ssh, dark: sd, chroma: sch, .. } = planes;
     let chroma_blur = chroma_sigma.map(|sg| match sch {
         Some((k, c)) if *k == sg.to_bits() => c.clone(),
         _ => {
@@ -542,14 +585,18 @@ pub(crate) fn prepare(
         }
     });
     let l = &log_l;
-    let (base, (clarity_blur, (texture_blur, dark))) = par_join(
+    let (base, (clarity_blur, ((texture_blur, sharpen), dark))) = par_join(
         || base_sigma.map(|sg| plane_at(sb, base_key(s, sg, base_detail), || timed("base", || tone_base(l, sg, base_detail)))),
         || {
             par_join(
                 || clarity_sigma.map(|sg| plane_at(sc, sg.to_bits(), || timed("clarity", || guided_fast(l, sg, CLARITY_EPS)))),
                 || {
                     par_join(
-                        || texture_sigma.map(|sg| plane_at(st, sg.to_bits(), || timed("texture", || gaussian(l, sg)))),
+                        || {
+                            let texture = texture_sigma.map(|sg| plane_at(st, sg.to_bits(), || timed("texture", || gaussian(l, sg))));
+                            let sharpen = capture.map(|c| (c, plane_at(ssh, c.sigma.to_bits(), || timed("sharpen", || gaussian(l, c.sigma)))));
+                            (texture, sharpen)
+                        },
                         || {
                             dark_sigma.map(|sg| match sd {
                                 Some((k, d, air)) if *k == sg.to_bits() => (d.clone(), *air),
@@ -573,7 +620,7 @@ pub(crate) fn prepare(
     };
     let ev = s.light.exposure as f32;
     let masks = timed("masks", || masks::evaluate(&s.masks, frame, img.width, img.height, &img, &log_l, ev, mattes));
-    Prepared { img, log_l, base, clarity_blur, texture_blur, dark, chroma_blur, air, masks, px_per_long }
+    Prepared { img, log_l, base, clarity_blur, texture_blur, sharpen, dark, chroma_blur, air, masks, px_per_long }
 }
 
 /// The airlight of the whole output frame, estimated on a small render of it (`proxy_w` px wide):
