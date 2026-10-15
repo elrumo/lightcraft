@@ -2672,8 +2672,8 @@ mod tests {
         std::fs::write(&path, cr3_with_preview(96, 64)).unwrap();
         let mut s = crate::Session::new().with_fs();
         let r = s.execute("library.import", &serde_json::json!({"paths": [path.to_string_lossy()]})).unwrap();
-        let local = s.catalog.photo(lightcraft_catalog::PhotoId(r["imported"][0].as_u64().unwrap())).unwrap();
-        let mut p = (**local).clone();
+        let local = s.catalog.photo(lightcraft_catalog::PhotoId(r["imported"][0].as_u64().unwrap())).unwrap().clone();
+        let mut p = (*local).clone();
         p.id = lightcraft_catalog::PhotoId(p.id.0 + 1000);
         p.source = lightcraft_catalog::Source::File { path: format!("{}abc/a.cr3", lightcraft_catalog::sync::PATH_PREFIX) };
         let id = p.id;
@@ -2683,6 +2683,9 @@ mod tests {
         let job = s.thumb_job(id, 128).unwrap();
         assert!(s.quick_thumb_job(&job).is_none());
         assert!(s.quick_view_job(id, 1600, true).unwrap().embedded.is_none());
+        // (the face scan renders the downloaded preview instead)
+        assert!(s.scan_preview_of(&p).is_none());
+        assert!(s.scan_preview_of(&local).is_some());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
