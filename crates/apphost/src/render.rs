@@ -1040,13 +1040,15 @@ impl<V> Scheduler<V> {
     fn preview_arrived(&mut self, session: &mut Session) {
         match session.media.take_arrived() {
             Some(ids) => {
-                for id in ids {
-                    self.failed.remove(&Slot::Thumb(id));
-                    self.thumb_inputs.remove(&id);
+                for id in &ids {
+                    self.failed.remove(&Slot::Thumb(*id));
+                    self.thumb_inputs.remove(id);
                 }
+                // (a People face or a browser's variant cut from that preview too)
+                self.failed.retain(|slot, f| !(matches!(slot, Slot::Variant(_)) && ids.contains(&f.3)));
             }
             None => {
-                self.failed.retain(|slot, _| !matches!(slot, Slot::Thumb(_)));
+                self.failed.retain(|slot, _| !matches!(slot, Slot::Thumb(_) | Slot::Variant(_)));
                 self.thumb_inputs.clear();
             }
         }
@@ -1467,6 +1469,20 @@ mod thumbnail_tests {
         assert_eq!(r.failure_of(slot, PhotoId(p.id.0 + 1)), None, "another photo's error");
         r.catalog_rev = 1;
         assert!(!r.thumb_current(&p, 384, 10));
+    }
+
+    // Given a face that failed to render for want of its synced preview, the preview landing retries it
+    #[test]
+    fn a_landed_preview_retries_its_failed_faces() {
+        let mut session = Session::new();
+        let mut r = Sched::default();
+        let (face, other) = (Slot::Variant(5), Slot::Variant(6));
+        r.failed.insert(face, (5, "still downloading".into(), 0, PhotoId(1)));
+        r.failed.insert(other, (6, "still downloading".into(), 0, PhotoId(2)));
+        session.media.note_arrived(PhotoId(1));
+        r.preview_arrived(&mut session);
+        assert!(!r.failed.contains_key(&face));
+        assert!(r.failed.contains_key(&other), "another photo's face still waits");
     }
 }
 

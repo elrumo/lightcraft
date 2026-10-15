@@ -825,6 +825,10 @@ impl Engine {
         if !self.variants.is_empty() {
             self.busy = true;
         }
+        // (a synced photo's variant waits for its preview: keep asking the server for it, as a grid cell does every frame)
+        for (job, _) in self.variants.values() {
+            self.session.note_thumb_ask(job.photo, true);
+        }
         let mut collect = Collect::default();
         let polled = self.sched.poll(&mut self.session, &mut collect);
         for (slot, image, hdr) in collect.0 {

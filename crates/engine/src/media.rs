@@ -1553,6 +1553,8 @@ impl crate::Session {
     /// library's thumbnail cache on disk) like [`Self::variant_job`], and `key` likewise follows
     /// the content: a later launch shows the tile without reading the original.
     pub fn face_job(&mut self, id: PhotoId, face: lightcraft_geom::Rect, edge: usize) -> Option<RenderJob> {
+        // (a synced photo's tile is cut from its preview: shown, so download it like a grid cell's)
+        self.note_thumb_ask(id, true);
         let p = self.catalog.photo(id)?.clone();
         // `face` is on the upright (EXIF-oriented) photo; the crop below is in the frame after the
         // user's Rotate Left/Right, so carry the box (and the photo's size) over to it.
