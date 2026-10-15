@@ -150,7 +150,7 @@ private struct MenuButton: View {
 
     var body: some View {
         let button = Button(LocalizedStringKey(item.label)) {
-            if item.engine { model.perform(item.id) } else { model.runUI(item.id) }
+            if item.engine { model.runCommand(item.id) } else { model.runUI(item.id) }
         }
         .disabled(!item.enabled || off)
         if let key = item.shortcut.flatMap(KeyShortcut.parse) {
@@ -223,7 +223,12 @@ extension AppModel {
         if uiCommands.isEmpty {
             uiCommands = (try? await engine.request("host.uiCommands").decode([UICommand].self)) ?? []
         }
-        menuEngine = ((try? await engine.commands()) ?? []).filter { !$0.menu.isEmpty }
+        if keyTable == nil {
+            keyTable = try? await engine.request("host.keyBindings").decode(FixedKey.Table.self)
+        }
+        engineCommands = (try? await engine.commands()) ?? []
+        menuEngine = engineCommands.filter { !$0.menu.isEmpty }
+        rebuildKeyMap()
         menuChanges.bump()
     }
 
@@ -328,15 +333,19 @@ extension AppModel {
         "view.filterSheet", "view.tagFace", "app.settings", "app.about", "app.help", "app.discord", "app.website", "app.github",
         "app.artcraft", "app.feedback", "app.shortcuts", "dialog.rename", "dialog.labelNames", "dialog.captureTime", "app.systemInfo",
         "dialog.cull", "photo.tagFromTracklog", "file.findMissing", "photo.locate", "app.exportPrevious", "view.softProof", "file.importLightroom",
-        "view.focusSearch", "view.secondWindow",
+        "view.focusSearch", "view.secondWindow", "view.zoomToggle", "view.zoomFit", "view.zoom100", "view.zoomIn", "view.zoomOut",
+        "view.maskOverlayColor", "tool.brush", "tool.linear", "tool.radial", "tool.wbPicker", "brush.smaller", "brush.larger",
+        "brush.featherLess", "brush.featherMore",
     ]
 
-    private func uiEnabled(_ id: String) -> Bool {
+    func uiEnabled(_ id: String) -> Bool {
         let photo = state.active != nil
         switch id {
+        case "view.zoomFit", "view.zoom100", "view.zoomIn", "view.zoomOut": return inLoupe
         case _ where id.hasPrefix("panel.") || id.hasPrefix("section."): return photo
         case "view.detail", "photo.setReference", "view.lightsOut", "view.fullScreenPreview", "dialog.allMetadata",
-             "dialog.createPreset", "dialog.copySettings", "dialog.superRes", "view.tagFace":
+             "dialog.createPreset", "dialog.copySettings", "dialog.superRes", "view.tagFace", "tool.brush", "tool.linear", "tool.radial",
+             "tool.wbPicker":
             return photo
         case "view.compare", "view.survey", "dialog.mergeHdr", "dialog.mergePanorama", "dialog.mergeHdrPanorama", "merge.hdrLast",
              "merge.panoramaLast", "merge.hdrPanoramaLast":
@@ -354,9 +363,14 @@ extension AppModel {
         case "app.appearance.system": prefs.appearance = .system
         case "app.appearance.light": prefs.appearance = .light
         case "app.appearance.dark": prefs.appearance = .dark
-        case "view.photoGrid", "view.back": path = []
+        case "view.photoGrid": path = []
+        case "view.back":
+            // (Esc: the Keyword Painter is put down, a tool's own screen is cancelled, a person's page goes back to the people)
+            if painting != nil { painting = nil } else if inLoupe, editor.tool?.hasScreen == true { cancelToolScreen() } else if case .person = path.last { path.removeLast() } else { path = [] }
         case "view.squareGrid": prefs.squareGrid.toggle()
-        case "view.gridToggle": if path.isEmpty { if let a = state.active { open(a) } } else { path = [] }
+        case "view.gridToggle":
+            // (G: the grid from any other screen, as in Lightroom; in the grid itself, egui's switch between its two grids)
+            if path.isEmpty { prefs.squareGrid.toggle() } else { path = [] }
         case "view.detail": if let a = state.active { open(a) }
         case "view.compare": path.append(.compare(chosen))
         case "view.survey": path.append(.survey(chosen))
@@ -386,7 +400,50 @@ extension AppModel {
             let kinds = ["thirds", "grid", "golden", "diagonal", "triangle", "spiral", "none"]
             prefs.cropGuide = kinds[((kinds.firstIndex(of: prefs.cropGuide) ?? 0) + 1) % kinds.count]
         case "view.cropOverlayOrientation": prefs.cropGuideOrientation = (prefs.cropGuideOrientation + 1) % 4
-        case "tool.done": editor.tool = nil
+        case "tool.done":
+            if inLoupe, editor.tool?.hasScreen == true {
+                perform("develop.endInteraction")
+                editor.tool = .edit
+            } else if !inLoupe {
+                // (Return: the photo that is chosen, large)
+                if path.isEmpty || cullScreen, let a = state.active { open(a) }
+            } else {
+                #if os(iOS)
+                editor.tool = nil
+                #endif
+            }
+        case "view.zoomToggle":
+            // (Space and Z: in the loupe the zoom a click gives, and back; in the grid the photo, large)
+            if inLoupe { editor.zoomAsk = editor.zoomedIn ? .fit : .fitted(prefs.clickZoom) } else if path.isEmpty || cullScreen, let a = state.active { open(a) }
+        case "view.zoomFit": editor.zoomAsk = .fit
+        case "view.zoom100": editor.zoomAsk = .actual(1)
+        case "view.zoomIn": editor.zoomAsk = .by(1.25)
+        case "view.zoomOut": editor.zoomAsk = .by(0.8)
+        case "view.panels": editor.review.toggle()
+        case "tool.brush", "tool.linear", "tool.radial":
+            // (B, L and R start a mask in the Masking tool)
+            openTool(.masking)
+            createMask(["tool.brush": "brush", "tool.linear": "linear", "tool.radial": "radial"][id] ?? "brush")
+        case "tool.wbPicker":
+            openTool(.edit)
+            editor.arm(.whiteBalance, self)
+        case "brush.smaller", "brush.larger", "brush.featherLess", "brush.featherMore":
+            // ([ ] size the brush a fifth at a time, Shift with them its feather ten at a time: egui's steps)
+            let grow = id == "brush.larger" ? 1.2 : id == "brush.smaller" ? 1 / 1.2 : 1
+            let feather = id == "brush.featherMore" ? 10.0 : id == "brush.featherLess" ? -10 : 0
+            switch editor.tool {
+            case .masking:
+                editor.brushSize = min(max(editor.brushSize * grow, 1 / 400), 100 / 400)
+                editor.brushFeather = min(max(editor.brushFeather + feather, 0), 100)
+            case .remove:
+                editor.removeSize = min(max(editor.removeSize * grow, 0.001), 0.25)
+                editor.removeFeather = min(max(editor.removeFeather + feather, 0), 100)
+            default: break
+            }
+        case "nav.first", "nav.last": goToEnd(last: id == "nav.last")
+        case "view.maskOverlayColor":
+            let colors: [[Int]] = [[230, 30, 40], [0, 200, 80], [60, 120, 255], [255, 210, 0], [255, 0, 200]]
+            prefs.maskOverlayColor = colors[((colors.firstIndex(of: prefs.maskOverlayColor) ?? -1) + 1) % colors.count]
         case "view.fullScreenPreview", "view.lightsOut": cover = .lightsOut
         case "view.slideshow": cover = .slideshow
         case "view.infoOverlay":
@@ -472,6 +529,16 @@ struct ShortcutsSheet: View {
     var body: some View {
         NavigationStack {
             List {
+                let fixed = model.fixedKeyRows()
+                ForEach(fixed.map { $0.section }.reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }, id: \.self) { section in
+                    Section(section) {
+                        ForEach(fixed.filter { $0.section == section }) { row in
+                            LabeledContent(row.label) {
+                                Text(verbatim: Self.symbols(row.shortcut)).font(.body.monospaced()).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
                 ForEach(["File", "Edit", "Photo", "View", "Window", "Tools", "Help"], id: \.self) { top in
                     let items = model.menuItems(top).filter { $0.shortcut.flatMap(KeyShortcut.parse) != nil }
                     if !items.isEmpty {

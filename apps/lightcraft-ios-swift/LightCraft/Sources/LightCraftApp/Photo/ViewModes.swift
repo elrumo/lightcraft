@@ -81,7 +81,10 @@ struct CompareView: View {
         .onAppear {
             if select == nil { select = model.state.active.flatMap { ids.contains($0) ? $0 : nil } ?? ids.first }
             if candidate == nil { candidate = ids.first { $0 != select } }
+            // the arrow keys, and the next photo after a rating with Auto Advance, bring up the next candidate
+            model.cullStep = { by in step(by) }
         }
+        .onDisappear { model.cullStep = nil }
     }
 
     private func side(_ photo: UInt64?, _ label: LocalizedStringKey) -> some View {
@@ -165,6 +168,16 @@ struct SurveyView: View {
         .background(Color.lcBackground)
         .navigationTitle("Survey")
         .inlineTitle()
+        .onAppear {
+            // the arrow keys, and the next photo after a rating with Auto Advance, move the active photo along the survey
+            model.cullStep = { by in
+                guard !ids.isEmpty else { return }
+                let at = model.state.active.flatMap { ids.firstIndex(of: $0) } ?? (by > 0 ? -1 : ids.count)
+                let next = min(max(at + by, 0), ids.count - 1)
+                Task { await model.select(ids[next]) }
+            }
+        }
+        .onDisappear { model.cullStep = nil }
     }
 
     /// Columns that give `n` photos the largest tiles in `size` (photos about 3:2).

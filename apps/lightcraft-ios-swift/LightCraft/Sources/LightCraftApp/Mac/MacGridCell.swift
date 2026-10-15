@@ -25,6 +25,7 @@ struct MacCellInteraction: ViewModifier {
     }
 
     private func clicked() {
+        model.claimKeyboard()
         let id: JSONValue = [.int(Int64(clamping: photo.id))]
         if let keyword = model.painting {
             model.perform("keyword.toggle", ["ids": id, "keyword": .string(keyword)])

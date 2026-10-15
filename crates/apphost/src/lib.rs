@@ -35,6 +35,7 @@ pub mod faces;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod host;
 pub mod import;
+pub mod keys;
 pub mod lightroom;
 pub mod merge;
 pub mod region;

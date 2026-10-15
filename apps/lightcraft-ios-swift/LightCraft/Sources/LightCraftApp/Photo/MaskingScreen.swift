@@ -511,23 +511,30 @@ private struct CreateMaskMenu: View {
     }
 
     private func create(_ kind: String) {
-        let editor = model.editor
+        model.createMask(kind)
+    }
+}
+
+extension AppModel {
+    /// Start a mask of `kind` on the photo shown (the + button's items; B, L and R on a Mac).
+    func createMask(_ kind: String) {
+        let editor = self.editor
         Task {
             if kind == "brush" || kind == "object" {
                 // the first stroke or tap makes the mask
-                await model.run("mask.select", ["id": .null])
+                await run("mask.select", ["id": .null])
             } else if kind == "subject" {
-                await model.selectSubject()
+                await selectSubject()
             } else {
-                await model.run("mask.add", ["kind": .string(kind)])
+                await run("mask.add", ["kind": .string(kind)])
             }
             editor.maskTool = kind == "brush" || kind == "colorRange" || kind == "object" ? kind : nil
             editor.brushErase = false
             editor.objectOp = nil
             editor.objectSubtract = false
-            if kind == "colorRange" { model.show(String(localized: "Tap the photo to pick a colour")) }
-            if kind == "brush" { model.show(String(localized: "Paint the area to adjust")) }
-            if kind == "object" { model.show(String(localized: "Tap an object to select it")) }
+            if kind == "colorRange" { show(String(localized: "Tap the photo to pick a colour")) }
+            if kind == "brush" { show(String(localized: "Paint the area to adjust")) }
+            if kind == "object" { show(String(localized: "Tap an object to select it")) }
         }
     }
 }

@@ -12,6 +12,8 @@ final class MacAppDelegate: NSObject, NSApplicationDelegate {
         // One main window: no tab bar, no View ▸ Show Tab Bar
         NSWindow.allowsAutomaticWindowTabbing = false
         let model = AppModel.shared
+        // the keyboard, the wheel and the trackpad of the photo windows (Mac/MacInput.swift)
+        MacInput.shared.install(model)
         let center = NotificationCenter.default
         // Active and resigned only. Rust's `background` pauses the GPU and frees decoded photos: a Mac
         // that is merely behind other windows (an export under way, a second display) must not do that

@@ -12,6 +12,12 @@ import AppKit
 /// engine answers `engine.*`, `render.*` and `host.*` itself and asks the app for the rest.
 /// - `ui.screenshot {path}`: the window as a PNG.
 /// - `ui.quit` (a Mac): quit the way the menu does, a moment after answering.
+/// - `ui.key {key}`: a key as a shortcut spells it (`3`, `Shift+X`, `Cmd+A`, `Right`) as the app takes it now
+///   (the key map and its rules); `{handled}` says whether it meant something.
+/// - `ui.rawKey {key, window?}` (a Mac): the same key sent through the app's own event handling, so the
+///   input monitor, the menus and the focused view all see it as they would a press on the keyboard.
+/// - `ui.loupe {scroll?: [dx, dy], zoomScroll?: dy, pinch?: m, smart?: true, at?: [x, y]}` (a Mac): the
+///   loupe's wheel, ⌘-wheel, pinch and two-finger double tap, at a point of the photo area (the middle).
 /// - `ui.inspect`: the screen, the photo, the state and timings (`perf`).
 /// - `ui.set {screen?: grid | photo | edit | crop | masking | remove | redEye | presets | info | commands |
 ///   people | map, photo?, span?: all | months | years, group?: light | color…, sheet?: albums |
@@ -42,6 +48,42 @@ final class ScriptHost {
             let (w, h) = try screenshot(to: path, params)
             return ["path": .string(path), "width": .int(Int64(clamping: w)), "height": .int(Int64(clamping: h))]
         #if os(macOS)
+        case "ui.rawKey":
+            guard let spelling = params["key"].string, let chord = KeyChord(shortcut: spelling) else {
+                throw ErrorBody(code: "badParams", message: "`key`: a shortcut such as `3`, `Shift+X`, `Cmd+A` or `Right`")
+            }
+            guard let window = WindowCapture.window(named: params["window"].string ?? "main") else {
+                throw ErrorBody(code: "noWindow", message: "no window to press the key in")
+            }
+            // (an unattended run has no key window)
+            window.makeKeyAndOrderFront(nil)
+            guard let event = MacInput.keyEvent(chord, in: window) else {
+                throw ErrorBody(code: "badParams", message: "`\(spelling)` can't be made into a key press")
+            }
+            // (queued like the keyboard's own, so the monitors and the menus see it in order)
+            NSApp.postEvent(event, atStart: false)
+            try? await Task.sleep(for: .milliseconds(200))
+            return ["sent": true, "key": .string(chord.description)]
+        case "ui.loupe":
+            guard let anchor = LoupeAnchors.current else { throw ErrorBody(code: "noLoupe", message: "no photo is open") }
+            let size = anchor.bounds.size
+            let point = CGPoint(x: params["at"][0].double ?? size.width / 2, y: params["at"][1].double ?? size.height / 2)
+            var used = false
+            if let d = params["scroll"].array, d.count == 2 {
+                used = anchor.handlers.scroll(CGSize(width: d[0].double ?? 0, height: d[1].double ?? 0), point, true, nil)
+            }
+            if let dy = params["zoomScroll"].double { used = anchor.handlers.scroll(.zero, point, true, CGFloat(dy)) }
+            if let m = params["pinch"].double {
+                anchor.handlers.magnify(CGFloat(m), point)
+                used = true
+            }
+            if params["smart"].bool == true {
+                anchor.handlers.smartMagnify(point)
+                used = true
+            }
+            // (the zoom settles a moment after the last event)
+            try? await Task.sleep(for: .milliseconds(400))
+            return ["used": .bool(used), "percent": model.editor.zoomPercent.map { .int(Int64($0)) } ?? .null, "zoomedIn": .bool(model.editor.zoomedIn)]
         case "ui.activate":
             // Comes to the front (the menu bar is the active app's: a script starts in the background)
             NSApp.activate()
@@ -57,6 +99,11 @@ final class ScriptHost {
             }
             return [:]
         #endif
+        case "ui.key":
+            guard let spelling = params["key"].string, let chord = KeyChord(shortcut: spelling) else {
+                throw ErrorBody(code: "badParams", message: "`key`: a shortcut such as `3`, `Shift+X`, `Cmd+A` or `Right`")
+            }
+            return ["handled": .bool(model.press(chord)), "key": .string(chord.description)]
         case "ui.inspect":
             var photo: JSONValue = .null
             if case .photo(let id) = model.path.last {
@@ -79,6 +126,8 @@ final class ScriptHost {
                 "perf": perf,
                 "hdr": hdr,
                 "zoom": ["percent": model.editor.zoomPercent.map { .int(Int64($0)) } ?? .null, "zoomedIn": .bool(model.editor.zoomedIn)],
+                "keys": ["bound": .int(Int64(model.keyMap.count)), "panelsAway": .bool(model.editor.review), "gridAcross": .int(Int64(model.gridAcross))],
+                "search": .string(model.searchText),
                 "activity": .array(model.activity.map { .string($0.label) }),
                 "images": [
                     "thumbs": .int(Int64(model.images.pictures.keys.filter { $0.hasPrefix("thumb") }.count)),
@@ -91,6 +140,7 @@ final class ScriptHost {
             #if os(macOS)
             inspected["windows"] = WindowCapture.list()
             inspected["active"] = .bool(NSApp.isActive)
+            inspected["responder"] = .string(NSApp.keyWindow?.firstResponder.map { String(describing: type(of: $0)) } ?? "none")
             if params["menus"].bool == true {
                 inspected["menus"] = WindowCapture.menus()
                 // (what the menu bar has to show: commands loaded, and the items planned for each menu)
@@ -138,7 +188,7 @@ final class ScriptHost {
             if let look = params["appearance"].string, let a = Prefs.Appearance(rawValue: look) { model.prefs.appearance = a }
             if let size = params["thumbSize"].double { model.prefs.thumbSize = min(max(size, Prefs.thumbSizes.lowerBound), Prefs.thumbSizes.upperBound) }
             // (the loupe's zoom: fit, fill, or a number of screen pixels per photo pixel, 1 being 100 %)
-            if let ask = params["zoomAsk"].string { model.editor.zoomAsk = ask == "fit" ? .fit : ask == "fill" ? .fill : .actual(Double(ask) ?? 1) }
+            if let ask = params["zoomAsk"].string { model.editor.zoomAsk = Self.zoomAsk(ask) }
             if let on = params["navigator"].bool { model.prefs.navigator = on }
             if let on = params["gridInfo"].bool { model.prefs.gridInfo = on }
             if let mode = params["beforeAfterMode"].string { model.prefs.beforeAfterMode = mode }
@@ -234,6 +284,19 @@ final class ScriptHost {
             return [:]
         default:
             throw ErrorBody(code: "unknownMethod", message: "`\(method)` isn't answered by the SwiftUI app yet")
+        }
+    }
+
+    /// `fit`, `fill`, `by:1.25` (the zoom now times that), `fitted:2` (twice the fitted size), or a number of
+    /// screen pixels per photo pixel (1 being 100 %).
+    private static func zoomAsk(_ text: String) -> ZoomAsk {
+        switch text {
+        case "fit": return .fit
+        case "fill": return .fill
+        default:
+            if text.hasPrefix("by:") { return .by(Double(text.dropFirst(3)) ?? 1) }
+            if text.hasPrefix("fitted:") { return .fitted(Double(text.dropFirst(7)) ?? 1) }
+            return .actual(Double(text) ?? 1)
         }
     }
 

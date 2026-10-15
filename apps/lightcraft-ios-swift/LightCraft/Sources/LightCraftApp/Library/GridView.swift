@@ -89,6 +89,13 @@ struct GridView: View {
                 proxy.scrollTo(target, anchor: .center)
                 jump = nil
             }
+            #if os(macOS)
+            // the arrow keys move the chosen photo: it stays on screen
+            .onChange(of: model.state.active) { _, active in
+                guard let active, let i = library.index(of: active) else { return }
+                proxy.scrollTo(i)
+            }
+            #endif
             .onAppear {
                 if let target = jump {
                     proxy.scrollTo(target, anchor: .center)
@@ -97,6 +104,8 @@ struct GridView: View {
             }
         }
         .simultaneousGesture(pinch)
+        // (Up and Down move by a row)
+        .onChange(of: across, initial: true) { _, columns in model.gridAcross = columns }
         .haptic(.selection, trigger: model.prefs.gridColumns)
         .haptic(.selection, trigger: choosing?.last)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width in

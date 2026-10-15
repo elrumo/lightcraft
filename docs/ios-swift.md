@@ -1,6 +1,6 @@
 # The SwiftUI app (iPhone, iPad and Mac)
 
-**Status (2026-10-14): S1 and S2 done on iOS 26.5 simulators (the phone and iPad layouts, every Edit group and tool,
+**Status (2026-10-15): S1 and S2 done on iOS 26.5 simulators (the phone and iPad layouts, every Edit group and tool,
 export, sync, People, Map, the menu bar, multiwindow); SW3 (a native iOS 26 look: system bars, an inspector, Photos-style
 dials) done on simulators; not yet tried on a device. The same code now builds for macOS (SM0, see [macOS](#macos)): a
 native AppKit-backed app, not Catalyst, with the iPad layout until SM2 gives it a Mac window (its editor's panel already has).** Row by row: `apps/lightcraft-ios-swift/PARITY.md`. A native SwiftUI app for iPhone and iPad
@@ -196,7 +196,13 @@ window?: main | settings | second | cover | part of a title, views?: true}` is t
 it from its views, which comes out flat: glass light, lists and thumbnails sometimes empty); `ui.set {windowSize: [w, h]}`
 (points); `ui.activate` (comes to the front: macOS often refuses it for a process started from a script, and the menu bar
 is the active app's); `ui.quit` (Quit as the menu does it, a moment after its answer: from a run-loop timer, because a
-quit that waits for the main actor cannot be called from inside a main-actor task); `ui.inspect {menus: true}`.
+quit that waits for the main actor cannot be called from inside a main-actor task); `ui.inspect {menus: true}` (and
+`responder`: what has the keyboard); `ui.key {key}` (a key as a shortcut spells it, `3`, `Shift+X`, `Cmd+A`, `Right`, as
+the app takes it now: `handled` says whether it meant something; on iOS too); `ui.rawKey {key, window?}` (the same key sent
+through the app's own event queue, so the input monitor, the menus and the focused view see it as they would a press
+on the keyboard: this is how a text field keeping its keys is tested); `ui.loupe {scroll?: [dx, dy], zoomScroll?: dy,
+pinch?: m, smart?: true, at?: [x, y]}` (the loupe's wheel, ⌘-wheel, pinch and two-finger double tap at a point of the
+photo area, the middle if none; answers `percent` and `zoomedIn`); `ui.set {zoomAsk: fit | fill | by:1.25 | fitted:2 | n}`.
 
 ## Look and feel
 
@@ -279,8 +285,41 @@ iPad"): one multiplatform Xcode target, arm64 only. Decisions (2026-10-14):
   the run from the last one: `library.select` modes), a double click opens it, a right click has its menu, and it can be
   dragged out with the others chosen; chosen cells have a ring. Its bar has Years, Months and All, the chosen photos'
   rating and flag, how many are chosen and a thumbnail-size slider (`Prefs.thumbSize`; a pinch changes it too, and the
-  window gives as many columns as fit). Still to do: the keyboard layer (rating digits, flags, arrows in the grid), the
-  loupe's scroll and pinch, and the keys of SM2.5 and SM2.6.
+  window gives as many columns as fit).
+
+**The keyboard** (SM2.5). A key means what one table says, the table egui reads: the commands' own shortcuts
+(`engine.commands`), the UI commands' (`host.uiCommands`) and the fixed keys no command declares for itself
+(`host.keyBindings`, `apphost::keys`, which egui's `shortcuts.rs` and keymap panel read too): the rating digits 0 to 5, the
+colour labels 6 to 9, Shift with either to go on to the next photo, Space, F6 and F7, Alt+1 to 9 for the keyword set, and the
+pairs of commands that share a key. `KeyMap` (`LightCraftCore/Keys.swift`, tested by `swift test`) is built from the three
+lists, and `KeyRules` says what a key means where you are, as egui's `shortcuts::handle` does: X rejects and, in the Crop
+tool, swaps the aspect; Delete takes the photos out of the album the grid shows and deletes them (after asking, ⌘Delete too)
+anywhere else, never the photo while Masking, Remove or Red Eye is open; [ and ] rate down and up in the grid; B puts the
+photos in the target album; S expands a stack; O, Shift+O and A are the crop's and the mask overlay's. `AppModel.press` runs
+the result (`App/AppModel+Keys.swift`); in Compare and Survey a rating or a flag goes to the active photo and the next
+candidate comes up after it. The input monitor (`Mac/MacInput.swift`, one `NSEvent` local monitor) hands every key of the
+main window to it before AppKit routes the key, and leaves a key alone when a field is being typed in, when a list, a slider
+or a menu has the focus and the key moves it (a slider of the edit panel says so through `arrowsTaken`), when a sheet or an
+alert is on the window, or in another window. A plain letter or digit that means nothing here is used up so the window does
+not beep; a held key goes on only if it is an arrow or a bracket. Menu items keep their shortcuts, so the menus show them
+and work without the monitor; a key the monitor ran never reaches a menu, so nothing runs twice, and ⌘ keys and F-keys that
+the monitor passes on (a field is being typed in) are the menus'. The arrows: Left and Right step through the photos, Up and
+Down move a row in the grid (`GridNavigation.rowDistance`, across the date headers; the engine's `library.up`/`down {rows}`),
+Home and End go to the first and the last photo, Return and Space open the chosen photo, Esc goes back (a tool's own screen is
+cancelled), Tab takes the panels away and brings them back (`editor.review`; a click on the photo no longer hides them), and
+the grid keeps the chosen photo on screen. Rating and flag keys say what they did in a toast, as egui's do.
+
+**The loupe's wheel and trackpad** (SM2.6). The monitor also sees scroll, pinch and a two-finger double tap before the
+window does, and gives them to the loupe under the pointer (`Mac/LoupeInput.swift`: an invisible view over the canvas says
+where the loupe is, so nothing depends on how SwiftUI hit-tests). Zoomed in, two fingers or the wheel move the photo; ⌘ or
+⌃ with the wheel zooms (away from you is in, whatever the scroll direction setting is); a pinch zooms; a two-finger double
+tap zooms in where the pointer is and back; a double click zooms in where it was clicked, and the cursor is a hand while the
+photo can be moved. Every zoom is about the pointer (`LoupeView.zoomAbout`, tested): the part of the photo under it stays
+under it. A fitted photo's sideways swipe is still the pager's, to the next photo. The sharp window for the part on screen
+is asked for when the moving has stopped (140 ms without an event, the trackpad's momentum included). The keys Z and Space,
+⌘0, ⌥⌘0, ⌘= and ⌘- zoom through `editor.zoomAsk` (toggle, fit, 100 %, in and out, about the middle). What a script cannot
+send is a real wheel, pinch or key from the hardware: the handlers are driven by `ui.loupe` and the keys by `ui.rawKey`,
+and the events' own numbers (scroll direction, pinch size) are the part to try by hand.
 
 Where it stands: it builds and launches with the iPad's regular-width layout in a window (SM0), and has a Mac's shell
 (SM1): a Settings window (⌘,: a tab per page of the iPhone's list, `Mac/MacSettings.swift`), a menu bar with the app
@@ -292,8 +331,7 @@ stops the engine (`Mac/MacAppDelegate.swift`); a library that won't open (the eg
 Again, Choose Another Library… and Continue Without Saving (`App/StartErrorView.swift`); the slideshow and Lights Out in
 a full-screen window of their own. Since the merge with the iPhone's later work (2026-10-15) the Settings window also has a
 Server tab (Server Administration, `Admin/`, written once for both platforms through the `Platform.swift` shims), while the
-first-launch welcome and the phone's two-finger gesture on the photo (`TwoFingerGesture`) stay iOS only. Not yet: the Mac
-input of SM2 (keys, the loupe's scroll and pinch), import in place, an export destination and libraries (SM3).
+first-launch welcome and the phone's two-finger gesture on the photo (`TwoFingerGesture`) stay iOS only. Not yet: import in place, an export destination and libraries (SM3).
 
 Two things a Mac's SwiftUI menu bar does that cost a day: it does not follow what an `@Observable` model changes, neither
 in a `Commands` body nor in the App's, only an `ObservableObject` the App observes (`MenuChanges`, bumped by the model);
@@ -355,7 +393,7 @@ SM, the Mac app (see [macOS](#macos); not part of the S gates, which are about r
   done), the Xcode project, Rust build, `run.sh --mac` and `ci/mac-tour.sh` (SM0.3);
 - SM1, the Mac shell (done on this Mac): quit that closes the engine and the start-up error (SM1.1), the Settings window,
   the menus and the slideshow window (SM1.2);
-- SM2, the Mac window: sidebar, content and inspector, a toolbar and filmstrip, pointer and keyboard (SM2.1, the editor's inspector and the Edit panel, SM2.2, the bar under the loupe, and SM2.3, the Crop and Masking panels, and SM2.4, the grid, done; the keyboard layer and the loupe's input to come);
+- SM2, the Mac window: sidebar, content and inspector, a toolbar and filmstrip, pointer and keyboard (SM2.1, the editor's inspector and the Edit panel, SM2.2, the bar under the loupe, and SM2.3, the Crop and Masking panels, and SM2.4, the grid, SM2.5, the keyboard, and SM2.6, the loupe's wheel and trackpad, done);
 - SM3, desktop workflows: import in place from the open panel and Finder, an export destination, libraries;
 - SM4, tracking and CI: the Mac rows in `PARITY.md`, `ios-swift.yml`, the other docs.
 

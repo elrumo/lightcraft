@@ -7,12 +7,7 @@ struct ScreenToolbar: ToolbarContent {
 
     var body: some ToolbarContent {
         ToolbarItem(placement: .cancellationAction) {
-            Button(role: .close) {
-                Task {
-                    if let base = model.editor.screenBase { await model.run("edit.undoTo", ["depth": .int(Int64(base))]) }
-                    model.editor.tool = .edit
-                }
-            }
+            Button(role: .close) { model.cancelToolScreen() }
             .accessibilityLabel("Cancel")
         }
         ToolbarItem(placement: .confirmationAction) {

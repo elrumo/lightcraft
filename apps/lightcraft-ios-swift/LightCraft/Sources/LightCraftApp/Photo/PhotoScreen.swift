@@ -15,7 +15,8 @@ struct PhotoScreen: View {
     @Environment(\.verticalSizeClass) private var verticalSize
     @Environment(\.horizontalSizeClass) private var horizontalSize
     let start: UInt64
-    @State private var review = false
+    /// The panels are away (`EditorModel.review`).
+    private var review: Bool { model.editor.review }
 
     var body: some View {
         let editor = model.editor
@@ -122,6 +123,7 @@ struct PhotoScreen: View {
         }
         .onDisappear {
             if model.path.isEmpty { editor.tool = nil }
+            editor.review = false
         }
     }
 
@@ -168,7 +170,7 @@ struct PhotoScreen: View {
     }
 
     private var photoPager: some View {
-        PhotoPager(start: start, startIndex: model.library.index(of: start), review: $review)
+        PhotoPager(start: start, startIndex: model.library.index(of: start), review: Bindable(model.editor).review)
             #if os(iOS)
             .overlay(alignment: .topTrailing) {
                 if model.editor.tool == .masking, !review {
@@ -363,6 +365,8 @@ struct ZoomablePhoto: View {
     @State private var frame: PhotoFrame?
     /// A review swipe under way: the rating or flag it started from and where it is now.
     @State private var swipe: ReviewSwipe?
+    /// The wheel or the trackpad moved the photo a moment ago: when it stops, the zoom settles.
+    @State private var settling: Task<Void, Never>?
     /// Points of travel per star and per flag step (as the egui app's review mode).
     private let perStar: CGFloat = 44
     private let perFlag: CGFloat = 56
@@ -476,12 +480,14 @@ struct ZoomablePhoto: View {
                     .padding(.bottom, 12)
             }
         }
+        #if os(iOS)
         .overlay(alignment: .bottom) {
             if review, let summary {
                 ReviewHUD(rating: swipe?.rating ?? summary.rating ?? 0, flag: swipe?.flag ?? Self.flagIndex(summary.flag))
                     .transition(.opacity)
             }
         }
+        #endif
         .contentShape(Rectangle())
         .gesture(magnify.simultaneously(with: drag), including: fingersMoveIt ? .none : .all)
         #if os(iOS)
@@ -489,22 +495,15 @@ struct ZoomablePhoto: View {
             TwoFingerGesture(moves: fingersMoveIt, fingers: fingersChanged, pan: twoFingerPan, pinch: twoFingerPinch, ended: twoFingerEnded)
         }
         #endif
+        #if os(iOS)
+        // (a phone's review mode: up and down on the photo rates and flags it)
         .simultaneousGesture(reviewSwipe, including: review && !zoomed ? .all : .none)
         .haptic(.selection, trigger: swipe?.rating)
         .haptic(.selection, trigger: swipe?.flag)
-        .onTapGesture(count: 2) {
+        #endif
+        .onTapGesture(count: 2) { location in
             model.buzz(.light)
-            withAnimation(.snappy) {
-                if zoom > 1 {
-                    zoom = 1
-                    pan = .zero
-                } else {
-                    zoom = model.prefs.clickZoom
-                }
-                zoomAtStart = zoom
-                panAtStart = pan
-                zoomed = zoom > 1
-            }
+            toggleZoom(at: location)
         }
         .onTapGesture(count: 1) { location in tapped(at: location, picture: picture) }
         .onLongPressGesture(minimumDuration: 0.4, maximumDistance: 10) {
@@ -521,6 +520,11 @@ struct ZoomablePhoto: View {
         }
         .haptic(trigger: showBefore) { _, new in new ? .impact(weight: .medium) : nil }
         .onGeometryChange(for: CGSize.self) { $0.size } action: { canvas = $0 }
+        #if os(macOS)
+        // the wheel, the trackpad's two-finger scroll and pinch (Mac/LoupeInput.swift), and the hand
+        .background { LoupeAnchor(handlers: loupeHandlers) }
+        .pointerStyle(zoom > 1.01 && !model.editor.touching ? (gesturing ? .grabActive : .grabIdle) : nil)
+        #endif
         .task(id: request) {
             guard let r = request, !r.dragging else { return }
             // only the size moved (a panel sliding in or out, a rotation): one render once it has
@@ -618,6 +622,15 @@ struct ZoomablePhoto: View {
         case .actual(let x):
             guard let s = summary, s.width > 0, s.height > 0 else { return }
             target = CGFloat(Double(max(s.width, s.height)) * x) / (max(fitted.width, fitted.height) * displayScale)
+        case .fitted(let n):
+            target = CGFloat(n)
+        case .by(let factor):
+            // (about the middle of what is shown, so the photo grows and shrinks where it is)
+            withAnimation(.snappy) {
+                zoomAbout(CGPoint(x: canvas.width / 2, y: canvas.height / 2), to: zoom * CGFloat(factor))
+                settleZoom()
+            }
+            return
         }
         withAnimation(.snappy) {
             zoom = min(max(target, 1), Self.maxZoom)
@@ -625,6 +638,63 @@ struct ZoomablePhoto: View {
             zoomAtStart = zoom
             panAtStart = .zero
             zoomed = zoom > 1.01
+        }
+    }
+
+    /// The zoom and pan as the numbers `LoupeView` does arithmetic on.
+    private var loupe: LoupeView {
+        get { LoupeView(zoom: Double(zoom), panX: Double(pan.width), panY: Double(pan.height)) }
+        nonmutating set {
+            zoom = CGFloat(newValue.zoom)
+            pan = CGSize(width: newValue.panX, height: newValue.panY)
+        }
+    }
+
+    /// Zoom to `target` about the canvas point `point`: what is under it stays under it.
+    private func zoomAbout(_ point: CGPoint, to target: CGFloat) {
+        var view = loupe
+        view.zoomAbout(x: Double(point.x), y: Double(point.y), to: Double(target), canvasWidth: Double(canvas.width), canvasHeight: Double(canvas.height), limit: Double(Self.maxZoom))
+        loupe = view
+        zoomed = zoom > 1.01
+    }
+
+    /// Move the photo by `delta` points, keeping it over the canvas.
+    private func panBy(_ delta: CGSize) {
+        var view = loupe
+        view.pan(dx: Double(delta.width), dy: Double(delta.height), canvasWidth: Double(canvas.width), canvasHeight: Double(canvas.height))
+        loupe = view
+    }
+
+    /// The zoom and pan are where they will stay: the sharp window is asked for there; fitted again
+    /// when it was zoomed out all the way.
+    private func settleZoom() {
+        zoomAtStart = zoom
+        if zoom <= 1.01 {
+            withAnimation(.snappy) {
+                zoom = 1
+                pan = .zero
+            }
+        }
+        panAtStart = pan
+        zoomed = zoom > 1.01
+    }
+
+    /// Zoom in where the click was (a double click, a two-finger double tap) and back out.
+    private func toggleZoom(at point: CGPoint) {
+        withAnimation(.snappy) {
+            if zoom > 1 {
+                zoom = 1
+                pan = .zero
+            } else {
+                #if os(macOS)
+                zoomAbout(point, to: CGFloat(model.prefs.clickZoom))
+                #else
+                zoom = model.prefs.clickZoom
+                #endif
+            }
+            zoomAtStart = zoom
+            panAtStart = pan
+            zoomed = zoom > 1
         }
     }
 
@@ -641,7 +711,12 @@ struct ZoomablePhoto: View {
             return
         }
         guard let pick = model.editor.picking else {
+            #if os(iOS)
             if !model.editor.touching { review.toggle() }
+            #else
+            // (a click on a Mac's photo hides nothing: Tab does; the keys are the photo's now)
+            model.claimKeyboard()
+            #endif
             return
         }
         guard let rect = shownRect(picture), rect.contains(location), let frame else { return }
@@ -686,17 +761,7 @@ struct ZoomablePhoto: View {
                 pan = clamped(pan)
                 zoomed = zoom > 1.01
             }
-            .onEnded { _ in
-                zoomAtStart = zoom
-                if zoom <= 1.01 {
-                    withAnimation(.snappy) {
-                        zoom = 1
-                        pan = .zero
-                    }
-                }
-                panAtStart = pan
-                zoomed = zoom > 1.01
-            }
+            .onEnded { _ in settleZoom() }
     }
 
     private var drag: some Gesture {
@@ -732,27 +797,13 @@ struct ZoomablePhoto: View {
     /// Zoom around the fingers, so what is under them stays under them.
     private func twoFingerPinch(_ scale: CGFloat, at q: CGPoint) {
         gesturing = true
-        let next = min(max(zoom * scale, 1), 8)
-        guard next != zoom else { return }
-        let k = 1 - next / zoom
-        let c = CGPoint(x: canvas.width / 2, y: canvas.height / 2)
-        zoom = next
-        pan = clamped(CGSize(width: pan.width + (q.x - c.x - pan.width) * k, height: pan.height + (q.y - c.y - pan.height) * k))
-        zoomed = zoom > 1.01
+        zoomAbout(q, to: zoom * scale)
     }
 
     private func twoFingerEnded() {
         guard gesturing else { return }
         gesturing = false
-        zoomAtStart = zoom
-        if zoom <= 1.01 {
-            withAnimation(.snappy) {
-                zoom = 1
-                pan = .zero
-            }
-        }
-        panAtStart = pan
-        zoomed = zoom > 1.01
+        settleZoom()
     }
 
     /// Keep the zoomed photo over the screen (view math only: the photo is fitted, then scaled).
@@ -762,6 +813,51 @@ struct ZoomablePhoto: View {
         return CGSize(width: min(max(p.width, -maxX), maxX), height: min(max(p.height, -maxY), maxY))
     }
 }
+
+#if os(macOS)
+/// The Mac's wheel and trackpad over the loupe (`MacInput` finds the loupe under the pointer and
+/// calls these): two fingers or the wheel move a photo that is zoomed in, ⌘ or ⌃ with the wheel zooms
+/// about the pointer, a pinch zooms about the pointer, a two-finger double tap zooms in there and back.
+extension ZoomablePhoto {
+    fileprivate var loupeHandlers: LoupeHandlers {
+        LoupeHandlers(
+            scroll: { delta, point, precise, zoomDelta in
+                if let zoomDelta {
+                    zoomAbout(point, to: zoom * CGFloat(LoupeView.scrollFactor(Double(zoomDelta), precise: precise)))
+                } else if zoom > 1.01 {
+                    panBy(delta)
+                } else {
+                    // (fitted: the sideways swipe is the pager's, to the next photo)
+                    return false
+                }
+                movedByHand()
+                return true
+            },
+            magnify: { magnification, point in
+                zoomAbout(point, to: zoom * CGFloat(LoupeView.pinchFactor(Double(magnification))))
+                movedByHand()
+            },
+            smartMagnify: { point in
+                settling?.cancel()
+                toggleZoom(at: point)
+            }
+        )
+    }
+
+    /// The photo was moved by hand: the sharp window waits until the moving stops (the trackpad's
+    /// momentum included; a wheel has no end to tell of, so a moment without an event is it).
+    fileprivate func movedByHand() {
+        gesturing = true
+        settling?.cancel()
+        settling = Task {
+            try? await Task.sleep(for: .milliseconds(140))
+            guard !Task.isCancelled else { return }
+            gesturing = false
+            settleZoom()
+        }
+    }
+}
+#endif
 
 /// The file name and date, or the exposure, over the photo's corner (Settings ▸ Interface).
 private struct InfoOverlay: View {

@@ -150,6 +150,19 @@ final class AppModel {
     /// The menu bar's commands: egui's UI commands (`host.uiCommands`) and the engine's with a menu.
     var uiCommands: [UICommand] = []
     var menuEngine: [CommandInfo] = []
+    /// Every engine command and whether it can run now: the keys run some that no menu has an item for.
+    @ObservationIgnored var engineCommands: [CommandInfo] = []
+    /// The keys no command declares for itself (`host.keyBindings`), and what each key means (`KeyMap`,
+    /// built when the commands are loaded).
+    @ObservationIgnored var keyTable: FixedKey.Table?
+    @ObservationIgnored var keyMap = KeyMap(ui: [], engine: [], fixed: [])
+    /// The grid's columns, which Up and Down move by.
+    @ObservationIgnored var gridAcross = 1
+    /// Compare and Survey, while one is open: what the arrow keys and Auto Advance do there (a step to
+    /// the next candidate or photo).
+    @ObservationIgnored var cullStep: ((Int) -> Void)?
+    /// A control that wants the arrow keys, while it has the focus (a Mac slider).
+    @ObservationIgnored var arrowsTaken: String?
     /// The photo Reference View shows beside the one being edited.
     var reference: UInt64?
     /// A file or folder the app is asking for (RootView's picker), and what it is for.
@@ -575,6 +588,10 @@ final class AppModel {
 
     /// The photos an action works on: the ones chosen, else the loupe's.
     var targets: [UInt64] {
+        #if os(macOS)
+        // (a Mac has no Select mode: the photos chosen in the grid, else the loupe's)
+        if !library.selected.isEmpty { return Array(library.selected) }
+        #endif
         if selectMode { return Array(library.selected) }
         if let active = state.active { return [active] }
         return Array(library.selected)

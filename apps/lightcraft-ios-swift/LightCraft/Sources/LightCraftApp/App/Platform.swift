@@ -267,6 +267,14 @@ enum Platform {
         #endif
     }
 
+    /// The photo views take the keyboard: whatever list or field had it lets go, so the arrow keys and
+    /// the rating keys are the photos'. (A Mac; a phone has no keys to take.)
+    static func claimKeyboard() {
+        #if os(macOS)
+        NSApp.keyWindow?.makeFirstResponder(nil)
+        #endif
+    }
+
     /// Opens a web address (or any URL) in the app that handles it.
     static func open(_ url: URL) {
         #if os(iOS)

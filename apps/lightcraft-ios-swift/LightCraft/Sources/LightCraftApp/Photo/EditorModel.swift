@@ -56,6 +56,10 @@ nonisolated enum Tool: String, CaseIterable, Identifiable {
 nonisolated enum ZoomAsk: Equatable {
     case fit, fill
     case actual(Double)
+    /// `n` times the fitted size (what a double click gives).
+    case fitted(Double)
+    /// The zoom now times `f`, about the middle (the zoom keys).
+    case by(Double)
 }
 
 /// The Edit tool's groups, one shown at a time (the desktop's sections).
@@ -183,6 +187,8 @@ final class EditorModel {
     /// Red Eye: a pet's eyes, and the correction chosen (its sliders).
     var eyePet = false
     var eye = 0
+    /// The panels are away and the photo alone is left (a tap on a phone, Tab on a Mac).
+    var review = false
     /// A zoom asked for from outside the loupe (a Mac's bottom bar and keys): the loupe applies it and
     /// clears it.
     var zoomAsk: ZoomAsk?

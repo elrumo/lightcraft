@@ -7,6 +7,7 @@ import SwiftUI
 /// in, a double click on the name or the thumb puts it back to its default, and the arrow keys nudge
 /// it when it has the focus. A drag is one undo step, drafts rendering as it moves (`editing`).
 struct MacSliderRow: View {
+    @Environment(AppModel.self) private var model
     let spec: ControlSpec
     let value: Double
     var label: String? = nil
@@ -46,6 +47,11 @@ struct MacSliderRow: View {
         }
         .frame(minHeight: 26)
         .onHover { hovering = $0 }
+        // (the arrow keys nudge it while it has the focus, not move to the next photo: Mac/MacInput.swift)
+        .onChange(of: focused) { _, on in
+            if on { model.arrowsTaken = spec.id } else if model.arrowsTaken == spec.id { model.arrowsTaken = nil }
+        }
+        .onDisappear { if model.arrowsTaken == spec.id { model.arrowsTaken = nil } }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text(LocalizedStringKey(label ?? spec.label)))
         .accessibilityValue(spec.format(value))
