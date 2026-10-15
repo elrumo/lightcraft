@@ -106,6 +106,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut Ui, t: &Tokens, landscape: bool) {
     } else {
         egui::Panel::top("crop_top").show_separator_line(false).exact_size(TITLE_H).frame(frame(t.canvas)).show(ui, |ui| title_bar(app, ui, t));
         egui::Panel::bottom("crop_bar").show_separator_line(false).exact_size(BAR_H).frame(frame(t.canvas)).show(ui, |ui| {
+            super::compact::fill_below(ui, ui.max_rect(), t.canvas);
             bottom_bar(app, ui, t);
         });
         let panel_h = TABS_H + if geometry { GEOMETRY_H } else { ASPECT_H };
