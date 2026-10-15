@@ -134,7 +134,7 @@ struct AlbumsSheet: View {
                     .accessibilityValue(section.collapsed ? Text("Collapsed") : Text("Expanded"))
                 }
             }
-            .dropDestination(for: String.self) { items, _ in AlbumDrag.move(items, into: nil, model) }
+            .dropDestination(for: String.self) { items, _ -> Bool in AlbumDrag.move(items, into: nil, model) }
             .contextMenu { SidebarSectionActions(id: section.id) }
         }
     }
