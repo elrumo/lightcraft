@@ -1,0 +1,54 @@
+{"method": "host.state"}
+{"sleep": 3000}
+{"method": "ui.set", "params": {"screen": "grid"}}
+{"sleep": 2500}
+{"method": "ui.inspect"}
+{"method": "ui.screenshot", "params": {"path": "duo-grid.png"}}
+{"method": "ui.wait", "params": {"path": "duo-grid.done", "seconds": 90}}
+{"method": "ui.set", "params": {"scrollGrid": 20}}
+{"sleep": 2500}
+{"method": "ui.inspect"}
+{"method": "ui.screenshot", "params": {"path": "duo-grid-scrolled.png"}}
+{"method": "ui.wait", "params": {"path": "duo-grid-scrolled.done", "seconds": 90}}
+{"method": "ui.set", "params": {"span": "months"}}
+{"sleep": 2000}
+{"method": "ui.set", "params": {"span": "all"}}
+{"sleep": 2500}
+{"method": "ui.inspect"}
+{"method": "ui.screenshot", "params": {"path": "duo-grid-restored.png"}}
+{"method": "ui.wait", "params": {"path": "duo-grid-restored.done", "seconds": 90}}
+{"method": "ui.set", "params": {"screen": "grid", "select": true}}
+{"sleep": 2500}
+{"method": "ui.screenshot", "params": {"path": "duo-select.png"}}
+{"method": "ui.wait", "params": {"path": "duo-select.done", "seconds": 90}}
+{"method": "ui.set", "params": {"screen": "edit", "select": false, "group": "light"}}
+{"sleep": 3500}
+{"method": "ui.inspect"}
+{"method": "ui.screenshot", "params": {"path": "duo-edit.png"}}
+{"method": "ui.wait", "params": {"path": "duo-edit.done", "seconds": 90}}
+{"method": "ui.set", "params": {"screen": "crop"}}
+{"sleep": 3500}
+{"method": "ui.screenshot", "params": {"path": "duo-crop.png"}}
+{"method": "ui.wait", "params": {"path": "duo-crop.done", "seconds": 90}}
+{"method": "ui.set", "params": {"screen": "masking"}}
+{"sleep": 3500}
+{"method": "ui.screenshot", "params": {"path": "duo-masking.png"}}
+{"method": "ui.wait", "params": {"path": "duo-masking.done", "seconds": 90}}
+{"method": "ui.set", "params": {"screen": "edit", "fold": {"vertical": false, "at": 0.5, "width": 40}}}
+{"sleep": 3500}
+{"method": "ui.inspect"}
+{"method": "ui.screenshot", "params": {"path": "duo-edit-tabletop.png"}}
+{"method": "ui.wait", "params": {"path": "duo-edit-tabletop.done", "seconds": 90}}
+{"method": "ui.set", "params": {"fold": null, "orientation": "landscape"}}
+{"sleep": 4500}
+{"method": "ui.inspect"}
+{"method": "ui.screenshot", "params": {"path": "duo-edit-landscape.png"}}
+{"method": "ui.wait", "params": {"path": "duo-edit-landscape.done", "seconds": 90}}
+{"method": "ui.set", "params": {"screen": "grid"}}
+{"sleep": 3500}
+{"method": "ui.inspect"}
+{"method": "ui.screenshot", "params": {"path": "duo-grid-landscape.png"}}
+{"method": "ui.wait", "params": {"path": "duo-grid-landscape.done", "seconds": 90}}
+{"method": "ui.set", "params": {"orientation": "portrait"}}
+{"sleep": 2500}
+{"method": "ui.inspect"}

@@ -23,6 +23,8 @@ struct GridView: View {
     @State private var choosing: Choosing?
     /// Where the grid is scrolled to.
     @State private var position = ScrollPosition(edge: .top)
+    /// This grid has appeared once (the first time it scrolls back to where the last one was left, `LibraryModel.anchor`).
+    @State private var appeared = false
 
     var body: some View {
         let library = model.library
@@ -58,10 +60,14 @@ struct GridView: View {
             // scrolled under the bar: back to the top while nobody has scrolled it
             .onChange(of: library.count) { toTop() }
             .onChange(of: library.groups.count) { toTop() }
-            .onScrollPhaseChange { _, phase in
+            .onScrollPhaseChange { _, phase, context in
                 if phase.isScrolling {
                     scrolling = true
                 } else {
+                    // where it came to rest, for a grid the system rebuilds: the cell in the middle of what is on screen
+                    // (a grid just made says it is at rest before its cells exist: nothing to write then)
+                    let g = context.geometry
+                    if let middle = frames.index(nearest: g.contentOffset.y + g.containerSize.height / 2) { library.anchor = middle }
                     Task {
                         try? await Task.sleep(for: .seconds(1.4))
                         if scrubbing == nil { scrolling = false }
@@ -81,12 +87,18 @@ struct GridView: View {
             .onChange(of: jump) { _, target in
                 guard let target else { return }
                 proxy.scrollTo(target, anchor: .center)
+                library.anchor = target
                 jump = nil
             }
             .onAppear {
+                defer { appeared = true }
                 if let target = jump {
                     proxy.scrollTo(target, anchor: .center)
+                    library.anchor = target
                     jump = nil
+                } else if !appeared, let anchor = library.anchor, anchor > 0, anchor < library.count {
+                    // a grid made again after a fold, an unfold or a rotation: back to where it was
+                    proxy.scrollTo(anchor, anchor: .center)
                 }
             }
         }
@@ -109,8 +121,9 @@ struct GridView: View {
         }
     }
 
+    /// Another photo list clears the anchor, so a grid that has scrolled back to one is not sent to the top by its count.
     private func toTop() {
-        if !position.isPositionedByUser { position.scrollTo(edge: .top) }
+        if !position.isPositionedByUser, model.library.anchor == nil { position.scrollTo(edge: .top) }
     }
 
     private func cell(_ i: Int) -> some View {
@@ -486,6 +499,11 @@ final class CellFrames {
     /// The cell under `p`.
     func index(at p: CGPoint) -> Int? {
         rects.first { $0.value.contains(p) }?.key
+    }
+
+    /// The cell whose middle is nearest to `y` (the first of its row).
+    func index(nearest y: CGFloat) -> Int? {
+        rects.min { (abs($0.value.midY - y), $0.value.minX) < (abs($1.value.midY - y), $1.value.minX) }?.key
     }
 }
 

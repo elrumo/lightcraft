@@ -24,7 +24,9 @@ struct RootView: View {
                     stack
                 }
                 .navigationSplitViewStyle(.balanced)
-                // a photo takes the screen: the albums step aside while it is open
+                // a photo takes the screen: the albums step aside while it is open (also when this branch has just
+                // come up: an unfold with a photo open, or a grid whose column a shut screen's photo hid)
+                .onAppear { model.sidebar = model.path.isEmpty ? .all : .detailOnly }
                 .onChange(of: model.path.isEmpty) { _, grid in
                     withAnimation { model.sidebar = grid ? .all : .detailOnly }
                 }
@@ -77,6 +79,9 @@ struct RootView: View {
             ActivityHUD()
         }
         .preferredColorScheme(model.prefs.appearance.scheme)
+        .duoReporting(model.duo)
+        // a fold or an unfold moves the window to the other display, which may differ in HDR headroom
+        .onGeometryChange(for: CGSize.self) { $0.size } action: { _ in model.updateHdrDisplay() }
         // the menu bar's commands, enabled for what is selected now
         .task(id: MenuKey(revision: model.settledRevision, active: model.state.active, selected: model.state.selectionCount, engine: model.engine != nil)) {
             await model.loadMenus()
@@ -116,7 +121,8 @@ struct RootView: View {
             .navigationDestination(for: Route.self) { route in
                 switch route {
                 case .photo(let id):
-                    PhotoScreen(start: id)
+                    // (opens on the photo the loupe shows: a rebuild by a fold or a rotation must not go back to `id`)
+                    PhotoScreen(start: model.shown ?? id)
                         .navigationTransition(.zoom(sourceID: id, in: photos))
                 case .commands: AllCommandsView()
                 case .people: PeopleView()
@@ -335,11 +341,10 @@ struct CloudButton: View {
         Button {
             model.sheet = .syncStatus
         } label: {
-            Image(systemName: symbol(sync?.state))
+            Label("Sync Status", systemImage: symbol(sync?.state))
                 .symbolEffect(.pulse, isActive: sync?.state == "syncing")
                 .foregroundStyle(tint(sync?.state))
         }
-        .accessibilityLabel("Sync Status")
         .accessibilityValue(sync?.state ?? "")
     }
 

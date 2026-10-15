@@ -150,6 +150,13 @@ final class AppModel {
     var welcomeAsked = false
     /// On an iPad, whether the albums column shows beside the grid.
     var sidebar: NavigationSplitViewVisibility = .all
+    /// What the app knows about its window and its hinge (`ui.inspect` → `layout`; `Duo.swift`).
+    let duo = DuoFacts()
+    /// The photo the loupe is showing (its pager's page). A screen the system rebuilds, as a fold or a rotation
+    /// does, opens on this one, not on the photo it was first pushed for.
+    var shown: UInt64?
+    /// A scroll of the grid that automation asked for (`ui.set {scrollGrid}`): the library screen turns it into a jump.
+    var gridJump: Int?
     /// The albums page's sections below My Photos, in order (`host.sidebar`).
     var sidebarSections: [SidebarSectionState] = SidebarSectionState.usual
     /// Photos are being chosen in the grid (Select).
@@ -269,7 +276,10 @@ final class AppModel {
     /// environment variable `LIGHTCRAFT_HDR_DISPLAY` (`1` or `0`) decides for the simulator and scripts.
     func updateHdrDisplay() {
         let forced = ProcessInfo.processInfo.environment["LIGHTCRAFT_HDR_DISPLAY"]
-        let screen = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first?.screen
+        // (the scene on screen: an iPhone Duo's scene moves between its two displays as it folds and unfolds, and
+        // the display it is on is the one to ask)
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let screen = (scenes.first { $0.activationState == .foregroundActive } ?? scenes.first)?.screen
         let on = forced.map { $0 == "1" } ?? ((screen?.potentialEDRHeadroom ?? 1) > 1)
         // (not before the engine is there: `start()` asks again once it is, and what is not sent is not recorded)
         guard let engine, on != hdrDisplay else { return }
@@ -545,6 +555,7 @@ final class AppModel {
 
     /// Open a photo in the loupe.
     func open(_ photo: UInt64) {
+        shown = photo
         Task { await select(photo) }
         path.append(.photo(photo))
     }

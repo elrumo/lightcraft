@@ -8,6 +8,8 @@ import UIKit
 /// engine answers `engine.*`, `render.*` and `host.*` itself and asks the app for the rest.
 /// - `ui.screenshot {path}`: the window as a PNG.
 /// - `ui.inspect`: the screen, the photo, the state and timings (`perf`).
+/// - `ui.wait {path, seconds?}`: waits (110 s at most, under the runner's 120) until the file at `path` exists: something outside the app, a
+///   capture of the whole display, is done with the screen as it is.
 /// - `ui.set {screen?: grid | photo | edit | crop | masking | remove | redEye | presets | info | commands |
 ///   people | map, photo?, span?: all | months | years, group?: light | color…, sheet?: albums |
 ///   filter | settings | export | sync | history | versions | keywords | about | superRes | createPreset | smartAlbum (id?) | allMetadata | none, select?,
@@ -34,6 +36,15 @@ final class ScriptHost {
             try? await Task.sleep(for: .milliseconds(100))
             let (w, h) = try screenshot(to: path)
             return ["path": .string(path), "width": .int(Int64(clamping: w)), "height": .int(Int64(clamping: h))]
+        case "ui.wait":
+            guard let path = params["path"].string else { throw ErrorBody(code: "badParams", message: "no path") }
+            let limit = min(params["seconds"].double ?? 60, 110)
+            var waited = 0.0
+            while !FileManager.default.fileExists(atPath: path), waited < limit {
+                try? await Task.sleep(for: .milliseconds(200))
+                waited += 0.2
+            }
+            return ["found": .bool(FileManager.default.fileExists(atPath: path)), "seconds": .double(waited)]
         case "ui.inspect":
             var photo: JSONValue = .null
             if case .photo(let id) = model.path.last {
@@ -51,6 +62,11 @@ final class ScriptHost {
             return [
                 "screen": .string(model.screenName),
                 "photo": photo,
+                // what the loupe shows (the pager's page) and where the grid was left (`AppModel.shown`, `LibraryModel.anchor`)
+                "shown": model.shown.map { .int(Int64(clamping: $0)) } ?? .null,
+                "gridAnchor": model.library.anchor.map { .int(Int64($0)) } ?? .null,
+                // the window, size classes, safe area, hinge and what the photo screen chose (`Duo.swift`)
+                "layout": model.duo.json(),
                 "photos": .int(Int64(clamping: model.library.count)),
                 "state": (try? JSONValue.encode(model.state)) ?? .null,
                 "perf": perf,
@@ -76,6 +92,7 @@ final class ScriptHost {
             if let select = params["select"].bool {
                 model.selectMode = select
             }
+            if let index = params["scrollGrid"].int { model.gridJump = Int(clamping: index) }
             if let on = params["faceBoxes"].bool { model.prefs.faceBoxes = on }
             if let on = params["tagFace"].bool { model.editor.tagFace = on }
             if let on = params["beforeAfter"].bool { model.editor.beforeAfter = on }
@@ -100,6 +117,15 @@ final class ScriptHost {
             if let space = params["proofSpace"].string { model.editor.proofSpace = space }
             if let on = params["proofWarning"].bool { model.editor.proofWarning = on }
             if let cover = params["cover"].string { model.cover = Cover(rawValue: cover) }
+            // a hinge made up for testing (the real one needs a Duo in a Device Hub pose): `{fold: {vertical, at, width}}`
+            // (a vertical one in the middle, 40 pt wide, by default; `{fold: true}` is that), `{fold: null}` takes it away
+            if case .object(let all) = params, let fold = all["fold"] {
+                if fold.isNull || fold.bool == false {
+                    model.duo.fakeFold = nil
+                } else {
+                    model.duo.fakeFold = .init(vertical: fold["vertical"].bool ?? true, at: CGFloat(fold["at"].double ?? 0.5), width: CGFloat(fold["width"].double ?? 40))
+                }
+            }
             if let o = params["orientation"].string, let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first {
                 // (the app turns itself: no rotating the simulator from outside)
                 scene.requestGeometryUpdate(.iOS(interfaceOrientations: o == "landscape" ? .landscapeRight : .portrait)) { _ in }
@@ -117,6 +143,7 @@ final class ScriptHost {
                 model.sheet = nil
                 if case .photo(let shown) = model.path.last, shown == id {
                 } else {
+                    model.shown = id
                     model.path = [.photo(id)]
                     await model.select(id)
                 }

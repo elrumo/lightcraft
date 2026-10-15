@@ -1,0 +1,40 @@
+{"method": "host.state"}
+{"sleep": 3000}
+{"method": "ui.set", "params": {"screen": "edit", "group": "light"}}
+{"sleep": 3500}
+{"method": "ui.inspect"}
+{"method": "ui.screenshot", "params": {"path": "fold-flat.png"}}
+{"sleep": 1000}
+{"method": "ui.set", "params": {"fold": {"vertical": true, "at": 0.5, "width": 40}}}
+{"sleep": 3500}
+{"method": "ui.inspect"}
+{"method": "ui.screenshot", "params": {"path": "fold-book.png"}}
+{"sleep": 1000}
+{"method": "ui.set", "params": {"fold": {"vertical": false, "at": 0.5, "width": 40}}}
+{"sleep": 3500}
+{"method": "ui.inspect"}
+{"method": "ui.screenshot", "params": {"path": "fold-tabletop.png"}}
+{"sleep": 1000}
+{"method": "ui.set", "params": {"fold": null}}
+{"sleep": 3500}
+{"method": "ui.inspect"}
+{"method": "ui.screenshot", "params": {"path": "fold-flat-again.png"}}
+{"sleep": 1000}
+{"method": "ui.set", "params": {"screen": "compare", "ids": [21, 17]}}
+{"sleep": 3500}
+{"method": "ui.inspect"}
+{"method": "ui.screenshot", "params": {"path": "compare-flat.png"}}
+{"sleep": 1000}
+{"method": "ui.set", "params": {"fold": {"vertical": true, "at": 0.5, "width": 40}}}
+{"sleep": 3500}
+{"method": "ui.inspect"}
+{"method": "ui.screenshot", "params": {"path": "compare-book.png"}}
+{"sleep": 1000}
+{"method": "ui.set", "params": {"fold": {"vertical": false, "at": 0.5, "width": 40}}}
+{"sleep": 3500}
+{"method": "ui.inspect"}
+{"method": "ui.screenshot", "params": {"path": "compare-tabletop.png"}}
+{"sleep": 1000}
+{"method": "ui.set", "params": {"fold": null}}
+{"sleep": 2500}
+{"method": "ui.inspect"}
