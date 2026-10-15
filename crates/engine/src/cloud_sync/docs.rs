@@ -267,6 +267,24 @@ impl Session {
         self.lut_profiles = out;
     }
 
+    /// Remove the LUT profiles that are shared (those [`Session::doc_items`] offers the server), with their `.cube` files
+    /// in this library's `Profiles` folder.
+    fn drop_shared_lut_profiles(&mut self) {
+        let shared: HashSet<String> =
+            self.doc_items("lut-profiles").iter().filter_map(|v| v.get("id").and_then(Value::as_str).map(str::to_string)).collect();
+        let dir = self.library.as_ref().filter(|l| l.on_disk).map(|l| l.dir.join("Profiles"));
+        self.lut_profiles.retain(|old| {
+            if !shared.contains(&old.id) {
+                return true;
+            }
+            lightcraft_pipeline::lut::unregister(&old.id);
+            if dir.as_ref().is_some_and(|d| std::path::Path::new(&old.file).starts_with(d)) {
+                let _ = std::fs::remove_file(&old.file);
+            }
+            false
+        });
+    }
+
     /// Did this device's documents change since they were last synced? (Compared only after prefs.json was
     /// written, which happens when they change.)
     fn docs_changed(&self, st: &mut SyncState) {
@@ -279,6 +297,54 @@ impl Session {
             let items = self.doc_items(name);
             let d = st.docs.entry(name.to_string()).or_default();
             d.changed = items != d.base;
+        }
+    }
+
+    /// Is there a shared document this device changed and the server doesn't have yet? (Signing out waits for it.)
+    pub(super) fn docs_pending(&self, st: &mut SyncState) -> bool {
+        self.docs_changed(st);
+        st.docs.values().any(|d| d.changed && !d.unsupported)
+    }
+
+    /// Signing out: what the account shares goes from this library (the user presets and the nine documents), so the
+    /// next account starts with its own and none of this one's reaches it. The built-in presets stay, and so does what
+    /// describes this computer (the cache size, the import settings that name a place here…); the `.cube` files of the
+    /// LUT profiles go with them.
+    pub(super) fn reset_shared_documents(&mut self) {
+        self.presets.retain(|p| p.builtin);
+        // (the LUT profiles that were shared go; one that never could be, over 4 MiB or whose file can't be read here, is
+        // only this computer's and stays: its file is the only copy)
+        self.drop_shared_lut_profiles();
+        for (name, _) in SPECS {
+            if !matches!(name, "prefs" | "preset-groups" | "lut-profiles")
+                && let Err(e) = self.set_doc_items(name, &[])
+            {
+                log::warn!("sync: signing out: {name}: {e}");
+            }
+        }
+        self.preset_group_order.clear();
+        // (the import defaults go back to the defaults, but the three that name a place on this computer stay)
+        let mut fresh = serde_json::to_value(crate::import::ImportDefaults::default()).unwrap_or(Value::Null);
+        let mine = serde_json::to_value(&self.import_defaults).unwrap_or(Value::Null);
+        if let (Some(f), Some(m)) = (fresh.as_object_mut(), mine.as_object()) {
+            for k in LOCAL_IMPORT {
+                match m.get(k) {
+                    Some(v) => drop(f.insert(k.to_string(), v.clone())),
+                    None => drop(f.remove(k)),
+                }
+            }
+        }
+        if let Ok(d) = serde_json::from_value(fresh) {
+            self.import_defaults = d;
+        }
+        self.keyword_set = None;
+        self.recent_keywords.clear();
+        // (a favourite or recent profile that was one of the removed LUTs)
+        let known = |id: &String| crate::presets::profile(id).is_some() || self.lut_profiles.iter().any(|p| &p.id == id);
+        self.profile_favorites = std::mem::take(&mut self.profile_favorites).into_iter().filter(known).collect();
+        self.profile_recent = std::mem::take(&mut self.profile_recent).into_iter().filter(known).collect();
+        if let Err(e) = self.save_prefs() {
+            log::warn!("sync: signing out: {e}");
         }
     }
 

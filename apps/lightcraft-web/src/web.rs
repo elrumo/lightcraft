@@ -544,7 +544,23 @@ impl WebApp {
         {
             self.originals.prefetch(path);
         }
+        // a sign-out removed the account's library: its preview files go from memory and from storage (the
+        // originals stay, as imports do; a library of the next account is a new one)
+        let purge = self.app.session.take_sync_purge();
+        if !purge.is_empty() {
+            self.originals.forget_proxies();
+        }
         let Some(b) = &self.backend else { return };
+        if !purge.is_empty() {
+            let b = b.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                for key in &purge {
+                    if let Err(e) = b.remove(key).await {
+                        log::warn!("removing {key}: {e}");
+                    }
+                }
+            });
+        }
         // what sync keeps in storage is known: a missing original is a photo whose file wasn't downloaded
         // (its previews stand in), asked for again once sync has stored it
         let synced = self.app.session.sync_store.as_ref().map(|s| s.originals.clone());

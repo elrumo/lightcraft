@@ -2159,5 +2159,7 @@
   "This model isn't downloaded yet: download it, or choose Classic.": "このモデルはまだダウンロードされていません。ダウンロードするか、［クラシック］を選んでください。",
   "Turned off in Settings → AI Models": "設定 → AIモデルでオフになっています",
   "Models can't be downloaded in this build: put the file in the models folder (Settings → AI Models).": "このビルドではモデルをダウンロードできません。ファイルをモデルフォルダに置いてください（設定 → AIモデル）。",
-  "Generating the new area…": "新しい領域を生成中…"
+  "Generating the new area…": "新しい領域を生成中…",
+  "Finishing sync before signing out": "サインアウト前に同期を完了しています",
+  "Removing the library from this device": "このデバイスからライブラリを削除しています"
 }

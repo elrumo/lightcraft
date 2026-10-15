@@ -1513,12 +1513,59 @@ impl LightcraftApp {
         self.perf.max_update_ms = self.perf.max_update_ms.max(self.perf.update_ms);
     }
 
+    /// What the UI holds that names the old library's photos and albums (their ids are only unique within a library):
+    /// textures and caches by id, the face being named, the photos being dragged, the compare and reference views, a
+    /// slideshow, a dialog about one of them. Another library was opened, or this one was emptied for another account.
+    pub(crate) fn forget_library_ui(&mut self) {
+        self.lightroom.last = None;
+        self.renderer.forget_all();
+        self.cloud_sync.forget_library();
+        let ui = &mut self.ui;
+        ui.compare = None;
+        ui.reference = None;
+        ui.slideshow = None;
+        ui.name_edit = None;
+        ui.person_page = None;
+        ui.person_from = None;
+        ui.last_person = None;
+        ui.dismissed_faces.clear();
+        ui.unnamed_selected.clear();
+        ui.unnamed_anchor = None;
+        ui.dragging_photos = None;
+        ui.reveal_album = None;
+        ui.dragging_album = None;
+        ui.grading_hidden = None;
+        ui.last_find_missing = None;
+        // (Settings stays open: it is where signing out and signing in happen)
+        if !matches!(
+            ui.dialog,
+            None | Some(
+                state::Dialog::Settings { .. }
+                    | state::Dialog::About
+                    | state::Dialog::Shortcuts
+                    | state::Dialog::WhatsNew
+                    | state::Dialog::SystemInfo { .. }
+                    | state::Dialog::SyncChoice
+            )
+        ) {
+            ui.dialog = None;
+        }
+        // an emptied library has no photo to show, compare or survey: the grid says so
+        if self.session.catalog.is_empty() && !matches!(ui.view, state::ViewMode::PhotoGrid | state::ViewMode::SquareGrid | state::ViewMode::Map) {
+            ui.view = state::ViewMode::PhotoGrid;
+        }
+    }
+
     /// Once per library opened (at launch too): name it in the window title, so nobody edits in
-    /// the wrong one, and put it first in File ▸ Open Recent Library.
+    /// the wrong one, and put it first in File ▸ Open Recent Library. A library other than the one shown
+    /// before makes the UI forget what named that one's photos.
     pub(crate) fn library_changed(&mut self, ctx: &egui::Context) {
         let generation = self.session.library_generation();
         if self.shown_library == Some(generation) {
             return;
+        }
+        if self.shown_library.is_some() {
+            self.forget_library_ui();
         }
         self.shown_library = Some(generation);
         if let Some(l) = self.session.library.as_ref().filter(|l| l.on_disk) {

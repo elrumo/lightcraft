@@ -2215,5 +2215,7 @@
   "This model isn't downloaded yet: download it, or choose Classic.": "Эта модель ещё не загружена: загрузите её или выберите «Классический».",
   "Turned off in Settings → AI Models": "Отключено в Настройки → Модели ИИ",
   "Models can't be downloaded in this build: put the file in the models folder (Settings → AI Models).": "В этой сборке модели не загружаются: положите файл в папку моделей (Настройки → Модели ИИ).",
-  "Generating the new area…": "Создание новой области…"
+  "Generating the new area…": "Создание новой области…",
+  "Finishing sync before signing out": "Завершение синхронизации перед выходом",
+  "Removing the library from this device": "Удаление библиотеки с этого устройства"
 }

@@ -29,6 +29,7 @@ use crate::LightcraftApp;
 use crate::icons::Icon;
 use crate::panels::mobile;
 use crate::state::{Appearance, GridBadges, PREVIEW_LIMITS, StartupView};
+use crate::sync_ui::SignOutHow;
 use crate::theme::Tokens;
 use crate::widgets::register;
 
@@ -1719,8 +1720,21 @@ fn sync_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
             // signed in to a server that has a library already, and this one has photos: nothing
             // syncs until the user chooses (a dialog asked once; this is where to come back to it)
             let waiting = app.session.sync_conflict().is_some();
+            // signing out waits for what is left to be sent: it can be cancelled, or done without waiting
+            let leaving = c.leaving;
+            // (a question left open that no longer applies, because the state moved on, goes)
+            app.cloud_sync.sign_out =
+                app.cloud_sync.sign_out.filter(|h| matches!((h, leaving), (SignOutHow::Wait, false) | (SignOutHow::Anyway, true)));
+            if let Some(how) = app.cloud_sync.sign_out {
+                sign_out_question(app, ui, t, how);
+                return;
+            }
             row(ui, t, "", |ui| {
-                if waiting {
+                if leaving {
+                    if action(ui, t, "syncSignOutCancel", "Cancel Sign Out", true, false) {
+                        sync_cmd(app, ui, "sync.cancelSignOut", json!({}));
+                    }
+                } else if waiting {
                     if action(ui, t, "syncChoose", "Choose What to Do…", true, false) {
                         sync_cmd(app, ui, "dialog.syncChoice", json!({}));
                     }
@@ -1737,10 +1751,29 @@ fn sync_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
                     card_end(ui, t);
                     ui.add_space(28.0);
                 }
-                if action(ui, t, "syncSignOut", "Sign Out", true, true) {
-                    sync_cmd(app, ui, "sync.signOut", json!({}));
+                if leaving {
+                    if action(ui, t, "syncSignOutAnyway", "Sign Out Anyway…", true, true) {
+                        app.cloud_sync.sign_out = Some(SignOutHow::Anyway);
+                    }
+                } else if action(ui, t, "syncSignOut", "Sign Out", true, true) {
+                    if c.library.is_empty() {
+                        // (this library never joined the server's: nothing of it is there, so it signs out and stays as it is)
+                        sync_cmd(app, ui, "sync.signOut", json!({}));
+                    } else {
+                        app.cloud_sync.sign_out = Some(SignOutHow::Wait);
+                    }
                 }
             });
+            if leaving {
+                hint(
+                    ui,
+                    t,
+                    crate::i18n::tr(
+                        "Signing out waits until everything this device has made has reached the server, then removes the library from this device. Cancel stays signed in. Sign Out Anyway doesn't wait: what hasn't been sent is lost.",
+                    ),
+                );
+                return;
+            }
             if waiting {
                 hint(
                     ui,
@@ -1877,7 +1910,81 @@ fn sync_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
                     "A library signed in to an empty server uploads its photos there. Signing in from a new, empty library gets the server's. If both have photos, you choose: add this library to the server's, or use the server's instead. Ticking Combine merges them at once: photos are matched by what they are, and nothing is removed on either side.",
                 ),
             );
+            // joined to an account's library, and signed out by the server: sign in again as that user, or remove it
+            let bound = known.as_ref().is_some_and(|c| !c.library.is_empty());
+            app.cloud_sync.sign_out = app.cloud_sync.sign_out.filter(|h| bound && *h == SignOutHow::Remove);
+            if let Some(how) = app.cloud_sync.sign_out {
+                sign_out_question(app, ui, t, how);
+            } else if bound {
+                if crate::is_compact(ui.ctx()) {
+                    ui.add_space(28.0);
+                }
+                row(ui, t, "", |ui| {
+                    if action(ui, t, "syncRemoveLibrary", "Remove Library from This Device…", true, true) {
+                        app.cloud_sync.sign_out = Some(SignOutHow::Remove);
+                    }
+                });
+                hint(
+                    ui,
+                    t,
+                    crate::i18n::tr(
+                        "This library belongs to the account it was signed in as, and the server signed this device out. Sign in as the same user to go on, or remove the library from this device to sign in as someone else: what hasn't been sent is lost.",
+                    ),
+                );
+            }
         }
+    }
+}
+
+/// What a sign-out button asked, asked back: what the answer does, then the answer. `sync.signOut` takes
+/// `confirm` for the graceful one (it waits for what is left to be sent) and `force` for the others.
+fn sign_out_question(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, how: SignOutHow) {
+    let (title, first, rest, confirm) = match how {
+        SignOutHow::Wait => (
+            "Sign Out?",
+            "This removes this account's library from this device.",
+            "It stays on the server, and signing in again brings it back. Anything that hasn't reached the server yet is sent first.",
+            "Sign Out",
+        ),
+        SignOutHow::Anyway => (
+            "Sign Out Without Waiting?",
+            "Some changes or photos haven't reached the server.",
+            "Signing out now removes this library from this device, and what hasn't been sent is lost.",
+            "Sign Out Anyway",
+        ),
+        SignOutHow::Remove => (
+            "Remove Library from This Device?",
+            "The server signed this device out, so nothing can be sent.",
+            "Removing the library from this device loses what hasn't been sent. Signing in again brings the rest back from the server.",
+            "Remove Library",
+        ),
+    };
+    heading(ui, t, title);
+    if how == SignOutHow::Remove {
+        let account = app.session.sync_state().map_or_else(String::new, |st| {
+            let host = st.config.server.trim_start_matches("https://").trim_start_matches("http://").trim_end_matches('/');
+            format!("{} · {host}", st.config.user)
+        });
+        info(ui, t, crate::i18n::tr("Library"), &account, t.text);
+    }
+    let mut text = format!("{} {}", crate::i18n::tr(first), crate::i18n::tr(rest));
+    // (a library that isn't a folder, a browser's, has no copy to keep)
+    if how != SignOutHow::Wait && app.session.library.as_ref().is_some_and(|l| l.on_disk) {
+        text.push(' ');
+        text.push_str(crate::i18n::tr("A copy of the catalog is first saved in the library folder."));
+    }
+    hint(ui, t, &text);
+    let (mut go, mut back) = (false, false);
+    row(ui, t, "", |ui| {
+        go = action(ui, t, "syncSignOutConfirm", confirm, true, true);
+        back = action(ui, t, "syncSignOutBack", "Cancel", true, false);
+    });
+    if go {
+        app.cloud_sync.sign_out = None;
+        let p = if how == SignOutHow::Wait { json!({"confirm": true}) } else { json!({"force": true}) };
+        sync_cmd(app, ui, "sync.signOut", p);
+    } else if back {
+        app.cloud_sync.sign_out = None;
     }
 }
 
