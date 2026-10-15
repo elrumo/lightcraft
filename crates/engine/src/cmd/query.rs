@@ -125,6 +125,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 _ => s.source.label(&s.catalog),
             };
             let n = s.visible().len();
+            let photos = s.visible_photos();
             Ok(json!({
                 "source": s.source,
                 "libraryFolder": s.library_folder.as_ref().filter(|_| s.source == LibrarySource::LibraryFolder),
@@ -133,6 +134,8 @@ pub fn specs() -> Vec<CommandSpec> {
                 "sort": s.sort,
                 "selection": s.selection,
                 "visibleCount": n,
+                // with the photos inside collapsed stacks: the grid's "24 photos"
+                "visiblePhotos": photos,
                 "activeMask": s.active_mask,
                 "activeSpot": s.active_spot,
                 "undo": s.undo.last().map(|u| u.label.clone()),

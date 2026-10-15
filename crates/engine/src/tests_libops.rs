@@ -81,6 +81,10 @@ fn months_count_every_photo_in_a_collapsed_stack() {
     let sum = |f: &str| runs.as_array().unwrap().iter().map(|r| r[f].as_u64().unwrap()).sum::<u64>();
     assert_eq!(sum("count"), before - 4);
     assert_eq!(sum("photos"), before);
+    // the grid's total ("24 photos")
+    let state = s.execute("library.state", &json!({})).unwrap();
+    assert_eq!(state["visibleCount"].as_u64(), Some(before - 4));
+    assert_eq!(state["visiblePhotos"].as_u64(), Some(before));
 }
 
 /// The grid's photos say where they are in a stack (the stack badge), collapsed or expanded.

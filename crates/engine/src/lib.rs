@@ -1259,6 +1259,12 @@ impl Session {
         &self.visible_stacked
     }
 
+    /// How many photos [`Session::visible`] stands for: its own and the ones inside its collapsed
+    /// stacks, as of the last time the list was computed.
+    pub fn visible_photos(&self) -> usize {
+        self.visible_stacked.values().fold(self.visible.len(), |n, k| n.saturating_add(k.saturating_sub(1)))
+    }
+
     pub fn visible_cloned(&mut self) -> Vec<PhotoId> {
         self.visible().to_vec()
     }
