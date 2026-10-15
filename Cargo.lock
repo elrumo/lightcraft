@@ -3723,6 +3723,7 @@ dependencies = [
  "lightcraft-apphost",
  "lightcraft-engine",
  "lightcraft-ios-host",
+ "lightcraft-sysmem",
  "log",
  "serde_json",
 ]

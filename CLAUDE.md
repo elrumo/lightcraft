@@ -40,9 +40,11 @@ of it. Full standard: `../craftrules/standards/never-crash.md`
   fallback (`unwrap_or…`) only where it can't silently corrupt a document. An unfinished feature returns an
   "unsupported" error or is disabled. Sole exception: a provably infallible literal, as `#[allow(clippy::expect_used)]`
   + `.expect("why it can't fail")`.
-- **`unsafe` lives only in `crates/sysmem`, `crates/ios-host`, `crates/capture` and `apps/lightcraft-ios-swift/src/abi.rs`.** `sysmem`: two libSystem calls,
-  `malloc_zone_pressure_relief` (returns freed allocator pages to macOS / iOS after raw decodes) and
-  `os_proc_available_memory` (the iOS app's memory limit). `ios-host`: the iOS app's Objective-C calls through `objc2`
+- **`unsafe` lives only in `crates/sysmem`, `crates/ios-host`, `crates/capture` and `apps/lightcraft-ios-swift/src/abi.rs`.** `sysmem`: libSystem calls,
+  `malloc_zone_pressure_relief` (returns freed allocator pages to macOS / iOS after raw decodes),
+  `os_proc_available_memory` (the iOS app's memory limit), and `mmap` / `munmap` for `ReturningAlloc`, the SwiftUI
+  app's global allocator (large blocks get pages of their own that go back when freed: macOS / iOS 27's allocator keeps
+  freed large blocks dirty in the footprint). `ios-host`: the iOS app's Objective-C calls through `objc2`
   (Photos and Files pickers, share sheet, pasteboard, lifecycle notifications, ImageIO decoding, status-bar taps), compiled for iOS only. (The iOS
   app's C entry point, `lightcraft_ios_main`, is the one `#[unsafe(no_mangle)]` there.) `capture`: ImageCaptureCore through
   `objc2` (cameras, phones and card readers: listing, thumbnails, copying files off them), compiled for iOS and macOS

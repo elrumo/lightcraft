@@ -158,16 +158,20 @@ struct Queued {
 }
 
 /// How large a draft (the loupe's render while a slider drags) may be, learned from how long this
-/// host takes to render one. The old fixed 0.6 scale is a few ms on a GPU for Exposure or
-/// Highlights, but Temperature and Noise Reduction rebuild every spatial plane (30–100 ms even on
-/// the GPU, `render_bench`), and the browser build has no GPU at all: it renders on one CPU thread at
-/// 100–300 ns per pixel, where that scale is a few frames a second.
-/// The scale is chosen once per drag and only goes down during it: a draft of another size starts
-/// from a cold stage cache, so a scale that moved with every sample would be slower than either.
+/// host takes to render one. On a GPU most drags render the whole view in a few ms (an Apple M1 Max:
+/// 3–5 ms for a 24 MP raw's Retina loupe, `examples/drag_bench.rs`), so a fast host drafts at the
+/// view's own size and the photo stays sharp while it moves; Temperature and Noise Reduction rebuild
+/// every spatial plane (30–100 ms on a slower GPU, `render_bench`), and the browser build has no GPU
+/// at all: it renders on one CPU thread at 100–300 ns per pixel, where 0.6 is a few frames a second.
+/// The scale is chosen once per drag and only goes down during it, and only when the drafts take
+/// about three times the target: a draft of another size starts from a cold stage cache (a full
+/// raw's: hundreds of ms), so a scale that moved with every sample would be slower than either.
 #[derive(Debug, Default)]
 pub struct DraftBudget {
-    /// Smoothed render time per output pixel (ms) of drafts that ran on a warm stage cache.
+    /// Render time per output pixel (ms) of drafts that ran on a warm stage cache: the median of the
+    /// latest few, so one draft held up by other work on the GPU doesn't shrink the drag.
     ms_per_px: Option<f64>,
+    recent: Vec<f64>,
     /// Size of the last draft that finished: the next one of the same size was warm.
     last: Option<[usize; 2]>,
     /// The scale the drag in progress renders at.
@@ -177,23 +181,37 @@ pub struct DraftBudget {
 }
 
 impl DraftBudget {
-    /// What a draft should take (ms): about two frames at 60 Hz. (A browser renders the drafts of a
-    /// drag on several workers in turn, so this is the lag behind the slider, not the update rate.)
-    const TARGET_MS: f64 = 40.0;
-    /// Linear scale limits. The ceiling is the scale drafts always had.
-    const MAX: f32 = 0.6;
+    /// What a draft should take (ms). Natively one draft renders at a time and the next waits for it,
+    /// so this is the update rate: about 50 a second. (A browser renders the drafts of a drag on
+    /// several workers in turn, so there it is the lag behind the slider: about two frames at 60 Hz.)
+    const TARGET_MS: f64 = if cfg!(target_arch = "wasm32") { 40.0 } else { 20.0 };
+    /// Linear scale limits: natively up to the view's own size; the browser keeps the old ceiling.
+    const MAX: f32 = if cfg!(target_arch = "wasm32") { 0.6 } else { 1.0 };
     const MIN: f32 = 0.2;
-    /// Before anything is measured: a CPU-only host (the browser) starts small.
-    const GUESS: f32 = if cfg!(target_arch = "wasm32") { 0.35 } else { Self::MAX };
+    /// Before anything is measured (a session's first drag): the scale drafts always had, smaller on a
+    /// CPU-only host (the browser).
+    const GUESS: f32 = if cfg!(target_arch = "wasm32") { 0.35 } else { 0.6 };
+    /// The frame's draft scale from which a zoomed view's windows are drafted at full size.
+    const WINDOW_FULL: f32 = 0.6;
+    /// How many warm drafts the cost is the median of.
+    const SAMPLES: usize = 5;
+    /// A drag's scale shrinks only below this share of it (the drafts take ~2.8 × the target).
+    const SHRINK: f32 = 0.6;
 
     /// A draft of `size` finished in `ms`.
     pub fn note(&mut self, size: [usize; 2], ms: f64) {
         let warm = self.last == Some(size);
         self.last = Some(size);
         let px = size[0] as f64 * size[1] as f64;
-        if warm && ms > 0.0 && px > 0.0 {
-            let c = ms / px;
-            self.ms_per_px = Some(self.ms_per_px.map_or(c, |old| old + (c - old) * 0.3));
+        let c = ms / px;
+        if warm && c.is_finite() && c > 0.0 {
+            if self.recent.len() >= Self::SAMPLES {
+                self.recent.remove(0);
+            }
+            self.recent.push(c);
+            let mut sorted = self.recent.clone();
+            sorted.sort_by(f64::total_cmp);
+            self.ms_per_px = sorted.get(sorted.len() / 2).copied();
         }
     }
 
@@ -213,7 +231,7 @@ impl DraftBudget {
         // (steps of 0.05, so the render size doesn't change with every sample)
         let want = if want.is_finite() { (want * 20.0).round() / 20.0 } else { Self::GUESS };
         let scale = match self.frozen {
-            Some(f) if want >= f * 0.75 => f,
+            Some(f) if want >= f * Self::SHRINK => f,
             _ => want,
         };
         self.frozen = Some(scale);
@@ -223,9 +241,10 @@ impl DraftBudget {
 
     /// The linear scale of a zoomed view's window draft, given the whole-frame draft's `scale`: windows
     /// hold only what is on screen and were always drafted at full size, which a fast host still does
-    /// (`scale` at its ceiling); a slower one shrinks them in proportion to how far the frame's draft went down.
+    /// (`scale` at [`Self::WINDOW_FULL`] or more); a slower one shrinks them in proportion to how far the
+    /// frame's draft went below it.
     pub fn window_scale(scale: f32) -> f32 {
-        if scale.is_finite() { (scale / Self::MAX).clamp(Self::MIN / Self::MAX, 1.0) } else { 1.0 }
+        if scale.is_finite() { (scale / Self::WINDOW_FULL).clamp(Self::MIN / Self::WINDOW_FULL, 1.0) } else { 1.0 }
     }
 
     /// For diagnostics: the scale of the latest drag, and the learned render cost (ms per megapixel).
@@ -1612,13 +1631,14 @@ mod draft_budget_tests {
     }
 
     #[test]
-    fn a_fast_host_keeps_the_old_scale_and_a_slow_one_shrinks_the_draft() {
-        // a GPU: a few ms for a 1.5 MP draft
+    fn a_fast_host_drafts_at_full_size_and_a_slow_one_shrinks_the_draft() {
+        // a GPU: a few ms for a 3 MP view, drafted at its own size (natively; the browser stops at 0.6)
         assert_eq!(learned(3.0).scale(true, 3e6), DraftBudget::MAX);
-        // the browser's CPU worker: ~100 ns a pixel makes 0.4 MP the most that fits 40 ms
+        // a CPU at ~100 ns a pixel: what fits the target (0.2 MP natively, 0.4 MP in the browser)
         let s = learned(100.0).scale(true, 3e6);
         let px = 3e6 * f64::from(s) * f64::from(s);
-        assert!((0.25e6..0.5e6).contains(&px), "scale {s} is {px} px");
+        let fits = DraftBudget::TARGET_MS / 1e-4;
+        assert!((fits * 0.65..fits * 1.35).contains(&px), "scale {s} is {px} px, {fits} fit");
         // a hopeless host stops at the floor
         assert_eq!(learned(10_000.0).scale(true, 3e6), DraftBudget::MIN);
     }
@@ -1638,8 +1658,14 @@ mod draft_budget_tests {
         let mut b = learned(3.0);
         let first = b.scale(true, 3e6);
         assert_eq!(first, DraftBudget::MAX);
-        // a little noise in the samples moves nothing
+        // a little noise in the samples moves nothing, nor does one draft held up by other work
         b.note([1000, 700], 2.6);
+        b.note([1000, 700], 70.0);
+        assert_eq!(b.scale(true, 3e6), first);
+        // drafts twice as slow as the target keep the size too (a new size would start cold: a long stall)
+        for _ in 0..6 {
+            b.note([1000, 700], 9.5);
+        }
         assert_eq!(b.scale(true, 3e6), first);
         // a slider that turns out much slower (it redoes more per tick) shrinks the draft...
         for _ in 0..12 {
@@ -1663,9 +1689,9 @@ mod draft_budget_tests {
         assert_eq!(DraftBudget::window_scale(DraftBudget::MAX), 1.0);
         assert_eq!(DraftBudget::window_scale(1.0), 1.0);
         assert!((DraftBudget::window_scale(0.3) - 0.5).abs() < 1e-6);
-        assert!((DraftBudget::window_scale(DraftBudget::MIN) - DraftBudget::MIN / DraftBudget::MAX).abs() < 1e-6);
+        assert!((DraftBudget::window_scale(DraftBudget::MIN) - DraftBudget::MIN / DraftBudget::WINDOW_FULL).abs() < 1e-6);
         assert_eq!(DraftBudget::window_scale(f32::NAN), 1.0);
-        assert!(DraftBudget::window_scale(0.0) >= DraftBudget::MIN / DraftBudget::MAX);
+        assert!(DraftBudget::window_scale(0.0) >= DraftBudget::MIN / DraftBudget::WINDOW_FULL);
     }
 
     #[test]

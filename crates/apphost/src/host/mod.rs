@@ -71,6 +71,22 @@ const VARIANT_WANTED: Duration = Duration::from_secs(10);
 /// Thumbnails kept known to the scheduler beyond what `render.retain` lists.
 const MAX_THUMBS: usize = 600;
 
+/// Bytes a pixel of an original takes once decoded for a zoomed window: the linear source on the CPU
+/// (12), its copy on the GPU (16), and the decode's temporaries (measured: 24 MP CR3, 12 MP ProRAW).
+const ORIGINAL_BYTES_PER_PX: f64 = 36.0;
+
+/// What is kept free beside a decoded original: the zoomed window's renders and the app's pictures.
+const ORIGINAL_RESERVE: f64 = 600.0 * 1048576.0;
+
+/// Whether decoding an original of `px` pixels leaves room under the app's memory limit, given what the
+/// system says is `left` before it ends the app (`None`: no such limit, a desktop) and whether the
+/// original is `decoded` already (a 48 MP ProRAW: 1.7 GB, on an iPhone 17 Pro that the system ends at
+/// about 3.3 GB).
+fn original_fits(left: Option<usize>, decoded: bool, px: f64) -> bool {
+    let Some(left) = left else { return true };
+    decoded || px.is_finite() && px * ORIGINAL_BYTES_PER_PX + ORIGINAL_RESERVE <= left as f64
+}
+
 enum Msg {
     /// A frontend's request: answered with a `reply` event.
     Request(Request),
@@ -603,6 +619,8 @@ impl Engine {
                 Ok(Value::Array(v))
             }
             "host.state" => Ok(serde_json::to_value(self.snapshot()).unwrap_or_default()),
+            // what memory the engine holds: its caches (`library.memory`) and the views' stage caches
+            "host.memory" => Ok(json!({"engine": self.session.memory_report(), "views": self.sched.memory()})),
             "host.uiCommands" => Ok(Value::Array(
                 crate::ui_commands::UI_COMMANDS
                     .iter()
@@ -1161,10 +1179,22 @@ impl Engine {
         if !(nw.is_finite() && nh.is_finite() && nw >= 1.0 && nh >= 1.0) {
             return;
         }
+        // a phone ends the app past its memory limit: when decoding the original for a window past the
+        // preview's size would take it there, the windows are cut from the preview's frame instead
+        // (magnified past it: soft, but the app stays)
+        let native_long = nw.max(nh).round() as usize;
+        let decoded = self.session.media.has_source(id, lightcraft_engine::SourceLevel::Full);
+        let px = f64::from(photo.width) * f64::from(photo.height);
+        let native_long = if original_fits(lightcraft_sysmem::available_memory(), decoded, px) {
+            native_long
+        } else {
+            log::info!("zoom: the original of photo {} doesn't fit in the memory left: windows from the preview", id.0);
+            native_long.min(lightcraft_engine::SourceLevel::Preview.max_edge())
+        };
         let sizes = region::ViewSizes {
             drawn_long: drawn as f32,
             canvas_long: canvas.0.max(canvas.1) as f32,
-            native_long: nw.max(nh).round() as usize,
+            native_long,
             texture_side: TEXTURE_SIDE,
             draft: None,
             windows: region::overlay_supports_window(overlay),

@@ -839,3 +839,22 @@ fn signing_out_ends_in_an_empty_library_and_a_state_event_that_says_so() {
     assert_eq!(after["state"]["visibleCount"], 0, "{after}");
     let _ = std::fs::remove_dir_all(&root);
 }
+
+// Zoomed in on a phone, the original is decoded for the window only while it fits in the memory the
+// system still allows (iOS ends the app past it: zoomed into a 48 MP ProRAW)
+#[test]
+fn a_zoom_decodes_the_original_only_when_it_fits_in_memory() {
+    let mp48 = 8064.0 * 6048.0;
+    // a desktop: no limit
+    assert!(original_fits(None, false, mp48));
+    // an iPhone 17 Pro with a 48 MP ProRAW open: 1.6 GB left is not enough, 3 GB is
+    assert!(!original_fits(Some(1_600 << 20), false, mp48));
+    assert!(original_fits(Some(3_000 << 20), false, mp48));
+    // decoded already: nothing more to hold
+    assert!(original_fits(Some(64 << 20), true, mp48));
+    // a 12 MP photo fits where a 48 MP one doesn't
+    assert!(original_fits(Some(1_600 << 20), false, 4032.0 * 3024.0));
+    // nonsense sizes never decode
+    assert!(!original_fits(Some(1 << 30), false, f64::NAN));
+    assert!(!original_fits(Some(1 << 30), false, f64::INFINITY));
+}

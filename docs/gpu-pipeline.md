@@ -282,9 +282,14 @@ the device on their first GPU render. `lightcraft_gpu::ready()` asks without blo
 ## Drafts during slider drags
 While a slider drags, the loupe renders a draft (`RenderJob::draft`: smaller wide-radius blurs, a smaller picture).
 The picture's linear scale used to be a fixed 0.6 of the loupe's size; it now comes from `DraftBudget`
-(`crates/ui-egui/src/render.rs`), which learns the host's cost per pixel from the drafts that finish and picks
-the scale once per drag, between 0.2 and 0.6, aiming at about 40 ms a tick. A host that renders 0.6 in time
-(a GPU, for Exposure, Highlights, Clarity: 3–16 ms) keeps 0.6. The ones that don't shrink: the browser, whose CPU
+(`crates/apphost/src/render.rs`, shared by egui and the SwiftUI app), which learns the host's cost per pixel from
+the drafts that finish (the median of the latest five, so one draft held up by other GPU work doesn't shrink a
+drag) and picks the scale once per drag (lowering it mid-drag only when drafts take about three times the target:
+a draft of a new size starts from a cold stage cache): natively between 0.2 and 1 (the view's own size), aiming at 20 ms a draft
+(one renders at a time, so that is about 50 pictures a second), and in the browser between 0.2 and 0.6 at 40 ms.
+A session's first drag starts at 0.6. A GPU renders most drags at full size in time (an M1 Max: 3–5 ms for a 24 MP
+raw's Retina loupe, `crates/apphost/examples/drag_bench.rs`), so the photo stays sharp while it moves and nothing
+jumps when the slider is let go. The ones that shrink: the browser, whose CPU
 pipeline costs 100–500 ns a pixel (docs/web.md), and the sliders that rebuild every spatial plane, White Balance
 and Noise Reduction, which are 30–100 ms a tick even on the GPU at 1920 × 1280 (`render_bench`, M1 Max, 20 MP CR3,
 2026-10-13, on a machine so loaded that only CPU time was usable):
