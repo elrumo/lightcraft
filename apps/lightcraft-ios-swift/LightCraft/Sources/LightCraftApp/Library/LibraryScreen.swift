@@ -32,6 +32,12 @@ struct LibraryScreen: View {
             }
             }
         }
+        .onChange(of: model.gridJump) { _, index in
+            if let index {
+                jump = index
+                model.gridJump = nil
+            }
+        }
         .safeAreaBar(edge: .top) {
             if !model.selectMode { FilterChips(chips: chips["chips"].array ?? []) }
         }
@@ -182,11 +188,14 @@ struct LibraryScreen: View {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Albums", systemImage: "rectangle.stack") { model.sheet = .albums }
                 }
+                .duoPriority(.high)
             }
             if model.albums.sync.map({ $0.state != "off" }) == true {
                 ToolbarItem(placement: .topBarTrailing) {
                     CloudButton()
                 }
+                // (it says something while it works or when something is wrong; otherwise it can go first)
+                .duoPriority(["syncing", "error", "conflict"].contains(model.state.sync?.state ?? "") || model.state.unsaved > 0 ? .high : .low)
                 ToolbarSpacer(.fixed, placement: .topBarTrailing)
             }
             if model.library.count > 0 {
@@ -198,12 +207,14 @@ struct LibraryScreen: View {
                 }
                 ToolbarSpacer(.fixed, placement: .topBarTrailing)
             }
-            ToolbarItemGroup(placement: .topBarTrailing) {
+            ToolbarItem(placement: .topBarTrailing) {
                 Button("Filter", systemImage: model.library.state?.isFiltered == true ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease") {
                     model.sheet = .filter
                 }
-                GridMoreMenu()
             }
+            .duoPriority(.high)
+            // the grid's "…": the system's overflow menu on iOS 27, so these and what overflowed are in one place
+            DuoOverflow { GridMoreItems() }
             // a phone's search waits in the bottom bar as a button; an iPad's is in the top bar
             if horizontalSize != .regular {
                 DefaultToolbarItem(kind: .search, placement: .bottomBar)
@@ -227,6 +238,7 @@ struct LibraryScreen: View {
             ToolbarItem(placement: .bottomBar) {
                 addButton
             }
+            .duoPriority(.high)
         }
     }
 
@@ -405,13 +417,14 @@ struct SortItems: View {
     }
 }
 
-/// The grid's "…": albums, the grid's look, Map, Settings, Help and All Commands.
-struct GridMoreMenu: View {
+/// The grid's "…" actions: albums, the grid's look, Map, Settings, Help and All Commands. The items only:
+/// `DuoOverflow` puts them in the overflow menu.
+struct GridMoreItems: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
         @Bindable var prefs = model.prefs
-        Menu {
+        Group {
             Button("New Album…", systemImage: "rectangle.stack.badge.plus") {
                 model.sheet = .newAlbum(parent: nil, folder: false, addSelected: false)
             }
@@ -452,8 +465,6 @@ struct GridMoreMenu: View {
             Section {
                 Button("All Commands…", systemImage: "command") { model.path.append(.commands) }
             }
-        } label: {
-            Label("More", systemImage: "ellipsis")
         }
     }
 }

@@ -21,12 +21,11 @@ struct SelectionBar: ToolbarContent {
                 .disabled(none)
         }
         ToolbarSpacer(.flexible, placement: .bottomBar)
-        ToolbarItemGroup(placement: .bottomBar) {
+        ToolbarItem(placement: .bottomBar) {
             Button("Export", systemImage: "square.and.arrow.up") { model.sheet = .export(ids) }
                 .disabled(none)
-            Menu("More", systemImage: "ellipsis") { SelectionMoreItems(ids: ids) }
-                .disabled(none)
         }
+        DuoOverflow(placement: .bottomBar) { SelectionMoreItems(ids: ids).disabled(none) }
         ToolbarSpacer(.flexible, placement: .bottomBar)
         ToolbarItem(placement: .bottomBar) {
             DeleteButton(ids: ids) { Label("Delete", systemImage: "trash") }

@@ -49,19 +49,16 @@ struct PhotoPicture: View {
 /// the active photo (ratings and flags go to it).
 struct CompareView: View {
     @Environment(AppModel.self) private var model
-    @Environment(\.verticalSizeClass) private var verticalSize
     let ids: [UInt64]
     @State private var select: UInt64?
     @State private var candidate: UInt64?
+    /// The hinge across the screen when an iPhone Duo is partly open: each photo goes on a page of its own.
+    @State private var fold: DuoFold?
 
     var body: some View {
-        let layout = verticalSize == .compact || ids.count < 2 ? AnyLayout(HStackLayout(spacing: 8)) : AnyLayout(HStackLayout(spacing: 8))
         VStack(spacing: 8) {
-            layout {
-                side(select, "Select")
-                side(candidate, "Candidate")
-            }
-            .padding(8)
+            photos
+                .padding(8)
             GlassEffectContainer {
                 HStack(spacing: 12) {
                     Button("Previous Candidate", systemImage: "chevron.left") { step(-1) }
@@ -74,14 +71,39 @@ struct CompareView: View {
                 .buttonBorderShape(.circle)
                 .controlSize(.large)
             }
+            // (not across a hinge: on the second page of a book, the lower one of a tabletop)
+            .padding(.leading, fold?.vertical == true ? fold?.frame.maxX ?? 0 : 0)
             .padding(.bottom, 8)
         }
         .background(Color(uiColor: .systemBackground))
+        .onFold($fold)
         .navigationTitle("Compare")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             if select == nil { select = model.state.active.flatMap { ids.contains($0) ? $0 : nil } ?? ids.first }
             if candidate == nil { candidate = ids.first { $0 != select } }
+        }
+    }
+
+    /// The Select and the Candidate side by side; with a hinge, the Select on one page and the Candidate on the other.
+    @ViewBuilder private var photos: some View {
+        if let fold, fold.vertical {
+            HStack(spacing: 0) {
+                side(select, "Select").frame(width: max(0, fold.frame.minX - 8))
+                Color.clear.frame(width: fold.frame.width)
+                side(candidate, "Candidate")
+            }
+        } else if let fold {
+            VStack(spacing: 0) {
+                side(select, "Select").frame(height: max(0, fold.frame.minY - 8))
+                Color.clear.frame(height: fold.frame.height)
+                side(candidate, "Candidate")
+            }
+        } else {
+            HStack(spacing: 8) {
+                side(select, "Select")
+                side(candidate, "Candidate")
+            }
         }
     }
 
