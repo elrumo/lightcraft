@@ -78,6 +78,24 @@ fn months_count_every_photo_in_a_collapsed_stack() {
     assert_eq!(years.as_array().unwrap().iter().map(|b| b["count"].as_u64().unwrap()).sum::<u64>(), before);
 }
 
+/// The grid's photos say where they are in a stack (the stack badge), collapsed or expanded.
+#[test]
+fn query_tells_a_photos_place_in_its_stack() {
+    let mut s = Session::with_demo();
+    let ids: Vec<u64> = s.visible_cloned().iter().take(3).map(|id| id.0).collect();
+    s.execute("stack.group", &json!({"ids": ids, "top": ids[0], "collapsed": true})).unwrap();
+    let page = s.execute("catalog.query", &json!({"limit": 1000})).unwrap();
+    let photos = page["photos"].as_array().unwrap();
+    let top = photos.iter().find(|p| p["id"] == ids[0]).unwrap();
+    assert_eq!(top["stack"], json!({"count": 3, "position": 0, "collapsed": true}));
+    assert!(photos.iter().all(|p| p["id"] != ids[1]), "a collapsed stack shows its top only");
+    assert!(photos.iter().filter(|p| !ids.contains(&p["id"].as_u64().unwrap())).all(|p| p.get("stack").is_none()));
+    s.execute("stack.toggle", &json!({"ids": [ids[0]]})).unwrap();
+    let page = s.execute("catalog.query", &json!({"limit": 1000})).unwrap();
+    let second = page["photos"].as_array().unwrap().iter().find(|p| p["id"] == ids[1]).unwrap().clone();
+    assert_eq!(second["stack"], json!({"count": 3, "position": 1, "collapsed": false}));
+}
+
 /// The filter's lists: each value with its count, cameras most used first.
 #[test]
 fn facets_list_the_filter_choices() {

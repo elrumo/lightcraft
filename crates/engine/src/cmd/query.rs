@@ -77,7 +77,7 @@ fn pagination_usize(value: u64) -> usize {
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
-        cmd!(query "catalog.query", "Query Photos", [], None, "{filter?: Filter, sort?: Sort, offset?, limit?} — omit filter to list the current view", always, |s, p| {
+        cmd!(query "catalog.query", "Query Photos", [], None, "{filter?: Filter, sort?: Sort, offset?, limit?} — omit filter to list the current view; a stacked photo has `stack: {count, position, collapsed}`", always, |s, p| {
             let ids = if p.get("filter").is_some() || p.get("sort").is_some() {
                 let f = p.get("filter").map(|f| serde_json::from_value(f.clone())).transpose().map_err(|e| bad("catalog.query", e.to_string()))?.unwrap_or_default();
                 let so = p.get("sort").map(|f| serde_json::from_value(f.clone())).transpose().map_err(|e| bad("catalog.query", e.to_string()))?.unwrap_or_default();
@@ -87,7 +87,23 @@ pub fn specs() -> Vec<CommandSpec> {
             };
             let off = pagination_usize(p.get("offset").and_then(Value::as_u64).unwrap_or(0));
             let lim = pagination_usize(p.get("limit").and_then(Value::as_u64).unwrap_or(200));
-            let items: Vec<Value> = ids.iter().skip(off).take(lim).filter_map(|id| s.catalog.photo(*id)).map(|p| photo_summary(p)).collect();
+            // a stacked photo's place in its stack: the grid's stack badge
+            let stacks = if s.catalog.stacks().next().is_some() { s.catalog.stack_index() } else { Default::default() };
+            let items: Vec<Value> = ids
+                .iter()
+                .skip(off)
+                .take(lim)
+                .filter_map(|id| s.catalog.photo(*id))
+                .map(|p| {
+                    let mut v = photo_summary(p);
+                    if let Some((sid, pos)) = stacks.get(&p.id)
+                        && let Some(st) = s.catalog.stack(*sid)
+                    {
+                        v["stack"] = json!({"count": st.photos.len(), "position": pos, "collapsed": st.collapsed});
+                    }
+                    v
+                })
+                .collect();
             Ok(json!({"total": ids.len(), "photos": items}))
         }),
         cmd!(query "catalog.stats", "Catalog Statistics", [], None, "{}", always, |s, _| {
