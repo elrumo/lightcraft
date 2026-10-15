@@ -337,6 +337,15 @@ fn tiff_samples_narrower_than_a_byte() {
     assert!(decode(&packed_tiff(10, 2, 1, 1, &rows[..3]), DecodeOptions::default()).is_err());
 }
 
+/// A copy cut off in the middle of its pixel data says so, with how much is missing, instead of the
+/// bare "failed to fill whole buffer" of the `tiff` crate.
+#[test]
+fn tiff_cut_short_says_so() {
+    let whole = packed_tiff(4, 4, 8, 1, &[7u8; 16]);
+    let e = decode(&whole[..whole.len() - 5], DecodeOptions::default()).unwrap_err().to_string();
+    assert!(e.contains("file is incomplete: 5 bytes of image data are missing"), "{e}");
+}
+
 /// A strip past the `tiff` crate's default 128 MiB chunk limit: a file that keeps its whole picture
 /// in one strip (a 16-bit RGB of 23 MP or more, as some multi-GB edited TIFFs do) was refused
 /// with "decoder limits exceeded". The limit counts the strip's stated length, so the pixels here
@@ -845,4 +854,57 @@ fn jxl_bad_input_is_an_error() {
     let b =
         encode_jxl(&EncodeImage::new(1, 1, 3, Samples::U8(&one)), &JxlOptions { quality: 1, ..Default::default() }, &EncodeMeta::default()).unwrap();
     assert_eq!(decode(&b, DecodeOptions::default()).unwrap().width, 1);
+}
+
+/// A one-strip-per-plane, uncompressed 8-bit RGB TIFF (PlanarConfiguration 2, as Photoshop writes with
+/// "Pixel Order: Per Channel"): `planes` holds the red, green and blue plane in turn.
+fn planar_rgb_tiff(width: u16, height: u16, planes: &[u8]) -> Vec<u8> {
+    const BITS_AT: u32 = 8 + 2 + 10 * 12 + 4;
+    const OFFSETS_AT: u32 = BITS_AT + 6;
+    const COUNTS_AT: u32 = OFFSETS_AT + 12;
+    const DATA_AT: u32 = COUNTS_AT + 12;
+    let plane = planes.len() as u32 / 3;
+    let short = |tag: u16, v: u16| [&tag.to_le_bytes()[..], &3u16.to_le_bytes(), &1u32.to_le_bytes(), &v.to_le_bytes(), &[0, 0]].concat();
+    let at = |tag: u16, ty: u16, count: u32, v: u32| [&tag.to_le_bytes()[..], &ty.to_le_bytes(), &count.to_le_bytes(), &v.to_le_bytes()].concat();
+    let mut b = b"II*\0".to_vec();
+    b.extend(8u32.to_le_bytes());
+    b.extend(10u16.to_le_bytes());
+    b.extend(short(256, width));
+    b.extend(short(257, height));
+    b.extend(at(258, 3, 3, BITS_AT));
+    b.extend(short(259, 1));
+    b.extend(short(262, 2));
+    b.extend(at(273, 4, 3, OFFSETS_AT));
+    b.extend(short(277, 3));
+    b.extend(short(278, height));
+    b.extend(at(279, 4, 3, COUNTS_AT));
+    b.extend(short(284, 2));
+    b.extend(0u32.to_le_bytes());
+    assert_eq!(b.len(), BITS_AT as usize);
+    for _ in 0..3 {
+        b.extend(8u16.to_le_bytes());
+    }
+    for i in 0..3 {
+        b.extend((DATA_AT + i * plane).to_le_bytes());
+    }
+    for _ in 0..3 {
+        b.extend(plane.to_le_bytes());
+    }
+    b.extend_from_slice(planes);
+    b
+}
+
+/// A planar RGB TIFF used to fail with "sample buffer too short": the `tiff` crate's `read_image` returns
+/// only the first plane of one, and the interleave step left it as it was.
+#[test]
+fn tiff_planar_rgb() {
+    // 2 × 1: pixel 0 is red, pixel 1 is blue.
+    let planes = [255u8, 0, /* G */ 0, 0, /* B */ 0, 255];
+    let d = decode(&planar_rgb_tiff(2, 1, &planes), DecodeOptions::default()).unwrap();
+    let (red, blue) = (d.image.get(0, 0), d.image.get(1, 0));
+    assert!(red[0] > 0.99 && red[1] < 0.01 && red[2] < 0.01, "{red:?}");
+    assert!(blue[0] < 0.01 && blue[1] < 0.01 && blue[2] > 0.99, "{blue:?}");
+    // a plane cut short is an error, not a panic or a wrong picture
+    let cut = planar_rgb_tiff(2, 1, &planes);
+    assert!(decode(&cut[..cut.len() - 1], DecodeOptions::default()).is_err());
 }
