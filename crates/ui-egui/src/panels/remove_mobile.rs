@@ -69,6 +69,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut Ui, t: &Tokens, landscape: bool) {
     } else {
         egui::Panel::top("remove_top").show_separator_line(false).exact_size(TITLE_H).frame(frame(t.canvas)).show(ui, |ui| title_bar(app, ui, t));
         egui::Panel::bottom("remove_bar").show_separator_line(false).exact_size(BAR_H).frame(frame(t.chrome)).show(ui, |ui| {
+            super::compact::fill_below(ui, ui.max_rect(), t.chrome);
             bottom_bar(app, ui, t);
         });
         egui::Panel::bottom("remove_panel").show_separator_line(false).exact_size(panel_height(app)).frame(frame(t.chrome)).show(ui, |ui| {
