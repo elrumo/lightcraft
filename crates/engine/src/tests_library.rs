@@ -186,6 +186,32 @@ fn new_library_without_seed_is_empty_and_compacts() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Photo, album and mask ids are only unique within a library: what the old one's named (the album
+/// photos go to, the photo worked on last, the "before" settings, the selected mask) means nothing in
+/// the next library, which can have photos and albums with the same numbers.
+#[test]
+fn opening_another_library_forgets_what_named_the_old_librarys_ids() {
+    let (a, b) = (temp_dir("forget-a"), temp_dir("forget-b"));
+    let mut s = open(&a, true);
+    let first = s.catalog.photos().next().map(|p| p.id).unwrap();
+    let album = lightcraft_catalog::AlbumId(s.execute("album.create", &json!({"name": "Picks"})).unwrap()["id"].as_u64().unwrap());
+    s.target_album = Some(album);
+    s.previous_active = Some(first);
+    s.active_mask = Some(3);
+    s.active_spot = Some(1);
+    s.before.insert(first, s.catalog.photo(first).unwrap().develop.clone());
+    s.signatures.insert("look-alike".into(), [0.5; 64]);
+    let generation = s.library_generation();
+    s.open_library(&b, false).unwrap();
+    assert_ne!(s.library_generation(), generation, "frontends reset what they show");
+    assert!(s.catalog.is_empty());
+    assert_eq!((s.target_album, s.previous_active, s.active_mask, s.active_spot), (None, None, None, None));
+    assert!(s.before.is_empty() && s.signatures.is_empty());
+    drop(s);
+    let _ = std::fs::remove_dir_all(&a);
+    let _ = std::fs::remove_dir_all(&b);
+}
+
 #[test]
 fn profile_favorites_and_recent_survive_reopen() {
     let dir = temp_dir("profiles");

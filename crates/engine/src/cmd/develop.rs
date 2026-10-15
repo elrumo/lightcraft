@@ -30,6 +30,11 @@ fn groups_param(p: &Value) -> Option<Vec<SettingsGroup>> {
     p.get("groups").and_then(|g| serde_json::from_value(g.clone()).ok())
 }
 
+/// The Generative Expand model ids, for messages.
+fn expand_ids() -> String {
+    crate::expand::ExpandModel::ALL.iter().map(|m| m.id()).collect::<Vec<_>>().join(", ")
+}
+
 fn crop_dims(s: &Session, id: PhotoId) -> (f64, f64) {
     let p = s.catalog.photo(id);
     let (w, h) = p.map(|p| (p.width.max(1) as f64, p.height.max(1) as f64)).unwrap_or((3.0, 2.0));
@@ -767,15 +772,23 @@ pub fn specs() -> Vec<CommandSpec> {
             "Generate",
             [],
             None,
-            "{model?: \"migan\"|\"lama\"|\"classic\" (default: the best one on this device, see crop.expandModels), wait?: bool (default true)} — Generative Expand: paints the area of the crop past the photo's edges on this device and stores it with the photo (one undo step, \"Generative Expand\"). Needs Expand on. migan and lama are optional downloads (models.download, after the user agreed); classic needs none. With wait: false it runs in the background (a row in the activity stack; activity.cancel stops it)",
+            "{model?: \"migan\"|\"lama\"|\"sd15-inpaint\"|\"kandinsky22-inpaint\"|\"sdxl-inpaint\"|\"classic\" (default: the chosen model when it is downloaded, else the most capable one that is, see crop.expandModels), wait?: bool (default true)} — Generative Expand: paints the area of the crop past the photo's edges on this device and stores it with the photo (one undo step, \"Generative Expand\"). Needs Expand on. The models are optional downloads (models.download, after the user agreed) offered by what this device can run; classic needs none. The diffusion models (sd15-inpaint, kandinsky22-inpaint, sdxl-inpaint) draw new detail and take from tens of seconds on a GPU to minutes on a CPU. With wait: false it runs in the background (a row in the activity stack; activity.cancel stops it)",
             has_active,
             |s, p| {
                 let id = active(s, "crop.generate")?;
                 let model = match p.get("model").and_then(Value::as_str) {
                     None | Some("auto") => None,
+                    Some(m) if crate::expand::EXTERNAL_MODELS.contains(&m) => {
+                        return Err(bad(
+                            "crop.generate",
+                            format!(
+                                "`{m}` paints through the app's own sheet: get the canvas with crop.expandCanvas and give its picture to crop.applyExpandPicture"
+                            ),
+                        ));
+                    }
                     Some(m) => Some(
                         crate::expand::ExpandModel::from_id(m)
-                            .ok_or_else(|| bad("crop.generate", format!("unknown model `{m}` (migan, lama, classic)")))?,
+                            .ok_or_else(|| bad("crop.generate", format!("unknown model `{m}` ({})", expand_ids())))?,
                     ),
                 };
                 if bool_or(p, "wait", true) {
@@ -791,11 +804,74 @@ pub fn specs() -> Vec<CommandSpec> {
             "Generative Expand Models",
             [],
             None,
-            "{} — the ways Generative Expand can paint on this device: id, label, note, available (this device can run it), ready (downloaded and on), downloadBytes, licence, credit, default; and running ({photo, model}) while a Generate runs",
+            "{} — the ways Generative Expand can paint: models (id, label, note, available: this device runs it, ready: downloaded and on, downloadBytes, licence, credit, restricted: its licence restricts use, diffusion, recommended: Automatic's pick here, chosen: what the pickers show, default: what crop.generate uses without a model); automatic (no model chosen: Automatic); device (class computer|phone|browser, memoryBytes, gpu, cores); and running ({photo, model}) while a Generate runs",
             always,
             |s, _| {
                 let running = s.expand_running().map(|(photo, m)| json!({"photo": photo.0, "model": m.id()}));
-                Ok(json!({"models": s.expand_choices(), "running": running}))
+                Ok(json!({"models": s.expand_choices(), "automatic": s.expand.preferred.is_none(), "device": s.device, "running": running}))
+            }
+        ),
+        cmd!(
+            "crop.expandModel",
+            "Choose Generative Expand Model",
+            [],
+            None,
+            "{model: \"auto\"|\"migan\"|\"lama\"|\"sd15-inpaint\"|\"kandinsky22-inpaint\"|\"sdxl-inpaint\"|\"classic\"} — what Generate paints with (Settings → AI Models, the crop tool's Fill With). auto: the best model for this device (crop.expandModels → recommended). Refused for a model this device doesn't run. Answers {model: the chosen id, automatic, ready}",
+            always,
+            |s, p| {
+                const C: &str = "crop.expandModel";
+                let m = p.get("model").and_then(Value::as_str).ok_or_else(|| bad(C, format!("`model` is required: auto, {}", expand_ids())))?;
+                let pick = match m {
+                    "auto" => None,
+                    id => Some(
+                        crate::expand::ExpandModel::from_id(id).ok_or_else(|| bad(C, format!("unknown model `{id}` (auto, {})", expand_ids())))?,
+                    ),
+                };
+                s.set_expand_preference(pick).map_err(|e| bad(C, e))?;
+                let chosen = s.chosen_expand_model();
+                Ok(json!({"model": chosen.id(), "automatic": pick.is_none(), "ready": s.expand_ready(chosen)}))
+            }
+        ),
+        cmd!(
+            query "crop.expandCanvas",
+            "Generative Expand Canvas",
+            [],
+            None,
+            "{maxEdge?: 1024} → {photo, key, width, height, png: base64}. The area Generative Expand paints as a picture for a painter outside the engine (the SwiftUI app's Apple Image Playground): the photo where it is, a placeholder over the new area. Its answer goes to `crop.applyExpandPicture` with the same `key`. Needs Expand on",
+            has_active,
+            |s, p| {
+                let id = active(s, "crop.expandCanvas")?;
+                let edge = p.get("maxEdge").and_then(Value::as_u64).and_then(|v| usize::try_from(v).ok()).unwrap_or(1024);
+                let canvas = s.expand_canvas(id, edge).map_err(|e| bad("crop.expandCanvas", e))?;
+                use base64::Engine as _;
+                Ok(json!({"photo": id.0, "key": canvas.key, "width": canvas.width, "height": canvas.height, "png": base64::engine::general_purpose::STANDARD.encode(&canvas.png)}))
+            }
+        ),
+        cmd!(
+            "crop.applyExpandPicture",
+            "Apply Generative Expand Picture",
+            [],
+            None,
+            "{key, model?: \"appleCloud\", path | png: base64} → {photo, model, width, height, storedBytes}. Stores a picture of the canvas made outside the engine (see `crop.expandCanvas`) as the fill: the photo stays as it is, the new area comes from the picture in the photo's tones with the photo's grain (one undo step, \"Generative Expand\"). Refused when the crop changed since the canvas was made, or the picture isn't the canvas's shape",
+            has_active,
+            |s, p| {
+                const C: &str = "crop.applyExpandPicture";
+                let id = active(s, C)?;
+                let key = p.get("key").and_then(Value::as_u64).ok_or_else(|| bad(C, "missing `key` (from crop.expandCanvas)"))?;
+                let model = p.get("model").and_then(Value::as_str).unwrap_or("appleCloud");
+                let done = match (p.get("path").and_then(Value::as_str), p.get("png").and_then(Value::as_str)) {
+                    (Some(path), _) => s.apply_expand_picture_file(id, std::path::Path::new(path), key, model),
+                    (None, Some(data)) => {
+                        use base64::Engine as _;
+                        let bytes = base64::engine::general_purpose::STANDARD
+                            .decode(data.as_bytes())
+                            .map_err(|e| bad(C, format!("`png` isn't base64: {e}")))?;
+                        s.apply_expand_picture(id, &bytes, key, model)
+                    }
+                    (None, None) => return Err(bad(C, "give `path` or `png`")),
+                }
+                .map_err(|e| bad(C, e))?;
+                serde_json::to_value(done).map_err(|e| bad(C, e.to_string()))
             }
         ),
         // ---- HDR editing

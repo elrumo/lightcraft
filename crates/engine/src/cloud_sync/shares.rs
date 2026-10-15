@@ -59,6 +59,11 @@ impl ShareState {
     pub(super) fn take_kind(&mut self, id: u64) -> Option<Kind> {
         self.tasks.remove(&id)
     }
+
+    /// No request about links is waiting or on its way.
+    pub(super) fn idle(&self) -> bool {
+        self.tasks.is_empty() && self.ready.is_empty()
+    }
 }
 
 impl SyncState {

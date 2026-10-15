@@ -7,6 +7,19 @@ use serde_json::json;
 
 use crate::Session;
 use crate::expand::ExpandModel;
+use crate::hardware::{DeviceClass, DeviceProfile, GB};
+
+/// A computer with `gb` GB, `gpu`, `cores` threads.
+fn computer(gb: u64, gpu: bool, cores: usize) -> DeviceProfile {
+    DeviceProfile { class: DeviceClass::Computer, memory_bytes: Some(gb * GB), gpu, cores }
+}
+
+/// A demo session on a mid-range computer without a GPU (the tests don't depend on the machine).
+fn session() -> Session {
+    let mut s = Session::with_demo();
+    s.set_device(computer(16, false, 8));
+    s
+}
 
 fn crop(s: &Session) -> CropGeometry {
     s.develop_of(s.active().unwrap()).unwrap().crop.geometry
@@ -24,7 +37,7 @@ fn has_fill(s: &Session) -> bool {
 
 #[test]
 fn expand_lets_the_crop_reach_past_the_photo() {
-    let mut s = Session::with_demo();
+    let mut s = session();
     let (w, h) = dims(&s);
     // off: a drag stops at the photo's edge
     s.execute("crop.drag", &json!({"handle": "left", "from": [0.0, 0.5], "to": [-0.3, 0.5]})).unwrap();
@@ -60,7 +73,7 @@ fn expand_lets_the_crop_reach_past_the_photo() {
 
 #[test]
 fn classic_generate_fills_the_new_area_as_one_undo_step() {
-    let mut s = Session::with_demo();
+    let mut s = session();
     let id = s.active().unwrap();
     // nothing to fill yet: Expand off, then nothing past the photo
     let e = s.execute("crop.generate", &json!({"model": "classic"})).unwrap_err().to_string();
@@ -104,7 +117,7 @@ fn classic_generate_fills_the_new_area_as_one_undo_step() {
 
 #[test]
 fn generate_in_the_background_shows_in_the_activity_stack() {
-    let mut s = Session::with_demo();
+    let mut s = session();
     s.execute("crop.expand", &json!({"on": true})).unwrap();
     s.execute("crop.set", &json!({"rect": [0.0, -0.2, 1.0, 1.0]})).unwrap();
     let r = s.execute("crop.generate", &json!({"model": "classic", "wait": false})).unwrap();
@@ -128,7 +141,7 @@ fn generate_in_the_background_shows_in_the_activity_stack() {
 
 #[test]
 fn a_cancelled_generate_stores_nothing() {
-    let mut s = Session::with_demo();
+    let mut s = session();
     s.execute("crop.expand", &json!({"on": true})).unwrap();
     s.execute("crop.set", &json!({"rect": [-0.3, -0.3, 1.3, 1.3]})).unwrap();
     s.start_expand(s.active().unwrap(), Some(ExpandModel::Classic)).unwrap();
@@ -149,41 +162,146 @@ fn a_cancelled_generate_stores_nothing() {
 
 #[test]
 fn the_models_are_offered_per_device_and_a_missing_one_says_so() {
-    let mut s = Session::with_demo();
+    let mut s = session();
     let list = s.execute("crop.expandModels", &json!({})).unwrap();
     let ids: Vec<&str> = list["models"].as_array().unwrap().iter().filter_map(|m| m["id"].as_str()).collect();
-    assert_eq!(ids, ["migan", "lama", "classic"]);
-    let classic = &list["models"][2];
+    assert_eq!(ids, ["migan", "lama", "sd15-inpaint", "kandinsky22-inpaint", "sdxl-inpaint", "classic"]);
+    let at = |id: &str| list["models"].as_array().unwrap().iter().find(|m| m["id"] == id).unwrap().clone();
+    let classic = at("classic");
     assert_eq!((classic["ready"].as_bool(), classic["default"].as_bool(), classic["downloadBytes"].as_u64()), (Some(true), Some(true), Some(0)));
-    // on a computer LaMa is offered; no model is on this test's device
-    assert_eq!(list["models"][1]["available"], true);
-    assert_eq!(list["models"][1]["ready"], false);
+    // a 16 GB computer without a GPU: LaMa and the 512- and 768-pixel diffusion models, not SDXL
+    let diffusion = crate::enhance::Enhancer::AVAILABLE;
+    for (id, available) in [("migan", true), ("lama", true), ("sd15-inpaint", diffusion), ("kandinsky22-inpaint", diffusion), ("sdxl-inpaint", false)]
+    {
+        assert_eq!(at(id)["available"], available, "{id}");
+        assert_eq!(at(id)["ready"], false, "{id}");
+    }
+    assert_eq!((at("sd15-inpaint")["restricted"].as_bool(), at("kandinsky22-inpaint")["restricted"].as_bool()), (Some(true), Some(false)));
+    assert_eq!(at("sdxl-inpaint")["diffusion"], true);
+    // Automatic: LaMa on a CPU with 8 threads; nothing is downloaded, so Generate falls back to Classic
+    assert_eq!((list["automatic"].as_bool(), list["device"]["class"].as_str()), (Some(true), Some("computer")));
+    assert_eq!((at("lama")["recommended"].as_bool(), at("lama")["chosen"].as_bool()), (Some(true), Some(true)));
     assert_eq!(s.default_expand_model(), ExpandModel::Classic);
     s.execute("crop.expand", &json!({"on": true})).unwrap();
     s.execute("crop.set", &json!({"rect": [-0.2, 0.0, 1.0, 1.0]})).unwrap();
-    for m in ["migan", "lama"] {
+    for m in ["migan", "lama", "sd15-inpaint", "kandinsky22-inpaint", "sdxl-inpaint"] {
         let e = s.execute("crop.generate", &json!({"model": m})).unwrap_err().to_string();
         assert!(e.contains("not downloaded") || e.contains("isn't available"), "{m}: {e}");
     }
+    if diffusion {
+        let e = s.execute("crop.generate", &json!({"model": "sd15-inpaint"})).unwrap_err().to_string();
+        assert!(e.contains("2.1 GB") && e.contains("OpenRAIL-M") && e.contains("models.download"), "{e}");
+    }
+    let e = s.execute("crop.generate", &json!({"model": "sdxl-inpaint"})).unwrap_err().to_string();
+    assert!(e.contains("isn't available on this device") && e.contains("16 GB"), "{e}");
     assert!(!has_fill(&s));
-    // Settings → AI Models lists LaMa next to MI-GAN where the enhancement models are built in
-    if crate::enhance::Enhancer::AVAILABLE {
-        let ids: Vec<String> = s.models().into_iter().map(|m| m.id).collect();
-        assert!(ids.iter().any(|i| i == "lama") && ids.iter().any(|i| i == "migan"), "{ids:?}");
+    // Settings → AI Models lists every model, offered by the device
+    if diffusion {
+        let models = s.models();
+        let find = |id: &str| models.iter().find(|m| m.id == id).unwrap();
+        assert!(find("lama").available && find("migan").available && find("sd15-inpaint").available && !find("sdxl-inpaint").available);
+        assert!(find("sd15-inpaint").restricted && !find("kandinsky22-inpaint").restricted);
+        assert!(find("sd15-inpaint").download_bytes > 2_000_000_000);
     }
 }
 
+/// What each device is offered, and what Automatic picks there.
+#[test]
+fn the_device_profile_decides_what_is_offered_and_picked() {
+    let phone = |gb: u64, gpu: bool| DeviceProfile { class: DeviceClass::Phone, memory_bytes: Some(gb * GB), gpu, cores: 6 };
+    let browser = DeviceProfile { class: DeviceClass::Browser, memory_bytes: None, gpu: false, cores: 4 };
+    let offered = |p: &DeviceProfile| ExpandModel::ALL.into_iter().filter(|m| m.fits(p)).map(|m| m.id()).collect::<Vec<_>>();
+    let d = crate::enhance::Enhancer::AVAILABLE && !cfg!(target_arch = "wasm32");
+    let with = |ids: &[&'static str], diffusion: &[&'static str]| -> Vec<&'static str> {
+        ExpandModel::ALL.into_iter().map(|m| m.id()).filter(|i| ids.contains(i) || (d && diffusion.contains(i))).collect()
+    };
+    // a phone: MI-GAN always, LaMa with 2 GB, Stable Diffusion 1.5 with a GPU and 4 GB
+    assert_eq!(offered(&phone(1, true)), with(&["migan", "classic"], &[]));
+    assert_eq!(offered(&phone(3, true)), with(&["migan", "lama", "classic"], &[]));
+    assert_eq!(offered(&phone(5, false)), with(&["migan", "lama", "classic"], &[]));
+    assert_eq!(offered(&phone(5, true)), with(&["migan", "lama", "classic"], &["sd15-inpaint"]));
+    assert_eq!(ExpandModel::recommended(&phone(1, true)), ExpandModel::MiGan);
+    assert_eq!(ExpandModel::recommended(&phone(3, true)), ExpandModel::Lama);
+    assert_eq!(ExpandModel::recommended(&phone(5, true)), if d { ExpandModel::Sd15 } else { ExpandModel::Lama });
+    // an unknown phone memory offers no more than MI-GAN
+    assert_eq!(offered(&DeviceProfile { memory_bytes: None, ..phone(5, true) }), with(&["migan", "classic"], &[]));
+    // computers
+    assert_eq!(offered(&computer(8, false, 4)), with(&["migan", "lama", "classic"], &["sd15-inpaint"]));
+    assert_eq!(offered(&computer(16, true, 8)), with(&["migan", "lama", "classic"], &["sd15-inpaint", "kandinsky22-inpaint", "sdxl-inpaint"]));
+    assert_eq!(offered(&computer(32, false, 8)), with(&["migan", "lama", "classic"], &["sd15-inpaint", "kandinsky22-inpaint", "sdxl-inpaint"]));
+    let pick = |p: DeviceProfile| ExpandModel::recommended(&p);
+    assert_eq!(pick(computer(8, false, 4)), ExpandModel::Lama);
+    assert_eq!(pick(computer(16, false, 16)), if d { ExpandModel::Sd15 } else { ExpandModel::Lama });
+    assert_eq!(pick(computer(16, true, 8)), if d { ExpandModel::Sd15 } else { ExpandModel::Lama });
+    assert_eq!(pick(computer(64, true, 12)), if d { ExpandModel::Sdxl } else { ExpandModel::Lama });
+    // a computer that doesn't say how much memory it has gets every model offered
+    assert_eq!(
+        offered(&DeviceProfile { memory_bytes: None, ..computer(1, false, 4) }),
+        with(&["migan", "lama", "classic"], &["sd15-inpaint", "kandinsky22-inpaint", "sdxl-inpaint"])
+    );
+    // the browser: MI-GAN and Classic
+    assert_eq!(offered(&browser), ["migan", "classic"]);
+    assert_eq!(ExpandModel::recommended(&browser), ExpandModel::MiGan);
+    // a phone's host gives its memory limit
+    let mut s = Session::with_demo();
+    s.set_device(DeviceProfile { memory_bytes: None, ..phone(1, true) });
+    s.set_app_memory(Some(5 << 30));
+    assert_eq!(s.device.memory_bytes, Some(5 * GB));
+    s.set_device(computer(16, false, 8));
+    s.set_app_memory(Some(1 << 30));
+    assert_eq!(s.device.memory_bytes, Some(16 * GB), "a computer counts its RAM");
+}
+
+#[test]
+fn the_chosen_model_is_kept_and_automatic_follows_the_device() {
+    let mut s = session();
+    assert_eq!(s.chosen_expand_model(), ExpandModel::Lama);
+    let r = s.execute("crop.expandModel", &json!({"model": "migan"})).unwrap();
+    assert_eq!((r["model"].as_str(), r["automatic"].as_bool(), r["ready"].as_bool()), (Some("migan"), Some(false), Some(false)));
+    assert_eq!(s.expand.preferred, Some(ExpandModel::MiGan));
+    let list = s.execute("crop.expandModels", &json!({})).unwrap();
+    assert_eq!(list["automatic"], false);
+    assert!(list["models"].as_array().unwrap().iter().any(|m| m["id"] == "migan" && m["chosen"] == true));
+    // a model this device doesn't run is refused, an unknown one too
+    let e = s.execute("crop.expandModel", &json!({"model": "sdxl-inpaint"})).unwrap_err().to_string();
+    assert!(e.contains("doesn't run on this device"), "{e}");
+    assert!(s.execute("crop.expandModel", &json!({"model": "dall-e"})).is_err());
+    assert!(s.execute("crop.expandModel", &json!({})).is_err());
+    assert_eq!(s.expand.preferred, Some(ExpandModel::MiGan));
+    // Classic chosen: Generate uses it without a model named
+    s.execute("crop.expandModel", &json!({"model": "classic"})).unwrap();
+    assert_eq!(s.default_expand_model(), ExpandModel::Classic);
+    // back to Automatic; a choice the device stops running falls back to Automatic's
+    let r = s.execute("crop.expandModel", &json!({"model": "auto"})).unwrap();
+    assert_eq!((r["model"].as_str(), r["automatic"].as_bool()), (Some("lama"), Some(true)));
+    s.execute("crop.expandModel", &json!({"model": "lama"})).unwrap();
+    s.set_device(DeviceProfile { class: DeviceClass::Phone, memory_bytes: Some(GB), gpu: false, cores: 4 });
+    assert_eq!(s.chosen_expand_model(), ExpandModel::MiGan);
+}
+
 /// With the real models (never part of the repository): each paints the strip and stores it.
+/// MI-GAN and LaMa from their files (`$LIGHTCRAFT_MIGAN`, `$LIGHTCRAFT_LAMA`); a diffusion model
+/// from a models folder holding its folder (`$LIGHTCRAFT_MODELS/sd15-inpaint/unet/…`), named by
+/// `$LIGHTCRAFT_DIFFUSION` (`sd15-inpaint`, `kandinsky22-inpaint`, `sdxl-inpaint`). On a CPU a
+/// diffusion model takes minutes.
 #[test]
 fn the_models_paint_the_new_area() {
     let migan = std::env::var_os("LIGHTCRAFT_MIGAN");
     let lama = std::env::var_os("LIGHTCRAFT_LAMA");
-    for (model, path) in [(ExpandModel::MiGan, migan), (ExpandModel::Lama, lama)] {
+    let diffusion = std::env::var("LIGHTCRAFT_DIFFUSION").ok().and_then(|id| ExpandModel::from_id(&id)).filter(|m| m.diffusion());
+    let models = std::env::var_os("LIGHTCRAFT_MODELS");
+    let mut todo = vec![(ExpandModel::MiGan, migan), (ExpandModel::Lama, lama)];
+    if let (Some(m), Some(dir)) = (diffusion, models) {
+        todo.push((m, Some(dir)));
+    }
+    for (model, path) in todo {
         let Some(path) = path else { continue };
         let mut s = Session::with_demo();
+        // (whatever this machine is, it runs every model here)
+        s.set_device(computer(64, false, 16));
         match model {
             ExpandModel::MiGan => s.install_eraser(&std::fs::read(&path).unwrap()).unwrap(),
-            _ => {
+            ExpandModel::Lama => {
                 let dir = std::env::temp_dir().join(format!("lc-expand-{}", std::process::id()));
                 std::fs::create_dir_all(dir.join("lama")).unwrap();
                 let file = dir.join("lama").join(lightcraft_erase::lama::FILE);
@@ -192,6 +310,7 @@ fn the_models_paint_the_new_area() {
                 }
                 s.enhancer.dir = Some(dir);
             }
+            _ => s.enhancer.dir = Some(path.into()),
         }
         if !s.expand_ready(model) {
             continue;
@@ -204,4 +323,85 @@ fn the_models_paint_the_new_area() {
         let id = s.active().unwrap();
         assert!(s.render_now(id, 300, 300).unwrap().image.data.iter().all(|p| p[3] == 255));
     }
+}
+
+/// A picture of `rgb` pixels as PNG bytes.
+fn png(w: usize, h: usize, f: impl Fn(usize, usize) -> [u8; 3]) -> Vec<u8> {
+    let img = lightcraft_raster::Rgba8::from_fn(w, h, |x, y| {
+        let p = f(x, y);
+        [p[0], p[1], p[2], 255]
+    });
+    lightcraft_codecs::encode_png(&lightcraft_codecs::EncodeImage::rgba8(&img), &lightcraft_codecs::EncodeMeta::default()).unwrap()
+}
+
+fn b64(bytes: &[u8]) -> String {
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+fn unb64(text: &str) -> Vec<u8> {
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD.decode(text).unwrap()
+}
+
+/// A painter outside the engine (Apple Image Playground in the SwiftUI app) is given the canvas as a
+/// picture and its answer becomes the fill, stored like any model's: one undo step, the photo as it is.
+#[test]
+fn an_outside_painter_gets_the_canvas_and_its_picture_becomes_the_fill() {
+    let mut s = Session::with_demo();
+    s.execute("crop.expand", &json!({})).unwrap();
+    // nothing past the photo yet: no canvas
+    let e = s.execute("crop.expandCanvas", &json!({})).unwrap_err().to_string();
+    assert!(e.contains("nothing past the photo"), "{e}");
+    s.execute("crop.set", &json!({"rect": [-0.2, 0.0, 1.0, 1.0]})).unwrap();
+    let c = s.execute("crop.expandCanvas", &json!({"maxEdge": 400})).unwrap();
+    let (w, h) = (c["width"].as_u64().unwrap() as usize, c["height"].as_u64().unwrap() as usize);
+    assert!(w.max(h) <= 400 && w.min(h) > 16, "{w} x {h}");
+    let canvas = lightcraft_codecs::decode(&unb64(c["png"].as_str().unwrap()), Default::default()).unwrap().to_srgb8();
+    assert_eq!((canvas.width, canvas.height), (w, h));
+    let key = c["key"].as_u64().unwrap();
+    // its answer: the canvas again, bluer, at twice the size (a painter's own size)
+    let answer = png(w * 2, h * 2, |x, y| {
+        let p = canvas.get(x / 2, y / 2);
+        [p[0] / 2, p[1], p[2].saturating_add(60)]
+    });
+    let done = s.execute("crop.applyExpandPicture", &json!({"key": key, "model": "appleCloud", "png": b64(&answer)})).unwrap();
+    assert_eq!(done["model"], "appleCloud");
+    assert_eq!(done["passes"], 0);
+    let d = s.develop_of(s.active().unwrap()).unwrap();
+    assert_eq!(d.expand_fill.as_ref().map(|f| f.model.as_str()), Some("appleCloud"));
+    // the picture can come as a file, too
+    let file = std::env::temp_dir().join(format!("lc-expand-picture-{}.png", std::process::id()));
+    std::fs::write(&file, &answer).unwrap();
+    s.execute("crop.applyExpandPicture", &json!({"key": key, "path": file.to_string_lossy()})).unwrap();
+    let _ = std::fs::remove_file(&file);
+    // each is one undo step, "Generative Expand"
+    s.execute("edit.undo", &json!({})).unwrap();
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert!(!has_fill(&s));
+}
+
+#[test]
+fn an_outside_picture_is_refused_when_it_does_not_fit() {
+    let mut s = Session::with_demo();
+    s.execute("crop.expand", &json!({})).unwrap();
+    s.execute("crop.set", &json!({"rect": [-0.2, 0.0, 1.0, 1.0]})).unwrap();
+    let c = s.execute("crop.expandCanvas", &json!({"maxEdge": 300})).unwrap();
+    let (w, h, key) = (c["width"].as_u64().unwrap() as usize, c["height"].as_u64().unwrap() as usize, c["key"].as_u64().unwrap());
+    let good = png(w, h, |_, _| [120, 130, 140]);
+    let apply = |s: &mut Session, p: serde_json::Value| s.execute("crop.applyExpandPicture", &p).unwrap_err().to_string();
+    // not a picture; a picture of another shape; a painter that isn't one
+    assert!(apply(&mut s, json!({"key": key, "png": b64(b"not a picture")})).contains("couldn't be read"));
+    assert!(apply(&mut s, json!({"key": key, "png": b64(&png(w / 4, h, |_, _| [1, 2, 3]))})).contains("shape"));
+    assert!(apply(&mut s, json!({"key": key, "model": "migan", "png": b64(&good)})).contains("unknown painter"));
+    assert!(apply(&mut s, json!({"png": b64(&good)})).contains("key"));
+    assert!(apply(&mut s, json!({"key": key})).contains("path"));
+    assert!(apply(&mut s, json!({"key": key, "path": "/definitely/not/here.png"})).contains("couldn't be read"));
+    // the crop moved while the picture was being made
+    s.execute("crop.set", &json!({"rect": [-0.3, 0.0, 1.0, 1.0]})).unwrap();
+    assert!(apply(&mut s, json!({"key": key, "png": b64(&good)})).contains("crop changed"));
+    assert!(!has_fill(&s));
+    // Generate itself doesn't take it: the app's sheet does
+    let e = s.execute("crop.generate", &json!({"model": "appleCloud"})).unwrap_err().to_string();
+    assert!(e.contains("crop.applyExpandPicture"), "{e}");
 }

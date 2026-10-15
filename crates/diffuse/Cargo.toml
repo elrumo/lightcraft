@@ -1,0 +1,27 @@
+[package]
+name = "lightcraft-diffuse"
+version.workspace = true
+edition.workspace = true
+license = "Apache-2.0"
+description = "LightCraft Generative Expand's diffusion models (Stable Diffusion 1.5 and SDXL inpainting, Kandinsky 2.2 inpaint) on candle, pure Rust (L3)"
+
+[lints]
+workspace = true
+
+# the models run natively only (the web build has MI-GAN and Classic)
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+lightcraft-raster = { workspace = true }
+lightcraft-inpaint = { workspace = true }
+lightcraft-erase = { workspace = true }
+lightcraft-fetch = { workspace = true }
+candle-core = { workspace = true }
+candle-nn = { workspace = true }
+candle-transformers = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
+candle-core = { workspace = true, features = ["metal"] }
+candle-nn = { workspace = true, features = ["metal"] }
+candle-transformers = { workspace = true, features = ["metal"] }

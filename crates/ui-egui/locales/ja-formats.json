@@ -282,8 +282,10 @@
   "Photos not copied from {name}: {n}": "{name}からコピーできなかった写真：{n}枚",
   "No photos could be copied from {name}": "{name}から写真をコピーできませんでした",
   "{name} connected": "{name}が接続されました",
-  "Uses the {} model, a {:.0} MB download ({} licence). {}.": "{}モデルを使用します（{:.0} MBのダウンロード、{}ライセンス）。{}。",
+  "Uses the {} model, a {} download ({} licence). {}.": "{}モデルを使用します（{}のダウンロード、{}ライセンス）。{}。",
   "New area painted with {}": "{}で新しい領域を生成しました",
-  "{note} · {:.0} MB download": "{note} · {:.0} MBのダウンロード",
-  "The new area was painted by {by} on this device.": "新しい領域はこのデバイス上で生成されました（{by}）。"
+  "{note} · {size} download": "{note} · {size}のダウンロード",
+  "The new area was painted by {by} on this device.": "新しい領域はこのデバイス上で生成されました（{by}）。",
+  "Automatic: {} suits this device": "自動：この端末には {} が適しています",
+  "{} isn't downloaded yet: download it below.": "{} はまだダウンロードされていません。下でダウンロードしてください。"
 }

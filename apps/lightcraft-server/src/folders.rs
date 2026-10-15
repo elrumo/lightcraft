@@ -233,6 +233,8 @@ pub struct Status {
     pub previews_per_min: Option<u64>,
     pub previews_bytes: u64,
     pub previews_bytes_total: Option<u64>,
+    /// The photo files being built right now (their paths).
+    pub previews_building: Vec<String>,
     /// The ones that couldn't be built.
     pub preview_errors: Vec<String>,
     /// When the last scan ended (unix seconds).
@@ -900,6 +902,8 @@ struct Jobs {
     queue: VecDeque<Job>,
     urgent: VecDeque<Job>,
     live: HashMap<(String, String), Stage>,
+    /// The files builder threads have right now (the admin page shows them).
+    building: HashMap<(String, String), PathBuf>,
 }
 
 impl Jobs {
@@ -948,7 +952,8 @@ impl Jobs {
         while let Some(job) = self.urgent.pop_front() {
             let key = Self::key(&job);
             if matches!(self.live.get(&key), Some(Stage::Urgent { .. })) {
-                self.live.insert(key, Stage::Building);
+                self.live.insert(key.clone(), Stage::Building);
+                self.building.insert(key, job.2.clone());
                 return Some(job);
             }
         }
@@ -957,6 +962,7 @@ impl Jobs {
             match self.live.get_mut(&key) {
                 Some(stage @ Stage::Waiting) => {
                     *stage = Stage::Building;
+                    self.building.insert(key, job.2.clone());
                     return Some(job);
                 }
                 // (asked for since, and built or being built there: this is the place it left)
@@ -968,7 +974,9 @@ impl Jobs {
     }
 
     fn done(&mut self, user: &str, hash: &str) {
-        self.live.remove(&(user.to_string(), hash.to_string()));
+        let key = (user.to_string(), hash.to_string());
+        self.live.remove(&key);
+        self.building.remove(&key);
     }
 }
 
@@ -1012,7 +1020,13 @@ impl Scanner {
     pub fn status(&self, user: &str) -> Status {
         let mut s = lock(&self.status).get(user).cloned().unwrap_or_default();
         // (waiting or being built)
-        s.previews = lock(&self.jobs).live.keys().filter(|(u, _)| u == user).count();
+        {
+            let j = lock(&self.jobs);
+            s.previews = j.live.keys().filter(|(u, _)| u == user).count();
+            let mut now: Vec<String> = j.building.iter().filter(|((u, _), _)| u == user).map(|(_, p)| p.to_string_lossy().into_owned()).collect();
+            now.sort();
+            s.previews_building = now;
+        }
         if let Some(&(began, done, total, bytes)) = lock(&self.runs).get(user) {
             (s.previews_done, s.previews_total, s.previews_eta_secs) = (done, total, eta(began, done, total));
             s.previews_bytes = bytes;
@@ -1250,7 +1264,9 @@ mod tests {
         assert_eq!(first.1, job("ann", 1).1);
         assert!(!j.rush(job("ann", 1)), "being built");
         assert!(j.urgent.is_empty());
+        assert_eq!(j.building.values().collect::<Vec<_>>(), [&first.2], "the one a builder has");
         j.done(&first.0, &first.1);
+        assert!(j.building.is_empty());
         assert_eq!(built(&mut j, 5), ["2"]);
     }
 
