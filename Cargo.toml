@@ -5,7 +5,7 @@ members = ["crates/*", "apps/*", "xtask"]
 exclude = ["third_party"]
 
 [workspace.package]
-version = "0.7.1"
+version = "0.8.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.90"
@@ -50,6 +50,8 @@ lightcraft-erase = { path = "crates/erase" }
 # no model by default: crates that want SigLIP 2 ask for `features = ["siglip"]`
 lightcraft-vision = { path = "crates/vision", default-features = false }
 lightcraft-geocode = { path = "crates/geocode" }
+lightcraft-slideshow = { path = "crates/slideshow" }
+lightcraft-testkit = { path = "crates/testkit" }
 
 # foundation
 thiserror = "2"
@@ -65,7 +67,7 @@ base64 = "0.23" # files handed to commands by content (`files: [{name, data}]`)
 half = "2" # f16 storage of embeddings (lightcraft-vision)
 siphasher = "1"
 libc = "0.2" # dev-only: process CPU time in benches
-dhat = "0.3" # opt-in heap profiling (lightcraft-cli --features dhat-heap); never in default builds
+dhat = "0.3" # opt-in heap profiling (lightcraft-cli --features dhat-heap) and heap tests; never in product builds
 
 # formats
 quick-xml = "0.38"

@@ -1,6 +1,6 @@
 # Hardware parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-14 · **Change:** minor (HDR display on macOS; cameras and card readers: ImageCaptureCore on macOS and iOS, GVfs PTP / MTP on Linux); previously minor (monitor profile from colord on Linux) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-15 · **Change:** minor (pen pressure for brush masks; monitor profile from colord on Linux); HDR display on macOS; cameras and card readers: ImageCaptureCore on macOS and iOS, GVfs PTP / MTP on Linux)) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6
 
 What Lightroom does with the machine's hardware, per platform, and what LightCraft does. Sources:
 [gpu-pipeline.md](gpu-pipeline.md), [display-profiles.md](display-profiles.md), [denoise.md](denoise.md),
@@ -14,7 +14,7 @@ What Lightroom does with the machine's hardware, per platform, and what LightCra
 | HDR (EDR) display | ✅ (macOS EDR, Windows HDR) | ✅ the loupe of an HDR edit, while the window's screen has headroom ([hdr-display](hdr-display.md)) | ⬜ | ⬜ | ⬜ | 🟡 macOS and the SwiftUI app only (LR-VIEW-HDR-DISPLAY) |
 | Monitor profile | automatic per display, follows the window | ✅ the screen's profile, followed across screens | 🟡 picked by hand (WCS needs FFI) | 🟡 colord's profile (one display, or all sharing one); no follow across monitors | — | 🟡 Windows OS profile not read; Linux per-monitor follow missing |
 | Second window / second monitor | ✅ (Classic) | ✅ (⌘F11) | ✅ | ✅ | — | ✅ (Classic secondary-window keys missing) |
-| Pen pressure / tilt (brush masks) | ✅ pressure for size / flow | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| Pen pressure / tilt (brush masks) | ✅ pressure for size / flow | ⬜ winit reports no tablet pressure on macOS | 🟡 pen force from winit touch events (untested on a tablet) | ⬜ winit has no X11 / Wayland tablet input | 🟡 pointer-event force where winit passes it | 🟡 brush size and flow follow pen pressure wherever egui gets a touch force (Brush ▸ Pen Pressure); no tilt; macOS / Linux tablets wait on winit |
 | Trackpad gestures | pinch zoom, pan | ✅ pinch, two-finger pan | 🟡 (winit) | 🟡 | 🟡 | ✅ on macOS |
 | Card readers / cameras as import sources | ✅ (devices panel, eject after import) | ✅ mounted volumes with DCIM; 🟡 PTP cameras and iPhones through ImageCaptureCore (written, not yet run) | ✅ mounted volumes | ✅ mounted volumes and GVfs PTP / MTP mounts | — | 🟡 no eject after import; no MTP / PTP on Windows; iOS / iPadOS cameras and card readers through ImageCaptureCore (written, not yet run on a device) |
 | Tethered capture | ✅ Classic (Canon, Nikon, Sony, Leica) | ⬜ | ⬜ | ⬜ | — | ⬜ |
@@ -38,7 +38,7 @@ NVIDIA, Intel and Windows DX12 still rely on user reports.
 |---|---:|---|
 | HDR display on Windows (scRGB / HDR10) and Linux (Wayland colour management); macOS EDR done | 5–10 | an HDR display on each (human) |
 | OS monitor profile: Windows WCS (an FFI helper crate, like `crates/sysmem`), follow the window across displays on Linux | 4–8 | multi-monitor setup |
-| Pen pressure for brush masks (winit tablet events or a pure-Rust tablet layer) | 6–12 | a tablet |
+| Pen pressure for brush masks: done where winit reports a touch force; macOS and Linux tablets need winit tablet events (or a pure-Rust tablet layer) | 3–8 | a tablet |
 | Remaining stages on GPU (defringe, spot removal, masks) | 10–20 | |
 | Tethered capture (PTP over USB in pure Rust, Canon / Nikon / Sony first) | 25–45 | cameras (human) |
 | Printing with colour management | 15–25 | printers (human) |
@@ -53,4 +53,5 @@ NVIDIA, Intel and Windows DX12 still rely on user reports.
 | 2026-10-13 | minor | Cameras and card readers: PTP cameras and iPhones through ImageCaptureCore on macOS, every camera and card reader on iOS, GVfs PTP / MTP mounts on Linux |
 | 2026-10-12 | minor | Monitor profile: Linux reads the display profile from colord; macOS row reflects #787 |
 | 2026-10-12 | minor | CPU ↔ GPU equivalence suite run on an AMD Radeon 8060S (Vulkan, RADV, Linux): 16 tests / 135 cases pass, max 2 LSB, mean ≤ 0.0003; first GPU verified outside Apple |
+| 2026-10-12 | minor | Pen pressure: strokes record per-point pressure from egui touch force, scaling dab size and flow; per-platform status |
 | 2026-10-10 | major | Created |

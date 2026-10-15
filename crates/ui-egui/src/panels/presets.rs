@@ -162,6 +162,7 @@ fn list(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             let open_id = egui::Id::new(("preset-group", &g));
             let open: bool = ui.data(|d| d.get_temp(open_id)).unwrap_or(true);
             let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 32.0), Sense::click_and_drag());
+            crate::widgets::announce(&resp, g.to_string());
             register(ui.ctx(), format!("presetGroup:{g}"), r);
             headers.push((g.clone(), r));
             if resp.drag_started() {
@@ -174,7 +175,7 @@ fn list(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             }
             paint(
                 ui.painter(),
-                Rect::from_center_size(pos2(r.left() + 22.0, r.center().y), vec2(12.0, 12.0)),
+                Rect::from_center_size(pos2(r.left() + 22.0, r.center().y), vec2(16.0, 16.0)),
                 if open { Icon::ChevronDown } else { Icon::ChevronRight },
                 t.text_label,
             );
@@ -204,6 +205,7 @@ fn list(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 let Some(pr) = app.session.presets.get(i).cloned() else { continue };
                 let (pid, name, fav) = (pr.id.clone(), crate::i18n::builtin_label(&pr.name, pr.builtin).to_string(), pr.favorite);
                 let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), row_h), Sense::click());
+                crate::widgets::announce(&resp, name.clone());
                 register(ui.ctx(), format!("preset:{pid}"), r);
                 let is_last = last.as_ref().is_some_and(|l| l.id == pid);
                 if is_last {
@@ -225,7 +227,7 @@ fn list(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 }
                 ui.painter().text(pos2(text_x, r.center().y), Align2::LEFT_CENTER, &name, t.font(13.0), t.text_label);
                 if fav {
-                    paint(ui.painter(), Rect::from_center_size(pos2(r.right() - 20.0, r.center().y), vec2(12.0, 12.0)), Icon::StarFilled, t.star);
+                    paint(ui.painter(), Rect::from_center_size(pos2(r.right() - 20.0, r.center().y), vec2(16.0, 16.0)), Icon::StarFilled, t.star);
                 }
                 // resting on a preset previews it in the loupe (no history entry)
                 if resp.hovered()
@@ -419,7 +421,7 @@ fn preset_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, pr: &Preset, name: &s
     if ui.button(crate::i18n::tr("Rename…")).clicked() {
         crate::panels::dialogs::prompt(app, "Rename Preset", "Preset name", name, "preset.rename", json!({"id": pid}), "name");
     }
-    ui.menu_button(crate::i18n::tr("Move to Group"), |ui| {
+    crate::widgets::menu_button(ui, crate::i18n::tr("Move to Group"), |ui| {
         let groups = grouped(ui.ctx(), &app.session);
         for g in groups.iter().filter(|x| x.user && x.name != group).map(|x| &x.name) {
             if ui.button(g).clicked() {

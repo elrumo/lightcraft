@@ -28,6 +28,12 @@ pub const PRESET_EXTS: &[&str] = &["xmp", "lrtemplate", "zip", "dng", "lmp", "mp
 
 // ------------------------------------------------------------------------------------- zip
 
+/// The most a preset zip entry may hold unpacked (a "DNG preset" photo is the largest kind, tens
+/// of MB): its stated size is the file's word, so a small archive could otherwise ask for 8 GB.
+pub const MAX_ZIP_ENTRY: usize = 256 << 20;
+/// The most a whole preset zip may hold unpacked.
+pub const MAX_ZIP_TOTAL: usize = 1 << 30;
+
 /// What one archive may expand to. Presets, LUTs and "DNG presets" are small, so a header that claims
 /// more is damage or a zip bomb: refused, never allocated.
 #[derive(Clone, Copy, Debug)]
@@ -38,7 +44,7 @@ pub(crate) struct ZipLimits {
     pub total: usize,
 }
 
-pub(crate) const ZIP_LIMITS: ZipLimits = ZipLimits { file: 256 << 20, total: 1 << 30 };
+pub(crate) const ZIP_LIMITS: ZipLimits = ZipLimits { file: MAX_ZIP_ENTRY, total: MAX_ZIP_TOTAL };
 
 /// What reading a zip archive gave: the files asked for, and those that couldn't be read (path
 /// inside the archive, reason).
@@ -54,10 +60,16 @@ fn le<const N: usize>(bytes: &[u8], at: usize) -> Option<[u8; N]> {
 }
 
 /// The files of a zip archive: (path inside the archive, bytes). Stored and deflated entries;
-/// directories, macOS resource forks and hidden files are skipped. The first entry that can't be read
-/// is an error; [`read_zip_where`] reads only what it is asked for and reports each failure.
+/// directories, macOS resource forks and hidden files are skipped. An entry that unpacks past
+/// [`MAX_ZIP_ENTRY`], or an archive past [`MAX_ZIP_TOTAL`], is an error (a zip bomb would make
+/// the allocation fail, which ends the app). The first entry that can't be read is an error;
+/// [`read_zip_where`] reads only what it is asked for and reports each failure.
 pub fn read_zip(bytes: &[u8]) -> Result<Vec<(String, Vec<u8>)>, String> {
-    let z = scan_zip(bytes, |_| true, ZIP_LIMITS)?;
+    read_zip_limited(bytes, MAX_ZIP_ENTRY, MAX_ZIP_TOTAL)
+}
+
+fn read_zip_limited(bytes: &[u8], max_entry: usize, max_total: usize) -> Result<Vec<(String, Vec<u8>)>, String> {
+    let z = scan_zip(bytes, |_| true, ZipLimits { file: max_entry, total: max_total })?;
     match z.failed.into_iter().next() {
         Some((name, why)) => Err(format!("{name}: {why}")),
         None => Ok(z.files),
@@ -93,7 +105,7 @@ pub(crate) fn scan_zip(bytes: &[u8], wanted: impl Fn(&str) -> bool, limits: ZipL
         let field16 = |o: usize| u16_at(sum(&[at, o])?).ok_or(BAD);
         let field32 = |o: usize| u32_at(sum(&[at, o])?).ok_or(BAD);
         let (flags, method) = (field16(8)?, field16(10)?);
-        let (csize, size) = (field32(20)?, field32(24)?);
+        let csize = field32(20)?;
         let (nlen, xlen, clen) = (field16(28)?, field16(30)?, field16(32)?);
         let local = field32(42)?;
         let name_at = sum(&[at, 46])?;
@@ -104,7 +116,7 @@ pub(crate) fn scan_zip(bytes: &[u8], wanted: impl Fn(&str) -> bool, limits: ZipL
         if skip || !wanted(&name) {
             continue;
         }
-        let entry = ZipEntry { flags, method, csize, size, local };
+        let entry = ZipEntry { flags, method, csize, local };
         match unpack(bytes, &entry, limits.file.min(limits.total.saturating_sub(total))) {
             Ok(content) => {
                 total = total.saturating_add(content.len());
@@ -121,7 +133,6 @@ struct ZipEntry {
     flags: usize,
     method: usize,
     csize: usize,
-    size: usize,
     local: usize,
 }
 
@@ -131,9 +142,12 @@ fn unpack(bytes: &[u8], e: &ZipEntry, room: usize) -> Result<Vec<u8>, String> {
     if e.flags & 1 != 0 {
         return Err("password-protected".into());
     }
-    // (the sizes are the file's own claims: nothing is allocated for them before they are checked)
-    let too_big = || "too large to unpack".to_string();
-    if e.size > room || (e.method == 0 && e.csize > room) {
+    // (the sizes are the file's own claims: what is unpacked is bounded by `room`, whatever they say)
+    let too_big = || {
+        let limit = if room >= 1 << 20 { format!("{} MB", room >> 20) } else { format!("{} KB", room >> 10) };
+        format!("too large to unpack (more than {limit})")
+    };
+    if e.method == 0 && e.csize > room {
         return Err(too_big());
     }
     if !bytes.get(e.local..).is_some_and(|b| b.starts_with(b"PK\x03\x04")) {
@@ -145,8 +159,11 @@ fn unpack(bytes: &[u8], e: &ZipEntry, room: usize) -> Result<Vec<u8>, String> {
     let data = bytes.get(data_at..data_at.checked_add(e.csize).ok_or(BAD)?).ok_or("truncated")?;
     match e.method {
         0 => Ok(data.to_vec()),
-        8 => miniz_oxide::inflate::decompress_to_vec_with_limit(data, e.size.saturating_add(1024).min(room.saturating_add(1)))
-            .map_err(|err| format!("can't be unpacked ({:?})", err.status))
+        8 => miniz_oxide::inflate::decompress_to_vec_with_limit(data, room.saturating_add(1))
+            .map_err(|err| match err.status {
+                miniz_oxide::inflate::TINFLStatus::HasMoreOutput => too_big(),
+                status => format!("can't be unpacked ({status:?})"),
+            })
             .and_then(|v| if v.len() > room { Err(too_big()) } else { Ok(v) }),
         m => Err(format!("unsupported compression method {m}")),
     }
@@ -454,6 +471,20 @@ pub(crate) fn lua_settings_props(settings: &Lua) -> Result<(Props, crate::crs_ma
     let mut values = crate::crs_masks::Values::new();
     for (k, v) in fields {
         let key = format!("crs:{k}");
+        // the profile a preset names: its fields as XMP's struct fields (`crs:Look/crs:Name`…)
+        if k == "Look"
+            && let Lua::Table(_, look) = v
+        {
+            for (f, fv) in look {
+                let val = match fv {
+                    Lua::Num(n) => format!("{n}"),
+                    Lua::Str(s) => delocalize(s),
+                    _ => continue,
+                };
+                props.insert(format!("crs:Look/crs:{f}"), vec![val]);
+            }
+            continue;
+        }
         if crate::crs_masks::CONTAINERS.contains(&key.as_str()) {
             values.insert(key.clone(), crate::crs_masks::from_lua(v));
         }
@@ -555,6 +586,12 @@ pub(crate) fn build(props: &Props, values: &crate::crs_masks::Values, name: Stri
         if o.get("wb").and_then(|w| w.get("mode")).and_then(Value::as_str).is_none_or(|m| m == "custom" || m == "asShot") {
             o.remove("wb");
         }
+    }
+    // the profile it names, resolved against the user's imported profiles by `preset.import`
+    if let Some(look) = crate::profile_refs::look_ref(props)
+        && let Some(o) = settings.as_object_mut()
+    {
+        o.insert("profile".into(), serde_json::json!({"look": look}));
     }
     if settings.as_object().is_none_or(Map::is_empty) {
         return None;
@@ -792,6 +829,17 @@ text]], z = ZSTR "loc" }"#,
     }
 
     #[test]
+    fn lrtemplate_keeps_the_profile_it_names() {
+        let t = r#"s = { title = "Film", value = { settings = { Exposure2012 = 0.2,
+            Look = { Name = "Portra 400", Amount = 0.5, UUID = "ABCD", Group = "$$$/Pack=Film Pack", Parameters = { Version = "14.0" } } } } }"#;
+        let v = read_presets("Film.lrtemplate", t.as_bytes(), None).unwrap();
+        assert_eq!(
+            v[0].preset.settings["profile"],
+            serde_json::json!({"look": {"name": "Portra 400", "amount": 50.0, "group": "Film Pack", "uuid": "abcd"}})
+        );
+    }
+
+    #[test]
     fn old_process_version_fields_are_approximated() {
         let t = "s = { title = \"Old\", value = { settings = { Exposure = 0.5, Contrast = 50, FillLight = 20, HighlightRecovery = 30, Clarity = 10, ToneCurve = { 0, 0, 64, 50, 255, 255 } } } }";
         let p = &read_presets("Old.lrtemplate", t.as_bytes(), None).unwrap()[0].preset;
@@ -860,6 +908,33 @@ text]], z = ZSTR "loc" }"#,
         // another editor's own look or profile is still reported
         let v = read_presets("Pack Look.xmp", pack_preset("Warm Film", true, Some("Camera Faithful")).as_bytes(), None).unwrap();
         assert_eq!(v[0].unmapped, ["CameraProfile", "Look"]);
+    }
+
+    #[test]
+    fn zip_bombs_are_refused() {
+        // an entry unpacking past the limit (3 MB of zeros pack into a few kB): refused, named
+        let zeros = vec![0u8; 3 << 20];
+        let z = zip(&[("Pack/huge.xmp", &zeros)], true);
+        assert!(z.len() < 64 << 10, "a small archive: {} bytes", z.len());
+        let e = read_zip_limited(&z, 1 << 20, 1 << 30).unwrap_err();
+        assert!(e.contains("Pack/huge.xmp") && e.contains("more than 1 MB"), "{e}");
+        // the whole archive counts too
+        let two = zip(&[("a.xmp", &zeros[..1 << 20]), ("b.xmp", &zeros[..1 << 20])], true);
+        assert!(read_zip_limited(&two, 2 << 20, (3 << 20) / 2).is_err());
+        assert_eq!(read_zip_limited(&two, 2 << 20, 3 << 20).unwrap().len(), 2);
+        // and stored entries
+        let stored = zip(&[("s.xmp", &zeros[..2 << 20])], false);
+        assert!(read_zip_limited(&stored, 1 << 20, 1 << 30).is_err());
+        // the size an entry states (here 4 GB) no longer sets how much may be unpacked
+        let mut lying = zip(&[("a.xmp", b"<x:xmpmeta/>")], true);
+        let cd = lying.windows(4).position(|w| w == b"PK\x01\x02").unwrap();
+        lying[cd + 24..cd + 28].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert_eq!(read_zip(&lying).unwrap()[0].1, b"<x:xmpmeta/>");
+        // offsets near the top of a u32 are an error, not an overflow
+        let mut far = zip(&[("a.xmp", b"x")], false);
+        let cd = far.windows(4).position(|w| w == b"PK\x01\x02").unwrap();
+        far[cd + 42..cd + 46].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(read_zip(&far).is_err());
     }
 
     #[test]

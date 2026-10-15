@@ -51,7 +51,8 @@
 //! | 6 | folder labels | `Op::SetFolderRecord`, `Catalog.folder_records` |
 //! | 7 | Kelvin white balance for raws whose camera has matrices (#730) | `Op::SetAsShotWb`, `WhiteBalance.scale` |
 //! | 8 | History cursor: Go to History Step adds no step | `Op::SetHistoryCursor`, `Photo.history_cursor` |
-//! | 9 | library folders on the sync server | `Op::SetServerPath`, `Photo.server_path` (this fork's format 3, then 8, before it merged upstream's formats 3..8; those libraries still open, as every op in them is known) |
+//! | 9 | preview-only recheck (#662, upstream) | `Photo.preview_checked`, `Op::SetContent.preview_checked` |
+//! | 10 | library folders on the sync server (this fork) | `Op::SetServerPath`, `Photo.server_path`. This fork wrote `SetServerPath` as format 3, then 8, then 9, before upstream's own format 9 made it 10; those libraries still open and are upgraded, as every op in them is known |
 //!
 //! Rules:
 //! - **Bump [`VERSION`]** (and add a row above) in the change that adds an [`Op`] variant or a
@@ -76,7 +77,7 @@ pub const LOG: &str = "catalog.log";
 const FORMAT: &str = "lightcraft-catalog";
 /// The catalog format this build writes (and the newest it reads). See the module docs →
 /// *Format versions*; bump it whenever an [`Op`] variant or a serialized field is added.
-pub const VERSION: u32 = 9;
+pub const VERSION: u32 = 10;
 
 /// [`Journal::records_since`] finds its place in the log through an index with one entry per this
 /// many records.
@@ -122,6 +123,8 @@ pub struct LoadReport {
     /// The library was in an older catalog format (`0` = before format versions: a log without a
     /// snapshot) and was rewritten in this version's format ([`VERSION`]).
     pub upgraded_from: Option<u32>,
+    /// What [`Catalog::repair`] changed in a damaged snapshot (empty for a sound one).
+    pub repaired: Vec<String>,
 }
 
 /// Where persistence time goes (reported by `library.info` → `persistence`; printed to stderr
@@ -381,7 +384,12 @@ impl Journal {
                     return Err(newer(format!("{SNAPSHOT} is catalog format v{}", h.version)));
                 }
                 let s: SnapFile = serde_json::from_slice(&bytes).map_err(|e| CatalogError::Corrupt(format!("{SNAPSHOT}: {e}")))?;
-                (s.catalog, s.seq, Some(h.version))
+                let mut catalog = s.catalog;
+                report.repaired = catalog.repair();
+                for r in &report.repaired {
+                    log::warn!("{SNAPSHOT}: {r}");
+                }
+                (catalog, s.seq, Some(h.version))
             }
             None => (Catalog::new(), 0, None),
         };
