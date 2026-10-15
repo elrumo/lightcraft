@@ -282,12 +282,12 @@ fn act(app: &mut LightcraftApp, ctx: &egui::Context, tap: Option<Tap>) {
         }
         Tap::Confirm(id, name) => app.run("people.name", json!({"cluster": id, "name": name})),
         Tap::Open(photo) => {
-            let name = app.ui.person_page.clone().unwrap_or_default();
+            let name = app.ui.person_page.clone();
             let r = app.run("library.select", json!({"ids": [photo], "active": photo}));
             let _ = app.run("view.detail", json!({}));
             // Back comes here again
             app.ui.person_from = Some((name.clone(), photo));
-            app.ui.last_person = Some(name);
+            app.ui.last_person = name.filter(|n| !n.is_empty());
             app.ui.person_page = None;
             r
         }

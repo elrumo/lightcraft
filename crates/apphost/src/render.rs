@@ -28,6 +28,7 @@ use lightcraft_engine::Session;
 pub use lightcraft_engine::hdr_view::HdrPicture;
 use lightcraft_engine::media::{QuickJob, QuickSource, RenderJob, RenderResult};
 use lightcraft_engine::pipeline::StageCache;
+use lightcraft_engine::slideshow::{Item, Title};
 use lightcraft_preview::JobPool;
 use lightcraft_raster::{Histogram, Rgba8};
 use std::sync::Arc;
@@ -68,6 +69,12 @@ pub enum Slot {
     Camera(u64),
     /// The second window's view of the active photo.
     Second,
+    /// A slideshow slide (the one up, the one fading out, the next ones prepared in advance): a
+    /// photo's, or a title screen.
+    Slide(lightcraft_engine::slideshow::Item),
+    /// The small composed slide in Settings ▸ Slideshow (the active photo with the layout being
+    /// edited).
+    SlidePreview,
     /// A slider drag's live HDR histogram: a small full-quality render of an HDR edit, beside the
     /// drafts (which have no HDR histogram), with no picture ([`Scheduler::live_hdr_histogram`]).
     HdrHistogram,
@@ -366,6 +373,8 @@ pub struct Scheduler<V> {
     variant_want: usize,
     /// Frames polled so far.
     frame: u64,
+    /// Slideshow slides may be held ([`Self::release_slides`] has something to do).
+    slides_live: bool,
     /// Stage caches cleared to stay in budget (see [`stage_trim_order`]).
     stages_trimmed: u64,
     /// A budget other than the memory budget's share (tests).
@@ -403,6 +412,9 @@ impl Slot {
             Slot::Import(i) => format!("import:{i}"),
             Slot::Camera(k) => format!("camera:{k}"),
             Slot::Second => "second".into(),
+            Slot::Slide(Item::Photo(id)) => format!("slide:photo:{}", id.0),
+            Slot::Slide(Item::Title(t)) => format!("slide:title:{}", t.id()),
+            Slot::SlidePreview => "slidePreview".into(),
             Slot::HdrHistogram => "hdrHistogram".into(),
         }
     }
@@ -428,6 +440,12 @@ impl Slot {
             "import" => Slot::Import(n.parse().ok()?),
             "camera" => Slot::Camera(num()?),
             "second" => Slot::Second,
+            "slide" => match n.split_once(':')? {
+                ("photo", id) => Slot::Slide(Item::Photo(PhotoId(id.parse().ok()?))),
+                ("title", id) => Slot::Slide(Item::Title(Title::parse(id)?)),
+                _ => return None,
+            },
+            "slidePreview" => Slot::SlidePreview,
             "hdrHistogram" => Slot::HdrHistogram,
             _ => return None,
         })
@@ -480,6 +498,7 @@ impl<V> Scheduler<V> {
             variant_used: HashMap::new(),
             variant_want: 0,
             frame: 0,
+            slides_live: false,
             stages_trimmed: 0,
             stage_budget_override: None,
             display: None,
@@ -617,7 +636,15 @@ impl<V> Scheduler<V> {
     fn renders_for_display(slot: Slot) -> bool {
         matches!(
             slot,
-            Slot::Main | Slot::Region | Slot::Before | Slot::RegionBefore | Slot::Hover | Slot::Compare(_) | Slot::CompareRegion(_) | Slot::Second
+            Slot::Main
+                | Slot::Region
+                | Slot::Before
+                | Slot::RegionBefore
+                | Slot::Hover
+                | Slot::Compare(_)
+                | Slot::CompareRegion(_)
+                | Slot::Second
+                | Slot::Slide(_)
         )
     }
 
@@ -728,6 +755,9 @@ impl<V> Scheduler<V> {
 
     /// Request a render for `slot` (no-op if already current or pending at the same priority).
     pub fn request(&mut self, slot: Slot, job: RenderJob, priority: u32) {
+        if matches!(slot, Slot::Slide(_)) {
+            self.slides_live = true;
+        }
         let mut job = self.job_for(slot, job);
         if !self.request_needed(slot, job.key, priority) {
             return;
@@ -769,6 +799,42 @@ impl<V> Scheduler<V> {
                 run_for(failed, run, &display)
             }),
         );
+    }
+
+    /// Render a slideshow title screen into `slot` (once per screen key, like [`Self::request`]):
+    /// a slide with no photo, composed on a worker (on wasm: the job pool's inline runs, not the
+    /// offload, which only knows photo renders).
+    pub fn request_title(&mut self, slot: Slot, compose: Arc<lightcraft_engine::slide_title::TitleCompose>, priority: u32) {
+        if matches!(slot, Slot::Slide(_)) {
+            self.slides_live = true;
+        }
+        let key = compose.key();
+        if !self.request_needed(slot, key, priority) {
+            return;
+        }
+        self.pending.insert(slot, (key, priority));
+        let request_id = lightcraft_preview::next_tick();
+        self.request_ids.insert(slot, request_id);
+        let display = self.display.clone();
+        let failed = Failed { request_id, source_key: None, photo: PhotoId(0), level: lightcraft_engine::media::SourceLevel::Preview, key };
+        self.pool.submit(slot, key, priority, Box::new(move || run_for(failed, || compose.result(request_id), &display)));
+    }
+
+    /// Drop the slideshow slides other than `keep`: their textures and their requests that have
+    /// not started (a slide that is no longer near is not worth rendering).
+    pub fn release_slides(&mut self, keep: &[Item]) {
+        if !self.slides_live {
+            return;
+        }
+        let gone = |s: &Slot| matches!(s, Slot::Slide(id) if !keep.contains(id));
+        self.textures.retain(|s, _| !gone(s));
+        let _ = self.pool.reprioritize(|s, p| if gone(s) { None } else { Some(p) });
+        self.queue.retain(|q| !gone(&q.slot));
+        // (a render already running finishes unclaimed: its result is dropped)
+        self.pending.retain(|s, _| !gone(s));
+        self.request_ids.retain(|s, _| !gone(s));
+        self.failed.retain(|s, _| !gone(s));
+        self.slides_live = !keep.is_empty();
     }
 
     /// Request a stand-in for `slot` (once per job key).
@@ -1356,6 +1422,7 @@ mod thumbnail_tests {
                 file_size: 99,
                 content_hash: Some("changed".into()),
                 preview_only: None,
+                preview_checked: String::new(),
             })
             .unwrap();
         assert!(!r.thumb_current(catalog.photo(PhotoId(1)).unwrap(), 384, 10));
@@ -1632,6 +1699,24 @@ mod scheduler_tests {
             assert!(t0.elapsed() < Duration::from_secs(30), "no result");
             std::thread::sleep(Duration::from_millis(2));
         }
+    }
+
+    // Slideshow slots have names in the host protocol, and the ones that are no longer near go
+    #[test]
+    fn slideshow_slots_have_names_and_release_all_but_the_ones_kept() {
+        let (photo, intro) = (Slot::Slide(Item::Photo(PhotoId(1))), Slot::Slide(Item::INTRO));
+        for slot in [photo, intro, Slot::Slide(Item::ENDING), Slot::SlidePreview] {
+            assert_eq!(Slot::parse(&slot.name()), Some(slot));
+        }
+        let shown =
+            || Shown { key: 1, photo: PhotoId(1), size: [1, 1], histogram: None, ms: 0.0, quick: None, request_id: 1, draft: false, view: () };
+        let mut r = Scheduler::<()>::with_worker_threads(1);
+        r.slides_live = true;
+        for slot in [photo, intro, Slot::SlidePreview] {
+            r.textures.insert(slot, shown());
+        }
+        r.release_slides(&[Item::INTRO]);
+        assert!(r.textures.contains_key(&intro) && r.textures.contains_key(&Slot::SlidePreview) && !r.textures.contains_key(&photo));
     }
 
     // A finished render becomes the slot's picture, with its facts, through the frontend's presenter

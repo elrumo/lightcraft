@@ -256,7 +256,7 @@ impl Segmenter {
             return Err(other("AI masks are not available in this build"));
         }
         if self.disabled {
-            return Err("AI masks are turned off: turn the SAM 3 model on in Settings → AI Models.".into());
+            return Err(other("AI masks are turned off: turn the SAM 3 model on in Settings → AI Models."));
         }
         #[cfg(feature = "sam")]
         if lightcraft_segment::remote::configured().is_some() {

@@ -668,6 +668,7 @@ mod tests {
             as_shot_temp: 6500.0,
             as_shot_tint: 0.0,
             lens: None,
+            native_long: None,
             settings: Arc::new(DevelopSettings::default()),
             max_w: size,
             max_h: size,

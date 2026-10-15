@@ -331,6 +331,8 @@ mod tests {
             linearized: false,
             opcodes: OpcodeLists::default(),
             metadata: Metadata::default(),
+            pixel_aspect: 1.0,
+            lens_metadata: Default::default(),
         };
         assert!(raw.can_bin(2) && raw.can_bin(3) && raw.can_bin(8) && !raw.can_bin(1));
         let b = raw.develop_binned(3, 2.0).unwrap().unwrap();

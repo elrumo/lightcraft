@@ -335,7 +335,7 @@ fn sidebar_section_param(command: &str, p: &Value) -> Result<SidebarSection, Str
 }
 
 /// An optional true / false parameter: absent or null is `None`, anything else is refused.
-fn bool_param(command: &str, p: &Value, key: &str) -> Result<Option<bool>, String> {
+pub fn bool_param(command: &str, p: &Value, key: &str) -> Result<Option<bool>, String> {
     match p.get(key) {
         None | Some(Value::Null) => Ok(None),
         Some(Value::Bool(b)) => Ok(Some(*b)),

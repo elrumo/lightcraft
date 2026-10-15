@@ -183,15 +183,15 @@ fn every_dropped_photo_has_a_tile_from_the_start_until_it_is_in_the_catalog() {
     let (mut h, files, dir) = setup("tiles", n, 25);
     let trip = album(&mut h, "Trip");
     show(&mut h, trip);
-    // an empty album: no "No photos" while the dropped ones are on their way
-    assert!(h.painted_text().iter().any(|t| t == "No photos"));
+    // an empty album in an empty library says so (the way in to Import) ... until the dropped ones are on their way
+    assert!(h.painted_text().iter().any(|t| t == "Your library is empty"));
     drop_files(&mut h, &files);
     let pending = h.app.import.as_ref().and_then(|t| t.pending()).expect("a drop has tiles").clone();
     assert_eq!(pending.len(), n, "a tile for each, before anything is read");
     assert!(has(&h, "pending:0"), "drawn in the frame of the drop");
     let text = h.painted_text();
     assert!(text.iter().any(|t| *t == format!("Adding photos ({n})")), "{text:?}");
-    assert!(!text.iter().any(|t| t == "No photos"), "{text:?}");
+    assert!(!text.iter().any(|t| t == "No photos" || t == "Your library is empty"), "{text:?}");
 
     let mut adding = false;
     let mut before = n;

@@ -288,7 +288,7 @@ fn import_cancelled_by_command_reports_cancelled() {
 fn a_photo_chosen_during_an_import_stays_selected() {
     let (mut h, dir) = slow_import("chosen", 20);
     crate::import::start_paths(&mut h.app, vec![dir.to_string_lossy().to_string()]).unwrap();
-    assert!(h.step_until(Duration::from_secs(60), |h| h.app.import.as_ref().is_some_and(|t| t.imported >= 2)));
+    assert!(h.step_until(Duration::from_secs(60), |h| h.app.import.as_ref().is_some_and(|t| t.tally.imported >= 2)));
     // the newest photo so far, never the import's first
     let chosen = h.app.session.catalog.photos().map(|p| p.id).max().expect("photos arrived");
     let r = h.request("engine.execute", json!({"command": "library.select", "params": {"ids": [chosen.0]}}), T);
@@ -394,12 +394,12 @@ fn batch_merge_runs_each_set_in_turn() {
     let rows = h.app.session.activity.list();
     assert_eq!((rows.len(), rows.first().map(|r| r.kind)), (1, Some("merge")));
     // the first merge finishes and the second starts by itself
-    assert!(h.step_until(T, |h| h.app.merge.batch.len() == 1 && h.app.merge.final_task.is_some()));
+    assert!(h.step_until(T, |h| h.app.merge.batch.len() == 1 && h.app.merge.runner.merging.is_some()));
     assert_eq!(h.app.session.catalog.len(), 10);
     // cancelling the second drops the third
     let rows = h.app.session.activity.list();
     h.app.session.activity.cancel(rows[0].id).unwrap();
-    assert!(h.step_until(T, |h| h.app.merge.final_task.is_none()));
+    assert!(h.step_until(T, |h| h.app.merge.runner.merging.is_none()));
     assert!(h.app.merge.batch.is_empty());
     assert_eq!(h.app.session.catalog.len(), 10, "nothing more merged");
     assert!(h.app.session.activity.list().is_empty());

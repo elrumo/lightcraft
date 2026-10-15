@@ -1153,7 +1153,7 @@ impl Engine {
             canvas_long: canvas.0.max(canvas.1) as f32,
             native_long: nw.max(nh).round() as usize,
             texture_side: TEXTURE_SIDE,
-            draft_scale: 1.0,
+            draft: None,
             windows: region::overlay_supports_window(overlay),
         };
         let Some(edge) = region::plan(0, sizes).window_edge else {
@@ -1465,7 +1465,7 @@ fn overlay(v: Option<&Value>) -> lightcraft_pipeline::Overlay {
 fn merge_ids(s: &Session, p: &Value) -> Vec<PhotoId> {
     match p.get("ids").and_then(Value::as_array) {
         Some(a) => a.iter().filter_map(Value::as_u64).map(PhotoId).collect(),
-        None => s.targets(&json!({})),
+        None => s.selected(),
     }
 }
 

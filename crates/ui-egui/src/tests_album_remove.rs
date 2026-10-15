@@ -79,8 +79,9 @@ fn the_delete_key_in_an_album_removes_from_the_album_only() {
     assert!(in_album(&h, album, photo));
 }
 
-/// In an album the Photo menu offers Remove from Album with the Delete key, and Delete Photo (no
-/// key) still deletes from the library, after asking; outside albums there is no Remove from Album.
+/// In an album the Photo menu offers Remove from Album with the Delete key, and Delete Photo (⌘Delete in
+/// this fork, where ⌫ outside albums still deletes through Remove from Album's binding) still deletes from the
+/// library, after asking; outside albums there is no Remove from Album.
 #[test]
 fn the_photo_menu_in_an_album_has_remove_from_album_on_the_delete_key() {
     let mut h = demo();
@@ -88,7 +89,7 @@ fn the_photo_menu_in_an_album_has_remove_from_album_on_the_delete_key() {
     exec(&mut h, "library.select", json!({"ids": [photo.0]}));
     let items = photo_menu(&h);
     assert!(!items.iter().any(|(id, _)| id == "album.removePhotos"), "not outside albums: {items:?}");
-    assert!(items.iter().any(|(id, sc)| id == "photo.delete" && sc.as_deref() == Some("Delete")), "{items:?}");
+    assert!(items.iter().any(|(id, sc)| id == "photo.delete" && sc.as_deref() == Some("Cmd+Delete")), "{items:?}");
 
     let album = garden(&h);
     exec(&mut h, "library.source", json!({"kind": "album", "id": album}));
@@ -96,7 +97,7 @@ fn the_photo_menu_in_an_album_has_remove_from_album_on_the_delete_key() {
     exec(&mut h, "library.select", json!({"ids": [photo.0]}));
     let items = photo_menu(&h);
     assert!(items.iter().any(|(id, sc)| id == "album.removePhotos" && sc.as_deref() == Some("Delete")), "{items:?}");
-    assert!(items.iter().any(|(id, sc)| id == "photo.delete" && sc.is_none()), "{items:?}");
+    assert!(items.iter().any(|(id, sc)| id == "photo.delete" && sc.as_deref() == Some("Cmd+Delete")), "{items:?}");
 
     // Photo ▸ Remove from Album (no params: the album on screen)
     crate::menubar::run_item(&mut h.app, "album.removePhotos", json!({})).unwrap();

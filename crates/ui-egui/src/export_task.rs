@@ -105,12 +105,8 @@ pub fn start_print(app: &mut LightcraftApp, params: &Value) -> Result<Value, Str
     let total = prepared.len();
     let title = std::path::Path::new(&path).file_stem().and_then(|n| n.to_str()).unwrap_or("Print").to_string();
     let write = app.services.write_shared.clone();
-    let progress = Arc::new(Mutex::new((0, String::new())));
-    let cancel = Arc::new(AtomicBool::new(false));
-    let (p, c) = (progress.clone(), cancel.clone());
-    let (tx, rx) = channel();
     let photos = ids.len();
-    let work = move || {
+    let batch = Batch::spawn(&app.session, "Printing to PDF", total, move |p, c, _row| {
         let result = prepared
             .run(&mut |done, name| {
                 if let Ok(mut g) = p.lock() {
@@ -130,15 +126,9 @@ pub fn start_print(app: &mut LightcraftApp, params: &Value) -> Result<Value, Str
                 }
                 Ok(vec![json!({"path": path, "pages": pages.len(), "photos": photos, "bytes": bytes.len(), "print": true})])
             });
-        let _ = tx.send(result.map(|files| (files, None, c.load(Ordering::Relaxed))));
-    };
-    #[cfg(not(target_arch = "wasm32"))]
-    std::thread::Builder::new().name("print".into()).spawn(work).map_err(|e| e.to_string())?;
-    #[cfg(target_arch = "wasm32")]
-    work();
-    let row = app.session.activity.start("export", "Printing to PDF", Cancel::Flag(cancel.clone()));
-    row.progress(0, total as u64);
-    app.export = Some(ExportTask { total, progress, cancel, rx, guard: row });
+        result.map(|files| (files, None, c.load(Ordering::Relaxed)))
+    })?;
+    app.export = Some(ExportTask { batch, send: SendTo::default() });
     Ok(json!({"background": true, "total": total}))
 }
 

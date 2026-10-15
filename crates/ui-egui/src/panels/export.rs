@@ -95,7 +95,7 @@ pub fn form(app: &mut LightcraftApp, ui: &mut egui::Ui, f: Form<'_>, part: Part)
         });
     } else {
         field(ui, "Preset", |ui| {
-            let c = egui::ComboBox::from_id_salt("exportPreset").width(220.0).selected_text(crate::i18n::tr("Choose…")).show_ui(ui, |ui| {
+            let c = crate::widgets::combo_box("exportPreset").width(220.0).selected_text(crate::i18n::tr("Choose…")).show_ui(ui, |ui| {
                 let mut builtin = true;
                 for (p, b) in &presets {
                     if builtin && !*b {
@@ -168,10 +168,12 @@ pub fn form(app: &mut LightcraftApp, ui: &mut egui::Ui, f: Form<'_>, part: Part)
         opts.bit_depth = Some(bd);
     }
     if matches!(opts.format, F::Jpeg | F::Tiff | F::Avif | F::Png | F::Jxl) {
-        let tip = "Photos edited in HDR: JPEG with an HDR gain map (looks right everywhere, brighter highlights on HDR displays), AVIF as 10-bit, PNG and JPEG XL as 16-bit Rec. 2020 PQ; TIFF needs 32-bit float";
-        crate::widgets::check(ui, &mut opts.hdr, "HDR output").on_hover_text(tip);
+        let tip = crate::i18n::tr(
+            "Photos edited in HDR: JPEG with an HDR gain map (looks right everywhere, brighter highlights on HDR displays), AVIF as 10-bit, PNG and JPEG XL as 16-bit Rec. 2020 PQ; TIFF needs 32-bit float",
+        );
+        crate::widgets::check(ui, &mut opts.hdr, crate::i18n::tr("HDR output")).on_hover_text(tip);
         if opts.hdr && !opts.hdr_output() {
-            ui.label(RichText::new("HDR TIFF needs 32-bit float.").color(t.text_dim));
+            ui.label(RichText::new(crate::i18n::tr("HDR TIFF needs 32-bit float.")).color(t.text_dim));
         }
         if opts.hdr && opts.format == F::Avif {
             use lightcraft_engine::export::HdrCurve as H;
@@ -180,14 +182,18 @@ pub fn form(app: &mut LightcraftApp, ui: &mut egui::Ui, f: Form<'_>, part: Part)
     }
     if !rendered {
     } else if opts.format == F::Avif && opts.hdr {
-        let curve = if opts.hdr_transfer == lightcraft_engine::export::HdrCurve::Hlg { "HLG" } else { "PQ" };
-        ui.label(RichText::new(format!("Color space: Rec. 2020 {curve} (HDR AVIF)")).color(t.text_dim));
+        let label = if opts.hdr_transfer == lightcraft_engine::export::HdrCurve::Hlg {
+            crate::i18n::tr("Color space: Rec. 2020 HLG (HDR AVIF)")
+        } else {
+            crate::i18n::tr("Color space: Rec. 2020 PQ (HDR AVIF)")
+        };
+        ui.label(RichText::new(label).color(t.text_dim));
     } else if opts.format == F::Png && opts.hdr {
-        ui.label(RichText::new("Color space: Rec. 2020 PQ, 16-bit (HDR PNG)").color(t.text_dim)).on_hover_text(
+        ui.label(RichText::new(crate::i18n::tr("Color space: Rec. 2020 PQ, 16-bit (HDR PNG)")).color(t.text_dim)).on_hover_text(crate::i18n::tr(
             "Viewers that don't read the PNG cICP chunk show PQ values as sRGB: flat and washed out. For a picture that looks right everywhere, use JPEG (gain map).",
-        );
+        ));
     } else if opts.format == F::Jxl && opts.hdr {
-        ui.label(RichText::new("Color space: Rec. 2020 PQ (HDR JPEG XL)").color(t.text_dim));
+        ui.label(RichText::new(crate::i18n::tr("Color space: Rec. 2020 PQ (HDR JPEG XL)")).color(t.text_dim));
     } else if opts.format == F::Avif {
         ui.label(RichText::new(crate::i18n::tr("Color space: sRGB (AVIF)")).color(t.text_dim));
     } else {
@@ -275,7 +281,7 @@ pub fn form(app: &mut LightcraftApp, ui: &mut egui::Ui, f: Form<'_>, part: Part)
             ui,
             "Compression",
             "exportDngCompression",
-            &[(Z::Lossless, "Lossless"), (Z::Deflate, "ZIP"), (Z::Uncompressed, "None")],
+            &[(Z::Lossless, "Lossless"), (Z::Deflate, "ZIP"), (Z::Uncompressed, "None"), (Z::Lossy, "Lossy")],
             &mut opts.dng_compression,
         );
     }
@@ -316,21 +322,35 @@ pub fn form(app: &mut LightcraftApp, ui: &mut egui::Ui, f: Form<'_>, part: Part)
         );
         register(ui.ctx(), "label:exportShareHelp", r.rect);
     } else {
-        field(ui, "Folder", |ui| {
-            trailing_button_row(ui, |ui| {
-                if app.services.pick_folder.is_some()
-                    && crate::widgets::text_button(ui, "exportChooseFolder", crate::i18n::tr("Choose…"), false).clicked()
-                    && let Some(pick) = app.services.pick_folder.as_mut()
-                    && let Some(d) = pick()
-                {
-                    *dir = d;
-                }
-                crate::widgets::named(
-                    ui.add(crate::widgets::text_box(ui, egui::TextEdit::singleline(dir).desired_width(ui.available_width()))),
-                    crate::i18n::tr("Folder"),
-                );
+        // like Lightroom Classic's Export To: one folder, or each photo's own folder (not on
+        // the web, where originals live in the browser's storage, not in folders)
+        use lightcraft_engine::export::DestinationMode as D;
+        if !cfg!(target_arch = "wasm32") || opts.destination_mode != D::SpecificFolder {
+            choices(
+                ui,
+                "Export to",
+                "exportDestinationMode",
+                &[(D::SpecificFolder, "Specific folder"), (D::SameAsOriginal, "Same folder as original photo")],
+                &mut opts.destination_mode,
+            );
+        }
+        if opts.destination_mode == D::SpecificFolder {
+            field(ui, "Folder", |ui| {
+                trailing_button_row(ui, |ui| {
+                    if app.services.pick_folder.is_some()
+                        && crate::widgets::text_button(ui, "exportChooseFolder", crate::i18n::tr("Choose…"), false).clicked()
+                        && let Some(pick) = app.services.pick_folder.as_mut()
+                        && let Some(d) = pick()
+                    {
+                        *dir = d;
+                    }
+                    crate::widgets::named(
+                        ui.add(crate::widgets::text_box(ui, egui::TextEdit::singleline(dir).desired_width(ui.available_width()))),
+                        crate::i18n::tr("Folder"),
+                    );
+                });
             });
-        });
+        }
         field(ui, "Subfolder", |ui| {
             crate::widgets::named(
                 ui.add(crate::widgets::text_box(
@@ -410,7 +430,7 @@ fn watermark_preview(
     type Base = std::sync::Arc<std::sync::Mutex<(u8, Option<Result<lightcraft_raster::Rgba8, String>>)>>;
     type Shown = (u64, u8, lightcraft_engine::export::Watermark, usize, egui::TextureHandle);
     let t = Tokens::get(ui.ctx());
-    let Some(&id) = app.session.targets(&json!({})).first() else { return };
+    let Some(&id) = app.session.selected().first() else { return };
     let Some(photo) = app.session.catalog.photo(id).cloned() else { return };
     let (out_w, out_h) = lightcraft_engine::export::output_size(&photo, &lightcraft_engine::export::ExportOptions { resize, ..Default::default() });
     let export_short = out_w.min(out_h);
@@ -607,7 +627,7 @@ fn export_size(ui: &mut egui::Ui, full: &mut bool, r: &mut Resize, ppi: &mut u16
             });
         } else {
             field(ui, "Resize to", |ui| {
-                let c = egui::ComboBox::from_id_salt("exportResizeMode").width(150.0).selected_text(crate::i18n::tr(cur)).show_ui(ui, |ui| {
+                let c = crate::widgets::combo_box("exportResizeMode").width(150.0).selected_text(crate::i18n::tr(cur)).show_ui(ui, |ui| {
                     for (m, l) in MODES {
                         ui.selectable_value(&mut r.mode, m, crate::i18n::tr(l));
                     }
@@ -971,7 +991,7 @@ pub fn in_grid_order(app: &mut LightcraftApp, ids: &[u64]) -> Vec<u64> {
 
 /// The photos the export dialog starts with: the selection, else the open photo.
 pub fn initial_ids(app: &mut LightcraftApp) -> Vec<u64> {
-    let want: Vec<u64> = app.session.targets(&json!({})).iter().map(|p| p.0).collect();
+    let want: Vec<u64> = app.session.selected().iter().map(|p| p.0).collect();
     in_grid_order(app, &want)
 }
 

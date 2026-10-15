@@ -98,6 +98,8 @@ fn click(h: &mut Headless, id: &str) {
     let at = widget(h, id).unwrap_or_else(|| panic!("no {id}")).center();
     press(h, at);
     release(h, at);
+    // (a folder opens with a motion: its rows are there once it has come to rest)
+    h.settle(std::time::Duration::from_secs(10));
 }
 
 fn toast(h: &Headless) -> String {
@@ -190,6 +192,7 @@ fn photos_already_in_the_folder_stay_put() {
     });
     h.step();
     release(&mut h, toggle.center());
+    h.settle(std::time::Duration::from_secs(10));
     let target = folder_row(&h, &home).expect("opened");
     let garden = id_of(&h, "garden.png");
     h.app.ui.dragging_photos = Some(vec![garden]);

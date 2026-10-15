@@ -258,20 +258,22 @@ fn a_photo_deleted_while_it_plays_does_not_stall_the_slideshow() {
     h.settle(SETTLE);
 }
 
-/// Scroll the Settings ▸ Slideshow column until widget `id` is in view (near its top): the
-/// sections are taller than the dialog.
+/// Scroll the Settings ▸ Slideshow page (one column here: the composed slide first, then the settings)
+/// until widget `id` is in view: the sections are taller than the dialog.
 fn reveal(h: &mut Headless, id: &str) {
     let find = |h: &Headless, w: &str| h.app.widgets.iter().find(|(i, _)| i == w).map(|(_, r)| *r);
-    for _ in 0..40 {
+    for _ in 0..60 {
         h.step();
-        let col = find(h, "slideshow:preview").expect("the Slideshow settings are open");
+        let win = find(h, "dialog:window").expect("Settings is open");
+        // (below the title and tabs, above the Close button)
+        let (top, bottom) = (win.top() + 120.0, win.bottom() - 100.0);
         let dy = match find(h, id) {
-            Some(w) if w.center().y >= col.top() + 10.0 && w.center().y <= col.top() + 340.0 => return,
-            Some(w) => (col.top() + 80.0 - w.center().y).clamp(-500.0, 500.0),
+            Some(w) if w.center().y >= top && w.center().y <= bottom => return,
+            Some(w) => (top + 60.0 - w.center().y).clamp(-500.0, 500.0),
             None => -300.0,
         };
-        // (the pointer over the settings column, left of the preview)
-        let r = h.request("ui.hoverWidget", json!({"id": "slideshow:preview", "fx": -1.0, "fy": 0.5}), T);
+        // (the pointer over the page, right of the sidebar)
+        let r = h.request("ui.hoverWidget", json!({"id": "dialog:window", "fx": 0.7, "fy": 0.5}), T);
         assert_eq!(r["ok"], true, "{r}");
         let r = h.request("ui.scroll", json!({"dy": dy}), T);
         assert_eq!(r["ok"], true, "{r}");
@@ -280,6 +282,39 @@ fn reveal(h: &mut Headless, id: &str) {
         }
     }
     panic!("{id} never came into view");
+}
+
+/// Scroll the Settings page back up until the composed slide is in view (the page is one column here, so
+/// the slide scrolls away with the settings).
+fn show_preview(h: &mut Headless) {
+    let find = |h: &Headless, w: &str| h.app.widgets.iter().find(|(i, _)| i == w).map(|(_, r)| *r);
+    for _ in 0..60 {
+        h.step();
+        let win = find(h, "dialog:window").expect("Settings is open");
+        if let Some(p) = find(h, "slideshow:preview")
+            && p.top() >= win.top() + 100.0
+            && p.bottom() <= win.bottom() - 100.0
+        {
+            h.settle(SETTLE);
+            return;
+        }
+        let r = h.request("ui.hoverWidget", json!({"id": "dialog:window", "fx": 0.7, "fy": 0.5}), T);
+        assert_eq!(r["ok"], true, "{r}");
+        let r = h.request("ui.scroll", json!({"dy": 400.0}), T);
+        assert_eq!(r["ok"], true, "{r}");
+        for _ in 0..8 {
+            h.step();
+        }
+    }
+    panic!("the slideshow preview never came into view");
+}
+
+fn dump(h: &Headless, name: &str) {
+    let img = h.paint();
+    let rgba = lightcraft_raster::Rgba8 { width: img.size[0], height: img.size[1], data: img.pixels.iter().map(|c| [c.r(), c.g(), c.b(), 255]).collect() };
+    if let Ok(png) = lightcraft_codecs::encode_png(&lightcraft_codecs::EncodeImage::rgba8(&rgba), &lightcraft_codecs::EncodeMeta::default()) {
+        let _ = std::fs::write(format!("/private/tmp/claude-501/-Users-eliasruizmonserrat-Documents-local-projects-personalProjects-lightcraft/61b8af9f-f442-4ebd-aaaf-54619ebb9c0f/scratchpad/{name}.png"), png);
+    }
 }
 
 fn painted(img: &egui::ColorImage, x: usize, y: usize) -> [u8; 3] {
@@ -372,9 +407,10 @@ fn settings_shows_the_slide_layout_and_a_live_preview() {
     let before = h.app.renderer.textures.get(&Slot::SlidePreview).map(|t| t.key);
     run(&mut h, "slideshow.layout", json!({"margins": 0.2, "backdropColor": "#00ff00"}));
     assert!(h.step_until(SETTLE, |h| h.app.renderer.textures.get(&Slot::SlidePreview).map(|t| t.key) != before));
-    h.step();
+    show_preview(&mut h);
     let rect = h.app.widgets.iter().find(|(id, _)| id == "slideshow:preview").map(|(_, r)| *r).unwrap();
     let img = h.paint();
+    dump(&h, "ss-layout");
     let c = painted(&img, (rect.left() + 3.0) as usize, (rect.center().y) as usize);
     assert!(c[1] > 200 && c[0] < 60, "the green backdrop in the preview margin: {c:?}");
     h.settle(SETTLE);
@@ -592,6 +628,8 @@ fn settings_shows_the_titles_and_the_preview_shows_a_title_screen() {
     assert_eq!(crate::panels::slide_titles::preview_shows(&h.view.ctx), Some(lightcraft_engine::slideshow::Title::Intro));
     run(&mut h, "slideshow.titles", json!({"intro": {"color": "#ff8000", "content": "none"}}));
     assert!(h.step_until(SETTLE, |h| h.app.renderer.textures.get(&Slot::SlidePreview).is_some_and(|t| t.photo == PhotoId(0))));
+    show_preview(&mut h);
+    dump(&h, "ss-titles");
     assert!(h.step_until(SETTLE, |h| {
         let rect = h.app.widgets.iter().find(|(id, _)| id == "slideshow:preview").map(|(_, r)| *r).unwrap();
         let img = h.paint();
@@ -651,6 +689,7 @@ fn template_browser_previews_on_hover_applies_and_manages_user_templates() {
         let c = painted(&img, (r.left() + 3.0) as usize, r.center().y as usize);
         c.iter().all(|v| (200..=230).contains(v))
     };
+    dump(&h, "ss-template");
     assert!(h.step_until(SETTLE, grey), "the hovered template on the selected photo");
     assert_eq!(SlideLook::of(&h.app.session), before, "hovering changes nothing");
     assert!(h.app.session.slide_templates_previous.is_none());

@@ -220,7 +220,7 @@ fn delete_tapped(app: &mut LightcraftApp, ctx: &egui::Context) {
 
 /// Ask before the photos go to Recently Deleted (the alert's Delete runs `photo.delete`).
 fn confirm_delete(app: &mut LightcraftApp) {
-    let count = app.session.targets(&json!({})).len();
+    let count = app.session.selected().len();
     if count > 0 {
         app.ui.dialog = Some(crate::state::Dialog::ConfirmDelete { count });
     }
@@ -228,7 +228,7 @@ fn confirm_delete(app: &mut LightcraftApp) {
 
 /// The choice Delete offers in an album: Remove from Album, or Delete (from the library).
 fn delete_rows(app: &mut LightcraftApp, ui: &mut egui::Ui) {
-    let ids: Vec<u64> = app.session.targets(&json!({})).iter().map(|p| p.0).collect();
+    let ids: Vec<u64> = app.session.selected().iter().map(|p| p.0).collect();
     if let Some(album) = plain_album(app)
         && mobile::row(ui, "removeFromAlbum", Some(Icon::Album), crate::i18n::tr("Remove from Album"), !ids.is_empty())
     {

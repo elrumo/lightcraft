@@ -123,6 +123,11 @@ pub struct PrefsWriter {
     pub failing: bool,
     /// `ui.json` couldn't be read at launch: never overwrite it this session.
     pub keep_file: bool,
+    /// Follows the window, to remember the size it rests at (`UiState::window`).
+    pub window: crate::window_place::WindowWatch,
+    /// When the window was first looked at: its watch goes by the clock from then on, not by
+    /// the interface's time, which stands still while the window is hidden.
+    pub window_since: Option<web_time::Instant>,
 }
 
 impl PrefsWriter {
@@ -165,8 +170,30 @@ impl PrefsWriter {
         Ok(())
     }
 
+    /// What to remember of the window as the app quits ([`WindowWatch::at_exit`]).
+    ///
+    /// [`WindowWatch::at_exit`]: crate::window_place::WindowWatch::at_exit
+    pub fn window_at_exit(&mut self, remembered: Option<crate::window_place::WindowPlace>) -> Option<crate::window_place::WindowPlace> {
+        match self.window_since {
+            Some(since) => self.window.at_exit(remembered, since.elapsed().as_secs_f64()),
+            None => remembered,
+        }
+    }
+
     pub fn tick(&mut self, app: &mut LightcraftApp, ctx: &egui::Context) {
-        let now = ctx.input(|i| i.time);
+        // (asked for before the input is read: the context is not asked from inside its own lock)
+        let zoom = ctx.zoom_factor();
+        let (now, seen) = ctx.input(|i| (i.time, crate::window_place::Seen::of(i.viewport(), i.content_rect(), zoom)));
+        // how the window is, to open like that next time (written with the settings below). What
+        // the settings hold is checked first: a script may have set it (`ui.set`)
+        let remembered = app.ui.window.and_then(crate::window_place::WindowPlace::checked);
+        let at = self.window_since.get_or_insert_with(web_time::Instant::now).elapsed().as_secs_f64();
+        app.ui.window = self.window.note(remembered, &seen, at);
+        if let Some(wait) = self.window.waits(at) {
+            // (a size is only remembered once the window has rested at it: look again then, though
+            // nothing else asks for a frame)
+            ctx.request_repaint_after(wait);
+        }
         let moved = app.ui.settings.library_path != self.library;
         if !moved && now - self.checked < 3.0 {
             return;

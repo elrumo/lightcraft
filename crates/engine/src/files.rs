@@ -1867,6 +1867,8 @@ pub(crate) mod tests {
             linearized: false,
             opcodes: OpcodeLists::default(),
             metadata: lightcraft_meta::Metadata::default(),
+            pixel_aspect: 1.0,
+            lens_metadata: Default::default(),
         };
         write_dng(&raw, &DngWriteOptions::default()).unwrap()
     }

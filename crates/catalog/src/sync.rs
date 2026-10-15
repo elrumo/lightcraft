@@ -631,6 +631,7 @@ impl ServerCore {
                 keyword_list: all.keyword_list.clone(),
                 folder_records: all.folder_records.clone(),
                 revision: 0,
+                ..Default::default()
             },
         };
         let from = after.map_or(std::ops::Bound::Unbounded, std::ops::Bound::Excluded);

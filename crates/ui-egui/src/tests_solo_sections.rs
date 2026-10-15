@@ -32,9 +32,11 @@ fn exec(h: &mut Headless, command: &str, params: serde_json::Value) -> serde_jso
 
 /// A real click through the control channel: `{id, button?, alt?}` as `ui.clickWidget` takes them.
 fn click(h: &mut Headless, params: serde_json::Value) {
+    // (the sections fold with a motion: click where the headers have come to rest)
+    h.settle(T);
     let r = h.request("ui.clickWidget", params.clone(), T);
     assert_eq!(r["ok"], true, "click {params}: {r}");
-    h.step();
+    h.settle(T);
 }
 
 #[test]

@@ -16,7 +16,7 @@ fn main() {
     };
     let mut s = Session::new();
     let t = Instant::now();
-    let files = lightcraft_engine::import::expand(std::slice::from_ref(&folder), None);
+    let files = lightcraft_engine::import::expand(std::slice::from_ref(&folder), None, &[]);
     println!("{} files listed in {:.1} s (the library is made of them)", files.len(), t.elapsed().as_secs_f64());
     for f in &files {
         let id = s.catalog.alloc_photo_id();

@@ -81,13 +81,19 @@ pub struct ViewSizes {
     pub native_long: usize,
     /// The largest texture the GPU takes.
     pub texture_side: usize,
-    /// 1.0, or less while a slider is dragged (a draft of the whole-frame render).
-    pub draft_scale: f32,
+    /// While a slider is dragged, the scale of the whole-frame draft against the render at rest
+    /// (1.0 or [`CPU_DRAFT_SCALE`], from egui's `DragScale`, or what the host learned it can do in
+    /// time); a draft is never above the canvas size. `None`: no drag.
+    pub draft: Option<f32>,
     /// Whether a window can be drawn over the whole-frame render (not with a diagnostic overlay
-    /// that needs whole-frame context, soft proofing, or a read too far for one window). Mask
-    /// overlays are window-safe.
+    /// that needs whole-frame context, or a read too far for one window). Mask overlays and soft
+    /// proofing are window-safe.
     pub windows: bool,
 }
+
+/// Size of a slider drag's whole-frame draft when full size would be too slow (the CPU renders
+/// it, or full-size drafts of this drag went over budget), against the render at rest.
+pub const CPU_DRAFT_SCALE: f32 = 0.6;
 
 /// What the loupe renders for a view: the whole frame at about canvas size, and, once the view is
 /// zoomed past what that holds, the window on screen at no more than 100 %.
@@ -107,12 +113,12 @@ pub struct LoupePlan {
 pub fn plan(preview_limit: u32, v: ViewSizes) -> LoupePlan {
     let canvas_long = if v.canvas_long.is_finite() { v.canvas_long.max(8.0) } else { 8.0 };
     let drawn_long = if v.drawn_long.is_finite() { v.drawn_long.max(8.0) } else { canvas_long };
-    let scale = if v.draft_scale.is_finite() { v.draft_scale.clamp(0.1, 1.0) } else { 1.0 };
+    let scale = v.draft.map_or(1.0, |s| if s.is_finite() { s.clamp(0.1, 1.0) } else { 1.0 });
     if !v.windows {
-        // the whole frame at the size it is drawn (soft proof or a whole-frame diagnostic has no
-        // window); while a slider drags, a canvas-sized draft as with windows: a drag at 1:1 must
-        // not render the photo's every pixel each frame
-        let long = if scale < 1.0 { drawn_long.min(canvas_long) } else { drawn_long };
+        // the whole frame at the size it is drawn (a whole-frame diagnostic has no window); while a
+        // slider drags, a canvas-sized draft as with windows: a drag at 1:1 must not render the
+        // photo's every pixel each frame
+        let long = if v.draft.is_some() { drawn_long.min(canvas_long) } else { drawn_long };
         let main_edge = loupe_edge(preview_limit, long * scale, v.native_long, v.texture_side);
         return LoupePlan { main_edge, window_edge: None };
     }
@@ -120,19 +126,23 @@ pub fn plan(preview_limit: u32, v: ViewSizes) -> LoupePlan {
     // original is not decoded for the whole-frame render
     let source_cap = if preview_limit == 0 { lightcraft_engine::SourceLevel::Preview.max_edge() } else { preview_limit as usize };
     let edge_at = |scale: f32| loupe_edge(preview_limit, drawn_long.min(canvas_long) * scale, v.native_long, v.texture_side).min(source_cap);
-    let main_edge = edge_at(scale);
     let frame_edge = window_frame_edge(drawn_long, v.native_long);
     // a user who capped the preview size has chosen speed over sharpness at fit
     let fit = drawn_long <= canvas_long * 1.05;
     // (against the undrafted whole-frame render: a drag must not switch the window off and on)
     let window_edge = (frame_edge as f32 > edge_at(1.0) as f32 * WINDOW_RATIO && !(fit && preview_limit != 0)).then_some(frame_edge);
-    LoupePlan { main_edge, window_edge }
+    // with a window over it, the whole-frame draft is hidden (it feeds the histogram and stands in
+    // where the window has no pixels yet): the small draft does, and the window keeps the frame time
+    let scale = if window_edge.is_some() && v.draft.is_some() { scale.min(CPU_DRAFT_SCALE) } else { scale };
+    LoupePlan { main_edge: edge_at(scale), window_edge }
 }
 
 /// Whether a window render can carry `overlay` (one that reads only around each pixel: a mask's,
-/// or none); the others need the whole frame, so the loupe renders that at the drawn size instead.
+/// every visible mask's at once, or none); the others need the whole frame, so the loupe renders
+/// that at the drawn size instead.
 pub fn overlay_supports_window(overlay: lightcraft_engine::pipeline::Overlay) -> bool {
-    matches!(overlay, lightcraft_engine::pipeline::Overlay::None | lightcraft_engine::pipeline::Overlay::Mask { .. })
+    use lightcraft_engine::pipeline::Overlay;
+    matches!(overlay, Overlay::None | Overlay::Mask { .. } | Overlay::AllMasks { .. })
 }
 
 /// Whether the picture on screen has the frame's aspect (to the one pixel a texture's whole-pixel

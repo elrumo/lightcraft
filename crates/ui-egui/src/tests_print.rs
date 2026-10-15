@@ -264,7 +264,7 @@ fn printing_shows_a_row_in_the_activity_stack_and_stops() {
     assert!(rows[0].cancellable);
     app.session.activity.cancel(rows[0].id).unwrap();
     let task = app.export.take().unwrap();
-    assert!(task.cancel.load(std::sync::atomic::Ordering::Relaxed));
+    assert!(task.batch.cancel.load(std::sync::atomic::Ordering::Relaxed));
     drop(task);
     assert!(app.session.activity.list().is_empty(), "the row goes with the print");
 }

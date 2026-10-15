@@ -44,6 +44,13 @@ pub struct Expansion {
     inner: Arc<Inner>,
 }
 
+impl PartialEq for Expansion {
+    /// Two expansions are the same when they draw the same fill (`key` identifies it).
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner) || self.inner.key == other.inner.key
+    }
+}
+
 struct Inner {
     fill: Option<ExpandFill>,
     /// Identifies the fill in the stage cache's key (see `Frame`'s `Debug`).

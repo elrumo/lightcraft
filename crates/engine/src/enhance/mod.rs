@@ -208,7 +208,18 @@ impl Enhancer {
         {
             let s = self.download.status();
             let id = self.fetching.lock().map(|f| *f).unwrap_or_else(|e| *e.into_inner()).map(String::from);
-            (id, DownloadStatus { running: s.running, done: s.done, total: s.total, file: s.file, error: s.error, finished: s.finished })
+            (
+                id,
+                DownloadStatus {
+                    running: s.running,
+                    done: s.done,
+                    total: s.total,
+                    file: s.file,
+                    error: s.error,
+                    cancelled: s.cancelled,
+                    finished: s.finished,
+                },
+            )
         }
         #[cfg(not(feature = "enhance"))]
         (None, DownloadStatus::default())

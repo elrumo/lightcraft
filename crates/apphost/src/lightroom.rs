@@ -357,18 +357,20 @@ impl Runner {
             }
             Err(mpsc::TryRecvError::Disconnected) => return Some(self.finish(task, json!({"error": "Lightroom worker stopped unexpectedly"}))),
         };
+        // The task's cancel flag says whether it was cancelled (the worker only stops for it), not an
+        // error's words: a real failure that mentions "cancelled" is still reported as a failure.
         let stopped = task.cancel.load(Ordering::Relaxed);
         match message {
             Message::Inspected(result) => Some(match result {
                 Ok(report) if !stopped => self.finish(task, report),
                 Ok(_) => self.finish(task, json!({"cancelled": true})),
-                Err(e) if stopped || e.contains("cancelled") => self.finish(task, json!({"cancelled": true})),
+                Err(_) if stopped => self.finish(task, json!({"cancelled": true})),
                 Err(e) => self.finish(task, json!({"error": e})),
             }),
             Message::Prepared(result) => {
                 let prepared = match result {
                     Ok(p) => p,
-                    Err(e) if stopped || e.contains("cancelled") => return Some(self.finish(task, json!({"cancelled": true}))),
+                    Err(_) if stopped => return Some(self.finish(task, json!({"cancelled": true}))),
                     Err(e) => return Some(self.finish(task, json!({"error": e}))),
                 };
                 if stopped || prepared.is_cancelled() || !prepared.token().matches(s) {
@@ -492,6 +494,31 @@ mod tests {
         assert!(!runner.running());
         assert_eq!(runner.status(), json!({"cancelled": true, "path": "fixture.lrcat"}));
         assert!(s.activity.list().is_empty());
+    }
+
+    /// Whether the task was cancelled is the task's flag, not an error's words (#1046): a cancel
+    /// reads as one whatever the message says, and a failure that mentions "cancelled" is a failure.
+    #[test]
+    fn lightroom_cancel_is_the_flag_not_the_words() {
+        let mut s = Session::with_demo();
+        let mut runner = Runner::default();
+        let (task, tx, cancel, _) = fake_import(&s);
+        runner.task = Some(task);
+        cancel.store(true, Ordering::Relaxed);
+        tx.send(Message::Prepared(Err("Lightroom-Import abgebrochen".into()))).unwrap();
+        runner.poll(&mut s, wake(), &words).expect("it ended");
+        assert_eq!(runner.status(), json!({"cancelled": true, "path": "fixture.lrcat"}));
+
+        for message in
+            [Message::Prepared(Err("the drive was ejected: copy cancelled by the system".into())), Message::Inspected(Err("cancelled".into()))]
+        {
+            let (task, tx, _, _) = fake_import(&s);
+            runner.task = Some(task);
+            tx.send(message).unwrap();
+            runner.poll(&mut s, wake(), &words).expect("it ended");
+            let last = runner.status();
+            assert!(last.get("cancelled").is_none() && last["error"].as_str().is_some_and(|e| e.contains("cancelled")), "{last}");
+        }
     }
 
     #[test]
