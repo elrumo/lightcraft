@@ -61,6 +61,23 @@ fn months_and_years_show_the_best_photos() {
     assert!(s.execute("library.blocks", &json!({"span": "weeks"})).is_err());
 }
 
+/// Months and Years count the photos in a collapsed stack, not one per stack.
+#[test]
+fn months_count_every_photo_in_a_collapsed_stack() {
+    let mut s = Session::with_demo();
+    let total = |s: &mut Session| -> u64 {
+        let m = s.execute("library.blocks", &json!({"span": "months"})).unwrap();
+        m.as_array().unwrap().iter().map(|b| b["count"].as_u64().unwrap()).sum()
+    };
+    let before = total(&mut s);
+    let ids: Vec<u64> = s.visible_cloned().iter().take(5).map(|id| id.0).collect();
+    s.execute("stack.group", &json!({"ids": ids, "collapsed": true})).unwrap();
+    assert_eq!(s.visible_cloned().len() as u64, before - 4, "the stack shows one photo");
+    assert_eq!(total(&mut s), before);
+    let years = s.execute("library.blocks", &json!({"span": "years"})).unwrap();
+    assert_eq!(years.as_array().unwrap().iter().map(|b| b["count"].as_u64().unwrap()).sum::<u64>(), before);
+}
+
 /// The filter's lists: each value with its count, cameras most used first.
 #[test]
 fn facets_list_the_filter_choices() {

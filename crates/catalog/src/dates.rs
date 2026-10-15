@@ -2,6 +2,8 @@
 //! weekday and month names, shifting a time by an offset, and grouping a photo list into runs of
 //! the same day / month / year (the date headers of the photo grid).
 
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 
 pub use crate::stacks::iso_seconds;
@@ -161,10 +163,11 @@ pub struct DateBlock {
 impl Catalog {
     /// The photos in `ids` grouped by capture month (`key_len` 7) or year (4), in the order they
     /// come, each group showing up to `show` of them: the best (picked, then most stars) and the
-    /// rest spread evenly through it, in the group's own order.
-    pub fn date_blocks(&self, ids: &[PhotoId], key_len: usize, show: usize) -> Vec<DateBlock> {
+    /// rest spread evenly through it, in the group's own order. A group's count includes the photos
+    /// a collapsed stack's shown photo stands for (`stacked`, from [`Catalog::arrange_stacks_counted`]).
+    pub fn date_blocks(&self, ids: &[PhotoId], stacked: &HashMap<PhotoId, usize>, key_len: usize, show: usize) -> Vec<DateBlock> {
         let mut out: Vec<(String, Vec<usize>)> = Vec::new();
-        let mut at: std::collections::HashMap<String, usize> = Default::default();
+        let mut at: HashMap<String, usize> = HashMap::new();
         for (i, id) in ids.iter().enumerate() {
             let key = self.photo(*id).and_then(|p| p.captured.as_deref().and_then(|c| c.get(..key_len)).map(str::to_string)).unwrap_or_default();
             match at.get(&key) {
@@ -207,7 +210,8 @@ impl Catalog {
                 if let Some(rest) = shown.get_mut(1..) {
                     rest.sort_unstable();
                 }
-                DateBlock { key, count: n, shown }
+                let count = members.iter().map(|i| ids.get(*i).and_then(|id| stacked.get(id)).copied().unwrap_or(1)).fold(0, usize::saturating_add);
+                DateBlock { key, count, shown }
             })
             .collect()
     }

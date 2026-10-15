@@ -45,7 +45,12 @@ pub struct Block {
 /// The photos in `ids` grouped by month (`key_len` 7) or year (4) ([`lightcraft_catalog::Catalog::date_blocks`],
 /// shared with the SwiftUI app's `library.blocks`).
 pub fn blocks(app: &LightcraftApp, ids: &[PhotoId], key_len: usize, show: usize) -> Vec<Block> {
-    app.session.catalog.date_blocks(ids, key_len, show).into_iter().map(|b| Block { key: b.key, count: b.count, shown: b.shown }).collect()
+    app.session
+        .catalog
+        .date_blocks(ids, app.session.visible_stacked(), key_len, show)
+        .into_iter()
+        .map(|b| Block { key: b.key, count: b.count, shown: b.shown })
+        .collect()
 }
 
 /// The blocks for this view and span, kept while neither changes.
