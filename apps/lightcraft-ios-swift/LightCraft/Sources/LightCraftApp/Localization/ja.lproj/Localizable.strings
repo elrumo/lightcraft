@@ -231,6 +231,8 @@
 "Appearance Mode" = "外観モード";
 "Appearance Settings…" = "外観設定…";
 "Apple" = "Apple";
+"Apple Image Playground" = "Apple Image Playground";
+"Apple Image Playground makes the new area in Apple's cloud (Private Cloud Compute). The part of the photo inside the crop is sent to Apple for that, and the result may look different from your photo. Nothing else leaves this device." = "Apple Image Playgroundは、新しい領域をAppleのクラウド（Private Cloud Compute）で作成します。そのため、切り抜き内の写真の部分がAppleに送信され、結果が元の写真と異なって見えることがあります。それ以外のものがこのデバイスから出ることはありません。";
 "Apple Vision" = "Apple Vision";
 "Apple tap-to-segment model" = "Appleのタップ選択モデル";
 "Apple's selection model couldn't start on this device." = "Appleの選択モデルをこのデバイスで起動できませんでした。";
@@ -546,6 +548,7 @@
 "Copyrighted" = "著作権あり";
 "Couldn't Be Read" = "読み込めなかったファイル";
 "Couldn't be read" = "読み込めなかったファイル";
+"Couldn't prepare the picture for Apple Image Playground." = "Apple Image Playground用の画像を準備できませんでした。";
 "Country" = "国";
 "Create" = "作成";
 "Create Administrator" = "管理者を作成";
@@ -2177,6 +2180,7 @@
 "Selenium Tone" = "セレン調色";
 "Send Feedback…" = "フィードバックを送る…";
 "Send the search data to my server, so my other devices can search too" = "検索用データを自分のサーバーに送り、他のデバイスでも検索できるようにする";
+"Send this photo to Apple?" = "この写真をAppleに送信しますか？";
 "Separated by commas" = "カンマ区切り";
 "Sepia Tone" = "セピア調色";
 "Sequence number zero-padded to N digits (1–9)" = "N桁にゼロ埋めした連番（1–9）";
@@ -2513,6 +2517,7 @@
 "The model is kept on this device only. LightCraft never uploads or shares it." = "モデルはこのデバイス内にのみ保存されます。LightCraftがアップロードしたり共有したりすることはありません。";
 "The most the server keeps for %@, in GB (at least 0.1): the originals their devices upload, previews, and photos added through their shared links. Photos in library folders don't count. Over the limit, uploads wait until there is room; nothing is deleted. Leave it empty for no limit." = "サーバーが%@のために保持する最大容量（GB単位、0.1以上）。デバイスからアップロードされた元画像、プレビュー、共有リンク経由で追加された写真が対象です。ライブラリのフォルダ内の写真は含まれません。上限を超えると、空きができるまでアップロードは待機し、何も削除されません。上限なしにするには空欄のままにします。";
 "The new area was painted by %@ on this device." = "新しい領域はこのデバイス上で生成されました（%1$@）。";
+"The new area was painted by Apple Image Playground, in Apple's cloud." = "新しい領域は、Appleのクラウド上でApple Image Playgroundが描きました。";
 "The number at the end of the original name (IMG_0042 → 0042)" = "元の名前の末尾の番号（IMG_0042 → 0042）";
 "The original extension is always added; {ext} only puts it inside the name as well." = "元の拡張子は常に付きます。{ext} は名前の中にも拡張子を入れる場合に使います";
 "The original files, unchanged, each with an XMP sidecar holding its edits." = "元のファイルを変更せず、編集内容を保存したXMPサイドカーファイルを添えて書き出します";
@@ -2656,6 +2661,7 @@
 "User name" = "ユーザー名";
 "Username" = "ユーザー名";
 "Users" = "ユーザー";
+"Uses Apple's cloud and asks every time" = "Appleのクラウドを使用し、毎回確認します";
 "Uses the %@ model, a %lld MB download (%@ licence). %@." = "%1$@モデルを使用します（%2$lld MBのダウンロード、%3$@ライセンス）。%4$@。";
 "Uses the MI-GAN model, a %lld MB download (%@). %@." = "MI-GANモデルを使用します。ダウンロードは%lld MB（%@）です。%@。";
 "Value" = "値";

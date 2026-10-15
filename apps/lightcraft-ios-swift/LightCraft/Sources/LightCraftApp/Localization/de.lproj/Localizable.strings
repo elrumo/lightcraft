@@ -241,6 +241,8 @@
 "Appearance Mode" = "Erscheinungsmodus";
 "Appearance Settings…" = "Erscheinungsbild-Einstellungen…";
 "Apple" = "Apple";
+"Apple Image Playground" = "Apple Image Playground";
+"Apple Image Playground makes the new area in Apple's cloud (Private Cloud Compute). The part of the photo inside the crop is sent to Apple for that, and the result may look different from your photo. Nothing else leaves this device." = "Apple Image Playground erstellt den neuen Bereich in Apples Cloud (Private Cloud Compute). Dafür wird der Teil des Fotos innerhalb des Zuschnitts an Apple gesendet, und das Ergebnis kann anders aussehen als dein Foto. Sonst verlässt nichts dieses Gerät.";
 "Apple Vision" = "Apple Vision";
 "Apple tap-to-segment model" = "Apple-Modell zum Auswählen per Tippen";
 "Apple's selection model couldn't start on this device." = "Das Auswahlmodell von Apple konnte auf diesem Gerät nicht gestartet werden.";
@@ -564,6 +566,7 @@
 "Copyrighted" = "Urheberrechtlich geschützt";
 "Couldn't Be Read" = "Konnten nicht gelesen werden";
 "Couldn't be read" = "Konnten nicht gelesen werden";
+"Couldn't prepare the picture for Apple Image Playground." = "Das Bild für Apple Image Playground konnte nicht vorbereitet werden.";
 "Country" = "Land";
 "Create" = "Erstellen";
 "Create Administrator" = "Administrator erstellen";
@@ -2168,6 +2171,7 @@
 "Selects any object from taps, including parts you add or leave out." = "Wählt jedes Objekt anhand von Tipps aus, auch Teile, die du hinzufügst oder auslässt.";
 "Selenium Tone" = "Selentonung";
 "Send Feedback…" = "Feedback senden…";
+"Send this photo to Apple?" = "Dieses Foto an Apple senden?";
 "Separated by commas" = "Durch Kommas getrennt";
 "Sepia Tone" = "Sepiatonung";
 "Sequence number zero-padded to N digits (1–9)" = "Laufende Nummer, mit Nullen auf N Stellen aufgefüllt (1–9)";
@@ -2499,6 +2503,7 @@
 "The model is kept on this device only. LightCraft never uploads or shares it." = "Das Modell bleibt nur auf diesem Gerät. LightCraft lädt es nie hoch und gibt es nicht weiter.";
 "The most the server keeps for %@, in GB (at least 0.1): the originals their devices upload, previews, and photos added through their shared links. Photos in library folders don't count. Over the limit, uploads wait until there is room; nothing is deleted. Leave it empty for no limit." = "Das Maximum, das der Server für %@ speichert, in GB (mindestens 0,1): die Originale, die die Geräte hochladen, Vorschauen und Fotos, die über die geteilten Links hinzugefügt wurden. Fotos in Bibliotheksordnern zählen nicht. Bei Überschreitung warten Uploads, bis wieder Platz ist; nichts wird gelöscht. Lass das Feld leer für kein Limit.";
 "The new area was painted by %@ on this device." = "Die neue Fläche wurde auf diesem Gerät erzeugt (%1$@).";
+"The new area was painted by Apple Image Playground, in Apple's cloud." = "Der neue Bereich wurde von Apple Image Playground in Apples Cloud gemalt.";
 "The number at the end of the original name (IMG_0042 → 0042)" = "Nummer am Ende des Originalnamens (IMG_0042 → 0042)";
 "The original extension is always added; {ext} only puts it inside the name as well." = "Die Originalerweiterung wird immer angehängt; {ext} fügt sie zusätzlich innerhalb des Namens ein.";
 "The original files, unchanged, each with an XMP sidecar holding its edits." = "Unveränderte Originaldateien, jeweils mit einer XMP-Begleitdatei für die Bearbeitungen.";
@@ -2636,6 +2641,7 @@
 "User name" = "Benutzername";
 "Username" = "Benutzername";
 "Users" = "Benutzer";
+"Uses Apple's cloud and asks every time" = "Nutzt Apples Cloud und fragt jedes Mal nach";
 "Uses the %@ model, a %lld MB download (%@ licence). %@." = "Verwendet das %1$@-Modell, ein Download von %2$lld MB (Lizenz %3$@). %4$@.";
 "Uses the MI-GAN model, a %lld MB download (%@). %@." = "Verwendet das Modell MI-GAN, ein Download von %lld MB (%@). %@.";
 "Value" = "Wert";

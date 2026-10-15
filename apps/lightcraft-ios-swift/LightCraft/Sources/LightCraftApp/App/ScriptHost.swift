@@ -17,7 +17,7 @@ import AppKit
 ///   people | map, photo?, span?: all | months | years, group?: light | color…, sheet?: albums |
 ///   filter | settings | export | sync | history | versions | keywords | about | superRes | createPreset | smartAlbum (id?) | allMetadata | none, select?,
 ///   faceBoxes?, tagFace?, beforeAfter?, visualizeSpots?, removeAI?, histogram?, cropGuide?, maskTool?: object | brush | colorRange | none, objectTap?: [x, y]
-///   (Select Object's tap, normalized), objectSubtract?, selectSubject?, selectionEngine?: auto | apple | classic, removeTap? (Remove selects by tapping), removeTapSize? (the reach past a tapped object, of the long edge), removeObjectTap?: [x, y],
+///   (Select Object's tap, normalized), objectSubtract?, selectSubject?, selectionEngine?: auto | apple | classic, playgroundExpand? (Generative Expand with the stand-in for Apple Image Playground: LIGHTCRAFT_FAKE_PLAYGROUND=1), removeTap? (Remove selects by tapping), removeTapSize? (the reach past a tapped object, of the long edge), removeObjectTap?: [x, y],
 ///   and on a Mac: windowSize? ([w, h] points), sections? ({"light": true}: the panels' open sections), inspector?, thumbSize?, zoomAsk?: fit | fill | n, appearance?: system | light | dark}`: go there.
 @Observable
 final class ScriptHost {
@@ -120,6 +120,7 @@ final class ScriptHost {
             if let on = params["beforeAfter"].bool { model.editor.beforeAfter = on }
             if let on = params["visualizeSpots"].bool { model.editor.visualizeSpots = on }
             if let on = params["removeAI"].bool { model.prefs.removeAI = on }
+            if params["playgroundExpand"].bool == true { await model.playgroundExpandWithStandIn() }
             if let on = params["removeTap"].bool { model.editor.removeTap = on }
             if let size = params["removeTapSize"].double { model.tapSizeChanged(size) }
             if let x = params["removeObjectTap"][0].double, let y = params["removeObjectTap"][1].double { await model.removeObject(at: (x, y)) }

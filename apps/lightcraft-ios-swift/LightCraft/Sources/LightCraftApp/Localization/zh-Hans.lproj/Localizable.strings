@@ -232,6 +232,8 @@
 "Appearance Mode" = "外观模式";
 "Appearance Settings…" = "外观设置…";
 "Apple" = "Apple";
+"Apple Image Playground" = "Apple Image Playground";
+"Apple Image Playground makes the new area in Apple's cloud (Private Cloud Compute). The part of the photo inside the crop is sent to Apple for that, and the result may look different from your photo. Nothing else leaves this device." = "Apple Image Playground 会在 Apple 的云端（私有云计算）生成新区域。为此，裁剪范围内的照片部分会发送给 Apple，结果可能与你的照片有所不同。除此之外，没有任何内容会离开此设备。";
 "Apple Vision" = "Apple Vision";
 "Apple tap-to-segment model" = "Apple 点按选择模型";
 "Apple's selection model couldn't start on this device." = "Apple 的选择模型无法在此设备上启动。";
@@ -550,6 +552,7 @@
 "Copyrighted" = "受版权保护";
 "Couldn't Be Read" = "无法读取";
 "Couldn't be read" = "无法读取";
+"Couldn't prepare the picture for Apple Image Playground." = "无法为 Apple Image Playground 准备图片。";
 "Country" = "国家/地区";
 "Create" = "创建";
 "Create Administrator" = "创建管理员";
@@ -2202,6 +2205,7 @@
 "Selenium Tone" = "硒调色";
 "Send Feedback…" = "发送反馈…";
 "Send the search data to my server, so my other devices can search too" = "将搜索数据发送到我的服务器，让我的其他设备也能搜索";
+"Send this photo to Apple?" = "要将这张照片发送给 Apple 吗？";
 "Separated by commas" = "用逗号分隔";
 "Sepia Tone" = "棕褐色调";
 "Sequence number zero-padded to N digits (1–9)" = "补零至 N 位的序号（1–9）";
@@ -2542,6 +2546,7 @@
 "The model is kept on this device only. LightCraft never uploads or shares it." = "模型仅保存在此设备上。LightCraft 绝不会上传或分享它。";
 "The most the server keeps for %@, in GB (at least 0.1): the originals their devices upload, previews, and photos added through their shared links. Photos in library folders don't count. Over the limit, uploads wait until there is room; nothing is deleted. Leave it empty for no limit." = "服务器为 %@ 保存的内容上限，单位为 GB（至少 0.1）：包括其设备上传的原始文件、预览，以及通过其分享的链接添加的照片。图库文件夹中的照片不计入。超出上限后，上传会等到有空间后再继续；不会删除任何内容。留空表示不设上限。";
 "The new area was painted by %@ on this device." = "新区域已在此设备上生成（%1$@）。";
+"The new area was painted by Apple Image Playground, in Apple's cloud." = "新区域由 Apple Image Playground 在 Apple 的云端绘制。";
 "The number at the end of the original name (IMG_0042 → 0042)" = "原始名称末尾的数字（IMG_0042 → 0042）";
 "The original extension is always added; {ext} only puts it inside the name as well." = "始终会添加原始扩展名；{ext} 只是额外把它放进名称中。";
 "The original files, unchanged, each with an XMP sidecar holding its edits." = "保留原始文件不变，每个文件附带一个保存其编辑内容的 XMP 附属文件。";
@@ -2685,6 +2690,7 @@
 "User name" = "用户名";
 "Username" = "用户名";
 "Users" = "用户";
+"Uses Apple's cloud and asks every time" = "使用 Apple 云端，每次都会询问";
 "Uses the %@ model, a %lld MB download (%@ licence). %@." = "使用 %1$@ 模型（需下载 %2$lld MB，%3$@ 许可证）。%4$@。";
 "Uses the MI-GAN model, a %lld MB download (%@). %@." = "使用 MI-GAN 模型，需下载 %lld MB（%@）。%@。";
 "Value" = "值";

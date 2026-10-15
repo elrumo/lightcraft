@@ -242,6 +242,8 @@
 "Appearance Mode" = "Режим оформления";
 "Appearance Settings…" = "Настройки оформления…";
 "Apple" = "Apple";
+"Apple Image Playground" = "Apple Image Playground";
+"Apple Image Playground makes the new area in Apple's cloud (Private Cloud Compute). The part of the photo inside the crop is sent to Apple for that, and the result may look different from your photo. Nothing else leaves this device." = "Apple Image Playground создаёт новую область в облаке Apple (Private Cloud Compute). Для этого часть фото внутри кадрирования отправляется в Apple, и результат может отличаться от вашего фото. Больше ничего не покидает это устройство.";
 "Apple Vision" = "Apple Vision";
 "Apple tap-to-segment model" = "Модель Apple для выбора касанием";
 "Apple's selection model couldn't start on this device." = "Модель выбора от Apple не удалось запустить на этом устройстве.";
@@ -567,6 +569,7 @@
 "Copyrighted" = "Защищено авторским правом";
 "Couldn't Be Read" = "Не удалось прочитать";
 "Couldn't be read" = "Не удалось прочитать";
+"Couldn't prepare the picture for Apple Image Playground." = "Не удалось подготовить изображение для Apple Image Playground.";
 "Country" = "Страна";
 "Create" = "Создать";
 "Create Administrator" = "Создать администратора";
@@ -2195,6 +2198,7 @@
 "Selects any object from taps, including parts you add or leave out." = "Выбирает любой объект по касаниям, включая части, которые вы добавляете или исключаете.";
 "Selenium Tone" = "Селеновое тонирование";
 "Send Feedback…" = "Отправить отзыв…";
+"Send this photo to Apple?" = "Отправить это фото в Apple?";
 "Separated by commas" = "Через запятую";
 "Sepia Tone" = "Сепия";
 "Sequence number zero-padded to N digits (1–9)" = "Порядковый номер, дополненный нулями до N цифр (1–9)";
@@ -2533,6 +2537,7 @@
 "The model is kept on this device only. LightCraft never uploads or shares it." = "Модель хранится только на этом устройстве. LightCraft никогда не выгружает и не распространяет её.";
 "The most the server keeps for %@, in GB (at least 0.1): the originals their devices upload, previews, and photos added through their shared links. Photos in library folders don't count. Over the limit, uploads wait until there is room; nothing is deleted. Leave it empty for no limit." = "Максимум, который сервер хранит для %@, в ГБ (не менее 0,1): оригиналы, которые выгружают устройства, просмотры и фото, добавленные через общие ссылки. Фото в папках библиотеки не учитываются. При превышении лимита выгрузки ждут, пока освободится место; ничего не удаляется. Оставьте пустым, чтобы не ограничивать.";
 "The new area was painted by %@ on this device." = "Новая область дорисована на этом устройстве (%1$@).";
+"The new area was painted by Apple Image Playground, in Apple's cloud." = "Новая область нарисована Apple Image Playground в облаке Apple.";
 "The number at the end of the original name (IMG_0042 → 0042)" = "Число в конце исходного имени (IMG_0042 → 0042)";
 "The original extension is always added; {ext} only puts it inside the name as well." = "Исходное расширение добавляется всегда; {ext} лишь вставляет его ещё и внутрь имени.";
 "The original files, unchanged, each with an XMP sidecar holding its edits." = "Исходные файлы без изменений, у каждого — XMP-файл с его правками.";
@@ -2672,6 +2677,7 @@
 "User name" = "Имя пользователя";
 "Username" = "Имя пользователя";
 "Users" = "Пользователи";
+"Uses Apple's cloud and asks every time" = "Использует облако Apple и каждый раз спрашивает";
 "Uses the %@ model, a %lld MB download (%@ licence). %@." = "Используется модель %1$@, загрузка %2$lld МБ (лицензия %3$@). %4$@.";
 "Uses the MI-GAN model, a %lld MB download (%@). %@." = "Использует модель MI-GAN, загрузка %lld МБ (%@). %@.";
 "Value" = "Значение";

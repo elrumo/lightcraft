@@ -42,10 +42,14 @@ struct ExpandControls: View {
     @Environment(AppModel.self) private var model
     @State private var info: ExpandModels?
     @State private var offer: ExpandModels.Model?
+    /// Apple Image Playground: asking first (it is Apple's cloud), and the sheet while it is up.
+    @State private var askingApple = false
+    @State private var sheet: PlaygroundRun?
 
     var body: some View {
         let running = model.activity.first { $0.kind == "expand" }
         let chosen = info?.chosen(model.prefs.expandModel)
+        let apple = usingApple
         VStack(spacing: 6) {
             HStack(spacing: 8) {
                 if let running {
@@ -65,9 +69,11 @@ struct ExpandControls: View {
                     .buttonStyle(.glass)
                     .accessibilityHint("Stops painting the new area")
                 } else {
-                    Button("Generate", systemImage: "wand.and.stars") { generate(chosen) }
-                        .buttonStyle(.glassProminent)
-                        .disabled(info == nil)
+                    Button("Generate", systemImage: "wand.and.stars") {
+                        if apple { askingApple = true } else { generate(chosen) }
+                    }
+                    .buttonStyle(.glassProminent)
+                    .disabled(info == nil)
                 }
                 fillWith(chosen)
             }
@@ -78,6 +84,15 @@ struct ExpandControls: View {
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 16)
+        }
+        .alert("Send this photo to Apple?", isPresented: $askingApple) {
+            Button("Continue") { startApple() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Apple Image Playground makes the new area in Apple's cloud (Private Cloud Compute). The part of the photo inside the crop is sent to Apple for that, and the result may look different from your photo. Nothing else leaves this device.")
+        }
+        .playgroundExpandSheet($sheet) { url, key in
+            Task { await model.playgroundFinish(file: url, key: key) }
         }
         .task(id: Key(revision: model.settledRevision, running: running != nil, downloading: downloading)) {
             // again while a model downloads, until it's here
@@ -107,6 +122,23 @@ struct ExpandControls: View {
         let downloading: Bool
     }
 
+    /// Fill With is Apple Image Playground, and this device can use it.
+    private var usingApple: Bool {
+        model.prefs.expandModel == PlaygroundExpand.id && PlaygroundExpand.isAvailable
+    }
+
+    /// The user agreed to send the photo: make the canvas and open Apple's sheet on it.
+    private func startApple() {
+        Task {
+            guard let canvas = await model.playgroundCanvas() else { return }
+            if PlaygroundExpand.isFake {
+                await model.playgroundExpandWithStandIn()
+            } else {
+                sheet = canvas
+            }
+        }
+    }
+
     /// A model download under way (the activity stack's row).
     private var downloading: Bool {
         model.activity.contains { $0.kind == "download" }
@@ -124,7 +156,7 @@ struct ExpandControls: View {
                             offer = m
                         }
                     } label: {
-                        if m.id == chosen?.id {
+                        if m.id == chosen?.id && !usingApple {
                             Label(m.label, systemImage: "checkmark")
                         } else {
                             Text(m.label)
@@ -133,13 +165,28 @@ struct ExpandControls: View {
                     }
                     .disabled(m.disabled == true)
                 }
+                if PlaygroundExpand.isAvailable {
+                    // (Apple's cloud: never the default, and asks every time)
+                    Button {
+                        model.prefs.expandModel = PlaygroundExpand.id
+                    } label: {
+                        if usingApple {
+                            Label("Apple Image Playground", systemImage: "checkmark")
+                        } else {
+                            Text("Apple Image Playground")
+                        }
+                        Text("Uses Apple's cloud and asks every time")
+                    }
+                }
             }
         } label: {
-            Label(chosen?.label ?? String(localized: "Fill With"), systemImage: "paintbrush.pointed")
+            Label(usingApple ? String(localized: "Apple Image Playground") : (chosen?.label ?? String(localized: "Fill With")), systemImage: "paintbrush.pointed")
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
         }
         .buttonStyle(.glass)
         .accessibilityLabel("Fill With")
-        .accessibilityValue(chosen?.label ?? "")
+        .accessibilityValue(usingApple ? String(localized: "Apple Image Playground") : (chosen?.label ?? ""))
     }
 
     /// A model's note: what it is, and what's needed first.
@@ -153,6 +200,7 @@ struct ExpandControls: View {
     /// What the new area holds, and what to do.
     private func status(_ chosen: ExpandModels.Model?) -> String {
         if let by = model.editor.setting("expand_fill", "model").string {
+            if by == PlaygroundExpand.id { return String(localized: "The new area was painted by Apple Image Playground, in Apple's cloud.") }
             let label = info?.models.first { $0.id == by }?.label ?? by
             return String(localized: "The new area was painted by \(label) on this device.")
         }

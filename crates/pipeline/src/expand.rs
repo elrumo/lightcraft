@@ -361,6 +361,12 @@ impl ExpandInput {
     /// few network pixels. Synthesis alone, coarse to fine, copies whole bands of the photo (a
     /// sunset's glow) into the new area. Display-encoded like [`Self::image`].
     pub fn classic(&self) -> Rgb32f {
+        self.textured(&self.diffused(), &self.synthesized(), 4.0 * self.network_px())
+    }
+
+    /// The photo's edge colours diffused outward over the new area, display-encoded: a sky or a sea
+    /// goes on as it ends, with no texture and no shapes.
+    fn diffused(&self) -> Rgb32f {
         let (w, h) = self.size();
         let hole: Vec<bool> = self.known.iter().map(|k| !k).collect();
         let flat: Vec<f32> = self.lin.data.iter().flat_map(|p| p.iter().copied()).collect();
@@ -369,7 +375,68 @@ impl ExpandInput {
             let i = (y * w + x) * 3;
             [0, 1, 2].map(|c| out.get(i + c).copied().unwrap_or(0.0))
         });
-        self.textured(&self.encode(&diffused), &self.synthesized(), 4.0 * self.network_px())
+        self.encode(&diffused)
+    }
+
+    /// The canvas as a picture for a painter outside the engine to continue (Apple's Image
+    /// Playground): the photo where it is, and the [`Self::classic`] fill as a placeholder over the
+    /// new area so the picture is whole. Display-encoded like [`Self::image`].
+    pub fn placeholder(&self) -> Rgb32f {
+        self.classic()
+    }
+
+    /// A picture of the whole canvas made outside the engine, as a model's answer for
+    /// [`Self::finish`]: resized to the canvas, its tones matched to the photo (a mean and spread per
+    /// channel over the strip of photo along the new area, since such a painter may have
+    /// re-rendered the colours), faded in from the photo's own edge colours over a few percent of
+    /// the canvas so the join doesn't show, the photo's pixels kept, and the photo's grain added
+    /// ([`Self::with_texture`]). `None` when the picture is empty or isn't the canvas's shape (more
+    /// than 8 % off in its proportions).
+    pub fn from_picture(&self, answer: &Rgb32f) -> Option<Rgb32f> {
+        let (w, h) = self.size();
+        if answer.width == 0 || answer.height == 0 || answer.data.len() != answer.width.checked_mul(answer.height)? {
+            return None;
+        }
+        let ratio = (w as f64 / h as f64) / (answer.width as f64 / answer.height as f64);
+        if !ratio.is_finite() || (ratio - 1.0).abs() > 0.08 {
+            return None;
+        }
+        let pic = if (answer.width, answer.height) == (w, h) {
+            answer.clone()
+        } else {
+            lightcraft_raster::resample::resize(answer, w, h, lightcraft_raster::resample::Filter::Mitchell)
+        };
+        // tones: the picture's strip along the new area made to look like the photo's
+        let band = near_new(&self.known, w, h, (w.max(h) / 25).max(4));
+        let stats = |img: &Rgb32f| -> Option<([f32; 3], [f32; 3])> {
+            let px: Vec<&[f32; 3]> = img.data.iter().zip(&band).filter(|(_, b)| **b).map(|(p, _)| p).collect();
+            if px.is_empty() {
+                return None;
+            }
+            let n = px.len() as f32;
+            let mean: [f32; 3] = std::array::from_fn(|c| px.iter().map(|p| p[c]).sum::<f32>() / n);
+            let spread: [f32; 3] = std::array::from_fn(|c| (px.iter().map(|p| (p[c] - mean[c]).powi(2)).sum::<f32>() / n).sqrt());
+            Some((mean, spread))
+        };
+        let ((mp, sp), (mq, sq)) = (stats(&self.image)?, stats(&pic)?);
+        let gain: [f32; 3] = std::array::from_fn(|c| if sq[c] > 1e-4 { (sp[c] / sq[c]).clamp(0.5, 2.0) } else { 1.0 });
+        let matched = pic.map(|p| [0, 1, 2].map(|c| ((p[c] - mq[c]) * gain[c] + mp[c]).clamp(0.0, 1.0)));
+        // the join: from the photo's own edge colours, outward, into the picture
+        let edge = self.diffused();
+        let from_photo = crate::spots::distance_to_inside(w, h, &self.known);
+        let fade = (w.max(h) as f32 * 0.04).max(8.0);
+        let mut out = self.image.clone();
+        for (i, o) in out.data.iter_mut().enumerate() {
+            if self.known.get(i).copied().unwrap_or(true) {
+                continue;
+            }
+            let t = (from_photo.get(i).copied().unwrap_or(f32::MAX) / fade).clamp(0.0, 1.0);
+            let t = t * t * (3.0 - 2.0 * t);
+            if let (Some(e), Some(m)) = (edge.data.get(i), matched.data.get(i)) {
+                *o = std::array::from_fn(|c| e[c] + (m[c] - e[c]) * t);
+            }
+        }
+        Some(self.with_texture(&out))
     }
 
     /// One network pixel (the networks see the canvas at 512 pixels), in canvas pixels.
@@ -383,14 +450,15 @@ impl ExpandInput {
         lin.map(|p| p.map(|v| (v / self.scale).clamp(0.0, 1.0).powf(1.0 / 2.2)))
     }
 
-    /// Texture synthesized from the photo over the new area (display-encoded); the canvas as it is
-    /// where nothing can be copied.
+    /// Texture synthesized from the photo over the new area (display-encoded); the photo's edge
+    /// colours diffused outward where nothing can be copied (a texture that is black there would
+    /// pull the new area down along the join: [`Self::textured`] adds what it has, less its blur).
     fn synthesized(&self) -> Rgb32f {
         let (w, h) = self.size();
         let hole: Vec<bool> = self.known.iter().map(|k| !k).collect();
         match crate::inpaint::fill(&self.lin, 0, 0, w, h, &hole, reach(&hole, w, h), (0.0, 0.0), 0) {
             Some(data) => self.encode(&Rgb32f { width: w, height: h, data }),
-            None => self.image.clone(),
+            None => self.diffused(),
         }
     }
 
@@ -546,6 +614,54 @@ mod tests {
         let (w2, h2) = f.fit(400, 400);
         let gone = missing(&f, w2, h2).unwrap();
         assert!(gone[(h2 / 2) * w2 + 1]);
+    }
+
+    /// A picture from outside (a painter that re-rendered the whole canvas with its own tones) is
+    /// a model's answer: the photo is untouched, and the new area carries the picture's content in
+    /// the photo's tones.
+    #[test]
+    fn a_picture_from_outside_is_matched_to_the_photo_and_keeps_it() {
+        // a photo with a little grain (the texture added over the new area is the photo's own)
+        let src = Rgb32f::from_fn(200, 100, |x, y| {
+            let g = ((x * 7 + y * 13) % 11) as f32 * 0.006;
+            [0.35 + g, 0.3 + g, 0.25 + g]
+        });
+        let s = expanded(Rect::new(0.0, 0.0, 1.4, 1.0));
+        let input = expand_input(&src, &SourceInfo::default(), &s, 256).unwrap();
+        let (w, h) = input.size();
+        // the painter's picture: vertical stripes in the new area, and the whole picture brighter and
+        // bluer than the photo (it re-rendered the colours), at twice the canvas's size
+        let pic = Rgb32f::from_fn(w * 2, h * 2, |x, y| {
+            let base = input.image.get(x / 2, y / 2);
+            let stripe = if (x / 32) % 2 == 0 { 0.15 } else { -0.15 };
+            if input.known[(y / 2) * w + x / 2] { base.map(|v| v * 0.8 + 0.2) } else { [0.55 + stripe, 0.55 + stripe, 0.7 + stripe] }
+        });
+        let out = input.from_picture(&pic).unwrap();
+        assert_eq!((out.width, out.height), (w, h));
+        // the photo's pixels are the photo's
+        for (i, k) in input.known.iter().enumerate().filter(|(_, k)| **k).take(2000) {
+            assert!(*k);
+            assert_eq!(out.data[i], input.image.data[i]);
+        }
+        // far from the photo the picture's stripes show (texture and tone matching keep their contrast)
+        let far = |x: usize| out.get(x, h / 2);
+        let known_w = (0..w).rev().find(|x| input.known[(h / 2) * w + x]).unwrap();
+        // (stripes 16 canvas pixels wide: two columns in different ones, near the far end)
+        let (a, b) = (far(w - 40), far(w - 40 - 16));
+        assert!((a[0] - b[0]).abs() > 0.03, "the picture's content shows: {a:?} {b:?}");
+        // tones matched: the picture was bluer, the photo's blue is lower
+        let mean_blue = (known_w + 1..w).map(|x| out.get(x, h / 2)[2]).sum::<f32>() / (w - known_w - 1) as f32;
+        assert!(mean_blue < 0.7, "{mean_blue}");
+        // the join is smooth: right at the edge the new area is the photo's own colours
+        let (edge_in, edge_out) = (out.get(known_w, h / 2), out.get(known_w + 1, h / 2));
+        for c in 0..3 {
+            assert!((edge_in[c] - edge_out[c]).abs() < 0.08, "{edge_in:?} {edge_out:?}");
+        }
+        // a picture of another shape, and an empty one, are refused
+        assert!(input.from_picture(&Rgb32f::filled(w, h * 2, [0.5; 3])).is_none());
+        assert!(input.from_picture(&Rgb32f::filled(0, 0, [0.5; 3])).is_none());
+        // and it stores like any model's answer
+        assert_eq!(input.finish(&out, "appleCloud").unwrap().model, "appleCloud");
     }
 
     #[test]

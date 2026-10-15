@@ -53,9 +53,10 @@ API (Photos' Clean Up is private), any out-painting API, a sky model. Image Play
 (`imagePlaygroundSheet`, `CreationStrategy.editExisting`) runs in Apple's cloud (Private Cloud
 Compute), takes no mask and returns a flat picture; the programmatic `ImageCreator` is removed in
 iOS 27. AI Remove and Generative Expand therefore keep MI-GAN, LaMa and Classic.
-Using the Image Playground sheet as an extra, opt-in Generative Expand engine was considered and not built: it needs an Apple
-Intelligence device and Apple's sheet (not scriptable, absent from simulators), sends the photo to Apple's cloud, and
-may re-render the whole picture rather than extend it.
+Image Playground's sheet is built as an extra, opt-in Generative Expand engine in the SwiftUI app
+([generative-expand.md](generative-expand.md)): never the default, it asks "Send this photo to Apple?" every time, and
+only the new area of what the sheet returns is used. It needs an Apple Intelligence device and Apple's sheet (not
+scriptable, absent from simulators) and is not yet tried on a device.
 
 ## Core ML spike (2026-10-15)
 

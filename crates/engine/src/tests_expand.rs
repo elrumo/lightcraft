@@ -205,3 +205,84 @@ fn the_models_paint_the_new_area() {
         assert!(s.render_now(id, 300, 300).unwrap().image.data.iter().all(|p| p[3] == 255));
     }
 }
+
+/// A picture of `rgb` pixels as PNG bytes.
+fn png(w: usize, h: usize, f: impl Fn(usize, usize) -> [u8; 3]) -> Vec<u8> {
+    let img = lightcraft_raster::Rgba8::from_fn(w, h, |x, y| {
+        let p = f(x, y);
+        [p[0], p[1], p[2], 255]
+    });
+    lightcraft_codecs::encode_png(&lightcraft_codecs::EncodeImage::rgba8(&img), &lightcraft_codecs::EncodeMeta::default()).unwrap()
+}
+
+fn b64(bytes: &[u8]) -> String {
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+fn unb64(text: &str) -> Vec<u8> {
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD.decode(text).unwrap()
+}
+
+/// A painter outside the engine (Apple Image Playground in the SwiftUI app) is given the canvas as a
+/// picture and its answer becomes the fill, stored like any model's: one undo step, the photo as it is.
+#[test]
+fn an_outside_painter_gets_the_canvas_and_its_picture_becomes_the_fill() {
+    let mut s = Session::with_demo();
+    s.execute("crop.expand", &json!({})).unwrap();
+    // nothing past the photo yet: no canvas
+    let e = s.execute("crop.expandCanvas", &json!({})).unwrap_err().to_string();
+    assert!(e.contains("nothing past the photo"), "{e}");
+    s.execute("crop.set", &json!({"rect": [-0.2, 0.0, 1.0, 1.0]})).unwrap();
+    let c = s.execute("crop.expandCanvas", &json!({"maxEdge": 400})).unwrap();
+    let (w, h) = (c["width"].as_u64().unwrap() as usize, c["height"].as_u64().unwrap() as usize);
+    assert!(w.max(h) <= 400 && w.min(h) > 16, "{w} x {h}");
+    let canvas = lightcraft_codecs::decode(&unb64(c["png"].as_str().unwrap()), Default::default()).unwrap().to_srgb8();
+    assert_eq!((canvas.width, canvas.height), (w, h));
+    let key = c["key"].as_u64().unwrap();
+    // its answer: the canvas again, bluer, at twice the size (a painter's own size)
+    let answer = png(w * 2, h * 2, |x, y| {
+        let p = canvas.get(x / 2, y / 2);
+        [p[0] / 2, p[1], p[2].saturating_add(60)]
+    });
+    let done = s.execute("crop.applyExpandPicture", &json!({"key": key, "model": "appleCloud", "png": b64(&answer)})).unwrap();
+    assert_eq!(done["model"], "appleCloud");
+    assert_eq!(done["passes"], 0);
+    let d = s.develop_of(s.active().unwrap()).unwrap();
+    assert_eq!(d.expand_fill.as_ref().map(|f| f.model.as_str()), Some("appleCloud"));
+    // the picture can come as a file, too
+    let file = std::env::temp_dir().join(format!("lc-expand-picture-{}.png", std::process::id()));
+    std::fs::write(&file, &answer).unwrap();
+    s.execute("crop.applyExpandPicture", &json!({"key": key, "path": file.to_string_lossy()})).unwrap();
+    let _ = std::fs::remove_file(&file);
+    // each is one undo step, "Generative Expand"
+    s.execute("edit.undo", &json!({})).unwrap();
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert!(!has_fill(&s));
+}
+
+#[test]
+fn an_outside_picture_is_refused_when_it_does_not_fit() {
+    let mut s = Session::with_demo();
+    s.execute("crop.expand", &json!({})).unwrap();
+    s.execute("crop.set", &json!({"rect": [-0.2, 0.0, 1.0, 1.0]})).unwrap();
+    let c = s.execute("crop.expandCanvas", &json!({"maxEdge": 300})).unwrap();
+    let (w, h, key) = (c["width"].as_u64().unwrap() as usize, c["height"].as_u64().unwrap() as usize, c["key"].as_u64().unwrap());
+    let good = png(w, h, |_, _| [120, 130, 140]);
+    let apply = |s: &mut Session, p: serde_json::Value| s.execute("crop.applyExpandPicture", &p).unwrap_err().to_string();
+    // not a picture; a picture of another shape; a painter that isn't one
+    assert!(apply(&mut s, json!({"key": key, "png": b64(b"not a picture")})).contains("couldn't be read"));
+    assert!(apply(&mut s, json!({"key": key, "png": b64(&png(w / 4, h, |_, _| [1, 2, 3]))})).contains("shape"));
+    assert!(apply(&mut s, json!({"key": key, "model": "migan", "png": b64(&good)})).contains("unknown painter"));
+    assert!(apply(&mut s, json!({"png": b64(&good)})).contains("key"));
+    assert!(apply(&mut s, json!({"key": key})).contains("path"));
+    assert!(apply(&mut s, json!({"key": key, "path": "/definitely/not/here.png"})).contains("couldn't be read"));
+    // the crop moved while the picture was being made
+    s.execute("crop.set", &json!({"rect": [-0.3, 0.0, 1.0, 1.0]})).unwrap();
+    assert!(apply(&mut s, json!({"key": key, "png": b64(&good)})).contains("crop changed"));
+    assert!(!has_fill(&s));
+    // Generate itself doesn't take it: the app's sheet does
+    let e = s.execute("crop.generate", &json!({"model": "appleCloud"})).unwrap_err().to_string();
+    assert!(e.contains("crop.applyExpandPicture"), "{e}");
+}
