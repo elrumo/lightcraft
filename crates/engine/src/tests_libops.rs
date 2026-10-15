@@ -76,6 +76,11 @@ fn months_count_every_photo_in_a_collapsed_stack() {
     assert_eq!(total(&mut s), before);
     let years = s.execute("library.blocks", &json!({"span": "years"})).unwrap();
     assert_eq!(years.as_array().unwrap().iter().map(|b| b["count"].as_u64().unwrap()).sum::<u64>(), before);
+    // the All grid's date headers: `count` stays the tiles under each, `photos` counts the stack's
+    let runs = s.execute("library.groups", &json!({"by": "month"})).unwrap();
+    let sum = |f: &str| runs.as_array().unwrap().iter().map(|r| r[f].as_u64().unwrap()).sum::<u64>();
+    assert_eq!(sum("count"), before - 4);
+    assert_eq!(sum("photos"), before);
 }
 
 /// The grid's photos say where they are in a stack (the stack badge), collapsed or expanded.

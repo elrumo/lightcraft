@@ -639,7 +639,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Date Groups",
             [],
             None,
-            "{by?: day|month|year (default: the sort's grouping; auto = day)} → [{key, label, start, count}] date headers of the grid",
+            "{by?: day|month|year (default: the sort's grouping; auto = day)} → [{key, label, start, count, photos}] date headers of the grid (`count` grid photos from `start`; `photos` with the ones in its collapsed stacks)",
             always,
             |s, p| {
                 let by = match str_param(p, "by") {
@@ -647,7 +647,7 @@ pub fn specs() -> Vec<CommandSpec> {
                     None => s.sort.group,
                 };
                 let vis = s.visible_cloned();
-                Ok(serde_json::to_value(s.catalog.date_runs(&vis, s.sort.key, by)).unwrap_or_default())
+                Ok(serde_json::to_value(s.catalog.date_runs(&vis, s.visible_stacked(), s.sort.key, by)).unwrap_or_default())
             }
         ),
         cmd!(

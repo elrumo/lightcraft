@@ -79,12 +79,12 @@ pub struct GridCache {
 }
 
 impl GridCache {
-    fn runs(&mut self, stats: &mut GridStats, cat: &Catalog, ids: &[PhotoId], key: RunsKey) -> Arc<Vec<DateRun>> {
+    fn runs(&mut self, stats: &mut GridStats, cat: &Catalog, stacked: &HashMap<PhotoId, usize>, ids: &[PhotoId], key: RunsKey) -> Arc<Vec<DateRun>> {
         match &self.runs {
             Some((k, r)) if *k == key => r.clone(),
             _ => {
                 stats.view_builds += 1;
-                let r = Arc::new(key.1.map(|sort| cat.date_runs(ids, sort, key.2)).unwrap_or_default());
+                let r = Arc::new(key.1.map(|sort| cat.date_runs(ids, stacked, sort, key.2)).unwrap_or_default());
                 self.runs = Some((key, r.clone()));
                 r
             }
@@ -273,7 +273,7 @@ fn show_inner(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     };
     let runs_key = (generation, group_key, by);
     let stats = &mut app.caches.grid_stats;
-    let runs = app.caches.grid.runs(stats, &app.session.catalog, &ids, runs_key);
+    let runs = app.caches.grid.runs(stats, &app.session.catalog, app.session.visible_stacked(), &ids, runs_key);
     // the layout only changes with the photos (and their shapes), the grouping, the width and
     // the thumbnail size
     // (phone tiles have their own width and size, so they key apart from desktop squares)
@@ -970,7 +970,7 @@ fn group_header(app: &mut LightcraftApp, ui: &mut egui::Ui, run: &DateRun, ids: 
     let x = r.left() + 8.0;
     let gw = g.size().x;
     p.galley(pos2(x, r.center().y - g.size().y / 2.0), g, t.text);
-    let n = run.count;
+    let n = run.photos.max(run.count);
     p.text(
         pos2(x + gw + 10.0, r.center().y),
         Align2::LEFT_CENTER,

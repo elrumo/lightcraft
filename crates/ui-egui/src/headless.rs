@@ -2044,7 +2044,8 @@ mod tests {
         h.app.ui.thumb_size = 120.0;
         h.settle(SETTLE);
         let vis = h.app.session.visible_cloned();
-        let month = h.app.session.catalog.date_runs(&vis, h.app.session.sort.key, lightcraft_catalog::GroupBy::Month);
+        let month =
+            h.app.session.catalog.date_runs(&vis, h.app.session.visible_stacked(), h.app.session.sort.key, lightcraft_catalog::GroupBy::Month);
         let r = h.request("ui.clickWidget", json!({"id": format!("group:{}", month[0].key)}), t);
         assert_eq!(r["ok"], true, "{r}");
         h.request("engine.execute", json!({"command": "library.sort", "params": {"group": "none"}}), t);

@@ -110,7 +110,11 @@ pub struct DateRun {
     pub label: String,
     /// Index of the first photo in the list.
     pub start: usize,
+    /// How many of the list's photos it has (its tiles: `start..start + count`).
     pub count: usize,
+    /// How many photos it stands for: `count` and the photos inside its collapsed stacks.
+    #[serde(default)]
+    pub photos: usize,
 }
 
 /// A capture time for display: `2022-03-30T22:11:11` → "March 30, 2022 at 10:11:11 PM" (the
@@ -220,7 +224,7 @@ impl Catalog {
     /// Members of a stack share the group of the stack's first photo in the list, so a stack is
     /// never split by a header. Empty for sort keys without a date and for [`GroupBy::None`]
     /// ([`GroupBy::Auto`] means days here).
-    pub fn date_runs(&self, ids: &[PhotoId], key: SortKey, by: GroupBy) -> Vec<DateRun> {
+    pub fn date_runs(&self, ids: &[PhotoId], stacked: &HashMap<PhotoId, usize>, key: SortKey, by: GroupBy) -> Vec<DateRun> {
         if by == GroupBy::None || ids.is_empty() {
             return Vec::new();
         }
@@ -246,9 +250,13 @@ impl Catalog {
                 Some((sid, _)) => stack_key.entry(*sid).or_insert_with(|| date_of(id)).clone(),
                 None => date_of(id),
             };
+            let photos = stacked.get(id).copied().unwrap_or(1);
             match runs.last_mut() {
-                Some(r) if r.key == k => r.count += 1,
-                _ => runs.push(DateRun { label: group_label(&k), key: k, start: i, count: 1 }),
+                Some(r) if r.key == k => {
+                    r.count += 1;
+                    r.photos = r.photos.saturating_add(photos);
+                }
+                _ => runs.push(DateRun { label: group_label(&k), key: k, start: i, count: 1, photos }),
             }
         }
         runs
@@ -302,7 +310,7 @@ mod tests {
             ids.push(id);
         }
         let shape = |r: &[DateRun]| r.iter().map(|r| (r.key.clone(), r.start, r.count)).collect::<Vec<_>>();
-        let day = c.date_runs(&ids, SortKey::CaptureDate, GroupBy::Day);
+        let day = c.date_runs(&ids, &HashMap::new(), SortKey::CaptureDate, GroupBy::Day);
         // the undated photo is grouped under Unknown Date
         assert_eq!(
             shape(&day),
@@ -316,19 +324,19 @@ mod tests {
         );
         assert_eq!(day[0].label, "Wednesday, 30 September 2026");
         assert_eq!(day[4].label, "Unknown Date");
-        assert_eq!(c.date_runs(&ids, SortKey::CaptureDate, GroupBy::Auto), day);
+        assert_eq!(c.date_runs(&ids, &HashMap::new(), SortKey::CaptureDate, GroupBy::Auto), day);
         assert_eq!(
-            shape(&c.date_runs(&ids, SortKey::CaptureDate, GroupBy::Month)),
+            shape(&c.date_runs(&ids, &HashMap::new(), SortKey::CaptureDate, GroupBy::Month)),
             vec![("2026-09".into(), 0, 3), ("2026-08".into(), 3, 1), ("2025-12".into(), 4, 1), (String::new(), 5, 1)]
         );
         assert_eq!(
-            shape(&c.date_runs(&ids, SortKey::CaptureDate, GroupBy::Year)),
+            shape(&c.date_runs(&ids, &HashMap::new(), SortKey::CaptureDate, GroupBy::Year)),
             vec![("2026".into(), 0, 4), ("2025".into(), 4, 1), (String::new(), 5, 1)]
         );
-        assert!(c.date_runs(&ids, SortKey::FileName, GroupBy::Day).is_empty());
-        assert!(c.date_runs(&ids, SortKey::CaptureDate, GroupBy::None).is_empty());
+        assert!(c.date_runs(&ids, &HashMap::new(), SortKey::FileName, GroupBy::Day).is_empty());
+        assert!(c.date_runs(&ids, &HashMap::new(), SortKey::CaptureDate, GroupBy::None).is_empty());
         // edit date: unedited photos have no date
-        let r = c.date_runs(&ids, SortKey::EditDate, GroupBy::Day);
+        let r = c.date_runs(&ids, &HashMap::new(), SortKey::EditDate, GroupBy::Day);
         assert_eq!(shape(&r), vec![(String::new(), 0, 6)]);
         assert_eq!(r[0].label, "Unknown Date");
         // a stack spanning midnight stays in its first member's group
@@ -336,7 +344,7 @@ mod tests {
         c.apply(op).unwrap();
         let arranged = c.arrange_stacks(&ids[..5]);
         assert_eq!(
-            shape(&c.date_runs(&arranged, SortKey::CaptureDate, GroupBy::Day))[..2],
+            shape(&c.date_runs(&arranged, &HashMap::new(), SortKey::CaptureDate, GroupBy::Day))[..2],
             [("2026-09-30".into(), 0, 3), ("2026-08-01".into(), 3, 1)]
         );
     }

@@ -510,7 +510,7 @@ fn random_sort_direction_reverses_and_serde_defaults_hold() {
 fn random_sort_has_no_date_headers() {
     let mut c = Catalog::new();
     let ids = many(&mut c, 5);
-    assert!(c.date_runs(&ids, SortKey::Random, GroupBy::Day).is_empty());
+    assert!(c.date_runs(&ids, &Default::default(), SortKey::Random, GroupBy::Day).is_empty());
 }
 
 /// Reload stores the lens data a file carries; the inverse (through the journal's JSON) takes it back.
@@ -730,7 +730,7 @@ fn undated_photos_group_under_unknown_date_and_sort_together() {
     assert_eq!(asc, vec![p_undated2, p_undated1, p_dated1, p_dated2]);
 
     // date_runs groups undated photos under Unknown Date
-    let runs = c.date_runs(&desc, SortKey::CaptureDate, GroupBy::Day);
+    let runs = c.date_runs(&desc, &Default::default(), SortKey::CaptureDate, GroupBy::Day);
     assert_eq!(runs.len(), 3);
     assert_eq!(runs[0].key, "2026-05-20");
     assert_eq!(runs[1].key, "2026-05-10");
