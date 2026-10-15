@@ -24,7 +24,7 @@ import AppKit
 /// - `ui.set {screen?: grid | photo | edit | crop | masking | remove | redEye | presets | info | commands |
 ///   people | map, photo?, span?: all | months | years, group?: light | color…, sheet?: albums |
 ///   filter | settings | export | sync | history | versions | keywords | about | superRes | createPreset | smartAlbum (id?) | allMetadata | none, select?,
-///   faceBoxes?, cropTab?: aspect | geometry, tagFace?, beforeAfter?, visualizeSpots?, removeAI?, histogram?, cropGuide?, maskTool?: object | brush | colorRange | none, objectTap?: [x, y]
+///   faceBoxes?, cropTab?: aspect | geometry, tagFace?, beforeAfter?, visualizeSpots?, visualizeDepth?, lensBrush?, removeAI?, histogram?, cropGuide?, maskTool?: object | brush | colorRange | none, objectTap?: [x, y]
 ///   (Select Object's tap, normalized), objectSubtract?, selectSubject?, selectionEngine?: auto | apple | classic, playgroundExpand? (Generative Expand with the stand-in for Apple Image Playground: LIGHTCRAFT_FAKE_PLAYGROUND=1), removeTap? (Remove selects by tapping), removeTapSize? (the reach past a tapped object, of the long edge), removeObjectTap?: [x, y],
 ///   and on a Mac: windowSize? ([w, h] points), squareGrid? (false: the aspect-ratio grid), zoomBlocks? ({in: true | false, at?: [x, y]}: a step of the pinch between Years, Months and All about a point of their content, the pointer's without one), sections? ({"light": true}: the panels' open sections), inspector?, thumbSize?, zoomAsk?: fit | fill | n, appearance?: system | light | dark}`: go there.
 @Observable
@@ -197,6 +197,9 @@ final class ScriptHost {
             if let on = params["tagFace"].bool { model.editor.tagFace = on }
             if let on = params["beforeAfter"].bool { model.editor.beforeAfter = on }
             if let on = params["visualizeSpots"].bool { model.editor.visualizeSpots = on }
+            if let on = params["visualizeDepth"].bool { model.editor.visualizeDepth = on }
+            // Lens Blur's Refine brush in hand: focus, blur, erase ("" puts it down)
+            if let brush = params["lensBrush"].string { model.editor.lensBrush = brush.isEmpty ? nil : brush }
             if let on = params["removeAI"].bool { model.prefs.removeAI = on }
             if params["playgroundExpand"].bool == true { await model.playgroundExpandWithStandIn() }
             if let on = params["removeTap"].bool { model.editor.removeTap = on }

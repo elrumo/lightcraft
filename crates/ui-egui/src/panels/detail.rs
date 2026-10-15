@@ -1506,6 +1506,10 @@ pub(crate) fn view_overlay(app: &LightcraftApp, d: &DevelopSettings) -> lightcra
     if edit && app.ui.hdr_visualize && d.hdr.enabled {
         return Overlay::HdrRange;
     }
+    // (painting the Refine brush shows the depth it changes)
+    if edit && (app.ui.depth_visualize || app.ui.tool == crate::lensblur::BRUSH_TOOL) && d.lens_blur.enabled {
+        return Overlay::Depth;
+    }
     Overlay::None
 }
 
@@ -1949,7 +1953,9 @@ fn general_cursor(app: &LightcraftApp, ui: &egui::Ui, resp: &egui::Response, img
         return;
     }
     let cursor = match app.ui.tool.as_str() {
-        "wbPicker" | "colorRange" | "pointColor" => egui::CursorIcon::Crosshair,
+        "wbPicker" | "colorRange" | "pointColor" | crate::lensblur::FOCUS_TOOL => egui::CursorIcon::Crosshair,
+        // (the brush draws its own outline)
+        crate::lensblur::BRUSH_TOOL => return,
         tool if tool.starts_with("tat:") => egui::CursorIcon::ResizeVertical,
         _ if img.width() > canvas.width() + 1.0 || img.height() > canvas.height() + 1.0 => {
             if resp.dragged() {
@@ -1986,6 +1992,23 @@ fn general_interaction(
     }
     if let Some(target) = app.ui.tool.strip_prefix("tat:").map(str::to_string) {
         targeted_drag(app, resp, map, &target);
+        return;
+    }
+    // Lens Blur's Refine brush
+    if app.ui.tool == crate::lensblur::BRUSH_TOOL {
+        lens_brush(app, ui, resp, map);
+        return;
+    }
+    // Lens Blur's focus picker: a click focuses on the depth there (the tool stays on)
+    if app.ui.tool == crate::lensblur::FOCUS_TOOL {
+        if resp.clicked()
+            && let Some(q) = resp.interact_pointer_pos()
+        {
+            let n = map.norm(q);
+            if let Err(e) = app.run("lensBlur.focus", json!({"x": n.x, "y": n.y})) {
+                app.toast_error(ui.ctx(), e);
+            }
+        }
         return;
     }
     if app.ui.tool == "colorRange" {
@@ -2721,6 +2744,63 @@ fn mask_overlay(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Respons
     if resp.drag_stopped() && matches!(app.gesture, Some(Gesture::MaskHandle { .. })) {
         app.gesture = None;
         let _ = app.run("develop.endInteraction", json!({}));
+    }
+}
+
+/// Lens Blur's Refine brush on the photo: the stroke is drawn live as it is painted (as a mask
+/// brush is) and committed as one `lensBlur.brushStroke` when the pointer lifts. ⌥ (Alt) paints
+/// with Erase.
+fn lens_brush(app: &mut LightcraftApp, ui: &mut egui::Ui, resp: &egui::Response, map: &CanvasMap) {
+    let long = (map.rect.width().max(map.rect.height())) as f64;
+    let clip = app.canvas_rect.unwrap_or(map.rect);
+    let p = &ui.painter_at(clip);
+    let r = (app.ui.brush_size as f64 * long) as f32;
+    if let Some(h) = resp.hover_pos() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::None);
+        p.circle_stroke(h, r, Stroke::new(1.0, Color32::WHITE));
+        p.circle_stroke(h, r * (1.0 - app.ui.brush_feather / 100.0).max(0.05), Stroke::new(1.0, Color32::from_white_alpha(120)));
+    }
+    if let Some(q) = resp.interact_pointer_pos()
+        && (resp.drag_started() || resp.dragged() || resp.clicked())
+    {
+        let n = map.norm(q);
+        match &mut app.gesture {
+            Some(Gesture::Brush { points }) if points.last() == Some(&n) => {}
+            Some(Gesture::Brush { points }) => points.push(n),
+            _ => app.gesture = Some(Gesture::Brush { points: vec![n] }),
+        }
+    }
+    let alt = resp.ctx.input(|i| i.modifiers.alt);
+    let mode = if alt { "erase".to_string() } else { app.ui.lens_brush.clone() };
+    if let Some(Gesture::Brush { points }) = &app.gesture {
+        let screen: Vec<Pos2> = points.iter().map(|q| map.screen(*q)).collect();
+        let params = crate::brush_live::LiveParams {
+            clip,
+            scale: ui.ctx().pixels_per_point(),
+            r,
+            hard: r * (1.0 - (app.ui.brush_feather / 100.0).clamp(0.0, 1.0)),
+            flow: (app.ui.brush_flow / 100.0).clamp(0.0, 1.0),
+            density: 1.0,
+            color: crate::lensblur::brush_color(&mode),
+            opacity: 0.45,
+        };
+        crate::brush_live::paint(&mut app.brush_live, ui.ctx(), p, params, &screen);
+    } else {
+        app.brush_live = None;
+    }
+    if (resp.drag_stopped() || resp.clicked())
+        && let Some(Gesture::Brush { points }) = app.gesture.take()
+    {
+        app.brush_live = None;
+        let pts: Vec<[f64; 2]> = points.iter().map(|q| [q.x, q.y]).collect();
+        let r = app.run(
+            "lensBlur.brushStroke",
+            json!({"mode": mode, "points": pts, "size": app.ui.brush_size, "feather": app.ui.brush_feather, "flow": app.ui.brush_flow,
+                   "autoMask": app.ui.brush_auto_mask}),
+        );
+        if let Err(e) = r {
+            app.toast_error(ui.ctx(), e);
+        }
     }
 }
 

@@ -238,6 +238,14 @@ pub struct Status {
     pub previews_per_min: Option<u64>,
     pub previews_bytes: u64,
     pub previews_bytes_total: Option<u64>,
+    /// Building previews is paused (for every user), and the photos of the library folders that have previews / are photos
+    /// in the library (counted in the background, so `None` at first).
+    pub previews_paused: bool,
+    pub previews_have: Option<usize>,
+    pub previews_photos: Option<usize>,
+    /// The last batch of previews that finished since the server started: how many, and when (unix seconds).
+    pub previews_last_done: Option<usize>,
+    pub previews_last_at: Option<u64>,
     /// The photo files being built right now (their paths).
     pub previews_building: Vec<String>,
     /// The ones that couldn't be built.
@@ -791,7 +799,6 @@ pub fn scan(
     let mut l = lock(lib);
     let roots: HashSet<&str> = folders.iter().map(|f| f.name.as_str()).collect();
     l.index.files.retain(|k, _| roots.contains(k.split_once('/').map_or("", |(r, _)| r)));
-    let mut all = Vec::new();
     for (k, e) in l.index.files.iter_mut() {
         let root = k.split_once('/').map_or("", |(r, _)| r);
         if available.contains(root) && !keys.contains(k) {
@@ -799,17 +806,10 @@ pub fn scan(
         }
         if e.missing {
             s.missing += 1;
-        } else if e.photo.is_some() && e.error.is_none() && !e.hash.is_empty() {
-            all.push((k.clone(), e.hash.clone()));
         }
     }
     l.index.reindex();
-    let in_library: HashSet<u64> = l.core.catalog().photos().map(|p| p.id.0).collect();
-    let all: Vec<(String, PathBuf)> = all
-        .into_iter()
-        .filter(|(k, _)| l.index.files.get(k).and_then(|e| e.photo).is_some_and(|id| in_library.contains(&id)))
-        .filter_map(|(k, h)| Some((h, l.index.path_of(&k)?)))
-        .collect();
+    let all = preview_jobs(&l);
     let saved = l.index.save(&user_dir);
     drop(l);
     if let Err(e) = saved {
@@ -822,6 +822,19 @@ pub fn scan(
     s.phase = "";
     s.last_scan = Some(accounts::now());
     Ok(s)
+}
+
+/// Every photo file of the library folders that is a photo in the library: its content hash and where it is
+/// (what has previews, or should).
+fn preview_jobs(l: &UserLib) -> Vec<(String, PathBuf)> {
+    let in_library: HashSet<u64> = l.core.catalog().photos().map(|p| p.id.0).collect();
+    l.index
+        .files
+        .iter()
+        .filter(|(_, e)| !e.missing && e.error.is_none() && !e.hash.is_empty())
+        .filter(|(_, e)| e.photo.is_some_and(|id| in_library.contains(&id)))
+        .filter_map(|(k, e)| Some((e.hash.clone(), l.index.path_of(k)?)))
+        .collect()
 }
 
 /// Build a photo file's smart and mini previews into the user's photo files (`blobs`), unless
@@ -997,6 +1010,15 @@ pub struct Scanner {
     jobs_wake: Condvar,
     /// Per user, the batch of previews being built: when it began, how many are done, how many in all.
     runs: Mutex<HashMap<String, (Instant, usize, usize, u64)>>,
+    /// Building previews waits (`pause`): the ones being built finish.
+    paused: AtomicBool,
+    /// Users whose previews are all to be queued again ([`Scanner::generate_all`]).
+    all_wanted: Mutex<BTreeSet<String>>,
+    /// Per user, how many photos have previews and how many there are, as last counted (and the batch's `done` then); the users being counted.
+    coverage: Arc<Mutex<HashMap<String, (Instant, usize, usize, usize)>>>,
+    counting: Arc<Mutex<HashSet<String>>>,
+    /// Per user, the last batch that finished: how many previews, and when (unix seconds).
+    last_batch: Mutex<HashMap<String, (usize, u64)>>,
     /// Previews that couldn't be built (user, hash): not tried again until the server restarts.
     failed: Mutex<HashMap<(String, String), String>>,
     pub(crate) stop: AtomicBool,
@@ -1012,6 +1034,11 @@ impl Scanner {
             jobs: Mutex::new(Jobs::default()),
             jobs_wake: Condvar::new(),
             runs: Mutex::new(HashMap::new()),
+            last_batch: Mutex::new(HashMap::new()),
+            paused: AtomicBool::new(false),
+            all_wanted: Mutex::new(BTreeSet::new()),
+            coverage: Arc::new(Mutex::new(HashMap::new())),
+            counting: Arc::new(Mutex::new(HashSet::new())),
             failed: Mutex::new(HashMap::new()),
             stop: AtomicBool::new(false),
         }
@@ -1023,8 +1050,49 @@ impl Scanner {
         self.wake.notify_all();
     }
 
+    /// Stop (or go on) taking previews to build; the ones being built finish. Until the server restarts.
+    pub fn pause(&self, paused: bool) {
+        self.paused.store(paused, Ordering::SeqCst);
+        self.jobs_wake.notify_all();
+    }
+
+    /// Queue every preview of this user's photos that is missing, soon, and try the ones that failed again.
+    pub fn generate_all(&self, user: &str) {
+        lock(&self.failed).retain(|(u, _), _| u != user);
+        lock(&self.all_wanted).insert(user.to_string());
+        self.wake.notify_all();
+    }
+
+    /// How many of this user's photos have their previews, and how many photos there are, as counted a few seconds ago
+    /// (a count runs in the background: `None` until the first is done).
+    pub(crate) fn coverage(&self, st: &State, user: &str) -> Option<(usize, usize)> {
+        // (what the batch built since the count is added: the count itself takes a while)
+        let built_now = lock(&self.runs).get(user).map_or(0, |r| r.1);
+        let cached =
+            lock(&self.coverage).get(user).map(|&(at, have, total, base)| (at.elapsed(), (have + built_now.saturating_sub(base)).min(total), total));
+        if cached.is_none_or(|(age, ..)| age >= Duration::from_secs(5)) && lock(&self.counting).insert(user.to_string()) {
+            let hashes: Option<Vec<String>> = crate::api::lib(st, user).ok().map(|l| preview_jobs(&lock(&l)).into_iter().map(|j| j.0).collect());
+            let base = built_now;
+            let (cov, counting, name) = (self.coverage.clone(), self.counting.clone(), user.to_string());
+            let blobs = accounts::user_dir(&st.data, user).join("blobs");
+            let count = move || {
+                let hashes = hashes.unwrap_or_default();
+                let have = hashes.iter().filter(|h| !previews_missing(&blobs, h)).count();
+                lock(&cov).insert(name.clone(), (Instant::now(), have, hashes.len(), base));
+                lock(&counting).remove(&name);
+            };
+            let counting = self.counting.clone();
+            let name = user.to_string();
+            if std::thread::Builder::new().name("lc-preview-count".into()).spawn(count).is_err() {
+                lock(&counting).remove(&name);
+            }
+        }
+        cached.map(|(_, have, total)| (have, total))
+    }
+
     pub fn status(&self, user: &str) -> Status {
         let mut s = lock(&self.status).get(user).cloned().unwrap_or_default();
+        s.previews_paused = self.paused.load(Ordering::SeqCst);
         // (waiting or being built)
         {
             let j = lock(&self.jobs);
@@ -1045,6 +1113,9 @@ impl Scanner {
         if s.scanning {
             s.elapsed_secs = s.started.map_or(0, |t| t.elapsed().as_secs());
             s.eta_secs = s.read_started.filter(|_| s.phase == "reading").and_then(|t| eta(t, s.done, s.todo));
+        }
+        if let Some(&(done, at)) = lock(&self.last_batch).get(user) {
+            (s.previews_last_done, s.previews_last_at) = (Some(done), Some(at));
         }
         s.preview_errors = lock(&self.failed).iter().filter(|((u, _), _)| u == user).map(|(_, e)| e.clone()).take(20).collect();
         s
@@ -1116,6 +1187,17 @@ pub(crate) fn run_scanner(st: &Arc<State>) {
             for u in users_with_folders(&st.data) {
                 sc.request(&u);
             }
+        }
+        let all = lock(&sc.all_wanted).pop_first();
+        if let Some(user) = all {
+            if let Ok(lib) = crate::api::lib(st, &user) {
+                let blobs = accounts::user_dir(&st.data, &user).join("blobs");
+                let jobs = preview_jobs(&lock(&lib));
+                for (hash, file) in jobs {
+                    sc.queue(&blobs, &user, hash, file);
+                }
+            }
+            continue;
         }
         let next = lock(&sc.wanted).pop_first();
         let Some(user) = next else {
@@ -1192,7 +1274,9 @@ pub(crate) fn run_previews(st: &Arc<State>) {
                 if sc.stop.load(Ordering::SeqCst) {
                     return;
                 }
-                if let Some(job) = j.next() {
+                if !sc.paused.load(Ordering::SeqCst)
+                    && let Some(job) = j.next()
+                {
                     break job;
                 }
                 j = sc.jobs_wake.wait_timeout(j, Duration::from_secs(5)).unwrap_or_else(PoisonError::into_inner).0;
@@ -1212,6 +1296,10 @@ pub(crate) fn run_previews(st: &Arc<State>) {
                 run.1 += 1;
                 run.3 = run.3.saturating_add(preview_bytes(&blobs, &hash));
                 if run.1 >= run.2 {
+                    let at = std::time::SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
+                    lock(&sc.last_batch).insert(user.clone(), (run.1, at));
+                    // (the count of photos with previews is stale now)
+                    lock(&sc.coverage).remove(&user);
                     runs.remove(&user);
                 }
             }

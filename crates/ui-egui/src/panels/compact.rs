@@ -57,13 +57,14 @@ const TOOLS: [(&str, Icon, RightPanel, &str); 6] = [
 ];
 
 /// The Edit tool's groups, one shown at a time: (id = the desktop section, icon, name).
-const GROUPS: [(&str, Icon, &str); 7] = [
+const GROUPS: [(&str, Icon, &str); 8] = [
     ("profile", Icon::ProfileGrid, "Profile"),
     ("light", Icon::Sun, "Light"),
     ("color", Icon::Drop, "Color"),
     ("effects", Icon::Vignette, "Effects"),
     ("detail", Icon::Detail, "Detail"),
     ("optics", Icon::Lens, "Optics"),
+    ("lensBlur", Icon::Aperture, "Lens Blur"),
     ("calibration", Icon::Target, "Calibration"),
 ];
 

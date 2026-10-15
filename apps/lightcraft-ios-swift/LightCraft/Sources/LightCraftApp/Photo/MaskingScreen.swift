@@ -6,10 +6,10 @@ enum MaskKind {
     /// Create New Mask, as Lightroom's mobile app lists it.
     static let create: [(kind: String, label: String)] = [
         ("subject", "Select Subject"), ("object", "Select Object"), ("sky", "Select Sky"), ("background", "Select Background"), ("linear", "Linear Gradient"),
-        ("radial", "Radial Gradient"), ("luminanceRange", "Luminance Range"), ("colorRange", "Color Range"), ("brush", "Brush"),
+        ("radial", "Radial Gradient"), ("luminanceRange", "Luminance Range"), ("depthRange", "Depth Range"), ("colorRange", "Color Range"), ("brush", "Brush"),
     ]
     /// What a mask can be added to, taken away from or intersected with.
-    static let parts = ["brush", "linear", "radial", "sky", "subject", "object", "luminanceRange"]
+    static let parts = ["brush", "linear", "radial", "sky", "subject", "object", "luminanceRange", "depthRange"]
 
     static func name(_ kind: String) -> String {
         switch kind {

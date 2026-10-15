@@ -953,6 +953,9 @@ pub enum MaskShape {
         lo_feather: f64,
         hi_feather: f64,
     },
+    /// Depth range: the parts of the photo between depths `lo` and `hi` (0 = nearest, 1 =
+    /// farthest, as [`LensBlur`]'s depths over 100) with a feathered falloff 0..0.5. Needs the
+    /// photo's depth (its own, or Lens Blur's estimated [`LensBlur::depth`]); selects nothing without.
     DepthRange {
         lo: f64,
         hi: f64,
@@ -1106,13 +1109,115 @@ impl Default for RedEye {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+/// Lens Blur: a shallow depth of field made from the photo's depth (its own depth map, or one
+/// estimated by the depth model and kept in [`LensBlur::depth`]). Depths are 0 (the nearest part
+/// of the photo) to 100 (the farthest), linear in inverse distance, as blur grows in a lens.
+///
+/// The fields added after the first four are left out of the JSON while at their defaults, so
+/// settings saved before them (and the preview-cache keys hashed from them) don't change.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LensBlur {
     pub enabled: bool,
+    /// Blur strength, 0–100.
     pub amount: f64,
+    /// Depth of the middle of the range kept sharp, 0–100.
     pub focal_distance: f64,
+    /// Width of the range kept sharp, 0–100.
     pub focal_range: f64,
+    /// How much brighter out-of-focus highlights bloom, 0–100.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub boost: f64,
+    #[serde(skip_serializing_if = "Bokeh::is_default")]
+    pub bokeh: Bokeh,
+    /// The depth the model estimated, for a photo without depth data of its own. A picture of this
+    /// photo, so copied and synced settings leave it behind ([`crate::extract_groups`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub depth: Option<crate::DepthMap>,
+    /// Refine: strokes painted where the photo should be sharp: its depth there is pulled into the
+    /// focal range. An erase stroke takes painting back.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub focus: Vec<BrushStroke>,
+    /// Refine: strokes painted where the photo should be blurred: its depth there is pushed to the
+    /// end of the range farthest from the focal range.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub blur: Vec<BrushStroke>,
+}
+
+impl LensBlur {
+    /// The settings Lens Blur starts with when it is first applied to a photo: focus on what the
+    /// caller chose, a moderate blur with round bokeh.
+    pub fn applied(focal_distance: f64) -> LensBlur {
+        LensBlur {
+            enabled: true,
+            amount: 50.0,
+            focal_distance: focal_distance.clamp(0.0, 100.0),
+            focal_range: 15.0,
+            boost: 50.0,
+            ..LensBlur::default()
+        }
+    }
+
+    /// Whether a render blurs anything (with depth to blur by).
+    pub fn active(&self) -> bool {
+        self.enabled && self.amount > 0.0
+    }
+
+    /// The sharp range, `[near, far]` depths (0–100).
+    pub fn focus_bounds(&self) -> [f64; 2] {
+        let (c, r) = (self.focal_distance.clamp(0.0, 100.0), self.focal_range.clamp(0.0, 100.0) / 2.0);
+        [(c - r).max(0.0), (c + r).min(100.0)]
+    }
+}
+
+/// The shape out-of-focus highlights take (the lens's aperture).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Bokeh {
+    /// A round aperture: even discs.
+    #[default]
+    Circle,
+    /// Discs with bright rims, like soap bubbles (an over-corrected lens).
+    Bubble,
+    /// A five-bladed aperture: pentagons.
+    Blade5,
+    /// A mirror lens: rings with a dark centre.
+    Ring,
+    /// Discs clipped toward the frame's edges (optical vignetting), cat's-eye shaped there.
+    CatEye,
+}
+
+impl Bokeh {
+    pub const ALL: [Bokeh; 5] = [Bokeh::Circle, Bokeh::Bubble, Bokeh::Blade5, Bokeh::Ring, Bokeh::CatEye];
+
+    fn is_default(&self) -> bool {
+        *self == Bokeh::Circle
+    }
+
+    /// Stable name (commands, JSON).
+    pub fn name(self) -> &'static str {
+        match self {
+            Bokeh::Circle => "circle",
+            Bokeh::Bubble => "bubble",
+            Bokeh::Blade5 => "blade5",
+            Bokeh::Ring => "ring",
+            Bokeh::CatEye => "catEye",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Bokeh::Circle => "Circle",
+            Bokeh::Bubble => "Bubble",
+            Bokeh::Blade5 => "5-Blade",
+            Bokeh::Ring => "Ring",
+            Bokeh::CatEye => "Cat Eye",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Bokeh> {
+        Bokeh::ALL.into_iter().find(|b| b.name() == s)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]

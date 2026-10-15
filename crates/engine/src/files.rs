@@ -564,10 +564,28 @@ fn load_bytes_now(
         ));
     }
     let d = lightcraft_codecs::decode(&bytes, fit_box(max_edge)).map_err(|e| e.to_string())?;
+    // a Portrait photo's depth map (HEIC, JPEG), oriented like the picture
+    let orientation = Orientation::from_exif(d.orientation);
+    let depth = lightcraft_codecs::depth::depth(&bytes).map(|z| depth_mattes(z.width, z.height, z.data, orientation));
     drop(bytes);
     let img = d.to_working();
     let img = if img.width.max(img.height) > max_edge { fit(&img, max_edge, max_edge, Filter::Mitchell) } else { img };
-    Ok((img.into_oriented(Orientation::from_exif(d.orientation)), None, SourceInfo::default()))
+    Ok((img.into_oriented(orientation), None, SourceInfo { mattes: depth, ..SourceInfo::default() }))
+}
+
+/// Mattes holding only a file's depth map: `w × h` disparity as stored, normalized to nearness and
+/// oriented like the picture.
+fn depth_mattes(w: usize, h: usize, disparity: Vec<f32>, orientation: Orientation) -> Arc<lightcraft_pipeline::masks::Mattes> {
+    let mut m = lightcraft_pipeline::masks::Mattes::default();
+    m.set_depth(normalized_depth(w, h, disparity).into_oriented(orientation));
+    Arc::new(m)
+}
+
+/// `w × h` disparity as nearness 0..1 ([`lightcraft_pipeline::lensblur::normalize`]).
+fn normalized_depth(w: usize, h: usize, disparity: Vec<f32>) -> lightcraft_raster::Plane {
+    let mut p = lightcraft_raster::Plane { width: w, height: h, data: disparity };
+    lightcraft_pipeline::lensblur::normalize(&mut p);
+    p
 }
 
 /// Which white-balance scale a raw is edited on, decided from the file alone, the way the catalog decides it from
@@ -632,8 +650,8 @@ fn local_tone(raw: &lightcraft_raw::RawImage) -> Option<Arc<lightcraft_pipeline:
     Some(Arc::new(lightcraft_pipeline::local_tone::LocalTone { map, placement }))
 }
 
-/// The semantic masks of a DNG that AI masks understand, over the developed image (default crop,
-/// oriented like it). Person mattes without a confidently selected pixel are left out (the
+/// The semantic masks of a DNG that AI masks understand, and its depth map, over the developed
+/// image (default crop, oriented like it). Person mattes without a confidently selected pixel are left out (the
 /// Subject mask then falls back to its heuristic); a sky matte counts even when empty (no sky).
 fn dng_mattes(bytes: &[u8], raw: &lightcraft_raw::RawInfo) -> Option<Arc<lightcraft_pipeline::masks::Mattes>> {
     use lightcraft_pipeline::masks::{MatteKind, Mattes};
@@ -648,6 +666,10 @@ fn dng_mattes(bytes: &[u8], raw: &lightcraft_raw::RawInfo) -> Option<Arc<lightcr
             continue;
         }
         mattes.push(kind, img.into_oriented(raw.orientation));
+    }
+    // a DNG 1.5 depth map, taken to span the developed picture
+    if let Some(d) = lightcraft_raw::depth::depth_map(bytes) {
+        mattes.set_depth(normalized_depth(d.width, d.height, d.disparity).into_oriented(raw.orientation));
     }
     (!mattes.is_empty()).then(|| Arc::new(mattes))
 }

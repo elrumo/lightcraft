@@ -21,6 +21,8 @@ lightcraft-fetch = { workspace = true }
 # Generative Expand's diffusion models (their pins live with them)
 lightcraft-erase = { workspace = true }
 lightcraft-diffuse = { workspace = true }
+# so is Lens Blur's depth model (its pin lives with the estimator)
+lightcraft-depth = { workspace = true }
 
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
 candle-core = { workspace = true, features = ["metal"] }

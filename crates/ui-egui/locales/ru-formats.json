@@ -287,5 +287,8 @@
   "{note} · {size} download": "{note} · загрузка {size}",
   "The new area was painted by {by} on this device.": "Новая область дорисована на этом устройстве ({by}).",
   "Automatic: {} suits this device": "Автоматически: для этого устройства подходит {}",
-  "{} isn't downloaded yet: download it below.": "Модель {} ещё не загружена: загрузите её ниже."
+  "{} isn't downloaded yet: download it below.": "Модель {} ещё не загружена: загрузите её ниже.",
+  "Downloading the depth model… {:.0} %": "Загрузка модели глубины… {:.0} %",
+  "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.": "У этого фото нет собственной карты глубины: «Размытие объектива» оценивает её с помощью Depth Anything V2 Small, загрузка {:.0} МБ (лицензия {}). {}.",
+  "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)": "В фокусе: {:.0}–{:.0} (0 — ближе всего, 100 — дальше всего)"
 }

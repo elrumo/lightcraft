@@ -681,20 +681,38 @@ function scanInfo(s) {
 }
 
 /** The previews panel: built / left in this batch, and the photo files being built right now (also during a scan). */
-function showPreviews(s) {
-  const panel = $('previewsPanel');
-  panel.hidden = !s.previews;
-  if (!s.previews) return;
+function showPreviews(name, s) {
+  const paused = !!s.previewsPaused;
+  $('previewsTitle').textContent = paused ? 'Previews paused' : s.previews ? 'Building previews' : 'Previews';
+  const have = s.previewsHave, photos = s.previewsPhotos;
+  $('previewsCover').textContent = photos == null ? 'Counting previews…' : n(have) + ' of ' + plural(photos, 'photo has', 'photos have') + ' previews' + (photos ? ' (' + Math.floor((100 * have) / photos) + '%)' : '');
   const total = s.previewsTotal || s.previews;
-  $('previewsTitle').textContent = 'Building previews';
-  $('previewsText').textContent =
-    n(s.previewsDone) + ' built, ' + n(s.previews) + ' left' + (s.previewsEtaSecs ? ', about ' + dur(s.previewsEtaSecs) + ' to go' : '') + (s.previewsPerMin ? ' (' + n(s.previewsPerMin) + ' a minute)' : '') + '. Photos show on devices as their previews are ready.';
-  progress($('previewsBar'), total ? s.previewsDone / total : 0);
+  const batch = s.previews
+    ? n(s.previewsDone) + ' built, ' + n(s.previews) + ' left' + (s.previewsEtaSecs && !paused ? ', about ' + dur(s.previewsEtaSecs) + ' to go' : '') + (s.previewsPerMin && !paused ? ' (' + n(s.previewsPerMin) + ' a minute)' : '') + '.'
+    : 'Nothing waiting: 0 left.' + (s.previewsLastAt ? ' The last batch, ' + plural(s.previewsLastDone, 'preview', 'previews') + ', finished ' + ago(s.previewsLastAt) + '.' : '');
+  $('previewsText').textContent = batch + (paused ? ' Paused for every user: the ones being built finish, then it waits.' : '');
+  progress($('previewsBar'), photos ? have / photos : s.previews && total ? s.previewsDone / total : 0);
   const now = s.previewsBuilding || [];
   $('previewsNow').replaceChildren(
     ...now.map((p) => el('li', {}, el('b', {}, 'Now'), el('code', { title: p }, p.slice(p.lastIndexOf('/') + 1)))),
-    ...(now.length ? [] : [el('li', { class: 'muted' }, 'Waiting for a builder.')]),
+    ...(s.previews && !now.length && !paused ? [el('li', { class: 'muted' }, 'Waiting for a builder.')] : []),
   );
+  const pause = $('previewsPause');
+  pause.hidden = !paused && !s.previews;
+  pause.querySelector('span').textContent = paused ? 'Resume' : 'Pause';
+  pause.querySelector('use').setAttribute('href', paused ? '#i-play' : '#i-pause');
+  pause.onclick = () => previewsAction(name, paused ? 'resume' : 'pause');
+  $('previewsAll').onclick = () => previewsAction(name, 'generate');
+}
+
+async function previewsAction(name, action) {
+  try {
+    const r = await api('POST', 'users/' + enc(name) + '/previews/' + action);
+    if (action === 'generate') toast('Queued every missing preview.');
+    showFolders(name, r);
+  } catch (e) {
+    fail(e);
+  }
 }
 
 function showFolders(name, r) {
@@ -740,7 +758,8 @@ function showFolders(name, r) {
   $('editIgnore').onclick = () => editIgnore(name, ignore);
   $('editIgnore').closest('.scan').hidden = !r.folders.length;
   const s = r.scan;
-  showPreviews(s);
+  $('previewsPanel').hidden = !r.folders.length;
+  showPreviews(name, s);
   const info = scanInfo(s);
   $('scanNow').closest('.scan').hidden = !r.folders.length;
   $('scanTitle').textContent = info.title;
@@ -757,7 +776,7 @@ function showFolders(name, r) {
   errs.querySelector('ul').replaceChildren(...all.map((e) => el('li', {}, e)));
   errs.hidden = !all.length;
   clearTimeout(timer);
-  const working = !!(s.scanning || s.previews);
+  const working = !!(s.scanning || s.previews || s.previewsPaused || s.previewsPhotos == null);
   if (working) timer = setTimeout(() => foldersOf === name && pollFolders(name).catch(fail), 2000);
   else if (scanWorking) route(); // done: the photo counts changed
   scanWorking = working;

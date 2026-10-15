@@ -67,6 +67,8 @@ Beta-blocking gaps (B) total **~230–430 h**; with the stability and platform w
   shows its thumbnail. Still open: 4:2:2 / 4:4:4 HEIC decoding itself (needs a sample file), Lightroom mobile
   `_proxy.dng` and `th_` / `pv_` blobs (`lightcraft-cli inspect` says what they are), a streaming decode for a
   single-strip 300 MP TIFF (still decoded whole).
+- 2026-10-14: Lens Blur and Depth Range masks (LR-EDIT-LENSBLUR 🟡, LR-MASK-DEPTHRANGE ✅;
+  [lens-blur.md](lens-blur.md)): Portrait / DNG depth or a Depth Anything V2 Small estimate, refine brushes.
 - 2026-10-10: Nikon lossy-after-split NEF (#633), ORF 12.8 bpp (#651), HDR gain map / PQ AVIF / float
   TIFF export (#646), activity stack (#345), JPEG XL export (#247).
 - 2026-10-09: EOS R7 C-RAW with an odd-height QP map (a45c2b66; part of gap 2), HEIC in release builds (#609), Samsung uncompressed SRW (#459), contact-sheet PDF (#563),
@@ -82,6 +84,7 @@ Beta-blocking gaps (B) total **~230–430 h**; with the stability and platform w
 |---|---|---|
 | 2026-10-14 | minor | Gap 12: Generative Expand gains diffusion models (Stable Diffusion 1.5, Kandinsky 2.2, SDXL; LR-CROP-GENEXPAND 🟡); not closed |
 | 2026-10-14 | minor | Gap 14 shrinks: the loupe of an HDR edit is drawn in HDR on macOS (EDR, a patched egui-wgpu float surface) and in the SwiftUI app; Windows / Linux, a GPU float output and a device check remain, 12–25 h → 6–12 h; gap not closed |
+| 2026-10-14 | minor | Lens Blur and Depth Range masks listed as closed (they had no gap row: P2 in the AI table of target-app-parity.md) |
 | 2026-10-13 | minor | Gap 12 notes Generative Expand on the device (MI-GAN / LaMa / Classic, LR-CROP-GENEXPAND 🟡); not closed |
 | 2026-10-11 | minor | Gap 10 shrinks: Leica Q3 verified by a recorded check of 38 private DNGs (236 models verified; Leica 14); gap not closed |
 | 2026-10-12 | minor | Camera-look deep shadows follow the JPEG toe (#1307); camera calibration remains partial |

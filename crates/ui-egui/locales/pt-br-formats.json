@@ -287,5 +287,8 @@
   "{note} · {size} download": "{note} · download de {size}",
   "The new area was painted by {by} on this device.": "A nova área foi pintada neste dispositivo ({by}).",
   "Automatic: {} suits this device": "Automático: {} é o adequado para este dispositivo",
-  "{} isn't downloaded yet: download it below.": "{} ainda não foi baixado: baixe-o abaixo."
+  "{} isn't downloaded yet: download it below.": "{} ainda não foi baixado: baixe-o abaixo.",
+  "Downloading the depth model… {:.0} %": "Baixando o modelo de profundidade… {:.0} %",
+  "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.": "Esta foto não tem profundidade própria: o Desfoque de lente a estima com o Depth Anything V2 Small, um download de {:.0} MB (licença {}). {}.",
+  "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)": "Em foco: {:.0}–{:.0} (0 mais perto, 100 mais longe)"
 }

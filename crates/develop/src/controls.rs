@@ -28,6 +28,7 @@ pub enum Section {
     Calibration,
     PointColor,
     RedEye,
+    LensBlur,
 }
 
 impl Section {
@@ -49,6 +50,7 @@ impl Section {
             Section::Calibration => "Calibration",
             Section::PointColor => "Point Color",
             Section::RedEye => "Red Eye",
+            Section::LensBlur => "Lens Blur",
         }
     }
 }
@@ -213,6 +215,8 @@ pub const MASK_REFINE: ControlSpec = shape("refine", "Refine Edges", 0.0, 100.0,
 const RANGE_LO: ControlSpec = shape("lo", "Range Low", 0.0, 100.0, 0.0, Track::Gradient { from: "#000000", to: "#ffffff" });
 const RANGE_HI: ControlSpec = shape("hi", "Range High", 0.0, 100.0, 100.0, Track::Gradient { from: "#000000", to: "#ffffff" });
 const SMOOTHNESS: ControlSpec = shape("smoothness", "Smoothness", 0.0, 100.0, 20.0, Track::Plain);
+const DEPTH_NEAR: ControlSpec = shape("lo", "Range Near", 0.0, 100.0, 0.0, Track::Gradient { from: "#f0a030", to: "#3050c0" });
+const DEPTH_FAR: ControlSpec = shape("hi", "Range Far", 0.0, 100.0, 100.0, Track::Gradient { from: "#f0a030", to: "#3050c0" });
 const COLOR_REFINE: ControlSpec = shape("refine", "Refine", 0.0, 100.0, 50.0, Track::Plain);
 const EDGE: ControlSpec = shape("edge", "Edge", -100.0, 100.0, 0.0, Track::Centered);
 
@@ -223,6 +227,9 @@ pub fn shape_controls(shape: &MaskShape) -> Vec<(ControlSpec, f64)> {
     match shape {
         MaskShape::LuminanceRange { lo, hi, lo_feather, hi_feather } => {
             vec![(RANGE_LO, lo * 100.0), (RANGE_HI, hi * 100.0), (SMOOTHNESS, ((lo_feather + hi_feather) / 2.0 / 0.5 * 100.0).clamp(0.0, 100.0))]
+        }
+        MaskShape::DepthRange { lo, hi, feather } => {
+            vec![(DEPTH_NEAR, lo * 100.0), (DEPTH_FAR, hi * 100.0), (SMOOTHNESS, (feather / 0.5 * 100.0).clamp(0.0, 100.0))]
         }
         MaskShape::ColorRange { refine, .. } => vec![(COLOR_REFINE, *refine)],
         MaskShape::Object { edge, .. } | MaskShape::Prompt { edge, .. } => vec![(EDGE, *edge)],
@@ -244,6 +251,9 @@ pub fn set_shape_control(shape: &MaskShape, id: &str, v: f64) -> Option<MaskShap
             let f = v.clamp(0.0, 100.0) / 100.0 * 0.5;
             (*lo_feather, *hi_feather) = (f, f);
         }
+        (MaskShape::DepthRange { lo, hi, .. }, "lo") => *lo = (v / 100.0).clamp(0.0, (*hi - 0.01).max(0.0)),
+        (MaskShape::DepthRange { lo, hi, .. }, "hi") => *hi = (v / 100.0).clamp((*lo + 0.01).min(1.0), 1.0),
+        (MaskShape::DepthRange { feather, .. }, "smoothness") => *feather = v.clamp(0.0, 100.0) / 100.0 * 0.5,
         (MaskShape::ColorRange { refine, .. }, "refine") => *refine = v.clamp(0.0, 100.0),
         (MaskShape::Object { edge, .. } | MaskShape::Prompt { edge, .. }, "edge") => *edge = v.clamp(-100.0, 100.0),
         _ => return None,
@@ -413,6 +423,10 @@ controls! {
     "calibration.blueHue" => calibration.blue_hue, "Blue Hue", Calibration, -100, 100, 0, 1, 0, Gradient { from: "#30a0d0", to: "#8040d0" };
     "calibration.blueSat" => calibration.blue_sat, "Blue Saturation", Calibration, -100, 100, 0, 1, 0, Gradient { from: "#7a7a7a", to: "#3a60e0" };
     "crop.angle" => crop.geometry.angle, "Straighten", Geometry, -45, 45, 0, 0.01, 2, Centered;
+    "lensBlur.amount" => lens_blur.amount, "Blur Amount", LensBlur, 0, 100, 0, 1, 0, Plain;
+    "lensBlur.focalDistance" => lens_blur.focal_distance, "Focal Distance", LensBlur, 0, 100, 0, 1, 0, Gradient { from: "#f0a030", to: "#3050c0" };
+    "lensBlur.focalRange" => lens_blur.focal_range, "Focal Range", LensBlur, 0, 100, 0, 1, 0, Plain;
+    "lensBlur.boost" => lens_blur.boost, "Boost", LensBlur, 0, 100, 0, 1, 0, Plain;
 }
 
 /// Template specs of the indexed controls (`<family>.<field>`; addressed as `<family>.<i>.<field>`).
@@ -688,6 +702,22 @@ mod tests {
         let bad = MaskShape::LuminanceRange { lo: f64::NAN, hi: f64::NAN, lo_feather: 0.0, hi_feather: 0.0 };
         assert!(set_shape_control(&bad, "lo", 50.0).is_some() && set_shape_control(&bad, "hi", 50.0).is_some());
         assert!(shape_controls(&MaskShape::Sky).is_empty());
+    }
+
+    #[test]
+    fn a_depth_range_keeps_its_bounds_in_order() {
+        let r = MaskShape::DepthRange { lo: 0.1, hi: 0.4, feather: 0.1 };
+        let c: Vec<(&str, f64)> = shape_controls(&r).iter().map(|(s, v)| (s.id, *v)).collect();
+        assert_eq!(c.iter().map(|c| c.0).collect::<Vec<_>>(), ["lo", "hi", "smoothness"]);
+        assert!((c[0].1 - 10.0).abs() < 1e-9 && (c[1].1 - 40.0).abs() < 1e-9 && (c[2].1 - 20.0).abs() < 1e-9, "{c:?}");
+        let Some(MaskShape::DepthRange { lo, .. }) = set_shape_control(&r, "lo", 90.0) else { panic!() };
+        assert!((lo - 0.39).abs() < 1e-9);
+        let Some(MaskShape::DepthRange { hi, .. }) = set_shape_control(&r, "hi", -5.0) else { panic!() };
+        assert!((hi - 0.11).abs() < 1e-9);
+        let Some(MaskShape::DepthRange { feather, .. }) = set_shape_control(&r, "smoothness", 100.0) else { panic!() };
+        assert_eq!(feather, 0.5);
+        let bad = MaskShape::DepthRange { lo: f64::NAN, hi: f64::NAN, feather: f64::NAN };
+        assert!(set_shape_control(&bad, "lo", 50.0).is_some() && set_shape_control(&bad, "hi", 50.0).is_some());
     }
 
     /// The Kelvin temperature's track follows Lightroom's (positions measured in Lightroom Classic against

@@ -1,5 +1,5 @@
 //! The Edit panel: histogram, Auto/B&W, profile, and the Light / Color / Effects / Detail / Optics
-//! sections, built from the engine's control specs.
+//! / Lens Blur ([`crate::lensblur`]) / Calibration sections, built from the engine's control specs.
 
 use egui::epaint::{Mesh, Vertex};
 use egui::{Align2, Color32, Pos2, Rect, RichText, Sense, Stroke, pos2, vec2};
@@ -396,6 +396,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         });
         ui.add_space(8.0);
     });
+    section(app, ui, &d, "lensBlur", "Lens Blur", |app, ui, d| crate::lensblur::panel(app, ui, d, id));
     // Lightroom Classic's Calibration panel (the cloud app hides it): last, like there.
     section(app, ui, &d, "calibration", "Calibration", |app, ui, d| {
         sub_title(ui, crate::i18n::tr("Shadows"));
