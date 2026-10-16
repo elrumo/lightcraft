@@ -23,6 +23,7 @@ pub mod backup;
 pub mod bench;
 pub mod chooser;
 pub mod files;
+pub mod health;
 pub mod store;
 pub mod wire;
 
@@ -30,6 +31,8 @@ pub mod wire;
 mod backend;
 #[cfg(target_arch = "wasm32")]
 mod erase;
+#[cfg(target_arch = "wasm32")]
+mod lifecycle;
 #[cfg(target_arch = "wasm32")]
 mod safety;
 #[cfg(target_arch = "wasm32")]

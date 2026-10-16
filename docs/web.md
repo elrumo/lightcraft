@@ -135,7 +135,19 @@ are the same in every version, so serve them with `Cache-Control: no-cache` (not
   - If the stored library can't be opened, a notice says the session is temporary and nothing
     is saved; the stored library is left as it was.
   - A panic (wasm is built with `panic = "abort"`) replaces the page with a message saying the
-    stored library is kept and to reload, instead of a frozen canvas.
+    stored library is kept and to reload, instead of a frozen canvas; the message has a Reload button.
+  - **A tab that lost its graphics reloads itself.** Browsers take a tab's WebGL context away (a tab in
+    the background under memory pressure, a GPU process restart, the machine sleeping). eframe has no
+    answer to that: every texture is gone, the canvas stays empty or stale and the painter panics on
+    its next new texture, so the page looked frozen while the app behind it still ran
+    (`apps/lightcraft-web/src/lifecycle.rs`). Now the loss is noticed (`webglcontextlost`, cancelled so
+    the browser may restore it; also checked when the tab comes back), painting stops, a message covers
+    the canvas, and once the tab is in front and the library is in storage the page reloads (after 2 s
+    if the browser has not given the graphics back, at once if it has). It does not reload while a
+    change is on its way to storage, nor when saving fails (the page in memory is then the only copy:
+    the message offers the Reload button instead), nor more than three times a minute
+    (`health::reload_budget`, so a driver that fails again at once cannot loop). A tab that comes back
+    to the front also repaints at once, as an idle app draws nothing by itself.
 - **Importing photos with no filesystem.** *File ▸ Import Photos…* (<kbd>⌘⇧I</kbd>) opens the
   browser's file picker. You can also drop files anywhere on the page. The bytes are written to
   storage, then imported and decoded by the same engine code as the desktop app
@@ -148,7 +160,12 @@ are the same in every version, so serve them with `Cache-Control: no-cache` (not
   source, develop settings, request); the worker reads the original or the cached thumbnail from
   storage itself, keeps decoded sources and the loupe's stage cache, renders, and transfers the
   RGBA bytes back. Jobs for a photo go back to the worker that decoded it. This needs no wasm
-  threads or `SharedArrayBuffer`. If no worker starts, rendering falls back to the main thread.
+  threads or `SharedArrayBuffer`. If no worker starts, rendering falls back to the main thread. A worker
+  that fails (an out-of-memory trap, an exception) ends its job with an error and is started again in its
+  place after a growing delay (0.5 s, 1 s, 2 s … up to six times in a row; a worker that answers resets the
+  count). Without that one failure left the page with fewer workers for good, and with none every render
+  ran on the page's own thread, freezing it for the length of each one. `web.stats` → `workers.restarted`
+  counts them; `lightcraft.command("web.crashWorker", '{"index":0}')` makes a worker throw to see it.
 - **Slider drags.** The browser has no GPU pipeline (it is the CPU one, a few hundred nanoseconds per
   output pixel per worker), so a drag cannot re-render the loupe at canvas size on every tick: on a
   Retina window that was 1–7 picture updates a second, and the sharp picture after the release
