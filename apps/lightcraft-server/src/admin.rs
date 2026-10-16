@@ -4,9 +4,13 @@
 //! - **First run:** while no user is an admin, the server prints a one-time setup code to its log
 //!   at start; `/admin` asks for it to create the first admin (so a server just put on the
 //!   internet can't be claimed by whoever finds it first). Wrong codes rotate it after a few tries.
-//! - **Sessions:** an admin signs in with their user name and password and gets a session token
-//!   of its own (idle sessions end, see [`accounts::ADMIN_IDLE`]); it is not a device and can't
-//!   sync, and a device token never opens these routes.
+//! - **Sessions:** an admin signs in with their user name and password and gets a session of its own;
+//!   it is not a device and can't sync, and a device token never opens these routes. The page keeps
+//!   its session in an `HttpOnly` cookie (`lc_admin`, `SameSite=Strict`, and every request that changes
+//!   something carries [`CSRF_HEADER`]); the SwiftUI app and scripts get a token to send as a bearer.
+//!   "Keep me signed in" keeps a session for weeks and across restarts of the server, see
+//!   [`accounts::ADMIN_REMEMBER_IDLE`]; any other ends after [`accounts::ADMIN_IDLE`] without a request.
+//!   A new password for the admin ends their sessions.
 //! - **Limits** on how much of the machine the server takes (CPU threads, previews, renders and
 //!   requests at once) are set here unless the deployment fixed them ([`crate::limits`]).
 //! - **Settings stay deployment settings:** where the data lives, the address the server listens
@@ -192,6 +196,51 @@ fn token(req: &Request) -> String {
     header_value(req, "Authorization").and_then(|v| v.strip_prefix("Bearer ")).unwrap_or("").trim().to_string()
 }
 
+/// The cookie the admin page's sign-in sets: the session token, where the page's script can't read it.
+const COOKIE: &str = "lc_admin";
+
+/// The header the page adds to every request that changes something when it signs in by cookie. A form on
+/// another site can't send it (and `/api/admin` answers no cross-origin preflight), so it can't use the cookie.
+const CSRF_HEADER: &str = "X-LightCraft-Admin";
+
+/// The session token a request signs in with: a bearer token (the SwiftUI app, scripts) or else the page's
+/// cookie; and whether it came in the cookie.
+fn credential(req: &Request) -> (String, bool) {
+    let bearer = token(req);
+    if !bearer.is_empty() {
+        return (bearer, false);
+    }
+    let cookie = req.headers().iter().filter(|h| h.field.equiv("Cookie")).flat_map(|h| h.value.as_str().split(';')).find_map(|c| {
+        let (k, v) = c.trim().split_once('=')?;
+        (k.trim() == COOKIE).then(|| v.trim().to_string())
+    });
+    (cookie.unwrap_or_default(), true)
+}
+
+/// `Set-Cookie` for an admin session. Kept ones outlive the browser (the server ends them when idle, see
+/// [`accounts::ADMIN_REMEMBER_IDLE`]); the others end with it. `Secure` when the connection is HTTPS (a proxy says so).
+fn session_cookie(req: &Request, token: &str, remember: bool) -> Option<Header> {
+    let age = if remember { format!("; Max-Age={}", accounts::ADMIN_REMEMBER_MAX.as_secs()) } else { String::new() };
+    header("Set-Cookie", &format!("{COOKIE}={token}; Path=/api/admin; HttpOnly; SameSite=Strict{age}{}", secure(req)))
+}
+
+/// `Set-Cookie` that makes the browser forget the session.
+fn clear_cookie(req: &Request) -> Option<Header> {
+    header("Set-Cookie", &format!("{COOKIE}=; Path=/api/admin; Max-Age=0; HttpOnly; SameSite=Strict{}", secure(req)))
+}
+
+fn secure(req: &Request) -> &'static str {
+    if crate::shares::is_https(req) { "; Secure" } else { "" }
+}
+
+/// `r` with a cookie to set, if there is one.
+fn with_cookie(mut r: Resp, cookie: Option<Header>) -> Resp {
+    if let Some(h) = cookie {
+        r.add_header(h);
+    }
+    r
+}
+
 #[derive(Deserialize)]
 struct Setup {
     code: String,
@@ -199,10 +248,17 @@ struct Setup {
     password: String,
 }
 
+/// `POST /api/admin/login`. The admin page asks for `cookie`: the session goes in an `HttpOnly` cookie and
+/// the answer holds no token; `remember` keeps it for weeks and across restarts. Anything else (the SwiftUI
+/// app, scripts) gets a token to send as a bearer.
 #[derive(Deserialize)]
 struct Login {
     user: String,
     password: String,
+    #[serde(default)]
+    remember: bool,
+    #[serde(default)]
+    cookie: bool,
 }
 
 #[derive(Deserialize)]
@@ -292,10 +348,18 @@ pub fn api(st: &State, req: &mut Request, method: &Method, rest: &str) -> Resp {
         (Method::Post, ["login"]) => return login(st, req),
         _ => {}
     }
-    let token = token(req);
+    let (token, by_cookie) = credential(req);
     let Some(me) = st.accounts.lock().unwrap_or_else(PoisonError::into_inner).check_admin(&token) else {
-        return error(401, "sign in as an admin");
+        // (a cookie that is no good any more is not sent again)
+        return with_cookie(error(401, "sign in as an admin"), clear_cookie(req).filter(|_| by_cookie && !token.is_empty()));
     };
+    if by_cookie && !matches!(method, Method::Get | Method::Head) && header_value(req, CSRF_HEADER).is_none() {
+        return error(403, "this request must come from the admin page");
+    }
+    if let (Method::Post, ["logout"]) = (method, parts.as_slice()) {
+        st.accounts.lock().unwrap_or_else(PoisonError::into_inner).admin_logout(&token);
+        return with_cookie(json(200, &json!({})), clear_cookie(req).filter(|_| by_cookie));
+    }
     // a user name in the path is one (never `..` or the like)
     if let ["users", name, ..] = parts.as_slice()
         && !accounts::valid_name(name)
@@ -303,16 +367,17 @@ pub fn api(st: &State, req: &mut Request, method: &Method, rest: &str) -> Resp {
         return error(400, format!("not a user name: {name}"));
     }
     let r = match (method, parts.as_slice()) {
-        (Method::Post, ["logout"]) => {
-            st.accounts.lock().unwrap_or_else(PoisonError::into_inner).admin_logout(&token);
-            Ok(json!({}))
-        }
         (Method::Get, ["status"]) => Ok(status(st, &me)),
         (Method::Get, ["users"]) => users(st),
         (Method::Post, ["users"]) => read_json::<NewUser>(req).map_err(Err).and_then(|u| add_user(st, u).map_err(Ok)),
-        (Method::Put, ["users", name, "password"]) => read_json::<Password>(req)
-            .map_err(Err)
-            .and_then(|p| accounts::set_user(&st.data, name, &p.password, true).map(|()| json!({})).map_err(|e| Ok((400, e)))),
+        (Method::Put, ["users", name, "password"]) => read_json::<Password>(req).map_err(Err).and_then(|p| {
+            accounts::set_user(&st.data, name, &p.password, true).map_err(|e| Ok((400, e)))?;
+            // (a new password ends the user's admin sessions; the browser that changed their own stays signed in)
+            if *name == me.as_str() {
+                st.accounts.lock().unwrap_or_else(PoisonError::into_inner).admin_keep(&token);
+            }
+            Ok(json!({}))
+        }),
         (Method::Put, ["users", name, "admin"]) => read_json::<Admin>(req)
             .map_err(Err)
             .and_then(|a| accounts::set_admin(&st.data, name, a.admin).map(|()| json!({})).map_err(|e| Ok((409, e)))),
@@ -382,20 +447,29 @@ pub fn api(st: &State, req: &mut Request, method: &Method, rest: &str) -> Resp {
             st.folders.request(name);
             folders(st, name)
         }),
-        (Method::Post, ["users", name, "previews", action @ ("pause" | "resume" | "generate")]) => {
+        // `generate`: the previews that are missing; `rebuild`: every preview, the ones there too
+        (Method::Post, ["users", name, "previews", action @ ("pause" | "resume" | "generate" | "rebuild")]) => {
             match *action {
                 "pause" => st.folders.pause(true),
                 "resume" => st.folders.pause(false),
+                "rebuild" => st.folders.rebuild_all(name),
                 _ => st.folders.generate_all(name),
             }
             log::info!("admin {me}: {action} previews ({name})");
             folders(st, name)
         }
+        // `scan`: read the files that are new or changed; `rescan`: read every file again
         (Method::Post, ["users", name, "scan"]) => {
             st.folders.request(name);
             folders(st, name)
         }
+        (Method::Post, ["users", name, "rescan"]) => {
+            log::info!("admin {me}: rescan everything ({name})");
+            st.folders.request_full(name);
+            folders(st, name)
+        }
         (Method::Get, ["limits"]) => Ok(st.limits.status()),
+        (Method::Get, ["usage"]) => Ok(usage(st)),
         (Method::Put, ["limits"]) => read_json::<crate::limits::Values>(req).map_err(Err).and_then(|v| {
             let e = st.limits.set(v).map_err(|e| Ok((400, e)))?;
             st.render.set_max(e.renders);
@@ -515,7 +589,7 @@ fn login(st: &State, req: &mut Request) -> Resp {
     if let Some(r) = crate::api::throttled(st, &keys) {
         return r;
     }
-    let r = st.accounts.lock().unwrap_or_else(PoisonError::into_inner).admin_login(&l.user, &l.password);
+    let r = st.accounts.lock().unwrap_or_else(PoisonError::into_inner).admin_login(&l.user, &l.password, l.remember);
     let mut t = st.throttle.lock().unwrap_or_else(PoisonError::into_inner);
     if matches!(r, Err(LoginError::Refused)) {
         t.failed(&keys)
@@ -525,8 +599,13 @@ fn login(st: &State, req: &mut Request) -> Resp {
     drop(t);
     match r {
         Ok(token) => {
-            log::info!("admin {} signed in to the admin page", l.user);
-            json(200, &json!({"token": token, "user": l.user}))
+            log::info!("admin {} signed in to the admin page{}", l.user, if l.remember { " (kept signed in)" } else { "" });
+            if l.cookie {
+                // (the page never holds the token: the browser sends the cookie, and script can't read it)
+                with_cookie(json(200, &json!({"user": l.user})), session_cookie(req, &token, l.remember))
+            } else {
+                json(200, &json!({"token": token, "user": l.user}))
+            }
         }
         Err(LoginError::Refused) => {
             log::warn!("refused an admin sign-in as `{}`", l.user.chars().take(64).collect::<String>());
@@ -564,6 +643,42 @@ fn web_build(web: &Path) -> Option<Value> {
     let v: Value = serde_json::from_str(&text).ok()?;
     let field = |k: &str| v.get(k).and_then(Value::as_str).map(|s| s.chars().take(64).collect::<String>());
     Some(json!({"version": field("version"), "commit": field("commit")}))
+}
+
+/// `GET /api/admin/usage`: what the server takes of the machine (a point every 30 s, averaged to a few hundred) and what
+/// each user's devices asked of it since it started ([`crate::usage`]). `supported`: the machine numbers are read here
+/// (Linux and Docker); elsewhere they are `null`.
+fn usage(st: &State) -> Value {
+    let u = &st.usage;
+    let history: Vec<Value> = u
+        .history()
+        .iter()
+        .map(|s| json!({"at": s.at, "cpu": s.cpu, "machineCpu": s.machine_cpu, "rss": s.rss, "memUsed": s.mem_used, "requests": s.requests, "out": s.out}))
+        .collect();
+    let names: Vec<String> = accounts::read_users(&st.data).map(|f| f.users.into_keys().collect()).unwrap_or_default();
+    let mut a = st.accounts.lock().unwrap_or_else(PoisonError::into_inner);
+    let users: Vec<Value> = names
+        .iter()
+        .map(|name| {
+            let devices: Vec<Value> = a
+                .devices_of(name)
+                .iter()
+                .map(|d| {
+                    let x = u.of(name, d.id);
+                    json!({"id": d.id, "name": d.name, "requests": x.requests, "in": x.bytes_in, "out": x.bytes_out, "busyMs": x.busy_ms, "lastSeen": a.last_seen(name, d.id)})
+                })
+                .collect();
+            json!({"name": name, "devices": devices})
+        })
+        .collect();
+    json!({
+        "since": u.since,
+        "supported": cfg!(target_os = "linux"),
+        "cores": st.limits.machine.cores,
+        "memory": st.limits.machine.memory,
+        "history": history,
+        "users": users,
+    })
 }
 
 fn status(st: &State, me: &str) -> Value {

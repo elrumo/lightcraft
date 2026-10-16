@@ -17,13 +17,16 @@ fn temp(tag: &str) -> PathBuf {
     d
 }
 
-fn write_png(path: &Path, seed: u8) {
+fn png_bytes(seed: u8) -> Vec<u8> {
     let (w, h) = (80usize, 60usize);
     let data: Vec<[u8; 4]> = (0..w * h).map(|i| [(i % w * 3) as u8, (i / w * 4) as u8, seed, 255]).collect();
     let img = lightcraft_raster::Rgba8 { width: w, height: h, data };
-    let bytes = lightcraft_codecs::encode_png(&lightcraft_codecs::EncodeImage::rgba8(&img), &lightcraft_codecs::EncodeMeta::default()).unwrap();
+    lightcraft_codecs::encode_png(&lightcraft_codecs::EncodeImage::rgba8(&img), &lightcraft_codecs::EncodeMeta::default()).unwrap()
+}
+
+fn write_png(path: &Path, seed: u8) {
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    std::fs::write(path, bytes).unwrap();
+    std::fs::write(path, png_bytes(seed)).unwrap();
 }
 
 const XMP: &str = r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description rdf:about="" xmlns:xmp="http://ns.adobe.com/xap/1.0/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmp:Rating="4"><dc:subject><rdf:Bag><rdf:li>beach</rdf:li></rdf:Bag></dc:subject></rdf:Description></rdf:RDF></x:xmpmeta>"#;
@@ -587,6 +590,149 @@ fn a_preview_a_device_asks_for_is_built_at_once() {
     // a hash the server has no photo for has nothing to wait for
     let (status, body, retry) = call("GET", "mini", &"ab".repeat(16));
     assert_eq!((status, said(&body), retry), (404, None, None));
+    drop(server);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// An admin's `POST /api/admin/<path>` (a bearer token from the login), answered as (status, JSON).
+fn admin_post(url: &str, token: &str, path: &str) -> (u16, Value) {
+    let agent: ureq::Agent = ureq::Agent::config_builder().http_status_as_error(false).build().into();
+    let mut r = agent.post(format!("{url}/api/admin/{path}")).header("Authorization", format!("Bearer {token}")).send(&b""[..]).unwrap();
+    let status = r.status().as_u16();
+    (status, serde_json::from_slice(&r.body_mut().read_to_vec().unwrap()).unwrap_or(Value::Null))
+}
+
+fn admin_token(url: &str) -> String {
+    let agent: ureq::Agent = ureq::Agent::config_builder().http_status_as_error(false).build().into();
+    let mut r =
+        agent.post(format!("{url}/api/admin/login")).send(json!({"user": "ann", "password": "correct horse"}).to_string().as_bytes()).unwrap();
+    let v: Value = serde_json::from_slice(&r.body_mut().read_to_vec().unwrap()).unwrap();
+    v["token"].as_str().unwrap().to_string()
+}
+
+/// Scan for changes reads the files that are new or changed (by size and time); Rescan everything reads every file
+/// again: it finds a change a scan trusts the index too much to see, and tries again what could not be read.
+#[test]
+fn rescan_reads_every_file_again_and_a_scan_reads_only_what_changed() {
+    let root = temp("rescan");
+    let photos = root.join("nas/photos");
+    write_png(&photos.join("a.png"), 1);
+    write_png(&photos.join("b.png"), 2);
+    std::fs::write(photos.join("broken.jpg"), b"not a photo").unwrap();
+    let data = root.join("data");
+    accounts::set_user(&data, "ann", "correct horse", false).unwrap();
+    accounts::set_admin(&data, "ann", true).unwrap();
+    accounts::add_folder(&data, "ann", &photos.to_string_lossy(), Some("Photos")).unwrap();
+    let mut cfg = Config::new(&data, "127.0.0.1:0");
+    cfg.scan_interval = None;
+    cfg.preview_threads = Some(1);
+    let server = Server::start(cfg).unwrap();
+    let url = format!("http://{}", server.addr());
+    let token = admin_token(&url);
+    let st = scanned(&server, 0);
+    assert_eq!((st.files, st.added, st.failed, st.full), (3, 2, 1, false), "{st:?}");
+
+    // a file gets other content of the same size, and its time is put back: nothing a scan looks at changed
+    let a = photos.join("a.png");
+    let modified = std::fs::metadata(&a).unwrap().modified().unwrap();
+    let (old, new) = (png_bytes(1), (2..=255u8).map(png_bytes).find(|b| b.len() == png_bytes(1).len()).expect("a picture of the same size"));
+    assert_ne!(old, new);
+    std::fs::write(&a, &new).unwrap();
+    std::fs::File::options().write(true).open(&a).unwrap().set_modified(modified).unwrap();
+
+    // Scan for changes: the index is trusted. Nothing is read, the failed file is not tried again
+    let (status, _) = admin_post(&url, &token, "users/ann/scan");
+    assert_eq!(status, 200);
+    let st = scanned(&server, 1);
+    assert_eq!((st.todo, st.changed, st.failed, st.full), (0, 0, 0, false), "{st:?}");
+
+    // Rescan everything: every file is read, the change is found, the failed file is tried again (and fails again)
+    let (status, answer) = admin_post(&url, &token, "users/ann/rescan");
+    assert_eq!(status, 200);
+    assert!(answer["scan"].is_object(), "answers with the status like a scan does: {answer}");
+    let st = scanned(&server, 2);
+    assert_eq!((st.files, st.todo, st.full), (3, 3, true), "{st:?}");
+    assert_eq!((st.changed, st.added, st.moved, st.failed), (1, 0, 0, 1), "{st:?}");
+
+    // and the next ordinary scan is an ordinary one again
+    let (status, _) = admin_post(&url, &token, "users/ann/scan");
+    assert_eq!(status, 200);
+    let st = scanned(&server, 3);
+    assert_eq!((st.todo, st.full), (0, false), "{st:?}");
+    // a user who isn't an admin can't ask (a device token is no admin session)
+    assert_eq!(admin_post(&url, "nonsense", "users/ann/rescan").0, 401);
+    drop(server);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// The smart and mini previews on disk: path and time of each.
+fn previews_on_disk(data: &Path) -> std::collections::BTreeMap<PathBuf, std::time::SystemTime> {
+    fn walk(dir: &Path, out: &mut std::collections::BTreeMap<PathBuf, std::time::SystemTime>) {
+        let Ok(rd) = std::fs::read_dir(dir) else { return };
+        for e in rd.flatten() {
+            if e.path().is_dir() {
+                walk(&e.path(), out);
+            } else if let Ok(t) = e.metadata().and_then(|m| m.modified()) {
+                out.insert(e.path(), t);
+            }
+        }
+    }
+    let mut out = std::collections::BTreeMap::new();
+    for kind in ["smart", "mini"] {
+        walk(&data.join("users/ann/blobs").join(kind), &mut out);
+    }
+    out
+}
+
+/// Build missing previews leaves the ones there alone; Rebuild all previews builds every one again, each replacing the
+/// old only once the new is written, so a photo that can't be read now keeps the preview it has.
+#[test]
+fn rebuilding_previews_replaces_the_ones_there_and_generating_does_not() {
+    let root = temp("rebuild");
+    let photos = root.join("nas/photos");
+    write_png(&photos.join("a.png"), 1);
+    write_png(&photos.join("b.png"), 2);
+    write_png(&photos.join("c.png"), 3);
+    let data = root.join("data");
+    accounts::set_user(&data, "ann", "correct horse", false).unwrap();
+    accounts::set_admin(&data, "ann", true).unwrap();
+    accounts::add_folder(&data, "ann", &photos.to_string_lossy(), Some("Photos")).unwrap();
+    let mut cfg = Config::new(&data, "127.0.0.1:0");
+    cfg.scan_interval = None;
+    cfg.preview_threads = Some(1);
+    let server = Server::start(cfg).unwrap();
+    let url = format!("http://{}", server.addr());
+    let token = admin_token(&url);
+    scanned(&server, 0);
+    let first = previews_on_disk(&data);
+    assert_eq!(first.len(), 6, "a smart and a mini preview of each photo: {first:?}");
+    // (file times have a resolution: let the next ones be later)
+    std::thread::sleep(Duration::from_millis(1100));
+
+    // Build missing previews: all are there, so nothing is built (waited for: it is the scanner that looks)
+    assert_eq!(admin_post(&url, &token, "users/ann/previews/generate").0, 200);
+    std::thread::sleep(Duration::from_millis(1500));
+    assert_eq!(previews_on_disk(&data), first, "nothing was built again");
+    assert!(!server.folder_status("ann").previews_rebuilding);
+
+    // c.png can't be read now (the index still thinks it can: no scan ran): its preview must stay
+    std::fs::write(photos.join("c.png"), b"gone bad").unwrap();
+    let (status, _) = admin_post(&url, &token, "users/ann/previews/rebuild");
+    assert_eq!(status, 200);
+    let mut st = server.folder_status("ann");
+    for _ in 0..600 {
+        if st.preview_errors.len() == 1 && st.previews == 0 && st.previews_last_done == Some(3) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+        st = server.folder_status("ann");
+    }
+    assert_eq!((st.previews, st.previews_last_done, st.preview_errors.len()), (0, Some(3), 1), "{st:?}");
+    assert!(!st.previews_rebuilding, "{st:?}");
+    let after = previews_on_disk(&data);
+    assert_eq!(after.len(), 6, "{after:?}");
+    let newer = after.iter().filter(|(p, t)| first.get(*p).is_some_and(|before| *t > before)).count();
+    assert_eq!(newer, 4, "the previews of a and b were replaced, c's stayed: {after:?}");
     drop(server);
     let _ = std::fs::remove_dir_all(&root);
 }

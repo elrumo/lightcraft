@@ -4,9 +4,15 @@
 'use strict';
 
 const $ = (id) => document.getElementById(id);
-const KEY = 'lightcraftAdminToken';
 const NAME = '[A-Za-z0-9._\\-]{1,64}';
-let token = sessionStorage.getItem(KEY) || '';
+// The session is the browser's `lc_admin` cookie (HttpOnly: this script can't read it, so can't leak it). An older
+// version of this page kept a token in the tab, which was lost with it: forget that one.
+try {
+  sessionStorage.removeItem('lightcraftAdminToken');
+} catch (_) {
+  // (no storage: nothing to forget)
+}
+let signedIn = false;
 let me = '';
 let routeSeq = 0;
 let foldersOf = null;
@@ -43,16 +49,16 @@ function icon(name) {
 }
 
 async function api(method, path, body) {
-  const headers = { 'Content-Type': 'application/json' };
-  if (token) headers.Authorization = 'Bearer ' + token;
-  const r = await fetch('/api/admin/' + path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+  // (the server wants this header on what changes something: a form on another site can't send it)
+  const headers = { 'Content-Type': 'application/json', 'X-LightCraft-Admin': '1' };
+  const r = await fetch('/api/admin/' + path, { method, headers, credentials: 'same-origin', body: body === undefined ? undefined : JSON.stringify(body) });
   let data = null;
   try {
     data = await r.json();
   } catch (_) {
     data = null;
   }
-  if (r.status === 401 && token && path !== 'login') {
+  if (r.status === 401 && signedIn && path !== 'login') {
     forget();
     showAuth('login', 'Your session ended. Sign in again.', 'info');
     const e = new Error('signed out');
@@ -306,6 +312,7 @@ async function route() {
   const [, view, name, tab] = location.hash.split('/');
   clearTimeout(timer);
   clearTimeout(recountTimer);
+  clearTimeout(usageTimer);
   foldersOf = null;
   scanWorking = false;
   const v = view === 'users' && name ? 'user' : VIEWS.includes(view) ? view : 'overview';
@@ -337,7 +344,98 @@ function recount(users) {
 // --------------------------------------------------------------- overview
 
 function loadOverview() {
+  loadUsage();
   return swr(['status', 'users', 'limits'], showOverview);
+}
+
+// ------------------------------------------------- server load and activity
+
+let usageTimer = null;
+
+/** The load and activity panels, asked again every half minute while the overview is open. */
+async function loadUsage() {
+  clearTimeout(usageTimer);
+  const seq = routeSeq;
+  try {
+    const u = await api('GET', 'usage');
+    if (seq !== routeSeq) return;
+    showUsage(u);
+    usageTimer = setTimeout(loadUsage, 30000);
+  } catch (e) {
+    fail(e);
+  }
+}
+
+/** A path of an svg (240 by 56) through `values` (`null`: no reading, skipped), 0 to `max`; the first also gets an area. */
+function spark(svg, series, max) {
+  const NS = 'http://www.w3.org/2000/svg';
+  const [W, H] = [240, 56];
+  svg.replaceChildren(
+    ...series.flatMap((values, k) => {
+      const at = (i) => ((i * W) / Math.max(1, values.length - 1)).toFixed(1);
+      const pts = values.map((v, i) => (v === null ? null : [at(i), (H - 2 - Math.min(1, v / (max || 1)) * (H - 4)).toFixed(1)])).filter(Boolean);
+      if (!pts.length) return [];
+      const line = pts.map(([x, y], i) => (i ? 'L' : 'M') + x + ' ' + y).join(' ');
+      const path = (cls, d) => {
+        const p = document.createElementNS(NS, 'path');
+        p.setAttribute('class', cls);
+        p.setAttribute('d', d);
+        return p;
+      };
+      const area = k === 0 && pts.length > 1 ? [path('area', line + ' L' + pts[pts.length - 1][0] + ' ' + H + ' L' + pts[0][0] + ' ' + H + ' Z')] : [];
+      return [...area, path(k === 0 ? '' : 'other', line)];
+    }),
+  );
+}
+
+function showUsage(u) {
+  const h = u.history;
+  const last = h[h.length - 1] || {};
+  const cores = u.cores || 1;
+  const span = h.length > 1 ? last.at - h[0].at : 0;
+  const pct = (x) => Math.round(100 * x) + '%';
+  // (where the machine can't be read there is nothing to chart for these two)
+  $('ldCpuBox').hidden = $('ldMemBox').hidden = !u.supported;
+  $('loadNote').textContent = u.supported
+    ? 'Read from this machine every 30 seconds' + (span >= 120 ? ' (the last ' + dur(Math.round(span / 60) * 60) + ' are shown; 24 hours are kept, and a restart starts them again)' : '') + '. The dashed lines are everything running on the machine, not only LightCraft.'
+    : 'CPU and memory can be read where the server runs on Linux, as it does in Docker. This server runs elsewhere, so only the requests are shown.';
+  // CPU: the server's, in cores, against all the cores it may use
+  $('ldCpu').textContent = last.cpu == null ? '–' : pct(last.cpu / cores);
+  $('ldCpuSub').textContent = last.cpu == null ? '' : n(Math.round(last.cpu * 10) / 10) + ' of ' + plural(cores, 'core', 'cores') + (last.machineCpu == null ? '' : ', the whole machine ' + pct(last.machineCpu));
+  spark($('sparkCpu'), [h.map((s) => s.cpu), h.map((s) => (s.machineCpu == null ? null : s.machineCpu * cores))], cores);
+  // memory: the server's, and what the machine (or container) uses of its total
+  $('ldMem').textContent = last.rss == null ? '–' : bytes(last.rss);
+  $('ldMemSub').textContent = last.memUsed == null ? '' : 'the machine uses ' + bytes(last.memUsed) + (u.memory ? ' of ' + bytes(u.memory) : '');
+  spark($('sparkMem'), [h.map((s) => s.rss), h.map((s) => s.memUsed)], u.memory || Math.max(1, ...h.map((s) => s.memUsed || s.rss || 0)));
+  // requests of devices a minute (a point is the requests since the one before)
+  const rates = h.map((s, i) => (s.requests * 60) / Math.max(1, i ? s.at - h[i - 1].at : 30));
+  const rate = rates.length ? rates[rates.length - 1] : 0;
+  $('ldReq').textContent = rate < 10 ? (Math.round(rate * 10) / 10).toLocaleString() : n(Math.round(rate));
+  const all = u.users.flatMap((x) => x.devices).reduce((a, d) => a + d.requests, 0);
+  $('ldReqSub').textContent = 'a minute, ' + n(all) + ' since the server started';
+  spark($('sparkReq'), [rates], Math.max(1, ...rates));
+  // what each user's devices asked of the server
+  $('activityNote').textContent =
+    "What each user's devices asked of the server since it started " + ago(u.since) + '. Busy is the time the server spent answering, without sending the answer. Counts start again when the server restarts.';
+  const body = $('activity').querySelector('tbody');
+  body.replaceChildren();
+  if (!u.users.length) body.append(emptyRow(6, 'users', 'No users yet.'));
+  const busy = (ms) => (ms < 1000 ? n(ms) + ' ms' : dur(Math.round(ms / 1000)));
+  const cells = (x, seen) => [
+    el('td', { class: 'num' }, n(x.requests)),
+    el('td', { class: 'num opt' }, bytes(x.in)),
+    el('td', { class: 'num' }, bytes(x.out)),
+    el('td', { class: 'num opt' }, busy(x.busyMs)),
+    el('td', { class: 'num opt' }, seen ? ago(seen) : ''),
+  ];
+  for (const user of u.users) {
+    const sum = (k) => user.devices.reduce((a, d) => a + d[k], 0);
+    const latest = Math.max(0, ...user.devices.map((d) => d.lastSeen || 0));
+    body.append(
+      el('tr', { class: 'group' }, el('td', {}, el('b', {}, user.name), el('span', { class: 'sub muted' }, plural(user.devices.length, 'device', 'devices'))), ...cells({ requests: sum('requests'), in: sum('in'), out: sum('out'), busyMs: sum('busyMs') }, latest)),
+    );
+    for (const d of user.devices) body.append(el('tr', {}, el('td', {}, d.name || 'Device ' + d.id), ...cells(d, d.lastSeen)));
+  }
 }
 
 const LIMITS = [
@@ -508,7 +606,8 @@ function loadUser(name, tab) {
   }
   for (const p of document.querySelectorAll('[data-panel]')) p.hidden = p.dataset.panel !== tab;
   $('addFolder').onclick = () => addFolder(name);
-  $('scanNow').onclick = () => scanNow(name);
+  $('scanNow').onclick = $('scanChanged').onclick = () => startScan(name, 'scan');
+  $('scanEverything').onclick = () => rescanEverything(name);
   if (tab === 'folders') foldersOf = name;
   // (the user and the tab's list are asked for together)
   const seq = routeSeq;
@@ -732,11 +831,14 @@ async function pollFolders(name) {
 
 function scanInfo(s) {
   if (s.scanning) {
+    // (a rescan reads every file again, not only the new or changed ones)
+    const title = s.full ? 'Rescanning everything…' : 'Scanning…';
     if (s.phase === 'reading' && s.todo) {
-      return { title: 'Scanning…', text: 'Reading ' + n(s.done) + ' of ' + n(s.todo) + ' new or changed files' + (s.etaSecs ? ', about ' + dur(s.etaSecs) + ' left.' : '.'), progress: s.done / s.todo };
+      const what = s.full ? ' files again' : ' new or changed files';
+      return { title, text: 'Reading ' + n(s.done) + ' of ' + n(s.todo) + what + (s.etaSecs ? ', about ' + dur(s.etaSecs) + ' left.' : '.'), progress: s.done / s.todo };
     }
-    if (s.phase === 'listing') return { title: 'Scanning…', text: 'Looking for photos: ' + n(s.files) + ' found so far.', progress: null };
-    return { title: 'Scanning…', text: 'Finishing up.', progress: null };
+    if (s.phase === 'listing') return { title, text: 'Looking for photos: ' + n(s.files) + ' found so far.', progress: null };
+    return { title, text: 'Finishing up.', progress: null };
   }
   if (!s.lastScan) return { title: 'Not scanned yet', text: 'Scan to add the photos in these folders to the library.' };
   const changes = [[s.added, 'new'], [s.moved, 'moved'], [s.changed, 'changed'], [s.linked, 'uploaded before'], [s.missing, 'missing'], [s.failed, 'not read']]
@@ -748,7 +850,7 @@ function scanInfo(s) {
 /** The previews panel: built / left in this batch, and the photo files being built right now (also during a scan). */
 function showPreviews(name, s) {
   const paused = !!s.previewsPaused;
-  $('previewsTitle').textContent = paused ? 'Previews paused' : s.previews ? 'Building previews' : 'Previews';
+  $('previewsTitle').textContent = paused ? 'Previews paused' : s.previews ? (s.previewsRebuilding ? 'Rebuilding previews' : 'Building previews') : 'Previews';
   const have = s.previewsHave, photos = s.previewsPhotos;
   $('previewsCover').textContent = photos == null ? 'Counting previews…' : n(have) + ' of ' + plural(photos, 'photo has', 'photos have') + ' previews' + (photos ? ' (' + Math.floor((100 * have) / photos) + '%)' : '');
   const total = s.previewsTotal || s.previews;
@@ -756,7 +858,8 @@ function showPreviews(name, s) {
     ? n(s.previewsDone) + ' built, ' + n(s.previews) + ' left' + (s.previewsEtaSecs && !paused ? ', about ' + dur(s.previewsEtaSecs) + ' to go' : '') + (s.previewsPerMin && !paused ? ' (' + n(s.previewsPerMin) + ' a minute)' : '') + '.'
     : 'Nothing waiting: 0 left.' + (s.previewsLastAt ? ' The last batch, ' + plural(s.previewsLastDone, 'preview', 'previews') + ', finished ' + ago(s.previewsLastAt) + '.' : '');
   $('previewsText').textContent = batch + (paused ? ' Paused for every user: the ones being built finish, then it waits.' : '');
-  progress($('previewsBar'), photos ? have / photos : s.previews && total ? s.previewsDone / total : 0);
+  // (while every preview is built again, those there count for nothing: the bar shows how far the batch is)
+  progress($('previewsBar'), s.previewsRebuilding && total ? s.previewsDone / total : photos ? have / photos : s.previews && total ? s.previewsDone / total : 0);
   const now = s.previewsBuilding || [];
   $('previewsNow').replaceChildren(
     ...now.map((p) => el('li', {}, el('b', {}, 'Now'), el('code', { title: p }, p.slice(p.lastIndexOf('/') + 1)))),
@@ -767,17 +870,34 @@ function showPreviews(name, s) {
   pause.querySelector('span').textContent = paused ? 'Resume' : 'Pause';
   pause.querySelector('use').setAttribute('href', paused ? '#i-play' : '#i-pause');
   pause.onclick = () => previewsAction(name, paused ? 'resume' : 'pause');
-  $('previewsAll').onclick = () => previewsAction(name, 'generate');
+  $('previewsAll').onclick = $('previewsMissing').onclick = () => previewsAction(name, 'generate');
+  $('previewsRebuild').onclick = () => rebuildPreviews(name);
 }
 
 async function previewsAction(name, action) {
   try {
     const r = await api('POST', 'users/' + enc(name) + '/previews/' + action);
     if (action === 'generate') toast('Queued every missing preview.');
+    if (action === 'rebuild') toast('Rebuilding every preview.');
     showFolders(name, r);
   } catch (e) {
     fail(e);
   }
+}
+
+/** Every preview again, the ones there too: slow, so it asks first. */
+function rebuildPreviews(name) {
+  return ask({
+    title: 'Rebuild all previews?',
+    text:
+      'The server builds the previews of every photo in ' + name + "'s library folders again, the ones that exist too, and replaces them as each new one is ready. " +
+      'For a big library that takes hours and keeps the processors busy. Use it after an update changed how photos are decoded or look. ' +
+      'To make only the previews that are missing, choose Build missing previews.',
+    ok: 'Rebuild all previews',
+    action: async () => {
+      await previewsAction(name, 'rebuild');
+    },
+  });
 }
 
 function showFolders(name, r) {
@@ -829,7 +949,7 @@ function showFolders(name, r) {
   $('scanNow').closest('.scan').hidden = !r.folders.length;
   $('scanTitle').textContent = info.title;
   $('scanText').textContent = info.text;
-  $('scanNow').disabled = !!s.scanning;
+  $('scanNow').disabled = $('scanMore').disabled = !!s.scanning;
   const bar = $('scanBar');
   bar.hidden = info.progress === undefined;
   bar.classList.toggle('indeterminate', info.progress === null);
@@ -921,16 +1041,66 @@ function removeFolder(name, f) {
   });
 }
 
-async function scanNow(name) {
+/** Start a scan: `scan` reads the files that are new or changed, `rescan` every file. */
+async function startScan(name, path) {
   try {
-    showFolders(name, await api('POST', 'users/' + enc(name) + '/scan'));
-    $('scanTitle').textContent = 'Scanning…';
-    $('scanNow').disabled = true;
+    showFolders(name, await api('POST', 'users/' + enc(name) + '/' + path));
+    $('scanTitle').textContent = path === 'rescan' ? 'Rescanning everything…' : 'Scanning…';
+    $('scanNow').disabled = $('scanMore').disabled = true;
     clearTimeout(timer);
     timer = setTimeout(() => foldersOf === name && pollFolders(name).catch(fail), 1000);
   } catch (e) {
     fail(e);
   }
+}
+
+/** Read every photo file again: slow, so it asks first. */
+function rescanEverything(name) {
+  return ask({
+    title: 'Rescan everything?',
+    text:
+      'The server reads every photo file in ' + name + "'s library folders again, the ones that haven't changed too, and checks each against its photo. " +
+      'It also tries again the files that could not be read. For a big library that takes hours and keeps the disks busy. Photos and their edits stay as they are unless a file now holds something else. ' +
+      "To read only what is new or changed, choose Scan for changes.",
+    ok: 'Rescan everything',
+    action: async () => {
+      await startScan(name, 'rescan');
+    },
+  });
+}
+
+/**
+ * A split button (`.split`): the main button does the usual thing, the arrow opens a menu of its variants, each with
+ * what it does. The menu closes on a choice, a click elsewhere or Esc; the arrow keys move between its items.
+ */
+function splitMenu(id) {
+  const root = $(id);
+  const more = root.querySelector('.split-more');
+  const menu = root.querySelector('.menu');
+  const items = () => [...menu.querySelectorAll('[role=menuitem]')];
+  const open = (on) => {
+    menu.hidden = !on;
+    more.setAttribute('aria-expanded', String(on));
+    if (on) items()[0]?.focus();
+  };
+  more.addEventListener('click', () => open(menu.hidden));
+  menu.addEventListener('click', () => open(false));
+  document.addEventListener('click', (e) => {
+    if (!menu.hidden && !root.contains(e.target)) open(false);
+  });
+  root.addEventListener('keydown', (e) => {
+    if (menu.hidden) return;
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      open(false);
+      more.focus();
+    } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      const all = items();
+      const at = all.indexOf(document.activeElement);
+      all[(at + (e.key === 'ArrowDown' ? 1 : all.length - 1)) % all.length]?.focus();
+    }
+  });
 }
 
 // ---------------------------------------------------------------- storage
@@ -1347,8 +1517,7 @@ function gcRun() {
 // ------------------------------------------------------------ sign in/out
 
 function forget() {
-  token = '';
-  sessionStorage.removeItem(KEY);
+  signedIn = false;
 }
 
 function setMe(name) {
@@ -1367,6 +1536,7 @@ function formAlert(form, message, kind) {
 
 function showAuth(which, message, kind) {
   clearTimeout(timer);
+  clearTimeout(usageTimer);
   if ($('dialog').open) $('dialog').close();
   $('dash').hidden = true;
   $('auth').hidden = false;
@@ -1384,27 +1554,26 @@ function showDash() {
   route();
 }
 
-async function signIn(user, password) {
-  const r = await api('POST', 'login', { user, password });
-  token = r.token;
-  sessionStorage.setItem(KEY, token);
+/** Sign in: the server answers with a cookie, which the browser keeps (for weeks with `remember`, else until it closes). */
+async function signIn(user, password, remember) {
+  const r = await api('POST', 'login', { user, password, remember: !!remember, cookie: true });
+  signedIn = true;
   setMe(r.user);
   showDash();
 }
 
 async function start() {
   $('origin').value = location.origin;
-  if (token) {
-    // (nearly every page needs the users: asked for with the sign-in check, not after it)
-    get('users').catch(() => {});
-    try {
-      setMe((await get('status')).me);
-      showDash();
-      return;
-    } catch (e) {
-      forget();
-      if (e.signedOut) return;
-    }
+  // Still signed in from the last visit? The cookie says so (nearly every page needs the users: asked for
+  // with the sign-in check, not after it).
+  get('users').catch(() => {});
+  try {
+    setMe((await get('status')).me);
+    signedIn = true;
+    showDash();
+    return;
+  } catch (_) {
+    forget();
   }
   try {
     const s = await api('GET', 'state');
@@ -1435,11 +1604,11 @@ document.addEventListener('DOMContentLoaded', () => {
     if (f.get('password') !== f.get('password2')) throw new Error("The passwords don't match.");
     await api('POST', 'setup', { code: f.get('code'), user: f.get('user'), password: f.get('password') });
     location.hash = '#/users';
-    await signIn(f.get('user'), f.get('password'));
+    await signIn(f.get('user'), f.get('password'), true);
     toast('Welcome! Add the people who use this server, then connect their devices.', 'info');
   });
   onSubmit('loginForm', async (f) => {
-    await signIn(f.get('user'), f.get('password'));
+    await signIn(f.get('user'), f.get('password'), f.get('remember') === 'on');
     $('loginForm').reset();
   });
   $('signOut').addEventListener('click', async () => {
@@ -1452,6 +1621,8 @@ document.addEventListener('DOMContentLoaded', () => {
     showAuth('login');
   });
   $('copyOrigin').addEventListener('click', copyOrigin);
+  splitMenu('scanSplit');
+  splitMenu('previewsSplit');
   $('limForm').addEventListener('submit', saveLimits);
   $('addUser').addEventListener('click', addUser);
   $('gcCheck').addEventListener('click', gcCheck);

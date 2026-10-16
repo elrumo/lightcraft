@@ -16,7 +16,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, SystemTime};
 
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use serde::{Deserialize, Serialize};
@@ -102,8 +102,62 @@ pub fn user_dir(data: &Path, name: &str) -> PathBuf {
     data.join("users").join(name)
 }
 
-/// An admin session ends after this long without a request.
+/// An admin session that wasn't asked to be kept ends after this long without a request (and with the server).
 pub const ADMIN_IDLE: Duration = Duration::from_secs(2 * 3600);
+
+/// A session the admin asked to keep ("keep me signed in") ends after this long without a request...
+pub const ADMIN_REMEMBER_IDLE: Duration = Duration::from_secs(30 * 24 * 3600);
+
+/// ...and this long after the sign-in, however often it was used: a stolen cookie doesn't last for ever.
+pub const ADMIN_REMEMBER_MAX: Duration = Duration::from_secs(180 * 24 * 3600);
+
+/// The most kept sessions one admin has (signing in on more browsers ends the least recently used).
+const ADMIN_SESSIONS_MAX: usize = 20;
+
+/// A kept session's last use is written to disk at most this often (seconds): a request doesn't write a file.
+const ADMIN_SEEN_SAVE: u64 = 600;
+
+/// `<data>/admin-sessions.json`: the kept admin sessions (the SHA-256 of each token, never the token), so a
+/// server restart doesn't sign the admins out.
+pub const ADMIN_SESSIONS: &str = "admin-sessions.json";
+
+/// What the admin page's sign-in left: who, when, and whether it is kept on disk.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+struct AdminSession {
+    user: String,
+    /// Unix seconds: when it began, and when it was last used.
+    created: u64,
+    seen: u64,
+    /// Kept for weeks and across restarts ("keep me signed in"); else for hours, in memory.
+    remember: bool,
+    /// A stamp of the user's password when they signed in: a new password (from the page or the command
+    /// line) ends the session.
+    pw: String,
+    /// `seen` as last written to disk.
+    #[serde(skip)]
+    saved: u64,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+struct AdminSessionsFile {
+    sessions: BTreeMap<String, AdminSession>,
+}
+
+/// A stamp that changes with the password and says nothing of it.
+fn password_stamp(password_hash: &str) -> String {
+    token_hash(&format!("lightcraft admin session\n{password_hash}")).chars().take(32).collect()
+}
+
+fn admin_expired(s: &AdminSession, now: u64) -> bool {
+    let idle = now.saturating_sub(s.seen);
+    if s.remember {
+        idle >= ADMIN_REMEMBER_IDLE.as_secs() || now.saturating_sub(s.created) >= ADMIN_REMEMBER_MAX.as_secs()
+    } else {
+        idle >= ADMIN_IDLE.as_secs()
+    }
+}
 
 pub fn now() -> u64 {
     SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
@@ -408,8 +462,8 @@ pub struct Accounts {
     tokens: HashMap<String, Session>,
     /// When each device was last heard from (since the server started), unix seconds.
     seen: HashMap<(String, u64), u64>,
-    /// Admin sessions by token hash: the admin, and when the session was last used.
-    admins: HashMap<String, (String, Instant)>,
+    /// Admin sessions by token hash.
+    admins: HashMap<String, AdminSession>,
 }
 
 pub enum LoginError {
@@ -425,7 +479,32 @@ impl Accounts {
                 a.reload(name);
             }
         }
+        // the admins kept signed in (a damaged file only signs them out)
+        let kept = read_json::<AdminSessionsFile>(&data.join(ADMIN_SESSIONS)).unwrap_or_else(|e| {
+            log::error!("{e}: the admins sign in again");
+            AdminSessionsFile::default()
+        });
+        let at = now();
+        a.admins = kept
+            .sessions
+            .into_iter()
+            .filter(|(key, s)| s.remember && key.len() == 64 && !admin_expired(s, at))
+            .map(|(key, s)| (key, AdminSession { saved: s.seen, ..s }))
+            .collect();
         a
+    }
+
+    /// Write the kept admin sessions down. A disk that can't take it costs the admins a sign-in after a
+    /// restart, no more: the sessions go on working.
+    fn save_admins(&self) {
+        let sessions: BTreeMap<String, AdminSession> = self.admins.iter().filter(|(_, s)| s.remember).map(|(k, s)| (k.clone(), s.clone())).collect();
+        let path = self.data.join(ADMIN_SESSIONS);
+        if sessions.is_empty() && !path.exists() {
+            return;
+        }
+        if let Err(e) = write_json(&path, &AdminSessionsFile { sessions }) {
+            log::warn!("the kept admin sessions weren't saved: {e}");
+        }
     }
 
     fn devices_path(&self, user: &str) -> PathBuf {
@@ -471,43 +550,83 @@ impl Accounts {
         self.seen.get(&(user.to_string(), device)).copied()
     }
 
-    /// Open an admin session (the user must be an admin).
-    pub fn admin_login(&mut self, user: &str, password: &str) -> Result<String, LoginError> {
+    /// Open an admin session (the user must be an admin). With `remember` it is kept for weeks, and across
+    /// restarts of the server ([`ADMIN_REMEMBER_IDLE`]); without, for [`ADMIN_IDLE`], in memory.
+    pub fn admin_login(&mut self, user: &str, password: &str, remember: bool) -> Result<String, LoginError> {
         let users = read_users(&self.data).map_err(LoginError::Failed)?;
-        let ok = users.users.get(user).is_some_and(|u| u.admin && password_ok(&u.password, password));
-        if !ok {
+        let Some(u) = users.users.get(user).filter(|u| u.admin && password_ok(&u.password, password)) else {
             return Err(LoginError::Refused);
-        }
+        };
         let token = random_hex(32).map_err(LoginError::Failed)?;
-        self.admins.retain(|_, (_, at)| at.elapsed() < ADMIN_IDLE);
-        self.admins.insert(token_hash(&token), (user.to_string(), Instant::now()));
+        let at = now();
+        self.admins.retain(|_, s| !admin_expired(s, at));
+        // (one admin's browsers are few: the least recently used one makes room for this)
+        let mut mine: Vec<(String, u64)> = self.admins.iter().filter(|(_, s)| s.user == user).map(|(k, s)| (k.clone(), s.seen)).collect();
+        mine.sort_by_key(|(_, seen)| *seen);
+        for (key, _) in mine.iter().take((mine.len() + 1).saturating_sub(ADMIN_SESSIONS_MAX)) {
+            self.admins.remove(key);
+        }
+        let s = AdminSession { user: user.to_string(), created: at, seen: at, remember, pw: password_stamp(&u.password), saved: at };
+        self.admins.insert(token_hash(&token), s);
+        self.save_admins();
         Ok(token)
     }
 
-    /// The admin an admin session belongs to (still an admin, session not idle too long).
+    /// The admin an admin session belongs to: still an admin with the password they signed in with, and the
+    /// session not idle for too long. A kept session's use is written down now and then.
     pub fn check_admin(&mut self, token: &str) -> Option<String> {
         if token.is_empty() || token.len() > 256 {
             return None;
         }
         let key = token_hash(token);
-        let (user, at) = self.admins.get_mut(&key)?;
-        if at.elapsed() >= ADMIN_IDLE || !read_users(&self.data).is_ok_and(|f| f.users.get(user.as_str()).is_some_and(|u| u.admin)) {
+        let at = now();
+        let s = self.admins.get(&key)?;
+        let admin_still =
+            read_users(&self.data).ok().is_some_and(|f| f.users.get(s.user.as_str()).is_some_and(|u| u.admin && password_stamp(&u.password) == s.pw));
+        if admin_expired(s, at) || !admin_still {
+            let kept = s.remember;
             self.admins.remove(&key);
+            if kept {
+                self.save_admins();
+            }
             return None;
         }
-        *at = Instant::now();
-        Some(user.clone())
+        let s = self.admins.get_mut(&key)?;
+        s.seen = s.seen.max(at);
+        let (user, save) = (s.user.clone(), s.remember && s.seen.saturating_sub(s.saved) >= ADMIN_SEEN_SAVE);
+        if save {
+            s.saved = s.seen;
+            self.save_admins();
+        }
+        Some(user)
     }
 
     pub fn admin_logout(&mut self, token: &str) {
-        self.admins.remove(&token_hash(token));
+        if self.admins.remove(&token_hash(token)).is_some_and(|s| s.remember) {
+            self.save_admins();
+        }
+    }
+
+    /// An admin changed their own password: this session goes on, the others (their other browsers) end.
+    pub fn admin_keep(&mut self, token: &str) {
+        let key = token_hash(token);
+        let Some(user) = self.admins.get(&key).map(|s| s.user.clone()) else { return };
+        let Some(stamp) = read_users(&self.data).ok().and_then(|f| f.users.get(&user).map(|u| password_stamp(&u.password))) else { return };
+        if let Some(s) = self.admins.get_mut(&key) {
+            s.pw = stamp;
+        }
+        self.save_admins();
     }
 
     /// Forget a removed user's devices.
     pub fn forget(&mut self, user: &str) {
         self.loaded.remove(user);
         self.tokens.retain(|_, s| s.user != user);
-        self.admins.retain(|_, (u, _)| u != user);
+        let before = self.admins.len();
+        self.admins.retain(|_, s| s.user != user);
+        if self.admins.len() != before {
+            self.save_admins();
+        }
     }
 
     /// Sign a device in: a new token and id space.
@@ -613,6 +732,118 @@ mod tests {
         remove_user(&data, "ann").unwrap();
         assert_eq!(a.check(&t2), None);
         assert_eq!(a.check(""), None);
+        let _ = std::fs::remove_dir_all(&data);
+    }
+
+    fn admin(tag: &str) -> (PathBuf, Accounts) {
+        let data = temp(tag);
+        set_user(&data, "ann", "correct horse", false).unwrap();
+        set_admin(&data, "ann", true).unwrap();
+        let a = Accounts::new(&data);
+        (data, a)
+    }
+
+    fn sign_in(a: &mut Accounts, remember: bool) -> String {
+        a.admin_login("ann", "correct horse", remember).map_err(|_| ()).unwrap()
+    }
+
+    #[test]
+    fn a_kept_admin_session_survives_a_restart_and_one_not_kept_does_not() {
+        let (data, mut a) = admin("admin-kept");
+        assert!(matches!(a.admin_login("ann", "wrong", true), Err(LoginError::Refused)));
+        let (kept, short) = (sign_in(&mut a, true), sign_in(&mut a, false));
+        assert_eq!(a.check_admin(&kept).as_deref(), Some("ann"));
+        assert_eq!(a.check_admin(&short).as_deref(), Some("ann"));
+        let file = std::fs::read_to_string(data.join(ADMIN_SESSIONS)).unwrap();
+        assert!(!file.contains(&kept) && !file.contains(&short), "tokens are stored hashed");
+        assert!(file.contains(&token_hash(&kept)) && !file.contains(&token_hash(&short)), "only the kept one is written");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(data.join(ADMIN_SESSIONS)).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+        // the server restarts
+        let mut b = Accounts::new(&data);
+        assert_eq!(b.check_admin(&kept).as_deref(), Some("ann"));
+        assert_eq!(b.check_admin(&short), None, "an unkept session ends with the server");
+        assert_eq!(b.check_admin("nonsense"), None);
+        // signing out ends it for good
+        b.admin_logout(&kept);
+        assert_eq!(Accounts::new(&data).check_admin(&kept), None);
+        let _ = std::fs::remove_dir_all(&data);
+    }
+
+    #[test]
+    fn admin_sessions_end_when_idle_too_long_or_too_old() {
+        let (data, mut a) = admin("admin-idle");
+        let (kept, short) = (sign_in(&mut a, true), sign_in(&mut a, false));
+        let day = 24 * 3600;
+        // two hours idle ends an unkept session, not a kept one
+        for s in a.admins.values_mut() {
+            s.seen = now() - ADMIN_IDLE.as_secs() - 1;
+        }
+        assert_eq!(a.check_admin(&short), None);
+        assert_eq!(a.check_admin(&kept).as_deref(), Some("ann"), "a kept session was not idle for weeks");
+        // every request moves the idle time on: 29 days idle is fine, and so is the next 29 after that
+        for s in a.admins.values_mut() {
+            s.seen = now() - 29 * day;
+        }
+        assert!(a.check_admin(&kept).is_some());
+        // 31 days idle ends it, and the file forgets it
+        for s in a.admins.values_mut() {
+            s.seen = now() - 31 * day;
+        }
+        assert_eq!(a.check_admin(&kept), None);
+        assert_eq!(Accounts::new(&data).check_admin(&kept), None);
+        // used all the time, but signed in 181 days ago
+        let old = sign_in(&mut a, true);
+        for s in a.admins.values_mut() {
+            s.created = now() - 181 * day;
+        }
+        assert_eq!(a.check_admin(&old), None, "a kept session ends after its longest life");
+        let _ = std::fs::remove_dir_all(&data);
+    }
+
+    #[test]
+    fn a_new_password_or_a_demotion_ends_the_admin_sessions() {
+        let (data, mut a) = admin("admin-password");
+        let (here, other) = (sign_in(&mut a, true), sign_in(&mut a, true));
+        set_user(&data, "ann", "battery staple", true).unwrap();
+        // (also changed from the command line: the server isn't told)
+        assert_eq!(a.check_admin(&here), None);
+        assert_eq!(a.check_admin(&other), None);
+        // the admin who changes their own password on the page keeps that browser, and loses the others
+        let (here, other) = (sign_in_with(&mut a, "battery staple"), sign_in_with(&mut a, "battery staple"));
+        set_user(&data, "ann", "another passphrase", true).unwrap();
+        a.admin_keep(&here);
+        assert_eq!(a.check_admin(&here).as_deref(), Some("ann"));
+        assert_eq!(a.check_admin(&other), None);
+        assert_eq!(Accounts::new(&data).check_admin(&here).as_deref(), Some("ann"), "and it is kept on disk");
+        // no longer an admin
+        set_user(&data, "bob", "correct horse", false).unwrap();
+        set_admin(&data, "bob", true).unwrap();
+        set_admin(&data, "ann", false).unwrap();
+        assert_eq!(a.check_admin(&here), None);
+        let _ = std::fs::remove_dir_all(&data);
+    }
+
+    fn sign_in_with(a: &mut Accounts, password: &str) -> String {
+        a.admin_login("ann", password, true).map_err(|_| ()).unwrap()
+    }
+
+    #[test]
+    fn one_admin_keeps_a_few_sessions_and_a_damaged_file_only_signs_them_out() {
+        let (data, mut a) = admin("admin-many");
+        let first = sign_in(&mut a, true);
+        a.admins.values_mut().for_each(|s| s.seen -= 100);
+        let rest: Vec<String> = (0..ADMIN_SESSIONS_MAX).map(|_| sign_in(&mut a, true)).collect();
+        assert_eq!(a.admins.len(), ADMIN_SESSIONS_MAX);
+        assert_eq!(a.check_admin(&first), None, "the least recently used one made room");
+        assert!(rest.iter().all(|t| a.check_admin(t).is_some()));
+        std::fs::write(data.join(ADMIN_SESSIONS), b"{ not json").unwrap();
+        let mut b = Accounts::new(&data);
+        assert_eq!(b.check_admin(&rest[0]), None);
+        assert!(b.admin_login("ann", "correct horse", true).is_ok(), "and they can sign in again");
         let _ = std::fs::remove_dir_all(&data);
     }
 }

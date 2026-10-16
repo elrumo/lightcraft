@@ -49,6 +49,7 @@ pub mod render;
 pub mod shares;
 pub mod switch;
 pub mod throttle;
+pub mod usage;
 pub mod vision;
 pub mod writeback;
 pub mod zip;
@@ -151,6 +152,8 @@ pub struct State {
     pub(crate) writer: writeback::Writer,
     /// The unfinished uploads being written right now (one writer per file).
     pub(crate) uploading: Mutex<std::collections::HashSet<PathBuf>>,
+    /// What the server takes of the machine and what each device asks of it ([`usage`]).
+    pub(crate) usage: usage::Usage,
 }
 
 /// A running server.
@@ -204,6 +207,7 @@ impl Server {
             cors: cors::Cors::new(&cfg.cors_origins),
             shares: Mutex::new(links),
             writer: writeback::Writer::new(),
+            usage: usage::Usage::new(),
         });
         // (counted now, so the admin page has the numbers by the time anyone opens it)
         state.sizes.refresh(&state.data);
@@ -216,6 +220,9 @@ impl Server {
         workers.push(std::thread::Builder::new().name("lc-vision".into()).spawn(move || vision::run(&s)).map_err(|e| e.to_string())?);
         let s = state.clone();
         workers.push(std::thread::Builder::new().name("lc-writeback".into()).spawn(move || writeback::run(&s)).map_err(|e| e.to_string())?);
+        state.usage.sample();
+        let s = state.clone();
+        workers.push(std::thread::Builder::new().name("lc-usage".into()).spawn(move || s.usage.run()).map_err(|e| e.to_string())?);
         // (as many as the limit may ever be: the ones over it wait, see `folders::run_previews`)
         for i in 0..state.limits.machine.max().previews.max(now.previews) {
             let s = state.clone();
@@ -269,6 +276,7 @@ impl Drop for Server {
         self.state.folders.shut_down();
         self.state.vision.shut_down();
         self.state.writer.shut_down();
+        self.state.usage.shut_down();
         for t in self.workers.drain(..) {
             let _ = t.join();
         }

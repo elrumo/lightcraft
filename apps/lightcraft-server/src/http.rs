@@ -160,6 +160,10 @@ impl<R: Read> Response<R> {
     pub fn status_code(&self) -> StatusCode {
         self.status
     }
+    /// The length of the body, when it is known.
+    pub fn data_length(&self) -> Option<usize> {
+        self.len
+    }
     pub fn headers(&self) -> &[Header] {
         &self.headers
     }

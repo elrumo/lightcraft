@@ -22,6 +22,7 @@
   <symbol id="i-info" viewBox="0 0 20 20"><circle cx="10" cy="10" r="7.5"/><path d="M10 9v5M10 6.2v.1"/></symbol>
   <symbol id="i-close" viewBox="0 0 20 20"><path d="M5.5 5.5l9 9M14.5 5.5l-9 9"/></symbol>
   <symbol id="i-chevron" viewBox="0 0 20 20"><path d="M8 5l5 5-5 5"/></symbol>
+  <symbol id="i-chevron-down" viewBox="0 0 20 20"><path d="M5 8l5 5 5-5"/></symbol>
   <symbol id="i-back" viewBox="0 0 20 20"><path d="M12 5l-5 5 5 5"/></symbol>
   <symbol id="i-device" viewBox="0 0 20 20"><rect x="3" y="4" width="14" height="9.5" rx="1.5"/><path d="M1.5 16.5h17"/></symbol>
   <symbol id="i-pause" viewBox="0 0 20 20"><path d="M6.5 4.5h2v11h-2zM11.5 4.5h2v11h-2z"/></symbol>
@@ -80,6 +81,10 @@
           <label for="loginPassword">Password</label>
           <input id="loginPassword" name="password" type="password" required autocomplete="current-password">
         </div>
+        <label class="switch" for="loginRemember">
+          <input type="checkbox" id="loginRemember" name="remember" role="switch" checked>
+          <span><span class="label">Keep me signed in</span><span class="help">On this browser, until 30 days pass without using the admin page. Turn it off on a computer you share.</span></span>
+        </label>
         <div class="alert negative" role="alert" hidden><svg class="icon"><use href="#i-alert"/></svg><p></p></div>
         <button type="submit" class="btn accent wide">Sign in</button>
       </form>
@@ -116,7 +121,36 @@
         <div class="stat"><span class="stat-label">Signed-in devices</span><span class="stat-value" id="stDevices">–</span></div>
         <div class="stat"><span class="stat-label">Free disk space</span><span class="stat-value" id="stFree">–</span><div class="meter small" id="stDisk" hidden><div></div></div></div>
       </div>
-      <div class="columns">
+      <section class="panel" id="loadPanel">
+        <h2>Server load</h2>
+        <p class="muted" id="loadNote"></p>
+        <div class="load-grid">
+          <div id="ldCpuBox">
+            <span class="label">CPU</span>
+            <div class="meter-head"><span id="ldCpu">–</span><span id="ldCpuSub"></span></div>
+            <svg class="spark" id="sparkCpu" viewBox="0 0 240 56" preserveAspectRatio="none" role="img" aria-label="CPU use over time"></svg>
+          </div>
+          <div id="ldMemBox">
+            <span class="label">Memory</span>
+            <div class="meter-head"><span id="ldMem">–</span><span id="ldMemSub"></span></div>
+            <svg class="spark" id="sparkMem" viewBox="0 0 240 56" preserveAspectRatio="none" role="img" aria-label="Memory use over time"></svg>
+          </div>
+          <div>
+            <span class="label">Requests from devices</span>
+            <div class="meter-head"><span id="ldReq">–</span><span id="ldReqSub"></span></div>
+            <svg class="spark" id="sparkReq" viewBox="0 0 240 56" preserveAspectRatio="none" role="img" aria-label="Requests over time"></svg>
+          </div>
+        </div>
+      </section>
+      <h2 class="sect">Activity</h2>
+      <p class="muted" id="activityNote"></p>
+      <div class="panel flush">
+        <table class="table" id="activity">
+          <thead><tr><th>User and device</th><th class="num">Requests</th><th class="num opt">Received</th><th class="num">Sent</th><th class="num opt">Busy</th><th class="num opt">Last seen</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="columns" id="overviewColumns">
         <section class="panel">
           <h2>Connect a device</h2>
           <p class="muted">Sync a library with this server from LightCraft on a Mac, PC or iPhone.</p>
@@ -226,10 +260,22 @@
         </section>
         <section class="panel scan" id="previewsPanel">
           <div class="scan-head">
-            <div><h3 id="previewsTitle">Previews</h3><p id="previewsCover"></p><p class="muted" id="previewsText"></p></div>
+            <div>
+              <h3 id="previewsTitle">Previews</h3>
+              <p id="previewsCover"></p>
+              <p class="muted" id="previewsText"></p>
+              <p class="muted help">Previews are the smaller copies that devices show instead of the originals. <b>Build missing previews</b> makes only the ones that don't exist yet. <b>Rebuild all previews</b> makes every one again.</p>
+            </div>
             <div class="actions">
               <button type="button" class="btn secondary" id="previewsPause"><svg class="icon"><use href="#i-pause"/></svg><span>Pause</span></button>
-              <button type="button" class="btn secondary" id="previewsAll"><svg class="icon"><use href="#i-refresh"/></svg><span>Generate all</span></button>
+              <div class="split" id="previewsSplit">
+                <button type="button" class="btn secondary split-main" id="previewsAll" title="Builds the previews that don't exist yet, and tries again the ones that failed"><svg class="icon"><use href="#i-refresh"/></svg><span>Build missing previews</span></button>
+                <button type="button" class="btn secondary split-more" id="previewsMore" aria-haspopup="menu" aria-expanded="false" aria-controls="previewsMenu" aria-label="More ways to build previews"><svg class="icon"><use href="#i-chevron-down"/></svg></button>
+                <div class="menu" id="previewsMenu" role="menu" hidden>
+                  <button type="button" role="menuitem" id="previewsMissing"><b>Build missing previews</b><span>Builds the previews that don't exist yet, and tries again the ones that failed. Photos that have previews are left alone. The usual choice.</span></button>
+                  <button type="button" role="menuitem" id="previewsRebuild"><b>Rebuild all previews</b><span>Builds every preview again, the ones that exist too, and replaces them. Use it after an update changed how photos are decoded or look, or if previews look wrong. Slow on a big library.</span></button>
+                </div>
+              </div>
             </div>
           </div>
           <div class="meter" id="previewsBar"><div></div></div>
@@ -237,8 +283,19 @@
         </section>
         <section class="panel scan">
           <div class="scan-head">
-            <div><h3 id="scanTitle">Scan</h3><p class="muted" id="scanText"></p></div>
-            <button type="button" class="btn secondary" id="scanNow"><svg class="icon"><use href="#i-refresh"/></svg><span>Scan now</span></button>
+            <div>
+              <h3 id="scanTitle">Scan</h3>
+              <p class="muted" id="scanText"></p>
+              <p class="muted help">A scan looks through the folders and reads only the files that are new, changed, moved or gone. <b>Rescan everything</b> reads every file again.</p>
+            </div>
+            <div class="split" id="scanSplit">
+              <button type="button" class="btn secondary split-main" id="scanNow" title="Reads only the files that are new or changed since the last scan"><svg class="icon"><use href="#i-refresh"/></svg><span>Scan for changes</span></button>
+              <button type="button" class="btn secondary split-more" id="scanMore" aria-haspopup="menu" aria-expanded="false" aria-controls="scanMenu" aria-label="More ways to scan"><svg class="icon"><use href="#i-chevron-down"/></svg></button>
+              <div class="menu" id="scanMenu" role="menu" hidden>
+                <button type="button" role="menuitem" id="scanChanged"><b>Scan for changes</b><span>Looks through every folder and reads only the files that are new, changed, moved or gone. Quick, and what the server does by itself on its schedule. The usual choice.</span></button>
+                <button type="button" role="menuitem" id="scanEverything"><b>Rescan everything</b><span>Reads every photo file again, the ones that haven't changed too, and checks each against its photo. Also tries again the files that couldn't be read. It takes as long as reading the whole library: hours for a big one on a NAS.</span></button>
+              </div>
+            </div>
           </div>
           <div class="meter" id="scanBar" hidden><div></div></div>
           <div class="alert negative" id="scanErrors" hidden><svg class="icon"><use href="#i-alert"/></svg><div><b>Some files couldn't be read</b><ul></ul></div></div>

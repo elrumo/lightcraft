@@ -241,7 +241,8 @@ fn api(st: &State, req: &mut Request, method: &Method, path: &str, q: &str) -> R
         }
     };
     let parts: Vec<&str> = path.trim_start_matches("/api/").split('/').collect();
-    match (method, parts.as_slice()) {
+    let (began, sent) = (Instant::now(), req.body_length().unwrap_or(0) as u64);
+    let resp = match (method, parts.as_slice()) {
         (Method::Post, ["logout"]) => match st.accounts.lock().unwrap_or_else(PoisonError::into_inner).logout(&who) {
             Ok(()) => json(200, &json!({})),
             Err(e) => error(500, e),
@@ -281,7 +282,10 @@ fn api(st: &State, req: &mut Request, method: &Method, path: &str, q: &str) -> R
         (Method::Delete, ["index", "faces"]) => crate::vision::face_delete(st, &who.user),
         (Method::Post, ["render"]) => render(st, req, &l, &who.user),
         _ => error(404, format!("no route {method} {path}")),
-    }
+    };
+    // (what this device asks of the server: the admin page's Overview)
+    st.usage.note(&who.user, who.device, sent, resp.data_length().unwrap_or(0) as u64, began.elapsed());
+    resp
 }
 
 /// The throttle's keys for a sign-in: the client's address and the user name.

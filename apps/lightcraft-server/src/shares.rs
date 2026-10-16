@@ -349,7 +349,7 @@ fn site(req: &Request) -> Option<String> {
 }
 
 /// What the visitor's connection came over (a proxy says so): the unlock cookie is `Secure` on HTTPS.
-fn is_https(req: &Request) -> bool {
+pub(crate) fn is_https(req: &Request) -> bool {
     header_value(req, "X-Forwarded-Proto").is_some_and(|p| p.split(',').next().is_some_and(|p| p.trim().eq_ignore_ascii_case("https")))
 }
 
