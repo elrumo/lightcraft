@@ -592,7 +592,7 @@ pipeline and encoder as the apps, and sends the image back, which the device sav
 | export, metadata and filter presets, curve presets, colour-label and keyword sets, LUT profiles (with their `.cube` files), the order of the develop preset groups, the import defaults that don't name a place | the watched folder for auto import, the folders and the external editor, the cache size, the search-sharing choices |
 | metadata and keywords, analysis results | undo / redo |
 | albums, folders, smart albums, stacks | the view (`view.json`, `ui.json`) |
-| | Local records (photos seen while browsing a folder, until added to the library) |
+| | Local records (photos seen while browsing a folder, or opened from the Photos library, until added to the library; which Photos library picture is which photo, `photo-library.json`) |
 
 ## When two devices change the same thing
 
