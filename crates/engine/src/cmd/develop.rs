@@ -626,6 +626,27 @@ pub fn specs() -> Vec<CommandSpec> {
             }
         ),
         cmd!(
+            "crop.zoom",
+            "Zoom Crop",
+            [],
+            None,
+            "{by: number (> 1 zooms in: the crop shrinks about its centre; < 1 grows it)} — a pinch on the crop, as Lightroom's: keeps its shape and angle, stays inside the photo (with Expand on: up to the photo's own size past it), no smaller than a drag allows",
+            has_active,
+            |s, p| {
+                let c = "crop.zoom";
+                let id = active(s, c)?;
+                let (w, h) = crop_dims(s, id);
+                let by = f64_req(p, "by", c)?;
+                if !(by.is_finite() && by > 0.0) {
+                    return Err(bad(c, "`by` must be a positive number"));
+                }
+                edit(s, c, "Crop", |d| {
+                    d.crop.geometry = d.crop.geometry.zoomed_in(by, w, h, d.crop.expand);
+                    Ok(())
+                })
+            }
+        ),
+        cmd!(
             "crop.straighten",
             "Straighten",
             [],

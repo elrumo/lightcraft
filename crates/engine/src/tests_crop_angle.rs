@@ -151,3 +151,23 @@ fn a_crop_shrunk_by_straightening_grows_back_towards_0() {
     let g = geometry(&s);
     assert!(close(g, CropGeometry::default()), "two separate drags: back to the full photo at 0°, got {g:?}");
 }
+
+#[test]
+fn crop_zoom_shrinks_and_grows_the_crop_inside_the_photo() {
+    let mut s = Session::with_demo();
+    let (w, h) = dims(&s);
+    s.execute("crop.straighten", &json!({"angle": 8.0})).unwrap();
+    let start = geometry(&s);
+    s.execute("crop.zoom", &json!({"by": 2.0})).unwrap();
+    let z = geometry(&s);
+    assert!((z.rect.width() * 2.0 - start.rect.width()).abs() < 1e-9, "{z:?} from {start:?}");
+    assert_eq!(z.angle, 8.0);
+    // zoomed out past the photo: as large as fits again, never outside
+    s.execute("crop.zoom", &json!({"by": 0.1})).unwrap();
+    let out = geometry(&s);
+    assert!(out.is_within_image(w, h) && out.rect.width() > z.rect.width(), "{out:?}");
+    for bad in [json!({}), json!({"by": 0}), json!({"by": -1.5}), json!({"by": "x"})] {
+        assert!(s.execute("crop.zoom", &bad).is_err(), "{bad}");
+    }
+    assert_eq!(geometry(&s), out);
+}
