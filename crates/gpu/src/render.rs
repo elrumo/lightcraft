@@ -7,11 +7,11 @@ use std::sync::{Arc, Mutex};
 use lightcraft_develop::DevelopSettings;
 use lightcraft_geom::Orientation;
 use lightcraft_pipeline::finish::{FinishParams, MASK_TERMS, mask_terms};
-use lightcraft_pipeline::geometry::SampleMode;
+use lightcraft_pipeline::geometry::{SampleMode, SamplePlan, SourceCut};
 use lightcraft_pipeline::local::plane_at;
 use lightcraft_pipeline::{Plan, RenderRequest, Rendered, SourceInfo, local};
 use lightcraft_raster::resample::Filter;
-use lightcraft_raster::{Histogram, Plane, Rgb32f, Rgba8};
+use lightcraft_raster::{Histogram, Plane, Rgb32f, Rgba8, orient_map};
 
 use crate::ctx::{Buf, FailKind, Gpu, fail, groups1, groups2};
 use crate::params::{Present, finish_block};
@@ -361,46 +361,6 @@ fn guided_fast(cx: &mut Cx<'_>, p: &Buf, w: usize, h: usize, sigma: f32, eps: f3
 // ---------------------------------------------------------------------------------------------
 // Geometry (`Frame::sample`)
 
-/// Integer pixel map `(x, y) → (m0·x + m1·y + m2, m3·x + m4·y + m5)` from an oriented image back
-/// to the source of `w × h` (`Image::oriented`: optional horizontal flip, then quarter turns).
-pub(crate) fn orient_map(o: Orientation, w: usize, h: usize) -> [i32; 6] {
-    let (flip, turns) = o.to_parts();
-    let (w, h) = (w as i32, h as i32);
-    let mut ops: Vec<fn(i32, i32) -> [i32; 6]> = Vec::new();
-    if flip {
-        ops.push(|w, _| [-1, 0, w - 1, 0, 1, 0]);
-    }
-    let cw: fn(i32, i32) -> [i32; 6] = |_, h| [0, 1, 0, -1, 0, h - 1];
-    let half: fn(i32, i32) -> [i32; 6] = |w, h| [-1, 0, w - 1, 0, -1, h - 1];
-    match turns {
-        1 => ops.push(cw),
-        2 => ops.push(half),
-        3 => {
-            ops.push(half);
-            ops.push(cw);
-        }
-        _ => {}
-    }
-    // compose: T ← T ∘ op, tracking each op's input size
-    let mut t = [1, 0, 0, 0, 1, 0];
-    let (mut cw_, mut ch_) = (w, h);
-    for op in ops {
-        let o = op(cw_, ch_);
-        t = [
-            t[0] * o[0] + t[1] * o[3],
-            t[0] * o[1] + t[1] * o[4],
-            t[0] * o[2] + t[1] * o[5] + t[2],
-            t[3] * o[0] + t[4] * o[3],
-            t[3] * o[1] + t[4] * o[4],
-            t[3] * o[2] + t[4] * o[5] + t[5],
-        ];
-        if o[0] == 0 {
-            (cw_, ch_) = (ch_, cw_);
-        }
-    }
-    t
-}
-
 fn affine_bits(a: &lightcraft_geom::Affine) -> [u32; 6] {
     a.0.map(|v| (v as f32).to_bits())
 }
@@ -519,12 +479,10 @@ fn coverage_mask(wp: &lightcraft_pipeline::optics::Warp, o2t: &lightcraft_geom::
     coverage
 }
 
-/// Resample the source into the output frame (`Frame::sample`). May return the source buffer
-/// itself when the frame is the identity.
-fn sample(cx: &mut Cx<'_>, src: &Arc<Rgb32f>, src_buf: Arc<Buf>, plan: &Plan<'_>) -> Arc<Buf> {
-    let (w, h) = (plan.w, plan.h);
+/// The base [`resample`] reads for the whole source `src_buf` (`Frame::sample`): oriented and prefiltered on
+/// the device. May be the source buffer itself.
+fn whole_base(cx: &mut Cx<'_>, src: &Rgb32f, src_buf: Arc<Buf>, plan: &Plan<'_>, sp: &SamplePlan) -> (Arc<Buf>, (usize, usize)) {
     let fr = &plan.frame;
-    let sp = fr.sample_plan(src.width, src.height, w, h);
     let oriented = if fr.orient == Orientation::Normal {
         src_buf
     } else {
@@ -534,14 +492,32 @@ fn sample(cx: &mut Cx<'_>, src: &Arc<Rgb32f>, src_buf: Arc<Buf>, plan: &Plan<'_>
         cx.run("orient", &p, &[Some(&src_buf), Some(&out), None], groups2(sp.ow, sp.oh, [16, 16]));
         Arc::new(out)
     };
-    let (base, (bw, bh)) = match sp.prefilter {
+    match sp.prefilter {
         Some(d) => (Arc::new(resize(cx, &oriented, (sp.ow, sp.oh), d, 3, Filter::Mitchell)), d),
         None => (oriented, (sp.ow, sp.oh)),
-    };
+    }
+}
+
+/// The base [`resample`] reads, from the part of the source a window reads ([`SourceCut`]): made on the CPU
+/// (cut, oriented and prefiltered with the whole image's taps, as `Frame::sample` makes it) and uploaded. The
+/// whole source is never on the device: a window of a 48 MP original uploads tens of MB instead of 560 (and its
+/// oriented, prefiltered copies).
+fn cut_base(cx: &mut Cx<'_>, src: &Rgb32f, cut: &SourceCut, plan: &Plan<'_>, sp: &SamplePlan) -> (Arc<Buf>, (usize, usize)) {
+    (Arc::new(cx.gpu.upload(rgb_words(&cut.base(src, plan.frame.orient, sp)))), cut.base_size())
+}
+
+/// Resample the base (the prefiltered oriented source, of which `base` holds the `bw × bh` from `off` on) into
+/// the output frame (`Frame::sample`). May return `base` itself when the frame is the identity.
+fn resample(cx: &mut Cx<'_>, base: Arc<Buf>, (bw, bh): (usize, usize), off: [usize; 2], plan: &Plan<'_>, sp: &SamplePlan) -> Arc<Buf> {
+    let (w, h) = (plan.w, plan.h);
+    let fr = &plan.frame;
+    // (an integer offset is subtracted exactly: the same sample positions as in the whole base)
+    let off = off.map(|v| (v as f32).to_bits());
     let mut affine = |xf: &lightcraft_geom::Affine| {
         let out = cx.gpu.buffer(w * h * 3);
         let mut p = vec![bw as u32, bh as u32, w as u32, h as u32];
         p.extend(affine_bits(xf));
+        p.extend(off);
         cx.run("sample_affine", &p, &[Some(&base), Some(&out), None], groups2(w, h, [16, 16]));
         Arc::new(out)
     };
@@ -552,7 +528,8 @@ fn sample(cx: &mut Cx<'_>, src: &Arc<Rgb32f>, src_buf: Arc<Buf>, plan: &Plan<'_>
         (SampleMode::Warp(o2t), None) => affine(&(lightcraft_geom::Affine::scale(sp.sx, sp.sy) * *o2t)),
         (SampleMode::Warp(o2t), Some(wp)) => {
             let out = cx.gpu.buffer(w * h * 3);
-            let p = warp_params(wp, (bw, bh), (w, h), o2t, sp.sx, sp.sy);
+            let mut p = warp_params(wp, (bw, bh), (w, h), o2t, sp.sx, sp.sy);
+            p.extend(off);
             // f32 rounding can cross a source edge. Keep the reference f64
             // framing decision in a bit mask; color sampling stays on the GPU.
             let coverage = cx.gpu.upload(&coverage_mask(wp, o2t, w, h));
@@ -621,20 +598,41 @@ pub fn render(
     lap("plan", &mut t, &mut cx);
 
     // 1. geometry (on the CPU when the source exceeds the device's buffer limit)
+    let sp = plan.frame.sample_plan(src.width, src.height, w, h);
+    // a window of a source too big for a view to keep (the original a zoom window is cut from) uploads only
+    // what it reads; a smaller one stays on the device for the view's next render
+    let big = src.data.len() * 12 > RETAIN_SOURCE_BYTES;
+    let cut = (cached.is_none() && big).then(|| plan.frame.source_cut(&sp, w, h)).flatten().filter(|c| {
+        let (bw, bh) = c.base_size();
+        gpu.fits(bw * bh * 3)
+    });
     let sampled = match &cached {
         Some(e) => e.sampled.clone(),
         // (a WarpRectilinear2 chain also goes to the CPU: its degree-14 polynomial needs f64; so
         // does Generative Expand, whose fill is put in at the resample)
-        None if gpu.fits(src.data.len() * 3) && !plan.frame.warp.as_ref().is_some_and(|w| w.needs_f64()) && !plan.frame.expands() => {
-            let upload = || gpu.upload(rgb_words(src));
-            // (a source too big for a view's stages to keep is the one shared copy: a window is
-            // cut from the photo's own pixels, and what its stages keep is its own sampled pixels)
-            let src_buf = match stages {
-                Some(c) if src.data.len() * 12 <= RETAIN_SOURCE_BYTES => c.source(src, upload),
-                Some(_) => shared_source(src, upload),
-                None => Arc::new(upload()),
+        None if (cut.is_some() || gpu.fits(src.data.len() * 3))
+            && !plan.frame.warp.as_ref().is_some_and(|w| w.needs_f64())
+            && !plan.frame.expands() =>
+        {
+            let (base, size, off) = match &cut {
+                Some(c) => {
+                    let (base, size) = cut_base(&mut cx, src, c, &plan, &sp);
+                    (base, size, [c.base[0], c.base[1]])
+                }
+                None => {
+                    let upload = || gpu.upload(rgb_words(src));
+                    // (a source too big for a view's stages to keep is the one shared copy: a
+                    // whole-frame render of the original, e.g. a large preview size)
+                    let src_buf = match stages {
+                        Some(c) if src.data.len() * 12 <= RETAIN_SOURCE_BYTES => c.source(src, upload),
+                        Some(_) => shared_source(src, upload),
+                        None => Arc::new(upload()),
+                    };
+                    let (base, size) = whole_base(&mut cx, src, src_buf, &plan, &sp);
+                    (base, size, [0; 2])
+                }
             };
-            sample(&mut cx, src, src_buf, &plan)
+            resample(&mut cx, base, size, off, &plan, &sp)
         }
         None => {
             let img = plan.frame.sample(src, w, h);
@@ -1258,22 +1256,5 @@ mod tests {
             map(cx, "log_lum_k", w * h, &[], [Some(&src), None, None], &o);
         });
         time("guided sigma=1.75", &mut |cx| drop(guided(cx, &src, w, h, 1.75, 0.01)));
-    }
-
-    #[test]
-    fn orient_map_matches_image_oriented() {
-        use Orientation::*;
-        let img = Rgb32f::from_fn(5, 3, |x, y| [x as f32, y as f32, 0.0]);
-        for o in [Normal, Rotate90, Rotate180, Rotate270, FlipH, Transverse, FlipV, Transpose] {
-            let r = img.oriented(o);
-            let m = orient_map(o, 5, 3);
-            for y in 0..r.height {
-                for x in 0..r.width {
-                    let (x, y) = (x as i32, y as i32);
-                    let (sx, sy) = (m[0] * x + m[1] * y + m[2], m[3] * x + m[4] * y + m[5]);
-                    assert_eq!(r.get(x as usize, y as usize), img.get(sx as usize, sy as usize), "{o:?} at {x},{y}");
-                }
-            }
-        }
     }
 }

@@ -120,25 +120,32 @@ pub fn resize<T: Pixel>(img: &Image<T>, w: usize, h: usize, filter: Filter) -> I
     if img.width == w && img.height == h {
         return img.clone();
     }
-    let wx = weights(img.width, w, filter);
-    let mut tmp = Image::<T>::new(w, img.height);
+    resize_with(img, 0..img.height, &weights(img.width, w, filter), &weights(img.height, h, filter))
+}
+
+/// [`resize`] with the taps given, reading the image's `rows` only: one output column per entry of `wx` and one
+/// row per entry of `wy`, each a first source index (a column of the image; a row counted from `rows.start`) and
+/// its weights. A part of a larger resize is that resize's taps for the part. Taps past the image read nothing.
+pub fn resize_with<T: Pixel>(img: &Image<T>, rows: std::ops::Range<usize>, wx: &[(usize, Vec<f32>)], wy: &[(usize, Vec<f32>)]) -> Image<T> {
+    let (w, h) = (wx.len().max(1), wy.len().max(1));
+    let rows = rows.start.min(img.height)..rows.end.min(img.height);
+    let mut tmp = Image::<T>::new(w, rows.len());
     par_rows(&mut tmp.data, w, |y, row| {
-        let src = img.row(y);
-        for (x, o) in row.iter_mut().enumerate() {
-            let (lo, ws) = &wx[x];
+        let at = (rows.start + y) * img.width;
+        let src = img.data.get(at..at + img.width).unwrap_or_default();
+        for ((lo, ws), o) in wx.iter().zip(row.iter_mut()) {
             let mut acc = T::zero();
-            for (k, wt) in ws.iter().enumerate() {
-                acc = acc.madd(src[lo + k], *wt);
+            for (s, wt) in src.get(*lo..).unwrap_or_default().iter().zip(ws) {
+                acc = acc.madd(*s, *wt);
             }
             *o = acc;
         }
     });
-    let wy = weights(img.height, h, filter);
     let mut out = Image::<T>::new(w, h);
     par_rows(&mut out.data, w, |y, row| {
-        let (lo, ws) = &wy[y];
+        let Some((lo, ws)) = wy.get(y) else { return };
         for (k, wt) in ws.iter().enumerate() {
-            let src = tmp.row(lo + k);
+            let Some(src) = tmp.data.get((lo + k) * w..(lo + k + 1) * w) else { break };
             for (o, s) in row.iter_mut().zip(src) {
                 *o = o.madd(*s, *wt);
             }

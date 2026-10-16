@@ -460,6 +460,37 @@ fn a_zoomed_view_gets_a_window_of_what_is_on_screen() {
     assert!(n(&main["width"]).max(n(&main["height"])) <= 512 && main["window"].is_null(), "{main}");
 }
 
+// Zoomed to 1:1, the original the windows are cut from stays decoded while the view is zoomed, over the
+// cache budget (a 48 MP one is 560 MB, more than a phone's share): before, every pan decoded it again.
+// Zoomed out, it goes.
+#[test]
+fn a_zoomed_view_keeps_its_original_decoded() {
+    let h = demo();
+    let budget = |h: &Watch, id: u64, p: Value| {
+        h.call(&req(id, "engine.execute", json!({"command": "app.memoryBudget", "params": p})), Duration::from_secs(30))
+    };
+    let default_mb = budget(&h, 1, json!({}))["result"]["budget"].as_f64().unwrap() / 1048576.0;
+    let first = h.call(&req(2, "engine.execute", json!({"command": "catalog.query", "params": {"limit": 1}})), Duration::from_secs(30));
+    let p = &first["result"]["photos"][0];
+    let (photo, long) = (p["id"].as_u64().unwrap(), p["width"].as_u64().unwrap().max(p["height"].as_u64().unwrap()));
+    // a cache share (half the budget) smaller than the demo photo's decoded original
+    assert!(long * long * 12 / 2 > 128 << 20, "{p}");
+    budget(&h, 3, json!({"mb": 256}));
+    let full = |h: &Watch, id: u64| {
+        let m = h.call(&req(id, "host.memory", json!({})), Duration::from_secs(30));
+        m["result"]["engine"]["fullSource"]["count"].as_u64().unwrap()
+    };
+    let zoom = json!({"drawn": long, "visible": [0.45, 0.45, 0.55, 0.55]});
+    h.submit(&req(4, "render.view", json!({"photo": photo, "width": 400, "height": 300, "zoom": zoom}))).unwrap();
+    h.wait_for(|e| e["kind"] == "image" && e["slot"] == "region");
+    let t0 = std::time::Instant::now();
+    while full(&h, 5) == 0 && t0.elapsed() < Duration::from_secs(10) {}
+    assert_eq!(full(&h, 6), 1, "the original stays while zoomed");
+    h.call(&req(7, "render.view", json!({"photo": photo, "width": 400, "height": 300})), Duration::from_secs(30));
+    assert_eq!(full(&h, 8), 0, "and goes at fit");
+    budget(&h, 9, json!({"mb": default_mb}));
+}
+
 // People's faces: a face box renders as its own small picture
 #[test]
 fn a_face_renders_on_its_own() {
@@ -847,9 +878,9 @@ fn a_zoom_decodes_the_original_only_when_it_fits_in_memory() {
     let mp48 = 8064.0 * 6048.0;
     // a desktop: no limit
     assert!(original_fits(None, false, mp48));
-    // an iPhone 17 Pro with a 48 MP ProRAW open: 1.6 GB left is not enough, 3 GB is
+    // an iPhone 17 Pro with a 48 MP ProRAW open: 1.6 GB left is not enough, the 2 GB it has is
     assert!(!original_fits(Some(1_600 << 20), false, mp48));
-    assert!(original_fits(Some(3_000 << 20), false, mp48));
+    assert!(original_fits(Some(2_000 << 20), false, mp48));
     // decoded already: nothing more to hold
     assert!(original_fits(Some(64 << 20), true, mp48));
     // a 12 MP photo fits where a 48 MP one doesn't

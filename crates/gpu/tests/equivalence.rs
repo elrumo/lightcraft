@@ -869,11 +869,12 @@ fn a_window_does_not_keep_the_whole_source_on_the_device() {
     assert!(lightcraft_gpu::stage_bytes(&stages) < 100 << 20);
 }
 
-/// …but the 288 MB is uploaded once for every window of every view of the photo, not once per
-/// window: panning at 1:1, and the Before and After windows, share one device copy of it, which
-/// goes when the app idles (`trim_pool(0)`).
+/// …nor uploads it at all: each window uploads the part of the source it reads (`SourceCut`), so panning at
+/// 1:1, and the Before and After windows, hold window-sized buffers (a phone's 48 MP original was 560 MB on
+/// the device, besides its 560 MB in memory). A whole-frame render of the original still uploads it once,
+/// for every view of the photo, until the app idles (`trim_pool(0)`).
 #[test]
-fn windows_of_a_big_photo_share_one_uploaded_source() {
+fn windows_of_a_big_photo_upload_only_what_they_read() {
     let _lock = BIG_SOURCE_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     if !gpu() {
         return;
@@ -884,15 +885,50 @@ fn windows_of_a_big_photo_share_one_uploaded_source() {
     let s = DevelopSettings::default();
     let (after, before) = (StageCache::default(), StageCache::default());
     let at = |x: usize| RenderRequest { window: Some(PixelWindow { x, y: 1500, w: 640, h: 480 }), ..RenderRequest::fit(6000, 4000) };
+    lightcraft_gpu::trim_pool(0);
     let start = lightcraft_gpu::source_uploads();
     for (cache, x) in [(&after, 1000), (&after, 1256), (&after, 1512), (&before, 1512), (&before, 1768)] {
         lightcraft_gpu::render(&src, &info, &s, &at(x), Some(cache)).expect("gpu render");
     }
-    assert_eq!(lightcraft_gpu::source_uploads() - start, 1, "one upload for five windows of two views");
+    assert_eq!(lightcraft_gpu::source_uploads() - start, 0, "five windows of two views upload no whole source");
+    assert_eq!(lightcraft_gpu::shared_source_bytes(), 0);
+    assert!(lightcraft_gpu::stage_bytes(&after) < 100 << 20, "{} MiB", lightcraft_gpu::stage_bytes(&after) >> 20);
+    let whole = RenderRequest::fit(6000, 4000);
+    lightcraft_gpu::render(&src, &info, &s, &whole, Some(&after)).expect("gpu render");
+    lightcraft_gpu::render(&src, &info, &s, &whole, Some(&before)).expect("gpu render");
+    assert_eq!(lightcraft_gpu::source_uploads() - start, 1, "one upload for two views' whole-frame renders");
     assert!(lightcraft_gpu::shared_source_bytes() >= 280_000_000, "{}", lightcraft_gpu::shared_source_bytes());
-    assert!(lightcraft_gpu::stage_bytes(&after) < 100 << 20, "and it is not in the views' stages");
     lightcraft_gpu::trim_pool(0);
     assert_eq!(lightcraft_gpu::shared_source_bytes(), 0, "an idle app gives it back");
-    lightcraft_gpu::render(&src, &info, &s, &at(1000), Some(&after)).expect("gpu render");
-    assert_eq!(lightcraft_gpu::source_uploads() - start, 2);
+}
+
+/// Windows cut from a big original's part (`SourceCut`) render what the CPU renders: rotated, prefiltered (a
+/// frame smaller than the photo) and through a lens warp with lateral CA, in the middle and at an edge.
+#[test]
+fn windows_cut_from_a_big_original_match() {
+    let _lock = BIG_SOURCE_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+    if !gpu() {
+        return;
+    }
+    use lightcraft_pipeline::PixelWindow;
+    let src = scene(1, 6000, 4000);
+    let info = SourceInfo { raw: true, ..Default::default() };
+    let mut rotated = DevelopSettings { orientation: Orientation::Rotate90, ..Default::default() };
+    rotated.light.exposure = 0.3;
+    let mut lens = rotated.clone();
+    lens.optics.distortion = 25.0;
+    lens.optics.ca_red = 40.0;
+    lens.optics.ca_blue = -30.0;
+    lens.crop.geometry.angle = 3.0;
+    let before = lightcraft_gpu::source_uploads();
+    for (name, s) in [("rotated", &rotated), ("lens", &lens)] {
+        // 1:1, and a frame half the photo's size (prefiltered)
+        for (fw, fh) in [(4000, 6000), (2000, 3000)] {
+            for win in [PixelWindow { x: fw / 3, y: fh / 3, w: 640, h: 480 }, PixelWindow { x: 0, y: fh - 480, w: 640, h: 480 }] {
+                let req = RenderRequest { window: Some(win), ..RenderRequest::fit(fw, fh) };
+                check(&format!("cut window: {name}, {fw}×{fh} at {},{}", win.x, win.y), &src, &info, s, &req);
+            }
+        }
+    }
+    assert_eq!(lightcraft_gpu::source_uploads(), before, "(from their cuts)");
 }

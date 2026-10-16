@@ -71,17 +71,21 @@ const VARIANT_WANTED: Duration = Duration::from_secs(10);
 /// Thumbnails kept known to the scheduler beyond what `render.retain` lists.
 const MAX_THUMBS: usize = 600;
 
-/// Bytes a pixel of an original takes once decoded for a zoomed window: the linear source on the CPU
-/// (12), its copy on the GPU (16), and the decode's temporaries (measured: 24 MP CR3, 12 MP ProRAW).
-const ORIGINAL_BYTES_PER_PX: f64 = 36.0;
+/// Bytes a pixel of an original takes while it is decoded for a zoomed window: the linear source (12; a
+/// window uploads only the part it reads, never the whole source) and the decode's temporaries at their
+/// peak (12: the picture turned upright, or the highlight rebuild's pyramid with the samples). Measured
+/// with `drag_bench zoom` on a 48 MP ProRAW: 1.39 to 1.48 GB above the fit view at the peak, the window's
+/// render included; settled, 0.88 GB at 1:1 and 0.72 GB at 8x.
+const ORIGINAL_BYTES_PER_PX: f64 = 24.0;
 
-/// What is kept free beside a decoded original: the zoomed window's renders and the app's pictures.
+/// What is kept free beside a decoded original: the zoomed window's render (its GPU stages and
+/// buffers: up to ~0.9 GB above the source for a phone's 1:1 window) and the app's pictures.
 const ORIGINAL_RESERVE: f64 = 600.0 * 1048576.0;
 
 /// Whether decoding an original of `px` pixels leaves room under the app's memory limit, given what the
 /// system says is `left` before it ends the app (`None`: no such limit, a desktop) and whether the
-/// original is `decoded` already (a 48 MP ProRAW: 1.7 GB, on an iPhone 17 Pro that the system ends at
-/// about 3.3 GB).
+/// original is `decoded` already (a 48 MP ProRAW needs 1.7 GB: an iPhone 17 Pro, which the system ends at
+/// about 3.3 GB, has 2.1 to 2.4 GB left with one open).
 fn original_fits(left: Option<usize>, decoded: bool, px: f64) -> bool {
     let Some(left) = left else { return true };
     decoded || px.is_finite() && px * ORIGINAL_BYTES_PER_PX + ORIGINAL_RESERVE <= left as f64
@@ -304,6 +308,8 @@ struct Engine {
     admin: admin::Admin,
     /// The zoom window last asked for (`render.view {zoom}`): its image event says where it goes.
     region: Option<RegionShown>,
+    /// The system ends the app past a memory limit (a phone): a zoomed view keeps one window's stages.
+    memory_limited: bool,
     /// `import.scan` running on its worker, and the candidates of the last one (`render.candidate`).
     scan: Option<PendingScan>,
     candidates: Vec<lightcraft_engine::import::ImportCandidate>,
@@ -452,6 +458,7 @@ impl Engine {
             merge_shown: 0,
             export_runs: 0,
             region: None,
+            memory_limited: available.is_some(),
             scan: None,
             candidates: Vec::new(),
             import: None,
@@ -727,7 +734,7 @@ impl Engine {
                     match p.get("zoom") {
                         Some(zoom) if !draft && proof.is_none() => self.request_region(id, (w, h), apply_crop, zoom, shown),
                         Some(_) => {}
-                        None => self.region = None,
+                        None => self.no_region(),
                     }
                     // until the loupe has this photo: its cached render, embedded preview or thumbnail
                     if self.sched.textures.get(&Slot::Main).is_none_or(|t| t.photo != id)
@@ -1170,7 +1177,7 @@ impl Engine {
             .map(|a| a.iter().filter_map(Value::as_f64).filter(|v| v.is_finite()).collect())
             .unwrap_or_default();
         let (Some(drawn), [x0, y0, x1, y1]) = (drawn, visible.as_slice()) else {
-            self.region = None;
+            self.no_region();
             return;
         };
         let Some(photo) = self.session.catalog.photo(id) else { return };
@@ -1203,7 +1210,7 @@ impl Engine {
             windows: region::overlay_supports_window(overlay),
         };
         let Some(edge) = region::plan(0, sizes).window_edge else {
-            self.region = None;
+            self.no_region();
             return;
         };
         let aspect = nw / nh;
@@ -1214,13 +1221,28 @@ impl Engine {
         let job = region::window_for(fw, fh, visible, region::max_span(TEXTURE_SIDE))
             .and_then(|win| Some((win, self.session.region_job(id, fw, fh, win, apply_crop)?)));
         let Some((window, job)) = job else {
-            self.region = None;
+            self.no_region();
             return;
         };
+        // the original a window is cut from stays decoded while the view is zoomed (over the cache budget: a
+        // 48 MP one is 560 MB), or every pan would decode it again
+        if job.level == lightcraft_engine::SourceLevel::Full {
+            self.session.media.set_on_screen(Some(id));
+        }
         let job = job.with_overlay(overlay);
+        // another window: what the last one's stages hold can't serve it (only a pan back), and a phone needs the room
+        if self.memory_limited && self.region.as_ref().is_some_and(|r| (r.full, r.window) != ((fw, fh), window)) {
+            self.sched.clear_stages(Slot::Region);
+        }
         self.region = Some(RegionShown { key: job.key, full: (fw, fh), window });
         self.sched.request(Slot::Region, job, 95);
         self.busy = true;
+    }
+
+    /// The loupe shows no window: the original windows were cut from may go (zoomed out: memory back at once).
+    fn no_region(&mut self) {
+        self.region = None;
+        self.session.media.set_on_screen(None);
     }
 
     /// Start enlarging `{id?}` (the active photo); `None` (answered when it ends) or the error now.

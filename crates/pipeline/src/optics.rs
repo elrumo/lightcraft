@@ -277,6 +277,36 @@ impl Warp {
             None
         }
     }
+
+    /// Bounds `[x0, y0, x1, y1]` (source px) on the source positions every colour plane reads for the output
+    /// pixels of `w × h` (`o2t`: output px → transformed px) that show the image: the `f64` positions
+    /// [`frame`](Self::frame) and [`corrected_to_source`](Self::corrected_to_source) give, bounded with
+    /// [`Interval`]s over blocks of pixels. `None` when a block can't be bounded.
+    pub fn source_bounds(&self, o2t: &Affine, w: usize, h: usize) -> Option<[f64; 4]> {
+        const BLOCK: usize = 32;
+        let planes: &[usize] = if self.per_channel() { &[0, 1, 2] } else { &[1] };
+        let mut b = [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
+        for y0 in (0..h).step_by(BLOCK) {
+            for x0 in (0..w).step_by(BLOCK) {
+                let (x1, y1) = ((x0 + BLOCK).min(w), (y0 + BLOCK).min(h));
+                // (blank canvas reads nothing)
+                if self.block_coverage(o2t, x0, x1, y0, y1) == Some(false) {
+                    continue;
+                }
+                let px = Interval::new(x0 as f64 + 0.5, (x1 - 1) as f64 + 0.5);
+                let py = Interval::new(y0 as f64 + 0.5, (y1 - 1) as f64 + 0.5);
+                let ((cx, cy), _) = self.framing(o2t, px, py);
+                for &ch in planes {
+                    let (sx, sy) = self.corrected_to_source_real(cx, cy, ch);
+                    if !(sx.is_decided() && sy.is_decided()) {
+                        return None;
+                    }
+                    b = [b[0].min(sx.lo()), b[1].min(sy.lo()), b[2].max(sx.hi()), b[3].max(sy.hi())];
+                }
+            }
+        }
+        b.iter().all(|v| v.is_finite()).then_some(b)
+    }
 }
 
 /// DNG `WarpRectilinear` source position for corrected position `p` (px) and plane `ch`.

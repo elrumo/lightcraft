@@ -736,6 +736,13 @@ impl<V> Scheduler<V> {
         self.release(slot);
     }
 
+    /// Drop what a view slot's stage cache holds (its next render starts afresh).
+    pub fn clear_stages(&mut self, slot: Slot) {
+        if let Some(c) = self.stages.get(&slot) {
+            c.clear();
+        }
+    }
+
     /// Free a view slot's texture and stage cache (the view is no longer shown).
     pub fn release(&mut self, slot: Slot) {
         self.textures.remove(&slot);
