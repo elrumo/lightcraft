@@ -71,6 +71,7 @@ mod model_download;
 pub mod models;
 pub mod originals;
 mod pdf;
+pub mod photo_library;
 pub mod preset_import;
 pub mod preset_luminar;
 pub mod preset_review;
@@ -259,6 +260,12 @@ pub struct Session {
     pub(crate) skip_auto_write: bool,
     /// When LightCraft last read or wrote each XMP sidecar (`sidecars.json` in the library).
     pub(crate) sidecar_times: sidecar::SidecarTimes,
+    /// Photos opened from the system photo library (`photo-library.json`; see [`photo_library`]).
+    pub(crate) photo_library: photo_library::PhotoLibraryMap,
+    /// Where the app stages photo-library originals ([`Session::set_photo_library_staging`]).
+    pub(crate) photo_library_staging: Option<std::path::PathBuf>,
+    /// What was selected before a photo-library photo was opened, to come back to when it is left.
+    pub(crate) photo_library_return: Option<Selection>,
     /// Photos whose automatic XMP sidecar write failed (their folder offline, read-only or full), written again by
     /// [`Session::retry_unsaved_sidecars`] once their file is reachable.
     pub(crate) unsaved_sidecars: std::collections::BTreeSet<PhotoId>,
@@ -485,6 +492,9 @@ impl Session {
             interaction: None,
             skip_auto_write: false,
             sidecar_times: Default::default(),
+            photo_library: Default::default(),
+            photo_library_staging: None,
+            photo_library_return: None,
             unsaved_sidecars: Default::default(),
             denoise: Default::default(),
             face_models_dir: None,
@@ -629,7 +639,7 @@ impl Session {
         }
         if self.depth == 0 {
             let skip = std::mem::take(&mut self.skip_auto_write);
-            if r.is_ok() && !skip && self.xmp.auto_write && self.interaction.is_none() && self.pending_log.len() > log_start {
+            if r.is_ok() && !skip && self.interaction.is_none() && self.pending_log.len() > log_start {
                 self.auto_write_sidecars_since(log_start);
             }
         }
@@ -660,6 +670,8 @@ impl Session {
     pub fn commit(&mut self, label: &str, op: Op) -> Result<()> {
         let fwd = op.clone();
         let inv = self.apply_catalog(op)?;
+        // a photo-library photo the user changes joins the library in this same step
+        let (fwd, inv) = self.adopt_changed(fwd, inv);
         self.sync_record(&fwd, &inv);
         self.pending_log.push(fwd);
         self.undo.push(UndoEntry { label: label.to_string(), op: inv, folder: None, retry_inverse: Vec::new(), retry_sidecars: Vec::new() });
@@ -1412,6 +1424,8 @@ mod tests_move_to_share;
 mod tests_organize;
 #[cfg(test)]
 mod tests_persist;
+#[cfg(test)]
+mod tests_photo_library;
 #[cfg(test)]
 mod tests_prefs;
 #[cfg(test)]

@@ -539,6 +539,7 @@ impl Session {
         self.active_mask = None;
         self.active_spot = None;
         self.previous_active = None;
+        self.photo_library_return = None;
         self.before.clear();
         self.signatures.clear();
     }
@@ -619,6 +620,14 @@ impl Session {
         // when the XMP sidecars were last read or written (a cache: unreadable = empty)
         self.sidecar_times =
             files.read(crate::sidecar::SidecarTimes::FILE).ok().flatten().map(|b| crate::sidecar::SidecarTimes::from_json(&b)).unwrap_or_default();
+        // which photo-library assets were opened as which photos (this device's own)
+        self.photo_library = files
+            .read(crate::photo_library::PhotoLibraryMap::FILE)
+            .ok()
+            .flatten()
+            .map(|b| crate::photo_library::PhotoLibraryMap::from_json(&b))
+            .unwrap_or_default();
+        self.photo_library_return = None;
         // sync: its state, and the id space this device allocates new ids in
         self.sync = crate::cloud_sync::SyncState::load(files.as_mut());
         if let Some(st) = self.sync.as_ref().filter(|st| !st.config.library.is_empty()) {
@@ -718,6 +727,8 @@ impl Session {
                 lib.forgot_local = Some(plan);
             }
         }
+        // photo-library photos left open and unchanged when the app last quit
+        self.tidy_photo_library();
         // smart previews written by an older camera-look fit are brought up to date in the background
         #[cfg(not(target_arch = "wasm32"))]
         if on_disk {

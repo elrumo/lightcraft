@@ -124,11 +124,20 @@ pub fn specs() -> Vec<CommandSpec> {
                 (LibrarySource::LibraryFolder, Some(path)) => lightcraft_catalog::folders::folder_label(path),
                 _ => s.source.label(&s.catalog),
             };
+            // the Local folder shown, and how many of its photos aren't in the library ("Add N to My Photos")
+            let browse = match s.browse.clone().filter(|_| s.source == LibrarySource::Folder) {
+                Some(b) => {
+                    let local = s.visible_cloned().iter().filter(|id| s.catalog.photo(**id).is_some_and(|p| p.local)).count();
+                    json!({"path": b.path, "subfolders": b.subfolders, "local": local})
+                }
+                None => Value::Null,
+            };
             let n = s.visible().len();
             let photos = s.visible_photos();
             Ok(json!({
                 "source": s.source,
                 "libraryFolder": s.library_folder.as_ref().filter(|_| s.source == LibrarySource::LibraryFolder),
+                "browse": browse,
                 "sourceLabel": label,
                 "filter": s.filter,
                 "sort": s.sort,

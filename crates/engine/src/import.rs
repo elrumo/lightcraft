@@ -1481,6 +1481,14 @@ pub fn commit_prepared(s: &mut Session, opts: &ImportOptions, now: &str, prepare
                             report.restored.push(id.0);
                         }
                     }
+                    // the photo is open from the photo library and only looked at: picked for real,
+                    // it joins the library where it already is
+                    None if !opts.local && existing.is_some_and(|id| s.opened_from_photo_library(id)) => {
+                        if let Some(id) = existing.filter(|id| !report.imported.contains(&id.0)) {
+                            ops.push(Op::SetLocal { id, local: false });
+                            report.imported.push(id.0);
+                        }
+                    }
                     _ => report.duplicates.push(Duplicate { path, existing: existing.map(|i| i.0), reason, existing_deleted: trashed.is_some() }),
                 }
             }

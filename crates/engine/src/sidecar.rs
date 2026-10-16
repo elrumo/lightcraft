@@ -805,7 +805,10 @@ impl Session {
         self.auto_write_sidecar_ids(ids);
     }
 
-    fn auto_write_sidecar_ids(&mut self, ids: Vec<PhotoId>) {
+    fn auto_write_sidecar_ids(&mut self, mut ids: Vec<PhotoId>) {
+        // with auto-write off, only Local folder photos (edited in place, beside their files); never a photo opened from
+        // the photo library and only looked at (its file is the engine's own copy)
+        ids.retain(|id| self.writes_sidecar(*id));
         if ids.is_empty() {
             return;
         }
@@ -828,6 +831,12 @@ impl Session {
         }
     }
 
+    /// Whether a change to `id` writes its sidecar: every photo with *Automatically write changes into XMP*, a browsed
+    /// (Local) folder photo always, a photo-library photo still only looked at never.
+    fn writes_sidecar(&self, id: PhotoId) -> bool {
+        self.catalog.photo(id).is_some_and(|p| (self.xmp.auto_write || p.local) && !(p.local && self.photo_library.has(id)))
+    }
+
     /// How many photos have an automatic sidecar write waiting (it failed: the folder offline, read-only or full).
     pub fn unsaved_sidecars(&self) -> usize {
         self.unsaved_sidecars.len()
@@ -838,8 +847,11 @@ impl Session {
     /// Returns how many were written.
     pub fn retry_unsaved_sidecars(&mut self) -> usize {
         if !self.xmp.auto_write {
-            self.unsaved_sidecars.clear();
-            return 0;
+            let keep: Vec<PhotoId> = self.unsaved_sidecars.iter().copied().filter(|id| self.writes_sidecar(*id)).collect();
+            self.unsaved_sidecars = keep.into_iter().collect();
+            if self.unsaved_sidecars.is_empty() {
+                return 0;
+            }
         }
         let mut ready = Vec::new();
         for id in self.unsaved_sidecars.clone() {
