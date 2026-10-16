@@ -9,6 +9,9 @@
 - One photo the model couldn't take made describing retry the same few photos forever, so the count never moved
   again. It is now set aside on its own and the rest carry on.
 - Describing a big library no longer holds up reading the words in photos and finding people: the three take turns.
+- The app's Settings ▸ Server Administration ▸ Search & People shows the same: the line with the dot, the time left of
+  each index with Pause and Resume, and under each user's bar their time left, waiting and failed counts and the last
+  problem.
 
 ### Sharpening without halos (process 3)
 - Raw photos looked crunchy, with bright and dark outlines along strong edges (hair against a light background, a
