@@ -51,6 +51,8 @@ pub const TEXT_EDGE: usize = 1280;
 /// Photos that fail to be read one after the other before the text reader is given up on.
 const READ_FAILURES: usize = 8;
 pub use lightcraft_vision::textindex::TEXT_SCORE_BASE;
+/// The score of a photo whose file name holds the query: above any text or look match.
+const NAME_SCORE: f64 = 100.0;
 /// Photos embedded in one model pass.
 const BATCH: usize = 8;
 /// Unload the model (and the in-memory index) after this long without use.
@@ -1494,6 +1496,10 @@ impl Session {
             })
         };
         if text.is_none() && semantic.is_err() {
+            // nothing indexed yet: a file name ("IMG_4008") is still found
+            if !lightcraft_catalog::search::named(self.catalog.photos().filter(|p| p.in_library()), &query).is_empty() {
+                return Ok(self.apply_ids(&query, &[], "local"));
+            }
             return Err(semantic.err().unwrap_or_default());
         }
         let known = semantic.as_ref().map_or_else(|_| self.vision.text_indexed(), |(_, _, n)| *n);
@@ -1534,19 +1540,28 @@ impl Session {
         self.apply_ids(query, &found, "local")
     }
 
-    /// Sets the view to `found` (best first) for `query`. An empty result is an empty view, not
-    /// "everything".
+    /// Sets the view to `found` (best first) for `query`, after the photos whose file name holds
+    /// it ("IMG_4008"). An empty result is an empty view, not "everything".
     fn apply_ids(&mut self, query: &str, found: &[(PhotoId, f32)], source: &str) -> Value {
-        self.filter.only = found.iter().map(|(id, _)| *id).collect();
+        let named = lightcraft_catalog::search::named(self.catalog.photos().filter(|p| p.in_library()), query);
+        let first: HashSet<PhotoId> = named.iter().copied().collect();
+        // (they push the least alike out: the search's limit still holds)
+        let len = found.len().max(named.len());
+        let photos: Vec<Value> = named
+            .iter()
+            .map(|id| json!({"id": id.0, "score": NAME_SCORE, "text": false, "name": true}))
+            .chain(found.iter().filter(|(id, _)| !first.contains(id)).map(|(id, score)| {
+                // (a score from TEXT_SCORE_BASE up is a match on words printed in the photo)
+                json!({"id": id.0, "score": (f64::from(*score) * 1e4).round() / 1e4, "text": *score >= TEXT_SCORE_BASE, "name": false})
+            }))
+            .take(len)
+            .collect();
+        self.filter.only = named.into_iter().chain(found.iter().map(|(id, _)| *id).filter(|id| !first.contains(id))).take(len).collect();
         self.filter.semantic = Some(query.to_string());
         json!({
             "query": query,
             "source": source,
-            // (a score from TEXT_SCORE_BASE up is a match on words printed in the photo)
-            "photos": found
-                .iter()
-                .map(|(id, score)| json!({"id": id.0, "score": (f64::from(*score) * 1e4).round() / 1e4, "text": *score >= TEXT_SCORE_BASE}))
-                .collect::<Vec<_>>(),
+            "photos": photos,
             "indexed": self.vision.indexed(),
             "libraryPhotos": self.vision_photo_count(),
         })

@@ -342,6 +342,17 @@ fn text_contains(p: &Photo, t: &str) -> bool {
     hay.iter().any(|h| contains_ci(h, t)) || m.keywords.iter().any(|k| contains_ci(k, t))
 }
 
+/// The photos of `photos` whose file name holds `query`, ignoring case ("IMG_4008", "img_4008.dng",
+/// "4008"): a search by description finds a photo by its name too. One word only: a description
+/// isn't a file name.
+pub fn named(photos: impl IntoIterator<Item = impl AsRef<Photo>>, query: &str) -> Vec<crate::PhotoId> {
+    let q = query.trim().to_lowercase();
+    if q.is_empty() || q.contains(char::is_whitespace) {
+        return Vec::new();
+    }
+    photos.into_iter().filter(|p| contains_ci(&p.as_ref().file_name, &q)).map(|p| p.as_ref().id).collect()
+}
+
 /// Whether `hay` contains `needle` (already lower-cased), ignoring case. ASCII text, nearly all of
 /// it, is compared in place; searching a big library on every keystroke shouldn't allocate.
 fn contains_ci(hay: &str, needle: &str) -> bool {
@@ -527,6 +538,19 @@ mod tests {
         assert_eq!(q(&c, "photos of the"), vec![sol]);
         assert_eq!(q(&c, ""), q(&c, "   "));
         assert_eq!(q(&c, "").len(), 6);
+    }
+
+    #[test]
+    fn a_file_name_is_found_whole_or_in_part() {
+        let (mut c, [sol, ..]) = library();
+        let raw = crate::tests::photo(&mut c, "IMG_4008.DNG", "2024-06-10T12:00:00");
+        for text in ["IMG_4008.DNG", "IMG_4008", "img_4008.dng", "4008"] {
+            assert_eq!(q(&c, text), vec![raw], "{text}");
+            assert_eq!(named(c.photos(), text), vec![raw], "{text}");
+        }
+        assert_eq!(named(c.photos(), "  sol.jpg "), vec![sol]);
+        assert!(named(c.photos(), "a red sunset").is_empty(), "a description isn't a file name");
+        assert!(named(c.photos(), " ").is_empty());
     }
 
     #[test]

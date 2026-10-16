@@ -30,7 +30,7 @@ to its licence, and everything else works without it.
   | `vision.model.status` | whether the model is installed and loaded, how many photos are indexed, the server's state, sharing |
   | `vision.model.download {acknowledged: true}` / `vision.model.cancel` | download (resumable, SHA-256-checked) or stop |
   | `vision.index {wait?, ids?}` / `vision.indexProgress` / `vision.indexCancel` | embed the photos that have no vector yet |
-  | `library.search {q, limit?, wait?, source?}` | `source`: `local`, `server`, or `auto` (this device's index when it covers the library, else the server's; always this device's when `vision.setLocalOnly` is on) |
+  | `library.search {q, limit?, wait?, source?}` | `source`: `local`, `server`, or `auto` (this device's index when it covers the library, else the server's; always this device's when `vision.setLocalOnly` is on). A one-word query that is part of a file name (`IMG_4008`, `img_4008.dng`) lists those photos first (`name: true`), on every device and source; the plain search field (`library.filter {text}`) matches file names too |
   | `vision.setLocalOnly {on}` | search on this device only, never through the sync server (saved with the library; no effect on a device that can't run the model) |
   | `vision.share {wait?}` / `vision.setShare {on}` | send this device's vectors (and text) to the server, once or whenever new photos are indexed |
   | `vision.setText {on}` | also read and search the text printed in photos (off until turned on; saved with the library) |
