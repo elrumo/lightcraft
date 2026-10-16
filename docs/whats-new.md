@@ -2,6 +2,14 @@
 
 ## 2026-10-16
 
+### iPhone ProRAW and other DNG raws in their full colour
+- Unedited ProRAW photos looked washed out next to Lightroom or Apple Photos: about three quarters as colourful,
+  with the same brightness. The tone curve stored in a DNG is meant for each colour channel, and LightCraft applied it
+  to brightness only. It now keeps the colour such a curve gives: richer midtones (a sunset's orange, a blue sky),
+  highlights that still fade to white. Canon, Sony, Nikon and other raws already matched their camera and don't change.
+- Smart previews of DNGs are rebuilt once from their originals. A server rebuilds its photos' previews with
+  Rebuild all previews on its admin page.
+
 ### The server's Search page shows that it is working, and the time left
 - On the admin page's Search section, a line with a dot says what the server is doing now ("Describing elias's photos ·
   last one 3 s ago"), turning orange when it seems stuck. Each user's bar has its own time left, at the pace of the
