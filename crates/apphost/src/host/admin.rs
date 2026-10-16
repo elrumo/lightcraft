@@ -7,6 +7,9 @@
 //!   after `/api/admin/` given as segments (percent-encoded here: the frontend never builds a URL).
 //!   Answers the server's JSON (`{}` when it sends none). Without a session only `state` and `setup`
 //!   work, against `server`.
+//! - `host.admin.search` — `GET /api/admin/search` with `progress` added: what its numbers mean for the
+//!   Search & People screen (whether the worker is at each index, the time left, each user's lines),
+//!   worked out as the web console does ([`search`]).
 //! - `host.admin.signOut` — forget the session (the server is told, best effort).
 //! - `host.admin.session` — `{signedIn, server, user}`.
 //!
@@ -22,6 +25,8 @@ use lightcraft_engine::cloud_sync::{self, Body, Done, Task};
 use serde_json::{Value, json};
 
 use super::{Engine, ErrorBody, Event, Sender};
+
+mod search;
 
 /// Most path segments a call may carry (the deepest admin route has five).
 const MAX_SEGMENTS: usize = 8;
@@ -45,6 +50,8 @@ pub(super) enum Kind {
     Call {
         signed_in: bool,
     },
+    /// `GET /api/admin/search`, answered with its `progress` (signed in).
+    Search,
     SignOut,
 }
 
@@ -135,6 +142,10 @@ pub(super) fn plan(id: u64, method: &str, p: &Value, login: Option<&Login>) -> R
             Some(l) => Plan::Send(Kind::SignOut, http("POST", &l.server, "logout", &l.token, Body::Empty)),
             None => Plan::Now(json!({})),
         }),
+        "host.admin.search" => match login {
+            Some(l) => Ok(Plan::Send(Kind::Search, http("GET", &l.server, "search", &l.token, Body::Empty))),
+            None => Err(ErrorBody::new("unauthorized", "Sign in as an admin.")),
+        },
         "host.admin.call" => {
             let verb = match text(p, "method") {
                 Some("GET") => "GET",
@@ -199,7 +210,17 @@ pub(super) fn finish(kind: Kind, done: &Done) -> (Result<Value, ErrorBody>, Chan
             }
         }
         Kind::Call { .. } if ok => (parsed().ok_or_else(misread), Change::Keep),
-        Kind::Call { signed_in: true } if done.status == 401 => (Err(ErrorBody::new("unauthorized", why())), Change::Clear),
+        Kind::Search if ok => {
+            let answer = parsed().map(|mut s| {
+                let progress = search::progress(&s);
+                if let Some(o) = s.as_object_mut() {
+                    o.insert("progress".into(), progress);
+                }
+                s
+            });
+            (answer.ok_or_else(misread), Change::Keep)
+        }
+        Kind::Call { signed_in: true } | Kind::Search if done.status == 401 => (Err(ErrorBody::new("unauthorized", why())), Change::Clear),
         _ => (Err(ErrorBody::new("other", why())), Change::Keep),
     }
 }
@@ -368,6 +389,34 @@ mod tests {
         let odd = Done { id: 4, status: 502, body: "<html>".into() };
         let (r, _) = finish(Kind::Call { signed_in: true }, &odd);
         assert_eq!(r.err().map(|e| e.message), Some("The server answered 502.".into()));
+    }
+
+    // The Search screen's call carries the session and comes back with what its numbers mean; a 401 ends the session
+    #[test]
+    fn search_answers_with_its_progress() {
+        assert_eq!(plan(1, "host.admin.search", &json!({}), None).err().map(|e| e.code), Some("unauthorized".into()));
+        let (kind, task) = sent(plan(1, "host.admin.search", &json!({}), Some(&login())));
+        assert_eq!(kind, Kind::Search);
+        assert_eq!(url_and_token(&task), ("http://nas:8080/api/admin/search", "tok"));
+        let body = json!({
+            "active": true,
+            "schedule": {"paused": false, "runsNow": true, "left": 600, "ready": 600, "perMinute": 120.0, "lastSecs": 1, "now": {"user": "ann", "secs": 20}},
+            "users": [{"name": "ann", "total": 1000, "indexed": 400, "work": {"search": {"perMinute": 120.0, "waiting": 0, "failed": 0, "problem": null}}}],
+        });
+        let done = Done { id: 1, status: 200, body: body.to_string() };
+        let (r, change) = finish(Kind::Search, &done);
+        let r = r.ok().unwrap_or_default();
+        assert_eq!(r["users"], body["users"]);
+        assert_eq!(r["progress"]["search"]["live"]["why"], "now");
+        assert_eq!(r["progress"]["search"]["users"]["ann"]["secs"], 300);
+        assert_eq!(r["progress"]["text"], Value::Null);
+        assert_eq!(change, Change::Keep);
+        let ended = Done { id: 2, status: 401, body: r#"{"error":"sign in as an admin"}"#.into() };
+        let (r, change) = finish(Kind::Search, &ended);
+        assert_eq!((r.err().map(|e| e.code), change), (Some("unauthorized".into()), Change::Clear));
+        // (an answer that is JSON but not an object is passed on as it is)
+        let list = Done { id: 3, status: 200, body: "[]".into() };
+        assert_eq!(finish(Kind::Search, &list).0.ok(), Some(json!([])));
     }
 
     // Empty answers are `{}`; an answer that isn't JSON is an error, not a panic
