@@ -53,6 +53,8 @@ pub(crate) enum Aux {
     People,
     /// `DELETE /api/index/faces`: forget the faces the server found.
     FacesDelete,
+    /// `GET /api/sensitive`: the photos the server flagged as possibly sensitive.
+    Sensitive,
 }
 
 /// A search the server answered, on its way to the view.
@@ -101,6 +103,8 @@ pub(crate) struct Remote {
     /// Bumped when a new answer arrives (what a view caches by).
     pub people_rev: u64,
     share_at: Option<Instant>,
+    /// The photos the server flagged as possibly sensitive.
+    pub sensitive: super::sensitive::ServerFlags,
 }
 
 impl Remote {
@@ -150,7 +154,7 @@ pub(crate) fn percent_encode(s: &str) -> String {
     out
 }
 
-fn why(d: &Done) -> String {
+pub(super) fn why(d: &Done) -> String {
     let said = serde_json::from_str::<Value>(&d.body).ok().and_then(|v| v["error"].as_str().map(str::to_string));
     match (d.status, said) {
         (0, _) => format!("can't reach the server: {}", d.body),
@@ -168,7 +172,7 @@ impl Session {
 
     /// Queue a request beside the library's own sync. It goes out with the next
     /// [`Session::sync_tasks`]; its answer reaches [`Session::vision_server_done`].
-    fn vision_aux(&mut self, method: &'static str, path: &str, body: Body, aux: Aux) -> Result<(), String> {
+    pub(super) fn vision_aux(&mut self, method: &'static str, path: &str, body: Body, aux: Aux) -> Result<(), String> {
         let st = self.sync.as_mut().filter(|st| !st.config.token.is_empty()).ok_or("this library isn't signed in to a server")?;
         queue(st, method, path, body, aux);
         Ok(())
@@ -311,6 +315,7 @@ impl Session {
             Aux::TextKeys => self.share_text_keys(st, d),
             Aux::FaceKeys => self.share_face_keys(st, d),
             Aux::People => self.people_arrived(d),
+            Aux::Sensitive => self.sensitive_arrived(d),
             Aux::FacesDelete => {
                 if !d.ok() {
                     log::warn!("asking the server to forget the faces: {}", why(d));
@@ -609,6 +614,7 @@ impl Session {
     pub(crate) fn vision_server_poll(&mut self, out: &mut super::VisionPolled) {
         if self.vision_signed_in() {
             self.vision_probe_server();
+            self.vision_fetch_sensitive(false);
         }
         for done in std::mem::take(&mut self.vision.remote.arrived) {
             // only the newest search counts: an older one is already out of date

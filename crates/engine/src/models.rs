@@ -68,6 +68,7 @@ pub const SAM3: &str = "sam3";
 pub const SEARCH: &str = "siglip2";
 pub const TEXT: &str = "ppocr";
 pub const FACES: &str = "faces";
+pub const NSFW: &str = "nsfw";
 
 /// The host of a download location ("https://user:pw@huggingface.co/a/b?x" → "huggingface.co").
 pub fn host_of(url: &str) -> String {
@@ -306,6 +307,41 @@ impl Session {
         .entry()
     }
 
+    fn sensitive_entry(&self) -> Entry {
+        let v = &self.vision;
+        let dir = v.sensitive_dir();
+        #[cfg(feature = "vision")]
+        let parts = dir.as_deref().map(|d| {
+            let env = std::env::var(lightcraft_vision::models::MIRRORS_ENV).ok();
+            lightcraft_vision::models::nsfw_downloads(d, env.as_deref(), v.mirrors_file.as_deref())
+        });
+        #[cfg(feature = "vision")]
+        let (files, mirrors) = parts.map_or((Vec::new(), Vec::new()), |p| (files_of(&p), p.into_iter().flat_map(|(_, m, _)| m).collect()));
+        #[cfg(not(feature = "vision"))]
+        let (files, mirrors): (Files, Vec<String>) = (Vec::new(), Vec::new());
+        Facts {
+            id: NSFW,
+            label: "NSFW Image Detection",
+            purpose: "Flag photos that might be sensitive, to review and hide (opt-in)",
+            credit: "nsfw_image_detection by Falcons.ai",
+            home_url: crate::vision::SENSITIVE_LICENSE_URL,
+            licence: crate::vision::SENSITIVE_LICENSE_NAME,
+            licence_url: crate::vision::SENSITIVE_LICENSE_URL,
+            restricted: false,
+            download_bytes: crate::vision::SENSITIVE_BYTES,
+            available: v.sensitive_available(),
+            installed: v.sensitive_installed(),
+            // (the library's choice, `vision.setSensitive`)
+            enabled: v.sensitive,
+            can_disable: true,
+            dir,
+            files,
+            mirrors,
+            download: shown(&v.sensitive_download_status()),
+        }
+        .entry()
+    }
+
     /// The enhancement models (Super Resolution), when this build has them.
     #[cfg(feature = "enhance")]
     fn enhance_entries(&self) -> Vec<Entry> {
@@ -350,7 +386,7 @@ impl Session {
 
     fn model_entries(&self) -> Vec<Entry> {
         #[allow(unused_mut)]
-        let mut v = vec![self.sam3_entry(), self.search_entry(), self.text_entry(), self.faces_entry()];
+        let mut v = vec![self.sam3_entry(), self.search_entry(), self.text_entry(), self.faces_entry(), self.sensitive_entry()];
         #[cfg(feature = "enhance")]
         v.extend(self.enhance_entries());
         v
@@ -379,6 +415,7 @@ impl Session {
             SEARCH => self.vision.start_download(&self.activity),
             TEXT => self.vision.start_text_download(&self.activity),
             FACES => self.vision.start_faces_download(&self.activity),
+            NSFW => self.vision.start_sensitive_download(&self.activity),
             other => self.enhancer.start_download(other, &self.activity),
         }
     }
@@ -390,6 +427,7 @@ impl Session {
             SEARCH => self.vision.cancel_download(),
             TEXT => self.vision.cancel_text_download(),
             FACES => self.vision.cancel_faces_download(),
+            NSFW => self.vision.cancel_sensitive_download(),
             other => self.enhancer.download_status().0.as_deref() == Some(other) && self.enhancer.cancel_download(),
         }
     }
@@ -444,6 +482,11 @@ impl Session {
         let entry = self.model_entry(id)?;
         if !entry.info.can_disable {
             return Err(format!("{} is turned on or off where it is used (the search field, the People view), not here", entry.info.label));
+        }
+        if id == NSFW {
+            // (saved with the library, like the other search choices)
+            self.vision.sensitive = enabled;
+            return self.save_prefs().map_err(|e| e.to_string());
         }
         if id == SAM3 {
             self.segmenter.disabled = !enabled;

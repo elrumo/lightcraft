@@ -681,6 +681,17 @@ impl Engine {
                 self.lifecycle(event).map_err(|e| bad(&e))?;
                 Ok(json!({}))
             }
+            // The app checked who the person is itself (Face ID, Touch ID, the device passcode): only this host can
+            // say so, never the engine's commands (the egui apps unlock with the password, `hidden.unlock`).
+            "host.hidden.unlock" => {
+                self.session.hidden_unlock_by_device();
+                Ok(self.session.hidden_status())
+            }
+            // A forgotten password, after Face ID: the next unlock on a device without Face ID sets a new one.
+            "host.hidden.resetPassword" => {
+                self.session.hidden_reset_password().map_err(|e| ErrorBody::engine(&e))?;
+                Ok(self.session.hidden_status())
+            }
             "ui.render" => {
                 let id = photo(p, &self.session).ok_or_else(|| bad("no photo"))?;
                 let edge = size(p.get("size").or(p.get("longEdge"))).unwrap_or(1600);
@@ -1425,6 +1436,8 @@ impl Engine {
             }
             "background" => {
                 self.in_front = false;
+                // Hidden locks while nobody can see the app
+                self.session.hidden_lock();
                 self.save();
                 // no GPU in the background, and a much smaller memory limit
                 lightcraft_engine::gpu::pause();

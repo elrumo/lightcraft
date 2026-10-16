@@ -338,5 +338,6 @@
   "Moved {n} photo{} to “{}”. Edit → Undo moves them back.": "{n} foto{0} movida{0} a “{1}”. Editar → Deshacer las devuelve.",
   "Downloading the depth model… {:.0} %": "Descargando el modelo de profundidad… {:.0} %",
   "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.": "Esta foto no tiene profundidad propia: el desenfoque de objetivo la estima con Depth Anything V2 Small, una descarga de {:.0} MB (licencia {}). {}.",
-  "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)": "Enfocado: {:.0}–{:.0} (0 lo más cerca, 100 lo más lejos)"
+  "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)": "Enfocado: {:.0}–{:.0} (0 lo más cerca, 100 lo más lejos)",
+  "{n} photos might be sensitive. Nothing is hidden until you choose.": "{n} fotos podrían ser sensibles. No se oculta nada hasta que lo decidas."
 }

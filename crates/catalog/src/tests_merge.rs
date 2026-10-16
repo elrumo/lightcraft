@@ -202,3 +202,17 @@ fn what_is_local_to_this_device_is_carried_under_the_new_ids() {
     assert!(r.local && r.id.0 >> ID_SPACE_SHIFT == 3);
     assert!(m.browsed_folders().contains_key("/browse"));
 }
+
+/// Hidden on this side stays hidden in the merged library, and pushing the changes hides it on the server.
+#[test]
+fn a_photo_hidden_on_either_side_stays_hidden() {
+    let (server, mut local, [sa, _], [la, _]) = two_libraries();
+    local.apply(Op::SetHidden { id: la, hidden: true }).unwrap();
+    let mut merged = merge(&local, server.clone(), 3);
+    assert!(merged.catalog.photo(sa).unwrap().hidden);
+    assert!(replay(&server, &mut merged.outbox).photo(sa).unwrap().hidden);
+    // and the other way round: shown here, hidden on the server
+    let (mut server, local, [sa, _], _) = two_libraries();
+    server.apply(Op::SetHidden { id: sa, hidden: true }).unwrap();
+    assert!(merge(&local, server, 3).catalog.photo(sa).unwrap().hidden);
+}

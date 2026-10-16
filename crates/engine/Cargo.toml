@@ -51,6 +51,14 @@ lightcraft-enhance = { workspace = true, optional = true }
 lightcraft-diffuse = { workspace = true, optional = true }
 # the store, index and traits only; the model itself is the `vision` feature
 lightcraft-vision = { workspace = true }
+# the Hidden album's password (argon2id; the salt comes from sha2, not the OS's random source)
+argon2 = { workspace = true }
+sha2 = { workspace = true }
+
+# argon2's password-hash pulls in getrandom 0.2, which needs its browser backend to build for the web (the
+# Hidden password's salt doesn't use it)
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom-02 = { package = "getrandom", version = "0.2", features = ["js"] }
 
 # model downloads and the sync client run natively only (the web build fetches no models)
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

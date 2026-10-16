@@ -556,13 +556,18 @@ pipeline and encoder as the apps, and sends the image back, which the device sav
 
 | Syncs | Stays on each device |
 |---|---|
-| photos (added, removed, Recently Deleted), ratings, flags, colour labels, label names | where the original is on this disk (renames and relinks of files), Local folders browsed |
+| photos (added, removed, Recently Deleted, Hidden), ratings, flags, colour labels, label names | where the original is on this disk (renames and relinks of files), Local folders browsed |
+| the Hidden password's hash and Blur Sensitive Photos (the `privacy` document, [`hidden.md`](hidden.md)) | whether Hidden is unlocked (it starts locked everywhere) |
 | develop settings, versions (incl. automatic ones), capture time edits | edit **History** (each device keeps its own steps) |
 | user presets (created or imported on any device, the web and iOS included; rename, move, delete, favourite) | favourites among the built-in presets, recent profiles |
 | export, metadata and filter presets, curve presets, colour-label and keyword sets, LUT profiles (with their `.cube` files), the order of the develop preset groups, the import defaults that don't name a place | the watched folder for auto import, the folders and the external editor, the cache size, the search-sharing choices |
 | metadata and keywords, analysis results | undo / redo |
 | albums, folders, smart albums, stacks | the view (`view.json`, `ui.json`) |
 | | Local records (photos seen while browsing a folder, until added to the library) |
+
+A server from before the Hidden album (catalog format 10 or older) would keep a hidden photo shown on the other
+devices: a device signed in to one refuses Hide and holds back any hidden change ("Update LightCraft Server first"). The
+server says its format with every pull (`format` in the answer to `GET /api/ops`; missing: older).
 
 ## When two devices change the same thing
 

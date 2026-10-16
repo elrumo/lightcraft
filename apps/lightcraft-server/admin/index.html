@@ -288,6 +288,25 @@
           <p class="muted" id="txUsersNone" hidden></p>
         </section>
         <section class="panel">
+          <h2>Sensitive content</h2>
+          <label class="switch" for="snSwitch">
+            <input type="checkbox" id="snSwitch" role="switch">
+            <span><span class="label">Flag photos that might be sensitive</span><span class="help" id="snHelp"></span></span>
+          </label>
+          <div class="sched" id="snSched"></div>
+          <div class="fetch" id="snFetch" hidden>
+            <div class="fetch-head"><span id="snFetchText"></span><span id="snFetchPct"></span></div>
+            <div class="meter large"><div id="snFetchBar"></div></div>
+            <div class="btn-row"><button type="button" class="btn secondary" id="snCancel">Cancel download</button></div>
+          </div>
+          <div class="alert negative" id="snError" role="alert" hidden><svg class="icon"><use href="#i-alert"/></svg><div><b>The download didn't finish</b><p></p></div></div>
+          <dl class="facts" id="snFacts"></dl>
+          <h3>Photos checked</h3>
+          <ul class="usage" id="snUsers"></ul>
+          <p class="muted" id="snUsersNone" hidden></p>
+          <p class="muted">Devices list the flagged photos under Possibly Sensitive and can blur them in the grid. Each person decides what to hide.</p>
+        </section>
+        <section class="panel">
           <h2>People</h2>
           <p class="muted">The server can find the faces in a user's photos and group them into people, which they name on their own devices. Faces are personal data, so this is off for everyone until you turn it on for them, one person at a time. They can delete everything found, from their devices.</p>
           <div class="sched" id="fcSched"></div>

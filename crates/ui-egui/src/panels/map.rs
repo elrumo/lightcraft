@@ -772,9 +772,14 @@ fn draw_markers(app: &mut LightcraftApp, ui: &mut egui::Ui, rect: Rect, v: &View
         let pictured: Vec<PhotoId> = c.pictured(&points, PICTURED).into_iter().map(PhotoId).collect();
         for (id, tile) in pictured.iter().zip(preview_tiles(r.shrink(1.5), pictured.len())) {
             super::grid::request_thumb(app, *id, super::grid::thumb_px(MARKER, ppp), if *id == front { 8 } else { 7 });
+            let blur = super::grid::obscured(app, *id);
             let p = ui.painter();
             if let Some(tex) = app.renderer.thumb(*id) {
-                p.image(tex.tex.id(), tile, cover_uv_in(tex.size, tile), Color32::WHITE);
+                if blur {
+                    super::grid::paint_obscured(p, tex.tex.id(), tile, cover_uv_in(tex.size, tile), 1.0);
+                } else {
+                    p.image(tex.tex.id(), tile, cover_uv_in(tex.size, tile), Color32::WHITE);
+                }
             } else {
                 p.rect_filled(tile, 0.0, t.cell);
             }

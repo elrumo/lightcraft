@@ -257,7 +257,7 @@ impl Catalog {
         // each keyword as written → its levels (its own and those above it), worked out once: a
         // large library repeats a few thousand keywords tens of thousands of times (issue #1011)
         let mut chains: HashMap<&str, Vec<usize>> = HashMap::new();
-        let photos = self.photos().filter(|p| p.in_library()).map(|p| (true, p.meta.keywords.as_slice()));
+        let photos = self.photos().filter(|p| p.visible()).map(|p| (true, p.meta.keywords.as_slice()));
         for (photo, (counts, keywords)) in std::iter::once((false, listed.as_slice())).chain(photos).enumerate() {
             for k in keywords {
                 let chain = chains.entry(k.as_str()).or_insert_with(|| {
@@ -775,7 +775,7 @@ impl Catalog {
         } else {
             let mut co: std::collections::HashMap<String, i64> = Default::default();
             if !current.is_empty() {
-                for p in self.photos().filter(|p| p.in_library()) {
+                for p in self.photos().filter(|p| p.visible()) {
                     if p.meta.keywords.iter().any(|k| has(k)) {
                         for k in p.meta.keywords.iter().filter(|k| !has(k)) {
                             *co.entry(k.clone()).or_default() += 1;

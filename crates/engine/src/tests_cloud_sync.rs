@@ -61,6 +61,8 @@ struct Fake {
     requests: Vec<String>,
     /// Every signed-in request answers `401`: the server signed this device out (an admin, or it was removed).
     revoked: bool,
+    /// The catalog format the server says it keeps (`None`: this build's).
+    format: Option<u32>,
 }
 
 mod sign_out;
@@ -87,6 +89,7 @@ impl Fake {
             building: Default::default(),
             requests: vec![],
             revoked: false,
+            format: None,
         }
     }
 
@@ -156,7 +159,14 @@ impl Fake {
                 match self.core.since(since.parse().unwrap(), limit.parse().unwrap()).unwrap() {
                     lightcraft_catalog::sync::Pull::Ops(ops) => {
                         let docs = self.docs.iter().map(|(n, d)| (n.clone(), d.version)).collect();
-                        ok(serde_json::to_value(proto::Ops { head: self.core.head(), ops, presets: self.presets.version, docs }).unwrap())
+                        ok(serde_json::to_value(proto::Ops {
+                            head: self.core.head(),
+                            ops,
+                            presets: self.presets.version,
+                            docs,
+                            format: self.format.unwrap_or(lightcraft_catalog::journal::VERSION),
+                        })
+                        .unwrap())
                     }
                     lightcraft_catalog::sync::Pull::Gone => status(410, json!({"error": "gone"})),
                 }
@@ -2503,5 +2513,36 @@ fn big_synced_library_timings() {
     time("sync.usage (previews left, counted)", &mut b, &mut |b| {
         b.sync_previews_left();
     });
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Hiding a photo hides it on the other devices, the Hidden password set on one opens Hidden on the other,
+/// and a server too old to keep photos hidden is never asked to.
+#[test]
+fn hidden_photos_and_the_password_reach_the_other_devices_and_an_old_server_is_refused() {
+    let mut f = Fake::new();
+    let (mut a, root, ids) = first_device("hidden", &mut f);
+    let mut b = open(&root.join("b"));
+    sign_in(&mut b);
+    sync(&mut b, &mut f);
+    assert!(b.visible().contains(&ids[0]));
+
+    a.selection = crate::Selection::single(ids[0]);
+    a.execute("photo.hide", &json!({})).unwrap();
+    a.execute("hidden.setPassword", &json!({"password": "shared one"})).unwrap();
+    sync(&mut a, &mut f);
+    sync(&mut b, &mut f);
+    assert!(b.catalog.photo(ids[0]).unwrap().hidden);
+    assert!(!b.visible().contains(&ids[0]), "hidden on the other device too");
+    assert!(b.hidden.has_password(), "the password came along");
+    b.execute("hidden.unlock", &json!({"password": "shared one"})).unwrap();
+
+    // a server from before the Hidden album would show it everywhere: Hide waits for it to be updated
+    f.format = Some(10);
+    sync(&mut a, &mut f);
+    a.selection = crate::Selection::single(ids[1]);
+    let e = a.execute("photo.hide", &json!({})).unwrap_err();
+    assert!(e.to_string().contains("Update LightCraft Server"), "{e}");
+    assert!(!a.catalog.photo(ids[1]).unwrap().hidden);
     let _ = std::fs::remove_dir_all(&root);
 }

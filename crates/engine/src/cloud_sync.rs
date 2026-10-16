@@ -379,6 +379,8 @@ pub struct SyncState {
     pub(crate) uploaded: HashSet<String>,
     /// A sign-in waiting to be sent (the password is never saved).
     login: Option<proto::Login>,
+    /// The catalog format the server keeps, from its last answer to a pull (`Some(0)`: a server older than the field).
+    pub(crate) server_format: Option<u32>,
     control: Option<(u64, Control)>,
     jobs: HashMap<u64, Job>,
     /// Requests beside the library's own sync (search by description through the server): what
@@ -490,7 +492,27 @@ pub struct SyncState {
     signout_paused: bool,
 }
 
+/// The catalog format that added the Hidden album (`Op::SetHidden`, `Photo.hidden`).
+const HIDDEN_FORMAT: u32 = 11;
+
+/// Why hiding photos waits for the sync server.
+const SERVER_TOO_OLD_FOR_HIDDEN: &str =
+    "Update LightCraft Server before hiding photos: this server can't keep them hidden, so they would show on your other devices";
+
+/// Refuse to hide photos while signed in to a server that can't keep them hidden (an older catalog format).
+pub(crate) fn check_server_keeps_hidden(s: &Session) -> crate::Result<()> {
+    match s.sync.as_ref() {
+        Some(st) if st.signed_in() && st.server_too_old_for_hidden() => Err(crate::EngineError::Other(SERVER_TOO_OLD_FOR_HIDDEN.into())),
+        _ => Ok(()),
+    }
+}
+
 impl SyncState {
+    /// The server answered a pull and keeps a catalog format older than the Hidden album's.
+    fn server_too_old_for_hidden(&self) -> bool {
+        self.server_format.is_some_and(|f| f < HIDDEN_FORMAT)
+    }
+
     fn new(config: SyncConfig) -> SyncState {
         SyncState {
             config,
@@ -498,6 +520,7 @@ impl SyncState {
             outbox_dirty: false,
             uploaded: HashSet::new(),
             login: None,
+            server_format: None,
             control: None,
             jobs: HashMap::new(),
             aux: HashMap::new(),
@@ -1393,6 +1416,9 @@ impl Session {
                     let t = st.http("GET", &path, Body::Empty, None);
                     st.control = Some((t.id(), Control::Pull));
                     tasks.push(t);
+                } else if !st.outbox.is_empty() && st.server_too_old_for_hidden() && st.outbox.carries_hidden() {
+                    // (it would show the photos on every other device: nothing is sent until the server is updated)
+                    st.fail(SERVER_TOO_OLD_FOR_HIDDEN.into());
                 } else if !st.outbox.is_empty() {
                     let (ops, pushed) = st.outbox.take_push(PUSH_LIMIT);
                     let body = serde_json::to_string(&proto::Push { base: st.config.cursor, ops }).unwrap_or_default();
@@ -1892,6 +1918,7 @@ impl Session {
                 _ if d.ok() => match decode::<proto::Ops>(d) {
                     Ok(ops) => {
                         let more = ops.ops.len() >= PULL_LIMIT;
+                        st.server_format = Some(ops.format);
                         st.presets_remote = ops.presets;
                         st.note_docs(&ops.docs);
                         if self.interaction.is_some() {

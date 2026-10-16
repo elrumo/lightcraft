@@ -24,6 +24,7 @@ pub fn photo_summary(p: &Photo) -> Value {
         "keywords": p.meta.keywords,
         "camera": p.meta.camera,
         "deleted": p.deleted,
+        "hidden": p.hidden,
         "copyOf": p.copy_of.map(|c| c.0),
         "copyName": p.copy_name,
         // an undecodable raw variant, shown and edited from its embedded JPEG: why
@@ -89,6 +90,8 @@ pub fn specs() -> Vec<CommandSpec> {
             let lim = pagination_usize(p.get("limit").and_then(Value::as_u64).unwrap_or(200));
             // a stacked photo's place in its stack: the grid's stack badge
             let stacks = if s.catalog.stacks().next().is_some() { s.catalog.stack_index() } else { Default::default() };
+            // (what the grid blurs, when Blur Sensitive Photos is on)
+            let sensitive = s.sensitive_ids();
             let items: Vec<Value> = ids
                 .iter()
                 .skip(off)
@@ -96,6 +99,9 @@ pub fn specs() -> Vec<CommandSpec> {
                 .filter_map(|id| s.catalog.photo(*id))
                 .map(|p| {
                     let mut v = photo_summary(p);
+                    if sensitive.contains(&p.id) {
+                        v["sensitive"] = json!(true);
+                    }
                     if let Some((sid, pos)) = stacks.get(&p.id)
                         && let Some(st) = s.catalog.stack(*sid)
                     {
@@ -107,13 +113,18 @@ pub fn specs() -> Vec<CommandSpec> {
             Ok(json!({"total": ids.len(), "photos": items}))
         }),
         cmd!(query "catalog.stats", "Catalog Statistics", [], None, "{}", always, |s, _| {
-            let all: Vec<_> = s.catalog.photos().filter(|p| p.in_library()).collect();
+            let sensitive = s.sensitive_photos().len();
+            let all: Vec<_> = s.catalog.photos().filter(|p| p.visible()).collect();
             Ok(json!({
                 "photos": all.len(),
                 "edited": all.iter().filter(|p| p.is_edited()).count(),
                 "picks": all.iter().filter(|p| p.flag == lightcraft_catalog::Flag::Pick).count(),
                 "rejects": all.iter().filter(|p| p.flag == lightcraft_catalog::Flag::Reject).count(),
-                "deleted": s.catalog.photos().filter(|p| p.deleted).count(),
+                "deleted": s.catalog.photos().filter(|p| p.deleted && (!p.hidden || s.hidden.showing())).count(),
+                // (how many photos the sensitive-content model flagged, here or on the server)
+                "sensitive": sensitive,
+                // (how many are hidden: only while Hidden is unlocked)
+                "hidden": s.hidden.unlocked().then(|| s.catalog.photos().filter(|p| p.in_library() && p.hidden).count()),
                 "albums": s.catalog.albums().filter(|a| !a.folder).count(),
                 "byDate": s.catalog.date_groups(),
                 "keywords": s.catalog.keywords(),
@@ -141,6 +152,8 @@ pub fn specs() -> Vec<CommandSpec> {
                 "undo": s.undo.last().map(|u| u.label.clone()),
                 "redo": s.redo.last().map(|u| u.label.clone()),
                 "clipboard": s.clipboard.is_some(),
+                "hidden": s.hidden_status(),
+                "blurSensitive": s.blur_sensitive,
             }))
         }),
         cmd!(query "photo.allMetadata", "All Metadata", [], None, "{id?} → {exif: [{group, tag, name, value}], xmp: [{name, value}]} — every EXIF / TIFF / GPS tag of the file and its XMP properties", always, |s, p| {

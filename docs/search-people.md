@@ -145,6 +145,14 @@ drag and no suggestions from your other names yet; it has been checked on a hand
 on a large real library. Face recognition is only as fair as its training data: expect more mistakes on some groups of people
 than others, which is one more reason names stay yours to give and confirm.
 
+## Possibly sensitive photos
+
+A fourth opt-in model, its own download: Falconsai's NSFW classifier flags photos that might be sensitive, in the same
+background pass, so they can be reviewed and hidden. It hides nothing by itself. See [hidden.md](hidden.md) →
+*Possibly sensitive photos* (commands `vision.setSensitive`, `vision.sensitive.download`, `vision.sensitive.list`,
+`library.hideSensitive`, `library.setBlurSensitive`; server `GET /api/sensitive`, admin page ▸ Search ▸ Sensitive
+content, `model download --sensitive`).
+
 ## On the server
 
 The server indexes each user's photos from the previews it already keeps (a worker wakes when a preview arrives, a folder

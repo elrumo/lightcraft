@@ -4,7 +4,7 @@ use lightcraft_develop::{ControlSpec, SettingsGroup};
 use serde_json::json;
 
 use crate::LightcraftApp;
-use crate::state::Dialog;
+use crate::state::{Dialog, HiddenPrompt};
 use crate::theme::Tokens;
 
 /// Rows the Rename dialog previews.
@@ -112,6 +112,9 @@ fn ok_label(app: &LightcraftApp, dlg: &Dialog, informational: bool) -> String {
         Dialog::RemoveFolder { .. } => "Remove",
         Dialog::EditIn { .. } => "Edit",
         Dialog::ShareLink { .. } => "Create Link",
+        Dialog::HiddenPassword { mode: HiddenPrompt::Unlock, .. } => "Unlock",
+        Dialog::HiddenPassword { mode: HiddenPrompt::Create, .. } => "Set Password",
+        Dialog::HiddenPassword { mode: HiddenPrompt::Change, .. } => "Save",
         Dialog::LightroomCatalog { .. } => "Import Lightroom Catalog…",
         Dialog::SynchronizeFolder { .. } => "Synchronize",
         Dialog::Export { .. } => "Export",
@@ -212,6 +215,9 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
         Dialog::NewAlbum { .. } => "Create Album",
         Dialog::RenameAlbum { .. } => "Rename Album",
         Dialog::ShareLink { .. } => "Share Link",
+        Dialog::HiddenPassword { mode: HiddenPrompt::Unlock, .. } => "Hidden",
+        Dialog::HiddenPassword { mode: HiddenPrompt::Create, .. } => "Set a Password for Hidden",
+        Dialog::HiddenPassword { mode: HiddenPrompt::Change, .. } => "Change Hidden Password",
         Dialog::Rename { .. } => "Rename Photos",
         Dialog::Import { .. } => "Import Photos",
         Dialog::PresetImport { .. } => "Import Presets",
@@ -291,7 +297,8 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                 Dialog::DenoiseModel { accepted: false, .. } | Dialog::FaceModel { accepted: false, .. } | Dialog::SynchronizeFolder { counts: None, .. }
             ) && !matches!(&dlg, Dialog::SmartRules { id, rules, .. } if !rules.check_for(&app.session.catalog, id.map(lightcraft_catalog::AlbumId)).is_empty())
             // (a link's password, if there is one, is long enough)
-            && !matches!(&dlg, Dialog::ShareLink { password, .. } if !password.is_empty() && password.chars().count() < lightcraft_engine::cloud_sync::SHARE_PASSWORD_MIN));
+            && !matches!(&dlg, Dialog::ShareLink { password, .. } if !password.is_empty() && password.chars().count() < lightcraft_engine::cloud_sync::SHARE_PASSWORD_MIN)
+            && !matches!(&dlg, Dialog::HiddenPassword { mode, password, confirm, .. } if !hidden_password_ok(*mode, password, confirm)));
     // (taken before `body` borrows the dialog)
     let confirm_delete = if let Dialog::ConfirmDelete { count } = &dlg { Some(*count) } else { None };
     let ok = ok_label(app, &dlg, informational);
@@ -826,6 +833,12 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                     confirm = true;
                 }
             }
+            Dialog::HiddenPassword { mode, current, password, confirm: again, .. } => {
+                let locked = !app.session.hidden.unlocked();
+                if hidden_password_body(ui, &t, *mode, locked, current, password, again) {
+                    confirm = true;
+                }
+            }
             Dialog::CreatePreset { name, group, groups } => {
                 crate::widgets::named(
                     ui.add(crate::widgets::text_box(
@@ -1339,6 +1352,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                         | Dialog::KeywordSet { .. }
                         | Dialog::SynchronizeFolder { .. }
                         | Dialog::ShareLink { .. }
+                        | Dialog::HiddenPassword { .. }
                         | Dialog::SaveEffect { .. }
                 ) =>
             {
@@ -1650,6 +1664,14 @@ pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_jso
             // (the link arrives with the next sync, and goes on the clipboard: `sync_ui::poll`)
             app.run("album.share", p)
         }
+        Dialog::HiddenPassword { mode, show, current, password, .. } => {
+            match mode {
+                HiddenPrompt::Unlock => app.run("hidden.unlock", json!({"password": password}))?,
+                HiddenPrompt::Create => app.run("hidden.setPassword", json!({"password": password}))?,
+                HiddenPrompt::Change => return app.run("hidden.setPassword", json!({"password": password, "current": current})),
+            };
+            show_unlocked(app, *show)
+        }
         Dialog::TextPrompt { value, command, params, key, .. } => {
             let mut p = params.clone();
             p[key.as_str()] = json!(value.trim());
@@ -1844,6 +1866,94 @@ pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_jso
 }
 
 /// Open a one-field dialog that runs `command` with `params` + `{key: typed value}`.
+/// Show the Hidden album (`show`: turn on Show Hidden instead), asking for the password first while Hidden is
+/// locked (or to choose one, when the library has none yet).
+pub fn open_hidden(app: &mut LightcraftApp, show: bool) -> Result<serde_json::Value, String> {
+    if app.session.hidden.unlocked() {
+        return show_unlocked(app, show);
+    }
+    let mode = if app.session.hidden.has_password() { HiddenPrompt::Unlock } else { HiddenPrompt::Create };
+    app.ui.dialog = Some(Dialog::HiddenPassword { mode, show, current: String::new(), password: String::new(), confirm: String::new() });
+    Ok(json!({}))
+}
+
+/// Hidden is unlocked: show the Hidden album, or turn on Show Hidden.
+fn show_unlocked(app: &mut LightcraftApp, show: bool) -> Result<serde_json::Value, String> {
+    if show {
+        return app.run("library.showHidden", json!({"on": true}));
+    }
+    let r = app.run("library.source", json!({"kind": "hidden"}));
+    if r.is_ok() {
+        crate::panels::left::leave_people(app);
+    }
+    r
+}
+
+/// Change the Hidden password (Settings): asks for the current one while Hidden is locked.
+pub fn change_hidden_password(app: &mut LightcraftApp) {
+    let mode = if app.session.hidden.has_password() { HiddenPrompt::Change } else { HiddenPrompt::Create };
+    app.ui.dialog = Some(Dialog::HiddenPassword { mode, show: false, current: String::new(), password: String::new(), confirm: String::new() });
+}
+
+/// What the Hidden password dialog can confirm: a password to unlock with, or a new one typed the same twice.
+fn hidden_password_ok(mode: HiddenPrompt, password: &str, confirm: &str) -> bool {
+    match mode {
+        HiddenPrompt::Unlock => !password.is_empty(),
+        HiddenPrompt::Create | HiddenPrompt::Change => password.chars().count() >= lightcraft_engine::hidden::MIN_PASSWORD && password == confirm,
+    }
+}
+
+/// The Hidden password dialog's fields. True when Return confirms.
+fn hidden_password_body(
+    ui: &mut egui::Ui,
+    t: &Tokens,
+    mode: HiddenPrompt,
+    locked: bool,
+    current: &mut String,
+    password: &mut String,
+    confirm: &mut String,
+) -> bool {
+    let first = just_opened(ui, "hiddenPassword");
+    let field = |ui: &mut egui::Ui, id: &str, text: &mut String, hint: &str, focus: bool| {
+        let mut f = crate::text_field::TextField::singleline(id, text).password(true).hint(crate::i18n::tr(hint)).width(f32::INFINITY);
+        if crate::is_compact(ui.ctx()) {
+            f = f.font(egui::FontId::proportional(17.0)).margin(egui::Margin::symmetric(12, 10));
+        }
+        let r = f.show(ui);
+        if focus {
+            r.response.request_focus();
+        }
+        r.ending == Some(crate::text_field::Ending::Return)
+    };
+    let note = match mode {
+        HiddenPrompt::Unlock => "Enter the password to see your hidden photos.",
+        HiddenPrompt::Create => {
+            "Choose a password for Hidden. It opens Hidden on all your devices; on an iPhone, iPad or Mac, Face ID or Touch ID does."
+        }
+        HiddenPrompt::Change => "The new password opens Hidden on all your devices.",
+    };
+    ui.label(egui::RichText::new(crate::i18n::tr(note)).color(t.text_dim));
+    let mut enter = false;
+    if mode == HiddenPrompt::Change && locked {
+        enter |= field(ui, "field:hiddenCurrent", current, "Current password", first);
+    }
+    let focus_new = first && !(mode == HiddenPrompt::Change && locked);
+    let hint = if mode == HiddenPrompt::Unlock { "Password" } else { "New password" };
+    enter |= field(ui, "field:hiddenPassword", password, hint, focus_new);
+    if mode != HiddenPrompt::Unlock {
+        enter |= field(ui, "field:hiddenConfirm", confirm, "Type it again", false);
+        let short = !password.is_empty() && password.chars().count() < lightcraft_engine::hidden::MIN_PASSWORD;
+        let differ = !confirm.is_empty() && confirm != password;
+        let (note, warn) = match (short, differ) {
+            (true, _) => ("A password has at least 4 characters.", true),
+            (_, true) => ("The two passwords are different.", true),
+            _ => ("Hidden keeps photos out of sight; it doesn't encrypt them.", false),
+        };
+        ui.label(egui::RichText::new(crate::i18n::tr(note)).color(if warn { t.caution } else { t.text_dim }));
+    }
+    enter && hidden_password_ok(mode, password, confirm)
+}
+
 pub fn prompt(app: &mut LightcraftApp, title: &str, hint: &str, value: &str, command: &str, params: serde_json::Value, key: &str) {
     app.ui.dialog =
         Some(Dialog::TextPrompt { title: title.into(), hint: hint.into(), value: value.into(), command: command.into(), params, key: key.into() });

@@ -1000,6 +1000,26 @@ const FEATURES = {
       bytes(f.sizeBytes) + ' download onto this server under the ' + f.license + '. Downloading them means accepting that licence: ' + f.licenseUrl +
       " Afterwards the server reads every user's photos in the background, about a second each.",
     done: 'Finding photos by their words is on for everyone on this server.',
+    models: 'PP-OCRv6',
+  },
+  sn: {
+    path: 'search/sensitive',
+    pick: (s) => s.sensitive,
+    users: 'checked',
+    what: 'sensitive-content model',
+    on: "On: the server checks every user's photos in the background, and their devices list and blur the ones that might be sensitive. Nothing is hidden by it.",
+    off: 'Off. What was checked is kept, so turning this on again picks up where it left off.',
+    needs: (f) => 'Needs the sensitive-content model: ' + bytes(f.sizeBytes) + ', downloaded once onto this server.',
+    getting: 'Downloading the sensitive-content model onto this server…',
+    label: 'Photos are checked once the model is ready.',
+    idle: 'Nothing is checked while this is off.',
+    title: 'Download the sensitive-content model?',
+    ask: (f) =>
+      'Flagging photos that might be sensitive (nudity and the like) uses an AI model that looks at each photo. It is not part of LightCraft: it is nsfw_image_detection from Falcons.ai, a ' +
+      bytes(f.sizeBytes) + ' download onto this server under the ' + f.license + '. Downloading it means accepting that licence: ' + f.licenseUrl +
+      " Afterwards the server checks every user's photos in the background. It can be wrong both ways: it only suggests, and each person decides what to hide.",
+    done: 'Flagging photos that might be sensitive is on for everyone on this server.',
+    models: 'nsfw_image_detection',
   },
 };
 
@@ -1029,7 +1049,7 @@ function fact(list, k, v, code) {
   list.append(el('dt', {}, k), el('dd', { class: code ? 'code' : null }, v));
 }
 
-const PART_KEY = { sr: 'search', tx: 'text', fc: 'faces' };
+const PART_KEY = { sr: 'search', tx: 'text', fc: 'faces', sn: 'sensitive' };
 const hhmm = (m) => String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
 // (the server keeps the window in UTC; the admin sees and sets their own time)
 const toLocalMin = (utc) => (((utc - new Date().getTimezoneOffset()) % 1440) + 1440) % 1440;
@@ -1098,7 +1118,7 @@ function showFeature(p, s) {
     fact(facts, 'Kept in', s.dir, true);
     if (f.active) fact(facts, 'In memory', s.loaded ? 'Yes (it unloads after ten idle minutes)' : 'Not now (it loads on the first search)');
   } else {
-    fact(facts, 'Models', f.installed ? 'PP-OCRv6 (installed)' : 'PP-OCRv6 (not downloaded)');
+    fact(facts, 'Models', F.models + (f.installed ? ' (installed)' : ' (not downloaded)'));
     fact(facts, 'Licence', el('a', { href: f.licenseUrl, target: '_blank', rel: 'noopener noreferrer' }, f.license));
   }
   const list = $(p + 'Users');
@@ -1143,7 +1163,7 @@ function showPeople(s) {
 }
 
 function showSearch([s]) {
-  const again = [showFeature('sr', s), showFeature('tx', s), showPeople(s)].some(Boolean);
+  const again = [showFeature('sr', s), showFeature('tx', s), showFeature('sn', s), showPeople(s)].some(Boolean);
   clearTimeout(timer);
   // (downloads and describing run on the server: watch them)
   if (again) timer = setTimeout(route, 2000);
@@ -1396,8 +1416,8 @@ document.addEventListener('DOMContentLoaded', () => {
   $('addUser').addEventListener('click', addUser);
   $('gcCheck').addEventListener('click', gcCheck);
   $('gcRun').addEventListener('click', gcRun);
-  for (const p of ['sr', 'tx']) $(p + 'Switch').addEventListener('change', (e) => toggleFeature(p, e));
-  for (const p of ['sr', 'tx', 'fc']) $(p + 'Cancel').addEventListener('click', () => cancelDownload(p));
+  for (const p of ['sr', 'tx', 'sn']) $(p + 'Switch').addEventListener('change', (e) => toggleFeature(p, e));
+  for (const p of ['sr', 'tx', 'fc', 'sn']) $(p + 'Cancel').addEventListener('click', () => cancelDownload(p));
   $('fcDownload').addEventListener('click', downloadFaces);
   window.addEventListener('hashchange', route);
   start();

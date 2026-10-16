@@ -1,5 +1,6 @@
-//! Photo understanding for the library: natural-language search (image and text embeddings) and,
-//! later, faces. This crate holds the parts that don't depend on a model runtime, so they build
+//! Photo understanding for the library: natural-language search (image and text embeddings), the
+//! text in photos, faces, and how likely a photo is to be sensitive ([`sensitive`]).
+//! This crate holds the parts that don't depend on a model runtime, so they build
 //! everywhere (web and iOS included): the on-disk record store ([`store`]) and the embedding index
 //! with its cosine search ([`index`]).
 //!
@@ -20,10 +21,13 @@ pub mod index;
 #[cfg(all(feature = "siglip", not(target_arch = "wasm32")))]
 pub mod models;
 #[cfg(all(feature = "onnx", not(target_arch = "wasm32")))]
+pub mod nsfw;
+#[cfg(all(feature = "onnx", not(target_arch = "wasm32")))]
 pub mod ocr;
 // protobuf bytes only (no runtime), so it builds everywhere: the web eraser uses it too
 pub mod onnxfix;
 pub mod reader;
+pub mod sensitive;
 #[cfg(all(feature = "siglip", not(target_arch = "wasm32")))]
 pub mod siglip;
 pub mod store;
@@ -35,6 +39,7 @@ pub use embedder::Embedder;
 pub use faces::FaceEngine;
 pub use index::{EmbeddingIndex, Hit, Import};
 pub use reader::TextReader;
+pub use sensitive::{Classifier, SensitiveIndex};
 pub use store::{Error, Key};
 pub use textindex::TextIndex;
 

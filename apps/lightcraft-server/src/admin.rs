@@ -414,6 +414,12 @@ pub fn api(st: &State, req: &mut Request, method: &Method, rest: &str) -> Resp {
             log::info!("admin {me}: reading the text in photos turned {}", if b.enabled { "on" } else { "off" });
             Ok(search(st))
         }),
+        (Method::Put, ["search", "sensitive"]) => read_json::<Enabled>(req).map_err(Err).and_then(|b| {
+            st.vision.set_sensitive_enabled(b.enabled).map_err(|e| Ok((500, e)))?;
+            log::info!("admin {me}: checking photos for sensitive content turned {}", if b.enabled { "on" } else { "off" });
+            st.vision.wake();
+            Ok(search(st))
+        }),
         (Method::Put, ["search", "schedule", kind]) => match Part::from_key(kind) {
             None => Err(Ok((404, "no such part".to_string()))),
             Some(part) => read_json::<Schedule>(req).map_err(Err).and_then(|b| {
@@ -430,6 +436,9 @@ pub fn api(st: &State, req: &mut Request, method: &Method, rest: &str) -> Resp {
         (Method::Post, ["search", "download"]) => read_json::<Licence>(req).map_err(Err).and_then(|l| fetch_models(st, &me, Part::Search, l)),
         (Method::Post, ["search", "text", "download"]) => read_json::<Licence>(req).map_err(Err).and_then(|l| fetch_models(st, &me, Part::Text, l)),
         (Method::Post, ["search", "faces", "download"]) => read_json::<Licence>(req).map_err(Err).and_then(|l| fetch_models(st, &me, Part::Faces, l)),
+        (Method::Post, ["search", "sensitive", "download"]) => {
+            read_json::<Licence>(req).map_err(Err).and_then(|l| fetch_models(st, &me, Part::Sensitive, l))
+        }
         (Method::Delete, ["search", "download"]) => {
             st.vision.switch.cancel(Part::Search);
             Ok(search(st))
@@ -440,6 +449,10 @@ pub fn api(st: &State, req: &mut Request, method: &Method, rest: &str) -> Resp {
         }
         (Method::Delete, ["search", "faces", "download"]) => {
             st.vision.switch.cancel(Part::Faces);
+            Ok(search(st))
+        }
+        (Method::Delete, ["search", "sensitive", "download"]) => {
+            st.vision.switch.cancel(Part::Sensitive);
             Ok(search(st))
         }
         // (faces are personal data: found only for a user an admin turned it on for)
@@ -593,6 +606,10 @@ fn terms(part: Part) -> (f64, String) {
         Part::Faces => {
             (FACE_BYTES as f64, format!("{} ({}) and {} ({})", FACE_LICENSES[0].0, FACE_LICENSES[0].1, FACE_LICENSES[1].0, FACE_LICENSES[1].1))
         }
+        Part::Sensitive => {
+            use lightcraft_engine::vision::{SENSITIVE_BYTES, SENSITIVE_LICENSE_NAME, SENSITIVE_LICENSE_URL};
+            (SENSITIVE_BYTES as f64, format!("{SENSITIVE_LICENSE_NAME} ({SENSITIVE_LICENSE_URL})"))
+        }
     }
 }
 
@@ -605,12 +622,14 @@ fn fetch_models(st: &State, me: &str, part: Part, l: Licence) -> AdminResult {
             Part::Search => ("the search model", format!("{:.1} GB", bytes / 1e9)),
             Part::Text => ("the text-reading models", format!("{:.0} MB", bytes / 1e6)),
             Part::Faces => ("the face models", format!("{:.0} MB", bytes / 1e6)),
+            Part::Sensitive => ("the sensitive-content model", format!("{:.0} MB", bytes / 1e6)),
         };
         return Err(Ok((400, format!("{what}: a {size} download under the {licences}: send `acknowledged: true` once you agree to it"))));
     }
     match part {
         Part::Search => st.vision.set_enabled(true),
         Part::Text => st.vision.set_text_enabled(true),
+        Part::Sensitive => st.vision.set_sensitive_enabled(true),
         Part::Faces => Ok(()),
     }
     .map_err(|e| Ok((500, e)))?;
@@ -628,7 +647,7 @@ fn search(st: &State) -> Value {
     let v = &st.vision;
     let (model, dim) = v.spec();
     // (what the server has indexed only matters while it does something)
-    let busy = v.installed() || v.text_installed() || v.faces_installed();
+    let busy = v.installed() || v.text_installed() || v.faces_installed() || v.sensitive_installed();
     let users: Vec<Value> = accounts::read_users(&st.data)
         .map(|f| f.users.into_iter().map(|(name, u)| (name, u.faces)).collect::<Vec<_>>())
         .unwrap_or_default()
@@ -639,7 +658,8 @@ fn search(st: &State) -> Value {
                 None => (None, None, None),
             };
             let total = a.as_ref().or(b.as_ref()).or(c.as_ref()).map(|p| p.total);
-            json!({"name": name, "faces": faces, "total": total, "indexed": a.map(|p| p.done), "read": b.map(|p| p.done), "found": c.map(|p| p.done)})
+            let checked = v.sensitive_installed().then(|| v.sensitive.index(&st.data, &name, false).ok().flatten().map_or(0, |ix| ix.lock().unwrap_or_else(PoisonError::into_inner).len()));
+            json!({"name": name, "faces": faces, "total": total, "indexed": a.map(|p| p.done), "read": b.map(|p| p.done), "found": c.map(|p| p.done), "checked": checked})
         })
         .collect();
     // paused / window / time left for one part; the left is photos still to do times the lately measured time each took
@@ -683,6 +703,16 @@ fn search(st: &State) -> Value {
             "licenses": FACE_LICENSES.iter().map(|(name, url)| json!({"name": name, "url": url})).collect::<Vec<_>>(),
             "download": v.switch.status(Part::Faces),
             "schedule": schedule(Part::Faces, |u| u["found"].as_u64()),
+        },
+        "sensitive": {
+            "enabled": v.switch.sensitive_enabled(),
+            "installed": v.sensitive.files_installed(),
+            "active": v.sensitive_installed(),
+            "sizeBytes": lightcraft_engine::vision::SENSITIVE_BYTES,
+            "license": lightcraft_engine::vision::SENSITIVE_LICENSE_NAME,
+            "licenseUrl": lightcraft_engine::vision::SENSITIVE_LICENSE_URL,
+            "download": v.switch.status(Part::Sensitive),
+            "schedule": schedule(Part::Sensitive, |u| u["checked"].as_u64()),
         },
         "users": users,
     })

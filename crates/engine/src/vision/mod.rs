@@ -18,7 +18,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, PoisonError};
 use web_time::{Duration, Instant};
@@ -27,15 +27,18 @@ use lightcraft_catalog::PhotoId;
 use lightcraft_develop::DevelopSettings;
 use lightcraft_raster::Rgba8;
 use lightcraft_vision::faces::index::FaceIndex;
-use lightcraft_vision::{Embedder, EmbeddingIndex, FaceEngine, Hit, Key, TextIndex, TextReader};
+use lightcraft_vision::{Classifier, Embedder, EmbeddingIndex, FaceEngine, Hit, Key, SensitiveIndex, TextIndex, TextReader};
 use serde_json::{Value, json};
 
 use crate::media::{RenderJob, SourceLevel, content_key};
 use crate::{Session, guard, memory};
 
 mod people;
+mod sensitive;
 mod server;
 pub use people::{Cluster, FaceRef, clusters_of};
+use sensitive::{ClassSpec, ClassifierProvider};
+pub use sensitive::{SENSITIVE_BYTES, SENSITIVE_DIR, SENSITIVE_LICENSE_NAME, SENSITIVE_LICENSE_URL, SENSITIVE_MIN, SENSITIVE_NOT_INSTALLED};
 pub(crate) use server::Aux;
 
 /// A number that is never used twice in this process (temporary file names).
@@ -135,6 +138,12 @@ struct FinderProvider {
 /// What worker threads and the session share.
 #[derive(Default)]
 struct Shared {
+    classifier: Mutex<Option<Arc<dyn Classifier>>>,
+    sensitive_ix: Mutex<Option<(Option<PathBuf>, SensitiveIndex)>>,
+    /// Photos scored, readable without the scores' lock; bumped with every change of them.
+    sensitive_len: AtomicUsize,
+    sensitive_rev: AtomicU64,
+    sensitive_opened: AtomicBool,
     finder: Mutex<Option<Arc<dyn FaceEngine>>>,
     face_ix: Mutex<Option<(Option<PathBuf>, FaceIndex)>>,
     /// Faces and photos looked at in the face index, readable without its lock.
@@ -193,6 +202,8 @@ pub struct IndexJob {
     pub reading: AtomicBool,
     /// The run is looking for faces in photos (after reading them).
     pub finding: AtomicBool,
+    /// The run is checking photos for sensitive content (last).
+    pub checking: AtomicBool,
     error: Mutex<Option<String>>,
 }
 
@@ -201,9 +212,11 @@ impl IndexJob {
         self.error.lock().unwrap_or_else(PoisonError::into_inner).clone()
     }
 
-    /// What the run is doing now: `describing`, `reading` (text) or `finding` (faces).
+    /// What the run is doing now: `describing`, `reading` (text), `finding` (faces) or `checking` (sensitive content).
     pub fn phase(&self) -> &'static str {
-        if self.finding.load(Ordering::Relaxed) {
+        if self.checking.load(Ordering::Relaxed) {
+            "checking"
+        } else if self.finding.load(Ordering::Relaxed) {
             "finding"
         } else if self.reading.load(Ordering::Relaxed) {
             "reading"
@@ -268,6 +281,9 @@ pub struct Vision {
     /// Find the faces in photos and group them into people. Off until the user turns it on
     /// (persisted in the library's prefs.json): it needs its own download and the user's yes.
     pub faces: bool,
+    /// Check photos for sensitive content (nudity and the like). Off until the user turns it on
+    /// (persisted in the library's prefs.json): it needs its own download and the user's yes.
+    pub sensitive: bool,
     /// This device runs none of the models even if this build could (a thin client; tests of one):
     /// it searches and lists people through the sync server.
     #[doc(hidden)]
@@ -278,6 +294,9 @@ pub struct Vision {
     injected: Option<Arc<dyn Embedder>>,
     injected_reader: Option<Arc<dyn TextReader>>,
     injected_finder: Option<Arc<dyn FaceEngine>>,
+    injected_classifier: Option<Arc<dyn Classifier>>,
+    /// The possibly sensitive photos, best first, and what they were worked out from.
+    sensitive_list: Option<(sensitive::ListKey, Arc<Vec<(PhotoId, f32)>>, Arc<HashSet<PhotoId>>)>,
     people: people::Cache,
     remote: server::Remote,
     shared: Arc<Shared>,
@@ -295,6 +314,8 @@ pub struct Vision {
     text_download: crate::download::Downloader,
     #[cfg(feature = "vision")]
     faces_download: crate::download::Downloader,
+    #[cfg(feature = "vision")]
+    sensitive_download: crate::download::Downloader,
 }
 
 impl Default for Vision {
@@ -307,11 +328,14 @@ impl Default for Vision {
             local_only: false,
             text: false,
             faces: false,
+            sensitive: false,
             thin: false,
             text_edge: TEXT_EDGE,
             injected: None,
             injected_reader: None,
             injected_finder: None,
+            injected_classifier: None,
+            sensitive_list: None,
             people: people::Cache::default(),
             remote: server::Remote::default(),
             shared: Arc::new(Shared::default()),
@@ -328,6 +352,8 @@ impl Default for Vision {
             text_download: crate::download::Downloader::default(),
             #[cfg(feature = "vision")]
             faces_download: crate::download::Downloader::default(),
+            #[cfg(feature = "vision")]
+            sensitive_download: crate::download::Downloader::default(),
         }
     }
 }
@@ -457,6 +483,11 @@ impl Vision {
         s.face_len.store(0, Ordering::Relaxed);
         s.face_photos.store(0, Ordering::Relaxed);
         s.faces_opened.store(false, Ordering::Relaxed);
+        *s.sensitive_ix.lock().unwrap_or_else(PoisonError::into_inner) = None;
+        s.sensitive_len.store(0, Ordering::Relaxed);
+        s.sensitive_rev.fetch_add(1, Ordering::Relaxed);
+        s.sensitive_opened.store(false, Ordering::Relaxed);
+        self.sensitive_list = None;
     }
 
     /// Notices from background work, for the user (taken: each is returned once).
@@ -1008,16 +1039,18 @@ struct Plan {
     semantic: Option<(Provider, IndexSpec)>,
     text: Option<(ReaderProvider, TextSpec)>,
     faces: Option<(FinderProvider, FaceSpec)>,
+    sensitive: Option<(ClassifierProvider, ClassSpec)>,
     embed: Vec<(Key, RenderJob)>,
     read: Vec<(Key, RenderJob)>,
     scan: Vec<(Key, RenderJob)>,
+    check: Vec<(Key, RenderJob)>,
 }
 
 /// Embeds `plan.embed`'s photos in batches and stores their vectors, then reads the text of
 /// `plan.read`'s and stores that.
 fn run_index(shared: &Arc<Shared>, plan: Plan, job: &IndexJob) {
     let _busy = Busy::new(shared);
-    let Plan { semantic, text, faces, embed, read, scan } = plan;
+    let Plan { semantic, text, faces, sensitive, embed, read, scan, check } = plan;
     let result = guard::catch("indexing photos", || -> Result<(), String> {
         if let Some((provider, spec)) = &semantic {
             describe_photos(shared, provider, spec, embed, job)?;
@@ -1035,6 +1068,13 @@ fn run_index(shared: &Arc<Shared>, plan: Plan, job: &IndexJob) {
         {
             job.finding.store(true, Ordering::Relaxed);
             find_faces(shared, provider, spec, scan, job)?;
+        }
+        if let Some((provider, spec)) = &sensitive
+            && !job.cancel.load(Ordering::Relaxed)
+            && job.error().is_none()
+        {
+            job.checking.store(true, Ordering::Relaxed);
+            sensitive::check_photos(shared, provider, spec, check, job)?;
         }
         Ok(())
     });
@@ -1275,6 +1315,16 @@ impl Session {
         map
     }
 
+    /// [`Session::vision_keys`] without the hidden photos, unless Show Hidden is on: what People lists.
+    pub(crate) fn vision_keys_shown(&self) -> HashMap<Key, Vec<PhotoId>> {
+        let showing = self.hidden.showing();
+        let mut map: HashMap<Key, Vec<PhotoId>> = HashMap::new();
+        for p in self.catalog.photos().filter(|p| p.in_library() && (showing || !p.hidden)) {
+            map.entry(Key::of(&content_key(p))).or_default().push(p.id);
+        }
+        map
+    }
+
     /// How many photos the index can hold: the library's photos, distinct by content.
     pub fn vision_photo_count(&self) -> usize {
         self.vision_keys().len()
@@ -1315,6 +1365,7 @@ impl Session {
                 "licenses": FACE_LICENSES.iter().map(|(n, u)| json!({"name": n, "url": u})).collect::<Vec<_>>(),
                 "download": v.faces_download_status(),
             },
+            "sensitive": self.sensitive_status(),
             "text": {
                 "available": v.text_available(),
                 "enabled": v.text,
@@ -1351,10 +1402,15 @@ impl Session {
         } else {
             Err(String::new())
         };
-        if semantic.is_err() && text.is_err() && faces.is_err() {
+        let sensitive = if self.vision.sensitive {
+            self.vision.classifier_provider().map(|(p, engine)| (p, ClassSpec { path: self.vision_sensitive_path(&engine), engine }))
+        } else {
+            Err(String::new())
+        };
+        if semantic.is_err() && text.is_err() && faces.is_err() && sensitive.is_err() {
             return Err(semantic.err().unwrap_or_default());
         }
-        let (semantic, text, faces) = (semantic.ok(), text.ok(), faces.ok());
+        let (semantic, text, faces, sensitive) = (semantic.ok(), text.ok(), faces.ok(), sensitive.ok());
         let shared = self.vision.shared.clone();
         let mut seen: HashSet<Key> = match &semantic {
             Some((_, spec)) => with_index(&shared, spec, |ix| ix.keys().copied().collect())?,
@@ -1366,6 +1422,10 @@ impl Session {
         };
         let mut seen_faces: HashSet<Key> = match &faces {
             Some((_, spec)) => with_faces(&shared, spec, |ix| ix.keys().copied().collect())?,
+            None => HashSet::new(),
+        };
+        let mut seen_checked: HashSet<Key> = match &sensitive {
+            Some((_, spec)) => sensitive::with_sensitive(&shared, spec, |ix| ix.keys().collect())?,
             None => HashSet::new(),
         };
         let want: Vec<PhotoId> = match ids {
@@ -1381,8 +1441,8 @@ impl Session {
         }
         #[cfg(target_arch = "wasm32")]
         self.sync_want_minis(&want);
-        let (mut embed, mut read, mut scan): (Vec<(Key, RenderJob)>, Vec<(Key, RenderJob)>, Vec<(Key, RenderJob)>) =
-            (Vec::new(), Vec::new(), Vec::new());
+        let (mut embed, mut read, mut scan, mut check): (Vec<(Key, RenderJob)>, Vec<(Key, RenderJob)>, Vec<(Key, RenderJob)>, Vec<(Key, RenderJob)>) =
+            (Vec::new(), Vec::new(), Vec::new(), Vec::new());
         let (mut failed, edge) = (0, self.vision.text_edge);
         for id in want {
             if self.catalog.photo(id).and_then(|p| self.synced_tier(p)) == Some(0) {
@@ -1393,13 +1453,17 @@ impl Session {
             let describe = semantic.is_some() && seen.insert(key);
             let reads = text.is_some() && seen_text.insert(key);
             let looks = faces.is_some() && seen_faces.insert(key);
+            let checks = sensitive.is_some() && seen_checked.insert(key);
             // a neutral rendering: the photo as its file looks, whatever the user did to it; not
             // cached, so indexing doesn't fill the thumbnail cache with a second set
-            if describe {
+            for (wanted, list) in [(describe, &mut embed), (checks, &mut check)] {
+                if !wanted {
+                    continue;
+                }
                 match self.variant_job(id, &DevelopSettings::default(), THUMB_EDGE) {
                     Some(mut job) => {
                         job.cache = None;
-                        embed.push((key, job));
+                        list.push((key, job));
                     }
                     None => failed += 1,
                 }
@@ -1417,12 +1481,12 @@ impl Session {
                 }
             }
         }
-        let job = Arc::new(IndexJob { total: embed.len() + read.len() + scan.len() + failed, ..Default::default() });
+        let job = Arc::new(IndexJob { total: embed.len() + read.len() + scan.len() + check.len() + failed, ..Default::default() });
         job.done.store(failed, Ordering::Relaxed);
         job.failed.store(failed, Ordering::Relaxed);
         self.vision.job = Some(job.clone());
         self.vision.job_reported = wait;
-        let plan = Plan { semantic, text, faces, embed, read, scan };
+        let plan = Plan { semantic, text, faces, sensitive, embed, read, scan, check };
         if wait || !self.vision.background || cfg!(target_arch = "wasm32") {
             run_index(&shared, plan, &job);
             self.vision.job_reported = true;
@@ -1659,6 +1723,9 @@ impl Session {
             *fd = None;
             *fx = None;
             sh.faces_opened.store(false, Ordering::Relaxed);
+            if let Ok(mut c) = sh.classifier.try_lock() {
+                *c = None;
+            }
             sh.loaded.store(false, Ordering::SeqCst);
             sh.opened.store(false, Ordering::Relaxed);
             sh.text_opened.store(false, Ordering::Relaxed);
@@ -1671,5 +1738,7 @@ impl Session {
 mod tests;
 #[cfg(test)]
 mod tests_people;
+#[cfg(test)]
+mod tests_sensitive;
 #[cfg(test)]
 mod tests_text;

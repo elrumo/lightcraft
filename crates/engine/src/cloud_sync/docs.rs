@@ -30,7 +30,7 @@ enum Key {
 }
 
 /// The documents, in the order they are synced.
-const SPECS: [(&str, Key); 9] = [
+const SPECS: [(&str, Key); 10] = [
     ("export-presets", Key::Name),
     ("metadata-presets", Key::Name),
     ("filter-presets", Key::Name),
@@ -40,6 +40,8 @@ const SPECS: [(&str, Key); 9] = [
     ("lut-profiles", Key::Id),
     ("prefs", Key::Id),
     ("preset-groups", Key::Id),
+    // the Hidden password (its own document: a device that doesn't know it never drops it from `prefs`)
+    ("privacy", Key::Id),
 ];
 
 /// Items taken from the server per document at most (untrusted input).
@@ -50,6 +52,10 @@ const CUBE_MAX: usize = 4 << 20;
 const NAME_MAX: usize = 200;
 /// The id of the one item of the `prefs` document.
 const IMPORT_ITEM: &str = "import";
+/// The item of `privacy` that holds the Hidden password's hash.
+const PASSWORD_ITEM: &str = "password";
+/// The item of `privacy` that turns blurring the possibly sensitive photos off (absent: on).
+const BLUR_ITEM: &str = "blurSensitive";
 /// The id of the one item of the `preset-groups` document (its `groups`: the order of the preset groups).
 const GROUPS_ITEM: &str = "order";
 /// The import defaults that name a place on one computer: not shared.
@@ -154,6 +160,7 @@ impl Session {
             // (nothing until the user reorders: a device that never did doesn't send a default)
             "preset-groups" if self.preset_group_order.is_empty() => Vec::new(),
             "preset-groups" => vec![json!({"id": GROUPS_ITEM, "groups": self.preset_group_order})],
+            "privacy" => self.privacy_items(),
             _ => Vec::new(),
         }
     }
@@ -177,9 +184,35 @@ impl Session {
             "lut-profiles" => self.set_lut_profiles(items),
             "prefs" => self.set_import_defaults(items),
             "preset-groups" => self.set_preset_group_order(items),
+            "privacy" => self.set_privacy_items(items),
             _ => return Ok(()),
         }
         self.save_prefs()
+    }
+
+    /// The `privacy` document: the Hidden password's hash, when there is one.
+    fn privacy_items(&self) -> Vec<Value> {
+        let mut items: Vec<Value> = self.hidden.password.iter().map(|h| json!({"id": PASSWORD_ITEM, "hash": h})).collect();
+        // (only once turned off: a device that never chose doesn't send the default)
+        if !self.blur_sensitive {
+            items.push(json!({"id": BLUR_ITEM, "on": false}));
+        }
+        items
+    }
+
+    /// The Hidden password the devices agreed on (none: it was reset). A hash that isn't one is left out: this
+    /// device's stays.
+    fn set_privacy_items(&mut self, items: &[Value]) {
+        let blur = items.iter().find(|v| v.get("id").and_then(Value::as_str) == Some(BLUR_ITEM)).and_then(|v| v["on"].as_bool());
+        self.blur_sensitive = blur.unwrap_or(true);
+        match items.iter().find(|v| v.get("id").and_then(Value::as_str) == Some(PASSWORD_ITEM)) {
+            None => self.hidden.password = None,
+            Some(item) => {
+                if let Some(h) = item.get("hash").and_then(Value::as_str).filter(|h| h.starts_with("$argon2") && h.len() < 512) {
+                    self.hidden.password = Some(h.to_string());
+                }
+            }
+        }
     }
 
     /// The import defaults the other device shares, over this device's (its watched folder stays).

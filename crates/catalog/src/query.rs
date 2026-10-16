@@ -16,6 +16,18 @@ pub enum RatingOp {
     AtMost,
 }
 
+/// Whether a view shows hidden photos ([`Photo::hidden`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum HiddenMode {
+    /// Left out: every view while Hidden is locked.
+    #[default]
+    Exclude,
+    /// Shown with the rest (Show Hidden).
+    Include,
+    /// Only hidden photos (the Hidden album).
+    Only,
+}
+
 /// What the grid shows. Empty/None fields don't filter.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -45,6 +57,11 @@ pub struct Filter {
     pub album: Option<AlbumId>,
     /// Show "Recently Deleted" instead of the library.
     pub deleted: bool,
+    /// Hidden photos: left out unless the session unlocked Hidden. Never (de)serialized, so a filter
+    /// preset, a smart album, a saved view or a caller's `catalog.query` filter can't show them: only
+    /// the session sets it.
+    #[serde(skip)]
+    pub hidden: HiddenMode,
     /// Capture date prefix (`2026`, `2026-04`, `2026-04-12`).
     pub date: Option<String>,
     /// A folder the library's photos were imported from: those photos and the ones imported from
@@ -275,6 +292,10 @@ impl Filter {
         if p.deleted != self.deleted {
             return false;
         }
+        match (self.hidden, p.hidden) {
+            (HiddenMode::Exclude, true) | (HiddenMode::Only, false) => return false,
+            _ => {}
+        }
         match &self.folder {
             // browsed photos only show in folder views, and in Recently Deleted once deleted (#1430)
             None if p.local && !p.deleted => return false,
@@ -457,7 +478,7 @@ impl Catalog {
         if filter.text.trim().is_empty() {
             return vec![];
         }
-        let photos: Vec<&Photo> = self.photos().map(|p| p.as_ref()).filter(|p| p.in_library()).collect();
+        let photos: Vec<&Photo> = self.photos().map(|p| p.as_ref()).filter(|p| p.visible()).collect();
         TextQuery::parse(&filter.text).understood(&photos)
     }
 
@@ -465,7 +486,7 @@ impl Catalog {
     pub fn date_groups(&self) -> Vec<DateGroup> {
         use std::collections::BTreeMap;
         let mut years: BTreeMap<&str, (BTreeMap<&str, usize>, BTreeMap<&str, usize>)> = BTreeMap::new();
-        for p in self.photos().filter(|p| p.in_library()) {
+        for p in self.photos().filter(|p| p.visible()) {
             let Some(d) = p.captured.as_deref() else { continue };
             // `get`, not `[..]`: a corrupt or foreign `captured` (a Lightroom catalog's
             // captureTime is copied verbatim) may not be ASCII, and slicing it on a byte index
@@ -495,7 +516,7 @@ impl Catalog {
     /// by name. What [`Filter::place`] picks from.
     pub fn places(&self) -> Vec<(String, usize)> {
         let mut m: std::collections::HashMap<String, (String, usize)> = Default::default();
-        for p in self.photos().filter(|p| p.in_library()) {
+        for p in self.photos().filter(|p| p.visible()) {
             let mut seen: Vec<String> = Vec::new();
             for name in place_names(p) {
                 let key = name.to_lowercase();
@@ -516,7 +537,7 @@ impl Catalog {
     /// seen). Most photos first, then by name.
     pub fn cameras(&self) -> Vec<(String, usize)> {
         let mut m: std::collections::HashMap<String, (String, usize)> = Default::default();
-        for p in self.photos().filter(|p| p.in_library()) {
+        for p in self.photos().filter(|p| p.visible()) {
             let name = p.meta.camera.trim();
             if !name.is_empty() {
                 m.entry(name.to_lowercase()).or_insert_with(|| (name.to_string(), 0)).1 += 1;
@@ -530,7 +551,7 @@ impl Catalog {
     /// All keywords with usage counts, sorted by name.
     pub fn keywords(&self) -> Vec<(String, usize)> {
         let mut m: std::collections::BTreeMap<String, usize> = Default::default();
-        for p in self.photos().filter(|p| p.in_library()) {
+        for p in self.photos().filter(|p| p.visible()) {
             for k in &p.meta.keywords {
                 *m.entry(k.clone()).or_default() += 1;
             }
