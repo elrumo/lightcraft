@@ -619,8 +619,11 @@ impl Engine {
                 Ok(Value::Array(v))
             }
             "host.state" => Ok(serde_json::to_value(self.snapshot()).unwrap_or_default()),
-            // what memory the engine holds: its caches (`library.memory`) and the views' stage caches
-            "host.memory" => Ok(json!({"engine": self.session.memory_report(), "views": self.sched.memory()})),
+            // what memory the engine holds: its caches (`library.memory`) and the views' stage caches; and what
+            // the system still lets the app use before it ends it (iOS)
+            "host.memory" => {
+                Ok(json!({"engine": self.session.memory_report(), "views": self.sched.memory(), "left": lightcraft_sysmem::available_memory()}))
+            }
             "host.uiCommands" => Ok(Value::Array(
                 crate::ui_commands::UI_COMMANDS
                     .iter()
