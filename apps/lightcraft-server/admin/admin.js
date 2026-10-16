@@ -1,12 +1,18 @@
 // LightCraft server admin page (served at /admin; API: /api/admin/…, see src/admin.rs).
-// Views by URL hash: #/overview, #/users, #/users/NAME[/devices|/folders|/shares], #/storage.
+// Views by URL hash: #/overview, #/users, #/users/NAME[/devices|/folders|/shares], #/presets, #/search, #/storage.
 // Text from the server (user and device names, errors) is only ever set as text, never as HTML.
 'use strict';
 
 const $ = (id) => document.getElementById(id);
-const KEY = 'lightcraftAdminToken';
 const NAME = '[A-Za-z0-9._\\-]{1,64}';
-let token = sessionStorage.getItem(KEY) || '';
+// The session is the browser's `lc_admin` cookie (HttpOnly: this script can't read it, so can't leak it). An older
+// version of this page kept a token in the tab, which was lost with it: forget that one.
+try {
+  sessionStorage.removeItem('lightcraftAdminToken');
+} catch (_) {
+  // (no storage: nothing to forget)
+}
+let signedIn = false;
 let me = '';
 let routeSeq = 0;
 let foldersOf = null;
@@ -43,16 +49,16 @@ function icon(name) {
 }
 
 async function api(method, path, body) {
-  const headers = { 'Content-Type': 'application/json' };
-  if (token) headers.Authorization = 'Bearer ' + token;
-  const r = await fetch('/api/admin/' + path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+  // (the server wants this header on what changes something: a form on another site can't send it)
+  const headers = { 'Content-Type': 'application/json', 'X-LightCraft-Admin': '1' };
+  const r = await fetch('/api/admin/' + path, { method, headers, credentials: 'same-origin', body: body === undefined ? undefined : JSON.stringify(body) });
   let data = null;
   try {
     data = await r.json();
   } catch (_) {
     data = null;
   }
-  if (r.status === 401 && token && path !== 'login') {
+  if (r.status === 401 && signedIn && path !== 'login') {
     forget();
     showAuth('login', 'Your session ended. Sign in again.', 'info');
     const e = new Error('signed out');
@@ -61,7 +67,9 @@ async function api(method, path, body) {
   }
   if (!r.ok) {
     const msg = (data && data.error) || 'the server answered ' + r.status;
-    throw new Error(msg.charAt(0).toUpperCase() + msg.slice(1));
+    const e = new Error(msg.charAt(0).toUpperCase() + msg.slice(1));
+    e.status = r.status;
+    throw e;
   }
   if (method !== 'GET') {
     // (something changed: what was read before is not to be shown as current)
@@ -147,7 +155,9 @@ const date = (secs) => new Date(secs * 1000).toLocaleString();
 function dur(secs) {
   if (secs < 60) return secs + ' s';
   const m = Math.round(secs / 60);
-  return m < 60 ? m + ' min' : Math.floor(m / 60) + ' h ' + (m % 60) + ' min';
+  if (m < 60) return m + ' min';
+  const h = Math.floor(m / 60);
+  return h < 48 ? h + ' h ' + (m % 60) + ' min' : Math.round(h / 24) + ' days';
 }
 
 function decode(s) {
@@ -297,13 +307,14 @@ function ask({ title, text, fields, ok, danger, action }) {
 
 // ---------------------------------------------------------------- routing
 
-const VIEWS = ['overview', 'users', 'search', 'storage'];
+const VIEWS = ['overview', 'users', 'presets', 'search', 'storage'];
 
 async function route() {
   if ($('dash').hidden) return;
   const [, view, name, tab] = location.hash.split('/');
   clearTimeout(timer);
   clearTimeout(recountTimer);
+  clearTimeout(usageTimer);
   foldersOf = null;
   scanWorking = false;
   const v = view === 'users' && name ? 'user' : VIEWS.includes(view) ? view : 'overview';
@@ -318,7 +329,7 @@ async function route() {
     s.hidden = s.dataset.view !== v;
     if (!s.hidden && !was) window.scrollTo(0, 0);
   }
-  const load = { overview: loadOverview, users: loadUsers, search: loadSearch, storage: loadStorage, user: () => loadUser(decode(name), tab === 'folders' || tab === 'shares' ? tab : 'devices') }[v];
+  const load = { overview: loadOverview, users: loadUsers, presets: loadPresets, search: loadSearch, storage: loadStorage, user: () => loadUser(decode(name), tab === 'folders' || tab === 'shares' ? tab : 'devices') }[v];
   try {
     await load();
   } catch (e) {
@@ -332,10 +343,299 @@ function recount(users) {
   if (users.some((u) => u.bytes === null)) recountTimer = setTimeout(route, 1500);
 }
 
+// ---------------------------------------------------------------- presets
+
+/** The shared presets as last read: `{version, items, builtin}` (see src/server_presets.rs). */
+let shared = null;
+
+function loadPresets() {
+  return swr(['presets'], ([p]) => showPresets(p));
+}
+
+const isHiddenItem = (it) => it.id === 'hidden';
+/** The built-in presets and groups hidden for everyone. */
+const hiddenOf = (items) => items.find(isHiddenItem) || { id: 'hidden', presets: [], groups: [] };
+
+/** `[[group, presets]]`, groups in the order they first come. */
+function byGroup(list) {
+  const m = new Map();
+  for (const p of list) {
+    if (!m.has(p.group)) m.set(p.group, []);
+    m.get(p.group).push(p);
+  }
+  return [...m];
+}
+
+/** A row's action: icon and word, the icon alone on a phone (the word stays its name). */
+function rowButton(name, text, onclick) {
+  return el('button', { type: 'button', class: 'btn quiet', title: text, 'aria-label': text, onclick }, icon(name), el('span', { class: 'btn-word' }, text));
+}
+
+function showPresets(p) {
+  shared = p;
+  const presets = p.items.filter((i) => !isHiddenItem(i));
+  const body = $('sharedPresets').querySelector('tbody');
+  body.replaceChildren();
+  if (!presets.length) body.append(emptyRow(2, 'presets', 'No shared presets yet. Import LightCraft, XMP or Lightroom preset files, or a zip of them.'));
+  for (const [group, list] of byGroup(presets)) {
+    body.append(
+      el(
+        'tr',
+        { class: 'group' },
+        el('td', {}, el('b', {}, group), el('span', { class: 'sub' }, plural(list.length, 'preset', 'presets'))),
+        el('td', { class: 'end' }, rowButton('edit', 'Rename', () => renameGroup(group)), rowButton('trash', 'Delete', () => deleteGroup(group, list.length))),
+      ),
+    );
+    for (const it of list) {
+      body.append(
+        el(
+          'tr',
+          {},
+          el('td', {}, el('div', { class: 'who-cell' }, el('span', { class: 'thing' }, icon('presets')), el('b', {}, it.name))),
+          el('td', { class: 'end' }, rowButton('edit', 'Rename', () => renamePreset(it)), rowButton('folder', 'Move', () => movePreset(it)), rowButton('trash', 'Delete', () => deletePreset(it))),
+        ),
+      );
+    }
+  }
+  const hidden = hiddenOf(p.items);
+  const builtin = $('builtinPresets').querySelector('tbody');
+  builtin.replaceChildren();
+  for (const [group, list] of byGroup(p.builtin)) {
+    const off = hidden.groups.includes(group);
+    builtin.append(el('tr', { class: 'group' }, el('td', {}, el('b', {}, group)), el('td', { class: 'end' }, shownSwitch(group, !off, (on) => hideBuiltin('groups', group, !on)))));
+    for (const b of list) {
+      const on = !off && !hidden.presets.includes(b.id);
+      builtin.append(el('tr', {}, el('td', {}, b.name), el('td', { class: 'end' }, shownSwitch(b.name, on, (now) => hideBuiltin('presets', b.id, !now), off))));
+    }
+  }
+}
+
+/** A "shown to users" switch for `what`; `change(on)` saves. */
+function shownSwitch(what, on, change, disabled) {
+  const input = el('input', { type: 'checkbox', role: 'switch', 'aria-label': 'Show ' + what + ' to users', disabled });
+  input.checked = on;
+  input.addEventListener('change', async () => {
+    input.disabled = true;
+    try {
+      await change(input.checked);
+    } catch (e) {
+      input.checked = !input.checked;
+      fail(e);
+    }
+    input.disabled = !!disabled;
+  });
+  return el('label', { class: 'switch' }, input);
+}
+
+/** Save `items` as the change of the presets last read, then show them. Someone else's change first: theirs are shown, and it throws. */
+async function savePresets(items) {
+  try {
+    await api('PUT', 'presets', { version: shared.version, items });
+  } catch (e) {
+    if (e.status !== 412) throw e;
+    await route();
+    throw new Error('Someone else changed the presets meanwhile: here they are now. Try again.');
+  }
+  await route();
+}
+
+const sharedItems = () => shared.items.filter((i) => !isHiddenItem(i));
+/** The items with the presets `presets` and the hidden built-ins kept. */
+const withHidden = (presets) => {
+  const h = hiddenOf(shared.items);
+  return h.presets.length || h.groups.length ? [...presets, h] : presets;
+};
+const groupsHelp = () => 'Groups: ' + byGroup(sharedItems()).map(([g]) => g).join(', ') + '. A new name makes a new group.';
+
+function renamePreset(it) {
+  return ask({
+    title: 'Rename ' + it.name,
+    fields: [{ name: 'name', label: 'Name', value: it.name }],
+    ok: 'Rename',
+    action: (v) => savePresets(withHidden(sharedItems().map((x) => (x.id === it.id ? { ...x, name: v.name.trim() } : x)))),
+  });
+}
+
+function movePreset(it) {
+  return ask({
+    title: 'Move ' + it.name,
+    fields: [{ name: 'group', label: 'Group', value: it.group, help: groupsHelp() }],
+    ok: 'Move',
+    action: (v) => savePresets(withHidden(sharedItems().map((x) => (x.id === it.id ? { ...x, group: v.group.trim() } : x)))),
+  });
+}
+
+function deletePreset(it) {
+  return ask({
+    title: 'Delete ' + it.name + '?',
+    text: 'It goes from every user’s devices the next time they sync. Edits made with it stay.',
+    ok: 'Delete',
+    danger: true,
+    action: async () => {
+      await savePresets(withHidden(sharedItems().filter((x) => x.id !== it.id)));
+      toast(it.name + ' was deleted.');
+    },
+  });
+}
+
+function renameGroup(group) {
+  return ask({
+    title: 'Rename the group ' + group,
+    fields: [{ name: 'name', label: 'Name', value: group, help: 'A group that has this name already takes its presets.' }],
+    ok: 'Rename',
+    action: (v) => savePresets(withHidden(sharedItems().map((x) => (x.group === group ? { ...x, group: v.name.trim() } : x)))),
+  });
+}
+
+function deleteGroup(group, count) {
+  return ask({
+    title: 'Delete the group ' + group + '?',
+    text: 'Its ' + plural(count, 'preset goes', 'presets go') + ' from every user’s devices the next time they sync. Edits made with them stay.',
+    ok: 'Delete',
+    danger: true,
+    action: async () => {
+      await savePresets(withHidden(sharedItems().filter((x) => x.group !== group)));
+      toast('The group ' + group + ' was deleted.');
+    },
+  });
+}
+
+/** Hide (or show) the built-in preset or group `name` (`kind`: `presets` or `groups`) for every user. */
+function hideBuiltin(kind, name, hide) {
+  const h = hiddenOf(shared.items);
+  const next = { id: 'hidden', presets: [...h.presets], groups: [...h.groups] };
+  next[kind] = next[kind].filter((x) => x !== name);
+  if (hide) next[kind].push(name);
+  const keep = next.presets.length || next.groups.length;
+  return savePresets(keep ? [...sharedItems(), next] : sharedItems());
+}
+
+/** A file's bytes as base64. */
+function base64(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result).split(',')[1] || '');
+    r.onerror = () => reject(r.error || new Error('can’t read ' + file.name));
+    r.readAsDataURL(file);
+  });
+}
+
+async function importPresets() {
+  const picked = [...$('presetFiles').files];
+  if (!picked.length) return;
+  const btn = $('importPresets');
+  busy(btn, true);
+  try {
+    const files = await Promise.all(picked.map(async (f) => ({ name: f.name, data: await base64(f) })));
+    const r = await api('POST', 'presets/import', { files });
+    const already = r.skipped ? ' (' + plural(r.skipped, 'was', 'were') + ' here already)' : '';
+    if (r.added) toast('Added ' + plural(r.added, 'preset', 'presets') + already + '.');
+    else toast('No new presets in ' + plural(picked.length, 'file', 'files') + already + '.', 'info');
+    const failed = r.failed || [];
+    if (failed.length) toast(plural(failed.length, 'file', 'files') + ' couldn’t be read: ' + failed.map((f) => f[0] + ': ' + f[1]).join('; '), 'negative');
+    await route();
+  } catch (e) {
+    fail(e);
+  } finally {
+    busy(btn, false);
+  }
+}
+
 // --------------------------------------------------------------- overview
 
 function loadOverview() {
+  loadUsage();
   return swr(['status', 'users', 'limits'], showOverview);
+}
+
+// ------------------------------------------------- server load and activity
+
+let usageTimer = null;
+
+/** The load and activity panels, asked again every half minute while the overview is open. */
+async function loadUsage() {
+  clearTimeout(usageTimer);
+  const seq = routeSeq;
+  try {
+    const u = await api('GET', 'usage');
+    if (seq !== routeSeq) return;
+    showUsage(u);
+    usageTimer = setTimeout(loadUsage, 30000);
+  } catch (e) {
+    fail(e);
+  }
+}
+
+/** A path of an svg (240 by 56) through `values` (`null`: no reading, skipped), 0 to `max`; the first also gets an area. */
+function spark(svg, series, max) {
+  const NS = 'http://www.w3.org/2000/svg';
+  const [W, H] = [240, 56];
+  svg.replaceChildren(
+    ...series.flatMap((values, k) => {
+      const at = (i) => ((i * W) / Math.max(1, values.length - 1)).toFixed(1);
+      const pts = values.map((v, i) => (v === null ? null : [at(i), (H - 2 - Math.min(1, v / (max || 1)) * (H - 4)).toFixed(1)])).filter(Boolean);
+      if (!pts.length) return [];
+      const line = pts.map(([x, y], i) => (i ? 'L' : 'M') + x + ' ' + y).join(' ');
+      const path = (cls, d) => {
+        const p = document.createElementNS(NS, 'path');
+        p.setAttribute('class', cls);
+        p.setAttribute('d', d);
+        return p;
+      };
+      const area = k === 0 && pts.length > 1 ? [path('area', line + ' L' + pts[pts.length - 1][0] + ' ' + H + ' L' + pts[0][0] + ' ' + H + ' Z')] : [];
+      return [...area, path(k === 0 ? '' : 'other', line)];
+    }),
+  );
+}
+
+function showUsage(u) {
+  const h = u.history;
+  const last = h[h.length - 1] || {};
+  const cores = u.cores || 1;
+  const span = h.length > 1 ? last.at - h[0].at : 0;
+  const pct = (x) => Math.round(100 * x) + '%';
+  // (where the machine can't be read there is nothing to chart for these two)
+  $('ldCpuBox').hidden = $('ldMemBox').hidden = !u.supported;
+  $('loadNote').textContent = u.supported
+    ? 'Read from this machine every 30 seconds' + (span >= 120 ? ' (the last ' + dur(Math.round(span / 60) * 60) + ' are shown; 24 hours are kept, and a restart starts them again)' : '') + '. The dashed lines are everything running on the machine, not only LightCraft.'
+    : 'CPU and memory can be read where the server runs on Linux, as it does in Docker. This server runs elsewhere, so only the requests are shown.';
+  // CPU: the server's, in cores, against all the cores it may use
+  $('ldCpu').textContent = last.cpu == null ? '–' : pct(last.cpu / cores);
+  $('ldCpuSub').textContent = last.cpu == null ? '' : n(Math.round(last.cpu * 10) / 10) + ' of ' + plural(cores, 'core', 'cores') + (last.machineCpu == null ? '' : ', the whole machine ' + pct(last.machineCpu));
+  spark($('sparkCpu'), [h.map((s) => s.cpu), h.map((s) => (s.machineCpu == null ? null : s.machineCpu * cores))], cores);
+  // memory: the server's, and what the machine (or container) uses of its total
+  $('ldMem').textContent = last.rss == null ? '–' : bytes(last.rss);
+  $('ldMemSub').textContent = last.memUsed == null ? '' : 'the machine uses ' + bytes(last.memUsed) + (u.memory ? ' of ' + bytes(u.memory) : '');
+  spark($('sparkMem'), [h.map((s) => s.rss), h.map((s) => s.memUsed)], u.memory || Math.max(1, ...h.map((s) => s.memUsed || s.rss || 0)));
+  // requests of devices a minute (a point is the requests since the one before)
+  const rates = h.map((s, i) => (s.requests * 60) / Math.max(1, i ? s.at - h[i - 1].at : 30));
+  const rate = rates.length ? rates[rates.length - 1] : 0;
+  $('ldReq').textContent = rate < 10 ? (Math.round(rate * 10) / 10).toLocaleString() : n(Math.round(rate));
+  const all = u.users.flatMap((x) => x.devices).reduce((a, d) => a + d.requests, 0);
+  $('ldReqSub').textContent = 'a minute, ' + n(all) + ' since the server started';
+  spark($('sparkReq'), [rates], Math.max(1, ...rates));
+  // what each user's devices asked of the server
+  $('activityNote').textContent =
+    "What each user's devices asked of the server since it started " + ago(u.since) + '. Busy is the time the server spent answering, without sending the answer. Counts start again when the server restarts.';
+  const body = $('activity').querySelector('tbody');
+  body.replaceChildren();
+  if (!u.users.length) body.append(emptyRow(6, 'users', 'No users yet.'));
+  const busy = (ms) => (ms < 1000 ? n(ms) + ' ms' : dur(Math.round(ms / 1000)));
+  const cells = (x, seen) => [
+    el('td', { class: 'num' }, n(x.requests)),
+    el('td', { class: 'num opt' }, bytes(x.in)),
+    el('td', { class: 'num' }, bytes(x.out)),
+    el('td', { class: 'num opt' }, busy(x.busyMs)),
+    el('td', { class: 'num opt' }, seen ? ago(seen) : ''),
+  ];
+  for (const user of u.users) {
+    const sum = (k) => user.devices.reduce((a, d) => a + d[k], 0);
+    const latest = Math.max(0, ...user.devices.map((d) => d.lastSeen || 0));
+    body.append(
+      el('tr', { class: 'group' }, el('td', {}, el('b', {}, user.name), el('span', { class: 'sub muted' }, plural(user.devices.length, 'device', 'devices'))), ...cells({ requests: sum('requests'), in: sum('in'), out: sum('out'), busyMs: sum('busyMs') }, latest)),
+    );
+    for (const d of user.devices) body.append(el('tr', {}, el('td', {}, d.name || 'Device ' + d.id), ...cells(d, d.lastSeen)));
+  }
 }
 
 const LIMITS = [
@@ -506,7 +806,8 @@ function loadUser(name, tab) {
   }
   for (const p of document.querySelectorAll('[data-panel]')) p.hidden = p.dataset.panel !== tab;
   $('addFolder').onclick = () => addFolder(name);
-  $('scanNow').onclick = () => scanNow(name);
+  $('scanNow').onclick = $('scanChanged').onclick = () => startScan(name, 'scan');
+  $('scanEverything').onclick = () => rescanEverything(name);
   if (tab === 'folders') foldersOf = name;
   // (the user and the tab's list are asked for together)
   const seq = routeSeq;
@@ -730,11 +1031,14 @@ async function pollFolders(name) {
 
 function scanInfo(s) {
   if (s.scanning) {
+    // (a rescan reads every file again, not only the new or changed ones)
+    const title = s.full ? 'Rescanning everything…' : 'Scanning…';
     if (s.phase === 'reading' && s.todo) {
-      return { title: 'Scanning…', text: 'Reading ' + n(s.done) + ' of ' + n(s.todo) + ' new or changed files' + (s.etaSecs ? ', about ' + dur(s.etaSecs) + ' left.' : '.'), progress: s.done / s.todo };
+      const what = s.full ? ' files again' : ' new or changed files';
+      return { title, text: 'Reading ' + n(s.done) + ' of ' + n(s.todo) + what + (s.etaSecs ? ', about ' + dur(s.etaSecs) + ' left.' : '.'), progress: s.done / s.todo };
     }
-    if (s.phase === 'listing') return { title: 'Scanning…', text: 'Looking for photos: ' + n(s.files) + ' found so far.', progress: null };
-    return { title: 'Scanning…', text: 'Finishing up.', progress: null };
+    if (s.phase === 'listing') return { title, text: 'Looking for photos: ' + n(s.files) + ' found so far.', progress: null };
+    return { title, text: 'Finishing up.', progress: null };
   }
   if (!s.lastScan) return { title: 'Not scanned yet', text: 'Scan to add the photos in these folders to the library.' };
   const changes = [[s.added, 'new'], [s.moved, 'moved'], [s.changed, 'changed'], [s.linked, 'uploaded before'], [s.missing, 'missing'], [s.failed, 'not read']]
@@ -746,7 +1050,7 @@ function scanInfo(s) {
 /** The previews panel: built / left in this batch, and the photo files being built right now (also during a scan). */
 function showPreviews(name, s) {
   const paused = !!s.previewsPaused;
-  $('previewsTitle').textContent = paused ? 'Previews paused' : s.previews ? 'Building previews' : 'Previews';
+  $('previewsTitle').textContent = paused ? 'Previews paused' : s.previews ? (s.previewsRebuilding ? 'Rebuilding previews' : 'Building previews') : 'Previews';
   const have = s.previewsHave, photos = s.previewsPhotos;
   $('previewsCover').textContent = photos == null ? 'Counting previews…' : n(have) + ' of ' + plural(photos, 'photo has', 'photos have') + ' previews' + (photos ? ' (' + Math.floor((100 * have) / photos) + '%)' : '');
   const total = s.previewsTotal || s.previews;
@@ -754,7 +1058,8 @@ function showPreviews(name, s) {
     ? n(s.previewsDone) + ' built, ' + n(s.previews) + ' left' + (s.previewsEtaSecs && !paused ? ', about ' + dur(s.previewsEtaSecs) + ' to go' : '') + (s.previewsPerMin && !paused ? ' (' + n(s.previewsPerMin) + ' a minute)' : '') + '.'
     : 'Nothing waiting: 0 left.' + (s.previewsLastAt ? ' The last batch, ' + plural(s.previewsLastDone, 'preview', 'previews') + ', finished ' + ago(s.previewsLastAt) + '.' : '');
   $('previewsText').textContent = batch + (paused ? ' Paused for every user: the ones being built finish, then it waits.' : '');
-  progress($('previewsBar'), photos ? have / photos : s.previews && total ? s.previewsDone / total : 0);
+  // (while every preview is built again, those there count for nothing: the bar shows how far the batch is)
+  progress($('previewsBar'), s.previewsRebuilding && total ? s.previewsDone / total : photos ? have / photos : s.previews && total ? s.previewsDone / total : 0);
   const now = s.previewsBuilding || [];
   $('previewsNow').replaceChildren(
     ...now.map((p) => el('li', {}, el('b', {}, 'Now'), el('code', { title: p }, p.slice(p.lastIndexOf('/') + 1)))),
@@ -765,17 +1070,34 @@ function showPreviews(name, s) {
   pause.querySelector('span').textContent = paused ? 'Resume' : 'Pause';
   pause.querySelector('use').setAttribute('href', paused ? '#i-play' : '#i-pause');
   pause.onclick = () => previewsAction(name, paused ? 'resume' : 'pause');
-  $('previewsAll').onclick = () => previewsAction(name, 'generate');
+  $('previewsAll').onclick = $('previewsMissing').onclick = () => previewsAction(name, 'generate');
+  $('previewsRebuild').onclick = () => rebuildPreviews(name);
 }
 
 async function previewsAction(name, action) {
   try {
     const r = await api('POST', 'users/' + enc(name) + '/previews/' + action);
     if (action === 'generate') toast('Queued every missing preview.');
+    if (action === 'rebuild') toast('Rebuilding every preview.');
     showFolders(name, r);
   } catch (e) {
     fail(e);
   }
+}
+
+/** Every preview again, the ones there too: slow, so it asks first. */
+function rebuildPreviews(name) {
+  return ask({
+    title: 'Rebuild all previews?',
+    text:
+      'The server builds the previews of every photo in ' + name + "'s library folders again, the ones that exist too, and replaces them as each new one is ready. " +
+      'For a big library that takes hours and keeps the processors busy. Use it after an update changed how photos are decoded or look. ' +
+      'To make only the previews that are missing, choose Build missing previews.',
+    ok: 'Rebuild all previews',
+    action: async () => {
+      await previewsAction(name, 'rebuild');
+    },
+  });
 }
 
 function showFolders(name, r) {
@@ -827,7 +1149,7 @@ function showFolders(name, r) {
   $('scanNow').closest('.scan').hidden = !r.folders.length;
   $('scanTitle').textContent = info.title;
   $('scanText').textContent = info.text;
-  $('scanNow').disabled = !!s.scanning;
+  $('scanNow').disabled = $('scanMore').disabled = !!s.scanning;
   const bar = $('scanBar');
   bar.hidden = info.progress === undefined;
   bar.classList.toggle('indeterminate', info.progress === null);
@@ -919,16 +1241,66 @@ function removeFolder(name, f) {
   });
 }
 
-async function scanNow(name) {
+/** Start a scan: `scan` reads the files that are new or changed, `rescan` every file. */
+async function startScan(name, path) {
   try {
-    showFolders(name, await api('POST', 'users/' + enc(name) + '/scan'));
-    $('scanTitle').textContent = 'Scanning…';
-    $('scanNow').disabled = true;
+    showFolders(name, await api('POST', 'users/' + enc(name) + '/' + path));
+    $('scanTitle').textContent = path === 'rescan' ? 'Rescanning everything…' : 'Scanning…';
+    $('scanNow').disabled = $('scanMore').disabled = true;
     clearTimeout(timer);
     timer = setTimeout(() => foldersOf === name && pollFolders(name).catch(fail), 1000);
   } catch (e) {
     fail(e);
   }
+}
+
+/** Read every photo file again: slow, so it asks first. */
+function rescanEverything(name) {
+  return ask({
+    title: 'Rescan everything?',
+    text:
+      'The server reads every photo file in ' + name + "'s library folders again, the ones that haven't changed too, and checks each against its photo. " +
+      'It also tries again the files that could not be read. For a big library that takes hours and keeps the disks busy. Photos and their edits stay as they are unless a file now holds something else. ' +
+      "To read only what is new or changed, choose Scan for changes.",
+    ok: 'Rescan everything',
+    action: async () => {
+      await startScan(name, 'rescan');
+    },
+  });
+}
+
+/**
+ * A split button (`.split`): the main button does the usual thing, the arrow opens a menu of its variants, each with
+ * what it does. The menu closes on a choice, a click elsewhere or Esc; the arrow keys move between its items.
+ */
+function splitMenu(id) {
+  const root = $(id);
+  const more = root.querySelector('.split-more');
+  const menu = root.querySelector('.menu');
+  const items = () => [...menu.querySelectorAll('[role=menuitem]')];
+  const open = (on) => {
+    menu.hidden = !on;
+    more.setAttribute('aria-expanded', String(on));
+    if (on) items()[0]?.focus();
+  };
+  more.addEventListener('click', () => open(menu.hidden));
+  menu.addEventListener('click', () => open(false));
+  document.addEventListener('click', (e) => {
+    if (!menu.hidden && !root.contains(e.target)) open(false);
+  });
+  root.addEventListener('keydown', (e) => {
+    if (menu.hidden) return;
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      open(false);
+      more.focus();
+    } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      const all = items();
+      const at = all.indexOf(document.activeElement);
+      all[(at + (e.key === 'ArrowDown' ? 1 : all.length - 1)) % all.length]?.focus();
+    }
+  });
 }
 
 // ---------------------------------------------------------------- storage
@@ -1056,10 +1428,32 @@ const toLocalMin = (utc) => (((utc - new Date().getTimezoneOffset()) % 1440) + 1
 const toUtcMin = (local) => (((local + new Date().getTimezoneOffset()) % 1440) + 1440) % 1440;
 const parseMin = (v) => (/^\d\d:\d\d$/.test(v) ? +v.slice(0, 2) * 60 + +v.slice(3) : null);
 
+const pace = (perMinute) => (perMinute >= 10 ? n(Math.round(perMinute)) + ' a minute' : n(Math.round(perMinute * 60)) + ' an hour');
+const etaOf = (photos, perMinute) => 'About ' + dur(Math.max(1, Math.round((photos / perMinute) * 60))) + ' left';
+
+/** Whether the worker is at one kind of index, for the line with the dot: what it is on, and how long ago it last finished a photo. */
+function liveState(p, c) {
+  if (!c.left || c.paused || !c.runsNow) return null;
+  const what = { sr: 'Describing ', tx: 'Reading the words in ', fc: 'Looking for faces in ' }[p] + (c.now ? c.now.user + "'s photos" : 'photos');
+  const last = c.lastSecs;
+  const lastly = last === null ? '' : ' · last one ' + (last < 5 ? 'just now' : dur(last) + ' ago');
+  // (each turn finishes a photo every few seconds: ten minutes on one without any means something hangs)
+  if (c.now && c.now.secs > 600 && (last === null || last > 600)) {
+    return { kind: 'stuck', text: what + ' for ' + dur(c.now.secs) + ' without finishing one. It may be stuck: restarting the server starts it again.' };
+  }
+  if (c.now) return { kind: 'on', text: what + lastly };
+  // (the three take turns, a few minutes each on a slow server)
+  if (c.perMinute) return { kind: 'on', text: 'Working, in turn with the others' + lastly };
+  if (!c.ready) return { kind: 'idle', text: 'Nothing to do until the photos left have their previews.' };
+  if (last !== null && last > 1800) return { kind: 'stuck', text: 'Nothing done for ' + dur(last) + '.' };
+  return { kind: 'idle', text: 'Waiting for its turn' + lastly + '.' };
+}
+
 /** Time left, pause and the daily window of one kind of index, in the box `<p>Sched`. */
 function showSched(p, c) {
   const box = $(p + 'Sched');
   if (!box.firstChild) {
+    const live = el('p', { class: 'live', role: 'status' }, el('span', { class: 'dot', 'aria-hidden': 'true' }), el('span', {}));
     const eta = el('p', { class: 'eta' });
     const pause = el('button', { type: 'button', class: 'btn secondary' });
     const mode = el('select', { 'aria-label': 'When to make the index' }, el('option', { value: 'any' }, 'Any time'), el('option', { value: 'window' }, 'Only between'));
@@ -1077,9 +1471,15 @@ function showSched(p, c) {
     };
     pause.addEventListener('click', () => send(pause.dataset.paused !== '1'));
     for (const i of [mode, from, to]) i.addEventListener('change', () => { from.hidden = to.hidden = mode.value !== 'window'; send(pause.dataset.paused === '1'); });
-    box.append(eta, el('div', { class: 'row' }, pause, mode, from, to));
+    box.append(live, eta, el('div', { class: 'row' }, pause, mode, from, to));
   }
-  const [eta, row] = box.children;
+  const [live, eta, row] = box.children;
+  const state = liveState(p, c);
+  live.hidden = !state;
+  if (state) {
+    live.className = 'live ' + state.kind;
+    live.lastChild.textContent = state.text;
+  }
   const [pause, mode, from, to] = row.children;
   pause.dataset.paused = c.paused ? '1' : '0';
   pause.textContent = c.paused ? 'Resume' : 'Pause';
@@ -1095,9 +1495,26 @@ function showSched(p, c) {
       ? 'Paused. ' + left + ' waiting.'
       : !c.runsNow
         ? left + ' waiting for ' + hhmm(toLocalMin(c.from)) + '–' + hhmm(toLocalMin(c.to)) + ' (your time).'
-        : c.perPhoto
-          ? 'About ' + dur(Math.round(c.left * c.perPhoto)) + ' left (' + left + ').'
+        : c.perMinute && c.ready
+          ? etaOf(c.ready, c.perMinute) + ' (' + left + ', ' + pace(c.perMinute) + ').'
           : left + ' to go.';
+}
+
+/** Under a user's bar: their time left at the pace of the last ten minutes, what waits for previews,
+ * what couldn't be done, and the last problem. */
+function userLines(p, w, done, total, c) {
+  if (!w) return [];
+  const bits = [];
+  const left = Math.max(0, total - done);
+  const ready = Math.max(0, left - w.waiting - w.failed);
+  const going = !c.paused && c.runsNow;
+  if (ready && going && w.perMinute) bits.push(etaOf(ready, w.perMinute) + ' (' + pace(w.perMinute) + ')');
+  else if (ready && !w.problem && liveState(p, c)?.kind === 'on') bits.push('Working out the time left…');
+  if (w.waiting) bits.push(n(w.waiting) + ' waiting for previews');
+  if (w.failed) bits.push(n(w.failed) + " couldn't be " + { sr: 'described', tx: 'read', fc: 'looked at' }[p]);
+  const out = bits.length ? [el('p', { class: 'sub', title: w.failed ? 'Photos that could not be done are tried again when the server restarts.' : null }, bits.join(' · '))] : [];
+  if (w.problem && left) out.push(el('p', { class: 'sub problem' }, w.problem.charAt(0).toUpperCase() + w.problem.slice(1)));
+  return out;
 }
 
 function showFeature(p, s) {
@@ -1128,8 +1545,19 @@ function showFeature(p, s) {
     const done = u[F.users];
     if (done === null || done === undefined) continue;
     any = true;
-    const meter = el('div', { class: 'meter' }, el('div', {}));
-    list.append(el('li', {}, avatar(u.name), el('a', { class: 'name', href: '#/users/' + enc(u.name) }, u.name), meter, el('span', { class: 'bytes' }, n(done) + ' / ' + n(u.total))));
+    const w = u.work && u.work[PART_KEY[p]];
+    const meter = el('div', { class: 'meter' + (w && w.perMinute && done < u.total && !f.schedule.paused ? ' busy' : '') }, el('div', {}));
+    list.append(
+      el(
+        'li',
+        {},
+        avatar(u.name),
+        el('a', { class: 'name', href: '#/users/' + enc(u.name) }, u.name),
+        el('span', { class: 'bytes' }, n(done) + ' / ' + n(u.total)),
+        meter,
+        ...userLines(p, w, done, u.total, f.schedule),
+      ),
+    );
     progress(meter, u.total ? done / u.total : 1);
   }
   const none = $(p + 'UsersNone');
@@ -1156,7 +1584,9 @@ function showPeople(s) {
     input.checked = u.faces;
     input.addEventListener('change', () => togglePeople(u, input));
     const text = u.faces ? (u.found === null ? 'Waiting for the server…' : n(u.found) + ' of ' + n(u.total) + ' photos looked at') : 'Off';
-    list.append(el('li', {}, avatar(u.name), el('a', { class: 'name', href: '#/users/' + enc(u.name) }, u.name), el('span', { class: 'bytes' }, text), el('label', { class: 'switch' }, input)));
+    const w = u.work && u.work.faces;
+    const lines = u.faces && u.found !== null ? userLines('fc', w, u.found, u.total, f.schedule) : [];
+    list.append(el('li', {}, avatar(u.name), el('a', { class: 'name', href: '#/users/' + enc(u.name) }, u.name), el('span', { class: 'bytes' }, text), el('label', { class: 'switch' }, input), ...lines));
   }
   if (!s.users.length) list.append(el('li', { class: 'muted' }, 'No users yet.'));
   return s.users.some((u) => u.faces && u.found !== null && u.found < u.total);
@@ -1307,8 +1737,7 @@ function gcRun() {
 // ------------------------------------------------------------ sign in/out
 
 function forget() {
-  token = '';
-  sessionStorage.removeItem(KEY);
+  signedIn = false;
 }
 
 function setMe(name) {
@@ -1327,6 +1756,7 @@ function formAlert(form, message, kind) {
 
 function showAuth(which, message, kind) {
   clearTimeout(timer);
+  clearTimeout(usageTimer);
   if ($('dialog').open) $('dialog').close();
   $('dash').hidden = true;
   $('auth').hidden = false;
@@ -1344,27 +1774,26 @@ function showDash() {
   route();
 }
 
-async function signIn(user, password) {
-  const r = await api('POST', 'login', { user, password });
-  token = r.token;
-  sessionStorage.setItem(KEY, token);
+/** Sign in: the server answers with a cookie, which the browser keeps (for weeks with `remember`, else until it closes). */
+async function signIn(user, password, remember) {
+  const r = await api('POST', 'login', { user, password, remember: !!remember, cookie: true });
+  signedIn = true;
   setMe(r.user);
   showDash();
 }
 
 async function start() {
   $('origin').value = location.origin;
-  if (token) {
-    // (nearly every page needs the users: asked for with the sign-in check, not after it)
-    get('users').catch(() => {});
-    try {
-      setMe((await get('status')).me);
-      showDash();
-      return;
-    } catch (e) {
-      forget();
-      if (e.signedOut) return;
-    }
+  // Still signed in from the last visit? The cookie says so (nearly every page needs the users: asked for
+  // with the sign-in check, not after it).
+  get('users').catch(() => {});
+  try {
+    setMe((await get('status')).me);
+    signedIn = true;
+    showDash();
+    return;
+  } catch (_) {
+    forget();
   }
   try {
     const s = await api('GET', 'state');
@@ -1395,11 +1824,11 @@ document.addEventListener('DOMContentLoaded', () => {
     if (f.get('password') !== f.get('password2')) throw new Error("The passwords don't match.");
     await api('POST', 'setup', { code: f.get('code'), user: f.get('user'), password: f.get('password') });
     location.hash = '#/users';
-    await signIn(f.get('user'), f.get('password'));
+    await signIn(f.get('user'), f.get('password'), true);
     toast('Welcome! Add the people who use this server, then connect their devices.', 'info');
   });
   onSubmit('loginForm', async (f) => {
-    await signIn(f.get('user'), f.get('password'));
+    await signIn(f.get('user'), f.get('password'), f.get('remember') === 'on');
     $('loginForm').reset();
   });
   $('signOut').addEventListener('click', async () => {
@@ -1412,9 +1841,16 @@ document.addEventListener('DOMContentLoaded', () => {
     showAuth('login');
   });
   $('copyOrigin').addEventListener('click', copyOrigin);
+  splitMenu('scanSplit');
+  splitMenu('previewsSplit');
   $('limForm').addEventListener('submit', saveLimits);
   $('addUser').addEventListener('click', addUser);
   $('gcCheck').addEventListener('click', gcCheck);
+  $('importPresets').addEventListener('click', () => {
+    $('presetFiles').value = '';
+    $('presetFiles').click();
+  });
+  $('presetFiles').addEventListener('change', importPresets);
   $('gcRun').addEventListener('click', gcRun);
   for (const p of ['sr', 'tx', 'sn']) $(p + 'Switch').addEventListener('change', (e) => toggleFeature(p, e));
   for (const p of ['sr', 'tx', 'fc', 'sn']) $(p + 'Cancel').addEventListener('click', () => cancelDownload(p));

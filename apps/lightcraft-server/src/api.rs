@@ -241,7 +241,8 @@ fn api(st: &State, req: &mut Request, method: &Method, path: &str, q: &str) -> R
         }
     };
     let parts: Vec<&str> = path.trim_start_matches("/api/").split('/').collect();
-    match (method, parts.as_slice()) {
+    let (began, sent) = (Instant::now(), req.body_length().unwrap_or(0) as u64);
+    let resp = match (method, parts.as_slice()) {
         (Method::Post, ["logout"]) => match st.accounts.lock().unwrap_or_else(PoisonError::into_inner).logout(&who) {
             Ok(()) => json(200, &json!({})),
             Err(e) => error(500, e),
@@ -250,7 +251,7 @@ fn api(st: &State, req: &mut Request, method: &Method, path: &str, q: &str) -> R
         (Method::Get, ["snapshot"]) => snapshot(st, req, &l, &who, q),
         (Method::Get, ["usage"]) => usage(st, &l, &who),
         (Method::Get, ["activity"]) => activity(st, &l, &who),
-        (Method::Get, ["ops"]) => ops(req, &l, q),
+        (Method::Get, ["ops"]) => ops(st, req, &l, q),
         (Method::Post, ["ops"]) => push(st, req, &l, &who),
         (Method::Get, ["presets"]) => {
             // (a preset collection imported whole is tens of MB: gzipped, a tenth of that)
@@ -264,6 +265,15 @@ fn api(st: &State, req: &mut Request, method: &Method, path: &str, q: &str) -> R
         (Method::Get, ["shares"]) => crate::shares::list(st, &who.user),
         (Method::Post, ["shares"]) => crate::shares::create(st, &who.user, req),
         (Method::Delete, ["shares", id]) => crate::shares::revoke(st, &who.user, id),
+        // (the presets shared with every user: the admin's to change)
+        (Method::Get, ["docs", crate::server_presets::NAME]) => {
+            let body = serde_json::to_vec(st.presets.lock().unwrap_or_else(PoisonError::into_inner).doc());
+            match body {
+                Ok(body) => big_json(req, body),
+                Err(e) => error(500, e),
+            }
+        }
+        (Method::Put, ["docs", crate::server_presets::NAME]) => error(403, "the shared presets are changed from /admin"),
         (Method::Get, ["docs", name]) => get_doc(&l, name),
         (Method::Put, ["docs", name]) => put_doc(req, &l, name),
         (m, ["blobs", kind, hash]) => blob(st, req, m, &l, &who.user, kind, hash),
@@ -282,7 +292,10 @@ fn api(st: &State, req: &mut Request, method: &Method, path: &str, q: &str) -> R
         (Method::Delete, ["index", "faces"]) => crate::vision::face_delete(st, &who.user),
         (Method::Post, ["render"]) => render(st, req, &l, &who.user),
         _ => error(404, format!("no route {method} {path}")),
-    }
+    };
+    // (what this device asks of the server: the admin page's Overview)
+    st.usage.note(&who.user, who.device, sent, resp.data_length().unwrap_or(0) as u64, began.elapsed());
+    resp
 }
 
 /// The throttle's keys for a sign-in: the client's address and the user name.
@@ -452,12 +465,16 @@ fn snapshot(st: &State, req: &Request, l: &Mutex<UserLib>, who: &Session, q: &st
     big_json(req, format!("{{\"library\":{lib},\"seq\":{seq},\"catalog\":{catalog}}}").into_bytes())
 }
 
-fn ops(req: &Request, l: &Mutex<UserLib>, q: &str) -> Resp {
+fn ops(st: &State, req: &Request, l: &Mutex<UserLib>, q: &str) -> Resp {
     let since = query(q, "since").and_then(|v| v.parse::<u64>().ok()).unwrap_or(0);
     let limit = query(q, "limit").and_then(|v| v.parse::<usize>().ok()).unwrap_or(1000).clamp(1, PULL_MAX);
+    let shared = st.presets.lock().unwrap_or_else(PoisonError::into_inner).version();
     let mut l = l.lock().unwrap_or_else(PoisonError::into_inner);
     let presets = l.presets.version;
-    let docs = l.docs.versions();
+    let mut docs = l.docs.versions();
+    if shared > 0 {
+        docs.insert(crate::server_presets::NAME.to_string(), shared);
+    }
     match l.core.since(since, limit) {
         Ok(Pull::Ops(ops)) => {
             let body = serde_json::to_vec(&proto::Ops { head: l.core.head(), ops, presets, docs, format: lightcraft_catalog::journal::VERSION });

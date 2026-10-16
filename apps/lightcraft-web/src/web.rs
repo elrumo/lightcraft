@@ -18,6 +18,7 @@ use crate::backend::Backend;
 use crate::backup::{ACTIVE_LIBRARY, DEFAULT_LIBRARY_DIR, valid_library_dir};
 use crate::bench::Bench;
 use crate::files::{Files, FlushOp, LIBRARY_FILES};
+use crate::lifecycle;
 use crate::safety::{self, notice};
 use crate::store::{Originals, content_hash, download_name, storage_key};
 use crate::wire::ThumbIndex;
@@ -464,6 +465,9 @@ impl WebApp {
         // sync keeps photo files in browser storage
         session.sync_store = stored;
         let frozen = Rc::new(Cell::new(false));
+        let flushing = Rc::new(Cell::new(false));
+        // a page that loses its graphics reloads once the library is in storage
+        lifecycle::set_saved(lifecycle::Saved { files: files.clone(), flushing: flushing.clone() });
         let mut app = LightcraftApp::new(session, services(originals.clone(), backend.clone(), files.clone(), frozen.clone(), cc.egui_ctx.clone()))
             .with_chinese_font(chinese_font);
         let ui_written = files.get("ui.json").unwrap_or_default();
@@ -504,7 +508,7 @@ impl WebApp {
             files,
             backend,
             workers,
-            flushing: Rc::new(Cell::new(false)),
+            flushing,
             flush_failed_at: Rc::new(Cell::new(0.0)),
             frozen,
             lib_dir,
@@ -724,7 +728,8 @@ impl WebApp {
             "dirty": self.files.is_dirty(),
             "flushing": self.flushing.get(),
             "saveError": self.files.error(),
-            "workers": {"alive": alive, "ready": ready, "remoteJobs": remote, "inlineJobs": inline},
+            "workers": {"alive": alive, "ready": ready, "remoteJobs": remote, "inlineJobs": inline, "restarted": self.workers.as_ref().map_or(0, Workers::restarted)},
+            "graphicsLost": lifecycle::graphics_lost(),
             "originalsInMemory": orig_n,
             "originalBytesInMemory": orig_bytes,
             "renderQueue": self.app.renderer.queued(),
@@ -734,11 +739,21 @@ impl WebApp {
         })
     }
 
+    /// `web.crashWorker {index}`: make a render worker throw, to see the page start another.
+    fn crash_worker(&self, params: &serde_json::Value) -> serde_json::Value {
+        let index = params.get("index").and_then(serde_json::Value::as_u64).and_then(|i| usize::try_from(i).ok()).unwrap_or(0);
+        json!({"crashed": self.workers.as_ref().is_some_and(|w| w.crash(index))})
+    }
+
     fn run_inbox(&mut self) {
         let inbox = INBOX.with(|q| std::mem::take(&mut *q.borrow_mut()));
         for (id, params, (resolve, reject)) in inbox {
             let params: serde_json::Value = serde_json::from_str(&params).unwrap_or(json!({}));
-            let r = if id == "web.stats" { Ok(self.web_stats()) } else { self.app.run(&id, params) };
+            let r = match id.as_str() {
+                "web.stats" => Ok(self.web_stats()),
+                "web.crashWorker" => Ok(self.crash_worker(&params)),
+                _ => self.app.run(&id, params),
+            };
             let _ = match r {
                 Ok(v) => resolve.call1(&JsValue::NULL, &v.to_string().into()),
                 Err(e) => reject.call1(&JsValue::NULL, &e.into()),
@@ -779,6 +794,12 @@ impl eframe::App for WebApp {
     }
 
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {
+        // Graphics the browser took away can't be drawn to (the painter panics on its next new
+        // texture): to eframe the window is hidden, so the app's logic runs and nothing is painted
+        // until the page has reloaded (`lifecycle`).
+        if lifecycle::graphics_lost() {
+            raw.viewports.entry(egui::ViewportId::ROOT).or_default().occluded = Some(true);
+        }
         if let Some(text) = PASTED.with(|p| p.borrow_mut().take()) {
             raw.events.push(egui::Event::Paste(text));
         }
@@ -822,6 +843,7 @@ pub fn start(chinese_font: Vec<u8>) {
             return;
         };
         let boot = boot(opts).await;
+        lifecycle::install(&canvas);
         let runner = eframe::WebRunner::new();
         let r = runner.start(canvas, eframe::WebOptions::default(), Box::new(move |cc| Ok(Box::new(WebApp::new(cc, boot, chinese_font))))).await;
         match r {

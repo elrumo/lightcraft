@@ -75,6 +75,9 @@ Build the image once, from the repository's root:
 docker build -f apps/lightcraft-server/Dockerfile -t lightcraft-server .
 ```
 
+Only using the apps, never the web client? Add `--target lite`: the image then holds the server and its admin page
+but no web client, and builds faster.
+
 **On a tailnet**, with HTTPS from Tailscale (turn on MagicDNS and HTTPS certificates in the tailnet's admin console):
 
 ```sh
@@ -271,7 +274,8 @@ lightcraft-cli run --library ~/LightCraft-synced sync.signIn server=photos.examp
   most the server keeps for one person; uploads over it wait, nothing is deleted. Library folders don't count.
 - **Logs:** `docker compose logs -f lightcraft`; `LIGHTCRAFT_LOG=debug` for more.
 - **Scans of library folders:** every 15 minutes (`LIGHTCRAFT_SCAN_INTERVAL`, minutes; `0` = only at start and from
-  the admin page's **Scan now**). A disk that isn't mounted is skipped, never read as everything deleted.
+  the admin page's **Scan for changes**; its arrow also offers **Rescan everything**, which reads every file again). A
+  disk that isn't mounted is skipped, never read as everything deleted.
 
 ## 6. When something goes wrong
 

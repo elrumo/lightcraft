@@ -46,26 +46,45 @@ pub fn confirm(text: &str) -> bool {
     web_sys::window().and_then(|w| w.confirm_with_message(text).ok()).unwrap_or(false)
 }
 
-/// Cover the page with a message (the app can't continue, or must not start).
+/// Cover the page with a message (the app can't continue, or must not start), with a Reload
+/// button: the library in storage is the same after it.
 pub fn show_blocking(text: &str) {
     let Some(doc) = document() else { return };
-    let el = match doc.get_element_by_id("lightcraft_blocking") {
-        Some(el) => el,
+    let message = match doc.get_element_by_id("lightcraft_blocking_text") {
+        Some(message) => message,
         None => {
-            let Ok(el) = doc.create_element("div") else { return };
+            let (Ok(el), Ok(message), Ok(button)) = (doc.create_element("div"), doc.create_element("div"), doc.create_element("button")) else {
+                return;
+            };
             el.set_id("lightcraft_blocking");
             let _ = el.set_attribute(
                 "style",
-                "position:fixed;inset:0;z-index:10;display:flex;align-items:center;justify-content:center;padding:32px;\
-                 background:#1c1c1c;color:#e0e0e0;font:15px/1.5 system-ui,-apple-system,'Segoe UI',sans-serif;text-align:center;white-space:pre-line",
+                "position:fixed;inset:0;z-index:10;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:24px;\
+                 padding:32px;background:#1c1c1c;color:#e0e0e0;font:15px/1.5 system-ui,-apple-system,'Segoe UI',sans-serif;text-align:center",
             );
+            message.set_id("lightcraft_blocking_text");
+            let _ = message.set_attribute("style", "white-space:pre-line;max-width:40em");
+            button.set_text_content(Some("Reload"));
+            let _ = button.set_attribute(
+                "style",
+                "font:inherit;color:inherit;background:#3a3a3a;border:1px solid #666;border-radius:6px;padding:6px 18px;cursor:pointer",
+            );
+            let reload = Closure::<dyn FnMut()>::new(|| {
+                if let Some(w) = web_sys::window() {
+                    let _ = w.location().reload();
+                }
+            });
+            let _ = button.add_event_listener_with_callback("click", reload.as_ref().unchecked_ref());
+            reload.forget();
+            let _ = el.append_child(&message);
+            let _ = el.append_child(&button);
             if let Some(body) = doc.body() {
                 let _ = body.append_child(&el);
             }
-            el
+            message
         }
     };
-    el.set_text_content(Some(text));
+    message.set_text_content(Some(text));
     if let Some(loading) = doc.get_element_by_id("lightcraft_loading") {
         loading.remove();
     }

@@ -200,23 +200,72 @@ impl<T: Copy + Default> Image<T> {
         }
         out
     }
-    /// Apply an EXIF orientation (stored → displayed).
-    /// [`Self::oriented`] without a copy when `o` is the identity.
-    pub fn into_oriented(self, o: lightcraft_geom::Orientation) -> Self {
-        if o == lightcraft_geom::Orientation::Normal { self } else { self.oriented(o) }
+    /// [`Self::oriented`] without a copy when `o` keeps the axes (the identity, a half turn, a flip), and with
+    /// one when it turns them: a 48 MP float picture is 560 MB more while it turns, not 1.1 GB.
+    pub fn into_oriented(mut self, o: lightcraft_geom::Orientation) -> Self
+    where
+        T: Send + Sync,
+    {
+        use lightcraft_geom::Orientation::*;
+        let w = self.width.max(1);
+        match o {
+            Normal => {}
+            Rotate180 => self.data.reverse(),
+            FlipH => self.data.chunks_mut(w).for_each(<[T]>::reverse),
+            FlipV => {
+                self.data.reverse();
+                self.data.chunks_mut(w).for_each(<[T]>::reverse);
+            }
+            _ => return self.oriented(o),
+        }
+        self
     }
 
-    pub fn oriented(&self, o: lightcraft_geom::Orientation) -> Self {
-        let (flip, turns) = o.to_parts();
-        let mut img = if flip { self.flip_h() } else { self.clone() };
-        match turns {
-            1 => img = img.rotate_cw(),
-            2 => img = img.rotate_180(),
-            3 => img = img.rotate_180().rotate_cw(),
-            _ => {}
-        }
-        img
+    /// Apply an EXIF orientation (stored → displayed): one pass, each pixel read from where
+    /// [`orient_map`] says.
+    pub fn oriented(&self, o: lightcraft_geom::Orientation) -> Self
+    where
+        T: Send + Sync,
+    {
+        let (w, h) = if o.swaps_axes() { (self.height, self.width) } else { (self.width, self.height) };
+        let m = orient_map(o, self.width, self.height);
+        let mut out = Image::new(w, h);
+        par_rows(&mut out.data, w, |y, row| {
+            let y = y as i64;
+            for (x, px) in row.iter_mut().enumerate() {
+                let x = x as i64;
+                let (sx, sy) = (m[0] * x + m[1] * y + m[2], m[3] * x + m[4] * y + m[5]);
+                let at = usize::try_from(sx).ok().filter(|&sx| sx < self.width).zip(usize::try_from(sy).ok()).map(|(sx, sy)| sy * self.width + sx);
+                if let Some(v) = at.and_then(|i| self.data.get(i)) {
+                    *px = *v;
+                }
+            }
+        });
+        out
     }
+}
+
+/// Integer pixel map `(x, y) → (m0·x + m1·y + m2, m3·x + m4·y + m5)` from an image oriented with `o` back to the
+/// `w × h` image it is made from (EXIF: an optional horizontal flip, then clockwise quarter turns).
+pub fn orient_map(o: lightcraft_geom::Orientation, w: usize, h: usize) -> [i64; 6] {
+    let (flip, turns) = o.to_parts();
+    let (w, h) = (w as i64, h as i64);
+    // each step maps a pixel of its output back to its input (`w × h`: only the last step turns the axes)
+    let flip_h = [-1, 0, w - 1, 0, 1, 0];
+    let half = [-1, 0, w - 1, 0, -1, h - 1];
+    let cw = [0, 1, 0, -1, 0, h - 1];
+    let ops = [flip.then_some(flip_h), (turns >= 2).then_some(half), (turns % 2 == 1).then_some(cw)];
+    // compose: T ← T ∘ op
+    ops.iter().flatten().fold([1, 0, 0, 0, 1, 0], |t, o| {
+        [
+            t[0] * o[0] + t[1] * o[3],
+            t[0] * o[1] + t[1] * o[4],
+            t[0] * o[2] + t[1] * o[5] + t[2],
+            t[3] * o[0] + t[4] * o[3],
+            t[3] * o[1] + t[4] * o[4],
+            t[3] * o[2] + t[4] * o[5] + t[5],
+        ]
+    })
 }
 
 impl Rgb32f {
@@ -277,6 +326,40 @@ impl Rgba8 {
 mod tests {
     use super::*;
     use lightcraft_geom::Orientation;
+
+    /// `oriented`, `into_oriented` and `orient_map` are the EXIF composition: a horizontal flip, then clockwise turns.
+    #[test]
+    fn orientations_are_a_flip_then_turns() {
+        let img = Image::from_fn(5, 3, |x, y| [x as f32, y as f32, 0.0]);
+        for o in [
+            Orientation::Normal,
+            Orientation::Rotate90,
+            Orientation::Rotate180,
+            Orientation::Rotate270,
+            Orientation::FlipH,
+            Orientation::Transverse,
+            Orientation::FlipV,
+            Orientation::Transpose,
+        ] {
+            let (flip, turns) = o.to_parts();
+            let mut want = if flip { img.flip_h() } else { img.clone() };
+            for _ in 0..turns {
+                want = want.rotate_cw();
+            }
+            let got = img.oriented(o);
+            assert_eq!((got.width, got.height, &got.data), (want.width, want.height, &want.data), "{o:?}");
+            let into = img.clone().into_oriented(o);
+            assert_eq!((into.width, into.height, &into.data), (want.width, want.height, &want.data), "{o:?} in place");
+            let m = orient_map(o, 5, 3);
+            for (y, row) in want.data.chunks(want.width).enumerate() {
+                for (x, px) in row.iter().enumerate() {
+                    let (x, y) = (x as i64, y as i64);
+                    let (sx, sy) = (m[0] * x + m[1] * y + m[2], m[3] * x + m[4] * y + m[5]);
+                    assert_eq!(*px, img.get(sx as usize, sy as usize), "{o:?} at {x},{y}");
+                }
+            }
+        }
+    }
 
     /// A sample at an infinite coordinate (the inverse mapping of a crop of no size) cast to
     /// isize::MAX, and its right / lower neighbour overflowed (a panic where overflow is checked):

@@ -339,5 +339,7 @@
   "Downloading the depth model… {:.0} %": "Downloading the depth model… {:.0} %",
   "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)": "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)",
   "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.": "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.",
+  "Delete the group “{name}” and its {n} presets?": "Odstranit skupinu „{name}“ a její přednastavení ({n})?",
+  "Hid “{name}”. Show Hidden Presets in the panel's menu brings it back.": "Skryto: „{name}“. Volba „Zobrazit skrytá přednastavení“ v nabídce panelu je vrátí zpět.",
   "{n} photos might be sensitive. Nothing is hidden until you choose.": "Fotografie, které mohou být citlivé: {n}. Nic se neskryje, dokud se nerozhodnete."
 }

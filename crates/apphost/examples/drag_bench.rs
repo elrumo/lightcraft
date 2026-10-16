@@ -176,17 +176,26 @@ fn main() {
 /// The process's memory as iOS counts it against the app's limit (`footprint`: dirty memory, the GPU's
 /// buffers included on Apple silicon), in MB.
 fn footprint_mb() -> f64 {
-    let out = std::process::Command::new("/usr/bin/footprint").arg("-p").arg(std::process::id().to_string()).output();
+    footprint().0
+}
+
+/// [`footprint_mb`] and the highest it has been since the process started (what the system ends an app
+/// by: a decode's temporaries count there, gone by the time a step ends), in MB.
+fn footprint() -> (f64, f64) {
+    let out = std::process::Command::new("/usr/bin/footprint").args(["--noCategories", "-p"]).arg(std::process::id().to_string()).output();
     let text = out.map(|o| String::from_utf8_lossy(&o.stdout).to_string()).unwrap_or_default();
-    // "LightCraft [123]: 64-bit    Footprint: 2480 KB (16384 bytes per page)"
-    let Some(rest) = text.split("Footprint: ").nth(1) else { return f64::NAN };
-    let mut it = rest.split_whitespace();
-    let n: f64 = it.next().and_then(|n| n.parse().ok()).unwrap_or(f64::NAN);
-    match it.next() {
-        Some("KB") => n / 1024.0,
-        Some("GB") => n * 1024.0,
-        _ => n,
-    }
+    // "phys_footprint: 2480 KB", "phys_footprint_peak: 1.2 GB"
+    let field = |name: &str| {
+        let Some(rest) = text.split(name).nth(1) else { return f64::NAN };
+        let mut it = rest.split_whitespace();
+        let n: f64 = it.next().and_then(|n| n.parse().ok()).unwrap_or(f64::NAN);
+        match it.next() {
+            Some("KB") => n / 1024.0,
+            Some("GB") => n * 1024.0,
+            _ => n,
+        }
+    };
+    (field("phys_footprint: "), field("phys_footprint_peak: "))
 }
 
 /// Zoom in as a phone does (`render.view {zoom}` after each pinch), then pan at the deepest zoom; the
@@ -218,7 +227,8 @@ fn zoom(host: &Host, pid: u64, w: u64, h: u64) {
     host.submit(&req(4_000_000, "render.view", json!({"photo": pid, "width": w, "height": h}))).ok();
     let ms = wait("fit");
     let m = host.call(&req(3_999_999, "host.memory", json!({})), Duration::from_secs(30))["result"].clone();
-    println!("fit: {ms:.0} ms, footprint {:.0} MB, {m}", footprint_mb());
+    let (now, peak) = footprint();
+    println!("fit: {ms:.0} ms, footprint {now:.0} MB, peak {peak:.0}, {m}");
     if let Some(secs) = std::env::var("BENCH_HOLD").ok().and_then(|s| s.parse::<u64>().ok()) {
         println!("holding {secs} s (pid {})", std::process::id());
         std::thread::sleep(Duration::from_secs(secs));
@@ -252,13 +262,18 @@ fn zoom(host: &Host, pid: u64, w: u64, h: u64) {
         n += 1;
         host.submit(&req(n, "render.view", json!({"photo": pid, "width": w, "height": h, "zoom": {"drawn": long * z, "visible": visible}}))).ok();
         let ms = wait(&what);
+        // `BENCH_SETTLE_MS`: measure that long after the window arrives (a render's buffers are freed after it)
+        if let Some(settle) = std::env::var("BENCH_SETTLE_MS").ok().and_then(|s| s.parse::<u64>().ok()) {
+            std::thread::sleep(Duration::from_millis(settle));
+        }
         n += 1;
         let all = host.call(&req(n, "host.memory", json!({})), Duration::from_secs(30))["result"].clone();
         let (m, v) = (&all["engine"], &all["views"]["stageCaches"]);
         let mb = |v: &Value| v.as_f64().unwrap_or(0.0) / 1048576.0;
         println!(
-            "{what}: {ms:.0} ms, footprint {:.0} MB (view stages: cpu {:.0}, gpu {:.0}; sources: preview {:.0}, full {:.0}; gpu {:.0} + pooled {:.0}; rendered {:.0})",
-            footprint_mb(),
+            "{what}: {ms:.0} ms, footprint {:.0} MB, peak {:.0} (view stages: cpu {:.0}, gpu {:.0}; sources: preview {:.0}, full {:.0}; gpu {:.0} + pooled {:.0}; rendered {:.0})",
+            footprint().0,
+            footprint().1,
             mb(&v["cpuBytes"]),
             mb(&v["gpuBytes"]),
             mb(&m["previewSources"]["bytes"]),
@@ -267,8 +282,19 @@ fn zoom(host: &Host, pid: u64, w: u64, h: u64) {
             mb(&m["gpu"]["pooled"]),
             mb(&m["rendered"]["bytes"])
         );
+        // `BENCH_CATEGORIES=1`: where the footprint is (malloc, the GPU's buffers, …)
+        if std::env::var("BENCH_CATEGORIES").is_ok()
+            && let Ok(o) = std::process::Command::new("/usr/bin/footprint").arg("-p").arg(std::process::id().to_string()).output()
+        {
+            for line in String::from_utf8_lossy(&o.stdout).lines().skip(5).take(30) {
+                println!("    {line}");
+            }
+        }
     };
-    for z in [2.0, 4.0, 8.0] {
+    // `BENCH_ZOOMS=8,4`: the zoom steps (default 2, 4, 8; the first decodes the original)
+    let zooms: Vec<f64> =
+        std::env::var("BENCH_ZOOMS").map_or_else(|_| vec![2.0, 4.0, 8.0], |z| z.split(',').filter_map(|z| z.trim().parse().ok()).collect());
+    for z in zooms {
         ask(z, 0.5, 0.5, format!("zoom {z}x"));
     }
     for i in 0..8 {

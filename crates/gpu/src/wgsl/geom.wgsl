@@ -53,7 +53,8 @@ fn orient(@builtin(global_invocation_id) g: vec3<u32>) {
     put(g.y * ow + g.x, vec3<f32>(src[j], src[j + 1u], src[j + 2u]));
 }
 
-// Bilinear resample through an affine (output px → base px). P: bw, bh, w, h, affine[6].
+// Bilinear resample through an affine (output px → base px), from a base that holds the bw × bh of it
+// from (ox, oy) on. P: bw, bh, w, h, affine[6], ox, oy.
 @compute @workgroup_size(16, 16)
 fn sample_affine(@builtin(global_invocation_id) g: vec3<u32>) {
     let w = pu(2u);
@@ -65,7 +66,7 @@ fn sample_affine(@builtin(global_invocation_id) g: vec3<u32>) {
     let py = f32(g.y) + 0.5;
     let x = pf(4u) * px + pf(6u) * py + pf(8u);
     let y = pf(5u) * px + pf(7u) * py + pf(9u);
-    put(g.y * w + g.x, bilinear(pu(0u), pu(1u), x, y));
+    put(g.y * w + g.x, bilinear(pu(0u), pu(1u), x - pf(10u), y - pf(11u)));
 }
 
 // --- the lens / perspective warp (`lightcraft_pipeline::optics::Warp`), in oriented-source px.
@@ -73,8 +74,8 @@ fn sample_affine(@builtin(global_invocation_id) g: vec3<u32>) {
 // 10 sx, 11 sy, 12 W, 13 H, 14 persp?, 15..24 persp_inv, 24 k1, 25..28 ca, 28 lens_dist,
 // 29 warp?, 30..48 warp planes (3 × 6), 48 warp centre x, 49 y, 50 warp radius, 51 vig_stops,
 // 52 vig_power, 53 lens_vig, 54 vignette?, 55..60 vignette k, 60 vignette centre x, 61 y,
-// 62 vignette radius, 63 per-channel?, 64 gain?
-const WP_N: u32 = 65u;
+// 62 vignette radius, 63 per-channel?, 64 gain?, 65 ox, 66 oy (the base holds bw × bh of it from there on)
+const WP_N: u32 = 67u;
 
 fn centre() -> vec2<f32> {
     return vec2<f32>(pf(12u) / 2.0, pf(13u) / 2.0);
@@ -183,12 +184,14 @@ fn sample_warp(@builtin(global_invocation_id) g: vec3<u32>) {
         put(g.y * w + g.x, vec3<f32>(BLANK_R, BLANK_G, BLANK_B));
         return;
     }
-    var v = bilinear(bw, bh, s.x * sx, s.y * sy);
+    let ox = pf(65u);
+    let oy = pf(66u);
+    var v = bilinear(bw, bh, s.x * sx - ox, s.y * sy - oy);
     if (pu(63u) != 0u) {
         let qr = corrected_to_source(c, 0u);
-        v.x = bilinear(bw, bh, qr.x * sx, qr.y * sy).x;
+        v.x = bilinear(bw, bh, qr.x * sx - ox, qr.y * sy - oy).x;
         let qb = corrected_to_source(c, 2u);
-        v.z = bilinear(bw, bh, qb.x * sx, qb.y * sy).z;
+        v.z = bilinear(bw, bh, qb.x * sx - ox, qb.y * sy - oy).z;
     }
     if (pu(64u) != 0u) {
         v = v * warp_gain(s);

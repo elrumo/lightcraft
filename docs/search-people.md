@@ -30,7 +30,7 @@ to its licence, and everything else works without it.
   | `vision.model.status` | whether the model is installed and loaded, how many photos are indexed, the server's state, sharing |
   | `vision.model.download {acknowledged: true}` / `vision.model.cancel` | download (resumable, SHA-256-checked) or stop |
   | `vision.index {wait?, ids?}` / `vision.indexProgress` / `vision.indexCancel` | embed the photos that have no vector yet |
-  | `library.search {q, limit?, wait?, source?}` | `source`: `local`, `server`, or `auto` (this device's index when it covers the library, else the server's; always this device's when `vision.setLocalOnly` is on) |
+  | `library.search {q, limit?, wait?, source?}` | `source`: `local`, `server`, or `auto` (this device's index when it covers the library, else the server's; always this device's when `vision.setLocalOnly` is on). A one-word query that is part of a file name (`IMG_4008`, `img_4008.dng`) lists those photos first (`name: true`), on every device and source; the plain search field (`library.filter {text}`) matches file names too |
   | `vision.setLocalOnly {on}` | search on this device only, never through the sync server (saved with the library; no effect on a device that can't run the model) |
   | `vision.share {wait?}` / `vision.setShare {on}` | send this device's vectors (and text) to the server, once or whenever new photos are indexed |
   | `vision.setText {on}` | also read and search the text printed in photos (off until turned on; saved with the library) |
@@ -183,10 +183,12 @@ memory when it is off. While it is off, `/api/search/status` says `installed: fa
 while the admin page's download runs), so devices stop asking and say why. Admin routes (admin session token):
 
 ```text
-GET    /api/admin/search            {enabled, installed, active, loaded, model, dim, dir, sizeBytes, license, licenseUrl, download,
-                                     text: {enabled, installed, active, sizeBytes, license, licenseUrl, download},
-                                     faces: {installed, sizeBytes, licenses, download},
-                                     users: [{name, faces, total, indexed, read, found}]}   (null: not done for this server)
+GET    /api/admin/search            {enabled, installed, active, loaded, model, dim, dir, sizeBytes, license, licenseUrl, download, schedule,
+                                     text: {enabled, installed, active, sizeBytes, license, licenseUrl, download, schedule},
+                                     faces: {installed, sizeBytes, licenses, download, schedule},
+                                     users: [{name, faces, total, indexed, read, found, work}]}   (null: not done for this server)
+                                     schedule: {paused, from, to, runsNow, left, ready, perMinute, lastSecs, now: {user, secs}}
+                                     work: {search|text|faces: {perMinute, waiting, failed, problem}}
 PUT    /api/admin/search            {enabled}: the switch; the model stays on disk when off
 PUT    /api/admin/search/text       {enabled}: the same for reading the text in photos (what was read is kept)
 POST   /api/admin/search[/text|/faces]/download   {acknowledged: true}: download those models if they aren't there (400 without the
@@ -194,6 +196,16 @@ POST   /api/admin/search[/text|/faces]/download   {acknowledged: true}: download
 DELETE /api/admin/search[/text|/faces]/download   stop the download (a new one resumes it)
 PUT    /api/admin/users/NAME/faces  {enabled}: find the people in that user's photos (needs the face models)
 ```
+
+The admin page shows how the worker gets on with each kind of index. It takes turns: up to 200 photos described, 25 read
+and 25 looked at for faces per user, then the next user, so a big library being described doesn't hold up the rest. A
+line with a dot says what it is on now and when it last finished a photo (green while it works, orange when a turn has
+gone ten minutes without finishing one, or nothing was done for half an hour although photos are ready). Each user's bar
+says the time left at the pace of the last ten minutes (`perMinute`, counting the time spent on the other indexes and
+users), how many photos wait for their previews (`waiting`), how many couldn't be done (`failed`: tried again after a
+restart) and the last problem. A photo the model can't take is set aside on its own: it no longer fails its whole batch
+on every pass, which used to stop describing for good. `ready` is the photos left that have previews and weren't set
+aside; the time left is worked out from it.
 
 Until it is installed every route says so (`503`) instead of failing, and uploads are still accepted. Old servers answer
 `404`, which clients read as "this server can't search". The routes are additive: old clients and servers keep working.

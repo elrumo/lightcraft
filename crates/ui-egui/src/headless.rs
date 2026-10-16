@@ -1893,6 +1893,40 @@ mod tests {
         assert!(!h.app.widgets.iter().any(|(w, _)| w.starts_with("preset:")), "all still folded");
     }
 
+    /// Presets column: a hidden group and a hidden preset leave the list; Show Hidden Presets lists them again;
+    /// Delete Group asks first, then deletes the user's presets in it.
+    #[test]
+    fn hidden_presets_leave_the_list_and_groups_are_deleted_after_asking() {
+        let mut h = demo([1400.0, 2000.0]);
+        let t = Duration::from_secs(10);
+        h.request("ui.set", json!({"view": "detail"}), t);
+        h.request("engine.execute", json!({"command": "panel.presets"}), t);
+        h.request("engine.execute", json!({"command": "preset.hideGroup", "params": {"group": "Film"}}), t);
+        h.request("engine.execute", json!({"command": "preset.hide", "params": {"id": "lc.moody"}}), t);
+        h.settle(SETTLE);
+        let listed = |h: &Headless, w: &str| h.app.widgets.iter().any(|(x, _)| x == w);
+        assert!(!listed(&h, "presetGroup:Film") && listed(&h, "presetGroup:Color"), "the hidden group is left out");
+        assert!(!listed(&h, "preset:lc.moody") && listed(&h, "preset:lc.cinematic"), "the hidden preset is left out");
+        h.app.ui.show_hidden_presets = true;
+        h.settle(SETTLE);
+        assert!(listed(&h, "presetGroup:Film") && listed(&h, "preset:lc.moody"), "listed again to be shown");
+        // a group of the user's own: deleted after asking
+        let mut p = lightcraft_develop::Preset::from_settings("user.mine", "Mine", "Trips", &Default::default(), &[]);
+        p.settings = json!({"light": {"exposure": 0.5}});
+        h.app.session.presets.push(p);
+        h.app.ui.dialog = Some(crate::state::Dialog::DeletePresetGroup { group: "Trips".into(), count: 1 });
+        h.settle(SETTLE);
+        h.request("ui.clickWidget", json!({"id": "button:dialogCancel"}), t);
+        h.settle(SETTLE);
+        assert!(h.app.session.presets.iter().any(|p| p.group == "Trips"), "nothing deleted before confirming");
+        h.app.ui.dialog = Some(crate::state::Dialog::DeletePresetGroup { group: "Trips".into(), count: 1 });
+        h.settle(SETTLE);
+        h.request("ui.dialog.confirm", json!({}), t);
+        h.settle(SETTLE);
+        assert!(!h.app.session.presets.iter().any(|p| p.group == "Trips"), "deleted");
+        assert!(h.app.ui.dialog.is_none());
+    }
+
     /// Presets column: resting on a preset previews it in the loupe without a history entry;
     /// thumbnails are variant renders; Create Preset includes only the checked groups.
     #[test]

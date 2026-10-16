@@ -57,7 +57,9 @@ docker exec lightcraft lightcraft-server folder add ann /photos/ann --name Photo
 ```
 
 The image holds the server and the web build; everything it keeps is in the `/data` volume (the photo folders
-mounted at `/photos` stay where they are). It runs as uid 10001, which must be able to read the photo folders, and
+mounted at `/photos` stay where they are). If everyone uses the apps and nobody the web client, add `--target lite`
+to the build (`make push-server-lite` pushes it as `…/lightcraft-lite`): the server and its admin page only, built
+without the web client, so it builds faster. It runs as uid 10001, which must be able to read the photo folders, and
 reports its health to Docker (`lightcraft-server health`).
 
 ### Without Docker
@@ -110,6 +112,7 @@ certificate from Let's Encrypt or Tailscale works as is; a self-signed one doesn
 
 ```text
 <data>/users.json                              users: argon2id password hash, library id, admin, storage limit
+<data>/server-presets.json                     presets shared with every user, built-in ones hidden for all { version, items }
 <data>/users/<name>/library/catalog.log        every change from every device, in order
 <data>/users/<name>/blobs/<kind>/<xx>/<hash>   photo files by content: original | smart | mini
 <data>/users/<name>/presets.json               user presets { version, presets }
@@ -126,10 +129,14 @@ Back up `<data>` like any folder (stop the server, or copy `catalog.log` first a
 
 ### The admin page
 
-`https://<your server>/admin` manages the server from a browser. It has four sections (a side bar on wide
+`https://<your server>/admin` manages the server from a browser. It has five sections (a side bar on wide
 screens, tabs on a phone), follows the system's light or dark mode, and confirms anything destructive in a dialog:
 
-- **Overview:** users, photos, signed-in devices and free disk space at a glance; **Connect a device** (the address
+- **Overview:** users, photos, signed-in devices and free disk space at a glance; **Server load** (the server's CPU
+  and memory, and the whole machine's, as a number and a chart of the last hours; read from `/proc` and the container's
+  cgroup files, so on Linux and in Docker only: elsewhere the page says so and shows the requests alone) and
+  **Activity** (what each user's devices asked of the server since it started: requests, data received and sent, the
+  time spent answering, when it last called; a signed-out device leaves the list); **Connect a device** (the address
   to type into Settings ▸ Sync on each device, the one you opened the page with, with a Copy button); and the
   server's details: version and the commit it was built from, data folder, the address it listens on, whether it
   serves the web build and that build's version and commit (its `version.json`, written by `cargo xtask web`).
@@ -142,9 +149,18 @@ screens, tabs on a phone), follows the system's light or dark mode, and confirms
   - **Shared links:** the [album links](#share-an-album) they made; revoke one.
   - **Library folders:** their [library folders](#library-folders-photos-already-on-the-server): add one (a path on
     the server, and the name devices show), remove one, whether the server can see it, the names to leave out of the
-    scan (**Skipped names**), **Scan now**, and what the
+    scan (**Skipped names**), **Scan for changes** (reads only the files that are new or changed) and, from the arrow
+    beside it, **Rescan everything** (reads every file again, [below](#library-folders-photos-already-on-the-server)),
+    **Build missing previews** and, from its arrow, **Rebuild all previews**, and what the
     last scan found (new, moved, changed, missing, files that couldn't be read) with progress while it scans and
-    while previews are built.
+    while previews are built. Each choice in those menus says what it does, and the two that take hours on a big
+    library ask first.
+- **Presets:** develop presets every user gets, beside their own. **Import presets** takes LightCraft (`.lcpreset`),
+  XMP and Lightroom (`.lrtemplate`) presets and zips of them (the same reader as a device's Import Presets; a preset
+  already there is skipped); then rename a preset, move it to another group, delete it, or rename or delete a whole
+  group. Below, a switch per built-in group and preset hides it from every user. Devices get the changes the next time
+  they sync and show these presets like the built-in ones: users can favourite and hide them, not change them. Two
+  admins changing them at once: the second is told and shown the first one's change.
 - **Search:** what the server does with each user's photos so their devices don't have to. A switch turns search by
   description on for every device that signs in (the web app, iPhone, other computers find photos by describing them
   without downloading the model); another does the same for finding photos by the words printed in them; **People**
@@ -161,7 +177,17 @@ replace it with a new one (logged again). Already have users? `lightcraft-server
 `user add NAME --admin`) instead.
 
 Admins sign in to the page with their user name and password. That opens an admin session of its own (not a device:
-it can't sync, and a device token can't manage the server); it ends after two hours without use, or with Sign Out.
+it can't sync, and a device token can't manage the server). The page keeps it in a cookie (`lc_admin`: `HttpOnly`, so
+no script can read it, `SameSite=Strict`, and `Secure` behind an HTTPS proxy), so closing the tab or the browser doesn't
+sign you out. **Keep me signed in** (on by default; turn it off on a computer you share) keeps the session for 30 days
+after you last used it, up to 180 days after you signed in, and across restarts of the server (`<data>/admin-sessions.json`
+holds a hash of each kept session's token, never the token, and is readable by the server's user only). Without it, the
+session ends with the browser, after two hours without use, or when the server restarts. Sign Out ends a session at
+once; a new password for the admin (from the page or `user passwd`), or no longer being an admin, ends all of theirs
+(the browser that changed its own password stays signed in), and an admin keeps at most 20 kept sessions (signing
+in on a 21st browser ends the one used longest ago). A request that changes something must carry the header
+`X-LightCraft-Admin` when it signs in by cookie, which a form on another site can't send. The SwiftUI app and scripts
+send the token `POST /api/admin/login` answers with as a bearer instead, and need no header.
 An admin is also an ordinary user with a library of their own.
 
 The data folder, the listen address and the domain are deployment settings, so the page shows them but doesn't change
@@ -238,7 +264,11 @@ can make such folders a user's **library folders** (admin page › Users › the
     temporary name and linked into place; if the server stops in between, the next scan recognises the file by its
     content. Previews stay in the server's store.
 - **Scans** run when the server starts, every 15 minutes (`--scan-interval`), when a folder is added and on demand
-  (**Scan now**, `lightcraft-server scan`). Files whose size and time didn't change aren't read again.
+  (the admin page's **Scan for changes**, `lightcraft-server scan`). Files whose size and time didn't change aren't read
+  again, and neither are the ones that couldn't be read, until the server restarts. The admin page's **Rescan
+  everything** (`POST /api/admin/users/{name}/rescan`) reads every file again, changed or not, and tries again the ones
+  that couldn't be read: it finds a file whose content changed but whose size and time didn't, and it takes as long
+  as reading the whole library. A file with the content it had leaves its photo, edits and sidecar as they are.
   - a new file becomes a new photo, with smart and mini previews built on the server (`LIGHTCRAFT_PREVIEW_THREADS`),
     in the order the scan found the files — except a photo a device is showing and doesn't have a preview of yet:
     asked for, its previews are built before the rest (see [Photos on a device](#photos-on-a-device)), so what a phone
@@ -563,7 +593,7 @@ pipeline and encoder as the apps, and sends the image back, which the device sav
 | export, metadata and filter presets, curve presets, colour-label and keyword sets, LUT profiles (with their `.cube` files), the order of the develop preset groups, the import defaults that don't name a place | the watched folder for auto import, the folders and the external editor, the cache size, the search-sharing choices |
 | metadata and keywords, analysis results | undo / redo |
 | albums, folders, smart albums, stacks | the view (`view.json`, `ui.json`) |
-| | Local records (photos seen while browsing a folder, until added to the library) |
+| | Local records (photos seen while browsing a folder, or opened from the Photos library, until added to the library; which Photos library picture is which photo, `photo-library.json`) |
 
 A server from before the Hidden album (catalog format 10 or older) would keep a hidden photo shown on the other
 devices: a device signed in to one refuses Hide and holds back any hidden change ("Update LightCraft Server first"). The
@@ -623,7 +653,12 @@ Big JSON answers (the library, pulled changes, the presets; 16 KiB and up) come 
 | `GET`/`POST /api/shares`, `DELETE /api/shares/{id}` | the user's album links ([`proto::Share`](../crates/catalog/src/sync.rs): `password` and `upload` say what each asks and allows): `{shares: [...]}`; `POST {album, expiresDays?, originals?, password?, upload?}` → the new link (`400` for a folder or smart album or a password under 4 characters, `404` no such album, `409` over 200 links); `DELETE` takes one back |
 | `GET /s/{token}`, `GET /s/{token}/{photo}[?play=1]`, `GET /s/{token}/{photo}/{thumb\|view\|original}`, `GET /s/{token}/download` | **no sign-in**: the album's page, a photo's page (`play`: the slideshow), the pictures, and Download All (a ZIP of the originals) ([above](#share-an-album)); `404` for anything else (unknown, ended or revoked token, a photo not in the album, `original` or `download` on a link that doesn't offer them), `401` until a link's password was typed, `429` when an address keeps guessing, `503` + `Retry-After` while the server is busy rendering |
 | `POST /s/{token}/unlock`, `POST /s/{token}/upload` | **no sign-in**: a link's password (`password=…`, a form; the answer sets the cookie that opens the link), and photos a visitor adds (`multipart/form-data`, field `photos`, optional `name`; `303` back to the album with `?added=N&skipped=M`; `403` on a link that doesn't take photos, `507` over the owner's [storage limit](#storage-limits)) |
-| `GET`/`PUT /api/docs/{name}` | the other shared settings, `name` one of `export-presets`, `metadata-presets`, `filter-presets`, `curve-presets`, `label-sets`, `keyword-sets`, `lut-profiles`, `prefs`, `preset-groups` (the order of the develop preset groups): `{version, items}` (a list; at most 24 MiB), merged by the devices item by item like presets; `PUT` with a stale `version` → `412` with the current document; another name → `404`. Their versions come with every pull (`docs`) |
+| `GET`/`PUT /api/docs/{name}` | the other shared settings, `name` one of `export-presets`, `metadata-presets`, `filter-presets`, `curve-presets`, `label-sets`, `keyword-sets`, `lut-profiles`, `prefs`, `preset-groups` (the order of the develop preset groups), `hidden-presets` (the presets and groups the user hid, one item each: `{id: "preset:<id>"}`, `{id: "group:<name>"}`): `{version, items}` (a list; at most 24 MiB), merged by the devices item by item like presets; `PUT` with a stale `version` → `412` with the current document; another name → `404`. Their versions come with every pull (`docs`) |
+| `GET /api/docs/server-presets` | the presets an admin shares with every user ([admin page](#the-admin-page) → Presets): `{version, items}`, each preset `{id: "srv.…", name, group, settings}` and one item `{id: "hidden", presets, groups}` (built-in presets and groups hidden for everyone). Read-only (`PUT` → `403`); its version comes with every pull (`docs`) once an admin has written it. Devices take it as it is, never merge or send it |
+| `POST /api/admin/login`, `POST /api/admin/logout` | the admin session ([above](#the-admin-page)): `login {user, password, remember?, cookie?}` → `{token, user}`, or with `cookie: true` (the page) `{user}` and a `Set-Cookie: lc_admin=…`; `remember` keeps it for weeks and across restarts; `logout` ends it (and clears the cookie). Anything else under `/api/admin/` takes the token as a bearer or the cookie (with `X-LightCraft-Admin` on what changes something) |
+| `GET /api/admin/usage` | (admin session) the Overview's numbers ([`usage.rs`](../apps/lightcraft-server/src/usage.rs)): `{since, supported, cores, memory, history: [{at, cpu, machineCpu, rss, memUsed, requests, out}], users: [{name, devices: [{id, name, requests, in, out, busyMs, lastSeen}]}]}`. `history` is a sample of the machine every 30 s for the last 24 h, averaged to at most 240 points (`cpu`: the server's CPU in cores, `machineCpu`: the whole machine's, 0 to 1, `rss` and `memUsed`: the server's memory and what the machine or container uses, `requests` and `out`: the devices' requests and the bytes sent to them since the point before); `null` where the platform doesn't say (`supported` is false off Linux). The counts are in memory and start again with the server |
+| `POST /api/admin/users/{name}/scan`, `…/rescan`, `…/previews/{generate\|rebuild\|pause\|resume}` | (admin session) the user's library folders: `scan` reads the files that are new or changed; `rescan` reads every file again; `previews/generate` builds the previews that are missing (and tries again the ones that failed); `previews/rebuild` builds every preview again, replacing the ones there only as each new one is written (so a photo that can't be read keeps its preview); `pause`/`resume` stop and go on, for every user. The answer is the user's folders with their scan status (`full`: this scan reads every file; `previewsRebuilding`) |
+| `GET`/`PUT /api/admin/presets`, `POST /api/admin/presets/import` | (admin session) the shared presets plus the built-in list (`builtin: [{id, name, group}]`); `PUT {version, items}` replaces them (`412` with the current document when stale; `400` naming a bad item); `import {files: [{name, data: base64}], group?}` → `{version, added, skipped, failed}` |
 | `POST /api/render` | `{hash, name, settings, export}` → the encoded image (`X-LightCraft-Size: WxH`): the photo with this original, rendered with these edits and [export options](#exporting-on-the-server) · `404` no such original (or a server older than the route) · `422` can't be rendered · `503` busy, `Retry-After` |
 | `GET /api/health` | `{ok, version}` (no sign-in) |
 | `GET /…` | the web build (`--web`) |

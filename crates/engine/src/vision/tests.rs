@@ -86,6 +86,26 @@ fn a_description_shows_the_best_matches_first() {
 }
 
 #[test]
+fn a_file_name_comes_first_indexed_or_not() {
+    let mut s = demo();
+    let library: Vec<_> = s.catalog.photos().filter(|p| p.in_library()).map(|p| (p.id.0, p.file_name.clone())).collect();
+    let (id, name) = library.iter().find(|(_, n)| library.iter().filter(|(_, m)| m == n).count() == 1).cloned().unwrap();
+    let stem = name.rsplit_once('.').unwrap().0.to_lowercase();
+    // nothing indexed yet: the name alone still finds it
+    let r = s.execute("library.search", &json!({"q": stem, "wait": true})).unwrap();
+    assert_eq!(ids(&r), [id], "{r}");
+    assert_eq!(r["photos"][0]["name"], true);
+    assert_eq!(s.visible_cloned().iter().map(|i| i.0).collect::<Vec<_>>(), [id]);
+
+    s.execute("vision.index", &json!({"wait": true})).unwrap();
+    let r = s.execute("library.search", &json!({"q": name, "limit": 3, "wait": true})).unwrap();
+    let found = ids(&r);
+    assert_eq!((found[0], found.len()), (id, 3), "first, and the limit holds: {r}");
+    assert_eq!(found.iter().filter(|i| **i == id).count(), 1, "not listed twice");
+    assert!(r["photos"].as_array().unwrap()[1..].iter().all(|p| p["name"] == false));
+}
+
+#[test]
 fn a_search_with_no_matches_shows_nothing_not_everything() {
     let mut s = demo();
     s.execute("vision.index", &json!({"wait": true})).unwrap();

@@ -4,6 +4,8 @@
 #   make push-server REF=HEAD        # from the committed code only (ignores uncommitted work)
 #   make push-server BUMP=minor      # or major; VERSION=1.0.0-rc.1 sets the version outright
 #   make server-version              # the version the next push would get (pushes nothing)
+#   make push-server-lite            # the same, without the web client (server + admin page only), to $(IMAGE)-lite;
+#                                    # takes the same REF/BUMP/VERSION; server-version-lite is its next version
 #
 # Every push is tagged with its version (semver, 0.2.3) and `latest`, and carries the version in its
 # org.opencontainers.image.version label: the next push reads it from :latest and bumps it. A version
@@ -39,8 +41,12 @@ next_version = set -e; \
 	if docker buildx imagetools inspect "$(IMAGE):$$v" >/dev/null 2>&1; then echo "$(IMAGE):$$v already exists" >&2; exit 1; fi; \
 	echo "$$v"
 
-.PHONY: push-server server-version
-push-server:
+.PHONY: push-server server-version push-server-lite server-version-lite
+# lite: the Dockerfile's `lite` stage, in an image of its own so its versions and :latest don't mix with the full one
+push-server-lite server-version-lite: IMAGE := $(IMAGE)-lite
+push-server-lite: STAGE := lite
+
+push-server push-server-lite:
 	@set -e; v=$$($(next_version)); ctx=.; \
 	if [ -n "$(REF)" ]; then \
 	  ctx=$$(mktemp -d); trap 'rm -rf "$$ctx"' EXIT; \
@@ -49,13 +55,13 @@ push-server:
 	fi; \
 	c=$$(git rev-parse --short=10 $(or $(REF),HEAD)); \
 	if [ -z "$(REF)" ] && [ -n "$$(git status --porcelain --untracked-files=no)" ]; then c="$$c-dirty"; fi; \
-	docker buildx build --platform $(PLATFORMS) -f apps/lightcraft-server/Dockerfile \
+	docker buildx build --platform $(PLATFORMS) -f apps/lightcraft-server/Dockerfile $(if $(STAGE),--target $(STAGE)) \
 	  --build-arg "LIGHTCRAFT_VERSION=$$v" --build-arg "LIGHTCRAFT_COMMIT=$$c" \
 	  --label "org.opencontainers.image.version=$$v" -t "$(IMAGE):$$v" -t "$(IMAGE):latest" --push "$$ctx"; \
 	echo "pushed $(IMAGE):$$v (also :latest)"
 	@docker buildx imagetools inspect $(IMAGE):latest | grep -E 'Name:|Digest:|Platform:' | head -4
 
-server-version:
+server-version server-version-lite:
 	@$(next_version)
 
 # Build LightCraft.app (ad-hoc signed unless MACOS_SIGN_IDENTITY is set) and its DMG.

@@ -752,13 +752,16 @@ fn matte_kind(name: &str) -> Option<lightcraft_pipeline::masks::MatteKind> {
 
 /// A DNG `ProfileToneCurve` (linear in, linear out, 1.0 = white after exposure compensation) as the
 /// finish stage's camera tone curve: 32 knots, log-spaced over 12 stops below white; above white
-/// the camera tone's shoulder continues it.
+/// the camera tone's shoulder continues it. The DNG applies the curve to each RGB channel; the finish
+/// stage applies it to luminance, so the curve carries the chroma scales a per-channel curve gives
+/// ([`lightcraft_pipeline::tone::channel_chroma`]): without them an iPhone ProRAW rendered with 74% of the
+/// colourfulness of Apple's own render, and of Lightroom's.
 pub(crate) fn dng_tone_curve(curve: &lightcraft_raw::profile::ToneCurve) -> Option<lightcraft_pipeline::tone::CameraTone> {
     let knots: [[f32; 2]; 32] = std::array::from_fn(|i| {
         let x = 2f32.powf(-12.0 + 12.0 * i as f32 / 31.0);
         [x, curve.eval(x).min(0.9995)]
     });
-    lightcraft_pipeline::tone::CameraTone::new(knots)
+    Some(lightcraft_pipeline::tone::CameraTone::new(knots)?.with_channel_chroma())
 }
 
 /// Orientation for an embedded preview: its own EXIF orientation when it has one, else the raw file's.
@@ -2148,6 +2151,8 @@ pub(crate) mod tests {
         assert!((0.8..1.1).contains(&(mean(&after) / mean(&before))), "{} vs {}", mean(&after), mean(&before));
         let tone = info.camera_tone.expect("the DNG tone curve becomes the camera tone");
         assert!((tone.apply(0.18) - 0.3).abs() < 0.01, "{}", tone.apply(0.18));
+        // applied per channel, its compressive upper segment takes colour out of the highlights
+        assert!(tone.chroma()[5] < 0.9 && tone.chroma()[1] > 0.95, "{:?}", tone.chroma());
         // a look table alone changes the render too (applied after exposure)
         raw.color.profile = ProfileLook {
             look_table: Some(HsvTable { hue_divisions: 1, sat_divisions: 2, val_divisions: 1, data: vec![[0.0, 1.0, 0.5]; 2], srgb_value: false }),

@@ -12,9 +12,11 @@
 //! thread, so an admin needs no shell on the server: the admin page starts it after showing the
 //! licence, watches [`Switch::status`] and can cancel it.
 
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::time::{Duration, Instant};
 
 use lightcraft_engine::guard;
 use lightcraft_vision::models::{self, Options, Progress};
@@ -23,6 +25,8 @@ use serde_json::{Value, json};
 
 /// The file in the data folder.
 pub const FILE: &str = "search.json";
+/// How far back the admin page's pace looks.
+const PACE_WINDOW: Duration = Duration::from_secs(10 * 60);
 
 /// The models an admin can fetch.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -102,8 +106,13 @@ pub struct Switch {
     /// `<data>/search.json` (`None`: no data folder, always on).
     file: Option<PathBuf>,
     slots: [Slot; 4],
-    /// Seconds a photo took lately, per part (smoothed), for the admin page's time left.
-    rate: Mutex<[Option<f64>; 4]>,
+    /// Per part and user, the batches of photos the worker finished lately: when each ended, how
+    /// many it had and the seconds it took (the newest is kept however old), for the admin page.
+    pace: Mutex<[HashMap<String, VecDeque<(Instant, usize, f64)>>; 4]>,
+    /// The part and user the worker is on, and since when.
+    now: Mutex<Option<(Part, String, Instant)>>,
+    /// Per part and user, the photos still waiting for their previews when the worker last looked.
+    waiting: Mutex<[HashMap<String, usize>; 4]>,
 }
 
 impl Switch {
@@ -173,20 +182,58 @@ impl Switch {
         }
     }
 
-    /// Records that `photos` took `secs` in all.
-    pub fn record(&self, part: Part, photos: usize, secs: f64) {
+    /// Records that the worker finished `photos` of `user`'s photos for `part`, in `secs`.
+    pub fn record(&self, part: Part, user: &str, photos: usize, secs: f64) {
         if photos == 0 {
             return;
         }
-        let per = secs / photos as f64;
-        let mut r = lock(&self.rate);
-        let slot = &mut r[part.slot()];
-        *slot = Some(slot.map_or(per, |old| 0.7 * old + 0.3 * per));
+        let now = Instant::now();
+        let mut p = lock(&self.pace);
+        let q = p[part.slot()].entry(user.to_string()).or_default();
+        q.push_back((now, photos, secs));
+        while q.len() > 1 && q.front().is_some_and(|b| now.duration_since(b.0) > PACE_WINDOW) {
+            q.pop_front();
+        }
     }
 
-    /// Seconds a photo has taken lately, once any was done.
-    pub fn per_photo(&self, part: Part) -> Option<f64> {
-        lock(&self.rate)[part.slot()]
+    /// Photos a minute `part` got through in the last ten minutes, for `user` or (`None`) everyone,
+    /// counting the time spent on other parts and users too; `None` when it did none.
+    pub fn per_minute(&self, part: Part, user: Option<&str>) -> Option<f64> {
+        let now = Instant::now();
+        let p = lock(&self.pace);
+        let (mut photos, mut began) = (0, now);
+        for (_, q) in p[part.slot()].iter().filter(|(u, _)| user.is_none_or(|w| w == u.as_str())) {
+            for &(end, n, secs) in q.iter().filter(|b| now.duration_since(b.0) <= PACE_WINDOW) {
+                photos += n;
+                began = began.min(end.checked_sub(Duration::try_from_secs_f64(secs).unwrap_or_default()).unwrap_or(end));
+            }
+        }
+        let secs = now.duration_since(began).min(PACE_WINDOW).as_secs_f64().max(1.0);
+        (photos > 0).then(|| photos as f64 * 60.0 / secs)
+    }
+
+    /// How long ago the worker last finished a photo for `part`.
+    pub fn last(&self, part: Part) -> Option<Duration> {
+        lock(&self.pace)[part.slot()].values().filter_map(|q| q.back()).map(|b| b.0.elapsed()).min()
+    }
+
+    /// What the worker is on (`None`: nothing).
+    pub fn working(&self, on: Option<(Part, &str)>) {
+        *lock(&self.now) = on.map(|(part, user)| (part, user.to_string(), Instant::now()));
+    }
+
+    /// The part and user the worker is on, and for how long.
+    pub fn now(&self) -> Option<(Part, String, Duration)> {
+        lock(&self.now).as_ref().map(|(part, user, since)| (*part, user.clone(), since.elapsed()))
+    }
+
+    pub fn set_waiting(&self, part: Part, user: &str, photos: usize) {
+        lock(&self.waiting)[part.slot()].insert(user.to_string(), photos);
+    }
+
+    /// `user`'s photos that `part` can't do yet because they have no previews.
+    pub fn waiting(&self, part: Part, user: &str) -> usize {
+        lock(&self.waiting)[part.slot()].get(user).copied().unwrap_or(0)
     }
 
     /// Search by description: on unless an admin turned it off.
@@ -344,9 +391,35 @@ mod tests {
         s.set_schedule(Part::Text, false, None).unwrap();
         assert!(s.window(Part::Text).is_none());
         assert!(s.set_schedule(Part::Text, false, Some((1440, 0))).is_err());
-        s.record(Part::Faces, 10, 5.0);
-        assert_eq!(s.per_photo(Part::Faces), Some(0.5));
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn the_pace_is_per_part_and_user_and_counts_the_time_between_batches() {
+        let s = Switch::default();
+        assert_eq!(s.per_minute(Part::Search, None), None);
+        assert!(s.last(Part::Search).is_none());
+        s.record(Part::Search, "ann", 0, 1.0);
+        assert_eq!(s.per_minute(Part::Search, None), None, "nothing done is no pace");
+        s.record(Part::Search, "ann", 30, 30.0);
+        s.record(Part::Search, "bob", 10, 5.0);
+        let all = s.per_minute(Part::Search, None).unwrap();
+        let ann = s.per_minute(Part::Search, Some("ann")).unwrap();
+        assert!((all - 80.0).abs() < 2.0, "40 photos since ann's batch began, 30 s ago: {all}");
+        assert!((ann - 60.0).abs() < 2.0, "{ann}");
+        assert_eq!(s.per_minute(Part::Text, None), None, "per part");
+        assert_eq!(s.per_minute(Part::Search, Some("cat")), None);
+        assert!(s.last(Part::Search).is_some_and(|d| d < Duration::from_secs(5)));
+        // (a batch that ended long ago no longer counts, but says when the last photo was done)
+        lock(&s.pace)[Part::Faces.slot()].insert("ann".into(), VecDeque::from([(Instant::now() - Duration::from_secs(3600), 5, 1.0)]));
+        assert_eq!(s.per_minute(Part::Faces, None), None);
+        assert!(s.last(Part::Faces).is_some_and(|d| d >= Duration::from_secs(3600)));
+        s.working(Some((Part::Text, "ann")));
+        assert!(s.now().is_some_and(|(p, u, _)| p == Part::Text && u == "ann"));
+        s.working(None);
+        assert!(s.now().is_none());
+        s.set_waiting(Part::Text, "ann", 7);
+        assert_eq!((s.waiting(Part::Text, "ann"), s.waiting(Part::Search, "ann")), (7, 0));
     }
 
     #[test]

@@ -131,6 +131,11 @@ impl Sensitive {
         Ok(Some(ix))
     }
 
+    /// The photos that could not be checked, by user.
+    pub(crate) fn failed(&self) -> &Mutex<HashSet<(String, Key)>> {
+        &self.failed
+    }
+
     /// Drop the model and the scores from memory (they come back on the next use).
     pub(crate) fn unload(&self) {
         if lock(&self.classifier).take().is_some() {
@@ -156,16 +161,21 @@ pub(crate) fn check_user(st: &Arc<State>, user: &str) -> Result<bool, String> {
     let index = s.index(&st.data, user, true)?.ok_or("the sensitive-content scores are unavailable")?;
     let failed = lock(&s.failed).clone();
     let mut work: Vec<(Key, Arc<Photo>, PathBuf)> = Vec::new();
+    let mut waiting = 0;
     {
         let ix = lock(&index);
         for (key, photo) in photos {
             if ix.contains(&key) || failed.contains(&(user.to_string(), key)) {
                 continue;
             }
-            let Some(path) = photo.content_hash.as_deref().and_then(|h| api::blob_path(&blobs, "smart", h)).filter(|p| p.is_file()) else { continue };
+            let Some(path) = photo.content_hash.as_deref().and_then(|h| api::blob_path(&blobs, "smart", h)).filter(|p| p.is_file()) else {
+                waiting += 1;
+                continue;
+            };
             work.push((key, photo, path));
         }
     }
+    v.switch.set_waiting(Part::Sensitive, user, waiting);
     if work.is_empty() {
         return Ok(false);
     }
@@ -178,6 +188,7 @@ pub(crate) fn check_user(st: &Arc<State>, user: &str) -> Result<bool, String> {
         if v.stopping() {
             return Ok(false);
         }
+        let one = Instant::now();
         let scored = lightcraft_engine::vision::neutral_from_preview(photo, path, EDGE)
             .and_then(|img| guard::catch("checking a photo", || classifier.score(&img)).and_then(|t| t.map_err(|e| e.to_string())));
         match scored {
@@ -185,6 +196,7 @@ pub(crate) fn check_user(st: &Arc<State>, user: &str) -> Result<bool, String> {
                 failures = 0;
                 if lock(&index).insert(*key, score).is_ok() {
                     done += 1;
+                    v.switch.record(Part::Sensitive, user, 1, one.elapsed().as_secs_f64());
                 } else {
                     lock(&s.failed).insert((user.to_string(), *key));
                 }
@@ -201,7 +213,6 @@ pub(crate) fn check_user(st: &Arc<State>, user: &str) -> Result<bool, String> {
         }
         v.touch();
     }
-    v.switch.record(Part::Sensitive, done, started.elapsed().as_secs_f64());
     log::info!("{user}: {done} of {} photo(s) checked for sensitive content in {:.1} s", work.len(), started.elapsed().as_secs_f64());
     lightcraft_engine::memory::release();
     Ok(more)

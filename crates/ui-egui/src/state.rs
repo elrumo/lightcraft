@@ -854,6 +854,8 @@ pub struct UiState {
     pub presets: bool,
     /// Presets column: show a live thumbnail of the photo with each preset.
     pub preset_thumbs: bool,
+    /// The Presets panel also lists the presets and groups the user hid (dimmed), to show them again.
+    pub show_hidden_presets: bool,
     pub filmstrip: bool,
     pub zoom: Zoom,
     /// Pan offset of the loupe when zoomed (image-normalized centre).
@@ -1559,6 +1561,11 @@ pub enum Dialog {
     DeleteEffects {
         names: Vec<String>,
     },
+    /// Confirm deleting a group of the user's presets (`preset.deleteGroup`).
+    DeletePresetGroup {
+        group: String,
+        count: usize,
+    },
     /// Confirm moving photos to Recently Deleted.
     ConfirmDelete {
         count: usize,
@@ -1663,6 +1670,7 @@ impl Default for UiState {
             right: RightPanel::Edit,
             presets: false,
             preset_thumbs: false,
+            show_hidden_presets: false,
             filmstrip: true,
             zoom: Zoom::Fit,
             pan: (0.5, 0.5),

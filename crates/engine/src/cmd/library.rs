@@ -240,6 +240,11 @@ fn step(s: &mut Session, d: isize) -> Result<Value> {
         return ok();
     }
     let cur = s.selection.active.and_then(|a| vis.iter().position(|x| *x == a));
+    // a photo open from the photo library (its own screen pages its pictures) isn't the grid's, even once a
+    // change has brought it into the library: next / Auto Advance mustn't jump from it into the library
+    if s.selection.active.is_some_and(|a| s.photo_library.has(a)) && (cur.is_none() || s.photo_library_return.is_some()) {
+        return ok();
+    }
     let next = match cur {
         Some(i) => (i as isize + d).clamp(0, vis.len() as isize - 1) as usize,
         None => 0,

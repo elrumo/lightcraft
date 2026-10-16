@@ -27,6 +27,7 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 
 use crate::backend::Backend;
+use crate::health::{MAX_RESTARTS, restart_delay_ms};
 use crate::wire::{CacheWatch, MAX_PIPELINE, ThumbIndex, WireJob, WorkerCore, WorkerSlots, choose_worker, thumb_storage_key};
 
 /// Storage key of the thumbnail index.
@@ -67,6 +68,11 @@ pub fn worker_main(store: String) {
         };
         let s = scope.clone();
         let onmessage = Closure::<dyn FnMut(web_sys::MessageEvent)>::new(move |e: web_sys::MessageEvent| {
+            // (`web.crashWorker`, to see the page start a worker again: the exception ends the worker
+            // and reaches the page as the Worker's `error` event)
+            if get(&e.data(), "crash").is_truthy() {
+                wasm_bindgen::throw_str("render worker: crash requested");
+            }
             let (s, b) = (s.clone(), backend.clone());
             wasm_bindgen_futures::spawn_local(async move { handle(&s, b, e.data()).await });
         });
@@ -183,6 +189,13 @@ struct W {
     ready: bool,
     dead: bool,
     busy: Option<Busy>,
+    /// Which worker has had this place: a new one gets the next number, and what an older one
+    /// still says (a message in flight, an error after `terminate`) is ignored.
+    generation: u32,
+    /// Failures in a row, until a job comes back.
+    restarts: u32,
+    /// When a dead worker may be started again (ms on the page's clock).
+    retry_at: f64,
 }
 
 struct Inner {
@@ -202,6 +215,12 @@ struct Inner {
     budget: u64,
     backend: Option<Backend>,
     ctx: egui::Context,
+    /// What a worker is started with (the compiled module and the storage kind), kept to start
+    /// another in the place of one that died.
+    module: JsValue,
+    store: String,
+    /// Workers started again (diagnostics).
+    restarted: u64,
     /// Jobs finished by workers / inline (for diagnostics).
     remote_done: u64,
     inline_done: u64,
@@ -240,6 +259,7 @@ impl Workers {
         budget: u64,
         ctx: egui::Context,
     ) -> Workers {
+        let module = get(&js_sys::global(), "lightcraftModule");
         let w = Workers(Rc::new(RefCell::new(Inner {
             preview_generation: CacheWatch::new(cache),
             workers: Vec::new(),
@@ -251,11 +271,13 @@ impl Workers {
             budget,
             backend,
             ctx,
+            module: module.clone(),
+            store: store.to_string(),
+            restarted: 0,
             remote_done: 0,
             inline_done: 0,
             inline_this_frame: false,
         })));
-        let module = get(&js_sys::global(), "lightcraftModule");
         if module.is_undefined() {
             log::warn!("render workers: no compiled module on the page (window.lightcraftModule); rendering on the main thread");
             return w;
@@ -264,51 +286,67 @@ impl Workers {
         for attempt in 0..n {
             // The callbacks name their worker by its place in `workers`; a failed attempt takes none.
             let i = slots.peek();
-            let opts = web_sys::WorkerOptions::new();
-            opts.set_type(web_sys::WorkerType::Module);
-            opts.set_name(&format!("lightcraft-render-{attempt}"));
-            let worker = match web_sys::Worker::new_with_options("./worker.js", &opts) {
+            let worker = match w.launch(i, 0, attempt, &module, store) {
                 Ok(x) => x,
                 Err(e) => {
-                    log::warn!("render worker {attempt}: {e:?}");
+                    log::warn!("render worker {attempt}: {e}");
                     continue;
                 }
             };
-            let me = w.clone();
-            let onmessage = Closure::<dyn FnMut(web_sys::MessageEvent)>::new(move |e: web_sys::MessageEvent| me.on_message(i, e.data()));
-            worker.set_onmessage(Some(onmessage.as_ref().unchecked_ref()));
-            onmessage.forget();
-            let me = w.clone();
-            let onerror = Closure::<dyn FnMut(JsValue)>::new(move |e: JsValue| me.on_error(i, e));
-            worker.set_onerror(Some(onerror.as_ref().unchecked_ref()));
-            onerror.forget();
-            let init = Object::new();
-            set(&init, "module", &module);
-            set(&init, "store", &store.into());
-            if let Err(e) = worker.post_message(&init) {
-                log::warn!("render worker {attempt}: {e:?}");
-                // It never joins the list, so it must not answer to the index of the next worker.
-                worker.set_onmessage(None);
-                worker.set_onerror(None);
-                worker.terminate();
-                continue;
-            }
-            w.0.borrow_mut().workers.push(W { worker, ready: false, dead: false, busy: None });
+            w.0.borrow_mut().workers.push(W { worker, ready: false, dead: false, busy: None, generation: 0, restarts: 0, retry_at: 0.0 });
             slots.commit();
         }
         w
     }
 
-    fn on_error(&self, i: usize, e: JsValue) {
+    /// A new render worker for place `i` of the list (`generation`: how many have had it), named
+    /// `lightcraft-render-{name}`. Its messages and errors come back to [`Self::on_message`] and
+    /// [`Self::on_error`] with the place and the generation.
+    fn launch(&self, i: usize, generation: u32, name: usize, module: &JsValue, store: &str) -> Result<web_sys::Worker, String> {
+        let opts = web_sys::WorkerOptions::new();
+        opts.set_type(web_sys::WorkerType::Module);
+        opts.set_name(&format!("lightcraft-render-{name}"));
+        let worker = web_sys::Worker::new_with_options("./worker.js", &opts).map_err(|e| format!("{e:?}"))?;
+        let me = self.clone();
+        let onmessage = Closure::<dyn FnMut(web_sys::MessageEvent)>::new(move |e: web_sys::MessageEvent| me.on_message(i, generation, e.data()));
+        worker.set_onmessage(Some(onmessage.as_ref().unchecked_ref()));
+        onmessage.forget();
+        let me = self.clone();
+        let onerror = Closure::<dyn FnMut(JsValue)>::new(move |e: JsValue| me.on_error(i, generation, e));
+        worker.set_onerror(Some(onerror.as_ref().unchecked_ref()));
+        onerror.forget();
+        let init = Object::new();
+        set(&init, "module", module);
+        set(&init, "store", &store.into());
+        if let Err(e) = worker.post_message(&init) {
+            // It never joins the list, so it must not answer to the index of the next worker.
+            worker.set_onmessage(None);
+            worker.set_onerror(None);
+            worker.terminate();
+            return Err(format!("{e:?}"));
+        }
+        Ok(worker)
+    }
+
+    fn on_error(&self, i: usize, generation: u32, e: JsValue) {
         let msg = get(&e, "message").as_string().unwrap_or_else(|| format!("{e:?}"));
-        log::error!("render worker {i} failed: {msg}");
         let mut g = self.0.borrow_mut();
+        // (an error of a worker that has been replaced, or that is retired already, is not news)
+        if g.workers.get(i).is_none_or(|w| w.generation != generation || w.dead) {
+            return;
+        }
+        log::error!("render worker {i} failed: {msg}");
         for holders in g.warm.values_mut() {
             holders.retain(|&j| j != i);
         }
+        g.affinity.retain(|_, worker| *worker != i);
+        let now = now();
         if let Some(w) = g.workers.get_mut(i) {
             w.dead = true;
+            w.ready = false;
             w.worker.terminate();
+            w.retry_at = now + restart_delay_ms(w.restarts);
+            w.restarts = w.restarts.saturating_add(1);
             if let Some(b) = w.busy.take() {
                 let r = RenderResult {
                     request_id: b.request_id,
@@ -329,17 +367,79 @@ impl Workers {
         g.ctx.request_repaint();
     }
 
-    fn on_message(&self, i: usize, data: JsValue) {
+    /// Once a frame: start a worker again in the place of one that died. Without this one error
+    /// (an out-of-memory trap, say) leaves the page with fewer workers for good, and with none every
+    /// render runs on the page's own thread, which freezes it for the length of each one.
+    fn supervise(&self) {
+        let now = now();
+        let starts: Vec<(usize, u32)> = {
+            let g = self.0.borrow();
+            g.workers
+                .iter()
+                .enumerate()
+                .filter(|(_, w)| w.dead && w.restarts < MAX_RESTARTS && now >= w.retry_at)
+                .map(|(i, w)| (i, w.generation.wrapping_add(1)))
+                .collect()
+        };
+        for (i, generation) in starts {
+            let (module, store) = {
+                let g = self.0.borrow();
+                (g.module.clone(), g.store.clone())
+            };
+            let started = self.launch(i, generation, i, &module, &store);
+            let mut g = self.0.borrow_mut();
+            let g = &mut *g;
+            let Some(w) = g.workers.get_mut(i) else { continue };
+            match started {
+                Ok(worker) => {
+                    log::info!("render worker {i}: started again");
+                    w.worker = worker;
+                    w.generation = generation;
+                    w.dead = false;
+                    w.busy = None;
+                    g.restarted += 1;
+                }
+                Err(e) => {
+                    log::warn!("render worker {i}: can't start again: {e}");
+                    w.retry_at = now + restart_delay_ms(w.restarts);
+                    w.restarts = w.restarts.saturating_add(1);
+                }
+            }
+        }
+    }
+
+    /// How many times a worker was started again (diagnostics: `web.stats`).
+    pub fn restarted(&self) -> u64 {
+        self.0.borrow().restarted
+    }
+
+    /// Make worker `i` throw (`web.crashWorker`, for trying the restart): the page sees the error
+    /// and starts another. `false` when there is no such worker alive.
+    pub fn crash(&self, i: usize) -> bool {
+        let g = self.0.borrow();
+        let Some(w) = g.workers.get(i).filter(|w| !w.dead) else { return false };
+        let msg = Object::new();
+        set(&msg, "crash", &true.into());
+        w.worker.post_message(&msg).is_ok()
+    }
+
+    fn on_message(&self, i: usize, generation: u32, data: JsValue) {
         let mut g = self.0.borrow_mut();
         let g = &mut *g;
         g.ctx.request_repaint();
         let Some(w) = g.workers.get_mut(i) else { return };
+        // (what a worker that has been replaced still had on its way)
+        if w.generation != generation || w.dead {
+            return;
+        }
         if get(&data, "ready").is_truthy() {
             w.ready = true;
             return;
         }
         let id = get(&data, "id").as_f64().unwrap_or(-1.0) as u32;
         let Some(b) = w.busy.take_if(|b| b.id == id) else { return };
+        // a worker that answers is well: its failures in a row start again from none
+        w.restarts = 0;
         let ms = get(&data, "ms").as_f64().unwrap_or(0.0);
         let rendered = if get(&data, "ok").is_truthy() {
             let (wd, ht) = (get(&data, "w").as_f64().unwrap_or(0.0) as usize, get(&data, "h").as_f64().unwrap_or(0.0) as usize);
@@ -542,6 +642,7 @@ impl RenderOffload for Workers {
     }
 
     fn finished(&mut self) -> Vec<(Slot, RenderResult, f64)> {
+        self.supervise();
         let mut g = self.0.borrow_mut();
         // Persist invalidation even when the cleared library has no visible render requests.
         if let Some(cache) = g.preview_generation.cache() {

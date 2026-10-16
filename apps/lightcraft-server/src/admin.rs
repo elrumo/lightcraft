@@ -4,9 +4,15 @@
 //! - **First run:** while no user is an admin, the server prints a one-time setup code to its log
 //!   at start; `/admin` asks for it to create the first admin (so a server just put on the
 //!   internet can't be claimed by whoever finds it first). Wrong codes rotate it after a few tries.
-//! - **Sessions:** an admin signs in with their user name and password and gets a session token
-//!   of its own (idle sessions end, see [`accounts::ADMIN_IDLE`]); it is not a device and can't
-//!   sync, and a device token never opens these routes.
+//! - **Sessions:** an admin signs in with their user name and password and gets a session of its own;
+//!   it is not a device and can't sync, and a device token never opens these routes. The page keeps
+//!   its session in an `HttpOnly` cookie (`lc_admin`, `SameSite=Strict`, and every request that changes
+//!   something carries [`CSRF_HEADER`]); the SwiftUI app and scripts get a token to send as a bearer.
+//!   "Keep me signed in" keeps a session for weeks and across restarts of the server, see
+//!   [`accounts::ADMIN_REMEMBER_IDLE`]; any other ends after [`accounts::ADMIN_IDLE`] without a request.
+//!   A new password for the admin ends their sessions.
+//! - **Shared presets** ([`crate::server_presets`]): presets every user gets, imported and organized here,
+//!   and the built-in ones hidden for everyone.
 //! - **Limits** on how much of the machine the server takes (CPU threads, previews, renders and
 //!   requests at once) are set here unless the deployment fixed them ([`crate::limits`]).
 //! - **Settings stay deployment settings:** where the data lives, the address the server listens
@@ -192,6 +198,51 @@ fn token(req: &Request) -> String {
     header_value(req, "Authorization").and_then(|v| v.strip_prefix("Bearer ")).unwrap_or("").trim().to_string()
 }
 
+/// The cookie the admin page's sign-in sets: the session token, where the page's script can't read it.
+const COOKIE: &str = "lc_admin";
+
+/// The header the page adds to every request that changes something when it signs in by cookie. A form on
+/// another site can't send it (and `/api/admin` answers no cross-origin preflight), so it can't use the cookie.
+const CSRF_HEADER: &str = "X-LightCraft-Admin";
+
+/// The session token a request signs in with: a bearer token (the SwiftUI app, scripts) or else the page's
+/// cookie; and whether it came in the cookie.
+fn credential(req: &Request) -> (String, bool) {
+    let bearer = token(req);
+    if !bearer.is_empty() {
+        return (bearer, false);
+    }
+    let cookie = req.headers().iter().filter(|h| h.field.equiv("Cookie")).flat_map(|h| h.value.as_str().split(';')).find_map(|c| {
+        let (k, v) = c.trim().split_once('=')?;
+        (k.trim() == COOKIE).then(|| v.trim().to_string())
+    });
+    (cookie.unwrap_or_default(), true)
+}
+
+/// `Set-Cookie` for an admin session. Kept ones outlive the browser (the server ends them when idle, see
+/// [`accounts::ADMIN_REMEMBER_IDLE`]); the others end with it. `Secure` when the connection is HTTPS (a proxy says so).
+fn session_cookie(req: &Request, token: &str, remember: bool) -> Option<Header> {
+    let age = if remember { format!("; Max-Age={}", accounts::ADMIN_REMEMBER_MAX.as_secs()) } else { String::new() };
+    header("Set-Cookie", &format!("{COOKIE}={token}; Path=/api/admin; HttpOnly; SameSite=Strict{age}{}", secure(req)))
+}
+
+/// `Set-Cookie` that makes the browser forget the session.
+fn clear_cookie(req: &Request) -> Option<Header> {
+    header("Set-Cookie", &format!("{COOKIE}=; Path=/api/admin; Max-Age=0; HttpOnly; SameSite=Strict{}", secure(req)))
+}
+
+fn secure(req: &Request) -> &'static str {
+    if crate::shares::is_https(req) { "; Secure" } else { "" }
+}
+
+/// `r` with a cookie to set, if there is one.
+fn with_cookie(mut r: Resp, cookie: Option<Header>) -> Resp {
+    if let Some(h) = cookie {
+        r.add_header(h);
+    }
+    r
+}
+
 #[derive(Deserialize)]
 struct Setup {
     code: String,
@@ -199,10 +250,17 @@ struct Setup {
     password: String,
 }
 
+/// `POST /api/admin/login`. The admin page asks for `cookie`: the session goes in an `HttpOnly` cookie and
+/// the answer holds no token; `remember` keeps it for weeks and across restarts. Anything else (the SwiftUI
+/// app, scripts) gets a token to send as a bearer.
 #[derive(Deserialize)]
 struct Login {
     user: String,
     password: String,
+    #[serde(default)]
+    remember: bool,
+    #[serde(default)]
+    cookie: bool,
 }
 
 #[derive(Deserialize)]
@@ -273,6 +331,22 @@ struct Licence {
     acknowledged: bool,
 }
 
+/// `PUT /api/admin/presets`: the shared presets, changed from version `version`.
+#[derive(Deserialize)]
+struct SharedPresets {
+    version: u64,
+    items: Vec<Value>,
+}
+
+/// `POST /api/admin/presets/import`: preset files given by content (`[{name, data: base64}]`), into
+/// `group` when given.
+#[derive(Deserialize)]
+struct ImportPresets {
+    files: Vec<Value>,
+    #[serde(default)]
+    group: Option<String>,
+}
+
 #[derive(Deserialize, Default)]
 #[serde(default, rename_all = "camelCase")]
 struct Gc {
@@ -292,10 +366,18 @@ pub fn api(st: &State, req: &mut Request, method: &Method, rest: &str) -> Resp {
         (Method::Post, ["login"]) => return login(st, req),
         _ => {}
     }
-    let token = token(req);
+    let (token, by_cookie) = credential(req);
     let Some(me) = st.accounts.lock().unwrap_or_else(PoisonError::into_inner).check_admin(&token) else {
-        return error(401, "sign in as an admin");
+        // (a cookie that is no good any more is not sent again)
+        return with_cookie(error(401, "sign in as an admin"), clear_cookie(req).filter(|_| by_cookie && !token.is_empty()));
     };
+    if by_cookie && !matches!(method, Method::Get | Method::Head) && header_value(req, CSRF_HEADER).is_none() {
+        return error(403, "this request must come from the admin page");
+    }
+    if let (Method::Post, ["logout"]) = (method, parts.as_slice()) {
+        st.accounts.lock().unwrap_or_else(PoisonError::into_inner).admin_logout(&token);
+        return with_cookie(json(200, &json!({})), clear_cookie(req).filter(|_| by_cookie));
+    }
     // a user name in the path is one (never `..` or the like)
     if let ["users", name, ..] = parts.as_slice()
         && !accounts::valid_name(name)
@@ -303,16 +385,17 @@ pub fn api(st: &State, req: &mut Request, method: &Method, rest: &str) -> Resp {
         return error(400, format!("not a user name: {name}"));
     }
     let r = match (method, parts.as_slice()) {
-        (Method::Post, ["logout"]) => {
-            st.accounts.lock().unwrap_or_else(PoisonError::into_inner).admin_logout(&token);
-            Ok(json!({}))
-        }
         (Method::Get, ["status"]) => Ok(status(st, &me)),
         (Method::Get, ["users"]) => users(st),
         (Method::Post, ["users"]) => read_json::<NewUser>(req).map_err(Err).and_then(|u| add_user(st, u).map_err(Ok)),
-        (Method::Put, ["users", name, "password"]) => read_json::<Password>(req)
-            .map_err(Err)
-            .and_then(|p| accounts::set_user(&st.data, name, &p.password, true).map(|()| json!({})).map_err(|e| Ok((400, e)))),
+        (Method::Put, ["users", name, "password"]) => read_json::<Password>(req).map_err(Err).and_then(|p| {
+            accounts::set_user(&st.data, name, &p.password, true).map_err(|e| Ok((400, e)))?;
+            // (a new password ends the user's admin sessions; the browser that changed their own stays signed in)
+            if *name == me.as_str() {
+                st.accounts.lock().unwrap_or_else(PoisonError::into_inner).admin_keep(&token);
+            }
+            Ok(json!({}))
+        }),
         (Method::Put, ["users", name, "admin"]) => read_json::<Admin>(req)
             .map_err(Err)
             .and_then(|a| accounts::set_admin(&st.data, name, a.admin).map(|()| json!({})).map_err(|e| Ok((409, e)))),
@@ -382,20 +465,29 @@ pub fn api(st: &State, req: &mut Request, method: &Method, rest: &str) -> Resp {
             st.folders.request(name);
             folders(st, name)
         }),
-        (Method::Post, ["users", name, "previews", action @ ("pause" | "resume" | "generate")]) => {
+        // `generate`: the previews that are missing; `rebuild`: every preview, the ones there too
+        (Method::Post, ["users", name, "previews", action @ ("pause" | "resume" | "generate" | "rebuild")]) => {
             match *action {
                 "pause" => st.folders.pause(true),
                 "resume" => st.folders.pause(false),
+                "rebuild" => st.folders.rebuild_all(name),
                 _ => st.folders.generate_all(name),
             }
             log::info!("admin {me}: {action} previews ({name})");
             folders(st, name)
         }
+        // `scan`: read the files that are new or changed; `rescan`: read every file again
         (Method::Post, ["users", name, "scan"]) => {
             st.folders.request(name);
             folders(st, name)
         }
+        (Method::Post, ["users", name, "rescan"]) => {
+            log::info!("admin {me}: rescan everything ({name})");
+            st.folders.request_full(name);
+            folders(st, name)
+        }
         (Method::Get, ["limits"]) => Ok(st.limits.status()),
+        (Method::Get, ["usage"]) => Ok(usage(st)),
         (Method::Put, ["limits"]) => read_json::<crate::limits::Values>(req).map_err(Err).and_then(|v| {
             let e = st.limits.set(v).map_err(|e| Ok((400, e)))?;
             st.render.set_max(e.renders);
@@ -461,6 +553,33 @@ pub fn api(st: &State, req: &mut Request, method: &Method, rest: &str) -> Resp {
             log::info!("admin {me}: finding the people in {name}'s photos turned {}", if b.enabled { "on" } else { "off" });
             st.vision.wake();
             Ok(search(st))
+        }),
+        (Method::Get, ["presets"]) => Ok(shared_presets(st)),
+        (Method::Put, ["presets"]) => read_json::<SharedPresets>(req).map_err(Err).and_then(|p| {
+            let r = st.presets.lock().unwrap_or_else(PoisonError::into_inner).put(p.version, &p.items);
+            match r {
+                Ok(Ok(version)) => {
+                    log::info!("admin {me}: shared presets changed (version {version})");
+                    Ok(json!({"version": version}))
+                }
+                // someone else changed them first: the answer is theirs, to show again
+                Ok(Err(current)) => Err(Err(json(412, &serde_json::to_value(&current).unwrap_or(Value::Null)))),
+                Err(e) if e.starts_with("storage:") => Err(Ok((500, e))),
+                Err(e) => Err(Ok((400, e))),
+            }
+        }),
+        (Method::Post, ["presets", "import"]) => read_json::<ImportPresets>(req).map_err(Err).and_then(|i| {
+            let group = i.group.as_deref().map(str::trim).filter(|g| !g.is_empty());
+            // ponytail: the import parses under the lock (pulls wait for it); a big pack takes seconds, it's rare
+            let r = st.presets.lock().unwrap_or_else(PoisonError::into_inner).import(i.files, group);
+            match r {
+                Ok(v) => {
+                    log::info!("admin {me}: imported {} shared preset(s)", v["added"]);
+                    Ok(v)
+                }
+                Err(e) if e.starts_with("storage:") => Err(Ok((500, e))),
+                Err(e) => Err(Ok((400, e))),
+            }
         }),
         (Method::Post, ["gc"]) => {
             let g = read_json::<Gc>(req).unwrap_or_default();
@@ -528,7 +647,7 @@ fn login(st: &State, req: &mut Request) -> Resp {
     if let Some(r) = crate::api::throttled(st, &keys) {
         return r;
     }
-    let r = st.accounts.lock().unwrap_or_else(PoisonError::into_inner).admin_login(&l.user, &l.password);
+    let r = st.accounts.lock().unwrap_or_else(PoisonError::into_inner).admin_login(&l.user, &l.password, l.remember);
     let mut t = st.throttle.lock().unwrap_or_else(PoisonError::into_inner);
     if matches!(r, Err(LoginError::Refused)) {
         t.failed(&keys)
@@ -538,8 +657,13 @@ fn login(st: &State, req: &mut Request) -> Resp {
     drop(t);
     match r {
         Ok(token) => {
-            log::info!("admin {} signed in to the admin page", l.user);
-            json(200, &json!({"token": token, "user": l.user}))
+            log::info!("admin {} signed in to the admin page{}", l.user, if l.remember { " (kept signed in)" } else { "" });
+            if l.cookie {
+                // (the page never holds the token: the browser sends the cookie, and script can't read it)
+                with_cookie(json(200, &json!({"user": l.user})), session_cookie(req, &token, l.remember))
+            } else {
+                json(200, &json!({"token": token, "user": l.user}))
+            }
         }
         Err(LoginError::Refused) => {
             log::warn!("refused an admin sign-in as `{}`", l.user.chars().take(64).collect::<String>());
@@ -577,6 +701,42 @@ fn web_build(web: &Path) -> Option<Value> {
     let v: Value = serde_json::from_str(&text).ok()?;
     let field = |k: &str| v.get(k).and_then(Value::as_str).map(|s| s.chars().take(64).collect::<String>());
     Some(json!({"version": field("version"), "commit": field("commit")}))
+}
+
+/// `GET /api/admin/usage`: what the server takes of the machine (a point every 30 s, averaged to a few hundred) and what
+/// each user's devices asked of it since it started ([`crate::usage`]). `supported`: the machine numbers are read here
+/// (Linux and Docker); elsewhere they are `null`.
+fn usage(st: &State) -> Value {
+    let u = &st.usage;
+    let history: Vec<Value> = u
+        .history()
+        .iter()
+        .map(|s| json!({"at": s.at, "cpu": s.cpu, "machineCpu": s.machine_cpu, "rss": s.rss, "memUsed": s.mem_used, "requests": s.requests, "out": s.out}))
+        .collect();
+    let names: Vec<String> = accounts::read_users(&st.data).map(|f| f.users.into_keys().collect()).unwrap_or_default();
+    let mut a = st.accounts.lock().unwrap_or_else(PoisonError::into_inner);
+    let users: Vec<Value> = names
+        .iter()
+        .map(|name| {
+            let devices: Vec<Value> = a
+                .devices_of(name)
+                .iter()
+                .map(|d| {
+                    let x = u.of(name, d.id);
+                    json!({"id": d.id, "name": d.name, "requests": x.requests, "in": x.bytes_in, "out": x.bytes_out, "busyMs": x.busy_ms, "lastSeen": a.last_seen(name, d.id)})
+                })
+                .collect();
+            json!({"name": name, "devices": devices})
+        })
+        .collect();
+    json!({
+        "since": u.since,
+        "supported": cfg!(target_os = "linux"),
+        "cores": st.limits.machine.cores,
+        "memory": st.limits.machine.memory,
+        "history": history,
+        "users": users,
+    })
 }
 
 fn status(st: &State, me: &str) -> Value {
@@ -638,6 +798,14 @@ fn fetch_models(st: &State, me: &str, part: Part, l: Licence) -> AdminResult {
     Ok(search(st))
 }
 
+/// `GET /api/admin/presets`: the shared presets (`{version, items}`, see [`crate::server_presets`]) and the
+/// built-in presets an admin may hide (`builtin: [{id, name, group}]`).
+fn shared_presets(st: &State) -> Value {
+    let doc = st.presets.lock().unwrap_or_else(PoisonError::into_inner).doc().clone();
+    let builtin: Vec<Value> = lightcraft_engine::presets::builtin().iter().map(|p| json!({"id": p.id, "name": p.name, "group": p.group})).collect();
+    json!({"version": doc.version, "items": doc.items, "builtin": builtin})
+}
+
 /// `GET /api/admin/search`: what the server does with the photos (describe, read the text, find the
 /// people), each one's models and download, and how far each user's photos are.
 fn search(st: &State) -> Value {
@@ -659,19 +827,40 @@ fn search(st: &State) -> Value {
             };
             let total = a.as_ref().or(b.as_ref()).or(c.as_ref()).map(|p| p.total);
             let checked = v.sensitive_installed().then(|| v.sensitive.index(&st.data, &name, false).ok().flatten().map_or(0, |ix| ix.lock().unwrap_or_else(PoisonError::into_inner).len()));
-            json!({"name": name, "faces": faces, "total": total, "indexed": a.map(|p| p.done), "read": b.map(|p| p.done), "found": c.map(|p| p.done), "checked": checked})
+            // (how the worker gets on with this user's photos: its pace, what waits for previews, what it couldn't do and why)
+            let work = |part: Part| {
+                json!({
+                    "perMinute": v.switch.per_minute(part, Some(&name)),
+                    "waiting": v.switch.waiting(part, &name),
+                    "failed": crate::vision::failed(st, part, &name),
+                    "problem": crate::vision::problem(st, part, &name),
+                })
+            };
+            let work = json!({"search": work(Part::Search), "text": work(Part::Text), "faces": work(Part::Faces), "sensitive": work(Part::Sensitive)});
+            json!({"name": name, "faces": faces, "total": total, "indexed": a.map(|p| p.done), "read": b.map(|p| p.done), "found": c.map(|p| p.done), "checked": checked, "work": work})
         })
         .collect();
-    // paused / window / time left for one part; the left is photos still to do times the lately measured time each took
+    // paused / window / time left for one part; `ready` is the photos left that have their previews
+    // and weren't given up on, which the time left is worked out from (at the pace of the last ten minutes)
+    let now = v.switch.now();
     let schedule = |part: Part, done: fn(&Value) -> Option<u64>| {
         let left: u64 = users.iter().filter_map(|u| Some(u["total"].as_u64()?.saturating_sub(done(u)?))).sum();
+        let stuck: u64 = users
+            .iter()
+            .filter(|u| done(u).is_some())
+            .map(|u| &u["work"][part.key()])
+            .map(|w| w["waiting"].as_u64().unwrap_or(0) + w["failed"].as_u64().unwrap_or(0))
+            .sum();
         let w = v.switch.window(part);
         json!({
             "paused": v.switch.paused(part),
             "from": w.map(|w| w.0), "to": w.map(|w| w.1),
             "runsNow": v.switch.may_run(part),
             "left": left,
-            "perPhoto": v.switch.per_photo(part),
+            "ready": left.saturating_sub(stuck),
+            "perMinute": v.switch.per_minute(part, None),
+            "lastSecs": v.switch.last(part).map(|d| d.as_secs()),
+            "now": now.as_ref().filter(|n| n.0 == part).map(|(_, user, since)| json!({"user": user, "secs": since.as_secs()})),
         })
     };
     json!({

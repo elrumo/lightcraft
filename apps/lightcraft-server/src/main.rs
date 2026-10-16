@@ -441,7 +441,7 @@ fn scan(data: &Path, user: &str) -> Result<(), String> {
         user,
         &lib,
         &stop,
-        true,
+        folders::Reread::Failed,
         &mut |s| {
             if tty && s.todo > 0 {
                 eprint!("\r{user}: read {} of {} file(s)", s.done, s.todo);

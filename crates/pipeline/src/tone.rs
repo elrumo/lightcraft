@@ -67,6 +67,13 @@ impl CameraTone {
         &self.chroma
     }
 
+    /// The curve with the chroma scales it would show applied to each RGB channel, as a DNG
+    /// `ProfileToneCurve` is ([`channel_chroma`]), instead of to luminance alone.
+    pub fn with_channel_chroma(self) -> Self {
+        let chroma = channel_chroma(|y| self.apply(y));
+        Self { chroma, ..self }
+    }
+
     /// The (scene, display) luminance knots, in increasing order.
     pub fn knots(&self) -> &[[f32; 2]; 32] {
         &self.knots
@@ -90,6 +97,32 @@ impl CameraTone {
         let slope = ((b[1] - a[1]) / (b[0] - a[0])).clamp(0.1, 16.0);
         1.0 - (1.0 - b[1]) * (-(y - b[0]) * slope / (1.0 - b[1]).max(0.01)).exp()
     }
+}
+
+/// Chroma scales (at display luminance `CHROMA_N` nodes, see [`ToneMap::chroma_scale`]) that make the
+/// luminance curve `f` (scene → display linear, increasing) colour a picture as `f` applied to each RGB
+/// channel would. The finish stage scales RGB by `f(y) / y`, which keeps linear channel ratios; a
+/// per-channel curve spreads channels by its slope in log-log terms instead: more colour where it's
+/// steeper than linear (midtones of a contrast curve), less where it compresses (highlights). Measured
+/// on an iPhone 17 Pro ProRAW, the luminance-only render had 74% of the colourfulness of Apple's own.
+/// The slope is a finite difference over ±20% (a saturated channel spread), not a derivative.
+pub fn channel_chroma(f: impl Fn(f32) -> f32) -> [f32; CHROMA_N] {
+    const S: f32 = 0.2;
+    let (lo, hi) = (GREY * 2f32.powf(LUT_MIN_EV), GREY * 2f32.powf(LUT_MAX_EV));
+    std::array::from_fn(|i| {
+        // nodes at display 0 and 1 are reached only in the limit: take them just inside
+        let o = (i as f32 / (CHROMA_N - 1) as f32).clamp(0.02, 0.98);
+        // scene luminance with f(x) = o, by bisection in log scene luminance
+        let (mut a, mut b) = (lo.ln(), hi.ln());
+        for _ in 0..48 {
+            let m = 0.5 * (a + b);
+            if f(m.exp()) < o { a = m } else { b = m }
+        }
+        let x = (0.5 * (a + b)).exp();
+        let y = f(x);
+        let k = (f(x * (1.0 + S)) - f(x * (1.0 - S))) / (2.0 * S * y);
+        if k.is_finite() { k.clamp(0.0, 4.0) } else { 1.0 }
+    })
 }
 
 /// Scene EV over grey where [`ToneMap::hdr`] starts lifting highlights above the SDR curve.
@@ -293,6 +326,22 @@ mod tests {
         assert!(plain.with_chroma([-1.0; CHROMA_N]).is_none());
         let bad = serde_json::json!({ "knots": knots(), "chroma": [9.0, 1, 1, 1, 1, 1, 1, 1] });
         assert!(serde_json::from_value::<CameraTone>(bad).is_err());
+    }
+
+    #[test]
+    fn channel_chroma_follows_the_curves_log_log_slope() {
+        // linear: per-channel and luminance application agree
+        assert!(channel_chroma(|y| 0.7 * y).iter().all(|k| (k - 1.0).abs() < 1e-3));
+        // a contrast curve (log-log slope 2·(1 − f)): more colour in the midtones, little near white
+        let k = channel_chroma(|y| y * y / (y * y + 0.05));
+        assert!(k[2] > 1.2 && k[3] > 1.0, "{k:?}");
+        assert!(k[7] < 0.3 && k.windows(2).skip(2).all(|w| w[1] <= w[0] + 1e-4), "{k:?}");
+        // a compressive camera curve never adds colour; the scales stay valid for `with_chroma`
+        let tone = CameraTone::new(knots()).unwrap().with_channel_chroma();
+        assert!(tone.chroma().iter().all(|k| (0.0..=1.0 + 1e-3).contains(k)), "{:?}", tone.chroma());
+        assert!(tone.with_chroma(*tone.chroma()).is_some());
+        // hostile curves give finite, bounded scales
+        assert!(channel_chroma(|_| f32::NAN).iter().chain(&channel_chroma(|_| 0.0)).all(|k| (0.0..=4.0).contains(k)));
     }
 
     #[test]

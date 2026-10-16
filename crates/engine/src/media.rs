@@ -62,7 +62,7 @@ impl SettingsHashes {
 }
 
 /// Bump when the pipeline's output changes, to invalidate cached thumbnails.
-pub const RENDER_CACHE_VERSION: u64 = 65;
+pub const RENDER_CACHE_VERSION: u64 = 66;
 
 /// Thumbnails render at one of these long edges (so window/cell size changes reuse the cache).
 pub const THUMB_SIZES: [usize; 4] = [128, 256, 384, 512];
@@ -1435,7 +1435,17 @@ impl crate::Session {
         let level = SourceLevel::for_size(if thumb_bucket.is_some() {
             max_w.max(max_h) // (grid thumbnails of tight crops stay cheap)
         } else {
-            source_edge_needed(&p, &settings, apply_crop, max_w.max(max_h))
+            // the photo fitted into the box, not the box: a tall canvas shows a landscape photo at the
+            // canvas's width (an iPad's 2,064 x 2,752 canvas read a 48 MP original for a 2,064 px picture)
+            let frame = lightcraft_pipeline::geometry::Frame::with_lens(
+                p.width.max(1) as usize,
+                p.height.max(1) as usize,
+                &settings,
+                apply_crop,
+                p.embedded_lens.as_ref(),
+            );
+            let (fw, fh) = frame.fit(max_w, max_h);
+            source_edge_needed(&p, &settings, apply_crop, fw.max(fh))
         });
         let source = self.media.source_ref(&p, level);
         let request = RenderRequest { apply_crop, ..RenderRequest::fit(max_w, max_h) };
@@ -2498,6 +2508,24 @@ mod tests {
         assert_eq!(s.render_job(id, 1600, 1600, false, false).unwrap().level, SourceLevel::Preview);
         // and a crop shown small enough still reads the preview
         assert_eq!(s.render_job(id, 600, 600, false, true).unwrap().level, SourceLevel::Preview);
+    }
+
+    // the level follows the photo fitted into the box, not the box: a portrait canvas (an iPad's
+    // 2,064 x 2,752) shows a landscape photo at the canvas's width, which the preview serves
+    #[test]
+    fn the_source_level_follows_the_photo_fitted_into_the_box() {
+        let mut s = crate::Session::with_demo();
+        let p = s.catalog.photos().find(|p| p.width > p.height && !p.is_edited()).unwrap().clone();
+        assert!(p.width > 2700, "demo photos are camera-sized");
+        let level = |s: &mut crate::Session, w, h| s.render_job(p.id, w, h, false, true).unwrap().level;
+        assert_eq!(level(&mut s, 2400, 4000), SourceLevel::Preview);
+        assert_eq!(level(&mut s, 2700, 4000), SourceLevel::Full);
+        // turned upright, in a landscape canvas
+        let mut d = (*s.develop_of(p.id).unwrap()).clone();
+        d.orientation = lightcraft_geom::Orientation::Rotate90;
+        s.set_develop(p.id, d, "Rotate").unwrap();
+        assert_eq!(level(&mut s, 4000, 2400), SourceLevel::Preview);
+        assert_eq!(level(&mut s, 4000, 2700), SourceLevel::Full);
     }
 
     // a window whose spot reads from further away than a render can hold is refused

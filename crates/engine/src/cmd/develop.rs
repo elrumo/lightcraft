@@ -1252,6 +1252,10 @@ pub fn specs() -> Vec<CommandSpec> {
                 return Err(bad("preset.delete", "built-in presets can't be deleted"));
             }
             s.presets.remove(i);
+            if s.hidden_presets.presets.iter().any(|h| h == pid) {
+                s.hidden_presets.presets.retain(|h| h != pid);
+                s.save_prefs()?;
+            }
             ok()
         }),
         cmd!("preset.favorite", "Favorite Preset", [], None, "{id, favorite?: bool}", always, |s, p| {
@@ -1272,6 +1276,83 @@ pub fn specs() -> Vec<CommandSpec> {
             user_preset(s, p, c)?.group = group;
             ok()
         }),
+        cmd!(
+            "preset.hide",
+            "Hide Preset",
+            [],
+            None,
+            "{id, hidden?: bool} (toggles when omitted) — the Presets panels leave it out unless they show hidden presets; any preset, built-in ones too (synced) → {hidden}",
+            always,
+            |s, p| {
+                let c = "preset.hide";
+                let pid = str_param(p, "id").ok_or_else(|| bad(c, "missing id"))?.to_string();
+                let was = s.hidden_presets.presets.contains(&pid);
+                if !was && !s.presets.iter().any(|x| x.id == pid) {
+                    return Err(bad(c, format!("unknown preset `{pid}`")));
+                }
+                let hidden = bool_or(p, "hidden", !was);
+                s.hidden_presets.presets.retain(|h| *h != pid);
+                if hidden {
+                    s.hidden_presets.presets.push(pid);
+                }
+                s.save_prefs()?;
+                Ok(json!({"hidden": hidden}))
+            }
+        ),
+        cmd!(
+            "preset.hideGroup",
+            "Hide Preset Group",
+            [],
+            None,
+            "{group, hidden?: bool} (toggles when omitted) — the Presets panels leave the group out unless they show hidden presets (synced) → {hidden}",
+            always,
+            |s, p| {
+                let c = "preset.hideGroup";
+                let group = str_param(p, "group").ok_or_else(|| bad(c, "missing group"))?.to_string();
+                let was = s.hidden_presets.groups.contains(&group);
+                if !was && !s.presets.iter().any(|x| x.group == group) {
+                    return Err(bad(c, format!("unknown preset group `{group}`")));
+                }
+                let hidden = bool_or(p, "hidden", !was);
+                s.hidden_presets.groups.retain(|h| *h != group);
+                if hidden {
+                    s.hidden_presets.groups.push(group);
+                }
+                s.save_prefs()?;
+                Ok(json!({"hidden": hidden}))
+            }
+        ),
+        cmd!(
+            "preset.renameGroup",
+            "Rename Preset Group",
+            [],
+            None,
+            "{group, name} — a group of the user's presets (built-in and server groups can't be renamed); a group already called `name` takes them in (synced) → {groups}",
+            always,
+            |s, p| {
+                let c = "preset.renameGroup";
+                let group = str_param(p, "group").ok_or_else(|| bad(c, "missing group"))?.to_string();
+                let name = str_param(p, "name").map(str::trim).filter(|n| !n.is_empty()).ok_or_else(|| bad(c, "missing name"))?.to_string();
+                let groups = s.rename_preset_group(&group, &name).map_err(|e| bad(c, e))?;
+                s.save_prefs()?;
+                Ok(json!({"groups": groups}))
+            }
+        ),
+        cmd!(
+            "preset.deleteGroup",
+            "Delete Preset Group",
+            [],
+            None,
+            "{group} — deletes the user's presets in the group (built-in and server presets stay) (synced) → {deleted}",
+            always,
+            |s, p| {
+                let c = "preset.deleteGroup";
+                let group = str_param(p, "group").ok_or_else(|| bad(c, "missing group"))?.to_string();
+                let deleted = s.delete_preset_group(&group).map_err(|e| bad(c, e))?;
+                s.save_prefs()?;
+                Ok(json!({"deleted": deleted}))
+            }
+        ),
         cmd!(
             "preset.moveGroup",
             "Reorder Preset Group",

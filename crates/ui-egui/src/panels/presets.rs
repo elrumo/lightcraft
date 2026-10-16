@@ -19,10 +19,15 @@ use crate::{HoverPreview, LightcraftApp};
 /// Long edge of preset thumbnails (px).
 const THUMB_EDGE: usize = 128;
 
-/// The presets by group, in the order the user put the groups in ([`lightcraft_engine::Session::preset_groups`]).
+/// The presets by group, in the order the user put the groups in ([`lightcraft_engine::Session::preset_groups`]),
+/// without the hidden ones unless the panel shows them.
 fn grouped_presets(app: &LightcraftApp) -> Vec<(String, Vec<Preset>)> {
-    let s = &app.session;
-    s.preset_groups().into_iter().map(|g| (g.clone(), s.presets.iter().filter(|p| p.group == g).cloned().collect())).collect()
+    let (s, show) = (&app.session, app.ui.show_hidden_presets);
+    s.preset_groups()
+        .into_iter()
+        .map(|g| (g.clone(), s.presets.iter().filter(|p| p.group == g && (show || !s.hidden_presets.hides(p))).cloned().collect::<Vec<_>>()))
+        .filter(|(_, items)| !items.is_empty())
+        .collect()
 }
 
 /// The preset amount slider may replace only the undo step it created.
@@ -91,6 +96,8 @@ fn list(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     egui::Popup::menu(&more).show(|ui| {
         let r = crate::widgets::check(ui, &mut app.ui.preset_thumbs, crate::i18n::tr("Show Thumbnails"));
         register(ui.ctx(), "presetMenu:thumbnails", r.rect);
+        let r = crate::widgets::check(ui, &mut app.ui.show_hidden_presets, crate::i18n::tr("Show Hidden Presets"));
+        register(ui.ctx(), "presetMenu:showHidden", r.rect);
         ui.separator();
         // (a failure is said, never dropped: a button that does nothing looks broken)
         let r = ui.button(crate::i18n::tr("Import Presets…"));
@@ -147,7 +154,7 @@ fn list(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     }
     let thumbs = app.ui.preset_thumbs && active.is_some();
     let row_h = if thumbs { 54.0 } else { 26.0 };
-    let groups = grouped(ui.ctx(), &app.session);
+    let groups = grouped(ui.ctx(), &app.session, app.ui.show_hidden_presets);
     let scroll = egui::ScrollArea::vertical().id_salt("presets-scroll").auto_shrink([false, false]).show(ui, |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
         // a group header dragged up or down puts the group elsewhere (`preset.moveGroup`)
@@ -158,7 +165,7 @@ fn list(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         // imported whole is 10 000+ presets, and building every row each frame took seconds.
         let visible = ui.clip_rect().expand(row_h);
         for grp in groups.iter() {
-            let (g, builtin) = (grp.name.clone(), grp.builtin);
+            let (g, builtin, hidden) = (grp.name.clone(), grp.builtin, grp.hidden);
             let open_id = egui::Id::new(("preset-group", &g));
             let open: bool = ui.data(|d| d.get_temp(open_id)).unwrap_or(true);
             let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 32.0), Sense::click_and_drag());
@@ -184,16 +191,12 @@ fn list(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 Align2::LEFT_CENTER,
                 crate::i18n::builtin_label(&g, builtin),
                 t.semibold(13.0),
-                t.text_label,
+                if hidden { t.text_dim } else { t.text_label },
             );
             if resp.clicked() {
                 ui.data_mut(|d| d.insert_temp(open_id, !open));
             }
-            resp.context_menu(|ui| {
-                if ui.button(crate::i18n::tr("Export Group…")).clicked() {
-                    let _ = app.run("file.exportPresets", json!({"group": g}));
-                }
-            });
+            resp.context_menu(|ui| group_menu(app, ui, &g, builtin, hidden));
             if !open {
                 continue;
             }
@@ -225,7 +228,8 @@ fn list(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                     }
                     text_x = tr.right() + 10.0;
                 }
-                ui.painter().text(pos2(text_x, r.center().y), Align2::LEFT_CENTER, &name, t.font(13.0), t.text_label);
+                let dim = hidden || app.session.hidden_presets.presets.contains(&pid);
+                ui.painter().text(pos2(text_x, r.center().y), Align2::LEFT_CENTER, &name, t.font(13.0), if dim { t.text_dim } else { t.text_label });
                 if fav {
                     paint(ui.painter(), Rect::from_center_size(pos2(r.right() - 20.0, r.center().y), vec2(16.0, 16.0)), Icon::StarFilled, t.star);
                 }
@@ -338,6 +342,8 @@ fn strip(app: &mut LightcraftApp, ui: &mut egui::Ui, active: Option<PhotoId>, cu
                 if chip.clicked() {
                     picked = g.clone();
                 }
+                let hidden = app.session.hidden_presets.groups.contains(g);
+                chip.context_menu(|ui| group_menu(app, ui, g, builtin, hidden));
             }
             ui.add_space(pad);
         });
@@ -379,7 +385,7 @@ fn strip(app: &mut LightcraftApp, ui: &mut egui::Ui, active: Option<PhotoId>, cu
                 if pr.favorite {
                     paint(ui.painter(), Rect::from_center_size(img.right_top() + vec2(-12.0, 12.0), vec2(13.0, 13.0)), Icon::StarFilled, t.star);
                 }
-                let color = if on { t.text } else { t.text_dim };
+                let color = if on && !app.session.hidden_presets.hides(&pr) { t.text } else { t.text_dim };
                 let mut job = egui::text::LayoutJob::simple(name.clone(), t.font(12.0), color, TILE);
                 job.wrap.max_rows = 1;
                 job.wrap.overflow_character = Some('…');
@@ -408,6 +414,10 @@ fn preset_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, pr: &Preset, name: &s
     if ui.button(crate::i18n::tr(if fav { "Remove from Favorites" } else { "Add to Favorites" })).clicked() {
         let _ = app.run("preset.favorite", json!({"id": pid}));
     }
+    let hidden = app.session.hidden_presets.presets.contains(&pid);
+    if ui.button(crate::i18n::tr(if hidden { "Show Preset" } else { "Hide Preset" })).clicked() {
+        hide(app, ui.ctx(), "preset.hide", json!({"id": pid, "hidden": !hidden}), name);
+    }
     if builtin {
         return;
     }
@@ -422,7 +432,7 @@ fn preset_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, pr: &Preset, name: &s
         crate::panels::dialogs::prompt(app, "Rename Preset", "Preset name", name, "preset.rename", json!({"id": pid}), "name");
     }
     crate::widgets::menu_button(ui, crate::i18n::tr("Move to Group"), |ui| {
-        let groups = grouped(ui.ctx(), &app.session);
+        let groups = grouped(ui.ctx(), &app.session, true);
         for g in groups.iter().filter(|x| x.user && x.name != group).map(|x| &x.name) {
             if ui.button(g).clicked() {
                 let _ = app.run("preset.move", json!({"id": pid, "group": g}));
@@ -438,6 +448,38 @@ fn preset_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, pr: &Preset, name: &s
     }
 }
 
+/// Hide a preset or group, or show it again (`preset.hide`, `preset.hideGroup`); one hidden from a panel that
+/// doesn't show hidden presets says where it went.
+fn hide(app: &mut LightcraftApp, ctx: &egui::Context, command: &str, params: serde_json::Value, name: &str) {
+    match app.run(command, params) {
+        Ok(r) if r["hidden"] == true && !app.ui.show_hidden_presets => {
+            app.toast(ctx, crate::i18n::tr_format!("Hid “{name}”. Show Hidden Presets in the panel's menu brings it back.", name = name))
+        }
+        Ok(_) => {}
+        Err(e) => app.toast_error(ctx, e),
+    }
+}
+
+/// A group's menu (a right click on its header, a long press on its chip): hide it or show it again,
+/// export it; a group of the user's own presets can also be renamed and deleted.
+fn group_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, g: &str, builtin: bool, hidden: bool) {
+    let label = crate::i18n::builtin_label(g, builtin).to_string();
+    if ui.button(crate::i18n::tr(if hidden { "Show Group" } else { "Hide Group" })).clicked() {
+        hide(app, ui.ctx(), "preset.hideGroup", json!({"group": g, "hidden": !hidden}), &label);
+    }
+    if !builtin && ui.button(crate::i18n::tr("Rename Group…")).clicked() {
+        crate::panels::dialogs::prompt(app, "Rename Preset Group", "Group name", g, "preset.renameGroup", json!({"group": g}), "name");
+    }
+    ui.separator();
+    if ui.button(crate::i18n::tr("Export Group…")).clicked() {
+        let _ = app.run("file.exportPresets", json!({"group": g}));
+    }
+    if !builtin && ui.button(crate::i18n::tr("Delete Group…")).clicked() {
+        let count = app.session.presets.iter().filter(|p| p.group == g && !p.builtin).count();
+        app.ui.dialog = Some(crate::state::Dialog::DeletePresetGroup { group: g.to_string(), count });
+    }
+}
+
 /// A preset group as the panel lists it: indices into the session's presets.
 struct Group {
     name: String,
@@ -446,30 +488,44 @@ struct Group {
     builtin: bool,
     /// Holds a user preset (a Move to Group target).
     user: bool,
+    /// The user hid it (`preset.hideGroup`).
+    hidden: bool,
     items: Vec<usize>,
 }
 
 /// The presets by group (groups in the user's order, [`lightcraft_engine::Session::preset_groups`];
-/// presets in list order), rebuilt only when the list (its generation) or the group order changed.
-fn grouped(ctx: &egui::Context, session: &lightcraft_engine::Session) -> Arc<Vec<Group>> {
-    type Cached = (u64, Vec<String>, Arc<Vec<Group>>);
-    let id = egui::Id::new("presets-grouped");
+/// presets in list order), without the hidden ones unless `show_hidden`; rebuilt only when the list (its
+/// generation), the group order or what is hidden changed.
+fn grouped(ctx: &egui::Context, session: &lightcraft_engine::Session, show_hidden: bool) -> Arc<Vec<Group>> {
+    type Cached = (u64, Vec<String>, lightcraft_engine::presets::Hidden, Arc<Vec<Group>>);
+    let id = egui::Id::new(("presets-grouped", show_hidden));
     let presets = &session.presets;
-    if let Some((generation, order, groups)) = ctx.data(|d| d.get_temp::<Cached>(id))
+    let hide = &session.hidden_presets;
+    if let Some((generation, order, hidden, groups)) = ctx.data(|d| d.get_temp::<Cached>(id))
         && generation == presets.generation()
         && order == session.preset_group_order
+        && hidden == *hide
     {
         return groups;
     }
     let mut by_name: std::collections::HashMap<&str, Group> = std::collections::HashMap::new();
     for (i, p) in presets.iter().enumerate() {
-        let g = by_name.entry(&p.group).or_insert_with(|| Group { name: p.group.clone(), builtin: false, user: false, items: Vec::new() });
+        let g = by_name.entry(&p.group).or_insert_with(|| Group {
+            name: p.group.clone(),
+            builtin: false,
+            user: false,
+            hidden: hide.groups.contains(&p.group),
+            items: Vec::new(),
+        });
         g.builtin |= p.builtin;
         g.user |= !p.builtin;
-        g.items.push(i);
+        if show_hidden || !hide.hides(p) {
+            g.items.push(i);
+        }
     }
-    let groups = Arc::new(session.preset_groups().iter().filter_map(|g| by_name.remove(g.as_str())).collect::<Vec<_>>());
-    ctx.data_mut(|d| d.insert_temp(id, (presets.generation(), session.preset_group_order.clone(), groups.clone())));
+    let order = session.preset_groups();
+    let groups = Arc::new(order.iter().filter_map(|g| by_name.remove(g.as_str())).filter(|g| !g.items.is_empty()).collect::<Vec<_>>());
+    ctx.data_mut(|d| d.insert_temp(id, (presets.generation(), session.preset_group_order.clone(), hide.clone(), groups.clone())));
     groups
 }
 

@@ -303,7 +303,7 @@ input[readonly]:hover { border-color: transparent; }
 main { grid-area: main; padding: 8px 32px 64px; max-width: 1120px; width: 100%; }
 main > section { animation: enter 0.18s ease-out; }
 @keyframes enter { from { opacity: 0; transform: translateY(4px); } }
-@media (prefers-reduced-motion: reduce) { main > section { animation: none; } .btn, .switch input::after { transition: none; } }
+@media (prefers-reduced-motion: reduce) { main > section, .live.on .dot { animation: none; } .meter.busy::after { display: none; } .btn, .switch input::after { transition: none; } }
 .page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin: 8px 0 24px; }
 .section-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
 .section-head p { max-width: 640px; }
@@ -321,6 +321,19 @@ main > section { animation: enter 0.18s ease-out; }
 .panel h3 { margin: 24px 0 12px; }
 .panel.flush { padding: 0; overflow-x: auto; }
 .limits { margin-top: 16px; }
+/* server load: three small charts */
+#loadPanel { margin-bottom: 8px; }
+.load-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 24px; }
+.load-grid .label { font-size: 13px; font-weight: 600; color: var(--text-3); }
+.load-grid .meter-head { display: block; margin: 4px 0 0; }
+.load-grid .meter-head span:last-child { display: block; font-size: 13px; }
+.spark { display: block; width: 100%; height: 56px; margin-top: 8px; }
+.spark path { fill: none; stroke: var(--accent); stroke-width: 1.5; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
+.spark path.area { fill: var(--accent); fill-opacity: 0.12; stroke: none; }
+.spark path.other { stroke: var(--text-3); stroke-dasharray: 3 3; }
+.sect { margin: 24px 0 4px; }
+.sect + .muted { margin-bottom: 12px; max-width: 680px; }
+#overviewColumns { margin-top: 16px; }
 .limits-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px 20px; margin-bottom: 16px; }
 .limits-actions { display: flex; justify-content: flex-end; }
 .columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; align-items: start; }
@@ -406,6 +419,11 @@ main > section { animation: enter 0.18s ease-out; }
 .table tr.link { cursor: pointer; }
 .table tr.link:hover td { background: var(--fill); }
 .table td.end { text-align: right; white-space: nowrap; width: 1%; }
+.table th.end { text-align: right; width: 1%; }
+.table tr.group td { background: var(--fill); padding-top: 10px; padding-bottom: 10px; }
+.table tr.group .sub { display: inline; margin-left: 8px; }
+.table td.end .switch { justify-content: flex-end; }
+.stack > * + * { margin-top: 16px; }
 .table .chev-col { width: 1%; }
 .table .chev { color: var(--text-3); display: block; }
 .table .empty td { text-align: center; padding: 40px 16px; color: var(--text-3); }
@@ -483,6 +501,47 @@ main > section { animation: enter 0.18s ease-out; }
 .scan-head h3 { margin: 0 0 4px; }
 .scan .meter { margin-top: 16px; }
 .scan-head .actions { display: flex; gap: 8px; flex: none; }
+.scan-head p.help { margin: 8px 0 0; max-width: 640px; font-size: 12.5px; }
+.scan-head p.help b { color: var(--text-2); font-weight: 600; }
+@media (max-width: 640px) { .scan-head { flex-wrap: wrap; } }
+
+/* A split button: the usual action, and an arrow that opens a menu of its variants, each saying what it does. */
+.split { position: relative; display: inline-flex; flex: none; gap: 2px; align-self: flex-start; }
+.split-main { border-top-right-radius: 4px; border-bottom-right-radius: 4px; }
+.split-more { width: 32px; padding: 0; border-top-left-radius: 4px; border-bottom-left-radius: 4px; }
+.split-more .icon { margin: 0; }
+.menu {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 6px);
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: min(380px, calc(100vw - 32px));
+  padding: 6px;
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow-pop);
+}
+.menu[hidden] { display: none; }
+.menu button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.menu button:hover, .menu button:focus-visible { background: var(--fill); }
+.menu button b { color: var(--heading); font-weight: 700; }
+.menu button span { color: var(--text-3); font-size: 12.5px; line-height: 1.4; }
 #previewsCover { margin: 0 0 4px; font-weight: 600; color: var(--heading); font-variant-numeric: tabular-nums; }
 .building { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 4px; font-size: 13px; }
 .building li { display: flex; gap: 8px; align-items: baseline; min-width: 0; }
@@ -592,6 +651,7 @@ main > section { animation: enter 0.18s ease-out; }
 #srFacts { margin-bottom: 12px; }
 .panel > .switch + .alert, .panel > .alert + .facts { margin-top: 16px; }
 @media (max-width: 440px) { .sidenav a .icon { display: none; } }
+@media (max-width: 640px) { .table td.end .btn { padding: 0 8px; } .table td.end .btn-word { display: none; } .table td.end .btn .icon { margin: 0; } }
 
 .people { list-style: none; margin: 16px 0 0; padding: 0; display: flex; flex-direction: column; gap: 14px; }
 .people li { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto auto; gap: 12px; align-items: center; }
@@ -600,5 +660,21 @@ main > section { animation: enter 0.18s ease-out; }
 
 .sched { margin: 12px 0 4px; }
 .sched .eta { margin: 0 0 8px; font-size: 12.5px; color: var(--text-3); }
+
+/* the worker at it: a dot that breathes while photos are being done, and a shimmer on the bars it fills */
+.sched .live { display: flex; align-items: baseline; gap: 8px; margin: 0 0 4px; font-size: 13px; color: var(--text-2); }
+.live .dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--text-3); transform: translateY(-1px); }
+.live.on .dot { background: var(--positive); animation: breathe 1.6s ease-out infinite; }
+.live.stuck .dot { background: var(--notice); }
+@keyframes breathe { from { box-shadow: 0 0 0 0 color-mix(in srgb, var(--positive) 60%, transparent); } to { box-shadow: 0 0 0 7px transparent; } }
+.meter.busy { position: relative; }
+.meter.busy::after { content: ''; position: absolute; inset: 0 auto 0 0; width: 30%; background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--accent) 50%, transparent), transparent); animation: slide 1.8s ease-in-out infinite; }
+
+/* a user's row in a search list: name and count, the bar under them, then time left and problems */
+.usage.work li, .people li { row-gap: 6px; }
+.usage.work li { grid-template-columns: 28px minmax(0, 1fr) auto; }
+.usage.work .meter, .usage .sub, .people .sub { grid-column: 2 / -1; }
+.usage .sub, .people .sub { margin: 0; font-size: 12.5px; color: var(--text-3); overflow-wrap: anywhere; }
+.usage .sub.problem, .people .sub.problem { color: var(--negative-text); }
 .sched .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .sched select, .sched input[type=time] { font: inherit; font-size: 13px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: var(--heading); }

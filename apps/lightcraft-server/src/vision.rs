@@ -63,6 +63,9 @@ const TEXT_EDGE: usize = lightcraft_engine::vision::TEXT_EDGE;
 /// Photos whose text is read in one pass over a user (then the worker looks at the others'
 /// photos and at new ones before coming back).
 const READ_CHUNK: usize = 25;
+/// Photos described in one pass over a user, so the text and the faces of theirs and the others'
+/// photos get their turn while a big library is described.
+const DESCRIBE_CHUNK: usize = 200;
 /// Photos embedded in one model pass.
 const BATCH: usize = 8;
 /// How often the index is checked for photos that need a vector, when nothing woke it.
@@ -562,13 +565,19 @@ pub(crate) fn run(st: &Arc<State>) {
         };
         for user in accounts::read_users(&st.data).map(|f| f.users.into_keys().collect::<Vec<_>>()).unwrap_or_default() {
             if v.installed() && v.switch.may_run(Part::Search) {
-                report(user.clone(), "search index", index_user(st, &user));
+                v.switch.working(Some((Part::Search, &user)));
+                let r = index_user(st, &user);
+                if r == Ok(true) {
+                    v.wake();
+                }
+                report(user.clone(), "search index", r.map(|_| ()));
             }
             if v.faces_installed()
                 && v.switch.may_run(Part::Faces)
                 && !v.stop.load(Ordering::SeqCst)
                 && accounts::read_users(&st.data).is_ok_and(|f| f.users.get(&user).is_some_and(|u| u.faces))
             {
+                v.switch.working(Some((Part::Faces, &user)));
                 match scan_user(st, &user) {
                     Ok(more) => {
                         lock(&v.problems).remove(&format!("{user}:faces"));
@@ -580,6 +589,7 @@ pub(crate) fn run(st: &Arc<State>) {
                 }
             }
             if v.text_installed() && v.switch.may_run(Part::Text) && !v.stop.load(Ordering::SeqCst) {
+                v.switch.working(Some((Part::Text, &user)));
                 match read_user(st, &user) {
                     // (more to read: come back after looking at new photos)
                     Ok(more) => {
@@ -592,6 +602,7 @@ pub(crate) fn run(st: &Arc<State>) {
                 }
             }
             if v.sensitive_installed() && v.switch.may_run(Part::Sensitive) && !v.stop.load(Ordering::SeqCst) {
+                v.switch.working(Some((Part::Sensitive, &user)));
                 match crate::sensitive::check_user(st, &user) {
                     Ok(more) => {
                         lock(&v.problems).remove(&format!("{user}:sensitive"));
@@ -602,6 +613,7 @@ pub(crate) fn run(st: &Arc<State>) {
                     Err(e) => report(format!("{user}:sensitive"), "sensitive-content scores", Err(e)),
                 }
             }
+            v.switch.working(None);
         }
         v.unload_if_idle();
     }
@@ -622,16 +634,21 @@ fn scan_user(st: &Arc<State>, user: &str) -> Result<bool, String> {
     let index = v.face_index(&st.data, user, true)?.ok_or("the face index is unavailable")?;
     let failed = lock(&v.failed_faces).clone();
     let mut work: Vec<(Key, Arc<Photo>, PathBuf)> = Vec::new();
+    let mut waiting = 0;
     {
         let ix = lock(&index);
         for (key, photo) in photos {
             if ix.scanned(&key) || failed.contains(&(user.to_string(), key)) {
                 continue;
             }
-            let Some(path) = photo.content_hash.as_deref().and_then(|h| api::blob_path(&blobs, "smart", h)).filter(|p| p.is_file()) else { continue };
+            let Some(path) = photo.content_hash.as_deref().and_then(|h| api::blob_path(&blobs, "smart", h)).filter(|p| p.is_file()) else {
+                waiting += 1;
+                continue;
+            };
             work.push((key, photo, path));
         }
     }
+    v.switch.set_waiting(Part::Faces, user, waiting);
     if work.is_empty() {
         return Ok(false);
     }
@@ -644,6 +661,7 @@ fn scan_user(st: &Arc<State>, user: &str) -> Result<bool, String> {
         if v.stop.load(Ordering::SeqCst) {
             return Ok(false);
         }
+        let one = Instant::now();
         let found = lightcraft_engine::vision::neutral_from_preview(photo, path, TEXT_EDGE)
             .and_then(|img| guard::catch("finding faces", || finder.faces(&img)).and_then(|t| t.map_err(|e| e.to_string())));
         match found {
@@ -651,6 +669,7 @@ fn scan_user(st: &Arc<State>, user: &str) -> Result<bool, String> {
                 failures = 0;
                 if lock(&index).insert_photo(*key, &faces).is_ok() {
                     done += 1;
+                    v.switch.record(Part::Faces, user, 1, one.elapsed().as_secs_f64());
                 } else {
                     lock(&v.failed_faces).insert((user.to_string(), *key));
                 }
@@ -667,7 +686,6 @@ fn scan_user(st: &Arc<State>, user: &str) -> Result<bool, String> {
         }
         v.touch();
     }
-    v.switch.record(Part::Faces, done, started.elapsed().as_secs_f64());
     log::info!("{user}: faces found in {done} of {} photo(s) in {:.1} s", work.len(), started.elapsed().as_secs_f64());
     lightcraft_engine::memory::release();
     Ok(more)
@@ -690,13 +708,18 @@ fn read_user(st: &Arc<State>, user: &str) -> Result<bool, String> {
     let failed = lock(&v.failed_text).clone();
     // (only a smart preview has the pixels small print needs)
     let mut work: Vec<(Key, Arc<Photo>, PathBuf)> = Vec::new();
+    let mut waiting = 0;
     for (key, photo) in photos {
         if have.contains(&key) || failed.contains(&(user.to_string(), key)) {
             continue;
         }
-        let Some(path) = photo.content_hash.as_deref().and_then(|h| api::blob_path(&blobs, "smart", h)).filter(|p| p.is_file()) else { continue };
+        let Some(path) = photo.content_hash.as_deref().and_then(|h| api::blob_path(&blobs, "smart", h)).filter(|p| p.is_file()) else {
+            waiting += 1;
+            continue;
+        };
         work.push((key, photo, path));
     }
+    v.switch.set_waiting(Part::Text, user, waiting);
     if work.is_empty() {
         return Ok(false);
     }
@@ -709,6 +732,7 @@ fn read_user(st: &Arc<State>, user: &str) -> Result<bool, String> {
         if v.stop.load(Ordering::SeqCst) {
             return Ok(false);
         }
+        let one = Instant::now();
         let read = lightcraft_engine::vision::neutral_from_preview(photo, path, TEXT_EDGE)
             .and_then(|img| guard::catch("reading text", || reader.text(&img)).and_then(|t| t.map_err(|e| e.to_string())));
         match read {
@@ -716,6 +740,7 @@ fn read_user(st: &Arc<State>, user: &str) -> Result<bool, String> {
                 failures = 0;
                 if lock(&index).insert(*key, &text).is_ok() {
                     done += 1;
+                    v.switch.record(Part::Text, user, 1, one.elapsed().as_secs_f64());
                 } else {
                     lock(&v.failed_text).insert((user.to_string(), *key));
                 }
@@ -732,14 +757,14 @@ fn read_user(st: &Arc<State>, user: &str) -> Result<bool, String> {
         }
         v.touch();
     }
-    v.switch.record(Part::Text, done, started.elapsed().as_secs_f64());
     log::info!("{user}: text read from {done} of {} photo(s) in {:.1} s", work.len(), started.elapsed().as_secs_f64());
     lightcraft_engine::memory::release();
     Ok(more)
 }
 
-/// Embeds a user's photos that have a mini preview and no vector yet.
-fn index_user(st: &Arc<State>, user: &str) -> Result<(), String> {
+/// Embeds up to [`DESCRIBE_CHUNK`] of a user's photos that have a mini preview and no vector yet.
+/// True when there are more.
+fn index_user(st: &Arc<State>, user: &str) -> Result<bool, String> {
     let v = &st.vision;
     let lib = api::lib(st, user)?;
     let (photos, blobs) = {
@@ -747,32 +772,37 @@ fn index_user(st: &Arc<State>, user: &str) -> Result<(), String> {
         (hashed(&l), l.dir.join("blobs"))
     };
     if photos.is_empty() {
-        return Ok(());
+        return Ok(false);
     }
     let index = v.index(&st.data, user)?;
-    let mut have: HashSet<Key> = lock(&index).keys().copied().collect();
+    let have: HashSet<Key> = lock(&index).keys().copied().collect();
     let failed = lock(&v.failed).clone();
     let mut work: Vec<(Key, Arc<Photo>, PathBuf)> = Vec::new();
+    let mut waiting = 0;
     for (key, photo) in photos {
         if have.contains(&key) || failed.contains(&(user.to_string(), key)) {
             continue;
         }
-        let Some(path) = photo.content_hash.as_deref().and_then(|h| api::blob_path(&blobs, "mini", h)).filter(|p| p.is_file()) else { continue };
-        have.insert(key);
+        let Some(path) = photo.content_hash.as_deref().and_then(|h| api::blob_path(&blobs, "mini", h)).filter(|p| p.is_file()) else {
+            waiting += 1;
+            continue;
+        };
         work.push((key, photo, path));
     }
+    v.switch.set_waiting(Part::Search, user, waiting);
     if work.is_empty() {
-        return Ok(());
+        return Ok(false);
     }
-    log::info!("{user}: {} photo(s) to index for search", work.len());
+    let more = work.len() > DESCRIBE_CHUNK;
+    work.truncate(DESCRIBE_CHUNK);
     let model = v.model()?;
     let started = Instant::now();
-    let total = work.len();
-    let mut done = 0;
+    let (mut done, mut failures) = (0, 0);
     for chunk in work.chunks(BATCH) {
         if v.stop.load(Ordering::SeqCst) {
-            return Ok(());
+            return Ok(false);
         }
+        let batch = Instant::now();
         let (mut keys, mut images) = (Vec::new(), Vec::new());
         for (key, photo, path) in chunk {
             match lightcraft_engine::vision::neutral_from_preview(photo, path, THUMB_EDGE) {
@@ -790,20 +820,64 @@ fn index_user(st: &Arc<State>, user: &str) -> Result<(), String> {
             continue;
         }
         let refs: Vec<&_> = images.iter().collect();
-        let vectors = guard::catch("embedding photos", || model.encode_images(&refs))?.map_err(|e| e.to_string())?;
+        let embed = |imgs| guard::catch("embedding photos", || model.encode_images(imgs)).and_then(|t| t.map_err(|e| e.to_string()));
+        // (a photo the model can't take must not hold up the others, pass after pass: then they go one at a time)
+        let vectors: Vec<Result<Vec<f32>, String>> = match embed(refs.as_slice()) {
+            Ok(all) if all.len() == refs.len() => all.into_iter().map(Ok).collect(),
+            _ => {
+                refs.iter().map(|img| embed(std::slice::from_ref(img)).and_then(|mut one| one.pop().ok_or_else(|| "no vector".to_string()))).collect()
+            }
+        };
+        let mut added = 0;
         let mut ix = lock(&index);
-        for (k, vec) in keys.iter().zip(&vectors) {
-            if ix.insert(*k, vec).is_err() {
-                lock(&v.failed).insert((user.to_string(), *k));
+        for (k, vec) in keys.iter().zip(vectors) {
+            match vec.and_then(|vec| ix.insert(*k, &vec).map_err(|e| e.to_string())) {
+                Ok(_) => {
+                    added += 1;
+                    failures = 0;
+                }
+                Err(e) => {
+                    log::debug!("{user}: can't describe a photo for search: {e}");
+                    lock(&v.failed).insert((user.to_string(), *k));
+                    failures += 1;
+                    if failures >= 8 {
+                        // a model that fails this often will keep failing
+                        return Err(format!("describing photos keeps failing: {e}"));
+                    }
+                }
             }
         }
-        done += keys.len();
+        drop(ix);
+        done += added;
+        v.switch.record(Part::Search, user, added, batch.elapsed().as_secs_f64());
         v.touch();
     }
-    v.switch.record(Part::Search, done, started.elapsed().as_secs_f64());
-    log::info!("{user}: {done} of {total} photo(s) indexed for search in {:.1} s", started.elapsed().as_secs_f64());
+    log::info!("{user}: {done} of {} photo(s) indexed for search in {:.1} s", work.len(), started.elapsed().as_secs_f64());
     lightcraft_engine::memory::release();
-    Ok(())
+    Ok(more)
+}
+
+/// The last problem the worker had with `user`'s photos for `part`.
+pub(crate) fn problem(st: &State, part: Part, user: &str) -> Option<String> {
+    let key = match part {
+        Part::Search => user.to_string(),
+        Part::Text => format!("{user}:text"),
+        Part::Faces => format!("{user}:faces"),
+        Part::Sensitive => format!("{user}:sensitive"),
+    };
+    lock(&st.vision.problems).get(&key).cloned()
+}
+
+/// `user`'s photos that `part` could not do (tried again when the server restarts).
+pub(crate) fn failed(st: &State, part: Part, user: &str) -> usize {
+    let v = &st.vision;
+    let set = match part {
+        Part::Search => &v.failed,
+        Part::Text => &v.failed_text,
+        Part::Faces => &v.failed_faces,
+        Part::Sensitive => v.sensitive.failed(),
+    };
+    lock(set).iter().filter(|(u, _)| u == user).count()
 }
 
 /// `%xx` and `+` decoded (a query string value).

@@ -1,7 +1,8 @@
 //! Local: browse a folder on disk without adding it to the library (Lightroom's Local tab).
 //! The folder's photos are probed in place as `local` photos — only folder views list them —
-//! and edits go to the files' XMP sidecars like any photo added in place. "Add to My Photos"
-//! makes them ordinary library photos.
+//! and their edits are written to the files' XMP sidecars whatever *Automatically write changes
+//! into XMP* says (Lightroom's Local saves edits beside the files). "Add to My Photos" makes them
+//! ordinary library photos.
 //!
 //! Each browse records when the folders it listed were browsed. Untouched records of folders
 //! not browsed for [`Session::forget_local_days`] are forgotten (when the library opens, or with
@@ -46,9 +47,8 @@ fn browse(s: &mut Session, p: &Value) -> Result<Value> {
     // looking at a folder never brings its deleted photos back (importing the files does)
     let opts = ImportOptions { mode: ImportMode::Add, local: true, on_deleted: crate::import::OnDeleted::Skip, ..Default::default() };
     let report = import_with(s, &files, &opts)?;
-    let reread = reread_sidecars(s, &files)?;
     let forgotten = forget_gone(s, &dir_s, subfolders, &files);
-    stamp_browsed(s, &dir_s, &files);
+    let reread = s.browse_finished(&dir_s, &files)?;
     s.browse = Some(Browse { path: dir_s.clone(), subfolders });
     s.source = LibrarySource::Folder;
     s.keep_active_in_view();
@@ -65,6 +65,16 @@ fn browse(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 impl Session {
+    /// What a browse of `dir` does once its files (`files`) are catalogued: read again the XMP
+    /// sidecars another app changed, and note that the folders were browsed now. Returns how many
+    /// photos the sidecars changed. For a UI that reads the folder on a worker thread
+    /// (`apphost`), as `library.browse` does at once.
+    pub fn browse_finished(&mut self, dir: &str, files: &[String]) -> Result<usize> {
+        let reread = reread_sidecars(self, files)?;
+        stamp_browsed(self, dir, files);
+        Ok(reread)
+    }
+
     /// Forget the untouched Local records of files gone from the folder `dir` (with its subfolders when
     /// `subfolders`) that a browse just listed as `files`: what `library.browse` does after reading a folder, for a
     /// UI that reads it on a worker thread instead. Returns how many went.

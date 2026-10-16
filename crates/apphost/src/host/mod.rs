@@ -32,6 +32,7 @@
 //! the choice after signing in to a server that has a library as `ask {dialog: "syncChoice"}`).
 
 mod admin;
+mod browsing;
 pub mod leases;
 pub mod protocol;
 mod script;
@@ -71,17 +72,21 @@ const VARIANT_WANTED: Duration = Duration::from_secs(10);
 /// Thumbnails kept known to the scheduler beyond what `render.retain` lists.
 const MAX_THUMBS: usize = 600;
 
-/// Bytes a pixel of an original takes once decoded for a zoomed window: the linear source on the CPU
-/// (12), its copy on the GPU (16), and the decode's temporaries (measured: 24 MP CR3, 12 MP ProRAW).
-const ORIGINAL_BYTES_PER_PX: f64 = 36.0;
+/// Bytes a pixel of an original takes while it is decoded for a zoomed window: the linear source (12; a
+/// window uploads only the part it reads, never the whole source) and the decode's temporaries at their
+/// peak (12: the picture turned upright, or the highlight rebuild's pyramid with the samples). Measured
+/// with `drag_bench zoom` on a 48 MP ProRAW: 1.39 to 1.48 GB above the fit view at the peak, the window's
+/// render included; settled, 0.88 GB at 1:1 and 0.72 GB at 8x.
+const ORIGINAL_BYTES_PER_PX: f64 = 24.0;
 
-/// What is kept free beside a decoded original: the zoomed window's renders and the app's pictures.
+/// What is kept free beside a decoded original: the zoomed window's render (its GPU stages and
+/// buffers: up to ~0.9 GB above the source for a phone's 1:1 window) and the app's pictures.
 const ORIGINAL_RESERVE: f64 = 600.0 * 1048576.0;
 
 /// Whether decoding an original of `px` pixels leaves room under the app's memory limit, given what the
 /// system says is `left` before it ends the app (`None`: no such limit, a desktop) and whether the
-/// original is `decoded` already (a 48 MP ProRAW: 1.7 GB, on an iPhone 17 Pro that the system ends at
-/// about 3.3 GB).
+/// original is `decoded` already (a 48 MP ProRAW needs 1.7 GB: an iPhone 17 Pro, which the system ends at
+/// about 3.3 GB, has 2.1 to 2.4 GB left with one open).
 fn original_fits(left: Option<usize>, decoded: bool, px: f64) -> bool {
     let Some(left) = left else { return true };
     decoded || px.is_finite() && px * ORIGINAL_BYTES_PER_PX + ORIGINAL_RESERVE <= left as f64
@@ -304,11 +309,15 @@ struct Engine {
     admin: admin::Admin,
     /// The zoom window last asked for (`render.view {zoom}`): its image event says where it goes.
     region: Option<RegionShown>,
+    /// The system ends the app past a memory limit (a phone): a zoomed view keeps one window's stages.
+    memory_limited: bool,
     /// `import.scan` running on its worker, and the candidates of the last one (`render.candidate`).
     scan: Option<PendingScan>,
     candidates: Vec<lightcraft_engine::import::ImportCandidate>,
     /// `import.start` running: answered when it ends.
     import: Option<PendingImport>,
+    /// `library.browse` reading its folder on a worker (`crate::browse`): answered when it ends.
+    browse: Option<browsing::PendingBrowse>,
     /// Wakes the thread (a worker has something for it).
     wake: Sender<Msg>,
     /// Previews asked for (`render.variant`) and not rendered yet: asked again every tick (the
@@ -407,6 +416,8 @@ impl Engine {
             session.set_app_memory(available);
             session.face_models_dir = crate::startup::face_models_dir(home);
         }
+        // the photo-library originals the app fetches are staged with its picks (moved into the library when opened)
+        session.set_photo_library_staging(Some(crate::startup::staging(&tmp).0));
         // searches by description and indexing run off the engine thread (as in egui); the tick applies them
         session.vision.background = true;
         let sched = match config.render_threads {
@@ -452,9 +463,11 @@ impl Engine {
             merge_shown: 0,
             export_runs: 0,
             region: None,
+            memory_limited: available.is_some(),
             scan: None,
             candidates: Vec::new(),
             import: None,
+            browse: None,
             wake: host_wake,
             variants: HashMap::new(),
             thumbs_wanted: HashMap::new(),
@@ -584,6 +597,18 @@ impl Engine {
             return lightcraft_engine::guard::catch("`host.exportPrevious`", || self.start_export(id, call, &params))
                 .unwrap_or_else(|e| Some(Event::err(id, ErrorBody::new("panic", e))));
         }
+        // showing a Local folder reads it on a worker (`crate::browse`): answered when it ends
+        if matches!(req.method.as_str(), "engine.execute" | "ui.menu.invoke" | "command")
+            && req.params.get("command").or(req.params.get("id")).and_then(Value::as_str) == Some("library.browse")
+        {
+            let params = req.params.get("params").cloned().filter(|v| !v.is_null()).unwrap_or_else(|| json!({}));
+            return lightcraft_engine::guard::catch("`library.browse`", || self.start_browse(id, call, &params))
+                .unwrap_or_else(|e| Some(Event::err(id, ErrorBody::new("panic", e))));
+        }
+        // a Local folder's subfolders, listed on a worker (a network share can take long)
+        if req.method == "host.local.subfolders" {
+            return self.list_subfolders(id, call, &req.params);
+        }
         // the server's admin API (`host.admin.*`): on a worker, answered when the server has
         if req.method.starts_with("host.admin.") {
             return lightcraft_engine::guard::catch(&format!("`{}`", req.method), || self.start_admin(id, call, &req.method, &req.params))
@@ -641,6 +666,9 @@ impl Engine {
             })),
             // the sidebar's arrangement, which the app keeps: `{layout?, command?, params?}` → the
             // arrangement after one of the `view.sidebar*` commands, and the sections shown
+            // Local's places (`crate::local`) from the roots and hidden places the app keeps: `{roots, hidden,
+            // browseRoot?, command?: addRoot | hide | restoreHidden, path?}` → `{roots, hidden, places, owner, browseRoot, current}`
+            "host.local" => self.local_places(p).map_err(|e| bad(&e)),
             "host.sidebar" => {
                 let mut layout = p.get("layout").cloned().map(crate::sidebar::SidebarLayout::from).unwrap_or_default();
                 if let Some(command) = p.get("command").and_then(Value::as_str) {
@@ -716,8 +744,28 @@ impl Engine {
                     (size(p.get("width")).ok_or_else(|| bad("missing `width`"))?, size(p.get("height")).ok_or_else(|| bad("missing `height`"))?);
                 let apply_crop = p.get("applyCrop").and_then(Value::as_bool).unwrap_or(true);
                 let draft = p.get("draft").and_then(Value::as_bool).unwrap_or(false);
+                if let Some(pid) = p.get("preset").and_then(Value::as_str) {
+                    // resting on a preset: the photo with it, nothing committed (`hover`, its `key` to tell it by).
+                    // `replacing`: in place of the last step (another preset applied, which a click would undo first)
+                    let preset = self.session.presets.iter().find(|x| x.id == pid).ok_or_else(|| bad(&format!("no preset `{pid}`")))?;
+                    let d = self.session.develop_of(id).ok_or_else(|| bad("no such photo"))?;
+                    let base = match p.get("replacing").and_then(Value::as_bool) {
+                        Some(true) => self.session.undo.last().and_then(|u| undone_develop(&u.op, id, 0)).unwrap_or(d),
+                        _ => d,
+                    };
+                    let amount = p.get("amount").and_then(Value::as_f64).unwrap_or(100.0).clamp(0.0, 200.0) / 100.0;
+                    let job = self.session.preview_job(id, w, h, apply_crop, &preset.apply(&base, amount)).ok_or_else(|| bad("no such photo"))?;
+                    // (as a string: a u64 doesn't survive every JSON reader)
+                    let key = self.sched.job_for(Slot::Hover, job.clone()).key.to_string();
+                    self.sched.request(Slot::Hover, job, 105);
+                    self.busy = true;
+                    return Ok(json!({"slot": Slot::Hover.name(), "key": key}));
+                }
+                let key;
                 let slot = if p.get("before").and_then(Value::as_bool).unwrap_or(false) {
-                    let job = self.session.render_job(id, w, h, true, apply_crop).ok_or_else(|| bad("no such photo"))?;
+                    let job =
+                        self.sched.job_for(Slot::Before, self.session.render_job(id, w, h, true, apply_crop).ok_or_else(|| bad("no such photo"))?);
+                    key = job.key;
                     self.sched.request(Slot::Before, job, 90);
                     Slot::Before
                 } else {
@@ -731,14 +779,15 @@ impl Engine {
                         Some(v) => Some(serde_json::from_value::<lightcraft_pipeline::Proof>(v.clone()).map_err(|e| bad(&format!("`proof`: {e}")))?),
                         None => None,
                     };
-                    let job = if draft { job.draft() } else { job }.with_overlay(shown).with_proof(proof);
+                    let job = self.sched.job_for(Slot::Main, if draft { job.draft() } else { job }.with_overlay(shown).with_proof(proof));
+                    key = job.key;
                     self.sched.request(Slot::Main, job, 100);
                     // zoomed in: the window on screen at the zoom scale too (a drag keeps the one there is;
                     // a proof is of the whole frame, as egui's)
                     match p.get("zoom") {
                         Some(zoom) if !draft && proof.is_none() => self.request_region(id, (w, h), apply_crop, zoom, shown),
                         Some(_) => {}
-                        None => self.region = None,
+                        None => self.no_region(),
                     }
                     // until the loupe has this photo: its cached render, embedded preview or thumbnail
                     if self.sched.textures.get(&Slot::Main).is_none_or(|t| t.photo != id)
@@ -749,7 +798,9 @@ impl Engine {
                     Slot::Main
                 };
                 self.busy = true;
-                Ok(json!({"slot": slot.name()}))
+                // the render the slot's picture will be once it comes (its image event's `key`), so a UI can say
+                // it is still working on it: a string, as JSON numbers past 2^53 lose bits in some readers
+                Ok(json!({"slot": slot.name(), "key": key.to_string()}))
             }
             "render.candidate" => {
                 let i = p.get("index").and_then(Value::as_u64).ok_or_else(|| bad("missing `index`"))?;
@@ -767,8 +818,12 @@ impl Engine {
                 let edge = size(p.get("edge")).unwrap_or(160);
                 let d = self.session.develop_of(id).ok_or_else(|| bad("no such photo"))?;
                 let settings = if let Some(pid) = p.get("preset").and_then(Value::as_str) {
+                    // over the original photo (framed as it is), not its edit: the presets panel's pictures stay put
+                    // while presets are applied, and a B&W one applied doesn't turn every other picture grey
                     let preset = self.session.presets.iter().find(|x| x.id == pid).ok_or_else(|| bad(&format!("no preset `{pid}`")))?;
-                    preset.apply(&d, p.get("amount").and_then(Value::as_f64).unwrap_or(100.0).clamp(0.0, 200.0) / 100.0)
+                    let original = self.session.catalog.photo(id).ok_or_else(|| bad("no such photo"))?.import_defaults();
+                    let base = lightcraft_engine::develop::DevelopSettings { crop: d.crop, orientation: d.orientation, ..original };
+                    preset.apply(&base, p.get("amount").and_then(Value::as_f64).unwrap_or(100.0).clamp(0.0, 200.0) / 100.0)
                 } else if let Some(profile) = p.get("profile").and_then(Value::as_str) {
                     d.with_profile(profile)
                 } else if let Some(v) = p.get("version").and_then(Value::as_u64) {
@@ -936,6 +991,7 @@ impl Engine {
         self.poll_admin();
         self.poll_scan();
         self.poll_import();
+        self.poll_browse();
         self.session.persist_if_dirty();
         let state = self.snapshot();
         if self.state.as_ref() != Some(&state) {
@@ -989,7 +1045,7 @@ impl Engine {
             }
             return Some(Event::ok(id, self.lightroom.status()));
         }
-        if self.scan.is_some() || self.import.is_some() {
+        if self.scan.is_some() || self.import.is_some() || self.browse.is_some() {
             return Some(Event::err(id, ErrorBody::new("other", "an import is running")));
         }
         let path = std::path::PathBuf::from(path.unwrap_or_default());
@@ -1030,7 +1086,7 @@ impl Engine {
     /// Start scanning `paths` for the import review; `None` (answered when it ends) or the error now.
     fn start_scan(&mut self, id: u64, call: Option<&Sender<Event>>, p: &Value) -> Option<Event> {
         let bad = |m: &str| Some(Event::err(id, ErrorBody::new("badParams", format!("`import.scan`: {m}"))));
-        if self.scan.is_some() || self.import.is_some() {
+        if self.scan.is_some() || self.import.is_some() || self.browse.is_some() {
             return Some(Event::err(id, ErrorBody::new("other", "an import is running")));
         }
         if !self.session.library.as_ref().is_some_and(|l| l.on_disk) {
@@ -1082,7 +1138,7 @@ impl Engine {
     /// Start importing (`paths`, or `indexes` of the last scan's candidates, with `library.import`'s
     /// params; `albumName` makes a new album first); `None` (answered when it ends) or the error now.
     fn start_import(&mut self, id: u64, call: Option<&Sender<Event>>, p: &Value) -> Option<Event> {
-        if self.import.is_some() || self.scan.is_some() {
+        if self.import.is_some() || self.scan.is_some() || self.browse.is_some() {
             return Some(Event::err(id, ErrorBody::new("other", "an import is running")));
         }
         let mut paths: Vec<String> =
@@ -1181,7 +1237,7 @@ impl Engine {
             .map(|a| a.iter().filter_map(Value::as_f64).filter(|v| v.is_finite()).collect())
             .unwrap_or_default();
         let (Some(drawn), [x0, y0, x1, y1]) = (drawn, visible.as_slice()) else {
-            self.region = None;
+            self.no_region();
             return;
         };
         let Some(photo) = self.session.catalog.photo(id) else { return };
@@ -1214,7 +1270,7 @@ impl Engine {
             windows: region::overlay_supports_window(overlay),
         };
         let Some(edge) = region::plan(0, sizes).window_edge else {
-            self.region = None;
+            self.no_region();
             return;
         };
         let aspect = nw / nh;
@@ -1225,13 +1281,28 @@ impl Engine {
         let job = region::window_for(fw, fh, visible, region::max_span(TEXTURE_SIDE))
             .and_then(|win| Some((win, self.session.region_job(id, fw, fh, win, apply_crop)?)));
         let Some((window, job)) = job else {
-            self.region = None;
+            self.no_region();
             return;
         };
+        // the original a window is cut from stays decoded while the view is zoomed (over the cache budget: a
+        // 48 MP one is 560 MB), or every pan would decode it again
+        if job.level == lightcraft_engine::SourceLevel::Full {
+            self.session.media.set_on_screen(Some(id));
+        }
         let job = job.with_overlay(overlay);
+        // another window: what the last one's stages hold can't serve it (only a pan back), and a phone needs the room
+        if self.memory_limited && self.region.as_ref().is_some_and(|r| (r.full, r.window) != ((fw, fh), window)) {
+            self.sched.clear_stages(Slot::Region);
+        }
         self.region = Some(RegionShown { key: job.key, full: (fw, fh), window });
         self.sched.request(Slot::Region, job, 95);
         self.busy = true;
+    }
+
+    /// The loupe shows no window: the original windows were cut from may go (zoomed out: memory back at once).
+    fn no_region(&mut self) {
+        self.region = None;
+        self.session.media.set_on_screen(None);
     }
 
     /// Start enlarging `{id?}` (the active photo); `None` (answered when it ends) or the error now.
@@ -1521,6 +1592,17 @@ fn overlay(v: Option<&Value>) -> lightcraft_pipeline::Overlay {
     }
 }
 
+/// The develop settings undoing `op` (an undo step) gives photo `id` back, if it changes them.
+fn undone_develop(op: &lightcraft_catalog::Op, id: PhotoId, depth: u8) -> Option<Arc<lightcraft_engine::develop::DevelopSettings>> {
+    use lightcraft_catalog::Op;
+    match op {
+        Op::SetDevelop { id: i, settings, .. } if *i == id => Some(settings.clone()),
+        // (batches nest a few deep: a step's ops, a photo's develop + history)
+        Op::Batch { ops } if depth < 8 => ops.iter().find_map(|o| undone_develop(o, id, depth + 1)),
+        _ => None,
+    }
+}
+
 /// The photos a `host.merge.*` request names (`ids`), else the selection.
 fn merge_ids(s: &Session, p: &Value) -> Vec<PhotoId> {
     match p.get("ids").and_then(Value::as_array) {
@@ -1540,11 +1622,13 @@ fn merge_options(p: &Value) -> crate::merge::MergeOptions {
 
 /// The state's `presetsGeneration`: the preset list's generation, moved also by the imported (LUT)
 /// profiles, imported here or brought by the sync (the profile browser lists them, and a preset that
-/// uses one looks different once it is here).
+/// uses one looks different once it is here), and by the presets and groups hidden and the groups' order.
 fn presets_generation(s: &Session) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
     s.presets.generation().hash(&mut h);
+    s.hidden_presets.hash(&mut h);
+    s.preset_group_order.hash(&mut h);
     for p in &s.lut_profiles {
         (&p.id, &p.name, &p.group, &p.file).hash(&mut h);
     }

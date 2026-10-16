@@ -7,8 +7,8 @@
 
 use lightcraft_develop::{DevelopSettings, EmbeddedLens};
 use lightcraft_geom::{Affine, CropGeometry, Homography, Orientation, Point, Rect};
-use lightcraft_raster::resample::{Filter, resize};
-use lightcraft_raster::{Rgb32f, par_rows};
+use lightcraft_raster::resample::{Filter, resize, resize_with, weights};
+use lightcraft_raster::{Rgb32f, orient_map, par_rows};
 
 use crate::optics::{Warp, reorient_lens};
 
@@ -259,22 +259,77 @@ impl Frame {
         SamplePlan { ow, oh, prefilter, sx, sy, mode }
     }
 
+    /// The part of the source that [`Frame::sample`] of `w × h` reads with `plan`, when it can be bounded and is
+    /// not the whole image (a window of a zoomed view: a small part of a big original). `None`: the whole source.
+    pub fn source_cut(&self, plan: &SamplePlan, w: usize, h: usize) -> Option<SourceCut> {
+        let (bw, bh) = plan.prefilter.unwrap_or((plan.ow, plan.oh));
+        let corners = |xf: &Affine| {
+            let ps =
+                [(0.5, 0.5), (w as f64 - 0.5, 0.5), (0.5, h as f64 - 0.5), (w as f64 - 0.5, h as f64 - 0.5)].map(|(x, y)| xf.apply(Point::new(x, y)));
+            let (xs, ys) = (ps.map(|p| p.x), ps.map(|p| p.y));
+            let (min, max) =
+                (|v: [f64; 4]| v.into_iter().fold(f64::INFINITY, f64::min), |v: [f64; 4]| v.into_iter().fold(f64::NEG_INFINITY, f64::max));
+            Some([min(xs), min(ys), max(xs), max(ys)])
+        };
+        let b = match (&plan.mode, self.warp.as_ref()) {
+            (SampleMode::Copy, _) => None,
+            (SampleMode::Affine(xf), _) => corners(xf),
+            (SampleMode::Warp(o2t), None) => corners(&(Affine::scale(plan.sx, plan.sy) * *o2t)),
+            (SampleMode::Warp(o2t), Some(wp)) => {
+                wp.source_bounds(o2t, w, h).map(|[x0, y0, x1, y1]| [x0 * plan.sx, y0 * plan.sy, x1 * plan.sx, y1 * plan.sy])
+            }
+        }?;
+        if !b.iter().all(|v| v.is_finite()) || w == 0 || h == 0 {
+            return None;
+        }
+        // a bilinear sample at p reads pixels ⌊p − 0.5⌋ and the one after; one more each way for the GPU's f32
+        let lo = |v: f64, n: usize| ((v - 0.5).floor() - 1.0).clamp(0.0, n as f64) as usize;
+        let hi = |v: f64, n: usize| ((v - 0.5).floor() + 3.0).clamp(0.0, n as f64) as usize;
+        let base = [lo(b[0], bw), lo(b[1], bh), hi(b[2], bw), hi(b[3], bh)];
+        if base[2] <= base[0] || base[3] <= base[1] || base == [0, 0, bw, bh] {
+            return None;
+        }
+        let src = match plan.prefilter {
+            None => base,
+            Some((pw, ph)) => {
+                // the oriented pixels the prefilter's taps for those reach
+                let span = |n: usize, m: usize, a: usize, b: usize| {
+                    let w = weights(n, m, Filter::Mitchell);
+                    let taps = w.get(a..b)?;
+                    Some((taps.iter().map(|t| t.0).min()?, taps.iter().map(|t| t.0 + t.1.len()).max()?))
+                };
+                let ((x0, x1), (y0, y1)) = (span(plan.ow, pw, base[0], base[2])?, span(plan.oh, ph, base[1], base[3])?);
+                [x0, y0, x1, y1]
+            }
+        };
+        Some(SourceCut { base, src })
+    }
+
     /// Sample the source into a `w × h` output buffer: orientation, crop, rotation, flips — one
     /// bilinear resample from a pre-filtered (area-downscaled) copy, so minification never aliases.
     pub fn sample(&self, src: &Rgb32f, w: usize, h: usize) -> Rgb32f {
-        let oriented = if self.orient == Orientation::Normal { None } else { Some(src.oriented(self.orient)) };
-        let o = oriented.as_ref().unwrap_or(src);
         let plan = self.sample_plan(src.width, src.height, w, h);
-        let base = match plan.prefilter {
-            Some((nw, nh)) => std::borrow::Cow::Owned(resize(o, nw, nh, Filter::Mitchell)),
-            None => std::borrow::Cow::Borrowed(o),
+        // a window of a big original reads a small part of it: only that part is oriented and prefiltered
+        // (the same pixels; read in place when there is neither to do)
+        let cut = if self.orient != Orientation::Normal || plan.prefilter.is_some() { self.source_cut(&plan, w, h) } else { None };
+        let (base, off) = match cut {
+            Some(c) => (std::borrow::Cow::Owned(c.base(src, self.orient, &plan)), [c.base[0] as f32, c.base[1] as f32]),
+            None => {
+                let oriented = if self.orient == Orientation::Normal { None } else { Some(src.oriented(self.orient)) };
+                let base = match (plan.prefilter, oriented) {
+                    (Some((nw, nh)), o) => std::borrow::Cow::Owned(resize(o.as_ref().unwrap_or(src), nw, nh, Filter::Mitchell)),
+                    (None, Some(o)) => std::borrow::Cow::Owned(o),
+                    (None, None) => std::borrow::Cow::Borrowed(src),
+                };
+                (base, [0.0; 2])
+            }
         };
         let affine = |xf: Affine| {
             let mut out = Rgb32f::new(w, h);
             par_rows(&mut out.data, w, |y, row| {
                 for (x, px) in row.iter_mut().enumerate() {
                     let p = xf.apply(Point::new(x as f64 + 0.5, y as f64 + 0.5));
-                    *px = base.sample_bilinear(p.x as f32, p.y as f32);
+                    *px = base.sample_bilinear(p.x as f32 - off[0], p.y as f32 - off[1]);
                 }
             });
             out
@@ -282,7 +337,7 @@ impl Frame {
         let mut out = match (plan.mode, self.warp.as_ref()) {
             // (a copy is the whole photo: nothing past it)
             (SampleMode::Copy, _) => return base.into_owned(),
-            (SampleMode::Warp(o2t), Some(warp)) => sample_warped(&base, plan.sx, plan.sy, warp, o2t, w, h),
+            (SampleMode::Warp(o2t), Some(warp)) => sample_warped(&base, off, plan.sx, plan.sy, warp, o2t, w, h),
             // `sample_plan` plans a warp only when there is one; without it the same mapping is affine
             (SampleMode::Warp(o2t), None) => affine(Affine::scale(plan.sx, plan.sy) * o2t),
             (SampleMode::Affine(xf), _) => affine(xf),
@@ -323,6 +378,93 @@ pub struct SamplePlan {
     pub mode: SampleMode,
 }
 
+/// The part of the source a sample reads ([`Frame::source_cut`]): what a window of a big original is made from,
+/// instead of orienting, prefiltering (and on the GPU, uploading) the whole image. The same pixels as the
+/// whole-image path: the base is the whole prefilter's pixels, made with its taps.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SourceCut {
+    /// The base pixels the sample reads, `[x0, y0, x1, y1]` (end exclusive): prefiltered pixels, or oriented
+    /// source pixels without a prefilter.
+    pub base: [usize; 4],
+    /// The oriented source pixels those are made from (the prefilter's taps), `[x0, y0, x1, y1]`.
+    pub src: [usize; 4],
+}
+
+impl SourceCut {
+    /// The base's size.
+    pub fn base_size(&self) -> (usize, usize) {
+        (self.base[2].saturating_sub(self.base[0]), self.base[3].saturating_sub(self.base[1]))
+    }
+
+    /// The oriented source pixels' size.
+    pub fn src_size(&self) -> (usize, usize) {
+        (self.src[2].saturating_sub(self.src[0]), self.src[3].saturating_sub(self.src[1]))
+    }
+
+    /// The oriented pixels [`Self::src`] of `img` (the frame's orientation `orient` on top of it), as
+    /// `img.oriented(orient)` holds them.
+    pub fn cut(&self, img: &Rgb32f, orient: Orientation) -> Rgb32f {
+        let (w, h) = self.src_size();
+        let [x0, y0, ..] = self.src;
+        let mut out = Rgb32f::new(w, h);
+        if orient == Orientation::Normal {
+            par_rows(&mut out.data, w, |y, row| {
+                let at = (y0 + y) * img.width + x0;
+                if let Some(s) = img.data.get(at..at + row.len()) {
+                    row.copy_from_slice(s);
+                }
+            });
+            return out;
+        }
+        let m = orient_map(orient, img.width, img.height);
+        par_rows(&mut out.data, w, |y, row| {
+            let oy = (y0 + y) as i64;
+            for (x, px) in row.iter_mut().enumerate() {
+                let ox = (x0 + x) as i64;
+                let (sx, sy) = (m[0] * ox + m[1] * oy + m[2], m[3] * ox + m[4] * oy + m[5]);
+                let at = usize::try_from(sy).ok().zip(usize::try_from(sx).ok()).filter(|&(_, sx)| sx < img.width).map(|(sy, sx)| sy * img.width + sx);
+                if let Some(v) = at.and_then(|i| img.data.get(i)) {
+                    *px = *v;
+                }
+            }
+        });
+        out
+    }
+
+    /// The prefilter's taps for the base pixels (`None` without one), columns then rows, as indices into the
+    /// oriented source from `from` on.
+    fn taps(&self, plan: &SamplePlan, from: [usize; 2]) -> Option<[Vec<(usize, Vec<f32>)>; 2]> {
+        let (pw, ph) = plan.prefilter?;
+        let part = |n: usize, m: usize, a: usize, b: usize, from: usize| {
+            weights(n, m, Filter::Mitchell)
+                .into_iter()
+                .skip(a)
+                .take(b.saturating_sub(a))
+                .map(|(lo, w)| (lo.saturating_sub(from), w))
+                .collect::<Vec<_>>()
+        };
+        Some([part(plan.ow, pw, self.base[0], self.base[2], from[0]), part(plan.oh, ph, self.base[1], self.base[3], from[1])])
+    }
+
+    /// The base pixels of `img` (`orient` on top of it): its cut, prefiltered (an upright image's rows are read in
+    /// place: a window of a frame two thirds of a 48 MP original's size holds no 290 MB cut).
+    pub fn base(&self, img: &Rgb32f, orient: Orientation, plan: &SamplePlan) -> Rgb32f {
+        match orient {
+            Orientation::Normal => match self.taps(plan, [0, self.src[1]]) {
+                Some([wx, wy]) => resize_with(img, self.src[1]..self.src[3], &wx, &wy),
+                None => self.cut(img, orient),
+            },
+            _ => {
+                let cut = self.cut(img, orient);
+                match self.taps(plan, [self.src[0], self.src[1]]) {
+                    Some([wx, wy]) => resize_with(&cut, 0..cut.height, &wx, &wy),
+                    None => cut,
+                }
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum SampleMode {
     /// The (prefiltered) oriented source is the output.
@@ -343,8 +485,9 @@ pub fn perspective(s: &DevelopSettings, ow: f64, oh: f64) -> Homography {
 }
 
 /// One resample through the warp: `o2t` maps output px → transformed px, the warp maps those to source px
-/// (scaled by `sx, sy` into `base`).
-fn sample_warped(base: &Rgb32f, sx: f64, sy: f64, wp: &Warp, o2t: Affine, w: usize, h: usize) -> Rgb32f {
+/// (scaled by `sx, sy` into the base, of which `base` holds the part from `off` on).
+#[allow(clippy::too_many_arguments)]
+fn sample_warped(base: &Rgb32f, off: [f32; 2], sx: f64, sy: f64, wp: &Warp, o2t: Affine, w: usize, h: usize) -> Rgb32f {
     let per_channel = wp.per_channel();
     let gain = wp.has_gain();
     let mut out = Rgb32f::new(w, h);
@@ -354,11 +497,11 @@ fn sample_warped(base: &Rgb32f, sx: f64, sy: f64, wp: &Warp, o2t: Affine, w: usi
                 *px = BLANK;
                 continue;
             };
-            let mut v = base.sample_bilinear((g.x * sx) as f32, (g.y * sy) as f32);
+            let mut v = base.sample_bilinear((g.x * sx) as f32 - off[0], (g.y * sy) as f32 - off[1]);
             if per_channel {
                 for ch in [0usize, 2] {
                     let q = wp.corrected_to_source(c, ch);
-                    v[ch] = base.sample_bilinear((q.x * sx) as f32, (q.y * sy) as f32)[ch];
+                    v[ch] = base.sample_bilinear((q.x * sx) as f32 - off[0], (q.y * sy) as f32 - off[1])[ch];
                 }
             }
             if gain {
@@ -454,5 +597,63 @@ mod tests {
         // the whole image, mirrored: output top-left is the image's bottom-right
         let p = f.out_to_norm(400, 200).apply(Point::new(0.0, 0.0));
         assert!((p.x - 1.0).abs() < 1e-9 && (p.y - 1.0).abs() < 1e-9, "{p:?}");
+    }
+
+    /// [`Frame::sample`] as it was before [`SourceCut`]: the whole source oriented and prefiltered.
+    fn sample_whole(f: &Frame, src: &Rgb32f, w: usize, h: usize) -> Rgb32f {
+        let o = src.oriented(f.orient);
+        let plan = f.sample_plan(src.width, src.height, w, h);
+        let base = match plan.prefilter {
+            Some((nw, nh)) => resize(&o, nw, nh, Filter::Mitchell),
+            None => o,
+        };
+        let affine = |xf: Affine| {
+            Rgb32f::from_fn(w, h, |x, y| {
+                let p = xf.apply(Point::new(x as f64 + 0.5, y as f64 + 0.5));
+                base.sample_bilinear(p.x as f32, p.y as f32)
+            })
+        };
+        match (plan.mode, f.warp.as_ref()) {
+            (SampleMode::Warp(o2t), Some(wp)) => sample_warped(&base, [0.0; 2], plan.sx, plan.sy, wp, o2t, w, h),
+            (SampleMode::Warp(o2t), None) => affine(Affine::scale(plan.sx, plan.sy) * o2t),
+            (SampleMode::Affine(xf), _) => affine(xf),
+            (SampleMode::Copy, _) => base,
+        }
+    }
+
+    /// A window of a big original reads its own part of the source only, and gets the very pixels the whole
+    /// oriented, prefiltered source gives.
+    #[test]
+    fn a_window_is_sampled_from_its_cut_of_the_source() {
+        let src =
+            Rgb32f::from_fn(900, 600, |x, y| [((x * 7 + y * 13) % 101) as f32 / 100.0, ((x * x + y) % 37) as f32 / 36.0, (x ^ y) as f32 / 1024.0]);
+        let rotated = DevelopSettings { orientation: Orientation::Rotate90, ..Default::default() };
+        let mut straightened = rotated.clone();
+        straightened.crop.geometry.angle = 4.0;
+        straightened.crop.flip_h = true;
+        let mut lens = DevelopSettings::default();
+        lens.optics.distortion = 30.0;
+        lens.optics.ca_red = 40.0;
+        lens.optics.ca_blue = -30.0;
+        lens.optics.vignetting = -20.0;
+        for (name, s) in [("rotated", &rotated), ("straightened, flipped", &straightened), ("lens", &lens)] {
+            // 1:1 (no prefilter) and two smaller frames (prefiltered), a window near the middle and one at an edge
+            for full_long in [900, 600, 410] {
+                let frame = Frame::new(900, 600, s, true);
+                let (fw, fh) = frame.fit(full_long, full_long);
+                for win in [
+                    crate::PixelWindow { x: fw / 3, y: fh / 4, w: fw / 4, h: fh / 5 },
+                    crate::PixelWindow { x: 0, y: fh - fh / 6, w: fw / 3, h: fh / 6 },
+                ] {
+                    let f = frame.window(fw, fh, win);
+                    let plan = f.sample_plan(900, 600, win.w, win.h);
+                    let cut = f.source_cut(&plan, win.w, win.h).unwrap_or_else(|| panic!("{name}, {full_long}: no cut"));
+                    let (cw, ch) = cut.src_size();
+                    assert!(cw * ch * 4 < 900 * 600, "{name}, {full_long}: the cut {cut:?} is small");
+                    let (a, b) = (f.sample(&src, win.w, win.h), sample_whole(&f, &src, win.w, win.h));
+                    assert!(a.data == b.data, "{name}, {full_long}, {win:?}: other pixels from the cut {cut:?}");
+                }
+            }
+        }
     }
 }

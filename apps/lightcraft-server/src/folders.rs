@@ -203,6 +203,8 @@ pub fn unchanged(path: &Path, size: u64, mtime: u64) -> bool {
 #[serde(rename_all = "camelCase")]
 pub struct Status {
     pub scanning: bool,
+    /// This scan reads every file again, changed or not ([`Scanner::request_full`]), not only the new and changed ones.
+    pub full: bool,
     /// What the scan is doing: `listing` (finding photo files; `files` counts up), `reading`
     /// (hashing and importing the new ones: `done` of `todo`), `finishing`; empty when idle.
     pub phase: &'static str,
@@ -241,6 +243,8 @@ pub struct Status {
     /// Building previews is paused (for every user), and the photos of the library folders that have previews / are photos
     /// in the library (counted in the background, so `None` at first).
     pub previews_paused: bool,
+    /// The batch being built replaces previews that are there ([`Scanner::rebuild_all`]), not only the missing ones.
+    pub previews_rebuilding: bool,
     pub previews_have: Option<usize>,
     pub previews_photos: Option<usize>,
     /// The last batch of previews that finished since the server started: how many, and when (unix seconds).
@@ -669,23 +673,35 @@ fn reread_sidecars(lib: &Mutex<UserLib>, read: &[(Found, Option<String>)], note_
     }
 }
 
+/// Which files a scan reads again (listing the folders and noting what is missing is the same for all).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Reread {
+    /// The new ones, and the ones whose size or time changed since they were read.
+    Changed,
+    /// Those, and the ones that failed before though they haven't changed (a newer server may read them).
+    Failed,
+    /// Every file, changed or not. A file with the content it had leaves its photo as it is: the index is the
+    /// cache a scan trusts, and this one doesn't.
+    Everything,
+}
+
 /// Scan a user's library folders: add, move and update their photos in the user's library.
 /// `progress` sees the status as it goes, `preview` each photo file whose previews may be
-/// missing (the caller builds them, see [`build_previews`]). `retry_failed`: read the files that
-/// failed before again, though they haven't changed (a newer server may read them).
+/// missing (the caller builds them, see [`build_previews`]). `reread`: which files are read again.
 pub fn scan(
     data: &Path,
     user: &str,
     lib: &Mutex<UserLib>,
     stop: &AtomicBool,
-    retry_failed: bool,
+    reread: Reread,
     progress: &mut dyn FnMut(&Status),
     preview: &mut dyn FnMut(String, PathBuf),
 ) -> Result<Status, String> {
+    let (retry_failed, everything) = (reread != Reread::Changed, reread == Reread::Everything);
     let (folders, ignore): (Vec<LibraryFolder>, Vec<String>) =
         accounts::read_users(data)?.users.get(user).map(|u| (u.folders.clone(), u.ignore.clone())).ok_or_else(|| format!("no user `{user}`"))?;
     let now = lightcraft_engine::import::system_clock();
-    let mut s = Status { scanning: true, phase: "listing", started: Some(Instant::now()), ..Default::default() };
+    let mut s = Status { scanning: true, full: everything, phase: "listing", started: Some(Instant::now()), ..Default::default() };
     progress(&s);
     let had: HashSet<String> = {
         let l = lock(lib);
@@ -723,9 +739,10 @@ pub fn scan(
         let todo: Vec<Found> = found
             .iter()
             .filter(|f| {
-                l.index.files.get(&f.key).is_none_or(|e| {
-                    e.size != f.size || e.mtime != f.mtime || (e.photo.is_none() && e.error.is_none()) || (retry_failed && e.error.is_some())
-                })
+                everything
+                    || l.index.files.get(&f.key).is_none_or(|e| {
+                        e.size != f.size || e.mtime != f.mtime || (e.photo.is_none() && e.error.is_none()) || (retry_failed && e.error.is_some())
+                    })
             })
             .cloned()
             .collect();
@@ -841,10 +858,16 @@ fn preview_jobs(l: &UserLib) -> Vec<(String, PathBuf)> {
 /// Build a photo file's smart and mini previews into the user's photo files (`blobs`), unless
 /// they're there.
 pub fn build_previews(blobs: &Path, hash: &str, file: &Path) -> Result<bool, String> {
+    build_previews_as(blobs, hash, file, false)
+}
+
+/// [`build_previews`]; with `replace`, though they're there. The old ones stay until the new ones are written
+/// (each file is replaced whole), so a file that can't be read now costs a photo nothing.
+pub fn build_previews_as(blobs: &Path, hash: &str, file: &Path, replace: bool) -> Result<bool, String> {
     let (Some(smart), Some(mini)) = (crate::api::blob_path(blobs, "smart", hash), crate::api::blob_path(blobs, "mini", hash)) else {
         return Err(format!("not a content hash: {hash}"));
     };
-    if smart.is_file() && mini.is_file() {
+    if smart.is_file() && mini.is_file() && !replace {
         return Ok(false);
     }
     for dir in [&smart, &mini].into_iter().filter_map(|p| p.parent()) {
@@ -924,6 +947,8 @@ struct Jobs {
     live: HashMap<(String, String), Stage>,
     /// The files builder threads have right now (the admin page shows them).
     building: HashMap<(String, String), PathBuf>,
+    /// The previews, waiting or being built, that are built though they are there ([`Scanner::rebuild_all`]).
+    forced: HashSet<(String, String)>,
 }
 
 impl Jobs {
@@ -940,6 +965,24 @@ impl Jobs {
         self.live.insert(key, Stage::Waiting);
         self.queue.push_back(job);
         true
+    }
+
+    /// Like [`Jobs::push`], for a preview that is built again though it is there; a job waiting already becomes one
+    /// of these. Whether it is new.
+    fn push_forced(&mut self, job: Job) -> bool {
+        let key = Self::key(&job);
+        match self.live.get(&key) {
+            // (being built now: that one is as new as a rebuild would be)
+            Some(Stage::Building) => false,
+            Some(_) => {
+                self.forced.insert(key);
+                false
+            }
+            None => {
+                self.forced.insert(key);
+                self.push(job)
+            }
+        }
     }
 
     /// Go before the scans' jobs (a device is showing this photo), after the ones asked for earlier (so the cells
@@ -997,6 +1040,7 @@ impl Jobs {
         let key = (user.to_string(), hash.to_string());
         self.live.remove(&key);
         self.building.remove(&key);
+        self.forced.remove(&key);
     }
 }
 
@@ -1015,6 +1059,10 @@ pub struct Scanner {
     paused: AtomicBool,
     /// Users whose previews are all to be queued again ([`Scanner::generate_all`]).
     all_wanted: Mutex<BTreeSet<String>>,
+    /// Users whose previews are all to be built again, those there too ([`Scanner::rebuild_all`]).
+    rebuild_wanted: Mutex<BTreeSet<String>>,
+    /// Users whose next scan reads every file ([`Scanner::request_full`]).
+    full: Mutex<BTreeSet<String>>,
     /// Per user, how many photos have previews and how many there are, as last counted (and the batch's `done` then); the users being counted.
     coverage: Arc<Mutex<HashMap<String, (Instant, usize, usize, usize)>>>,
     counting: Arc<Mutex<HashSet<String>>>,
@@ -1038,6 +1086,8 @@ impl Scanner {
             last_batch: Mutex::new(HashMap::new()),
             paused: AtomicBool::new(false),
             all_wanted: Mutex::new(BTreeSet::new()),
+            rebuild_wanted: Mutex::new(BTreeSet::new()),
+            full: Mutex::new(BTreeSet::new()),
             coverage: Arc::new(Mutex::new(HashMap::new())),
             counting: Arc::new(Mutex::new(HashSet::new())),
             failed: Mutex::new(HashMap::new()),
@@ -1045,10 +1095,16 @@ impl Scanner {
         }
     }
 
-    /// Scan this user's folders soon.
+    /// Scan this user's folders soon: list them, and read the files that are new or changed.
     pub fn request(&self, user: &str) {
         lock(&self.wanted).insert(user.to_string());
         self.wake.notify_all();
+    }
+
+    /// Scan this user's folders soon, and read every file again, changed or not ([`Reread::Everything`]).
+    pub fn request_full(&self, user: &str) {
+        lock(&self.full).insert(user.to_string());
+        self.request(user);
     }
 
     /// Builders waiting for a place look again (the limit changed).
@@ -1066,6 +1122,14 @@ impl Scanner {
     pub fn generate_all(&self, user: &str) {
         lock(&self.failed).retain(|(u, _), _| u != user);
         lock(&self.all_wanted).insert(user.to_string());
+        self.wake.notify_all();
+    }
+
+    /// Queue every preview of this user's photos, the ones there too, soon. A preview is replaced when its new one
+    /// is built (never before), so a photo whose file can't be read any more keeps the preview it has.
+    pub fn rebuild_all(&self, user: &str) {
+        lock(&self.failed).retain(|(u, _), _| u != user);
+        lock(&self.rebuild_wanted).insert(user.to_string());
         self.wake.notify_all();
     }
 
@@ -1106,6 +1170,7 @@ impl Scanner {
             let mut now: Vec<String> = j.building.iter().filter(|((u, _), _)| u == user).map(|(_, p)| p.to_string_lossy().into_owned()).collect();
             now.sort();
             s.previews_building = now;
+            s.previews_rebuilding = j.forced.iter().any(|(u, _)| u == user);
         }
         if let Some(&(began, done, total, bytes)) = lock(&self.runs).get(user) {
             (s.previews_done, s.previews_total, s.previews_eta_secs) = (done, total, eta(began, done, total));
@@ -1125,6 +1190,15 @@ impl Scanner {
         }
         s.preview_errors = lock(&self.failed).iter().filter(|((u, _), _)| u == user).map(|(_, e)| e.clone()).take(20).collect();
         s
+    }
+
+    /// Have a photo file's previews built again soon, though they are there ([`Scanner::rebuild_all`]).
+    pub(crate) fn queue_rebuild(&self, user: &str, hash: String, file: PathBuf) {
+        let mut j = lock(&self.jobs);
+        if j.push_forced((user.to_string(), hash, file)) {
+            lock(&self.runs).entry(user.to_string()).or_insert_with(|| (Instant::now(), 0, 0, 0)).2 += 1;
+            self.jobs_wake.notify_one();
+        }
     }
 
     /// Have a photo file's previews built soon (unless they are there, or failed before): what is now the case.
@@ -1205,6 +1279,16 @@ pub(crate) fn run_scanner(st: &Arc<State>) {
             }
             continue;
         }
+        let rebuild = lock(&sc.rebuild_wanted).pop_first();
+        if let Some(user) = rebuild {
+            if let Ok(lib) = crate::api::lib(st, &user) {
+                let jobs = preview_jobs(&lock(&lib));
+                for (hash, file) in jobs {
+                    sc.queue_rebuild(&user, hash, file);
+                }
+            }
+            continue;
+        }
         let next = lock(&sc.wanted).pop_first();
         let Some(user) = next else {
             let w = lock(&sc.wanted);
@@ -1221,14 +1305,21 @@ pub(crate) fn run_scanner(st: &Arc<State>) {
         let blobs = accounts::user_dir(&st.data, &user).join("blobs");
         let t = Instant::now();
         let scans = lock(&sc.status).get(&user).map_or(0, |s| s.scans);
+        let reread = if lock(&sc.full).remove(&user) {
+            Reread::Everything
+        } else if scans == 0 {
+            // the first scan since the server started: an upgrade may read what failed
+            Reread::Failed
+        } else {
+            Reread::Changed
+        };
         let r = lightcraft_engine::guard::catch("a library folder scan", || {
             scan(
                 &st.data,
                 &user,
                 &lib,
                 &sc.stop,
-                // the first scan since the server started: an upgrade may read what failed
-                scans == 0,
+                reread,
                 &mut |s| {
                     lock(&sc.status).insert(user.clone(), Status { scans, ..s.clone() });
                 },
@@ -1292,7 +1383,8 @@ pub(crate) fn run_previews(st: &Arc<State>) {
         };
         let (user, hash, file) = job;
         let blobs = accounts::user_dir(&st.data, &user).join("blobs");
-        let r = build_previews(&blobs, &hash, &file);
+        let replace = lock(&sc.jobs).forced.contains(&(user.clone(), hash.clone()));
+        let r = build_previews_as(&blobs, &hash, &file, replace);
         lock(&sc.jobs).done(&user, &hash);
         // (a builder waiting for a place may take one now)
         sc.jobs_wake.notify_one();
@@ -1372,6 +1464,27 @@ mod tests {
         j.done(&first.0, &first.1);
         assert!(j.building.is_empty());
         assert_eq!(built(&mut j, 5), ["2"]);
+    }
+
+    #[test]
+    fn a_preview_to_build_again_is_marked_until_it_is_built() {
+        let key = |n: u32| ("ann".to_string(), job("ann", n).1);
+        let mut j = Jobs::default();
+        assert!(j.push(job("ann", 1)), "waiting for a preview that is missing");
+        assert!(!j.push_forced(job("ann", 1)), "waiting already: not a new job");
+        assert!(j.forced.contains(&key(1)), "but it is built again now, whether or not it is there");
+        assert!(j.push_forced(job("ann", 2)), "a new job");
+        assert!(j.forced.contains(&key(2)));
+        assert!(!j.forced.contains(&key(3)));
+        // one being built is as new as a rebuild would make it
+        let first = j.next().expect("a job");
+        assert!(!j.push_forced(job("ann", 1)) && j.live.len() == 2);
+        j.done(&first.0, &first.1);
+        assert!(!j.forced.contains(&key(1)), "built: the mark goes");
+        assert!(j.forced.contains(&key(2)), "the other waits with its mark");
+        let second = j.next().expect("the next job");
+        j.done(&second.0, &second.1);
+        assert!(j.forced.is_empty() && j.live.is_empty());
     }
 
     #[test]

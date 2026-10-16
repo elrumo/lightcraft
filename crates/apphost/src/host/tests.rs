@@ -218,6 +218,32 @@ fn a_drag_renders_drafts_then_a_final_view() {
     assert!(draft["width"].as_u64() < full["width"].as_u64(), "draft {draft} vs full {full}");
 }
 
+// `render.view` names the render it asked for: the loupe's picture is that one once its key is the reply's (the
+// SwiftUI app says Lens Blur is still rendering until then), and an edit asks for another
+#[test]
+fn render_view_names_the_render_it_asked_for() {
+    let h = demo();
+    let t = Duration::from_secs(30);
+    let first = h.call(&req(1, "engine.execute", json!({"command": "catalog.query", "params": {"limit": 1}})), t);
+    let photo = first["result"]["photos"][0]["id"].as_u64().unwrap();
+    h.call(&req(2, "engine.execute", json!({"command": "library.select", "params": {"ids": [photo]}})), t);
+    let asked = h.call(&req(3, "render.view", json!({"photo": photo, "width": 160, "height": 120})), t);
+    let key = asked["result"]["key"].as_str().unwrap_or_else(|| panic!("{asked}")).to_string();
+    let shown = h.wait_for(|e| e["kind"] == "image" && e["slot"] == "main" && e["final"] == true);
+    assert_eq!(shown["key"].as_u64().map(|k| k.to_string()), Some(key.clone()), "{shown}");
+    // the same view again: the same render, nothing new to wait for
+    let again = h.call(&req(4, "render.view", json!({"photo": photo, "width": 160, "height": 120})), t);
+    assert_eq!(again["result"]["key"].as_str(), Some(key.as_str()), "{again}");
+    h.call(&req(5, "engine.execute", json!({"command": "develop.set", "params": {"control": "light.exposure", "value": 0.7}})), t);
+    let edited = h.call(&req(6, "render.view", json!({"photo": photo, "width": 160, "height": 120})), t);
+    let next = edited["result"]["key"].as_str().unwrap_or_else(|| panic!("{edited}")).to_string();
+    assert_ne!(next, key, "an edit is another render");
+    h.wait_for(|e| e["kind"] == "image" && e["slot"] == "main" && e["key"].as_u64().map(|k| k.to_string()) == Some(next.clone()));
+    // a draft is a render of its own too
+    let draft = h.call(&req(7, "render.view", json!({"photo": photo, "width": 160, "height": 120, "draft": true})), t);
+    assert!(draft["result"]["key"].as_str().is_some_and(|k| k != next), "{draft}");
+}
+
 // Closing saves and stops; the host refuses what comes after, and dropping it again is fine
 #[test]
 fn close_stops_the_engine() {
@@ -386,6 +412,11 @@ fn the_state_says_when_the_presets_change() {
     assert_ne!(after, before);
     let state = h.wait_for(|e| e["kind"] == "state" && e["state"]["presetsGeneration"] == after);
     assert_eq!(state["state"]["presetsGeneration"], after);
+    // hiding a preset moves it too (the panel leaves it out)
+    h.call(&req(40, "engine.execute", json!({"command": "preset.hide", "params": {"id": "lc.moody"}})), Duration::from_secs(30));
+    let hidden = generation(&h, 41);
+    assert_ne!(hidden, after, "a hidden preset");
+    let after = hidden;
     // an imported profile moves it too (the profile browser reads its list again)
     let dir = std::env::temp_dir().join(format!("lc-host-profile-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
@@ -416,6 +447,41 @@ fn presets_profiles_and_versions_preview() {
     assert!(h.reply_to(5)["result"]["slot"].as_str().unwrap().starts_with("variant:"));
     h.submit(&req(6, "render.variant", json!({"edge": 96}))).unwrap();
     assert!(h.reply_to(6)["error"].is_object(), "nothing to preview");
+}
+
+// A preset's preview is of the original photo: applying presets (a B&W one) leaves every preset's picture as it was.
+// Resting on a preset renders the loupe with it (`hover`, told by its key), over the last step when `replacing`.
+#[test]
+fn preset_previews_ignore_the_edit_and_hover_renders_the_loupe() {
+    let h = demo();
+    let (bw, warm) = ("lc.bw-high-contrast", "lc.warm-glow");
+    let slot = |h: &Watch, n: u64| {
+        h.submit(&req(n, "render.variant", json!({"preset": warm, "edge": 96}))).unwrap();
+        h.reply_to(n)["result"]["slot"].as_str().unwrap().to_string()
+    };
+    let before = slot(&h, 2);
+    let r = h.call(&req(3, "engine.execute", json!({"command": "preset.apply", "params": {"id": bw}})), Duration::from_secs(30));
+    assert!(r["error"].is_null(), "{r}");
+    assert_eq!(slot(&h, 4), before, "the same picture after a B&W preset was applied");
+
+    let ask = |h: &Watch, n: u64, replacing: bool| {
+        h.submit(&req(n, "render.view", json!({"width": 120, "height": 80, "preset": warm, "replacing": replacing}))).unwrap();
+        let r = h.reply_to(n);
+        assert_eq!(r["result"]["slot"], "hover", "{r}");
+        // (a string in the reply: a u64 doesn't survive every JSON reader)
+        r["result"]["key"].as_str().unwrap().parse::<u64>().unwrap()
+    };
+    let over = ask(&h, 5, false);
+    h.wait_for(|e| e["kind"] == "image" && e["slot"] == "hover" && e["key"] == over);
+    // in place of the B&W preset: another picture (over the photo as it was before it)
+    let instead = ask(&h, 6, true);
+    assert_ne!(instead, over);
+    h.wait_for(|e| e["kind"] == "image" && e["slot"] == "hover" && e["key"] == instead);
+    // nothing was committed
+    let state = h.call(&req(7, "host.state", json!({})), Duration::from_secs(30));
+    assert_eq!(state["result"]["undo"].as_str().map(|l| l.starts_with("Preset: ")), Some(true), "{state}");
+    h.submit(&req(8, "render.view", json!({"width": 120, "height": 80, "preset": "nope"}))).unwrap();
+    assert!(h.reply_to(8)["error"].is_object(), "no such preset");
 }
 
 /// `render.view`'s overlay: the selected mask with its colour, Visualize Spots, nothing for nonsense.
@@ -458,6 +524,37 @@ fn a_zoomed_view_gets_a_window_of_what_is_on_screen() {
     // the whole-frame render stays canvas-sized and has no window
     let main = h.wait_for(|e| e["kind"] == "image" && e["slot"] == "main");
     assert!(n(&main["width"]).max(n(&main["height"])) <= 512 && main["window"].is_null(), "{main}");
+}
+
+// Zoomed to 1:1, the original the windows are cut from stays decoded while the view is zoomed, over the
+// cache budget (a 48 MP one is 560 MB, more than a phone's share): before, every pan decoded it again.
+// Zoomed out, it goes.
+#[test]
+fn a_zoomed_view_keeps_its_original_decoded() {
+    let h = demo();
+    let budget = |h: &Watch, id: u64, p: Value| {
+        h.call(&req(id, "engine.execute", json!({"command": "app.memoryBudget", "params": p})), Duration::from_secs(30))
+    };
+    let default_mb = budget(&h, 1, json!({}))["result"]["budget"].as_f64().unwrap() / 1048576.0;
+    let first = h.call(&req(2, "engine.execute", json!({"command": "catalog.query", "params": {"limit": 1}})), Duration::from_secs(30));
+    let p = &first["result"]["photos"][0];
+    let (photo, long) = (p["id"].as_u64().unwrap(), p["width"].as_u64().unwrap().max(p["height"].as_u64().unwrap()));
+    // a cache share (half the budget) smaller than the demo photo's decoded original
+    assert!(long * long * 12 / 2 > 128 << 20, "{p}");
+    budget(&h, 3, json!({"mb": 256}));
+    let full = |h: &Watch, id: u64| {
+        let m = h.call(&req(id, "host.memory", json!({})), Duration::from_secs(30));
+        m["result"]["engine"]["fullSource"]["count"].as_u64().unwrap()
+    };
+    let zoom = json!({"drawn": long, "visible": [0.45, 0.45, 0.55, 0.55]});
+    h.submit(&req(4, "render.view", json!({"photo": photo, "width": 400, "height": 300, "zoom": zoom}))).unwrap();
+    h.wait_for(|e| e["kind"] == "image" && e["slot"] == "region");
+    let t0 = std::time::Instant::now();
+    while full(&h, 5) == 0 && t0.elapsed() < Duration::from_secs(10) {}
+    assert_eq!(full(&h, 6), 1, "the original stays while zoomed");
+    h.call(&req(7, "render.view", json!({"photo": photo, "width": 400, "height": 300})), Duration::from_secs(30));
+    assert_eq!(full(&h, 8), 0, "and goes at fit");
+    budget(&h, 9, json!({"mb": default_mb}));
 }
 
 // People's faces: a face box renders as its own small picture
@@ -847,9 +944,9 @@ fn a_zoom_decodes_the_original_only_when_it_fits_in_memory() {
     let mp48 = 8064.0 * 6048.0;
     // a desktop: no limit
     assert!(original_fits(None, false, mp48));
-    // an iPhone 17 Pro with a 48 MP ProRAW open: 1.6 GB left is not enough, 3 GB is
+    // an iPhone 17 Pro with a 48 MP ProRAW open: 1.6 GB left is not enough, the 2 GB it has is
     assert!(!original_fits(Some(1_600 << 20), false, mp48));
-    assert!(original_fits(Some(3_000 << 20), false, mp48));
+    assert!(original_fits(Some(2_000 << 20), false, mp48));
     // decoded already: nothing more to hold
     assert!(original_fits(Some(64 << 20), true, mp48));
     // a 12 MP photo fits where a 48 MP one doesn't
@@ -857,4 +954,43 @@ fn a_zoom_decodes_the_original_only_when_it_fits_in_memory() {
     // nonsense sizes never decode
     assert!(!original_fits(Some(1 << 30), false, f64::NAN));
     assert!(!original_fits(Some(1 << 30), false, f64::INFINITY));
+}
+
+// A Mac's Local: a folder is read on a worker (`library.browse`, answered when done, its row in the activity stack
+// meanwhile), its places come from `host.local` and its subfolders from `host.local.subfolders`
+#[test]
+fn a_local_folder_is_read_in_the_background_with_its_places() {
+    let base = std::env::temp_dir().join(format!("lc-host-browse-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let (src, lib, tmp) = (base.join("Pictures"), base.join("lib"), base.join("tmp"));
+    std::fs::create_dir_all(src.join("Trip")).unwrap();
+    std::fs::create_dir_all(&tmp).unwrap();
+    let mut demo = Session::with_demo();
+    let ids: Vec<u64> = demo.visible_cloned().iter().take(2).map(|id| id.0).collect();
+    crate::export::export_now(&mut demo, &json!({"dir": src.to_string_lossy(), "ids": ids, "longEdge": 48, "format": "png"}), &mut |_, _, _| true)
+        .unwrap();
+    let config = OpenConfig {
+        library: Some(lib.to_string_lossy().to_string()),
+        tmp: Some(tmp.to_string_lossy().to_string()),
+        render_threads: Some(2),
+        ..Default::default()
+    };
+    let h = Watch::new(Host::open(config).unwrap().0);
+    h.submit(&req(1, "engine.execute", json!({"command": "library.browse", "params": {"path": src.to_string_lossy()}}))).unwrap();
+    let done = h.reply_to(1);
+    assert_eq!((done["result"]["photos"].as_u64(), done["result"]["new"].as_u64()), (Some(2), Some(2)), "{done}");
+    let state = h.call(&req(2, "engine.execute", json!({"command": "library.state"})), Duration::from_secs(30));
+    assert_eq!(state["result"]["browse"]["local"], 2, "{state}");
+    let places = h.call(
+        &req(3, "host.local", json!({"roots": [], "hidden": [], "command": "addRoot", "path": src.to_string_lossy()})),
+        Duration::from_secs(30),
+    );
+    assert_eq!(places["result"]["roots"].as_array().map(Vec::len), Some(1), "{places}");
+    assert!(places["result"]["places"].as_array().unwrap().iter().any(|p| p["label"] == "Pictures"), "{places}");
+    assert_eq!(places["result"]["current"].as_str(), src.to_str(), "{places}");
+    let subs = h.call(&req(4, "host.local.subfolders", json!({"path": src.to_string_lossy()})), Duration::from_secs(30));
+    assert_eq!(subs["result"][0]["name"], "Trip", "{subs}");
+    let bad = h.call(&req(5, "host.local", json!({"command": "nonsense"})), Duration::from_secs(30));
+    assert!(bad["error"].is_object(), "{bad}");
+    let _ = std::fs::remove_dir_all(&base);
 }

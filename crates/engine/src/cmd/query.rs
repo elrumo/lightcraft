@@ -135,11 +135,20 @@ pub fn specs() -> Vec<CommandSpec> {
                 (LibrarySource::LibraryFolder, Some(path)) => lightcraft_catalog::folders::folder_label(path),
                 _ => s.source.label(&s.catalog),
             };
+            // the Local folder shown, and how many of its photos aren't in the library ("Add N to My Photos")
+            let browse = match s.browse.clone().filter(|_| s.source == LibrarySource::Folder) {
+                Some(b) => {
+                    let local = s.visible_cloned().iter().filter(|id| s.catalog.photo(**id).is_some_and(|p| p.local)).count();
+                    json!({"path": b.path, "subfolders": b.subfolders, "local": local})
+                }
+                None => Value::Null,
+            };
             let n = s.visible().len();
             let photos = s.visible_photos();
             Ok(json!({
                 "source": s.source,
                 "libraryFolder": s.library_folder.as_ref().filter(|_| s.source == LibrarySource::LibraryFolder),
+                "browse": browse,
                 "sourceLabel": label,
                 "filter": s.filter,
                 "sort": s.sort,
@@ -302,12 +311,44 @@ pub fn specs() -> Vec<CommandSpec> {
                     .collect(),
             ))
         }),
-        cmd!(query "presets.list", "List Presets", [], None, "{}", always, |s, _| {
-            Ok(Value::Array(s.presets.iter().map(|p| json!({"id": p.id, "name": p.name, "group": p.group, "favorite": p.favorite, "builtin": p.builtin})).collect()))
+        cmd!(query "presets.list", "List Presets", [], None, "{} → [{id, name, group, favorite, builtin (built-in or the sync server's: not editable), hidden (the preset itself, `preset.hide`)}]", always, |s, _| {
+            let hidden = |id: &String| s.hidden_presets.presets.contains(id);
+            Ok(Value::Array(
+                s.presets
+                    .iter()
+                    .map(|p| json!({"id": p.id, "name": p.name, "group": p.group, "favorite": p.favorite, "builtin": p.builtin, "hidden": hidden(&p.id)}))
+                    .collect(),
+            ))
         }),
-        cmd!(query "presets.groups", "List Preset Groups", [], None, "{} — the preset groups in the order the Presets panel shows them", always, |s, _| {
-            Ok(json!(s.preset_groups()))
-        }),
+        cmd!(
+            query "presets.groups",
+            "List Preset Groups",
+            [],
+            None,
+            "{details?: bool} — the preset groups in the order the Presets panel shows them → [name], or with details [{name, hidden (`preset.hideGroup`), builtin (holds built-in or server presets: can't be renamed), user (holds the user's presets)}]",
+            always,
+            |s, p| {
+                let groups = s.preset_groups();
+                if !p.get("details").and_then(Value::as_bool).unwrap_or(false) {
+                    return Ok(json!(groups));
+                }
+                let mut kinds: std::collections::HashMap<&str, (bool, bool)> = std::collections::HashMap::new();
+                for pr in s.presets.iter() {
+                    let k = kinds.entry(pr.group.as_str()).or_default();
+                    k.0 |= pr.builtin;
+                    k.1 |= !pr.builtin;
+                }
+                Ok(Value::Array(
+                    groups
+                        .iter()
+                        .map(|g| {
+                            let (builtin, user) = kinds.get(g.as_str()).copied().unwrap_or_default();
+                            json!({"name": g, "hidden": s.hidden_presets.groups.contains(g), "builtin": builtin, "user": user})
+                        })
+                        .collect(),
+                ))
+            }
+        ),
         cmd!(query "profiles.list", "List Profiles", [], None, "{} — every profile (built-in, then imported LUTs marked `imported`) with its group and favourite flag", always, |s, _| {
             let favorite = |id: &str| s.profile_favorites.iter().any(|f| f == id);
             let builtin = crate::presets::PROFILES.iter().map(|p| json!({"id": p.id, "name": p.name, "group": p.group, "favorite": favorite(p.id)}));

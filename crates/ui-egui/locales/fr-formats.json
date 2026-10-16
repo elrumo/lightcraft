@@ -339,5 +339,7 @@
   "Downloading the depth model… {:.0} %": "Téléchargement du modèle de profondeur… {:.0} %",
   "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.": "Cette photo n’a pas de profondeur propre : le flou de l’objectif l’estime avec Depth Anything V2 Small, un téléchargement de {:.0} Mo (licence {}). {}.",
   "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)": "Mise au point : {:.0}–{:.0} (0 le plus proche, 100 le plus éloigné)",
+  "Delete the group “{name}” and its {n} presets?": "Supprimer le groupe « {name} » et ses {n} préréglages ?",
+  "Hid “{name}”. Show Hidden Presets in the panel's menu brings it back.": "« {name} » est masqué. « Afficher les préréglages masqués », dans le menu du panneau, le fait réapparaître.",
   "{n} photos might be sensitive. Nothing is hidden until you choose.": "{n} photos pourraient être sensibles. Rien n’est masqué tant que vous n’avez pas choisi."
 }
