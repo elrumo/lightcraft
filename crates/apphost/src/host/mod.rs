@@ -712,8 +712,11 @@ impl Engine {
                     (size(p.get("width")).ok_or_else(|| bad("missing `width`"))?, size(p.get("height")).ok_or_else(|| bad("missing `height`"))?);
                 let apply_crop = p.get("applyCrop").and_then(Value::as_bool).unwrap_or(true);
                 let draft = p.get("draft").and_then(Value::as_bool).unwrap_or(false);
+                let key;
                 let slot = if p.get("before").and_then(Value::as_bool).unwrap_or(false) {
-                    let job = self.session.render_job(id, w, h, true, apply_crop).ok_or_else(|| bad("no such photo"))?;
+                    let job =
+                        self.sched.job_for(Slot::Before, self.session.render_job(id, w, h, true, apply_crop).ok_or_else(|| bad("no such photo"))?);
+                    key = job.key;
                     self.sched.request(Slot::Before, job, 90);
                     Slot::Before
                 } else {
@@ -727,7 +730,8 @@ impl Engine {
                         Some(v) => Some(serde_json::from_value::<lightcraft_pipeline::Proof>(v.clone()).map_err(|e| bad(&format!("`proof`: {e}")))?),
                         None => None,
                     };
-                    let job = if draft { job.draft() } else { job }.with_overlay(shown).with_proof(proof);
+                    let job = self.sched.job_for(Slot::Main, if draft { job.draft() } else { job }.with_overlay(shown).with_proof(proof));
+                    key = job.key;
                     self.sched.request(Slot::Main, job, 100);
                     // zoomed in: the window on screen at the zoom scale too (a drag keeps the one there is;
                     // a proof is of the whole frame, as egui's)
@@ -745,7 +749,9 @@ impl Engine {
                     Slot::Main
                 };
                 self.busy = true;
-                Ok(json!({"slot": slot.name()}))
+                // the render the slot's picture will be once it comes (its image event's `key`), so a UI can say
+                // it is still working on it: a string, as JSON numbers past 2^53 lose bits in some readers
+                Ok(json!({"slot": slot.name(), "key": key.to_string()}))
             }
             "render.candidate" => {
                 let i = p.get("index").and_then(Value::as_u64).ok_or_else(|| bad("missing `index`"))?;

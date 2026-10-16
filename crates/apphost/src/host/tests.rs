@@ -218,6 +218,32 @@ fn a_drag_renders_drafts_then_a_final_view() {
     assert!(draft["width"].as_u64() < full["width"].as_u64(), "draft {draft} vs full {full}");
 }
 
+// `render.view` names the render it asked for: the loupe's picture is that one once its key is the reply's (the
+// SwiftUI app says Lens Blur is still rendering until then), and an edit asks for another
+#[test]
+fn render_view_names_the_render_it_asked_for() {
+    let h = demo();
+    let t = Duration::from_secs(30);
+    let first = h.call(&req(1, "engine.execute", json!({"command": "catalog.query", "params": {"limit": 1}})), t);
+    let photo = first["result"]["photos"][0]["id"].as_u64().unwrap();
+    h.call(&req(2, "engine.execute", json!({"command": "library.select", "params": {"ids": [photo]}})), t);
+    let asked = h.call(&req(3, "render.view", json!({"photo": photo, "width": 160, "height": 120})), t);
+    let key = asked["result"]["key"].as_str().unwrap_or_else(|| panic!("{asked}")).to_string();
+    let shown = h.wait_for(|e| e["kind"] == "image" && e["slot"] == "main" && e["final"] == true);
+    assert_eq!(shown["key"].as_u64().map(|k| k.to_string()), Some(key.clone()), "{shown}");
+    // the same view again: the same render, nothing new to wait for
+    let again = h.call(&req(4, "render.view", json!({"photo": photo, "width": 160, "height": 120})), t);
+    assert_eq!(again["result"]["key"].as_str(), Some(key.as_str()), "{again}");
+    h.call(&req(5, "engine.execute", json!({"command": "develop.set", "params": {"control": "light.exposure", "value": 0.7}})), t);
+    let edited = h.call(&req(6, "render.view", json!({"photo": photo, "width": 160, "height": 120})), t);
+    let next = edited["result"]["key"].as_str().unwrap_or_else(|| panic!("{edited}")).to_string();
+    assert_ne!(next, key, "an edit is another render");
+    h.wait_for(|e| e["kind"] == "image" && e["slot"] == "main" && e["key"].as_u64().map(|k| k.to_string()) == Some(next.clone()));
+    // a draft is a render of its own too
+    let draft = h.call(&req(7, "render.view", json!({"photo": photo, "width": 160, "height": 120, "draft": true})), t);
+    assert!(draft["result"]["key"].as_str().is_some_and(|k| k != next), "{draft}");
+}
+
 // Closing saves and stops; the host refuses what comes after, and dropping it again is fine
 #[test]
 fn close_stops_the_engine() {
