@@ -712,6 +712,23 @@ impl Engine {
                     (size(p.get("width")).ok_or_else(|| bad("missing `width`"))?, size(p.get("height")).ok_or_else(|| bad("missing `height`"))?);
                 let apply_crop = p.get("applyCrop").and_then(Value::as_bool).unwrap_or(true);
                 let draft = p.get("draft").and_then(Value::as_bool).unwrap_or(false);
+                if let Some(pid) = p.get("preset").and_then(Value::as_str) {
+                    // resting on a preset: the photo with it, nothing committed (`hover`, its `key` to tell it by).
+                    // `replacing`: in place of the last step (another preset applied, which a click would undo first)
+                    let preset = self.session.presets.iter().find(|x| x.id == pid).ok_or_else(|| bad(&format!("no preset `{pid}`")))?;
+                    let d = self.session.develop_of(id).ok_or_else(|| bad("no such photo"))?;
+                    let base = match p.get("replacing").and_then(Value::as_bool) {
+                        Some(true) => self.session.undo.last().and_then(|u| undone_develop(&u.op, id, 0)).unwrap_or(d),
+                        _ => d,
+                    };
+                    let amount = p.get("amount").and_then(Value::as_f64).unwrap_or(100.0).clamp(0.0, 200.0) / 100.0;
+                    let job = self.session.preview_job(id, w, h, apply_crop, &preset.apply(&base, amount)).ok_or_else(|| bad("no such photo"))?;
+                    // (as a string: a u64 doesn't survive every JSON reader)
+                    let key = self.sched.job_for(Slot::Hover, job.clone()).key.to_string();
+                    self.sched.request(Slot::Hover, job, 105);
+                    self.busy = true;
+                    return Ok(json!({"slot": Slot::Hover.name(), "key": key}));
+                }
                 let key;
                 let slot = if p.get("before").and_then(Value::as_bool).unwrap_or(false) {
                     let job =
@@ -769,8 +786,12 @@ impl Engine {
                 let edge = size(p.get("edge")).unwrap_or(160);
                 let d = self.session.develop_of(id).ok_or_else(|| bad("no such photo"))?;
                 let settings = if let Some(pid) = p.get("preset").and_then(Value::as_str) {
+                    // over the original photo (framed as it is), not its edit: the presets panel's pictures stay put
+                    // while presets are applied, and a B&W one applied doesn't turn every other picture grey
                     let preset = self.session.presets.iter().find(|x| x.id == pid).ok_or_else(|| bad(&format!("no preset `{pid}`")))?;
-                    preset.apply(&d, p.get("amount").and_then(Value::as_f64).unwrap_or(100.0).clamp(0.0, 200.0) / 100.0)
+                    let original = self.session.catalog.photo(id).ok_or_else(|| bad("no such photo"))?.import_defaults();
+                    let base = lightcraft_engine::develop::DevelopSettings { crop: d.crop, orientation: d.orientation, ..original };
+                    preset.apply(&base, p.get("amount").and_then(Value::as_f64).unwrap_or(100.0).clamp(0.0, 200.0) / 100.0)
                 } else if let Some(profile) = p.get("profile").and_then(Value::as_str) {
                     d.with_profile(profile)
                 } else if let Some(v) = p.get("version").and_then(Value::as_u64) {
@@ -1533,6 +1554,17 @@ fn overlay(v: Option<&Value>) -> lightcraft_pipeline::Overlay {
         Some("hdr") => Overlay::HdrRange,
         Some("depth") => Overlay::Depth,
         _ => Overlay::None,
+    }
+}
+
+/// The develop settings undoing `op` (an undo step) gives photo `id` back, if it changes them.
+fn undone_develop(op: &lightcraft_catalog::Op, id: PhotoId, depth: u8) -> Option<Arc<lightcraft_engine::develop::DevelopSettings>> {
+    use lightcraft_catalog::Op;
+    match op {
+        Op::SetDevelop { id: i, settings, .. } if *i == id => Some(settings.clone()),
+        // (batches nest a few deep: a step's ops, a photo's develop + history)
+        Op::Batch { ops } if depth < 8 => ops.iter().find_map(|o| undone_develop(o, id, depth + 1)),
+        _ => None,
     }
 }
 

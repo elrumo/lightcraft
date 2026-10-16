@@ -444,6 +444,41 @@ fn presets_profiles_and_versions_preview() {
     assert!(h.reply_to(6)["error"].is_object(), "nothing to preview");
 }
 
+// A preset's preview is of the original photo: applying presets (a B&W one) leaves every preset's picture as it was.
+// Resting on a preset renders the loupe with it (`hover`, told by its key), over the last step when `replacing`.
+#[test]
+fn preset_previews_ignore_the_edit_and_hover_renders_the_loupe() {
+    let h = demo();
+    let (bw, warm) = ("lc.bw-high-contrast", "lc.warm-glow");
+    let slot = |h: &Watch, n: u64| {
+        h.submit(&req(n, "render.variant", json!({"preset": warm, "edge": 96}))).unwrap();
+        h.reply_to(n)["result"]["slot"].as_str().unwrap().to_string()
+    };
+    let before = slot(&h, 2);
+    let r = h.call(&req(3, "engine.execute", json!({"command": "preset.apply", "params": {"id": bw}})), Duration::from_secs(30));
+    assert!(r["error"].is_null(), "{r}");
+    assert_eq!(slot(&h, 4), before, "the same picture after a B&W preset was applied");
+
+    let ask = |h: &Watch, n: u64, replacing: bool| {
+        h.submit(&req(n, "render.view", json!({"width": 120, "height": 80, "preset": warm, "replacing": replacing}))).unwrap();
+        let r = h.reply_to(n);
+        assert_eq!(r["result"]["slot"], "hover", "{r}");
+        // (a string in the reply: a u64 doesn't survive every JSON reader)
+        r["result"]["key"].as_str().unwrap().parse::<u64>().unwrap()
+    };
+    let over = ask(&h, 5, false);
+    h.wait_for(|e| e["kind"] == "image" && e["slot"] == "hover" && e["key"] == over);
+    // in place of the B&W preset: another picture (over the photo as it was before it)
+    let instead = ask(&h, 6, true);
+    assert_ne!(instead, over);
+    h.wait_for(|e| e["kind"] == "image" && e["slot"] == "hover" && e["key"] == instead);
+    // nothing was committed
+    let state = h.call(&req(7, "host.state", json!({})), Duration::from_secs(30));
+    assert_eq!(state["result"]["undo"].as_str().map(|l| l.starts_with("Preset: ")), Some(true), "{state}");
+    h.submit(&req(8, "render.view", json!({"width": 120, "height": 80, "preset": "nope"}))).unwrap();
+    assert!(h.reply_to(8)["error"].is_object(), "no such preset");
+}
+
 /// `render.view`'s overlay: the selected mask with its colour, Visualize Spots, nothing for nonsense.
 #[test]
 fn view_overlays_parse() {
