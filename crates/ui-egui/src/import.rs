@@ -629,6 +629,11 @@ pub fn poll_scan(app: &mut LightcraftApp, ctx: &egui::Context) {
         if let Some(b) = app.session.browse.clone() {
             let listed: Vec<String> = out.candidates.iter().map(|c| c.path.clone()).collect();
             app.session.forget_gone_from(&b.path, b.subfolders, &listed);
+            // sidecars another app (Lightroom) changed since are read again, and the folder is noted as browsed, as
+            // `library.browse` does (the new files read theirs as they are added)
+            if let Err(e) = app.session.browse_finished(&b.path, &listed) {
+                log::warn!("browse {}: {e}", b.path);
+            }
         }
         // what the library doesn't know yet joins the Local view
         let queue: Vec<String> =

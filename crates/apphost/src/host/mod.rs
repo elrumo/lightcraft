@@ -32,6 +32,7 @@
 //! the choice after signing in to a server that has a library as `ask {dialog: "syncChoice"}`).
 
 mod admin;
+mod browsing;
 pub mod leases;
 pub mod protocol;
 mod script;
@@ -315,6 +316,8 @@ struct Engine {
     candidates: Vec<lightcraft_engine::import::ImportCandidate>,
     /// `import.start` running: answered when it ends.
     import: Option<PendingImport>,
+    /// `library.browse` reading its folder on a worker (`crate::browse`): answered when it ends.
+    browse: Option<browsing::PendingBrowse>,
     /// Wakes the thread (a worker has something for it).
     wake: Sender<Msg>,
     /// Previews asked for (`render.variant`) and not rendered yet: asked again every tick (the
@@ -413,6 +416,8 @@ impl Engine {
             session.set_app_memory(available);
             session.face_models_dir = crate::startup::face_models_dir(home);
         }
+        // the photo-library originals the app fetches are staged with its picks (moved into the library when opened)
+        session.set_photo_library_staging(Some(crate::startup::staging(&tmp).0));
         // searches by description and indexing run off the engine thread (as in egui); the tick applies them
         session.vision.background = true;
         let sched = match config.render_threads {
@@ -462,6 +467,7 @@ impl Engine {
             scan: None,
             candidates: Vec::new(),
             import: None,
+            browse: None,
             wake: host_wake,
             variants: HashMap::new(),
             thumbs_wanted: HashMap::new(),
@@ -591,6 +597,18 @@ impl Engine {
             return lightcraft_engine::guard::catch("`host.exportPrevious`", || self.start_export(id, call, &params))
                 .unwrap_or_else(|e| Some(Event::err(id, ErrorBody::new("panic", e))));
         }
+        // showing a Local folder reads it on a worker (`crate::browse`): answered when it ends
+        if matches!(req.method.as_str(), "engine.execute" | "ui.menu.invoke" | "command")
+            && req.params.get("command").or(req.params.get("id")).and_then(Value::as_str) == Some("library.browse")
+        {
+            let params = req.params.get("params").cloned().filter(|v| !v.is_null()).unwrap_or_else(|| json!({}));
+            return lightcraft_engine::guard::catch("`library.browse`", || self.start_browse(id, call, &params))
+                .unwrap_or_else(|e| Some(Event::err(id, ErrorBody::new("panic", e))));
+        }
+        // a Local folder's subfolders, listed on a worker (a network share can take long)
+        if req.method == "host.local.subfolders" {
+            return self.list_subfolders(id, call, &req.params);
+        }
         // the server's admin API (`host.admin.*`): on a worker, answered when the server has
         if req.method.starts_with("host.admin.") {
             return lightcraft_engine::guard::catch(&format!("`{}`", req.method), || self.start_admin(id, call, &req.method, &req.params))
@@ -648,6 +666,9 @@ impl Engine {
             })),
             // the sidebar's arrangement, which the app keeps: `{layout?, command?, params?}` → the
             // arrangement after one of the `view.sidebar*` commands, and the sections shown
+            // Local's places (`crate::local`) from the roots and hidden places the app keeps: `{roots, hidden,
+            // browseRoot?, command?: addRoot | hide | restoreHidden, path?}` → `{roots, hidden, places, owner, browseRoot, current}`
+            "host.local" => self.local_places(p).map_err(|e| bad(&e)),
             "host.sidebar" => {
                 let mut layout = p.get("layout").cloned().map(crate::sidebar::SidebarLayout::from).unwrap_or_default();
                 if let Some(command) = p.get("command").and_then(Value::as_str) {
@@ -959,6 +980,7 @@ impl Engine {
         self.poll_admin();
         self.poll_scan();
         self.poll_import();
+        self.poll_browse();
         self.session.persist_if_dirty();
         let state = self.snapshot();
         if self.state.as_ref() != Some(&state) {
@@ -1012,7 +1034,7 @@ impl Engine {
             }
             return Some(Event::ok(id, self.lightroom.status()));
         }
-        if self.scan.is_some() || self.import.is_some() {
+        if self.scan.is_some() || self.import.is_some() || self.browse.is_some() {
             return Some(Event::err(id, ErrorBody::new("other", "an import is running")));
         }
         let path = std::path::PathBuf::from(path.unwrap_or_default());
@@ -1053,7 +1075,7 @@ impl Engine {
     /// Start scanning `paths` for the import review; `None` (answered when it ends) or the error now.
     fn start_scan(&mut self, id: u64, call: Option<&Sender<Event>>, p: &Value) -> Option<Event> {
         let bad = |m: &str| Some(Event::err(id, ErrorBody::new("badParams", format!("`import.scan`: {m}"))));
-        if self.scan.is_some() || self.import.is_some() {
+        if self.scan.is_some() || self.import.is_some() || self.browse.is_some() {
             return Some(Event::err(id, ErrorBody::new("other", "an import is running")));
         }
         if !self.session.library.as_ref().is_some_and(|l| l.on_disk) {
@@ -1105,7 +1127,7 @@ impl Engine {
     /// Start importing (`paths`, or `indexes` of the last scan's candidates, with `library.import`'s
     /// params; `albumName` makes a new album first); `None` (answered when it ends) or the error now.
     fn start_import(&mut self, id: u64, call: Option<&Sender<Event>>, p: &Value) -> Option<Event> {
-        if self.import.is_some() || self.scan.is_some() {
+        if self.import.is_some() || self.scan.is_some() || self.browse.is_some() {
             return Some(Event::err(id, ErrorBody::new("other", "an import is running")));
         }
         let mut paths: Vec<String> =

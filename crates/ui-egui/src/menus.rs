@@ -826,33 +826,21 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
         "local.addRoot" => {
             // a folder kept in Local's sidebar (saved with the UI state); nothing on disk changes
             let Some(path) = p.get("path").and_then(Value::as_str) else { return Some(Err("local.addRoot needs a path".into())) };
-            let abs = std::path::absolute(path).map(|a| a.to_string_lossy().trim_end_matches(['/', '\\']).to_string()).unwrap_or(path.into());
-            let abs = if abs.is_empty() { path.to_string() } else { abs };
-            if !std::path::Path::new(&abs).is_dir() {
-                return Some(Err(format!("{path}: not a folder")));
+            match lightcraft_apphost::local::add_root(&mut app.ui.local_roots, &mut app.ui.hidden_locations, path) {
+                Ok(_) => Ok(json!({"roots": app.ui.local_roots})),
+                Err(e) => Err(e),
             }
-            use crate::panels::left::same_folder;
-            if !app.ui.local_roots.iter().any(|r| same_folder(r, &abs)) {
-                app.ui.local_roots.push(abs.clone());
-            }
-            app.ui.hidden_locations.retain(|h| !same_folder(h, &abs));
-            Ok(json!({"roots": app.ui.local_roots}))
         }
         "local.hide" => match p.get("path").and_then(Value::as_str) {
             Some(path) => {
-                if !app.ui.hidden_locations.iter().any(|h| crate::panels::left::same_folder(h, path)) {
-                    app.ui.hidden_locations.push(path.to_string());
-                }
+                lightcraft_apphost::local::hide(&mut app.ui.hidden_locations, path);
                 Ok(json!({"hidden": app.ui.hidden_locations}))
             }
             None => Err("local.hide needs a path".into()),
         },
         "local.restoreHidden" => {
             // one path, or (no path) every hidden location
-            match p.get("path").and_then(Value::as_str) {
-                Some(path) => app.ui.hidden_locations.retain(|h| !crate::panels::left::same_folder(h, path)),
-                None => app.ui.hidden_locations.clear(),
-            }
+            lightcraft_apphost::local::restore_hidden(&mut app.ui.hidden_locations, p.get("path").and_then(Value::as_str));
             Ok(json!({"hidden": app.ui.hidden_locations}))
         }
         "view.gridColumns" => {

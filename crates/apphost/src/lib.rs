@@ -30,6 +30,7 @@
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+pub mod browse;
 pub mod export;
 pub mod faces;
 #[cfg(not(target_arch = "wasm32"))]
@@ -37,6 +38,7 @@ pub mod host;
 pub mod import;
 pub mod keys;
 pub mod lightroom;
+pub mod local;
 pub mod merge;
 pub mod region;
 pub mod render;

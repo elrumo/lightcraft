@@ -955,3 +955,42 @@ fn a_zoom_decodes_the_original_only_when_it_fits_in_memory() {
     assert!(!original_fits(Some(1 << 30), false, f64::NAN));
     assert!(!original_fits(Some(1 << 30), false, f64::INFINITY));
 }
+
+// A Mac's Local: a folder is read on a worker (`library.browse`, answered when done, its row in the activity stack
+// meanwhile), its places come from `host.local` and its subfolders from `host.local.subfolders`
+#[test]
+fn a_local_folder_is_read_in_the_background_with_its_places() {
+    let base = std::env::temp_dir().join(format!("lc-host-browse-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let (src, lib, tmp) = (base.join("Pictures"), base.join("lib"), base.join("tmp"));
+    std::fs::create_dir_all(src.join("Trip")).unwrap();
+    std::fs::create_dir_all(&tmp).unwrap();
+    let mut demo = Session::with_demo();
+    let ids: Vec<u64> = demo.visible_cloned().iter().take(2).map(|id| id.0).collect();
+    crate::export::export_now(&mut demo, &json!({"dir": src.to_string_lossy(), "ids": ids, "longEdge": 48, "format": "png"}), &mut |_, _, _| true)
+        .unwrap();
+    let config = OpenConfig {
+        library: Some(lib.to_string_lossy().to_string()),
+        tmp: Some(tmp.to_string_lossy().to_string()),
+        render_threads: Some(2),
+        ..Default::default()
+    };
+    let h = Watch::new(Host::open(config).unwrap().0);
+    h.submit(&req(1, "engine.execute", json!({"command": "library.browse", "params": {"path": src.to_string_lossy()}}))).unwrap();
+    let done = h.reply_to(1);
+    assert_eq!((done["result"]["photos"].as_u64(), done["result"]["new"].as_u64()), (Some(2), Some(2)), "{done}");
+    let state = h.call(&req(2, "engine.execute", json!({"command": "library.state"})), Duration::from_secs(30));
+    assert_eq!(state["result"]["browse"]["local"], 2, "{state}");
+    let places = h.call(
+        &req(3, "host.local", json!({"roots": [], "hidden": [], "command": "addRoot", "path": src.to_string_lossy()})),
+        Duration::from_secs(30),
+    );
+    assert_eq!(places["result"]["roots"].as_array().map(Vec::len), Some(1), "{places}");
+    assert!(places["result"]["places"].as_array().unwrap().iter().any(|p| p["label"] == "Pictures"), "{places}");
+    assert_eq!(places["result"]["current"].as_str(), src.to_str(), "{places}");
+    let subs = h.call(&req(4, "host.local.subfolders", json!({"path": src.to_string_lossy()})), Duration::from_secs(30));
+    assert_eq!(subs["result"][0]["name"], "Trip", "{subs}");
+    let bad = h.call(&req(5, "host.local", json!({"command": "nonsense"})), Duration::from_secs(30));
+    assert!(bad["error"].is_object(), "{bad}");
+    let _ = std::fs::remove_dir_all(&base);
+}
