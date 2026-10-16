@@ -2,6 +2,14 @@
 
 ## 2026-10-16
 
+### The server's Search page shows that it is working, and the time left
+- On the admin page's Search section, a line with a dot says what the server is doing now ("Describing elias's photos ·
+  last one 3 s ago"), turning orange when it seems stuck. Each user's bar has its own time left, at the pace of the
+  last ten minutes, and says how many photos wait for their previews, how many couldn't be done, and the last problem.
+- One photo the model couldn't take made describing retry the same few photos forever, so the count never moved
+  again. It is now set aside on its own and the rest carry on.
+- Describing a big library no longer holds up reading the words in photos and finding people: the three take turns.
+
 ### Sharpening without halos (process 3)
 - Raw photos looked crunchy, with bright and dark outlines along strong edges (hair against a light background, a
   strap against skin), even in the fitted view. The default Sharpening (Amount 40, as Lightroom's) boosted detail

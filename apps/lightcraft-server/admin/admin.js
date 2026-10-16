@@ -147,7 +147,9 @@ const date = (secs) => new Date(secs * 1000).toLocaleString();
 function dur(secs) {
   if (secs < 60) return secs + ' s';
   const m = Math.round(secs / 60);
-  return m < 60 ? m + ' min' : Math.floor(m / 60) + ' h ' + (m % 60) + ' min';
+  if (m < 60) return m + ' min';
+  const h = Math.floor(m / 60);
+  return h < 48 ? h + ' h ' + (m % 60) + ' min' : Math.round(h / 24) + ' days';
 }
 
 function decode(s) {
@@ -1036,10 +1038,32 @@ const toLocalMin = (utc) => (((utc - new Date().getTimezoneOffset()) % 1440) + 1
 const toUtcMin = (local) => (((local + new Date().getTimezoneOffset()) % 1440) + 1440) % 1440;
 const parseMin = (v) => (/^\d\d:\d\d$/.test(v) ? +v.slice(0, 2) * 60 + +v.slice(3) : null);
 
+const pace = (perMinute) => (perMinute >= 10 ? n(Math.round(perMinute)) + ' a minute' : n(Math.round(perMinute * 60)) + ' an hour');
+const etaOf = (photos, perMinute) => 'About ' + dur(Math.max(1, Math.round((photos / perMinute) * 60))) + ' left';
+
+/** Whether the worker is at one kind of index, for the line with the dot: what it is on, and how long ago it last finished a photo. */
+function liveState(p, c) {
+  if (!c.left || c.paused || !c.runsNow) return null;
+  const what = { sr: 'Describing ', tx: 'Reading the words in ', fc: 'Looking for faces in ' }[p] + (c.now ? c.now.user + "'s photos" : 'photos');
+  const last = c.lastSecs;
+  const lastly = last === null ? '' : ' · last one ' + (last < 5 ? 'just now' : dur(last) + ' ago');
+  // (each turn finishes a photo every few seconds: ten minutes on one without any means something hangs)
+  if (c.now && c.now.secs > 600 && (last === null || last > 600)) {
+    return { kind: 'stuck', text: what + ' for ' + dur(c.now.secs) + ' without finishing one. It may be stuck: restarting the server starts it again.' };
+  }
+  if (c.now) return { kind: 'on', text: what + lastly };
+  // (the three take turns, a few minutes each on a slow server)
+  if (c.perMinute) return { kind: 'on', text: 'Working, in turn with the others' + lastly };
+  if (!c.ready) return { kind: 'idle', text: 'Nothing to do until the photos left have their previews.' };
+  if (last !== null && last > 1800) return { kind: 'stuck', text: 'Nothing done for ' + dur(last) + '.' };
+  return { kind: 'idle', text: 'Waiting for its turn' + lastly + '.' };
+}
+
 /** Time left, pause and the daily window of one kind of index, in the box `<p>Sched`. */
 function showSched(p, c) {
   const box = $(p + 'Sched');
   if (!box.firstChild) {
+    const live = el('p', { class: 'live', role: 'status' }, el('span', { class: 'dot', 'aria-hidden': 'true' }), el('span', {}));
     const eta = el('p', { class: 'eta' });
     const pause = el('button', { type: 'button', class: 'btn secondary' });
     const mode = el('select', { 'aria-label': 'When to make the index' }, el('option', { value: 'any' }, 'Any time'), el('option', { value: 'window' }, 'Only between'));
@@ -1057,9 +1081,15 @@ function showSched(p, c) {
     };
     pause.addEventListener('click', () => send(pause.dataset.paused !== '1'));
     for (const i of [mode, from, to]) i.addEventListener('change', () => { from.hidden = to.hidden = mode.value !== 'window'; send(pause.dataset.paused === '1'); });
-    box.append(eta, el('div', { class: 'row' }, pause, mode, from, to));
+    box.append(live, eta, el('div', { class: 'row' }, pause, mode, from, to));
   }
-  const [eta, row] = box.children;
+  const [live, eta, row] = box.children;
+  const state = liveState(p, c);
+  live.hidden = !state;
+  if (state) {
+    live.className = 'live ' + state.kind;
+    live.lastChild.textContent = state.text;
+  }
   const [pause, mode, from, to] = row.children;
   pause.dataset.paused = c.paused ? '1' : '0';
   pause.textContent = c.paused ? 'Resume' : 'Pause';
@@ -1075,9 +1105,26 @@ function showSched(p, c) {
       ? 'Paused. ' + left + ' waiting.'
       : !c.runsNow
         ? left + ' waiting for ' + hhmm(toLocalMin(c.from)) + '–' + hhmm(toLocalMin(c.to)) + ' (your time).'
-        : c.perPhoto
-          ? 'About ' + dur(Math.round(c.left * c.perPhoto)) + ' left (' + left + ').'
+        : c.perMinute && c.ready
+          ? etaOf(c.ready, c.perMinute) + ' (' + left + ', ' + pace(c.perMinute) + ').'
           : left + ' to go.';
+}
+
+/** Under a user's bar: their time left at the pace of the last ten minutes, what waits for previews,
+ * what couldn't be done, and the last problem. */
+function userLines(p, w, done, total, c) {
+  if (!w) return [];
+  const bits = [];
+  const left = Math.max(0, total - done);
+  const ready = Math.max(0, left - w.waiting - w.failed);
+  const going = !c.paused && c.runsNow;
+  if (ready && going && w.perMinute) bits.push(etaOf(ready, w.perMinute) + ' (' + pace(w.perMinute) + ')');
+  else if (ready && !w.problem && liveState(p, c)?.kind === 'on') bits.push('Working out the time left…');
+  if (w.waiting) bits.push(n(w.waiting) + ' waiting for previews');
+  if (w.failed) bits.push(n(w.failed) + " couldn't be " + { sr: 'described', tx: 'read', fc: 'looked at' }[p]);
+  const out = bits.length ? [el('p', { class: 'sub', title: w.failed ? 'Photos that could not be done are tried again when the server restarts.' : null }, bits.join(' · '))] : [];
+  if (w.problem && left) out.push(el('p', { class: 'sub problem' }, w.problem.charAt(0).toUpperCase() + w.problem.slice(1)));
+  return out;
 }
 
 function showFeature(p, s) {
@@ -1108,8 +1155,19 @@ function showFeature(p, s) {
     const done = u[F.users];
     if (done === null || done === undefined) continue;
     any = true;
-    const meter = el('div', { class: 'meter' }, el('div', {}));
-    list.append(el('li', {}, avatar(u.name), el('a', { class: 'name', href: '#/users/' + enc(u.name) }, u.name), meter, el('span', { class: 'bytes' }, n(done) + ' / ' + n(u.total))));
+    const w = u.work && u.work[PART_KEY[p]];
+    const meter = el('div', { class: 'meter' + (w && w.perMinute && done < u.total && !f.schedule.paused ? ' busy' : '') }, el('div', {}));
+    list.append(
+      el(
+        'li',
+        {},
+        avatar(u.name),
+        el('a', { class: 'name', href: '#/users/' + enc(u.name) }, u.name),
+        el('span', { class: 'bytes' }, n(done) + ' / ' + n(u.total)),
+        meter,
+        ...userLines(p, w, done, u.total, f.schedule),
+      ),
+    );
     progress(meter, u.total ? done / u.total : 1);
   }
   const none = $(p + 'UsersNone');
@@ -1136,7 +1194,9 @@ function showPeople(s) {
     input.checked = u.faces;
     input.addEventListener('change', () => togglePeople(u, input));
     const text = u.faces ? (u.found === null ? 'Waiting for the server…' : n(u.found) + ' of ' + n(u.total) + ' photos looked at') : 'Off';
-    list.append(el('li', {}, avatar(u.name), el('a', { class: 'name', href: '#/users/' + enc(u.name) }, u.name), el('span', { class: 'bytes' }, text), el('label', { class: 'switch' }, input)));
+    const w = u.work && u.work.faces;
+    const lines = u.faces && u.found !== null ? userLines('fc', w, u.found, u.total, f.schedule) : [];
+    list.append(el('li', {}, avatar(u.name), el('a', { class: 'name', href: '#/users/' + enc(u.name) }, u.name), el('span', { class: 'bytes' }, text), el('label', { class: 'switch' }, input), ...lines));
   }
   if (!s.users.length) list.append(el('li', { class: 'muted' }, 'No users yet.'));
   return s.users.some((u) => u.faces && u.found !== null && u.found < u.total);

@@ -846,6 +846,42 @@ fn put(w: &Who, path: &str, body: Value) -> (u16, Value) {
     (status, json_body(&mut r))
 }
 
+/// The colour stand-in, except that a batch with a red photo in it fails: one photo the model
+/// can't take.
+struct NoRed;
+
+impl Embedder for NoRed {
+    fn model_id(&self) -> &str {
+        FAKE_ID
+    }
+    fn dim(&self) -> usize {
+        FAKE_DIM
+    }
+    fn encode_text(&self, t: &str) -> Result<Vec<f32>, VisionError> {
+        FakeEmbedder.encode_text(t)
+    }
+    fn encode_images(&self, imgs: &[&lightcraft_raster::Rgba8]) -> Result<Vec<Vec<f32>>, VisionError> {
+        let vectors = FakeEmbedder.encode_images(imgs)?;
+        if vectors.iter().any(|v| v[0] > 0.2) {
+            return Err(VisionError::Invalid("image size"));
+        }
+        Ok(vectors)
+    }
+}
+
+#[test]
+fn a_photo_the_model_cant_take_does_not_hold_up_the_others() {
+    // (it used to fail its whole batch on every pass, so nothing after it was ever described)
+    let f = fixture("nored", Some(Arc::new(NoRed)));
+    indexed(&f, 3);
+    accounts::set_admin(&f.data, "ann", true).unwrap();
+    let admin = admin_login(&f.server, "ann", "correct horse");
+    let s = get(&admin, "/api/admin/search").1;
+    let w = &s["users"][0]["work"]["search"];
+    assert_eq!((&w["failed"], &w["waiting"], &w["problem"]), (&json!(1), &json!(0), &Value::Null), "{s}");
+    assert_eq!((&s["schedule"]["left"], &s["schedule"]["ready"]), (&json!(1), &json!(0)), "the one left can't be done: {s}");
+}
+
 #[test]
 fn an_admin_turns_search_on_and_off_for_every_device() {
     let f = fixture("switch", Some(Arc::new(FakeEmbedder)));
@@ -860,7 +896,15 @@ fn an_admin_turns_search_on_and_off_for_every_device() {
         json!({"name": "ann", "faces": false, "total": 4, "indexed": 4, "read": null, "found": null}),
         json!({"name": "bob", "faces": false, "total": 0, "indexed": 0, "read": null, "found": null}),
     );
-    assert_eq!(s["users"], json!([ann, bob]), "{s}");
+    let mut users = s["users"].clone();
+    users.as_array_mut().unwrap().iter_mut().for_each(|u| drop(u.as_object_mut().unwrap().remove("work")));
+    assert_eq!(users, json!([ann, bob]), "{s}");
+    // and how the worker gets on: ann's four were described just now, nothing waits or failed
+    let w = &s["users"][0]["work"]["search"];
+    assert!(w["perMinute"].as_f64().is_some_and(|m| m > 0.0), "{s}");
+    assert_eq!((&w["waiting"], &w["failed"], &w["problem"]), (&json!(0), &json!(0), &Value::Null), "{s}");
+    assert_eq!((&s["schedule"]["left"], &s["schedule"]["ready"]), (&json!(0), &json!(0)), "{s}");
+    assert!(s["schedule"]["lastSecs"].as_u64().is_some_and(|t| t < 60), "{s}");
     // a device's token never opens the admin routes
     assert_eq!(get(&f.ann, "/api/admin/search").0, 401);
 

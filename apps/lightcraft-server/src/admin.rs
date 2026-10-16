@@ -639,19 +639,40 @@ fn search(st: &State) -> Value {
                 None => (None, None, None),
             };
             let total = a.as_ref().or(b.as_ref()).or(c.as_ref()).map(|p| p.total);
-            json!({"name": name, "faces": faces, "total": total, "indexed": a.map(|p| p.done), "read": b.map(|p| p.done), "found": c.map(|p| p.done)})
+            // (how the worker gets on with this user's photos: its pace, what waits for previews, what it couldn't do and why)
+            let work = |part: Part| {
+                json!({
+                    "perMinute": v.switch.per_minute(part, Some(&name)),
+                    "waiting": v.switch.waiting(part, &name),
+                    "failed": crate::vision::failed(st, part, &name),
+                    "problem": crate::vision::problem(st, part, &name),
+                })
+            };
+            let work = json!({"search": work(Part::Search), "text": work(Part::Text), "faces": work(Part::Faces)});
+            json!({"name": name, "faces": faces, "total": total, "indexed": a.map(|p| p.done), "read": b.map(|p| p.done), "found": c.map(|p| p.done), "work": work})
         })
         .collect();
-    // paused / window / time left for one part; the left is photos still to do times the lately measured time each took
+    // paused / window / time left for one part; `ready` is the photos left that have their previews
+    // and weren't given up on, which the time left is worked out from (at the pace of the last ten minutes)
+    let now = v.switch.now();
     let schedule = |part: Part, done: fn(&Value) -> Option<u64>| {
         let left: u64 = users.iter().filter_map(|u| Some(u["total"].as_u64()?.saturating_sub(done(u)?))).sum();
+        let stuck: u64 = users
+            .iter()
+            .filter(|u| done(u).is_some())
+            .map(|u| &u["work"][part.key()])
+            .map(|w| w["waiting"].as_u64().unwrap_or(0) + w["failed"].as_u64().unwrap_or(0))
+            .sum();
         let w = v.switch.window(part);
         json!({
             "paused": v.switch.paused(part),
             "from": w.map(|w| w.0), "to": w.map(|w| w.1),
             "runsNow": v.switch.may_run(part),
             "left": left,
-            "perPhoto": v.switch.per_photo(part),
+            "ready": left.saturating_sub(stuck),
+            "perMinute": v.switch.per_minute(part, None),
+            "lastSecs": v.switch.last(part).map(|d| d.as_secs()),
+            "now": now.as_ref().filter(|n| n.0 == part).map(|(_, user, since)| json!({"user": user, "secs": since.as_secs()})),
         })
     };
     json!({
