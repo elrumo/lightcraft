@@ -1,6 +1,6 @@
 # HDR display (LR-VIEW-HDR-DISPLAY)
 
-> **Last updated:** 2026-10-14 · **Change:** new (the loupe of an HDR edit shows HDR on macOS and in the SwiftUI app)
+> **Last updated:** 2026-10-16 · **Change:** the SwiftUI loupe draws the float picture as a half-float IOSurface (GPU colour matching)
 
 When **Edit ▸ Light ▸ HDR** is on and the screen can show more than SDR white, the loupe draws the photo
 in HDR: highlights go past white, up to the edit's headroom limit (`hdr.maxEv`). Every other view, and a
@@ -27,7 +27,7 @@ never shown wrong.
 | Frontend | How | Where it says the display can |
 |----------|-----|-------------------------------|
 | **egui, macOS** | a `Rgba16Float` texture (`apps/lightcraft/src/hdr_sink.rs`) drawn instead of the 8-bit one (`TexView::paint_id`); the window's surface goes to extended Display P3 (EDR) while it is on screen | `NSScreen.maximumPotentialExtendedDynamicRangeColorComponentValue > 1` of the window's screen, asked twice a second (`hdr_display.rs`) |
-| **SwiftUI (iOS)** | an `hdr` lease beside the `image` event (RGBA16F, `lc_image` as for any picture) → a 16-bit float `CGImage` in extended Display P3, drawn with `Image.allowedDynamicRange(.high)` | `UIScreen.potentialEDRHeadroom > 1`, told with `render.hdrDisplay {on}` at start and when the app becomes active |
+| **SwiftUI (iOS, Mac)** | an `hdr` lease beside the `image` event (RGBA16F, `lc_image` as for any picture) → copied on the event pump's thread into an IOSurface (`'RGhA'` half floats, extended Display P3, the edit's `peak` as its content headroom), drawn by a layer with `preferredDynamicRange = .high` (`LoupePicture`): Core Animation colour-matches it on the GPU, where a float `CGImage` was converted on the CPU at every picture of a drag | `UIScreen.potentialEDRHeadroom > 1` (`NSScreen.maximumPotentialExtendedDynamicRangeColorComponentValue` on a Mac), told with `render.hdrDisplay {on}` at start and when the app becomes active |
 
 Windows (scRGB / HDR10 swap chains), Wayland (the colour-management protocol) and the web are not driven
 yet and report SDR (`display: SDR (…)` in the log).
@@ -68,7 +68,11 @@ shader writes what it samples), so a value above 1 reaches the surface as it is.
 ## Known limits
 
 - The HDR render is CPU only: a slider drag on an HDR edit redraws slower than an SDR one (the draft
-  budget learns it). A GPU float output would remove it.
+  budget learns it). A GPU float output would remove it. Measured on a 24 MP CR3 in the SwiftUI Mac app (M1 Max,
+  2026-10-16, a busy machine): the CPU's `finish (deep)` took ~180 ms for the full-size picture and ~12 ms for a
+  0.25 MP draft, where the GPU's `finish + readback` took ~5 ms full size, so drags ran at 20 to 55 pictures a second
+  with drafts of ~590 × 390 against ~115 full-size ones for SDR. The first HDR drag after SDR ones also starts at
+  full size (the budget learned SDR's speed): 200 to 350 ms to the first picture.
 - Headroom beyond what the screen reaches right now is clipped by the system (macOS), not tone-mapped by us.
 - Values outside Display P3 are clamped (the render's gamut map is P3).
 - The surface stays in HDR output for a second after the last HDR picture (a hover preview, the Before view or
@@ -77,5 +81,6 @@ shader writes what it samples), so a value above 1 reaches the surface as it is.
 - The window's own screenshot cannot read back a float surface, so `ui.screenshot` renders headlessly on a
   window that can draw HDR: it shows the 8-bit pictures.
 - Generative Expand stays SDR (its missing area is transparent in the 8-bit picture; an HDR one has no alpha).
-- The SwiftUI path is checked in the simulator for plumbing (it reports no EDR): the picture's brightness
-  needs a device with an EDR display.
+- The SwiftUI path is checked in the simulator for plumbing (it reports no EDR) and, on a Mac, by an HDR window
+  capture (ScreenCaptureKit, `hdrLocalDisplay`): the same values above white as the float `CGImage` it replaced.
+  How bright it looks needs someone at an EDR screen.
