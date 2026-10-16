@@ -376,7 +376,8 @@ fn a_thin_client_searches_through_the_server() {
     // a device with no model of its own (the web build, iOS)
     let mut s = device(&f, "thin-device", None);
     assert!(!s.vision.available(), "nothing to search with until the server says it can");
-    let e = s.execute("library.search", &json!({"q": "red", "wait": true})).unwrap_err().to_string();
+    // (a word no file name holds: a file name is found without any model)
+    let e = s.execute("library.search", &json!({"q": "crimson", "wait": true})).unwrap_err().to_string();
     assert!(e.contains("server"), "{e}");
 
     // it asks, the answer comes with the next sync round, and now the switch would show
@@ -401,7 +402,7 @@ fn a_thin_client_searches_through_the_server() {
         assert_eq!(s.filter.semantic.as_deref(), Some(q));
     }
     // this device can't search on its own
-    let e = s.execute("library.search", &json!({"q": "red", "wait": true, "source": "local"})).unwrap_err().to_string();
+    let e = s.execute("library.search", &json!({"q": "crimson", "wait": true, "source": "local"})).unwrap_err().to_string();
     assert!(e.contains("server") && e.contains("model"), "{e}");
     assert!(s.execute("library.search", &json!({"q": "red", "wait": true, "source": "nowhere"})).is_err());
 

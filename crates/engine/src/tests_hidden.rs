@@ -129,3 +129,20 @@ fn statistics_leave_hidden_photos_out_and_say_how_many_only_when_unlocked() {
     assert_eq!((stats["photos"].as_u64(), stats["hidden"].as_u64()), (Some(total), Some(1)));
     assert!(s.catalog.photo(id).unwrap().hidden);
 }
+
+#[test]
+fn a_hidden_photo_is_not_found_by_its_file_name() {
+    let mut s = Session::with_demo();
+    let id = hide_first(&mut s);
+    let name = s.catalog.photo(id).unwrap().file_name.clone();
+    // (a name search is one word)
+    let stem = name.rsplit_once('.').map_or(name.as_str(), |(n, _)| n).split_whitespace().next().unwrap_or_default().to_string();
+    let found = |s: &mut Session| -> Vec<u64> {
+        let r = s.execute("library.search", &json!({"q": stem, "wait": true}));
+        r.map(|v| v["photos"].as_array().into_iter().flatten().filter_map(|p| p["id"].as_u64()).collect()).unwrap_or_default()
+    };
+    assert!(!found(&mut s).contains(&id.0), "locked: not found by name");
+    s.execute("hidden.setPassword", &json!({"password": "1234"})).unwrap();
+    s.execute("library.showHidden", &json!({"on": true})).unwrap();
+    assert!(found(&mut s).contains(&id.0), "with Show Hidden it is");
+}

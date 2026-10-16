@@ -1561,7 +1561,9 @@ impl Session {
         };
         if text.is_none() && semantic.is_err() {
             // nothing indexed yet: a file name ("IMG_4008") is still found
-            if !lightcraft_catalog::search::named(self.catalog.photos().filter(|p| p.in_library()), &query).is_empty() {
+            if !lightcraft_catalog::search::named(self.catalog.photos().filter(|p| p.in_library() && (!p.hidden || self.hidden.showing())), &query)
+                .is_empty()
+            {
                 return Ok(self.apply_ids(&query, &[], "local"));
             }
             return Err(semantic.err().unwrap_or_default());
@@ -1607,7 +1609,8 @@ impl Session {
     /// Sets the view to `found` (best first) for `query`, after the photos whose file name holds
     /// it ("IMG_4008"). An empty result is an empty view, not "everything".
     fn apply_ids(&mut self, query: &str, found: &[(PhotoId, f32)], source: &str) -> Value {
-        let named = lightcraft_catalog::search::named(self.catalog.photos().filter(|p| p.in_library()), query);
+        let named =
+            lightcraft_catalog::search::named(self.catalog.photos().filter(|p| p.in_library() && (!p.hidden || self.hidden.showing())), query);
         let first: HashSet<PhotoId> = named.iter().copied().collect();
         // (they push the least alike out: the search's limit still holds)
         let len = found.len().max(named.len());
