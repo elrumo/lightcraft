@@ -19,6 +19,11 @@ use lightcraft_ui_egui::prefs::PrefsWriter;
 use lightcraft_ui_egui::{LightcraftApp, PickSource, SaveDone, Services, ShareExports};
 use serde_json::json;
 
+/// Freed image buffers go back to the system at once: iOS ends the app by its footprint, which the
+/// system allocator's cache of freed large blocks would fill (`lightcraft_sysmem::ReturningAlloc`).
+#[global_allocator]
+static ALLOC: lightcraft_sysmem::ReturningAlloc = lightcraft_sysmem::ReturningAlloc;
+
 /// Picks the pickers delivered (from any thread), joined to the app on the next frame.
 type Inbox = Arc<Mutex<Vec<Picked>>>;
 

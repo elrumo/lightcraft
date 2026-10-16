@@ -46,6 +46,11 @@ use lightcraft_ui_egui::panels::library_problem::LibraryProblem;
 use lightcraft_ui_egui::prefs::{PrefsWriter, load_prefs, prefs_path};
 use lightcraft_ui_egui::{LightcraftApp, Services};
 
+/// Freed image buffers go back to the system at once: macOS's allocator keeps freed large blocks
+/// dirty in the footprint (`lightcraft_sysmem::ReturningAlloc`).
+#[global_allocator]
+static ALLOC: lightcraft_sysmem::ReturningAlloc = lightcraft_sysmem::ReturningAlloc;
+
 /// Reverse-DNS app id: Wayland app id, `.desktop` file and hicolor icon name.
 const APP_ID: &str = "ai.storyteller.lightcraft";
 

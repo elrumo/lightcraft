@@ -177,7 +177,8 @@ whose portable helpers (safe file names, unique paths, the folder walk) are test
   (`gpu::pause`: renders go to the CPU, and errors meanwhile don't turn the GPU off for the rest of the run) and
   decoded photos are released; an export in progress asks for background time.
 - **Memory.** The budget is a third of what the app may allocate at launch (`os_proc_available_memory`), between 256 MiB
-  and 1 GiB; a memory warning releases decoded photos.
+  and 1 GiB; a memory warning releases decoded photos. The global allocator is `lightcraft_sysmem::ReturningAlloc`,
+  so freed image buffers leave the footprint iOS ends the app by (*Shape* in [ios-swift.md](ios-swift.md)).
 - **Paths.** A library opened from another folder than last time (iOS gives the container a new path on every app
   update) re-points the photos stored under its old folder (`location.json`).
 

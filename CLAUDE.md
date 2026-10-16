@@ -42,7 +42,7 @@ of it. Full standard: `../craftrules/standards/never-crash.md`
   + `.expect("why it can't fail")`.
 - **`unsafe` lives only in `crates/sysmem`, `crates/ios-host`, `crates/capture` and `apps/lightcraft-ios-swift/src/abi.rs`.** `sysmem`: libSystem calls,
   `malloc_zone_pressure_relief` (returns freed allocator pages to macOS / iOS after raw decodes),
-  `os_proc_available_memory` (the iOS app's memory limit), and `mmap` / `munmap` for `ReturningAlloc`, the SwiftUI
+  `os_proc_available_memory` (the iOS app's memory limit), and `mmap` / `munmap` for `ReturningAlloc`, every
   app's global allocator (large blocks get pages of their own that go back when freed: macOS / iOS 27's allocator keeps
   freed large blocks dirty in the footprint). `ios-host`: the iOS app's Objective-C calls through `objc2`
   (Photos and Files pickers, share sheet, pasteboard, lifecycle notifications, ImageIO decoding, status-bar taps), compiled for iOS only. (The iOS

@@ -123,6 +123,12 @@ USAGE:
 #[global_allocator]
 static ALLOC: dhat::Alloc = dhat::Alloc;
 
+/// Freed image buffers go back to the system at once: macOS's allocator keeps freed large blocks
+/// dirty in the footprint (`lightcraft_sysmem::ReturningAlloc`).
+#[cfg(not(feature = "dhat-heap"))]
+#[global_allocator]
+static ALLOC: lightcraft_sysmem::ReturningAlloc = lightcraft_sysmem::ReturningAlloc;
+
 /// Why `--library DIR` can't be opened; for a library open in another program, how to work with
 /// that one instead (issue #99).
 /// Print the open library's warnings (an unlockable library, damaged settings files) on stderr:
