@@ -11,7 +11,8 @@
 - Describing a big library no longer holds up reading the words in photos and finding people: the three take turns.
 - The app's Settings ▸ Server Administration ▸ Search & People shows the same: the line with the dot, the time left of
   each index with Pause and Resume, and under each user's bar their time left, waiting and failed counts and the last
-  problem.
+  problem. Each index's daily window is set there too, as on the web page: **When** is Any Time or Only Between, with
+  From and Until in your own time.
 
 ### Sharpening without halos (process 3)
 - Raw photos looked crunchy, with bright and dark outlines along strong edges (hair against a light background, a
