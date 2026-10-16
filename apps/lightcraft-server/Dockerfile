@@ -58,14 +58,20 @@ RUN --mount=type=cache,id=lightcraft-registry-$TARGETARCH,target=/usr/local/carg
  && mkdir -p /out \
  && cp "target/$t/release/lightcraft-server" /out/
 
-FROM debian:bookworm-slim
+# `--target lite` (`make push-server-lite`): the server and its admin page only, for people who use the apps and not
+# the web client. BuildKit builds just the stages a target needs, so the web stage above is skipped.
+FROM debian:bookworm-slim AS lite
 RUN useradd --system --uid 10001 --home-dir /data lightcraft && mkdir -p /data && chown lightcraft /data
 COPY --from=server /out/lightcraft-server /usr/local/bin/lightcraft-server
-COPY --from=web /out /srv/web
-ENV LIGHTCRAFT_DATA=/data LIGHTCRAFT_LISTEN=0.0.0.0:8080 LIGHTCRAFT_WEB=/srv/web
+ENV LIGHTCRAFT_DATA=/data LIGHTCRAFT_LISTEN=0.0.0.0:8080
 VOLUME /data
 EXPOSE 8080
 USER lightcraft
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s CMD ["lightcraft-server", "health"]
 ENTRYPOINT ["lightcraft-server"]
 CMD ["serve"]
+
+# the default image: lite plus the web build at /
+FROM lite
+COPY --from=web /out /srv/web
+ENV LIGHTCRAFT_WEB=/srv/web

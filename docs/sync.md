@@ -57,7 +57,9 @@ docker exec lightcraft lightcraft-server folder add ann /photos/ann --name Photo
 ```
 
 The image holds the server and the web build; everything it keeps is in the `/data` volume (the photo folders
-mounted at `/photos` stay where they are). It runs as uid 10001, which must be able to read the photo folders, and
+mounted at `/photos` stay where they are). If everyone uses the apps and nobody the web client, add `--target lite`
+to the build (`make push-server-lite` pushes it as `…/lightcraft-lite`): the server and its admin page only, built
+without the web client, so it builds faster. It runs as uid 10001, which must be able to read the photo folders, and
 reports its health to Docker (`lightcraft-server health`).
 
 ### Without Docker

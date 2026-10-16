@@ -75,6 +75,9 @@ Build the image once, from the repository's root:
 docker build -f apps/lightcraft-server/Dockerfile -t lightcraft-server .
 ```
 
+Only using the apps, never the web client? Add `--target lite`: the image then holds the server and its admin page
+but no web client, and builds faster.
+
 **On a tailnet**, with HTTPS from Tailscale (turn on MagicDNS and HTTPS certificates in the tailnet's admin console):
 
 ```sh
