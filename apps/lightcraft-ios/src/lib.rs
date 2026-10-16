@@ -371,6 +371,7 @@ fn services(ctx: egui::Context, inbox: Inbox, tmp: &Path) -> Services {
         })),
         write: Some(Box::new(lightcraft_engine::export::write_file)),
         write_shared: Some(Arc::new(lightcraft_engine::export::write_file)),
+        export_runner: None,
         png: Some(Box::new(|img: &lightcraft_raster::Rgba8| {
             lightcraft_codecs::encode_png(&lightcraft_codecs::EncodeImage::rgba8(img), &lightcraft_codecs::EncodeMeta::default()).unwrap_or_default()
         })),

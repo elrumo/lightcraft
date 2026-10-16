@@ -4,8 +4,9 @@
 //! encoded and written on the worker (several side by side: [`run_batch`]); its row in the
 //! activity stack shows the count, the file in progress and ✕ (issue #345).
 //!
-//! Needs [`crate::Services::write_shared`] (a thread-safe writer); without it (web) the batch runs
-//! synchronously as before.
+//! Needs [`crate::Services::write_shared`] (a thread-safe writer) or [`crate::Services::export_runner`]
+//! (the browser: no threads, so the host runs the batch between frames, the photos on a Web Worker,
+//! `docs/web.md`); with neither the batch runs synchronously.
 
 use std::sync::atomic::Ordering;
 
@@ -43,8 +44,14 @@ pub fn start(
     if app.export.is_some() {
         return Err("an export is already running".into());
     }
-    let write = app.services.write_shared.clone().ok_or("no background writer")?;
     let total = items.len();
+    if let Some(run) = app.services.export_runner.as_mut() {
+        let (batch, pending) = Batch::deferred(&app.session, "Exporting", total);
+        run(Prepared { items, opts, to, after }, pending)?;
+        app.export = Some(ExportTask { batch, send });
+        return Ok(json!({"background": true, "total": total}));
+    }
+    let write = app.services.write_shared.clone().ok_or("no background writer")?;
     // translated here: the language is the UI thread's, and the worker would show English
     let adding = crate::i18n::tr("Adding to Apple Photos…").to_string();
     let batch = Batch::start(&app.session, Prepared { items, opts, to, after }, write, adding)?;
@@ -359,6 +366,59 @@ mod contact_sheet_tests {
         app.export.as_ref().unwrap().batch.cancel.store(true, Ordering::Relaxed);
         let task = app.export.take().unwrap();
         assert!(task.batch.rx.recv_timeout(Duration::from_secs(20)).unwrap().is_err());
+    }
+}
+
+#[cfg(test)]
+mod runner_tests {
+    use super::*;
+    use lightcraft_apphost::export::{Pending, Prepared};
+    use std::sync::{Arc, Mutex};
+
+    /// A host without threads (the browser) takes the batch with `Services::export_runner` and goes on
+    /// with it between frames: the UI gets the activity row, ✕ and the toast as for a thread's batch.
+    #[test]
+    fn a_host_without_threads_runs_the_batch_between_frames() {
+        let taken = Arc::new(Mutex::new(None::<(Prepared, Pending)>));
+        let slot = taken.clone();
+        let services = crate::Services {
+            export_runner: Some(Box::new(move |prepared, pending| {
+                *slot.lock().unwrap() = Some((prepared, pending));
+                Ok(())
+            })),
+            ..Default::default()
+        };
+        let mut app = LightcraftApp::new(lightcraft_engine::Session::with_demo(), services);
+        let ids: Vec<_> = app.session.catalog.photos().take(3).map(|p| p.id.0).collect();
+        let started = app.run("app.export", json!({"ids": ids, "dir": "out", "format": "png", "width": 32, "background": true})).unwrap();
+        assert_eq!((started["background"].as_bool(), started["total"].as_u64()), (Some(true), Some(3)), "{started}");
+        let rows = app.session.activity.list();
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        assert_eq!((rows[0].kind, rows[0].label.as_str(), rows[0].total), ("export", "Exporting", 3));
+        assert!(rows[0].cancellable);
+        assert!(app.run("app.export", json!({"ids": ids, "dir": "out", "format": "png", "background": true})).is_err(), "one at a time");
+
+        let (prepared, pending) = taken.lock().unwrap().take().expect("the host was handed the batch");
+        assert_eq!(prepared.items.len(), 3);
+        let ctx = egui::Context::default();
+        pending.set_progress(1, "second.png");
+        poll(&mut app, &ctx);
+        assert_eq!(app.export.as_ref().unwrap().status()["current"], "second.png");
+        // ✕ in the stack
+        app.session.activity.cancel(app.session.activity.list()[0].id).unwrap();
+        assert!(pending.cancel.load(Ordering::Relaxed));
+        pending.finish(Ok((vec![json!({"path": "out/a.png", "width": 32, "height": 48, "bytes": 10, "sidecars": []})], None, true)));
+        poll(&mut app, &ctx);
+        assert!(app.export.is_none() && app.session.activity.list().is_empty(), "the row goes with the export");
+        let toast = app.ui.toast.as_ref().map(|t| t.0.clone()).unwrap_or_default();
+        assert!(toast.contains("Exported 1 of 3") && toast.contains("cancelled"), "{toast}");
+        assert_eq!(app.last_export_result.as_ref().unwrap()["cancelled"], true);
+
+        // a host that can't start the batch says so, and no row is left behind
+        app.services.export_runner = Some(Box::new(|_, _| Err("no worker".into())));
+        let e = app.run("app.export", json!({"ids": ids, "dir": "out", "format": "png", "background": true})).unwrap_err();
+        assert!(e.contains("no worker"), "{e}");
+        assert!(app.export.is_none() && app.session.activity.list().is_empty());
     }
 }
 

@@ -15,6 +15,8 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 lightcraft-engine = { workspace = true }
 lightcraft-ui-egui = { workspace = true }
+lightcraft-apphost = { workspace = true }
+lightcraft-meta = { workspace = true }
 lightcraft-codecs = { workspace = true }
 lightcraft-raster = { workspace = true }
 lightcraft-preview = { workspace = true }

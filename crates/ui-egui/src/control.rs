@@ -581,7 +581,8 @@ pub fn export_active(app: &mut LightcraftApp, p: &Value) -> Result<Value, String
     let to = Destination { dir: dir.clone(), exact };
     // Add to Apple Photos: refused here, before anything is written, when it can't be done
     let after = app.session.after_export(&opts)?;
-    let background = p.get("background").and_then(Value::as_bool).unwrap_or(false) && app.services.write_shared.is_some();
+    let can_background = app.services.write_shared.is_some() || app.services.export_runner.is_some();
+    let background = p.get("background").and_then(Value::as_bool).unwrap_or(false) && can_background;
     let out = if background {
         let items = lightcraft_engine::export::prepare_batch(&mut app.session, &ids, &opts)?;
         crate::export_task::start(app, items, opts, to, send, after)?

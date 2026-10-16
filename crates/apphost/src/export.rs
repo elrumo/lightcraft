@@ -3,7 +3,7 @@
 
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, TryRecvError, channel};
+use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::sync::{Arc, Mutex};
 
 use lightcraft_catalog::PhotoId;
@@ -137,7 +137,45 @@ pub struct Batch {
     pub guard: TaskGuard,
 }
 
+/// The other end of a [`Batch::deferred`]: what the host's own executor updates while it works (the
+/// file in progress, the stack's ✕ as `cancel`) and the outcome it ends with.
+pub struct Pending {
+    pub progress: Arc<Mutex<(usize, String)>>,
+    pub cancel: Arc<AtomicBool>,
+    /// The batch's activity row.
+    pub row: TaskHandle,
+    tx: Sender<Outcome>,
+}
+
+impl Pending {
+    /// The batch is over: [`Batch::poll`] reports `outcome`. (Dropped without this, it reports
+    /// that the export stopped unexpectedly.)
+    pub fn finish(self, outcome: Outcome) {
+        let _ = self.tx.send(outcome);
+    }
+
+    /// Photos started so far and the file in progress, as [`Batch::status`] reports them.
+    pub fn set_progress(&self, done: usize, current: &str) {
+        if let Ok(mut g) = self.progress.lock() {
+            *g = (done, current.to_string());
+        }
+    }
+}
+
 impl Batch {
+    /// A batch whose work the host runs itself (a browser: no threads, so the work is a task that
+    /// goes on between frames), with an activity row `label` of `total` steps. [`Batch::poll`]
+    /// reports the outcome once [`Pending::finish`] is called.
+    pub fn deferred(session: &Session, label: &str, total: usize) -> (Batch, Pending) {
+        let progress = Arc::new(Mutex::new((0, String::new())));
+        let cancel = Arc::new(AtomicBool::new(false));
+        let guard = session.activity.start("export", label, Cancel::Flag(cancel.clone()));
+        guard.progress(0, total as u64);
+        let (tx, rx) = channel();
+        let pending = Pending { progress: progress.clone(), cancel: cancel.clone(), row: guard.handle(), tx };
+        (Batch { total, progress, cancel, rx, guard }, pending)
+    }
+
     /// Run `work(progress, cancel, row)` on a worker thread (inline in a browser, which has no
     /// threads) with an activity row `label` of `total` steps.
     pub fn spawn(
@@ -146,20 +184,14 @@ impl Batch {
         total: usize,
         work: impl FnOnce(&Mutex<(usize, String)>, &Arc<AtomicBool>, TaskHandle) -> Outcome + Send + 'static,
     ) -> Result<Batch, String> {
-        let progress = Arc::new(Mutex::new((0, String::new())));
-        let cancel = Arc::new(AtomicBool::new(false));
-        let guard = session.activity.start("export", label, Cancel::Flag(cancel.clone()));
-        guard.progress(0, total as u64);
-        let (tx, rx) = channel();
-        let (p, c, row) = (progress.clone(), cancel.clone(), guard.handle());
-        let job = move || {
-            let _ = tx.send(work(&p, &c, row));
-        };
+        let (batch, pending) = Self::deferred(session, label, total);
+        let (p, c, row) = (pending.progress.clone(), pending.cancel.clone(), pending.row.clone());
+        let job = move || pending.finish(work(&p, &c, row));
         #[cfg(not(target_arch = "wasm32"))]
         std::thread::Builder::new().name("export".into()).spawn(job).map_err(|e| e.to_string())?;
         #[cfg(target_arch = "wasm32")]
         job();
-        Ok(Batch { total, progress, cancel, rx, guard })
+        Ok(batch)
     }
 
     /// Export `prepared` in the background through `write`, then do its `after` (Add to Apple
@@ -251,6 +283,28 @@ mod tests {
         assert!(cancelled);
         assert!(files.len() < 3, "{files:?}");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // Where there are no threads the host runs the batch itself: a row, progress and ✕ as for a
+    // thread, and the outcome when it says so (or "stopped unexpectedly" if it never does)
+    #[test]
+    fn a_deferred_batch_ends_when_the_host_says_so() {
+        let s = Session::with_demo();
+        let (batch, pending) = Batch::deferred(&s, "Exporting", 2);
+        assert_eq!(s.activity.list().len(), 1, "a row while it runs");
+        assert!(batch.poll().is_none());
+        pending.set_progress(1, "b.jpg");
+        assert_eq!(batch.status(), json!({"total": 2, "done": 1, "current": "b.jpg"}));
+        s.activity.cancel(batch.guard.id()).unwrap();
+        assert!(pending.cancel.load(Ordering::Relaxed), "the stack's ✕ reaches the host");
+        pending.finish(Ok((vec![json!({"path": "a.jpg"})], None, true)));
+        let (files, _, cancelled) = batch.poll().expect("ended").unwrap();
+        assert_eq!((files.len(), cancelled), (1, true));
+        drop(batch);
+        assert!(s.activity.list().is_empty(), "the row goes with the batch");
+        let (batch, pending) = Batch::deferred(&s, "Exporting", 1);
+        drop(pending);
+        assert_eq!(batch.poll().expect("ended").unwrap_err(), "Export stopped unexpectedly");
     }
 
     // Export Now writes the active photo at the default size, reports it, and can be stopped
