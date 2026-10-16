@@ -1,6 +1,6 @@
 //! Settings that follow a user to their other devices: export, metadata and filter presets, curve
-//! presets, colour-label and keyword sets, LUT profiles, the order of the develop preset groups and
-//! the import defaults that don't name a place on one computer. Each is a small document on the
+//! presets, colour-label and keyword sets, LUT profiles, the order of the develop preset groups, the
+//! presets and groups they hid and the import defaults that don't name a place on one computer. Each is a small document on the
 //! server (`GET` / `PUT /api/docs/<name>`, [`proto::Doc`]) — a JSON list — kept like the user presets ([`super::merge_presets`]): a device
 //! sends its list when it changes, and merges the server's against the copy both last agreed on,
 //! item by item, so a preset deleted on one device stays deleted and ones added on two devices are
@@ -10,6 +10,10 @@
 //! sharing choices and the window layout (they describe one computer or one person's privacy
 //! choice there). An older server that doesn't know the documents says `404`: they are left alone
 //! for the session and the library's own sync goes on.
+//!
+//! One document is the server's, not the user's: `server-presets`, the presets its admin shares with
+//! all its users and the built-in ones the admin hid ([`Session::set_server_presets`]). A device
+//! only reads it: what the server has replaces what it had, and it is never sent.
 
 use std::collections::{BTreeMap, HashSet};
 
@@ -30,7 +34,7 @@ enum Key {
 }
 
 /// The documents, in the order they are synced.
-const SPECS: [(&str, Key); 9] = [
+const SPECS: [(&str, Key); 11] = [
     ("export-presets", Key::Name),
     ("metadata-presets", Key::Name),
     ("filter-presets", Key::Name),
@@ -40,7 +44,16 @@ const SPECS: [(&str, Key); 9] = [
     ("lut-profiles", Key::Id),
     ("prefs", Key::Id),
     ("preset-groups", Key::Id),
+    ("hidden-presets", Key::Id),
+    (SERVER_PRESETS, Key::Id),
 ];
+
+/// The server's shared presets: read, never sent.
+const SERVER_PRESETS: &str = "server-presets";
+/// Shared presets taken from the server at most.
+const SERVER_PRESETS_MAX: usize = 20_000;
+/// The item of `server-presets` that lists the built-in presets (`presets`) and groups (`groups`) the server hides.
+const SERVER_HIDDEN_ITEM: &str = "hidden";
 
 /// Items taken from the server per document at most (untrusted input).
 const ITEMS_MAX: usize = 2000;
@@ -154,6 +167,10 @@ impl Session {
             // (nothing until the user reorders: a device that never did doesn't send a default)
             "preset-groups" if self.preset_group_order.is_empty() => Vec::new(),
             "preset-groups" => vec![json!({"id": GROUPS_ITEM, "groups": self.preset_group_order})],
+            // (one item each, so what two devices hid is all kept and one shown again stays shown)
+            "hidden-presets" => (self.hidden_presets.presets.iter().map(|id| json!({"id": format!("preset:{id}")})))
+                .chain(self.hidden_presets.groups.iter().map(|g| json!({"id": format!("group:{g}")})))
+                .collect(),
             _ => Vec::new(),
         }
     }
@@ -177,6 +194,8 @@ impl Session {
             "lut-profiles" => self.set_lut_profiles(items),
             "prefs" => self.set_import_defaults(items),
             "preset-groups" => self.set_preset_group_order(items),
+            "hidden-presets" => self.set_hidden_presets(items),
+            SERVER_PRESETS => self.take_server_presets(items),
             _ => return Ok(()),
         }
         self.save_prefs()
@@ -210,6 +229,42 @@ impl Session {
             .filter(|g| !g.trim().is_empty() && g.chars().count() <= NAME_MAX && seen.insert(*g))
             .map(str::to_string)
             .collect();
+    }
+
+    /// The presets and groups the user hid on another device.
+    fn set_hidden_presets(&mut self, items: &[Value]) {
+        let mut hidden = crate::presets::Hidden::default();
+        for id in items.iter().take(ITEMS_MAX).filter_map(|v| v.get("id").and_then(Value::as_str)) {
+            if let Some(p) = id.strip_prefix("preset:").filter(|p| !p.is_empty() && !hidden.presets.iter().any(|h| h == p)) {
+                hidden.presets.push(p.to_string());
+            } else if let Some(g) = id.strip_prefix("group:").filter(|g| !g.is_empty() && g.chars().count() <= NAME_MAX && !hidden.groups.iter().any(|h| h == g)) {
+                hidden.groups.push(g.to_string());
+            }
+        }
+        self.hidden_presets = hidden;
+    }
+
+    /// The server's shared presets (`{id: "srv.…", name, group, settings}`) and the built-in ones it hides
+    /// (the item [`SERVER_HIDDEN_ITEM`]): what doesn't parse, repeats an id or is too large is left out.
+    fn take_server_presets(&mut self, items: &[Value]) {
+        let mut hidden = crate::presets::Hidden::default();
+        let mut list = Vec::new();
+        let mut seen = HashSet::new();
+        let short = |s: &str| !s.trim().is_empty() && s.chars().count() <= NAME_MAX;
+        for v in items.iter().take(SERVER_PRESETS_MAX) {
+            if v.get("id").and_then(Value::as_str) == Some(SERVER_HIDDEN_ITEM) {
+                let names = |k: &str| -> Vec<String> {
+                    v.get(k).and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).filter(|s| short(s)).take(ITEMS_MAX).map(str::to_string).collect()
+                };
+                hidden = crate::presets::Hidden { presets: names("presets"), groups: names("groups") };
+                continue;
+            }
+            let Ok(p) = serde_json::from_value::<lightcraft_develop::Preset>(v.clone()) else { continue };
+            if p.id.starts_with(crate::presets::SERVER_PREFIX) && short(&p.id) && short(&p.name) && short(&p.group) && p.settings.is_object() && seen.insert(p.id.clone()) {
+                list.push(lightcraft_develop::Preset { favorite: false, ..p });
+            }
+        }
+        self.set_server_presets(list, hidden);
     }
 
     /// Install the LUT profiles in `items` (each carries its `.cube` text): a new one is written to
@@ -296,7 +351,7 @@ impl Session {
         for (name, _) in SPECS {
             let items = self.doc_items(name);
             let d = st.docs.entry(name.to_string()).or_default();
-            d.changed = items != d.base;
+            d.changed = name != SERVER_PRESETS && items != d.base;
         }
     }
 
@@ -306,7 +361,7 @@ impl Session {
         st.docs.values().any(|d| d.changed && !d.unsupported)
     }
 
-    /// Signing out: what the account shares goes from this library (the user presets and the nine documents), so the
+    /// Signing out: what the account shares goes from this library (the user presets and the shared documents), so the
     /// next account starts with its own and none of this one's reaches it. The built-in presets stay, and so does what
     /// describes this computer (the cache size, the import settings that name a place here…); the `.cube` files of the
     /// LUT profiles go with them.
@@ -374,6 +429,18 @@ impl Session {
     /// The server's document `theirs` merged into this device's.
     fn take_doc(&mut self, st: &mut SyncState, name: &str, theirs: proto::Doc) {
         let Some(key) = key_for(name) else { return };
+        // (the server's own document: taken as it is, and no base kept, it is never merged)
+        if name == SERVER_PRESETS {
+            let items = theirs.items.as_array().cloned().unwrap_or_default();
+            if let Err(e) = self.set_doc_items(name, &items) {
+                log::warn!("sync: {name}: {e}");
+            }
+            let d = st.docs.entry(name.to_string()).or_default();
+            d.remote = d.remote.max(theirs.version);
+            st.config.docs_versions.insert(name.to_string(), theirs.version);
+            st.docs_base_dirty = true;
+            return;
+        }
         let remote: Vec<Value> = theirs.items.as_array().map(|a| a.iter().take(ITEMS_MAX).cloned().collect()).unwrap_or_default();
         let ours = self.doc_items(name);
         let base = st.docs.get(name).map(|d| d.base.clone()).unwrap_or_default();

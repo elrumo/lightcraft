@@ -338,5 +338,7 @@
   "Moved {n} photo{} to “{}”. Edit → Undo moves them back.": "{n} Foto{0} nach „{1}“ verschoben. Bearbeiten → Rückgängig holt sie zurück.",
   "Downloading the depth model… {:.0} %": "Tiefenmodell wird heruntergeladen… {:.0} %",
   "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.": "Dieses Foto enthält keine eigene Tiefe: Objektivunschärfe schätzt sie mit Depth Anything V2 Small, einem Download von {:.0} MB (Lizenz {}). {}.",
-  "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)": "Scharf: {:.0}–{:.0} (0 = am nächsten, 100 = am weitesten)"
+  "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)": "Scharf: {:.0}–{:.0} (0 = am nächsten, 100 = am weitesten)",
+  "Delete the group “{name}” and its {n} presets?": "Die Gruppe „{name}“ und ihre {n} Vorgaben löschen?",
+  "Hid “{name}”. Show Hidden Presets in the panel's menu brings it back.": "„{name}“ ausgeblendet. „Ausgeblendete Vorgaben anzeigen“ im Menü des Bedienfelds blendet es wieder ein."
 }

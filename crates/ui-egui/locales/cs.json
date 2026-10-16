@@ -2064,5 +2064,19 @@
   "Select none": "Zrušit celý výběr",
   "Select all": "Vybrat vše",
   "Visualize HDR": "Zobrazit rozsah HDR",
-  "Place (from GPS)": "Místo (z GPS)"
+  "Place (from GPS)": "Místo (z GPS)",
+  "Show Hidden Presets": "Zobrazit skrytá přednastavení",
+  "Show Preset": "Zobrazit přednastavení",
+  "Hide Preset": "Skrýt přednastavení",
+  "Show Group": "Zobrazit skupinu",
+  "Hide Group": "Skrýt skupinu",
+  "Rename Group…": "Přejmenovat skupinu…",
+  "Delete Group…": "Odstranit skupinu…",
+  "Delete Preset Group": "Odstranit skupinu přednastavení",
+  "Rename Preset Group": "Přejmenovat skupinu přednastavení",
+  "Photos keep their edits. Export the group first to keep a copy.": "Fotky si ponechají své úpravy. Chcete-li si ponechat kopii, nejprve skupinu exportujte.",
+  "All Presets": "Všechna přednastavení",
+  "Delete Group": "Odstranit skupinu",
+  "Rename Group": "Přejmenovat skupinu",
+  "New Group": "Nová skupina"
 }

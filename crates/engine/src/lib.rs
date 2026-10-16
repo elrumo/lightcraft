@@ -296,6 +296,12 @@ pub struct Session {
     /// The order the user dragged the preset groups into (`preset.moveGroup`; groups not listed follow
     /// by name, see [`Session::preset_groups`]). Persisted in prefs.json and synced.
     pub preset_group_order: Vec<String>,
+    /// The presets and preset groups the user hid (`preset.hide`, `preset.hideGroup`): the Presets panels leave
+    /// them out unless asked to show hidden ones. Persisted in prefs.json and synced.
+    pub hidden_presets: presets::Hidden,
+    /// The built-in presets and groups the sync server's admin hid for all its users: not in
+    /// [`Session::presets`] (see [`Session::set_server_presets`]). Persisted in presets.json.
+    pub server_hidden: presets::Hidden,
     /// Favourite profile ids (persisted with the library, like preset favourites).
     pub profile_favorites: Vec<String>,
     /// Recently applied profile ids, newest first (at most [`presets::RECENT_PROFILES`]).
@@ -497,6 +503,8 @@ impl Session {
             copy_groups: lightcraft_develop::SettingsGroup::default_copy(),
             presets: presets::PresetList::new(presets::builtin()),
             preset_group_order: Vec::new(),
+            hidden_presets: presets::Hidden::default(),
+            server_hidden: presets::Hidden::default(),
             profile_favorites: Vec::new(),
             profile_recent: Vec::new(),
             journal: Vec::new(),

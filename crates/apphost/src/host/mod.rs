@@ -1587,11 +1587,13 @@ fn merge_options(p: &Value) -> crate::merge::MergeOptions {
 
 /// The state's `presetsGeneration`: the preset list's generation, moved also by the imported (LUT)
 /// profiles, imported here or brought by the sync (the profile browser lists them, and a preset that
-/// uses one looks different once it is here).
+/// uses one looks different once it is here), and by the presets and groups hidden and the groups' order.
 fn presets_generation(s: &Session) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
     s.presets.generation().hash(&mut h);
+    s.hidden_presets.hash(&mut h);
+    s.preset_group_order.hash(&mut h);
     for p in &s.lut_profiles {
         (&p.id, &p.name, &p.group, &p.file).hash(&mut h);
     }

@@ -219,7 +219,93 @@ pub fn imported_preset_id(p: &Preset) -> String {
     format!("user.imp.{h:016x}")
 }
 
+/// Ids of the presets a sync server shares with all its users (its `server-presets` document) start
+/// with this. They are kept like the built-in ones: `builtin`, never sent back, not editable here.
+pub const SERVER_PREFIX: &str = "srv.";
+
+/// `p` came from the sync server's shared presets.
+pub fn is_server_preset(p: &Preset) -> bool {
+    p.builtin && p.id.starts_with(SERVER_PREFIX)
+}
+
+/// Presets and preset groups left out of the Presets panels: the ones the user hid (`preset.hide`,
+/// `preset.hideGroup`, synced), or the built-in ones a sync server's admin hid for all its users.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Hidden {
+    /// Preset ids.
+    pub presets: Vec<String>,
+    /// Group names.
+    pub groups: Vec<String>,
+}
+
+impl Hidden {
+    /// `p` is hidden, itself or by its group.
+    pub fn hides(&self, p: &Preset) -> bool {
+        self.presets.contains(&p.id) || self.groups.contains(&p.group)
+    }
+}
+
 impl Session {
+    /// Make the sync server's shared presets `server` (ids [`SERVER_PREFIX`]…) and hide the built-in
+    /// presets and groups it hides for all its users: the list is then the built-in presets, the server's,
+    /// then the user's. Favourites stay favourites (a built-in one the server hid and shows again doesn't).
+    pub fn set_server_presets(&mut self, server: Vec<Preset>, hidden: Hidden) {
+        let favorites: std::collections::HashSet<String> = self.presets.iter().filter(|p| p.builtin && p.favorite).map(|p| p.id.clone()).collect();
+        let user: Vec<Preset> = self.presets.iter().filter(|p| !p.builtin).cloned().collect();
+        let mut list: Vec<Preset> = builtin().into_iter().filter(|p| !hidden.hides(p)).collect();
+        list.extend(server.into_iter().filter(|p| p.id.starts_with(SERVER_PREFIX)).map(|p| Preset { builtin: true, ..p }));
+        for p in &mut list {
+            p.favorite = p.favorite || favorites.contains(&p.id);
+        }
+        list.extend(user);
+        *self.presets = list;
+        self.server_hidden = hidden;
+    }
+
+    /// Rename preset group `group` (of the user's presets) to `name`; a group already called `name` takes
+    /// them in. Its place in the order and its being hidden go with it.
+    pub fn rename_preset_group(&mut self, group: &str, name: &str) -> Result<Vec<String>, String> {
+        let fixed = self.presets.iter().any(|p| p.group == group && p.builtin);
+        if fixed {
+            return Err("built-in and server preset groups can't be renamed".into());
+        }
+        if !self.presets.iter().any(|p| p.group == group) {
+            return Err(format!("unknown preset group `{group}`"));
+        }
+        if group == name {
+            return Ok(self.preset_groups());
+        }
+        for p in self.presets.iter_mut().filter(|p| p.group == group) {
+            p.group = name.to_string();
+        }
+        for list in [&mut self.preset_group_order, &mut self.hidden_presets.groups] {
+            let taken = list.iter().any(|g| g == name);
+            if taken {
+                list.retain(|g| g != group);
+            } else {
+                list.iter_mut().filter(|g| g.as_str() == group).for_each(|g| *g = name.to_string());
+            }
+        }
+        Ok(self.preset_groups())
+    }
+
+    /// Delete the user's presets in group `group` (built-in and server presets stay) → how many.
+    pub fn delete_preset_group(&mut self, group: &str) -> Result<usize, String> {
+        let gone: Vec<String> = self.presets.iter().filter(|p| p.group == group && !p.builtin).map(|p| p.id.clone()).collect();
+        if gone.is_empty() {
+            let fixed = self.presets.iter().any(|p| p.group == group);
+            return Err(if fixed { "built-in and server presets can't be deleted".into() } else { format!("unknown preset group `{group}`") });
+        }
+        self.presets.retain(|p| p.builtin || p.group != group);
+        self.hidden_presets.presets.retain(|id| !gone.contains(id));
+        if !self.presets.iter().any(|p| p.group == group) {
+            self.hidden_presets.groups.retain(|g| g != group);
+            self.preset_group_order.retain(|g| g != group);
+        }
+        Ok(gone.len())
+    }
+
     /// The preset groups in the order the Presets panel shows them: the user's order
     /// ([`Session::preset_group_order`]), then the groups it doesn't list, by name.
     pub fn preset_groups(&self) -> Vec<String> {
@@ -893,5 +979,64 @@ mod tests {
         let dv = s.develop_of(s.active().unwrap()).unwrap();
         assert_eq!((dv.light.exposure, dv.light.shadows, dv.grain.amount), (0.3, 20.0, 12.0));
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// Hiding (built-in presets too), renaming and deleting groups of the user's presets; the hidden
+    /// state and the group order follow a renamed group.
+    #[test]
+    fn presets_and_groups_hide_rename_and_delete() {
+        let mut s = Session::new();
+        let mine = |s: &mut Session, id: &str, group: &str| {
+            s.presets.push(Preset { id: id.into(), name: id.into(), group: group.into(), settings: json!({}), favorite: false, builtin: false })
+        };
+        mine(&mut s, "user.a", "Trips");
+        mine(&mut s, "user.b", "Trips");
+        mine(&mut s, "user.c", "Mine");
+        assert_eq!(s.execute("preset.hide", &json!({"id": "lc.moody"})).unwrap()["hidden"], true);
+        assert_eq!(s.execute("preset.hide", &json!({"id": "lc.moody"})).unwrap()["hidden"], false, "toggles");
+        s.execute("preset.hide", &json!({"id": "user.a", "hidden": true})).unwrap();
+        assert!(s.execute("preset.hide", &json!({"id": "nope"})).is_err());
+        s.execute("preset.hideGroup", &json!({"group": "Trips"})).unwrap();
+        assert!(s.execute("preset.hideGroup", &json!({"group": "Nope"})).is_err());
+        let list = s.execute("presets.list", &json!({})).unwrap();
+        let a = list.as_array().unwrap().iter().find(|p| p["id"] == "user.a").unwrap();
+        assert_eq!(a["hidden"], true);
+        s.execute("preset.moveGroup", &json!({"group": "Trips", "to": 0})).unwrap();
+        // renamed: its place and its being hidden go with it
+        assert!(s.execute("preset.renameGroup", &json!({"group": "B&W", "name": "Mono"})).is_err(), "built-in groups stay");
+        let r = s.execute("preset.renameGroup", &json!({"group": "Trips", "name": "Travel"})).unwrap();
+        assert_eq!(r["groups"][0], "Travel");
+        assert_eq!(s.hidden_presets.groups, ["Travel"]);
+        assert!(s.presets.iter().filter(|p| p.group == "Travel").count() == 2);
+        let details = s.execute("presets.groups", &json!({"details": true})).unwrap();
+        assert_eq!(details[0], json!({"name": "Travel", "hidden": true, "builtin": false, "user": true}));
+        assert!(details.as_array().unwrap().iter().any(|g| g["name"] == "B&W" && g["builtin"] == true && g["user"] == false));
+        // into a group that is already there: merged
+        s.execute("preset.renameGroup", &json!({"group": "Mine", "name": "Travel"})).unwrap();
+        assert_eq!(s.presets.iter().filter(|p| p.group == "Travel").count(), 3);
+        // deleted: the user's presets go, with what was hidden of them
+        assert!(s.execute("preset.deleteGroup", &json!({"group": "Film"})).is_err(), "built-in presets stay");
+        assert_eq!(s.execute("preset.deleteGroup", &json!({"group": "Travel"})).unwrap()["deleted"], 3);
+        assert!(s.presets.iter().all(|p| p.builtin));
+        assert!(s.hidden_presets.presets.is_empty() && s.hidden_presets.groups.is_empty());
+    }
+
+    /// The server's presets join the list like built-in ones, and the built-ins it hides leave it.
+    #[test]
+    fn server_presets_join_and_hide() {
+        let mut s = Session::new();
+        s.presets.push(Preset { id: "user.a".into(), name: "A".into(), group: "Mine".into(), settings: json!({}), favorite: true, builtin: false });
+        s.execute("preset.favorite", &json!({"id": "lc.bw-soft", "favorite": true})).unwrap();
+        let server = vec![
+            Preset { id: "srv.one".into(), name: "One".into(), group: "Team".into(), settings: json!({}), favorite: false, builtin: false },
+            Preset { id: "user.x".into(), name: "Not".into(), group: "Team".into(), settings: json!({}), favorite: false, builtin: false },
+        ];
+        s.set_server_presets(server, Hidden { presets: vec!["lc.moody".into()], groups: vec!["Film".into()] });
+        assert!(s.presets.iter().any(|p| p.id == "srv.one" && p.builtin && is_server_preset(p)));
+        assert!(!s.presets.iter().any(|p| p.id == "user.x" || p.id == "lc.moody" || p.group == "Film"));
+        assert!(s.presets.iter().any(|p| p.id == "lc.bw-soft" && p.favorite), "favourites stay");
+        assert!(s.presets.iter().any(|p| p.id == "user.a" && p.favorite && !p.builtin), "the user's presets stay");
+        s.set_server_presets(Vec::new(), Hidden::default());
+        assert!(s.presets.iter().any(|p| p.id == "lc.moody") && !s.presets.iter().any(|p| p.id == "srv.one"));
     }
 }

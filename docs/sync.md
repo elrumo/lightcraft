@@ -112,6 +112,7 @@ certificate from Let's Encrypt or Tailscale works as is; a self-signed one doesn
 
 ```text
 <data>/users.json                              users: argon2id password hash, library id, admin, storage limit
+<data>/server-presets.json                     presets shared with every user, built-in ones hidden for all { version, items }
 <data>/users/<name>/library/catalog.log        every change from every device, in order
 <data>/users/<name>/blobs/<kind>/<xx>/<hash>   photo files by content: original | smart | mini
 <data>/users/<name>/presets.json               user presets { version, presets }
@@ -128,7 +129,7 @@ Back up `<data>` like any folder (stop the server, or copy `catalog.log` first a
 
 ### The admin page
 
-`https://<your server>/admin` manages the server from a browser. It has four sections (a side bar on wide
+`https://<your server>/admin` manages the server from a browser. It has five sections (a side bar on wide
 screens, tabs on a phone), follows the system's light or dark mode, and confirms anything destructive in a dialog:
 
 - **Overview:** users, photos, signed-in devices and free disk space at a glance; **Server load** (the server's CPU
@@ -154,6 +155,12 @@ screens, tabs on a phone), follows the system's light or dark mode, and confirms
     last scan found (new, moved, changed, missing, files that couldn't be read) with progress while it scans and
     while previews are built. Each choice in those menus says what it does, and the two that take hours on a big
     library ask first.
+- **Presets:** develop presets every user gets, beside their own. **Import presets** takes LightCraft (`.lcpreset`),
+  XMP and Lightroom (`.lrtemplate`) presets and zips of them (the same reader as a device's Import Presets; a preset
+  already there is skipped); then rename a preset, move it to another group, delete it, or rename or delete a whole
+  group. Below, a switch per built-in group and preset hides it from every user. Devices get the changes the next time
+  they sync and show these presets like the built-in ones: users can favourite and hide them, not change them. Two
+  admins changing them at once: the second is told and shown the first one's change.
 - **Search:** what the server does with each user's photos so their devices don't have to. A switch turns search by
   description on for every device that signs in (the web app, iPhone, other computers find photos by describing them
   without downloading the model); another does the same for finding photos by the words printed in them; **People**
@@ -641,10 +648,12 @@ Big JSON answers (the library, pulled changes, the presets; 16 KiB and up) come 
 | `GET`/`POST /api/shares`, `DELETE /api/shares/{id}` | the user's album links ([`proto::Share`](../crates/catalog/src/sync.rs): `password` and `upload` say what each asks and allows): `{shares: [...]}`; `POST {album, expiresDays?, originals?, password?, upload?}` → the new link (`400` for a folder or smart album or a password under 4 characters, `404` no such album, `409` over 200 links); `DELETE` takes one back |
 | `GET /s/{token}`, `GET /s/{token}/{photo}[?play=1]`, `GET /s/{token}/{photo}/{thumb\|view\|original}`, `GET /s/{token}/download` | **no sign-in**: the album's page, a photo's page (`play`: the slideshow), the pictures, and Download All (a ZIP of the originals) ([above](#share-an-album)); `404` for anything else (unknown, ended or revoked token, a photo not in the album, `original` or `download` on a link that doesn't offer them), `401` until a link's password was typed, `429` when an address keeps guessing, `503` + `Retry-After` while the server is busy rendering |
 | `POST /s/{token}/unlock`, `POST /s/{token}/upload` | **no sign-in**: a link's password (`password=…`, a form; the answer sets the cookie that opens the link), and photos a visitor adds (`multipart/form-data`, field `photos`, optional `name`; `303` back to the album with `?added=N&skipped=M`; `403` on a link that doesn't take photos, `507` over the owner's [storage limit](#storage-limits)) |
-| `GET`/`PUT /api/docs/{name}` | the other shared settings, `name` one of `export-presets`, `metadata-presets`, `filter-presets`, `curve-presets`, `label-sets`, `keyword-sets`, `lut-profiles`, `prefs`, `preset-groups` (the order of the develop preset groups): `{version, items}` (a list; at most 24 MiB), merged by the devices item by item like presets; `PUT` with a stale `version` → `412` with the current document; another name → `404`. Their versions come with every pull (`docs`) |
+| `GET`/`PUT /api/docs/{name}` | the other shared settings, `name` one of `export-presets`, `metadata-presets`, `filter-presets`, `curve-presets`, `label-sets`, `keyword-sets`, `lut-profiles`, `prefs`, `preset-groups` (the order of the develop preset groups), `hidden-presets` (the presets and groups the user hid, one item each: `{id: "preset:<id>"}`, `{id: "group:<name>"}`): `{version, items}` (a list; at most 24 MiB), merged by the devices item by item like presets; `PUT` with a stale `version` → `412` with the current document; another name → `404`. Their versions come with every pull (`docs`) |
+| `GET /api/docs/server-presets` | the presets an admin shares with every user ([admin page](#the-admin-page) → Presets): `{version, items}`, each preset `{id: "srv.…", name, group, settings}` and one item `{id: "hidden", presets, groups}` (built-in presets and groups hidden for everyone). Read-only (`PUT` → `403`); its version comes with every pull (`docs`) once an admin has written it. Devices take it as it is, never merge or send it |
 | `POST /api/admin/login`, `POST /api/admin/logout` | the admin session ([above](#the-admin-page)): `login {user, password, remember?, cookie?}` → `{token, user}`, or with `cookie: true` (the page) `{user}` and a `Set-Cookie: lc_admin=…`; `remember` keeps it for weeks and across restarts; `logout` ends it (and clears the cookie). Anything else under `/api/admin/` takes the token as a bearer or the cookie (with `X-LightCraft-Admin` on what changes something) |
 | `GET /api/admin/usage` | (admin session) the Overview's numbers ([`usage.rs`](../apps/lightcraft-server/src/usage.rs)): `{since, supported, cores, memory, history: [{at, cpu, machineCpu, rss, memUsed, requests, out}], users: [{name, devices: [{id, name, requests, in, out, busyMs, lastSeen}]}]}`. `history` is a sample of the machine every 30 s for the last 24 h, averaged to at most 240 points (`cpu`: the server's CPU in cores, `machineCpu`: the whole machine's, 0 to 1, `rss` and `memUsed`: the server's memory and what the machine or container uses, `requests` and `out`: the devices' requests and the bytes sent to them since the point before); `null` where the platform doesn't say (`supported` is false off Linux). The counts are in memory and start again with the server |
 | `POST /api/admin/users/{name}/scan`, `…/rescan`, `…/previews/{generate\|rebuild\|pause\|resume}` | (admin session) the user's library folders: `scan` reads the files that are new or changed; `rescan` reads every file again; `previews/generate` builds the previews that are missing (and tries again the ones that failed); `previews/rebuild` builds every preview again, replacing the ones there only as each new one is written (so a photo that can't be read keeps its preview); `pause`/`resume` stop and go on, for every user. The answer is the user's folders with their scan status (`full`: this scan reads every file; `previewsRebuilding`) |
+| `GET`/`PUT /api/admin/presets`, `POST /api/admin/presets/import` | (admin session) the shared presets plus the built-in list (`builtin: [{id, name, group}]`); `PUT {version, items}` replaces them (`412` with the current document when stale; `400` naming a bad item); `import {files: [{name, data: base64}], group?}` → `{version, added, skipped, failed}` |
 | `POST /api/render` | `{hash, name, settings, export}` → the encoded image (`X-LightCraft-Size: WxH`): the photo with this original, rendered with these edits and [export options](#exporting-on-the-server) · `404` no such original (or a server older than the route) · `422` can't be rendered · `503` busy, `Retry-After` |
 | `GET /api/health` | `{ok, version}` (no sign-in) |
 | `GET /…` | the web build (`--web`) |

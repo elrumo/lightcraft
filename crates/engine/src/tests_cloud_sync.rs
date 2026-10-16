@@ -2054,6 +2054,71 @@ fn the_order_of_the_preset_groups_follows_the_user() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// Presets and groups hidden on one device are hidden on the other; one shown again there is shown here.
+#[test]
+fn hidden_presets_follow_the_user() {
+    let mut f = Fake::new();
+    let (mut a, mut b, root) = two_devices("preset-hidden", &mut f);
+    a.execute("preset.hide", &json!({"id": "lc.bw-soft"})).unwrap();
+    a.execute("preset.hideGroup", &json!({"group": "Film"})).unwrap();
+    sync(&mut a, &mut f);
+    b.execute("preset.hide", &json!({"id": "lc.moody"})).unwrap();
+    sync(&mut b, &mut f);
+    sync(&mut a, &mut f);
+    for s in [&a, &b] {
+        assert_eq!(s.hidden_presets.groups, ["Film"]);
+        let mut ids = s.hidden_presets.presets.clone();
+        ids.sort();
+        assert_eq!(ids, ["lc.bw-soft", "lc.moody"], "what both hid is kept");
+    }
+    b.execute("preset.hide", &json!({"id": "lc.bw-soft", "hidden": false})).unwrap();
+    sync(&mut b, &mut f);
+    sync(&mut a, &mut f);
+    assert_eq!(a.hidden_presets.presets, ["lc.moody"]);
+    drop(a);
+    let a = open(&root.join("a"));
+    assert_eq!((a.hidden_presets.presets.as_slice(), a.hidden_presets.groups.as_slice()), (&["lc.moody".to_string()][..], &["Film".to_string()][..]));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// The presets a server's admin shares reach every device as presets that can't be edited, the built-in
+/// ones the admin hid go, nothing is sent back, and they stay when the library is reopened.
+#[test]
+fn the_servers_presets_reach_every_device() {
+    let mut f = Fake::new();
+    let (mut a, _b, root) = two_devices("server-presets", &mut f);
+    let items = json!([
+        {"id": "srv.warm", "name": "Team Warm", "group": "Team", "settings": {"light": {"exposure": 0.3}}},
+        {"id": "user.sneaky", "name": "Not the server's", "group": "Team", "settings": {}},
+        {"id": "srv.bad", "name": "No settings", "group": "Team", "settings": 3},
+        {"id": "hidden", "presets": ["lc.moody"], "groups": ["B&W"]}
+    ]);
+    f.docs.insert("server-presets".into(), proto::Doc { version: 1, items });
+    let before = f.requests.len();
+    sync(&mut a, &mut f);
+    let warm = a.presets.iter().find(|p| p.id == "srv.warm").expect("the server's preset is here");
+    assert!(warm.builtin && warm.group == "Team");
+    assert!(!a.presets.iter().any(|p| p.id == "user.sneaky" || p.id == "srv.bad"), "only well-formed server presets");
+    assert!(!a.presets.iter().any(|p| p.id == "lc.moody" || p.group == "B&W"), "built-ins the server hides are gone");
+    assert!(a.presets.iter().any(|p| p.group == "Film"), "the other built-ins stay");
+    assert!(a.execute("preset.rename", &json!({"id": "srv.warm", "name": "Mine"})).is_err(), "not editable on a device");
+    a.execute("preset.favorite", &json!({"id": "srv.warm"})).unwrap();
+    sync(&mut a, &mut f);
+    assert!(!f.requests[before..].iter().any(|r| r.starts_with("PUT /api/docs/server-presets")), "{:?}", &f.requests[before..]);
+    assert!(!f.presets.presets.as_array().unwrap().iter().any(|p| p["id"] == "srv.warm"), "not sent as a user preset");
+    drop(a);
+    let mut a = open(&root.join("a"));
+    let warm = a.presets.iter().find(|p| p.id == "srv.warm").expect("kept when reopened");
+    assert!(warm.favorite && warm.builtin);
+    assert!(!a.presets.iter().any(|p| p.id == "lc.moody"));
+    // the admin shows the built-ins again and removes the preset
+    f.docs.insert("server-presets".into(), proto::Doc { version: 2, items: json!([]) });
+    sync(&mut a, &mut f);
+    assert!(a.presets.iter().any(|p| p.id == "lc.moody") && a.presets.iter().any(|p| p.group == "B&W"));
+    assert!(!a.presets.iter().any(|p| p.id == "srv.warm"));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// A server from before the documents answers 404: the rest of the sync goes on, with no error and no
 /// retrying every second.
 #[test]

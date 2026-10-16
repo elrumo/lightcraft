@@ -419,6 +419,11 @@ main > section { animation: enter 0.18s ease-out; }
 .table tr.link { cursor: pointer; }
 .table tr.link:hover td { background: var(--fill); }
 .table td.end { text-align: right; white-space: nowrap; width: 1%; }
+.table th.end { text-align: right; width: 1%; }
+.table tr.group td { background: var(--fill); padding-top: 10px; padding-bottom: 10px; }
+.table tr.group .sub { display: inline; margin-left: 8px; }
+.table td.end .switch { justify-content: flex-end; }
+.stack > * + * { margin-top: 16px; }
 .table .chev-col { width: 1%; }
 .table .chev { color: var(--text-3); display: block; }
 .table .empty td { text-align: center; padding: 40px 16px; color: var(--text-3); }
@@ -646,6 +651,7 @@ main > section { animation: enter 0.18s ease-out; }
 #srFacts { margin-bottom: 12px; }
 .panel > .switch + .alert, .panel > .alert + .facts { margin-top: 16px; }
 @media (max-width: 440px) { .sidenav a .icon { display: none; } }
+@media (max-width: 640px) { .table td.end .btn { padding: 0 8px; } .table td.end .btn-word { display: none; } .table td.end .btn .icon { margin: 0; } }
 
 .people { list-style: none; margin: 16px 0 0; padding: 0; display: flex; flex-direction: column; gap: 14px; }
 .people li { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto auto; gap: 12px; align-items: center; }

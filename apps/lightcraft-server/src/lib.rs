@@ -12,6 +12,7 @@
 //! ```text
 //! <data>/users.json                       users: argon2 password hash, library id
 //! <data>/search.json                      { enabled }: search by description on or off (admin page)
+//! <data>/server-presets.json              presets shared with every user, built-ins hidden for all (admin page)
 //! <data>/users/<name>/library/            the op log (catalog.log)
 //! <data>/users/<name>/blobs/<kind>/<xx>/<hash>   original | smart | mini
 //! <data>/users/<name>/presets.json        { version, presets }
@@ -39,6 +40,7 @@ pub mod admin;
 pub mod api;
 pub mod cors;
 pub mod docs;
+pub mod server_presets;
 pub mod folders;
 pub mod gc;
 pub mod guest;
@@ -152,6 +154,8 @@ pub struct State {
     pub(crate) writer: writeback::Writer,
     /// The unfinished uploads being written right now (one writer per file).
     pub(crate) uploading: Mutex<std::collections::HashSet<PathBuf>>,
+    /// The presets shared with every user ([`server_presets`]).
+    pub(crate) presets: Mutex<server_presets::ServerPresets>,
     /// What the server takes of the machine and what each device asks of it ([`usage`]).
     pub(crate) usage: usage::Usage,
 }
@@ -189,6 +193,7 @@ impl Server {
         }
         let vision_dir = cfg.vision_dir.clone().unwrap_or_else(|| cfg.data.join("models").join("siglip2"));
         let links = shares::Index::load(&cfg.data);
+        let shared_presets = server_presets::ServerPresets::load(&cfg.data);
         let state = Arc::new(State {
             vision: vision::Search::new(vision_dir, cfg.embedder).with_data(&cfg.data).with_reader(cfg.text_reader).with_finder(cfg.face_finder),
             accounts: Mutex::new(accounts::Accounts::new(&cfg.data)),
@@ -207,6 +212,7 @@ impl Server {
             cors: cors::Cors::new(&cfg.cors_origins),
             shares: Mutex::new(links),
             writer: writeback::Writer::new(),
+            presets: Mutex::new(shared_presets),
             usage: usage::Usage::new(),
         });
         // (counted now, so the admin page has the numbers by the time anyone opens it)

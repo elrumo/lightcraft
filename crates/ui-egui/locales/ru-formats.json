@@ -338,5 +338,7 @@
   "Moved {n} photo{} to “{}”. Edit → Undo moves them back.": "В «{1}» перемещено фото: {n}{0:.0}. Правка → Отменить вернёт их.",
   "Downloading the depth model… {:.0} %": "Загрузка модели глубины… {:.0} %",
   "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.": "У этого фото нет собственной карты глубины: «Размытие объектива» оценивает её с помощью Depth Anything V2 Small, загрузка {:.0} МБ (лицензия {}). {}.",
-  "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)": "В фокусе: {:.0}–{:.0} (0 — ближе всего, 100 — дальше всего)"
+  "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)": "В фокусе: {:.0}–{:.0} (0 — ближе всего, 100 — дальше всего)",
+  "Delete the group “{name}” and its {n} presets?": "Удалить группу «{name}» и её пресеты ({n})?",
+  "Hid “{name}”. Show Hidden Presets in the panel's menu brings it back.": "Скрыто: «{name}». Вернуть можно командой «Показывать скрытые пресеты» в меню панели."
 }

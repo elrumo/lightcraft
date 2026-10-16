@@ -101,7 +101,7 @@ fn ok_label(app: &LightcraftApp, dlg: &Dialog, informational: bool) -> String {
         Dialog::DenoiseModel { .. } => "Install",
         Dialog::FaceModel { info, .. } if !informational && info["download"].is_string() => "Download",
         Dialog::FaceModel { .. } if !informational => "Install",
-        Dialog::ConfirmDelete { .. } | Dialog::DeleteKeyword { .. } | Dialog::DeleteEffects { .. } => "Delete",
+        Dialog::ConfirmDelete { .. } | Dialog::DeleteKeyword { .. } | Dialog::DeleteEffects { .. } | Dialog::DeletePresetGroup { .. } => "Delete",
         Dialog::SaveEffect { .. } => "Create",
         Dialog::MovePhotos { .. } => "Move",
         // (not "Merge": that is photo merging, HDR / panorama, in some languages)
@@ -255,6 +255,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
         Dialog::ManageEffects { .. } => "Manage Effect Presets",
         Dialog::DeleteEffects { names } if names.len() == 1 => "Delete Effect Preset",
         Dialog::DeleteEffects { .. } => "Delete Effect Presets",
+        Dialog::DeletePresetGroup { .. } => "Delete Preset Group",
         Dialog::RemoveFolder { disk: true, .. } => "Remove Disk from Library",
         Dialog::RemoveFolder { .. } => "Remove Folder from Library",
         Dialog::SynchronizeFolder { .. } => "Synchronize Folder",
@@ -1054,6 +1055,10 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                 ui.label(what);
                 ui.label(egui::RichText::new(crate::i18n::tr("Masks keep their sliders. Export presets first to keep a copy.")).color(t.text_dim));
             }
+            Dialog::DeletePresetGroup { group, count } => {
+                ui.label(crate::i18n::tr_format!("Delete the group “{name}” and its {n} presets?", name = group, n = count));
+                ui.label(egui::RichText::new(crate::i18n::tr("Photos keep their edits. Export the group first to keep a copy.")).color(t.text_dim));
+            }
             d @ Dialog::SynchronizeFolder { .. } => crate::sync::body(app, ui, d),
             Dialog::LightroomCatalog { folder, catalog } => {
                 ui.label(crate::i18n::tr("This is a Lightroom catalog, not a LightCraft library. Import it into a LightCraft library instead?"));
@@ -1837,6 +1842,7 @@ pub fn confirm_dialog(app: &mut LightcraftApp, dlg: &Dialog) -> Result<serde_jso
             crate::panels::mask_effects::save_confirm(app, name, group, fields, *amount, *brush)
         }
         Dialog::DeleteEffects { names } => app.run("mask.deleteEffect", json!({"names": names})),
+        Dialog::DeletePresetGroup { group, .. } => app.run("preset.deleteGroup", json!({"group": group})),
         Dialog::RemoveFolder { path, disk, .. } => app.run("library.removeFolder", json!({"path": path, "disk": disk})),
         d @ Dialog::SynchronizeFolder { .. } => crate::sync::confirm(app, d),
         Dialog::About | Dialog::Shortcuts | Dialog::Settings { .. } | Dialog::ManageEffects { .. } => Ok(serde_json::Value::Null),
@@ -2137,7 +2143,11 @@ pub enum ConfirmStyle {
 
 pub fn confirm_style(dlg: &Dialog) -> ConfirmStyle {
     match dlg {
-        Dialog::ConfirmDelete { .. } | Dialog::DeleteKeyword { .. } | Dialog::DeleteEffects { .. } | Dialog::RemoveFolder { .. } => {
+        Dialog::ConfirmDelete { .. }
+        | Dialog::DeleteKeyword { .. }
+        | Dialog::DeleteEffects { .. }
+        | Dialog::DeletePresetGroup { .. }
+        | Dialog::RemoveFolder { .. } => {
             ConfirmStyle::Plain
         }
         _ if only_shows(dlg) => ConfirmStyle::Plain,

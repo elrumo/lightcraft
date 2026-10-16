@@ -165,6 +165,9 @@ pub struct LibraryStores {
 struct PresetsFile {
     user: Vec<Preset>,
     favorites: Vec<String>,
+    /// The sync server's shared presets, and the built-in ones it hides ([`Session::set_server_presets`]).
+    server: Vec<Preset>,
+    server_hidden: crate::presets::Hidden,
     /// Favourite profiles, and the recently applied ones (newest first).
     profile_favorites: Vec<String>,
     profile_recent: Vec<String>,
@@ -288,6 +291,8 @@ struct PrefsFile {
     lut_profiles: Vec<crate::cmd::lut_profiles::LutProfile>,
     /// The order of the preset groups (`preset.moveGroup`).
     preset_group_order: Vec<String>,
+    /// The presets and groups the user hid (`preset.hide`, `preset.hideGroup`).
+    hidden_presets: crate::presets::Hidden,
     /// Keyword sets, the one in use, recent keywords.
     keyword_sets: Vec<crate::cmd::keywords::KeywordSet>,
     keyword_set: Option<String>,
@@ -328,6 +333,8 @@ fn presets_json(s: &Session) -> String {
     let f = PresetsFile {
         user: presets.iter().filter(|p| !p.builtin).cloned().collect(),
         favorites: presets.iter().filter(|p| p.builtin && p.favorite).map(|p| p.id.clone()).collect(),
+        server: presets.iter().filter(|p| crate::presets::is_server_preset(p)).cloned().collect(),
+        server_hidden: s.server_hidden.clone(),
         profile_favorites: s.profile_favorites.clone(),
         profile_recent: s.profile_recent.clone(),
     };
@@ -588,6 +595,7 @@ impl Session {
         self.lut_profiles = prefs.lut_profiles;
         crate::cmd::lut_profiles::register_all(self);
         self.preset_group_order = prefs.preset_group_order;
+        self.hidden_presets = prefs.hidden_presets;
         self.keyword_sets = prefs.keyword_sets;
         self.keyword_set = prefs.keyword_set;
         self.recent_keywords = prefs.recent_keywords;
@@ -626,6 +634,10 @@ impl Session {
                 if ids.insert(u.id.clone()) {
                     self.presets.push(u);
                 }
+            }
+            if !f.server.is_empty() || f.server_hidden != crate::presets::Hidden::default() {
+                let server = f.server.into_iter().map(|p| Preset { favorite: f.favorites.contains(&p.id), ..p }).collect();
+                self.set_server_presets(server, f.server_hidden);
             }
             let known = |id: &String| crate::presets::profile(id).is_some() || self.lut_profiles.iter().any(|p| &p.id == id);
             self.profile_favorites = f.profile_favorites.into_iter().filter(known).collect();
@@ -974,6 +986,7 @@ impl Session {
             label_sets: self.label_sets.clone(),
             lut_profiles: self.lut_profiles.clone(),
             preset_group_order: self.preset_group_order.clone(),
+            hidden_presets: self.hidden_presets.clone(),
             keyword_sets: self.keyword_sets.clone(),
             keyword_set: self.keyword_set.clone(),
             recent_keywords: self.recent_keywords.clone(),

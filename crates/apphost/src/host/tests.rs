@@ -412,6 +412,11 @@ fn the_state_says_when_the_presets_change() {
     assert_ne!(after, before);
     let state = h.wait_for(|e| e["kind"] == "state" && e["state"]["presetsGeneration"] == after);
     assert_eq!(state["state"]["presetsGeneration"], after);
+    // hiding a preset moves it too (the panel leaves it out)
+    h.call(&req(40, "engine.execute", json!({"command": "preset.hide", "params": {"id": "lc.moody"}})), Duration::from_secs(30));
+    let hidden = generation(&h, 41);
+    assert_ne!(hidden, after, "a hidden preset");
+    let after = hidden;
     // an imported profile moves it too (the profile browser reads its list again)
     let dir = std::env::temp_dir().join(format!("lc-host-profile-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();

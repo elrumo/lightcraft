@@ -2459,5 +2459,19 @@
   "Blur Brush": "Pincel de desenfoque",
   "Erase Brush": "Pincel de borrado",
   "Clear Brush": "Borrar pincel",
-  "Lens Blur and Depth Range masks on photos without depth data of their own": "Desenfoque de objetivo y máscaras de rango de profundidad en fotos sin datos de profundidad propios"
+  "Lens Blur and Depth Range masks on photos without depth data of their own": "Desenfoque de objetivo y máscaras de rango de profundidad en fotos sin datos de profundidad propios",
+  "Show Hidden Presets": "Mostrar ajustes preestablecidos ocultos",
+  "Show Preset": "Mostrar ajuste preestablecido",
+  "Hide Preset": "Ocultar ajuste preestablecido",
+  "Show Group": "Mostrar grupo",
+  "Hide Group": "Ocultar grupo",
+  "Rename Group…": "Cambiar nombre del grupo…",
+  "Delete Group…": "Eliminar grupo…",
+  "Delete Preset Group": "Eliminar grupo de ajustes preestablecidos",
+  "Rename Preset Group": "Cambiar nombre del grupo de ajustes preestablecidos",
+  "Photos keep their edits. Export the group first to keep a copy.": "Las fotos conservan sus ediciones. Exporta antes el grupo para guardar una copia.",
+  "All Presets": "Todos los ajustes preestablecidos",
+  "Delete Group": "Eliminar grupo",
+  "Rename Group": "Cambiar nombre del grupo",
+  "New Group": "Nuevo grupo"
 }

@@ -2458,5 +2458,19 @@
   "Blur Brush": "Pinceau Flou",
   "Erase Brush": "Pinceau Effacer",
   "Clear Brush": "Effacer les coups de pinceau",
-  "Lens Blur and Depth Range masks on photos without depth data of their own": "Flou de l’objectif et masques Plage de profondeur sur les photos sans données de profondeur propres"
+  "Lens Blur and Depth Range masks on photos without depth data of their own": "Flou de l’objectif et masques Plage de profondeur sur les photos sans données de profondeur propres",
+  "Show Hidden Presets": "Afficher les préréglages masqués",
+  "Show Preset": "Afficher le préréglage",
+  "Hide Preset": "Masquer le préréglage",
+  "Show Group": "Afficher le groupe",
+  "Hide Group": "Masquer le groupe",
+  "Rename Group…": "Renommer le groupe…",
+  "Delete Group…": "Supprimer le groupe…",
+  "Delete Preset Group": "Supprimer le groupe de préréglages",
+  "Rename Preset Group": "Renommer le groupe de préréglages",
+  "Photos keep their edits. Export the group first to keep a copy.": "Les photos conservent leurs retouches. Exportez d’abord le groupe pour en garder une copie.",
+  "All Presets": "Tous les préréglages",
+  "Delete Group": "Supprimer le groupe",
+  "Rename Group": "Renommer le groupe",
+  "New Group": "Nouveau groupe"
 }

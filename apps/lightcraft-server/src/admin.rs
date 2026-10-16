@@ -11,6 +11,8 @@
 //!   "Keep me signed in" keeps a session for weeks and across restarts of the server, see
 //!   [`accounts::ADMIN_REMEMBER_IDLE`]; any other ends after [`accounts::ADMIN_IDLE`] without a request.
 //!   A new password for the admin ends their sessions.
+//! - **Shared presets** ([`crate::server_presets`]): presets every user gets, imported and organized here,
+//!   and the built-in ones hidden for everyone.
 //! - **Limits** on how much of the machine the server takes (CPU threads, previews, renders and
 //!   requests at once) are set here unless the deployment fixed them ([`crate::limits`]).
 //! - **Settings stay deployment settings:** where the data lives, the address the server listens
@@ -329,6 +331,22 @@ struct Licence {
     acknowledged: bool,
 }
 
+/// `PUT /api/admin/presets`: the shared presets, changed from version `version`.
+#[derive(Deserialize)]
+struct SharedPresets {
+    version: u64,
+    items: Vec<Value>,
+}
+
+/// `POST /api/admin/presets/import`: preset files given by content (`[{name, data: base64}]`), into
+/// `group` when given.
+#[derive(Deserialize)]
+struct ImportPresets {
+    files: Vec<Value>,
+    #[serde(default)]
+    group: Option<String>,
+}
+
 #[derive(Deserialize, Default)]
 #[serde(default, rename_all = "camelCase")]
 struct Gc {
@@ -522,6 +540,33 @@ pub fn api(st: &State, req: &mut Request, method: &Method, rest: &str) -> Resp {
             log::info!("admin {me}: finding the people in {name}'s photos turned {}", if b.enabled { "on" } else { "off" });
             st.vision.wake();
             Ok(search(st))
+        }),
+        (Method::Get, ["presets"]) => Ok(shared_presets(st)),
+        (Method::Put, ["presets"]) => read_json::<SharedPresets>(req).map_err(Err).and_then(|p| {
+            let r = st.presets.lock().unwrap_or_else(PoisonError::into_inner).put(p.version, &p.items);
+            match r {
+                Ok(Ok(version)) => {
+                    log::info!("admin {me}: shared presets changed (version {version})");
+                    Ok(json!({"version": version}))
+                }
+                // someone else changed them first: the answer is theirs, to show again
+                Ok(Err(current)) => Err(Err(json(412, &serde_json::to_value(&current).unwrap_or(Value::Null)))),
+                Err(e) if e.starts_with("storage:") => Err(Ok((500, e))),
+                Err(e) => Err(Ok((400, e))),
+            }
+        }),
+        (Method::Post, ["presets", "import"]) => read_json::<ImportPresets>(req).map_err(Err).and_then(|i| {
+            let group = i.group.as_deref().map(str::trim).filter(|g| !g.is_empty());
+            // ponytail: the import parses under the lock (pulls wait for it); a big pack takes seconds, it's rare
+            let r = st.presets.lock().unwrap_or_else(PoisonError::into_inner).import(i.files, group);
+            match r {
+                Ok(v) => {
+                    log::info!("admin {me}: imported {} shared preset(s)", v["added"]);
+                    Ok(v)
+                }
+                Err(e) if e.starts_with("storage:") => Err(Ok((500, e))),
+                Err(e) => Err(Ok((400, e))),
+            }
         }),
         (Method::Post, ["gc"]) => {
             let g = read_json::<Gc>(req).unwrap_or_default();
@@ -732,6 +777,14 @@ fn fetch_models(st: &State, me: &str, part: Part, l: Licence) -> AdminResult {
     let started = st.vision.start_download(part).map_err(|e| Ok((500, e)))?;
     log::info!("admin {me}: {part:?} models{}", if started { ": downloading" } else { ": already there" });
     Ok(search(st))
+}
+
+/// `GET /api/admin/presets`: the shared presets (`{version, items}`, see [`crate::server_presets`]) and the
+/// built-in presets an admin may hide (`builtin: [{id, name, group}]`).
+fn shared_presets(st: &State) -> Value {
+    let doc = st.presets.lock().unwrap_or_else(PoisonError::into_inner).doc().clone();
+    let builtin: Vec<Value> = lightcraft_engine::presets::builtin().iter().map(|p| json!({"id": p.id, "name": p.name, "group": p.group})).collect();
+    json!({"version": doc.version, "items": doc.items, "builtin": builtin})
 }
 
 /// `GET /api/admin/search`: what the server does with the photos (describe, read the text, find the

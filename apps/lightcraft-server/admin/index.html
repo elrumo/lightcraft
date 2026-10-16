@@ -29,6 +29,9 @@
   <symbol id="i-play" viewBox="0 0 20 20"><path d="M6 4.5v11l9-5.5z"/></symbol>
   <symbol id="i-folder" viewBox="0 0 20 20"><path d="M2.5 6A1.5 1.5 0 0 1 4 4.5h3.5l2 2H16A1.5 1.5 0 0 1 17.5 8v6.5A1.5 1.5 0 0 1 16 16H4a1.5 1.5 0 0 1-1.5-1.5z"/></symbol>
   <symbol id="i-refresh" viewBox="0 0 20 20"><path d="M16.2 8.5A6.5 6.5 0 1 0 16 13"/><path d="M16.5 3.5v5h-5"/></symbol>
+  <symbol id="i-presets" viewBox="0 0 20 20"><path d="M3 5.5h7.5M14.5 5.5H17M3 10h2.5M9.5 10H17M3 14.5h9.5M16.5 14.5h.5"/><circle cx="12.5" cy="5.5" r="2"/><circle cx="7.5" cy="10" r="2"/><circle cx="14.5" cy="14.5" r="2"/></symbol>
+  <symbol id="i-edit" viewBox="0 0 20 20"><path d="M12.5 4.5l3 3L7 16H4v-3z"/><path d="M11 6l3 3"/></symbol>
+  <symbol id="i-upload" viewBox="0 0 20 20"><path d="M10 13V3.5M6 7.5l4-4 4 4M3.5 13v2A1.5 1.5 0 0 0 5 16.5h10a1.5 1.5 0 0 0 1.5-1.5v-2"/></symbol>
   <symbol id="i-trash" viewBox="0 0 20 20"><path d="M3.5 6h13M8 6V4h4v2M5.5 6l.8 10.5h7.4l.8-10.5"/></symbol>
   <symbol id="i-key" viewBox="0 0 20 20"><circle cx="7" cy="13" r="3.5"/><path d="M9.5 10.5L16 4M13.5 6.5l2 2"/></symbol>
   <symbol id="i-shield" viewBox="0 0 20 20"><path d="M10 2.5l6 2.5v4.5c0 3.8-2.6 6.6-6 8-3.4-1.4-6-4.2-6-8V5z"/></symbol>
@@ -107,6 +110,7 @@
   <nav class="sidenav" aria-label="Sections">
     <a href="#/overview" data-nav="overview"><svg class="icon"><use href="#i-overview"/></svg><span>Overview</span></a>
     <a href="#/users" data-nav="users"><svg class="icon"><use href="#i-users"/></svg><span>Users</span></a>
+    <a href="#/presets" data-nav="presets"><svg class="icon"><use href="#i-presets"/></svg><span>Presets</span></a>
     <a href="#/search" data-nav="search"><svg class="icon"><use href="#i-sparkle"/></svg><span>Search</span></a>
     <a href="#/storage" data-nav="storage"><svg class="icon"><use href="#i-storage"/></svg><span>Storage</span></a>
   </nav>
@@ -358,6 +362,29 @@
           <p class="muted" id="fcNeeds" hidden></p>
           <ul class="people" id="fcUsers"></ul>
         </section>
+      </div>
+    </section>
+
+    <!-- Presets -->
+    <section data-view="presets" hidden>
+      <div class="page-head">
+        <div><h1>Presets</h1><p class="lead">Presets every user gets in LightCraft, beside their own. On their devices they can favorite and hide them, not change them.</p></div>
+        <button type="button" class="btn accent" id="importPresets"><svg class="icon"><use href="#i-upload"/></svg><span>Import presets</span></button>
+        <input type="file" id="presetFiles" multiple hidden accept=".lcpreset,.xmp,.lrtemplate,.zip,.lmp,.mplumpack">
+      </div>
+      <div class="stack">
+        <div class="panel flush">
+          <table class="table" id="sharedPresets">
+            <thead><tr><th>Shared presets</th><th class="end"><span class="sr">Actions</span></th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div class="panel flush">
+          <table class="table" id="builtinPresets">
+            <thead><tr><th>Built-in presets</th><th class="end">Shown to users</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
       </div>
     </section>
 

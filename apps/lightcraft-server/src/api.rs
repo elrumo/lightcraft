@@ -251,7 +251,7 @@ fn api(st: &State, req: &mut Request, method: &Method, path: &str, q: &str) -> R
         (Method::Get, ["snapshot"]) => snapshot(st, req, &l, &who, q),
         (Method::Get, ["usage"]) => usage(st, &l, &who),
         (Method::Get, ["activity"]) => activity(st, &l, &who),
-        (Method::Get, ["ops"]) => ops(req, &l, q),
+        (Method::Get, ["ops"]) => ops(st, req, &l, q),
         (Method::Post, ["ops"]) => push(st, req, &l, &who),
         (Method::Get, ["presets"]) => {
             // (a preset collection imported whole is tens of MB: gzipped, a tenth of that)
@@ -265,6 +265,15 @@ fn api(st: &State, req: &mut Request, method: &Method, path: &str, q: &str) -> R
         (Method::Get, ["shares"]) => crate::shares::list(st, &who.user),
         (Method::Post, ["shares"]) => crate::shares::create(st, &who.user, req),
         (Method::Delete, ["shares", id]) => crate::shares::revoke(st, &who.user, id),
+        // (the presets shared with every user: the admin's to change)
+        (Method::Get, ["docs", crate::server_presets::NAME]) => {
+            let body = serde_json::to_vec(st.presets.lock().unwrap_or_else(PoisonError::into_inner).doc());
+            match body {
+                Ok(body) => big_json(req, body),
+                Err(e) => error(500, e),
+            }
+        }
+        (Method::Put, ["docs", crate::server_presets::NAME]) => error(403, "the shared presets are changed from /admin"),
         (Method::Get, ["docs", name]) => get_doc(&l, name),
         (Method::Put, ["docs", name]) => put_doc(req, &l, name),
         (m, ["blobs", kind, hash]) => blob(st, req, m, &l, &who.user, kind, hash),
@@ -455,12 +464,16 @@ fn snapshot(st: &State, req: &Request, l: &Mutex<UserLib>, who: &Session, q: &st
     big_json(req, format!("{{\"library\":{lib},\"seq\":{seq},\"catalog\":{catalog}}}").into_bytes())
 }
 
-fn ops(req: &Request, l: &Mutex<UserLib>, q: &str) -> Resp {
+fn ops(st: &State, req: &Request, l: &Mutex<UserLib>, q: &str) -> Resp {
     let since = query(q, "since").and_then(|v| v.parse::<u64>().ok()).unwrap_or(0);
     let limit = query(q, "limit").and_then(|v| v.parse::<usize>().ok()).unwrap_or(1000).clamp(1, PULL_MAX);
+    let shared = st.presets.lock().unwrap_or_else(PoisonError::into_inner).version();
     let mut l = l.lock().unwrap_or_else(PoisonError::into_inner);
     let presets = l.presets.version;
-    let docs = l.docs.versions();
+    let mut docs = l.docs.versions();
+    if shared > 0 {
+        docs.insert(crate::server_presets::NAME.to_string(), shared);
+    }
     match l.core.since(since, limit) {
         Ok(Pull::Ops(ops)) => {
             let body = serde_json::to_vec(&proto::Ops { head: l.core.head(), ops, presets, docs });

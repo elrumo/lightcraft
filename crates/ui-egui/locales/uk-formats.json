@@ -338,5 +338,7 @@
   "Moved {n} photo{} to “{}”. Edit → Undo moves them back.": "До «{1}» переміщено фото: {n}{0:.0}. Редагування → Скасувати поверне їх.",
   "Downloading the depth model… {:.0} %": "Завантаження моделі глибини… {:.0} %",
   "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.": "У цього фото немає власної глибини: розмиття об’єктива оцінює її за допомогою Depth Anything V2 Small, завантаження {:.0} МБ (ліцензія {}). {}.",
-  "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)": "У фокусі: {:.0}–{:.0} (0 найближче, 100 найдалі)"
+  "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)": "У фокусі: {:.0}–{:.0} (0 найближче, 100 найдалі)",
+  "Delete the group “{name}” and its {n} presets?": "Видалити групу «{name}» і її набори налаштувань ({n})?",
+  "Hid “{name}”. Show Hidden Presets in the panel's menu brings it back.": "Приховано: «{name}». Повернути можна командою «Показувати приховані набори налаштувань» у меню панелі."
 }

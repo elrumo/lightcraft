@@ -1,5 +1,5 @@
 // LightCraft server admin page (served at /admin; API: /api/admin/…, see src/admin.rs).
-// Views by URL hash: #/overview, #/users, #/users/NAME[/devices|/folders|/shares], #/storage.
+// Views by URL hash: #/overview, #/users, #/users/NAME[/devices|/folders|/shares], #/presets, #/search, #/storage.
 // Text from the server (user and device names, errors) is only ever set as text, never as HTML.
 'use strict';
 
@@ -67,7 +67,9 @@ async function api(method, path, body) {
   }
   if (!r.ok) {
     const msg = (data && data.error) || 'the server answered ' + r.status;
-    throw new Error(msg.charAt(0).toUpperCase() + msg.slice(1));
+    const e = new Error(msg.charAt(0).toUpperCase() + msg.slice(1));
+    e.status = r.status;
+    throw e;
   }
   if (method !== 'GET') {
     // (something changed: what was read before is not to be shown as current)
@@ -305,7 +307,7 @@ function ask({ title, text, fields, ok, danger, action }) {
 
 // ---------------------------------------------------------------- routing
 
-const VIEWS = ['overview', 'users', 'search', 'storage'];
+const VIEWS = ['overview', 'users', 'presets', 'search', 'storage'];
 
 async function route() {
   if ($('dash').hidden) return;
@@ -327,7 +329,7 @@ async function route() {
     s.hidden = s.dataset.view !== v;
     if (!s.hidden && !was) window.scrollTo(0, 0);
   }
-  const load = { overview: loadOverview, users: loadUsers, search: loadSearch, storage: loadStorage, user: () => loadUser(decode(name), tab === 'folders' || tab === 'shares' ? tab : 'devices') }[v];
+  const load = { overview: loadOverview, users: loadUsers, presets: loadPresets, search: loadSearch, storage: loadStorage, user: () => loadUser(decode(name), tab === 'folders' || tab === 'shares' ? tab : 'devices') }[v];
   try {
     await load();
   } catch (e) {
@@ -339,6 +341,204 @@ async function route() {
 function recount(users) {
   clearTimeout(recountTimer);
   if (users.some((u) => u.bytes === null)) recountTimer = setTimeout(route, 1500);
+}
+
+// ---------------------------------------------------------------- presets
+
+/** The shared presets as last read: `{version, items, builtin}` (see src/server_presets.rs). */
+let shared = null;
+
+function loadPresets() {
+  return swr(['presets'], ([p]) => showPresets(p));
+}
+
+const isHiddenItem = (it) => it.id === 'hidden';
+/** The built-in presets and groups hidden for everyone. */
+const hiddenOf = (items) => items.find(isHiddenItem) || { id: 'hidden', presets: [], groups: [] };
+
+/** `[[group, presets]]`, groups in the order they first come. */
+function byGroup(list) {
+  const m = new Map();
+  for (const p of list) {
+    if (!m.has(p.group)) m.set(p.group, []);
+    m.get(p.group).push(p);
+  }
+  return [...m];
+}
+
+/** A row's action: icon and word, the icon alone on a phone (the word stays its name). */
+function rowButton(name, text, onclick) {
+  return el('button', { type: 'button', class: 'btn quiet', title: text, 'aria-label': text, onclick }, icon(name), el('span', { class: 'btn-word' }, text));
+}
+
+function showPresets(p) {
+  shared = p;
+  const presets = p.items.filter((i) => !isHiddenItem(i));
+  const body = $('sharedPresets').querySelector('tbody');
+  body.replaceChildren();
+  if (!presets.length) body.append(emptyRow(2, 'presets', 'No shared presets yet. Import LightCraft, XMP or Lightroom preset files, or a zip of them.'));
+  for (const [group, list] of byGroup(presets)) {
+    body.append(
+      el(
+        'tr',
+        { class: 'group' },
+        el('td', {}, el('b', {}, group), el('span', { class: 'sub' }, plural(list.length, 'preset', 'presets'))),
+        el('td', { class: 'end' }, rowButton('edit', 'Rename', () => renameGroup(group)), rowButton('trash', 'Delete', () => deleteGroup(group, list.length))),
+      ),
+    );
+    for (const it of list) {
+      body.append(
+        el(
+          'tr',
+          {},
+          el('td', {}, el('div', { class: 'who-cell' }, el('span', { class: 'thing' }, icon('presets')), el('b', {}, it.name))),
+          el('td', { class: 'end' }, rowButton('edit', 'Rename', () => renamePreset(it)), rowButton('folder', 'Move', () => movePreset(it)), rowButton('trash', 'Delete', () => deletePreset(it))),
+        ),
+      );
+    }
+  }
+  const hidden = hiddenOf(p.items);
+  const builtin = $('builtinPresets').querySelector('tbody');
+  builtin.replaceChildren();
+  for (const [group, list] of byGroup(p.builtin)) {
+    const off = hidden.groups.includes(group);
+    builtin.append(el('tr', { class: 'group' }, el('td', {}, el('b', {}, group)), el('td', { class: 'end' }, shownSwitch(group, !off, (on) => hideBuiltin('groups', group, !on)))));
+    for (const b of list) {
+      const on = !off && !hidden.presets.includes(b.id);
+      builtin.append(el('tr', {}, el('td', {}, b.name), el('td', { class: 'end' }, shownSwitch(b.name, on, (now) => hideBuiltin('presets', b.id, !now), off))));
+    }
+  }
+}
+
+/** A "shown to users" switch for `what`; `change(on)` saves. */
+function shownSwitch(what, on, change, disabled) {
+  const input = el('input', { type: 'checkbox', role: 'switch', 'aria-label': 'Show ' + what + ' to users', disabled });
+  input.checked = on;
+  input.addEventListener('change', async () => {
+    input.disabled = true;
+    try {
+      await change(input.checked);
+    } catch (e) {
+      input.checked = !input.checked;
+      fail(e);
+    }
+    input.disabled = !!disabled;
+  });
+  return el('label', { class: 'switch' }, input);
+}
+
+/** Save `items` as the change of the presets last read, then show them. Someone else's change first: theirs are shown, and it throws. */
+async function savePresets(items) {
+  try {
+    await api('PUT', 'presets', { version: shared.version, items });
+  } catch (e) {
+    if (e.status !== 412) throw e;
+    await route();
+    throw new Error('Someone else changed the presets meanwhile: here they are now. Try again.');
+  }
+  await route();
+}
+
+const sharedItems = () => shared.items.filter((i) => !isHiddenItem(i));
+/** The items with the presets `presets` and the hidden built-ins kept. */
+const withHidden = (presets) => {
+  const h = hiddenOf(shared.items);
+  return h.presets.length || h.groups.length ? [...presets, h] : presets;
+};
+const groupsHelp = () => 'Groups: ' + byGroup(sharedItems()).map(([g]) => g).join(', ') + '. A new name makes a new group.';
+
+function renamePreset(it) {
+  return ask({
+    title: 'Rename ' + it.name,
+    fields: [{ name: 'name', label: 'Name', value: it.name }],
+    ok: 'Rename',
+    action: (v) => savePresets(withHidden(sharedItems().map((x) => (x.id === it.id ? { ...x, name: v.name.trim() } : x)))),
+  });
+}
+
+function movePreset(it) {
+  return ask({
+    title: 'Move ' + it.name,
+    fields: [{ name: 'group', label: 'Group', value: it.group, help: groupsHelp() }],
+    ok: 'Move',
+    action: (v) => savePresets(withHidden(sharedItems().map((x) => (x.id === it.id ? { ...x, group: v.group.trim() } : x)))),
+  });
+}
+
+function deletePreset(it) {
+  return ask({
+    title: 'Delete ' + it.name + '?',
+    text: 'It goes from every user’s devices the next time they sync. Edits made with it stay.',
+    ok: 'Delete',
+    danger: true,
+    action: async () => {
+      await savePresets(withHidden(sharedItems().filter((x) => x.id !== it.id)));
+      toast(it.name + ' was deleted.');
+    },
+  });
+}
+
+function renameGroup(group) {
+  return ask({
+    title: 'Rename the group ' + group,
+    fields: [{ name: 'name', label: 'Name', value: group, help: 'A group that has this name already takes its presets.' }],
+    ok: 'Rename',
+    action: (v) => savePresets(withHidden(sharedItems().map((x) => (x.group === group ? { ...x, group: v.name.trim() } : x)))),
+  });
+}
+
+function deleteGroup(group, count) {
+  return ask({
+    title: 'Delete the group ' + group + '?',
+    text: 'Its ' + plural(count, 'preset goes', 'presets go') + ' from every user’s devices the next time they sync. Edits made with them stay.',
+    ok: 'Delete',
+    danger: true,
+    action: async () => {
+      await savePresets(withHidden(sharedItems().filter((x) => x.group !== group)));
+      toast('The group ' + group + ' was deleted.');
+    },
+  });
+}
+
+/** Hide (or show) the built-in preset or group `name` (`kind`: `presets` or `groups`) for every user. */
+function hideBuiltin(kind, name, hide) {
+  const h = hiddenOf(shared.items);
+  const next = { id: 'hidden', presets: [...h.presets], groups: [...h.groups] };
+  next[kind] = next[kind].filter((x) => x !== name);
+  if (hide) next[kind].push(name);
+  const keep = next.presets.length || next.groups.length;
+  return savePresets(keep ? [...sharedItems(), next] : sharedItems());
+}
+
+/** A file's bytes as base64. */
+function base64(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result).split(',')[1] || '');
+    r.onerror = () => reject(r.error || new Error('can’t read ' + file.name));
+    r.readAsDataURL(file);
+  });
+}
+
+async function importPresets() {
+  const picked = [...$('presetFiles').files];
+  if (!picked.length) return;
+  const btn = $('importPresets');
+  busy(btn, true);
+  try {
+    const files = await Promise.all(picked.map(async (f) => ({ name: f.name, data: await base64(f) })));
+    const r = await api('POST', 'presets/import', { files });
+    const already = r.skipped ? ' (' + plural(r.skipped, 'was', 'were') + ' here already)' : '';
+    if (r.added) toast('Added ' + plural(r.added, 'preset', 'presets') + already + '.');
+    else toast('No new presets in ' + plural(picked.length, 'file', 'files') + already + '.', 'info');
+    const failed = r.failed || [];
+    if (failed.length) toast(plural(failed.length, 'file', 'files') + ' couldn’t be read: ' + failed.map((f) => f[0] + ': ' + f[1]).join('; '), 'negative');
+    await route();
+  } catch (e) {
+    fail(e);
+  } finally {
+    busy(btn, false);
+  }
 }
 
 // --------------------------------------------------------------- overview
@@ -1626,6 +1826,11 @@ document.addEventListener('DOMContentLoaded', () => {
   $('limForm').addEventListener('submit', saveLimits);
   $('addUser').addEventListener('click', addUser);
   $('gcCheck').addEventListener('click', gcCheck);
+  $('importPresets').addEventListener('click', () => {
+    $('presetFiles').value = '';
+    $('presetFiles').click();
+  });
+  $('presetFiles').addEventListener('change', importPresets);
   $('gcRun').addEventListener('click', gcRun);
   for (const p of ['sr', 'tx']) $(p + 'Switch').addEventListener('change', (e) => toggleFeature(p, e));
   for (const p of ['sr', 'tx', 'fc']) $(p + 'Cancel').addEventListener('click', () => cancelDownload(p));

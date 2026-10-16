@@ -2394,5 +2394,19 @@
   "Blur Brush": "模糊筆刷",
   "Erase Brush": "擦除筆刷",
   "Clear Brush": "清除筆刷",
-  "Lens Blur and Depth Range masks on photos without depth data of their own": "用於本身沒有深度資料之照片的鏡頭模糊與深度範圍遮色片"
+  "Lens Blur and Depth Range masks on photos without depth data of their own": "用於本身沒有深度資料之照片的鏡頭模糊與深度範圍遮色片",
+  "Show Hidden Presets": "顯示隱藏的預設集",
+  "Show Preset": "顯示預設集",
+  "Hide Preset": "隱藏預設集",
+  "Show Group": "顯示群組",
+  "Hide Group": "隱藏群組",
+  "Rename Group…": "重新命名群組…",
+  "Delete Group…": "刪除群組…",
+  "Delete Preset Group": "刪除預設集群組",
+  "Rename Preset Group": "重新命名預設集群組",
+  "Photos keep their edits. Export the group first to keep a copy.": "照片會保留其編輯。若要保留副本，請先匯出該群組。",
+  "All Presets": "所有預設集",
+  "Delete Group": "刪除群組",
+  "Rename Group": "重新命名群組",
+  "New Group": "新增群組"
 }

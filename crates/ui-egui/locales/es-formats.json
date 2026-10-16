@@ -338,5 +338,7 @@
   "Moved {n} photo{} to “{}”. Edit → Undo moves them back.": "{n} foto{0} movida{0} a “{1}”. Editar → Deshacer las devuelve.",
   "Downloading the depth model… {:.0} %": "Descargando el modelo de profundidad… {:.0} %",
   "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.": "Esta foto no tiene profundidad propia: el desenfoque de objetivo la estima con Depth Anything V2 Small, una descarga de {:.0} MB (licencia {}). {}.",
-  "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)": "Enfocado: {:.0}–{:.0} (0 lo más cerca, 100 lo más lejos)"
+  "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)": "Enfocado: {:.0}–{:.0} (0 lo más cerca, 100 lo más lejos)",
+  "Delete the group “{name}” and its {n} presets?": "¿Eliminar el grupo «{name}» y sus {n} ajustes preestablecidos?",
+  "Hid “{name}”. Show Hidden Presets in the panel's menu brings it back.": "Has ocultado «{name}». Mostrar ajustes preestablecidos ocultos, en el menú del panel, lo vuelve a mostrar."
 }

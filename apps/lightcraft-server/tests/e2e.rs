@@ -904,6 +904,54 @@ fn shared_documents_are_versioned_and_only_known_names_are_kept() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// The presets an admin shares (imported, then edited on the admin page) reach a user's device as presets it can't
+/// change, with the built-ins the admin hid gone; devices can read them but never write them.
+#[test]
+fn presets_an_admin_shares_reach_every_device() {
+    let root = temp("shared-presets");
+    let server = start(&root);
+    accounts::set_admin(&root.join("data"), "ann", true).unwrap();
+    let base = format!("http://{}", server.addr());
+    let req = |m: &str, path: &str, token: &str, body: Option<Value>| {
+        let (s, b, _) = call(m, &format!("{base}{path}"), token, body.map(|v| v.to_string()).as_deref().map(str::as_bytes), &[]);
+        (s, json_of(&b))
+    };
+    let admin =
+        req("POST", "/api/admin/login", "", Some(json!({"user": "ann", "password": "correct horse"}))).1["token"].as_str().unwrap().to_string();
+    let (s, p) = req("GET", "/api/admin/presets", &admin, None);
+    assert_eq!((s, p["version"].as_u64(), p["items"].clone()), (200, Some(0), json!([])), "{p}");
+    assert!(p["builtin"].as_array().unwrap().iter().any(|b| b["id"] == "lc.moody"), "{p}");
+    // imported: our own .lcpreset, written for this test
+    let file = json!({"format": "lightcraft.preset", "version": 1, "presets": [{"id": "x", "name": "Bright", "group": "Team", "settings": {"light": {"exposure": 0.7}}}]});
+    let files = lightcraft_engine::inline_files::to_param([("Team.lcpreset", file.to_string().as_bytes())]);
+    let (s, r) = req("POST", "/api/admin/presets/import", &admin, Some(json!({"files": files})));
+    assert_eq!((s, r["added"].as_u64(), r["version"].as_u64()), (200, Some(1), Some(1)), "{r}");
+    // renamed on the page, and the built-in Moody hidden for everyone
+    let (_, p) = req("GET", "/api/admin/presets", &admin, None);
+    let mut item = p["items"][0].clone();
+    item["name"] = json!("Team Bright");
+    let items = json!([item, {"id": "hidden", "presets": ["lc.moody"], "groups": []}]);
+    let (s, r) = req("PUT", "/api/admin/presets", &admin, Some(json!({"version": 1, "items": items})));
+    assert_eq!((s, r["version"].as_u64()), (200, Some(2)), "{r}");
+    let (s, cur) = req("PUT", "/api/admin/presets", &admin, Some(json!({"version": 1, "items": []})));
+    assert_eq!((s, cur["version"].as_u64()), (412, Some(2)), "a stale change gets the current presets");
+    assert_eq!(req("PUT", "/api/admin/presets", &admin, Some(json!({"version": 2, "items": [{"id": "user.x"}]}))).0, 400);
+    // a device: read-only for it, and its version comes with every pull
+    let token = sign_in_raw(&base);
+    assert_eq!(req("GET", "/api/admin/presets", &token, None).0, 401, "a device token isn't an admin session");
+    assert_eq!(req("PUT", "/api/docs/server-presets", &token, Some(json!({"version": 2, "items": []}))).0, 403);
+    assert_eq!(req("GET", "/api/ops?since=0", &token, None).1["docs"]["server-presets"], 2);
+    let mut a = open(&root.join("a"));
+    sign_in(&mut a, &base);
+    let st = a.execute("sync.now", &json!({"wait": true})).unwrap();
+    assert_eq!(st["state"], "idle", "{st}");
+    let shared = a.presets.iter().find(|p| p.name == "Team Bright").expect("the shared preset is on the device");
+    assert!(shared.builtin && shared.id.starts_with("srv.") && shared.group == "Team");
+    assert!(!a.presets.iter().any(|p| p.id == "lc.moody"), "hidden for everyone");
+    drop(server);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// Signing out, against the real server: what is left goes up first, the device's token stops working there, the library
 /// on the device is empty, and another user signs in to it and gets their own library; the first user's is untouched.
 #[test]
