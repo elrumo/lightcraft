@@ -38,7 +38,8 @@ use lightcraft_raw::{
 /// version every raw's proxy, DNGs too, goes stale on a bump.
 /// 11: a CR3 of a model with measured matrices starts from the neutral look, not a fit to its camera JPEG.
 /// 12: the EOS R6's neutral look adds its hue/saturation table (`camera_profiles::NEUTRAL_BUNDLED`).
-pub const LOOK_VERSION: u32 = 12;
+/// 13: that table refitted with pooled pairs in a fixed order (`camera_profiles::in_order`).
+pub const LOOK_VERSION: u32 = 13;
 
 #[derive(Clone, Debug)]
 pub(crate) struct CameraLook {
@@ -430,7 +431,8 @@ fn neutral_look(model: Option<&str>) -> Option<CameraLook> {
 /// same photo by another raw converter (encoded image file bytes), with the neutral look's chroma curve taken out
 /// ([`without_chroma`]), so the table makes up only what the tone and chroma curves leave. The render may be cropped
 /// slightly or lens-corrected: the pairs line up as for a camera JPEG ([`align_cr3_framing`]), away from edges, and
-/// clipped sensor pixels are left out. `None` for other files or renders that don't line up.
+/// clipped sensor pixels are left out. `None` for other files or renders that don't line up with it
+/// ([`MIN_REFERENCE_ALIGNMENT`]).
 pub(crate) fn neutral_pairs(raw: &mut RawImage, reference: &[u8]) -> Option<Vec<([f64; 3], [f64; 3])>> {
     if raw.format != RawFormat::Cr3 || lightcraft_raw::color::has_matrix(&raw.color) {
         return None;
@@ -444,6 +446,10 @@ pub(crate) fn neutral_pairs(raw: &mut RawImage, reference: &[u8]) -> Option<Vec<
     let upright = decoded.to_working().into_oriented(lightcraft_geom::Orientation::from_exif(decoded.orientation));
     // back into the sensor's orientation, where the camera JPEG would be
     let (sensor, reference, clipped) = proxies_from(raw, upright.into_oriented(raw.orientation.inverse()), &transform, PROFILE_PROXY, None)?;
+    // a render of another photo (a name mix-up) or turned the wrong way would only add noise
+    if alignment(&sensor, &reference) < MIN_REFERENCE_ALIGNMENT {
+        return None;
+    }
     let sensor = without_clipped(&sensor, &clipped).unwrap_or(sensor);
     let (pairs, _) = collect_pairs(&sensor, &reference, 0.05, Some(EDGE_CONTRAST), false)?;
     let tone = ToneMap::camera(&neutral_look(None)?.tone, 0.0, 0.0, 0.0);
@@ -457,6 +463,12 @@ pub(crate) fn neutral_pairs(raw: &mut RawImage, reference: &[u8]) -> Option<Vec<
 /// How close to 0 or 1 a linear sRGB channel of a reference render may come before the pair is left out (about 3 of
 /// 255 in sRGB near black, where JPEG noise leaves a clipped channel).
 const SRGB_EDGE: f64 = 0.001;
+
+/// How well a reference render must line up with the sensor ([`alignment`], high-passed log luminance) for
+/// [`neutral_pairs`]: Lightroom's exports of 19 EOS R6 photos reached 0.10 to 0.81, the same exports turned upside down
+/// or of another photo at most 0.03. (The whole-picture [`structure_agrees`] refused a beach of sky and sand, whose
+/// large-scale brightness the render's own vignetting correction changes.)
+const MIN_REFERENCE_ALIGNMENT: f64 = 0.05;
 
 /// A displayed colour with `tone`'s chroma curve undone: the colour that, scaled by the curve's chroma at its
 /// luminance, displays as `y`. The same luminance and hue; `None` where the curve keeps too little chroma to undo
@@ -2783,11 +2795,11 @@ mod tests {
         let pairs = neutral_pairs(&mut raw, &png(&upright)).expect("the sample's own JPEG lines up");
         assert!(pairs.len() > 1000, "{}", pairs.len());
         assert!(fit_neutral_table(&pairs).is_some());
-        // a picture of something else gives far fewer, if any
+        // the render turned upside down, or of something else, gives none
         let mut raw = lightcraft_raw::decode(&bytes).unwrap();
         let mut other = upright.clone();
         other.data.reverse();
-        assert!(neutral_pairs(&mut raw, &png(&other)).is_none_or(|p| p.len() < pairs.len() / 2));
+        assert!(neutral_pairs(&mut raw, &png(&other)).is_none());
     }
 
     /// The neutral tone keeps the brightness it was set to (the median of Lightroom's default exports of 19 EOS R6
