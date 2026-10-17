@@ -1919,6 +1919,10 @@ impl crate::Session {
             if src.info.as_ref().is_some_and(|i| i.raw) && self.catalog.photo(r.photo).is_some_and(|p| p.preview_only.is_some()) {
                 crate::cmd::convert::heal_preview_only(self, r.photo);
             }
+            // and one catalogued as developable whose file only gave its embedded JPEG (a decoded source: never a smart preview)
+            if src.info.as_ref().is_some_and(|i| !i.raw) && self.catalog.photo(r.photo).is_some_and(|p| p.develops_raw()) {
+                crate::cmd::convert::flag_preview_only(self, r.photo);
+            }
         }
     }
 
@@ -2055,8 +2059,16 @@ pub(crate) fn export_source_edge(p: &Photo, out_long: usize) -> Option<usize> {
     if !native.is_finite() || native < 1.0 {
         return None;
     }
-    let needed = (w.max(h) as f64 * (out_long as f64 / native).min(1.0) * 1.12).ceil();
-    (needed * 2.0 <= w.max(h) as f64).then_some(needed as usize)
+    let long = w.max(h) as f64;
+    let wanted = long * (out_long as f64 / native).min(1.0);
+    let needed = (wanted * 1.12).ceil();
+    if needed * 2.0 <= long {
+        return Some(needed as usize);
+    }
+    // Just over half (a 4096 px export of a 48 MP photo, whose half is 4032 px) still takes the half-size source, a
+    // few per cent short of the output: the whole original would cost a phone ~3 GB more than it has.
+    let half = (long / 2.0).floor();
+    (wanted <= half * 1.05).then_some(half as usize)
 }
 
 /// How many pixels the source of an export `out_long` pixels long has: the photo's own, or fewer when a DNG is read
@@ -2617,19 +2629,23 @@ mod tests {
         let s = crate::Session::with_demo();
         let p = s.catalog.photos().next().unwrap().clone();
         let long = p.width.max(p.height) as usize;
-        // a quarter of the size: a source with a 12 % margin; half the size, the full size, or more: the whole original
+        // a quarter of the size: a source with a 12 % margin; half the size (or a few per cent over: a 4096 px export of
+        // a 48 MP photo reads 4032 px, not 8064): the half-size source; well over half, the full size, or more: the whole
         assert_eq!(export_source_edge(&p, long / 4), Some((long as f64 / 4.0 * 1.12).ceil() as usize));
-        assert_eq!(export_source_edge(&p, long / 2), None);
+        assert_eq!(export_source_edge(&p, long / 2), Some(long / 2));
+        assert_eq!(export_source_edge(&p, long / 2 + long / 50), Some(long / 2));
+        assert_eq!(export_source_edge(&p, long * 3 / 5), None);
         assert_eq!(export_source_edge(&p, long), None);
         assert_eq!(export_source_edge(&p, long * 2), None);
         // a crop to half the photo: an export an eighth of the original's size is a quarter of the crop's, so the source
-        // needs a quarter of the original (not an eighth), and a quarter-size export is half the crop's, which saves nothing
+        // needs a quarter of the original (not an eighth), and a quarter-size export is half the crop's, which takes the half-size source
         let mut cropped: Photo = (*p).clone();
         let mut d = (*cropped.develop).clone();
         d.crop.geometry.rect = lightcraft_geom::Rect { x0: 0.0, y0: 0.0, x1: 0.5, y1: 0.5 };
         cropped.develop = Arc::new(d);
         assert_eq!(export_source_edge(&cropped, long / 8), Some((long as f64 / 4.0 * 1.12).ceil() as usize));
-        assert_eq!(export_source_edge(&cropped, long / 4), None);
+        assert_eq!(export_source_edge(&cropped, long / 4), Some(long / 2));
+        assert_eq!(export_source_edge(&cropped, long * 3 / 10), None);
     }
 
     #[test]

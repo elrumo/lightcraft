@@ -27,6 +27,7 @@ pub mod query;
 pub mod revision;
 pub mod rules;
 pub mod safe_file;
+mod snapload;
 pub mod search;
 pub mod stacks;
 pub mod store;

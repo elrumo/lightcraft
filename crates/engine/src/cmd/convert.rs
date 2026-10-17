@@ -513,6 +513,35 @@ pub(crate) fn heal_preview_only(s: &mut Session, id: lightcraft_catalog::PhotoId
     }
 }
 
+/// The reverse of [`heal_preview_only`]: a raw catalogued as developed from its sensor data whose file just
+/// gave only its embedded JPEG (damaged raw data, such as a copy cut short, or a catalog written by a build or
+/// a device that never decoded it). It and its virtual copies get "Preview only" with the decoder's reason and
+/// the file's size ([`content_op`]), so every view says the photo is the camera's JPEG, not the raw. Their
+/// edits stay. Not an undo step: the user did nothing.
+pub(crate) fn flag_preview_only(s: &mut Session, id: lightcraft_catalog::PhotoId) {
+    let Some(master) = s.catalog.photo(id).map(|p| p.copy_of.unwrap_or(id)) else { return };
+    let Some(Source::File { path }) = s.catalog.photo(master).map(|p| p.source.clone()) else { return };
+    if s.media.file_probe.is_none() {
+        return;
+    }
+    let Some(Ok(info)) = crate::import::probe_paths(s, std::slice::from_ref(&path)).pop() else { return };
+    if info.preview_only.is_none() {
+        return;
+    }
+    let ops: Vec<Op> = s
+        .catalog
+        .photos()
+        .filter(|p| (p.id == master || p.copy_of == Some(master)) && p.develops_raw())
+        .filter_map(|p| content_op(p.id, p, info.clone()))
+        .collect();
+    if ops.is_empty() {
+        return;
+    }
+    if let Err(e) = s.apply_quiet(Op::Batch { ops }) {
+        log::warn!("can't mark {path} as preview only: {e}");
+    }
+}
+
 /// Ops that fill a photo's empty camera fields (camera, lens, exposure, GPS, capture time) from a fresh probe.
 fn fill_missing_meta(id: lightcraft_catalog::PhotoId, ph: &lightcraft_catalog::Photo, info: &crate::media::ProbeInfo) -> Vec<Op> {
     let (mut m, src) = (ph.meta.clone(), &info.meta);

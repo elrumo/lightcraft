@@ -16,6 +16,7 @@
 //! lightcraft-server folder list [NAME]
 //! lightcraft-server folder ignore NAME [PATTERN…]
 //! lightcraft-server scan [NAME]
+//! lightcraft-server check [NAME]
 //! lightcraft-server gc [--dry-run]
 //! lightcraft-server health
 //! ```
@@ -53,6 +54,7 @@ const USAGE: &str = "usage:
   lightcraft-server folder list [NAME]
   lightcraft-server folder ignore NAME [PATTERN…]   (names the scan skips, like '*.fcpbundle'; none: show them, '': clear)
   lightcraft-server scan [NAME]                (read the library folders now)
+  lightcraft-server check [NAME]               (look for photo files cut short, such as copies that stopped part-way; changes nothing)
   lightcraft-server model enable|disable [--text|--sensitive]   (search by description, or with --text reading the text in photos, or with --sensitive checking photos for sensitive content, for every device that signs in; on once the models are installed, off keeps the files)
   lightcraft-server model status|download [--accept-licences] [--text] [--faces] [--sensitive] [--vision-dir DIR]   (the search model: about 1.5 GB, Google's Apache License 2.0; --text adds the models that read the text in photos: about 31 MB, Baidu's Apache License 2.0; --faces adds the models that find and tell apart faces: about 39 MB, MIT and Apache 2.0; --sensitive adds the model that flags photos that might be sensitive: about 87 MB, Falcons.ai's Apache License 2.0)
   lightcraft-server gc [--dry-run]
@@ -326,6 +328,18 @@ fn run(args: &[String]) -> Result<(), String> {
             }
             Ok(())
         }
+        ["check", rest @ ..] => {
+            let users: Vec<String> = match rest {
+                [name] => vec![name.to_string()],
+                [] => accounts::read_users(&data)?.users.into_keys().collect(),
+                _ => return Err(USAGE.into()),
+            };
+            let mut damaged = 0;
+            for u in users {
+                damaged += check(&data, &u)?;
+            }
+            if damaged > 0 { Err(format!("{damaged} damaged file(s)")) } else { Ok(()) }
+        }
         ["model", "status"] => {
             let sw = lightcraft_server::switch::Switch::new(&data);
             let on = |b: bool| if b { "on (once the models are installed)" } else { "off" };
@@ -424,6 +438,44 @@ fn request_scan(data: &Path, user: &str) {
 }
 
 /// `scan NAME`: here and now, or by the running server.
+/// Check a user's originals for files cut short and print the damaged ones; the report is kept for the
+/// admin page. While the server runs (it holds the library), photos are named by their files only.
+fn check(data: &Path, user: &str) -> Result<usize, String> {
+    use lightcraft_server::integrity;
+    let dir = accounts::user_dir(data, user);
+    // (fails while the server runs: it holds the library)
+    let names = lightcraft_server::api::UserLib::open_for(data, user).map(|l| integrity::photo_names(l.catalog())).unwrap_or_default();
+    let mut files = integrity::folder_originals(&folders::Index::load(&dir), &names);
+    files.extend(integrity::kept_originals(&dir, &names));
+    let (done, stop) = (std::sync::atomic::AtomicUsize::new(0), std::sync::atomic::AtomicBool::new(false));
+    let tty = std::io::stderr().is_terminal();
+    let total = files.len();
+    let report = std::thread::scope(|s| {
+        let work = s.spawn(|| integrity::check_all(&files, &done, &stop));
+        while tty && !work.is_finished() {
+            eprint!("\r{user}: checked {} of {total} file(s)", done.load(std::sync::atomic::Ordering::Relaxed));
+            std::thread::sleep(Duration::from_millis(500));
+        }
+        work.join().map_err(|_| "the check failed unexpectedly".to_string())
+    })?;
+    if tty {
+        eprintln!();
+    }
+    for d in report.cut.iter().chain(&report.unreadable) {
+        let missing = d.missing.map(|m| format!(", {m} bytes missing")).unwrap_or_default();
+        println!("{user}\t{}\t{}{missing}", d.path, d.why);
+    }
+    println!(
+        "{user}: {} file(s) checked; {} cut short, {} unreadable, {} of a format not checked",
+        report.files,
+        report.cut.len(),
+        report.unreadable.len(),
+        report.unchecked
+    );
+    report.save(&dir)?;
+    Ok(report.cut.len() + report.unreadable.len())
+}
+
 fn scan(data: &Path, user: &str) -> Result<(), String> {
     let lib_dir = accounts::user_dir(data, user).join("library");
     std::fs::create_dir_all(&lib_dir).map_err(|e| format!("{}: {e}", lib_dir.display()))?;

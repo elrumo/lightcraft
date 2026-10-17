@@ -1007,3 +1007,24 @@ fn a_painted_keyword_toggles_on_the_photos() {
     assert!(!has(&s, ids[0]) && !has(&s, ids[1]));
     assert!(s.execute("keyword.toggle", &json!({"ids": ids, "keyword": "  "})).is_err());
 }
+
+/// An album sorted by capture date lists its photos by date, whatever order they were added in, so the
+/// date headers are one per day (they used to alternate: the album's insertion order was shown instead).
+#[test]
+fn an_album_sorted_by_capture_date_is_in_date_order() {
+    use lightcraft_catalog::{Op, Photo, PhotoId, Source};
+    let mut s = Session::new();
+    let days = ["2026-03-02", "2026-03-01", "2026-03-02", "2026-03-01", "2026-03-02"];
+    for (i, day) in days.iter().enumerate() {
+        let mut p = Photo::new(PhotoId(i as u64 + 1), Source::Demo { scene: 0 }, &format!("{i}.jpg"), "JPEG", 4, 3, "2026-10-09T00:00:00");
+        p.captured = Some(format!("{day}T1{i}:00:00"));
+        s.catalog.apply(Op::AddPhoto { photo: Box::new(p) }).unwrap();
+    }
+    s.selection = crate::Selection::single(PhotoId(1));
+    let ids: Vec<u64> = (1..=5).collect();
+    let album = s.execute("album.create", &json!({"name": "Trip"})).unwrap()["id"].as_u64().unwrap();
+    s.execute("album.addPhotos", &json!({"id": album, "ids": ids})).unwrap();
+    s.execute("library.source", &json!({"kind": "album", "id": album})).unwrap();
+    let keys: Vec<String> = s.execute("library.groups", &json!({})).unwrap().as_array().unwrap().iter().map(|g| g["key"].as_str().unwrap().to_string()).collect();
+    assert_eq!(keys, ["2026-03-02", "2026-03-01"]);
+}

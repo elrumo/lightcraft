@@ -44,6 +44,7 @@ pub mod folders;
 pub mod gc;
 pub mod guest;
 pub mod http;
+pub mod integrity;
 pub mod limits;
 pub mod multipart;
 pub mod render;
@@ -162,6 +163,8 @@ pub struct State {
     pub(crate) presets: Mutex<server_presets::ServerPresets>,
     /// What the server takes of the machine and what each device asks of it ([`usage`]).
     pub(crate) usage: usage::Usage,
+    /// Checks of users' originals for files cut short ([`integrity`]).
+    pub(crate) checker: integrity::Checker,
 }
 
 /// A running server.
@@ -222,6 +225,7 @@ impl Server {
             writer: writeback::Writer::new(),
             presets: Mutex::new(shared_presets),
             usage: usage::Usage::new(),
+            checker: integrity::Checker::default(),
         });
         // (counted now, so the admin page has the numbers by the time anyone opens it)
         state.sizes.refresh(&state.data);
@@ -291,6 +295,7 @@ impl Drop for Server {
         self.state.vision.shut_down();
         self.state.writer.shut_down();
         self.state.usage.shut_down();
+        self.state.checker.shut_down();
         for t in self.workers.drain(..) {
             let _ = t.join();
         }

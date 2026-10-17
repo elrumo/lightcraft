@@ -89,7 +89,7 @@ pub fn specs() -> Vec<CommandSpec> {
             let off = pagination_usize(p.get("offset").and_then(Value::as_u64).unwrap_or(0));
             let lim = pagination_usize(p.get("limit").and_then(Value::as_u64).unwrap_or(200));
             // a stacked photo's place in its stack: the grid's stack badge (none with View > Stacks off)
-            let stacks = if !s.stacks_off && s.catalog.stacks().next().is_some() { s.catalog.stack_index() } else { Default::default() };
+            let stacked = !s.stacks_off;
             // (what the grid blurs, when Blur Sensitive Photos is on)
             let sensitive = s.sensitive_ids();
             let items: Vec<Value> = ids
@@ -102,8 +102,9 @@ pub fn specs() -> Vec<CommandSpec> {
                     if sensitive.contains(&p.id) {
                         v["sensitive"] = json!(true);
                     }
-                    if let Some((sid, pos)) = stacks.get(&p.id)
-                        && let Some(st) = s.catalog.stack(*sid)
+                    if stacked
+                        && let Some(st) = s.catalog.stack_of(p.id)
+                        && let Some(pos) = st.photos.iter().position(|x| *x == p.id)
                     {
                         v["stack"] = json!({"count": st.photos.len(), "position": pos, "collapsed": st.collapsed});
                     }

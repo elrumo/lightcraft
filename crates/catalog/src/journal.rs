@@ -382,9 +382,9 @@ fn snap_header(bytes: &[u8]) -> std::result::Result<SnapHeader, serde_json::Erro
 
 /// The whole `catalog.snap` (after [`SnapHeader`] was checked; `format` and `version` are ignored).
 #[derive(serde::Deserialize)]
-struct SnapFile {
-    seq: u64,
-    catalog: Catalog,
+pub(crate) struct SnapFile {
+    pub(crate) seq: u64,
+    pub(crate) catalog: Catalog,
 }
 
 impl Journal {
@@ -405,7 +405,10 @@ impl Journal {
                 if h.version > VERSION {
                     return Err(newer(format!("{SNAPSHOT} is catalog format v{}", h.version)));
                 }
-                let s: SnapFile = serde_json::from_slice(&bytes).map_err(|e| CatalogError::Corrupt(format!("{SNAPSHOT}: {e}")))?;
+                let s = match crate::snapload::read(&bytes) {
+                    Some(s) => s,
+                    None => serde_json::from_slice(&bytes).map_err(|e| CatalogError::Corrupt(format!("{SNAPSHOT}: {e}")))?,
+                };
                 let mut catalog = s.catalog;
                 report.repaired = catalog.repair();
                 for r in &report.repaired {

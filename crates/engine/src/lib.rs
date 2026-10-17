@@ -1167,12 +1167,9 @@ impl Session {
                     self.view_filter(self.source, &Filter::default())
                 }
             });
-            // Views whose order or photos are not the query's alone are worked out whole each time: an album in
-            // its own order, Recently Added (how far back it reaches moves with every import), Missing Photos.
-            let own_order = matches!(self.source, LibrarySource::Album(a) if self.sort.key == lightcraft_catalog::SortKey::CaptureDate
-                && self.filter == Filter::default()
-                && self.catalog.album(a).is_some_and(|al| !al.is_smart()));
-            let whole = own_order || matches!(self.source, LibrarySource::RecentlyAdded | LibrarySource::Missing | LibrarySource::Sensitive);
+            // Views whose photos are not the query's alone are worked out whole each time: Recently Added (how far back
+            // it reaches moves with every import), Missing Photos.
+            let whole = matches!(self.source, LibrarySource::RecentlyAdded | LibrarySource::Missing | LibrarySource::Sensitive);
             // A view that asks about "the last N days" (itself, or through a smart album it looks into) changes
             // with the clock as well as with edits: a photo nobody touched can stop matching. It is asked whole.
             let clocked = f.depends_on_now()
@@ -1207,23 +1204,6 @@ impl Session {
                 self.source = LibrarySource::All;
                 self.library_folder = None;
                 return self.visible();
-            }
-            if matches!(self.source, LibrarySource::Album(_))
-                && self.sort.key == lightcraft_catalog::SortKey::CaptureDate
-                && let LibrarySource::Album(a) = self.source
-                && let Some(al) = self.catalog.album(a)
-                && !al.is_smart()
-                && self.filter == Filter::default()
-            {
-                // each photo's place looked up, not searched for (a big album sorted in O(n log n))
-                let mut place: std::collections::HashMap<PhotoId, usize> = std::collections::HashMap::with_capacity(al.photos.len());
-                for (i, id) in al.photos.iter().enumerate() {
-                    place.entry(*id).or_insert(i);
-                }
-                visible.sort_by_key(|id| place.get(id).copied().unwrap_or(usize::MAX));
-                if !self.sort.ascending {
-                    visible.reverse();
-                }
             }
             if self.filter.semantic.is_some() || self.source == LibrarySource::Sensitive {
                 // a search by description: best match first, whatever the sort (the flagged photos: most likely first)

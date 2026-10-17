@@ -20,6 +20,7 @@ let shownUser = '';
 let timer = null;
 let recountTimer = null;
 let scanWorking = false;
+let checkTimer = null;
 const cache = new Map(); // GET path -> its last answer and when it came
 const inflight = new Map(); // GET path -> the request on its way
 
@@ -1021,7 +1022,7 @@ function revokeShare(name, s) {
 // -------------------------------------------------------- library folders
 
 function loadFolders(name) {
-  return swr(['users/' + enc(name) + '/folders'], ([r]) => showFolders(name, r));
+  return Promise.all([swr(['users/' + enc(name) + '/folders'], ([r]) => showFolders(name, r)), loadCheck(name)]);
 }
 
 /** The folders again, while a scan or the previews are going on. */
@@ -1253,6 +1254,61 @@ async function startScan(name, path) {
   } catch (e) {
     fail(e);
   }
+}
+
+// -------------------------------------------------------- file check
+
+/** The last check of a user's files for ones cut short, and how far a running one is. */
+async function loadCheck(name) {
+  const r = await get('users/' + enc(name) + '/check');
+  if (foldersOf === name) showCheck(name, r);
+}
+
+async function startCheck(name) {
+  try {
+    showCheck(name, await api('POST', 'users/' + enc(name) + '/check'));
+  } catch (e) {
+    fail(e);
+  }
+}
+
+function showCheck(name, r) {
+  const rep = r.report;
+  const bad = rep ? rep.cut.concat(rep.unreadable) : [];
+  $('checkPanel').hidden = false;
+  $('checkRun').disabled = r.running;
+  $('checkRun').onclick = () => startCheck(name);
+  $('checkTitle').textContent = r.running ? 'Checking files…' : rep ? 'Files checked ' + ago(rep.finished) : 'Check files';
+  $('checkText').textContent = r.running
+    ? 'Checked ' + n(r.done) + ' of ' + plural(r.total, 'file', 'files') + '.'
+    : rep
+      ? plural(rep.files, 'file', 'files') + ' checked: ' + (bad.length ? n(rep.cut.length) + ' cut short, ' + n(rep.unreadable.length) + " couldn't be read." : 'none is damaged.')
+      : 'Not checked yet.';
+  const bar = $('checkBar');
+  bar.hidden = !r.running;
+  if (r.running) progress(bar, r.total ? r.done / r.total : 0);
+  $('checkFound').hidden = r.running || !bad.length;
+  $('checkFoundTitle').textContent = plural(bad.length, 'damaged file', 'damaged files');
+  // (a photo is named only when its name isn't the file's own)
+  const named = (d) => d.photos.filter((p) => !d.path.endsWith('/' + p));
+  const why = (d) => d.why + (d.missing ? ' (' + bytes(d.missing) + ' missing)' : '') + (named(d).length ? ': ' + named(d).join(', ') : '');
+  const shown = bad.slice(0, 200);
+  $('checkList').replaceChildren(
+    ...shown.map((d) => el('li', {}, el('code', {}, d.path), ' ', el('span', { class: 'muted' }, why(d)))),
+    ...(bad.length > shown.length ? [el('li', { class: 'muted' }, n(bad.length - shown.length) + ' more in the list.')] : []),
+  );
+  $('checkSave').onclick = () => saveList(name + '-damaged-files.csv', bad);
+  clearTimeout(checkTimer);
+  if (r.running) checkTimer = setTimeout(() => foldersOf === name && loadCheck(name).catch(fail), 1000);
+}
+
+/** The damaged files as a CSV the browser saves. */
+function saveList(file, rows) {
+  const q = (v) => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+  const lines = rows.map((d) => [d.path, d.size, d.missing, d.why, d.photos.join('; ')].map(q).join(','));
+  const url = URL.createObjectURL(new Blob(['path,size,missing_bytes,problem,photos\n' + lines.join('\n') + '\n'], { type: 'text/csv' }));
+  el('a', { href: url, download: file }).click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 /** Read every photo file again: slow, so it asks first. */

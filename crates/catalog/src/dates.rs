@@ -242,12 +242,11 @@ impl Catalog {
         if !matches!(key, SortKey::CaptureDate | SortKey::ImportDate | SortKey::EditDate) {
             return Vec::new();
         }
-        let stacks = self.stack_index();
         let mut runs: Vec<DateRun> = Vec::new();
         let mut stack_key: std::collections::HashMap<crate::StackId, String> = Default::default();
         for (i, id) in ids.iter().enumerate() {
-            let k = match stacks.get(id) {
-                Some((sid, _)) => stack_key.entry(*sid).or_insert_with(|| date_of(id)).clone(),
+            let k = match self.stack_id_of(*id) {
+                Some(sid) => stack_key.entry(sid).or_insert_with(|| date_of(id)).clone(),
                 None => date_of(id),
             };
             let photos = stacked.get(id).copied().unwrap_or(1);

@@ -49,11 +49,13 @@ pub fn budget_for_limit(available: Option<usize>) -> usize {
     available.filter(|a| *a > 0).map_or(768 << 20, |a| a / 3).clamp(MIN, MAX)
 }
 
-/// What an export needs at its peak: the source as floats (12 bytes per pixel) while the develop pipeline's stage
-/// buffers, the output image and the encoder take about 48 bytes per output pixel. (Measured on a 12 MP and a 48 MP
-/// ProRAW; deliberately a little high.)
+/// What an export needs at its peak on top of the app's own memory: about 56 bytes per source pixel (the decoded floats,
+/// the stage copies made while it is developed and oriented, the GPU's copy) and 104 per output pixel (pipeline planes,
+/// the output image, the encoder). Measured as the process's peak footprint in `lightcraft-cli render` of a 48 MP ProRAW
+/// at 1024 to 6048×8064 px (a 4096 px export read whole peaked at 5.0 GB, full size at 8.0 GB), less the ~1 GB the
+/// process holds at any size; deliberately a little high.
 pub fn export_need(source_px: usize, output_px: usize) -> usize {
-    source_px.saturating_mul(12).saturating_add(output_px.saturating_mul(48))
+    source_px.saturating_mul(56).saturating_add(output_px.saturating_mul(104))
 }
 
 /// What an export may take on this device, where going over ends the app: on iOS the system ends an app that
@@ -391,11 +393,13 @@ mod tests {
     fn export_needs_follow_the_pixels() {
         let (mp12, mp48) = (12_192_768usize, 48_771_072usize);
         let gib = 1usize << 30;
-        // two iOS budgets of 1 GiB: a 12 MP export fits; a 48 MP one at full size does not, but a 48 MP photo exported
-        // at half its size (read at 12 MP, written at 24 MP) does
+        // two iOS budgets of 1 GiB: a 12 MP export fits; a 48 MP one at full size does not, and neither does a 4096 px
+        // one of a 48 MP photo read whole (the crash on an iPhone 17 Pro), while the same read at 12 MP (4032 px) fits
+        let mp4096 = 4096 * 3072;
         assert!(export_need(mp12, mp12) < 2 * gib, "{}", export_need(mp12, mp12));
         assert!(export_need(mp48, mp48) > 2 * gib, "{}", export_need(mp48, mp48));
-        assert!(export_need(mp12, mp48 / 2) < 2 * gib, "{}", export_need(mp12, mp48 / 2));
+        assert!(export_need(mp48, mp4096) > 2 * gib, "{}", export_need(mp48, mp4096));
+        assert!(export_need(mp12, mp4096) < 2 * gib, "{}", export_need(mp12, mp4096));
         // never overflows
         assert_eq!(export_need(usize::MAX, usize::MAX), usize::MAX);
     }
