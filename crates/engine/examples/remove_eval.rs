@@ -1,7 +1,7 @@
 //! Heal / Remove / AI Remove quality, measured against the photo they were painted on.
 //!
 //! `cargo run --release -p lightcraft-engine --example remove_eval -- [--out sheet.png] [--feather 0]
-//!  [--positions 6] [--images N] [--edge 1200] [photo.jpg …]`
+//!  [--positions 6] [--images N] [--edge 1200] [--tile 150] [--removal] [photo.jpg …]`
 //!
 //! For each picture (the procedural demo scenes, the CC0 photos in `corpus/cc0-remove/`, and any
 //! files named on the command line) it paints dabs of two sizes at fixed places, with each mode,
@@ -104,7 +104,7 @@ fn run() -> Result<(), String> {
                     return false;
                 }
                 if a.starts_with("--") {
-                    skip_next = true;
+                    skip_next = a.as_str() != "--removal";
                     return false;
                 }
                 true
@@ -169,7 +169,7 @@ fn run() -> Result<(), String> {
                 Mode::Lama => lama.as_ref().map(|m| m as &dyn Painter),
                 _ => None,
             };
-            let Some(done) = paint(src, case, *mode, painter, feather) else {
+            let Some(done) = paint(src, &[case.pos], case.size, *mode, painter, feather) else {
                 eprintln!("case {ci} {}: no result", mode.name());
                 continue;
             };
@@ -202,18 +202,65 @@ fn run() -> Result<(), String> {
         let (s, t, g, c) = (col(|s| s.seam), col(|s| s.tone), col(|s| s.grain), col(|s| s.secs));
         println!("{:<10} {:>6} {:>8.4} {:>8.4} {:>8.4} {:>8.4} {:>8.4} {:>8.4} {:>7.2}", mode.name(), v.len(), s.0, s.1, t.0, t.1, g.0, g.1, c.1);
     }
-    write_sheet(&out, &sheet_rows)
+    write_sheet(&out, &sheet_rows)?;
+    if args.iter().any(|a| a == "--removal") {
+        removal(&corpus, &modes, migan.as_ref(), lama.as_ref(), feather, &out.replace(".png", "-removal.png"))?;
+    }
+    Ok(())
+}
+
+/// Strokes over real people in the CC0 photos: (file, stroke in normalized coordinates, size in long edges).
+type Task = (&'static str, &'static [(f64, f64)], f64);
+const REMOVALS: [Task; 4] = [
+    ("people-standing-beach.jpg", &[(0.491, 0.614), (0.491, 0.678)], 0.02),
+    ("people-standing-beach.jpg", &[(0.442, 0.590), (0.442, 0.640)], 0.018),
+    ("people-standing-beach.jpg", &[(0.613, 0.597), (0.639, 0.603)], 0.018),
+    ("two-people-beach.jpg", &[(0.523, 0.771), (0.542, 0.846)], 0.038),
+];
+
+/// The strokes of [`REMOVALS`] with each mode: a row a stroke, the photo then each mode, for looking at.
+fn removal(corpus: &str, modes: &[Mode], migan: Option<&Eraser>, lama: Option<&Lama>, feather: f64, out: &str) -> Result<(), String> {
+    let mut rows = Vec::new();
+    for (file, pts, size) in REMOVALS {
+        let path = format!("{corpus}/cc0-remove/{file}");
+        let Ok(bytes) = std::fs::read(&path) else {
+            eprintln!("(no {path}: skipped)");
+            continue;
+        };
+        let d = decode(&bytes, DecodeOptions::default()).map_err(|e| format!("{path}: {e}"))?;
+        let src = d.image;
+        let long = src.width.max(src.height) as f64;
+        let (cx, cy) = (
+            pts.iter().map(|p| p.0).sum::<f64>() / pts.len() as f64 * src.width as f64,
+            pts.iter().map(|p| p.1).sum::<f64>() / pts.len() as f64 * src.height as f64,
+        );
+        let side = 9.0 * size * long;
+        let mut row = vec![crop(&src, cx, cy, side)];
+        for mode in modes {
+            let painter: Option<&dyn Painter> = match mode {
+                Mode::Migan => migan.map(|m| m as &dyn Painter),
+                Mode::Lama => lama.map(|m| m as &dyn Painter),
+                _ => None,
+            };
+            match paint(&src, pts, size, *mode, painter, feather) {
+                Some(done) => row.push(crop(&done, cx, cy, side)),
+                None => row.push(Rgb32f::filled(tile(), tile(), [0.0; 3])),
+            }
+        }
+        rows.push(row);
+    }
+    write_sheet(out, &rows)
 }
 
 /// `src` with one dab painted in `mode`, in linear light; `None` when the model can't paint it.
-fn paint(src: &Rgb32f, case: &Case, mode: Mode, painter: Option<&dyn Painter>, feather: f64) -> Option<Rgb32f> {
+fn paint(src: &Rgb32f, pts: &[(f64, f64)], size: f64, mode: Mode, painter: Option<&dyn Painter>, feather: f64) -> Option<Rgb32f> {
     let info = SourceInfo::default();
     let spot_mode = match mode {
         Mode::Heal => SpotMode::Heal,
         _ => SpotMode::Remove,
     };
     let mut s = DevelopSettings::default();
-    s.spots.push(Spot { mode: spot_mode, points: vec![Point::new(case.pos.0, case.pos.1)], size: case.size, feather, ..Default::default() });
+    s.spots.push(Spot { mode: spot_mode, points: pts.iter().map(|p| Point::new(p.0, p.1)).collect(), size, feather, ..Default::default() });
     if let Some(p) = painter {
         let input = spots::erase_input(src, &info, &s, 0)?;
         let filled = fill_with(p, &input.image, &input.hole).ok()?;

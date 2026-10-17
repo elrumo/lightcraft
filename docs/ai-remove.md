@@ -41,11 +41,14 @@ agreed), `models.list`, `models.cancel`, `models.delete`. Without the model both
   and exports never run the model, and look the same at every size.
 - When the spot renders, the painted picture gives the broad structure, and the fine grain and texture come from the
   patch synthesis that classic Remove uses, so the fill doesn't look smoother than the photo around it.
-- The fill is matched to the photo along the stroke's edge, as Heal and classic Remove are: the fill just inside the
-  edge is compared with the photo just outside it (a gain per channel, averaged over 3 % of the stroke's radius so grain
-  doesn't decide) and that is spread over the stroke as a membrane, so no seam is left however the photo's tones change
-  along the edge. Because it is a gain, a later white-balance or exposure change carries over in the shadows and the
-  highlights alike. The gain is applied to the fill's tones, not its grain.
+- The fill is matched to the photo along the stroke's edge, as Heal's patch is: the fill just inside the edge is
+  compared with the photo just outside it (a gain per channel, averaged over 3 % of the stroke's radius so grain doesn't
+  decide) and that is spread over the stroke as a membrane, so no seam is left however the photo's tones change along
+  the edge. Because it is a gain, a later white-balance or exposure change carries over in the shadows and the
+  highlights alike. The gain is applied to the fill's tones, not its grain. Where one place on the edge differs from
+  the edge's usual mismatch by more than about half (a neighbour's coat, what is left of the object), that place is
+  only followed part of the way: forcing it coloured the whole fill. Classic Remove, whose fill is made from the photo
+  around the stroke, is not matched (it looked worse that way).
 
 ## Limits (be aware)
 
@@ -92,8 +95,10 @@ fill's fine-detail strength over the photo's around it). Lower is better; it als
 The feather defaults to 0 here, because a feathered edge hides what is measured. The dabs are at most 5 % of the long
 edge, so the numbers rank *seams* and *tones*, not how well a network continues a large structure.
 
-Edge matching (2026-10-17), 312 cases, median seam error before → after: Heal 0.116 → 0.037, Remove 0.038 → 0.030,
-AI Remove (MI-GAN) 0.037 → 0.029; median tone error 0.038 → 0.023, 0.022 → 0.021, 0.017 → 0.017; grain within 0.05 of
-before (Heal 0.54 → 0.59). Tried and dropped: matching over a wide window (it counts the photo's own gradient across the
-edge as a mismatch: seam error 0.087 for Remove), smoothing the match along the edge (worse seams, little grain gained),
-and asking the model to fill a hole 15–50 % wider than the visible stroke (worse on every measure).
+Edge matching (2026-10-17), 312 cases, median seam error before → after: Heal 0.116 → 0.046, AI Remove (MI-GAN) 0.037 →
+0.028, classic Remove unchanged at 0.038; median tone error 0.038 → 0.025, 0.017 → 0.017; grain within 0.05 of before
+(Heal 0.54 → 0.59). `--removal` adds strokes over real people in the two CC0 photos for looking at, as a sheet (photo |
+Heal | Remove | each network). Tried and dropped: matching over a wide window (it counts the photo's own gradient across
+the edge as a mismatch: seam error 0.087 for Remove), smoothing the match along the edge (worse seams, little grain
+gained), asking the model to fill a hole 15–50 % wider than the visible stroke (worse on every measure), and matching
+classic Remove (better on the numbers, grey smudges and colour glows beside leftover legs and neighbours on the real strokes).

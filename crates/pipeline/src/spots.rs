@@ -4,7 +4,7 @@
 //! - **Heal** copies the source's *detail* and keeps the target's *tone*: the source patch is matched to the photo along
 //!   the edge of the spot and that match is spread over the patch as a membrane ([`boundary_match`]), so no seam is left.
 //! - **Remove** fills the stroke with texture synthesized from around it ([`crate::inpaint`]), seeded
-//!   by and searching the spot's source too; it heals from the source when nothing around fits.
+//!   by and searching the spot's source too; it heals from the source (matched like Heal's patch) when nothing around fits.
 //!   With **AI Remove** the spot carries what a model painted under it ([`SpotFill`], made by
 //!   [`erase_input`] and [`EraseInput::finish`] around the model), matched to the photo along the stroke's edge as Heal
 //!   does, so a later white balance change follows.
@@ -350,6 +350,12 @@ fn fill_box(src: &mut [[f32; 3]], tgt: &[[f32; 3]], alpha: &[f32], bw: usize, bh
 /// 0.058 at four times it. Smaller still lets the grain decide.
 const EDGE_REACH: f32 = 0.03;
 
+/// How far, in log gain (0.45 is about ±55 % at one spread, softly), the mismatch at one place on the edge may differ from the edge's usual
+/// one before it is held back. The usual one (the median) is applied whole: it is the light the fill was made in
+/// against the photo's now (an exposure or white balance change). A place far from it is a different thing meeting
+/// the edge (a neighbour's coat, what is left of the object), and forcing the fill to match that colours the whole area.
+const GAIN_SPREAD: f32 = 0.45;
+
 /// Change `src`, the fill, so it meets the photo `tgt` all along the edge of the area it covers (where `alpha` is not 0),
 /// and spread what that takes over the area as a membrane (harmonic: no seam is left, however the photo's tones change
 /// along the edge). The fill just inside the edge is compared with the photo just outside it, each averaged over
@@ -388,6 +394,16 @@ fn boundary_match(src: &mut [[f32; 3]], tgt: &[[f32; 3]], alpha: &[f32], (bw, bh
         .zip(around.iter().zip(&covered))
         .map(|(b, (a, c))| if *b { std::array::from_fn(|k| (a[k].max(EPS) / c[k].max(EPS)).ln()) } else { [0.0; 3] })
         .collect();
+    let median: [f32; 3] = std::array::from_fn(|k| {
+        let mut v: Vec<f32> = gain.iter().zip(&band).filter(|(_, b)| **b).map(|(g, _)| g[k]).collect();
+        let mid = v.len() / 2;
+        v.select_nth_unstable_by(mid, f32::total_cmp).1.to_owned()
+    });
+    for (g, _) in gain.iter_mut().zip(&band).filter(|(_, b)| **b) {
+        for k in 0..3 {
+            g[k] = median[k] + GAIN_SPREAD * ((g[k] - median[k]) / GAIN_SPREAD).tanh();
+        }
+    }
     // The solver takes every pixel that isn't solved for as a known value, and averages them at its coarse levels, so the
     // photo outside the area must carry the gain too (the edge's, carried outward) or it would pull the area's towards 0.
     let spread = (r * 0.1).max(2.0);
@@ -507,6 +523,7 @@ pub fn apply(img: &mut Rgb32f, spots: &[Spot], frame: &Frame, ppl: f64) {
         }
         // AI Remove: the stored fill, matched to the photo along its edge below like a heal
         let baked = if remove { spot.fill.as_ref().and_then(|f| sample_fill(f, &frame.out_to_norm(w, h), (bx0, by0, bw), &tgt)) } else { None };
+        let model_fill = baked.is_some();
         // Remove: synthesize; the seed follows the spot, so a fill doesn't change when others do
         let seed = spot.points.first().map_or(0, |p| p.x.to_bits() ^ p.y.to_bits().rotate_left(32));
         let filled = match baked {
@@ -518,11 +535,14 @@ pub fn apply(img: &mut Rgb32f, spots: &[Spot], frame: &Frame, ppl: f64) {
             None if remove => crate::inpaint::fill(img, bx0, by0, bw, bh, &hole, fill_r, offset, seed),
             None => None,
         };
+        // A fill synthesized from around the stroke already continues what is there; the others (a heal's patch, a
+        // model's picture, the patch a failed synthesis falls back to) come from elsewhere and are matched to the
+        // photo along the edge of the area they cover. Clone stays as copied.
+        let from_elsewhere = model_fill || filled.is_none();
         if let Some(f) = filled {
             src = f;
         }
-        // the fill meets the photo along the edge of the area it covers (Clone stays as copied)
-        if matches!(spot.mode, SpotMode::Remove | SpotMode::Heal) {
+        if from_elsewhere && matches!(spot.mode, SpotMode::Remove | SpotMode::Heal) {
             boundary_match(&mut src, &tgt, &alpha, (bw, bh), r);
         }
         for y in 0..bh {
@@ -1061,6 +1081,22 @@ mod tests {
             (0..n).map(|x| (v[(n / 2) * n + x][1] - v[(n / 2) * n + x.saturating_sub(1)][1]).abs()).take(n / 2 + 8).skip(n / 2 - 8).sum::<f32>()
         };
         assert!(hp(&src) < 1.3 * hp(&before), "{} vs {}", hp(&src), hp(&before));
+    }
+
+    #[test]
+    fn an_edge_that_meets_something_else_does_not_colour_the_whole_fill() {
+        let (n, r) = (120, 30.0);
+        let (_, alpha) = gradient_and_disc(n, r);
+        // grey all round, but a red coat hugs the disc on its right
+        let tgt: Vec<[f32; 3]> = (0..n * n).map(|i| if i % n >= 80 && alpha[i] == 0.0 { [0.9, 0.1, 0.1] } else { [0.5; 3] }).collect();
+        let mut src = vec![[0.5f32; 3]; n * n];
+        assert!(boundary_match(&mut src, &tgt, &alpha, (n, n), r));
+        // the edge by the coat meets it as far as the spread allows ...
+        let by_coat = src[(n / 2) * n + 89];
+        assert!(by_coat[1] < 0.4, "{by_coat:?}");
+        // ... and the middle keeps most of its own tones (all the way to the coat's, it would be 0.33)
+        let mid = src[(n / 2) * n + n / 2];
+        assert!(mid[1] > 0.4, "the middle took the coat's colour: {mid:?}");
     }
 
     #[test]
