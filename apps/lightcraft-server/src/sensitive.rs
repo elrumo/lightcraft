@@ -1,7 +1,7 @@
 //! Checking each user's photos for sensitive content (nudity and the like) from the smart previews the
 //! server keeps, so a device that can't run the model (iOS, the web) can still list and blur them.
 //!
-//! Off until an admin downloads the model on the admin page (**Search ▸ Sensitive content**) or with
+//! Off until an admin downloads the model on the admin page (**Processing ▸ Sensitive content**) or with
 //! `lightcraft-server model download --accept-licences --sensitive`; the download turns it on, and
 //! `model disable --sensitive` (or the page's switch) turns it off, keeping the scores. The worker scores
 //! [`CHUNK`] photos of a user at a time, after the search, the faces and the text.

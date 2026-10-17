@@ -715,6 +715,15 @@ fn rebuilding_previews_replaces_the_ones_there_and_generating_does_not() {
     assert_eq!(previews_on_disk(&data), first, "nothing was built again");
     assert!(!server.folder_status("ann").previews_rebuilding);
 
+    // The Processing page does the same for everyone at once, and reports every user's previews together
+    let (status, all) = admin_post(&url, &token, "previews/generate");
+    assert_eq!(status, 200);
+    assert_eq!(all["previews"]["paused"], false);
+    assert_eq!(all["previews"]["users"][0]["name"], "ann");
+    assert_eq!(admin_post(&url, &token, "previews/pause").1["previews"]["paused"], true);
+    assert_eq!(admin_post(&url, &token, "previews/resume").1["previews"]["paused"], false);
+    assert_eq!(admin_post(&url, &token, "previews/nonsense").0, 404);
+
     // c.png can't be read now (the index still thinks it can: no scan ran): its preview must stay
     std::fs::write(photos.join("c.png"), b"gone bad").unwrap();
     let (status, _) = admin_post(&url, &token, "users/ann/previews/rebuild");

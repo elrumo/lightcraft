@@ -20,7 +20,7 @@
 //!
 //! Vectors are filed by content hash, from a neutral (unedited) rendering of the mini preview, in
 //! `<data>/users/<name>/search/<model>.bin`: derived data, safe to delete. The model is not part
-//! of LightCraft: an admin installs it from the admin page (Search) or with `lightcraft-server
+//! of LightCraft: an admin installs it from the admin page (Processing) or with `lightcraft-server
 //! model download --accept-licences`, and can turn it off again ([`crate::switch`]; `installed` is
 //! false while it is off). It loads on first use and unloads when idle (~1.5 GB while loaded).
 //! Until then every route says so instead of failing.

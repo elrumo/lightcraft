@@ -64,7 +64,7 @@ hidden. It only suggests: nothing is hidden or changed until the person chooses.
 - **Blur:** **Blur Sensitive Photos** (on by default; the bar above the list, Settings ▸ General, the SwiftUI app's
   Settings ▸ General) obscures the flagged photos in the grid, the filmstrip and the map. Opening a photo shows it.
   `library.setBlurSensitive {on}`; the choice syncs with the library.
-- **On the server:** an admin turns it on for everyone (admin page ▸ Search ▸ Sensitive content, or
+- **On the server:** an admin turns it on for everyone (admin page ▸ Processing ▸ Sensitive content, or
   `lightcraft-server model download --accept-licences --sensitive`). The server checks each user's smart previews and
   devices without the model (iOS, the web) list its flags (`GET /api/sensitive`).
 

@@ -465,6 +465,18 @@ pub fn api(st: &State, req: &mut Request, method: &Method, rest: &str) -> Resp {
             st.folders.request(name);
             folders(st, name)
         }),
+        // The same for every user at once (the Processing page): `pause` and `resume` were global already
+        (Method::Post, ["previews", action @ ("pause" | "resume" | "generate" | "rebuild")]) => {
+            let names: Vec<String> = accounts::read_users(&st.data).map(|f| f.users.into_keys().collect()).unwrap_or_default();
+            match *action {
+                "pause" => st.folders.pause(true),
+                "resume" => st.folders.pause(false),
+                "rebuild" => names.iter().for_each(|n| st.folders.rebuild_all(n)),
+                _ => names.iter().for_each(|n| st.folders.generate_all(n)),
+            }
+            log::info!("admin {me}: {action} previews (everyone)");
+            Ok(search(st))
+        }
         // `generate`: the previews that are missing; `rebuild`: every preview, the ones there too
         (Method::Post, ["users", name, "previews", action @ ("pause" | "resume" | "generate" | "rebuild")]) => {
             match *action {
@@ -864,6 +876,7 @@ fn search(st: &State) -> Value {
         })
     };
     json!({
+        "previews": previews(st),
         "schedule": schedule(Part::Search, |u| u["indexed"].as_u64()),
         "enabled": v.switch.enabled(),
         "installed": v.files_installed(),
@@ -904,6 +917,39 @@ fn search(st: &State) -> Value {
             "schedule": schedule(Part::Sensitive, |u| u["checked"].as_u64()),
         },
         "users": users,
+    })
+}
+
+/// Building previews, for the Processing page: every user's batch added up (`left`, `done`, the pace), the time left
+/// (the slowest user's), what is being built now, and per user how many photos have previews.
+fn previews(st: &State) -> Value {
+    let names: Vec<String> = accounts::read_users(&st.data).map(|f| f.users.into_keys().collect()).unwrap_or_default();
+    let (mut left, mut done, mut per_min, mut eta, mut have, mut photos, mut counted) = (0usize, 0usize, 0u64, None::<u64>, 0usize, 0usize, true);
+    let (mut building, mut users, mut last, mut rebuilding) = (Vec::new(), Vec::new(), None::<(usize, u64)>, false);
+    for name in &names {
+        let s = st.folders.status(name);
+        let cov = st.folders.coverage(st, name);
+        counted &= cov.is_some();
+        let (h, p) = cov.unwrap_or((0, 0));
+        (left, done, have, photos) = (left + s.previews, done + s.previews_done, have + h, photos + p);
+        per_min += s.previews_per_min.unwrap_or(0);
+        eta = eta.max(s.previews_eta_secs);
+        rebuilding |= s.previews_rebuilding;
+        if let Some((at, n)) = s.previews_last_at.zip(s.previews_last_done) {
+            if last.is_none_or(|l| at > l.1) {
+                last = Some((n, at));
+            }
+        }
+        building.extend(s.previews_building.iter().cloned());
+        users.push(json!({"name": name, "left": s.previews, "done": s.previews_done, "total": s.previews_total, "have": cov.map(|c| c.0), "photos": cov.map(|c| c.1), "errors": s.preview_errors.len()}));
+    }
+    building.sort();
+    json!({
+        "paused": st.folders.status("").previews_paused,
+        "left": left, "done": done, "perMinute": per_min, "etaSecs": eta, "rebuilding": rebuilding,
+        "have": counted.then_some(have), "photos": counted.then_some(photos),
+        "lastDone": last.map(|l| l.0), "lastAt": last.map(|l| l.1),
+        "building": building, "users": users,
     })
 }
 
