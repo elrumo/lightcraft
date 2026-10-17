@@ -3,7 +3,7 @@
 
 use lightcraft_color::cct::{temp_tint_to_xy, wb_matrix, xy_to_temp_tint};
 use lightcraft_color::{REC2020, luminance_2020};
-use lightcraft_develop::{DevelopSettings, Process};
+use lightcraft_develop::DevelopSettings;
 use lightcraft_raster::blur::gaussian;
 use std::sync::Arc;
 
@@ -244,8 +244,7 @@ fn median_row(src: &[f32], out: &mut [f32], r: usize) {
 }
 
 /// Separable minimum (`2r+1` px along each row, then each column; clamped edges): a square
-/// erosion. Dehaze's patch dark channel from process V4 (#1237; upstream's "V3", see
-/// [`lightcraft_develop::Process::V4`]).
+/// erosion. Dehaze's patch dark channel (#1237).
 pub fn min_hv(p: &Plane, r: usize) -> Plane {
     if r == 0 || p.data.is_empty() {
         return p.clone();
@@ -282,18 +281,14 @@ fn min_row(src: &[f32], out: &mut [f32], r: usize) {
     }
 }
 
-/// Patch radius of dehaze's dark channel from process V4, as a fraction of the long edge.
+/// Patch radius of dehaze's dark channel, as a fraction of the long edge.
 pub const DEHAZE_PATCH: f64 = 0.005;
 /// Largest [`dehaze_patch_radius`] (px).
 pub const DEHAZE_PATCH_MAX: usize = 64;
 
-/// Patch (minimum) radius of the dehaze dark channel of `s`'s process at `px_per_long`: 0 (the
-/// per-pixel minimum) before V4.
-pub fn dehaze_patch_radius(s: &DevelopSettings, px_per_long: f64) -> usize {
-    match s.process.process() {
-        Process::V1 | Process::V2 | Process::V3 => 0,
-        Process::V4 => ((DEHAZE_PATCH * px_per_long).round().max(1.0) as usize).min(DEHAZE_PATCH_MAX),
-    }
+/// Patch (minimum) radius of the dehaze dark channel at `px_per_long`.
+pub fn dehaze_patch_radius(px_per_long: f64) -> usize {
+    ((DEHAZE_PATCH * px_per_long).round().max(1.0) as usize).min(DEHAZE_PATCH_MAX)
 }
 
 /// Cache key of the dark-channel plane: its blur radius and patch radius.
@@ -318,11 +313,11 @@ fn transpose(p: &Plane) -> Plane {
     t
 }
 
-/// Detail scale of the highlights/shadows base from process V2, as a fraction of the long edge:
+/// Detail scale of the highlights/shadows base, as a fraction of the long edge:
 /// the base is the edge-aware filter of the [`median_hv`] of log luminance at this radius, so
 /// twigs, lines and fine texture brighter or darker than their surroundings take their
 /// surroundings' shift (and keep their contrast, as with Exposure) while region boundaries stay
-/// sharp (no halos). V1's base is the edge-aware filter of log luminance itself (issue #632).
+/// sharp (no halos; issue #632).
 pub const BASE_DETAIL: f64 = 0.0015;
 /// Largest [`base_detail_radius`] (px).
 pub const BASE_DETAIL_MAX: usize = 24;
@@ -332,17 +327,8 @@ pub fn base_detail_radius(px_per_long: f64) -> usize {
     ((BASE_DETAIL * px_per_long).round().max(0.0) as usize).min(BASE_DETAIL_MAX)
 }
 
-/// Median radius (px) of the highlights/shadows base of `s`'s rendering process at `px_per_long`:
-/// 0 (no median) under V1, [`base_detail_radius`] from V2.
-pub fn tone_base_detail(s: &DevelopSettings, px_per_long: f64) -> usize {
-    match s.process.process() {
-        Process::V1 => 0,
-        Process::V2 | Process::V3 | Process::V4 => base_detail_radius(px_per_long),
-    }
-}
-
 /// The highlights/shadows base layer of log luminance `l`: the fast guided filter ([`BASE_EPS`])
-/// of its [`median_hv`] at `detail` px ([`tone_base_detail`]); at 0, of `l` itself (V1).
+/// of its [`median_hv`] at `detail` px ([`base_detail_radius`]); at 0, of `l` itself.
 pub fn tone_base(l: &Plane, sigma: f32, detail: usize) -> Plane {
     if detail == 0 {
         return guided_fast(l, sigma, BASE_EPS);
@@ -418,7 +404,7 @@ pub fn nr_params(s: &DevelopSettings, scale: f32) -> (Option<NrLum>, Option<NrCo
     (l, c)
 }
 
-/// Capture sharpening (process V3, Lightroom's Detail ▸ Sharpening): an unsharp mask of log
+/// Capture sharpening (Lightroom's Detail ▸ Sharpening): an unsharp mask of log
 /// luminance against its blur at the Radius slider's pixels of the original, so it sharpens the
 /// finest detail and, like the full-size render scaled down, fades in previews (a radius below
 /// [`NR_MIN_SIGMA`] takes that blur, weighted by the ratio of variances, as noise reduction does).
@@ -432,17 +418,9 @@ pub struct Capture {
     pub detail: f32,
 }
 
-/// Whether `s`'s rendering process sharpens with [`Capture`] (from V3) rather than the texture band.
-pub fn capture_process(s: &DevelopSettings) -> bool {
-    match s.process.process() {
-        Process::V1 | Process::V2 => false,
-        Process::V3 | Process::V4 => true,
-    }
-}
-
 /// [`Capture`] sharpening of `s` at `scale` output pixels per pixel of the original
-/// ([`crate::Plan::detail_scale`]): `None` before V3, with no sharpening (global or local) or when
-/// a preview is too small to show any.
+/// ([`crate::Plan::detail_scale`]): `None` with no sharpening (global or local) or when a preview
+/// is too small to show any.
 pub fn capture_sharpen(s: &DevelopSettings, scale: f32) -> Option<Capture> {
     if s.detail.sharpen_amount == 0.0 && !s.masks.iter().any(|m| m.adjust.sharpness != 0.0) {
         return None;
@@ -453,9 +431,6 @@ pub fn capture_sharpen(s: &DevelopSettings, scale: f32) -> Option<Capture> {
 /// [`capture_sharpen`] whether or not anything is sharpened: what the Radius and Detail sliders
 /// would sharpen with, which the Alt-drag sharpening views show ([`crate::Overlay::SharpenDetail`]).
 pub fn capture_view(s: &DevelopSettings, scale: f32) -> Option<Capture> {
-    if !capture_process(s) {
-        return None;
-    }
     let scale = if scale.is_finite() { scale.clamp(0.0, 1.0) } else { 1.0 };
     // (`clamp` keeps a NaN: a damaged value takes the default)
     let finite_or = |v: f64, d: f64| if v.is_finite() { v } else { d };
@@ -526,7 +501,7 @@ pub(crate) struct Planes {
     /// The image's key without its noise reduction (`Plan::pre_nr_key`).
     pub pre_nr: u64,
     pub log_l: Option<Arc<Plane>>,
-    /// Keyed by its radius, process and median radius ([`BaseKey`]).
+    /// Keyed by its radius and median radius ([`BaseKey`]).
     pub base: Option<(BaseKey, Arc<Plane>)>,
     pub clarity: Option<(u32, Arc<Plane>)>,
     pub texture: Option<(u32, Arc<Plane>)>,
@@ -547,14 +522,13 @@ impl Planes {
     }
 }
 
-/// What the highlights/shadows base plane was computed with: its radius (`f32` bits), the
-/// rendering process and the median radius ([`tone_base_detail`]). The base differs between
-/// processes, so a photo moved to another one (Update to Current Process, undo) recomputes it.
-pub type BaseKey = (u32, Process, usize);
+/// What the highlights/shadows base plane was computed with: its radius (`f32` bits) and the
+/// median radius ([`base_detail_radius`]).
+pub type BaseKey = (u32, usize);
 
-/// The [`BaseKey`] of a base at `sigma` for `s` (`detail`: [`PlaneSigmas::base_detail`]).
-pub fn base_key(s: &DevelopSettings, sigma: f32, detail: usize) -> BaseKey {
-    (sigma.to_bits(), s.process.process(), detail)
+/// The [`BaseKey`] of a base at `sigma` (`detail`: [`PlaneSigmas::base_detail`]).
+pub fn base_key(sigma: f32, detail: usize) -> BaseKey {
+    (sigma.to_bits(), detail)
 }
 
 /// Reuse `slot` if it was computed with `key` (a radius's `f32` bits, or a [`BaseKey`]), else
@@ -586,10 +560,10 @@ pub const CHROMA_SIGMA: f32 = 0.004;
 /// Radii (px) of the spatial planes the settings need (`None` = not needed).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct PlaneSigmas {
-    /// Edge-aware base for highlights/shadows ([`tone_base`]: fast guided filter, [`BASE_EPS`]; from
-    /// process V2 of the [`BASE_DETAIL`] median).
+    /// Edge-aware base for highlights/shadows ([`tone_base`]: fast guided filter, [`BASE_EPS`], of
+    /// the [`BASE_DETAIL`] median).
     pub base: Option<f32>,
-    /// Median radius (px) of that base ([`tone_base_detail`]: 0 under V1).
+    /// Median radius (px) of that base ([`base_detail_radius`]).
     pub base_detail: usize,
     /// Clarity band (fast guided filter, [`CLARITY_EPS`]).
     pub clarity: Option<f32>,
@@ -597,7 +571,7 @@ pub struct PlaneSigmas {
     pub texture: Option<f32>,
     /// Dehaze dark channel (Gaussian).
     pub dark: Option<f32>,
-    /// Patch radius (px) of that dark channel ([`dehaze_patch_radius`]: 0 before V4).
+    /// Patch radius (px) of that dark channel ([`dehaze_patch_radius`]).
     pub dark_patch: usize,
     /// Chromaticity blur for local Moiré / colour noise (Gaussian).
     pub chroma: Option<f32>,
@@ -614,7 +588,7 @@ pub fn plane_sigmas(s: &DevelopSettings, px_per_long: f64, q: Quality) -> PlaneS
     let tone_active =
         s.light.highlights != 0.0 || s.light.shadows != 0.0 || s.masks.iter().any(|m| m.adjust.highlights != 0.0 || m.adjust.shadows != 0.0);
     // Edge-aware base at ~1.5% of the long edge (EV² epsilon: edges of > ~0.6 EV are preserved)
-    // From V2 it is taken of the median at 0.15%: lines and texture finer than that are detail,
+    // It is taken of the median at 0.15%: lines and texture finer than that are detail,
     // not tone (#632).
     let base = tone_active.then(|| {
         let sigma = (0.015 * ppl).max(1.0);
@@ -622,19 +596,13 @@ pub fn plane_sigmas(s: &DevelopSettings, px_per_long: f64, q: Quality) -> PlaneS
     });
     let clarity = (s.effects.clarity != 0.0 || local_any(|a| a.clarity)).then(|| (0.012 * ppl).max(1.0));
     // local Noise and Defringe read the fine detail band too
-    // (from V3 sharpening has a plane of its own, `capture_sharpen`)
-    let band_sharpens = !capture_process(s);
-    let texture = (s.effects.texture != 0.0
-        || (band_sharpens && s.detail.sharpen_amount != 0.0)
-        || local_any(|a| a.texture)
-        || (band_sharpens && local_any(|a| a.sharpness))
-        || local_any(|a| a.noise)
-        || s.masks.iter().any(|m| m.adjust.defringe > 0.0))
-    .then(|| texture_sigma(px_per_long));
+    // (sharpening has a plane of its own, `capture_sharpen`)
+    let texture = (s.effects.texture != 0.0 || local_any(|a| a.texture) || local_any(|a| a.noise) || s.masks.iter().any(|m| m.adjust.defringe > 0.0))
+        .then(|| texture_sigma(px_per_long));
     let dark = (s.effects.dehaze != 0.0 || local_any(|a| a.dehaze)).then(|| (0.02 * ppl).max(1.0));
     let chroma = (local_any(|a| a.moire) || s.masks.iter().any(|m| m.adjust.noise > 0.0)).then(|| (CHROMA_SIGMA * ppl).max(1.0));
-    let base_detail = if base.is_some() { tone_base_detail(s, px_per_long) } else { 0 };
-    let dark_patch = if dark.is_some() { dehaze_patch_radius(s, px_per_long) } else { 0 };
+    let base_detail = if base.is_some() { base_detail_radius(px_per_long) } else { 0 };
+    let dark_patch = if dark.is_some() { dehaze_patch_radius(px_per_long) } else { 0 };
     PlaneSigmas { base, base_detail, clarity, texture, dark, dark_patch, chroma }
 }
 
@@ -675,7 +643,7 @@ pub(crate) fn prepare(
     });
     let l = &log_l;
     let (base, (clarity_blur, ((texture_blur, sharpen), dark))) = par_join(
-        || base_sigma.map(|sg| plane_at(sb, base_key(s, sg, base_detail), || timed("base", || tone_base(l, sg, base_detail)))),
+        || base_sigma.map(|sg| plane_at(sb, base_key(sg, base_detail), || timed("base", || tone_base(l, sg, base_detail)))),
         || {
             par_join(
                 || clarity_sigma.map(|sg| plane_at(sc, sg.to_bits(), || timed("clarity", || guided_fast(l, sg, CLARITY_EPS)))),
@@ -720,7 +688,7 @@ pub(crate) fn frame_airlight(src: &Rgb32f, info: &SourceInfo, s: &DevelopSetting
     white_balance(&mut img, info, s);
     let ppl = frame.px_per_long(proxy_w);
     let sigma = (0.02 * ppl).max(1.0) as f32;
-    airlight(&dark_plane(&img, sigma, dehaze_patch_radius(s, ppl)))
+    airlight(&dark_plane(&img, sigma, dehaze_patch_radius(ppl)))
 }
 
 /// How many airlight proxies [`frame_proxy`] keeps (one per photo and frame being zoomed into; each ≤ 1.8 MB).
@@ -811,7 +779,7 @@ mod tests {
             let mut img = frame.sample(src, 48, 32);
             white_balance(&mut img, &info, &s);
             let ppl = frame.px_per_long(48);
-            airlight(&dark_plane(&img, (0.02 * ppl).max(1.0) as f32, dehaze_patch_radius(&s, ppl)))
+            airlight(&dark_plane(&img, (0.02 * ppl).max(1.0) as f32, dehaze_patch_radius(ppl)))
         };
         let frame = crate::frame_for(&hazy, &info, &s, true);
         let kept = frame_proxy(&hazy, &frame, 48, 32);

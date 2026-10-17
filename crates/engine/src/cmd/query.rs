@@ -220,18 +220,9 @@ pub fn specs() -> Vec<CommandSpec> {
             }
             Ok(v)
         }),
-        cmd!(query "develop.get", "Get Develop Settings", [], None, "{id?} → the photo's develop settings; `process` is the rendering process they are interpreted by (see develop.updateProcess)", always, |s, p| {
+        cmd!(query "develop.get", "Get Develop Settings", [], None, "{id?} → the photo's develop settings", always, |s, p| {
             let id = photo_arg(s, p, "develop.get")?;
-            Ok(s.develop_of(id)
-                .map(|d| {
-                    let mut v = d.to_json();
-                    // saved settings leave V1 out (`ProcessVersion::is_legacy`); here it is always stated
-                    if let Some(o) = v.as_object_mut() {
-                        o.insert("process".into(), json!(d.process));
-                    }
-                    v
-                })
-                .unwrap_or(Value::Null))
+            Ok(s.develop_of(id).map(|d| d.to_json()).unwrap_or(Value::Null))
         }),
         cmd!(
             query "view.frame",

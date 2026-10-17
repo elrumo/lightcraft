@@ -26,7 +26,7 @@ What we write (standard namespaces, so other tools can read the metadata):
 | Capture time, GPS | `exif:DateTimeOriginal`, `photoshop:DateCreated`, `exif:GPSLatitude`/`GPSLongitude` |
 | Pick / reject flag | `lc:flag` (`pick`, `reject`, `none`) |
 | Location | `lc:location` |
-| Develop settings | `lc:settings` — our complete `DevelopSettings` as JSON (exact round trip, incl. masks, spots, crop and the rendering process; settings without `process` are V1, see [process-versions.md](process-versions.md)) |
+| Develop settings | `lc:settings` — our complete `DevelopSettings` as JSON (exact round trip, incl. masks, spots and crop; a `process` number from an older LightCraft is ignored) |
 
 `lc:` is `http://ns.lightcraft.app/lc/1.0/`.
 
@@ -132,8 +132,7 @@ We read these fields; we never write them. Only fields in the packet are applied
 object that gets merged like a preset, so everything else keeps its current or default value. Packets marked
 `crs:AlreadyApplied="True"` are skipped, because those pixels already contain the edit. Only process-version 2012+ field
 names are read (e.g. `Exposure2012`, not the older `Exposure`). `crs:ProcessVersion` itself numbers the other
-application's renderer and is ignored: the photo keeps LightCraft's own process, the latest for a newly imported photo
-([process-versions.md](process-versions.md)).
+application's renderer and is ignored: LightCraft has one rendering.
 
 | `crs:` field(s) | LightCraft control | Notes |
 |---|---|---|

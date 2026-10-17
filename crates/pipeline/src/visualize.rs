@@ -262,13 +262,13 @@ pub fn adjust_settings(o: Overlay, s: &mut Cow<'_, DevelopSettings>) {
 }
 
 /// The plane a sharpening view draws ([`Overlay::reads_detail`]), from the render's log luminance
-/// `log_l` and the detail planes it sharpened with: `texture`, the blur of the band sharpening
-/// before process V3, and `capture`, capture sharpening (V3 on) with its blur (each `None` when the
-/// render didn't need it: blurred here with the same sigma). [`Overlay::SharpenDetail`]: the detail
-/// band (log luminance minus its blur, in EV; with capture sharpening, as it is sharpened: weighted
-/// by Radius and holding back strong edges by Detail); [`Overlay::SharpenMask`]: the sharpening
-/// weight under the photo's Masking. Both renderers call this with their own planes.
-pub fn sharpen_plane(o: Overlay, plan: &Plan<'_>, log_l: &Plane, texture: Option<&Plane>, capture: Option<(&Capture, &Plane)>) -> Option<Plane> {
+/// `log_l` and the capture sharpening it used with its blur (`None` when the render didn't need
+/// it: blurred here with the same sigma). [`Overlay::SharpenDetail`]: the detail band (log
+/// luminance minus its blur, in EV, as it is sharpened: weighted by Radius and holding back strong
+/// edges by Detail); [`Overlay::SharpenMask`]: the sharpening weight under the photo's Masking.
+/// Both renderers call this with their own planes. A preview too small to show any sharpening
+/// shows none: flat.
+pub fn sharpen_plane(o: Overlay, plan: &Plan<'_>, log_l: &Plane, capture: Option<(&Capture, &Plane)>) -> Option<Plane> {
     if !o.reads_detail() {
         return None;
     }
@@ -276,10 +276,8 @@ pub fn sharpen_plane(o: Overlay, plan: &Plan<'_>, log_l: &Plane, texture: Option
     let masking = (s.detail.sharpen_masking / 100.0).clamp(0.0, 1.0) as f32;
     let mask = o == Overlay::SharpenMask;
     let fits = |b: &Plane| (b.width, b.height) == (log_l.width, log_l.height);
-    let own;
     let cap;
-    // from process V3 sharpening has a plane of its own; with nothing sharpened yet (or a plane of
-    // another size) the view is of what the Radius would sharpen
+    // with nothing sharpened yet (or a plane of another size) the view is of what the Radius would sharpen
     let capture = match capture.filter(|(_, b)| fits(b)) {
         Some((c, b)) => Some((*c, b)),
         None => match local::capture_view(s, plan.detail_scale) {
@@ -296,16 +294,7 @@ pub fn sharpen_plane(o: Overlay, plan: &Plan<'_>, log_l: &Plane, texture: Option
             let d = d * c.w;
             if mask { crate::finish::sharpen_mask_weight(masking, d) } else { d * crate::finish::capture_keep(c.detail, d.abs()) }
         }),
-        None => {
-            let blur = match texture.filter(|b| fits(b)) {
-                Some(b) => b,
-                None => {
-                    own = lightcraft_raster::blur::gaussian(log_l, local::texture_sigma(plan.px_per_long));
-                    &own
-                }
-            };
-            detail(blur, &|d| if mask { crate::finish::sharpen_mask_weight(masking, d) } else { d })
-        }
+        None => vec![if mask { crate::finish::sharpen_mask_weight(masking, 0.0) } else { 0.0 }; log_l.data.len()],
     };
     Some(Plane { width: log_l.width, height: log_l.height, data })
 }

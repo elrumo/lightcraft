@@ -338,16 +338,13 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (dz != 0.0 && pu(F_HAS_DARK) != 0u) {
         let d = clamp(dark[i] / pf(F_AIR_PRE), 0.0, 1.0);
         let air = pf(F_AIR);
-        if (dz > 0.0 && pu(F_DEHAZE_V4) != 0u) {
-            // process V4 (`finish::dehaze_v4_pixel`)
+        if (dz > 0.0) {
+            // (`finish::dehaze_pixel`)
             let k0 = clamp(dz, 0.0, 1.0);
             let k = k0 * (0.4 + 0.6 * k0);
             let t = max(1.0 - 0.95 * k * d, 0.15);
             let veil = min(air * (1.0 - t), 0.9 * max(min(c.x, min(c.y, c.z)), 0.0));
             c = max((c - veil) / t, vec3<f32>(0.0));
-        } else if (dz > 0.0) {
-            let t = max(1.0 - 0.95 * min(dz, 1.0) * d, 0.12);
-            c = max((c - air * (1.0 - t)) / t, vec3<f32>(0.0));
         } else {
             let k = min(-dz, 1.0) * 0.7 * (0.35 + 0.65 * d);
             c = c + (air * 0.9 - c) * k;
@@ -398,23 +395,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     let tx = pf(F_TEX) + lt[8];
     let sp = lt[13] * 0.6 + pf(F_SHARPEN);
-    // (before V3 sharpening reads the texture band; from V3 its own plane, after the texture plane)
-    var sp_band = 0.0;
-    if (pu(F_BAND_SHARPEN) != 0u) {
-        sp_band = sp;
-    }
-    if ((tx != 0.0 || sp_band != 0.0) && pu(F_HAS_TEX) != 0u) {
+    // (sharpening has its own plane, after the texture plane: capture sharpening below)
+    if (tx != 0.0 && pu(F_HAS_TEX) != 0u) {
         let det = l_pre - tex[i];
         let tame = 1.0 - 0.6 * sstep(0.4, 1.6, abs(det));
         delta += tx * 1.1 * clamp(det, -1.0, 1.0) * tame;
-        if (sp_band != 0.0) {
-            let sm = pf(F_SHARPEN_MASK);
-            var mk = 1.0;
-            if (sm > 0.0) {
-                mk = sstep(sm * 0.25, sm * 0.25 + 0.15, abs(det));
-            }
-            delta += sp_band * 1.3 * clamp(det, -0.8, 0.8) * mk;
-        }
     }
     // capture sharpening (`finish::capture_delta`)
     if (sp != 0.0 && pu(F_HAS_SHARP) != 0u) {

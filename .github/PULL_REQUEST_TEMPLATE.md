@@ -44,10 +44,10 @@ Fixes #
 - **Overlap:** <!-- open pull requests that fix the same issue or change the same functions, by number, and how
   this one differs. Search the open pull requests for the issue number and checklist id first. "none found" is fine. -->
 - **Existing edits and libraries:** <!-- does any photo already edited render differently, or any saved setting,
-  preset, sort order or default change? Then it goes behind a new process version (docs/process-versions.md) or is a
-  setting that is off by default, with a line in docs/whats-new.md. "unchanged" is fine. -->
+  preset, sort order or default change? Then say so in docs/whats-new.md (LightCraft has one rendering: a retune
+  changes existing edits) or make it a setting that is off by default. "unchanged" is fine. -->
 - **Shared numbers taken:** <!-- catalog format `VERSION` (crates/catalog/src/journal.rs), `RENDER_CACHE_VERSION`,
-  `LOOK_VERSION`, process version: the number this takes. If another pull request lands with it first, take one
+  `LOOK_VERSION`: the number this takes. If another pull request lands with it first, take one
   past main's when you rebase. -->
 - **Where it came from:** <!-- for a decoder, camera or lens data, or fitted constants: the public spec, your own
   measurements, or observed output, and the files measured. Never GPL / LGPL code (dcraw, LibRaw, rawspeed, darktable,

@@ -17,7 +17,7 @@ each a gap in [gaps.md](gaps.md); the step-by-step list is [Next actions](#next-
    fixes (#769, #535, #702) are left.
 3. **Tests in CI on macOS, Windows and Linux** (gap 9, 6–12 h).
 4. **Render-fidelity suite** (gap 3, 30–60 h): score our output against Lightroom's on the same CC0
-   raws (references local in `plan/`), then tune; a retune ships as a new process version.
+   raws (references local in `plan/`), then tune; a retune changes existing edits and goes in `docs/whats-new.md`.
 5. **Camera colour of our own** (gap 1, 50–90 h): chart-based calibration for the most-used models,
    building on the per-file JPEG fits and pooled profiles (`lightcraft-cli calibrate`); never Adobe
    data.
@@ -49,7 +49,7 @@ Concrete, in the order to take them. Hours are the gap's estimate from [gaps.md]
 3. CI on macOS, Windows and Linux (gap 9): a matrix job running `cargo test --workspace` with the
    craft-fonts input; keep FreeBSD. Fix the load-sensitive tests first so the new jobs don't flake.
 4. Render-fidelity suite (gap 3): an xtask that renders CC0 raws and scores them against local-only
-   Lightroom references in `plan/` (never committed); then tune per control and ship process version V2.
+   Lightroom references in `plan/` (never committed); then tune per control.
 5. Camera colour (gap 1): extend `lightcraft-cli calibrate` to chart-based fits, starting with the ten most
    used bodies in `docs/raw/usage-weights.tsv`; this needs chart shots from people who own them.
 6. AI masks (gap 5): the maintainer picks permissively licensed segmentation weights; inference runs on the
@@ -133,8 +133,7 @@ calibration: M0–M13 took ≈ 25 active hours against an estimate of ≈ 110–
   alongside GPL code); decoder source is never read (decided 2026-10-05). Still open:
   freedom-to-operate review for local Laplacian filters, PatchMatch and HEVC (HEIC).
 - **Look parity** with Adobe's default rendering is tuned by eye until the fidelity suite exists.
-  Retuning changes existing edits, so it ships as a new process version
-  ([process-versions.md](process-versions.md)).
+  Retuning changes existing edits, so it is announced in `docs/whats-new.md`.
 
 ## Design notes kept from the old ROADMAP
 

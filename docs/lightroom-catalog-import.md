@@ -68,9 +68,7 @@ fields are reported. Lightroom's saved Upright correction isn't read from catalo
 whether the catalog's orientation agrees with the decoded file, haven't been checked on a real catalog, so the mode
 is solved again and the import reports `Upright`, whether it is in the catalog's develop settings or its XMP (XMP
 sidecars keep it: [xmp-interop.md](xmp-interop.md), *Saved
-Upright geometry*). Lightroom's `ProcessVersion` is not mapped: newly imported photos are on
-LightCraft's latest rendering process, and photos already in the library keep theirs
-([process-versions.md](process-versions.md)). When a recovery archive is saved, it retains source settings/history/snapshots
+Upright geometry*). Lightroom's `ProcessVersion` is not mapped: LightCraft has one rendering. When a recovery archive is saved, it retains source settings/history/snapshots
 and original smart-collection rules. Smart collections become smart albums when every rule has an exact equivalent: rating, pick
 flag, color label, has-adjustments, ISO, focal length and aperture comparisons; text rules on
 keywords, filename, camera, lens, title, caption, creator, copyright, location fields and file

@@ -188,7 +188,7 @@ use control ids and ranges from `develop.controls` rather than translated labels
 | Undo / redo | `edit.undo {}` / `edit.redo {}` | Restore settings; poll again for feedback |
 
 With Auto Sync enabled, `develop.set` and `develop.adjust` can also change the other selected photos.
-Only changed settings propagate; spot removal, red eye and the rendering process stay per photo.
+Only changed settings propagate; spot removal and red eye stay per photo.
 During an interaction, propagation occurs when it ends. Re-read affected photos after the edit.
 `develop.autoSync {}` toggles the mode; it is not a state query.
 

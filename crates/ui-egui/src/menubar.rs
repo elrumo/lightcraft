@@ -218,7 +218,6 @@ const LAYOUT: &[(&str, &[&str])] = &[
             "develop.auto",
             "develop.treatment",
             "develop.reset",
-            "develop.updateProcess",
             "dialog.createPreset",
             "---",
             "photo.saveMetadataToFile",
