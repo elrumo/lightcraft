@@ -41,8 +41,11 @@ agreed), `models.list`, `models.cancel`, `models.delete`. Without the model both
   and exports never run the model, and look the same at every size.
 - When the spot renders, the painted picture gives the broad structure, and the fine grain and texture come from the
   patch synthesis that classic Remove uses, so the fill doesn't look smoother than the photo around it.
-- The fill is matched to the photo's tones from the stroke's surroundings, as Heal does: a later white-balance or
-  exposure change carries over.
+- The fill is matched to the photo along the stroke's edge, as Heal and classic Remove are: the fill just inside the
+  edge is compared with the photo just outside it (a gain per channel, averaged over 3 % of the stroke's radius so grain
+  doesn't decide) and that is spread over the stroke as a membrane, so no seam is left however the photo's tones change
+  along the edge. Because it is a gain, a later white-balance or exposure change carries over in the shadows and the
+  highlights alike. The gain is applied to the fill's tones, not its grain.
 
 ## Limits (be aware)
 
@@ -77,3 +80,20 @@ their own, not checked here.
 LightCraft runs it with its own code on [rten](https://github.com/robertknight/rten), a pure-Rust ONNX runtime; the
 ONNX file's `uint8` casts are made `Identity` in memory (`lightcraft_vision::onnxfix`), never on disk. No code from
 other inpainting apps (for example inpaint-web, which is GPL-3.0) is used.
+
+## Measuring Remove, Heal and AI Remove
+
+`cargo run --release -p lightcraft-engine --example remove_eval -- [--out sheet.png] [--tile 220] [photo.jpg …]` paints
+dabs of two sizes at six places on each picture (the CC0 photos in `corpus/cc0-remove/`, the demo scenes and any files
+named), with Heal, Remove and, when `LIGHTCRAFT_MIGAN` / `LIGHTCRAFT_LAMA` name the model files, AI Remove with each
+network. It compares each result with the untouched picture: **seam** (how much more the colour steps across the dab's
+edge than it does in the photo), **tone** (the fill's blurred colour against the photo's) and **grain** (|ln| of the
+fill's fine-detail strength over the photo's around it). Lower is better; it also writes a contact sheet (photo | modes).
+The feather defaults to 0 here, because a feathered edge hides what is measured. The dabs are at most 5 % of the long
+edge, so the numbers rank *seams* and *tones*, not how well a network continues a large structure.
+
+Edge matching (2026-10-17), 312 cases, median seam error before → after: Heal 0.116 → 0.037, Remove 0.038 → 0.030,
+AI Remove (MI-GAN) 0.037 → 0.029; median tone error 0.038 → 0.023, 0.022 → 0.021, 0.017 → 0.017; grain within 0.05 of
+before (Heal 0.54 → 0.59). Tried and dropped: matching over a wide window (it counts the photo's own gradient across the
+edge as a mismatch: seam error 0.087 for Remove), smoothing the match along the edge (worse seams, little grain gained),
+and asking the model to fill a hole 15–50 % wider than the visible stroke (worse on every measure).

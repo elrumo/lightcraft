@@ -1,13 +1,13 @@
 //! Remove / Heal / Clone spots, rendered at output resolution in scene-linear light.
 //!
 //! - **Clone** copies the source patch with a feathered edge.
-//! - **Heal** copies the source's *detail* and keeps the target's *tone*: result = src + blur(target − src)
-//!   (frequency separation — a fast, stable approximation of gradient-domain healing).
+//! - **Heal** copies the source's *detail* and keeps the target's *tone*: the source patch is matched to the photo along
+//!   the edge of the spot and that match is spread over the patch as a membrane ([`boundary_match`]), so no seam is left.
 //! - **Remove** fills the stroke with texture synthesized from around it ([`crate::inpaint`]), seeded
 //!   by and searching the spot's source too; it heals from the source when nothing around fits.
 //!   With **AI Remove** the spot carries what a model painted under it ([`SpotFill`], made by
-//!   [`erase_input`] and [`EraseInput::finish`] around the model), matched to the photo's current
-//!   tones from the stroke's surroundings as Heal does, so a later white balance change follows.
+//!   [`erase_input`] and [`EraseInput::finish`] around the model), matched to the photo along the stroke's edge as Heal
+//!   does, so a later white balance change follows.
 //!   Automatic sources: candidate offsets on rings around the spot are scored by how well the
 //!   source's surrounding annulus matches the target's.
 //! - **Fill** (content-aware) rebuilds the spot from patches of its surroundings instead of one
@@ -343,6 +343,76 @@ fn fill_box(src: &mut [[f32; 3]], tgt: &[[f32; 3]], alpha: &[f32], bw: usize, bh
     }
 }
 
+/// How far the correction looks past the edge of the filled area, and how wide the band of the area along the edge that
+/// carries it is, in radii (at least a pixel). Measured with `remove_eval` (Heal, Remove and AI Remove on the two CC0
+/// photos and the demo scenes): the smaller, the less of the photo's own gradient across the edge counts as a mismatch,
+/// and the median seam error fell from 0.116 (the Gaussian offset this replaced) to 0.037 for Heal at this size, against
+/// 0.058 at four times it. Smaller still lets the grain decide.
+const EDGE_REACH: f32 = 0.03;
+
+/// Change `src`, the fill, so it meets the photo `tgt` all along the edge of the area it covers (where `alpha` is not 0),
+/// and spread what that takes over the area as a membrane (harmonic: no seam is left, however the photo's tones change
+/// along the edge). The fill just inside the edge is compared with the photo just outside it, each averaged over
+/// [`EDGE_REACH`] radii `r` so grain doesn't decide; the difference is a gain per channel (a ratio, so a white balance
+/// or exposure change made after a fill was baked, or a source in other light, is followed in the shadows and the
+/// highlights alike), applied to the fill's tones and not to its grain. `false` when there is no edge to match.
+fn boundary_match(src: &mut [[f32; 3]], tgt: &[[f32; 3]], alpha: &[f32], (bw, bh): (usize, usize), r: f32) -> bool {
+    let n = bw * bh;
+    if src.len() != n || tgt.len() != n || alpha.len() != n {
+        return false;
+    }
+    let hole: Vec<bool> = alpha.iter().map(|a| *a >= 0.02).collect();
+    let covered_px = hole.iter().filter(|h| **h).count();
+    if covered_px == 0 || covered_px == n {
+        return false;
+    }
+    let reach = (r * EDGE_REACH).max(1.0);
+    let blur = |v: &[[f32; 3]], sigma: f32| lightcraft_raster::blur::gaussian(&Rgb32f { width: bw, height: bh, data: v.to_vec() }, sigma);
+    let blur_plane = |w: Vec<f32>, sigma: f32| lightcraft_raster::blur::gaussian(&lightcraft_raster::Plane { width: bw, height: bh, data: w }, sigma);
+    // the average of `v` over the pixels that are (`keep`) in the area or not, at every pixel (normalized convolution)
+    let average = |v: &[[f32; 3]], keep: bool| -> Vec<[f32; 3]> {
+        let w: Vec<f32> = hole.iter().map(|h| if *h == keep { 1.0 } else { 0.0 }).collect();
+        let weighted: Vec<[f32; 3]> = v.iter().zip(&w).map(|(p, w)| p.map(|c| c * w)).collect();
+        let (num, den) = (blur(&weighted, reach), blur_plane(w, reach));
+        num.data.iter().zip(&den.data).map(|(p, d)| p.map(|c| c / d.max(1e-4))).collect()
+    };
+    let (around, covered) = (average(tgt, false), average(src, true));
+    // the band along the edge carries the mismatch; the rest of the area is solved for
+    let outside: Vec<bool> = hole.iter().map(|h| !*h).collect();
+    let to_edge = distance_to_inside(bw, bh, &outside);
+    let interior: Vec<bool> = hole.iter().zip(&to_edge).map(|(h, d)| *h && *d > reach).collect();
+    let band: Vec<bool> = hole.iter().zip(&interior).map(|(h, i)| *h && !*i).collect();
+    const EPS: f32 = 1e-4;
+    let mut gain: Vec<[f32; 3]> = band
+        .iter()
+        .zip(around.iter().zip(&covered))
+        .map(|(b, (a, c))| if *b { std::array::from_fn(|k| (a[k].max(EPS) / c[k].max(EPS)).ln()) } else { [0.0; 3] })
+        .collect();
+    // The solver takes every pixel that isn't solved for as a known value, and averages them at its coarse levels, so the
+    // photo outside the area must carry the gain too (the edge's, carried outward) or it would pull the area's towards 0.
+    let spread = (r * 0.1).max(2.0);
+    let (num, den) = (blur(&gain, spread), blur_plane(band.iter().map(|b| if *b { 1.0 } else { 0.0 }).collect(), spread));
+    let total = num.data.iter().fold([0f32; 3], |a, p| [a[0] + p[0], a[1] + p[1], a[2] + p[2]]);
+    let mean = total.map(|t| t / den.data.iter().sum::<f32>().max(1e-4));
+    for ((g, h), (nu, d)) in gain.iter_mut().zip(&hole).zip(num.data.iter().zip(&den.data)) {
+        if !*h {
+            *g = if *d > 1e-3 { nu.map(|c| c / d) } else { mean };
+        }
+    }
+    let solved = lightcraft_inpaint::membrane_fill(bw, bh, 3, gain.as_flattened(), &interior);
+    let (solved, _) = solved.as_chunks::<3>();
+    // the gain is for the tones, not the grain: a gain would make a darker source's grain louder than the photo's
+    let smooth = blur(src, (r * 0.1).max(3.0));
+    for ((p, h), (low, g)) in src.iter_mut().zip(&hole).zip(smooth.data.iter().zip(solved)) {
+        if *h {
+            for k in 0..3 {
+                p[k] = low[k] * g[k].exp() + (p[k] - low[k]);
+            }
+        }
+    }
+    true
+}
+
 /// Apply all spots to `img` (output resolution). `ppl` = output pixels per long-edge unit.
 pub fn apply(img: &mut Rgb32f, spots: &[Spot], frame: &Frame, ppl: f64) {
     if spots.is_empty() {
@@ -435,9 +505,8 @@ pub fn apply(img: &mut Rgb32f, spots: &[Spot], frame: &Frame, ppl: f64) {
         if fill {
             fill_box(&mut src, &tgt, &alpha, bw, bh);
         }
-        // AI Remove: the stored fill, tone-matched below like a heal
+        // AI Remove: the stored fill, matched to the photo along its edge below like a heal
         let baked = if remove { spot.fill.as_ref().and_then(|f| sample_fill(f, &frame.out_to_norm(w, h), (bx0, by0, bw), &tgt)) } else { None };
-        let tone_match = baked.is_some();
         // Remove: synthesize; the seed follows the spot, so a fill doesn't change when others do
         let seed = spot.points.first().map_or(0, |p| p.x.to_bits() ^ p.y.to_bits().rotate_left(32));
         let filled = match baked {
@@ -449,41 +518,13 @@ pub fn apply(img: &mut Rgb32f, spots: &[Spot], frame: &Frame, ppl: f64) {
             None if remove => crate::inpaint::fill(img, bx0, by0, bw, bh, &hole, fill_r, offset, seed),
             None => None,
         };
-        let heal = match filled {
-            Some(f) => {
-                src = f;
-                tone_match
-            }
-            None => matches!(spot.mode, SpotMode::Remove | SpotMode::Heal),
-        };
-        let low = if heal {
-            // Tone correction from the spot's *surroundings* only: normalized convolution of
-            // (target − source) over pixels outside the stroke (a membrane-like interpolation).
-            let outside: Vec<f32> = alpha.iter().map(|a| if *a < 0.02 { 1.0 } else { 0.0 }).collect();
-            let diff = Rgb32f {
-                width: bw,
-                height: bh,
-                data: tgt.iter().zip(&src).zip(&outside).map(|((t, s), m)| [(t[0] - s[0]) * m, (t[1] - s[1]) * m, (t[2] - s[2]) * m]).collect(),
-            };
-            let wts = lightcraft_raster::Plane { width: bw, height: bh, data: outside };
-            let sigma = (r * 0.6).max(1.0);
-            let (bd, bm) = (lightcraft_raster::blur::gaussian(&diff, sigma), lightcraft_raster::blur::gaussian(&wts, sigma));
-            Some(Rgb32f {
-                width: bw,
-                height: bh,
-                data: bd
-                    .data
-                    .iter()
-                    .zip(&bm.data)
-                    .map(|(d, m)| {
-                        let m = m.max(1e-4);
-                        [d[0] / m, d[1] / m, d[2] / m]
-                    })
-                    .collect(),
-            })
-        } else {
-            None
-        };
+        if let Some(f) = filled {
+            src = f;
+        }
+        // the fill meets the photo along the edge of the area it covers (Clone stays as copied)
+        if matches!(spot.mode, SpotMode::Remove | SpotMode::Heal) {
+            boundary_match(&mut src, &tgt, &alpha, (bw, bh), r);
+        }
         for y in 0..bh {
             for x in 0..bw {
                 let i = y * bw + x;
@@ -491,11 +532,7 @@ pub fn apply(img: &mut Rgb32f, spots: &[Spot], frame: &Frame, ppl: f64) {
                 if a <= 0.0 {
                     continue;
                 }
-                let mut v = src[i];
-                if let Some(l) = &low {
-                    let d = l.data[i];
-                    v = [v[0] + d[0], v[1] + d[1], v[2] + d[2]];
-                }
+                let v = src[i];
                 let t = tgt[i];
                 img.set(bx0 + x, by0 + y, [t[0] + (v[0] - t[0]) * a, t[1] + (v[1] - t[1]) * a, t[2] + (v[2] - t[2]) * a].map(|c| c.max(0.0)));
             }
@@ -977,6 +1014,64 @@ mod tests {
         let mut out = img.clone();
         apply(&mut out, &s.spots, &frame, frame.px_per_long(120));
         assert!(out.get(60, 60)[1] > 0.2, "filled from around it: {:?}", out.get(60, 60));
+    }
+
+    /// A photo that brightens left to right, a disc of it to fill, and a fill of the wrong tone.
+    fn gradient_and_disc(n: usize, r: f32) -> (Vec<[f32; 3]>, Vec<f32>) {
+        let tgt: Vec<[f32; 3]> = (0..n * n).map(|i| [0.2 + 0.4 * (i % n) as f32 / n as f32; 3]).collect();
+        let alpha: Vec<f32> = (0..n * n)
+            .map(|i| if ((i % n) as f32 + 0.5 - n as f32 / 2.0).hypot((i / n) as f32 + 0.5 - n as f32 / 2.0) < r { 1.0 } else { 0.0 })
+            .collect();
+        (tgt, alpha)
+    }
+
+    #[test]
+    fn a_fill_is_matched_to_the_photo_along_its_whole_edge() {
+        let (n, r) = (120, 30.0);
+        let (tgt, alpha) = gradient_and_disc(n, r);
+        let mut src = vec![[0.35f32; 3]; n * n];
+        assert!(boundary_match(&mut src, &tgt, &alpha, (n, n), r));
+        // just inside the edge, all the way round, the fill is what the photo is just outside it
+        for k in 0..16 {
+            let a = k as f32 / 16.0 * std::f32::consts::TAU;
+            let at = |rad: f32| ((n as f32 / 2.0 + a.cos() * rad) as usize, (n as f32 / 2.0 + a.sin() * rad) as usize);
+            let ((ix, iy), (ox, oy)) = (at(r - 1.5), at(r + 1.5));
+            let (inside, outside) = (src[iy * n + ix][1], tgt[oy * n + ox][1]);
+            assert!((inside - outside).abs() < 0.02, "edge at {k}: {inside} vs {outside}");
+        }
+        // nothing outside the area changes, and the middle is the photo's tone there, not the fill's
+        assert_eq!(src[0], [0.35; 3]);
+        let mid = src[(n / 2) * n + n / 2][1];
+        assert!((mid - 0.4).abs() < 0.03, "{mid}");
+    }
+
+    #[test]
+    fn a_fill_in_other_light_gets_the_photos_tones_by_a_gain_and_keeps_its_grain() {
+        let (n, r) = (120, 30.0);
+        let (tgt, alpha) = gradient_and_disc(n, r);
+        // the same tones, darker by half, with a grain of its own
+        let grain = |i: usize| if (i * 7919) % 5 < 2 { 0.01f32 } else { -0.01 };
+        let mut src: Vec<[f32; 3]> = tgt.iter().enumerate().map(|(i, p)| p.map(|v| v * 0.5 + grain(i))).collect();
+        let before = src.clone();
+        assert!(boundary_match(&mut src, &tgt, &alpha, (n, n), r));
+        let c = (n / 2) * n + n / 2;
+        assert!((src[c][1] - tgt[c][1]).abs() < 0.03, "{} vs {}", src[c][1], tgt[c][1]);
+        // the grain keeps its strength (a gain on the whole fill would double it)
+        let hp = |v: &[[f32; 3]]| {
+            (0..n).map(|x| (v[(n / 2) * n + x][1] - v[(n / 2) * n + x.saturating_sub(1)][1]).abs()).take(n / 2 + 8).skip(n / 2 - 8).sum::<f32>()
+        };
+        assert!(hp(&src) < 1.3 * hp(&before), "{} vs {}", hp(&src), hp(&before));
+    }
+
+    #[test]
+    fn there_is_no_edge_to_match_on_nothing_or_everything() {
+        let (n, r) = (40, 10.0);
+        let (tgt, _) = gradient_and_disc(n, r);
+        let mut src = vec![[0.3f32; 3]; n * n];
+        assert!(!boundary_match(&mut src, &tgt, &vec![0.0; n * n], (n, n), r));
+        assert!(!boundary_match(&mut src, &tgt, &vec![1.0; n * n], (n, n), r));
+        assert!(!boundary_match(&mut src, &tgt, &[1.0], (n, n), r), "sizes that don't match");
+        assert!(src.iter().all(|p| *p == [0.3; 3]));
     }
 
     #[test]
