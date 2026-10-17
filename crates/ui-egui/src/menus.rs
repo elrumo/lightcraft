@@ -2254,11 +2254,7 @@ fn edit_in(app: &mut LightcraftApp, ctx: &egui::Context, p: &Value, photocraft: 
         .map(|c| c.iter().map(|c| c["path"].as_str().unwrap_or_default().to_string()).collect())
         .unwrap_or_else(|| vec![r["path"].as_str().unwrap_or_default().to_string()]);
     if let Ok(track) = serde_json::from_value::<Vec<lightcraft_engine::cmd::TrackedEdit>>(r["track"].clone()) {
-        let list = &mut app.ui.external_edits;
-        list.retain(|t| !track.iter().any(|n| n.path == t.path));
-        list.extend(track);
-        let extra = list.len().saturating_sub(lightcraft_engine::cmd::MAX_TRACKED);
-        list.drain(..extra);
+        lightcraft_engine::cmd::TrackedEdit::merge(&mut app.ui.external_edits, track);
     }
     let mut failed = None;
     for path in &copies {

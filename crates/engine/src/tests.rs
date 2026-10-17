@@ -104,6 +104,11 @@ fn demo_library_loads() {
     assert!(s.active().is_some());
     let st = s.execute("catalog.stats", &json!({})).unwrap();
     assert_eq!(st["photos"], 24);
+    assert!(st["byDate"].is_array() && st["edited"].is_u64());
+    // the sidebar's counts alone: the same numbers, without what takes seconds in a big library
+    let counts = s.execute("catalog.stats", &json!({"counts": true})).unwrap();
+    assert_eq!((&counts["photos"], &counts["picks"], &counts["deleted"]), (&st["photos"], &st["picks"], &st["deleted"]));
+    assert!(counts["byDate"].is_null() && counts["edited"].is_null() && counts["keywords"].is_null());
     let albums = s.execute("albums.list", &json!({})).unwrap();
     assert!(albums.as_array().unwrap().iter().any(|a| a["folder"] == true));
 }

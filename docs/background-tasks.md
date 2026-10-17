@@ -46,6 +46,13 @@ guard.detail(&file_name);
   - `Cancel::Yes`: the job polls `guard.is_cancelled()` itself.
   - `Cancel::No`: the job can't stop; it gets no ✕ and doesn't make Quit ask.
   - `set_cancellable(false)` for a phase that has to finish once started (a Lightroom import adding its photos).
+- **Speed and time left:** every row reports `rate` (units a second, from half-second steps of its progress; the first
+  jump after it starts is not counted, so a download that resumes from what is on disk doesn't look fast) and `etaMs`
+  (the time left at that rate). Both are empty while not known, and the rate is dropped after 3 s without progress.
+- **Taking turns:** work limited to a few at once takes a turn: `activity.try_turn(pool, limit)`, else
+  `set_queued(true)` on its row and `activity.wait_turn(pool, limit, &cancel)` on its own thread, in the order asked
+  (`None` when cancelled while waiting). Model downloads (`crates/engine/src/download.rs`) run two at once this way;
+  the others show as `queued` rows that start by themselves, and ✕ takes one out of the line.
 - **Quiet periodic work** shows no row: the auto-import folder listing runs every few seconds through
   `tasks::spawn(.., None, ..)`.
 

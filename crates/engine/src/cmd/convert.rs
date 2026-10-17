@@ -292,6 +292,15 @@ impl TrackedEdit {
         let (size, modified) = stamp(path).unzip();
         TrackedEdit { path: path.to_string(), since: Some(now), touched: Some(now), size, modified }
     }
+
+    /// The host's watch list `list` with `new` (the `track` of `photo.editExternal`) on its end: a file
+    /// already watched is replaced, and at most [`MAX_TRACKED`] stay (the oldest are dropped first).
+    pub fn merge(list: &mut Vec<TrackedEdit>, new: Vec<TrackedEdit>) {
+        list.retain(|t| !new.iter().any(|n| n.path == t.path));
+        list.extend(new);
+        let extra = list.len().saturating_sub(MAX_TRACKED);
+        list.drain(..extra);
+    }
 }
 
 /// How long a file handed to an external editor is watched after it was handed over or last

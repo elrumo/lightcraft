@@ -134,9 +134,8 @@ fn model_offer(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         note(ui, tr("This photo has no depth of its own, and depth estimation isn't available in this build."));
         return;
     }
-    let (fetching, st) = app.session.enhancer.download_status();
-    let mine = fetching.as_deref() == Some(depth::ID);
-    if mine && st.running {
+    let st = app.session.enhancer.model_download_status(depth::ID);
+    if st.running {
         let pct = if st.total > 0 { st.done as f64 / st.total as f64 * 100.0 } else { 0.0 };
         note(ui, tr_format!("Downloading the depth model… {:.0} %", pct));
         if crate::widgets::text_button(ui, "lensBlurCancel", tr("Cancel Download"), false).clicked() {
@@ -146,7 +145,7 @@ fn model_offer(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         return;
     }
     note(ui, offer);
-    if mine && let Some(e) = &st.error {
+    if let Some(e) = &st.error {
         note(ui, e.clone());
     }
     if crate::widgets::text_button(ui, "lensBlurDownload", tr("Download"), false).clicked()

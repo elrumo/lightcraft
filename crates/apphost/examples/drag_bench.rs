@@ -80,7 +80,13 @@ fn main() {
         std::process::exit(1);
     };
     call("engine.execute", json!({"command": "library.select", "params": {"ids": [pid]}}));
-    println!("gpu: {:?}, view {w}x{h}", lightcraft_engine::gpu::adapter_name());
+    // `BENCH_HDR=1`: an HDR edit on a display with headroom (the loupe renders its float HDR picture)
+    let hdr = std::env::var("BENCH_HDR").is_ok_and(|v| v == "1");
+    if hdr {
+        call("engine.execute", json!({"command": "develop.hdr", "params": {"enabled": true}}));
+        call("render.hdrDisplay", json!({"on": true}));
+    }
+    println!("gpu: {:?}, view {w}x{h}{}", lightcraft_engine::gpu::adapter_name(), if hdr { ", HDR" } else { "" });
 
     // events: wait for the loupe's sharp picture
     let wait_final = |host: &Host, t0: Instant| -> f64 {

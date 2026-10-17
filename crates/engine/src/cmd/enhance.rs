@@ -79,7 +79,7 @@ fn download(s: &mut Session, p: &Value) -> Result<Value> {
         ));
     }
     let started = s.enhancer.start_download(id, &s.activity).map_err(EngineError::Other)?;
-    Ok(json!({"started": started, "installed": s.enhancer.installed(id), "downloading": s.enhancer.download_status().1.running}))
+    Ok(json!({"started": started, "installed": s.enhancer.installed(id), "downloading": s.enhancer.model_download_status(id).running}))
 }
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -116,9 +116,9 @@ pub fn specs() -> Vec<CommandSpec> {
             "Cancel Enhancement Model Download",
             [],
             None,
-            "{} — stop the download (what has arrived is kept, and a new download resumes from it) → {cancelled}",
+            "{id?} — stop that model's download, or every one (what has arrived is kept, and a new download resumes from it) → {cancelled}",
             super::always,
-            |s, _| Ok(json!({"cancelled": s.enhancer.cancel_download()}))
+            |s, p| Ok(json!({"cancelled": s.enhancer.cancel_download(super::str_param(p, "id"))}))
         ),
     ]
 }

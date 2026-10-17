@@ -29,6 +29,7 @@ const MODULES: &[Module] = &[
         ],
         entries: &["main"],
     },
+    Module { src: include_str!("wgsl/hist.wgsl"), bindings: &[("src", false, "u32"), ("hist", true, "atomic<u32>")], entries: &["hdr_hist"] },
     Module {
         src: include_str!("wgsl/blur.wgsl"),
         bindings: &[("src", false, "f32"), ("dst", true, "f32")],
@@ -255,6 +256,12 @@ fn constants() -> String {
         crate::params::CURVE_N
     );
     s += &format!("const POINT_WORDS: u32 = {}u;\n", lightcraft_pipeline::colorops::POINT_WORDS);
+    // an HDR histogram's bins (`lightcraft_raster::HdrBins`, as an HDR edit's histogram has them)
+    s += &format!(
+        "const HIST_FROM: u32 = {}u;\nconst HIST_STOPS: f32 = {:?};\n",
+        lightcraft_raster::Histogram::HDR_FROM,
+        lightcraft_develop::Hdr::MAX_EV_LIMIT as f32
+    );
     s += &format!("const EYE_WORDS: u32 = {}u;\n", lightcraft_pipeline::redeye::EYE_WORDS);
     use lightcraft_pipeline::masks::{AUTO_TOL_CHROMA, AUTO_TOL_EV};
     s += &format!("const AUTO_TOL_EV: f32 = {AUTO_TOL_EV:?};\nconst AUTO_TOL_CHROMA: f32 = {AUTO_TOL_CHROMA:?};\n");
@@ -529,14 +536,17 @@ impl Gpu {
         pass.dispatch_workgroups(groups[0], groups[1], groups[2]);
     }
 
-    /// Submit `enc`, then read back the first `len` 32-bit values of `src`.
+    /// Submit `enc`, then read back `len` 32-bit values of `src` from value `offset` on, as `T`s.
     ///
-    /// A failed readback (device lost, map error, timeout) fails the render ([`FailKind::Fatal`])
-    /// and returns zeros, which the caller discards; after an earlier failure in the same render
-    /// nothing more is submitted.
-    pub fn finish_and_read<T: bytemuck::Pod>(&self, mut enc: wgpu::CommandEncoder, src: &Buf, len: usize) -> Vec<T> {
-        assert!(len <= src.len, "readback of {len} values from a buffer of {}", src.len);
-        let zeros = || vec![<T as bytemuck::Zeroable>::zeroed(); len];
+    /// A failed readback (device lost, map error, timeout, a range past the buffer's end) fails the
+    /// render ([`FailKind::Fatal`]) and returns zeros, which the caller discards; after an earlier
+    /// failure in the same render nothing more is submitted.
+    pub fn finish_and_read<T: bytemuck::Pod>(&self, mut enc: wgpu::CommandEncoder, src: &Buf, offset: usize, len: usize) -> Vec<T> {
+        let zeros = || vec![<T as bytemuck::Zeroable>::zeroed(); len * 4 / std::mem::size_of::<T>().max(1)];
+        if offset.saturating_add(len) > src.len {
+            fail(FailKind::Fatal, format!("readback of {len} values at {offset} from a buffer of {}", src.len));
+            return zeros();
+        }
         if failed() {
             return zeros();
         }
@@ -547,7 +557,7 @@ impl Gpu {
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        enc.copy_buffer_to_buffer(src.raw(), 0, &staging, 0, size);
+        enc.copy_buffer_to_buffer(src.raw(), (offset * 4) as u64, &staging, 0, size);
         self.submit([enc.finish()]);
         let slice = staging.slice(..size);
         let (tx, rx) = std::sync::mpsc::channel();

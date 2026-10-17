@@ -245,6 +245,8 @@ pub struct Session {
     visible_gen: u64,
     /// How many photos each collapsed stack's shown photo in `visible` stands for (two or more).
     visible_stacked: Arc<std::collections::HashMap<PhotoId, usize>>,
+    /// Show every photo of a stack in the grid, none folded away (View > Stacks off).
+    pub stacks_off: bool,
     /// Photos in the current source with no filter on (cached like `visible`).
     total: Option<((u64, String), usize)>,
     pub undo: Vec<UndoEntry>,
@@ -484,6 +486,7 @@ impl Session {
             never_follow: false,
             visible_gen: 0,
             visible_stacked: Default::default(),
+            stacks_off: false,
             total: None,
             undo: Vec::new(),
             commits: 0,
@@ -1060,8 +1063,10 @@ impl Session {
 
     /// Photos shown in the grid/filmstrip for the current source, filter and sort.
     pub fn visible(&mut self) -> &[PhotoId] {
-        let mut key =
-            (self.catalog.revision, format!("{:?}|{:?}|{:?}|{:?}|{:?}", self.source, self.filter, self.sort, self.browse, self.library_folder));
+        let mut key = (
+            self.catalog.revision,
+            format!("{:?}|{:?}|{:?}|{:?}|{:?}|{}", self.source, self.filter, self.sort, self.browse, self.library_folder, self.stacks_off),
+        );
         // What a held view is told apart by: what is shown and how, and for a smart album its rules (rules that were
         // changed ask something else). Not the checks of Missing Photos below: they fill the view in, they are
         // no other view.
@@ -1183,7 +1188,7 @@ impl Session {
                 visible.retain(|id| cmd::missing::is_missing(cat, avail, *id));
             }
             let mut stacked = Default::default();
-            if self.source != LibrarySource::RecentlyDeleted {
+            if self.source != LibrarySource::RecentlyDeleted && !self.stacks_off {
                 (visible, stacked) = self.catalog.arrange_stacks_counted(&visible);
             }
             self.visible = visible.into();

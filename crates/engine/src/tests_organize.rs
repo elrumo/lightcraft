@@ -336,3 +336,28 @@ fn deleting_an_album_folder_preserves_photos_and_restores_its_subtree() {
     drop(reopened);
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn stack_toggle_takes_the_tapped_photo_without_a_selection_and_stacks_can_be_switched_off() {
+    let dir = temp_dir("stacks-tap");
+    let mut s = open(&dir);
+    let vis = s.visible_cloned();
+    let n = vis.len();
+    s.execute("library.select", &json!({"ids": [vis[2].0, vis[3].0, vis[4].0]})).unwrap();
+    s.execute("stack.group", &json!({})).unwrap();
+    s.execute("library.select", &json!({"ids": [vis[0].0]})).unwrap();
+    // the tapped photo is in a stack the selection isn't
+    s.execute("stack.toggle", &json!({"ids": [vis[2].0]})).unwrap();
+    assert_eq!(s.visible_cloned().len(), n);
+    s.execute("stack.toggle", &json!({"ids": [vis[2].0]})).unwrap();
+    assert_eq!(s.visible_cloned().len(), n - 2);
+    let badged = |s: &mut Session| {
+        let page = s.execute("catalog.query", &json!({})).unwrap();
+        page["photos"].as_array().unwrap().iter().filter(|p| p.get("stack").is_some()).count()
+    };
+    assert_eq!(badged(&mut s), 1);
+    s.execute("view.stacks", &json!({"on": false})).unwrap();
+    assert_eq!(s.visible_cloned().len(), n);
+    // no stack badges either: every photo shows flat
+    assert_eq!(badged(&mut s), 0);
+}

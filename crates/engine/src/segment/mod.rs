@@ -101,16 +101,26 @@ pub struct Polled {
     pub refine: Option<u32>,
 }
 
-/// The model download (`segment.model.*`).
-#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
+/// A model download (`segment.model.*`, `models.list`), as the session sees it.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default, rename_all = "camelCase")]
 pub struct DownloadStatus {
     pub running: bool,
+    /// It waits for one of the model downloads that run (two at once) to end; `running` is true meanwhile.
+    pub queued: bool,
+    /// Bytes a second, 0 while not known yet.
+    pub rate: u64,
+    /// Time left at that rate, when it is known.
+    pub eta_ms: Option<u64>,
     pub done: u64,
     pub total: u64,
+    /// The file being fetched.
     pub file: String,
+    /// The last download's error (cleared when a new one starts).
     pub error: Option<String>,
-    /// The last download was cancelled (it resumes next time): decide on this, not on `error`'s text.
+    /// The last download was cancelled (its `error` says so in words): decide on this, not on the text.
     pub cancelled: bool,
+    /// The last download finished and the files are in place.
     pub finished: bool,
 }
 
@@ -216,18 +226,7 @@ impl Segmenter {
     /// The model download's state.
     pub fn download_status(&self) -> DownloadStatus {
         #[cfg(feature = "sam")]
-        {
-            let s = self.download.status();
-            DownloadStatus {
-                running: s.running,
-                done: s.done,
-                total: s.total,
-                file: s.file,
-                error: s.error,
-                cancelled: s.cancelled,
-                finished: s.finished,
-            }
-        }
+        return self.download.status();
         #[cfg(not(feature = "sam"))]
         DownloadStatus::default()
     }

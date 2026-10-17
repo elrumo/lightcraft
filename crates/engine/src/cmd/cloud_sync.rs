@@ -6,8 +6,8 @@ use lightcraft_catalog::{AlbumId, PhotoId};
 use serde_json::{Value, json};
 
 use super::{CommandSpec, always, bad, bool_or, cmd, str_param};
-use crate::cloud_sync::Resolution;
-use crate::{LibrarySource, Result, Session};
+use crate::cloud_sync::{QueueKind, Resolution};
+use crate::{EngineError, LibrarySource, Result, Session};
 
 /// The library was signed in to a server once (signed in now or not).
 fn synced(s: &Session) -> std::result::Result<(), String> {
@@ -106,6 +106,15 @@ fn activity(s: &mut Session, p: &Value) -> Result<Value> {
         "serverError": st.and_then(|st| st.activity_error()),
         "serverAgeSecs": st.and_then(|st| st.activity_age()).map(|a| a.as_secs()),
     }))
+}
+
+/// One page of what the sync sheet counts, photo by photo.
+fn queue(s: &mut Session, p: &Value) -> Result<Value> {
+    const C: &str = "sync.queue";
+    let kind = str_param(p, "kind").and_then(QueueKind::parse).ok_or_else(|| bad(C, "missing `kind` (changes, uploads or downloads)"))?;
+    let count = |key: &str, default: usize| p.get(key).and_then(Value::as_u64).map_or(default, |n| usize::try_from(n).unwrap_or(usize::MAX));
+    let page = s.sync_queue(kind, count("offset", 0), count("limit", 100).clamp(1, 500));
+    serde_json::to_value(page).map_err(|e| EngineError::Other(e.to_string()))
 }
 
 /// Settle the choice after signing in to a server that already has a library.
@@ -313,6 +322,9 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(query "sync.resolveConflict", "Resolve Sync Conflict", [], None,
             "{choice: \"upload\" | \"useServer\" | \"cancel\"}: this library and the server's both have photos. upload: add this library's photos, edits and albums to the server's (photos both have are kept once) and get the server's; useServer: replace this library with the server's (a copy of this one is kept in the library folder); cancel: sign out and keep this library as it is",
             conflict_pending, resolve_conflict),
+        cmd!(query "sync.queue", "Sync Queue", [], None,
+            "{kind: \"changes\" | \"uploads\" | \"downloads\", offset?, limit?}: one page (`limit` 100, at most 500) of what `sync.status` counts as `pending`, `uploads` and `downloads`, photo by photo: `total` of them in all, `changes` (the pending ones: a record's several changes are one item), and `items` of {kind (photo, album, stack, label, keyword, other), id, name, what (the values changing: rating, develop, add…; or the file moving: original, smart preview, preview, building previews), running}, the transfers moving now first",
+            synced, queue),
         cmd!(query "sync.activity", "Sync Activity", [], None,
             "{refresh?: bool}: what this device is sending and receiving (changes waiting, photos and files queued and done, the ones moving now) and what the server is doing for this library (scanning library folders, building previews, indexing for search), as the server last said (asked for again every 2 s while someone looks) unless `refresh` asks it now",
             synced, activity),

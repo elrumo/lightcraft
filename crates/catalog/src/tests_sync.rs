@@ -197,6 +197,30 @@ fn outbox_records_shared_changes_only() {
 }
 
 #[test]
+fn outbox_changes_name_their_record_and_value() {
+    let mut c = Catalog::new();
+    let add = add_photo(&mut c);
+    let mut out = Outbox::default();
+    let inv = c.apply(add.clone()).unwrap();
+    out.record(&add, &inv, &c);
+    let id = PhotoId(1);
+    let op = Op::SetRating { id, rating: 4 };
+    let inv = c.apply(op.clone()).unwrap();
+    out.record(&op, &inv, &c);
+    let got: Vec<(Subject, &str)> = out.changes().collect();
+    assert_eq!(got, vec![(Subject::Photo(id), "add"), (Subject::Photo(id), "rating")]);
+
+    // every key `key_of` makes reads back, and one that isn't a key reads as `Other` (never a panic)
+    assert_eq!(parse_key("a7.name"), (Subject::Album(AlbumId(7)), "name"));
+    assert_eq!(parse_key("s3.set"), (Subject::Stack(StackId(3)), "set"));
+    assert_eq!(parse_key("label.Red"), (Subject::LabelName("Red".into()), "name"));
+    assert_eq!(parse_key("keyword.travel|rome"), (Subject::Keyword("travel|rome".into()), "keyword"));
+    for bad in ["", "p", "p.", "pX.rating", "p99999999999999999999.rating", "zz", "é.é"] {
+        assert!(matches!(parse_key(bad), (Subject::Other(_), "")), "{bad:?}");
+    }
+}
+
+#[test]
 fn outbox_acks_only_what_did_not_change() {
     let mut c = Catalog::new();
     let add = add_photo(&mut c);

@@ -14,7 +14,8 @@
 //! on `/api/admin/*`), so the user types the admin password here. A request runs on a worker thread
 //! ([`cloud_sync::run`], the sync driver's transport) and is answered when it ends, so a server that
 //! doesn't answer never stalls the engine thread. A `401` on a signed-in call (the server forgets a
-//! session after two idle hours) clears the session and answers code `unauthorized`.
+//! session after two idle hours) clears the session and answers code `unauthorized`; a `412` (a
+//! document someone else changed first, like the shared presets) answers code `conflict`.
 
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
 
@@ -200,6 +201,7 @@ pub(super) fn finish(kind: Kind, done: &Done) -> (Result<Value, ErrorBody>, Chan
         }
         Kind::Call { .. } if ok => (parsed().ok_or_else(misread), Change::Keep),
         Kind::Call { signed_in: true } if done.status == 401 => (Err(ErrorBody::new("unauthorized", why())), Change::Clear),
+        Kind::Call { .. } if done.status == 412 => (Err(ErrorBody::new("conflict", why())), Change::Keep),
         _ => (Err(ErrorBody::new("other", why())), Change::Keep),
     }
 }
@@ -368,6 +370,9 @@ mod tests {
         let odd = Done { id: 4, status: 502, body: "<html>".into() };
         let (r, _) = finish(Kind::Call { signed_in: true }, &odd);
         assert_eq!(r.err().map(|e| e.message), Some("The server answered 502.".into()));
+        let stale = Done { id: 5, status: 412, body: r#"{"version":3,"items":[]}"#.into() };
+        let (r, change) = finish(Kind::Call { signed_in: true }, &stale);
+        assert_eq!((r.err().map(|e| e.code), change), (Some("conflict".into()), Change::Keep));
     }
 
     // Empty answers are `{}`; an answer that isn't JSON is an error, not a panic

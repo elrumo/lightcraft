@@ -166,18 +166,28 @@ struct Queued {
 /// The scale is chosen once per drag and only goes down during it, and only when the drafts take
 /// about three times the target: a draft of another size starts from a cold stage cache (a full
 /// raw's: hundreds of ms), so a scale that moved with every sample would be slower than either.
+/// SDR and HDR drafts (an HDR edit's loupe on a display with headroom renders its float HDR
+/// picture) are learned apart: where the HDR one renders on the CPU (a LUT profile, a refined mask)
+/// it costs ~10× the SDR one, and a drag must not start from the other kind's speed.
 #[derive(Debug, Default)]
 pub struct DraftBudget {
+    /// What SDR (`[0]`) and HDR (`[1]`) drafts cost.
+    cost: [DraftCost; 2],
+    /// The scale the drag in progress renders at.
+    frozen: Option<f32>,
+    /// The scale the latest drag rendered at, and whether it drafted HDR (diagnostics).
+    last_scale: Option<f32>,
+    last_hdr: bool,
+}
+
+#[derive(Debug, Default)]
+struct DraftCost {
     /// Render time per output pixel (ms) of drafts that ran on a warm stage cache: the median of the
     /// latest few, so one draft held up by other work on the GPU doesn't shrink the drag.
     ms_per_px: Option<f64>,
     recent: Vec<f64>,
     /// Size of the last draft that finished: the next one of the same size was warm.
     last: Option<[usize; 2]>,
-    /// The scale the drag in progress renders at.
-    frozen: Option<f32>,
-    /// The scale the latest drag rendered at (diagnostics).
-    last_scale: Option<f32>,
 }
 
 impl DraftBudget {
@@ -198,33 +208,36 @@ impl DraftBudget {
     /// A drag's scale shrinks only below this share of it (the drafts take ~2.8 × the target).
     const SHRINK: f32 = 0.6;
 
-    /// A draft of `size` finished in `ms`.
-    pub fn note(&mut self, size: [usize; 2], ms: f64) {
-        let warm = self.last == Some(size);
-        self.last = Some(size);
+    /// A draft of `size` (`hdr`: an HDR picture) finished in `ms`.
+    pub fn note(&mut self, size: [usize; 2], ms: f64, hdr: bool) {
+        let cost = &mut self.cost[usize::from(hdr)];
+        let warm = cost.last == Some(size);
+        cost.last = Some(size);
         let px = size[0] as f64 * size[1] as f64;
         let c = ms / px;
         if warm && c.is_finite() && c > 0.0 {
-            if self.recent.len() >= Self::SAMPLES {
-                self.recent.remove(0);
+            if cost.recent.len() >= Self::SAMPLES {
+                cost.recent.remove(0);
             }
-            self.recent.push(c);
-            let mut sorted = self.recent.clone();
+            cost.recent.push(c);
+            let mut sorted = cost.recent.clone();
             sorted.sort_by(f64::total_cmp);
-            self.ms_per_px = sorted.get(sorted.len() / 2).copied();
+            cost.ms_per_px = sorted.get(sorted.len() / 2).copied();
         }
     }
 
-    /// The linear scale of a draft of a render that is `full_px` pixels at full size: 1 when no
-    /// slider is dragging.
-    pub fn scale(&mut self, interacting: bool, full_px: f64) -> f32 {
+    /// The linear scale of a draft of a render that is `full_px` pixels at full size (`hdr`: an HDR
+    /// picture): 1 when no slider is dragging.
+    pub fn scale(&mut self, interacting: bool, full_px: f64, hdr: bool) -> f32 {
         if !interacting {
             // (the full-size render that follows replaces the stage cache: the next drag starts cold)
             self.frozen = None;
-            self.last = None;
+            for c in &mut self.cost {
+                c.last = None;
+            }
             return 1.0;
         }
-        let want = match self.ms_per_px {
+        let want = match self.cost[usize::from(hdr)].ms_per_px {
             Some(c) if c > 0.0 => ((Self::TARGET_MS / c / full_px.max(1.0)).sqrt() as f32).clamp(Self::MIN, Self::MAX),
             _ => Self::GUESS,
         };
@@ -236,6 +249,7 @@ impl DraftBudget {
         };
         self.frozen = Some(scale);
         self.last_scale = Some(scale);
+        self.last_hdr = hdr;
         scale
     }
 
@@ -249,7 +263,7 @@ impl DraftBudget {
 
     /// For diagnostics: the scale of the latest drag, and the learned render cost (ms per megapixel).
     pub fn report(&self) -> (Option<f32>, Option<f64>) {
-        (self.last_scale, self.ms_per_px.map(|c| c * 1e6))
+        (self.last_scale, self.cost[usize::from(self.last_hdr)].ms_per_px.map(|c| c * 1e6))
     }
 }
 
@@ -403,6 +417,8 @@ pub struct Scheduler<V> {
     /// The display can show the range above SDR white: the loupe renders HDR edits in HDR
     /// ([`Self::set_hdr_display`]).
     hdr_display: bool,
+    /// The loupe's latest picture was an HDR one: its drafts will be too (see [`DraftBudget`]).
+    main_hdr: bool,
     /// Since when nothing has been pending, and whether the GPU pool was trimmed since.
     #[cfg(not(target_arch = "wasm32"))]
     idle: Option<(std::time::Instant, bool)>,
@@ -522,6 +538,7 @@ impl<V> Scheduler<V> {
             stage_budget_override: None,
             display: None,
             hdr_display: false,
+            main_hdr: false,
             #[cfg(not(target_arch = "wasm32"))]
             idle: None,
         }
@@ -761,7 +778,8 @@ impl<V> Scheduler<V> {
     /// The linear scale the loupe renders at: 1 unless a slider is dragging, then what this host
     /// renders in time (see [`DraftBudget`]). `full_px`: the pixels of the undrafted render.
     pub fn draft_scale(&mut self, interacting: bool, full_px: f64) -> f32 {
-        self.draft.scale(interacting, full_px)
+        // (the picture on screen says which kind the drag's drafts are: a drag doesn't switch HDR)
+        self.draft.scale(interacting, full_px, self.main_hdr)
     }
 
     /// What the draft budget has learned (see [`DraftBudget::report`]).
@@ -1179,6 +1197,7 @@ impl<V> Scheduler<V> {
                 self.pending.remove(&slot);
             }
             let hdr = r.hdr.take();
+            let is_hdr = hdr.is_some();
             let rendered = match r.rendered {
                 Ok(x) => {
                     self.failed.remove(&slot);
@@ -1253,9 +1272,10 @@ impl<V> Scheduler<V> {
             }
             if slot == Slot::Main {
                 self.last_main_ms = ms;
+                self.main_hdr = is_hdr;
                 if let Some(i) = self.draft_ids.iter().position(|id| *id == r.request_id) {
                     self.draft_ids.swap_remove(i);
-                    self.draft.note(size, ms);
+                    self.draft.note(size, ms, is_hdr);
                 }
             }
             polled.shown.push(slot);
@@ -1627,67 +1647,87 @@ mod draft_budget_tests {
         let mut b = DraftBudget::default();
         let size = [1000, 700];
         for _ in 0..4 {
-            b.note(size, ns_per_px * 1e-6 * 700_000.0);
+            b.note(size, ns_per_px * 1e-6 * 700_000.0, false);
         }
         b
     }
 
     #[test]
     fn nothing_is_drafted_when_no_slider_drags() {
-        assert_eq!(learned(100.0).scale(false, 3e6), 1.0);
+        assert_eq!(learned(100.0).scale(false, 3e6, false), 1.0);
     }
 
     #[test]
     fn a_fast_host_drafts_at_full_size_and_a_slow_one_shrinks_the_draft() {
         // a GPU: a few ms for a 3 MP view, drafted at its own size (natively; the browser stops at 0.6)
-        assert_eq!(learned(3.0).scale(true, 3e6), DraftBudget::MAX);
+        assert_eq!(learned(3.0).scale(true, 3e6, false), DraftBudget::MAX);
         // a CPU at ~100 ns a pixel: what fits the target (0.2 MP natively, 0.4 MP in the browser)
-        let s = learned(100.0).scale(true, 3e6);
+        let s = learned(100.0).scale(true, 3e6, false);
         let px = 3e6 * f64::from(s) * f64::from(s);
         let fits = DraftBudget::TARGET_MS / 1e-4;
         assert!((fits * 0.65..fits * 1.35).contains(&px), "scale {s} is {px} px, {fits} fit");
         // a hopeless host stops at the floor
-        assert_eq!(learned(10_000.0).scale(true, 3e6), DraftBudget::MIN);
+        assert_eq!(learned(10_000.0).scale(true, 3e6, false), DraftBudget::MIN);
     }
 
     #[test]
     fn a_draft_of_a_new_size_is_cold_and_teaches_nothing() {
         let mut b = DraftBudget::default();
-        b.note([800, 600], 900.0);
-        b.note([400, 300], 900.0);
-        assert_eq!(b.scale(true, 3e6), DraftBudget::GUESS, "no two drafts of one size yet");
-        b.note([400, 300], 12.0);
-        assert!(b.scale(false, 3e6) == 1.0 && b.ms_per_px.is_some_and(|c| (c - 1e-4).abs() < 1e-9));
+        b.note([800, 600], 900.0, false);
+        b.note([400, 300], 900.0, false);
+        assert_eq!(b.scale(true, 3e6, false), DraftBudget::GUESS, "no two drafts of one size yet");
+        b.note([400, 300], 12.0, false);
+        assert!(b.scale(false, 3e6, false) == 1.0 && b.cost[0].ms_per_px.is_some_and(|c| (c - 1e-4).abs() < 1e-9));
     }
 
     #[test]
     fn the_scale_holds_during_a_drag_and_only_goes_down() {
         let mut b = learned(3.0);
-        let first = b.scale(true, 3e6);
+        let first = b.scale(true, 3e6, false);
         assert_eq!(first, DraftBudget::MAX);
         // a little noise in the samples moves nothing, nor does one draft held up by other work
-        b.note([1000, 700], 2.6);
-        b.note([1000, 700], 70.0);
-        assert_eq!(b.scale(true, 3e6), first);
+        b.note([1000, 700], 2.6, false);
+        b.note([1000, 700], 70.0, false);
+        assert_eq!(b.scale(true, 3e6, false), first);
         // drafts twice as slow as the target keep the size too (a new size would start cold: a long stall)
         for _ in 0..6 {
-            b.note([1000, 700], 9.5);
+            b.note([1000, 700], 9.5, false);
         }
-        assert_eq!(b.scale(true, 3e6), first);
+        assert_eq!(b.scale(true, 3e6, false), first);
         // a slider that turns out much slower (it redoes more per tick) shrinks the draft...
         for _ in 0..12 {
-            b.note([1000, 700], 70.0);
+            b.note([1000, 700], 70.0, false);
         }
-        let smaller = b.scale(true, 3e6);
+        let smaller = b.scale(true, 3e6, false);
         assert!(smaller < first * 0.75 && smaller >= DraftBudget::MIN, "{smaller}");
         // ...and a fast tick afterwards doesn't grow it back mid-drag
         for _ in 0..30 {
-            b.note([1000, 700], 2.0);
+            b.note([1000, 700], 2.0, false);
         }
-        assert_eq!(b.scale(true, 3e6), smaller);
+        assert_eq!(b.scale(true, 3e6, false), smaller);
         // the next drag starts afresh from what was learned last
-        assert_eq!(b.scale(false, 3e6), 1.0);
-        assert_eq!(b.scale(true, 3e6), DraftBudget::MAX);
+        assert_eq!(b.scale(false, 3e6, false), 1.0);
+        assert_eq!(b.scale(true, 3e6, false), DraftBudget::MAX);
+    }
+
+    #[test]
+    fn hdr_drafts_are_learned_apart_from_sdr_ones() {
+        // SDR drafts on the GPU at full size; HDR ones on the CPU (a LUT profile), 30× slower
+        let mut b = learned(3.0);
+        assert_eq!(b.scale(true, 3e6, false), DraftBudget::MAX);
+        assert_eq!(b.scale(false, 3e6, false), 1.0);
+        // the first HDR drag doesn't start from SDR's speed (a full-size picture of a CPU render: a stall)
+        assert_eq!(b.scale(true, 3e6, true), DraftBudget::GUESS);
+        for _ in 0..4 {
+            b.note([1000, 700], 90e-6 * 700_000.0, true);
+        }
+        assert_eq!(b.scale(false, 3e6, true), 1.0);
+        let hdr = b.scale(true, 3e6, true);
+        assert!(hdr < 0.5, "{hdr}");
+        assert!(b.report().1.is_some_and(|c| (c - 90.0).abs() < 1e-6), "the HDR cost is reported: {:?}", b.report());
+        // ...and SDR's is still what it was
+        assert_eq!(b.scale(false, 3e6, false), 1.0);
+        assert_eq!(b.scale(true, 3e6, false), DraftBudget::MAX);
     }
 
     // A fast host keeps drafting a zoomed view's windows at full size; a slower one shrinks them with the frame's draft
@@ -1704,12 +1744,12 @@ mod draft_budget_tests {
     #[test]
     fn hostile_numbers_give_a_scale_in_range() {
         for full in [0.0, -1.0, f64::NAN, f64::INFINITY, 1e300] {
-            let s = learned(100.0).scale(true, full);
+            let s = learned(100.0).scale(true, full, false);
             assert!((DraftBudget::MIN..=DraftBudget::MAX).contains(&s), "full_px {full}: {s}");
             let mut b = DraftBudget::default();
-            b.note([0, 0], f64::NAN);
-            b.note([0, 0], f64::INFINITY);
-            assert!(b.scale(true, full) > 0.0);
+            b.note([0, 0], f64::NAN, false);
+            b.note([0, 0], f64::INFINITY, false);
+            assert!(b.scale(true, full, false) > 0.0);
         }
     }
 }

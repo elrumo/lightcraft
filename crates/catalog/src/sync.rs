@@ -104,6 +104,44 @@ pub fn key_of(op: &Op) -> Option<String> {
     }
 }
 
+/// What a pending change is about ([`Outbox::changes`]).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Subject {
+    Photo(PhotoId),
+    Album(crate::AlbumId),
+    Stack(crate::StackId),
+    /// A colour label's name (`Red`).
+    LabelName(String),
+    /// A keyword, by its path in the keyword list.
+    Keyword(String),
+    /// A key this version doesn't know (an outbox written by a newer one).
+    Other(String),
+}
+
+/// The record a [`key_of`] key is about and the value of it that changes (`rating`, `develop`, `add`…).
+pub fn parse_key(key: &str) -> (Subject, &str) {
+    let record = |prefix: char| {
+        let (id, field) = key.strip_prefix(prefix)?.split_once('.')?;
+        Some((id.parse::<u64>().ok()?, field))
+    };
+    if let Some((id, field)) = record('p') {
+        return (Subject::Photo(PhotoId(id)), field);
+    }
+    if let Some((id, field)) = record('a') {
+        return (Subject::Album(crate::AlbumId(id)), field);
+    }
+    if let Some((id, field)) = record('s') {
+        return (Subject::Stack(crate::StackId(id)), field);
+    }
+    if let Some(label) = key.strip_prefix("label.") {
+        return (Subject::LabelName(label.to_string()), "name");
+    }
+    if let Some(path) = key.strip_prefix("keyword.") {
+        return (Subject::Keyword(path.to_string()), "keyword");
+    }
+    (Subject::Other(key.to_string()), "")
+}
+
 /// The key prefix of every value of the record a removal deletes (`p7.`).
 fn removed_prefix(op: &Op) -> Option<String> {
     match op {
@@ -248,6 +286,12 @@ impl Outbox {
     }
     pub fn len(&self) -> usize {
         self.entries.len()
+    }
+
+    /// The pending changes in the order they will be sent, each as the record it is about and the
+    /// value of it that changes ([`parse_key`]).
+    pub fn changes(&self) -> impl Iterator<Item = (Subject, &str)> {
+        self.entries.iter().map(|e| parse_key(&e.key))
     }
 
     /// Note an op this device applied (`inverse` is what [`Catalog::apply`] returned, `after` the

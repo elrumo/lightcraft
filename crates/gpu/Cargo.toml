@@ -34,3 +34,5 @@ denoise = ["dep:lightcraft-denoise", "lightcraft-denoise/runtime"]
 lightcraft-testkit = { workspace = true }
 lightcraft-scenes = { workspace = true }
 lightcraft-raw = { workspace = true }
+# the HDR picture's half floats (`hdr_pictures_match`)
+half = { workspace = true }

@@ -9,6 +9,14 @@ fn pf(i: u32) -> f32 {
     return bitcast<f32>(P[i]);
 }
 
+// The exact sRGB curve, carried on past 1 (`lightcraft_color::transfer::linear_to_srgb`).
+fn srgb_exact(v: f32) -> f32 {
+    if (v <= 0.0031308) {
+        return v * 12.92;
+    }
+    return 1.055 * pow(v, 1.0 / 2.4) - 0.055;
+}
+
 // Linear index of a 1-D kernel dispatched on a 2-D grid of 256-wide workgroups.
 fn lin_index(g: vec3<u32>, n: vec3<u32>) -> u32 {
     return g.x + g.y * n.x * 256u;

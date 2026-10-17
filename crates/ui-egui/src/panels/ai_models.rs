@@ -208,9 +208,14 @@ fn card(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens, m: &ModelInfo) {
 
         // download in progress, or the buttons
         if let Some(d) = m.download.as_ref().filter(|d| d.running) {
-            let frac = if d.total > 0 { d.done as f64 / d.total as f64 } else { 0.0 };
-            let r = ui.add(egui::ProgressBar::new(frac as f32).text(format!("{} / {}", size(d.done), size(d.total))));
-            register(ui.ctx(), format!("progress:model-{}", m.id), r.rect);
+            if d.queued {
+                // (two downloads run at once: this one starts when one of them ends)
+                hint(ui, t, crate::i18n::tr("Waiting to start…"));
+            } else {
+                let frac = if d.total > 0 { d.done as f64 / d.total as f64 } else { 0.0 };
+                let r = ui.add(egui::ProgressBar::new(frac as f32).text(format!("{} / {}", size(d.done), size(d.total))));
+                register(ui.ctx(), format!("progress:model-{}", m.id), r.rect);
+            }
             let r = ui.button(crate::i18n::tr("Cancel Download"));
             register(ui.ctx(), format!("button:modelCancel-{}", m.id), r.rect);
             if r.clicked() {

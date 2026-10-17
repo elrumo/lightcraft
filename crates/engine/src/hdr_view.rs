@@ -5,7 +5,9 @@
 //! render then comes with an [`HdrPicture`] beside its 8-bit picture, which every other view and a
 //! display without headroom keep using. The pixels are the same render as the export's HDR output
 //! ([`OutputDepth::F32Hdr`](lightcraft_pipeline::OutputDepth::F32Hdr)), so what the loupe shows is
-//! what an HDR export holds.
+//! what an HDR export holds. The GPU writes the picture itself
+//! ([`lightcraft_gpu::try_render_hdr`], [`HdrPicture::from_halves`]); the CPU's float render is packed
+//! into one ([`HdrPicture::from_deep`]).
 
 use lightcraft_pipeline::{DeepImage, DeepSamples};
 
@@ -39,7 +41,22 @@ fn encode_table() -> &'static [u16] {
     })
 }
 
+/// A headroom limit fit to describe a picture: a non-finite one is no limit worth a bad picture, so 1
+/// (SDR white).
+fn held_peak(peak: f32) -> f32 {
+    if peak.is_finite() { peak.max(1.0) } else { 1.0 }
+}
+
 impl HdrPicture {
+    /// A `width × height` picture from its half floats as [`Self::rgba16f`] holds them (what the GPU
+    /// writes, [`lightcraft_gpu::try_render_hdr`]). `None` for a buffer that isn't that size.
+    pub fn from_halves(width: usize, height: usize, rgba16f: Vec<u16>, peak: f32) -> Option<HdrPicture> {
+        if rgba16f.len() != width.checked_mul(height)?.checked_mul(4)? {
+            return None;
+        }
+        Some(HdrPicture { width, height, rgba16f, peak: held_peak(peak) })
+    }
+
     /// The linear float render `deep` ([`OutputDepth::F32Hdr`](lightcraft_pipeline::OutputDepth::F32Hdr)),
     /// every sample held to `0..=peak` and encoded. `None` for any other kind of render, or a buffer
     /// that isn't `width × height` pixels.
@@ -49,8 +66,7 @@ impl HdrPicture {
         if v.len() != pixels.checked_mul(3)? {
             return None;
         }
-        // (a non-finite peak is no limit worth a bad picture: 1 keeps SDR white)
-        let peak = if peak.is_finite() { peak.max(1.0) } else { 1.0 };
+        let peak = held_peak(peak);
         let one = half::f16::ONE.to_bits();
         let table = encode_table();
         let mut rgba16f = Vec::with_capacity(pixels.saturating_mul(4));
@@ -108,6 +124,14 @@ mod tests {
         // a hostile peak is no limit at all, and never a NaN pixel
         let p = HdrPicture::from_deep(&d, f32::NAN).unwrap();
         assert!(p.rgba16f.iter().all(|b| half::f16::from_bits(*b).is_finite()));
+    }
+
+    #[test]
+    fn halves_of_the_wrong_size_make_no_picture() {
+        assert!(HdrPicture::from_halves(2, 1, vec![0; 8], 4.0).is_some());
+        assert!(HdrPicture::from_halves(2, 1, vec![0; 7], 4.0).is_none());
+        assert!(HdrPicture::from_halves(usize::MAX, 2, vec![], 4.0).is_none());
+        assert_eq!(HdrPicture::from_halves(1, 1, vec![0; 4], f32::NAN).map(|p| p.peak), Some(1.0));
     }
 
     #[test]

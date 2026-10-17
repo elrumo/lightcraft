@@ -11,7 +11,7 @@
 
 use std::path::{Path, PathBuf};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::Session;
@@ -89,15 +89,7 @@ fn hosts<'a>(urls: impl IntoIterator<Item = &'a String>) -> Vec<String> {
 
 /// A download's state from the search module's JSON, kept only while it runs or failed.
 fn shown(v: &Value) -> Option<DownloadStatus> {
-    let d = DownloadStatus {
-        running: v["running"].as_bool().unwrap_or(false),
-        done: v["done"].as_u64().unwrap_or(0),
-        total: v["total"].as_u64().unwrap_or(0),
-        file: v["file"].as_str().unwrap_or_default().to_string(),
-        error: v["error"].as_str().map(str::to_string),
-        cancelled: v["cancelled"].as_bool().unwrap_or(false),
-        finished: v["finished"].as_bool().unwrap_or(false),
-    };
+    let d = DownloadStatus::deserialize(v).unwrap_or_default();
     (d.running || d.error.is_some()).then_some(d)
 }
 
@@ -310,11 +302,9 @@ impl Session {
     #[cfg(feature = "enhance")]
     fn enhance_entries(&self) -> Vec<Entry> {
         let e = &self.enhancer;
-        let (fetching, d) = e.download_status();
         Enhancer::models()
             .map(|m| {
                 let dir = e.model_dir(m.id);
-                let mine = fetching.as_deref() == Some(m.id);
                 Facts {
                     id: m.id,
                     label: m.label,
@@ -341,7 +331,7 @@ impl Session {
                         .unwrap_or_default(),
                     dir,
                     mirrors: e.mirrors(m.id),
-                    download: Some(d.clone()).filter(|d| mine && (d.running || d.error.is_some())),
+                    download: Some(e.model_download_status(m.id)).filter(|d| d.running || d.error.is_some()),
                 }
                 .entry()
             })
@@ -390,7 +380,7 @@ impl Session {
             SEARCH => self.vision.cancel_download(),
             TEXT => self.vision.cancel_text_download(),
             FACES => self.vision.cancel_faces_download(),
-            other => self.enhancer.download_status().0.as_deref() == Some(other) && self.enhancer.cancel_download(),
+            other => self.enhancer.cancel_download(Some(other)),
         }
     }
 

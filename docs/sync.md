@@ -195,7 +195,8 @@ them: `--data` / `LIGHTCRAFT_DATA`, `--listen` / `LIGHTCRAFT_LISTEN`, and the do
 (`LIGHTCRAFT_DOMAIN` with the compose file). Its JSON API is under `/api/admin/` (`apps/lightcraft-server/src/admin.rs`).
 
 The SwiftUI iPhone / iPad app has the same console as screens: **Settings ▸ Server Administration** (sign-in or first-run
-setup, Overview, Users with their devices, shared links and library folders, Search & People, Storage & Clean Up). It
+setup, Overview, Users with their devices, shared links and library folders, Presets, Search & People, Limits, Storage &
+Clean Up). It
 calls the same API through the app's engine (`host.admin.*`, [ios-swift.md](ios-swift.md)) and asks for the admin
 password itself, since the Sync sign-in is a device's.
 
@@ -460,6 +461,16 @@ trouble) and opens, as Lightroom's cloud does, a panel (`view.syncStatus`, File 
 
 Each section is a rounded card with a row per piece of work; a server whose disk is almost full, and changes that
 can't be saved, are warnings above them.
+
+The numbers say how many, not which. `sync.queue kind=changes|uploads|downloads [offset] [limit]` lists the photos
+behind each of them, a page at a time (100, at most 500): `total` of them in all (the number `sync.status` gives as
+`uploads` or `downloads`; for `changes`, the records with changes waiting, where `changes` counts the changes
+themselves, `pending` in `sync.status`) and `items` of `{kind, id, name, what, running}`. A change is listed by the record
+it is about, with every value of it that is waiting (a photo's `rating` and `develop`, an album's `add`), in the order
+they will be sent; a transfer by the photo and the file moving (`original`, `smart preview`, `preview`, `building
+previews`), the ones moving now first. The SwiftUI app (iPhone, iPad and Mac) makes the three rows of **This Device**
+in its Sync sheet links to these lists: a picture, the name and what is waiting for each photo, a spinner on the file
+moving, rows that are done leaving as the queue empties, more loaded as the list is scrolled.
 
 The same numbers are the `sync.activity` command (`lightcraft-cli run --library DIR sync.activity refresh=true`, MCP,
 control channel) and part of `sync.status`; `ui.inspect` and `ui.widgets` list the popover and its parts (`icon:cloud`,

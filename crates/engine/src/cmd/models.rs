@@ -37,9 +37,8 @@ fn download(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let started = s.start_model_download(id).map_err(EngineError::Other)?;
     let m = s.models().into_iter().find(|m| m.id == id);
-    Ok(
-        json!({"started": started, "installed": m.as_ref().is_some_and(|m| m.installed), "downloading": m.and_then(|m| m.download).is_some_and(|d| d.running)}),
-    )
+    let d = m.as_ref().and_then(|m| m.download.clone()).filter(|d| d.running);
+    Ok(json!({"started": started, "installed": m.is_some_and(|m| m.installed), "downloading": d.is_some(), "queued": d.is_some_and(|d| d.queued)}))
 }
 
 fn delete(s: &mut Session, p: &Value) -> Result<Value> {
@@ -74,7 +73,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "AI Models",
             [],
             None,
-            "{} — the optional AI models: what each is for, whether it is available in this build, installed on this device, turned on, its download size, the space it takes, its folder, where it downloads from (hosts), licence, credit, and its download's progress → {models: [{id, label, purpose, available, installed, enabled, downloadBytes, diskBytes, dir, sources, licence, licenceUrl, credit, homeUrl, download?: {running, done, total, file, error, finished}}], diskBytes}",
+            "{} — the optional AI models: what each is for, whether it is available in this build, installed on this device, turned on, its download size, the space it takes, its folder, where it downloads from (hosts), licence, credit, and its download's progress (two run at once: the others are `queued` until one ends; `rate` in bytes a second, `etaMs` the time left) → {models: [{id, label, purpose, available, installed, enabled, downloadBytes, diskBytes, dir, sources, licence, licenceUrl, credit, homeUrl, download?: {running, queued, done, total, rate, etaMs, file, error, finished}}], diskBytes}",
             super::always,
             list
         ),
@@ -83,7 +82,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Download AI Model",
             [],
             None,
-            "{id, acknowledged: true} — download a model in the background, only after the user agreed to its size and licence (it is refused without `acknowledged`). Watch models.list; models.cancel stops it (it resumes later) → {started, installed, downloading}",
+            "{id, acknowledged: true} — download a model in the background, only after the user agreed to its size and licence (it is refused without `acknowledged`). Two downloads run at once; another waits for its turn (`queued`) and starts by itself. Watch models.list; models.cancel stops it, or takes it out of the line (it resumes later) → {started, installed, downloading, queued}",
             super::always,
             download
         ),
@@ -92,7 +91,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Cancel AI Model Download",
             [],
             None,
-            "{id} — stop that model's download (what has arrived is kept) → {cancelled}",
+            "{id} — stop that model's download, or take it out of the line while it waits (what has arrived is kept) → {cancelled}",
             super::always,
             |s, p| {
                 let id = id_of(p, "models.cancel")?;
