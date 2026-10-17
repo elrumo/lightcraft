@@ -2493,5 +2493,8 @@
   "Download Sensitive-Content Model": "下载敏感内容模型",
   "Cancel Sensitive-Content Model Download": "取消下载敏感内容模型",
   "List Possibly Sensitive Photos": "列出可能敏感的照片",
-  "Flag photos that might be sensitive, to review and hide (opt-in)": "标出可能敏感的照片，供您查看和隐藏（需手动启用）。"
+  "Flag photos that might be sensitive, to review and hide (opt-in)": "标出可能敏感的照片，供您查看和隐藏（需手动启用）。",
+  "Import Lightroom Albums": "导入 Lightroom 相册",
+  "Import Lightroom Albums…": "导入 Lightroom 相册…",
+  "Lightroom Catalog": "Lightroom 目录"
 }

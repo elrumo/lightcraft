@@ -113,7 +113,7 @@ pub struct LiveTable {
     pub column_names: Option<Vec<String>>,
 }
 
-/// Read-only SQLite database image, with a committed WAL overlay if supplied.
+/// Read-only SQLite database, with a committed WAL overlay if supplied.
 pub struct Database {
     main: Vec<u8>,
     file: Option<FileSource>,
@@ -162,6 +162,8 @@ impl Database {
         Self::open(main, None, committed_wal)
     }
 
+    /// [`Database::open_with_wal`] on a database file: pages are read from `source` when they
+    /// are needed, so a catalog of several gigabytes never has to fit in memory.
     pub fn open_file_with_wal(source: FileSource, committed_wal: &[u8]) -> Result<Self, String> {
         Self::open(source.header().to_vec(), Some(source), committed_wal)
     }
@@ -254,6 +256,60 @@ impl Database {
         let mut state = WalkState { seen: HashSet::new(), out: Vec::new(), payload_total: 0 };
         self.visit_table(rootpage, ncols, alias, 0, &mut state)?;
         Ok(state.out)
+    }
+
+    /// The row whose rowid is `rowid` in a table B-tree, decoding up to `ncols` values, or `None`.
+    pub fn get_row(&self, rootpage: u32, rowid: i64, ncols: usize) -> Result<Option<Record>, String> {
+        if !(1..=MAX_PAGE_ID).contains(&rootpage) || rootpage > self.page_count {
+            return Err("table root page is outside database".into());
+        }
+        let alias = self.rowid_aliases.get(&rootpage).copied();
+        let usable = self.page_size.checked_sub(self.reserved).ok_or("invalid usable page size")?;
+        let mut page_id = rootpage;
+        for _ in 0..=MAX_BTREE_DEPTH {
+            let page = self.page(page_id)?;
+            let base = if page_id == 1 { 100 } else { 0 };
+            let content = page.get(..usable).ok_or("truncated usable SQLite page")?;
+            match *content.get(base).ok_or("truncated B-tree header")? {
+                // child i holds the rowids up to key i, the right child the rest
+                0x05 => {
+                    let mut next = be_u32_at(content, base + 8)?;
+                    for cell in cell_offsets(content, base, 12, usable)? {
+                        let mut at = cell.checked_add(4).ok_or("interior cell overflow")?;
+                        let key = i64::from_be_bytes(read_varint(content, &mut at)?.to_be_bytes());
+                        if rowid <= key {
+                            next = be_u32_at(content, cell)?;
+                            break;
+                        }
+                    }
+                    if next == 0 {
+                        return Err("interior B-tree cell has null child".into());
+                    }
+                    page_id = next;
+                }
+                0x0d => {
+                    for cell in cell_offsets(content, base, 8, usable)? {
+                        let mut at = cell;
+                        let payload_len = usize_from_u64(read_varint(content, &mut at)?, "payload length")?;
+                        if payload_len > MAX_PAYLOAD {
+                            return Err("SQLite record payload is too large".into());
+                        }
+                        if i64::from_be_bytes(read_varint(content, &mut at)?.to_be_bytes()) != rowid {
+                            continue;
+                        }
+                        let payload = self.payload(&page, at, payload_len)?;
+                        let mut values = decode_record(&payload, ncols, self.encoding)?;
+                        if let Some(value @ Value::Null) = alias.and_then(|index| values.get_mut(index)) {
+                            *value = Value::Integer(rowid);
+                        }
+                        return Ok(Some(Record { values }));
+                    }
+                    return Ok(None);
+                }
+                other => return Err(format!("unsupported SQLite table B-tree page type 0x{other:02x}")),
+            }
+        }
+        Err("SQLite B-tree is too deep".into())
     }
 
     fn page(&self, page_id: u32) -> Result<Cow<'_, [u8]>, String> {
@@ -471,6 +527,26 @@ impl Database {
     }
 }
 
+/// The validated cell offsets of a B-tree page whose header (`header_len` bytes: 8 on a leaf,
+/// 12 on an interior page) starts at `base`.
+fn cell_offsets(content: &[u8], base: usize, header_len: usize, usable: usize) -> Result<Vec<usize>, String> {
+    let cells = usize::from(be_u16_at(content, base + 3)?);
+    if cells > MAX_CELLS {
+        return Err("SQLite B-tree contains too many cells".into());
+    }
+    let ptr_start = base.checked_add(header_len).ok_or("B-tree header overflow")?;
+    let ptr_end = cells.checked_mul(2).and_then(|n| ptr_start.checked_add(n)).ok_or("B-tree pointer-array overflow")?;
+    if ptr_end > usable {
+        return Err("truncated B-tree pointer array".into());
+    }
+    (0..cells)
+        .map(|i| {
+            let cell = usize::from(be_u16_at(content, ptr_start + i * 2)?);
+            if cell < ptr_end || cell >= usable { Err("invalid B-tree cell pointer".into()) } else { Ok(cell) }
+        })
+        .collect()
+}
+
 fn validate_header_fields(header: &[u8], page_size: usize) -> Result<usize, String> {
     let write_version = *header.get(18).ok_or("truncated SQLite header")?;
     let read_version = *header.get(19).ok_or("truncated SQLite header")?;
@@ -621,7 +697,12 @@ fn serial_value(payload: &[u8], body: &mut usize, serial: u64, encoding: TextEnc
         8 => Value::Integer(0),
         9 => Value::Integer(1),
         12 => Value::Blob(bytes.to_vec()),
-        13 => Value::Text(decode_text(bytes, encoding)?),
+        // bytes stored as TEXT that aren't UTF-8 (Lightroom keeps MessagePack this way) are bytes
+        13 => match decode_text(bytes, encoding) {
+            Ok(text) => Value::Text(text),
+            Err(_) if matches!(encoding, TextEncoding::Utf8) => Value::Blob(bytes.to_vec()),
+            Err(e) => return Err(e),
+        },
         _ => return Err("invalid SQLite field type".into()),
     };
     *body = end;
@@ -1248,6 +1329,39 @@ mod tests {
         assert_eq!(db.read_table(2, 1).unwrap().len(), 2);
     }
 
+    /// `get_row` follows interior keys to the one leaf holding a rowid instead of reading the
+    /// whole table: a Lightroom cloud catalog's `revs` table is gigabytes.
+    #[test]
+    fn get_row_descends_interior_pages_by_rowid() {
+        let mut main = vec![0u8; 4 * 512];
+        main[512] = 0x05;
+        main[515..517].copy_from_slice(&1u16.to_be_bytes());
+        main[520..524].copy_from_slice(&4u32.to_be_bytes());
+        main[524..526].copy_from_slice(&500u16.to_be_bytes());
+        main[1012..1016].copy_from_slice(&3u32.to_be_bytes());
+        main[1016] = 5;
+        leaf_rows(&mut main[1024..1536], 0, &[(3, &[2, 1, 7]), (5, &[2, 1, 9])]);
+        leaf_rows(&mut main[1536..], 0, &[(8, &[2, 1, 11])]);
+        let db = Database {
+            file: None,
+            main,
+            overlay: HashMap::new(),
+            page_size: 512,
+            reserved: 0,
+            encoding: TextEncoding::Utf8,
+            page_count: 4,
+            tables: Vec::new(),
+            rowid_aliases: HashMap::new(),
+        };
+        let value = |rowid| db.get_row(2, rowid, 1).unwrap().map(|r| r.values[0].clone());
+        assert_eq!(value(3), Some(Value::Integer(7)));
+        assert_eq!(value(5), Some(Value::Integer(9)));
+        assert_eq!(value(8), Some(Value::Integer(11)));
+        assert_eq!(value(4), None);
+        assert_eq!(value(99), None);
+        assert!(db.get_row(9, 1, 1).is_err());
+    }
+
     #[test]
     fn negative_rowid_varint_is_signed() {
         let mut main = vec![0u8; 512];
@@ -1301,6 +1415,14 @@ mod tests {
         assert!(db.read_table(1, 1).is_err());
         let (_scratch, db) = file_backed(db);
         assert!(db.read_table(1, 1).is_err());
+    }
+
+    /// Lightroom (cloud) stores MessagePack with the TEXT type: bytes that aren't UTF-8 come back
+    /// as a blob instead of failing the whole row.
+    #[test]
+    fn text_that_is_not_utf8_reads_as_bytes() {
+        assert_eq!(decode_record(&[2, 17, 0x81, 0xa1], 1, TextEncoding::Utf8).unwrap(), vec![Value::Blob(vec![0x81, 0xa1])]);
+        assert_eq!(decode_record(&[2, 17, b'o', b'k'], 1, TextEncoding::Utf8).unwrap(), vec![Value::Text("ok".into())]);
     }
 
     #[test]

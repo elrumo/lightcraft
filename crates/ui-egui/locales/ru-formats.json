@@ -345,5 +345,10 @@
   "“{name}” is still being scanned: wait for it, or stop it with ✕ on its row": "«{name}» ещё просматривается: дождитесь окончания или остановите поиск кнопкой ✕ в его строке",
   "Look at the changes found in “{name}” first, or dismiss them": "Сначала просмотрите изменения, найденные в «{name}», или скройте их",
   "Rendered {ok} of {total} to DNG": "В DNG отрисовано {ok} из {total}",
-  "{n} photos might be sensitive. Nothing is hidden until you choose.": "Фото, которые могут быть деликатными: {n}. Ничего не будет скрыто без вашего решения."
+  "{n} photos might be sensitive. Nothing is hidden until you choose.": "Фото, которые могут быть деликатными: {n}. Ничего не будет скрыто без вашего решения.",
+  "Lightroom albums imported: {albums} albums and {folders} folders made, {added} photos put in albums": "Альбомы Lightroom импортированы: создано альбомов — {albums}, папок — {folders}; добавлено фото в альбомы — {added}",
+  "Lightroom catalog inspected: {albums} albums, {folders} folders, {photos} photos in albums": "Каталог Lightroom проверен: альбомов — {albums}, папок — {folders}, фото в альбомах — {photos}",
+  "{ambiguous} photos fit more than one photo here, and were left out.": "Пропущено фото, подходящих сразу к нескольким фото здесь: {ambiguous}.",
+  "{matched} of the albums' photos are in this library; {unmatched} are not, and were left out.": "Фото из альбомов в этой библиотеке: {matched}; отсутствуют и пропущены: {unmatched}.",
+  "{updated} albums that were already here got photos.": "Уже существовавших альбомов, получивших фото: {updated}."
 }

@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~14 points and ~340–600 h away
 
-> **Last reviewed:** 2026-10-15 · **Last updated:** 2026-10-16 · **Change:** minor (browser export no longer freezes the page: new row LR-BEHAV-WEB-EXPORT 🟡, checklist 550 rows; upstream merged again, up to 0da998f2: RAW 83% decode / 38% verified, CR3 on 26 bodies, Slideshow and Print started, full-resolution zoom closed; Next actions added in docs/roadmap.md; Sign Out and Generative Expand diffusion models in *Fork additions*) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6
+> **Last reviewed:** 2026-10-15 · **Last updated:** 2026-10-16 · **Change:** minor (Lightroom albums import in *Fork additions*; browser export no longer freezes the page: new row LR-BEHAV-WEB-EXPORT 🟡, checklist 550 rows; upstream merged again, up to 0da998f2: RAW 83% decode / 38% verified, CR3 on 26 bodies, Slideshow and Print started, full-resolution zoom closed; Next actions added in docs/roadmap.md; Sign Out and Generative Expand diffusion models in *Fork additions*) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6
 
 One-page summary of how close LightCraft is to Adobe Lightroom. Agents: read this, then pick work
 from [docs/gaps.md](docs/gaps.md). The full assessment, method and evidence are in
@@ -131,6 +131,7 @@ This fork adds features upstream doesn't have; they are outside the numbers abov
 | **AI Remove** (`crates/erase`, [ai-remove.md](docs/ai-remove.md)) | Remove ▸ Generative AI: MI-GAN (MIT, optional download, pinned SHA-256) on rten fills a stroke on desktop, iPhone and the web; the fill is stored with the spot, so renders and exports never run the model | Not run on an iPhone yet |
 | **Lens Blur and depth** (`crates/depth`, `crates/pipeline/src/lensblur.rs`, [lens-blur.md](docs/lens-blur.md)) | Edit ▸ Lens Blur and Depth Range masks from the photo's own depth (iPhone Portrait HEIC / JPEG, DNG 1.5) or a Depth Anything V2 Small estimate (Apache-2.0, optional 27 MB download, stored with the settings); bokeh shapes, Boost, Focus / Blur / Erase refine brushes; desktop, phone, browser and the SwiftUI app | Portrait depth checked on Apple-written synthetic files only; not run on a device or in a browser yet |
 | **Generative Expand on the device** (`crates/erase`, `crates/diffuse`, [generative-expand.md](docs/generative-expand.md)) | Crop ▸ Expand: the frame reaches past the photo and Generate paints the new area with MI-GAN (every device), LaMa (Apache-2.0, 208 MB), Stable Diffusion 1.5 Inpainting (2.1 GB, also capable phones), Kandinsky 2.2 Inpaint (Apache-2.0, 9 GB) or SDXL Inpainting (6.9 GB), offered by the device's profile with an Automatic default (Settings → AI Models), or Classic (no download), in the background; stored with the settings | The diffusion models take minutes on a CPU, not timed on a GPU yet; no variations or prompt; not run on a phone yet |
+| **Lightroom albums import** (`crates/engine/src/lightroom_albums.rs`, `lightroom_cloud.rs`, [lightroom-catalog-import.md](docs/lightroom-catalog-import.md#lightroom-albums-albums-only)) | A Lightroom (cloud) library's albums and folders (read from the desktop app's local `Managed Catalog.mcat`), or a Classic catalog's collections, become albums holding the photos the library already has, matched by file identity; desktop, CLI, SwiftUI app; synced to the library's other devices | Phones without a computer can't reach Lightroom mobile's data; photos only in Lightroom are counted, not imported |
 
 Next for the fork: sync and the iOS app verified on real hardware (Lens Blur on an iPhone's Portrait photos among
 it); then sharing between people with accounts (comments, likes, shared libraries).
@@ -230,6 +231,7 @@ it); then sharing between people with accounts (comments, likes, shared librarie
 | Date | Change | Summary |
 |---|---|---|
 | 2026-10-16 | minor | Browser build: Export no longer runs on the page's thread (each rendered photo is made on a Web Worker, ✕ stops it at once): new checklist row LR-BEHAV-WEB-EXPORT 🟡, 549 → 550 rows, P1 94.8% → 94.5%; other numbers unchanged |
+| 2026-10-16 | minor | Fork additions: Lightroom albums import (a Lightroom cloud library's or a Classic catalog's albums, holding the photos already in the library) |
 | 2026-10-15 | minor | Upstream merged again (up to 0da998f2); Upcoming re-ranked, *Next actions* added in docs/roadmap.md; numbers as upstream's |
 | 2026-10-15 | minor | Sync: Sign Out waits until everything has reached the server, then removes the account's library from the device (as Lightroom's does), so two accounts' libraries never meet on a device; *Fork additions* row updated; numbers unchanged |
 | 2026-10-14 | minor | Generative Expand: Stable Diffusion 1.5, Kandinsky 2.2 and SDXL inpainting, offered by the device's profile; *Fork additions* row updated; numbers unchanged |

@@ -2519,5 +2519,8 @@
   "Download Sensitive-Content Model": "Завантажити модель делікатного вмісту",
   "Cancel Sensitive-Content Model Download": "Скасувати завантаження моделі делікатного вмісту",
   "List Possibly Sensitive Photos": "Список фото, які можуть бути делікатними",
-  "Flag photos that might be sensitive, to review and hide (opt-in)": "Позначати фото, які можуть бути делікатними, щоб переглянути й приховати їх (за бажанням)"
+  "Flag photos that might be sensitive, to review and hide (opt-in)": "Позначати фото, які можуть бути делікатними, щоб переглянути й приховати їх (за бажанням)",
+  "Import Lightroom Albums": "Імпортувати альбоми Lightroom",
+  "Import Lightroom Albums…": "Імпортувати альбоми Lightroom…",
+  "Lightroom Catalog": "Каталог Lightroom"
 }

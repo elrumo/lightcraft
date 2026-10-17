@@ -345,5 +345,10 @@
   "“{name}” is still being scanned: wait for it, or stop it with ✕ on its row": "“{name}”仍在扫描：请等待完成，或用其所在行的 ✕ 停止",
   "Look at the changes found in “{name}” first, or dismiss them": "请先查看在“{name}”中发现的更改，或将其忽略",
   "Rendered {ok} of {total} to DNG": "已将 {total} 张中的 {ok} 张渲染为 DNG",
-  "{n} photos might be sensitive. Nothing is hidden until you choose.": "{n} 张照片可能敏感。在您选择之前，不会隐藏任何内容。"
+  "{n} photos might be sensitive. Nothing is hidden until you choose.": "{n} 张照片可能敏感。在您选择之前，不会隐藏任何内容。",
+  "Lightroom albums imported: {albums} albums and {folders} folders made, {added} photos put in albums": "已导入 Lightroom 相册：创建了 {albums} 个相册和 {folders} 个文件夹，{added} 张照片已放入相册",
+  "Lightroom catalog inspected: {albums} albums, {folders} folders, {photos} photos in albums": "已检查 Lightroom 目录：{albums} 个相册，{folders} 个文件夹，相册中有 {photos} 张照片",
+  "{ambiguous} photos fit more than one photo here, and were left out.": "{ambiguous} 张照片与此处多张照片相符，已略过。",
+  "{matched} of the albums' photos are in this library; {unmatched} are not, and were left out.": "相册中的照片有 {matched} 张在此图库中；{unmatched} 张不在，已略过。",
+  "{updated} albums that were already here got photos.": "{updated} 个已有相册加入了照片。"
 }

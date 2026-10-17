@@ -15,6 +15,7 @@ use std::sync::{
 use serde_json::Value;
 
 use crate::import::{ImportJob, ImportMode, ImportOptions, Prepared};
+use crate::lightroom_albums::{AlbumPlan, LibraryPhoto};
 use crate::lightroom_catalog::{self, CatalogImport, ImportIndex};
 
 const COMMAND: &str = "library.importLightroom";
@@ -79,6 +80,8 @@ pub struct PreparedLightroom {
     pub(crate) update_existing: bool,
     pub(crate) now: String,
     cancelled: bool,
+    /// Albums only: the albums and the library photos they get, instead of `data` and `normal`.
+    pub(crate) albums: Option<AlbumPlan>,
 }
 
 impl PreparedLightroom {
@@ -202,11 +205,16 @@ pub struct LightroomJob {
     token: LightroomLibraryToken,
     archive_dir: Option<PathBuf>,
     progress: LightroomProgress,
+    /// Albums only: the library's photos, to match the catalog's against.
+    library: Option<Vec<LibraryPhoto>>,
 }
 
 impl LightroomJob {
-    /// Snapshot session state only.  This constructor performs no filesystem work.
-    pub fn new(s: &mut crate::Session, path: PathBuf, update_existing: bool) -> crate::Result<Self> {
+    /// Snapshot session state only.  This constructor performs no filesystem work. With
+    /// `albums_only` (always for a Lightroom cloud catalog) only albums are imported, holding the
+    /// photos the library already has.
+    pub fn new(s: &mut crate::Session, path: PathBuf, update_existing: bool, albums_only: bool) -> crate::Result<Self> {
+        let library = (albums_only || crate::lightroom_cloud::is_cloud(&path)).then(|| crate::lightroom_albums::library_photos(s));
         // a photo deleted here stays deleted: the catalog's record is matched, not restored
         let opts = ImportOptions { mode: ImportMode::Add, on_deleted: crate::import::OnDeleted::Skip, ..ImportOptions::default() };
         let import = ImportJob::new(s, opts)?;
@@ -218,7 +226,7 @@ impl LightroomJob {
             add_done: Arc::clone(&import.done),
             ..LightroomProgress::default()
         };
-        Ok(Self { path, update_existing, import, token: LightroomLibraryToken::capture(s), archive_dir, progress })
+        Ok(Self { path, update_existing, import, token: LightroomLibraryToken::capture(s), archive_dir, progress, library })
     }
 
     /// The job's progress, to watch from another thread while [`LightroomJob::prepare`] runs.
@@ -239,6 +247,9 @@ impl LightroomJob {
     pub fn prepare(&mut self, cancel: &AtomicBool) -> crate::Result<PreparedLightroom> {
         if cancel.load(Ordering::Relaxed) {
             return Err(cancelled());
+        }
+        if let Some(library) = &self.library {
+            return self.prepare_albums(library, cancel);
         }
         // (reading stops with a message when `cancel` is set: the flag says it was cancelled)
         let mut data = lightroom_catalog::read_with_progress(&self.path, cancel, &self.progress.catalog_total, &self.progress.catalog_done)
@@ -272,6 +283,39 @@ impl LightroomJob {
             update_existing: self.update_existing,
             now: self.import.now().to_string(),
             cancelled: cancel.load(Ordering::Relaxed),
+            albums: None,
+        })
+    }
+
+    /// Albums only: read the catalog's albums and match their photos to `library`'s.
+    fn prepare_albums(&self, library: &[LibraryPhoto], cancel: &AtomicBool) -> crate::Result<PreparedLightroom> {
+        let (total, done) = (&self.progress.catalog_total, &self.progress.catalog_done);
+        let source = if crate::lightroom_cloud::is_cloud(&self.path) {
+            crate::lightroom_cloud::read(&self.path, true, cancel, total, done)
+        } else {
+            lightroom_catalog::read_with_progress(&self.path, cancel, total, done).map(|data| lightroom_catalog::album_source(&data))
+        }
+        .map_err(|e| if cancel.load(Ordering::Relaxed) { cancelled() } else { error(e) })?;
+        let index_path = self.archive_dir.as_ref().map(|dir| dir.join("lightroom-index.json"));
+        Ok(PreparedLightroom {
+            data: CatalogImport {
+                source: source.source.clone(),
+                photos: Vec::new(),
+                collections: Vec::new(),
+                members: Vec::new(),
+                collection_content: Vec::new(),
+                stacks: Vec::new(),
+                warnings: Vec::new(),
+            },
+            normal: Prepared::default(),
+            index: lightroom_catalog::load_index(index_path.as_deref())?,
+            archive_path: None,
+            token: self.token.clone(),
+            missing_sources: HashSet::new(),
+            update_existing: self.update_existing,
+            now: self.import.now().to_string(),
+            cancelled: cancel.load(Ordering::Relaxed),
+            albums: Some(AlbumPlan::new(source, library)),
         })
     }
 }
@@ -285,6 +329,15 @@ pub fn commit_prepared(s: &mut crate::Session, mut prepared: PreparedLightroom) 
     if !prepared.token.matches(s) {
         prepared.normal.rollback();
         return Err(error("Lightroom import belongs to a different open library"));
+    }
+    let path = prepared.token.library_dir().map(|dir| dir.join("Interop/lightroom-index.json"));
+    let finalization = |index: &ImportIndex| -> crate::Result<LightroomArchiveFinalization> {
+        let bytes = if path.is_some() { Some(serde_json::to_vec(index).map_err(|e| error(e.to_string()))?) } else { None };
+        Ok(LightroomArchiveFinalization { path: path.clone(), bytes })
+    };
+    if let Some(plan) = prepared.albums.take() {
+        let report = plan.apply(s, &mut prepared.index)?;
+        return Ok(LightroomCompletion { report, finalization: finalization(&prepared.index)? });
     }
     // A command-scoped Lightroom import must never rewrite source XMP sidecars.  Direct depth-0
     // callers do not set this transient flag, so they cannot affect a later command.
@@ -309,9 +362,7 @@ pub fn commit_prepared(s: &mut crate::Session, mut prepared: PreparedLightroom) 
             undo0,
         },
     )?;
-    let path = prepared.token.library_dir().map(|dir| dir.join("Interop/lightroom-index.json"));
-    let bytes = if path.is_some() { Some(serde_json::to_vec(&applied.index).map_err(|e| error(e.to_string()))?) } else { None };
-    Ok(LightroomCompletion { report: applied.report, finalization: LightroomArchiveFinalization { path, bytes } })
+    Ok(LightroomCompletion { report: applied.report, finalization: finalization(&applied.index)? })
 }
 
 fn original_paths(data: &CatalogImport, cancel: &AtomicBool) -> crate::Result<(Vec<String>, HashSet<String>)> {
@@ -370,6 +421,7 @@ mod tests {
             update_existing: false,
             now: "2026-01-01T00:00:00".into(),
             cancelled: true,
+            albums: None,
         }
     }
 
@@ -409,6 +461,7 @@ mod tests {
             update_existing: false,
             now: "2026-01-01T00:00:00".into(),
             cancelled: false,
+            albums: None,
         }
     }
 
@@ -470,7 +523,7 @@ mod tests {
     #[test]
     fn a_cancelled_read_is_cancelled_by_kind() {
         let mut session = crate::Session::new();
-        let mut job = LightroomJob::new(&mut session, PathBuf::from("/nonexistent/cancelled.lrcat"), false).unwrap();
+        let mut job = LightroomJob::new(&mut session, PathBuf::from("/nonexistent/cancelled.lrcat"), false, false).unwrap();
         let Err(e) = job.prepare(&AtomicBool::new(true)) else { panic!("cancelled before it started") };
         assert_eq!(e.kind(), crate::ErrorKind::Cancelled, "{e}");
         // the `error` text clients see is unchanged
@@ -550,6 +603,7 @@ mod tests {
             update_existing: false,
             now: "2026-01-01T00:00:00".into(),
             cancelled: false,
+            albums: None,
         };
         let completion = commit_prepared(&mut session, prepared).unwrap();
         assert_eq!(completion.report["photos"], 5_000);

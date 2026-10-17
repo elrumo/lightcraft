@@ -345,5 +345,10 @@
   "Look at the changes found in “{name}” first, or dismiss them": "Look at the changes found in “{name}” first, or dismiss them",
   "Rendered {ok} of {total} to DNG": "Rendered {ok} of {total} to DNG",
   "“{name}” is still being scanned: wait for it, or stop it with ✕ on its row": "“{name}” is still being scanned: wait for it, or stop it with ✕ on its row",
-  "{n} photos might be sensitive. Nothing is hidden until you choose.": "შესაძლოა მგრძნობიარე ფოტოები: {n}. არაფერი დაიმალება, სანამ თქვენ არ გადაწყვეტთ."
+  "{n} photos might be sensitive. Nothing is hidden until you choose.": "შესაძლოა მგრძნობიარე ფოტოები: {n}. არაფერი დაიმალება, სანამ თქვენ არ გადაწყვეტთ.",
+  "Lightroom albums imported: {albums} albums and {folders} folders made, {added} photos put in albums": "Lightroom-ის ალბომების იმპორტი დასრულდა: შეიქმნა ალბომი: {albums}, საქაღალდე: {folders}; ალბომებს დაემატა ფოტო: {added}",
+  "Lightroom catalog inspected: {albums} albums, {folders} folders, {photos} photos in albums": "Lightroom-ის კატალოგი შემოწმდა: ალბომი: {albums}, საქაღალდე: {folders}, ფოტო ალბომებში: {photos}",
+  "{ambiguous} photos fit more than one photo here, and were left out.": "აქ ერთზე მეტ ფოტოს ემთხვევა და გამოტოვებულია ფოტო: {ambiguous}.",
+  "{matched} of the albums' photos are in this library; {unmatched} are not, and were left out.": "ალბომების ფოტოებიდან ამ ბიბლიოთეკაშია: {matched}; აქ არ არის და გამოტოვებულია: {unmatched}.",
+  "{updated} albums that were already here got photos.": "უკვე არსებულ ალბომებს დაემატა ფოტოები: {updated}."
 }

@@ -2522,5 +2522,8 @@
   "Download Sensitive-Content Model": "Modell für sensible Inhalte herunterladen",
   "Cancel Sensitive-Content Model Download": "Download des Modells für sensible Inhalte abbrechen",
   "List Possibly Sensitive Photos": "Möglicherweise sensible Fotos auflisten",
-  "Flag photos that might be sensitive, to review and hide (opt-in)": "Fotos markieren, die sensibel sein könnten, zum Prüfen und Ausblenden (optional)"
+  "Flag photos that might be sensitive, to review and hide (opt-in)": "Fotos markieren, die sensibel sein könnten, zum Prüfen und Ausblenden (optional)",
+  "Import Lightroom Albums": "Lightroom-Alben importieren",
+  "Import Lightroom Albums…": "Lightroom-Alben importieren …",
+  "Lightroom Catalog": "Lightroom-Katalog"
 }

@@ -345,5 +345,10 @@
   "“{name}” is still being scanned: wait for it, or stop it with ✕ on its row": "「{name}」はまだスキャン中です。終わるまで待つか、その行の ✕ で停止してください",
   "Look at the changes found in “{name}” first, or dismiss them": "先に「{name}」で見つかった変更を確認するか、閉じてください",
   "Rendered {ok} of {total} to DNG": "{total} 枚中 {ok} 枚を DNG にレンダリングしました",
-  "{n} photos might be sensitive. Nothing is hidden until you choose.": "{n}枚の写真がセンシティブな可能性があります。選択するまで何も非表示にはなりません。"
+  "{n} photos might be sensitive. Nothing is hidden until you choose.": "{n}枚の写真がセンシティブな可能性があります。選択するまで何も非表示にはなりません。",
+  "Lightroom albums imported: {albums} albums and {folders} folders made, {added} photos put in albums": "Lightroom のアルバムを読み込みました：アルバム {albums} 件とフォルダ {folders} 件を作成、{added} 枚の写真をアルバムに追加",
+  "Lightroom catalog inspected: {albums} albums, {folders} folders, {photos} photos in albums": "Lightroom カタログを確認しました：アルバム {albums} 件、フォルダ {folders} 件、アルバム内の写真 {photos} 枚",
+  "{ambiguous} photos fit more than one photo here, and were left out.": "{ambiguous} 枚の写真はここにある複数の写真に該当するため除外しました。",
+  "{matched} of the albums' photos are in this library; {unmatched} are not, and were left out.": "アルバムの写真のうち {matched} 枚はこのライブラリにあります。{unmatched} 枚はないため除外しました。",
+  "{updated} albums that were already here got photos.": "既存のアルバム {updated} 件に写真を追加しました。"
 }

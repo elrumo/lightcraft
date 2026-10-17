@@ -345,5 +345,10 @@
   "“{name}” is still being scanned: wait for it, or stop it with ✕ on its row": "“{name}” ainda está sendo verificada: aguarde ou interrompa com ✕ na linha dela",
   "Look at the changes found in “{name}” first, or dismiss them": "Revise primeiro as alterações encontradas em “{name}” ou dispense-as",
   "Rendered {ok} of {total} to DNG": "{ok} de {total} renderizadas em DNG",
-  "{n} photos might be sensitive. Nothing is hidden until you choose.": "{n} fotos podem ser sensíveis. Nada é ocultado até você decidir."
+  "{n} photos might be sensitive. Nothing is hidden until you choose.": "{n} fotos podem ser sensíveis. Nada é ocultado até você decidir.",
+  "Lightroom albums imported: {albums} albums and {folders} folders made, {added} photos put in albums": "Álbuns do Lightroom importados: {albums} álbuns e {folders} pastas criados, {added} fotos colocadas em álbuns",
+  "Lightroom catalog inspected: {albums} albums, {folders} folders, {photos} photos in albums": "Catálogo do Lightroom inspecionado: {albums} álbuns, {folders} pastas, {photos} fotos em álbuns",
+  "{ambiguous} photos fit more than one photo here, and were left out.": "{ambiguous} fotos correspondem a mais de uma foto aqui e foram deixadas de fora.",
+  "{matched} of the albums' photos are in this library; {unmatched} are not, and were left out.": "{matched} das fotos dos álbuns estão nesta biblioteca; {unmatched} não estão e foram deixadas de fora.",
+  "{updated} albums that were already here got photos.": "{updated} álbuns que já existiam receberam fotos."
 }

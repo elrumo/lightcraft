@@ -2654,5 +2654,8 @@
   "Download Sensitive-Content Model": "センシティブコンテンツモデルをダウンロード",
   "Cancel Sensitive-Content Model Download": "センシティブコンテンツモデルのダウンロードをキャンセル",
   "List Possibly Sensitive Photos": "センシティブな可能性のある写真を一覧表示",
-  "Flag photos that might be sensitive, to review and hide (opt-in)": "センシティブな可能性のある写真を検出し、確認や非表示ができるようにします（任意）。"
+  "Flag photos that might be sensitive, to review and hide (opt-in)": "センシティブな可能性のある写真を検出し、確認や非表示ができるようにします（任意）。",
+  "Import Lightroom Albums": "Lightroom のアルバムを読み込む",
+  "Import Lightroom Albums…": "Lightroom のアルバムを読み込む…",
+  "Lightroom Catalog": "Lightroom カタログ"
 }

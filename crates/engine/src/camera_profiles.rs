@@ -61,13 +61,93 @@ impl CameraProfile {
     /// Whether the data is usable (bounded matrix, table shape matching its data).
     fn valid(&self) -> bool {
         let matrix = self.matrix.iter().flatten().all(|v| v.is_finite() && v.abs() < 8.0) && Mat3(self.matrix).inverse().is_some();
-        let table = self.hue_sat.as_ref().is_none_or(|t| {
-            let dims = (1..=4096).contains(&t.hue_divisions) && (2..=4096).contains(&t.sat_divisions) && (1..=4096).contains(&t.val_divisions);
-            let len = t.hue_divisions.checked_mul(t.sat_divisions).and_then(|n| n.checked_mul(t.val_divisions));
-            dims && len == Some(t.data.len()) && t.data.iter().flatten().all(|v| v.is_finite()) && t.data.iter().all(|e| e[1] >= 0.0 && e[2] >= 0.0)
-        });
-        self.version == VERSION && !self.model.is_empty() && matrix && table
+        self.version == VERSION && !self.model.is_empty() && matrix && self.hue_sat.as_ref().is_none_or(table_valid)
     }
+}
+
+/// A table's shape matches its data, and its entries are finite with non-negative scales.
+fn table_valid(t: &HsvTable) -> bool {
+    let dims = (1..=4096).contains(&t.hue_divisions) && (2..=4096).contains(&t.sat_divisions) && (1..=4096).contains(&t.val_divisions);
+    let len = t.hue_divisions.checked_mul(t.sat_divisions).and_then(|n| n.checked_mul(t.val_divisions));
+    dims && len == Some(t.data.len()) && t.data.iter().flatten().all(|v| v.is_finite()) && t.data.iter().all(|e| e[1] >= 0.0 && e[2] >= 0.0)
+}
+
+/// The hue/saturation table a camera model's neutral look adds on top of its measured matrices (Canon CR3s,
+/// `camera_preview::neutral_look`), fitted by `lightcraft-cli calibrate --references` to renders of the same photos by
+/// another raw converter. Files are `<model>.neutral.json` next to the profiles ([`dir`], replacing a built-in one,
+/// [`NEUTRAL_BUNDLED`]).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct NeutralTable {
+    pub version: u32,
+    /// The camera model as the files report it (Exif `Model`), e.g. `Canon EOS R6`.
+    pub model: String,
+    /// Photos and colour pairs the table was fitted on.
+    pub files: usize,
+    pub samples: usize,
+    /// Correction of the scene colour through the model's spectral matrices (linear ProPhoto RGB).
+    pub hue_sat: HsvTable,
+}
+
+/// Neutral-look tables built into LightCraft (`assets/camera-profiles/`, see `assets/ATTRIBUTION.md`):
+/// `(model, JSON)`. The EOS R6's is fitted to Lightroom's default exports of the maintainer's own photos (maintainer
+/// decision 2026-10-17, `docs/camera-preview-colour.md`).
+pub const NEUTRAL_BUNDLED: &[(&str, &str)] = &[("Canon EOS R6", include_str!("../../../assets/camera-profiles/Canon_EOS_R6.neutral.json"))];
+
+/// File name of `model`'s neutral-look table.
+pub fn neutral_file_name(model: &str) -> String {
+    file_name(model).replace(".json", ".neutral.json")
+}
+
+fn parse_neutral(json: &[u8], origin: &str) -> Result<NeutralTable, String> {
+    let table: NeutralTable = serde_json::from_slice(json).map_err(|e| format!("{origin}: {e}"))?;
+    if table.version != VERSION || table.model.trim().is_empty() || !table_valid(&table.hue_sat) {
+        return Err(format!("{origin}: not a usable neutral-look table (version {}, model {:?})", table.version, table.model));
+    }
+    Ok(table)
+}
+
+/// Write `table` to `dir` (created if needed) as `<model>.neutral.json`; returns the path.
+pub fn save_neutral(table: &NeutralTable, dir: &Path) -> Result<PathBuf, String> {
+    std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let path = dir.join(neutral_file_name(&table.model));
+    let json = serde_json::to_vec_pretty(table).map_err(|e| e.to_string())?;
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, json).map_err(|e| format!("{}: {e}", tmp.display()))?;
+    std::fs::rename(&tmp, &path).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(path)
+}
+
+/// The neutral-look table for camera `model`: from [`dir`], else built in; read once per process.
+pub fn neutral_table(model: &str) -> Option<Arc<NeutralTable>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, Option<Arc<NeutralTable>>>>> = OnceLock::new();
+    let model = model.trim();
+    if model.is_empty() {
+        return None;
+    }
+    let mut cache = CACHE.get_or_init(Default::default).lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some(hit) = cache.get(model) {
+        return hit.clone();
+    }
+    let local = dir().map(|d| d.join(neutral_file_name(model))).filter(|p| p.is_file()).and_then(|path| {
+        let read = std::fs::metadata(&path)
+            .map_err(|e| e.to_string())
+            .and_then(|m| {
+                if m.len() > MAX_FILE { Err(format!("{} bytes is too large", m.len())) } else { std::fs::read(&path).map_err(|e| e.to_string()) }
+            })
+            .and_then(|bytes| parse_neutral(&bytes, &path.display().to_string()))
+            .and_then(|t| if t.model.trim() == model { Ok(t) } else { Err(format!("it is for {:?}, not {model:?}", t.model)) });
+        read.inspect_err(|e| eprintln!("lightcraft: ignoring neutral-look table {}: {e}", path.display())).ok()
+    });
+    let table = local
+        .or_else(|| {
+            let (_, json) = NEUTRAL_BUNDLED.iter().find(|(m, _)| *m == model)?;
+            parse_neutral(json.as_bytes(), &format!("built-in neutral-look table {model}"))
+                .inspect_err(|e| eprintln!("lightcraft: ignoring {e}"))
+                .ok()
+        })
+        .map(Arc::new);
+    cache.insert(model.to_owned(), table.clone());
+    table
 }
 
 /// LightCraft's configuration folder (settings, GPU marker, camera profiles); one helper for the app.
@@ -177,7 +257,7 @@ pub fn cache_key() -> u64 {
         for (name, len, modified) in &files {
             h.str(name).u64(*len).u64(*modified);
         }
-        for (model, json) in BUNDLED {
+        for (model, json) in BUNDLED.iter().chain(NEUTRAL_BUNDLED) {
             h.str(model).str(json);
         }
         h.finish().0 as u64
@@ -210,6 +290,35 @@ impl Pool {
         entry.0 += 1;
         entry.1.extend(pairs.into_iter().step_by(step));
         Ok(Some(model.to_owned()))
+    }
+
+    /// Add one raw file's neutral-look pairs against `reference`, a render of the same photo by another raw converter
+    /// (`camera_preview::neutral_pairs`). `Ok(None)` when the file can't contribute (not a CR3 of a model with
+    /// measured matrices, a render that doesn't line up).
+    pub fn add_reference(&mut self, bytes: &[u8], reference: &[u8]) -> Result<Option<String>, String> {
+        let mut raw = lightcraft_raw::decode(bytes).map_err(|e| e.to_string())?;
+        raw.opcodes.list3.retain(|op| !op.is_lens_correction());
+        let Some(model) = raw.metadata.model.as_deref().map(str::trim).filter(|m| !m.is_empty()).map(str::to_owned) else { return Ok(None) };
+        let Some(pairs) = crate::camera_preview::neutral_pairs(&mut raw, reference) else { return Ok(None) };
+        let step = pairs.len().div_ceil(PAIRS_PER_FILE).max(1);
+        let entry = self.models.entry(model.clone()).or_default();
+        entry.0 += 1;
+        entry.1.extend(pairs.into_iter().step_by(step));
+        Ok(Some(model))
+    }
+
+    /// Fit a neutral-look table per model with at least `min_files` photos (pools filled by [`Pool::add_reference`]).
+    pub fn fit_neutral(&self, min_files: usize) -> Vec<Result<NeutralTable, String>> {
+        let mut models: Vec<_> = self.models.iter().collect();
+        models.sort_by(|a, b| a.0.cmp(b.0));
+        models
+            .into_iter()
+            .filter(|(_, (files, _))| *files >= min_files)
+            .map(|(model, (files, pairs))| {
+                let hue_sat = crate::camera_preview::fit_neutral_table(pairs).ok_or_else(|| format!("{model}: no usable hue/saturation fit"))?;
+                Ok(NeutralTable { version: VERSION, model: model.clone(), files: *files, samples: pairs.len(), hue_sat })
+            })
+            .collect()
     }
 
     /// Fit a profile per model with at least `min_files` photos.
@@ -250,6 +359,28 @@ mod tests {
     fn profile() -> CameraProfile {
         let table = HsvTable { hue_divisions: 4, sat_divisions: 2, val_divisions: 1, data: vec![[5.0, 1.2, 1.0]; 8], srgb_value: false };
         CameraProfile::new("ILCE-7M4", 12, 3456, Mat3([[1.6, -0.5, -0.1], [-0.2, 1.3, -0.1], [-0.1, -0.2, 1.3]]), Some(table))
+    }
+
+    #[test]
+    fn neutral_tables_round_trip_and_the_bundled_ones_load() {
+        let dir = std::env::temp_dir().join(format!("lc-neutral-tables-{}", std::process::id()));
+        let table = NeutralTable { version: VERSION, model: "Canon EOS R6".into(), files: 3, samples: 99, hue_sat: profile().hue_sat.unwrap() };
+        let path = save_neutral(&table, &dir).unwrap();
+        assert_eq!(path.file_name().unwrap(), "Canon_EOS_R6.neutral.json");
+        assert_eq!(parse_neutral(&std::fs::read(&path).unwrap(), "test").unwrap(), table);
+        // a table whose shape doesn't match its data, or a newer version, is refused
+        let mut bad = table.clone();
+        bad.hue_sat.data.pop();
+        assert!(parse_neutral(&serde_json::to_vec(&bad).unwrap(), "test").is_err());
+        let newer = NeutralTable { version: VERSION + 1, ..table };
+        assert!(parse_neutral(&serde_json::to_vec(&newer).unwrap(), "test").is_err());
+        assert!(parse_neutral(b"{not json", "test").is_err());
+        std::fs::remove_dir_all(&dir).ok();
+        for (model, json) in NEUTRAL_BUNDLED {
+            let t = parse_neutral(json.as_bytes(), model).unwrap();
+            assert_eq!(t.model, *model);
+            assert_eq!((t.hue_sat.hue_divisions, t.hue_sat.sat_divisions, t.hue_sat.val_divisions), (72, 5, 5));
+        }
     }
 
     #[test]
