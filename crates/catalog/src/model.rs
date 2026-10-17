@@ -443,21 +443,17 @@ impl Photo {
         self.develops_raw() && relative_wb_camera(&self.format, &self.meta.camera)
     }
     /// The develop settings import gave this photo: [`Photo::camera_defaults`], or the user's
-    /// default preset applied on top of them ([`Photo::import_look`]). Like the camera defaults,
-    /// in the photo's own rendering process.
+    /// default preset applied on top of them ([`Photo::import_look`]).
     pub fn import_defaults(&self) -> DevelopSettings {
         match &self.import_look {
-            Some(l) => DevelopSettings { process: self.develop.process, ..(**l).clone() },
+            Some(l) => (**l).clone(),
             None => self.camera_defaults(),
         }
     }
     /// The built-in defaults for this photo, before any user default preset: raws start from
     /// their as-shot white balance; lens corrections on when the file has them, and for a CR3, whose
     /// camera's vignetting correction is measured from its JPEG once it is decoded (the engine's
-    /// `camera_preview::jpeg_vignetting`; no import probe sees it). They
-    /// carry the photo's own rendering process ([`lightcraft_develop::ProcessVersion`]): which
-    /// process a photo renders with is not an edit, so comparisons with its defaults (edited?
-    /// still as imported?) don't change when a newer process exists. A new photo has the latest.
+    /// `camera_preview::jpeg_vignetting`; no import probe sees it).
     pub fn camera_defaults(&self) -> DevelopSettings {
         let relative = self.relative_wb();
         let wb = if relative { Some((6500.0, 0.0)) } else { self.as_shot_wb };
@@ -471,7 +467,6 @@ impl Photo {
         if self.embedded_lens.is_some() || (self.develops_raw() && self.format.eq_ignore_ascii_case("CR3")) {
             d.optics.lens_profile = true;
         }
-        d.process = self.develop.process;
         d
     }
     /// The file name's extension without the dot, as written (`CR2` for `IMG_0042.CR2`); empty
@@ -602,32 +597,6 @@ mod edited_tests {
         assert!(p.is_edited());
         p.develop = Arc::new(DevelopSettings::default());
         assert!(!p.is_edited(), "a full reset is unedited too");
-    }
-
-    #[test]
-    fn the_process_a_photo_renders_with_is_not_an_edit() {
-        use lightcraft_develop::ProcessVersion;
-        // a photo on another process than the latest (a V1 photo once a later process is the
-        // latest, or a photo saved by a newer LightCraft)
-        let other = ProcessVersion(ProcessVersion::LATEST.0 + 1);
-        let mut p = Photo::new(PhotoId(1), Source::Demo { scene: 0 }, "a.dng", "DNG", 10, 10, "2026-10-01T00:00:00");
-        p.kind = MediaKind::Raw;
-        p.as_shot_wb = Some((5200.0, 4.0));
-        assert_eq!(p.camera_defaults().process, ProcessVersion::LATEST, "a new photo gets the latest");
-        p.develop = Arc::new(DevelopSettings { process: other, ..p.import_defaults() });
-        assert_eq!((p.camera_defaults().process, p.import_defaults().process), (other, other));
-        assert!(!p.is_edited(), "still as imported");
-        // with a default preset's look as well
-        let mut look = DevelopSettings::for_raw(5200.0, 4.0);
-        look.light.exposure = 0.3;
-        p.import_look = Some(Arc::new(look.clone()));
-        p.develop = Arc::new(DevelopSettings { process: other, ..look });
-        assert_eq!(p.import_defaults().process, other);
-        assert!(!p.is_edited());
-        let mut d = (*p.develop).clone();
-        d.light.exposure = 1.0;
-        p.develop = Arc::new(d);
-        assert!(p.is_edited(), "an edit still is one");
     }
 
     /// Lens corrections start on for a raw whose file has lens data, and for every CR3: its camera's vignetting

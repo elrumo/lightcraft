@@ -30,7 +30,10 @@ const THREADS: usize = 4;
 pub enum Verdict {
     Ok,
     /// Cut short: `missing` bytes (when the file says how long it should be) are gone from its end.
-    Cut { missing: Option<u64>, why: String },
+    Cut {
+        missing: Option<u64>,
+        why: String,
+    },
     /// A format this check doesn't read.
     Unchecked,
 }
@@ -375,7 +378,9 @@ impl Checker {
             let report = check_all(&files, &j.done, &stop);
             if !stop.load(Ordering::Relaxed) {
                 match report.save(&user_dir) {
-                    Ok(()) => log::info!("{name}: checked {} files: {} cut short, {} unreadable", report.files, report.cut.len(), report.unreadable.len()),
+                    Ok(()) => {
+                        log::info!("{name}: checked {} files: {} cut short, {} unreadable", report.files, report.cut.len(), report.unreadable.len())
+                    }
                     Err(e) => log::error!("{name}: the check's report wasn't saved: {e}"),
                 }
             }
@@ -391,7 +396,8 @@ impl Checker {
     /// `{running, done, total, report}` for the admin page.
     pub fn status(&self, user: &str, user_dir: &Path) -> serde_json::Value {
         let job = self.jobs.lock().unwrap_or_else(PoisonError::into_inner).get(user).cloned();
-        let (running, done, total) = job.map_or((false, 0, 0), |j| (j.running.load(Ordering::Acquire), j.done.load(Ordering::Relaxed), j.total.load(Ordering::Relaxed)));
+        let (running, done, total) =
+            job.map_or((false, 0, 0), |j| (j.running.load(Ordering::Acquire), j.done.load(Ordering::Relaxed), j.total.load(Ordering::Relaxed)));
         serde_json::json!({"running": running, "done": done, "total": total, "report": Report::load(user_dir)})
     }
 
@@ -425,7 +431,9 @@ mod tests {
     fn tiff_file() -> Vec<u8> {
         let mut b = b"II*\0".to_vec();
         b.extend(8u32.to_le_bytes());
-        let entry = |tag: u16, typ: u16, count: u32, value: u32| [tag.to_le_bytes().as_slice(), &typ.to_le_bytes(), &count.to_le_bytes(), &value.to_le_bytes()].concat();
+        let entry = |tag: u16, typ: u16, count: u32, value: u32| {
+            [tag.to_le_bytes().as_slice(), &typ.to_le_bytes(), &count.to_le_bytes(), &value.to_le_bytes()].concat()
+        };
         // IFD0 at 8: strip at 100 (50 bytes), SubIFD at 60
         b.extend(3u16.to_le_bytes());
         b.extend(entry(273, 4, 1, 100));

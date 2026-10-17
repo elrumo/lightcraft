@@ -21,8 +21,7 @@ precomputed multiplication per sample. Missing delta entries contribute zero. Ne
 are kept. Values outside the active area do not contribute.
 
 The source API still preserves negative shadow noise and values above white. Vendor RAW formats
-keep their existing scale. This is a DNG source-decoding correction, not a change to the develop
-process or to tone-slider response (`docs/process-versions.md`). Cached thumbnails are invalidated.
+keep their existing scale. This is a DNG source-decoding correction, not a change to tone-slider response. Cached thumbnails are invalidated.
 Existing smart previews contain already developed pixels and must be removed and rebuilt from
 their originals to receive the correction; offline proxies keep their stored rendering.
 

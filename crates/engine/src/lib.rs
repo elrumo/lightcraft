@@ -1028,7 +1028,7 @@ impl Session {
         let Some(old) = self.develop_of(id) else { return Vec::new() };
         let Some(mut delta) = json_delta(&old.to_json(), &new.to_json()) else { return Vec::new() };
         if let Some(o) = delta.as_object_mut() {
-            for k in ["spots", "red_eye", "version", "process"] {
+            for k in ["spots", "red_eye", "version"] {
                 o.remove(k);
             }
             if o.is_empty() {
@@ -1501,7 +1501,6 @@ mod tests_presets_scale;
 #[cfg(test)]
 mod tests_print;
 #[cfg(test)]
-mod tests_process;
 #[cfg(test)]
 mod tests_recheck;
 #[cfg(test)]

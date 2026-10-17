@@ -7,9 +7,7 @@
 
 use std::sync::Arc;
 
-use lightcraft_develop::{
-    BrushStroke, DevelopSettings, Mask, MaskComponent, MaskOp, MaskShape, Process, Spot, Treatment, VignetteStyle, WbMode, Wheel,
-};
+use lightcraft_develop::{BrushStroke, DevelopSettings, Mask, MaskComponent, MaskOp, MaskShape, Spot, Treatment, VignetteStyle, WbMode, Wheel};
 use lightcraft_geom::{Orientation, Point, Rect};
 use lightcraft_pipeline::{Quality, RenderRequest, SourceInfo, StageCache, render};
 use lightcraft_raster::{Rgb32f, Rgba8};
@@ -219,11 +217,6 @@ fn cases() -> Vec<(&'static str, Edit)> {
         }),
         ("dehaze -", |s| s.effects.dehaze = -50.0),
         ("dehaze +", |s| s.effects.dehaze = 60.0),
-        // a photo still on process V3 keeps the dehaze it was made with (per-pixel dark channel, no easing)
-        ("dehaze + on V3", |s| {
-            s.process = Process::V3.version();
-            s.effects.dehaze = 60.0;
-        }),
         ("clarity/texture -", |s| {
             s.effects.clarity = -60.0;
             s.effects.texture = -40.0;
@@ -232,7 +225,7 @@ fn cases() -> Vec<(&'static str, Edit)> {
             s.detail.sharpen_amount = 90.0;
             s.detail.sharpen_masking = 60.0;
         }),
-        // process V3's capture sharpening: its radius, Detail, and a mask's Sharpness with no global sharpening
+        // capture sharpening: its radius, Detail, and a mask's Sharpness with no global sharpening
         ("capture sharpening radius / detail", |s| {
             s.detail.sharpen_amount = 120.0;
             s.detail.sharpen_radius = 2.6;
@@ -728,7 +721,7 @@ fn cached_renders_with_masks_match_uncached() {
 /// luminance; V2: of its fine median, a radius that grows with the render) matches the CPU's, and
 /// a warm cache never hands one process the other's base.
 #[test]
-fn highlights_shadows_base_matches_on_every_process() {
+fn highlights_shadows_base_matches() {
     if !gpu() {
         return;
     }
@@ -737,31 +730,30 @@ fn highlights_shadows_base_matches_on_every_process() {
     let cache = StageCache::default();
     for &(w, h) in &[(720, 480), (2400, 1600)] {
         let req = RenderRequest::fit(w, h);
-        for p in Process::ALL {
-            let mut s = DevelopSettings { process: p.version(), ..DevelopSettings::default() };
-            s.light.highlights = -100.0;
-            s.light.shadows = 60.0;
-            check(&format!("{p:?} highlights/shadows {w}"), &src, &raw, &s, &req);
-            typical(&mut s);
-            check(&format!("{p:?} typical {w}"), &src, &raw, &s, &req);
-            s.masks = vec![Mask {
-                components: vec![MaskComponent {
-                    name: None,
-                    op: MaskOp::Add,
-                    invert: false,
-                    shape: MaskShape::Linear { start: Point::new(0.5, 0.0), end: Point::new(0.5, 0.9) },
-                }],
-                adjust: lightcraft_develop::LocalAdjustments { highlights: -70.0, shadows: 40.0, ..Default::default() },
-                ..Default::default()
-            }];
-            check(&format!("{p:?} local highlights {w}"), &src, &raw, &s, &req);
-        }
-        for p in [Process::V1, Process::V2, Process::V1, Process::V2] {
-            let mut s = DevelopSettings { process: p.version(), ..DevelopSettings::default() };
-            s.light.highlights = -100.0;
+        let mut s = DevelopSettings::default();
+        s.light.highlights = -100.0;
+        s.light.shadows = 60.0;
+        check(&format!("highlights/shadows {w}"), &src, &raw, &s, &req);
+        typical(&mut s);
+        check(&format!("typical {w}"), &src, &raw, &s, &req);
+        s.masks = vec![Mask {
+            components: vec![MaskComponent {
+                name: None,
+                op: MaskOp::Add,
+                invert: false,
+                shape: MaskShape::Linear { start: Point::new(0.5, 0.0), end: Point::new(0.5, 0.9) },
+            }],
+            adjust: lightcraft_develop::LocalAdjustments { highlights: -70.0, shadows: 40.0, ..Default::default() },
+            ..Default::default()
+        }];
+        check(&format!("local highlights {w}"), &src, &raw, &s, &req);
+        // a warm cache renders what a cold one does
+        let mut s = DevelopSettings::default();
+        s.light.highlights = -100.0;
+        for _ in 0..2 {
             let warm = lightcraft_gpu::render(&src, &raw, &s, &req, Some(&cache)).expect("gpu");
             let fresh = lightcraft_gpu::render(&src, &raw, &s, &req, None).expect("gpu");
-            assert_eq!(warm.image, fresh.image, "{p:?} at {w} px, cached");
+            assert_eq!(warm.image, fresh.image, "at {w} px, cached");
         }
     }
 }

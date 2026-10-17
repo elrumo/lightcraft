@@ -2,6 +2,14 @@
 
 ## 2026-10-17
 
+### One rendering for every photo
+- LightCraft no longer has rendering processes (V1 to V4) or **Photo ▸ Update to Current Process**. Every photo, new or
+  old, renders with the newest: capture sharpening (Radius in the original's pixels, Detail against halos),
+  Highlights and Shadows that keep fine detail, and Dehaze that eases in and never pushes a pixel to black.
+- Photos edited before may look different, mostly where Sharpening, Highlights / Shadows or Dehaze were used: the old
+  sharpening band (halos at every size) and the old, too-strong Dehaze are gone. The slider values are unchanged.
+- Thumbnails and previews are redrawn once.
+
 ### Canon raws open like they do in Lightroom
 - A Canon CR3 used to start from the look of the JPEG the camera embedded in it: the picture style set on the camera
   (including film-look styles loaded onto it) and Auto Lighting Optimizer's lifted shadows. Lightroom ignores both, so

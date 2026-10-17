@@ -1061,7 +1061,11 @@ fn folders(st: &State, name: &str) -> AdminResult {
 }
 
 fn known_user(st: &State, name: &str) -> Result<(), std::result::Result<(u16, String), Resp>> {
-    if accounts::read_users(&st.data).map_err(|e| Ok((500, e)))?.users.contains_key(name) { Ok(()) } else { Err(Ok((404, format!("no user `{name}`")))) }
+    if accounts::read_users(&st.data).map_err(|e| Ok((500, e)))?.users.contains_key(name) {
+        Ok(())
+    } else {
+        Err(Ok((404, format!("no user `{name}`"))))
+    }
 }
 
 /// Start checking a user's originals (their library folders' files and the ones the server keeps).

@@ -37,7 +37,7 @@ If the original curve cannot be fitted, the wider curve can still be accepted af
 
 The extra dark knots move the straight-line extension down toward black without a new serialized curve format or a different CPU/GPU interpolation rule. `LOOK_VERSION` 5 refreshes older fitted smart previews when their originals are online; `RENDER_CACHE_VERSION` 62 redraws cached renders.
 
-No process-version bump is needed under the [rule for changes to source data](process-versions.md#the-rule). The decoded source carries the fitted camera tone in `SourceInfo`; both V1 and V2 use it in `finish::base_tone`. Existing raws edited under V1 or V2 can therefore change when decoded again. Offline smart previews keep their stored pixels and tone until rebuilt from the original. The scan on library opening runs once per look version for each smart previews folder. If an original was offline at that scan, run Build Smart Previews after reconnecting it.
+The decoded source carries the fitted camera tone in `SourceInfo`, which `finish::base_tone` uses. Existing raws can therefore change when decoded again. Offline smart previews keep their stored pixels and tone until rebuilt from the original. The scan on library opening runs once per look version for each smart previews folder. If an original was offline at that scan, run Build Smart Previews after reconnecting it.
 
 Compared with main `701f78ea` at a 1200-pixel long edge, all 15 public raw.pixls.us files across six makes and the private #1021 file retain their accepted look. The darkest 10% moves closer to the JPEG on all seven public deep-shadow files (at least 10% below L* 13) and #1021. On Sony RX100 V sample 1324, its mean L* changes from 4.79 to 2.13 against the JPEG's 2.14; on a6700 sample 6735, 7.20 to 5.23 against 4.60. On #1021 (numbers only), 9.28 to 3.25 against 3.50; the 10th percentile changes from 11.94 to 5.34 against 5.45, and mean CIEDE2000 at 200 pixels changes from 7.25 to 6.37. Five of eight controls are byte-identical. The largest control changes are on a7 IV sample 6928, which still has 6.8% below L* 13: mean CIEDE2000 improves by 0.048, whole-frame mean L* falls by 0.149, and the 5th percentile falls by 1.56 L*. This is a limited camera-JPEG comparison, not a claim of colour calibration or Lightroom parity.
 
@@ -229,7 +229,7 @@ file's camera JPEG, per-file fit → neutral look, and ΔL\*): EOS R6 Standard 2
 
 Unchanged: CR2s and CR3s of models without measured matrices keep the per-file fit (no Lightroom references for them
 yet); a monochrome picture style now renders in colour on these models, as in Lightroom; white balance is in Kelvin
-through the matrices as before. The look is a property of the decoded source, so no process version changes;
+through the matrices as before. The look is a property of the decoded source;
 `LOOK_VERSION` 11 (12 with the EOS R6 table, 13 refitted in a fixed order) rebuilds the smart previews of raws and
 `RENDER_CACHE_VERSION` 67 (68, 69) redraws renders. A sync server needs the new build and Rebuild all previews.
 

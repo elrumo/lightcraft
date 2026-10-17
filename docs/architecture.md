@@ -44,8 +44,8 @@ post-command policy into `apphost` (the extraction rule in `CLAUDE.md`).
   `cargo run --release -p lightcraft-apphost --example open_bench -- <library copy>` times the open and the
   first screen's requests the way the SwiftUI app asks for them.
 - **Edits** are a `develop::Settings` value (every slider is a control spec with id, range and
-  default), normalized to image coordinates so previews and exports match. Process versions
-  (`docs/process-versions.md`) keep old edits rendering the same after a retune.
+  default), normalized to image coordinates so previews and exports match. There is one rendering:
+  a retune changes how existing edits look (`docs/whats-new.md` says so).
 - **Sidecars**: XMP read and write with Adobe `crs:` interop (`docs/xmp-interop.md`); Lightroom
   Classic `.lrcat` import through a pure-Rust SQLite reader (`docs/lightroom-catalog-import.md`).
 

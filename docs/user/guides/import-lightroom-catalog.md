@@ -30,7 +30,7 @@ Original files stay where they are, and LightCraft refers to them in place. Phot
 
 - Develop settings are an approximation. Camera profiles, Adobe's AI models and some masking and retouch fields are not reproduced, and settings LightCraft cannot map are reported.
 - Smart collections become regular albums that hold the photos they contain at the time of import.
-- Lightroom's process version is not carried over. Imported photos use LightCraft's newest rendering.
+- Lightroom's process version is not carried over. LightCraft has one rendering.
 
 ## Good to know
 
