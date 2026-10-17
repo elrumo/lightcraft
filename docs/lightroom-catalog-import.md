@@ -1,6 +1,7 @@
-# Lightroom Classic catalog import
+# Lightroom catalog import
 
-File → Import Lightroom Catalog… opens `.lrcat` directly. Lightroom, Python, DNG conversion
+File → Import Lightroom Catalog… opens a Lightroom Classic `.lrcat` directly, or a Lightroom (cloud)
+library's albums ([Lightroom albums](#lightroom-albums-albums-only)). Lightroom, Python, DNG conversion
 and a C SQLite runtime are not required. The source database is read-only, including committed
 `-wal` pages; a catalog that changes during the read is rejected. LightCraft owns subsequent edits.
 
@@ -44,9 +45,9 @@ retained. Oldest managed archives are retired; legacy `.json` archives remain un
 `Interop/lightroom-index.json` records imported identities. Source catalogs and originals are
 never overwritten.
 
-Each native `.lrcat` database and WAL file is independently limited to 1 GiB
-(1,073,741,824 bytes). This bounds the current whole-file reader; referenced photo sizes and
-photo counts are not part of that limit. XMP packets are capped at 16 MiB and each table at one million rows.
+The database is read a page at a time from the file, so its size is not bounded by memory (a
+Lightroom cloud catalog is often over a gigabyte); its committed WAL is read whole and limited to
+4 GiB. Referenced photo sizes and photo counts are not part of that limit. XMP packets are capped at 16 MiB and each table at one million rows.
 The in-tree, read-only Rust SQLite B-tree reader follows SQLite’s public file-format
 specification; it introduces no dependency or C runtime. Table payloads are capped at 256 MiB.
 Optional history, keyword and collection tables that exceed limits are skipped with warnings;
@@ -97,3 +98,51 @@ the path relative to the catalog that Lightroom records for root folders on the 
 (`relativePathFromCatalog`), when that is a folder, and reports the remapping as a warning. Copying
 a project folder with its catalog inside it therefore keeps its originals linked. Other moved
 originals stay missing; use LightCraft's missing-photo relinking tools to update their paths.
+
+## Lightroom albums (albums only)
+
+File → Import Lightroom Albums… (and the SwiftUI sheet's **Albums Only** switch) brings a Lightroom
+catalog's albums and folders of albums into the open library, holding the photos the library
+**already has**. No photo is added, and no rating, keyword or edit changes: the albums are made in one
+undo step (`library.importLightroom {"path": …, "albumsOnly": true}`). On a library synced with
+`lightcraft-server` the albums are ordinary album changes, so they reach the other devices; run the
+import on any device of the library.
+
+Two kinds of catalog give albums:
+
+- **Lightroom (cloud)**: the desktop app keeps a copy of the whole cloud catalog on the computer, even for
+  photos whose originals are only in the cloud: `~/Pictures/Lightroom Library.lrlibrary` (Windows:
+  `%USERPROFILE%\Pictures\Lightroom Library.lrlibrary`). Pick the `.lrlibrary` (a Mac with Lightroom
+  installed shows it as one file), its `<catalog id>` folder or its `Managed Catalog.mcat`. A library
+  holds one catalog per account that signed in; the one changed last is read. Such a catalog only ever
+  gives albums. Quit Lightroom first: a catalog that changes while it is read is refused. On a phone
+  without a computer, copy `Managed Catalog.mcat` and `Managed Catalog.mcat-wal` into one folder and pick
+  the folder. Lightroom mobile's own data can't be reached.
+- **Lightroom Classic**: the `.lrcat`'s regular collections and collection sets (smart collections become
+  albums with the photos they hold now).
+
+The catalog is SQLite: table `docs` lists the documents, table `revs` holds each one's revisions as
+MessagePack (decoded in tree, `crates/engine/src/msgpack.rs`). The reader
+(`crates/engine/src/lightroom_cloud.rs`) reads every `album` (`collection`: an album,
+`collection_set`: a folder), every `album_asset` (a photo in an album) and the `asset` documents of
+the photos albums hold (`importSource.fileName`, `fileSize`, `originalWidth`, `originalHeight`,
+`xmp.exif.DateTimeOriginal`, `captureDate`), looking each revision up by its rowid. Deleted documents,
+albums of shared spaces and photos not in the catalog are left out.
+
+Each Lightroom photo is matched to a library photo (not deleted, not only browsed, not a virtual copy;
+`crates/engine/src/lightroom_albums.rs`), never guessed:
+
+1. the same file (Classic: the path LightCraft references);
+2. the same byte size and the same name or the same capture second (the same bytes, maybe renamed);
+3. the same name (without extension), capture second and dimensions, either way round (a re-encoded copy,
+   such as a photo exported from Photos).
+
+Capture times are compared to the second without zone or fraction. When more than one library photo fits
+(two copies of one file count as one) the photo is reported as **ambiguous** and left out; one that fits
+none is **not in the library**. The result says how many albums and folders were made, how many photos went
+into albums, and how many were matched, ambiguous or not in the library.
+
+An album imported before is found again (the import index in `Interop/lightroom-index.json`), else an
+album or folder with the same name in the same folder, so importing twice, or on a second device, merges
+the photos it lacks instead of making a copy. This applies to the full Classic import's collections too.
+

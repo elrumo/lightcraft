@@ -1379,12 +1379,14 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
             };
             import_into_album(app, p, r)
         }
-        "file.importLightroom" => {
+        // a Lightroom cloud catalog (.mcat, .lrlibrary) always gives only its albums
+        "file.importLightroom" | "file.importLightroomAlbums" => {
+            let albums_only = id == "file.importLightroomAlbums";
             let path = match p.get("path").and_then(Value::as_str).map(str::to_string) {
                 Some(path) => Some(path),
                 None => {
-                    let req =
-                        PickRequest::file(crate::i18n::tr("Import Lightroom Catalog"), crate::i18n::tr("Lightroom Classic Catalog"), &["lrcat"]);
+                    let title = if albums_only { "Import Lightroom Albums" } else { "Import Lightroom Catalog" };
+                    let req = PickRequest::file(crate::i18n::tr(title), crate::i18n::tr("Lightroom Catalog"), &["lrcat", "mcat", "lrlibrary"]);
                     match crate::pick::ask(app, id, p, "path", req, |s| s.pick_lightroom_catalog.as_mut().and_then(|f| f()).map(|x| vec![x])) {
                         Picked::Now(v) => v.into_iter().next(),
                         Picked::Later | Picked::Unavailable => None,
@@ -1392,7 +1394,7 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
                 }
             };
             match path {
-                Some(path) => app.run("library.importLightroom", json!({"path":path})),
+                Some(path) => app.run("library.importLightroom", json!({"path": path, "albumsOnly": albums_only})),
                 None => Ok(Value::Null),
             }
         }

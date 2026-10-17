@@ -726,7 +726,7 @@ fn a_lightroom_catalog_is_read_in_the_background() {
     assert!(status["result"]["path"].as_str().unwrap().ends_with("Lightroom Catalog.lrcat"), "{status}");
     std::fs::create_dir_all(dir.join("Empty")).unwrap();
     let none = inspect(3, json!({"path": dir.join("Empty").to_string_lossy()}));
-    assert!(none["error"]["message"].as_str().unwrap().contains("no Lightroom Classic catalog"), "{none}");
+    assert!(none["error"]["message"].as_str().unwrap().contains("no Lightroom catalog"), "{none}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

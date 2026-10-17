@@ -340,5 +340,10 @@
   "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.": "这张照片本身没有深度数据：镜头模糊会使用 Depth Anything V2 Small 来估算（需下载 {:.0} MB，{} 许可证）。{}。",
   "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)": "对焦范围：{:.0}–{:.0}（0 最近，100 最远）",
   "Delete the group “{name}” and its {n} presets?": "删除分组“{name}”及其 {n} 个预设？",
-  "Hid “{name}”. Show Hidden Presets in the panel's menu brings it back.": "已隐藏“{name}”。使用面板菜单中的“显示隐藏的预设”可将其找回。"
+  "Hid “{name}”. Show Hidden Presets in the panel's menu brings it back.": "已隐藏“{name}”。使用面板菜单中的“显示隐藏的预设”可将其找回。",
+  "Lightroom albums imported: {albums} albums and {folders} folders made, {added} photos put in albums": "已导入 Lightroom 相册：创建了 {albums} 个相册和 {folders} 个文件夹，{added} 张照片已放入相册",
+  "Lightroom catalog inspected: {albums} albums, {folders} folders, {photos} photos in albums": "已检查 Lightroom 目录：{albums} 个相册，{folders} 个文件夹，相册中有 {photos} 张照片",
+  "{ambiguous} photos fit more than one photo here, and were left out.": "{ambiguous} 张照片与此处多张照片相符，已略过。",
+  "{matched} of the albums' photos are in this library; {unmatched} are not, and were left out.": "相册中的照片有 {matched} 张在此图库中；{unmatched} 张不在，已略过。",
+  "{updated} albums that were already here got photos.": "{updated} 个已有相册加入了照片。"
 }

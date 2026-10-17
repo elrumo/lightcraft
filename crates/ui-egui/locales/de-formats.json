@@ -340,5 +340,10 @@
   "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.": "Dieses Foto enthält keine eigene Tiefe: Objektivunschärfe schätzt sie mit Depth Anything V2 Small, einem Download von {:.0} MB (Lizenz {}). {}.",
   "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)": "Scharf: {:.0}–{:.0} (0 = am nächsten, 100 = am weitesten)",
   "Delete the group “{name}” and its {n} presets?": "Die Gruppe „{name}“ und ihre {n} Vorgaben löschen?",
-  "Hid “{name}”. Show Hidden Presets in the panel's menu brings it back.": "„{name}“ ausgeblendet. „Ausgeblendete Vorgaben anzeigen“ im Menü des Bedienfelds blendet es wieder ein."
+  "Hid “{name}”. Show Hidden Presets in the panel's menu brings it back.": "„{name}“ ausgeblendet. „Ausgeblendete Vorgaben anzeigen“ im Menü des Bedienfelds blendet es wieder ein.",
+  "Lightroom albums imported: {albums} albums and {folders} folders made, {added} photos put in albums": "Lightroom-Alben importiert: {albums} Alben und {folders} Ordner erstellt, {added} Fotos in Alben aufgenommen",
+  "Lightroom catalog inspected: {albums} albums, {folders} folders, {photos} photos in albums": "Lightroom-Katalog geprüft: {albums} Alben, {folders} Ordner, {photos} Fotos in Alben",
+  "{ambiguous} photos fit more than one photo here, and were left out.": "{ambiguous} Fotos passen zu mehr als einem Foto hier und wurden ausgelassen.",
+  "{matched} of the albums' photos are in this library; {unmatched} are not, and were left out.": "{matched} Fotos der Alben sind in dieser Bibliothek; {unmatched} nicht, sie wurden ausgelassen.",
+  "{updated} albums that were already here got photos.": "{updated} bereits vorhandene Alben haben Fotos erhalten."
 }

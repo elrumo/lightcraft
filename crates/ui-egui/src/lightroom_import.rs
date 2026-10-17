@@ -44,6 +44,13 @@ fn announce(app: &mut LightcraftApp, ctx: &egui::Context, done: Finished) {
         }
     } else if value.get("cancelled").and_then(Value::as_bool).unwrap_or(false) {
         crate::i18n::tr(if kind == Kind::Inspect { "Lightroom inspection cancelled" } else { "Lightroom import cancelled" }).into()
+    } else if kind == Kind::Inspect && value["kind"] == "cloud" {
+        crate::i18n::tr_format!(
+            "Lightroom catalog inspected: {albums} albums, {folders} folders, {photos} photos in albums",
+            albums = value["albums"].as_u64().unwrap_or(0),
+            folders = value["folders"].as_u64().unwrap_or(0),
+            photos = value["photos"].as_u64().unwrap_or(0)
+        )
     } else if kind == Kind::Inspect {
         let photos = value["photos"].as_u64().unwrap_or(0);
         let collections = value["collections"].as_u64().unwrap_or(0);
@@ -53,6 +60,14 @@ fn announce(app: &mut LightcraftApp, ctx: &egui::Context, done: Finished) {
             photos = photos,
             collections = collections,
             missing = missing
+        )
+    } else if value.get("report").unwrap_or(&value)["albumsOnly"] == true {
+        let report = value.get("report").unwrap_or(&value);
+        crate::i18n::tr_format!(
+            "Lightroom albums imported: {albums} albums and {folders} folders made, {added} photos put in albums",
+            albums = report["albums"].as_u64().unwrap_or(0),
+            folders = report["folders"].as_u64().unwrap_or(0),
+            added = report["added"].as_u64().unwrap_or(0)
         )
     } else {
         let report = value.get("report").unwrap_or(&value);
@@ -97,6 +112,21 @@ fn result_dialog(value: &Value, summary: &str) -> crate::state::Dialog {
             photos = photos,
             collections = report["collections"].as_u64().unwrap_or(0)
         ));
+    }
+    if report["albumsOnly"] == true {
+        let count = |k: &str| report[k].as_u64().unwrap_or(0);
+        details.push(crate::i18n::tr_format!(
+            "{matched} of the albums' photos are in this library; {unmatched} are not, and were left out.",
+            matched = count("matched"),
+            unmatched = count("unmatched")
+        ));
+        if count("ambiguous") > 0 {
+            details
+                .push(crate::i18n::tr_format!("{ambiguous} photos fit more than one photo here, and were left out.", ambiguous = count("ambiguous")));
+        }
+        if count("albumsUpdated") > 0 {
+            details.push(crate::i18n::tr_format!("{updated} albums that were already here got photos.", updated = count("albumsUpdated")));
+        }
     }
     if let Some(failures) = report["failed"].as_array() {
         details
@@ -150,7 +180,8 @@ pub fn command(app: &mut LightcraftApp, id: &str, p: &Value, ctx: &egui::Context
         app.lightroom.start_inspect(&app.session, &path, wake(ctx), &words)
     } else {
         let update = p.get("updateExisting").and_then(Value::as_bool).unwrap_or(false);
-        app.lightroom.start_import(&mut app.session, &path, update, wake(ctx), &words)
+        let albums_only = p.get("albumsOnly").and_then(Value::as_bool).unwrap_or(false);
+        app.lightroom.start_import(&mut app.session, &path, update, albums_only, wake(ctx), &words)
     }?;
     if wait {
         return wait_for(app, ctx, std::time::Duration::from_secs(600));

@@ -340,5 +340,10 @@
   "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)": "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)",
   "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.": "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.",
   "Delete the group “{name}” and its {n} presets?": "Eliminare il gruppo «{name}» e i suoi {n} preset?",
-  "Hid “{name}”. Show Hidden Presets in the panel's menu brings it back.": "Hai nascosto «{name}». «Mostra preset nascosti», nel menu del pannello, lo fa ricomparire."
+  "Hid “{name}”. Show Hidden Presets in the panel's menu brings it back.": "Hai nascosto «{name}». «Mostra preset nascosti», nel menu del pannello, lo fa ricomparire.",
+  "Lightroom albums imported: {albums} albums and {folders} folders made, {added} photos put in albums": "Album di Lightroom importati: creati {albums} album e {folders} cartelle, {added} foto inserite negli album",
+  "Lightroom catalog inspected: {albums} albums, {folders} folders, {photos} photos in albums": "Catalogo di Lightroom esaminato: album {albums}, cartelle {folders}, foto negli album {photos}",
+  "{ambiguous} photos fit more than one photo here, and were left out.": "{ambiguous} foto corrispondono a più di una foto qui e sono state escluse.",
+  "{matched} of the albums' photos are in this library; {unmatched} are not, and were left out.": "{matched} foto degli album sono in questa libreria; {unmatched} no e sono state escluse.",
+  "{updated} albums that were already here got photos.": "{updated} album già presenti hanno ricevuto foto."
 }
