@@ -1107,3 +1107,80 @@ fn same_folder_as_original_refuses_photos_without_a_folder() {
     assert!(e.contains("folder is missing") && e.contains(&gone), "{e}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A host that finishes photos in its own time (the browser: each photo on a Web Worker) places
+/// them with [`BatchPlacer`]; the files, names and results are the ones [`run_batch`] makes: a
+/// taken name renamed past, a failed photo recorded, a cancelled batch short.
+#[test]
+fn a_batch_placed_one_photo_at_a_time_is_the_batch_run_batch_makes() {
+    use crate::export::{BatchPlacer, Destination, run_batch};
+    let mut s = Session::with_demo();
+    let ids: Vec<_> = s.catalog.photos().take(3).map(|p| p.id).collect();
+    // every photo gets the same name from the template, and the first is taken already
+    let o = ExportOptions::from_json(&json!({"format": "png", "width": 32, "naming": "same"}));
+    let to = Destination { dir: "out".into(), exact: None };
+    let taken = ["out/same.png".to_string()];
+    let exists = |p: &str| taken.iter().any(|t| t == p);
+
+    let mut batch_written = Vec::new();
+    let mut write = |p: &str, b: &[u8]| {
+        batch_written.push((p.to_string(), b.to_vec()));
+        Ok(())
+    };
+    let items = crate::export::prepare_batch(&mut s, &ids, &o).unwrap();
+    let whole = run_batch(items, &o, &to, &mut write, &exists, false, &mut |_, _| true).unwrap();
+
+    let mut step_written = Vec::new();
+    let mut write = |p: &str, b: &[u8]| {
+        step_written.push((p.to_string(), b.to_vec()));
+        Ok(())
+    };
+    let items = crate::export::prepare_batch(&mut s, &ids, &o).unwrap();
+    let mut placer = BatchPlacer::new(&o, &to, &mut write, &exists, false, items.len());
+    for (i, item) in items.into_iter().enumerate() {
+        let head = item.head();
+        // (the second photo fails to render)
+        let result = if i == 1 { Err("synthetic render failure".to_string()) } else { item.run() };
+        placer.place(&head, result).unwrap();
+    }
+    let stepped = placer.finish();
+    assert_eq!(stepped.len(), 3, "{stepped:?}");
+    assert_eq!(stepped[1]["error"], "synthetic render failure");
+    assert_eq!(stepped[1]["photo"], ids[1].0);
+    assert_eq!(step_written.iter().map(|(p, _)| p.as_str()).collect::<Vec<_>>(), ["out/same-2.png", "out/same-3.png"]);
+    // the photos that rendered are the same files at the same names as the batch's
+    assert_eq!(whole[0], stepped[0]);
+    assert_eq!(batch_written[0], step_written[0]);
+    assert_eq!(batch_written.iter().map(|(p, _)| p.as_str()).collect::<Vec<_>>(), ["out/same-2.png", "out/same-3.png", "out/same-4.png"]);
+}
+
+/// A rendered export can be taken apart for another instance to render ([`PreparedExport::render_parts`]) and
+/// put together again by the one encoder ([`encode_render_export`]): the same file as running it here.
+/// A copied original has no render to take apart.
+#[test]
+fn a_rendered_export_taken_apart_encodes_to_the_same_file() {
+    use crate::export::encode_render_export;
+    let mut s = Session::with_demo();
+    let id = s.active().unwrap();
+    s.execute("develop.set", &json!({"control": "light.exposure", "value": 0.4})).unwrap();
+    // (the CPU pipeline on both sides: a GPU render may differ by a level or two)
+    let o = ExportOptions::from_json(&json!({"format": "tiff", "width": 64, "bitDepth": 16}));
+    let item = crate::export::prepare_export(&mut s, id, &o, 1).unwrap();
+    let parts = item.render_parts().expect("a render");
+    assert!(parts.hdr_job.is_none());
+    let whole = item.run().unwrap();
+    assert_eq!((parts.job.request.max_w, parts.job.request.max_h), (whole.width, whole.height), "the job renders the output size");
+    let r = parts.job.run().rendered.unwrap();
+    let again = encode_render_export(whole.file_name.clone(), r, None, &parts.opts, parts.meta.as_ref()).unwrap();
+    assert_eq!((again.width, again.height), (whole.width, whole.height));
+    if lightcraft_gpu::available() {
+        assert!(again.bytes.len().abs_diff(whole.bytes.len()) < whole.bytes.len() / 50, "a GPU render may differ a level, not the file");
+    } else {
+        assert_eq!(again.bytes, whole.bytes);
+    }
+
+    let (mut s, id, dir, _src, _) = library_with_jpeg("export-parts");
+    let original = ExportOptions { format: ExportFormat::Original, ..Default::default() };
+    assert!(crate::export::prepare_export(&mut s, id, &original, 1).unwrap().render_parts().is_none(), "a copy renders nothing");
+    let _ = std::fs::remove_dir_all(&dir);
+}

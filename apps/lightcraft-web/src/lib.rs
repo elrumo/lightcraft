@@ -8,7 +8,8 @@
 //!   ([`store`]); a new library starts with the procedural demo photos;
 //! - renders run in Web Workers, each a second instance of this module ([`wire`], `workers`), and
 //!   fall back to the main thread (one job per frame) if workers can't start;
-//! - export downloads the file through the browser; presets are imported from the browser's file
+//! - export renders and encodes each photo on a Web Worker of its own, so the page keeps drawing (`export`),
+//!   and downloads the file through the browser; presets are imported from the browser's file
 //!   chooser, read into memory ([`chooser`]);
 //! - self-hosted sync (`docs/sync.md`) talks to the server that serves the page, with `fetch`
 //!   (`sync`); synced previews and originals are kept in browser storage.
@@ -31,6 +32,8 @@ pub mod wire;
 mod backend;
 #[cfg(target_arch = "wasm32")]
 mod erase;
+#[cfg(target_arch = "wasm32")]
+mod export;
 #[cfg(target_arch = "wasm32")]
 mod lifecycle;
 #[cfg(target_arch = "wasm32")]

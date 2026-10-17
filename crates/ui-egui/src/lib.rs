@@ -271,6 +271,10 @@ pub type SaveFile = Box<dyn FnMut(&str) -> Option<String>>;
 pub type WriteFn = Box<dyn FnMut(&str, &[u8]) -> Result<(), String>>;
 /// A writer other threads can use (background export).
 pub type SharedWrite = std::sync::Arc<dyn Fn(&str, &[u8]) -> Result<(), String> + Send + Sync>;
+/// Runs a prepared export batch without blocking the UI where there are no threads (the browser):
+/// the host takes the batch to an executor of its own, keeps the [`Pending`](lightcraft_apphost::export::Pending)
+/// current (progress, ✕) and ends it with the outcome; an error means it did not start.
+pub type ExportRunner = Box<dyn FnMut(lightcraft_apphost::export::Prepared, lightcraft_apphost::export::Pending) -> Result<(), String>>;
 pub type PngEncode = Box<dyn Fn(&lightcraft_raster::Rgba8) -> Vec<u8>>;
 /// A folder chooser (`None` = cancelled).
 pub type PickFolder = Box<dyn FnMut() -> Option<String>>;
@@ -388,6 +392,9 @@ pub struct Services {
     pub write: Option<WriteFn>,
     /// Thread-safe writer: with it, UI-started exports run in the background (desktop only).
     pub write_shared: Option<SharedWrite>,
+    /// Without threads: a host that can run an export between frames instead (the browser, whose
+    /// workers render and encode the photos). Used when there is no `write_shared`.
+    pub export_runner: Option<ExportRunner>,
     /// PNG encoder (the host links an image encoder; the UI crate stays codec-free).
     pub png: Option<PngEncode>,
     /// Show a file in the system file manager (desktop only).

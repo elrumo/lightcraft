@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~14 points and ~340–600 h away
 
-> **Last reviewed:** 2026-10-15 · **Last updated:** 2026-10-15 · **Change:** minor (upstream merged again, up to 0da998f2: RAW 83% decode / 38% verified, CR3 on 26 bodies, Slideshow and Print started, full-resolution zoom closed; Next actions added in docs/roadmap.md; Sign Out and Generative Expand diffusion models in *Fork additions*) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6
+> **Last reviewed:** 2026-10-15 · **Last updated:** 2026-10-16 · **Change:** minor (browser export no longer freezes the page: new row LR-BEHAV-WEB-EXPORT 🟡, checklist 550 rows; upstream merged again, up to 0da998f2: RAW 83% decode / 38% verified, CR3 on 26 bodies, Slideshow and Print started, full-resolution zoom closed; Next actions added in docs/roadmap.md; Sign Out and Generative Expand diffusion models in *Fork additions*) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6
 
 One-page summary of how close LightCraft is to Adobe Lightroom. Agents: read this, then pick work
 from [docs/gaps.md](docs/gaps.md). The full assessment, method and evidence are in
@@ -12,7 +12,7 @@ from [docs/gaps.md](docs/gaps.md). The full assessment, method and evidence are 
 
 | | Value | Kind |
 |---|---:|---|
-| **Feature breadth** (checklist) | **84.3%** of 549 rows (P0 98.3%, P1 94.8%, P2 60.0%) | measured: [parity-checklist.md](docs/parity-checklist.md) recount |
+| **Feature breadth** (checklist) | **84.3%** of 550 rows (P0 98.3%, P1 94.5%, P2 60.0%) | measured: [parity-checklist.md](docs/parity-checklist.md) recount |
 | **Feature breadth** (weighted by use) | **~77%** | estimated |
 | **Ready for real work** (full target) | **~61%** (56–66%) | estimated: weighted sum over the dimensions |
 | **Mainstream practitioner** | **~51%** (46–56%) | estimated |
@@ -229,6 +229,7 @@ it); then sharing between people with accounts (comments, likes, shared librarie
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-16 | minor | Browser build: Export no longer runs on the page's thread (each rendered photo is made on a Web Worker, ✕ stops it at once): new checklist row LR-BEHAV-WEB-EXPORT 🟡, 549 → 550 rows, P1 94.8% → 94.5%; other numbers unchanged |
 | 2026-10-15 | minor | Upstream merged again (up to 0da998f2); Upcoming re-ranked, *Next actions* added in docs/roadmap.md; numbers as upstream's |
 | 2026-10-15 | minor | Sync: Sign Out waits until everything has reached the server, then removes the account's library from the device (as Lightroom's does), so two accounts' libraries never meet on a device; *Fork additions* row updated; numbers unchanged |
 | 2026-10-14 | minor | Generative Expand: Stable Diffusion 1.5, Kandinsky 2.2 and SDXL inpainting, offered by the device's profile; *Fork additions* row updated; numbers unchanged |

@@ -911,6 +911,7 @@ fn snapshot(args: &[String]) -> Result<(), String> {
     }
     let services = lightcraft_ui_egui::Services {
         write_shared: Some(std::sync::Arc::new(lightcraft_engine::export::write_file)),
+        export_runner: None,
         write: Some(Box::new(lightcraft_engine::export::write_file)),
         png: Some(Box::new(|img: &lightcraft_raster::Rgba8| {
             lightcraft_codecs::encode_png(&lightcraft_codecs::EncodeImage::rgba8(img), &lightcraft_codecs::EncodeMeta::default()).unwrap_or_default()
