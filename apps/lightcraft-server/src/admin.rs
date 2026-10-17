@@ -935,10 +935,10 @@ fn previews(st: &State) -> Value {
         per_min += s.previews_per_min.unwrap_or(0);
         eta = eta.max(s.previews_eta_secs);
         rebuilding |= s.previews_rebuilding;
-        if let Some((at, n)) = s.previews_last_at.zip(s.previews_last_done) {
-            if last.is_none_or(|l| at > l.1) {
-                last = Some((n, at));
-            }
+        if let Some((at, n)) = s.previews_last_at.zip(s.previews_last_done)
+            && last.is_none_or(|l| at > l.1)
+        {
+            last = Some((n, at));
         }
         building.extend(s.previews_building.iter().cloned());
         users.push(json!({"name": name, "left": s.previews, "done": s.previews_done, "total": s.previews_total, "have": cov.map(|c| c.0), "photos": cov.map(|c| c.1), "errors": s.preview_errors.len()}));
