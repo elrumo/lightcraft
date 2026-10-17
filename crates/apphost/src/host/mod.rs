@@ -71,6 +71,9 @@ const PREFETCH_PRIORITY: u32 = 4;
 const VARIANT_WANTED: Duration = Duration::from_secs(10);
 /// Thumbnails kept known to the scheduler beyond what `render.retain` lists.
 const MAX_THUMBS: usize = 600;
+/// The most thumbnails asked for again every tick (`thumbs_wanted`): `render.retain` trims them to what is on
+/// screen, this only bounds a frontend that never sends one (a frontend asks once: one dropped stays blank).
+const MAX_WANTED: usize = 20_000;
 
 /// Bytes a pixel of an original takes while it is decoded for a zoomed window: the linear source (12; a
 /// window uploads only the part it reads, never the whole source) and the decode's temporaries at their
@@ -328,6 +331,8 @@ struct Engine {
     /// downloads a synced photo's mini preview only while its cell keeps asking, and renders again once
     /// it has landed. (A frontend asks once, when the cell appears.)
     thumbs_wanted: HashMap<PhotoId, (usize, u32)>,
+    /// The files handed to an external editor (`host.editIn`), watched for what it saves.
+    edits: crate::external_edit::Watch,
 }
 
 /// A scan for the import review the frontend asked for.
@@ -433,6 +438,7 @@ impl Engine {
             let _ = sync_wake.send(Msg::Wake);
         }));
         let library = session.library.as_ref().filter(|l| l.on_disk).map(|l| l.dir.display().to_string());
+        let edits = crate::external_edit::Watch::load(&session);
         let opened = json!({"library": library, "photos": session.catalog.len(), "demo": demo, "warnings": warnings});
         Ok(Engine {
             session,
@@ -471,6 +477,7 @@ impl Engine {
             wake: host_wake,
             variants: HashMap::new(),
             thumbs_wanted: HashMap::new(),
+            edits,
         })
     }
 
@@ -677,6 +684,17 @@ impl Engine {
                 let shown: Vec<&str> = layout.shown().map(|s| s.id()).collect();
                 Ok(json!({"layout": layout, "shown": shown}))
             }
+            // Photo ▸ Edit In (`crate::external_edit`): the copy to hand to the editor, what it saved coming
+            // back, the originals themselves, and what a phone's share sheet sends back by name
+            "host.editIn" => self.edits.start(&mut self.session, p).map_err(|e| ErrorBody::engine(&e)),
+            "host.editIn.check" => self.check_external_edits().map_err(|e| ErrorBody::engine(&e)),
+            "host.editIn.originals" => crate::external_edit::originals(&self.session, p).map_err(|e| ErrorBody::new("other", e)),
+            "host.editIn.claim" => {
+                let paths: Vec<String> = p.get("paths").and_then(Value::as_array).into_iter().flatten().filter_map(|v| v.as_str().map(str::to_string)).collect();
+                let (r, text) = self.edits.claim(&mut self.session, &paths).map_err(|e| ErrorBody::engine(&e))?;
+                self.note_external_edits(text);
+                Ok(r)
+            }
             "host.merge.start" | "host.merge.last" => {
                 let ids = merge_ids(&self.session, p);
                 let r = if method == "host.merge.last" {
@@ -731,8 +749,8 @@ impl Engine {
                 let edge = size(p.get("edge")).unwrap_or(256);
                 let priority = p.get("priority").and_then(Value::as_u64).map_or(10, |n| n.min(99) as u32);
                 self.sched.request_thumb(&mut self.session, id, edge, priority);
-                if self.thumbs_wanted.len() >= MAX_THUMBS {
-                    self.thumbs_wanted.clear(); // (the frontend lists what is on screen: it asks again)
+                if self.thumbs_wanted.len() >= MAX_WANTED {
+                    self.thumbs_wanted.clear();
                 }
                 self.thumbs_wanted.insert(id, (edge, priority));
                 self.busy = true;
@@ -1498,6 +1516,21 @@ impl Engine {
         self.session.save_view();
     }
 
+    /// Bring back what an external editor saved to the files Edit In handed it, and say so.
+    fn check_external_edits(&mut self) -> Result<Value, lightcraft_engine::EngineError> {
+        let (r, text) = self.edits.check(&mut self.session)?;
+        self.note_external_edits(text);
+        Ok(r)
+    }
+
+    /// Tell the frontend what came back from an external editor (nothing: `None`).
+    fn note_external_edits(&mut self, text: Option<String>) {
+        if let Some(text) = text {
+            self.events.push(Event::Message { text, level: "info".into() }.to_value());
+            self.busy = true;
+        }
+    }
+
     fn lifecycle(&mut self, event: &str) -> Result<(), String> {
         log::info!("lifecycle: {event}");
         match event {
@@ -1518,6 +1551,10 @@ impl Engine {
             "foreground" | "active" => {
                 self.in_front = true;
                 lightcraft_engine::gpu::resume();
+                // (an editor saved while the app was away)
+                if let Err(e) = self.check_external_edits() {
+                    log::warn!("checking the external edits: {e}");
+                }
             }
             "memoryWarning" => {
                 let freed = self.session.release_memory();

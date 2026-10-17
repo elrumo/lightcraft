@@ -109,6 +109,9 @@ fn count_text_by_unit() {
         detail: String::new(),
         cancellable: true,
         cancelling: false,
+        queued: false,
+        rate: 0,
+        eta_ms: None,
         age_ms: 600,
     };
     assert_eq!(count_text(&t), "3 of 25");

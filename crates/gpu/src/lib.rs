@@ -491,6 +491,7 @@ pub fn render(src: &Arc<Rgb32f>, info: &SourceInfo, s: &DevelopSettings, req: &R
 /// the CPU): the kernel writes 8-bit output, so high-bit-depth exports and soft proofs render on
 /// the CPU, and so does Visualize HDR, which needs the float HDR render. [`try_render`] follows it,
 /// and the loupe sizes its slider-drag drafts by it (issue #330), so the two can't drift apart.
+/// (The loupe's HDR picture has an entry of its own, [`try_render_hdr`].)
 pub fn handles(depth: lightcraft_pipeline::OutputDepth, proofed: bool, overlay: lightcraft_pipeline::Overlay) -> bool {
     depth == lightcraft_pipeline::OutputDepth::U8 && !proofed && overlay != lightcraft_pipeline::Overlay::HdrRange
 }
@@ -506,12 +507,51 @@ pub fn try_render(
     req: &RenderRequest,
     stages: Option<&StageCache>,
 ) -> Result<Rendered, Fallback> {
+    if !handles(req.depth, req.proof.is_some(), req.overlay) {
+        return Err(Fallback::NotTried);
+    }
+    attempt(src, info, s, req, stages).map(|(r, _)| r)
+}
+
+/// [`try_render`] for the loupe's HDR picture of an HDR edit: a float HDR request
+/// ([`OutputDepth::F32Hdr`](lightcraft_pipeline::OutputDepth::F32Hdr)), unproofed and without an
+/// overlay. Gives the 8-bit render (the picture's reduction: what is above SDR white clips), with
+/// the picture's HDR histogram (the bins of [`Histogram::of_hdr`](lightcraft_raster::Histogram::of_hdr)
+/// with [`Hdr::MAX_EV_LIMIT`](lightcraft_develop::Hdr::MAX_EV_LIMIT) stops), and the picture itself:
+/// `width × height × 4` half-float bit patterns, R, G, B in the output space's primaries, encoded
+/// with the sRGB curve carried on past 1 (SDR white is 1.0) and held to the edit's peak, then 1.0
+/// (what `lightcraft_engine::hdr_view::HdrPicture` holds). It matches the CPU's float render within
+/// the bounds in `docs/gpu-pipeline.md`.
+pub fn try_render_hdr(
+    src: &Arc<Rgb32f>,
+    info: &SourceInfo,
+    s: &DevelopSettings,
+    req: &RenderRequest,
+    stages: Option<&StageCache>,
+) -> Result<(Rendered, Vec<u16>), Fallback> {
+    if req.depth != lightcraft_pipeline::OutputDepth::F32Hdr || req.proof.is_some() || req.overlay != lightcraft_pipeline::Overlay::None {
+        return Err(Fallback::NotTried);
+    }
+    match attempt(src, info, s, req, stages)? {
+        (r, Some(halves)) => Ok((r, halves)),
+        (_, None) => Err(Fallback::Failed("GPU render: no HDR picture came back".into())),
+    }
+}
+
+/// A render on the GPU, the HDR picture beside it for a float HDR request (see [`try_render`]).
+fn attempt(
+    src: &Arc<Rgb32f>,
+    info: &SourceInfo,
+    s: &DevelopSettings,
+    req: &RenderRequest,
+    stages: Option<&StageCache>,
+) -> Result<(Rendered, Option<Vec<u16>>), Fallback> {
     #[cfg(not(target_arch = "wasm32"))]
     {
         // sections switched off with their eye render as if at their defaults (issue #316)
         let effective = s.effective();
         let s: &DevelopSettings = &effective;
-        if !enabled() || !handles(req.depth, req.proof.is_some(), req.overlay) {
+        if !enabled() {
             return Err(Fallback::NotTried);
         }
         if PAUSED.load(Ordering::Relaxed) {
@@ -552,7 +592,7 @@ pub fn try_render(
                     e.clear();
                 }
                 let what = match &r {
-                    Some(r) => format!("{}×{}", r.image.width, r.image.height),
+                    Some((r, _)) => format!("{}×{}", r.image.width, r.image.height),
                     None => "GPU render".into(),
                 };
                 let reason = match f.kind {

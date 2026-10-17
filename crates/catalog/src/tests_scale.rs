@@ -25,6 +25,12 @@ fn library(n: u64) -> (Catalog, AlbumId) {
             p.rating = (i % 6) as u8;
             p.flag = if i % 7 == 0 { Flag::Pick } else { Flag::None };
             p.meta.keywords = vec![format!("kw{}", i % 500), "travel|italy".into()];
+            // a third are raws, as in a camera's library: their defaults start from the as-shot white balance
+            if i % 3 == 0 {
+                p.format = "CR2".into();
+                p.kind = MediaKind::Raw;
+                p.as_shot_wb = Some((5200.0, 4.0));
+            }
             Op::AddPhoto { photo: Box::new(p) }
         })
         .collect();
@@ -86,6 +92,12 @@ fn scale_100k() {
         let n = time(&format!("smart album count, {what}"), || c.album_count(a));
         eprintln!("  = {n}");
     }
+    // what `catalog.stats` (the sidebar's counts, read after every change) is made of
+    time("stats: in library", || c.photos().filter(|p| p.in_library()).count());
+    time("stats: picks", || c.photos().filter(|p| p.in_library() && p.flag == Flag::Pick).count());
+    time("stats: edited", || c.photos().filter(|p| p.in_library() && p.is_edited()).count());
+    time("stats: date groups", || c.date_groups());
+    time("stats: keywords", || c.keywords());
     time("albums_of", || c.albums_of(PhotoId(6)));
     time("arrange stacks", || c.arrange_stacks(&c.query(&all, &Sort::default())));
     time("stack_of × 1000", || (0..1000u64).filter(|i| c.stack_of(PhotoId(i * 97 + 1)).is_some()).count());

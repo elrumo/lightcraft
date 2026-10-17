@@ -447,6 +447,71 @@ fn gpu_matches_cpu() {
     eprintln!("worst: mean {:.4} LSB, max {} LSB", worst.0, worst.1);
 }
 
+/// The loupe's HDR picture of an HDR edit (`try_render_hdr`) against the CPU's float HDR render, encoded
+/// as the picture holds it (extended sRGB curve, held to the peak): mean |Δ| < 0.5 and max |Δ| ≤ 3 in
+/// 8-bit steps of the encoded value (1/255) over the whole range, above SDR white included. Its 8-bit
+/// image (the picture's reduction) has the 8-bit cases' bounds; its HDR histogram (counted on the GPU)
+/// puts at most 2% of the samples in other bins than `Histogram::of_hdr` of the CPU's values.
+#[test]
+fn hdr_pictures_match() {
+    if !gpu() {
+        return;
+    }
+    use lightcraft_pipeline::{DeepSamples, OutputDepth, OutputSpace};
+    let src = scene(0, 960, 640);
+    let curve = lightcraft_pipeline::tone::CameraTone::new(std::array::from_fn(|i| {
+        let x = 0.004 * 1.18f32.powi(i as i32);
+        [x, 1.0 - (-2.0 * x).exp()]
+    }))
+    .unwrap();
+    let raw = SourceInfo { raw: true, ..Default::default() };
+    let camera = SourceInfo { raw: true, camera_tone: Some(curve), ..Default::default() };
+    let req = RenderRequest { depth: OutputDepth::F32Hdr, space: OutputSpace::DisplayP3, ..RenderRequest::fit(720, 720) };
+    let (mut worst, mut above) = ((0.0f64, 0.0f64), 0usize);
+    for (info, (name, edit)) in cases().into_iter().map(|c| (&raw, c)).chain([(&camera, ("camera tone", typical as Edit))]) {
+        let mut s = DevelopSettings::default();
+        edit(&mut s);
+        s.hdr.enabled = true;
+        s.hdr.max_ev = 3.0;
+        // highlights well above SDR white
+        s.light.exposure += 1.0;
+        let cpu = render(&src, info, &s, &req);
+        let (gpu, halves) = lightcraft_gpu::try_render_hdr(&src, info, &s, &req, None).expect("gpu render");
+        let (mean8, max8, _) = diff(&cpu.image, &gpu.image);
+        let Some(DeepSamples::F32(v)) = cpu.deep.map(|d| d.samples) else { panic!("{name}: no float render") };
+        assert_eq!(halves.len(), v.len() / 3 * 4, "{name}");
+        let (peak, half) = (s.hdr.peak(), |i: usize| half::f16::from_bits(halves[i]).to_f32());
+        let (mut sum, mut max, mut over) = (0.0f64, 0.0f64, 0usize);
+        for (p, c) in v.as_chunks::<3>().0.iter().enumerate() {
+            for k in 0..3 {
+                let want = lightcraft_color::transfer::linear_to_srgb(c[k].clamp(0.0, peak));
+                let d = f64::from((half(4 * p + k) - want).abs()) * 255.0;
+                (sum, max, over) = (sum + d, max.max(d), over + usize::from(want > 1.0));
+            }
+            assert_eq!(half(4 * p + 3), 1.0, "{name}: opaque");
+        }
+        let mean = sum / v.len() as f64;
+        let want = lightcraft_raster::Histogram::of_hdr(v.as_chunks::<3>().0, lightcraft_develop::Hdr::MAX_EV_LIMIT as f32);
+        let hist = &gpu.histogram;
+        assert_eq!((hist.total, hist.hdr), (want.total, want.hdr), "{name}: histogram");
+        let moved = [(&hist.r, &want.r), (&hist.g, &want.g), (&hist.b, &want.b), (&hist.luma, &want.luma)]
+            .map(|(a, b)| a.iter().zip(b).map(|(x, y)| x.abs_diff(*y)).sum::<u32>() as f64 / 2.0 / f64::from(want.total));
+        let moved = moved.into_iter().fold(0.0, f64::max);
+        eprintln!(
+            "{name:<28} HDR mean {mean:.4} max {max:.3} (8-bit: mean {mean8:.4} max {max8}), {:.1}% above white, histogram {:.3}% moved",
+            over as f64 * 100.0 / v.len() as f64,
+            moved * 100.0
+        );
+        assert!(moved <= 0.02, "{name}: {:.2}% of the histogram's samples in other bins", moved * 100.0);
+        assert!(mean < MEAN_LSB && max <= f64::from(MAX_LSB), "{name}: HDR mean {mean:.4}, max {max:.3} (1/255)");
+        assert!(mean8 < MEAN_LSB && max8 <= MAX_LSB, "{name}: 8-bit mean {mean8:.4} LSB, max {max8} LSB");
+        worst = (worst.0.max(mean), worst.1.max(max));
+        above += over;
+    }
+    eprintln!("worst: HDR mean {:.4}, max {:.3} (1/255)", worst.0, worst.1);
+    assert!(above > 0, "the cases reach above SDR white");
+}
+
 /// Issue #523: a raw's clipped highlights rebuilt as the raw decode does it (fully clipped ones to the neutral of
 /// the colour model applied after them, here a look whose rows don't sum to one) stay neutral when darkened, on
 /// the GPU as on the CPU, and the two renders agree.

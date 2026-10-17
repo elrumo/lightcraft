@@ -538,6 +538,8 @@ pub fn specs() -> Vec<CommandSpec> {
                 let run: std::collections::HashSet<u64> = visible.get(from.min(to)..=from.max(to)).unwrap_or(&[]).iter().map(|i| i.0).collect();
                 let mut chosen: Vec<u64> = base.iter().copied().filter(|i| adding || !run.contains(i)).collect();
                 if adding {
+                    // (a set: the base can be thousands of photos, and the run hundreds)
+                    let base: std::collections::HashSet<u64> = base.iter().copied().collect();
                     chosen.extend(visible.iter().map(|i| i.0).filter(|i| run.contains(i) && !base.contains(i)));
                 }
                 s.execute("library.select", &json!({"ids": chosen}))?;

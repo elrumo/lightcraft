@@ -502,7 +502,7 @@ impl Vision {
         #[cfg(feature = "vision")]
         {
             let s = self.download.status();
-            json!({"running": s.running, "done": s.done, "total": s.total, "file": s.file, "error": s.error, "cancelled": s.cancelled, "finished": s.finished})
+            serde_json::to_value(s).unwrap_or_default()
         }
         #[cfg(not(feature = "vision"))]
         json!({"running": false, "done": 0, "total": 0, "file": "", "error": null, "cancelled": false, "finished": false})
@@ -608,7 +608,7 @@ impl Vision {
         #[cfg(feature = "vision")]
         {
             let s = self.text_download.status();
-            json!({"running": s.running, "done": s.done, "total": s.total, "file": s.file, "error": s.error, "cancelled": s.cancelled, "finished": s.finished})
+            serde_json::to_value(s).unwrap_or_default()
         }
         #[cfg(not(feature = "vision"))]
         json!({"running": false, "done": 0, "total": 0, "file": "", "error": null, "cancelled": false, "finished": false})
@@ -727,7 +727,7 @@ impl Vision {
         #[cfg(feature = "vision")]
         {
             let s = self.faces_download.status();
-            json!({"running": s.running, "done": s.done, "total": s.total, "file": s.file, "error": s.error, "cancelled": s.cancelled, "finished": s.finished})
+            serde_json::to_value(s).unwrap_or_default()
         }
         #[cfg(not(feature = "vision"))]
         json!({"running": false, "done": 0, "total": 0, "file": "", "error": null, "cancelled": false, "finished": false})

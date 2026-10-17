@@ -31,9 +31,8 @@ impl SuperResState {
 /// Where the model stands, which decides the dialog's buttons: `(installed, downloading, failed)`.
 fn state(app: &LightcraftApp) -> (bool, bool, bool) {
     let e = &app.session.enhancer;
-    let (id, d) = e.download_status();
-    let mine = id.as_deref() == Some(SUPER_RES_MODEL);
-    (e.installed(SUPER_RES_MODEL), mine && d.running, mine && d.error.is_some())
+    let d = e.model_download_status(SUPER_RES_MODEL);
+    (e.installed(SUPER_RES_MODEL), d.running, d.error.is_some())
 }
 
 /// Open the dialog for the active photo (Photo ▸ Enhance…).
@@ -195,8 +194,7 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, error: Option<&str>) {
             }
         });
     }
-    let (fetching, d) = app.session.enhancer.download_status();
-    let mine = fetching.as_deref() == Some(SUPER_RES_MODEL);
+    let d = app.session.enhancer.model_download_status(SUPER_RES_MODEL);
     if running {
         ui.add_space(4.0);
         let frac = if d.total > 0 { d.done as f64 / d.total as f64 } else { 0.0 };
@@ -205,12 +203,12 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui, error: Option<&str>) {
         let r = ui.button(crate::i18n::tr("Cancel Download"));
         crate::widgets::register(ui.ctx(), "button:superResCancel", r.rect);
         if r.clicked() {
-            app.session.enhancer.cancel_download();
+            app.session.enhancer.cancel_download(Some(SUPER_RES_MODEL));
         }
         ui.ctx().request_repaint_after(std::time::Duration::from_millis(250));
         return;
     }
-    if let Some(e) = error.map(str::to_string).or_else(|| mine.then_some(d.error).flatten()) {
+    if let Some(e) = error.map(str::to_string).or(d.error) {
         ui.label(egui::RichText::new(format!("{} {e}", crate::i18n::tr("The download didn't work:"))).color(egui::Color32::from_rgb(230, 90, 80)));
     }
 }

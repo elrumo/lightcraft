@@ -133,6 +133,14 @@ walks the drive.
   command (runtime preference; `ui.inspect` → `perf.gpu` shows the adapter), a buffer larger than
   the device's storage-buffer limit, or a render the device did not complete correctly (see
   [Limits, failures and the CPU fallback](#limits-failures-and-the-cpu-fallback)).
+- The loupe's HDR picture of an HDR edit on a display with headroom (`lightcraft_gpu::try_render_hdr`,
+  `media::develop_hdr`, [hdr-display](hdr-display.md)): the per-pixel kernel runs with the edit's peak
+  (`PEAK`: values above SDR white kept, the exact sRGB curve carried on past 1, tone curves continued with
+  slope 1 above white, the HDR vignette and gamut map, as `finish_with`'s HDR branches) and writes the
+  picture's RGBA half floats after the 8-bit image (`HDR_OUT`, two words a pixel), and `hdr_hist` counts its
+  HDR histogram with workgroup atomics, so no CPU pass touches the pixels. It falls back where an SDR
+  render does (LUT profiles, refined masks) and to the CPU's float render when it fails. HDR exports stay
+  on the CPU (`try_render` declines high bit depths).
 - wasm32: the crate compiles to the CPU fallback (WebGPU needs asynchronous device creation and a
   device shared with the canvas — open item below).
 
@@ -240,6 +248,14 @@ fresh ones. `windows_match` runs the settings cases again as a window of a 3000 
 from outside the window: the vignette geometry arrives as the `VIG_VIEW` parameter, the airlight and
 noise-reduction size come from the whole frame, and a window that spots or Auto Mask strokes grew is
 cut back after the readback. The tests skip (pass with a note) when no adapter exists.
+
+`hdr_pictures_match` renders the settings cases (and a camera tone curve) as HDR edits (+1 EV, 3 stops of
+headroom, Display P3) and compares the GPU's HDR picture with the CPU's float render encoded the same way
+(extended sRGB curve, held to the peak), in steps of 1/255 of the encoded value, with the 8-bit bounds above:
+measured (M1 Max, Metal, 2026-10-16) **max 0.25, mean ≤ 0.05** for every case, with 27–64% of the samples
+above SDR white: one half-float rounding step at twice SDR white. The 8-bit reduction differs by max 1 LSB,
+and the GPU's HDR histogram has ≤ 1.4% of the samples one bin away from `Histogram::of_hdr`'s (half floats
+rounding across bin edges; the test allows 2%).
 
 **AMD Radeon 8060S (RADV STRIX_HALO, Vulkan 1.4, Mesa 26.2.4, Linux 7.2), 2026-10-12**, the first
 non-Apple GPU verified: all 16 tests pass, 135 compared cases. 124 differ by max 1 LSB, 10 are
@@ -365,4 +381,5 @@ A zoom window never uploads the whole original. `Frame::source_cut` bounds what 
   faster path for exports.
 - Large-radius blurs at full size (dehaze dark channel at 24 MP) dominate the export: a summed-area
   table or a downsampled dark channel would cut them further.
-- GPU histogram (atomics) to skip the CPU pass over the readback.
+- GPU histogram (atomics) for SDR renders too, as the HDR picture has (`hdr_hist`): the CPU pass over the
+  8-bit readback is ~1.5 ms of a 0.6 MP draft.

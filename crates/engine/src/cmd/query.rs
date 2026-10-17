@@ -88,8 +88,8 @@ pub fn specs() -> Vec<CommandSpec> {
             };
             let off = pagination_usize(p.get("offset").and_then(Value::as_u64).unwrap_or(0));
             let lim = pagination_usize(p.get("limit").and_then(Value::as_u64).unwrap_or(200));
-            // a stacked photo's place in its stack: the grid's stack badge
-            let stacks = if s.catalog.stacks().next().is_some() { s.catalog.stack_index() } else { Default::default() };
+            // a stacked photo's place in its stack: the grid's stack badge (none with View > Stacks off)
+            let stacks = if !s.stacks_off && s.catalog.stacks().next().is_some() { s.catalog.stack_index() } else { Default::default() };
             // (what the grid blurs, when Blur Sensitive Photos is on)
             let sensitive = s.sensitive_ids();
             let items: Vec<Value> = ids
@@ -112,24 +112,35 @@ pub fn specs() -> Vec<CommandSpec> {
                 .collect();
             Ok(json!({"total": ids.len(), "photos": items}))
         }),
-        cmd!(query "catalog.stats", "Catalog Statistics", [], None, "{}", always, |s, _| {
-            let sensitive = s.sensitive_photos().len();
-            let all: Vec<_> = s.catalog.photos().filter(|p| p.visible()).collect();
-            Ok(json!({
-                "photos": all.len(),
-                "edited": all.iter().filter(|p| p.is_edited()).count(),
-                "picks": all.iter().filter(|p| p.flag == lightcraft_catalog::Flag::Pick).count(),
-                "rejects": all.iter().filter(|p| p.flag == lightcraft_catalog::Flag::Reject).count(),
-                "deleted": s.catalog.photos().filter(|p| p.deleted && (!p.hidden || s.hidden.showing())).count(),
-                // (how many photos the sensitive-content model flagged, here or on the server)
-                "sensitive": sensitive,
-                // (how many are hidden: only while Hidden is unlocked)
-                "hidden": s.hidden.unlocked().then(|| s.catalog.photos().filter(|p| p.in_library() && p.hidden).count()),
-                "albums": s.catalog.albums().filter(|a| !a.folder).count(),
-                "byDate": s.catalog.date_groups(),
-                "keywords": s.catalog.keywords(),
-            }))
-        }),
+        cmd!(
+            query "catalog.stats",
+            "Catalog Statistics",
+            [],
+            None,
+            "{counts?: bool} — with counts only photos, picks, rejects, deleted and albums: the sidebar's, read after every change (edited, byDate and keywords take seconds in a big library)",
+            always,
+            |s, p| {
+                let sensitive = s.sensitive_photos().len();
+                let all: Vec<_> = s.catalog.photos().filter(|p| p.visible()).collect();
+                let mut stats = json!({
+                    "photos": all.len(),
+                    "picks": all.iter().filter(|p| p.flag == lightcraft_catalog::Flag::Pick).count(),
+                    "rejects": all.iter().filter(|p| p.flag == lightcraft_catalog::Flag::Reject).count(),
+                    "deleted": s.catalog.photos().filter(|p| p.deleted && (!p.hidden || s.hidden.showing())).count(),
+                    // (how many photos the sensitive-content model flagged, here or on the server)
+                    "sensitive": sensitive,
+                    // (how many are hidden: only while Hidden is unlocked)
+                    "hidden": s.hidden.unlocked().then(|| s.catalog.photos().filter(|p| p.in_library() && p.hidden).count()),
+                    "albums": s.catalog.albums().filter(|a| !a.folder).count(),
+                });
+                if p.get("counts").and_then(Value::as_bool) != Some(true) {
+                    stats["edited"] = json!(all.iter().filter(|p| p.is_edited()).count());
+                    stats["byDate"] = json!(s.catalog.date_groups());
+                    stats["keywords"] = json!(s.catalog.keywords());
+                }
+                Ok(stats)
+            }
+        ),
         cmd!(query "library.state", "Library State", [], None, "{}", always, |s, _| {
             let label = match (s.source, s.library_folder.as_deref()) {
                 (LibrarySource::LibraryFolder, Some(path)) => lightcraft_catalog::folders::folder_label(path),

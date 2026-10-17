@@ -161,9 +161,14 @@ impl<'a> Cx<'a> {
 
     /// Submit what is recorded and read back `len` values of `b`.
     pub fn read<T: bytemuck::Pod>(&mut self, b: &Buf, len: usize) -> Vec<T> {
+        self.read_at(b, 0, len)
+    }
+
+    /// [`Self::read`] from value `offset` of `b` on.
+    pub fn read_at<T: bytemuck::Pod>(&mut self, b: &Buf, offset: usize, len: usize) -> Vec<T> {
         self.pending = 0;
         let enc = self.enc.take().unwrap_or_else(|| self.gpu.encoder());
-        self.gpu.finish_and_read(enc, b, len)
+        self.gpu.finish_and_read(enc, b, offset, len)
     }
 
     /// Submit what is recorded so far without waiting. Renders submit stage by stage and every
@@ -556,7 +561,9 @@ pub(crate) fn profiling() -> bool {
 }
 
 /// Render on `gpu`, reusing `stages` (if given). `None` (or a result the caller discards) when the
-/// render failed: the reason is recorded with [`crate::ctx::fail`].
+/// render failed: the reason is recorded with [`crate::ctx::fail`]. A float HDR request
+/// ([`OutputDepth::F32Hdr`](lightcraft_pipeline::OutputDepth::F32Hdr)) also comes with its HDR
+/// picture (see [`crate::try_render_hdr`]); the 8-bit image is its reduction.
 pub fn render(
     gpu: &Gpu,
     src: &Arc<Rgb32f>,
@@ -565,7 +572,7 @@ pub fn render(
     req: &RenderRequest,
     stages: Option<&GpuStages>,
     fault: Option<crate::Fault>,
-) -> Option<Rendered> {
+) -> Option<(Rendered, Option<Vec<u16>>)> {
     let mut t = profiling().then(std::time::Instant::now);
     // Each stage is submitted on its own; under `LIGHTCRAFT_PROFILE` also waited for, so the
     // timings are real.
@@ -695,8 +702,10 @@ pub fn render(
         }
         None => prep.texture.clone(),
     };
+    // an HDR render writes its HDR picture too: two words of half floats a pixel after the 8-bit image
+    let hdr_out = req.depth == lightcraft_pipeline::OutputDepth::F32Hdr;
     // cleared, so that work which never ran cannot pass for an image (see the check below)
-    let out = cx.zeroed(n);
+    let out = cx.zeroed(if hdr_out { 3 * n } else { n });
     if fault == Some(crate::Fault::Validation) {
         // a dispatch the device rejects (too many workgroups)
         cx.run("box_h", &[0; 5], &[Some(&aux), Some(&out)], [gpu.device.limits().max_compute_workgroups_per_dimension + 1, 1, 1]);
@@ -705,6 +714,9 @@ pub fn render(
     let rows = (BAND_PIXELS / w.max(1) / 16 * 16).max(16); // whole workgroups: bands never overlap
     let y0_at = crate::params::index("Y0").unwrap_or(0);
     let mut p = p;
+    if let Some(slot) = crate::params::index("HDR_OUT").and_then(|i| p.get_mut(i)) {
+        *slot = hdr_out as u32;
+    }
     for y0 in (0..h).step_by(rows).filter(|_| fault != Some(crate::Fault::DropWork)) {
         p[y0_at] = y0 as u32;
         cx.run(
@@ -753,7 +765,16 @@ pub fn render(
     } else {
         None
     };
+    // an HDR render's histogram is its picture's HDR one, counted on the GPU (what the request keeps of it)
+    let (kx, ky, kw, kh) = plan.keep.map_or((0, 0, w, h), |k| (k.x, k.y, k.w, k.h));
+    let hdr_hist = hdr_out.then(|| {
+        let hist = cx.zeroed(4 * Histogram::BINS);
+        cx.run("hdr_hist", &[w, kx, ky, kw, kh, n].map(|v| v as u32), &[Some(&out), Some(&hist)], groups2(kw, kh, [16, 16]));
+        hist
+    });
     let data: Vec<[u8; 4]> = cx.read(&out, n);
+    let halves: Option<Vec<u16>> = hdr_out.then(|| cx.read_at(&out, n, 2 * n));
+    let hdr_counts: Option<Vec<u32>> = hdr_hist.map(|b| cx.read(&b, 4 * Histogram::BINS));
     let image = Rgba8 { width: w, height: h, data };
     lap("finish + readback", &mut t, &mut cx);
     if crate::ctx::failed() {
@@ -767,11 +788,17 @@ pub fn render(
         fail(FailKind::Fatal, format!("the GPU returned an incomplete image ({unwritten} of {n} pixels unwritten)"));
         return None;
     }
-    let histogram = match plan.keep {
-        Some(k) => Histogram::of_srgb8(&image.crop(k.x, k.y, k.w, k.h)),
-        None => Histogram::of_srgb8(&image),
+    let histogram = match (hdr_counts, plan.keep) {
+        (Some(c), _) => hdr_histogram(&c, kw * kh),
+        (None, Some(k)) => Histogram::of_srgb8(&image.crop(k.x, k.y, k.w, k.h)),
+        (None, None) => Histogram::of_srgb8(&image),
     };
     lap("histogram", &mut t, &mut cx);
+    // (every pixel counted once: a histogram kernel that did not run is no histogram)
+    if histogram.hdr.is_some() && histogram.luma.iter().map(|c| u64::from(*c)).sum::<u64>() != u64::from(histogram.total) {
+        fail(FailKind::Fatal, "the GPU returned an incomplete HDR histogram".into());
+        return None;
+    }
     // An entirely black result (upstream work that did not run would give that too): redo it on
     // the CPU, which costs time only for the rare photo that really is black.
     if n >= 4096 && [&histogram.r, &histogram.g, &histogram.b].iter().all(|c| c.first() == Some(&histogram.total)) {
@@ -793,10 +820,28 @@ pub fn render(
     });
     lightcraft_pipeline::visualize::apply(&mut image, req.overlay, &plan, overlay_mask.as_ref(), all_overlay_alphas.as_deref());
     // spots grew the window the render worked on: cut it back to the request
+    let mut halves = halves;
     if let Some(k) = plan.keep {
         image = image.crop(k.x, k.y, k.w, k.h);
+        // (four halves a pixel; a short result fails the caller's size check)
+        halves = halves.map(|v| (k.y..k.y + k.h).flat_map(|y| v.get((y * w + k.x) * 4..(y * w + k.x + k.w) * 4).unwrap_or(&[])).copied().collect());
     }
-    Some(Rendered { image, histogram, deep: None })
+    Some((Rendered { image, histogram, deep: None }, halves))
+}
+
+/// The HDR histogram the `hdr_hist` kernel counted (R, G, B and luma, [`Histogram::BINS`] each) over
+/// `total` pixels, with an HDR edit's bins (as `lightcraft_engine`'s HDR histograms).
+fn hdr_histogram(counts: &[u32], total: usize) -> Histogram {
+    let n = Histogram::BINS;
+    let ch = |k: usize| counts.get(k * n..(k + 1) * n).map_or_else(|| vec![0; n], <[u32]>::to_vec);
+    Histogram {
+        r: ch(0),
+        g: ch(1),
+        b: ch(2),
+        luma: ch(3),
+        total: u32::try_from(total).unwrap_or(u32::MAX),
+        hdr: Some(lightcraft_raster::HdrBins { from: Histogram::HDR_FROM, stops: lightcraft_develop::Hdr::MAX_EV_LIMIT as f32 }),
+    }
 }
 
 /// Pixels whose alpha is not 255 (cheap: no early exit, so it vectorizes).

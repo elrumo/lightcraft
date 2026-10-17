@@ -32,6 +32,8 @@
 
 pub mod browse;
 pub mod export;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod external_edit;
 pub mod faces;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod host;

@@ -80,6 +80,11 @@ const FIELDS: &[(&str, usize)] = &[
     ("OUT_GAMMA", 1),
     // first row of a band dispatch (the kernel runs over rows Y0.., see `render`)
     ("Y0", 1),
+    // the render's peak (linear, SDR white = 1; above 1 an HDR render) and its sRGB encoding
+    ("PEAK", 1),
+    ("PEAK_ENC", 1),
+    // also write the HDR picture (half floats after the 8-bit one, see `render`)
+    ("HDR_OUT", 1),
 ];
 
 /// `(name, index)` of every field (for the WGSL constants).
@@ -245,6 +250,8 @@ pub fn finish_block(fp: &FinishParams, masks: &[[f32; MASK_TERMS]], present: &Pr
     let (trc, gamma) = fp.out_trc.code();
     p.u("OUT_TRC", trc);
     p.f("OUT_GAMMA", gamma);
+    p.f("PEAK", fp.peak);
+    p.f("PEAK_ENC", lightcraft_color::transfer::linear_to_srgb(fp.peak));
     if let Some((amt, cell, rough, seed)) = fp.grain {
         p.b("GRAIN", true);
         p.f("GRAIN_AMT", amt);

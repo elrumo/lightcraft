@@ -8,6 +8,7 @@
 //! job's own Cancel all set the same atomic. Numbers are worded by the frontend from `done`, `total` and [`Unit`]; a
 //! detail set here is a name (a file, a model), never a sentence, so the frontend can translate everything else.
 
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
@@ -27,6 +28,16 @@ struct Inner {
     /// Oldest first.
     tasks: Mutex<Vec<Arc<Entry>>>,
     next: AtomicU64,
+    turns: Mutex<Turns>,
+}
+
+/// Who may run now in each pool of tasks limited to a few at once ([`Activity::try_turn`],
+/// [`Activity::wait_turn`]): how many hold a turn, and the tickets waiting for one, in the order they asked.
+#[derive(Default)]
+struct Turns {
+    running: HashMap<&'static str, usize>,
+    waiting: HashMap<&'static str, VecDeque<u64>>,
+    next: u64,
 }
 
 /// How a task can be cancelled.
@@ -86,7 +97,59 @@ pub struct TaskInfo {
     pub cancellable: bool,
     /// Cancel was asked for; the job stops at its next check.
     pub cancelling: bool,
+    /// Waiting for its turn (a model download while two others run): it starts by itself.
+    pub queued: bool,
+    /// How fast `done` grows, in units a second (0 while not known yet, or when it stalled).
+    pub rate: u64,
+    /// Time left at that rate, when it is known.
+    pub eta_ms: Option<u64>,
     pub age_ms: u64,
+}
+
+/// How fast a task's `done` grows: an average over half-second steps. The first change after the task starts is
+/// not counted, because a download that resumes, or skips the files it already has, jumps by what is on disk.
+#[derive(Default)]
+struct Meter {
+    /// `done` when the meter started.
+    first: Option<u64>,
+    /// The last step's time and `done`.
+    step: Option<(web_time::Instant, u64)>,
+    rate: f64,
+}
+
+/// A rate not updated for this long is not trusted (the connection stalled).
+const STALE_SECS: f64 = 3.0;
+
+impl Meter {
+    fn sample(&mut self, done: u64, now: web_time::Instant) {
+        let Some(first) = self.first else {
+            self.first = Some(done);
+            return;
+        };
+        let Some((at, prev)) = self.step else {
+            if done != first {
+                self.step = Some((now, done));
+            }
+            return;
+        };
+        let dt = now.duration_since(at).as_secs_f64();
+        if dt < 0.5 {
+            return;
+        }
+        if let Some(grown) = done.checked_sub(prev) {
+            let r = grown as f64 / dt;
+            self.rate = if self.rate > 0.0 { self.rate * 0.7 + r * 0.3 } else { r };
+        }
+        self.step = Some((now, done));
+    }
+
+    /// The rate, or 0 while it isn't known or has gone stale.
+    fn rate(&self, now: web_time::Instant) -> f64 {
+        match self.step {
+            Some((at, _)) if now.duration_since(at).as_secs_f64() < STALE_SECS && self.rate.is_finite() => self.rate,
+            _ => 0.0,
+        }
+    }
 }
 
 struct Entry {
@@ -100,6 +163,8 @@ struct Entry {
     detail: Mutex<String>,
     cancel: Option<Arc<AtomicBool>>,
     cancellable: AtomicBool,
+    queued: AtomicBool,
+    meter: Mutex<Meter>,
     /// Held while a cancel is decided ([`Activity::cancel`], [`Activity::cancel_all`]) and while
     /// cancelling is switched ([`TaskGuard::set_cancellable`], [`TaskHandle::set_cancellable`]): a
     /// step that turns it off and then reads the cancel flag either sees a cancel that was
@@ -143,8 +208,16 @@ impl Entry {
     }
 
     fn progress(&self, done: u64, total: u64) {
+        let done = if total > 0 { done.min(total) } else { done };
         self.total.store(total, Ordering::Relaxed);
-        self.done.store(if total > 0 { done.min(total) } else { done }, Ordering::Relaxed);
+        self.done.store(done, Ordering::Relaxed);
+        lock(&self.meter).sample(done, web_time::Instant::now());
+    }
+
+    fn set_queued(&self, yes: bool) {
+        self.queued.store(yes, Ordering::Relaxed);
+        // (the time spent waiting is not part of the rate)
+        *lock(&self.meter) = Meter::default();
     }
 
     fn detail(&self, text: &str) {
@@ -152,16 +225,24 @@ impl Entry {
     }
 
     fn info(&self) -> TaskInfo {
+        let (done, total) = (self.done.load(Ordering::Relaxed), self.total.load(Ordering::Relaxed));
+        let queued = self.queued.load(Ordering::Relaxed);
+        let rate = if queued { 0.0 } else { lock(&self.meter).rate(web_time::Instant::now()) };
+        // (the float-to-int casts saturate; a NaN never gets here)
+        let eta_ms = (rate > 0.0 && total > 0).then(|| (total.saturating_sub(done) as f64 / rate * 1000.0) as u64);
         TaskInfo {
             id: self.id,
             kind: self.kind,
             label: self.label.clone(),
-            done: self.done.load(Ordering::Relaxed),
-            total: self.total.load(Ordering::Relaxed),
+            done,
+            total,
             unit: Unit::from_u8(self.unit.load(Ordering::Relaxed)),
             detail: lock(&self.detail).clone(),
             cancellable: self.is_cancellable(),
             cancelling: self.is_cancelled(),
+            queued,
+            rate: rate.round() as u64,
+            eta_ms,
             age_ms: u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX),
         }
     }
@@ -188,6 +269,8 @@ impl Activity {
             detail: Mutex::new(String::new()),
             cancellable: AtomicBool::new(cancel.is_some()),
             cancel,
+            queued: AtomicBool::new(false),
+            meter: Mutex::new(Meter::default()),
             gate: Mutex::new(()),
         });
         lock(&self.inner.tasks).push(entry.clone());
@@ -217,6 +300,66 @@ impl Activity {
     pub fn running_cancellable(&self) -> Vec<TaskInfo> {
         lock(&self.inner.tasks).iter().filter(|e| e.is_cancellable() && !e.is_cancelled()).map(|e| e.info()).collect()
     }
+
+    /// A turn in `pool`, where at most `limit` tasks run at once, if one is free now and nobody waits for one.
+    pub fn try_turn(&self, pool: &'static str, limit: usize) -> Option<Turn> {
+        let mut t = lock(&self.inner.turns);
+        let running = t.running.get(pool).copied().unwrap_or(0);
+        if running >= limit || t.waiting.get(pool).is_some_and(|w| !w.is_empty()) {
+            return None;
+        }
+        t.running.insert(pool, running.saturating_add(1));
+        Some(Turn { activity: self.clone(), pool })
+    }
+
+    /// Wait for a turn in `pool` (at most `limit` tasks run at once; turns go in the order they were asked for).
+    /// `None` when `cancel` is set while waiting. Blocks: call it on the task's own thread.
+    pub fn wait_turn(&self, pool: &'static str, limit: usize, cancel: &AtomicBool) -> Option<Turn> {
+        let ticket = {
+            let mut t = lock(&self.inner.turns);
+            t.next = t.next.wrapping_add(1);
+            let ticket = t.next;
+            t.waiting.entry(pool).or_default().push_back(ticket);
+            ticket
+        };
+        loop {
+            {
+                let mut t = lock(&self.inner.turns);
+                let running = t.running.get(pool).copied().unwrap_or(0);
+                let first = t.waiting.get(pool).and_then(|w| w.front().copied());
+                if cancel.load(Ordering::Relaxed) {
+                    if let Some(w) = t.waiting.get_mut(pool) {
+                        w.retain(|&x| x != ticket);
+                    }
+                    return None;
+                }
+                if running < limit && first == Some(ticket) {
+                    if let Some(w) = t.waiting.get_mut(pool) {
+                        w.pop_front();
+                    }
+                    t.running.insert(pool, running.saturating_add(1));
+                    return Some(Turn { activity: self.clone(), pool });
+                }
+            }
+            // ponytail: polls; a Condvar if many tasks ever wait at once
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+    }
+}
+
+/// A turn to run in a limited pool ([`Activity::try_turn`]); dropping it frees the place for the next.
+pub struct Turn {
+    activity: Activity,
+    pool: &'static str,
+}
+
+impl Drop for Turn {
+    fn drop(&mut self) {
+        let mut t = lock(&self.activity.inner.turns);
+        if let Some(n) = t.running.get_mut(self.pool) {
+            *n = n.saturating_sub(1);
+        }
+    }
 }
 
 /// A task's place in the list, held by whoever owns the job; dropping it removes the row.
@@ -242,6 +385,11 @@ impl TaskGuard {
 
     pub fn set_unit(&self, unit: Unit) {
         self.entry.unit.store(unit.to_u8(), Ordering::Relaxed);
+    }
+
+    /// Waiting for its turn ([`Activity::wait_turn`]), or not any more.
+    pub fn set_queued(&self, yes: bool) {
+        self.entry.set_queued(yes);
     }
 
     /// A step that must not be cut short (the Lightroom import's commit) turns cancelling off for its duration.
@@ -293,6 +441,11 @@ impl TaskHandle {
 
     pub fn is_cancelled(&self) -> bool {
         self.entry.is_cancelled()
+    }
+
+    /// The task as `activity.list` shows it (its row may be gone: the task ended).
+    pub fn info(&self) -> TaskInfo {
+        self.entry.info()
     }
 
     /// [`TaskGuard::set_cancellable`] from the worker, at the moment its step starts (an export
@@ -425,6 +578,72 @@ mod tests {
         g2.handle().set_cancellable(false);
         assert!(a.cancel(g2.id()).is_err());
         assert_eq!(a.cancel_all(), 0, "{:?}", a.list());
+    }
+
+    #[test]
+    fn turns_go_in_order_and_a_cancel_leaves_the_line() {
+        let a = Activity::default();
+        let (t1, t2) = (a.try_turn("download", 2).unwrap(), a.try_turn("download", 2).unwrap());
+        assert!(a.try_turn("download", 2).is_none());
+        assert!(a.try_turn("other", 1).is_some(), "pools are separate");
+        let (stop_b, stop_c) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false)));
+        let (tx, rx) = std::sync::mpsc::channel();
+        let wait = |name: &'static str, stop: Arc<AtomicBool>| {
+            let (a, tx) = (a.clone(), tx.clone());
+            std::thread::spawn(move || {
+                let turn = a.wait_turn("download", 2, &stop);
+                tx.send((name, turn.is_some())).unwrap();
+                // (holds the turn a moment, then frees it)
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            })
+        };
+        let b = wait("b", stop_b.clone());
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        let c = wait("c", stop_c.clone());
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        assert!(rx.try_recv().is_err(), "both wait while two run");
+        assert!(a.try_turn("download", 2).is_none(), "nobody jumps the line");
+        // b gives up; when a place frees, c gets it
+        stop_b.store(true, Ordering::Relaxed);
+        assert_eq!(rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap(), ("b", false));
+        drop(t1);
+        assert_eq!(rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap(), ("c", true));
+        b.join().unwrap();
+        c.join().unwrap();
+        drop(t2);
+        assert!(a.try_turn("download", 2).is_some() && a.try_turn("download", 2).is_some());
+    }
+
+    #[test]
+    fn the_rate_skips_the_first_jump_and_goes_stale() {
+        let t0 = web_time::Instant::now();
+        let at = |ms: u64| t0 + std::time::Duration::from_millis(ms);
+        let mut m = Meter::default();
+        m.sample(0, at(0));
+        // a resumed download reports what is already on disk first
+        m.sample(900_000, at(100));
+        assert_eq!(m.rate(at(100)), 0.0);
+        m.sample(1_000_000, at(1100));
+        assert!((m.rate(at(1100)) - 100_000.0).abs() < 1.0, "{}", m.rate(at(1100)));
+        // steps shorter than half a second aren't measured
+        m.sample(1_000_100, at(1200));
+        assert!((m.rate(at(1200)) - 100_000.0).abs() < 1.0);
+        // nothing for a while: not trusted any more
+        assert_eq!(m.rate(at(5000)), 0.0);
+        // a row while it waits has no rate; once it runs, the ETA follows from the rate
+        let a = Activity::default();
+        let g = a.start("download", "Downloading model", Cancel::Yes);
+        g.set_queued(true);
+        g.progress(0, 1000);
+        let r = &a.list()[0];
+        assert!(r.queued && r.rate == 0 && r.eta_ms.is_none());
+        g.set_queued(false);
+        assert!(!a.list()[0].queued);
+        g.entry.meter.lock().unwrap().rate = 100.0;
+        g.entry.meter.lock().unwrap().step = Some((web_time::Instant::now(), 500));
+        g.progress(500, 1000);
+        let r = &a.list()[0];
+        assert_eq!((r.rate, r.eta_ms.map(|ms| ms / 100)), (100, Some(50)));
     }
 
     #[test]

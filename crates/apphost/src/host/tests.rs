@@ -100,6 +100,23 @@ fn a_thumbnail_arrives_as_a_leased_image() {
     assert!(h.leases().take_image(token).is_none());
 }
 
+// A frontend that lets thumbnails go says so (`render.retain` with `max`): asked for again, they come again. Without
+// it the host takes them for still shown and sends nothing (the SwiftUI grid's cells stayed blank zoomed out)
+#[test]
+fn thumbnails_let_go_come_again_when_asked() {
+    let h = demo();
+    let first = h.call(&req(1, "engine.execute", json!({"command": "catalog.query", "params": {"limit": 2}})), Duration::from_secs(30));
+    let ids: Vec<u64> = first["result"]["photos"].as_array().unwrap().iter().filter_map(|p| p["id"].as_u64()).collect();
+    assert_eq!(ids.len(), 2, "{first}");
+    for id in &ids {
+        h.submit(&req(2, "render.thumb", json!({"photo": id, "edge": 128}))).unwrap();
+        h.wait_for(|e| e["kind"] == "image" && e["slot"] == format!("thumb:{id}"));
+    }
+    h.call(&req(3, "render.retain", json!({"thumbs": [], "max": 1})), Duration::from_secs(30));
+    h.submit(&req(4, "render.thumb", json!({"photo": ids[0], "edge": 128}))).unwrap();
+    h.wait_for(|e| e["kind"] == "image" && e["slot"] == format!("thumb:{}", ids[0]));
+}
+
 // A SwiftUI cell asks for its thumbnail once, when it appears. The host keeps asking while the cell is
 // on screen (the engine downloads a synced photo's preview only while asked), and the render that
 // failed for want of the preview runs again by itself once the preview has landed
@@ -954,6 +971,97 @@ fn a_zoom_decodes_the_original_only_when_it_fits_in_memory() {
     // nonsense sizes never decode
     assert!(!original_fits(Some(1 << 30), false, f64::NAN));
     assert!(!original_fits(Some(1 << 30), false, f64::INFINITY));
+}
+
+/// A flat 16-bit PSD of `w` × `h`: what an editor saves.
+fn write_psd(path: &Path, w: u32, h: u32) {
+    let px = vec![30000u16; (w * h * 3) as usize];
+    let img = lightcraft_codecs::EncodeImage::new(w, h, 3, lightcraft_codecs::Samples::U16(&px));
+    std::fs::write(path, lightcraft_codecs::encode_psd(&img, &Default::default()).unwrap()).unwrap();
+}
+
+// Photo ▸ Edit In through the host: a copy rendered next to the photo and stacked with it; what the
+// editor saves comes back when the app is active again, and the watch outlives a restart; a Save As is
+// stacked on top; a file shared back under the copy's name (a phone) replaces it
+#[test]
+fn edit_in_brings_back_what_the_editor_saved() {
+    let base = std::env::temp_dir().join(format!("lc-host-editin-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let (src, lib, tmp) = (base.join("src"), base.join("lib"), base.join("tmp"));
+    std::fs::create_dir_all(&tmp).unwrap();
+    let mut demo = Session::with_demo();
+    let one: Vec<u64> = demo.visible_cloned().iter().take(1).map(|id| id.0).collect();
+    crate::export::export_now(&mut demo, &json!({"dir": src.to_string_lossy(), "ids": one, "longEdge": 48, "format": "png"}), &mut |_, _, _| true)
+        .unwrap();
+    let png = std::fs::read_dir(&src).unwrap().flatten().next().unwrap().path();
+    let config = OpenConfig {
+        library: Some(lib.to_string_lossy().to_string()),
+        tmp: Some(tmp.to_string_lossy().to_string()),
+        render_threads: Some(2),
+        ..Default::default()
+    };
+    let h = Watch::new(Host::open(config.clone()).unwrap().0);
+    let run = |h: &Host, id: u64, method: &str, params: Value| h.call(&req(id, method, params), Duration::from_secs(60));
+    let exec = |h: &Host, id: u64, command: &str, params: Value| run(h, id, "engine.execute", json!({"command": command, "params": params}));
+    let rows = |h: &Host| exec(h, 90, "catalog.query", json!({"limit": 20}))["result"]["photos"].as_array().cloned().unwrap_or_default();
+    let imported = exec(&h, 1, "library.import", json!({"paths": [png.to_string_lossy()]}));
+    let id = imported["result"]["imported"][0].as_u64().unwrap_or_else(|| panic!("{imported}"));
+    exec(&h, 2, "library.select", json!({"ids": [id]}));
+
+    // Edit In: a PSD copy beside the photo, stacked with it
+    let edit = run(&h, 3, "host.editIn", json!({"format": "psd", "bitDepth": 8}));
+    assert!(edit["error"].is_null(), "{edit}");
+    let copy = edit["result"]["copies"][0]["path"].as_str().unwrap().to_string();
+    let new = edit["result"]["copies"][0]["id"].as_u64().unwrap();
+    assert!(copy.ends_with("-Edit.psd") && Path::new(&copy).is_file(), "{edit}");
+    let row = |h: &Host, id: u64| rows(h).into_iter().find(|r| r["id"] == id).unwrap();
+    assert_eq!(row(&h, new)["stack"]["count"], 2, "stacked with the photo");
+    assert_eq!(row(&h, new)["stack"]["collapsed"], false);
+    // nothing saved yet
+    assert_eq!(run(&h, 4, "host.editIn.check", json!({}))["result"]["reloaded"], json!([]));
+
+    // the editor saves over it, then the app comes to the front: the photo is read again and the user told
+    write_psd(Path::new(&copy), 30, 20);
+    run(&h, 5, "host.lifecycle", json!({"event": "active"}));
+    let told = h.wait_for(|e| e["kind"] == "message" && e["text"].as_str().is_some_and(|t| t.contains("external editor")));
+    assert_eq!(told["text"], "Updated the edits saved in the external editor");
+    assert_eq!((row(&h, new)["width"].as_u64(), row(&h, new)["height"].as_u64()), (Some(30), Some(20)));
+
+    // a restart keeps the watch: a save made while the app was closed still comes back
+    drop(h);
+    write_psd(Path::new(&copy), 24, 16);
+    let h = Watch::new(Host::open(config).unwrap().0);
+    run(&h, 6, "host.lifecycle", json!({"event": "active"}));
+    h.wait_for(|e| e["kind"] == "message");
+    assert_eq!(row(&h, new)["width"].as_u64(), Some(24));
+
+    // a Save As under the same name is added on top of the stack
+    let as_png = Path::new(&copy).with_extension("png");
+    std::fs::copy(&png, &as_png).unwrap();
+    let check = run(&h, 7, "host.editIn.check", json!({}));
+    let added = check["result"]["added"][0]["id"].as_u64().unwrap_or_else(|| panic!("{check}"));
+    assert_eq!(row(&h, added)["stack"]["count"], 3, "{check}");
+
+    // a phone cannot be told: the editor's file arrives shared into the app, named as the copy (" 2" added)
+    let shared = tmp.join("shared");
+    std::fs::create_dir_all(&shared).unwrap();
+    let stem = Path::new(&copy).file_stem().unwrap().to_string_lossy().to_string();
+    let back = shared.join(format!("{stem} 2.psd"));
+    write_psd(&back, 18, 12);
+    let other = shared.join("holiday.psd");
+    write_psd(&other, 18, 12);
+    let claim = run(&h, 8, "host.editIn.claim", json!({"paths": [back.to_string_lossy(), other.to_string_lossy()]}));
+    assert_eq!(claim["result"]["claimed"], json!([back.to_string_lossy()]), "{claim}");
+    assert!(!back.exists() && other.exists(), "the claimed file moved, the other stayed");
+    assert_eq!(row(&h, new)["width"].as_u64(), Some(18));
+
+    // a missing editor file or a photo with no file is an error, not a crash
+    let none = run(&h, 9, "host.editIn.originals", json!({"ids": [999_999]}));
+    assert!(none["error"].is_object(), "{none}");
+    let some = run(&h, 10, "host.editIn.originals", json!({"ids": [id]}));
+    assert_eq!(some["result"]["files"][0]["path"], png.to_string_lossy().as_ref(), "{some}");
+    drop(h);
+    let _ = std::fs::remove_dir_all(&base);
 }
 
 // A Mac's Local: a folder is read on a worker (`library.browse`, answered when done, its row in the activity stack

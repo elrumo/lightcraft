@@ -18,6 +18,15 @@
   again. It is now set aside on its own and the rest carry on.
 - Describing a big library no longer holds up reading the words in photos and finding people: the three take turns.
 
+### Edit In on the Mac app, and a hand-off on iPhone and iPad
+- The Mac app has Photo ▸ Edit In (⇧⌘E PhotoCraft, ⌥⌘E another editor, and Open Original in Other Editor for a raw
+  with no copy), also in the "..." menu. It renders a copy with your edits next to the photo, stacks it with the
+  original and opens it in the editor. What the editor saves comes back when LightCraft is active again, even after a
+  restart, and syncs like any other change. Settings ▸ General ▸ External Editing sets the editors and the file.
+- On iPhone and iPad, Edit In... in a photo's or the selection's "..." menu stacks the copy with the original and
+  opens the share sheet. An editor on a phone cannot tell LightCraft when it saves: share its file to Add to
+  LightCraft, and when it is named as the copy it replaces it, or is stacked on top of it.
+
 ### Sharpening without halos (process 3)
 - Raw photos looked crunchy, with bright and dark outlines along strong edges (hair against a light background, a
   strap against skin), even in the fitted view. The default Sharpening (Amount 40, as Lightroom's) boosted detail

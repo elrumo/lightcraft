@@ -1122,11 +1122,13 @@ impl RenderJob {
                 // Thumbnails (many small jobs side by side) stay on the CPU; views and exports use
                 // the GPU when there is one.
                 let gpu = self.cache.is_none();
-                // (the HDR picture is the float HDR render: CPU only)
-                let request =
-                    if self.hdr_view { RenderRequest { depth: lightcraft_pipeline::OutputDepth::F32Hdr, ..self.request } } else { self.request };
-                let (mut rendered, gpu_fallback) = develop_reporting(src, &info, &self.settings, &request, self.stages.as_deref(), gpu);
-                let hdr = self.hdr_view.then(|| Self::hdr_picture(&self.settings, &mut rendered)).flatten();
+                let (mut rendered, gpu_fallback, hdr) = if self.hdr_view {
+                    let request = RenderRequest { depth: lightcraft_pipeline::OutputDepth::F32Hdr, ..self.request };
+                    develop_hdr(src, &info, &self.settings, &request, self.stages.as_deref(), gpu)
+                } else {
+                    let (r, f) = develop_reporting(src, &info, &self.settings, &self.request, self.stages.as_deref(), gpu);
+                    (r, f, None)
+                };
                 // for a display profile: the image goes to the display's values, the histogram
                 // and the cached view preview stay sRGB
                 let mut srgb = None;
@@ -1169,17 +1171,47 @@ impl RenderJob {
             Err(e) => self.failed(e),
         }
     }
+}
 
-    /// The HDR picture of a render made for [`Self::with_hdr_display`]; its float samples leave
-    /// `rendered` (the 8-bit picture and the HDR histogram stay).
-    fn hdr_picture(settings: &DevelopSettings, rendered: &mut Rendered) -> Option<Arc<crate::hdr_view::HdrPicture>> {
-        let deep = rendered.deep.take()?;
-        if let lightcraft_pipeline::DeepSamples::F32(v) = &deep.samples {
-            // (the histogram of an HDR edit shows its HDR range, as for its SDR previews)
-            rendered.histogram = Histogram::of_hdr(v.as_chunks::<3>().0, lightcraft_develop::Hdr::MAX_EV_LIMIT as f32);
+/// [`develop_reporting`] for the HDR picture of a [`RenderJob::with_hdr_display`] job (`req` asks for
+/// the float HDR render): on the GPU where an SDR render would be (it writes the picture's half floats
+/// itself), else the CPU's float render, packed. The 8-bit image is the picture's reduction; the
+/// histogram shows its HDR range, as for an HDR edit's SDR previews. Also says why the GPU render fell
+/// back to the CPU, as [`develop_reporting`].
+pub fn develop_hdr(
+    src: &Arc<Rgb32f>,
+    info: &SourceInfo,
+    s: &DevelopSettings,
+    req: &RenderRequest,
+    stages: Option<&StageCache>,
+    gpu: bool,
+) -> (Rendered, Option<String>, Option<Arc<crate::hdr_view::HdrPicture>>) {
+    use crate::hdr_view::HdrPicture;
+    let peak = s.hdr.peak();
+    let mut fallback = None;
+    if gpu && gpu_renders(s, req) {
+        match lightcraft_gpu::try_render_hdr(src, info, s, req, stages) {
+            Ok((r, halves)) => match HdrPicture::from_halves(r.image.width, r.image.height, halves, peak) {
+                // (its histogram is the picture's HDR one)
+                Some(p) => return (r, None, Some(Arc::new(p))),
+                None => fallback = Some(format!("{}×{}: the GPU's HDR picture has the wrong size", r.image.width, r.image.height)),
+            },
+            Err(lightcraft_gpu::Fallback::Failed(why)) => fallback = Some(why),
+            Err(lightcraft_gpu::Fallback::NotTried) => {}
         }
-        crate::hdr_view::HdrPicture::from_deep(&deep, settings.hdr.peak()).map(Arc::new)
     }
+    let (mut rendered, _) = develop_image(src, info, s, req, stages, false);
+    let deep = rendered.deep.take();
+    if let Some(lightcraft_pipeline::DeepSamples::F32(v)) = deep.as_ref().map(|d| &d.samples) {
+        rendered.histogram = Histogram::of_hdr(v.as_chunks::<3>().0, lightcraft_develop::Hdr::MAX_EV_LIMIT as f32);
+    }
+    (rendered, fallback, deep.and_then(|d| HdrPicture::from_deep(&d, peak)).map(Arc::new))
+}
+
+/// Whether a render of `s` for `req` can go to the GPU: LUT profiles and refined masks have no GPU
+/// stage, nor has soft proofing.
+fn gpu_renders(s: &DevelopSettings, req: &RenderRequest) -> bool {
+    !lightcraft_pipeline::lut::is_lut_profile(&s.profile.id) && !s.masks.iter().any(|m| m.visible && m.refine > 0.0) && req.proof.is_none()
 }
 
 /// Render `src`: on the GPU when `gpu` is set and a GPU is available (`lightcraft_gpu`), else on
@@ -1216,12 +1248,7 @@ fn develop_image(
     stages: Option<&StageCache>,
     gpu: bool,
 ) -> (Rendered, Option<String>) {
-    // LUT profiles have no GPU stage: they render on the CPU
-    let fallback = if gpu
-        && !lightcraft_pipeline::lut::is_lut_profile(&s.profile.id)
-        && !s.masks.iter().any(|m| m.visible && m.refine > 0.0)
-        && req.proof.is_none()
-    {
+    let fallback = if gpu && gpu_renders(s, req) {
         match lightcraft_gpu::try_render(src, info, s, req, stages) {
             Ok(r) => return (r, None),
             Err(lightcraft_gpu::Fallback::Failed(why)) => Some(why),

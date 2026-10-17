@@ -69,9 +69,10 @@ pub struct Enhancer {
     /// `<id>-mirrors.txt`), never from the built-in location. For tests and for people who want
     /// no connection to any host they didn't choose.
     pub no_builtin_mirrors: bool,
+    /// Each model's download (made when it is first asked for).
     #[cfg(feature = "enhance")]
-    download: crate::download::Downloader,
-    /// The model the downloader was last started for.
+    downloads: std::sync::Mutex<std::collections::BTreeMap<&'static str, std::sync::Arc<crate::download::Downloader>>>,
+    /// The model whose download was started last.
     #[cfg(feature = "enhance")]
     fetching: std::sync::Mutex<Option<&'static str>>,
 }
@@ -181,7 +182,7 @@ impl Enhancer {
     pub fn status(&self) -> Vec<ModelStatus> {
         #[cfg(feature = "enhance")]
         {
-            let fetching = self.fetching.lock().map(|f| *f).unwrap_or_else(|e| *e.into_inner());
+            let fetching = self.last_fetched();
             Self::models()
                 .map(|m| ModelStatus {
                     id: m.id.into(),
@@ -202,31 +203,41 @@ impl Enhancer {
         Vec::new()
     }
 
-    /// The download's state, and which model it is for.
+    #[cfg(feature = "enhance")]
+    fn last_fetched(&self) -> Option<&'static str> {
+        *self.fetching.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    #[cfg(feature = "enhance")]
+    fn downloads(&self) -> std::sync::MutexGuard<'_, std::collections::BTreeMap<&'static str, std::sync::Arc<crate::download::Downloader>>> {
+        self.downloads.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Model `id`'s download, while it runs or after it ended (nothing: never started here).
+    pub fn model_download_status(&self, id: &str) -> DownloadStatus {
+        #[cfg(feature = "enhance")]
+        if let Some(d) = self.downloads().get(id) {
+            return d.status();
+        }
+        let _ = id;
+        DownloadStatus::default()
+    }
+
+    /// A download that runs (else the one started last), and which model it is for.
     pub fn download_status(&self) -> (Option<String>, DownloadStatus) {
         #[cfg(feature = "enhance")]
         {
-            let s = self.download.status();
-            let id = self.fetching.lock().map(|f| *f).unwrap_or_else(|e| *e.into_inner()).map(String::from);
-            (
-                id,
-                DownloadStatus {
-                    running: s.running,
-                    done: s.done,
-                    total: s.total,
-                    file: s.file,
-                    error: s.error,
-                    cancelled: s.cancelled,
-                    finished: s.finished,
-                },
-            )
+            let running = self.downloads().iter().find(|(_, d)| d.running()).map(|(id, _)| *id);
+            let id = running.or_else(|| self.last_fetched());
+            (id.map(String::from), id.map(|id| self.model_download_status(id)).unwrap_or_default())
         }
         #[cfg(not(feature = "enhance"))]
         (None, DownloadStatus::default())
     }
 
-    /// Start downloading model `id` on a background thread. `Ok(false)` when it is installed or
-    /// a download is running already. The caller must have the user's consent.
+    /// Start downloading model `id` on a background thread (it waits for its turn while other
+    /// model downloads run). `Ok(false)` when it is installed or its download runs already. The
+    /// caller must have the user's consent.
     pub fn start_download(&self, id: &str, activity: &crate::activity::Activity) -> std::result::Result<bool, String> {
         #[cfg(feature = "enhance")]
         {
@@ -239,7 +250,8 @@ impl Enhancer {
             if parts.iter().any(|(_, m, _)| m.is_empty()) {
                 return Err(spec.no_mirrors_message());
             }
-            let started = self.download.start_parts(spec.id, parts, lightcraft_fetch::Options::default(), activity, spec.label)?;
+            let download = self.downloads().entry(spec.id).or_default().clone();
+            let started = download.start_parts(spec.id, parts, lightcraft_fetch::Options::default(), activity, spec.label)?;
             if started {
                 *self.fetching.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(spec.id);
             }
@@ -252,12 +264,16 @@ impl Enhancer {
         }
     }
 
-    /// Stop a running download (what has arrived is kept, to resume). False when none runs.
-    pub fn cancel_download(&self) -> bool {
+    /// Stop model `id`'s download, or every one (`None`); what has arrived is kept, to resume. False
+    /// when none runs.
+    pub fn cancel_download(&self, id: Option<&str>) -> bool {
         #[cfg(feature = "enhance")]
-        return self.download.cancel();
+        return self.downloads().iter().filter(|(m, _)| id.is_none_or(|id| id == **m)).fold(false, |any, (_, d)| d.cancel() || any);
         #[cfg(not(feature = "enhance"))]
-        false
+        {
+            let _ = id;
+            false
+        }
     }
 
     /// Why Super Resolution can't run now, or `Ok(())`.

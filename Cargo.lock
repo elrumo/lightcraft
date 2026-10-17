@@ -3656,6 +3656,7 @@ name = "lightcraft-gpu"
 version = "0.8.0"
 dependencies = [
  "bytemuck",
+ "half",
  "lightcraft-color",
  "lightcraft-denoise",
  "lightcraft-develop",

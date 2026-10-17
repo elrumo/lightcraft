@@ -40,10 +40,16 @@ fn megabytes(bytes: u64) -> String {
     if mb < 10.0 { format!("{mb:.1}") } else { format!("{:.0}", mb.floor()) }
 }
 
-/// The row's second line: "Stopping…" once cancelled, else the count and what is being worked on.
+/// The row's second line: "Stopping…" once cancelled, "Waiting to start…" while it waits for its turn, else the count
+/// and what is being worked on.
 fn detail_line(t: &TaskInfo) -> String {
     if t.cancelling {
         return tr("Stopping…").to_string();
+    }
+    // (a model download waiting while two others run)
+    if t.queued {
+        let waiting = tr("Waiting to start…");
+        return if t.detail.is_empty() { waiting.to_string() } else { format!("{waiting} · {}", t.detail) };
     }
     let count = count_text(t);
     match (count.is_empty(), t.detail.is_empty()) {

@@ -31,7 +31,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 use lightcraft_catalog::join::{self, Counts};
-use lightcraft_catalog::sync::{Outbox, PATH_PREFIX, Pushed, carry_local, original_path, proto};
+use lightcraft_catalog::sync::{Outbox, PATH_PREFIX, Pushed, Subject, carry_local, original_path, proto};
 use lightcraft_catalog::{AlbumId, Catalog, Op, Photo, PhotoId, Source, Store};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -307,6 +307,25 @@ enum Job {
 }
 
 impl Job {
+    /// Whether the job sends (`true`) or fetches, what file it moves (`original`, `smart preview`, `preview`
+    /// or `building previews`) and whose it is.
+    fn what(&self) -> (bool, &'static str, PhotoId) {
+        match self {
+            Job::Head { id, .. } | Job::Put { blob: Blob::Original, id, .. } => (true, "original", *id),
+            Job::Put { blob, id, .. } => (true, if *blob == Blob::Smart { "smart preview" } else { "preview" }, *id),
+            Job::Proxies { id, .. } => (true, "building previews", *id),
+            Job::Get { blob, id, .. } => (
+                false,
+                match blob {
+                    Blob::Original => "original",
+                    Blob::Smart => "smart preview",
+                    Blob::Mini => "preview",
+                },
+                *id,
+            ),
+        }
+    }
+
     /// What a job moves: one transfer at a time per file.
     fn target(&self) -> String {
         match self {
@@ -788,6 +807,15 @@ impl SyncState {
         Ok(())
     }
 
+    /// The transfers queued or running, those moving now first (`mini_previews`: with the grid's small
+    /// previews too, which are only downloads and many: a big library's are not walked unless asked for).
+    fn queued(&self, mini_previews: bool) -> impl Iterator<Item = (&Job, bool)> {
+        let mut moving: Vec<(&u64, &Job)> = self.jobs.iter().collect();
+        moving.sort_by_key(|(request, _)| **request);
+        let minis = mini_previews.then(|| self.minis.iter().chain(self.minis_failed.iter().map(|(_, job)| job))).into_iter().flatten();
+        moving.into_iter().map(|(_, job)| (job, true)).chain(self.urgent.iter().chain(self.ready.iter()).chain(self.plan.iter()).chain(minis).map(|job| (job, false)))
+    }
+
     /// Photo file transfers queued or running: (uploads, downloads). (Every frame: the mini previews
     /// of a big library are counted, not walked.)
     fn transfers(&self) -> (usize, usize) {
@@ -974,6 +1002,57 @@ pub struct Transfer {
     pub what: &'static str,
     /// The photo's file name (empty when it isn't in the library any more).
     pub name: String,
+}
+
+/// Which of the sync sheet's counts [`Session::sync_queue`] lists.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QueueKind {
+    /// Changes made here and not yet sent.
+    Changes,
+    /// Photo files waiting to go up.
+    Uploads,
+    /// Photo files waiting to come down.
+    Downloads,
+}
+
+impl QueueKind {
+    pub fn parse(s: &str) -> Option<QueueKind> {
+        match s {
+            "changes" => Some(QueueKind::Changes),
+            "uploads" => Some(QueueKind::Uploads),
+            "downloads" => Some(QueueKind::Downloads),
+            _ => None,
+        }
+    }
+}
+
+/// One page of what is waiting to go or come ([`Session::sync_queue`]).
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Queue {
+    /// How many there are in all: records with changes for `Changes`, files for the transfers (the
+    /// number `sync.status` gives as `uploads` / `downloads`).
+    pub total: usize,
+    /// The changes waiting to be sent (`sync.status`' `pending`): a record can hold several.
+    pub changes: usize,
+    pub items: Vec<QueueItem>,
+}
+
+/// One entry of a [`Queue`].
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueueItem {
+    /// `photo`, `album`, `stack`, `label`, `keyword` or `other`: what it is about (a transfer is always a photo's).
+    pub kind: &'static str,
+    /// The photo's, album's or stack's id (`None` for a label or keyword).
+    pub id: Option<u64>,
+    /// The file name (empty when the photo isn't in the library any more), the album's name, the keyword's path.
+    pub name: String,
+    /// What changes in it (`rating`, `develop`, `add`, `remove`…), or the file moving (`original`, `smart preview`,
+    /// `preview`, `building previews`).
+    pub what: Vec<String>,
+    /// A transfer that is moving now.
+    pub running: bool,
 }
 
 /// A synced photo's preview file names ([`Session::proxy_names`]), and which of them are here.
@@ -2382,25 +2461,9 @@ impl Session {
         let mut running: Vec<Transfer> = st
             .jobs
             .values()
-            .map(|job| match job {
-                Job::Head { id, .. } | Job::Put { blob: Blob::Original, id, .. } => {
-                    Transfer { upload: true, what: "original", name: file_name(*id).unwrap_or_default() }
-                }
-                Job::Put { blob, id, .. } => Transfer {
-                    upload: true,
-                    what: if *blob == Blob::Smart { "smart preview" } else { "preview" },
-                    name: file_name(*id).unwrap_or_default(),
-                },
-                Job::Proxies { id, .. } => Transfer { upload: true, what: "building previews", name: file_name(*id).unwrap_or_default() },
-                Job::Get { blob, id, .. } => Transfer {
-                    upload: false,
-                    what: match blob {
-                        Blob::Original => "original",
-                        Blob::Smart => "smart preview",
-                        Blob::Mini => "preview",
-                    },
-                    name: file_name(*id).unwrap_or_default(),
-                },
+            .map(|job| {
+                let (upload, what, id) = job.what();
+                Transfer { upload, what, name: file_name(id).unwrap_or_default() }
             })
             .collect();
         // (a stable order: the jobs are kept in a map)
@@ -2415,6 +2478,63 @@ impl Session {
             failing: st.blob_retry.len(),
             error: st.transfer_error.clone(),
         }
+    }
+
+    /// One page of what the sync sheet counts (`kind`): the records with changes waiting to be sent (a
+    /// photo, an album… with everything that changes in it), or the files of photos waiting to go up or
+    /// come down, the ones moving now first. `total` is how many there are in all.
+    pub fn sync_queue(&self, kind: QueueKind, offset: usize, limit: usize) -> Queue {
+        let Some(st) = &self.sync else { return Queue::default() };
+        let name = |id: PhotoId| self.catalog.photo(id).map(|p| p.file_name.clone()).unwrap_or_default();
+        if kind == QueueKind::Changes {
+            // (in the order they will be sent, a record where its first change is)
+            let mut at: HashMap<Subject, usize> = HashMap::new();
+            let mut groups: Vec<(Subject, Vec<&str>)> = Vec::new();
+            for (subject, field) in st.outbox.changes() {
+                let i = match at.get(&subject) {
+                    Some(i) => *i,
+                    None => {
+                        at.insert(subject.clone(), groups.len());
+                        groups.push((subject, Vec::new()));
+                        groups.len() - 1
+                    }
+                };
+                if let Some((_, fields)) = groups.get_mut(i) {
+                    fields.push(field);
+                }
+            }
+            let total = groups.len();
+            let items = groups
+                .into_iter()
+                .skip(offset)
+                .take(limit)
+                .map(|(subject, fields)| {
+                    let (kind, id, name) = match subject {
+                        Subject::Photo(id) => ("photo", Some(id.0), name(id)),
+                        Subject::Album(id) => ("album", Some(id.0), self.catalog.album(id).map(|a| a.name.clone()).unwrap_or_default()),
+                        Subject::Stack(id) => ("stack", Some(id.0), String::new()),
+                        Subject::LabelName(label) => ("label", None, label),
+                        Subject::Keyword(path) => ("keyword", None, path),
+                        Subject::Other(key) => ("other", None, key),
+                    };
+                    QueueItem { kind, id, name, what: fields.into_iter().map(str::to_string).collect(), running: false }
+                })
+                .collect();
+            return Queue { total, changes: st.outbox.len(), items };
+        }
+        let downloads = kind == QueueKind::Downloads;
+        let (uploads_left, downloads_left) = st.transfers();
+        let items = st
+            .queued(downloads)
+            .filter(|(job, _)| job.what().0 != downloads)
+            .skip(offset)
+            .take(limit)
+            .map(|(job, running)| {
+                let (_, what, id) = job.what();
+                QueueItem { kind: "photo", id: Some(id.0), name: name(id), what: vec![what.to_string()], running }
+            })
+            .collect();
+        Queue { total: if downloads { downloads_left } else { uploads_left }, changes: st.outbox.len(), items }
     }
 
     /// Switch to another state of the library wholesale (a snapshot replaces the op log).

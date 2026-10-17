@@ -23,8 +23,8 @@ use std::time::Instant;
 
 use lightcraft_develop::DevelopSettings;
 use lightcraft_engine::export::{ExportOptions, encode_image};
-use lightcraft_engine::media::develop;
-use lightcraft_pipeline::{Quality, RenderRequest, SourceInfo, StageCache};
+use lightcraft_engine::media::{develop, develop_hdr};
+use lightcraft_pipeline::{OutputDepth, OutputSpace, Quality, RenderRequest, SourceInfo, StageCache};
 use lightcraft_raster::Rgb32f;
 use lightcraft_raster::resample::{Filter, fit};
 
@@ -256,6 +256,21 @@ fn main() {
             t.light.contrast = k % 50.0;
             t.light.exposure = 0.3 + k * 0.01;
             drop(develop(&preview, &info, &t, &view, Some(&caches[g as usize]), g));
+        });
+        // the same drag on an HDR edit's loupe, on a display with headroom: its float HDR picture
+        let hdr_view = RenderRequest { depth: OutputDepth::F32Hdr, space: OutputSpace::DisplayP3, ..view };
+        let mut hdr = s.clone();
+        hdr.hdr.enabled = true;
+        let hdr_caches = [StageCache::default(), StageCache::default()];
+        for g in backends {
+            drop(develop_hdr(&preview, &info, &hdr, &hdr_view, Some(&hdr_caches[*g as usize]), *g));
+        }
+        row("loupe 1920×1280 HDR exposure drag (warm):", &mut |g| {
+            let mut t = hdr.clone();
+            k += 1.0;
+            t.light.contrast = k % 50.0;
+            t.light.exposure = 0.3 + k * 0.01;
+            drop(develop_hdr(&preview, &info, &t, &hdr_view, Some(&hdr_caches[g as usize]), g));
         });
         for g in backends {
             drop(develop(&preview, &info, &s, &draft, Some(&caches[*g as usize]), *g));

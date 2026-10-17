@@ -41,8 +41,13 @@ model this build can't run (SAM 3 on an iPhone) is listed as not available. The 
 it offers the download itself (Object / Describe masks, Super Resolution). The on / off choice is saved with the app
 settings (`models_disabled` in `ui.json`; the SwiftUI app keeps it as `modelsDisabled` in its own settings and gives it back to the engine at launch).
 
-Agents get the same through commands: `models.list`, `models.download {id, acknowledged: true}`, `models.cancel {id}`,
-`models.delete {id, confirm: true}`, `models.setEnabled {id, enabled}`.
+Two downloads run at once; a model asked for while two run shows as queued (in Settings and as a row of the activity
+stack, with ✕) and starts by itself when one ends, in the order asked. A running download shows its sizes, speed and
+time left; the SwiftUI app's activity capsule names the model ("Downloading LaMa · 8.3 MB / 208 MB · 2 min left · 2
+queued").
+
+Agents get the same through commands: `models.list` (each download's `queued`, `rate` and `etaMs`), `models.download
+{id, acknowledged: true}`, `models.cancel {id}`, `models.delete {id, confirm: true}`, `models.setEnabled {id, enabled}`.
 
 ## Apple's models (SwiftUI iOS app)
 

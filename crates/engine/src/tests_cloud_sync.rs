@@ -384,6 +384,48 @@ fn two_devices_share_photos_edits_and_files() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// Photo ▸ Edit In on a synced library: the copy is a photo of its own, stacked on the original, and
+/// its file goes up like any import; what the editor saves changes the photo's content, and the new
+/// file goes up too. The other device gets the copy, the stack and the new content.
+#[test]
+fn an_edit_copy_and_what_the_editor_saves_reach_the_server_and_the_other_device() {
+    let mut f = Fake::new();
+    let (mut a, root, ids) = first_device("editin", &mut f);
+    let mut b = open(&root.join("b"));
+    sign_in(&mut b);
+    sync(&mut b, &mut f);
+    let originals = |f: &Fake| f.blobs.keys().filter(|(k, _)| k == "original").count();
+    let before = originals(&f);
+
+    a.selection = crate::Selection::single(ids[0]);
+    let r = a.execute("photo.editExternal", &json!({"format": "psd", "bitDepth": 8})).unwrap();
+    let (copy, path) = (PhotoId(r["id"].as_u64().unwrap()), r["path"].as_str().unwrap().to_string());
+    let track = r["track"].clone();
+    sync(&mut a, &mut f);
+    assert_eq!(f.core.catalog().len(), 3, "the copy is on the server");
+    let stack = f.core.catalog().stack_of(copy).expect("stacked on the server");
+    assert!(stack.photos.contains(&ids[0]) && stack.top() == copy);
+    assert_eq!(originals(&f), before + 1, "its file went up");
+    sync(&mut b, &mut f);
+    assert_eq!(b.catalog.len(), 3);
+    assert!(b.catalog.stack_of(copy).is_some_and(|s| s.photos.contains(&ids[0]) && s.top() == copy), "stacked on the other device");
+
+    // the editor saves over the copy (other dimensions, so other bytes and a new content hash)
+    let px = vec![60000u16; 30 * 20 * 3];
+    let img = lightcraft_codecs::EncodeImage::new(30, 20, 3, lightcraft_codecs::Samples::U16(&px));
+    std::fs::write(&path, lightcraft_codecs::encode_psd(&img, &Default::default()).unwrap()).unwrap();
+    let r = a.execute("photo.checkExternalEdits", &json!({"files": track})).unwrap();
+    assert_eq!(r["reloaded"], json!([copy.0]), "{r}");
+    let hash = a.catalog.photo(copy).unwrap().content_hash.clone();
+    sync(&mut a, &mut f);
+    assert_eq!(f.core.catalog().photo(copy).unwrap().content_hash, hash, "the server knows the new content");
+    assert_eq!(originals(&f), before + 2, "the saved file went up");
+    sync(&mut b, &mut f);
+    let seen = b.catalog.photo(copy).unwrap();
+    assert_eq!((seen.content_hash.clone(), seen.width, seen.height), (hash, 30, 20), "the other device sees what was saved");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// A new library seeded with the demo photos joins: their ids mean other photos than the
 /// server's, so nothing of them carries over (file names, sources, the selection).
 #[test]
@@ -2412,6 +2454,104 @@ fn what_is_being_sent_is_listed_with_its_progress() {
         }
     }
     assert!(most_down >= 2, "two previews came down: {most_down}");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn the_sync_queue_lists_the_photos_behind_each_count() {
+    let mut f = Fake::new();
+    let (mut a, root, ids) = first_device("queue", &mut f);
+    let page = |s: &mut Session, kind: &str, extra: Value| {
+        let mut p = json!({"kind": kind});
+        p.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        s.execute("sync.queue", &p).unwrap()
+    };
+    let nothing = page(&mut a, "changes", json!({}));
+    assert_eq!((nothing["total"].as_u64(), nothing["changes"].as_u64(), nothing["items"].as_array().map(Vec::len)), (Some(0), Some(0), Some(0)), "{nothing}");
+
+    // an edit, a rating and an album, not sent yet: a record each, with what changes in it, in the order they were made
+    a.selection = crate::Selection::single(ids[0]);
+    a.execute("develop.set", &json!({"control": "light.contrast", "value": 25.0})).unwrap();
+    a.selection = crate::Selection::single(ids[1]);
+    a.execute("photo.rate", &json!({"rating": 4})).unwrap();
+    a.execute("album.create", &json!({"name": "Trip", "addSelected": true})).unwrap();
+    let q = page(&mut a, "changes", json!({}));
+    let status = a.execute("sync.status", &json!({})).unwrap();
+    assert_eq!(q["changes"], status["pending"], "the same count the sheet shows: {q}");
+    let items = q["items"].as_array().unwrap();
+    assert_eq!(q["total"].as_u64(), Some(items.len() as u64), "{q}");
+    let seen: Vec<(&str, u64, &str)> = items.iter().map(|i| (i["kind"].as_str().unwrap(), i["id"].as_u64().unwrap_or(0), i["name"].as_str().unwrap())).collect();
+    assert_eq!(seen[0], ("photo", ids[0].0, "a.png"), "{q}");
+    assert_eq!(items[0]["what"], json!(["develop"]));
+    assert_eq!(seen[1], ("photo", ids[1].0, "b.png"), "{q}");
+    assert_eq!(items[1]["what"], json!(["rating"]));
+    assert_eq!((seen[2].0, seen[2].2), ("album", "Trip"), "{q}");
+    assert!(items[2]["what"].as_array().unwrap().iter().any(|w| w == "add"), "{q}");
+    // pages: the second record alone
+    let second = page(&mut a, "changes", json!({"offset": 1, "limit": 1}));
+    assert_eq!(second["items"], json!([items[1]]));
+    assert_eq!(second["total"], q["total"]);
+    // sent: nothing is left
+    sync(&mut a, &mut f);
+    assert_eq!(page(&mut a, "changes", json!({}))["total"], 0);
+
+    // a photo imported while signed in: each file queued to go up is listed with what it is, as sync.status counts it
+    write_png(&root.join("in2/c.png"), 3);
+    a.execute("library.import", &json!({"paths": [root.join("in2").to_string_lossy()]})).unwrap();
+    let mut listed = std::collections::BTreeSet::new();
+    let mut running = false;
+    for _ in 0..500 {
+        let tasks = a.sync_tasks();
+        let t = a.sync_transfers();
+        let q = page(&mut a, "uploads", json!({}));
+        assert_eq!(q["total"].as_u64(), Some(t.uploads as u64), "{q}");
+        assert_eq!(q["items"].as_array().map(Vec::len), Some(t.uploads), "{q}");
+        for i in q["items"].as_array().unwrap() {
+            assert_eq!(i["kind"], "photo");
+            listed.insert((i["name"].as_str().unwrap().to_string(), i["what"][0].as_str().unwrap().to_string()));
+            running |= i["running"] == true;
+        }
+        if tasks.is_empty() {
+            break;
+        }
+        for task in tasks {
+            let d = f.handle(&task);
+            a.sync_done(d);
+        }
+    }
+    assert!(listed.contains(&("c.png".to_string(), "original".to_string())), "{listed:?}");
+    assert!(running, "the file moving now is marked");
+    assert_eq!(page(&mut a, "uploads", json!({}))["total"], 0);
+
+    // a second device joins: the previews it asks for come down, listed the same way
+    let mut b = open(&root.join("b"));
+    sign_in(&mut b);
+    let mut came = std::collections::BTreeSet::new();
+    for _ in 0..500 {
+        let shown: Vec<PhotoId> = b.catalog.photos().map(|p| p.id).collect();
+        for id in shown {
+            b.thumb_job(id, 128);
+        }
+        let tasks = b.sync_tasks();
+        let t = b.sync_transfers();
+        let q = page(&mut b, "downloads", json!({}));
+        assert_eq!(q["total"].as_u64(), Some(t.downloads as u64), "{q}");
+        for i in q["items"].as_array().unwrap() {
+            came.insert((i["name"].as_str().unwrap().to_string(), i["what"][0].as_str().unwrap().to_string()));
+        }
+        if tasks.is_empty() {
+            break;
+        }
+        for task in tasks {
+            let d = f.handle(&task);
+            b.sync_done(d);
+        }
+    }
+    assert!(came.iter().any(|(name, what)| name.ends_with(".png") && what == "preview"), "{came:?}");
+    assert_eq!(page(&mut b, "downloads", json!({}))["total"], 0);
+
+    // a call with no kind says what it needs
+    assert!(a.execute("sync.queue", &json!({})).unwrap_err().to_string().contains("kind"));
     let _ = std::fs::remove_dir_all(&root);
 }
 
