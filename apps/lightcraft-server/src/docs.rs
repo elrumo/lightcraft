@@ -14,8 +14,19 @@ use lightcraft_catalog::sync::proto::Doc;
 
 /// The documents a device may keep here. (Preferences that name a place on one computer — folders,
 /// caches, the external editor — are not among them: they stay per device.)
-pub const NAMES: [&str; 9] =
-    ["export-presets", "metadata-presets", "filter-presets", "curve-presets", "label-sets", "keyword-sets", "lut-profiles", "prefs", "preset-groups"];
+pub const NAMES: [&str; 10] = [
+    "export-presets",
+    "metadata-presets",
+    "filter-presets",
+    "curve-presets",
+    "label-sets",
+    "keyword-sets",
+    "lut-profiles",
+    "prefs",
+    "preset-groups",
+    // the Hidden password's hash (an argon2id string; the server never reads it)
+    "privacy",
+];
 
 /// The largest document (the LUT profiles carry their `.cube` files).
 pub const MAX: u64 = 24 << 20;

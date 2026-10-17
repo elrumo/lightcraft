@@ -2505,8 +2505,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ff2abc00be7fca6ebc474524697ae276ad847ad0a6b3faa4bcb027e9a4614ad0"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "wasi",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -3521,7 +3523,9 @@ name = "lightcraft-engine"
 version = "0.8.0"
 dependencies = [
  "ab_glyph",
+ "argon2",
  "base64 0.23.1",
+ "getrandom 0.2.17",
  "half",
  "harfrust",
  "jxl-oxide",
@@ -3562,6 +3566,7 @@ dependencies = [
  "rustls-rustcrypto",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror 2.0.21",
  "unicode-segmentation",
  "ureq",
@@ -3967,6 +3972,7 @@ dependencies = [
  "image",
  "lightcraft-fetch",
  "lightcraft-raster",
+ "lightcraft-testkit",
  "rten",
  "rten-tensor",
  "serde_json",
@@ -3984,8 +3990,10 @@ dependencies = [
  "eframe",
  "egui",
  "js-sys",
+ "lightcraft-apphost",
  "lightcraft-codecs",
  "lightcraft-engine",
+ "lightcraft-meta",
  "lightcraft-preview",
  "lightcraft-raster",
  "lightcraft-ui-egui",

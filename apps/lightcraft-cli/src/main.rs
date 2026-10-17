@@ -109,6 +109,9 @@ USAGE:
         --run-on WHERE    auto (default), gpu or cpu
         --max-connections N   concurrent clients (default 8)
   lightcraft-cli commands [--json]   list every command id with its parameters
+  lightcraft-cli hidden reset-password --library DIR
+      Forget the library's Hidden password (a forgotten one): the next unlock in the app sets a new one.
+      Synced libraries forget it on every device at their next sync.
   lightcraft-cli controls [--json]   list every develop control id with its range
   lightcraft-cli calibrate [--max N] [--out DIR] FOLDERS/FILES…
       Fit a colour profile per camera model from raw files and their embedded camera JPEGs
@@ -180,6 +183,7 @@ fn main() -> ExitCode {
         Some("controls") => controls(&args[1..]),
         Some("denoise-serve") => denoise_serve(&args[1..]),
         Some("calibrate") => calibrate(&args[1..]),
+        Some("hidden") => hidden(&args[1..]),
         Some("--version" | "-V" | "version") => {
             println!("lightcraft-cli {}", env!("CARGO_PKG_VERSION"));
             Ok(())
@@ -528,6 +532,22 @@ fn parse_steps(tokens: &[String]) -> Result<Vec<Step>, String> {
 fn run_step(b: &mut dyn Backend, s: &Step) -> Result<Value, String> {
     let direct = s.id.starts_with("ui.") || s.id.starts_with("engine.") || s.id == "app.quit";
     if direct { b.call(&s.id, s.params.clone()) } else { b.call("engine.execute", json!({"command": s.id, "params": s.params})) }
+}
+
+/// `hidden reset-password --library DIR`: forget the Hidden password of a library (docs/hidden.md).
+fn hidden(args: &[String]) -> Result<(), String> {
+    let (Some("reset-password"), Some("--library"), Some(dir), None) =
+        (args.first().map(String::as_str), args.get(1).map(String::as_str), args.get(2), args.get(3))
+    else {
+        return Err("usage: lightcraft-cli hidden reset-password --library DIR".into());
+    };
+    let mut s = Session::new().with_fs().with_system_clock();
+    s.open_library(dir, false).map_err(|e| library_error(dir, e))?;
+    library_warnings(&mut s, "hidden");
+    s.hidden_reset_password().map_err(|e| e.to_string())?;
+    s.close_library().map_err(|e| e.to_string())?;
+    println!("{dir}: the Hidden password is forgotten; the next unlock sets a new one");
+    Ok(())
 }
 
 fn run(args: &[String]) -> Result<(), String> {
@@ -880,6 +900,7 @@ fn snapshot(args: &[String]) -> Result<(), String> {
     }
     let services = lightcraft_ui_egui::Services {
         write_shared: Some(std::sync::Arc::new(lightcraft_engine::export::write_file)),
+        export_runner: None,
         write: Some(Box::new(lightcraft_engine::export::write_file)),
         png: Some(Box::new(|img: &lightcraft_raster::Rgba8| {
             lightcraft_codecs::encode_png(&lightcraft_codecs::EncodeImage::rgba8(img), &lightcraft_codecs::EncodeMeta::default()).unwrap_or_default()

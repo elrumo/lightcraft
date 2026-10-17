@@ -40,7 +40,6 @@ pub mod admin;
 pub mod api;
 pub mod cors;
 pub mod docs;
-pub mod server_presets;
 pub mod folders;
 pub mod gc;
 pub mod guest;
@@ -48,6 +47,8 @@ pub mod http;
 pub mod limits;
 pub mod multipart;
 pub mod render;
+pub mod sensitive;
+pub mod server_presets;
 pub mod shares;
 pub mod switch;
 pub mod throttle;
@@ -91,6 +92,8 @@ pub struct Config {
     pub text_reader: Option<Arc<dyn lightcraft_vision::TextReader>>,
     /// A face finder instead of YuNet and SFace from `<vision_dir>/faces` (tests).
     pub face_finder: Option<Arc<dyn lightcraft_vision::FaceEngine>>,
+    /// A sensitive-content classifier instead of the model in the model folder (tests).
+    pub classifier: Option<Arc<dyn lightcraft_vision::Classifier>>,
     /// Renders at once for devices that export on the server ([`render`]; `None`: as for `max_requests`).
     pub render_threads: Option<usize>,
     /// How long a render waits for a free place before the device is told to try again (`None`: 45 s).
@@ -116,6 +119,7 @@ impl Config {
             embedder: None,
             text_reader: None,
             face_finder: None,
+            classifier: None,
             render_threads: None,
             render_wait: None,
             cors_origins: Vec::new(),
@@ -195,7 +199,11 @@ impl Server {
         let links = shares::Index::load(&cfg.data);
         let shared_presets = server_presets::ServerPresets::load(&cfg.data);
         let state = Arc::new(State {
-            vision: vision::Search::new(vision_dir, cfg.embedder).with_data(&cfg.data).with_reader(cfg.text_reader).with_finder(cfg.face_finder),
+            vision: vision::Search::new(vision_dir, cfg.embedder)
+                .with_data(&cfg.data)
+                .with_reader(cfg.text_reader)
+                .with_finder(cfg.face_finder)
+                .with_classifier(cfg.classifier),
             accounts: Mutex::new(accounts::Accounts::new(&cfg.data)),
             sizes: admin::Sizes::default(),
             listen: addr.to_string(),

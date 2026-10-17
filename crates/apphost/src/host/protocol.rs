@@ -83,6 +83,7 @@ impl ErrorBody {
             E::LightroomCatalog { .. } => "lightroomCatalog",
             E::Cancelled(_) => "cancelled",
             E::ModelMissing { .. } => "modelMissing",
+            E::Locked(_) => "locked",
             E::Other(_) => "other",
         };
         ErrorBody::new(code, e.to_string())

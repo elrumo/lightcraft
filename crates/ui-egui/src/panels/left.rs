@@ -903,6 +903,23 @@ pub fn body(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             if row(app, ui, "recentlyDeleted", Icon::Trash, "Recently Deleted", Some(deleted), src == LibrarySource::RecentlyDeleted, 0.0).clicked() {
                 let _ = app.run("library.source", json!({"kind": "recentlyDeleted"}));
             }
+            // the photos the sensitive-content model flagged, to look through (once it flagged any)
+            let flagged = app.session.sensitive_ids().len();
+            if (flagged > 0 || src == LibrarySource::Sensitive)
+                && row(app, ui, "sensitive", Icon::EyeOff, "Possibly Sensitive", Some(flagged), src == LibrarySource::Sensitive && !people_shown, 0.0)
+                    .clicked()
+            {
+                let _ = app.run("library.source", json!({"kind": "sensitive"}));
+                leave_people(app);
+            }
+            // the hidden photos: behind the password, so a padlock and no count while locked
+            let unlocked = app.session.hidden.unlocked();
+            let (icon, count) = if unlocked { (Icon::EyeOff, Some(counts.hidden)) } else { (Icon::Lock, None) };
+            if row(app, ui, "hidden", icon, "Hidden", count, src == LibrarySource::Hidden && !people_shown, 0.0).clicked()
+                && let Err(e) = crate::panels::dialogs::open_hidden(app, false)
+            {
+                app.toast(ui.ctx(), e);
+            }
             // the album just made: the folders down to it open, once (also when the section is shut)
             let reveal = app.ui.reveal_album.take();
             if reveal.is_some() {
@@ -1034,7 +1051,7 @@ pub(crate) fn new_album_rows(app: &mut LightcraftApp, ui: &mut egui::Ui) {
 }
 
 /// A collection picked while People is shown: its photos, in the grid People was opened from.
-fn leave_people(app: &mut LightcraftApp) {
+pub(crate) fn leave_people(app: &mut LightcraftApp) {
     if app.ui.view == crate::state::ViewMode::People {
         app.ui.person_page = None;
         app.ui.view = if app.ui.grid_mode == crate::state::ViewMode::SquareGrid {
@@ -1200,7 +1217,6 @@ pub(crate) use lightcraft_apphost::local::{LocalPlaces, local_places, same_folde
 fn subfolders(ui: &egui::Ui, path: &str) -> Vec<(String, String)> {
     fs_cached(ui, "subfolders", path, 2.0, lightcraft_apphost::local::list_subfolders).unwrap_or_default()
 }
-
 
 /// How many [`fs_cached`] answers for `ctx` are being worked out right now. Rows appear (and
 /// the sidebar below them moves) when they land, so the headless driver counts them as pending

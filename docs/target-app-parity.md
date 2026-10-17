@@ -1,6 +1,6 @@
 # Target-app parity: LightCraft vs Adobe Lightroom
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-15 · **Change:** minor (Lens Blur and Depth Range masks: AI table row ⬜ → 🟡; upstream merged up to 0da998f2: checklist 84.3% of 549 rows with the fork's rows counted; RAW: 83% of Adobe's models decode, 38% verified after the camera-coverage sweep #1327) · **Target:** Adobe Lightroom Classic 15.5 (August 2026) and Lightroom 9.6 (desktop)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-16 · **Change:** minor (browser export off the page's thread: new row LR-BEHAV-WEB-EXPORT 🟡, 550 rows; Lens Blur and Depth Range masks: AI table row ⬜ → 🟡; upstream merged up to 0da998f2: checklist 84.3% of 549 rows with the fork's rows counted; RAW: 83% of Adobe's models decode, 38% verified after the camera-coverage sweep #1327) · **Target:** Adobe Lightroom Classic 15.5 (August 2026) and Lightroom 9.6 (desktop)
 
 The authoritative assessment of how close LightCraft is to Lightroom. The row-by-row checklist is
 [parity-checklist.md](parity-checklist.md); the ranked work list is [gaps.md](gaps.md); deep areas
@@ -12,7 +12,7 @@ have their own documents: [raw-parity.md](raw-parity.md), [file-format-parity.md
 
 | Number | Value | Kind |
 |---|---:|---|
-| **Feature breadth**, checklist | **84.3%** of 549 in-scope rows (P0 98.3%, P1 94.8%, P2 60.0%) | **measured**: recount of [parity-checklist.md](parity-checklist.md) rows (✅ 1, 🟡 ½, 🚫 left out), the same rule `cargo xtask parity` uses |
+| **Feature breadth**, checklist | **84.3%** of 550 in-scope rows (P0 98.3%, P1 94.5%, P2 60.0%) | **measured**: recount of [parity-checklist.md](parity-checklist.md) rows (✅ 1, 🟡 ½, 🚫 left out), the same rule `cargo xtask parity` uses |
 | **Feature breadth**, weighted by use | **~77%** | estimated: feature-area table below |
 | **Ready for real work** (full target) | **~61%** (range 56–66%) | estimated: weighted sum over the dimensions with written weights, see [below](#ready-for-real-work-mainstream-practitioner-and-essentials-user) |
 | **Mainstream practitioner** | **~51%** (range 46–56%) | estimated: weekly areas of a working photographer, depth 74.0% × 0.804 × colour 0.85 |
@@ -276,6 +276,7 @@ most of its list; what remains is the data-heavy part (colour, lenses, models) i
 
 | Date | Checklist (all / P0 / P1 / P2) | Ready for real work | Remaining to full parity | Source |
 |---|---|---|---|---|
+| 2026-10-16 | 84.3% / 98.3% / 94.5% / 60.0% (550 rows) | ~61% full · ~51% mainstream · ~65% essentials | unchanged | browser export runs on a Web Worker instead of freezing the page; one new 🟡 row (LR-BEHAV-WEB-EXPORT) |
 | 2026-10-15 | 84.3% / 98.3% / 94.8% / 60.0% (549 rows) | ~61% full · ~51% mainstream · ~65% essentials | unchanged | upstream merged up to 0da998f2 (Slideshow, Print, 545 verified models) with this fork's rows counted |
 | 2026-10-12 | 81.1% (unchanged) | ~61% full · ~51% mainstream · ~65% essentials | unchanged | 22 more CR3 bodies verified (raw-parity.md) |
 | 2026-10-10 (RAW) | 81.1% (unchanged) | ~61% full · ~49% mainstream · ~64% essentials | unchanged | RAW measured model by model against Adobe's list; RAW decode and colour as explicit rows |
@@ -301,6 +302,7 @@ P2 items 12–25 h; look tuning, performance, packaging, hardening 25–45 h.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-16 | minor | Browser export off the page's thread: new checklist row LR-BEHAV-WEB-EXPORT 🟡 (549 → 550 rows, P1 94.8% → 94.5%); other numbers unchanged |
 | 2026-10-14 | minor | Localization ~52% → ~55% (mean of the 12 key languages): de, es, fr, ja and uk catalogs filled |
 | 2026-10-14 | minor | Merge and HDR: merge 100% → 88% (LR-MERGE-HDR ✅ → 🟡 after testing on real 67 MP brackets; gap 29); area percentages unchanged |
 | 2026-10-14 | minor | Gap 4 (full-resolution zoom) closed: removed from the interaction-fidelity notes, the alpha-gate partial rows and the beta needs; headline numbers and the ×0.95 interaction factor unchanged |

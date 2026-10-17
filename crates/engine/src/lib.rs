@@ -52,6 +52,7 @@ pub mod fonts;
 pub mod guard;
 pub mod hardware;
 pub mod hdr_view;
+pub mod hidden;
 pub mod import;
 mod import_move;
 pub mod inline_files;
@@ -140,6 +141,9 @@ pub enum EngineError {
     /// offers its download (terms first) on [`ErrorKind::ModelMissing`], not on the message.
     #[error("{msg}")]
     ModelMissing { model: AiModel, msg: String },
+    /// Hidden is locked: a frontend asks for the password (or Face ID) on [`ErrorKind::Locked`] and tries again.
+    #[error("{0}")]
+    Locked(String),
     #[error("{0}")]
     Other(String),
 }
@@ -228,6 +232,10 @@ pub struct Session {
     /// A view holds the photos it shows until it is refreshed (`library.holdView`): an edit that makes a photo stop
     /// matching a smart album's rules, Picks or the filter bar leaves it where it is. Off: the photo goes at once.
     pub hold_view: bool,
+    /// The Hidden album's lock and Show Hidden ([`hidden`]): never saved.
+    pub hidden: hidden::HiddenLock,
+    /// Blur the photos the sensitive-content model flagged in the grid (`library.setBlurSensitive`; synced).
+    pub blur_sensitive: bool,
     /// The view last worked out, the catalog's revision then, and the photos in it before stacks are arranged.
     /// A small edit is followed from it: only the photos the edit touched are asked about again and put at their
     /// place in the order ([`Session::visible`]). It is also what a held view holds ([`Session::hold_view`]).
@@ -479,6 +487,8 @@ impl Session {
             visible: Vec::new().into(),
             visible_key: None,
             hold_view: false,
+            hidden: Default::default(),
+            blur_sensitive: true,
             base: None,
             view_followed: 0,
             view_worked_out: 0,
@@ -1065,8 +1075,21 @@ impl Session {
     pub fn visible(&mut self) -> &[PhotoId] {
         let mut key = (
             self.catalog.revision,
-            format!("{:?}|{:?}|{:?}|{:?}|{:?}|{}", self.source, self.filter, self.sort, self.browse, self.library_folder, self.stacks_off),
+            format!(
+                "{:?}|{:?}|{:?}|{:?}|{:?}|{}|{:?}",
+                self.source,
+                self.filter,
+                self.sort,
+                self.browse,
+                self.library_folder,
+                self.stacks_off,
+                self.hidden.mode()
+            ),
         );
+        if self.source == LibrarySource::Sensitive {
+            // (new scores change what it shows, edits or not)
+            key.1.push_str(&format!("|{}", self.vision.sensitive_rev()));
+        }
         // What a held view is told apart by: what is shown and how, and for a smart album its rules (rules that were
         // changed ask something else). Not the checks of Missing Photos below: they fill the view in, they are
         // no other view.
@@ -1087,7 +1110,12 @@ impl Session {
         if !dragging && self.visible_key.as_ref() != Some(&key) {
             // "in the last N days" rules count back from the session's clock
             lightcraft_catalog::rules::set_now(Some((self.clock)()));
-            let f = self.view_filter(self.source, &self.filter);
+            let mut f = self.view_filter(self.source, &self.filter);
+            if self.source == LibrarySource::Sensitive {
+                // the flagged photos, most likely first (an empty list: none, not all of them)
+                f.only = self.sensitive_photos().iter().map(|(id, _)| *id).collect();
+                f.semantic = Some("sensitive".into());
+            }
             // A held view keeps the photos it shows that stopped matching what is asked of them (a smart album's
             // rules, a flag, the filter bar), as long as they are still where the view looks: in the library for
             // a view that is only a question, else in the album or folder shown. Taking a photo out of an album
@@ -1110,7 +1138,7 @@ impl Session {
             let own_order = matches!(self.source, LibrarySource::Album(a) if self.sort.key == lightcraft_catalog::SortKey::CaptureDate
                 && self.filter == Filter::default()
                 && self.catalog.album(a).is_some_and(|al| !al.is_smart()));
-            let whole = own_order || matches!(self.source, LibrarySource::RecentlyAdded | LibrarySource::Missing);
+            let whole = own_order || matches!(self.source, LibrarySource::RecentlyAdded | LibrarySource::Missing | LibrarySource::Sensitive);
             // A view that asks about "the last N days" (itself, or through a smart album it looks into) changes
             // with the clock as well as with edits: a photo nobody touched can stop matching. It is asked whole.
             let clocked = f.depends_on_now()
@@ -1163,9 +1191,10 @@ impl Session {
                     visible.reverse();
                 }
             }
-            if self.filter.semantic.is_some() {
-                // a search by description: best match first, whatever the sort
-                let rank: std::collections::HashMap<PhotoId, usize> = self.filter.only.iter().enumerate().map(|(i, id)| (*id, i)).collect();
+            if self.filter.semantic.is_some() || self.source == LibrarySource::Sensitive {
+                // a search by description: best match first, whatever the sort (the flagged photos: most likely first)
+                let order = if self.source == LibrarySource::Sensitive { &f.only } else { &self.filter.only };
+                let rank: std::collections::HashMap<PhotoId, usize> = order.iter().enumerate().map(|(i, id)| (*id, i)).collect();
                 visible.sort_by_key(|id| rank.get(id).copied().unwrap_or(usize::MAX));
             }
             if self.source == LibrarySource::RecentlyAdded {
@@ -1202,6 +1231,10 @@ impl Session {
     /// `source` as a filter over `base` (the filter bar's, or none), with the folder it shows.
     fn view_filter(&self, source: LibrarySource, base: &Filter) -> Filter {
         let mut f = source.to_filter(base, &self.catalog);
+        // (the Hidden album asks for hidden photos itself; every other view shows them only with Show Hidden)
+        if source != LibrarySource::Hidden {
+            f.hidden = self.hidden.mode();
+        }
         if source == LibrarySource::Folder {
             // no folder chosen: nothing (an empty path matches nothing)
             let b = self.browse.clone().unwrap_or_default();
@@ -1397,6 +1430,8 @@ mod tests_focus_scan;
 mod tests_folders;
 #[cfg(test)]
 mod tests_forget_local;
+#[cfg(test)]
+mod tests_hidden;
 #[cfg(test)]
 mod tests_history_cursor;
 #[cfg(test)]

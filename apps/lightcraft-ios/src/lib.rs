@@ -128,6 +128,8 @@ impl Host {
         match event {
             Lifecycle::WillResignActive => self.save(),
             Lifecycle::DidEnterBackground => {
+                // Hidden locks while nobody can see the app
+                self.app.session.hidden_lock();
                 self.save();
                 // an export in progress gets the time the system allows to finish
                 if self.app.export.is_some() && self.background.is_none() {
@@ -371,6 +373,7 @@ fn services(ctx: egui::Context, inbox: Inbox, tmp: &Path) -> Services {
         })),
         write: Some(Box::new(lightcraft_engine::export::write_file)),
         write_shared: Some(Arc::new(lightcraft_engine::export::write_file)),
+        export_runner: None,
         png: Some(Box::new(|img: &lightcraft_raster::Rgba8| {
             lightcraft_codecs::encode_png(&lightcraft_codecs::EncodeImage::rgba8(img), &lightcraft_codecs::EncodeMeta::default()).unwrap_or_default()
         })),

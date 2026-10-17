@@ -425,6 +425,16 @@ fn grid_more(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     if mobile::row_checked(ui, "filterBar", Some(Icon::Filter), crate::i18n::tr("Filter Bar"), true, Some(app.ui.filter_bar)) {
         run_cmd(app, &ctx, "view.filterBar", json!({}));
     }
+    // hidden photos with the rest (asks for the password while Hidden is locked)
+    let showing = app.session.hidden.showing();
+    if app.session.source != lightcraft_engine::LibrarySource::Hidden
+        && mobile::row_checked(ui, "showHidden", Some(Icon::EyeOff), crate::i18n::tr("Show Hidden"), true, Some(showing))
+    {
+        let r = if showing { app.run("library.showHidden", json!({"on": false})) } else { crate::panels::dialogs::open_hidden(app, true) };
+        if let Err(e) = r {
+            app.toast(&ctx, e);
+        }
+    }
     let square = app.ui.view == ViewMode::SquareGrid;
     if mobile::row_checked(ui, "squareGrid", Some(Icon::GridSquare), crate::i18n::tr("Square Thumbnails"), true, Some(square)) {
         run_cmd(app, &ctx, if square { "view.photoGrid" } else { "view.squareGrid" }, json!({}));
@@ -579,6 +589,10 @@ fn photo_more(app: &mut LightcraftApp, ui: &mut egui::Ui) {
         run_cmd(app, &ctx, "view.beforeAfter", json!({}));
     }
     mobile::row_gap(ui);
+    let (hide, label) = if crate::menubar::selection_hidden(app) { ("photo.unhide", "Unhide Photo") } else { ("photo.hide", "Hide Photo") };
+    if mobile::row(ui, "hidePhoto", Some(Icon::EyeOff), crate::i18n::tr(label), true) {
+        run_cmd(app, &ctx, hide, json!({}));
+    }
     if mobile::row(ui, "deletePhoto", Some(Icon::Trash), crate::i18n::tr("Delete Photo"), true) {
         delete_tapped(app, &ctx);
     }
@@ -1554,6 +1568,11 @@ fn more_items(app: &mut LightcraftApp, ui: &mut egui::Ui, ids: &[u64]) {
     if app.session.clipboard.is_some() && menu_row(ui, "pasteSelected", crate::i18n::tr("Paste Selected Settings…"), false) {
         let _ = app.run("dialog.pasteSettings", json!({}));
         mobile::close_actions(ui.ctx());
+    }
+    let hidden = common(app, ids, |p| p.hidden) == Some(true);
+    let (hide, label) = if hidden { ("photo.unhide", "Unhide") } else { ("photo.hide", "Hide") };
+    if menu_row(ui, "selHide", crate::i18n::tr(label), false) {
+        run_on(app, ui, hide, json!({}), ids);
     }
     if menu_row(ui, "selectEdit", crate::i18n::tr("Edit"), false)
         && let Some(first) = ids.first()

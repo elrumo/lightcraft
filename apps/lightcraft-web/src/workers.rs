@@ -28,20 +28,20 @@ use wasm_bindgen::prelude::*;
 
 use crate::backend::Backend;
 use crate::health::{MAX_RESTARTS, restart_delay_ms};
-use crate::wire::{CacheWatch, MAX_PIPELINE, ThumbIndex, WireJob, WorkerCore, WorkerSlots, choose_worker, thumb_storage_key};
+use crate::wire::{CacheWatch, ExportWire, MAX_PIPELINE, ThumbIndex, WireJob, WorkerCore, WorkerSlots, choose_worker, thumb_storage_key};
 
 /// Storage key of the thumbnail index.
 pub const THUMB_INDEX: &str = "thumbs/index.json";
 
-fn set(o: &Object, k: &str, v: &JsValue) {
+pub(crate) fn set(o: &Object, k: &str, v: &JsValue) {
     let _ = Reflect::set(o, &k.into(), v);
 }
 
-fn get(o: &JsValue, k: &str) -> JsValue {
+pub(crate) fn get(o: &JsValue, k: &str) -> JsValue {
     Reflect::get(o, &k.into()).unwrap_or(JsValue::UNDEFINED)
 }
 
-fn now() -> f64 {
+pub(crate) fn now() -> f64 {
     let perf = get(&js_sys::global(), "performance");
     let f = get(&perf, "now");
     f.dyn_ref::<js_sys::Function>().and_then(|f| f.call0(&perf).ok()).and_then(|v| v.as_f64()).unwrap_or(0.0)
@@ -84,8 +84,64 @@ pub fn worker_main(store: String) {
     });
 }
 
+/// The bytes `job` needs from storage when the worker has not decoded its source yet: the
+/// original, else (a synced photo whose original is on the server) its downloaded previews.
+async fn read_original(backend: &Option<Backend>, job: &WireJob) -> Result<Option<Vec<u8>>, String> {
+    let Some(hash) = CORE.with(|c| c.borrow_mut().needs_original(job)) else { return Ok(None) };
+    let Some(b) = backend else { return Ok(None) };
+    if let Some(bytes) = b.read(&crate::store::storage_key(&hash)).await? {
+        return Ok(Some(bytes));
+    }
+    for key in crate::wire::proxy_keys(&hash, job.max_edge) {
+        if let Some(bytes) = b.read(&key).await? {
+            return Ok(Some(bytes));
+        }
+    }
+    Ok(None)
+}
+
+/// Run an export message (`{id, export}`: an [`ExportWire`] as JSON): render the photo at its output
+/// size, encode it with the engine's encoder, and post `{id, ok, bytes, w, h, ms, heap}` with the
+/// file's bytes transferred. `heap`: the module's memory, which only grows, so the page can see
+/// what an export costs a worker.
+async fn handle_export(scope: &web_sys::DedicatedWorkerGlobalScope, backend: Option<Backend>, id: JsValue, text: String) {
+    let t0 = now();
+    let out = Object::new();
+    set(&out, "id", &id);
+    let result: Result<lightcraft_engine::export::Exported, String> = async {
+        let wire: ExportWire = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+        let original = read_original(&backend, &wire.job).await?;
+        CORE.with(|c| c.borrow_mut().export(&wire, original.as_deref()))
+    }
+    .await;
+    let mut transfer = Array::new();
+    match result {
+        Ok(file) => {
+            let bytes = Uint8Array::from(file.bytes.as_slice());
+            set(&out, "ok", &true.into());
+            set(&out, "w", &(file.width as u32).into());
+            set(&out, "h", &(file.height as u32).into());
+            set(&out, "bytes", &bytes);
+            transfer = Array::of1(&bytes.buffer());
+        }
+        Err(e) => {
+            set(&out, "ok", &false.into());
+            set(&out, "err", &e.into());
+        }
+    }
+    let heap = wasm_bindgen::memory().unchecked_into::<js_sys::WebAssembly::Memory>().buffer().unchecked_into::<js_sys::ArrayBuffer>();
+    set(&out, "heap", &heap.byte_length().into());
+    set(&out, "ms", &(now() - t0).into());
+    if let Err(e) = scope.post_message_with_transfer(&out, &transfer) {
+        log::error!("export worker: post: {e:?}");
+    }
+}
+
 /// Run one job message and post the result.
 async fn handle(scope: &web_sys::DedicatedWorkerGlobalScope, backend: Option<Backend>, msg: JsValue) {
+    if let Some(text) = get(&msg, "export").as_string() {
+        return handle_export(scope, backend, get(&msg, "id"), text).await;
+    }
     let id = get(&msg, "id");
     let t0 = now();
     let out = Object::new();
@@ -109,26 +165,7 @@ async fn handle(scope: &web_sys::DedicatedWorkerGlobalScope, backend: Option<Bac
             }
         }
         set(&out, "cacheMiss", &cache_miss.into());
-        let original = match CORE.with(|c| c.borrow_mut().needs_original(&job)) {
-            Some(hash) => match &backend {
-                Some(b) => match b.read(&crate::store::storage_key(&hash)).await? {
-                    Some(bytes) => Some(bytes),
-                    // a synced photo whose original is on the server: its downloaded previews
-                    None => {
-                        let mut found = None;
-                        for key in crate::wire::proxy_keys(&hash, job.max_edge) {
-                            if let Some(bytes) = b.read(&key).await? {
-                                found = Some(bytes);
-                                break;
-                            }
-                        }
-                        found
-                    }
-                },
-                None => None,
-            },
-            None => None,
-        };
+        let original = read_original(&backend, &job).await?;
         let rendered = CORE.with(|c| c.borrow_mut().render(&job, original.as_deref()))?;
         let mut stored = 0;
         if let (Some(b), Some(key)) = (&backend, job.thumb_key())

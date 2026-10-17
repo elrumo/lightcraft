@@ -1796,7 +1796,93 @@ fn render_weight(full_px: usize, long: usize, level: crate::media::SourceLevel, 
     src_px.saturating_mul(12).saturating_add(out_px.saturating_mul(36))
 }
 
+/// A photo of a batch as [`BatchPlacer`] needs to know it (taken with [`PreparedExport::head`]
+/// before [`PreparedExport::run`] uses the export up).
+#[derive(Clone)]
+pub struct ItemHead {
+    photo: lightcraft_catalog::PhotoId,
+    name: String,
+    source_dir: Option<String>,
+    guard: std::sync::Arc<crate::originals::OriginalGuard>,
+}
+
+/// A rendered export taken apart, for a host that renders it somewhere else (the browser's export
+/// worker, which has no [`PreparedExport`] to run): [`encode_render_export`] makes the file from
+/// what it renders.
+pub struct RenderParts {
+    pub job: crate::media::RenderJob,
+    /// The HDR rendition of a gain map JPEG (`job` renders its SDR base).
+    pub hdr_job: Option<crate::media::RenderJob>,
+    pub meta: Option<Metadata>,
+    pub opts: ExportOptions,
+}
+
+/// The file [`PreparedExport::run`] makes from a photo's render `r` (and, for a gain map JPEG, the
+/// HDR rendition `hdr`): the one place a rendered export is encoded, whoever rendered it.
+pub fn encode_render_export(
+    file_name: String,
+    r: lightcraft_pipeline::Rendered,
+    hdr: Option<lightcraft_pipeline::Rendered>,
+    opts: &ExportOptions,
+    meta: Option<&Metadata>,
+) -> Result<Exported, String> {
+    let bytes = match hdr {
+        Some(hr) => {
+            let hdr = hr.deep.ok_or("the HDR render has no float samples")?;
+            encode_gain_map_jpeg(&r.image, &hdr, opts, meta)?
+        }
+        None => encode_rendered(&r, opts, meta)?,
+    };
+    Ok(Exported { file_name, bytes, width: r.image.width, height: r.image.height, sidecars: Vec::new(), gpu_fallback: None })
+}
+
+/// Places a batch's files one photo at a time, for a host whose photos finish in their own time
+/// (the browser, which has no threads: [`run_batch`] is this with the photos run in a loop). Same
+/// paths, conflict policy and sidecars as [`run_batch`].
+pub struct BatchPlacer<'a>(Placer<'a>);
+
+impl<'a> BatchPlacer<'a> {
+    /// `photos`: how many the batch has (an exact file name is for a single photo).
+    pub fn new(
+        o: &'a ExportOptions,
+        to: &'a Destination,
+        write: &'a mut dyn FnMut(&str, &[u8]) -> Result<(), String>,
+        exists: &'a dyn Fn(&str) -> bool,
+        stop_on_error: bool,
+        photos: usize,
+    ) -> Self {
+        let mut placer = Placer::new(o, to, write, exists, stop_on_error);
+        placer.single = photos == 1;
+        BatchPlacer(placer)
+    }
+
+    /// Write `head`'s photo's result and record the outcome. `Err` only when it failed and
+    /// `stop_on_error` is set.
+    pub fn place(&mut self, head: &ItemHead, result: Result<Exported, String>) -> Result<(), String> {
+        self.0.place(head.photo, head.name.clone(), head.source_dir.as_deref(), &head.guard, result)
+    }
+
+    /// One JSON object per photo placed, as [`run_batch`] returns them.
+    pub fn finish(self) -> Vec<serde_json::Value> {
+        self.0.out
+    }
+}
+
 impl PreparedExport {
+    /// What [`BatchPlacer::place`] needs of this photo.
+    pub fn head(&self) -> ItemHead {
+        ItemHead { photo: self.photo, name: self.file_name.clone(), source_dir: self.source_dir.clone(), guard: self.guard.clone() }
+    }
+
+    /// The pieces of a rendered export (not of a copied original or a DNG), cheap to take: the
+    /// export itself is left as it is, to run here when the host can't render elsewhere.
+    pub fn render_parts(&self) -> Option<RenderParts> {
+        match &self.work {
+            Work::Render(w) => Some(RenderParts { job: w.job.clone(), hdr_job: w.hdr_job.clone(), meta: w.meta.clone(), opts: w.opts.clone() }),
+            _ => None,
+        }
+    }
+
     /// Let `cancel` (the export's flag) end a wait for a busy sync server.
     pub fn set_cancel(&mut self, cancel: std::sync::Arc<std::sync::atomic::AtomicBool>) {
         if let Work::Server(w) = &mut self.work {
@@ -1812,15 +1898,11 @@ impl PreparedExport {
                 let result = job.run();
                 let r = result.rendered?;
                 let gpu_fallback = result.gpu_fallback;
-                let bytes = match hdr_job {
-                    Some(hj) => {
-                        let hr = hj.run().rendered?;
-                        let hdr = hr.deep.ok_or("the HDR render has no float samples")?;
-                        encode_gain_map_jpeg(&r.image, &hdr, &opts, meta.as_ref())?
-                    }
-                    None => encode_rendered(&r, &opts, meta.as_ref())?,
+                let hdr = match hdr_job {
+                    Some(hj) => Some(hj.run().rendered?),
+                    None => None,
                 };
-                Ok(Exported { file_name, bytes, width: r.image.width, height: r.image.height, sidecars: Vec::new(), gpu_fallback })
+                Ok(Exported { gpu_fallback, ..encode_render_export(file_name, r, hdr, &opts, meta.as_ref())? })
             }
             #[cfg(not(target_arch = "wasm32"))]
             Work::Server(w) => {

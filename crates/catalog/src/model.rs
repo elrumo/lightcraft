@@ -262,6 +262,10 @@ pub struct Photo {
     /// In "Recently Deleted".
     #[serde(default)]
     pub deleted: bool,
+    /// In "Hidden": left out of All Photos, albums, search and People until the user unlocks Hidden
+    /// or turns on Show Hidden ([`crate::HiddenMode`]).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hidden: bool,
     /// Seen while browsing a folder on disk (Local), not added to the library: only folder views
     /// show it until it is added.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -390,6 +394,7 @@ impl Photo {
             history: Vec::new(),
             history_cursor: None,
             deleted: false,
+            hidden: false,
             local: false,
             duration: None,
             as_shot_wb: None,
@@ -511,6 +516,10 @@ impl Photo {
     /// In the library: not deleted and not only browsed (Local).
     pub fn in_library(&self) -> bool {
         !self.deleted && !self.local
+    }
+    /// In the library and not hidden: what counts and tallies the user sees are made of.
+    pub fn visible(&self) -> bool {
+        self.in_library() && !self.hidden
     }
     /// Edited by the user: settings differ from what import gave the photo.
     pub fn is_edited(&self) -> bool {

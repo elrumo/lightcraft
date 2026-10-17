@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~14 points and ~340–600 h away
 
-> **Last reviewed:** 2026-10-15 · **Last updated:** 2026-10-15 · **Change:** minor (upstream merged again, up to 0da998f2: RAW 83% decode / 38% verified, CR3 on 26 bodies, Slideshow and Print started, full-resolution zoom closed; Next actions added in docs/roadmap.md; Sign Out and Generative Expand diffusion models in *Fork additions*) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6
+> **Last reviewed:** 2026-10-15 · **Last updated:** 2026-10-16 · **Change:** minor (browser export no longer freezes the page: new row LR-BEHAV-WEB-EXPORT 🟡, checklist 550 rows; upstream merged again, up to 0da998f2: RAW 83% decode / 38% verified, CR3 on 26 bodies, Slideshow and Print started, full-resolution zoom closed; Next actions added in docs/roadmap.md; Sign Out and Generative Expand diffusion models in *Fork additions*) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6
 
 One-page summary of how close LightCraft is to Adobe Lightroom. Agents: read this, then pick work
 from [docs/gaps.md](docs/gaps.md). The full assessment, method and evidence are in
@@ -12,7 +12,7 @@ from [docs/gaps.md](docs/gaps.md). The full assessment, method and evidence are 
 
 | | Value | Kind |
 |---|---:|---|
-| **Feature breadth** (checklist) | **84.3%** of 549 rows (P0 98.3%, P1 94.8%, P2 60.0%) | measured: [parity-checklist.md](docs/parity-checklist.md) recount |
+| **Feature breadth** (checklist) | **84.3%** of 550 rows (P0 98.3%, P1 94.5%, P2 60.0%) | measured: [parity-checklist.md](docs/parity-checklist.md) recount |
 | **Feature breadth** (weighted by use) | **~77%** | estimated |
 | **Ready for real work** (full target) | **~61%** (56–66%) | estimated: weighted sum over the dimensions |
 | **Mainstream practitioner** | **~51%** (46–56%) | estimated |
@@ -124,6 +124,7 @@ This fork adds features upstream doesn't have; they are outside the numbers abov
 | **Optional self-hosted sync** (`lightcraft-server`, [sync.md](docs/sync.md); local-first stays the default) | One library shared by a user's devices (desktop, CLI, web build, iOS app): previews and originals by content hash, field-level merges, photo folders already on the server read in place; presets, sets and LUT profiles follow the user; a library that already has photos can merge into the server's; album links (a timeline by day, a page per photo, a slideshow, Download All, an optional password, optionally a form for visitors to add photos to the album); per-user storage limits; opt-in writable folders (XMP sidecars written back, uploads filed into an imports folder); a size budget for downloaded originals, resumable uploads, small previews downloaded as the grid shows them; Sign Out waits for what is left, signs the device out and empties the library, so another account starts clean | Verification on real hardware (a physical iPhone over real TLS, a real NAS, a long-lived library); comments and likes on shared albums, accounts for other people |
 | **iPhone / iPad app** (`apps/lightcraft-ios`, `crates/ios-host`; [ios.md](docs/ios.md)) | The egui app with a compact touch layout: phone grid, touch sliders, crop, Remove and Masking screens, an iOS 26 glass look, export with Save to Photos; native host (Photos / Files pickers, share sheet, HEIC through ImageIO, lifecycle, memory budget). Checked on the simulator, partly on an iPhone | Most of the host on a device; Lightroom-mobile features ([ios-gaps.md](docs/ios-gaps.md)) |
 | **Map view and place search** (`crates/geo`, [map.md](docs/map.md)) | Desktop, web and iOS: clustered thumbnail markers, an offline world map plus OpenStreetMap tiles, place search (`madrid`, `photos in lisbon in june 2024`) and the place in Info, offline from GeoNames | Not yet run in a browser or on a device; drag-to-geotag, saved locations, a satellite layer |
+| **Hidden album and possibly sensitive photos** ([hidden.md](docs/hidden.md)) | Hide / Unhide like Apple Photos: hidden photos leave every view until Hidden is unlocked (a synced password in the egui apps, Face ID / Touch ID in the SwiftUI app), Show Hidden mixes them back in, syncs through the server; an opt-in NSFW classifier (desktop and server) lists photos that might be sensitive, with Hide All and a grid blur | Not run with real Face ID on a device; the classifier's cut-off and accuracy unmeasured; no "not sensitive" mark |
 | **Search by description, text in photos, People** (`crates/vision`, [search-people.md](docs/search-people.md)) | SigLIP 2, PP-OCRv6 and YuNet + SFace, each an opt-in consented download, on the desktop and on the sync server | Measured on a handful of images only (face grouping accuracy, OCR at about a second a photo, no relevance cut-off); a device-side model on iOS |
 | **Super Resolution** (`crates/enhance`, [super-resolution.md](docs/super-resolution.md)) | Nomos Uni SPAN 2× (optional download) on desktop and iPhone; every optional model listed, downloaded and deleted in Settings → AI Models ([ai-models.md](docs/ai-models.md)) | Enlarges the rendered photo, not the raw data; no preview in the dialog |
 | **Content-aware Remove by patch synthesis** (M8.4) and **panorama Fill Edges** (M13) | Remove fills from synthesized texture seeded by the spot's source; a stitched panorama's empty corners are filled with continued texture | Rows or tiles in strong perspective can come out at the wrong angle |
@@ -224,6 +225,7 @@ it); then sharing between people with accounts (comments, likes, shared librarie
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-16 | minor | Browser build: Export no longer runs on the page's thread (each rendered photo is made on a Web Worker, ✕ stops it at once): new checklist row LR-BEHAV-WEB-EXPORT 🟡, 549 → 550 rows, P1 94.8% → 94.5%; other numbers unchanged |
 | 2026-10-15 | minor | Upstream merged again (up to 0da998f2); Upcoming re-ranked, *Next actions* added in docs/roadmap.md; numbers as upstream's |
 | 2026-10-15 | minor | Sync: Sign Out waits until everything has reached the server, then removes the account's library from the device (as Lightroom's does), so two accounts' libraries never meet on a device; *Fork additions* row updated; numbers unchanged |
 | 2026-10-14 | minor | Generative Expand: Stable Diffusion 1.5, Kandinsky 2.2 and SDXL inpainting, offered by the device's profile; *Fork additions* row updated; numbers unchanged |

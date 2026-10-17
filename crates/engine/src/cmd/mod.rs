@@ -23,6 +23,7 @@ mod face_recognize;
 pub mod filters;
 mod focus;
 pub mod geocode;
+mod hidden;
 pub mod keywords;
 mod lensblur;
 pub mod library;
@@ -150,6 +151,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         let mut v = Vec::new();
         v.extend(edit::specs());
         v.extend(library::specs());
+        v.extend(hidden::specs());
         v.extend(develop::specs());
         v.extend(color::specs());
         v.extend(curves::specs());

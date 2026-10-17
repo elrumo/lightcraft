@@ -45,6 +45,8 @@ candle-nn = { workspace = true, features = ["metal"], optional = true }
 
 [dev-dependencies]
 ab_glyph = { workspace = true }
+# tests record why they skip (the real models aren't here)
+lightcraft-testkit = { workspace = true }
 image = { workspace = true }
 
 [[example]]

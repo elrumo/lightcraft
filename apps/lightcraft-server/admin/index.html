@@ -111,7 +111,7 @@
     <a href="#/overview" data-nav="overview"><svg class="icon"><use href="#i-overview"/></svg><span>Overview</span></a>
     <a href="#/users" data-nav="users"><svg class="icon"><use href="#i-users"/></svg><span>Users</span></a>
     <a href="#/presets" data-nav="presets"><svg class="icon"><use href="#i-presets"/></svg><span>Presets</span></a>
-    <a href="#/search" data-nav="search"><svg class="icon"><use href="#i-sparkle"/></svg><span>Search</span></a>
+    <a href="#/processing" data-nav="processing"><svg class="icon"><use href="#i-sparkle"/></svg><span>Processing</span></a>
     <a href="#/storage" data-nav="storage"><svg class="icon"><use href="#i-storage"/></svg><span>Storage</span></a>
   </nav>
 
@@ -307,10 +307,37 @@
       </div>
     </section>
 
-    <!-- Search -->
-    <section data-view="search" hidden>
-      <div class="page-head"><div><h1>Search</h1><p class="lead">What the server does with your users' photos so their devices don't have to: find them by description, by the words printed in them, and by the people in them. Each needs a model, downloaded once onto this server.</p></div></div>
+    <!-- Processing -->
+    <section data-view="processing" hidden>
+      <div class="page-head"><div><h1>Processing</h1><p class="lead">What the server does with your users' photos in the background so their devices don't have to: build previews, find photos by description, by the words printed in them and by the people in them, and flag the ones that might be sensitive. The AI models are downloaded once onto this server.</p></div></div>
       <div class="columns">
+        <section class="panel">
+          <h2>Previews</h2>
+          <p id="pvCover" class="cover"></p>
+          <p class="muted" id="pvText"></p>
+          <div class="meter" id="pvBar"><div></div></div>
+          <ul class="building" id="pvNow"></ul>
+          <div class="btn-row">
+            <button type="button" class="btn secondary" id="pvPause"><svg class="icon"><use href="#i-pause"/></svg><span>Pause</span></button>
+            <div class="split" id="pvSplit">
+              <button type="button" class="btn secondary split-main" id="pvAll" title="Builds the previews that don't exist yet, for every user, and tries again the ones that failed"><svg class="icon"><use href="#i-refresh"/></svg><span>Build missing previews</span></button>
+              <button type="button" class="btn secondary split-more" aria-haspopup="menu" aria-expanded="false" aria-controls="pvMenu" aria-label="More ways to build previews"><svg class="icon"><use href="#i-chevron-down"/></svg></button>
+              <div class="menu" id="pvMenu" role="menu" hidden>
+                <button type="button" role="menuitem" id="pvMissing"><b>Build missing previews</b><span>Builds the previews that don't exist yet, for every user, and tries again the ones that failed. The usual choice.</span></button>
+                <button type="button" role="menuitem" id="pvRebuild"><b>Rebuild all previews</b><span>Builds every preview of every user again and replaces them. Use it after an update changed how photos are decoded or look. Slow on a big library.</span></button>
+              </div>
+            </div>
+          </div>
+          <h3>Photos with previews</h3>
+          <ul class="usage work" id="pvUsers"></ul>
+          <p class="muted" id="pvUsersNone" hidden>No users yet.</p>
+          <p class="muted help">Previews are the smaller copies that devices show instead of the originals. A single user's can be built from their Folders page.</p>
+        </section>
+        <section class="panel">
+          <h2>AI models</h2>
+          <p class="muted">Each kind of processing below needs its model, downloaded once onto this server. Clients that don't use a server download the same models themselves.</p>
+          <ul class="models" id="mmList"></ul>
+        </section>
         <section class="panel">
           <h2>Search by description</h2>
           <label class="switch" for="srSwitch">
@@ -347,6 +374,25 @@
           <h3>Photos read</h3>
           <ul class="usage work" id="txUsers"></ul>
           <p class="muted" id="txUsersNone" hidden></p>
+        </section>
+        <section class="panel">
+          <h2>Sensitive content</h2>
+          <label class="switch" for="snSwitch">
+            <input type="checkbox" id="snSwitch" role="switch">
+            <span><span class="label">Flag photos that might be sensitive</span><span class="help" id="snHelp"></span></span>
+          </label>
+          <div class="sched" id="snSched"></div>
+          <div class="fetch" id="snFetch" hidden>
+            <div class="fetch-head"><span id="snFetchText"></span><span id="snFetchPct"></span></div>
+            <div class="meter large"><div id="snFetchBar"></div></div>
+            <div class="btn-row"><button type="button" class="btn secondary" id="snCancel">Cancel download</button></div>
+          </div>
+          <div class="alert negative" id="snError" role="alert" hidden><svg class="icon"><use href="#i-alert"/></svg><div><b>The download didn't finish</b><p></p></div></div>
+          <dl class="facts" id="snFacts"></dl>
+          <h3>Photos checked</h3>
+          <ul class="usage" id="snUsers"></ul>
+          <p class="muted" id="snUsersNone" hidden></p>
+          <p class="muted">Devices list the flagged photos under Possibly Sensitive and can blur them in the grid. Each person decides what to hide.</p>
         </section>
         <section class="panel">
           <h2>People</h2>

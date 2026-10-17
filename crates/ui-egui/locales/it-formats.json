@@ -340,5 +340,6 @@
   "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)": "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)",
   "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.": "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.",
   "Delete the group “{name}” and its {n} presets?": "Eliminare il gruppo «{name}» e i suoi {n} preset?",
-  "Hid “{name}”. Show Hidden Presets in the panel's menu brings it back.": "Hai nascosto «{name}». «Mostra preset nascosti», nel menu del pannello, lo fa ricomparire."
+  "Hid “{name}”. Show Hidden Presets in the panel's menu brings it back.": "Hai nascosto «{name}». «Mostra preset nascosti», nel menu del pannello, lo fa ricomparire.",
+  "{n} photos might be sensitive. Nothing is hidden until you choose.": "{n} foto potrebbero essere sensibili. Non viene nascosto nulla finché non scegli."
 }

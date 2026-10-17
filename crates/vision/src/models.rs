@@ -129,6 +129,26 @@ pub const FACE_LICENCES: [(&str, &str); 2] = [
     ("Apache License 2.0 (BUPT, SFace)", "https://huggingface.co/opencv/face_recognition_sface"),
 ];
 
+/// The sensitive-content classifier (Falconsai's ViT-B/16, Apache-2.0): the int8 ONNX export the
+/// onnx-community made of it, pinned to a commit. Its one file goes straight into the model's folder.
+pub const NSFW_PARTS: &[OcrPart] = &[OcrPart {
+    dir: "",
+    files: &[FileSpec {
+        name: "model_int8.onnx",
+        size: Some(87_333_629),
+        sha256: Some("bdc941491cd09ae75c5f40b038a5cd64482fa4e2b5297747323c5cda31303920"),
+        max: 87_333_629,
+    }],
+    default_mirror: "https://huggingface.co/onnx-community/nsfw_image_detection-ONNX/resolve/1ceb3c7fe1e9f3f2507e6df577437f23a9149fd5/onnx",
+}];
+
+/// Download size of the sensitive-content classifier.
+pub const NSFW_BYTES: u64 = 87_333_629;
+
+/// The licence the user is shown before downloading the sensitive-content classifier.
+pub const NSFW_LICENCE: (&str, &str) =
+    ("Apache License 2.0 (Falcons.ai, nsfw_image_detection)", "https://huggingface.co/Falconsai/nsfw_image_detection");
+
 /// One download: the files, the mirrors to try for them, and the folder they go into.
 pub type Download = (&'static [FileSpec<'static>], Vec<String>, std::path::PathBuf);
 
@@ -151,6 +171,11 @@ pub fn part_downloads(parts: &'static [OcrPart], folder: &str, dir: &Path, env: 
 /// What to download for the text-reading models into `dir` (see [`part_downloads`]; folder `ocr`).
 pub fn ocr_downloads(dir: &Path, env: Option<&str>, file: Option<&Path>) -> Vec<Download> {
     part_downloads(OCR_PARTS, "ocr", dir, env, file)
+}
+
+/// What to download for the sensitive-content classifier into `dir` (see [`part_downloads`]; folder `nsfw`).
+pub fn nsfw_downloads(dir: &Path, env: Option<&str>, file: Option<&Path>) -> Vec<Download> {
+    part_downloads(NSFW_PARTS, "nsfw", dir, env, file)
 }
 
 /// What to download for the face models into `dir` (see [`part_downloads`]; folder `faces`).
@@ -215,6 +240,24 @@ mod tests {
         }
         let total: u64 = parts.iter().flat_map(|(files, _, _)| files.iter()).filter_map(|f| f.size).sum();
         assert_eq!(total, FACE_BYTES);
+    }
+
+    #[test]
+    fn the_sensitive_content_model_fills_the_folder_the_classifier_loads() {
+        let parts = nsfw_downloads(Path::new("/m/nsfw"), Some("https://mirror.example/models"), None);
+        let names: Vec<String> =
+            parts.iter().flat_map(|(files, _, dir)| files.iter().map(move |f| dir.join(f.name).to_string_lossy().into_owned())).collect();
+        assert_eq!(names, ["/m/nsfw/model_int8.onnx"]);
+        #[cfg(feature = "onnx")]
+        assert_eq!(crate::nsfw::MODEL_FILE, "model_int8.onnx");
+        for (files, mirrors, _) in &parts {
+            assert_eq!(mirrors, &["https://mirror.example/models/nsfw".to_string(), NSFW_PARTS[0].default_mirror.to_string()]);
+            assert!(mirrors[1].contains("/resolve/") && !mirrors[1].contains("/main"));
+            for f in *files {
+                assert_eq!((f.size, f.sha256.map(str::len)), (Some(f.max), Some(64)), "{}", f.name);
+            }
+        }
+        assert_eq!(parts.iter().flat_map(|(f, _, _)| f.iter()).filter_map(|f| f.size).sum::<u64>(), NSFW_BYTES);
     }
 
     #[test]

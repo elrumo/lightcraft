@@ -314,6 +314,13 @@ struct PrefsFile {
     search_text: bool,
     /// Find the faces in photos and group them into people (`vision.setFaces`).
     search_faces: bool,
+    /// The Hidden password, an argon2id PHC string (`hidden.setPassword`; synced as the `privacy` document).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hidden_password: Option<String>,
+    /// Check photos for sensitive content (`vision.setSensitive`).
+    search_sensitive: bool,
+    /// Blur the possibly sensitive photos in the grid (`library.setBlurSensitive`; missing = on).
+    blur_sensitive: Option<bool>,
     /// Slideshow playback settings.
     slideshow: crate::slideshow::PlaybackSettings,
     /// Slideshow slide layout (margins, options, backdrop).
@@ -535,6 +542,7 @@ impl Session {
         #[cfg(not(target_arch = "wasm32"))]
         self.faces.library_changed();
         self.vision.forget_library();
+        self.hidden.lock();
         self.target_album = None;
         self.active_mask = None;
         self.active_spot = None;
@@ -611,6 +619,10 @@ impl Session {
         self.vision.local_only = prefs.search_local_only;
         self.vision.text = prefs.search_text;
         self.vision.faces = prefs.search_faces;
+        self.vision.sensitive = prefs.search_sensitive;
+        self.blur_sensitive = prefs.blur_sensitive.unwrap_or(true);
+        // (locked, whatever the last library was)
+        self.hidden = crate::hidden::HiddenLock::for_library(prefs.hidden_password.filter(|h| h.starts_with("$argon2")));
         self.hold_view = prefs.hold_view;
         self.refresh_view();
         self.smart_previews_dir = prefs.smart_previews_dir.filter(|_| on_disk).map(PathBuf::from);
@@ -943,13 +955,15 @@ impl Session {
     }
 
     fn view_json(&self) -> Vec<u8> {
+        // (Hidden is locked again at the next start: it opens on All Photos, with nothing of it selected)
+        let hidden = self.source == LibrarySource::Hidden;
         let view = ViewFile {
-            source: self.source,
+            source: if hidden { LibrarySource::All } else { self.source },
             browse: self.browse.clone(),
             // only while it is shown: a leftover would be a stale choice nobody made
             library_folder: self.library_folder.clone().filter(|_| self.source == LibrarySource::LibraryFolder),
             sort: self.sort,
-            selection: self.selection.clone(),
+            selection: if hidden { Selection::default() } else { self.selection.clone() },
         };
         serde_json::to_vec_pretty(&view).unwrap_or_default()
     }
@@ -1009,6 +1023,9 @@ impl Session {
             search_local_only: self.vision.local_only,
             search_text: self.vision.text,
             search_faces: self.vision.faces,
+            hidden_password: self.hidden.password.clone(),
+            search_sensitive: self.vision.sensitive,
+            blur_sensitive: Some(self.blur_sensitive),
             slideshow: self.slideshow.clone(),
             slide_layout: self.slide_layout.clone(),
             slide_overlays: self.slide_overlays.clone(),

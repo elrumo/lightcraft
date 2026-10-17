@@ -194,9 +194,45 @@ are the same in every version, so serve them with `Cache-Control: no-cache` (not
   ([gpu-pipeline.md](gpu-pipeline.md#drafts-during-slider-drags)).
 - **Every develop control** (sliders, curves, mixer, grading, masking, crop…) works as it does
   on the desktop, since it's the same crate.
-- **Export downloads the file.** *Export…* (<kbd>⌘⇧E</kbd>) runs the same `app.export` path as
-  the desktop app (`lightcraft_engine::export`: JPEG/PNG/TIFF/WebP, sizing, naming). The host's
-  `write` service hands each file to the browser as a download instead of writing it to disk.
+- **Export downloads the file, without freezing the page.** *Export…* (<kbd>⌘⇧E</kbd>) runs the same `app.export`
+  path as the desktop app (`lightcraft_engine::export`: JPEG/PNG/TIFF/WebP, sizing, naming), and each file reaches
+  the browser as a download instead of being written to disk. A full-size raw is seconds of decode, develop and
+  encode on the CPU pipeline, and the page has one thread, so the batch used to run on it: no repaint, no input,
+  a hidden tab throttled, and the browser offering to kill the page, for as long as the batch took. Now
+  (`apps/lightcraft-web/src/export.rs`):
+  - **The photos go to a Web Worker of their own.** A batch is a task between frames (`Services::export_runner`,
+    `Batch::deferred`: the same activity row, count, current file, ✕ and toast as a desktop export). Each photo is
+    sent as an `ExportWire` (the render job at the output size, the options, the metadata): the worker reads the
+    original from storage, renders it and encodes it with the engine's one encoder
+    (`encode_render_export`, also what `PreparedExport::run` ends with), and posts back the file's bytes. The page
+    only builds the message, places the result (`BatchPlacer`: the same paths, conflict policy and sidecars as
+    `run_batch`) and offers the download, so a frame holds no more than that.
+  - **One extra worker per batch, ended with it.** The render workers go on drawing thumbnails and the loupe, one
+    export at a time keeps the memory bounded (the worker's heap peaked at 1.55 GB for a 20 MP raw and 2.8 GB for a
+    32.5 MP one; wasm memory only grows and stops at 4 GB, so a much larger photo fails with "export it smaller", and
+    ending the worker is what gives the memory back), and ✕ stops the worker on the spot instead of at the end of the photo (the
+    files already placed stay). A worker that dies (out of memory, a trap) fails that photo, with its own error in
+    the result, and the next photo gets a new one.
+  - **What stays on the page,** one photo per turn of the event loop: *Original* (copying the file) and *DNG*
+    (decode and write: the page still blocks for each photo of a DNG batch), and every export when no worker can
+    be had (`?store=memory`, which leaves a worker nothing to read originals from; `?workers=0` leaves the render
+    workers off but not this one).
+  - Measured 2026-10-16 with `docs/showcase/web-export-bench.js`, Chrome (the in-app browser, a dev build with
+    optimisations) on an M1 Max whose load average was above 400 (so read the times as a ratio): a batch of 10 full-size
+    JPEGs of a 20 MP Canon CR3 took 110 s (11 s a photo, the same a photo as on the page) with the page's thread away
+    from its event loop for at most 45 ms at a stretch (p99 0.1 ms) and no task over 50 ms; three of a 32.5 MP raw,
+    52 s and 30 ms. The same export on the page (`?sync`) is one 20 s task for two photos. ✕ ended the batch 75 ms
+    after the press, in the middle of a photo. The files are byte-identical to the ones the page makes: the same
+    SHA-256 for the sync and the worker batch of a 20 MP raw, and for JPEG (Display P3, sharpening, metadata), 16-bit
+    TIFF (Adobe RGB), PNG with a watermark and WebP of a demo photo and two raws.
+    `lightcraft.command("web.crashExportWorker", "{}")` makes the next photo's worker throw: that photo fails with its
+    error, the next gets a new worker.
+  - Automation: `lightcraft.command("app.export", '{"background":true,…}')` (the Export dialog's parameters) returns
+    `{background, total}` at once; `web.stats` → `export` reports `running` (`{total, done, current}`), `last` (the
+    files, `cancelled`) and the counters (`photosOnWorker`, `photosInline`, `workerStarts`, `peakWorkerHeapMb`).
+    Without `background` the command still runs on the page and answers when it is over (scripts that want the files).
+  - A browser asks before saving many files from one page without a click ("Download multiple files?"): the files
+    arrive one by one as before, one download each.
 - **Text on a phone.** Under 900 pt wide the page uses the phone layout (`docs/ios-gaps.md`). A tap
   on a text field raises the on-screen keyboard, also for a field a tap opens by itself (New
   Album): iOS Safari raises it only for a focus made inside the tap, so `panels::mobile::edit_menu`
@@ -235,9 +271,10 @@ Sign Out Anyway here, since the library isn't a folder; File ▸ Back Up Library
 - **Generative Expand runs on the main thread too** (Crop ▸ Expand ▸ Generate, [generative-expand.md](generative-expand.md)):
   one MI-GAN pass at 512 pixels and the texture synthesis, a few seconds; the same stored MI-GAN, or Classic without
   a download. LaMa (208 MB) isn't offered in the browser.
-- **Exports and auto-adjustments run on the main thread** (they need the original's pixels
-  there). Right after a reload, the first such command on a photo whose original isn't in memory
-  yet fails with "still loading" and works a moment later.
+- **Auto-adjustments run on the main thread** (they need the original's pixels there), and so do the exports that
+  are not renders (Original, DNG: see *Export downloads the file*). Right after a reload, the first such command on
+  a photo whose original isn't in memory yet fails with "still loading" and works a moment later.
+- **Contact Sheet and Print to PDF are disabled** in the browser (they would run on the page like the old exports did).
 - **Durability is "a frame later", not fsync-before-return:** a crash or tab kill in the few
   milliseconds between a command and its flush loses that command.
 - **Data-safety gaps still open** (issue #107): a panic in a decoder still ends the page (and a
@@ -284,3 +321,10 @@ render fails. `await lightcraft.command("web.stats", "{}")` reports `draft` (`sc
 it drops a raw served beside the page, drags Exposure, Temperature and Highlights once per animation frame, and
 prints the picture updates per second, the slowest animation frame and the time the sharp render takes after the
 release.
+
+**Export.** [`docs/showcase/web-export-bench.js`](showcase/web-export-bench.js) drops a raw served beside the page,
+exports it N times at full size through `app.export` (the Export dialog's command) and prints the longest stretch the
+page's thread was away from its event loop (a message to itself, over and over: animation frames and timers are held
+to one a second while the pane is hidden, which is not a freeze), the tasks over 50 ms (`PerformanceObserver`
+`longtask`), the time of the batch and the SHA-256 of every file; `?sync` runs the batch on the page, the way it used to
+run, for comparison. `web.stats` → `export` has the counters and the last batch.

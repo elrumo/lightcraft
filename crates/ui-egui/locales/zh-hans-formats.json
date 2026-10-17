@@ -340,5 +340,6 @@
   "This photo has no depth of its own: Lens Blur estimates it with Depth Anything V2 Small, a {:.0} MB download ({} licence). {}.": "这张照片本身没有深度数据：镜头模糊会使用 Depth Anything V2 Small 来估算（需下载 {:.0} MB，{} 许可证）。{}。",
   "In focus: {:.0}–{:.0} (0 nearest, 100 farthest)": "对焦范围：{:.0}–{:.0}（0 最近，100 最远）",
   "Delete the group “{name}” and its {n} presets?": "删除分组“{name}”及其 {n} 个预设？",
-  "Hid “{name}”. Show Hidden Presets in the panel's menu brings it back.": "已隐藏“{name}”。使用面板菜单中的“显示隐藏的预设”可将其找回。"
+  "Hid “{name}”. Show Hidden Presets in the panel's menu brings it back.": "已隐藏“{name}”。使用面板菜单中的“显示隐藏的预设”可将其找回。",
+  "{n} photos might be sensitive. Nothing is hidden until you choose.": "{n} 张照片可能敏感。在您选择之前，不会隐藏任何内容。"
 }
