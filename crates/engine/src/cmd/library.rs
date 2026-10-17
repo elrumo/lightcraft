@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use super::{CommandSpec, always, bad, bool_or, cmd, has_active, has_library_selection, has_selection, ok, str_param};
 use crate::{LibrarySource, Result, Selection, Session};
 
-fn select_after_deletion(s: &mut Session, before: &[PhotoId]) {
+pub(super) fn select_after_deletion(s: &mut Session, before: &[PhotoId]) {
     let at = before.iter().position(|id| Some(*id) == s.selection.active);
     let remaining: std::collections::HashSet<_> = s.visible_cloned().into_iter().collect();
     s.selection.ids.retain(|id| remaining.contains(id));
@@ -509,7 +509,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Show Source",
             [],
             None,
-            "{kind: all|recentlyAdded|album|recentlyDeleted|picks|missing|libraryFolder, id?: albumId, path?: a path from library.folders (for libraryFolder)}",
+            "{kind: all|recentlyAdded|album|recentlyDeleted|picks|missing|libraryFolder|hidden|sensitive, id?: albumId, path?: a path from library.folders (for libraryFolder)} — hidden needs Hidden unlocked (hidden.unlock; error kind `locked` otherwise)",
             always,
             |s, p| {
                 let kind = str_param(p, "kind").unwrap_or("all");
@@ -519,6 +519,9 @@ pub fn specs() -> Vec<CommandSpec> {
                     "recentlyDeleted" => LibrarySource::RecentlyDeleted,
                     "picks" => LibrarySource::Picks,
                     "missing" => LibrarySource::Missing,
+                    "hidden" if !s.hidden.unlocked() => return Err(crate::EngineError::Locked("Hidden is locked: unlock it first".into())),
+                    "hidden" => LibrarySource::Hidden,
+                    "sensitive" => LibrarySource::Sensitive,
                     "album" => {
                         let a = album_param(p, "id", "library.source")?;
                         if s.catalog.album(a).is_none_or(|a| a.folder) {
@@ -547,6 +550,7 @@ pub fn specs() -> Vec<CommandSpec> {
                     }
                     other => return Err(bad("library.source", format!("unknown source `{other}`"))),
                 };
+                s.relock_hidden_when_left();
                 s.keep_active_in_view();
                 Ok(json!({"count": s.visible().len()}))
             }

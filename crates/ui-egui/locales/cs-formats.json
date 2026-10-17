@@ -344,5 +344,6 @@
   "Changes found: {n}": "Changes found: {n}",
   "Look at the changes found in “{name}” first, or dismiss them": "Look at the changes found in “{name}” first, or dismiss them",
   "Rendered {ok} of {total} to DNG": "Rendered {ok} of {total} to DNG",
-  "“{name}” is still being scanned: wait for it, or stop it with ✕ on its row": "“{name}” is still being scanned: wait for it, or stop it with ✕ on its row"
+  "“{name}” is still being scanned: wait for it, or stop it with ✕ on its row": "“{name}” is still being scanned: wait for it, or stop it with ✕ on its row",
+  "{n} photos might be sensitive. Nothing is hidden until you choose.": "Fotografie, které mohou být citlivé: {n}. Nic se neskryje, dokud se nerozhodnete."
 }

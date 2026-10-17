@@ -251,6 +251,17 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             .map(|(l, v, e)| (l.to_string(), json!({"edited": v}), f.edited == e))
             .collect(),
     );
+    // hidden photos mixed in (asks for the password while Hidden is locked)
+    let showing = app.session.hidden.showing();
+    if app.session.source != lightcraft_engine::LibrarySource::Hidden {
+        ui.add_space(6.0);
+        if toggle(ui, "showHidden", showing, "Show Hidden", |p, r, c| paint(p, r, Icon::EyeOff, c)).clicked() {
+            let r = if showing { app.run("library.showHidden", json!({"on": false})) } else { crate::panels::dialogs::open_hidden(app, true) };
+            if let Err(e) = r {
+                app.toast(ui.ctx(), e);
+            }
+        }
+    }
 
     // metadata pickers
     let ui: &mut egui::Ui = if two_rows { &mut row2 } else { &mut row1 };

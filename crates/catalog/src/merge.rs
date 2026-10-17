@@ -100,6 +100,11 @@ fn merge_photo(m: &mut Catalog, out: &mut Outbox, sid: PhotoId, local: &Photo, r
     if label != server.label {
         apply(m, out, Op::SetLabel { id: sid, label });
     }
+    // (measured from "shown", so hidden on either side stays hidden)
+    let hidden = pick(&base.hidden, &server.hidden, &local.hidden, c);
+    if hidden != server.hidden {
+        apply(m, out, Op::SetHidden { id: sid, hidden });
+    }
     let develop = pick(&*base.develop, &*server.develop, &*local.develop, c);
     if develop != *server.develop {
         let edited = server.edited.clone().or_else(|| local.edited.clone());

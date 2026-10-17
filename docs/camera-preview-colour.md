@@ -97,7 +97,7 @@ CR3 uses the same colour gates and relative WB. Its sensor and JPEG proxies are 
 
 On the public CC0 EOS R100 / RF-S 18–45 mm sample, the measured framing scale was 0.968. Held-out edge agreement rose from 0.7291 to 0.9194, and the unchanged colour gates accepted the fit (held-out RMS 0.10625 → 0.07704). The corpus test asserts acceptance after decoding the sensor RAW, and synthetic tests cover nonlinear camera tone, known crop/translation and unrelated references. The matrix, tone and hue/saturation table are estimated from the file; no third-party camera matrix or decoder calibration source is copied.
 
-This is a per-file camera-look estimate, **not measured spectral calibration or Lightroom parity**. Camera local tone, picture styles, noise reduction and lens warps cannot all be reproduced by a global matrix/curve; same-aspect crops may evade the aspect check. Skin, mixed-light scenes and saturated highlights can still differ from a supplied JPEG. Broader Sony, Nikon and Canon model/lighting coverage, chart-based calibration, absolute WB and other manufacturers remain unverified. Rejected fits and other RAW formats retain their existing behaviour.
+CR3s of models with measured spectral matrices no longer use this fit: they start from the neutral look described in [Canon CR3: a neutral look instead of the camera JPEG](#canon-cr3-a-neutral-look-instead-of-the-camera-jpeg). This is a per-file camera-look estimate, **not measured spectral calibration or Lightroom parity**. Camera local tone, picture styles, noise reduction and lens warps cannot all be reproduced by a global matrix/curve; same-aspect crops may evade the aspect check. Skin, mixed-light scenes and saturated highlights can still differ from a supplied JPEG. Broader Sony, Nikon and Canon model/lighting coverage, chart-based calibration, absolute WB and other manufacturers remain unverified. Rejected fits and other RAW formats retain their existing behaviour.
 
 ### Sony ILCE-7RM6 (A7R VI)
 
@@ -163,7 +163,52 @@ The ARW decoder reads the setting from maker-note tag `0xb025` (ExifTool's Sony 
 
 Measured before → after (mean L* and CIE76 ΔE at 200 px): on the 24 ILCE-7CR photos with Lightroom references, the 8 with DRO on go from +6.4 L* (+4.4 to +10.5) to +0.8 L* (−0.4 to +1.9) against Lightroom's default, median ΔE 7.5 → 3.3; by Lightroom lightness band (L* 0–25, 25–50, 50–75, 75–100) they now differ from it by +2.3, +1.4, −0.8 and −3.0 L* (before +7.8, +9.4, +3.8, −0.8), like the 16 with DRO off (+2.5, −0.1, −2.0, −3.2), which render byte-identically. Of all 131 ILCE-7CR photos, the 56 fitted with DRO on now render 6.1 L* darker than their camera JPEGs on average (0.3 lighter before), as Lightroom renders the measured ones 5.7 L* darker; the 71 with DRO off are byte-identical. Of 116 CC0 Sony files from 100 bodies, 79 were shot with DRO on (71 of them Auto); the 57 changed of the 69 fitted ones render 2.1 L* darker on average (at most 10.8), the 12 others (six compacts, four ILCE-7M4 shots in Vivid, an ILCE-1 and an ILCE-7RM4, whose own curves are already darker) and all 35 DRO-off files are unchanged. The issue's ILCE-7M3 file goes from +0.8 to −6.5 L* against its camera JPEG. Applied to photos shot with DRO off, whose JPEG shows the camera's own curve, the rule would move the 68 fitted ILCE-7CR photos by −0.4 L* (median; at most −4.1) and 25 of 28 fitted CC0 ones by at most −1.8 L*; the exceptions are an ILCE-3500 (−4.7) and the cine bodies FX3 and FX30 (−7.2 and −5.1), whose picture profiles are not the Standard style.
 
-Picture styles other than Standard are lowered to the Standard curve too where it is darker; Lightroom ignores them as well. Nikon Active D-Lighting, Canon Auto Lighting Optimizer and Fujifilm D-Range settings are likely to have the same effect and are not handled yet. Render cache version 23 redraws thumbnails; smart previews built before keep the brightened tone curve in their header until rebuilt.
+Picture styles other than Standard are lowered to the Standard curve too where it is darker; Lightroom ignores them as well. Nikon Active D-Lighting and Fujifilm D-Range settings are likely to have the same effect and are not handled yet; Canon's Auto Lighting Optimizer is, for the CR3s of measured models (next section). Render cache version 23 redraws thumbnails; smart previews built before keep the brightened tone curve in their header until rebuilt.
+
+## Canon CR3: a neutral look instead of the camera JPEG
+
+A CR3's embedded JPEG shows what the camera was set to: the picture style, including custom style files loaded on the
+camera (film emulations), and Auto Lighting Optimizer, which lifts shadows. Lightroom ignores both, and so did nothing
+in LightCraft: the per-file fit copied them into the raw's starting look. Measured on 19 EOS R6 CR3s of one
+photographer (RF 24-105 mm F4 L; User Def. 3 holding the custom style "ProNeg-CiP" with ALO Standard, User Def. 2
+holding "Crowdak V3" with ALO Strong; ISO 100-1250) against Lightroom's default exports (Lightroom for iOS 11.6.10,
+Adobe Color, no edits, sRGB JPEG at 2048 px), compared at 160 px after registering Lightroom's lens-corrected framing
+(mean over photos):
+
+| Starting look | ΔL\* | chroma | p75 / p90 / p98 ΔL\* | ΔE00 (median) |
+|---|---|---|---|---|
+| per-file fit to the camera JPEG (before) | −1.8 (+5.7 to −8.6) | ×0.91 | −2.8 / −2.3 / −2.8 | 5.59 (5.32) |
+| camera JPEG itself | −1.9 | ×0.91 | −2.3 / −1.9 / −3.0 | 4.86 (4.62) |
+| spectral matrices, default tone map | −13.0 | ×0.83 | −21 / −20 / −16 | 13.21 (13.90) |
+| spectral matrices, neutral look (after) | −0.7 (median −0.4) | ×1.04 | −1.5 / −0.4 / +0.5 | 4.63 (4.64) |
+
+A CR3 of a model with measured spectral matrices (EOS R, RP, R5, R5 Mark II, R6, R6 Mark II, R10, 200D II)
+therefore no longer fits its JPEG: it starts from those matrices and LightCraft's neutral tone (`neutral_look` in
+`crates/engine/src/camera_preview.rs`). The curve raises scene luminance to a contrast power about grey and rolls it off
+to white, `t = 0.18 · (x · 2^e / 0.18)^c`, display `t / (1 + t)` with a soft black point (a smooth knee 0.004 wide), with
+exposure `e` = 1.494 EV and contrast `c` = 1.65.
+These two numbers were set by least squares against the median Lightroom brightness of the 19 photos per quarter stop
+of scene luminance: from 6 stops under grey to 3 over the curve stays within 1.9 L\* of it (a four-parameter form with
+a white point and a toe did no better than 1.7). Applied to luminance alone, a curve that steep leaves highlights too
+colourful (chroma against Lightroom ×1.76 above L\* 75) and midtones too dull (×0.76); applied per channel
+(`tone::channel_chroma`) it over-colours the shadows (×1.34). The chroma curve is therefore `0.926 · k^0.765` of the
+per-channel one `k`, which lands within 10% of Lightroom at each of the curve's eight nodes. Nothing of Adobe's was
+read: Lightroom's output was measured and four numbers chosen to match it.
+
+What remains is not tone. Hues: against Lightroom, yellows and sand render about 9° greener, reds about 10° and cyans
+7-14° off, while against Canon's own JPEGs of the CC0 corpus samples the spectral colour is within about 3° in every
+well-populated hue sector, so these are Adobe Color's own choices, not errors of the matrices; they are left alone.
+Corners: Lightroom applies its lens profile for RF lenses, and LightCraft has no lens data for them (a darker, vignetted
+frame edge). The CC0 corpus CR3s check that the neutral look reads as Canon's own rendering too (ΔE00 against each
+file's camera JPEG, per-file fit → neutral look, and ΔL\*): EOS R6 Standard 2.1 → 2.0 (+0.6 L\*), R5 Standard 2.2 → 2.7
+(−1.4), R Landscape 2.3 → 2.3 (+1.3).
+
+Unchanged: CR2s and CR3s of models without measured matrices keep the per-file fit (no Lightroom references for them
+yet); a monochrome picture style now renders in colour on these models, as in Lightroom; white balance is in Kelvin
+through the matrices as before. The look is a property of the decoded source, so no process version changes;
+`LOOK_VERSION` 11 rebuilds the smart previews of raws and `RENDER_CACHE_VERSION` 67 redraws renders. A sync server needs
+the new build and Rebuild all previews. Today's look (the camera JPEG's) is not offered as a profile yet: a Camera
+Matching profile needs the proxies to carry both looks.
 
 ## Spectral camera matrices and the order of precedence
 
@@ -180,14 +225,15 @@ vendor white-balance multipliers give through the same matrices. No number comes
 A raw starts from the first of these that is available (`camera_preview::starting_colour`):
 
 1. the file's own colour matrices (DNG);
-2. a camera profile for its model (bundled or local), with tone and chroma fitted to the file's JPEG;
-3. the file-local fit to its own JPEG described above;
-4. the model's spectral matrices, with LightCraft's default tone curve and no JPEG fit;
-5. the neutral fallback.
+2. for a Canon CR3 of a model with spectral matrices, those matrices and the neutral look (previous section);
+3. a camera profile for its model (bundled or local), with tone and chroma fitted to the file's JPEG;
+4. the file-local fit to its own JPEG described above;
+5. the model's spectral matrices, with LightCraft's default tone curve and no JPEG fit;
+6. the neutral fallback.
 
-When the file's JPEG is black and white, step 2 fits the tone curve alone with the profile's colour; without a profile, or when that fit fails, 4 and 5 take the tone curve fitted to it (see the black-and-white JPEG paragraph above).
+When the file's JPEG is black and white, step 3 fits the tone curve alone with the profile's colour; without a profile, or when that fit fails, 5 and 6 take the tone curve fitted to it (see the black-and-white JPEG paragraph above).
 
-The spectral matrices only replace the neutral fallback: a photo whose JPEG fit is accepted (with or without a
+Apart from step 2, the spectral matrices only replace the neutral fallback: a photo whose JPEG fit is accepted (with or without a
 profile) renders exactly as before, and a covered model takes its spectral matrices only when that fit fails the
 gates or the file has no usable JPEG. White balance of a covered model is in Kelvin through its matrices whichever
 look it got (above, issue #730), and so is that of a model whose presets give the scale; for every other raw

@@ -22,6 +22,11 @@ pub enum LibrarySource {
     /// A folder the library's photos were imported from ([`crate::Session::library_folder`]),
     /// and the folders inside it (`library.folders`).
     LibraryFolder,
+    /// The hidden photos ([`crate::hidden`]): only while Hidden is unlocked.
+    Hidden,
+    /// The photos the sensitive-content model flagged ([`crate::vision`]), most likely first: filled in by the
+    /// session (derived data, not a filter of the catalog).
+    Sensitive,
 }
 
 /// The folder a [`LibrarySource::Folder`] view shows.
@@ -51,6 +56,9 @@ impl LibrarySource {
             LibrarySource::Album(a) => f.album = Some(*a),
             LibrarySource::RecentlyDeleted => f.deleted = true,
             LibrarySource::Picks => f.flag = Some(lightcraft_catalog::Flag::Pick),
+            LibrarySource::Hidden => f.hidden = lightcraft_catalog::HiddenMode::Only,
+            // (the photos themselves are filled in by the session)
+            LibrarySource::Sensitive => {}
             // the folder itself is filled in by the session (it holds the path)
             LibrarySource::Folder | LibrarySource::Missing | LibrarySource::LibraryFolder => {}
         }
@@ -67,6 +75,8 @@ impl LibrarySource {
             LibrarySource::Folder => "Folder".into(),
             LibrarySource::LibraryFolder => "Folder".into(),
             LibrarySource::Missing => "Missing Photos".into(),
+            LibrarySource::Hidden => "Hidden".into(),
+            LibrarySource::Sensitive => "Possibly Sensitive".into(),
         }
     }
 }

@@ -1,6 +1,6 @@
 # RAW parity: cameras, formats, demosaic, colour and lens profiles
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-16 · **Change:** minor (DNG tone curves keep their colour; integration batch 36: 515 models verified after the CC0 per-model checks; Epson ERF and Mamiya MEF decode; measured Nikon image areas; Apple ProRAW: gain table map on by default) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6 (Camera Raw 18.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-17 · **Change:** minor (Canon CR3s of measured models start from a neutral look tuned to Lightroom's brightness; DNG tone curves keep their colour; integration batch 36: 515 models verified after the CC0 per-model checks; Epson ERF and Mamiya MEF decode; measured Nikon image areas; Apple ProRAW: gain table map on by default) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6 (Camera Raw 18.7)
 
 Raw processing is the deepest single dimension of Lightroom parity: a photographer whose camera
 does not decode, or decodes with the wrong colour, cannot switch. This document measures it model by
@@ -215,7 +215,7 @@ sample files. A pointer for contributors, not legal advice.
 
 | Item | Adobe | LightCraft |
 |---|---|---|
-| Default profile per model | Adobe Standard for every model (1,500 profile names in the bundle) | the DNG's own matrices; else a pooled profile (**5 bundled**: ILCA-99M2, ILCE-7CR, ILCE-7M4, X-H2S, X-T4); else a guarded per-file fit to the camera's embedded JPEG; else spectral matrices (**52 models**, rawtoaces-data); else a neutral matrix |
+| Default profile per model | Adobe Standard for every model (1,500 profile names in the bundle) | the DNG's own matrices; for a CR3 of the 8 Canon models with spectral matrices, those and a neutral look tuned to Lightroom's brightness (no fit to the camera JPEG's picture style); else a pooled profile (**5 bundled**: ILCA-99M2, ILCE-7CR, ILCE-7M4, X-H2S, X-T4); else a guarded per-file fit to the camera's embedded JPEG; else spectral matrices (**52 models**, rawtoaces-data); else a neutral matrix |
 | Camera Matching looks | 481 models (plus phone-maker looks) | none (the per-file JPEG fit imitates the camera's own look) |
 | Creative profiles | Adobe Color, Portrait, Landscape, Vivid, Monochrome… | our own looks (Color, Neutral, Vivid, Landscape, Portrait, Monochrome) |
 | DCP / dual-illuminant model | ✅ | dual-illuminant DNG colour (ColorMatrix / ForwardMatrix 1-2, CameraCalibration, AnalogBalance), HueSatMap, LookTable, ProfileToneCurve; external `.dcp` never loaded (clean-room); ProfileToneCurve renders with the colour of a per-channel curve (`tone::channel_chroma`): iPhone 17 Pro ProRAW mean chroma 9.4 → 12.6 against Apple's preview 12.7, and 10.6 → 15.8 against 17.4, lightness unchanged |
@@ -227,7 +227,9 @@ sample files. A pointer for contributors, not legal advice.
   bodies, median ΔE 5.1, ΔL\* +0.2; rejected fits fall back to a neutral matrix at median ΔE 18.5,
   ΔL\* −11, chroma ×0.39. RW2 140 of 174 files accepted, median 5.0. NEF 13 of 13, 2.9–7.8. RAF 23 of
   24, pooled X-H2S 1.62 / X-T4 2.34. SRW 2.2–7.6.
-- Against Lightroom itself (few): Sony DRO median ΔE76 7.5 → 3.3; Olympus E-1 vs Lightroom Classic
+- Against Lightroom itself (few): Canon EOS R6 CR3s with custom picture styles and Auto Lighting Optimizer (19
+  photos, Lightroom for iOS default exports): mean ΔE00 5.59 → 4.63, ΔL\* −1.8 → −0.7, chroma ×0.91 → ×1.04
+  (neutral look, `camera-preview-colour.md`); Sony DRO median ΔE76 7.5 → 3.3; Olympus E-1 vs Lightroom Classic
   ΔE00 11.25 → 8.30; ProRAW with its gain map ΔE00 19 (the map is on by default anyway: without it, backlit iPhone 17 Pro ProRAWs render far darker than the iPhone shows them). No measurement against
   Adobe Standard across models exists.
 - User evidence: 33 open issues about raw colour or rendering (wrong colours, dark, flat, green,
@@ -297,6 +299,7 @@ Beyond decoding:
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-17 | minor | Canon CR3s of the 8 models with spectral matrices start from those matrices and a neutral look (two-parameter tone curve set to Lightroom's median brightness, softened per-channel chroma) instead of a fit to the camera JPEG's picture style and Auto Lighting Optimizer: 19 EOS R6 photos against Lightroom ΔE00 5.59 → 4.63; colour score unchanged |
 | 2026-10-14 | minor | Camera-coverage sweep (#1327): 30 models verified on 40 CC0 files (`coverage_sweep_corpus.rs`, `coverage-sweep.tsv`; `docs/raw/coverage.py` 515 → 545 verified rows); the counts above are not re-measured here. Sensor verification does not establish colour parity (#1277) |
 | 2026-10-14 | minor | 21 Sony and Leica models verified (one CC0 raw.pixls.us file each, pinned; `sony_leica_corpus.rs`): 258 verified, 920 unverified; Leica on a verified body 21% → 72%, Sony 91% → 92%, use-weighted 85% and 43% |
 | 2026-10-14 | minor | 17 uncompressed Olympus and Samsung models verified on one CC0 file each (`olympus_samsung_corpus.rs`): 254 verified, 932 unverified, 224 preview; OM / Olympus 3% → 6% (5% on verified bodies); use-weighted 85% and 42% unchanged; duplicated summary rows from a merge removed |

@@ -20,7 +20,7 @@
 //!
 //! Vectors are filed by content hash, from a neutral (unedited) rendering of the mini preview, in
 //! `<data>/users/<name>/search/<model>.bin`: derived data, safe to delete. The model is not part
-//! of LightCraft: an admin installs it from the admin page (Search) or with `lightcraft-server
+//! of LightCraft: an admin installs it from the admin page (Processing) or with `lightcraft-server
 //! model download --accept-licences`, and can turn it off again ([`crate::switch`]; `installed` is
 //! false while it is off). It loads on first use and unloads when idle (~1.5 GB while loaded).
 //! Until then every route says so instead of failing.
@@ -114,11 +114,15 @@ pub struct Search {
     problems: Mutex<HashMap<String, String>>,
     /// Whether an admin turned search on, and the model download they started ([`switch`]).
     pub(crate) switch: Switch,
+    /// Checking the photos for sensitive content ([`crate::sensitive`]).
+    pub(crate) sensitive: crate::sensitive::Sensitive,
 }
 
 impl Search {
     pub fn new(dir: PathBuf, injected: Option<Arc<dyn Embedder>>) -> Search {
+        let sensitive = crate::sensitive::Sensitive::new(&dir);
         Search {
+            sensitive,
             dir,
             injected,
             injected_reader: None,
@@ -146,6 +150,32 @@ impl Search {
     pub fn with_data(mut self, data: &Path) -> Search {
         self.switch = Switch::new(data);
         self
+    }
+
+    /// Checks photos for sensitive content with `classifier` instead of the model from the model folder (tests).
+    pub fn with_classifier(mut self, classifier: Option<Arc<dyn lightcraft_vision::Classifier>>) -> Search {
+        self.sensitive = self.sensitive.with_classifier(classifier);
+        self
+    }
+
+    /// Whether the server checks photos for sensitive content now: the model is in place and an admin has
+    /// not turned it off.
+    pub fn sensitive_installed(&self) -> bool {
+        self.sensitive.files_installed() && self.switch.sensitive_enabled()
+    }
+
+    /// Turn checking for sensitive content on or off for every device (the scores are kept).
+    pub fn set_sensitive_enabled(&self, on: bool) -> Result<(), String> {
+        self.switch.set_sensitive_enabled(on)?;
+        if !on {
+            self.sensitive.unload();
+        }
+        Ok(())
+    }
+
+    /// The server is shutting down: work stops at the next photo.
+    pub(crate) fn stopping(&self) -> bool {
+        self.stop.load(Ordering::SeqCst)
     }
 
     /// Finds faces with `finder` instead of YuNet and SFace from the model folder (tests).
@@ -374,6 +404,7 @@ impl Search {
             Part::Search => self.files_installed(),
             Part::Text => self.text_files_installed(),
             Part::Faces => self.faces_installed(),
+            Part::Sensitive => self.sensitive.files_installed(),
         };
         if there {
             return Ok(false);
@@ -389,7 +420,7 @@ impl Search {
         }
     }
 
-    fn touch(&self) {
+    pub(crate) fn touch(&self) {
         *lock(&self.used) = Some(Instant::now());
     }
 
@@ -471,6 +502,9 @@ impl Search {
         if !self.switch.text_enabled() {
             self.unload_text();
         }
+        if !self.switch.sensitive_enabled() {
+            self.sensitive.unload();
+        }
         let idle = lock(&self.used).is_some_and(|t| t.elapsed() >= IDLE_UNLOAD);
         if idle {
             // (a request holding an index keeps it until it is done)
@@ -486,13 +520,14 @@ impl Search {
                 log::info!("the face models were unloaded after {} minutes without use", IDLE_UNLOAD.as_secs() / 60);
             }
             lock(&self.faces).clear();
+            self.sensitive.unload();
             *lock(&self.used) = None;
         }
     }
 }
 
 /// Distinct photos of `lib` that have a content hash, by key.
-fn hashed(lib: &UserLib) -> Vec<(Key, Arc<Photo>)> {
+pub(crate) fn hashed(lib: &UserLib) -> Vec<(Key, Arc<Photo>)> {
     let mut seen = HashSet::new();
     lib.core
         .catalog()
@@ -564,6 +599,18 @@ pub(crate) fn run(st: &Arc<State>) {
                         }
                     }
                     Err(e) => report(format!("{user}:text"), "text index", Err(e)),
+                }
+            }
+            if v.sensitive_installed() && v.switch.may_run(Part::Sensitive) && !v.stop.load(Ordering::SeqCst) {
+                v.switch.working(Some((Part::Sensitive, &user)));
+                match crate::sensitive::check_user(st, &user) {
+                    Ok(more) => {
+                        lock(&v.problems).remove(&format!("{user}:sensitive"));
+                        if more {
+                            v.wake();
+                        }
+                    }
+                    Err(e) => report(format!("{user}:sensitive"), "sensitive-content scores", Err(e)),
                 }
             }
             v.switch.working(None);
@@ -816,6 +863,7 @@ pub(crate) fn problem(st: &State, part: Part, user: &str) -> Option<String> {
         Part::Search => user.to_string(),
         Part::Text => format!("{user}:text"),
         Part::Faces => format!("{user}:faces"),
+        Part::Sensitive => format!("{user}:sensitive"),
     };
     lock(&st.vision.problems).get(&key).cloned()
 }
@@ -827,6 +875,7 @@ pub(crate) fn failed(st: &State, part: Part, user: &str) -> usize {
         Part::Search => &v.failed,
         Part::Text => &v.failed_text,
         Part::Faces => &v.failed_faces,
+        Part::Sensitive => v.sensitive.failed(),
     };
     lock(set).iter().filter(|(u, _)| u == user).count()
 }
@@ -880,6 +929,13 @@ pub(crate) fn status(st: &State, l: &Mutex<UserLib>, user: &str) -> Resp {
                 "engine": v.engine(),
                 "indexed": read,
                 "problem": lock(&v.problems).get(&format!("{user}:text")),
+            },
+            // (checking for sensitive content: whether this server does, and how far it is)
+            "sensitive": {
+                "enabled": v.sensitive_installed(),
+                "engine": v.sensitive.engine(),
+                "checked": v.sensitive.index(&st.data, user, false).ok().flatten().map_or(0, |ix| lock(&ix).len()),
+                "problem": lock(&v.problems).get(&format!("{user}:sensitive")),
             },
             // (finding people: whether an admin turned it on for this user, and how far it is)
             "faces": {
@@ -1198,6 +1254,24 @@ pub fn download_face_models(dir: &Path, mirrors_file: Option<&Path>) -> Result<(
         }
     };
     for (files, mirrors, to) in models::face_downloads(&dir.join(lightcraft_engine::vision::FACES_DIR), env.as_deref(), mirrors_file) {
+        models::download(files, &mirrors, &to, &Options::default(), &cancel, &mut report).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// `lightcraft-server model download --sensitive`: fetches the sensitive-content model into `<dir>/nsfw`.
+pub fn download_sensitive_model(dir: &Path, mirrors_file: Option<&Path>) -> Result<(), String> {
+    use lightcraft_vision::models::{self, Options, Progress};
+    let env = std::env::var(models::MIRRORS_ENV).ok();
+    let cancel = AtomicBool::new(false);
+    let mut last = Instant::now() - Duration::from_secs(10);
+    let mut report = |p: &Progress| {
+        if last.elapsed() >= Duration::from_secs(2) {
+            last = Instant::now();
+            eprintln!("{}: {:.1} / {:.1} MB", p.file, p.done as f64 / 1e6, p.total as f64 / 1e6);
+        }
+    };
+    for (files, mirrors, to) in models::nsfw_downloads(&dir.join(lightcraft_engine::vision::SENSITIVE_DIR), env.as_deref(), mirrors_file) {
         models::download(files, &mirrors, &to, &Options::default(), &cancel, &mut report).map_err(|e| e.to_string())?;
     }
     Ok(())

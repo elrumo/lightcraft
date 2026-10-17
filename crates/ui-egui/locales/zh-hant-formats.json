@@ -344,5 +344,6 @@
   "Changes found: {n}": "找到的變更：{n}",
   "“{name}” is still being scanned: wait for it, or stop it with ✕ on its row": "「{name}」仍在掃描：請等待完成，或用其所在列的 ✕ 停止",
   "Look at the changes found in “{name}” first, or dismiss them": "請先檢視在「{name}」中找到的變更，或將其忽略",
-  "Rendered {ok} of {total} to DNG": "已將 {total} 張中的 {ok} 張渲染為 DNG"
+  "Rendered {ok} of {total} to DNG": "已將 {total} 張中的 {ok} 張渲染為 DNG",
+  "{n} photos might be sensitive. Nothing is hidden until you choose.": "{n} 張照片可能敏感。在您選擇之前，不會隱藏任何內容。"
 }

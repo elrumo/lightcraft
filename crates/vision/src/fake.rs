@@ -101,6 +101,26 @@ impl crate::TextReader for FakeReader {
     }
 }
 
+/// The fake sensitive-content classifier's engine id.
+pub const FAKE_CLASSIFIER_ID: &str = "fake-nsfw";
+
+/// A stand-in for the sensitive-content model: a photo whose average is mostly red is sensitive (0.9),
+/// any other isn't (0.1). Deterministic, instant, no files.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct FakeClassifier;
+
+impl crate::sensitive::Classifier for FakeClassifier {
+    fn engine(&self) -> &str {
+        FAKE_CLASSIFIER_ID
+    }
+    fn score(&self, img: &Rgba8) -> Result<f32, Error> {
+        let n = img.data.len().max(1) as f64;
+        let mean = |c: usize| img.data.iter().map(|p| f64::from(p.get(c).copied().unwrap_or(0))).sum::<f64>() / n;
+        let (r, g, b) = (mean(0), mean(1), mean(2));
+        Ok(if r > 1.4 * g.max(b) && r > 90.0 { 0.9 } else { 0.1 })
+    }
+}
+
 pub const FAKE_FACES_ID: &str = "fake-faces";
 
 /// A stand-in for the face finder: the left and right halves of a photo each "have a face" when

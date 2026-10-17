@@ -8,7 +8,8 @@ use serde_json::{Value, json};
 
 use super::{CommandSpec, always, bad, cmd, str_param};
 use crate::vision::{
-    DEFAULT_LIMIT, FACE_BYTES, FACE_LICENSES, LICENSE_NAME, LICENSE_URL, MODEL_BYTES, TEXT_BYTES, TEXT_LICENSE_NAME, TEXT_LICENSE_URL,
+    DEFAULT_LIMIT, FACE_BYTES, FACE_LICENSES, LICENSE_NAME, LICENSE_URL, MODEL_BYTES, SENSITIVE_BYTES, SENSITIVE_LICENSE_NAME, SENSITIVE_LICENSE_URL,
+    TEXT_BYTES, TEXT_LICENSE_NAME, TEXT_LICENSE_URL,
 };
 
 fn ids_param(p: &Value) -> Option<Vec<PhotoId>> {
@@ -210,6 +211,92 @@ pub fn specs() -> Vec<CommandSpec> {
             "{} — stop the face models download (what has arrived is kept, and a new download resumes from it) → {cancelled}",
             always,
             |s, _| Ok(json!({"cancelled": s.vision.cancel_faces_download()}))
+        ),
+        cmd!(
+            "vision.setSensitive",
+            "Check Photos for Sensitive Content",
+            [],
+            None,
+            "{on: bool} — whether photos are checked for sensitive content (nudity and the like) when they are indexed (vision.index), and the ones that might be listed (library.source {kind: sensitive}) and blurred in the grid (library.setBlurSensitive). Nothing is hidden by it. Off until turned on, and only after the user agreed to it (the model is a download of its own, vision.sensitive.download); saved with the library → {enabled}",
+            always,
+            |s, p| {
+                let on = p.get("on").and_then(Value::as_bool).ok_or_else(|| bad("vision.setSensitive", "missing `on`"))?;
+                s.vision.sensitive = on;
+                s.save_prefs()?;
+                Ok(json!({"enabled": on}))
+            }
+        ),
+        cmd!(
+            query "vision.sensitive.download",
+            "Download Sensitive-Content Model",
+            [],
+            None,
+            "{acknowledged: true} — download the model that checks photos for sensitive content (Falconsai's NSFW image classifier, about 87 MB, Apache License 2.0, not LightCraft's) in the background; only after the user agreed to it. Watch vision.model.status → sensitive.download; vision.sensitive.cancel stops it (it resumes later) → {started, installed, downloading}",
+            always,
+            |s, p| {
+                let c = "vision.sensitive.download";
+                if p.get("acknowledged").and_then(Value::as_bool) != Some(true) {
+                    return Err(bad(
+                        c,
+                        format!(
+                            "the sensitive-content model is a {:.0} MB download under the {SENSITIVE_LICENSE_NAME} ({SENSITIVE_LICENSE_URL}): pass `acknowledged: true` once the user has agreed to download it",
+                            SENSITIVE_BYTES as f64 / 1e6
+                        ),
+                    ));
+                }
+                let started = s.vision.start_sensitive_download(&s.activity).map_err(|e| bad(c, e))?;
+                Ok(json!({"started": started, "installed": s.vision.sensitive_installed(), "downloading": s.vision.sensitive_download_status()["running"]}))
+            }
+        ),
+        cmd!(
+            query "vision.sensitive.cancel",
+            "Cancel Sensitive-Content Model Download",
+            [],
+            None,
+            "{} — stop the sensitive-content model download (what has arrived is kept, and a new download resumes from it) → {cancelled}",
+            always,
+            |s, _| Ok(json!({"cancelled": s.vision.cancel_sensitive_download()}))
+        ),
+        cmd!(
+            query "vision.sensitive.list",
+            "List Possibly Sensitive Photos",
+            [],
+            None,
+            "{wait?: bool} — the photos the sensitive-content model flagged (here, or on the sync server when it checks them; `wait` asks the server now), most likely first → {photos: [{id, score}], min}",
+            always,
+            |s, p| {
+                if p.get("wait").and_then(Value::as_bool) == Some(true) {
+                    s.vision_fetch_sensitive(true);
+                }
+                let photos: Vec<Value> = s.sensitive_photos().iter().map(|(id, score)| json!({"id": id.0, "score": score})).collect();
+                Ok(json!({"photos": photos, "min": crate::vision::SENSITIVE_MIN}))
+            }
+        ),
+        cmd!(
+            "library.hideSensitive",
+            "Hide All Possibly Sensitive Photos",
+            [],
+            None,
+            "{} — hide every photo the sensitive-content model flagged (one undo step) → {changed}",
+            always,
+            |s, _| {
+                let ids: Vec<PhotoId> = s.sensitive_photos().iter().map(|(id, _)| *id).collect();
+                Ok(json!({"changed": super::hidden::set_hidden(s, &ids, true)?}))
+            }
+        ),
+        cmd!(
+            "library.setBlurSensitive",
+            "Blur Sensitive Photos",
+            [],
+            None,
+            "{on: bool} — blur the photos the sensitive-content model flagged in the grid and filmstrip (on by default; synced with the library) → {enabled}",
+            always,
+            |s, p| {
+                let on = p.get("on").and_then(Value::as_bool).ok_or_else(|| bad("library.setBlurSensitive", "missing `on`"))?;
+                s.blur_sensitive = on;
+                s.save_prefs()?;
+                Ok(json!({"enabled": on}))
+            }
         ),
         cmd!(
             query "people.list",

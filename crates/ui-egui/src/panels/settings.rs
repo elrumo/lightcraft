@@ -867,6 +867,23 @@ fn general_tab(app: &mut LightcraftApp, ui: &mut egui::Ui, t: &Tokens) {
             }
         });
     }
+    heading(ui, t, crate::i18n::tr("Hidden"));
+    row(ui, t, "", |ui| {
+        let label = if app.session.hidden.has_password() { "Change Hidden Password…" } else { "Set Hidden Password…" };
+        if action(ui, t, "settingsHiddenPassword", label, true, false) {
+            crate::panels::dialogs::change_hidden_password(app);
+        }
+    });
+    hint(
+        ui,
+        t,
+        crate::i18n::tr("The password that opens the Hidden album on every device of this library (Face ID or Touch ID on an iPhone, iPad or Mac)."),
+    );
+    // (the photos the sensitive-content model flagged, Settings ▸ AI Models)
+    let mut blur = app.session.blur_sensitive;
+    if ui.checkbox(&mut blur, crate::i18n::tr("Blur photos that might be sensitive in the grid")).changed() {
+        let _ = app.run("library.setBlurSensitive", json!({"on": blur}));
+    }
     heading(ui, t, crate::i18n::tr("Startup"));
     pick(
         ui,

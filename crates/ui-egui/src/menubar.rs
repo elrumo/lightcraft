@@ -233,6 +233,8 @@ const LAYOUT: &[(&str, &[&str])] = &[
             "photo.makeAvailableOffline",
             "sync.downloadOriginals",
             "---",
+            "photo.hide",
+            "photo.unhide",
             "album.removePhotos",
             "photo.delete",
             "photo.restore",
@@ -306,6 +308,12 @@ pub(crate) fn selection_deleted(app: &LightcraftApp) -> bool {
     s.selection.ids.iter().copied().chain(s.selection.active).any(|id| s.catalog.photo(id).is_some_and(|p| p.deleted))
 }
 
+/// The selection includes a hidden photo (Unhide replaces Hide).
+pub(crate) fn selection_hidden(app: &LightcraftApp) -> bool {
+    let s = &app.session;
+    s.selection.ids.iter().copied().chain(s.selection.active).any(|id| s.catalog.photo(id).is_some_and(|p| p.hidden))
+}
+
 /// Items only some hosts have are left out of the others' menus (the web build's library backup);
 /// Restore and Delete Permanently replace Delete for photos in Recently Deleted.
 fn host_supports(app: &LightcraftApp, id: &str) -> bool {
@@ -321,6 +329,8 @@ fn host_supports(app: &LightcraftApp, id: &str) -> bool {
         "@Import from Device" => app.services.host_pick.is_none() || app.services.cameras.is_some(),
         "photo.restore" | "photo.deletePermanently" => selection_deleted(app),
         "photo.delete" => !selection_deleted(app),
+        "photo.hide" => !selection_hidden(app),
+        "photo.unhide" => selection_hidden(app),
         // only in an album that holds its photos (not a smart one); ⌫ there removes from the album, and
         // Delete Photo (⌘⌫) is the alternative
         "album.removePhotos" => in_normal_album(app) && !selection_deleted(app),

@@ -633,10 +633,12 @@ fn a_section_moves_up_and_down_from_its_menu() {
 #[test]
 fn recently_deleted_is_listed_with_my_photos() {
     let h = demo([1400.0, 1400.0], json!({"view": "photoGrid", "leftPanel": true}));
-    let (picks, deleted) = (widget(&h, "source:picks"), widget(&h, "source:recentlyDeleted"));
+    let (picks, deleted, hidden) = (widget(&h, "source:picks"), widget(&h, "source:recentlyDeleted"), widget(&h, "source:hidden"));
     assert_eq!(deleted.top(), picks.bottom(), "no gap: the same group");
+    // (Hidden is the group's last row)
+    assert_eq!(hidden.top(), deleted.bottom(), "Hidden right after it");
     let first = sections_drawn(&h).remove(0);
-    assert_eq!(header(&h, &first).top() - deleted.bottom(), 10.0, "the sections start below it");
+    assert_eq!(header(&h, &first).top() - hidden.bottom(), 10.0, "the sections start below the group");
 }
 
 /// An arrangement set through the control channel is checked: a wrong one is refused and leaves

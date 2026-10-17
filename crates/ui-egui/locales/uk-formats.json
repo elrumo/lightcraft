@@ -344,5 +344,6 @@
   "Changes found: {n}": "Знайдено змін: {n}",
   "“{name}” is still being scanned: wait for it, or stop it with ✕ on its row": "«{name}» ще переглядається: дочекайтеся завершення або зупиніть пошук кнопкою ✕ у його рядку",
   "Look at the changes found in “{name}” first, or dismiss them": "Спершу перегляньте зміни, знайдені в «{name}», або сховайте їх",
-  "Rendered {ok} of {total} to DNG": "У DNG відрендерено {ok} з {total}"
+  "Rendered {ok} of {total} to DNG": "У DNG відрендерено {ok} з {total}",
+  "{n} photos might be sensitive. Nothing is hidden until you choose.": "Фото, які можуть бути делікатними: {n}. Нічого не буде приховано без вашого рішення."
 }

@@ -467,7 +467,8 @@ pub(crate) fn album_items(st: &State, user: &str, album: u64) -> Result<(String,
         .photos
         .iter()
         .filter_map(|id| c.photo(*id))
-        .filter(|p| !p.deleted && !p.local)
+        // (a hidden photo is never on a shared album's page)
+        .filter(|p| !p.deleted && !p.local && !p.hidden)
         .map(|p| Item { id: p.id.0, name: p.file_name.clone(), date: p.date().to_string() })
         .collect();
     items.sort_by(|a, b| a.date.cmp(&b.date));
@@ -708,7 +709,7 @@ fn picture(st: &State, req: &Request, user: &str, share: &Share, photo: u64, kin
         let l = l.lock().unwrap_or_else(PoisonError::into_inner);
         let c = l.core.catalog();
         let in_album = c.album(AlbumId(share.album)).is_some_and(|a| !a.is_smart() && !a.folder && a.photos.iter().any(|p| p.0 == photo));
-        let Some(p) = c.photo(PhotoId(photo)).filter(|p| in_album && !p.deleted && !p.local) else {
+        let Some(p) = c.photo(PhotoId(photo)).filter(|p| in_album && !p.deleted && !p.local && !p.hidden) else {
             return error(404, "no such photo here");
         };
         let Some(hash) = lightcraft_catalog::sync::content_key(p) else { return error(404, "the server has no file for this photo") };

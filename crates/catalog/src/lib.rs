@@ -44,7 +44,7 @@ use lightcraft_develop::DevelopSettings;
 pub use local::{DEFAULT_FORGET_DAYS, ForgetPlan, folder_of};
 pub use lock::{LibraryLock, LockError, LockOwner};
 pub use model::*;
-pub use query::{DateGroup, Filter, Person, RatingOp, Sort, SortKey, mix64};
+pub use query::{DateGroup, Filter, HiddenMode, Person, RatingOp, Sort, SortKey, mix64};
 pub use revision::ViewRevision;
 pub use rules::{Match, Rule, RuleSet};
 use serde::{Deserialize, Serialize};
@@ -113,6 +113,11 @@ pub enum Op {
     SetDeleted {
         id: PhotoId,
         deleted: bool,
+    },
+    /// In "Hidden" (`true`) or shown with the rest of the library.
+    SetHidden {
+        id: PhotoId,
+        hidden: bool,
     },
     /// Browsed-only (`true`) or part of the library.
     SetLocal {
@@ -503,8 +508,16 @@ impl Catalog {
 
     /// Whether smart album `id` with `rules` (as [`Filter::prepare`]d) holds `p`.
     fn smart_album_has(&self, id: AlbumId, rules: &Filter, prepared: &query::Prepared, p: &Photo) -> bool {
-        // guarded: a smart album testing smart albums can't loop or recurse without end
-        !p.deleted && rules::smart_album_holds(id, p.id, || rules.matches_in(p, self, prepared))
+        // guarded: a smart album testing smart albums can't loop or recurse without end. Hidden photos belong
+        // to it too (the view's own filter decides whether they show; rules never set `hidden`)
+        !p.deleted
+            && rules::smart_album_holds(id, p.id, || {
+                if p.hidden {
+                    Filter { hidden: HiddenMode::Include, ..rules.clone() }.matches_in(p, self, prepared)
+                } else {
+                    rules.matches_in(p, self, prepared)
+                }
+            })
     }
 
     /// Whether smart album `from` tests `to`, directly or through the smart albums it tests (the
@@ -569,9 +582,9 @@ impl Catalog {
             // counted in place: no id list is built just for its length
             Some(Album { smart: Some(rules), .. }) => {
                 let prepared = rules.prepare();
-                self.photos.values().filter(|p| self.smart_album_has(id, rules, &prepared, p)).count()
+                self.photos.values().filter(|p| !p.hidden && self.smart_album_has(id, rules, &prepared, p)).count()
             }
-            Some(a) => a.photos.iter().filter(|p| self.photos.get(p).is_some_and(|p| !p.deleted)).count(),
+            Some(a) => a.photos.iter().filter(|p| self.photos.get(p).is_some_and(|p| !p.deleted && !p.hidden)).count(),
             None => 0,
         }
     }
@@ -699,6 +712,7 @@ impl Catalog {
             }
             // (a photo's place on the sync server decides the library-folder filter, so it counts for all too)
             Op::SetDeleted { .. }
+            | Op::SetHidden { .. }
             | Op::SetLocal { .. }
             | Op::SetContent { .. }
             | Op::SetEmbeddedLens { .. }
@@ -776,6 +790,10 @@ impl Catalog {
             Op::SetDeleted { id, deleted } => {
                 let p = self.photo_mut(id)?;
                 Op::SetDeleted { id, deleted: std::mem::replace(&mut p.deleted, deleted) }
+            }
+            Op::SetHidden { id, hidden } => {
+                let p = self.photo_mut(id)?;
+                Op::SetHidden { id, hidden: std::mem::replace(&mut p.hidden, hidden) }
             }
             Op::SetLocal { id, local } => {
                 let p = self.photo_mut(id)?;
@@ -1222,6 +1240,8 @@ mod tests_folder_records;
 mod tests_folders;
 #[cfg(test)]
 mod tests_format_version;
+#[cfg(test)]
+mod tests_hidden;
 #[cfg(test)]
 mod tests_index;
 #[cfg(test)]

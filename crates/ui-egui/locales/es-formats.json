@@ -344,5 +344,6 @@
   "Changes found: {n}": "Cambios encontrados: {n}",
   "“{name}” is still being scanned: wait for it, or stop it with ✕ on its row": "“{name}” aún se está analizando: espera a que termine o detenlo con ✕ en su fila",
   "Look at the changes found in “{name}” first, or dismiss them": "Revisa primero los cambios encontrados en “{name}” o descártalos",
-  "Rendered {ok} of {total} to DNG": "{ok} de {total} renderizadas a DNG"
+  "Rendered {ok} of {total} to DNG": "{ok} de {total} renderizadas a DNG",
+  "{n} photos might be sensitive. Nothing is hidden until you choose.": "{n} fotos podrían ser sensibles. No se oculta nada hasta que lo decidas."
 }

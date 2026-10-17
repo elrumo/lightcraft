@@ -216,7 +216,8 @@ impl Session {
     /// ones with faces that aren't confirmed yet (`all`: every one). Biggest first.
     pub fn people_list(&mut self, all: bool, limit: usize, wait: bool) -> Result<Value, String> {
         let clusters = self.people_clusters(wait)?;
-        let photos = self.vision_keys();
+        // (a face on a hidden photo isn't shown: a person only in hidden photos isn't listed)
+        let photos = self.vision_keys_shown();
         let mut out = Vec::new();
         let mut people = 0;
         for c in clusters.iter() {
@@ -232,8 +233,8 @@ impl Session {
             let mut ids: Vec<PhotoId> = c.members.iter().flat_map(|m| photos.get(&m.key).into_iter().flatten().copied()).collect();
             ids.sort();
             ids.dedup();
-            let Some(best) = c.members.first() else { continue };
-            let Some(cover) = photos.get(&best.key).and_then(|p| p.first()) else { continue };
+            // the largest face on a photo that is shown
+            let Some((best, cover)) = c.members.iter().find_map(|m| Some((m, photos.get(&m.key)?.first()?))) else { continue };
             out.push(json!({
                 "id": c.id,
                 "name": name,

@@ -291,6 +291,7 @@ impl Op {
             | Op::SetDevelop { id, .. }
             | Op::SetMeta { id, .. }
             | Op::SetDeleted { id, .. }
+            | Op::SetHidden { id, .. }
             | Op::SetLocal { id, .. }
             | Op::SetVersions { id, .. }
             | Op::SetHistory { id, .. }

@@ -1,5 +1,5 @@
-//! The server-wide switches for search by description and for reading the text in photos, and
-//! fetching the models of those two and of People from the admin page.
+//! The server-wide switches for search by description, reading the text in photos and checking photos
+//! for sensitive content, and fetching the models of those three and of People from the admin page.
 //!
 //! With a switch on and its model installed, every device that signs in to this server uses it
 //! without downloading anything. The switches are `<data>/search.json`
@@ -37,6 +37,8 @@ pub enum Part {
     Text,
     /// YuNet and SFace: the people in photos.
     Faces,
+    /// Falconsai's NSFW classifier: the photos that might be sensitive.
+    Sensitive,
 }
 
 impl Part {
@@ -50,11 +52,12 @@ impl Part {
             Part::Search => "search",
             Part::Text => "text",
             Part::Faces => "faces",
+            Part::Sensitive => "sensitive",
         }
     }
 
     pub fn from_key(k: &str) -> Option<Part> {
-        [Part::Search, Part::Text, Part::Faces].into_iter().find(|p| p.key() == k)
+        [Part::Search, Part::Text, Part::Faces, Part::Sensitive].into_iter().find(|p| p.key() == k)
     }
 
     fn what(self) -> &'static str {
@@ -62,6 +65,7 @@ impl Part {
             Part::Search => "the search model",
             Part::Text => "the text-reading models",
             Part::Faces => "the face models",
+            Part::Sensitive => "the sensitive-content model",
         }
     }
 }
@@ -101,14 +105,14 @@ struct Slot {
 pub struct Switch {
     /// `<data>/search.json` (`None`: no data folder, always on).
     file: Option<PathBuf>,
-    slots: [Slot; 3],
+    slots: [Slot; 4],
     /// Per part and user, the batches of photos the worker finished lately: when each ended, how
     /// many it had and the seconds it took (the newest is kept however old), for the admin page.
-    pace: Mutex<[HashMap<String, VecDeque<(Instant, usize, f64)>>; 3]>,
+    pace: Mutex<[HashMap<String, VecDeque<(Instant, usize, f64)>>; 4]>,
     /// The part and user the worker is on, and since when.
     now: Mutex<Option<(Part, String, Instant)>>,
     /// Per part and user, the photos still waiting for their previews when the worker last looked.
-    waiting: Mutex<[HashMap<String, usize>; 3]>,
+    waiting: Mutex<[HashMap<String, usize>; 4]>,
 }
 
 impl Switch {
@@ -250,6 +254,16 @@ impl Switch {
         self.set("text", on)
     }
 
+    /// Checking photos for sensitive content: on unless an admin turned it off (it needs its model first,
+    /// which only an admin downloads).
+    pub fn sensitive_enabled(&self) -> bool {
+        self.on("sensitive")
+    }
+
+    pub fn set_sensitive_enabled(&self, on: bool) -> Result<(), String> {
+        self.set("sensitive", on)
+    }
+
     pub fn status(&self, part: Part) -> Fetch {
         lock(&self.slots[part.slot()].fetch).clone()
     }
@@ -273,6 +287,7 @@ impl Switch {
             Part::Search => vec![(models::SIGLIP_FILES, models::mirrors(env, file), dir.to_path_buf())],
             Part::Text => models::ocr_downloads(&dir.join(lightcraft_engine::vision::TEXT_DIR), env, file),
             Part::Faces => models::face_downloads(&dir.join(lightcraft_engine::vision::FACES_DIR), env, file),
+            Part::Sensitive => models::nsfw_downloads(&dir.join(lightcraft_engine::vision::SENSITIVE_DIR), env, file),
         };
         let slot = &self.slots[part.slot()];
         {

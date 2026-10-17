@@ -23,7 +23,7 @@
 //!   ends: `{candidates}`, each with `inTrash`); `render.candidate {index, edge?}` — a candidate's
 //!   thumbnail (slot `import:<index>`); `import.start {paths | indexes, …library.import params,
 //!   albumName?}` — import in the background (answered when it ends: what it added).
-//! - `host.admin.signIn | call | signOut | session` — the sync server's admin API, on worker threads
+//! - `host.admin.signIn | call | search | signOut | session` — the sync server's admin API, on worker threads
 //!   ([`admin`]: the SwiftUI app's Server Administration screens).
 //! - `ui.reply {id, result | error}` — the frontend's answer to a `uiRequest` (automation).
 //!
@@ -727,6 +727,17 @@ impl Engine {
                 let event = p.get("event").and_then(Value::as_str).ok_or_else(|| bad("missing `event`"))?;
                 self.lifecycle(event).map_err(|e| bad(&e))?;
                 Ok(json!({}))
+            }
+            // The app checked who the person is itself (Face ID, Touch ID, the device passcode): only this host can
+            // say so, never the engine's commands (the egui apps unlock with the password, `hidden.unlock`).
+            "host.hidden.unlock" => {
+                self.session.hidden_unlock_by_device();
+                Ok(self.session.hidden_status())
+            }
+            // A forgotten password, after Face ID: the next unlock on a device without Face ID sets a new one.
+            "host.hidden.resetPassword" => {
+                self.session.hidden_reset_password().map_err(|e| ErrorBody::engine(&e))?;
+                Ok(self.session.hidden_status())
             }
             "ui.render" => {
                 let id = photo(p, &self.session).ok_or_else(|| bad("no photo"))?;
@@ -1530,6 +1541,8 @@ impl Engine {
             }
             "background" => {
                 self.in_front = false;
+                // Hidden locks while nobody can see the app
+                self.session.hidden_lock();
                 self.save();
                 // no GPU in the background, and a much smaller memory limit
                 lightcraft_engine::gpu::pause();
