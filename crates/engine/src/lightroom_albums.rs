@@ -152,8 +152,8 @@ impl<'a> Matcher<'a> {
         m
     }
 
-    /// 1. the same file; 2. the same byte size and name or capture second (the same bytes,
-    /// maybe renamed); 3. the same name, capture second and dimensions (a re-encoded copy).
+    /// Matches, in order: the same file; the same byte size and name or capture second (the same
+    /// bytes, maybe renamed); the same name, capture second and dimensions (a re-encoded copy).
     fn find(&self, photo: &PhotoIdentity) -> Found {
         if let Some(id) = photo.path.as_deref().and_then(|p| self.by_path.get(path_key(p).as_str())) {
             return Found::One(*id);
