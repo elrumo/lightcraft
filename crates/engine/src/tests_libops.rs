@@ -1025,6 +1025,7 @@ fn an_album_sorted_by_capture_date_is_in_date_order() {
     let album = s.execute("album.create", &json!({"name": "Trip"})).unwrap()["id"].as_u64().unwrap();
     s.execute("album.addPhotos", &json!({"id": album, "ids": ids})).unwrap();
     s.execute("library.source", &json!({"kind": "album", "id": album})).unwrap();
-    let keys: Vec<String> = s.execute("library.groups", &json!({})).unwrap().as_array().unwrap().iter().map(|g| g["key"].as_str().unwrap().to_string()).collect();
+    let keys: Vec<String> =
+        s.execute("library.groups", &json!({})).unwrap().as_array().unwrap().iter().map(|g| g["key"].as_str().unwrap().to_string()).collect();
     assert_eq!(keys, ["2026-03-02", "2026-03-01"]);
 }

@@ -9,6 +9,10 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+/// Reads up to `len` bytes of a file from byte `offset` (fewer at the end of the file); can be called from
+/// several threads at once ([`Store::ranged_reader`]).
+pub type RangeReader = Arc<dyn Fn(u64, usize) -> io::Result<Vec<u8>> + Send + Sync>;
+
 /// A flat namespace of named files with the few operations the journal needs.
 pub trait Store: Send {
     /// The whole file, or `None` if it doesn't exist.
@@ -21,6 +25,12 @@ pub trait Store: Send {
             let rest = all.get(from..).unwrap_or_default();
             rest.get(..len).unwrap_or(rest).to_vec()
         }))
+    }
+    /// A file's size and a reader of ranges of it that several threads can use at once, so that a big file
+    /// (the snapshot of a library of hundreds of thousands of photos) is read in pieces by the threads that
+    /// parse them rather than whole first. `None` (the default): the file is missing, or can only be read whole.
+    fn ranged_reader(&self, _name: &str) -> Option<(u64, RangeReader)> {
+        None
     }
     /// Replace a file atomically: after a crash either the old or the new content is visible,
     /// never a mix (native: write temp + fsync + rename + fsync directory).
@@ -92,6 +102,31 @@ fn create_staging(tmp: &std::path::Path) -> io::Result<std::fs::File> {
     std::fs::OpenOptions::new().write(true).create_new(true).open(tmp)
 }
 
+/// Up to `len` bytes of `file` from `offset`, without moving the file's position (threads share the handle).
+#[cfg(any(unix, windows))]
+fn read_at(file: &std::fs::File, offset: u64, len: usize) -> io::Result<Vec<u8>> {
+    #[cfg(unix)]
+    use std::os::unix::fs::FileExt;
+    #[cfg(windows)]
+    use std::os::windows::fs::FileExt;
+    let mut buf = vec![0u8; len];
+    let mut done = 0usize;
+    while done < len {
+        let to = buf.get_mut(done..).ok_or_else(|| io::Error::other("read past the buffer"))?;
+        let at = offset.checked_add(done as u64).ok_or_else(|| io::Error::other("read past the end of the offsets"))?;
+        #[cfg(unix)]
+        let n = file.read_at(to, at)?;
+        #[cfg(windows)]
+        let n = file.seek_read(to, at)?;
+        if n == 0 {
+            break;
+        }
+        done += n;
+    }
+    buf.truncate(done);
+    Ok(buf)
+}
+
 impl Store for FsStore {
     fn read(&mut self, name: &str) -> io::Result<Option<Vec<u8>>> {
         match std::fs::read(self.path(name)) {
@@ -112,6 +147,14 @@ impl Store for FsStore {
         let mut buf = Vec::new();
         f.take(len as u64).read_to_end(&mut buf)?;
         Ok(Some(buf))
+    }
+
+    #[cfg(any(unix, windows))]
+    fn ranged_reader(&self, name: &str) -> Option<(u64, RangeReader)> {
+        let file = std::fs::File::open(self.path(name)).ok()?;
+        let size = file.metadata().ok()?.len();
+        let read: RangeReader = Arc::new(move |offset, len| read_at(&file, offset, len));
+        Some((size, read))
     }
 
     fn write_atomic(&mut self, name: &str, data: &[u8]) -> io::Result<()> {

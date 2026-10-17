@@ -23,12 +23,13 @@ pub mod local;
 pub mod lock;
 pub mod merge;
 pub mod model;
+mod par;
 pub mod query;
 pub mod revision;
 pub mod rules;
 pub mod safe_file;
-mod snapload;
 pub mod search;
+mod snapload;
 pub mod stacks;
 pub mod store;
 pub mod sync;
@@ -1112,11 +1113,19 @@ impl Catalog {
     /// missing, not a folder or inside itself moves to the top level. Returns what was changed
     /// (nothing, for a catalog this build wrote).
     pub fn repair(&mut self) -> Vec<String> {
+        self.repair_with(true)
+    }
+
+    /// [`Catalog::repair`]; `photo_ids` says whether to check that every photo carries the id it is filed under
+    /// (a reader that has just done so while it read them says no: the pass touches every photo of a big library).
+    pub(crate) fn repair_with(&mut self, photo_ids: bool) -> Vec<String> {
         let mut changed = Vec::new();
-        for (id, p) in self.photos.iter_mut() {
-            if p.id != *id {
-                changed.push(format!("photo {} was filed as {}", p.id.0, id.0));
-                Arc::make_mut(p).id = *id;
+        if photo_ids {
+            for (id, p) in self.photos.iter_mut() {
+                if p.id != *id {
+                    changed.push(format!("photo {} was filed as {}", p.id.0, id.0));
+                    Arc::make_mut(p).id = *id;
+                }
             }
         }
         for (id, a) in self.albums.iter_mut() {

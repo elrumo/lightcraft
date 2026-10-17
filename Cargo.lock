@@ -3383,6 +3383,7 @@ dependencies = [
  "lightcraft-raw",
  "lightcraft-sysmem",
  "log",
+ "memchr",
  "proptest",
  "serde",
  "serde_json",

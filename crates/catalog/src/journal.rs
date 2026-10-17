@@ -388,15 +388,31 @@ pub(crate) struct SnapFile {
 }
 
 impl Journal {
+    /// The snapshot read by several threads in pieces ([`crate::snapload`]) and its catalog format, when the store
+    /// can read ranges, the snapshot is a big one of this build's format or older, and the pieces read well.
+    /// `None` for everything else, including a snapshot that is damaged or newer: [`Journal::open`] reads those whole,
+    /// and says what is wrong with them.
+    pub(crate) fn read_in_pieces(store: &dyn Store) -> Option<(SnapFile, u32)> {
+        let (size, read_at) = store.ranged_reader(SNAPSHOT)?;
+        let h = snap_header(&read_at(0, 256).ok()?).ok()?;
+        if h.format != FORMAT || h.version > VERSION {
+            return None;
+        }
+        Some((crate::snapload::read(size, &read_at)?, h.version))
+    }
+
     /// Open (or create) the catalog in `store`: load the snapshot, replay the log, repair a torn
     /// tail. Fails only if the snapshot itself is unreadable (then nothing is modified).
     pub fn open(mut store: Box<dyn Store>) -> Result<(Journal, Catalog, LoadReport)> {
         let mut report = LoadReport::default();
-        let snap = store.read(SNAPSHOT).map_err(io)?;
+        // a big snapshot is read in pieces by the threads that parse them; anything unusual about it, and it is read whole
+        let pieces = Self::read_in_pieces(store.as_ref());
+        let snap = if pieces.is_some() { None } else { store.read(SNAPSHOT).map_err(io)? };
         let log = store.read(LOG).map_err(io)?;
-        report.created = snap.is_none() && log.is_none();
-        let (mut catalog, snapshot_seq, snapshot_version) = match snap {
-            Some(bytes) => {
+        report.created = snap.is_none() && pieces.is_none() && log.is_none();
+        let loaded = match (pieces, snap) {
+            (Some((s, version)), _) => Some((s, version, false)),
+            (None, Some(bytes)) => {
                 // the header first: a newer snapshot may not parse as this version's catalog
                 let h = snap_header(&bytes).map_err(|e| CatalogError::Corrupt(format!("{SNAPSHOT}: {e}")))?;
                 if h.format != FORMAT {
@@ -405,16 +421,19 @@ impl Journal {
                 if h.version > VERSION {
                     return Err(newer(format!("{SNAPSHOT} is catalog format v{}", h.version)));
                 }
-                let s = match crate::snapload::read(&bytes) {
-                    Some(s) => s,
-                    None => serde_json::from_slice(&bytes).map_err(|e| CatalogError::Corrupt(format!("{SNAPSHOT}: {e}")))?,
-                };
+                let s: SnapFile = serde_json::from_slice(&bytes).map_err(|e| CatalogError::Corrupt(format!("{SNAPSHOT}: {e}")))?;
+                Some((s, h.version, true))
+            }
+            (None, None) => None,
+        };
+        let (mut catalog, snapshot_seq, snapshot_version) = match loaded {
+            Some((s, version, check_photo_ids)) => {
                 let mut catalog = s.catalog;
-                report.repaired = catalog.repair();
+                report.repaired = catalog.repair_with(check_photo_ids);
                 for r in &report.repaired {
                     log::warn!("{SNAPSHOT}: {r}");
                 }
-                (catalog, s.seq, Some(h.version))
+                (catalog, s.seq, Some(version))
             }
             None => (Catalog::new(), 0, None),
         };

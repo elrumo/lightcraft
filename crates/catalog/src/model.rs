@@ -247,6 +247,7 @@ pub struct Photo {
     pub flag: Flag,
     #[serde(default)]
     pub label: Option<ColorLabel>,
+    #[serde(deserialize_with = "crate::snapload::develop")]
     pub develop: Arc<DevelopSettings>,
     #[serde(default)]
     pub edited: Option<String>,

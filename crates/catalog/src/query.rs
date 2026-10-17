@@ -171,11 +171,11 @@ impl Sort {
             _ => date_key(p.edited.as_deref()),
         };
         if !matches!(self.key, SortKey::CaptureDate | SortKey::ImportDate | SortKey::EditDate) {
-            v.sort_unstable_by(|a, b| self.order(a, b));
+            crate::par::sort_by(v, |a, b| self.order(a, b));
             return;
         }
         let mut keyed: Vec<(DateKey, &Photo)> = v.iter().map(|p| (key(p), *p)).collect();
-        keyed.sort_unstable_by(|(ka, a), (kb, b)| match ka.cmp(kb) {
+        crate::par::sort_by(&mut keyed, |(ka, a), (kb, b)| match ka.cmp(kb) {
             std::cmp::Ordering::Equal => self.order(a, b),
             o if self.ascending => o,
             o => o.reverse(),
@@ -850,14 +850,24 @@ mod sort_photos_tests {
         let mut photos = Vec::new();
         for i in 0..400u64 {
             let name = format!("IMG_{:03}.jpg", (i * 7) % 50);
-            let mut p = Photo::new(PhotoId(i + 1), Source::Demo { scene: 0 }, &name, "JPEG", 10, 10, dates.get((i % 11) as usize).and_then(|d| d.as_deref()).unwrap_or(""));
+            let mut p = Photo::new(
+                PhotoId(i + 1),
+                Source::Demo { scene: 0 },
+                &name,
+                "JPEG",
+                10,
+                10,
+                dates.get((i % 11) as usize).and_then(|d| d.as_deref()).unwrap_or(""),
+            );
             p.captured = dates.get(((i * 3) % 11) as usize).cloned().flatten();
             p.edited = dates.get(((i * 5) % 11) as usize).cloned().flatten();
             p.rating = (i % 4) as u8;
             p.file_size = i % 9;
             photos.push(p);
         }
-        for key in [SortKey::CaptureDate, SortKey::ImportDate, SortKey::EditDate, SortKey::FileName, SortKey::Rating, SortKey::FileSize, SortKey::Random] {
+        for key in
+            [SortKey::CaptureDate, SortKey::ImportDate, SortKey::EditDate, SortKey::FileName, SortKey::Rating, SortKey::FileSize, SortKey::Random]
+        {
             for ascending in [true, false] {
                 let sort = Sort { key, ascending, group: crate::GroupBy::Auto, seed: 3 };
                 let mut fast: Vec<&Photo> = photos.iter().rev().collect();

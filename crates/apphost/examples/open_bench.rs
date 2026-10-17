@@ -4,8 +4,10 @@
 //! `cargo run --release -p lightcraft-apphost --example open_bench -- <library folder> [desktop|mobile]`
 //!
 //! Run it on a copy of a big library (`cp -c -R`, which costs no disk on APFS): opening writes to it
-//! (the lock, view.json, a snapshot when the format changed). `LIGHTCRAFT_PROFILE=1` adds the
-//! engine's own timings.
+//! (the lock, view.json, a snapshot when the format changed), and remove its `sync.*` files first, or
+//! the engine may talk to the library's sync server. `OPEN_BENCH_SESSION=1` first times the session
+//! alone, and the library view built from nothing three times. `LIGHTCRAFT_PROFILE=1` adds the engine's
+//! own timings.
 
 use std::time::{Duration, Instant};
 
@@ -31,6 +33,19 @@ fn main() {
     let tmp = std::env::temp_dir().join(format!("lc-open-bench-{}", std::process::id()));
     let config = OpenConfig { library: Some(library.clone()), tmp: Some(tmp.to_string_lossy().into()), profile, ..Default::default() };
 
+    if std::env::var_os("OPEN_BENCH_SESSION").is_some() {
+        let t = Instant::now();
+        let s = lightcraft_apphost::startup::open_session_or_err(Some(std::path::Path::new(library)));
+        println!("session only       {:7.0} ms  ({})", t.elapsed().as_secs_f64() * 1e3, s.as_ref().map_or(0, |s| s.catalog.len()));
+        if let Ok(mut s) = s {
+            for _ in 0..3 {
+                s.refresh_view();
+                let t = Instant::now();
+                let n = s.visible().len();
+                println!("  visible()        {:7.0} ms  ({n})", t.elapsed().as_secs_f64() * 1e3);
+            }
+        }
+    }
     let t0 = Instant::now();
     let (host, opened) = match Host::open(config) {
         Ok(h) => h,

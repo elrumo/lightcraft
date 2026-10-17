@@ -34,6 +34,15 @@ post-command policy into `apphost` (the extraction rule in `CLAUDE.md`).
 - **Persistence** (`crates/catalog/src/journal.rs`): an append-only journal of human-readable
   operations plus periodic snapshots, compacted in the background; torn appends and crashes are
   tested (`tests_torn_append.rs`, `tests_journal.rs`). A lock file guards against two writers.
+  **Opening a big library** (`snapload.rs`): a snapshot over 16 MB (tens of thousands of photos) is read
+  straight from the file by byte ranges on all cores: the photos map is cut at entry boundaries, each piece
+  is parsed on a worker, and develop settings that repeat inside a piece are compared as text and shared
+  rather than parsed again. Anything unexpected falls back to the plain `serde_json` read, which gives the
+  same catalog and the errors. A 194,000-photo library (708 MB snapshot) opened in 3.5 to 5.3 s on one
+  thread and peaked at 1.8 GB; it opens in about 0.9 s and peaks at 0.9 GB. The grid's list is built with a
+  fixed-size sort key per photo, sorted on all cores (`Sort::sort_photos`, `par.rs`), stack lookups use the catalog's own index, and
+  `cargo run --release -p lightcraft-apphost --example open_bench -- <library copy>` times the open and the
+  first screen's requests the way the SwiftUI app asks for them.
 - **Edits** are a `develop::Settings` value (every slider is a control spec with id, range and
   default), normalized to image coordinates so previews and exports match. Process versions
   (`docs/process-versions.md`) keep old edits rendering the same after a retune.
