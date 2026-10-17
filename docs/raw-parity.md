@@ -1,6 +1,6 @@
 # RAW parity: cameras, formats, demosaic, colour and lens profiles
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-17 · **Change:** minor (the camera JPEG's look of those CR3s stays on offer as the Camera Look profile; Canon CR3s of measured models start from a neutral look tuned to Lightroom's brightness; DNG tone curves keep their colour; integration batch 36: 515 models verified after the CC0 per-model checks; Epson ERF and Mamiya MEF decode; measured Nikon image areas; Apple ProRAW: gain table map on by default) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6 (Camera Raw 18.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-17 · **Change:** minor (the camera JPEG's look of those CR3s stays on offer as the Camera Look profile; EOS R6 neutral-look hue/saturation table fitted to Lightroom exports; Canon CR3s of measured models start from a neutral look tuned to Lightroom's brightness; DNG tone curves keep their colour; integration batch 36: 515 models verified after the CC0 per-model checks; Epson ERF and Mamiya MEF decode; measured Nikon image areas; Apple ProRAW: gain table map on by default) · **Target:** Adobe Lightroom Classic 15.5 / Lightroom 9.6 (Camera Raw 18.7)
 
 Raw processing is the deepest single dimension of Lightroom parity: a photographer whose camera
 does not decode, or decodes with the wrong colour, cannot switch. This document measures it model by
@@ -219,7 +219,8 @@ sample files. A pointer for contributors, not legal advice.
   24, pooled X-H2S 1.62 / X-T4 2.34. SRW 2.2–7.6.
 - Against Lightroom itself (few): Canon EOS R6 CR3s with custom picture styles and Auto Lighting Optimizer (19
   photos, Lightroom for iOS default exports): mean ΔE00 5.59 → 4.63, ΔL\* −1.8 → −0.7, chroma ×0.91 → ×1.04
-  (neutral look, `camera-preview-colour.md`); Sony DRO median ΔE76 7.5 → 3.3; Olympus E-1 vs Lightroom Classic
+  (neutral look, `camera-preview-colour.md`), 4.13 with the R6's hue/saturation table fitted to those exports
+  (held out by scene 5.72 → 5.40); Sony DRO median ΔE76 7.5 → 3.3; Olympus E-1 vs Lightroom Classic
   ΔE00 11.25 → 8.30; ProRAW with its gain map ΔE00 19 (the map is on by default anyway: without it, backlit iPhone 17 Pro ProRAWs render far darker than the iPhone shows them). No measurement against
   Adobe Standard across models exists.
 - User evidence: 33 open issues about raw colour or rendering (wrong colours, dark, flat, green,
@@ -290,6 +291,7 @@ Beyond decoding:
 | Date | Change | Summary |
 |---|---|---|
 | 2026-10-17 | minor | The look fitted to those CR3s' camera JPEGs stays on offer as the Camera Look profile (Camera Matching group): applied to the neutral decode at render time and carried by smart and sync previews |
+| 2026-10-17 | minor | The EOS R6's neutral look adds a hue/saturation table fitted by `lightcraft-cli calibrate --references` to Lightroom default exports of the maintainer's photos (maintainer decision): ΔE00 against Lightroom 4.63 → 4.13 on 19 photos, 5.72 → 5.40 held out; `calibrate` reads CR3 and CR2 too; colour score unchanged |
 | 2026-10-17 | minor | Canon CR3s of the 8 models with spectral matrices start from those matrices and a neutral look (two-parameter tone curve set to Lightroom's median brightness, softened per-channel chroma) instead of a fit to the camera JPEG's picture style and Auto Lighting Optimizer: 19 EOS R6 photos against Lightroom ΔE00 5.59 → 4.63; colour score unchanged |
 | 2026-10-14 | minor | Camera-coverage sweep (#1327): 30 models verified on 40 CC0 files (`coverage_sweep_corpus.rs`, `coverage-sweep.tsv`; `docs/raw/coverage.py` 515 → 545 verified rows); the counts above are not re-measured here. Sensor verification does not establish colour parity (#1277) |
 | 2026-10-14 | minor | 21 Sony and Leica models verified (one CC0 raw.pixls.us file each, pinned; `sony_leica_corpus.rs`): 258 verified, 920 unverified; Leica on a verified body 21% → 72%, Sony 91% → 92%, use-weighted 85% and 43% |
