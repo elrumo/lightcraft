@@ -1435,7 +1435,7 @@ const etaOf = (photos, perMinute) => 'About ' + dur(Math.max(1, Math.round((phot
 /** Whether the worker is at one kind of index, for the line with the dot: what it is on, and how long ago it last finished a photo. */
 function liveState(p, c) {
   if (!c.left || c.paused || !c.runsNow) return null;
-  const what = { sr: 'Describing ', tx: 'Reading the words in ', fc: 'Looking for faces in ' }[p] + (c.now ? c.now.user + "'s photos" : 'photos');
+  const what = { sr: 'Describing ', tx: 'Reading the words in ', fc: 'Looking for faces in ', sn: 'Checking ' }[p] + (c.now ? c.now.user + "'s photos" : 'photos');
   const last = c.lastSecs;
   const lastly = last === null ? '' : ' · last one ' + (last < 5 ? 'just now' : dur(last) + ' ago');
   // (each turn finishes a photo every few seconds: ten minutes on one without any means something hangs)
@@ -1512,7 +1512,7 @@ function userLines(p, w, done, total, c) {
   if (ready && going && w.perMinute) bits.push(etaOf(ready, w.perMinute) + ' (' + pace(w.perMinute) + ')');
   else if (ready && !w.problem && liveState(p, c)?.kind === 'on') bits.push('Working out the time left…');
   if (w.waiting) bits.push(n(w.waiting) + ' waiting for previews');
-  if (w.failed) bits.push(n(w.failed) + " couldn't be " + { sr: 'described', tx: 'read', fc: 'looked at' }[p]);
+  if (w.failed) bits.push(n(w.failed) + " couldn't be " + { sr: 'described', tx: 'read', fc: 'looked at', sn: 'checked' }[p]);
   const out = bits.length ? [el('p', { class: 'sub', title: w.failed ? 'Photos that could not be done are tried again when the server restarts.' : null }, bits.join(' · '))] : [];
   if (w.problem && left) out.push(el('p', { class: 'sub problem' }, w.problem.charAt(0).toUpperCase() + w.problem.slice(1)));
   return out;

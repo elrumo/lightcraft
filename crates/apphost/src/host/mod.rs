@@ -23,7 +23,7 @@
 //!   ends: `{candidates}`, each with `inTrash`); `render.candidate {index, edge?}` — a candidate's
 //!   thumbnail (slot `import:<index>`); `import.start {paths | indexes, …library.import params,
 //!   albumName?}` — import in the background (answered when it ends: what it added).
-//! - `host.admin.signIn | call | signOut | session` — the sync server's admin API, on worker threads
+//! - `host.admin.signIn | call | search | signOut | session` — the sync server's admin API, on worker threads
 //!   ([`admin`]: the SwiftUI app's Server Administration screens).
 //! - `ui.reply {id, result | error}` — the frontend's answer to a `uiRequest` (automation).
 //!

@@ -195,7 +195,7 @@ them: `--data` / `LIGHTCRAFT_DATA`, `--listen` / `LIGHTCRAFT_LISTEN`, and the do
 (`LIGHTCRAFT_DOMAIN` with the compose file). Its JSON API is under `/api/admin/` (`apps/lightcraft-server/src/admin.rs`).
 
 The SwiftUI iPhone / iPad app has the same console as screens: **Settings ▸ Server Administration** (sign-in or first-run
-setup, Overview, Users with their devices, shared links and library folders, Presets, Search & People, Limits, Storage &
+setup, Overview, Users with their devices, shared links and library folders, Presets, Processing, Limits, Storage &
 Clean Up). It
 calls the same API through the app's engine (`host.admin.*`, [ios-swift.md](ios-swift.md)) and asks for the admin
 password itself, since the Sync sign-in is a device's.
