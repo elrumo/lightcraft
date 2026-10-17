@@ -154,11 +154,12 @@ fn starting_colour_with(
             eprintln!("[profile] {:?} neutral look on spectral sensitivities: {} {}", raw.format, camera.make, camera.model);
         }
         let (xy, neutral) = start(raw);
+        let starting = neutral_look();
         let matched = match fitted {
-            Some(look) => camera_match(&neutral, &t, Some(look)),
-            None => camera_match(&neutral, &neutral, if black_and_white { monochrome(raw, &neutral) } else { None }),
+            Some(look) => camera_match((&neutral, starting.as_ref()), &t, Some(look)),
+            None => camera_match((&neutral, starting.as_ref()), &neutral, if black_and_white { monochrome(raw, &neutral) } else { None }),
         };
-        return (xy, neutral, neutral_look(), matched);
+        return (xy, neutral, starting, matched);
     }
     let (look, black_and_white) = fit(raw, &t);
     if let Some(look) = look {
@@ -179,27 +180,34 @@ fn starting_colour_with(
     (xy, t, look, None)
 }
 
-/// What turns the pixels `to` develops (`files::CameraColourModel`: `to.matrix · diag(to.wb)` and the baseline
-/// exposure) into the ones `from` with `look` on top develops: `look.matrix · from.matrix · diag(from.wb)`, the
-/// look's hue/saturation table, its tone curve (none: the default tone map). Same camera RGB in, so one 3×3 carries
-/// the colour change. `None` when `to`'s colour can't be inverted.
-fn camera_match(to: &CameraTransform, from: &CameraTransform, look: Option<CameraLook>) -> Option<CameraMatch> {
+/// What turns the pixels the starting look develops (`to` with the look `start` on top, as `files::CameraColourModel`
+/// applies them: `start.matrix · to.matrix · diag(to.wb)` and the baseline exposure, then `start`'s hue/saturation
+/// table) into the ones `from` with `look` on top develops: `start`'s table undone, then one 3×3 (same camera RGB in,
+/// so one matrix carries the change of matrices and white balance), `look`'s table and tone curve (none: the default
+/// tone map). `None` when the starting colour can't be inverted.
+fn camera_match(start: (&CameraTransform, Option<&CameraLook>), from: &CameraTransform, look: Option<CameraLook>) -> Option<CameraMatch> {
     let develops = |t: &CameraTransform, m: Mat3| {
         let gain = 2f64.powf(t.baseline_exposure);
         let [r, g, b] = t.wb.map(|w| f64::from(w) * gain);
         m.mul(&t.matrix).mul(&Mat3::diag(r, g, b))
     };
-    let matrix = develops(from, look.as_ref().map_or(Mat3::IDENTITY, |l| l.matrix)).mul(&develops(to, Mat3::IDENTITY).inverse()?);
+    let (to, starting) = start;
+    let undone = develops(to, starting.map_or(Mat3::IDENTITY, |l| l.matrix)).inverse()?;
+    let matrix = develops(from, look.as_ref().map_or(Mat3::IDENTITY, |l| l.matrix)).mul(&undone);
     let (hue_sat, tone) = look.map_or((None, None), |l| (l.hue_sat, Some(l.tone)));
-    CameraMatch { matrix, hue_sat, tone }.checked()
+    CameraMatch { start_hue_sat: starting.and_then(|l| l.hue_sat.clone()), matrix, hue_sat, tone }.checked()
 }
 
-/// `img`, linear Rec.2020 in a raw's starting look, in the camera's own look `m` (the Camera Matching profile): its
-/// matrix and hue/saturation table, as the decode applies a fitted look ([`crate::files::CameraColourModel::apply`]).
+/// `img`, linear Rec.2020 in a raw's starting look, in the camera's own look `m` (the Camera Matching profile): the
+/// starting look's table undone, then the camera look's matrix and table, as the decode applies a fitted look
+/// ([`crate::files::CameraColourModel::apply`]).
 pub(crate) fn camera_matched(img: &Rgb32f, m: &CameraMatch) -> Rgb32f {
+    let mut out = img.clone();
+    if let Some(start) = m.start_hue_sat.as_ref().and_then(HueSat::new) {
+        lightcraft_raster::par_rows(&mut out.data, out.width, |_, row| row.iter_mut().for_each(|p| *p = start.undo(*p)));
+    }
     let hue_sat = m.hue_sat.as_ref().and_then(HueSat::new);
     let colour = crate::files::CameraColourModel { wb: [1.0; 3], matrix: m.matrix, gain: 1.0, tables: None, hue_sat: hue_sat.as_ref() };
-    let mut out = img.clone();
     colour.apply(&mut out);
     out
 }
@@ -1638,6 +1646,21 @@ impl<'a> HueSat<'a> {
         std::array::from_fn(|i| rgb[i] + (out[i] * before / after - rgb[i]) * w)
     }
 
+    /// The colour that [`Self::apply`] turns into `rgb`, found by fixed-point iteration (`x ← x + rgb − apply(x)`): a
+    /// table moves hue and saturation by small, smooth amounts, so a few steps get within float rounding.
+    pub fn undo(&self, rgb: [f32; 3]) -> [f32; 3] {
+        let mut x = rgb;
+        for _ in 0..UNDO_STEPS {
+            let y = self.apply(x);
+            let next: [f32; 3] = std::array::from_fn(|i| x[i] + rgb[i] - y[i]);
+            if !next.iter().all(|v| v.is_finite()) {
+                break;
+            }
+            x = next;
+        }
+        x
+    }
+
     /// [`Self::apply`] to `N` pixels at once (`rgb[channel][lane]`), bit for bit, through
     /// [`HsvTable::apply_lanes`], with the guards as selects.
     #[inline]
@@ -1674,6 +1697,9 @@ impl<'a> HueSat<'a> {
         restored
     }
 }
+
+/// Fixed-point steps of [`HueSat::undo`].
+const UNDO_STEPS: usize = 6;
 
 /// HSV hue (degrees) and saturation; `None` for black or non-finite colours.
 fn hue_saturation(p: [f64; 3]) -> Option<(f64, f64)> {
@@ -2752,6 +2778,39 @@ mod tests {
                 let (got, want) = (m.matrix.apply(develop(&neutral, Mat3::IDENTITY, c)), develop(&neutral, colour, c));
                 assert!((0..3).all(|i| (got[i] - want[i]).abs() < 1e-9), "{got:?} {want:?}");
             }
+        }
+    }
+
+    /// Camera Look renders the pixels the fitted look develops, also when the starting look has a matrix and a
+    /// hue/saturation table of its own: decoding camera RGB through the starting look (as `files::CameraColourModel`
+    /// does) and then [`camera_matched`] gives what decoding it through the fitted look gives.
+    #[test]
+    fn camera_matched_pixels_are_the_fitted_looks() {
+        let transform = |wb: [f32; 3], m: Mat3| CameraTransform { matrix: m, wb, white_xy: D65, matrix_is_fallback: false, baseline_exposure: 0.3 };
+        let neutral = transform([2.1, 1.0, 1.6], Mat3([[1.7, -0.5, -0.2], [-0.2, 1.5, -0.3], [0.0, -0.4, 1.4]]));
+        let fallback = transform([2.0, 1.0, 1.5], Mat3([[1.4, -0.3, -0.1], [-0.1, 1.2, -0.1], [0.0, -0.2, 1.2]]));
+        let mut starting = dro_test_look(&std::array::from_fn(|i| 0.006 * 1.13f32.powi(i as i32)), &|x| x.cbrt());
+        starting.matrix = Mat3([[1.05, -0.03, -0.02], [-0.01, 1.02, -0.01], [0.0, -0.02, 1.02]]);
+        starting.hue_sat =
+            Some(HsvTable { hue_divisions: 6, sat_divisions: 2, val_divisions: 1, data: vec![[4.0, 1.08, 1.0]; 12], srgb_value: false });
+        let fitted = dro_test_look(&std::array::from_fn(|i| 0.006 * 1.13f32.powi(i as i32)), &|x| x.sqrt());
+        let m = camera_match((&neutral, Some(&starting)), &fallback, Some(fitted.clone())).expect("invertible");
+        let decode = |t: &CameraTransform, look: &CameraLook| {
+            let mut img = Rgb32f::new(4, 3);
+            for (i, p) in img.data.iter_mut().enumerate() {
+                // (colours every matrix here keeps above zero: the decode clips below it)
+                *p = [0.15 + 0.01 * i as f32, 0.3, 0.12 + 0.01 * (i % 5) as f32];
+            }
+            let hue_sat = look.hue_sat.as_ref().and_then(HueSat::new);
+            let gain = 2f32.powf(t.baseline_exposure as f32);
+            let colour =
+                crate::files::CameraColourModel { wb: t.wb, matrix: look.matrix.mul(&t.matrix), gain, tables: None, hue_sat: hue_sat.as_ref() };
+            colour.apply(&mut img);
+            img
+        };
+        let (got, want) = (camera_matched(&decode(&neutral, &starting), &m), decode(&fallback, &fitted));
+        for (g, w) in got.data.iter().zip(&want.data) {
+            assert!((0..3).all(|i| (g[i] - w[i]).abs() <= 2e-4 * w[i].abs().max(0.05)), "{g:?} {w:?}");
         }
     }
 

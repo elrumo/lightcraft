@@ -2256,7 +2256,7 @@ mod tests {
             .unwrap()
         };
         let (neutral, camera) = (tone(|x| x / (1.0 + x)), tone(|x| (x / (1.0 + x)).sqrt()));
-        let m = Arc::new(CameraMatch { matrix: lightcraft_color::Mat3::diag(2.0, 1.0, 0.5), hue_sat: None, tone: Some(camera) });
+        let m = Arc::new(CameraMatch { start_hue_sat: None, matrix: lightcraft_color::Mat3::diag(2.0, 1.0, 0.5), hue_sat: None, tone: Some(camera) });
         let picture = |edge: usize| {
             let mut p = Rgb32f::new(edge, 2);
             p.data.fill([0.2, 0.3, 0.4]);

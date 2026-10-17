@@ -544,7 +544,9 @@ mod tests {
         // a fitted table's size (72 hues, 5 saturations, 5 values) with numbers that don't repeat
         let data = (0..72 * 5 * 5).map(|i| [((i * 37) % 61) as f32 * 0.37 - 11.0, 1.0 + ((i * 11) % 23) as f32 * 0.0137, 1.0]).collect();
         let table = HsvTable { hue_divisions: 72, sat_divisions: 5, val_divisions: 5, data, srgb_value: true };
+        let start = HsvTable { hue_divisions: 4, sat_divisions: 2, val_divisions: 1, data: vec![[3.0, 1.05, 1.0]; 8], srgb_value: false };
         let m = CameraMatch {
+            start_hue_sat: Some(start),
             matrix: lightcraft_color::Mat3([[1.2, -0.1, -0.1], [-0.05, 1.1, -0.05], [0.01, -0.2, 1.19]]),
             hue_sat: Some(table),
             tone: Some(tone),

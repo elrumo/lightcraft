@@ -214,14 +214,15 @@ the new build and Rebuild all previews.
 The look these CR3s started from before stays on offer as the **Camera Look** profile (`lc.camera`, in a Camera
 Matching group, without an Amount), as Lightroom offers its Camera Matching profiles. The decode still fits the camera
 JPEG (the order of precedence below, as if step 2 were not there) and keeps the difference between the two looks with
-the source (`camera_preview::camera_match`, `lightcraft_pipeline::CameraMatch`): one 3×3 matrix from the neutral look's
-linear Rec.2020 to the fitted look's (both develop the same white-balanced camera RGB, so one matrix carries the change
-of matrices, white-balance multipliers and baseline exposure), the fit's hue/saturation table, and its tone curve
-(none when the fit failed: the default tone map, or a black-and-white JPEG's curve). When a render's profile is Camera
-Look, the engine turns the decoded picture into the camera look (`DecodedSource::develop_input`), once per picture, and
-keeps it while only sliders move; the tone curve takes the neutral one's place. White balance, exposure and every
-slider keep their values and their meaning, so switching looks never moves a slider. The CPU and GPU pipelines see an
-ordinary source picture.
+the source (`camera_preview::camera_match`, `lightcraft_pipeline::CameraMatch`): the neutral look's own hue/saturation
+table to undo (where it has one; by fixed-point iteration), one 3×3 matrix from the neutral look's linear Rec.2020 to
+the fitted look's (both develop the same white-balanced camera RGB, so one matrix carries the change of matrices,
+white-balance multipliers and baseline exposure), the fit's hue/saturation table, and its tone curve (none when the
+fit failed: the default tone map, or a black-and-white JPEG's curve). When a render's profile is Camera Look, the
+engine turns the decoded picture into the camera look (`DecodedSource::develop_input`), once per picture, and keeps it
+while only sliders move; the tone curve takes the neutral one's place. White balance, exposure and every slider keep
+their values and their meaning, so switching looks never moves a slider. The CPU and GPU pipelines see an ordinary
+source picture.
 
 Smart previews, and a sync server's previews that a phone renders from, carry the camera look in a JPEG segment of
 their own (`smart.rs`, APP11, zlib-compressed JSON, about 8 KB for the corpus EOS R6 file; older builds skip it), so the profile works without the original;
