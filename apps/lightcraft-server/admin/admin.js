@@ -1664,7 +1664,7 @@ function showModels(s) {
       const btn = d.running
         ? el('button', { type: 'button', class: 'btn secondary', onclick: () => cancelDownload(p) }, 'Cancel')
         : f.installed
-          ? el('span', { class: 'ok' }, 'Installed')
+          ? el('span', { class: 'ok' }, el('span', {}, 'Installed'), el('button', { type: 'button', class: 'btn quiet', onclick: () => removeModel(p, what) }, 'Remove'))
           : el('button', { type: 'button', class: 'btn accent', onclick: get }, 'Download');
       const meter = d.running ? el('div', { class: 'meter' }, el('div', {})) : null;
       const li = el('li', {}, el('span', { class: 'what' }, el('b', {}, what), el('span', { class: 'muted' }, model + ' · ' + bytes(f.sizeBytes))), btn, ...(meter ? [meter] : []));
@@ -1673,6 +1673,22 @@ function showModels(s) {
     }),
   );
   return going;
+}
+
+/** Delete a part's model files from the server (what it found stays), after asking. */
+function removeModel(p, what) {
+  return ask({
+    title: 'Delete the ' + what.toLowerCase() + ' model?',
+    text:
+      'This deletes its files from this server and frees their disk space. What it already found for your users is kept, but nothing new is found until you download the model again. ' +
+      (p === 'fc' ? 'People stays switched on for the users who have it. ' : '') + 'It can be downloaded again at any time.',
+    ok: 'Delete',
+    danger: true,
+    action: () => api('DELETE', 'search/models/' + PART_KEY[p]),
+  }).then(async (ok) => {
+    if (ok) toast('Deleted the ' + what.toLowerCase() + ' model.', 'info');
+    await route();
+  });
 }
 
 function showSearch([s]) {

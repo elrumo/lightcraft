@@ -60,7 +60,7 @@ impl Part {
         [Part::Search, Part::Text, Part::Faces, Part::Sensitive].into_iter().find(|p| p.key() == k)
     }
 
-    fn what(self) -> &'static str {
+    pub(crate) fn what(self) -> &'static str {
         match self {
             Part::Search => "the search model",
             Part::Text => "the text-reading models",

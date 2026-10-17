@@ -1027,3 +1027,32 @@ fn photos_that_might_be_sensitive_are_flagged_for_devices() {
     let (_, s) = get(&f.ann, "/api/search/status");
     assert_eq!(s["sensitive"]["enabled"], true, "{s}");
 }
+
+/// An admin deletes a model's files from the admin page: only the files the model is made of go, what it found
+/// stays, the part reads as not installed, and it can be fetched again.
+#[test]
+fn an_admin_deletes_a_downloaded_model_and_only_its_files() {
+    let f = fixture("remove-models", None);
+    accounts::set_admin(&f.data, "ann", true).unwrap();
+    let admin = admin_login(&f.server, "ann", "correct horse");
+    let s = get(&admin, "/api/admin/search").1;
+    assert_eq!(s["sensitive"]["installed"], false, "{s}");
+
+    // the model's file, a partial download of it, and a file of something else in the same folder
+    let dir = std::path::PathBuf::from(s["dir"].as_str().unwrap()).join(lightcraft_engine::vision::SENSITIVE_DIR);
+    std::fs::create_dir_all(&dir).unwrap();
+    for name in ["model_int8.onnx", "model_int8.onnx.part", "keep.txt"] {
+        std::fs::write(dir.join(name), b"x").unwrap();
+    }
+    assert_eq!(get(&admin, "/api/admin/search").1["sensitive"]["installed"], true);
+
+    assert_eq!(delete(&admin, "/api/admin/search/models/nonsense").0, 404);
+    let (status, s) = delete(&admin, "/api/admin/search/models/sensitive");
+    assert_eq!((status, &s["sensitive"]["installed"]), (200, &json!(false)), "{s}");
+    assert!(!dir.join("model_int8.onnx").exists() && !dir.join("model_int8.onnx.part").exists());
+    assert!(dir.join("keep.txt").exists(), "the folder's other contents stay");
+    // deleting again is not an error
+    assert_eq!(delete(&admin, "/api/admin/search/models/sensitive").0, 200);
+    // only an admin may
+    assert_eq!(delete(&f.ann, "/api/admin/search/models/sensitive").0, 401);
+}
