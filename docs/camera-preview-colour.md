@@ -109,7 +109,9 @@ A pooled profile was tried and is not bundled. Pooling the 46 photos (158,549 co
 
 ## Camera profiles (pooled per model)
 
-One photo can show too little of a colour for its own fit to learn it: in a second shot of the lime shirt only a few dozen proxy pixels show it, next to a hillside of foliage at the same hue that the camera renders differently, and the shirt stayed yellow (hue 68° against the JPEG's 82°; a 192-pixel proxy only reached 74°). `lightcraft-cli calibrate [--max N] [--out DIR] FOLDERS…` therefore pools the colour pairs of many ARWs, NEF/NRWs, RAFs or Canon CR2/CR3 files per camera model — each against its own embedded JPEG, at a 192-pixel proxy, at most 4000 pairs per photo, files spread evenly over the folders — and fits one matrix (from white-balanced camera RGB, so no single photo's white point is baked in) and one hue/saturation/value table. Models need at least 5 usable photos.
+One photo can show too little of a colour for its own fit to learn it: in a second shot of the lime shirt only a few dozen proxy pixels show it, next to a hillside of foliage at the same hue that the camera renders differently, and the shirt stayed yellow (hue 68° against the JPEG's 82°; a 192-pixel proxy only reached 74°). `lightcraft-cli calibrate [--max N] [--out DIR] FOLDERS…` therefore pools the colour pairs of many ARWs, NEF/NRWs, RAFs or Canon CR2/CR3 files per camera model — each against its own embedded JPEG, at a 192-pixel proxy, at most 4000 pairs per photo, files spread evenly over the folders — and fits one matrix (from white-balanced camera RGB, so no single photo's white point is baked in) and one hue/saturation/value table. Models need at least 5 usable photos. The pooled pairs are sorted before fitting: pools filled on several threads
+arrived in a different order each run and the fits hold out pairs by position, so the same photos used to give a
+slightly different profile every time (entries up to 1.5 apart on the EOS R6 table).
 
 Profiles are JSON files `<model>.json` in `$LIGHTCRAFT_CAMERA_PROFILES`, else `<config>/camera-profiles` (macOS `~/Library/Application Support/LightCraft/camera-profiles`); a local profile replaces a built-in one. Built-in profiles live in `assets/camera-profiles/` (listed in `assets/ATTRIBUTION.md`) and are compiled in, so the app, CLI and web build share them: ILCE-7M4, fitted to 597 photos (2.2 million colour pairs) shot in 2026, mostly with the Standard creative style and DRO Auto; ILCE-7CR, 125 photos, and ILCA-99M2, 144 photos (both below); X-H2S, 201 photos; X-T4, 545 photos; NIKON Z 6_2, 296 photos; NIKON Z 8, 261 photos; NIKON D5300, 264 photos (below). They hold aggregate colour statistics only. A photo of a profiled model takes its colour from the profile and fits only its own tone and chroma curves (picture styles vary per shot; with Sony's DRO on, that tone curve is then lowered as described below); the acceptance gates still apply. A rejected profile fit retries the photo's own colour and tone fit before falling back to neutral rendering. Files are read once per process and validated (version, bounded invertible matrix, table shape and finite data); a damaged file is ignored with a warning. The profiles folder's contents are part of the render cache keys, so thumbnails rendered before a profile existed are redone; smart previews built before keep their colour until rebuilt.
 
@@ -205,7 +207,10 @@ pairs each CR3 with a render of the same photo (here Lightroom's default export)
 the hue/saturation table the neutral look adds for that model (`camera_preview::neutral_pairs`, `fit_neutral_table`;
 the same 72 × 5 × 5 table and kernels as the per-file fit, on the scene colour through the spectral matrices). The
 targets have the neutral look's chroma curve taken out first (`without_chroma`), so the table adds only what the tone
-and chroma curves leave; pairs where the render touches the sRGB gamut's edge are left out. The result,
+and chroma curves leave; pairs where the render touches the sRGB gamut's edge are left out, and a render that doesn't
+line up with the sensor is refused (high-passed log-luminance alignment under 0.05: Lightroom's exports of the 19
+photos reached 0.10-0.81, the same exports upside down or of another photo at most 0.03; the whole-picture structure
+check of the DNG tone fit refused a beach of sky and sand whose vignetting the export corrects). The result,
 `assets/camera-profiles/Canon_EOS_R6.neutral.json` (18 of the 19 photos, a night shot gave no colour; 62,852 pairs;
 hue shifts −9° to +11°, saturation ×0.68 to ×1.65), is loaded by `camera_profiles::neutral_table` (a local
 `<model>.neutral.json` in the profiles folder replaces it) and applied like a camera profile's table. Held out by scene
@@ -224,8 +229,8 @@ file's camera JPEG, per-file fit → neutral look, and ΔL\*): EOS R6 Standard 2
 Unchanged: CR2s and CR3s of models without measured matrices keep the per-file fit (no Lightroom references for them
 yet); a monochrome picture style now renders in colour on these models, as in Lightroom; white balance is in Kelvin
 through the matrices as before. The look is a property of the decoded source, so no process version changes;
-`LOOK_VERSION` 11 (12 with the EOS R6 table) rebuilds the smart previews of raws and `RENDER_CACHE_VERSION` 67 (68)
-redraws renders. A sync server needs the new build and Rebuild all previews.
+`LOOK_VERSION` 11 (12 with the EOS R6 table, 13 refitted in a fixed order) rebuilds the smart previews of raws and
+`RENDER_CACHE_VERSION` 67 (68, 69) redraws renders. A sync server needs the new build and Rebuild all previews.
 
 ### The camera's look as a profile: Camera Look
 
@@ -233,18 +238,17 @@ The look these CR3s started from before stays on offer as the **Camera Look** pr
 Matching group, without an Amount), as Lightroom offers its Camera Matching profiles. The decode still fits the camera
 JPEG (the order of precedence below, as if step 2 were not there) and keeps the difference between the two looks with
 the source (`camera_preview::camera_match`, `lightcraft_pipeline::CameraMatch`): the neutral look's own hue/saturation
-table to undo (where it has one; by fixed-point iteration), one 3×3 matrix from the neutral look's linear Rec.2020 to
-the fitted look's (both develop the same white-balanced camera RGB, so one matrix carries the change of matrices,
-white-balance multipliers and baseline exposure), the fit's hue/saturation table, and its tone curve (none when the
-fit failed: the default tone map, or a black-and-white JPEG's curve). When a render's profile is Camera Look, the
-engine turns the decoded picture into the camera look (`DecodedSource::develop_input`), once per picture, and keeps it
-while only sliders move; the tone curve takes the neutral one's place. White balance, exposure and every slider keep
-their values and their meaning, so switching looks never moves a slider. The CPU and GPU pipelines see an ordinary
-source picture.
+table to undo (where it has one, exactly: below), one 3×3 matrix from the neutral look's linear Rec.2020 to the fitted
+look's (both develop the same white-balanced camera RGB, so one matrix carries the change of matrices, white-balance
+multipliers and baseline exposure), the fit's hue/saturation table, and its tone curve (none when the fit failed: the
+default tone map, or a black-and-white JPEG's curve). When a render's profile is Camera Look, the engine turns the
+decoded picture into the camera look (`DecodedSource::develop_input`), once per picture, and keeps it while only
+sliders move; the tone curve takes the neutral one's place. White balance, exposure and every slider keep their values
+and their meaning, so switching looks never moves a slider. The CPU and GPU pipelines see an ordinary source picture.
 
 Smart previews, and a sync server's previews that a phone renders from, carry the camera look in a JPEG segment of
 their own (`smart.rs`, APP11, zlib-compressed JSON, about 8 KB for the corpus EOS R6 file; older builds skip it), so
-the profile works without the original; `LOOK_VERSION` 13 rebuilds raw previews once to add it. The EOS R6's neutral
+the profile works without the original; `LOOK_VERSION` 14 rebuilds raw previews once to add it. The EOS R6's neutral
 table is undone in its own terms (`HsvTable::undo`: the hue where the table's shift lands, by bisection where a
 fixed-point step doesn't settle; the saturation over the table's scale; the brightness that keeps the luminance),
 since a fixed-point or Newton iteration on RGB fails where its sky-blue shifts change faster than the hue and where it

@@ -270,6 +270,16 @@ pub struct Pool {
     models: HashMap<String, (usize, Vec<([f64; 3], [f64; 3])>)>,
 }
 
+/// `pairs` in a fixed order: pools filled on several threads arrive in a different order each run, and the fits hold
+/// out pairs by position, so without it the same photos gave a different table every time.
+fn in_order(pairs: &[([f64; 3], [f64; 3])]) -> Vec<([f64; 3], [f64; 3])> {
+    let mut sorted = pairs.to_vec();
+    sorted.sort_by(|a, b| {
+        a.0.iter().chain(&a.1).zip(b.0.iter().chain(&b.1)).map(|(x, y)| x.total_cmp(y)).find(|o| o.is_ne()).unwrap_or(std::cmp::Ordering::Equal)
+    });
+    sorted
+}
+
 /// Most colour pairs kept per photo, so a few busy photos can't dominate a profile.
 const PAIRS_PER_FILE: usize = 4000;
 
@@ -315,7 +325,8 @@ impl Pool {
             .into_iter()
             .filter(|(_, (files, _))| *files >= min_files)
             .map(|(model, (files, pairs))| {
-                let hue_sat = crate::camera_preview::fit_neutral_table(pairs).ok_or_else(|| format!("{model}: no usable hue/saturation fit"))?;
+                let hue_sat =
+                    crate::camera_preview::fit_neutral_table(&in_order(pairs)).ok_or_else(|| format!("{model}: no usable hue/saturation fit"))?;
                 Ok(NeutralTable { version: VERSION, model: model.clone(), files: *files, samples: pairs.len(), hue_sat })
             })
             .collect()
@@ -329,7 +340,8 @@ impl Pool {
             .into_iter()
             .filter(|(_, (files, _))| *files >= min_files)
             .map(|(model, (files, pairs))| {
-                let (matrix, hue_sat) = crate::camera_preview::fit_profile(pairs).ok_or_else(|| format!("{model}: no usable colour fit"))?;
+                let (matrix, hue_sat) =
+                    crate::camera_preview::fit_profile(&in_order(pairs)).ok_or_else(|| format!("{model}: no usable colour fit"))?;
                 Ok(CameraProfile::new(model, *files, pairs.len(), matrix, hue_sat))
             })
             .collect()
@@ -359,6 +371,16 @@ mod tests {
     fn profile() -> CameraProfile {
         let table = HsvTable { hue_divisions: 4, sat_divisions: 2, val_divisions: 1, data: vec![[5.0, 1.2, 1.0]; 8], srgb_value: false };
         CameraProfile::new("ILCE-7M4", 12, 3456, Mat3([[1.6, -0.5, -0.1], [-0.2, 1.3, -0.1], [-0.1, -0.2, 1.3]]), Some(table))
+    }
+
+    /// The same photos give the same fit whatever order their pairs were pooled in.
+    #[test]
+    fn pooled_pairs_are_fitted_in_a_fixed_order() {
+        let pairs: Vec<([f64; 3], [f64; 3])> = (0..50).map(|i| ([i as f64, 0.5, 1.0 / (i + 1) as f64], [0.1 * i as f64, 0.2, 0.3])).collect();
+        let mut shuffled = pairs.clone();
+        shuffled.reverse();
+        shuffled.swap(3, 40);
+        assert_eq!(in_order(&pairs), in_order(&shuffled));
     }
 
     #[test]
